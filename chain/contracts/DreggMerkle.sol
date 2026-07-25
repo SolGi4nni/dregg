@@ -40,7 +40,8 @@ pragma solidity ^0.8.20;
 ///
 /// This mirrors the positional hashing dregg uses for its Merkle nodes
 /// (`metatheory Dregg2.Circuit.StateCommit.compress` / `frameDigest`, and the
-/// on-chain `DreggVault._computeRoot`), instantiated with keccak256 for an
+/// on-chain `DreggVault._insertLeaf` incremental note tree), instantiated with
+/// keccak256 for an
 /// EVM-native, EVM-cheap commitment (a dregg-published keccak MIRROR of a
 /// BabyBear-native sub-root — the same construction as the outbound message
 /// root; see `DreggStateOracle`).

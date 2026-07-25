@@ -191,8 +191,10 @@ contract DreggVaultFeeOnTransferTest is Test {
     // ─── helpers ────────────────────────────────────────────────────────────
 
     function _proof(uint256 amount, bytes32 nullifier) internal view returns (bytes memory) {
+        // #3 deployment binding: the guest commits (…, boundVault, boundChainId).
         bytes memory publicValues = abi.encode(
-            true, nullifier, address(feeToken), amount, recipient, vault.noteTreeRoot()
+            true, nullifier, address(feeToken), amount, recipient, vault.noteTreeRoot(),
+            address(vault), block.chainid
         );
         return abi.encode(hex"1234", publicValues);
     }

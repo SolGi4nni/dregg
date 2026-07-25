@@ -46,7 +46,9 @@ contract DreggDeployerGate is IDeployerGate {
     address public attester;
     /// The audit oracle (marks cleared audit reports).
     address public auditor;
-    /// The fraud-proof / slasher authorized to slash bonds on a proven rug.
+    /// The OPERATIONAL fraud-detection / slasher role. It cannot drain a bond in
+    /// one call (that was the #11 hole); it TIMELOCKS via `proposeSlash` →
+    /// `executeSlash`, vetoable by governance. See the SLASH_DELAY block.
     address public slasher;
 
     // ─── Bond arm ──────────────────────────────────────────────────────────────
@@ -71,6 +73,37 @@ contract DreggDeployerGate is IDeployerGate {
     /// The timestamp until which a deployer's bond is escrow-locked (0 = unlocked).
     /// Extended forward each time the deployer backs a fresh launch via the BOND arm.
     mapping(address => uint256) public bondLockedUntil;
+
+    // ─── Slash timelock (#11) ──────────────────────────────────────────────────
+    /// The operational `slasher` role can no longer drain a bond in one call
+    /// (the #11 hole: `msg.sender == slasher`, any amount, arbitrary recipient, NO
+    /// on-chain fraud proof → a compromised slasher key drains every bond). It now
+    /// TIMELOCKS: `proposeSlash` stages a slash with `eta = now + SLASH_DELAY`,
+    /// `executeSlash` moves the funds only on/after `eta`, and `cancelSlash` lets
+    /// governance (`admin`) VETO within the window — so a compromised slasher key
+    /// buys nothing but a delay during which governance cancels it and rotates the
+    /// key via `setSlasher`. Governance itself retains an immediate `slash` (it is
+    /// already the omnipotent root — `setSlasher`/`setAdmin` — so this grants it no
+    /// new power; hardening the governance root is the separate admin-timelock item).
+    ///
+    /// CONSERVATIVE DEFAULT: 2 days mirrors the DreggGroth16VerifierUpgradeable VK
+    /// timelock (batch 1) — long enough for governance to notice and veto a rogue
+    /// slash, short enough that an honest fraud slash still resolves promptly.
+    uint256 public constant SLASH_DELAY = 2 days;
+
+    struct PendingSlash {
+        address deployer;
+        uint256 amount;
+        address recipient;
+        uint256 eta;
+        bool executed;
+        bool cancelled;
+    }
+
+    /// Staged slashes by id. `id == 0` is never a real proposal.
+    mapping(uint256 => PendingSlash) public pendingSlashes;
+    /// Monotone id counter (first real proposal is id 1).
+    uint256 public slashCount;
 
     /// The pinned launchpad. Once set, ONLY it may call `authorizeDeploy` — which
     /// makes the bond escrow non-griefable (an arbitrary caller cannot lock a
@@ -109,6 +142,12 @@ contract DreggDeployerGate is IDeployerGate {
     event BondPosted(address indexed deployer, uint256 amount, uint256 total);
     event BondSlashed(address indexed deployer, uint256 amount, address indexed recipient);
     event BondWithdrawn(address indexed deployer, uint256 amount);
+    /// A slasher-role slash was STAGED behind the timelock (not yet effective).
+    event SlashProposed(
+        uint256 indexed id, address indexed deployer, uint256 amount, address recipient, uint256 eta
+    );
+    /// Governance VETOED a staged slash before its `eta`.
+    event SlashCancelled(uint256 indexed id);
     /// A bond was escrow-locked (or its lock extended) to back a launch.
     event BondLockExtended(address indexed deployer, uint256 lockedUntil, bytes32 indexed launchParamsHash);
     event LaunchpadSet(address indexed launchpad);
@@ -126,6 +165,12 @@ contract DreggDeployerGate is IDeployerGate {
     error NullifierAlreadyUsed(bytes32 nullifier);
     /// The bond is escrow-locked to back a live launch until `lockedUntil`.
     error BondLocked(uint256 lockedUntil);
+    /// A staged slash cannot execute until its timelock `eta` (#11).
+    error SlashNotReady(uint256 eta);
+    /// A staged slash was already executed or cancelled (#11).
+    error SlashAlreadyResolved(uint256 id);
+    /// No staged slash with this id (#11).
+    error UnknownSlash(uint256 id);
 
     constructor(address _admin, uint256 _minBond) {
         admin = _admin;
@@ -186,15 +231,67 @@ contract DreggDeployerGate is IDeployerGate {
         emit BondPosted(msg.sender, msg.value, bondOf[msg.sender]);
     }
 
-    /// Slash a deployer's bond (the fraud-proof / slasher on a proven rug).
-    function slash(address deployer, uint256 amount, address recipient) external {
-        if (msg.sender != slasher) revert Unauthorized();
+    /// GOVERNANCE-immediate slash (`admin` only). `admin` is the omnipotent root
+    /// (it already sets the slasher, min bond, and admin), so an immediate slash
+    /// here grants it no power it lacked — it is the emergency/settled-fraud path.
+    /// The OPERATIONAL `slasher` role does NOT use this; it timelocks via
+    /// `proposeSlash`/`executeSlash` so a compromised slasher key cannot drain
+    /// bonds in one shot (#11). Hardening the governance root itself is the
+    /// separate admin-timelock item (#14).
+    function slash(address deployer, uint256 amount, address recipient) external onlyAdmin {
+        _applySlash(deployer, amount, recipient);
+    }
+
+    /// Move up to `amount` (capped at the bond balance) of `deployer`'s bond to
+    /// `recipient`. Shared by the governance-immediate and timelocked paths.
+    function _applySlash(address deployer, uint256 amount, address recipient) internal {
         uint256 bal = bondOf[deployer];
         uint256 take = amount > bal ? bal : amount;
         bondOf[deployer] = bal - take;
         (bool ok,) = recipient.call{value: take}("");
         if (!ok) revert TransferFailed();
         emit BondSlashed(deployer, take, recipient);
+    }
+
+    /// The OPERATIONAL slasher STAGES a slash behind the timelock (#11). Returns
+    /// the proposal id. It becomes executable at `eta = now + SLASH_DELAY` and
+    /// governance can `cancelSlash` it before then.
+    function proposeSlash(address deployer, uint256 amount, address recipient)
+        external
+        returns (uint256 id)
+    {
+        if (msg.sender != slasher) revert Unauthorized();
+        id = ++slashCount;
+        pendingSlashes[id] = PendingSlash({
+            deployer: deployer,
+            amount: amount,
+            recipient: recipient,
+            eta: block.timestamp + SLASH_DELAY,
+            executed: false,
+            cancelled: false
+        });
+        emit SlashProposed(id, deployer, amount, recipient, block.timestamp + SLASH_DELAY);
+    }
+
+    /// Execute a staged slash once its timelock has elapsed and it was not vetoed.
+    /// Callable by the slasher (the operational role that staged it).
+    function executeSlash(uint256 id) external {
+        if (msg.sender != slasher) revert Unauthorized();
+        PendingSlash storage p = pendingSlashes[id];
+        if (p.eta == 0) revert UnknownSlash(id);
+        if (p.executed || p.cancelled) revert SlashAlreadyResolved(id);
+        if (block.timestamp < p.eta) revert SlashNotReady(p.eta);
+        p.executed = true;
+        _applySlash(p.deployer, p.amount, p.recipient);
+    }
+
+    /// Governance VETO of a staged slash (the compromised-slasher backstop, #11).
+    function cancelSlash(uint256 id) external onlyAdmin {
+        PendingSlash storage p = pendingSlashes[id];
+        if (p.eta == 0) revert UnknownSlash(id);
+        if (p.executed || p.cancelled) revert SlashAlreadyResolved(id);
+        p.cancelled = true;
+        emit SlashCancelled(id);
     }
 
     /// Withdraw an unslashed bond (a deployer exiting in good standing). Refused

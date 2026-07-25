@@ -60,22 +60,37 @@ contract DreggVault is IDreggVault {
 
     // ─── State ──────────────────────────────────────────────────────────────
 
-    /// Incremental Merkle tree of note commitments (simplified: stores leaves only).
+    /// INCREMENTAL fixed-depth Merkle tree of note commitments (Tornado/Semaphore
+    /// style). Each deposit is O(TREE_DEPTH) hashes + SLOADs — CONSTANT per deposit,
+    /// independent of `depositCount` — so deposits can never grow to exceed the
+    /// block gas limit (the #5 gas-DoS the old `_computeRoot` full-tree rebuild left
+    /// open: rebuilding the whole tree from storage per deposit was O(n) SLOADs and
+    /// eventually un-depositable). See `_insertLeaf`.
     ///
-    /// PLACEHOLDER: this keccak256 tree is a stand-in pending Poseidon2 circuit
-    /// alignment. The real note tree is Poseidon2 (see IDreggVault noteCommitment
-    /// docs); the SP1 guest program proves membership against the Poseidon2 tree,
-    /// so until the on-chain tree is rebuilt as an incremental Poseidon2 tree the
+    /// PLACEHOLDER (#12, separate design item): this is still the keccak256 tree,
+    /// NOT domain-separated, and does NOT match the circuit's Poseidon2 note tree.
+    /// The SP1 guest program proves membership against the Poseidon2 tree, so the
     /// keccak root here and the circuit root only agree because the federation
     /// mirrors deposits. The root COMPARISON below is real (withdraw proofs must
-    /// commit to the current root or one of the last ROOT_HISTORY_SIZE roots);
-    /// the hash function is the placeholder.
-    bytes32[] private noteCommitments;
+    /// commit to the current root or one of the last ROOT_HISTORY_SIZE roots); the
+    /// hash function remains the placeholder pending Poseidon2 alignment.
+    ///
+    /// TREE_DEPTH = 20 → up to 1,048,576 notes. CONSERVATIVE DEFAULT: 2^20 leaves
+    /// comfortably exceeds any pre-launch note volume while keeping the per-deposit
+    /// hash count (20) tiny; a deployment expecting more should widen the depth.
+    uint32 public constant TREE_DEPTH = 20;
+    uint256 public constant MAX_LEAVES = uint256(1) << TREE_DEPTH;
+
+    /// The left-sibling cache for the incremental insert (one per level) and the
+    /// precomputed all-zero subtree roots (`zeros[i]` = root of an empty subtree of
+    /// height `i`). Both are seeded in the constructor.
+    bytes32[TREE_DEPTH] public filledSubtrees;
+    bytes32[TREE_DEPTH] public zeros;
 
     /// Current root of the note commitment tree.
     bytes32 public noteTreeRoot;
 
-    /// Total number of deposits (== noteCommitments.length).
+    /// Total number of deposits (== the next free leaf index).
     uint256 public depositCount;
 
     /// Ring buffer of recent tree roots (Tornado-style). Withdrawals may prove
@@ -157,6 +172,12 @@ contract DreggVault is IDreggVault {
     error InsufficientVaultBalance(address token, uint256 requested, uint256 available);
     error ReentrantCall();
     error BalanceQueryFailed();
+    /// The withdraw proof is bound to a DIFFERENT vault deployment (`address(this)`).
+    error VaultBindingMismatch(address boundVault, address thisVault);
+    /// The withdraw proof is bound to a DIFFERENT chain (`block.chainid`).
+    error ChainBindingMismatch(uint256 boundChainId, uint256 thisChainId);
+    /// The incremental note tree is full (`depositCount == MAX_LEAVES`).
+    error MerkleTreeFull();
     // ── Escrow errors ──
     error SettlementNotContract();
     error DuplicateEscrowId(bytes32 escrowId);
@@ -196,6 +217,18 @@ contract DreggVault is IDreggVault {
         sp1Verifier = _sp1Verifier;
         programVkey = _programVkey;
         settlement = _settlement;
+
+        // Seed the incremental Merkle tree: `zeros[i]` is the root of an empty
+        // subtree of height `i` (zeros[0] is the zero leaf), and the left-sibling
+        // cache starts as those empty subtrees. `noteTreeRoot` begins as the empty
+        // tree's root, which `isKnownRoot` still rejects (nothing is spendable until
+        // a deposit records a real root).
+        bytes32 currentZero = bytes32(0);
+        for (uint32 i = 0; i < TREE_DEPTH; i++) {
+            zeros[i] = currentZero;
+            filledSubtrees[i] = currentZero;
+            currentZero = keccak256(abi.encodePacked(currentZero, currentZero));
+        }
     }
 
     // ─── Deposits ───────────────────────────────────────────────────────────
@@ -222,7 +255,9 @@ contract DreggVault is IDreggVault {
 
         // Record the deposit and update the note tree. `received` is the custodied
         // amount — the record, the credited balance, and the event all reflect it.
-        uint256 leafIndex = depositCount;
+        // `_insertLeaf` appends the commitment at `depositCount` in O(TREE_DEPTH)
+        // and moves `noteTreeRoot` — constant work per deposit (the #5 gas fix).
+        uint256 leafIndex = _insertLeaf(noteCommitment);
         deposits[noteCommitment] = DepositRecord({
             token: token,
             depositor: msg.sender,
@@ -230,13 +265,9 @@ contract DreggVault is IDreggVault {
             leafIndex: leafIndex,
             blockNumber: block.number
         });
-        noteCommitments.push(noteCommitment);
         depositCount = leafIndex + 1;
         tokenBalances[token] += received;
 
-        // Update the tree root (simplified: hash of all commitments).
-        // In production, use an incremental Merkle tree for O(log n) updates.
-        noteTreeRoot = _computeRoot();
         _recordRoot(noteTreeRoot);
 
         emit Deposit(token, received, noteCommitment, leafIndex);
@@ -247,8 +278,9 @@ contract DreggVault is IDreggVault {
         if (msg.value == 0) revert ZeroAmount();
         if (deposits[noteCommitment].blockNumber != 0) revert DuplicateNoteCommitment();
 
-        // Record the ETH deposit (token = address(0) for native ETH).
-        uint256 leafIndex = depositCount;
+        // Record the ETH deposit (token = address(0) for native ETH). The
+        // incremental insert is O(TREE_DEPTH) — constant per deposit (the #5 fix).
+        uint256 leafIndex = _insertLeaf(noteCommitment);
         deposits[noteCommitment] = DepositRecord({
             token: address(0),
             depositor: msg.sender,
@@ -256,11 +288,9 @@ contract DreggVault is IDreggVault {
             leafIndex: leafIndex,
             blockNumber: block.number
         });
-        noteCommitments.push(noteCommitment);
         depositCount = leafIndex + 1;
         tokenBalances[address(0)] += msg.value;
 
-        noteTreeRoot = _computeRoot();
         _recordRoot(noteTreeRoot);
 
         emit Deposit(address(0), msg.value, noteCommitment, leafIndex);
@@ -277,25 +307,12 @@ contract DreggVault is IDreggVault {
     ) external nonReentrant {
         if (amount == 0) revert ZeroAmount();
 
-        // Decode + verify the SP1 proof (fail-closed on a codeless verifier).
-        bytes memory publicValues = _verifySp1(sp1Proof);
-
-        // Decode public values committed by the SP1 guest program.
-        // Expected format: (bool valid, bytes32 nullifier, address token, uint256 amount, address recipient, bytes32 noteTreeRoot)
-        (
-            bool valid,
-            bytes32 nullifier,
-            address proofToken,
-            uint256 proofAmount,
-            address proofRecipient,
-            bytes32 proofRoot
-        ) = abi.decode(publicValues, (bool, bytes32, address, uint256, address, bytes32));
-
-        // Verify the proof's public outputs match the withdrawal parameters.
-        if (!valid) revert ProofVerificationFailed();
-        if (proofAmount != amount) revert AmountMismatch();
-        if (proofRecipient != recipient) revert RecipientMismatch();
-        if (proofToken != token) revert TokenMismatch();
+        // Decode + verify the SP1 proof (fail-closed on a codeless verifier), then
+        // decode the public values and enforce every field match INCLUDING the #3
+        // deployment binding. Split into a helper so `withdraw` stays under the
+        // stack-depth limit. Returns the nullifier and the committed root.
+        (bytes32 nullifier, bytes32 proofRoot) =
+            _decodeAndCheckWithdraw(_verifySp1(sp1Proof), token, amount, recipient);
 
         // The proof must commit to the current note tree root or one of the
         // recent roots in the ring buffer (Tornado-style grace window).
@@ -589,39 +606,90 @@ contract DreggVault is IDreggVault {
         if (!verifySuccess) revert ProofVerificationFailed();
     }
 
+    /// Decode a withdraw proof's public values and enforce EVERY field match:
+    /// validity, (token, amount, recipient), and the #3 deployment binding
+    /// (`boundVault == address(this)`, `boundChainId == block.chainid`). Returns the
+    /// nullifier and the committed note-tree root (checked against the ring buffer
+    /// by the caller). Split out of `withdraw` to stay under the stack-depth limit.
+    ///
+    /// Expected public-values format (the SP1 guest statement):
+    ///   (bool valid, bytes32 nullifier, address token, uint256 amount,
+    ///    address recipient, bytes32 noteTreeRoot,
+    ///    address boundVault, uint256 boundChainId)
+    ///
+    /// `boundVault`/`boundChainId` are the DEPLOYMENT BINDING (#3): before them the
+    /// withdraw statement carried nothing tying it to THIS vault, so a valid proof
+    /// replayed on any DreggVault sharing `programVkey` (the same guest on another
+    /// address or chain). The check only bites once the guest COMMITS these values —
+    /// the companion circuit change is off-chain (the SP1 guest statement), not here.
+    function _decodeAndCheckWithdraw(
+        bytes memory publicValues,
+        address token,
+        uint256 amount,
+        address recipient
+    ) internal view returns (bytes32 nullifier, bytes32 proofRoot) {
+        (
+            bool valid,
+            bytes32 nf,
+            address proofToken,
+            uint256 proofAmount,
+            address proofRecipient,
+            bytes32 root,
+            address boundVault,
+            uint256 boundChainId
+        ) = abi.decode(publicValues, (bool, bytes32, address, uint256, address, bytes32, address, uint256));
+
+        // Verify the proof's public outputs match the withdrawal parameters.
+        if (!valid) revert ProofVerificationFailed();
+        if (proofAmount != amount) revert AmountMismatch();
+        if (proofRecipient != recipient) revert RecipientMismatch();
+        if (proofToken != token) revert TokenMismatch();
+
+        // Deployment binding: reject a proof built for a different vault or chain.
+        if (boundVault != address(this)) revert VaultBindingMismatch(boundVault, address(this));
+        if (boundChainId != block.chainid) revert ChainBindingMismatch(boundChainId, block.chainid);
+
+        nullifier = nf;
+        proofRoot = root;
+    }
+
     /// Record a new root in the ring buffer of recent roots.
     function _recordRoot(bytes32 newRoot) internal {
         rootHistory[rootHistoryCount % ROOT_HISTORY_SIZE] = newRoot;
         rootHistoryCount += 1;
     }
 
-    /// Compute the Merkle root of all note commitments.
-    /// Simplified implementation: iterative hashing. In production, use an
-    /// incremental Merkle tree with fixed depth (e.g., 20 levels = 1M leaves).
-    function _computeRoot() internal view returns (bytes32) {
-        uint256 count = noteCommitments.length;
-        if (count == 0) return bytes32(0);
-        if (count == 1) return noteCommitments[0];
+    /// Append `leaf` at index `depositCount` into the incremental fixed-depth
+    /// Merkle tree, update `noteTreeRoot`, and return the leaf index. O(TREE_DEPTH)
+    /// hashes + SLOADs — CONSTANT per deposit regardless of how many notes already
+    /// exist (the #5 gas-DoS fix: the old full-tree rebuild was O(n)). Reverts once
+    /// the tree is full (`MAX_LEAVES` leaves).
+    ///
+    /// Standard Tornado/Semaphore insert: walk from the leaf to the root, and at
+    /// each level pair the running hash with either the freshly cached left sibling
+    /// (`filledSubtrees[i]`, when this node is a right child) or the empty subtree
+    /// root (`zeros[i]`, when it is a left child — in which case cache it as the
+    /// left sibling for the next insert at this level).
+    function _insertLeaf(bytes32 leaf) internal returns (uint256 index) {
+        index = depositCount;
+        if (index >= MAX_LEAVES) revert MerkleTreeFull();
 
-        // Build a simple binary hash tree.
-        bytes32[] memory layer = new bytes32[](count);
-        for (uint256 i = 0; i < count; i++) {
-            layer[i] = noteCommitments[i];
-        }
-
-        while (layer.length > 1) {
-            uint256 newLen = (layer.length + 1) / 2;
-            bytes32[] memory newLayer = new bytes32[](newLen);
-            for (uint256 i = 0; i < newLen; i++) {
-                if (2 * i + 1 < layer.length) {
-                    newLayer[i] = keccak256(abi.encodePacked(layer[2 * i], layer[2 * i + 1]));
-                } else {
-                    newLayer[i] = layer[2 * i]; // Odd leaf promoted.
-                }
+        uint256 currentIndex = index;
+        bytes32 currentLevelHash = leaf;
+        bytes32 left;
+        bytes32 right;
+        for (uint32 i = 0; i < TREE_DEPTH; i++) {
+            if (currentIndex % 2 == 0) {
+                left = currentLevelHash;
+                right = zeros[i];
+                filledSubtrees[i] = currentLevelHash;
+            } else {
+                left = filledSubtrees[i];
+                right = currentLevelHash;
             }
-            layer = newLayer;
+            currentLevelHash = keccak256(abi.encodePacked(left, right));
+            currentIndex /= 2;
         }
-
-        return layer[0];
+        noteTreeRoot = currentLevelHash;
     }
 }

@@ -40,6 +40,44 @@ contract DreggCredentialGateTest is Test {
         gate.setFederationTrust(FED_ROOT, true);
     }
 
+    // ─── #13 proof builders (presenter + action binding) ────────────────────
+    /// Public values for a mint proof bound to `sender` + `tokenId`.
+    function _mintPV(address sender, uint256 tokenId, bytes32 nullifier)
+        internal
+        view
+        returns (bytes memory)
+    {
+        bytes32 action = keccak256(abi.encode(address(gate), block.chainid, gate.ACTION_MINT(), tokenId));
+        return abi.encode(true, FED_ROOT, PRED_HASH, nullifier, sender, action);
+    }
+
+    function _mintProof(address sender, uint256 tokenId, bytes32 nullifier)
+        internal
+        view
+        returns (bytes memory)
+    {
+        return abi.encode(hex"5678", _mintPV(sender, tokenId, nullifier));
+    }
+
+    /// Public values for a vote proof bound to `sender` + `proposalId` + `support`.
+    function _votePV(address sender, uint256 proposalId, bool support, bytes32 nullifier)
+        internal
+        view
+        returns (bytes memory)
+    {
+        bytes32 action =
+            keccak256(abi.encode(address(gate), block.chainid, gate.ACTION_VOTE(), proposalId, support));
+        return abi.encode(true, FED_ROOT, PRED_HASH, nullifier, sender, action);
+    }
+
+    function _voteProof(address sender, uint256 proposalId, bool support, bytes32 nullifier)
+        internal
+        view
+        returns (bytes memory)
+    {
+        return abi.encode(hex"707e", _votePV(sender, proposalId, support, nullifier));
+    }
+
     // ─── Admin / VK Governance ──────────────────────────────────────────────
 
     function test_adminCanSetFederationTrust() public {
@@ -92,8 +130,7 @@ contract DreggCredentialGateTest is Test {
     function test_mintWithCredential() public {
         uint256 tokenId = 1;
         bytes32 nullifier = keccak256("mintNull1");
-        bytes memory publicValues = abi.encode(true, FED_ROOT, PRED_HASH, nullifier);
-        bytes memory sp1Proof = abi.encode(hex"5678", publicValues);
+        bytes memory sp1Proof = _mintProof(user, tokenId, nullifier);
 
         vm.prank(user);
         gate.mintWithCredential(tokenId, FED_ROOT, PRED_HASH, sp1Proof);
@@ -107,8 +144,7 @@ contract DreggCredentialGateTest is Test {
     function test_mintRejectsDuplicateNullifierSameToken() public {
         // Replaying the same nullifier against the SAME tokenId must revert.
         bytes32 nullifier = keccak256("mintNull2");
-        bytes memory publicValues = abi.encode(true, FED_ROOT, PRED_HASH, nullifier);
-        bytes memory sp1Proof = abi.encode(hex"5678", publicValues);
+        bytes memory sp1Proof = _mintProof(user, 1, nullifier);
 
         vm.prank(user);
         gate.mintWithCredential(1, FED_ROOT, PRED_HASH, sp1Proof);
@@ -119,19 +155,22 @@ contract DreggCredentialGateTest is Test {
     }
 
     function test_mintRejectsReplayAcrossTokenIds() public {
-        // SOUNDNESS: tokenId is a caller argument the proof never binds, so one
-        // credential presentation must NOT be replayable to mint a second (different)
-        // tokenId. The bare nullifier is the key: the second mint reverts.
+        // SOUNDNESS: one credential presentation (one nullifier) must NOT mint a
+        // second (different) tokenId. Under the #13 action binding each proof is
+        // bound to its tokenId, so the attacker must build a FRESH presentation for
+        // tokenId 11 — but it reuses the same credential nullifier, and the bare
+        // nullifier is the replay key: the second mint reverts.
         bytes32 nullifier = keccak256("mintNull3");
-        bytes memory publicValues = abi.encode(true, FED_ROOT, PRED_HASH, nullifier);
-        bytes memory sp1Proof = abi.encode(hex"5678", publicValues);
+        // Build proofs BEFORE pranking (the helper's view call consumes the prank).
+        bytes memory proof10 = _mintProof(user, 10, nullifier);
+        bytes memory proof11 = _mintProof(user, 11, nullifier);
 
         vm.prank(user);
-        gate.mintWithCredential(10, FED_ROOT, PRED_HASH, sp1Proof);
+        gate.mintWithCredential(10, FED_ROOT, PRED_HASH, proof10);
 
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSelector(DreggCredentialGate.NullifierAlreadyUsed.selector, nullifier));
-        gate.mintWithCredential(11, FED_ROOT, PRED_HASH, sp1Proof);
+        gate.mintWithCredential(11, FED_ROOT, PRED_HASH, proof11);
 
         assertEq(gate.tokenOwner(10), user);
         assertEq(gate.tokenOwner(11), address(0));
@@ -143,17 +182,20 @@ contract DreggCredentialGateTest is Test {
         bytes32 null1 = keccak256("mintNullA");
         bytes32 null2 = keccak256("mintNullB");
 
-        bytes memory sp1Proof1 = abi.encode(hex"aa", abi.encode(true, FED_ROOT, PRED_HASH, null1));
-        bytes memory sp1Proof2 = abi.encode(hex"bb", abi.encode(true, FED_ROOT, PRED_HASH, null2));
+        // Build proofs BEFORE pranking (the helper's `gate.ACTION_MINT()` view call
+        // would otherwise consume the prank meant for the mint).
+        address user2 = address(0xCAFE);
+        bytes memory proof1 = _mintProof(user, tokenId, null1);
+        bytes memory proof2 = _mintProof(user2, tokenId, null2);
 
         vm.prank(user);
-        gate.mintWithCredential(tokenId, FED_ROOT, PRED_HASH, sp1Proof1);
+        gate.mintWithCredential(tokenId, FED_ROOT, PRED_HASH, proof1);
 
-        // Different user tries to mint same tokenId.
-        address user2 = address(0xCAFE);
+        // Different user, with their OWN valid proof for the same tokenId, still
+        // can't mint it — it is already owned.
         vm.prank(user2);
         vm.expectRevert(abi.encodeWithSelector(DreggCredentialGate.TokenAlreadyMinted.selector, tokenId));
-        gate.mintWithCredential(tokenId, FED_ROOT, PRED_HASH, sp1Proof2);
+        gate.mintWithCredential(tokenId, FED_ROOT, PRED_HASH, proof2);
     }
 
     // ─── Vote With Credential ───────────────────────────────────────────────
@@ -161,8 +203,7 @@ contract DreggCredentialGateTest is Test {
     function test_voteWithCredential() public {
         uint256 proposalId = 7;
         bytes32 nullifier = keccak256("voteNull1");
-        bytes memory publicValues = abi.encode(true, FED_ROOT, PRED_HASH, nullifier);
-        bytes memory sp1Proof = abi.encode(hex"707e", publicValues);
+        bytes memory sp1Proof = _voteProof(user, proposalId, true, nullifier);
 
         vm.prank(user);
         gate.voteWithCredential(proposalId, true, FED_ROOT, PRED_HASH, sp1Proof);
@@ -175,33 +216,116 @@ contract DreggCredentialGateTest is Test {
     function test_voteRejectsDoubleVote() public {
         uint256 proposalId = 8;
         bytes32 nullifier = keccak256("voteNull2");
-        bytes memory publicValues = abi.encode(true, FED_ROOT, PRED_HASH, nullifier);
-        bytes memory sp1Proof = abi.encode(hex"707e", publicValues);
+        // Build proofs BEFORE pranking (the helper's view call consumes the prank).
+        bytes memory yesProof = _voteProof(user, proposalId, true, nullifier);
+        bytes memory noProof = _voteProof(user, proposalId, false, nullifier);
 
         vm.prank(user);
-        gate.voteWithCredential(proposalId, true, FED_ROOT, PRED_HASH, sp1Proof);
+        gate.voteWithCredential(proposalId, true, FED_ROOT, PRED_HASH, yesProof);
 
+        // Flipping to the opposite side needs a proof bound to (proposalId, false),
+        // but that fresh presentation reuses the same per-proposal nullifier → the
+        // per-proposal nullifier blocks the second vote.
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSelector(DreggCredentialGate.AlreadyVoted.selector, proposalId, nullifier));
-        gate.voteWithCredential(proposalId, false, FED_ROOT, PRED_HASH, sp1Proof);
+        gate.voteWithCredential(proposalId, false, FED_ROOT, PRED_HASH, noProof);
     }
 
     function test_voteAllowsSameNullifierDifferentProposal() public {
         bytes32 nullifier1 = keccak256("voteMulti1");
         bytes32 nullifier2 = keccak256("voteMulti2");
-        bytes memory sp1Proof1 = abi.encode(hex"01", abi.encode(true, FED_ROOT, PRED_HASH, nullifier1));
-        bytes memory sp1Proof2 = abi.encode(hex"02", abi.encode(true, FED_ROOT, PRED_HASH, nullifier2));
+        // Build proofs BEFORE pranking (the helper's view call consumes the prank).
+        bytes memory proofP1 = _voteProof(user, 1, true, nullifier1);
+        bytes memory proofP2 = _voteProof(user, 2, false, nullifier2);
 
         vm.prank(user);
-        gate.voteWithCredential(1, true, FED_ROOT, PRED_HASH, sp1Proof1);
+        gate.voteWithCredential(1, true, FED_ROOT, PRED_HASH, proofP1);
 
         vm.prank(user);
-        gate.voteWithCredential(2, false, FED_ROOT, PRED_HASH, sp1Proof2);
+        gate.voteWithCredential(2, false, FED_ROOT, PRED_HASH, proofP2);
 
         (uint256 yes1, ) = gate.getVotes(1);
         (, uint256 no2) = gate.getVotes(2);
         assertEq(yes1, 1);
         assertEq(no2, 1);
+    }
+
+    // ─── #13 Proof-Binding (presenter + action) ─────────────────────────────
+
+    address constant SNIPER = address(0x5715E5);
+
+    /// A proof BOUND to `user` cannot be sniped from the mempool and presented by a
+    /// different msg.sender to steal the mint.
+    function test_mintSnipedByDifferentSenderRejected() public {
+        bytes32 nullifier = keccak256("snipeMint");
+        // The proof is bound to `user` (the legitimate presenter).
+        bytes memory sp1Proof = _mintProof(user, 1, nullifier);
+
+        // The sniper front-runs with the SAME proof but their own msg.sender.
+        vm.prank(SNIPER);
+        vm.expectRevert(
+            abi.encodeWithSelector(DreggCredentialGate.SenderBindingMismatch.selector, user, SNIPER)
+        );
+        gate.mintWithCredential(1, FED_ROOT, PRED_HASH, sp1Proof);
+
+        // The legitimate presenter still mints with their own proof.
+        vm.prank(user);
+        gate.mintWithCredential(1, FED_ROOT, PRED_HASH, sp1Proof);
+        assertEq(gate.tokenOwner(1), user);
+    }
+
+    /// A proof bound to tokenId 5 cannot be redirected to mint a different tokenId.
+    function test_mintForDifferentTokenIdRejected() public {
+        bytes32 nullifier = keccak256("redirMint");
+        bytes memory sp1Proof = _mintProof(user, 5, nullifier); // bound to tokenId 5
+
+        bytes32 boundAction = keccak256(abi.encode(address(gate), block.chainid, gate.ACTION_MINT(), uint256(5)));
+        bytes32 wantAction = keccak256(abi.encode(address(gate), block.chainid, gate.ACTION_MINT(), uint256(6)));
+        vm.prank(user);
+        vm.expectRevert(
+            abi.encodeWithSelector(DreggCredentialGate.ActionBindingMismatch.selector, boundAction, wantAction)
+        );
+        gate.mintWithCredential(6, FED_ROOT, PRED_HASH, sp1Proof);
+    }
+
+    /// A vote proof bound to `support = true` cannot be flipped to the OPPOSITE side.
+    function test_voteFlipSupportRejected() public {
+        bytes32 nullifier = keccak256("flipVote");
+        bytes memory sp1Proof = _voteProof(user, 3, true, nullifier); // bound to (3, true)
+
+        bytes32 boundAction = keccak256(abi.encode(address(gate), block.chainid, gate.ACTION_VOTE(), uint256(3), true));
+        bytes32 wantAction = keccak256(abi.encode(address(gate), block.chainid, gate.ACTION_VOTE(), uint256(3), false));
+        vm.prank(user);
+        vm.expectRevert(
+            abi.encodeWithSelector(DreggCredentialGate.ActionBindingMismatch.selector, boundAction, wantAction)
+        );
+        gate.voteWithCredential(3, false, FED_ROOT, PRED_HASH, sp1Proof);
+    }
+
+    /// A vote proof bound to proposal 3 cannot be replayed to vote on every proposal.
+    function test_voteForDifferentProposalRejected() public {
+        bytes32 nullifier = keccak256("everyVote");
+        bytes memory sp1Proof = _voteProof(user, 3, true, nullifier); // bound to proposal 3
+
+        bytes32 boundAction = keccak256(abi.encode(address(gate), block.chainid, gate.ACTION_VOTE(), uint256(3), true));
+        bytes32 wantAction = keccak256(abi.encode(address(gate), block.chainid, gate.ACTION_VOTE(), uint256(4), true));
+        vm.prank(user);
+        vm.expectRevert(
+            abi.encodeWithSelector(DreggCredentialGate.ActionBindingMismatch.selector, boundAction, wantAction)
+        );
+        gate.voteWithCredential(4, true, FED_ROOT, PRED_HASH, sp1Proof);
+    }
+
+    /// A vote proof bound to `user` cannot be sniped by a different msg.sender.
+    function test_voteSnipedByDifferentSenderRejected() public {
+        bytes32 nullifier = keccak256("snipeVote");
+        bytes memory sp1Proof = _voteProof(user, 9, true, nullifier);
+
+        vm.prank(SNIPER);
+        vm.expectRevert(
+            abi.encodeWithSelector(DreggCredentialGate.SenderBindingMismatch.selector, user, SNIPER)
+        );
+        gate.voteWithCredential(9, true, FED_ROOT, PRED_HASH, sp1Proof);
     }
 
     // ─── Proof Failure ──────────────────────────────────────────────────────

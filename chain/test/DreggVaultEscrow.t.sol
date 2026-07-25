@@ -367,7 +367,8 @@ contract DreggVaultEscrowTest is Test {
         // A generic withdraw for 1 ETH clears the root gate but fails SOLVENCY: it
         // may only draw the generic 0.1 ETH, never the escrowed 1 ETH.
         bytes memory pv = abi.encode(
-            true, keccak256("nf"), address(0), uint256(1 ether), RECIPIENT, vault.noteTreeRoot()
+            true, keccak256("nf"), address(0), uint256(1 ether), RECIPIENT, vault.noteTreeRoot(),
+            address(vault), block.chainid // #3 deployment binding
         );
         bytes memory sp1Proof = abi.encode(hex"1234", pv);
         vm.expectRevert(

@@ -21,6 +21,24 @@ contract DreggCredentialGate is IDreggCredentialGate {
     /// Verification key identifying the dregg credential verifier guest program.
     bytes32 public immutable programVkey;
 
+    // ─── Action-binding domain tags (#13) ────────────────────────────────────
+    //
+    // The SP1 credential proof now ALSO binds the PRESENTER and the SPECIFIC
+    // ACTION: the guest commits `(… , address boundSender, bytes32 boundAction)`,
+    // and mint/vote check `boundSender == msg.sender` and `boundAction ==` the
+    // action hash recomputed on-chain. Before this, the proof bound only
+    // (valid, fedRoot, predHash, nullifier), so it could be sniped from the
+    // mempool — a front-runner stole the mint, voted OPPOSITE (flip `support`),
+    // or voted EVERY proposal (reuse across `proposalId`). The action hash folds
+    // `address(this)` + `block.chainid` too, so a credential proof also cannot be
+    // replayed on another gate deployment or chain.
+    //
+    // NOTE: the check only bites once the guest commits these values — the
+    // companion circuit change (the SP1 credential-presentation statement) is
+    // off-chain, not authored here.
+    bytes32 public constant ACTION_MINT = keccak256("dregg.credential.mint.v1");
+    bytes32 public constant ACTION_VOTE = keccak256("dregg.credential.vote.v1");
+
     // ─── State ──────────────────────────────────────────────────────────────
 
     /// Spent presentation nullifiers (sybil resistance). The key is the BARE
@@ -105,6 +123,11 @@ contract DreggCredentialGate is IDreggCredentialGate {
     error AlreadyVoted(uint256 proposalId, bytes32 nullifier);
     error InvalidProofOutputs();
     error VerifierNotContract();
+    /// The proof is bound to a DIFFERENT presenter than `msg.sender` (#13 snipe).
+    error SenderBindingMismatch(address boundSender, address caller);
+    /// The proof is bound to a DIFFERENT action than the one being performed
+    /// (wrong tokenId / proposalId / support, or wrong gate/chain) (#13 snipe).
+    error ActionBindingMismatch(bytes32 boundAction, bytes32 expectedAction);
 
     // ─── Constructor ────────────────────────────────────────────────────────
 
@@ -203,36 +226,11 @@ contract DreggCredentialGate is IDreggCredentialGate {
         // Check federation is trusted.
         if (!trustedFederations[federationRoot]) revert UntrustedFederation(federationRoot);
 
-        // Fail-closed verifier guard (see verifyCredential).
-        if (sp1Verifier.code.length == 0) revert VerifierNotContract();
-
-        // Decode and verify the SP1 proof.
-        (bytes memory proofBytes, bytes memory publicValues) = abi.decode(
-            sp1Proof,
-            (bytes, bytes)
-        );
-
-        (bool verifySuccess, ) = sp1Verifier.staticcall(
-            abi.encodeWithSignature(
-                "verifyProof(bytes32,bytes,bytes)",
-                programVkey,
-                publicValues,
-                proofBytes
-            )
-        );
-        if (!verifySuccess) revert ProofVerificationFailed();
-
-        // Decode public values.
-        (
-            bool valid,
-            bytes32 proofFedRoot,
-            bytes32 proofPredHash,
-            bytes32 nullifier
-        ) = abi.decode(publicValues, (bool, bytes32, bytes32, bytes32));
-
-        if (!valid) revert ProofVerificationFailed();
-        if (proofFedRoot != federationRoot) revert InvalidProofOutputs();
-        if (proofPredHash != predicateHash) revert InvalidProofOutputs();
+        // Verify + decode + bind: the proof must be valid, match (fedRoot,predHash),
+        // be presented by THIS caller, and be bound to THIS exact mint (#13 — the
+        // action hash pins tokenId, so a sniped proof cannot steal a different mint).
+        bytes32 expectedAction = keccak256(abi.encode(address(this), block.chainid, ACTION_MINT, tokenId));
+        bytes32 nullifier = _verifyBindDecode(federationRoot, predicateHash, sp1Proof, expectedAction);
 
         // Sybil resistance: the BARE presentation nullifier is the replay key —
         // one credential presentation mints exactly one token. tokenId is NOT bound
@@ -265,36 +263,13 @@ contract DreggCredentialGate is IDreggCredentialGate {
         // Check federation is trusted.
         if (!trustedFederations[federationRoot]) revert UntrustedFederation(federationRoot);
 
-        // Fail-closed verifier guard (see verifyCredential).
-        if (sp1Verifier.code.length == 0) revert VerifierNotContract();
-
-        // Decode and verify the SP1 proof.
-        (bytes memory proofBytes, bytes memory publicValues) = abi.decode(
-            sp1Proof,
-            (bytes, bytes)
-        );
-
-        (bool verifySuccess, ) = sp1Verifier.staticcall(
-            abi.encodeWithSignature(
-                "verifyProof(bytes32,bytes,bytes)",
-                programVkey,
-                publicValues,
-                proofBytes
-            )
-        );
-        if (!verifySuccess) revert ProofVerificationFailed();
-
-        // Decode public values.
-        (
-            bool valid,
-            bytes32 proofFedRoot,
-            bytes32 proofPredHash,
-            bytes32 nullifier
-        ) = abi.decode(publicValues, (bool, bytes32, bytes32, bytes32));
-
-        if (!valid) revert ProofVerificationFailed();
-        if (proofFedRoot != federationRoot) revert InvalidProofOutputs();
-        if (proofPredHash != predicateHash) revert InvalidProofOutputs();
+        // Verify + decode + bind: the proof must be valid, match (fedRoot,predHash),
+        // be presented by THIS caller, and be bound to THIS exact vote (#13 — the
+        // action hash pins proposalId AND support, so a sniped proof cannot vote for
+        // a different proposal nor be flipped to the opposite side).
+        bytes32 expectedAction =
+            keccak256(abi.encode(address(this), block.chainid, ACTION_VOTE, proposalId, support));
+        bytes32 nullifier = _verifyBindDecode(federationRoot, predicateHash, sp1Proof, expectedAction);
 
         // Per-proposal sybil resistance: each credential can only vote once per proposal.
         if (voteNullifiers[proposalId][nullifier]) revert AlreadyVoted(proposalId, nullifier);
@@ -309,6 +284,53 @@ contract DreggCredentialGate is IDreggCredentialGate {
 
         emit CredentialVerified(federationRoot, predicateHash, nullifier);
         emit CredentialVote(proposalId, support, federationRoot, predicateHash, nullifier);
+    }
+
+    // ─── Internal ───────────────────────────────────────────────────────────
+
+    /// Fail-closed-verify the SP1 proof, decode its extended public values, and
+    /// enforce ALL of: valid, matching (fedRoot, predHash), presenter == msg.sender,
+    /// and `boundAction == expectedAction` (#13 presenter+action binding). Returns
+    /// the presentation nullifier. Split out of mint/vote to keep them under the
+    /// stack-depth limit. `view`: it only reads, and a private call preserves the
+    /// caller's `msg.sender`.
+    function _verifyBindDecode(
+        bytes32 federationRoot,
+        bytes32 predicateHash,
+        bytes calldata sp1Proof,
+        bytes32 expectedAction
+    ) private view returns (bytes32 nullifier) {
+        // Fail-closed verifier guard (see verifyCredential).
+        if (sp1Verifier.code.length == 0) revert VerifierNotContract();
+
+        (bytes memory proofBytes, bytes memory publicValues) = abi.decode(sp1Proof, (bytes, bytes));
+
+        (bool verifySuccess, ) = sp1Verifier.staticcall(
+            abi.encodeWithSignature(
+                "verifyProof(bytes32,bytes,bytes)", programVkey, publicValues, proofBytes
+            )
+        );
+        if (!verifySuccess) revert ProofVerificationFailed();
+
+        // Public values now carry the presenter + action binding (#13):
+        // (bool valid, bytes32 fedRoot, bytes32 predHash, bytes32 nullifier,
+        //  address boundSender, bytes32 boundAction)
+        (
+            bool valid,
+            bytes32 proofFedRoot,
+            bytes32 proofPredHash,
+            bytes32 nf,
+            address boundSender,
+            bytes32 boundAction
+        ) = abi.decode(publicValues, (bool, bytes32, bytes32, bytes32, address, bytes32));
+
+        if (!valid) revert ProofVerificationFailed();
+        if (proofFedRoot != federationRoot) revert InvalidProofOutputs();
+        if (proofPredHash != predicateHash) revert InvalidProofOutputs();
+        if (boundSender != msg.sender) revert SenderBindingMismatch(boundSender, msg.sender);
+        if (boundAction != expectedAction) revert ActionBindingMismatch(boundAction, expectedAction);
+
+        nullifier = nf;
     }
 
     // ─── View Functions ─────────────────────────────────────────────────────

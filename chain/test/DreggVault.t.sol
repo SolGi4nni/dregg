@@ -210,7 +210,9 @@ contract DreggVaultTest is Test {
             address(0),     // token (ETH)
             uint256(0.5 ether), // amount
             RECIPIENT,      // recipient
-            vault.noteTreeRoot() // root
+            vault.noteTreeRoot(), // root
+            address(vault), // #3 deployment binding (boundVault)
+            block.chainid   // boundChainId
         );
         bytes memory proofBytes = hex"1234"; // Mock proof data
 
@@ -238,7 +240,9 @@ contract DreggVaultTest is Test {
             address(token),
             uint256(1 ether),
             RECIPIENT,
-            vault.noteTreeRoot()
+            vault.noteTreeRoot(),
+            address(vault), // #3 deployment binding
+            block.chainid
         );
         bytes memory proofBytes = hex"5678";
         bytes memory sp1Proof = abi.encode(proofBytes, publicValues);
@@ -261,7 +265,9 @@ contract DreggVaultTest is Test {
             address(0),
             uint256(0.5 ether),
             RECIPIENT,
-            vault.noteTreeRoot()
+            vault.noteTreeRoot(),
+            address(vault), // #3 deployment binding
+            block.chainid
         );
         bytes memory proofBytes = hex"abcd";
         bytes memory sp1Proof = abi.encode(proofBytes, publicValues);
@@ -289,7 +295,9 @@ contract DreggVaultTest is Test {
             address(0),
             uint256(0.5 ether),
             RECIPIENT,
-            vault.noteTreeRoot()
+            vault.noteTreeRoot(),
+            address(vault), // #3 deployment binding
+            block.chainid
         );
         bytes memory proofBytes = hex"bad0";
         bytes memory sp1Proof = abi.encode(proofBytes, publicValues);
@@ -311,7 +319,9 @@ contract DreggVaultTest is Test {
             address(0),
             uint256(0.5 ether),
             RECIPIENT, // proof says RECIPIENT
-            vault.noteTreeRoot()
+            vault.noteTreeRoot(),
+            address(vault), // #3 deployment binding
+            block.chainid
         );
         bytes memory proofBytes = hex"f001";
         bytes memory sp1Proof = abi.encode(proofBytes, publicValues);
@@ -332,7 +342,9 @@ contract DreggVaultTest is Test {
             address(0),
             uint256(0.5 ether), // proof says 0.5 ETH
             RECIPIENT,
-            vault.noteTreeRoot()
+            vault.noteTreeRoot(),
+            address(vault), // #3 deployment binding
+            block.chainid
         );
         bytes memory proofBytes = hex"a171";
         bytes memory sp1Proof = abi.encode(proofBytes, publicValues);
@@ -352,7 +364,9 @@ contract DreggVaultTest is Test {
             address(0), // proof says ETH
             uint256(0.5 ether),
             RECIPIENT,
-            vault.noteTreeRoot()
+            vault.noteTreeRoot(),
+            address(vault), // #3 deployment binding
+            block.chainid
         );
         bytes memory proofBytes = hex"70c1";
         bytes memory sp1Proof = abi.encode(proofBytes, publicValues);
@@ -385,7 +399,9 @@ contract DreggVaultTest is Test {
             address(0),
             uint256(0.5 ether),
             RECIPIENT,
-            vault.noteTreeRoot()
+            vault.noteTreeRoot(),
+            address(vault), // #3 deployment binding
+            block.chainid
         );
         bytes memory sp1Proof = abi.encode(hex"1234", publicValues);
 
@@ -410,7 +426,9 @@ contract DreggVaultTest is Test {
             address(0),
             uint256(1 ether),
             RECIPIENT,
-            vault.noteTreeRoot()
+            vault.noteTreeRoot(),
+            address(vault), // #3 deployment binding
+            block.chainid
         );
         bytes memory sp1Proof = abi.encode(hex"1234", publicValues);
 
@@ -436,7 +454,9 @@ contract DreggVaultTest is Test {
             address(token),
             uint256(1 ether),
             RECIPIENT,
-            vault.noteTreeRoot()
+            vault.noteTreeRoot(),
+            address(vault), // #3 deployment binding
+            block.chainid
         );
         bytes memory sp1Proof = abi.encode(hex"1234", publicValues);
 
@@ -461,7 +481,9 @@ contract DreggVaultTest is Test {
             address(0),
             uint256(1 ether),
             RECIPIENT,
-            vault.noteTreeRoot()
+            vault.noteTreeRoot(),
+            address(vault), // #3 deployment binding
+            block.chainid
         );
         bytes memory sp1Proof = abi.encode(hex"1234", publicValues);
 
@@ -483,7 +505,9 @@ contract DreggVaultTest is Test {
             address(0),
             uint256(0.5 ether),
             RECIPIENT,
-            bogusRoot
+            bogusRoot,
+            address(vault), // #3 deployment binding
+            block.chainid
         );
         bytes memory sp1Proof = abi.encode(hex"1234", publicValues);
 
@@ -500,7 +524,9 @@ contract DreggVaultTest is Test {
             address(0),
             uint256(0.5 ether),
             RECIPIENT,
-            bytes32(0)
+            bytes32(0),
+            address(vault), // #3 deployment binding
+            block.chainid
         );
         bytes memory sp1Proof = abi.encode(hex"1234", publicValues);
 
@@ -522,7 +548,9 @@ contract DreggVaultTest is Test {
             address(0),
             uint256(0.5 ether),
             RECIPIENT,
-            oldRoot
+            oldRoot,
+            address(vault), // #3 deployment binding
+            block.chainid
         );
         bytes memory sp1Proof = abi.encode(hex"1234", publicValues);
 
@@ -542,13 +570,13 @@ contract DreggVaultTest is Test {
         bytes32 innerNullifier = keccak256("reNullInner");
         bytes memory innerProof = abi.encode(
             hex"02",
-            abi.encode(true, innerNullifier, address(0), uint256(0.25 ether), address(attacker), root)
+            abi.encode(true, innerNullifier, address(0), uint256(0.25 ether), address(attacker), root, address(vault), block.chainid)
         );
         attacker.arm(innerProof, 0.25 ether);
 
         bytes memory outerProof = abi.encode(
             hex"01",
-            abi.encode(true, keccak256("reNullOuter"), address(0), uint256(0.25 ether), address(attacker), root)
+            abi.encode(true, keccak256("reNullOuter"), address(0), uint256(0.25 ether), address(attacker), root, address(vault), block.chainid)
         );
 
         vault.withdraw(address(0), 0.25 ether, address(attacker), outerProof);
