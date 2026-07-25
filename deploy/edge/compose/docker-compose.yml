@@ -50,8 +50,34 @@ services:
     image: ${RESOLVER_IMAGE:-dregg-mirror:latest}
     restart: unless-stopped
     environment:
+      # LOAD-BEARING: the binary defaults to 127.0.0.1:8791 on purpose (it terminates no
+      # TLS, so "exposed to the internet" must not be its path of least resistance). In a
+      # container, loopback is unreachable from the sibling caddy — so bind the container
+      # network, on the port the Caddyfile proxies (`reverse_proxy resolver:8080`).
+      DREGG_MIRROR_BIND: 0.0.0.0:8080
+      # A bare HOST, not a URL: this string is printed on every page as the party the
+      # reader is trusting ("dregg.gg checked this object. You did not.") and is the
+      # authority of every mirror link the page emits. The binary normalizes a URL form
+      # anyway (dregg-mirror/src/page.rs `normalize_origin`), but say what is meant.
+      DREGG_MIRROR_ORIGIN: ${MIRROR_ORIGIN:-dregg.gg}
+      DREGG_MIRROR_ROOT: /var/lib/dregg/mirror/objects
+      # ⚠ SET BUT UNUSED. The intended shape is that the resolver fetches attested
+      # envelopes from the node (the transport hop netlayer.ts injects); that transport is
+      # NOT built. Today the corpus is the mounted directory below, and the binary says so
+      # on startup rather than letting an empty mirror look like a healthy one. The seam
+      # is `ObjectStore` (dregg-mirror/src/store.rs).
       DREGG_NODE_URL: http://node:8420
-      DREGG_MIRROR_ORIGIN: ${MIRROR_ORIGIN:-https://dregg.gg}
+    volumes:
+      # The object corpus. Read-only: the mirror serves and never writes. The filename is
+      # not trusted — the mirror re-hashes the bytes and refuses if they do not hash to the
+      # address asked for, so a tampered file serves as nothing.
+      - /var/lib/dregg/mirror:/var/lib/dregg/mirror:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     depends_on:
       node: { condition: service_healthy }
     logging: *loki
