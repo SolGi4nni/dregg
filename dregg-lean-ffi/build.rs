@@ -429,6 +429,48 @@ fn build_dregg2_archive(
     require_current_source: bool,
     reseeded: bool,
 ) {
+    // ── COLD-LANE GUARD (2026-07-25) — check the archive BEFORE spending a Lean build ─────────
+    //
+    // This function used to `lake build` FIRST and only then discover, ~700 lines later, that the
+    // base archive was absent and give up with "building marshal-only for now". In a lane with no
+    // seed that ordering spends the ENTIRE mathlib build to reach a branch that throws it away.
+    //
+    // It is not a theoretical cost. On 2026-07-25 a plain `cargo check -p dungeon-on-dregg` in a
+    // cold scratchpad `CARGO_TARGET_DIR` reached this line, and one build script became **55
+    // concurrent `lake env leanc` jobs at ~642 MB each — about 35 GB** on a laptop with no cgroup
+    // containment (`swarm-build` is an hbox tool; there is no local equivalent). Load average hit
+    // 154, swap reached 54 GB, every other lane measured ~7% CPU efficiency, and NOTHING on the
+    // machine could finish — including the Lean work itself. All of it was destined for the
+    // marshal-only branch regardless, because that lane had no seed to splice into.
+    //
+    // So: if there is nothing to splice into, do not build. Marshal-only is the same outcome the
+    // old code reached; this just declines to burn a mathlib build to get there.
+    //
+    // `DREGG_LEAN_COLD_BUILD=1` is the explicit opt-in for the paths that genuinely want a cold
+    // build (`scripts/bootstrap.sh`, seed publication in CI). Fail-closed on purpose: the cheap,
+    // safe behaviour is the default, and the expensive one must be asked for by name.
+    if !archive.exists() && !seed.exists() {
+        if std::env::var("DREGG_LEAN_COLD_BUILD").as_deref() != Ok("1") {
+            println!(
+                "cargo:warning=dregg-lean-ffi: no base archive at {} and no seed at {} — SKIPPING \
+                 the Lean build entirely and linking marshal-only. A cold `lake build` here would \
+                 compile the whole mathlib closure (observed: 55 concurrent leanc jobs, ~35 GB) \
+                 only to be discarded, since there is nothing to splice into. To seed properly run \
+                 `./scripts/bootstrap.sh` from the repo root. To force the cold build anyway set \
+                 DREGG_LEAN_COLD_BUILD=1 — and bound it, e.g. DREGG_LEANC_JOBS=4.",
+                archive.display(),
+                seed.display()
+            );
+            return;
+        }
+        println!(
+            "cargo:warning=dregg-lean-ffi: DREGG_LEAN_COLD_BUILD=1 — running a COLD Lean build. \
+             This compiles the mathlib closure and can hold tens of GB. Bound it with \
+             DREGG_LEANC_JOBS=<n> (default {}) and prefer a machine with cgroup containment.",
+            configured_leanc_workers()
+        );
+    }
+
     // (1) Refresh the Lean `:c` facets. `lake build` is incremental; building the FFI module pulls
     // in (and emits `:c` for) its whole Dregg2 transitive closure.
     let inc = sysroot.join("include");
@@ -548,8 +590,14 @@ fn build_dregg2_archive(
         // (via `dregg-exec-lean`'s conservation oracle) instead of the hand-written `BlockConservation` twin.
         "Dregg2.Circuit.CrossCellConserveDecision",
     ];
+    // BOUNDED FAN-OUT (2026-07-25). `lake build` with no `-j` spawns one `leanc` per ready module,
+    // and each C-codegen job holds several hundred MB. Unbounded, that is the 55-job / ~35 GB
+    // stampede that took a laptop to load 154 and 54 GB of swap. `configured_leanc_workers()` defaults to a
+    // conservative share of the machine rather than all of it; `DREGG_LEANC_JOBS` overrides.
     let lake_status = Command::new("lake")
         .arg("build")
+        .arg("-j")
+        .arg(configured_leanc_workers().to_string())
         .args(lake_targets)
         .current_dir(meta)
         .status();
