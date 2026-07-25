@@ -112,6 +112,16 @@ this consumer.
      decay cannot reach the deployed depth). Proven over the EXISTING
      `Strategy`/`fsRun`/`winProb` layer via `chain_far_survival_idx`; fired end-to-end at a
      concrete instance (`tower_fire`).
+     ⚑ 2026-07-24 — **the prover is now QUANTIFIED**: `ud_tower_far_survival_strategy` states
+     the same bound for an ARBITRARY `S : Strategy F (Σ i, Fin (nn i) → F)` that commits `w0`
+     at round 0, gated only on the path-local `FoldConsistentAlong` (the fold-consistency the
+     verifier's spot checks force). `ud_tower_far_survival` is its honest instance — the gate
+     is free for `honestStrategy` (`honest_foldConsistentAlong`), so nothing is lost — and
+     `FriChainStepIdx.consistencyFreeSurvival_false` refutes the un-gated form (a prover that
+     COMMITS A CODEWORD at round 1 escapes farness with probability 1), so the gate is
+     load-bearing rather than a disguised honesty assumption. What is NOT proved here or
+     anywhere in-tree: the OTHER branch, that a fold-inconsistent prover is caught by the
+     query phase.
 
 ## What is CARRIED as precisely-named hypotheses (never axioms)
 
@@ -813,57 +823,17 @@ theorem towerE_cover {L : ℕ} {nn : ℕ → ℕ} {V : ∀ i, Set (Fin (nn i) �
     exact Finset.empty_subset _
 
 open Classical in
-/-- **⚑ THE INTERFACE THEOREM — round-by-round FS soundness of the fold tower, with the
-UD-regime correlated agreement as the EXPLICIT hypothesis.** Under
-
-  * `hCA` — per-layer `CorrelatedAgreementCurveUDParam` at the fold arity m (the L1–L6
-    deliverable, consumed at every layer's parameters — this is why the Param form, not the
-    single deployed instantiation, is the target),
-  * `hlift` — the decimation-lift weld (the named tower residual),
-  * `hsched` — the constant-relative-radius schedule `m·rᵢ₊₁ ≤ rᵢ`,
-
-any event implying "the terminal word of the `rounds`-round honest-fold FS chain from the
-far `w0` is not far" has probability at most `rounds·(m−1)(r₁+1)/|F|` over the random
-oracle. Contrapositive: except with that probability, farness SURVIVES to the terminal
-round — where the query phase (priced separately, the L6 dichotomy) finishes; equivalently,
-an accepting run's committed word is `r₀`-close, which per §4 is the decode's `ColsClose`.
-One application of the landed `chain_far_survival_idx`; the CA enters ONLY as the bad-set
-cap, which is exactly the interface the plan needs L1–L6 to fill.
-
-⚑ 2026-07-24: this is now the HONEST INSTANCE of `ud_tower_far_survival_strategy` below, which
-states the same bound for an ARBITRARY prover strategy. Statement unchanged. -/
-theorem ud_tower_far_survival
-    (L : ℕ) (nn : ℕ → ℕ) (V : ∀ i, Set (Fin (nn i) → F)) (rr : ℕ → ℕ) (m : ℕ)
-    (dec : ∀ i, (Fin (nn i) → F) → Fin m → (Fin (nn (i + 1)) → F))
-    (hm : 1 ≤ m) (hsched : ∀ i, m * rr (i + 1) ≤ rr i)
-    (hlift : DecimLift nn V m dec)
-    (hCA : ∀ i, i < L →
-      CorrelatedAgreementCurveUDParam F (nn (i + 1)) (V (i + 1)) (rr (i + 1)) m)
-    (w0 : Fin (nn 0) → F) (hfar0 : ¬ closeN (V 0) (rr 0) w0)
-    (rounds : ℕ) {bad : (towerD L nn F → F) → Bool}
-    (hbad : ∀ H : towerD L nn F → F, bad H = true →
-      ¬ sigFar (towerFar L nn V rr)
-          (honestStrategy (sigFold (towerFold nn m dec)) ⟨0, w0⟩
-            (fsChain (towerEnc L nn)
-              (honestStrategy (sigFold (towerFold nn m dec)) ⟨0, w0⟩) H rounds []))) :
-    winProb bad
-      ≤ ((rounds : ℝ) * (((m - 1) * (rr 1 + 1) : ℕ) : ℝ)) / (Fintype.card F : ℝ) := by
-  haveI : Nonempty F := ⟨0⟩
-  exact chain_far_survival_idx (towerChainStepIdx L nn V rr m dec)
-    (towerEnc L nn) (towerE L nn V rr m dec)
-    (towerE_card_le hm hsched hlift hCA) w0 towerE_cover
-    ((towerFar_of_le (Nat.zero_le L) w0).mpr hfar0) rounds hbad
-
-open Classical in
-/-- **⚑⚑ THE INTERFACE THEOREM AT AN ARBITRARY PROVER STRATEGY.** Same hypotheses, same bound
-`rounds·(m−1)(r₁+1)/|F|` — but the prover is now quantified: `S : Strategy F (Σ i, Fin (nn i) → F)`
-is any adaptive strategy that commits the far `w0` at round 0 (`hstart`), and the only thing asked
-of it is the PATH-LOCAL `FoldConsistentAlong` (each round's commitment is the fold of the previous
-one along the path the oracle walks — what the verifier's fold-consistency spot checks force; the
-other branch of the dichotomy, "the prover is caught", is the query phase's job and is NOT proved
-here). `ud_tower_far_survival` is the honest instance (`honest_foldConsistentAlong` discharges the
-gate for free), and `FriChainStepIdx.consistencyFreeSurvival_false` proves the gate cannot simply
-be dropped: a prover that COMMITS A CODEWORD at round 1 escapes farness with probability 1. -/
+/-- **⚑⚑ THE INTERFACE THEOREM AT AN ARBITRARY PROVER STRATEGY.** The prover is quantified:
+`S : Strategy F (Σ i, Fin (nn i) → F)` is any adaptive strategy that commits the far `w0` at
+round 0 (`hstart`), and the only thing asked of it is the PATH-LOCAL `FoldConsistentAlong` — each
+round's commitment is the fold of the previous one along the path the oracle actually walks, which
+is what the verifier's fold-consistency spot checks force. (The other branch of the dichotomy,
+"a fold-inconsistent prover is CAUGHT", is the query phase's job and is NOT proved here or
+anywhere in-tree.) Same hypotheses and same bound `rounds·(m−1)(r₁+1)/|F|` as the honest form
+below, which is now its instance — `honest_foldConsistentAlong` discharges the gate for free, so
+the generalization loses nothing; and `FriChainStepIdx.consistencyFreeSurvival_false` proves the
+gate cannot be dropped (a prover that COMMITS A CODEWORD at round 1 escapes farness with
+probability 1). -/
 theorem ud_tower_far_survival_strategy
     (L : ℕ) (nn : ℕ → ℕ) (V : ∀ i, Set (Fin (nn i) → F)) (rr : ℕ → ℕ) (m : ℕ)
     (dec : ∀ i, (Fin (nn i) → F) → Fin m → (Fin (nn (i + 1)) → F))
@@ -887,9 +857,28 @@ theorem ud_tower_far_survival_strategy
   rw [hstart]
   exact (towerFar_of_le (Nat.zero_le L) w0).mpr hfar0
 
-/-- The honest prover IS a `ud_tower_far_survival_strategy` instance — stated as a theorem so the
-"nothing is lost" claim is machine-checked at the tower, not just at the abstract layer. -/
-theorem ud_tower_far_survival_of_strategy
+open Classical in
+/-- **⚑ THE INTERFACE THEOREM — round-by-round FS soundness of the fold tower, with the
+UD-regime correlated agreement as the EXPLICIT hypothesis.** Under
+
+  * `hCA` — per-layer `CorrelatedAgreementCurveUDParam` at the fold arity m (the L1–L6
+    deliverable, consumed at every layer's parameters — this is why the Param form, not the
+    single deployed instantiation, is the target),
+  * `hlift` — the decimation-lift weld (the named tower residual),
+  * `hsched` — the constant-relative-radius schedule `m·rᵢ₊₁ ≤ rᵢ`,
+
+any event implying "the terminal word of the `rounds`-round honest-fold FS chain from the
+far `w0` is not far" has probability at most `rounds·(m−1)(r₁+1)/|F|` over the random
+oracle. Contrapositive: except with that probability, farness SURVIVES to the terminal
+round — where the query phase (priced separately, the L6 dichotomy) finishes; equivalently,
+an accepting run's committed word is `r₀`-close, which per §4 is the decode's `ColsClose`.
+One application of the landed `chain_far_survival_idx`; the CA enters ONLY as the bad-set
+cap, which is exactly the interface the plan needs L1–L6 to fill.
+
+⚑ 2026-07-24: this is now the HONEST INSTANCE of `ud_tower_far_survival_strategy` above, which
+states the same bound for an ARBITRARY prover strategy. Statement unchanged; the honest
+restriction is gone from the proof. -/
+theorem ud_tower_far_survival
     (L : ℕ) (nn : ℕ → ℕ) (V : ∀ i, Set (Fin (nn i) → F)) (rr : ℕ → ℕ) (m : ℕ)
     (dec : ∀ i, (Fin (nn i) → F) → Fin m → (Fin (nn (i + 1)) → F))
     (hm : 1 ≤ m) (hsched : ∀ i, m * rr (i + 1) ≤ rr i)
@@ -1015,7 +1004,7 @@ end TowerFire
   uFire_not_simClose, one_mem_curveGood, curveGood_fire, deployed_code_eq,
   deployed_colsClose_of_curveUD, deployed_deep_pair_close, rlc_alpha_bad_bound,
   towerFar_of_le, mem_towerGood, towerGood_card_le, towerChainStepIdx,
-  rr_succ_le_rr_one, towerE_card_le, towerE_cover, ud_tower_far_survival, fireLift,
-  w4_far0, tower_fire]
+  rr_succ_le_rr_one, towerE_card_le, towerE_cover, ud_tower_far_survival_strategy,
+  ud_tower_far_survival, fireLift, w4_far0, tower_fire]
 
 end Dregg2.Circuit.CorrelatedAgreement.Interface

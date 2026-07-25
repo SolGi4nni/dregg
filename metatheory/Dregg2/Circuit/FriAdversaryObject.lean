@@ -239,6 +239,31 @@ theorem honest_foldConsistentAlong {R C D : Type} (enc : C → List R → D) (fo
       rw [foldConsistentAlong_succ]
       exact ⟨rfl, ih _⟩
 
+/-- **The gate is PATH-LOCAL, and that is exactly what buys strictly more provers.** Any strategy
+that merely AGREES with an honest fold on prefixes up to the horizon `n + |cs|` is
+fold-consistent along every path from `cs` — no matter what it does on longer prefixes, where the
+`n`-round run never looks. This is what lets `FriChainStepIdx.offpathS` /
+`CorrelatedAgreement.DecimLiftDischarge.towerOffpathS` fire the strategy-generic bounds while
+being PROVABLY different strategies from `honestStrategy`. -/
+theorem foldConsistentAlong_of_agree_honest {R C D : Type} (enc : C → List R → D)
+    (fold : C → R → C) (w0 : C) (S : Strategy R C) (H : D → R) :
+    ∀ (n : ℕ) (cs : List R),
+      (∀ ds : List R, ds.length ≤ n + cs.length → S ds = honestStrategy fold w0 ds) →
+      FoldConsistentAlong enc S fold H n cs := by
+  intro n
+  induction n with
+  | zero => intro cs _; exact foldConsistentAlong_zero enc S fold H cs
+  | succ n ih =>
+      intro cs hagree
+      have hcs : S cs = honestStrategy fold w0 cs := hagree cs (by omega)
+      rw [foldConsistentAlong_succ]
+      constructor
+      · rw [hcs, hagree _ (by simp only [List.length_cons]; omega)]
+        exact honestStrategy_cons fold w0 _ cs
+      · refine ih _ (fun ds hds => hagree ds ?_)
+        simp only [List.length_cons] at hds
+        omega
+
 /-- **⚑ FAR SURVIVES THE WHOLE FOLD CHAIN, AT AN ARBITRARY PROVER STRATEGY.** The round-chain
 argument no longer assumes the prover is honest: `S : Strategy R C` is ANY (adaptive) strategy,
 and the only thing asked of it is `FoldConsistentAlong` — that along the path the oracle actually
@@ -352,6 +377,7 @@ theorem honest_chain_far_fires :
   fsRun_queried,
   foldConsistentAlong_succ,
   honest_foldConsistentAlong,
+  foldConsistentAlong_of_agree_honest,
   chain_far_strategy_of_farCover,
   honest_chain_far,
   chainStep_is_load_bearing,

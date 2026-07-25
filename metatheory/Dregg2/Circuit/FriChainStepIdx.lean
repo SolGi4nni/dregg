@@ -503,6 +503,20 @@ def ConsistencyFreeSurvival : Prop :=
           (∀ H : Unit → Bool, bad H = true → ¬ far (S (fsChain enc S H n []))) →
           winProb bad ≤ ((n : ℝ) * (b : ℝ)) / (Fintype.card Bool : ℝ)
 
+open Classical in
+/-- **THE OTHER SIDE OF THE CANARY, AT THE SAME INSTANCE.** Turn the gate back ON and the very
+same codeword-committing prover satisfies the bound — and the theorem that supplies it is the
+GENERAL `chain_far_survival_strategy_gated`, not a special case. Gate off: probability 1 against
+a bound of 0 (`consistencyFreeSurvival_false`). Gate on: `≤ 0`. One instance, both signs: that is
+what "load-bearing" means. -/
+theorem codewordCommit_gated_bound :
+    winProb (fun H : Unit → Bool =>
+        true && decide (FoldConsistentAlong canaryEnc codewordCommit canaryFold H 1 []))
+      ≤ ((1 : ℕ) : ℝ) * ((0 : ℕ) : ℝ) / (Fintype.card Bool : ℝ) := by
+  exact chain_far_survival_strategy_gated canary_chainStep canaryEnc canaryE canaryE_card
+    codewordCommit canary_cover codewordCommit_far0 1
+    (bad := fun _ => true) (fun H _ => codewordCommit_escapes H)
+
 /-- **⚑⚑ THE CANARY, AS A REFUTATION.** The consistency-free survival statement is FALSE. The
 witness is the codeword-committing prover: `ChainStep` holds (identity fold), the cap is `b = 0`,
 the cover holds, the prover starts far — and it leaves farness with probability `1 > 0`. So
@@ -947,6 +961,7 @@ end Falsifiers
   codewordCommit_escapes,
   codewordCommit_escape_prob_one,
   codewordCommit_not_foldConsistent,
+  codewordCommit_gated_bound,
   consistencyFreeSurvival_false,
   chainStepIdx_iff_sigma,
   honest_sig_layer,

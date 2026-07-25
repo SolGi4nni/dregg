@@ -49,6 +49,16 @@ untouched (no weakening); the finite-depth tower simply has nothing above layer 
      reproducing `tower_chain_far_survival`'s number through the CA interface route (the two
      caps agree: `(m−1)(0+1) = 7 = n−1`). Contrast `Interface.tower_fire`, which fired at
      `m = 1` over RS(4,1)/ZMod 5.
+  6. ⚑ 2026-07-24 — **the prover is QUANTIFIED**:
+     `ud_tower_far_survival_discharged_strategy` is the same statement for an ARBITRARY
+     `S : Strategy BabyBear (Σ i, Fin (twSz i) → BabyBear)` committing `w0` at round 0, gated
+     only on the path-local `FoldConsistentAlong`; theorem 4 is now its honest instance
+     (`honest_foldConsistentAlong` discharges the gate for free — nothing is lost), and
+     `discharged_tower_fire_strategy` fires it at the real five-layer tower with a prover
+     PROVEN not equal to `honestStrategy` (`towerOffpathS_ne_honest`), same `35/|BabyBear|`.
+     `FriChainStepIdx.consistencyFreeSurvival_false` refutes the un-gated form outright.
+     NOT proved here or anywhere in-tree: the other branch of the dichotomy — that a
+     fold-INCONSISTENT prover is caught by the query phase.
 
 **Honest scope.** The fire's CA instances are at radius 0 (exact agreement — the Vandermonde
 corner, genuinely proven); the positive-radius `CorrelatedAgreementCurveUDParam` at the
@@ -74,7 +84,9 @@ open Dregg2.Circuit.FriFoldArity
 open Dregg2.Circuit.FriSetupTower
   (towerS twSz tower_link farWord farWord_far monoW monoW_mem wchain)
 open Dregg2.Circuit.FriChainStepIdx (sigFar sigFold)
-open Dregg2.Circuit.FriAdversaryObject (honestStrategy fsChain)
+open Dregg2.Circuit.FriAdversaryObject
+  (Strategy honestStrategy fsChain FoldConsistentAlong honest_foldConsistentAlong
+   foldConsistentAlong_zero foldConsistentAlong_succ foldConsistentAlong_of_agree_honest)
 open Dregg2.Crypto.ProbCrypto (winProb)
 open Dregg2.Circuit.BabyBearFriField (BabyBear)
 open scoped BigOperators Matrix
@@ -313,11 +325,37 @@ theorem decimLift_of_tower_fires :
       _ ≤ _ := Finset.card_le_card fun y _ =>
           Finset.mem_filter.mpr ⟨Finset.mem_univ y, fun j => rfl⟩
 
+/-- **⚑⚑ THE STRENGTHENED COROLLARY AT AN ARBITRARY PROVER STRATEGY.** `DecimLift` removed by
+`decimLift_of_tower` AND the prover quantified: `S` is any adaptive strategy over layer-tagged
+words that commits `w0` at round 0, gated only on the path-local `FoldConsistentAlong`. This
+is the deepest probabilistic statement of the ladder in its strategy-generic form at the REAL
+five-layer arity-8 tower. `ud_tower_far_survival_discharged` is its honest instance. -/
+theorem ud_tower_far_survival_discharged_strategy
+    (rr : ℕ → ℕ) (hsched : ∀ i, 8 * rr (i + 1) ≤ rr i)
+    (hCA : ∀ i, i < 5 →
+      CorrelatedAgreementCurveUDParam BabyBear (twSz (i + 1)) (towerV (i + 1)) (rr (i + 1)) 8)
+    (S : Strategy BabyBear (Σ i, (Fin (twSz i) → BabyBear)))
+    (w0 : Fin (twSz 0) → BabyBear) (hstart : S [] = ⟨0, w0⟩)
+    (hfar0 : ¬ closeN (towerV 0) (rr 0) w0)
+    (rounds : ℕ) {bad : (towerD 5 twSz BabyBear → BabyBear) → Bool}
+    (hbad : ∀ H : towerD 5 twSz BabyBear → BabyBear, bad H = true →
+      FoldConsistentAlong (towerEnc 5 twSz) S (sigFold (towerFold twSz 8 towerDec)) H rounds []
+        ∧ ¬ sigFar (towerFar 5 twSz towerV rr)
+            (S (fsChain (towerEnc 5 twSz) S H rounds []))) :
+    winProb bad
+      ≤ ((rounds : ℝ) * (((8 - 1) * (rr 1 + 1) : ℕ) : ℝ)) / (Fintype.card BabyBear : ℝ) :=
+  ud_tower_far_survival_strategy 5 twSz towerV rr 8 towerDec (by norm_num) hsched
+    decimLift_of_tower hCA S w0 hstart hfar0 rounds hbad
+
 /-- **⚑ THE STRENGTHENED COROLLARY — `ud_tower_far_survival` at the tower, `DecimLift`
 REMOVED.** Same conclusion as the §5 interface theorem, at `(L, nn, V, m, dec) :=
 (5, twSz, towerV, 8, towerDec)`; the lift weld is supplied by `decimLift_of_tower`. What
 remains hypothetical is exactly what SHOULD remain: the radius schedule, the per-layer
-UD-regime CA (the L1–L6 deliverable), and the initial farness. -/
+UD-regime CA (the L1–L6 deliverable), and the initial farness.
+
+⚑ 2026-07-24: now the honest instance of `ud_tower_far_survival_discharged_strategy` —
+statement unchanged; `honest_foldConsistentAlong` discharges the fold-consistency gate for
+free, which is the precise sense in which quantifying the prover lost nothing. -/
 theorem ud_tower_far_survival_discharged
     (rr : ℕ → ℕ) (hsched : ∀ i, 8 * rr (i + 1) ≤ rr i)
     (hCA : ∀ i, i < 5 →
@@ -331,8 +369,11 @@ theorem ud_tower_far_survival_discharged
               (honestStrategy (sigFold (towerFold twSz 8 towerDec)) ⟨0, w0⟩) H rounds []))) :
     winProb bad
       ≤ ((rounds : ℝ) * (((8 - 1) * (rr 1 + 1) : ℕ) : ℝ)) / (Fintype.card BabyBear : ℝ) :=
-  ud_tower_far_survival 5 twSz towerV rr 8 towerDec (by norm_num) hsched
-    decimLift_of_tower hCA w0 hfar0 rounds hbad
+  ud_tower_far_survival_discharged_strategy rr hsched hCA
+    (honestStrategy (sigFold (towerFold twSz 8 towerDec)) ⟨0, w0⟩) w0 rfl hfar0 rounds
+    (fun H hH =>
+      ⟨honest_foldConsistentAlong (towerEnc 5 twSz) (sigFold (towerFold twSz 8 towerDec))
+        ⟨0, w0⟩ H rounds [], hbad H hH⟩)
 
 end TowerInstance
 
@@ -398,6 +439,66 @@ theorem discharged_tower_fire :
 theorem discharged_fire_lt_one : (35 : ℝ) / (Fintype.card BabyBear : ℝ) < 1 :=
   Dregg2.Circuit.FriSetupTower.tower_bound_lt_one
 
+/-! ### §4.1 — the STRATEGY-generic corollary fires at a prover that is NOT the honest one.
+
+Firing the generalization only at `honestStrategy` would leave open the suspicion that
+`FoldConsistentAlong` is a disguised way of saying "S = honestStrategy". It is not: the gate is
+PATH-LOCAL, so a prover is free to behave arbitrarily off the 5-round path the oracle walks. -/
+
+/-- A prover at the REAL five-layer tower that agrees with the honest fold on every prefix of
+length ≤ 5 — the entire 5-round FS path — and commits the layer-0 word again beyond it, where
+the honest prover would sit at layer ≥ 6. -/
+noncomputable def towerOffpathS : Strategy BabyBear (Σ i, (Fin (twSz i) → BabyBear)) :=
+  fun cs =>
+    if cs.length ≤ 5 then
+      honestStrategy (sigFold (towerFold twSz 8 towerDec)) ⟨0, farWord⟩ cs
+    else ⟨0, farWord⟩
+
+/-- It commits the proven-far `farWord` at round 0. -/
+theorem towerOffpathS_start : towerOffpathS [] = ⟨0, farWord⟩ := rfl
+
+/-- **It really is a different strategy**: at a 6-challenge prefix the honest prover is at layer
+6 and `towerOffpathS` is at layer 0. -/
+theorem towerOffpathS_ne_honest :
+    towerOffpathS ≠ honestStrategy (sigFold (towerFold twSz 8 towerDec)) ⟨0, farWord⟩ := by
+  intro h
+  have hfst : (towerOffpathS [0, 0, 0, 0, 0, 0]).1
+      = (honestStrategy (sigFold (towerFold twSz 8 towerDec)) ⟨0, farWord⟩
+          [(0 : BabyBear), 0, 0, 0, 0, 0]).1 :=
+    congrArg Sigma.fst (congrFun h [0, 0, 0, 0, 0, 0])
+  rw [Dregg2.Circuit.FriChainStepIdx.honest_sig_layer] at hfst
+  simp [towerOffpathS] at hfst
+
+/-- …and it IS fold-consistent along the whole 5-round path, under every oracle: it agrees with
+the honest fold everywhere the run looks (`foldConsistentAlong_of_agree_honest`). -/
+theorem towerOffpathS_consistent (H : towerD 5 twSz BabyBear → BabyBear) :
+    FoldConsistentAlong (towerEnc 5 twSz) towerOffpathS
+      (sigFold (towerFold twSz 8 towerDec)) H 5 [] := by
+  refine foldConsistentAlong_of_agree_honest (towerEnc 5 twSz)
+    (sigFold (towerFold twSz 8 towerDec)) ⟨0, farWord⟩ towerOffpathS H 5 [] (fun ds hds => ?_)
+  simp only [List.length_nil, Nat.add_zero] at hds
+  simp only [towerOffpathS, if_pos hds]
+
+open Classical in
+/-- **⚑⚑ THE STRATEGY-GENERIC FIRE AT THE DEPLOYED TOWER.** Five FS rounds of the arity-8 fold
+from the proven-far `farWord` at the real `2^19` top domain, run by a prover that
+`towerOffpathS_ne_honest` proves is NOT the honest one: the probability that farness dies across
+the five welded layers is still at most `35/|BabyBear|`. Same number as `discharged_tower_fire`,
+now with the prover quantified rather than fixed — every hypothesis discharged (lift weld,
+per-layer CA, schedule, initial farness, fold-consistency). -/
+theorem discharged_tower_fire_strategy :
+    winProb (fun H : towerD 5 twSz BabyBear → BabyBear =>
+        decide (¬ sigFar (towerFar 5 twSz towerV (fun _ => 0))
+          (towerOffpathS (fsChain (towerEnc 5 twSz) towerOffpathS H 5 []))))
+      ≤ (35 : ℝ) / (Fintype.card BabyBear : ℝ) := by
+  refine le_trans
+    (ud_tower_far_survival_discharged_strategy (fun _ => 0) (fun _ => by norm_num) hCA_zero
+      towerOffpathS farWord towerOffpathS_start farWord_far_zero 5
+      (bad := fun H => decide (¬ sigFar (towerFar 5 twSz towerV (fun _ => 0))
+        (towerOffpathS (fsChain (towerEnc 5 twSz) towerOffpathS H 5 []))))
+      (fun H hH => ⟨towerOffpathS_consistent H, of_decide_eq_true hH⟩))
+    (le_of_eq (by norm_num))
+
 end Fire
 
 /-! ## §5 — kernel-clean keystones. -/
@@ -408,11 +509,15 @@ end Fire
   towerFold_is_Fold,
   decimLift_of_tower,
   decimLift_of_tower_fires,
+  ud_tower_far_survival_discharged_strategy,
   ud_tower_far_survival_discharged,
   hCA_zero,
   farWord_far_zero,
   discharged_tower_fire,
-  discharged_fire_lt_one
+  discharged_fire_lt_one,
+  towerOffpathS_ne_honest,
+  towerOffpathS_consistent,
+  discharged_tower_fire_strategy
 ]
 
 end Dregg2.Circuit.CorrelatedAgreement.DecimLiftDischarge
