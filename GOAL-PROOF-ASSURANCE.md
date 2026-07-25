@@ -123,6 +123,26 @@ Both look identical to `rg "extractable := True"`. They are not the same finding
 
 The checkable test: **is the carrier discharging work, or recording that there is none?**
 
+## ⚑ THE FOLD DICHOTOMY IS CLOSED — and it named the next blocker exactly
+
+`∀ S` proved farness survives for a **fold-consistent** prover; the canary proved the complement is
+where a prover wins with probability **1**. So the quantifier was *decorative*. Now the complement is
+priced and `strategy_soundness_compose` has **no consistency gate in its statement**.
+
+**The shaping finding, a theorem not a remark:** *exact consistency is not spot-checkable.* The gate is
+an **equality**, so its negation gives **one** disagreeing point, while the query bound pays only above
+`δ·|ι|` points — at the exact gate the payment is **nothing**. A fact about the **protocol**. Hence the
+graded gate (`FoldCloseAlong`, definitionally the exact one at `d = 0`).
+
+**The blocker, located precisely:** not the tower — `FriSetupTower` landed that — but its **radius**.
+*Every landed schedule runs at `d = 0`*, so the margin in `goodδ_card_lt` is zero and `ChainStepGap` has
+no positive-radius instance. Note `FriPositiveRadiusPayment` already found positive-radius farness
+**uninhabited** at `|L| = 16`, so this must be attempted at the `2^19` tower, not the toy instance.
+
+**Ceiling, unchanged:** this is a ROM/FS statement about an **unbound word-committing** prover. The
+commitment is not tied to a Merkle root, so nothing stops a prover answering different queries from
+different words. It discharges **no** part of the FRI/STARK floor.
+
 ## Done log
 - **`∀ S` — the fold chain is de-honested** (`7f655b5c55`). Every survival theorem instantiated
   `Strategy := honestStrategy`; now generalized under a path-local fold-consistency gate, with
