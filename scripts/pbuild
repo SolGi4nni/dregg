@@ -55,7 +55,8 @@ set -euo pipefail
 HOST="${PBUILD_HOST:-persvati}"
 # Warmth threshold: a lane counts as warm if its cargo target/{release,debug}/deps
 # holds at least this many built artifacts (a fresh lane has 0). Override with
-# PBUILD_WARM_DEPS. A warm .lake/packages/mathlib also counts as warm.
+# PBUILD_WARM_DEPS. A warm metatheory/.lake/packages/mathlib (the lake package root)
+# also counts as warm — see the probe below for why that path matters.
 WARM_DEPS="${PBUILD_WARM_DEPS:-100}"
 # Optional host policy. Persvati keeps the historical defaults (no wrapper and
 # no extra disk floor). Hosts that are also production co-tenants can require a
@@ -87,7 +88,7 @@ LANE="${1:?usage: pbuild [--force-cold] <lane> <command...>}"; shift
 #
 # So pbuild states its own outcome, once, in a line that is hard to lose:
 #
-#   pbuild: VERDICT outcome=PASS|FAIL|REFUSED status=<n> lane=<lane> host=<host> cmd=<cmd>
+#   pbuild: VERDICT outcome=PASS|FAIL|REFUSED|ENVFAULT status=<n> lane=<lane> host=<host> cmd=<cmd>
 #
 # On STDOUT deliberately. Every idiom agents actually use — `> log 2>&1`,
 # `2>&1 | tee log`, `| tail -n 50` — carries stdout; a stderr-only line is exactly
@@ -98,15 +99,45 @@ LANE="${1:?usage: pbuild [--force-cold] <lane> <command...>}"; shift
 #
 # REFUSED is called out separately from FAIL on purpose: a refusal means the build
 # NEVER RAN, so neither a red nor a green may be read off that log at all.
+#
+# ENVFAULT means the build STARTED and was KILLED BY THE BOX — so like REFUSED it
+# carries no verdict, but unlike REFUSED it is not this script's decision. It exists
+# because the failure it names was invisible for eight days (2026-07-25 census):
+#
+#   hbox's user journal holds 198 `Failed with result 'oom-kill'` events, 2026-07-17
+#   → 07-24. Measured over 3111 scopes that reported a peak: every one of the 67
+#   killed scopes peaked at EXACTLY a cap value (24G x60, 32G x5, 40G, 70G) and NOT
+#   ONE of the 3044 survivors exceeded ~14G. So the killer is always the per-build
+#   `SWARM_MEM_MAX` cap, never slice pressure and never the box running dry — and 60
+#   of the 60 kills at 24G trace to one copy-pasteable recipe (`SWARM_MEM_MAX=24G
+#   swarm-build lake build …`, metatheory/Dregg2/Crypto/AXIOM-PICTURE.md) applied to
+#   Crypto/PQ refinement modules that genuinely need more than 24G.
+#
+#   The cost was not the kills. It was that nothing told the lane: `swarm-build`
+#   surfaces an OOM-kill as an ordinary nonzero status, so from inside a lane it is
+#   indistinguishable from a proof error. On 07-24 one lane retried the same
+#   `lake build Dregg2.Crypto.VerifyCoreArgAssembly` every 2-3 minutes from 21:33 to
+#   22:05 — nine consecutive kills — then abandoned the box for the laptop, which is
+#   how that night reached load 154 and 54 GB of swap.
+#
+# The probe runs ONLY after a nonzero status, so the happy path pays nothing. It
+# checks both kill mechanisms these boxes actually use: the systemd cgroup OOM
+# (hbox, via swarm-build scopes) and a kernel/earlyoom kill (persvati runs earlyoom
+# with `--prefer cargo|rustc`, so a Rust build there is the PREFERRED victim).
+# Disable with PBUILD_OOM_PROBE=0.
 PBUILD_CMD_DESC="$*"
 # PHASE, not the exit code, decides REFUSED vs FAIL. Keying off status numbers would
 # be its own version of this bug: a remote `cargo` is free to exit 3 or 4, and a
 # guard refusal and a genuine build failure must never be confusable.
 PBUILD_PHASE=guard
+# Set by the run phase when the remote reports the build was killed for memory.
+PBUILD_ENVFAULT=""
 _pbuild_verdict() {
   _pb_status=$?
   if [ "$PBUILD_PHASE" = guard ]; then
     _pb_outcome=REFUSED
+  elif [ -n "$PBUILD_ENVFAULT" ]; then
+    _pb_outcome=ENVFAULT
   elif [ "$_pb_status" -eq 0 ]; then
     _pb_outcome=PASS
   else
@@ -117,6 +148,21 @@ _pbuild_verdict() {
   return "$_pb_status"
 }
 trap _pbuild_verdict EXIT
+
+# Ask the remote whether the thing that just died was killed for memory. Prints the
+# evidence line it found (so the claim is never bare) and returns 0 on a hit.
+_pbuild_oom_evidence() {
+  [ "${PBUILD_OOM_PROBE:-1}" = 1 ] || return 1
+  ssh -o BatchMode=yes -o ConnectTimeout=8 "$HOST" '
+    since="-20 min"
+    # 1. systemd cgroup OOM — what swarm-build scopes hit when SWARM_MEM_MAX binds.
+    journalctl --user --since "$since" --no-pager 2>/dev/null \
+      | grep -E "oom-kill|killed by the OOM killer" | tail -n 2
+    # 2. kernel OOM / earlyoom — the persvati path (no cgroup wrapper there).
+    journalctl --since "$since" --no-pager 2>/dev/null \
+      | grep -E "earlyoom.*(sending SIGKILL|Killed process)|Out of memory: Killed process" | tail -n 2
+  ' 2>/dev/null | grep -E '.'
+}
 
 # Repo root, derived from THIS script's own location (scripts/pbuild) — NOT a hardcoded maintainer
 # path (#39). The old absolute `SRC` silently rsync'd the wrong tree from any other clone.
@@ -178,7 +224,22 @@ PROBE="$(ssh "$HOST" "bash -s" <<PROBE_EOF
 set -e
 warm_of() {
   d="\$1"
-  [ -d "\${d}/.lake/packages/mathlib" ] && { echo warm; return; }
+  # ⚠ THE LEAN PACKAGE ROOT IS <lane>/metatheory, NOT <lane> (fixed 2026-07-25).
+  # metatheory/lakefile.toml is the lake package, so lake resolves mathlib to
+  # <lane>/metatheory/.lake/packages/mathlib — which is exactly where THIS SCRIPT's
+  # own \`cache get\` step puts it (\`cd '\${REMOTE}/metatheory'\`, below). The probe
+  # looked at <lane>/.lake, a path that never exists, so the mathlib arm was DEAD:
+  # measured on hbox 2026-07-25, lane \`games-deploy\` held 8105 oleans and pbuild
+  # called it COLD and refused it.
+  #
+  # That made the same-day "fetch mathlib, never compile it" win (13h -> 40s)
+  # unclaimable: a lane pbuild had just warmed still read cold on the next call, so
+  # the only ways forward were --force-cold (which rebuilds the whole cargo dep graph,
+  # the very spike the guard exists to prevent) or give up and build on the laptop.
+  # Every Lean-warm/cargo-cold lane on the Lean box was refused. Check BOTH paths.
+  for m in "\${d}/metatheory/.lake/packages/mathlib" "\${d}/.lake/packages/mathlib"; do
+    [ -d "\$m" ] && { echo warm; return; }
+  done
   n=\$(ls "\${d}/target/release/deps" "\${d}/target/debug/deps" 2>/dev/null | wc -l | tr -d ' ')
   if [ "\${n:-0}" -ge ${WARM_DEPS} ]; then echo warm; else echo cold; fi
 }
@@ -310,42 +371,108 @@ fi
 # a lane sets `DREGG_ALLOW_UNAUDITED_PQ=1`, sees the same SIGABRT it was trying to
 # opt out of, and concludes its CODE is broken. (Cost one cycle to find, tonight.)
 #
-# Only DREGG_-prefixed names are forwarded, and each value is shell-quoted, so this
-# cannot smuggle PATH/LD_PRELOAD or any other ambient influence onto the box.
-# Explicit `env VAR=… cargo …` in the command still works and still wins.
+# An ALLOWLIST of names is forwarded, each value shell-quoted, so this cannot smuggle
+# PATH/LD_PRELOAD or any other ambient influence onto the box. Explicit
+# `env VAR=… cargo …` in the command still works and still wins.
+#
+# ⚠ THE ALLOWLIST INCLUDES THE RESOURCE KNOBS (2026-07-25), because until it did, the
+# documented remedy for an OOM-killed build did not exist. `swarm-build` reads
+# SWARM_MEM_MAX from its OWN environment on the remote, and lake's only fan-out knob
+# is LEAN_NUM_THREADS (it has no -j) — neither is DREGG_-prefixed, so
+# `SWARM_MEM_MAX=64G scripts/hbuild …` was consumed by the local process and the
+# remote build ran at the 96G default with the caller believing otherwise. A lane
+# could SEE the cap was the problem and still have no way to change it.
+PBUILD_ENV_ALLOW_RE='^(DREGG_[A-Z0-9_]*|SWARM_MEM_MAX|LEAN_NUM_THREADS|RUST_BACKTRACE|RUSTFLAGS)$'
 REMOTE_ENV=""
-for _v in $(env | sed -n 's/^\(DREGG_[A-Z0-9_]*\)=.*/\1/p'); do
+_pb_fwd_names=""
+while IFS= read -r _v; do
+  [ -n "$_v" ] || continue
   printf -v _q '%q' "${!_v}"
   REMOTE_ENV+="export ${_v}=${_q}; "
-done
-[ -n "$REMOTE_ENV" ] && echo "pbuild: forwarding $(printf '%s' "$REMOTE_ENV" | grep -o 'DREGG_[A-Z0-9_]*' | tr '\n' ' ')to ${HOST}" >&2
+  _pb_fwd_names+="${_v} "
+done <<<"$(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' | grep -E "$PBUILD_ENV_ALLOW_RE" || true)"
+[ -n "$REMOTE_ENV" ] && echo "pbuild: forwarding ${_pb_fwd_names}to ${HOST}" >&2
 
 # Every guard has passed and the tree is synced: from here a nonzero status is the
 # BUILD's verdict, not a refusal. (See the VERDICT block at the top.)
 PBUILD_PHASE=run
 
-# Build with cargo + elan env sourced (non-login shells lack them). Persvati's
-# empty-wrapper path is intentionally byte-for-byte the historical behavior.
+# Build with cargo + elan env sourced (non-login shells lack them).
+#
+# ⚠ ARGV IS QUOTED ON BOTH BRANCHES (2026-07-25). The no-wrapper branch used to end
+# in an UNQUOTED `cd '$REMOTE' && $*`, so the remote shell re-split every argument on
+# whitespace. persvati is the no-wrapper host, so persvati was the branch that had it.
+# The comment six lines down claiming "nextest filters and feature lists cross ssh
+# with their argv intact" described only the WRAPPER branch — a true sentence about
+# the code it did not sit above.
+#
+# What it actually breaks: `pbuild lane cargo test -p p --test t -- --exact 'a b'`
+# arrives as ... --exact a b, and a test filter that names nothing is not an error —
+# it is `0 passed; 0 filtered out`, i.e. a GREEN with no test in it. That is the
+# silent-green shape this repo keeps paying for, wired into the build tool itself.
+#
+# Both branches now use one rule: a SINGLE argument is passed verbatim (that is the
+# established compound-command interface — `pbuild lane 'cd x && y; z'` must keep
+# working, and quoting it would break every caller), and MULTIPLE arguments are
+# individually `%q`-quoted so argv survives the remote shell.
+if [ "$#" -eq 1 ]; then
+  REMOTE_COMMAND="$1"
+else
+  printf -v REMOTE_COMMAND '%q ' "$@"
+fi
+
+_pb_run_status=0
 if [ -z "$REMOTE_WRAPPER" ]; then
-  # shellcheck disable=SC2029 # Historical pbuild command interpolation on the remote shell.
+  # shellcheck disable=SC2029 # REMOTE/REMOTE_ENV/REMOTE_COMMAND are locally owned and quoted above.
   ssh "$HOST" "set -e; source ~/.cargo/env 2>/dev/null || true; \
     [ -f ~/.elan/env ] && source ~/.elan/env 2>/dev/null || true; \
     export PATH=\"\$HOME/.cargo/bin:\$HOME/.elan/bin:\$PATH\"; \
     ${REMOTE_ENV}\
-    cd '${REMOTE}' && $*"
+    cd '${REMOTE}' && ${REMOTE_COMMAND}" || _pb_run_status=$?
 else
-  # One argument retains the established compound-command interface. Multiple
-  # arguments are shell-quoted individually so nextest filters and feature
-  # lists cross ssh with their argv intact.
-  if [ "$#" -eq 1 ]; then
-    REMOTE_COMMAND="$1"
-  else
-    printf -v REMOTE_COMMAND '%q ' "$@"
-  fi
   printf -v REMOTE_COMMAND_Q '%q' "$REMOTE_COMMAND"
+  # ⚠ ${REMOTE_ENV} BELONGS ON THIS BRANCH TOO (2026-07-25). It was interpolated into
+  # the no-wrapper branch only, so every forwarded knob was DROPPED on hbox — while
+  # the line above still printed "pbuild: forwarding DREGG_… to hbox". An announcement
+  # with no mechanism, and on the branch that carries the Lean box: `DREGG_REQUIRE_LEAN`
+  # is precisely the knob that decides whether a test consults the verified core or
+  # degrades to its Rust twin, and on hbox it was silently ignored. It also has to sit
+  # BEFORE the `exec` so swarm-build itself inherits SWARM_MEM_MAX.
   # shellcheck disable=SC2029 # REMOTE_COMMAND_Q/WRAPPER_Q are client-shell-quoted by construction.
   ssh "$HOST" "set -e; source ~/.cargo/env 2>/dev/null || true; \
     [ -f ~/.elan/env ] && source ~/.elan/env 2>/dev/null || true; \
     export PATH=\"\$HOME/.cargo/bin:\$HOME/.elan/bin:\$PATH\"; \
-    cd '${REMOTE}' && exec ${REMOTE_WRAPPER_Q} bash -c ${REMOTE_COMMAND_Q}"
+    ${REMOTE_ENV}\
+    cd '${REMOTE}' && exec ${REMOTE_WRAPPER_Q} bash -c ${REMOTE_COMMAND_Q}" || _pb_run_status=$?
+fi
+
+# A nonzero status is the moment — and the only moment — worth asking the box whether
+# it did this. See the ENVFAULT block at the top for why this is not a nicety.
+if [ "$_pb_run_status" -ne 0 ]; then
+  if _pb_oom_lines="$(_pbuild_oom_evidence)"; then
+    PBUILD_ENVFAULT=1
+    {
+      echo ""
+      echo "pbuild: ⚠ THE BOX KILLED THIS BUILD FOR MEMORY — this is an ENVIRONMENT fault,"
+      echo "        NOT your code, and NOT a verdict. Do not read a red off this log, and"
+      echo "        do not retry the identical command: on 2026-07-24 a lane retried one"
+      echo "        OOM-killed \`lake build\` nine times in 32 minutes and learned nothing."
+      echo ""
+      echo "        Evidence from ${HOST}:"
+      printf '          %s\n' "$_pb_oom_lines"
+      echo ""
+      echo "        What to do instead:"
+      echo "          • RAISE THE CAP first. Every OOM-kill measured on hbox sat exactly on"
+      echo "            a per-build \`SWARM_MEM_MAX\` value, never on box pressure — and no"
+      echo "            surviving build has ever exceeded ~14G. If you inherited"
+      echo "            SWARM_MEM_MAX=24G from a doc recipe, that cap is the whole problem:"
+      echo "              SWARM_MEM_MAX=64G scripts/hbuild ${LANE} <cmd>"
+      echo "          • Narrow the unit. One module (\`lake build Some.One.Module\`) rather"
+      echo "            than a nine-module line, so the peak is one module's peak."
+      echo "          • Bound Lean's fan-out: LEAN_NUM_THREADS=4 (lake has no -j)."
+      echo "          • Serialize. Another lane's build may be sharing the cgroup ceiling."
+      echo ""
+    } >&2
+  fi
+  exit "$_pb_run_status"
 fi

@@ -12,13 +12,30 @@ export PATH=$HOME/.elan/bin:$HOME/.cargo/bin:$PATH
 export HACL_DIST=$HOME/src/hacl-star/dist/gcc-compatible
 export LIBRARY_PATH=$HACL_DIST
 cd ~/dev/breadstuffs/metatheory
-SWARM_MEM_MAX=24G swarm-build lake build \
+SWARM_MEM_MAX=64G swarm-build lake build \
   Dregg2.Crypto.Keccak.Fips202SpongeRefine Dregg2.Crypto.MlKemKeygenRefine \
   Dregg2.Crypto.MlDsaKeygenRefine Dregg2.Crypto.VerifyCoreHashFrame \
   Dregg2.Crypto.MlKemKeygenAcvp Dregg2.Crypto.MlKemEncapsAcvp \
   Dregg2.Crypto.MlDsaKeygenAcvp Dregg2.Crypto.MlDsaSigGenAcvp Dregg2.Crypto.MlDsaSigVerAcvp
-SWARM_MEM_MAX=24G swarm-build lake env lean AxiomProbe.lean
+SWARM_MEM_MAX=64G swarm-build lake env lean AxiomProbe.lean
 ```
+
+> ⚠ **The cap was `24G` here until 2026-07-25, and it was killing these exact builds.**
+> A census of hbox's user journal found **198 `oom-kill` events** between 07-17 and 07-24.
+> Across 3111 scopes that reported a memory peak, **every one of the 67 killed scopes
+> peaked at exactly a cap value** (`24G`×60, `32G`×5, `40G`, `70G`) and **not one of the
+> 3044 survivors exceeded ~14G** — so the killer was always the per-build cap, never box
+> pressure. The `24G` line above is where 60 of those came from: this file presents itself
+> as *the* reproduce recipe, so every lane that needed these modules copy-pasted a cap
+> that `MlDsaKeygenRefine`, `MlKemKeygenRefine` and `VerifyCoreArgAssembly` genuinely
+> exceed. On 07-24 one lane retried the same killed `lake build` nine times in 32 minutes,
+> because `swarm-build` surfaced the kill as an ordinary nonzero status — indistinguishable,
+> from inside a lane, from a proof error. `scripts/pbuild` now reports that case as
+> `VERDICT outcome=ENVFAULT` with the journal line as evidence.
+>
+> If you narrow this to a single module you can lower the cap again — but **measure it**
+> (`systemctl --user show <scope> -p MemoryPeak`, or read the `memory peak` line
+> `journalctl --user` prints when the scope exits) rather than inheriting a number.
 
 `clean` below means the axiom set is **exactly** `[propext, Classical.choice, Quot.sound]` — the
 three standard Lean kernel axioms, which is the corpus definition of clean (`docs/AXIOM-HYGIENE.md`,
