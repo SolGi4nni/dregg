@@ -428,7 +428,14 @@ theorem encryptV_eq_spec_witness :
     toRqKem (encV witEk witR witR)
       = ((List.range' 0 paramK 1).map (fun i => toRqKem sampleA * toRqKem (encY witR)[i]!)).sum
         + toRqKem (encE2 witR) + toRqKem (encMu witR) :=
-  encryptV_eq_spec witEk witR witR (fun _ => sampleA) witEk_hT (fun _ _ => sampleA_size) encY_witR_size
+  -- `sampleA_size` is AMBIGUOUS here: this file opens both `MlKemRing` and `DecapsCoreSpec`, and each
+  -- exports a `sampleA_size`. Both state `sampleA.size = 256` about the SAME constant (there is one
+  -- `sampleA`, `MlKemRing.sampleA`; `DecapsCoreSpec` opens `MlKemRing`), so the qualification is
+  -- semantically free -- but it has to be written, and nothing ever caught it because this module was
+  -- an ORPHAN: reachable from no lake target, so the collision `DecapsCoreSpec.sampleA_size` introduced
+  -- never turned anything red.
+  encryptV_eq_spec witEk witR witR (fun _ => sampleA) witEk_hT
+    (fun _ _ => MlKemRing.sampleA_size) encY_witR_size
 
 /-! ## `encaps_produces_spec_valid` — the security-meaningful direction (KEM analog of `sign_produces_spec_valid`).
 
