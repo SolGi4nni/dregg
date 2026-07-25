@@ -30,7 +30,8 @@
 //! (`dregg_circuit::bridge_action_witness`) — out of scope here.
 
 use dregg_bridge::ethereum_relayer::{
-    EthBridgeConfig, EthDepositTrust, EthRelayer, EthRelayerError, MockEthRpc, eth_deposit_nullifier,
+    EthBridgeConfig, EthDepositTrust, EthRelayer, EthRelayerError, MockEthRpc,
+    eth_deposit_nullifier,
 };
 use dregg_cell::{AuthRequired, Cell, CellId, EFFECT_MINT, Ledger, Permissions};
 use dregg_turn::{
@@ -127,12 +128,20 @@ fn rpc_only_forged_deposit_is_refused() {
     // address, topic, finality tag, receipt inclusion) all PASS — they are RPC-only.
     let mut rpc = MockEthRpc::new(100, 105, 110);
     rpc.insert_deposit(MockEthRpc::deposit_log(
-        CONTRACT, lock_id, recipient, amount, 90, tx(1), 0,
+        CONTRACT,
+        lock_id,
+        recipient,
+        amount,
+        90,
+        tx(1),
+        0,
     ));
     let relayer = EthRelayer::new(config(), rpc);
     let observed = relayer.observe_deposits().expect("scan")[0]
         .as_ref()
-        .expect("the structural verify still SURFACES the deposit (the gate refuses, not the observe)")
+        .expect(
+            "the structural verify still SURFACES the deposit (the gate refuses, not the observe)",
+        )
         .clone();
 
     // It reaches only the fail-closed RPC grade.
@@ -151,7 +160,8 @@ fn rpc_only_forged_deposit_is_refused() {
     let req = observed.to_bridge_mint_request(issuer, ledger_cell);
     assert!(!req.consensus_verified);
     assert_eq!(
-        exec.bridge_mint_against_lock(&mut ledger, &req).unwrap_err(),
+        exec.bridge_mint_against_lock(&mut ledger, &req)
+            .unwrap_err(),
         BridgeMintError::TrustTooLow,
         "an RPC-only (forged/MITM) deposit CANNOT mint"
     );
