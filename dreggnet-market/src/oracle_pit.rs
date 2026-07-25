@@ -210,9 +210,29 @@ impl DescentQuestion {
     }
 }
 
-/// **What the pit is a market ON.** A specific run of the Lean-native Descent plus one binary
-/// question about it. The subject's digest is frozen into the pit cell at birth.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// **What the pit is a market ON.** A run of the Lean-native Descent plus one binary question
+/// about it. The subject's digest is frozen into the pit cell at birth.
+///
+/// # ⚠ RUN DESIGNATION — the load-bearing limitation of this module
+///
+/// `(seed, day_seed)` identifies **the day's WORLD, not a run of it.** The world is fixed by the
+/// beacon; the MOVES are not. Every player who descends that day — and the same player descending
+/// twice — produces a *different, equally genuine* [`NativeDescentRecord`], and every one of them
+/// re-executes cleanly. So an unpinned pit does not settle on "today's run"; it settles on
+/// **whichever verified terminal run of that day's world reaches it first**, which hands the
+/// outcome to whoever settles rather than to the dungeon.
+///
+/// This is not hypothetical: a crowned run and a timid one on the same day both pass
+/// [`read_verified_run`] for the same unpinned subject. The re-execution gate is doing its job —
+/// it refuses FORGED runs — but "genuine" is weaker than "the one this market is about".
+///
+/// [`on_player`](Self::on_player) narrows it to one player and closes cross-player substitution.
+/// It does not close same-player substitution. **Fully closing this needs a designator outside
+/// this module**: the day's canonical run has to be named by something the settler does not
+/// control — the daily leaderboard's admitted entry, or a run-identity commitment published
+/// before the board freezes — and the subject must pin THAT. Until a deployment supplies one, the
+/// pit is sound only where a single designated run exists by construction.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PitSubject {
     /// The run's normalized deploy seed — the world identity a replay redeploys on.
     pub seed: u8,
@@ -220,18 +240,36 @@ pub struct PitSubject {
     /// daily beacon with
     /// [`native_descent_run_day_seed`](dreggnet_offerings::native_descent::native_descent_run_day_seed).
     pub day_seed: CommittedSeed,
+    /// **The designated player, when the deployment pins one.** See the RUN-DESIGNATION note on
+    /// [`PitSubject`]: `(seed, day_seed)` fixes the WORLD, not the run, so a pit that does not pin
+    /// a player will accept any verified terminal run of that day's world. `None` is the unpinned
+    /// form and is only sound when something outside this module designates the run.
+    pub player: Option<String>,
     /// The binary question the pit prices.
     pub question: DescentQuestion,
 }
 
 impl PitSubject {
-    /// A subject over `(seed, day_seed)` asking `question`.
+    /// A subject over `(seed, day_seed)` asking `question`, with NO designated player.
+    ///
+    /// Read the RUN-DESIGNATION note on [`PitSubject`] before deploying this form: it settles on
+    /// whichever verified terminal run of that day's world is submitted first.
     pub fn new(seed: u8, day_seed: CommittedSeed, question: DescentQuestion) -> Self {
         PitSubject {
             seed,
             day_seed,
+            player: None,
             question,
         }
+    }
+
+    /// A subject pinned to ONE player's run of that day's world. [`read_verified_run`] then refuses
+    /// a record whose replay-derived actor is anyone else, which closes cross-player substitution.
+    /// It does NOT close same-player substitution — one player can still play the day twice and
+    /// submit whichever record they prefer.
+    pub fn on_player(mut self, player: &DreggIdentity) -> Self {
+        self.player = Some(player.as_str().to_string());
+        self
     }
 
     /// The 32-byte subject digest — the pit's identity. Frozen into the pit cell's `WriteOnce`
@@ -241,6 +279,14 @@ impl PitSubject {
         let mut h = blake3::Hasher::new_derive_key(SUBJECT_DOMAIN);
         h.update(&[self.seed]);
         h.update(self.day_seed.as_bytes());
+        match &self.player {
+            None => h.update(&[0u8]),
+            Some(player) => {
+                h.update(&[1u8]);
+                h.update(&(player.len() as u64).to_be_bytes());
+                h.update(player.as_bytes())
+            }
+        };
         h.update(&[code]);
         h.update(&arg.to_be_bytes());
         *h.finalize().as_bytes()
@@ -292,6 +338,9 @@ pub enum PitRefusal {
     /// the record's own day-seed, so without this a genuine run from another day would replay
     /// cleanly and settle the wrong market.
     WrongDay,
+    /// The subject pins a player and the record's replay-derived actor is someone else. Only
+    /// raised by a subject built with [`PitSubject::on_player`].
+    WrongPlayer,
     /// Exact re-execution refused the record (a spliced move, a substituted player, a hand-edited
     /// completion, a re-pointed provenance root). Carries the replay's own break reason.
     ReplayFailed(String),
@@ -324,6 +373,10 @@ impl std::fmt::Display for PitRefusal {
                 f,
                 "the record's day-seed is not this pit's subject day-seed — a run from another day \
                  replays cleanly and would settle the wrong market"
+            ),
+            PitRefusal::WrongPlayer => write!(
+                f,
+                "this pit is pinned to one player's run and the record was played by someone else"
             ),
             PitRefusal::ReplayFailed(why) => {
                 write!(f, "the run record did not re-execute: {why}")
@@ -379,6 +432,15 @@ pub fn read_verified_run(
     let replayed = offering
         .resume_record(record)
         .map_err(|error| PitRefusal::ReplayFailed(error.to_string()))?;
+
+    // A pinned pit checks the actor the REPLAY bound (the offering binds it on the first admitted
+    // turn and refuses any later substitution), never the record's asserted `actor` field.
+    if let Some(pinned) = &subject.player {
+        let played_by = replayed.actor().map(|actor| actor.as_str().to_string());
+        if played_by.as_deref() != Some(pinned.as_str()) {
+            return Err(PitRefusal::WrongPlayer);
+        }
+    }
 
     let depth = replayed
         .checkpoint()
@@ -1493,7 +1555,7 @@ impl Offering for OraclePitOffering {
         let seed = cfg.seed.unwrap_or(1);
         let committee = PitCommittee::ceremony(self.parties)
             .map_err(|error| OfferingError::Deploy(error.to_string()))?;
-        let book = OraclePitBook::deploy(self.subject, self.matrix, committee, seed)?;
+        let book = OraclePitBook::deploy(self.subject.clone(), self.matrix, committee, seed)?;
         Ok(OraclePitSession {
             book,
             wallets: HostedWallets::new(),

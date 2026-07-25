@@ -1,0 +1,50 @@
+# dregg-mirror — THE MIRROR RESOLVER: the no-extension on-ramp for `dregg://` objects.
+#
+# DREGG-QUIET-UPGRADE.md §9 item 4 named this seam and left it open: "the mirror-form
+# server view (tier `server`) is NOT BUILT — the mirror string parses and upgrades under
+# the extension, but the no-extension click path has no server renderer." This crate is
+# that server.
+#
+# What it is: someone on X/Discord clicks `https://dregg.gg/poll/7f2a9c4d` with NO
+# extension installed. This service resolves the content address, runs the SAME
+# fail-closed verification ladder the extension's netlayer runs (`extension/src/
+# netlayer.ts`), and renders the object through the SAME `deos-view` web renderer the
+# rest of the system paints with — under an HONEST tier-`server` label that says plainly
+# that the READER checked nothing and is trusting this origin, plus the upgrade path to
+# the tier where they check it themselves.
+#
+# WEIGHT: deliberately tiny. `deos-view` is pulled `default-features = false, features =
+# ["web"]` — the gpui-FREE + deos-js-FREE renderer (serde only), so this crate never
+# drags the GPU stack or SpiderMonkey. `http-serve` is the workspace's own std-net serve
+# loop (no async runtime, no framework). blake3 is the content-address gate; ed25519-dalek
+# is the committee-anchored quorum gate. That is the whole graph.
+[package]
+name = "dregg-mirror"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "The mirror resolver: a tier-`server` HTTP view of a content-addressed dregg:// object for readers with no extension, honestly labelled and fail-closed."
+
+[dependencies]
+# THE RENDERER — `ViewNode` → HTML, the SAME surface every other glass paints. We
+# CONSUME it (`parse_view_tree` + `web::render_html` + `web::portal_css`); we never
+# author card markup by hand here. `web` only: gpui-free, deos-js-free, serde-only.
+deos-view = { path = "../deos-view", default-features = false, features = ["web"] }
+# The workspace's own tiny HTTP/1.1 vocabulary + std-net serve loop (one thread per
+# connection, slow-loris + body-cap hardened). No tokio, no axum.
+http-serve = { path = "../http-serve" }
+# THE CONTENT-ADDRESS GATE: `blake3(content) == addr`. The reason the transport can be
+# untrusted — and the one gate that is MANDATORY on every resolve.
+blake3 = "1"
+# The committee-anchored quorum gate (netlayer.ts `checkQuorum`'s anchored branch):
+# each quorum signature is a real Ed25519 check over the receipt-stream root.
+ed25519-dalek = { version = "2", features = ["std"] }
+serde = { workspace = true, features = ["std", "derive"] }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

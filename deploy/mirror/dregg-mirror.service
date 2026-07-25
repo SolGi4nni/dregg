@@ -1,0 +1,71 @@
+# dregg-mirror — the tier-`server` view of a dregg:// object, for readers with no
+# extension. DREGG-QUIET-UPGRADE.md §9 item 4.
+#
+# ⚠ NOT INSTALLED. This is the unit for a box that runs systemd units (persvati, hbox).
+# The recommended home is the AWS EDGE, which runs a docker compose stack and NOT systemd
+# (deploy/README.md) — there the mirror is a compose service with the same env, and this
+# file is the reference for what it needs. See deploy/mirror/RUNBOOK.md.
+#
+# BIND: LOOPBACK (127.0.0.1:8791). The mirror terminates no TLS and does no rate limiting;
+# the edge in front of it owns both (deploy/mirror/Caddyfile.mirror). The binary's own
+# default is loopback for the same reason — "exposed straight to the internet" must never
+# be the path of least resistance. 8790 is the games server, 8420/8781/8787 are taken
+# (deploy/README.md, docs/ops/OPS-RUNBOOK.md); 8791 is free.
+#
+# hbox discipline (deploy/hbox/RUNBOOK.md): a USER unit under ~/.config/systemd/user/,
+# `loginctl enable-linger`, %h-relative paths, WantedBy=default.target.
+
+[Unit]
+Description=dregg mirror resolver (tier-`server` view of dregg:// objects)
+After=network-online.target
+Wants=network-online.target
+# Restart-storm brake: a hard crash loop stops the unit instead of pegging the box.
+# `systemctl --user reset-failed dregg-mirror` re-arms it after a fix.
+StartLimitIntervalSec=600
+StartLimitBurst=10
+
+[Service]
+Type=simple
+# Placed by ember, chmod 600. Carries DREGG_MIRROR_ORIGIN / _ROOT / _COMMITTEE.
+EnvironmentFile=-%h/.config/dregg/mirror.env
+Environment=RUST_LOG=info
+# Loopback. Never 0.0.0.0 — the edge is the only thing that should be public.
+Environment=DREGG_MIRROR_BIND=127.0.0.1:8791
+# The public origin NAMED ON EVERY PAGE ("dregg.gg checked this object. You did not.").
+# If this is wrong, every page misnames who the reader is trusting — it is a correctness
+# setting, not cosmetics.
+Environment=DREGG_MIRROR_ORIGIN=dregg.gg
+Environment=DREGG_MIRROR_EXTENSION_URL=https://dregg.gg/extension
+# The object corpus: <root>/<kind>/<64-hex>.json (+ optional <64-hex>.att.json).
+# The FILENAME is not trusted — the mirror re-hashes the bytes and fails closed if they
+# do not hash to the address asked for, so a tampered file serves as nothing.
+Environment=DREGG_MIRROR_ROOT=%h/.local/state/dregg-mirror/objects
+# DREGG_MIRROR_COMMITTEE: comma-separated trusted Ed25519 pubkeys (hex) for the anchored
+# quorum gate. UNSET here on purpose — there is no committee to anchor against yet, so the
+# gate runs STRUCTURALLY and every page says so in those words. Set it the moment a real
+# committee exists; do not leave the honest-but-weaker gate running once it is avoidable.
+WorkingDirectory=%h/dev/breadstuffs
+ExecStart=%h/dev/breadstuffs/target/release/dregg-mirror
+Restart=always
+RestartSec=5
+
+# Hardening. The mirror reads a directory of objects and writes nothing.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadOnlyPaths=%h/.local/state/dregg-mirror
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+MemoryDenyWriteExecute=true
+
+# It is a thin read surface; bound it far below the box so it can never starve a
+# co-resident build or node.
+LimitNOFILE=65536
+MemoryHigh=256M
+MemoryMax=512M
+TasksMax=512
+
+[Install]
+WantedBy=default.target

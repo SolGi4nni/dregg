@@ -39,6 +39,16 @@ server-rendered, still-verifiable tier-`server` view — a named seam, not yet b
 **and** it is detectable by the scanner as the same dregg-thing. One string, two readings: **inert-but-useful without the agent,
 live-and-verified with it.** Posters SHOULD paste the mirror form; the scanner accepts both.
 
+**Served mirror shape (`dregg-mirror`, §9 item 4):** `https://dregg.gg/<kind>/<addr>`, with
+`/d/<kind>/<addr>` kept as a permanent alias so every already-published link above keeps
+resolving. Two deliberate shortenings, both bought with the same currency — X truncates
+*displayed* link text, so every character of path prefix is a character of address that does not
+survive the elision: the `/d/` segment is dropped (the kind segment already namespaces the
+space, so `/d/` carried no information), and the addr may be a **git-style unambiguous hex
+prefix** with the `b3_` tag optional. `dregg.gg/poll/7f2a9c4d` is 23 characters. An ambiguous
+prefix is REFUSED, never resolved to a guess; the tag stays mandatory in the canonical
+`dregg://` string, which travels and must never lose its algorithm.
+
 Constraints:
 - The content-addr is the object's blake3 digest → **the reference is self-authenticating**; a
   platform that rewrites the URL breaks the link (fail-closed), it cannot substitute content.
@@ -177,9 +187,22 @@ author-placed tags, not scanned prose.
 3. **BUILT — the detector** (`extension/src/detect.ts`): MutationObserver, canonical+mirror
    patterns, idempotent (`data-dregg-upgraded`, keyed by content-addr), per-origin default-deny
    (`dregg_upgrade_origins`), shortener adapter as the only platform-specific shim.
-4. **NAMED SEAM — the mirror-form server view** (`dregg.net/d/…`, tier `server`) is not built:
-   the mirror string parses and upgrades under the extension, but the no-extension click path has
-   no server renderer, and no public devnet currently serves one.
+4. **BUILT — the mirror-form server view** (tier `server`): `dregg-mirror/` — resolve a content
+   address (full, or an unambiguous git-style hex prefix), run the SAME four-gate ladder
+   `netlayer.ts` runs (`dregg-mirror/src/object.rs`, mirrored gate for gate), and render the
+   object through the SAME `deos-view` web renderer every other glass paints with. The URI
+   grammar is a faithful Rust mirror of `port.ts`, never a second parser
+   (`dregg-mirror/src/uri.rs`). Fail-closed throughout: an unknown kind, a bad or ambiguous
+   address, a hash mismatch or a failed gate renders an honest refusal page and NONE of the
+   object. §5 is held in one module (`src/trust.rs`) and asserted on by the tests — the tier is a
+   CONSTANT, since server-side gate passing never promotes it (the reader still checked nothing);
+   the badge carries `(trust the origin)` verbatim and never the extension tier's green; the page
+   prints the ladder gate by gate including the gates it SKIPPED, and hands over the canonical
+   `dregg://…` string plus the way to the tier where the reader checks it themselves.
+   ⚠ STILL OPEN: no public devnet serves real attested objects, so the deployed corpus is
+   whatever the operator places, and with no trusted committee configured the quorum gate runs
+   STRUCTURALLY (signatures counted, not cryptographically anchored) — which every page says in
+   those words. Deployment shape: `deploy/mirror/`.
 5. **BUILT — packaging**: MV3 manifests for Chromium (`extension/manifest.json`) and Firefox
    (`extension/manifest-firefox.json`).
 

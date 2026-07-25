@@ -269,6 +269,41 @@ fn the_oracle_refuses_every_faked_settlement() {
     assert!(read_verified_run(&subject, &crowned).is_ok());
 }
 
+/// THE NAMED LIMITATION, DRIVEN HONESTLY. `(seed, day_seed)` fixes the day's WORLD, not a run of
+/// it: a crowned run and a timid one on the same day are BOTH genuine and both re-execute, so an
+/// unpinned pit settles on whichever arrives first. Pinning a player closes the cross-player half.
+/// This test exists so the gap is a measured fact in the record, not a caveat in a doc comment.
+#[test]
+fn an_unpinned_subject_accepts_any_genuine_run_of_that_days_world() {
+    let unpinned = crowned_subject(DescentQuestion::Crowned);
+    let crowned = play(day(0xd1), CROWNED_RUN);
+    let timid = play(day(0xd1), TIMID_RUN);
+
+    // BOTH are genuine, and they disagree about the very question the market prices.
+    let crowned_reading = read_verified_run(&unpinned, &crowned).expect("crowned re-executes");
+    let timid_reading = read_verified_run(&unpinned, &timid).expect("timid re-executes");
+    assert!(DescentQuestion::Crowned.resolve(&crowned_reading));
+    assert!(!DescentQuestion::Crowned.resolve(&timid_reading));
+    assert_ne!(
+        crowned_reading.run_root, timid_reading.run_root,
+        "two distinct runs of one day's world"
+    );
+
+    // Pinning the player who actually played still admits that player's run...
+    let pinned = crowned_subject(DescentQuestion::Crowned).on_player(&descender());
+    assert!(read_verified_run(&pinned, &crowned).is_ok());
+    // ...and a pit pinned to somebody else refuses it, on the REPLAY-bound actor.
+    let other = crowned_subject(DescentQuestion::Crowned)
+        .on_player(&DreggIdentity("someone:else".to_string()));
+    assert_eq!(
+        read_verified_run(&other, &crowned),
+        Err(PitRefusal::WrongPlayer)
+    );
+    // The pin is part of the pit's identity, so a pinned pit is a different on-ledger object.
+    assert_ne!(pinned.digest(), unpinned.digest());
+    assert_ne!(pinned.digest(), other.digest());
+}
+
 /// The verdict a settled pit freezes on-ledger is a function of the whole re-execution, so an
 /// auditor recomputes it from the run record alone.
 #[test]
