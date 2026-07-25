@@ -855,9 +855,9 @@ fn play_view() -> (CreateEmbed, Vec<CreateActionRow>) {
 fn adventure_view() -> (CreateEmbed, Vec<CreateActionRow>) {
     let embed = embeds::dregg_embed("Narrative Worlds")
         .description(
-            "The shared, AI-narrated, on-chain party dungeon: buttons are write-once ballots, \
-             the plurality choice lands as one real verified turn. Narration can describe that \
-             turn; it cannot invent one.",
+            "The shared, AI-narrated party dungeon: buttons are write-once ballots, and the \
+             plurality choice lands as one real executor turn, receipted and hash-linked to \
+             the turn before it. Narration can describe that turn; it cannot invent one.",
         )
         .field(
             "The Warden's Keep",

@@ -1789,7 +1789,7 @@ struct ResultView {
 fn describe_outcome(outcome: &MoveOutcome) -> ResultView {
     match outcome {
         MoveOutcome::Landed { .. } => ResultView {
-            headline: "A verified turn landed on the chain.".to_string(),
+            headline: "A turn landed, receipted.".to_string(),
             body:
                 "The world resolved the party's choice — a real, committed, executor-admitted turn."
                     .to_string(),
@@ -2382,7 +2382,7 @@ fn resolution_final_embed(res: &ResolvedRound) -> CreateEmbed {
         ""
     };
     let body = format!(
-        "**{}** with {}/{} ballot(s){}.\n\n{}\n> {}\n\n{}\n\n**{} verified turns** on the chain. Run `/dungeon verify` to re-check them by replay.",
+        "**{}** with {}/{} ballot(s){}.\n\n{}\n> {}\n\n{}\n\n**{} receipted turns**, hash-linked. Run `/dungeon verify` to re-check them by replay.",
         res.winner_label,
         res.votes_for_winner,
         res.total_ballots,

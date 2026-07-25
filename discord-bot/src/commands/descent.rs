@@ -2343,7 +2343,7 @@ fn result_embed(
         None => String::new(),
     };
     let body = format!(
-        "{verdict}{rank_line}\n\n{note}\n\n**{turns} verified turns** on the chain — run \
+        "{verdict}{rank_line}\n\n{note}\n\n**{turns} receipted turns**, hash-linked — run \
          `/descent verify` to re-check them by replay.",
         verdict = verdict,
         rank_line = rank_line,

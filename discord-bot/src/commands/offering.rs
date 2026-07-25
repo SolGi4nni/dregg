@@ -1282,8 +1282,20 @@ pub fn outcome_note(outcome: &Outcome) -> String {
     match outcome {
         Outcome::Landed { receipt, ended } => {
             let card = PlayerTurnReceipt::from_landed(receipt, *ended);
+            // "Landed" is the executor's fact and is always true here — `Outcome::Landed`
+            // means the turn was ADMITTED. "Verified" is a claim about the ACTOR, and this
+            // header used to assert it unconditionally while the card printed one line below
+            // it says otherwise: `compact_text` calls `lead_phrase()`, whose `Asserted` grade
+            // renders "Recorded (asserted …)" under a doc-comment reading, in as many words,
+            // `"Verified" would be a lie here`. So the surface contradicted its own body, and
+            // the honest half was the one nobody read.
+            //
+            // The grade ladder — Asserted / Signed / Signed (custodial) / Verified turn — is
+            // exactly the distinction this project sells. Overriding it with the top rung on
+            // every turn does not merely overstate one message; it makes the ladder unreadable,
+            // because if everything says "verified" then nothing does.
             format!(
-                "**A verified turn landed.**\n> {}\n> This complete id is the copyable join into \
+                "**The turn landed.**\n> {}\n> This complete id is the copyable join into \
                  the session's hash-linked receipt chain; every later turn commits to the \
                  record before it.",
                 card.compact_text(PlayerReplaySurface::Discord)
