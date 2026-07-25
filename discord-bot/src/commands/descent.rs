@@ -78,6 +78,7 @@ use ugc_dregg::{Completion, Registry, Universe, UniverseId, record_playthrough};
 use crate::BotState;
 use crate::commands::ack;
 use crate::commands::offering::identity_of;
+use crate::throttle::RateLimiter;
 use webauth_core::identity_resolve::RootResolver;
 
 /// The Descent brand colour (a deep permadeath crimson-violet, distinct from `/dungeon`'s teal).
@@ -86,6 +87,29 @@ const DESCENT_COLOR: u32 = 0x9D174D;
 const TAGLINE: &str = "beacon-seeded · permadeath · the chain remembers · no-cheat board";
 /// The leaderboard author label today's world is published under.
 const BOARD_AUTHOR: &str = "the-descent";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-user throttle on the executor-driving Descent funnels (defense-in-depth).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Burst depth: how many Descent actions one user may fire back-to-back from cold.
+const DESCENT_THROTTLE_BURST: u32 = 6;
+/// Steady-state refill: ~one action every two seconds — far above human play, so an honest
+/// player never meets it; a spammer is bounded to this rate.
+const DESCENT_THROTTLE_REFILL_PER_SEC: f64 = 0.5;
+
+/// The per-user shock absorber shared by every executor-driving Descent funnel: opening a run
+/// (`/descent play`), pressing a move (`descent:move`), and re-verifying a board entry
+/// (`descent:rv`). Each of these blocks the single shared descent store thread — and re-verify
+/// re-executes an entire recorded run — so one user pressing across channels could, by volume
+/// alone, starve every other player's turns and load the prover pool. This bounds that rate. It
+/// is NOT the security boundary: the verified executor still gates every turn; a throttle miss
+/// only decides whether the press reaches the store at all.
+fn descent_throttle() -> &'static RateLimiter {
+    static THROTTLE: OnceLock<RateLimiter> = OnceLock::new();
+    THROTTLE
+        .get_or_init(|| RateLimiter::new(DESCENT_THROTTLE_BURST, DESCENT_THROTTLE_REFILL_PER_SEC))
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Today's beacon — the committed drand `quicknet` round (the pinned reveal path).
@@ -1336,6 +1360,21 @@ fn class_id_of(label: &str) -> Option<u64> {
 
 async fn handle_play(ctx: &Context, command: &CommandInteraction, state: &BotState) {
     let user_id = command.user.id.get();
+
+    // Defense-in-depth: bound how fast one user can open runs on the shared store thread. Checked
+    // BEFORE the ACK so a throttled open does no store work at all; an honest player never meets
+    // it (the bucket sits far above human play speed).
+    if !descent_throttle().allow(user_id) {
+        respond_ephemeral_slash(
+            ctx,
+            command,
+            "You're opening Descent runs too fast — give it a moment. (A shared world executor \
+             drives every run; this only bounds rapid-fire spam, never normal play.)",
+        )
+        .await;
+        return;
+    }
+
     let who = identity_of(state, user_id);
     let class = command.data.options.first().and_then(|sub| {
         if let CommandDataOptionValue::SubCommand(opts) = &sub.value {
@@ -1643,6 +1682,20 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
         return;
     }
 
+    // Defense-in-depth: bound how fast the owner can drive turns into the shared store thread
+    // (even a stale/expired press reads the store below). Checked BEFORE the ACK so a throttled
+    // press does no store work; an honest player at the keyboard never meets the bucket.
+    if !descent_throttle().allow(presser) {
+        respond_ephemeral(
+            ctx,
+            component,
+            "You're taking Descent turns too fast — wait a moment. (Every move drives the shared \
+             world executor; this only bounds rapid spam, never normal play.)",
+        )
+        .await;
+        return;
+    }
+
     // ACK the press inside Discord's 3s window BEFORE the turn commits or the narrator runs
     // (the narrator alone can take ~20s). The re-render lands as an EDIT of this deferred
     // update — a slow narration can no longer present a committed permadeath move as
@@ -1825,6 +1878,21 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
 /// the pressed message is left exactly as it is.
 async fn respond_ephemeral(ctx: &Context, component: &ComponentInteraction, text: &str) {
     let _ = component
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new()
+                    .content(text)
+                    .ephemeral(true),
+            ),
+        )
+        .await;
+}
+
+/// The slash-command form of [`respond_ephemeral`]: a direct ephemeral message when nothing has
+/// been ACKed yet (used to answer a throttled `/descent play` before any store work happens).
+async fn respond_ephemeral_slash(ctx: &Context, command: &CommandInteraction, text: &str) {
+    let _ = command
         .create_response(
             &ctx.http,
             CreateInteractionResponse::Message(
@@ -2440,8 +2508,31 @@ fn reverify_rows(reverify: &[(usize, String)]) -> Vec<CreateActionRow> {
 /// outside the bot. Deliberately no owner gate: a stranger's re-run is the point.
 async fn handle_reverify(ctx: &Context, component: &ComponentInteraction, cid_hex: &str) {
     let Some(cid) = decode_hex32(cid_hex) else {
+        // F2 — NEVER A SILENT DROP. A malformed completion id used to `return` without answering
+        // the interaction, so the presser saw Discord's "This interaction failed" (the same thing
+        // a CRASHED bot looks like). Nothing was re-executed and the board is unchanged — say so.
+        respond_ephemeral(
+            ctx,
+            component,
+            "That re-verify button carries an id this bot build can no longer read — nothing was \
+             re-executed. Open `/descent board` for the live board and its current buttons.",
+        )
+        .await;
         return;
     };
+    // Defense-in-depth: re-verify RE-EXECUTES a whole recorded run on the shared store thread —
+    // the heaviest press there is. Bound how fast one user can fire them, BEFORE the defer/work.
+    let presser = component.user.id.get();
+    if !descent_throttle().allow(presser) {
+        respond_ephemeral(
+            ctx,
+            component,
+            "You're re-verifying too fast — wait a moment. (Each re-verify re-executes a full run \
+             on the shared world executor; this only bounds rapid spam.)",
+        )
+        .await;
+        return;
+    }
     // ACK inside Discord's 3s window as a NEW deferred PUBLIC response — re-executing the run is
     // seconds of CPU. The result lands as an EDIT of this deferred response; the pressed board is
     // left intact, exactly as the previous "post a new message" response did.
@@ -3226,6 +3317,31 @@ mod tests {
             .reverify_entry(uid, &cid)
             .expect("the pressed entry re-executes to the WIN on a fresh world");
         assert!(turns > 0, "a real re-executed move count comes back");
+    }
+
+    /// **F2: the `descent:rv` malformed-id branch is REACHED (never a silent drop).** A re-verify
+    /// custom id that is not a well-formed 32-byte hex completion id decodes to `None` — the exact
+    /// condition on which [`handle_reverify`] now answers the presser ephemerally instead of
+    /// returning without touching the interaction (which surfaced as "This interaction failed").
+    #[test]
+    fn malformed_reverify_id_decodes_to_none() {
+        // Too short, non-hex, and wrong length are all rejected (each routes to the ephemeral
+        // "nothing was re-executed" answer rather than a silent return).
+        assert!(decode_hex32("").is_none(), "empty id is refused");
+        assert!(decode_hex32("not-hex").is_none(), "non-hex id is refused");
+        assert!(
+            decode_hex32(&"ab".repeat(31)).is_none(),
+            "a 62-char (31-byte) id is refused"
+        );
+        assert!(
+            decode_hex32(&format!("zz{}", "ab".repeat(31))).is_none(),
+            "a 64-char id with non-hex digits is refused"
+        );
+        // A well-formed 64-hex-char id still decodes — the branch fires only on malformed input.
+        assert!(
+            decode_hex32(&"ab".repeat(32)).is_some(),
+            "a valid 32-byte hex id still decodes"
+        );
     }
 
     /// Drive a real win on today's world and return the run (won) + its board id, over the given

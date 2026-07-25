@@ -135,6 +135,12 @@ pub mod viewnode_applet;
 // emit point, non-blocking (a turn never waits on the log).
 pub mod audit;
 
+// A per-user token-bucket rate limiter (defense-in-depth): a conservative shock absorber in
+// front of the executor-driving interaction funnels so one user cannot, by press volume alone,
+// saturate the shared store thread or the prover pool. NOT a security boundary — the verified
+// executor is still the referee. See [`throttle`].
+pub mod throttle;
+
 use std::sync::Arc;
 
 use serenity::Client;

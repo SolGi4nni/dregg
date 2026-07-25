@@ -312,7 +312,15 @@ impl CapTPClient {
             .await
             .map_err(storage_error)?;
 
-        info!(cell_id, recipient_key, token, "Created local CapTP handoff");
+        // NEVER LOG THE BEARER. `token` is the `dregg-handoff-<hex(secret)>` bearer that
+        // `redeem_handoff` / `handoff_status` look up verbatim — logging it hands the capability
+        // to anyone with log read. Log a one-way, non-reversible reference instead.
+        info!(
+            cell_id,
+            recipient_key,
+            handoff = %token_ref(&token),
+            "Created local CapTP handoff"
+        );
         Ok(record)
     }
 
@@ -389,8 +397,9 @@ impl CapTPClient {
             .await
             .map_err(storage_error)?;
 
+        // NEVER LOG THE BEARER (see `delegate_cap`): the token is still redeemable-looking data.
         info!(
-            token,
+            handoff = %token_ref(&redeemed.token),
             cell_id = redeemed.cell_id,
             "Redeemed local CapTP handoff"
         );
@@ -593,6 +602,20 @@ fn storage_error(error: sqlx::Error) -> CapTPError {
     CapTPError::Storage(error.to_string())
 }
 
+/// A short, NON-SECRET reference to a handoff bearer token, safe for a log line. The bearer
+/// itself (`dregg-handoff-<hex(secret)>`) is looked up verbatim by
+/// [`CapTPClient::redeem_handoff`] / [`CapTPClient::handoff_status`], so logging it would hand
+/// the pending capability to anyone with log read. This is a one-way BLAKE3 digest of the token,
+/// truncated to 8 hex chars — enough to correlate the log lines of one handoff, never enough to
+/// reconstruct or redeem it.
+fn token_ref(token: &str) -> String {
+    let digest = blake3::Hasher::new()
+        .update(b"dregg-discord-captp-handoff-logref-v1")
+        .update(token.as_bytes())
+        .finalize();
+    hex::encode(&digest.as_bytes()[..4])
+}
+
 /// The pure `dregg://` enliven core: verified attested resolve of `cell_id`
 /// against `web` (no DB). Performs the fetch + the full
 /// content→commitment→receipt→quorum-root verification chain; returns the verified
@@ -739,5 +762,37 @@ mod enliven_tests {
         assert!(msg.contains("deadbeef"));
         assert!(msg.contains("enliven"));
         assert!(msg.contains("web-of-cells"));
+    }
+}
+
+#[cfg(test)]
+mod handoff_log_hygiene_tests {
+    use super::*;
+
+    // F1: the value logged for a handoff must NOT leak the bearer token. The bearer is looked up
+    // VERBATIM to redeem the capability, so a log line may carry only a one-way, non-reversible
+    // reference to it — never the token or its secret.
+    #[test]
+    fn token_ref_never_leaks_the_bearer_secret() {
+        let secret = hex::encode([0xABu8; 32]);
+        let token = format!("dregg-handoff-{secret}");
+        let logref = token_ref(&token);
+        assert!(
+            !logref.contains(&secret),
+            "the log ref must not embed the token secret: {logref}"
+        );
+        assert_ne!(logref, token, "the log ref is not the bearer");
+        // A short, stable correlation handle.
+        assert_eq!(logref.len(), 8, "an 8-hex-char non-secret ref");
+        assert_eq!(logref, token_ref(&token), "deterministic for one token");
+    }
+
+    // Distinct bearers get distinct refs, so operators can still correlate one handoff's lines.
+    #[test]
+    fn token_ref_distinguishes_distinct_tokens() {
+        assert_ne!(
+            token_ref("dregg-handoff-aaaa"),
+            token_ref("dregg-handoff-bbbb")
+        );
     }
 }
