@@ -473,7 +473,21 @@ mod tomb_tests {
 
         let dead = a_run_that_dies();
         let tomb = Tomb::seal(&dead).expect("a run the dark kept seals a tomb");
-        assert_eq!(tomb.spent(), BREATH, "the light is out");
+        // ⚑ THE LIGHT IS NOT OUT — and that is the point. This line assumed a tomb could
+        // only be sealed at `spent = BREATH`, which was true when `flee` cost one breath
+        // from any depth. The day-9 run dies on floor 4 with FOUR breath still in hand: the
+        // climb home wants five. What is spent is the TOLL, not the clock.
+        assert_eq!(tomb.spent(), 26, "four breath still in hand");
+        assert_eq!(
+            tomb.depth(),
+            4,
+            "and four floors between them and the mouth"
+        );
+        assert_eq!(
+            tomb.spent() + tomb.depth(),
+            BREATH,
+            "the toll is what ran out (Dungeon.doomed_never_banks)"
+        );
         assert_eq!(tomb.day(), 9);
     }
 
