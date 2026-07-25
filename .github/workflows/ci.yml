@@ -195,6 +195,32 @@ jobs:
             git -C ../plonky3-recursion checkout "$REV"
           fi
 
+      # ⚑ THIS RUNS FIRST, DELIBERATELY (2026-07-25). It used to be the LAST step
+      # in this job, behind `cargo test` — and that test step hard-aborts (SIGABRT
+      # at harness start, the known no-lean-link verified-PQ-core guard named in
+      # 870e82ce9e's own message). So this job has been `failure` on EVERY
+      # non-cancelled run since at least 07-22, and the wasm32 build never ran.
+      #
+      # What that cost: the browser bundle stopped building entirely when two
+      # crates pulled `zstd` into the wasm32 graph (compiling x86-64 assembly for
+      # wasm32), and nobody learned for five days. The served artifact stayed at
+      # `PORTABLE_VERSION = 1` while the server moved to 3 and hard-refuses it,
+      # and `NativeDescentWorld.fromBeacon` — which descent_play.rs:703 calls on
+      # every live-beacon day — did not exist in it. The hero "Play" CTA threw a
+      # TypeError before the game opened.
+      #
+      # A GATE BEHIND A RED GATE IS NOT A GATE. This step depends on nothing the
+      # steps below it establish, so ordering it first costs nothing and means a
+      # broken wasm32 build is reported even while something else in this job is
+      # red. If you add a step here, ask whether it must precede this one; the
+      # default answer is no.
+      - name: Build the wasm32 bundle (the oracle + the pages artifact)
+        run: |
+          set -euo pipefail
+          RUSTFLAGS="-C link-arg=-zstack-size=33554432" \
+            wasm-pack build wasm --target web --out-dir pkg --release
+          test -s wasm/pkg/dregg_wasm.d.ts
+
       # THE GATE. The ~78 `#[test]`s (68 in src/, 10 in tests/) are ordinary
       # native tests — they are the ones the manifest bug hid, and they run here.
       - name: cargo test (the ~78 native tests the manifest bug hid)
@@ -212,16 +238,6 @@ jobs:
         working-directory: wasm
         run: wasm-pack test --headless --chrome
 
-      # The browser bundle itself must still BUILD for wasm32 — this is the
-      # artifact pages.yml serves and the one `sdk-ts`'s differential oracle is
-      # built from. A crate whose native tests pass but whose wasm32 build is
-      # broken is still rotted.
-      - name: Build the wasm32 bundle (the oracle + the pages artifact)
-        run: |
-          set -euo pipefail
-          RUSTFLAGS="-C link-arg=-zstack-size=33554432" \
-            wasm-pack build wasm --target web --out-dir pkg --release
-          test -s wasm/pkg/dregg_wasm.d.ts
 
   # EXCLUDED-WORKSPACES GATE (2026-07-17, CI-meaningfulness audit Track A2).
   # The repo-root `Cargo.toml` `exclude` list carries eleven DELIBERATE standalone
