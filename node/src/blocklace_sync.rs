@@ -2472,10 +2472,20 @@ fn belt_gate_bypass_allowed(
     allow_unverified: bool,
     require_lean: bool,
 ) -> bool {
-    if require_lean {
-        return false;
-    }
-    !belt_export_linked || allow_unverified
+    // ⚑ ONE BOOLEAN EXPRESSION, DELIBERATELY — DO NOT REINTRODUCE THE EARLY RETURN.
+    //
+    // This was `if require_lean { return false; }` followed by the disjunction, and that shape
+    // BLINDED invariant 6 (`scripts/ci-invariants/gate-dataflow.py`) at this very site. The
+    // checker inlines a declared discriminator's body when searching the gate-absent region for
+    // a terminal verdict, and a bare `return false` reads as a REFUSAL token. So with this
+    // predicate's early return present, deleting `finality_belt_disposition`'s real
+    // `return Err(FinalityGateUnavailable)` still PASSED — the guard reported
+    // "the non-exempt arm REFUSES (`return false`)", quoting *this function* rather than the
+    // disposition it was supposed to be checking. Measured, not theorised: mutating the refusal
+    // to `Ok(())` left invariant 6 green until this was flattened.
+    //
+    // `coord_gate_bypass_allowed` carries the same note for the same reason.
+    !require_lean && (!belt_export_linked || allow_unverified)
 }
 
 /// Why a poll REFUSED to advance finality. Distinct from every "the verified rule did not finalize
