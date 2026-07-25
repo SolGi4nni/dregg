@@ -63,7 +63,8 @@ use crate::game::{
     goals_of, index_of, opening_board, winner_of,
 };
 use crate::reference::{
-    ATT, AUTO, Board, Coord, Move, REP, VAC, apply_turn, move_valid, round_is_clean,
+    ATT, AUTO, Board, Coord, Decision, Move, REP, VAC, apply_turn, automaton_sense, move_valid,
+    resolve_mid, round_is_clean,
 };
 
 /// The default match seed when a [`SessionConfig`] pins none.
@@ -140,6 +141,109 @@ pub enum Phase {
     Over,
 }
 
+/// **What the automaton DID on the last resolution, and why.**
+///
+/// The daemon's step is the whole mechanic and it used to happen INVISIBLY: the board simply
+/// differed between two renders and the reader was left to diff it by eye. Recorded on a LANDED
+/// resolution only (a refused one restores the previous record — anti-ghost) and read back by
+/// [`AutomataflSession::last_step`].
+#[derive(Clone, Debug)]
+pub struct AutoStep {
+    /// The resolved-turn number this step belongs to (the turn that had just fired).
+    pub turn_no: u64,
+    /// Where the automaton stood BEFORE the step — i.e. after the players' moves landed
+    /// ([`resolve_mid`]), which is the board it actually senses.
+    pub from: Coord,
+    /// Where it stood after. Equal to `from` when it held.
+    pub to: Coord,
+    /// The plain-language reading of the pull that decided it.
+    pub why: String,
+}
+
+/// The on-screen word for a one-step offset. The board is painted row-major with `y = 0` at the
+/// TOP (seat A's goal row), so `+y` is DOWN the screen.
+fn dir_word(off: Coord) -> &'static str {
+    match off {
+        (dx, _) if dx > 0 => "right",
+        (dx, _) if dx < 0 => "left",
+        (_, dy) if dy > 0 => "down",
+        (_, dy) if dy < 0 => "up",
+        _ => "nowhere",
+    }
+}
+
+/// `1 square` / `3 squares`.
+fn squares(d: usize) -> String {
+    if d == 1 {
+        "1 square".to_string()
+    } else {
+        format!("{d} squares")
+    }
+}
+
+/// **Read one axis's [`Decision`] as a sentence** — WHY that axis pulls the way it does. The
+/// variant codes are the reference's (`1 = TowardAttractor, 2 = FromRepulsor, 3 = UnbalancedPair`)
+/// and the distances are the raycast distances the decision was taken on, so this is the actual
+/// reason, not a plausible-sounding gloss.
+fn decision_why(d: &Decision, axis_x: bool) -> String {
+    let (dir, back) = match (axis_x, d.pos) {
+        (true, true) => ("right", "left"),
+        (true, false) => ("left", "right"),
+        (false, true) => ("down", "up"),
+        (false, false) => ("up", "down"),
+    };
+    match d.variant {
+        // UnbalancedPair: an attractor ahead and a repulsor behind, both pushing the same way.
+        3 => format!(
+            "an attractor {} to its {dir} and a repulsor {} to its {back} — both send it {dir}",
+            squares(d.att_dist),
+            squares(d.rep_dist),
+        ),
+        // FromRepulsor: the repulsor it is running from is BEHIND it.
+        2 => format!(
+            "shoved {dir}, away from a repulsor {} to its {back}",
+            squares(d.rep_dist.max(1)),
+        ),
+        // TowardAttractor: the attractor it is going to is AHEAD of it.
+        1 => format!(
+            "pulled {dir}, toward an attractor {} to its {dir}",
+            squares(d.att_dist.max(1)),
+        ),
+        _ => "nothing pulls it on this axis".to_string(),
+    }
+}
+
+/// **The automaton's READ of a board** — where it would step next and why, as
+/// `(destination, reason)`. `destination == board.auto` means it holds.
+///
+/// This is PUBLIC information: it is a pure function of the board every viewer already sees, so it
+/// is safe on a spectator's surface and leaks nothing about a sealed move.
+fn sense_reading(b: &Board) -> (Coord, String) {
+    let s = automaton_sense(b);
+    let (ox, oy) = s.offset;
+    let target = (b.auto.0 + ox, b.auto.1 + oy);
+    let moves = (ox != 0 || oy != 0) && b.in_bounds(target) && b.cell_at(target) == VAC;
+    if !moves {
+        let why = if ox == 0 && oy == 0 {
+            "the two axes pull equally hard, so it holds".to_string()
+        } else if !b.in_bounds(target) {
+            format!(
+                "it leans {} but that is off the board, so it holds",
+                dir_word(s.offset)
+            )
+        } else {
+            format!(
+                "it leans {} but a piece is standing there, so it holds",
+                dir_word(s.offset)
+            )
+        };
+        return (b.auto, why);
+    }
+    let axis_x = ox != 0;
+    let dec = if axis_x { s.x_dec } else { s.y_dec };
+    (target, decision_why(&dec, axis_x))
+}
+
 /// **The automatafl Offering** — hosts one n=2 match with a per-viewer sealed-move surface.
 /// Stateless; the live match lives in [`AutomataflSession`].
 pub struct AutomataflOffering;
@@ -190,6 +294,9 @@ pub struct AutomataflSession {
     /// Total sealed commitments / opened seals across the match (the strictly-monotone counters).
     commits: u64,
     reveals: u64,
+    /// **The automaton's last step** — what the daemon did on the most recent LANDED resolution,
+    /// and the pull that decided it. `None` until the first resolution.
+    last_step: Option<AutoStep>,
     /// The winner, once the automaton reaches a goal square.
     winner: Option<Seat>,
     /// Whether the match is over (a winner, or the clock).
@@ -227,6 +334,28 @@ impl AutomataflSession {
     /// The resolved-turn counter.
     pub fn turn_no(&self) -> u64 {
         self.turn_no
+    }
+
+    /// **What the automaton did on the last resolution** — the daemon's step and the pull that
+    /// decided it. `None` before the first resolution.
+    pub fn last_step(&self) -> Option<&AutoStep> {
+        self.last_step.as_ref()
+    }
+
+    /// **Where the automaton would go if the board did not change** — `(destination, reason)`;
+    /// `destination == board().auto` means it would hold. A pure function of the PUBLIC board.
+    pub fn automaton_read(&self) -> (Coord, String) {
+        sense_reading(&self.board)
+    }
+
+    /// The fewest steps the automaton could possibly need to reach `seat`'s nearest goal corner
+    /// (Manhattan — it moves one orthogonal square per resolution). `0` = it is standing on one.
+    pub fn goal_distance(&self, seat: Seat) -> i32 {
+        seat.goals()
+            .iter()
+            .map(|g| (g.0 - self.board.auto.0).abs() + (g.1 - self.board.auto.1).abs())
+            .min()
+            .unwrap_or(0)
     }
 
     /// The reference board (the committed position).
@@ -431,6 +560,9 @@ impl AutomataflSession {
     /// * every LEGAL target of that source is tagged `good` and highlighted, and carries the
     ///   `{turn: "commit", arg: index}` affordance a click fires (the rook-line highlighting);
     /// * a movable piece carries `{turn: "select", arg: index}` while the viewer has not sealed;
+    /// * once the VIEWER has sealed, the stale rook line is dropped and their own move is painted
+    ///   instead: the source `warn`, the destination `sealed`. Per-viewer, out of the viewer's own
+    ///   slot only — a spectator and the opponent see neither square marked;
     /// * everything else is inert (empty `turn`) and NOT highlighted — a diagonal square, the
     ///   source itself, an out-of-line square: no highlight, no affordance.
     ///
@@ -444,11 +576,19 @@ impl AutomataflSession {
             Some(s) => self.sel[s.idx()].into_iter().collect(),
             None => self.sel.iter().flatten().copied().collect(),
         };
+        // **THE VIEWER'S OWN SEALED MOVE, ON THE BOARD.** Strictly per-viewer: read ONLY out of
+        // `viewer`'s OWN slot, so a spectator (`None`) and the opponent get nothing here — the fog
+        // is untouched. Once a seat HAS sealed, its rook-line highlight is stale (there is no
+        // affordance left on those squares) and painting it lies about what is pending; the two
+        // squares that matter are the piece it sealed and where it sealed it TO.
+        let own_sealed: Option<Move> = viewer.and_then(|s| self.committed[s.idx()]);
         let mut targets: Vec<Coord> = Vec::new();
-        for &src in &selections {
-            for t in self.legal_targets(src) {
-                if !targets.contains(&t) {
-                    targets.push(t);
+        if own_sealed.is_none() {
+            for &src in &selections {
+                for t in self.legal_targets(src) {
+                    if !targets.contains(&t) {
+                        targets.push(t);
+                    }
                 }
             }
         }
@@ -472,6 +612,12 @@ impl AutomataflSession {
 
             let (tag, highlight) = if is_auto {
                 ("accent", true)
+            } else if own_sealed.map(|m| m.to) == Some(c) {
+                // WHERE YOU SEALED IT TO — its own treatment, and only ever on its own seat's
+                // surface.
+                ("sealed", true)
+            } else if own_sealed.map(|m| m.frm) == Some(c) {
+                ("warn", true)
             } else if is_selected {
                 ("warn", true)
             } else if is_target {
@@ -591,6 +737,206 @@ impl AutomataflSession {
         ViewNode::Menu { items }
     }
 
+    /// **THE ONE SENTENCE that says what to do now.** The single largest legibility win on a
+    /// simultaneous-move board: without it the reader has to infer the phase, then infer whether
+    /// they are the one being waited on, then infer which control fires.
+    ///
+    /// Per-viewer, and it discloses NOTHING a viewer may not see: the only facts it reads about the
+    /// OTHER seat are `has sealed` / `has opened`, both of which are already public (the executor
+    /// holds the commitment and the reveal counters in the clear). Never the move.
+    fn next_step_line(&self, viewer: Option<Seat>) -> String {
+        if let Some(w) = self.winner {
+            let mine = viewer == Some(w);
+            return format!(
+                "The match is over: the automaton reached seat {}'s goal corner. {}",
+                w.label(),
+                if viewer.is_none() {
+                    format!("Seat {} wins.", w.label())
+                } else if mine {
+                    "You win.".to_string()
+                } else {
+                    "You lose.".to_string()
+                }
+            );
+        }
+        if self.ended {
+            return "The match is over: the clock ran out with the automaton on nobody's corner — \
+                    a draw."
+                .to_string();
+        }
+        let Some(s) = viewer else {
+            // The spectator's line — the same facts, in the third person.
+            return match self.phase() {
+                Phase::Commit => {
+                    let waiting: Vec<&str> = [Seat::A, Seat::B]
+                        .iter()
+                        .filter(|s| self.committed[s.idx()].is_none())
+                        .map(|s| s.label())
+                        .collect();
+                    format!(
+                        "Both seats are sealing a move at the same time. Still to seal: {}.",
+                        waiting.join(" and ")
+                    )
+                }
+                Phase::Reveal => {
+                    "Both moves are sealed. Each seat now opens its own seal.".to_string()
+                }
+                Phase::Resolve => {
+                    "Both moves are open — the turn is one press from firing.".to_string()
+                }
+                Phase::Over => "The match is over.".to_string(),
+            };
+        };
+        let i = s.idx();
+        let other = s.other();
+        match self.phase() {
+            Phase::Commit if self.committed[i].is_some() => format!(
+                "Sealed. Waiting for seat {} to seal — this page updates by itself, so there is \
+                 nothing to reload.",
+                other.label()
+            ),
+            Phase::Commit if self.sel[i].is_some() => {
+                "Your piece is picked up. Click one of the GLOWING squares to seal a move there — \
+                 the other seat cannot see where you sealed until you both open."
+                    .to_string()
+            }
+            Phase::Commit => {
+                "YOUR MOVE. Click any piece to pick it up; its rook line lights up, and clicking a \
+                 lit square seals a move there. Both seats move at once, so nothing happens on the \
+                 board until you have both sealed."
+                    .to_string()
+            }
+            Phase::Reveal if !self.revealed[i] => {
+                "Both moves are sealed. Press Reveal your sealed move to open yours.".to_string()
+            }
+            Phase::Reveal => format!(
+                "You have opened. Waiting for seat {} to open theirs.",
+                other.label()
+            ),
+            Phase::Resolve => "Both moves are open. Press Resolve the turn — conflicting moves \
+                               drop, the survivors apply, and THEN the automaton takes its step."
+                .to_string(),
+            Phase::Over => "The match is over.".to_string(),
+        }
+    }
+
+    /// **"Where the turn stands"** — the status plaque: which of the three phases is live, who you
+    /// are at this table, whether each seat has sealed / opened, and the one sentence that says
+    /// what to do now.
+    fn standing(&self, viewer: Option<Seat>) -> ViewNode {
+        let phase = self.phase();
+        let phase_pill = |p: Phase, label: &str| ViewNode::Pill {
+            text: label.to_string(),
+            tag: if p == phase { "good" } else { "muted" }.to_string(),
+            slot: None,
+            cases: Vec::<PillCase>::new(),
+        };
+        // A seat's PUBLIC standing this turn (never its move): choosing → sealed → opened.
+        let seat_pill = |s: Seat| {
+            let i = s.idx();
+            let (word, tag) = if self.revealed[i] {
+                ("opened", "good")
+            } else if self.committed[i].is_some() {
+                ("sealed", "accent")
+            } else {
+                ("still choosing", "warn")
+            };
+            let whose = match viewer {
+                Some(v) if v == s => " (you)",
+                Some(_) => " (them)",
+                None => "",
+            };
+            ViewNode::Pill {
+                text: format!("seat {}{whose} · {word}", s.label()),
+                tag: tag.to_string(),
+                slot: None,
+                cases: Vec::<PillCase>::new(),
+            }
+        };
+        let who = match viewer {
+            Some(s) => format!(
+                "You hold seat {} — your goal corners are {}.",
+                s.label(),
+                Self::goal_text(s)
+            ),
+            None => "You are watching this table: BOTH sealed moves are fog to you, and every \
+                     control is inert."
+                .to_string(),
+        };
+        ViewNode::Section {
+            title: "Where the turn stands".to_string(),
+            tag: "accent".to_string(),
+            children: vec![
+                ViewNode::Row(vec![
+                    phase_pill(Phase::Commit, "1 · SEAL"),
+                    phase_pill(Phase::Reveal, "2 · OPEN"),
+                    phase_pill(Phase::Resolve, "3 · RESOLVE"),
+                ]),
+                ViewNode::Text(self.next_step_line(viewer)),
+                ViewNode::Row(vec![seat_pill(Seat::A), seat_pill(Seat::B)]),
+                ViewNode::Text(who),
+            ],
+        }
+    }
+
+    /// **"The automaton"** — the plaque for the piece that decides the match and that neither
+    /// player owns. It answers the two questions the board alone cannot: what did it just do and
+    /// WHY, and — since the read is a pure function of the public board — where it would go next
+    /// if nobody moved. Both are public; nothing here is per-viewer.
+    fn automaton_plaque(&self) -> ViewNode {
+        let auto = self.board.auto;
+        let mut kids = vec![ViewNode::Text(format!(
+            "The automaton stands at ({},{}). Nobody moves it directly — it answers the attractors \
+             and repulsors around it, one square per resolution, and whoever's corner it reaches \
+             wins the match.",
+            auto.0, auto.1
+        ))];
+        kids.push(ViewNode::Text(match &self.last_step {
+            None => "It has not stepped yet — the first resolution is its first step.".to_string(),
+            Some(s) if s.from == s.to => format!(
+                "Last turn (turn {}) it HELD at ({},{}) — {}.",
+                s.turn_no, s.from.0, s.from.1, s.why
+            ),
+            Some(s) => format!(
+                "Last turn (turn {}) it stepped from ({},{}) onto ({},{}) — {}.",
+                s.turn_no, s.from.0, s.from.1, s.to.0, s.to.1, s.why
+            ),
+        }));
+        if !self.ended {
+            let (target, why) = self.automaton_read();
+            kids.push(ViewNode::Text(if target == auto {
+                format!("If nothing moved it would HOLD — {why}.")
+            } else {
+                format!(
+                    "If nothing moved it would step onto ({},{}) — {why}.",
+                    target.0, target.1
+                )
+            }));
+        }
+        // HOW CLOSE IS IT TO ENDING THE MATCH. `1` means the very next resolution can decide it.
+        let dist_pill = |s: Seat| {
+            let d = self.goal_distance(s);
+            let (word, tag) = match d {
+                0 => ("ON a goal corner".to_string(), "bad"),
+                1 => ("1 step from a goal".to_string(), "bad"),
+                2..=3 => (format!("{d} steps from a goal"), "warn"),
+                _ => (format!("{d} steps from a goal"), ""),
+            };
+            ViewNode::Pill {
+                text: format!("seat {} · {word}", s.label()),
+                tag: tag.to_string(),
+                slot: None,
+                cases: Vec::<PillCase>::new(),
+            }
+        };
+        kids.push(ViewNode::Row(vec![dist_pill(Seat::A), dist_pill(Seat::B)]));
+        ViewNode::Section {
+            title: "The automaton".to_string(),
+            tag: "accent".to_string(),
+            children: kids,
+        }
+    }
+
     /// A seat's two goal corners, rendered (`(0,0)·(10,0)`).
     fn goal_text(seat: Seat) -> String {
         seat.goals()
@@ -643,18 +989,22 @@ impl AutomataflSession {
                     cases: Vec::<PillCase>::new(),
                 },
             ]),
+            self.standing(viewer),
             ViewNode::Section {
                 title: "The board".to_string(),
                 tag: String::new(),
                 children: vec![
                     ViewNode::Text(
-                        "R = repulsor · A = attractor · @ = the automaton · a/b = the goals. \
-                         Click a piece to select it — its rook line lights up."
+                        "Attractors (A) are the round brass discs; repulsors (R) are the angular \
+                         pale blades; the automaton (@) is the violet ring; the four brass corners \
+                         are the goals (a/b). Click a piece to pick it up — its rook line lights \
+                         up, and clicking a lit square seals a move there."
                             .to_string(),
                     ),
                     self.board_grid(viewer),
                 ],
             },
+            self.automaton_plaque(),
         ];
         kids.push(self.move_line(Seat::A, viewer));
         kids.push(self.move_line(Seat::B, viewer));
@@ -690,6 +1040,7 @@ impl Offering for AutomataflOffering {
             turn_no: 0,
             commits: 0,
             reveals: 0,
+            last_step: None,
             winner: None,
             ended: false,
             seed,
@@ -906,6 +1257,18 @@ impl Offering for AutomataflOffering {
                 // THE RESOLUTION — the pure transition the AIR re-checks in-circuit: validity
                 // filter → conflict resolve → apply → the automaton's step.
                 let next = apply_turn(&session.board, &[ma, mb]);
+                // THE DAEMON'S STEP, RECORDED. `apply_turn = automaton_step ∘ resolve_mid`, so the
+                // board the automaton actually senses is the MID board (the players' moves already
+                // applied) — read it there, exactly once, and keep the reading for the surface. The
+                // step used to leave no trace at all: the reader saw two boards and had to diff.
+                let mid = resolve_mid(&session.board, &[ma, mb]);
+                let (auto_to, auto_why) = sense_reading(&mid);
+                let step = AutoStep {
+                    turn_no: session.turn_no,
+                    from: mid.auto,
+                    to: auto_to,
+                    why: auto_why,
+                };
                 // THE WIN CHECK — the automaton standing on one of the four stock goal corners
                 // wins for that corner's owner (`reference::win_owner`, the `try_complete_round`
                 // goal scan).
@@ -918,7 +1281,9 @@ impl Offering for AutomataflOffering {
                     session.seal,
                     session.revealed,
                     session.turn_no,
+                    session.last_step.clone(),
                 );
+                session.last_step = Some(step);
                 session.board = next;
                 session.turn_no += 1;
                 session.sel = [None, None];
@@ -948,6 +1313,7 @@ impl Offering for AutomataflOffering {
                         session.seal = before.3;
                         session.revealed = before.4;
                         session.turn_no = before.5;
+                        session.last_step = before.6;
                         session.winner = None;
                         session.ended = false;
                         session.rounds.pop();
