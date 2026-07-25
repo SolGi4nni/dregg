@@ -595,63 +595,13 @@ const PRELUDE: &str = r#"
                 return __deos_editor_add_affordance(String(cardId), JSON.stringify(spec || {})) | 0;
             }
         },
-        // ── THE PRIVATE SERVER SURFACE — `deos.server.*` ───────────────────────────
-        // A hosted userspace program (run headless INSIDE a dregg node) holds state +
-        // offers cap-gated affordances players connect to + fire. The program's setup
-        // registers its surface here; the HOST publishes it for client discovery.
-        //
-        //   defineAffordance({name, required, effects:[...], instance:<hex>?})  — register
-        //     a cap-gated affordance carrying ARBITRARY effects (the keystone). `required`
-        //     is an authority label ("none"/"signature"/"proof"/"either"). Each effect is
-        //     a small object the host decodes into a real `Effect`:
-        //       {type:"setField", cell:<hex>, index:N, value:N}
-        //       {type:"incrementNonce", cell:<hex>}
-        //     `instance` (optional) scopes the affordance to a forked instance (a cell hex
-        //     returned by `fork()`); omit it to register on the root server surface.
-        //     Returns 1 on register, -1 on a malformed spec.
-        //   fork(seedLabel) — INSTANCE the server's world: mint a fresh OPEN instance cell
-        //     (a real verified turn through the host) — a cap-bounded fork for a party or
-        //     session (the membrane-fork). Returns the instance cell id hex (the discovery
-        //     key clients connect to), or "" on refusal. Scope affordances to it by passing
-        //     its hex as `defineAffordance`'s `instance`.
-        //   spawnCell(seedHex, perms) — GM superpower: mint a fresh cell (a real
-        //     CreateCell turn through the host) under the server's authority. Returns
-        //     the new cell id hex, or "" on refusal. `perms` is "open" (default) for a
-        //     fully-open cell.
-        //   grant(toCellHex, onCellHex, required) — GM superpower: grant a capability
-        //     over `onCell` to `toCell` (a real GrantCapability turn). Returns 1/-1.
-        //   setField(cellHex, index, value) — GM superpower: commit a `SetField` NOW on
-        //     any cell the GM governs (a real verified turn through the host). The GM
-        //     uses this to stamp a freshly-spawned cell's stats (level/xp/room), to fire
-        //     an NPC reaction, and to apply a LEVEL-UP after observing XP cross a
-        //     threshold. Returns 1 on commit, -1 on refusal. (Players can't reach this —
-        //     it is a server-side native; a player drives the world only via signed
-        //     turns over the caps the GM granted them.)
-        //   getField(cellHex, index) — read a u64 field off the live ledger (the GM
-        //     observing a player's character, e.g. its XP). Returns the value, or -1 if
-        //     the cell/field is absent.
-        server: {
-            defineAffordance: function(spec) {
-                return __deos_server_define_affordance(JSON.stringify(spec || {})) | 0;
-            },
-            fork: function(seedLabel) {
-                var c = __deos_server_fork(String(seedLabel || ""));
-                return c === "" ? null : c;
-            },
-            spawnCell: function(seedHex, perms) {
-                var c = __deos_server_spawn_cell(String(seedHex || ""), String(perms || "open"));
-                return c === "" ? null : c;
-            },
-            grant: function(toCellHex, onCellHex, required) {
-                return __deos_server_grant(String(toCellHex), String(onCellHex), String(required || "signature")) | 0;
-            },
-            setField: function(cellHex, index, value) {
-                return __deos_server_set_field(String(cellHex), index | 0, value | 0) | 0;
-            },
-            getField: function(cellHex, index) {
-                return __deos_server_get_field(String(cellHex), index | 0) | 0;
-            }
-        },
+        // ── THE PRIVATE SERVER SURFACE — `deos.server.*` — is DELIBERATELY ABSENT from
+        //    this CONFINED base prelude. The `deos.server.*` GM superpowers (spawnCell/
+        //    fork/setField/grant/defineAffordance) are installed ONLY in the operator's
+        //    TRUSTED authoring runtime (see `SERVER_PRELUDE` + `JsRuntime::eval_trusted`);
+        //    a model-authored `run_js`/`run_attached` script evaluates in THIS confined
+        //    global, where `deos.server` is `undefined` and the `__deos_server_*` natives
+        //    are not installed — so the un-`held`-bounded GM path is unreachable (F1).
         // ── THE BOUNDED MULTI-CELL COMPOSE — `deos.compose([...])` ──────────────────
         // The agent's brain decides-and-executes a genuinely useful MULTI-CELL task as ONE
         // all-or-nothing BOUNDED gesture on the live World: e.g. stand up a shared notebook
@@ -681,6 +631,69 @@ const PRELUDE: &str = r#"
     };
 "#;
 
+/// The TRUSTED-ONLY `deos.server.*` GM surface — the operator's private-server
+/// superpowers: `spawnCell`/`fork` (mint OPEN, funded cells), `setField` (write any OPEN
+/// cell), `grant` (hand out caps), `defineAffordance`/`getField`. They take NO `held`
+/// argument and run NO cap tooth (the GM's own-world privilege), so this surface is
+/// installed ONLY by [`JsRuntime::eval_trusted`] (deos-host's `run_program`), AFTER
+/// [`struct@PRELUDE`], and NEVER in the confined global a model-authored `run_js`/
+/// `run_attached` script evaluates in. In the confined surface `deos.server` is
+/// `undefined` AND the `__deos_server_*` natives are not installed, so
+/// `deos.server.spawnCell/grant/setField(...)` throws (F1).
+///
+///   defineAffordance({name, required, effects:[...], instance:<hex>?}) — register a
+///     cap-gated affordance carrying ARBITRARY effects; `required` is an authority label
+///     ("none"/"signature"/"proof"/"either"). Returns 1 on register, -1 on a bad spec.
+///   fork(seedLabel) — INSTANCE the server's world: mint a fresh OPEN instance cell.
+///   spawnCell(seedHex, perms) — GM superpower: mint a fresh cell ("open" default).
+///   grant(toCellHex, onCellHex, required) — GM superpower: grant a capability over
+///     `onCell` to `toCell`. `required` must name an explicit NON-universal authority
+///     (the universal "none"/"open" is refused — F5). Returns 1/-1.
+///   setField(cellHex, index, value) — GM superpower: commit a `SetField` on any cell
+///     the GM governs. getField(cellHex, index) — read a u64 field off the live ledger.
+const SERVER_PRELUDE: &str = r#"
+    deos.server = {
+        defineAffordance: function(spec) {
+            return __deos_server_define_affordance(JSON.stringify(spec || {})) | 0;
+        },
+        fork: function(seedLabel) {
+            var c = __deos_server_fork(String(seedLabel || ""));
+            return c === "" ? null : c;
+        },
+        spawnCell: function(seedHex, perms) {
+            var c = __deos_server_spawn_cell(String(seedHex || ""), String(perms || "open"));
+            return c === "" ? null : c;
+        },
+        grant: function(toCellHex, onCellHex, required) {
+            return __deos_server_grant(String(toCellHex), String(onCellHex), String(required || "signature")) | 0;
+        },
+        setField: function(cellHex, index, value) {
+            return __deos_server_set_field(String(cellHex), index | 0, value | 0) | 0;
+        },
+        getField: function(cellHex, index) {
+            return __deos_server_get_field(String(cellHex), index | 0) | 0;
+        }
+    };
+"#;
+
+/// Which native surface an [`JsRuntime`] eval installs on its fresh global.
+///
+/// The GM `deos.server.*` superpowers (mint OPEN funded cells, write/grant any OPEN cell,
+/// with NO `held` cap tooth) are OPERATOR-only: they are installed ONLY in
+/// [`InstallSurface::Trusted`], never in the [`InstallSurface::Confined`] global a model's
+/// `run_js`/`run_attached`/`run_authoring`/`run_compose` script evaluates in. The confined
+/// surface keeps the bounded model hands — the crawl, `app.fire`, `deos.editor.*`,
+/// `deos.compose` — every one of which enforces the agent's `held` cap tooth.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum InstallSurface {
+    /// The model's hands — NO `deos.server.*` GM surface (`__deos_server_*` natives and
+    /// the `deos.server` object are both absent). Every model-authored eval uses this.
+    Confined,
+    /// The operator's authoring runtime — the FULL surface INCLUDING `deos.server.*`.
+    /// Only `deos-host`'s server-program runner asks for this.
+    Trusted,
+}
+
 /// A real SpiderMonkey runtime with the `deos` binding available.
 pub struct JsRuntime {
     rt: Runtime,
@@ -700,10 +713,34 @@ impl JsRuntime {
         })
     }
 
-    /// Evaluate a JS program against a fresh global that has the `deos` binding. The
-    /// program drives the thread-local applet. Returns the script's result as an i32
-    /// if it produced one (else `None`).
+    /// Evaluate a JS program against a fresh CONFINED global that has the `deos` binding
+    /// — the model's hands. The GM `deos.server.*` superpowers are NOT installed here
+    /// (see [`InstallSurface`]), so a model-authored `run_js`/`run_attached`/
+    /// `run_authoring`/`run_compose` script cannot reach the un-`held`-bounded GM path
+    /// (F1). The program drives the thread-local applet. Returns the script's result as
+    /// an i32 if it produced one (else `None`).
     pub fn eval(&mut self, source: &str) -> Result<Option<i32>, String> {
+        self.eval_with_surface(source, InstallSurface::Confined)
+    }
+
+    /// Evaluate a JS program against a fresh TRUSTED global with the FULL surface —
+    /// INCLUDING the `deos.server.*` GM superpowers. For the OPERATOR's server-program
+    /// authoring runtime ONLY (`deos-host`'s `run_program`), NEVER a model-authored
+    /// script. Every model path routes through [`Self::eval`] (confined), so the GM
+    /// natives live only where an operator explicitly asks for them here.
+    pub fn eval_trusted(&mut self, source: &str) -> Result<Option<i32>, String> {
+        self.eval_with_surface(source, InstallSurface::Trusted)
+    }
+
+    /// The shared eval core — install the native bridge on a fresh global (the base
+    /// surface always, the `__deos_server_*` GM natives ONLY when `surface` is
+    /// [`InstallSurface::Trusted`]), run the prelude (+ the server prelude only when
+    /// trusted), then run `source`.
+    fn eval_with_surface(
+        &mut self,
+        source: &str,
+        surface: InstallSurface,
+    ) -> Result<Option<i32>, String> {
         LAST_NATIVE_ERROR.with(|e| *e.borrow_mut() = None);
 
         let cx = self.rt.cx();
@@ -725,8 +762,12 @@ impl JsRuntime {
             let mut realm = AutoRealm::new_from_handle(cx, global.handle());
             let (g, realm_cx) = realm.global_and_reborrow();
 
-            // Install the native bridge functions on the realm's global.
-            for (name, f, nargs) in [
+            // Install the native bridge functions on the realm's global. The BASE surface
+            // is installed for EVERY eval; the `__deos_server_*` GM natives (the
+            // operator's private-server superpowers) are installed ONLY in the TRUSTED
+            // surface — NEVER in the confined global a model's run_js evaluates in, so the
+            // GM natives are unreachable from the model's hands (F1).
+            let mut natives: Vec<(&'static CStr, RawNative, u32)> = vec![
                 // drive (slice 1)
                 (c"__deos_fire", native_fire as RawNative, 2u32),
                 (c"__deos_get", native_get as RawNative, 1),
@@ -766,40 +807,52 @@ impl JsRuntime {
                     native_editor_add_affordance as RawNative,
                     2,
                 ),
-                // private server (the deos-host surface) — define / spawn / grant
-                (
-                    c"__deos_server_define_affordance",
-                    native_server_define_affordance as RawNative,
-                    1,
-                ),
-                (c"__deos_server_fork", native_server_fork as RawNative, 1),
-                (
-                    c"__deos_server_spawn_cell",
-                    native_server_spawn_cell as RawNative,
-                    2,
-                ),
-                (c"__deos_server_grant", native_server_grant as RawNative, 3),
-                (
-                    c"__deos_server_set_field",
-                    native_server_set_field as RawNative,
-                    3,
-                ),
-                (
-                    c"__deos_server_get_field",
-                    native_server_get_field as RawNative,
-                    2,
-                ),
                 // bounded multi-cell compose (the agent's useful, atomic, held-bounded story)
                 (c"__deos_compose", native_compose as RawNative, 1),
-            ] {
+            ];
+            if surface == InstallSurface::Trusted {
+                // THE GM SUPERPOWERS — the deos-host operator surface (define / fork /
+                // spawn / grant / setField / getField). TRUSTED runtime ONLY; a model's
+                // confined eval never installs these.
+                let server: [(&'static CStr, RawNative, u32); 6] = [
+                    (
+                        c"__deos_server_define_affordance",
+                        native_server_define_affordance as RawNative,
+                        1,
+                    ),
+                    (c"__deos_server_fork", native_server_fork as RawNative, 1),
+                    (
+                        c"__deos_server_spawn_cell",
+                        native_server_spawn_cell as RawNative,
+                        2,
+                    ),
+                    (c"__deos_server_grant", native_server_grant as RawNative, 3),
+                    (
+                        c"__deos_server_set_field",
+                        native_server_set_field as RawNative,
+                        3,
+                    ),
+                    (
+                        c"__deos_server_get_field",
+                        native_server_get_field as RawNative,
+                        2,
+                    ),
+                ];
+                natives.extend(server);
+            }
+            for (name, f, nargs) in natives {
                 let defined = JS_DefineFunction(realm_cx, g, name.as_ptr(), Some(f), nargs, 0);
                 if defined.is_null() {
                     return Err(format!("JS_DefineFunction failed for {name:?}"));
                 }
             }
 
-            // (1) install the prelude on this global; (2) run the user's source.
+            // (1) install the base prelude on this global; (1b) in the TRUSTED surface
+            //     ONLY, also install the `deos.server.*` GM object; (2) run the source.
             eval_on(realm_cx, g, PRELUDE)?;
+            if surface == InstallSurface::Trusted {
+                eval_on(realm_cx, g, SERVER_PRELUDE)?;
+            }
             let r = eval_on(realm_cx, g, source)?;
 
             if let Some(err) = last_native_error() {
@@ -1952,8 +2005,20 @@ unsafe extern "C" fn native_server_grant(
             None => return false,
         };
         // A bad permission label REFUSES the grant (a typo must not mint the broadest
-        // always-allowed capability).
+        // always-allowed capability). F5: a DELIBERATE universal label ("none" → the
+        // always-satisfied `AuthRequired::None`; "open" already fails parse) is ALSO
+        // refused — a grant must name an explicit NON-universal authority, so the GM
+        // cannot hand out a cap anyone may exercise (the universal-cap footgun that
+        // amplifies F1). ("open" surfaces below as the unknown-label refusal.)
         let permissions = match parse_auth_label(&req_label) {
+            Ok(dregg_cell::AuthRequired::None) => {
+                record_error(
+                    "server.grant: refusing a grant of the universal 'none'/'open' authority; \
+                     name an explicit authority (signature/proof/either)"
+                        .into(),
+                );
+                return false;
+            }
             Ok(p) => p,
             Err(_) => return false,
         };

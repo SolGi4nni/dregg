@@ -225,19 +225,24 @@ fn tavern_gm_program(patron_hex: &[String]) -> String {
     }
 
     // ── GRANTS: each patron -> shared board + party + its OWN seat + its OWN stall.
-    //    Deliberately NOT another patron's stall — that is the over-reach foil. ────────
+    //    Deliberately NOT another patron's stall — that is the over-reach foil.
+    //    The granted authority is "either" (signature OR proof), an EXPLICIT
+    //    non-universal authority: it satisfies the OPEN cells' `None`-gated writes (the
+    //    patron holds the ocap edge, signs its turn) while NOT being the universal
+    //    "none"/"open" cap that `deos.server.grant` refuses (F5). A non-holder (another
+    //    patron) still holds no cap edge at all, so it stays refused. ─────────────────
     for (i, holder) in patron_hex.iter().enumerate() {
         js.push_str(&format!(
-            "deos.server.grant(\"{holder}\", board, \"none\");\n"
+            "deos.server.grant(\"{holder}\", board, \"either\");\n"
         ));
         js.push_str(&format!(
-            "deos.server.grant(\"{holder}\", party, \"none\");\n"
+            "deos.server.grant(\"{holder}\", party, \"either\");\n"
         ));
         js.push_str(&format!(
-            "deos.server.grant(\"{holder}\", seat{i}, \"none\");\n"
+            "deos.server.grant(\"{holder}\", seat{i}, \"either\");\n"
         ));
         js.push_str(&format!(
-            "deos.server.grant(\"{holder}\", stall{i}, \"none\");\n"
+            "deos.server.grant(\"{holder}\", stall{i}, \"either\");\n"
         ));
     }
 
@@ -590,7 +595,7 @@ impl<'a> Patron<'a> {
                 },
                 Effect::SetField {
                     cell: self.cells.board,
-                    index: self.board_lane(),
+                    index: self.board_lane() as u64,
                     value: pack_u64(value),
                 },
                 Effect::SetField {
@@ -643,7 +648,7 @@ impl<'a> Patron<'a> {
                 },
                 Effect::SetField {
                     cell: self.cells.party,
-                    index: PARTY_MEMBER_BASE + self.seat_index,
+                    index: (PARTY_MEMBER_BASE + self.seat_index) as u64,
                     value: pack_u64(marker),
                 },
             ],

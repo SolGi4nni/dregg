@@ -289,7 +289,11 @@ fn run_program(
     let applet = AttachedApplet::attach_with(Box::new(sink), server_cell, held, Vec::new(), 0);
     deos_js::js::set_current_target(deos_js::JsTarget::Attached(applet));
 
-    let eval = rt.eval(program_js);
+    // TRUSTED eval — the operator's server program authors through the `deos.server.*`
+    // GM surface (spawnCell/fork/setField/grant/defineAffordance). That surface is
+    // installed ONLY on this trusted path; a model-authored `run_js`/`run_attached`
+    // (deos-hermes) routes through the CONFINED `eval`, where the GM natives are absent.
+    let eval = rt.eval_trusted(program_js);
     // Take the target back (drop it) regardless; we only need the registry.
     let _ = deos_js::js::take_current_target();
     eval?;
