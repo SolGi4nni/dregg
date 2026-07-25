@@ -1,0 +1,238 @@
+# gates-executed.tsv — THE RECORDED EXPECTATION that scripts/check-gates-executed.py enforces.
+#
+# Every row is a test that MUST HAVE EXECUTED. Not "must compile", not "must be present in the
+# tree" — must have appeared in libtest's own output, by name, with a status.
+#
+# WHY THIS FILE EXISTS. On 2026-07-20 a commit about ML-KEM deleted an FFI binding that two
+# committed dregg-circuit-prove tests imported. `cargo test --workspace` compiles every target
+# before running any, so ZERO tests ran in that crate for five days — and every signal we had
+# was satisfied by the ABSENCE of execution. The law-1 ratchet (AIR is authored in Lean, never
+# hand-written in Rust) and all 23 Lean<->Rust emit-equality gates were dark the whole time.
+# docs/WOUND-ci-gates-dead-since-2026-07-20.md is the record.
+#
+# The expected set has to be RECORDED, not derived: a set inferred at runtime from the same
+# source the accident removes will always agree that nothing was expected. That is the whole
+# design. The checker additionally hardcodes the two floors — `law1_enforcement_gate` by name,
+# and >= 23 emit gates — in reviewed CODE, so emptying this file is not a way to go green.
+#
+# COLUMNS (tab-separated; blank lines and '#' comments ignored):
+#   crate      cargo package name; run as `cargo test -p <crate> --test <stem>`
+#   stem       the integration-test file, <crate-dir>/tests/<stem>.rs
+#   test_path  the test's name AS LIBTEST PRINTS IT (module path included, e.g. `teeth::foo`)
+#   expect     `run`     — must report `ok`. `ignored` or absent is RED.
+#              `ignored` — an expensive probe armed elsewhere (armed-teeth.yml runs --ignored);
+#                          it may report `ignored` or `ok`, but it may not VANISH.
+#
+# THE ARMED SET IS THE CRATE THAT WENT DARK. Every row today is `dregg-circuit-prove`: that is
+# where the incident happened and where the two named critical sets live. The `crate` column is
+# here so widening is an append, not a rewrite — other gate-shaped suites exist and are NOT yet
+# armed by this file (circuit/tests/*_gate.rs, exec-lean/tests/*_gate.rs, turn/tests/*_gate.rs,
+# turn-prover, zkoracle-prove, fhegg-fhe, teasting). Saying so is the point: an arming list that
+# does not name what it leaves out reads like coverage it does not have.
+#
+# THE #! DIRECTIVES ARE THE RATCHET. They are cross-checked against the rows below, so trimming
+# rows to make a smaller reality pass requires editing the number too — deliberate, and visible
+# in a diff. They are not decoration.
+#
+# TO ADD A GATE: add the file, then append its rows and bump the counts. The checker requires
+# the `*_emit_gate.rs` glob to EQUAL the emit-gate stems here IN BOTH DIRECTIONS, so a new gate
+# nothing arms is RED — a hand-kept arming list that can only lag does not go red, it quietly
+# covers less, which is exactly how gates go dark.
+#
+# Counted 2026-07-25 against HEAD: 24 binaries, 23 emit gates, 191 tests.
+#
+# crate	stem	test_path	expect
+#!EXPECT_GATE_FILES=24
+#!EXPECT_EMIT_GATES=23
+#!EXPECT_TESTS=191
+dregg-circuit-prove	law1_enforcement_gate	law1_no_new_rust_authored_constraints	run
+dregg-circuit-prove	law1_enforcement_gate	law1_no_new_rust_authored_air_accepts	run
+dregg-circuit-prove	law1_enforcement_gate	teeth::destructuring_is_not_authoring	run
+dregg-circuit-prove	law1_enforcement_gate	teeth::construction_is_authoring	run
+dregg-circuit-prove	law1_enforcement_gate	teeth::the_fifth_assert_zero_dialect_is_visible	run
+dregg-circuit-prove	law1_enforcement_gate	teeth::gpui_when_is_not_a_constraint	run
+dregg-circuit-prove	law1_enforcement_gate	teeth::comments_and_strings_are_not_algebra	run
+dregg-circuit-prove	law1_enforcement_gate	teeth::the_gate_goes_red_on_a_hand_written_air	run
+dregg-circuit-prove	law1_enforcement_gate	teeth::the_scope_reaches_param_compose	run
+dregg-circuit-prove	accumulator_nonrev_emit_gate	accumulator_nonrev_emit_decodes_to_hand_built	run
+dregg-circuit-prove	accumulator_nonrev_emit_gate	honest_non_revocation_proves_and_verifies	run
+dregg-circuit-prove	accumulator_nonrev_emit_gate	forged_accumulator_pi_refuses	run
+dregg-circuit-prove	accumulator_nonrev_emit_gate	forged_alpha_pi_refuses	run
+dregg-circuit-prove	accumulator_nonrev_emit_gate	tampered_alpha_aux_drift_refuses	run
+dregg-circuit-prove	accumulator_nonrev_emit_gate	zero_remainder_refuses	run
+dregg-circuit-prove	accumulator_nonrev_emit_gate	tampered_sum_refuses	run
+dregg-circuit-prove	accumulator_nonrev_emit_gate	tampered_last_row_check_refuses	run
+dregg-circuit-prove	adjacency_membership_emit_gate	adjacency_emit_decodes_to_hand_built	run
+dregg-circuit-prove	adjacency_membership_emit_gate	arity2_chip_lookup_is_hash_2_to_1	run
+dregg-circuit-prove	adjacency_membership_emit_gate	honest_adjacency_proves_and_verifies	run
+dregg-circuit-prove	adjacency_membership_emit_gate	forged_claimed_root_refuses	run
+dregg-circuit-prove	adjacency_membership_emit_gate	tampered_leaf_keeping_root_refuses	run
+dregg-circuit-prove	adjacency_membership_emit_gate	tampered_sibling_keeping_root_refuses	run
+dregg-circuit-prove	adjacency_membership_emit_gate	nonconsecutive_wide_bracket_refuses	run
+dregg-circuit-prove	adjacency_membership_emit_gate	catch_tooth_is_precisely_load_bearing	run
+dregg-circuit-prove	adjacency_membership_emit_gate	forged_top_level_ordering_refuses	run
+dregg-circuit-prove	adjacency_membership_emit_gate	forged_reconstructed_index_refuses	run
+dregg-circuit-prove	attested_fact_membership_emit_gate	lean_bytes_parse_dispatch_and_shape	run
+dregg-circuit-prove	attested_fact_membership_emit_gate	the_honest_witness_proves_and_verifies	run
+dregg-circuit-prove	attested_fact_membership_emit_gate	a_prover_chosen_fact_commitment_is_unsat	run
+dregg-circuit-prove	attested_fact_membership_emit_gate	a_non_member_fact_hash_under_an_honest_root_is_unsat	run
+dregg-circuit-prove	attested_fact_membership_emit_gate	a_broken_level_tie_is_unsat	run
+dregg-circuit-prove	attested_fact_membership_emit_gate	a_forged_state_root_pi_is_unsat	run
+dregg-circuit-prove	attested_fact_membership_emit_gate	the_commitment_lanes_are_derived_by_the_prover_not_witnessed	run
+dregg-circuit-prove	attested_fact_membership_emit_gate	a_forged_sibling_under_an_honest_root_is_unsat	run
+dregg-circuit-prove	bilateral_aggregation_emit_gate	bilateral_aggregation_emit_decodes_to_hand_built	run
+dregg-circuit-prove	bilateral_aggregation_emit_gate	honest_aggregation_proves_and_verifies	run
+dregg-circuit-prove	bilateral_aggregation_emit_gate	forged_turn_identity_pi_refuses	run
+dregg-circuit-prove	bilateral_aggregation_emit_gate	forged_middle_row_identity_refuses	run
+dregg-circuit-prove	bilateral_aggregation_emit_gate	two_agent_cells_refuse	run
+dregg-circuit-prove	bilateral_aggregation_emit_gate	forged_active_counter_refuses	run
+dregg-circuit-prove	bridge_action_emit_gate	bridge_action_emit_decodes_to_hand_built	run
+dregg-circuit-prove	bridge_action_emit_gate	honest_bridge_action_proves_and_verifies	run
+dregg-circuit-prove	bridge_action_emit_gate	forged_public_input_refuses	run
+dregg-circuit-prove	bridge_action_emit_gate	swapped_nullifier_recipient_refuses	run
+dregg-circuit-prove	bridge_action_emit_gate	broken_padding_continuity_refuses	run
+dregg-circuit-prove	committed_threshold_emit_gate	committed_threshold_emit_decodes_to_hand_built	run
+dregg-circuit-prove	committed_threshold_emit_gate	arity2_chip_lookup_is_hash_2_to_1	run
+dregg-circuit-prove	committed_threshold_emit_gate	honest_committed_threshold_proves_and_verifies	run
+dregg-circuit-prove	committed_threshold_emit_gate	forged_threshold_commitment_pi_refuses	run
+dregg-circuit-prove	committed_threshold_emit_gate	forged_fact_commitment_pi_refuses	run
+dregg-circuit-prove	committed_threshold_emit_gate	value_below_threshold_refuses	run
+dregg-circuit-prove	committed_threshold_emit_gate	forged_poseidon2_result_refuses	run
+dregg-circuit-prove	committed_threshold_emit_gate	tampered_private_value_refuses	run
+dregg-circuit-prove	committed_threshold_emit_gate	nonbinary_bit_refuses	run
+dregg-circuit-prove	committed_threshold_emit_gate	forge_committed_value_neq_fact_rejects	run
+dregg-circuit-prove	derivation_emit_gate	derivation_emit_decodes_to_hand_built	run
+dregg-circuit-prove	derivation_emit_gate	honest_derivation_proves_and_verifies	run
+dregg-circuit-prove	derivation_emit_gate	forged_derived_hash_column_refuses	run
+dregg-circuit-prove	derivation_emit_gate	forged_conclusion_pi_refuses	run
+dregg-circuit-prove	derivation_emit_gate	forged_state_root_pi_refuses	run
+dregg-circuit-prove	derivation_emit_gate	forged_body_fact_hash_pi_refuses	run
+dregg-circuit-prove	derivation_emit_gate	no_body_facts_refuses	run
+dregg-circuit-prove	derivation_emit_gate	out_of_range_gte_high_bit_refuses	run
+dregg-circuit-prove	dfa_routing_emit_gate	dfa_routing_emit_decodes_to_hand_built	run
+dregg-circuit-prove	dfa_routing_emit_gate	dfa_chip_lookups_are_the_named_hashes	run
+dregg-circuit-prove	dfa_routing_emit_gate	honest_route_proves_and_verifies	run
+dregg-circuit-prove	dfa_routing_emit_gate	forged_final_state_refuses	run
+dregg-circuit-prove	dfa_routing_emit_gate	forged_route_commitment_refuses	run
+dregg-circuit-prove	dfa_routing_emit_gate	forged_table_commitment_seed_refuses	run
+dregg-circuit-prove	dfa_routing_emit_gate	forbidden_edge_refuses	run
+dregg-circuit-prove	dfa_routing_emit_gate	transition_gate_is_load_bearing	run
+dregg-circuit-prove	dfa_routing_emit_gate	forged_running_hash_refuses	run
+dregg-circuit-prove	dfa_routing_emit_gate	perf_prove_verify_breakdown	ignored
+dregg-circuit-prove	effect_action_emit_gate	effect_action_emit_decodes_to_hand_built	run
+dregg-circuit-prove	effect_action_emit_gate	honest_burn_binding_proves_and_verifies	run
+dregg-circuit-prove	effect_action_emit_gate	honest_revoke_binding_proves_and_verifies	run
+dregg-circuit-prove	effect_action_emit_gate	burn_forged_pi_limb_refuses	run
+dregg-circuit-prove	effect_action_emit_gate	burn_broken_subtraction_refuses	run
+dregg-circuit-prove	effect_action_emit_gate	burn_wrong_disclosure_flag_refuses	run
+dregg-circuit-prove	effect_action_emit_gate	burn_stashed_later_row_refuses	run
+dregg-circuit-prove	effect_action_emit_gate	revoke_forged_pi_limb_refuses	run
+dregg-circuit-prove	effect_action_emit_gate	mutation_canaries_bite_named_teeth	run
+dregg-circuit-prove	effect_action_emit_gate	revoke_stashed_later_row_refuses	run
+dregg-circuit-prove	fold_emit_gate	fold_emit_decodes_to_hand_built	run
+dregg-circuit-prove	fold_emit_gate	arity7_chip_lookup_is_hash_fact	run
+dregg-circuit-prove	fold_emit_gate	honest_fold_proves_and_verifies	run
+dregg-circuit-prove	fold_emit_gate	forged_fact_hash_refuses	run
+dregg-circuit-prove	fold_emit_gate	membership_root_mismatch_refuses	run
+dregg-circuit-prove	fold_emit_gate	broken_removal_increment_refuses	run
+dregg-circuit-prove	fold_emit_gate	inflated_removal_count_refuses	run
+dregg-circuit-prove	fold_emit_gate	forged_transition_hash_refuses	run
+dregg-circuit-prove	fold_emit_gate	removal_without_valid_hash_refuses	run
+dregg-circuit-prove	fold_emit_gate	broken_pi4_carrier_constancy_refuses	run
+dregg-circuit-prove	garbled_eval_emit_gate	garbled_eval_emit_decodes_to_hand_built	run
+dregg-circuit-prove	garbled_eval_emit_gate	honest_garbled_eval_proves_and_verifies	run
+dregg-circuit-prove	garbled_eval_emit_gate	forged_commitment_pi_refuses	run
+dregg-circuit-prove	garbled_eval_emit_gate	forged_table_entry_refuses	run
+dregg-circuit-prove	garbled_eval_emit_gate	non_boolean_selector_refuses	run
+dregg-circuit-prove	garbled_eval_emit_gate	ambiguous_gate_type_refuses	run
+dregg-circuit-prove	garbled_eval_emit_gate	broken_wire_chaining_refuses	run
+dregg-circuit-prove	garbled_eval_emit_gate	forged_gate_index_delta_refuses	run
+dregg-circuit-prove	ivc_state_transition_emit_gate	ivc_emit_decodes_to_hand_built	run
+dregg-circuit-prove	ivc_state_transition_emit_gate	arity4_chip_lookup_is_extend_accumulated_hash	run
+dregg-circuit-prove	ivc_state_transition_emit_gate	honest_ivc_chain_proves_and_verifies	run
+dregg-circuit-prove	ivc_state_transition_emit_gate	forged_published_hash_refuses	run
+dregg-circuit-prove	ivc_state_transition_emit_gate	forged_seed_refuses	run
+dregg-circuit-prove	ivc_state_transition_emit_gate	forged_step_count_refuses	run
+dregg-circuit-prove	ivc_state_transition_emit_gate	fabricated_new_hash_refuses	run
+dregg-circuit-prove	merkle_membership_emit_gate	merkle_membership_emit_decodes_to_hand_built	run
+dregg-circuit-prove	merkle_membership_emit_gate	arity4_chip_lookup_is_hash_4_to_1	run
+dregg-circuit-prove	merkle_membership_emit_gate	honest_membership_proves_and_verifies	run
+dregg-circuit-prove	merkle_membership_emit_gate	forged_claimed_root_refuses	run
+dregg-circuit-prove	merkle_membership_emit_gate	tampered_leaf_keeping_root_refuses	run
+dregg-circuit-prove	merkle_membership_emit_gate	tampered_sibling_keeping_root_refuses	run
+dregg-circuit-prove	merkle_membership_emit_gate	forged_parent_digest_refuses	run
+dregg-circuit-prove	multi_step_emit_gate	multi_step_emit_decodes_to_hand_built	run
+dregg-circuit-prove	multi_step_emit_gate	arity2_chip_lookup_is_hash_2_to_1	run
+dregg-circuit-prove	multi_step_emit_gate	honest_chain_proves_and_verifies	run
+dregg-circuit-prove	multi_step_emit_gate	tampered_derived_refuses	run
+dregg-circuit-prove	multi_step_emit_gate	broken_chain_link_refuses	run
+dregg-circuit-prove	multi_step_emit_gate	forged_initial_root_refuses	run
+dregg-circuit-prove	multi_step_emit_gate	forged_final_hash_refuses	run
+dregg-circuit-prove	note_spending_emit_gate	note_spend_emit_decodes_to_production_lowering	run
+dregg-circuit-prove	note_spending_emit_gate	honest_note_spend_proves_and_verifies	run
+dregg-circuit-prove	note_spending_emit_gate	forged_nullifier_pi_refuses	run
+dregg-circuit-prove	note_spending_emit_gate	forged_merkle_root_pi_refuses	run
+dregg-circuit-prove	note_spending_emit_gate	forged_mint_hash_pi_refuses	run
+dregg-circuit-prove	note_spending_emit_gate	tampered_merkle_sibling_refuses	run
+dregg-circuit-prove	poseidon2_hash_emit_gate	poseidon2_hash_emit_decodes_without_rust_constraints	run
+dregg-circuit-prove	poseidon2_hash_emit_gate	arity2_chip_lookup_is_hash_2_to_1	run
+dregg-circuit-prove	poseidon2_hash_emit_gate	honest_hash_proves_and_verifies	run
+dregg-circuit-prove	poseidon2_hash_emit_gate	forged_digest_column_refuses	run
+dregg-circuit-prove	poseidon2_hash_emit_gate	tampered_preimage_keeping_digest_refuses	run
+dregg-circuit-prove	poseidon2_hash_emit_gate	forged_digest_pi_refuses	run
+dregg-circuit-prove	poseidon2_hash_emit_gate	forged_preimage_pi_refuses	run
+dregg-circuit-prove	predicates_arithmetic_emit_gate	predicate_ge_emit_decodes_to_hand_built	run
+dregg-circuit-prove	predicates_arithmetic_emit_gate	honest_ge_proves_and_verifies	run
+dregg-circuit-prove	predicates_arithmetic_emit_gate	value_below_threshold_refuses_on_range	run
+dregg-circuit-prove	predicates_arithmetic_emit_gate	inconsistent_diff_refuses_on_c5	run
+dregg-circuit-prove	predicates_arithmetic_emit_gate	tampered_slot_refuses_on_c3	run
+dregg-circuit-prove	predicates_arithmetic_emit_gate	forged_threshold_pi_refuses_on_c1	run
+dregg-circuit-prove	predicates_arithmetic_emit_gate	forged_fact_pi_refuses_on_c2	run
+dregg-circuit-prove	predicates_arithmetic_emit_gate	forge_committed_value_neq_fact_rejects	run
+dregg-circuit-prove	predicates_comparison_emit_gate	every_sibling_dispatches_with_both_weld_legs	run
+dregg-circuit-prove	predicates_comparison_emit_gate	le_round_trip	run
+dregg-circuit-prove	predicates_comparison_emit_gate	gt_round_trip	run
+dregg-circuit-prove	predicates_comparison_emit_gate	lt_round_trip	run
+dregg-circuit-prove	predicates_comparison_emit_gate	neq_round_trip	run
+dregg-circuit-prove	predicates_comparison_emit_gate	inrange_round_trip	run
+dregg-circuit-prove	predicates_relational_compound_emit_gate	compound_emit_decodes_to_hand_built	run
+dregg-circuit-prove	predicates_relational_compound_emit_gate	relational_emit_decodes_to_hand_built	run
+dregg-circuit-prove	predicates_relational_compound_emit_gate	arity2_chip_lookup_is_hash_2_to_1	run
+dregg-circuit-prove	predicates_relational_compound_emit_gate	compound_honest_proves_and_verifies	run
+dregg-circuit-prove	predicates_relational_compound_emit_gate	relational_honest_proves_and_verifies	run
+dregg-circuit-prove	predicates_relational_compound_emit_gate	compound_forged_composed_refuses	run
+dregg-circuit-prove	predicates_relational_compound_emit_gate	compound_nonbinary_subresult_refuses	run
+dregg-circuit-prove	predicates_relational_compound_emit_gate	compound_broken_subproof_binding_refuses	run
+dregg-circuit-prove	predicates_relational_compound_emit_gate	compound_no_operator_refuses	run
+dregg-circuit-prove	predicates_relational_compound_emit_gate	relational_forged_commitment_refuses	run
+dregg-circuit-prove	predicates_relational_compound_emit_gate	relational_out_of_range_diff_refuses	run
+dregg-circuit-prove	predicates_relational_compound_emit_gate	relational_forged_result_bit_refuses	run
+dregg-circuit-prove	predicates_relational_compound_emit_gate	relational_range_decoupled_diff_forge_refuses	run
+dregg-circuit-prove	predicates_relational_compound_emit_gate	relational_unbounded_value_b_forge_refuses	run
+dregg-circuit-prove	predicates_relational_compound_emit_gate	relational_eq_decoupled_forge_refuses	run
+dregg-circuit-prove	presentation_emit_gate	presentation_emit_decodes_to_hand_built	run
+dregg-circuit-prove	presentation_emit_gate	honest_fresh_token_proves_and_verifies	run
+dregg-circuit-prove	presentation_emit_gate	expired_token_refuses_on_diff_range	run
+dregg-circuit-prove	presentation_emit_gate	just_expired_token_refuses_on_hi_range	run
+dregg-circuit-prove	presentation_emit_gate	inconsistent_diff_refuses_on_binding_gate	run
+dregg-circuit-prove	presentation_emit_gate	forged_summary_pi_refuses	run
+dregg-circuit-prove	presentation_emit_gate	forged_verifier_height_pi_refuses	run
+dregg-circuit-prove	quantified_absence_emit_gate	quantified_absence_emit_decodes_to_hand_built	run
+dregg-circuit-prove	quantified_absence_emit_gate	honest_witness_proves_and_verifies	run
+dregg-circuit-prove	quantified_absence_emit_gate	tampered_elem_refuses_on_diff_gate	run
+dregg-circuit-prove	quantified_absence_emit_gate	tampered_quotient_refuses_on_prod_gate	run
+dregg-circuit-prove	quantified_absence_emit_gate	forged_product_without_reduction_refuses	run
+dregg-circuit-prove	quantified_absence_emit_gate	tampered_remainder_refuses_on_sum_gate	run
+dregg-circuit-prove	quantified_absence_emit_gate	forged_acc_all_refuses_on_boundary	run
+dregg-circuit-prove	quantified_absence_emit_gate	forged_alpha_refuses_on_alpha_pin	run
+dregg-circuit-prove	temporal_predicate_emit_gate	temporal_predicate_emit_decodes_to_hand_built	run
+dregg-circuit-prove	temporal_predicate_emit_gate	honest_temporal_run_proves_and_verifies	run
+dregg-circuit-prove	temporal_predicate_emit_gate	below_threshold_value_refuses	run
+dregg-circuit-prove	temporal_predicate_emit_gate	forged_threshold_pi_refuses	run
+dregg-circuit-prove	temporal_predicate_emit_gate	forged_final_state_root_pi_refuses	run
+dregg-circuit-prove	temporal_predicate_emit_gate	forged_padded_len_pi_refuses	run
+dregg-circuit-prove	temporal_predicate_emit_gate	broken_accumulator_counter_refuses	run
+dregg-circuit-prove	temporal_predicate_emit_gate	mutated_last_row_threshold_refuses	run
+dregg-circuit-prove	turn_chain_emit_gate	lean_bytes_parse_dispatch_and_shape	run
+dregg-circuit-prove	turn_chain_emit_gate	production_witness_padding_proves_and_verifies	run
+dregg-circuit-prove	turn_chain_emit_gate	forged_history_fixtures_are_rejected	run

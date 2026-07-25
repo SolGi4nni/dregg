@@ -34,7 +34,9 @@ CI runs `cargo test --workspace` (`.github/workflows/ci.yml:431` macOS, `:456` L
 
 * `circuit-prove/tests/law1_enforcement_gate.rs` — the ratchet enforcing the codebase's central law
   (**AIR is authored in Lean, never hand-written in Rust**)
-* ~25 `circuit-prove/tests/*_emit_gate.rs` — every Lean↔Rust emit **equality** gate
+* **23** `circuit-prove/tests/*_emit_gate.rs` — every Lean↔Rust emit **equality** gate. (An earlier
+  draft of this doc said "~25". Counted 2026-07-25: it is **23**, and that number is now the
+  hardcoded floor in `scripts/check-gates-executed.py`.)
 
 `armed-teeth.yml` survived only because it names its 8 binaries explicitly with `--test`.
 
@@ -80,15 +82,56 @@ CI runs `cargo test --workspace` (`.github/workflows/ci.yml:431` macOS, `:456` L
   hundreds of fake violations from **gpui `.when(cond, …)` in the cockpit**, so those forms only join in
   a file mentioning `AirBuilder`, pinned by its own tooth.
 * Give `param-compose` a Lean emit route, then delete it. — **in progress**
-* **Add a CI check that the test suite actually EXECUTED**, not merely that the job exited 0. This is the
-  standing gap: every other repair here is downstream of the fact that *absence of execution satisfied
-  every signal we had*.
+* ~~Add a CI check that the test suite actually EXECUTED~~ **DONE.** `scripts/check-gates-executed.py`
+  + the recorded expectation `scripts/gates-executed.tsv` (24 binaries / 191 tests), wired as the
+  standalone `gates-executed` job in `.github/workflows/ci.yml`. It does not read an exit code: it runs
+  each gate as its **own** `cargo test -p <crate> --test <stem>` — the `armed-teeth.yml` shape, which is
+  why that lane survived these five days — and then **parses libtest's own output**, requiring a
+  `running N tests` / `test result:` pair per binary and every recorded test name present with status
+  `ok`. A compile error, a `#[cfg]` compile-out, a rename, an `#[ignore]`, and a filtered-to-zero run
+  (**cargo exit 0**) are each a distinct RED with a distinct message. The two floors — `law1_enforcement_gate`
+  by name, and **≥ 23** emit gates — are hardcoded in the checker, so emptying the manifest is not a
+  route to green; and the `*_emit_gate.rs` glob must **equal** the manifest in both directions, so a new
+  gate that nothing arms is also RED. `--self-test` runs on every invocation against synthetic fixtures
+  (deleted gate, unarmed gate, trimmed manifest, compile-error log, filtered-to-zero log, silenced test,
+  red test, and a positive control), because shipping an unfalsifiable guard *against unfalsifiable
+  guards* would be the joke telling itself.
 
-## A correction to this record
+## A correction to this record — and then a correction to THAT
 
-An earlier draft cited a `dregg-lean-ffi` build-script regression (`FanoutVerdict` et al. unresolved)
-as a second, earlier CI blocker. **That was read from a stale CI log.** `build_parallel.rs` landed in
-`526e85d4bb` and is tracked; `build.rs:43` has `mod build_parallel;`; and `cargo check -p
-dregg-circuit-prove --all-targets` → EXIT=0 independently proves the build script compiles at HEAD.
-The FriLedger cascade was the real blocker. Recorded because a wound doc that overstates is the same
-failure mode as a docstring that overstates.
+An earlier draft cited a `dregg-lean-ffi` build-script regression (`FanoutVerdict` et al. unresolved) as
+a second CI blocker. I then "corrected" that, calling it **read from a stale CI log**, on the grounds
+that `build_parallel.rs` was tracked, the `mod` declaration was present, and my own
+`cargo check -p dregg-circuit-prove --all-targets` returned EXIT=0.
+
+**That correction was itself wrong, and the way it was wrong is the more useful lesson.** Measured:
+
+| commit | time | occurrences of `FanoutVerdict`/`BoundedRun`/`fanout_verdict`/`LAKE_FANOUT_ENV` in `build_parallel.rs` |
+|---|---|---|
+| `b2ef7834` | 07-25 03:13 | **0** |
+| `16f77193` | 07-25 14:37 | **22** |
+
+The symbols genuinely were **absent** when the 07:14 CI run failed on them. They landed later. I checked
+the tree at ~13:00, found them present, saw my local build green, and concluded the log was stale.
+
+**I compared a PAST CI run against a PRESENT tree.** "Local-green now" does not refute "CI-red then" —
+it is not evidence about the same object. A build-script break that is fixed by lunchtime still zeroed
+every gate in the morning's run. Recorded because this doc exists to stop exactly that kind of reasoning,
+and it caught me inside its own pages.
+
+## ⚑ CI IS STILL NOT RUNNING THE SUITE — a second, independent cause (live 2026-07-25)
+
+The FriLedger cascade is fixed. The suite still does not run:
+
+1. **The Lean-seed arm step fails first.** On the last three `ci.yml` runs, `Test (ubuntu-latest)` and
+   `Test (macos-latest)` died at **"Arm the Lean test gate"**, *before* `cargo test --workspace`.
+   `scripts/fetch-lean-seed.sh` exits **35** (curl SSL/connect), the archive is absent, the step
+   `exit 1`s. **A transient network error is being converted into "zero tests ran"** — and reported
+   identically to any other red.
+2. **When it did start, it aborted at compile time** (07-25 16:07: `could not compile grain-verify-wasm`).
+   Zero tests ran.
+3. **`ci.yml`'s last 60 runs: 0 success, 16 failure, 43 cancelled.** Red is the *steady state*, so red
+   currently carries **no signal**. A new red check helps only once this is true again.
+
+Within the armed set, by contrast, **nothing is dark**: all 24 binaries execute, **191/191 tests pass**,
+law-1 ratchet included.

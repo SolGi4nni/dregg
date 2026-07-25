@@ -492,6 +492,74 @@ jobs:
           CARGO_PROFILE_TEST_DEBUG: "0"
         run: cargo test -p deos-zed --no-default-features --features firmament
 
+  # ════════════════════════════════════════════════════════════════════════════════════
+  # THE EXECUTION GATE — the one job that can tell "the tests passed" from "the tests
+  # never ran". docs/WOUND-ci-gates-dead-since-2026-07-20.md.
+  #
+  # THE INCIDENT. On 2026-07-20 a commit about ML-KEM deleted a Lean→Rust FFI binding two
+  # committed `dregg-circuit-prove` tests still imported. `cargo test --workspace` COMPILES
+  # EVERY TARGET BEFORE RUNNING ANY, so one un-compilable test file meant ZERO tests ran in
+  # that crate — for five days. The law-1 ratchet (AIR is AUTHORED IN LEAN, never
+  # hand-written in Rust) and all 23 Lean↔Rust `*_emit_gate` equality gates were dark the
+  # whole time, and NOTHING SAID SO: absence of execution satisfied every signal we had.
+  #
+  # WHY IT IS A SEPARATE JOB, NOT A STEP IN `test` ABOVE. A step appended to the workspace
+  # test job inherits the workspace's compile fate — the exact coupling that produced the
+  # blackout. `armed-teeth.yml` survived those five days for one reason: it names its
+  # binaries with `--test`, so it does not. This job takes that shape and adds the half
+  # armed-teeth does not have — it PARSES what libtest reported and matches it against a set
+  # RECORDED IN THE REPO (scripts/gates-executed.tsv, 24 binaries / 191 tests), with the two
+  # floors (`law1_enforcement_gate` by name, ≥23 emit gates) hardcoded in the checker so
+  # emptying the manifest is not a way to go green.
+  #
+  # It is deliberately NOT `continue-on-error` and deliberately NOT gated on the Lean seed:
+  # these gates do not need an archive, and a gate that can only run when infrastructure is
+  # healthy is a gate that is off exactly when you need it.
+  #
+  # The checker runs its own `--self-test` first, on EVERY invocation — synthetic fixtures
+  # for a deleted gate, an unarmed new gate, a trimmed manifest, a compile-error log, a
+  # filtered-to-zero run (cargo exit 0!), a silenced test, a red test, plus a positive
+  # control. Shipping an unfalsifiable guard against unfalsifiable guards would be a joke
+  # telling itself, so the guard proves it can go red before it says anything about the tree.
+  gates-executed:
+    name: Execution gate (the law-1 ratchet + 23 emit gates actually RAN)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true   # include_str!'d staged registries live in LFS (.gitattributes)
+
+      # Same disk reclaim as the test job: the hosted runner ships ~14 GB free on /.
+      - name: Reclaim runner disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /usr/local/lib/android /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/powershell /usr/share/swift
+          sudo docker image prune --all --force || true
+          df -h /
+
+      # STATIC-ONLY SELF-PROOF, BEFORE ANY TOOLCHAIN. If the Rust setup below ever breaks,
+      # this step has already run and the log already shows the guard biting — the failure
+      # mode of a guard must not be silence.
+      - name: Prove the execution gate can go RED (self-test; no cargo, no toolchain)
+        run: python3 scripts/check-gates-executed.py --self-test
+
+      # No apt step on purpose: `dregg-circuit-prove`'s graph is plonky3 + wgpu, none of which
+      # needs the gpui/servo system headers the `test` job installs, and the armed set contains
+      # no GPU binary. If a link here ever fails for a missing system library, copy the `test`
+      # job's apt line rather than narrowing the armed set.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-06-21
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Every named gate EXECUTED (parsed from libtest, not inferred from an exit code)
+        env:
+          CARGO_PROFILE_DEV_DEBUG: "0"
+          CARGO_PROFILE_TEST_DEBUG: "0"
+        run: python3 scripts/check-gates-executed.py
+
   # The LIVE agent-brain transport lane. The default build is 100% the recorded
   # `RecordedOpenAICaller`; the REAL `reqwest`-over-TCP transport
   # (`LiveOpenAICompatCaller`) is exercised only under `--features live-brain`, so it
