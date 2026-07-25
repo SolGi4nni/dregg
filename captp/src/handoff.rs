@@ -59,6 +59,19 @@ pub enum HandoffError {
     /// The recipient's ML-DSA-65 (post-quantum) half of the HYBRID presentation is
     /// invalid against the introducer-PINNED recipient ML-DSA key. Fail-closed.
     InvalidRecipientPqSignature,
+    /// The wire-supplied introducer public key does NOT correspond to the
+    /// certificate's claimed `introducer` id (the CLASSICAL live path's id↔pk
+    /// binding, F-1). `validate_handoff` verifies the introducer signature against a
+    /// wire-supplied `introducer_pk`, then checks the claimed `introducer` is a known
+    /// federation — but NEITHER binds `introducer_pk` to `cert.introducer`. Without
+    /// this, a presenter sets `introducer = <trusted F>`, signs the cert with their
+    /// OWN key, and supplies their own pk: the signature verifies (it covers
+    /// `introducer = F`) and F is trusted, so the handoff is falsely ATTRIBUTED to F
+    /// which never signed. The classical path therefore requires a LEGACY ed25519 id
+    /// (`introducer.0 == introducer_pk.0`); a HYBRID introducer id commits to an
+    /// ML-DSA key absent from the classical wire and MUST use `validate_handoff_hybrid`
+    /// (which binds id↔pk via `verify_committed_ml_dsa`), so it fails CLOSED here.
+    IntroducerKeyMismatch,
     /// The introducer is not a recognized/trusted federation.
     UntrustedIntroducer,
     /// The swiss number in the certificate is not in the target's swiss table.
@@ -110,6 +123,11 @@ impl std::fmt::Display for HandoffError {
             HandoffError::InvalidRecipientPqSignature => write!(
                 f,
                 "invalid recipient ML-DSA (post-quantum) half on handoff presentation"
+            ),
+            HandoffError::IntroducerKeyMismatch => write!(
+                f,
+                "introducer public key does not correspond to the certificate's introducer id \
+                 (classical handoff requires a legacy ed25519 id == pk; a hybrid id must use the hybrid path)"
             ),
             HandoffError::UntrustedIntroducer => {
                 write!(f, "introducer is not a trusted federation")
@@ -702,22 +720,67 @@ pub struct HandoffAcceptance {
 /// `allowed_effects` are the certificate's granted (attenuated) authority.
 /// The wire tag of an `AuthRequired` for the verified Lean handoff gate (mirrors
 /// `cell/src/permissions.rs::AuthRequired` constructor order, which the Lean `AuthReq` shares):
-/// `0=None 1=Signature 2=Proof 3=Either 4=Impossible 5+(vk_hash digest)=Custom`. The `Custom`
-/// vk_hash is folded to a small `u64` (the Lean rule compares Custom only for tag equality, so any
-/// injective fold of the 32 bytes preserves the verdict; we use the first 8 bytes as a `u64`).
-fn auth_required_tag(a: &AuthRequired) -> u64 {
+/// `0=None 1=Signature 2=Proof 3=Either 4=Impossible 5+(vk_hash)=Custom`. The `Custom` tag carries
+/// the FULL 32-byte `vk_hash` INJECTIVELY as the decimal of `5 + BE(vk_hash)` (a value up to
+/// 256 bits). The verified Lean gate decodes it as `custom (n - 5)` over an UNBOUNDED `Nat`
+/// (`Dregg2.Exec.DistributedExports.authOfTag`) and compares Custom identities by equality
+/// (`CapTPConcrete.handoffNonAmplifyingC`), so the ENTIRE 256-bit identity is the comparison key —
+/// two Custom predicates differing in ANY byte get DISTINCT tags. (F-2: previously only
+/// `vk_hash[..8]` was folded to a `u64`, so two distinct Customs agreeing in their first 8 bytes
+/// collided to the SAME tag; the gate then judged `Custom{h1} == Custom{h2}` and admitted an
+/// authority never held. The Lean decode was already full-width-faithful — the truncation was
+/// entirely here — so restoring injectivity is a Rust-wire-only change, no Lean/AIR follow-up.)
+fn auth_required_tag(a: &AuthRequired) -> String {
     match a {
-        AuthRequired::None => 0,
-        AuthRequired::Signature => 1,
-        AuthRequired::Proof => 2,
-        AuthRequired::Either => 3,
-        AuthRequired::Impossible => 4,
-        AuthRequired::Custom { vk_hash } => {
-            let mut b = [0u8; 8];
-            b.copy_from_slice(&vk_hash[..8]);
-            5u64.saturating_add(u64::from_le_bytes(b))
+        AuthRequired::None => "0".to_string(),
+        AuthRequired::Signature => "1".to_string(),
+        AuthRequired::Proof => "2".to_string(),
+        AuthRequired::Either => "3".to_string(),
+        AuthRequired::Impossible => "4".to_string(),
+        AuthRequired::Custom { vk_hash } => custom_tag_decimal(vk_hash),
+    }
+}
+
+/// The wire tag for `AuthRequired::Custom { vk_hash }`: the decimal string of
+/// `5 + BE(vk_hash)`, reading the 32 bytes as a big-endian 256-bit unsigned integer.
+/// INJECTIVE in `vk_hash` (distinct hashes ⇒ distinct tags). The `+ 5` matches the
+/// Lean `authOfTag`/`tagOfAuth` offset reserving `0..=4` for the concrete variants;
+/// the gate recovers `custom (tag - 5)` and compares the full identity by equality.
+fn custom_tag_decimal(vk_hash: &[u8; 32]) -> String {
+    // value = 5 + BE(vk_hash), on a 33-byte big-endian buffer that absorbs the carry.
+    let mut buf = [0u8; 33];
+    buf[1..].copy_from_slice(vk_hash);
+    let mut carry: u16 = 5;
+    for b in buf.iter_mut().rev() {
+        let s = *b as u16 + carry;
+        *b = (s & 0xff) as u8;
+        carry = s >> 8;
+        if carry == 0 {
+            break;
         }
     }
+    be_bytes_to_decimal(&buf)
+}
+
+/// A big-endian byte slice → its unsigned decimal string (repeated long division by
+/// 10). Returns `"0"` for an all-zero input.
+fn be_bytes_to_decimal(bytes: &[u8]) -> String {
+    let mut num = bytes.to_vec();
+    let mut digits: Vec<u8> = Vec::new();
+    while !num.iter().all(|&b| b == 0) {
+        let mut rem: u16 = 0;
+        for b in num.iter_mut() {
+            let cur = (rem << 8) | *b as u16;
+            *b = (cur / 10) as u8;
+            rem = cur % 10;
+        }
+        digits.push(b'0' + rem as u8);
+    }
+    if digits.is_empty() {
+        return "0".to_string();
+    }
+    digits.reverse();
+    String::from_utf8(digits).expect("digits are ASCII 0-9 by construction")
 }
 
 /// The effect-mask wire field for the verified Lean handoff gate: `None` (unrestricted) ⇒ `"x"`,
@@ -767,10 +830,46 @@ pub fn validate_handoff(
 ) -> Result<HandoffAcceptance, HandoffError> {
     let cert = &presentation.certificate;
 
-    // 1. Verify introducer signature
+    // 1. Verify introducer signature (against the WIRE-supplied introducer_pk).
     if !cert.verify_signature(introducer_pk) {
         return Err(HandoffError::InvalidIntroducerSignature);
     }
+
+    // 1b. F-1 — BIND the wire-supplied `introducer_pk` to the CLAIMED introducer id.
+    //     Step 1 proves the cert was signed by whoever owns `introducer_pk`; the
+    //     known-federation check (§3, below) proves `cert.introducer` is trusted.
+    //     NEITHER proves `introducer_pk` is actually `cert.introducer`'s key — so a
+    //     presenter could name a trusted federation F as `introducer`, sign with
+    //     their OWN key, and supply their own pk: the signature verifies (it covers
+    //     `introducer = F`) and F is trusted, so the handoff is falsely ATTRIBUTED to
+    //     F which never signed (the introducer-impersonation forgery). Close it: the
+    //     CLASSICAL path admits only a LEGACY ed25519 identity, whose id IS its
+    //     ed25519 pk. A HYBRID introducer id (`H("dregg-hybrid-id-v1", P_ed ‖ P_ml)`)
+    //     commits to an ML-DSA key not present on this classical wire; it cannot be
+    //     bound here and MUST use `validate_handoff_hybrid` (which binds id↔pk via
+    //     `verify_committed_ml_dsa`). So a non-legacy id fails CLOSED.
+    if cert.introducer.0 != introducer_pk.0 {
+        return Err(HandoffError::IntroducerKeyMismatch);
+    }
+
+    validate_handoff_body(presentation, swiss_table, known_federations, current_height)
+}
+
+/// The introducer-AUTHENTICATED remainder of handoff validation, shared by the
+/// classical [`validate_handoff`] and the hybrid [`validate_handoff_hybrid`]. The
+/// caller MUST have already authenticated the introducer AND bound its key to
+/// `cert.introducer` (classical: the legacy `id == pk` equality; hybrid: the
+/// `verify_committed_ml_dsa` id-commitment) before calling this. It takes no
+/// `introducer_pk` and performs NO introducer key↔id binding of its own — it runs:
+/// recipient signature, known-federation, expiry, swiss admission (read-only),
+/// target binding, §6 non-amplification, replay, and the use-consuming success path.
+fn validate_handoff_body(
+    presentation: &HandoffPresentation,
+    swiss_table: &mut SwissTable,
+    known_federations: &[FederationId],
+    current_height: u64,
+) -> Result<HandoffAcceptance, HandoffError> {
+    let cert = &presentation.certificate;
 
     // 2. Verify recipient signature (proves the presenter owns recipient_pk)
     if !presentation.verify_recipient_signature() {
@@ -992,19 +1091,19 @@ pub fn validate_handoff_hybrid(
         return Err(HandoffError::InvalidRecipientPqSignature);
     }
 
-    // 6+. Delegate the swiss / non-amplification / target-binding / replay /
-    //     enliven logic (which re-checks the ed25519 halves, harmless).
+    // 6+. Run the swiss / non-amplification / target-binding / replay / enliven
+    //     logic via the shared introducer-authenticated body (which re-checks the
+    //     recipient ed25519 half, harmless). We call `validate_handoff_body`
+    //     DIRECTLY rather than `validate_handoff`: the hybrid introducer was already
+    //     authenticated AND bound to its id above (ed25519 sig + id-commitment via
+    //     `verify_committed_ml_dsa`, steps 1–3), so re-imposing the CLASSICAL legacy
+    //     `id == pk` binding would REJECT this (hashed) hybrid id — the id-commitment
+    //     IS the hybrid path's id↔pk binding.
     let base_pres = HandoffPresentation {
         certificate: base_cert.clone(),
         recipient_signature: presentation.recipient_signature,
     };
-    validate_handoff(
-        &base_pres,
-        introducer_pk,
-        swiss_table,
-        known_federations,
-        current_height,
-    )
+    validate_handoff_body(&base_pres, swiss_table, known_federations, current_height)
 }
 
 // =============================================================================
@@ -1040,13 +1139,15 @@ impl crate::verified_gate::CaptpVerifiedGate for LatticeVerdictGate {
         // wire: "h=<held_tag>;g=<granted_tag>;he=<held_eff>;ge=<granted_eff>"
         // built by `verified_non_amplifying` via `auth_required_tag` /
         // `effect_mask_field`; an effect field of "x" means unrestricted (None).
-        let (mut held_tag, mut granted_tag) = (None, None);
+        let (mut held_tag, mut granted_tag): (Option<&str>, Option<&str>) = (None, None);
         let (mut held_eff, mut granted_eff) = (None, None);
         for field in wire.split(';') {
             let (k, v) = field.split_once('=')?;
             match k {
-                "h" => held_tag = Some(v.parse::<u64>().ok()?),
-                "g" => granted_tag = Some(v.parse::<u64>().ok()?),
+                // Tags are decimal strings — the Custom tag is the full 256-bit
+                // `5 + BE(vk_hash)` (far past `u64`), so parse it big-width, not as u64.
+                "h" => held_tag = Some(v),
+                "g" => granted_tag = Some(v),
                 "he" => held_eff = Some(parse_test_effect_field(v)),
                 "ge" => granted_eff = Some(parse_test_effect_field(v)),
                 _ => {}
@@ -1085,24 +1186,74 @@ fn parse_test_effect_field(v: &str) -> Option<EffectMask> {
     }
 }
 
-/// Invert `auth_required_tag` for the test gate. Tags 0..=4 are the concrete
-/// variants; ≥5 is `Custom` (the `auth_required_tag` fold of the first 8 vk_hash
-/// bytes — reconstructed into those bytes so two wires with the same tag rebuild
-/// the SAME `Custom`, matching the tag-equality the lattice uses for `Custom`).
+/// Invert `auth_required_tag` for the test gate. Tags `"0".."4"` are the concrete
+/// variants; any other decimal is `Custom` and is decoded as the FULL 32-byte
+/// `vk_hash = tag - 5` (the exact inverse of [`custom_tag_decimal`]). Reconstructing
+/// the whole identity — not just its first 8 bytes — is what lets this gate observe
+/// the F-2 fix: two tags differing anywhere rebuild DISTINCT `Custom`s, so the
+/// lattice's `Custom` tag-equality judges distinct authorities distinct.
 #[cfg(test)]
-fn auth_required_from_tag(t: u64) -> AuthRequired {
+fn auth_required_from_tag(t: &str) -> AuthRequired {
     match t {
-        0 => AuthRequired::None,
-        1 => AuthRequired::Signature,
-        2 => AuthRequired::Proof,
-        3 => AuthRequired::Either,
-        4 => AuthRequired::Impossible,
-        n => {
-            let mut vk_hash = [0u8; 32];
-            vk_hash[..8].copy_from_slice(&n.saturating_sub(5).to_le_bytes());
-            AuthRequired::Custom { vk_hash }
+        "0" => AuthRequired::None,
+        "1" => AuthRequired::Signature,
+        "2" => AuthRequired::Proof,
+        "3" => AuthRequired::Either,
+        "4" => AuthRequired::Impossible,
+        dec => AuthRequired::Custom {
+            vk_hash: vk_hash_from_custom_tag(dec),
+        },
+    }
+}
+
+/// The inverse of [`custom_tag_decimal`]: a decimal `tag` (`= 5 + BE(vk_hash)`) →
+/// the 32-byte big-endian `vk_hash`. Parses the decimal into a little-endian byte
+/// magnitude, subtracts 5, and lays it out big-endian. Test-only; any real Custom
+/// tag is `≥ 5` and `< 2^256 + 5`, so the round-trip is exact.
+#[cfg(test)]
+fn vk_hash_from_custom_tag(dec: &str) -> [u8; 32] {
+    // Parse decimal → little-endian magnitude (le[0] = least-significant byte).
+    let mut le: Vec<u8> = vec![0];
+    for ch in dec.bytes() {
+        let d = match ch {
+            b'0'..=b'9' => (ch - b'0') as u16,
+            _ => continue,
+        };
+        // le = le * 10 + d
+        let mut carry = d;
+        for b in le.iter_mut() {
+            let cur = *b as u16 * 10 + carry;
+            *b = (cur & 0xff) as u8;
+            carry = cur >> 8;
+        }
+        while carry > 0 {
+            le.push((carry & 0xff) as u8);
+            carry >>= 8;
         }
     }
+    // Subtract 5 (borrow-propagating; every real Custom tag is ≥ 5).
+    let mut borrow: i16 = 5;
+    for b in le.iter_mut() {
+        if borrow == 0 {
+            break;
+        }
+        let cur = *b as i16 - (borrow & 0xff);
+        if cur < 0 {
+            *b = (cur + 256) as u8;
+            borrow = 1;
+        } else {
+            *b = cur as u8;
+            borrow = 0;
+        }
+    }
+    // Little-endian magnitude → 32-byte big-endian vk_hash.
+    let mut out = [0u8; 32];
+    for (i, &b) in le.iter().enumerate() {
+        if i < 32 {
+            out[31 - i] = b;
+        }
+    }
+    out
 }
 
 /// Install the real-verdict §6 gate for THIS test process (idempotent). Called by
@@ -1895,5 +2046,175 @@ mod tests {
             HandoffError::IntroducerIdentityCommitmentMismatch,
             "a self-carried ML-DSA key not committed by the FederationId must reject"
         );
+    }
+
+    // ── F-1: introducer id↔pk binding on the classical live path ────────────
+
+    /// F-1 FALSIFIER (introducer impersonation on the LIVE classical path). A
+    /// presenter names a TRUSTED federation F as the cert's `introducer`, SIGNS the
+    /// cert with their OWN key, and supplies their own pk on the wire. Pre-fix, the
+    /// introducer-signature check (against the attacker pk, which really did sign)
+    /// AND the known-federation check (F is trusted) BOTH passed, so the handoff was
+    /// falsely ATTRIBUTED to F which never signed. The id↔pk binding now REFUSES it:
+    /// the wire pk is not F's key.
+    #[test]
+    fn f1_introducer_impersonation_is_refused() {
+        super::install_test_lattice_gate();
+        // A trusted federation F the attacker wants to be credited as introducer.
+        let (_f_sk, f_pk, f_fed) = setup_introducer();
+        // The attacker's OWN key (unrelated to F).
+        let (atk_sk, atk_pk) = generate_keypair();
+        assert_ne!(atk_pk.0, f_pk.0, "the attacker key must differ from F's");
+        let (recip_sk, recip_pk) = setup_recipient();
+        let target_fed = FederationId([0xDD; 32]);
+        let target_cell = CellId([0xEE; 32]);
+
+        let mut swiss_table = SwissTable::new();
+        let swiss = swiss_table.export(target_cell, AuthRequired::Signature, 100, None);
+
+        // The cert CLAIMS introducer = F but is SIGNED with the attacker's key.
+        let cert = HandoffCertificate::create(
+            &atk_sk, // signs with the attacker key ...
+            f_fed,   // ... while naming F as the introducer
+            target_fed,
+            target_cell,
+            recip_pk.0,
+            AuthRequired::Signature,
+            None,
+            None,
+            None,
+            swiss,
+        );
+        let presentation = HandoffPresentation::create(cert, &recip_sk);
+        // F is trusted; the attacker supplies THEIR OWN pk (which validates the
+        // signature they actually produced). Both legacy checks pass — only the
+        // id↔pk binding catches the impersonation.
+        let known = vec![f_fed];
+        let result = validate_handoff(&presentation, &atk_pk, &mut swiss_table, &known, 150);
+        assert_eq!(
+            result.unwrap_err(),
+            HandoffError::IntroducerKeyMismatch,
+            "a cert naming introducer=F but signed under an unrelated key, presented with the \
+             signer's own pk, must be refused: the wire pk is not bound to F"
+        );
+    }
+
+    /// F-1 positive: a GENUINE introducer (legacy id == its ed25519 pk) still
+    /// accepts — the binding does not reject honest handoffs.
+    #[test]
+    fn f1_genuine_introducer_still_accepts() {
+        let (cert, recip_sk, intro_pk, intro_fed, _target_fed, mut swiss_table) =
+            full_handoff_setup();
+        let presentation = HandoffPresentation::create(cert, &recip_sk);
+        let known = vec![intro_fed];
+        let result = validate_handoff(&presentation, &intro_pk, &mut swiss_table, &known, 150);
+        assert!(
+            result.is_ok(),
+            "a genuine introducer whose id is its ed25519 pk must still be accepted"
+        );
+    }
+
+    // ── F-2: injective Custom encoding to the §6 gate ───────────────────────
+
+    /// F-2 FALSIFIER (Custom auth truncated to 64 bits). Two DISTINCT Custom
+    /// predicates that COLLIDE in their first 8 `vk_hash` bytes but differ later
+    /// must be judged DISTINCT authorities. Pre-fix, `auth_required_tag` folded only
+    /// `vk_hash[..8]` to a u64, so both encoded to the SAME wire tag: the gate judged
+    /// `Custom{h1} == Custom{h2}` (non-amplifying) and admitted an authority never held.
+    #[test]
+    fn f2_custom_collision_in_first_8_bytes_is_amplification() {
+        super::install_test_lattice_gate();
+        // h1 and h2 AGREE on bytes 0..8, DIFFER at byte 8 (past the old fold window).
+        let mut h1 = [0u8; 32];
+        for (i, b) in h1.iter_mut().take(8).enumerate() {
+            *b = i as u8;
+        }
+        let mut h2 = h1;
+        h2[8] ^= 0xff;
+
+        // (a) DIRECT: the LIVE encoder must give DISTINCT tags — the injectivity itself.
+        assert_ne!(
+            super::auth_required_tag(&AuthRequired::Custom { vk_hash: h1 }),
+            super::auth_required_tag(&AuthRequired::Custom { vk_hash: h2 }),
+            "Customs colliding in their first 8 bytes must encode to DISTINCT wire tags"
+        );
+
+        // (b) END-TO-END: held = Custom{h1}, granted = Custom{h2} (h1 ≠ h2) amplifies.
+        let (presentation, intro_pk, intro_fed, mut swiss_table) = handoff_with_auth(
+            AuthRequired::Custom { vk_hash: h1 },
+            None,
+            AuthRequired::Custom { vk_hash: h2 },
+            None,
+        );
+        let known = vec![intro_fed];
+        let result = validate_handoff(&presentation, &intro_pk, &mut swiss_table, &known, 150);
+        assert_eq!(
+            result.unwrap_err(),
+            HandoffError::Amplification,
+            "granting Custom{{h2}} over held Custom{{h1}} with h1 != h2 (colliding first 8 bytes) \
+             must be refused as amplification"
+        );
+    }
+
+    /// F-2 positive: an EQUAL Custom → Custom handoff (`Custom{h} → Custom{h}`)
+    /// still attenuates — the injective encoding does not over-reject.
+    #[test]
+    fn f2_equal_custom_handoff_still_attenuates() {
+        super::install_test_lattice_gate();
+        let mut h = [0u8; 32];
+        h[8] = 0x7c;
+        h[31] = 0x01;
+        let (presentation, intro_pk, intro_fed, mut swiss_table) = handoff_with_auth(
+            AuthRequired::Custom { vk_hash: h },
+            None,
+            AuthRequired::Custom { vk_hash: h },
+            None,
+        );
+        let known = vec![intro_fed];
+        let result = validate_handoff(&presentation, &intro_pk, &mut swiss_table, &known, 150);
+        assert!(
+            result.is_ok(),
+            "an equal Custom→Custom handoff (h == h) must still attenuate"
+        );
+    }
+
+    /// The Custom tag codec round-trips: `vk_hash_from_custom_tag(custom_tag_decimal(h)) == h`
+    /// across edge magnitudes (zero, low byte, high byte, all-ones). This pins the
+    /// injective full-width encoding the F-2 fix relies on.
+    #[test]
+    fn f2_custom_tag_codec_roundtrips() {
+        let cases: [[u8; 32]; 5] = [
+            [0u8; 32],
+            {
+                let mut h = [0u8; 32];
+                h[31] = 1; // value 1 (least-significant byte)
+                h
+            },
+            {
+                let mut h = [0u8; 32];
+                h[0] = 0xff; // most-significant byte set (large 256-bit value)
+                h
+            },
+            [0xffu8; 32], // 2^256 - 1: the +5 carry crosses into a 33rd byte
+            {
+                let mut h = [0u8; 32];
+                for (i, b) in h.iter_mut().enumerate() {
+                    *b = (i as u8).wrapping_mul(7).wrapping_add(3);
+                }
+                h
+            },
+        ];
+        for h in cases {
+            let tag = super::custom_tag_decimal(&h);
+            assert!(
+                tag.bytes().all(|c| c.is_ascii_digit()),
+                "the wire tag must be all decimal digits (the Lean gate parses digits only)"
+            );
+            assert_eq!(
+                super::vk_hash_from_custom_tag(&tag),
+                h,
+                "custom tag codec must round-trip the full 32-byte identity"
+            );
+        }
     }
 }
