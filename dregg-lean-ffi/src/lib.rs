@@ -22,11 +22,6 @@ pub use lean_direct::{
 #[path = "distributed_ffi.rs"]
 pub mod distributed_ffi;
 
-// TEMP-COMPILE-CHECK-ONLY (revert): the LC gate route-through; permanent mod+re-export is the
-// integrator splice.
-#[path = "bridge_lc_ffi.rs"]
-pub mod bridge_lc_ffi;
-
 pub use distributed_ffi::{
     decode_tau_order, distributed_exports_available, shadow_captp_pipeline_resolve,
     shadow_captp_process_drop, shadow_captp_validate_handoff, shadow_coord_2pc_decide,
