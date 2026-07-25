@@ -8407,19 +8407,39 @@ async fn post_propose_epoch_transition(
     let mut proposals = Vec::new();
     // Removals first, then additions (a rotation = remove old + add new).
     for pk in &removes {
-        let block_id = blocklace.propose_membership(&state, *pk, false).await;
+        // `None` ⇒ the proposal failed to durably land (F2 fail-closed) and was
+        // NOT created/broadcast; surface that to the operator rather than a stale id.
+        let proposal_block = match blocklace.propose_membership(&state, *pk, false).await {
+            Some(block_id) => hex_encode(&block_id.0),
+            None => {
+                tracing::warn!(
+                    validator = %hex_encode(pk),
+                    "epoch-transition remove proposal failed to persist durably — not created"
+                );
+                "error: durable persist failed; proposal not created".to_string()
+            }
+        };
         proposals.push(EpochProposalEntry {
             action: "remove".to_string(),
             validator: hex_encode(pk),
-            proposal_block: hex_encode(&block_id.0),
+            proposal_block,
         });
     }
     for pk in &adds {
-        let block_id = blocklace.propose_membership(&state, *pk, true).await;
+        let proposal_block = match blocklace.propose_membership(&state, *pk, true).await {
+            Some(block_id) => hex_encode(&block_id.0),
+            None => {
+                tracing::warn!(
+                    validator = %hex_encode(pk),
+                    "epoch-transition add proposal failed to persist durably — not created"
+                );
+                "error: durable persist failed; proposal not created".to_string()
+            }
+        };
         proposals.push(EpochProposalEntry {
             action: "add".to_string(),
             validator: hex_encode(pk),
-            proposal_block: hex_encode(&block_id.0),
+            proposal_block,
         });
     }
 

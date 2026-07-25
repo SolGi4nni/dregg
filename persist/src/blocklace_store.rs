@@ -49,6 +49,14 @@ impl PersistentStore {
     /// This is idempotent: re-inserting the same block is a no-op at the storage
     /// level (redb overwrites with identical data).
     pub fn persist_block(&self, block: &Block) -> Result<()> {
+        if self
+            .fail_persist_block
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return Err(StoreError::Database(
+                "persist_block fault injected (test-only fail_persist_block seam)".to_string(),
+            ));
+        }
         let key = block.id().0;
         let value = block.to_bytes();
         let txn = self.db.begin_write()?;
@@ -58,6 +66,16 @@ impl PersistentStore {
         }
         txn.commit()?;
         Ok(())
+    }
+
+    /// Test-only: arm/disarm the [`Self::persist_block`] fault seam (finding F2).
+    /// Never called in production — a node durability test sets it to exercise the
+    /// authored-block fail-closed rollback + no-broadcast path through the real
+    /// producer, then clears it to let subsequent persists succeed.
+    #[doc(hidden)]
+    pub fn set_fail_persist_block(&self, fail: bool) {
+        self.fail_persist_block
+            .store(fail, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Persist multiple blocks in a single transaction (batch write).

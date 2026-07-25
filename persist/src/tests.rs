@@ -34,6 +34,37 @@ fn fresh_store_is_sealed_to_canonical_state_epoch_11() {
     );
 }
 
+/// F5: the durable receipt-index HEAD anchor `{ len, root }` round-trips and
+/// SURVIVES a reopen (crash recovery), so boot can check the recovered chain
+/// against the head served before restart. A fresh store has no anchor.
+#[test]
+fn receipt_index_head_anchor_round_trips_across_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("head.redb");
+    let root1 = [0x42u8; 32];
+    let root2 = [0x99u8; 32];
+    {
+        let store = PersistentStore::open(&path).expect("open");
+        assert_eq!(
+            store.load_receipt_index_head().unwrap(),
+            None,
+            "a fresh store has no receipt-index head anchor"
+        );
+        store.persist_receipt_index_head(7, &root1).expect("persist");
+        assert_eq!(store.load_receipt_index_head().unwrap(), Some((7, root1)));
+        // Idempotent overwrite advances the anchor forward.
+        store.persist_receipt_index_head(9, &root2).expect("persist 2");
+        assert_eq!(store.load_receipt_index_head().unwrap(), Some((9, root2)));
+    }
+    // Reopen the SAME file: the anchor survives the restart.
+    let store = PersistentStore::open(&path).expect("reopen");
+    assert_eq!(
+        store.load_receipt_index_head().unwrap(),
+        Some((9, root2)),
+        "the receipt-index head anchor survives a restart"
+    );
+}
+
 #[test]
 fn canonical_state_epoch_refuses_populated_unmarked_pre_v11_store_on_reopen() {
     let directory = tempfile::tempdir().unwrap();

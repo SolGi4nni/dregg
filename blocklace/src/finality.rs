@@ -1119,6 +1119,55 @@ impl Blocklace {
             .expect("local block violates consensus-time-v1")
     }
 
+    /// Undo the most recent LOCALLY-AUTHORED block after its durable persist
+    /// FAILED, BEFORE it is broadcast — the exact inverse of the four mutations
+    /// [`Self::try_add_block_with_predecessors`] makes (`self_seq`, `blocks`,
+    /// `consensus_time_frontier_v1`, our `tips` entry).
+    ///
+    /// The self strand's next sequence is rebuilt on boot from PERSISTED blocks
+    /// ONLY. So an authored-but-unpersisted tip left live here would, after a
+    /// crash, be re-authored at the same `(creator, seq)` with different content
+    /// — a slashable **self-equivocation** (node durability finding F2). Rolling
+    /// the block back keeps the live lace equal to durable state, so the caller
+    /// can safely refuse to broadcast it.
+    ///
+    /// MUST be called while STILL holding the write access that authored the
+    /// block, with `block_id` still our current self-tip (no successor authored
+    /// on top — persist inside the same lock guarantees this). Returns `true`
+    /// when a local-authored self-tip was rolled back; `false` (a no-op) when
+    /// `block_id` is not our current self-authored tip — never rolls back a peer
+    /// block or a superseded one.
+    pub fn rollback_local_authored(&mut self, block_id: BlockId) -> bool {
+        let self_creator = self.self_creator();
+        // Only ever roll back OUR OWN current tip.
+        if self.tips.get(&self_creator) != Some(&block_id) {
+            return false;
+        }
+        let seq = match self.blocks.get(&block_id) {
+            Some(block) if block.creator == self_creator => block.seq,
+            _ => return false,
+        };
+        // Restore our tip to the prior self-authored block at seq-1, if any (a
+        // rolled-back genesis block has no prior self tip → withdraw the entry).
+        let prev_self_tip = self
+            .blocks
+            .values()
+            .find(|b| b.creator == self_creator && b.seq + 1 == seq)
+            .map(Block::id);
+        match prev_self_tip {
+            Some(prev) => {
+                self.tips.insert(self_creator, prev);
+            }
+            None => {
+                self.tips.remove(&self_creator);
+            }
+        }
+        self.self_seq = seq.saturating_sub(1);
+        self.blocks.remove(&block_id);
+        self.consensus_time_frontier_v1.remove(&block_id);
+        true
+    }
+
     /// Produce a locally-authored consensus-timed turn through the strict v1 path.
     ///
     /// Unlike generic [`Self::add_block`], this returns an error before changing sequence, tips, or
@@ -2146,6 +2195,82 @@ mod pq_hybrid_tests {
         let mut lace = enrolled_lace();
         assert!(lace.receive_block_pinned(block).is_ok());
         assert_eq!(lace.len(), 1);
+    }
+
+    /// F2 (self-equivocation window): `rollback_local_authored` is the EXACT
+    /// inverse of authoring, so a block that failed to persist durably can be
+    /// withdrawn from the live lace before broadcast. Both directions: a
+    /// second-block rollback restores the prior self-tip + seq; a genesis-block
+    /// rollback withdraws the tip and returns seq to 0.
+    #[test]
+    fn rollback_local_authored_restores_seq_and_tip() {
+        let mut lace = enrolled_lace(); // self = key_for(1)
+        let self_creator = lace.self_creator();
+        assert_eq!(lace.self_seq, 0);
+        assert!(lace.tips.get(&self_creator).is_none());
+
+        let b1 = lace.add_block(Payload::Ack);
+        assert_eq!(lace.self_seq, 1);
+        assert_eq!(lace.tips.get(&self_creator), Some(&b1.id()));
+        let b2 = lace.add_block(Payload::Data(b"x".to_vec()));
+        assert_eq!(lace.self_seq, 2);
+        assert_eq!(lace.tips.get(&self_creator), Some(&b2.id()));
+        assert!(lace.blocks.contains_key(&b2.id()));
+
+        // Roll back the second (un-persisted) block: seq → 1, tip → b1, b2 gone.
+        assert!(lace.rollback_local_authored(b2.id()));
+        assert_eq!(
+            lace.self_seq, 1,
+            "self_seq restored to the prior authored seq"
+        );
+        assert_eq!(
+            lace.tips.get(&self_creator),
+            Some(&b1.id()),
+            "tip restored to the prior self block"
+        );
+        assert!(
+            !lace.blocks.contains_key(&b2.id()),
+            "the un-persisted block is withdrawn"
+        );
+
+        // Re-authoring yields seq 2 again — live state matches what boot would
+        // rebuild from persisted blocks (b1 only), so no (creator, seq) reuse.
+        let b2b = lace.add_block(Payload::Data(b"y".to_vec()));
+        assert_eq!(b2b.seq, 2);
+
+        // Roll back to the genesis boundary: the tip is withdrawn, seq → 0.
+        assert!(lace.rollback_local_authored(b2b.id()));
+        assert!(lace.rollback_local_authored(b1.id()));
+        assert_eq!(lace.self_seq, 0, "seq returns to genesis");
+        assert!(
+            lace.tips.get(&self_creator).is_none(),
+            "no self tip after genesis rollback"
+        );
+        assert!(lace.blocks.is_empty(), "no self blocks remain");
+    }
+
+    /// `rollback_local_authored` NEVER touches a superseded or unknown block: it
+    /// only ever withdraws our OWN current tip (a no-op false otherwise), so it
+    /// cannot corrupt the strand if misapplied.
+    #[test]
+    fn rollback_local_authored_refuses_non_tip() {
+        let mut lace = enrolled_lace();
+        let b1 = lace.add_block(Payload::Ack);
+        let b2 = lace.add_block(Payload::Ack);
+        let seq_before = lace.self_seq;
+
+        // b1 is superseded by b2 (the tip) → refuse, no mutation.
+        assert!(
+            !lace.rollback_local_authored(b1.id()),
+            "refuse to roll back a superseded block"
+        );
+        assert_eq!(lace.self_seq, seq_before, "no mutation on refusal");
+        assert!(lace.blocks.contains_key(&b1.id()));
+        assert!(lace.blocks.contains_key(&b2.id()));
+
+        // A totally unknown id is a no-op too.
+        assert!(!lace.rollback_local_authored(BlockId([0xEE; 32])));
+        assert_eq!(lace.self_seq, seq_before);
     }
 
     /// THE adversarial test: a consensus block with a VALID ed25519 half from

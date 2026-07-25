@@ -165,6 +165,36 @@ fn payload_for_consensus_time_v1(
     }
 }
 
+/// The F2 durable-landing step shared by every LOCAL producer: persist a
+/// just-authored block while its authoring write lock is STILL held; on a
+/// persist I/O failure, roll it back out of `lace` and report `false` so the
+/// caller does NOT broadcast an un-persisted authored block. Persisting inside
+/// the lock is what makes the rollback exact — no concurrently-authored
+/// successor can be stranded (the block is always our current self-tip). Returns
+/// `true` when the block durably landed. See
+/// [`dregg_blocklace::finality::Blocklace::rollback_local_authored`].
+fn land_authored_or_rollback(
+    store: &dregg_persist::PersistentStore,
+    lace: &mut Blocklace,
+    block: &Block,
+) -> bool {
+    if let Err(e) = store.persist_block(block) {
+        warn!(
+            error = %e,
+            block_id = %block.id(),
+            "authored block failed to persist durably — rolling it back out of the live \
+             lace and NOT broadcasting (self-equivocation window closed)"
+        );
+        let rolled = lace.rollback_local_authored(block.id());
+        debug_assert!(
+            rolled,
+            "the just-authored block must be the rollback-able self tip"
+        );
+        return false;
+    }
+    true
+}
+
 fn produce_payload_with_consensus_time_v1(
     lace: &mut Blocklace,
     payload: Payload,
@@ -705,13 +735,15 @@ impl BlocklaceHandle {
     /// A heartbeat is a real, signed block linking to the current tips; it
     /// carries no turn but advances the DAG (seq + parent links) so the chain
     /// makes visible progress while idle. Returns the new block id.
-    pub async fn submit_heartbeat(&self, state: &NodeState) -> BlockId {
-        let block = {
-            let mut lace = self.lace.write().await;
-            lace.add_block(Payload::Ack)
-        };
+    pub async fn submit_heartbeat(&self, state: &NodeState) -> Option<BlockId> {
+        // Fail-closed (F2): the heartbeat advances our self strand's seq, so it
+        // must durably land before it is broadcast — otherwise a persist failure
+        // + crash lets restart re-author this seq with different content
+        // (self-equivocation). On failure the block is rolled back and not sent.
+        let block = self
+            .author_add_block_or_rollback(state, Payload::Ack)
+            .await?;
         let block_id = block.id();
-        Self::persist_block_to_store(state, &block).await;
         *self.last_produced.write().await = std::time::Instant::now();
 
         // Heartbeats still advance ordering bookkeeping (the finality executor
@@ -719,7 +751,7 @@ impl BlocklaceHandle {
         self.finality_notify.notify_one();
         self.push_new_blocks().await;
         debug!(block_id = %block_id, seq = block.seq, "produced heartbeat block");
-        block_id
+        Some(block_id)
     }
 
     /// ROUND-DISCIPLINED block production (the Stage-5 finality mechanism).
@@ -772,35 +804,41 @@ impl BlocklaceHandle {
             let c = self.constitution.read().await;
             dregg_blocklace::ordering::supermajority_threshold(c.current.participant_count())
         };
-        let block = {
-            let mut lace = self.lace.write().await;
-            let plan = plan_round_block(&lace, lace.self_creator(), supermajority);
-            let produced = match plan {
-                RoundPlan::Wait => return None,
-                RoundPlan::Genesis => produce_payload_with_consensus_time_v1(
-                    &mut lace,
-                    payload,
-                    Vec::new(),
-                    producer_wall,
-                ),
-                RoundPlan::Advance { predecessors, .. } => produce_payload_with_consensus_time_v1(
-                    &mut lace,
-                    payload,
-                    predecessors,
-                    producer_wall,
-                ),
-            };
-            match produced {
-                Ok(block) => block,
-                Err(error) => {
-                    error!(%error, "consensus-time-v1 refused round block production");
-                    return None;
-                }
+        // Fail-closed (F2): the round block advances our self strand, so it must
+        // durably land BEFORE broadcast. `RoundPlan::Wait` (no supermajority yet)
+        // is normal backpressure, not an error — surface it as `None` without a
+        // wasted persist by short-circuiting before authoring.
+        let store = { state.read().await.store.clone() };
+        let mut lace = self.lace.write().await;
+        let plan = plan_round_block(&lace, lace.self_creator(), supermajority);
+        let produced = match plan {
+            RoundPlan::Wait => return None,
+            RoundPlan::Genesis => produce_payload_with_consensus_time_v1(
+                &mut lace,
+                payload,
+                Vec::new(),
+                producer_wall,
+            ),
+            RoundPlan::Advance { predecessors, .. } => produce_payload_with_consensus_time_v1(
+                &mut lace,
+                payload,
+                predecessors,
+                producer_wall,
+            ),
+        };
+        let block = match produced {
+            Ok(block) => block,
+            Err(error) => {
+                error!(%error, "consensus-time-v1 refused round block production");
+                return None;
             }
         };
+        if !land_authored_or_rollback(&store, &mut lace, &block) {
+            return None;
+        }
+        drop(lace);
 
         let block_id = block.id();
-        Self::persist_block_to_store(state, &block).await;
         *self.last_produced.write().await = std::time::Instant::now();
         self.finality_notify.notify_one();
         self.push_new_blocks().await;
@@ -904,26 +942,38 @@ impl BlocklaceHandle {
 
         // SOLO (n=1): tau finalizes every block trivially in sequence, so produce
         // the turn block immediately (linking current tips) — no round discipline.
-        let block = {
-            let mut lace = self.lace.write().await;
-            let predecessors: Vec<BlockId> = lace.tips().values().copied().collect();
-            let producer_wall = match producer_wall_unix_seconds() {
-                Ok(seconds) => seconds,
-                Err(error) => {
-                    warn!(
-                        error,
-                        "producer clock unavailable; proposing the causal minimum for solo turn"
-                    );
-                    i64::MIN
-                }
-            };
-            produce_payload_with_consensus_time_v1(&mut lace, payload, predecessors, producer_wall)
-                .expect("configured live consensus-time-v1 must admit a locally produced solo turn")
+        // Fail-closed (F2): the solo turn advances our self strand, so it must
+        // durably land BEFORE broadcast; a persist failure rolls it back (it is
+        // not ordered/final) rather than serving an un-persisted authored turn.
+        let store = { state.read().await.store.clone() };
+        let mut lace = self.lace.write().await;
+        let predecessors: Vec<BlockId> = lace.tips().values().copied().collect();
+        let producer_wall = match producer_wall_unix_seconds() {
+            Ok(seconds) => seconds,
+            Err(error) => {
+                warn!(
+                    error,
+                    "producer clock unavailable; proposing the causal minimum for solo turn"
+                );
+                i64::MIN
+            }
         };
+        let block =
+            produce_payload_with_consensus_time_v1(&mut lace, payload, predecessors, producer_wall)
+                .expect(
+                    "configured live consensus-time-v1 must admit a locally produced solo turn",
+                );
         let block_id = block.id();
+        if !land_authored_or_rollback(&store, &mut lace, &block) {
+            // The turn did NOT durably land and was withdrawn from the live lace.
+            // Report it as not-ordered (Local): no live caller reads this handle,
+            // and the turn simply never finalizes (the client observes no receipt
+            // and may retry). Never Ordered — that would ack a lost turn.
+            error!(block_id = %block_id, "solo turn failed to persist durably — withdrawn, not broadcast");
+            return (block_id, FinalityLevel::Local);
+        }
+        drop(lace);
 
-        // Persist the newly created block to the store.
-        Self::persist_block_to_store(state, &block).await;
         *self.last_produced.write().await = std::time::Instant::now();
 
         // Notify the finality executor that new blocks are available.
@@ -944,13 +994,56 @@ impl BlocklaceHandle {
         BlockId(*blake3::hash(&bytes).as_bytes())
     }
 
-    /// Persist a block to the store. Logs a warning on failure but does not
-    /// propagate the error (persistence failure should not block consensus progress).
-    async fn persist_block_to_store(state: &NodeState, block: &Block) {
-        let s = state.read().await;
-        if let Err(e) = s.store.persist_block(block) {
-            warn!(error = %e, "failed to persist block to store");
+    /// Author a local block and DURABLY LAND IT before it can be broadcast —
+    /// the fail-closed producer step that closes the self-equivocation window
+    /// (node durability finding F2).
+    ///
+    /// `author` mutates the write-locked lace and returns the new block (its
+    /// `(creator, seq)` advances the self strand). The block is persisted while
+    /// that write lock is STILL held, so on a persist I/O failure it is rolled
+    /// back out of the live lace ([`Blocklace::rollback_local_authored`]) —
+    /// keeping the live lace equal to durable state — and `None` is returned so
+    /// the caller does NOT broadcast it. Boot rebuilds the self strand's next
+    /// sequence from PERSISTED blocks only; without this, an authored-but-
+    /// unpersisted-yet-broadcast block would be re-authored at the same
+    /// `(creator, seq)` with different content after a crash (a slashable
+    /// self-equivocation).
+    ///
+    /// The store handle is captured BEFORE the lace lock (deadlock-free order,
+    /// as in `produce_private_dependent_round_block`). `Some(block)` ⇒ the block
+    /// durably landed and the caller may broadcast; `None` ⇒ production was
+    /// refused OR the block was withdrawn (never broadcast).
+    async fn author_persist_or_rollback<F>(&self, state: &NodeState, author: F) -> Option<Block>
+    where
+        F: FnOnce(&mut Blocklace) -> Result<Block, BlockError>,
+    {
+        let store = { state.read().await.store.clone() };
+        let mut lace = self.lace.write().await;
+        let block = match author(&mut lace) {
+            Ok(block) => block,
+            Err(e) => {
+                error!(%e, "local block production refused before persist");
+                return None;
+            }
+        };
+        if land_authored_or_rollback(&store, &mut lace, &block) {
+            Some(block)
+        } else {
+            None
         }
+    }
+
+    /// Author a plain `add_block(payload)` fail-closed (see
+    /// [`Self::author_persist_or_rollback`]). Used by the heartbeat + membership
+    /// producers, whose payloads (`Ack` / `MembershipVote`) never trip the
+    /// consensus-time admission that `add_block` asserts.
+    async fn author_add_block_or_rollback(
+        &self,
+        state: &NodeState,
+        payload: Payload,
+    ) -> Option<Block> {
+        self.author_persist_or_rollback(state, move |lace| Ok(lace.add_block(payload)))
+            .await
     }
 
     /// Push new blocks to peers via the gossip topic.
@@ -1957,17 +2050,22 @@ impl BlocklaceHandle {
         }
         drop(constitution);
 
-        let block = {
-            let mut lace = self.lace.write().await;
-            lace.add_block(Payload::MembershipVote {
-                action: MembershipAction::Join {
-                    node_id: self.self_key,
+        // Fail-closed (F2): the proposal advances our self strand, so land it
+        // durably before broadcast; a persist failure withdraws it (we retry).
+        let Some(block) = self
+            .author_add_block_or_rollback(
+                state,
+                Payload::MembershipVote {
+                    action: MembershipAction::Join {
+                        node_id: self.self_key,
+                    },
                 },
-            })
+            )
+            .await
+        else {
+            warn!("join proposal failed to persist durably — not broadcast (will retry)");
+            return;
         };
-
-        // Persist the membership vote block.
-        Self::persist_block_to_store(state, &block).await;
 
         info!(
             block_id = %block.id(),
@@ -1983,15 +2081,24 @@ impl BlocklaceHandle {
     /// Creates a `MembershipVote` block with an `Approve` action referencing
     /// the proposal block, and disseminates it to peers.
     async fn cast_approval_vote(&self, state: &NodeState, proposal_block: BlockId) {
-        let block = {
-            let mut lace = self.lace.write().await;
-            lace.add_block(Payload::MembershipVote {
-                action: MembershipAction::Approve { proposal_block },
-            })
+        // Fail-closed (F2): the vote advances our self strand, so land it durably
+        // before broadcast; a persist failure withdraws it rather than emitting a
+        // vote whose seq restart would re-author with different content.
+        let Some(block) = self
+            .author_add_block_or_rollback(
+                state,
+                Payload::MembershipVote {
+                    action: MembershipAction::Approve { proposal_block },
+                },
+            )
+            .await
+        else {
+            warn!(
+                proposal = %proposal_block,
+                "approval vote failed to persist durably — not broadcast"
+            );
+            return;
         };
-
-        // Persist the approval vote block.
-        Self::persist_block_to_store(state, &block).await;
 
         debug!(
             block_id = %block.id(),
@@ -2164,27 +2271,31 @@ impl BlocklaceHandle {
         state: &NodeState,
         node_id: [u8; 32],
         add: bool,
-    ) -> BlockId {
+    ) -> Option<BlockId> {
         let action = if add {
             MembershipAction::Join { node_id }
         } else {
             MembershipAction::Leave { node_id }
         };
-        let block = {
-            let mut lace = self.lace.write().await;
-            lace.add_block(Payload::MembershipVote {
-                action: action.clone(),
-            })
-        };
+        // Fail-closed (F2): land the proposal durably before broadcast so a
+        // persist failure cannot leave a broadcast-but-unpersisted proposal seq
+        // that restart re-authors differently. `None` ⇒ the proposal did not land.
+        let block = self
+            .author_add_block_or_rollback(
+                state,
+                Payload::MembershipVote {
+                    action: action.clone(),
+                },
+            )
+            .await?;
         let block_id = block.id();
-        Self::persist_block_to_store(state, &block).await;
         info!(
             block_id = %block_id,
             add,
             "operator proposed epoch transition (membership change) on running node"
         );
         self.push_new_blocks().await;
-        block_id
+        Some(block_id)
     }
 }
 
@@ -10970,6 +11081,92 @@ mod tests {
         assert_eq!(receipts, 1, "fresh durable commit emits one receipt event");
     }
 
+    /// F2 (self-equivocation window): a locally-authored block must land DURABLY
+    /// before it is broadcast. Both directions through the REAL producer
+    /// (`submit_heartbeat`), driven by the `persist_block` fault seam:
+    ///
+    ///  * a SIMULATED persist failure returns `None` (so `push_new_blocks` is
+    ///    never reached — not broadcast), leaves the DURABLE block count
+    ///    unchanged (the authored seq does not advance durably, so restart —
+    ///    which rebuilds the self strand from persisted blocks — cannot re-author
+    ///    it), and rolls the block back out of the live lace (tip unchanged);
+    ///  * a SUCCESSFUL persist advances both the durable store and the live tip.
+    #[tokio::test]
+    async fn authored_block_persist_failure_is_fail_closed_no_broadcast_no_durable_advance() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let state = crate::state::NodeState::new(tmp.path(), Vec::new()).expect("node state");
+        let self_key = [0x5Au8; 32];
+        let handle = test_handle_with_committee(self_key, vec![self_key]).await;
+        let store = { state.read().await.store.clone() };
+        let self_creator = handle.lace.read().await.self_creator();
+
+        // Helper: (durable block count, live tip id, live tip seq).
+        async fn snapshot(
+            store: &dregg_persist::PersistentStore,
+            handle: &BlocklaceHandle,
+            self_creator: &[u8; 32],
+        ) -> (u64, Option<BlockId>, Option<u64>) {
+            let count = store.blocklace_block_count().expect("durable block count");
+            let lace = handle.lace.read().await;
+            let tip = lace.tips().get(self_creator).copied();
+            let seq = tip.and_then(|id| lace.get(&id).map(|b| b.seq));
+            (count, tip, seq)
+        }
+
+        // ── SUCCESS: heartbeat lands durably and advances the live tip. ──
+        let id1 = handle
+            .submit_heartbeat(&state)
+            .await
+            .expect("heartbeat with a working store lands durably");
+        let (count1, tip1, seq1) = snapshot(&store, &handle, &self_creator).await;
+        assert_eq!(count1, 1, "the authored heartbeat is durable");
+        assert_eq!(tip1, Some(id1), "live tip is the authored block");
+        assert_eq!(seq1, Some(1), "first authored block is seq 1");
+
+        // ── FAILURE: arm the persist fault; the next heartbeat must fail closed. ──
+        store.set_fail_persist_block(true);
+        let outcome = handle.submit_heartbeat(&state).await;
+        assert!(
+            outcome.is_none(),
+            "a persist failure returns None (never reaches push_new_blocks — not broadcast)"
+        );
+        let (count2, tip2, seq2) = snapshot(&store, &handle, &self_creator).await;
+        assert_eq!(
+            count2, 1,
+            "durable authored-seq did NOT advance on persist failure (restart cannot re-author)"
+        );
+        assert_eq!(
+            tip2,
+            Some(id1),
+            "the un-persisted block was rolled back — tip unchanged"
+        );
+        assert_eq!(
+            seq2,
+            Some(1),
+            "self seq did NOT advance past the last durable block"
+        );
+
+        // ── RECOVERY: clear the fault; production resumes at the un-reused seq. ──
+        store.set_fail_persist_block(false);
+        let id3 = handle
+            .submit_heartbeat(&state)
+            .await
+            .expect("heartbeat lands durably again once the store recovers");
+        assert_ne!(
+            id3, id1,
+            "a fresh block, not a re-emit of the rolled-back one"
+        );
+        let (count3, tip3, seq3) = snapshot(&store, &handle, &self_creator).await;
+        assert_eq!(count3, 2, "the recovered heartbeat is durable");
+        assert_eq!(tip3, Some(id3));
+        assert_eq!(
+            seq3,
+            Some(2),
+            "seq advances 1 -> 2 (the failed attempt consumed no durable seq)"
+        );
+    }
+
     /// Write-ahead-before-live falsifier: drive a valid body-committed transfer
     /// all the way to the real durable barrier, inject a store error there, and
     /// prove that every live/publication surface remains at its pre-turn image.
@@ -13171,16 +13368,25 @@ async fn advance_constitution_wave(state: &NodeState, handle: &BlocklaceHandle) 
                 "proposing auto-leave for timed-out participant"
             );
 
-            // Create the leave proposal block.
-            let block = {
-                let mut lace = handle.lace.write().await;
-                lace.add_block(Payload::MembershipVote {
-                    action: MembershipAction::Leave { node_id: *node_key },
-                })
+            // Create the leave proposal block and land it durably BEFORE it is
+            // registered/voted/broadcast (F2 fail-closed): registering a proposal
+            // whose block did not persist would bind constitution state to a seq
+            // that restart re-authors differently. On failure, skip this proposal.
+            let Some(block) = handle
+                .author_add_block_or_rollback(
+                    state,
+                    Payload::MembershipVote {
+                        action: MembershipAction::Leave { node_id: *node_key },
+                    },
+                )
+                .await
+            else {
+                warn!(
+                    node = %node_hex,
+                    "auto-leave proposal failed to persist durably — not registered or broadcast"
+                );
+                continue;
             };
-
-            // Persist the leave proposal block.
-            BlocklaceHandle::persist_block_to_store(state, &block).await;
 
             // Register the proposal in the constitution manager.
             let mut constitution = handle.constitution.write().await;

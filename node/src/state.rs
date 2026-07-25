@@ -785,6 +785,20 @@ fn load_witnessed_receipts(
     (witnessed_receipts, witnessed_receipt_order)
 }
 
+/// Recovery-convergence read-error policy (finding F3): a READ ERROR of the
+/// recorded finalized-root row is FATAL (fail closed) exactly when the node has
+/// finalized state to protect — a NON-ZERO commit cursor. On a fresh/zero-cursor
+/// node there is nothing to converge to, so the error is non-fatal (boot). If
+/// the cursor ITSELF is unreadable we cannot prove the node is fresh, so we fail
+/// closed rather than laundering a corrupt store into a clean boot.
+fn recovery_read_error_is_fatal(cursor: Result<u64, dregg_persist::StoreError>) -> bool {
+    match cursor {
+        Ok(0) => false,
+        Ok(_) => true,
+        Err(_) => true,
+    }
+}
+
 /// Make the cipherclerk's receipt chain durable across a restart.
 ///
 /// THE WELD the deep-reads converged on: the served `/api/receipts*` chain and
@@ -1537,6 +1551,8 @@ impl NodeState {
         }
     }
 
+    // (`recovery_read_error_is_fatal` is a free fn below the impl.)
+
     /// Verify recovery convergence: the canonical root of the CURRENTLY-LOADED
     /// ledger must equal the durably recorded finalized root.
     ///
@@ -1573,10 +1589,31 @@ impl NodeState {
                 return Ok(());
             }
             Err(e) => {
-                // Could not read the recorded root; do not treat a read failure
-                // as a soundness violation (matches the pre-deferral behavior,
-                // which logged-and-continued when no comparable root was found).
-                tracing::warn!(error = %e, "could not read recorded finalized root for recovery convergence");
+                // A READ FAILURE of the recorded root is NOT the same as its
+                // absence (finding F3). On a node that has committed at least one
+                // finalized turn (a NON-ZERO commit cursor) the recorded root is
+                // the strongest boot integrity gate; a present-but-unreadable
+                // (corrupt) row must FAIL CLOSED rather than silently disable the
+                // gate on a node that has real finalized state to protect. Only a
+                // genuinely fresh / zero-cursor node (no finalized state, nothing
+                // to converge to) may continue on a read error.
+                if recovery_read_error_is_fatal(s.store.commit_cursor()) {
+                    tracing::error!(
+                        error = %e,
+                        "recorded finalized-root row is UNREADABLE at a non-zero commit cursor \
+                         — refusing to start (STORE INTEGRITY EVENT)"
+                    );
+                    return Err(format!(
+                        "recovery convergence: the recorded finalized-root row is unreadable at a \
+                         non-zero commit cursor — refusing to serve a store whose strongest boot \
+                         integrity gate is corrupt (STORE INTEGRITY EVENT): {e}"
+                    ));
+                }
+                tracing::warn!(
+                    error = %e,
+                    "could not read recorded finalized root at a zero/fresh commit cursor \
+                     (no finalized state to converge to) — continuing"
+                );
                 return Ok(());
             }
         };
@@ -2039,11 +2076,15 @@ impl NodeStateInner {
     }
 
     /// Bring the receipt-index MMR up to the receipt chain length: push the
-    /// `receipt_hash()` leaf of every chain entry not yet indexed. `O(new
-    /// leaves)` — the incremental maintenance the index needs, run lazily off
-    /// the read path (the query handlers call this before serving). It is purely
-    /// additive over the already-committed, append-only chain, so it can never
-    /// affect commit soundness.
+    /// `receipt_hash()` leaf of every chain entry not yet indexed, then refresh
+    /// the durable head anchor (finding F5). Runs lazily off the read path (the
+    /// query handlers call this before serving) and is purely additive over the
+    /// already-committed, append-only chain, so it can never affect commit
+    /// soundness. When nothing is new it EARLY-RETURNS in `O(1)`; the head-anchor
+    /// refresh (an `O(len)` root recompute + one durable write) fires only when
+    /// the index actually GREW — the same growth that a serving query already
+    /// pays a root recompute for — so it is bounded by receipt-arrival rate, not
+    /// query rate.
     pub fn sync_receipt_index(&mut self) {
         let have = self.receipt_index.len() as usize;
         let chain = self.cclerk.receipt_chain();
@@ -2055,6 +2096,47 @@ impl NodeStateInner {
         let new_leaves: Vec<[u8; 32]> = chain[have..].iter().map(|r| r.receipt_hash()).collect();
         for leaf in new_leaves {
             self.receipt_index.push(leaf);
+        }
+        self.refresh_receipt_index_head_anchor();
+    }
+
+    /// Refresh the durable receipt-index HEAD anchor `{ len, root }` (finding F5)
+    /// and, on the FIRST sync after a restart (the served length still equals the
+    /// recorded anchor length), verify the recovered chain still reproduces the
+    /// head served before the restart. The receipt index is ADDITIVE and never
+    /// commit-gating, so a divergence is a LOUD detection/alert (not a panic);
+    /// the anchor then advances forward. A persist failure is best-effort — the
+    /// anchor is a rebuildable cache and boot rebuilds it from the chain.
+    fn refresh_receipt_index_head_anchor(&self) {
+        let len = self.receipt_index.len();
+        let root = self.receipt_index.root();
+        match self.store.load_receipt_index_head() {
+            Ok(Some((anchor_len, anchor_root))) if anchor_len == len && anchor_root != root => {
+                tracing::error!(
+                    len,
+                    "receipt-index head MISMATCH on recovery — the served non-omission root \
+                     diverged from the durable anchor: the recovered receipt chain no longer \
+                     reproduces the head served before restart (STORE INTEGRITY EVENT)"
+                );
+            }
+            Ok(Some((anchor_len, _))) if anchor_len > len => {
+                tracing::error!(
+                    anchor_len,
+                    len,
+                    "durable receipt-index anchor is AHEAD of the recovered chain — possible \
+                     receipt-log rollback (STORE INTEGRITY EVENT)"
+                );
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(error = %e, "could not read receipt-index head anchor for recovery check");
+            }
+        }
+        if let Err(e) = self.store.persist_receipt_index_head(len, &root) {
+            tracing::warn!(
+                error = %e,
+                "failed to persist receipt-index head anchor (rebuildable cache; boot rebuilds it)"
+            );
         }
     }
 
@@ -3587,6 +3669,12 @@ mod witnessed_receipt_persistence_tests {
                 5,
                 "every appended receipt is durable the moment it lands on the chain"
             );
+            // F5: the served head was durably anchored by `sync_receipt_index`.
+            assert_eq!(
+                s.store.load_receipt_index_head().expect("load head anchor"),
+                Some((pre_len, pre_root)),
+                "sync_receipt_index anchored the served receipt-index head durably"
+            );
         }
 
         // ── RESTART ── reopen the SAME data dir (crash recovery).
@@ -3619,6 +3707,15 @@ mod witnessed_receipt_persistence_tests {
         s.cclerk
             .verify_own_chain()
             .expect("every reloaded agent-scoped receipt chain verifies");
+
+        // F5: the durable head anchor survived the restart AND the rebuilt MMR
+        // reproduces it (the recovery check in `refresh_receipt_index_head_anchor`
+        // saw `anchor_len == len` with a matching root — no integrity event).
+        assert_eq!(
+            s.store.load_receipt_index_head().expect("load head anchor"),
+            Some((post_len, post_root)),
+            "the receipt-index head anchor survives restart and matches the rebuilt MMR"
+        );
     }
 
     /// THE REALM-SUBSTRATE RESTART CANARY (realm-model graduated into the node).
@@ -4068,6 +4165,49 @@ mod crash_recovery_overlay_tests {
             .get(&cell(seed, 0).id())
             .expect("recovered cell present");
         assert_eq!(recovered.state.balance(), 42);
+    }
+
+    /// F3 (integrity gate skippable on read-error): the read-error policy that
+    /// [`NodeStateInner::verify_recovery_convergence`] uses. Both directions —
+    /// a read error is non-fatal ONLY on a fresh/zero-cursor node; on a node with
+    /// finalized state (non-zero cursor) an unreadable recorded root FAILS CLOSED,
+    /// and an unreadable cursor also fails closed (freshness unprovable).
+    #[test]
+    fn recovery_read_error_is_fatal_only_with_finalized_state() {
+        assert!(
+            !recovery_read_error_is_fatal(Ok(0)),
+            "fresh/zero-cursor node: a root read error must NOT block boot"
+        );
+        assert!(
+            recovery_read_error_is_fatal(Ok(1)),
+            "non-zero cursor: an unreadable recorded root FAILS CLOSED"
+        );
+        assert!(recovery_read_error_is_fatal(Ok(9_999)));
+        assert!(
+            recovery_read_error_is_fatal(Err(dregg_persist::StoreError::Database(
+                "cursor unreadable".to_string()
+            ))),
+            "cursor itself unreadable: cannot prove freshness → fail closed"
+        );
+    }
+
+    /// F3 "still succeeds" direction: a genuinely fresh node (zero commit cursor,
+    /// no recorded finalized root) has nothing to converge to and MUST boot — the
+    /// read-error fail-closed path must never break first boot.
+    #[tokio::test]
+    async fn fresh_zero_cursor_boot_passes_convergence_with_no_recorded_root() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let state = NodeState::new_with_key_file(tmp.path(), vec![], "node.key")
+            .expect("fresh construction");
+        assert_eq!(
+            state.read().await.store.commit_cursor().expect("cursor"),
+            0,
+            "fresh node has a zero commit cursor"
+        );
+        state
+            .verify_recovery_convergence()
+            .await
+            .expect("a fresh zero-cursor node with no recorded root must boot");
     }
 
     /// A small deterministic committee (signing keys → public keys) for the NODE-1/2 tests.

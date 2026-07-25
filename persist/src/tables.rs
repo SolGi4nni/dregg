@@ -211,6 +211,17 @@ pub const META_FAITHFUL_NOTE_ROOT_ANCHOR: &str = "faithful_note_root_anchor_v1";
 /// Transactionally updated exact count/head seal for truncation detection.
 pub const META_FAITHFUL_NOTE_ROOT_HEAD: &str = "faithful_note_root_head_v1";
 
+/// Key for the durable RECEIPT-INDEX HEAD anchor (stored in METADATA_BYTES).
+///
+/// The served `/api/receipts/index/*` non-omission MMR is projected from the
+/// receipt chain; this compact `{ len: u64, root: [u8; 32] }` (40 bytes,
+/// little-endian len ‖ root) is the last head the node served. On recovery the
+/// rebuilt MMR is checked against it, so a receipt chain that no longer
+/// reproduces the head served before restart is a detectable store-integrity
+/// event (finding F5). It is a rebuildable cache — never commit-gating — and the
+/// anchor that makes a future retention-windowed log compaction sound.
+pub const META_RECEIPT_INDEX_HEAD: &str = "receipt_index_head_v1";
+
 /// Key for the latest checkpoint height.
 pub const META_LATEST_CHECKPOINT_HEIGHT: &str = "latest_checkpoint_height";
 

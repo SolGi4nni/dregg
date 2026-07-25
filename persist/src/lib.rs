@@ -235,6 +235,12 @@ pub type Result<T> = std::result::Result<T, StoreError>;
 /// crash-safe through redb's write-ahead logging.
 pub struct PersistentStore {
     db: Database,
+    /// Test-only fault seam for [`Self::persist_block`]. When set, `persist_block`
+    /// returns a database error instead of writing, so a node durability test can
+    /// drive the authored-block fail-closed/rollback path (finding F2) through the
+    /// REAL producer (`submit_heartbeat` / `produce_round_block`). Always compiled
+    /// — one relaxed atomic load per block persist — and NEVER set in production.
+    fail_persist_block: std::sync::atomic::AtomicBool,
 }
 
 impl PersistentStore {
@@ -247,7 +253,10 @@ impl PersistentStore {
     /// Creates the file and all necessary tables if they don't exist.
     pub fn open(path: &Path) -> Result<Self> {
         let db = Database::create(path).map_err(|e| StoreError::Database(e.to_string()))?;
-        let store = Self { db };
+        let store = Self {
+            db,
+            fail_persist_block: std::sync::atomic::AtomicBool::new(false),
+        };
         store.initialize_tables()?;
         store.enforce_canonical_state_schema_epoch()?;
         // This migration must precede any generic index rebuild: once a legacy
@@ -273,7 +282,10 @@ impl PersistentStore {
         let db = Database::builder()
             .create_with_backend(backend)
             .map_err(|e| StoreError::Database(e.to_string()))?;
-        let store = Self { db };
+        let store = Self {
+            db,
+            fail_persist_block: std::sync::atomic::AtomicBool::new(false),
+        };
         store.initialize_tables()?;
         store.enforce_canonical_state_schema_epoch()?;
         store.migrate_per_cell_receipt_head_index_v1()?;
@@ -729,6 +741,59 @@ impl PersistentStore {
                 "realm log reports {count} entries but has no last key"
             ))),
         }
+    }
+
+    // =========================================================================
+    // Durable receipt-index head anchor (finding F5)
+    // =========================================================================
+    //
+    // The served `/api/receipts/index/*` non-omission MMR is rebuilt from the
+    // receipt chain on boot. This compact `{ len, root }` anchor lets recovery
+    // DETECT a chain that no longer reproduces the head served before the
+    // restart (a store-integrity event on an ADDITIVE, non-commit-gating index),
+    // survives restart as a checked value, and is the durable head a future
+    // retention-windowed log compaction must preserve. It is O(1) on disk — it
+    // never persists the leaf set — so bounding the receipt/realm-log DISK and
+    // the O(n) boot replay of the full served chain remains a scoped follow-up
+    // (F5-b): the served chain must stay fully in memory to answer range
+    // openings, and the Lean-mirrored `MMR.lean` structure would need a
+    // compacted-prefix extension to keep serving the full-history root.
+
+    /// Durably record the served receipt-index head `{ len, root }` (40 bytes:
+    /// little-endian `len` ‖ `root`). Idempotent overwrite.
+    pub fn persist_receipt_index_head(&self, len: u64, root: &[u8; 32]) -> Result<()> {
+        let mut buf = [0u8; 40];
+        buf[..8].copy_from_slice(&len.to_le_bytes());
+        buf[8..].copy_from_slice(root);
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(tables::METADATA_BYTES)?;
+            table.insert(tables::META_RECEIPT_INDEX_HEAD, buf.as_slice())?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Load the durable receipt-index head anchor, or `None` if never recorded
+    /// (a fresh node, or one that has not yet served the index).
+    pub fn load_receipt_index_head(&self) -> Result<Option<(u64, [u8; 32])>> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(tables::METADATA_BYTES)?;
+        let Some(guard) = table.get(tables::META_RECEIPT_INDEX_HEAD)? else {
+            return Ok(None);
+        };
+        let bytes = guard.value();
+        if bytes.len() != 40 {
+            return Err(StoreError::Integrity(format!(
+                "receipt-index head anchor is {} bytes, expected 40",
+                bytes.len()
+            )));
+        }
+        let mut len_bytes = [0u8; 8];
+        len_bytes.copy_from_slice(&bytes[..8]);
+        let mut root = [0u8; 32];
+        root.copy_from_slice(&bytes[8..]);
+        Ok(Some((u64::from_le_bytes(len_bytes), root)))
     }
 
     // =========================================================================
