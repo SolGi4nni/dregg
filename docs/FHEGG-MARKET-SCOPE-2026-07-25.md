@@ -23,11 +23,21 @@ malicious security + the ZK floor open; the live DrEX clear is regression-broken
   the Rust decrypted observable to the Lean argmax — but ONLY the plaintext/decrypted semantics (the tfhe-rs
   ciphertext-eval correctness + AggregatesFitU32 stay NAMED residuals).
 
-## ⚡ ACTIONABLE REGRESSION (from our own twin-deletion campaign, fixable)
-The DrEX /clear ring-settle is REGRESSION-BROKEN: intent/src/bin/drex_clear.rs never calls
-register_intent_verified_gate → a twin-deletion fail-closed now REFUSES every clearing book INCL the demo. Fix:
-register the gate (a fail-closed that over-reached — the [[project-twin-deletion-campaign]] class of "the gate
-fail-closes a legit path"). Near-term, restores the DrEX demo.
+## ⚡ ACTIONABLE REGRESSION (from our own twin-deletion campaign) — /clear FIXED, other consumers still dark
+The DrEX /clear ring-settle was REGRESSION-BROKEN: the clear-book CLI never installed an IntentVerifiedGate, so
+the twin-deletion fail-closed REFUSED every clearing book INCL the demo, with a message that blamed the ring
+("verified settlement rejected the ring: …FFI unavailable"). Note the fail-closed itself is CORRECT and stays:
+an unverified in-process Rust fold must not decide a settlement. What over-reached was the APP, not the gate.
+FIXED: the CLI is exec-lean/src/bin/drex_clear.rs (NOT intent/src/bin/ — it was moved into dregg-exec-lean, the
+crate that owns the gate impl, because FFI-free dregg-intent cannot depend on exec-lean without a cycle), and its
+main calls dregg_exec_lean::register_distributed_gates(). A missing core now names the BUILD/ENVIRONMENT instead
+of the book, and exec-lean/tests/drex_clear_gate.rs pins both poles.
+STILL UNREGISTERED (same fail-closed, no gate reachable — each settles a ring with no gate installed):
+perf/src/bin/orchestration_demo.rs (a BIN that .expect()s the settle → panics; already deps dregg-exec-lean, so
+it is a one-line fix), starbridge-apps/tussle, starbridge-apps/sealed-auction (both only MENTION
+register_distributed_gates() in doc comments — neither calls it, and neither deps exec-lean), app-framework
+(ring_trade / service_promise / agent_coordination) and every app on it (discord-bot, dreggnet-market), plus the
+public intent lib entries fulfillment.rs::execute_fulfillment_flow_verified* / trustless.rs / drex_routing.rs.
 
 ## FORWARD — top 5 things we NEED (ranked)
 ① [BLOCKS LAUNCH] **A real distributed MPC/threshold runtime.** Today every party is a THREAD in one process +

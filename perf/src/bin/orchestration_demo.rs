@@ -74,6 +74,14 @@ fn timed<T>(label: &str, f: impl FnOnce() -> T) -> (T, f64) {
 }
 
 fn main() {
+    // Install the verified-Lean executor gate before any settlement. `settle_ring_verified` FAILS
+    // CLOSED with no `IntentVerifiedGate` installed (the twin-deletion inversion: an unverified
+    // in-process Rust fold must not decide a settlement), so without this the award ring in step 5
+    // panics on its `expect` and step 5b's anti-tamper assertion would be satisfied by the MISSING
+    // gate rather than by the verified executor refusing the leak. `dregg-exec-lean` is already a
+    // dependency of this crate; this is the same install `node/src/lib.rs` does at startup.
+    dregg_exec_lean::register_distributed_gates();
+
     println!("\n=== dregg multi-agent orchestration demo (the polis loop, measured) ===\n");
 
     // -----------------------------------------------------------------------

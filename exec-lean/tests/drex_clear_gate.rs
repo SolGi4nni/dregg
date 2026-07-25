@@ -96,6 +96,76 @@ fn drex_clear_bin_clears_the_demo_book() {
     );
 }
 
+/// The regression gate that CANNOT self-skip — it has teeth on a box WITHOUT the Lean archive too,
+/// which is where the previous gate went blind.
+///
+/// `drex_clear_bin_clears_the_demo_book` only fires where `libdregg_lean.a` is linked; on every other
+/// box it returns early, so deleting `register_distributed_gates()` from the bin's `main` would sail
+/// through. This test never skips. It asserts the CLI's failure MODE, which is registration-sensitive
+/// in both environments:
+///
+///   * archive linked   → the demo book must CLEAR (`ok:true`) — the gate is installed and works;
+///   * archive absent   → the CLI must refuse and say the BUILD/ENVIRONMENT has no verified core.
+///     Without the registration the refusal instead reads `no verified gate registered` (a WIRING
+///     BUG), which this test rejects — so the unregistered path is RED here as well.
+///
+/// In BOTH directions it forbids the old ring-blaming wording. `"verified settlement rejected the
+/// ring: …FFI unavailable…"` is a lie about a legitimate book: nothing judged that ring. The demo
+/// book below is CLEARABLE by construction (the GOLD→ART→WINE→GOLD ring), so any message claiming it
+/// was *rejected* for want of an FFI is misattribution, and it is what sent the DrEX outage to the
+/// matcher instead of to the missing gate.
+#[test]
+fn drex_clear_blames_the_missing_core_never_the_book() {
+    let bin = env!("CARGO_BIN_EXE_drex_clear");
+    let out = Command::new(bin)
+        .arg(DEMO_BOOK)
+        .stdin(Stdio::null())
+        .output()
+        .expect("spawn drex_clear");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let last = stdout.trim().lines().last().unwrap_or_default();
+    let v: serde_json::Value = serde_json::from_str(last)
+        .unwrap_or_else(|e| panic!("drex_clear emitted non-JSON: {e}; raw: {stdout}"));
+    let err = v["error"].as_str().unwrap_or_default().to_string();
+
+    assert!(
+        !err.contains("rejected the ring"),
+        "a clearable book must never be reported as REJECTED by the verified settlement — when the \
+         core cannot run, the ring was never judged. Say what is missing instead; got: {err}"
+    );
+
+    if dregg_lean_ffi::lean_available() {
+        assert_eq!(
+            v["ok"],
+            serde_json::Value::Bool(true),
+            "with the Lean archive linked, the bin installs the gate and the demo book CLEARS; \
+             got: {v}"
+        );
+        return;
+    }
+
+    // No archive: the ONLY acceptable outcome is a refusal that names the missing verified core.
+    assert_eq!(
+        v["ok"],
+        serde_json::Value::Bool(false),
+        "with NO verified core a book must NEVER clear — it would be an unverified Rust \
+         settlement; got: {v}"
+    );
+    assert!(
+        !err.contains("no verified gate registered") && !err.contains("WIRING BUG"),
+        "the bin must INSTALL the verified gate (`register_distributed_gates()` in `main`); a \
+         `no verified gate registered` refusal means that call is gone — the exact regression this \
+         test exists to catch; got: {err}"
+    );
+    assert!(
+        err.contains("ENVIRONMENT") && err.contains("NO VERIFIED CORE"),
+        "with the gate installed but no linked archive, the refusal must blame the ENVIRONMENT and \
+         name the missing verified core; got: {err}"
+    );
+    // Keep the hard mode honest: a verification lane must not accept this weaker branch as a pass.
+    dregg_lean_ffi::demand_lean(false, "Lean archive (drex_clear accept-direction)");
+}
+
 /// Both directions at the library level, through the REAL Lean gate (no subprocess): a funded,
 /// conserving ring is ACCEPTED and conserves; an over-debiting ring is REFUSED with `LegRejected`
 /// (the fail-close preserved — a bad book never settles).

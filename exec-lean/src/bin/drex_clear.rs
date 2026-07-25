@@ -17,6 +17,16 @@
 //! `intent/src/bin/`, where it could not register the gate, so every clearing book — including the
 //! demo — was refused fail-closed.)
 //!
+//! ## What it says when the verified core is missing
+//!
+//! It still REFUSES — there is no unverified fallback, ever — but it does not blame the book. A ring
+//! that could not be judged was not rejected, and the old wording ("verified settlement rejected the
+//! ring: …FFI unavailable") pointed a day of debugging at the matcher. `fail_verified_core_absent`
+//! names which absence it is: a WIRING BUG (this binary never installed the gate) or the
+//! ENVIRONMENT (gate installed, no linked archive). `tests/drex_clear_gate.rs` pins both, and its
+//! no-archive direction is what keeps the registration from silently disappearing again on a box
+//! where the accept-direction test self-skips.
+//!
 //! This is the SAME real pipeline as `dregg-exec-lean/examples/drex_clear_book.rs` — orders →
 //! aggregated book (rung-2) → **real ring matcher** (`solver.rs`, Johnson elementary circuits +
 //! Shapley–Scarf TTC) → **verified conserving settlement** (`verified_settle.rs`, each leg folded
@@ -193,6 +203,46 @@ fn fail(msg: &str) -> ! {
     let v = serde_json::json!({ "ok": false, "error": msg });
     println!("{v}");
     std::process::exit(1);
+}
+
+/// Whether a settlement error means the verified core could not JUDGE the ring (as opposed to
+/// judging it and refusing it). `FfiUnavailable` is the only such kind: no gate installed, or a gate
+/// whose export could not run (archive absent / init failed / wire error).
+fn verified_core_absent(e: &VerifiedSettleError) -> bool {
+    matches!(e, VerifiedSettleError::FfiUnavailable(_))
+}
+
+/// Fail with a message that blames the BUILD/ENVIRONMENT, never the book.
+///
+/// When the verified core cannot run, the ring was **not rejected — it was never judged**, and this
+/// binary refuses to settle it with the unverified in-process Rust fold (that fail-closed inversion
+/// in `intent/src/verified_settle.rs` is the whole point). Saying "verified settlement rejected the
+/// ring" there is a LIE about a legitimate book, and it sent a day of debugging at the matcher
+/// instead of at the missing gate. The two absences are distinguished because their fixes are
+/// opposite:
+///   * `no verified gate registered` — this BINARY never installed the gate: a wiring bug in the
+///     app (the twin-deletion regression itself), fixed in code.
+///   * anything else — the gate IS installed but its Lean export could not run: this BUILD has no
+///     verified core (`libdregg_lean.a` unlinked / init failed), fixed in the environment.
+fn fail_verified_core_absent(e: &VerifiedSettleError) -> ! {
+    let detail = e.to_string();
+    if detail.contains("no verified gate registered") {
+        fail(&format!(
+            "WIRING BUG: no verified executor gate is installed in this binary, so the ring was \
+             NEVER JUDGED — it was not rejected. An app that settles intents must call \
+             `dregg_exec_lean::register_distributed_gates()` at startup (as `node/src/lib.rs` and \
+             this bin's `main` do). This build will not settle a ring with unverified Rust. \
+             underlying: {detail}"
+        ))
+    } else {
+        fail(&format!(
+            "ENVIRONMENT: this build has NO VERIFIED CORE — the Lean gate is installed but its \
+             export could not run (no linked `dregg-lean-ffi/libdregg_lean.a`, or Lean init \
+             failed), so the ring was NEVER JUDGED — it was not rejected. Seed a HEAD-matching \
+             archive and rebuild; this build will not settle a ring with unverified Rust. \
+             underlying: {detail}"
+        ))
+    }
 }
 
 fn main() {
@@ -386,6 +436,8 @@ fn main() {
     );
     let (pre, post) = match settle_fulfillment_verified(&sealed, &ring.settlements) {
         Ok(pp) => pp,
+        // "Could not judge" is NOT "rejected": name the missing core, never blame the book.
+        Err(e) if verified_core_absent(&e) => fail_verified_core_absent(&e),
         Err(e) => fail(&format!("verified settlement rejected the ring: {e}")),
     };
     let legs = match extract_legs(&sealed, &ring.settlements) {
@@ -465,6 +517,9 @@ fn main() {
         let victim = legs[0].clone();
         starved.set(victim.from, &victim.asset, victim.amount - 1);
         match settle_ring_verified(&starved, &legs) {
+            // A core that cannot judge must not be reported as a passing reject-polarity check
+            // (that would read as "the kernel refused the over-debit" when nothing ran at all).
+            Err(e) if verified_core_absent(&e) => fail_verified_core_absent(&e),
             Err(VerifiedSettleError::LegRejected { index, .. }) => Some(Reject {
                 victim: name_of_cellbyte(victim.from),
                 asset: dict.name_of(victim.asset[0]),
