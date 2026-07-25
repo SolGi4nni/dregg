@@ -956,6 +956,8 @@ def verify_by_name_routing() -> list[str]:
     # THE SECOND DOOR — see verify_include_targets. The Lean table is one way an artifact gets
     # claimed; a Rust `include_str!` is the other, and the four legs above cannot see it.
     findings.extend(verify_include_targets())
+    # ...and the same door one language over: a committed `import` of an uncommitted module.
+    findings.extend(verify_lean_imports())
 
     sys.stdout.flush()  # so the summary precedes the findings this returns (stderr)
     return findings
@@ -1205,6 +1207,75 @@ def verify_include_targets() -> list[str]:
         f"{len(files)} tracked .rs · checked {leg}"
         + (f" · {n_nonliteral} non-literal (macro-built path) site(s) NOT checkable" if n_nonliteral else "")
         + (f" · {excluded} candidate file(s) in named exclusions" if excluded else "")
+    )
+    return findings
+
+
+# ---- the SAME door, one language over: a committed `import` of an uncommitted module -----
+#
+# `20b9d9a20f` is titled "repairs a committed tree that imported untracked files": a committed
+# .lean imported `Dregg2.Circuit.Emit.GuardedHidingSpanWideBlindRefine`, which was left untracked,
+# so a fresh checkout could not build it. Identical shape to INCLUDE-UNTRACKED — green for the
+# author, red for everyone else — and worth checking here rather than waiting for the next
+# multi-hour `lake build` to discover it, since this driver's whole point is that the emit's Lean
+# corpus builds.
+#
+# Only `Dregg2.*` / `Polis.*` are resolved: Mathlib/Std/Lean/Batteries live in `.lake/packages`,
+# which is not this repo's to track. That scope is a decision, not an oversight — a mis-typed
+# Mathlib import is Lean's error to give, an untracked FIRST-PARTY module is ours.
+LEAN_FIRST_PARTY_ROOTS = ("Dregg2", "Polis")
+_LEAN_IMPORT = re.compile(r"^\s*import\s+([A-Za-z0-9_.]+)", re.M)
+
+
+def verify_lean_imports() -> list[str]:
+    """Every first-party `import` in a tracked metatheory/*.lean must name a TRACKED module.
+
+    Returns finding lines (empty == clean); prints a one-line summary. Skipped entirely with a
+    stated reason where there is no git index, since "tracked" is the whole question."""
+    out = subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files", "-z", "--", "metatheory/*.lean"],
+        capture_output=True, text=True,
+    )
+    if out.returncode != 0:
+        print("verify-lean-imports: SKIPPED — no git index here, and `tracked` is the question.")
+        return []
+    files = [p for p in out.stdout.split("\0") if p]
+    if not files:
+        sys.exit(
+            "emit_descriptors: `git ls-files metatheory/*.lean` returned NOTHING. A scan that "
+            "sees zero modules would report a vacuous pass; re-point it."
+        )
+    pre = len("metatheory/")
+    tracked_mods = {f[pre:-len(".lean")].replace("/", ".") for f in files}
+    on_disk_mods = {
+        p.relative_to(ROOT / "metatheory").as_posix()[:-len(".lean")].replace("/", ".")
+        for p in (ROOT / "metatheory").rglob("*.lean")
+        if ".lake" not in p.relative_to(ROOT / "metatheory").parts
+    }
+
+    findings: list[str] = []
+    n_imports = 0
+    for f in files:
+        text = (ROOT / f).read_text(errors="replace")
+        for m in _LEAN_IMPORT.finditer(text):
+            mod = m.group(1)
+            if not mod.startswith(LEAN_FIRST_PARTY_ROOTS):
+                continue
+            n_imports += 1
+            if mod in tracked_mods:
+                continue
+            line = text.count("\n", 0, m.start()) + 1
+            where = "exists ON DISK but is NOT tracked" if mod in on_disk_mods else "exists NOWHERE"
+            findings.append(
+                f"LEAN-IMPORT-{'UNTRACKED' if mod in on_disk_mods else 'GHOST'}: {f}:{line} "
+                f"imports `{mod}`, whose module file {where}. A committed file cannot import an "
+                f"uncommitted one — a fresh checkout cannot `lake build` this, and every theorem "
+                f"downstream of it is unbuilt rather than proven. Commit the module, or drop the "
+                f"import and whatever it was carrying."
+            )
+    print(
+        f"verify-lean-imports: {n_imports} first-party import(s) over {len(files)} tracked "
+        f"metatheory/*.lean ({len(tracked_mods)} modules) · checked exists+tracked"
     )
     return findings
 
