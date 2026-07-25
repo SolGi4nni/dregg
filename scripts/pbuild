@@ -128,7 +128,9 @@ WARM_LANES="$(printf '%s\n' "$PROBE" | sed -n '/^WARM_BEGIN$/,/^WARM_END$/p' | s
 if [ "$STATUS" != "warm" ]; then
   if [ "$FORCE_COLD" -eq 1 ]; then
     echo "pbuild: WARNING — lane '${LANE}' is COLD; --force-cold given, seeding a" >&2
-    echo "        fresh build (compiles the whole dep graph from scratch, box load spikes)." >&2
+    echo "        fresh build. The Lean half is cheap (mathlib oleans are FETCHED below," >&2
+    echo "        not compiled); the Rust dep graph still compiles from scratch." >&2
+    SEED_LEAN_CACHE=1
   else
     {
       echo "pbuild: REFUSING — lane '${LANE}' is COLD on ${HOST} (no warm cargo target/,"
@@ -183,6 +185,32 @@ rsync -az --delete \
   --filter="+ /${LEAN_ARCHIVE}" \
   --filter=':- .gitignore' --exclude='.git/' \
   "$SRC" "${HOST}:${REMOTE}/"
+
+# ---- FETCH mathlib, never compile it (2026-07-25) --------------------------
+# THE measurement that unlocks parallel remote lanes:
+#
+#   compiling the mathlib closure : ~13 HOURS  (measured: 3,337/8,098 objects at ~6/min)
+#   `lake exe cache get`          :  40 SECONDS (measured: 8,463 files, 2,680 -> 8,105 oleans)
+#
+# Mathlib ships a prebuilt olean cache and NOTHING in this repo has ever called it. That single
+# omission is why a cold lane was catastrophic, why the guard above had to refuse cold lanes at
+# all, and therefore why work piled onto one laptop's shared target lock while two 24-core boxes
+# sat idle. A cold lane's Lean half is now a 40-second download; only the Rust dep graph still
+# compiles, and that parallelises across lanes because each lane owns its own target dir.
+#
+# Idempotent and additive — `cache get` only fills in missing oleans, so running it on a warm
+# lane is safe and repairs a partially-populated one. Failure is NON-FATAL: a lane with no
+# network still builds, just the slow way, and says so.
+if [ "${SEED_LEAN_CACHE:-0}" -eq 1 ] || [ "${PBUILD_ALWAYS_CACHE_GET:-0}" -eq 1 ]; then
+  echo "pbuild: fetching the mathlib olean cache into lane '${LANE}' (seconds, not hours) …" >&2
+  # shellcheck disable=SC2029 # REMOTE is a locally-owned, validated lane path.
+  ssh "$HOST" "set -e; source ~/.elan/env 2>/dev/null || true; \
+    export PATH=\"\$HOME/.elan/bin:\$PATH\"; \
+    cd '${REMOTE}/metatheory' 2>/dev/null || exit 0; \
+    lake exe cache get 2>&1 | tail -2" \
+    || echo "pbuild: WARNING — mathlib cache fetch failed; the lane will COMPILE mathlib \
+instead (hours). Check network/elan on ${HOST} before blaming the build." >&2
+fi
 
 # Build with cargo + elan env sourced (non-login shells lack them). Persvati's
 # empty-wrapper path is intentionally byte-for-byte the historical behavior.
