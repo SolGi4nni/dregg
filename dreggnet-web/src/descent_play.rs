@@ -332,19 +332,289 @@ fn read_play_snippet(path: &str) -> Option<Vec<u8>> {
     })
 }
 
-const PLAY_STYLE: &str = r#"<style>
-.nd-page{max-width:980px}.nd-intro{max-width:720px;margin:2rem 0 1.5rem}.nd-intro h1{font-size:clamp(2.6rem,9vw,6.5rem);line-height:.84;margin:.2rem 0 1rem;letter-spacing:-.045em}.nd-intro p{max-width:62ch}.nd-kicker{text-transform:uppercase;letter-spacing:.16em;font-size:.72rem;color:#c9a767}.nd-shell{border:1px solid rgba(201,167,103,.42);background:linear-gradient(145deg,rgba(17,20,32,.96),rgba(7,9,16,.98));box-shadow:0 30px 90px rgba(0,0,0,.42);padding:clamp(1rem,3vw,2rem)}.nd-meta{display:flex;flex-wrap:wrap;gap:.65rem 1.3rem;align-items:center;padding-bottom:1rem;border-bottom:1px solid rgba(255,255,255,.1);font-size:.78rem;letter-spacing:.08em;text-transform:uppercase;color:#a8aec4}.nd-proof{margin-left:auto;color:#76d3a2}.nd-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:rgba(255,255,255,.11);margin:1.4rem 0}.nd-stat{background:#0c101c;padding:1rem}.nd-stat b{display:block;font:600 clamp(1.2rem,4vw,2rem)/1.1 ui-monospace,SFMono-Regular,monospace;color:#f0e6cf}.nd-stat span{display:block;margin-top:.35rem;color:#8e95aa;font-size:.68rem;letter-spacing:.13em;text-transform:uppercase}.nd-custody{padding:1rem;border:1px solid rgba(255,255,255,.1);margin-bottom:1.2rem}.nd-custody strong{color:#d4ba82}.nd-action-menu{min-width:0}.nd-action-header{display:flex;gap:.6rem 1rem;align-items:baseline;justify-content:space-between;margin:1.25rem 0 .75rem}.nd-action-heading{margin:0;font-size:1rem}.nd-action-summary{margin:0;color:#8e95aa;font-size:.78rem}.nd-action-assurance{margin:0 0 .75rem;color:#777f96;font-size:.72rem;line-height:1.45}.nd-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.7rem}.nd-actions button,.nd-tools button{appearance:none;border:1px solid rgba(201,167,103,.5);background:#151a29;color:#f4eddf;padding:.85rem 1rem;text-align:left;font:inherit;cursor:pointer}.nd-actions button{min-height:48px;overflow-wrap:anywhere;touch-action:manipulation}.nd-actions button:hover:not(:disabled),.nd-tools button:hover{background:#222a3e;border-color:#d7b978}.nd-actions button:disabled{opacity:.32;cursor:not-allowed}.nd-actions button:focus-visible,.nd-tools button:focus-visible,.nd-unavailable summary:focus-visible{outline:3px solid #76d3a2;outline-offset:3px}.nd-unavailable{margin-top:.85rem;border-top:1px solid rgba(255,255,255,.08);padding-top:.7rem;color:#8e95aa}.nd-unavailable summary{cursor:pointer;font-size:.78rem;min-height:44px;display:flex;align-items:center;touch-action:manipulation}.nd-unavailable ul{list-style:none;margin:.7rem 0 0;padding:0;display:grid;gap:.35rem}.nd-unavailable li{display:flex;justify-content:space-between;gap:1rem;font-size:.75rem}.nd-unavailable-label{color:#b7bdce;overflow-wrap:anywhere}.nd-unavailable-reason{color:#666e84;text-align:right;overflow-wrap:anywhere}.nd-message{min-height:3.5rem;padding:1rem;margin:1rem 0;background:rgba(255,255,255,.045);border-left:3px solid #6b7288}.nd-message.good{border-color:#68c394}.nd-message.bad{border-color:#c76f69}.nd-tools{display:flex;flex-wrap:wrap;gap:.6rem}.nd-tools button{font-size:.78rem;padding:.6rem .8rem;min-height:44px}.nd-share{display:inline-block;margin:.2rem 0 1rem;color:#76d3a2}.nd-root{margin-top:1rem;color:#777f96;font:11px/1.5 ui-monospace,SFMono-Regular,monospace;overflow-wrap:anywhere}.nd-terminal{color:#e1bf75}.nd-fatal{padding:1rem;border:1px solid #9f514d;background:#261416;color:#f2c9c5}
-/* ═══ THE VITALS — a badge and the meters that ARE the game ═══════════════ */
-.nd-vitals{margin:1.4rem 0}.nd-status{display:flex;flex-wrap:wrap;gap:.55rem .9rem;align-items:center;margin-bottom:.95rem}.nd-pill{display:inline-flex;align-items:center;padding:.3rem .75rem;border-radius:999px;border:1px solid currentColor;font:700 .68rem/1 ui-monospace,SFMono-Regular,monospace;letter-spacing:.13em;text-transform:uppercase}.nd-pill.good{color:#76d3a2;background:rgba(118,211,162,.1)}.nd-pill.warn{color:#e1bf75;background:rgba(225,191,117,.1)}.nd-pill.bad{color:#e08c86;background:rgba(224,140,134,.13)}.nd-standing{color:#a8aec4;font-size:.86rem}
-.nd-meters{display:grid;gap:.42rem}.nd-meter{display:grid;grid-template-columns:5.2rem 1fr 3.7rem;align-items:center;gap:.7rem}.nd-meter-label{color:#8e95aa;font:.7rem/1 ui-monospace,SFMono-Regular,monospace;letter-spacing:.11em;text-transform:uppercase}.nd-meter-track{position:relative;height:.72rem;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.09);overflow:hidden}.nd-meter-fill{display:block;height:100%;background:linear-gradient(90deg,#c9a767,#f0e6cf);transition:width .25s ease}.nd-meter.low .nd-meter-fill{background:linear-gradient(90deg,#8c3b36,#e08c86)}.nd-meter.done .nd-meter-fill{background:linear-gradient(90deg,#2f7a58,#76d3a2)}.nd-meter-value{color:#f0e6cf;font:.77rem/1 ui-monospace,SFMono-Regular,monospace;text-align:right}
-.nd-pressure{margin:.55rem 0 0;color:#d9b48a;font-size:.8rem;line-height:1.5}
+/// **The play surface's own room.**
+///
+/// This is the only page on the product that is a GAME rather than a document, and it is dressed
+/// as one. Three decisions carry it:
+///
+/// 1. **One palette, and it is the brand's night palette** (`dregg-posters/theme.typ`,
+///    `dregg-site/static/css/site.css`): ground `#0b0a10`, panel `#131118`, ink `#dcd8e4`,
+///    brass `#b08d57`/`#d8b47e`, violet `#a89fd8`/`#cfc8f0`. The page's cool site accent is
+///    retuned to brass here (scoped to this stylesheet, which is served on this route only) so the
+///    room reads as torchlight rather than as a dashboard. Colour MEANS something and there are
+///    only three meanings: **brass is light** (the torch, relics, the floor you stand on, what
+///    your torch reveals you may act on), **violet is proof** (banked custody, a verified replay,
+///    a settled receipt), **rust-red is peril** (a shut way, a standing guardian, a guttering
+///    clock). Nothing is coloured for decoration.
+/// 2. **Two faces, deliberately.** A system SERIF carries the voice — headings, the standing line,
+///    the pressure lines, the verbs — because a dungeon speaks in prose; the mono voice carries
+///    every measured thing — glyphs, counters, seeds, roots. No third face, no webfont, no CDN:
+///    every face here is resident on the reader's machine, so there is no silent fallback and no
+///    off-origin request the strict CSP would have to admit.
+/// 3. **The room is LIT, and the light is the game.** `--nd-dim` and `--nd-glow` are set on the
+///    live shell from the run's remaining light; `--nd-depth` is the floor the player stands on.
+///    So the shaft carries a real pool of torchlight that SLIDES DOWN with the player and CLOSES
+///    IN as the clock burns down. That is not decoration either — it is the one resource the run
+///    cannot refill, drawn as the thing it is. When the run settles, the lights come up: a closed
+///    record is a receipt to read, not a dungeon to survive.
+///
+/// Motion is short, clarifies, and never gates input: a relic landing in the pack, a pip going
+/// out, a bar growing. All of it is off under `prefers-reduced-motion`.
+const PLAY_STYLE: &str = r##"<style>
+/* ═══ TOKENS — the night palette, the two faces, the scale ════════════════ */
+:root{
+--nd-ground:#0b0a10;--nd-deep:#07060b;--nd-panel:#131118;--nd-stone:#191621;
+--nd-line:#272233;--nd-line-soft:#1c1826;--nd-line-lit:#3a3247;
+--nd-ink:#dcd8e4;--nd-soft:#a49fb4;--nd-faint:#6d6880;--nd-ghost:#463f57;
+--nd-torch:#d8b47e;--nd-torch-deep:#b08d57;--nd-torch-hot:#f0c98d;--nd-ember:#c2703c;
+--nd-proof:#a89fd8;--nd-proof-lit:#cfc8f0;
+--nd-peril:#c96a5e;--nd-peril-lit:#e59289;
+--nd-serif:ui-serif,"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,"Times New Roman",serif;
+--nd-mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"DejaVu Sans Mono","Liberation Mono",monospace;
+--nd-ease:cubic-bezier(.2,.7,.3,1);
+--nd-f1:.6875rem;--nd-f2:.8125rem;--nd-f3:.9375rem;--nd-f4:1.0625rem;--nd-f5:1.3125rem;
+/* The shared chrome's cyan accent becomes torchlight for this route: links and the focus ring */
+/* belong to the same room as the board. */
+--accent:#d8b47e;--line-soft:#1c1826}
+/* The ground the whole page stands on: a warm breath of light from the mouth of the shaft above, */
+/* a cold violet from the proof layer below. */
+body{background:
+radial-gradient(122% 78% at 50% -12%,rgba(216,180,126,.062),transparent 62%),
+radial-gradient(96% 56% at 50% 118%,rgba(168,159,216,.05),transparent 66%),
+var(--nd-ground);background-attachment:fixed}
+/* ═══ THE DOOR — a title, one rule of the game, then the board ════════════ */
+.nd-page{max-width:62rem}
+.nd-intro{max-width:46rem;margin:clamp(1.4rem,4.5vw,2.6rem) 0 clamp(1.1rem,3vw,1.8rem)}
+.nd-kicker{display:flex;align-items:center;gap:.6rem;margin:0 0 .85rem;font-family:var(--nd-mono);font-size:var(--nd-f1);letter-spacing:.22em;text-transform:uppercase;color:var(--nd-torch-deep)}
+.nd-kicker::before{content:"";flex:0 0 auto;width:1.5rem;height:1px;background:linear-gradient(90deg,transparent,var(--nd-torch-deep))}
+.nd-intro h1{font-family:var(--nd-serif);font-weight:600;font-size:clamp(2.1rem,6.6vw,3.5rem);line-height:1.02;letter-spacing:-.022em;margin:0 0 .7rem;color:#f4efe3;text-shadow:0 0 44px rgba(216,180,126,.22)}
+.nd-intro p{margin:0;max-width:52ch;font-family:var(--nd-serif);font-size:var(--nd-f4);line-height:1.62;color:var(--nd-soft)}
+/* ═══ THE SHELL — cut stone, not a rounded card ═══════════════════════════ */
+.nd-shell{position:relative;border:1px solid var(--nd-line);border-radius:3px;padding:clamp(.9rem,2.4vw,1.5rem);background:linear-gradient(180deg,var(--nd-panel),var(--nd-deep));box-shadow:0 44px 96px -60px #000,inset 0 1px 0 rgba(255,255,255,.028)}
+/* The dark closing in. A whisper on the shell (the shaft below carries the real weight), driven */
+/* from the run's own remaining light. */
+/* Opacity, not a gradient colour stop, so the dark ARRIVES rather than steps: gradients do not
+   interpolate, and a light clock that jumps between states would read as a rendering bug. */
+.nd-shell::after{content:"";position:absolute;inset:0;pointer-events:none;border-radius:inherit;background:radial-gradient(120% 88% at 50% 34%,transparent 46%,#030206 100%);opacity:calc(var(--nd-dim,0) * .34);transition:opacity .55s var(--nd-ease)}
+/* ═══ THE RUN HEADER — one word, one sentence, the provenance ═════════════ */
+.nd-run{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.35rem 1.4rem;align-items:start;margin:0 0 1.05rem;padding:0 0 .9rem;border-bottom:1px solid var(--nd-line-soft)}
+.nd-status{grid-column:1;display:flex;flex-wrap:wrap;gap:.4rem .55rem;align-items:center;margin:0 0 .5rem}
+.nd-pill{display:inline-flex;align-items:center;gap:.42rem;padding:.24rem .62rem;border-radius:2px;border:1px solid currentColor;font-family:var(--nd-mono);font-size:var(--nd-f1);font-weight:700;letter-spacing:.17em;text-transform:uppercase;line-height:1.3}
+.nd-pill::before{content:"";flex:0 0 auto;width:.36rem;height:.36rem;border-radius:50%;background:currentColor;box-shadow:0 0 8px currentColor}
+.nd-pill.good{color:var(--nd-proof-lit);background:rgba(168,159,216,.1)}
+.nd-pill.warn{color:var(--nd-torch);background:rgba(216,180,126,.09)}
+.nd-pill.bad{color:var(--nd-peril-lit);background:rgba(201,106,94,.11)}
+.nd-terminal{font-family:var(--nd-mono);font-size:var(--nd-f1);letter-spacing:.17em;text-transform:uppercase;color:var(--nd-torch-hot)}
+.nd-standing{grid-column:1;margin:0;font-family:var(--nd-serif);font-size:var(--nd-f5);line-height:1.32;letter-spacing:-.01em;color:var(--nd-ink)}
+.nd-meta{grid-column:2;grid-row:1/span 2;display:grid;gap:.22rem;justify-items:end;text-align:right;font-family:var(--nd-mono);font-size:var(--nd-f1);letter-spacing:.05em;color:var(--nd-faint);white-space:nowrap}
+.nd-proof{color:var(--nd-proof-lit)}
+.nd-proof.bad{color:var(--nd-peril-lit)}
+/* ═══ THE TORCH — the clock, and the most alive thing on the page ═════════
+   26 pips, one per breath, because a turn-based clock is COUNTED, not estimated: a player reads
+   "four moves left" straight off the band instead of eyeballing a percentage. The lit run burns
+   left to right like a fuse; the burning edge is `.tip` and it breathes. */
+.nd-torch{position:relative;overflow:hidden;margin:0 0 1.1rem;padding:.85rem 1rem .9rem;border:1px solid var(--nd-line);border-radius:3px;background:linear-gradient(180deg,rgba(216,180,126,.05),rgba(11,10,16,.45));transition:border-color .4s var(--nd-ease),background .4s var(--nd-ease)}
+.nd-torch::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:linear-gradient(180deg,var(--nd-torch-hot),var(--nd-torch-deep));opacity:.85}
+.nd-torch-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:.25rem .85rem;margin:0 0 .6rem}
+.nd-torch-label{font-family:var(--nd-mono);font-size:var(--nd-f1);letter-spacing:.24em;text-transform:uppercase;color:var(--nd-torch-deep)}
+.nd-torch-say{margin:0;font-family:var(--nd-serif);font-size:var(--nd-f3);line-height:1.5;color:var(--nd-soft)}
+.nd-torch .nd-meter{grid-template-columns:minmax(0,1fr) auto;gap:0 1rem;align-items:center}
+.nd-torch .nd-meter-label{display:none}
+.nd-torch .nd-meter-track{grid-column:1;grid-row:1;display:flex;align-items:stretch;gap:.2rem;height:auto;border:0;border-radius:0;background:none;overflow:visible;box-shadow:none}
+.nd-torch .nd-meter-value{grid-column:2;grid-row:1;display:flex;align-items:baseline;gap:.06rem;line-height:1}
+.nd-torch .nd-meter-value b{font-weight:600;font-size:clamp(1.75rem,6vw,2.4rem);letter-spacing:-.035em;color:var(--nd-torch-hot)}
+.nd-torch .nd-meter-value i{font-style:normal;font-size:var(--nd-f2);color:var(--nd-faint)}
+.nd-pip{position:relative;flex:1 1 0;min-width:0;height:1.45rem;border-radius:1px;background:var(--nd-stone);box-shadow:inset 0 0 0 1px rgba(255,255,255,.03)}
+.nd-pip.lit{background:linear-gradient(180deg,var(--nd-torch-hot),var(--nd-torch-deep));box-shadow:0 0 10px -3px rgba(216,180,126,.7),inset 0 1px 0 rgba(255,255,255,.32)}
+.nd-pip.spent{background:linear-gradient(180deg,#15121b,#0c0a11)}
+.nd-pip.tip{background:linear-gradient(180deg,#fff2d8,var(--nd-torch));box-shadow:0 0 15px -1px rgba(240,201,141,.75);animation:nd-flicker 3.6s ease-in-out infinite}
+/* The pip that went dark on THIS turn keeps an ember for a beat — the only feedback that says */
+/* "you just spent one" without a number moving. */
+.nd-pip.guttered::after{content:"";position:absolute;inset:0;border-radius:inherit;background:var(--nd-ember);animation:nd-gutter .75s var(--nd-ease) forwards}
+@keyframes nd-gutter{from{opacity:.85}to{opacity:0}}
+@keyframes nd-flicker{0%,100%{opacity:1}44%{opacity:.74}72%{opacity:.95}}
+/* Burning low: the flame cools from gold to ember and the band's frame warns. */
+.nd-torch[data-state=low]{border-color:rgba(194,112,60,.42)}
+.nd-torch[data-state=low] .nd-meter-value b{color:#f0aa66}
+.nd-torch[data-state=guttering]{border-color:rgba(201,106,94,.55);background:linear-gradient(180deg,rgba(201,106,94,.1),rgba(11,10,16,.5))}
+.nd-torch[data-state=guttering] .nd-pip.lit{background:linear-gradient(180deg,#f0a15e,var(--nd-ember));box-shadow:0 0 12px -3px rgba(194,112,60,.8)}
+.nd-torch[data-state=guttering] .nd-pip.tip{background:linear-gradient(180deg,#ffd7a8,#e08050);animation-duration:1.15s}
+.nd-torch[data-state=guttering] .nd-meter-value b{color:var(--nd-peril-lit)}
+.nd-torch[data-state=dead]{border-color:rgba(201,106,94,.4);background:#0a090e}
+.nd-torch[data-state=dead] .nd-torch-say{color:var(--nd-peril-lit)}
+.nd-torch[data-state=out]{opacity:.72}
+/* ═══ THE ARENA — board left, vitals right; one column on a phone ═════════ */
+.nd-arena{display:grid;grid-template-columns:minmax(0,1fr);gap:1.05rem;margin:0 0 1.1rem}
+@media(min-width:56rem){.nd-arena{grid-template-columns:minmax(0,1fr) 16.5rem;align-items:start}}
 /* ═══ THE SHAFT — a relic keeps its COLUMN, so you watch it travel ════════ */
-.nd-shaft{margin:1.5rem 0}.nd-shaft-heading{margin:0 0 .6rem;font-size:1rem}.nd-map{display:grid;gap:.22rem;padding:.5rem;border:1px solid rgba(255,255,255,.1);background:#080b13;max-width:34rem}.nd-cell{display:grid;place-items:center;aspect-ratio:1/1;min-width:1.1rem;border:1px solid transparent;border-radius:3px;background:rgba(255,255,255,.02);color:#5c6478;font:600 clamp(.68rem,2.3vw,1rem)/1 ui-monospace,SFMono-Regular,monospace}.nd-cell.tag-muted{color:#3f465a}.nd-cell.tag-accent{color:#f4ecd9;background:rgba(201,167,103,.15);border-color:rgba(201,167,103,.52)}.nd-cell.tag-good{color:#76d3a2}.nd-cell.tag-warn{color:#e1bf75}.nd-cell.tag-bad{color:#e08c86}.nd-cell.actionable{border-color:#76d3a2;box-shadow:0 0 12px -3px #76d3a2,inset 0 0 0 1px rgba(118,211,162,.34)}.nd-legend{margin:.5rem 0 0;color:#777f96;font:.7rem/1.75 ui-monospace,SFMono-Regular,monospace;overflow-wrap:anywhere}
-@media(max-width:620px){.nd-page{padding-left:14px!important;padding-right:14px!important}.nd-intro{margin-top:1.2rem}.nd-shell{padding:13px}.nd-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.nd-actions{grid-template-columns:1fr}.nd-action-header{align-items:flex-start;flex-direction:column}.nd-action-summary{line-height:1.5}.nd-unavailable li{flex-direction:column;gap:.15rem;padding:.25rem 0}.nd-unavailable-reason{text-align:left}.nd-meta{font-size:.68rem}.nd-proof{margin-left:0;width:100%}.nd-tools button{flex:1 1 auto}.nd-intro h1{font-size:3.8rem}}
-/* The shaft on a phone: 11 columns of a ~360px viewport, so the cell floor is sized to keep the
-   WHOLE map visible without horizontal scroll, and the meter gutters narrow to match. */
-@media(max-width:620px){.nd-meter{grid-template-columns:4rem 1fr 3.1rem;gap:.5rem}.nd-map{gap:.16rem;padding:.35rem;max-width:100%}.nd-cell{min-width:0;border-radius:2px}.nd-status{gap:.4rem .6rem}.nd-legend{font-size:.64rem}}
-</style>"#;
+.nd-shaft{min-width:0}
+.nd-shaft-heading{display:flex;align-items:baseline;gap:.55rem;margin:0 0 .5rem;font-family:var(--nd-mono);font-size:var(--nd-f1);font-weight:700;letter-spacing:.22em;text-transform:uppercase;color:var(--nd-faint)}
+.nd-mapwrap{overflow-x:auto;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch;padding-bottom:2px}
+.nd-map{position:relative;isolation:isolate;min-width:15.5rem;display:grid;gap:.2rem;padding:.5rem;border:1px solid var(--nd-line);border-radius:3px;background:linear-gradient(180deg,#100e16,#07060b);box-shadow:inset 0 0 46px -12px #000,inset 0 1px 0 rgba(255,255,255,.028)}
+/* THE DARK CLOSING IN. `--nd-dim` is the run's own spent light, so the shaft's corners go black as
+   the clock burns down. */
+.nd-map::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:2;border-radius:inherit;background:radial-gradient(86% 68% at 50% 42%,transparent 30%,#030206 100%);opacity:var(--nd-dim,0);transition:opacity .55s var(--nd-ease)}
+/* THE POOL OF TORCHLIGHT. It is centred on the floor you stand on — `--nd-depth` is a plain floor
+   number, so the geometry is exact rather than a tuned percentage — and it SLIDES DOWN the shaft
+   as you delve. `--nd-glow` is your remaining light, so the pool also weakens as you burn. Depth 0
+   puts it above floor one, which is light coming down from the mouth of the shaft. */
+.nd-floors{position:relative;display:grid;gap:.2rem}
+.nd-floors::before{content:"";position:absolute;left:-14%;right:-14%;top:calc((var(--nd-depth,0) - .5) / 4 * 100%);height:150%;transform:translateY(-50%);pointer-events:none;z-index:0;background:radial-gradient(closest-side,rgba(240,201,141,.2),rgba(216,180,126,.06) 52%,transparent 76%);opacity:var(--nd-glow,1);transition:top .45s var(--nd-ease),opacity .45s var(--nd-ease)}
+.nd-row{position:relative;z-index:1;display:grid;grid-template-columns:repeat(var(--nd-cols,11),minmax(0,1fr));gap:.2rem}
+/* A row holding the keyboard's focus rises ABOVE the closing dark, so the focus ring stays a
+   focus ring even when the torch is nearly out. */
+.nd-row:focus-within{z-index:4}
+/* The manifest: eight anonymous columns become eight named ones. */
+.nd-row-head .nd-cell{aspect-ratio:auto;height:1.05rem;border:0;background:none;color:var(--nd-ghost);font-size:.58rem}
+.nd-head-span{grid-column:span 3;display:grid;place-items:center;font-family:var(--nd-mono);font-size:.54rem;letter-spacing:.15em;text-transform:uppercase;color:var(--nd-ghost)}
+/* The floor you stand on is the LIT one — the row itself, not a badge on it. */
+.nd-row.here .nd-cell{background:rgba(216,180,126,.05);border-color:rgba(216,180,126,.1)}
+.nd-row.here .nd-cell.tag-void{color:#4d4560}
+/* The shaft is a PLACE; the pack and the vault are a LEDGER. They share the columns (that is the
+   whole point) but they are not floors five and six, so they sit on their own ground — and above
+   the closing dark (z-index over `.nd-map::after`), because custody is not lit by your torch. As
+   the run burns out the shaft goes black around you and your ledger keeps reading. */
+.nd-rule{position:relative;z-index:3;height:1px;margin:.42rem .15rem;background:linear-gradient(90deg,transparent,var(--nd-line-lit),transparent)}
+.nd-band{position:relative;z-index:3;display:grid;gap:.2rem;padding:.32rem .28rem .28rem;border-radius:2px;background:rgba(168,159,216,.035);box-shadow:inset 0 0 0 1px rgba(168,159,216,.07)}
+.nd-cell{position:relative;display:grid;place-items:center;aspect-ratio:1/1;min-width:0;margin:0;padding:0;border:1px solid transparent;border-radius:2px;background:rgba(255,255,255,.014);color:var(--nd-ghost);font-family:var(--nd-mono);font-size:clamp(.68rem,2.05vw,.95rem);font-weight:600;line-height:1;-webkit-appearance:none;appearance:none;transition:color .16s,border-color .16s,background .16s,box-shadow .18s,transform .1s var(--nd-ease)}
+.nd-cell.tag-void{color:#2f2a3b;font-size:.56rem}
+.nd-cell.tag-mark{color:var(--nd-faint);font-size:.62rem}
+.nd-cell.tag-you{color:#100c07;background:linear-gradient(180deg,var(--nd-torch-hot),var(--nd-torch-deep));border-color:var(--nd-torch-hot);box-shadow:0 0 16px -4px rgba(240,201,141,.85);font-weight:700}
+.nd-cell.tag-crown{color:#fff4dd;background:rgba(240,201,141,.16);border-color:rgba(240,201,141,.42);text-shadow:0 0 14px rgba(240,201,141,.7)}
+.nd-cell.tag-relic{color:var(--nd-torch);text-shadow:0 0 10px rgba(216,180,126,.45)}
+.nd-cell.tag-vault{color:var(--nd-proof-lit);text-shadow:0 0 12px rgba(168,159,216,.55)}
+.nd-cell.tag-open{color:#5d7566}
+.nd-cell.tag-shut{color:var(--nd-peril);background:rgba(201,106,94,.08);border-color:rgba(201,106,94,.22)}
+.nd-cell.tag-guard{color:var(--nd-peril-lit);background:rgba(201,106,94,.1);border-color:rgba(201,106,94,.3)}
+.nd-cell.tag-fallen{color:#4b4457}
+/* A guardian on a floor you are not standing on: present, but out of your torch's reach. */
+.nd-cell.tag-dim{color:#413b4f}
+/* WHAT YOUR TORCH SHOWS YOU MAY DO. Brass ring plus a corner tick, so the affordance is a SHAPE */
+/* and not only a hue. Eligibility is the offering's own verdict — see `buildMap`. */
+button.nd-cell{cursor:pointer;font:inherit;font-family:var(--nd-mono);font-size:clamp(.68rem,2.05vw,.95rem);font-weight:600}
+.nd-cell.actionable{color:#fff6e6;border-color:rgba(240,201,141,.62);background:rgba(240,201,141,.1);box-shadow:0 0 0 1px rgba(240,201,141,.14),0 0 18px -7px rgba(240,201,141,.9)}
+.nd-cell.actionable::after{content:"";position:absolute;right:2px;bottom:2px;width:.26rem;height:.26rem;border-radius:50%;background:var(--nd-torch-hot);box-shadow:0 0 6px var(--nd-torch-hot)}
+button.nd-cell.actionable:hover{background:rgba(240,201,141,.19);border-color:var(--nd-torch-hot);transform:translateY(-1px)}
+button.nd-cell.actionable:active{transform:translateY(0) scale(.95)}
+button.nd-cell:focus-visible{outline:2px solid var(--nd-proof-lit);outline-offset:2px;z-index:4}
+/* A relic that moved on THIS turn lands with weight — the one animation that says a move HAPPENED. */
+.nd-cell.moved{animation:nd-land .4s var(--nd-ease) both}
+@keyframes nd-land{0%{transform:scale(1.5);filter:brightness(2.1)}62%{transform:scale(.96)}100%{transform:none;filter:none}}
+.nd-legend{display:flex;flex-wrap:wrap;gap:.28rem .8rem;margin:.6rem 0 0;padding:0;list-style:none;font-family:var(--nd-serif);font-size:var(--nd-f2);line-height:1.5;color:var(--nd-faint)}
+.nd-legend li{display:inline-flex;align-items:center;gap:.36rem;white-space:nowrap}
+.nd-legend b{display:grid;place-items:center;flex:0 0 auto;width:1.1rem;height:1.1rem;border-radius:2px;border:1px solid var(--nd-line);background:rgba(255,255,255,.03);font-family:var(--nd-mono);font-size:.64rem;font-weight:600;color:var(--nd-soft)}
+.nd-legend-note{margin:.5rem 0 0;font-family:var(--nd-serif);font-size:var(--nd-f2);line-height:1.55;color:var(--nd-ghost);max-width:60ch}
+/* ═══ THE RAIL — the three secondary meters and the pressure lines ════════ */
+.nd-rail{display:grid;gap:.85rem;align-content:start;min-width:0}
+.nd-panel{border:1px solid var(--nd-line-soft);border-radius:3px;background:rgba(255,255,255,.016);padding:.8rem .85rem .85rem}
+.nd-panel-head{margin:0 0 .65rem;font-family:var(--nd-mono);font-size:var(--nd-f1);font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:var(--nd-faint)}
+.nd-meters{display:grid;gap:.7rem}
+.nd-meter{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.3rem .6rem;align-items:baseline}
+.nd-meter-label{grid-column:1;grid-row:1;font-family:var(--nd-mono);font-size:var(--nd-f1);letter-spacing:.15em;text-transform:uppercase;color:var(--nd-faint)}
+.nd-meter-value{grid-column:2;grid-row:1;font-family:var(--nd-mono);font-size:var(--nd-f2);color:var(--nd-ink);font-variant-numeric:tabular-nums}
+.nd-meter-value i{font-style:normal;color:var(--nd-faint)}
+.nd-meter-track{grid-column:1/-1;grid-row:2;position:relative;height:.34rem;border-radius:2px;background:rgba(255,255,255,.05);box-shadow:inset 0 0 0 1px rgba(255,255,255,.03);overflow:hidden}
+.nd-meter-fill{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--nd-torch-deep),var(--nd-torch));transition:width .34s var(--nd-ease)}
+.nd-meter.low .nd-meter-fill{background:linear-gradient(90deg,#8a3f38,var(--nd-peril-lit))}
+.nd-meter.done .nd-meter-fill{background:linear-gradient(90deg,var(--nd-proof),var(--nd-proof-lit))}
+/* The things you are about to lose to. A coloured rule, not a warning emoji — the register is a */
+/* quiet dungeon, not a browser alert. */
+.nd-pressure{display:flex;gap:.55rem;margin:.6rem 0 0;font-family:var(--nd-serif);font-size:var(--nd-f2);line-height:1.5;color:var(--nd-soft)}
+.nd-panel .nd-pressure:first-of-type{margin-top:0}
+.nd-pressure::before{content:"";flex:0 0 auto;width:2px;border-radius:1px;background:var(--nd-line-lit);align-self:stretch}
+.nd-pressure.warn::before{background:var(--nd-torch-deep)}
+.nd-pressure.peril{color:var(--nd-peril-lit)}
+.nd-pressure.peril::before{background:var(--nd-peril)}
+.nd-pressure.proof::before{background:var(--nd-proof)}
+/* ═══ THE VERBS — every one names its price, so colour names its family ═══ */
+.nd-action-menu{min-width:0;margin:0 0 1rem}
+.nd-action-header{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:.3rem 1rem;margin:0 0 .5rem}
+.nd-action-heading{margin:0;font-family:var(--nd-mono);font-size:var(--nd-f1);font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:var(--nd-faint)}
+.nd-action-summary{margin:0;font-family:var(--nd-serif);font-size:var(--nd-f2);color:var(--nd-soft)}
+.nd-action-assurance{margin:0 0 .7rem;max-width:62ch;font-size:var(--nd-f1);line-height:1.5;color:var(--nd-ghost)}
+.nd-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(13.5rem,1fr));gap:.5rem}
+.nd-actions button{position:relative;min-height:3rem;padding:.6rem .85rem .6rem 1rem;border:1px solid var(--nd-line-lit);border-left-width:2px;border-left-color:var(--nd-line-lit);border-radius:3px;background:linear-gradient(180deg,rgba(255,255,255,.028),rgba(255,255,255,.008));color:var(--nd-ink);font-family:var(--nd-serif);font-size:var(--nd-f3);font-weight:500;line-height:1.35;text-align:left;cursor:pointer;overflow-wrap:anywhere;touch-action:manipulation;transition:border-color .15s,background .15s,color .15s,transform .1s var(--nd-ease),box-shadow .2s}
+/* The verb families, by the one colour system: descending and taking are TORCH work, striking and
+   gambling are PERIL, and the climb out is the PROOF that makes a run yours. The offering already
+   names each verb's price in its own label, so the rule is the only decoration a button needs.
+   A verb this sheet has never heard of keeps the neutral rule rather than going unstyled — the
+   action list is the offering's, and it is allowed to grow. */
+.nd-actions button[data-turn=delve]{border-left-color:var(--nd-torch-deep)}
+.nd-actions button[data-turn=unlock]{border-left-color:var(--nd-torch)}
+.nd-actions button[data-turn=loot]{border-left-color:var(--nd-torch-hot)}
+.nd-actions button[data-turn=smite]{border-left-color:var(--nd-peril)}
+.nd-actions button[data-turn=lunge]{border-left-color:var(--nd-ember)}
+.nd-actions button[data-turn=flee]{border-left-color:var(--nd-proof);background:linear-gradient(180deg,rgba(168,159,216,.1),rgba(255,255,255,.01))}
+.nd-actions button:hover{border-color:rgba(240,201,141,.55);color:#fff6e6;background:linear-gradient(180deg,rgba(240,201,141,.13),rgba(255,255,255,.02));transform:translateY(-1px);box-shadow:0 10px 24px -18px rgba(240,201,141,.95)}
+.nd-actions button[data-turn=flee]:hover{border-color:rgba(207,200,240,.6);color:#f3f0ff;background:linear-gradient(180deg,rgba(168,159,216,.18),rgba(255,255,255,.02))}
+.nd-actions button:active{transform:translateY(0) scale(.995)}
+.nd-actions button:focus-visible,.nd-tools button:focus-visible,.nd-unavailable summary:focus-visible{outline:2px solid var(--nd-proof-lit);outline-offset:2px}
+.nd-unavailable{margin:.8rem 0 0;padding:.65rem 0 0;border-top:1px solid var(--nd-line-soft);color:var(--nd-faint)}
+.nd-unavailable summary{display:flex;align-items:center;min-height:2.6rem;font-family:var(--nd-mono);font-size:var(--nd-f2);letter-spacing:.05em;cursor:pointer;touch-action:manipulation}
+.nd-unavailable summary:hover{color:var(--nd-soft)}
+.nd-unavailable ul{list-style:none;margin:.5rem 0 0;padding:0;display:grid;gap:.28rem}
+.nd-unavailable li{display:flex;justify-content:space-between;gap:1rem;padding:.22rem 0;border-bottom:1px solid rgba(255,255,255,.022);font-size:var(--nd-f2)}
+.nd-unavailable-label{color:var(--nd-soft);font-family:var(--nd-serif);overflow-wrap:anywhere}
+.nd-unavailable-reason{flex:0 0 auto;max-width:16rem;text-align:right;color:var(--nd-ghost);font-family:var(--nd-mono);font-size:var(--nd-f1);overflow-wrap:anywhere}
+/* ═══ THE LOG — what just happened, in the dungeon's voice ════════════════ */
+.nd-message{margin:0 0 1rem;padding:.7rem .9rem .7rem 1rem;min-height:3.1rem;border:1px solid var(--nd-line-soft);border-left:2px solid var(--nd-line-lit);border-radius:0 3px 3px 0;background:rgba(255,255,255,.016);font-family:var(--nd-serif);font-size:var(--nd-f3);line-height:1.55;color:var(--nd-soft)}
+.nd-message.good{border-left-color:var(--nd-proof);color:var(--nd-ink)}
+.nd-message.bad{border-left-color:var(--nd-peril);background:rgba(201,106,94,.055);color:var(--nd-peril-lit)}
+.nd-message.fresh{animation:nd-log-in .3s var(--nd-ease) both}
+@keyframes nd-log-in{from{opacity:0;transform:translateX(-4px)}to{opacity:1;transform:none}}
+/* ═══ THE SETTLEMENT — when the run ends, the receipt IS the surface ══════ */
+.nd-settled{margin:0 0 1.05rem;padding:.95rem 1.05rem 1rem;border:1px solid rgba(168,159,216,.34);border-radius:3px;background:linear-gradient(180deg,rgba(168,159,216,.1),rgba(11,10,16,.35))}
+.nd-settled h2{margin:0 0 .3rem;font-family:var(--nd-serif);font-weight:600;font-size:var(--nd-f5);color:var(--nd-proof-lit)}
+.nd-settled p{margin:0;max-width:56ch;font-family:var(--nd-serif);font-size:var(--nd-f3);line-height:1.55;color:var(--nd-soft)}
+.nd-share{display:inline-flex;align-items:center;gap:.4rem;margin:.75rem 0 0;padding:.5rem .8rem;border:1px solid rgba(168,159,216,.45);border-radius:3px;background:rgba(168,159,216,.08);color:var(--nd-proof-lit);font-family:var(--nd-mono);font-size:var(--nd-f2);text-decoration:none}
+.nd-share:hover{border-color:var(--nd-proof-lit);background:rgba(168,159,216,.16);color:#fff}
+/* ═══ THE RECORD — provenance tools, deliberately quiet ═══════════════════ */
+.nd-record{margin:1.05rem 0 0;padding:.9rem 0 0;border-top:1px solid var(--nd-line-soft)}
+.nd-tools{display:flex;flex-wrap:wrap;gap:.45rem}
+.nd-tools button{appearance:none;-webkit-appearance:none;display:inline-flex;align-items:center;justify-content:center;min-height:2.6rem;padding:.5rem .8rem;border:1px solid var(--nd-line);border-radius:3px;background:rgba(255,255,255,.02);color:var(--nd-soft);font-family:var(--nd-mono);font-size:var(--nd-f2);cursor:pointer;transition:border-color .15s,color .15s,background .15s}
+.nd-tools button:hover:not(:disabled){border-color:var(--nd-line-lit);color:var(--nd-ink);background:rgba(255,255,255,.045)}
+.nd-tools button:disabled{opacity:.38;cursor:not-allowed}
+.nd-tools button.primary{border-color:rgba(168,159,216,.5);background:rgba(168,159,216,.1);color:var(--nd-proof-lit)}
+.nd-tools button.primary:hover:not(:disabled){border-color:var(--nd-proof-lit);background:rgba(168,159,216,.18);color:#fff}
+.nd-tools button.danger:hover:not(:disabled){border-color:rgba(201,106,94,.5);color:var(--nd-peril-lit);background:rgba(201,106,94,.08)}
+.nd-root{margin:.8rem 0 0;font-family:var(--nd-mono);font-size:var(--nd-f1);line-height:1.65;color:var(--nd-ghost);overflow-wrap:anywhere}
+/* ═══ BOOT + REFUSAL — the two states before there is a game ══════════════ */
+.nd-boot{display:flex;align-items:center;gap:.65rem;margin:1.4rem 0;padding:.95rem 1.05rem;border:1px solid var(--nd-line);border-left:2px solid var(--nd-torch-deep);border-radius:0 3px 3px 0;background:rgba(255,255,255,.015);color:var(--nd-soft);font-family:var(--nd-serif);font-size:var(--nd-f3)}
+.nd-boot::before{content:"";flex:0 0 auto;width:.5rem;height:.5rem;border-radius:50%;background:var(--nd-torch);box-shadow:0 0 12px var(--nd-torch);animation:nd-breathe 2.1s ease-in-out infinite}
+@keyframes nd-breathe{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(.82)}}
+.nd-fatal{margin:1.4rem 0;padding:.95rem 1.05rem;border:1px solid rgba(201,106,94,.45);border-left:2px solid var(--nd-peril);border-radius:0 3px 3px 0;background:rgba(201,106,94,.06);color:var(--nd-peril-lit);font-family:var(--nd-serif);font-size:var(--nd-f3);line-height:1.55;overflow-wrap:anywhere}
+.nd-offline{margin:1.4rem 0;padding:.95rem 1.05rem;border:1px solid var(--nd-line);border-left:2px solid var(--nd-proof);border-radius:0 3px 3px 0;background:rgba(255,255,255,.015);color:var(--nd-soft);font-family:var(--nd-serif);font-size:var(--nd-f3);line-height:1.6}
+.nd-offline a{color:var(--nd-proof-lit)}
+/* ═══ THE PHONE — one column, and the shaft still fits without a swipe ════ */
+@media(max-width:44rem){
+.nd-page{padding-left:.9rem!important;padding-right:.9rem!important}
+.nd-shell{padding:.85rem .8rem 1rem}
+.nd-run{grid-template-columns:minmax(0,1fr);gap:.45rem}
+.nd-meta{grid-column:1;grid-row:auto;display:flex;flex-wrap:wrap;gap:.2rem .9rem;justify-items:start;text-align:left}
+.nd-torch{padding:.75rem .8rem .8rem}
+.nd-pip{height:1.15rem}
+.nd-actions{grid-template-columns:1fr}
+.nd-unavailable li{flex-direction:column;gap:.1rem}
+.nd-unavailable-reason{max-width:none;text-align:left}
+.nd-tools button{flex:1 1 9rem}
+}
+/* Below ~26rem the 26-pip band and a big numeral cannot share a line honestly, so the count goes */
+/* above the fuse rather than squeezing it into a comb nobody can count. */
+@media(max-width:26rem){
+.nd-torch .nd-meter{grid-template-columns:minmax(0,1fr)}
+.nd-torch .nd-meter-value{grid-column:1;grid-row:1;margin:0 0 .4rem}
+.nd-torch .nd-meter-track{grid-row:2;gap:.09rem}
+.nd-torch .nd-meter-value b{font-size:1.7rem}
+.nd-pip{height:1rem}
+.nd-map{gap:.15rem;padding:.35rem}
+.nd-row{gap:.15rem}
+}
+/* ═══ REDUCED MOTION — every one of the above is a nicety, and none is the ═
+   information. Under `prefers-reduced-motion` the surface still says everything it says. */
+@media(prefers-reduced-motion:reduce){
+.nd-page *,.nd-page *::before,.nd-page *::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
+}
+</style>"##;
 
 /// Static, strict-CSP chrome around the same-origin native wasm bootstrap.
 fn shell_page() -> String {
@@ -355,17 +625,19 @@ fn shell_page() -> String {
          <meta name=\"color-scheme\" content=\"dark\">\
          <title>Play The Descent — DreggNet</title>{style}{play_style}</head><body>{topbar}\
          <main class=\"session nd-page\">\
-         <header class=\"nd-intro\"><p class=\"nd-kicker\">Lean-authored · locally replayed</p>\
+         <header class=\"nd-intro\"><p class=\"nd-kicker\">Lean-authored · replayed in your tab</p>\
          <h1>The Descent</h1>\
-         <p>Carry relics through a finite light clock. Keys attenuate as you descend; what you do \
-         not bank on a proved exit never became yours.</p></header>\
+         <p>You go down carrying a torch that does not refill. Every verb spends one breath of it, \
+         the climb out included — and a relic is only yours once a proved exit banks it.</p>\
+         </header>\
          <div id=\"descent-play-root\" data-day-key=\"{day_key}\" \
          data-native-seed=\"{native_seed}\" data-day-source=\"{day_source}\" \
          data-guard-hp=\"{guard_hp}\">\
-         <p class=\"notice\" role=\"status\">Opening the native executor…</p>\
+         <p class=\"nd-boot\" role=\"status\">Striking a light…</p>\
          </div>\
-         <noscript><p class=\"notice refused\" role=\"status\">The Descent plays in-tab with \
-         JavaScript + WebAssembly. The server-driven version remains available in \
+         <noscript><p class=\"nd-offline\" role=\"status\">The Descent runs its whole ruleset \
+         in this tab, in WebAssembly, which needs JavaScript on. With it off the same game is \
+         playable server-side — a real board, a real turn per click, no client code — in \
          <a href=\"/offerings\">the shared offering host</a>.</p></noscript>\
          </main>{footer}\
          <script type=\"module\" src=\"/descent/play/static/app.js\"></script>\
@@ -402,6 +674,17 @@ let lastMessage = "A fresh run is ready. The first landed move binds it to this 
 let lastKind = "";
 let lastShare = null;
 let lastShareRanked = false;
+// The log's own clock. `render()` runs on every repaint, so a log line that animated on every
+// render would twitch at the player constantly; it animates only when the SENTENCE changed.
+let logStamp = 0;
+let paintedStamp = -1;
+
+// Say something in the run log. One place, so every message also stamps the log clock.
+function say(kind, text) {
+  lastKind = kind;
+  lastMessage = text;
+  logStamp += 1;
+}
 // Today's verified drand pair, when day.json resolved a beacon day. A fresh open then goes through
 // `fromBeacon`, which runs the BLS pairing check in this tab (fail-closed): the run's banked-relic
 // provenance root binds to the revealed round instead of the pre-computable deploy seed. Null on
@@ -502,8 +785,7 @@ async function submitVerifiedRun(auto) {
   if (!snapshot.ended || !world.verify()) return;
   anchorInFlight = true;
   if (!auto) {
-    lastKind = "";
-    lastMessage = "Submitting the full native record for fresh server replay…";
+    say("", "Submitting the full native record for fresh server replay…");
     render();
   }
   try {
@@ -522,7 +804,6 @@ async function submitVerifiedRun(auto) {
     lastShare = result.share;
     lastShareRanked = result.ranked === true;
     markAnchored(result.run_id);
-    lastKind = "good";
     const durability = result.durable === true
       ? " The artifact is in the durable Descent store."
       : " The server did not persist this artifact; keep your local replay record.";
@@ -532,13 +813,12 @@ async function submitVerifiedRun(auto) {
     const outcome = lastShareRanked
       ? "Exact server replay passed. This crowned run now ranks in the native lane."
       : "Exact server replay passed. This settlement is shareable but did not crown, so it does not rank.";
-    lastMessage = (auto ? "Run settled — auto-anchored to the board. " : "") + outcome + durability + anchored;
+    say("good", (auto ? "Run settled — auto-anchored to the board. " : "") + outcome + durability + anchored);
   } catch (e) {
     lastShare = null;
-    lastKind = "bad";
-    lastMessage = (auto
+    say("bad", (auto
       ? "Auto-anchor did not complete; your local record is intact and the Publish button remains: "
-      : "Publication refused; the local record remains intact: ") + errorText(e);
+      : "Publication refused; the local record remains intact: ") + errorText(e));
   } finally {
     anchorInFlight = false;
   }
@@ -620,91 +900,208 @@ function relicGlyph(relic) {
   return relic <= 3 ? GLYPH_KEY : GLYPH_TREASURE;
 }
 
+// Colour means ONE of three things on this surface: brass is light (what your torch reaches —
+// relics, the floor you stand on, what you may act on), violet is proof (banked custody, a
+// verified replay), rust is peril (a shut way, a standing guardian, a guttering clock). A relic
+// in the dark or in the pack is lit by the torch you are burning; a banked one is lit by the
+// proof that made it yours, which is why the vault row does not dim as the run runs out.
 function relicTag(relic) {
-  if (relic === 0) return "accent";
-  return relic <= 3 ? "warn" : "good";
+  return relic === 0 ? "crown" : "relic";
 }
 
 function countCustody(sim, code) {
   return sim.custody.filter(c => c === code).length;
 }
 
+// The previous paint's custody row and remaining light. They exist so a MOVE CAN FEEL LIKE IT
+// HAPPENED: the relic that changed hands lands with weight, and the breath that just went out
+// keeps an ember for a beat. Both are pure presentation and both are cleared on a fresh run.
+let lastCustody = null;
+let lastLight = null;
+// The last painted fill ratio per meter, so a bar that moved GROWS instead of teleporting. The
+// DOM is rebuilt on every render, so a bare CSS transition would have nothing to move from.
+const lastFill = Object.create(null);
+
+function forgetLastPaint() {
+  lastCustody = null;
+  lastLight = null;
+  for (const key of Object.keys(lastFill)) delete lastFill[key];
+}
+
 // A labelled meter: the bar is the argument, the numbers are the proof.
-function meter(label, value, max, tone) {
+//
+// `ticks` draws the track as `max` discrete pips instead of a continuous fill. That is the light
+// clock's form and it is a deliberate one — this is a turn-based game where one breath buys
+// exactly one verb, so the player should be able to COUNT the moves left rather than estimate a
+// percentage. The pips burn left to right like a fuse; the burning edge is the flame.
+function meter(label, value, max, tone, ticks) {
   const box = node("div", "nd-meter" + (tone ? " " + tone : ""));
   box.append(node("span", "nd-meter-label", label));
   const track = node("span", "nd-meter-track");
-  const fill = node("span", "nd-meter-fill");
   const ratio = max > 0 ? Math.max(0, Math.min(1, value / max)) : 0;
-  fill.style.width = (ratio * 100).toFixed(1) + "%";
-  track.append(fill);
-  box.append(track, node("span", "nd-meter-value", value + "/" + max));
+  if (ticks) {
+    for (let i = 0; i < max; i += 1) {
+      const lit = i < value;
+      let cls = "nd-pip " + (lit ? "lit" : "spent");
+      if (lit && i === value - 1) cls += " tip";
+      if (!lit && lastLight !== null && i < lastLight) cls += " guttered";
+      track.append(node("span", cls));
+    }
+  } else {
+    const fill = node("span", "nd-meter-fill");
+    const from = label in lastFill ? lastFill[label] : ratio;
+    fill.style.width = (from * 100).toFixed(1) + "%";
+    if (from !== ratio && typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => { fill.style.width = (ratio * 100).toFixed(1) + "%"; });
+    }
+    lastFill[label] = ratio;
+    track.append(fill);
+  }
+  const readout = node("span", "nd-meter-value");
+  readout.append(node("b", "", String(value)), node("i", "", "/" + max));
+  box.append(track, readout);
   box.setAttribute("role", "img");
   box.setAttribute("aria-label", label + " " + value + " of " + max);
   return box;
 }
 
-function mapCell(glyph, tag, actionable, title) {
-  const cell = node("span", "nd-cell" + (tag ? " tag-" + tag : "") + (actionable ? " actionable" : ""), glyph);
-  if (title) cell.title = title;
+// One square of the shaft. `action` is an OFFERING-SUPPLIED admissible move or null — when it is a
+// move the cell IS the button that takes it, so the board is directly playable and the verb list
+// below stays the canonical, labelled, keyboard-first surface. A cell never decides anything: the
+// only reason it lights is that the offering's own action list said `enabled: true`, and the
+// executor still re-checks the move when it is submitted.
+function mapCell(glyph, tag, action, title, moved) {
+  const cls = "nd-cell" + (tag ? " tag-" + tag : "") + (action ? " actionable" : "") +
+    (moved ? " moved" : "");
+  if (!action) {
+    const cell = node("span", cls, glyph);
+    // The board is narrated once, as a sentence, below — sixty-six glyph cells read aloud one at
+    // a time is noise, not information.
+    cell.setAttribute("aria-hidden", "true");
+    if (title) cell.title = title;
+    return cell;
+  }
+  const cell = node("button", cls, glyph);
+  cell.type = "button";
+  cell.title = title ? title + " — " + action.label : action.label;
+  cell.setAttribute("aria-label", action.label);
+  cell.dataset.turn = action.turn;
+  cell.dataset.arg = String(action.arg);
+  cell.addEventListener("click", () => takeTurn(action));
   return cell;
 }
 
-// The shaft: four floor rows, then the pack row, then the vault row. A relic keeps its COLUMN for
-// the whole run, so you watch it travel out of the dark, into your pack, and into the vault.
+// The shaft: a manifest row that names the eight relic columns, four floor rows, then — across a
+// rule and on their own ground, because they are a LEDGER and not floors five and six — the pack
+// row and the vault row. A relic keeps its COLUMN for the whole run, so you watch it travel out of
+// the dark, into your pack, and into the vault.
 function buildMap(sim, actions) {
-  const can = (turn, arg) => actions.some(a => a.turn === turn && a.arg === arg && a.enabled === true);
+  const can = (turn, arg) =>
+    actions.find(a => a.turn === turn && a.arg === arg && a.enabled === true) || null;
+  const moved = relic => lastCustody !== null && lastCustody[relic] !== sim.custody[relic];
   const grid = node("div", "nd-map");
-  grid.style.gridTemplateColumns = "repeat(" + MAP_COLS + ", 1fr)";
-  grid.setAttribute("role", "img");
-  grid.setAttribute(
-    "aria-label",
-    "The shaft. You stand on floor " + sim.depth + " of " + FLOORS + ". " +
-    countCustody(sim, CARRIED) + " relics in your pack, " + countCustody(sim, BANKED) + " banked."
-  );
+  grid.style.setProperty("--nd-cols", String(MAP_COLS));
+  // Which floor the torch pool sits on. The light follows the player DOWN the shaft.
+  grid.style.setProperty("--nd-depth", String(sim.depth));
+  grid.setAttribute("role", "group");
+  grid.setAttribute("aria-label", "The shaft");
 
+  const manifest = node("div", "nd-row nd-row-head");
+  manifest.append(node("span", "nd-head-span", "shaft"));
+  for (let relic = 0; relic < RELICS; relic += 1) {
+    manifest.append(mapCell(relicGlyph(relic), "", null, "Relic " + relic + "'s column"));
+  }
+  grid.append(manifest);
+
+  const floors = node("div", "nd-floors");
   for (let floor = 1; floor <= FLOORS; floor += 1) {
     const here = sim.depth === floor;
-    grid.append(mapCell(here ? GLYPH_YOU : String(floor), here ? "accent" : "muted", false,
+    const row = node("div", "nd-row" + (here ? " here" : ""));
+    row.append(mapCell(here ? GLYPH_YOU : String(floor), here ? "you" : "mark", null,
       here ? "You stand on floor " + floor : "Floor " + floor));
 
     const open = floor === 1 || sim.ways[floor - 2] === 1;
-    const passable = floor === sim.depth + 1 && can("delve", 0);
-    const openable = floor >= 2 && can("unlock", floor);
-    grid.append(mapCell(open ? GLYPH_WAY_OPEN : GLYPH_WAY_SHUT, open ? "good" : "bad",
-      passable || openable,
+    const passable = floor === sim.depth + 1 ? can("delve", 0) : null;
+    const openable = floor >= 2 ? can("unlock", floor) : null;
+    row.append(mapCell(open ? GLYPH_WAY_OPEN : GLYPH_WAY_SHUT, open ? "open" : "shut",
+      open ? passable : openable,
       open ? "The way into floor " + floor + " is open" : "The way into floor " + floor + " is shut"));
 
     const slain = here && sim.wounds >= GUARD_HP[floor];
-    grid.append(mapCell(slain ? GLYPH_GUARDIAN_SLAIN : GLYPH_GUARDIAN,
-      here ? (slain ? "good" : "bad") : "muted", here && can("smite", 0),
+    row.append(mapCell(slain ? GLYPH_GUARDIAN_SLAIN : GLYPH_GUARDIAN,
+      here ? (slain ? "fallen" : "guard") : "dim", here ? can("smite", 0) : null,
       slain ? "The floor " + floor + " guardian has fallen" : "The floor " + floor + " guardian stands"));
 
     for (let relic = 0; relic < RELICS; relic += 1) {
       if (sim.custody[relic] === floor) {
-        grid.append(mapCell(relicGlyph(relic), relicTag(relic), can("loot", relic),
-          "Relic " + relic + " lies on floor " + floor));
+        row.append(mapCell(relicGlyph(relic), relicTag(relic), can("loot", relic),
+          "Relic " + relic + " lies on floor " + floor, moved(relic)));
       } else {
-        grid.append(mapCell(GLYPH_EMPTY, "muted", false));
+        row.append(mapCell(GLYPH_EMPTY, "void", null, null));
       }
     }
+    floors.append(row);
   }
+  grid.append(floors);
 
-  const row = (marker, markerTag, code, cellTag, what) => {
-    grid.append(mapCell(marker, markerTag, false, what));
-    grid.append(mapCell(GLYPH_EMPTY, "muted", false));
-    grid.append(mapCell(GLYPH_EMPTY, "muted", false));
+  grid.append(node("div", "nd-rule"));
+  const band = node("div", "nd-band");
+  const custodyRow = (marker, code, cellTag, what) => {
+    const row = node("div", "nd-row");
+    row.append(mapCell(marker, cellTag, null, what));
+    row.append(mapCell(GLYPH_EMPTY, "void", null, null));
+    row.append(mapCell(GLYPH_EMPTY, "void", null, null));
     for (let relic = 0; relic < RELICS; relic += 1) {
       if (sim.custody[relic] === code) {
-        grid.append(mapCell(relicGlyph(relic), cellTag || relicTag(relic), false, what));
+        row.append(mapCell(relicGlyph(relic), cellTag, null, what, moved(relic)));
       } else {
-        grid.append(mapCell(GLYPH_EMPTY, "muted", false));
+        row.append(mapCell(GLYPH_EMPTY, "void", null, null));
       }
     }
+    band.append(row);
   };
-  row(GLYPH_PACK, "accent", CARRIED, null, "In your pack — still losable");
-  row(GLYPH_VAULT, "good", BANKED, "good", "Banked — a proved exit made it yours");
+  custodyRow(GLYPH_PACK, CARRIED, "relic", "In your pack — still losable");
+  custodyRow(GLYPH_VAULT, BANKED, "vault", "Banked — a proved exit made it yours");
+  grid.append(band);
   return grid;
+}
+
+// What the glyphs mean, as a scannable list rather than two dense mono paragraphs. Built from the
+// glyph constants themselves so the legend cannot fall out of step with the board.
+function buildLegend() {
+  const list = node("ul", "nd-legend");
+  // A glyph key is a visual aid for a visual board; the board itself is narrated as a sentence
+  // just above, so reading ten glyph names aloud would only be in the way.
+  list.setAttribute("aria-hidden", "true");
+  const entry = (glyph, meaning) => {
+    const item = node("li");
+    item.append(node("b", "", glyph), node("span", "", meaning));
+    list.append(item);
+  };
+  entry(GLYPH_YOU, "you");
+  entry(GLYPH_WAY_OPEN, "open way");
+  entry(GLYPH_WAY_SHUT, "shut way");
+  entry(GLYPH_GUARDIAN, "guardian");
+  entry(GLYPH_GUARDIAN_SLAIN, "fallen");
+  entry(GLYPH_CROWN, "the crown");
+  entry(GLYPH_KEY, "way-key");
+  entry(GLYPH_TREASURE, "treasure");
+  entry(GLYPH_PACK, "your pack");
+  entry(GLYPH_VAULT, "banked");
+  return list;
+}
+
+// The board, said once, for a screen reader. Reading sixty-six cells aloud is not a board.
+function narrateMap(sim, ended, carried, banked) {
+  const where = ended
+    ? "The run is settled."
+    : sim.depth === 0
+      ? "You stand at the mouth of the shaft."
+      : "You stand on floor " + sim.depth + " of " + FLOORS + ".";
+  return "The shaft has " + FLOORS + " floors and " + RELICS + " relics, one to a column. " +
+    where + " " + carried + " relic" + (carried === 1 ? " is" : "s are") + " in your pack and " +
+    banked + " " + (banked === 1 ? "is" : "are") + " banked." +
+    (ended ? "" : " Every move you may make now is a verb in the list below.");
 }
 
 // The run's one-word state. `ended` is the record's own settled bit; a run that cannot pay the one
@@ -715,66 +1112,200 @@ function standing(sim, ended) {
   return { word: "DELVING", tone: "warn" };
 }
 
-// The things a player is about to lose to, said out loud.
+// Where you are, in one sentence, in the dungeon's own voice.
+function standingLine(sim, ended, banked, hoardHere) {
+  if (ended) {
+    return banked === 0
+      ? "The tomb is closed. You came out with nothing."
+      : "The tomb is closed. " + banked + " relic" + (banked === 1 ? "" : "s") +
+        " came out with you.";
+  }
+  if (sim.depth === 0) return "You stand at the mouth of the shaft.";
+  return "Floor " + sim.depth + " of " + FLOORS + " — " + (hoardHere === 0
+    ? "nothing is left lying in the dark here."
+    : hoardHere + " relic" + (hoardHere === 1 ? "" : "s") + " still lie" +
+      (hoardHere === 1 ? "s" : "") + " in the dark here.");
+}
+
+// The torch's four states. This is the whole emotional arc of a run, so the surface names it
+// rather than leaving it implicit in a number: lit, low, guttering, dead — and `out` once the
+// record is closed and the clock stops meaning anything.
+function torchState(light, ended) {
+  if (ended) return "out";
+  if (light <= 0) return "dead";
+  if (light <= 4) return "guttering";
+  if (light <= 8) return "low";
+  return "lit";
+}
+
+function torchSay(light, ended) {
+  if (ended) return "the torch is out; the record is closed.";
+  if (light <= 0) return "the dark has closed — no verb can be paid for, and nothing more can be banked.";
+  if (light <= 4) return "guttering. the climb out is itself a verb, and it costs one of these.";
+  if (light <= 8) return "burning low. every verb costs one breath, the climb out included.";
+  return "every verb costs one breath. what is not banked when the light dies was never yours.";
+}
+
+// The things a player is about to lose to, said out loud. Each line carries a tone so the rail can
+// grade them — the peril ones are the ones that end runs.
 function pressures(sim, ended) {
   const lines = [];
   if (ended) return lines;
   const light = Math.max(0, BREATH - sim.spent);
   if (light <= 4) {
-    lines.push("⚠ the light is guttering — " + light + " left, and climbing out costs 1");
+    lines.push({ tone: "peril", text: "the light is guttering — " + light +
+      " left, and climbing out costs 1" });
   }
   if (sim.depth >= 1 && sim.wounds < GUARD_HP[sim.depth]) {
     const left = GUARD_HP[sim.depth] - sim.wounds;
-    lines.push("⚠ the guardian stands — the hoard here stays shut until it falls (" +
-      left + " more strike" + (left === 1 ? "" : "s") + ", " + left * 2 + " light)");
+    lines.push({ tone: "peril", text: "the guardian stands — the hoard here stays shut until it falls (" +
+      left + " more strike" + (left === 1 ? "" : "s") + ", " + left * 2 + " light)" });
   }
   const pack = countCustody(sim, CARRIED);
   if (pack + 1 + sim.depth > CAP) {
-    lines.push("⚠ carrying rights are spent at this depth — the next relic would not fit");
+    lines.push({ tone: "warn", text:
+      "carrying rights are spent at this depth — the next relic would not fit" });
   }
   if (pack > 0) {
-    lines.push("⚠ " + pack + " relic" + (pack === 1 ? "" : "s") +
-      " ride" + (pack === 1 ? "s" : "") + " in the pack — nothing is yours until a proved exit banks it");
+    lines.push({ tone: "proof", text: pack + " relic" + (pack === 1 ? "" : "s") +
+      " ride" + (pack === 1 ? "s" : "") +
+      " in the pack — nothing is yours until a proved exit banks it" });
   }
   return lines;
 }
 
+// Take a move. ONE path for the board's lit cells and the verb list alike, so a click on the
+// dungeon and a click on a button are the same submitted turn across the same executor boundary.
+function takeTurn(action) {
+  let result;
+  try { result = JSON.parse(world.advance(action.turn, action.arg, actor)); }
+  catch (e) { notice("The native turn boundary failed: " + errorText(e)); return; }
+  if (result.ok) {
+    save();
+    lastShare = null;
+    say("good", "Turn committed · revision " + result.revision + " · receipt " +
+      shortRoot(result.receiptHashHex));
+  } else {
+    say("bad", "Refused without advancing: " +
+      (result.error || "the native executor declined the move"));
+  }
+  render();
+  // If that landed move settled the run, auto-anchor it to the board (once) — no manual
+  // publish needed to rank.
+  maybeAutoAnchor();
+}
+
+// Keyboard play has to survive a repaint. `render()` replaces the whole shell, so without this the
+// focus ring falls to the document body after every move and a keyboard player Tabs back in each
+// turn. If the move that had focus is spent, focus lands on the first verb still available.
+function focusKeyOf(el) {
+  if (!el || !el.dataset || !el.dataset.turn) return null;
+  // The same move is reachable from two places — a lit cell on the board and its verb button — so
+  // the key carries WHICH, and focus comes back to the surface the player was actually using.
+  const where = el.classList && el.classList.contains("nd-cell") ? "cell" : "verb";
+  return where + ":" + el.dataset.turn + ":" + el.dataset.arg;
+}
+
+function restoreFocus(shell, wanted) {
+  if (!wanted || !shell.querySelectorAll) return;
+  for (const control of shell.querySelectorAll("[data-turn]")) {
+    if (focusKeyOf(control) === wanted) { control.focus({ preventScroll: true }); return; }
+  }
+  const first = shell.querySelector(".nd-actions button");
+  if (first) first.focus({ preventScroll: true });
+}
+
 function render() {
+  const held = root.contains && root.contains(document.activeElement)
+    ? focusKeyOf(document.activeElement) : null;
   const snapshot = JSON.parse(world.stateJson());
   const sim = snapshot.state;
   const actions = JSON.parse(world.actionsJson(actor));
-  const shell = node("section", "nd-shell");
-  const meta = node("div", "nd-meta");
-  meta.append(
-    node("span", "", "day " + (root.dataset.dayKey || "local")),
-    node("span", "", "revision " + snapshot.revision),
-    node("span", "", "seed " + snapshot.seed),
-    node("span", "nd-proof", world.verify() ? "● replay verified" : "● verification failed")
-  );
-  shell.append(meta);
-
-  // ── THE VITALS: one badge, then the meters that ARE the game. ──
   const carried = countCustody(sim, CARRIED);
   const banked = countCustody(sim, BANKED);
   const hoardHere = countCustody(sim, sim.depth);
-  const state = standing(sim, snapshot.ended);
-  const vitals = node("div", "nd-vitals");
-  const badge = node("div", "nd-status");
-  badge.append(node("span", "nd-pill " + state.tone, state.word));
-  badge.append(node("span", "nd-standing", snapshot.ended
-    ? "the tomb is frozen — " + banked + " relic" + (banked === 1 ? "" : "s") + " came out with you"
-    : sim.depth === 0
-      ? "you stand at the mouth of the shaft"
-      : "floor " + sim.depth + " of " + FLOORS + " — " + hoardHere +
-        " relic" + (hoardHere === 1 ? "" : "s") + " lying here"));
-  if (snapshot.ended) {
-    badge.append(node("span", "nd-terminal", snapshot.crowned ? "CROWNED EXIT" : "EXIT SETTLED"));
-  }
-  vitals.append(badge);
+  const light = Math.max(0, BREATH - sim.spent);
+  const ratio = BREATH > 0 ? light / BREATH : 0;
 
+  const shell = node("section", "nd-shell");
+  // ── THE ROOM IS LIT BY THE RUN ──
+  // `--nd-dim` is the dark closing in and `--nd-glow` is how far the torch still reaches. Both are
+  // read straight off the light the executor has actually charged for, so the atmosphere is the
+  // resource — not a mood setting layered on top of it. Neither decides anything.
+  //
+  // AND WHEN THE RUN ENDS, THE LIGHTS COME UP. A settled surface is no longer a dungeon you are
+  // trying to survive; it is the receipt for one, and a receipt has to be read.
+  shell.style.setProperty("--nd-dim",
+    (snapshot.ended ? 0.12 : Math.pow(1 - ratio, 1.6) * 0.62).toFixed(3));
+  shell.style.setProperty("--nd-glow", (snapshot.ended ? 0.5 : 0.26 + 0.74 * ratio).toFixed(3));
+
+  // ── THE RUN HEADER: one word, one sentence, the provenance. ──
+  const state = standing(sim, snapshot.ended);
+  const head = node("header", "nd-run");
+  const status = node("div", "nd-status");
+  status.append(node("span", "nd-pill " + state.tone, state.word));
+  if (snapshot.ended) {
+    status.append(node("span", "nd-terminal", snapshot.crowned ? "crowned exit" : "exit settled"));
+  }
+  head.append(status);
+  head.append(node("p", "nd-standing", standingLine(sim, snapshot.ended, banked, hoardHere)));
+  const verified = world.verify();
+  const meta = node("div", "nd-meta");
+  meta.append(node("span", "", "day " + (root.dataset.dayKey || "local")));
+  meta.append(node("span", "", "turn " + snapshot.revision + " · seed " + snapshot.seed));
+  meta.append(node("span", "", root.dataset.daySource === "beacon"
+    ? "drand beacon day" : "offline-date day"));
+  meta.append(node("span", "nd-proof" + (verified ? "" : " bad"),
+    verified ? "replay verified" : "verification failed"));
+  head.append(meta);
+  shell.append(head);
+
+  // ── THE TORCH: the clock, and the loudest thing on the page. ──
+  const torch = node("div", "nd-torch");
+  torch.dataset.state = torchState(light, snapshot.ended);
+  const torchHead = node("div", "nd-torch-head");
+  torchHead.append(node("span", "nd-torch-label", "torch"));
+  torchHead.append(node("p", "nd-torch-say", torchSay(light, snapshot.ended)));
+  torch.append(torchHead);
+  torch.append(meter("light", Math.max(0, BREATH - sim.spent), BREATH,
+    light <= 4 ? "low" : "", true));
+  shell.append(torch);
+
+  // ── THE SETTLEMENT: once the run ends, the receipt is the surface. ──
+  if (snapshot.ended) {
+    const settled = node("div", "nd-settled");
+    settled.append(node("h2", "", snapshot.crowned ? "A crowned exit" : "The exit settled"));
+    settled.append(node("p", "", snapshot.crowned
+      ? "Every relic in the shaft came out with you. The record is closed, and once the server's own replay accepts it this run ranks in the day's native lane."
+      : banked + " relic" + (banked === 1 ? "" : "s") + " banked. The record is closed; a settlement that is not crowned stays shareable and verifiable, but it does not rank."));
+    if (lastShare) {
+      const share = node("a", "nd-share",
+        lastShareRanked ? "Open ranked native proof →" : "Open verified native record →");
+      share.href = lastShare;
+      settled.append(share);
+    }
+    shell.append(settled);
+  }
+
+  // ── THE ARENA: the shaft, and the vitals beside it. ──
+  const arena = node("div", "nd-arena");
+  const shaft = node("section", "nd-shaft");
+  shaft.append(node("h2", "nd-shaft-heading", "the shaft"));
+  const mapwrap = node("div", "nd-mapwrap");
+  mapwrap.append(buildMap(sim, actions));
+  shaft.append(mapwrap);
+  shaft.append(node("p", "sr-only", narrateMap(sim, snapshot.ended, carried, banked)));
+  shaft.append(buildLegend());
+  shaft.append(node("p", "nd-legend-note",
+    "One column per relic, kept for the whole run: you watch a relic travel out of the dark, " +
+    "into the pack, into the vault. A cell your torch picks out is one you may act on now — " +
+    "press it, or take the same move from the verbs below."));
+  arena.append(shaft);
+
+  const rail = node("aside", "nd-rail");
+  const vitals = node("div", "nd-panel");
+  vitals.append(node("h2", "nd-panel-head", "vitals"));
   const meters = node("div", "nd-meters");
-  meters.append(meter("light", Math.max(0, BREATH - sim.spent), BREATH,
-    BREATH - sim.spent <= 4 ? "low" : ""));
   meters.append(meter("pack", carried, Math.max(0, CAP - sim.depth),
     carried + 1 + sim.depth > CAP ? "low" : ""));
   if (sim.depth >= 1) {
@@ -783,64 +1314,41 @@ function render() {
   }
   meters.append(meter("banked", banked, RELICS, banked > 0 ? "done" : ""));
   vitals.append(meters);
+  rail.append(vitals);
 
-  for (const line of pressures(sim, snapshot.ended)) {
-    vitals.append(node("p", "nd-pressure", line));
+  const pressing = pressures(sim, snapshot.ended);
+  if (pressing.length > 0) {
+    const panel = node("div", "nd-panel");
+    panel.append(node("h2", "nd-panel-head", "pressure"));
+    for (const line of pressing) panel.append(node("p", "nd-pressure " + line.tone, line.text));
+    rail.append(panel);
   }
-  shell.append(vitals);
+  arena.append(rail);
+  shell.append(arena);
 
-  // ── THE MAP: the shaft itself, with what you may act on marked. ──
-  const shaft = node("section", "nd-shaft");
-  shaft.append(node("h2", "nd-shaft-heading", "The shaft"));
-  shaft.append(buildMap(sim, actions));
-  shaft.append(node("p", "nd-legend",
-    "rows: floors 1–" + FLOORS + " · " + GLYPH_PACK + " your pack (still losable) · " +
-    GLYPH_VAULT + " banked (yours). columns: floor · way · guardian · then one per relic " +
-    "(1 crown, 2–4 way-keys, 5–8 treasures)"));
-  shaft.append(node("p", "nd-legend",
-    GLYPH_YOU + " you are here · " + GLYPH_WAY_OPEN + " open way · " + GLYPH_WAY_SHUT +
-    " shut way · " + GLYPH_GUARDIAN + " guardian · " + GLYPH_GUARDIAN_SLAIN + " slain · " +
-    GLYPH_CROWN + " crown · " + GLYPH_KEY + " way-key · " + GLYPH_TREASURE +
-    " treasure · a lit cell is one you may act on now"));
-  shell.append(shaft);
-
+  // ── THE VERBS. ──
   const actionMenu = node("section", "nd-action-menu");
-  mountDescentActionMenu(actionMenu, actions, {
-    ended: snapshot.ended,
-    onChoose: (action) => {
-      let result;
-      try { result = JSON.parse(world.advance(action.turn, action.arg, actor)); }
-      catch (e) { notice("The native turn boundary failed: " + errorText(e)); return; }
-      if (result.ok) {
-        save();
-        lastShare = null;
-        lastKind = "good";
-        lastMessage = "Turn committed · revision " + result.revision + " · receipt " + shortRoot(result.receiptHashHex);
-      } else {
-        lastKind = "bad";
-        lastMessage = "Refused without advancing: " + (result.error || "the native executor declined the move");
-      }
-      render();
-      // If that landed move settled the run, auto-anchor it to the board (once) — no manual
-      // publish needed to rank.
-      maybeAutoAnchor();
-    },
-  });
+  mountDescentActionMenu(actionMenu, actions, { ended: snapshot.ended, onChoose: takeTurn });
   shell.append(actionMenu);
 
-  const message = node("p", "nd-message " + lastKind, lastMessage);
+  // ── THE LOG: what just happened. It animates only when the sentence CHANGED. ──
+  const message = node("p",
+    ["nd-message", lastKind, logStamp !== paintedStamp ? "fresh" : ""].filter(Boolean).join(" "),
+    lastMessage);
   message.setAttribute("role", "status");
+  paintedStamp = logStamp;
   shell.append(message);
 
+  // ── THE RECORD: provenance tools, deliberately quiet. ──
+  const record = node("footer", "nd-record");
   const tools = node("div", "nd-tools");
   const verify = node("button", "", "Verify full record");
   verify.type = "button";
   verify.addEventListener("click", () => {
     const report = JSON.parse(world.verifyJson());
-    lastKind = report.verified ? "good" : "bad";
-    lastMessage = report.verified
+    say(report.verified ? "good" : "bad", report.verified
       ? "Fresh replay accepted all " + report.turns + " receipts."
-      : "Replay verification refused: " + report.detail;
+      : "Replay verification refused: " + report.detail);
     render();
   });
   const copy = node("button", "", "Copy replay record");
@@ -848,21 +1356,20 @@ function render() {
   copy.addEventListener("click", async () => {
     try {
       await navigator.clipboard.writeText(world.recordJson());
-      lastKind = "good";
-      lastMessage = "The versioned replay record is on your clipboard.";
+      say("good", "The versioned replay record is on your clipboard.");
     } catch (e) {
-      lastKind = "bad";
-      lastMessage = "Clipboard refused; your local run remains intact: " + errorText(e);
+      say("bad", "Clipboard refused; your local run remains intact: " + errorText(e));
     }
     render();
   });
   // A terminal run auto-anchors on completion, so this button is an explicit RE-submit (the same
   // idempotent POST). It stays enabled after an auto-anchor so a player can re-publish on demand.
-  const publish = node("button", "", snapshot.ended ? "Publish verified run" : "Settle before publishing");
+  const publish = node("button", snapshot.ended ? "primary" : "",
+    snapshot.ended ? "Publish verified run" : "Settle before publishing");
   publish.type = "button";
-  publish.disabled = !snapshot.ended || !world.verify();
+  publish.disabled = !snapshot.ended || !verified;
   publish.addEventListener("click", () => { submitVerifiedRun(false); });
-  const restart = node("button", "", "Abandon this run");
+  const restart = node("button", "danger", "Abandon this run");
   restart.type = "button";
   restart.addEventListener("click", () => {
     if (restart.dataset.armed !== "yes") {
@@ -879,27 +1386,21 @@ function render() {
     try { world.free(); } catch (_) {}
     world = openFreshWorld(Number(root.dataset.nativeSeed));
     lastShare = null;
-    lastKind = "";
-    lastMessage = "Fresh run opened. No previous record was installed.";
+    forgetLastPaint();
+    say("", "Fresh run opened. No previous record was installed.");
     render();
   });
   tools.append(verify, copy, publish, restart);
-  shell.append(tools);
-  if (lastShare) {
-    const share = node(
-      "a",
-      "nd-share",
-      lastShareRanked ? "Open ranked native proof →" : "Open verified native record →"
-    );
-    share.href = lastShare;
-    shell.append(share);
-  }
-  shell.append(node(
-    "p",
-    "nd-root",
-    "journal root · " + snapshot.rootHex + " · actor · " + (snapshot.actor || "unclaimed")
-  ));
+  record.append(tools);
+  record.append(node("p", "nd-root",
+    "journal root " + snapshot.rootHex + " · actor " + (snapshot.actor || "unclaimed")));
+  shell.append(record);
+
   root.replaceChildren(shell);
+  restoreFocus(shell, held);
+  // What this paint SAW, so the next one can show what changed.
+  lastCustody = sim.custody.slice();
+  lastLight = light;
 }
 
 async function boot() {
@@ -961,15 +1462,16 @@ async function boot() {
     const snapshot = JSON.parse(world.stateJson());
     const expected = (nativeSeed % 251) + 1;
     if (snapshot.seed !== expected) throw new Error("retained record belongs to another native day");
-    if (retained) lastMessage = "Local record restored only after exact native replay.";
+    if (retained) say("", "Local record restored only after exact native replay.");
   } catch (e) {
     storedRemove(recordKey);
     clearAnchored();
     try { world = openFreshWorld(nativeSeed); }
     catch (openError) { notice("Native world deployment refused: " + errorText(openError)); return; }
-    lastKind = "bad";
-    lastMessage = "A retained record was refused and discarded: " + errorText(e);
+    say("bad", "A retained record was refused and discarded: " + errorText(e));
   }
+  // The first paint has nothing to compare against, so nothing lands or gutters on it.
+  forgetLastPaint();
   render();
   // A restored run that already reached its terminal settlement but was never anchored (e.g. the
   // tab closed the moment it settled) auto-anchors now. A run anchored in a prior visit carries
@@ -1244,6 +1746,135 @@ mod tests {
                 "today's drawn map is not day 0's, so the published table must not be day 0's"
             );
         }
+    }
+
+    /// **THE PAGE CARRIES ITS OWN LOOK — no off-origin byte, no silent webfont.**
+    ///
+    /// The design leans on typography, so the temptation to reach for a font CDN is real and it is
+    /// exactly the hole the `/tg/link` review closed for scripts. `font-src 'self'` already
+    /// refuses one at runtime, which means a stylesheet that asked for a remote face would not
+    /// degrade — it would render in a fallback nobody chose, silently, only in production. So the
+    /// stylesheet is pinned to name no remote origin at all, and to set both faces from stacks
+    /// that are already resident on the reader's machine.
+    ///
+    /// Falsifier: paste a `@import url(https://fonts.googleapis.com/...)` into [`PLAY_STYLE`].
+    #[test]
+    fn the_play_surface_is_self_contained_and_typeset_from_resident_faces() {
+        let page = super::shell_page();
+        for smell in [
+            "@import",
+            "url(http",
+            "url('http",
+            "fonts.googleapis",
+            "fonts.gstatic",
+            "cdn.jsdelivr",
+            "unpkg.com",
+            "//esm.sh",
+        ] {
+            assert!(
+                !page.contains(smell),
+                "the play page must fetch nothing off-origin, and it references `{smell}`"
+            );
+        }
+        // Two faces, both resident: a serif for the dungeon's voice, a mono for everything the
+        // game measures. Neither names a webfont family.
+        assert!(
+            super::PLAY_STYLE.contains("--nd-serif:ui-serif,")
+                && super::PLAY_STYLE.contains("--nd-mono:ui-monospace,"),
+            "the type stacks start at the platform's own UI faces"
+        );
+    }
+
+    /// **THE LIGHT IS THE GAME, SO THE SURFACE IS LIT BY IT.**
+    ///
+    /// Three properties, each of which a restyle could quietly drop while still looking fine on a
+    /// full torch:
+    ///
+    /// - the light clock is DISCRETE — one pip per breath, because one breath buys exactly one
+    ///   verb and a player should be able to COUNT the moves left rather than eyeball a bar;
+    /// - the shaft's own lighting (`--nd-dim`, `--nd-glow`, `--nd-depth`) is computed from the run
+    ///   the executor has actually charged, so the dark closing in is the RESOURCE and not a mood;
+    /// - motion is honoured as optional: `prefers-reduced-motion` turns all of it off, and none of
+    ///   the information lives in the motion.
+    #[tokio::test]
+    async fn the_light_clock_is_counted_and_the_room_is_lit_by_the_run() {
+        use axum::body::to_bytes;
+        let resp = super::get_play_app_js().await.into_response();
+        let js =
+            String::from_utf8(to_bytes(resp.into_body(), 1 << 20).await.unwrap().to_vec()).unwrap();
+
+        // The clock is drawn as BREATH discrete pips (the `ticks` argument), with the burning edge
+        // marked, and the breath just spent keeps an ember for one beat of feedback.
+        assert!(
+            js.contains("meter(\"light\", Math.max(0, BREATH - sim.spent), BREATH,")
+                && js.contains("light <= 4 ? \"low\" : \"\", true)"),
+            "the light meter is the TICKED one — a plain fill would make the one countable \
+             resource in the game uncountable"
+        );
+        for needle in ["nd-pip", "\" tip\"", "\" guttered\""] {
+            assert!(js.contains(needle), "the pip clock draws {needle}");
+        }
+        // The atmosphere is a function of the run, not a constant.
+        for needle in ["--nd-dim", "--nd-glow", "--nd-depth"] {
+            assert!(
+                js.contains(needle),
+                "the controller drives `{needle}` from the live snapshot"
+            );
+        }
+        assert!(
+            js.contains("snapshot.ended ? 0.12 :"),
+            "a settled run brings the lights UP — a closed record is a receipt to read"
+        );
+        // Motion is a nicety everywhere it appears.
+        assert!(
+            super::PLAY_STYLE.contains("@media(prefers-reduced-motion:reduce)"),
+            "every animation on this surface is disabled for readers who asked for that"
+        );
+    }
+
+    /// **THE BOARD IS PLAYABLE, AND IT IS STILL NOT A REFEREE.**
+    ///
+    /// A lit cell is a real button that takes the move, which is what makes the surface feel like
+    /// a game rather than a readout — but the whole risk of that change is a browser that starts
+    /// deciding what is legal. It does not: a cell lights only because the OFFERING's own action
+    /// list decorated that `{turn, arg}` `enabled: true`, and pressing it goes through the same
+    /// single [`takeTurn`] path (and therefore the same `world.advance` executor boundary) as the
+    /// labelled verb list. The verb list stays the canonical surface — every move, including the
+    /// refused ones, with its price named.
+    #[tokio::test]
+    async fn a_lit_cell_is_the_offerings_verdict_and_takes_the_same_executor_path() {
+        use axum::body::to_bytes;
+        let resp = super::get_play_app_js().await.into_response();
+        let js =
+            String::from_utf8(to_bytes(resp.into_body(), 1 << 20).await.unwrap().to_vec()).unwrap();
+
+        assert!(
+            js.contains(
+                "actions.find(a => a.turn === turn && a.arg === arg && a.enabled === true)"
+            ),
+            "a cell lights from the offering's own action row, never from a rule re-derived here"
+        );
+        assert!(
+            js.contains("cell.addEventListener(\"click\", () => takeTurn(action));")
+                && js.contains("onChoose: takeTurn"),
+            "the board and the verb list submit through ONE path"
+        );
+        assert_eq!(
+            js.matches("world.advance(").count(),
+            1,
+            "there is exactly one place a turn crosses the executor boundary"
+        );
+        // Keyboard play has to survive the repaint that a landed move causes.
+        assert!(
+            js.contains("restoreFocus(shell, held)"),
+            "focus is restored after the shell is replaced, or every move costs a keyboard \
+             player a Tab hunt"
+        );
+        // Wide content scrolls in its OWN well; the page body never scrolls sideways on a phone.
+        assert!(
+            super::PLAY_STYLE.contains(".nd-mapwrap{overflow-x:auto"),
+            "the shaft gets its own scroll container"
+        );
     }
 
     #[tokio::test]
