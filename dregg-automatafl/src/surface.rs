@@ -1357,8 +1357,33 @@ impl Offering for AutomataflOffering {
                 session.committed = [None, None];
                 session.seal = [0, 0];
                 session.revealed = [false, false];
-                session.winner = winner;
-                session.ended = winner.is_some() || session.turn_no >= MAX_TURNS;
+                let capped = session.turn_no >= MAX_TURNS;
+                // ⚑ ADJUDICATE THE CAP, do not draw it. `MAX_TURNS` used to end the match with
+                // `winner = None` — a terminal rule no theorem had ever seen. The ruleset owns this
+                // decision (`AutomataflRules.adjudicateCapped`, with `adjudicate_seated` and
+                // `adjudicate_sound` proven): the seat strictly nearer its own goal wins, a seat
+                // owning goals beats one owning none, exact parity is a genuine draw. Only consulted
+                // when the cap actually bites and nobody has already won on entry.
+                session.winner = match winner {
+                    Some(w) => Some(w),
+                    None if capped => {
+                        match rules::adjudicate_capped(&session.board, stock_goals) {
+                            // `adjudicate_capped` speaks the ruleset's wire vocabulary — a seat
+                            // INDEX — while `session.winner` holds the surface's `Seat`. The gap
+                            // is one `map`; leaving it unbridged made `dregg-automatafl` fail to
+                            // compile, and because it is upstream of the bot and the web crate it
+                            // took three unrelated lanes down with it for hours.
+                            Ok(adjudicated) => adjudicated.map(Seat::from_idx),
+                            Err(why) => {
+                                return refuse(format!(
+                                    "the game oracle could not adjudicate the capped match: {why}"
+                                ));
+                            }
+                        }
+                    }
+                    None => None,
+                };
+                session.ended = session.winner.is_some() || capped;
                 // RECORD THE ROUND — the two revealed moves, in seat order, appended only once
                 // the executor accepts the resolution below (a refused resolution pops it).
                 session.rounds.push((ma, mb));
