@@ -1535,10 +1535,19 @@ For any `Satisfied2` witness of `R e` whose published commitments `StateDecode`-
 the bundle PRODUCES `kstepAll e pre post` — but with the decode ENRICHED to a `StateDecodeLog` over the
 realizable `logHashInjective LH` floor (the log binding woven in as the named carrier, not a per-effect
 residual). This is exactly the apex-shaped per-effect rung with the log floor `LH` made explicit: the
-circuit-witness extraction (`StarkSound`-supplied) + the `logHashInjective` log-CR carrier. -/
+circuit-witness extraction (`StarkSound`-supplied) + the `logHashInjective` log-CR carrier.
+
+⚑ **PORTED OFF `Poseidon2SpongeCR` (vacuity campaign, 2026-07-25).** This def used to open with a
+`Poseidon2SpongeCR hash →` antecedent — a floor this tree PROVES FALSE at deployed BabyBear parameters
+(`Poseidon2Surface.poseidon2SpongeCR_false_babyBear`), sitting in the def's BODY where no binder-keyed
+ruler could see it, so every theorem that merely MENTIONED `ClosedLogExtract` was a silent carrier.
+The antecedent was DEAD: all 35 rungs in the tree that discharge a `ClosedLogExtract` slot bound it as
+`_hCR` and never used it (the log binding they actually consume is `logHashInjective`, carried inside
+`StateDecodeLog`). Deleting it makes the bundle strictly STRONGER — one fewer hypothesis to assume, so
+every producer proves more and every consumer supplies less; `closedLogExtract_no_strength_lost` pins
+that the OLD statement still follows. The gate against its return is `FloorCensus.portedPropBody`. -/
 def ClosedLogExtract (S : CommitSurface) (LH : List Turn → ℤ) (hash : List ℤ → ℤ) (R : Registry)
     (e : EffectIdx) : Prop :=
-  Poseidon2SpongeCR hash →
   ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : Dregg2.Circuit.DescriptorIR2.VmTrace)
     (pc : PublishedCommit) (pubLogPre pubLogPost : ℤ) (pre post : RecChainedState),
     Dregg2.Circuit.DescriptorIR2.Satisfied2 hash (R e) minit mfin maddrs t →
@@ -1559,9 +1568,11 @@ theorem effectDecodeBridge_of_closedLogExtract
       StateDecode S pc pre post →
       ∃ pubLogPre pubLogPost, StateDecodeLog S LH pc pubLogPre pubLogPost pre post) :
     EffectDecodeBridge S hash R e := by
-  intro hCR minit mfin maddrs t pc pre post hsat hdec
+  -- `EffectDecodeBridge` still opens with its OWN `Poseidon2SpongeCR` antecedent (that def is a
+  -- separate port); `ClosedLogExtract` no longer takes one, so the CR is introduced and DROPPED.
+  intro _hCR minit mfin maddrs t pc pre post hsat hdec
   obtain ⟨pubLogPre, pubLogPost, hdecLog⟩ := mkLog pc pre post hdec
-  exact hext hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  exact hext minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
 
 /-! ### `hrefinesAllClosed`: the apex's `∀ e` per-effect family, from the closed-extract bundle. -/
 
@@ -1650,7 +1661,7 @@ theorem closedLogExtract_transfer
             pre post tr _a)) :
     ClosedLogExtract
       (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hash Rfix 0 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   -- v12 big-bang: `Rfix 0` is `transferV3Membership` definitionally (the teeth-exposing transfer —
   -- rc + the two membership teeth PI pins at 50..51, `v3RegistryHeap` tail pos 60; both wraps
   -- append only `.piBinding` pins). FULL PEEL (`satisfied2_of_transferV3Membership`: teeth → rc)
@@ -1663,10 +1674,52 @@ theorem closedLogExtract_transfer
   exact transfer_closedLog hash hside hsat' pre post tr a pc pubLogPre pubLogPost hdecLog
     hpub.down logNeeds
 
+/-! ### §C.2 — the PORT's teeth: no strength lost, and the deleted antecedent was NOT doing work.
+
+The `Poseidon2SpongeCR hash →` antecedent is gone from `ClosedLogExtract` (see the def's doc). Two
+independent checks pin that the deletion is a STRENGTHENING and not a silent restatement. -/
+
+/-- **TOOTH 1 — NO STRENGTH LOST.** The OLD statement (`Poseidon2SpongeCR hash → …`, verbatim, with
+the antecedent typed out rather than referenced) still follows from the ported bundle, by discarding
+the hypothesis. So every consumer that used to apply `ClosedLogExtract` under the CR floor still can:
+the port removed an assumption, it did not weaken a conclusion. Stated as a `theorem` (not an
+`example`) so `#assert_axioms` can pin it and the census/ratchet can SEE it. -/
+theorem closedLogExtract_no_strength_lost
+    (S : CommitSurface) (LH : List Turn → ℤ) (hash : List ℤ → ℤ) (R : Registry) (e : EffectIdx)
+    (hext : ClosedLogExtract S LH hash R e) :
+    Poseidon2SpongeCR hash →
+    ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
+      (t : Dregg2.Circuit.DescriptorIR2.VmTrace)
+      (pc : PublishedCommit) (pubLogPre pubLogPost : ℤ) (pre post : RecChainedState),
+      Dregg2.Circuit.DescriptorIR2.Satisfied2 hash (R e) minit mfin maddrs t →
+      StateDecodeLog S LH pc pubLogPre pubLogPost pre post →
+      kstepAll e pre post :=
+  fun _hCR => hext
+
+/-- **TOOTH 2 — the port is STRICTLY stronger, i.e. the converse does NOT hold definitionally.** The
+old shape re-stated as a hypothesis does not give the new bundle back for free: `hold` must be applied
+to a `Poseidon2SpongeCR hash` proof that the ported statement does not supply. We pin the exact price —
+the port is recoverable ONLY by paying the refuted floor — which is the whole content of "strictly
+stronger" here, and is why the antecedent was worth deleting rather than re-grounding. -/
+theorem closedLogExtract_converse_costs_the_floor
+    (S : CommitSurface) (LH : List Turn → ℤ) (hash : List ℤ → ℤ) (R : Registry) (e : EffectIdx)
+    (hCR : Poseidon2SpongeCR hash)
+    (hold : Poseidon2SpongeCR hash →
+      ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
+        (t : Dregg2.Circuit.DescriptorIR2.VmTrace)
+        (pc : PublishedCommit) (pubLogPre pubLogPost : ℤ) (pre post : RecChainedState),
+        Dregg2.Circuit.DescriptorIR2.Satisfied2 hash (R e) minit mfin maddrs t →
+        StateDecodeLog S LH pc pubLogPre pubLogPost pre post →
+        kstepAll e pre post) :
+    ClosedLogExtract S LH hash R e :=
+  hold hCR
+
 /-! ## §D — axiom hygiene. -/
 
 #assert_axioms closedLog_of_encode
 #assert_axioms ClosedLogExtract
+#assert_axioms closedLogExtract_no_strength_lost
+#assert_axioms closedLogExtract_converse_costs_the_floor
 #assert_axioms effectDecodeBridge_of_closedLogExtract
 #assert_axioms closedLogExtract_transfer
 #assert_axioms hrefinesAllClosed

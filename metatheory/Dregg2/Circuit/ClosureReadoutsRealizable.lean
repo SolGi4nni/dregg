@@ -122,17 +122,22 @@ variable {hRest : RestHashIffFrame RH}
 local notation "Slive" => S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
 
 /-- **The dead slot is FALSE.** Any `ClosedLogExtract Slive LH hash Rfix 15` — in particular the
-`other 15` member every `ClosureReadouts` bundle carries — yields `False`, given the hash-CR floor and
-ANY decodable boundary: feed it the honest transfer witness (`satisfied2_emptyTag_15`) and the decode;
-it must produce `kstepAll 15 pre post`, which is EMPTY (`kstepAll_not_total`). -/
+`other 15` member every `ClosureReadouts` bundle carries — yields `False`, given ANY decodable
+boundary: feed it the honest transfer witness (`satisfied2_emptyTag_15`) and the decode; it must
+produce `kstepAll 15 pre post`, which is EMPTY (`kstepAll_not_total`).
+
+⚑ STRENGTHENED by the `ClosedLogExtract` port (2026-07-25): this refutation used to carry
+`hCR : Poseidon2SpongeCR hash` solely to feed the bundle's now-deleted antecedent. With the antecedent
+gone the hypothesis is gone, so the dead slot is refuted with NO crypto floor assumed at all — which
+matters, because `Poseidon2SpongeCR` is FALSE at deployed BabyBear parameters and a refutation resting
+on a false hypothesis would have proved nothing. -/
 theorem closedLogExtract_emptyTag_false
     {LH : List Turn → ℤ} {hash : List ℤ → ℤ}
-    (hCR : Poseidon2SpongeCR hash)
     {pc : PublishedCommit} {pubLogPre pubLogPost : ℤ} {pre post : RecChainedState}
     (hdec : StateDecodeLog Slive LH pc pubLogPre pubLogPost pre post)
     (hext : ClosedLogExtract Slive LH hash Rfix 15) : False :=
   Dregg2.Circuit.DescriptorRefinesComplete.kstepAll_not_total pre post
-    (hext hCR (fun _ => 0) (fun _ => (0, 0)) []
+    (hext (fun _ => 0) (fun _ => (0, 0)) []
       Dregg2.Circuit.FloorsNonVacuous.faithfulTrace pc pubLogPre pubLogPost pre post
       (satisfied2_emptyTag_15 hash (fun _ => 0) (fun _ => (0, 0))) hdec)
 
@@ -160,11 +165,14 @@ theorem stateDecodeLog_inhabited (S : CommitSurface) (LH : List Turn → ℤ)
 
 /-! ## §3 — the headline finding: `ClosureReadouts` is UNINSTANTIABLE under the realizable floors. -/
 
-/-- **Survey finding #3, machine-checked.** Under the two named realizable crypto floors — the sponge
-CR the apex carries anyway (`Poseidon2SpongeCR hash`) and the log-CR carrier (`logHashInjective LH`) —
-NO `ClosureReadouts` bundle exists, for ANY surface/`Scap`/`compressN` parameterization: its `other 15`
-member is refuted by the honest transfer witness on the empty-cell boundary. The apexes that consume
-the bundle only at `pi.effect` are untouched; but "the floor is realizable" was false as stated. -/
+/-- **Survey finding #3, machine-checked.** Under the ONE named realizable crypto floor — the log-CR
+carrier `logHashInjective LH`, needed only to inhabit the decodable boundary — NO `ClosureReadouts`
+bundle exists, for ANY surface/`Scap`/`compressN` parameterization: its `other 15` member is refuted by
+the honest transfer witness on the empty-cell boundary. The apexes that consume the bundle only at
+`pi.effect` are untouched; but "the floor is realizable" was false as stated.
+
+⚑ The `Poseidon2SpongeCR hash` hypothesis this finding used to carry is GONE with the
+`ClosedLogExtract` port — it was only ever passed through to the bundle's deleted antecedent. -/
 theorem closureReadouts_uninstantiable
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
@@ -174,14 +182,14 @@ theorem closureReadouts_uninstantiable
     {LH : List Turn → ℤ} {hash : List ℤ → ℤ} {State : Type}
     {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
-    (hCR : Poseidon2SpongeCR hash) (hLog : logHashInjective LH)
+    (hLog : logHashInjective LH)
     (rds : @ClosureReadouts CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
       LH hash State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc) : False := by
   obtain ⟨pc, pubLogPre, pubLogPost, pre, post, hdec⟩ :=
     stateDecodeLog_inhabited
       (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hLog
       ⟨0, 0, 0, 0⟩
-  exact closedLogExtract_emptyTag_false hCR hdec (rds.other 15)
+  exact closedLogExtract_emptyTag_false hdec (rds.other 15)
 
 /-- **FIRE.** At the CONCRETE injective floors — `encodeSponge` (proved CR) and `refLH` (proved
 injective) — the uninstantiability holds with NO crypto hypotheses left: for every surface, there is
@@ -200,7 +208,6 @@ theorem closureReadouts_uninstantiable_concrete
       Dregg2.Circuit.FloorsNonVacuous.encodeSponge
       State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc) : False :=
   closureReadouts_uninstantiable
-    Dregg2.Circuit.FloorsNonVacuous.encodeSponge_cr
     (Dregg2.Circuit.Poseidon2Binding.logHashInjective_of_realization
       Dregg2.Circuit.Poseidon2Binding.Reference.refLogRealization)
     rds
@@ -561,7 +568,7 @@ total-`∀ e` hypothesis was doing IMPOSSIBLE work at exactly the slots where it
 per-effect extract only at `pi.effect` and the log-enrichment `mkLog`. -/
 theorem lightclient_unfoolable_live
     (hash : List ℤ → ℤ) (S : CommitSurface) (LH : List Turn → ℤ)
-    (hCR : Poseidon2SpongeCR hash) [StarkSound hash Rfix]
+    [StarkSound hash Rfix]
     (hext : ∀ e, LiveTag e → ClosedLogExtract S LH hash Rfix e)
     (mkLog : ∀ (_e : EffectIdx) (pc : PublishedCommit) (pre post : RecChainedState),
       StateDecode S pc pre post →
@@ -580,7 +587,7 @@ theorem lightclient_unfoolable_live
   obtain ⟨pre, post, hdecode⟩ := hwitdec minit mfin maddrs t hsat hpub
   obtain ⟨pubLogPre, pubLogPost, hdecLog⟩ := mkLog pi.effect pi.toPublished pre post hdecode
   have hstep : kstepAll pi.effect pre post :=
-    hext pi.effect hlive hCR minit mfin maddrs t pi.toPublished pubLogPre pubLogPost pre post
+    hext pi.effect hlive minit mfin maddrs t pi.toPublished pubLogPre pubLogPost pre post
       hsat hdecLog
   refine ⟨pre, post, hdecode, hstep, ?_, ?_⟩
   · simpa using hdecode.preBinds
@@ -600,7 +607,7 @@ theorem lightclient_unfoolable_closed_final_live
     (hash : List ℤ → ℤ) (LH : List Turn → ℤ) {State : Type}
     {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
-    (hCR : Poseidon2SpongeCR hash) [StarkSound hash Rfix]
+    [StarkSound hash Rfix]
     (rds : @ClosureReadoutsLive CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
       LH hash State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc)
     (mkLog : ∀ (_e : EffectIdx) (pc : PublishedCommit) (pre post : RecChainedState),
@@ -623,7 +630,7 @@ theorem lightclient_unfoolable_closed_final_live
       pi.post = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
         post.kernel pi.turn :=
   lightclient_unfoolable_live hash
-    (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hCR
+    (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH
     (closedLogExtract_all_genuine_live rds) mkLog pi π hlive hwitdec hacc
 
 /-! ## §7 — the gap is closed, teeth on both sides.

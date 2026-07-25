@@ -99,7 +99,7 @@ theorem closedLogExtract_of_rung {S : CommitSurface} {LH : List Turn → ℤ} {h
     {R : Registry} {e : EffectIdx}
     (rung : ClosedLogRung S LH hash R e) :
     ClosedLogExtract S LH hash R e := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   exact rung minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
 
 /-! ## §2 — the per-effect dischargers, grouped by family.

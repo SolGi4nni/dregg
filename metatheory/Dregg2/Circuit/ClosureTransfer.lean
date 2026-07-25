@@ -386,7 +386,7 @@ theorem closedLogExtract_transfer_closed
             (readout minit mfin maddrs t pre post hsat).2.1) :
     ClosedLogExtract
       (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hash Rfix 0 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   -- v12 big-bang: `Rfix 0 = transferV3Membership` definitionally (the teeth-exposing transfer —
   -- the rc wrap PLUS the two `(sender_leaf, authorized_root)` membership teeth PI pins at 50..51;
   -- both wraps append only `.piBinding` pins). FULL PEEL (`satisfied2_of_transferV3Membership`:

@@ -139,8 +139,22 @@ type, so a binder-only census reports them as NOT CARRIERS at all). Fail closed 
 missed: these gate the L0 keystones. -/
 def sentinelPropBody : List Name :=
   [ `Dregg2.Circuit.CircuitSoundness.descriptorRefines
-  , `Dregg2.Circuit.CircuitCompleteness.descriptorComplete
-  , `Dregg2.Circuit.ClosureAll.ClosedLogExtract ]
+  , `Dregg2.Circuit.CircuitCompleteness.descriptorComplete ]
+
+/-- Pass 1b RATCHET (the INVERSE sentinel): `Prop`-def-body floor carriers that have been PORTED —
+their floor antecedent is DELETED — and must never come back. Each name must resolve to a `Prop`-
+valued `def` in our modules AND must NOT be discovered as a prop-body floor carrier. Fail closed on
+either: a ported def that reappears in `propBody` is the port being reverted, and a name that no
+longer resolves is the ratchet quietly losing its grip.
+
+`ClosureAll.ClosedLogExtract` was the first of the three keystone gates to fall (2026-07-25). Its
+`Poseidon2SpongeCR hash →` antecedent was DEAD — all 35 rungs discharging a slot bound it as `_hCR`
+and never used it — so the port is a DELETION, strictly strengthening, needing no bridge lemma. The
+kernel-defeq shape pin lives in `Circuit/ClosedLogExtractPortCheck`; this list is the census-level
+half, so an instrument that reports the class as clean cannot also be the instrument that stopped
+looking. -/
+def portedPropBody : List Name :=
+  [ `Dregg2.Circuit.ClosureAll.ClosedLogExtract ]
 
 /-- The higher-order-flow SENTINEL: the top keystone that v1 mis-leveled to L0 because its
 floor hypothesis flows into ANOTHER hypothesis (`hrefines`), not a constant. v2 must see the
@@ -492,6 +506,22 @@ def run (outPath : Option String) : MetaM Unit := do
       throwError "FLOOR-CENSUS FAIL-CLOSED: Pass 1b sentinel {f} was not discovered as a \
         prop-body floor carrier. Partial import or a regression in the δ-unfolding — a v2 \
         census that misses the keystone gates must not report."
+  -- ⚑ FAIL-CLOSED gate (d′), the RATCHET: a PORTED prop-body keystone must still resolve, and must
+  -- NOT be a floor carrier again. Landing a port and then letting the floor creep back into the
+  -- def's body is the exact regression this campaign keeps paying for, and it is invisible to every
+  -- binder-keyed ruler — so the census, which is the only instrument that can see the class, is
+  -- where the ratchet has to live.
+  for f in portedPropBody do
+    unless env.find? f |>.isSome do
+      throwError "FLOOR-CENSUS FAIL-CLOSED: ported prop-body keystone {f} is not in the \
+        environment. The ratchet cannot certify a port whose subject it cannot resolve — a rename \
+        or deletion must update `portedPropBody` in the same commit."
+    if propBody.contains f then
+      throwError "FLOOR-CENSUS FAIL-CLOSED: PORT REVERTED — {f} is a prop-body floor carrier \
+        again, carrying {propBody.getD f #[]}. Its floor antecedent was DELETED by a landed port; \
+        a floor back in the def's BODY makes every theorem that merely MENTIONS it a silent \
+        carrier with no binder anywhere in its type. Re-do the port, or remove the name from \
+        `portedPropBody` and say in the commit that the campaign gave the surface back."
 
   -- ===== Pass 1: carriers =====
   let memo ← IO.mkRef ({} : Std.HashMap (Name × Nat) (Bool × Array Name))

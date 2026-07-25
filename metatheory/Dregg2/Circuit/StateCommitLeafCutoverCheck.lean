@@ -234,4 +234,31 @@ def argus_circuit_pins_receipt_of_injective
   crossbind_circuit_exec_same_state_of_injective, stateCommit_binds_cellCommit_of_injective,
   setFieldCommit_binds_cellCommit_of_injective, argus_circuit_pins_receipt_of_injective]
 
+/-! ## §4 — THE BLINDNESS CONTROL (the reason the 13 greens above mean anything).
+
+The `#assert_not_depends_on` pins in §2 are REJECTORS: each passes by finding nothing. A rejector
+cannot detect its own blindness, and `Dregg2/Tactics.lean` records the measurement that settles it —
+built with `allowOpaque := false` the shared walk MISSED a real semantic dependency while reporting
+`scanned = 36`, because a root's TYPE constants are still walked when its VALUE is invisible. Under
+that failure every pin above reports CLEAN, vacuously, and this module stays green.
+
+`#assert_depends_on` is the exact dual and shares the same `findForbiddenPath`, so the two go blind
+together or not at all. `walkControl`'s statement is `True`; it reaches the floor ONLY through its
+proof term, via the two portal theorems that carry `cellLeafInjective` in their own telescopes. A
+walk that has stopped opening theorem values cannot report it, so the build fails HERE rather than
+certifying 13 cut-over theorems on a blind scan.
+
+Tactics.lean states the bar: every module relying on `#assert_not_depends_on` should carry at least
+one such control. This module carried 13 pins and none. Do not delete it to get green. -/
+theorem walkControl : True := by
+  have _h := @Dregg2.Circuit.StateCommit.MovedDigestBindsCells
+  have _h2 := @Dregg2.Circuit.StateCommit.FrameDigestBindsCells
+  trivial
+
+#assert_axioms Dregg2.Circuit.StateCommitLeafCutoverCheck.walkControl
+#assert_depends_on Dregg2.Circuit.StateCommitLeafCutoverCheck.walkControl
+  [Dregg2.Circuit.StateCommit.cellLeafInjective,
+   Dregg2.Circuit.StateCommit.FrameDigestBindsCells,
+   Dregg2.Circuit.StateCommit.MovedDigestBindsCells]
+
 end Dregg2.Circuit.StateCommitLeafCutoverCheck

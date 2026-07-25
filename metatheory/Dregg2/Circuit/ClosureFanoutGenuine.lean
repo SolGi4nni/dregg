@@ -110,7 +110,7 @@ theorem closedLogExtract_mint_closed
       (pubLogPost : ℤ) (pre post : RecChainedState),
       MintTraceReadout (LH := LH) (hash := hash) minit mfin maddrs t pubLogPost pre post) :
     ClosedLogExtract Slive LH hash Rfix 3 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   -- `Rfix 3` is the DEPLOYED gated mint member (`withSelectorGate selM.MINT mintV3`); strip the
   -- appended selector-binding gate to recover the bare-`mintV3` witness the readout/rung consume.
   have hsat := Dregg2.Circuit.Emit.EffectVmEmitRotationV3.withSelectorGate_satisfied2
@@ -136,7 +136,7 @@ theorem closedLogExtract_burn_closed
       (pubLogPost : ℤ) (pre post : RecChainedState),
       BurnTraceReadout (LH := LH) (hash := hash) minit mfin maddrs t pubLogPost pre post) :
     ClosedLogExtract Slive LH hash Rfix 4 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   -- rc-EMIT: peel the uniform `withDfaRcPins` wrap (4 additive `.piBinding` pins) to the base.
   have hsat := Dregg2.Circuit.Emit.EffectVmEmitRotationV3Refused.satisfied2_of_v3RefusedMember hash
     Dregg2.Circuit.RotatedKernelRefinementMintBurn.burnV3 hsat
@@ -161,7 +161,7 @@ theorem closedLogExtract_bridgeMint_closed
       (pubLogPost : ℤ) (pre post : RecChainedState),
       BridgeMintTraceReadout (LH := LH) (hash := hash) minit mfin maddrs t pubLogPost pre post) :
     ClosedLogExtract Slive LH hash Rfix 20 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   -- `Rfix 20` is the DEPLOYED felt-mint-hash bridge member (`mintV3BridgeHash = withMintHashPin
   -- (withSelectorGate selM.MINT mintV3)`), rc-EMIT-wrapped; peel the uniform `withDfaRcPins` wrap
   -- (4 additive `.piBinding` pins), then the additive mint-hash pin, then strip the appended
@@ -195,7 +195,7 @@ theorem closedLogExtract_incrementNonce_closed
       (pubLogPost : ℤ) (pre post : RecChainedState),
       IncNonceTraceReadout (LH := LH) (hash := hash) minit mfin maddrs t pubLogPost pre post) :
     ClosedLogExtract Slive LH hash Rfix 7 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   -- rc-EMIT: peel the uniform `withDfaRcPins` wrap (4 additive `.piBinding` pins) to the base.
   have hsat := Dregg2.Circuit.Emit.EffectVmEmitRotationV3Refused.satisfied2_of_v3RefusedMember hash
     Dregg2.Circuit.RotatedKernelRefinementIncNonce.incNonceV3 hsat
@@ -221,7 +221,7 @@ theorem closedLogExtract_setField_closed (slot : Fin 8)
       (pubLogPost : ℤ) (pre post : RecChainedState),
       SetFieldTraceReadout (LH := LH) (hash := hash) slot minit mfin maddrs t pubLogPost pre post) :
     ClosedLogExtract Slive LH hash Rfix 5 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   obtain ⟨actor, cell, v, permOut, hsat2, hside, hpub, logNeeds⟩ :=
     readout minit mfin maddrs t pubLogPost pre post hsat
   exact setField_closedLog slot hash hside hsat2 pre post actor cell v pc pubLogPre pubLogPost hdecLog
@@ -247,7 +247,7 @@ theorem closedLogExtract_heapWrite_closed
       (pubLogPost : ℤ) (pre post : RecChainedState),
       HeapWriteTraceReadout (LH := LH) (hash := hash) minit mfin maddrs t pubLogPost pre post) :
     ClosedLogExtract Slive LH hash Rfix 56 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   -- OPTION I: `Rfix 56 = effHeapWriteV3 heapWriteV3 …` (`actionTagToPos 56 = 45`, `v3RegistryHeap`
   -- tail). STRIP the after-spine + read appendices (both ADDITIVE — no map/mem op) down to the Class-A
   -- splice base `heapWriteV3`, so the base-level `heapWrite_closedLog_sat` rung lifts to the DEPLOYED
@@ -289,7 +289,7 @@ theorem closedLogExtract_delegate_closed
             Dregg2.Circuit.RotatedKernelRefinementCapFamily.DelegateWriteAnchor
               Scap pre post del rec tt hash minit mfin maddrs t henc)) :
     ClosedLogExtract Slive LH hash Rfix 1 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   have hsat' : Satisfied2 hash Dregg2.Circuit.Emit.CapOpenEmit.delegateWriteCapOpenV3
       minit mfin maddrs t := hsat
   obtain ⟨hChip, del, rec, tt, hpub, logNeeds⟩ := readout minit mfin maddrs t pubLogPost pre post hsat
@@ -312,7 +312,7 @@ theorem closedLogExtract_introduce_closed
             Dregg2.Circuit.RotatedKernelRefinementCapFamily.IntroduceWriteAnchor
               Scap pre post intro rec tt hash minit mfin maddrs t henc)) :
     ClosedLogExtract Slive LH hash Rfix 10 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   have hsat' : Satisfied2 hash Dregg2.Circuit.Emit.CapOpenEmit.introduceWriteCapOpenV3
       minit mfin maddrs t := hsat
   obtain ⟨hChip, intro, rec, tt, hpub, logNeeds⟩ := readout minit mfin maddrs t pubLogPost pre post hsat
@@ -341,7 +341,7 @@ theorem closedLogExtract_attenuate_closed
             Dregg2.Circuit.RotatedKernelRefinementCapFamily.AttenuateWriteAnchor
               Scap pre post actor idx keep hash minit mfin maddrs t henc)) :
     ClosedLogExtract Slive LH hash Rfix 12 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   have hsat' : Satisfied2 hash Dregg2.Circuit.Emit.CapOpenEmit.attenuateCapOpenEffV3
       minit mfin maddrs t := hsat
   obtain ⟨hChip, actor, idx, keep, hsub, hpub, logNeeds⟩ := readout minit mfin maddrs t pubLogPost pre post hsat
@@ -367,7 +367,7 @@ theorem closedLogExtract_delegateAtten_closed
             Dregg2.Circuit.RotatedKernelRefinementCapFamily.DelegateAttenWriteAnchor
               Scap pre post del rec tt keep hash minit mfin maddrs t henc)) :
     ClosedLogExtract Slive LH hash Rfix 11 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   have hsat' : Satisfied2 hash Dregg2.Circuit.Emit.CapOpenEmit.delegateAttenWriteCapOpenV3
       minit mfin maddrs t := hsat
   obtain ⟨hChip, del, rec, tt, keep, hsub, hpub, logNeeds⟩ := readout minit mfin maddrs t pubLogPost pre post hsat
@@ -392,7 +392,7 @@ theorem closedLogExtract_revokeDelegation_closed
             Dregg2.Circuit.RotatedKernelRefinementCapFamily.RevokeDelegationWriteAnchor
               Scap pre post holder tt hash minit mfin maddrs t henc.capRemove)) :
     ClosedLogExtract Slive LH hash Rfix 14 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   have hsat' : Satisfied2 hash Dregg2.Circuit.Emit.CapOpenEmit.revokeDelegationWriteCapOpenV3
       minit mfin maddrs t := hsat
   obtain ⟨hChip, holder, tt, hpub, logNeeds⟩ := readout minit mfin maddrs t pubLogPost pre post hsat
@@ -418,7 +418,7 @@ theorem closedLogExtract_revoke_closed
             Dregg2.Circuit.RotatedKernelRefinementCapFamily.RevokeDelegationWriteAnchor
               Scap pre post holder tt hash minit mfin maddrs t henc)) :
     ClosedLogExtract Slive LH hash Rfix 2 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   have hsat' : Satisfied2 hash Dregg2.Circuit.Emit.CapOpenEmit.revokeDelegationWriteCapOpenV3
       minit mfin maddrs t := hsat
   obtain ⟨hChip, holder, tt, hpub, logNeeds⟩ := readout minit mfin maddrs t pubLogPost pre post hsat
@@ -448,7 +448,7 @@ theorem closedLogExtract_refreshDelegation_closed
             Dregg2.Circuit.RotatedKernelRefinementCapFamily.RefreshDelegationWriteAnchor
               Scap pre post actor child hash minit mfin maddrs t henc)) :
     ClosedLogExtract Slive LH hash Rfix 55 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   have hsat' : Satisfied2 hash Dregg2.Circuit.Emit.CapOpenEmit.refreshDelegationWriteCapOpenV3
       minit mfin maddrs t := hsat
   obtain ⟨hChip, actor, child, hpub, logNeeds⟩ := readout minit mfin maddrs t pubLogPost pre post hsat
@@ -481,7 +481,7 @@ theorem closedLogExtract_cellSeal_closed
           Dregg2.Circuit.RotatedKernelRefinementCellSeal.CellSealTraceReadout
             hash minit mfin maddrs t pre post actor cell)) :
     ClosedLogExtract Slive LH hash Rfix 52 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   -- `Rfix 52 = withDfaRcPins cellSealV3` definitionally (the registry's cellSeal member,
   -- rc-EMIT-wrapped); peel the uniform wrap (4 additive `.piBinding` pins) to the base.
   have hsat' : Satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmitRotationV3.cellSealV3
@@ -504,7 +504,7 @@ theorem closedLogExtract_cellUnseal_closed
           Dregg2.Circuit.RotatedKernelRefinementLifecycle.CellUnsealTraceReadout
             hash t pre post actor cell)) :
     ClosedLogExtract Slive LH hash Rfix 53 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   -- rc-EMIT: peel the uniform `withDfaRcPins` wrap (4 additive `.piBinding` pins) to the base.
   have hsat' : Satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmitRotationV3.cellUnsealV3
       minit mfin maddrs t :=
@@ -528,7 +528,7 @@ theorem closedLogExtract_cellDestroy_closed
           Dregg2.Circuit.RotatedKernelRefinementLifecycle.CellDestroyTraceReadout
             compressN2 hash t pre post actor cell certHash)) :
     ClosedLogExtract Slive LH hash Rfix 54 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   -- rc-EMIT: peel the uniform `withDfaRcPins` wrap (4 additive `.piBinding` pins) to the base.
   have hsat' : Satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmitRotationV3.cellDestroyV3
       minit mfin maddrs t :=
@@ -552,7 +552,7 @@ theorem closedLogExtract_refusal_closed
           Dregg2.Circuit.RotatedKernelRefinementLifecycle.RefusalTraceReadout
             compressN2 hash t pre post actor cell)) :
     ClosedLogExtract Slive LH hash Rfix 39 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   -- OPTION I: `Rfix 39 = effFieldsWriteV3 refusalFieldsWriteV3 …` (`actionTagToPos 39 = 55`,
   -- `v3RegistryHeap` tail). STRIP the after-spine + read appendices (both ADDITIVE — no map/mem op) down
   -- to the Class-A base `refusalFieldsWriteV3`, so the base-level `refusal_closedLog_sat` rung lifts to
@@ -581,7 +581,7 @@ theorem closedLogExtract_receiptArchive_closed
           Dregg2.Circuit.RotatedKernelRefinementLifecycle.ReceiptArchiveTraceReadout
             hash t pre post actor cell)) :
     ClosedLogExtract Slive LH hash Rfix 40 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   -- rc-EMIT: peel the uniform `withDfaRcPins` wrap (4 additive `.piBinding` pins) to the base.
   have hsat' : Satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmitRotationV3.receiptArchiveV3
       minit mfin maddrs t :=
@@ -605,7 +605,7 @@ theorem closedLogExtract_setPermissions_closed
           Dregg2.Circuit.RotatedKernelRefinementPermsVK.SetPermsTraceReadout
             hash minit mfin maddrs t pre post actor cell p)) :
     ClosedLogExtract Slive LH hash Rfix 8 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   -- rc-EMIT: peel the uniform `withDfaRcPins` wrap (4 additive `.piBinding` pins) to the base.
   have hsat' : Satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmitRotationV3.setPermsV3
       minit mfin maddrs t :=
@@ -627,7 +627,7 @@ theorem closedLogExtract_setVK_closed
           Dregg2.Circuit.RotatedKernelRefinementPermsVK.SetVKTraceReadout
             hash minit mfin maddrs t pre post actor cell vk)) :
     ClosedLogExtract Slive LH hash Rfix 9 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   -- rc-EMIT: peel the uniform `withDfaRcPins` wrap (4 additive `.piBinding` pins) to the base.
   have hsat' : Satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmitRotationV3.setVKV3
       minit mfin maddrs t :=
@@ -652,7 +652,7 @@ theorem closedLogExtract_setProgram_closed
           Dregg2.Circuit.RotatedKernelRefinementProgram.SetProgramTraceReadout
             compressN hash t pre post actor cell prog)) :
     ClosedLogExtract Slive LH hash Rfix 13 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   have hsat' : Satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmitRotationV3.setProgramV3
       minit mfin maddrs t := hsat
   obtain ⟨actor, cell, prog, permOut, hside, hpub, logNeeds⟩ := readout minit mfin maddrs t pubLogPost pre post hsat
@@ -671,7 +671,7 @@ theorem closedLogExtract_makeSovereign_closed
           Dregg2.Circuit.RotatedKernelRefinementMisc.MakeSovereignTraceReadout
             hash minit mfin maddrs t pre post actor cell)) :
     ClosedLogExtract Slive LH hash Rfix 38 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   -- v12 big-bang: `Rfix 38 = makeSovereignV3Deployed` (the key-commit member — rc + the 4 teeth PI
   -- pins + the in-AIR KEY_COMMIT chip gate). FULL PEEL (gate → teeth pins → rc) to the base.
   have hsat' : Satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmitRotationV3.makeSovereignV3
@@ -691,7 +691,7 @@ theorem closedLogExtract_createCell_closed
           Dregg2.Circuit.RotatedKernelRefinementBirth.CreateCellTraceReadout
             hash minit mfin maddrs t pre post actor newCell)) :
     ClosedLogExtract Slive LH hash Rfix 17 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   -- §J′: `Rfix 17 = effAccumInsertV3 cellsRootGroupCol … createCellV3 …` (`actionTagToPos 17 = 58`).
   -- STRIP the insert appendix (weld gates + binds) + the heap-open READ appendix (both ADDITIVE — no
   -- map/mem op) down to the base `createCellV3`, so the base-level `createCell_closedLog_sat` rung lifts
@@ -722,7 +722,7 @@ theorem closedLogExtract_createCellFromFactory_closed
           Dregg2.Circuit.RotatedKernelRefinementBirth.CreateFromFactoryTraceReadout
             hash minit mfin maddrs t pre post actor newCell vk)) :
     ClosedLogExtract Slive LH hash Rfix 18 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   -- STEP 3 + rc-EMIT: `Rfix 18 = withDfaRcPins factoryV3Carriers`, `factoryV3Carriers =
   -- withAfterOctetPins (withAfterOctetPins factoryV3 B_CHILD_VK_OCTET) B_CONTRACT_HASH_OCTET` (the
   -- uniform DSL rc wrap OUTERMOST over the two ADDITIVE carrier-octet `.piBinding` pin cohorts —
@@ -763,7 +763,7 @@ theorem closedLogExtract_spawn_closed
             Dregg2.Circuit.RotatedKernelRefinementBirth.SpawnWriteAnchor
               Scap hash minit mfin maddrs t pre post actor child target rd)) :
     ClosedLogExtract Slive LH hash Rfix 19 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   have hsat' : Satisfied2 hash Dregg2.Circuit.Emit.CapOpenEmit.spawnWriteCapOpenV3
       minit mfin maddrs t := hsat
   obtain ⟨hChip, actor, child, target, hpub, logNeeds⟩ := readout minit mfin maddrs t pubLogPost pre post hsat
@@ -780,7 +780,7 @@ theorem closedLogExtract_noteSpend_closed
           Dregg2.Circuit.RotatedKernelRefinementNotes.NoteSpendTraceReadout
             hash minit mfin maddrs t pre post nf actor spendProof)) :
     ClosedLogExtract Slive LH hash Rfix 27 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   -- §J′: `Rfix 27 = effAccumInsertV3 nullifierRootGroupCol … noteSpendV3 …` (`actionTagToPos 27 = 56`).
   -- STRIP the insert appendix + the heap-open READ appendix (both ADDITIVE) down to the base `noteSpendV3`.
   have hsat' : Satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmitRotationV3.noteSpendV3
@@ -810,7 +810,7 @@ theorem closedLogExtract_noteCreate_closed
           Dregg2.Circuit.RotatedKernelRefinementNotes.NoteCreateTraceReadout
             hash minit mfin maddrs t pre post cm actor)) :
     ClosedLogExtract Slive LH hash Rfix 28 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   -- §J′: `Rfix 28 = effAccumInsertV3 commitmentsRootGroupCol … noteCreateV3 …` (`actionTagToPos 28 = 57`).
   -- STRIP the insert appendix + the heap-open READ appendix (both ADDITIVE) down to the base `noteCreateV3`.
   have hsat' : Satisfied2 hash Dregg2.Circuit.Emit.EffectVmEmitRotationV3.noteCreateV3
@@ -841,7 +841,7 @@ theorem closedLogExtract_emitEvent_closed
         (post.log = Dregg2.Circuit.Spec.CellStateLog.emitReceipt actor cell :: pre.log →
           Dregg2.Circuit.RotatedKernelRefinementPermsVK.emitEventEncodes pre post actor cell)) :
     ClosedLogExtract Slive LH hash Rfix 6 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   obtain ⟨actor, cell, topic, data, hpub, logNeeds⟩ := readout minit mfin maddrs t pubLogPost pre post hsat
   exact emitEvent_closedLog pre post actor cell topic data pc pubLogPre pubLogPost hdecLog hpub.down logNeeds
 
@@ -855,7 +855,7 @@ theorem closedLogExtract_pipelinedSend_closed
         (post.log = Dregg2.Circuit.Spec.QueuePipelinedSend.pipelinedSendReceipt actor :: pre.log →
           Dregg2.Circuit.RotatedKernelRefinementMisc.pipelinedSendEncodes pre post actor)) :
     ClosedLogExtract Slive LH hash Rfix 47 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   obtain ⟨actor, hpub, logNeeds⟩ := readout minit mfin maddrs t pubLogPost pre post hsat
   exact pipelinedSend_closedLog pre post actor pc pubLogPre pubLogPost hdecLog hpub.down logNeeds
 
@@ -881,7 +881,7 @@ theorem closedLogExtract_exercise_closed
         Dregg2.Circuit.RotatedKernelRefinementExerciseAuth.exerciseEncodesAuthV3
           pre post actor target inner) :
     ClosedLogExtract Slive LH hash Rfix 16 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   obtain ⟨actor, target, inner, henc⟩ := readout minit mfin maddrs t pre post hsat
   exact exercise_closedLog_capOpenSat pre post actor target inner pc pubLogPre pubLogPost hdecLog henc
 

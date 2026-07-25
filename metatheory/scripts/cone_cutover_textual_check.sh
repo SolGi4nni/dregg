@@ -31,7 +31,34 @@ SPECS=(
 
 fail=0
 
-echo "══ [1/2] building each spec module's imports (the file itself is re-elaborated fresh below) ══"
+# ══ [0/3] THE INVOCATION-PRESENCE CHECK ═══════════════════════════════════════════════════════
+#
+# `#teeth_wired` (Dregg2/Verify/TeethWiring.lean, invoked at the end of Dregg2.lean) is what keeps
+# every cutover tooth in the build: it reads `Environment.header.moduleNames` at the root and fails
+# if any roster module is missing. It is strictly better than a textual scan — it rides lake's
+# import graph, so the edit that darkens a tooth re-runs it — but it has ONE blind spot it cannot
+# ever cover: a DELETED COMMAND RAISES NO ERROR. Remove the `#teeth_wired` line and the build goes
+# green with the whole roster unchecked.
+#
+# That is not hypothetical. Before `#teeth_wired` existed, exactly ONE of eleven teeth modules was
+# covered by any wiring check at all, and this campaign shipped six teeth that never ran once while
+# advertising them as armed. The check that notices a check has been removed has to live OUTSIDE
+# the build. That is this block; it is cheap, textual, and about wiring only — never about a proof.
+echo "══ [0/3] the #teeth_wired invocation is still present in the root ══"
+if ! grep -qx 'import Dregg2.Verify.TeethWiring' Dregg2.lean; then
+  echo "✗ Dregg2.lean does not import Dregg2.Verify.TeethWiring — the wiring gate cannot elaborate."
+  fail=1
+fi
+if ! grep -qx '#teeth_wired' Dregg2.lean; then
+  echo "✗ Dregg2.lean has no '#teeth_wired' invocation. The gate's module may still be imported and"
+  echo "  building green while the CHECK NEVER RUNS — exactly the failure mode that left six cutover"
+  echo "  teeth dark. Re-add the line at the end of Dregg2.lean."
+  fail=1
+fi
+[ "$fail" -eq 0 ] || { echo "══ CONE CUTOVER TEXTUAL CHECK: RED (wiring gate disarmed) ══"; exit 1; }
+echo "✓ #teeth_wired is wired into Dregg2.lean"
+
+echo "══ [1/3] building each spec module's imports (the file itself is re-elaborated fresh below) ══"
 for spec in "${SPECS[@]}"; do
   mod="${spec%.lean}"; mod="${mod//\//.}"
   if ! lake build "$mod"; then
@@ -41,7 +68,7 @@ for spec in "${SPECS[@]}"; do
 done
 [ "$fail" -eq 0 ] || exit 1
 
-echo "══ [2/2] FRESH textual post-state (CONE_CUTOVER_TEXT=1) ══"
+echo "══ [2/3] FRESH textual post-state (CONE_CUTOVER_TEXT=1) ══"
 for spec in "${SPECS[@]}"; do
   out="$(CONE_CUTOVER_TEXT=1 lake env lean "$spec" 2>&1)"
   status=$?

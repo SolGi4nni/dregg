@@ -285,4 +285,31 @@ example :
 #assert_axioms Dregg2.Exec.FieldsMap.fieldsRoot_binds_tail
 #assert_not_depends_on Dregg2.Exec.FieldsMap.fieldsRoot_binds_tail [Dregg2.Circuit.StateCommit.compressNInjective, Dregg2.Circuit.ListCommit.ListDigestBindsList]
 
+/-! ## §3 — THE BLINDNESS CONTROL (the reason the 13 greens above mean anything).
+
+Every check in this module is a REJECTOR: `#assert_not_depends_on` passes when it finds nothing.
+A rejector cannot detect its own blindness. `Dregg2/Tactics.lean` records the measurement that
+settles this — built with `allowOpaque := false`, the shared walk reported `hit = none` with
+`scanned = 36` on a deliberately SEMANTIC re-proof: the forbidden dependency was MISSED while the
+scanned count sat far above any tripwire, because a root's TYPE constants are still walked when its
+VALUE is invisible. A value-blind walk therefore reports all 13 pins above CLEAN, vacuously, and
+nothing in this module would notice.
+
+`#assert_depends_on` is the exact dual, sharing the same `findForbiddenPath`, so the two go blind
+together or not at all. The control below reaches both floors ONLY through its proof term — its
+statement is `True` — so a walk that has stopped opening theorem values CANNOT report it, and the
+build fails LOUDLY here instead of certifying the cutover vacuously.
+
+Tactics.lean states the bar: "Every module that relies on `#assert_not_depends_on` should carry at
+least one such positive control." This module carried 13 pins and none. Do not delete it to get
+green; it is what makes the greens above evidence. -/
+theorem walkControl : True := by
+  have _h := fun (LE : ℕ → ℤ) (cN : List ℤ → ℤ) =>
+    @Dregg2.Circuit.ListCommit.ListDigestBindsList ℕ LE cN
+  trivial
+
+#assert_axioms Dregg2.Circuit.ListCommitCutoverCheck.walkControl
+#assert_depends_on Dregg2.Circuit.ListCommitCutoverCheck.walkControl
+  [Dregg2.Circuit.ListCommit.ListDigestBindsList, Dregg2.Circuit.StateCommit.compressNInjective]
+
 end Dregg2.Circuit.ListCommitCutoverCheck

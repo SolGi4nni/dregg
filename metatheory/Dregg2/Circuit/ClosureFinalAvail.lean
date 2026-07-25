@@ -91,9 +91,9 @@ theorem closedLogExtract_transport
     {S : CommitSurface} {LH : List Turn → ℤ} {hash : List ℤ → ℤ} {R R' : Registry} {e : EffectIdx}
     (heq : R' e = R e) (hext : ClosedLogExtract S LH hash R e) :
     ClosedLogExtract S LH hash R' e := by
-  intro hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   rw [heq] at hsat
-  exact hext hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  exact hext minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
 
 /-! ## §2 — the `∀ e, ClosedLogExtract … RfixAvail e` family: hardened debiting slots + transported rest. -/
 

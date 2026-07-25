@@ -339,4 +339,27 @@ end CS
 #assert_not_depends_on Dregg2.Circuit.CircuitSoundness.logDecodeChain_frame_continuous
   [Dregg2.Circuit.StateCommit.logHashInjective]
 
+/-! ## THE BLINDNESS CONTROL (the reason the 16 greens above mean anything).
+
+The `#assert_not_depends_on` pins above are REJECTORS: each passes by finding nothing. A rejector
+cannot detect its own blindness, and `Dregg2/Tactics.lean` records the measurement that settles it —
+built with `allowOpaque := false` the shared walk MISSED a real semantic dependency while reporting
+`scanned = 36`, because a root's TYPE constants are still walked when its VALUE is invisible. Under
+that failure every pin above reports CLEAN, vacuously, and this module stays green.
+
+`#assert_depends_on` is the exact dual and shares the same `findForbiddenPath`, so the two go blind
+together or not at all. `walkControl`'s statement is `True` — it reaches `logHashInjective` ONLY
+through its proof term — so a walk that has stopped opening theorem values cannot report it and the
+build fails HERE, loudly, instead of certifying 16 cut-over endpoints on a blind scan.
+
+Tactics.lean states the bar: every module relying on `#assert_not_depends_on` should carry at least
+one such control. This module carried 16 pins and none. Do not delete it to get green. -/
+theorem walkControl : True := by
+  have _h := @Dregg2.Circuit.StateCommit.logHashInjective
+  trivial
+
+#assert_axioms Dregg2.Circuit.LogCommitCutoverCheck.walkControl
+#assert_depends_on Dregg2.Circuit.LogCommitCutoverCheck.walkControl
+  [Dregg2.Circuit.StateCommit.logHashInjective]
+
 end Dregg2.Circuit.LogCommitCutoverCheck

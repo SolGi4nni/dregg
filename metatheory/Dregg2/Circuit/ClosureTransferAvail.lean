@@ -374,7 +374,7 @@ theorem closedLogExtract_transfer_closed_avail
       Dregg2.Exec.authorizedB pre.kernel.caps (readout minit mfin maddrs t pre post hsat).1 = true) :
     ClosedLogExtract
       (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hash R 0 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   -- the registry's transfer entry IS the deployed hardened member.
   rw [hR0] at hsat
   -- bind the readout ONCE so the floors (stated at `(readout …)` projections) align with the row
@@ -517,7 +517,7 @@ theorem closedLogExtract_burn_closed_avail
       BurnTraceReadoutAvail hash LH minit mfin maddrs t pubLogPost pre post) :
     ClosedLogExtract
       (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hash R 4 := by
-  intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
+  intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   rw [hR4] at hsat
   obtain ⟨actor, cell, a, amt, permOut, hside, hpub, logNeeds⟩ :=
     readout minit mfin maddrs t pubLogPost pre post hsat
