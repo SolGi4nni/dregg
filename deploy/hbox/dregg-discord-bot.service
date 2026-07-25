@@ -27,6 +27,10 @@ EnvironmentFile=%h/.config/dregg/discord-bot.env
 # (audit-DATE.discord-<pid>.NN.jsonl) keep the shared dir contention-free. The
 # discord bin reads this env directly (no source change); the env file may
 # override; =off disables.
+# The host serving the run-cards a finished descent links to. UNSET = every share
+# path in the bot is silently off; audited 2026-07-25 and it was unset everywhere,
+# so the link had never fired in production. The bot now warns once at startup.
+Environment=DESCENT_WEB_BASE=https://dregg.gg
 Environment=DREGG_AUDIT_DIR=%h/.local/state/dregg/audit
 WorkingDirectory=%h/dregg-bot
 ExecStart=%h/dregg-bot/dregg-discord-bot

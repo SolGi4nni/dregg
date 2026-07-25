@@ -2397,10 +2397,35 @@ struct ShareInput {
 /// Shared with [`crate::commands::native_descent`], whose native run-cards live on the same host
 /// under `/descent/native/run/{id}` — one base for both lanes, so a deployment configures one env.
 pub(crate) fn descent_web_base() -> Option<String> {
-    std::env::var("DESCENT_WEB_BASE")
+    let base = std::env::var("DESCENT_WEB_BASE")
         .ok()
         .map(|s| s.trim().trim_end_matches('/').to_string())
-        .filter(|s| !s.is_empty())
+        .filter(|s| !s.is_empty());
+
+    // ⚠ SAY SO, ONCE, LOUDLY. Returning `None` here does not merely omit a link — it
+    // silently disables EVERY share path in the bot, on both the procgen and native
+    // lanes. Audited 2026-07-25: this variable is set in NO deploy unit anywhere in the
+    // tree, which means the share link has never fired in production and nothing ever
+    // said so. A feature that is off because a variable is unset, and is quiet about it,
+    // is indistinguishable from a feature that is broken — and this repo has spent two
+    // days deleting exactly that equivalence (a bridge module rustc never compiled, six
+    // reality-gate tests that skipped themselves for 4d17h, a constraint oracle that
+    // returned false and installed nothing).
+    //
+    // Once per process, not per call: a share attempt happens on every finished run and
+    // a per-call warning would bury the log it is trying to be visible in.
+    if base.is_none() {
+        static WARNED: std::sync::Once = std::sync::Once::new();
+        WARNED.call_once(|| {
+            eprintln!(
+                "dregg-bot: WARNING — DESCENT_WEB_BASE is unset, so NO run is shareable. \
+                 Every finished descent will land, be verified, and produce no link. Set it \
+                 to the host serving /descent/native/run/{{id}} (e.g. \
+                 DESCENT_WEB_BASE=https://dregg.gg) in the bot's EnvironmentFile."
+            );
+        });
+    }
+    base
 }
 
 /// **Ingest a terminal run to the web board and return its shareable run-card URL.** POSTs the
