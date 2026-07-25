@@ -1,8 +1,14 @@
 //! Generalized effect-action binding **schemas + layout constants** (`EffectActionSchema`, `HASH_LIMBS`,
 //! `AMOUNT_LIMBS`) — NOT an AIR (the name is historical; 2026-07-16 sweep).
 //!
-//! This file authors NO constraints in any of the three dialects. The effect-action constraints are built
-//! by `effect_action_to_descriptor2` and ride the assured IR2 interpreter.
+//! ⚠ The line this header used to carry — "This file authors NO constraints in any of the three
+//! dialects" — was FALSE. `effect_action_to_descriptor2` (below) BUILDS the constraint list in Rust:
+//! it pushes `VmConstraint::PiBinding` and `WindowGateSpec` values directly. Those two families are
+//! byte-pinned to their Lean author (`Dregg2.Circuit.Emit.EffectActionBindingEmit.effectActionDesc`,
+//! via `EffectActionBindingRefine`), so they do not currently DISAGREE with Lean — but they are
+//! Rust-authored, which is the standing law's subject, and the pin is what keeps them honest, not
+//! the construction. See the ⚑ on `effect_action_to_descriptor2` for the one place the Rust
+//! construction is genuinely WEAKER than its Lean author.
 //!
 //! Sibling AIR to `bridge_action_witness`. The bridge AIR established the pattern:
 //! a 32-byte field becomes 8 BabyBear limbs (4 bytes each), a u64 amount
@@ -86,14 +92,34 @@ pub enum AlgebraicConstraint {
     ///   amounts[2] = amount       (u64 → 2 limbs)
     ///   amounts[3] = was_burn_flag (u64; constrained to 1)
     ///
-    /// Constraints enforced on row 0 / row continuity:
-    ///   1. new_balance_lo + amount_lo + borrow * 2^32 == old_balance_lo
-    ///   2. new_balance_hi + amount_hi - borrow            == old_balance_hi
+    /// ⚠ NOT ENFORCED BY THE DEPLOYED DESCRIPTOR. This doc used to read
+    /// "Constraints enforced on row 0 / row continuity" and list four
+    /// gates. `effect_action_to_descriptor2` never reads `schema.algebraic`,
+    /// so NONE of them is emitted. The gates below exist and are PROVEN in
+    /// Lean (`EffectActionBindingEmit.burnDesc`, five Base gates with
+    /// `cLo_zero_iff` / `cHi_zero_iff` / `cBorrowBool_zero_iff` /
+    /// `cWasBurnLo_zero_iff`), but nothing routes them into Rust:
+    ///   1. new_balance_lo + amount_lo == old_balance_lo + borrow * 2^32
+    ///   2. new_balance_hi + amount_hi + borrow == old_balance_hi
     ///   3. borrow * (borrow - 1) == 0   (boolean borrow bit)
-    ///   4. was_burn_flag == 1
+    ///   4. was_burn_flag_lo == 1
+    ///   5. was_burn_flag_hi == 0
     ///
-    /// The borrow witness lives in an aux column threaded through every
-    /// row (kept constant for FRI continuity).
+    /// What this tag ACTUALLY does today is reserve one aux column
+    /// (`aux_count() == 1`) for the borrow bit that `generate_trace` fills
+    /// and NO constraint reads.
+    ///
+    /// Why that is not (currently) a soundness hole: the deployed verifier
+    /// `TurnExecutor::verify_effect_binding_proofs_with_ledger` reconstructs
+    /// ALL FOUR amounts from its own authoritative state — `old_balance`
+    /// from the ledger snapshot, `new_balance = old_balance - amount`
+    /// computed by the executor, `amount` from the runtime `Effect::Burn`,
+    /// `was_burn_flag` hard-coded to 1 — rejects any wire PI that disagrees,
+    /// and then STARK-verifies against ITS OWN PI vector. The prover has no
+    /// freedom over the values these gates would relate. The residual is
+    /// that the conservation relation is enforced by executor arithmetic
+    /// rather than in-circuit, so any FUTURE consumer that trusts a burn
+    /// binding proof WITHOUT that reconstruction inherits nothing.
     Burn,
 }
 
@@ -274,11 +300,28 @@ impl EffectActionAir {
 /// The public inputs the caller supplies are `EffectActionWitness::public_inputs`;
 /// the executor reconstructs them from its own view of the effect's typed
 /// parameters (and, for `Burn`, the authoritative pre/post ledger balances) and
-/// binds them here, so a proof committed to different typed bytes is UNSAT. Schema
-/// aux columns (e.g. the `Burn` borrow bit at `pi_count()`) are past the PI surface
-/// — they are free witness columns bound only by continuity; the balance-transition
-/// invariant is enforced by the executor's own ledger reconstruction + the PI
-/// equality it checks before verify, not by an in-descriptor arithmetic gate.
+/// binds them here, so a proof committed to different typed bytes is UNSAT.
+///
+/// ⚑ **THE LEAN DIVERGENCE — this function never reads `schema.algebraic`.**
+/// The Lean author of this same descriptor
+/// (`Dregg2.Circuit.Emit.EffectActionBindingEmit.burnDesc`) is
+/// `contGates 17 ++ piGates 16 ++ burnGates` = 38 constraints, byte-pinned by
+/// `#guard emitVmJson2 burnDesc == …` and carrying five PROVEN Base gates
+/// (the two limb equations, borrow booleanity, and the two disclosure pins).
+/// The two families below are 33. So for `SCHEMA_BURN` the Rust construction is
+/// STRICTLY WEAKER than the Lean object it is supposed to be: the borrow aux
+/// column at `pi_count()` rides completely free — no constraint reads it, and it
+/// is past the PI surface so nothing compares it either. The house law says these
+/// constraints are AUTHORED IN LEAN and Rust only calls the emitted artifact; the
+/// standing repair is to route Burn through the Lean-emitted JSON the way
+/// `descriptor_by_name` already routes every predicate descriptor
+/// (`EmitByName.lean` + `scripts/emit-descriptors.sh`), NOT to hand-write five
+/// more Rust gates here.
+///
+/// Not currently exploitable — see `AlgebraicConstraint::Burn` for why (the
+/// executor computes all four amounts itself and verifies against its own PI
+/// vector, pinned by `burn_conservation_is_enforced_by_pi_reconstruction`) — but
+/// the enforcement lives in executor arithmetic, not in the circuit.
 ///
 /// The mapping is total (no effect-action constraint kind to refuse), so this
 /// always returns `Ok`.
@@ -539,20 +582,18 @@ pub const SCHEMA_NOTE_CREATE: EffectActionSchema = EffectActionSchema {
 /// amounts = [old_balance (u64), new_balance (u64), amount (u64),
 ///            was_burn_flag (u64; constrained to 1)]
 ///
-/// Algebraic constraints (see `AlgebraicConstraint::Burn`):
-///   1. `new_balance == old_balance - amount` (two-limb u64 subtraction
-///      with a boolean borrow witness)
-///   2. `was_burn_flag == 1` (binding the disclosure into PI; the
-///      receipt's `was_burn` flag is independently absorbed into
-///      `Turn::hash`, this AIR slot closes the loop so a verifier can
-///      algebraically attribute the burn disclosure to a specific
-///      receipt)
-///   3. Borrow bit is boolean (`borrow * (borrow - 1) == 0`)
+/// ⚠ Algebraic constraints: DECLARED HERE, NOT EMITTED. This doc used to
+/// assert that the AIR enforces `new_balance == old_balance - amount`, the
+/// disclosure pin `was_burn_flag == 1`, and borrow booleanity. It does not —
+/// `effect_action_to_descriptor2` ignores `algebraic` entirely, so the
+/// deployed burn descriptor is 33 constraints (16 PI pins + 17 continuity)
+/// against the Lean author's 38. See `AlgebraicConstraint::Burn` for the
+/// full statement, including why this is not currently exploitable (the
+/// executor reconstructs every one of these amounts itself and verifies
+/// against its own PI vector) and what the residual actually is.
 ///
 /// The `old_balance >= amount` predicate is enforced by the executor's
-/// `InsufficientBalance` runtime check; the AIR binds the arithmetic at
-/// the limb level. Golden-Vision adds bit-decomp range checks to close
-/// the residual algebraic gap.
+/// `InsufficientBalance` runtime check.
 ///
 /// `slot` is not bound here because Silver-Vision rejects any slot other
 /// than the canonical balance slot (`0`); see the executor's apply check.

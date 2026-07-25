@@ -551,11 +551,39 @@ pub struct AdmittedOp {
     pub cost: u64,
 }
 
-/// Admit one storage op under the gateway mandate. Mirrors the Lean
-/// `sgmAdmitM` admission exactly (the SGM crate's `sgm_admit` is asserted as
-/// the oracle): op allowlist → (GET) clearance / (PUT) prefix scope → volume
-/// debit. Plus the request-level capability check: the node operator's agent
-/// cell must hold a c-list capability over the gateway cell.
+/// Admit one storage op under the gateway mandate: op allowlist → (GET)
+/// clearance / (PUT) prefix scope → volume debit. Plus the request-level
+/// capability check: the node operator's agent cell must hold a c-list
+/// capability over the gateway cell.
+///
+/// ⚑ **`sgm_admit` IS THE VERDICT — this function does not decide.** It used to.
+/// The route carried its OWN copy of the admission ladder and then
+/// `debug_assert_eq!`d the result against `sgm_admit`. That is a THIRD
+/// implementation of one predicate (Lean `sgmAdmitM` → the SGM crate's
+/// `sgm_admit` → this route), and it had already diverged:
+///
+///   * Lean `getClearanceOK` (`StorageGatewayMandate/Core.lean:85`) is
+///     `mayRead m.clearanceGraph m.actorLabels m.readCompartment` — reflexive-
+///     transitive DOMINANCE in the clearance graph, which the SGM crate's
+///     `get_clearance_ok` faithfully walks;
+///   * this route tested `clearance_label != Some(pinned)` — exact EQUALITY.
+///
+/// So a client presenting `x-dregg-clearance: writer` — whose clearance
+/// dominates `storage-read` in the demo graph, as the crate's own docs state —
+/// was REFUSED by the node and ADMITTED by the proof. Seven live route handlers
+/// ran the diverged copy.
+///
+/// Neither of the two guards could see it. The `debug_assert_eq!` sat AFTER the
+/// early `return Err`, so it could only ever fire on the ADMIT path — structurally
+/// blind to the one direction this actually drifted — and there is no
+/// `[profile.release]` in the workspace root, so it was compiled out of the
+/// deployed build regardless.
+///
+/// The shape below cannot regress that way: the ADMIT/REFUSE verdict comes from
+/// exactly one call to `sgm_admit`, and the per-predicate checks are reduced to
+/// [`classify_refusal`], which only ever produces an error. A drift in the
+/// classifier can mislabel a refusal; it cannot turn a refusal into an admit, nor
+/// an admit into a refusal.
 pub fn admit(
     s: &NodeStateInner,
     gateway: CellId,
@@ -576,63 +604,90 @@ pub fn admit(
     let spent = slot_u64(cell, VOLUME_SPENT_SLOT);
     let ceiling = slot_u64(cell, VOLUME_CEILING_SLOT);
     let cost = op.demo_cost();
+    let clearance_label = clearance.map(|c| field_from_bytes(c.as_bytes()));
+    let read_compartment = slot(cell, READ_COMPARTMENT_SLOT);
 
-    // Op allowlist (Lean `opAllowed`).
+    // THE DECISION. One call, the mandate predicate, the same object Lean
+    // `sgmAdmitM` is the specification of.
+    match sgm_admit(
+        spent,
+        ceiling,
+        key,
+        &cfg.key_prefix,
+        op,
+        &cfg.allowed_ops,
+        clearance_label.as_slice(),
+        read_compartment,
+    ) {
+        Some(new_spent) => Ok(AdmittedOp { new_spent, cost }),
+        None => Err(classify_refusal(
+            cfg,
+            op,
+            key,
+            spent,
+            ceiling,
+            cost,
+            clearance_label.as_slice(),
+            read_compartment,
+        )),
+    }
+}
+
+/// Explain a refusal `sgm_admit` has ALREADY returned, for the HTTP surface.
+///
+/// ⚠ This is a REASON, never a verdict. It is only ever called on the `None`
+/// branch above, its return type is `StorageRefusal` (it has no way to express
+/// "admit"), and its final arm is a catch-all — so a predicate here drifting out
+/// of step with `sgm_admit` costs an accurate error message, nothing more. Do not
+/// reintroduce an early `return Ok(..)` into this function or its caller: that is
+/// exactly the second decision procedure this shape exists to prevent.
+#[allow(clippy::too_many_arguments)]
+fn classify_refusal(
+    cfg: &StorageGatewayConfig,
+    op: StorageOp,
+    key: &str,
+    spent: u64,
+    ceiling: u64,
+    cost: u64,
+    actor_labels: &[[u8; 32]],
+    read_compartment: [u8; 32],
+) -> StorageRefusal {
     if !cfg.allowed_ops.contains(&op) {
-        return Err(StorageRefusal::OpNotAllowed(match op {
+        return StorageRefusal::OpNotAllowed(match op {
             StorageOp::Get => "GET",
             StorageOp::Put => "PUT",
             StorageOp::List => "LIST",
-        }));
+        });
     }
-
-    // Per-op scope checks (Lean `putPrefixOK` / `getClearanceOK`).
-    let clearance_label = clearance.map(|c| field_from_bytes(c.as_bytes()));
     match op {
-        StorageOp::Put => {
-            if !key.starts_with(&cfg.key_prefix) {
-                return Err(StorageRefusal::PrefixViolation {
-                    key: key.to_string(),
-                    prefix: cfg.key_prefix.clone(),
-                });
-            }
+        StorageOp::Put if !key.starts_with(&cfg.key_prefix) => {
+            return StorageRefusal::PrefixViolation {
+                key: key.to_string(),
+                prefix: cfg.key_prefix.clone(),
+            };
         }
-        StorageOp::Get => {
-            let pinned = slot(cell, READ_COMPARTMENT_SLOT);
-            if clearance_label != Some(pinned) {
-                return Err(StorageRefusal::ClearanceDenied);
-            }
+        // Dominance, not equality — the SGM crate's walk of the clearance graph,
+        // which is what `sgm_admit` just consulted.
+        StorageOp::Get
+            if !starbridge_storage_gateway_mandate::get_clearance_ok(
+                actor_labels,
+                read_compartment,
+            ) =>
+        {
+            return StorageRefusal::ClearanceDenied;
         }
-        StorageOp::List => {}
+        _ => {}
     }
-
-    // Volume debit (Lean `Slice.tryDebit`).
     if spent.saturating_add(cost) > ceiling {
-        return Err(StorageRefusal::VolumeBudgetExceeded {
+        return StorageRefusal::VolumeBudgetExceeded {
             spent,
             cost,
             ceiling,
-        });
+        };
     }
-    let new_spent = spent + cost;
-
-    // The verified-mirror predicate is the oracle: assert agreement.
-    debug_assert_eq!(
-        sgm_admit(
-            spent,
-            ceiling,
-            key,
-            &cfg.key_prefix,
-            op,
-            &cfg.allowed_ops,
-            clearance_label.as_slice(),
-            slot(cell, READ_COMPARTMENT_SLOT),
-        ),
-        Some(new_spent),
-        "route admission diverged from sgm_admit"
-    );
-
-    Ok(AdmittedOp { new_spent, cost })
+    // `sgm_admit` refused for a reason this classifier does not model. Fail closed
+    // with the least-specific refusal rather than inventing one.
+    StorageRefusal::ClearanceDenied
 }
 
 // =============================================================================
@@ -1508,6 +1563,92 @@ mod tests {
         let (status, data) = do_get(&state, &hash_hex, Some(DEFAULT_READ_COMPARTMENT)).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(data, body.to_vec());
+    }
+
+    /// CANARY for the route/proof divergence (LANE AV item 1).
+    ///
+    /// Lean `getClearanceOK` is `mayRead` — reflexive-transitive DOMINANCE in the
+    /// clearance graph. The demo graph carries the single edge
+    /// `writer -> storage-read` (`clearance_graph()`), so a WRITER's clearance
+    /// dominates the read compartment and the mandate ADMITS its GET.
+    ///
+    /// The route used to test exact EQUALITY (`clearance_label != Some(pinned)`),
+    /// so it refused this exact request — the node said 403 where the proof said
+    /// yes. Neither guard could catch it: the `debug_assert_eq!` against
+    /// `sgm_admit` sat after the early `return Err` (so it only ran when the node
+    /// ADMITTED), and with no `[profile.release]` in the workspace root it was
+    /// compiled out of release builds anyway.
+    ///
+    /// MUTATION CANARY: restore the equality test in `admit` and this goes RED
+    /// with 403 while `sgm_admit_admits_a_writer_get` below stays green — which
+    /// is precisely the split that defines the divergence.
+    #[tokio::test]
+    async fn writer_clearance_dominates_read_compartment_on_the_live_route() {
+        let (state, _gateway, _dir) = seeded_state().await;
+
+        let body = b"a writer may read what a writer may write";
+        let (status, json) = do_put(&state, Some("uploads/dominated.txt"), body).await;
+        assert_eq!(status, StatusCode::OK);
+        let hash_hex = json["hash"].as_str().unwrap().to_string();
+
+        // `writer` != `storage-read` as labels, but DOMINATES it in the graph.
+        assert_ne!(
+            starbridge_storage_gateway_mandate::writer_label(),
+            field_from_bytes(DEFAULT_READ_COMPARTMENT.as_bytes()),
+            "the canary is only meaningful if the two labels genuinely differ"
+        );
+
+        let (status, data) = do_get(&state, &hash_hex, Some("writer")).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "a writer's clearance dominates storage-read, so the mandate admits this GET; \
+             the route must not refuse what sgm_admit / Lean getClearanceOK accepts"
+        );
+        assert_eq!(data, body.to_vec());
+    }
+
+    /// The predicate half of the canary above, with no HTTP in the way: the SGM
+    /// mandate predicate (the object Lean `sgmAdmitM` specifies) ADMITS a writer's
+    /// GET. Pins the direction of the divergence independently of the route, so a
+    /// future regression is attributable to one side or the other.
+    #[test]
+    fn sgm_admit_admits_a_writer_get() {
+        let read_comp = field_from_bytes(DEFAULT_READ_COMPARTMENT.as_bytes());
+        let writer = starbridge_storage_gateway_mandate::writer_label();
+        let allowed = [StorageOp::Get, StorageOp::Put, StorageOp::List];
+
+        assert_eq!(
+            sgm_admit(
+                0,
+                100,
+                "uploads/x.txt",
+                DEFAULT_KEY_PREFIX,
+                StorageOp::Get,
+                &allowed,
+                &[writer],
+                read_comp,
+            ),
+            Some(1),
+            "writer dominates storage-read ⇒ the mandate admits (Lean getClearanceOK = mayRead)"
+        );
+
+        // And a label with no path to the compartment is still refused — the fix
+        // widens the accepted set to the dominance closure, it does not open it.
+        assert_eq!(
+            sgm_admit(
+                0,
+                100,
+                "uploads/x.txt",
+                DEFAULT_KEY_PREFIX,
+                StorageOp::Get,
+                &allowed,
+                &[field_from_bytes(b"guest")],
+                read_comp,
+            ),
+            None,
+            "guest dominates nothing ⇒ still refused"
+        );
     }
 
     // ── refcount / ownership behavior on put ─────────────────────────────────

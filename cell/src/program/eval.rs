@@ -260,17 +260,12 @@ fn evaluate_constraint(
 /// `dregg-exec-lean::constraint_oracle::encode_constraint` — which are Rust-evaluated on EVERY target,
 /// even with the oracle installed (`admits` returns `None` for them).
 ///
-/// Used to FAIL CLOSED on a native node with NO oracle installed: the subset's admission MUST be
-/// decided by the verified `dregg_constraint_admits`, so a subset constraint reached with no oracle is
-/// refused rather than silently Rust-decided. Deliberately OVER-INCLUSIVE — a new/unknown variant
+/// Used to FAIL CLOSED whenever the subset was NOT decided by Lean: the subset's admission MUST be
+/// computed by the verified `dregg_constraint_admits`, so a subset constraint that Lean did not answer
+/// is refused rather than silently Rust-decided. Deliberately OVER-INCLUSIVE — a new/unknown variant
 /// counts as subset ⇒ fail-closed — so any drift from `encode_constraint` biases toward REFUSAL, never
 /// toward a silent unverified admit. (This mirror of the class-c list must track `encode_constraint`;
 /// the safe direction of any mismatch is that the subset over-covers.)
-///
-/// GATED to RELEASE (deployed) native builds — see [`no_oracle_subset_disposition`] for why this is
-/// `not(debug_assertions)` (cell's own convention for "production", the same one the `test-stubs`
-/// guard uses) rather than a plain `not(test)`.
-#[cfg(any(test, all(not(debug_assertions), any(unix, windows))))]
 fn constraint_in_lean_subset(constraint: &StateConstraint) -> bool {
     !matches!(
         constraint,
@@ -288,27 +283,33 @@ fn constraint_in_lean_subset(constraint: &StateConstraint) -> bool {
     )
 }
 
-/// The no-oracle disposition for a single constraint on a deployed native node:
+/// The disposition for a Lean-subset constraint the VERIFIED evaluator did not decide:
 /// `Some(Err(ConstraintOracleUnavailable))` for a Lean-SUBSET constraint (FAIL CLOSED — the subset
 /// must be decided by the verified `dregg_constraint_admits`, never the unverified Rust `match`), or
 /// `None` for a class-c witness/crypto/executor-state variant (the named trusted-Rust slot, which
 /// falls through to the hand-written evaluator on every target).
 ///
-/// ACTIVATED only on a native RELEASE build with no oracle (the gate in
-/// [`evaluate_constraint_full`]). `dregg-cell` is a pervasive shared dependency, so a plain
-/// `not(test)` fail-closed would refuse VALID turns for every programmed cell across the whole
-/// workspace's DEBUG test builds (which never install the oracle). Gating on `not(debug_assertions)`
-/// is the faithful generalization of the coordination twins' `cfg(test)` split: the deployed (release)
-/// node fails closed without the verified oracle — closing the audit's fail-OPEN, the production
-/// mint/authz risk — while dev/test (debug) builds keep the guest-path evaluator green. It is cell's
-/// OWN "production" convention: the `test-stubs` accept-path guard uses the same `not(debug_assertions)`.
-/// A deployed node is a release build and additionally installs the Lean oracle at startup.
+/// ⚑ There are TWO ways the subset goes undecided, and BOTH must reach this disposition:
 ///
-/// Compiled under `test` too so this pure disposition is unit-tested directly (the gate ACTIVATION is
-/// release-only, which cell cannot test at runtime — the `test-stubs` invariant forbids release test
-/// builds — so the LOGIC is pinned here and the wiring by `cargo check --release`).
-#[cfg(any(test, all(not(debug_assertions), any(unix, windows))))]
-fn no_oracle_subset_disposition(constraint: &StateConstraint) -> Option<Result<(), ProgramError>> {
+/// 1. **No oracle installed** on a native node (the node forgot `install_constraint_oracle`). This is
+///    the fail-OPEN the game-proof audit originally found. Its call site is gated to a native RELEASE
+///    build: `dregg-cell` is a pervasive shared dependency, so a plain `not(test)` fail-closed would
+///    refuse VALID turns for every programmed cell across the whole workspace's DEBUG test builds
+///    (which never install an oracle). `not(debug_assertions)` is cell's OWN "production" convention —
+///    the same one the `test-stubs` accept-path guard uses.
+/// 2. **An oracle IS installed and DECLINED** (`admits` returned `None`). The original code treated
+///    this as "must be class-c" and fell straight through to the Rust `match`. That is FALSE:
+///    `dregg-exec-lean::constraint_oracle` also returns `None` when the marshaller declines a
+///    subset constraint — an affine term list outside the `i128`-exact envelope
+///    (`MAX_AFFINE_TERMS` / `MAX_AFFINE_COEFF`), a list over `MAX_LIST`, a collection read over
+///    `MAX_COLL_CELLS`, an `AnyOf`/`AllOf` branch the wire cannot carry — and when the FFI call
+///    itself fails (`Err(_) => None`) or the verdict does not parse. Every one of those routed a
+///    Lean-subset decision back into the unverified Rust twin. Worst case, `affine_sum` accumulates
+///    in `i128` with an UNCHECKED `sum += k * x`: outside the envelope that wraps, and a wrapped
+///    negative sum ADMITS an `AffineLe` the Lean `affineSum` (over unbounded `Int`) refuses.
+///    This call site is NOT release-gated — the presence of an installed oracle already selects the
+///    deployed configuration, so failing closed here cannot affect a build that never installs one.
+fn undecided_subset_disposition(constraint: &StateConstraint) -> Option<Result<(), ProgramError>> {
     if constraint_in_lean_subset(constraint) {
         Some(Err(ProgramError::ConstraintOracleUnavailable {
             constraint: constraint.clone(),
@@ -340,17 +341,29 @@ fn evaluate_constraint_full(
     // subset is the PURE arms (registers / heap / balance), the bounded CONTEXT arms (the
     // `{block_height, sender, delegation_epoch}` slice of `ctx`/`meta`, marshalled explicitly and
     // fail-closed on absence), and the `AnyOf` / `AllOf` combinators over them. `admits` returns
-    // `Some(decision)` for that subset and `None` for the witness / crypto / executor-state variants
-    // below (which stay Rust-evaluated — the NAMED trusted slot enumerated in
-    // `dregg-exec-lean::constraint_oracle`). No oracle installed (cell's own tests, wasm, the SP1
-    // zkVM guest — none can link the archive) ⇒ the Rust guest-path evaluator below runs.
+    // `Some(decision)` for that subset. It returns `None` for the witness / crypto / executor-state
+    // variants below (the NAMED trusted slot enumerated in `dregg-exec-lean::constraint_oracle`) —
+    // but ALSO, and this is the trap, whenever the marshaller declines a SUBSET constraint (wire
+    // envelope), the FFI fails, or a verdict does not parse. So `None` is "Lean did not decide",
+    // NOT "class-c", and only the disposition below may tell the two apart. No oracle installed
+    // (cell's own tests, wasm, the SP1 zkVM guest — none can link the archive) ⇒ the Rust
+    // guest-path evaluator below runs.
     // See `super::oracle` for why this is a runtime seam and not a direct FFI call.
     if let Some(oracle) = super::oracle::installed_oracle() {
         if let Some(decision) = oracle.admits(constraint, new_state, old_state, ctx, meta) {
             return decision;
         }
-        // Oracle installed but `admits` returned `None` ⇒ a class-c (witness/crypto/executor-state)
-        // variant, the named trusted-Rust slot ⇒ the hand-written evaluator below decides it.
+        // Oracle installed but `admits` returned `None`. This does NOT mean "class-c": the
+        // marshaller also declines a SUBSET constraint whose inputs fall outside a wire envelope
+        // (affine terms past the `i128`-exact bound, an over-long list, an over-large collection
+        // read, an `AnyOf` branch the wire cannot carry), and `None` is likewise the FFI-failure and
+        // unparsed-verdict result. Falling through to the Rust `match` on any of those hands a
+        // Lean-subset decision back to the unverified twin — for `AffineLe` that is a wrapped
+        // `i128` sum admitting what Lean's unbounded-`Int` `affineSum` refuses. FAIL CLOSED on the
+        // subset instead; class-c still returns `None` here and falls through as designed.
+        if let Some(disposition) = undecided_subset_disposition(constraint) {
+            return disposition;
+        }
     } else {
         // NO Lean constraint oracle installed. On a NATIVE node the Lean-subset admission MUST be
         // computed by the verified `dregg_constraint_admits`; running the hand-written Rust `match`
@@ -358,11 +371,11 @@ fn evaluate_constraint_full(
         // `install_constraint_oracle` silently ran the Rust twin). FAIL CLOSED for the subset instead;
         // the class-c variants (the trusted-Rust slot) still fall through to the evaluator below.
         // (wasm32 / the SP1 zkVM guest cannot link the Lean archive and keep the Rust subset arms
-        // below, explicitly non-verified. The gate is RELEASE-only — see `no_oracle_subset_disposition`
-        // — so debug/test builds across the workspace keep the guest evaluator and stay green; a
-        // deployed release node without the oracle fails closed.)
+        // below, explicitly non-verified. THIS gate is RELEASE-only — see
+        // `undecided_subset_disposition` — so debug/test builds across the workspace keep the guest
+        // evaluator and stay green; a deployed release node without the oracle fails closed.)
         #[cfg(all(not(debug_assertions), any(unix, windows)))]
-        if let Some(disposition) = no_oracle_subset_disposition(constraint) {
+        if let Some(disposition) = undecided_subset_disposition(constraint) {
             return disposition;
         }
     }
@@ -3046,41 +3059,64 @@ pub fn field_from_u64_be(val: u64) -> FieldElement {
 }
 
 /// FAIL-CLOSED logic pins for the constraint-oracle subset twin (#2). These exercise the pure
-/// no-oracle disposition directly (its ACTIVATION in `evaluate_constraint_full` is release-only —
-/// `not(debug_assertions)` — and cell cannot run a release test build because the `test-stubs`
-/// accept-path guard forbids it, so the gate WIRING is pinned by `cargo check --release`).
+/// disposition directly. Its two activations in `evaluate_constraint_full` differ: the NO-ORACLE one
+/// is release-only (`not(debug_assertions)`, pinned by `cargo check --release`, since cell forbids a
+/// release test build via the `test-stubs` invariant), while the ORACLE-DECLINED one is ungated and
+/// therefore testable over the real `evaluate` path — see `tests/oracle_decline_fails_closed.rs`.
 #[cfg(test)]
 mod constraint_oracle_fail_closed_tests {
     use super::*;
     use crate::program::types::RenouncedSet;
 
     #[test]
-    fn no_oracle_disposition_fails_closed_for_lean_subset() {
-        // A Lean-SUBSET constraint (`FieldEquals`, class-a/pure) ⇒ FAIL CLOSED when no oracle is
-        // installed: the deployed evaluator refuses rather than deciding the subset in unverified Rust.
+    fn undecided_disposition_fails_closed_for_lean_subset() {
+        // A Lean-SUBSET constraint (`FieldEquals`, class-a/pure) ⇒ FAIL CLOSED whenever Lean did not
+        // decide it: the deployed evaluator refuses rather than deciding the subset in unverified Rust.
         let subset = StateConstraint::FieldEquals {
             index: 0,
             value: field_from_u64(7),
         };
         assert!(
             matches!(
-                no_oracle_subset_disposition(&subset),
+                undecided_subset_disposition(&subset),
                 Some(Err(ProgramError::ConstraintOracleUnavailable { .. }))
             ),
-            "a Lean-subset constraint must fail closed (ConstraintOracleUnavailable) with no oracle"
+            "a Lean-subset constraint must fail closed (ConstraintOracleUnavailable) when undecided"
         );
     }
 
     #[test]
-    fn no_oracle_disposition_defers_class_c_to_the_trusted_rust_slot() {
+    fn undecided_disposition_fails_closed_for_an_out_of_envelope_affine() {
+        // `AffineLe` is class-a/pure, so it is in the Lean subset — but its terms here are OUTSIDE
+        // `dregg-exec-lean`'s `i128`-exact marshalling envelope (`|k| > MAX_AFFINE_COEFF = 2^32`), so
+        // the oracle DECLINES with `None` even though it is installed. The disposition must still
+        // refuse: this is the exact input on which the Rust `affine_sum` wraps its `i128` accumulator
+        // and ADMITS what Lean's unbounded-`Int` `affineSum` refuses.
+        let out_of_envelope = StateConstraint::AffineLe {
+            terms: vec![(i64::MAX, 0), (i64::MAX, 1)],
+            c: 0,
+        };
+        assert!(
+            matches!(
+                undecided_subset_disposition(&out_of_envelope),
+                Some(Err(ProgramError::ConstraintOracleUnavailable { .. }))
+            ),
+            "an out-of-envelope AffineLe is still Lean-subset and must fail closed, not wrap in Rust"
+        );
+    }
+
+    #[test]
+    fn undecided_disposition_defers_class_c_to_the_trusted_rust_slot() {
         // A class-c witness/crypto variant (`Renounced` — a non-membership proof) is the named
         // trusted-Rust slot: the disposition returns `None` so it falls through to the hand-written
-        // evaluator on every target, exactly as when an oracle IS installed and `admits` returns `None`.
+        // evaluator on every target. This is the ONLY reason `admits` returning `None` may fall
+        // through — the envelope/FFI/verdict declines above must NOT, which is why the disposition is
+        // consulted on the oracle-installed path too.
         let class_c = StateConstraint::Renounced {
             set: RenouncedSet::PublicRoot { set_root_index: 0 },
         };
         assert!(
-            no_oracle_subset_disposition(&class_c).is_none(),
+            undecided_subset_disposition(&class_c).is_none(),
             "a class-c (witness/crypto/executor-state) constraint must defer to the Rust trusted slot"
         );
     }
