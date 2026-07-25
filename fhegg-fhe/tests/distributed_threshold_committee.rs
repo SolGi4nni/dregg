@@ -256,6 +256,26 @@ fn request(address: SocketAddr, kind: u8, payload: &[u8]) -> Vec<u8> {
 /// Without the liveness check a dead child is indistinguishable from a slow one
 /// until the deadline, which turns a two-second `abort()` into a ten-minute wait
 /// and hides the reason in a child's stderr.
+/// Tell a party to stop, WITHOUT waiting for its answer.
+///
+/// Fire-and-forget on purpose. The party replies and then exits, so its answer
+/// races its own process teardown, and a client that blocks on that answer is
+/// asserting on a scheduling coincidence — which is exactly how this flaked once,
+/// after every real assertion in the test had already passed. Every request that
+/// matters (the collective key, an opening) is answered by a party that stays
+/// alive, and those still wait for their reply.
+fn shutdown(address: SocketAddr) {
+    let Ok(mut stream) = TcpStream::connect_timeout(&address, IO_TIMEOUT) else {
+        return;
+    };
+    let mut header = [0u8; 9];
+    header[0] = KIND_SHUTDOWN;
+    header[1..5].copy_from_slice(&(N_PARTIES as u32).to_be_bytes());
+    use std::io::Write;
+    let _ = stream.write_all(&header);
+    let _ = stream.flush();
+}
+
 fn wait_for_ready(parties: &mut [PartyProcess], paths: &[PathBuf], deadline: Instant) {
     while Instant::now() < deadline {
         if paths.iter().all(|path| path.exists()) {
@@ -523,7 +543,7 @@ fn three_party_processes_open_at_t_and_refuse_below_it() {
     );
 
     for process in &parties {
-        let _ = request(process.address, KIND_SHUTDOWN, &[]);
+        shutdown(process.address);
     }
     let _ = fs::remove_dir_all(&dir);
 }
