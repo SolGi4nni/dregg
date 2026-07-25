@@ -113,3 +113,33 @@ four halls, 17 tests). The Dark Bazaar is no longer a design with proofs — it 
 4. The F2 FPGA — needs an F2 instance + HDL build; scope is written.
 
 The proved + measured + running layer is complete on our lane; the leaps are where the two dragons converge.
+
+---
+
+## 7. The whole Dark Bazaar runs HOUSE-BLIND — Tier-0, no single viewer (the culmination)
+
+Beyond the single-key demos (§6), all four halls were driven to TIER-0 DARK: priced/cleared under an n-of-n
+COLLECTIVE key that NO single party — and no `n−1` coalition — can open. `cargo test -p fhegg-fhe --test
+dark_netting_threshold --test dark_oracle_pit_threshold --test dark_pool_threshold --test e2e_private_derivative`
+→ **10 passed**, the whole house-blind Dark Bazaar:
+
+| hall | Tier-0 dark artifact | no-single-viewer tooth |
+|---|---|---|
+| **Netting Vault** | signed multilateral net under collective key (additive) | n−1 combine REFUSED |
+| **Oracle Pit** | quadratic pricing under collective key + **threshold relin** (ct×ct multiply) | n−1 REFUSED |
+| **Dark Pool** | constant-product invariant under collective key + threshold relin; unfair swap caught house-blind | n−1 REFUSED |
+| **Sealed Exchange** | convex clearing under collective key (e2e private derivative) | n−1 REFUSED |
+
+Each composes this session's proved theory (NettingVault / OraclePitQuadratic / DarkBazaarCollectiveOpening /
+DarkBazaarQuorumNecessity) with the FROZEN threshold + threshold::relin ceremonies, and asserts the n−1
+refusal — the running witness that any coalition below n cannot open any position, price, net, or reserve.
+
+**This is the north star as running code:** "the dealer cannot see the cards, the players cannot see each
+other, and every deal carries a proof" — executing, across the WHOLE Dark Bazaar, at maximum privacy. The
+session's arc: proved (14 Lean files) → measured (compute-bound wins on real AMD) → running (all four halls
+single-key, §6) → HOUSE-BLIND (all four halls Tier-0 dark, no single viewer, this section).
+
+The remaining frontier is now purely the LIVE / throughput leaps: host a dark hall as a real product (wire
+into cells/receipts/finality + UX, codex's turf), the GPU-multiply throughput on the dark path (the measured
+5-10× multiply win, via the fhe.rs↔RnsPoly bridge), and the F2 FPGA. The proved + measured + running +
+house-blind layer is complete on our lane.
