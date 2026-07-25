@@ -175,6 +175,14 @@ jobs:
       # is what proves the teeth executed.
       - name: Arm the deployed binding teeth
         run: |
+          # ⚠ `set +e` IS LOAD-BEARING. GitHub runs `run:` blocks under
+          # `bash --noprofile --norc -eo pipefail`, so `-e` is ALREADY ON and a plain
+          # `set -uo pipefail` does not clear it. Under `-e` the `cargo test | tee` below
+          # aborts the step the instant a tooth is red — which looks fine, except it means
+          # the floor check after it is UNREACHABLE CODE, i.e. a guard on the guard that
+          # cannot fire. Turn `-e` off, capture the status, check the floor, then exit with
+          # the status we saved.
+          set +e
           set -uo pipefail
           # Measured 2026-07-25: 13 tooth/teeth files in circuit-prove/tests/, carrying 17
           # `#[ignore]`d teeth under the old 8-file glob. Floors are a RATCHET — raise them

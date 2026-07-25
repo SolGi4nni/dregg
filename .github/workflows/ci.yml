@@ -891,6 +891,11 @@ jobs:
       - name: Lean runtime probes nothing else builds (4 unarmed + the Linux twin)
         if: steps.pin.outputs.armed == '1'
         run: |
+          # `set +e` is load-bearing: GitHub runs `run:` under `bash -eo pipefail`, so
+          # without it a failing probe aborts the step and the assertion-count floor below
+          # — the only thing that can tell "the probes ran" from "the probes compiled
+          # away" — becomes unreachable code.
+          set +e
           set -uo pipefail
           cargo test -p dregg-lean-ffi --features lean-lib \
             --test handler_cutover_probe \
