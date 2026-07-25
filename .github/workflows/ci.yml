@@ -312,7 +312,21 @@ jobs:
       # Same system-dep set as the Check job: these workspaces path-dep deep into
       # the main tree (discord-bot alone pulls deos-view + starbridge surfaces),
       # so give every leg the same floor rather than bisecting -sys probes per leg.
-      - run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libgl1-mesa-dev libegl-dev libgles-dev libharfbuzz-dev libfreetype-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev libxext-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gperf libunwind-dev
+      # ...plus ONE package the Check job does not need: `liburing-dev`, for
+      # deos-homeserver. Its `conduwuit` git dep is taken with DEFAULT features, and
+      # upstream's `default` = `standard` = `[... io_uring, jemalloc, journald,
+      # systemd ...]` (src/main/Cargo.toml at the pinned rev 4454e540), so the
+      # rust-librocksdb-sys fork builds with `io-uring` on and its build script
+      # pkg-config-probes `liburing`, failing the leg before a single crate compiles:
+      # "the `io-uring` feature was requested but pkg-config probe for `liburing`
+      # failed ... apt-get install liburing-dev". NOTE that deos-homeserver's own
+      # Cargo.toml comment claims "Default features = standard + ring (NO
+      # jemalloc/io_uring/sentry/systemd)" — that is WRONG as written, because it
+      # never sets `default-features = false`; this leg is what makes the actual
+      # feature set observable. Installing the dep keeps the gate honest about the
+      # graph as it RESOLVES; narrowing the features is a build-behaviour change and
+      # belongs to whoever owns that embed.
+      - run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libgl1-mesa-dev libegl-dev libgles-dev libharfbuzz-dev libfreetype-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev libxext-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gperf libunwind-dev liburing-dev
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.toolchain }}
@@ -929,7 +943,7 @@ jobs:
       - run: bash scripts/check-ratchet-darkness.sh
 
   descriptor-by-name-routing:
-    name: Descriptor by-name routing round-trip (table <-> checked-in <-> stamp)
+    name: Committed reference -> uncommitted target (by-name routing, include_str!, Lean import, workflow)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # `metatheory/EmitByName.lean`'s `byNameDescriptors` is the routing table for the whole
@@ -950,6 +964,30 @@ jobs:
     # decl and the terminator, must yield one name per list entry, and must agree with the
     # file's own machine-checked length guard), so a reshaped table reds instead of
     # quietly narrowing what this checks.
+    #
+    # ONE INVOCATION, FOUR DOORS on the same class — a COMMITTED reference to an
+    # UNCOMMITTED target, which is green for the author and red for every fresh checkout,
+    # and which nothing else in this repo can see because every other gate starts from a
+    # file that EXISTS. The job name used to advertise only the first:
+    #   1. the Lean routing table above (GHOST / UNROUTED / UNSTAMPED);
+    #   2. Rust `include_str!`/`include_bytes!` (INCLUDE-GHOST / -UNTRACKED / -ESCAPES-REPO)
+    #      — rustc resolves those at COMPILE time, so an untracked one breaks the crate and
+    #      everything downstream, for everyone but the lane that emitted it;
+    #   3. first-party Lean `import` (LEAN-IMPORT-GHOST / -UNTRACKED) — the wound
+    #      `20b9d9a20f` is titled after, which had already recurred;
+    #   4. paths a tracked `.github/workflows/*.yml` INVOKES (WORKFLOW-GHOST /
+    #      -UNTRACKED / -ESCAPES-REPO). `bash scripts/x.sh` with `scripts/x.sh` untracked is
+    #      `No such file or directory` on every runner; the only other detector was the
+    #      broken job itself, AFTER it landed. Live instance the night it was added:
+    #      `scripts/check-ratchet-darkness.sh` sat untracked under an uncommitted ci.yml
+    #      hunk that ran it.
+    # Deliberately NOT four jobs: the class is one, the check is ~1s, and it is the same
+    # invocation `scripts/check-descriptor-drift.sh` runs as its local preflight — so a new
+    # medium inherits both positions the moment its leg is added, and nothing has to
+    # remember to call it. Doors 2 and 4 parse a real language (Rust tokens; shell inside
+    # YAML block scalars) so they do not red on prose in comments, and both REPORT their
+    # NOT-CHECKABLE counts (macro-built include paths; `${{ }}`/`$VAR`/glob paths, runtime-
+    # produced downloads, .gitignore'd build outputs) rather than guessing.
     steps:
       - uses: actions/checkout@v4
         with:

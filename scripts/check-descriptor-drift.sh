@@ -55,14 +55,23 @@ fi
 # imports an uncommitted module. `20b9d9a20f` is literally titled "repairs a committed tree that
 # imported untracked files", and it had already recurred. Worth catching HERE rather than after the
 # multi-hour build below, since that build is what the missing module breaks.
-echo "check-descriptor-drift: by-name routing + include_str! targets + Lean imports (static preflight)..."
+#
+# A FOURTH leg (verify_workflow_refs) is the same door in the CI medium: a committed
+# `.github/workflows/*.yml` step whose `run:` invokes a script nobody committed. `bash
+# scripts/x.sh` with `scripts/x.sh` untracked is green on the author's box and `No such file or
+# directory` on every runner and every fresh clone — and it was live the night that leg was
+# written (`scripts/check-ratchet-darkness.sh` sat untracked under an uncommitted ci.yml hunk that
+# ran it). It rides along here for the same reason as the other three: this is the ~1s answer, and
+# without it the medium's only detector is the broken job itself, AFTER it lands.
+echo "check-descriptor-drift: by-name routing + include_str! targets + Lean imports + workflow-invoked paths (static preflight)..."
 if ! python3 "$ROOT/scripts/emit_descriptors.py" --verify-by-name-routing; then
   echo "" >&2
   echo "REFERENCE GAP: something committed points at something that is not. EmitByName.lean's" >&2
-  echo "  table, the checked-in by-name/ set, the Rust include_str!/include_bytes! targets and" >&2
-  echo "  the first-party Lean imports do not cover each other (see the findings above)." >&2
-  echo "  Fix the routing table, or commit/stamp the artifact or module ALONGSIDE the reference" >&2
-  echo "  to it — not this gate, and never by #[cfg]-gating the include away." >&2
+  echo "  table, the checked-in by-name/ set, the Rust include_str!/include_bytes! targets, the" >&2
+  echo "  first-party Lean imports and the paths the workflows invoke do not cover each other" >&2
+  echo "  (see the findings above)." >&2
+  echo "  Fix the routing table, or commit/stamp the artifact, module or script ALONGSIDE the" >&2
+  echo "  reference to it — not this gate, and never by #[cfg]-gating the include away." >&2
   exit 1
 fi
 

@@ -53,10 +53,14 @@ Modes:
                          Static parse of the .lean — no Lean run, no cargo, seconds
                          — so it still works while the emit is blocked (which is
                          exactly when a routing gap can sit unnoticed). ALSO runs
-                         the second door: every literal `include_str!`/
-                         `include_bytes!` target in tracked Rust must EXIST and be
-                         TRACKED (an untracked one compiles only for the lane that
-                         emitted it — see verify_include_targets).
+                         all three other doors on ONE class — a COMMITTED reference
+                         to an UNCOMMITTED target, which is green for its author and
+                         red for every fresh checkout: every literal `include_str!`/
+                         `include_bytes!` target in tracked Rust (verify_include_
+                         targets), every first-party Lean `import` (verify_lean_
+                         imports), and every repo path a tracked
+                         `.github/workflows/*.yml` invokes (verify_workflow_refs)
+                         must EXIST and be TRACKED.
   --list-emitter-modules print the Lean modules the emitters import (one per line)
                          — the set that must be `lake build`-ed for the emit to run
                          on a cold checkout. Derived from the emitters' own imports;
@@ -79,6 +83,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import socket
 import subprocess
 import sys
@@ -958,6 +963,12 @@ def verify_by_name_routing() -> list[str]:
     findings.extend(verify_include_targets())
     # ...and the same door one language over: a committed `import` of an uncommitted module.
     findings.extend(verify_lean_imports())
+    # ...and THE FOURTH: a committed workflow step that runs an uncommitted script. Wired HERE,
+    # into the leg that already owns "a committed reference to an uncommitted target", rather than
+    # as a fifth CI job — this one invocation is what `scripts/check-descriptor-drift.sh` runs as
+    # its ~1s preflight and what the `descriptor-by-name-routing` job runs, so the fourth medium
+    # inherits both positions the moment it is added and nothing has to remember to call it.
+    findings.extend(verify_workflow_refs())
 
     sys.stdout.flush()  # so the summary precedes the findings this returns (stderr)
     return findings
@@ -1343,6 +1354,523 @@ def verify_lean_imports() -> list[str]:
         f"verify-lean-imports: {n_imports} first-party import(s) over {len(files)} tracked "
         f"metatheory/*.lean ({len(tracked_mods)} modules) · checked exists+tracked"
         + (f"\n  IN FLIGHT (untracked module, import NOT yet committed — `git add` the module IN "
+           f"THE SAME COMMIT or HEAD breaks): {', '.join(inflight)}" if inflight else "")
+    )
+    return findings
+
+
+# ---- THE FOURTH DOOR: a workflow that runs a script nobody committed ---------------------
+#
+# Same class as the two above, third medium. A `.github/workflows/*.yml` step whose `run:`
+# invokes `bash scripts/x.sh` is a COMMITTED reference; if `scripts/x.sh` is untracked the job
+# dies with `No such file or directory` on every runner and every fresh clone while the author's
+# box is green. Nothing else could see it: the routing preflight covered Lean imports and
+# `include_str!` targets, `actionlint` (not run here) type-checks workflow SYNTAX and does not
+# resolve invoked paths against the index, and the job itself only reds AFTER it lands.
+#
+# Live instance the night this leg was written: `scripts/check-ratchet-darkness.sh` sat untracked
+# while an uncommitted ci.yml hunk added a `ratchet-darkness` job running it. It landed correctly
+# (7f52c1fac0 committed all three files) — by the author's diligence, not by detection. This is
+# the detection.
+#
+# PARSER SHAPE, and why it is built the way it is. Workflow `run:` bodies are SHELL, so the
+# question "which repo paths does this workflow execute" cannot be answered by a regex over the
+# YAML: `#`-comments (both YAML and shell) carry prose full of sentence-final periods and words
+# like `bash to`, heredoc bodies carry foreign languages, and half the real invocations are
+# spelled across a `\` continuation. Every one of those produced a false hit on the first pass.
+# So: strip comments, join continuations, drop heredoc bodies, then extract only COMMAND-POSITION
+# invocations, and classify each one:
+#
+#   * CHECKED — a statically resolvable in-repo path. Must exist and be tracked.
+#   * NOT-CHECKABLE — reported with a count and a reason, never guessed at. Five reasons, each
+#     one a thing this parser genuinely cannot resolve rather than a thing it declines to look at:
+#     a `$VAR`/`${{ }}`/glob in the path, a non-static `working-directory:`, a `cd` earlier in the
+#     block, an absolute host/runner path (`/usr/bin/...` is not ours to track), a path the
+#     workflow PRODUCES at runtime (`curl -o elan-init.sh` then `bash elan-init.sh`), a path git
+#     itself declares generated (`.gitignore`d — `./target/release/dregg-node`), or a block whose
+#     shell would not lex.
+#
+# The `include_str!` lexer's failure mode is the one to avoid here: it `sys.exit`ed on a char
+# literal it misread, so two CI jobs were dying BEFORE reporting anything and looked like they
+# were checking. This leg is FATAL only where a fatality is the honest answer (an unterminated
+# heredoc means the block boundaries this parser computed are wrong), and every other
+# can't-tell is a NAMED, COUNTED line in the summary.
+_WF_BLOCK_OPEN = re.compile(
+    r"^(?P<pre>\s*(?:-\s+)?)(?P<key>[A-Za-z_][\w.-]*)\s*:\s*(?P<style>[|>][-+]?\d*)\s*(?:#.*)?$"
+)
+_WF_INLINE = re.compile(r"^\s*(?:-\s+)?(?P<key>run|uses|working-directory)\s*:\s*(?P<val>\S.*?)\s*$")
+_HEREDOC = re.compile(r"<<-?\s*(?P<q>['\"]?)(?P<word>[A-Za-z_]\w*)(?P=q)")
+_ENV_ASSIGN = re.compile(r"^[A-Za-z_]\w*=")
+_REDIRECT = re.compile(r"^\d*(?:>>|>|&>)(.*)$")
+
+# Command-position heads whose first non-flag operand IS a repo script, mapped to the flags that
+# mean "the script is INLINE or on stdin, there is no path operand". Per-interpreter on purpose:
+# `-e` is eval for perl/node/ruby but errexit for a SHELL, so one shared flag set would silently
+# skip a real `bash -e scripts/x.sh` site — the quiet kind of coverage loss this whole leg exists
+# to prevent. `sh -s -- -y` (the elan/rustup pipe-to-shell idiom) is the live case for `-s`.
+WF_INTERPRETERS: dict[str, frozenset[str]] = {
+    "bash": frozenset({"-c", "-s"}),
+    "sh": frozenset({"-c", "-s"}),
+    "zsh": frozenset({"-c", "-s"}),
+    "dash": frozenset({"-c", "-s"}),
+    "ksh": frozenset({"-c", "-s"}),
+    "python": frozenset({"-c", "-m"}),
+    "python2": frozenset({"-c", "-m"}),
+    "python3": frozenset({"-c", "-m"}),
+    "ruby": frozenset({"-e"}),
+    "perl": frozenset({"-e", "-E"}),
+    "node": frozenset({"-e", "--eval", "-p", "--print"}),
+    "deno": frozenset({"-e", "--eval"}),
+    "pwsh": frozenset({"-c", "-Command", "-EncodedCommand"}),
+    "powershell": frozenset({"-c", "-Command", "-EncodedCommand"}),
+}
+WF_SOURCERS = frozenset({"source", "."})
+# Transparent prefixes — strip and look at what they wrap.
+WF_PREFIX_CMDS = frozenset({"sudo", "time", "exec", "env", "nice", "ionice", "nohup",
+                            "command", "builtin", "stdbuf"})
+# Commands whose LAST operand is a file they create, and commands ALL of whose operands are.
+WF_DEST_LAST = frozenset({"mv", "cp", "install", "ln", "rsync"})
+WF_DEST_ALL = frozenset({"mkdir", "tee", "touch"})
+WF_DEST_FLAGS = frozenset({"-o", "-O", "--output", "--output-document", "-d", "-C", "--directory"})
+# A character that makes a path un-resolvable at scan time.
+WF_DYNAMIC_CHARS = frozenset("$`*?[]~{}")
+
+
+def _wf_scan_line(line: str, q: str | None) -> tuple[str, str | None, list[str]]:
+    """ONE shell pass over `line`, entered in quote state `q` (None / `'` / `"`).
+
+    Returns (line with any trailing `#` comment removed, quote state at end of line, heredoc
+    opener words seen). All three answers have to come from the SAME walk, because each one is
+    only correct relative to the quote state the others compute:
+
+      * a `#` starts a comment only OUTSIDE quotes — `echo 'a#b'` keeps its hash;
+      * a `<<WORD` opens a heredoc only OUTSIDE quotes — Actions' multiline-output idiom is
+        literally `echo 'verdict<<CANARY_EOF'`, and reading that as a heredoc opener made this
+        parser swallow the rest of the workflow and then FATAL on a heredoc that never existed;
+      * `\\` escapes the next character outside quotes and inside `"` but NOT inside `'` — and
+        getting that wrong is what made `discovery.yml`'s `echo "{\\"node_id\\":..."` read as an
+        unbalanced quote, which silently dropped that whole block from the scan.
+
+    The returned quote state is what lets a quote SPAN LINES, which a `run: |` block is one shell
+    script and therefore allowed to do (`gh release create --notes "…` over four lines)."""
+    out: list[str] = []
+    heredocs: list[str] = []
+    i, n = 0, len(line)
+    while i < n:
+        c = line[i]
+        if q == "'":
+            out.append(c)
+            if c == "'":
+                q = None
+            i += 1
+            continue
+        if q == '"':
+            if c == "\\" and i + 1 < n:
+                out.append(c); out.append(line[i + 1]); i += 2; continue
+            out.append(c)
+            if c == '"':
+                q = None
+            i += 1
+            continue
+        if c in "'\"":
+            q = c; out.append(c); i += 1; continue
+        if c == "\\" and i + 1 < n:
+            out.append(c); out.append(line[i + 1]); i += 2; continue
+        if c == "#" and (i == 0 or line[i - 1] in " \t;&|("):
+            break
+        if c == "<" and line.startswith("<<", i):
+            m = _HEREDOC.match(line, i)
+            if m:
+                heredocs.append(m.group("word"))
+        out.append(c); i += 1
+    return "".join(out), q, heredocs
+
+
+def _wf_logical_lines(body: list[tuple[int, str]], where: str) -> list[tuple[int, str]]:
+    """Block body -> logical shell lines: comments stripped, `\\` continuations JOINED, heredoc
+    bodies dropped. Returns (first lineno, code).
+
+    Continuations matter for correctness in BOTH directions: unjoined, `sudo rm -rf ... \\` +
+    `/usr/local/lib/android` reads as an absolute-path invocation (a false hit), and
+    `curl -sSfL URL \\` + `-o elan-init.sh` hides the `-o` that makes the NEXT line's
+    `bash elan-init.sh` a runtime-produced file rather than a ghost (a false RED).
+
+    FATAL on an unterminated heredoc: the block boundaries would then be wrong, and this refuses
+    to report on a body it read wrong (the one place where silence would be worse than noise)."""
+    out: list[tuple[int, str]] = []
+    pending: list[tuple[str, int]] = []
+    acc: list[str] = []
+    acc_line = 0
+    q: str | None = None
+    for lineno, raw in body:
+        if pending:
+            if raw.strip() == pending[0][0]:
+                pending.pop(0)
+            continue
+        code, q, heredocs = _wf_scan_line(raw, q)
+        pending.extend((w, lineno) for w in heredocs)
+        stripped = code.rstrip()
+        if not acc:
+            acc_line = lineno
+        # Two ways one shell command spans lines, and BOTH have to be joined: a trailing `\`, and
+        # a quote still open at end of line.
+        if q is not None or (stripped.endswith("\\") and not stripped.endswith("\\\\")):
+            acc.append(stripped[:-1] if q is None else stripped)
+            continue
+        acc.append(stripped)
+        out.append((acc_line, " ".join(s.strip() for s in acc if s.strip())))
+        acc = []
+    if acc:
+        out.append((acc_line, " ".join(s.strip() for s in acc if s.strip())))
+    if pending:
+        w, ln = pending[0]
+        sys.exit(
+            f"emit_descriptors: {where}:{ln} — heredoc `<<{w}` is never terminated inside this "
+            f"`run:` block. This parser will not report on a block whose boundaries it read wrong."
+        )
+    return out
+
+
+def _wf_segments(code: str) -> list[str]:
+    """Split one logical shell line into command segments at `;`, `&&`, `||`, `|`, `(`, `)`.
+
+    Same escape rules as `_wf_scan_line` (`\\` escapes inside `"` but not inside `'`), so a
+    separator buried in `"…\\"…;…"` does not split a command in two."""
+    segs: list[str] = []
+    cur: list[str] = []
+    i, n, q = 0, len(code), None
+    while i < n:
+        c = code[i]
+        if q == "'":
+            cur.append(c)
+            if c == "'":
+                q = None
+            i += 1
+            continue
+        if q == '"':
+            if c == "\\" and i + 1 < n:
+                cur.append(c); cur.append(code[i + 1]); i += 2; continue
+            cur.append(c)
+            if c == '"':
+                q = None
+            i += 1
+            continue
+        if c in "'\"":
+            q = c; cur.append(c); i += 1; continue
+        if c == "\\" and i + 1 < n:
+            cur.append(c); cur.append(code[i + 1]); i += 2; continue
+        if code.startswith("&&", i) or code.startswith("||", i):
+            segs.append("".join(cur)); cur = []; i += 2; continue
+        if c in ";&|()":
+            segs.append("".join(cur)); cur = []; i += 1; continue
+        cur.append(c); i += 1
+    segs.append("".join(cur))
+    return [s.strip() for s in segs if s.strip()]
+
+
+def _wf_unquote(t: str) -> str:
+    return t[1:-1] if len(t) >= 2 and t[0] == t[-1] and t[0] in "'\"" else t
+
+
+def _wf_norm(p: str) -> str:
+    p = p.strip()
+    while p.startswith("./"):
+        p = p[2:]
+    return p
+
+
+def _wf_head(tokens: list[str]) -> list[str]:
+    """Drop leading `FOO=bar` env assignments and transparent prefixes (`sudo`, `time`, ...)."""
+    t = list(tokens)
+    while t and (_ENV_ASSIGN.match(t[0]) or _wf_unquote(t[0]) in WF_PREFIX_CMDS):
+        t = t[1:]
+    return t
+
+
+def _wf_first_operand(tokens: list[str]) -> str | None:
+    for a in tokens:
+        if a.startswith("-"):
+            continue
+        return _wf_unquote(a)
+    return None
+
+
+def _wf_produced(logical: list[tuple[int, str]]) -> set[str]:
+    """Paths this workflow CREATES at runtime — redirect targets, `-o`/`-O`/`-d`/`-C` operands,
+    and the destinations of `mv`/`cp`/`install`/`ln`/`rsync`/`mkdir`/`tee`/`touch`/`git clone`.
+
+    Collected per FILE, not per block, deliberately: a step that builds `dist/x` and a later step
+    that runs `./dist/x` are different blocks, and the conservative direction for a gate is to
+    call that NOT-CHECKABLE rather than to red on it. It costs this leg nothing on the class it
+    exists for — nothing in any workflow PRODUCES a `scripts/*.sh` it then runs, so an untracked
+    one is still caught. `chmod` is deliberately NOT here: `chmod +x scripts/x.sh` does not create
+    the file, and treating it as a producer would have exempted exactly the wound."""
+    made: set[str] = set()
+    for _, code in logical:
+        for seg in _wf_segments(code):
+            try:
+                t = shlex.split(seg, posix=False)
+            except ValueError:
+                continue
+            if not t:
+                continue
+            for k, tok in enumerate(t):
+                m = _REDIRECT.match(tok)
+                if m:
+                    tgt = m.group(1) or (t[k + 1] if k + 1 < len(t) else "")
+                    if tgt:
+                        made.add(_wf_norm(_wf_unquote(tgt)))
+            for k in range(len(t) - 1):
+                if t[k] in WF_DEST_FLAGS:
+                    made.add(_wf_norm(_wf_unquote(t[k + 1])))
+            t = _wf_head(t)
+            if not t:
+                continue
+            base = _wf_unquote(t[0]).rsplit("/", 1)[-1]
+            operands = [_wf_unquote(a) for a in t[1:] if not a.startswith("-")]
+            if base in WF_DEST_ALL:
+                made.update(_wf_norm(o) for o in operands)
+            elif base in WF_DEST_LAST and operands:
+                made.add(_wf_norm(operands[-1]))
+            elif base == "git" and operands[:1] == ["clone"] and len(operands) >= 3:
+                made.add(_wf_norm(operands[-1]))
+    return made
+
+
+def _wf_parse(path: Path, rel: str) -> list[tuple[int, str, str, list[tuple[int, str]]]]:
+    """Workflow file -> [(lineno, kind, working_directory, body)] for kind in {run, uses}.
+
+    A hand-rolled YAML SUBSET on purpose: PyYAML is not a dependency of this repo and the
+    `descriptor-by-name-routing` job runs a bare `python3` with no pip step, so importing it would
+    make this leg's coverage depend on whatever the runner image happens to ship. Only three keys
+    are read (`run`, `uses`, `working-directory`) and only two node shapes (a `|`/`>` block scalar,
+    and a plain inline scalar), which is the whole grammar GitHub's step syntax uses for them.
+
+    `working-directory:` is tracked per step (reset at each `- ` list item at or above the step's
+    indent) because it RELOCATES every relative path in the step: `extension.yml`'s
+    `./build.sh` under `working-directory: extension` is `extension/build.sh`, which is tracked —
+    honouring the key turns two would-be false hits into two real passes."""
+    lines = path.read_text(errors="replace").splitlines()
+    steps: list[tuple[int, str, str, list[tuple[int, str]]]] = []
+    i, n = 0, len(lines)
+    cur_wd, cur_step_ind = "", None
+    while i < n:
+        raw = lines[i]
+        stripped = raw.strip()
+        if not stripped:
+            i += 1
+            continue
+        ind = len(raw) - len(raw.lstrip())
+        if stripped.startswith("- ") or stripped == "-":
+            if cur_step_ind is None or ind <= cur_step_ind:
+                cur_wd, cur_step_ind = "", ind
+        mb = _WF_BLOCK_OPEN.match(raw)
+        if mb:
+            keyind = len(mb.group("pre"))
+            body: list[tuple[int, str]] = []
+            j = i + 1
+            while j < n:
+                b = lines[j]
+                if not b.strip():
+                    body.append((j + 1, "")); j += 1; continue
+                if len(b) - len(b.lstrip()) <= keyind:
+                    break
+                body.append((j + 1, b)); j += 1
+            if mb.group("key") == "run":
+                steps.append((i + 1, "run", cur_wd, body))
+            i = j
+            continue
+        mi = _WF_INLINE.match(raw)
+        if mi:
+            val = re.sub(r"\s+#.*$", "", mi.group("val")).strip()
+            key = mi.group("key")
+            if key == "working-directory":
+                cur_wd = _wf_unquote(val)
+            elif key == "run":
+                steps.append((i + 1, "run", cur_wd, [(i + 1, val)]))
+            elif key == "uses":
+                steps.append((i + 1, "uses", cur_wd, [(i + 1, val)]))
+        i += 1
+    return steps
+
+
+def verify_workflow_refs() -> list[str]:
+    """Every repo path a tracked `.github/workflows/*.yml` INVOKES must exist and be tracked.
+
+    Returns finding lines (empty == clean); prints a one-line summary with the checked and
+    NOT-CHECKABLE counts. Skipped with a stated reason where there is no git index."""
+    wf_dir = ROOT / ".github" / "workflows"
+    out = subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files", "-z", "--", ".github/workflows"],
+        capture_output=True, text=True,
+    )
+    if out.returncode != 0:
+        print("verify-workflow-refs: SKIPPED — no git index here, and `tracked` is the question.")
+        return []
+    wfs = sorted(p for p in out.stdout.split("\0") if p.endswith((".yml", ".yaml")))
+    if not wfs:
+        sys.exit(
+            "emit_descriptors: `git ls-files .github/workflows` returned NO workflow files. A "
+            "scan that sees zero workflows would report a vacuous pass; re-point it."
+        )
+    tracked = {p for p in subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files", "-z"], capture_output=True, text=True
+    ).stdout.split("\0") if p}
+
+    # (lineno, kind, token, resolved_rel) for the sites that survive to the exists+tracked test,
+    # and a reason-tagged bucket for every site that does not.
+    findings: list[str] = []
+    inflight: list[str] = []
+    notcheckable: dict[str, list[str]] = {}
+    unlexable: list[str] = []
+    n_sites = n_checked = 0
+    candidates: list[tuple[str, int, str, str]] = []   # (rel_wf, lineno, token, resolved_rel)
+
+    def defer(reason: str, where: str) -> None:
+        notcheckable.setdefault(reason, []).append(where)
+
+    for wf in wfs:
+        p = ROOT / wf
+        if not p.exists():   # tracked but deleted in the working tree
+            continue
+        produced_in_file: set[str] = set()
+        parsed = _wf_parse(p, wf)
+        for lineno, kind, wd, body in parsed:
+            if kind == "run":
+                produced_in_file |= _wf_produced(_wf_logical_lines(body, wf))
+
+        for lineno, kind, wd, body in parsed:
+            raw_sites: list[tuple[int, str, str, bool]] = []   # (line, what, token, cwd_static)
+            if kind == "uses":
+                v = _wf_unquote(body[0][1])
+                if v.startswith("./"):
+                    # A LOCAL composite action: `uses: ./x` resolves `x/action.yml` OR
+                    # `x/action.yaml` — either spelling satisfies it, so a site is raised only
+                    # when NEITHER is tracked, and it names the `.yml` one. No instance in the
+                    # tree today; the class arrives the first time someone factors a step out.
+                    stem = v.rstrip("/") + "/action."
+                    if not any(_wf_norm(stem + e) in tracked for e in ("yml", "yaml")):
+                        raw_sites.append((lineno, "uses (local action)", stem + "yml", True))
+            else:
+                logical = _wf_logical_lines(body, wf)
+                block_ok = True
+                for ln, code in logical:
+                    for seg in _wf_segments(code):
+                        try:
+                            shlex.split(seg, posix=False)
+                        except ValueError:
+                            block_ok = False
+                if not block_ok:
+                    unlexable.append(f"{wf}:{lineno}")
+                    continue
+                cwd_static = True
+                for ln, code in logical:
+                    for seg in _wf_segments(code):
+                        t = _wf_head(shlex.split(seg, posix=False))
+                        if not t:
+                            continue
+                        head = _wf_unquote(t[0])
+                        base = head.rsplit("/", 1)[-1]
+                        if base == "cd":
+                            cwd_static = False
+                            continue
+                        what, tok = None, None
+                        if base in WF_INTERPRETERS:
+                            if any(a in WF_INTERPRETERS[base] for a in t[1:]):
+                                continue          # inline script / stdin: no path operand at all
+                            what, tok = f"{base} <script>", _wf_first_operand(t[1:])
+                        elif head in WF_SOURCERS:
+                            what, tok = "source", _wf_first_operand(t[1:])
+                        elif head.startswith(("./", "../", "/")):
+                            what, tok = "direct exec", head
+                        if what and tok:
+                            raw_sites.append((ln, what, tok, cwd_static))
+
+            for ln, what, tok, cwd_static in raw_sites:
+                n_sites += 1
+                where = f"{wf}:{ln} ({what} `{tok}`)"
+                if any(c in tok for c in WF_DYNAMIC_CHARS):
+                    defer("path built from a variable / `${{ }}` / glob", where); continue
+                if tok.startswith("/"):
+                    abs_p = Path(tok)
+                    try:
+                        rel = abs_p.resolve().relative_to(ROOT).as_posix()
+                    except ValueError:
+                        defer("absolute host/runner-image path (not this repo's to track)", where)
+                        continue
+                elif not cwd_static:
+                    defer("a `cd` earlier in the block moved the working directory", where); continue
+                elif any(c in wd for c in WF_DYNAMIC_CHARS):
+                    defer("step `working-directory:` is not static", where); continue
+                else:
+                    base_dir = (ROOT / wd) if wd else ROOT
+                    try:
+                        rel = (base_dir / _wf_norm(tok)).resolve().relative_to(ROOT).as_posix()
+                    except ValueError:
+                        findings.append(
+                            f"WORKFLOW-ESCAPES-REPO: {wf}:{ln} ({what}) `{tok}`"
+                            + (f" (working-directory `{wd}`)" if wd else "")
+                            + " resolves OUTSIDE this repository. The job then depends on a "
+                            "path no checkout can reproduce. Vendor it in-tree, or fetch it in an "
+                            "explicit step so the dependency is on the record."
+                        )
+                        continue
+                if _wf_norm(tok) in produced_in_file or rel in produced_in_file:
+                    defer("produced by the workflow at runtime (download/redirect/copy)", where)
+                    continue
+                candidates.append((wf, ln, what, tok, rel))
+
+    # `.gitignore` is the repo's OWN declaration of what is generated, so a build output
+    # (`./target/release/dregg-node`) is separated from a wound by asking git, not by pattern-
+    # matching directory names. One batched call.
+    ignored: set[str] = set()
+    if candidates:
+        probe = sorted({c[4] for c in candidates})
+        ci = subprocess.run(
+            ["git", "-C", str(ROOT), "check-ignore", "--stdin", "-z"],
+            input="\0".join(probe) + "\0", capture_output=True, text=True,
+        )
+        if ci.returncode not in (0, 1):
+            sys.exit(
+                f"emit_descriptors: `git check-ignore` failed (rc={ci.returncode}): "
+                f"{ci.stderr.strip()!r}. Refusing to report a pass while the generated-vs-wound "
+                f"split is unanswered."
+            )
+        ignored = {q for q in ci.stdout.split("\0") if q}
+
+    for wf, ln, what, tok, rel in candidates:
+        if rel in ignored:
+            defer("git itself calls this path generated (`.gitignore`d build output)",
+                  f"{wf}:{ln} ({tok})")
+            continue
+        n_checked += 1
+        if rel in tracked:
+            continue
+        if not (ROOT / rel).exists():
+            findings.append(
+                f"WORKFLOW-GHOST: {wf}:{ln} ({what}) `{tok}` -> {rel}, which exists NOWHERE — no "
+                f"file, no git history, and nothing in this workflow produces it. The step cannot "
+                f"resolve on ANY runner or ANY fresh checkout. Commit the target, or drop the step."
+            )
+        elif _reference_is_committed(wf, tok):
+            findings.append(
+                f"WORKFLOW-UNTRACKED: {wf}:{ln} ({what}) `{tok}` -> {rel}, which exists ON DISK "
+                f"but is NOT tracked by git — and the step IS committed. So HEAD is broken RIGHT "
+                f"NOW: the job passes for whoever wrote the target and fails for every runner and "
+                f"every fresh checkout. `git add` the target."
+            )
+        else:
+            inflight.append(f"{wf}:{ln} -> {rel}")
+
+    nc_total = sum(len(v) for v in notcheckable.values())
+    print(
+        f"verify-workflow-refs: {n_sites} invocation site(s) over {len(wfs)} tracked workflow(s) "
+        f"· {n_checked} checked exists+tracked · {nc_total} NOT-CHECKABLE"
+        + ("".join(f"\n  NOT-CHECKABLE ({len(v)}) — {r}: {', '.join(sorted(v))}"
+                   for r, v in sorted(notcheckable.items())) if notcheckable else "")
+        + (f"\n  NOT-CHECKABLE ({len(unlexable)}) — `run:` block whose shell would not lex "
+           f"(quotes unbalanced per logical line): {', '.join(unlexable)}" if unlexable else "")
+        + (f"\n  IN FLIGHT (untracked script, step NOT yet committed — `git add` the script IN "
            f"THE SAME COMMIT or HEAD breaks): {', '.join(inflight)}" if inflight else "")
     )
     return findings
@@ -1820,7 +2348,8 @@ def main():
             sys.exit(1)
         print("verify-by-name-routing: PASS — the routing table and the checked-in "
               "by-name set cover each other, every routed artifact is stamped, and every "
-              "literal include_str!/include_bytes! target exists and is tracked.")
+              "literal include_str!/include_bytes! target, first-party Lean import, and "
+              "path invoked by a tracked workflow exists and is tracked.")
         return
     if "--stamp-existing" in argv:
         stamp_existing()
