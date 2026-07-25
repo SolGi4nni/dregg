@@ -128,18 +128,27 @@ fn a_win_predicate_reads_a_spilled_var_from_the_dense_snapshot_tail() {
         play.steps[0].state.len() > spween_dregg::STATE_SLOTS,
         "the playthrough fingerprint must carry its committed ext tail"
     );
+    // `RejectReason` is not `PartialEq`, so `assert_eq!(.., Ok(1))` does not typecheck (E0369) —
+    // and has not since the enum was introduced, which is why this target never compiled. Unwrap
+    // and compare the turn count instead: the tooth is unchanged (an `Err` still fails, now with
+    // the refusal's `Debug` in the message rather than an opaque inequality), and it matches the
+    // idiom the same file already uses at its other `verify_completion` site.
+    let turns = verify_completion(
+        &universe,
+        &Completion {
+            universe: universe.id(),
+            player: "wide-player".into(),
+            play,
+            claimed_turns: 1,
+        },
+    )
+    .expect(
+        "the win checker must map the canonical u64 key to the dense snapshot tail, not use it \
+         as a Vec index",
+    );
     assert_eq!(
-        verify_completion(
-            &universe,
-            &Completion {
-                universe: universe.id(),
-                player: "wide-player".into(),
-                play,
-                claimed_turns: 1,
-            },
-        ),
-        Ok(1),
-        "the win checker must map the canonical u64 key to the dense snapshot tail, not use it as a Vec index"
+        turns, 1,
+        "the wide-state completion verifies for exactly its one claimed turn"
     );
 }
 

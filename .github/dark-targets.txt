@@ -14,6 +14,19 @@
 # ABORTS at the first non-compiling target and shows you nothing past it — which is the
 # whole reason twelve of these accumulated unseen through 2026-07-25.
 #
+# ⚠⚠ AND `--keep-going` IS NECESSARY BUT NOT SUFFICIENT. A red LIBRARY prunes its entire
+# downstream cone: cargo cannot attempt anything that depends on a crate it failed to
+# build. On 2026-07-25 `starbridge-v2`'s lib had been red since 07-17, and `dregg-persist`
+# depends on it, so the first `--keep-going` sweep produced 711 lines and stopped well
+# short of the workspace; the sweep AFTER that one lib was repaired produced 1775 and
+# found four more dark targets, two of them (`ugc-dregg`, `dregg-perf`) months old.
+# A dark-target count taken while ANY lib is red is a LOWER BOUND. Fix libs first, sweep
+# again, and do not believe the first number.
+#
+# ⚠ Local sweeps see the WORKING TREE; CI sees HEAD. A live lane's uncommitted or
+# untracked test file can show up as "dark" locally and is not a row for this list —
+# check `git status` on the file before adding it.
+#
 # Adding a row is a real cost. Say WHY, and name what the dark test was guarding.
 
 # ── THE FRI SOUNDNESS LEDGER GATE (2 targets) ────────────────────────────────────────

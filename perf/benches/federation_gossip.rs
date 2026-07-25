@@ -91,8 +91,15 @@ fn bench_gossip(c: &mut Criterion) {
     g.bench_function("sign", |b| {
         b.iter(|| black_box(Block::new_signed(&k, 5, preds.clone(), payload(5))));
     });
+    // ⚑ This measures the HYBRID verify — Ed25519 AND the ML-DSA-65 half pinned to the ENROLLED
+    // roster key, which is what a gossip peer actually pays per block. `verify_signature` gained
+    // that parameter in 4f736aa709 and this bench has not compiled since, so every "federation
+    // gossip verify" figure predating 2026-07-25 is the classical half only, and understates it.
+    // The enrolled key is derived exactly as the signer derives it (`Block::pq_public_key`), so the
+    // PQ half genuinely verifies rather than short-circuiting on a mismatch.
+    let enrolled_pq = Block::pq_public_key(&k);
     g.bench_function("verify", |b| {
-        b.iter(|| black_box(sample.verify_signature().is_ok()));
+        b.iter(|| black_box(sample.verify_signature(&enrolled_pq).is_ok()));
     });
     g.bench_function("id", |b| {
         b.iter(|| black_box(sample.id()));
