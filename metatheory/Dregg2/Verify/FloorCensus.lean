@@ -323,9 +323,9 @@ def run (outPath : Option String) : MetaM Unit := do
 
   -- ===== Pass 0b: refutation witnesses =====
   -- ⚑ Only a `¬ F …`-CONCLUSION theorem is a refutation WITNESS of `F`. A theorem
-  -- `(h : F …) → X → False` proves ¬(F ∧ X), not ¬F — it is a TOOTH (cure machinery,
-  -- excluded from the carrier surface below) but never the recorded refutation, and it
-  -- never satisfies the sentinel gate.
+  -- `(h : F …) → X → False` proves ¬(F ∧ X), not ¬F — it is a TOOTH (classified as such
+  -- in the carrier surface below) but never the recorded refutation, and it never
+  -- satisfies the sentinel gate.
   let mut refutedBy : Std.HashMap Name (Name × Bool) := {}  -- floor ↦ (¬-witness, closed?)
   let mut falseForm : Std.HashMap Name Name := {}           -- floor ↦ a False-under-hyps tooth
   for nm in ours do
