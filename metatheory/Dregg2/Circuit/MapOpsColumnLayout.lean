@@ -576,7 +576,7 @@ falls back to `(0, 0)`). Totality is what lets an opener's per-instance leaf sid
 stated at the position the path already fixes, instead of at a proof-local `cases` binder. -/
 def heapAt (h : Heap.FeltHeap) (p : Nat) : ℤ × ℤ := (h[p]?).getD (0, 0)
 
-@[simp] theorem heapAt_of_getElem? {h : Heap.FeltHeap} {p : Nat} {e : ℤ × ℤ}
+theorem heapAt_of_getElem? {h : Heap.FeltHeap} {p : Nat} {e : ℤ × ℤ}
     (he : h[p]? = some e) : heapAt h p = e := by
   simp [heapAt, he]
 
