@@ -208,6 +208,26 @@ if [ "$list_guard_fail" != 0 ]; then
   exit 1
 fi
 
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# FLOOR-RATCHET PREFLIGHT — a NEW floor carrier must arrive WITH its baseline decision.
+#
+# `#floor_ratchet` (metatheory/Dregg2.lean) is the real gate, but it only runs when the ~10 000
+# target `Dregg2` root is BUILT, so its feedback loop is HOURS and it lands on whoever builds next
+# rather than on the author. 915437862f did exactly that: two new modules, five declarations taking
+# floors this tree PROVES FALSE at deployed BabyBear parameters, no baseline entry — green on its
+# own files, and `lake build Dregg2` red for every other lane until someone else bisected it.
+#
+# This is the seconds-long preflight for that hours-long gate: a SET DIFFERENCE against HEAD over
+# the staged .lean files, so only carriers this commit INTRODUCES block it. Same shape, same
+# loud declared-intent escape as the curated-list shrink guard above:
+#   DREGG_ALLOW_NEW_FLOOR_CARRIER=1 git commit ...
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+if [ -x "$repo_root/scripts/check-floor-baseline-preflight.sh" ]; then
+  if git diff --cached --name-only --diff-filter=ACMR -- '*.lean' | grep -q .; then
+    "$repo_root/scripts/check-floor-baseline-preflight.sh" || exit 1
+  fi
+fi
+
 command -v rustfmt >/dev/null 2>&1 || exit 0   # no rustfmt on PATH → don't block the commit
 
 # Workspace default edition (root [workspace.package] edition), used for crates that inherit it

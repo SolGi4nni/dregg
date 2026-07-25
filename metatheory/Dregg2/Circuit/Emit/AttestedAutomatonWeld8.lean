@@ -227,11 +227,21 @@ theorem root8_binds_automaton_or_collides (S8 : Heap8Scheme) (R8 : Digest8)
     exact_mod_cast h1.symm
   · exact Or.inr hc
 
-/-- **(CANARY — the collision disjunct is REFUTABLE, so §2 is not a free pass.)** At an injective
-chip the named-pair disjunct is EMPTY, and the binding half has to do all the work. -/
-theorem weld_collision_disjunct_refutable (S8 : Heap8Scheme) (hCR : Compress8CR S8.chipAbsorb8)
-    (m₁ m₂ : Heap.FeltHeap) : ¬ MapRootColl S8 MAP_TREE_DEPTH m₁ m₂ :=
-  mapRootColl_refutable_of_injective S8 hCR MAP_TREE_DEPTH m₁ m₂
+/-- **(CANARY — the collision disjunct is REFUTABLE, so §2 is not a free pass.)** Exhibiting the
+named-pair disjunct REFUTES the deployed chip's injectivity outright, so nobody discharges §2 by
+taking the right branch: the binding half has to do all the work.
+
+⚑ STATED AS ANTI-FLOOR CONTENT, not as a bridge under a `Compress8CR` binder. The two spellings
+are definitionally equal (`Γ, F ⊢ False` IS `Γ ⊢ ¬ F`), but the binder spelling makes the canary a
+CARRIER of a hypothesis this tree PROVES FALSE at deployed BabyBear parameters
+(`VacuitySweepTeeth.deployedHeap8Scheme_chip_not_Compress8CR`) — a theorem the accrual gate must
+then grandfather as knowingly vacuous. This spelling assumes no floor, so it is exempt by
+construction, and it says strictly MORE: not "at an injective chip the disjunct is empty" but "the
+disjunct IS a chip collision". Contrapositively it still delivers everything the bridge form did —
+`root8_binds_automaton_of_injective` below is one line from it. -/
+theorem weld_collision_disjunct_refutable (S8 : Heap8Scheme) (m₁ m₂ : Heap.FeltHeap)
+    (hc : MapRootColl S8 MAP_TREE_DEPTH m₁ m₂) : ¬ Compress8CR S8.chipAbsorb8 :=
+  fun hCR => mapRootColl_refutable_of_injective S8 hCR MAP_TREE_DEPTH m₁ m₂ hc
 
 /-- **NO STRENGTH LOST** — under chip injectivity the welded root determines the machine outright:
 the exact 8-felt analog of `AttestedAutomatonEmit.root_binds_automaton`. ⚠ `Compress8CR` is FALSE at
@@ -244,7 +254,7 @@ theorem root8_binds_automaton_of_injective (S8 : Heap8Scheme) (hCR : Compress8CR
     ∀ s y : Nat, s < ASTATES → y < ASYM → d.step s y = e.step s y := by
   rcases root8_binds_automaton_or_collides S8 R8 d e hd he with h | hc
   · exact h
-  · exact absurd hc (weld_collision_disjunct_refutable S8 hCR m₁ m₂)
+  · exact absurd hCR (weld_collision_disjunct_refutable S8 m₁ m₂ hc)
 
 /-- ⚑ **`forged_edge_refused_8` — THE OTHER POLARITY, WELDED.** A prover opening an edge the
 committed automaton does NOT have, at the SAME 8-felt root, must exhibit the named arity-16 chip
