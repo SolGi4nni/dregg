@@ -1,7 +1,9 @@
 # The CI gates stopped running on 2026-07-20, and nobody noticed for five days
 
-**Found:** 2026-07-25, by a Rust-deletion lane sweeping for twins. **Status:** route restored; the
-gates it disabled are being re-enabled and their true (red) state surfaced.
+**Found:** 2026-07-25, by a Rust-deletion lane sweeping for twins.
+**Status:** ✅ **route restored, gates running again, ratchet widened.** Verified: `cargo check -p
+dregg-circuit-prove --all-targets` → EXIT=0 zero errors, and the ratchet executes in **4.63s**,
+9 teeth passing — including one that proves it can go **red**.
 
 ## What happened
 
@@ -67,10 +69,26 @@ CI runs `cargo test --workspace` (`.github/workflows/ci.yml:431` macOS, `:456` L
 
 ## Follow-ups
 
-* Restore the route — **in progress**; the binding is back in the working tree.
-* Widen the ratchet: whole-workspace scope, plus the two dialects it cannot match
-  (`b.assert_zero(&Head::…)`, and Rust-built `LeanExpr`/`VmConstraint` trees). Separate
-  **authoring** from **lowering** — `custom_leaf_lowering.rs` is a false positive, and a gate that
-  cries wolf is a gate that gets ignored.
-* Give `param-compose` a Lean emit route, then delete it.
-* Add a CI check that the test suite **actually executed**, not merely that the job exited 0.
+* ~~Restore the route~~ **DONE** (`3ba423cbc6`). `cargo check -p dregg-circuit-prove --all-targets`
+  → EXIT=0, zero errors: the gates can execute again.
+* ~~Widen the ratchet~~ **DONE** (`3ba423cbc6`). Whole-workspace scope (2513 files, ~5s walk), the two
+  missing dialects added, and **authoring separated from lowering in code** — `custom_leaf_lowering.rs`
+  goes 46 phantom violations → 0 while its 64 genuine ones still count. Honest baseline: **88 files,
+  1560 authored sites**, every entry named, including `param-compose` (28 + `air_accepts`) and
+  `perf/src/lib.rs` (28) — all previously invisible. Runs in **4.63s**.
+  Note the naive widening would have been *worse*: extending `.assert_eq`/`.when` workspace-wide invents
+  hundreds of fake violations from **gpui `.when(cond, …)` in the cockpit**, so those forms only join in
+  a file mentioning `AirBuilder`, pinned by its own tooth.
+* Give `param-compose` a Lean emit route, then delete it. — **in progress**
+* **Add a CI check that the test suite actually EXECUTED**, not merely that the job exited 0. This is the
+  standing gap: every other repair here is downstream of the fact that *absence of execution satisfied
+  every signal we had*.
+
+## A correction to this record
+
+An earlier draft cited a `dregg-lean-ffi` build-script regression (`FanoutVerdict` et al. unresolved)
+as a second, earlier CI blocker. **That was read from a stale CI log.** `build_parallel.rs` landed in
+`526e85d4bb` and is tracked; `build.rs:43` has `mod build_parallel;`; and `cargo check -p
+dregg-circuit-prove --all-targets` → EXIT=0 independently proves the build script compiles at HEAD.
+The FriLedger cascade was the real blocker. Recorded because a wound doc that overstates is the same
+failure mode as a docstring that overstates.
