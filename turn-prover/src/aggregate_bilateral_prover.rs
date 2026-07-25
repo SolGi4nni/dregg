@@ -239,9 +239,17 @@ fn build_inner_rows_v2_from_schedule(
         .collect()
 }
 
-/// Project a 32-byte cell-id to an 8-felt decomposition. Mirrors the
-/// `canonical_32_to_felts_4` pattern but at 4-bytes-per-felt
-/// (no overflow on BabyBear's 31-bit modulus).
+/// Project a 32-byte cell-id to an 8-felt decomposition: **BIG-endian** 4-byte chunks with the top
+/// bit of each masked off (`& 0x7FFF_FFFF`).
+///
+/// ⚠ **This is its own encoder, and the comparison this doc used to draw is wrong in both
+/// directions.** It said it "mirrors the `canonical_32_to_felts_4` pattern" and "matches its
+/// truncation discipline". It does not: `canonical_32_to_felts_4` masks `& 0x3F` on the high byte
+/// of each group (8+8+8+6 = 30 bits, 16 source bits unbound) and reads LITTLE-endian; this reads
+/// BIG-endian and masks one bit per felt (31 bits kept, 8 source bits unbound). Two different
+/// truncations over two different byte orders, equated by comment. It is also the only BIG-endian
+/// byte→felt map outside the staged umem V2 path, so it diverges from the little-endian rule in
+/// `dregg_codec`. Not on the doc's 17-implementation census; migrate with Stage 3.
 pub(crate) fn cell_id_to_felts_8(c: &CellId) -> [BabyBear; 8] {
     let bytes = c.as_bytes();
     let mut out = [BabyBear::ZERO; 8];

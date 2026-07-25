@@ -341,37 +341,6 @@ pub struct NoteSpendingWitness {
     pub preimage_limbs: [BabyBear; limb_col::PREIMAGE_LIMBS],
 }
 
-/// Convert a 256-bit external spending key (e.g., from BLAKE3) to 8 BabyBear limbs.
-///
-/// Each 4-byte chunk is interpreted as a little-endian u32 and reduced modulo BabyBear::P
-/// via `BabyBear::new_canonical()`. This gives 8 × ~31 bits = ~248 bits of key material
-/// inside the STARK circuit.
-pub fn key_to_field_elements(key: &[u8; 32]) -> [BabyBear; SPENDING_KEY_LIMBS] {
-    let mut limbs = [BabyBear::ZERO; SPENDING_KEY_LIMBS];
-    for i in 0..SPENDING_KEY_LIMBS {
-        let bytes = [key[i * 4], key[i * 4 + 1], key[i * 4 + 2], key[i * 4 + 3]];
-        limbs[i] = BabyBear::new_canonical(u32::from_le_bytes(bytes));
-    }
-    limbs
-}
-
-/// Decompose a 32-byte field into 8 BabyBear limbs (4 LE bytes each, mod p).
-///
-/// Identical to `dregg_cell::note::bytes32_to_limbs` (the limb layout consumed
-/// by `Note::poseidon2_commitment`). Every byte of the input contributes to a
-/// limb, so two 32-byte values differing in ANY byte produce a distinct limb
-/// vector (up to per-limb mod-p aliasing of raw u32 ≥ p, a deterministic total
-/// mapping shared by prover and verifier).
-pub fn bytes32_to_limbs(b: &[u8; 32]) -> [BabyBear; 8] {
-    let mut out = [BabyBear::ZERO; 8];
-    for (i, limb) in out.iter_mut().enumerate() {
-        let off = i * 4;
-        let v = u32::from_le_bytes([b[off], b[off + 1], b[off + 2], b[off + 3]]);
-        *limb = BabyBear::new_canonical(v);
-    }
-    out
-}
-
 /// Decompose a u64 into 2 BabyBear limbs `[low 32 bits, high 32 bits]` (mod p).
 ///
 /// Binds the FULL 64 bits of a u64 note field. Matches
@@ -413,15 +382,15 @@ pub fn note_to_preimage_limbs(
     randomness: &[u8; 32],
 ) -> [BabyBear; limb_col::PREIMAGE_LIMBS] {
     let mut out = [BabyBear::ZERO; limb_col::PREIMAGE_LIMBS];
-    let owner_l = bytes32_to_limbs(owner);
+    let owner_l = crate::effect_vm::bytes32_to_8_limbs(owner);
     // VALUE uses the 30/34 split so the low limb matches `col::VALUE`/`pi::VALUE`
     // and the high limb matches `col::VALUE_HI`/`pi::VALUE_HI`. asset_type uses a
     // plain 32/32 split (no separate PI high limb; high bits bind only through
     // the commitment).
     let value_l = value_to_limbs_30_34(value);
     let asset_l = u64_to_limbs(asset_type);
-    let nonce_l = bytes32_to_limbs(creation_nonce);
-    let rand_l = bytes32_to_limbs(randomness);
+    let nonce_l = crate::effect_vm::bytes32_to_8_limbs(creation_nonce);
+    let rand_l = crate::effect_vm::bytes32_to_8_limbs(randomness);
     out[0..8].copy_from_slice(&owner_l);
     out[8] = value_l[0];
     out[9] = value_l[1];
@@ -1108,14 +1077,14 @@ mod tests {
     }
 
     #[test]
-    fn key_to_field_elements_roundtrip() {
+    fn spending_key_limbs_roundtrip() {
         // Verify the conversion from 256-bit external key to 8 BabyBear limbs.
         let external_key: [u8; 32] = [
             0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
             0x07, 0x08, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC,
             0xDD, 0xEE, 0xFF, 0x00,
         ];
-        let limbs = key_to_field_elements(&external_key);
+        let limbs = crate::effect_vm::bytes32_to_8_limbs(&external_key);
         assert_eq!(limbs.len(), 8);
 
         // Each limb should be a valid BabyBear element (< p)
@@ -1124,7 +1093,7 @@ mod tests {
         }
 
         // Deterministic
-        let limbs2 = key_to_field_elements(&external_key);
+        let limbs2 = crate::effect_vm::bytes32_to_8_limbs(&external_key);
         assert_eq!(limbs, limbs2);
     }
 

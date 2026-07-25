@@ -1889,7 +1889,9 @@ mod tests {
     #[test]
     fn compress_left_the_old_two_permutation_sponge_domain() {
         for pk in [[0x11u8; 32], [0xABu8; 32], [0u8; 32]] {
-            let old = dregg_circuit::poseidon2::hash_many(&BabyBear::encode_hash(&pk));
+            let old = dregg_circuit::poseidon2::hash_many(
+                &dregg_circuit::effect_vm::bytes32_to_8_limbs(&pk),
+            );
             assert_ne!(
                 compress(&pk),
                 old,

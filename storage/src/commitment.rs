@@ -424,9 +424,15 @@ impl<T: CommitmentSchema> MerkleRoot<T> {
         }
     }
 
-    /// Trust-boundary conversion: lift a wire-side 32-byte BLAKE3 root to
-    /// a dual-form MerkleRoot by deriving its Poseidon2 form via the fixed
-    /// canonical_32_to_felts_4 bijection. Used by HTTP/gossip decoders.
+    /// Trust-boundary conversion: lift a wire-side 32-byte BLAKE3 root to a dual-form MerkleRoot
+    /// by deriving its Poseidon2 form via the fixed `canonical_32_to_felts_4` map.
+    ///
+    /// ⚠ **NOT a bijection.** This doc said "bijection" while `Self::poseidon2` two hundred lines
+    /// up says, correctly, "NOT a bijection … one-way map" — the same file contradicted itself.
+    /// `canonical_32_to_felts_4` packs 8+8+8+6 bits per limb, discarding bits 6-7 of every fourth
+    /// byte (16 of 256 source bits unbound), and then folds 8 felts to 4 through Poseidon2. It is
+    /// deterministic and total, which is all this decoder needs; it is not invertible and it does
+    /// not bind all 256 bits. Used by HTTP/gossip decoders.
     pub fn from_blake3_root(root: [u8; 32]) -> Self {
         Self::from_parts(root, canonical_32_to_felts_4(&root))
     }

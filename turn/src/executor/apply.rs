@@ -2295,7 +2295,7 @@ impl TurnExecutor {
         // PI encoding convention (provers MUST match):
         //   * nullifier, merkle_root, destination_federation: 32-byte values
         //     compressed into one BabyBear via
-        //     `BabyBear::encode_hash(bytes)` → Poseidon2 `hash_many` →
+        //     `dregg_circuit::effect_vm::bytes32_to_8_limbs(bytes)` → Poseidon2 `hash_many` →
         //     single field element (the same `bytes_to_babybear`
         //     compression used by `bridge::present` and the SDK).
         //   * value: split into TWO limbs — low 30 bits (PI[VALUE], the felt
@@ -2320,7 +2320,7 @@ impl TurnExecutor {
             // Compress a 32-byte value to a single BabyBear via Poseidon2 of 8 limbs.
             // Matches `bridge::present::bytes_to_babybear` so prover and verifier agree.
             fn compress(bytes: &[u8; 32]) -> BabyBear {
-                let limbs = BabyBear::encode_hash(bytes);
+                let limbs = dregg_circuit::effect_vm::bytes32_to_8_limbs(bytes);
                 poseidon2::hash_many(&limbs)
             }
             // 30-bit-trunc fix (CAVEAT-LAYER-COVERAGE.md §6.5): split a u64

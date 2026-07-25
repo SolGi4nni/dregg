@@ -130,7 +130,7 @@ where
 /// (AuthRequired::None tier), semantics_tag=0 (Replayable)])` — ONE ~31-bit felt.
 fn old_leaf_felt_replayable(sym: &Symbol) -> BabyBear {
     let mut inputs: Vec<BabyBear> = Vec::with_capacity(12);
-    inputs.extend_from_slice(&BabyBear::encode_hash(sym));
+    inputs.extend_from_slice(&dregg_circuit::effect_vm::bytes32_to_8_limbs(sym));
     inputs.push(BabyBear::new(1)); // ArgsSchema::Variadic commitment tag
     inputs.push(BabyBear::new(0)); // Variadic carries no arity
     inputs.push(BabyBear::new(0)); // AuthRequired::None tier felt

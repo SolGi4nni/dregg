@@ -551,7 +551,7 @@ pub fn compute_stake_nullifier(commitment: &[u8; 32], epoch: u64, counter: u32) 
     use dregg_circuit::poseidon2::hash_many;
 
     // Encode commitment as 8 field elements
-    let commitment_elements = BabyBear::encode_hash(commitment);
+    let commitment_elements = dregg_circuit::effect_vm::bytes32_to_8_limbs(commitment);
 
     // Encode epoch as 2 field elements (high/low 32 bits)
     let epoch_lo = BabyBear::new((epoch & 0x7FFF_FFFF) as u32);

@@ -69,10 +69,13 @@ fn convert_turn_effects_to_vm_unchecked(
         // yet exist — see M11 in docs/audit/RE-AUTHORED-MIRROR-MAP.md). What
         // IS tested: `protocol-tests/.../effect_vm_differential.rs` drives THIS
         // projection through the AIR trace and checks it against the runtime
-        // executor's state mutation. Because every byte now contributes to the
-        // felt, the per-effect param column and the `compute_effects_hash`-
-        // derived `PI[EFFECTS_HASH]` bind the full 32-byte value rather than a
-        // 4-byte equivalence class.
+        // executor's state mutation. Every byte now contributes to the felt, so the per-effect
+        // param column and the `compute_effects_hash`-derived `PI[EFFECTS_HASH]` depend on the
+        // full 32-byte value rather than a 4-byte equivalence class. ⚠ That is a real improvement
+        // over the 4-byte truncation and it is NOT a binding claim: `fold_bytes32_to_bb` is an
+        // onto F_p-linear form, so a collision AND a hit on a chosen target felt are each one
+        // linear solve. This comment used to say "bind the full 32-byte value"; it binds a ~31-bit
+        // linear image.
         //
         // (The full-u64 amount truncation, by contrast, was closed earlier:
         // the VM effect carries `value_full` bound via 4×16-bit PI limbs +
@@ -92,15 +95,26 @@ fn convert_turn_effects_to_vm_unchecked(
             dregg_circuit::effect_vm::field_limbs8(value)[0]
         }
 
-        // 32-byte widening (effect-vm-hash-widen lane, 2026-05-28): the full
-        // 256-bit binding path. Projects a 32-byte value into 8 BabyBear limbs
+        // ⚠ CORRECTION (canonical-codec Stage 0): "the full 256-bit binding path" is an
+        // OVERSTATEMENT, and both deployed projectors carried it. `bytes32_to_8_limbs` reduces each
+        // 4-byte chunk mod `p`, which identifies `x` with `x + p`; a uniformly random chunk needs
+        // reducing 53.1% of the time, so for CHOSEN bytes a colliding pair is CONSTRUCTED in O(1),
+        // no grind. The path reaches hash strength only where the input is a Poseidon2/BLAKE3
+        // IMAGE — the strength is the hash's, borrowed. The two projectors DO agree byte-for-byte
+        // (one shared helper), which is why a collision over-includes (an honest turn goes UNSAT)
+        // rather than authorizing a forgery: availability, not theft. Migration target is
+        // `dregg_codec::Digest8`; both projectors MUST move in exactly ONE commit, since a skew
+        // between them is worse than the wound (Stage 3).
+        // 32-byte widening (effect-vm-hash-widen lane, 2026-05-28): projects a 32-byte
+        // value into 8 BabyBear limbs
         // (4 bytes each, little-endian) via the SHARED circuit helper, so the
         // executor and SDK projectors emit byte-for-byte identical encodings by
         // construction (one shared helper — no executor↔SDK comparison test
         // exists yet; M11 in docs/audit/RE-AUTHORED-MIRROR-MAP.md). Used for the
         // hash params widened to `[BabyBear; 8]` — same shape EmitEvent/Custom
         // already use. Where the old single-felt fold gave ~31-bit collision
-        // resistance, the 8-limb form binds all 32 bytes via compute_effects_hash.
+        // resistance, the 8-limb form covers all 32 bytes via compute_effects_hash (covers, not
+        // binds — see the correction above).
         fn hash_to_8(h: &[u8; 32]) -> [BabyBear; 8] {
             dregg_circuit::effect_vm::bytes32_to_8_limbs(h)
         }
@@ -275,21 +289,9 @@ fn convert_turn_effects_to_vm_unchecked(
                     }
                     let payload_bytes = *payload_hasher.finalize().as_bytes();
 
-                    fn bytes32_to_8_felts(b: &[u8; 32]) -> [BabyBear; 8] {
-                        let mut out = [BabyBear::ZERO; 8];
-                        for i in 0..8 {
-                            let off = i * 4;
-                            let v =
-                                u32::from_le_bytes([b[off], b[off + 1], b[off + 2], b[off + 3]]);
-                            // Reduce mod p so we always land in canonical BabyBear.
-                            out[i] = BabyBear::new(v % dregg_circuit::field::BABYBEAR_P);
-                        }
-                        out
-                    }
-
                     vm_effects.push(VmEffect::EmitEvent {
-                        topic_hash: bytes32_to_8_felts(&topic_bytes),
-                        payload_hash: bytes32_to_8_felts(&payload_bytes),
+                        topic_hash: dregg_circuit::effect_vm::bytes32_to_8_limbs(&topic_bytes),
+                        payload_hash: dregg_circuit::effect_vm::bytes32_to_8_limbs(&payload_bytes),
                     });
                 }
                 Effect::SpawnWithDelegation {

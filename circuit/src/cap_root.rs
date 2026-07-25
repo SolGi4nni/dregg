@@ -246,13 +246,18 @@ impl CapLeaf {
 }
 
 /// Fold 32 bytes into a single BabyBear felt: `hash_many` over the 8 4-byte
-/// little-endian limbs (`BabyBear::encode_hash`). Used for `target` and
-/// `breadstuff`. The fold is collision-resistant under the Poseidon2 sponge
-/// (up to the per-limb mod-p wrap on 4-byte chunks whose raw u32 exceeds `p`,
-/// a deterministic total mapping identical for cell and circuit since this is
-/// the single shared implementation).
+/// little-endian limbs (`bytes32_to_8_limbs`). Used for `target` and `breadstuff`.
+///
+/// ⚠ **NOT collision-resistant.** This doc disclosed the mod-`p` wrap but framed it as benign —
+/// "collision-resistant under the Poseidon2 sponge (up to the per-limb wrap)". The wrap is
+/// UPSTREAM of the sponge, so the sponge receives identical inputs for an aliased pair and cannot
+/// undo the collision; for attacker-chosen `target`/`breadstuff` bytes the pair is CONSTRUCTED,
+/// not searched. In-tree exhibit: `exact_cap_root`'s alias canary. Being "the single shared
+/// implementation" makes producer and verifier AGREE on the collision — which is why the failure
+/// over-includes rather than forging — it does not make the map binding. Migration target is the
+/// already-written `exact_cap_root` (Stage 2b).
 pub fn fold_bytes32(bytes: &[u8; 32]) -> BabyBear {
-    hash_many(&BabyBear::encode_hash(bytes))
+    hash_many(&crate::effect_vm::bytes32_to_8_limbs(bytes))
 }
 
 /// The canonical `slot_hash` key for a c-list slot: a domain-separated

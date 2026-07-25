@@ -566,23 +566,6 @@ pub enum DelegationProofData {
     },
 }
 
-/// Encode a 32-byte hash as 8 `BabyBear` field elements (4 bytes each, LE),
-/// reduced mod the BabyBear prime.
-///
-/// Byte-for-byte identical to the executor's
-/// `TurnExecutor::bytes32_to_babybear` (`executor/proof_verify.rs`). Kept here
-/// so the bearer-cap STARK public-input layout has ONE definition that both the
-/// in-ledger executor arm and the Ledger-free inspector/wasm verifier share.
-fn stark_delegation_bytes32_to_babybear(bytes: &[u8; 32]) -> Vec<dregg_circuit::field::BabyBear> {
-    use dregg_circuit::field::{BABYBEAR_P, BabyBear};
-    let mut result = Vec::with_capacity(8);
-    for chunk in bytes.chunks(4) {
-        let val = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-        result.push(BabyBear(val % BABYBEAR_P));
-    }
-    result
-}
-
 /// Recompute the canonical public-input vector a [`DelegationProofData::StarkDelegation`]
 /// bearer proof must commit to, given the `root_issuer_commitment` and the
 /// (federation, target, permission-tier, expiry) scope it is being exercised under.
@@ -607,8 +590,12 @@ pub fn stark_delegation_expected_public_inputs(
     root_issuer_commitment: &[u8; 32],
 ) -> Vec<dregg_circuit::field::BabyBear> {
     let mut public_inputs = Vec::new();
-    public_inputs.extend(stark_delegation_bytes32_to_babybear(root_issuer_commitment));
-    public_inputs.extend(stark_delegation_bytes32_to_babybear(target.as_bytes()));
+    public_inputs.extend(dregg_circuit::effect_vm::bytes32_to_8_limbs(
+        root_issuer_commitment,
+    ));
+    public_inputs.extend(dregg_circuit::effect_vm::bytes32_to_8_limbs(
+        target.as_bytes(),
+    ));
     let perm_tag: u32 = match permissions {
         AuthRequired::None => 0,
         AuthRequired::Signature => 1,
@@ -628,7 +615,7 @@ pub fn stark_delegation_expected_public_inputs(
         h.update(&expires_at.to_le_bytes());
         *h.finalize().as_bytes()
     };
-    public_inputs.extend(stark_delegation_bytes32_to_babybear(&scope_hash));
+    public_inputs.extend(dregg_circuit::effect_vm::bytes32_to_8_limbs(&scope_hash));
     public_inputs
 }
 

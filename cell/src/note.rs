@@ -161,29 +161,6 @@ impl core::fmt::Display for NoteError {
 
 impl std::error::Error for NoteError {}
 
-/// Decompose a 32-byte value into 8 BabyBear limbs (4 bytes each,
-/// little-endian). Position 0 carries bytes `[0..4]`; position 7 carries
-/// bytes `[28..32]`. Each 4-byte chunk is reduced mod `p`.
-///
-/// This is the canonical full-32-byte limb decomposition, identical to the
-/// EffectVM hash-binding lane's `circuit::effect_vm::helpers::bytes32_to_8_limbs`
-/// (commit b0b87952). Every byte of the input contributes to some limb, so two
-/// 32-byte values differing in ANY byte produce a distinct limb vector (up to
-/// the per-limb mod-p wrap, which only aliases 4-byte chunks whose raw u32
-/// exceeds `p` — a measure-zero, deterministic, total mapping that is identical
-/// for any two callers).
-#[inline]
-fn bytes32_to_limbs(b: &[u8; 32]) -> [dregg_circuit::field::BabyBear; 8] {
-    use dregg_circuit::field::{BABYBEAR_P, BabyBear};
-    let mut out = [BabyBear::ZERO; 8];
-    for (i, limb) in out.iter_mut().enumerate() {
-        let off = i * 4;
-        let v = u32::from_le_bytes([b[off], b[off + 1], b[off + 2], b[off + 3]]);
-        *limb = BabyBear::new(v % BABYBEAR_P);
-    }
-    out
-}
-
 /// Decompose a u64 into 2 BabyBear limbs: `[low 32 bits, high 32 bits]`, each
 /// reduced mod `p`. Binds the FULL 64 bits of a u64 note field (value /
 /// asset_type), versus the legacy form that bound only the low 32 bits.
@@ -196,21 +173,27 @@ fn u64_to_limbs(v: u64) -> [dregg_circuit::field::BabyBear; 2] {
     ]
 }
 
-/// Injective raw-byte mapping used by the faithful-v2 spend predicate.
+/// **The canonical injective byte→felt map, lifted to felts.** Sixteen little-endian u16 limbs,
+/// delegating to the promoted deployed codec (`exact_nullifier_aafi::raw_to_u16_le`, the map that
+/// backs the live exact fields root) rather than re-deriving it — this file used to carry its own
+/// copy, one of four that disagreed on endianness. Every limb is `< 2^16 ≪ p`, so the felt lift is
+/// the identity and NO reduction occurs; that is what makes it injective, and the inverse is
+/// `u16_le_to_raw`. See `dregg_codec::Limbs16` for the designation and the exhaustive proof.
 #[inline]
 fn bytes32_to_u16_limbs(b: &[u8; 32]) -> [dregg_circuit::field::BabyBear; 16] {
     use dregg_circuit::field::BabyBear;
-    core::array::from_fn(|i| {
-        let off = 2 * i;
-        BabyBear::new(u16::from_le_bytes([b[off], b[off + 1]]) as u32)
-    })
+    let limbs = dregg_circuit::exact_nullifier_aafi::raw_to_u16_le(*b);
+    core::array::from_fn(|i| BabyBear::new(u32::from(limbs[i])))
 }
 
-/// Injective full-u64 mapping used by the faithful-v2 spend predicate.
+/// The canonical integer→felt map, lifted to felts: four little-endian u16 limbs,
+/// `value = Σ limbᵢ · 2^(16i)`. Delegates to the promoted deployed codec
+/// (`exact_nullifier_aafi::u64_to_u16_le`) so integers and byte strings share ONE endianness rule.
 #[inline]
 fn u64_to_u16_limbs(v: u64) -> [dregg_circuit::field::BabyBear; 4] {
     use dregg_circuit::field::BabyBear;
-    core::array::from_fn(|i| BabyBear::new(((v >> (16 * i)) & 0xffff) as u32))
+    let limbs = dregg_circuit::exact_nullifier_aafi::u64_to_u16_le(v);
+    core::array::from_fn(|i| BabyBear::new(u32::from(limbs[i])))
 }
 
 /// Canonically pack a genuine eight-felt digest as 32 bytes.
@@ -312,8 +295,10 @@ impl Note {
         // commitment(1) + spending_key(8 limbs) + creation_nonce(8 limbs) = 17.
         let mut preimage = Vec::with_capacity(17);
         preimage.push(commitment_felt);
-        preimage.extend_from_slice(&bytes32_to_limbs(spending_key)); // 8
-        preimage.extend_from_slice(&bytes32_to_limbs(&self.creation_nonce)); // 8
+        preimage.extend_from_slice(&dregg_circuit::effect_vm::bytes32_to_8_limbs(spending_key)); // 8
+        preimage.extend_from_slice(&dregg_circuit::effect_vm::bytes32_to_8_limbs(
+            &self.creation_nonce,
+        )); // 8
         Nullifier(crate::felt_to_bytes32(hash_many(&preimage)))
     }
 
@@ -440,11 +425,15 @@ impl Note {
         use dregg_circuit::poseidon2::hash_many;
 
         let mut preimage = Vec::with_capacity(28);
-        preimage.extend_from_slice(&bytes32_to_limbs(&self.owner)); // 8
+        preimage.extend_from_slice(&dregg_circuit::effect_vm::bytes32_to_8_limbs(&self.owner)); // 8
         preimage.extend_from_slice(&u64_to_limbs(self.fields[1])); // 2 (value)
         preimage.extend_from_slice(&u64_to_limbs(self.fields[0])); // 2 (asset_type)
-        preimage.extend_from_slice(&bytes32_to_limbs(&self.creation_nonce)); // 8
-        preimage.extend_from_slice(&bytes32_to_limbs(&self.randomness)); // 8
+        preimage.extend_from_slice(&dregg_circuit::effect_vm::bytes32_to_8_limbs(
+            &self.creation_nonce,
+        )); // 8
+        preimage.extend_from_slice(&dregg_circuit::effect_vm::bytes32_to_8_limbs(
+            &self.randomness,
+        )); // 8
 
         hash_many(&preimage)
     }

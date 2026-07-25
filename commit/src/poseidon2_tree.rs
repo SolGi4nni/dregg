@@ -87,7 +87,7 @@ const NOTE_EMPTY_DOMAIN: u32 = 0x4e45_4d38; // "NEM8"
 /// Injectively encode a 32-byte note commitment as sixteen canonical BabyBear
 /// lanes.  Lane `i` is the little-endian `u16` at bytes `2i..2i+2`.
 ///
-/// This is deliberately not [`BabyBear::encode_hash`]: that legacy codec uses
+/// This is deliberately not [`bytes32_to_8_limbs`]: that legacy codec uses
 /// eight `u32` chunks, each reduced modulo `p`, and therefore identifies a raw
 /// chunk `x` with `x + p`.  Here every source limb is `< 2^16 < p`.
 #[inline]
@@ -627,21 +627,17 @@ impl Default for Poseidon2MerkleTree {
 /// commitment bytes through Poseidon2 to produce a single field element
 /// that can be inserted into the Poseidon2 Merkle tree.
 ///
-/// This is a one-way binding: you can prove that a particular BLAKE3
-/// commitment maps to a particular field element, but you cannot reverse it.
+/// ⚠ **One-way, but NOT binding.** This doc said "a one-way binding". One-wayness holds (the
+/// sponge gives preimage resistance); collision-binding does not. Two things break it: the 8-limb
+/// preimage is mod-`p` aliasable, so for CHOSEN bytes a colliding pair is constructed in `O(1)`
+/// UPSTREAM of the sponge — the sponge is fed identical inputs and cannot undo it; and the
+/// single-felt image carries only a ~2^15.45 birthday bound even for hash-image inputs. There is no
+/// security boundary where a one-felt image of a 32-byte value is acceptable. The replacement is
+/// `dregg_codec::Digest8`, not a better one-felt fold; Stage 2j.
 pub fn commitment_to_field(commitment: &[u8; 32]) -> BabyBear {
     // Encode the 32-byte commitment as 8 BabyBear elements (4 bytes each)
-    let elements = BabyBear::encode_hash(commitment);
+    let elements = dregg_circuit::effect_vm::bytes32_to_8_limbs(commitment);
     // Hash them through Poseidon2 to get a single field element
-    dregg_circuit::poseidon2::hash_many(&elements)
-}
-
-/// Convert arbitrary bytes to a BabyBear field element via Poseidon2.
-///
-/// Packs bytes into field elements (4 bytes per element, with modular reduction),
-/// then hashes them with Poseidon2's sponge construction.
-pub fn hash_bytes_to_field(data: &[u8]) -> BabyBear {
-    let elements = BabyBear::from_bytes_packed(data);
     dregg_circuit::poseidon2::hash_many(&elements)
 }
 
@@ -938,17 +934,6 @@ mod tests {
         let proof = tree.prove_membership(0).unwrap();
         assert_eq!(proof.siblings.len(), depth);
         assert_eq!(proof.positions.len(), depth);
-    }
-
-    #[test]
-    fn hash_bytes_to_field_works() {
-        let data = b"hello world";
-        let f = hash_bytes_to_field(data);
-        assert_ne!(f, BabyBear::ZERO);
-
-        // Deterministic
-        let f2 = hash_bytes_to_field(data);
-        assert_eq!(f, f2);
     }
 
     // =========================================================================

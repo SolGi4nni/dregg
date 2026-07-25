@@ -39,7 +39,7 @@ use crate::field::BabyBear;
 use crate::lean_descriptor_air::{VmConstraint, VmRow};
 
 /// Field limbs per 32-byte scope value (`root_issuer_commitment` / `target` / `scope_hash`), matching
-/// `action.rs::stark_delegation_bytes32_to_babybear` (8 limbs each).
+/// `effect_vm::bytes32_to_8_limbs` (8 limbs each).
 pub const SCOPE_VALUE_LIMBS: usize = 8;
 /// The three 32-byte scope values bound by the delegation-binding: root_issuer, target, scope_hash.
 pub const SCOPE_VALUES: usize = 3;

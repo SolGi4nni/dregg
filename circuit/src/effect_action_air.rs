@@ -141,22 +141,6 @@ impl EffectActionSchema {
     }
 }
 
-/// Encode a 32-byte value as 8 BabyBear limbs (4 bytes each, little-endian
-/// per chunk, each chunk reduced via `BabyBear::new`).
-///
-/// Same encoding as `bridge_action_witness::encode_hash`. The collision
-/// probability across two distinct 32-byte values whose all 8 limbs collide
-/// modulo the BabyBear prime is ~p^-8 ≈ 2^-248 (well above the 124-bit STARK
-/// soundness target).
-pub fn encode_hash(bytes: &[u8; 32]) -> [BabyBear; HASH_LIMBS] {
-    let mut out = [BabyBear::ZERO; HASH_LIMBS];
-    for (i, chunk) in bytes.chunks(4).enumerate() {
-        let val = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-        out[i] = BabyBear::new(val);
-    }
-    out
-}
-
 /// Encode a u64 amount as 2 BabyBear limbs (low 32 + high 32, each reduced
 /// canonically via `BabyBear::new`).
 ///
@@ -187,7 +171,7 @@ impl EffectActionWitness {
     pub fn public_inputs(&self) -> Vec<BabyBear> {
         let mut pi = Vec::with_capacity(self.schema.width());
         for f in &self.fields {
-            pi.extend_from_slice(&encode_hash(f));
+            pi.extend_from_slice(&crate::effect_vm::bytes32_to_8_limbs(f));
         }
         for a in &self.amounts {
             let [lo, hi] = encode_amount(*a);
@@ -228,7 +212,7 @@ impl EffectActionAir {
         let mut row0 = vec![BabyBear::ZERO; width];
         let mut col = 0;
         for f in &witness.fields {
-            let limbs = encode_hash(f);
+            let limbs = crate::effect_vm::bytes32_to_8_limbs(f);
             for limb in limbs {
                 row0[col] = limb;
                 col += 1;
@@ -590,18 +574,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn encode_hash_deterministic() {
-        let a = encode_hash(&[0x42; 32]);
-        let b = encode_hash(&[0x42; 32]);
+    fn hash_limbs_deterministic() {
+        let a = crate::effect_vm::bytes32_to_8_limbs(&[0x42; 32]);
+        let b = crate::effect_vm::bytes32_to_8_limbs(&[0x42; 32]);
         assert_eq!(a, b);
     }
 
     #[test]
-    fn encode_hash_distinguishes_distinct_bytes() {
-        let a = encode_hash(&[0x42; 32]);
+    fn hash_limbs_distinguish_distinct_bytes() {
+        let a = crate::effect_vm::bytes32_to_8_limbs(&[0x42; 32]);
         let mut bytes = [0x42u8; 32];
         bytes[0] = 0x43;
-        let b = encode_hash(&bytes);
+        let b = crate::effect_vm::bytes32_to_8_limbs(&bytes);
         assert_ne!(a, b);
     }
 

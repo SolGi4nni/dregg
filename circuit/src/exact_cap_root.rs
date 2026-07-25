@@ -58,16 +58,8 @@ impl ExactCapAuth {
     }
 }
 
-pub fn bytes32_to_u16_le(bytes: [u8; 32]) -> [u16; EXACT_CAP_BYTES32_LIMBS] {
-    core::array::from_fn(|i| u16::from_le_bytes([bytes[2 * i], bytes[2 * i + 1]]))
-}
-
 pub fn u32_to_u16_le(value: u32) -> [u16; EXACT_CAP_U32_LIMBS] {
     [value as u16, (value >> 16) as u16]
-}
-
-pub fn u64_to_u16_le(value: u64) -> [u16; EXACT_CAP_U64_LIMBS] {
-    core::array::from_fn(|i| (value >> (16 * i)) as u16)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -131,22 +123,22 @@ impl ExactCapLeaf {
         for x in u32_to_u16_le(self.slot) {
             push!(BabyBear::new(x.into()));
         }
-        for x in bytes32_to_u16_le(self.target) {
+        for x in crate::exact_nullifier_aafi::raw_to_u16_le(self.target) {
             push!(BabyBear::new(x.into()));
         }
         push!(BabyBear::new(self.auth.tag().into()));
-        for x in bytes32_to_u16_le(self.auth.custom_vk()) {
+        for x in crate::exact_nullifier_aafi::raw_to_u16_le(self.auth.custom_vk()) {
             push!(BabyBear::new(x.into()));
         }
         for x in u32_to_u16_le(self.mask) {
             push!(BabyBear::new(x.into()));
         }
         push!(BabyBear::new(u32::from(self.expiry.is_some())));
-        for x in u64_to_u16_le(self.expiry.unwrap_or(0)) {
+        for x in crate::exact_nullifier_aafi::u64_to_u16_le(self.expiry.unwrap_or(0)) {
             push!(BabyBear::new(x.into()));
         }
         push!(BabyBear::new(u32::from(self.breadstuff.is_some())));
-        for x in bytes32_to_u16_le(self.breadstuff.unwrap_or([0; 32])) {
+        for x in crate::exact_nullifier_aafi::raw_to_u16_le(self.breadstuff.unwrap_or([0; 32])) {
             push!(BabyBear::new(x.into()));
         }
         debug_assert_eq!(at, EXACT_CAP_LEAF_PREIMAGE_LEN);

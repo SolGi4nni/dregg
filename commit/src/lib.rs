@@ -62,9 +62,7 @@ pub use field::FieldElement;
 pub use fold::{CheckPolicy, FoldDelta, FoldDeltaBuilder, FoldVerification, verify_fold_chain};
 pub use hash::{HASH_ARITY, hash_leaf, hash_node};
 pub use merkle::{MerkleProof, MerkleTree, NonMembershipProof, SurvivalWitness};
-pub use poseidon2_tree::{
-    Poseidon2MerkleProof, Poseidon2MerkleTree, commitment_to_field, hash_bytes_to_field,
-};
+pub use poseidon2_tree::{Poseidon2MerkleProof, Poseidon2MerkleTree, commitment_to_field};
 pub use state::{RULE_PREFIX, StateCommitment, TokenState};
 pub use symbol::SymbolTable;
 

@@ -42,7 +42,7 @@ fn compute_federation_root_bb(issuer_key: &[u8; 32]) -> BabyBear {
 }
 
 fn cclerk_bytes_to_babybear(bytes: &[u8; 32]) -> BabyBear {
-    let limbs = BabyBear::encode_hash(bytes);
+    let limbs = dregg_circuit::effect_vm::bytes32_to_8_limbs(bytes);
     poseidon2::hash_many(&limbs)
 }
 

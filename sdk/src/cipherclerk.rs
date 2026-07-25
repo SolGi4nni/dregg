@@ -4800,7 +4800,7 @@ impl AgentCipherclerk {
 
     /// Compress a 32-byte value into a single BabyBear element via Poseidon2.
     pub(crate) fn bytes_to_babybear(bytes: &[u8; 32]) -> BabyBear {
-        let limbs = BabyBear::encode_hash(bytes);
+        let limbs = dregg_circuit::effect_vm::bytes32_to_8_limbs(bytes);
         poseidon2::hash_many(&limbs)
     }
 
@@ -6717,8 +6717,11 @@ impl AgentCipherclerk {
         // so this SDK projector and the executor projector emit byte-for-byte
         // identical felts — the differential invariant in
         // `protocol-tests/.../effect_vm_differential.rs` asserts this. The
-        // full 32-byte value is now bound through the per-effect param column
-        // and `PI[EFFECTS_HASH]` (`compute_effects_hash`).
+        // full 32-byte value now REACHES the per-effect param column and `PI[EFFECTS_HASH]`
+        // (`compute_effects_hash`). ⚠ It is not BOUND there: `fold_bytes32_to_bb` is an onto
+        // F_p-linear form (collision and chosen-target hit are each one linear solve), so this is
+        // a ~31-bit linear image of the 32 bytes. This comment used to claim the full value was
+        // bound; the 4-byte-truncation fix it describes was real, the framing overstated it.
         // v13 FIELDS-OCTET: lane 0 of the FAITHFUL `field_limbs8` split (the
         // u64-lane lo32) — byte-identical to the executor projector, the SAME
         // welded lane the rotated producer writes to limb `4 + slot`. REPLACES the
@@ -6731,8 +6734,18 @@ impl AgentCipherclerk {
             dregg_circuit::effect_vm::fold_bytes32_to_bb(h)
         }
 
-        // 32-byte widening (effect-vm-hash-widen lane, 2026-05-28): full
-        // 256-bit binding path for hash params widened to `[BabyBear; 8]`
+        // ⚠ CORRECTION (canonical-codec Stage 0): "the full 256-bit binding path" is an
+        // OVERSTATEMENT, and both deployed projectors carried it. `bytes32_to_8_limbs` reduces each
+        // 4-byte chunk mod `p`, which identifies `x` with `x + p`; a uniformly random chunk needs
+        // reducing 53.1% of the time, so for CHOSEN bytes a colliding pair is CONSTRUCTED in O(1),
+        // no grind. The path reaches hash strength only where the input is a Poseidon2/BLAKE3
+        // IMAGE — the strength is the hash's, borrowed. The two projectors DO agree byte-for-byte
+        // (one shared helper), which is why a collision over-includes (an honest turn goes UNSAT)
+        // rather than authorizing a forgery: availability, not theft. Migration target is
+        // `dregg_codec::Digest8`; both projectors MUST move in exactly ONE commit, since a skew
+        // between them is worse than the wound (Stage 3).
+        // 32-byte widening (effect-vm-hash-widen lane, 2026-05-28): hash params widened
+        // to `[BabyBear; 8]`
         // (CreateSealPair, *Escrow, CellSeal, etc.). Delegates to the SAME
         // shared circuit helper the executor projector calls, so both emit
         // byte-for-byte identical 8-limb encodings (protocol-tests differential
@@ -6740,15 +6753,6 @@ impl AgentCipherclerk {
         // absorbed by compute_effects_hash.
         fn hash_to_8(h: &[u8; 32]) -> [BabyBear; 8] {
             dregg_circuit::effect_vm::bytes32_to_8_limbs(h)
-        }
-
-        // #110: full 32-byte → 8-felt projection (4 bytes per felt,
-        // little-endian). Used for EmitEvent topic_hash / payload_hash and
-        // related event-shaped variants that need full ~256-bit binding.
-        // Delegates to the shared circuit helper so it stays in lock-step with
-        // the executor projector.
-        fn bytes32_to_8_felts(b: &[u8; 32]) -> [BabyBear; 8] {
-            dregg_circuit::effect_vm::bytes32_to_8_limbs(b)
         }
 
         let mut vm_effects = Vec::new();
@@ -7004,8 +7008,8 @@ impl AgentCipherclerk {
                     }
                     let payload_bytes = *ph.finalize().as_bytes();
                     vm_effects.push(VmEffect::EmitEvent {
-                        topic_hash: bytes32_to_8_felts(&topic_bytes),
-                        payload_hash: bytes32_to_8_felts(&payload_bytes),
+                        topic_hash: dregg_circuit::effect_vm::bytes32_to_8_limbs(&topic_bytes),
+                        payload_hash: dregg_circuit::effect_vm::bytes32_to_8_limbs(&payload_bytes),
                     });
                 }
 

@@ -323,3 +323,62 @@ fn full_image_size_and_host_cost_smoke() {
         std::mem::size_of::<UValV2>(),
     );
 }
+
+/// **THE ENDIANNESS PIN — and the ONE remaining divergence from the canonical codec.**
+///
+/// `docs/DESIGN-canonical-byte-felt-codec.md` §2.5 decides little-endian for every multi-limb
+/// byte string: three of the four Layer-L implementations were LE, the DEPLOYED one
+/// (`exact_nullifier_aafi::raw_to_u16_le`, backing the live exact fields root) is LE, and Lean's
+/// own plan states *"Every multi-limb integer/byte string is little-endian."* The designation now
+/// lives in `dregg_codec::Limbs16`, whose tests pin the LE vector and the three distinct orders.
+///
+/// **umem V2 is the exception.** `UAddrV2::from_key` reads its 32-byte source through
+/// `bytes32_to_u16_be` — BIG-endian per pair. This test pins that divergence EXPLICITLY, as the
+/// exact per-pair byte swap of the canonical map, for three reasons:
+///
+/// 1. A silent divergence is what produced four disagreeing Layer-L copies in the first place.
+///    Pinned, it is a fact on the record rather than a surprise for the next author.
+/// 2. Flipping it is **not** byte-safe, so it is not Stage-0/1 work — it changes every V2 address
+///    limb. The plan files the flip under Stage 4 (with the V1 codec deletion and the V2 arming),
+///    one re-genesis, and this test is what will fail and point at the flip when it happens.
+/// 3. Flipping it is nonetheless **free**, and this test records the evidence: V2 has no production
+///    caller. `UAddrV2`/`UValV2`/`UmemOpV2`/`UmemBoundaryV2`/`from_full_image` appear in exactly one
+///    file outside `turn/src/umem.rs` — this test file. The armed `umem_witness_enabled` lane runs
+///    the **V1** codec (`umem_key_addr_v1` / `umem_val_felt_v1`), not this one.
+///
+/// Do the flip before V2 arms, and delete this test when you do.
+#[test]
+fn umem_v2_address_is_big_endian_the_one_divergence_from_the_canonical_le_codec() {
+    // A source with distinguishable halves in every pair, so LE and BE cannot coincide.
+    let mut raw = [0u8; 32];
+    for (i, b) in raw.iter_mut().enumerate() {
+        *b = i as u8;
+    }
+
+    let canonical_le = dregg_circuit::exact_nullifier_aafi::raw_to_u16_le(raw);
+    let v2 = UAddrV2::from_key(&UKey::Cell(CellId(raw)));
+    let limbs = v2.limbs();
+    // `UAddrV2::limbs` lays out [domain, variant, source32(16), arguments(4)].
+    let source_limbs: [u16; 16] = limbs[2..18].try_into().expect("16 source limbs");
+
+    // The divergence, stated exactly: umem V2's limb i is the canonical limb i byte-swapped.
+    for i in 0..16 {
+        assert_eq!(
+            source_limbs[i],
+            canonical_le[i].swap_bytes(),
+            "umem V2 limb {i} must be the per-pair byte swap of the canonical LE codec"
+        );
+    }
+    // ...and they genuinely differ, so this test cannot pass vacuously on a symmetric vector.
+    assert_ne!(
+        source_limbs, canonical_le,
+        "the pin is vacuous unless the two maps actually disagree on this vector"
+    );
+    // Both remain injective on the pair domain — the divergence is orientation, not information
+    // loss. Only the ORDER a comparator derives from them differs.
+    assert_eq!(
+        dregg_circuit::exact_nullifier_aafi::u16_le_to_raw(canonical_le),
+        raw,
+        "the canonical codec round-trips"
+    );
+}

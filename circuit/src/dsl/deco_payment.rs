@@ -92,7 +92,7 @@ pub fn stripe_payment_facts_felts(
     [
         amount_lo,
         felt_of_str(currency),
-        hash_many(&BabyBear::encode_hash(recipient)),
+        hash_many(&crate::effect_vm::bytes32_to_8_limbs(recipient)),
         felt_of_str(payment_intent_id),
     ]
 }
@@ -158,7 +158,7 @@ mod tests {
         let felt = deco_payment_hash_felt(
             BabyBear::new(2500),
             felt_of_str("usd"),
-            hash_many(&BabyBear::encode_hash(&recipient)),
+            hash_many(&crate::effect_vm::bytes32_to_8_limbs(&recipient)),
             felt_of_str("pi_abc123"),
         );
         assert_eq!(byte, felt);

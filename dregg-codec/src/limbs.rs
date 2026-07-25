@@ -97,10 +97,11 @@ impl From<[u8; 32]> for Bytes32 {
 
 /// **Layer L — sixteen little-endian `u16` limbs.** The injective byte→felt map.
 ///
-/// Ordering note: the derived `Ord` is **not** implemented, deliberately. Limb-vector
-/// lexicographic order in *index* order is `memcmp` on byte-reversed data, which is a footgun for
-/// sorted-map brackets. Use [`Limbs16::cmp_memcmp_order`] (or read the columns via
-/// [`Limbs16::memcmp_order`]) when byte order matters; the choice is then visible at the use site.
+/// Ordering note: `Ord` is **not** implemented, deliberately. Three different useful orders live
+/// on these limbs and they disagree — see the ORDER block on the impl below. A blanket `Ord` would
+/// silently pick one, which is how a comparator and the codec drift apart. Name the order you
+/// mean: [`Limbs16::cmp_limb_lex`] (the deployed one), [`Limbs16::cmp_le_integer`], or
+/// [`Limbs16::cmp_memcmp_order`].
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Limbs16([u16; BYTES32_U16_LIMBS]);

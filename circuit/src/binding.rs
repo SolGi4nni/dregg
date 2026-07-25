@@ -238,7 +238,7 @@ pub fn compute_action_binding(action: &str, resource: &str) -> ActionBinding {
     let digest = blake3::keyed_hash(&dsk, &buf);
 
     // Encode the 32-byte digest as 8 BabyBear elements.
-    let limbs = BabyBear::encode_hash(digest.as_bytes());
+    let limbs = crate::effect_vm::bytes32_to_8_limbs(digest.as_bytes());
 
     // Absorb all 8 limbs through Poseidon2 sponge and squeeze 8 elements.
     let mut state = Poseidon2State::new();

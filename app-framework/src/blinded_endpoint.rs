@@ -255,9 +255,11 @@ async fn handle_commit(
 ) -> Result<Json<CommitResponse>, (StatusCode, Json<crate::server::ErrorResponse>)> {
     let commitment_bytes = parse_hex32(&req.commitment_hex)
         .ok_or_else(|| api_error(StatusCode::BAD_REQUEST, "invalid commitment_hex"))?;
-    // Trust-boundary conversion: derive the typed Commitment4 (BLAKE3 +
-    // Poseidon2) from the wire-side 32-byte hash via the fixed
-    // canonical_32_to_felts_4 bijection (DESIGN-commitment-framework §4.1).
+    // Trust-boundary conversion: derive the typed Commitment4 (BLAKE3 + Poseidon2) from the
+    // wire-side 32-byte hash via the fixed `canonical_32_to_felts_4` map
+    // (DESIGN-commitment-framework §4.1). ⚠ NOT a bijection — this comment claimed one. The map
+    // discards bits 6-7 of every fourth byte (16 of 256 source bits unbound) and then folds 8
+    // felts to 4. Deterministic and total, which is what this decoder needs; not invertible.
     let commitment = commitment_bytes.into();
 
     let mut q = state.queue.lock().await;

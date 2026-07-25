@@ -113,24 +113,6 @@ pub mod pi {
     pub const AMOUNT_HI: usize = 25;
 }
 
-/// Encode a 32-byte value as 8 BabyBear limbs (4 bytes each, little-endian per
-/// chunk, each chunk reduced via `BabyBear::new`).
-///
-/// This is the canonical bridge-action encoding. `BabyBear::new(u32)` reduces
-/// modulo p = 2^31 - 2^27 + 1, so values 2^31-2^27+1 .. 2^32-1 collide on
-/// reduction — but since we apply the same encoding on prover and verifier,
-/// the boundary constraint is on the reduced value. Two distinct 32-byte
-/// values whose limbs all collide modulo p have collision probability ~p^-8
-/// ≈ 2^-248, well above the 124-bit STARK soundness target.
-pub fn encode_hash(bytes: &[u8; 32]) -> [BabyBear; HASH_LIMBS] {
-    let mut out = [BabyBear::ZERO; HASH_LIMBS];
-    for (i, chunk) in bytes.chunks(4).enumerate() {
-        let val = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-        out[i] = BabyBear::new(val);
-    }
-    out
-}
-
 /// Encode a u64 amount as 2 BabyBear limbs (low 32 + high 32, each reduced
 /// canonically via `BabyBear::new`).
 pub fn encode_amount(amount: u64) -> [BabyBear; 2] {
@@ -156,9 +138,9 @@ pub struct BridgeActionWitness {
 impl BridgeActionWitness {
     /// Compute the canonical public-input vector this witness commits to.
     pub fn public_inputs(&self) -> Vec<BabyBear> {
-        let n = encode_hash(&self.nullifier);
-        let r = encode_hash(&self.recipient);
-        let d = encode_hash(&self.destination_federation);
+        let n = crate::effect_vm::bytes32_to_8_limbs(&self.nullifier);
+        let r = crate::effect_vm::bytes32_to_8_limbs(&self.recipient);
+        let d = crate::effect_vm::bytes32_to_8_limbs(&self.destination_federation);
         let [lo, hi] = encode_amount(self.amount);
         let mut pi = Vec::with_capacity(BRIDGE_ACTION_PI_COUNT);
         pi.extend_from_slice(&n);
@@ -225,9 +207,9 @@ pub struct BridgeActionAir;
 impl BridgeActionAir {
     /// Generate the execution trace and public inputs from a witness.
     pub fn generate_trace(witness: &BridgeActionWitness) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
-        let n = encode_hash(&witness.nullifier);
-        let r = encode_hash(&witness.recipient);
-        let d = encode_hash(&witness.destination_federation);
+        let n = crate::effect_vm::bytes32_to_8_limbs(&witness.nullifier);
+        let r = crate::effect_vm::bytes32_to_8_limbs(&witness.recipient);
+        let d = crate::effect_vm::bytes32_to_8_limbs(&witness.destination_federation);
         let [lo, hi] = encode_amount(witness.amount);
 
         // Row 0: the full typed binding.
@@ -272,18 +254,18 @@ mod tests {
     }
 
     #[test]
-    fn encode_hash_roundtrip_deterministic() {
-        let a = encode_hash(&[0x42; 32]);
-        let b = encode_hash(&[0x42; 32]);
-        assert_eq!(a, b, "encode_hash must be deterministic");
+    fn hash_limbs_roundtrip_deterministic() {
+        let a = crate::effect_vm::bytes32_to_8_limbs(&[0x42; 32]);
+        let b = crate::effect_vm::bytes32_to_8_limbs(&[0x42; 32]);
+        assert_eq!(a, b, "bytes32_to_8_limbs must be deterministic");
     }
 
     #[test]
-    fn encode_hash_distinguishes_distinct_bytes() {
-        let a = encode_hash(&[0x42; 32]);
+    fn hash_limbs_distinguish_distinct_bytes() {
+        let a = crate::effect_vm::bytes32_to_8_limbs(&[0x42; 32]);
         let mut bytes = [0x42u8; 32];
         bytes[0] = 0x43;
-        let b = encode_hash(&bytes);
+        let b = crate::effect_vm::bytes32_to_8_limbs(&bytes);
         assert_ne!(a, b, "one byte change must change the limb encoding");
     }
 
@@ -313,9 +295,9 @@ mod tests {
         let w = make_witness();
         let pi = w.public_inputs();
         assert_eq!(pi.len(), BRIDGE_ACTION_PI_COUNT);
-        let n = encode_hash(&w.nullifier);
-        let r = encode_hash(&w.recipient);
-        let d = encode_hash(&w.destination_federation);
+        let n = crate::effect_vm::bytes32_to_8_limbs(&w.nullifier);
+        let r = crate::effect_vm::bytes32_to_8_limbs(&w.recipient);
+        let d = crate::effect_vm::bytes32_to_8_limbs(&w.destination_federation);
         let [lo, hi] = encode_amount(w.amount);
         for i in 0..HASH_LIMBS {
             assert_eq!(pi[pi::NULLIFIER_START + i], n[i]);

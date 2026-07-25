@@ -17,7 +17,7 @@ use dregg_cell::{Cell, Ledger};
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::heap_root::{HeapLeaf, compute_canonical_heap_root_8, empty_heap_root_8};
 use dregg_turn::rotation_witness::{
-    cells_root, empty_nullifier_root_8, iroot, produce, root_felt, wire_commit_8,
+    cells_root, empty_nullifier_root_8, iroot, produce, wire_commit_8,
 };
 
 /// (a)+(b) A non-empty nullifier accumulator root fills ALL 8 rotated lanes — limb 26 = root lane 0,
@@ -86,7 +86,7 @@ fn nullifier_root_fills_all_8_lanes_and_twins_agree() {
 
 /// (c) A non-spend turn commits the NATIVE empty default (`empty_heap_root_8`), NOT `[0u8; 32]`: the
 /// empty-frontier fill writes limbs [26,67..73] as the native empty root's 8 felts, and limb 26
-/// DIFFERS from the OLD lossy `root_felt(&[0u8; 32])` — the committed value genuinely SHIFTED.
+/// DIFFERS from the OLD lossy `hash_bytes(&[0u8; 32])` — the committed value genuinely SHIFTED.
 #[test]
 fn non_spend_turn_commits_native_empty_not_zero_bytes() {
     let empty = empty_nullifier_root_8();
@@ -118,7 +118,7 @@ fn non_spend_turn_commits_native_empty_not_zero_bytes() {
     }
     assert_ne!(
         w.pre_limbs[26],
-        root_felt(&[0u8; 32]),
+        dregg_circuit::poseidon2::hash_bytes(&[0u8; 32]),
         "limb 26 must NOT be the OLD lossy hash_bytes([0u8;32]) — the committed value shifted"
     );
 }

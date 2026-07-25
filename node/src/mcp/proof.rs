@@ -557,19 +557,9 @@ pub(super) fn project_setfield_to_vm(
             }
             let payload_bytes = *payload_hasher.finalize().as_bytes();
 
-            fn bytes32_to_8_felts(b: &[u8; 32]) -> [dregg_circuit::BabyBear; 8] {
-                let mut out = [dregg_circuit::BabyBear::ZERO; 8];
-                for i in 0..8 {
-                    let off = i * 4;
-                    let v = u32::from_le_bytes([b[off], b[off + 1], b[off + 2], b[off + 3]]);
-                    out[i] = dregg_circuit::BabyBear::new(v % dregg_circuit::field::BABYBEAR_P);
-                }
-                out
-            }
-
             Some(dregg_circuit::effect_vm::Effect::EmitEvent {
-                topic_hash: bytes32_to_8_felts(&topic_bytes),
-                payload_hash: bytes32_to_8_felts(&payload_bytes),
+                topic_hash: dregg_circuit::effect_vm::bytes32_to_8_limbs(&topic_bytes),
+                payload_hash: dregg_circuit::effect_vm::bytes32_to_8_limbs(&payload_bytes),
             })
         }
         _ => None,

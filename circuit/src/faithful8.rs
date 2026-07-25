@@ -49,6 +49,34 @@
 //! `From<Faithful8> for [BabyBear; 8]`): the wall polices construction, not
 //! inspection — that is what stops the cascade at module boundaries.
 //!
+//! ## ⚠ WHAT THIS WALL DOES NOT GUARD — read before trusting a `Faithful8`
+//!
+//! It guards the **WIDTH** axis (1 felt vs 8) and it guards it well. Wound #23 is the natural
+//! experiment: a 1-felt heap root sat *"three fields away from three siblings
+//! (`nullifier_root`/`commitments_root`/`revoked_root`) that were already `Faithful8`"* — three
+//! correct uses, one bare `BabyBear`, same struct, ~2^31 grind on the consensus anchor. The wall's
+//! absence made #23 possible; its presence made the three siblings safe.
+//!
+//! But it has **no opinion whatsoever about whether those 8 felts are a HARD COMPRESSION or a
+//! FREE-ALIAS PROJECTION**, and its own constructor list admits the failures:
+//!
+//! * [`Faithful8::from_bytes32`] **is** `bytes32_to_8_limbs` — family F1, `O(1)` aliasable for a
+//!   directly-chosen preimage (`v` and `v + p` collide for 53.1% of 4-byte chunks).
+//! * [`Faithful8::from_canonical_key`] **is** `canonical_32_to_felts_8` — family F2, 16 source
+//!   bits discarded.
+//!
+//! So the claim *"possession of a `Faithful8` is evidence the value came from a faithful encoder"*
+//! is **false for a directly-chosen preimage**, and the type then **LAUNDERS** it: a sink cannot
+//! distinguish an aliased octet from a genuinely hard one. That is the anti-launder clause
+//! realized in our own code, and it is why the replacement (`dregg_codec::Digest8`) has
+//! `from_bytes32`, `from_canonical_key`, and the `_DANGER` hatch **deleted, not deprecated** — a
+//! wall with an escape hatch is a convention.
+//!
+//! Second gap, where most of the remaining wounds live: **the wall covers committed VALUES and
+//! leaves map/sort KEYS bare.** Every kind-D wound is a key, and a key is a bare `BabyBear` that
+//! no type ever guarded. `dregg_codec`'s `MapKey` is the type that would make those
+//! unrepresentable; it is Stage 3 work.
+//!
 //! ## The tripwire
 //!
 //! A bare `[BabyBear; 8]` cannot enter a `Faithful8` sink without naming a
@@ -74,11 +102,13 @@
 
 use crate::field::BabyBear;
 
-/// A **faithful 8-felt commitment octet** (~124-bit binding of its source).
+/// An **8-felt commitment octet** — 8 lanes wide, not 1.
 ///
-/// See the module docs for the constructor discipline. The inner array is
-/// private on purpose: possession of a `Faithful8` is evidence the value came
-/// from a faithful encoder (or a NAMED, greppable `_DANGER` residual site).
+/// Possession of a `Faithful8` is evidence of **WIDTH ONLY**: that the value was not squeezed
+/// through a single ~31-bit felt. It is **not** evidence that the 8 lanes bind their source
+/// hard — `from_bytes32` and `from_canonical_key` are both `O(1)`-aliasable for a chosen
+/// preimage, so for those two constructors the wall LAUNDERS the alias. See the module docs.
+/// The successor with a genuinely narrow constructor set is `dregg_codec::Digest8`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Faithful8([BabyBear; 8]);
 
@@ -89,10 +119,15 @@ impl Faithful8 {
     /// projection of any 32-byte source.
     pub const ZERO: Self = Self([BabyBear::ZERO; 8]);
 
-    /// The canonical full-32-byte limb split ([`crate::effect_vm::bytes32_to_8_limbs`]):
-    /// limb `i` carries bytes `[4i..4i+4]` little-endian, reduced mod `p`. The
-    /// faithful ~124-bit binding of `b` — THE constructor for hash-rooted octets
-    /// (blake3 digests, VK hashes, contract hashes, …).
+    /// The full-32-byte limb split ([`crate::effect_vm::bytes32_to_8_limbs`]): limb `i` carries
+    /// bytes `[4i..4i+4]` little-endian, reduced mod `p`.
+    ///
+    /// ⚠ **NOT a ~124-bit binding of `b`.** This doc claimed one. The mod-`p` reduction identifies
+    /// a chunk `x` with `x + p`, so a colliding pair is CONSTRUCTED in `O(1)` whenever the caller
+    /// chooses the bytes. It reaches hash-strength ONLY because the intended inputs are blake3
+    /// digests / VK hashes / contract hashes — i.e. the strength is the hash's, borrowed, and it
+    /// evaporates the moment an attacker-chosen 32-byte value is passed here. Deleted in the
+    /// successor (`dregg_codec::Digest8` has no `from_bytes32`); Stage 2/3 migration.
     #[inline]
     pub fn from_bytes32(b: &[u8; 32]) -> Self {
         Self(crate::effect_vm::bytes32_to_8_limbs(b))
@@ -123,9 +158,14 @@ impl Faithful8 {
         Self(crate::poseidon2::wire_commit_8_chip(pre_limbs, iroot))
     }
 
-    /// The 30-bit canonical KEY-COMMIT octet (the `pubkey8` carrier lane): 8
-    /// limbs of `8+8+8+6 = 30` bits each over the canonical 32-byte key — 240
-    /// bits, faithful. The packing is owned by
+    /// The 30-bit KEY-COMMIT octet (the `pubkey8` carrier lane): 8 limbs of `8+8+8+6 = 30` bits
+    /// each over the canonical 32-byte key.
+    ///
+    /// ⚠ **240 is the IMAGE size, not the binding.** This doc said "240 bits, faithful". The
+    /// packing discards bits 6-7 of every fourth byte, so **16 source bits are unbound** and a
+    /// colliding 32-byte STRING is free; only a colliding *meaningful* value costs anything
+    /// (~2^120 for a pubkey that must also be a valid group element). Second-preimage is `O(1)`
+    /// for a directly-chosen input. Deleted in the successor. The packing is owned by
     /// `dregg_commit::typed::canonical_32_to_felts_8` (byte-identical twin:
     /// `dregg_cell::commitment::canonical_to_babybear_pi`); this constructor
     /// takes its output and NAMES the lane so the wall stays greppable.

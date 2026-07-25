@@ -823,8 +823,9 @@ pub const NOTECREATE_COMMITMENT: usize = NOTESPEND_NULLIFIER + 1; // 199
 //       site or PI binding over param0, and the live registry member
 //       `burnVmDescriptor2R24` references trace col 68 (`PARAM_BASE + 0`)
 //       ZERO times. The burn target is an UNCONSTRAINED witness column.
-//   (3) the off-AIR equality — `TurnExecutor::expected_burn_target_limbs` has
-//       ZERO call sites and is `#[allow(dead_code)]`.
+//   (3) the off-AIR equality — there is none. `TurnExecutor::expected_burn_target_limbs` was the
+//       dead-code stub that would have carried it; it had zero call sites and was DELETED in the
+//       canonical-codec Stage 0 sweep, so nothing off-AIR compares the target either.
 // The only carrier the target actually reaches is `compute_effects_hash` (all
 // 8 limbs since the #25 widening), and the deployed descriptor binds none of
 // `PI[EFFECTS_HASH_BASE..+4]` either. Whoever ANCHORS this — that is the real

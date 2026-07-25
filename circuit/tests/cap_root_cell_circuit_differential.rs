@@ -47,7 +47,7 @@ fn ref_leaf(
         AuthRequired::Custom { vk_hash } => {
             use dregg_circuit::poseidon2::hash_many;
             let mut inputs = vec![BabyBear::new(5)];
-            inputs.extend_from_slice(&BabyBear::encode_hash(vk_hash));
+            inputs.extend_from_slice(&dregg_circuit::effect_vm::bytes32_to_8_limbs(vk_hash));
             hash_many(&inputs)
         }
     };

@@ -547,13 +547,13 @@ pub fn field_key_hash(key: u64) -> BabyBear {
     ])
 }
 
-/// Legacy v1 32-byte fold.  `BabyBear::encode_hash` reduces each `u32` chunk
+/// Legacy v1 32-byte fold.  `bytes32_to_8_limbs` reduces each `u32` chunk
 /// modulo the field before hashing, so source bytes differing by `+p` in one
 /// chunk alias deterministically.  This is neither a faithful encoding nor a
 /// collision-resistant commitment to the source bytes.  V2 uses sixteen
 /// exact `u16` limbs in [`ExactFieldsLeaf::preimage`].
 pub fn fold_value32(bytes: &[u8; 32]) -> BabyBear {
-    hash_many(&BabyBear::encode_hash(bytes))
+    hash_many(&crate::effect_vm::bytes32_to_8_limbs(bytes))
 }
 
 /// One legacy-v1 openable-fields entry: the sorted-tree leaf `(key_hash, value)`. The

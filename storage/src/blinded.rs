@@ -1061,16 +1061,14 @@ mod tests {
         use dregg_circuit::descriptor_ir2::{MemBoundaryWitness, prove_vm_descriptor2};
         use dregg_circuit::field::BabyBear;
         use dregg_circuit::note_spend_witness::{NOTE_SPEND_LEAF_NAME, note_spend_witness};
-        use dregg_circuit::note_spending_witness::{
-            NoteSpendingWitness, key_to_field_elements, pi as np,
-        };
+        use dregg_circuit::note_spending_witness::{NoteSpendingWitness, pi as np};
 
         // A REAL value-0 note-spend witness (blinded items are value/asset/dest
         // agnostic → the four amount/asset/destination PI slots are all ZERO).
         let owner = [0x11u8; 32];
         let nonce = [0x22u8; 32];
         let rand = [0x33u8; 32];
-        let key = key_to_field_elements(&[0x77u8; 32]);
+        let key = dregg_circuit::effect_vm::bytes32_to_8_limbs(&[0x77u8; 32]);
         let depth = 2usize;
         let mut siblings = Vec::with_capacity(depth);
         let mut positions = Vec::with_capacity(depth);

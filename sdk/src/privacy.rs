@@ -26,7 +26,7 @@ use dregg_circuit::descriptor_ir2::{
 };
 use dregg_circuit::field::BABYBEAR_P;
 use dregg_circuit::note_spending_witness::{
-    NOTE_SPENDING_WIDTH, NoteSpendingWitness, key_to_field_elements, pi as note_spend_pi,
+    NOTE_SPENDING_WIDTH, NoteSpendingWitness, pi as note_spend_pi,
 };
 use dregg_circuit::poseidon2;
 // `verify_anonymous_presentation` verifies the committed BLINDED ring-membership descriptor
@@ -419,7 +419,7 @@ impl AgentCipherclerk {
         let recipient_spending_key: [u8; 32] = *recipient_spending_key_hasher.finalize().as_bytes();
 
         // Convert spending key to 8 BabyBear limbs.
-        let spending_key_limbs = key_to_field_elements(spending_key);
+        let spending_key_limbs = dregg_circuit::effect_vm::bytes32_to_8_limbs(spending_key);
 
         // Build the spending witness for the STARK proof with FULL-WIDTH
         // (256-bit-per-field) commitment binding. `from_note_limbs` decomposes
@@ -622,7 +622,7 @@ impl AgentCipherclerk {
     /// (matches `commit::poseidon2_tree::commitment_to_field`). (Home moved
     /// here from the retired `dsl::revocation` module.)
     fn revocation_hash_to_field(hash: &[u8; 32]) -> BabyBear {
-        let elements = BabyBear::encode_hash(hash);
+        let elements = dregg_circuit::effect_vm::bytes32_to_8_limbs(hash);
         poseidon2::hash_many(&elements)
     }
 
@@ -720,7 +720,7 @@ pub fn verify_anonymous_presentation(
 
         // Check federation root is the committed root.
         let expected_root_bb = {
-            let limbs = BabyBear::encode_hash(expected_federation_root);
+            let limbs = dregg_circuit::effect_vm::bytes32_to_8_limbs(expected_federation_root);
             poseidon2::hash_many(&limbs)
         };
 
@@ -1202,7 +1202,7 @@ mod tests {
     fn test_verify_note_spending_accepts_honest_rejects_forged() {
         // Build a real full-width witness (value < 2^30 so value_hi = 0, dest = 0 —
         // the exact local-spend shape `verify_note_spending` reconstructs).
-        let spending_key = key_to_field_elements(&[0x7Au8; 32]);
+        let spending_key = dregg_circuit::effect_vm::bytes32_to_8_limbs(&[0x7Au8; 32]);
         let merkle_siblings = vec![
             [BabyBear::new(11), BabyBear::new(22), BabyBear::new(33)],
             [BabyBear::new(44), BabyBear::new(55), BabyBear::new(66)],
@@ -1297,7 +1297,7 @@ mod tests {
         use std::panic::AssertUnwindSafe;
 
         // ── PRODUCER: an honest local-spend witness (value < 2^30 ⇒ value_hi = 0, dest = 0). ──
-        let spending_key = key_to_field_elements(&[0x5Cu8; 32]);
+        let spending_key = dregg_circuit::effect_vm::bytes32_to_8_limbs(&[0x5Cu8; 32]);
         let merkle_siblings = vec![
             [BabyBear::new(7), BabyBear::new(8), BabyBear::new(9)],
             [BabyBear::new(10), BabyBear::new(11), BabyBear::new(12)],

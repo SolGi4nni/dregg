@@ -22,15 +22,26 @@ fn join_u64(lo: BabyBear, hi: BabyBear) -> u64 {
     (lo.0 as u64) | ((hi.0 as u64) << 30)
 }
 
-/// Decompose a 32-byte value into 8 BabyBear limbs (4 bytes each,
-/// little-endian). Position 0 carries bytes `[0..4]`; position 7 carries
-/// bytes `[28..32]`. Each limb is reduced mod `p` (so a 4-byte chunk whose
-/// top bits exceed `p` wraps — this is fine: the encoding is a deterministic,
-/// total function and is identical on both projectors).
+/// **THE single family-F1 encoding in the tree** — 8 BabyBear limbs, 4 little-endian bytes each,
+/// reduced mod `p`. Position 0 carries bytes `[0..4]`; position 7 carries bytes `[28..32]`.
 ///
-/// This is the canonical full-32-byte limb decomposition used to bind hashes
-/// / field elements into the Effect VM PI. It matches the `bytes32_to_8_felts`
-/// convention already used for `Effect::EmitEvent` and `Effect::Custom`.
+/// Every former duplicate (`bytes32_to_8_limbs`'s callers, the three nested
+/// `bytes32_to_8_felts` clones, `bytes32_to_limbs`, `bytes_to_babybear_vec`,
+/// `stark_delegation_bytes32_to_babybear`) now calls THIS body. That collapse moved zero bytes:
+/// all of them computed the same map. Keeping one body is the point — a second name for the same
+/// arithmetic is how the ~17-implementation zoo grew.
+///
+/// ⚠ **NOT injective, and NOT "canonical".** The word "canonical" used to appear here and is
+/// exactly what invited the re-inventions. The mod-`p` reduction identifies a 4-byte chunk `x`
+/// with `x + p`, and a uniformly random chunk needs reducing with probability
+/// `1 − p/2^32 = 53.1%`, so a colliding pair is CONSTRUCTED in `O(1)` — no grind — wherever the
+/// bytes are attacker-chosen. It is deterministic and identical on both projectors, which is why
+/// a collision over-includes (an honest turn goes UNSAT) rather than authorizing a forgery; that
+/// is an availability property, not a binding one.
+///
+/// The canonical codec is `dregg_codec::Limbs16` (16 little-endian u16 limbs, injective) with
+/// `dregg_codec::Digest8` for committed fixed-width slots. Migrating this call graph onto it is
+/// Stage 2 of `docs/DESIGN-canonical-byte-felt-codec.md` — VK-affecting, so not done here.
 // crypto index loops kept verbatim
 #[allow(clippy::needless_range_loop)]
 #[inline]
@@ -133,7 +144,24 @@ pub fn field_limbs8(b: &[u8; 32]) -> [BabyBear; 8] {
     out
 }
 
-/// Collision-resistant fold of a full 32-byte value into a single BabyBear.
+/// Fold of a full 32-byte value into a single BabyBear. **⚠ NOT collision-resistant — `O(1)`, and
+/// `O(1)` even for a CHOSEN TARGET.** This doc used to open with "Collision-resistant fold" and
+/// claim `~2^-31`; both are wrong, and the repo's own test says so
+/// (`circuit/tests/effects_hash_fold_and_burn_target_width.rs`,
+/// `fold_bytes32_to_bb_collides_in_o1_because_it_is_linear`, which exhibits the constructor).
+///
+/// `Σ limbᵢ · MIX^i (mod p)` is an **onto F_p-linear form** on the limb vector. Therefore:
+/// finding a colliding pair is one linear solve, and finding a preimage of ANY chosen felt is one
+/// linear solve. The `~2^-31` figure is the probability that two INDEPENDENT UNIFORM inputs
+/// happen to collide — it is not an adversarial cost, and an adversary here pays none. It also
+/// sits on top of the mod-`p` limb encoding, so it inherits that aliasing upstream.
+///
+/// This is the single worst arithmetic in the tree by attacker cost. It survives here because a
+/// collision over-includes (both producer and verifier project identically, so an honest turn goes
+/// UNSAT) rather than authorizing a forgery — availability, not theft. Migrating it is Stage 2/4 of
+/// `docs/DESIGN-canonical-byte-felt-codec.md`; the replacement is `dregg_codec::Digest8`, never a
+/// better one-felt fold, because no one-felt image of a 32-byte value is acceptable at a security
+/// boundary (`2^15.45` birthday).
 ///
 /// CLOSED (effect-vm-hash-truncation lane, 2026-05-28): the previous
 /// `hash_to_bb` / `field_element_to_bb` projectors took ONLY the first 4 bytes
@@ -150,12 +178,11 @@ pub fn field_limbs8(b: &[u8; 32]) -> [BabyBear; 8] {
 ///   fold = Σ_{i=0}^{7} limb_i · MIX^i   (mod p)
 /// ```
 ///
-/// where `limb_i` is the i-th little-endian 4-byte chunk and `MIX` is a fixed
-/// non-trivial field element. Because every limb contributes with a distinct,
-/// invertible weight, flipping any byte changes the output (and two distinct
-/// 32-byte inputs collide only with ~`1/p ≈ 2^-31` probability for random
-/// inputs — versus the previous *guaranteed* collision whenever the low 4
-/// bytes matched).
+/// where `limb_i` is the i-th little-endian 4-byte chunk and `MIX` is a fixed non-trivial field
+/// element. Distinct invertible weights mean flipping a byte changes the output *by default*, and
+/// two INDEPENDENT UNIFORM inputs collide with ~`1/p ≈ 2^-31` — which is strictly better than the
+/// previous *guaranteed* collision whenever the low 4 bytes matched, and is still not a binding
+/// property. Linearity means an adversary never draws from that distribution: they solve.
 ///
 /// Both the executor projector (`effect_vm_bridge.rs`) and the SDK projector
 /// (`cipherclerk.rs`) call THIS function, so their per-effect felts agree
@@ -182,8 +209,11 @@ pub fn fold_bytes32_to_bb(b: &[u8; 32]) -> BabyBear {
 /// `offered_action_commitment` with the reason discriminant XOR'd into its
 /// low 4 bytes (little-endian). Projected into 8 limbs by both the executor
 /// and SDK projectors, this binds the FULL 32-byte commitment plus the
-/// discriminant at ~256-bit strength (the prior single-felt
-/// `discriminant + fold_bytes32_to_bb(commitment)` form bound only ~31 bits).
+/// discriminant across all 8 limbs (the prior single-felt
+/// `discriminant + fold_bytes32_to_bb(commitment)` form bound only ~31 bits). ⚠ The "~256-bit
+/// strength" this doc used to claim holds only because the input is a Poseidon2/BLAKE3 IMAGE, not
+/// because of the encoder: the 8-limb split is mod-`p` aliasable in `O(1)` for CHOSEN bytes. The
+/// strength is the hash's, borrowed.
 ///
 /// Both `turn::executor::effect_vm_bridge` and `sdk::cipherclerk` call this so
 /// their `[BabyBear; 8]` encodings agree byte-for-byte (protocol-tests

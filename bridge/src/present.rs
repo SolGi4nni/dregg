@@ -1021,70 +1021,6 @@ impl BridgePresentationBuilder {
         Ok((main_proof, pred_proofs))
     }
 
-    /// Build the circuit-level presentation witness from the authorization trace.
-    /// Uses linear algebraic binding for the issuer membership (legacy path).
-    #[allow(dead_code)] // Legacy linear-binding path, retained alongside the Merkle-membership presenter.
-    fn build_circuit_witness(
-        &self,
-        trace: &AuthorizationTrace,
-        request: &AuthRequest,
-    ) -> Result<PresentationWitness, AuthError> {
-        // Compute the canonical action binding commitment from (action, resource).
-        // Resource = app_id OR service (whichever is present), matching the wire
-        // verifier's expectation. This ensures service-scoped tokens produce the
-        // same binding that the verifier will recompute.
-        let action_str = request.action.as_deref().unwrap_or("");
-        let resource_str = request
-            .app_id
-            .as_deref()
-            .or(request.service.as_deref())
-            .unwrap_or("");
-        let request_pred_bb = dregg_circuit::compute_action_binding(action_str, resource_str);
-
-        // Timestamp.
-        let timestamp = request.now.unwrap_or(0);
-        let timestamp_bb = BabyBear::from_u64(timestamp as u64);
-
-        // Build fold witnesses from the chain deltas.
-        let fold_chain = self.build_fold_witnesses();
-
-        // Compute the Poseidon2 state root for the derivation witness.
-        let derivation_state_root = self.final_state_poseidon2_root(&fold_chain);
-
-        // Build the derivation witness from the trace.
-        let derivation = self.build_derivation_witness(trace, derivation_state_root)?;
-
-        // Build the issuer membership witness.
-        let issuer_key_hash = bytes_to_babybear(&self.issuer_key);
-        let issuer_membership = self.build_issuer_membership_poseidon2(issuer_key_hash)?;
-
-        // Generate fresh presentation randomness for the presentation tag.
-        let presentation_randomness = generate_presentation_randomness();
-
-        // Assemble the presentation witness.
-        // We need the federation_root to match the issuer_membership.expected_root
-        // for the proof to verify.
-        // NOTE: Legacy path uses blinding_factor=ZERO (no ring membership).
-        // NOTE: Legacy path uses composition_commitment=ZERO (no sub-proof binding).
-        let witness = PresentationWitness {
-            federation_root: issuer_membership.expected_root,
-            request_predicate: request_pred_bb,
-            timestamp: timestamp_bb,
-            fold_chain,
-            derivation,
-            issuer_membership,
-            issuer_key_hash,
-            revealed_facts_commitment: self.revealed_facts_commitment,
-            blinding_factor: BabyBear::ZERO,
-            presentation_randomness,
-            composition_commitment: WideHash::ZERO,
-            verifier_nonce: BabyBear::ZERO,
-            verifier_block_height: BabyBear::ZERO,
-        };
-
-        Ok(witness)
-    }
-
     /// Build the circuit-level presentation witness using Poseidon2 hashing
     /// for the issuer membership proof (collision-resistant, production path).
     ///
@@ -1756,17 +1692,17 @@ impl BridgePresentationBuilder {
     }
 }
 
-/// Encode a 32-byte value as 8 BabyBear field elements (4 bytes each, mod p).
-/// This preserves full 256-bit distinguishability across the limb vector.
-pub fn bytes_to_babybear_vec(bytes: &[u8; 32]) -> [BabyBear; 8] {
-    BabyBear::encode_hash(bytes)
-}
-
-/// Compress a 32-byte value into a single BabyBear element by encoding as
-/// 8 limbs and hashing them together with Poseidon2. This preserves collision
-/// resistance up to the ~31-bit field size while using all 256 input bits.
+/// Compress a 32-byte value into a single BabyBear element by encoding it as 8 mod-`p` limbs and
+/// hashing them with Poseidon2.
+///
+/// ⚠ **~2^15.45, not ~2^128.** The prior doc here claimed this "preserves collision resistance …
+/// while using all 256 input bits"; both halves are false. The limb encoding identifies `x` with
+/// `x + p` (53.1% of 4-byte chunks alias), so the sponge is fed identical inputs and cannot undo
+/// the collision — a colliding pair is CONSTRUCTED, not searched, wherever the bytes are
+/// attacker-chosen. And the single-felt image carries a ~2^15.45 birthday bound regardless.
+/// Migrate to `Digest8` (`dregg-codec`); this is Stage 2 work.
 pub fn bytes_to_babybear(bytes: &[u8; 32]) -> BabyBear {
-    let limbs = bytes_to_babybear_vec(bytes);
+    let limbs = dregg_circuit::effect_vm::bytes32_to_8_limbs(bytes);
     poseidon2::hash_many(&limbs)
 }
 
@@ -3413,12 +3349,13 @@ mod tests {
     }
 
     #[test]
-    fn test_bytes_to_babybear_vec() {
-        // Multi-limb encoding should preserve all 32 bytes.
+    fn test_encode_hash_limbs() {
+        // The 8-limb encoding covers all 32 bytes. It does NOT bind them: see the alias canary
+        // in `dregg-codec`'s `the_mod_p_alias_pair_no_longer_collides`.
         let mut bytes = [0u8; 32];
         bytes[0] = 1;
         bytes[31] = 0xFF;
-        let limbs = bytes_to_babybear_vec(&bytes);
+        let limbs = dregg_circuit::effect_vm::bytes32_to_8_limbs(&bytes);
         assert_eq!(limbs.len(), 8);
         // First limb encodes bytes[0..4]: value 1
         assert_eq!(limbs[0], BabyBear::new(1));

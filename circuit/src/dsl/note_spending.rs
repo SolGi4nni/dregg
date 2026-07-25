@@ -46,7 +46,7 @@ pub const NULLIFIER_INTERMEDIATE: usize = 17;
 #[allow(deprecated)]
 pub use crate::note_spending_witness::{
     NoteSpendingAir, NoteSpendingWitness as NoteSpendingWitnessType, create_test_witness,
-    key_to_field_elements, test_spending_key,
+    test_spending_key,
 };
 
 // ============================================================================
@@ -770,7 +770,7 @@ pub fn note_spend_mint_hash_felt(
 /// `verify_stark` closure performs before verifying the note-spend proof:
 ///
 ///   * `nullifier` / `note_tree_root` / `destination_federation`: 32-byte
-///     values compressed via `BabyBear::encode_hash` → Poseidon2 `hash_many`
+///     values compressed via `bytes32_to_8_limbs` → Poseidon2 `hash_many`
 ///     (the `bridge::present::bytes_to_babybear` convention);
 ///   * `value`: split into the low-30 / high-34 limbs (the two-limb full-u64
 ///     binding, CAVEAT-LAYER-COVERAGE.md §6.5);
@@ -790,7 +790,7 @@ pub fn bridge_mint_hash_felt(
     asset_type: u64,
 ) -> BabyBear {
     fn compress(bytes: &[u8; 32]) -> BabyBear {
-        hash_many(&BabyBear::encode_hash(bytes))
+        hash_many(&crate::effect_vm::bytes32_to_8_limbs(bytes))
     }
     let value_lo = BabyBear::new((value & ((1u64 << 30) - 1)) as u32);
     let value_hi = BabyBear::new((value >> 30) as u32);

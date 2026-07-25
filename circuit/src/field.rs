@@ -183,12 +183,6 @@ impl BabyBear {
         self * self
     }
 
-    /// Convert a byte slice to a vector of field elements.
-    /// Each byte becomes one field element.
-    pub fn from_bytes(bytes: &[u8]) -> Vec<Self> {
-        bytes.iter().map(|&b| Self::new(b as u32)).collect()
-    }
-
     /// Convert 4 bytes into a single field element (little-endian, fits in BabyBear).
     /// Only uses 31 bits, so at most 3.875 bytes of entropy per element.
     pub fn from_bytes_packed(bytes: &[u8]) -> Vec<Self> {
@@ -206,27 +200,6 @@ impl BabyBear {
             i += 4;
         }
         result
-    }
-
-    /// Encode a 32-byte hash as a vector of BabyBear elements (8 elements, 4 bytes each).
-    pub fn encode_hash(hash: &[u8; 32]) -> [Self; 8] {
-        let mut out = [Self::ZERO; 8];
-        for (i, chunk) in hash.chunks(4).enumerate() {
-            let val = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-            out[i] = Self::new(val);
-        }
-        out
-    }
-
-    /// Decode 8 BabyBear elements back to a 32-byte value.
-    /// Note: this is lossy due to modular reduction in `encode_hash`.
-    pub fn decode_hash(elements: &[Self; 8]) -> [u8; 32] {
-        let mut out = [0u8; 32];
-        for (i, &elem) in elements.iter().enumerate() {
-            let bytes = elem.0.to_le_bytes();
-            out[i * 4..i * 4 + 4].copy_from_slice(&bytes);
-        }
-        out
     }
 }
 
@@ -423,7 +396,7 @@ mod tests {
             1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
             25, 26, 27, 28, 29, 30, 31, 32,
         ];
-        let encoded = BabyBear::encode_hash(&hash);
+        let encoded = crate::effect_vm::bytes32_to_8_limbs(&hash);
         assert_eq!(encoded.len(), 8);
         // Verify round-trip (may lose some bits due to reduction)
         for &e in &encoded {

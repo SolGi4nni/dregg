@@ -119,11 +119,15 @@ impl Leaf {
         self.u128(p.patch.0);
     }
 
-    /// Finalize the preimage into a 32-byte heap leaf value via BLAKE3 (the
-    /// cryptographic digest already present in the substrate dep tree). The
-    /// substrate's `fold_bytes32` is collision-resistant over the full 32 bytes,
-    /// so distinct preimages yield distinct heap leaves with overwhelming
-    /// probability.
+    /// Finalize the preimage into a 32-byte heap leaf value via BLAKE3 (the cryptographic digest
+    /// already present in the substrate dep tree). Distinct preimages yield distinct heap leaves
+    /// with overwhelming probability — because **BLAKE3** is collision-resistant, which is the
+    /// mechanism actually used here.
+    ///
+    /// ⚠ This doc used to credit "the substrate's `fold_bytes32`", which is not called on this
+    /// path at all and is not collision-resistant either (an onto F_p-linear form; see
+    /// `dregg_circuit::effect_vm::fold_bytes32_to_bb`). Naming the wrong mechanism is how the next
+    /// author inherits a guarantee nobody provides.
     fn finish(self) -> FieldElement {
         *blake3::hash(&self.bytes).as_bytes()
     }

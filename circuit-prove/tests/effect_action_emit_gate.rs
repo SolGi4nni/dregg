@@ -15,7 +15,7 @@
 //!      hand-built `EffectVmDescriptor2` (Lean emit ≡ Rust builder — a byte drift on either side
 //!      breaks this OR the Lean `#guard`);
 //!   2. proves an HONEST binding witness (the SAME limb encoding the hand AIR uses,
-//!      `effect_action_air::{encode_hash, encode_amount}`) through [`prove_vm_descriptor2`], asserts
+//!      `effect_vm::bytes32_to_8_limbs` + `effect_action_air::encode_amount`) through [`prove_vm_descriptor2`], asserts
 //!      ACCEPT, and re-verifies;
 //!   3. the MUTATION CANARIES — each tampers exactly one thing and asserts refusal, and each bites a
 //!      NAMED constraint:
@@ -35,7 +35,8 @@ use dregg_circuit::descriptor_ir2::{
     EffectVmDescriptor2, MemBoundaryWitness, VmConstraint2, WindowExpr, WindowGateSpec,
     parse_vm_descriptor2, prove_vm_descriptor2, verify_vm_descriptor2,
 };
-use dregg_circuit::effect_action_air::{encode_amount, encode_hash};
+use dregg_circuit::effect_action_air::encode_amount;
+use dregg_circuit::effect_vm::bytes32_to_8_limbs;
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::lean_descriptor_air::{LeanExpr, VmConstraint, VmRow};
 use dregg_circuit::refusal::{Outcome, classify};
@@ -148,7 +149,7 @@ fn hand_built_burn() -> EffectVmDescriptor2 {
 /// One Burn binding row (width 17): field limbs + old/new/amount/was_burn limbs + borrow aux.
 fn burn_row(target: &[u8; 32], old: u64, new: u64, amount: u64, was_burn: u64) -> Vec<BabyBear> {
     let mut row = vec![BabyBear::ZERO; 17];
-    let f = encode_hash(target);
+    let f = bytes32_to_8_limbs(target);
     row[0..8].copy_from_slice(&f);
     let [o_lo, o_hi] = encode_amount(old);
     let [n_lo, n_hi] = encode_amount(new);
@@ -187,7 +188,7 @@ fn rows4(row: Vec<BabyBear>) -> Vec<Vec<BabyBear>> {
 /// One revoke-capability binding row (width 10): cell_id limbs + slot limbs.
 fn revoke_row(cell: &[u8; 32], slot: u64) -> Vec<BabyBear> {
     let mut row = vec![BabyBear::ZERO; 10];
-    let f = encode_hash(cell);
+    let f = bytes32_to_8_limbs(cell);
     row[0..8].copy_from_slice(&f);
     let [lo, hi] = encode_amount(slot);
     row[8] = lo;

@@ -584,7 +584,7 @@ fn auth_required_to_tag(auth: &AuthRequired) -> dregg_circuit::field::BabyBear {
             // Absorb [tier, vk_limb0..7] so the 8 vk_hash limbs bind the tag.
             let mut inputs = Vec::with_capacity(9);
             inputs.push(tier);
-            inputs.extend_from_slice(&BabyBear::encode_hash(vk_hash));
+            inputs.extend_from_slice(&dregg_circuit::effect_vm::bytes32_to_8_limbs(vk_hash));
             hash_many(&inputs)
         }
         _ => tier,

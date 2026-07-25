@@ -182,7 +182,7 @@ pub fn schnorr_verify_prehashed(
 fn compute_challenge(r: &CurvePoint, pk: &CurvePoint, message: &[u8]) -> Scalar {
     // Hash the message to 8 field elements via BLAKE3 then encode
     let msg_blake = blake3::hash(message);
-    let msg_hash = BabyBear::encode_hash(msg_blake.as_bytes());
+    let msg_hash = crate::effect_vm::bytes32_to_8_limbs(msg_blake.as_bytes());
     compute_challenge_from_elements(r, pk, &msg_hash)
 }
 
@@ -372,7 +372,7 @@ mod tests {
 
         // Compute the message hash the same way the signer does
         let msg_blake = blake3::hash(message);
-        let msg_hash = BabyBear::encode_hash(msg_blake.as_bytes());
+        let msg_hash = crate::effect_vm::bytes32_to_8_limbs(msg_blake.as_bytes());
 
         assert!(schnorr_verify_prehashed(&pk, &sig, &msg_hash));
     }

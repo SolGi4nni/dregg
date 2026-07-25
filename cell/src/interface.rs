@@ -181,7 +181,7 @@ impl MethodSig {
 
         let mut inputs: Vec<BabyBear> = Vec::with_capacity(20);
         // 8 limbs of the method symbol (the dispatch key).
-        inputs.extend_from_slice(&BabyBear::encode_hash(&self.symbol));
+        inputs.extend_from_slice(&dregg_circuit::effect_vm::bytes32_to_8_limbs(&self.symbol));
         // args schema (tag + arity).
         let [args_tag, args_n] = self.args_schema.commitment_bytes();
         inputs.push(BabyBear::new(args_tag as u32));
@@ -217,7 +217,7 @@ fn auth_leaf_lanes(
         AuthRequired::Custom { .. } => 5,
     };
     let vk_limbs = match auth {
-        AuthRequired::Custom { vk_hash } => BabyBear::encode_hash(vk_hash),
+        AuthRequired::Custom { vk_hash } => dregg_circuit::effect_vm::bytes32_to_8_limbs(vk_hash),
         _ => [BabyBear::ZERO; 8],
     };
     (BabyBear::new(tier), vk_limbs)
