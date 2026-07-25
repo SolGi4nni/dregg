@@ -34,7 +34,7 @@ route	turn/src/executor/atomic.rs	ConservationGateUnavailable	twin#1 the FAIL-CL
 route	turn/src/executor/atomic.rs	#\[cfg\(not\(all\(any\(unix, windows\), not\(debug_assertions\)\)\)\)\]	twin#1 the Rust conservation fallback stays STRICTLY gated out of every native release build (the complement of the fail-closed cfg); widening this cfg is how the twin comes back
 
 # ── twin#2 cell StateConstraint eval (native fail-closed when no oracle) ─────────────
-route	cell/src/program/eval.rs	no_oracle_subset_disposition	twin#2 a subset constraint with no oracle fails closed to the verified dregg_constraint_admits
+route	cell/src/program/eval.rs	undecided_subset_disposition	twin#2 a subset constraint with no oracle fails closed to the verified dregg_constraint_admits
 
 # ── twin#3 coord 2PC decide ──────────────────────────────────────────────────────────
 route	coord/src/atomic.rs	verified_decision	twin#3 the 2PC live path routes through the verified Lean gate
