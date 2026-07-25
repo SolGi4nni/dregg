@@ -92,6 +92,7 @@ open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.SetFieldCommit (recSetFieldCommit sfFrameCarrier)
 open Dregg2.Circuit.CommitmentCrossBind
   (LeafIsCellCommit cellCommit_determined stateCommit_binds_cellCommit setFieldCommit_binds_cellCommit)
+open Dregg2.Circuit.StateCommitLeafRegrounded (CellLeafColl MovedLeafColl FrameLeafColl)
 open Dregg2.Exec.RecordCommit (cellCommit)
 open Dregg2.Circuit.Argus (RecStmt interp transferStmt interp_transferStmt_eq_recKExec)
 
@@ -159,9 +160,11 @@ ARGUS TERM produced. REUSES `stateCommit_binds_cellCommit` (no crypto re-derived
 the root's state IS the Argus `interp` output (`hexec` names `k'`). -/
 theorem argus_circuit_pins_receipt
     (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
-    (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
+    (hCompressN : compressNInjective compressN)
     (hRest : RestHashIffFrame RH)
     (st : RecStmt) (k k' k₂ : RecordKernelState) (t : Turn)
+    (hnoFrameLeafC : ¬ FrameLeafColl CH k' k₂ (k'.accounts \ {t.src, t.dst}))
+    (hnoMovedLeaf : ¬ MovedLeafColl CH k'.cell k₂.cell t.src t.dst)
     (hexec : interp st k = some k')
     (hRootPI : recStateCommit CH RH cmb compress compressN k' t
       = recStateCommit CH RH cmb compress compressN k₂ t) :
@@ -172,7 +175,7 @@ theorem argus_circuit_pins_receipt
   -- the crown's circuit corner: equal circuit roots ⟹ the produced cell's receipt = `k₂`'s receipt.
   obtain ⟨hframe, _, _⟩ :=
     stateCommit_binds_cellCommit CH RH cmb compress compressN compress2 restLimbs
-      hCmb hCompress hCompressN hLeaf hRest k' k₂ t hRootPI
+      hCmb hCompress hCompressN hRest k' k₂ t hnoFrameLeafC hnoMovedLeaf hRootPI
   -- the receipt the Argus term publishes is the `cellCommit` of the produced cell `k'.cell c`.
   rw [argus_receipt_some_iff compressN compress2 restLimbs st k k' c hexec, hframe c hc]
 
@@ -183,9 +186,11 @@ publishes for any untouched live cell EQUALS `k₂`'s receipt. The executor's RE
 pins the canonical receipt of the cell the Argus term produced. REUSES `setFieldCommit_binds_cellCommit`. -/
 theorem argus_executor_pins_receipt
     (hCmb : compressInjective cmb)
-    (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
+    (hCompressN : compressNInjective compressN)
     (hRest : RestHashIffFrame RH) (hLog : Dregg2.Circuit.StateCommit.logHashInjective LH)
     (st : RecStmt) (k k' k₂ : RecordKernelState) (cell : CellId) (log log' : List Turn)
+    (hnoFrameLeafE : ¬ FrameLeafColl CH k' k₂ (k'.accounts \ {cell}))
+    (hnoTouchedLeaf : ¬ CellLeafColl CH cell (k'.cell cell) (k₂.cell cell))
     (hexec : interp st k = some k')
     (hSFRootPI : recSetFieldCommit CH RH cmb compressN LH k' cell log
       = recSetFieldCommit CH RH cmb compressN LH k₂ cell log') :
@@ -195,7 +200,7 @@ theorem argus_executor_pins_receipt
   intro c hc
   obtain ⟨hframe, _⟩ :=
     setFieldCommit_binds_cellCommit CH RH cmb compressN LH compress2 restLimbs
-      hCmb hCompressN hLeaf hRest hLog k' k₂ cell log log' hSFRootPI
+      hCmb hCompressN hRest hLog k' k₂ cell log log' hnoFrameLeafE hnoTouchedLeaf hSFRootPI
   rw [argus_receipt_some_iff compressN compress2 restLimbs st k k' c hexec, hframe c hc]
 
 /-- **`argus_commits_to_one_receipt` — THE CONNECTION KEYSTONE.** The MID-4 close FOR THE IR.
@@ -215,9 +220,13 @@ commitment of the cell the IR term produced. "The state an Argus term produces c
 authenticated receipt." -/
 theorem argus_commits_to_one_receipt
     (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
-    (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
+    (hCompressN : compressNInjective compressN)
     (hRest : RestHashIffFrame RH) (hLog : Dregg2.Circuit.StateCommit.logHashInjective LH)
     (st : RecStmt) (k k' k₂ : RecordKernelState) (t : Turn) (cell : CellId) (log log' : List Turn)
+    (hnoFrameLeafC : ¬ FrameLeafColl CH k' k₂ (k'.accounts \ {t.src, t.dst}))
+    (hnoMovedLeaf : ¬ MovedLeafColl CH k'.cell k₂.cell t.src t.dst)
+    (hnoFrameLeafE : ¬ FrameLeafColl CH k' k₂ (k'.accounts \ {cell}))
+    (hnoTouchedLeaf : ¬ CellLeafColl CH cell (k'.cell cell) (k₂.cell cell))
     (hexec : interp st k = some k')
     (hRootPI : recStateCommit CH RH cmb compress compressN k' t
       = recStateCommit CH RH cmb compress compressN k₂ t)
@@ -238,12 +247,12 @@ theorem argus_commits_to_one_receipt
     have hPub := argus_receipt_some_iff compressN compress2 restLimbs st k k' c hexec
     -- (ii): the CIRCUIT corner equates the published receipt to `k₂`'s; strip the `some` against (i).
     have hCirc := argus_circuit_pins_receipt CH RH cmb compress compressN compress2 restLimbs
-      hCmb hCompress hCompressN hLeaf hRest st k k' k₂ t hexec hRootPI c hcCirc
+      hCmb hCompress hCompressN hRest st k k' k₂ t hnoFrameLeafC hnoMovedLeaf hexec hRootPI c hcCirc
     have hCircEq : cellCommit compressN compress2 (restLimbs c) (k'.cell c)
         = cellCommit compressN compress2 (restLimbs c) (k₂.cell c) := Option.some.inj (hPub.symm.trans hCirc)
     -- (iii): the EXECUTOR corner independently equates the SAME published receipt to `k₂`'s.
     have hExec := argus_executor_pins_receipt CH RH cmb compressN LH compress2 restLimbs
-      hCmb hCompressN hLeaf hRest hLog st k k' k₂ cell log log' hexec hSFRootPI c hcExec
+      hCmb hCompressN hRest hLog st k k' k₂ cell log log' hnoFrameLeafE hnoTouchedLeaf hexec hSFRootPI c hcExec
     have hExecEq : cellCommit compressN compress2 (restLimbs c) (k'.cell c)
         = cellCommit compressN compress2 (restLimbs c) (k₂.cell c) := Option.some.inj (hPub.symm.trans hExec)
     ⟨hPub, hCircEq, hExecEq⟩
@@ -258,9 +267,13 @@ state determines*. We surface `qc`/`qe` as the two corners' bindings of the publ
 their equality through the shared `argusReceipt` value (NOT by `rfl` on a pre-identified term). -/
 theorem argus_circuit_executor_receipts_agree
     (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
-    (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
+    (hCompressN : compressNInjective compressN)
     (hRest : RestHashIffFrame RH) (hLog : Dregg2.Circuit.StateCommit.logHashInjective LH)
     (st : RecStmt) (k k' k₂ : RecordKernelState) (t : Turn) (cell : CellId) (log log' : List Turn)
+    (hnoFrameLeafC : ¬ FrameLeafColl CH k' k₂ (k'.accounts \ {t.src, t.dst}))
+    (hnoMovedLeaf : ¬ MovedLeafColl CH k'.cell k₂.cell t.src t.dst)
+    (hnoFrameLeafE : ¬ FrameLeafColl CH k' k₂ (k'.accounts \ {cell}))
+    (hnoTouchedLeaf : ¬ CellLeafColl CH cell (k'.cell cell) (k₂.cell cell))
     (qc qe : ℤ)
     (hexec : interp st k = some k')
     (hRootPI : recStateCommit CH RH cmb compress compressN k' t
@@ -275,11 +288,11 @@ theorem argus_circuit_executor_receipts_agree
   -- the circuit corner ties the published receipt to `k₂`'s; so does the executor corner; both also equal
   -- `argusReceipt`, hence `qc = (k₂'s receipt) = qe` — agreement through the ONE produced-state receipt.
   have hCirc := argus_circuit_pins_receipt CH RH cmb compress compressN compress2 restLimbs
-    hCmb hCompress hCompressN hLeaf hRest st k k' k₂ t hexec hRootPI c hcCirc
+    hCmb hCompress hCompressN hRest st k k' k₂ t hnoFrameLeafC hnoMovedLeaf hexec hRootPI c hcCirc
   have hQcVal : some qc = some (cellCommit compressN compress2 (restLimbs c) (k₂.cell c)) :=
     hQc.symm.trans hCirc
   have hExec := argus_executor_pins_receipt CH RH cmb compressN LH compress2 restLimbs
-    hCmb hCompressN hLeaf hRest hLog st k k' k₂ cell log log' hexec hSFRootPI c hcExec
+    hCmb hCompressN hRest hLog st k k' k₂ cell log log' hnoFrameLeafE hnoTouchedLeaf hexec hSFRootPI c hcExec
   have hQeVal : some qe = some (cellCommit compressN compress2 (restLimbs c) (k₂.cell c)) :=
     hQe.symm.trans hExec
   exact Option.some.inj (hQcVal.trans hQeVal.symm)
@@ -331,9 +344,13 @@ theorem argus_published_index_pins_receipt
     (compress2 : Int → Int → Int) (restLimbs : CellId → List ℤ)
     (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
     (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
-    (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
+    (hCompressN : compressNInjective compressN)
     (hRest : RestHashIffFrame RH) (hLog : Dregg2.Circuit.StateCommit.logHashInjective LH)
     (st : RecStmt) (k k' k₂ : RecordKernelState) (t : Turn) (cell : CellId) (log log' : List Turn)
+    (hnoFrameLeafC : ¬ FrameLeafColl CH k' k₂ (k'.accounts \ {t.src, t.dst}))
+    (hnoMovedLeaf : ¬ MovedLeafColl CH k'.cell k₂.cell t.src t.dst)
+    (hnoFrameLeafE : ¬ FrameLeafColl CH k' k₂ (k'.accounts \ {cell}))
+    (hnoTouchedLeaf : ¬ CellLeafColl CH cell (k'.cell cell) (k₂.cell cell))
     (hexec : interp st k = some k')
     -- the published receipt index: the client-held genuine log `L`, the prover's log `L'` recomposing
     -- the SAME published root (the adversarial-server form):
@@ -356,8 +373,8 @@ theorem argus_published_index_pins_receipt
   intro c hcCirc hcExec
   obtain ⟨hPub, hCircEq, _⟩ :=
     argus_commits_to_one_receipt CH RH cmb compress compressN LH compress2 restLimbs
-      hCmb hCompress hCompressN hLeaf hRest hLog st k k' k₂ t cell log log'
-      hexec hRootPI hSFRootPI c hcCirc hcExec
+      hCmb hCompress hCompressN hRest hLog st k k' k₂ t cell log log'
+      hnoFrameLeafC hnoMovedLeaf hnoFrameLeafE hnoTouchedLeaf hexec hRootPI hSFRootPI c hcCirc hcExec
   rw [hPub, hCircEq]
 
 /-- **`transfer_published_index_pins_receipt`** — the discharged keystone at the TRANSFER term,
@@ -372,9 +389,13 @@ theorem transfer_published_index_pins_receipt
     (compress2 : Int → Int → Int) (restLimbs : CellId → List ℤ)
     (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
     (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
-    (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
+    (hCompressN : compressNInjective compressN)
     (hRest : RestHashIffFrame RH) (hLog : Dregg2.Circuit.StateCommit.logHashInjective LH)
     (turn : Turn) (k k' k₂ : RecordKernelState) (t : Turn) (cell : CellId) (log log' : List Turn)
+    (hnoFrameLeafC : ¬ FrameLeafColl CH k' k₂ (k'.accounts \ {t.src, t.dst}))
+    (hnoMovedLeaf : ¬ MovedLeafColl CH k'.cell k₂.cell t.src t.dst)
+    (hnoFrameLeafE : ¬ FrameLeafColl CH k' k₂ (k'.accounts \ {cell}))
+    (hnoTouchedLeaf : ¬ CellLeafColl CH cell (k'.cell cell) (k₂.cell cell))
     (hexec : recKExec k turn = some k')
     (L L' : List ℤ) (hpub : mroot hash L' = mroot hash L) (i j : ℕ)
     (hOpenCirc' : Opens L' i (recStateCommit CH RH cmb compress compressN k' t))
@@ -387,7 +408,8 @@ theorem transfer_published_index_pins_receipt
   have hi : interp (transferStmt turn) k = some k' := by
     rw [interp_transferStmt_eq_recKExec]; exact hexec
   exact argus_published_index_pins_receipt CH RH cmb compress compressN LH compress2 restLimbs
-    hash hCR hCmb hCompress hCompressN hLeaf hRest hLog (transferStmt turn) k k' k₂ t cell log log'
+    hash hCR hCmb hCompress hCompressN hRest hLog (transferStmt turn) k k' k₂ t cell log log'
+    hnoFrameLeafC hnoMovedLeaf hnoFrameLeafE hnoTouchedLeaf
     hi L L' hpub i j hOpenCirc' hOpenCirc hOpenSF' hOpenSF
 
 -- NON-VACUITY of the openings premise (both polarities, on the decidable `Opens`): a root WRITTEN at a
@@ -444,10 +466,14 @@ authenticated receipt Q of the cell the VERIFIED EXECUTOR produced. The IR-execu
 closes on a single Q for the transfer effect. -/
 theorem transfer_commits_to_one_receipt
     (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
-    (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
+    (hCompressN : compressNInjective compressN)
     (hRest : RestHashIffFrame RH) (LH : List Turn → ℤ)
     (hLog : Dregg2.Circuit.StateCommit.logHashInjective LH)
     (turn : Turn) (k k' k₂ : RecordKernelState) (t : Turn) (cell : CellId) (log log' : List Turn)
+    (hnoFrameLeafC : ¬ FrameLeafColl CH k' k₂ (k'.accounts \ {t.src, t.dst}))
+    (hnoMovedLeaf : ¬ MovedLeafColl CH k'.cell k₂.cell t.src t.dst)
+    (hnoFrameLeafE : ¬ FrameLeafColl CH k' k₂ (k'.accounts \ {cell}))
+    (hnoTouchedLeaf : ¬ CellLeafColl CH cell (k'.cell cell) (k₂.cell cell))
     (hexec : recKExec k turn = some k')
     (hRootPI : recStateCommit CH RH cmb compress compressN k' t
       = recStateCommit CH RH cmb compress compressN k₂ t)
@@ -462,8 +488,8 @@ theorem transfer_commits_to_one_receipt
     rw [interp_transferStmt_eq_recKExec]; exact hexec
   obtain ⟨hPub, hCircEq, _⟩ :=
     argus_commits_to_one_receipt CH RH cmb compress compressN LH compress2 restLimbs
-      hCmb hCompress hCompressN hLeaf hRest hLog (transferStmt turn) k k' k₂ t cell log log'
-      hi hRootPI hSFRootPI c hcCirc hcExec
+      hCmb hCompress hCompressN hRest hLog (transferStmt turn) k k' k₂ t cell log log'
+      hnoFrameLeafC hnoMovedLeaf hnoFrameLeafE hnoTouchedLeaf hi hRootPI hSFRootPI c hcCirc hcExec
   -- the published receipt is the produced cell's (`hPub`); the circuit corner equates it to `k₂`'s (`hCircEq`).
   rw [hPub, hCircEq]
 

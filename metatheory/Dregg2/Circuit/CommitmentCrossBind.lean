@@ -116,6 +116,7 @@ This crown binds the three commitments **through their shared `CH`/`RH`/`cmb` su
        gap. Named, not hidden.
 -/
 import Dregg2.Circuit.SetFieldCommit
+import Dregg2.Circuit.StateCommitLeafRegrounded
 import Dregg2.Exec.RecordCommit
 import Dregg2.Circuit.Emit.EffectVmFullStateRunnable
 import Dregg2.Circuit.Emit.EffectVmWideCommitReduction
@@ -124,6 +125,10 @@ namespace Dregg2.Circuit.CommitmentCrossBind
 
 open Dregg2.Circuit
 open Dregg2.Circuit.StateCommit
+open Dregg2.Circuit.StateCommitLeafRegrounded
+  (CellLeafColl MovedLeafColl FrameLeafColl cellLeaf_binds_of_noColl
+   movedDigest_binds_of_noLeafColl frameDigest_binds_of_noLeafColl
+   noCellLeafColl_of_inj noMovedLeafColl_of_inj noFrameLeafColl_of_inj)
 open Dregg2.Circuit.SetFieldCommit
 open Dregg2.Exec
 open Dregg2.Exec.RecordCommit
@@ -200,9 +205,11 @@ the rest. Derived: `recStateCommit_binds` splits the root (`cmb` CR) into equal 
 fields. -/
 theorem stateCommit_binds_cells_and_rest
     (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
-    (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
+    (hCompressN : compressNInjective compressN)
     (hRest : RestHashIffFrame RH)
     (k k' : RecordKernelState) (t : Turn)
+    (hnoFrameLeaf : ¬ FrameLeafColl CH k k' (k.accounts \ {t.src, t.dst}))
+    (hnoMovedLeaf : ¬ MovedLeafColl CH k.cell k'.cell t.src t.dst)
     (hroot : recStateCommit CH RH cmb compress compressN k t
       = recStateCommit CH RH cmb compress compressN k' t) :
     (∀ c ∈ frameCarrier k t, k.cell c = k'.cell c)
@@ -228,10 +235,12 @@ theorem stateCommit_binds_cells_and_rest
   obtain ⟨hfd, hmd⟩ := hCompress _ _ _ _ hcd
   -- frame cells (carrier now `k.accounts \ {src,dst}` on both sides).
   have hframe : ∀ c ∈ k.accounts \ {t.src, t.dst}, k.cell c = k'.cell c :=
-    FrameDigestBindsCells CH compressN hCompressN hLeaf k k' (k.accounts \ {t.src, t.dst}) hfd
+    frameDigest_binds_of_noLeafColl CH compressN hCompressN k k' (k.accounts \ {t.src, t.dst})
+      hnoFrameLeaf hfd
   -- moved cells.
   obtain ⟨hsrc, hdst⟩ :=
-    MovedDigestBindsCells CH compress hCompress hLeaf k.cell k'.cell t.src t.dst hmd
+    movedDigest_binds_of_noLeafColl CH compress hCompress k.cell k'.cell t.src t.dst
+      hnoMovedLeaf hmd
   exact ⟨hframe, ⟨hsrc, hdst⟩, hframe16⟩
 
 /-- **`setFieldCommit_binds_all`.** Equal EXECUTOR log-bearing roots (same touched cell) force
@@ -243,9 +252,11 @@ rest-side into `RH`+`LH`; then the frame lemma + `RestHashIffFrame` + `logHashIn
 everything. -/
 theorem setFieldCommit_binds_all
     (hCmb : compressInjective cmb)
-    (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
+    (hCompressN : compressNInjective compressN)
     (hRest : RestHashIffFrame RH) (hLog : logHashInjective LH)
     (k k' : RecordKernelState) (cell : CellId) (log log' : List Turn)
+    (hnoFrameLeaf : ¬ FrameLeafColl CH k k' (k.accounts \ {cell}))
+    (hnoTouchedLeaf : ¬ CellLeafColl CH cell (k.cell cell) (k'.cell cell))
     (hroot : recSetFieldCommit CH RH cmb compressN LH k cell log
       = recSetFieldCommit CH RH cmb compressN LH k' cell log') :
     (∀ c ∈ sfFrameCarrier k cell, k.cell c = k'.cell c)
@@ -275,9 +286,11 @@ theorem setFieldCommit_binds_all
   rw [hacc] at hfd
   -- untouched cells (carrier now `k.accounts \ {cell}` on both sides).
   have hframe : ∀ c ∈ k.accounts \ {cell}, k.cell c = k'.cell c :=
-    FrameDigestBindsCells CH compressN hCompressN hLeaf k k' (k.accounts \ {cell}) hfd
+    frameDigest_binds_of_noLeafColl CH compressN hCompressN k k' (k.accounts \ {cell})
+      hnoFrameLeaf hfd
   -- touched cell.
-  have htouched : k.cell cell = k'.cell cell := hLeaf cell _ _ hleafeq
+  have htouched : k.cell cell = k'.cell cell :=
+    cellLeaf_binds_of_noColl CH cell _ _ hnoTouchedLeaf hleafeq
   -- 16 fields + log.
   exact ⟨hframe, htouched, hframe16, hLog log log' hLHeq⟩
 
@@ -320,11 +333,12 @@ frame child (the SAME `frameDigest CH compressN · S` over a SHARED carrier `S`)
 then the proved sponge binding forces `k` and `k'` to agree on EVERY cell in `S`. A circuit proof and
 an executor proof publishing the SAME frame sub-root constrain the SAME cells. -/
 theorem crossbind_cells_agree
-    (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
+    (hCompressN : compressNInjective compressN)
     (k k' : RecordKernelState) (S : Finset CellId)
+    (hnoFrameLeaf : ¬ FrameLeafColl CH k k' S)
     (hPI : frameDigest CH compressN k S = frameDigest CH compressN k' S) :
     ∀ c ∈ S, k.cell c = k'.cell c :=
-  FrameDigestBindsCells CH compressN hCompressN hLeaf k k' S hPI
+  frameDigest_binds_of_noLeafColl CH compressN hCompressN k k' S hnoFrameLeaf hPI
 
 /-- **`crossbind_circuit_exec_same_state`.** The packaged weld: GIVEN the circuit and the
 executor publish the SAME rest sub-root AND the SAME frame sub-root over the SHARED untouched carrier
@@ -334,8 +348,9 @@ across the two commitments. This is the MID-4 keystone: a `recStateCommit` proof
 state a `recSetFieldCommit` proof is about (on their shared projection). -/
 theorem crossbind_circuit_exec_same_state
     (hRest : RestHashIffFrame RH)
-    (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
+    (hCompressN : compressNInjective compressN)
     (k k' : RecordKernelState) (S : Finset CellId)
+    (hnoFrameLeaf : ¬ FrameLeafColl CH k k' S)
     (hRestPI : RH k = RH k')
     (hFramePI : frameDigest CH compressN k S = frameDigest CH compressN k' S) :
     (∀ c ∈ S, k.cell c = k'.cell c)
@@ -348,7 +363,7 @@ theorem crossbind_circuit_exec_same_state
           ∧ k'.delegationEpochAt = k.delegationEpochAt
           ∧ k'.heaps = k.heaps
           ∧ k'.nullifierRoot = k.nullifierRoot ∧ k'.revokedRoot = k.revokedRoot ∧ k'.commitmentsRoot = k.commitmentsRoot) :=
-  ⟨crossbind_cells_agree CH compressN hCompressN hLeaf k k' S hFramePI,
+  ⟨crossbind_cells_agree CH compressN hCompressN k k' S hnoFrameLeaf hFramePI,
    crossbind_rest_agree RH hRest k k' hRestPI⟩
 
 end Weld
@@ -389,9 +404,11 @@ theorem stateCommit_binds_cellCommit
     --  proof routes through `cellCommit_determined`; the leaf-factors-through-cellCommit portal is not
     --  needed here, so the lemma stands without it — strictly fewer named-floor assumptions.)
     (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
-    (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
+    (hCompressN : compressNInjective compressN)
     (hRest : RestHashIffFrame RH)
     (k k' : RecordKernelState) (t : Turn)
+    (hnoFrameLeaf : ¬ FrameLeafColl CH k k' (k.accounts \ {t.src, t.dst}))
+    (hnoMovedLeaf : ¬ MovedLeafColl CH k.cell k'.cell t.src t.dst)
     (hroot : recStateCommit CH RH cmb compress compressN k t
       = recStateCommit CH RH cmb compress compressN k' t) :
     (∀ c ∈ frameCarrier k t,
@@ -403,7 +420,7 @@ theorem stateCommit_binds_cellCommit
           = cellCommit compressN compress2 (restLimbs t.dst) (k'.cell t.dst) := by
   obtain ⟨hframe, ⟨hsrc, hdst⟩, _⟩ :=
     stateCommit_binds_cells_and_rest CH RH cmb compress compressN
-      hCmb hCompress hCompressN hLeaf hRest k k' t hroot
+      hCmb hCompress hCompressN hRest k k' t hnoFrameLeaf hnoMovedLeaf hroot
   refine ⟨fun c hc => ?_, ?_, ?_⟩
   · exact cellCommit_determined compressN compress2 (restLimbs c) (hframe c hc)
   · exact cellCommit_determined compressN compress2 (restLimbs t.src) hsrc
@@ -418,9 +435,11 @@ theorem setFieldCommit_binds_cellCommit
     -- (`hBridge : LeafIsCellCommit …` DISCHARGED — same as the circuit-side crown: the conclusion is in
     --  `cellCommit` terms, proved via `cellCommit_determined`; the bridge portal is not consumed here.)
     (hCmb : compressInjective cmb)
-    (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
+    (hCompressN : compressNInjective compressN)
     (hRest : RestHashIffFrame RH) (hLog : logHashInjective LH)
     (k k' : RecordKernelState) (cell : CellId) (log log' : List Turn)
+    (hnoFrameLeaf : ¬ FrameLeafColl CH k k' (k.accounts \ {cell}))
+    (hnoTouchedLeaf : ¬ CellLeafColl CH cell (k.cell cell) (k'.cell cell))
     (hroot : recSetFieldCommit CH RH cmb compressN LH k cell log
       = recSetFieldCommit CH RH cmb compressN LH k' cell log') :
     (∀ c ∈ sfFrameCarrier k cell,
@@ -430,7 +449,7 @@ theorem setFieldCommit_binds_cellCommit
           = cellCommit compressN compress2 (restLimbs cell) (k'.cell cell) := by
   obtain ⟨hframe, htouched, _, _⟩ :=
     setFieldCommit_binds_all CH RH cmb compressN LH
-      hCmb hCompressN hLeaf hRest hLog k k' cell log log' hroot
+      hCmb hCompressN hRest hLog k k' cell log log' hnoFrameLeaf hnoTouchedLeaf hroot
   exact ⟨fun c hc => cellCommit_determined compressN compress2 (restLimbs c) (hframe c hc),
     cellCommit_determined compressN compress2 (restLimbs cell) htouched⟩
 
