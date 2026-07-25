@@ -449,6 +449,14 @@ struct RunView {
     options: Vec<MoveOption>,
 }
 
+/// **The turn a button minted from this view authorizes.** The run's committed turn count is the
+/// attenuation: a button carries it, and [`commit_press`] advances only on an exact match. A
+/// `usize` that does not fit a `u64` (unreachable on a supported target) yields `u64::MAX`, which
+/// equals no live run's turn count — every press refused, i.e. fail-CLOSED.
+fn view_turn(view: &RunView) -> u64 {
+    u64::try_from(view.turns).unwrap_or(u64::MAX)
+}
+
 impl RunView {
     /// Snapshot a live run for rendering (on the store thread — plain data only).
     fn of(run: &DailyRun) -> RunView {
@@ -484,6 +492,15 @@ impl RunView {
 enum MoveResult {
     /// No run is open for this player.
     NoRun,
+    /// **The pressed button's capability is spent.** It was minted for `pressed_turn` and the run
+    /// has since committed past it — a scrolled-back room message, a second device, or the losing
+    /// half of a double-click. NOTHING is committed; the run is untouched.
+    Stale {
+        /// The turn the button authorized (baked into its custom id when it was rendered).
+        pressed_turn: u64,
+        /// The run's actual committed turn count at the moment the press was serialized.
+        current_turn: u64,
+    },
     /// The run already ended; nothing to advance.
     AlreadyEnded(RunView),
     /// The executor REFUSED the move (a gate bit): nothing committed, the room unchanged.
@@ -1367,7 +1384,13 @@ async fn handle_play(ctx: &Context, command: &CommandInteraction, state: &BotSta
              it any time.",
             false,
         );
-        ack::edit_slash(ctx, command, embed, move_rows(user_id, &view.options)).await;
+        ack::edit_slash(
+            ctx,
+            command,
+            embed,
+            move_rows(user_id, view_turn(&view), &view.options),
+        )
+        .await;
         return;
     }
 
@@ -1424,7 +1447,7 @@ async fn handle_play(ctx: &Context, command: &CommandInteraction, state: &BotSta
     record_narration(user_id, &narration, kind);
 
     let embed = room_embed(&view, &narration, kind);
-    let rows = move_rows(user_id, &view.options);
+    let rows = move_rows(user_id, view_turn(&view), &view.options);
     ack::edit_slash(ctx, command, embed, rows).await;
 }
 
@@ -1458,7 +1481,7 @@ async fn handle_room(ctx: &Context, command: &CommandInteraction) {
         Some(view) => {
             let (narration, kind) = current_narration(user_id, &view);
             let embed = room_embed(&view, &narration, kind);
-            let rows = move_rows(user_id, &view.options);
+            let rows = move_rows(user_id, view_turn(&view), &view.options);
             respond(ctx, command, embed, rows, false).await;
         }
     }
@@ -1466,8 +1489,86 @@ async fn handle_room(ctx: &Context, command: &CommandInteraction) {
 
 // ─── the move buttons (a press advances the presser's OWN run) ──────────────────
 
+/// **The ONE store job a move press runs: the turn-gate and the advance, together.**
+///
+/// The button's custom id carries the committed turn number it was minted at
+/// ([`move_rows`]); this re-reads the run's ACTUAL committed turn count and advances only on an
+/// exact match. Both halves happen inside a single job on the single-threaded
+/// [`DescentStore`], so the check cannot be raced: two presses of the same button are serialized
+/// here — the first advances the run past `pressed_turn`, the second sees the mismatch and
+/// returns [`MoveResult::Stale`] having touched nothing.
+///
+/// This is the whole attenuation. Before it, `descent:move:<owner>:<index>` named no turn, so a
+/// double-click inside the ~20s narration window landed a second unintended permadeath turn, and
+/// a scrolled-back room message (or a second device) committed a move against whatever room was
+/// current at press time — a capability that never expired.
+///
+/// Returns the move outcome plus, for a TERMINAL run, the reproducible public input the share
+/// link is minted from.
+fn commit_press<S: CharacterStore>(
+    w: &mut DescentWorld,
+    characters: S,
+    owner: u64,
+    pressed_turn: u64,
+    choice: usize,
+    player: &str,
+    day_key: &str,
+) -> (MoveResult, Option<ShareInput>) {
+    let Some(slot) = w.slots.get_mut(&owner) else {
+        return (MoveResult::NoRun, None);
+    };
+    // THE GATE. `turns()` is monotone (a landed move pushes a step; a refused move pushes
+    // nothing), so a button minted for this room stays valid across a refusal and is spent the
+    // instant a turn commits.
+    let current_turn = u64::try_from(slot.run.turns()).unwrap_or(u64::MAX);
+    if pressed_turn != current_turn {
+        return (
+            MoveResult::Stale {
+                pressed_turn,
+                current_turn,
+            },
+            None,
+        );
+    }
+
+    let mut off = DailyDescentOffering::new(characters);
+    let uid = slot.universe_id;
+    let outcome = advance_core(&mut off, &mut slot.run, &mut w.board, uid, player, choice);
+    // Durable: a verified win survives restart. Only the reproducible public input (the move
+    // sequence + player) is persisted; the board is rebuilt by REPLAY on boot, so a tampered
+    // row cannot resurrect a cheat. Persist ONLY when the win actually ranked (rank Some).
+    if let MoveResult::Landed { rank: Some(_), .. } = &outcome {
+        persist_completion_row(&slot.run, player);
+    }
+    // H2: capture the reproducible public input of a TERMINAL run (its move sequence + player +
+    // profile), so the outcome embed can hand back a shareable, independently-verifiable
+    // run-card link (the web board re-executes it). Read straight off the committed playthrough.
+    let share = match &outcome {
+        MoveResult::Landed { view, .. } if view.ended => Some(ShareInput {
+            day: day_key.to_string(),
+            moves: slot
+                .run
+                .playthrough()
+                .steps
+                .iter()
+                .map(|s| {
+                    u64::try_from(s.choice_index)
+                        .expect("committed room choice index fits the stable u64 wire format")
+                })
+                .collect(),
+            player: player.to_string(),
+            level: slot.run.character().level(),
+            class: slot.run.character().class(),
+            won: view.won,
+        }),
+        _ => None,
+    };
+    (outcome, share)
+}
+
 /// Route a `descent:` component press. custom_ids:
-/// * `descent:move:<userId>:<choiceIndex>` — advance the presser's OWN run by one real turn;
+/// * `descent:move:<userId>:<turnNo>:<choiceIndex>` — advance the presser's OWN run by one real
+///   turn, and ONLY the turn the button was minted for (see [`commit_press`]);
 /// * `descent:rv:<completion_id hex>` — **Re-verify #N**: ANY presser (deliberately no owner
 ///   gate — a stranger's re-run is the point) re-executes a ranked entry through the live
 ///   no-cheat gate, in front of the channel (backlog Tier-2 #9).
@@ -1478,14 +1579,32 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
         handle_reverify(ctx, component, parts[2]).await;
         return;
     }
-    if parts.len() != 4 || parts[1] != "move" {
+    // A 4-part `descent:move:<owner>:<index>` is a button rendered BEFORE the turn-gate existed
+    // and still sitting in a channel. It names no turn, so honoring it means committing a
+    // permadeath move on an unattenuated capability — refuse it and point at the live room.
+    if parts.len() == 4 && parts[1] == "move" {
+        respond_ephemeral(
+            ctx,
+            component,
+            "This button predates the turn-gate and no longer authorizes a move — nothing was \
+             committed. Run `/descent room` for your current room and its live buttons.",
+        )
+        .await;
+        return;
+    }
+    if parts.len() != 5 || parts[1] != "move" {
         return;
     }
     let owner: u64 = match parts[2].parse() {
         Ok(n) => n,
         Err(_) => return,
     };
-    let choice: usize = match parts[3]
+    // The turn this button authorizes — the attenuation it carries.
+    let pressed_turn: u64 = match parts[3].parse() {
+        Ok(n) => n,
+        Err(_) => return,
+    };
+    let choice: usize = match parts[4]
         .parse::<u64>()
         .ok()
         .and_then(|choice| usize::try_from(choice).ok())
@@ -1511,18 +1630,12 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
             .decided("refused", "not_owner")
             .with_offering("descent"),
         );
-        let _ = component
-            .create_response(
-                &ctx.http,
-                CreateInteractionResponse::Message(
-                    CreateInteractionResponseMessage::new()
-                        .content(
-                            "This is not your descent — run `/descent play` to begin your own.",
-                        )
-                        .ephemeral(true),
-                ),
-            )
-            .await;
+        respond_ephemeral(
+            ctx,
+            component,
+            "This is not your descent — run `/descent play` to begin your own.",
+        )
+        .await;
         return;
     }
 
@@ -1540,82 +1653,118 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
     // WHICH WORLD this run is being played in — resolved from the SAME helper the web resolves its
     // day from, and carried on the share so the web re-executes in it (see `ShareInput::day`).
     let day_key = resolve_todays_day().0.key;
+
+    // The PRE-PRESS snapshot — read-only, so a spent or stale capability is answered without ever
+    // reaching the substrate, and a live one gets its in-flight render BEFORE the slow narration.
+    // The authoritative check is still the one inside `commit_press` (atomic with the advance);
+    // this one only decides what the player is shown first.
+    let before: Option<RunView> = store()
+        .run(move |w| w.slots.get(&owner).map(|s| RunView::of(&s.run)))
+        .unwrap_or(None);
+    match &before {
+        None => {
+            refuse_expired_run(ctx, component, state, presser, &id).await;
+            return;
+        }
+        Some(view) if view_turn(view) != pressed_turn => {
+            refuse_stale_press(
+                ctx,
+                component,
+                state,
+                presser,
+                &id,
+                owner,
+                pressed_turn,
+                view,
+                &player_name,
+            )
+            .await;
+            return;
+        }
+        // An ended run has no ballot and no narration ahead of it — `commit_press` answers it
+        // immediately, so there is no in-flight state to show.
+        Some(view) if view.ended => {}
+        Some(view) => {
+            // THE IN-FLIGHT RENDER. The player is on a permadeath run and the narrator can burn
+            // ~20s; without this the press looks like nothing happened and they press again. The
+            // ballot is repainted DEAD, so the surface itself stops offering a second press.
+            let (narration, kind) = current_narration(owner, view);
+            let embed = room_embed(view, &narration, kind).field(
+                "⏳ Your turn is being taken",
+                "The world is resolving your move and the room ahead is being narrated (this can \
+                 take a moment). These buttons are spent — the room will re-render itself here.",
+                false,
+            );
+            update_message(
+                ctx,
+                component,
+                embed,
+                move_rows_in_flight(owner, pressed_turn, &view.options),
+            )
+            .await;
+        }
+    }
+
     let (result, share) = store()
         .run(move |w| {
-            let Some(slot) = w.slots.get_mut(&owner) else {
-                return (MoveResult::NoRun, None);
-            };
-            let mut off = DailyDescentOffering::new(store_clone);
-            let uid = slot.universe_id;
-            let outcome = advance_core(&mut off, &mut slot.run, &mut w.board, uid, &player, choice);
-            // Durable: a verified win survives restart. Only the reproducible public input (the move
-            // sequence + player) is persisted; the board is rebuilt by REPLAY on boot, so a tampered
-            // row cannot resurrect a cheat. Persist ONLY when the win actually ranked (rank Some).
-            if let MoveResult::Landed { rank: Some(_), .. } = &outcome {
-                persist_completion_row(&slot.run, &player);
-            }
-            // H2: capture the reproducible public input of a TERMINAL run (its move sequence + player +
-            // profile), so the outcome embed can hand back a shareable, independently-verifiable
-            // run-card link (the web board re-executes it). Read straight off the committed playthrough.
-            let share = match &outcome {
-                MoveResult::Landed { view, .. } if view.ended => Some(ShareInput {
-                    day: day_key.clone(),
-                    moves: slot
-                        .run
-                        .playthrough()
-                        .steps
-                        .iter()
-                        .map(|s| {
-                            u64::try_from(s.choice_index).expect(
-                                "committed room choice index fits the stable u64 wire format",
-                            )
-                        })
-                        .collect(),
-                    player: player.clone(),
-                    level: slot.run.character().level(),
-                    class: slot.run.character().class(),
-                    won: view.won,
-                }),
-                _ => None,
-            };
-            (outcome, share)
+            commit_press(
+                w,
+                store_clone,
+                owner,
+                pressed_turn,
+                choice,
+                &player,
+                &day_key,
+            )
         })
         .unwrap_or((MoveResult::NoRun, None));
 
     match result {
         MoveResult::NoRun => {
-            // AUDIT the expired-run refusal (advance_core was never reached).
-            crate::audit::log().emit(
-                crate::audit::AuditEvent::new(
-                    "discord",
-                    crate::audit::custodial_actor(state, presser),
-                    crate::audit::Surface::Component,
-                    crate::audit::Input {
-                        kind: "descent:move".to_string(),
-                        detail: serde_json::json!({ "custom_id": id.as_str() }),
-                    },
-                )
-                .decided("refused", "no_run")
-                .with_offering("descent"),
-            );
-            // The press was already ACKed (deferred update), so this rides a followup — the
-            // stale room message is left as-is, the presser gets the pointer privately.
-            ack::followup_ephemeral(
-                ctx,
-                component,
-                "Your descent has expired — run `/descent play` to begin anew.",
-            )
-            .await;
+            refuse_expired_run(ctx, component, state, presser, &id).await;
+        }
+        MoveResult::Stale { pressed_turn, .. } => {
+            // The press LOST THE RACE: it passed the read-only pre-check, then another press of
+            // the same button committed the turn first. `commit_press` is the authority and it
+            // committed nothing here — this is the exactly-once guarantee firing.
+            let now: Option<RunView> = store()
+                .run(move |w| w.slots.get(&owner).map(|s| RunView::of(&s.run)))
+                .unwrap_or(None);
+            match now {
+                Some(view) => {
+                    refuse_stale_press(
+                        ctx,
+                        component,
+                        state,
+                        presser,
+                        &id,
+                        owner,
+                        pressed_turn,
+                        &view,
+                        &player_name,
+                    )
+                    .await
+                }
+                None => refuse_expired_run(ctx, component, state, presser, &id).await,
+            }
         }
         MoveResult::Refused { why, view } => {
             // A real executor refusal: the room is unchanged, no receipt committed (anti-ghost).
+            // The turn count is unchanged too, so the re-minted buttons carry the SAME turn — the
+            // player may retry this room.
             let (narration, kind) = current_narration(owner, &view);
             let embed = room_embed(&view, &narration, kind).field(
                 "Refused — the world disposed",
                 format!("```{}```", truncate(&why, 500)),
                 false,
             );
-            update_message(ctx, component, embed, move_rows(owner, &view.options)).await;
+            update_message(
+                ctx,
+                component,
+                embed,
+                move_rows(owner, view_turn(&view), &view.options),
+            )
+            .await;
         }
         MoveResult::AlreadyEnded(view) => {
             let embed = result_embed(
@@ -1654,10 +1803,137 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
                 .await;
                 record_narration(owner, &narration, kind);
                 let embed = room_embed(&view, &narration, kind);
-                update_message(ctx, component, embed, move_rows(owner, &view.options)).await;
+                // The NEXT room's buttons are minted at the NEW committed turn — the ones the
+                // player just pressed are now unspendable anywhere they still appear.
+                update_message(
+                    ctx,
+                    component,
+                    embed,
+                    move_rows(owner, view_turn(&view), &view.options),
+                )
+                .await;
             }
         }
     }
+}
+
+/// An ephemeral refusal as the FIRST response to a press (nothing was ACKed, nothing committed):
+/// the pressed message is left exactly as it is.
+async fn respond_ephemeral(ctx: &Context, component: &ComponentInteraction, text: &str) {
+    let _ = component
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new()
+                    .content(text)
+                    .ephemeral(true),
+            ),
+        )
+        .await;
+}
+
+/// The press names a run that is no longer open. AUDITed and answered privately; the press was
+/// already ACKed (deferred update), so this rides a followup and the message is left as-is.
+async fn refuse_expired_run(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    state: &BotState,
+    presser: u64,
+    id: &str,
+) {
+    crate::audit::log().emit(
+        crate::audit::AuditEvent::new(
+            "discord",
+            crate::audit::custodial_actor(state, presser),
+            crate::audit::Surface::Component,
+            crate::audit::Input {
+                kind: "descent:move".to_string(),
+                detail: serde_json::json!({ "custom_id": id }),
+            },
+        )
+        .decided("refused", "no_run")
+        .with_offering("descent"),
+    );
+    ack::followup_ephemeral(
+        ctx,
+        component,
+        "Your descent has expired — run `/descent play` to begin anew.",
+    )
+    .await;
+}
+
+/// **The spent-capability refusal.** The button was minted for a turn this run has already
+/// committed past — a scrolled-back room message, a second device, or a double-click that lost the
+/// race. NOTHING is committed. The presser is told privately, and the stale surface is REPAIRED in
+/// place: it re-renders as the run's CURRENT room with buttons minted at the current turn, so the
+/// dead capability is replaced rather than left lying around looking live.
+#[allow(clippy::too_many_arguments)]
+async fn refuse_stale_press(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    state: &BotState,
+    presser: u64,
+    id: &str,
+    owner: u64,
+    pressed_turn: u64,
+    view: &RunView,
+    player_name: &str,
+) {
+    let current_turn = view_turn(view);
+    crate::audit::log().emit(
+        crate::audit::AuditEvent::new(
+            "discord",
+            crate::audit::custodial_actor(state, presser),
+            crate::audit::Surface::Component,
+            crate::audit::Input {
+                kind: "descent:move".to_string(),
+                detail: serde_json::json!({
+                    "custom_id": id,
+                    "pressed_turn": pressed_turn,
+                    "current_turn": current_turn,
+                }),
+            },
+        )
+        .decided("refused", "stale_turn")
+        .with_offering("descent"),
+    );
+    ack::followup_ephemeral(
+        ctx,
+        component,
+        &format!(
+            "That room has moved on — this button was minted at turn {pressed_turn} and your run \
+             is on turn {current_turn}. **Nothing was committed.** The message has been re-rendered \
+             to your current room (`/descent room` re-shows it any time)."
+        ),
+    )
+    .await;
+
+    if view.ended {
+        let embed = result_embed(
+            view,
+            None,
+            "This descent has already ended.",
+            Some(player_name),
+        );
+        update_message(ctx, component, embed, vec![]).await;
+        return;
+    }
+    let (narration, kind) = current_narration(owner, view);
+    let embed = room_embed(view, &narration, kind).field(
+        "That button had expired",
+        format!(
+            "It was minted at turn {pressed_turn}; your run is on turn {current_turn}. No move \
+             was committed — here is the room you are actually in."
+        ),
+        false,
+    );
+    update_message(
+        ctx,
+        component,
+        embed,
+        move_rows(owner, current_turn, &view.options),
+    )
+    .await;
 }
 
 /// EDIT the pressed room message into the post-turn render. The press was ACKed with a
@@ -2281,7 +2557,32 @@ async fn handle_reverify(ctx: &Context, component: &ComponentInteraction, cid_he
 
 /// The move buttons for the current room, chunked into Discord action rows of five. A locked
 /// (ineligible) move is a red button decoration; the executor is still the sole referee.
-fn move_rows(owner: u64, options: &[MoveOption]) -> Vec<CreateActionRow> {
+///
+/// **Each button is an ATTENUATED capability.** Its custom id carries the committed turn number it
+/// was minted at — `descent:move:<owner>:<turn>:<index>` — and [`commit_press`] advances the run
+/// only when that number is still the run's current one. So the button authorizes exactly one
+/// turn, the one the player is looking at: a scrolled-back room message, a copy open on a second
+/// device, and the second half of a double-click all arrive naming a turn the run has passed, and
+/// commit nothing. (Before this the id named only the owner, and every button ever rendered stayed
+/// live forever against whatever room happened to be current.)
+fn move_rows(owner: u64, turn_no: u64, options: &[MoveOption]) -> Vec<CreateActionRow> {
+    build_move_rows(owner, turn_no, options, false)
+}
+
+/// The SAME ballot rendered DEAD — the in-flight state a press paints onto its own message while
+/// the (up to ~20s) narration runs, so a player on a permadeath run SEES their turn being taken
+/// instead of apparent silence. The ids still carry the spent turn, so even a client that ignores
+/// `disabled` gets refused by the gate.
+fn move_rows_in_flight(owner: u64, turn_no: u64, options: &[MoveOption]) -> Vec<CreateActionRow> {
+    build_move_rows(owner, turn_no, options, true)
+}
+
+fn build_move_rows(
+    owner: u64,
+    turn_no: u64,
+    options: &[MoveOption],
+    disabled: bool,
+) -> Vec<CreateActionRow> {
     let mut rows: Vec<CreateActionRow> = Vec::new();
     for (row_idx, chunk) in options.chunks(5).enumerate() {
         if row_idx >= 5 {
@@ -2300,9 +2601,10 @@ fn move_rows(owner: u64, options: &[MoveOption]) -> Vec<CreateActionRow> {
                 ButtonStyle::Secondary
             };
             buttons.push(
-                CreateButton::new(format!("descent:move:{owner}:{}", opt.index))
+                CreateButton::new(format!("descent:move:{owner}:{turn_no}:{}", opt.index))
                     .label(truncate(&label, 78))
-                    .style(style),
+                    .style(style)
+                    .disabled(disabled),
             );
         }
         if !buttons.is_empty() {
@@ -3154,29 +3456,204 @@ mod tests {
         assert!(measured.enabled, "a measured blow is available at full HP");
 
         // The move buttons build (one row, five buttons for the gate).
-        let rows = move_rows(42, &opts);
+        let rows = move_rows(42, 1, &opts);
         assert!(!rows.is_empty(), "the ballot renders buttons");
     }
 
-    /// The custom-id round-trips: `descent:move:<owner>:<idx>` parses back to (owner, idx).
+    /// Seed a LIVE run into the process store under `uid` (the shape `/descent play` leaves behind)
+    /// so the press path can be driven exactly as the button drives it.
+    fn seed_live_slot(uid: u64, who: &str) {
+        let who = player(who);
+        store()
+            .run(move |w| {
+                let off = DailyDescentOffering::new(InMemoryCharacterStore::new());
+                let (run, universe_id) =
+                    open_core(&off, &mut w.board, who, &resolve_todays_beacon(), None)
+                        .expect("open today's run for the press test");
+                w.slots.insert(
+                    uid,
+                    Slot {
+                        run,
+                        universe_id,
+                        narrator: NarratorKind::Scripted,
+                        last_narration: String::new(),
+                    },
+                );
+            })
+            .expect("seed the live slot");
+    }
+
+    /// The run's COMMITTED turn count — what the button is minted against.
+    fn committed_turns(uid: u64) -> u64 {
+        store()
+            .run(move |w| {
+                u64::try_from(w.slots.get(&uid).expect("the seeded run").run.turns()).unwrap()
+            })
+            .expect("read the committed turn count")
+    }
+
+    /// A choice that LANDS in the run's current room — the careful line `drive_win` walks, read
+    /// off the live run so these tests never depend on the beacon's warden draw.
+    fn landing_choice(uid: u64) -> usize {
+        store()
+            .run(move |w| {
+                let run = &w.slots.get(&uid).expect("the seeded run").run;
+                let room = run.current_room().expect("a live room");
+                match room.as_str() {
+                    "gate" => {
+                        if run.read_var("warden_hp") == 0 {
+                            GATE_PRESS
+                        } else if run.read_var("hp") >= 16 {
+                            GATE_MEASURED
+                        } else {
+                            GATE_HEAL
+                        }
+                    }
+                    "keyroom" => KEY_TAKE,
+                    "hoardgate" => HOARD_FORCE,
+                    "hoard" => HOARD_SEIZE,
+                    r if r.starts_with("corridor") => CORRIDOR_ON,
+                    other => panic!("unexpected room in the careful line: {other}"),
+                }
+            })
+            .expect("read the current room")
+    }
+
+    /// Press a button carrying `pressed_turn` — EXACTLY the store job `handle_component` submits.
+    fn press(uid: u64, pressed_turn: u64, choice: usize, who: &str) -> MoveResult {
+        let who = who.to_string();
+        store()
+            .run(move |w| {
+                commit_press(
+                    w,
+                    InMemoryCharacterStore::new(),
+                    uid,
+                    pressed_turn,
+                    choice,
+                    &who,
+                    "test-day",
+                )
+                .0
+            })
+            .expect("press")
+    }
+
+    /// **FALSIFIER (was RED before the turn-gate: it committed 3 turns where 2 were owed).** Press
+    /// the button the player is looking at twice — the double-click a permadeath player makes when
+    /// the ~20s narration leaves the room silent. ONE button must buy ONE turn.
+    #[test]
+    fn two_presses_of_one_button_commit_exactly_one_turn() {
+        let uid = 9_000_101u64;
+        seed_live_slot(uid, "double-press");
+        let minted_at = committed_turns(uid);
+        let choice = landing_choice(uid);
+
+        // THE SAME BUTTON, pressed twice: one custom id, so one `pressed_turn`.
+        let first = press(uid, minted_at, choice, "double-press");
+        let second = press(uid, minted_at, choice, "double-press");
+
+        assert!(
+            matches!(first, MoveResult::Landed { .. }),
+            "the first press takes the turn: {first:?}"
+        );
+        assert!(
+            matches!(
+                second,
+                MoveResult::Stale { pressed_turn, current_turn }
+                    if pressed_turn == minted_at && current_turn == minted_at + 1
+            ),
+            "the second press of the SAME button must find the capability spent: {second:?}"
+        );
+        assert_eq!(
+            committed_turns(uid),
+            minted_at + 1,
+            "ONE button, pressed twice, must commit exactly ONE permadeath turn"
+        );
+
+        // NON-VACUOUS: the run is not simply frozen — a button minted at the CURRENT turn still
+        // takes a real turn, so the refusal above is the attenuation and not a dead run.
+        let live = press(uid, minted_at + 1, landing_choice(uid), "double-press");
+        assert!(
+            matches!(live, MoveResult::Landed { .. }),
+            "a freshly-minted button still moves the run: {live:?}"
+        );
+        assert_eq!(committed_turns(uid), minted_at + 2);
+    }
+
+    /// **FALSIFIER: the never-expiring capability.** A room message scrolled back in the channel
+    /// (or still open on a second device) carries live-looking buttons. Pressing one used to commit
+    /// a move against whatever room was current NOW; it must instead be refused, uncommitted.
+    #[test]
+    fn a_button_from_an_earlier_turn_is_refused_by_the_world_it_finds() {
+        let uid = 9_000_202u64;
+        seed_live_slot(uid, "stale-embed");
+        // The turn the OLD message's buttons were minted at.
+        let stale_turn = committed_turns(uid);
+
+        // The player moves on from a NEWER message; the world is now one turn ahead.
+        let moved = press(uid, stale_turn, landing_choice(uid), "stale-embed");
+        assert!(
+            matches!(moved, MoveResult::Landed { .. }),
+            "the live press lands: {moved:?}"
+        );
+        let now = committed_turns(uid);
+        assert_eq!(now, stale_turn + 1);
+
+        // NOW the scrolled-back message is pressed.
+        let out = press(uid, stale_turn, landing_choice(uid), "stale-embed");
+        assert!(
+            matches!(
+                out,
+                MoveResult::Stale { pressed_turn, current_turn }
+                    if pressed_turn == stale_turn && current_turn == now
+            ),
+            "a turn-N button pressed against a turn-N+1 world must be refused: {out:?}"
+        );
+        assert_eq!(
+            committed_turns(uid),
+            now,
+            "a stale press commits NOTHING — the run is exactly where it was"
+        );
+    }
+
+    /// The custom-id round-trips: the EMITTED button carries `descent:move:<owner>:<turn>:<idx>`,
+    /// which parses back to (owner, turn, idx) — and the in-flight ballot really is rendered dead.
     #[test]
     fn the_move_custom_id_round_trips() {
-        let rows = move_rows(
-            777,
-            &[MoveOption {
-                label: "Measured blow".into(),
-                index: u64::MAX,
-                enabled: true,
-            }],
+        let ballot = [MoveOption {
+            label: "Measured blow".into(),
+            index: u64::MAX,
+            enabled: true,
+        }];
+        let rows = move_rows(777, 12, &ballot);
+        assert!(!rows.is_empty());
+
+        // Read the id off the ACTUAL emitted button (not a format string re-typed here).
+        let emitted = serde_json::to_string(&rows).expect("the action rows serialize");
+        let id = format!("descent:move:{}:{}:{}", 777, 12, u64::MAX);
+        assert!(
+            emitted.contains(&id),
+            "the emitted button must carry the turn it was minted at: {emitted}"
         );
-        // Rebuild the id the button carries and parse it exactly as `handle_component` does.
-        let id = format!("descent:move:{}:{}", 777, u64::MAX);
+
+        // Parse it exactly as `handle_component` does.
         let parts: Vec<&str> = id.split(':').collect();
-        assert_eq!(parts.len(), 4);
+        assert_eq!(parts.len(), 5);
         assert_eq!(parts[1], "move");
         assert_eq!(parts[2].parse::<u64>().unwrap(), 777);
-        assert_eq!(parts[3].parse::<u64>().unwrap(), u64::MAX);
+        assert_eq!(parts[3].parse::<u64>().unwrap(), 12);
+        assert_eq!(parts[4].parse::<u64>().unwrap(), u64::MAX);
         assert!("-1".parse::<u64>().is_err(), "negative actions fail closed");
-        assert!(!rows.is_empty());
+        // The un-attenuated legacy shape is NOT a live move id — the handler refuses it outright.
+        assert_eq!("descent:move:777:0".split(':').count(), 4);
+
+        // The in-flight ballot is the same ids, rendered unpressable.
+        let dead = serde_json::to_string(&move_rows_in_flight(777, 12, &ballot))
+            .expect("the in-flight rows serialize");
+        assert!(
+            dead.contains("\"disabled\":true"),
+            "the in-flight ballot must be rendered DEAD: {dead}"
+        );
+        assert!(dead.contains(&id), "and still carry the spent turn: {dead}");
     }
 }
