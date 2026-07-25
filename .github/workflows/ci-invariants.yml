@@ -1,7 +1,7 @@
 # ci-invariants.yml — THE ENFORCING GATE for the twin-deletion + megaswarm-fix campaign.
 #
 # Recommendation ① of the twin-deletion campaign: make the campaign's gains un-regressable.
-# It runs scripts/ci-invariants.sh, which enforces FOUR invariants (see docs/CI-INVARIANTS.md):
+# It runs scripts/ci-invariants.sh, which enforces FIVE invariants (see docs/CI-INVARIANTS.md):
 #
 #   1  THE TREE BUILDS         — cargo check --workspace --all-targets --keep-going, zero
 #                                non-compiling members (the dregg-analyzer / PlayerWorlds class).
@@ -10,8 +10,13 @@
 #   3  NO SILENCED FALSIFIER   — no falsifier-class test carries #[ignore].
 #   4  NO RUST TWIN OF A LEAN  — every live decider still routes through its proven @[export]; the
 #      @[export]                 native/rust/mirror siblings stay #[cfg(test)]-only.
+#   5  ONE MATHLIB PROVISIONING— every CI mathlib provisioning routes through
+#      PATH                      scripts/ci-mathlib-cache.sh and the lakefile keeps its git+rev pin.
+#                                Added after five sites spent 20 days fetching mathlib's prebuilt
+#                                oleans into a directory lake does not read: a from-source mathlib
+#                                build is indistinguishable from a slow one in a green log.
 #
-# The `structural` job (invariants 3+4, NO build) is the fast always-on required check. `tree-builds`
+# The `structural` job (invariants 3+4+5, NO build) is the fast always-on required check. `tree-builds`
 # (invariant 1) and `falsifiers` (invariant 2) are the heavy jobs — they mirror ci.yml's toolchain /
 # system-deps / disk-reclaim / LFS setup. `tree-builds` overlaps ci.yml's `check` job but adds
 # --keep-going (enumerate EVERY failing crate, not just the first) and is the campaign's named gate.
@@ -37,7 +42,7 @@ env:
 jobs:
   # ── the fast, always-on required check: invariants 3 + 4, pure bash/grep/awk, no build ──
   structural:
-    name: Structural invariants (no build — #[ignore] + Rust-twin guard)
+    name: Structural invariants (no build — #[ignore] + Rust-twin + one-mathlib-path guards)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

@@ -2,7 +2,7 @@
 # ci-invariants.sh — THE ENFORCING GATE for the twin-deletion + megaswarm-fix campaign.
 #
 # Recommendation ① of the twin-deletion campaign: institutionalize the invariants the
-# 2026-07-23/24 campaign fought for so the gains become UN-REGRESSABLE. It enforces FOUR
+# 2026-07-23/24 campaign fought for so the gains become UN-REGRESSABLE. It enforces FIVE
 # invariants, each a HARD failure with an actionable message:
 #
 #   1  THE TREE BUILDS         — `cargo check --workspace --all-targets --keep-going` has
@@ -18,18 +18,24 @@
 #      @[export]                 every live decider still routes through its proven @[export], the
 #                                native/rust/mirror siblings stay #[cfg(test)]-only, and no deleted
 #                                twin (rust_non_amplifying, unwrap_or(native), …) reappears live.
+#   5  ONE MATHLIB PROVISIONING — every CI mathlib provisioning goes through
+#      PATH                       scripts/ci-mathlib-cache.sh, no workflow names a mathlib checkout
+#                                 path of its own, and the lakefile keeps its `git`+`rev` pin. Added
+#                                 2026-07-25 after five sites spent 20 days fetching the prebuilt
+#                                 oleans into a directory lake does not read (~84 min/job, measured).
 #
 # See docs/CI-INVARIANTS.md for the full description, expected runtime, the fast subset, and
 # how to extend each registry.
 #
 # USAGE:
 #   scripts/ci-invariants.sh [SUBCOMMAND]
-#     all           (default) run all four invariants
-#     structural    invariants 3 + 4 + registry EXISTENCE only — NO cargo build (seconds)
+#     all           (default) run all five invariants
+#     structural    invariants 3 + 4 + 5 + registry EXISTENCE only — NO cargo build (seconds)
 #     build         invariant 1 only  (heavy: full workspace check)
 #     falsifiers    invariant 2 only  (heavy: compiles + runs the registry)
 #     no-ignore     invariant 3 only  (seconds)
 #     no-twin       invariant 4 only  (seconds)
+#     one-mathlib   invariant 5 only  (seconds)
 #
 # ENV:
 #   CI_INVARIANTS_BUILD_ARGS   override the invariant-1 cargo args (default:
@@ -294,6 +300,81 @@ inv_no_twin() {
   done < <(read_twins)
 }
 
+# ════════════════════════════════════════════════════════════════════════════════
+# INVARIANT 5 — ONE MATHLIB PROVISIONING PATH
+# ════════════════════════════════════════════════════════════════════════════════
+# WHY (2026-07-25): five CI provisioning sites cloned mathlib to
+# `$GITHUB_WORKSPACE/../../src/mathlib4` and ran `lake exe cache get` there. That was correct
+# only while metatheory/lakefile.toml pinned `path = "../../../src/mathlib4"`. `4ccee5bd71`
+# (2026-07-05) made the require portable `git`+`rev`, which lake resolves into
+# `metatheory/.lake/packages/mathlib` — so the cache landed where nothing read it and every Lean
+# job recompiled mathlib from source (MEASURED: the zero-sorry step went 21-31 min -> 115.1 min
+# on that commit's own run). It stayed invisible for 20 days because a from-source mathlib build
+# is INDISTINGUISHABLE FROM A SLOW ONE in a green log.
+#
+# The fix routes every site through scripts/ci-mathlib-cache.sh, which restates no path. This
+# invariant is what makes that un-regressable: a workflow may not name a mathlib checkout path of
+# its own, and the lakefile must keep the `git`+`rev` shape the script assumes.
+inv_one_mathlib_path() {
+  hdr "Invariant 5 — ONE MATHLIB PROVISIONING PATH (scripts/ci-mathlib-cache.sh)"
+  local wf_dir="$ROOT/.github/workflows"
+  local script="$ROOT/scripts/ci-mathlib-cache.sh"
+  local lakefile="$ROOT/metatheory/lakefile.toml"
+
+  [ -f "$script" ] || fatal "scripts/ci-mathlib-cache.sh is missing — the single provisioning path is gone; this gate would check nothing."
+  [ -f "$lakefile" ] || fatal "metatheory/lakefile.toml is missing."
+  [ -d "$wf_dir" ] || fatal ".github/workflows is missing."
+
+  # (a) The lakefile must still be a `git`+`rev` require. A float (no `rev`) makes mathlib's
+  #     prebuilt-olean cache unfindable and silently reverts CI to a from-source compile; a
+  #     return to `path =` would silently un-fix every site.
+  if grep -qE '^[[:space:]]*path[[:space:]]*=' "$lakefile"; then
+    bad "metatheory/lakefile.toml has a \`path =\` require again. Every workflow now provisions via lake's git resolution (.lake/packages/mathlib); a path require moves the read location and nothing here would notice."
+  elif ! grep -qE '^[[:space:]]*rev[[:space:]]*=[[:space:]]*"[0-9a-f]{40}"' "$lakefile"; then
+    bad "metatheory/lakefile.toml no longer pins mathlib to an explicit 40-hex \`rev\`. Without it \`lake exe cache get\` cannot find prebuilt oleans and CI compiles mathlib from source (~84 min/job, measured)."
+  else
+    ok "lakefile pins mathlib as git+rev (lake resolves it to metatheory/.lake/packages/mathlib)"
+  fi
+
+  # (b) No workflow may name a mathlib checkout path of its own. The one legitimate mention is
+  #     inside a comment recording this history, so only non-comment lines are scanned.
+  local offenders
+  offenders="$(grep -rniE '^[[:space:]]*[^#]*(src/mathlib4|clone[[:space:]]+.*mathlib4)' "$wf_dir" 2>/dev/null || true)"
+  if [ -n "$offenders" ]; then
+    bad "a workflow provisions mathlib on its OWN path instead of calling scripts/ci-mathlib-cache.sh:"
+    printf '%s\n' "$offenders" | sed 's/^/          /' >&2
+  else
+    ok "no workflow names a mathlib checkout path of its own"
+  fi
+
+  # (c) Every `lake exe cache get` in a workflow must be THE script's. A fresh inline copy is
+  #     how this broke the first time.
+  local inline
+  inline="$(grep -rn 'lake.*exe cache get' "$wf_dir" 2>/dev/null | grep -vE '^[^:]*:[0-9]+:[[:space:]]*#' || true)"
+  if [ -n "$inline" ]; then
+    bad "an inline \`lake exe cache get\` reappeared in a workflow (it belongs in scripts/ci-mathlib-cache.sh, which asserts the oleans landed and the rev matched):"
+    printf '%s\n' "$inline" | sed 's/^/          /' >&2
+  else
+    ok "no inline \`lake exe cache get\` in any workflow"
+  fi
+
+  # (d) Every job that builds Lean must actually CALL the script. Approximate but load-bearing:
+  #     a workflow that installs the metatheory toolchain and never provisions mathlib is a job
+  #     that will compile mathlib from source.
+  local wf
+  for wf in "$wf_dir"/*.yml; do
+    grep -q 'metatheory/lean-toolchain' "$wf" || continue
+    if grep -q 'ci-mathlib-cache.sh' "$wf"; then
+      ok "$(basename "$wf") installs the metatheory toolchain and provisions via the script"
+    elif grep -qE 'scripts/bootstrap\.sh' "$wf"; then
+      # bootstrap.sh does its own `cache get` into the same .lake/packages/mathlib.
+      ok "$(basename "$wf") provisions via scripts/bootstrap.sh (same destination)"
+    else
+      bad "$(basename "$wf") installs the metatheory Lean toolchain but never provisions mathlib's prebuilt oleans — that job will compile mathlib FROM SOURCE. Add: run: bash scripts/ci-mathlib-cache.sh"
+    fi
+  done
+}
+
 # ── dispatch ────────────────────────────────────────────────────────────────────
 main() {
   local cmd="${1:-all}"
@@ -303,11 +384,12 @@ main() {
     falsifiers) inv_falsifiers ;;
     no-ignore)  inv_no_ignore ;;
     no-twin)    inv_no_twin ;;
-    structural) inv_no_ignore; inv_no_twin ;;
-    all)        inv_build; inv_falsifiers; inv_no_ignore; inv_no_twin ;;
+    one-mathlib) inv_one_mathlib_path ;;
+    structural) inv_no_ignore; inv_no_twin; inv_one_mathlib_path ;;
+    all)        inv_build; inv_falsifiers; inv_no_ignore; inv_no_twin; inv_one_mathlib_path ;;
     -h|--help|help)
-      sed -n '2,40p' "$0"; exit 0 ;;
-    *) fatal "unknown subcommand '$cmd' (try: all | structural | build | falsifiers | no-ignore | no-twin)" ;;
+      sed -n '2,45p' "$0"; exit 0 ;;
+    *) fatal "unknown subcommand '$cmd' (try: all | structural | build | falsifiers | no-ignore | no-twin | one-mathlib)" ;;
   esac
   echo
   if [ "$FAILURES" -eq 0 ]; then

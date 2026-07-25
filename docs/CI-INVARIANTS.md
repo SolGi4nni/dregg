@@ -5,18 +5,18 @@ megaswarm-fix campaign fought for, so the gains become **un-regressable**. It is
 of that campaign (`docs/TWIN-DELETION-MAP-2026-07-23.md`,
 `docs/MEGASWARM-FLAW-BACKLOG-2026-07-23.md`; memory `project-twin-deletion-campaign`).
 
-It enforces **four** invariants. Each is a hard failure with an actionable message; the script
+It enforces **five** invariants. Each is a hard failure with an actionable message; the script
 exits `0` (all pass), `1` (an invariant failed), or `2` (environment problem — a registry or source
 file moved, so the gate would otherwise check nothing).
 
 ```
-scripts/ci-invariants.sh [ all | structural | build | falsifiers | no-ignore | no-twin ]
+scripts/ci-invariants.sh [ all | structural | build | falsifiers | no-ignore | no-twin | one-mathlib ]
 ```
 
-- `all` (default) — all four invariants.
-- `structural` — invariants **3 + 4** plus registry existence, **no cargo build**. Runs in seconds;
-  this is the always-on required PR check.
-- `build`, `falsifiers`, `no-ignore`, `no-twin` — one invariant each.
+- `all` (default) — all five invariants.
+- `structural` — invariants **3 + 4 + 5** plus registry existence, **no cargo build**. Runs in
+  seconds; this is the always-on required PR check.
+- `build`, `falsifiers`, `no-ignore`, `no-twin`, `one-mathlib` — one invariant each.
 
 Two checked-in registries drive it, both under `scripts/ci-invariants/`:
 
@@ -169,9 +169,38 @@ must call it.
 
 ---
 
+## Invariant 5 — ONE MATHLIB PROVISIONING PATH
+
+Every CI mathlib provisioning must route through `scripts/ci-mathlib-cache.sh`. Checked (all
+grep/awk, seconds, no build):
+
+| Sub-check | Fails when |
+|---|---|
+| lakefile shape | `metatheory/lakefile.toml` regains a `path =` require, or loses its explicit 40-hex `rev =` (a float makes mathlib's prebuilt-olean cache unfindable). |
+| no private path | any non-comment workflow line names `src/mathlib4` or clones `mathlib4` itself. |
+| no inline fetch | an inline `lake exe cache get` reappears in a workflow instead of the script. |
+| every Lean job provisions | a workflow installs the `metatheory/lean-toolchain` toolchain but calls neither `ci-mathlib-cache.sh` nor `bootstrap.sh` — that job would compile mathlib from source. |
+
+**Why (2026-07-25).** Five provisioning sites (`ci.yml` × 3, `proof-integrity-canary.yml`, and both
+`starbridge-v2-installers.yml` lanes) cloned mathlib to `$GITHUB_WORKSPACE/../../src/mathlib4` and
+ran `lake exe cache get` there. That was correct only while the lakefile pinned
+`path = "../../../src/mathlib4"`. `4ccee5bd71` (2026-07-05) made the require portable `git`+`rev`,
+which lake resolves into `metatheory/.lake/packages/mathlib` — so the 8463-olean download landed
+where nothing reads it and every Lean job recompiled the mathlib subset from source. **Measured** on
+`ci.yml`'s "Zero-sorry guard" step: 20.9/23.6/21.9/21.1/31.0 min for the five runs before the pin,
+**115.1 min on the pin commit's own run** (which touched no Lean proof), 99–111 min the next day.
+It hid for 20 days because a from-source mathlib build is indistinguishable from a slow one in a
+green log — the same reason this is now a gate and not a comment.
+
+The two starbridge copies were worse than slow: they `sed`'d for the deleted `path = "…"` line, so
+`MATHLIB_DIR` became `<repo>/metatheory` and `git clone` exited 128 — a hard red on every
+`lean-cache` miss.
+
+---
+
 ## Wiring
 
-`.github/workflows/ci-invariants.yml` runs it. The `structural` job (invariants 3+4, no build) is
+`.github/workflows/ci-invariants.yml` runs it. The `structural` job (invariants 3+4+5, no build) is
 the fast always-on gate; `tree-builds` (invariant 1, `--keep-going`) and `falsifiers` (invariant 2)
 are the heavy jobs, mirroring `ci.yml`'s toolchain / system-deps / disk-reclaim / LFS setup. Run it
 locally the same way: `scripts/ci-invariants.sh structural` before a push, `scripts/ci-invariants.sh
@@ -183,3 +212,9 @@ all` when you have the build lock.
 exercised without touching the checked-in one. This is how the guards were verified to **fire** on a
 regression (route-through removed, a forbidden twin present, a native decider un-gated, a silenced
 falsifier-class test) — a green here is meant to mean something.
+
+Invariant 5 has no registry, so it is falsified by running the script against a **synthetic tree**
+(`ROOT` is derived from the script's own location, so a scratch `scripts/ + metatheory/ +
+.github/workflows/` skeleton is enough). All five of its sub-checks were verified to go red that
+way on 2026-07-25: `path =` restored, `rev` dropped, a workflow naming `src/mathlib4`, an inline
+`lake exe cache get`, and a Lean job that installs the toolchain and never provisions.

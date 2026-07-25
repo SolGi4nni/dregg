@@ -129,13 +129,14 @@ jobs:
       # The verified Lean archive (dregg-lean-ffi/libdregg_lean.a) is linked by
       # the embedded executor (native-full). It is NOT prebuilt on the runner —
       # the repo's `scripts/bootstrap.sh` is the blessed "fresh clone → working
-      # verified-executor build" entry point: it reconstructs the mathlib path
-      # dep, `lake build`s Dregg2.Exec.FFI, and SEEDS the archive
-      # (dregg-lean-ffi/scripts/seed-dregg2-closure.sh). bootstrap.sh requires the
-      # mathlib checkout at the lakefile's pinned local path FIRST, so we
-      # reconstruct it exactly as ci.yml's `metatheory-no-sorry` job does (pinned
-      # rev + `lake exe cache get` for the prebuilt mathlib oleans), then run
-      # bootstrap. HEAVY (first run compiles the Lean closure); cache the result.
+      # verified-executor build" entry point: it pulls mathlib's prebuilt oleans,
+      # `lake build`s Dregg2.Exec.FFI, and SEEDS the archive
+      # (dregg-lean-ffi/scripts/seed-dregg2-closure.sh). mathlib is a portable
+      # `git`+`rev` require, so there is no path to reconstruct; we prime the
+      # prebuilt oleans with the same scripts/ci-mathlib-cache.sh every Lean CI
+      # lane uses (green-or-bust on a cache miss, which bootstrap.sh only warns
+      # about), then run bootstrap. HEAVY (first run compiles the Lean closure);
+      # cache the result.
       - name: Cache libdregg_lean.a + Lean build (.lake)
         id: lean-cache
         uses: actions/cache@v4
@@ -156,19 +157,18 @@ jobs:
           bash elan-init.sh -y --default-toolchain "$(cat metatheory/lean-toolchain)"
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
 
-      - name: Reconstruct the pinned mathlib path dependency
+      # ⚑ THIS STEP WAS STATICALLY BROKEN, NOT MERELY SLOW (fixed 2026-07-25). It parsed
+      # `sed -n 's/^path = "\(.*\)"/\1/p' metatheory/lakefile.toml` — a line `4ccee5bd71`
+      # (2026-07-05) DELETED when the mathlib require became portable `git`+`rev`. With
+      # MATHLIB_REL empty, MATHLIB_DIR became `<repo>/metatheory/` itself and
+      # `git clone <url> <repo>/metatheory` exits 128 ("already exists and is not an empty
+      # directory"); under `set -euo pipefail` that is a HARD RED on every lean-cache MISS.
+      # (Verified at HEAD: the sed yields the empty string, and the clone exits 128.)
+      # lake resolves the require into `metatheory/.lake/packages/mathlib`; the shared script
+      # fetches the prebuilt oleans there, which is also where bootstrap.sh below looks.
+      - name: Fetch pinned mathlib4 (prebuilt oleans into metatheory/.lake/packages/mathlib)
         if: steps.lean-cache.outputs.cache-hit != 'true'
-        run: |
-          set -euo pipefail
-          # metatheory/lakefile.toml pins mathlib as a LOCAL PATH dep; bootstrap.sh
-          # reads that path. Recreate it at the pinned rev + pull the prebuilt cache.
-          MATHLIB_REL="$(sed -n 's/^path = "\(.*\)"/\1/p' metatheory/lakefile.toml | head -1)"
-          MATHLIB_REV="$(grep -oE '[0-9a-f]{40}' metatheory/lakefile.toml | head -1)"
-          MATHLIB_DIR="$(cd metatheory && pwd)/$MATHLIB_REL"
-          mkdir -p "$(dirname "$MATHLIB_DIR")"
-          git clone https://github.com/leanprover-community/mathlib4 "$MATHLIB_DIR"
-          git -C "$MATHLIB_DIR" checkout "$MATHLIB_REV"
-          ( cd "$MATHLIB_DIR" && "$HOME/.elan/bin/lake" exe cache get )
+        run: bash scripts/ci-mathlib-cache.sh
 
       - name: bootstrap.sh — build + seed libdregg_lean.a
         if: steps.lean-cache.outputs.cache-hit != 'true'
@@ -363,17 +363,11 @@ jobs:
           bash elan-init.sh -y --default-toolchain "$(cat metatheory/lean-toolchain)"
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
 
-      - name: Reconstruct the pinned mathlib path dependency
+      # Same fix as the arm64 lane above: the old `path = "…"` sed yielded the empty string
+      # after `4ccee5bd71`, making this a hard-red `git clone` into `<repo>/metatheory`.
+      - name: Fetch pinned mathlib4 (prebuilt oleans into metatheory/.lake/packages/mathlib)
         if: steps.lean-cache.outputs.cache-hit != 'true'
-        run: |
-          set -euo pipefail
-          MATHLIB_REL="$(sed -n 's/^path = "\(.*\)"/\1/p' metatheory/lakefile.toml | head -1)"
-          MATHLIB_REV="$(grep -oE '[0-9a-f]{40}' metatheory/lakefile.toml | head -1)"
-          MATHLIB_DIR="$(cd metatheory && pwd)/$MATHLIB_REL"
-          mkdir -p "$(dirname "$MATHLIB_DIR")"
-          git clone https://github.com/leanprover-community/mathlib4 "$MATHLIB_DIR"
-          git -C "$MATHLIB_DIR" checkout "$MATHLIB_REV"
-          ( cd "$MATHLIB_DIR" && "$HOME/.elan/bin/lake" exe cache get )
+        run: bash scripts/ci-mathlib-cache.sh
 
       - name: bootstrap.sh — build + seed libdregg_lean.a
         if: steps.lean-cache.outputs.cache-hit != 'true'

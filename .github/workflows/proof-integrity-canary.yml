@@ -44,15 +44,15 @@ jobs:
           bash elan-init.sh -y --default-toolchain "$(cat metatheory/lean-toolchain)"
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
 
-      # The lakefile's mathlib require is a local path two levels above the repo root; reconstruct it
-      # at the pinned rev and pull the prebuilt .olean cache (don't recompile mathlib).
-      - name: Fetch pinned mathlib4
-        run: |
-          MATHLIB_DIR="$(cd "$GITHUB_WORKSPACE/../.." && pwd)/src/mathlib4"
-          mkdir -p "$MATHLIB_DIR"
-          git clone https://github.com/leanprover-community/mathlib4 "$MATHLIB_DIR"
-          git -C "$MATHLIB_DIR" checkout "$MATHLIB_REV"
-          ( cd "$MATHLIB_DIR" && ~/.elan/bin/lake exe cache get )
+      # mathlib is a PORTABLE `git`+`rev` require that lake resolves into
+      # `metatheory/.lake/packages/mathlib`. This step used to clone mathlib to
+      # `$GITHUB_WORKSPACE/../../src/mathlib4` and `cache get` there — the path the OLD
+      # `path = "../../../src/mathlib4"` require resolved to before `4ccee5bd71` (2026-07-05).
+      # That target was a directory nothing read, so this canary recompiled the mathlib subset
+      # from source on every nightly run (measured on ci.yml's twin step: ~84 min). Shared with
+      # ci.yml's three Lean jobs so the provisioning cannot drift per workflow again.
+      - name: Fetch pinned mathlib4 (prebuilt oleans into metatheory/.lake/packages/mathlib)
+        run: bash scripts/ci-mathlib-cache.sh
 
       # The gate: BASELINE must be GREEN, then AUTH-GRAPH-DROP + LEDGER-SPEC-DROP must each go RED.
       # Exits nonzero (failing the job) iff a load-bearing C-c1 proof regressed to decorative.

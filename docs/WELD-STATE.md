@@ -189,6 +189,9 @@ pin is the open apex-registry step.
 
 Also landed in the same span: the portable relative mathlib path restored
 (`metatheory/lakefile.toml:10` → `../../../src/mathlib4`, commit `d3c16c7f1`).
+⚠ SUPERSEDED 2026-07-05 by `4ccee5bd71`: that `path =` require is gone: mathlib is now a portable
+`git`+`rev` require which lake resolves into `metatheory/.lake/packages/mathlib`. Provisioning goes
+through `scripts/ci-mathlib-cache.sh` (see docs/CI-INVARIANTS.md, invariant 5).
 
 **What this means for the carrier map below:** nothing in §2–§6 regresses; the
 cap-write close is a §1-family (faithful-commitment) completion. The cap-root anchor
