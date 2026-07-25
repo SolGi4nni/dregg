@@ -638,7 +638,9 @@ jobs:
           grep '^error: could not compile' clippy-correctness.log \
             | sed -E 's/^error: could not compile `([^`]+)` \((.*)\) due to.*/\1 (\2)/' \
             | sort -u > dark-now.txt || true
-          grep -vE '^\s*(#|$)' "$LIST" | sort -u > dark-known.txt
+          # `file …` rows belong to the mod-declaration sweep below; they share this
+          # list (one doctrine, one file) but partition its rows.
+          grep -vE '^\s*(#|$)' "$LIST" | grep -v '^file ' | sort -u > dark-known.txt
           NEW=$(comm -23 dark-now.txt dark-known.txt)
           FIXED=$(comm -13 dark-now.txt dark-known.txt)
           if [ -n "$NEW" ]; then
@@ -662,6 +664,23 @@ jobs:
             exit 1
           fi
           echo "dark-target ratchet: $(wc -l < dark-known.txt) known, 0 new, 0 stale."
+      # ── THE MOD-DECLARATION SWEEP (the ratchet's blind spot) ───────────────
+      # The step above catches a target that FAILS TO COMPILE. It cannot catch a
+      # file rustc NEVER OPENS — an unreferenced `.rs` is not a target, emits no
+      # diagnostic, and `--keep-going` never names it. Both failures leave every
+      # `#[test]` in the file unable to fire; only one of them is visible.
+      #
+      # What the invisible half cost, twice: `eth-lightclient`'s `bridge_lc_ffi`
+      # ETH light-client verification bridge had never been compiled, and
+      # `cargo test --lib -- bridge_lc_ffi` matched 0 of its 24 tests and reported
+      # GREEN. Then `sdk/src/fhegg.rs` — wired and tested on 07-17, un-wired on
+      # 07-20 as collateral in a commit about ML-DSA that never mentions it, while
+      # the `fhegg` feature stayed in `default` so every consumer kept compiling
+      # the dependency for a module that did not exist.
+      #
+      # Same two-sided ratchet, same allowlist file, `file `-prefixed rows.
+      - name: mod-declaration sweep
+        run: python3 scripts/check-dark-modules.py
 
   fmt:
     name: Format

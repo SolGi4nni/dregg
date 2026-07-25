@@ -29,38 +29,128 @@
 #
 # Adding a row is a real cost. Say WHY, and name what the dark test was guarding.
 
-# ── THE FRI SOUNDNESS LEDGER GATE (2 targets) ────────────────────────────────────────
-# Both import `dregg_lean_ffi::{FriKnobs, FriLedger, fri_ledger, fri_ledger_available}`,
-# which has ZERO definition sites tree-wide. The Rust binding was removed in TWO stages
-# by TWO commits, neither of which mentions FRI:
-#   * 7ebe7b7d4b (2026-07-20 05:08, "no-silent-fallback: two gates make unaudited PQ
-#     substitution IMPOSSIBLE") rewrote `dregg-lean-ffi/build.rs` and dropped the
-#     `dregg_fri_ledger` archive probe, its `rustc-check-cfg` declaration and its
-#     `rustc-cfg` emission — so `dregg_fri_ledger_present` stopped being set.
-#   * 0f2802a0ca (2026-07-20 21:53, "ML-KEM keygen now dispatches the VERIFIED core")
-#     deleted the public API (`FriKnobs`/`FriLedger`/`fri_ledger`/`fri_ledger_available`
-#     and the `mod ffi` bridge) plus `lean_init.c`'s `dregg_fri_ledger_str` C shim.
-# The LEAN side is alive and orphaned: `@[export] dregg_fri_ledger`
-# (metatheory/Dregg2/Circuit/FriLedger.lean:380) is inside the FFI boundary closure
-# (metatheory/Dregg2/FFI.lean:31), so the symbol IS in today's archive.
+# ── THE LIST IS EMPTY (2026-07-25). Every target in the workspace compiles. ──────────
 #
-# WHAT IS DARK: the knob-drift PIN — the sole guard that the deployed FRI knobs still
-# equal the Lean literals every per-fold soundness theorem is stated about — plus the
-# per-config ledger floors and six mutation canaries. Cited as load-bearing in 16 files
-# under docs/ and GOAL-*.md. Verified by hand 2026-07-25: no knob has drifted while the
-# gate was dark (all 7 shipped configs still match their Lean literals) — but that is a
-# manual reading with a shelf life, not a gate.
+# It held TWELVE rows earlier today. The last two to clear were the FRI soundness ledger
+# gate (`dregg-circuit-prove` tests `fri_params_soundness_budget` /
+# `fri_regrid_post_s2_measure`), dark for five days. The repair took TWO commits and was
+# not complete until the second: 3ba423cbc6 restored build.rs (probe + check-cfg + cfg
+# emission + shim.define) and lib.rs (`FriKnobs`/`FriLedger`/`fri_ledger`/
+# `fri_ledger_available` + the `mod ffi` bridge), which left `dregg_fri_ledger_str`
+# DECLARED with no definition anywhere — a link error, not a compile error, so the targets
+# stopped being dark while still not running. a954ac5892 added the `lean_init.c` C shim
+# that actually reaches the Lean export. Three layers were needed; two looked like enough.
 #
-# REPAIR (restores both rows at once) is confined to `dregg-lean-ffi/`, which was a live
-# lane's territory on 2026-07-25; restore from 0f2802a0ca^ / 7ebe7b7d4b^:
-#   1. src/lib.rs           — FriKnobs, FriLedger, fri_ledger_available, fri_ledger, and
-#                             mod ffi's extern decl + lean_fri_ledger + fri_ledger_present
-#                             (both cfg arms, and the not(lean) stub).
-#   2. src/lean_init.c      — `extern lean_object *dregg_fri_ledger(lean_object*);` and the
-#                             `dregg_fri_ledger_str` string bridge.
-#   3. build.rs             — `archive_exports(&build_archive, "dregg_fri_ledger")`, the
-#                             `cargo::rustc-check-cfg=cfg(dregg_fri_ledger_present)` and the
-#                             `cargo:rustc-cfg=dregg_fri_ledger_present` emission.
-# OWNER: the dregg-lean-ffi / FRI lane.
-dregg-circuit-prove (test "fri_params_soundness_budget")
-dregg-circuit-prove (test "fri_regrid_post_s2_measure")
+# KEEP THE LESSON, not the row. That outage is the reference case for how this file's
+# subject matter is created, and it has three parts worth remembering:
+#
+#   * IT TOOK TWO COMMITS, NEITHER MENTIONING FRI. 7ebe7b7d4b dropped the `dregg_fri_ledger`
+#     archive probe + its `rustc-check-cfg` + its `rustc-cfg` emission from build.rs (subject:
+#     a PQ-substitution SECURITY STRENGTHENING); 0f2802a0ca, 17h later, deleted the Rust API
+#     and the `lean_init.c` C shim. Stage one disarmed the gate SILENTLY; only stage two made
+#     it a compile error anyone could see. A commit subject is not a description of a diff.
+#
+#   * THE SAME REWRITE DROPPED A SECOND GATE, and that one never went dark at all.
+#     7ebe7b7d4b removed `dregg_constraint_admits`'s probe/check-cfg/emission/shim.define too
+#     — the REALITY-GATE (fbe236f32b) routing the node's admission decision through the Lean
+#     constraint evaluator. Because nothing DELETED its Rust API, the `#[cfg]` simply went
+#     always-false and `constraint_admits_available()` returned false for 4d17h, compiling
+#     green the whole time. It was restored by accident on 07-24 (b01d0a7c1d, a manifest
+#     widening), not by anyone noticing. A dark target is the LOUD failure mode; the quiet one
+#     leaves no row here at all.
+#
+#   * THE DETECTOR EXISTED AND WAS OPTED OUT OF. `unexpected_cfgs = "deny"`
+#     (`[workspace.lints.rust]`) fires exactly on a `#[cfg(foo)]` whose `foo` no build script
+#     declares — it would have caught BOTH drops the moment 7ebe7b7d4b landed. It binds only
+#     crates with `[lints] workspace = true`, and `dregg-lean-ffi/Cargo.toml` has no `[lints]`
+#     section — the one crate whose entire job is cfg-gating access to verified Lean exports
+#     is the crate where an undeclared cfg gate is not an error. (Audited 2026-07-25: all 28
+#     `dregg_*_present` cfgs used under `dregg-lean-ffi/src/` are currently declared in its
+#     build.rs, so nothing is dangling right now — but nothing STOPS the next one.)
+#
+# ── DARK FILES: `file ` ROWS (the mod-declaration sweep) ─────────────────────────────
+# The ratchet above catches a target that FAILS TO COMPILE. It cannot catch a file rustc
+# NEVER OPENS. That file is not a target, so `--keep-going` never names it, no diagnostic
+# mentions it, and `cargo test -- <filter over its tests>` prints `0 filtered out … ok` —
+# a GREEN report over a run that executed nothing. Both failures leave every `#[test]` in
+# the file unable to fire; only one of them is visible.
+#
+# `scripts/check-dark-modules.py` (run by the `mod-declaration sweep` step of the SAME
+# `clippy-correctness` job) sweeps every tracked `.rs` for a reaching `mod` declaration,
+# `[[bin]]`/`path =` target root, `build.rs`, or `#[path]`/`include!`. Rows here are
+# prefixed `file ` so the two readers partition one list. Same two-sided ratchet: a dark
+# file not listed FAILS, a listed file that became reachable FAILS.
+#
+#     file <path>   # why it is deliberately uncompiled, and who owns it
+#
+# Reproduce locally:  python3 scripts/check-dark-modules.py --print-dark
+#
+# ⚠ WHAT THIS CLASS HAS COST, TWICE. `eth-lightclient`'s `bridge_lc_ffi` — the ETH
+# light-client verification bridge — had never been compiled, and its own
+# `cargo test --lib -- bridge_lc_ffi` matched 0 of 24 tests and reported success. Then
+# `sdk/src/fhegg.rs`: `26005d1fe8` (07-17) added it AND its `mod` line and ran its tests
+# (3 passed); `b6702625a7` (07-20, "verified ML-DSA sign core INSTALLED") deleted the mod
+# line and its six-line comment as collateral in a lib.rs hunk its own file-by-file message
+# never mentions. The `fhegg` feature stayed in `default`, so for five days every SDK
+# consumer compiled `fhegg-solver` while `dregg_sdk::fhegg` did not exist and its
+# tamper-refusal tooth never ran. A file can be wired, tested, and STILL go dark later.
+#
+# MEASURED at the commit that added this sweep: 3,978 tracked `.rs`, 21 dark. Three were
+# real and are now resolved — `circuit/src/xmss.rs` WIRED (15 tests, all green, canaried),
+# `sdk/src/fhegg.rs` RE-WIRED, `dregg-dsl/src/gen_diff_test.rs` DELETED (it was RED: three
+# E0004s, superseded by `dregg-dsl-differential`). One more was found that the original
+# sweep missed and is enumerated below. The other 17 are intentional.
+
+# ── GENUINELY DARK, NOT MINE TO FIX (1) ──────────────────────────────────────────────
+# 767 lines with 3 `#[test]`s, unreferenced since the repo's root commit (4f736aa709) —
+# `deos-js/src/lib.rs` declares its 20-odd sibling cards and `mailtown` (whose own doc says
+# it "mirrors the `mud` module") but has never declared `mud`. Same class as `fhegg.rs`,
+# found by this sweep and NOT by the `mod`-grep that preceded it. Compile status UNMEASURED
+# — stated, not claimed. Owner: the deos-js lane. Wire it or delete it; this row exists so
+# it is DETECTED rather than merely documented, not to bless it.
+file deos-js/src/mud.rs
+
+# ── INTENTIONALLY UNCOMPILED (17) ────────────────────────────────────────────────────
+# Documented scaffold with `todo!()`s. Its own header: "deliberately NOT a member of the
+# Cargo workspace (so it cannot break other lanes' builds)"; `fhegg-rtl/` has no Cargo.toml
+# at all. `fhegg-rtl/hardware/cosim/README.md` carries the three-step contributor contract.
+file fhegg-rtl/hardware/cosim/cosim_harness.rs
+
+# A standalone `rustc --test` harness, not a cargo target: `sel4/render-pd` forces
+# `build.target = aarch64-sel4-roottask-musl` in `.cargo/config.toml`, so `cargo test`
+# cannot run on the host. It `#[path]`s the REAL `src/render_blit.rs` and runs its polarity
+# tests. ⚠ NOTHING INVOKES IT — no script, no workflow, no doc outside its own header
+# (swept 2026-07-25). It is a guard that fires only when a human types the command in its
+# doc comment. Owner: the sel4/render-pd lane.
+file sel4/render-pd/host-check/render_blit_polarity.rs
+
+# Retired one-line stub; the mesh e2e it named lives elsewhere. Pre-triaged.
+file tests/src/service_mesh_e2e.rs
+
+# A GPU-DFT prototype kept as a sketch, never a target.
+file circuit-prove/sketches/gpu_dft_prototype.rs
+
+# The mirror-gate CANARY corpus: these files are FIXTURES for
+# `scripts/check-mirror-gates.sh` — deliberately drifted/false-citation/twin sources whose
+# whole purpose is to be detected by that gate. Compiling them would defeat it.
+file scripts/mirror-gates/canary/mirrors/A1__circuit-prove__tests__drifted_emit_gate.rs
+file scripts/mirror-gates/canary/mirrors/A2__circuit-prove__tests__self_golden.rs
+file scripts/mirror-gates/canary/mirrors/D1__circuit-prove__tests__inline_mirror.rs
+file scripts/mirror-gates/canary/mirrors/D2__circuit__src__false_citation.rs
+file scripts/mirror-gates/canary/mirrors/D3__faction__src__twin.rs
+file scripts/mirror-gates/canary/mirrors/G1__drifted_local_golden/circuit-prove/tests/drifted_local_golden.rs
+
+# Frozen benchmark INPUTS and audit scripts published as artifacts of the 2026-07-22
+# direct-logic stability run. They are evidence, pinned as they were run; recompiling them
+# against today's tree would destroy the thing they document.
+file docs/deos/artifacts/direct-logic-dregg-workloads-2026-07-22-stability-v2/boolean-baseline.rs
+file docs/deos/artifacts/direct-logic-dregg-workloads-2026-07-22-stability-v2/inputs/rust/descriptor_ir2.rs
+file docs/deos/artifacts/direct-logic-dregg-workloads-2026-07-22-stability-v2/inputs/rust/direct_logic_dregg_workloads_benchmark.rs
+file docs/deos/artifacts/direct-logic-dregg-workloads-2026-07-22-stability-v2/inputs/rust/plonky3-fri-prover.rs
+file docs/deos/artifacts/direct-logic-dregg-workloads-2026-07-22-stability-v2/inputs/rust/plonky3-grinding-challenger.rs
+file docs/deos/artifacts/direct-logic-dregg-workloads-2026-07-22-stability-v2/pow-witness-audit.rs
+file docs/deos/artifacts/direct-logic-dregg-workloads-2026-07-22-stability-v2/proof-byte-audit.rs
+file docs/deos/artifacts/direct-logic-dregg-workloads-2026-07-22-stability-v2/transcript-sweep.rs
+file docs/deos/artifacts/direct-logic-dregg-workloads-2026-07-22-stability-v2/verify-transcript-sweep.rs
+
+# Rows go below this line. Keep it empty.

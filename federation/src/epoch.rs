@@ -4,12 +4,18 @@
 //! the validator set is fixed. At each epoch boundary:
 //!
 //! 1. Pending membership changes (joins/leaves) are applied.
-//! 2. Each continuing validator generates a fresh XMSS signing tree for the new epoch.
+//! 2. Each continuing validator re-derives its per-epoch signing-key commitment.
 //! 3. The threshold adjusts based on the new membership count (BFT: `(n - 1) / 3 + 1`).
 //! 4. The old epoch's validators attest the transition via a QuorumCertificate.
 //!
-//! Historical epoch configs are retained so that old-epoch signatures remain
-//! verifiable against the signing key roots that were active at the time.
+//! Historical epoch configs are retained so that an old epoch's MEMBER SET and
+//! threshold stay reconstructible. Step 2 said "generates a fresh XMSS signing
+//! tree" and this paragraph said old-epoch signatures "remain verifiable against
+//! the signing key roots" until 2026-07-25; both were false. There is no XMSS
+//! anything in this crate and nothing verifies against a `signing_key_root` —
+//! see [`epoch_signing_key_commitment`] for what the field is and what would have
+//! to close before it could authenticate. Historical signature verification runs
+//! against the Ed25519 `ValidatorInfo::public_key` retained in those same records.
 //!
 //! # Relationship to the LIVE consensus
 //!
@@ -60,8 +66,12 @@ pub struct EpochConfig {
 pub struct ValidatorInfo {
     /// The validator's Ed25519 public key (identity).
     pub public_key: PublicKey,
-    /// Root hash of the validator's XMSS signing tree for this epoch.
-    /// A fresh tree is generated at each epoch boundary for forward secrecy.
+    /// The validator's opaque per-epoch signing-key commitment
+    /// ([`epoch_signing_key_commitment`]), re-derived at each epoch boundary.
+    ///
+    /// ⚠ NOT a key root, and it buys no forward secrecy today: no code path
+    /// verifies a signature against this value. Its only live job is to be bound
+    /// into [`EpochTransition::signing_message`]. Name kept for wire stability.
     pub signing_key_root: [u8; 32],
     /// Validator's stake (for weighted threshold schemes).
     pub stake: u64,
@@ -394,32 +404,70 @@ pub fn verify_epoch_transition(transition: &EpochTransition, old_config: &EpochC
 }
 
 // =============================================================================
-// XMSS Key Rotation
+// Per-epoch signing-key commitment
 // =============================================================================
 
-/// Generate a new XMSS tree root for a validator entering a new epoch.
+/// Derive the per-epoch signing-key commitment a validator publishes on entering
+/// an epoch: `BLAKE3-KDF("dregg-epoch-signing-key-commitment-v1", seed ‖ epoch ‖ height)`.
 ///
-/// In production, this would generate a full XMSS tree with the given height
-/// (number of one-time signatures available). For now, we derive a deterministic
-/// root from the seed and epoch using BLAKE3.
+/// # This is NOT an XMSS root, and the height is not a tree height
+///
+/// It was called `new_epoch_tree` and documented as "in production, this would
+/// generate a full XMSS tree" until 2026-07-25. That framing was wrong in the
+/// direction that flatters: it reads as a degraded stand-in for a key root, i.e.
+/// as if the ONLY thing missing were the tree. Measured at the definitions,
+/// what is missing is the whole scheme —
+///
+///   1. **Nothing verifies against `signing_key_root`.** Tree-wide it is written
+///      (here and in `epoch_diff`'s random-bytes fixture), folded into
+///      `EpochTransition::signing_message`, and read back by
+///      `EpochHistory::validator_at_epoch`. Not one call site checks a signature
+///      against it. Every signature this crate verifies is Ed25519 against
+///      `ValidatorInfo::public_key` — a different key, on a different curve.
+///   2. **No leaf state is kept.** XMSS security is one-use-per-leaf; that needs
+///      a persisted consumption index. `ValidatorInfo` has no such field and no
+///      call site advances one, so a real tree wired in here would reuse leaves —
+///      XMSS's catastrophic failure, not its guarantee.
+///   3. **There is no verifier to wire to.** `dregg-circuit`'s `xmss` module is a
+///      real, tested Poseidon2-WOTS key tree (`XmssTree` / `xmss_verify`), but it
+///      is a NATIVE host-side primitive with no in-circuit AIR, and
+///      `dregg-federation` does not depend on `dregg-circuit`.
+///
+/// So `signing_key_root` is what this function actually produces: an OPAQUE
+/// 32-byte per-(seed, epoch) commitment, deterministic and domain-separated,
+/// whose only live job is to be bound into the transition message old-epoch
+/// validators sign. Substituting a genuine XMSS root today would cost a heavy
+/// dependency and a wire-format break and buy nothing, because (1) and (2) would
+/// still hold — it would make the field LOOK authenticating without being so.
+/// Close (1) and (2) first; this function is then the thing to replace.
 ///
 /// # Parameters
 /// - `seed`: The validator's long-term secret seed (32 bytes).
-/// - `epoch`: The epoch number for which the tree is generated.
-/// - `tree_height`: The XMSS tree height (e.g., 10 for 1024 signatures per epoch).
-pub fn new_epoch_tree(seed: &[u8; 32], epoch: u64, tree_height: u32) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("dregg-xmss-epoch-tree-v1");
+/// - `epoch`: The epoch number this commitment is scoped to.
+/// - `tree_height`: Bound into the commitment as a domain separator. It sizes
+///   nothing here — no tree is built.
+pub fn epoch_signing_key_commitment(seed: &[u8; 32], epoch: u64, tree_height: u32) -> [u8; 32] {
+    // Domain string re-cut with the rename: `dregg-xmss-epoch-tree-v1` asserted an
+    // XMSS tree in the KDF context itself. Nothing pins these bytes (the only
+    // consumer folds them into a message it also signs; `epoch_diff`'s fixture uses
+    // random roots), so the honest context is the cheap change.
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-epoch-signing-key-commitment-v1");
     hasher.update(seed);
     hasher.update(&epoch.to_le_bytes());
     hasher.update(&tree_height.to_le_bytes());
     *hasher.finalize().as_bytes()
 }
 
-/// Rotate signing keys for all continuing validators in an epoch transition.
+/// Re-derive the per-epoch signing-key commitment for all continuing validators.
 ///
 /// Returns a new member list with updated `signing_key_root` values for
 /// validators that persist across the epoch boundary. New validators keep
 /// the root they were provisioned with.
+///
+/// ⚠ Despite the name, no KEY rotates here: the value produced is the opaque
+/// commitment described on [`epoch_signing_key_commitment`], and no signature is
+/// ever verified against it. The Ed25519 identity in `ValidatorInfo::public_key`
+/// — which this function does NOT touch — is what actually authenticates votes.
 pub fn rotate_signing_keys(
     members: &[ValidatorInfo],
     seeds: &[[u8; 32]],
@@ -431,7 +479,7 @@ pub fn rotate_signing_keys(
         .enumerate()
         .map(|(i, v)| {
             if let Some(seed) = seeds.get(i) {
-                let new_root = new_epoch_tree(seed, new_epoch, tree_height);
+                let new_root = epoch_signing_key_commitment(seed, new_epoch, tree_height);
                 ValidatorInfo {
                     signing_key_root: new_root,
                     ..v.clone()
@@ -766,16 +814,16 @@ mod tests {
         let seed_a = [1u8; 32];
         let seed_b = [2u8; 32];
 
-        let root_epoch_0_a = new_epoch_tree(&seed_a, 0, 10);
-        let root_epoch_1_a = new_epoch_tree(&seed_a, 1, 10);
-        let root_epoch_0_b = new_epoch_tree(&seed_b, 0, 10);
+        let root_epoch_0_a = epoch_signing_key_commitment(&seed_a, 0, 10);
+        let root_epoch_1_a = epoch_signing_key_commitment(&seed_a, 1, 10);
+        let root_epoch_0_b = epoch_signing_key_commitment(&seed_b, 0, 10);
 
         // Different epochs produce different roots.
         assert_ne!(root_epoch_0_a, root_epoch_1_a);
         // Different seeds produce different roots.
         assert_ne!(root_epoch_0_a, root_epoch_0_b);
         // Same inputs produce same output (deterministic).
-        assert_eq!(root_epoch_0_a, new_epoch_tree(&seed_a, 0, 10));
+        assert_eq!(root_epoch_0_a, epoch_signing_key_commitment(&seed_a, 0, 10));
     }
 
     #[test]
@@ -881,8 +929,14 @@ mod tests {
         assert_ne!(rotated[0].signing_key_root, original_root_0);
         assert_ne!(rotated[1].signing_key_root, original_root_1);
 
-        // Should match what new_epoch_tree produces.
-        assert_eq!(rotated[0].signing_key_root, new_epoch_tree(&seed_0, 1, 10));
-        assert_eq!(rotated[1].signing_key_root, new_epoch_tree(&seed_1, 1, 10));
+        // Should match what epoch_signing_key_commitment produces.
+        assert_eq!(
+            rotated[0].signing_key_root,
+            epoch_signing_key_commitment(&seed_0, 1, 10)
+        );
+        assert_eq!(
+            rotated[1].signing_key_root,
+            epoch_signing_key_commitment(&seed_1, 1, 10)
+        );
     }
 }

@@ -333,6 +333,19 @@ pub mod stark_zk;
 
 pub mod temporal_predicate_dsl;
 
+/// XMSS one-time-signature key tree over this crate's Poseidon2-WOTS
+/// (`native_signature`): 2^h leaves, each a WOTS keypair, consumed in order,
+/// with the Merkle root as the public key and an authentication path in every
+/// signature. STARK-native (Poseidon2 internal nodes), NATIVE-ONLY — there is
+/// no in-circuit XMSS verification AIR, so this is a host-side primitive.
+///
+/// ⚠ NOT the federation epoch key root. `dregg-federation`'s
+/// `epoch::new_epoch_tree` returns a bare BLAKE3 derivation and is a DIFFERENT
+/// function with a DIFFERENT domain string; see the note there for why the two
+/// are not interchangeable today (nothing in federation verifies an XMSS
+/// signature, so its `signing_key_root` is an opaque committed byte string).
+pub mod xmss;
+
 #[cfg(feature = "plonky3")]
 pub mod plonky3_prover;
 

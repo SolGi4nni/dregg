@@ -13,8 +13,7 @@
 
 use crate::field::BabyBear;
 use crate::native_signature::{
-    WOTS_TOTAL_CHAINS, WotsPublicKey, WotsSecretKey, WotsSignature, wots_keygen, wots_sign,
-    wots_verify,
+    WotsPublicKey, WotsSecretKey, WotsSignature, wots_keygen, wots_sign, wots_verify,
 };
 use crate::poseidon2;
 

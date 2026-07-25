@@ -130,6 +130,23 @@ pub mod endpoints;
 pub mod error;
 pub mod explain;
 pub mod factories;
+// EXPERIMENTAL (feature `fhegg`, default-on): the fhEgg PLAINTEXT uniform-price
+// clearing demo surface — clear-a-book + verify-a-settlement over
+// `fhegg_solver::wire`. NO FHE, NO privacy, demo-scale; the solver is untrusted
+// and the settlement is self-checkable (`verify_settlement` re-derives it all).
+// The STARK-VERIFIED clearing path (Cert-F, ring-3/market4) lives in
+// circuit-prove, not here — see the module doc before claiming anything.
+//
+// ⚠ THIS LINE HAS BEEN DELETED BEFORE. `26005d1fe8` (07-17) added it together
+// with `fhegg.rs` and ran its tests (3 passed); `b6702625a7` (07-20, "verified
+// ML-DSA sign core INSTALLED") removed it and the comment above as collateral in
+// a lib.rs hunk that its own file-by-file message never mentions. The `fhegg`
+// feature stayed in `default`, so for five days every SDK consumer compiled
+// `fhegg-solver` while `dregg_sdk::fhegg` did not exist and the tamper-refusal
+// tooth below never ran. The mod-declaration sweep in `clippy-correctness` now
+// fails CI if `fhegg.rs` goes unreferenced again.
+#[cfg(feature = "fhegg")]
+pub mod fhegg;
 pub mod flashwell;
 pub mod full_turn_proof;
 pub mod hatchery_mint;
