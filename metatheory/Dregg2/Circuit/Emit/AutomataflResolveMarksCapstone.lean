@@ -71,7 +71,8 @@ open Dregg2.Circuit.Emit.AutomataflLegCEmit (readAtHead norHead marksListDecode 
 open Dregg2.Circuit.Emit.AutomataflCommit (feltCount packCell boardCode)
 open Dregg2.Games.Automatafl (Board Coord Particle Move Pid MoveValid)
 open Dregg2.Games.AutomataflRules (RoundState roundStep clashCoords resolveMoves resolvableB moveLegalB
-  moveLegalB_iff MoveLegal GameConfig GoalAssignment automatonStepCfg openRound unresolved)
+  moveLegalB_iff MoveLegal GameConfig GoalAssignment automatonStepCfg openRound unresolved
+  stockGoals2 stockGoals2_seats stockGoals2_seats_contains_zero)
 open Dregg2.Circuit.Emit.AutomataflTurnCapstone (turn_sat_imp_roundStep_pi)
 
 set_option autoImplicit false
@@ -544,8 +545,14 @@ The clean round's decoded RoundState (`rmRoundStateIn`) has `marks = marksListDe
 accumulated marks from the prior Leg C rounds), `locked = []` and `waiting = seats` — the P = 2
 landing (a pair clash re-enters BOTH seats, so the clean round's moves are BOTH fresh and the locked
 list is empty; M1/M2, `LEGC_SEATS = 2`). The fresh filter keeps both moves because each is marks-legal
-(`resolveMarksMoveLegal`, PROVEN — not assumed) and claims seat `0` (`moveDecodeN`'s hard-coded `who`,
-the Leg-S who-routing residual; `hseat0 : seats.contains 0`). -/
+(`resolveMarksMoveLegal`, PROVEN — not assumed) and claims seat `0` (`moveDecodeN`'s hard-coded `who`),
+which the generic-`seats` lemmas below carry as `hseat0 : seats.contains 0 = true`.
+
+⚑ `hseat0` IS NOT DEBT. At the DEPLOYED goal assignment it is a THEOREM, not a hypothesis:
+`AutomataflRules.stockGoals2_seats` proves `(stockGoals2 size).seats = [0, 1]` by `rfl` at EVERY
+size, so `stockGoals2_seats_contains_zero` discharges it. The stock-instance capstone
+(`turn_sat_imp_roundStepMarks_pi_stock`, §7d) carries NO `hseat0`. The generic-`seats` form is kept
+because it is the more general statement, not because anything is owed. -/
 
 section RoundState
 variable {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
@@ -582,8 +589,9 @@ theorem roundStep_marks_outcomeBoard (cfg : GameConfig) (g : GoalAssignment) (rs
     simp only [hne, Bool.false_eq_true, if_false]
 
 /-- **The fresh filter keeps both moves** — `hfresh` DISCHARGED from the descriptor. Each move is
-marks-legal (`resolveMarksMoveLegal`) and claims seat `0` (`hseat0`), so the `roundStep` fresh filter
-admits both. -/
+marks-legal (`resolveMarksMoveLegal`) and claims seat `0`, which the seat list must hold (`hseat0`;
+DISCHARGED at the deployed `stockGoals2` by `stockGoals2_seats_contains_zero`), so the `roundStep`
+fresh filter admits both. -/
 theorem rm_fresh_keeps_both (W : BoardWindow n)
     (hsat : Satisfied2 hash (automataflResolveMarksDescN n) minit mfin maddrs t)
     (hc : StepCanon t) (hlen : 1 < t.rows.length) (seats : List Pid)
@@ -675,10 +683,14 @@ end RoundState
 round of a MULTI-round turn: the resolve leg is the marks-carrying descriptor, and the round consumes
 the ACCUMULATED `RoundState` (`rmRoundStateIn`, `marks ≠ []`). The `hfresh` HYPOTHESIS of the old
 capstone is GONE — the marks-legality is DISCHARGED from the descriptor (`resolveMarksMoveLegal`), so
-only the who-routing `hseat0 : seats.contains 0` remains (the Leg-S residual, design §9.2). The seam is
-still the fold's PI equalities; the resolve-side ingredients ride the restricted resolve trace, and
-the appended marks window (`PI[R_PI_COUNT …)`) sits ABOVE the mid/auto seam slots, so it does not
-disturb them. -/
+in the GENERIC-`seats` statement only the who-routing `hseat0 : seats.contains 0` is left standing.
+**At the deployed game it is not left standing either**: `turn_sat_imp_roundStepMarks_pi_stock` fixes
+`g := stockGoals2 11` and `seats := (stockGoals2 11).seats` — the stock two-player 11×11 game that
+`dregg-automatafl/src/reference.rs::{stock_two_player, GOAL_CORNERS_2P}` deploys — and discharges
+`hseat0` by `stockGoals2_seats_contains_zero`, so the deployed capstone is UNCONDITIONAL in the seats.
+The seam is still the fold's PI equalities; the resolve-side ingredients ride the restricted resolve
+trace, and the appended marks window (`PI[R_PI_COUNT …)`) sits ABOVE the mid/auto seam slots, so it
+does not disturb them. -/
 
 section TurnMarks
 open Dregg2.Circuit.Emit.AutomataflStepEmit (automataflStepDescN)
@@ -700,7 +712,8 @@ theorem rm_moveLegal_empty
 /-- **`turn_sat_imp_roundStepMarks_pi` — THE M6 WHOLE-TURN CAPSTONE.** The decoded NEW board IS the
 board `AutomataflRules.roundStep` produces for the CLEAN round consuming the ACCUMULATED RoundState
 (`rmRoundStateIn`, `marks ≠ []`) — cell-wise, off ONLY the fold's PI equalities and `hseat0`. No
-`hfresh`. -/
+`hfresh`. (`hseat0` is the price of the ARBITRARY seat list; see
+`turn_sat_imp_roundStepMarks_pi_stock` for the deployed instance, where it is discharged.) -/
 theorem turn_sat_imp_roundStepMarks_pi (g : GoalAssignment) (seats : List Pid)
     (hsatR : Satisfied2 hashR (automataflResolveMarksDescN 11) minitR mfinR maddrsR tR)
     (hcR : StepCanon tR) (hlenR : 1 < tR.rows.length)
@@ -745,6 +758,38 @@ theorem turn_sat_imp_roundStepMarks_pi (g : GoalAssignment) (seats : List Pid)
   intro x y hx hy
   rw [hbase x y hx hy, hopen, ← hmarks]
 
+/-- **`turn_sat_imp_roundStepMarks_pi_stock` — THE M6 WHOLE-TURN CAPSTONE AT THE DEPLOYED GAME.**
+
+The same conclusion as `turn_sat_imp_roundStepMarks_pi`, with the goal assignment and the seat list
+fixed to **the stock two-player 11×11 game that is actually deployed** — `stockGoals2 11` is
+`dregg-automatafl/src/reference.rs::GOAL_CORNERS_2P` corner for corner, and its seat list is
+`[0, 1]` — and with **NO `hseat0` hypothesis**: who is seated is `stockGoals2_seats_contains_zero`,
+a `rfl`-theorem about the deployed assignment. P = 2 is not a restriction being carried here; P = 2
+IS the game. Every hypothesis that remains is about the TRACES (satisfaction, canonicity, the PI
+seam, this round being clean and resolvable) — none about the ruleset. -/
+theorem turn_sat_imp_roundStepMarks_pi_stock
+    (hsatR : Satisfied2 hashR (automataflResolveMarksDescN 11) minitR mfinR maddrsR tR)
+    (hcR : StepCanon tR) (hlenR : 1 < tR.rows.length)
+    (hsatA : Satisfied2 hashA (automataflStepDescN 11) minitA mfinA maddrsA tA)
+    (hcA : StepCanon tA) (hlenA : 1 < tA.rows.length)
+    (hclean : clashCoords (boardDecodeOldN 11 (envAt tR 0))
+        [moveDecodeN 11 (envAt tR 0) 0, moveDecodeN 11 (envAt tR 0) 1] = [])
+    (hres : resolvableB (boardDecodeOldN 11 (envAt tR 0))
+        [moveDecodeN 11 (envAt tR 0) 0, moveDecodeN 11 (envAt tR 0) 1] = true)
+    (hseamPack : ∀ j, j < feltCount 11 → tR.pub (16 + feltCount 11 + j) = tA.pub (16 + j))
+    (hseamAutoX : tR.pub (NGen.AUTO_PI_BASE 11)
+      = tA.pub (Dregg2.Circuit.Emit.AutomataflStepEmit.AUTO_PI_BASE 11))
+    (hseamAutoY : tR.pub (NGen.AUTO_PI_BASE 11 + 1)
+      = tA.pub (Dregg2.Circuit.Emit.AutomataflStepEmit.AUTO_PI_BASE 11 + 1)) :
+    ∀ x y : Nat, x < 11 → y < 11 →
+      codeToParticle ((envAt tA 0).loc
+          (Dregg2.Circuit.Emit.AutomataflStepEmit.NGen.new 11 (y * 11 + x)))
+        = (outcomeBoard (roundStep ⟨.column⟩ (stockGoals2 11)
+              (rmRoundStateIn 11 (envAt tR 0) (stockGoals2 11).seats)
+              [moveDecodeN 11 (envAt tR 0) 0, moveDecodeN 11 (envAt tR 0) 1])).cellAt ⟨x, y⟩ :=
+  turn_sat_imp_roundStepMarks_pi (stockGoals2 11) (stockGoals2 11).seats hsatR hcR hlenR hsatA hcA
+    hlenA (stockGoals2_seats_contains_zero 11) hclean hres hseamPack hseamAutoX hseamAutoY
+
 end TurnMarks
 
 /-! ## §8 — SHAPE CANARIES. -/
@@ -776,5 +821,6 @@ end TurnMarks
 #assert_axioms rmRoundStep_marks_outcomeBoard
 #assert_axioms rm_moveLegal_empty
 #assert_axioms turn_sat_imp_roundStepMarks_pi
+#assert_axioms turn_sat_imp_roundStepMarks_pi_stock
 
 end Dregg2.Circuit.Emit.AutomataflResolveMarksCapstone

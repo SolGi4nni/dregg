@@ -500,6 +500,24 @@ def stockGoals2 (size : Nat) : GoalAssignment :=
 def stockGoals4 (size : Nat) : GoalAssignment :=
   ⟨[(⟨0, 0⟩, 0), (⟨size - 1, 0⟩, 1), (⟨size - 1, size - 1⟩, 2), (⟨0, size - 1⟩, 3)]⟩
 
+/-- **The deployed game's seat list is a CLOSED FORM: `[0, 1]`, at EVERY board size.**
+
+`GoalAssignment.seats` is `(entries.map (·.2)).dedup`, and `stockGoals2`'s seat components are the
+literals `0, 0, 1, 1` at every `size` — `size` enters only the corner COORDINATES, never a seat. So
+"who is seated" in the stock two-player game is DECIDABLE, not a hypothesis: no `size ≥ 2`, no `n =
+11` instance needed. Holds definitionally (`rfl`). -/
+theorem stockGoals2_seats (size : Nat) : (stockGoals2 size).seats = [0, 1] := rfl
+
+/-- **Seat 0 is seated in the deployed game** — for every `size`. This is the fact the circuit
+capstones carried as the hypothesis `hseat0 : seats.contains 0 = true`; at `stockGoals2` it is a
+THEOREM, so the deployed-instance capstones assume nothing about who is seated. -/
+theorem stockGoals2_seats_contains_zero (size : Nat) :
+    (stockGoals2 size).seats.contains 0 = true := rfl
+
+/-- Seat 1 likewise — the two-player game seats EXACTLY `{0, 1}`. -/
+theorem stockGoals2_seats_contains_one (size : Nat) :
+    (stockGoals2 size).seats.contains 1 = true := rfl
+
 /-- The win check: the automaton **moved**, and its new square is a declared goal. -/
 def winOnEntry (before after : Board) (g : GoalAssignment) : Option Pid :=
   if after.automaton = before.automaton then none
@@ -2653,6 +2671,10 @@ def repBoard : Board := mkBoard 5 [(⟨2, 1⟩, .repulsor)] ⟨2, 2⟩
 
 #guard (stockGoals2 11).WellFormed2 11 = true
 #guard (stockGoals4 11).WellFormed4 11 = true
+-- the DEPLOYED assignment, corner for corner: `reference.rs::GOAL_CORNERS_2P` at n = 11
+#guard stockGoals2 11 = GoalAssignment.mk [(⟨0, 0⟩, 0), (⟨10, 0⟩, 0), (⟨0, 10⟩, 1), (⟨10, 10⟩, 1)]
+-- ... and its seat list is EXACTLY the two seats (`stockGoals2_seats`, here at the deployed size)
+#guard (stockGoals2 11).seats = [0, 1]
 -- `model.py::DEFAULT_GOALS[2]` repeats (10,0) and gives seat 1 a COLUMN — it is NOT well-formed
 #guard (GoalAssignment.mk [(⟨0, 0⟩, 0), (⟨10, 0⟩, 0), (⟨10, 0⟩, 1), (⟨10, 10⟩, 1)]).WellFormed2 11
         = false
@@ -2734,6 +2756,9 @@ end Conformance
   automatonStepCfg_preserves_inBounds,
   winOnEntry_sound,
   winOnEntry_corner,
+  stockGoals2_seats,
+  stockGoals2_seats_contains_zero,
+  stockGoals2_seats_contains_one,
   landMap_of_not_src,
   landMap_of_not_mover,
   filter_land_eq_singleton,

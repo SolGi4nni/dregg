@@ -39,9 +39,21 @@ cell at n = 11.
 ## Scope, said out loud
 
 P = 2 (`LEGC_SEATS = 2`): a pair clash re-enters BOTH seats, so the clean round's moves are both
-fresh and `locked = []`. The only residual of the clean round is `hseat0 : seats.contains 0` (the
-Leg-S who-routing residual, design § 9.2). Board equality is stated CELL-WISE (as everywhere in this
-tree — `Board` carries function fields, so `=` is neither decidable nor what any capstone states).
+fresh and `locked = []`. **P = 2 is not a limitation being carried — P = 2 IS the deployed game**
+(`dregg-automatafl/src/reference.rs::{stock_two_player, GOAL_CORNERS_2P}`, the stock two-player 11×11
+board). Board equality is stated CELL-WISE (as everywhere in this tree — `Board` carries function
+fields, so `=` is neither decidable nor what any capstone states).
+
+## `hseat0` IS DISCHARGED AT THE DEPLOYED GOAL ASSIGNMENT
+
+The generic-`seats` capstones below take `hseat0 : seats.contains 0 = true` because they quantify
+over an ARBITRARY seat list. That is not a residual and not owed work: at the deployed assignment it
+is a THEOREM. `AutomataflRules.stockGoals2_seats` proves `(stockGoals2 size).seats = [0, 1]` by `rfl`
+at EVERY size (`size` enters only the corner coordinates, never a seat), so
+`stockGoals2_seats_contains_zero` discharges `hseat0` outright. §5b lands the deployed instances —
+`rm_clean_resolves_stock` and `braid_sat_imp_runTurn_stock` — at `g := stockGoals2 11`,
+`seats := (stockGoals2 11).seats`, with **NO `hseat0` hypothesis**. The generic forms are kept
+because they are the more general statements.
 -/
 import Dregg2.Games.AutomataflTermination
 import Dregg2.Circuit.Emit.AutomataflResolveMarksCapstone
@@ -522,6 +534,90 @@ theorem braid_sat_imp_runTurn (g : GoalAssignment) (seats : List Pid) (b0 : Boar
       rw [hM6]
       exact (hBoard.cell ⟨x, y⟩).symm
 
+/-! ## §5b  THE DEPLOYED-GAME INSTANCE — `hseat0` DISCHARGED, NOT ASSUMED
+
+The stock two-player 11×11 game is what runs: `stockGoals2 11` is `reference.rs::GOAL_CORNERS_2P`
+corner for corner, and `stockGoals2_seats` computes its seat list to `[0, 1]` by `rfl`. Instantiating
+the capstones there turns the who-routing hypothesis into a proof obligation we DISCHARGE, so the
+deployed statements are unconditional in the seats: every hypothesis they still carry is about the
+TRACES (satisfaction of the emitted descriptors, canonicity, the PI seam, this round being clean and
+resolvable) or about the fold seam — none about the ruleset.
+
+What this does NOT change: the shape is still `descriptor-satisfaction → spec`, standing on the same
+undischarged proof-system floor as every capstone in this tree. Discharging `hseat0` retires a
+GAME-RULES hypothesis, not a soundness one. -/
+
+/-- `rm_clean_resolves` at the deployed goal assignment — no `hseat0`. -/
+theorem rm_clean_resolves_stock
+    {hashR : List ℤ → ℤ} {minitR : ℤ → ℤ} {mfinR : ℤ → ℤ × Nat} {maddrsR : List ℤ} {tR : VmTrace}
+    (hsatR : Satisfied2 hashR (automataflResolveMarksDescN 11) minitR mfinR maddrsR tR)
+    (hcR : StepCanon tR) (hlenR : 1 < tR.rows.length)
+    (hclean : clashCoords (boardDecodeOldN 11 (envAt tR 0))
+        [moveDecodeN 11 (envAt tR 0) 0, moveDecodeN 11 (envAt tR 0) 1] = [])
+    (hres : resolvableB (boardDecodeOldN 11 (envAt tR 0))
+        [moveDecodeN 11 (envAt tR 0) 0, moveDecodeN 11 (envAt tR 0) 1] = true) :
+    ∃ afterRM winRM,
+      roundStep ⟨.column⟩ (stockGoals2 11)
+          (rmRoundStateIn 11 (envAt tR 0) (stockGoals2 11).seats) (cleanSubs tR)
+        = .resolved afterRM winRM :=
+  rm_clean_resolves (stockGoals2 11) (stockGoals2 11).seats hsatR hcR hlenR
+    (stockGoals2_seats_contains_zero 11) hclean hres
+
+/-- **`braid_sat_imp_runTurn_stock` — THE M7 WHOLE-TURN CAPSTONE FOR THE GAME THAT IS DEPLOYED.**
+
+`braid_sat_imp_runTurn` with the goal assignment and the seat list fixed to the stock two-player
+11×11 game (`stockGoals2 11` = `reference.rs::GOAL_CORNERS_2P`; seats `[0, 1]`), and with **NO
+`hseat0` hypothesis** — `stockGoals2_seats_contains_zero` discharges it. Given a chain of accepted
+Leg C conflict rounds seaming into the clean round's accumulated state, plus the clean round's
+resolve-marks and step traces, the whole multi-round turn of the DEPLOYED game RESOLVES and its final
+board is, cell for cell, the board decoded off the step trace. -/
+theorem braid_sat_imp_runTurn_stock (b0 : Board)
+    (Cs : List VmTrace) (hCsAcc : ∀ t ∈ Cs, LegCAccepted t)
+    {hashR : List ℤ → ℤ} {minitR : ℤ → ℤ} {mfinR : ℤ → ℤ × Nat} {maddrsR : List ℤ} {tR : VmTrace}
+    {hashA : List ℤ → ℤ} {minitA : ℤ → ℤ} {mfinA : ℤ → ℤ × Nat} {maddrsA : List ℤ} {tA : VmTrace}
+    (hsatR : Satisfied2 hashR (automataflResolveMarksDescN 11) minitR mfinR maddrsR tR)
+    (hcR : StepCanon tR) (hlenR : 1 < tR.rows.length)
+    (hsatA : Satisfied2 hashA (automataflStepDescN 11) minitA mfinA maddrsA tA)
+    (hcA : StepCanon tA) (hlenA : 1 < tA.rows.length)
+    (hclean : clashCoords (boardDecodeOldN 11 (envAt tR 0))
+        [moveDecodeN 11 (envAt tR 0) 0, moveDecodeN 11 (envAt tR 0) 1] = [])
+    (hres : resolvableB (boardDecodeOldN 11 (envAt tR 0))
+        [moveDecodeN 11 (envAt tR 0) 0, moveDecodeN 11 (envAt tR 0) 1] = true)
+    (hseamPack : ∀ j, j < feltCount 11 → tR.pub (16 + feltCount 11 + j) = tA.pub (16 + j))
+    (hseamAutoX : tR.pub (Dregg2.Circuit.Emit.AutomataflResolveEmit.NGen.AUTO_PI_BASE 11)
+      = tA.pub (Dregg2.Circuit.Emit.AutomataflStepEmit.AUTO_PI_BASE 11))
+    (hseamAutoY : tR.pub (Dregg2.Circuit.Emit.AutomataflResolveEmit.NGen.AUTO_PI_BASE 11 + 1)
+      = tA.pub (Dregg2.Circuit.Emit.AutomataflStepEmit.AUTO_PI_BASE 11 + 1))
+    (hfold : FoldSeam (openRound b0 (stockGoals2 11).seats) Cs
+        (rmRoundStateIn 11 (envAt tR 0) (stockGoals2 11).seats)) :
+    ∃ (finalBoard : Board) (win : Option Pid),
+      runTurn ⟨.column⟩ (stockGoals2 11) (openRound b0 (stockGoals2 11).seats)
+            (Cs.map conflictSubs ++ [cleanSubs tR])
+          = some (finalBoard, win)
+      ∧ ∀ x y : Nat, x < 11 → y < 11 →
+          codeToParticle ((envAt tA 0).loc
+              (Dregg2.Circuit.Emit.AutomataflStepEmit.NGen.new 11 (y * 11 + x)))
+            = finalBoard.cellAt ⟨x, y⟩ :=
+  braid_sat_imp_runTurn (stockGoals2 11) (stockGoals2 11).seats b0 Cs hCsAcc hsatR hcR hlenR
+    hsatA hcA hlenA (stockGoals2_seats_contains_zero 11) hclean hres hseamPack hseamAutoX hseamAutoY
+    hfold
+
+/-! ### Non-vacuity canaries for the deployed instance
+
+The instantiation fixes the RULESET, not the traces: the seat list it substitutes is the real
+two-seat list, and the opening round it substitutes really has BOTH seats waiting and nothing
+locked / marked — so the clean round's fresh filter has two live seats to admit, not an empty one
+that would make the fold trivially true. -/
+
+#guard (stockGoals2 11).seats = [0, 1]
+#guard (stockGoals2 11) = GoalAssignment.mk [(⟨0, 0⟩, 0), (⟨10, 0⟩, 0), (⟨0, 10⟩, 1), (⟨10, 10⟩, 1)]
+#guard (openRound stockTwoPlayer (stockGoals2 11).seats).waiting = [0, 1]
+#guard (openRound stockTwoPlayer (stockGoals2 11).seats).locked = []
+#guard (openRound stockTwoPlayer (stockGoals2 11).seats).marks = []
+-- and `hseat0` is NOT a tautology over goal assignments — an assignment that seats nobody at `0`
+-- refutes it. The deployed one satisfies it, which is what makes the discharge above CONTENT.
+#guard (GoalAssignment.mk [(⟨0, 0⟩, 5), (⟨10, 10⟩, 7)]).seats.contains 0 = false
+
 /-! ## §6  Axiom hygiene -/
 
 #assert_all_clean [
@@ -539,9 +635,12 @@ theorem braid_sat_imp_runTurn (g : GoalAssignment) (seats : List Pid) (b0 : Boar
   legCAccepted_again,
   runTurn_conflict_fold,
   rm_clean_resolves,
-  braid_sat_imp_runTurn
+  braid_sat_imp_runTurn,
+  rm_clean_resolves_stock,
+  braid_sat_imp_runTurn_stock
 ]
 
 #print axioms braid_sat_imp_runTurn
+#print axioms braid_sat_imp_runTurn_stock
 
 end Dregg2.Circuit.Emit.AutomataflBraidFold
