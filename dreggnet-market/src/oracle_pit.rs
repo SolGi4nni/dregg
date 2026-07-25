@@ -80,7 +80,10 @@
 //! * `combine` refusing an `n−1` share set is an explicit quorum check inside `combine`, not a
 //!   proof. The cryptographic no-single-viewer property rests on the smudging discipline
 //!   (`MIN_SMUDGE_BITS`) that the partial decryptions carry; the `is_err()` only shows the API
-//!   fails closed.
+//!   fails closed. The falsifier that DOES carry cryptographic content — an `n−1` coalition
+//!   forging the missing custodian's share, clearing every structural check, and still not
+//!   recovering the plaintext — lives on the shared committee at
+//!   [`crate::threshold_committee`].
 //! * The committee's parties run **in one process** here. Each holds its own independent secret
 //!   and `combine` needs all of them, so the threshold property is real; the co-location is a
 //!   deployment property. The transport-separated form is [`fhegg_fhe::mpc_party`].
@@ -112,15 +115,13 @@ use dreggnet_offerings::{
     Action, DreggIdentity, Offering, OfferingError, Outcome, RunCost, SessionConfig, Surface,
     VerifyReport,
 };
-use fhe::bfv::{Ciphertext, Encoding, Plaintext};
-use fhe_traits::{FheEncoder, FheEncrypter, Serialize as FheSerialize};
-use fhegg_fhe::bfv_lean::LeanCiphertext;
-use fhegg_fhe::bfv_mul::{BoundedCiphertext, MulEngine};
-use fhegg_fhe::threshold::relin::{RelinKeySession, generate_relinearization_key};
-use fhegg_fhe::threshold::{
-    BfvParams, CollectivePublicKey, KeygenCoordinator, KeygenSession, MIN_SMUDGE_BITS,
-    ThresholdParty, combine,
+
+use crate::threshold_committee::{
+    CommitteeCeremony, CommitteeError, PartySeeding, RelinSchedule, ThresholdCommittee,
 };
+use fhe::bfv::Ciphertext;
+use fhegg_fhe::bfv_mul::BoundedCiphertext;
+use fhegg_fhe::threshold::BfvParams;
 use starbridge_sealed_auction::{
     AUCTION_FACTORY_VK, COMMIT_BASE, COMMIT_CAPACITY, HIGH_BID_SLOT, PHASE_COMMIT, PHASE_RESOLVED,
     PHASE_REVEAL, PHASE_SLOT, SELLER_SLOT, WINNER_SLOT, auction_child_program_vk,
@@ -662,114 +663,52 @@ impl PitCostMatrix {
 // The threshold committee.
 // =============================================================================
 
-/// **The pit's n-of-n threshold committee.** A real multiparty BFV keygen: every party contributes
-/// to a collective public key whose secret exists nowhere, and every opening needs every party's
-/// partial decryption. Positions are encrypted to `collective`; prices and the pool are opened only
-/// by [`combine`] over all `n` shares.
+/// **The pit's n-of-n threshold committee.**
 ///
-/// The parties run in one process here — each still holds its own independent secret and `combine`
-/// still needs all of them, so the threshold property is real; only the transport is co-located.
-pub struct PitCommittee {
-    params: BfvParams,
-    keygen: KeygenSession,
-    collective: CollectivePublicKey,
-    parties: Vec<ThresholdParty>,
+/// This is [`ThresholdCommittee`] — the one committee object this crate has, shared with
+/// [`crate::dark_pool_offering`]. A real multiparty BFV keygen: every party contributes to a
+/// collective public key whose secret exists nowhere, and every opening needs every party's
+/// partial decryption. Positions are encrypted to the collective key; prices and the pool are
+/// opened only by `combine` over all `n` shares.
+///
+/// The parties run in one process here — each still holds its own independent secret and
+/// `combine` still needs all of them, so the reconstruction property is real; only the transport
+/// is co-located. What that does and does not buy is spelled out on
+/// [`crate::threshold_committee`], including which of the combiner's refusals is a structural
+/// arity check and which one carries the cryptographic content.
+pub type PitCommittee = ThresholdCommittee;
+
+impl From<CommitteeError> for PitRefusal {
+    fn from(value: CommitteeError) -> Self {
+        match value {
+            // The multiply engine refusing a wrap-unsafe key is a PRICING refusal — the pit
+            // cannot price its quadratic — not a statement about the committee.
+            CommitteeError::MulEngine(why) => PitRefusal::Pricing(format!("mul engine: {why}")),
+            other => PitRefusal::Committee(other.to_string()),
+        }
+    }
 }
 
-impl PitCommittee {
-    /// Run the n-of-n collective keygen ceremony for `n` parties.
-    pub fn ceremony(n: usize) -> Result<Self, PitRefusal> {
-        let params = BfvParams::fold_set();
-        let keygen =
-            KeygenSession::random(n).map_err(|e| PitRefusal::Committee(format!("{e:?}")))?;
-        let mut coordinator = KeygenCoordinator::new(keygen.clone(), params.clone());
-        let mut parties = Vec::with_capacity(n);
-        for index in 0..n {
-            let (party, contribution) = ThresholdParty::join(&keygen, index, &params)
-                .map_err(|e| PitRefusal::Committee(format!("{e:?}")))?;
-            coordinator
-                .accept(contribution)
-                .map_err(|e| PitRefusal::Committee(format!("{e:?}")))?;
-            parties.push(party);
-        }
-        let collective = coordinator
-            .finish()
-            .map_err(|e| PitRefusal::Committee(format!("{e:?}")))?;
-        Ok(PitCommittee {
-            params,
-            keygen,
-            collective,
-            parties,
-        })
+/// Run the pit's n-of-n keygen ceremony for `n` parties.
+///
+/// The pit takes its key material from OS randomness: a pit is born with the market it prices and
+/// nothing needs to replay its committee, so there is no reproducibility to buy and therefore no
+/// single root whose compromise would hand over every share. (The dark pool trades the other way
+/// on purpose — see [`crate::dark_pool_offering::DarkPoolOffering::mount`].)
+///
+/// The relinearization ceremony is deferred to first use: the position and quote paths are linear
+/// and need no relin key, so a pit that never settles never pays for one. Unlike the wrapper this
+/// replaced, the key is CACHED after that first use rather than regenerated per `mul_engine()`
+/// call.
+fn pit_ceremony(n: usize) -> Result<PitCommittee, PitRefusal> {
+    Ok(CommitteeCeremony {
+        n_parties: n,
+        seeding: PartySeeding::OsRandom,
+        relin_entropy: RELIN_PUBLIC_ENTROPY,
+        relin_timeout: Duration::from_secs(90),
+        relin_schedule: RelinSchedule::OnFirstUse,
     }
-
-    /// How many parties must agree to open anything.
-    pub fn quorum(&self) -> usize {
-        self.parties.len()
-    }
-
-    /// The BFV plaintext modulus the wrap guards are checked against.
-    pub fn plaintext_modulus(&self) -> u64 {
-        self.params.plaintext_modulus()
-    }
-
-    fn encrypt(&self, value: u64) -> Result<Ciphertext, PitRefusal> {
-        let pt = Plaintext::try_encode(&[value], Encoding::simd(), self.params.arc())
-            .map_err(|e| PitRefusal::Committee(format!("encode: {e}")))?;
-        let mut rng = rand_09::rng();
-        self.collective
-            .pk
-            .try_encrypt(&pt, &mut rng)
-            .map_err(|e| PitRefusal::Committee(format!("collective encrypt: {e}")))
-    }
-
-    fn weight(&self, w: u64) -> Result<Plaintext, PitRefusal> {
-        Plaintext::try_encode(&[w], Encoding::simd(), self.params.arc())
-            .map_err(|e| PitRefusal::Committee(format!("weight encode: {e}")))
-    }
-
-    /// Open one ciphertext by a FULL-quorum threshold decrypt. Every party partial-decrypts with
-    /// the smudging floor; `combine` refuses anything short of the whole roster.
-    fn open(&self, ct: &Ciphertext, plain_bound: u64) -> Result<u64, PitRefusal> {
-        let lean = LeanCiphertext::from_fhe_bytes(
-            &ct.to_bytes(),
-            self.params.moduli(),
-            self.params.degree(),
-            plain_bound,
-        )
-        .map_err(|e| PitRefusal::Committee(format!("Lean boundary: {e:?}")))?;
-        let mut shares = Vec::with_capacity(self.parties.len());
-        for party in &self.parties {
-            shares.push(
-                party
-                    .partial_decrypt(&lean, MIN_SMUDGE_BITS)
-                    .map_err(|e| PitRefusal::Committee(format!("partial decrypt: {e:?}")))?,
-            );
-        }
-        let opened = combine(&shares, &self.params)
-            .map_err(|e| PitRefusal::Committee(format!("combine: {e:?}")))?;
-        opened
-            .first()
-            .copied()
-            .ok_or_else(|| PitRefusal::Committee("combine returned no slots".to_string()))
-    }
-
-    /// Run the n-of-n multiparty relinearization ceremony and build the ct×ct multiply engine the
-    /// quadratic pool needs. Kept off the position/quote path, which is linear and needs no relin.
-    fn mul_engine(&self) -> Result<MulEngine, PitRefusal> {
-        let session = RelinKeySession::from_public_entropy(
-            &self.keygen,
-            &self.collective,
-            RELIN_PUBLIC_ENTROPY,
-            Duration::from_secs(90),
-        )
-        .map_err(|e| PitRefusal::Committee(format!("relin session: {e:?}")))?;
-        let relin =
-            generate_relinearization_key(&session, &self.params, &self.collective, &self.parties)
-                .map_err(|e| PitRefusal::Committee(format!("relin ceremony: {e:?}")))?;
-        MulEngine::new(&relin, self.params.arc())
-            .map_err(|e| PitRefusal::Pricing(format!("mul engine: {e:?}")))
-    }
+    .run()?)
 }
 
 // =============================================================================
@@ -1075,10 +1014,10 @@ impl OraclePitBook {
         let (agg_yes, agg_no, bound) = self.aggregates()?;
         let PitCostMatrix { a, b, c } = self.matrix;
 
-        let price_yes_ct = &(&agg_yes * &self.committee.weight(2 * a)?)
-            + &(&agg_no * &self.committee.weight(b)?);
-        let price_no_ct = &(&agg_yes * &self.committee.weight(b)?)
-            + &(&agg_no * &self.committee.weight(2 * c)?);
+        let price_yes_ct = &(&agg_yes * &self.committee.plaintext(2 * a)?)
+            + &(&agg_no * &self.committee.plaintext(b)?);
+        let price_no_ct = &(&agg_yes * &self.committee.plaintext(b)?)
+            + &(&agg_no * &self.committee.plaintext(2 * c)?);
         let yes_bound = (2 * a + b) * bound;
         let no_bound = (b + 2 * c) * bound;
         let t = self.committee.plaintext_modulus();
@@ -1176,7 +1115,7 @@ impl OraclePitBook {
             let term = if weight == 1 {
                 product.ct.clone()
             } else {
-                &product.ct * &self.committee.weight(weight)?
+                &product.ct * &self.committee.plaintext(weight)?
             };
             pool_bound += (weight as u128) * (product.plain_bound as u128);
             pool_ct = Some(match pool_ct {
@@ -1200,8 +1139,8 @@ impl OraclePitBook {
         // On a pit that published a line this discloses nothing new — the two marginals already
         // determine both aggregates. On a pit that never quoted, this IS the first disclosure of
         // the aggregates; it is still only the totals, never the per-holder decomposition.
-        let scaled_yes = &agg_yes * &self.committee.weight(1)?;
-        let scaled_no = &agg_no * &self.committee.weight(1)?;
+        let scaled_yes = &agg_yes * &self.committee.plaintext(1)?;
+        let scaled_no = &agg_no * &self.committee.plaintext(1)?;
         let q_yes = self.committee.open(&scaled_yes, bound)?;
         let q_no = self.committee.open(&scaled_no, bound)?;
         let (winning_shares, losing_shares) = if outcome {
@@ -1553,8 +1492,8 @@ impl Offering for OraclePitOffering {
 
     fn open(&self, cfg: SessionConfig) -> Result<Self::Session, OfferingError> {
         let seed = cfg.seed.unwrap_or(1);
-        let committee = PitCommittee::ceremony(self.parties)
-            .map_err(|error| OfferingError::Deploy(error.to_string()))?;
+        let committee =
+            pit_ceremony(self.parties).map_err(|error| OfferingError::Deploy(error.to_string()))?;
         let book = OraclePitBook::deploy(self.subject.clone(), self.matrix, committee, seed)?;
         Ok(OraclePitSession {
             book,
@@ -1649,8 +1588,8 @@ impl Offering for OraclePitOffering {
                 "{} private position{} on the frozen board · {}-of-{} committee",
                 book.positions(),
                 if book.positions() == 1 { "" } else { "s" },
-                book.committee.quorum(),
-                book.committee.quorum()
+                book.committee.n_parties(),
+                book.committee.n_parties()
             )),
         ];
         match book.last_quote() {

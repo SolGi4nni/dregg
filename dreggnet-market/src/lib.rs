@@ -154,6 +154,13 @@ pub mod dark_amm_collective;
 #[cfg(feature = "dark-amm-game")]
 pub mod dark_amm_collective_worker;
 
+/// ONE n-of-n threshold committee, shared by every market in this crate that needs one. The
+/// collective BFV keygen, the full-quorum opening path, and the multiparty relinearization
+/// ceremony live here exactly once; [`dark_pool_offering`] and [`oracle_pit`] differ only in the
+/// parameters they name on `CommitteeCeremony`. See [`threshold_committee`].
+#[cfg(any(feature = "dark-pool-offering", feature = "oracle-pit"))]
+pub mod threshold_committee;
+
 /// THE PLAYABLE DARK POOL — a blind relic vendor a player can actually press a button on.
 /// Reserves live only as BFV ciphertexts under an n-of-n collective key, a swap is admitted
 /// only when one homomorphic constant-product check opens (under a FULL threshold quorum) to

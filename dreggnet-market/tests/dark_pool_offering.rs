@@ -4,6 +4,8 @@
 //! cryptographic (an arity check, a bookkeeping counter) the test says so in its own words rather
 //! than borrowing the word "cryptographic" from a doc comment.
 
+use std::time::Instant;
+
 use dreggnet_market::dark_pool_offering::{
     DARK_POOL_VENDOR_KEY, DarkPoolOffering, SEAT_FAUCET_DREGG, TURN_JOIN, TURN_PROPOSE, TURN_SWAP,
 };
@@ -374,6 +376,62 @@ fn verify_reopens_the_encrypted_reserves_under_the_full_quorum() {
     assert!(
         second.price > first.price,
         "depth should get more expensive"
+    );
+}
+
+/// WHERE THE CEREMONY COST LIVES. `mount` pays for the n-of-n keygen AND the multiparty
+/// relinearization ceremony; `open` must attach to the already-ceremonied pool and pay for
+/// neither. This is the falsifier for the claim in [`DarkPoolOffering::mount`]'s own doc — a
+/// refactor that moves the committee onto the session-open path (or that regenerates the relin
+/// key per use) fails here rather than being discovered as latency in a devnet.
+///
+/// The margin is deliberately enormous (open must be under a hundredth of mount) so a loaded
+/// build box cannot flake it; the printed numbers are the actual measurement.
+#[test]
+fn the_key_ceremony_is_paid_at_genesis_and_never_on_the_session_path() {
+    let start = Instant::now();
+    let offering = DarkPoolOffering::mount(0x6E51, 3).expect("mount the pool");
+    let ceremony = start.elapsed();
+
+    let start = Instant::now();
+    for _ in 0..16 {
+        offering.open(SessionConfig::default()).expect("open");
+    }
+    let per_open = start.elapsed() / 16;
+
+    println!(
+        "dark pool 3-of-3 genesis (keygen + relin ceremony): {ceremony:?}; per Offering::open: \
+         {per_open:?}"
+    );
+    assert!(
+        per_open * 100 < ceremony,
+        "opening a session cost {per_open:?} against a {ceremony:?} genesis — the ceremony has \
+         moved onto the session path"
+    );
+
+    // And a swap re-uses the same committee: one full-quorum opening, no second ceremony.
+    let mut session = offering.open(SessionConfig::default()).expect("open");
+    let who = player("chrono");
+    must_land(
+        &offering,
+        &mut session,
+        Action::new("", TURN_JOIN, 0, true),
+        &who,
+        "taking a seat",
+    );
+    let start = Instant::now();
+    must_land(
+        &offering,
+        &mut session,
+        Action::new("", TURN_SWAP, 1, true),
+        &who,
+        "a quoted swap",
+    );
+    let swap = start.elapsed();
+    println!("dark pool swap (one full-quorum opening, no ceremony): {swap:?}");
+    assert!(
+        swap < ceremony,
+        "a swap cost {swap:?} against a {ceremony:?} genesis — it is re-running a ceremony"
     );
 }
 

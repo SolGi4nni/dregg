@@ -71,18 +71,14 @@ use dreggnet_offerings::{
     VerifyReport,
 };
 use dreggnet_trade::{AssetId, TradeError, TradeWorld};
-use fhe::bfv::RelinearizationKey;
-use fhe_traits::Serialize as FheSerialize;
-use fhegg_fhe::bfv_lean::LeanCiphertext;
 use fhegg_fhe::bfv_mul::BoundedCiphertext;
 use fhegg_fhe::dark_amm::{AppliedSwap, DarkAmmError, DarkPool};
-use fhegg_fhe::threshold::relin::{RelinKeySession, generate_relinearization_key};
-use fhegg_fhe::threshold::{
-    BfvParams, CollectivePublicKey, DecryptShare, KeygenCoordinator, KeygenSession,
-    MIN_SMUDGE_BITS, ThresholdParty, combine,
-};
 use rand_09::SeedableRng;
 use rand_09::rngs::StdRng;
+
+use crate::threshold_committee::{
+    CommitteeCeremony, CommitteeError, PartySeeding, RelinSchedule, ThresholdCommittee,
+};
 
 /// Stable catalog key. Deliberately NOT `dark-pool`: that key belongs to
 /// [`crate::dark_amm_game::DARK_AMM_OFFERING_KEY`], the upload-only table, and admitting one
@@ -179,132 +175,65 @@ impl From<TradeError> for DarkPoolError {
     }
 }
 
+impl From<CommitteeError> for DarkPoolError {
+    fn from(value: CommitteeError) -> Self {
+        match value {
+            CommitteeError::Opening(why) => DarkPoolError::Opening(why),
+            other => DarkPoolError::Ceremony(other.to_string()),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // n-of-n custody
 // ---------------------------------------------------------------------------
 
 /// The `n` parties that jointly hold the pool's BFV secret key.
 ///
-/// The only secret-dependent object that leaves a party is a [`DecryptShare`], and
-/// [`combine`] reconstructs a plaintext only from a complete, distinct, ciphertext-matching,
-/// adequately-smudged share set. [`DarkPoolCustody::shares`] and
-/// [`DarkPoolCustody::combine_shares`] are public because they are exactly what a distributed
-/// deployment ships over the wire — and because an adversarial test needs to be able to try a
-/// short or forged coalition against the real combiner.
-pub struct DarkPoolCustody {
-    params: BfvParams,
-    parties: Vec<ThresholdParty>,
-    collective: CollectivePublicKey,
-    relin: RelinearizationKey,
-    keygen: KeygenSession,
-}
+/// This is [`ThresholdCommittee`] — the one committee object this crate has, shared with
+/// [`crate::oracle_pit`]. The alias is kept because "custody" is the word the pool's own
+/// vocabulary uses for it, not because the pool has a committee of its own.
+///
+/// The only secret-dependent object that leaves a party is a `DecryptShare`, and
+/// [`ThresholdCommittee::combine_shares`] reconstructs a plaintext only from a complete,
+/// distinct, ciphertext-matching, adequately-smudged share set. `shares` and `combine_shares`
+/// are public because they are exactly what a distributed deployment ships over the wire — and
+/// because an adversarial test needs to be able to try a short or forged coalition against the
+/// real combiner. Read `combine_shares`'s doc for which of its refusals is structural and which
+/// is cryptographic; they are not the same claim.
+pub type DarkPoolCustody = ThresholdCommittee;
 
-impl DarkPoolCustody {
-    /// Run one complete, DETERMINISTIC n-of-n ceremony: the public keygen session, every party's
-    /// custody-rooted key share, the aggregated collective public key, and the multiparty
-    /// relinearization key the homomorphic multiply needs.
-    ///
-    /// Determinism is from `entropy` alone, so a pool is reproducible for audit; a deployment MUST
-    /// replace this with per-party roots kept outside the coordinator process (see
-    /// [`ThresholdParty::join_seeded`]'s custody note). Standing this up in one process is a
-    /// SIMULATED ceremony: the parties are real and independently keyed, but nothing here proves
-    /// they ran on separate machines.
-    pub fn ceremony(n_parties: usize, entropy: [u8; 32]) -> Result<Self, DarkPoolError> {
-        let params = BfvParams::fold_set();
-        let crp_seed = blake3::derive_key("dregg-dark-pool-crp-v1", &entropy);
-        let keygen = KeygenSession::from_seed(n_parties, crp_seed)
-            .map_err(|e| DarkPoolError::Ceremony(format!("{e:?}")))?;
-        let mut coordinator = KeygenCoordinator::new(keygen.clone(), params.clone());
-        let mut parties = Vec::with_capacity(n_parties);
-        for index in 0..n_parties {
-            let mut material = Vec::with_capacity(40);
-            material.extend_from_slice(&entropy);
-            material.extend_from_slice(&(index as u64).to_le_bytes());
-            let root = blake3::derive_key("dregg-dark-pool-party-custody-v1", &material);
-            let (party, contribution) = ThresholdParty::join_seeded(&keygen, index, &params, &root)
-                .map_err(|e| DarkPoolError::Ceremony(format!("{e:?}")))?;
-            coordinator
-                .accept(contribution)
-                .map_err(|e| DarkPoolError::Ceremony(format!("{e:?}")))?;
-            parties.push(party);
-        }
-        let collective = coordinator
-            .finish()
-            .map_err(|e| DarkPoolError::Ceremony(format!("{e:?}")))?;
+/// blake3 derive-key domain for the pool's public CRP seed.
+const CRP_DOMAIN: &str = "dregg-dark-pool-crp-v1";
+/// blake3 derive-key domain for each custodian's per-party root.
+const PARTY_DOMAIN: &str = "dregg-dark-pool-party-custody-v1";
 
-        let relin_entropy = blake3::derive_key("dregg-dark-pool-relin-entropy-v1", &entropy);
-        let session = RelinKeySession::from_public_entropy(
-            &keygen,
-            &collective,
-            relin_entropy,
-            std::time::Duration::from_secs(300),
-        )
-        .map_err(|e| DarkPoolError::Ceremony(e.to_string()))?;
-        let relin = generate_relinearization_key(&session, &params, &collective, &parties)
-            .map_err(|e| DarkPoolError::Ceremony(e.to_string()))?;
-
-        Ok(Self {
-            params,
-            parties,
-            collective,
-            relin,
-            keygen,
-        })
+/// Run the pool's n-of-n ceremony from one 32-byte custody root.
+///
+/// Determinism is from `root` alone, so a pool is reproducible for audit. **Said plainly, because
+/// it is the pool's real custody posture:** deriving all `n` party roots from one value inside
+/// one process is a shared dealer. Whoever holds `root` holds every share and can decrypt the
+/// book unilaterally — the n-of-n property of a pool stood up this way is worth exactly the
+/// secrecy of `root`. A deployment MUST replace this with per-party roots kept outside the
+/// coordinator process (see `ThresholdParty::join_seeded`'s custody note). Standing this up in
+/// one process is a SIMULATED ceremony: the parties are real and independently keyed, but nothing
+/// here proves they ran on separate machines.
+///
+/// The relinearization key is generated eagerly: the house needs a multiply-capable key to
+/// encrypt its genesis reserves, and the cost belongs to pool genesis either way.
+fn pool_ceremony(n_parties: usize, root: [u8; 32]) -> Result<DarkPoolCustody, DarkPoolError> {
+    Ok(CommitteeCeremony {
+        n_parties,
+        seeding: PartySeeding::FromRoot {
+            root,
+            crp_domain: CRP_DOMAIN,
+            party_domain: PARTY_DOMAIN,
+        },
+        relin_entropy: blake3::derive_key("dregg-dark-pool-relin-entropy-v1", &root),
+        relin_timeout: std::time::Duration::from_secs(300),
+        relin_schedule: RelinSchedule::AtGenesis,
     }
-
-    /// How many custodians must agree to open ANYTHING (this is an `n`-of-`n` key).
-    pub fn n_parties(&self) -> usize {
-        self.keygen.n_parties()
-    }
-
-    /// A short public fingerprint of the collective key everything is encrypted to.
-    pub fn collective_key_digest(&self) -> [u8; 32] {
-        *blake3::hash(&self.collective.pk.to_bytes()).as_bytes()
-    }
-
-    /// The BFV parameter set every share and ciphertext is bound to.
-    pub fn params(&self) -> &BfvParams {
-        &self.params
-    }
-
-    fn lean(&self, ct: &BoundedCiphertext) -> Result<LeanCiphertext, DarkPoolError> {
-        LeanCiphertext::from_fhe_bytes(
-            &ct.ct.to_bytes(),
-            self.params.moduli(),
-            self.params.degree(),
-            ct.plain_bound,
-        )
-        .map_err(|e| DarkPoolError::Opening(format!("{e:?}")))
-    }
-
-    /// Every custodian's public decryption share for `ct` — the exact wire objects a distributed
-    /// deployment broadcasts. Producing them reveals nothing on its own.
-    pub fn shares(&self, ct: &BoundedCiphertext) -> Result<Vec<DecryptShare>, DarkPoolError> {
-        let lean = self.lean(ct)?;
-        self.parties
-            .iter()
-            .map(|party| {
-                party
-                    .partial_decrypt(&lean, MIN_SMUDGE_BITS)
-                    .map_err(|e| DarkPoolError::Opening(format!("{e:?}")))
-            })
-            .collect()
-    }
-
-    /// Combine a share set through the real n-of-n combiner and return slot 0. A short,
-    /// duplicated, mismatched or under-smudged set is refused; a set whose shares do not all come
-    /// from the honest custodians does not reconstruct the plaintext.
-    pub fn combine_shares(&self, shares: &[DecryptShare]) -> Result<u64, DarkPoolError> {
-        combine(shares, &self.params)
-            .map(|slots| slots[0])
-            .map_err(|e| DarkPoolError::Opening(format!("{e:?}")))
-    }
-
-    /// Open one ciphertext under the FULL quorum.
-    fn open_full_quorum(&self, ct: &BoundedCiphertext) -> Result<u64, DarkPoolError> {
-        let shares = self.shares(ct)?;
-        self.combine_shares(&shares)
-    }
+    .run()?)
 }
 
 // ---------------------------------------------------------------------------
@@ -491,20 +420,16 @@ const GENESIS_CAP_DREGG: u64 = 4_096;
 const GENESIS_CAP_RELICS: u64 = 16;
 
 impl PoolCore {
-    fn stand_up(seed: u64, n_custodians: usize) -> Result<Self, DarkPoolError> {
-        let mut material = Vec::with_capacity(16);
-        material.extend_from_slice(&seed.to_le_bytes());
-        material.extend_from_slice(&(n_custodians as u64).to_le_bytes());
-        let entropy = blake3::derive_key("dregg-dark-pool-genesis-v1", &material);
-        let custody = DarkPoolCustody::ceremony(n_custodians, entropy)?;
+    fn stand_up(root: [u8; 32], seed: u64, n_custodians: usize) -> Result<Self, DarkPoolError> {
+        let custody = pool_ceremony(n_custodians, root)?;
 
         // The reserves are encrypted to the COLLECTIVE key here and never decrypted again except
         // by a full quorum.
-        let mut rng = StdRng::from_seed(entropy);
+        let mut rng = StdRng::from_seed(root);
         let mut house = DarkPool::init(
-            custody.params.arc(),
-            &custody.collective.pk,
-            &custody.relin,
+            custody.params().arc(),
+            &custody.collective().pk,
+            custody.relin_key()?,
             GENESIS_DREGG,
             GENESIS_RELICS,
             GENESIS_CAP_DREGG,
@@ -607,7 +532,7 @@ impl PoolCore {
                     DarkAmmError::ZeroAmount => DarkPoolError::NoExactQuote { relics },
                     other => DarkPoolError::Pool(other.to_string()),
                 })?;
-        let opened = self.custody.open_full_quorum(&candidate.invariant)?;
+        let opened = self.custody.open_bounded(&candidate.invariant)?;
         self.quorum_openings += 1;
         if candidate.check_invariant(opened).is_err() {
             // Refused. The raw product stays inside this process; it is not in the error.
@@ -677,8 +602,8 @@ impl PoolCore {
     /// opened values are compared here and dropped.
     fn audit_reserves(&self) -> Result<bool, DarkPoolError> {
         let state = self.house.reserve_cts();
-        let x = self.custody.open_full_quorum(&state.ct_x)?;
-        let y = self.custody.open_full_quorum(&state.ct_y)?;
+        let x = self.custody.open_bounded(&state.ct_x)?;
+        let y = self.custody.open_bounded(&state.ct_y)?;
         Ok(x == self.quoter.x && y == self.quoter.y)
     }
 }
@@ -706,21 +631,53 @@ pub struct DarkPoolOffering {
 }
 
 impl DarkPoolOffering {
-    /// Stand up the pool: run the n-of-n ceremony ONCE, encrypt the genesis reserves to the
-    /// collective key, and mint the relic vault.
+    /// Stand up the pool from a `u64` seed: run the n-of-n ceremony ONCE, encrypt the genesis
+    /// reserves to the collective key, and mint the relic vault.
     ///
     /// **This is the expensive call.** The keygen + relinearization ceremony at the degree-4096
-    /// `fold_set` parameters is seconds of work, so it belongs to POOL GENESIS (a deployment
-    /// event), never to a player opening a session. [`Offering::open`] is deliberately cheap and
-    /// attaches to the already-ceremonied pool.
+    /// `fold_set` parameters is a fraction of a second per custodian, so it belongs to POOL
+    /// GENESIS (a deployment event), never to a player opening a session. [`Offering::open`] is
+    /// deliberately cheap and attaches to the already-ceremonied pool.
+    ///
+    /// **The custody root of a pool mounted this way carries at most 64 bits, and `seed` is a
+    /// caller-chosen parameter.** Every custodian's secret share is derived from it, so anyone
+    /// who learns `(seed, custodians)` reconstructs the whole committee and decrypts the book
+    /// alone — the n-of-n property is worth exactly the secrecy of that `u64`. This is the
+    /// REPRODUCIBLE path: it exists so a test or an audit can replay a pool byte-for-byte. A
+    /// deployment that means the threshold claim uses
+    /// [`mount_with_custody_root`](Self::mount_with_custody_root) with 32 bytes of real entropy —
+    /// and even then, read [`pool_ceremony`]: one process holding all `n` roots is a simulated
+    /// ceremony, not a distributed one.
     pub fn mount(seed: u64, custodians: usize) -> Result<Self, DarkPoolError> {
+        let mut material = Vec::with_capacity(16);
+        material.extend_from_slice(&seed.to_le_bytes());
+        material.extend_from_slice(&(custodians as u64).to_le_bytes());
+        let root = blake3::derive_key("dregg-dark-pool-genesis-v1", &material);
+        Self::stand_up(root, seed, custodians)
+    }
+
+    /// Stand up the pool from a full 32-byte custody root. Same ceremony as [`mount`](Self::mount)
+    /// without the 64-bit ceiling on the root; `seed` still names the vault/journal identity, so
+    /// two pools on the same seed and different roots are the same market under different keys.
+    pub fn mount_with_custody_root(
+        root: [u8; 32],
+        seed: u64,
+        custodians: usize,
+    ) -> Result<Self, DarkPoolError> {
+        Self::stand_up(root, seed, custodians)
+    }
+
+    fn stand_up(root: [u8; 32], seed: u64, custodians: usize) -> Result<Self, DarkPoolError> {
+        // The roster floor is enforced by the ceremony itself
+        // ([`crate::threshold_committee::MIN_COMMITTEE_PARTIES`]); this branch only names it in
+        // the pool's own vocabulary before paying for a keygen that would refuse anyway.
         if custodians < 2 {
             return Err(DarkPoolError::Ceremony(
                 "an n-of-n dark pool needs at least two custodians".to_string(),
             ));
         }
         Ok(Self {
-            core: Arc::new(Mutex::new(PoolCore::stand_up(seed, custodians)?)),
+            core: Arc::new(Mutex::new(PoolCore::stand_up(root, seed, custodians)?)),
             custodians,
         })
     }
