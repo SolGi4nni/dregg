@@ -189,6 +189,31 @@ impl TurnExecutor {
     }
 
     /// Check conservation using the committed (Pedersen) path.
+    ///
+    /// # Asset-type binding (F1)
+    ///
+    /// The committed value commitments are `commit(v,r) = v·V + r·R` over a pair
+    /// of generators that is IDENTICAL for every asset type — the cleartext
+    /// `asset_type` field on each `NoteSpend`/`NoteCreate` does not enter the
+    /// commitment at all. So without grouping, a turn could spend an asset-A note
+    /// of value V and mint an equal-value asset-B note: `Σv_in == Σv_out`, the
+    /// Schnorr excess is a valid commitment to zero, and the asset type is never
+    /// examined — cross-asset inflation / theft.
+    ///
+    /// The fix groups the committed legs by their cleartext `asset_type` and
+    /// verifies conservation PER asset bucket, mirroring the cleartext path
+    /// (which checks `Σv_in == Σv_out` independently for each asset). The single
+    /// turn-level `conservation_proof` binds the GLOBAL excess (`Σinputs −
+    /// Σoutputs` over the whole set), so a bucket verifies against it only when
+    /// the bucket IS the whole set — i.e. a single-asset turn. Any cross-asset
+    /// split makes a bucket's excess differ from the proof's and fails closed.
+    ///
+    /// NAMED RESIDUAL: because there is one algebraic excess proof per turn,
+    /// multi-asset committed conservation cannot be certified here and is
+    /// REJECTED (rather than passing unchecked). Proving several assets at once
+    /// needs one excess proof per asset — the deeper move routes committed
+    /// conservation through the per-asset Lean kernel
+    /// (`recTransferAsset`/`CrossCellConservation`), a rebuild candidate.
     pub(super) fn check_committed_conservation(turn: &Turn) -> Result<(), TurnError> {
         let proof_bytes = turn.conservation_proof.as_ref().ok_or_else(|| {
             TurnError::CommittedConservationFailed {
@@ -201,34 +226,70 @@ impl TurnExecutor {
                 reason: format!("failed to deserialize conservation_proof: {e}"),
             })?;
 
-        let mut input_commitments: Vec<ValueCommitment> = Vec::new();
-        let mut output_commitments: Vec<ValueCommitment> = Vec::new();
-        Self::collect_committed_notes(
-            &turn.call_forest,
-            &mut input_commitments,
-            &mut output_commitments,
-        )?;
+        // Collect each committed leg PAIRED with its cleartext `asset_type`.
+        let mut input_legs: Vec<(u64, ValueCommitment)> = Vec::new();
+        let mut output_legs: Vec<(u64, ValueCommitment)> = Vec::new();
+        Self::collect_committed_notes(&turn.call_forest, &mut input_legs, &mut output_legs)?;
 
         let turn_hash = turn.hash();
-        dregg_cell_crypto::verify_conservation(
-            &input_commitments,
-            &output_commitments,
-            &proof,
-            &turn_hash,
-        )
-        .map_err(|e| TurnError::CommittedConservationFailed {
-            reason: format!("conservation proof invalid: {e}"),
-        })?;
+
+        // Group by cleartext asset_type into per-asset buckets of (inputs, outputs).
+        let mut buckets: std::collections::BTreeMap<
+            u64,
+            (Vec<ValueCommitment>, Vec<ValueCommitment>),
+        > = std::collections::BTreeMap::new();
+        for (asset_type, vc) in input_legs {
+            buckets.entry(asset_type).or_default().0.push(vc);
+        }
+        for (asset_type, vc) in output_legs {
+            buckets.entry(asset_type).or_default().1.push(vc);
+        }
+
+        // A single algebraic excess proof cannot certify per-asset balance across
+        // more than one asset type: reject cross-asset committed turns rather than
+        // let a `{asset A} -> {asset B}` swap of equal value slip through the
+        // (value-only) Schnorr check.
+        if buckets.len() > 1 {
+            return Err(TurnError::CommittedConservationFailed {
+                reason: format!(
+                    "committed turn spans {} asset types but carries a single conservation \
+                     proof; one algebraic excess cannot certify per-asset balance (cross-asset \
+                     inflation guard). Multi-asset committed conservation requires one proof \
+                     per asset.",
+                    buckets.len()
+                ),
+            });
+        }
+
+        // Per-asset-bucket conservation. With a single-asset turn the one bucket
+        // IS the whole commitment set, so this verifies the global excess proof;
+        // a mislabeled cross-asset leg would land in a second bucket and be
+        // rejected above.
+        for (asset_type, (bucket_inputs, bucket_outputs)) in &buckets {
+            dregg_cell_crypto::verify_conservation(
+                bucket_inputs,
+                bucket_outputs,
+                &proof,
+                &turn_hash,
+            )
+            .map_err(|e| TurnError::CommittedConservationFailed {
+                reason: format!("conservation proof invalid for asset {asset_type}: {e}"),
+            })?;
+        }
 
         Self::verify_output_range_proofs(&turn.call_forest)?;
         Ok(())
     }
 
-    /// Collect ValueCommitment points from committed NoteSpend/NoteCreate effects.
+    /// Collect `(asset_type, ValueCommitment)` pairs from committed
+    /// NoteSpend/NoteCreate effects. The `asset_type` is the cleartext field on
+    /// the effect; pairing it with the commitment is what lets
+    /// [`Self::check_committed_conservation`] bucket by asset and reject a
+    /// cross-asset imbalance.
     pub(super) fn collect_committed_notes(
         forest: &crate::forest::CallForest,
-        inputs: &mut Vec<ValueCommitment>,
-        outputs: &mut Vec<ValueCommitment>,
+        inputs: &mut Vec<(u64, ValueCommitment)>,
+        outputs: &mut Vec<(u64, ValueCommitment)>,
     ) -> Result<(), TurnError> {
         for tree in &forest.roots {
             Self::collect_committed_notes_tree(tree, inputs, outputs)?;
@@ -238,8 +299,8 @@ impl TurnExecutor {
 
     pub(super) fn collect_committed_notes_tree(
         tree: &CallTree,
-        inputs: &mut Vec<ValueCommitment>,
-        outputs: &mut Vec<ValueCommitment>,
+        inputs: &mut Vec<(u64, ValueCommitment)>,
+        outputs: &mut Vec<(u64, ValueCommitment)>,
     ) -> Result<(), TurnError> {
         for effect in &tree.action.effects {
             Self::collect_committed_notes_from_effect(effect, inputs, outputs)?;
@@ -252,12 +313,13 @@ impl TurnExecutor {
 
     pub(super) fn collect_committed_notes_from_effect(
         effect: &Effect,
-        inputs: &mut Vec<ValueCommitment>,
-        outputs: &mut Vec<ValueCommitment>,
+        inputs: &mut Vec<(u64, ValueCommitment)>,
+        outputs: &mut Vec<(u64, ValueCommitment)>,
     ) -> Result<(), TurnError> {
         match effect {
             Effect::NoteSpend {
                 value_commitment: Some(vc_bytes),
+                asset_type,
                 ..
             } => {
                 let vc = ValueCommitment::from_bytes(&ValueCommitmentBytes(*vc_bytes)).ok_or_else(
@@ -265,10 +327,11 @@ impl TurnExecutor {
                         reason: "NoteSpend value_commitment is not a valid Ristretto point".into(),
                     },
                 )?;
-                inputs.push(vc);
+                inputs.push((*asset_type, vc));
             }
             Effect::NoteCreate {
                 value_commitment: Some(vc_bytes),
+                asset_type,
                 ..
             } => {
                 let vc = ValueCommitment::from_bytes(&ValueCommitmentBytes(*vc_bytes)).ok_or_else(
@@ -276,7 +339,7 @@ impl TurnExecutor {
                         reason: "NoteCreate value_commitment is not a valid Ristretto point".into(),
                     },
                 )?;
-                outputs.push(vc);
+                outputs.push((*asset_type, vc));
             }
             Effect::ExerciseViaCapability { inner_effects, .. } => {
                 for inner in inner_effects {
@@ -1202,5 +1265,103 @@ impl TurnExecutor {
             receipt,
             computrons_used,
         }
+    }
+}
+
+#[cfg(test)]
+mod committed_conservation_asset_binding_tests {
+    //! F1 falsifier: committed-mode conservation must bind the cleartext
+    //! `asset_type`. Both directions are checked directly against
+    //! [`TurnExecutor::check_committed_conservation`]:
+    //! - a same-asset committed turn with a valid Schnorr proof PASSES;
+    //! - a cross-asset committed turn whose VALUE balances (so its excess proof
+    //!   is cryptographically valid) is REJECTED by the per-asset bucket guard —
+    //!   this is the inflation/theft vector (burn cheap asset A, mint equal-value
+    //!   valuable asset B).
+    use super::*;
+    use crate::builder::{ActionBuilder, TurnBuilder};
+    use curve25519_dalek::scalar::Scalar;
+    use dregg_cell::note::{NoteCommitment, Nullifier};
+    use dregg_cell_crypto::prove_conservation;
+
+    fn scalar(seed: u8) -> Scalar {
+        let mut bytes = [0u8; 64];
+        bytes[0] = seed;
+        bytes[1] = seed.wrapping_mul(37);
+        Scalar::from_bytes_mod_order_wide(&bytes)
+    }
+
+    /// Build a committed turn spending one note `(in_asset, in_value)` and
+    /// creating one note `(out_asset, out_value)`, with a Schnorr conservation
+    /// proof over the (single-generator) commitments bound to the turn hash and a
+    /// real Bulletproof range proof on the output.
+    fn committed_turn(in_asset: u64, in_value: u64, out_asset: u64, out_value: u64) -> Turn {
+        let agent = CellId([0xAA; 32]);
+        let r_in = scalar(11);
+        let r_out = scalar(22);
+
+        let in_vc = ValueCommitment::commit(in_value, &r_in);
+        let out_vc = ValueCommitment::commit(out_value, &r_out);
+        let range_proof = BulletproofRangeProof::prove_range(out_value, &r_out);
+
+        let action = ActionBuilder::new_unchecked_for_tests(agent, "committed_transfer", agent)
+            .effect(Effect::NoteSpend {
+                nullifier: Nullifier([0xBB; 32]),
+                note_tree_root: [0u8; 32],
+                value: in_value,
+                asset_type: in_asset,
+                spending_proof: vec![],
+                value_commitment: Some(in_vc.to_bytes().0),
+            })
+            .effect(Effect::NoteCreate {
+                commitment: NoteCommitment([0xCC; 32]),
+                value: out_value,
+                asset_type: out_asset,
+                encrypted_note: vec![],
+                value_commitment: Some(out_vc.to_bytes().0),
+                range_proof: Some(range_proof.proof_bytes),
+            })
+            .build();
+
+        let mut builder = TurnBuilder::new(agent, 0);
+        builder.add_action(action);
+        let mut turn = builder.build();
+
+        // The proof binds the turn hash; `Turn::hash()` excludes conservation_proof.
+        let excess_blinding = r_in - r_out;
+        let turn_hash = turn.hash();
+        let proof = prove_conservation(
+            std::slice::from_ref(&in_vc),
+            std::slice::from_ref(&out_vc),
+            &excess_blinding,
+            &turn_hash,
+        );
+        turn.conservation_proof = Some(postcard::to_allocvec(&proof).unwrap());
+        turn
+    }
+
+    #[test]
+    fn same_asset_committed_conservation_passes() {
+        // Spend 500 of asset 1, create 500 of asset 1: value balances, one bucket.
+        let turn = committed_turn(1, 500, 1, 500);
+        assert!(
+            TurnExecutor::check_committed_conservation(&turn).is_ok(),
+            "same-asset committed conservation with a valid proof must pass"
+        );
+    }
+
+    #[test]
+    fn cross_asset_committed_conservation_rejected() {
+        // Spend 500 of asset 1, create 500 of asset 2. The VALUE balances
+        // (Σv_in == Σv_out) so the Schnorr excess proof is cryptographically
+        // valid — before the asset-type binding this passed and let value cross
+        // from asset 1 into asset 2. It must now be REJECTED by the per-asset
+        // bucket guard.
+        let turn = committed_turn(1, 500, 2, 500);
+        let result = TurnExecutor::check_committed_conservation(&turn);
+        assert!(
+            matches!(result, Err(TurnError::CommittedConservationFailed { .. })),
+            "cross-asset committed conservation must be rejected, got {result:?}"
+        );
     }
 }
