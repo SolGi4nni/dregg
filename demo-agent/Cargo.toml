@@ -7,6 +7,10 @@ edition.workspace = true
 dregg-cell = { path = "../cell" }
 dregg-cell-crypto = { path = "../cell-crypto" }
 dregg-turn = { path = "../turn" }
+# The `cross_fed_atomic` example mints a genuine proven receipt
+# (`dregg_turn_prover::mint_transfer_proven_receipt`) — moved out of `dregg-turn`'s
+# deleted `prover` feature into the prover crate.
+dregg-turn-prover = { path = "../turn-prover" }
 dregg-coord = { path = "../coord" }
 dregg-types = { path = "../types" }
 dregg-bridge = { path = "../bridge", features = ["test-utils"] }
@@ -130,8 +134,14 @@ name = "cross_federation_nft_swap"
 [[example]]
 name = "payment_channel_burst"
 
-[[example]]
-name = "base_anonymous_credential"
+# RETIRED (2026-07-25): base_anonymous_credential removed. It was built on the
+# deleted committed-threshold hand-STARK, and its headline claim (anonymous
+# credential verified ON-CHAIN via SP1 STARK->Groth16 on Base) was entirely
+# simulated: `simulate_onchain_verify` returned true for ANY non-empty byte
+# slice, the "Groth16 proof" was a blake3 hash, and ring membership was a
+# printed narrative. Nothing in it executed. The surviving, real capability
+# (prove a predicate over a credential without revealing the value) is
+# demonstrated end-to-end by `anonymous_credit_check`.
 
 [[example]]
 name = "base_private_transfer"

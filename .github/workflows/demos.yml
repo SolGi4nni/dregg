@@ -33,8 +33,26 @@ jobs:
         with:
           cache-on-failure: true
 
-      - name: Build demo crates
-        run: cargo build --release -p dregg-demo -p dregg-demo-agent
+      # `--examples` is the gate that `demo-agent/examples/` never had.
+      #
+      # Without it this step built only the lib+bins, and the run loop below only ever touched a
+      # HARDCODED subset — so an example outside that subset could stop compiling and no job in the
+      # repo would notice. That is exactly how six examples came to be broken for weeks by a single
+      # unswept API retirement (the hand-STARK `prove_X`/`verify_X` deletion).
+      #
+      # `cargo check --workspace --all-targets` in ci.yml's Check job does technically cover these
+      # targets, but it is a whole-workspace job that dies on the FIRST crate to break and has been
+      # red for unrelated reasons — a break here was indistinguishable from the standing noise.
+      # This step is the narrow, legible one: if it goes red, demo-agent examples do not compile.
+      #
+      # Cost: near zero. Every dependency is already compiled by this same step for the lib+bins;
+      # `--examples` adds only the per-example codegen (~40 small binaries, ~1-3 min on a warm
+      # rust-cache), and it runs in a job that already builds this crate.
+      # `--bins` is NOT redundant: cargo target-selection flags are RESTRICTIVE, so a bare
+      # `--examples` would build ONLY examples and stop producing the `dregg-demo` binary the next
+      # step runs. Both flags together = the original lib+bins, plus every example.
+      - name: Build demo crates (examples INCLUDED — the compile gate)
+        run: cargo build --release -p dregg-demo -p dregg-demo-agent --bins --examples
 
       - name: Run main demo binary
         id: main_demo
@@ -52,6 +70,12 @@ jobs:
       - name: Run all demo-agent examples
         id: examples
         run: |
+          # NOTE: this list is the RUN set, not the COMPILE set — the build step above compiles
+          # ALL examples via `--examples`, so an example missing from this list can no longer rot
+          # unnoticed. Names here must exist; `federation_bootstrap`, `offline_verification` and
+          # `wallet_lifecycle` were removed 2026-07-25 because they had no `[[example]]` entry (the
+          # first two retired with the hand-STARK engine) and so could only ever have exited
+          # non-zero — stale entries in a gate are the gate lying to you.
           EXAMPLES=(
             multi_org_delegation
             sub_agent_spawn
@@ -59,12 +83,9 @@ jobs:
             payment_channel
             rbac_datalog
             token_revocation
-            federation_bootstrap
-            offline_verification
             progressive_disclosure
             note_privacy
             programmable_cell
-            wallet_lifecycle
             web_auth_flow
             multi_silo_budget
             causal_ordering
@@ -72,6 +93,11 @@ jobs:
             escrow_demo
             auction_demo
             atomic_swap_demo
+            # Ported 2026-07-25 off the retired hand-STARK prove/verify onto the bridge
+            # descriptor-prover API. Each carries real assertions (honest pole + adversarial
+            # poles), so running them here is a genuine check, not a print.
+            anonymous_credit_check
+            garbled_ot_auction
           )
 
           mkdir -p /tmp/demo_results

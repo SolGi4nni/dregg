@@ -6,8 +6,8 @@
 //!   - INSTANT FINALITY: turns commit in microseconds, no block times
 //!   - ATOMIC MULTI-PARTY SETTLEMENT: single turn atomically debits escrow,
 //!     credits provider, updates reputation, and logs receipt. If ANY fails, ALL roll back.
-//!   - SEALED-BID AUCTION: bids committed as hashes via NullifierSet, then revealed.
-//!     No one sees others' bids until reveal phase.
+//!   - SEALED-BID AUCTION: bids committed as hashes in a commit-once registry, then
+//!     revealed. No one sees others' bids until reveal phase.
 //!   - NO GAS FEES: compute budget is a bounded-counter BudgetGate, not per-op gas.
 //!   - CAPABILITY-GATED ACCESS: providers must hold a breadstuff to bid.
 //!   - PROGRAMMABLE ESCROW: CellProgram::Predicate enforces release conditions.
@@ -22,14 +22,15 @@
 //!
 //! Scenario:
 //!   1. Client posts a compute job (ML training, max budget 50000 computrons)
-//!   2. Providers submit sealed bids (note commitments in NullifierSet)
+//!   2. Providers submit sealed bids (hash commitments in a commit-once registry)
 //!   3. Reveal phase: bids opened, lowest wins (reverse Vickrey)
 //!   4. Escrow locks client funds with a CellProgram::Predicate
 //!   5. Provider commits result hash, then reveals (commit-reveal)
 //!   6. Atomic settlement: TurnComposer atomically settles across 6 cells
 //!   7. Dispute: rollback demonstrated when escrow conditions fail
 
-use dregg_cell::nullifier_set::NullifierSet;
+use std::collections::BTreeSet;
+
 use dregg_cell::program::{CellProgram, StateConstraint, field_from_u64};
 use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
 use dregg_turn::action::{DelegationMode, Effect};
@@ -234,10 +235,25 @@ fn main() {
     // =====================================================================
     println!("--- Phase 2: SEALED-BID AUCTION (commit phase) ---\n");
 
-    let mut nullifier_set = NullifierSet::new();
+    // A COMMIT-ONCE REGISTRY — deliberately NOT `dregg_cell::nullifier_set::NullifierSet`.
+    //
+    // This demo used to push bid commitments into `NullifierSet`. That type has since become
+    // specifically a SPENT-NOTE accumulator: `insert(nullifier, value)` takes the spent note's
+    // `u64` value because it folds `split_u64(value).0` into the grow-gate leaf, which is what
+    // keeps `root8` byte-identical to the in-circuit noteSpend accumulator. A sealed bid is not a
+    // spent note and has no such value to contribute.
+    //
+    // The mechanical repair — pass the bid amount — would have been WRONG, and expensively so: it
+    // would hand the marketplace every bid at COMMIT time, destroying the exact property this
+    // phase exists to demonstrate ("no one sees others' bids until reveal"). Passing 0 instead
+    // would write a value the accumulator's own docs say must be the real one.
+    //
+    // So the commit-once property is provided by an ordinary set over the commitments, and the
+    // note accumulator is left to notes. What is demonstrated here is unchanged and honest:
+    // commitments bind the bids, and a replayed commitment is rejected.
+    let mut bid_commitments: BTreeSet<[u8; 32]> = BTreeSet::new();
 
     // Each provider commits a bid as H(amount || nonce).
-    // The commitment goes into the NullifierSet so it can't be replayed.
     let nonce_a: [u8; 32] = *blake3::hash(b"provider-a-bid-nonce").as_bytes();
     let nonce_b: [u8; 32] = *blake3::hash(b"provider-b-bid-nonce").as_bytes();
     let nonce_c: [u8; 32] = *blake3::hash(b"provider-c-bid-nonce").as_bytes();
@@ -250,11 +266,19 @@ fn main() {
     let commit_b = hash_commit(bid_b, &nonce_b);
     let commit_c = hash_commit(bid_c, &nonce_c);
 
-    // Insert commitments as nullifiers (they can only be used once)
-    use dregg_cell::note::Nullifier;
-    nullifier_set.insert(Nullifier(commit_a)).unwrap();
-    nullifier_set.insert(Nullifier(commit_b)).unwrap();
-    nullifier_set.insert(Nullifier(commit_c)).unwrap();
+    // `insert` returns false if the commitment was already present — that is the commit-once tooth.
+    assert!(
+        bid_commitments.insert(commit_a),
+        "first commit must be fresh"
+    );
+    assert!(
+        bid_commitments.insert(commit_b),
+        "first commit must be fresh"
+    );
+    assert!(
+        bid_commitments.insert(commit_c),
+        "first commit must be fresh"
+    );
 
     println!(
         "  Provider A (GPU) commits: {:02x}{:02x}{:02x}{:02x}...",
@@ -270,14 +294,15 @@ fn main() {
     );
     println!("  (Bid amounts are hidden behind BLAKE3 commitments)");
     println!(
-        "  NullifierSet size: {} (double-submit impossible)",
-        nullifier_set.len()
+        "  Commitment registry size: {} (double-submit impossible)",
+        bid_commitments.len()
     );
 
-    // Verify double-submit is rejected
-    let double_submit = nullifier_set.insert(Nullifier(commit_a));
-    assert!(double_submit.is_err(), "double-submit must be rejected");
-    println!("  Double-submit attempt: REJECTED (NullifierSet)");
+    // Verify double-submit is rejected. NON-VACUITY: the three inserts above each asserted `true`,
+    // so this `false` is the registry REFUSING a replay, not a set that rejects everything.
+    let double_submit = bid_commitments.insert(commit_a);
+    assert!(!double_submit, "double-submit must be rejected");
+    println!("  Double-submit attempt: REJECTED (commitment already registered)");
     println!();
 
     // =====================================================================
@@ -805,7 +830,7 @@ fn main() {
     println!("  3. FREE EXECUTION: No per-operation gas fees.");
     println!("     (BudgetGate enforces silo-level limits, not per-op metering)");
     println!();
-    println!("  4. SEALED BIDS WITHOUT GAS: NullifierSet commitments are free.");
+    println!("  4. SEALED BIDS WITHOUT GAS: hash commitments are free.");
     println!("     (On-chain sealed bids cost gas per commitment and reveal)");
     println!();
     println!("  5. PROGRAMMABLE ESCROW: CellProgram::Predicate enforces conditions.");

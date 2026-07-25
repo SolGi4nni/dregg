@@ -41,19 +41,21 @@ const SKIP_MARKERS: &[&str] = &[
 /// newly added examples must be explicitly registered here (i.e., registration is a
 /// conscious act, not silent auto-discovery).
 ///
-/// All 41 examples that exist under demo-agent/examples/ as of 2026-06-12.
+/// The examples that exist under demo-agent/examples/ as of 2026-07-25.
 /// (federation_bootstrap / federation_exit / proof_obligation were retired;
 /// orchestration_demo was added. ivc_attenuation_chain was retired 2026-07-16
-/// with the simulated `dregg_circuit::ivc` engine — mock-proof purge, final cut.)
+/// with the simulated `dregg_circuit::ivc` engine — mock-proof purge, final cut.
+/// bench_summary + offline_verification were retired with the hand-STARK/FRI
+/// engine and were STALE HERE for weeks — this list named three examples that no
+/// longer had `[[example]]` entries, so this check could only ever have failed.
+/// base_anonymous_credential was retired 2026-07-25 as unexecuted mock.)
 const EXAMPLES: &[&str] = &[
     "agent_network",
     "ai_agent_mcp_workflow",
     "anonymous_credit_check",
     "atomic_swap_demo",
     "auction_demo",
-    "base_anonymous_credential",
     "base_private_transfer",
-    "bench_summary",
     "causal_ordering",
     "cdt_revocation",
     "compute_marketplace",
@@ -62,13 +64,13 @@ const EXAMPLES: &[&str] = &[
     "delegation_demo",
     "delegation_swarm",
     "escrow_demo",
+    "garbled_ot_auction",
     "intent_lifecycle",
     "multi_org_delegation",
     "multi_silo_budget",
     "nft_demo",
     "note_bridge",
     "note_privacy",
-    "offline_verification",
     "orchestration_demo",
     "payment_channel",
     "payment_channel_burst",

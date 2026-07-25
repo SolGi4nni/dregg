@@ -248,7 +248,9 @@ fn main() {
                 preconditions: Default::default(),
                 effects: vec![Effect::SetField {
                     cell: target_svc,
-                    index: turn_idx % 8,
+                    // `Effect::SetField::index` is a `u64` (it is hashed via `to_le_bytes` into the
+                    // action commitment); `turn_idx` is a loop `usize`.
+                    index: (turn_idx % 8) as u64,
                     value,
                 }],
                 may_delegate: DelegationMode::None,

@@ -1,48 +1,101 @@
-//! Anonymous Credit Check — Zero-Knowledge Committed-Threshold Proof
+//! Anonymous Credit Check — Zero-Knowledge Predicate Proof over a Credential
 //!
-//! **Story**: Alice wants a loan. The bank sets a minimum credit score threshold
-//! (720) that it keeps secret from third parties via a Poseidon2 commitment.
-//! Alice proves she qualifies WITHOUT revealing her score, and WITHOUT the bank
-//! revealing its threshold to auditors.
+//! **Story**: Alice wants a loan. The bank publishes a minimum credit score (720).
+//! Alice proves she qualifies WITHOUT revealing her score — the bank and any auditor
+//! learn one bit and nothing else about the number behind it.
 //!
-//! This demonstrates dregg's committed-threshold AIR: a STARK proof that
-//! simultaneously proves:
-//!   1. Alice's value >= the bank's threshold (range proof via bit decomposition)
-//!   2. The threshold is correctly committed (Poseidon2 binding)
-//!   3. The value is bound to a specific credential (fact commitment)
+//! This demonstrates the deployed THIRD-PARTY predicate path. The bank does not know Alice's
+//! score, so it cannot re-derive her fact commitment — which means the trusted-state entry point
+//! (`prove_predicate_for_fact` / `verify_predicate_proof`) is the WRONG shape here: it is sound
+//! only for a verifier who already holds the value. Instead this demo uses
+//! `bridge::present::prove_predicate_for_fact_attested` / `verify_predicate_proof_third_party`,
+//! which join TWO real IR-v2 descriptor STARKs:
+//!   1. `dregg-predicate-arith-ge::threshold-v1` — Alice's value >= the bank's threshold, pinned
+//!      to a fact commitment (the two Poseidon2 legs are welded INSIDE the circuit, so a value and
+//!      a commitment naming a different value cannot be paired); and
+//!   2. `dregg-attested-fact-membership::v1` — that same commitment is the blinded image of a
+//!      member of the credit bureau's published `facts_root`.
 //!
-//! **Privacy guarantees:**
+//! The join is what makes it sound for a stranger: the bank feeds the root IT trusts, and the
+//! only commitment it will accept is the one a STARK manufactured against that root. A
+//! prover-chosen commitment has nowhere to enter. (The old vacuous form of this check read the
+//! expected commitment straight off the prover's own struct — the `x == x` gate.)
+//!
+//! **Privacy guarantees (what this code actually delivers):**
 //! - Bank learns: 1 bit (pass/fail). Nothing about Alice's actual score.
-//! - Alice learns: 1 bit (pass/fail). She knows the threshold (needed to prove),
-//!   but the threshold stays hidden from everyone else.
-//! - Auditors/third parties: see two opaque commitments and a valid STARK proof.
-//!   They learn: "some committed value satisfies some committed threshold."
-//!   They cannot determine either the score or the threshold.
+//! - The attested shape carries NO decommitment (`blinding: None`), so a proof-holder has nothing
+//!   to brute-force — unlike the trusted-state shape, whose disclosed opening lets a holder test
+//!   candidate values over a small domain.
+//!
+//! # RETIRED CAPABILITY — the bank's threshold is PUBLIC here, and that is a real change
+//!
+//! This demo used to prove a COMMITTED threshold: the bound was hidden behind
+//! `Poseidon2(threshold, blinding)` so auditors learned only "some committed value satisfies some
+//! committed threshold". That AIR (`dregg_circuit::committed_threshold::{prove,verify}_committed_threshold`)
+//! was deleted with the hand-STARK engine, and NO IR-v2 descriptor has been emitted to replace it —
+//! `bridge::present::prove_committed_threshold` is hard-coded to return `None` and
+//! `verify_committed_threshold_proof` to return `false`. There is nothing to call.
+//!
+//! So the threshold (720) is now a PUBLIC input, visible to every verifier. The value stays
+//! private, which is the property this demo still genuinely shows. Restoring the hidden-threshold
+//! variant needs an emitted committed-threshold descriptor registered in
+//! `dregg_circuit::descriptor_by_name`.
 //!
 //! Run with: cargo run --release -p dregg-demo-agent --example anonymous_credit_check
 
 use std::time::Instant;
 
-use dregg_circuit::{
-    BabyBear,
-    committed_threshold::{
-        CommittedThresholdWitness, compute_threshold_commitment, generate_blinding,
-        prove_committed_threshold, verify_committed_threshold,
-    },
-    poseidon2,
-    predicate_types::compute_fact_commitment,
+use dregg_bridge::present::{
+    Predicate, fresh_predicate_blinding, prove_predicate_for_fact_attested,
+    verify_predicate_proof_third_party,
 };
+use dregg_circuit::BabyBear;
+use dregg_circuit::attested_fact_membership_witness::attested_facts_root;
+use dregg_circuit::predicate_arith_witness::FactBinding;
+use dregg_circuit::refusal::must_refuse_or_unsat_panic;
+
+/// The credit bureau's depth-2 co-path for Alice's score leaf in its facts tree.
+///
+/// The emitted `dregg-attested-fact-membership::v1` descriptor pins the member to the LEFTMOST
+/// child slot at each level and is depth-2, so exactly two sibling triples are required.
+fn bureau_siblings() -> [[BabyBear; 3]; 2] {
+    [
+        [
+            BabyBear::new(0xA1),
+            BabyBear::new(0xA2),
+            BabyBear::new(0xA3),
+        ],
+        [
+            BabyBear::new(0xB1),
+            BabyBear::new(0xB2),
+            BabyBear::new(0xB3),
+        ],
+    ]
+}
+
+/// The `facts_root` the credit bureau PUBLISHES at issuance, derived independently of any
+/// presentation.
+///
+/// This is the point of the whole third-party construction: the bank verifies against THIS value,
+/// never against `proof.attestation.facts_root`. Reading the root off the prover's own proof would
+/// let a prover pick both the root and a fact under it, which attests nothing at all.
+///
+/// It delegates to `dregg_circuit`'s own `attested_facts_root` rather than recomputing the Merkle
+/// legs here, so the bureau's published root cannot silently drift from the root the emitted
+/// `dregg-attested-fact-membership::v1` descriptor actually authenticates.
+fn bureau_facts_root(fact_hash: BabyBear, siblings: &[[BabyBear; 3]; 2]) -> BabyBear {
+    attested_facts_root(fact_hash, siblings).expect("depth-2 co-path is the emitted descriptor's")
+}
 
 fn main() {
     println!("===============================================================================");
     println!("  ANONYMOUS CREDIT CHECK");
-    println!("  Zero-Knowledge Committed-Threshold Proof");
+    println!("  Zero-Knowledge Predicate Proof over a Credential");
     println!("===============================================================================");
     println!();
     println!("  Alice wants a loan from First National Bank.");
-    println!("  The bank has a secret minimum credit score threshold.");
+    println!("  The bank publishes a minimum credit score.");
     println!("  Alice will prove she qualifies WITHOUT revealing her score.");
-    println!("  The bank's threshold stays hidden from all third parties.");
     println!();
 
     let total_start = Instant::now();
@@ -53,40 +106,17 @@ fn main() {
     println!("--- Phase 1: BANK SETUP (verifier) ---");
     println!();
 
-    // The bank's secret threshold: 720 (minimum credit score for approval).
-    // In practice this comes from the bank's internal policy engine.
-    let bank_threshold = BabyBear::new(720);
+    // The bank's lending threshold: 720 (minimum credit score for approval).
+    //
+    // This is a PUBLIC input to the proof — it is `Predicate::Gte(720)`, and it travels on the
+    // proof itself as `proof.predicate`. The hidden-threshold (committed) variant is retired; see
+    // the module header. Nothing below pretends otherwise.
+    let bank_threshold: u32 = 720;
 
-    // The bank generates a random blinding factor to hide the threshold.
-    // This ensures no one can brute-force the threshold from the commitment.
-    let bank_blinding = generate_blinding();
-
-    // The bank computes: commitment = Poseidon2(threshold, blinding)
-    // This commitment is published on-chain or sent to auditors.
-    let threshold_commitment = compute_threshold_commitment(bank_threshold, bank_blinding);
-
-    println!("  Bank's internal threshold: 720 (SECRET)");
-    println!(
-        "  Bank's blinding factor:    {} (SECRET)",
-        bank_blinding.as_u32()
-    );
-    println!(
-        "  Published commitment:      {} (PUBLIC)",
-        threshold_commitment.as_u32()
-    );
+    println!("  Bank's lending threshold:  720 (PUBLIC — it is the proof's public input)");
     println!();
-    println!("  The commitment hides both the threshold value and the blinding factor.");
-    println!("  Given only the commitment, an adversary cannot determine whether the");
-    println!("  threshold is 600, 720, or 800 — it's computationally bound by Poseidon2.");
-    println!();
-
-    // The bank sends (threshold, blinding) to Alice over a secure channel.
-    // This is necessary for Alice to generate the proof.
-    println!(
-        "  Bank -> Alice (secure channel): threshold=720, blinding={}",
-        bank_blinding.as_u32()
-    );
-    println!("  (Alice needs both to generate a valid proof.)");
+    println!("  Alice needs the threshold to prove against it; so does every verifier.");
+    println!("  What stays private is her SCORE, which is the point of the exercise.");
     println!();
 
     // =========================================================================
@@ -96,30 +126,39 @@ fn main() {
     println!();
 
     // Alice's actual credit score: 785. This is her private attribute.
-    let alice_score = BabyBear::new(785);
+    let alice_score: u32 = 785;
 
-    // The score is bound to a specific credential via a fact commitment.
-    // This prevents Alice from using someone else's score.
-    // fact_commitment = Poseidon2(H("credit_score", [785, 0, 0]), state_root)
-    let score_fact_hash = poseidon2::hash_fact(
-        BabyBear::new(100), // "credit_score" predicate symbol
-        &[alice_score, BabyBear::ZERO, BabyBear::ZERO],
-    );
-    let credential_state_root = BabyBear::new(88888); // credential authority's state root
-    let fact_commitment = compute_fact_commitment(score_fact_hash, credential_state_root);
+    // The credential's FACT IDENTITY: everything the commitment covers EXCEPT the value.
+    //
+    // The value is `terms[0]` and is handed to the prover separately. That is deliberate: the old
+    // API took an opaque `fact_hash` beside a value, which let the two name DIFFERENT facts, and
+    // for `>=` the circuit did not relate them — so the mispairing was a provable forgery rather
+    // than a caller mistake. Terms are not opaque, so the pairing cannot come apart.
+    let credential_state_root = BabyBear::new(88888); // credit bureau's state root
+    let score_fact = FactBinding {
+        predicate_sym: BabyBear::new(100), // "credit_score"
+        term1: BabyBear::ZERO,
+        term2: BabyBear::ZERO,
+        state_root: credential_state_root,
+    };
 
-    println!("  Alice's credit score:    785 (SECRET — only Alice knows)");
+    // ---- ISSUANCE (the credit bureau, who DOES know the score, does this once and publishes).
+    let siblings = bureau_siblings();
+    let alice_fact_hash = score_fact.fact_hash_of(BabyBear::from_u64(alice_score as u64));
+    let published_facts_root = bureau_facts_root(alice_fact_hash, &siblings);
+
+    println!("  Alice's credit score:    785 (SECRET — only Alice and the bureau know)");
     println!(
-        "  Credential state root:   {} (from credit bureau)",
+        "  Credential state root:   {} (PUBLISHED by the credit bureau)",
         credential_state_root.as_u32()
     );
     println!(
-        "  Fact commitment:         {} (PUBLIC — binds proof to credential)",
-        fact_commitment.as_u32()
+        "  Published facts root:    {} (PUBLISHED by the credit bureau)",
+        published_facts_root.as_u32()
     );
     println!();
-    println!("  The fact commitment proves this score belongs to a SPECIFIC credential");
-    println!("  without revealing which credential or what score it contains.");
+    println!("  The bank will verify against the PUBLISHED root above — not against anything");
+    println!("  Alice hands it. That is what stops her naming a credential of her own invention.");
     println!();
 
     // =========================================================================
@@ -130,41 +169,48 @@ fn main() {
 
     let proof_start = Instant::now();
 
-    // Alice constructs the witness with all her private data.
-    let witness = CommittedThresholdWitness {
-        private_value: alice_score, // 785 — her actual score
-        threshold: bank_threshold,  // 720 — received from bank
-        blinding: bank_blinding,    // received from bank
-        fact_commitment,            // binds to her credential
-    };
+    // A FRESH blinding per showing. This is what makes two presentations of the SAME credential
+    // carry different commitments, so a colluding bank and auditor cannot link them.
+    let showing_blinding = fresh_predicate_blinding();
 
-    // Verify the predicate is satisfiable before generating the expensive proof.
-    assert!(witness.is_satisfiable(), "785 >= 720 should be satisfiable");
-    println!("  Pre-check: 785 >= 720 is satisfiable [OK]");
-
-    // Generate the STARK proof. This proves three things simultaneously:
-    //   1. private_value >= threshold (via bit decomposition of the difference)
-    //   2. Poseidon2(threshold, blinding) == threshold_commitment (binding)
-    //   3. The value is bound to fact_commitment (credential linkage)
-    let proof = prove_committed_threshold(witness)
-        .expect("Proof generation must succeed for a satisfiable witness");
+    // Generate the joined STARK pair. Real proving work happens here.
+    let proof = prove_predicate_for_fact_attested(
+        alice_score,
+        score_fact,
+        showing_blinding,
+        &Predicate::Gte(bank_threshold),
+        &siblings,
+    )
+    .expect("785 >= 720 is TRUE and Alice's fact is a genuine member — this must prove");
 
     let proof_time = proof_start.elapsed();
 
-    println!("  Generating STARK proof (FRI + Poseidon2 + bit decomposition)...");
+    println!("  Generating STARK proofs (predicate + fact membership)...");
     println!();
     println!("  Proof generated:");
     println!("    Time: {:.2}ms", proof_time.as_secs_f64() * 1000.0);
-    println!("    AIR: dregg-committed-threshold-v1");
-    println!(
-        "    Trace width: 37 columns (value + threshold + blinding + diff + 30 bits + 3 commitments)"
-    );
+    println!("    Descriptors: dregg-predicate-arith-ge::threshold-v1");
+    println!("                 dregg-attested-fact-membership::v1");
     println!();
+
+    // The attested shape must carry an attestation and must NOT carry a decommitment. If this
+    // ever flipped, the proof would be the trusted-state shape wearing the wrong name, and the
+    // bank's third-party verification below would be checking something weaker than it claims.
+    assert!(
+        proof.attestation.is_some(),
+        "the third-party shape must carry a fact attestation"
+    );
+    assert!(
+        proof.blinding.is_none(),
+        "the third-party shape must NOT disclose the opening — there would be nothing stopping a \
+         proof-holder from brute-forcing the score over the small credit-score domain"
+    );
+
     println!("  What the proof encodes (hidden in the witness):");
     println!("    - Alice's score (785) is in the trace but NEVER leaves her machine");
-    println!("    - The difference (785 - 720 = 65) is bit-decomposed for range checking");
-    println!("    - The high bit (bit 29) is zero, proving diff < 2^29 < p/2 (non-negative)");
-    println!("    - Poseidon2(720, blinding) is computed in-circuit and matches the commitment");
+    println!("    - The comparison 785 >= 720 is checked in-circuit against the PUBLIC bound");
+    println!("    - The fact hash and blinding stay hidden witnesses: no opening travels");
+    println!("    - The membership STARK ties the commitment to the bureau's published root");
     println!();
 
     // =========================================================================
@@ -175,35 +221,36 @@ fn main() {
 
     let verify_start = Instant::now();
 
-    // The bank verifies against its own threshold commitment.
-    let bank_verify = verify_committed_threshold(
-        &proof,
-        threshold_commitment, // bank knows this (it computed it)
-        fact_commitment,      // from Alice's credential
-    );
+    // The bank verifies against the roots the CREDIT BUREAU published. It never learned Alice's
+    // score and never needed to: the membership STARK is what manufactures the commitment the
+    // predicate STARK is then checked against.
+    let bank_verify =
+        verify_predicate_proof_third_party(&proof, published_facts_root, credential_state_root);
     let bank_time = verify_start.elapsed();
-    assert!(bank_verify, "Bank verification must succeed");
+    assert!(
+        bank_verify,
+        "the bank must accept a genuine proof against the bureau's published roots"
+    );
+
+    // The bank must also pin WHICH statement it accepted. `verify_predicate_proof_third_party`
+    // checks that the proof is valid; it does not check that the bound is the bank's bound. A
+    // proof of `score >= 300` is perfectly valid and would pass the call above — so a lender that
+    // skipped this check would approve on a threshold the borrower picked. See Attack 2 below.
+    assert_eq!(
+        proof.predicate,
+        Predicate::Gte(bank_threshold),
+        "the accepted proof must be about the BANK's threshold, not one Alice chose"
+    );
 
     println!("  Bank verification: PASS");
-    println!("    Checked: proof.threshold_commitment == bank's commitment [OK]");
-    println!("    Checked: STARK constraints satisfied [OK]");
+    println!("    Checked: fact-membership STARK verifies against the bureau's published root");
+    println!("    Checked: the attested commitment is the one the predicate STARK pins");
+    println!("    Checked: predicate STARK verifies against that attested commitment");
+    println!("    Checked: the proven bound is the bank's own 720");
     println!("    Time: {:.3}ms", bank_time.as_secs_f64() * 1000.0);
     println!();
-
-    // A third-party auditor can also verify — they see only the commitments.
-    let auditor_verify = verify_committed_threshold(
-        &proof,
-        threshold_commitment, // public (on-chain or from bank)
-        fact_commitment,      // public (from credential system)
-    );
-    assert!(auditor_verify);
-
-    println!("  Auditor verification: PASS");
-    println!("    The auditor verifies the same proof but learns NOTHING about:");
-    println!("    - Alice's actual score (hidden in witness)");
-    println!("    - The bank's threshold (hidden behind Poseidon2 commitment)");
-    println!("    - The blinding factor (secret between bank and Alice)");
-    println!("    They only learn: 'A valid credential satisfies a committed threshold.'");
+    println!("  The bank learned exactly one bit. It still does not know whether Alice's");
+    println!("  score is 720, 785, or 850 — only that it is at least 720.");
     println!();
 
     // =========================================================================
@@ -215,22 +262,25 @@ fn main() {
     println!("  │  Party          │ Knows                  │ Cannot Determine        │");
     println!("  ├───────────────────────────────────────────────────────────────────┤");
     println!("  │  Alice (prover) │ Her score (785)        │ Nothing new — she       │");
-    println!("  │                 │ Bank's threshold (720) │ already knew her score   │");
-    println!("  │                 │ Blinding factor        │                         │");
+    println!("  │                 │ Bank's threshold (720) │ already knew her score  │");
+    println!("  │                 │ Her showing blinding   │                         │");
     println!("  ├───────────────────────────────────────────────────────────────────┤");
     println!("  │  Bank (verifier)│ Pass/fail (1 bit)      │ Alice's actual score    │");
-    println!("  │                 │ Its own threshold      │ How far above/below     │");
-    println!("  │                 │ Fact commitment        │ Alice's identity*       │");
+    println!("  │                 │ The threshold (public) │ How far above the bar   │");
+    println!("  │                 │ Bureau's public roots  │ Alice's identity*       │");
     println!("  ├───────────────────────────────────────────────────────────────────┤");
     println!("  │  Auditor        │ Proof is valid         │ The score               │");
-    println!("  │                 │ Two commitments        │ The threshold            │");
-    println!("  │                 │                        │ The blinding factor      │");
-    println!("  │                 │                        │ Whether it passed/failed │");
+    println!("  │                 │ The threshold (public) │ Which bureau fact it is │");
+    println!("  │                 │ One blinded commitment │ Whether two showings are│");
+    println!("  │                 │                        │ the same credential     │");
     println!("  └───────────────────────────────────────────────────────────────────┘");
     println!();
     println!("  * In this demo, Alice's identity is not linked to the fact commitment.");
     println!("    In production, the credential system uses ZK ring membership to");
     println!("    further decouple identity from the proof.");
+    println!();
+    println!("  NOTE: the threshold is PUBLIC in the 'Cannot Determine' sense above — the");
+    println!("  committed-threshold AIR that used to hide it is retired (see the module header).");
     println!();
 
     // =========================================================================
@@ -240,80 +290,130 @@ fn main() {
     println!();
 
     // Attack 1: Alice tries to prove with a score below threshold.
+    //
+    // A false comparison is refused three ways, and this counts all three: the witness builder
+    // declines (`None`), or a produced proof fails verification, or — WITHOUT `--release` — p3's
+    // debug `check_constraints` PANICS on the unsatisfiable base gate. `must_refuse_or_unsat_panic`
+    // is the discriminator that accepts exactly those and REDS on anything else, so a stray unwrap
+    // can never launder itself as a refusal, and an ACCEPTED forgery aborts the demo loudly.
     println!("  Attack 1: Alice lies about her score (pretends 650 >= 720)");
-    let bad_witness = CommittedThresholdWitness {
-        private_value: BabyBear::new(650), // below threshold!
-        threshold: bank_threshold,
-        blinding: bank_blinding,
-        fact_commitment,
-    };
-    assert!(!bad_witness.is_satisfiable());
-    let bad_proof = prove_committed_threshold(bad_witness);
-    assert!(bad_proof.is_none());
-    println!("    Result: Cannot generate proof. 650 < 720 => difference wraps around");
-    println!("    in the field, high bit != 0, constraint system is unsatisfiable. [BLOCKED]");
+    must_refuse_or_unsat_panic("Alice lies about her score (650 >= 720)", || {
+        match prove_predicate_for_fact_attested(
+            650, // below the bar
+            score_fact,
+            fresh_predicate_blinding(),
+            &Predicate::Gte(bank_threshold),
+            &siblings,
+        ) {
+            None => Err("the prover refused the false statement".to_string()),
+            // If a proof object came back, it must not survive verification against the roots the
+            // bank trusts. (The bureau's published root is for the 785 leaf, so a 650 fact is not
+            // a member of it either — two independent reasons to refuse.)
+            Some(p) => {
+                if verify_predicate_proof_third_party(
+                    &p,
+                    published_facts_root,
+                    credential_state_root,
+                ) {
+                    Ok(())
+                } else {
+                    Err("the proof failed to verify".to_string())
+                }
+            }
+        }
+    });
+    println!("    Result: refused. The comparison tooth is a real constraint, not a check the");
+    println!("    prover performs on itself. [BLOCKED]");
     println!();
 
-    // Attack 2: Alice uses the wrong threshold commitment.
-    println!("  Attack 2: Alice forges a different (lower) threshold commitment");
-    let forged_threshold = BabyBear::new(600); // Easier threshold
-    let forged_blinding = generate_blinding();
-    let forged_commitment = compute_threshold_commitment(forged_threshold, forged_blinding);
+    // Attack 2: Alice proves a TRUE statement — against a bar she picked herself.
+    println!("  Attack 2: Alice proves against her own, easier threshold (785 >= 600)");
+    let easier_proof = prove_predicate_for_fact_attested(
+        alice_score,
+        score_fact,
+        fresh_predicate_blinding(),
+        &Predicate::Gte(600),
+        &siblings,
+    )
+    .expect("785 >= 600 is TRUE, so this genuinely proves");
 
-    // She can generate a proof against the forged commitment...
-    let forged_witness = CommittedThresholdWitness {
-        private_value: alice_score,
-        threshold: forged_threshold,
-        blinding: forged_blinding,
-        fact_commitment,
-    };
-    let forged_proof = prove_committed_threshold(forged_witness)
-        .expect("This will generate a proof (785 >= 600 is true)");
-
-    // ...but the bank's verification rejects it (wrong commitment).
-    let forged_verify = verify_committed_threshold(
-        &forged_proof,
-        threshold_commitment, // bank's REAL commitment
-        fact_commitment,
-    );
-    assert!(!forged_verify);
-    println!("    Generated proof against forged threshold (600): SUCCESS");
-    println!("    Bank verifies against its REAL commitment:     REJECTED");
-    println!(
-        "    The proof's threshold_commitment ({}) != bank's ({})",
-        forged_commitment.as_u32(),
-        threshold_commitment.as_u32()
-    );
-    println!("    [BLOCKED]");
-    println!();
-
-    // Attack 3: Someone tries to learn the threshold from the commitment.
-    println!("  Attack 3: Auditor tries to brute-force the threshold");
-    println!("    Commitment = Poseidon2(threshold, blinding)");
-    println!("    Without the blinding factor, the auditor must guess BOTH values.");
-    println!("    Search space: ~2^31 * 2^31 = 2^62 operations (computationally infeasible).");
-    println!("    Even with a known range [300, 850] for credit scores:");
-    println!("    550 * 2^31 ~ 1.18 trillion operations. [INFEASIBLE]");
-    println!();
-
-    // Attack 4: Different fact commitment (using someone else's credential).
-    println!("  Attack 4: Bob uses Alice's proof with his own fact commitment");
-    let bobs_fact = compute_fact_commitment(
-        poseidon2::hash_fact(
-            BabyBear::new(100),
-            &[BabyBear::new(650), BabyBear::ZERO, BabyBear::ZERO],
+    // NEUTERED CANARY: the proof is internally sound — it really does verify. So what refuses it
+    // below is the BOUND mismatch, not a broken proof. Without this pole the assertion after it
+    // could pass for the wrong reason.
+    assert!(
+        verify_predicate_proof_third_party(
+            &easier_proof,
+            published_facts_root,
+            credential_state_root
         ),
-        credential_state_root,
+        "CANARY: the easier-bar proof must itself be valid, or Attack 2 is not demonstrating a \
+         BOUND mismatch"
     );
-    let swap_verify = verify_committed_threshold(
-        &proof,
-        threshold_commitment,
-        bobs_fact, // Bob's credential, not Alice's
+    // THE GATE: the bank compares the proven bound to its OWN policy.
+    assert_ne!(
+        easier_proof.predicate,
+        Predicate::Gte(bank_threshold),
+        "the easier-bar proof must not claim the bank's bound"
     );
-    assert!(!swap_verify);
-    println!("    Bob presents Alice's proof with his own fact_commitment:");
-    println!("    Verification: REJECTED (fact_commitment mismatch)");
-    println!("    The proof is bound to Alice's SPECIFIC credential. [BLOCKED]");
+    println!("    Proof against bar 600: VALID (785 >= 600 really is true)");
+    println!("    Bank checks the bound it accepted: 600 != 720 => REJECTED");
+    println!("    A valid proof of the WRONG statement is still the wrong statement. [BLOCKED]");
+    println!();
+
+    // Attack 3: Someone tries to recover the score from what travels.
+    println!("  Attack 3: Auditor tries to recover the score from the presentation");
+    println!("    The attested shape carries NO opening (blinding: None), so there is no");
+    println!("    decommitment to test candidate scores against — an auditor holding the proof");
+    println!("    cannot brute-force the ~550-wide credit-score domain. [INFEASIBLE]");
+    println!("    (The trusted-state shape DOES disclose an opening and is brute-forceable over");
+    println!("    a small domain — that is why this demo uses the third-party shape.)");
+    println!();
+
+    // Attack 4: a genuine proof about a credential from a DIFFERENT (attacker-run) bureau.
+    println!(
+        "  Attack 4: Mallory attests a real proof under a bureau root the bank does not trust"
+    );
+    let foreign_state_root = BabyBear::new(99999);
+    let mallory_fact = FactBinding {
+        predicate_sym: BabyBear::new(100),
+        term1: BabyBear::ZERO,
+        term2: BabyBear::ZERO,
+        state_root: foreign_state_root,
+    };
+    let mallory_score: u32 = 800;
+    let mallory_proof = prove_predicate_for_fact_attested(
+        mallory_score,
+        mallory_fact,
+        fresh_predicate_blinding(),
+        &Predicate::Gte(bank_threshold),
+        &siblings,
+    )
+    .expect("800 >= 720 is TRUE under Mallory's own root");
+    let mallory_root = bureau_facts_root(
+        mallory_fact.fact_hash_of(BabyBear::from_u64(mallory_score as u64)),
+        &siblings,
+    );
+
+    // NEUTERED CANARY: against MALLORY'S OWN root the proof verifies. So the refusal below is
+    // about the root the bank trusts, not about a malformed proof.
+    assert!(
+        verify_predicate_proof_third_party(&mallory_proof, mallory_root, foreign_state_root),
+        "CANARY: Mallory's proof must verify against Mallory's OWN root, or Attack 4 is not \
+         demonstrating a ROOT-MISMATCH refusal"
+    );
+    // THE GATE: against the bureau root the BANK trusts, it is refused.
+    assert!(
+        !verify_predicate_proof_third_party(
+            &mallory_proof,
+            published_facts_root,
+            credential_state_root
+        ),
+        "SOUNDNESS: a proof attested under a root the bank does NOT trust must be REJECTED — \
+         nothing ties it to the real bureau's credential"
+    );
+    println!("    Mallory's proof against Mallory's own root:  ACCEPTED (it is a real proof)");
+    println!("    Same proof against the REAL bureau's root:   REJECTED");
+    println!("    Self-issued credentials do not become real by being provable. [BLOCKED]");
     println!();
 
     // =========================================================================
@@ -365,12 +465,17 @@ fn main() {
     println!("  Components exercised:");
     println!("    - Poseidon2 hash (SNARK-friendly, algebraic)");
     println!("    - BabyBear field arithmetic (p = 2^31 - 1)");
-    println!("    - STARK prover (FRI polynomial commitment)");
-    println!("    - Bit decomposition range check (30-bit soundness)");
-    println!("    - CommittedThresholdAir (37-column trace)");
+    println!("    - IR-v2 descriptor prover (plonky3 batch STARK)");
+    println!("    - dregg-predicate-arith-ge::threshold-v1   (the comparison)");
+    println!("    - dregg-attested-fact-membership::v1       (the credential binding)");
     println!();
     println!("  This is something you CANNOT do with traditional PKI, OAuth, or");
-    println!("  any non-ZK system: prove a predicate about a secret value against");
-    println!("  a secret threshold, with cryptographic soundness, in milliseconds.");
+    println!("  any non-ZK system: prove a predicate about a secret value held in");
+    println!("  someone else's credential, to a stranger, with cryptographic");
+    println!("  soundness, in milliseconds.");
+    println!();
+    println!("  Note the honest boundary: the STARKs above inherit the undischarged");
+    println!("  FRI soundness floor, and the threshold is public (the committed-");
+    println!("  threshold AIR that hid it is retired — see the module header).");
     println!("===============================================================================");
 }
