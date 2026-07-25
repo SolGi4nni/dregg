@@ -913,6 +913,72 @@ pub fn fri_ledger(knobs: FriKnobs) -> Result<FriLedger, String> {
     })
 }
 
+/// The grantor's pinned delegation parameters — the wire shape of the Lean
+/// `Dregg2.Apps.DelegAdmit.Grant`. This is a MARSHALLING struct, not a policy: it carries the three
+/// numbers to the boundary and holds no decision of its own.
+///
+/// * `tool_id` — the single allowlisted tool / MCP id the worker is scoped to (the SCOPE);
+/// * `rate_limit` — the granted invocation ceiling `N` (the RATE);
+/// * `deadline` — the expiry height/clock (the DEADLINE).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DelegGrant {
+    /// The single allowlisted tool / MCP id (the SCOPE).
+    pub tool_id: i64,
+    /// The granted invocation ceiling `N` (the RATE).
+    pub rate_limit: i64,
+    /// The expiry height/clock (the DEADLINE).
+    pub deadline: i64,
+}
+
+/// Whether the linked archive exports the DELEGATED TOOL/MCP-ACCESS admission decision
+/// (`dregg_deleg_admit`, the C-ABI entry over `Dregg2.Apps.DelegAdmit.delegAdmitFFI`).
+///
+/// When false there is NO answer source: every gateway that used to carry its own `deleg_admit`
+/// refuses. That is deliberate — the three Rust re-implementations this replaced are deleted, and a
+/// wasm32 / `no-lean-link` build (which cannot link `libdregg_lean.a` at all) reads false here and
+/// must say so rather than quietly re-deciding the policy in Rust. Distinct from [`lean_available`]:
+/// a stale archive can lack this export.
+pub fn deleg_admit_available() -> bool {
+    ffi::deleg_admit_present() && lean_init_once().is_ok()
+}
+
+/// **Run the DELEGATED TOOL/MCP-ACCESS admission decision `@[export] dregg_deleg_admit`** — the
+/// executable `Dregg2.Apps.DelegAdmit.delegAdmit`, the five-conjunct predicate
+/// `Dregg2.Apps.ToolAccessDelegation.tool_invocation_commit_iff_admit` proves the production
+/// caveat-gated executor COMMITS a metered `calls_made : c → c+1` write IFF (and whose negations are
+/// the `tool_invocation_over_rate_rejected` / `_past_deadline_rejected` / `_out_of_scope_rejected`
+/// teeth):
+///
+/// 1. SCOPE — `tool == g.tool_id`;
+/// 2. DEADLINE — `now <= g.deadline`;
+/// 3. STEP — `new == old + 1`;
+/// 4. SANE — `0 <= old`;
+/// 5. RATE — `new <= g.rate_limit`.
+///
+/// `Ok(true)` = the delegated policy ADMITS the invocation; `Ok(false)` = it REFUSES. `Err` = **no
+/// verdict was reached** (the archive lacks the export, the Lean runtime would not initialize, or the
+/// wire came back malformed). The two are deliberately distinguishable and callers must treat `Err`
+/// as a refusal WITH a distinct reason — an unanswered gate is not an open gate.
+///
+/// ⚑ This is a CALL, not a check. It exists because three Rust functions used to decide this — each
+/// documented as "the byte-faithful Rust mirror" of the Lean, each maintained by hand, each backed by
+/// a differential test that (there being no formal semantics of Rust) pinned drift and proved nothing
+/// about any input the test did not enumerate. They are deleted; this is the only answer source.
+pub fn deleg_admit(g: DelegGrant, now: i64, tool: i64, old: i64, new: i64) -> Result<bool, String> {
+    ensure_lean_init()?;
+    let wire = format!(
+        "{} {} {} {now} {tool} {old} {new}",
+        g.tool_id, g.rate_limit, g.deadline
+    );
+    match ffi::lean_deleg_admit(&wire)?.trim() {
+        "1" => Ok(true),
+        "0" => Ok(false),
+        other => Err(format!(
+            "dregg_deleg_admit returned no verdict for {wire:?} (fail-closed): {other:?}"
+        )),
+    }
+}
+
 /// Whether the linked archive exports the automatafl GAME ORACLE (`dregg_automatafl_rules`, the
 /// C-ABI entry over `Dregg2.Games.AutomataflFFI.rulesFFI`). When false, `dregg-automatafl` has NO
 /// answer source for a board transition and its oracle calls fail closed — there is no Rust twin to

@@ -565,6 +565,11 @@ fn describe_refusal(refusal: &GatewayRefusal) -> String {
         } => format!(
             "budget exhausted: {spent} spent + {price} price exceeds the {budget} allowance"
         ),
+        // NOT a mandate leg — the verified admission oracle reached NO VERDICT, so the call is
+        // refused fail-closed (an operator/build condition, not an exhausted caveat).
+        GatewayRefusal::OracleUnavailable { reason } => format!(
+            "refused fail-closed: the verified admission oracle reached no verdict ({reason})"
+        ),
     }
 }
 

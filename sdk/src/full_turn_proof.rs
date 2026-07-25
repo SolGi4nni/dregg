@@ -613,7 +613,8 @@ pub struct CapMembershipWitness {
     /// Direction bits (0 = current node is the LEFT child, 1 = right).
     pub directions: Vec<u8>,
     /// **(cap-WRITE light-client axis)** The holder cell's FULL sorted c-list leaf-set — the
-    /// `(addr, value)` leaves of the openable cap-tree (`heap_root::HeapLeaf`) the WRITE-bearing
+    /// `HeapLeaf` leaves of the openable cap-tree (`heap_root::HeapLeaf` — the arity-3 IMT leaf
+    /// `(addr, value, next_addr)`; the pointer is relinked by the tree builder) the WRITE-bearing
     /// cap-open wrappers' `map_op` opens against (BEFORE cap-root → AFTER cap-root). The membership
     /// path above opens ONE leaf; the cap-tree WRITE needs the WHOLE tree to compute the genuine
     /// post-insert/remove root. Empty ⇒ the write wrapper is not provable (the AUTHORITY-ONLY

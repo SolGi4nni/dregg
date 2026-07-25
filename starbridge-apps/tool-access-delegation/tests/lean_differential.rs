@@ -1,14 +1,26 @@
-//! Differential test: the Rust `deleg_admit` / `deleg_corpus` mirror agrees, cell-for-cell, with the
-//! verified Lean `Dregg2.Apps.ToolAccessDelegation.delegAdmit` / `mandateSpec.diffCorpus`.
+//! ROUTE + DIFFERENTIAL tests over the delegated tool-access admission boundary.
 //!
-//! The pinned vector here is the IDENTICAL literal the Lean
-//! `#guard AppDiffPinned (mandateSpec demoGrant 50 77 5) [...]` pins. Drift on either side fails:
-//!   * a Rust `deleg_admit` change ≠ this literal ⇒ this test FAILS;
-//!   * a Lean `delegAdmit` change ⇒ the Lean `#guard` trips at `lake build` ⇒ forced re-pin.
+//! `deleg_admit` / `deleg_corpus` / `admit_table` no longer decide anything: they marshal across
+//! `dregg_deleg_admit` to `Dregg2.Apps.DelegAdmit.delegAdmit`, the predicate the Lean
+//! `tool_invocation_commit_iff_admit` and its three rejection teeth are proven over. What this file
+//! checks is therefore split in two, and the distinction is load-bearing:
 //!
-//! This is the anti-drift tooth that keeps the running Rust admission mirror == the proven Lean policy,
-//! so the formal `tool_invocation_commit_iff_admit` / `tool_invocation_*_rejected` guarantees actually
-//! describe what the deployed app enforces.
+//!   * **ROUTE** ([`corpus_matches_lean_pinned_literal`], the three tooth tests) — the boundary is
+//!     actually reached and the verdicts that come back are the ones the Lean `#guard`s witness. The
+//!     pinned vector here is the IDENTICAL literal the Lean
+//!     `#guard AppDiffPinned (mandateSpec demoGrant 50 77 5) [...]` pins, so a Lean `delegAdmit`
+//!     change trips the `#guard` at `lake build` AND this literal here.
+//!   * **DIFFERENTIAL** ([`wire_marshalling_agrees_with_the_policy_over_a_grid_sweep`]) — a
+//!     test-local restatement of the five conjuncts swept over a grid, compared cell-for-cell with
+//!     what the oracle answers. It is a MARSHALLING check: it catches a mangled wire, an argument
+//!     swapped in transit, a sign lost on a negative id. It is **not** refinement, **not**
+//!     translation validation, and **not** verification — there is no formal semantics of Rust, and
+//!     a sweep says nothing about the inputs it does not enumerate. The thing that covers those is
+//!     that the answering function IS the one the theorems are stated over.
+//!
+//! Before this routing there were THREE Rust re-implementations of the policy in the workspace and
+//! this file compared one of them to a literal. That comparison was the whole assurance story, and
+//! it was a drift detector wearing a proof's clothes.
 
 use starbridge_tool_access_delegation::{Grant, admit_table, deleg_admit, deleg_corpus};
 
@@ -18,6 +30,22 @@ const DEMO: Grant = Grant {
     rate_limit: 3,
     deadline: 100,
 };
+
+/// The linked archive answers, or the test is honestly skipped — and PANICS under
+/// `DREGG_TEST_REQUIRE_LEAN=1`, so a verification lane cannot report a hollow `ok` for a gate that
+/// never ran.
+fn lean_answers() -> bool {
+    dregg_lean_ffi::demand_lean(
+        dregg_lean_ffi::deleg_admit_available(),
+        "dregg_deleg_admit (the delegated tool-access admission oracle)",
+    )
+}
+
+/// One admission verdict from the Lean oracle; an `Err` here is NO VERDICT and must fail the test
+/// loudly rather than read as a refusal.
+fn admits(g: &Grant, now: i64, tool: i64, old: i64, new: i64) -> bool {
+    deleg_admit(g, now, tool, old, new).expect("the Lean oracle reached a verdict")
+}
 
 /// The EXACT vector the Lean `AppDiffPinned (mandateSpec demoGrant 50 77 5)` `#guard` pins, row-major
 /// over old {0,1,2,3} × new {1,2,3,4} (16 cells; exactly the 3 diagonal advances `(c, c+1)` with
@@ -35,41 +63,58 @@ const PINNED_CORPUS_IN_SCOPE_IN_TIME: [bool; 16] = [
 
 #[test]
 fn corpus_matches_lean_pinned_literal() {
+    if !lean_answers() {
+        return;
+    }
     assert_eq!(
-        deleg_corpus(&DEMO, 50, 77).as_slice(),
+        deleg_corpus(&DEMO, 50, 77)
+            .expect("the Lean oracle reached a verdict")
+            .as_slice(),
         &PINNED_CORPUS_IN_SCOPE_IN_TIME[..],
-        "Rust deleg_corpus diverged from the Lean-pinned AppDiffPinned vector — \
-         either the Rust mirror or the Lean delegAdmit drifted"
+        "the routed corpus diverged from the Lean-pinned AppDiffPinned vector — either the Lean \
+         delegAdmit changed (re-pin both sides) or the wire marshalling is wrong"
     );
 }
 
 #[test]
 fn rate_tooth_bites() {
+    if !lean_answers() {
+        return;
+    }
     // Lean `tool_invocation_over_rate_rejected` witness: the (N+1)-th invocation is rejected.
-    assert!(deleg_admit(&DEMO, 50, 77, 2, 3)); // the 3rd (last legal) call
-    assert!(!deleg_admit(&DEMO, 50, 77, 3, 4)); // the 4th — over the granted rate
+    assert!(admits(&DEMO, 50, 77, 2, 3)); // the 3rd (last legal) call
+    assert!(!admits(&DEMO, 50, 77, 3, 4)); // the 4th — over the granted rate
 }
 
 #[test]
 fn deadline_tooth_bites() {
+    if !lean_answers() {
+        return;
+    }
     // Lean `tool_invocation_past_deadline_rejected`: now 101 > deadline 100 ⇒ EMPTY table.
-    assert!(deleg_admit(&DEMO, 100, 77, 0, 1)); // exactly at the deadline still admits
-    assert!(!deleg_admit(&DEMO, 101, 77, 0, 1)); // one past — rejected
-    assert_eq!(admit_table(&DEMO, 101, 77).len(), 0);
+    assert!(admits(&DEMO, 100, 77, 0, 1)); // exactly at the deadline still admits
+    assert!(!admits(&DEMO, 101, 77, 0, 1)); // one past — rejected
+    assert_eq!(admit_table(&DEMO, 101, 77).unwrap().len(), 0);
 }
 
 #[test]
 fn scope_tooth_bites() {
+    if !lean_answers() {
+        return;
+    }
     // Lean `tool_invocation_out_of_scope_rejected`: tool 99 ≠ granted 77 ⇒ EMPTY table.
-    assert!(deleg_admit(&DEMO, 50, 77, 0, 1)); // the granted tool admits
-    assert!(!deleg_admit(&DEMO, 50, 99, 0, 1)); // a different tool — rejected
-    assert_eq!(admit_table(&DEMO, 50, 99).len(), 0);
+    assert!(admits(&DEMO, 50, 77, 0, 1)); // the granted tool admits
+    assert!(!admits(&DEMO, 50, 99, 0, 1)); // a different tool — rejected
+    assert_eq!(admit_table(&DEMO, 50, 99).unwrap().len(), 0);
 }
 
 #[test]
 fn corpus_is_non_vacuous() {
+    if !lean_answers() {
+        return;
+    }
     // The corpus contains BOTH true and false (it is neither all-admit nor all-reject).
-    let c = deleg_corpus(&DEMO, 50, 77);
+    let c = deleg_corpus(&DEMO, 50, 77).expect("the Lean oracle reached a verdict");
     assert!(
         c.iter().any(|&b| b),
         "corpus has no admitted cell (vacuous-reject)"
@@ -85,11 +130,20 @@ fn corpus_is_non_vacuous() {
     );
 }
 
-/// Sweep a range of grants and confirm the Rust admission is exactly the folded policy on every cell —
-/// the property the Lean `app_commit_iff_admit` proves over the whole grid (here checked by brute force
-/// as the differential witness that the Rust mirror has no off-by-one against the Lean predicate).
+/// A **DIFFERENTIAL TEST** of the WIRE, not a verification of the policy.
+///
+/// Sweeps a range of grants/presentations and compares each of the oracle's verdicts against a
+/// test-local restatement of the five conjuncts. What it can catch is marshalling damage: a swapped
+/// argument, a dropped sign, a truncated field, a grant flattened in the wrong order. What it
+/// CANNOT do is establish that the policy is right — the enumerated cells say nothing about the
+/// rest, and Rust has no formal semantics for a case test to generalize over. The Lean side is where
+/// "for all inputs" lives (`tool_invocation_commit_iff_admit`); this is a boundary smoke test with a
+/// wide nozzle.
 #[test]
-fn folded_policy_holds_over_grid_sweep() {
+fn wire_marshalling_agrees_with_the_policy_over_a_grid_sweep() {
+    if !lean_answers() {
+        return;
+    }
     for rate in 1..=5i64 {
         for deadline in 0..=4i64 {
             let g = Grant {
@@ -101,15 +155,17 @@ fn folded_policy_holds_over_grid_sweep() {
                 for tool in 6..=8i64 {
                     for old in 0..=rate {
                         for new in 1..=(rate + 1) {
-                            let expected = tool == g.tool_id
+                            let restated = tool == g.tool_id
                                 && now <= g.deadline
                                 && new == old + 1
                                 && 0 <= old
                                 && new <= g.rate_limit;
                             assert_eq!(
-                                deleg_admit(&g, now, tool, old, new),
-                                expected,
-                                "deleg_admit disagreed at g={g:?} now={now} tool={tool} {old}->{new}"
+                                admits(&g, now, tool, old, new),
+                                restated,
+                                "the routed verdict disagreed with the restated policy at \
+                                 g={g:?} now={now} tool={tool} {old}->{new} — suspect the WIRE \
+                                 (argument order, sign, truncation), not the proof"
                             );
                         }
                     }
@@ -117,4 +173,26 @@ fn folded_policy_holds_over_grid_sweep() {
             }
         }
     }
+}
+
+/// NEGATIVE ids survive the signed wire — the marshalling case a `Nat`-shaped wire would have eaten
+/// silently. (`Grant.tool_id` and the presented tool are `Int` on both sides.)
+#[test]
+fn negative_ids_round_trip_the_wire() {
+    if !lean_answers() {
+        return;
+    }
+    let g = Grant {
+        tool_id: -5,
+        rate_limit: 2,
+        deadline: 100,
+    };
+    assert!(
+        admits(&g, 50, -5, 0, 1),
+        "the granted negative tool id admits"
+    );
+    assert!(
+        !admits(&g, 50, 5, 0, 1),
+        "the positive twin is out of scope"
+    );
 }

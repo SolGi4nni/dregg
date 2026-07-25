@@ -39,13 +39,21 @@
 //!   * `tool_id`     (the SCOPE) — `WriteOnce`: the single allowlisted tool/MCP id, bound at grant
 //!     and frozen.
 //!
-//! ## Differential pinning
+//! ## Where the admission decision lives
 //!
-//! [`deleg_admit`] is the byte-for-byte mirror of the Lean `delegAdmit`. [`deleg_corpus`] enumerates
-//! the FULL `(old, new)` grid for a grant and emits the admission decision vector — the EXACT vector the
-//! Lean `AppDiffPinned (mandateSpec demoGrant 50 77 5)` `#guard` pins. The test
-//! `tests/lean_differential.rs` asserts the Rust corpus equals that pinned literal; drift on either side
-//! fails.
+//! [`deleg_admit`] **CALLS** the Lean `delegAdmit` across the `dregg_deleg_admit` C-ABI boundary
+//! (`Dregg2.Apps.DelegAdmit.delegAdmitFFI`); it does not re-decide the policy. It used to be the five
+//! conjuncts written out in Rust, documented as "the byte-for-byte mirror", with
+//! `tests/lean_differential.rs` pinning the two against each other. That agreement was a
+//! DIFFERENTIAL — it caught drift and proved nothing, because there is no formal semantics of Rust
+//! and a case test says nothing about the inputs it does not enumerate. The mirror is DELETED; the
+//! decision is the one `tool_invocation_commit_iff_admit` is stated over.
+//!
+//! [`deleg_corpus`] still enumerates the FULL `(old, new)` grid and emits the admission decision
+//! vector — the EXACT vector the Lean `AppDiffPinned (mandateSpec demoGrant 50 77 5)` `#guard` pins —
+//! but now every cell in it is an answer from Lean, so `tests/lean_differential.rs` reads as a ROUTE
+//! test: the boundary reaches the proven predicate and returns its verdicts. An absent export is
+//! `Err` (no verdict), never a Rust fallback.
 
 #![forbid(unsafe_code)]
 
@@ -97,30 +105,32 @@ pub const TOOL_ID_SLOT: u8 = 3;
 pub const NO_DEADLINE: u64 = u64::MAX;
 
 // =============================================================================
-// The grant + folded admission predicate (the Lean `Grant` / `delegAdmit` mirror).
+// The grant shape + the routed admission verdict. The predicate itself lives in Lean
+// (`Dregg2.Apps.DelegAdmit.delegAdmit`, `@[export dregg_deleg_admit]`); nothing below re-decides it.
 // =============================================================================
 
-/// The grantor's pinned delegation parameters — the Rust mirror of the Lean `Grant`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Grant {
-    /// The single allowlisted tool / MCP id the worker is scoped to (the SCOPE).
-    pub tool_id: i64,
-    /// The granted invocation ceiling N: at most N tool calls under this mandate (the RATE).
-    pub rate_limit: i64,
-    /// The expiry height: invocations presented at `now > deadline` are refused (the DEADLINE).
-    pub deadline: i64,
-}
+/// The grantor's pinned delegation parameters. This IS the marshalling shape the `dregg_deleg_admit`
+/// boundary takes (`dregg_lean_ffi::DelegGrant`), re-exported under the name the Lean `Grant` carries
+/// — one shape, not a mirror of one.
+pub use dregg_lean_ffi::DelegGrant as Grant;
 
-/// **`deleg_admit`** — the byte-for-byte mirror of the Lean `delegAdmit g now tool old new`. Does the
-/// delegated policy admit advancing the rate counter `old → new`, presented at height `now` for tool
-/// `tool`, under grant `g`?  Every conjunct fail-closed:
+/// **`deleg_admit`** — the delegated-policy verdict, **DECIDED IN LEAN**. Marshals
+/// `(g, now, tool, old, new)` across `dregg_deleg_admit` to `Dregg2.Apps.DelegAdmit.delegAdmit` —
+/// the predicate `Dregg2.Apps.ToolAccessDelegation.tool_invocation_commit_iff_admit` proves the
+/// production caveat-gated executor commits a metered `calls_made : c → c+1` write IFF, and whose
+/// negations are the over-rate / past-deadline / out-of-scope teeth. Every conjunct fail-closed:
 ///
 ///   * SCOPE:    `tool == g.tool_id`;
 ///   * DEADLINE: `now <= g.deadline`;
 ///   * single-step increment `new == old + 1` and sane prior `0 <= old`;
 ///   * RATE:     `new <= g.rate_limit`.
-pub fn deleg_admit(g: &Grant, now: i64, tool: i64, old: i64, new: i64) -> bool {
-    tool == g.tool_id && now <= g.deadline && new == old + 1 && 0 <= old && new <= g.rate_limit
+///
+/// `Err` means **NO VERDICT** — the linked archive lacks the export, or this target cannot link it
+/// at all — and a caller must treat it as a refusal. This function used to be those five conjuncts
+/// written out in Rust and documented as "the byte-for-byte mirror" of the Lean; that is a
+/// DIFFERENTIAL, not a proof (there is no formal semantics of Rust). The mirror is DELETED.
+pub fn deleg_admit(g: &Grant, now: i64, tool: i64, old: i64, new: i64) -> Result<bool, String> {
+    dregg_lean_ffi::deleg_admit(*g, now, tool, old, new)
 }
 
 /// The old-value grid for a grant of `N` calls: the counter ranges over `0..=N` (the Lean `oldGrid`).
@@ -134,31 +144,32 @@ pub fn new_grid(n: i64) -> Vec<i64> {
 }
 
 /// **`deleg_corpus`** — the full-grid admission decision vector, row-major over `old_grid × new_grid`,
-/// the EXACT vector the Lean `AppDiffPinned (mandateSpec g now tool _)` pins. A Rust mirror change or a
-/// Lean `delegAdmit` change makes the two diverge ⇒ the differential test fails.
-pub fn deleg_corpus(g: &Grant, now: i64, tool: i64) -> Vec<bool> {
+/// the EXACT vector the Lean `AppDiffPinned (mandateSpec g now tool _)` pins. Every cell is a CALL
+/// into the Lean oracle, so the corpus RENDERS the proven predicate over the grid instead of being a
+/// second implementation of it. `Err` on the first cell that reaches no verdict.
+pub fn deleg_corpus(g: &Grant, now: i64, tool: i64) -> Result<Vec<bool>, String> {
     let mut v = Vec::new();
     for old in old_grid(g.rate_limit) {
         for new in new_grid(g.rate_limit) {
-            v.push(deleg_admit(g, now, tool, old, new));
+            v.push(deleg_admit(g, now, tool, old, new)?);
         }
     }
-    v
+    Ok(v)
 }
 
-/// The admitted `(old, new)` transition table the executor's `Cases` allow-list enforces (the Rust
-/// mirror of the Lean `mandateSpec.admitTable`): exactly the diagonal advances `(c, c+1)` with
-/// `c+1 <= rate_limit`, present iff `tool == g.tool_id` and `now <= g.deadline`.
-pub fn admit_table(g: &Grant, now: i64, tool: i64) -> Vec<(i64, i64)> {
+/// The admitted `(old, new)` transition table the executor's `Cases` allow-list enforces (the Lean
+/// `mandateSpec.admitTable`): exactly the diagonal advances `(c, c+1)` with `c+1 <= rate_limit`,
+/// present iff `tool == g.tool_id` and `now <= g.deadline`. Each cell is decided by the Lean oracle.
+pub fn admit_table(g: &Grant, now: i64, tool: i64) -> Result<Vec<(i64, i64)>, String> {
     let mut t = Vec::new();
     for old in old_grid(g.rate_limit) {
         for new in new_grid(g.rate_limit) {
-            if deleg_admit(g, now, tool, old, new) {
+            if deleg_admit(g, now, tool, old, new)? {
                 t.push((old, new));
             }
         }
     }
-    t
+    Ok(t)
 }
 
 // =============================================================================
@@ -848,35 +859,60 @@ mod tests {
         );
     }
 
+    /// The linked archive answers the delegated-policy question, or the test is honestly skipped
+    /// (and PANICS under `DREGG_TEST_REQUIRE_LEAN=1`, so a verification lane cannot report a hollow
+    /// `ok` for a gate that never ran).
+    fn lean_answers() -> bool {
+        dregg_lean_ffi::demand_lean(
+            dregg_lean_ffi::deleg_admit_available(),
+            "dregg_deleg_admit (the delegated tool-access admission oracle)",
+        )
+    }
+
     #[test]
-    fn deleg_admit_matches_lean_demo() {
-        // Lean `#guard delegAdmit demoGrant …` witnesses.
-        assert!(deleg_admit(&DEMO, 50, 77, 0, 1)); // invocation 1 admitted
-        assert!(deleg_admit(&DEMO, 50, 77, 1, 2)); // invocation 2
-        assert!(deleg_admit(&DEMO, 50, 77, 2, 3)); // invocation 3 (the last)
-        assert!(!deleg_admit(&DEMO, 50, 77, 3, 4)); // over-rate (4 > 3) — RATE TOOTH
-        assert!(!deleg_admit(&DEMO, 50, 99, 0, 1)); // out-of-scope tool — SCOPE TOOTH
-        assert!(!deleg_admit(&DEMO, 101, 77, 0, 1)); // past-deadline — DEADLINE TOOTH
+    fn deleg_admit_is_answered_by_lean_on_the_demo_grant() {
+        if !lean_answers() {
+            return;
+        }
+        // The Lean `#guard delegAdmit demoGrant …` witnesses, ROUTED: each verdict below came back
+        // across `dregg_deleg_admit`. Nothing in this crate decides them.
+        let admits = |now, tool, old, new| {
+            deleg_admit(&DEMO, now, tool, old, new).expect("the Lean oracle reached a verdict")
+        };
+        assert!(admits(50, 77, 0, 1)); // invocation 1 admitted
+        assert!(admits(50, 77, 1, 2)); // invocation 2
+        assert!(admits(50, 77, 2, 3)); // invocation 3 (the last)
+        assert!(!admits(50, 77, 3, 4)); // over-rate (4 > 3) — RATE TOOTH
+        assert!(!admits(50, 99, 0, 1)); // out-of-scope tool — SCOPE TOOTH
+        assert!(!admits(101, 77, 0, 1)); // past-deadline — DEADLINE TOOTH
     }
 
     #[test]
     fn admit_table_holds_exactly_three_legal_advances() {
+        if !lean_answers() {
+            return;
+        }
         // Lean: `mandateSpec demoGrant 50 77 5 |>.admitTable.length == 3`, contains (0,1),(1,2),(2,3).
-        let t = admit_table(&DEMO, 50, 77);
+        let t = admit_table(&DEMO, 50, 77).expect("the Lean oracle reached a verdict");
         assert_eq!(t.len(), 3);
         assert!(t.contains(&(0, 1)));
         assert!(t.contains(&(1, 2)));
         assert!(t.contains(&(2, 3)));
         assert!(!t.contains(&(3, 4))); // over-rate advance ABSENT (TOOTH)
         // Out-of-scope / past-deadline bake an EMPTY table.
-        assert_eq!(admit_table(&DEMO, 50, 99).len(), 0);
-        assert_eq!(admit_table(&DEMO, 101, 77).len(), 0);
+        assert_eq!(admit_table(&DEMO, 50, 99).unwrap().len(), 0);
+        assert_eq!(admit_table(&DEMO, 101, 77).unwrap().len(), 0);
     }
 
     #[test]
     fn corpus_matches_lean_pinned_vector() {
+        if !lean_answers() {
+            return;
+        }
         // The EXACT vector the Lean `AppDiffPinned (mandateSpec demoGrant 50 77 5)` `#guard` pins.
         // Row-major over old {0,1,2,3} × new {1,2,3,4}; 16 cells; exactly the 3 diagonal advances true.
+        // Both sides are now the SAME function, so this pins the ROUTE (the boundary reaches it and
+        // marshals faithfully), not an agreement between two implementations.
         let expected = vec![
             // old = 0:  →1 true,  →2,→3,→4 false
             true, false, false, false, //
@@ -887,7 +923,10 @@ mod tests {
             // old = 3:  none (3→4 is over-rate)
             false, false, false, false,
         ];
-        assert_eq!(deleg_corpus(&DEMO, 50, 77), expected);
+        assert_eq!(
+            deleg_corpus(&DEMO, 50, 77).expect("the Lean oracle reached a verdict"),
+            expected
+        );
     }
 
     #[test]

@@ -21,10 +21,16 @@
 //!   refused.
 //! * **TURN BUDGET** — the RATE: at most `turn_budget` committed turns ride this key.
 //!
-//! [`play_admit`] is the folded admission predicate, the play mirror of
-//! [`dregg_sdk::tool_gateway::deleg_admit`]:
-//! `SCOPE(target) ∧ now ≤ deadline ∧ new = old+1 ∧ 0 ≤ old ∧ new ≤ turn_budget`. Every conjunct
-//! fail-closed, each negation a named leg ([`PlayRefusal`]) so an audit sees which caveat bit.
+//! [`play_admit`] is the folded admission verdict —
+//! `SCOPE(target) ∧ now ≤ deadline ∧ new = old+1 ∧ 0 ≤ old ∧ new ≤ turn_budget` — and it is
+//! **DECIDED IN LEAN**: it marshals the play grant as the tool mandate it is and asks
+//! `dregg_deleg_admit` (`Dregg2.Apps.DelegAdmit.delegAdmit`), the predicate
+//! `tool_invocation_commit_iff_admit` and the three rejection teeth are proven over. Every conjunct
+//! fail-closed, each negation a named leg ([`PlayRefusal`]) so an audit sees which caveat bit; an
+//! unreachable oracle (notably **wasm32**, which cannot link the archive) is
+//! [`PlayRefusal::OracleUnavailable`] — a refusal, never a Rust fallback. It used to be five `&&`s
+//! here, described as "the play mirror of `dregg_sdk::tool_gateway::deleg_admit`" — itself a mirror
+//! of the Lean. Both mirrors are deleted.
 //!
 //! ## The two teeth that make it a delegation, not just a config
 //!
@@ -147,23 +153,61 @@ impl PlayGrant {
     }
 }
 
-/// **The folded play-admission predicate** — the play mirror of
-/// [`dregg_sdk::tool_gateway::deleg_admit`] (the Rust twin of the Lean
-/// `Dregg2.Apps.ToolAccessDelegation.delegAdmit`). Returns `true` IFF the grant admits the turn
-/// advancing the counter `old → new`, presented at height `now` to play offering `target`.
-/// Fail-closed on every conjunct, in the SAME order as the tool mandate:
+/// **The folded play-admission verdict — DECIDED IN LEAN.**
 ///
-/// 1. SCOPE — `g.scope.admits(target)`;
-/// 2. DEADLINE — `now <= g.deadline`;
-/// 3. single-step increment — `new == old + 1`;
-/// 4. sane prior count — `0 <= old`;
-/// 5. RATE — `new <= g.turn_budget`.
-pub fn play_admit(g: &PlayGrant, now: i64, target: i64, old: i64, new: i64) -> bool {
-    g.scope.admits(target)
-        && now <= g.deadline
-        && new == old + 1
-        && 0 <= old
-        && new <= g.turn_budget
+/// A play grant IS a tool mandate wearing play's vocabulary, so this marshals it as one and asks
+/// `dregg_deleg_admit` (`Dregg2.Apps.DelegAdmit.delegAdmit`) — the five-conjunct predicate
+/// `Dregg2.Apps.ToolAccessDelegation.tool_invocation_commit_iff_admit` proves the production
+/// caveat-gated executor commits a metered counter advance IFF, and whose negations are the
+/// over-rate / past-deadline / out-of-scope teeth. The mapping is exact, term for term:
+///
+/// | play                    | mandate                                       |
+/// |-------------------------|-----------------------------------------------|
+/// | `g.turn_budget`         | `rateLimit` (the RATE)                        |
+/// | `g.deadline`            | `deadline` (the DEADLINE)                     |
+/// | `g.scope` + `target`    | `toolId` + presented `tool` (the SCOPE)       |
+///
+/// The one place play is WIDER is [`PlayScope::Any`], which the mandate's single `toolId` has no
+/// spelling for. It is carried faithfully by sending `target` AS the mandate's `tool_id`: the SCOPE
+/// conjunct `tool = toolId` is then `target = target`, true exactly when `Any` admits — and nothing
+/// else in the predicate reads `toolId`, so widening the scope this way cannot loosen the RATE, the
+/// DEADLINE, the single-step or the sane-prior conjunct. `PlayScope::Offering(id)` sends `id`, so the
+/// conjunct is `target = id` — the same test [`PlayScope::admits`] spells out.
+///
+/// * `Ok(true)` — the grant ADMITS the turn advancing `old → new` at height `now` on `target`.
+/// * `Ok(false)` — it REFUSES; [`SessionKey::admit`] names the leg that bit.
+/// * `Err(reason)` — **NO VERDICT** (the archive lacks `dregg_deleg_admit`, or this target cannot
+///   link it — notably **wasm32**, which this crate must keep building for). Callers refuse
+///   fail-closed with [`PlayRefusal::OracleUnavailable`]; there is deliberately no Rust arm.
+///
+/// ⚑ This was five `&&`s here, called "the play mirror of `dregg_sdk::tool_gateway::deleg_admit`"
+/// — a mirror of a mirror of the Lean, all three maintained by hand. Rust has no formal semantics,
+/// so none of them proved anything about any input a test did not enumerate. All three are deleted.
+pub fn play_admit(
+    g: &PlayGrant,
+    now: i64,
+    target: i64,
+    old: i64,
+    new: i64,
+) -> Result<bool, String> {
+    // SCOPE, as the mandate spells it: `Any` presents the target as its own allowlisted id (so the
+    // `tool = toolId` conjunct is vacuously true, exactly when `Any` admits); `Offering(id)` presents
+    // `id` (so the conjunct is `target = id`). See `PlayScope::admits`.
+    let tool_id = match g.scope {
+        PlayScope::Any => target,
+        PlayScope::Offering(id) => id,
+    };
+    dregg_lean_ffi::deleg_admit(
+        dregg_lean_ffi::DelegGrant {
+            tool_id,
+            rate_limit: g.turn_budget,
+            deadline: g.deadline,
+        },
+        now,
+        target,
+        old,
+        new,
+    )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -284,6 +328,19 @@ pub enum PlayRefusal {
         /// The public-key hex the session key is bound to.
         bound: String,
     },
+    /// **NO VERDICT** — the verified admission oracle could not be reached, so the turn is refused
+    /// fail-closed.
+    ///
+    /// Not a negated caveat: the delegated policy said nothing, because `dregg_deleg_admit` (the
+    /// C-ABI entry over `Dregg2.Apps.DelegAdmit.delegAdmit`) is absent from the linked archive — or
+    /// this target cannot link `libdregg_lean.a` at all, which is the case on **wasm32**, where this
+    /// crate must keep building for the browser binding. The session key refuses rather than
+    /// deciding its own caveats; re-growing a Rust predicate on the wasm path is precisely how the
+    /// three twins survived the first time.
+    OracleUnavailable {
+        /// Why no verdict was reached (the boundary's own error text).
+        reason: String,
+    },
 }
 
 impl std::fmt::Display for PlayRefusal {
@@ -307,6 +364,11 @@ impl std::fmt::Display for PlayRefusal {
             PlayRefusal::WrongHolderKey { presented, bound } => write!(
                 f,
                 "turn driven under the wrong holder key: presented {presented}, key is bound to {bound}"
+            ),
+            PlayRefusal::OracleUnavailable { reason } => write!(
+                f,
+                "turn refused fail-closed — the verified admission oracle \
+                 (dregg_deleg_admit / Dregg2.Apps.DelegAdmit.delegAdmit) reached NO VERDICT: {reason}"
             ),
         }
     }
@@ -387,10 +449,11 @@ impl SessionKey {
     pub fn admit(&self, now: i64, target: i64) -> Result<(), PlayRefusal> {
         let old = self.turns_taken;
         let new = old + 1;
-        if play_admit(&self.grant, now, target, old, new) {
-            Ok(())
-        } else {
-            Err(self.diagnose(now, target))
+        match play_admit(&self.grant, now, target, old, new) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(self.diagnose(now, target)),
+            // NO VERDICT — refuse fail-closed rather than decide the caveats here.
+            Err(reason) => Err(PlayRefusal::OracleUnavailable { reason }),
         }
     }
 

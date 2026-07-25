@@ -1140,7 +1140,55 @@ pub struct AgentCipherclerk {
     /// rung, FAIL-CLOSED rather than fabricated.
     retained_carrier_material:
         HashMap<[u8; 32], crate::carrier_witness_attach::RetainedCarrierMaterial>,
+    /// **THE MEMOISED PQ HALF** — the ML-DSA-65 key [`Self::ml_dsa_key`] derives, held
+    /// beside the digest of the seed it was derived FROM.
+    ///
+    /// `MlDsaTurnKey::from_ed25519_seed` is a pure function of the 32-byte ed25519 seed
+    /// (deterministic FIPS 204 `ML-DSA.KeyGen(ξ)`), and on the deployed build it runs the
+    /// Lean-verified keygen core across the FFI boundary — measured at **227 ms of CPU per
+    /// call** (`dregg_mldsa_keygen_real`, C driver against `libdregg_lean.a`). Every hybrid
+    /// signature re-derived it, so a replayed turn paid a full keygen for a value it had
+    /// already computed. This field is that memo. Nothing cryptographic changes: the key
+    /// served from here is bit-identical to the one a fresh derivation returns.
+    ///
+    /// **THE CACHE LIVES INSIDE THE IDENTITY, NOT BESIDE IT.** A process-global map keyed
+    /// by seed would work arithmetically and be wrong operationally: it pools every tenant's
+    /// ML-DSA secret in one process-lifetime structure that outlives the clerks that own
+    /// them, and it makes "which identity may read this entry" a property of a lookup key
+    /// rather than of ownership. Here a cache entry is reachable only through the clerk
+    /// that derived it, so two identities are two caches and cross-identity sharing has no
+    /// path to express itself.
+    ///
+    /// **The stored digest is the second wall.** `seed_binding` is
+    /// `blake3::derive_key(`[`ML_DSA_CACHE_BINDING_CTX`]`, seed)` — not the seed — and
+    /// [`Self::ml_dsa_key`] re-derives it from the LIVE `signing_key` on every call and
+    /// serves the cached key only on an exact match. So even a future edit that re-keys a
+    /// clerk in place cannot make it sign under its predecessor's PQ key: the binding
+    /// misses and the key is re-derived. A poisoned lock likewise falls through to a fresh
+    /// derivation — the cache can cost latency, never correctness.
+    ///
+    /// Lifetime/zeroization: this holds key material derived from a seed the clerk already
+    /// holds in `signing_key` for its whole life, so it widens no window. [`Drop`] clears it.
+    /// Runtime-only, never serialized.
+    ml_dsa_key_cache: std::sync::RwLock<Option<MlDsaKeyCacheEntry>>,
 }
+
+/// The seed-bound memo behind [`AgentCipherclerk::ml_dsa_key`]. The key is served ONLY when
+/// `seed_binding` matches the digest recomputed from the clerk's live signing key.
+struct MlDsaKeyCacheEntry {
+    /// `blake3::derive_key(ML_DSA_CACHE_BINDING_CTX, seed)` of the ed25519 seed this key was
+    /// derived from. A digest, not the seed: the validity check never needs the secret itself.
+    seed_binding: [u8; 32],
+    /// The derived PQ key, behind an `Arc` so serving it copies a pointer rather than a second
+    /// copy of the 4032-byte ML-DSA secret.
+    key: std::sync::Arc<dregg_turn::pq::MlDsaTurnKey>,
+}
+
+/// BLAKE3 KDF context for the [`AgentCipherclerk::ml_dsa_key`] cache's seed binding. Its only
+/// job is to make the cache-validity check a collision-resistant function of the ed25519 seed
+/// that produced the cached PQ key, so a clerk can never serve a key derived from a different
+/// seed than the one it is signing with.
+const ML_DSA_CACHE_BINDING_CTX: &str = "dregg-sdk ml-dsa key cache seed binding v1";
 
 /// Internal carrier for a proven sovereign turn: the proof-carrying [`Turn`]
 /// plus the retained scope-2 trace and γ.2-projected public inputs that the
@@ -1245,6 +1293,7 @@ impl AgentCipherclerk {
             // leg, which the executor still admits for them.
             umem_weld_staged_enabled: true,
             retained_carrier_material: HashMap::new(),
+            ml_dsa_key_cache: std::sync::RwLock::new(None),
         }
     }
 
@@ -1322,6 +1371,7 @@ impl AgentCipherclerk {
             // leg, which the executor still admits for them.
             umem_weld_staged_enabled: true,
             retained_carrier_material: HashMap::new(),
+            ml_dsa_key_cache: std::sync::RwLock::new(None),
         }
     }
 
@@ -3125,8 +3175,46 @@ impl AgentCipherclerk {
     /// Deriving from `signing_key.to_bytes()` (the ed25519 secret seed) means the
     /// PQ public key matches a node / genesis fixture built from the same
     /// mnemonic, with no separate ceremony (deterministic: same seed → same key).
-    fn ml_dsa_key(&self) -> dregg_turn::pq::MlDsaTurnKey {
-        dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(&self.signing_key.to_bytes())
+    ///
+    /// MEMOISED in [`Self::ml_dsa_key_cache`]. The derivation runs the Lean-verified
+    /// keygen core over the FFI boundary at ~227 ms of CPU, and it is a PURE FUNCTION of
+    /// the seed — so the first call per clerk pays it and the rest read the memo. The key
+    /// returned is bit-identical either way; this changes latency and nothing else.
+    ///
+    /// The memo is served only when the digest stored beside it equals the digest
+    /// recomputed HERE from the live `signing_key`, so a clerk cannot serve a key derived
+    /// from any seed but its own. Both lock failures (poisoned `read`, poisoned `write`)
+    /// degrade to a plain fresh derivation.
+    fn ml_dsa_key(&self) -> std::sync::Arc<dregg_turn::pq::MlDsaTurnKey> {
+        let seed = Zeroizing::new(self.signing_key.to_bytes());
+        let binding = blake3::derive_key(ML_DSA_CACHE_BINDING_CTX, seed.as_slice());
+
+        if let Ok(cache) = self.ml_dsa_key_cache.read() {
+            if let Some(entry) = cache.as_ref() {
+                // THE GATE: this clerk's LIVE seed, not merely "some seed once cached here".
+                if entry.seed_binding == binding {
+                    return std::sync::Arc::clone(&entry.key);
+                }
+            }
+        }
+
+        let key = std::sync::Arc::new(dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(&seed));
+        if let Ok(mut cache) = self.ml_dsa_key_cache.write() {
+            *cache = Some(MlDsaKeyCacheEntry {
+                seed_binding: binding,
+                key: std::sync::Arc::clone(&key),
+            });
+        }
+        key
+    }
+
+    /// The ML-DSA-65 (FIPS 204) PUBLIC key of this cipherclerk's hybrid identity — the PQ
+    /// half a verifier enrolls or matches against.
+    ///
+    /// Rides the same memo as [`Self::ml_dsa_key`], so asking a clerk for its PQ public key
+    /// twice costs one derivation, not two.
+    pub fn ml_dsa_public_bytes(&self) -> Vec<u8> {
+        self.ml_dsa_key().public_bytes()
     }
 
     /// Sign arbitrary bytes with this cipherclerk's identity.
@@ -7617,6 +7705,13 @@ impl Drop for AgentCipherclerk {
         if let Some(ref mut phrase) = self.mnemonic_phrase {
             phrase.zeroize();
         }
+        // Drop the memoised PQ key with the identity that owns it, rather than waiting for
+        // the field's own drop glue. The `Arc` is not shared outside a live signing call, so
+        // this is the last reference in the ordinary case and the ML-DSA secret goes away
+        // here, at the same moment as the ed25519 seed it was derived from.
+        if let Ok(mut cache) = self.ml_dsa_key_cache.write() {
+            *cache = None;
+        }
     }
 }
 
@@ -10144,6 +10239,69 @@ mod tests {
         assert_eq!(
             clipped, 0,
             "disjoint widening clips to the empty mask, not the wider ask"
+        );
+    }
+
+    // ─── the memoised PQ half ────────────────────────────────────────────────────────────
+    //
+    // `sdk/tests/mldsa_key_cache.rs` proves the SECURITY property (no two identities share a
+    // derived key) from outside, on the wire. These two prove the MEMO IS LIVE from inside,
+    // by object identity rather than by a stopwatch: they go red the moment `ml_dsa_key`
+    // goes back to deriving per call, and they cannot be flaky on a loaded box.
+
+    /// Install the verified keygen core, or fail loudly. Without it `from_ed25519_seed` takes
+    /// dregg-pq's unaudited-fallback branch (which aborts the process unless explicitly
+    /// allowed), so an uninstalled run would prove nothing about the deployed derivation.
+    fn install_keygen_core_for_test() {
+        use dregg_pq::MlDsaKeygenCoreRealInstall as K;
+        let outcome = crate::install_verified_mldsa_keygen_core_real();
+        assert!(
+            matches!(outcome, K::Installed | K::AlreadyInstalled),
+            "the verified ML-DSA keygen core must be installed for this test to exercise the \
+             deployed derivation; got {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn ml_dsa_key_is_derived_once_per_clerk() {
+        install_keygen_core_for_test();
+        let clerk = AgentCipherclerk::new();
+        let first = clerk.ml_dsa_key();
+        let second = clerk.ml_dsa_key();
+        assert!(
+            std::sync::Arc::ptr_eq(&first, &second),
+            "the second ml_dsa_key() must be the SAME object as the first — a fresh derivation \
+             here is a ~227 ms verified-keygen call on every signature"
+        );
+        assert_eq!(first.public_bytes(), second.public_bytes());
+    }
+
+    #[test]
+    fn two_clerks_never_share_the_memoised_key_object() {
+        install_keygen_core_for_test();
+        let a = AgentCipherclerk::from_key_bytes(Zeroizing::new([0x1a; 32]));
+        let b = AgentCipherclerk::from_key_bytes(Zeroizing::new([0x2b; 32]));
+        // Interleaved, so a single shared slot would have to answer both.
+        let a1 = a.ml_dsa_key();
+        let b1 = b.ml_dsa_key();
+        let a2 = a.ml_dsa_key();
+        let b2 = b.ml_dsa_key();
+        assert!(
+            std::sync::Arc::ptr_eq(&a1, &a2),
+            "clerk a must keep its own memo"
+        );
+        assert!(
+            std::sync::Arc::ptr_eq(&b1, &b2),
+            "clerk b must keep its own memo"
+        );
+        assert!(
+            !std::sync::Arc::ptr_eq(&a1, &b1),
+            "two identities must never hold the same derived key object"
+        );
+        assert_ne!(
+            a1.public_bytes(),
+            b1.public_bytes(),
+            "distinct seeds must derive distinct PQ identities"
         );
     }
 }

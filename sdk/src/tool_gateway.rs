@@ -15,9 +15,13 @@
 //!   and `tool_invocation_commit_iff_admit` (the executor's caveat gate commits a
 //!   metered `calls_made : c → c+1` write IFF that predicate holds), with the
 //!   over-rate / past-deadline / out-of-scope rejection TEETH. [`deleg_admit`] in
-//!   this module is the byte-faithful Rust mirror of that Lean predicate; the
-//!   `tool_gateway_admit_mirrors_lean_delegadmit` test pins the SAME decision
-//!   vector the Lean `#guard`s witness.
+//!   this module **CALLS** that predicate: it marshals the grant + presentation
+//!   across `dregg_deleg_admit` (the C-ABI entry over
+//!   `Dregg2.Apps.DelegAdmit.delegAdmit`) and returns Lean's answer. It used to be
+//!   five `&&`s here, described as a "byte-faithful Rust mirror" and pinned by a
+//!   case test — a differential, not a proof. The mirror is DELETED; when the
+//!   oracle cannot be reached the gateway REFUSES ([`GatewayRefusal::OracleUnavailable`]),
+//!   it does not decide the mandate itself.
 //! * The cap-gated executor path — [`crate::SubAgent`] / [`crate::AgentRuntime::spawn_sub_agent_scoped`]:
 //!   the worker carries a public-key biscuit credential scoped to EXACTLY the
 //!   granted tool method, presented as `Authorization::Token`, so the EXECUTOR
@@ -204,21 +208,47 @@ impl Payable for ConsumerSpendAccount {
     }
 }
 
-/// **`deleg_admit`** — the folded delegated-policy predicate, the byte-faithful
-/// Rust mirror of the Lean `delegAdmit g now tool old new`
-/// (`Dregg2.Apps.ToolAccessDelegation.delegAdmit`).
+/// **`deleg_admit`** — the folded delegated-policy verdict, **DECIDED IN LEAN**.
 ///
-/// Returns `true` IFF the delegated policy admits the invocation that advances
-/// the rate counter `old → new`, presented at height `now` for tool `tool` under
-/// grant `g`. Fail-closed on every conjunct, in the SAME order as the Lean:
+/// Marshals `(g, now, tool, old, new)` across the `dregg_deleg_admit` C-ABI
+/// boundary and returns what `Dregg2.Apps.DelegAdmit.delegAdmit` answered — the
+/// five-conjunct predicate `Dregg2.Apps.ToolAccessDelegation.tool_invocation_commit_iff_admit`
+/// proves the production caveat-gated executor commits a metered
+/// `calls_made : c → c+1` write IFF, and whose negations are the
+/// `tool_invocation_over_rate_rejected` / `_past_deadline_rejected` /
+/// `_out_of_scope_rejected` teeth:
 ///
 /// 1. SCOPE — `tool == g.tool_id`;
 /// 2. DEADLINE — `now <= g.deadline`;
 /// 3. single-step increment — `new == old + 1`;
 /// 4. sane prior count — `0 <= old`;
 /// 5. RATE — `new <= g.rate_limit`.
-pub fn deleg_admit(g: &ToolGrant, now: i64, tool: i64, old: i64, new: i64) -> bool {
-    tool == g.tool_id && now <= g.deadline && new == old + 1 && 0 <= old && new <= g.rate_limit
+///
+/// * `Ok(true)` — the delegated policy ADMITS the invocation.
+/// * `Ok(false)` — it REFUSES; [`ToolGateway::invoke`] names the leg that bit.
+/// * `Err(reason)` — **NO VERDICT WAS REACHED**: the linked archive lacks
+///   `dregg_deleg_admit`, or this target cannot link it at all (wasm32 / zkvm —
+///   `no-lean-link`). The gateway turns this into
+///   [`GatewayRefusal::OracleUnavailable`] and refuses. An unanswered gate is not
+///   an open gate, and there is deliberately no Rust arm to fall back to.
+///
+/// ⚑ This used to be five `&&`s in this file, documented as "the byte-faithful
+/// Rust mirror" of the Lean predicate and pinned by a case test. That is a
+/// DIFFERENTIAL, not a proof: there is no formal semantics of Rust, so agreement
+/// on the enumerated cases said nothing about the rest. The decision is Lean's;
+/// this function only carries the numbers to it.
+pub fn deleg_admit(g: &ToolGrant, now: i64, tool: i64, old: i64, new: i64) -> Result<bool, String> {
+    dregg_lean_ffi::deleg_admit(
+        dregg_lean_ffi::DelegGrant {
+            tool_id: g.tool_id,
+            rate_limit: g.rate_limit,
+            deadline: g.deadline,
+        },
+        now,
+        tool,
+        old,
+        new,
+    )
 }
 
 /// The mandate cell program installed on the worker cell — the executor-side
@@ -292,6 +322,21 @@ pub enum GatewayRefusal {
         /// The consumer's total spend allowance.
         budget: u64,
     },
+    /// **NO VERDICT** — the verified admission oracle could not be reached, so
+    /// the call is refused fail-closed.
+    ///
+    /// This is NOT a negated conjunct: the delegated policy said nothing,
+    /// because `dregg_deleg_admit` (the C-ABI entry over
+    /// `Dregg2.Apps.DelegAdmit.delegAdmit`) is absent from the linked archive —
+    /// or this target cannot link `libdregg_lean.a` at all (**wasm32 / zkvm**,
+    /// the `no-lean-link` platform feature). The gateway refuses rather than
+    /// deciding the mandate itself; the three Rust re-implementations that used
+    /// to answer here are deleted, and re-growing one on the wasm path is
+    /// exactly how the twins survived the first time.
+    OracleUnavailable {
+        /// Why no verdict was reached (the boundary's own error text).
+        reason: String,
+    },
 }
 
 impl std::fmt::Display for GatewayRefusal {
@@ -319,6 +364,11 @@ impl std::fmt::Display for GatewayRefusal {
             } => write!(
                 f,
                 "tool call over budget: {spent} already spent + {price} price exceeds the {budget} allowance"
+            ),
+            GatewayRefusal::OracleUnavailable { reason } => write!(
+                f,
+                "tool call refused fail-closed — the verified admission oracle \
+                 (dregg_deleg_admit / Dregg2.Apps.DelegAdmit.delegAdmit) reached NO VERDICT: {reason}"
             ),
         }
     }
@@ -909,12 +959,22 @@ impl ToolGateway {
         let old = self.calls_made;
         let new = old + 1;
 
-        // §1 — IN-BAND admission (the byte-faithful Lean `delegAdmit` mirror).
-        // Fail-closed, naming the leg that bit. NO turn is submitted on refusal.
-        if !deleg_admit(&self.grant, now, tool, old, new) {
-            return Err(ToolCallError::Refused(
-                self.diagnose_refusal(tool, now, old),
-            ));
+        // §1 — IN-BAND admission, DECIDED IN LEAN (`dregg_deleg_admit` over
+        // `Dregg2.Apps.DelegAdmit.delegAdmit`). Fail-closed, naming the leg that
+        // bit. NO turn is submitted on refusal — and NO turn is submitted when the
+        // oracle reached no verdict either.
+        match deleg_admit(&self.grant, now, tool, old, new) {
+            Ok(true) => {}
+            Ok(false) => {
+                return Err(ToolCallError::Refused(
+                    self.diagnose_refusal(tool, now, old),
+                ));
+            }
+            Err(reason) => {
+                return Err(ToolCallError::Refused(GatewayRefusal::OracleUnavailable {
+                    reason,
+                }));
+            }
         }
         // §1b — IN-BAND value-budget admission (the market conjunct). A paid call
         // whose price would exceed the consumer's allowance is refused in-band as
@@ -985,12 +1045,21 @@ impl ToolGateway {
         let old = self.calls_made;
         let new = old + 1;
 
-        // §1 — IN-BAND admission, the SAME gate as the inline path. NO enqueue,
-        // no reservation on refusal (the anti-ghost tooth at the on-ramp).
-        if !deleg_admit(&self.grant, now, tool, old, new) {
-            return Err(ToolCallError::Refused(
-                self.diagnose_refusal(tool, now, old),
-            ));
+        // §1 — IN-BAND admission, the SAME Lean-decided gate as the inline path.
+        // NO enqueue, no reservation on refusal, and none when the oracle reached
+        // no verdict (the anti-ghost tooth at the on-ramp).
+        match deleg_admit(&self.grant, now, tool, old, new) {
+            Ok(true) => {}
+            Ok(false) => {
+                return Err(ToolCallError::Refused(
+                    self.diagnose_refusal(tool, now, old),
+                ));
+            }
+            Err(reason) => {
+                return Err(ToolCallError::Refused(GatewayRefusal::OracleUnavailable {
+                    reason,
+                }));
+            }
         }
         // §1b — IN-BAND value-budget admission (the market conjunct), the SAME
         // gate the inline path runs. Over-budget short-circuits at the on-ramp:
@@ -1306,39 +1375,43 @@ mod tests {
         }
     }
 
+    /// THE ROUTE TEST — the gateway's admission verdicts come back from the LEAN
+    /// oracle across the real `dregg_deleg_admit` boundary, on the same demo grant
+    /// the Lean `#guard`s witness (`ToolAccessDelegation.lean §8` / `DelegAdmit §3`).
+    ///
+    /// This is a ROUTE assertion, not a differential and not a refinement: it
+    /// proves the C-ABI call reaches `Dregg2.Apps.DelegAdmit.delegAdmit` and
+    /// returns its answer. There is no Rust predicate left to compare against —
+    /// that is the point. It says nothing about inputs it does not enumerate;
+    /// what covers those is that the answering function IS the one
+    /// `tool_invocation_commit_iff_admit` is stated over.
     #[test]
-    fn tool_gateway_admit_mirrors_lean_delegadmit() {
-        // BOTH-POLARITY at the predicate level: this is the EXACT decision vector
-        // the Lean `#guard`s witness in `ToolAccessDelegation.lean §8`. A drift on
-        // either side is a divergence between the Rust seam and the proven crown.
+    fn tool_gateway_admission_is_answered_by_lean() {
+        if !dregg_lean_ffi::demand_lean(
+            dregg_lean_ffi::deleg_admit_available(),
+            "dregg_deleg_admit (the delegated tool-access admission oracle)",
+        ) {
+            return;
+        }
         let g = demo_grant();
+        let admits = |now, tool, old, new| {
+            deleg_admit(&g, now, tool, old, new).expect("the Lean oracle reached a verdict")
+        };
 
         // The three legal advances (in-scope tool 77, in-time now 50, 1..3 <= 3):
-        assert!(deleg_admit(&g, 50, 77, 0, 1), "invocation 1 admitted");
-        assert!(deleg_admit(&g, 50, 77, 1, 2), "invocation 2 admitted");
-        assert!(
-            deleg_admit(&g, 50, 77, 2, 3),
-            "invocation 3 admitted (the last)"
-        );
+        assert!(admits(50, 77, 0, 1), "invocation 1 admitted");
+        assert!(admits(50, 77, 1, 2), "invocation 2 admitted");
+        assert!(admits(50, 77, 2, 3), "invocation 3 admitted (the last)");
 
         // The TEETH (each negated conjunct), matching the Lean `== false` guards:
-        assert!(
-            !deleg_admit(&g, 50, 77, 3, 4),
-            "invocation 4 over-rate (4 > 3)"
-        );
-        assert!(!deleg_admit(&g, 50, 99, 0, 1), "out-of-scope tool 99");
-        assert!(
-            !deleg_admit(&g, 101, 77, 0, 1),
-            "past-deadline now 101 > 100"
-        );
+        assert!(!admits(50, 77, 3, 4), "invocation 4 over-rate (4 > 3)");
+        assert!(!admits(50, 99, 0, 1), "out-of-scope tool 99");
+        assert!(!admits(101, 77, 0, 1), "past-deadline now 101 > 100");
 
         // Non-single-step and negative-old also fail closed (the increment +
         // sane-prior conjuncts):
-        assert!(
-            !deleg_admit(&g, 50, 77, 0, 2),
-            "not a single-step increment"
-        );
-        assert!(!deleg_admit(&g, 50, 77, -1, 0), "negative prior count");
+        assert!(!admits(50, 77, 0, 2), "not a single-step increment");
+        assert!(!admits(50, 77, -1, 0), "negative prior count");
     }
 
     #[test]

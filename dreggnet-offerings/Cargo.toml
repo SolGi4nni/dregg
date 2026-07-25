@@ -111,6 +111,19 @@ dreggnet-asset = { path = "../dreggnet-asset" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+# THE ADMISSION DECISION. `session::play_admit` does NOT decide the session key's caveats — it
+# marshals them across `dregg_deleg_admit` to `Dregg2.Apps.DelegAdmit.delegAdmit`, the predicate
+# `Dregg2.Apps.ToolAccessDelegation.tool_invocation_commit_iff_admit` is proven over. The
+# five-conjunct Rust re-implementation this crate carried (documented as "the play mirror of
+# `dregg_sdk::tool_gateway::deleg_admit`", itself a mirror of the Lean) is DELETED.
+#
+# wasm32-CLEAN: this crate must stay so (the browser binding). `dregg-lean-ffi`'s build script
+# hard-skips the archive link for wasm32/zkvm and the crate compiles marshal-only with runtime
+# stubs, so `deleg_admit_available()` reads FALSE there and `play_admit` returns
+# `PlayRefusal::OracleUnavailable` — a fail-closed refusal, never a Rust fallback. Its one
+# non-trivial dep (`dregg-circuit`) is already in this graph via dregg-app-framework -> dregg-turn.
+dregg-lean-ffi = { path = "../dregg-lean-ffi" }
+
 [dev-dependencies]
 # Dev-only: decode the real published drand `quicknet` round vector the daily-descent
 # driven test seeds "today's dungeon" from (genuine drand interop for the beacon leg).

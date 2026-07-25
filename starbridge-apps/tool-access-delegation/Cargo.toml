@@ -21,6 +21,11 @@ dregg-app-framework = { path = "../../app-framework" }
 dregg-cell = { path = "../../cell", default-features = false }
 dregg-turn = { path = "../../turn" }
 dregg-types = { path = "../../types" }
+# THE DECISION. `deleg_admit` / `admit_table` do not decide the mandate policy here — they
+# marshal it across `dregg_deleg_admit` to `Dregg2.Apps.DelegAdmit.delegAdmit`, the predicate
+# `tool_invocation_commit_iff_admit` is proven over. The five-conjunct Rust re-implementation
+# this crate carried is DELETED; there is no fallback arm.
+dregg-lean-ffi = { path = "../../dregg-lean-ffi" }
 
 blake3 = "1"
 serde = { workspace = true }

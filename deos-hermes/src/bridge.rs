@@ -401,6 +401,12 @@ fn describe_refusal(refusal: &GatewayRefusal) -> String {
         } => format!(
             "budget exhausted: {spent} spent + {price} price exceeds the {budget} allowance this mandate"
         ),
+        // NOT a mandate leg — the verified admission oracle reached NO VERDICT, so the call is
+        // refused fail-closed. Say so plainly: this is an operator/build problem (the linked archive
+        // lacks `dregg_deleg_admit`, or this target cannot link it), not the user overrunning a caveat.
+        GatewayRefusal::OracleUnavailable { reason } => format!(
+            "refused fail-closed: the verified admission oracle reached no verdict ({reason})"
+        ),
     }
 }
 
