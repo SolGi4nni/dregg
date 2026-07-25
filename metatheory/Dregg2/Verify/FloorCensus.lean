@@ -31,9 +31,11 @@ Passes (all READ-ONLY over the imported environment):
       a statement rewrite once its endpoint is ported.
     - `dead` — the proof term never touches it (droppable, modulo conclusion occurrence).
     - `no-value` — axiom/opaque/ctor/recursor carriers (no proof term to classify).
-  Structural exclusions, no allow-lists: a telescope body of `False` is a refutation tooth
-  (excluded, reported as `TOOTH`); a conclusion whose head is itself a floor is a BRIDGE
-  (kept, flagged `bridge`).
+    - `tooth` — telescope body is `False`: refutation teeth and reduction-to-floor
+      theorems stated contradiction-style. A distinct class, never dropped (the underlying
+      proof-term class is kept as a `was-*` flag).
+  Structural classes, no allow-lists: a conclusion whose head is itself a floor is a
+  BRIDGE (kept, flagged `bridge`).
 * **Bundles.** Structure FIELDS typed at a floor are found via projections
   (`getProjectionStructureName?` + floor-headed forall-body) and reported as `BUNDLE`/`PROJ`.
 * **The `Function.Injective` blind spot.** `Poseidon2SpongeCR f` is defeq to
@@ -56,8 +58,7 @@ port, never from an instrument that quietly measured less.
 ## Output (machine-readable, TSV, one record per line)
   `FLOOR   name refuted witness closed? named?`
   `CARRIER name module file startLine endLine kind class conc level floors flags`
-  `TOOTH   name module floors`
-  `BUNDLE  struct floor` / `PROJ proj struct floor`
+  `BUNDLE  struct` / `PROJ proj struct floor`
   `SHAPE   name module file line injective-head`
   `SUMMARY key value`
 Usage: `#floor_census` (stdout) or `#floor_census "/abs/path/out.tsv"` (file + summary).
@@ -373,7 +374,6 @@ def run (outPath : Option String) : MetaM Unit := do
   -- ===== Pass 1: carriers =====
   let memo ← IO.mkRef ({} : Std.HashMap (Name × Nat) (Bool × Array Name))
   let mut sites : Array Site := #[]
-  let mut teeth : Array (Name × Name × Array Name) := #[]
   let mut bundles : Array (Name × Name × Name) := #[]   -- (proj, struct, floor)
   let mut shapes : Array (Name × Name × Name) := #[]    -- (site, mod, injective-at head)
   for nm in ours do
@@ -418,8 +418,10 @@ def run (outPath : Option String) : MetaM Unit := do
       if fvs.isEmpty then
         return some (Sum.inl shapeHits)
       if !shapeHits.isEmpty then flags := flags.push "inj-spelled"
-      if body.isAppOf ``False then
-        return some (Sum.inr (Site.mk nm mod (declKind info) "TOOTH" "False" fls #[] #[] 0 0))
+      -- body `False` = the TOOTH class: refutation teeth AND reduction-to-floor theorems
+      -- stated contradiction-style (`Floor → forgery → False`). NOT dropped — a distinct
+      -- class inside the carrier surface, so no site the text ruler counts goes invisible.
+      let isTooth := body.isAppOf ``False
       let conc := concShape body
       if (headConst? body).any floors.contains then flags := flags.push "bridge"
       if fvs.any body.containsFVar then flags := flags.push "conc-floor"
@@ -450,19 +452,19 @@ def run (outPath : Option String) : MetaM Unit := do
                 if !edges.contains x then edges := edges.push x
           if vo.edges.any (fun (c, _) => transportSinks.contains c) then
             flags := flags.push "transport"
+      if isTooth then
+        flags := flags.push s!"was-{cls}"
+        cls := "tooth"
       return some (Sum.inr (Site.mk nm mod (declKind info) cls conc fls edges flags 0 0))
     match res with
     | none => pure ()
     | some (Sum.inl shapeHits) =>
       for fh in shapeHits do shapes := shapes.push (nm, mod, fh)
     | some (Sum.inr s) =>
-      if s.cls == "TOOTH" then
-        teeth := teeth.push (s.name, s.mod, s.floors)
-      else
-        let (l0, l1) ← match ← findDeclarationRanges? nm with
-          | some rg => pure (rg.range.pos.line, rg.range.endPos.line)
-          | none => pure (0, 0)
-        sites := sites.push { s with startLine := l0, endLine := l1 }
+      let (l0, l1) ← match ← findDeclarationRanges? nm with
+        | some rg => pure (rg.range.pos.line, rg.range.endPos.line)
+        | none => pure (0, 0)
+      sites := sites.push { s with startLine := l0, endLine := l1 }
 
   -- ===== floor-flow DAG levels =====
   let carrierSet : NameSet := sites.foldl (fun a s => a.insert s.name) {}
@@ -490,8 +492,6 @@ def run (outPath : Option String) : MetaM Unit := do
     lines := lines.push
       (s!"CARRIER\t{s.name}\t{s.mod}\t{modFile s.mod}\t{s.startLine}\t{s.endLine}\t" ++
        s!"{s.kind}\t{s.cls}\t{s.conc}\t{level.getD s.name 0}\t{fmtNames s.floors}\t{fmtFlags s.flags}")
-  for (n, m, fl) in teeth do
-    lines := lines.push s!"TOOTH\t{n}\t{m}\t{fmtNames fl}"
   let mut structSeen : Array Name := #[]
   for (p, sn, fl) in bundles do
     if !structSeen.contains sn then structSeen := structSeen.push sn
@@ -514,9 +514,8 @@ def run (outPath : Option String) : MetaM Unit := do
   summary := summary.push s!"SUMMARY\tcandidate-floors\t{cand.size}"
   summary := summary.push s!"SUMMARY\trefuted-floors\t{floors.size}"
   summary := summary.push s!"SUMMARY\tcarriers\t{sites.size}"
-  for cl in ["endpoint", "threader", "dead", "no-value"] do
+  for cl in ["endpoint", "threader", "dead", "no-value", "tooth"] do
     summary := summary.push s!"SUMMARY\tclass-{cl}\t{(sites.filter (·.cls == cl)).size}"
-  summary := summary.push s!"SUMMARY\tteeth-excluded\t{teeth.size}"
   summary := summary.push s!"SUMMARY\tbridges\t{(sites.filter (·.flags.contains "bridge")).size}"
   summary := summary.push s!"SUMMARY\tconc-floor\t{(sites.filter (·.flags.contains "conc-floor")).size}"
   summary := summary.push s!"SUMMARY\taux-endpoints\t{(sites.filter (·.flags.contains "aux-endpoint")).size}"
