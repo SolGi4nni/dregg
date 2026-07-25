@@ -19,15 +19,35 @@ use dregg_cell::{StateConstraint, field_from_u64};
 use dregg_exec_lean::register_constraint_oracle;
 
 /// Install once for this test binary (`OnceLock`; the whole file shares one process).
+///
+/// ── WHY THIS IS `demand_lean` AND NOT A BARE `return false` ─────────────────────────────────────
+/// Every test below opens `if !ensure_oracle() { return; }`. A `#[test]` that returns early because
+/// a precondition is missing is INDISTINGUISHABLE from a test that ran and passed — cargo prints
+/// `ok` either way. That is not hypothetical here: commit `7ebe7b7d4b` dropped build.rs's
+/// `cargo:rustc-cfg=dregg_constraint_admits_present`, `constraint_admits_available()` went
+/// permanently false, and all five gates below self-skipped to green for 4d17h.
+///
+/// So BOTH exits are now loud, and both are ARMED by `DREGG_TEST_REQUIRE_LEAN=1` (the repo's
+/// existing hard-mode env, honoured by `dregg_lean_ffi::demand_lean`):
+///   * export absent   -> `demand_lean` prints, and PANICS when armed.
+///   * oracle uninstalled after `register_constraint_oracle()` -> this used to return `false` with
+///     NO message at all, which would have turned a real installation regression into five green
+///     no-ops. It now prints, and panics when armed.
 fn ensure_oracle() -> bool {
-    if !dregg_lean_ffi::constraint_admits_available() {
-        eprintln!("SKIP: libdregg_lean.a lacks dregg_constraint_admits — rebuild the archive");
+    if !dregg_lean_ffi::demand_lean(
+        dregg_lean_ffi::constraint_admits_available(),
+        "dregg_constraint_admits export (the Lean-backed constraint oracle)",
+    ) {
         return false;
     }
     // `register` may have already run in an earlier test fn of this binary; either way the oracle is
     // installed afterward. (`OnceLock::set` returns false on the second call — still installed.)
     let _ = register_constraint_oracle();
-    dregg_cell::program::constraint_oracle_installed()
+    dregg_lean_ffi::demand_lean(
+        dregg_cell::program::constraint_oracle_installed(),
+        "installed constraint oracle (register_constraint_oracle ran but \
+         dregg_cell::program::constraint_oracle_installed() is still false)",
+    )
 }
 
 fn state_with_reg0(v: u64) -> CellState {

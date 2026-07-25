@@ -1126,17 +1126,18 @@ mod tests {
         };
 
         // Generate two anonymous presentations.
-        // NOTE: This requires the bridge crate to have synthetic federation membership
-        // enabled (cfg(test) or feature="test-utils"). When running in isolation without
-        // that feature, prove_authorization returns IssuerNotInFederation.
-        let pres1 = match cclerk.authorize_anonymously(&token, &request) {
-            Ok(p) => p,
-            Err(SdkError::Auth(dregg_bridge::AuthError::IssuerNotInFederation)) => {
-                // Bridge crate compiled without test-utils feature; skip this test.
-                return;
-            }
-            Err(e) => panic!("unexpected error: {e:?}"),
-        };
+        //
+        // This used to `return;` on `IssuerNotInFederation` — a silent self-skip whose comment
+        // said "bridge compiled without test-utils". That branch CANNOT be taken: `sdk`'s
+        // `[dev-dependencies]` pins `dregg-bridge = { …, features = ["test-utils"] }`
+        // (sdk/Cargo.toml:175) precisely so synthetic federation membership is present in every
+        // `cargo test` build, and dev-dep features unify onto the lib under test. So the only
+        // thing that early `return` could ever do is convert a REAL regression in
+        // `authorize_anonymously` — one that starts reporting `IssuerNotInFederation` — into a
+        // green run in which the unlinkability `assert_ne!` below never executed. Green or bust.
+        let pres1 = cclerk
+            .authorize_anonymously(&token, &request)
+            .expect("authorize_anonymously must succeed (bridge test-utils is a dev-dependency)");
         let pres2 = cclerk.authorize_anonymously(&token, &request).unwrap();
 
         // Presentation tags MUST differ (fresh randomness per presentation).

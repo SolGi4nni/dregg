@@ -77,6 +77,22 @@ fn hybrid_sig(m: &Member, msg: &[u8]) -> HybridQuorumSig {
 #[test]
 fn fresh_genesis_committee_authenticates_a_beacon_finalized_root() {
     let Ok(dir) = std::env::var("FRESH_GENESIS_DIR") else {
+        // ARMABLE skip, mirroring `dregg_lean_ffi::demand_lean`'s grammar. A loud `eprintln!` is
+        // not enough on its own: CI reads the exit code, not stderr, so a lane that BELIEVES it is
+        // driving a re-genesis beacon (and forgot to export the dir) gets a green run in which
+        // nothing below executed. Under `DREGG_TEST_REQUIRE_FRESH_GENESIS=1` that is a hard fail.
+        let armed = matches!(
+            std::env::var("DREGG_TEST_REQUIRE_FRESH_GENESIS")
+                .ok()
+                .as_deref(),
+            Some("1") | Some("true") | Some("TRUE") | Some("on") | Some("ON")
+        );
+        assert!(
+            !armed,
+            "DREGG_TEST_REQUIRE_FRESH_GENESIS=1 but FRESH_GENESIS_DIR is unset — this test would \
+             have SILENTLY SKIPPED the committee/beacon authentication assertions and reported \
+             `ok`. Point FRESH_GENESIS_DIR at a re-genesis output dir; do not weaken the hard mode."
+        );
         eprintln!("SKIP: FRESH_GENESIS_DIR unset (set it to a re-genesis output dir to drive)");
         return;
     };

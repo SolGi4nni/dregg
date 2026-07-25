@@ -2113,8 +2113,13 @@ fn corpus_is_exhaustive() {
 
 #[test]
 fn lean_and_rust_agree_on_the_whole_corpus() {
-    if !dregg_lean_ffi::constraint_admits_available() {
-        eprintln!("SKIP: libdregg_lean.a lacks dregg_constraint_admits — rebuild the archive");
+    // Loud AND armable: `demand_lean` panics under `DREGG_TEST_REQUIRE_LEAN=1` rather than letting
+    // the whole-corpus differential report `ok` having compared nothing. A hand-rolled
+    // `eprintln! + return` is loud but cannot be armed, and CI reads the exit code, not stderr.
+    if !dregg_lean_ffi::demand_lean(
+        dregg_lean_ffi::constraint_admits_available(),
+        "dregg_constraint_admits export (the whole-corpus Lean/Rust differential)",
+    ) {
         return;
     }
     let corpus = variant_corpus();

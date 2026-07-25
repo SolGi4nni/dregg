@@ -265,3 +265,10 @@ dregg-agent = { path = "../dregg-agent" }
 dregg-sdk-net = { path = "../dregg-sdk-net", features = ["test-support"] }
 postcard = { version = "1", features = ["use-std"] }
 tokio = { version = "1", features = ["full"] }
+
+# Bound to the workspace lint set (2026-07-25). The load-bearing member is
+# `unexpected_cfgs = "deny"`: a `#[cfg(feature = "X")]` naming a feature this manifest does
+# not declare is ALWAYS FALSE, so the gated code silently compiles to nothing. This crate had
+# no `[lints]` section, so that check did not bind here.
+[lints]
+workspace = true

@@ -44,12 +44,20 @@ proptest! {
         let _ = dregg_wire::codec::decode(&buf);
     }
 
-    /// Re-encoding a successfully-decoded message must itself succeed and the
-    /// message must survive a SECOND decode unchanged. A positional desync (the
-    /// skip_serializing_if failure mode) would corrupt the re-encode here. This
-    /// is the wire-message analogue of the Turn roundtrip below.
+    /// Arbitrary bytes that HAPPEN to decode must still be a codec fixed point.
+    ///
+    /// ⚠ THIS LEG IS NEARLY ALWAYS VACUOUS BY CONSTRUCTION and is kept only as a
+    /// no-panic probe on the accept path. `decode` reads a 4-byte length header
+    /// and then postcard-parses the remainder against a 20-odd-variant enum, so a
+    /// uniformly random buffer essentially never reaches the body — for 4000
+    /// cases the assertions inside the `if let` ran approximately zero times while
+    /// the test reported `ok`. The REAL fixed-point property is
+    /// `encoded_wire_message_is_a_codec_fixed_point` below, which generates VALID
+    /// messages so the assertion runs on every single case. Do not delete that one
+    /// and keep this one: this shape is the "self-skipping test" class, in a
+    /// property test's clothing.
     #[test]
-    fn wire_message_decode_is_a_fixed_point(buf in proptest::collection::vec(any::<u8>(), 0..4096)) {
+    fn arbitrary_bytes_that_decode_are_a_fixed_point(buf in proptest::collection::vec(any::<u8>(), 0..4096)) {
         if let Ok(msg) = dregg_wire::codec::decode(&buf) {
             // It decoded — so it MUST re-encode and round-trip byte-stably.
             let frame = dregg_wire::codec::encode(&msg)
@@ -61,6 +69,123 @@ proptest! {
             prop_assert_eq!(msg, msg2, "wire message is not a codec fixed point");
         }
     }
+
+    /// THE NON-VACUOUS FIXED POINT. Generate a REAL `WireMessage`, encode it, and
+    /// require encode→decode→encode→decode to be stable. Every case exercises the
+    /// assertion; nothing is skipped.
+    ///
+    /// The strategy deliberately drives the `Option` fields (`reason`) through both
+    /// `Some` and `None`, because a `#[serde(skip_serializing_if = "Option::is_none")]`
+    /// on a postcard-encoded field is EXACTLY the positional desync this file exists
+    /// to catch: the encoder omits the byte, the decoder still expects it, and every
+    /// subsequent field shifts. With the old arbitrary-bytes-only leg that regression
+    /// could not be observed at all.
+    #[test]
+    fn encoded_wire_message_is_a_codec_fixed_point(msg in arb_wire_message()) {
+        let frame = dregg_wire::codec::encode(&msg)
+            .expect("a constructed WireMessage must encode");
+        let payload = &frame[dregg_wire::codec::HEADER_SIZE..];
+        let decoded = dregg_wire::codec::decode(payload)
+            .expect("an encoded WireMessage must decode (positional stability)");
+        prop_assert_eq!(&msg, &decoded, "encode->decode is not the identity");
+
+        let frame2 = dregg_wire::codec::encode(&decoded)
+            .expect("a decoded WireMessage must re-encode");
+        prop_assert_eq!(&frame, &frame2, "re-encode is not byte-stable (positional desync)");
+        let decoded2 = dregg_wire::codec::decode(&frame2[dregg_wire::codec::HEADER_SIZE..])
+            .expect("a re-encoded WireMessage must decode again");
+        prop_assert_eq!(&decoded, &decoded2, "wire message is not a codec fixed point");
+    }
+}
+
+/// THE CANARY for `encoded_wire_message_is_a_codec_fixed_point`: prove the fixed-point
+/// property can actually SEE a positional desync, rather than being satisfied for free.
+///
+/// A `#[serde(skip_serializing_if = "Option::is_none")]` on a postcard field omits the
+/// option's discriminant byte while the decoder still expects it, shifting every later
+/// field. Here that regression is simulated by BYTE SURGERY on a real encoding — delete
+/// the discriminant and require the result to be observably wrong (a decode error, or a
+/// message that differs). If this ever passes by decoding back to the ORIGINAL message,
+/// the codec is positionally insensitive at that offset and the fixed-point property
+/// above is worth nothing there.
+///
+/// This exists because the *old* fixed-point test wrapped its whole body in
+/// `if let Ok(msg) = decode(&random_bytes)`, which essentially never fired: it asserted
+/// nothing across 4000 cases and reported `ok`.
+#[test]
+fn a_positional_desync_is_observable_by_the_fixed_point_property() {
+    use dregg_wire::message::WireMessage;
+    let msg = WireMessage::PresentationResult {
+        accepted: true,
+        reason: Some("denied: stale root".to_string()),
+        request_digest: [7u8; 32],
+    };
+    let frame = dregg_wire::codec::encode(&msg).expect("encode");
+    let payload = &frame[dregg_wire::codec::HEADER_SIZE..];
+    assert_eq!(
+        dregg_wire::codec::decode(payload).expect("baseline decode"),
+        msg,
+        "baseline: the unmutated payload must round-trip"
+    );
+
+    // Drop each byte in turn from the option-bearing region and require that NONE of the
+    // truncated payloads decodes back to the original message. At least one deletion must
+    // also be a real structural break (Err), or the encoding carries no positional
+    // information at all here.
+    let mut any_err = false;
+    for i in 0..payload.len() {
+        let mut desynced = payload.to_vec();
+        desynced.remove(i);
+        match dregg_wire::codec::decode(&desynced) {
+            Ok(other) => assert_ne!(
+                other, msg,
+                "deleting payload byte {i} still decoded to the ORIGINAL message — the codec is \
+                 positionally blind here, so the fixed-point property cannot catch a \
+                 skip_serializing_if desync"
+            ),
+            Err(_) => any_err = true,
+        }
+    }
+    assert!(
+        any_err,
+        "no single-byte deletion produced a decode error — the framing is not length-checked, \
+         which is itself a finding"
+    );
+}
+
+/// Valid `WireMessage`s spanning a unit variant, a big-payload variant, and a
+/// variant carrying an `Option` field in both inhabitations.
+fn arb_wire_message() -> impl Strategy<Value = dregg_wire::message::WireMessage> {
+    use dregg_wire::message::{AuthorizationRequest, WireMessage};
+    prop_oneof![
+        Just(WireMessage::RequestAttestedRoot),
+        (
+            proptest::collection::vec(any::<u8>(), 0..512),
+            "[a-z]{1,8}",
+            "[a-z]{1,8}",
+            "[a-z]{1,8}",
+            any::<[u8; 32]>(),
+        )
+            .prop_map(
+                |(proof, a, b, c, federation_root)| WireMessage::PresentToken {
+                    proof,
+                    request: AuthorizationRequest::new(&a, &b, &c),
+                    federation_root,
+                }
+            ),
+        (
+            any::<bool>(),
+            proptest::option::of("[ -~]{0,32}"),
+            any::<[u8; 32]>(),
+        )
+            .prop_map(|(accepted, reason, request_digest)| {
+                WireMessage::PresentationResult {
+                    accepted,
+                    reason,
+                    request_digest,
+                }
+            }),
+    ]
 }
 
 /// A declared frame length at/over the 16 MiB cap is a memory-exhaustion lever.

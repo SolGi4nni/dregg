@@ -30,3 +30,10 @@ ed25519-dalek = { version = "2", features = ["hazmat"] }
 # dregg-types) are root members, and the one `[patch]` the dregg-turn graph needs
 # (ark-serialize's serde_with feature from emberian/algebra) is inherited from the
 # root workspace, so no per-crate `[workspace]`/`[patch]` is needed here anymore.
+
+# Bound to the workspace lint set (2026-07-25). The load-bearing member is
+# `unexpected_cfgs = "deny"`: a `#[cfg(feature = "X")]` naming a feature this manifest does
+# not declare is ALWAYS FALSE, so the gated code silently compiles to nothing. This crate had
+# no `[lints]` section, so that check did not bind here.
+[lints]
+workspace = true

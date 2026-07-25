@@ -669,10 +669,16 @@ echo '{"tool":"cell_write","path":"/deploy","value":"site@abc"}'
 echo '{"tool":"invoke","service":"check_health"}'
 echo '{"tool":"finish","summary":"done"}'
 "#;
-        let harness = match SubprocessHarness::spawn("sh", &["-c", script]) {
-            Ok(h) => h,
-            Err(_) => return, // no `sh` on this host — skip (the mock path is the floor).
-        };
+        // NOT `Err(_) => return`. That guard claimed to cover "no `sh` on this host", but it
+        // swallowed EVERY spawn failure — including a regression in `SubprocessHarness::spawn`
+        // itself, the code this test exists to exercise — and reported `ok` having asserted
+        // nothing. `sh` is present on every platform this crate builds for (POSIX; the crate is
+        // not built for Windows), so the branch only ever hid bugs. If a host genuinely lacks a
+        // shell, this failing loudly is the correct outcome: the test cannot do its job there.
+        let harness = SubprocessHarness::spawn("sh", &["-c", script]).expect(
+            "SubprocessHarness::spawn(\"sh\") must succeed — this is the spawn path under test, \
+             and a spawn failure is a FINDING, not a reason to report a green no-op",
+        );
         let cloud = AgentCloud::from_seed([66u8; 32]);
         let handle = cloud
             .deploy(&spec(

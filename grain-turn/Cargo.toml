@@ -78,3 +78,10 @@ dregg-lean-ffi = { path = "../dregg-lean-ffi" }
 # NOTE: breadstuffs (the core) depends on a downstream operated layer ZERO times.
 # The R2 verifier (grain-verify) lives in a downstream verifier crate
 # the cross-repo end-to-end test lives there too. See docs/GRAIN-VERIFY-HOME.md.
+
+# Bound to the workspace lint set (2026-07-25). The load-bearing member is
+# `unexpected_cfgs = "deny"`: a `#[cfg(feature = "X")]` naming a feature this manifest does
+# not declare is ALWAYS FALSE, so the gated code silently compiles to nothing. This crate had
+# no `[lints]` section, so that check did not bind here.
+[lints]
+workspace = true
