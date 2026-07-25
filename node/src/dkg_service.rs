@@ -835,6 +835,25 @@ async fn post_contribute(
     // Dealings carry sealed shares; validate their addressing up front.
     let mut sealed = Vec::new();
     if let CeremonyMsg::Dealing(d) = &signed.msg {
+        // THEME-2 #9 RESOURCE BOUND: a dealing seals at most one share per roster
+        // member, so a dealer can legitimately contribute AT MOST the roster size
+        // `n`. Reject an over-count up front — before the `record`/`extend` — so a
+        // Byzantine dealer cannot grow `room.sealed` without bound (the cap holds
+        // total sealed at ≤ n² per ceremony: n dealers × n shares each, and
+        // `record_message` admits each dealer's sealed set only once).
+        let roster_n = inner
+            .dkg
+            .room(&ceremony)
+            .map(|r| r.view.params().n)
+            .unwrap_or(0);
+        if req.sealed_shares.len() > roster_n {
+            return Err(DkgRefusal::BadRequest(format!(
+                "dealing carries {} sealed shares but the ceremony roster is only {} — a dealer \
+                 may seal at most one share per member",
+                req.sealed_shares.len(),
+                roster_n
+            )));
+        }
         for wire in &req.sealed_shares {
             let share = wire.to_sealed(ceremony.0)?;
             if share.dealer != d.dealer {
@@ -1526,6 +1545,69 @@ mod tests {
         let offenses = st["offenses"].as_array().unwrap();
         assert_eq!(offenses.len(), 1);
         assert_eq!(offenses[0]["offender"], 1);
+    }
+
+    /// THEME-2 #9 FALSIFIER — both directions. A dealing carrying MORE sealed
+    /// shares than the roster size is REFUSED before it can grow `room.sealed`
+    /// (the bound), while a legit dealing with exactly-roster-many shares is
+    /// admitted (liveness).
+    #[tokio::test]
+    async fn oversized_sealed_share_dealing_is_bounded_and_legit_dealing_admitted() {
+        let (state, members, _dir) = funded_state(3).await;
+        let (ceremony, _) = start_ceremony(&state, &members, 2, 19).await;
+        let ceremony_hex = hex_encode(ceremony.as_bytes());
+        let params = DkgParams { n: 3, t: 2 };
+        let roster = client_roster(&members);
+
+        let (_d, signed, sealed) = CeremonyDriver::new(
+            ceremony.0,
+            params,
+            1,
+            members[0].sign_sk,
+            members[0].seal_sk,
+            roster,
+        )
+        .unwrap();
+
+        // A dealer seals exactly n=3 shares; forge an OVER-count of 4 by
+        // duplicating one. It must be refused BEFORE `record_message`/`extend`.
+        let mut oversized = sealed_wire(&sealed, 1);
+        assert_eq!(oversized.len(), 3, "a 3-roster dealer seals 3 shares");
+        oversized.push(oversized[0].clone()); // now 4 > roster size 3
+        let (status, json) = post_json(
+            &state,
+            "/dkg/contribute",
+            serde_json::json!({
+                "ceremony": ceremony_hex,
+                "message": hex_encode(&signed.to_bytes()),
+                "sealed_shares": oversized,
+            }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "a dealing over the roster-size sealed-share cap is refused: {json}"
+        );
+
+        // Nothing was recorded — the ceremony holds zero sealed shares.
+        let (_, st) = get_json(&state, &format!("/dkg/status/{ceremony_hex}")).await;
+        assert_eq!(st["sealed_shares"].as_array().unwrap().len(), 0);
+
+        // The SAME dealer's legit dealing (exactly 3 sealed shares) is admitted.
+        let (status, json) = post_json(
+            &state,
+            "/dkg/contribute",
+            serde_json::json!({
+                "ceremony": ceremony_hex,
+                "message": hex_encode(&signed.to_bytes()),
+                "sealed_shares": sealed_wire(&sealed, 1),
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "legit dealing admitted: {json}");
+        assert_eq!(json["recorded"], "fresh");
+        assert_eq!(json["sealed_held"], 3);
     }
 
     #[tokio::test]

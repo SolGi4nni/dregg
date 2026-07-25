@@ -323,6 +323,20 @@ impl Waker {
         self.cursors.get(&name.key()).copied().unwrap_or(0)
     }
 
+    /// The number of distinct waiters currently registered on a channel. Used by
+    /// the node's subscribe handler to cap the wait table (THEME-2/anon-DoS #11).
+    pub fn waiter_count(&self, name: &ChannelName) -> usize {
+        let key = name.key();
+        self.marks.keys().filter(|(k, _)| *k == key).count()
+    }
+
+    /// Whether `waiter` is already registered on a channel. A re-subscribe of an
+    /// already-registered waiter is idempotent (it re-marks, not grows), so the
+    /// wait-table cap only gates genuinely NEW waiters.
+    pub fn is_waiting(&self, name: &ChannelName, waiter: &FederationId) -> bool {
+        self.marks.contains_key(&(name.key(), *waiter))
+    }
+
     /// Register a waiter on a channel: it will be woken when the cursor advances
     /// past the current value. Marks its last-seen at the current cursor.
     pub fn wait(&mut self, name: &ChannelName, waiter: FederationId) {
@@ -537,6 +551,17 @@ impl Bus {
     /// `name` produces a pending wake ([`Self::poll_wake`]).
     pub fn wait(&mut self, name: &ChannelName, waiter: FederationId) {
         self.waker.wait(name, waiter);
+    }
+
+    /// The number of distinct waiters registered on a channel (wait-table cap).
+    pub fn waiter_count(&self, name: &ChannelName) -> usize {
+        self.waker.waiter_count(name)
+    }
+
+    /// Whether `waiter` is already registered on a channel (so a re-subscribe is
+    /// not counted against the wait-table cap).
+    pub fn is_waiting(&self, name: &ChannelName, waiter: &FederationId) -> bool {
+        self.waker.is_waiting(name, waiter)
     }
 
     /// **POLL** for a wake on a channel: `Some(Wake)` if the cursor advanced past

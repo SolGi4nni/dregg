@@ -1293,6 +1293,12 @@ async fn post_drain(
     }))
 }
 
+/// ANON-DoS #11 — hard cap on distinct waiters a single channel may register.
+/// The roster gate already bounds a room-held channel to its member count; this
+/// is defense-in-depth and the sole bound for a channel this node holds no room
+/// for. Generous, so a legit membership never approaches it.
+const MAX_WAITERS_PER_CHANNEL: usize = 4096;
+
 #[derive(Deserialize)]
 struct SubscribeRequest {
     channel: String,
@@ -1324,9 +1330,35 @@ async fn post_subscribe(
     let waiter = FederationId(hex_decode_32(&req.waiter).ok_or_else(|| {
         ChannelRefusal::BadRequest(format!("malformed waiter id: {}", req.waiter))
     })?);
+    // ANON-DoS #11: the waiter table (`Waker::marks`) was grown by a
+    // CALLER-SUPPLIED id with no membership check, so any anon caller could
+    // register unbounded distinct waiters. ROSTER-GATE it: when this node holds
+    // the channel's room, only a member cell may register (a non-member has no
+    // business observing the channel's wake cursor, and this bounds the table to
+    // the roster size). We check against the node-held roster (member cell → seal
+    // pk); the waiter id IS the member's cell id.
+    if let Some(room) = inner.channels.room(&channel) {
+        if !room.roster.contains_key(&CellId(waiter.0)) {
+            return Err(ChannelRefusal::TurnRejected(format!(
+                "waiter {} is not a member of channel {} — only roster members may subscribe",
+                hex_encode(&waiter.0),
+                hex_encode(&channel.0),
+            )));
+        }
+    }
     let name = bus_channel_name(channel);
     let relay_key = inner.cclerk.gossip_signing_key();
     let bus = inner.channels.ensure_bus(relay_key);
+    // CAP the wait table (defense-in-depth beyond the roster gate, and the sole
+    // bound for a channel this node holds no room for): a genuinely NEW waiter is
+    // refused once the channel is at `MAX_WAITERS_PER_CHANNEL`. A re-subscribe of
+    // an already-registered waiter is idempotent and never rejected.
+    if !bus.is_waiting(&name, &waiter) && bus.waiter_count(&name) >= MAX_WAITERS_PER_CHANNEL {
+        return Err(ChannelRefusal::TurnRejected(format!(
+            "channel {} wait table is at its {MAX_WAITERS_PER_CHANNEL}-waiter cap",
+            hex_encode(&channel.0),
+        )));
+    }
     bus.wait(&name, waiter);
     let cursor = bus.cursor(&name);
     Ok(Json(SubscribeResponse {
@@ -1798,7 +1830,8 @@ mod tests {
         let channel_hex = hex_encode(channel.as_bytes());
 
         // (1) A waiter subscribes — no wake before any post (a wake is a FACT).
-        let waiter_hex = hex_encode(&[0x77u8; 32]);
+        // The waiter MUST be a channel member (ANON-DoS #11 roster gate).
+        let waiter_hex = hex_encode(members[0].0.as_bytes());
         let (status, sub) = post_json(
             &state,
             "/channels/subscribe",
@@ -1909,6 +1942,64 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(again["drained"].as_array().unwrap().len(), 0);
         assert_eq!(again["pending"], 0);
+    }
+
+    /// ANON-DoS #11 FALSIFIER — both directions. A NON-member's caller-supplied
+    /// waiter id is REFUSED (so the wait table cannot be grown by an anon flood of
+    /// fabricated ids); a channel MEMBER is admitted (liveness for legit
+    /// subscribers), and a re-subscribe by the same member is idempotent.
+    #[tokio::test]
+    async fn subscribe_roster_gates_nonmembers_and_admits_members() {
+        let (state, members, _dir) = funded_state().await;
+        let (channel, _) = create_group(&state, &members).await;
+        let channel_hex = hex_encode(channel.as_bytes());
+
+        // A non-member waiter is refused by the roster gate.
+        let stranger = hex_encode(&[0x99u8; 32]);
+        let (status, json) = post_json(
+            &state,
+            "/channels/subscribe",
+            serde_json::json!({ "channel": channel_hex, "waiter": stranger }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "a non-member waiter must be refused: {json}"
+        );
+
+        // A member waiter is admitted.
+        let member = hex_encode(members[0].0.as_bytes());
+        let (status, json) = post_json(
+            &state,
+            "/channels/subscribe",
+            serde_json::json!({ "channel": channel_hex, "waiter": member }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "a member waiter is admitted: {json}"
+        );
+
+        // Re-subscribe by the same member is idempotent (no unbounded growth).
+        let (status, _) = post_json(
+            &state,
+            "/channels/subscribe",
+            serde_json::json!({ "channel": channel_hex, "waiter": member }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        {
+            let s = state.read().await;
+            let bus = s.channels.bus().expect("bus exists after create");
+            let name = bus_channel_name(channel);
+            assert_eq!(
+                bus.waiter_count(&name),
+                1,
+                "one distinct member waiter — a re-subscribe does not grow the table"
+            );
+        }
     }
 
     /// THE DELIVERY-HOT-PATH WITNESS: live SSE delivery drains the Bus box for the

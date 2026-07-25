@@ -19,18 +19,100 @@
 //! receipt's emitted events / commit record) and `?kind=<effect kind>`
 //! (matched against the commit record's effect summaries).
 
+use std::collections::HashMap;
 use std::convert::Infallible;
+use std::net::IpAddr;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use axum::extract::{Query, State};
+use axum::extract::{ConnectInfo, Query, State};
 use axum::http::HeaderMap;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use dregg_types::hex_encode;
 use futures_util::stream::Stream;
 use serde::{Deserialize, Serialize};
-use tokio::sync::broadcast;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, broadcast};
 
 use crate::state::{NodeEvent, NodeState, NodeStateInner};
+
+/// ANON-DoS #3 — the default cap on concurrently-open receipt-stream (SSE)
+/// connections node-wide. Each live stream holds a `broadcast::Receiver` and
+/// re-acquires `state.read()` on every drain, so an unbounded fan of streams is a
+/// cheap way to pin the node's read path. A global [`Semaphore`] hard-caps the
+/// total; a per-IP counter stops one peer from consuming the whole budget.
+pub const MAX_LIVE_SSE_CONNECTIONS: usize = 512;
+/// ANON-DoS #3 — the default per-IP cap on concurrent SSE connections.
+pub const MAX_SSE_CONNECTIONS_PER_IP: u32 = 16;
+
+/// Shared admission control for the receipt SSE stream (ANON-DoS #3): a global
+/// permit pool plus a per-IP live-connection tally. Constructed once in the
+/// router and cloned into the handler; each accepted stream holds a permit + a
+/// per-IP slot for its whole lifetime (released on disconnect via RAII).
+#[derive(Clone)]
+pub struct SseLimits {
+    sem: Arc<Semaphore>,
+    per_ip: Arc<Mutex<HashMap<IpAddr, u32>>>,
+    per_ip_max: u32,
+}
+
+impl SseLimits {
+    pub fn new(global_max: usize, per_ip_max: u32) -> Self {
+        Self {
+            sem: Arc::new(Semaphore::new(global_max.max(1))),
+            per_ip: Arc::new(Mutex::new(HashMap::new())),
+            per_ip_max: per_ip_max.max(1),
+        }
+    }
+
+    /// Default limits ([`MAX_LIVE_SSE_CONNECTIONS`] / [`MAX_SSE_CONNECTIONS_PER_IP`]).
+    pub fn with_defaults() -> Self {
+        Self::new(MAX_LIVE_SSE_CONNECTIONS, MAX_SSE_CONNECTIONS_PER_IP)
+    }
+
+    /// Try to admit a new stream from `ip`. Returns an [`SseSlot`] (holding the
+    /// global permit + the per-IP reservation) on success, or `None` when the
+    /// global pool is exhausted or this IP is already at its per-IP cap.
+    fn try_admit(&self, ip: IpAddr) -> Option<SseSlot> {
+        let permit = Arc::clone(&self.sem).try_acquire_owned().ok()?;
+        {
+            let mut map = self.per_ip.lock().expect("sse per-ip mutex");
+            let slot = map.entry(ip).or_insert(0);
+            if *slot >= self.per_ip_max {
+                // Global permit `permit` drops here, returning it to the pool.
+                return None;
+            }
+            *slot += 1;
+        }
+        Some(SseSlot {
+            _permit: permit,
+            per_ip: Arc::clone(&self.per_ip),
+            ip,
+        })
+    }
+}
+
+/// RAII admission slot for one live SSE stream. Holding it keeps a global permit
+/// reserved and one unit of this IP's per-IP tally; dropping it (on disconnect,
+/// when the stream is dropped) releases both.
+struct SseSlot {
+    _permit: OwnedSemaphorePermit,
+    per_ip: Arc<Mutex<HashMap<IpAddr, u32>>>,
+    ip: IpAddr,
+}
+
+impl Drop for SseSlot {
+    fn drop(&mut self) {
+        if let Ok(mut map) = self.per_ip.lock() {
+            if let Some(n) = map.get_mut(&self.ip) {
+                *n = n.saturating_sub(1);
+                if *n == 0 {
+                    map.remove(&self.ip);
+                }
+            }
+        }
+        // `_permit` drops here, returning the global permit to the pool.
+    }
+}
 
 /// Optional stream filter: `?cell=<hex-cell-id>&kind=<effect-kind>`.
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -129,42 +211,73 @@ fn matches(filter: &StreamFilter, ev: &ReceiptEvent) -> bool {
     true
 }
 
-struct Cursor {
+struct LiveCursor {
     state: NodeState,
     rx: broadcast::Receiver<NodeEvent>,
     filter: StreamFilter,
     /// Next chain index to send.
     next: u64,
+    /// Admission slot held for the stream's lifetime (ANON-DoS #3): released on
+    /// disconnect when the stream — and this cursor — is dropped.
+    _slot: SseSlot,
+}
+
+/// The stream's driving state: either a rejected connection (over the SSE
+/// admission caps — emits one error event then closes) or a live receipt cursor.
+enum Cursor {
+    Rejected { emitted: bool },
+    Live(LiveCursor),
 }
 
 /// `GET /api/events/stream` — SSE of committed receipts.
 pub async fn events_stream(
     Query(filter): Query<StreamFilter>,
     headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     State(state): State<NodeState>,
+    limits: SseLimits,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    // Subscribe BEFORE reading the chain head: anything committed between
-    // the snapshot and the first recv() still wakes the cursor.
-    let rx = state.subscribe_events();
+    // ANON-DoS #3: admit under the global + per-IP live-connection caps BEFORE
+    // subscribing or touching state. A rejected connection returns a stream that
+    // emits one error event and closes — it never holds a broadcast receiver or
+    // re-acquires the read lock.
+    let cursor = match limits.try_admit(addr.ip()) {
+        None => Cursor::Rejected { emitted: false },
+        Some(slot) => {
+            // Subscribe BEFORE reading the chain head: anything committed between
+            // the snapshot and the first recv() still wakes the cursor.
+            let rx = state.subscribe_events();
 
-    // `Last-Event-ID: <chain_index>` resumes after the last delivered
-    // receipt; a fresh connection tails from the current head.
-    let resume = headers
-        .get("last-event-id")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.trim().parse::<u64>().ok());
-    let next = match resume {
-        Some(id) => id.saturating_add(1),
-        None => state.read().await.cclerk.receipt_chain_length() as u64,
+            // `Last-Event-ID: <chain_index>` resumes after the last delivered
+            // receipt; a fresh connection tails from the current head.
+            let resume = headers
+                .get("last-event-id")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.trim().parse::<u64>().ok());
+            let next = match resume {
+                Some(id) => id.saturating_add(1),
+                None => state.read().await.cclerk.receipt_chain_length() as u64,
+            };
+            Cursor::Live(LiveCursor {
+                state,
+                rx,
+                filter,
+                next,
+                _slot: slot,
+            })
+        }
     };
-
-    let cursor = Cursor {
-        state,
-        rx,
-        filter,
-        next,
-    };
-    let stream = futures_util::stream::unfold(cursor, |mut c| async move {
+    let stream = futures_util::stream::unfold(cursor, |cursor| async move {
+        let mut c = match cursor {
+            Cursor::Rejected { emitted: true } => return None,
+            Cursor::Rejected { emitted: false } => {
+                let sse = Event::default().event("error").data(
+                    "{\"error\":\"too many concurrent event-stream connections; retry later\"}",
+                );
+                return Some((Ok::<_, Infallible>(sse), Cursor::Rejected { emitted: true }));
+            }
+            Cursor::Live(c) => c,
+        };
         loop {
             // Drain the chain from the cursor before waiting again.
             let pending = {
@@ -190,7 +303,7 @@ pub async fn events_stream(
                             serde_json::to_string(&ev)
                                 .unwrap_or_else(|e| format!("{{\"error\":\"serialize: {e}\"}}")),
                         );
-                    return Some((Ok::<_, Infallible>(sse), c));
+                    return Some((Ok::<_, Infallible>(sse), Cursor::Live(c)));
                 }
                 Some(None) => continue,
                 None => {}
@@ -212,4 +325,53 @@ pub async fn events_stream(
             .interval(Duration::from_secs(30))
             .text("hb"),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// ANON-DoS #3 FALSIFIER — both directions. The SSE admission control BOUNDS
+    /// live connections by BOTH a per-IP cap and a global pool (a flood is
+    /// refused), AND every admitted slot RELEASES its global permit + per-IP unit
+    /// on drop (disconnect), so a legit client always reconnects once capacity
+    /// frees (liveness).
+    #[test]
+    fn sse_admission_bounds_global_and_per_ip_and_releases_on_disconnect() {
+        // Global pool of 3 live streams; per-IP cap of 2.
+        let limits = SseLimits::new(3, 2);
+        let ip_a: IpAddr = "10.0.0.1".parse().unwrap();
+        let ip_b: IpAddr = "10.0.0.2".parse().unwrap();
+        let ip_c: IpAddr = "10.0.0.3".parse().unwrap();
+
+        // ip_a fills its per-IP budget (2), then its 3rd is refused — WITHOUT
+        // consuming a global permit (the refused attempt returns it).
+        let a1 = limits.try_admit(ip_a).expect("a1 admitted");
+        let a2 = limits.try_admit(ip_a).expect("a2 admitted");
+        assert!(
+            limits.try_admit(ip_a).is_none(),
+            "a single IP cannot exceed its per-IP cap"
+        );
+
+        // ip_b takes the last global permit; the global pool (3) is now full.
+        let b1 = limits.try_admit(ip_b).expect("b1 admitted");
+        assert!(
+            limits.try_admit(ip_c).is_none(),
+            "a fresh IP is refused once the GLOBAL pool is exhausted"
+        );
+
+        // LIVENESS: dropping a live slot (disconnect) frees a global permit AND
+        // ip_a's per-IP unit, so a new connection is admitted again.
+        drop(a1);
+        let c1 = limits
+            .try_admit(ip_c)
+            .expect("a freed global permit admits a new connection");
+        // ip_a is back under its per-IP cap too (a1 released), so it re-admits.
+        drop(b1);
+        let a3 = limits
+            .try_admit(ip_a)
+            .expect("ip_a re-admits after release");
+
+        drop((a2, c1, a3));
+    }
 }

@@ -483,6 +483,17 @@ impl BlocklaceHandle {
     /// sorted by (seq, creator) so the result is a deterministic, height-ordered
     /// view of the DAG. Each view carries real block/parent hashes.
     pub async fn block_views(&self) -> Vec<BlockView> {
+        self.block_views_page(0, usize::MAX).await
+    }
+
+    /// ANON-DoS #2 — a BOUNDED window of the height-ordered block views:
+    /// `limit` views starting at `offset` in (seq, creator) order. The full-scan
+    /// [`Self::block_views`] delegates here with an unbounded window; the public
+    /// `GET /api/blocklace/blocks` handler passes a capped `limit` so an anon
+    /// caller cannot force materialization + serialization of the ENTIRE lace.
+    /// Only the requested window is turned into `BlockView`s (the per-block hex
+    /// allocation), so the work is bounded by `limit`, not the lace size.
+    pub async fn block_views_page(&self, offset: usize, limit: usize) -> Vec<BlockView> {
         let lace = self.lace.read().await;
         let quorum = {
             let c = self.constitution.read().await;
@@ -492,6 +503,8 @@ impl BlocklaceHandle {
         blocks.sort_by(|(_, a), (_, b)| a.seq.cmp(&b.seq).then_with(|| a.creator.cmp(&b.creator)));
         blocks
             .into_iter()
+            .skip(offset)
+            .take(limit)
             .map(|(id, block)| {
                 let predecessors: Vec<String> = block
                     .predecessors

@@ -43,9 +43,42 @@
 //! and the unit tests pin this invariant against the Rust implementation; the Lean
 //! file states and proves the convergence end-to-end.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::time::{Duration, Instant};
 
 use dregg_blocklace::finality::{Block, BlockId, Blocklace};
+
+/// THEME-2 #4 RESOURCE BOUND — maximum orphans a node will stage at once.
+///
+/// A Byzantine committee member can sign blocks citing arbitrarily many
+/// never-landing predecessors; without a cap the [`OrphanBuffer`] grows without
+/// bound (and each staged orphan feeds the catch-up Pull fan-out). This cap is
+/// deliberately GENEROUS: honest out-of-order gossip during a real catch-up
+/// stages far fewer than this (the buffer is a transient causal-reorder window,
+/// not a backlog), so the cap only ever bites under an adversarial flood. When
+/// the buffer is full a NEW orphan evicts the OLDEST one (drop-oldest), and a
+/// dropped orphan is not lost to the system: it is re-pullable (its id reappears
+/// as a peer frontier tip / is re-gossiped at-least-once), so a legit block whose
+/// predecessor is merely slow still finalizes once its past lands — the cap only
+/// discards the STALEST staged block, which under load is the one least likely to
+/// still be resolvable.
+pub const MAX_ORPHANS: usize = 4096;
+
+/// THEME-2 #4 — how long a staged orphan may wait for its predecessors before it
+/// is swept as stale. A legit predecessor that is merely slow arrives well within
+/// this window; past it, the orphan is almost certainly citing a predecessor that
+/// will never land (an attack, or a block whose producer is gone), and a genuine
+/// straggler is re-pullable. Swept opportunistically on each apply batch.
+pub const ORPHAN_TTL: Duration = Duration::from_secs(120);
+
+/// THEME-2 #4 — hard cap on the number of catch-up Pull roots a single apply
+/// batch will emit, bounding the network amplification an orphan flood can
+/// trigger. A causally-closed batch emits ZERO roots and a genuine gap needs only
+/// a handful (bounded by the honest DAG width), so this generous cap never bites a
+/// legit catch-up; it only truncates an adversarial fan-out. Truncation is
+/// liveness-safe: any root not requested this batch is re-derived from the still
+/// buffered orphans on the next batch ([`OrphanBuffer::unmet_roots`]).
+pub const MAX_PULL_ROOTS: usize = 8192;
 
 /// The not-yet-known predecessors of `block` relative to a replica that holds
 /// `present` (the blocklace keyset) and has `buffered` orphans staged.
@@ -88,6 +121,17 @@ pub struct OrphanBuffer {
     /// Reverse index: predecessor id -> orphan ids waiting on it. Lets a newly
     /// landed block cheaply find the orphans it may unblock.
     waiting_on: HashMap<BlockId, HashSet<BlockId>>,
+    /// THEME-2 #4 age bookkeeping. `order` maps a strictly-increasing insertion
+    /// sequence to the orphan staged at that moment (ascending seq == ascending
+    /// insertion time), so the OLDEST staged orphan is `order.first_key_value()`
+    /// — the drop-oldest eviction and TTL sweep victim. `inserted_at` is the
+    /// reverse index: orphan id -> (its seq, the wall-clock instant it was
+    /// staged). Both are maintained in lockstep with `orphans` (an orphan enters
+    /// and leaves all three together), so neither can outgrow the buffer.
+    order: BTreeMap<u64, BlockId>,
+    inserted_at: HashMap<BlockId, (u64, Instant)>,
+    /// Monotonic insertion counter feeding `order` keys.
+    next_seq: u64,
 }
 
 impl OrphanBuffer {
@@ -127,12 +171,58 @@ impl OrphanBuffer {
         if self.orphans.contains_key(&id) || missing.is_empty() {
             return;
         }
+        // THEME-2 #4: drop-OLDEST when at capacity, so a Byzantine flood of
+        // orphans citing never-landing predecessors stays bounded at
+        // `MAX_ORPHANS`. The victim is the STALEST staged orphan (smallest
+        // insertion seq); a legit-but-slow child is the FRESHEST and is never the
+        // victim, and any dropped orphan is re-pullable, so this preserves
+        // liveness for honest late blocks while capping the adversary.
+        while self.orphans.len() >= MAX_ORPHANS {
+            let Some((_, oldest)) = self.order.iter().next().map(|(s, id)| (*s, *id)) else {
+                break;
+            };
+            self.drop_orphan(&oldest);
+        }
         let missing_set: HashSet<BlockId> = missing.into_iter().collect();
         for pred in &missing_set {
             self.waiting_on.entry(*pred).or_default().insert(id);
         }
         self.waits.insert(id, missing_set);
         self.orphans.insert(id, block);
+        let seq = self.next_seq;
+        self.next_seq += 1;
+        self.order.insert(seq, id);
+        self.inserted_at.insert(id, (seq, Instant::now()));
+    }
+
+    /// Remove an orphan's age bookkeeping (`order` + `inserted_at`). Called from
+    /// every path that removes an orphan so the two age indices never outgrow
+    /// `orphans`.
+    fn forget_age(&mut self, id: &BlockId) {
+        if let Some((seq, _)) = self.inserted_at.remove(id) {
+            self.order.remove(&seq);
+        }
+    }
+
+    /// THEME-2 #4 — sweep orphans that have waited longer than `ttl` for their
+    /// predecessors. Returns the ids dropped (for metrics/logging). Because
+    /// `order` is ascending by insertion time, the sweep stops at the first
+    /// not-yet-expired orphan. A swept orphan is re-pullable, so this never
+    /// permanently loses a block whose past simply arrives late.
+    pub fn sweep_expired(&mut self, ttl: Duration) -> Vec<BlockId> {
+        let now = Instant::now();
+        let mut expired: Vec<BlockId> = Vec::new();
+        for (_, id) in self.order.iter() {
+            match self.inserted_at.get(id) {
+                Some((_, at)) if now.duration_since(*at) >= ttl => expired.push(*id),
+                // `order` is time-ordered: the first fresh orphan ends the sweep.
+                _ => break,
+            }
+        }
+        for id in &expired {
+            self.drop_orphan(id);
+        }
+        expired
     }
 
     /// Every predecessor id that some buffered orphan is still waiting on AND that
@@ -187,6 +277,7 @@ impl OrphanBuffer {
                 // All predecessors satisfied: release it.
                 self.waits.remove(&orphan_id);
                 if let Some(block) = self.orphans.remove(&orphan_id) {
+                    self.forget_age(&orphan_id);
                     released.push(block);
                     // This release may unblock further orphans.
                     frontier.push_back(orphan_id);
@@ -209,6 +300,7 @@ impl OrphanBuffer {
             }
         }
         self.orphans.remove(id);
+        self.forget_age(id);
     }
 }
 
@@ -246,6 +338,12 @@ pub fn apply_with_buffering(
     blocks: Vec<Block>,
 ) -> ApplyOutcome {
     use dregg_blocklace::finality::BlockError;
+
+    // THEME-2 #4: opportunistically sweep stale orphans (predecessors that never
+    // landed within the TTL) on every apply batch. Cheap — stops at the first
+    // still-fresh orphan — and needs no separate timer task; orphans only matter
+    // while blocks are flowing, which is exactly when this runs.
+    let _swept = buffer.sweep_expired(ORPHAN_TTL);
 
     let mut inserted: Vec<Block> = Vec::new();
     let mut pull_roots: HashSet<BlockId> = HashSet::new();
@@ -362,9 +460,17 @@ pub fn apply_with_buffering(
     // leaves NO pull roots.
     pull_roots.retain(|r| !lace.contains(r));
 
+    // THEME-2 #4: bound the catch-up Pull fan-out this batch emits (network
+    // amplification cap). Truncation is liveness-safe — any root dropped here is
+    // re-derived from the still-buffered orphans on the next batch.
+    let mut pull_roots: Vec<BlockId> = pull_roots.into_iter().collect();
+    if pull_roots.len() > MAX_PULL_ROOTS {
+        pull_roots.truncate(MAX_PULL_ROOTS);
+    }
+
     ApplyOutcome {
         inserted,
-        pull_roots: pull_roots.into_iter().collect(),
+        pull_roots,
         equivocations,
     }
 }
@@ -690,5 +796,106 @@ mod tests {
         assert!(lace.contains(&timed.id()));
         assert_eq!(accepted.inserted.len(), 1);
         assert!(buffer.is_empty());
+    }
+
+    /// A fake predecessor id that will never land (distinct per `n`).
+    fn fake_pred(n: u64) -> BlockId {
+        let mut bytes = [0xEEu8; 32];
+        bytes[..8].copy_from_slice(&n.to_le_bytes());
+        BlockId(bytes)
+    }
+
+    /// A distinct-id orphan, cheaply: clone a real signed block and vary its
+    /// payload so `id()` (a content hash) differs. `OrphanBuffer::buffer` keys
+    /// only on `id()` + the supplied `missing` set, so this exercises the buffer's
+    /// capacity/eviction bookkeeping without thousands of expensive hybrid signs.
+    fn distinct_orphan(base: &Block, tag: u64) -> Block {
+        let mut b = base.clone();
+        b.payload = Payload::Data(tag.to_le_bytes().to_vec());
+        b
+    }
+
+    /// THEME-2 #4 FALSIFIER — both directions. A Byzantine flood of orphans citing
+    /// never-landing predecessors stays BOUNDED at `MAX_ORPHANS`; AND a legit
+    /// late-arriving parent still releases its child (liveness preserved for
+    /// honest late blocks under the cap).
+    #[test]
+    fn orphan_flood_stays_bounded_and_legit_late_parent_still_finalizes() {
+        let sk = key(70);
+        let base = Block::new(&sk, 1, Payload::Ack, Vec::new());
+
+        let mut buf = OrphanBuffer::new();
+        // Flood: MAX_ORPHANS + 500 orphans, each waiting on its own fake pred.
+        let flood = MAX_ORPHANS + 500;
+        for i in 0..flood as u64 {
+            let orphan = distinct_orphan(&base, i);
+            buf.buffer(orphan, vec![fake_pred(i)]);
+        }
+        assert_eq!(
+            buf.len(),
+            MAX_ORPHANS,
+            "an orphan flood must stay bounded at MAX_ORPHANS (drop-oldest evicts the stalest)"
+        );
+        // The age indices never outgrow the buffer.
+        assert_eq!(buf.order.len(), MAX_ORPHANS);
+        assert_eq!(buf.inserted_at.len(), MAX_ORPHANS);
+
+        // LIVENESS DIRECTION: a legit parent P and its child C. C is staged LAST
+        // (freshest), so the flood's drop-oldest never evicts it; when P lands, C
+        // is released even though the buffer is at capacity.
+        let parent = distinct_orphan(&base, 9_000_001);
+        let child = distinct_orphan(&base, 9_000_002);
+        buf.buffer(child.clone(), vec![parent.id()]);
+        assert_eq!(
+            buf.len(),
+            MAX_ORPHANS,
+            "buffering C evicted the oldest fake"
+        );
+        assert!(
+            buf.contains(&child.id()),
+            "the fresh legit child is retained"
+        );
+
+        let released = buf.ready_after(parent.id());
+        assert_eq!(
+            released.len(),
+            1,
+            "the legit child is released when its late parent lands"
+        );
+        assert_eq!(released[0].id(), child.id());
+        assert!(
+            !buf.contains(&child.id()),
+            "released child leaves the buffer"
+        );
+    }
+
+    /// THEME-2 #4 FALSIFIER — the TTL sweep drops orphans that have out-waited the
+    /// window while leaving fresh ones staged (so a slow-but-present predecessor
+    /// still resolves its child, and the sweep's age bookkeeping stays consistent).
+    #[test]
+    fn orphan_ttl_sweep_drops_stale_but_keeps_fresh() {
+        let sk = key(71);
+        let base = Block::new(&sk, 1, Payload::Ack, Vec::new());
+        let mut buf = OrphanBuffer::new();
+        for i in 0..10u64 {
+            buf.buffer(distinct_orphan(&base, i), vec![fake_pred(i)]);
+        }
+        assert_eq!(buf.len(), 10);
+
+        // A generous TTL sweeps nothing (all fresh).
+        let dropped = buf.sweep_expired(Duration::from_secs(3600));
+        assert!(
+            dropped.is_empty(),
+            "no orphan is stale within the TTL window"
+        );
+        assert_eq!(buf.len(), 10);
+
+        // A zero TTL treats every staged orphan as expired: all swept, and the age
+        // indices drain in lockstep (no leak).
+        let dropped = buf.sweep_expired(Duration::ZERO);
+        assert_eq!(dropped.len(), 10);
+        assert!(buf.is_empty());
+        assert!(buf.order.is_empty());
+        assert!(buf.inserted_at.is_empty());
     }
 }

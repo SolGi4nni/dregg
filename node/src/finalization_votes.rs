@@ -23,9 +23,28 @@
 //! exercised by unit tests without a running node (see the tests at the bottom).
 //! The gossip wiring lives in [`crate::blocklace_sync`].
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use dregg_blocklace::finality::{BlockId, FinalityLevel};
+
+/// THEME-2 #5 RESOURCE BOUND — the default cap on how many outstanding vote
+/// records a SINGLE committee member may occupy in the collector.
+///
+/// `record` accepts any hybrid-signed vote from an enrolled member over an
+/// ATTACKER-CHOSEN `block_id` (the collector does not — and cannot cheaply —
+/// require the block to exist in the local lace), so a single Byzantine member
+/// can sign votes for unlimited fabricated `block_id`s, each a fresh `votes` map
+/// entry. This caps that: a member may occupy at most this many outstanding vote
+/// slots; the (cap+1)th evicts the member's OWN oldest *lonely, un-attested* vote
+/// — a `block_id` NO OTHER member has voted for and that is not consensus-attested
+/// (exactly the shape of a fabricated block: a real finalizing block draws votes
+/// from many members and is never lonely). The eviction is isolated to the
+/// over-budget member and never removes a vote another member cast, a vote for a
+/// consensus-attested block, or a vote for a block more than one member shares —
+/// so a legit block still reaches quorum on the honest supermajority even while a
+/// Byzantine member is being trimmed (see the falsifier). Generous so honest
+/// members never approach it in normal operation.
+pub const MAX_VOTES_PER_MEMBER: usize = 4096;
 use dregg_federation::frost::{MlDsaPublicKey, MlDsaSigningKey};
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 
@@ -202,6 +221,17 @@ pub struct VoteCollector {
     votes: HashMap<BlockId, HashMap<[u8; 32], (dregg_types::Signature, [u8; 32], Vec<u8>)>>,
     /// Blocks that have crossed the quorum threshold (consensus-wide Attested).
     attested: HashSet<BlockId>,
+    /// THEME-2 #5 — per-member eviction bookkeeping: for each member, the
+    /// `block_id`s it has an outstanding vote for, in insertion order (front =
+    /// oldest). Bounded at `max_votes_per_member` per member by
+    /// [`Self::enforce_member_cap`], which pops the oldest entry on overflow —
+    /// dropping the underlying vote ONLY when that oldest entry is a lonely,
+    /// un-attested (i.e. fabricated-shaped) vote, else merely un-tracking a
+    /// safe/attested/shared vote from the eviction queue. Keyed by member, so the
+    /// index can never exceed `max_votes_per_member × committee_size`.
+    voted_blocks: HashMap<[u8; 32], VecDeque<BlockId>>,
+    /// The per-member outstanding-vote cap (defaults to [`MAX_VOTES_PER_MEMBER`]).
+    max_votes_per_member: usize,
 }
 
 /// The outcome of recording one vote.
@@ -233,6 +263,77 @@ impl VoteCollector {
             quorum_threshold,
             votes: HashMap::new(),
             attested: HashSet::new(),
+            voted_blocks: HashMap::new(),
+            max_votes_per_member: MAX_VOTES_PER_MEMBER,
+        }
+    }
+
+    /// Override the per-member outstanding-vote cap (THEME-2 #5). Builder-style;
+    /// the default is [`MAX_VOTES_PER_MEMBER`]. Lower values let tests exercise the
+    /// eviction path without thousands of real hybrid signatures.
+    pub fn with_vote_cap(mut self, cap: usize) -> Self {
+        self.max_votes_per_member = cap.max(1);
+        self
+    }
+
+    /// THEME-2 #5 — the number of distinct `block_id`s currently tracked (the
+    /// collector's `votes`-map footprint). Bounded by the per-member cap times the
+    /// committee size plus the honest chain's in-flight blocks.
+    pub fn tracked_block_count(&self) -> usize {
+        self.votes.len()
+    }
+
+    /// THEME-2 #5 — record that `member` cast a fresh vote for `new_block`, and
+    /// enforce the per-member cap. On overflow, pop the member's OLDEST tracked
+    /// block and, if that block is a lonely (single-voter) un-attested vote,
+    /// evict the underlying vote; an attested / multi-voter / already-gone entry
+    /// is only un-tracked (its vote is retained — it is either consensus-valuable
+    /// or amortized across other voters, never the fabricated-flood vector).
+    /// Exactly one queue slot is freed per overflow, so the queue length can never
+    /// exceed the cap, and only a member's own lonely-un-attested vote is ever
+    /// dropped — never a vote needed to reach or persist a quorum.
+    fn enforce_member_cap(&mut self, member: [u8; 32], new_block: BlockId) {
+        {
+            let dq = self.voted_blocks.entry(member).or_default();
+            dq.push_back(new_block);
+            if dq.len() <= self.max_votes_per_member {
+                return;
+            }
+        }
+        while self
+            .voted_blocks
+            .get(&member)
+            .is_some_and(|d| d.len() > self.max_votes_per_member)
+        {
+            let Some(oldest) = self
+                .voted_blocks
+                .get_mut(&member)
+                .and_then(|d| d.pop_front())
+            else {
+                break;
+            };
+            let signers = self.votes.get(&oldest);
+            let member_present = signers.is_some_and(|s| s.contains_key(&member));
+            if !member_present || self.attested.contains(&oldest) {
+                // Stale queue entry (vote already gone) or a consensus-attested
+                // vote — un-track it for eviction; never drop an attested vote.
+                continue;
+            }
+            let lonely = signers.is_some_and(|s| s.len() == 1);
+            if lonely {
+                // FABRICATED-FLOOD VICTIM: this member is the only voter for an
+                // un-attested block — the exact shape of a signed vote over a
+                // never-finalizing block_id. Drop it.
+                if let Some(s) = self.votes.get_mut(&oldest) {
+                    s.remove(&member);
+                    if s.is_empty() {
+                        self.votes.remove(&oldest);
+                    }
+                }
+            }
+            // Otherwise (shared, un-attested): a real block accruing a quorum from
+            // several members — un-track from THIS member's eviction queue but
+            // keep the vote (it is not the flood vector and is amortized).
         }
     }
 
@@ -402,12 +503,19 @@ impl VoteCollector {
         // First-write-wins per signer: an equivocating member cannot displace
         // the vote already counted for it, nor be counted twice. Retain the
         // ML-DSA (pq) signature too, so the assembled quorum carries BOTH halves.
+        let is_fresh = !signers.contains_key(&vote.voter);
         signers.entry(vote.voter).or_insert((
             vote.signature.clone(),
             vote.merkle_root,
             vote.pq_signature.clone(),
         ));
         let distinct_votes = signers.len();
+        // THEME-2 #5: enforce the per-member outstanding-vote cap on a genuinely
+        // new (voter, block) pair. A re-emit of an already-counted vote is inert
+        // here (first-write-wins), so the cap tracks only fresh occupancy.
+        if is_fresh {
+            self.enforce_member_cap(vote.voter, vote.block_id);
+        }
         let already = self.attested.contains(&vote.block_id);
 
         if already {
@@ -1213,6 +1321,74 @@ mod tests {
                 .collect();
             check_case(n, &votes, &format!("random case {case} (n={n})"));
         }
+    }
+
+    /// THEME-2 #5 FALSIFIER — both directions. A Byzantine committee member
+    /// signing votes for N ≫ cap FABRICATED block_ids stays BOUNDED (its
+    /// occupancy never exceeds the per-member cap); AND a legit block still
+    /// reaches consensus-wide quorum on the honest supermajority even while that
+    /// Byzantine member is being flood-evicted — the eviction never touches a vote
+    /// another member cast or a block accruing a real quorum.
+    #[test]
+    fn byzantine_member_flood_stays_bounded_and_honest_quorum_still_finalizes() {
+        let (committee, pq) = committee_of(&[1, 2, 3, 4]);
+        let quorum = dregg_blocklace::ordering::supermajority_threshold(4); // = 3
+        // Small cap so the flood is cheap (no thousands of real ML-DSA signs);
+        // the eviction logic is identical at MAX_VOTES_PER_MEMBER.
+        let cap = 8usize;
+        let mut col = VoteCollector::new(committee, pq, quorum).with_vote_cap(cap);
+
+        // A legit block the HONEST members (2,3,4) finalize on the same root.
+        let legit = BlockId([200; 32]);
+        for m in [2u8, 3, 4] {
+            col.record(&signed_vote(m, legit, FinalityLevel::Ordered, TEST_ROOT));
+        }
+        assert!(
+            col.is_consensus_attested(&legit),
+            "the honest supermajority (3 of 4) finalizes the legit block"
+        );
+
+        // Byzantine member 1 floods 30 ≫ cap votes over distinct FABRICATED
+        // block_ids — each a valid hybrid signature, each lonely (only member 1).
+        for i in 1u8..=30 {
+            let fabricated = BlockId([i; 32]);
+            let outcome = col.record(&signed_vote(
+                1,
+                fabricated,
+                FinalityLevel::Ordered,
+                TEST_ROOT,
+            ));
+            assert_ne!(
+                outcome,
+                RecordOutcome::Rejected,
+                "a well-formed member vote is accepted (then capped, not rejected)"
+            );
+        }
+
+        // BOUNDED: member 1's fabricated votes are hard-capped. The only tracked
+        // blocks are the legit one plus at most `cap` of member 1's fakes.
+        assert!(
+            col.tracked_block_count() <= cap + 1,
+            "a Byzantine flood of {} fabricated votes must stay bounded, tracked = {}",
+            30,
+            col.tracked_block_count()
+        );
+
+        // LIVENESS PRESERVED: the legit block is STILL consensus-attested — the
+        // flood/eviction never disturbed the honest quorum's votes.
+        assert!(
+            col.is_consensus_attested(&legit),
+            "the legit block stays finalized through the Byzantine flood"
+        );
+        // And a fresh legit block finalizes AFTER the flood, too.
+        let legit2 = BlockId([201; 32]);
+        for m in [2u8, 3, 4] {
+            col.record(&signed_vote(m, legit2, FinalityLevel::Ordered, TEST_ROOT));
+        }
+        assert!(
+            col.is_consensus_attested(&legit2),
+            "a new legit block still reaches quorum after the flood"
+        );
     }
 
     /// MONOTONE-SAFE BOUNDARY. A block already consensus-attested under the old

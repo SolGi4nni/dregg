@@ -1891,6 +1891,18 @@ pub fn router_with_cors(
     // an attacker's ML-DSA signing budget.
     let faithful_mirror_limiter = RateLimiter::new(120, 60);
 
+    // ANON-DoS #1/#2: per-IP limiters for the expensive public full-scan reads.
+    // Each holds `state.read()` while it folds/scans/serializes, so a flood must
+    // not be free. Budget = 120/min (the faithful-mirror read precedent): it
+    // bounds a tight flood while leaving generous headroom for a dashboard /
+    // consensus-liveness probe that polls these every couple seconds (≈30/min).
+    // Per-request work is independently bounded (pagination + `MAX_PROOF_LEAVES`).
+    let cell_proof_limiter = RateLimiter::new(120, 60);
+    let cells_list_limiter = RateLimiter::new(120, 60);
+    let blocklace_blocks_limiter = RateLimiter::new(120, 60);
+    // ANON-DoS #3: global + per-IP admission control for the receipt SSE stream.
+    let sse_limits = crate::events::SseLimits::with_defaults();
+
     // Public routes (no auth required)
     let mut public_routes = Router::new()
         .route("/status", get(get_status))
@@ -1901,9 +1913,19 @@ pub fn router_with_cors(
         .route("/api/blocks", get(get_federation_roots))
         .route("/api/federations", get(get_federations))
         .route("/api/membership", get(get_membership))
-        .route("/api/cells", get(get_all_cells))
+        .route("/api/cells", {
+            let limiter = cells_list_limiter.clone();
+            get(move |connect_info, headers, page, state| {
+                get_all_cells(connect_info, headers, page, state, limiter.clone())
+            })
+        })
         .route("/api/cell/{id}", get(get_cell_detail))
-        .route("/api/cell/{id}/proof", get(get_cell_proof))
+        .route("/api/cell/{id}/proof", {
+            let limiter = cell_proof_limiter.clone();
+            get(move |connect_info, headers, state, path, query| {
+                get_cell_proof(connect_info, headers, state, path, query, limiter.clone())
+            })
+        })
         .route("/api/node/cells/{id}", get(get_cell_detail))
         .route("/api/tokens", get(get_tokens))
         // DEOS-HOST discovery: a hosted private server's cap-gated affordance surface,
@@ -1964,7 +1986,12 @@ pub fn router_with_cors(
             })
         })
         .route("/api/events", get(get_events))
-        .route("/api/events/stream", get(crate::events::events_stream))
+        .route("/api/events/stream", {
+            let limits = sse_limits.clone();
+            get(move |query, headers, connect_info, state| {
+                crate::events::events_stream(query, headers, connect_info, state, limits.clone())
+            })
+        })
         .route(
             "/api/promise-resolutions",
             get(crate::promise_resolutions::get_promise_resolutions),
@@ -1989,7 +2016,12 @@ pub fn router_with_cors(
         .route("/checkpoint/latest", get(get_checkpoint_latest))
         .route("/checkpoint/{height}", get(get_checkpoint_at_height))
         .route("/api/blocklace/checkpoint", get(get_blocklace_checkpoint))
-        .route("/api/blocklace/blocks", get(get_blocklace_blocks))
+        .route("/api/blocklace/blocks", {
+            let limiter = blocklace_blocks_limiter.clone();
+            get(move |connect_info, headers, page, state| {
+                get_blocklace_blocks(connect_info, headers, page, state, limiter.clone())
+            })
+        })
         .route("/api/block/{height}", get(get_block_by_height))
         .route("/pir/info", get(get_pir_info))
         .route("/pir/query", post(post_pir_query))
@@ -4546,11 +4578,48 @@ async fn get_cell(
 // =============================================================================
 
 /// GET /api/cells — list all cells in the ledger with summary info.
-async fn get_all_cells(State(state): State<NodeState>) -> Json<Vec<CellListEntry>> {
+/// ANON-DoS #1/#2 — default and maximum page sizes for the public full-scan list
+/// reads. The default keeps existing small-devnet callers whole (they receive the
+/// full listing) while the max bounds the per-request work + response so a flood
+/// cannot force a full-ledger / full-lace materialization under the read lock.
+pub const DEFAULT_LIST_PAGE: usize = 1_000;
+pub const MAX_LIST_PAGE: usize = 10_000;
+
+/// ANON-DoS #1 — hard cap on the number of leaves the cell-inclusion proof will
+/// fold + serialize in one request. Checked cheaply against `ledger.len()` BEFORE
+/// the O(N) fold, so a ledger past this cap yields `413` rather than pinning the
+/// read lock. Generous: a devnet ledger is far smaller, and the flat-root proof
+/// design does not scale past this regardless.
+pub const MAX_PROOF_LEAVES: usize = 100_000;
+
+/// Shared `?offset=&limit=` pagination query for the bounded list reads.
+#[derive(Deserialize)]
+pub struct PageQuery {
+    pub offset: Option<usize>,
+    pub limit: Option<usize>,
+}
+
+async fn get_all_cells(
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
+    Query(page): Query<PageQuery>,
+    State(state): State<NodeState>,
+    limiter: RateLimiter,
+) -> Result<Json<Vec<CellListEntry>>, StatusCode> {
+    // ANON-DoS #2: this scans + serializes the full ledger under `state.read()`.
+    // Per-IP rate limit (proxy-aware, mirrors /api/discharge) + a bounded page so
+    // one caller cannot force a full-ledger materialization/flood.
+    if !limiter.check_request(addr.ip(), &headers).await {
+        return Err(StatusCode::TOO_MANY_REQUESTS);
+    }
+    let offset = page.offset.unwrap_or(0);
+    let limit = page.limit.unwrap_or(DEFAULT_LIST_PAGE).min(MAX_LIST_PAGE);
     let s = state.read().await;
     let entries: Vec<CellListEntry> = s
         .ledger
         .iter()
+        .skip(offset)
+        .take(limit)
         .map(|(id, cell)| CellListEntry {
             id: hex_encode(&id.0),
             balance: cell.state.balance(),
@@ -4561,7 +4630,7 @@ async fn get_all_cells(State(state): State<NodeState>) -> Json<Vec<CellListEntry
             found: true,
         })
         .collect();
-    Json(entries)
+    Ok(Json(entries))
 }
 
 /// GET /api/cell/:id — detailed cell information for the explorer.
@@ -4667,10 +4736,22 @@ pub struct CellProofQuery {
     /// only retained at checkpoint boundaries, which do not line up with attested
     /// heights, so arbitrary-height reconstruction is not offered.
     pub height: Option<u64>,
+    /// ANON-DoS #1 — optional leaf-window offset. When set (with `leaf_limit`),
+    /// `leaves` carries only `leaves[leaf_offset .. leaf_offset+leaf_limit]` of the
+    /// full sorted set; `total_leaves` still reports the whole count so a verifier
+    /// can page through every window and reconstruct the flat root. Omitted =
+    /// serve the whole leaf set (bounded by `MAX_PROOF_LEAVES`).
+    pub leaf_offset: Option<usize>,
+    /// ANON-DoS #1 — optional leaf-window size (clamped to `MAX_LIST_PAGE`).
+    pub leaf_limit: Option<usize>,
 }
 
 #[derive(Serialize)]
 pub struct CellProofResponse {
+    /// ANON-DoS #1 — total number of leaves in the served ledger (the full flat
+    /// set), independent of any `leaf_offset`/`leaf_limit` window applied to
+    /// `leaves`. A paginating verifier fetches every window up to this count.
+    pub total_leaves: usize,
     /// The cell view — byte-identical to `GET /api/cell/{id}`.
     pub cell: CellDetailResponse,
     /// `canonical_ledger_root` of the SERVED (current) ledger. `leaves` reconstruct
@@ -4711,11 +4792,29 @@ pub struct CellProofResponse {
 /// exist only at checkpoint boundaries), so it does not time-travel; `?height=H` is a
 /// no-rollback assertion checked against the latest attested height.
 async fn get_cell_proof(
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
     State(state): State<NodeState>,
     AxumPath(id): AxumPath<String>,
     Query(params): Query<CellProofQuery>,
+    limiter: RateLimiter,
 ) -> Result<Json<CellProofResponse>, StatusCode> {
+    // ANON-DoS #1: this materializes + folds + serializes the ENTIRE leaf set
+    // under `state.read()`. Per-IP rate limit (proxy-aware, mirrors
+    // /api/discharge) so a flood cannot hold the read lock, plus a hard
+    // `MAX_PROOF_LEAVES` cap checked cheaply BEFORE the fold, plus optional leaf
+    // pagination — so the per-request work + response is bounded.
+    if !limiter.check_request(addr.ip(), &headers).await {
+        return Err(StatusCode::TOO_MANY_REQUESTS);
+    }
+
     let s = state.read().await;
+
+    // Cheap pre-check (HashMap len, no fold): refuse to fold/serialize a ledger
+    // past the cap rather than pin the read lock unboundedly.
+    if s.ledger.len() > MAX_PROOF_LEAVES {
+        return Err(StatusCode::PAYLOAD_TOO_LARGE);
+    }
 
     let cell_id_bytes: [u8; 32] = hex_decode(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
     let cell_id = dregg_cell::CellId(cell_id_bytes);
@@ -4726,13 +4825,23 @@ async fn get_cell_proof(
     // Full sorted leaf set + flat root of the CURRENT ledger. Construction is
     // byte-identical to the attested root (both fold through
     // `canonical_ledger_root_from_leaves`), so a served root that equals an attested
-    // root is a genuine match, not a coincidence of encoding.
+    // root is a genuine match, not a coincidence of encoding. The root always folds
+    // the WHOLE set (so it matches the attested root); `leaves` may be a bounded
+    // WINDOW of that set, with `total_leaves` reporting the full count.
     let leaf_entries = dregg_persist::canonical_ledger_leaves(&s.ledger);
     let merkle_root = hex_encode(&dregg_persist::canonical_ledger_root_from_leaves(
         &leaf_entries,
     ));
+    let total_leaves = leaf_entries.len();
+    let leaf_offset = params.leaf_offset.unwrap_or(0);
+    let leaf_limit = params
+        .leaf_limit
+        .map(|l| l.min(MAX_LIST_PAGE))
+        .unwrap_or(total_leaves);
     let leaves: Vec<(String, String)> = leaf_entries
         .iter()
+        .skip(leaf_offset)
+        .take(leaf_limit)
         .map(|(cid, h)| (hex_encode(cid), hex_encode(h)))
         .collect();
 
@@ -4762,6 +4871,7 @@ async fn get_cell_proof(
         && quorum >= threshold;
 
     Ok(Json(CellProofResponse {
+        total_leaves,
         cell,
         merkle_root,
         leaves,
@@ -5874,12 +5984,24 @@ async fn post_membership_approve(
 /// Empty list when consensus is not yet running (e.g. the handle hasn't been
 /// installed at startup); never a 404, so the explorer can poll safely.
 async fn get_blocklace_blocks(
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
+    Query(page): Query<PageQuery>,
     State(state): State<NodeState>,
-) -> Json<Vec<crate::blocklace_sync::BlockView>> {
-    match state.blocklace().await {
-        Some(handle) => Json(handle.block_views().await),
-        None => Json(Vec::new()),
+    limiter: RateLimiter,
+) -> Result<Json<Vec<crate::blocklace_sync::BlockView>>, StatusCode> {
+    // ANON-DoS #2: this scans + serializes the FULL lace. Per-IP rate limit
+    // (mirrors /api/discharge) + a bounded page (only the window is turned into
+    // BlockViews) so a flood cannot force a full-lace materialization.
+    if !limiter.check_request(addr.ip(), &headers).await {
+        return Err(StatusCode::TOO_MANY_REQUESTS);
     }
+    let offset = page.offset.unwrap_or(0);
+    let limit = page.limit.unwrap_or(DEFAULT_LIST_PAGE).min(MAX_LIST_PAGE);
+    Ok(match state.blocklace().await {
+        Some(handle) => Json(handle.block_views_page(offset, limit).await),
+        None => Json(Vec::new()),
+    })
 }
 
 /// GET /api/block/{height} — fetch one blocklace block by height (creator seq).
@@ -9256,11 +9378,16 @@ mod tests {
             "/api/federations",
             "/api/intents",
         ] {
+            let addr: std::net::SocketAddr = "127.0.0.1:4444".parse().unwrap();
             let response = app
                 .clone()
                 .oneshot(
                     Request::builder()
                         .uri(path)
+                        // `/api/cells` (ANON-DoS #2) now resolves the client IP for
+                        // its per-IP rate limiter — supply ConnectInfo as the live
+                        // server does.
+                        .extension(ConnectInfo(addr))
                         .body(Body::empty())
                         .expect("request"),
                 )
