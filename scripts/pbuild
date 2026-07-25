@@ -14,6 +14,34 @@
 # ones. Keep LEAN (lake) builds LOCAL (the local .lake/mathlib cache is warm;
 # a fresh persvati lane-dir would re-download mathlib = catastrophic).
 #
+# ── WHERE TO BUILD (the swarm rule, paid for on 2026-07-25) ─────────────────────
+# The symptom that produced this block: hour-long subagents, all of them because
+# every lane started its OWN build instead of waiting or offloading. Two different
+# resources, two different answers:
+#
+#   LEAN (`lake build`) → LOCAL, always. The local metatheory/.lake is warm
+#       (mathlib + ~1730 Dregg2 oleans); persvati's Lean .lake is cold/divergent,
+#       so "offloading" a Lean build means re-downloading and re-elaborating
+#       mathlib. Concurrent lake builds in the shared metatheory/ tree are FINE —
+#       lake's own file locks and incrementality handle them — but bound the
+#       fan-out: `lake` has NO `-j`/`--jobs` flag; the knob that works is
+#       LEAN_NUM_THREADS=<n> (measured 2026-07-25: unset → 10-12 concurrent
+#       `lean` on this 12-core box, =4 → exactly 4, =2 → exactly 2). One `lean`
+#       per ready module, GBs each: 55 unbounded jobs took this laptop to load
+#       average 154 and 54 GB of swap. dregg-lean-ffi/build.rs applies this cap
+#       itself and now VERIFIES it held (build_parallel::run_bounded_lake).
+#
+#   CARGO → do NOT start a second one against the shared target/. There is ONE
+#       lock per target dir, it has been observed held 45+ minutes with several
+#       cargos queued behind it, and a queued cargo looks exactly like a slow
+#       build from inside a lane. Either use the build already running (read its
+#       log), or `scripts/pbuild <lane> cargo …` to get an isolated remote lane
+#       dir with its own lock and its own warm cache. `CARGO_TARGET_DIR` to a
+#       scratch path is the LAST resort: a cold target dir re-runs every build
+#       script, and dregg-lean-ffi's cold path is the mathlib-sized one.
+#
+# Being slow costs one lane some minutes; being greedy costs everyone the box.
+#
 # COLD-LANE GUARD: a lane dir with no warm build cache (no populated cargo
 # target/ and no warm .lake/mathlib) compiles the WHOLE dependency graph from
 # scratch — the load-95+ box-spike this guard exists to prevent. By default an
