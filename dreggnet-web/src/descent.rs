@@ -57,8 +57,10 @@ use dreggnet_offerings::native_descent::Rarity;
 // both `deny_unknown_fields`, no shared code) is DELETED: it was the mechanism that kept the
 // settled run's minted `banked_notes` from ever crossing the browser->server boundary.
 use dreggnet_offerings::native_descent_wire::{
-    MAX_PORTABLE_RECORD_BYTES, PortableCompletion, PortableRecord, replay_portable_record,
+    MAX_PORTABLE_RECORD_BYTES, PortableCompletion, PortableRecord, PortableSim,
+    replay_portable_record,
 };
+use dungeon_on_dregg::descent::{DayWorld, day_index, day_world};
 use procgen_dregg::CommittedSeed;
 use procgen_dregg::beacon::DailyBeacon;
 use procgen_dregg::descent_day::{self, DescentDay};
@@ -68,8 +70,9 @@ use spween_dregg::{
 use ugc_dregg::{Completion, Universe, record_playthrough, verify_completion};
 use webauth_core::identity_resolve::RootResolver;
 
+use crate::descent_card::{CARD_STYLE, RunStory};
 use crate::descent_store::{DescentRunStore, StoredDay, StoredNativeRun, StoredRun};
-use crate::{document, esc};
+use crate::{document, document_with_head, esc};
 
 /// The author label the day's world is published under (a stable content-address input; the daily
 /// world is anonymous-authored on the no-cheat board).
@@ -220,6 +223,14 @@ struct VerifiedNativeRun {
     turns: usize,
     root_hex: String,
     completion: Option<PortableCompletion>,
+    /// **The shaft as the REPLAY left it** — the post-state of the last event the server's own
+    /// exact re-execution landed, not the submitted one. `None` only for a record with no events
+    /// (a run that never moved, and so has no story to paint).
+    final_state: Option<PortableSim>,
+    /// The day's DRAWN map (relic homes + per-floor guardian vitality), resolved from the record's
+    /// committed day-seed. Carried because the run-card's guardian column would otherwise read
+    /// day 0's shipped vitalities on every beacon day.
+    world: DayWorld,
 }
 
 impl VerifiedNativeRun {
@@ -231,6 +242,13 @@ impl VerifiedNativeRun {
         self.completion
             .as_ref()
             .map_or(0, |c| c.banked_relics.len())
+    }
+
+    /// The run's whole story, ready to paint. `None` when the tape is empty.
+    fn story(&self) -> Option<RunStory> {
+        self.final_state
+            .clone()
+            .map(|state| RunStory::new(state, self.world, self.crowned()))
     }
 }
 
@@ -822,8 +840,15 @@ fn verify_native_record(
         ));
     }
 
+    // The day's DRAWN dungeon, off the record's own committed provenance root — the same reduction
+    // `Descent::deploy_on_day` makes. The run-card's guardian column reads this, so a beacon day's
+    // card shows that day's vitalities instead of day 0's shipped ones.
+    let world = day_world(day_index(&expected.day_seed()?));
+
     let (_offering, session) = replay_portable_record(expected)?;
     let actual = PortableRecord::from_record(&session.export_record());
+    // The REPLAYED final state (the last landed event's post-state), never the submitted one.
+    let final_state = actual.events.last().map(|event| event.post.clone());
     Ok(VerifiedNativeRun {
         actor: actual
             .actor
@@ -832,6 +857,8 @@ fn verify_native_record(
         turns: actual.events.len(),
         root_hex: actual.root_hex,
         completion: actual.completion,
+        final_state,
+        world,
     })
 }
 
@@ -1386,7 +1413,7 @@ async fn get_native_run_card(
     State(state): State<Arc<DescentState>>,
     Path(id): Path<String>,
 ) -> Html<String> {
-    let (record, day_key, title, expected_seed) = {
+    let (record, day_key, title, seed, expected_seed) = {
         let inner = state.inner.lock().unwrap();
         let Some(run) = inner.native_runs.get(&id) else {
             return Html(run_missing(&id));
@@ -1398,11 +1425,14 @@ async fn get_native_run_card(
             run.record.clone(),
             day.key.clone(),
             day.day.title.clone(),
+            seed_tag(&day.seed),
             native_seed_for_committed_day(&day.seed),
         )
     };
     let replay = verify_native_record(expected_seed, &record);
-    Html(native_run_card_page(&id, &day_key, &title, &record, replay))
+    Html(native_run_card_page(
+        &id, &day_key, &title, &seed, &record, replay,
+    ))
 }
 
 /// Read a committed var off a playthrough's final recorded state via the day's var→slot map (`0` if
@@ -1574,13 +1604,24 @@ fn leaderboard_page(day: &Day, rows: &[Row], native_rows: &[NativeRow]) -> Strin
     )
 }
 
+/// **The shareable run-card.** The artifact a stranger meets first, so it is built story-first: the
+/// shaft as the run left it (what came out, what was left behind, how deep they got, what was still
+/// in the pack when the light died), THEN the independent-verification verdict that makes the story
+/// worth believing, THEN the material a verifier wants.
+///
+/// The picture is [`crate::descent_card`] — the live play surface's own board, painted from the
+/// REPLAYED final state, so what a player watched happen is what a stranger sees. The
+/// `<head>` carries the OpenGraph/Twitter tags, because this page's whole job is to be posted.
+#[allow(clippy::too_many_arguments)]
 fn native_run_card_page(
     run_id: &str,
     day_key: &str,
     title: &str,
+    seed: &str,
     record: &PortableRecord,
     replay: Result<VerifiedNativeRun, String>,
 ) -> String {
+    let story = replay.as_ref().ok().and_then(VerifiedNativeRun::story);
     let (verified, actor, turns, root, banked, notes, crowned, detail) = match replay {
         Ok(run) => {
             let banked = run.banked_relics();
@@ -1645,15 +1686,67 @@ fn native_run_card_page(
     } else {
         "IN PROGRESS — exact prefix, not ranked"
     };
+
+    // ── THE STORY, FIRST. A stranger meets the run before they meet the ruleset. ──
+    let (card, share_text, headline) = match &story {
+        Some(story) => (
+            story.html(&actor, day_key, seed),
+            story.text_card(&actor, day_key),
+            story.headline(),
+        ),
+        None if verified => (
+            String::new(),
+            String::new(),
+            "An exact record with no landed turns — this run never moved.".to_string(),
+        ),
+        None => (
+            String::new(),
+            String::new(),
+            "This record does not re-execute. Nothing it claims is shown as fact.".to_string(),
+        ),
+    };
+    // The copyable form: the SAME board every text channel paints (`coordgrid_text`), so a run
+    // pasted into a chat is the run, not a screenshot of one.
+    let share_block = if share_text.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<details class=\"rc-text\"><summary>Copy this run as text \
+             (the same board Discord and Telegram paint)</summary><pre>{}</pre></details>",
+            esc(&share_text),
+        )
+    };
+
+    // ── THE SOCIAL PREVIEW. Meta tags are head-only, and this page exists to be posted. ──
+    let og_title = match (&story, verified) {
+        (Some(story), true) => format!("{} — {actor}'s descent", story.ending().word()),
+        (_, true) => format!("{actor}'s descent"),
+        (_, false) => format!("FAIL — {actor}'s record does not re-execute"),
+    };
+    let head = format!(
+        "{card_style}<meta name=\"description\" content=\"{desc}\">\
+         <meta property=\"og:type\" content=\"article\">\
+         <meta property=\"og:site_name\" content=\"DreggNet\">\
+         <meta property=\"og:title\" content=\"{og_title}\">\
+         <meta property=\"og:description\" content=\"{desc}\">\
+         <meta name=\"twitter:card\" content=\"summary\">\
+         <meta name=\"twitter:title\" content=\"{og_title}\">\
+         <meta name=\"twitter:description\" content=\"{desc}\">",
+        card_style = CARD_STYLE,
+        og_title = esc(&og_title),
+        desc = esc(&format!(
+            "{headline} Re-verified by re-execution the moment you open this page."
+        )),
+    );
+
     let body = format!(
         "<div class=\"crumb\"><a href=\"/descent/leaderboard?day={day}\">← leaderboard</a>\
          <span class=\"sep\">·</span><strong>{actor}</strong><span class=\"sep\">·</span>\
          <span class=\"sid\">native record {id}</span></div><main class=\"session\">\
          <div class=\"page-head\" style=\"padding-top:var(--s4)\"><p class=\"eyebrow\">\
-         Lean-native compatibility artifact · {title}</p><h1>Exact native replay</h1>\
-         <p class=\"deck\">This is a native browser record. It is verified under the \
-         Lean-authored verb/receipt ruleset and is deliberately not represented as the older \
-         procgen leaderboard's passage-choice tape.</p></div>\
+         Lean-native compatibility artifact · {title}</p><h1>{actor}'s descent</h1>\
+         <p class=\"deck\">{headline}</p></div>\
+         {card}\
          <section class=\"verdict {class}\"><h2><span class=\"stamp\">{verdict}</span>\
          Independent verification — {verdict}</h2><p>{detail}</p></section>\
          <div class=\"kv\"><div><p class=\"k\">Outcome</p><p class=\"v\">{outcome}</p></div>\
@@ -1661,11 +1754,17 @@ fn native_run_card_page(
          <div><p class=\"k\">Banked relics</p><p class=\"v mono\">{banked}</p></div>\
          <div><p class=\"k\">Minted notes</p><p class=\"v mono\">{notes}</p></div>\
          <div><p class=\"k\">Journal root</p><p class=\"v mono\">{root}</p></div></div>\
+         {share_block}\
+         <p class=\"prose\" style=\"margin-top:var(--s5)\">\
+         <a class=\"btn btn-primary\" href=\"/descent/play\">Take your own light down \
+         <span class=\"arr\" aria-hidden=\"true\">→</span></a></p>\
          </main>",
         day = esc(day_key),
         actor = esc(&actor),
         id = esc(run_id),
         title = esc(title),
+        headline = esc(&headline),
+        card = card,
         class = verdict_class,
         verdict = verdict,
         detail = esc(&detail),
@@ -1674,10 +1773,12 @@ fn native_run_card_page(
         banked = banked,
         notes = esc(&notes),
         root = esc(&root),
+        share_block = share_block,
     );
-    document(
+    document_with_head(
         &format!("The Descent — {actor} · native proof"),
         "descent-run",
+        &head,
         &body,
     )
 }

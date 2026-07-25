@@ -50,6 +50,13 @@
 /// turn via `OfferingHost::advance_signed`. See [`act_signed`].
 pub mod act_signed;
 
+/// **The automatafl front door** — the bespoke table surface over the generic offering rails:
+/// `GET /automatafl` (rules + CTA), `POST /automatafl/table` (mint a SEAT-LOCKED table and its two
+/// unguessable seat links), `GET /automatafl/table/{id}` (take a seat), `GET /automatafl/watch/{id}`
+/// (spectate the fogged board), plus the realtime surface stream both that route and the generic
+/// `GET /offerings/{key}/session/{id}/events` share. See [`automatafl_web`].
+pub mod automatafl_web;
+
 /// The audit emitter — the interaction envelope around every catalog/Mini-App decision
 /// (docs/BOT-AUDIT-LOGGING-DESIGN.md).
 pub mod audit;
@@ -64,6 +71,11 @@ pub mod crowd_round;
 /// (`GET /descent/leaderboard`) + a run-card that re-executes the recorded run to PASS/FAIL
 /// (`GET /descent/run/{id}`). Additive; see [`descent::descent_router`].
 pub mod descent;
+/// THE SHARED RUN'S PICTURE — the run-card's shaft renderer (`GET /descent/native/run/{id}`). The
+/// share link is how a stranger first meets the game, so the card paints the LIVE surface's board
+/// (same glyphs, same one-column-per-relic shaft) as it stood when the run ended: what was banked,
+/// what was still in the pack when the light died, how deep they got. See [`descent_card`].
+mod descent_card;
 /// THE PLAYABLE web front door for *The Descent* (backlog H1): `GET /descent/play` mounts a
 /// same-origin, strict-CSP DOM controller (`NATIVE_PLAY_APP_JS`) over the Lean-native
 /// `NativeDescentWorld` (the wasm `bindings_native_descent` executor) — NOT the `<dregg-descent>`
@@ -317,50 +329,147 @@ impl Frontend for WebFrontend {
     }
 }
 
+/// Default cap on LIVE `/session/{id}` sessions the single-offering [`WebState`] surface holds —
+/// the memory backstop against a flood of distinct arbitrary path ids. Overridable via
+/// [`WebState::with_capacity`]. Sized to match `dreggnet_catalog`'s
+/// [`DEFAULT_LIVE_HOST_CAPACITY`](dreggnet_catalog::player_worlds::DEFAULT_LIVE_HOST_CAPACITY).
+pub const DEFAULT_WEB_SESSION_CAPACITY: usize = 1024;
+
+/// **The single-offering web surface's live sessions under a bounded LRU** — the memory backstop
+/// against a flood of distinct `GET /session/{id}` path ids (the anonymous offering-#0 DoS vector:
+/// each arbitrary `{id}` used to mint an uncapped, never-evicted [`DungeonSession`]). A new id past
+/// [`capacity`](BoundedSessions::capacity) first evicts the least-recently-touched session. This
+/// legacy surface has NO durable store, so that eviction is lossy — but a re-open of the evicted id
+/// rebuilds the SAME id-seeded genesis world, and a live viewer's session is kept hot by every
+/// render touch. Mirrors `dreggnet_catalog::PlayerWorlds`'s bounded-LRU host cache.
+struct BoundedSessions {
+    /// The live sessions — a real `DungeonSession` (WorldCell + playthrough) per session id.
+    map: HashMap<SessionId, DungeonSession>,
+    /// Monotone access clock per live session — the LRU key. A touch bumps the id to `clock`;
+    /// eviction removes the id with the smallest (oldest) value (tie-broken by id, deterministic).
+    touched: HashMap<SessionId, u64>,
+    /// The monotone tick source for `touched`.
+    clock: u64,
+    /// The maximum number of live sessions. Always `>= 1` (a `0` request is clamped).
+    capacity: usize,
+}
+
+impl BoundedSessions {
+    fn new(capacity: usize) -> Self {
+        BoundedSessions {
+            map: HashMap::new(),
+            touched: HashMap::new(),
+            clock: 0,
+            capacity: capacity.max(1),
+        }
+    }
+
+    /// Bump `id` to the most-recently-used position — called on every open/render touch so an
+    /// actively-viewed session is never the eviction victim.
+    fn touch(&mut self, id: &SessionId) {
+        if self.map.contains_key(id) {
+            self.clock += 1;
+            self.touched.insert(id.clone(), self.clock);
+        }
+    }
+
+    /// Insert a freshly-opened `session` under `id`, first LRU-evicting the coldest session(s)
+    /// while at capacity. Returns the evicted ids so the caller tears down their frontend slots
+    /// too (keeping `sessions` and `presented` bounded TOGETHER).
+    fn insert_evicting(&mut self, id: SessionId, session: DungeonSession) -> Vec<SessionId> {
+        let mut evicted = Vec::new();
+        while self.map.len() >= self.capacity && !self.map.contains_key(&id) {
+            let victim = self
+                .touched
+                .iter()
+                .min_by_key(|&(vid, &tick)| (tick, vid.0.clone()))
+                .map(|(vid, _)| vid.clone())
+                .or_else(|| self.map.keys().next().cloned());
+            match victim {
+                Some(v) => {
+                    self.map.remove(&v);
+                    self.touched.remove(&v);
+                    evicted.push(v);
+                }
+                None => break,
+            }
+        }
+        self.clock += 1;
+        self.touched.insert(id.clone(), self.clock);
+        self.map.insert(id, session);
+        evicted
+    }
+}
+
 /// **The axum web surface state** — the ONE [`DungeonOffering`] core, the live per-session
-/// [`DungeonSession`]s (the real verifiable state chains), and the [`WebFrontend`] recording what
-/// each session last presented. Shared behind an `Arc` as the axum handler `State`.
+/// [`DungeonSession`]s (the real verifiable state chains) under a bounded LRU, and the
+/// [`WebFrontend`] recording what each session last presented. Shared behind an `Arc` as the axum
+/// handler `State`.
 pub struct WebState {
     /// The offering core (offering #0). Stateless factory; each session is a real playthrough.
     offering: DungeonOffering,
-    /// The live sessions — a real `DungeonSession` (WorldCell + playthrough) per session id.
-    sessions: Mutex<HashMap<SessionId, DungeonSession>>,
+    /// The live sessions — a real `DungeonSession` per session id, hard-bounded by a LRU capacity
+    /// so an arbitrary-`{id}` flood cannot grow memory without limit.
+    sessions: Mutex<BoundedSessions>,
     /// The web frontend recording each session's last-presented surface + actions.
     frontend: Mutex<WebFrontend>,
 }
 
 impl WebState {
-    /// A fresh web surface over the free-tier dungeon offering.
+    /// A fresh web surface over the free-tier dungeon offering, bounded at
+    /// [`DEFAULT_WEB_SESSION_CAPACITY`] live sessions.
     pub fn new() -> Self {
+        WebState::with_capacity(DEFAULT_WEB_SESSION_CAPACITY)
+    }
+
+    /// A web surface over the free-tier dungeon offering with an explicit live-session LRU
+    /// capacity (clamped to `>= 1`).
+    pub fn with_capacity(capacity: usize) -> Self {
         WebState {
             offering: DungeonOffering::new(),
-            sessions: Mutex::new(HashMap::new()),
+            sessions: Mutex::new(BoundedSessions::new(capacity)),
             frontend: Mutex::new(WebFrontend::new()),
         }
     }
 
-    /// A web surface over a caller-provided offering (e.g. [`DungeonOffering::paid`]).
+    /// A web surface over a caller-provided offering (e.g. [`DungeonOffering::paid`]), bounded at
+    /// [`DEFAULT_WEB_SESSION_CAPACITY`] live sessions.
     pub fn with_offering(offering: DungeonOffering) -> Self {
         WebState {
             offering,
-            sessions: Mutex::new(HashMap::new()),
+            sessions: Mutex::new(BoundedSessions::new(DEFAULT_WEB_SESSION_CAPACITY)),
             frontend: Mutex::new(WebFrontend::new()),
         }
     }
 
     /// Whether a session is open.
     pub fn is_open(&self, id: &SessionId) -> bool {
-        self.sessions.lock().unwrap().contains_key(id)
+        self.sessions.lock().unwrap().map.contains_key(id)
+    }
+
+    /// The number of live sessions currently held — hard-bounded by the LRU capacity.
+    pub fn live_sessions(&self) -> usize {
+        self.sessions.lock().unwrap().map.len()
+    }
+
+    /// The number of frontend surface slots currently retained — bounded in LOCKSTEP with
+    /// [`live_sessions`](WebState::live_sessions): an LRU-evicted session's `presented` slot is torn
+    /// down, so `presented` cannot outgrow the session map under a flood.
+    pub fn presented_sessions(&self) -> usize {
+        self.frontend.lock().unwrap().presented.len()
     }
 
     /// Ensure a session is open: on first touch, [`open`](Offering::open) a fresh
     /// [`DungeonSession`] (seeded deterministically from the session id, so a re-open of the same
-    /// id is the SAME replay-verifiable world), spin its frontend slot, and present the initial
-    /// surface (so a first POST can already `collect` the gatehall affordances).
+    /// id is the SAME replay-verifiable world), LRU-evict the coldest session(s) if the map is at
+    /// capacity (tearing down their frontend slots too), spin its frontend slot, and present the
+    /// initial surface (so a first POST can already `collect` the gatehall affordances). A touch of
+    /// an already-live session just bumps its LRU recency.
     pub fn ensure_open(&self, id: &SessionId) {
         {
-            let sessions = self.sessions.lock().unwrap();
-            if sessions.contains_key(id) {
+            let mut sessions = self.sessions.lock().unwrap();
+            if sessions.map.contains_key(id) {
+                sessions.touch(id);
                 return;
             }
         }
@@ -370,8 +479,17 @@ impl WebState {
             .expect("the Keep opens");
         let surface = self.offering.render(&session);
         let actions = self.offering.actions(&session);
-        self.sessions.lock().unwrap().insert(id.clone(), session);
+        let evicted = self
+            .sessions
+            .lock()
+            .unwrap()
+            .insert_evicting(id.clone(), session);
         let mut fe = self.frontend.lock().unwrap();
+        // Tear down the frontend slots of the LRU-evicted sessions, so `presented` stays bounded
+        // in lockstep with the sessions map.
+        for gone in &evicted {
+            fe.teardown(gone);
+        }
         fe.spin_session(id.clone());
         fe.present(id, &surface, &actions);
     }
@@ -379,19 +497,19 @@ impl WebState {
     /// Re-verify a session's whole committed chain by replay (the offering's own proof).
     pub fn verify(&self, id: &SessionId) -> Option<VerifyReport> {
         let sessions = self.sessions.lock().unwrap();
-        sessions.get(id).map(|s| self.offering.verify(s))
+        sessions.map.get(id).map(|s| self.offering.verify(s))
     }
 
     /// The number of real verified turns (genesis + committed steps) in a session.
     pub fn receipts_len(&self, id: &SessionId) -> Option<usize> {
         let sessions = self.sessions.lock().unwrap();
-        sessions.get(id).map(|s| s.receipts_len())
+        sessions.map.get(id).map(|s| s.receipts_len())
     }
 
     /// The session's current room (passage) name, if still running.
     pub fn current_room(&self, id: &SessionId) -> Option<String> {
         let sessions = self.sessions.lock().unwrap();
-        sessions.get(id).and_then(|s| s.current_passage_name())
+        sessions.map.get(id).and_then(|s| s.current_passage_name())
     }
 
     /// Re-derive the current surface + actions from the live session, tell the frontend to
@@ -399,16 +517,19 @@ impl WebState {
     /// fragment, and wrap it in a full HTML page with `notice` and the live verify status.
     fn render_page(&self, id: &SessionId, notice: Option<&str>) -> String {
         let (surface, actions, verify) = {
-            let sessions = self.sessions.lock().unwrap();
-            let session = match sessions.get(id) {
-                Some(s) => s,
+            let mut sessions = self.sessions.lock().unwrap();
+            let rendered = match sessions.map.get(id) {
+                Some(session) => (
+                    self.offering.render(session),
+                    self.offering.actions(session),
+                    self.offering.verify(session),
+                ),
                 None => return page_missing(id),
             };
-            (
-                self.offering.render(session),
-                self.offering.actions(session),
-                self.offering.verify(session),
-            )
+            // A render is a touch — keep an actively-viewed session hot so the LRU never evicts it
+            // out from under a live player.
+            sessions.touch(id);
+            rendered
         };
         let fragment = {
             let mut fe = self.frontend.lock().unwrap();
@@ -505,16 +626,26 @@ async fn post_act(
             "Refused: that affordance is not on the current surface.".to_string()
         }
         Some((_sid, action, actor)) => {
-            // The CORE resolves the collected action on the substrate — ONE real turn.
+            // The CORE resolves the collected action on the substrate — ONE real turn. A touch of
+            // an existing session keeps it hot (LRU), so an active player is never the flood's
+            // eviction victim mid-turn.
             let outcome = {
                 let mut sessions = state.sessions.lock().unwrap();
-                let session = sessions
+                let out = sessions
+                    .map
                     .get_mut(&id)
-                    .expect("the session is open (ensure_open ran)");
-                state.offering.advance(session, action, actor)
+                    .map(|session| state.offering.advance(session, action, actor));
+                sessions.touch(&id);
+                out
             };
             match outcome {
-                Outcome::Landed { receipt, ended } => {
+                // The session was LRU-evicted between `ensure_open` and now (only reachable under a
+                // concurrent flood of other ids). An honest refusal — never a panic (that would
+                // reintroduce a DoS while closing one).
+                None => "Refused: the session is no longer live (evicted under load) — reload the \
+                         page to resume from its committed state."
+                    .to_string(),
+                Some(Outcome::Landed { receipt, ended }) => {
                     let card = PlayerTurnReceipt::from_landed(&receipt, ended)
                         .compact_text(PlayerReplaySurface::Web);
                     if ended {
@@ -527,7 +658,7 @@ async fn post_act(
                 }
                 // The executor is the sole referee: a crafted POST of a dimmed / ineligible
                 // affordance lands as a REAL refusal — nothing committed, the world unmoved.
-                Outcome::Refused(why) => {
+                Some(Outcome::Refused(why)) => {
                     metrics::inc_turn_refused();
                     format!("Refused: {why} (nothing committed — anti-ghost).")
                 }
@@ -867,12 +998,22 @@ strong{font-weight:700;color:var(--fg)}
 .backlink{display:inline-flex;align-items:center;gap:.4rem;margin:var(--s5) 0 0;font-size:var(--t-sm);color:var(--fg-2);text-decoration:none;font-weight:600}
 .backlink:hover{color:var(--accent)}
 /* ═══ THE BOARD — the hero surface ═══════════════════════════════════════ */
-.coordgrid{display:grid;gap:.4rem;width:100%;max-width:24rem;margin:1.1rem auto;padding:.6rem;border:1px solid var(--line);border-radius:14px;background:radial-gradient(130% 120% at 50% 0%,#0d1731,#060a15);box-shadow:inset 0 1px 0 rgba(255,255,255,.045),inset 0 0 44px -14px #000,0 20px 46px -26px #000}
-.coordgrid .cell{position:relative;display:flex;align-items:center;justify-content:center;aspect-ratio:1/1;min-width:1.9rem;border:1px solid var(--line-soft);border-radius:9px;background:rgba(255,255,255,.02);color:var(--fg);font-family:var(--mono);font-size:1.15rem;font-weight:700;line-height:1;margin:0;transition:border-color .14s,background .14s,color .14s,transform .09s var(--ease),box-shadow .18s}
-/* The checker — a 5-wide grid only (an odd width ⇒ nth-child alternation IS a checkerboard; a */
-/* tug hand of another width just stays flat). `:where()` zeroes the selector's specificity, so a */
-/* tinted cell (tag-accent/warn) keeps its own field and only the plain squares checker. */
-:where(.coordgrid[style*="repeat(5,"]) .cell:nth-child(2n){background-image:linear-gradient(rgba(255,255,255,.032),rgba(255,255,255,.032))}
+/* A LITERAL meter (a game's light clock, a carry ceiling, a guardian's vitality). The bar is the */
+/* argument and the numbers are the proof, so the track is wide and the value sits beside it in the */
+/* mono voice. Semantic, not decorative: the fill is the accent — it is the thing being spent. */
+.progress{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:.6rem;margin:.35rem 0;font-size:var(--t-sm)}
+.progress-label{color:var(--fg-3);font-size:var(--t-micro);letter-spacing:.12em;text-transform:uppercase;white-space:pre}
+.progress-track{position:relative;height:.62rem;border:1px solid var(--line-soft);border-radius:999px;background:rgba(255,255,255,.045);overflow:hidden}
+.progress-fill{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,rgba(92,201,255,.45),var(--accent));box-shadow:0 0 12px -4px var(--accent)}
+.progress-value{color:var(--fg);font-family:var(--mono);font-size:var(--t-xs);font-variant-numeric:tabular-nums}
+.coordgrid{display:grid;gap:.4rem;width:100%;max-width:32rem;margin:1.1rem auto;padding:.6rem;border:1px solid var(--line);border-radius:14px;background:radial-gradient(130% 120% at 50% 0%,#0d1731,#060a15);box-shadow:inset 0 1px 0 rgba(255,255,255,.045),inset 0 0 44px -14px #000,0 20px 46px -26px #000}
+.coordgrid .cell{position:relative;display:flex;align-items:center;justify-content:center;aspect-ratio:1/1;min-width:1.5rem;border:1px solid var(--line-soft);border-radius:9px;background:rgba(255,255,255,.02);color:var(--fg);font-family:var(--mono);font-size:1.15rem;font-weight:700;line-height:1;margin:0;transition:border-color .14s,background .14s,color .14s,transform .09s var(--ease),box-shadow .18s}
+/* The checker. An ODD width ⇒ nth-child alternation IS a checkerboard; an even one would be */
+/* vertical stripes, so the RENDERER decides (it knows the real column count) and tags the grid */
+/* `.checkered`. No board size is written here — a 5, an 11, or a 13 all land on the same rule. */
+/* `:where()` zeroes the selector's specificity, so a tinted cell (tag-accent/warn) keeps its own */
+/* field and only the plain squares checker. */
+:where(.coordgrid.checkered) .cell:nth-child(2n){background-image:linear-gradient(rgba(255,255,255,.032),rgba(255,255,255,.032))}
 .coordgrid form.cell{padding:0;cursor:pointer}
 .coordgrid form.cell button{width:100%;height:100%;display:flex;align-items:center;justify-content:center;border:0;border-radius:inherit;background:transparent;color:inherit;font:inherit;font-size:inherit;font-weight:inherit;cursor:pointer;padding:0}
 .coordgrid form.cell button:focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-radius:inherit}
@@ -984,9 +1125,11 @@ hr{border:0;border-top:1px solid var(--line-soft);margin:var(--s4) 0}
 .crumb{padding-left:.9rem;padding-right:.9rem}
 .hero,.steps{padding-left:.9rem;padding-right:.9rem}
 .foot{padding-left:.9rem;padding-right:.9rem;flex-direction:column;align-items:flex-start;gap:.75rem}
-/* ≥44px touch targets on the board */
+/* The board on a phone. The STOCK automatafl board is 11 squares wide, so a ≥44px touch target */
+/* per cell (484px) cannot fit a 360px viewport: the cell floor is sized to keep the WHOLE board */
+/* visible without horizontal scroll, and the per-square POST form stays the full cell. */
 .coordgrid{gap:.3rem;padding:.45rem;max-width:100%}
-.coordgrid .cell{min-width:2.75rem;border-radius:8px}
+.coordgrid .cell{min-width:1.35rem;border-radius:8px}
 .affordance{flex-direction:column}
 .affordance input.arg{flex:1 1 auto;width:100%;text-align:left}
 .affordance button{min-height:2.85rem}
@@ -1014,6 +1157,23 @@ hr{border:0;border-top:1px solid var(--line-soft);margin:var(--s4) 0}
 .affordance.pending button,.coordgrid form.cell.pending button{opacity:.6;cursor:progress}
 .affordance.pending,.coordgrid form.cell.pending{cursor:progress}
 form.in-flight button[disabled]{cursor:progress}
+/* ═══ THE AUTOMATAFL FRONT DOOR — rules, seat links, spectator lock ══════ */
+/* The rules list on `/automatafl`: one claim per line, the lead word carrying the weight. */
+.rules{margin:.6rem 0 0;padding:0 0 0 1.1rem;color:var(--fg-2);max-width:74ch}
+.rules li{margin:.5rem 0;line-height:1.55}
+.rules strong{color:var(--fg)}
+/* A seat link is a SECRET — it is set in the mono voice and made selectable as one unit, so it */
+/* reads as key material to be copied whole rather than prose to be skimmed. */
+.invite{margin:.5rem 0 0}
+.invite code{display:block;overflow-x:auto;white-space:nowrap;padding:.55rem .7rem;border:1px dashed var(--line);border-radius:10px;background:rgba(255,255,255,.02);color:var(--head);font-family:var(--mono);font-size:var(--t-sm);user-select:all}
+.seat-link{display:inline-flex;align-items:center;gap:.4rem;margin:.7rem 0 0;font-weight:700;color:var(--accent);text-decoration:none}
+.seat-link:hover{text-decoration:underline}
+/* SPECTATING. The read-only rendering is a native `disabled` fieldset (no markup rewriting), so */
+/* the lock cannot drift from the surface it wraps; this only makes the state legible. */
+.spectate-lock{border:0;margin:0;padding:0;min-inline-size:0}
+.live-surface.spectating .coordgrid{opacity:.94}
+.live-surface.spectating form.cell,.live-surface.spectating .affordance button{cursor:not-allowed}
+.live-surface.spectating form.cell:hover{border-color:var(--line-soft);background:rgba(255,255,255,.02);color:var(--fg);transform:none;box-shadow:none}
 /* ═══ MOTION — only where it clarifies, and never against the user ═══════ */
 @media (prefers-reduced-motion:reduce){
 *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}
@@ -1160,6 +1320,34 @@ const ENHANCE_SCRIPT: &str = r##"<script>
       form.submit();
     });
   },false);
+  /* THE REALTIME SUBSCRIBER. A simultaneous-move table (automatafl) leaves the waiting seat with
+     nothing to do but reload; this holds one EventSource open and swaps in the server's re-render
+     of THIS viewer's surface the moment the opponent seals, opens, or resolves. The stream is
+     per-viewer, so the fog it carries is the fog the page was served with.
+     Degrades to nothing: no EventSource (or no data-events) => the old reload path, untouched.
+     Never clobbers a submit in flight, and never fights the user's own optimistic swap. */
+  function subscribe(){
+    var live=document.getElementById(REGION);
+    if(!live)return;
+    var url=live.getAttribute("data-events");
+    if(!url||!window.EventSource)return;
+    var es;
+    try{es=new EventSource(url,{withCredentials:true});}catch(e){return;}
+    es.onmessage=function(ev){
+      var cur=document.getElementById(REGION);
+      if(!cur)return;
+      if(cur.querySelector("form.in-flight"))return; /* a press is resolving — let it land first */
+      var html=ev.data;
+      if(cur.hasAttribute("data-readonly"))html="<fieldset class=\"spectate-lock\" disabled>"+html+"</fieldset>";
+      if(cur.innerHTML===html)return;
+      cur.innerHTML=html;
+      cur.classList.remove("swap-in");
+      void cur.offsetWidth;
+      cur.classList.add("swap-in");
+    };
+  }
+  if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",subscribe,false);
+  else subscribe();
 })();
 </script>"##;
 
@@ -1167,6 +1355,7 @@ const ENHANCE_SCRIPT: &str = r##"<script>
 const FOOTER: &str = "<footer class=\"foot\">\
      <p>Verification is in-process re-execution — no node, no testnet.</p>\
      <nav aria-label=\"Footer\"><a href=\"/descent\">The Descent</a>\
+     <a href=\"/automatafl\">Automatafl</a>\
      <a href=\"/offerings\">The Lab</a><a href=\"/gallery\">Gallery</a>\
      <a href=\"/health\">Status</a></nav></footer>";
 
@@ -1177,12 +1366,28 @@ const FOOTER: &str = "<footer class=\"foot\">\
 /// `title` is the `<title>` text (escaped here — callers pass raw); `active` marks the current nav
 /// item (`"offerings"` / `"descent"` / `"gallery"` / `""`).
 pub(crate) fn document(title: &str, active: &str, body: &str) -> String {
+    document_with_head(title, active, "", body)
+}
+
+/// [`document`] with EXTRA `<head>` markup — a page-specific stylesheet, and the OpenGraph /
+/// Twitter-card tags a *shareable* surface needs. Meta tags are only honoured in the head, so a
+/// page whose whole job is to be posted somewhere (the Descent run-card) cannot emit them from the
+/// body; this is the one seam that lets it emit them without hand-rolling the product shell (the
+/// way `descent_play`'s standalone `shell_page` did, and drifted out of the `ENHANCE_SCRIPT` it
+/// silently dropped).
+pub(crate) fn document_with_head(
+    title: &str,
+    active: &str,
+    head_extra: &str,
+    body: &str,
+) -> String {
     format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
          <meta name=\"color-scheme\" content=\"dark\">\
-         <title>{title}</title>{style}</head><body>{topbar}{body}{footer}{script}</body></html>",
+         <title>{title}</title>{head_extra}{style}</head><body>{topbar}{body}{footer}{script}</body></html>",
         title = esc(title),
+        head_extra = head_extra,
         style = STYLE,
         topbar = topbar(active),
         body = body,
@@ -2068,6 +2273,13 @@ pub fn catalog_router(state: Arc<CatalogState>) -> Router {
     Router::new()
         .route("/offerings", get(get_catalog))
         .route("/offerings/{key}/session/{id}", get(get_offering_session))
+        // THE REALTIME SEAM — one open `EventSource` per viewer; the server pushes THAT VIEWER's
+        // re-rendered surface whenever it changes. Additive and degradable: a client without
+        // `EventSource` never opens it and keeps the reload path.
+        .route(
+            "/offerings/{key}/session/{id}/events",
+            get(get_offering_events),
+        )
         .route("/offerings/{key}/session/{id}/act", post(post_offering_act))
         .route(
             "/offerings/{key}/session/{id}/act-signed",
@@ -2164,6 +2376,31 @@ async fn get_offering_session(
     .into_response()
 }
 
+/// `GET /offerings/{key}/session/{id}/events` — **the realtime surface stream.**
+///
+/// This is what a simultaneous-move game was missing: automatafl's waiting seat had no way to learn
+/// that the opponent had sealed, opened, or resolved except by hammering reload. The stream holds
+/// one `EventSource` open per viewer and pushes THAT VIEWER's re-rendered surface fragment whenever
+/// the rendered bytes change (server-side change detection — an idle table pushes nothing).
+///
+/// It is the SAME per-viewer render the page is served with, so the fog is identical: a spectator's
+/// stream carries a spectator's fragment and never a sealed move. Degradation is total: a client
+/// without `EventSource`, or with JS off, simply never opens it and the server-form path is
+/// untouched.
+async fn get_offering_events(
+    State(state): State<Arc<CatalogState>>,
+    Path((key, id)): Path<(String, String)>,
+    headers: HeaderMap,
+    Query(query): Query<WebQuery>,
+) -> Response {
+    let sid = SessionId::new(id);
+    let (asserted_user, established) = web_user_established(&headers, &query);
+    let (_, viewer) = catalog_route_viewer(&key, &asserted_user, established);
+    // Never MINT a world from a stream subscription — the stream observes a table, it does not open
+    // one. An unopened session simply renders nothing and the stream stays quiet until it exists.
+    automatafl_web::surface_stream(state, key, sid, viewer).into_response()
+}
+
 /// The `{turn, arg}` POST body of `POST /offerings/{key}/session/{id}/act`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct OfferingActForm {
@@ -2250,6 +2487,24 @@ async fn post_offering_act(
     // Route + attribute an UNestablished RPG touch through the shared anonymous world so a raw
     // `?user=` flood cannot mint a private per-identity world per value (the unbounded-host DoS).
     let (user, actor) = catalog_route_viewer(&key, &asserted_user, established);
+    // THE SEAT LOCK. On an automatafl table minted at `/automatafl` the two seats are bound to two
+    // unguessable server-derived labels, so a stranger who learns the id can neither race in and
+    // claim a seat nor reach the per-viewer sealed-move disclosure by asserting the other seat's
+    // label. Every other key/id is untouched (`Ok(())`), and this refuses BEFORE anything opens or
+    // advances — nothing commits.
+    if let Err(why) = automatafl_web::enforce_seat_lock(&key, &sid.0, &user) {
+        audit::log()
+            .emit(act_audit_event(&user, &actor, &key, &sid, &form).decided("gated", why.clone()));
+        return Html(render_offering_response(
+            &state,
+            &key,
+            &sid,
+            Some(&format!("Refused: {why}.")),
+            &actor,
+            wants_fragment(&headers),
+        ))
+        .into_response();
+    }
     let presented_game = if game_kind(&key).is_some() {
         match state.presented_game_action(&key, &sid, &form) {
             Ok(reference) => Some(reference),
@@ -2913,8 +3168,14 @@ fn catalog_node(node: &ViewNode, key: &str, id: &str, out: &mut String) {
         // `highlighted` class. An inert cell is a plain span — never a button.
         ViewNode::CoordGrid { cols, cells } => {
             let cols_n = (*cols).max(1);
+            // The checkerboard is a property of the WIDTH, not of a particular game: `nth-child`
+            // alternation reads as a checker only when the row length is odd (an even width would
+            // stripe). The renderer knows the real column count, so it decides here and the
+            // stylesheet stays free of board sizes — a 5, an 11 or a 13 all render correctly.
+            let checkered = if cols_n % 2 == 1 { " checkered" } else { "" };
             out.push_str(&format!(
-                "<div class=\"coordgrid\" style=\"grid-template-columns:repeat({cols_n},1fr)\">",
+                "<div class=\"coordgrid{checkered}\" \
+                 style=\"grid-template-columns:repeat({cols_n},1fr)\">",
             ));
             for (i, cell) in cells.iter().enumerate() {
                 let hl = if cell.highlight { " highlighted" } else { "" };
@@ -2925,11 +3186,13 @@ fn catalog_node(node: &ViewNode, key: &str, id: &str, out: &mut String) {
                 };
                 // THE GOAL SQUARE — automatafl's objective squares paint the lowercase glyphs
                 // `a`/`b` (the seat's goal) when vacant; no piece uses those glyphs (pieces are
-                // `R`/`A`/`@`/`·`), so a lowercase `a`/`b` uniquely marks a goal cell. It gets a
-                // distinct `goal` look (a teal dashed objective ring) so a goal no longer reads as
-                // a plain vacant square — even when it is also a legal move target (green) it stays
-                // legible as the objective.
-                let goal = if cell.glyph == "a" || cell.glyph == "b" {
+                // `R`/`A`/`@`/`·`), so a lowercase `a`/`b` uniquely marks a goal cell. On the STOCK
+                // board a goal corner starts OCCUPIED (a repulsor sits on all four), and an
+                // occupied corner keeps its piece glyph — so the surface also tags it `goal`, and
+                // either signal earns the distinct `goal` look (a teal dashed objective ring). A
+                // goal never reads as a plain square — even when it is also a legal move target
+                // (green) it stays legible as the objective.
+                let goal = if cell.glyph == "a" || cell.glyph == "b" || cell.tag == "goal" {
                     " goal"
                 } else {
                     ""
@@ -3160,9 +3423,22 @@ fn catalog_node(node: &ViewNode, key: &str, id: &str, out: &mut String) {
                 esc(label)
             ));
         }
+        // A LITERAL meter (a light clock, a carry ceiling, a guardian's vitality) is the one bound
+        // visual the no-JS route CAN paint honestly: it carries its own numbers, so the fill is
+        // baked here rather than waiting on a live slot. `label · bar · value/max` — a real bar, not
+        // a bare ratio, because the shape is what a player reads at a glance.
         ViewNode::Progress { value, max, label } => {
+            let pct = if *max == 0 {
+                0.0
+            } else {
+                (*value as f64 / *max as f64).clamp(0.0, 1.0) * 100.0
+            };
             out.push_str(&format!(
-                "<div class=\"progress\">{}{}/{}</div>",
+                "<div class=\"progress\">\
+                 <span class=\"progress-label\">{}</span>\
+                 <span class=\"progress-track\">\
+                 <span class=\"progress-fill\" style=\"width:{pct:.1}%\"></span></span>\
+                 <span class=\"progress-value\">{}/{}</span></div>",
                 esc(label),
                 value,
                 max
@@ -3313,17 +3589,28 @@ fn catalog_page(offerings: &[OfferingInfo]) -> String {
         };
         // A live session is worth SEEING (a lit dot), not just counting.
         let live = if o.open_sessions > 0 { " live" } else { "" };
+        // An offering with a BESPOKE front door gets a second link to it. The shared card link
+        // drops you into a fixed, publicly-guessable demo session (`{key}-web`); for a hidden-move
+        // two-player game that is the wrong default, so automatafl also offers its own table-minting
+        // door where the seats are locked to two unguessable links.
+        let front_door = if o.key == automatafl_web::KEY {
+            "<a class=\"play\" href=\"/automatafl\">Open your own table \
+             <span class=\"arr\" aria-hidden=\"true\">→</span></a>"
+        } else {
+            ""
+        };
         format!(
             "<div class=\"offering-card\"><h3>{name}</h3>{tagline}\
              <p class=\"meta\"><span class=\"dot{live}\"></span>{key} · {n} open</p>\
              <a class=\"play\" href=\"/offerings/{key}/session/{key}-web\">{verb} \
-             <span class=\"arr\" aria-hidden=\"true\">→</span></a></div>",
+             <span class=\"arr\" aria-hidden=\"true\">→</span></a>{front_door}</div>",
             name = esc(name),
             tagline = tagline_html,
             live = live,
             key = esc(&o.key),
             n = o.open_sessions,
             verb = verb,
+            front_door = front_door,
         )
     };
     let group = |heading: &str, shelf: &str, blurb: &str, keys: &[&str], verb: &str| -> String {
@@ -3457,12 +3744,16 @@ fn offering_page(key: &str, title: &str, id: &SessionId, surface: &str) -> Strin
          <div class=\"page-head\" style=\"padding-top:var(--s4)\"><h1>{name}</h1>{tagline}</div>\
          {session_rail}\
          <div id=\"live-surface\" class=\"live-surface\" tabindex=\"-1\" aria-live=\"polite\" \
-         data-result-kind=\"surface-and-receipt\">{surface}</div>\
+         data-result-kind=\"surface-and-receipt\" data-events=\"{events}\">{surface}</div>\
          </main>",
         crumb = crumb(name, id),
         name = esc(name),
         tagline = tagline_html,
         session_rail = game_session::session_rail(key, &id.0).unwrap_or_default(),
+        // The realtime seam the enhancement script subscribes to. Declared on the live region
+        // itself so the swap target and its stream can never disagree about which session they are
+        // showing; a client with no `EventSource` ignores the attribute entirely.
+        events = format!("/offerings/{}/session/{}/events", esc(key), esc(&id.0)),
         surface = surface,
     );
     document(&format!("DreggNet Cloud — {title}"), "offerings", &body)
@@ -4612,6 +4903,12 @@ fn make_app_parts_with_catalog(
         // `bindings_native_descent` executor), NOT the `<dregg-descent>` element. State-free +
         // additive; no route overlap with `descent_router`'s board/run/submit surface.
         .merge(descent_play::descent_play_router())
+        // THE AUTOMATAFL FRONT DOOR — `GET /automatafl` (the rules + the CTA), `POST
+        // /automatafl/table` (mint a seat-locked table + its two unguessable seat links), `GET
+        // /automatafl/table/{id}` (take a seat), `GET /automatafl/watch/{id}` (spectate the fogged
+        // board, controls disabled). Additive; the play itself still happens on the catalog's own
+        // `/offerings/automatafl/session/{id}` surface.
+        .merge(automatafl_web::automatafl_router(Arc::clone(&catalog)))
         .merge(sprite::sprite_router())
         .merge(overlay_router);
     #[cfg(feature = "hosted-binary-operations")]
@@ -4713,33 +5010,59 @@ async fn health() -> impl IntoResponse {
 /// product and teaches its colour language before a stranger clicks anything. Inert spans,
 /// `aria-hidden` (the adjacent legend states the same thing in text); no assets, no requests.
 fn hero_board() -> String {
-    /// The selected piece at (1,1) — its rook line is the lit legal-move set.
-    const SEL: usize = 6;
-    /// The automaton at the centre (2,2).
-    const AUTO: usize = 12;
-    /// An unselected piece at (3,3) — untagged, so it reads solid.
-    const PIECE: usize = 18;
-    /// Seat A's goal square (0,0) / seat B's (4,4).
-    const GOAL_A: usize = 0;
-    const GOAL_B: usize = 24;
+    // THE REAL POSITION. The still is painted from `dregg_automatafl`'s own opening board and goal
+    // corners — the SAME data the live surface renders — so the landing cannot drift away from the
+    // product it previews. (It used to be a hand-rolled 5×5 grid; when the played board became the
+    // stock 11×11 game, that still would have advertised a board nobody can play.)
+    use dregg_automatafl::game::{GOALS, N, coord_of, index_of, opening_board};
+    use dregg_automatafl::reference::{ATT, AUTO, REP, VAC};
 
-    let mut out = String::from(
-        "<div class=\"coordgrid hero-board\" style=\"grid-template-columns:repeat(5,1fr)\" \
-         aria-hidden=\"true\">",
+    let board = opening_board();
+    // Mid-turn: seat A has the attractor at (3,1) selected, so its rook line is the lit legal-move
+    // set — exactly what the live board highlights on a click.
+    let sel = (3i32, 1i32);
+    let sel_idx = index_of(sel).expect("in bounds");
+
+    // Same checker rule as the live board (`catalog_node`'s `CoordGrid` arm): odd width ⇒ the
+    // nth-child alternation reads as a checkerboard, so the class is decided from the real `N`.
+    let checkered = if N % 2 == 1 { " checkered" } else { "" };
+    let mut out = format!(
+        "<div class=\"coordgrid{checkered} hero-board\" \
+         style=\"grid-template-columns:repeat({N},1fr)\" aria-hidden=\"true\">",
     );
-    for i in 0..25usize {
-        let (r, c) = (i / 5, i % 5);
-        // The selected piece's rook cross — the legal-move set the live surface would light.
-        let lit = r == 1 || c == 1;
-        let (glyph, cls) = match i {
-            AUTO => ("@", "cell highlighted tag-accent"),
-            SEL => ("A", "cell highlighted tag-warn"),
-            PIECE => ("R", "cell"),
-            GOAL_A => ("a", "cell tag-muted goal"),
-            GOAL_B => ("b", "cell tag-muted goal"),
-            _ if lit => ("·", "cell highlighted tag-good"),
-            _ => ("·", "cell tag-muted"),
+    for i in 0..(N * N) {
+        let c = coord_of(i);
+        let p = board.cells[i];
+        // The selected piece's rook cross, minus the automaton's own square (never a legal target).
+        let lit = (c.0 == sel.0 || c.1 == sel.1) && c != board.auto && i != sel_idx;
+        let goal = GOALS.iter().find(|(g, _)| *g == c);
+        // The GLYPH is the square's own content — the piece standing there, or (on a vacant goal
+        // corner) its owner's letter, exactly as the live `CoordGrid` paints it.
+        let glyph = match p {
+            REP => "R".to_string(),
+            ATT => "A".to_string(),
+            AUTO => "@".to_string(),
+            _ => match goal {
+                Some((_, 0)) => "a".to_string(),
+                Some(_) => "b".to_string(),
+                None => "·".to_string(),
+            },
         };
+        // The CLASS is the square's role this turn.
+        let mut cls = if c == board.auto {
+            "cell highlighted tag-accent".to_string()
+        } else if i == sel_idx {
+            "cell highlighted tag-warn".to_string()
+        } else if lit {
+            "cell highlighted tag-good".to_string()
+        } else if p == VAC {
+            "cell tag-muted".to_string()
+        } else {
+            "cell".to_string()
+        };
+        if goal.is_some() {
+            cls.push_str(" goal");
+        }
         out.push_str(&format!("<span class=\"{cls}\">{glyph}</span>"));
     }
     out.push_str("</div>");
@@ -4769,6 +5092,7 @@ async fn index() -> Html<String> {
          {hero_play}\
          <a class=\"btn {hero_board_class}\" href=\"/descent\">See today's no-cheat board \
          <span class=\"arr\" aria-hidden=\"true\">→</span></a>\
+         <a class=\"btn btn-ghost\" href=\"/automatafl\">Play Automatafl</a>\
          <a class=\"btn btn-ghost\" href=\"/offerings\">Browse the Lab</a>\
          </div></div>\
          <div class=\"hero-art\">{board}\
