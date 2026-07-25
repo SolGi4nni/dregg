@@ -954,7 +954,10 @@ async function load() {
     nodeGet("api/cells", { limit: "200" }),
     nodeGet("api/receipts"),
     nodeGet("api/blocklace/blocks", { limit: "200" }),
-    nodeGet("api/blocks"),
+    // ATTESTED ROOTS. This used to read `api/blocks`, which served roots under a
+    // name that promises blocks; that path now serves blocks, and the roots kept
+    // their own name.
+    nodeGet("api/federation/roots"),
   ]);
 
   $("#posture").innerHTML = renderPosture(status, producerR.kind === "ok" ? producerR.body : null);
