@@ -32,6 +32,7 @@
 use crate::finality::FinalizedExecution;
 use alloy_primitives::{keccak256, U256};
 use alloy_trie::{proof::verify_proof, Nibbles, TrieAccount};
+use dregg_lean_ffi::{verified_mpt_lc_verify, MptLcVerdict};
 
 /// Re-exported so downstream code and tests can build balances without depending on
 /// `alloy-primitives` directly.
@@ -113,6 +114,19 @@ pub enum Erc20ProofError {
     /// `ProvenErc20Holding` for it (the Nomad-law floor: a trivial/empty holding is not a
     /// proof of participation). Callers wanting existence-of-account use the account path.
     ZeroBalance,
+    /// **FAIL CLOSED — the verified decider is not reachable.** The linked archive does not
+    /// export `dregg_mpt_lc_verify` (cold-seed / marshal-only / stale archive, or a target that
+    /// cannot link it), so no accept/reject can be rendered for the EVM-inclusion decision.
+    /// There is deliberately no Rust fallback: the `is_zero && account_ok && storage_ok`
+    /// composition this crate used to decide with WAS the twin `Dregg2.Bridge.LightClientMptGate`
+    /// deletes — see [`crate::verified_gate`] for the same posture on the ETH path.
+    VerifiedGateUnavailable(String),
+    /// The verified gate REFUSED for a conjunct the diagnostic classifier does not model. In this
+    /// integration the anchor bindings (state-root / token / mapping-slot) hold by construction
+    /// — the proof is opened against the trusted anchors themselves — so this arm is unreachable
+    /// unless the gate's decision drifted from the classifier. The REFUSAL still stands
+    /// (fail-closed).
+    VerifiedGateRefused,
 }
 
 impl core::fmt::Display for Erc20ProofError {
@@ -130,6 +144,16 @@ impl core::fmt::Display for Erc20ProofError {
                 write!(f, "token contract account is absent from the state trie")
             }
             Self::ZeroBalance => write!(f, "claimed balance is zero — refused (no weight)"),
+            Self::VerifiedGateUnavailable(why) => write!(
+                f,
+                "verified EVM-inclusion gate `dregg_mpt_lc_verify` is not reachable ({why}) — \
+                 refused (fail-closed; there is no unverified Rust twin to fall back to)"
+            ),
+            Self::VerifiedGateRefused => write!(
+                f,
+                "verified EVM-inclusion gate refused for an unclassified conjunct — refused \
+                 (fail-closed)"
+            ),
         }
     }
 }
@@ -423,6 +447,128 @@ fn walk_storage_exclusion(
     Err(MptProofInvalid)
 }
 
+// ---------------------------------------------------------------------------
+// The verified EVM-inclusion decision — the Lean gate is the decider
+// ---------------------------------------------------------------------------
+//
+// `Dregg2.Bridge.LightClientMpt.mptVerify` proves `mpt_noForgery` / `mpt_balance_binding`, and
+// `LightClientMptGate.mptVerifyDecision_refines` proves (by `rfl`) that the `@[export]
+// dregg_mpt_lc_verify` decision, fed an update's true projections, IS `mptVerify`:
+//
+//     (bal != 0) && (sr == tsr) && (tk == ttk) && (ms == tms) && account_ok && storage_ok
+//
+// Until now `verify_erc20_holding` decided that composition in Rust — the Nomad-law zero floor
+// (`claimed_balance.is_zero()`) `&&`-ed with the two alloy-trie `verify_proof` results. That Rust
+// `&&`-composition is the twin. It is gone: this crate now COMPUTES the two keccak-interleaved
+// path-walk RESULTS (`account_ok` / `storage_ok`, the `CryptoLeaf.hashCR` carriers) and hands them,
+// with the balance/anchor scalars, to the archive; the gate renders accept/reject.
+//
+// The anchor bindings (`sr == tsr` &c.) hold BY CONSTRUCTION here: `verify_erc20_holding` opens the
+// proof against a SINGLE trusted anchor (there is no separately-carried update root to compare), so
+// the update's anchor IS the trusted one and the same value is supplied for both wire fields. The
+// decision the gate genuinely renders over this integration is therefore the zero floor composed
+// with the two path walks — exactly the composition deleted from Rust.
+//
+// Fail-closed: an archive that does not export the gate ⇒ `Err(VerifiedGateUnavailable)` and the
+// holding is REFUSED. There is no unverified Rust fallback — the Rust rules WERE the twin.
+
+/// The MPT gate route-through, shared by [`verify_erc20_holding`] and [`verify_erc20_holding_wide`].
+/// Computes the two keccak path-walk RESULTS (dominated-conjunct short-circuited, monotone-safe),
+/// hands the balance/anchor scalars + those results to `@[export] dregg_mpt_lc_verify`, and mints a
+/// [`HoldingTrust::StructureOnly`] holding ONLY on the gate's accept. `slot_key` is the already-
+/// derived storage-trie slot key (narrow or wide); `slot_decimal` is that mapping-slot's decimal
+/// `Nat` encoding for the wire (supplied for both trusted and carried — equal by construction).
+#[allow(clippy::too_many_arguments)]
+fn mpt_gate_holding(
+    state_root: [u8; 32],
+    account_proof: &[Vec<u8>],
+    storage_proof: &[Vec<u8>],
+    token: [u8; 20],
+    holder: [u8; 20],
+    slot_key: [u8; 32],
+    slot_decimal: String,
+    account: &AccountClaim,
+    claimed_balance: U256,
+    block_number: u64,
+) -> Result<ProvenErc20Holding, Erc20ProofError> {
+    // DOMINATED-CONJUNCT SHORT-CIRCUIT (mirrors `verified_gate`'s ETH pattern): the zero floor and
+    // a failed account walk each dominate the `mptVerify` conjunction, so reporting `false` for the
+    // work below them is monotone-downward — it can only make the gate refuse more, never admit.
+    let dominated_zero = claimed_balance.is_zero();
+    let account_ok = if dominated_zero {
+        false
+    } else {
+        verify_evm_account_proof(state_root, token, account, account_proof).is_ok()
+    };
+    let storage_ok = if dominated_zero || !account_ok {
+        false
+    } else {
+        verify_evm_storage_slot(
+            account.storage_hash,
+            slot_key,
+            claimed_balance,
+            storage_proof,
+        )
+        .is_ok()
+    };
+
+    // The model's projections are `Nat` decimals; the digest/identifier scalars are the decimal
+    // encodings of the 256-bit / 160-bit values (they do not fit a fixed integer, hence `&str`).
+    // Carried == trusted by construction (see the note above), so the same value is supplied twice.
+    let bal = claimed_balance.to_string();
+    let sr = U256::from_be_bytes(state_root).to_string();
+    let tk = U256::from_be_slice(&token).to_string();
+
+    match verified_mpt_lc_verify(
+        &bal,
+        &sr,
+        &sr,
+        &tk,
+        &tk,
+        &slot_decimal,
+        &slot_decimal,
+        account_ok,
+        storage_ok,
+    ) {
+        Ok(MptLcVerdict::Accept) => Ok(ProvenErc20Holding {
+            holder,
+            token,
+            balance: claimed_balance,
+            state_root,
+            block_number,
+            trust: HoldingTrust::StructureOnly,
+        }),
+        Ok(MptLcVerdict::Reject) => {
+            Err(mpt_refusal_reason(claimed_balance, account_ok, storage_ok))
+        }
+        Err(why) => Err(Erc20ProofError::VerifiedGateUnavailable(why)),
+    }
+}
+
+/// Attach a specific fail-closed reason to a refusal the VERIFIED gate has ALREADY rendered — the
+/// non-authoritative diagnostic for the MPT path (the analog of `verified_gate::refusal_reason`).
+/// It is called only after the gate returned `Reject`; every arm returns an `Erc20ProofError` and
+/// it has no accepting outcome. The arms follow `mptVerifyDecision`'s `&&` order so the specific
+/// error (`ZeroBalance` / `AccountProofInvalid` / `StorageProofInvalid`) matches the deleted Rust
+/// path's fail-closed vocabulary exactly.
+fn mpt_refusal_reason(
+    claimed_balance: U256,
+    account_ok: bool,
+    storage_ok: bool,
+) -> Erc20ProofError {
+    if claimed_balance.is_zero() {
+        Erc20ProofError::ZeroBalance
+    } else if !account_ok {
+        Erc20ProofError::AccountProofInvalid
+    } else if !storage_ok {
+        Erc20ProofError::StorageProofInvalid
+    } else {
+        // Unreachable in this integration (the anchor bindings hold by construction); the gate
+        // nonetheless refused, so the holding stays refused (fail-closed).
+        Erc20ProofError::VerifiedGateRefused
+    }
+}
+
 /// **Prove a holder's ERC-20 balance against a caller-supplied state root —
 /// non-custodially.** Mints a [`HoldingTrust::StructureOnly`] holding: the MPT chain is
 /// fully verified, but THIS function has no evidence the `state_root` itself is
@@ -450,37 +596,24 @@ pub fn verify_erc20_holding(
     claimed_balance: U256,
     block_number: u64,
 ) -> Result<ProvenErc20Holding, Erc20ProofError> {
-    // Nomad-law floor: a zero holding is not a proof of holding.
-    if claimed_balance.is_zero() {
-        return Err(Erc20ProofError::ZeroBalance);
-    }
-
-    // (1) ACCOUNT PROOF: state_root --MPT--> keccak256(token) -> RLP(account).
-    //     Reconstruct the exact RLP account leaf; verify_proof checks the terminal
-    //     value equals it. This binds nonce/balance/storageHash/codeHash all at once —
-    //     any wrong field (or wrong contract, or wrong state root) fails closed.
-    verify_evm_account_proof(state_root, token, account, account_proof)
-        .map_err(|_| Erc20ProofError::AccountProofInvalid)?;
-
-    // (2) STORAGE PROOF: storage_hash --MPT--> keccak256(slot_key) -> RLP(balance).
-    //     The storage-trie value is the minimal big-endian RLP of the uint256 balance.
+    // THE DECISION is the verified Lean gate's, not a Rust `&&`-composition. This computes the two
+    // keccak path-walk RESULTS and the balance/anchor scalars and routes them through
+    // `dregg_mpt_lc_verify` (the zero floor, the anchor bindings and the two walks are
+    // `mptVerifyDecision`, which `mptVerifyDecision_refines` proves is `mptVerify`). Fail-closed on
+    // a missing archive ([`Erc20ProofError::VerifiedGateUnavailable`]) — no unverified twin remains.
     let slot_key = erc20_balance_slot_key(&holder, balances_slot);
-    verify_evm_storage_slot(
-        account.storage_hash,
-        slot_key,
-        claimed_balance,
-        storage_proof,
-    )
-    .map_err(|_| Erc20ProofError::StorageProofInvalid)?;
-
-    Ok(ProvenErc20Holding {
-        holder,
-        token,
-        balance: claimed_balance,
+    mpt_gate_holding(
         state_root,
+        account_proof,
+        storage_proof,
+        token,
+        holder,
+        slot_key,
+        balances_slot.to_string(),
+        account,
+        claimed_balance,
         block_number,
-        trust: HoldingTrust::StructureOnly,
-    })
+    )
 }
 
 /// **Prove a holder's ERC-20 balance where the `balances` mapping sits at an ARBITRARY
@@ -520,33 +653,21 @@ pub fn verify_erc20_holding_wide(
     claimed_balance: U256,
     block_number: u64,
 ) -> Result<ProvenErc20Holding, Erc20ProofError> {
-    // Nomad-law floor: a zero holding is not a proof of holding.
-    if claimed_balance.is_zero() {
-        return Err(Erc20ProofError::ZeroBalance);
-    }
-
-    // (1) ACCOUNT PROOF: state_root --MPT--> keccak256(token) -> RLP(account).
-    verify_evm_account_proof(state_root, token, account, account_proof)
-        .map_err(|_| Erc20ProofError::AccountProofInvalid)?;
-
-    // (2) STORAGE PROOF over the WIDE (32-byte-base) balances-mapping slot key.
+    // THE DECISION is the verified Lean gate's (see [`verify_erc20_holding`]); the ONLY difference
+    // is the WIDE (32-byte-base) balances-mapping slot key. Same fail-closed posture.
     let slot_key = erc20_balance_slot_key_wide(&holder, &balances_base_slot);
-    verify_evm_storage_slot(
-        account.storage_hash,
-        slot_key,
-        claimed_balance,
-        storage_proof,
-    )
-    .map_err(|_| Erc20ProofError::StorageProofInvalid)?;
-
-    Ok(ProvenErc20Holding {
-        holder,
-        token,
-        balance: claimed_balance,
+    mpt_gate_holding(
         state_root,
+        account_proof,
+        storage_proof,
+        token,
+        holder,
+        slot_key,
+        U256::from_be_bytes(balances_base_slot).to_string(),
+        account,
+        claimed_balance,
         block_number,
-        trust: HoldingTrust::StructureOnly,
-    })
+    )
 }
 
 /// **The consensus-anchored proof-of-holdings entry.** Opens the EIP-1186 proof chain

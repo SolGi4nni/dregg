@@ -30,6 +30,15 @@
 //! * `compute_signing_root(header, domain) = hash_tree_root(SigningData{ object_root: hash_tree_root(header), domain })`
 //!   = `SHA-256( hash_tree_root(header) || domain )`.
 
+//! ## Who decides (the twin-deletion boundary)
+//!
+//! The accept/reject for every rule above — the 2/3 threshold, the committee-size and
+//! bitfield checks, the zero-participant Nomad floor, the branch-depth admissibility — is
+//! rendered by the VERIFIED Lean gate `@[export] dregg_eth_lc_verify`, reached through
+//! [`verified_gate`]. This crate computes the crypto PRIMITIVES (`blst` aggregate verify and
+//! the SHA-256 SSZ reconstructions) and hands their RESULTS to the archive. It no longer
+//! carries a Rust re-authoring of the rules, and it FAILS CLOSED when the archive is absent.
+
 pub mod ssz;
 
 pub mod base;
@@ -38,6 +47,7 @@ pub mod evm;
 pub mod execution;
 pub mod finality;
 pub mod store;
+pub mod verified_gate;
 
 use blst::min_pk::{AggregatePublicKey, PublicKey, Signature};
 use blst::BLST_ERROR;
@@ -98,6 +108,20 @@ pub enum Error {
     BadExecutionBranch,
     /// A Merkle branch of the wrong depth was supplied.
     WrongBranchLength { got: usize, expected: usize },
+    /// The participation bitfield is not exactly [`SYNC_COMMITTEE_SIZE`] bits.
+    WrongBitfieldLength { got: usize },
+    /// **FAIL CLOSED — the verified decider is not reachable.** The linked archive does not
+    /// export `dregg_eth_lc_verify` (cold-seed / marshal-only / stale archive, or a target that
+    /// cannot link it), so no accept/reject can be rendered. There is deliberately no Rust
+    /// fallback: the Rust rules WERE the twin this crate deleted, and a light client that
+    /// silently falls back to an unverified twin is the exact posture
+    /// `Dregg2.Bridge.LightClientEthGate` exists to end. See [`verified_gate`].
+    VerifiedGateUnavailable(String),
+    /// The verified gate REFUSED, and the non-authoritative diagnostic classifier could not name
+    /// which conjunct failed — the classifier has drifted from the gate. The REFUSAL still
+    /// stands; `wire` is the exact `dregg_eth_lc_verify` input, so the divergence is
+    /// reproducible against the archive directly.
+    VerifiedGateRefused { wire: String },
 }
 
 impl core::fmt::Display for Error {
@@ -275,15 +299,129 @@ pub fn bls_aggregate_verify_same_message(
 // The two light-client gates
 // ---------------------------------------------------------------------------
 
-/// Verify a sync-committee signature over a beacon header.
+/// The sync-aggregate PROJECTIONS `LightClientEthGate.syncDecision` decides over: three
+/// combinatorial facts plus the `blst` aggregate-verify RESULT. Producing one of these decides
+/// NOTHING — it is the crypto-primitive computation that survived the twin deletion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncProjection {
+    /// `ts.committee.length`.
+    pub committee_len: usize,
+    /// `agg.bits.length` — 512 by the wire type, projected honestly rather than assumed.
+    pub bits_len: usize,
+    /// `(participants ts.committee agg.bits).length` — the Lean `participants` is a
+    /// zip-truncating filter, so the subset is taken over `min(committee_len, bits_len)`.
+    pub participant_count: usize,
+    /// The `EthLeaf.blsAggVerify` carrier's boolean result.
+    pub bls_ok: bool,
+    /// The carrier's own failure classification (`BadPubkey` vs `BadSignature`), kept for the
+    /// non-authoritative refusal diagnostic — the boolean projection erases it. `None` when the
+    /// aggregate verified or when it was skipped as a dominated conjunct.
+    pub bls_err: Option<Error>,
+}
+
+/// Compute the sync-aggregate projections: the participating subset, its size, and the `blst`
+/// aggregate verify over that subset and the signing root. **Decides nothing** — no threshold,
+/// no committee-size rule, no floor. [`verify_sync_aggregate`] hands the result to the archive.
 ///
-/// Aggregates the participating committee pubkeys, computes the signing root with
-/// the correct sync-committee domain, and BLS-verifies the aggregate signature —
-/// enforcing the 2/3 participation threshold.
+/// The expensive `blst` aggregate verify is SKIPPED (reported `false`) when a cheap
+/// combinatorial conjunct already fails, so an unauthenticated sub-quorum update cannot buy a
+/// 342-key pairing check. That substitution is monotone-downward on a conjunction — it can only
+/// ever make the gate refuse more, never admit more — so it is an optimization, not a decision
+/// (see `verified_gate`'s module docs).
+pub fn sync_projection(
+    header: &BeaconBlockHeader,
+    sync_aggregate: &SyncAggregate,
+    committee_pubkeys: &[[u8; 48]],
+    fork_version: [u8; 4],
+    genesis_validators_root: [u8; 32],
+) -> SyncProjection {
+    let committee_len = committee_pubkeys.len();
+    let bits_len = sync_aggregate.sync_committee_bits.len() * 8;
+
+    // The participating subset, exactly `LightClientEth.participants` (zip-truncating): a
+    // committee longer than the bitfield contributes nothing past the bitfield's end, which is
+    // also what keeps `participated` in bounds for an over-long committee.
+    let participants: Vec<&[u8; 48]> = committee_pubkeys
+        .iter()
+        .take(bits_len)
+        .enumerate()
+        .filter(|(i, _)| sync_aggregate.participated(*i))
+        .map(|(_, pk)| pk)
+        .collect();
+    let participant_count = participants.len();
+
+    // DOMINATED-CONJUNCT SHORT-CIRCUIT (see the module docs on `verified_gate`): when one of the
+    // cheap conjuncts fails, `syncDecision` is already `false` whatever the BLS result is, so
+    // reporting `bls_ok = false` cannot change the gate's verdict — and skipping the pairing
+    // work denies the DoS.
+    let dominated = committee_len != SYNC_COMMITTEE_SIZE
+        || bits_len != SYNC_COMMITTEE_SIZE
+        || participant_count == 0
+        || participant_count * 3 < SYNC_COMMITTEE_SIZE * 2;
+    if dominated {
+        return SyncProjection {
+            committee_len,
+            bits_len,
+            participant_count,
+            bls_ok: false,
+            bls_err: None,
+        };
+    }
+
+    let bls_err = bls_aggregate_over_participants(
+        &participants,
+        header,
+        sync_aggregate,
+        fork_version,
+        genesis_validators_root,
+    )
+    .err();
+    SyncProjection {
+        committee_len,
+        bits_len,
+        participant_count,
+        bls_ok: bls_err.is_none(),
+        bls_err,
+    }
+}
+
+/// The `blst` aggregate-verify CARRIER: deserialize + subgroup-validate the participating
+/// pubkeys, compute the signing root under the sync-committee domain, and verify the aggregate
+/// G2 signature. This is a crypto primitive — it reports whether the signature verifies and
+/// nothing about whether the update is admissible.
+fn bls_aggregate_over_participants(
+    participants: &[&[u8; 48]],
+    header: &BeaconBlockHeader,
+    sync_aggregate: &SyncAggregate,
+    fork_version: [u8; 4],
+    genesis_validators_root: [u8; 32],
+) -> Result<(), Error> {
+    let pks: Vec<PublicKey> = participants
+        .iter()
+        .map(|b| PublicKey::from_bytes(b.as_slice()))
+        .collect::<Result<_, _>>()
+        .map_err(|_| Error::BadPubkey)?;
+    let pk_refs: Vec<&PublicKey> = pks.iter().collect();
+    let signing_root = compute_signing_root(header, fork_version, genesis_validators_root);
+    let sig = Signature::from_bytes(&sync_aggregate.sync_committee_signature)
+        .map_err(|_| Error::BadSignature)?;
+    bls_aggregate_verify_same_message(&pk_refs, &signing_root, &sig)
+}
+
+/// Verify a sync-committee signature over a beacon header — **decided by the verified Lean
+/// gate**, not by Rust.
 ///
-/// Fail-closed on: an empty / wrong-size committee, zero participants,
-/// sub-threshold participation, an undecodable pubkey/signature, a wrong
-/// domain/fork (wrong signing root → signature mismatch), or a bad signature.
+/// Computes the crypto primitive ([`sync_projection`]) and hands the projections to
+/// `dregg_eth_lc_verify` asking about its `syncDecision` conjunct (committee is exactly 512
+/// keys, the bitfield is 512 bits, the participating subset is nonempty, participation meets the
+/// multiply-form 2/3 threshold, and the BLS aggregate verified). The 2/3 arithmetic and the
+/// floors are `LightClientEthGate.syncDecision`, which
+/// `LightClientEthGate.syncDecision_refines` proves is `LightClientEth.verifySyncAggregate`.
+///
+/// Fail-closed on: an empty / wrong-size committee, zero participants, sub-threshold
+/// participation, an undecodable pubkey/signature, a wrong domain/fork (wrong signing root →
+/// signature mismatch), a bad signature — **and on a missing archive**
+/// ([`Error::VerifiedGateUnavailable`]), because there is no unverified twin to fall back to.
 pub fn verify_sync_aggregate(
     header: &BeaconBlockHeader,
     sync_aggregate: &SyncAggregate,
@@ -291,47 +429,22 @@ pub fn verify_sync_aggregate(
     fork_version: [u8; 4],
     genesis_validators_root: [u8; 32],
 ) -> Result<(), Error> {
-    if committee_pubkeys.len() != SYNC_COMMITTEE_SIZE {
-        return Err(Error::WrongCommitteeSize {
-            got: committee_pubkeys.len(),
-        });
-    }
-
-    // Participating subset (bit set in the aggregate).
-    let participants: Vec<&[u8; 48]> = committee_pubkeys
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| sync_aggregate.participated(*i))
-        .map(|(_, pk)| pk)
-        .collect();
-
-    let count = participants.len();
-    if count == 0 {
-        return Err(Error::NoParticipants);
-    }
-    // Safe-update threshold: participants * 3 >= SYNC_COMMITTEE_SIZE * 2 (>= 2/3).
-    // The multiply form avoids the rounding trap of `count >= 2*512/3`.
-    let required = (SYNC_COMMITTEE_SIZE * 2).div_ceil(3); // = 342
-    if count * 3 < SYNC_COMMITTEE_SIZE * 2 {
-        return Err(Error::InsufficientParticipation {
-            participants: count,
-            required,
-        });
-    }
-
-    // Deserialize + subgroup-validate each participating pubkey.
-    let pks: Vec<PublicKey> = participants
-        .iter()
-        .map(|b| PublicKey::from_bytes(b.as_slice()))
-        .collect::<Result<_, _>>()
-        .map_err(|_| Error::BadPubkey)?;
-    let pk_refs: Vec<&PublicKey> = pks.iter().collect();
-
-    let signing_root = compute_signing_root(header, fork_version, genesis_validators_root);
-    let sig = Signature::from_bytes(&sync_aggregate.sync_committee_signature)
-        .map_err(|_| Error::BadSignature)?;
-
-    bls_aggregate_verify_same_message(&pk_refs, &signing_root, &sig)
+    let sp = sync_projection(
+        header,
+        sync_aggregate,
+        committee_pubkeys,
+        fork_version,
+        genesis_validators_root,
+    );
+    verified_gate::gate(
+        &verified_gate::sync_only(
+            sp.committee_len,
+            sp.bits_len,
+            sp.participant_count,
+            sp.bls_ok,
+        ),
+        sp.bls_err,
+    )
 }
 
 /// Verify the committee-rotation Merkle branch: prove `next_sync_committee`

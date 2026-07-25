@@ -19,6 +19,7 @@ use crate::ssz::{
     self, htr_bytelist_le32, htr_bytes20, htr_logs_bloom, htr_u64, is_valid_merkle_branch,
     merkleize,
 };
+use crate::verified_gate;
 use crate::Error;
 
 /// `EXECUTION_PAYLOAD_GINDEX` — generalized index of `execution_payload` in
@@ -96,33 +97,44 @@ impl ExecutionPayloadHeader {
     }
 }
 
-/// Verify the `execution_branch` proves `execution` against a beacon block
-/// `body_root`, and return the recovered EVM execution `state_root`.
+/// The execution-branch RECONSTRUCTION CARRIER: fold `hash_tree_root(execution)` up the supplied
+/// branch at subtree index 9 and compare against `body_root`. This is the `EthLeaf.hashPairCR`
+/// crypto primitive — it reports whether the branch reconstructs and **decides nothing** about
+/// whether the branch is an admissible depth.
+pub fn execution_branch_reconstructs(
+    execution: &ExecutionPayloadHeader,
+    execution_branch: &[[u8; 32]],
+    body_root: &[u8; 32],
+) -> bool {
+    let leaf = execution.hash_tree_root();
+    is_valid_merkle_branch(
+        &leaf,
+        execution_branch,
+        EXECUTION_PAYLOAD_SUBTREE_INDEX,
+        body_root,
+    )
+}
+
+/// Verify the `execution_branch` proves `execution` against a beacon block `body_root`, and
+/// return the recovered EVM execution `state_root` — **decided by the verified Lean gate**.
 ///
-/// Fail-closed on a wrong-depth branch or a branch that does not reconstruct
-/// `body_root` from `hash_tree_root(execution)` at subtree index 9.
+/// The depth admissibility (exactly 4) is `LightClientEthGate.execDecision`, which
+/// `execDecision_refines` proves is `LightClientEth.verifyExecutionPayload`. Rust supplies the
+/// branch length and the [`execution_branch_reconstructs`] result; the archive renders the
+/// verdict, and refuses to render one at all when it is absent
+/// ([`Error::VerifiedGateUnavailable`]). The returned `state_root` is READ from the header the
+/// gate just accepted — recovery, not a second decision.
 pub fn verify_execution_payload(
     execution: &ExecutionPayloadHeader,
     execution_branch: &[[u8; 32]],
     body_root: &[u8; 32],
 ) -> Result<[u8; 32], Error> {
-    if execution_branch.len() != EXECUTION_PAYLOAD_DEPTH {
-        return Err(Error::WrongBranchLength {
-            got: execution_branch.len(),
-            expected: EXECUTION_PAYLOAD_DEPTH,
-        });
-    }
-    let leaf = execution.hash_tree_root();
-    if is_valid_merkle_branch(
-        &leaf,
-        execution_branch,
-        EXECUTION_PAYLOAD_SUBTREE_INDEX,
-        body_root,
-    ) {
-        Ok(execution.state_root)
-    } else {
-        Err(Error::BadExecutionBranch)
-    }
+    let reconstructs = execution_branch_reconstructs(execution, execution_branch, body_root);
+    verified_gate::gate(
+        &verified_gate::exec_only(execution_branch.len(), reconstructs),
+        None,
+    )?;
+    Ok(execution.state_root)
 }
 
 /// Re-export the merkle root helper so tests can construct self-consistent branch

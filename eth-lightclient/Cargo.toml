@@ -15,6 +15,18 @@ license = "AGPL-3.0-or-later"
 description = "Inbound Ethereum Altair sync-committee light-client verify core: BLS12-381 verification of beacon block headers + SSZ committee-rotation Merkle-branch verify"
 
 [dependencies]
+# THE VERIFIED DECIDER. `dregg-lean-ffi` is the route-through onto the Lean gate
+# `@[export] dregg_eth_lc_verify` (`Dregg2.Bridge.LightClientEthGate`), whose
+# `ethVerifyDecision_refines` proves the exported decision IS
+# `LightClientEth.verifyFinalizedUpdate` — the object `eth_no_forgery` is proven over.
+# This crate no longer decides accept/reject for the ETH verify rules: it computes the
+# crypto PRIMITIVES (blst aggregate verify + the SHA-256 SSZ branch reconstructions) and
+# hands their RESULTS plus the combinatorial projections to the archive, fail-closed.
+# See `src/verified_gate.rs`.
+#
+# No cycle: dregg-lean-ffi's dependency closure is {dregg-circuit -> dregg-dsl, blake3}
+# plus the optional lean-lib extras, none of which reaches eth-lightclient.
+dregg-lean-ffi = { path = "../dregg-lean-ffi" }
 # blst 0.3.16 — supranational's BLS12-381 library, the reference implementation
 # used by Lighthouse, Teku, Prysm, Nimbus, Lodestar. Its `min_pk` variant is
 # exactly ETH2's scheme (G1 public keys, G2 signatures) and it implements the

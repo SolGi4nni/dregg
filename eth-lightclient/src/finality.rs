@@ -21,15 +21,19 @@
 //!   `finality_update`s carry a 7-node branch — we accept either depth, fail-closed
 //!   on any other length.
 //! * The signed message is `attested_header.beacon` under the sync-committee domain
-//!   (handled by [`crate::verify_sync_aggregate`], which enforces the 2/3 floor).
+//!   (the `blst` aggregate verify runs in [`crate::sync_projection`]; the 2/3 floor over its
+//!   result is enforced by the verified Lean gate, see [`crate::verified_gate`]).
 //!
 //! Verifying finality on top of the sync-aggregate is what makes the followed header
 //! *final* rather than merely *attested* — a re-org cannot revert it. The recovered
 //! execution `state_root` is then the anchor for [`crate::evm::verify_erc20_holding`].
 
-use crate::execution::{verify_execution_payload, ExecutionPayloadHeader};
+use crate::execution::{
+    execution_branch_reconstructs, ExecutionPayloadHeader, EXECUTION_PAYLOAD_DEPTH,
+};
 use crate::ssz::is_valid_merkle_branch;
-use crate::{verify_sync_aggregate, BeaconBlockHeader, Error, SyncAggregate};
+use crate::verified_gate::{self, EthProjections};
+use crate::{sync_projection, BeaconBlockHeader, Error, SyncAggregate};
 
 /// `FINALIZED_ROOT_GINDEX` — generalized index of `finalized_checkpoint.root` in
 /// `BeaconState` (Altair..Deneb).
@@ -145,92 +149,143 @@ impl FinalizedExecution {
     }
 }
 
-/// Verify ONLY the finality branch: `hash_tree_root(finalized_beacon)` includes into
-/// `attested_state_root` at the finalized-root gindex. Fail-closed on wrong depth or a
-/// branch that does not reconstruct the attested state root.
-pub fn verify_finality_branch(
+/// The finality-branch RECONSTRUCTION CARRIER: fold `hash_tree_root(finalized_beacon)` up the
+/// supplied branch at subtree index 41 and compare against the attested state root. This is the
+/// `EthLeaf.hashPairCR` crypto primitive — it reports whether the branch reconstructs and
+/// **decides nothing** about whether the branch is an admissible depth.
+pub fn finality_branch_reconstructs(
     finalized_beacon: &BeaconBlockHeader,
     finality_branch: &[[u8; 32]],
     attested_state_root: &[u8; 32],
-) -> Result<(), Error> {
-    // Accept the Altair..Deneb depth (6) OR the Electra+ depth (7). Both walk to the
-    // same subtree index 41; the Electra tree is simply one level deeper. Any other
-    // length is fail-closed.
-    if finality_branch.len() != FINALIZED_ROOT_DEPTH
-        && finality_branch.len() != FINALIZED_ROOT_DEPTH_ELECTRA
-    {
-        return Err(Error::WrongBranchLength {
-            got: finality_branch.len(),
-            expected: FINALIZED_ROOT_DEPTH_ELECTRA,
-        });
-    }
+) -> bool {
     // Sanity: the subtree index is invariant across the fork boundary.
     debug_assert_eq!(
         FINALIZED_ROOT_GINDEX % (1 << FINALIZED_ROOT_DEPTH),
         FINALIZED_ROOT_GINDEX_ELECTRA % (1 << FINALIZED_ROOT_DEPTH_ELECTRA)
     );
     let leaf = finalized_beacon.hash_tree_root();
-    if is_valid_merkle_branch(
+    is_valid_merkle_branch(
         &leaf,
         finality_branch,
         FINALIZED_ROOT_SUBTREE_INDEX,
         attested_state_root,
-    ) {
-        Ok(())
-    } else {
-        Err(Error::BadFinalityBranch)
-    }
+    )
 }
 
-/// **Finality-following + execution-state recovery.**
+/// Verify ONLY the finality branch: `hash_tree_root(finalized_beacon)` includes into
+/// `attested_state_root` at the finalized-root gindex — **decided by the verified Lean gate**.
 ///
-/// Given a `LightClientUpdate` and the CURRENT trusted sync-committee pubkeys, this:
-///   1. verifies the sync-committee BLS aggregate over `attested_header` at the ≥ 2/3
-///      threshold ([`verify_sync_aggregate`] — fail-closed on sub-quorum / bad sig);
-///   2. verifies the finality branch proving `finalized_header.beacon` against
-///      `attested_header.state_root` ([`verify_finality_branch`]);
-///   3. verifies the execution branch proving `finalized_header.execution` against
+/// The depth admissibility (Altair..Deneb 6 OR Electra+ 7, both walking to subtree index 41;
+/// any other length fail-closed) is `LightClientEthGate.finalityDecision`, which
+/// `finalityDecision_refines` proves is `LightClientEth.verifyFinalityBranch`. Rust supplies the
+/// branch length and the [`finality_branch_reconstructs`] result; the archive renders the
+/// verdict, and refuses to render one at all when it is absent
+/// ([`Error::VerifiedGateUnavailable`]).
+pub fn verify_finality_branch(
+    finalized_beacon: &BeaconBlockHeader,
+    finality_branch: &[[u8; 32]],
+    attested_state_root: &[u8; 32],
+) -> Result<(), Error> {
+    let reconstructs =
+        finality_branch_reconstructs(finalized_beacon, finality_branch, attested_state_root);
+    verified_gate::gate(
+        &verified_gate::finality_only(finality_branch.len(), reconstructs),
+        None,
+    )
+}
+
+/// Project a `LightClientUpdate` onto the eight facts the verified gate decides over —
+/// `LightClientEthGate.ethProjectedDecision`, field for field. Three of the eight are the crypto
+/// carriers' RESULTS (`blst` aggregate verify, two SHA-256 branch reconstructions); the other
+/// five are lengths and a popcount. **Nothing here decides.**
+///
+/// Also returned: the `blst` carrier's own failure classification, for the non-authoritative
+/// refusal diagnostic (the boolean projection erases `BadPubkey` vs `BadSignature`).
+pub fn project_update(
+    update: &LightClientUpdate,
+    committee_pubkeys: &[[u8; 48]],
+    fork_version: [u8; 4],
+    genesis_validators_root: [u8; 32],
+) -> (EthProjections, Option<Error>) {
+    let sp = sync_projection(
+        &update.attested_header,
+        &update.sync_aggregate,
+        committee_pubkeys,
+        fork_version,
+        genesis_validators_root,
+    );
+    let finality_ok = finality_branch_reconstructs(
+        &update.finalized_header.beacon,
+        &update.finality_branch,
+        &update.attested_header.state_root,
+    );
+    let exec_ok = execution_branch_reconstructs(
+        &update.finalized_header.execution,
+        &update.finalized_header.execution_branch,
+        &update.finalized_header.beacon.body_root,
+    );
+    (
+        EthProjections {
+            committee_len: sp.committee_len,
+            bits_len: sp.bits_len,
+            participant_count: sp.participant_count,
+            bls_ok: sp.bls_ok,
+            finality_len: update.finality_branch.len(),
+            finality_ok,
+            exec_len: update.finalized_header.execution_branch.len(),
+            exec_ok,
+        },
+        sp.bls_err,
+    )
+}
+
+/// **Finality-following + execution-state recovery — decided by the verified Lean gate.**
+///
+/// Given a `LightClientUpdate` and the CURRENT trusted sync-committee pubkeys, this computes the
+/// three crypto primitives and makes **one** call to `@[export] dregg_eth_lc_verify` over the
+/// update's true projections:
+///   1. the sync-committee BLS aggregate over `attested_header` and the ≥ 2/3 threshold;
+///   2. the finality branch proving `finalized_header.beacon` against
+///      `attested_header.state_root`;
+///   3. the execution branch proving `finalized_header.execution` against
 ///      `finalized_header.beacon.body_root`, recovering the EVM `state_root`.
 ///
-/// On success the light client has advanced to a verified FINALIZED beacon header and
-/// its finalized EVM execution state root. Any failure returns `Err` — never a
-/// partial/asserted advance (fail closed).
+/// The projections passed are exactly `LightClientEthGate.ethProjectedDecision`'s, and
+/// `ethVerifyDecision_refines` proves (by `rfl`) that the gate's decision over them IS
+/// `LightClientEth.verifyFinalizedUpdate` — so an `Ok` here is, given the named `blsSound` /
+/// `hashPairCR` carriers, the `EthValidAt` no-forgery conclusion of
+/// `ethVerifyDecision_no_forgery`, by construction rather than by resemblance.
+///
+/// On success the light client has advanced to a verified FINALIZED beacon header and its
+/// finalized EVM execution state root. Any failure returns `Err` — never a partial/asserted
+/// advance. **A missing archive is also a failure** ([`Error::VerifiedGateUnavailable`]): the
+/// Rust rules that used to decide here were the twin, and they are gone.
 pub fn verify_finalized_update(
     update: &LightClientUpdate,
     committee_pubkeys: &[[u8; 48]],
     fork_version: [u8; 4],
     genesis_validators_root: [u8; 32],
 ) -> Result<FinalizedExecution, Error> {
-    // (1) The sync committee must have signed the attested header with ≥ 2/3
-    //     participation. This is the consensus authority for the whole update.
-    verify_sync_aggregate(
-        &update.attested_header,
-        &update.sync_aggregate,
+    let (projections, bls_err) = project_update(
+        update,
         committee_pubkeys,
         fork_version,
         genesis_validators_root,
-    )?;
+    );
 
-    // (2) The attested state finalizes the finalized header.
-    verify_finality_branch(
-        &update.finalized_header.beacon,
-        &update.finality_branch,
-        &update.attested_header.state_root,
-    )?;
+    // THE decision. Not a Rust match on Rust rules — the archive's verdict over the same eight
+    // projections `ethVerifyDecision_refines` is stated about.
+    verified_gate::gate(&projections, bls_err)?;
 
-    // (3) Recover and bind the EVM execution state root under the finalized header.
-    let execution_state_root = verify_execution_payload(
-        &update.finalized_header.execution,
-        &update.finalized_header.execution_branch,
-        &update.finalized_header.beacon.body_root,
-    )?;
-
+    // Only past the gate is the receipt minted. `execution_state_root` is READ from the payload
+    // header whose inclusion the gate just accepted — the recovery step, not a second decision.
+    debug_assert_eq!(projections.exec_len, EXECUTION_PAYLOAD_DEPTH);
     Ok(FinalizedExecution {
         finalized_slot: update.finalized_header.beacon.slot,
         finalized_beacon_root: update.finalized_header.beacon.hash_tree_root(),
         execution_block_number: update.finalized_header.execution.block_number,
         execution_block_hash: update.finalized_header.execution.block_hash,
-        execution_state_root,
+        execution_state_root: update.finalized_header.execution.state_root,
         execution_timestamp: update.finalized_header.execution.timestamp,
     })
 }
