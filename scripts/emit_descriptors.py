@@ -1112,9 +1112,30 @@ def _tracked_rust_files() -> tuple[list[str], bool]:
     ), False
 
 
+def _reference_is_committed(path: str, needle: str) -> bool:
+    """Does HEAD's version of `path` already contain `needle`?
+
+    The three-way split both doors below use — and the one `verify_by_name_routing` already
+    used for artifacts (its `inflight` list) — turns on this. A reference to an untracked file
+    is a BROKEN HEAD if the reference itself is committed, and a lane MID-AUTHORING if it is
+    not. Conflating them either lets a real break pass or reds every lane that is writing a new
+    module, and a gate that cries wolf during normal authoring is a gate people route around.
+
+    In CI nothing is uncommitted, so working tree == HEAD and every finding is a real break:
+    the distinction costs the gate no teeth where it matters."""
+    out = subprocess.run(
+        ["git", "-C", str(ROOT), "show", f"HEAD:{path}"],
+        capture_output=True, text=True,
+    )
+    if out.returncode != 0:
+        return False  # not in HEAD at all -> the reference cannot be committed
+    return needle in out.stdout
+
+
 def verify_include_targets() -> list[str]:
-    """Every literal `include_str!`/`include_bytes!` target in tracked Rust must EXIST and be
-    TRACKED. Returns finding lines (empty == clean); prints a one-line summary."""
+    """Every literal `include_str!`/`include_bytes!` target in tracked Rust must EXIST, and must
+    be TRACKED wherever the include itself is already committed. Returns finding lines (empty ==
+    clean); prints a one-line summary naming any in-flight (uncommitted-include) pairs."""
     files, have_index = _tracked_rust_files()
     tracked_paths: set[str] = set()
     if have_index:
@@ -1139,6 +1160,7 @@ def verify_include_targets() -> list[str]:
             candidates = {p for p in g.stdout.split("\0") if p} & candidates
 
     findings: list[str] = []
+    inflight_includes: list[str] = []
     n_sites = n_nonliteral = 0
     excluded = 0
     for rel in sorted(candidates):
@@ -1203,13 +1225,16 @@ def verify_include_targets() -> list[str]:
                     f"include and its dispatch arm — do NOT `#[cfg]`-gate the include away."
                 )
             elif have_index and trel not in tracked_paths:
-                findings.append(
-                    f"INCLUDE-UNTRACKED: {rel}:{line} `include_str!/include_bytes!` of "
-                    f"`{m.group(1)}` -> {trel}, which exists ON DISK but is NOT tracked by git. "
-                    f"It compiles for whoever emitted it and BREAKS THE BUILD for every "
-                    f"co-tenant and every fresh clone. Commit the artifact alongside the "
-                    f"include, in the same commit."
-                )
+                if _reference_is_committed(rel, m.group(1)):
+                    findings.append(
+                        f"INCLUDE-UNTRACKED: {rel}:{line} `include_str!/include_bytes!` of "
+                        f"`{m.group(1)}` -> {trel}, which exists ON DISK but is NOT tracked by "
+                        f"git — and the include IS committed. So HEAD is broken RIGHT NOW: it "
+                        f"compiles for whoever emitted the artifact and reds for every "
+                        f"co-tenant and every fresh clone. `git add` the artifact."
+                    )
+                else:
+                    inflight_includes.append(f"{rel}:{line} -> {trel}")
         for m in _INCLUDE_MACRO_ANY.finditer(blanked):
             if m.start() not in literal_starts and not quoted(m.start()):
                 n_nonliteral += 1
@@ -1220,6 +1245,9 @@ def verify_include_targets() -> list[str]:
         f"{len(files)} tracked .rs · checked {leg}"
         + (f" · {n_nonliteral} non-literal (macro-built path) site(s) NOT checkable" if n_nonliteral else "")
         + (f" · {excluded} candidate file(s) in named exclusions" if excluded else "")
+        + (f"\n  IN FLIGHT (untracked target, include NOT yet committed — `git add` the artifact "
+           f"IN THE SAME COMMIT or HEAD breaks): {', '.join(inflight_includes)}"
+           if inflight_includes else "")
     )
     return findings
 
@@ -1267,6 +1295,7 @@ def verify_lean_imports() -> list[str]:
     }
 
     findings: list[str] = []
+    inflight: list[str] = []
     n_imports = 0
     for f in files:
         text = (ROOT / f).read_text(errors="replace")
@@ -1278,17 +1307,30 @@ def verify_lean_imports() -> list[str]:
             if mod in tracked_mods:
                 continue
             line = text.count("\n", 0, m.start()) + 1
-            where = "exists ON DISK but is NOT tracked" if mod in on_disk_mods else "exists NOWHERE"
-            findings.append(
-                f"LEAN-IMPORT-{'UNTRACKED' if mod in on_disk_mods else 'GHOST'}: {f}:{line} "
-                f"imports `{mod}`, whose module file {where}. A committed file cannot import an "
-                f"uncommitted one — a fresh checkout cannot `lake build` this, and every theorem "
-                f"downstream of it is unbuilt rather than proven. Commit the module, or drop the "
-                f"import and whatever it was carrying."
-            )
+            if mod not in on_disk_mods:
+                # GHOST fails unconditionally: nobody is mid-authoring a file that does not exist,
+                # so there is no in-flight reading of this. `lake build` cannot resolve it, and
+                # every theorem citing that module is UNBUILT rather than proven.
+                findings.append(
+                    f"LEAN-IMPORT-GHOST: {f}:{line} imports `{mod}`, whose module file exists "
+                    f"NOWHERE — no file, no git history. A fresh checkout cannot `lake build` "
+                    f"this, and every theorem downstream of it is unbuilt rather than proven. "
+                    f"Commit the module, or drop the import and whatever it was carrying."
+                )
+            elif _reference_is_committed(f, f"import {mod}"):
+                findings.append(
+                    f"LEAN-IMPORT-UNTRACKED: {f}:{line} imports `{mod}`, whose module file exists "
+                    f"ON DISK but is NOT tracked — and the import IS committed. HEAD is broken "
+                    f"RIGHT NOW: it builds for whoever wrote the module and reds for every fresh "
+                    f"checkout (this is the wound `20b9d9a20f` repaired). `git add` the module."
+                )
+            else:
+                inflight.append(f"{f}:{line} -> {mod}")
     print(
         f"verify-lean-imports: {n_imports} first-party import(s) over {len(files)} tracked "
         f"metatheory/*.lean ({len(tracked_mods)} modules) · checked exists+tracked"
+        + (f"\n  IN FLIGHT (untracked module, import NOT yet committed — `git add` the module IN "
+           f"THE SAME COMMIT or HEAD breaks): {', '.join(inflight)}" if inflight else "")
     )
     return findings
 
