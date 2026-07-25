@@ -3,6 +3,38 @@
 for ANY `d : EffectVmDescriptor2` from {floor + per-effect MEMORY LEGS}, with `hood`/`hbus`/
 `MainAirAcceptF` DISCHARGED from the column-layout modelers.
 
+## ⚑⚑ STATUS 2026-07-25 — THE THREE ASSEMBLERS DESCRIBED BELOW ARE DELETED. READ THIS FIRST.
+
+`algoStarkSound_of_memoryLegs`, `algoStarkSound_of_memoryFree` and
+`algoStarkSound_transferV3_ofBusModels` are GONE from this file. They took `FriLdtExtract … d` in
+their FRI slot, and that bundle is PROVED to force `CircuitSoundness.verifyBatch` to reject EVERY
+input at the deployed `cfg*` arguments (`ApexOodLaneRepair.friLdtExtract_makes_verifyBatch_reject_everything`,
+`PremiseInhabitability.friLdtExtract_empties_deployed`) — so all three, and everything assembled
+through them, quantified over an EMPTY accepting set and were VACUOUSLY true.
+
+Their replacements live in `Dregg2/Circuit/ApexOodLaneRepair.lean`, same statements over
+`FriLdtExtractCons` (`oodPoint = ood :: oodRest`, the shape `FriVerifier.batchTablesCheck` matches
+at `FriVerifier.lean:805`):
+`algoStarkSound_of_memoryLegs_cons`, `algoStarkSound_of_memoryFree_cons`,
+`algoStarkSound_transferV3_ofBusModels_cons`.
+
+The corrected premise is NOT a second vacuity: `ApexOodLaneRepair.friLdtExtractCons_iff_noOodShape`
+proves it EQUIVALENT to itself with the OOD conjunct DELETED, because acceptance itself supplies the
+cons shape (`acceptsFull_gives_cons_shape`) — zero added strength, so the repair can never be the
+reason a premise is empty.
+
+`FriLdtExtract` the DEFINITION (§1 below) is deliberately RETAINED as the SUBJECT of those vacuity
+theorems, so the broken shape cannot be reintroduced silently. It has NO consumers left in the tree
+outside the vacuity instruments.
+
+⚠ The rest of this header is the PRE-DELETION text, kept because it still describes §1's bundles,
+§2's `hbus` arm, §4's memory-leg machinery and `algoStarkSound_transferV3_subsumed` accurately.
+Wherever it says `algoStarkSound_of_memoryLegs` / `_of_memoryFree` / `_transferV3_ofBusModels`,
+read the `_cons` form in `ApexOodLaneRepair`. ⚠ `algoStarkSound_transferV3_subsumed` (still here)
+rides `FriLdtExtractV3`, which is ITSELF proved empty
+(`FriLdtExtractDeployed.friLdtExtractV3_makes_verifyBatch_reject_everything`); its corrected chain
+is `StarkSoundFriLdtCorrected`, and it is NOT migrated as of this date.
+
 ## What this closes (the one-line honest claim)
 
 `algoStarkSound_of_memoryLegs (d)` assembles the full `AlgoStarkSound` at the registry slice
@@ -255,63 +287,25 @@ theorem nonArithArm_of_busModels {F : Type*} [Field F] [DecidableEq F]
 /-! ## §3 — ★ THE GENERAL ASSEMBLER: `AlgoStarkSound` for ANY `d`, per-effect inputs =
 {memory legs} only; `hood`/`hbus`/`MainAirAcceptF` discharged from the modelers. -/
 
-/-- **`algoStarkSound_of_memoryLegs` — the ∀-d assembler.** For ANY descriptor `d`, from
-  * the shared floor `Poseidon2SpongeCR sponge` (genuinely used: the commitment binding inside
-    `hood_of_oodColumnLayout`),
-  * the ∀-d FRI extraction bundle `FriLdtExtract … d`,
-  * the per-used-table bus models `BusModelFamily … d`,
-  * the per-effect `MemoryLegs … d`,
-  * the graduated column shape (`d.hashSites = []`, `d.ranges = []` — `rfl` per effect),
-the full `AlgoStarkSound` holds at the registry slice `fun _ => d`. Per accepting run:
-`MainAirAcceptF d t` is DERIVED by the OOD modeler (`hood_of_oodColumnLayout` — acceptance +
-Poseidon2-CR binding + the GENERAL layout law + RLC de-batch — then
-`ood_forces_mainAirAccept_field_of_residuals`); the whole non-arith arm is DERIVED by the LogUp
-modeler through `nonArithArm_of_busModels`; the committed `algoStarkSound_of_bricks` closes the
-class. NO `hood`, NO `hbus`, NO `MainAirAcceptF`, NO per-descriptor column layout among the
-hypotheses. -/
-theorem algoStarkSound_of_memoryLegs {F : Type*} [Field F] [DecidableEq F]
-    (d : EffectVmDescriptor2)
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
-    (hash : List ℤ → ℤ) (fp : List ℤ → F) (embed : ℤ → F)
-    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
-    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
-    (initState : List ℤ) (logN : Nat) (view : ProofView)
-    (tr : BatchPublicInputs → BatchProof → VmTrace)
-    (hsites : d.hashSites = []) (hranges : d.ranges = [])
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr d)
-    (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr d)
-    (hlegs : MemoryLegs hash perm RATE toNat params vk core A initState logN view tr d) :
-    AlgoStarkSound hash (fun _ => d) perm RATE toNat params vk
-      (fullChecks core A toNat params.powBits) initState logN view :=
-  Dregg2.Circuit.AlgoStarkSoundInstance.algoStarkSound_of_bricks hash (fun _ => d)
-    perm RATE toNat params vk (fullChecks core A toNat params.powBits) initState logN view
-    (fun pi π hacc => by
-      obtain ⟨ζ, Λ, qp, topen, ood, vCommitted, root, idx, siblings,
-        hcap, hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩ :=
-        hfri pi π hacc
-      obtain ⟨minit, mfin, maddrs, hrest, hNodup, hClosed, hDisc, hBal, hMemTF, hMapTF⟩ :=
-        hlegs pi π hacc
-      -- `MainAirAcceptF d t`, DERIVED from the OOD column-layout modeler (∀ d):
-      have hAir : MainAirAcceptF d (tr pi π) :=
-        ood_forces_mainAirAccept_field_of_residuals d (tr pi π) hcap ζ qp
-          (hood_of_oodColumnLayout d sponge hCR perm RATE toNat params vk core A initState
-            logN (view pi π).1 (view pi π).2 hacc (tr pi π) ζ Λ qp topen ood vCommitted root
-            idx siblings hoodPt hmem hCommitted hOpened hlayout hLam)
-          hnonexc
-      -- the whole non-arith arm, DERIVED from the LogUp bus modeler (∀ d) + the memory legs:
-      have harm : ∀ i < (tr pi π).rows.length, ∀ c ∈ d.constraints, ¬ isArith c →
-          c.holdsAt hash (tr pi π).tf (envAt (tr pi π) i) (i == 0)
-            (i + 1 == (tr pi π).rows.length) :=
-        nonArithArm_of_busModels hash fp embed d (tr pi π) (hbusF pi π hacc) hrest
-      -- the two graduated-shape legs (rfl-empty column lists):
-      have hH : ∀ i < (tr pi π).rows.length,
-          siteHoldsAll hash (envAt (tr pi π) i) d.hashSites := by
-        intro i _; rw [hsites]; trivial
-      have hR : ∀ i < (tr pi π).rows.length, ∀ r ∈ d.ranges,
-          r.holds (envAt (tr pi π) i) := by
-        intro i _ r hr; rw [hranges] at hr; simp at hr
-      exact ⟨minit, mfin, maddrs, tr pi π, hAir, harm, hH, hR,
-        hNodup, hClosed, hDisc, hBal, hMemTF, hMapTF, hPub⟩)
+/-! **⚑ DELETED 2026-07-25 — `algoStarkSound_of_memoryLegs`.** It was the ∀-d assembler taking
+`FriLdtExtract … d` in its FRI slot. That bundle is PROVED to force `CircuitSoundness.verifyBatch`
+to reject EVERY input at the deployed `cfg*` arguments
+(`ApexOodLaneRepair.friLdtExtract_makes_verifyBatch_reject_everything`,
+`PremiseInhabitability.friLdtExtract_empties_deployed`), so this assembler and everything assembled
+through it quantified over an EMPTY accepting set and was VACUOUSLY true.
+
+Its replacement is `ApexOodLaneRepair.algoStarkSound_of_memoryLegs_cons` — the same statement with
+`FriLdtExtractCons` (`oodPoint = ood :: oodRest`, the shape `FriVerifier.batchTablesCheck` matches at
+`FriVerifier.lean:805`) in the FRI slot, every other input reused unchanged. It is NOT a weaker
+theorem: `ApexOodLaneRepair.friLdtExtractCons_iff_noOodShape` proves the corrected bundle EQUIVALENT
+to itself with the OOD conjunct deleted, because acceptance itself supplies the cons shape
+(`acceptsFull_gives_cons_shape`) — so the corrected premise adds exactly ZERO strength and cannot
+empty anything.
+
+NO TWIN IS KEPT. A caller still holding the old bundle composes `ApexOodLaneRepair.friLdtExtract_imp_cons`
+(a real implication) — but note that doing so buys nothing, since the old bundle is empty at deployed
+args. `FriLdtExtract` the DEFINITION is deliberately retained below as the SUBJECT of the vacuity
+theorems, so the broken shape cannot be reintroduced silently. -/
 
 /-! ## §4 — the MEM/MAP-FREE corollary: no memory-leg input at all. -/
 
@@ -397,58 +391,20 @@ theorem memoryLegs_of_lookupShape
   · rw [memLog_eq_nil_of_lookupShape d (tr pi π) hshape, List.map_nil]; exact hMem
   · rw [mapLog_eq_nil_of_lookupShape d (tr pi π) hshape]; exact hMap
 
-/-- **`algoStarkSound_of_memoryFree` — the mem/map-free assembler.** For any descriptor whose
-non-arith constraints are all lookups (the graduated shape — `rfl`-family per effect) with
-empty legacy column lists, NO memory-leg input remains: the residual is EXACTLY
-{`Poseidon2SpongeCR`, `FriLdtExtract … d`, `BusModelFamily … d`} + the two aux-table-emptiness
-assembly facts (`MemMapFree` — the conjuncts `FriLdtExtractV3` carries verbatim). -/
-theorem algoStarkSound_of_memoryFree {F : Type*} [Field F] [DecidableEq F]
-    (d : EffectVmDescriptor2)
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
-    (hash : List ℤ → ℤ) (fp : List ℤ → F) (embed : ℤ → F)
-    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
-    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
-    (initState : List ℤ) (logN : Nat) (view : ProofView)
-    (tr : BatchPublicInputs → BatchProof → VmTrace)
-    (hshape : ∀ c ∈ d.constraints, ¬ isArith c → ∃ l : Lookup, c = VmConstraint2.lookup l)
-    (hsites : d.hashSites = []) (hranges : d.ranges = [])
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr d)
-    (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr d)
-    (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
-    AlgoStarkSound hash (fun _ => d) perm RATE toNat params vk
-      (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_of_memoryLegs d sponge hCR hash fp embed perm RATE toNat params vk core A
-    initState logN view tr hsites hranges hfri hbusF
-    (memoryLegs_of_lookupShape hash perm RATE toNat params vk core A initState logN view tr d
-      hshape hmemfree)
+/-! **⚑ DELETED 2026-07-25 — `algoStarkSound_of_memoryFree`.** The mem/map-free corollary of the
+deleted `algoStarkSound_of_memoryLegs`, carrying the same EMPTY `FriLdtExtract … d` premise.
+Replacement: `ApexOodLaneRepair.algoStarkSound_of_memoryFree_cons` (identical statement over
+`FriLdtExtractCons`; `memoryLegs_of_lookupShape`, retained above, is still its `MemoryLegs` input).
+Same zero-added-strength receipt as above (`friLdtExtractCons_iff_noOodShape`). -/
 
 /-! ## §5 — ★ transferV3 SUBSUMED. -/
 
-/-- **The general assembler AT the deployed `transferV3`** — `algoStarkSound_of_memoryFree`
-specialized: the per-effect side conditions discharge by `rfl` + the committed shape brick
-(`hbus_is_lookup`); residual = {`Poseidon2SpongeCR`, `FriLdtExtract … transferV3`,
-`BusModelFamily … transferV3`, `MemMapFree`}. This is the DEEPER form of the hand-wired
-instance: the LogUp arm is DERIVED from the extracted bus models, not carried. -/
-theorem algoStarkSound_transferV3_ofBusModels {F : Type*} [Field F] [DecidableEq F]
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
-    (hash : List ℤ → ℤ) (fp : List ℤ → F) (embed : ℤ → F)
-    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
-    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
-    (initState : List ℤ) (logN : Nat) (view : ProofView)
-    (tr : BatchPublicInputs → BatchProof → VmTrace)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
-        transferV3)
-    (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
-        transferV3)
-    (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
-    AlgoStarkSound hash (fun _ => transferV3) perm RATE toNat params vk
-      (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_of_memoryFree transferV3 sponge hCR hash fp embed perm RATE toNat params vk
-    core A initState logN view tr
-    Dregg2.Circuit.AirLegsDischarged.hbus_is_lookup
-    Dregg2.Circuit.AirLegsDischarged.transferV3_hashSites
-    Dregg2.Circuit.AirLegsDischarged.transferV3_ranges
-    hfri hbusF hmemfree
+/-! **⚑ DELETED 2026-07-25 — `algoStarkSound_transferV3_ofBusModels`.** The deployed-`transferV3`
+specialization of the deleted `algoStarkSound_of_memoryFree`, carrying the same EMPTY
+`FriLdtExtract … transferV3` premise — i.e. the apex instance at the deployed descriptor was
+vacuously true. Replacement: `ApexOodLaneRepair.algoStarkSound_transferV3_ofBusModels_cons`, which
+discharges the same per-effect side conditions (`hbus_is_lookup`, `transferV3_hashSites`,
+`transferV3_ranges`) over `FriLdtExtractCons … transferV3`. -/
 
 /-- **The hand-wired `algoStarkSound_transferV3`, RE-DERIVED through the general modeler** —
 the EXACT statement of `AlgoStarkSoundTransferV3.algoStarkSound_transferV3`, with the
@@ -503,14 +459,11 @@ theorem transferV3_sideConditions_mechanical :
 /-! ## Kernel-clean keystones (0 sorries; axiom floor is Lean's own). -/
 
 #assert_axioms nonArithArm_of_busModels
-#assert_axioms algoStarkSound_of_memoryLegs
 #assert_axioms memOpsOf_eq_nil_of_lookupShape
 #assert_axioms mapOpsOf_eq_nil_of_lookupShape
 #assert_axioms memLog_eq_nil_of_lookupShape
 #assert_axioms mapLog_eq_nil_of_lookupShape
 #assert_axioms memoryLegs_of_lookupShape
-#assert_axioms algoStarkSound_of_memoryFree
-#assert_axioms algoStarkSound_transferV3_ofBusModels
 #assert_axioms algoStarkSound_transferV3_subsumed
 #assert_axioms transferV3_sideConditions_mechanical
 

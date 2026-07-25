@@ -102,7 +102,18 @@ classical halves, and they have OPPOSITE status in this tree:
   R4b pins the MAIN-TRACE ROWS to the commitment's decode; the aux-table columns' own decode is a
   further rung (their soundness enters through `BusModelOk`, which is carried, not faked).
 
-Additive new file; imports read-only. No sorry, no axiom, `#assert_axioms` on every theorem.
+No sorry, no axiom, `#assert_axioms` on every theorem.
+
+⚑ NO LONGER PURELY ADDITIVE (2026-07-25): `decodedLdtLink_of_friLdtExtract` was DELETED from this
+file. It was the only route into the DEEP-ALI residual `DecodedLdtLink`, and its hypothesis —
+`AlgoStarkSoundGeneral.FriLdtExtract` — is PROVED to force `CircuitSoundness.verifyBatch` to reject
+EVERY input at the deployed `cfg*` arguments, i.e. it was an EMPTY premise. See the deletion note at
+the `DecodedLdtLink` definition below; the replacement is
+`FriFsDecodedOodRepair.decodedLdtLinkCons_of_friLdtExtractCons`, landing in `DecodedLdtLinkCons`.
+⚠ `DecodedLdtLink` itself (retained here) still states the SINGLETON `oodPoint = [ood]` and is
+therefore still refuted on accepting runs — it is kept as the subject of
+`FriFsDecodedOodRepair.decodedLdtLink_makes_verifyBatch_reject_every_close_run`, not as a premise
+anything should newly consume.
 -/
 import Dregg2.Circuit.FriDecodedTraceReadout
 import Dregg2.Circuit.DeployedTraceExtract
@@ -474,27 +485,15 @@ def DecodedLdtLink {numCols : ℕ}
                 - vanishingPoly (decodedTr oracle pubA tfam pi π) * qp c)) ∧
       tracePublishedCommit (decodedTr oracle pubA tfam pi π) = pi.toPublished
 
-/-- The pinned link is IMPLIED by the landed bundle shape at the pinned trace — `DecodedLdtLink`
-is not a new stronger demand: anything supplying `FriLdtExtract` at `decodedTr` supplies it (the
-`hcap` conjunct is simply dropped, and the `ColsClose` antecedent weakens further). -/
-theorem decodedLdtLink_of_friLdtExtract {numCols : ℕ}
-    (sponge : List ℤ → ℤ)
-    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
-    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
-    (initState : List ℤ) (logN : Nat) (view : ProofView)
-    (oracle : BatchPublicInputs → BatchProof → MatrixOracle (Fin (8 * 2 ^ 21)) numCols BabyBear)
-    (pubA : BatchPublicInputs → BatchProof → Assignment)
-    (tfam : BatchPublicInputs → BatchProof → TraceFamily)
-    (d : EffectVmDescriptor2)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view
-      (decodedTr oracle pubA tfam) d) :
-    DecodedLdtLink sponge perm RATE toNat params vk core A initState logN view
-      oracle pubA tfam d := by
-  intro pi π hacc _
-  obtain ⟨ζ, Λ, qp, topen, ood, vCommitted, root, idx, siblings,
-    -, hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩ := hfri pi π hacc
-  exact ⟨ζ, Λ, qp, topen, ood, vCommitted, root, idx, siblings,
-    hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩
+/-! **⚑ DELETED 2026-07-25 — `decodedLdtLink_of_friLdtExtract`.** It supplied `DecodedLdtLink` from
+`AlgoStarkSoundGeneral.FriLdtExtract` at `decodedTr`. That bundle is PROVED to force
+`CircuitSoundness.verifyBatch` to reject EVERY input at the deployed `cfg*` arguments
+(`ApexOodLaneRepair.friLdtExtract_makes_verifyBatch_reject_everything`), so the adapter's hypothesis
+was an EMPTY premise and it was the only route into the DEEP-ALI residual. Its replacement is
+`FriFsDecodedOodRepair.decodedLdtLinkCons_of_friLdtExtractCons`, which lands directly in
+`DecodedLdtLinkCons` (the `ood :: oodRest` shape `FriVerifier.batchTablesCheck` matches at
+`FriVerifier.lean:805`) from `ApexOodLaneRepair.FriLdtExtractCons`. No twin is kept: routing the
+old adapter through `decodedLdtLink_imp_cons` would have preserved the empty ENTRY. -/
 
 /-- **`DecodedBusLink`** — the LogUp bus models AT the decoded trace (the aux-column analogue of
 the DEEP link; `BusModelOk` is `LogUpColumnLayout`'s named FS side-condition bundle, carried
@@ -656,7 +655,6 @@ theorem decoded_air_leg_fires :
 #assert_axioms decodedTr_readout
 #assert_axioms decodedTr_rows_le
 #assert_axioms decodedTr_memMapFree
-#assert_axioms decodedLdtLink_of_friLdtExtract
 #assert_axioms positiveRadiusTraceDecode_decoded
 #assert_axioms positiveRadiusTraceDecode_transferV3
 #assert_axioms decoded_air_leg_bites

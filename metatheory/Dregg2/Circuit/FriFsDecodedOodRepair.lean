@@ -483,6 +483,37 @@ theorem decodedLdtLink_imp_cons {numCols : ℕ}
   exact ⟨ζ, Λ, qp, topen, ood, vCommitted, root, [], idx, siblings,
     hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩
 
+/-- **⚑ THE CONS-SHAPED ENTRY into `DecodedLdtLinkCons`** — the replacement for the DELETED
+`FriDecodedTraceWitness.decodedLdtLink_of_friLdtExtract`, which routed the only supply of the
+DEEP-ALI residual through `AlgoStarkSoundGeneral.FriLdtExtract`, the bundle PROVED to force
+`CircuitSoundness.verifyBatch` to reject every input at the deployed `cfg*` args
+(`ApexOodLaneRepair.friLdtExtract_makes_verifyBatch_reject_everything`). Composing
+`decodedLdtLink_imp_cons` after the landed adapter would NOT have repaired anything: the entry
+would still have been an empty hypothesis, so `DecodedLdtLinkCons` would have been reachable only
+from a premise nothing satisfies.
+
+Same content as the landed adapter otherwise: the `hcap` conjunct is dropped (`DecodedLdtLink`
+discharges it) and the `ColsClose` antecedent is weakened away, so this is a REAL implication —
+no contradiction is used and it holds at every instantiation, including inhabited ones. -/
+theorem decodedLdtLinkCons_of_friLdtExtractCons {numCols : ℕ}
+    (sponge : List ℤ → ℤ)
+    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
+    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
+    (initState : List ℤ) (logN : Nat) (view : ProofView)
+    (oracle : BatchPublicInputs → BatchProof → MatrixOracle (Fin (8 * 2 ^ 21)) numCols BabyBear)
+    (pubA : BatchPublicInputs → BatchProof → Assignment)
+    (tfam : BatchPublicInputs → BatchProof → TraceFamily)
+    (d : EffectVmDescriptor2)
+    (hfri : Dregg2.Circuit.ApexOodLaneRepair.FriLdtExtractCons sponge perm RATE toNat params vk
+      core A initState logN view (decodedTr oracle pubA tfam) d) :
+    DecodedLdtLinkCons sponge perm RATE toNat params vk core A initState logN view
+      oracle pubA tfam d := by
+  intro pi π hacc _
+  obtain ⟨ζ, Λ, qp, topen, ood, vCommitted, root, oodRest, idx, siblings,
+    -, hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩ := hfri pi π hacc
+  exact ⟨ζ, Λ, qp, topen, ood, vCommitted, root, oodRest, idx, siblings,
+    hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩
+
 /-- **⚑ L5·R4b RE-DERIVED FROM THE CORRECTED RESIDUAL.** `positiveRadiusTraceDecode_decoded` with
 `DecodedLdtLink` replaced by `DecodedLdtLinkCons`: the same `TraceWitnessed` conclusion at the same
 realistic deployed instance (`friSetupDeployed`, UD radius `7340032`), from the same three residuals.
@@ -639,6 +670,7 @@ theorem decodedLdtLinkCons_iff_noOodShape {numCols : ℕ}
 #assert_axioms decodedLdtLink_makes_deployed_verifier_reject_close_runs
 #assert_axioms decodedLdtLink_makes_verifyBatch_reject_every_close_run
 #assert_axioms decodedLdtLink_imp_cons
+#assert_axioms decodedLdtLinkCons_of_friLdtExtractCons
 #assert_axioms positiveRadiusTraceDecode_decoded_cons
 #assert_axioms positiveRadiusTraceDecode_transferV3_cons
 #assert_axioms decodedLdtLinkCons_iff_noOodShape
