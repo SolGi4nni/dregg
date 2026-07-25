@@ -396,16 +396,23 @@ contract DreggLaunchpadProofAttestorTest is Test {
         uint256 id = _register();
         vm.prank(binder);
         att.bindLaunch(id, _schedule(), stmt);
+        // Build the revealed book NOW, while the commit/reveal windows are open —
+        // the timelocked VK rotation below warps time forward past them (but still
+        // well inside the launchpad's 7-day clearing/refund grace).
+        _setupTwoRevealed(id);
         assertEq(att.currentEpoch(), 0);
         assertTrue(att.attestClearing(id, 1000, 3 * G, keccak256("book"), _blob(proof, stmt)));
 
         // Rotate to a VK the proof was NOT minted under (alpha := the G1
         // generator — on-curve and in-field, so it validates, but the pairing
-        // fails). Same pattern as `DreggSocket.t.sol`.
+        // fails). Same pattern as `DreggSocket.t.sol`. The flip is TIMELOCKED:
+        // propose, wait out the mandatory delay, activate.
         DreggGroth16VerifierUpgradeable.VerifyingKey memory vk = registry.getVerifyingKey(0);
         vk.alpha.x = 1;
         vk.alpha.y = 2;
-        registry.advanceEpoch(vk);
+        registry.proposeEpoch(vk);
+        vm.warp(block.timestamp + registry.TIMELOCK_DELAY() + 1);
+        registry.activateEpoch();
 
         assertEq(att.currentEpoch(), 1, "the attestor follows the registry, pins nothing");
         assertFalse(
@@ -413,7 +420,8 @@ contract DreggLaunchpadProofAttestorTest is Test {
             "an old-epoch proof does not attest under the new VK"
         );
 
-        _setupTwoRevealed(id);
+        // Still within the clearing window (~2 days < REFUND_GRACE 7 days), so
+        // finalize runs — and is refused for lack of a valid attestation.
         vm.expectRevert(DreggLaunchpad.ClearingNotAttested.selector);
         pad.finalizeClearing(id, _order(), _blob(proof, stmt));
     }

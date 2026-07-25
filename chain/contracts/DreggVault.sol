@@ -156,6 +156,7 @@ contract DreggVault is IDreggVault {
     error UnknownRoot(bytes32 root);
     error InsufficientVaultBalance(address token, uint256 requested, uint256 available);
     error ReentrantCall();
+    error BalanceQueryFailed();
     // ── Escrow errors ──
     error SettlementNotContract();
     error DuplicateEscrowId(bytes32 escrowId);
@@ -204,43 +205,41 @@ contract DreggVault is IDreggVault {
         address token,
         uint256 amount,
         bytes32 noteCommitment
-    ) external {
+    ) external nonReentrant {
         if (amount == 0) revert ZeroAmount();
         if (deposits[noteCommitment].blockNumber != 0) revert DuplicateNoteCommitment();
 
-        // Transfer ERC-20 tokens from sender to this contract.
-        // Using a low-level call to support non-standard ERC-20s (USDT, etc.).
-        (bool success, bytes memory data) = token.call(
-            abi.encodeWithSignature(
-                "transferFrom(address,address,uint256)",
-                msg.sender,
-                address(this),
-                amount
-            )
-        );
-        if (!success || (data.length > 0 && !abi.decode(data, (bool)))) {
-            revert TransferFailed();
-        }
+        // Pull the ERC-20 in and credit ONLY what actually arrived (the measured
+        // before/after `balanceOf(this)` delta). A fee-on-transfer / rebasing token
+        // delivers LESS than `amount`; crediting the requested `amount` (as this
+        // did) over-credits `tokenBalances[token]` so a later withdrawal draws down
+        // OTHER depositors' balances of the same token — cross-user theft. Measuring
+        // the delta credits exactly the custodied amount. `nonReentrant` makes the
+        // measurement sound: a malicious token cannot re-enter `deposit` between the
+        // two `balanceOf` reads to double-count its own inbound transfer.
+        uint256 received = _pullERC20(token, msg.sender, amount);
+        if (received == 0) revert ZeroAmount();
 
-        // Record the deposit and update the note tree.
+        // Record the deposit and update the note tree. `received` is the custodied
+        // amount — the record, the credited balance, and the event all reflect it.
         uint256 leafIndex = depositCount;
         deposits[noteCommitment] = DepositRecord({
             token: token,
             depositor: msg.sender,
-            amount: amount,
+            amount: received,
             leafIndex: leafIndex,
             blockNumber: block.number
         });
         noteCommitments.push(noteCommitment);
         depositCount = leafIndex + 1;
-        tokenBalances[token] += amount;
+        tokenBalances[token] += received;
 
         // Update the tree root (simplified: hash of all commitments).
         // In production, use an incremental Merkle tree for O(log n) updates.
         noteTreeRoot = _computeRoot();
         _recordRoot(noteTreeRoot);
 
-        emit Deposit(token, amount, noteCommitment, leafIndex);
+        emit Deposit(token, received, noteCommitment, leafIndex);
     }
 
     /// @inheritdoc IDreggVault
@@ -370,25 +369,20 @@ contract DreggVault is IDreggVault {
         uint256 amount,
         uint256 deadline,
         bytes32 escrowId
-    ) external {
+    ) external nonReentrant {
         if (amount == 0) revert ZeroAmount();
         if (deadline == 0) revert ZeroDeadline();
         if (escrows[escrowId].status != EscrowStatus.None) revert DuplicateEscrowId(escrowId);
 
-        // Pull the ERC-20 in (low-level call supports non-standard tokens like USDT).
-        (bool success, bytes memory data) = token.call(
-            abi.encodeWithSignature(
-                "transferFrom(address,address,uint256)",
-                msg.sender,
-                address(this),
-                amount
-            )
-        );
-        if (!success || (data.length > 0 && !abi.decode(data, (bool)))) {
-            revert TransferFailed();
-        }
+        // Credit only the measured balance delta: `escrowRelease`/`escrowRefund`
+        // pay out `e.amount`, so a fee-on-transfer token MUST escrow what actually
+        // arrived, never the requested `amount` (else a release would pay more than
+        // was custodied and drain other escrows of the same token). Same fix and
+        // same soundness argument as `deposit`.
+        uint256 received = _pullERC20(token, msg.sender, amount);
+        if (received == 0) revert ZeroAmount();
 
-        _recordEscrow(escrowId, token, amount, deadline);
+        _recordEscrow(escrowId, token, received, deadline);
     }
 
     /// @notice Lock native ETH into a timed escrow under `escrowId`.
@@ -539,6 +533,37 @@ contract DreggVault is IDreggVault {
                 revert TransferFailed();
             }
         }
+    }
+
+    /// Pull `amount` of ERC-20 `token` from `from` into the vault, returning the
+    /// ACTUAL received amount — the before/after `balanceOf(this)` delta. This is
+    /// the fee-on-transfer / rebasing guard: a token that skims a fee on transfer
+    /// delivers less than `amount`, and only the measured delta may be credited (a
+    /// requested-amount credit lets one token's pool draw down other depositors'
+    /// balances). Low-level call supports non-standard ERC-20s (USDT, etc.).
+    function _pullERC20(address token, address from, uint256 amount) internal returns (uint256 received) {
+        uint256 balBefore = _erc20SelfBalance(token);
+        (bool success, bytes memory data) = token.call(
+            abi.encodeWithSignature("transferFrom(address,address,uint256)", from, address(this), amount)
+        );
+        if (!success || (data.length > 0 && !abi.decode(data, (bool)))) {
+            revert TransferFailed();
+        }
+        uint256 balAfter = _erc20SelfBalance(token);
+        // Checked subtraction (Solidity 0.8): a pull that somehow REDUCED our
+        // balance reverts rather than underflowing into a huge phantom credit.
+        received = balAfter - balBefore;
+    }
+
+    /// This vault's own ERC-20 balance of `token`, fail-closed: a token whose
+    /// `balanceOf` reverts or returns fewer than 32 bytes cannot be measured, so
+    /// the deposit reverts rather than crediting a guessed amount.
+    function _erc20SelfBalance(address token) internal view returns (uint256) {
+        (bool ok, bytes memory data) = token.staticcall(
+            abi.encodeWithSignature("balanceOf(address)", address(this))
+        );
+        if (!ok || data.length < 32) revert BalanceQueryFailed();
+        return abi.decode(data, (uint256));
     }
 
     /// Decode an SP1 proof envelope and verify it via the SP1 Verifier Gateway.

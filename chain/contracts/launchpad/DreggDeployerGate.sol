@@ -53,6 +53,31 @@ contract DreggDeployerGate is IDeployerGate {
     uint256 public minBond;
     mapping(address => uint256) public bondOf;
 
+    /// Conduct-bond ESCROW window. A bond that BACKS a launch (authorized through
+    /// the BOND arm) is locked from withdrawal until this long after that launch
+    /// was registered — long enough to cover the launch itself plus a
+    /// fraud-challenge period — so a deployer cannot post a bond, register a
+    /// launch, and reclaim the bond the next block (a rug with ZERO at stake, the
+    /// hole the unconditional `withdrawBond` left open). Slashing stays available
+    /// the whole time; only the deployer's OWN `withdrawBond` is gated.
+    ///
+    /// CONSERVATIVE DEFAULT: 30 days comfortably covers a commit+reveal raise plus
+    /// the launchpad's 7-day `REFUND_GRACE` and a challenge margin. A launch whose
+    /// disclosed windows exceed this could in principle outlast the timer; a
+    /// production deployment that permits very long raises should have the
+    /// launchpad signal launch resolution to release the lock precisely.
+    uint64 public constant CHALLENGE_WINDOW = 30 days;
+
+    /// The timestamp until which a deployer's bond is escrow-locked (0 = unlocked).
+    /// Extended forward each time the deployer backs a fresh launch via the BOND arm.
+    mapping(address => uint256) public bondLockedUntil;
+
+    /// The pinned launchpad. Once set, ONLY it may call `authorizeDeploy` — which
+    /// makes the bond escrow non-griefable (an arbitrary caller cannot lock a
+    /// bonded deployer's funds by re-authorizing) and, incidentally, closes the
+    /// pending-launch nullifier-snipe surface. `address(0)` = unpinned (dev/test).
+    address public launchpad;
+
     // ─── Interview / audit registries ──────────────────────────────────────────
     /// Verdict commitments the attester has marked as passed-and-attested.
     mapping(bytes32 => bool) public interviewPassed;
@@ -84,6 +109,9 @@ contract DreggDeployerGate is IDeployerGate {
     event BondPosted(address indexed deployer, uint256 amount, uint256 total);
     event BondSlashed(address indexed deployer, uint256 amount, address indexed recipient);
     event BondWithdrawn(address indexed deployer, uint256 amount);
+    /// A bond was escrow-locked (or its lock extended) to back a launch.
+    event BondLockExtended(address indexed deployer, uint256 lockedUntil, bytes32 indexed launchParamsHash);
+    event LaunchpadSet(address indexed launchpad);
     event InterviewAttested(bytes32 indexed commitment, bool passed);
     event AuditAttested(bytes32 indexed reportHash, bool cleared);
     /// A cleared audit bound to exactly one launch disclosure.
@@ -96,6 +124,8 @@ contract DreggDeployerGate is IDeployerGate {
     error NothingToWithdraw();
     error TransferFailed();
     error NullifierAlreadyUsed(bytes32 nullifier);
+    /// The bond is escrow-locked to back a live launch until `lockedUntil`.
+    error BondLocked(uint256 lockedUntil);
 
     constructor(address _admin, uint256 _minBond) {
         admin = _admin;
@@ -137,6 +167,14 @@ contract DreggDeployerGate is IDeployerGate {
         interviewFederationRoot = federationRoot;
     }
 
+    /// Pin the launchpad that drives `authorizeDeploy`. Once pinned, only it may
+    /// call `authorizeDeploy`, so the bond escrow cannot be griefed and the
+    /// pending-launch nullifier snipe is closed. Set this on any real deployment.
+    function setLaunchpad(address l) external onlyAdmin {
+        launchpad = l;
+        emit LaunchpadSet(l);
+    }
+
     function armEnabled(uint8 arm) public view returns (bool) {
         return (acceptedArms & uint8(1 << arm)) != 0;
     }
@@ -159,14 +197,30 @@ contract DreggDeployerGate is IDeployerGate {
         emit BondSlashed(deployer, take, recipient);
     }
 
-    /// Withdraw an unslashed bond (a deployer exiting in good standing).
+    /// Withdraw an unslashed bond (a deployer exiting in good standing). Refused
+    /// while the bond is escrow-locked backing a live launch (until the launch's
+    /// challenge window elapses) — the fix for the rug-with-zero-bond hole: a
+    /// deployer can no longer reclaim the bond that gates a launch it just
+    /// registered. Slashing remains available against a locked bond.
     function withdrawBond() external {
+        uint256 lockedUntil = bondLockedUntil[msg.sender];
+        if (block.timestamp < lockedUntil) revert BondLocked(lockedUntil);
         uint256 bal = bondOf[msg.sender];
         if (bal == 0) revert NothingToWithdraw();
         bondOf[msg.sender] = 0;
         (bool ok,) = msg.sender.call{value: bal}("");
         if (!ok) revert TransferFailed();
         emit BondWithdrawn(msg.sender, bal);
+    }
+
+    /// Escrow-lock (or extend the lock on) `deployer`'s bond to back a launch for
+    /// the challenge window. Never shortens an existing lock.
+    function _lockBond(address deployer, bytes32 launchParamsHash) internal {
+        uint256 lockedUntil = block.timestamp + CHALLENGE_WINDOW;
+        if (lockedUntil > bondLockedUntil[deployer]) {
+            bondLockedUntil[deployer] = lockedUntil;
+        }
+        emit BondLockExtended(deployer, bondLockedUntil[deployer], launchParamsHash);
     }
 
     // ─── (b) Interview + (c) Audit attestation ────────────────────────────────
@@ -209,12 +263,22 @@ contract DreggDeployerGate is IDeployerGate {
         external
         returns (bool)
     {
+        // Once a launchpad is pinned, only it may drive authorization. This makes
+        // the BOND escrow non-griefable (an arbitrary caller cannot lock a bonded
+        // deployer's funds by re-authorizing) and closes the pending-launch
+        // nullifier-snipe surface. Unpinned (dev/test) leaves the call open.
+        if (launchpad != address(0) && msg.sender != launchpad) revert Unauthorized();
+
         if (capability.length == 0) return false;
         (uint8 arm, bytes memory armData) = abi.decode(capability, (uint8, bytes));
         if (!armEnabled(arm)) return false;
 
         if (arm == ARM_BOND) {
             if (bondOf[deployer] < minBond) return false;
+            // ESCROW the bond over the launch + challenge window: the deployer
+            // cannot withdraw it until the window elapses, so the launch it now
+            // backs always has the bond at stake.
+            _lockBond(deployer, launchParamsHash);
             emit DeployAuthorized(deployer, launchParamsHash, arm);
             return true;
         }

@@ -18,11 +18,14 @@ import {DreggGroth16VerifierUpgradeable} from "../contracts/DreggGroth16Verifier
 ///   * epoch 0 is seeded BYTE-IDENTICAL to the generated verifier, so the
 ///     live proof still verifies (drop-in `verifyProof` == current epoch);
 ///   * `DreggSettlement` wired to the registry settles the real proof;
-///   * `advanceEpoch(newVk)` moves the pointer — a proof verifies against the
-///     epoch whose VK matches it, and OLD epochs stay verifiable;
+///   * a timelocked `proposeEpoch(newVk)` → `activateEpoch` flip moves the
+///     pointer — a proof verifies against the epoch whose VK matches it, and
+///     OLD epochs stay verifiable;
 ///   * an epoch FLIP changes settlement behavior with NO redeploy;
-///   * the owner gate is real: an ungated `advanceEpoch` REVERTS;
-///   * a wrong-epoch proof REJECTS; a malformed VK REVERTS.
+///   * the owner gate is real: an ungated propose/activate REVERTS;
+///   * the TIMELOCK is real: activating before the delay elapses REVERTS, and
+///     the staged VK is inert until activation;
+///   * a wrong-epoch proof REJECTS; a malformed VK REVERTS at propose time.
 contract DreggVerifierEpochRegistryTest is Test {
     bytes32 constant VK_HASH = keccak256("dregg-settlement-vk-dev-setup");
 
@@ -71,6 +74,14 @@ contract DreggVerifierEpochRegistryTest is Test {
         }
 
         verifier = new DreggGroth16VerifierUpgradeable();
+    }
+
+    /// Drive the two-phase timelocked flip as owner: propose, wait out the
+    /// mandatory delay, activate. This is now the ONLY way the pointer moves.
+    function _flip(DreggGroth16VerifierUpgradeable.VerifyingKey memory vk) internal {
+        verifier.proposeEpoch(vk);
+        vm.warp(block.timestamp + verifier.TIMELOCK_DELAY() + 1);
+        verifier.activateEpoch();
     }
 
     // ── epoch 0 seeded byte-identical: the live proof still verifies ────────
@@ -137,7 +148,7 @@ contract DreggVerifierEpochRegistryTest is Test {
         // A well-formed (in-field) but WRONG δ — passes _validate, so the flip
         // is accepted, yet the real proof no longer satisfies e(C, −δ).
         perturbed.deltaNeg.x0 = perturbed.deltaNeg.x0 ^ 1;
-        verifier.advanceEpoch(perturbed);
+        _flip(perturbed);
         assertEq(verifier.currentEpoch(), 1);
 
         vm.expectRevert(IDreggSettlement.ProofRejected.selector);
@@ -152,7 +163,7 @@ contract DreggVerifierEpochRegistryTest is Test {
         // redeployed — accepts the same real proof.
         DreggGroth16VerifierUpgradeable.VerifyingKey memory good =
             verifier.getVerifyingKey(0);
-        verifier.advanceEpoch(good);
+        _flip(good);
         assertEq(verifier.currentEpoch(), 2);
 
         settlement.settle(
@@ -170,11 +181,11 @@ contract DreggVerifierEpochRegistryTest is Test {
             verifier.getVerifyingKey(0);
         // well-formed (in-field) but WRONG γ — the real proof fails e(L, −γ)
         perturbed.gammaNeg.x0 = perturbed.gammaNeg.x0 ^ 1;
-        verifier.advanceEpoch(perturbed);
+        _flip(perturbed);
 
         // epoch 2: the byte-identical real VK again (a proof under THIS VK
         // verifies at THIS new epoch).
-        verifier.advanceEpoch(verifier.getVerifyingKey(0));
+        _flip(verifier.getVerifyingKey(0));
         assertEq(verifier.currentEpoch(), 2);
 
         // old epoch 0 still verifies (proofs minted under the old VK survive a flip)
@@ -205,7 +216,7 @@ contract DreggVerifierEpochRegistryTest is Test {
 
     // ── the owner gate (load-bearing security) ──────────────────────────────
 
-    function test_UngatedAdvanceEpochReverts() public {
+    function test_UngatedProposeEpochReverts() public {
         DreggGroth16VerifierUpgradeable.VerifyingKey memory vk = verifier.getVerifyingKey(0);
         address mallory = address(0xBAD);
         vm.prank(mallory);
@@ -214,43 +225,130 @@ contract DreggVerifierEpochRegistryTest is Test {
                 DreggGroth16VerifierUpgradeable.NotOwner.selector, mallory
             )
         );
-        verifier.advanceEpoch(vk);
-        // pointer unmoved
+        verifier.proposeEpoch(vk);
+        // pointer unmoved, nothing pending
         assertEq(verifier.currentEpoch(), 0);
     }
 
-    function test_UngatedSetVerifyingKeyReverts() public {
+    function test_UngatedActivateEpochReverts() public {
+        // Owner stages a legit proposal…
         DreggGroth16VerifierUpgradeable.VerifyingKey memory vk = verifier.getVerifyingKey(0);
+        verifier.proposeEpoch(vk);
+        vm.warp(block.timestamp + verifier.TIMELOCK_DELAY() + 1);
+        // …but a non-owner cannot activate it.
         vm.prank(address(0xBAD));
         vm.expectRevert(
             abi.encodeWithSelector(
                 DreggGroth16VerifierUpgradeable.NotOwner.selector, address(0xBAD)
             )
         );
-        verifier.setVerifyingKey(5, vk);
+        verifier.activateEpoch();
+        assertEq(verifier.currentEpoch(), 0);
     }
 
-    function test_OwnerCanTransferAndNewOwnerAdvances() public {
-        address gov = address(0x60F);
-        verifier.transferOwnership(gov);
-        assertEq(verifier.owner(), gov);
+    // ── the TIMELOCK (the load-bearing #1 fix) ──────────────────────────────
 
-        // old owner (this test contract) can no longer advance
+    function test_ActivateBeforeDelayReverts() public {
+        DreggGroth16VerifierUpgradeable.VerifyingKey memory vk = verifier.getVerifyingKey(0);
+        (, uint256 eta) = verifier.proposeEpoch(vk);
+        // The VK is staged but INERT: current epoch unmoved, epoch 1 not yet set.
+        assertEq(verifier.currentEpoch(), 0);
+        assertFalse(verifier.isEpochSet(1));
+        // Activating before the timelock elapses REVERTS.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DreggGroth16VerifierUpgradeable.ProposalNotReady.selector, eta
+            )
+        );
+        verifier.activateEpoch();
+        // One second before eta still reverts.
+        vm.warp(eta - 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DreggGroth16VerifierUpgradeable.ProposalNotReady.selector, eta
+            )
+        );
+        verifier.activateEpoch();
+        assertEq(verifier.currentEpoch(), 0);
+    }
+
+    function test_ActivateAfterDelaySucceeds() public {
+        DreggGroth16VerifierUpgradeable.VerifyingKey memory vk = verifier.getVerifyingKey(0);
+        (uint256 epoch, uint256 eta) = verifier.proposeEpoch(vk);
+        assertEq(epoch, 1);
+        vm.warp(eta); // exactly eta is enough (>= eta)
+        uint256 activated = verifier.activateEpoch();
+        assertEq(activated, 1);
+        assertEq(verifier.currentEpoch(), 1);
+        // The flipped-in VK (byte-identical to epoch 0) verifies the real proof.
+        assertTrue(verifier.verifyProof(a, b, c, commitments, commitmentPok, inputs));
+    }
+
+    function test_StagedVkIsInertDuringTimelock() public {
+        // Propose a perturbed VK the real proof does NOT satisfy.
+        DreggGroth16VerifierUpgradeable.VerifyingKey memory perturbed = verifier.getVerifyingKey(0);
+        perturbed.deltaNeg.x0 = perturbed.deltaNeg.x0 ^ 1;
+        verifier.proposeEpoch(perturbed);
+        // During the timelock the CURRENT epoch (0) is untouched — the live proof
+        // still verifies, and the staged epoch 1 is not yet verifiable.
+        assertTrue(verifier.verifyProof(a, b, c, commitments, commitmentPok, inputs));
+        assertFalse(verifier.isEpochSet(1));
+        assertFalse(verifier.verifyProofAtEpoch(1, a, b, c, commitments, commitmentPok, inputs));
+    }
+
+    function test_CancelProposalVetoesTheFlip() public {
+        DreggGroth16VerifierUpgradeable.VerifyingKey memory vk = verifier.getVerifyingKey(0);
+        verifier.proposeEpoch(vk);
+        verifier.cancelProposal();
+        // Nothing to activate after a veto — even after the delay.
+        vm.warp(block.timestamp + verifier.TIMELOCK_DELAY() + 1);
+        vm.expectRevert(DreggGroth16VerifierUpgradeable.NoPendingProposal.selector);
+        verifier.activateEpoch();
+        assertEq(verifier.currentEpoch(), 0);
+    }
+
+    // ── two-step ownership ──────────────────────────────────────────────────
+
+    function test_TwoStepOwnershipTransfer() public {
+        address gov = address(0x60F);
+        // Step 1: nominate. Ownership does NOT move yet.
+        verifier.transferOwnership(gov);
+        assertEq(verifier.owner(), address(this));
+        assertEq(verifier.pendingOwner(), gov);
+
+        // A non-nominee cannot accept.
+        vm.prank(address(0xBAD));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DreggGroth16VerifierUpgradeable.NotPendingOwner.selector, address(0xBAD)
+            )
+        );
+        verifier.acceptOwnership();
+
+        // Step 2: the nominee accepts — now ownership moves.
+        vm.prank(gov);
+        verifier.acceptOwnership();
+        assertEq(verifier.owner(), gov);
+        assertEq(verifier.pendingOwner(), address(0));
+
+        // The old owner can no longer propose; the new owner can drive a flip.
         DreggGroth16VerifierUpgradeable.VerifyingKey memory vk = verifier.getVerifyingKey(0);
         vm.expectRevert(
             abi.encodeWithSelector(
                 DreggGroth16VerifierUpgradeable.NotOwner.selector, address(this)
             )
         );
-        verifier.advanceEpoch(vk);
+        verifier.proposeEpoch(vk);
 
-        // new owner (the "governance" address, standing in for a timelock) can
-        vm.prank(gov);
-        verifier.advanceEpoch(vk);
+        vm.startPrank(gov);
+        verifier.proposeEpoch(vk);
+        vm.warp(block.timestamp + verifier.TIMELOCK_DELAY() + 1);
+        verifier.activateEpoch();
+        vm.stopPrank();
         assertEq(verifier.currentEpoch(), 1);
     }
 
-    // ── malformed VK reverts at set time ────────────────────────────────────
+    // ── malformed VK reverts at PROPOSE time ────────────────────────────────
 
     function test_MalformedVkOutOfFieldReverts() public {
         DreggGroth16VerifierUpgradeable.VerifyingKey memory vk = verifier.getVerifyingKey(0);
@@ -261,7 +359,7 @@ contract DreggVerifierEpochRegistryTest is Test {
                 DreggGroth16VerifierUpgradeable.MalformedVerifyingKey.selector, "alpha"
             )
         );
-        verifier.advanceEpoch(vk);
+        verifier.proposeEpoch(vk);
     }
 
     function test_MalformedVkOffCurveReverts() public {
@@ -273,16 +371,21 @@ contract DreggVerifierEpochRegistryTest is Test {
                 DreggGroth16VerifierUpgradeable.MalformedVerifyingKey.selector, "ic"
             )
         );
-        verifier.advanceEpoch(vk);
+        verifier.proposeEpoch(vk);
     }
 
-    function test_CannotOverwriteSetEpoch() public {
+    function test_CannotProposeOverAnAlreadySetEpoch() public {
+        // Land epoch 1 through the timelock…
         DreggGroth16VerifierUpgradeable.VerifyingKey memory vk = verifier.getVerifyingKey(0);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                DreggGroth16VerifierUpgradeable.EpochAlreadySet.selector, uint256(0)
-            )
-        );
-        verifier.setVerifyingKey(0, vk);
+        _flip(vk);
+        assertEq(verifier.currentEpoch(), 1);
+        // …then activate epoch 2 as well, so both 1 and 2 are set.
+        _flip(vk);
+        assertEq(verifier.currentEpoch(), 2);
+        // A fresh proposal always targets currentEpoch+1 (3, unset) — set epochs
+        // can never be overwritten. Sanity: the pointer only ever moves forward.
+        assertTrue(verifier.isEpochSet(1));
+        assertTrue(verifier.isEpochSet(2));
+        assertFalse(verifier.isEpochSet(3));
     }
 }

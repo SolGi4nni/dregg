@@ -36,25 +36,28 @@ import {IGroth16VerifierRegistry} from "./IGroth16VerifierRegistry.sol";
 /// still verifies unchanged.
 ///
 /// ── THE GATE (load-bearing security) ────────────────────────────────────
-/// A MUTABLE VK is a security control: a malicious setter can install a VK
-/// that accepts any proof (a forged one over any statement). `advanceEpoch` /
-/// `setVerifyingKey` are therefore `onlyOwner`. This adds NO new trust over
-/// the status quo — today the deployer already chooses the baked-in VK by
-/// deploying the generated verifier — it simply names the setter and makes it
-/// swappable.
+/// A MUTABLE VK is a security control: a setter that could install a VK which
+/// accepts any proof (a forged one over any statement) is an accept-anything
+/// backdoor. The registry closes that with TWO on-chain controls the code
+/// itself ENFORCES — not merely names as a deploy requirement:
 ///
-///   * PRIVATE / TESTNET: `onlyOwner` (this contract) is sufficient — the
-///     owner is the operator who would have redeployed anyway.
-///   * PUBLIC / MAINNET: the owner MUST be a GOVERNANCE contract behind a
-///     TIMELOCK (e.g. an OpenZeppelin `TimelockController` owned by a
-///     multisig / token governor). A mutable VK with an EOA owner is an
-///     accept-anything backdoor; the timelock is what makes a flip observable
-///     and vetoable before it takes effect. This is documented as the deploy
-///     requirement for any public instance — see
-///     `docs/deos/UPGRADEABLE-VK-REGISTRY.md`.
+///   1. A TIMELOCK. A VK/epoch change is a two-phase `proposeEpoch` →
+///      (wait `TIMELOCK_DELAY`) → `activateEpoch`. There is NO immediate-effect
+///      path: a proposed VK is staged but INACTIVE until the delay elapses, so a
+///      swap is observable and vetoable (`cancelProposal`) for at least the delay
+///      before it can take effect. A compromised owner cannot flip the VK in one
+///      block.
+///   2. TWO-STEP OWNERSHIP. `transferOwnership` only NOMINATES; the nominee must
+///      `acceptOwnership`. A one-way transfer to a wrong/dead/hostile address can
+///      never strand or silently capture the trust root.
 ///
-/// The owner gate is the ONLY thing standing between the registry and a
-/// forged-VK acceptance, so it is a real modifier, tested in both polarities.
+/// For a public/mainnet instance the owner SHOULD still be a governance multisig
+/// (so the propose/veto keys are themselves distributed), but the timelock is now
+/// a property of THIS contract, not a promise about who holds the key. See
+/// `docs/deos/UPGRADEABLE-VK-REGISTRY.md`.
+///
+/// These gates are the only thing standing between the registry and a forged-VK
+/// acceptance, so they are real, tested in both polarities and across the delay.
 contract DreggGroth16VerifierUpgradeable is IGroth16VerifierRegistry {
     // ── BN254 field / scalar orders (same as the generated verifier) ──────
     /// Base field order P.
@@ -101,16 +104,46 @@ contract DreggGroth16VerifierUpgradeable is IGroth16VerifierRegistry {
 
     // ── registry state ────────────────────────────────────────────────────
     address public owner;
+    /// Two-step ownership: a NOMINATED next owner that must itself call
+    /// `acceptOwnership`. A one-way transfer to a wrong/dead address can therefore
+    /// never strand or silently capture the VK trust root in a single tx.
+    address public pendingOwner;
     uint256 public currentEpoch;
     mapping(uint256 => VerifyingKey) private _vks;
     mapping(uint256 => bool) private _vkSet;
 
+    /// The MINIMUM on-chain delay between PROPOSING a VK/epoch and ACTIVATING it.
+    /// This is the load-bearing timelock the audit required the code to ENFORCE
+    /// (not merely name): a VK swap is observable and vetoable for at least this
+    /// long before it can take effect, so a compromised owner cannot install an
+    /// accept-anything VK in a single block. CONSERVATIVE DEFAULT: 2 days — the
+    /// common governance-timelock floor; long enough for a swap to be seen and
+    /// challenged, short enough not to cripple a legitimate epoch rotation.
+    uint256 public constant TIMELOCK_DELAY = 2 days;
+
+    /// A pending, timelocked VK proposal for the next epoch. The proposed VK is
+    /// staged into `_vks[epoch]` at propose time (already `_validate`d) but stays
+    /// INACTIVE (`_vkSet[epoch]` false, `currentEpoch` unmoved) until
+    /// `activateEpoch` is called on/after `eta`. Cancellable before then (the veto).
+    struct Proposal {
+        bool pending;
+        uint256 epoch; // == currentEpoch + 1 at propose time
+        uint256 eta; // earliest activation timestamp (propose time + TIMELOCK_DELAY)
+    }
+    Proposal public proposal;
+
     error NotOwner(address caller);
+    error NotPendingOwner(address caller);
     error ZeroOwner();
     error MalformedVerifyingKey(string reason);
     error EpochAlreadySet(uint256 epoch);
+    error NoPendingProposal();
+    error ProposalNotReady(uint256 eta);
 
+    event OwnershipTransferStarted(address indexed from, address indexed to);
     event OwnershipTransferred(address indexed from, address indexed to);
+    event EpochProposed(uint256 indexed epoch, uint256 eta, address indexed by);
+    event EpochProposalCancelled(uint256 indexed epoch, address indexed by);
     event EpochAdvanced(uint256 indexed epoch, address indexed by);
     event VerifyingKeySet(uint256 indexed epoch, address indexed by);
 
@@ -135,46 +168,74 @@ contract DreggGroth16VerifierUpgradeable is IGroth16VerifierRegistry {
         emit VerifyingKeySet(0, msg.sender);
     }
 
-    // ── ownership ─────────────────────────────────────────────────────────
+    // ── ownership (TWO-STEP) ──────────────────────────────────────────────
+
+    /// NOMINATE a next owner. The nominee is not the owner until it calls
+    /// `acceptOwnership`; this transaction only records the pending nominee, so a
+    /// transfer to a wrong/dead address cannot strand the trust root.
     function transferOwnership(address to) external onlyOwner {
         if (to == address(0)) revert ZeroOwner();
-        emit OwnershipTransferred(owner, to);
-        owner = to;
+        pendingOwner = to;
+        emit OwnershipTransferStarted(owner, to);
     }
 
-    // ── epoch administration (THE GATE) ───────────────────────────────────
+    /// Accept a pending ownership nomination — only callable by the nominee.
+    function acceptOwnership() external {
+        if (msg.sender != pendingOwner) revert NotPendingOwner(msg.sender);
+        emit OwnershipTransferred(owner, pendingOwner);
+        owner = pendingOwner;
+        pendingOwner = address(0);
+    }
 
-    /// Write the NEXT epoch's VK and bump the current-epoch pointer. This is
-    /// the whole VK-epoch flip: one transaction, no redeploy. `onlyOwner`;
-    /// for a public instance the owner MUST be governance + timelock.
-    function advanceEpoch(VerifyingKey calldata newVk)
+    // ── epoch administration (THE GATE: propose → timelock → activate) ─────
+
+    /// PROPOSE the next epoch's VK. Validates and STAGES it into `_vks[epoch]`
+    /// (epoch == currentEpoch + 1) but leaves it INACTIVE — `currentEpoch` does
+    /// not move and `verifyProof*` do not see it — until `activateEpoch` is called
+    /// on/after `eta = now + TIMELOCK_DELAY`. Re-proposing before activation simply
+    /// re-stages the VK and resets the delay. `onlyOwner`.
+    function proposeEpoch(VerifyingKey calldata newVk)
         external
         onlyOwner
-        returns (uint256 epoch)
+        returns (uint256 epoch, uint256 eta)
     {
         _validate(newVk);
         epoch = currentEpoch + 1;
         if (_vkSet[epoch]) revert EpochAlreadySet(epoch);
+        // Stage the VK (validated). It is NOT active: `_vkSet[epoch]` stays false
+        // until `activateEpoch`, so nothing verifies against it during the delay.
         _store(epoch, newVk);
+        eta = block.timestamp + TIMELOCK_DELAY;
+        proposal = Proposal({pending: true, epoch: epoch, eta: eta});
+        emit EpochProposed(epoch, eta, msg.sender);
+    }
+
+    /// ACTIVATE the pending proposal once its timelock has elapsed: flip the staged
+    /// VK live and advance the current-epoch pointer. This is the whole VK-epoch
+    /// flip — no redeploy — but it can only land at least `TIMELOCK_DELAY` after the
+    /// proposal, never in the same block. `onlyOwner`.
+    function activateEpoch() external onlyOwner returns (uint256 epoch) {
+        Proposal memory p = proposal;
+        if (!p.pending) revert NoPendingProposal();
+        if (block.timestamp < p.eta) revert ProposalNotReady(p.eta);
+        epoch = p.epoch;
+        // The staged VK was written (and validated) at propose time; flip it live
+        // and advance the pointer. Refuses a double-activate (proposal consumed).
         _vkSet[epoch] = true;
         currentEpoch = epoch;
+        proposal.pending = false;
         emit EpochAdvanced(epoch, msg.sender);
         emit VerifyingKeySet(epoch, msg.sender);
     }
 
-    /// Write a VK for a specific epoch WITHOUT moving the pointer (seeding a
-    /// not-yet-current epoch, or correcting one before it goes live). Refuses
-    /// to overwrite an already-set epoch — mutating a live epoch's VK in place
-    /// would silently invalidate/forge everything proven under it. `onlyOwner`.
-    function setVerifyingKey(uint256 epoch, VerifyingKey calldata vk)
-        external
-        onlyOwner
-    {
-        if (_vkSet[epoch]) revert EpochAlreadySet(epoch);
-        _validate(vk);
-        _store(epoch, vk);
-        _vkSet[epoch] = true;
-        emit VerifyingKeySet(epoch, msg.sender);
+    /// VETO a pending proposal before it activates (e.g. a swap spotted during the
+    /// timelock window). The staged-but-inactive VK is left dangling in `_vks` and
+    /// harmlessly overwritten by the next `proposeEpoch`. `onlyOwner`.
+    function cancelProposal() external onlyOwner {
+        Proposal memory p = proposal;
+        if (!p.pending) revert NoPendingProposal();
+        proposal.pending = false;
+        emit EpochProposalCancelled(p.epoch, msg.sender);
     }
 
     function isEpochSet(uint256 epoch) external view returns (bool) {

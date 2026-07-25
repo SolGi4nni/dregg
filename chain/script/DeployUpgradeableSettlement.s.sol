@@ -23,10 +23,12 @@ import {DreggGroth16VerifierUpgradeable} from "../contracts/DreggGroth16Verifier
 ///         its `verifyProof` targets the current epoch, so `DreggSettlement`
 ///         needs no change and no separate adapter.
 ///
-/// GATE (public/mainnet): after deploy, hand registry ownership to a governance
-/// contract behind a timelock — `registry.transferOwnership(timelock)`. A
-/// mutable VK with an EOA owner is an accept-anything backdoor; the timelock is
-/// the load-bearing control. See docs/deos/UPGRADEABLE-VK-REGISTRY.md.
+/// GATE (public/mainnet): the registry now ENFORCES the timelock itself — a
+/// VK/epoch flip is `proposeEpoch` → wait `TIMELOCK_DELAY` → `activateEpoch`, and
+/// ownership transfer is two-step (`transferOwnership` nominates, the nominee
+/// `acceptOwnership`). After deploy, hand ownership to a governance multisig:
+/// `registry.transferOwnership(gov)`, then the multisig calls `acceptOwnership()`.
+/// See docs/deos/UPGRADEABLE-VK-REGISTRY.md.
 ///
 /// Dry-run: forge script script/DeployUpgradeableSettlement.s.sol:DeployUpgradeableSettlement
 contract DeployUpgradeableSettlement is Script {
@@ -52,11 +54,12 @@ contract DeployUpgradeableSettlement is Script {
             IGroth16Verifier25(address(registry)), vkHash, genesisRoot
         );
 
-        // OPTIONAL public/mainnet: transfer registry ownership to a timelock.
+        // OPTIONAL public/mainnet: NOMINATE a governance owner (two-step). The
+        // nominee must call `acceptOwnership()` itself to complete the transfer.
         address newOwner = vm.envOr("DREGG_VK_OWNER", address(0));
         if (newOwner != address(0)) {
             registry.transferOwnership(newOwner);
-            console.log("registry ownership -> ", newOwner);
+            console.log("registry ownership nominated (awaiting acceptOwnership) -> ", newOwner);
         }
 
         vm.stopBroadcast();
@@ -67,7 +70,7 @@ contract DeployUpgradeableSettlement is Script {
         console.log("  owner       :", registry.owner());
         console.log("DreggSettlement                :", address(settlement));
         console.log("-----------------------------------------------------------");
-        console.log("VK-epoch flip = registry.advanceEpoch(newVk) [onlyOwner]: a tx, not a redeploy.");
+        console.log("VK-epoch flip = proposeEpoch(newVk) -> wait TIMELOCK_DELAY -> activateEpoch [onlyOwner].");
     }
 
     function _fixtureGenesis() internal pure returns (uint32[8] memory g) {

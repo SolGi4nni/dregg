@@ -196,7 +196,10 @@ contract DreggSocketTest is Test {
         // (1, 2) is the BN254 G1 generator — on-curve, in-field, != real alpha.
         vk.alpha.x = 1;
         vk.alpha.y = 2;
-        registry.advanceEpoch(vk);
+        // The VK flip is timelocked: propose, wait out the delay, activate.
+        registry.proposeEpoch(vk);
+        vm.warp(block.timestamp + registry.TIMELOCK_DELAY() + 1);
+        registry.activateEpoch();
         assertEq(socket.currentEpoch(), 1);
 
         // The consumer, untouched, now rejects against the current epoch.
