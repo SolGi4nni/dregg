@@ -239,12 +239,18 @@ struct TestDir {
 
 impl TestDir {
     fn new() -> Self {
+        // Process-global counter: a nanosecond nonce alone collides under parallel `cargo test` (same pid,
+        // coarse clock) and `create_dir(...).unwrap()` panics AlreadyExists → flaky. The seq guarantees uniqueness.
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path =
-            std::env::temp_dir().join(format!("fhegg-fhtri004-use-{}-{nonce}", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "fhegg-fhtri004-use-{}-{seq}-{nonce}",
+            std::process::id()
+        ));
         fs::create_dir(&path).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
         Self { path }
