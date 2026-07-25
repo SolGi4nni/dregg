@@ -153,6 +153,26 @@ deos-view = { path = "../deos-view", default-features = false, features = ["web"
 # discord-bot/http_server.rs). Default features carry the `Form`/`Query` extractors
 # + the `Html`/`Json` responses this surface uses.
 axum = { version = "0.8" }
+# THE TRANSPORT LAYER — `CompressionLayer` (src/lib.rs `make_app_parts_with_catalog`). The play
+# page's wasm bundle is 58 MiB on the wire uncompressed; at the quality this deploy pins
+# (`PLAY_COMPRESSION_QUALITY` = 4) negotiated `br` carries it in 3,738,736 B (16.3x) and `gzip` in
+# 7,811,717 B (7.8x). This is a LAYER, not a handler change: every route on the merged app gets it,
+# and the per-route response builders stay untouched.
+#
+# Three codecs, deliberately: `br` is what every current browser actually offers first (and wins
+# by 2x over gzip on this bundle), `gzip` is the universal floor, `zstd` is free once the crate
+# is here. All four backends (`async-compression`/`brotli`/`flate2`/`zstd`) are ALREADY resolved
+# in the root lock, so this adds a layer, not a new compile tree. Version 0.6 matches the
+# `tower-http 0.6.11` the workspace already resolves (app-framework's `cors`), so it unifies onto
+# the one instance.
+#
+# `DefaultPredicate` (the layer's default) refuses to compress `text/event-stream`, which is what
+# keeps the crowd-stream overlay's SSE push (`GET /overlay/sse`) streaming rather than buffering.
+tower-http = { version = "0.6", features = [
+    "compression-br",
+    "compression-gzip",
+    "compression-zstd",
+] }
 # Form/query deserialization for the POST /act body ({turn, arg}) + the ?user= param.
 serde = { version = "1", features = ["derive"] }
 # The JSON body of GET /session/{id}/verify (the replay VerifyReport over HTTP).
