@@ -38,8 +38,8 @@
 //! | more subjects / params / knots than the bounds | a new [`ComposeShape`] = a new VK (a size class, like a bigger board) |
 //! | **a kernel or AIR edit** | **never** |
 //!
-//! Nothing in [`air`]'s types is a field count, a param count, a role list, or a rule
-//! table. [`ComposeShape`] carries only MAXIMA, which double as the fuel/DoS meter
+//! Nothing the emitted AIR is parameterised by is a field count, a param count, a role list,
+//! or a rule table. [`ComposeShape`] carries only MAXIMA, which double as the fuel/DoS meter
 //! ([`ComposeShape::hash_sites`]) — a host prices a composition from the shape alone,
 //! without seeing its content.
 //!
@@ -55,18 +55,20 @@
 //! ## The budget (measured — `tests/size.rs`)
 //!
 //! Against the deployed caps `MAX_TRACE_WIDTH = 1024`, `MAX_CONSTRAINT_DEGREE = 8`,
-//! `MAX_PUBLIC_INPUTS = 64`. `prog` is the AIR's own columns; `lane` is the extra columns
-//! the custom-leaf lowering allocates per single-output hash site; `leaf = prog + lane` is
-//! the width the folded leaf actually carries. The digest is `MerkleHash8` (`node8`), whose
-//! 8 outputs are program-owned, so it pays **zero lane columns**:
+//! `MAX_PUBLIC_INPUTS = 64`. `leaf` is the EMITTED IR-v2 `trace_width` — which IS the width the
+//! folded leaf carries, because the Lean family emits IR-v2 directly: there is no `CellProgram`,
+//! no custom-leaf lowering step, and hence no `lane` column term. (The retired Rust AIR needed two
+//! numbers; `rust` below is its historical `prog` count, kept only because the 33-column delta is
+//! evidence the two objects were the same AIR — one `zero` padding column plus four 8-felt IV
+//! groups that Lean replaces with literal constants in the chip tuple.)
 //!
 //! ```text
-//!   shape                       prog   lane   leaf   deg  PIs  app  sites  verdict
-//!   n2 p2  l1  k1                219      0    219    3    53   37     6    FITS
-//!   n3 p4  l3  k2                379      0    379    3    53   37     9    FITS   <- proved as a leaf
-//!   n4 p8  l8  k6 (realistic)    803      0    803    3    53   37    18    FITS   (identity_bits=28)
-//!   n6 p8  l12 k10              1310      0   1310    3    53   37    27    EXCEEDS -> segment
-//!   n8 p16 l16 k16             2495      0   2495    3    53   37    46    EXCEEDS -> segment
+//!   shape                       leaf   deg  PIs  app  sites  verdict            (rust, retired)
+//!   n2 p2  l1  k1                186    3    53   37     6    FITS                       219
+//!   n3 p4  l3  k2                346    3    53   37     9    FITS  <- proved as a leaf   379
+//!   n4 p8  l8  k6 (realistic)    770    3    53   37    18    FITS  (identity_bits=28)    803
+//!   n6 p8  l12 k10              1277    3    53   37    27    EXCEEDS -> segment            —
+//!   n8 p16 l16 k16              2462    3    53   37    46    EXCEEDS -> segment            —
 //! ```
 //!
 //! Degree is **3** everywhere (cap 8) — the knot `coeff · val_a · val_b` and the
@@ -74,19 +76,18 @@
 //! constraint. PIs are **53/64 (37/48 app)** and CONSTANT in every bound — growing the
 //! scene never touches the layout.
 //!
-//! **Segmentation is NOT needed at the realistic shape — and now the DEFAULT 28-bit
-//! identity namespace fits, with room to spare.** The realistic shape carries an 803-column
-//! leaf (no hidden lane columns), 221 under the 1024 cap, and `tests/prove_fold.rs` proves
-//! that saturated shape as a SINGLE foldable leaf. This was the previously-unstated price
-//! `node8` erased: the old 8-chain digest paid 368 node hash sites, each costing 7 lane
-//! columns in the lowered leaf, so the "999-column" realistic shape actually folded a
-//! 3575-column leaf (999 + 368×7 = 2576 lane columns). One `node8` site per 8-felt block
-//! binds the same ~124 bits at zero lane cost, and the digest chains fell from ~400 program
-//! columns to ~176.
+//! **Segmentation is NOT needed at the realistic shape — and the DEFAULT 28-bit
+//! identity namespace fits, with room to spare.** The realistic shape carries a 770-column
+//! leaf, 254 under the 1024 cap, and `tests/prove_fold.rs` proves that saturated shape as a
+//! SINGLE foldable leaf. This was the previously-unstated price `node8` erased: the old 8-chain
+//! digest paid 368 node hash sites, each costing 7 lane columns in the lowered leaf, so the
+//! "999-column" realistic shape actually folded a 3575-column leaf (999 + 368×7 = 2576 lane
+//! columns). One `node8` site per 8-felt block binds the same ~124 bits at zero lane cost, and the
+//! digest chains fell from ~400 program columns to ~176.
 //!
 //! ### The segmentation plan (needed for growth past ~n4/p8, not for Stage 1)
 //!
-//! The digest chains are no longer the dominant cost (they are ~176 of the 803 columns and
+//! The digest chains are no longer the dominant cost (they are ~176 of the 770 columns and
 //! carry no lane columns). Past the realistic shape the ordering tooth's range gadgets
 //! dominate — the natural cut is the AIR's own body, not the digest.
 //!
@@ -122,15 +123,38 @@
 //! `braid-hook`'s direct-IR2 fold) rides THAT route: the leaf re-proves the emitted descriptor
 //! itself, so the relation has exactly one semantics.
 //!
-//! ### The hand-written Rust AIR ([`air`] + [`builder`]) is RETIRED DEBT, still standing
+//! ### The hand-written Rust AIR is DELETED (2026-07-25)
 //!
-//! [`air`] and [`builder`] hand-write the same AIR in Rust — constraints, gadgets and an
-//! `air_accepts` predicate, the three things the Lean-authored-AIR law names. NOTHING ON A
-//! PRODUCTION PATH CALLS THEM ANY MORE. They remain only because this crate's own test corpus
-//! (`tests/{composition,size,turn_door,prove_fold}.rs`) is written against them at shapes Lean has
-//! not byte-pinned; deleting the modules requires migrating or dropping that corpus, and dropping
-//! two now-stale rows from `circuit-prove/tests/law1_enforcement_gate.rs`'s `BASELINE`. Do not
-//! extend them, and do not build anything new on them.
+//! `src/air.rs` (659 lines) and `src/builder.rs` (369) hand-wrote the same AIR in Rust —
+//! constraints, gadgets, an `air_accepts` predicate and a `tamper()` forgery harness: the three
+//! things the Lean-authored-AIR law names, plus the fourth. They are GONE, together with their two
+//! `BASELINE` rows in `circuit-prove/tests/law1_enforcement_gate.rs`. The whole test corpus
+//! (`tests/{composition,size,turn_door,prove_fold,lean_witness}.rs`) now rides the emitted
+//! descriptor.
+//!
+//! **The honest price of that deletion**, at current resolution. Four things named as EMITTED but
+//! NOT YET REFINED in `ParamComposeRefine.lean`'s coverage boundary lost the only checker they had:
+//!
+//!   1. **the four digest chains' root-is-the-fold induction** — the wide `node8` chip lookups are
+//!      a cross-table BUS arm, and the deployed row-local evaluator
+//!      ([`witness::compose_trace_accepts`]) is deliberately silent on those. The retired
+//!      `builder.air_accepts` evaluated the `MerkleHash8` sites directly, so a wrong digest column
+//!      went red in milliseconds; now only the real batch prover sees it
+//!      (`tests/prove_fold.rs::a_tampered_node8_digest_lane_does_not_prove`, `#[ignore]`d). The
+//!      PRODUCER-side equality with `crate::reference`'s host twins is still checked fast.
+//!   2. **the ordering tooth's integer-level non-vacuity** — the ℤ-level argument that consumes the
+//!      `identity_bits <= 28` margin. (The ordering GATES themselves still bite row-locally.)
+//!   3. **the activity-prefix corollaries** — "active is a prefix of length `subject_count`" and
+//!      "absence is committed as zero".
+//!   4. **an assembled `Satisfied2` witness** of the `MultiStepChainRefine.wTrace_satisfied2` kind.
+//!
+//! ...plus **multi-shape VK distinctness** at `canonical_vk_v2` resolution (there is no
+//! `CellProgram` to hash any more; `tests/composition.rs` now pins distinctness of the emitted
+//! descriptor NAME and WIRE BYTES, which is what that key is computed over) and the **cross-shape
+//! hash-site census**, which moved from `builder.hash_site_count()` to counting the emitted
+//! `Lookup` constraints — the same number, read off the emitted object instead of a Rust twin.
+//!
+//! The emitted descriptor CARRIES all of these gates. The Lean refinement has not PROVEN them.
 //!
 //! ## Honest scope
 //!
@@ -164,8 +188,6 @@
 //!    `explanation_root`. A zero-knowledge *predicate* over a hidden param (rather than
 //!    revealing it) is a further ruleset term, not a new mechanism.
 
-pub mod air;
-pub mod builder;
 pub mod digest;
 pub mod field;
 pub mod lean_descriptor;
@@ -175,8 +197,6 @@ pub mod reference;
 pub mod shape;
 pub mod witness;
 
-pub use air::{ComposeAir, Forgery, build, build_forged};
-pub use builder::{Builder, Head};
 pub use digest::DIGEST_FELTS;
 pub use lean_descriptor::lean_descriptor_for;
 pub use model::{ComposeError, Composition, Knot, LinearTerm, Ruleset, Subject};

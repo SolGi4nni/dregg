@@ -23,6 +23,12 @@
 //! for real. The AIR's PI layout getting PAST 2c is exactly the claim under test: its
 //! public inputs open with `[old8 ‖ new8]` in the door's ABI, so a real turn can carry it.
 //! `tests/prove_fold.rs` mints the actual leaf.
+//!
+//! **Say the substrate out loud:** the public inputs carried here are produced by the WITNESS
+//! PRODUCER for the LEAN-AUTHORED descriptor (`dregg_param_compose::witness`), and the
+//! `program_bytes` the v2 `vk_hash` binds are the Lean-emitted descriptor's OWN wire string —
+//! the same bytes `dregg_entity_compose::program_bytes` feeds the deployed key. Nothing here
+//! authors or lowers a constraint.
 
 #![allow(non_snake_case)]
 
@@ -40,13 +46,15 @@ use dregg_turn::{
     TurnExecutor, TurnResult,
 };
 
-use dregg_param_compose::air::build;
+use dregg_param_compose::lean_descriptor::{lean_descriptor_for, lean_descriptor_json};
 use dregg_param_compose::model::{Composition, Knot, LinearTerm, Ruleset, Subject};
 use dregg_param_compose::shape::ComposeShape;
+use dregg_param_compose::witness::{compose_trace_accepts, compose_witness};
 
 const ROLE_P: u64 = 101;
 const ROLE_Q: u64 = 202;
 
+/// Lean's `pcLeaf` — byte-pinned in `ParamComposeGoldenShapes.lean`.
 fn shape() -> ComposeShape {
     ComposeShape::new(3, 4, 3, 2)
 }
@@ -220,19 +228,21 @@ fn turn_with(
     }
 }
 
-/// Build the composition AIR bound to `(old, new)` and package its REAL public inputs as
+/// Produce the composition witness bound to `(old, new)` and package its REAL public inputs as
 /// the turn's custom sub-proof.
 fn compose_proof_for(
     vk_hash: [u8; 32],
     old: &[u8; 32],
     new: &[u8; 32],
 ) -> (CustomProgramProof, usize) {
-    let air = build(&shape(), &composition(), &felt8(old), &felt8(new)).expect("builds");
+    let sh = shape();
+    let desc = lean_descriptor_for(&sh).expect("the door shape is Lean-pinned");
+    let w = compose_witness(&sh, &composition(), &felt8(old), &felt8(new)).expect("produces");
     assert!(
-        air.builder.air_accepts(),
-        "the carried composition is honest"
+        compose_trace_accepts(&desc, &w),
+        "the carried composition is honest — the EMITTED descriptor says so"
     );
-    let pis: Vec<u32> = air.builder.pis.iter().map(|f| f.0).collect();
+    let pis: Vec<u32> = w.pis.iter().map(|f| f.0).collect();
     let n = pis.len();
     (
         CustomProgramProof {
@@ -246,15 +256,15 @@ fn compose_proof_for(
     )
 }
 
+/// The `program_bytes` a genuine v2 `vk_hash` binds: the LEAN-EMITTED descriptor's own wire
+/// string, so the turn names the composition program's own key and that key is over the Lean
+/// object rather than a Rust re-authoring of it. This is byte-for-byte what
+/// `dregg_entity_compose::program_bytes` feeds the deployed registry.
 fn program_bytes() -> Vec<u8> {
-    let air = build(
-        &shape(),
-        &composition(),
-        &[BabyBear::ZERO; 8],
-        &[BabyBear::ZERO; 8],
-    )
-    .expect("builds");
-    postcard::to_allocvec(&air.builder.descriptor()).expect("descriptor serializes")
+    lean_descriptor_json(&shape())
+        .expect("the door shape is Lean-pinned")
+        .as_bytes()
+        .to_vec()
 }
 
 // ===========================================================================

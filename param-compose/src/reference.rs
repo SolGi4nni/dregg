@@ -1,5 +1,7 @@
 //! **THE REFERENCE ORACLE** — the host-side composition, the canonical field streams, and
-//! the roots. It computes the outcome OFF-circuit; `crate::air` RE-CHECKS it in-circuit
+//! the roots. It computes the outcome OFF-circuit; the LEAN-AUTHORED AIR
+//! (`metatheory/Dregg2/Circuit/Emit/ParamComposeEmit.lean`, reached via
+//! `crate::lean_descriptor` and witnessed by `crate::witness`) RE-CHECKS it in-circuit
 //! (a DIFFERENTIAL TEST — NOT translation validation, and NOT refinement or verification.
 //! There is no formal semantics of Rust, so comparing this reference against the AIR proves
 //! NOTHING about all inputs; it is unit testing on cases. The real refinement lives in Lean:
@@ -11,7 +13,7 @@
 //!
 //!   * **canonical subject ordering** — ascending `identity` ([`canonical_subjects`]);
 //!   * **duplicate rejection** — equal identities are refused, in-circuit by a STRICT
-//!     increase (`crate::air`), so there is no separate host tooth to trust;
+//!     increase in the EMITTED AIR, so there is no separate host tooth to trust;
 //!   * **missing/hidden/default values** — a param slot at or past `param_count` is
 //!     canonically ZERO and is bound as zero into `subjects_root`; absence is COMMITTED,
 //!     never ambiguous. A ruleset term addressing such a slot is REFUSED;

@@ -218,18 +218,44 @@ fn the_produced_roots_are_the_reference_host_twins() {
     }
 }
 
+/// **THE PRIVACY BOUNDARY.** No param value, and no raw outcome, reaches a public input.
+///
+/// The params must be LARGE and DISTINCTIVE for this to measure a LEAK rather than a
+/// coincidence. `realistic_composition`'s own params are the small integers `1..=12`, four of
+/// which are legitimately public in another slot — `abi_version = 1`, `subject_count = 4`,
+/// `knot_count = 6`, `param_count = 8` — so over that fixture the assertion below fires on
+/// `params[0] = 1` colliding with the ABI version. It DID fire: this test was RED at HEAD,
+/// asserting a leak that was really the ABI-version slot. Repaired 2026-07-25 by making the
+/// params distinctive, which is the same discipline `tests/composition.rs`'s twin already spells
+/// out in its own doc comment.
 #[test]
 fn param_values_never_reach_a_public_input() {
-    let (shape, comp) = (pc_realistic(), realistic_composition());
+    let shape = pc_realistic();
+    let mut comp = realistic_composition();
+    for (i, s) in comp.subjects.iter_mut().enumerate() {
+        for (q, v) in s.params.iter_mut().enumerate() {
+            *v = 111_111 + (i * 8 + q) as i64;
+        }
+    }
     let w = compose_witness(&shape, &comp, &old8(), &new8()).expect("produces");
+    assert!(
+        emitted_accepts(&shape, &w, 4),
+        "the distinctive-param composition must still satisfy the emitted descriptor"
+    );
     for s in &comp.subjects {
         for &p in &s.params {
             assert!(
                 !w.pis.contains(&fb(p as i128)),
-                "a param value leaked into the PIs"
+                "param value {p} leaked into the PIs"
             );
         }
     }
+    // ...and the composed outcome is a COMMITMENT, never published raw.
+    let outcome = comp.compose().expect("composes").outcome;
+    assert!(
+        !w.pis.contains(&fb(outcome)),
+        "the raw outcome {outcome} appeared in the public inputs — it must be a COMMITMENT"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -438,19 +464,24 @@ fn every_pinned_shape_resolves_and_names_itself() {
     }
 }
 
-/// **THE STRUCTURAL CROSS-CHECK, AS A GATE.** `lib.rs` publishes a MEASURED budget table for the
-/// hand-written Rust AIR's own column count (`prog`) at three shapes. The Lean family emits exactly
-/// 33 fewer at each: `air.rs:312`'s single `zero` column plus the four 8-felt IV column groups
-/// `air.rs::wide_chain` allocates once per chain (`1 + 4 * 8 = 33`), which the Lean author replaces
-/// with literal constants in the chip tuple.
+/// **THE STRUCTURAL CROSS-CHECK, AS A GATE.** The retired hand-written Rust AIR
+/// (`param-compose/src/{air,builder}.rs`, DELETED 2026-07-25) carried exactly 33 more columns than
+/// the Lean family emits at every shape: its single `zero` padding column plus the four 8-felt IV
+/// column groups its `wide_chain` allocated once per chain (`1 + 4 * 8 = 33`), which the Lean
+/// author replaces with literal constants in the chip tuple.
 ///
-/// Both terms depend on NOTHING but "there are four digest chains", so the delta is shape-invariant
-/// by construction — which is what makes it evidence that the two objects are the same AIR rather
-/// than a coincidence at one size. This asserts it at every shape where a Rust `prog` number is
-/// published; `tests/size.rs` measures the Rust side at five of them directly.
+/// Both terms depended on NOTHING but "there are four digest chains", so the delta was
+/// shape-invariant by construction — which is what made it evidence that the two objects were the
+/// same AIR rather than a coincidence at one size.
+///
+/// **At what resolution, now.** The Rust numbers below (219 / 379 / 803) are HISTORICAL: they were
+/// measured against the deleted AIR and are recorded here and in `lib.rs`'s budget table. Nothing
+/// re-measures them. What this test still does is pin the LEAN widths — a Lean emission that moved
+/// at any of these three shapes goes red here — so it survives as a drift detector on the surviving
+/// side, not as a live differential.
 #[test]
 fn the_lean_width_is_the_rust_width_less_the_thirty_three_pinned_columns() {
-    // (shape, the `prog` column count `lib.rs`'s budget table publishes for the Rust AIR)
+    // (shape, the HISTORICAL `prog` column count of the deleted Rust AIR — `lib.rs`'s budget table)
     for (shape, rust_prog) in [
         (ComposeShape::new(2, 2, 1, 1), 219usize),
         (ComposeShape::new(3, 4, 3, 2), 379),

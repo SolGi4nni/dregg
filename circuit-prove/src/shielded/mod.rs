@@ -110,6 +110,6 @@ pub use wide_value_binding::{
     BINDING_BLIND_LANES, LIMB_BITS, U64_LIMBS, WIDE_VALUE_BINDING_LANES, WideValueBindingClaim,
     WideValueBindingError, WideValueBindingProof, WideValueBindingWitness,
     generate_wide_value_binding_trace, prove_wide_value_binding, verify_stark_with_wide_bindings,
-    verify_wide_value_binding, wide_transfer_message, wide_value_binding_circuit,
-    wide_value_binding_descriptor,
+    verify_wide_value_binding, wide_transfer_message, wide_value_binding_descriptor,
+    wide_value_binding_descriptor_json,
 };

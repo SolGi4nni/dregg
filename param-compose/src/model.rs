@@ -7,7 +7,7 @@
 //! [`Subject::identity`]).
 
 /// The canonical value of an absent role. An ACTIVE subject's role must be non-zero
-/// (`crate::air` enforces it), so `0` unambiguously means "no subject here".
+/// (the EMITTED AIR enforces it), so `0` unambiguously means "no subject here".
 pub const ROLE_ABSENT: u64 = 0;
 
 /// A typed projection of one participating entity.
@@ -29,7 +29,7 @@ pub struct Subject {
     /// caught by the ledger/schema layer that issues them, not here.
     pub identity: u64,
     /// The role tag this subject occupies. Must be non-zero and unique among the
-    /// subjects of one composition (`crate::air` enforces both) — a role is a KEY.
+    /// subjects of one composition (the EMITTED AIR enforces both) — a role is a KEY.
     pub role: u64,
     /// The typed params, in schema slot order. Length must be `<= param_count`; slots at
     /// or past `param_count` are canonically ZERO (see `crate::reference`).
@@ -95,7 +95,7 @@ pub struct Composition {
     /// The law.
     pub ruleset: Ruleset,
     /// The schema's active param width. Params at or past this index are canonically
-    /// zero; a rule term addressing one is REFUSED (`crate::air`).
+    /// zero; a rule term addressing one is REFUSED by the EMITTED AIR.
     pub param_count: usize,
 }
 

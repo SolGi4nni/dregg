@@ -34,13 +34,14 @@
 //! parallel 4-ary (`Hash4to1`) absorb chains, because the custom-leaf lowering REFUSED
 //! `MerkleHash8` (it carried single-output chip sites only). That refusal is gone. One
 //! node8 site now binds all 8 felts, so the 8× site multiplier — and its per-site 7 lane
-//! columns in the lowered leaf — are gone. See `crate::air::wide_chain` (the in-circuit
-//! twin) and `tests/size.rs` (the before/after program+lane column census).
+//! columns in the lowered leaf — are gone. See `ParamComposeEmit.lean` §11 (`chainLookups`,
+//! the emitted twin) and `tests/size.rs` (the leaf-width census).
 //!
-//! Every function here is the HOST TWIN of the in-circuit chain in `crate::air`, which
-//! rebuilds the identical `cap_node8` chain over witnessed columns with
-//! `ConstraintExpr::MerkleHash8`. The two are pinned against each other by the PI-layout
-//! and root tests in `tests/composition.rs`.
+//! Every function here is the HOST TWIN of the chain the LEAN-AUTHORED AIR emits
+//! (`metatheory/Dregg2/Circuit/Emit/ParamComposeEmit.lean` §11 — one wide arity-16 `node8` chip
+//! lookup per 8-felt block, over the digest columns `crate::witness` fills). The two are pinned
+//! against each other by the PI-layout and root tests in `tests/composition.rs` and
+//! `tests/lean_witness.rs`.
 
 use dregg_circuit::cap_root::cap_node8;
 use dregg_circuit::field::BabyBear;
@@ -82,7 +83,8 @@ pub fn iv8(domain: u64) -> [BabyBear; DIGEST_FELTS] {
     core::array::from_fn(|lane| fb((domain * LANE_STRIDE) as i128 + lane as i128))
 }
 
-/// The 8-felt digest of `data` under `domain`. Host twin of `crate::air::wide_chain`.
+/// The 8-felt digest of `data` under `domain`. Host twin of the emitted `chainLookups`
+/// (`ParamComposeEmit.lean` §11).
 ///
 /// A `cap_node8` Merkle-Damgård chain: seed with `iv8(domain)`, then absorb `data` 8 felts
 /// at a time (the final block zero-padded), returning the 8-felt accumulator.

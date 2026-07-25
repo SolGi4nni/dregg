@@ -14,12 +14,15 @@
 //! * **Scope.** The single largest hand-written Rust AIR in the tree — `param-compose/src/air.rs` +
 //!   `param-compose/src/builder.rs`, ~1000 lines, its own `Head` polynomial type, its own
 //!   `assert_zero`, its own `air_accepts`, and a `tamper()` forgery harness — sat entirely OUTSIDE the
-//!   scanned directories and was therefore invisible to a gate whose entire purpose is to see it. It is
-//!   live on a production path (`entity-compose/src/lib.rs` imports `dregg_param_compose::air::{ComposeAir,
-//!   build}` in non-test code), both crates are workspace `default-members`, and `metatheory/` contains
-//!   **no** `paramCompose` emitter — there is no Lean route for it at all. This gate now scans **every
-//!   `.rs` file under any `src/` tree in the repository**, so a violation cannot hide by being in a
-//!   different crate.
+//!   scanned directories and was therefore invisible to a gate whose entire purpose is to see it. At
+//!   the time of that rewrite it was live on a production path (`entity-compose/src/lib.rs` imported
+//!   `dregg_param_compose::air::{ComposeAir, build}` in non-test code), both crates are workspace
+//!   `default-members`, and `metatheory/` contained **no** `paramCompose` emitter. This gate now scans
+//!   **every `.rs` file under any `src/` tree in the repository**, so a violation cannot hide by being
+//!   in a different crate. **OUTCOME (2026-07-25): both files are DELETED.** Lean grew the route
+//!   (`Dregg2/Circuit/Emit/ParamComposeEmit.lean` + `ParamComposeRefine`, all 18 corpus shapes
+//!   `#guard`-pinned), the consumers and the whole test corpus moved onto the emitted descriptor, and
+//!   the two `BASELINE` rows went with the files.
 //! * **Counting.** `circuit/src/custom_leaf_lowering.rs` "violated" the old gate 46 times. Every one of
 //!   those 46 is `ConstraintExpr::Variant { .. } =>` — a match arm in a LOWERING. Destructuring a
 //!   constraint authors nothing. A gate that cries wolf 46 times gets ignored, and this one was: the
@@ -105,15 +108,18 @@
 //! * THE USER-PROGRAM GRAMMAR: `dsl/predicates/*`, `dsl/descriptors.rs` — the host-trusted smart-contract
 //!   surface users deploy programs against; interpreted, fails closed on an unknown vk_hash.
 //! * NAMED RESIDUALS — real debt, now VISIBLE for the first time:
-//!   - **`param-compose/src/{air,builder}.rs` (28) + the `entity-compose` consumer.** A complete
-//!     hand-written Rust AIR: 24 `assert_zero` sites, its own `ConstraintExpr` emission, `air_accepts`,
-//!     and `tamper()`. `builder.rs:9-14` documents itself as "a sibling of `dregg-automatafl`'s builder …
-//!     duplicated rather than shared" — the automatafl Rust-AIR deletion is recorded as complete and
-//!     `dregg-automatafl/src/` indeed has no `builder.rs`/`air.rs` left, but the clone had already been
-//!     copied out into `param-compose/`, where it survived precisely because it was outside this gate's
-//!     old scope. There is NO Lean route: `grep -ri paramcompose metatheory/` is empty. Not deleted here —
-//!     a sibling lane is assessing a Lean emit route. Deleting it is the fix; this line is the receipt
-//!     that it is debt.
+//!   - ~~**`param-compose/src/{air,builder}.rs` (28) + the `entity-compose` consumer.**~~ **CLOSED
+//!     2026-07-25 — DELETED, 1028 lines.** It was a complete hand-written Rust AIR: 24 `assert_zero`
+//!     sites, its own `ConstraintExpr` emission, `air_accepts`, and `tamper()`, and `builder.rs`
+//!     documented itself as "a sibling of `dregg-automatafl`'s builder … duplicated rather than
+//!     shared" — the automatafl Rust-AIR deletion was recorded as complete, but the clone had already
+//!     been copied out into `param-compose/`, where it survived precisely because it was outside this
+//!     gate's old scope. The "There is NO Lean route" line this entry carried is what changed:
+//!     `Dregg2/Circuit/Emit/ParamComposeEmit.lean` now authors the whole AIR and byte-pins the wire,
+//!     `ParamComposeRefine.paramCompose_refines_law` refines it, and all 18 shapes the test corpus
+//!     exercises are `#guard`-pinned, so consumers and tests alike ride the emitted descriptor.
+//!     Deleting it was the fix; this line is the receipt that it happened. (The honest price — four
+//!     coverage items that lost their only checker — is recorded in `param-compose/src/lib.rs`.)
 //!   - **`perf/src/lib.rs` (28)** — a hand-built `VmConstraint2::{MapOp,UMemOp}` descriptor, dialect (4),
 //!     in a crate no previous audit scanned.
 //!   - `ivc.rs` + `dsl/fold.rs` (`FoldAir`) — test-only; `ivc`'s emitter is one Lean PROVES insufficient
@@ -633,17 +639,15 @@ const BASELINE: &[(&str, usize)] = &[
     ("circuit-prove/src/private_preference_cell.rs", 2),
     ("circuit-prove/src/shielded/attest.rs", 11),
     ("circuit-prove/src/shielded/spend_circuit.rs", 11),
-    // ⚑ 639 lines of Rust-authored CircuitDescriptor added FOR the felt-width repair — the drift
-    // the law names, arriving inside a correctness fix. A LEAN ROUTE NOW EXISTS:
+    // circuit-prove/src/shielded/wide_value_binding.rs is GONE from this ledger (was 7).
     // Dregg2/Circuit/Emit/WideValueBindingEmit.lean authors the whole AIR (byte-pinned, 29874 B)
     // and WideValueBindingRefine proves EVERY emitted constraint — including
     // legacy_join_cannot_separate_aliases, which needs no crypto: the one-felt legacy join is
-    // provably blind to a v / v+p alias pair, for ANY hash.
-    // WHAT BLOCKS DELETION IS NOT LEAN: the deployed sidecar rides prove_dsl_zk on a v1
-    // DslCircuit and there is no IR-2 -> v1 lowering, so moving it changes the proof BYTES on
-    // the Turn wire (turn/src/action.rs:995, turn-prover/src/shielded_transfer_verifier.rs).
-    // That is a deploy decision, not a proof gap. Delete this row in the SAME commit as the file.
-    ("circuit-prove/src/shielded/wide_value_binding.rs", 7),
+    // provably blind to a v / v+p alias pair, for ANY hash. The sidecar now reads that golden
+    // and proves through Plonky3HidingFriReference (the SAME create_zk_config the retired
+    // prove_dsl_zk route used, so hiding is preserved); the descriptor-authoring half of the
+    // file — mod col's AIR use, constant_gate, limb_recompose, u64_recompose,
+    // wide_input_columns, wide_value_binding_descriptor, wide_value_binding_circuit — is deleted.
     ("circuit-prove/src/shielded_ring_clearing_air.rs", 75),
     ("circuit-prove/src/shielded_ring_clearing_nleg_air.rs", 32),
     ("circuit-prove/src/shielded_spend_leaf_adapter.rs", 39),
@@ -704,15 +708,12 @@ const BASELINE: &[(&str, usize)] = &[
     ("dregg-dsl-differential/src/plonky3_runner.rs", 10),
     ("dregg-dsl-runtime/src/composition.rs", 13),
     ("game-turn-slice/src/compiler.rs", 6),
-    // ⚑ A COMPLETE hand-written Rust AIR. The "No Lean route exists" note here is now STALE:
-    // Dregg2/Circuit/Emit/ParamComposeEmit.lean authors the whole AIR and byte-pins the wire
-    // (24540 B at pcMin, 314273 B deployed), refined by ParamComposeRefine.paramCompose_refines_law,
-    // and entity-compose no longer imports this crate's air/builder on any production path.
-    // WHAT STILL BLOCKS DELETION: param-compose/tests/*.rs (~1935 lines) exercise shapes Lean has
-    // NOT pinned, so they cannot be migrated faithfully without new #guard instances. Delete these
-    // two rows in the SAME change that deletes the files, or the stale-entry check below fires.
-    ("param-compose/src/air.rs", 19),
-    ("param-compose/src/builder.rs", 9),  // ⚑ the dregg-automatafl builder CLONE that survived that deletion (copied out first).
+    // ── THE LAW WON HERE (2026-07-25). `param-compose/src/air.rs` (19 sites) and
+    //    `param-compose/src/builder.rs` (9) — the largest hand-written Rust AIR in the tree,
+    //    1028 lines — are DELETED. Dregg2/Circuit/Emit/ParamComposeEmit.lean authors the whole
+    //    AIR and byte-pins the wire, all 18 shapes the corpus exercises are #guard-pinned, and
+    //    param-compose's own test corpus now rides the emitted descriptor. Their rows are gone
+    //    from this BASELINE in that same change (the stale-entry check below requires it).
     ("perf/src/lib.rs", 28),  // ⚑ a hand-built VmConstraint2::{MapOp,UMemOp} descriptor.
     ("sdk/src/full_turn_proof.rs", 2),
     ("tests/src/dsl_pipeline.rs", 8),
@@ -727,10 +728,10 @@ const AIR_ACCEPTS_LEDGER: &[(&str, &str)] = &[
     ("circuit/src/lean_descriptor_air.rs",
      "test-module ORACLE: it does not decide acceptance itself, it calls prove_vm_descriptor + \
       verify_vm_descriptor and treats a prover panic as reject. Delegation, not authorship."),
-    ("param-compose/src/builder.rs",
-     "⚑ DEBT. A real hand-authored acceptance predicate over a hand-authored Rust AIR, paired with \
-      tamper() for forgery tests. No Lean route exists (metatheory/ has no paramCompose). Retire with \
-      the AIR, not separately."),
+    // `param-compose/src/builder.rs`'s `air_accepts` — a real hand-authored acceptance predicate
+    // over a hand-authored Rust AIR, paired with tamper() for forgery tests — is DELETED with the
+    // AIR (2026-07-25), so it needs no ledger line. It was retired exactly as this ledger demanded:
+    // with the AIR, not separately.
     ("entity-compose/src/lib.rs",
      "⚑ DEBT, derived: rebuilds the param-compose AIR and calls ITS air_accepts. It is the production \
       consumer that makes the param-compose AIR live rather than dead code."),
@@ -1057,23 +1058,38 @@ mod teeth {
     }
 
     #[test]
-    fn the_scope_reaches_param_compose() {
+    fn the_scope_reaches_outside_the_two_old_directories() {
         // The regression that made this rewrite necessary: the biggest Rust AIR in the tree
-        // was outside the scanned directories. If this stops finding it, the scope broke again.
+        // (`param-compose/src/{air,builder}.rs`) sat outside the scanned `circuit/src` +
+        // `circuit-prove/src` and was invisible to a gate whose whole purpose was to see it.
+        //
+        // That AIR is now DELETED (2026-07-25) — so it can no longer serve as the scope probe,
+        // and the probe moves to the OTHER files the two-directory scope hid. If this stops
+        // finding them, the scope broke again.
         let found = scan_repo();
         for f in [
-            "param-compose/src/air.rs",
-            "param-compose/src/builder.rs",
             "perf/src/lib.rs",
+            "constraint-lowering/src/lib.rs",
+            "dregg-dsl-runtime/src/composition.rs",
+            "game-turn-slice/src/compiler.rs",
         ] {
             assert!(
                 found.contains_key(f),
-                "{f} is a hand-written Rust AIR and the gate must see it; scope regressed"
+                "{f} authors constraints outside circuit/ + circuit-prove/ and the gate must \
+                 see it; scope regressed"
+            );
+        }
+        // ...and the file the probe used to be is GONE, which is the direction of the law. A
+        // reappearance is a NEW hand-written Rust AIR and must not pass silently.
+        for gone in ["param-compose/src/air.rs", "param-compose/src/builder.rs"] {
+            assert!(
+                !repo_root().join(gone).exists(),
+                "{gone} was DELETED — a hand-written Rust AIR must not come back"
             );
         }
         assert!(
             found.len() > 60,
-            "the widened scope should reach ~88 files across the workspace, found {}",
+            "the widened scope should reach ~86 files across the workspace, found {}",
             found.len()
         );
     }

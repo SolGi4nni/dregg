@@ -1,34 +1,50 @@
-//! **THE BUDGET CENSUS.** Program width, LOWERED-LEAF width, degree, PIs, and Poseidon2
-//! sites at each shape, measured against the deployed caps (`MAX_TRACE_WIDTH = 1024`,
-//! `MAX_CONSTRAINT_DEGREE = 8`, `MAX_PUBLIC_INPUTS = 64`) — the automatafl lesson taken up
-//! front rather than discovered.
+//! **THE BUDGET CENSUS**, measured on the LEAN-EMITTED object. Leaf width, degree, PIs and
+//! Poseidon2 sites at each shape, against the deployed caps (`MAX_TRACE_WIDTH = 1024`,
+//! `MAX_CONSTRAINT_DEGREE = 8`, `MAX_PUBLIC_INPUTS = 64`) — the automatafl lesson taken up front
+//! rather than discovered.
 //!
-//! # Two widths, and why BOTH are measured
+//! **Say the substrate out loud:** nothing here authors or lowers a constraint. Every number is
+//! read off `paramComposeDesc` as byte-pinned by
+//! `metatheory/Dregg2/Circuit/Emit/{ParamComposeEmit,ParamComposeGolden,ParamComposeGoldenShapes,
+//! ParamComposeGoldenCensus}.lean` and decoded by the production IR-v2 decoder.
 //!
-//! `prog` is the AIR's own column count (`descriptor.trace_width`). `leaf` is the width the
-//! FOLDED leaf actually carries: the custom-leaf lowering (`cellprogram_to_descriptor2`)
-//! allocates extra `lane` columns per single-output Poseidon2 site (7 per `Hash4to1` /
-//! `Hash2to1` / `Hash3Cap`), so the leaf a prover mints is `prog + lane`. A census that
-//! reports only `prog` UNDER-COUNTS the leaf — which is exactly the trap this AIR used to
-//! sit in (the 8-chain digest paid 368 hash sites × 7 = 2576 lane columns the earlier
-//! report never counted, so a "999-column" realistic shape folded a 3575-column leaf).
+//! # ONE width, not two — and where the missing measurement went
 //!
-//! The digest is now `MerkleHash8` (`node8`), whose 8 outputs are PROGRAM-OWNED, so it
-//! allocates ZERO lane columns and `leaf == prog`. This test measures both and ASSERTS the
-//! shapes it claims fit actually fit at the LEAF width — a gate that can go red, not a print.
+//! The pre-migration census reported TWO widths: `prog` (a Rust-authored `CircuitDescriptor`'s
+//! own columns) and `leaf` (`prog` + the `lane` columns `cellprogram_to_descriptor2` allocates
+//! per single-output Poseidon2 site). The `lane == 0` assertion was the gate that no
+//! single-output hash site had crept back in and re-inflated the folded leaf.
+//!
+//! **That measurement does not exist on this route, and is not faked here.** The Lean family
+//! emits IR-v2 DIRECTLY: there is no `CellProgram`, no custom-leaf lowering step, and hence no
+//! lane-column term — `leaf == trace_width` by construction, and the fold proves exactly this
+//! object. The CONTENT the `lane == 0` assertion carried (every digest site is a WIDE 25-tuple
+//! `node8` whose 8 outputs are program-owned, so no site can allocate lanes) is a Lean `#guard`
+//! at the emitter, `ParamComposeEmit.lean` §14:
+//!
+//! ```text
+//!   #guard ((paramComposeDesc pcMin).constraints.filterMap
+//!             (fun c => match c with | .lookup l => some l.tuple.length | _ => none)).all
+//!           (· == 1 + CHIP_RATE + CHIP_OUT_LANES)
+//! ```
+//!
+//! It fires at `lake build`, over the emitted object, before any Rust sees it. That is where the
+//! tooth lives now; no Rust stand-in is invented for it.
 //!
 //! Run:
 //!   cargo test -p dregg-param-compose --test size -- --nocapture
 
-use dregg_circuit::custom_leaf_lowering::cellprogram_to_descriptor2;
+use dregg_circuit::descriptor_ir2::{EffectVmDescriptor2, VmConstraint2};
 use dregg_circuit::field::BabyBear;
-use dregg_param_compose::air::build;
+use dregg_circuit::lean_descriptor_air::{LeanExpr, VmConstraint};
 use dregg_param_compose::field::fb;
+use dregg_param_compose::lean_descriptor::lean_descriptor_for;
 use dregg_param_compose::model::{Composition, Knot, LinearTerm, Ruleset, Subject};
 use dregg_param_compose::pi;
 use dregg_param_compose::shape::{
     ComposeShape, MAX_CONSTRAINT_DEGREE, MAX_PUBLIC_INPUTS, MAX_TRACE_WIDTH,
 };
+use dregg_param_compose::witness::{compose_trace_accepts, compose_witness};
 
 fn old8() -> [BabyBear; 8] {
     core::array::from_fn(|i| fb(1000 + i as i128))
@@ -76,89 +92,118 @@ fn saturating(shape: &ComposeShape) -> Composition {
     }
 }
 
-/// A measured census row: `(program_width, lane_columns, leaf_width, degree, pis)`.
+/// Total degree of an emitted expression. A pure MEASUREMENT of the decoded object — it decides
+/// nothing and constrains nothing; `Const` is 0, `Var` is 1, `Add` takes the max and `Mul` adds.
+fn expr_degree(e: &LeanExpr) -> usize {
+    match e {
+        LeanExpr::Const(_) => 0,
+        LeanExpr::Var(_) => 1,
+        LeanExpr::Add(a, b) => expr_degree(a).max(expr_degree(b)),
+        LeanExpr::Mul(a, b) => expr_degree(a) + expr_degree(b),
+    }
+}
+
+/// The largest constraint degree the emitted descriptor carries.
+fn emitted_max_degree(desc: &EffectVmDescriptor2) -> usize {
+    desc.constraints
+        .iter()
+        .map(|c| match c {
+            VmConstraint2::Base(VmConstraint::Gate(e)) => expr_degree(e),
+            VmConstraint2::Base(VmConstraint::Boundary { body, .. }) => expr_degree(body),
+            VmConstraint2::Base(_) => 1,
+            VmConstraint2::Lookup(l) => l.tuple.iter().map(expr_degree).max().unwrap_or(0),
+            _ => 1,
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+/// Wide `node8` chip lookups the emitted descriptor carries — the Poseidon2 site count.
+fn emitted_site_count(desc: &EffectVmDescriptor2) -> usize {
+    desc.constraints
+        .iter()
+        .filter(|c| matches!(c, VmConstraint2::Lookup(_)))
+        .count()
+}
+
+/// A measured census row, read off the EMITTED object.
 struct Row {
-    prog: usize,
-    lane: usize,
+    /// The IR-v2 leaf width the fold actually proves (there is no lowering step, so this IS the
+    /// leaf).
     leaf: usize,
     deg: usize,
     pis: usize,
+    sites: usize,
 }
 
 fn report(tag: &str, shape: &ComposeShape) -> Row {
+    let desc = lean_descriptor_for(shape)
+        .unwrap_or_else(|| panic!("{tag}: Lean must carry a byte-pinned instance at {shape:?}"));
+
+    // The saturating composition must actually fill this shape's layout and satisfy the emitted
+    // object — a census over a descriptor nothing can witness would be measuring a ghost.
     let comp = saturating(shape);
-    let air = build(shape, &comp, &old8(), &new8()).expect("saturating composition builds");
-    assert!(
-        air.builder.air_accepts(),
-        "{tag}: the honest saturating witness must self-accept"
-    );
-    let d = air.builder.descriptor();
-    let prog = d.trace_width;
-
-    // Lower to the IR-v2 leaf the FOLD actually proves — the lane columns the lowering
-    // allocates past the base width are the leaf's real cost (zero for node8 sites).
-    let program = air.builder.cellprogram();
-    let lowered = cellprogram_to_descriptor2(&program).unwrap_or_else(|e| {
-        panic!("{tag}: the composition AIR must lower to a foldable leaf: {e}")
+    let w = compose_witness(shape, &comp, &old8(), &new8()).unwrap_or_else(|e| {
+        panic!("{tag}: the saturating composition must produce a witness: {e}")
     });
-    let leaf = lowered.trace_width;
-    let lane = leaf - prog;
+    assert!(
+        compose_trace_accepts(&desc, &w),
+        "{tag}: the honest saturating witness must satisfy the EMITTED descriptor"
+    );
 
+    let leaf = desc.trace_width;
+    let deg = emitted_max_degree(&desc);
+    let sites = emitted_site_count(&desc);
     let fits = if leaf <= MAX_TRACE_WIDTH {
         "FITS"
     } else {
         "EXCEEDS -> SEGMENT"
     };
     eprintln!(
-        "{tag:<26} prog={:<5} lane={:<5} leaf={:<5} deg={:<2} pis={:<3} app_pis={:<3} sites={:<4} \
-         constraints={:<6} [{fits}]",
-        prog,
-        lane,
+        "{tag:<26} leaf={:<5} deg={:<2} pis={:<3} app_pis={:<3} sites={:<4} constraints={:<6} \
+         [{fits}]  {}",
         leaf,
-        d.max_degree,
-        d.public_input_count,
-        d.public_input_count - pi::APP_BASE,
-        air.builder.hash_site_count(),
-        d.constraints.len(),
+        deg,
+        desc.public_input_count,
+        desc.public_input_count - pi::APP_BASE,
+        sites,
+        desc.constraints.len(),
+        desc.name,
     );
     assert!(
-        d.max_degree <= MAX_CONSTRAINT_DEGREE,
-        "{tag}: degree {} exceeds the deployed cap {MAX_CONSTRAINT_DEGREE}",
-        d.max_degree
+        deg <= MAX_CONSTRAINT_DEGREE,
+        "{tag}: emitted degree {deg} exceeds the deployed cap {MAX_CONSTRAINT_DEGREE}"
     );
     assert!(
-        d.public_input_count <= MAX_PUBLIC_INPUTS,
+        desc.public_input_count <= MAX_PUBLIC_INPUTS,
         "{tag}: {} PIs exceed the deployed cap {MAX_PUBLIC_INPUTS}",
-        d.public_input_count
+        desc.public_input_count
+    );
+    assert_eq!(
+        sites,
+        shape.hash_sites(),
+        "{tag}: the shape's published fuel bound must be the emitted site count"
     );
     Row {
-        prog,
-        lane,
         leaf,
-        deg: d.max_degree,
-        pis: d.public_input_count,
+        deg,
+        pis: desc.public_input_count,
+        sites,
     }
 }
 
 /// **THE HEADLINE MEASUREMENT + GATE.** The realistic HOARDLIGHT-scale composition the task
-/// names: ~8 params x ~4 subjects + ~6 knots, at the DEFAULT 28-bit identity namespace.
+/// names: ~8 params x ~4 subjects + ~6 knots, at the DEFAULT 28-bit identity namespace — Lean's
+/// `pcRealistic`, the shape `entity-compose` deploys.
 ///
-/// Unlike the old census this does not merely print a verdict — it ASSERTS the LEAF width
-/// (program + lowering lane columns) fits the deployed cap. With the `node8` digest the
-/// realistic shape fits at its default identity namespace, with headroom, so this is a real
-/// gate: if a change reintroduced the lane-column cost (a single-output digest), it goes RED
-/// here rather than silently printing EXCEEDS while 3.5x over the leaf budget.
+/// This does not merely print a verdict — it ASSERTS the leaf the fold proves fits the deployed
+/// cap, and that the saturated witness satisfies it.
 #[test]
 fn realistic_shape_fits_as_one_leaf() {
     eprintln!("\n=== REALISTIC SHAPE: ~8 params x ~4 subjects + ~6 knots (default 28-bit ids) ===");
     let realistic = ComposeShape::new(4, 8, 8, 6);
     let r = report("realistic (id=28)", &realistic);
 
-    assert_eq!(
-        r.lane, 0,
-        "the digest is node8 (program-owned outputs), so the lowered leaf must allocate ZERO \
-         lane columns; a nonzero count means a single-output hash site crept back in"
-    );
     assert!(
         r.leaf <= MAX_TRACE_WIDTH,
         "the realistic shape must fold as ONE leaf at the DEFAULT identity namespace: leaf \
@@ -166,9 +211,8 @@ fn realistic_shape_fits_as_one_leaf() {
         r.leaf
     );
     eprintln!(
-        "  VERDICT: realistic shape folds a {}-column leaf (0 lane columns) — {} under the \
-         {MAX_TRACE_WIDTH} cap, at the DEFAULT 28-bit namespace. ONE leaf, no segmentation, no \
-         identity narrowing.",
+        "  VERDICT: realistic shape folds a {}-column leaf — {} under the {MAX_TRACE_WIDTH} cap, \
+         at the DEFAULT 28-bit namespace. ONE leaf, no segmentation, no identity narrowing.",
         r.leaf,
         MAX_TRACE_WIDTH - r.leaf
     );
@@ -177,8 +221,7 @@ fn realistic_shape_fits_as_one_leaf() {
         r.pis,
         r.pis - pi::APP_BASE
     );
-    let _ = r.deg;
-    let _ = r.prog;
+    let _ = (r.deg, r.sites);
 }
 
 /// **THE IDENTITY-WIDTH LEVER.** The ordering tooth's range gadgets are the AIR's single
@@ -214,24 +257,30 @@ fn identity_width_sweep() {
 /// not silently built. A 31-bit namespace lets both comparison bits satisfy the range
 /// gadget, so the "canonical order + duplicate rejection" tooth would look present and
 /// enforce nothing — exactly the failure this check exists to make impossible.
+///
+/// It is refused at BOTH poles, and the shape is deliberately NOT byte-pinned in Lean: pinning
+/// it would pin an object that must not exist.
 #[test]
 fn an_identity_width_that_would_go_vacuous_is_refused() {
     let sh = ComposeShape::new(4, 8, 8, 6).with_identity_bits(31);
     assert!(!sh.identity_bits_sound());
+    assert!(
+        lean_descriptor_for(&sh).is_none(),
+        "an unsound identity width must have NO emitted descriptor — blocked, not faked"
+    );
     let comp = saturating(&ComposeShape::new(4, 8, 8, 6));
     assert!(
-        build(&sh, &comp, &old8(), &new8()).is_err(),
-        "a shape whose ordering comparison would be VACUOUS must be refused, never built"
+        compose_witness(&sh, &comp, &old8(), &new8()).is_err(),
+        "a shape whose ordering comparison would be VACUOUS must be refused, never witnessed"
     );
 }
 
 /// The census across shapes: where the 1024-column LEAF wall actually is. The shapes
 /// documented to fit are ASSERTED (a real gate); the larger shapes that still segment are
-/// printed as honest scope — node8 shrinks their leaf dramatically but does not make them
-/// fit.
+/// asserted to still EXCEED, so "it segments" cannot silently become false.
 #[test]
 fn staged_leaf_width_census() {
-    eprintln!("\n=== SHAPE CENSUS (leaf = program + lowering lane columns) ===");
+    eprintln!("\n=== SHAPE CENSUS (leaf = the emitted IR-v2 trace width; no lowering step) ===");
 
     // Documented-to-fit shapes: ASSERT the leaf fits (these gates can go red).
     for (tag, sh) in [
@@ -240,7 +289,6 @@ fn staged_leaf_width_census() {
         ("n4 p8 l8 k6 (realistic)", ComposeShape::new(4, 8, 8, 6)),
     ] {
         let r = report(tag, &sh);
-        assert_eq!(r.lane, 0, "{tag}: node8 digest must cost zero lane columns");
         assert!(
             r.leaf <= MAX_TRACE_WIDTH,
             "{tag}: documented to FIT, but leaf {} > {MAX_TRACE_WIDTH}",
@@ -248,14 +296,13 @@ fn staged_leaf_width_census() {
         );
     }
 
-    // Larger shapes: these EXCEED the single-leaf cap and segment. Measured (not asserted
-    // to fit) — honest scope. node8 still costs zero lane columns.
+    // Larger shapes: these EXCEED the single-leaf cap and segment. Lean pins them precisely so
+    // the segmentation boundary is a MEASURED number rather than an estimate.
     for (tag, sh) in [
         ("n6 p8 l12 k10", ComposeShape::new(6, 8, 12, 10)),
         ("n8 p16 l16 k16", ComposeShape::new(8, 16, 16, 16)),
     ] {
         let r = report(tag, &sh);
-        assert_eq!(r.lane, 0, "{tag}: node8 digest must cost zero lane columns");
         assert!(
             r.leaf > MAX_TRACE_WIDTH,
             "{tag}: documented to SEGMENT — if it now fits, update the crate's budget scope \
@@ -284,4 +331,18 @@ fn the_pi_layout_does_not_encode_the_subject_count() {
         37,
         "37 app PIs, inside the door's 48-PI app budget"
     );
+    // ...and the EMITTED object agrees at every pinned shape it is checked against.
+    for n in [2usize, 4, 6, 8] {
+        let sh = match n {
+            2 => ComposeShape::new(2, 4, 1, 1),
+            4 => ComposeShape::new(4, 8, 8, 6),
+            6 => ComposeShape::new(6, 8, 12, 10),
+            _ => ComposeShape::new(8, 16, 16, 16),
+        };
+        assert_eq!(
+            lean_descriptor_for(&sh).expect("pinned").public_input_count,
+            counts[0],
+            "the emitted PI count must be constant across shapes ({sh:?})"
+        );
+    }
 }
