@@ -208,6 +208,15 @@ impl CommitteeCeremony {
             .finish()
             .map_err(|e| CommitteeError::Keygen(format!("{e:?}")))?;
 
+        // Build 5 Tier-0: the collective key must round-trip (encrypt → full-quorum decrypt) before use —
+        // a corrupt key from a malformed party contribution (aggregation checks no c0 well-formedness) is
+        // refused fail-closed here, never cached. Detection, not attribution (the per-share ZK proof is
+        // the full Build 5). Bounded one-time cost at committee genesis.
+        fhegg_fhe::threshold::collective_key_acceptance_gate(&collective, &params, &parties, 4)
+            .map_err(|e| {
+                CommitteeError::Keygen(format!("collective key acceptance gate: {e:?}"))
+            })?;
+
         let committee = ThresholdCommittee {
             params,
             keygen,
