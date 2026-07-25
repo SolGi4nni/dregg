@@ -62,17 +62,40 @@ pub type Result<T> = std::result::Result<T, RelinError>;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RelinError {
     EmptyRoster,
-    QuorumTooSmall { have: usize, need: usize },
-    DuplicateParty { party: usize },
-    InvalidParty { party: usize, n_parties: usize },
-    SessionMismatch { party: usize },
+    QuorumTooSmall {
+        have: usize,
+        need: usize,
+    },
+    DuplicateParty {
+        party: usize,
+    },
+    InvalidParty {
+        party: usize,
+        n_parties: usize,
+    },
+    SessionMismatch {
+        party: usize,
+    },
     PublicKeyMismatch,
     ZeroTimeout,
-    Timeout { phase: &'static str },
-    ChannelClosed { phase: &'static str },
+    Timeout {
+        phase: &'static str,
+    },
+    ChannelClosed {
+        phase: &'static str,
+    },
     PhaseMismatch,
-    Fhe { phase: &'static str },
+    Fhe {
+        phase: &'static str,
+    },
     PartyPanicked,
+    /// The candidate n-of-n relin key failed its mandatory acceptance gate: a FRESH random trial ct×ct
+    /// product did not decrypt to the exact plaintext product under the full threshold quorum. Fail closed —
+    /// a silently-corrupt relin key (a malformed/biased party contribution slips past aggregation, which
+    /// checks no well-formedness proof) is refused here and never cached or used.
+    AcceptanceFailed {
+        trial: usize,
+    },
 }
 
 impl std::fmt::Display for RelinError {
@@ -103,6 +126,11 @@ impl std::fmt::Display for RelinError {
             Self::PhaseMismatch => write!(f, "relinearization message has the wrong phase"),
             Self::Fhe { phase } => write!(f, "fhe.rs rejected relinearization {phase}"),
             Self::PartyPanicked => write!(f, "a relinearization party worker panicked"),
+            Self::AcceptanceFailed { trial } => write!(
+                f,
+                "relin key failed the acceptance gate at trial {trial}: a fresh ct×ct product did not \
+                 decrypt to the exact plaintext product under the quorum (candidate key refused)"
+            ),
         }
     }
 }
@@ -474,4 +502,100 @@ pub fn generate_relinearization_key(
             phase: "round 2 aggregation",
         })
     })
+}
+
+/// **The mandatory relin acceptance gate (roadmap Build 4 — Tier-0 malicious-security detection).**
+///
+/// Aggregation of the n-of-n relin shares checks NO well-formedness proof, so a malformed/biased party
+/// contribution can silently corrupt the collective relin key (the fault surfaces only as garbage at
+/// multiply-time, unattributably). This gate catches that fail-closed: it runs `trials` (at least 8) FRESH
+/// random ct×ct products through the candidate key and requires each to decrypt — via the full threshold
+/// quorum — to the EXACT plaintext product. A corrupt key produces a mismatch and is refused with
+/// [`RelinError::AcceptanceFailed`], so it is never cached or used.
+///
+/// This is DETECTION under an honest coordinator, NOT attribution — an honest stopgap subsumed once the
+/// decrypt-share validity certificate (roadmap Build 6) attributes a bad share to its party. It adds no new
+/// crypto: it reuses [`MulEngine`], the collective encrypt, and the in-tree threshold `partial_decrypt`/
+/// `combine`. Fresh per-call randomness means a corrupt key cannot be tuned to pass a fixed vector.
+pub fn relin_acceptance_gate(
+    relin: &RelinearizationKey,
+    params: &BfvParams,
+    collective: &super::CollectivePublicKey,
+    parties: &[super::ThresholdParty],
+    trials: usize,
+) -> Result<()> {
+    use crate::bfv_lean::LeanCiphertext;
+    use crate::bfv_mul::{BoundedCiphertext, MulEngine};
+    use fhe::bfv::{Encoding, Plaintext};
+    use fhe_traits::{FheEncoder, FheEncrypter, Serialize as _};
+    use rand_09::Rng;
+
+    let t = params.plaintext_modulus();
+    let engine = MulEngine::new(relin, params.arc()).map_err(|_| RelinError::Fhe {
+        phase: "acceptance-gate engine",
+    })?;
+    let mut rng = rand_09::rng();
+    // Keep m1*m2 < t so the exact product is representable (deployed t ~ 2^20).
+    const BOUND: u64 = 1000;
+    for trial in 0..trials.max(8) {
+        let m1 = rng.random_range(0..BOUND);
+        let m2 = rng.random_range(0..BOUND);
+        let encrypt = |m: u64| -> std::result::Result<fhe::bfv::Ciphertext, RelinError> {
+            let pt = Plaintext::try_encode(&[m], Encoding::simd(), params.arc()).map_err(|_| {
+                RelinError::Fhe {
+                    phase: "acceptance-gate encode",
+                }
+            })?;
+            collective
+                .pk
+                .try_encrypt(&pt, &mut rand_09::rng())
+                .map_err(|_| RelinError::Fhe {
+                    phase: "acceptance-gate encrypt",
+                })
+        };
+        let product = engine
+            .multiply(
+                &BoundedCiphertext::new(encrypt(m1)?, m1),
+                &BoundedCiphertext::new(encrypt(m2)?, m2),
+            )
+            .map_err(|_| RelinError::Fhe {
+                phase: "acceptance-gate multiply",
+            })?;
+        let lean = LeanCiphertext::from_fhe_bytes(
+            &product.ct.to_bytes(),
+            params.moduli(),
+            params.degree(),
+            product.plain_bound,
+        )
+        .map_err(|_| RelinError::Fhe {
+            phase: "acceptance-gate lean boundary",
+        })?;
+        let shares = parties
+            .iter()
+            .map(|p| p.partial_decrypt(&lean, super::MIN_SMUDGE_BITS))
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|_| RelinError::Fhe {
+                phase: "acceptance-gate partial decrypt",
+            })?;
+        let opened = super::combine(&shares, params).map_err(|_| RelinError::Fhe {
+            phase: "acceptance-gate combine",
+        })?;
+        if opened.first().copied() != Some((m1 * m2) % t) {
+            return Err(RelinError::AcceptanceFailed { trial });
+        }
+    }
+    Ok(())
+}
+
+/// [`generate_relinearization_key`] followed by the mandatory [`relin_acceptance_gate`]. Any caller that
+/// CACHES or USES a relin key should call this, never the bare generator — a corrupt key never escapes.
+pub fn generate_relinearization_key_verified(
+    session: &RelinKeySession,
+    params: &BfvParams,
+    collective: &super::CollectivePublicKey,
+    parties: &[super::ThresholdParty],
+) -> Result<RelinearizationKey> {
+    let relin = generate_relinearization_key(session, params, collective, parties)?;
+    relin_acceptance_gate(&relin, params, collective, parties, 8)?;
+    Ok(relin)
 }
