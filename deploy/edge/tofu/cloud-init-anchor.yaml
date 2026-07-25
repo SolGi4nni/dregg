@@ -1,0 +1,65 @@
+#cloud-config
+# THE ANCHOR — the tailnet exit and the address DNS points at.
+#
+# Everything here exists to make this box boring. It forwards packets and holds
+# an IP. Any service that grows belongs on the workhorse, because rebooting THIS
+# box is felt by every peer on the tailnet (deploy/aws/README.md's all-caps
+# warning was written after we learned that the hard way).
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - curl
+  - ufw
+  - unattended-upgrades
+
+write_files:
+  # IP forwarding — the thing that makes an exit node an exit node. Declared in
+  # a file rather than sysctl-on-the-fly so it survives a reboot by construction.
+  - path: /etc/sysctl.d/99-tailscale-exit.conf
+    content: |
+      net.ipv4.ip_forward = 1
+      net.ipv6.conf.all.forwarding = 1
+
+  # The floating IP is not automatically configured on the interface — Hetzner
+  # routes it to the server, but the server has to claim it.
+  - path: /etc/systemd/network/10-floating.network
+    content: |
+      [Match]
+      Name=eth0
+      [Network]
+      DHCP=yes
+
+  - path: /etc/motd
+    content: |
+
+        dregg-anchor — the tailnet exit + the DNS target.
+
+        This box is deliberately boring. If you are about to install a service
+        here, install it on dregg-workhorse instead.
+
+        Rebooting this drops the exit for every peer. Restart the SERVICE,
+        never the box, unless you mean it.
+
+        Declared in: deploy/edge/tofu/  (breadstuffs)
+
+runcmd:
+  - sysctl --system
+  # Tailscale from their repo (the Debian package lags).
+  - curl -fsSL https://tailscale.com/install.sh | sh
+  # Join as an exit node. --advertise-exit-node still needs approval in the
+  # admin console; that is deliberate on Tailscale's part and fine.
+  - |
+    if [ -n "${ts_authkey}" ]; then
+      tailscale up --authkey="${ts_authkey}" --advertise-exit-node --ssh
+    fi
+  - systemctl enable --now unattended-upgrades
+
+# Unattended security upgrades, but never an unattended reboot: this box
+# rebooting unannounced is exactly the incident we are designing away from.
+apt:
+  conf: |
+    Unattended-Upgrade::Automatic-Reboot "false";
+
+final_message: "dregg-anchor up. Approve the exit node in the tailscale admin console, then verify with `tailscale status`."

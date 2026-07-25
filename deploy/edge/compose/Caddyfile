@@ -1,0 +1,32 @@
+# TLS + routing for the edge. Caddy issues and renews certs itself; the CAA
+# record in the tofu outputs authorizes Let's Encrypt to do it.
+
+{
+	email ops@dregg.net
+}
+
+# ── dregg.gg — the mirror resolver ─────────────────────────────────────────
+# The click-through target for a `dregg://` object shared anywhere. Kept on its
+# own domain deliberately: this is trust-tier `server`, the weakest tier in the
+# system, and it should not wear the flagship domain's authority.
+dregg.gg, www.dregg.gg {
+	encode zstd gzip
+	reverse_proxy resolver:8080
+
+	header {
+		# The resolver renders untrusted content-addressed objects. Lock it down.
+		Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none'"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+}
+
+# ── dregg.app — the play surface ───────────────────────────────────────────
+# `.app` is HSTS-preloaded at the TLD, so browsers refuse plaintext to it with
+# no configuration on our part. Uncomment when the surface is ready to serve.
+# dregg.app {
+# 	encode zstd gzip
+# 	reverse_proxy funnel:8790
+# }

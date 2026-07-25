@@ -1,0 +1,93 @@
+# deploy/edge/compose — WHAT ACTUALLY RUNS ON THE EDGE.
+#
+# This file is TODO-4, closed. The AWS box's stack lived only at
+# /opt/dreggnet/docker-compose.yml — "unreviewable, undiffable, one `rm` from
+# gone" (deploy/README.md). This is that file, in the repo, describing the
+# services deploy/README.md observed RUNNING on 2026-07-15 — not the ancestor
+# at `0310c9e31^:dreggnet/deploy/staging/docker-compose.yml`, which is a
+# SUPERSET defining postgres/gateway/caddy/headscale that were never up.
+#
+# Images are built elsewhere and shipped (see deploy/README.md § Where to build).
+# Nothing here compiles anything.
+#
+#   docker compose up -d
+#   docker compose ps
+
+name: dregg-edge
+
+services:
+  # ── the public devnet node ─────────────────────────────────────────────────
+  # Both halves matter: TCP for the API, UDP for peering. A host that cannot do
+  # arbitrary UDP cannot run this, which is why the edge is a VM and not a PaaS.
+  node:
+    image: ${NODE_IMAGE:-dregg-node:n5}
+    restart: unless-stopped
+    ports:
+      - "8420:8420/tcp"
+      - "9420:9420/udp"
+    volumes:
+      # A REAL, backed-up path. The predecessor of this line was a `mktemp -d`,
+      # and the devnet ledger it held is gone forever. Declared, not improvised.
+      - /var/lib/dregg/node:/var/lib/dregg/node
+    command: ["--data-dir", "/var/lib/dregg/node"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8420/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging: &loki
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+  # ── the mirror resolver: dregg.gg ──────────────────────────────────────────
+  # The no-extension click path from X. A `dregg://<kind>/<addr>` in a tweet is
+  # transcluded in place by the extension; everyone ELSE clicks the mirror and
+  # lands here. This surface is trust-tier `server` (docs/DREGG-QUIET-UPGRADE.md
+  # §5) — the ONE place in the system where the reader is trusting an origin
+  # rather than checking. It must say so on the page.
+  resolver:
+    image: ${RESOLVER_IMAGE:-dregg-mirror:latest}
+    restart: unless-stopped
+    environment:
+      DREGG_NODE_URL: http://node:8420
+      DREGG_MIRROR_ORIGIN: ${MIRROR_ORIGIN:-https://dregg.gg}
+    depends_on:
+      node: { condition: service_healthy }
+    logging: *loki
+
+  # ── TLS termination for the resolver ───────────────────────────────────────
+  # Caddy because ACME is automatic and the config is four lines. The old edge
+  # had no working TLS terminator despite the ancestor compose defining one.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [resolver]
+    logging: *loki
+
+  # ── the Discord bot ────────────────────────────────────────────────────────
+  # ⚠ ONE TOKEN, ONE BOT. Stop it wherever it is currently running BEFORE
+  # starting it here, or every command double-fires (deploy/README.md TODO-2).
+  # Profile-gated so `up -d` does not accidentally start a second one.
+  bot:
+    image: ${BOT_IMAGE:-dregg-discord-bot:staging}
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      DREGG_NODE_URL: http://node:8420
+    depends_on:
+      node: { condition: service_healthy }
+    profiles: ["bot"]
+    logging: *loki
+
+volumes:
+  caddy_data:
+  caddy_config:
