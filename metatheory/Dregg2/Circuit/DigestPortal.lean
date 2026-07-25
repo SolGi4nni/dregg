@@ -1,13 +1,30 @@
 /-
 # Dregg2.Circuit.DigestPortal — Wave 4: bridge abstract digest portals to Poseidon2 emit.
 
-Connects the abstract `cellLeafInjective` / `compressNInjective` / `logHashInjective` carriers used
-in `StateCommit` to the in-circuit Poseidon2 sponge gadget (`Poseidon2Emit`). The refinement
-direction composes `emit_faithful_poseidon2_compress` with `GadgetRefinement`; the CR→injectivity
-discharge is `cellLeafInjective_from_poseidon2_cr`,
-`compressNInjective_from_poseidon2_emit`, `logHashInjective_from_poseidon2_emit`, from the single
-Poseidon2 collision-resistance assumption (`Poseidon2Binding.Poseidon2SpongeCR`), the correct
-crypto carrier — not idealized `ℤ` injectivity.
+Connects the abstract `cellLeafInjective` / `logHashInjective` carriers used in `StateCommit` to the
+in-circuit Poseidon2 sponge gadget (`Poseidon2Emit`). The refinement direction composes
+`emit_faithful_poseidon2_compress` with `GadgetRefinement`; the CR→injectivity discharges are
+`cellLeafInjective_from_poseidon2_cr` and `logHashInjective_from_poseidon2_emit`, from the single
+Poseidon2 collision-resistance assumption (`Poseidon2Binding.Poseidon2SpongeCR`).
+
+## ⚑ 2026-07-25 BUNDLE CUTOVER — what this module now claims, honestly
+
+`Poseidon2SpongeCR` and `cellLeafInjective` are PROVABLY FALSE at deployed BabyBear parameters
+(`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`,
+`StateCommitFloorRegrounded.cellLeafInjective_false_babyBear`). Three declarations here carried them
+and are GONE (§1, §4):
+
+  * `PortalBundle` — a structure whose FIRST FIELD was `cellLeafInjective CH`, hence uninhabitable at
+    deployment; plus a `Prop`-as-data field. Zero references outside this file. DELETED with its two
+    constructors and `ofPoseidon2CR`; its one real fact survives as `emitted_poseidon2_registered`.
+  * `compressNInjective_from_poseidon2_emit` — a floor-to-itself relabel (the two predicates are
+    `Iff.rfl`-equal). DELETED; `Poseidon2Binding.compressNInjective_of_poseidon2CR` is the identical
+    surviving statement.
+
+The two survivors are TRUE but VACUOUS at deployment (their `LeafRealization`/`LogRealization`
+premises are uninhabitable there) and are labelled as such at each declaration; that cutover is a
+separate transaction across 8 and 5 files. See `Dregg2.Shielded.RealCrypto` §2.0 for the bundle-family
+design decision this file follows.
 -/
 import Dregg2.Circuit.Poseidon2Emit
 import Dregg2.Circuit.Poseidon2Binding
@@ -26,28 +43,25 @@ open Dregg2.Exec.CircuitEmit
 open Dregg2.Crypto.PortalFloor
 open Dregg2.Exec (CellId Value Turn)
 
-/-! ## §1 — portal bundle (abstract OR emitted). -/
+/-! ## §1 — the emit-registration pin.
 
-/-- **`PortalBundle`** — the Wave-4 bridge record: abstract leaf injectivity (current portal),
-the §8 Poseidon2 CR carrier, and the proved emit-registration pin. -/
-structure PortalBundle (CH : CellId → Value → ℤ) where
-  /-- Abstract per-cell leaf injectivity (the current `StateCommit` portal). -/
-  cellLeafInj : cellLeafInjective CH
-  /-- §8 Poseidon2 collision-resistance carrier (the correct crypto assumption). -/
-  poseidon2CR : Prop
-  /-- Emitted sponge descriptor is registered under `poseidon2CompressAirName`. -/
-  emitRegistered : emittedPoseidon2Compress.name = poseidon2CompressAirName
-  deriving Repr
+⚑ **`PortalBundle` IS DELETED (2026-07-25 bundle cutover).** It was a `structure` whose first field was
+`cellLeafInj : cellLeafInjective CH` — a floor `StateCommitFloorRegrounded.cellLeafInjective_false_babyBear`
+REFUTES at deployed parameters (a cell's `Value` is infinite; a leaf hash pins it into ONE BabyBear
+felt). A structure carrying a FALSE field is UNINHABITABLE, so the bundle and its two constructors
+(`ofCellLeafInjective`, `ofPoseidon2Emit`) plus `ofPoseidon2CR` carried no content: nothing outside this
+module ever referenced them, no theorem was stated over them, and the only genuine fact they held was
+the `rfl` registration pin — kept below, so the deletion gives up nothing.
 
-/-- Build a portal from the abstract injectivity alone (CR not yet discharged). -/
-def PortalBundle.ofCellLeafInjective (CH : CellId → Value → ℤ) (h : cellLeafInjective CH) :
-    PortalBundle CH :=
-  { cellLeafInj := h, poseidon2CR := False, emitRegistered := rfl }
+The bundle's third field also typed a Prop AS DATA (`poseidon2CR : Prop`, set to `False` by
+`ofCellLeafInjective`), which is not a carrier of anything at all. Per the `RealCrypto` §2.0 bundle
+decision, a bundle gets no Prop field; here the whole bundle was scaffolding, so it is REMOVED rather
+than re-shaped. -/
 
-/-- Build a portal from Poseidon2 CR + the proved emit faithfulness pin. -/
-def PortalBundle.ofPoseidon2Emit (CH : CellId → Value → ℤ) (hcr : Prop)
-    (hleaf : cellLeafInjective CH) : PortalBundle CH :=
-  { cellLeafInj := hleaf, poseidon2CR := hcr, emitRegistered := rfl }
+/-- **The emitted sponge descriptor is registered under `poseidon2CompressAirName`** — the pin the
+deleted `PortalBundle.emitRegistered` field carried, restated standalone. -/
+theorem emitted_poseidon2_registered :
+    emittedPoseidon2Compress.name = poseidon2CompressAirName := rfl
 
 /-! ## §2 — refinement composition (proved). -/
 
@@ -74,38 +88,47 @@ open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR LeafRealization LogReali
 
 /-- **`cellLeafInjective_from_poseidon2_cr`** (was HOLE W4). Discharge `cellLeafInjective CH` from a
 Poseidon2 leaf realization: CR of the shared sponge composed with the injective leaf serialization.
-The CR is the SOLE crypto content (carried in `R.spongeCR`); no abstract `ℤ` injectivity is assumed. -/
+The CR is the SOLE crypto content (carried in `R.spongeCR`); no abstract `ℤ` injectivity is assumed.
+
+⚑ VACUOUS AT DEPLOYED PARAMETERS, and named as such: `LeafRealization` carries
+`spongeCR : Poseidon2SpongeCR sponge` as a FIELD, so
+`StateCommitFloorRegrounded.leafRealization_uninhabitable_babyBear` proves no deployed `R` exists. See
+§4 for why this is kept rather than deleted in this transaction. -/
 theorem cellLeafInjective_from_poseidon2_cr {CH : CellId → Value → ℤ} (R : LeafRealization CH) :
     cellLeafInjective CH :=
   cellLeafInjective_of_realization R
 
-/-- **`compressNInjective_from_poseidon2_emit`** (was HOLE W4). Discharge `compressNInjective` for
-the `StateCommit` frame sponge — the same list-hash `emittedPoseidon2Compress` realizes — DIRECTLY
-from Poseidon2 collision-resistance (`compressNInjective` IS `Poseidon2SpongeCR`). -/
-theorem compressNInjective_from_poseidon2_emit {compressN : List ℤ → ℤ}
-    (hCR : Poseidon2SpongeCR compressN) : compressNInjective compressN :=
-  compressNInjective_of_poseidon2CR hCR
-
 /-- **`logHashInjective_from_poseidon2_emit`** (was HOLE W4). Discharge `logHashInjective LH` for the
-growing receipt-chain sponge from a Poseidon2 log realization (CR + injective turn-list encoder). -/
+growing receipt-chain sponge from a Poseidon2 log realization (CR + injective turn-list encoder).
+
+⚑ Same caveat as `cellLeafInjective_from_poseidon2_cr`: `LogRealization` is UNINHABITABLE at deployed
+parameters (`StateCommitFloorRegrounded.logRealization_uninhabitable_babyBear`). -/
 theorem logHashInjective_from_poseidon2_emit {LH : List Turn → ℤ} (R : LogRealization LH) :
     logHashInjective LH :=
   logHashInjective_of_realization R
 
-/-! ## §4 — the honest portal builder: a `PortalBundle` whose leaf injectivity is DISCHARGED from CR. -/
+/-! ## §4 — what was DELETED here, and what it means for the two survivors above.
 
-/-- **`PortalBundle.ofPoseidon2CR`** — build the portal bundle from a genuine Poseidon2 leaf
-realization (CR-discharged), so `cellLeafInj` is PROVED, not assumed, and `poseidon2CR` carries the
-real CR Prop (not the `False` placeholder of `ofCellLeafInjective`). -/
-def PortalBundle.ofPoseidon2CR {CH : CellId → Value → ℤ} (R : LeafRealization CH) :
-    PortalBundle CH :=
-  { cellLeafInj := cellLeafInjective_from_poseidon2_cr R
-    poseidon2CR := Poseidon2SpongeCR R.sponge
-    emitRegistered := rfl }
+⚑ `compressNInjective_from_poseidon2_emit` is DELETED. It was `compressNInjective compressN` from a
+`Poseidon2SpongeCR compressN` hypothesis — but those two predicates are DEFINITIONALLY EQUAL
+(`Poseidon2Binding.compressNInjective_iff_poseidon2CR` is `Iff.rfl`), so it renamed a refuted floor
+into itself and carried a tier-A binder for no content. `Poseidon2Binding.compressNInjective_of_poseidon2CR`
+— the identical statement, imported here — survives, so nothing is lost; and the honest, deployed-parameter
+form of frame-sponge binding is `Poseidon2Binding.group4Find_spec` (an extractor that HANDS BACK the
+colliding pair) rather than either of these. `PortalBundle.ofPoseidon2CR` went with the bundle in §1.
+
+⚑ HONESTY ABOUT THE TWO SURVIVORS: `cellLeafInjective_from_poseidon2_cr` and
+`logHashInjective_from_poseidon2_emit` are TRUE theorems that are VACUOUS at deployed parameters —
+their `LeafRealization`/`LogRealization` premises are uninhabitable there, proved by
+`StateCommitFloorRegrounded.{leafRealization,logRealization}_uninhabitable_babyBear`. They are kept
+because the `LeafRealization`/`LogRealization` cutover is a distinct transaction spanning 8 and 5 files
+(including `Verify.KeystoneAuditArgusReceipt`, whose `cellLeafInjective`/`logHashInjective` discharges
+route through them) and deleting them here without that cutover would delete a discharge whose
+replacement is not built. NAMED as the next bundle cutover, not laundered as fine. -/
 
 #assert_axioms digest_emit_refines_merkle_portal
+#assert_axioms emitted_poseidon2_registered
 #assert_axioms cellLeafInjective_from_poseidon2_cr
-#assert_axioms compressNInjective_from_poseidon2_emit
 #assert_axioms logHashInjective_from_poseidon2_emit
 
 end Dregg2.Circuit.DigestPortal

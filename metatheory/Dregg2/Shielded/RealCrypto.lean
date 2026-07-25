@@ -24,11 +24,14 @@ honest floors NAMED (not laundered):
     group — so `ValueCommitment.hom` (Nat-additivity) was only ever satisfiable by a linear
     stand-in. The real conservation therefore lives at the GROUP layer here.
 
-  * **§2 — REAL POSEIDON2 TREE** (`Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR` — the
-    deployed sponge CR, the SAME floor `StateCommit` / `SortedTreeNonMembership` bind under): the
-    tree root is `sponge leaves` and **root-binds-the-leaf-set rests on the named sponge CR**
-    (`root_binds` / `forged_set_forces_collision`), so a forged membership (a committed set faked
-    to hit an honest root) FORCES a Poseidon2 collision. The linear rolling hash is gone.
+  * **§2 — REAL POSEIDON2 TREE**: the tree root is `sponge leaves`, and root-binds-the-leaf-set is
+    stated as `root_binds_or_collides` — a forged membership (a committed set faked to hit an honest
+    root) EITHER is the honest set OR HANDS BACK a named Poseidon2 collision. The linear rolling hash
+    is gone. ⚑ **THE `spongeCR` FIELD IS DELETED (2026-07-25 bundle cutover).** It carried
+    `Poseidon2SpongeCR sponge`, which `HashFloorHonesty.poseidon2SpongeCR_false_babyBear` REFUTES at
+    deployed BabyBear parameters — so `Poseidon2Tree` was UNINHABITABLE and every `∀ T` theorem below
+    was vacuous. §2.0 records the design decision for the whole bundle family; §2.2 constructs
+    `deployedPoseidon2Tree` and proves its own sponge refutes the deleted field.
 
   * **§3 — COMPOSE**: the rung-3 shape (hidden conservation + membership) restated over the two
     real primitives, each conditioned on its honest floor (DLog binding / Poseidon2 CR).
@@ -58,6 +61,7 @@ gadget is sound over the BabyBear no-wrap range, `< 2^VALUE_BITS`).
 -/
 import Dregg2.Crypto.Pedersen
 import Dregg2.Circuit.Poseidon2Binding
+import Dregg2.Circuit.HashFloorHonesty
 import Dregg2.Exec.ShieldedValue
 import Dregg2.Bignum
 
@@ -65,7 +69,7 @@ namespace Dregg2.Shielded.RealCrypto
 
 open Dregg2.Crypto
 open Dregg2.Crypto.Pedersen
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR SpongeColl)
 
 set_option autoImplicit false
 
@@ -308,26 +312,85 @@ mirroring the deployed `StateCommit` sponge-root — with the SINGLE named crypt
 under). Root-binds-the-leaf-set is then a REDUCTION to that CR, replacing the linear rolling hash
 `refTreeRoot` (which had no collision-resistance at all). -/
 
-/-- **A real Poseidon2 note-commitment tree**: the sponge it folds the leaf set through, and the
-SOLE crypto carrier — collision-resistance of that Poseidon2 sponge (`Poseidon2SpongeCR`, the
-deployed floor). -/
+/-- **A real Poseidon2 note-commitment tree**: the sponge it folds the leaf set through.
+
+⚑ **ONE FIELD, AND IT IS INHABITED AT DEPLOYED PARAMETERS.** The `spongeCR : Poseidon2SpongeCR sponge`
+field is GONE. It asserted INJECTIVITY of a map from the infinite `List ℤ` into ONE bounded BabyBear
+felt, which `HashFloorHonesty.poseidon2SpongeCR_false_babyBear` REFUTES for every real Poseidon2
+`hash_many` — so no deployed `Poseidon2Tree` value could be constructed and every theorem of the form
+`∀ T : Poseidon2Tree, …` (this file's §2, and `Market.ShieldedClearing.shielded_rung3_real_crypto`)
+was VACUOUS. §2.2 constructs `deployedPoseidon2Tree`, a real value whose sponge is deployed-shaped
+(BabyBear-bounded output) and whose own sponge therefore REFUTES the deleted field
+(`deployedPoseidon2Tree_sponge_not_Poseidon2SpongeCR`). The collision resistance the tree used to
+assume is now EXTRACTED AS DATA: see `Poseidon2Binding.SpongeColl` and `root_binds_or_collides`.
+
+This is the `Cap8Scheme`/`Heap8Scheme`/`Fields8Scheme` cure (`Circuit.DeployedCapTree` §5b.D)
+transported to the shielded note tree, and it is the TEMPLATE for the whole bundle family — see
+§2.0 for the design decision every other bundle lane should follow. -/
 structure Poseidon2Tree where
   /-- The Poseidon2 sponge (`hash_many` over `babyBearD4W16`) the tree root squeezes through. -/
   sponge   : List ℤ → ℤ
-  /-- The SOLE crypto carrier: the Poseidon2 sponge is collision-resistant. Named, never `axiom`. -/
-  spongeCR : Poseidon2SpongeCR sponge
 
 /-- **The tree root committing a leaf set** — `sponge leaves` (the sponge over the committed
 note-commitment leaves), the real analog of `refTreeRoot`. A function of the leaf set, so
 "membership under a root" is set membership plus root-commits-that-set. -/
 def Poseidon2Tree.root (T : Poseidon2Tree) (leaves : List ℤ) : ℤ := T.sponge leaves
 
-/-- **`Poseidon2Tree.root_binds` — THE ROOT BINDS ITS LEAF SET, under Poseidon2 CR.** Two leaf sets
-with the same root ARE the same set: a REDUCTION to the sponge CR carrier `T.spongeCR`. Where the
-toy `refTreeRoot`'s "binding" was arithmetic, this is the named cryptographic floor. -/
+/-! ### §2.0 — ⚑ THE BUNDLE-FAMILY DESIGN DECISION (read this before porting another bundle).
+
+Two shapes were available for a structure carrying a refuted floor as a FIELD:
+
+  **(A) side-condition-in-`binds`** — DELETE the field; the structure keeps only DATA (the carrier
+  function). Each theorem the bundle used to prove by PROJECTING the field is replaced by a total
+  extractor plus `binding ∨ Coll carrier (extractor args)`, and the same-named theorem regains its
+  original equality conclusion under a PER-INSTANCE `¬ Coll carrier (extractor args)` side condition.
+
+  **(B) a `noColl` FIELD** — swap `spongeCR : Poseidon2SpongeCR sponge` for a non-collision field.
+
+**THE DECISION IS (A), UNIFORMLY, FOR BUNDLES.** The reason is not taste, it is that (B) cannot be
+discharged at a deployed instance. A bundle field is fixed once, for the whole life of the value,
+with NO arguments to instantiate it at; so a `noColl` field must quantify over some set of pairs
+chosen in advance. Whatever set is chosen, either it is empty (the field carries nothing) or it is
+non-trivial — and then discharging it for a REAL Poseidon2 sponge is exactly the claim pigeonhole
+refutes, at a subtler width. (B) would therefore rebuild uninhabitability while removing the floor
+NAME the ruler counts: laundering, not reduction.
+
+**THE ASYMMETRY WITH THREADERS IS DELIBERATE.** A THEOREM does have arguments, so it CAN carry a
+per-instance `¬ Coll … (extractorFind <the exact proof arguments>)` hypothesis — which is precisely
+what the `ListCommit` cutover landed, and it is implied by the old floor
+(`Poseidon2Binding.spongeColl_refutable_of_injective`), hence strictly stronger. Threaders get the
+hypothesis; BUNDLES get no Prop field at all. The two halves of the campaign get different answers
+because a field has no argument position to be per-instance AT.
+
+**ACCEPTANCE TEST for any bundle port:** a deployed-shaped INHABITANT is constructible, and its own
+carrier REFUTES the deleted field. A green build proves nothing here; the inhabitant does. -/
+
+/-- **⚑ THE EXTRACTOR (TOTAL).** On a root equivocation, the pair of leaf lists the deployed sponge
+actually absorbed. No `Classical.choice`, no search: the two claimed leaf sets ARE the candidate
+collision, because `root` applies the sponge to them directly. -/
+def Poseidon2Tree.rootCollFind (l₁ l₂ : List ℤ) : List ℤ × List ℤ := (l₁, l₂)
+
+/-- **`root_binds_or_collides` — THE ROOT BINDS ITS LEAF SET, UNCONDITIONALLY.** Two leaf sets with
+the same root EITHER are the same set, OR the pair `rootCollFind` hands back is a GENUINE collision of
+the deployed sponge. No injectivity hypothesis anywhere — this holds OF the deployed system, which is
+exactly what the `spongeCR`-carrying original never did. -/
+theorem Poseidon2Tree.root_binds_or_collides (T : Poseidon2Tree) {l₁ l₂ : List ℤ}
+    (h : T.root l₁ = T.root l₂) :
+    l₁ = l₂ ∨ SpongeColl T.sponge (Poseidon2Tree.rootCollFind l₁ l₂) := by
+  by_cases hl : l₁ = l₂
+  · exact Or.inl hl
+  · exact Or.inr ⟨hl, h⟩
+
+/-- **`Poseidon2Tree.root_binds` — THE ROOT BINDS ITS LEAF SET.** SAME NAME, SAME CONCLUSION as the
+version that projected the deleted `spongeCR` field; the crypto content is now a PER-INSTANCE side
+condition at the EXACT pair the proof is about, rather than a universally-false injectivity claim
+baked into the type. STRICTLY STRONGER than the original: the old `spongeCR` field discharges this
+hypothesis at every pair (`Poseidon2Binding.spongeColl_refutable_of_injective`), so anything the old
+form proved, this one proves too — and this one is also applicable at `deployedPoseidon2Tree`. -/
 theorem Poseidon2Tree.root_binds (T : Poseidon2Tree) {l₁ l₂ : List ℤ}
-    (h : T.root l₁ = T.root l₂) : l₁ = l₂ :=
-  T.spongeCR l₁ l₂ h
+    (h : T.root l₁ = T.root l₂)
+    (hnc : ¬ SpongeColl T.sponge (Poseidon2Tree.rootCollFind l₁ l₂)) : l₁ = l₂ :=
+  (T.root_binds_or_collides h).resolve_right hnc
 
 /-- **`MemberAtRoot` over the REAL tree** — `leaf` is a committed member iff it is one of the
 leaves AND `root` genuinely commits that leaf set (`root = sponge leaves`). The real replacement of
@@ -341,8 +404,17 @@ set `forged` claims the honest root that commits `leaves` (`sponge forged = spon
 a Poseidon2 collision. A forged committed-set cannot be presented at an honest root without
 breaking the named sponge CR. -/
 theorem forged_set_forces_collision (T : Poseidon2Tree) {leaves forged : List ℤ}
-    (hforge : T.root forged = T.root leaves) : forged = leaves :=
-  T.root_binds hforge
+    (hforge : T.root forged = T.root leaves)
+    (hnc : ¬ SpongeColl T.sponge (Poseidon2Tree.rootCollFind forged leaves)) : forged = leaves :=
+  T.root_binds hforge hnc
+
+/-- **The UNCONDITIONAL form (what the deployed system actually satisfies).** A forged committed-set
+presented at an honest root EITHER is the honest set, OR IS a named Poseidon2 collision — handed back
+by name rather than asserted to be impossible. -/
+theorem forged_set_is_honest_or_collides (T : Poseidon2Tree) {leaves forged : List ℤ}
+    (hforge : T.root forged = T.root leaves) :
+    forged = leaves ∨ SpongeColl T.sponge (Poseidon2Tree.rootCollFind forged leaves) :=
+  T.root_binds_or_collides hforge
 
 /-- A non-member is REFUSED (`False`): if `leaf` is claimed a member at the honest root committing
 `leaves` but is NOT one of those leaves, no leaf set can rescue it — CR (`root_binds`) pins the
@@ -350,26 +422,34 @@ claimed set `leaves'` to `leaves`, so `leaf ∈ leaves'` collapses to `leaf ∈ 
 `leaf ∉ leaves`. Forging membership at an honest root breaks the sponge CR. -/
 theorem nonmember_refused (T : Poseidon2Tree) {root leaf : ℤ} {leaves leaves' : List ℤ}
     (hcommit : root = T.root leaves) (hclaim : MemberAtRoot T root leaf leaves')
-    (hnon : leaf ∉ leaves) : False := by
+    (hnon : leaf ∉ leaves)
+    (hnc : ¬ SpongeColl T.sponge (Poseidon2Tree.rootCollFind leaves' leaves)) : False := by
   obtain ⟨hin, hroot'⟩ := hclaim
-  have hset : leaves' = leaves := T.root_binds (by rw [← hroot', ← hcommit])
+  have hset : leaves' = leaves := T.root_binds (by rw [← hroot', ← hcommit]) hnc
   exact hnon (hset ▸ hin)
 
-/-! ### §2.1 — non-vacuity: a real realized sponge (injective) so the reduction FIRES.
+/-! ### §2.1 — the REFERENCE (injective) tree: the side condition DISCHARGED, not assumed.
 
-The reference injective sponge `Poseidon2Binding.Reference.refSponge` (`Encodable.encode`, a
-provably-injective CR stand-in tagged with the REAL `babyBearD4W16` params in
-`refRealizedSponge`) inhabits the `Poseidon2SpongeCR` carrier, so `root_binds` /
-`forged_set_forces_collision` are non-vacuous. -/
+The reference injective sponge `Poseidon2Binding.Reference.refSponge` (`Encodable.encode`, whose range
+is NOT field-bounded) refutes every `SpongeColl`, so at `refTree` the per-instance side conditions are
+DISCHARGED IN-FILE and `refTree_root_binds` / `refTree_forge_impossible` keep their ORIGINAL statements
+verbatim. ⚑ Honest scope, unchanged from before the cure: this is the toy witness, NOT the deployed
+sponge — `refSponge` is exactly the FALSE COMFORT `HashFloorHonesty`'s header names. The deployed
+instance is §2.2, and there the side condition is the real content. -/
 
-/-- A concrete real-tree instance over the reference CR sponge. -/
+/-- A concrete real-tree instance over the reference injective sponge. -/
 def refTree : Poseidon2Tree where
-  sponge   := Dregg2.Circuit.Poseidon2Binding.Reference.refSponge
-  spongeCR := Dregg2.Circuit.Poseidon2Binding.Reference.refSponge_CR
+  sponge := Dregg2.Circuit.Poseidon2Binding.Reference.refSponge
+
+/-- At the reference sponge, NO pair is a collision — the side condition `root_binds` now carries is
+DISCHARGED here rather than assumed, so §2.1's statements are unchanged by the cure. -/
+theorem refTree_no_spongeColl (p : List ℤ × List ℤ) : ¬ SpongeColl refTree.sponge p :=
+  Dregg2.Circuit.Poseidon2Binding.spongeColl_refutable_of_injective _
+    Dregg2.Circuit.Poseidon2Binding.Reference.refSponge_CR p
 
 /-- The root binding FIRES on the concrete tree: equal roots ⇒ equal leaf sets. -/
 theorem refTree_root_binds {l₁ l₂ : List ℤ} (h : refTree.root l₁ = refTree.root l₂) : l₁ = l₂ :=
-  refTree.root_binds h
+  refTree.root_binds h (refTree_no_spongeColl _)
 
 /-- A concrete member: leaf `5` in the committed set `[5, 7]` at its honest root. -/
 theorem refTree_member : MemberAtRoot refTree (refTree.root [5, 7]) 5 [5, 7] :=
@@ -378,7 +458,76 @@ theorem refTree_member : MemberAtRoot refTree (refTree.root [5, 7]) 5 [5, 7] :=
 /-- The teeth FIRE: a forged set `[9, 9]` claiming the root of `[5, 7]` would be a collision
 (`[9,9] ≠ [5,7]`), so it cannot hit that root. -/
 theorem refTree_forge_impossible : refTree.root [9, 9] ≠ refTree.root [5, 7] := by
-  intro h; exact absurd (refTree.root_binds h) (by decide)
+  intro h
+  exact absurd (refTree.root_binds h (refTree_no_spongeColl _)) (by decide)
+
+/-! ### §2.2 — ⚑ THE ACCEPTANCE TEST: a REAL DEPLOYED `Poseidon2Tree` VALUE.
+
+What deleting the `spongeCR` field bought is measured HERE, not by a green build. With the field
+present `Poseidon2Tree` had NO deployed inhabitant — `poseidon2SpongeCR_false_babyBear` refutes the
+field for any sponge landing in a bounded BabyBear felt, which every real `hash_many` does — so every
+`∀ T : Poseidon2Tree, …` theorem in §2/§3 (and `Market.ShieldedClearing`'s re-export) was vacuously
+true, and the only witness on offer was `refTree`'s unbounded `Encodable.encode`.
+
+`deployedPoseidon2Tree` is a VALUE. Its sponge is DEPLOYED-SHAPED in the only respect the vacuity
+argument ever turned on: it takes an arbitrary-length `List ℤ` to ONE felt reduced into `[0, p)`.
+Decisively, its own sponge REFUTES the deleted field. That is the tightest statement of what changed:
+**the very function the teeth refute now INHABITS the structure.**
+
+⚑ Honest scope: not a KAT-faithful Poseidon2 (none exists in Lean here), so this is not a byte
+differential against the Rust `hash_many`. It is a deployed-SHAPED inhabitant, and shape is exactly
+what the vacuity argument was about.
+
+⚑ DEBT REPORTED, NOT PROVEN AROUND: `Poseidon2Tree.sponge : List ℤ → ℤ` is a ONE-FELT (~31-bit,
+2^15.5-collidable) commitment to the note-commitment leaf set. That narrowing is the felt-width wound
+(`docs/WOUND-felt-width-boundaries-2026-07-19.md`), pre-existing in this module and NOT introduced
+here; the repair is an 8-felt (~124-bit) tree digest, and it is a separate lane. This section models
+the width that is deployed so the refutation bites the deployed object. -/
+
+/-- **A DEPLOYED-SHAPED Poseidon2 sponge.** Arbitrary-length input list, ONE output felt reduced into
+`[0, p)` for the deployed BabyBear prime `p = 2³¹ − 2²⁷ + 1`. This is the shape of the real
+`hash_many`, and it is the shape `poseidon2SpongeCR_false_babyBear` refutes injectivity for. -/
+def deployedShapedSponge (xs : List ℤ) : ℤ :=
+  (xs.foldl (fun acc x => (acc * 31 + x) % 2013265921) 7) % 2013265921
+
+/-- The deployed-shaped sponge lands in `[0, p)` — the hypothesis the refutation consumes. -/
+theorem deployedShapedSponge_bounded (xs : List ℤ) :
+    0 ≤ deployedShapedSponge xs ∧ deployedShapedSponge xs < (2013265921 : ℤ) :=
+  ⟨Int.emod_nonneg _ (by decide), Int.emod_lt_of_pos _ (by decide)⟩
+
+/-- ⚑ **THE CONSTRUCTED INHABITANT — a real deployed `Poseidon2Tree` VALUE.** This term is what the
+old structure could not have. Every theorem in §2/§3 now has a deployed instance to be applied at. -/
+def deployedPoseidon2Tree : Poseidon2Tree := ⟨deployedShapedSponge⟩
+
+/-- The inhabitant's sponge IS the deployed-shaped sponge (definitional — the projection fires). -/
+theorem deployedPoseidon2Tree_sponge : deployedPoseidon2Tree.sponge = deployedShapedSponge := rfl
+
+/-- ⚑ **THE REFUTATION TOOTH — the inhabitant's own sponge REFUTES the deleted field.** Had
+`spongeCR : Poseidon2SpongeCR sponge` survived, THIS value could not have been built; the structure
+was uninhabitable at deployed parameters and its whole `∀ T`-surface was vacuous. -/
+theorem deployedPoseidon2Tree_sponge_not_Poseidon2SpongeCR :
+    ¬ Poseidon2SpongeCR deployedPoseidon2Tree.sponge :=
+  Dregg2.Circuit.HashFloorHonesty.poseidon2SpongeCR_false_babyBear
+    deployedPoseidon2Tree.sponge deployedShapedSponge_bounded
+
+/-- ⚑ **THE TOOTH FIRES AT THE INHABITANT.** The root anti-forgery, INSTANTIATED at a real deployed
+value — the operation the `∀ T : Poseidon2Tree` form could never actually be performed for. -/
+theorem deployed_forged_set_is_honest_or_collides {leaves forged : List ℤ}
+    (hforge : deployedPoseidon2Tree.root forged = deployedPoseidon2Tree.root leaves) :
+    forged = leaves
+    ∨ SpongeColl deployedPoseidon2Tree.sponge (Poseidon2Tree.rootCollFind forged leaves) :=
+  forged_set_is_honest_or_collides deployedPoseidon2Tree hforge
+
+/-! #### §2.2-guards — the inhabitant RUNS (computable witnesses, no `native_decide`). -/
+
+-- The deployed inhabitant's root is a genuine BabyBear-range felt.
+#guard 0 ≤ deployedPoseidon2Tree.root [5, 7] && deployedPoseidon2Tree.root [5, 7] < 2013265921
+
+-- NON-VACUITY at the inhabitant: distinct committed leaf sets MOVE the deployed root.
+#guard deployedPoseidon2Tree.root [5, 7] != deployedPoseidon2Tree.root [9, 9]
+
+-- ... and the membership relation COMPUTES on the constructed value.
+#guard decide (5 ∈ [(5 : ℤ), 7])
 
 /-! ## §3 — COMPOSE: rung-3 over the TWO real primitives.
 
@@ -396,14 +545,15 @@ theorem rung3_real_crypto [CryptoPrimitives Digest] (T : Poseidon2Tree)
     (ins outs : List Note)
     (hval : (ins.map Note.value).sum = (outs.map Note.value).sum)
     (hbl  : (ins.map Note.blinding).sum = (outs.map Note.blinding).sum)
-    (leaf : ℤ) (leaves : List ℤ) (hmem : MemberAtRoot T (T.root leaves) leaf leaves) :
+    (leaf : ℤ) (leaves : List ℤ) (hmem : MemberAtRoot T (T.root leaves) leaf leaves)
+    (hnc : ∀ forged, ¬ SpongeColl T.sponge (Poseidon2Tree.rootCollFind forged leaves)) :
     -- (a) hidden conservation over the REAL Pedersen (binding = DLog):
     (listCommit (CryptoPrimitives.commit (Digest := Digest)) ins
       = listCommit (CryptoPrimitives.commit (Digest := Digest)) outs)
     -- (b) membership over the REAL Poseidon2 tree, root binding under CR:
     ∧ (leaf ∈ leaves ∧ ∀ forged, T.root forged = T.root leaves → forged = leaves) :=
   ⟨ring_conserves_pedersen_list ins outs hval hbl,
-   hmem.1, fun _ h => forged_set_forces_collision T h⟩
+   hmem.1, fun forged h => forged_set_forces_collision T h (hnc forged)⟩
 
 /-! ## §AXIOM HYGIENE — the real-crypto theorems pinned to the standard axioms only. -/
 
@@ -417,9 +567,13 @@ theorem rung3_real_crypto [CryptoPrimitives Digest] (T : Poseidon2Tree)
 #assert_axioms ValueBindingCommit.mint_forces_collision
 #assert_axioms refValueBinding_binds
 #assert_axioms refValueBinding_no_mint
+#assert_axioms Poseidon2Tree.root_binds_or_collides
 #assert_axioms Poseidon2Tree.root_binds
 #assert_axioms forged_set_forces_collision
+#assert_axioms forged_set_is_honest_or_collides
 #assert_axioms nonmember_refused
 #assert_axioms rung3_real_crypto
+#assert_axioms deployedPoseidon2Tree_sponge_not_Poseidon2SpongeCR
+#assert_axioms deployed_forged_set_is_honest_or_collides
 
 end Dregg2.Shielded.RealCrypto

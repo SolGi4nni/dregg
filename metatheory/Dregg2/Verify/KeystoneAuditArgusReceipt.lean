@@ -83,8 +83,16 @@ theorem compressN₀_inj : Dregg2.Circuit.StateCommit.compressNInjective compres
 /-- The 2-to-1 node carrier: the proven-injective `refNode`, a `compressInjective` carrier. -/
 def cmb₀ : ℤ → ℤ → ℤ := Dregg2.Crypto.CommitmentBinding.Reference.refNode
 
+/-- ⚑ The `Compress2.compress1CR` field is DELETED (2026-07-25 bundle cutover), so this discharge now
+supplies the PER-INSTANCE non-collision side condition explicitly — DISCHARGED here, not assumed, from
+`Reference.refCompress2`'s injective `Encodable.encode` compression
+(`CommitmentBinding.refCompress2_no_coll`). The receipt's claim is unchanged; what changed is that the
+premise is now a fact about this specific toy carrier rather than a field of a structure no deployed
+value could inhabit. The honest scope note in this file's header still applies: `refCompress2` is a
+toy witness, not the deployed `hash_2_to_1`. -/
 theorem cmb₀_inj : Dregg2.Circuit.StateCommit.compressInjective cmb₀ :=
   compressInjective_of_compress2 Dregg2.Crypto.CommitmentBinding.Reference.refCompress2
+    (fun _ _ _ _ => Dregg2.Crypto.CommitmentBinding.Reference.refCompress2_no_coll _)
 
 /-- The leaf carrier: the concrete realized `refCH`, a `cellLeafInjective` carrier. -/
 def CH₀ : Dregg2.Exec.CellId → Dregg2.Exec.Value → ℤ := Dregg2.Circuit.Poseidon2Binding.Reference.refCH

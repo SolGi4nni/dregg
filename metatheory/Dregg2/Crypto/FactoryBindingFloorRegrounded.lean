@@ -14,19 +14,29 @@ more with the identical shape, still doc-marked "REALIZABLE", **none re-grounded
 
 The commit-state siblings (`cellLeafInjective`/`logHashInjective`) are `Circuit.StateCommitFloorRegrounded`.
 
-## ⚑ `Compress2` is NON-INHABITABLE at deployed parameters — the priority shape, again
+## ⚑ `Compress2` WAS non-inhabitable at deployed parameters — and the field is now DELETED (2026-07-25)
 
-`Compress1CR` is not merely a hypothesis on a theorem: it is a **FIELD** of the `Compress2` structure
-(`compress1CR`). §1's `compress2_uninhabitable_babyBear` proves a deployed `Compress2` **value cannot
-exist** — `List ℤ` is infinite, a BabyBear squeeze is one bounded field element, pigeonhole. This is the
-`Compress8CR`-in-`Cap8Scheme` shape the sweep named the priority. Consequence, and it is the load-bearing
-one: `CommitmentBinding.compressInjective_of_compress2` is the route that discharges
-`StateCommit.recStateCommit_binds`'s `compressInjective cmb` portal — the sweep's own header advertises it
-as *"the `StateCommit` root-binding portal thereby stands on the permutation CR, NOT a separate
-assumption"*. At BabyBear that route stands on nothing: its premise is uninhabitable, and only
-`Reference.refCompress2` (whose `compress1` is `Encodable.encode`, injective into ALL of `ℤ`) satisfies
-it. Toy witness satisfiable; real instantiation false — verbatim the FALSE COMFORT `HashFloorHonesty`'s
-own header named.
+`Compress1CR` was not merely a hypothesis on a theorem: it was a **FIELD** of the `Compress2` structure
+(`compress1CR`), so a deployed `Compress2` **value could not exist** — `List ℤ` is infinite, a BabyBear
+squeeze is one bounded field element, pigeonhole. That was the `Compress8CR`-in-`Cap8Scheme` shape the
+sweep named the priority, and the consequence was load-bearing:
+`CommitmentBinding.compressInjective_of_compress2` is the route that discharges
+`StateCommit.recStateCommit_binds`'s `compressInjective cmb` portal — advertised as *"the `StateCommit`
+root-binding portal thereby stands on the permutation CR, NOT a separate assumption"* — and at BabyBear
+that route stood on nothing, satisfied only by `Reference.refCompress2` (`compress1 = Encodable.encode`,
+injective into ALL of `ℤ`). Toy witness satisfiable, real instantiation false: verbatim the FALSE
+COMFORT `HashFloorHonesty`'s own header named.
+
+**THE CUTOVER LANDED, so this file's §1a now reads differently.** The `compress1CR` field is DELETED;
+`Compress2` carries the compression and nothing false about it;
+`CommitmentBinding.deployedCompress2` is a real deployed-shaped INHABITANT; and
+`compressInjective_of_compress2` keeps its name and conclusion under a PER-INSTANCE
+`¬ Compress1Coll` side condition at the exact packed blocks (implied by the deleted field via
+`compress1Coll_refutable_of_injective`, hence strictly stronger). The old
+`compress2_uninhabitable_babyBear` is GONE — it projected the deleted field, and after the cure the
+honest statement is not "no value exists" but `deployedCompress2_compress1_not_Compress1CR`: **the very
+function the teeth refute now INHABITS the structure.** `compress1CR_field_uninhabitable_babyBear`
+keeps the general falsifier alive for the next bundle that tries the same trick.
 
 ## ⚑ `BindingHashCR` is the ONE carrier in this cluster that is NOT false by pigeonhole — and that
    matters more than a fifth refutation would
@@ -133,18 +143,28 @@ theorem compress1CR_false_babyBear (c1 : List ℤ → ℤ)
     (hb : ∀ xs, 0 ≤ c1 xs ∧ c1 xs < (2013265921 : ℤ)) : ¬ Compress1CR c1 :=
   compress1CR_false_of_finite_range c1 (finite_range_of_field_window c1 _ hb)
 
-/-- **⚑ TOOTH — a deployed `Compress2` CANNOT EXIST.** `Compress1CR` is a FIELD (`compress1CR`), so a
-BabyBear-range-bounded single-permutation compression makes the whole bundle uninhabitable — not a false
-hypothesis on a theorem, a **non-inhabitable structure**, exactly the `Compress8CR`-in-`Cap8Scheme` shape
-the sweep called the priority.
+/-- **⚑ THE REFUTATION TOOTH — the deployed `Compress2` inhabitant's own compression REFUTES the
+deleted field.** This SUPERSEDES `compress2_uninhabitable_babyBear` (deleted in the 2026-07-25 bundle
+cutover), which proved `Compress2 h → False` from the `compress1CR` FIELD. That theorem could not
+survive its own finding: once the field is deleted the bundle is INHABITED, and the honest statement is
+no longer "no value exists" but "the value that exists refutes what the field asserted".
 
-Consequence: `CommitmentBinding.compressInjective_of_compress2` — advertised as the route by which
-*"the `StateCommit` root-binding portal stands on the permutation CR, NOT a separate assumption"* — has an
-uninhabitable premise at deployed parameters. Only `Reference.refCompress2` (`compress1 = Encodable.encode`,
-range NOT bounded) satisfies it. -/
-theorem compress2_uninhabitable_babyBear {h : ℤ → ℤ → ℤ} (R : Compress2 h)
-    (hb : ∀ xs, 0 ≤ R.compress1 xs ∧ R.compress1 xs < (2013265921 : ℤ)) : False :=
-  compress1CR_false_babyBear R.compress1 hb R.compress1CR
+`CommitmentBinding.deployedCompress2` is a real `Compress2` value whose `compress1` squeezes the
+infinite `List ℤ` into ONE BabyBear felt — exactly the shape `compress1CR_false_babyBear` refutes. Had
+the field survived, THIS value could not have been built and every `∀ R : Compress2 h, …` theorem
+would still be vacuous. -/
+theorem deployedCompress2_compress1_not_Compress1CR :
+    ¬ Compress1CR Dregg2.Crypto.CommitmentBinding.deployedCompress2.compress1 :=
+  compress1CR_false_babyBear _
+    Dregg2.Crypto.CommitmentBinding.deployedShapedCompress1_bounded
+
+/-- **The general form, kept as the falsifier for any not-yet-cut-over bundle in this shape**: a
+`Compress2`-like structure that still carries a BabyBear-range-bounded `Compress1CR` FIELD is
+uninhabitable. Stated over the field's TYPE rather than a projection, so it stays provable after the
+`Compress2` cutover and still bites the next bundle that tries the same trick. -/
+theorem compress1CR_field_uninhabitable_babyBear (c1 : List ℤ → ℤ)
+    (hb : ∀ xs, 0 ≤ c1 xs ∧ c1 xs < (2013265921 : ℤ)) (hfield : Compress1CR c1) : False :=
+  compress1CR_false_babyBear c1 hb hfield
 
 /-! ### §1b — the factory content-hash `HashInjective` is FALSE at BLAKE3's output width. -/
 
@@ -972,7 +992,8 @@ theorem rebindRom_nonNegl_forger_excluded (F : BindingFamily)
   finite_range_of_nat_window,
   compress1CR_false_of_finite_range,
   compress1CR_false_babyBear,
-  compress2_uninhabitable_babyBear,
+  deployedCompress2_compress1_not_Compress1CR,
+  compress1CR_field_uninhabitable_babyBear,
   hashInjective_false_of_finite_range,
   hashInjective_false_blake3,
   bindingHashCR_false_of_compressing,

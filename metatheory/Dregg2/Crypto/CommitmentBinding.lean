@@ -51,14 +51,22 @@ Stated as injectivity of `List ℤ → ℤ`, which is FALSE by cardinality
 squeeze is one bounded field element. It is the same predicate as the already-flagged
 `StateCommit.compressNInjective` / `Poseidon2Binding.Poseidon2SpongeCR`, and it shares their fate.
 
-⚑ **WORSE THAN A HYPOTHESIS:** this is a FIELD of `Compress2` (`compress1CR`), so a deployed `Compress2`
-VALUE CANNOT EXIST (`FactoryBindingFloorRegrounded.compress2_uninhabitable_babyBear`) — the
-`Compress8CR`-in-`Cap8Scheme` shape `VACUITY-SWEEP.md` FINDING 2 named the priority. Consequence for
-this file's own headline claim (§1 header: *"the `StateCommit.recStateCommit_binds` root-binding portal
-thereby stands on the permutation CR, NOT a separate assumption"*): at BabyBear it stands on nothing —
-`compressInjective_of_compress2`'s premise is uninhabitable, and only `Reference.refCompress2`
-(`compress1 = Encodable.encode`, range NOT bounded) satisfies it. Toy witness satisfiable; real
-instantiation false. KEPT for the record.
+⚑ **IT USED TO BE THE `Compress2.compress1CR` FIELD, AND THAT MADE `Compress2` UNINHABITABLE** — not
+merely a hypothesis on a theorem but a non-constructible field, so EVERY theorem of the form
+`∀ R : Compress2 h, …` was VACUOUS, and this file's own §1 headline (*"the
+`StateCommit.recStateCommit_binds` root-binding portal thereby stands on the permutation CR, NOT a
+separate assumption"*) stood, at BabyBear, on nothing. **The field is DELETED (§1, 2026-07-25 bundle
+cutover)**; `Compress2` now carries the compression and nothing false about it, §1.1 exhibits the real
+deployed inhabitant `deployedCompress2`, and
+`FactoryBindingFloorRegrounded.deployedCompress2_compress1_not_Compress1CR` proves that inhabitant's
+own compression refutes the deleted field. The old "non-vacuity" argument (`Reference.refCompress2`
+exhibits an injective compression) was exactly the FALSE COMFORT: toy witness satisfiable, real
+compressing Poseidon2 false.
+
+**WHAT `Compress1CR` IS RETAINED FOR — two honest jobs, neither a deployed keystone:** the INJECTIVE
+SPECIAL CASE bridge (`compress1Coll_refutable_of_injective`, which shows the deleted theorem falls
+straight out once you assume it, so nothing genuinely proved was surrendered), and its role as a
+hypothesis at the call sites of consumers that have not yet been cut over. It is a FIELD OF NOTHING.
 
 ⚑ Honest replacement: `Crypto.FactoryBindingFloorRegrounded.compress2_node_advantage_bound` — a node-hash
 collision finder reduces (by the injective packing) to a `compress1` collision finder, negligible under
@@ -74,8 +82,40 @@ one-permutation-call primitive #4, stated at the digest level for a fixed initia
 def Compress1CR (compress1 : List ℤ → ℤ) : Prop :=
   ∀ a b : List ℤ, compress1 a = compress1 b → a = b
 
-/-- A 2-to-1 hash realized as `h a b = compress1 (pack₂ a b)` with `compress1` CR and `pack₂` an
-injective 2-element packing. The cleaner, self-contained realization (no `SpongeMachine` surgery). -/
+/-- **`Compress1Coll compress1 p`** — the SPECIFIC pair of input blocks `p` is a GENUINE collision of
+the single permutation call: DISTINCT blocks with the SAME squeeze. The named disjunct that replaces
+the deleted `compress1CR` field.
+
+Note what this is NOT: not `∃ a b, compress1 a = compress1 b ∧ a ≠ b`, which at deployed parameters is
+UNCONDITIONALLY TRUE by pigeonhole (`FactoryBindingFloorRegrounded.compress1CR_false_babyBear` proves
+exactly that) and would therefore be a free pass. It is a predicate about the pair an extractor
+RETURNS, and it is REFUTABLE (`compress1Coll_refutable_of_injective`). The
+`Poseidon2Binding.SpongeColl` / `DeployedCapTree.Coll8` shape at primitive #4. -/
+def Compress1Coll (compress1 : List ℤ → ℤ) (p : List ℤ × List ℤ) : Prop :=
+  p.1 ≠ p.2 ∧ compress1 p.1 = compress1 p.2
+
+/-- "Is this pair a genuine collision?" is DECIDABLE, so the extractor stays a TOTAL function with no
+`Classical.choice` in the reduction. -/
+instance decidableCompress1Coll (compress1 : List ℤ → ℤ) (p : List ℤ × List ℤ) :
+    Decidable (Compress1Coll compress1 p) := by
+  unfold Compress1Coll
+  infer_instance
+
+/-- A 2-to-1 hash realized as `h a b = compress1 (pack₂ a b)` with `pack₂` an injective 2-element
+packing. The cleaner, self-contained realization (no `SpongeMachine` surgery).
+
+⚑ **THE `compress1CR` FIELD IS DELETED (2026-07-25 bundle cutover), AND THE BUNDLE IS NOW INHABITED.**
+It carried `Compress1CR compress1` — injectivity of a map from the infinite `List ℤ` into ONE bounded
+BabyBear felt, which `FactoryBindingFloorRegrounded.compress1CR_false_babyBear` REFUTES for every real
+`hash_2_to_1`. So no deployed `Compress2` value could be constructed, every `∀ R : Compress2 h, …`
+theorem was VACUOUS, and this file's own §1 headline (*"the root-binding portal thereby stands on the
+permutation CR, NOT a separate assumption"*) was, at deployed parameters, standing on nothing.
+`deployedCompress2` (§1.1) is a real value whose `compress1` is deployed-shaped and therefore REFUTES
+the deleted field (`FactoryBindingFloorRegrounded.deployedCompress2_compress1_not_Compress1CR`). The
+collision resistance the bundle used to assume is now EXTRACTED AS DATA — see `Compress1Coll` and
+`compressInjective_of_compress2_or_collides`.
+
+Design decision + rationale for the whole bundle family: `Dregg2.Shielded.RealCrypto` §2.0. -/
 structure Compress2 (h : ℤ → ℤ → ℤ) where
   /-- The single-permutation-call compression the node hash squeezes through. -/
   compress1 : List ℤ → ℤ
@@ -85,18 +125,105 @@ structure Compress2 (h : ℤ → ℤ → ℤ) where
   pack₂_inj : ∀ a b c d, pack₂ a b = pack₂ c d → a = c ∧ b = d
   /-- The node hash factors as `compress1 ∘ pack₂`. -/
   factor : ∀ a b, h a b = compress1 (pack₂ a b)
-  /-- The SOLE crypto carrier: the single permutation call is CR. -/
-  compress1CR : Compress1CR compress1
+
+/-- **⚑ THE EXTRACTOR (TOTAL).** On a node-hash equivocation, the two rate blocks the single
+permutation call actually absorbed. No search, no choice: `factor` says the node hash IS `compress1`
+of these blocks, so they are the candidate collision. -/
+def Compress2.nodeCollFind {h : ℤ → ℤ → ℤ} (R : Compress2 h) (a b c d : ℤ) : List ℤ × List ℤ :=
+  (R.pack₂ a b, R.pack₂ c d)
+
+/-- **`compressInjective_of_compress2_or_collides` — UNCONDITIONAL.** Equal 2-to-1 node images EITHER
+force the two input pairs equal, OR the packed blocks `nodeCollFind` hands back ARE a genuine collision
+of the single permutation call. No injectivity hypothesis anywhere — this holds OF the deployed
+`hash_2_to_1`, which the `compress1CR`-carrying original never did. -/
+theorem compressInjective_of_compress2_or_collides {h : ℤ → ℤ → ℤ} (R : Compress2 h)
+    {a b c d : ℤ} (hh : h a b = h c d) :
+    (a = c ∧ b = d) ∨ Compress1Coll R.compress1 (R.nodeCollFind a b c d) := by
+  rw [R.factor a b, R.factor c d] at hh
+  by_cases hp : R.pack₂ a b = R.pack₂ c d
+  · exact Or.inl (R.pack₂_inj a b c d hp)
+  · exact Or.inr ⟨hp, hh⟩
 
 /-- **`compressInjective_of_compress2`** — discharge `compressInjective h` (the 2-to-1 node CR portal
-the `StateCommit` root-binding `recStateCommit_binds` consumes) from a `Compress2` realization. PROVED
-by peeling the one-permutation-call CR then the injective packing. The sole crypto content is
-`R.compress1CR` — the SAME single permutation call as the sponge. -/
-theorem compressInjective_of_compress2 {h : ℤ → ℤ → ℤ} (R : Compress2 h) :
+the `StateCommit` root-binding `recStateCommit_binds` consumes) from a `Compress2` realization. SAME
+NAME, SAME CONCLUSION as the version that projected the deleted `compress1CR` field; the crypto content
+is now a PER-INSTANCE side condition at the EXACT blocks the proof is about.
+
+STRICTLY STRONGER than the original: the deleted `compress1CR` field discharges this hypothesis at
+every pair (`compress1Coll_refutable_of_injective`), so anything the old form proved this one proves
+too — and unlike the old form it can be instantiated at `deployedCompress2`. -/
+theorem compressInjective_of_compress2 {h : ℤ → ℤ → ℤ} (R : Compress2 h)
+    (hnc : ∀ a b c d : ℤ, ¬ Compress1Coll R.compress1 (R.nodeCollFind a b c d)) :
     compressInjective h := by
   intro a b c d hh
-  rw [R.factor a b, R.factor c d] at hh
-  exact R.pack₂_inj a b c d (R.compress1CR _ _ hh)
+  exact (compressInjective_of_compress2_or_collides R hh).resolve_right (hnc a b c d)
+
+/-! ### Strength bridges — standalone, deliberately NOT hypotheses on any keystone. -/
+
+/-- **⚑ THE NO-STRENGTH-LOST TOOTH.** Under exactly the injectivity the deleted field asserted, the
+collision disjunct is impossible and the plain equality falls straight out — so every theorem that used
+to stand on `Compress2.compress1CR` is EXACTLY the injective special case of its cured form. Nothing
+genuinely proved was given up; what was given up is the pretence that the deployed `hash_2_to_1`
+satisfies the field. -/
+theorem compress1Coll_refutable_of_injective {c1 : List ℤ → ℤ} (hCR : Compress1CR c1)
+    (p : List ℤ × List ℤ) : ¬ Compress1Coll c1 p := by
+  rintro ⟨hne, himg⟩
+  exact hne (hCR _ _ himg)
+
+/-- **(CANARY — the collision branch is REACHABLE.)** A degenerate compression genuinely collides, so
+`Compress1Coll` is not accidentally empty and the disjunction is informative in both directions. -/
+theorem badCompress1Coll_reachable : Compress1Coll (fun _ => 0) ([0], [1]) := ⟨by decide, rfl⟩
+
+/-! ### §1.1 — ⚑ THE ACCEPTANCE TEST: a REAL DEPLOYED `Compress2` VALUE.
+
+With `compress1CR` present, `Compress2` had NO deployed inhabitant, so every theorem over it was
+vacuously true and the only witness on offer was `Reference.refCompress2`'s unbounded
+`Encodable.encode`. `deployedCompress2` is a VALUE whose `compress1` is deployed-shaped in the only
+respect the vacuity argument turned on: an arbitrary-length `List ℤ` squeezed into ONE felt reduced
+into `[0, p)`, exactly like the real `poseidon2.rs:357` `hash_2_to_1`. Its own `compress1` REFUTES the
+deleted field — see `FactoryBindingFloorRegrounded.deployedCompress2_compress1_not_Compress1CR`, which
+is where the falsifier is in scope. -/
+
+/-- **A DEPLOYED-SHAPED single-permutation compression.** Arbitrary-length rate block in, ONE BabyBear
+felt out (`p = 2³¹ − 2²⁷ + 1`) — the shape `compress1CR_false_babyBear` refutes injectivity for. -/
+def deployedShapedCompress1 (xs : List ℤ) : ℤ :=
+  (xs.foldl (fun acc x => (acc * 31 + x) % 2013265921) 2) % 2013265921
+
+/-- Every output of the deployed-shaped compression lands in `[0, p)` — the hypothesis the refutation
+tooth consumes. -/
+theorem deployedShapedCompress1_bounded (xs : List ℤ) :
+    0 ≤ deployedShapedCompress1 xs ∧ deployedShapedCompress1 xs < (2013265921 : ℤ) :=
+  ⟨Int.emod_nonneg _ (by decide), Int.emod_lt_of_pos _ (by decide)⟩
+
+/-- The deployed-shaped 2-to-1 node hash: one permutation call over the packed rate block. -/
+def deployedShapedNode (a b : ℤ) : ℤ := deployedShapedCompress1 [a, b]
+
+/-- ⚑ **THE CONSTRUCTED INHABITANT — a real deployed `Compress2` VALUE.** This term is what the old
+structure could not have; every theorem above now has a deployed instance to be applied at. -/
+def deployedCompress2 : Compress2 deployedShapedNode where
+  compress1 := deployedShapedCompress1
+  pack₂ := fun a b => [a, b]
+  pack₂_inj := by
+    intro a b c d h
+    exact ⟨(List.cons.inj h).1, (List.cons.inj (List.cons.inj h).2).1⟩
+  factor := fun _ _ => rfl
+
+/-- The inhabitant's compression IS the deployed-shaped one (definitional — the projection fires). -/
+theorem deployedCompress2_compress1 : deployedCompress2.compress1 = deployedShapedCompress1 := rfl
+
+/-- ⚑ **THE TOOTH FIRES AT THE INHABITANT.** The node anti-equivocation, INSTANTIATED at a real
+deployed value — the operation the `∀ R : Compress2 h` form could never be performed for. -/
+theorem deployed_node_binds_or_collides {a b c d : ℤ}
+    (hh : deployedShapedNode a b = deployedShapedNode c d) :
+    (a = c ∧ b = d)
+    ∨ Compress1Coll deployedCompress2.compress1 (deployedCompress2.nodeCollFind a b c d) :=
+  compressInjective_of_compress2_or_collides deployedCompress2 hh
+
+-- The inhabitant RUNS: its node digest is a genuine BabyBear-range felt ...
+#guard 0 ≤ deployedShapedNode 5 7 && deployedShapedNode 5 7 < 2013265921
+
+-- ... and distinct input pairs MOVE it (non-vacuity at the constructed value).
+#guard deployedShapedNode 5 7 != deployedShapedNode 9 9
 
 /-! ## §2 — the BLAKE3 cell-commitment v3/v4 binding ⟸ BLAKE3 CR. -/
 
@@ -159,9 +286,17 @@ def refCompress2 : Compress2 refNode where
   pack₂ := refPack₂
   pack₂_inj := refPack₂_inj
   factor := fun _ _ => rfl
-  compress1CR := refCompress1CR
 
-example : compressInjective refNode := compressInjective_of_compress2 refCompress2
+/-- At the reference (injective) compression NO pair is a collision, so the per-instance side
+condition `compressInjective_of_compress2` now carries is DISCHARGED here rather than assumed — the
+`example` below is unchanged by the cure. ⚑ Honest scope, unchanged from before: `refCompress1` is
+`Encodable.encode`, whose range is NOT field-bounded; it is the toy witness, not the deployed
+`hash_2_to_1`. The deployed instance is `deployedCompress2`, where the side condition is real content. -/
+theorem refCompress2_no_coll (p : List ℤ × List ℤ) : ¬ Compress1Coll refCompress2.compress1 p :=
+  compress1Coll_refutable_of_injective refCompress1CR p
+
+example : compressInjective refNode :=
+  compressInjective_of_compress2 refCompress2 (fun _ _ _ _ => refCompress2_no_coll _)
 
 /-- A COLLIDING compression (constant) FALSIFIES `Compress1CR` — the carrier is not `True`. -/
 def badCompress1 (_ : List ℤ) : ℤ := 0
@@ -198,6 +333,10 @@ theorem refCommitment_binds
 end Reference
 
 #assert_axioms compressInjective_of_compress2
+#assert_axioms compressInjective_of_compress2_or_collides
+#assert_axioms compress1Coll_refutable_of_injective
+#assert_axioms badCompress1Coll_reachable
+#assert_axioms deployed_node_binds_or_collides
 #assert_axioms blake3_commitment_binds
 #assert_axioms Reference.refCompress1CR
 #assert_axioms Reference.badCompress1_not_CR

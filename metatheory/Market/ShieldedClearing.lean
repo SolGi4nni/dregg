@@ -253,9 +253,17 @@ lives in a group, so the real conservation lives at the GROUP layer (`RealCrypto
 /-- **`shielded_ring_clears_real_crypto` — rung-3's two hidden-crypto halves over REAL primitives.**
 A balanced ring over the real group Pedersen conserves on the COMMITMENTS (hidden conservation,
 under DLog `binding`), and a leaf committed under the real Poseidon2 tree has its membership root
-bind the leaf set (under `Poseidon2SpongeCR`), so a forged set forces a collision. This is
-`shielded_ring_value_conserves_hidden` + the membership half, re-stated over the retired-toy
-replacements — a direct re-export of `RealCrypto.rung3_real_crypto`. -/
+bind the leaf set, so a forged set forces a collision. This is `shielded_ring_value_conserves_hidden`
++ the membership half, re-stated over the retired-toy replacements — a direct re-export of
+`RealCrypto.rung3_real_crypto`.
+
+⚑ The membership half now carries a PER-INSTANCE side condition `hnc` instead of standing on the
+`Poseidon2Tree.spongeCR` field that made the bundle uninhabitable at BabyBear (the 2026-07-25 bundle
+cutover; see `RealCrypto` §2.0). `hnc` says the SPECIFIC forged/honest leaf-set pairs at issue are not
+sponge collisions — implied by the deleted injectivity field
+(`Poseidon2Binding.spongeColl_refutable_of_injective`), so this statement is STRICTLY STRONGER than
+the one it replaces, and unlike that one it can be instantiated at
+`RealCrypto.deployedPoseidon2Tree`. -/
 theorem shielded_ring_clears_real_crypto {Digest : Type} [AddCommGroup Digest]
     [Dregg2.Crypto.CryptoPrimitives Digest] (T : Dregg2.Shielded.RealCrypto.Poseidon2Tree)
     (ins outs : List Dregg2.Crypto.Pedersen.Note)
@@ -264,12 +272,14 @@ theorem shielded_ring_clears_real_crypto {Digest : Type} [AddCommGroup Digest]
     (hbl  : (ins.map Dregg2.Crypto.Pedersen.Note.blinding).sum
               = (outs.map Dregg2.Crypto.Pedersen.Note.blinding).sum)
     (leaf : ℤ) (leaves : List ℤ)
-    (hmem : Dregg2.Shielded.RealCrypto.MemberAtRoot T (T.root leaves) leaf leaves) :
+    (hmem : Dregg2.Shielded.RealCrypto.MemberAtRoot T (T.root leaves) leaf leaves)
+    (hnc : ∀ forged, ¬ Dregg2.Circuit.Poseidon2Binding.SpongeColl T.sponge
+      (Dregg2.Shielded.RealCrypto.Poseidon2Tree.rootCollFind forged leaves)) :
     (Dregg2.Crypto.Pedersen.listCommit (Dregg2.Crypto.CryptoPrimitives.commit (Digest := Digest)) ins
       = Dregg2.Crypto.Pedersen.listCommit
           (Dregg2.Crypto.CryptoPrimitives.commit (Digest := Digest)) outs)
     ∧ (leaf ∈ leaves ∧ ∀ forged, T.root forged = T.root leaves → forged = leaves) :=
-  Dregg2.Shielded.RealCrypto.rung3_real_crypto T ins outs hval hbl leaf leaves hmem
+  Dregg2.Shielded.RealCrypto.rung3_real_crypto T ins outs hval hbl leaf leaves hmem hnc
 
 /-! ## 5. NON-VACUITY, POSITIVE POLE — a concrete two-leg shielded ring clears fair + private.
 
