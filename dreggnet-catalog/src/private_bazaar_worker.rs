@@ -1801,6 +1801,9 @@ pub enum PrivateBazaarWorkerError {
     LegacySpoolRequiresMigration,
     SpoolScopeMismatch,
     StaleLiveMarket,
+    /// The fixed-family private-book relation, its durable commitment binding,
+    /// or one of the public settlement joins refused. Nothing was spooled.
+    PrivateClearingRefused(String),
     SupervisorAlreadyRunning,
     CursorOverflow,
     UnfinalizedEvidence,

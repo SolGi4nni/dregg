@@ -93,6 +93,18 @@ dreggnet-hermes = { path = "../dreggnet-hermes" }
 [dev-dependencies]
 deos-view = { path = "../deos-view", default-features = false }
 dregg-app-framework = { path = "../app-framework", default-features = false }
+# THE SINGLE FFI BOUNDARY. A native node installs the verified Lean gate at
+# startup (`register_distributed_gates()`); without it `dregg-intent`'s ring
+# settlement FAILS CLOSED, so the private Bazaar's proof-authorized SETTLE can
+# never land. `tests/private_bazaar_production_relation.rs` installs the REAL
+# gate the same way a node does, so the production relation is exercised against
+# the verified executor rather than against a stub.
+#
+# DEV-ONLY on purpose: the catalog itself must stay FFI-free for the frontend and
+# wasm targets that consume it, which is exactly why the SHIPPED binaries — not
+# this crate — are the ones that must install the gate. See the residual noted in
+# that test's module docs.
+dregg-exec-lean = { path = "../exec-lean" }
 tempfile = { workspace = true }
 # `tests/live_descent_day.rs` drives the live day binding against the SAME roots the Descent
 # derives (`day_seed_from_deploy_seed`) and the SAME published reveal a surface would serve.

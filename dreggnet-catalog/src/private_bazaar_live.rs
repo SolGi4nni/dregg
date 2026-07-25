@@ -28,9 +28,11 @@ use dreggnet_market::private_bazaar_live_host::{
 };
 use dreggnet_market::private_clearing::{
     PrivateClearingCommitmentStore, PrivateClearingError, PrivateClearingReceipt,
+    PrivateSealedIngressBook,
 };
 use dreggnet_market::private_clearing_guild_allocation::{GuildMember, GuildReward, GuildRoster};
-use dreggnet_offerings::{DreggIdentity, OfferingHost};
+use dreggnet_market::{DarkBazaarOffering, TURN_BID};
+use dreggnet_offerings::{Action, DreggIdentity, Offering, OfferingHost, Outcome};
 use dungeon_on_dregg::progression::DungeonWorldCell;
 
 use crate::private_bazaar_service::{
@@ -331,6 +333,81 @@ impl PrivateBazaarLiveDeployment {
         let listener = self.private_worker(targets)?;
         let source = self.private_receipt_spool()?;
         Ok(PrivateBazaarFileWorker::new(listener, source))
+    }
+
+    /// PRODUCTION producer of a proof-verified private clearing.
+    ///
+    /// Every other private-Bazaar production surface in this crate — the
+    /// authenticated receipt source, the durable spool, the worker listener, the
+    /// supervisor — CONSUMES a `PrivateClearingReceipt`. Until this method
+    /// existed, nothing outside test code produced one, so the whole live path
+    /// idled on a producer that was only ever exercised by tests. This is that
+    /// producer, and it runs the real relation: the Lean-emitted `N=4,K=4`
+    /// descriptor's Plonky3 `HidingFriPcs` proof is minted over the worker's own
+    /// sealed book and must VERIFY before the executor-backed SETTLE is
+    /// submitted. No operator assertion can stand in for it.
+    ///
+    /// Order of operations is load-bearing:
+    ///
+    /// 1. a durable binding that contradicts this book is refused while the
+    ///    board is still untouched;
+    /// 2. the sealed bids become real executor BID turns — private ingress, out
+    ///    of band; no browser or chat action can carry a bid, a limit, a blind,
+    ///    a witness, or a proof;
+    /// 3. the worker-private commitment blind is bound or reloaded, and pinned
+    ///    to this exact ingress book;
+    /// 4. the expected root/price/volume are derived from this worker's own book
+    ///    and blind — never copied out of the proof about to be checked;
+    /// 5. the hiding proof is minted and `settle_private_verified` refuses
+    ///    unless it verifies against those independently pinned public values.
+    ///
+    /// SCALE: `book` is already gated to the proved family by
+    /// [`PrivateSealedIngressBook::new`] (at most
+    /// `PROVEN_MAX_SEALED_BIDS` = 3 sealed bids, limits inside the four-bucket
+    /// price family, quantities fixed at one). There is no path from here that
+    /// runs the relation on a book the descriptor does not cover, and there is
+    /// no "clear it anyway, unproved" branch.
+    pub fn settle_private_clearing_verified(
+        &self,
+        seed: u64,
+        book: &PrivateSealedIngressBook,
+        new_commitment_blinding: Option<[u32; 8]>,
+    ) -> Result<PrivateClearingReceipt, PrivateBazaarLiveDeploymentError> {
+        let commitment_store = self.commitment_store.clone();
+        self.registry
+            .with_entered_typed(seed, |market, journey| {
+                let market_instance_id = journey.market_identity().digest();
+                commitment_store.precheck_untouched_ingress(market_instance_id, book)?;
+
+                let offering = DarkBazaarOffering::new();
+                for (actor, limit) in book.sealed_bids() {
+                    let outcome = offering.advance(
+                        market,
+                        Action::new("private ingress sealed bid", TURN_BID, *limit, true),
+                        actor.clone(),
+                    );
+                    if !matches!(outcome, Outcome::Landed { .. }) {
+                        return Err(PrivateClearingError::SettlementRefused(format!(
+                            "private ingress sealed bid refused: {outcome:?}"
+                        )));
+                    }
+                }
+
+                let binding = commitment_store.bind_or_load(
+                    market,
+                    market_instance_id,
+                    new_commitment_blinding,
+                )?;
+                if !binding.matches_ingress_book(book) {
+                    return Err(PrivateClearingError::CommitmentBindingMismatch);
+                }
+                let expected = market
+                    .private_clearing_expectation_with_binding(market_instance_id, &binding)?;
+                let authorization = market
+                    .prepare_private_clearing_zk_with_binding(market_instance_id, &binding)?;
+                offering.settle_private_verified(market, authorization, expected)
+            })?
+            .map_err(PrivateBazaarLiveDeploymentError::PrivateClearing)
     }
 
     /// Consume one verified private clearing already installed in the exact

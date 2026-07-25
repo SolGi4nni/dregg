@@ -54,6 +54,20 @@ const BINDING_CHECKSUM_DOMAIN: &str = "dregg.private-bazaar-commitment-binding.v
 const BINDING_MAGIC: &[u8; 8] = b"DBCB0001";
 const BINDING_RECORD_LEN: usize = 8 + 32 + 4 + 4 + 32 + (8 * 4) + 32;
 
+/// The exact private-book family the Lean-emitted descriptor proves.
+///
+/// `metatheory/Market/DarkBazaarPrivateDescriptor.lean` fixes `ORDER_COUNT = 4`,
+/// `PRICE_COUNT = 4` and `QTY_BITS = 4`, and emits
+/// `circuit/descriptors/by-name/dark-bazaar-private-n4k4.json`. One of the four
+/// committed order slots is always this crate's synthetic top-price ask, so at
+/// most three real sealed bids fit inside the proved family. A larger book is
+/// simply not covered by that descriptor: production ingress refuses it rather
+/// than clearing it unproved.
+pub const PROVEN_MAX_SEALED_BIDS: usize = dark_bazaar_private::ORDER_COUNT - 1;
+
+/// Bid limits must be members of the proved four-bucket price family `0..=3`.
+pub const PROVEN_PRICE_BUCKETS: usize = dark_bazaar_private::PRICE_COUNT;
+
 /// Public values pinned independently of the proof being verified.
 ///
 /// In a product deployment `order_root` comes from an authenticated source
@@ -124,6 +138,98 @@ pub struct PrivateClearingReceipt {
     pub settlement_turn: dregg_app_framework::TurnReceipt,
 }
 
+/// A worker-private sealed ingress book already gated to the proven family.
+///
+/// The scale gate lives at CONSTRUCTION, deliberately: a book outside the proved
+/// `N=4,K=4` shape must be refused while the executor board is still untouched,
+/// not after three BID turns have already landed on it. There is no constructor
+/// that admits an out-of-family book, so no production caller can run the
+/// Lean-descriptor relation on input the descriptor does not cover.
+///
+/// Bid limits are worker-private. `Debug` prints only the arity.
+#[derive(Clone, PartialEq, Eq)]
+pub struct PrivateSealedIngressBook {
+    bids: Vec<(DreggIdentity, i64)>,
+}
+
+impl std::fmt::Debug for PrivateSealedIngressBook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PrivateSealedIngressBook")
+            .field("bids", &self.bids.len())
+            .field("limits", &"<worker-private>")
+            .finish()
+    }
+}
+
+impl PrivateSealedIngressBook {
+    /// Accept exactly the books the emitted `N=4,K=4` descriptor proves, and
+    /// refuse every other book by name. A caller holding this value knows its
+    /// contents are inside the proved family; a caller that could not build one
+    /// has no other route onto the private clearing path.
+    pub fn new(bids: Vec<(DreggIdentity, i64)>) -> Result<Self, PrivateClearingError> {
+        if bids.is_empty() {
+            return Err(PrivateClearingError::NoBids);
+        }
+        if bids.len() > PROVEN_MAX_SEALED_BIDS {
+            return Err(PrivateClearingError::TooManyBids(bids.len()));
+        }
+        for (actor, limit) in &bids {
+            if actor.0.is_empty() {
+                return Err(PrivateClearingError::EmptyIngressBidder);
+            }
+            if *limit < 0 || *limit >= PROVEN_PRICE_BUCKETS as i64 {
+                return Err(PrivateClearingError::PriceOutsideFixedFamily(i128::from(
+                    *limit,
+                )));
+            }
+        }
+        Ok(Self { bids })
+    }
+
+    /// How many sealed bids this ingress book carries. Never zero.
+    pub fn len(&self) -> usize {
+        self.bids.len()
+    }
+
+    /// Always false: an empty book is refused at construction.
+    pub const fn is_empty(&self) -> bool {
+        false
+    }
+
+    /// Worker-only: the sealed bids in exact ingress order. The private clearing
+    /// worker places these as real executor BID turns; nothing on a frontend
+    /// action path holds this value.
+    #[doc(hidden)]
+    pub fn sealed_bids(&self) -> &[(DreggIdentity, i64)] {
+        &self.bids
+    }
+
+    /// The exact canonical fixed-family order records this book will commit:
+    /// one qty-1 bid per sealed bid in ingress order, then the deterministic
+    /// synthetic ask at the top bid. This mirrors `private_orders` over the
+    /// live market, but is derivable BEFORE any BID turn lands, which is what
+    /// lets a contradicting durable binding be refused on an untouched board.
+    ///
+    /// The two derivations are pinned to each other on every production settle
+    /// by [`PrivateClearingCommitmentBinding::matches_ingress_book`], so a drift
+    /// between them fails closed instead of going unnoticed.
+    #[doc(hidden)]
+    pub fn canonical_orders(&self) -> Vec<PrivateOrder> {
+        let top = self
+            .bids
+            .iter()
+            .map(|(_, limit)| *limit)
+            .max()
+            .expect("a sealed ingress book is nonempty by construction");
+        let mut orders = Vec::with_capacity(self.bids.len() + 1);
+        for (_, limit) in &self.bids {
+            orders.push(PrivateOrder::bid(1, *limit as u8));
+        }
+        orders.push(PrivateOrder::ask(1, top as u8));
+        orders
+    }
+}
+
 /// Worker-private durable binding between one commitment blind and one exact
 /// canonical private book. Fields have no public accessors: frontends never
 /// receive the blind or private-input digest.
@@ -189,6 +295,15 @@ impl PrivateClearingCommitmentBinding {
 
     fn blind_fingerprint(&self) -> [u8; 32] {
         blind_fingerprint(self.blinding)
+    }
+
+    /// This durable binding names exactly the canonical record the given ingress
+    /// book derives. Checked on every production settle so the pre-mutation
+    /// ingress derivation and the live-market derivation cannot silently
+    /// diverge: a drift becomes a refusal, not a wrong commitment.
+    #[doc(hidden)]
+    pub fn matches_ingress_book(&self, book: &PrivateSealedIngressBook) -> bool {
+        self.private_input_digest == private_input_digest(&book.canonical_orders())
     }
 
     fn encode(&self) -> Vec<u8> {
@@ -276,16 +391,50 @@ impl PrivateClearingCommitmentStore {
     /// new caller-supplied blind. Existing bindings need no blind supplied after
     /// restart. A blind already reserved for different market/session/rule/order
     /// bytes is refused globally.
+    fn market_path(&self, market_instance_id: [u8; 32]) -> PathBuf {
+        self.root
+            .join("by-market")
+            .join(format!("{}.binding", hex32(market_instance_id)))
+    }
+
+    /// Refuse an ingress book that this market's durable binding already
+    /// contradicts, while the executor board is still untouched.
+    ///
+    /// This is the restart/substitution tooth: after a crash the worker replays
+    /// its private inputs into a freshly listed market, and a substituted book
+    /// must be refused before a single BID turn commits, not after. `Ok(())`
+    /// with no stored binding means this is a first claim, and the binding is
+    /// created from the live market later in the same settle.
+    #[doc(hidden)]
+    pub fn precheck_untouched_ingress(
+        &self,
+        market_instance_id: [u8; 32],
+        book: &PrivateSealedIngressBook,
+    ) -> Result<(), PrivateClearingError> {
+        if market_instance_id == [0; 32] {
+            return Err(PrivateClearingError::InvalidMarketInstance);
+        }
+        let market_path = self.market_path(market_instance_id);
+        if !market_path.exists() {
+            return Ok(());
+        }
+        let binding = read_binding(&market_path)?;
+        if binding.market_instance_id != market_instance_id
+            || binding.rule != dark_bazaar_private::RULE_ID
+            || !binding.matches_ingress_book(book)
+        {
+            return Err(PrivateClearingError::CommitmentBindingMismatch);
+        }
+        Ok(())
+    }
+
     pub fn bind_or_load(
         &self,
         session: &DarkBazaarSession,
         market_instance_id: [u8; 32],
         new_blinding: Option<[u32; dark_bazaar_private::DIGEST_WIDTH]>,
     ) -> Result<PrivateClearingCommitmentBinding, PrivateClearingError> {
-        let market_path = self
-            .root
-            .join("by-market")
-            .join(format!("{}.binding", hex32(market_instance_id)));
+        let market_path = self.market_path(market_instance_id);
         if market_path.exists() {
             let binding = read_binding(&market_path)?;
             binding.validate(session, market_instance_id)?;
@@ -441,6 +590,8 @@ pub enum PrivateClearingError {
     TooManyBids(usize),
     /// The top bid cannot be represented by the current four-price family.
     PriceOutsideFixedFamily(i128),
+    /// A sealed ingress bid named no bidder.
+    EmptyIngressBidder,
     /// The reserve tooth would refuse this auction after reveal.
     BelowReserve { high: i128, reserve: i128 },
     /// The proof names a different replay-stable market session.
@@ -510,6 +661,9 @@ impl std::fmt::Display for PrivateClearingError {
                 "top bid {price} is outside fixed K={} price family",
                 dark_bazaar_private::PRICE_COUNT
             ),
+            Self::EmptyIngressBidder => {
+                write!(f, "a sealed ingress bid named no bidder")
+            }
             Self::BelowReserve { high, reserve } => write!(
                 f,
                 "top bid {high} is below reserve {reserve}; no sale may settle"
@@ -638,6 +792,46 @@ impl DarkBazaarSession {
             dark_bazaar_private::prove_zk(self.private_proof_session(), &witness)
                 .map_err(PrivateClearingError::InvalidProof)?;
         Ok(PrivateClearingAuthorization::new(proof, statement))
+    }
+
+    /// Derive the public values a production worker should pin, WITHOUT proving
+    /// and without reading any proof.
+    ///
+    /// The eight-felt root is committed here from the worker's own private book
+    /// and its own durable blind; the price comes from the live sealed auction's
+    /// exact tie policy; the volume is the one-unit settlement policy. This is
+    /// the difference between authenticating a source and copying a number out
+    /// of the artifact under test: [`PrivateClearingExpectation::from_statement`]
+    /// gives proof validity only, while this expectation is independent evidence
+    /// that the verified proof is about *this* market's book.
+    pub fn private_clearing_expectation_with_binding(
+        &self,
+        market_instance_id: [u8; 32],
+        binding: &PrivateClearingCommitmentBinding,
+    ) -> Result<PrivateClearingExpectation, PrivateClearingError> {
+        let orders = binding.validate(self, market_instance_id)?;
+        let witness = PrivateBookWitness::try_from_orders_with_blinding(&orders, binding.blinding)
+            .map_err(PrivateClearingError::InvalidProof)?;
+        let committed = dark_bazaar_private::statement(self.private_proof_session(), &witness)
+            .map_err(PrivateClearingError::InvalidProof)?;
+        let live = live_clear(self)?;
+        if committed.p_star != live.price {
+            return Err(PrivateClearingError::PriceMismatch {
+                expected: live.price,
+                claimed: committed.p_star,
+            });
+        }
+        if committed.v_star != 1 {
+            return Err(PrivateClearingError::VolumeMismatch {
+                expected: 1,
+                claimed: committed.v_star,
+            });
+        }
+        Ok(PrivateClearingExpectation {
+            order_root: committed.order_root,
+            price: live.price,
+            volume: 1,
+        })
     }
 }
 
@@ -1164,5 +1358,48 @@ mod tests {
             wide.prepare_private_clearing_zk(),
             Err(PrivateClearingError::PriceOutsideFixedFamily(4))
         ));
+    }
+
+    /// MAKE THE ANTI-DRIFT GUARD FIRE.
+    ///
+    /// `matches_ingress_book` pins the pre-mutation ingress derivation of the
+    /// canonical order record against the live-market derivation the durable
+    /// binding was built from. A guard that cannot go red is not a guard, so
+    /// this exercises BOTH polarities directly against a real binding: the exact
+    /// book agrees, and every other in-family book disagrees.
+    #[test]
+    fn ingress_book_pinning_agrees_only_with_the_exact_bound_book() {
+        let offering = DarkBazaarOffering::new();
+        // Bids of 2 (alice) then 3 (bob), in that ingress order.
+        let session = listed_two_bid_session(&offering, 0x1_1CE);
+        let binding = PrivateClearingCommitmentBinding::new(&session, [0x5A; 32], [3; 8])
+            .expect("bind the live two-bid book");
+
+        let exact = PrivateSealedIngressBook::new(vec![(actor("alice"), 2), (actor("bob"), 3)])
+            .expect("in-family");
+        assert!(
+            binding.matches_ingress_book(&exact),
+            "the exact bound book must agree, or the production settle would refuse every honest \
+             replay"
+        );
+
+        // RED: a different limit.
+        let changed_limit =
+            PrivateSealedIngressBook::new(vec![(actor("alice"), 1), (actor("bob"), 3)])
+                .expect("in-family");
+        assert!(!binding.matches_ingress_book(&changed_limit));
+
+        // RED: the same limits in a different ingress order. Order is part of
+        // the committed record, so a permutation is a different private book.
+        let permuted = PrivateSealedIngressBook::new(vec![(actor("bob"), 3), (actor("alice"), 2)])
+            .expect("in-family");
+        assert!(
+            !binding.matches_ingress_book(&permuted),
+            "ingress order is committed; a permutation must not pass as the bound book"
+        );
+
+        // RED: a dropped bid.
+        let shorter = PrivateSealedIngressBook::new(vec![(actor("bob"), 3)]).expect("in-family");
+        assert!(!binding.matches_ingress_book(&shorter));
     }
 }

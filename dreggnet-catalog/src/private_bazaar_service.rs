@@ -13,6 +13,8 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use dreggnet_market::private_clearing::PrivateSealedIngressBook;
+
 use crate::private_bazaar_live::PrivateBazaarLiveDeployment;
 use crate::private_bazaar_targets::PrivateBazaarDurableTargetRegistry;
 use crate::private_bazaar_worker::{
@@ -93,6 +95,29 @@ impl PrivateBazaarAuthenticatedReceiptSource {
             }
         }
         Ok(PrivateBazaarSourceCapture { observed, appended })
+    }
+
+    /// PRODUCTION: mint the real private-book proof for one live hosted market,
+    /// then capture the receipt it authorized into this worker's durable spool.
+    ///
+    /// This is the one in-tree path from private ingress to the spool that ends
+    /// in real cryptography. `capture_once` alone can only ever observe what
+    /// something else already produced; before this method the producer existed
+    /// only in test code, so the deployed worker polled a source no production
+    /// caller could fill. The clearing is authorized by a verified Plonky3
+    /// `HidingFriPcs` proof of the Lean-emitted `N=4,K=4` descriptor, over a
+    /// book already gated to that proved shape — a refusal anywhere in the
+    /// relation, the binding, or the public joins leaves the spool untouched.
+    pub fn settle_and_capture(
+        &mut self,
+        seed: u64,
+        book: &PrivateSealedIngressBook,
+        new_commitment_blinding: Option<[u32; 8]>,
+    ) -> Result<PrivateBazaarSourceCapture, PrivateBazaarWorkerError> {
+        self.deployment
+            .settle_private_clearing_verified(seed, book, new_commitment_blinding)
+            .map_err(|error| PrivateBazaarWorkerError::PrivateClearingRefused(error.to_string()))?;
+        self.capture_once()
     }
 }
 
@@ -597,6 +622,11 @@ fn classify_worker_error(error: &PrivateBazaarWorkerError) -> PrivateBazaarWorke
         | PrivateBazaarWorkerError::ClaimMissingAfterApply
         | PrivateBazaarWorkerError::Corrupt(_)
         | PrivateBazaarWorkerError::InjectedAfterTargetDispatch
+        // A refused private-book relation, commitment binding, or public
+        // settlement join is Integrity, therefore NOT retryable: a worker that
+        // backed off and retried a tampered witness would be grinding toward
+        // acceptance. It stays refused until an operator looks at it.
+        | PrivateBazaarWorkerError::PrivateClearingRefused(_)
         | PrivateBazaarWorkerError::SupervisorAlreadyRunning => {
             PrivateBazaarWorkerFaultClass::Integrity
         }
