@@ -165,12 +165,19 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
 /// override is intentionally shared: operators should not have to discover
 /// that the initial Dregg2 facets parallelise while closure completion remains
 /// a serial, single-core tail.
-/// The jobs flag THIS `lake` actually understands, or `None`.
+/// The jobs flag THIS `lake` actually understands, or `None` — a SECONDARY cap, kept for the day a
+/// future lake grows one back. The cap that actually applies today is the `LEAN_NUM_THREADS` task
+/// pool (`build_parallel::LAKE_FANOUT_ENV`); neither toolchain on this box has a jobs flag at all.
 ///
 /// Lake's job control has moved across versions (`-j`/`--jobs` existed, then did not); passing a
 /// flag the binary rejects turns `lake build` into an immediate hard failure rather than a bounded
 /// one. Probe `lake help` once and believe it. `DREGG_LAKE_JOBS_FLAG` overrides (empty ⇒ none).
-fn lake_jobs_flag() -> Option<String> {
+///
+/// ⚠ PROBE THE LAKE THAT WILL RUN. `lake` is an elan proxy: the toolchain it resolves comes from the
+/// CWD's `lean-toolchain`, so probing from the build script's own directory asks the elan DEFAULT
+/// (here Lake 5.0.0-src+f054605 / Lean 4.32.1) while the build itself runs in `metatheory/` under
+/// that directory's pin (Lake 5.0.0-src+d024af0 / Lean 4.30.0). Two different binaries. Hence `meta`.
+fn lake_jobs_flag(meta: &Path) -> Option<String> {
     if let Ok(explicit) = std::env::var("DREGG_LAKE_JOBS_FLAG") {
         let trimmed = explicit.trim();
         return if trimmed.is_empty() {
@@ -179,7 +186,11 @@ fn lake_jobs_flag() -> Option<String> {
             Some(trimmed.to_string())
         };
     }
-    let help = Command::new("lake").arg("help").output().ok()?;
+    let help = Command::new("lake")
+        .arg("help")
+        .current_dir(meta)
+        .output()
+        .ok()?;
     let text = String::from_utf8_lossy(&help.stdout);
     // Only a line that DOCUMENTS jobs counts. Substring-matching the raw help is a trap: `-j` is a
     // substring of `--json`, which every lake has, so a naive `text.contains("-j")` "finds" a jobs
@@ -200,6 +211,38 @@ fn lake_jobs_flag() -> Option<String> {
         }
     }
     None
+}
+
+/// Report what the fan-out cap ACTUALLY did, and bark if it did nothing.
+///
+/// This is the teeth. The regression it exists to catch is not "the build was slow", it is "a
+/// containment knob was passed for 95 minutes while bounding nothing, and no one could tell from the
+/// outside". A cap that cannot report on itself is the same failure waiting for the next toolchain
+/// bump, so every build now measures the children `lake` spawned and says which of three things
+/// happened: the bound held, the bound DID NOT APPLY, or this host could not be measured.
+fn report_lake_fanout(run: &build_parallel::BoundedRun, budget: usize) {
+    match build_parallel::fanout_verdict(run.peak_children, budget) {
+        // Nothing to bound (warm/no-op build) or bounded as asked: silent. Cargo warnings are a
+        // scarce channel; spending one on "everything is fine" is how the real ones get missed.
+        build_parallel::FanoutVerdict::Held { .. } => {}
+        build_parallel::FanoutVerdict::Exceeded { peak, budget } => println!(
+            "cargo:warning=dregg-lean-ffi: ⚠ THE LEAN BUILD FAN-OUT CAP DID NOT APPLY — asked for \
+             {budget} concurrent `lean` processes via {env}, measured {peak}. This `lake` no longer \
+             takes its job-pool size from {env}, so `lake build` is running UNBOUNDED (one `lean` \
+             per ready module, GBs each: the 2026-07-25 stampede was 55 jobs / ~35 GB / 54 GB of \
+             swap). Re-measure the mechanism for this toolchain before running a cold closure — see \
+             build_parallel::LAKE_FANOUT_ENV for the measurement harness — and until then bound the \
+             build from outside (cgroups / `swarm-build` on hbox).",
+            env = build_parallel::LAKE_FANOUT_ENV,
+        ),
+        build_parallel::FanoutVerdict::Unverified => println!(
+            "cargo:warning=dregg-lean-ffi: the Lean build fan-out cap ({env}={budget}) was applied \
+             but could NOT be verified on this host (no `pgrep` to count `lake`'s children). It is \
+             an unchecked knob here — exactly the state that let a broken `-j` bound nothing for 95 \
+             minutes — so prefer external containment for a cold closure.",
+            env = build_parallel::LAKE_FANOUT_ENV,
+        ),
+    }
 }
 
 fn configured_leanc_workers() -> usize {
@@ -595,38 +638,40 @@ fn build_dregg2_archive(
     // Adding an export is now: put the `@[export]` next to its proof, add ONE `import` line to
     // `Dregg2/FFI.lean`. Nothing here changes.
     let lake_targets = ["Dregg2.FFI"];
-    // BOUNDED FAN-OUT, PROBED (2026-07-25). The intent is the 2026-07-25 containment fix: `lake
-    // build` unbounded spawns one child per ready module, each holding several hundred MB — the
-    // 55-job / ~35 GB stampede that took a laptop to load 154 and 54 GB of swap.
+    // BOUNDED FAN-OUT, MEASURED (2026-07-25). Unbounded, `lake build` spawns one `lean` per ready
+    // module, each elaborating a proof module and holding GBs — the 55-job / ~35 GB stampede that
+    // took a laptop to load average 154 and 54 GB of swap.
     //
-    // ⚠ But the flag must EXIST. `Lake 5.0.0-src+d024af0 (Lean 4.30.0)` — the toolchain this repo
-    // pins — has **no `-j` and no `--jobs`**: `lake build -j 4` dies instantly with
-    // `unknown short option '-j'`. Passing it unconditionally did not bound the build, it made
-    // EVERY `lake build` from this script fail, which sent every non-strict build down the
-    // "restore the git-tracked seed" path — and the seed exports no PQ core at all. A containment
-    // measure that silently disarms the verified runtime is worse than none. So: ask lake what it
-    // supports, pass the flag only if it is real, and say so out loud when it is not.
-    let lake_jobs_flag = lake_jobs_flag();
-    if lake_jobs_flag.is_none() {
-        println!(
-            "cargo:warning=dregg-lean-ffi: this `lake` exposes no jobs flag, so `lake build` \
-             elaboration parallelism is UNBOUNDED. The `leanc` phases this script runs itself are \
-             still bounded (DREGG_LEANC_JOBS={}). On a cold closure prefer a machine with cgroup \
-             containment.",
-            configured_leanc_workers()
-        );
-    }
+    // The cap is the `LEAN_NUM_THREADS` task-pool size, applied and then VERIFIED by
+    // `build_parallel::run_bounded_lake` (that constant carries the measurement which decided it:
+    // 24 independent modules, peak 10 concurrent `lean` uncapped, exactly 4 at 4, exactly 2 at 2).
+    //
+    // ⚠ It is NOT `-j`. This `lake` has no jobs flag at all, so the `-j <n>` that stood here for
+    // ~95 minutes on 2026-07-25 bounded nothing: it made EVERY `lake build` from this script fail
+    // instantly, which sent every non-strict build down the restore-the-seed path — and the seed
+    // exports no PQ core — while every strict build panicked blaming an IR tree that was fine. A
+    // containment measure that silently disarms the verified runtime is worse than none, which is
+    // why the budget is now checked against the children `lake` actually spawned rather than
+    // trusted because it was passed.
+    //
+    // `configured_leanc_workers()` (default: half the cores, ≤ 8; `DREGG_LEANC_JOBS` overrides) is
+    // the SAME budget the `leanc` phases below use, because it is one MEMORY budget wearing a CPU
+    // budget's clothes. An outer `LEAN_NUM_THREADS` is an operator decision and is honoured as-is.
+    let fanout_budget = configured_leanc_workers();
     let mut lake_cmd = Command::new("lake");
     lake_cmd.arg("build");
-    if let Some(flag) = &lake_jobs_flag {
-        lake_cmd
-            .arg(flag)
-            .arg(configured_leanc_workers().to_string());
+    // Belt and braces: if a future `lake` grows a REAL jobs flag back, pass it too — both mechanisms
+    // are then live and `report_lake_fanout` still verifies the result. Today this is `None`.
+    if let Some(flag) = lake_jobs_flag(meta) {
+        lake_cmd.arg(flag).arg(fanout_budget.to_string());
     }
-    let lake_status = lake_cmd.args(lake_targets).current_dir(meta).status();
-    match lake_status {
-        Ok(s) if s.success() => {}
-        Ok(s) => {
+    lake_cmd.args(lake_targets).current_dir(meta);
+    let lake_run = build_parallel::run_bounded_lake(&mut lake_cmd, fanout_budget);
+    match lake_run {
+        Ok(run) if run.status.success() => report_lake_fanout(&run, fanout_budget),
+        Ok(run) => {
+            let s = run.status;
+            report_lake_fanout(&run, fanout_budget);
             // `lake build` FAILED. When this happens the metatheory `.lake/build/ir` tree is NOT
             // guaranteed internally coherent: some modules' `:c` facets are freshly re-emitted while
             // others (the ones whose module elaboration aborted — e.g. a WIP proof regression tripping
@@ -640,10 +685,29 @@ fn build_dregg2_archive(
             // (possibly incoherent) working archive and restore that consistent seed. A strict
             // verification/release build must instead fail: an older coherent kernel is not
             // evidence that the current checkout's Turn semantics were compiled.
-            let reason = format!(
-                "`lake build` of the FFI + gate modules exited {s}; the current-source IR tree is \
-                 not coherent enough to produce a verified runtime archive"
-            );
+            //
+            // ⚠ NAME THE ACTUAL CAUSE. "the IR tree is not coherent" is ONE of the reasons `lake`
+            // can exit non-zero, and for ~95 minutes on 2026-07-25 it was reported for a completely
+            // different one: `lake` REJECTED this script's own command line (`unknown short option
+            // '-j'`) and never elaborated a module, while `lake build --no-build` exited 0 — the
+            // tree was fine and the error was lying about why. A lane lost an hour to that. So
+            // separate "lake refused the invocation" (a bug in THIS file, nothing to do with Lean)
+            // from "a module failed to elaborate", and quote what lake said either way.
+            let said = build_parallel::stderr_tail(&run.stderr, 8);
+            let reason = if build_parallel::is_cli_rejection(&run.stderr) {
+                format!(
+                    "`lake` REFUSED this build script's own invocation (exit {s}) — a CLI mismatch \
+                     in dregg-lean-ffi/build.rs, NOT a Lean or IR problem: no module was \
+                     elaborated and the IR tree is untouched. Fix the `lake build` arguments here. \
+                     lake said: {said}"
+                )
+            } else {
+                format!(
+                    "`lake build` of the FFI + gate modules exited {s} (a module failed to \
+                     elaborate), so the current-source IR tree is not coherent enough to produce a \
+                     verified runtime archive. lake said: {said}"
+                )
+            };
             if require_current_source {
                 panic!(
                     "dregg-lean-ffi: DREGG_REQUIRE_LEAN/current release gate refuses a stale \
@@ -651,10 +715,18 @@ fn build_dregg2_archive(
                      verification claim by restoring an older seed."
                 );
             }
+            // Say the substitution OUT LOUD, in the words the reader needs: what is linked is no
+            // longer this checkout. A quiet "restored the seed" line reads like housekeeping; it is
+            // a PROVENANCE DOWNGRADE, and every green measured against the result is a green
+            // measured against something other than what HEAD would ship.
             println!(
-                "cargo:warning=dregg-lean-ffi: {reason}. This non-strict debug build restores the \
-                 git-tracked consistent seed and does NOT splice a partial fresh set. Set \
-                 DREGG_REQUIRE_LEAN=1 to make this stale-source fallback a hard failure."
+                "cargo:warning=dregg-lean-ffi: ⚠ VERIFIED-RUNTIME PROVENANCE DOWNGRADE — {reason}. \
+                 This non-strict (debug) build LINKS THE PRE-BUILT SEED ARCHIVE INSTEAD OF THIS \
+                 CHECKOUT: the Lean objects about to be linked do NOT correspond to HEAD, the seed \
+                 exports no PQ core, and any test that passes against it has NOT exercised the \
+                 current Lean sources. It does not splice a partial fresh set (that would tear the \
+                 archive). Set DREGG_REQUIRE_LEAN=1 to make this a hard failure, or \
+                 DREGG_TEST_REQUIRE_LEAN=1 to make the debug test lane refuse the missing exports."
             );
             // Force the working archive back to the seed (overwrite any prior incoherent splice).
             let _ = std::fs::remove_file(archive);
