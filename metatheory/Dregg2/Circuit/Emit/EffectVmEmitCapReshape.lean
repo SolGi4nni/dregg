@@ -498,13 +498,23 @@ def gMaskRecon (maskCol : Nat) (bitCol : Nat → Nat) : EmittedExpr :=
 
 /-! ### §4.1 — the descriptor's constraint segments. -/
 
-/-- The per-bit BOOLEAN + SUBMASK + reconstruction gates (the non-amplification leg, in-circuit). -/
+/-- The per-bit BOOLEAN + SUBMASK + reconstruction gates (the non-amplification leg, in-circuit).
+
+The recon gates read `prmCol col.HELD_MASK` = **column 72** and `prmCol col.GRANTED_MASK` = **column
+74** — the PARAM COLUMNS, not the param indices. Column 72 is exactly the felt `siteHeldLeaf` hashes
+into the opened held leaf, which is what makes BOTH teeth on this flavour load-bearing: the held bits
+(which the submask gates and the control-bit production gate read) reconstruct the very mask the
+membership-opening's recomputed leaf commits, so inflating the held bits to dodge non-amp or to forge
+the mint right breaks the recon gate ⇒ UNSAT. `prmCol`-wrapping here is mandatory — `gMaskRecon`
+consumes a raw COLUMN (`eCol maskCol`), while `col.*_MASK` are param INDICES; passing an index raw is
+the conflation that made these gates read effect-SELECTOR columns 4/6 (fixed 2026-07-24; §4D's
+"⚠ the mint-flavour carries the IDENTICAL conflation" note, now discharged). -/
 def nonAmpGates : List VmConstraint :=
   ((List.range MASK_BITS).map (fun i => VmConstraint.gate (gBool (col.heldBit i))))
     ++ ((List.range MASK_BITS).map (fun i => VmConstraint.gate (gBool (col.grantedBit i))))
     ++ ((List.range MASK_BITS).map (fun i => VmConstraint.gate (gSubmaskBit i)))
-    ++ [ VmConstraint.gate (gMaskRecon col.HELD_MASK col.heldBit)
-       , VmConstraint.gate (gMaskRecon col.GRANTED_MASK col.grantedBit) ]
+    ++ [ VmConstraint.gate (gMaskRecon (prmCol col.HELD_MASK) col.heldBit)
+       , VmConstraint.gate (gMaskRecon (prmCol col.GRANTED_MASK) col.grantedBit) ]
 
 /-- The PRODUCTION-AUTHORITY gates: the held `target` param equals the minted-asset PI (binds the
 issuer cell), and the control bit is set (`h₆ = 1`, i.e. `h₆ − 1 = 0`). The anti-unauthorized-mint leg. -/
@@ -733,12 +743,15 @@ an OPENED parent cap (the mint flavour's `siteHeldLeaf` shape — `held_leaf = h
 against a membership opening) is the NEXT rung and is NOT done here. Do not read `granted ⊑ held` as
 conferred-rights non-amplification until col 75 is bound.
 
-⚠ The mint-flavour `nonAmpGates` (§4.1) carries the IDENTICAL conflation — VERIFIED, not merely
-suspected: `dregg-effectvm-capreshape-v1.json` gates 24/25 read `v4`/`v6` where `prmCol` gives 72/74.
-Its `col.SLOT`/`col.TARGET`/`col.HELD_MASK` uses in `siteHeldLeaf`/`productionGates` are already
-correctly `prmCol`-wrapped, so the fix is the same two call sites. Deliberately NOT fixed here:
-`capReshapeVmDescriptor` is a separate emitted JSON with its own Rust consumer
-(`circuit/src/cap_reshape_descriptor.rs`), out of this lane's file set. In HORIZONLOG. -/
+The mint-flavour `nonAmpGates` (§4.1) carried the IDENTICAL conflation and is now FIXED (2026-07-24).
+It was verified in the deployed bytes, not merely suspected: `dregg-effectvm-capreshape-v1.json` gates
+24/25 read `v4`/`v6` where `prmCol` gives 72/74, while `siteHeldLeaf` correctly hashed `prmCol
+col.HELD_MASK` = col 72. So the held BITS — read by the submask gates AND by the production control-bit
+gate — were decoupled from the committed leaf: a prover could set every `heldBit i = 1` (making every
+submask gate `gᵢ·(1−hᵢ) = 0` vacuously true and `h₆ = 1` free) while col 72 carried an honest small
+mask, defeating BOTH teeth at once. Both call sites are now `prmCol`-wrapped, and the behavioural
+canary is `circuit/src/cap_reshape_descriptor.rs::held_bits_bind_the_hashed_held_mask_felt` (the mint
+mirror of the delegation flavour's `nonamp_leg_binds_the_hashed_rights_felt`). -/
 
 namespace dcol
 /-- The GRANTED rights-mask column for a delegation row: `cp.RIGHTS` (param 4) — the rights the cap-edge
@@ -1004,6 +1017,12 @@ theorem overGrantDelegRow_rejected :
 #guard dcol.GRANTED_MASK == EffectVmEmitCapRoot.cp.RIGHTS
 #guard dcol.HELD_MASK == 7
 #guard decide (dcol.HELD_MASK < NUM_PARAMS)
+-- ⚑ THE MINT-FLAVOUR INTERLOCK (§4.1): the held-mask recon gate reads the PARAM COLUMN 72 — the very
+-- felt `siteHeldLeaf` hashes into the opened held leaf — not the param INDEX 4 (an effect-selector
+-- column). A regression to the raw index reads a selector column and silently decouples BOTH teeth.
+#guard prmCol col.HELD_MASK == 72
+#guard prmCol col.GRANTED_MASK == 74
+#guard siteHeldLeaf.inputs.contains (.col (prmCol col.HELD_MASK))
 
 #assert_axioms capLeaf_injective
 #assert_axioms capLeafList_injective

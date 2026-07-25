@@ -1,8 +1,8 @@
 {
   "version": 1,
   "mode": "emit",
-  "dregg2_tree_hash": "3b930708e70c5d1a7736ee57c64160f9d63f96c5",
-  "repo_head": "2e7f6e65c3a901eeb93fe0e00c890f9803357ff7",
+  "dregg2_tree_hash": "924e8b8d95b43475a2ea674e32a127a0ec569fb2",
+  "repo_head": "656120b19e98f5a2a13117f63faf02941c69037e",
   "source_dirty": true,
   "lean_toolchain": "leanprover/lean4:v4.30.0",
   "emitters": [
@@ -22,7 +22,7 @@
     "EmitCertF.lean",
     "EmitCertFMarket4.lean"
   ],
-  "generated_utc": "2026-07-24T19:07:48Z",
+  "generated_utc": "2026-07-25T00:26:45Z",
   "operator": "ember@nextop.local",
   "descriptor_sha256": {
     "dregg-bilateral-aggregation-v3.json": "6b8b58dbdd46115442f050990296aca7ccd79b5735f326b90db7b0058b49b365",
@@ -37,7 +37,7 @@
     "dregg-effectvm-bridgemint-v1.json": "7fd4ed0d7021982a771030a86d53fa5b3539b0c75a88fbdb25bc33b370853db8",
     "dregg-effectvm-burn-ir2.json": "f732611fccdbe342987fec08e87ffd576ab8b3d8dd9d7aee67d7b9df8f5c70eb",
     "dregg-effectvm-burn-v1.json": "2230c3d206be35268c199a38c3318a63f250e5542c55c0be9e2e47a73e1734f3",
-    "dregg-effectvm-capreshape-v1.json": "594ab88a9c4198557b1283cb0749445bc400550052d5fd477d9f63d6bab9494c",
+    "dregg-effectvm-capreshape-v1.json": "621f9d0f81fca703fc4dda7cc02b9537133152126af79b22acd7ffaa64cad522",
     "dregg-effectvm-cell-destroy-ir2.json": "ea1dec2287e522594fea348fb523e83faba968c22c96e25f6ee8f62ce82c05fa",
     "dregg-effectvm-cell-seal-ir2.json": "9096de2f8f2b829b10c461eacede288bfdd85b0fd509555cbb206b6fd3451bea",
     "dregg-effectvm-celldestroy-v2.json": "b7fe5ea26cf63a8c90b0a997cdb3729157b9ec60df034581b1875795115201f8",
@@ -106,8 +106,14 @@
     "accumulator-nonrev.json": "ad8f91b437b6d35aa07f609434eb97c9d43ecdb1ab778496fe5128baa32a6ff4",
     "adjacency-membership.json": "4c5e5a229d3b1aed4a015e2930ea37fb2f10c5f323c259152d3fcc066c7ff8d1",
     "attested-fact-membership.json": "a66055fca6672174460d774b1dda778702520b82650ce0566e89fff37f5c665b",
+    "automatafl-legc-n11.json": "2adbe764381fc317f23e914f8ff52afd4b76d7ea70db96c1e9d85dc91d675188",
+    "automatafl-legc-n5.json": "ac41145a9cdb60d6e0b583f4845b30206618f166ce46b43bca575a491101c10d",
+    "automatafl-resolve-marks-n11.json": "df0455cd0dfdf09fd03e7790dc0739e540ac131f29366b4112e9d3979a95203f",
+    "automatafl-resolve-marks-n2.json": "1ba072bc037ebc157d1da9e377e561e151b0237e03bce053cbeed09aa4d8dbe4",
     "automatafl-resolve-n11.json": "7bf510c4aea1686b9e554e58bc0003e90906dd976185712fd47c7d2d2033bba3",
     "automatafl-resolve.json": "76386fdc3444011bea06f82b8e23de3dd44e8cf503e77dfba670b4dfefcd09d3",
+    "automatafl-step-marks-n11.json": "79924bbe811128b81166846af23695896912c0e7a5cb66ee57468ce30d9c2fb5",
+    "automatafl-step-marks-n2.json": "147ced08666f1b6ca60bdb014fccfd1e77340c8bb1a0a31bf9eb302f024d11c7",
     "automatafl-step-n11.json": "091b8af736cde912b9156090dd44bb185139f80f210161e4e7457ffb485d1114",
     "automatafl-step.json": "2ca17339397cfd1ea77141e7caaeee268cf5596f5f937d911bee319476246b22",
     "blinded-membership-4ary-depth2.json": "e4b165cff0b0d0170f312bcdc0b54558697c8f7f9dacd987b9b4c0bcd1737caf",
@@ -127,6 +133,7 @@
     "faithful-note-spend-exact-v3.json": "dac87d07f12ec01cc32e34ec131db0786244b2492d5bc153f90bbf062e577b6e",
     "faithful-note-spend-v2.json": "113f8be9d1eb5804754756773e5b3a6c6dc1af2384d56fff3102f635096f1f3b",
     "field-delta-result-range.json": "2038274b162dc192a097f79305b7912a101597114821710c16f5ea1f64828840",
+    "guarded-hiding-span-m0-wide-blinded-commit-blind5-v1.json": "148e2c614885ec78eb400ddae608ac95f0085d7fc3ca0dd06ef697a5bc22a835",
     "merkle-membership-4ary-general.json": "5f4235f777d849c79e99200dcb84522ea242422af213396c0466eac1a4fd75d3",
     "merkle-membership-depth2.json": "287b680c42669fa1064c98efcc078aad7b94f7d3fb1e062b7a0f2456b5da88cf",
     "note-spend-leaf.json": "f5a5683bd0d2cfdeba90d6585bd6aeb275e933c961da004e2ac5684e37b18ee1",
@@ -162,8 +169,8 @@
   "fp_file_sha256": {
     "circuit/src/bilateral_aggregation_air.rs": "752402369f555938fb30fa1a7e042ff8f2091e3badd077718a95a2f7e115ce21",
     "circuit/src/cap_delegation_nonamp_descriptor.rs": "f634f39e6d96cec52c1cfea9851611a0e77de73f3bf28b6dad5f41c2ed17bd85",
-    "circuit/src/cap_reshape_descriptor.rs": "58cfdabae8f78b683d60dd90da1a4b587992b4498f8d63722653ed7343fd2873",
-    "circuit/src/effect_vm_descriptors.rs": "94d479b3891c86f18e7ae3d422ea81a3ad5779876818e740bbfd967f42149a33",
+    "circuit/src/cap_reshape_descriptor.rs": "a5b53ea982184e470efb20692805687469eb82a4e4829de508b42ae2e152ee97",
+    "circuit/src/effect_vm_descriptors.rs": "e97b75dcb11bb6a493659fe4d2181c67ae8a2648661e75b333d09a94f7a6b095",
     "circuit/src/lean_descriptor_air.rs": "aceffe54c45a905a2f34e333214b9b0e30606b40c0f8fd460726b0067d20ddb2"
   }
 }

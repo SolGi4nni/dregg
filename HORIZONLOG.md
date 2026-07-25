@@ -832,6 +832,25 @@ re-run the drift gate; then DELETE the two defect pins. Bundle with MOVE 5's "re
 orphans" — there is no point routing the six cap-graph effects to this descriptor until the gates bind
 the right columns. Do NOT wire it first.
 
+**CLOSED on the MINT flavour, 2026-07-24.** The "UNVERIFIED, and the next thing to check" suspicion was
+correct and is now discharged in the deployed bytes. `dregg-effectvm-capreshape-v1.json` gates 24/25 read
+`v4`/`v6` where `prmCol` gives 72/74, while `siteHeldLeaf` correctly hashed col 72 — so the held BITS,
+which BOTH the submask gates and the production control-bit gate read, were decoupled from the mask the
+recomputed leaf commits. One witness defeated both teeth at once: set every `heldBit i = 1` (every submask
+gate `g·(1−h) = g·0 = 0` vacuously true AND `h₆ = 1` for free) while col 72 carries an honest read-only
+mask ⇒ all eight rights, mint included, off a read-only cap. Fixed by `prmCol`-wrapping both `gMaskRecon`
+call sites in `EffectVmEmitCapReshape.nonAmpGates`; re-emitted through `scripts/emit_descriptors.py`
+(authorized regen, PROVENANCE stamped, `CAPRESHAPE_V1_FP` re-pinned `594ab88a…` → `621f9d0f…`), and the
+fresh Lean emission is byte-identical to the installed artifact. The tooth is proven to BITE, not merely
+be present: `cap_reshape_descriptor.rs::held_bits_bind_the_hashed_held_mask_felt` runs the SAME forged
+witness against BOTH generations — the deployed pre-fix bytes (reconstructed byte-exactly by regressing
+just those two `"v":` values) ACCEPT it, the fixed bytes REFUSE it. Class audit: scanning every emitted
+descriptor for mask-recon-shaped gates and every `prmCol`-using Lean file for a param-index identifier
+reused raw in a column position finds NO third instance — the delegation flavour (fixed 07-17) and this
+one were the whole class. `dregg-cross-cell-conservation-v2.json`'s ten 15-bit recon gates reading cols
+4..13 are a FALSE positive: that AIR is a standalone 172-col layout with no param block, where 4..13 are
+its genuine `CC*/DC*/C*/D*` columns.
+
 ## setField VALUE8 epoch STAGED → the controlled adoption re-point (named 2026-07-14, `circuit/descriptors/rotation-v3-setfield-value8-staged-registry.tsv`)
 The faithful per-trader setField weld is BUILT + verified but STAGED (live wire untouched). Lean
 `EffectVmEmitRotationV3Refused.v3RegistrySetFieldValue8` (8 `setFieldValue8VmDescriptor2-{slot}R24`
