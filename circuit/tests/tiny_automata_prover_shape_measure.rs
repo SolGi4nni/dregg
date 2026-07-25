@@ -69,18 +69,35 @@ fn lane_chain(lane: usize, n: usize) -> Vec<(u32, u32, u32)> {
 /// Shape A: the deployed `exact_public_rows` table-routing descriptor, k lanes over ONE table.
 /// The manifest is the exact multiset of all `k·n` queries (duplicates carry multiplicity).
 fn shape_a_json(k: usize, n: usize) -> String {
-    let mut manifest: Vec<String> = Vec::with_capacity(k * n);
+    shape_a_json_m(k, n, 1)
+}
+
+/// Shape A with `m` IDENTICAL transition lookups per lane per row.
+///
+/// This is the DECLARED-ROW AXIS: it multiplies the declared manifest (and hence the
+/// `ExactPublicRow` batch-instance count) by `m` while leaving the main trace — `n` rows,
+/// `3k` columns, the same witness values — bit-identically unchanged. Exact-multiset LogUp
+/// forces `#declared rows = #queries`, so declared rows CANNOT be varied without varying the
+/// query count; `m` is the only way to move declared rows at a FIXED trace, and the
+/// LogUp-aux-column cost that rides along with it is subtracted out by the matching
+/// `shape_b_json_m` control (which adds the same `m` interactions and NO instances).
+fn shape_a_json_m(k: usize, n: usize, m: usize) -> String {
+    let mut manifest: Vec<String> = Vec::with_capacity(k * n * m);
     for lane in 0..k {
         for (c, s, x) in lane_chain(lane, n) {
-            manifest.push(format!("[{c},{s},{x}]"));
+            for _ in 0..m {
+                manifest.push(format!("[{c},{s},{x}]"));
+            }
         }
     }
     let mut constraints: Vec<String> = Vec::new();
     for j in 0..k {
         let (c, s, x) = (3 * j, 3 * j + 1, 3 * j + 2);
-        constraints.push(format!(
-            "{{\"t\":\"lookup\",\"table\":{TRT_TID},\"tuple\":[{{\"t\":\"var\",\"v\":{c}}},{{\"t\":\"var\",\"v\":{s}}},{{\"t\":\"var\",\"v\":{x}}}]}}"
-        ));
+        for _ in 0..m {
+            constraints.push(format!(
+                "{{\"t\":\"lookup\",\"table\":{TRT_TID},\"tuple\":[{{\"t\":\"var\",\"v\":{c}}},{{\"t\":\"var\",\"v\":{s}}},{{\"t\":\"var\",\"v\":{x}}}]}}"
+            ));
+        }
         constraints.push(format!(
             "{{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{{\"t\":\"add\",\"l\":{{\"t\":\"nxt\",\"c\":{c}}},\"r\":{{\"t\":\"mul\",\"l\":{{\"t\":\"const\",\"v\":-1}},\"r\":{{\"t\":\"loc\",\"c\":{x}}}}}}}}}"
         ));
@@ -94,7 +111,7 @@ fn shape_a_json(k: usize, n: usize) -> String {
         ));
     }
     format!(
-        "{{\"name\":\"megafast-shape-a-k{k}-n{n}\",\"ir\":2,\"trace_width\":{},\"public_input_count\":{},\
+        "{{\"name\":\"megafast-shape-a-k{k}-n{n}-m{m}\",\"ir\":2,\"trace_width\":{},\"public_input_count\":{},\
          \"tables\":[{{\"id\":{TRT_TID},\"name\":\"dfa_transition_table\",\"arity\":3,\"sem\":\"exact_public_rows\",\"rows\":[{}]}}],\
          \"constraints\":[{}],\"hash_sites\":[],\"ranges\":[]}}",
         3 * k,
@@ -108,12 +125,23 @@ fn shape_a_json(k: usize, n: usize) -> String {
 /// multiplicity-carrying range table (ONE table AIR of height `2^bits` for all lanes, all rows —
 /// the same `LookupBus::table_entry(.., multiplicity)` machinery `eval_decomp` uses in production).
 fn shape_b_json(k: usize, n: usize) -> String {
+    shape_b_json_m(k, n, 1)
+}
+
+/// Shape B with `m` identical lookups per lane per row: the CONTROL for `shape_a_json_m`.
+/// Same main trace, same `m·k` bus interactions (hence the same `m·k` LogUp extension aux
+/// columns), and STILL exactly 2 batch instances. Subtracting this from `shape_a_json_m` at the
+/// same `(k, n, m)` isolates the per-DECLARED-ROW (per-`ExactPublicRow`-instance) cost from the
+/// aux-column cost that exact-multiset semantics forces to move with it.
+fn shape_b_json_m(k: usize, n: usize, m: usize) -> String {
     let mut constraints: Vec<String> = Vec::new();
     for j in 0..k {
         let (c, s, x) = (3 * j, 3 * j + 1, 3 * j + 2);
-        constraints.push(format!(
-            "{{\"t\":\"lookup\",\"table\":{TID_RANGE},\"tuple\":[{{\"t\":\"var\",\"v\":{s}}}]}}"
-        ));
+        for _ in 0..m {
+            constraints.push(format!(
+                "{{\"t\":\"lookup\",\"table\":{TID_RANGE},\"tuple\":[{{\"t\":\"var\",\"v\":{s}}}]}}"
+            ));
+        }
         constraints.push(format!(
             "{{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{{\"t\":\"add\",\"l\":{{\"t\":\"nxt\",\"c\":{c}}},\"r\":{{\"t\":\"mul\",\"l\":{{\"t\":\"const\",\"v\":-1}},\"r\":{{\"t\":\"loc\",\"c\":{x}}}}}}}}}"
         ));
@@ -127,7 +155,7 @@ fn shape_b_json(k: usize, n: usize) -> String {
         ));
     }
     format!(
-        "{{\"name\":\"megafast-shape-b-k{k}-n{n}\",\"ir\":2,\"trace_width\":{},\"public_input_count\":{},\
+        "{{\"name\":\"megafast-shape-b-k{k}-n{n}-m{m}\",\"ir\":2,\"trace_width\":{},\"public_input_count\":{},\
          \"tables\":[{{\"id\":{TID_RANGE},\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":4}}],\
          \"constraints\":[{}],\"hash_sites\":[],\"ranges\":[]}}",
         3 * k,
@@ -332,12 +360,16 @@ fn one_point() {
         return;
     };
     let parts: Vec<&str> = spec.split(':').collect();
-    assert_eq!(parts.len(), 3, "MEGAFAST_ONE=<A|B>:<k>:<n>");
+    assert!(
+        parts.len() == 3 || parts.len() == 4,
+        "MEGAFAST_ONE=<A|B>:<k>:<n>[:<m>]"
+    );
     let k: usize = parts[1].parse().expect("k");
     let n: usize = parts[2].parse().expect("n");
+    let m: usize = parts.get(3).map_or(1, |v| v.parse().expect("m"));
     let json = match parts[0] {
-        "A" => shape_a_json(k, n),
-        "B" => shape_b_json(k, n),
+        "A" => shape_a_json_m(k, n, m),
+        "B" => shape_b_json_m(k, n, m),
         other => panic!("unknown shape {other}"),
     };
     let desc = parse_vm_descriptor2(&json).expect("descriptor parses");
@@ -373,4 +405,95 @@ fn one_point() {
         sink = sink.wrapping_add(proof.degree_bits.len());
     }
     println!("one_point {spec} reps={} pow={pow:?} sink={sink}", reps());
+}
+
+// ============================================================================
+// COMPOSED-PROVER-BENCH: absolute cost, and the DECLARED-ROW axis
+// ============================================================================
+
+/// One grid point's LOAD-INDEPENDENT facts: batch instances, main width, and the EXACT wire
+/// size in bytes. These are deterministic functions of `(shape, k, n, m)` — they do not move
+/// with box load, so they are reported without any statistical hedging. Every point is also
+/// PROVED and VERIFIED here, so a printed size is a size of a proof that actually verifies.
+fn size_point(label: &str, json: &str, k: usize, n: usize, m: usize) -> (usize, usize) {
+    let desc = parse_vm_descriptor2(json).expect("descriptor parses");
+    let (trace, pis) = trace_and_pis(k, n);
+    let mem = MemBoundaryWitness::default();
+    let heaps: Vec<Vec<dregg_circuit::heap_root::HeapLeaf>> = vec![];
+    let proof = prove_vm_descriptor2(&desc, &trace, &pis, &mem, &heaps)
+        .unwrap_or_else(|e| panic!("{label} k={k} n={n} m={m} must prove: {e}"));
+    verify_vm_descriptor2(&desc, &proof, &pis)
+        .unwrap_or_else(|e| panic!("{label} k={k} n={n} m={m} must verify: {e:?}"));
+    let bytes = postcard::to_allocvec(&proof).expect("postcard").len();
+    let instances = proof.degree_bits.len();
+    println!(
+        "{label:>2} k={k:<3} n={n:<5} m={m:<2} inst={:<5} main_w={:<4} wire={:>8} B ({:>7.2} KiB)",
+        instances,
+        desc.trace_width,
+        bytes,
+        kib(bytes)
+    );
+    (instances, bytes)
+}
+
+/// **THE ABSOLUTE SIZE TABLE.** A k=4 composition (four tiny automata over one word) at the
+/// word lengths the goal names, plus the k=1 reference. Shape A is reported only where the
+/// `MAX_EXACT_PUBLIC_ROWS = 128` cap admits it (`k·n ≤ 128`); the points past the cap are
+/// reported as inexpressible, which is itself the measurement.
+#[test]
+fn absolute_wire_sizes() {
+    println!("== ABSOLUTE PROOF SIZE: composed tiny automata, production ir2_config ==");
+    println!("-- shape A (deployed exact_public_rows), k=4 composition --");
+    for n in [16usize, 32] {
+        let (inst, _) = size_point("A", &shape_a_json(4, n), 4, n, 1);
+        assert_eq!(inst, 1 + 4 * n);
+    }
+    for n in [64usize, 256, 1024] {
+        // The cap lives in `check_descriptor2`, which `prove_vm_descriptor2` runs FIRST — the
+        // descriptor parses, and the prover refuses it. That refusal is the measurement.
+        let desc = parse_vm_descriptor2(&shape_a_json(4, n)).expect("parses");
+        let (trace, pis) = trace_and_pis(4, n);
+        let mem = MemBoundaryWitness::default();
+        let heaps: Vec<Vec<dregg_circuit::heap_root::HeapLeaf>> = vec![];
+        let err = prove_vm_descriptor2(&desc, &trace, &pis, &mem, &heaps)
+            .err()
+            .unwrap_or_else(|| panic!("A k=4 n={n} should exceed the exact-public cap"));
+        println!("A k=4  n={n:<5} INEXPRESSIBLE: {err}");
+    }
+    println!("-- shape A, k=1 reference --");
+    for n in [16usize, 64, 128] {
+        size_point("A", &shape_a_json(1, n), 1, n, 1);
+    }
+    println!("-- shape B (shared multiplicity table), k=4 composition --");
+    for n in [16usize, 64, 256, 1024] {
+        let (inst, _) = size_point("B", &shape_b_json(4, n), 4, n, 1);
+        assert_eq!(inst, 2);
+    }
+    println!("-- shape B, k=1 reference --");
+    for n in [16usize, 64, 256, 1024] {
+        size_point("B", &shape_b_json(1, n), 1, n, 1);
+    }
+}
+
+/// **THE DECLARED-ROW AXIS, at a FIXED main trace.** `n = 16` rows and `3k` columns are held
+/// bit-identical while the DECLARED manifest grows `m`-fold (16 → 128 rows, i.e. 17 → 129 batch
+/// instances). Shape B at the same `(k, n, m)` is the control: identical trace, identical
+/// interaction count, 2 instances always. A/B at fixed `m` is therefore the per-declared-row
+/// cost with the LogUp-aux-column cost divided out.
+#[test]
+fn declared_row_axis_sizes() {
+    println!("== DECLARED-ROW AXIS at FIXED trace (k=1, n=16; m = lookups per row) ==");
+    for m in [1usize, 2, 4, 8] {
+        let (ia, ba) = size_point("A", &shape_a_json_m(1, 16, m), 1, 16, m);
+        let (ib, bb) = size_point("B", &shape_b_json_m(1, 16, m), 1, 16, m);
+        assert_eq!(ia, 1 + 16 * m, "one instance per declared manifest row");
+        assert_eq!(ib, 2, "the control never grows an instance");
+        println!(
+            "   -> declared={:<4} A/B wire = {:.2}x  (A {} B, delta {} B)",
+            16 * m,
+            ba as f64 / bb as f64,
+            ba,
+            bb
+        );
+    }
 }

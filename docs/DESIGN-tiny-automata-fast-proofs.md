@@ -256,3 +256,153 @@ MEGAFAST_ONE=B:32:1024 MEGAFAST_REPS=5 MEGAFAST_POW=0 RAYON_NUM_THREADS=1 \
   /usr/bin/time -p ./target/release/deps/tiny_automata_prover_shape_measure-* one_point
 cd metatheory && lake env lean Dregg2/Circuit/Emit/DfaRoutingSubsetTableCost.lean
 ```
+
+---
+
+# 7. THE ABSOLUTE NUMBERS, and the DECLARED-ROW axis isolated
+
+Measured 2026-07-25, same `HEAD`, same production `ir2_config`. Two things §1–§4 did not have:
+an **absolute** answer ("megafast" in milliseconds, not ratios), and the declared-row cost measured
+**at a bit-identical main trace** instead of confounded with trace growth.
+
+## 7.0 Timing method, and why the hedging in §1 can be dropped
+
+`/usr/bin/time -p` user+sys CPU, `RAYON_NUM_THREADS=1`, min over 2 invocations, per-grid-point
+`MEGAFAST_REPS=0` baseline subtracted, 20 reps (10 at `n = 1024`). Quantization is 0.5 ms/proof
+(1 ms at 10 reps).
+
+**The single-thread CPU number IS the end-to-end wall number here** — measured, not assumed. Re-run
+at DEFAULT rayon threads on the same box:
+
+| point | 1-thread CPU | default-threads wall | default-threads CPU |
+|---|---|---|---|
+| `B k=4 n=256` | 53.0 ms | **50.0 ms** | 47 ms |
+| `B k=4 n=1024` | 175.0 ms | **183.0 ms** | 174 ms |
+| `A k=4 n=16` | 47.5 ms | **50.0 ms** | 48 ms |
+
+Wall ≈ CPU ≈ single-thread CPU: at these trace heights (2⁴–2¹⁰ rows) rayon finds nothing to
+parallelize, so the prover is effectively single-threaded and §1's "conservative absolute" caveat is
+retired. These are real wall-clock times for one composed automaton proof.
+
+## 7.1 ⚑ HOW FAST IS A COMPOSED TINY-AUTOMATA PROOF? — 4 automata, one word
+
+Production config (16-bit FRI query PoW **included**). Wire bytes are exact and load-independent.
+
+| `k=4`, word `n` | **shape B (recommended: shared table)** | | | **shape A (deployed `exact_public_rows`)** | | |
+|---|---|---|---|---|---|---|
+| | prove | wire | inst | prove | wire | inst |
+| 16 | **4.0 ms** | **41.34 KiB** | 2 | 47.5 ms | 146.80 KiB | 65 |
+| 64 | **22.5 ms** | **54.12 KiB** | 2 | — INEXPRESSIBLE — | | |
+| 256 | **53.0 ms** | **68.28 KiB** | 2 | — INEXPRESSIBLE — | | |
+| 1024 | **175.0 ms** | **76.10 KiB** | 2 | — INEXPRESSIBLE — | | |
+
+(`A k=4 n=32`: 30.0 ms / 266.63 KiB / 129 instances — the last point the cap admits. Past it the
+prover refuses: `exact-public table dfa_transition_table has 256x3 cells; bounded tooth permits at
+most 128 rows and 4096 cells`.)
+
+**So: a 4-automaton composition over a 256-symbol word is 53 ms and 68 KiB.** Not 10 ms, not 1 s.
+Over a 1024-symbol word, 175 ms and 76 KiB. In the shape that is deployed today, it is not provable
+at any speed. Verification is 1.5–4 ms for shape B and ~13 ms for shape A at 129 instances
+(single samples from the `--nocapture` run, load-contaminated).
+
+`k=1` reference, same config: A 14.5 ms/63.36 KiB (`n=16`), 18.5/158.08 (`n=64`), 35.5/270.31
+(`n=128`); B 8.5/38.19, 20.5/50.89, 47.0/64.98 (`n=256`), 132.0/73.00 (`n=1024`).
+
+⚠ The PoW grind rides inside every production number as a **fixed but arbitrary per-`(descriptor,
+witness)` draw**: across the 19 production points here the grind (production minus the `pow = 0`
+re-run of the same point) ranged **0.5 ms to 37 ms**. `A k=4 n=16` is 47.5 ms in production but
+10.5 ms at `pow = 0` — that 37 ms is a lottery ticket, not the automaton, and it is why
+`A k=4 n=16` (47.5 ms) reads *slower* than `A k=4 n=32` (30.0 ms). `pow = 0` companions:
+`A 4:16` 10.5, `A 4:32` 21.5, `B 4:16` 3.5, `B 4:64` 11.5, `B 4:256` 39.5, `B 4:1024` 163.0 ms.
+
+## 7.2 ⚑ THE DECLARED-ROW COST, at a bit-identical main trace
+
+§3 read the declared-row cost off sweeps that moved the trace at the same time. This isolates it:
+`k = 1`, `n = 16`, 3 main columns, the same witness values — and `m` **identical** transition
+lookups per row, which multiplies the declared manifest (exact-multiset LogUp forces
+`#declared rows = #queries`, so `m` is the only handle that moves declared rows at a fixed trace).
+Shape B at the same `(k, n, m)` is the control: same trace, same `m` bus interactions, hence the
+same `m` LogUp extension aux columns, and **2 instances always** — so `A − B` is the pure
+`ExactPublicRow`-instance cost.
+
+| declared rows `D` | instances | A prove (pow=0) | B control | **A − B** | A wire | B wire |
+|---|---|---|---|---|---|---|
+| 16 | 17 | 4.50 ms | 2.50 ms | 2.00 ms | 64 878 B | 39 105 B |
+| 32 | 33 | 7.00 ms | 2.50 ms | 4.50 ms | 93 483 B | 39 886 B |
+| 64 | 65 | 11.50 ms | 3.50 ms | 8.00 ms | 149 271 B | 41 208 B |
+| 128 | 129 | 20.50 ms | 4.00 ms | 16.50 ms | 264 230 B | 43 998 B |
+
+```
+per DECLARED ROW, at a fixed trace:   0.143 ms  and  1 780 B (1.74 KiB)
+   of which the forced aux column:    0.013 ms  and     44 B
+   ⇒ per ExactPublicRow INSTANCE:     0.130 ms  and  1 736 B (1.70 KiB)
+```
+
+`(A−B)/D` is 0.125, 0.141, 0.125, 0.129 ms across the four points — linear **through the origin**,
+as it must be if the cost is one batch instance per declared row. Wire slope is 1788/1743/1796 B
+across the three steps. The §3 estimates (0.15 ms, 1.76 KiB) were within 10% despite the confound.
+
+**What this makes the discipline question, in milliseconds.** Every declared row costs 0.143 ms and
+1.74 KiB *whatever the word length is*:
+
+| discipline | declared rows `D` | declared-row bill, 4 automata over a 256-symbol word |
+|---|---|---|
+| RUN table (`exactPublicRows` today: the run's edges, with multiplicity) | `k·n` = 1024 | **+146 ms, +1.74 MiB** — and unreachable, `D ≤ 128` |
+| WHOLE graph, DEDUPLICATED, shared across lanes (2-state/2-symbol DFA) | `|Q|·|Σ|` = 4 | **+0.6 ms, +7 KiB** |
+| WHOLE graph, deduplicated (16-state/8-symbol automaton) | 128 | **+18 ms, +222 KiB** |
+
+(The 1024-row row is the measured 0.143 ms/1.74 KiB law extrapolated past the cap — labelled
+extrapolation, not a measurement.)
+
+⚑ **This inverts §4b's framing.** The whole-graph discipline is *cheaper* in declared rows than the
+run-table discipline for any word longer than `|Q|·|Σ|`, and it is `k`-independent when `k` lanes
+share one table. The cost driver was never "whole graph vs run"; it is **UNIT CAPACITY** — under
+`exactPublicRows` a deduplicated whole-graph table is not merely expensive, it is unsatisfiable
+unless the word's run is an Eulerian path. Multiplicity is what buys both the dedup and the sharing.
+
+## 7.3 The composition law, with the declared-row term
+
+Independently reproduced on this grid (different points, different axis) and extended:
+
+```
+T(n, k, D)  ≈  G  +  F·n  +  c·k·n  +  d·D
+   F ≈ 0.10  ms per trace row        (B k=4 pow=0: (163.0−3.5)/1008 = 0.158 = F + 4c)
+   c ≈ 0.013 ms per lane-row         (B prod k=1→4 at n=1024: (175−132)/(3·1024) = 0.0140)
+   d ≈ 0.143 ms per DECLARED row     (§7.2, at a fixed trace)
+   G   = the 16-bit PoW grind, a per-(descriptor,witness) draw measured 0.5–37 ms
+W(n, k, D)  ≈  W₀ + (≈6 KiB per FRI layer) + 1.05 KiB·k + 1.74 KiB·D
+   (B k=1 wire 38.19 → 50.89 → 64.98 → 73.00 KiB at n = 16, 64, 256, 1024;
+    B lane slope (41.34−38.19)/3 = 1.05 KiB — §2's number, reproduced exactly)
+```
+
+`d` is 11x `c` and 1.4x `F`: **one declared row costs more prover time than one trace row.** That
+single inequality is the whole recommendation.
+
+## 7.4 Recommendation, with the price tag attached
+
+Ship the shape §4 designed — `RowSemantics.publicRows` / `Ir2Air::PublicTable`, one instance of
+height `2^⌈log₂|T|⌉` carrying the DEDUPLICATED distinct transitions plus a witnessed multiplicity
+column — and declare the **whole graph**, deduplicated, shared by all `k` lanes. Measured price of
+that mechanism (shape B is the byte-table realization of exactly it): **4.0 ms / 41.3 KiB for 4
+automata over a 16-symbol word, 53 ms / 68.3 KiB at 256, 175 ms / 76.1 KiB at 1024, two batch
+instances at every size, verify 1.5–4 ms.** Price of not shipping it: `(k=4, n=256)` is
+inexpressible, and merely lifting `MAX_EXACT_PUBLIC_ROWS` without adding multiplicity would still
+cost +146 ms and +1.74 MiB over that (extrapolated law, §7.2).
+
+Unchanged from §4: the emit-path change is steps 1–6 there; the Lean half is authored and green
+(`DfaRoutingSubsetTableCost.lean`), the Rust `Ir2Air::PublicTable` is unwritten, and the refinement
+theorem survives. Unchanged from §5: shape B is a **cost proxy** (1-tuple range lookup, not a
+3-tuple transition lookup; add the analytic ~304 B/lane for arity), the FRI floor is undischarged,
+and a STARK proves the trace, not the witness generator.
+
+Reproduce §7:
+
+```
+cargo test -p dregg-circuit --release --test tiny_automata_prover_shape_measure --no-run
+./target/release/deps/tiny_automata_prover_shape_measure-* absolute_wire_sizes  --exact --nocapture
+./target/release/deps/tiny_automata_prover_shape_measure-* declared_row_axis_sizes --exact --nocapture
+MEGAFAST_ONE=B:4:256 MEGAFAST_REPS=20 RAYON_NUM_THREADS=1 \
+  /usr/bin/time -p ./target/release/deps/tiny_automata_prover_shape_measure-* one_point --exact
+MEGAFAST_ONE=A:1:16:8 MEGAFAST_REPS=20 MEGAFAST_POW=0 RAYON_NUM_THREADS=1 \
+  /usr/bin/time -p ./target/release/deps/tiny_automata_prover_shape_measure-* one_point --exact
+```
