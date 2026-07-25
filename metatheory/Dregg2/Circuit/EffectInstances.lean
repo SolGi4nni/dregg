@@ -192,8 +192,8 @@ theorem transferE_full_sound
     (h : satisfiedE S transferE (encodeE S transferE k t k')) :
     TransferSpec k t k' := by
   have hapex : transferE.apex k t k' :=
-    effect_circuit_full_sound S transferE hN hL hRest hLog transferGuardDecodes k t k'
-      hwf hwf' h
+    effect_circuit_full_sound S transferE hN hL hRest transferGuardDecodes k t k'
+      hwf hwf' (Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) h
   exact (apex_iff_transferSpec k t k').mp hapex
 
 #assert_axioms transferGuardLocal
@@ -388,8 +388,8 @@ theorem setFieldE_full_sound
     (h : satisfiedE S setFieldE (encodeE S setFieldE s a s')) :
     SetFieldSpec s a.actor a.cell a.f a.v s' := by
   have hapex : setFieldE.apex s a s' :=
-    effect_circuit_full_sound S setFieldE hN hL hRest hLog setFieldGuardDecodes s a s'
-      hwf hwf' h
+    effect_circuit_full_sound S setFieldE hN hL hRest setFieldGuardDecodes s a s'
+      hwf hwf' (Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) h
   exact (apex_iff_setFieldSpec s a s' hnr).mp hapex
 
 #assert_axioms setFieldGuardLocal

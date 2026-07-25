@@ -232,7 +232,7 @@ theorem noteSpendA_full_sound
     NoteSpendSpec s args.nf args.actor args.spendProof s' := by
   have hapex : (noteSpendE LE cN hN hLE).apex s args s' :=
     effect2_circuit_full_sound S (noteSpendE LE cN hN hLE)
-      (noteSpendRestFrameDecodes S LE cN hN hLE hRest) hLog (noteSpendGuardDecodes LE cN hN hLE)
+      (noteSpendRestFrameDecodes S LE cN hN hLE hRest) (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) (noteSpendGuardDecodes LE cN hN hLE)
       s args s' h
   exact (apex_iff_noteSpendSpec LE cN hN hLE s args s').mp hapex
 

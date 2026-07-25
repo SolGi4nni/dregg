@@ -132,7 +132,7 @@ theorem effect2triple_extract {St Args : Type} (S : Surface2) (E : EffectSpec2Tr
     (hsat : satisfiedE2Triple S E a)
     (hPI : PIBindsDigestsTriple S E pre args post a) :
     E.apex pre args post :=
-  effect2triple_circuit_full_sound S E hRestF hLog hGuard pre args post
+  effect2triple_circuit_full_sound S E hRestF (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) hGuard pre args post
     ((satisfiedE2Triple_of_PIBindsDigestsTriple S E pre args post a hPI).mp hsat)
 
 /-- A forged COMPONENT-1 (the first touched component) is refuted. -/
@@ -176,7 +176,7 @@ theorem effect2triple_extract_rejects_log_forge {St Args : Type} (S : Surface2)
     (htamper : E.view.getLog post ≠ E.postLog pre args) :
     ¬ satisfiedE2Triple S E a := by
   intro hsat
-  exact effectCircuit2Triple_rejects_log_forge S E hLog pre args post htamper
+  exact effectCircuit2Triple_rejects_log_forge S E (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) pre args post htamper
     ((satisfiedE2Triple_of_PIBindsDigestsTriple S E pre args post a hPI).mp hsat)
 
 /-! ## §4 — per-effect instantiation: `createCellA` (accounts + bal + born-empty side tables). -/

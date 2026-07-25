@@ -63,11 +63,13 @@ framework, additively. The ONE relocation done to existing files was moving `log
 `SetFieldCommit` into `StateCommit` (beside the other CR carriers).
 -/
 import Dregg2.Circuit.StateCommit
+import Dregg2.Circuit.LogCommitRegrounded
 
 namespace Dregg2.Circuit.EffectCommit
 
 open Dregg2.Circuit
 open Dregg2.Circuit.StateCommit
+open Dregg2.Circuit.LogCommitRegrounded (LogColl noLogColl_of_inj logHash_binds_of_noLogColl)
 open Dregg2.Exec
 open Dregg2.Exec.CircuitEmit
 
@@ -426,10 +428,11 @@ frozen by the frame digest; dead → `AccountsWF`); the log + 16 fields from the
 only the realizable Poseidon-CR injectivity portals + `AccountsWF` + the per-effect `GuardDecodes`. -/
 theorem effect_circuit_full_sound
     (hN : compressNInjective S.compressN) (hL : cellLeafInjective S.CH)
-    (hRest : RestHashIffFrame S.RH) (hLog : logHashInjective S.LH)
+    (hRest : RestHashIffFrame S.RH)
     (hGuard : GuardDecodes E)
     (pre : St) (args : Args) (post : St)
     (hwf  : AccountsWF (E.view.toKernel pre)) (hwf' : AccountsWF (E.view.toKernel post))
+    (hno : ¬ LogColl S.LH (E.view.getLog post) (E.postLog pre args))
     (h : satisfiedE S E (encodeE S E pre args post)) :
     E.apex pre args post := by
   have hArith : satisfied (effectCircuit E) (encodeE S E pre args post) := h
@@ -459,7 +462,7 @@ theorem effect_circuit_full_sound
       { accounts := ∅, cell := E.expectedLeaf pre args, caps := fun _ => [] }
       (E.touched pre args) hte
   have hlogVal : E.view.getLog post = E.postLog pre args :=
-    hLog _ _ ((elog_iff S E pre args post).mp hlog)
+    logHash_binds_of_noLogColl S.LH _ _ hno ((elog_iff S E pre args post).mp hlog)
   -- reconstruct the post cell map by funext over (touched / live-untouched / dead).
   have hcellmap : (E.view.toKernel post).cell
       = touchedCellMap (E.view.toKernel pre).cell (E.touched pre args) (E.expectedLeaf pre args) := by
@@ -571,13 +574,14 @@ theorem effectCircuit_rejects_wrong_touched
 
 /-- **log forgery REJECTED:** a post-log differing from the spec-predicted post-log cannot satisfy —
 `cELog` + `logHashInjective`. -/
-theorem effectCircuit_rejects_log_forge (hLog : logHashInjective S.LH)
+theorem effectCircuit_rejects_log_forge
     (pre : St) (args : Args) (post : St)
+    (hno : ¬ LogColl S.LH (E.view.getLog post) (E.postLog pre args))
     (htamper : E.view.getLog post ≠ E.postLog pre args) :
     ¬ satisfiedE S E (encodeE S E pre args post) := by
   intro h
   have hlog : cELog.holds (encodeE S E pre args post) := h cELog (by simp [effectCircuit])
-  exact htamper (hLog _ _ ((elog_iff S E pre args post).mp hlog))
+  exact htamper (logHash_binds_of_noLogColl S.LH _ _ hno ((elog_iff S E pre args post).mp hlog))
 
 end Sound
 

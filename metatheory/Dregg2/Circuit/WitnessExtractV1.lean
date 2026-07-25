@@ -140,7 +140,8 @@ theorem effect_extract {St Args : Type} (S : CommitSurface) (E : EffectSpec St A
     (hsat : satisfiedE S E a)
     (hPI : PIBindsDigestsV1 S E pre args post a) :
     E.apex pre args post :=
-  effect_circuit_full_sound S E hN hL hRest hLog hGuard pre args post hwf hwf'
+  effect_circuit_full_sound S E hN hL hRest hGuard pre args post hwf hwf'
+    (Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog)
     ((satisfiedE_of_PIBindsDigestsV1 S E pre args post a hPI).mp hsat)
 
 /-! ## §4 — NON-VACUITY: anti-ghost teeth. A PI-bound trace whose claimed state VIOLATES the apex is
@@ -193,7 +194,7 @@ theorem effect_extract_rejects_log_forge {St Args : Type} (S : CommitSurface) (E
     (htamper : E.view.getLog post ≠ E.postLog pre args) :
     ¬ satisfiedE S E a := by
   intro hsat
-  exact effectCircuit_rejects_log_forge S E hLog pre args post htamper
+  exact effectCircuit_rejects_log_forge S E pre args post (Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) htamper
     ((satisfiedE_of_PIBindsDigestsV1 S E pre args post a hPI).mp hsat)
 
 /-! ## §4b — CONCRETE non-vacuity: the four v1 EQ gates REJECT a tampered wire (decidable `#guard`s).

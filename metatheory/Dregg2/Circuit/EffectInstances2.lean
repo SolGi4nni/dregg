@@ -197,7 +197,7 @@ theorem mintE_full_sound
     MintASpec s args.actor args.cell args.a args.amt s' := by
   have hapex : (mintE D hD).apex s args s' :=
     effect2_circuit_full_sound S (mintE D hD)
-      (mintRestFrameDecodes S D hD hRest) hLog (mintGuardDecodes D hD) s args s' h
+      (mintRestFrameDecodes S D hD hRest) (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) (mintGuardDecodes D hD) s args s' h
   exact (apex_iff_mintASpec D hD s args s').mp hapex
 
 /-! ### §1d — EMISSION: the v2 mint circuit on the Lean→Plonky3 wire.
@@ -385,7 +385,7 @@ theorem noteSpendE_full_sound
     NoteSpendSpec s args.nf args.actor true s' := by
   have hapex : (noteSpendE LE cN hN hLE).apex s args s' :=
     effect2_circuit_full_sound S (noteSpendE LE cN hN hLE)
-      (noteSpendRestFrameDecodes S LE cN hN hLE hRest) hLog (noteSpendGuardDecodes LE cN hN hLE)
+      (noteSpendRestFrameDecodes S LE cN hN hLE hRest) (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) (noteSpendGuardDecodes LE cN hN hLE)
       s args s' h
   exact (apex_iff_noteSpendSpec LE cN hN hLE s args s').mp hapex
 

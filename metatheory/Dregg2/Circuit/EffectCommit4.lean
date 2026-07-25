@@ -244,9 +244,10 @@ section Sound
 variable {St Args : Type} (S : Surface2) (E : EffectSpec2Quad St Args)
 
 theorem effect2quad_circuit_full_sound
-    (hRestF : RestFrameDecodes2Quad S E) (hLog : logHashInjective S.LH)
+    (hRestF : RestFrameDecodes2Quad S E)
     (hGuard : GuardDecodes2Quad E)
     (pre : St) (args : Args) (post : St)
+    (hno : ¬ Dregg2.Circuit.LogCommitRegrounded.LogColl S.LH (E.view.getLog post) (E.postLog pre args))
     (h : satisfiedE2Quad S E (encodeE2Quad S E pre args post)) :
     E.apex pre args post := by
   have hArith : satisfied (effectCircuit2Quad E) (encodeE2Quad S E pre args post) := h
@@ -268,7 +269,8 @@ theorem effect2quad_circuit_full_sound
   have hcomp3 := E.active3.binds pre args (E.view.toKernel post) ((e2qbind3_iff S E pre args post).mp hbind3)
   have hcomp4 := E.active4.binds pre args (E.view.toKernel post) ((e2qbind4_iff S E pre args post).mp hbind4)
   have hlogVal : E.view.getLog post = E.postLog pre args :=
-    hLog _ _ ((e2qlog_iff S E pre args post).mp hlog)
+    Dregg2.Circuit.LogCommitRegrounded.logHash_binds_of_noLogColl S.LH _ _ hno
+      ((e2qlog_iff S E pre args post).mp hlog)
   exact ⟨hguard, hcomp1, hcomp2, hcomp3, hcomp4, hlogVal, hframe⟩
 
 theorem effect2quad_circuit_full_complete
@@ -336,12 +338,14 @@ theorem effectCircuit2Quad_rejects_wrong_component4
   have hbind := h cE2QBind4 (by simp [effectCircuit2Quad])
   exact htamper (E.active4.binds pre args (E.view.toKernel post) ((e2qbind4_iff S E pre args post).mp hbind))
 
-theorem effectCircuit2Quad_rejects_log_forge (hLog : logHashInjective S.LH)
-    (pre : St) (args : Args) (post : St) (htamper : E.view.getLog post ≠ E.postLog pre args) :
+theorem effectCircuit2Quad_rejects_log_forge
+    (pre : St) (args : Args) (post : St) (htamper : E.view.getLog post ≠ E.postLog pre args)
+    (hno : ¬ Dregg2.Circuit.LogCommitRegrounded.LogColl S.LH (E.view.getLog post) (E.postLog pre args)) :
     ¬ satisfiedE2Quad S E (encodeE2Quad S E pre args post) := by
   intro h
   have hlog := h cE2QLog (by simp [effectCircuit2Quad])
-  exact htamper (hLog _ _ ((e2qlog_iff S E pre args post).mp hlog))
+  exact htamper (Dregg2.Circuit.LogCommitRegrounded.logHash_binds_of_noLogColl S.LH _ _ hno
+    ((e2qlog_iff S E pre args post).mp hlog))
 
 end Sound
 

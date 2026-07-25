@@ -181,8 +181,8 @@ theorem receiptArchiveA_full_sound
     (h : satisfiedE S receiptArchiveE (encodeE S receiptArchiveE s args s')) :
     ReceiptArchiveSpec s args.actor args.cell s' := by
   have hapex : receiptArchiveE.apex s args s' :=
-    effect_circuit_full_sound S receiptArchiveE hN hL hRest hLog receiptArchiveGuardDecodes s args s'
-      hwf hwf' h
+    effect_circuit_full_sound S receiptArchiveE hN hL hRest receiptArchiveGuardDecodes s args s'
+      hwf hwf' (Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) h
   exact (apex_iff_ReceiptArchiveSpec s args s').mp hapex
 
 

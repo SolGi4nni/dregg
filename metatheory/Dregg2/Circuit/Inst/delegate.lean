@@ -240,7 +240,7 @@ theorem delegate_full_sound
     DelegateSpec s args.del args.recipient args.target s' := by
   have hapex : (delegateE D hD).apex s args s' :=
     effect2_circuit_full_sound S (delegateE D hD)
-      (delegateRestFrameDecodes S D hD hRest) hLog (delegateGuardDecodes D hD) s args s' h
+      (delegateRestFrameDecodes S D hD hRest) (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) (delegateGuardDecodes D hD) s args s' h
   exact (apex_iff_delegateSpec D hD s args s').mp hapex
 
 

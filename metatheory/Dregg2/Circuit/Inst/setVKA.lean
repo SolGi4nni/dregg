@@ -187,7 +187,8 @@ theorem setVKA_full_sound
     (h : satisfiedE S setVKE (encodeE S setVKE s args s')) :
     SetVKSpec s args.actor args.cell args.vk s' := by
   have hapex : setVKE.apex s args s' :=
-    effect_circuit_full_sound S setVKE hN hL hRest hLog setVKGuardDecodes s args s' hwf hwf' h
+    effect_circuit_full_sound S setVKE hN hL hRest setVKGuardDecodes s args s' hwf hwf'
+      (Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) h
   exact (apex_iff_setVKSpec s args s').mp hapex
 
 

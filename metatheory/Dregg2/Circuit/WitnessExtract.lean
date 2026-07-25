@@ -168,7 +168,7 @@ theorem effect2_extract {St Args : Type} (S : Surface2) (E : EffectSpec2 St Args
     (hsat : satisfiedE2 S E a)
     (hPI : PIBindsDigests S E pre args post a) :
     E.apex pre args post :=
-  effect2_circuit_full_sound S E hRestF hLog hGuard pre args post
+  effect2_circuit_full_sound S E hRestF (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) hGuard pre args post
     ((satisfiedE2_of_PIBindsDigests S E pre args post a hPI).mp hsat)
 
 /-- **`effect2_extract_emitted`** — the same extractor stated against the EMITTED (wire-form) circuit
@@ -242,7 +242,7 @@ theorem effect2_extract_rejects_log_forge {St Args : Type} (S : Surface2) (E : E
   intro hsat
   have hsat' : satisfiedE2 S E (encodeE2 S E pre args post) :=
     (satisfiedE2_of_PIBindsDigests S E pre args post a hPI).mp hsat
-  exact effectCircuit2_rejects_log_forge S E hLog pre args post htamper hsat'
+  exact effectCircuit2_rejects_log_forge S E (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) pre args post htamper hsat'
 
 /-! ## §5b — CONCRETE non-vacuity: the gates reject. A tampered trace whose component digest
 wire (`68`) disagrees with its expected wire (`69`) FAILS `cE2Bind` — UNSAT — so satisfaction is NOT

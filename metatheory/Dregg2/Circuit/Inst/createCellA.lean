@@ -211,7 +211,7 @@ theorem createCellA_full_sound
     CreateCellSpec s args.actor args.newCell s' := by
   have hapex :=
     effect2triple_circuit_full_sound S (createCellE LE cN hN hLE DBal hDBal DSide hDSide)
-      (createCellRestFrameDecodes S LE cN hN hLE DBal hDBal DSide hDSide hRest) hLog
+      (createCellRestFrameDecodes S LE cN hN hLE DBal hDBal DSide hDSide hRest) (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog)
       (createCellGuardDecodes LE cN hN hLE DBal hDBal DSide hDSide) s args s' h
   exact (apex_iff_createCellSpec LE cN hN hLE DBal hDBal DSide hDSide s args s').mp hapex
 

@@ -163,7 +163,7 @@ theorem receiptArchiveLifecycleA_full_sound
     ReceiptArchiveLifecycleSpec s args.actor args.cell s' := by
   have hapex : (receiptArchiveLifecycleE D hD).apex s args s' :=
     effect2_circuit_full_sound S (receiptArchiveLifecycleE D hD)
-      (archiveRestFrameDecodes S D hD hRest) hLog (archiveGuardDecodes D hD) s args s' h
+      (archiveRestFrameDecodes S D hD hRest) (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) (archiveGuardDecodes D hD) s args s' h
   exact (apex_iff_ReceiptArchiveLifecycleSpec D hD s args s').mp hapex
 
 /-! ## EMISSION — Lean→Plonky3 wire (the `cellSealA` analog). -/

@@ -194,7 +194,7 @@ theorem bridgeMintA_full_sound
     InboundMintSpec s args.actor args.cell args.a args.value s' := by
   have hapex : (bridgeMintE D hD).apex s args s' :=
     effect2_circuit_full_sound S (bridgeMintE D hD)
-      (bridgeMintRestFrameDecodes S D hD hRest) hLog (bridgeMintGuardDecodes D hD) s args s' h
+      (bridgeMintRestFrameDecodes S D hD hRest) (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) (bridgeMintGuardDecodes D hD) s args s' h
   exact (apex_iff_inboundMintSpec D hD s args s').mp hapex
 
 /-! ## §2 — axiom-hygiene tripwires.

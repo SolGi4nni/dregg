@@ -391,9 +391,10 @@ frame from the `RestIffNo*` portal; the log from `logHashInjective`. Carries onl
 `RestFrameDecodes2` + `logHashInjective` + `GuardDecodes2` (the component's `binds`/`encodes` are FIELDS,
 discharged by its smart constructor). -/
 theorem effect2_circuit_full_sound
-    (hRestF : RestFrameDecodes2 S E) (hLog : logHashInjective S.LH)
+    (hRestF : RestFrameDecodes2 S E)
     (hGuard : GuardDecodes2 E)
     (pre : St) (args : Args) (post : St)
+    (hno : ¬ Dregg2.Circuit.LogCommitRegrounded.LogColl S.LH (E.view.getLog post) (E.postLog pre args))
     (h : satisfiedE2 S E (encodeE2 S E pre args post)) :
     E.apex pre args post := by
   have hArith : satisfied (effectCircuit2 E) (encodeE2 S E pre args post) := h
@@ -413,7 +414,8 @@ theorem effect2_circuit_full_sound
   have hcomp : E.active.postClause pre args (E.view.toKernel post) :=
     E.active.binds pre args (E.view.toKernel post) ((e2bind_iff S E pre args post).mp hbind)
   have hlogVal : E.view.getLog post = E.postLog pre args :=
-    hLog _ _ ((e2log_iff S E pre args post).mp hlog)
+    Dregg2.Circuit.LogCommitRegrounded.logHash_binds_of_noLogColl S.LH _ _ hno
+      ((e2log_iff S E pre args post).mp hlog)
   exact ⟨hguard, hcomp, hlogVal, hframe⟩
 
 /-- **`effect2_circuit_full_complete`** — every apex-satisfying step yields a satisfying full-state
@@ -464,13 +466,15 @@ theorem effectCircuit2_rejects_wrong_component
 
 /-- **log forgery REJECTED:** a post-log differing from the spec-predicted post-log cannot satisfy —
 `cE2Log` + `logHashInjective`. -/
-theorem effectCircuit2_rejects_log_forge (hLog : logHashInjective S.LH)
+theorem effectCircuit2_rejects_log_forge
     (pre : St) (args : Args) (post : St)
-    (htamper : E.view.getLog post ≠ E.postLog pre args) :
+    (htamper : E.view.getLog post ≠ E.postLog pre args)
+    (hno : ¬ Dregg2.Circuit.LogCommitRegrounded.LogColl S.LH (E.view.getLog post) (E.postLog pre args)) :
     ¬ satisfiedE2 S E (encodeE2 S E pre args post) := by
   intro h
   have hlog : cE2Log.holds (encodeE2 S E pre args post) := h cE2Log (by simp [effectCircuit2])
-  exact htamper (hLog _ _ ((e2log_iff S E pre args post).mp hlog))
+  exact htamper (Dregg2.Circuit.LogCommitRegrounded.logHash_binds_of_noLogColl S.LH _ _ hno
+    ((e2log_iff S E pre args post).mp hlog))
 
 end Sound
 

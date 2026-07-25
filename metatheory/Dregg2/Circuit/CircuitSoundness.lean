@@ -80,6 +80,7 @@ DERIVED (NOT carried — proved here from the above): the decode's faithfulness
 (`stateDecodeChain_frame_continuous`), and the apex composition shape.
 -/
 import Dregg2.Circuit.StateCommit
+import Dregg2.Circuit.LogCommitRegrounded
 import Dregg2.Circuit.ActionDispatch
 import Dregg2.Circuit.DescriptorIR2
 import Dregg2.Circuit.Poseidon2Binding
@@ -1015,11 +1016,13 @@ structure LogDecode (LH : List Turn → ℤ) (pubLogPre pubLogPost : ℤ) (pre p
 /-- **FAITHFULNESS (log).** Two log-decodes of the SAME published log commitment force EQUAL receipt
 chains — pure `logHashInjective` binding, no admissibility. The log analog of
 `stateDecode_pre_faithful`/`stateDecode_post_faithful`. -/
-theorem logDecode_faithful (LH : List Turn → ℤ) (hLog : logHashInjective LH)
+theorem logDecode_faithful (LH : List Turn → ℤ)
     {p q : ℤ} {pre post pre' post' : RecChainedState}
+    (hno : ¬ Dregg2.Circuit.LogCommitRegrounded.LogColl LH pre.log pre'.log)
     (h : LogDecode LH p q pre post) (h' : LogDecode LH p q pre' post') :
     pre.log = pre'.log :=
-  hLog pre.log pre'.log (by rw [← h.logPreBinds, ← h'.logPreBinds])
+  Dregg2.Circuit.LogCommitRegrounded.logHash_binds_of_noLogColl LH pre.log pre'.log hno
+    (by rw [← h.logPreBinds, ← h'.logPreBinds])
 
 /-- **The LOG-SEAM tooth (log half DERIVED, not assumed).** If two adjacent steps' published LOG
 commitments AGREE across the boundary (`a.logPubPost = b.logPubPre` — the log column of the prover's
@@ -1028,13 +1031,14 @@ binds its receipt chain (`LogDecode`), then their receipt chains COINCIDE: `a.po
 The receipt-log half of the seam is FORCED by the `logHashInjective` binding — a prover whose published
 log commitment disagrees with the threaded receipt chain is REJECTED. The faithful mirror of
 `stateDecodeChain_frame_continuous` (kernel half) on the log. -/
-theorem logDecodeChain_frame_continuous (LH : List Turn → ℤ) (hLog : logHashInjective LH)
+theorem logDecodeChain_frame_continuous (LH : List Turn → ℤ)
     {a b : RecChainedState} {ap aq bp bq : ℤ} {a' b' : RecChainedState}
+    (hno : ¬ Dregg2.Circuit.LogCommitRegrounded.LogColl LH a'.log b.log)
     (hda : LogDecode LH ap aq a a') (hdb : LogDecode LH bp bq b b')
     (hseam : aq = bp) :
     a'.log = b.log := by
-  -- `LH a'.log = aq = bp = LH b.log`, then `logHashInjective`.
-  apply hLog a'.log b.log
+  -- `LH a'.log = aq = bp = LH b.log`, then the per-instance side condition (S3).
+  apply Dregg2.Circuit.LogCommitRegrounded.logHash_binds_of_noLogColl LH a'.log b.log hno
   rw [← hda.logPostBinds, hseam, hdb.logPreBinds]
 
 /-- **`TurnDecodeChainLog`** — a `TurnDecodeChain` AUGMENTED with the per-step published LOG decode and
@@ -1089,7 +1093,8 @@ theorem turnDecodeChainLog_seam_log_derived (hash : List ℤ → ℤ) (S : Commi
   refine List.IsChain.imp ?_ hmem
   intro a b hab
   obtain ⟨hseam, ha, hb⟩ := hab
-  exact logDecodeChain_frame_continuous LH cl.hLog (cl.logDecode a ha) (cl.logDecode b hb) hseam
+  exact logDecodeChain_frame_continuous LH
+    (Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj cl.hLog) (cl.logDecode a ha) (cl.logDecode b hb) hseam
 
 /-- **The FULL-state seam is DERIVED (kernel ⊕ log).** Combining the kernel tooth
 (`turnDecodeChain_seam_kernel_derived`, from the published kernel-root seam) with the log tooth
@@ -1159,7 +1164,7 @@ example (LH : List Turn → ℤ) (hLog : logHashInjective LH)
     (hda : LogDecode LH ap aq a a') (hdb : LogDecode LH bp bq b b')
     (hseam : aq = bp) :
     a'.log = b.log :=
-  logDecodeChain_frame_continuous LH hLog hda hdb hseam
+  logDecodeChain_frame_continuous LH (Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) hda hdb hseam
 
 #assert_axioms LogDecode
 #assert_axioms logDecode_faithful

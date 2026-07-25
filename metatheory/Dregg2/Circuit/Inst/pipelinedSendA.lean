@@ -171,8 +171,8 @@ theorem pipelinedSendA_full_sound
     (h : satisfiedE S pipelinedSendE (encodeE S pipelinedSendE s args s')) :
     PipelinedSendSpec s args.actor s' := by
   have hapex : pipelinedSendE.apex s args s' :=
-    effect_circuit_full_sound S pipelinedSendE hN hL hRest hLog pipelinedSendGuardDecodes s args s'
-      hwf hwf' h
+    effect_circuit_full_sound S pipelinedSendE hN hL hRest pipelinedSendGuardDecodes s args s'
+      hwf hwf' (Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) h
   exact (apex_iff_pipelinedSendSpec s args s').mp hapex
 
 

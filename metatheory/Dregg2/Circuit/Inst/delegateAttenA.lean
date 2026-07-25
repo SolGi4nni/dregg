@@ -250,7 +250,7 @@ theorem delegateAttenA_full_sound
     DelegateAttenSpec s args.del args.recv args.t args.keep s' := by
   have hapex : (delegateAttenE D hD).apex s args s' :=
     effect2_circuit_full_sound S (delegateAttenE D hD)
-      (delAttenRestFrameDecodes S D hD hRest) hLog (delAttenGuardDecodes D hD) s args s' h
+      (delAttenRestFrameDecodes S D hD hRest) (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) (delAttenGuardDecodes D hD) s args s' h
   exact (apex_iff_delegateAttenSpec D hD s args s').mp hapex
 
 

@@ -91,7 +91,7 @@ theorem effect2_circuit_refines_apex
     (hRestF : RestFrameDecodes2 S E) (hLog : logHashInjective S.LH) (hGuard : GuardDecodes2 E)
     (pre : St) (args : Args) (post : St) (h : effect2CircuitStep S E pre args post) :
     effect2ApexStep E pre args post :=
-  effect2_circuit_full_sound S E hRestF hLog hGuard pre args post h
+  effect2_circuit_full_sound S E hRestF (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) hGuard pre args post h
 
 /-- **`effect2_apex_refines_circuit`** — COMPLETENESS: apex ⊑ circuit. -/
 theorem effect2_apex_refines_circuit

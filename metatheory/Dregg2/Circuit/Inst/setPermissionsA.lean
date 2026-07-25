@@ -193,8 +193,8 @@ theorem setPermissionsA_full_sound
     (h : satisfiedE S setPermissionsE (encodeE S setPermissionsE s args s')) :
     SetPermissionsSpec s args.actor args.cell args.p s' := by
   have hapex : setPermissionsE.apex s args s' :=
-    effect_circuit_full_sound S setPermissionsE hN hL hRest hLog setPermissionsGuardDecodes s args s'
-      hwf hwf' h
+    effect_circuit_full_sound S setPermissionsE hN hL hRest setPermissionsGuardDecodes s args s'
+      hwf hwf' (Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) h
   exact (apex_iff_setPermissionsSpec s args s').mp hapex
 
 

@@ -177,7 +177,7 @@ theorem refreshDelegationA_full_sound
     RefreshDelegationFullSpec s args.actor args.child s' := by
   have hapex : (refreshDelegationE D hD).apex s args s' :=
     effect2_circuit_full_sound S (refreshDelegationE D hD)
-      (refreshDelegationRestFrameDecodes S D hD hRest) hLog
+      (refreshDelegationRestFrameDecodes S D hD hRest) (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog)
       (refreshDelegationGuardDecodes D hD) s args s' h
   exact (apex_iff_refreshDelegationSpec D hD s args s').mp hapex
 

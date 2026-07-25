@@ -68,6 +68,7 @@ injectivity of a genuine hash, never `axiom`, never sum-injectivity):
   * `SetFieldGuard s actor cell f v` — the executor's admissibility guard (the cellstatefield gate).
 -/
 import Dregg2.Circuit.StateCommit
+import Dregg2.Circuit.LogCommitRegrounded
 import Dregg2.Circuit.Spec.cellstatefield
 
 namespace Dregg2.Circuit.SetFieldCommit
@@ -417,10 +418,11 @@ theorem setfield_circuit_full_sound
     (hCompressN : StateCommit.compressNInjective compressN)
     (hLeaf : StateCommit.cellLeafInjective CH)
     (hRest : StateCommit.RestHashIffFrame RH)
-    (hLog : StateCommit.logHashInjective LH)
     (s : RecChainedState) (actor cell : CellId) (f : FieldName) (v : Int) (s' : RecChainedState)
     (hnr : Dregg2.Exec.EffectsState.reservedField f = false)
     (hwf : StateCommit.AccountsWF s.kernel) (hwf' : StateCommit.AccountsWF s'.kernel)
+    (hno : ¬ Dregg2.Circuit.LogCommitRegrounded.LogColl LH s'.log
+      ({ actor := actor, src := cell, dst := cell, amt := 0 } :: s.log))
     (h : satisfiedSF cmb (encodeSF CH RH cmb compressN LH s actor cell f v s')) :
     SetFieldSpec s actor cell f v s' := by
   obtain ⟨hsat, _hcommit⟩ := h
@@ -465,7 +467,7 @@ theorem setfield_circuit_full_sound
   have hlogeq : LH s'.log = LH ({ actor := actor, src := cell, dst := cell, amt := 0 } :: s.log) :=
     (sflog_iff CH RH cmb compressN LH s actor cell f v s').mp hloggate
   have hlogspec : s'.log = { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log :=
-    hLog _ _ hlogeq
+    Dregg2.Circuit.LogCommitRegrounded.logHash_binds_of_noLogColl LH _ _ hno hlogeq
   -- reconstruct the post cell map by funext = setFieldCellMap.
   have hcellmap : s'.kernel.cell = setFieldCellMap s.kernel.cell cell f v := by
     funext c
@@ -647,15 +649,16 @@ post log is NOT the honest one-row extension makes `satisfiedSF` UNSATISFIABLE: 
 forces `LH post = LH (receipt :: pre)`, and `logHashInjective` forces the post log to be EXACTLY the
 one-row extension — contradiction. Forging/dropping receipts is FORBIDDEN BY CONSTRUCTION. -/
 theorem setFieldCircuit_rejects_log_forge
-    (hLog : StateCommit.logHashInjective LH)
     (s : RecChainedState) (actor cell : CellId) (f : FieldName) (v : Int) (s' : RecChainedState)
-    (hbadlog : s'.log ≠ { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log) :
+    (hbadlog : s'.log ≠ { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log)
+    (hno : ¬ Dregg2.Circuit.LogCommitRegrounded.LogColl LH s'.log
+      ({ actor := actor, src := cell, dst := cell, amt := 0 } :: s.log)) :
     ¬ satisfiedSF cmb (encodeSF CH RH cmb compressN LH s actor cell f v s') := by
   rintro ⟨hsat, _⟩
   have hloggate := hsat cSFLog (by unfold setFieldCircuit; simp)
   have hlogeq : LH s'.log = LH ({ actor := actor, src := cell, dst := cell, amt := 0 } :: s.log) :=
     (sflog_iff CH RH cmb compressN LH s actor cell f v s').mp hloggate
-  exact hbadlog (hLog _ _ hlogeq)
+  exact hbadlog (Dregg2.Circuit.LogCommitRegrounded.logHash_binds_of_noLogColl LH _ _ hno hlogeq)
 
 #assert_axioms setFieldCircuit_rejects_log_forge
 

@@ -223,9 +223,10 @@ section Sound
 variable {St Args : Type} (S : Surface2) (E : EffectSpec2Triple St Args)
 
 theorem effect2triple_circuit_full_sound
-    (hRestF : RestFrameDecodes2Triple S E) (hLog : logHashInjective S.LH)
+    (hRestF : RestFrameDecodes2Triple S E)
     (hGuard : GuardDecodes2Triple E)
     (pre : St) (args : Args) (post : St)
+    (hno : ¬ Dregg2.Circuit.LogCommitRegrounded.LogColl S.LH (E.view.getLog post) (E.postLog pre args))
     (h : satisfiedE2Triple S E (encodeE2Triple S E pre args post)) :
     E.apex pre args post := by
   have hArith : satisfied (effectCircuit2Triple E) (encodeE2Triple S E pre args post) := h
@@ -245,7 +246,8 @@ theorem effect2triple_circuit_full_sound
   have hcomp2 := E.active2.binds pre args (E.view.toKernel post) ((e2tbind2_iff S E pre args post).mp hbind2)
   have hcomp3 := E.active3.binds pre args (E.view.toKernel post) ((e2tbind3_iff S E pre args post).mp hbind3)
   have hlogVal : E.view.getLog post = E.postLog pre args :=
-    hLog _ _ ((e2tlog_iff S E pre args post).mp hlog)
+    Dregg2.Circuit.LogCommitRegrounded.logHash_binds_of_noLogColl S.LH _ _ hno
+      ((e2tlog_iff S E pre args post).mp hlog)
   exact ⟨hguard, hcomp1, hcomp2, hcomp3, hlogVal, hframe⟩
 
 theorem effect2triple_circuit_full_complete
@@ -303,12 +305,14 @@ theorem effectCircuit2Triple_rejects_wrong_component3
   have hbind := h cE2TBind3 (by simp [effectCircuit2Triple])
   exact htamper (E.active3.binds pre args (E.view.toKernel post) ((e2tbind3_iff S E pre args post).mp hbind))
 
-theorem effectCircuit2Triple_rejects_log_forge (hLog : logHashInjective S.LH)
-    (pre : St) (args : Args) (post : St) (htamper : E.view.getLog post ≠ E.postLog pre args) :
+theorem effectCircuit2Triple_rejects_log_forge
+    (pre : St) (args : Args) (post : St) (htamper : E.view.getLog post ≠ E.postLog pre args)
+    (hno : ¬ Dregg2.Circuit.LogCommitRegrounded.LogColl S.LH (E.view.getLog post) (E.postLog pre args)) :
     ¬ satisfiedE2Triple S E (encodeE2Triple S E pre args post) := by
   intro h
   have hlog := h cE2TLog (by simp [effectCircuit2Triple])
-  exact htamper (hLog _ _ ((e2tlog_iff S E pre args post).mp hlog))
+  exact htamper (Dregg2.Circuit.LogCommitRegrounded.logHash_binds_of_noLogColl S.LH _ _ hno
+    ((e2tlog_iff S E pre args post).mp hlog))
 
 end Sound
 

@@ -182,8 +182,8 @@ theorem emitEventA_full_sound
     (h : satisfiedE S emitEventE (encodeE S emitEventE s args s')) :
     EmitEventSpec s args.actor args.cell args.topic args.data s' := by
   have hapex : emitEventE.apex s args s' :=
-    effect_circuit_full_sound S emitEventE hN hL hRest hLog emitEventGuardDecodes s args s'
-      hwf hwf' h
+    effect_circuit_full_sound S emitEventE hN hL hRest emitEventGuardDecodes s args s'
+      hwf hwf' (Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) h
   exact (apex_iff_emitEventSpec s args s').mp hapex
 
 

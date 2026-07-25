@@ -201,7 +201,7 @@ theorem heapWriteA_full_sound
     HeapWriteSpec s args.actor args.target args.addr args.value args.newRoot s' := by
   have hapex : (heapWriteE DCell hDCell DH hDH).apex s args s' :=
     effect2dual_circuit_full_sound S (heapWriteE DCell hDCell DH hDH)
-      (heapWriteRestFrameDecodes S DCell hDCell DH hDH hRest) hLog
+      (heapWriteRestFrameDecodes S DCell hDCell DH hDH hRest) (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog)
       (heapWriteGuardDecodes DCell hDCell DH hDH) s args s' h
   exact (apex_iff_heapWriteSpec DCell hDCell DH hDH s args s').mp hapex
 

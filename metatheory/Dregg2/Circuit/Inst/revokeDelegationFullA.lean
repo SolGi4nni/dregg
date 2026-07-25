@@ -256,7 +256,7 @@ theorem revokeDelegationFull_full_sound
     RevokeDelegationFullSpec s args.holder args.t s' := by
   have hapex : (revokeDelegationFullE D hD DStep hDStep).apex s args s' :=
     effect2dual_circuit_full_sound S (revokeDelegationFullE D hD DStep hDStep)
-      (revokeRestFrameDecodes S D hD DStep hDStep hRest) hLog
+      (revokeRestFrameDecodes S D hD DStep hDStep hRest) (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog)
       (revokeGuardDecodes D hD DStep hDStep) s args s' h
   exact (apex_iff_revokeDelegationFullSpec D hD DStep hDStep s args s').mp hapex
 

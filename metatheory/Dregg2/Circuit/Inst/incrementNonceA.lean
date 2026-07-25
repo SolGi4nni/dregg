@@ -182,8 +182,8 @@ theorem incrementNonceA_full_sound
     (h : satisfiedE S incrementNonceE (encodeE S incrementNonceE s args s')) :
     IncrementNonceSpec s args.actor args.cell args.n s' := by
   have hapex : incrementNonceE.apex s args s' :=
-    effect_circuit_full_sound S incrementNonceE hN hL hRest hLog incrementNonceGuardDecodes s args s'
-      hwf hwf' h
+    effect_circuit_full_sound S incrementNonceE hN hL hRest incrementNonceGuardDecodes s args s'
+      hwf hwf' (Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) h
   exact (apex_iff_incrementNonceSpec s args s').mp hapex
 
 

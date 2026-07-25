@@ -232,7 +232,7 @@ theorem noteCreateA_full_sound
     NoteCreateASpec s args.cm args.actor s' := by
   have hapex : (noteCreateE LE cN hN hLE).apex s args s' :=
     effect2_circuit_full_sound S (noteCreateE LE cN hN hLE)
-      (noteCreateRestFrameDecodes S LE cN hN hLE hRest) hLog (noteCreateGuardDecodes LE cN hN hLE)
+      (noteCreateRestFrameDecodes S LE cN hN hLE hRest) (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) (noteCreateGuardDecodes LE cN hN hLE)
       s args s' h
   exact (apex_iff_noteCreateASpec LE cN hN hLE s args s').mp hapex
 

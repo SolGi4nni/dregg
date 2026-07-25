@@ -167,7 +167,7 @@ theorem cellDestroyA_full_sound
     CellDestroySpec s args.actor args.cell args.certHash s' := by
   have hapex : (cellDestroyE DLif hDLif DDC hDDC).apex s args s' :=
     effect2dual_circuit_full_sound S (cellDestroyE DLif hDLif DDC hDDC)
-      (cellDestroyRestFrameDecodes S DLif hDLif DDC hDDC hRest) hLog
+      (cellDestroyRestFrameDecodes S DLif hDLif DDC hDDC hRest) (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog)
       (cellDestroyGuardDecodes DLif hDLif DDC hDDC) s args s' h
   exact (apex_iff_cellDestroySpec DLif hDLif DDC hDDC s args s').mp hapex
 

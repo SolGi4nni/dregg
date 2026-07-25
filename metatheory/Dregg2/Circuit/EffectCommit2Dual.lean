@@ -220,9 +220,10 @@ section Sound
 variable {St Args : Type} (S : Surface2) (E : EffectSpec2Dual St Args)
 
 theorem effect2dual_circuit_full_sound
-    (hRestF : RestFrameDecodes2Dual S E) (hLog : logHashInjective S.LH)
+    (hRestF : RestFrameDecodes2Dual S E)
     (hGuard : GuardDecodes2Dual E)
     (pre : St) (args : Args) (post : St)
+    (hno : ¬ Dregg2.Circuit.LogCommitRegrounded.LogColl S.LH (E.view.getLog post) (E.postLog pre args))
     (h : satisfiedE2Dual S E (encodeE2Dual S E pre args post)) :
     E.apex pre args post := by
   have hArith : satisfied (effectCircuit2Dual E) (encodeE2Dual S E pre args post) := h
@@ -246,7 +247,8 @@ theorem effect2dual_circuit_full_sound
   have hcomp2 : E.active2.postClause pre args (E.view.toKernel post) :=
     E.active2.binds pre args (E.view.toKernel post) ((e2dbind2_iff S E pre args post).mp hbind2)
   have hlogVal : E.view.getLog post = E.postLog pre args :=
-    hLog _ _ ((e2dlog_iff S E pre args post).mp hlog)
+    Dregg2.Circuit.LogCommitRegrounded.logHash_binds_of_noLogColl S.LH _ _ hno
+      ((e2dlog_iff S E pre args post).mp hlog)
   exact ⟨hguard, hcomp1, hcomp2, hlogVal, hframe⟩
 
 theorem effect2dual_circuit_full_complete
@@ -295,13 +297,15 @@ theorem effectCircuit2Dual_rejects_wrong_component2
   have hbind := h cE2DBind2 (by simp [effectCircuit2Dual])
   exact htamper (E.active2.binds pre args (E.view.toKernel post) ((e2dbind2_iff S E pre args post).mp hbind))
 
-theorem effectCircuit2Dual_rejects_log_forge (hLog : logHashInjective S.LH)
+theorem effectCircuit2Dual_rejects_log_forge
     (pre : St) (args : Args) (post : St)
-    (htamper : E.view.getLog post ≠ E.postLog pre args) :
+    (htamper : E.view.getLog post ≠ E.postLog pre args)
+    (hno : ¬ Dregg2.Circuit.LogCommitRegrounded.LogColl S.LH (E.view.getLog post) (E.postLog pre args)) :
     ¬ satisfiedE2Dual S E (encodeE2Dual S E pre args post) := by
   intro h
   have hlog := h cE2DLog (by simp [effectCircuit2Dual])
-  exact htamper (hLog _ _ ((e2dlog_iff S E pre args post).mp hlog))
+  exact htamper (Dregg2.Circuit.LogCommitRegrounded.logHash_binds_of_noLogColl S.LH _ _ hno
+    ((e2dlog_iff S E pre args post).mp hlog))
 
 end Sound
 

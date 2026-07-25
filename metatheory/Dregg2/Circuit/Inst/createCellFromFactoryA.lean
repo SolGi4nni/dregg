@@ -319,7 +319,7 @@ theorem createCellFromFactoryA_full_sound
     effect2quint_circuit_full_sound S
       (createFromFactoryE LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC DAuth hDAuth)
       (createFromFactoryRestFrameDecodes S LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC DAuth hDAuth
-        hRest) hLog
+        hRest) (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog)
       (createFromFactoryGuardDecodes LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC DAuth hDAuth) s args
       s' h
   exact (apex_iff_createFromFactoryCircuitSpec LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC DAuth

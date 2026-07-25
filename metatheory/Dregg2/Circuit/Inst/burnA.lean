@@ -199,7 +199,7 @@ theorem burnA_full_sound
     BurnSpec s args.actor args.cell args.a args.amt s' := by
   have hapex : (burnE D hD).apex s args s' :=
     effect2_circuit_full_sound S (burnE D hD)
-      (burnRestFrameDecodes S D hD hRest) hLog (burnGuardDecodes D hD) s args s' h
+      (burnRestFrameDecodes S D hD hRest) (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) (burnGuardDecodes D hD) s args s' h
   exact (apex_iff_burnSpec D hD s args s').mp hapex
 
 /-! ## §2 — EMISSION: production burn circuit on the Lean→Plonky3 wire.

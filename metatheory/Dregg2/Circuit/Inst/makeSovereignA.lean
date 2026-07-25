@@ -182,8 +182,8 @@ theorem makeSovereignA_full_sound
     (h : satisfiedE S makeSovereignE (encodeE S makeSovereignE s args s')) :
     MakeSovereignSpec s args.actor args.cell s' := by
   have hapex : makeSovereignE.apex s args s' :=
-    effect_circuit_full_sound S makeSovereignE hN hL hRest hLog makeSovereignGuardDecodes s args s'
-      hwf hwf' h
+    effect_circuit_full_sound S makeSovereignE hN hL hRest makeSovereignGuardDecodes s args s'
+      hwf hwf' (Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) h
   exact (apex_iff_makeSovereignSpec s args s').mp hapex
 
 

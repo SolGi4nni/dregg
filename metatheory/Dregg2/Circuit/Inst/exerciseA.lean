@@ -213,8 +213,8 @@ theorem exerciseA_full_sound
     (h : satisfiedE S exerciseE (encodeE S exerciseE s args s')) :
     ExerciseHoldSpec s args.actor args.target s' := by
   have hapex : exerciseE.apex s args s' :=
-    effect_circuit_full_sound S exerciseE hN hL hRest hLog exerciseGuardDecodes s args s'
-      hwf hwf' h
+    effect_circuit_full_sound S exerciseE hN hL hRest exerciseGuardDecodes s args s'
+      hwf hwf' (Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) h
   exact (apex_iff_exerciseHoldSpec s args s').mp hapex
 
 /-! ## §2 — composite refinement (hold circuit + parameterized inner turn). -/

@@ -198,7 +198,7 @@ theorem mintA_full_sound
     MintASpec s args.actor args.cell args.a args.amt s' := by
   have hapex : (mintE D hD).apex s args s' :=
     effect2_circuit_full_sound S (mintE D hD)
-      (mintRestFrameDecodes S D hD hRest) hLog (mintGuardDecodes D hD) s args s' h
+      (mintRestFrameDecodes S D hD hRest) (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) (mintGuardDecodes D hD) s args s' h
   exact (apex_iff_mintASpec D hD s args s').mp hapex
 
 /-! ## §2 — EMISSION: production mint circuit on the Lean→Plonky3 wire.

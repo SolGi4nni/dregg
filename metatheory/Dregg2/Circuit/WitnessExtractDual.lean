@@ -117,7 +117,7 @@ theorem effect2dual_extract {St Args : Type} (S : Surface2) (E : EffectSpec2Dual
     (hsat : satisfiedE2Dual S E a)
     (hPI : PIBindsDigestsDual S E pre args post a) :
     E.apex pre args post :=
-  effect2dual_circuit_full_sound S E hRestF hLog hGuard pre args post
+  effect2dual_circuit_full_sound S E hRestF (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) hGuard pre args post
     ((satisfiedE2Dual_of_PIBindsDigestsDual S E pre args post a hPI).mp hsat)
 
 /-- A forged COMPONENT-1 (the first touched component violates its bind/postClause) is refuted. -/
@@ -150,7 +150,7 @@ theorem effect2dual_extract_rejects_log_forge {St Args : Type} (S : Surface2)
     (htamper : E.view.getLog post ≠ E.postLog pre args) :
     ¬ satisfiedE2Dual S E a := by
   intro hsat
-  exact effectCircuit2Dual_rejects_log_forge S E hLog pre args post htamper
+  exact effectCircuit2Dual_rejects_log_forge S E (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) pre args post htamper
     ((satisfiedE2Dual_of_PIBindsDigestsDual S E pre args post a hPI).mp hsat)
 
 /-! ## §4 — per-effect instantiation: `cellDestroyA` (lifecycle + death-cert) and `heapWriteA`

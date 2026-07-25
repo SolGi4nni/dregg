@@ -149,7 +149,7 @@ theorem cellSealA_full_sound
     CellSealSpec s args.actor args.cell s' := by
   have hapex : (cellSealE D hD).apex s args s' :=
     effect2_circuit_full_sound S (cellSealE D hD)
-      (cellSealRestFrameDecodes S D hD hRest) hLog (cellSealGuardDecodes D hD) s args s' h
+      (cellSealRestFrameDecodes S D hD hRest) (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) (cellSealGuardDecodes D hD) s args s' h
   exact (apex_iff_cellSealSpec D hD s args s').mp hapex
 
 

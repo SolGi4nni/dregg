@@ -188,7 +188,8 @@ theorem refusalA_full_sound
     (h : satisfiedE S refusalE (encodeE S refusalE s args s')) :
     RefusalSpec s args.actor args.cell s' := by
   have hapex : refusalE.apex s args s' :=
-    effect_circuit_full_sound S refusalE hN hL hRest hLog refusalGuardDecodes s args s' hwf hwf' h
+    effect_circuit_full_sound S refusalE hN hL hRest refusalGuardDecodes s args s' hwf hwf'
+      (Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) h
   exact (apex_iff_refusalSpec s args s').mp hapex
 
 

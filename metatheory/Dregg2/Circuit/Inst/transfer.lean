@@ -220,7 +220,7 @@ theorem transfer_full_sound
     BalanceMovementSpec s args.t args.a s' := by
   have hapex : (balanceE D hD).apex s args s' :=
     effect2_circuit_full_sound S (balanceE D hD)
-      (balanceRestFrameDecodes S D hD hRest) hLog (balanceGuardDecodes D hD) s args s' h
+      (balanceRestFrameDecodes S D hD hRest) (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) (balanceGuardDecodes D hD) s args s' h
   exact (apex_iff_balanceMovementSpec D hD s args s').mp hapex
 
 

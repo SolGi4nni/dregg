@@ -243,7 +243,7 @@ theorem attenuateA_full_sound
     AttenuateSpec s args.actor args.idx args.keep s' := by
   have hapex : (attenuateE D hD).apex s args s' :=
     effect2_circuit_full_sound S (attenuateE D hD)
-      (attenuateRestFrameDecodes S D hD hRest) hLog (attenuateGuardDecodes D hD) s args s' h
+      (attenuateRestFrameDecodes S D hD hRest) (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) (attenuateGuardDecodes D hD) s args s' h
   exact (apex_iff_attenuateSpec D hD s args s').mp hapex
 
 

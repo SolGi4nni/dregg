@@ -182,7 +182,8 @@ theorem setProgramA_full_sound
     (h : satisfiedE S setProgramE (encodeE S setProgramE s args s')) :
     SetProgramSpec s args.actor args.cell args.prog s' := by
   have hapex : setProgramE.apex s args s' :=
-    effect_circuit_full_sound S setProgramE hN hL hRest hLog setProgramGuardDecodes s args s' hwf hwf' h
+    effect_circuit_full_sound S setProgramE hN hL hRest setProgramGuardDecodes s args s' hwf hwf'
+      (Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) h
   exact (apex_iff_setProgramSpec s args s').mp hapex
 
 /-! ## EMISSION — Lean→Plonky3 wire. -/
