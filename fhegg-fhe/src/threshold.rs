@@ -60,13 +60,13 @@ use sha2::{Digest, Sha256};
 use crate::additive::pick_params;
 use crate::bfv_lean::{LeanCiphertext, RnsPoly};
 
+/// Crash-tolerant `t < n` Shamir custody and opening.  The original API in
+/// this module remains the smaller, independently tested n-of-n construction.
+pub mod quorum;
 /// The same `t`-of-`n` custody, with the parties in SEPARATE PROCESSES: sealed
 /// dealer rows, recipient-side VSS verification, and a pairwise cross-evaluation
 /// round over the enrolled native-PQ transport.
 pub mod distributed;
-/// Crash-tolerant `t < n` Shamir custody and opening.  The original API in
-/// this module remains the smaller, independently tested n-of-n construction.
-pub mod quorum;
 /// Honest n-of-n multiparty BFV relinearization-key generation.  Each party
 /// retains the same secret share used by collective key generation; only the
 /// two public fhe.rs protocol-round shares reach the coordinator.

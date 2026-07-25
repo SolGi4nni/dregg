@@ -8,8 +8,8 @@
 # GOAL — PROOF ASSURANCE: make the arguments SENSIBLE, not just green
 
 **Standing goal:** grind down proof engineering / assurance / argument-sensibility / refactor /
-replacement. Set 2026-07-25, ran to 11am — **horizon reached 2026-07-25 ~12:13**. The lane stays open as
-a record; the wound classes and instruments below are the durable output.
+replacement. Re-set 2026-07-25, running to **9pm**. Thrust has moved from the Lean apex to the
+**Rust/Lean boundary** — and, per ember, to **deleting Rust so the logic lives in Lean**.
 
 ## The thesis
 A proof can be kernel-clean, `sorry`-free, non-vacuous *in its own terms*, and still say nothing —
@@ -95,10 +95,32 @@ Every migration is a **strengthening** (`V3 → Cons → Faithful`), and `retire
 proves migration costs a consumer nothing. What it buys, exactly: the premise no longer *forces*
 universal rejection. It does **not** prove satisfiability at the opaque `cfg*` args — nothing can.
 
-## Still in flight at the horizon (harvest when convenient)
-- `felt-width-record-gap` — the statement types a 4-lane challenge; the serialized record still holds one felt
-- `r11-remainder` — the last 10 carrier-gated kernels, one counterexample or totality proof each
-- `positive-radius-schedule` — the single named blocker on the strategy-soundness composition
+## In flight
+- `entity-compose-producer` — the ONLY thing blocking deletion of `param-compose`'s Rust AIR
+- `eval-oracle` — `ir2_eval_accepts` rejects *everything*, making 3 assertions unfalsifiable
+- `ci-did-it-run` — CI cannot distinguish "passed" from "never ran"
+
+## ⚑ THE BOUNDARY FINDINGS (2026-07-25 afternoon)
+
+**CI had been dead for five days.** A PQ-lane commit about ML-KEM deleted the FriLedger FFI binding while
+two committed tests still imported it. `cargo test --workspace` compiles *all* targets before running
+*any* — so zero tests ran, silently disabling the law-1 ratchet and all 23 emit gates. Restored; gates
+green (181 passed, **no drift** across the blackout). Full record:
+`docs/WOUND-ci-gates-dead-since-2026-07-20.md`.
+
+**The bucket root does not bind.** `⟨by decide, rfl⟩`, zero axioms: two distinct `Object`s share one
+deployed content root. Cause isolated to `Int.toNat` clamping in one line; fix is a wire change on the
+`@[export]` path. *Injectivity could never have found this — it is false at both encoders.* That is the
+argument for the whole game-floor cutover.
+
+**The forgery teeth all bite.** Four soundness teeth were red; **zero live soundness holes**. The
+constraint system refused every forgery — the harness couldn't *observe* it, because p3 **panics** before
+`Err` is reachable. `refusal.rs` had this wrong: the discriminator is **lookups**, not the `check` flag.
+
+**A Rust AIR nobody could see.** `param-compose` — 1028 lines *with* `air_accepts`, live on the deployed
+`Effect::Custom` door, no Lean route, invisible to the ratchet (wrong scope *and* an unmatched dialect).
+Its own doc reveals it was copied out of automatafl's builder **before** that AIR was deleted. Now fully
+authored in Lean and byte-pinned.
 
 ## Next moves (my pick)
 0. ~~Bare-premise cutover~~ · ~~`TranscriptWordCommitment`~~ · ~~duplication debt~~ · ~~base-field
