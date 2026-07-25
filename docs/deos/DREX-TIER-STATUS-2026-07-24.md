@@ -68,6 +68,21 @@ there. `drex-web-v2/README.md:26-30` ("Open-tier ring order-entry… → the rea
 is now stale against this regression and should be corrected or the README should say what this
 doc says.
 
+> **RESOLVED 2026-07-25 (appended; the audit above is left as the record of the outage).** Two of
+> its claims did not survive contact. (1) "architecturally *cannot* without adding a new
+> dependency" — the CLI simply moved to the crate that already owns the gate impl. It now lives at
+> `exec-lean/src/bin/drex_clear.rs` and its `main` calls `dregg_exec_lean::register_distributed_gates()`,
+> exactly as `node/src/lib.rs:609` does; `dregg-exec-lean` already depended on `dregg-intent`, so no
+> new dependency was added and no cycle exists. (2) "the demo works only when there is nothing to
+> settle" — the demo book CLEARS again through the real Lean export. What the audit got right and
+> what stands: the fail-closed is CORRECT and is untouched; an app that settles intents must install
+> the gate. Also fixed here: the refusal used to say "verified settlement rejected the ring", which
+> blamed a legitimate book for a missing FFI — it now names either the WIRING BUG or the
+> ENVIRONMENT, and `exec-lean/tests/drex_clear_gate.rs` fails on the unregistered path with or
+> without a linked archive. Still unregistered, same class: `perf`'s orchestration demo (fixed in
+> the same commit), `starbridge-apps/tussle`, `starbridge-apps/sealed-auction`, `app-framework`
+> (`ring_trade` / `service_promise` / `agent_coordination`) and the apps built on it.
+
 ---
 
 ## 1. Architecture correction, before the tier table
