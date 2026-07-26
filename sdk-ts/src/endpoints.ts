@@ -7,18 +7,32 @@
  * module centralizes them as distinct NAMED endpoints (they serve different
  * purposes and are not collapsed into one):
  *
- *   api      — the main / canonical API host        (dregg.fg-goose.online)
- *   devnet   — the public devnet node (HTTP + WSS)   (devnet.dregg.fg-goose.online)
- *   auth     — the auth / credential surface         (auth.dregg.fg-goose.online)
- *   gateway  — the macaroon discharge gateway        (gateway.dregg.fg-goose.online)
+ *   api      — the main / canonical API host        (dregg.net)
+ *   devnet   — the public devnet node (HTTP + WSS)   (node.dregg.net)
+ *   auth     — the auth / credential surface         (auth.dregg.net)
+ *   gateway  — the macaroon discharge gateway        (gateway.dregg.net)
  *   hosting  — the WebOfCells cell-hosting wildcard  (dregg.works)
  *   portal   — the static portal / "live" view       (portal.dregg.studio)
+ *
+ * ⚠ MEASURED 2026-07-26 — THESE ARE NAMES, NOT LIVE SERVICE. Do not read this
+ * table as "the defaults reach something". Probed from a laptop that day:
+ *
+ *   node.dregg.net, auth.dregg.net, gateway.dregg.net, dregg.works  → NXDOMAIN
+ *   dregg.net                        → Squarespace, the marketing site, not an API
+ *   portal.dregg.studio              → 34.224.208.52, the OLD AWS edge (static portal)
+ *   devnet.dregg.fg-goose.online     → 34.224.208.52, TLS handshake FAILS (no cert)
+ *
+ * So there is no public dregg node to default to right now. These names are the
+ * product family the Rust SDK already declares (`sdk/src/endpoints.rs`), and the
+ * previous values here — the `*.dregg.fg-goose.online` devnet family — are the
+ * RETIRED devnet-era domain on the AWS box being migrated off
+ * (`~/dev/dregg-infra/edge/RUNBOOK.md`). Neither reaches a node; only one of them
+ * is the name we intend to keep. Point the SDK at your own node.
  *
  * Overrides (so production is a config change, not 83 edits):
  *   - Node: the `DREGG_{API,DEVNET,AUTH,GATEWAY,HOSTING,PORTAL}_DOMAIN` env vars.
  *   - Browser: assign `globalThis.__DREGG_ENDPOINTS__ = { devnet: "..." , ... }`
  *     before constructing clients.
- * With nothing set, the values are byte-identical to today's literals.
  *
  * This file is browser-safe: it never imports `fs`/`path` and only touches
  * `process.env` behind a guard, so it can be re-exported from `browser.ts`.
@@ -40,12 +54,18 @@ export interface DreggDomains {
   portal: string;
 }
 
-/** The current production domains (the baked-in defaults). */
+/**
+ * The product domain family (the baked-in defaults). Kept byte-identical to the
+ * Rust `dregg_sdk::endpoints::defaults` so the two "one source of truth" modules
+ * cannot disagree — they did, from the fg-goose retirement until 2026-07-26.
+ *
+ * See the module header: as of 2026-07-26 none of these serve a node.
+ */
 export const DEFAULT_DOMAINS: Readonly<DreggDomains> = Object.freeze({
-  api: "dregg.fg-goose.online",
-  devnet: "devnet.dregg.fg-goose.online",
-  auth: "auth.dregg.fg-goose.online",
-  gateway: "gateway.dregg.fg-goose.online",
+  api: "dregg.net",
+  devnet: "node.dregg.net",
+  auth: "auth.dregg.net",
+  gateway: "gateway.dregg.net",
   hosting: "dregg.works",
   portal: "portal.dregg.studio",
 });
@@ -117,8 +137,8 @@ export function portalUrl(domains: DreggDomains = resolveDomains()): string {
  * after import.
  */
 export const DREGG_ENDPOINTS = Object.freeze({
-  /** Default node URL (e.g. `https://devnet.dregg.fg-goose.online`). */
+  /** Default node URL (e.g. `https://node.dregg.net`). */
   defaultNodeUrl: devnetUrl(),
-  /** Default node WSS URL (e.g. `wss://devnet.dregg.fg-goose.online/ws`). */
+  /** Default node WSS URL (e.g. `wss://node.dregg.net/ws`). */
   defaultNodeWssUrl: devnetWssUrl(),
 });

@@ -16,7 +16,7 @@
  * ```ts
  * import { Identity, AgentRuntime } from "@dregg/sdk/browser";
  * const id = Identity.generate();                       // WebCrypto getRandomValues
- * const rt = new AgentRuntime(id, "https://devnet.dregg.fg-goose.online");
+ * const rt = new AgentRuntime(id, "https://node.dregg.net");
  * const signed = await rt.turn().transfer(targetHex, 100n).sign();
  * console.log(signed.explain());                        // anti-blind-signing reading
  * const receipt = await signed.submit();                // a real ed25519-signed turn

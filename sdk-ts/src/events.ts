@@ -15,7 +15,7 @@
  * `NodeClient.turnProof(..)`.
  *
  * ```ts
- * const events = new NodeEvents("https://devnet.dregg.fg-goose.online");
+ * const events = new NodeEvents("https://node.dregg.net");
  * for await (const receipt of events.subscribe(new ReceiptFilter())) {
  *   console.log("committed:", receipt.turnHash);
  * }
@@ -277,7 +277,7 @@ export class NodeEvents {
   private readonly baseUrl: string;
   private readonly opts: NodeEventsOptions;
 
-  /** Point at a node's base URL (e.g. `https://devnet.dregg.fg-goose.online`). */
+  /** Point at a node's base URL (e.g. `https://node.dregg.net`). */
   constructor(baseUrl: string, opts: NodeEventsOptions = {}) {
     this.baseUrl = baseUrl.replace(/\/+$/, "");
     this.opts = opts;

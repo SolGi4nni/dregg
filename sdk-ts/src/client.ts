@@ -394,7 +394,7 @@ export class NodeClient {
  * turn builder with [`turn`]:
  *
  * ```ts
- * const runtime = new AgentRuntime(identity, "https://devnet.dregg.fg-goose.online");
+ * const runtime = new AgentRuntime(identity, "https://node.dregg.net");
  * const receipt = await (await runtime.turn().writeU64(0, 42).sign()).submit();
  * ```
  */

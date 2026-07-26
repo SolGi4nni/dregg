@@ -26,7 +26,7 @@
  * material, just the node's public attestation surface.
  *
  * ```ts
- * const aq = new AttestedQuery("https://devnet.dregg.fg-goose.online");
+ * const aq = new AttestedQuery("https://node.dregg.net");
  * const roots = await aq.attestedRoots();           // federation-signed roots
  * const cp = await aq.checkpoint();                 // latest finalized checkpoint
  * const proof = await aq.turnProof(turnHashHex);    // full-turn STARK bytes (verify elsewhere)

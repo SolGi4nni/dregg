@@ -41,7 +41,7 @@
  * import { Identity, AgentRuntime, profiles } from "@dregg/sdk";
  *
  * const id = profiles.loadActive() ?? Identity.generate();
- * const runtime = new AgentRuntime(id, "https://devnet.dregg.fg-goose.online");
+ * const runtime = new AgentRuntime(id, "https://node.dregg.net");
  * await runtime.faucet(500);
  * const signed = await runtime.turn().writeU64(0, 42n).sign();
  * console.log(signed.explain()); // read before you leap

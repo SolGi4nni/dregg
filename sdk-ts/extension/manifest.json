@@ -5,7 +5,7 @@
   "description": "A dregg identity and an authorized, human-confirmed .turn() from any web page — the extension mediates, the key never leaves it. Built on @dregg/sdk's browser front door.",
   "permissions": ["storage"],
   "host_permissions": [
-    "https://devnet.dregg.fg-goose.online/*",
+    "https://node.dregg.net/*",
     "http://localhost:8420/*",
     "http://127.0.0.1:8420/*"
   ],
