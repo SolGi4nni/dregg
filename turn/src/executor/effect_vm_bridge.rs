@@ -89,8 +89,25 @@ fn convert_turn_effects_to_vm_unchecked(
         // `field_limbs8` split (the u64-lane lo32), the SAME lane the rotated
         // producer writes to the field's welded limb `4 + slot`. So the setField
         // write gate `gFieldWriteP1 slot` (fields[slot]_after == param VALUE) binds
-        // the genuine faithful lane 0, and the value8 completion weld forces lanes
-        // 1..7 into the state commitment. REPLACES the ~31-bit `fold_bytes32_to_bb`.
+        // the genuine faithful lane 0. REPLACES the ~31-bit `fold_bytes32_to_bb`.
+        //
+        // ⚠ THIS COMMENT USED TO SAY "and the value8 completion weld forces lanes 1..7 into
+        // the state commitment". That is FALSE on this wire, in the live tense. What the
+        // DEPLOYED member does is the OPPOSITE: `v3OfFrozen (setFieldTickFace slot)` FREEZES
+        // all 56 fields completion lanes at before == after — the written slot's 7 included.
+        // The completion lanes are not fed by this 1-felt param at all; they are `field_limbs8`
+        // of the REAL 32-byte cell field (`rotation_witness::produce`), so freezing them makes
+        // bytes 0..28 of a field value UNWRITABLE rather than merely unbound: an honest
+        // large-value write is UNSAT, not silently truncated. That is what makes the 1-felt
+        // param benign (a completeness seam, not a silent-forge gap) — pinned both poles in
+        // `circuit/tests/setfield_completion_lane_forge.rs`.
+        //
+        // The value8 epoch that WOULD force lanes 1..7 into the state commitment is STAGED and
+        // NOT on this wire (`circuit/tests/setfield_value8_epoch_flip.rs`): it exists only on the
+        // bare 1-felt stratum (w=1692/pi=57) with NO wide and NO welded twin, while the live
+        // accept set is wide+welded only (`sdk/src/full_turn_proof.rs` `collect_bound` over
+        // WIDE_REGISTRY_STAGED_TSV + WIDE_UMEM_WELD_REGISTRY_TSV, w=1601/1608, pi=66). Adopting
+        // it is an epoch, not a collect-set flip.
         fn field_element_to_bb(value: &[u8; 32]) -> BabyBear {
             dregg_circuit::effect_vm::field_limbs8(value)[0]
         }
