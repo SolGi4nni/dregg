@@ -25,7 +25,8 @@ import Dregg2.Circuit.Inst.createCellFromFactoryA
 namespace Dregg2.Circuit.WitnessExtract5
 
 open Dregg2.Circuit
-open Dregg2.Circuit.StateCommit (logHashInjective compressNInjective)
+open Dregg2.Circuit.StateCommit (compressNInjective)
+open Dregg2.Circuit.LogCommitRegrounded (LogColl noLogColl_of_inj)
 open Dregg2.Circuit.ListCommit (listLeafInjective)
 open Dregg2.Circuit.EffectCommit2 (Surface2)
 open Dregg2.Circuit.EffectCommit5
@@ -144,13 +145,14 @@ that satisfies the quint effect circuit and is `PIBindsDigestsQuint`-pinned forc
 `E.apex pre args post` — ALL FIVE touched components and the log determined, the adversary keeping the
 un-gated roots and `w ≥ 80`. -/
 theorem effect2quint_extract {St Args : Type} (S : Surface2) (E : EffectSpec2Quint St Args)
-    (hRestF : RestFrameDecodes2Quint S E) (hLog : logHashInjective S.LH)
+    (hRestF : RestFrameDecodes2Quint S E)
     (hGuard : GuardDecodes2Quint E)
     (pre : St) (args : Args) (post : St) (a : Assignment)
+    (hno : ¬ LogColl S.LH (E.view.getLog post) (E.postLog pre args))
     (hsat : satisfiedE2Quint S E a)
     (hPI : PIBindsDigestsQuint S E pre args post a) :
     E.apex pre args post :=
-  effect2quint_circuit_full_sound S E hRestF (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) hGuard pre args post
+  effect2quint_circuit_full_sound S E hRestF (hno := hno) hGuard pre args post
     ((satisfiedE2Quint_of_PIBindsDigestsQuint S E pre args post a hPI).mp hsat)
 
 /-- A forged COMPONENT-1 is refuted. -/
@@ -208,15 +210,17 @@ theorem effect2quint_extract_rejects_wrong_component5 {St Args : Type} (S : Surf
   exact effectCircuit2Quint_rejects_wrong_component5 S E pre args post htamper
     ((satisfiedE2Quint_of_PIBindsDigestsQuint S E pre args post a hPI).mp hsat)
 
-/-- A forged LOG is refuted (`logHashInjective`). -/
+/-- A forged LOG is refuted — under the PER-INSTANCE `¬ LogColl` at this claim's own pair, not
+the ∀-quantified `logHashInjective` this tree proves false at BabyBear. -/
 theorem effect2quint_extract_rejects_log_forge {St Args : Type} (S : Surface2)
-    (E : EffectSpec2Quint St Args) (hLog : logHashInjective S.LH)
+    (E : EffectSpec2Quint St Args)
     (pre : St) (args : Args) (post : St) (a : Assignment)
+    (hno : ¬ LogColl S.LH (E.view.getLog post) (E.postLog pre args))
     (hPI : PIBindsDigestsQuint S E pre args post a)
     (htamper : E.view.getLog post ≠ E.postLog pre args) :
     ¬ satisfiedE2Quint S E a := by
   intro hsat
-  exact effectCircuit2Quint_rejects_log_forge S E (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) pre args post htamper
+  exact effectCircuit2Quint_rejects_log_forge S E (hno := hno) pre args post htamper
     ((satisfiedE2Quint_of_PIBindsDigestsQuint S E pre args post a hPI).mp hsat)
 
 /-! ## §4 — per-effect instantiation: `spawnA` (accounts + create-leg + caps + delegate + delegations)
@@ -233,8 +237,10 @@ theorem spawnA_extract
     (DCaps : Caps → ℤ) (hDCaps : Function.Injective DCaps)
     (DDel : (CellId → Option CellId) → ℤ) (hDDel : Function.Injective DDel)
     (DDgs : (CellId → List Cap) × (CellId → Nat) → ℤ) (hDDgs : Function.Injective DDgs)
-    (hRest : Inst.SpawnA.RestIffNoSpawnTouched S.RH) (hLog : logHashInjective S.LH)
+    (hRest : Inst.SpawnA.RestIffNoSpawnTouched S.RH)
     (s : RecChainedState) (args : Inst.SpawnA.SpawnArgs) (s' : RecChainedState) (a : Assignment)
+    (hno : ¬ LogColl S.LH ((Inst.SpawnA.spawnE LE cN hN hLE DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs).view.getLog s')
+             ((Inst.SpawnA.spawnE LE cN hN hLE DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs).postLog s args))
     (hsat : satisfiedE2Quint S
       (Inst.SpawnA.spawnE LE cN hN hLE DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs) a)
     (hPI : PIBindsDigestsQuint S
@@ -244,9 +250,8 @@ theorem spawnA_extract
     (effect2quint_extract S
       (Inst.SpawnA.spawnE LE cN hN hLE DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs)
       (Inst.SpawnA.spawnRestFrameDecodes S LE cN hN hLE DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs
-        hRest) hLog
-      (Inst.SpawnA.spawnGuardDecodes LE cN hN hLE DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs)
-      s args s' a hsat hPI)
+        hRest) (Inst.SpawnA.spawnGuardDecodes LE cN hN hLE DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs)
+      s args s' a hno hsat hPI)
 
 /-- **`createCellFromFactoryA_extract`** — adversarial extraction for `createCellFromFactory` (a quint
 write: accounts + bal + cell + slotCaveats + born-empty authority). A satisfying PI-bound trace forces
@@ -259,9 +264,14 @@ theorem createCellFromFactoryA_extract
     (DCell : (CellId → Value) → ℤ) (hDCell : Function.Injective DCell)
     (DSC : (CellId → List SlotCaveat) → ℤ) (hDSC : Function.Injective DSC)
     (DAuth : BornEmptyAuthorityTables → ℤ) (hDAuth : Function.Injective DAuth)
-    (hRest : Inst.CreateCellFromFactoryA.RestIffNoFactoryTouched S.RH) (hLog : logHashInjective S.LH)
+    (hRest : Inst.CreateCellFromFactoryA.RestIffNoFactoryTouched S.RH)
     (s : RecChainedState) (args : Inst.CreateCellFromFactoryA.CreateFromFactoryArgs) (s' : RecChainedState)
     (a : Assignment)
+    (hno : ¬ LogColl S.LH
+             ((Inst.CreateCellFromFactoryA.createFromFactoryE LE cN hN hLE DBal hDBal DCell hDCell
+                 DSC hDSC DAuth hDAuth).view.getLog s')
+             ((Inst.CreateCellFromFactoryA.createFromFactoryE LE cN hN hLE DBal hDBal DCell hDCell
+                 DSC hDSC DAuth hDAuth).postLog s args))
     (hsat : satisfiedE2Quint S
       (Inst.CreateCellFromFactoryA.createFromFactoryE LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC
         DAuth hDAuth) a)
@@ -275,9 +285,9 @@ theorem createCellFromFactoryA_extract
       (Inst.CreateCellFromFactoryA.createFromFactoryE LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC
         DAuth hDAuth)
       (Inst.CreateCellFromFactoryA.createFromFactoryRestFrameDecodes S LE cN hN hLE DBal hDBal DCell
-        hDCell DSC hDSC DAuth hDAuth hRest) hLog
+        hDCell DSC hDSC DAuth hDAuth hRest)
       (Inst.CreateCellFromFactoryA.createFromFactoryGuardDecodes LE cN hN hLE DBal hDBal DCell hDCell
-        DSC hDSC DAuth hDAuth) s args s' a hsat hPI)
+        DSC hDSC DAuth hDAuth) s args s' a hno hsat hPI)
 
 /-! ## §4b — CONCRETE non-vacuity: the quint gates REJECT a tampered wire (decidable `#guard`s). A forged
 component-1..5 (`68≠69` .. `76≠77`), rest (`66≠67`) or log (`78≠79`) FAILS its EQ gate. -/

@@ -24,7 +24,8 @@ import Dregg2.Circuit.Inst.createCellA
 namespace Dregg2.Circuit.WitnessExtract3
 
 open Dregg2.Circuit
-open Dregg2.Circuit.StateCommit (logHashInjective compressNInjective)
+open Dregg2.Circuit.StateCommit (compressNInjective)
+open Dregg2.Circuit.LogCommitRegrounded (LogColl noLogColl_of_inj)
 open Dregg2.Circuit.ListCommit (listLeafInjective)
 open Dregg2.Circuit.EffectCommit2 (Surface2)
 open Dregg2.Circuit.EffectCommit3
@@ -126,13 +127,14 @@ that satisfies the triple effect circuit and is `PIBindsDigestsTriple`-pinned fo
 `E.apex pre args post` — ALL THREE touched components and the log determined, the adversary keeping the
 un-gated roots and `w ≥ 76`. -/
 theorem effect2triple_extract {St Args : Type} (S : Surface2) (E : EffectSpec2Triple St Args)
-    (hRestF : RestFrameDecodes2Triple S E) (hLog : logHashInjective S.LH)
+    (hRestF : RestFrameDecodes2Triple S E)
     (hGuard : GuardDecodes2Triple E)
     (pre : St) (args : Args) (post : St) (a : Assignment)
+    (hno : ¬ LogColl S.LH (E.view.getLog post) (E.postLog pre args))
     (hsat : satisfiedE2Triple S E a)
     (hPI : PIBindsDigestsTriple S E pre args post a) :
     E.apex pre args post :=
-  effect2triple_circuit_full_sound S E hRestF (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) hGuard pre args post
+  effect2triple_circuit_full_sound S E hRestF (hno := hno) hGuard pre args post
     ((satisfiedE2Triple_of_PIBindsDigestsTriple S E pre args post a hPI).mp hsat)
 
 /-- A forged COMPONENT-1 (the first touched component) is refuted. -/
@@ -168,15 +170,17 @@ theorem effect2triple_extract_rejects_wrong_component3 {St Args : Type} (S : Sur
   exact effectCircuit2Triple_rejects_wrong_component3 S E pre args post htamper
     ((satisfiedE2Triple_of_PIBindsDigestsTriple S E pre args post a hPI).mp hsat)
 
-/-- A forged LOG is refuted (`logHashInjective`). -/
+/-- A forged LOG is refuted — under the PER-INSTANCE `¬ LogColl` at this claim's own pair, not
+the ∀-quantified `logHashInjective` this tree proves false at BabyBear. -/
 theorem effect2triple_extract_rejects_log_forge {St Args : Type} (S : Surface2)
-    (E : EffectSpec2Triple St Args) (hLog : logHashInjective S.LH)
+    (E : EffectSpec2Triple St Args)
     (pre : St) (args : Args) (post : St) (a : Assignment)
+    (hno : ¬ LogColl S.LH (E.view.getLog post) (E.postLog pre args))
     (hPI : PIBindsDigestsTriple S E pre args post a)
     (htamper : E.view.getLog post ≠ E.postLog pre args) :
     ¬ satisfiedE2Triple S E a := by
   intro hsat
-  exact effectCircuit2Triple_rejects_log_forge S E (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) pre args post htamper
+  exact effectCircuit2Triple_rejects_log_forge S E (hno := hno) pre args post htamper
     ((satisfiedE2Triple_of_PIBindsDigestsTriple S E pre args post a hPI).mp hsat)
 
 /-! ## §4 — per-effect instantiation: `createCellA` (accounts + bal + born-empty side tables). -/
@@ -190,17 +194,21 @@ theorem createCellA_extract
     (hN : compressNInjective cN) (hLE : listLeafInjective LE)
     (DBal : (CellId → AssetId → ℤ) → ℤ) (hDBal : Function.Injective DBal)
     (DSide : BornEmptySideTables → ℤ) (hDSide : Function.Injective DSide)
-    (hRest : Inst.CreateCellA.RestIffNoAccountsBalBorn S.RH) (hLog : logHashInjective S.LH)
+    (hRest : Inst.CreateCellA.RestIffNoAccountsBalBorn S.RH)
     (s : RecChainedState) (args : Inst.CreateCellA.CreateCellArgs) (s' : RecChainedState)
     (a : Assignment)
+    (hno : ¬ LogColl S.LH
+             ((Inst.CreateCellA.createCellE LE cN hN hLE DBal hDBal DSide hDSide).view.getLog s')
+             ((Inst.CreateCellA.createCellE LE cN hN hLE DBal hDBal DSide hDSide).postLog s args))
     (hsat : satisfiedE2Triple S (Inst.CreateCellA.createCellE LE cN hN hLE DBal hDBal DSide hDSide) a)
     (hPI : PIBindsDigestsTriple S (Inst.CreateCellA.createCellE LE cN hN hLE DBal hDBal DSide hDSide)
       s args s' a) :
     CreateCellSpec s args.actor args.newCell s' :=
   (Inst.CreateCellA.apex_iff_createCellSpec LE cN hN hLE DBal hDBal DSide hDSide s args s').mp
     (effect2triple_extract S (Inst.CreateCellA.createCellE LE cN hN hLE DBal hDBal DSide hDSide)
-      (Inst.CreateCellA.createCellRestFrameDecodes S LE cN hN hLE DBal hDBal DSide hDSide hRest) hLog
-      (Inst.CreateCellA.createCellGuardDecodes LE cN hN hLE DBal hDBal DSide hDSide) s args s' a hsat hPI)
+      (Inst.CreateCellA.createCellRestFrameDecodes S LE cN hN hLE DBal hDBal DSide hDSide hRest)
+      (Inst.CreateCellA.createCellGuardDecodes LE cN hN hLE DBal hDBal DSide hDSide)
+      s args s' a hno hsat hPI)
 
 /-! ## §4b — CONCRETE non-vacuity: the triple gates REJECT a tampered wire (decidable `#guard`s, not
 `rfl` on a trivial Prop). A forged component-1 (`68 ≠ 69`), -2 (`70 ≠ 71`), -3 (`72 ≠ 73`), rest

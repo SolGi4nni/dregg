@@ -8,6 +8,17 @@ consumers were rewired through the ONE uniform bridge `LogCommitRegrounded.noLog
 module is the machine-checked answer to the question that decides the next wave: **is the rest of that
 cone mechanical?**
 
+⚑ EIGHT OF THE ORIGINAL 48 PINS ARE GONE FROM THIS LIST, and their absence is the campaign WORKING.
+The four adversarial-witness EXTRACTORS and their log-forgery teeth
+(`WitnessExtract{,Dual,3,5}.effect2*_extract{,_rejects_log_forge}`) were CUT OVER IN PLACE on 07-25 —
+same names, same conclusions, `logHashInjective S.LH` replaced by the per-instance
+`¬ LogColl S.LH (E.view.getLog post) (E.postLog pre args)` — so ConePort correctly no longer sees a
+carrier at those names and a `.port` pin there would now FAIL. Their teeth moved to
+`Circuit/LogCommitCutoverCheck` §7 (kernel-defeq statement pins + `#assert_not_depends_on` +
+no-strength-lost), which is where a cut-over endpoint belongs; this module measures what is still
+PORTABLE, not what is already ported. The 28 `WitnessExtractPerEffect` instantiations and the
+`TurnEmit` mint pair went with them and were never pinned here (they are consumers of consumers).
+
 MEASURED, 2026-07-25, on this tree: **48 PORTED / 48 eligible, 0 refusals, 0 unexplained.** Every port
 is one bridge application (`sites=1, sideConds=1`), each one surgered on the ELABORATED term,
 `Meta.check`ed, kernel-`addDecl`ed and delaboration-ROUND-TRIPPED before it counts. That is the whole
@@ -140,14 +151,6 @@ def targets : List Target :=
   , { decl := `Dregg2.Circuit.Inst.SetVKA.setVKA_full_sound, expected := .port }
   , { decl := `Dregg2.Circuit.Inst.SpawnA.spawnA_full_sound, expected := .port }
   , { decl := `Dregg2.Circuit.Inst.Transfer.transfer_full_sound, expected := .port }
-  , { decl := `Dregg2.Circuit.WitnessExtract.effect2_extract, expected := .port }
-  , { decl := `Dregg2.Circuit.WitnessExtract.effect2_extract_rejects_log_forge, expected := .port }
-  , { decl := `Dregg2.Circuit.WitnessExtract3.effect2triple_extract, expected := .port }
-  , { decl := `Dregg2.Circuit.WitnessExtract3.effect2triple_extract_rejects_log_forge, expected := .port }
-  , { decl := `Dregg2.Circuit.WitnessExtract5.effect2quint_extract, expected := .port }
-  , { decl := `Dregg2.Circuit.WitnessExtract5.effect2quint_extract_rejects_log_forge, expected := .port }
-  , { decl := `Dregg2.Circuit.WitnessExtractDual.effect2dual_extract, expected := .port }
-  , { decl := `Dregg2.Circuit.WitnessExtractDual.effect2dual_extract_rejects_log_forge, expected := .port }
   , { decl := `Dregg2.Circuit.WitnessExtractV1.effect_extract, expected := .port }
   , { decl := `Dregg2.Circuit.WitnessExtractV1.effect_extract_rejects_log_forge, expected := .port } ]
 

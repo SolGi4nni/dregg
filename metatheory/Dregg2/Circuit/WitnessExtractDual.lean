@@ -22,7 +22,7 @@ import Dregg2.Circuit.Inst.heapWriteA
 namespace Dregg2.Circuit.WitnessExtractDual
 
 open Dregg2.Circuit
-open Dregg2.Circuit.StateCommit (logHashInjective)
+open Dregg2.Circuit.LogCommitRegrounded (LogColl noLogColl_of_inj)
 open Dregg2.Circuit.EffectCommit2 (Surface2)
 open Dregg2.Circuit.EffectCommit2Dual
 open Dregg2.Exec (RecChainedState CellId AssetId Value)
@@ -111,13 +111,14 @@ theorem satisfiedE2Dual_of_PIBindsDigestsDual {St Args : Type} (S : Surface2) (E
 satisfies the dual effect circuit and is `PIBindsDigestsDual`-pinned forces `E.apex pre args post` —
 BOTH touched components and the log determined, the adversary keeping the un-gated roots and `w ≥ 74`. -/
 theorem effect2dual_extract {St Args : Type} (S : Surface2) (E : EffectSpec2Dual St Args)
-    (hRestF : RestFrameDecodes2Dual S E) (hLog : logHashInjective S.LH)
+    (hRestF : RestFrameDecodes2Dual S E)
     (hGuard : GuardDecodes2Dual E)
     (pre : St) (args : Args) (post : St) (a : Assignment)
+    (hno : ¬ LogColl S.LH (E.view.getLog post) (E.postLog pre args))
     (hsat : satisfiedE2Dual S E a)
     (hPI : PIBindsDigestsDual S E pre args post a) :
     E.apex pre args post :=
-  effect2dual_circuit_full_sound S E hRestF (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) hGuard pre args post
+  effect2dual_circuit_full_sound S E hRestF (hno := hno) hGuard pre args post
     ((satisfiedE2Dual_of_PIBindsDigestsDual S E pre args post a hPI).mp hsat)
 
 /-- A forged COMPONENT-1 (the first touched component violates its bind/postClause) is refuted. -/
@@ -142,15 +143,17 @@ theorem effect2dual_extract_rejects_wrong_component2 {St Args : Type} (S : Surfa
   exact effectCircuit2Dual_rejects_wrong_component2 S E pre args post htamper
     ((satisfiedE2Dual_of_PIBindsDigestsDual S E pre args post a hPI).mp hsat)
 
-/-- A forged LOG is refuted (`logHashInjective`). -/
+/-- A forged LOG is refuted — under the PER-INSTANCE `¬ LogColl` at this claim's own pair, not
+the ∀-quantified `logHashInjective` this tree proves false at BabyBear. -/
 theorem effect2dual_extract_rejects_log_forge {St Args : Type} (S : Surface2)
-    (E : EffectSpec2Dual St Args) (hLog : logHashInjective S.LH)
+    (E : EffectSpec2Dual St Args)
     (pre : St) (args : Args) (post : St) (a : Assignment)
+    (hno : ¬ LogColl S.LH (E.view.getLog post) (E.postLog pre args))
     (hPI : PIBindsDigestsDual S E pre args post a)
     (htamper : E.view.getLog post ≠ E.postLog pre args) :
     ¬ satisfiedE2Dual S E a := by
   intro hsat
-  exact effectCircuit2Dual_rejects_log_forge S E (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) pre args post htamper
+  exact effectCircuit2Dual_rejects_log_forge S E (hno := hno) pre args post htamper
     ((satisfiedE2Dual_of_PIBindsDigestsDual S E pre args post a hPI).mp hsat)
 
 /-! ## §4 — per-effect instantiation: `cellDestroyA` (lifecycle + death-cert) and `heapWriteA`
@@ -162,32 +165,35 @@ component AND the death-certificate component). A satisfying PI-bound trace forc
 theorem cellDestroyA_extract
     (S : Surface2) (DLif : (CellId → Nat) → ℤ) (hDLif : Function.Injective DLif)
     (DDC : (CellId → Nat) → ℤ) (hDDC : Function.Injective DDC)
-    (hRest : Inst.CellDestroyA.RestIffNoLifecycleDeathCert S.RH) (hLog : logHashInjective S.LH)
+    (hRest : Inst.CellDestroyA.RestIffNoLifecycleDeathCert S.RH)
     (s : RecChainedState) (args : Inst.CellDestroyA.CellDestroyArgs) (s' : RecChainedState)
     (a : Assignment)
+    (hno : ¬ LogColl S.LH ((Inst.CellDestroyA.cellDestroyE DLif hDLif DDC hDDC).view.getLog s')
+             ((Inst.CellDestroyA.cellDestroyE DLif hDLif DDC hDDC).postLog s args))
     (hsat : satisfiedE2Dual S (Inst.CellDestroyA.cellDestroyE DLif hDLif DDC hDDC) a)
     (hPI : PIBindsDigestsDual S (Inst.CellDestroyA.cellDestroyE DLif hDLif DDC hDDC) s args s' a) :
     Spec.CellLifecycle.CellDestroySpec s args.actor args.cell args.certHash s' :=
   (Inst.CellDestroyA.apex_iff_cellDestroySpec DLif hDLif DDC hDDC s args s').mp
     (effect2dual_extract S (Inst.CellDestroyA.cellDestroyE DLif hDLif DDC hDDC)
-      (Inst.CellDestroyA.cellDestroyRestFrameDecodes S DLif hDLif DDC hDDC hRest) hLog
-      (Inst.CellDestroyA.cellDestroyGuardDecodes DLif hDLif DDC hDDC) s args s' a hsat hPI)
+      (Inst.CellDestroyA.cellDestroyRestFrameDecodes S DLif hDLif DDC hDDC hRest) (Inst.CellDestroyA.cellDestroyGuardDecodes DLif hDLif DDC hDDC) s args s' a hno hsat hPI)
 
 /-- **`heapWriteA_extract`** — adversarial extraction for `heapWrite` (a dual write: the cell record
 component AND the heap component). A satisfying PI-bound trace forces the COMPLETE `HeapWriteSpec`. -/
 theorem heapWriteA_extract
     (S : Surface2) (DCell : (CellId → Value) → ℤ) (hDCell : Function.Injective DCell)
     (DH : (CellId → Heap.FeltHeap) → ℤ) (hDH : Function.Injective DH)
-    (hRest : Inst.HeapWriteA.RestIffNoCellHeaps S.RH) (hLog : logHashInjective S.LH)
+    (hRest : Inst.HeapWriteA.RestIffNoCellHeaps S.RH)
     (s : RecChainedState) (args : Inst.HeapWriteA.HeapWriteArgs) (s' : RecChainedState)
     (a : Assignment)
+    (hno : ¬ LogColl S.LH ((Inst.HeapWriteA.heapWriteE DCell hDCell DH hDH).view.getLog s')
+             ((Inst.HeapWriteA.heapWriteE DCell hDCell DH hDH).postLog s args))
     (hsat : satisfiedE2Dual S (Inst.HeapWriteA.heapWriteE DCell hDCell DH hDH) a)
     (hPI : PIBindsDigestsDual S (Inst.HeapWriteA.heapWriteE DCell hDCell DH hDH) s args s' a) :
     Spec.HeapWrite.HeapWriteSpec s args.actor args.target args.addr args.value args.newRoot s' :=
   (Inst.HeapWriteA.apex_iff_heapWriteSpec DCell hDCell DH hDH s args s').mp
     (effect2dual_extract S (Inst.HeapWriteA.heapWriteE DCell hDCell DH hDH)
-      (Inst.HeapWriteA.heapWriteRestFrameDecodes S DCell hDCell DH hDH hRest) hLog
-      (Inst.HeapWriteA.heapWriteGuardDecodes DCell hDCell DH hDH) s args s' a hsat hPI)
+      (Inst.HeapWriteA.heapWriteRestFrameDecodes S DCell hDCell DH hDH hRest)
+      (Inst.HeapWriteA.heapWriteGuardDecodes DCell hDCell DH hDH) s args s' a hno hsat hPI)
 
 /-! ## §4b — CONCRETE non-vacuity: the dual gates REJECT a tampered wire (decidable `#guard`s, not `rfl`
 on a trivial Prop). A forged component-1 (wire `68 ≠ 69`), component-2 (`70 ≠ 71`), rest (`66 ≠ 67`) or

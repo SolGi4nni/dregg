@@ -35,6 +35,11 @@ import Dregg2.Circuit.EffectCommit5
 import Dregg2.Circuit.SetFieldCommit
 import Dregg2.Circuit.CircuitSoundness
 import Dregg2.Circuit.LogCommitRegrounded
+import Dregg2.Circuit.WitnessExtract
+import Dregg2.Circuit.WitnessExtractDual
+import Dregg2.Circuit.WitnessExtract3
+import Dregg2.Circuit.WitnessExtract5
+import Dregg2.Circuit.WitnessExtractPerEffect
 import Dregg2.Tactics
 
 namespace Dregg2.Circuit.LogCommitCutoverCheck
@@ -337,6 +342,197 @@ end CS
   [Dregg2.Circuit.StateCommit.logHashInjective]
 #assert_axioms Dregg2.Circuit.CircuitSoundness.logDecodeChain_frame_continuous
 #assert_not_depends_on Dregg2.Circuit.CircuitSoundness.logDecodeChain_frame_continuous
+  [Dregg2.Circuit.StateCommit.logHashInjective]
+
+/-! ## §7 — the ADVERSARIAL-WITNESS EXTRACTORS (`Circuit/WitnessExtract{,Dual,3,5}`), cut over 07-25.
+
+The four generic extractors and their log-forgery teeth are the hostile-witness layer ABOVE the
+`effect2*_circuit_full_sound` crown jewels §2-§5 already carry per-instance: an ARBITRARY assignment
+that satisfies the effect circuit and is PI-bound forces the whole apex. Each took
+`logHashInjective S.LH` purely to hand `noLogColl_of_inj hLog` to the crown jewel underneath — the
+floor was a PASS-THROUGH, never consumed here, so its removal is a statement rewrite with no proof
+content lost, and the per-instance pair is the one the layer below already names.
+
+That pass-through is exactly why they mattered: `logHashInjective LH` is FALSE at deployed BabyBear
+(`StateCommitFloorRegrounded.logHashInjective_false_babyBear` — a hash into a bounded field cannot be
+injective on `List Turn`), so every extraction theorem taking it — including all 28 per-effect
+instantiations in `WitnessExtractPerEffect` and the per-effect entries in `WitnessExtract{Dual,3,5}`
+and `TurnEmit` — said NOTHING about the deployed prover. "A satisfying trace forces the spec" is the
+whole hostile-witness claim; under a false hypothesis it was vacuous. -/
+
+section Extractors
+open Dregg2.Circuit.EffectCommit2 (Surface2 EffectSpec2 satisfiedE2 emittedEffect2)
+open Dregg2.Circuit.WitnessExtract
+open Dregg2.Exec.CircuitEmit (satisfiedEmitted)
+
+/-- ⚙ CUTOVER CHECK — `effect2_extract`, THE single-component adversarial extractor. -/
+example : ∀ (St Args : Type) (S : Surface2) (E : EffectSpec2 St Args),
+    EffectCommit2.RestFrameDecodes2 S E → EffectCommit2.GuardDecodes2 E →
+    ∀ (pre : St) (args : Args) (post : St) (a : Assignment),
+    ¬ LogColl S.LH (E.view.getLog post) (E.postLog pre args) →
+    satisfiedE2 S E a → PIBindsDigests S E pre args post a →
+    E.apex pre args post :=
+  @effect2_extract
+
+/-- NO STRENGTH LOST — `effect2_extract`'s pre-cutover statement, through the bridge. -/
+example {St Args : Type} (S : Surface2) (E : EffectSpec2 St Args)
+    (hRestF : EffectCommit2.RestFrameDecodes2 S E) (hLog : logHashInjective S.LH)
+    (hGuard : EffectCommit2.GuardDecodes2 E)
+    (pre : St) (args : Args) (post : St) (a : Assignment)
+    (hsat : satisfiedE2 S E a) (hPI : PIBindsDigests S E pre args post a) :
+    E.apex pre args post :=
+  effect2_extract S E hRestF hGuard pre args post a (noLogColl_of_inj hLog) hsat hPI
+
+/-- ⚙ CUTOVER CHECK — `effect2_extract_emitted` (the same, against the Rust-prover wire form). -/
+example : ∀ (St Args : Type) (S : Surface2) (E : EffectSpec2 St Args),
+    EffectCommit2.RestFrameDecodes2 S E → EffectCommit2.GuardDecodes2 E →
+    ∀ (name : String) (pre : St) (args : Args) (post : St) (a : Assignment),
+    ¬ LogColl S.LH (E.view.getLog post) (E.postLog pre args) →
+    satisfiedEmitted (emittedEffect2 name E) a → PIBindsDigests S E pre args post a →
+    E.apex pre args post :=
+  @effect2_extract_emitted
+
+/-- ⚙ CUTOVER CHECK — `effect2_extract_rejects_log_forge` (the anti-ghost log tooth). -/
+example : ∀ (St Args : Type) (S : Surface2) (E : EffectSpec2 St Args)
+    (pre : St) (args : Args) (post : St) (a : Assignment),
+    ¬ LogColl S.LH (E.view.getLog post) (E.postLog pre args) →
+    PIBindsDigests S E pre args post a →
+    E.view.getLog post ≠ E.postLog pre args →
+    ¬ satisfiedE2 S E a :=
+  @effect2_extract_rejects_log_forge
+
+/-- NO STRENGTH LOST — the log-forgery tooth's pre-cutover statement. -/
+example {St Args : Type} (S : Surface2) (E : EffectSpec2 St Args) (hLog : logHashInjective S.LH)
+    (pre : St) (args : Args) (post : St) (a : Assignment)
+    (hPI : PIBindsDigests S E pre args post a)
+    (htamper : E.view.getLog post ≠ E.postLog pre args) :
+    ¬ satisfiedE2 S E a :=
+  effect2_extract_rejects_log_forge S E pre args post a (noLogColl_of_inj hLog) hPI htamper
+
+end Extractors
+
+section ExtractorsDual
+open Dregg2.Circuit.EffectCommit2 (Surface2)
+open Dregg2.Circuit.EffectCommit2Dual (EffectSpec2Dual satisfiedE2Dual)
+open Dregg2.Circuit.WitnessExtractDual
+
+/-- ⚙ CUTOVER CHECK — `effect2dual_extract`. -/
+example : ∀ (St Args : Type) (S : Surface2) (E : EffectSpec2Dual St Args),
+    EffectCommit2Dual.RestFrameDecodes2Dual S E → EffectCommit2Dual.GuardDecodes2Dual E →
+    ∀ (pre : St) (args : Args) (post : St) (a : Assignment),
+    ¬ LogColl S.LH (E.view.getLog post) (E.postLog pre args) →
+    satisfiedE2Dual S E a → PIBindsDigestsDual S E pre args post a →
+    E.apex pre args post :=
+  @effect2dual_extract
+
+/-- NO STRENGTH LOST — `effect2dual_extract`, old statement. -/
+example {St Args : Type} (S : Surface2) (E : EffectSpec2Dual St Args)
+    (hRestF : EffectCommit2Dual.RestFrameDecodes2Dual S E) (hLog : logHashInjective S.LH)
+    (hGuard : EffectCommit2Dual.GuardDecodes2Dual E)
+    (pre : St) (args : Args) (post : St) (a : Assignment)
+    (hsat : satisfiedE2Dual S E a) (hPI : PIBindsDigestsDual S E pre args post a) :
+    E.apex pre args post :=
+  effect2dual_extract S E hRestF hGuard pre args post a (noLogColl_of_inj hLog) hsat hPI
+
+/-- ⚙ CUTOVER CHECK — `effect2dual_extract_rejects_log_forge`. -/
+example : ∀ (St Args : Type) (S : Surface2) (E : EffectSpec2Dual St Args)
+    (pre : St) (args : Args) (post : St) (a : Assignment),
+    ¬ LogColl S.LH (E.view.getLog post) (E.postLog pre args) →
+    PIBindsDigestsDual S E pre args post a →
+    E.view.getLog post ≠ E.postLog pre args →
+    ¬ satisfiedE2Dual S E a :=
+  @effect2dual_extract_rejects_log_forge
+
+end ExtractorsDual
+
+section ExtractorsTriple
+open Dregg2.Circuit.EffectCommit2 (Surface2)
+open Dregg2.Circuit.EffectCommit3 (EffectSpec2Triple satisfiedE2Triple)
+open Dregg2.Circuit.WitnessExtract3
+
+/-- ⚙ CUTOVER CHECK — `effect2triple_extract`. -/
+example : ∀ (St Args : Type) (S : Surface2) (E : EffectSpec2Triple St Args),
+    EffectCommit3.RestFrameDecodes2Triple S E → EffectCommit3.GuardDecodes2Triple E →
+    ∀ (pre : St) (args : Args) (post : St) (a : Assignment),
+    ¬ LogColl S.LH (E.view.getLog post) (E.postLog pre args) →
+    satisfiedE2Triple S E a → PIBindsDigestsTriple S E pre args post a →
+    E.apex pre args post :=
+  @effect2triple_extract
+
+/-- ⚙ CUTOVER CHECK — `effect2triple_extract_rejects_log_forge`. -/
+example : ∀ (St Args : Type) (S : Surface2) (E : EffectSpec2Triple St Args)
+    (pre : St) (args : Args) (post : St) (a : Assignment),
+    ¬ LogColl S.LH (E.view.getLog post) (E.postLog pre args) →
+    PIBindsDigestsTriple S E pre args post a →
+    E.view.getLog post ≠ E.postLog pre args →
+    ¬ satisfiedE2Triple S E a :=
+  @effect2triple_extract_rejects_log_forge
+
+end ExtractorsTriple
+
+section ExtractorsQuint
+open Dregg2.Circuit.EffectCommit2 (Surface2)
+open Dregg2.Circuit.EffectCommit5 (EffectSpec2Quint satisfiedE2Quint)
+open Dregg2.Circuit.WitnessExtract5
+
+/-- ⚙ CUTOVER CHECK — `effect2quint_extract`. -/
+example : ∀ (St Args : Type) (S : Surface2) (E : EffectSpec2Quint St Args),
+    EffectCommit5.RestFrameDecodes2Quint S E → EffectCommit5.GuardDecodes2Quint E →
+    ∀ (pre : St) (args : Args) (post : St) (a : Assignment),
+    ¬ LogColl S.LH (E.view.getLog post) (E.postLog pre args) →
+    satisfiedE2Quint S E a → PIBindsDigestsQuint S E pre args post a →
+    E.apex pre args post :=
+  @effect2quint_extract
+
+/-- ⚙ CUTOVER CHECK — `effect2quint_extract_rejects_log_forge`. -/
+example : ∀ (St Args : Type) (S : Surface2) (E : EffectSpec2Quint St Args)
+    (pre : St) (args : Args) (post : St) (a : Assignment),
+    ¬ LogColl S.LH (E.view.getLog post) (E.postLog pre args) →
+    PIBindsDigestsQuint S E pre args post a →
+    E.view.getLog post ≠ E.postLog pre args →
+    ¬ satisfiedE2Quint S E a :=
+  @effect2quint_extract_rejects_log_forge
+
+end ExtractorsQuint
+
+#assert_axioms Dregg2.Circuit.WitnessExtract.effect2_extract
+#assert_not_depends_on Dregg2.Circuit.WitnessExtract.effect2_extract
+  [Dregg2.Circuit.StateCommit.logHashInjective]
+#assert_axioms Dregg2.Circuit.WitnessExtract.effect2_extract_emitted
+#assert_not_depends_on Dregg2.Circuit.WitnessExtract.effect2_extract_emitted
+  [Dregg2.Circuit.StateCommit.logHashInjective]
+#assert_axioms Dregg2.Circuit.WitnessExtract.effect2_extract_rejects_log_forge
+#assert_not_depends_on Dregg2.Circuit.WitnessExtract.effect2_extract_rejects_log_forge
+  [Dregg2.Circuit.StateCommit.logHashInjective]
+#assert_axioms Dregg2.Circuit.WitnessExtractDual.effect2dual_extract
+#assert_not_depends_on Dregg2.Circuit.WitnessExtractDual.effect2dual_extract
+  [Dregg2.Circuit.StateCommit.logHashInjective]
+#assert_axioms Dregg2.Circuit.WitnessExtract3.effect2triple_extract
+#assert_not_depends_on Dregg2.Circuit.WitnessExtract3.effect2triple_extract
+  [Dregg2.Circuit.StateCommit.logHashInjective]
+#assert_axioms Dregg2.Circuit.WitnessExtract5.effect2quint_extract
+#assert_not_depends_on Dregg2.Circuit.WitnessExtract5.effect2quint_extract
+  [Dregg2.Circuit.StateCommit.logHashInjective]
+
+/-- ⚙ ONE PER-EFFECT INSTANTIATION, PINNED. The 28 `WitnessExtractPerEffect` entries and the
+`TurnEmit` mint pair are mechanical retargets of the generics above, so one is checked here in full
+to pin the SHAPE the whole family now has: the side condition is `¬ LogColl` at THIS effect's own
+`(claimed post-log, spec-predicted post-log)` pair, and nothing quantifies over all log pairs. -/
+example : ∀ (S : Dregg2.Circuit.EffectCommit2.Surface2)
+    (D : (Dregg2.Exec.CellId → Dregg2.Exec.AssetId → ℤ) → ℤ) (hD : Function.Injective D),
+    Dregg2.Circuit.EffectCommit2.RestIffNoBal S.RH →
+    ∀ (s : Dregg2.Exec.RecChainedState) (args : Dregg2.Circuit.Inst.Transfer.BalanceArgs)
+      (s' : Dregg2.Exec.RecChainedState) (a : Assignment),
+    ¬ LogColl S.LH ((Dregg2.Circuit.Inst.Transfer.balanceE D hD).view.getLog s')
+        ((Dregg2.Circuit.Inst.Transfer.balanceE D hD).postLog s args) →
+    Dregg2.Circuit.EffectCommit2.satisfiedE2 S (Dregg2.Circuit.Inst.Transfer.balanceE D hD) a →
+    Dregg2.Circuit.WitnessExtract.PIBindsDigests S
+      (Dregg2.Circuit.Inst.Transfer.balanceE D hD) s args s' a →
+    Dregg2.Circuit.Spec.BalanceMovement.BalanceMovementSpec s args.t args.a s' :=
+  @Dregg2.Circuit.WitnessExtractPerEffect.transfer_extract
+
+#assert_axioms Dregg2.Circuit.WitnessExtractPerEffect.transfer_extract
+#assert_not_depends_on Dregg2.Circuit.WitnessExtractPerEffect.transfer_extract
   [Dregg2.Circuit.StateCommit.logHashInjective]
 
 /-! ## THE BLINDNESS CONTROL (the reason the 16 greens above mean anything).

@@ -48,7 +48,8 @@ import Dregg2.Circuit.Inst.receiptArchiveLifecycleA
 namespace Dregg2.Circuit.WitnessExtractPerEffect
 
 open Dregg2.Circuit
-open Dregg2.Circuit.StateCommit (logHashInjective compressNInjective cellLeafInjective)
+open Dregg2.Circuit.StateCommit (compressNInjective cellLeafInjective)
+open Dregg2.Circuit.LogCommitRegrounded (LogColl noLogColl_of_inj)
 open Dregg2.Circuit.ListCommit (listLeafInjective)
 open Dregg2.Circuit.EffectCommit2 (Surface2 satisfiedE2 emittedEffect2 RestIffNoBal RestIffNoNullifiers)
 open Dregg2.Circuit.WitnessExtract (PIBindsDigests effect2_extract effect2_extract_emitted
@@ -70,28 +71,32 @@ IS the genuine conservation-respecting transfer, no forged supply. -/
 /-- **`transfer_extract`** — adversarial extraction for the cross-cell transfer (`balanceE`). -/
 theorem transfer_extract
     (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D)
-    (hRest : RestIffNoBal S.RH) (hLog : logHashInjective S.LH)
+    (hRest : RestIffNoBal S.RH)
     (s : RecChainedState) (args : Inst.Transfer.BalanceArgs) (s' : RecChainedState) (a : Assignment)
+    (hno : ¬ LogColl S.LH ((Inst.Transfer.balanceE D hD).view.getLog s')
+             ((Inst.Transfer.balanceE D hD).postLog s args))
     (hsat : satisfiedE2 S (Inst.Transfer.balanceE D hD) a)
     (hPI : PIBindsDigests S (Inst.Transfer.balanceE D hD) s args s' a) :
     Spec.BalanceMovement.BalanceMovementSpec s args.t args.a s' :=
   (Inst.Transfer.apex_iff_balanceMovementSpec D hD s args s').mp
     (effect2_extract S (Inst.Transfer.balanceE D hD) (Inst.Transfer.balanceRestFrameDecodes S D hD hRest)
-      hLog (Inst.Transfer.balanceGuardDecodes D hD) s args s' a hsat hPI)
+      (Inst.Transfer.balanceGuardDecodes D hD) s args s' a hno hsat hPI)
 
 /-- **`transfer_extract_emitted`** — the same against the EMITTED (Rust-prover) wire form. -/
 theorem transfer_extract_emitted
     (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D)
-    (hRest : RestIffNoBal S.RH) (hLog : logHashInjective S.LH)
+    (hRest : RestIffNoBal S.RH)
     (name : String)
     (s : RecChainedState) (args : Inst.Transfer.BalanceArgs) (s' : RecChainedState) (a : Assignment)
+    (hno : ¬ LogColl S.LH ((Inst.Transfer.balanceE D hD).view.getLog s')
+             ((Inst.Transfer.balanceE D hD).postLog s args))
     (hsat : satisfiedEmitted (emittedEffect2 name (Inst.Transfer.balanceE D hD)) a)
     (hPI : PIBindsDigests S (Inst.Transfer.balanceE D hD) s args s' a) :
     Spec.BalanceMovement.BalanceMovementSpec s args.t args.a s' :=
   (Inst.Transfer.apex_iff_balanceMovementSpec D hD s args s').mp
     (effect2_extract_emitted S (Inst.Transfer.balanceE D hD)
-      (Inst.Transfer.balanceRestFrameDecodes S D hD hRest) hLog (Inst.Transfer.balanceGuardDecodes D hD)
-      name s args s' a hsat hPI)
+      (Inst.Transfer.balanceRestFrameDecodes S D hD hRest) (Inst.Transfer.balanceGuardDecodes D hD)
+      name s args s' a hno hsat hPI)
 
 /-- **`transfer_extract_rejects_wrong_ledger`** — ANTI-GHOST: a claimed post whose `bal` violates the
 movement's `postClause` (a forged ledger) has NO satisfying PI-bound witness. -/
@@ -107,27 +112,31 @@ theorem transfer_extract_rejects_wrong_ledger
 /-- **`balanceA_extract`** — adversarial extraction for `balanceA` (`balanceAE`). -/
 theorem balanceA_extract
     (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D)
-    (hRest : RestIffNoBal S.RH) (hLog : logHashInjective S.LH)
+    (hRest : RestIffNoBal S.RH)
     (s : RecChainedState) (args : Inst.BalanceA.BalanceArgs) (s' : RecChainedState) (a : Assignment)
+    (hno : ¬ LogColl S.LH ((Inst.BalanceA.balanceAE D hD).view.getLog s')
+             ((Inst.BalanceA.balanceAE D hD).postLog s args))
     (hsat : satisfiedE2 S (Inst.BalanceA.balanceAE D hD) a)
     (hPI : PIBindsDigests S (Inst.BalanceA.balanceAE D hD) s args s' a) :
     Spec.BalanceMovement.BalanceMovementSpec s args.t args.a s' :=
   (Inst.BalanceA.apex_iff_balanceASpec D hD s args s').mp
     (effect2_extract S (Inst.BalanceA.balanceAE D hD) (Inst.BalanceA.balanceRestFrameDecodes S D hD hRest)
-      hLog (Inst.BalanceA.balanceGuardDecodes D hD) s args s' a hsat hPI)
+      (Inst.BalanceA.balanceGuardDecodes D hD) s args s' a hno hsat hPI)
 
 theorem balanceA_extract_emitted
     (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D)
-    (hRest : RestIffNoBal S.RH) (hLog : logHashInjective S.LH)
+    (hRest : RestIffNoBal S.RH)
     (name : String)
     (s : RecChainedState) (args : Inst.BalanceA.BalanceArgs) (s' : RecChainedState) (a : Assignment)
+    (hno : ¬ LogColl S.LH ((Inst.BalanceA.balanceAE D hD).view.getLog s')
+             ((Inst.BalanceA.balanceAE D hD).postLog s args))
     (hsat : satisfiedEmitted (emittedEffect2 name (Inst.BalanceA.balanceAE D hD)) a)
     (hPI : PIBindsDigests S (Inst.BalanceA.balanceAE D hD) s args s' a) :
     Spec.BalanceMovement.BalanceMovementSpec s args.t args.a s' :=
   (Inst.BalanceA.apex_iff_balanceASpec D hD s args s').mp
     (effect2_extract_emitted S (Inst.BalanceA.balanceAE D hD)
-      (Inst.BalanceA.balanceRestFrameDecodes S D hD hRest) hLog (Inst.BalanceA.balanceGuardDecodes D hD)
-      name s args s' a hsat hPI)
+      (Inst.BalanceA.balanceRestFrameDecodes S D hD hRest) (Inst.BalanceA.balanceGuardDecodes D hD)
+      name s args s' a hno hsat hPI)
 
 theorem balanceA_extract_rejects_wrong_ledger
     (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D)
@@ -144,26 +153,30 @@ theorem balanceA_extract_rejects_wrong_ledger
 the COMPLETE declarative `BurnSpec` — a forged supply-destruction is refuted. -/
 theorem burnA_extract
     (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D)
-    (hRest : RestIffNoBal S.RH) (hLog : logHashInjective S.LH)
+    (hRest : RestIffNoBal S.RH)
     (s : RecChainedState) (args : Inst.BurnA.BurnArgs) (s' : RecChainedState) (a : Assignment)
+    (hno : ¬ LogColl S.LH ((Inst.BurnA.burnE D hD).view.getLog s')
+             ((Inst.BurnA.burnE D hD).postLog s args))
     (hsat : satisfiedE2 S (Inst.BurnA.burnE D hD) a)
     (hPI : PIBindsDigests S (Inst.BurnA.burnE D hD) s args s' a) :
     Spec.SupplyDestruction.BurnSpec s args.actor args.cell args.a args.amt s' :=
   (Inst.BurnA.apex_iff_burnSpec D hD s args s').mp
     (effect2_extract S (Inst.BurnA.burnE D hD) (Inst.BurnA.burnRestFrameDecodes S D hD hRest)
-      hLog (Inst.BurnA.burnGuardDecodes D hD) s args s' a hsat hPI)
+      (Inst.BurnA.burnGuardDecodes D hD) s args s' a hno hsat hPI)
 
 theorem burnA_extract_emitted
     (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D)
-    (hRest : RestIffNoBal S.RH) (hLog : logHashInjective S.LH)
+    (hRest : RestIffNoBal S.RH)
     (name : String)
     (s : RecChainedState) (args : Inst.BurnA.BurnArgs) (s' : RecChainedState) (a : Assignment)
+    (hno : ¬ LogColl S.LH ((Inst.BurnA.burnE D hD).view.getLog s')
+             ((Inst.BurnA.burnE D hD).postLog s args))
     (hsat : satisfiedEmitted (emittedEffect2 name (Inst.BurnA.burnE D hD)) a)
     (hPI : PIBindsDigests S (Inst.BurnA.burnE D hD) s args s' a) :
     Spec.SupplyDestruction.BurnSpec s args.actor args.cell args.a args.amt s' :=
   (Inst.BurnA.apex_iff_burnSpec D hD s args s').mp
     (effect2_extract_emitted S (Inst.BurnA.burnE D hD) (Inst.BurnA.burnRestFrameDecodes S D hD hRest)
-      hLog (Inst.BurnA.burnGuardDecodes D hD) name s args s' a hsat hPI)
+      (Inst.BurnA.burnGuardDecodes D hD) name s args s' a hno hsat hPI)
 
 theorem burnA_extract_rejects_wrong_supply
     (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D)
@@ -183,28 +196,30 @@ capability (an un-attenuated descent, a phantom delegation, a skipped revocation
 /-- **`attenuateA_extract`** — adversarial extraction for `attenuate`. -/
 theorem attenuateA_extract
     (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
-    (hRest : Inst.AttenuateA.RestIffNoCaps S.RH) (hLog : logHashInjective S.LH)
+    (hRest : Inst.AttenuateA.RestIffNoCaps S.RH)
     (s : RecChainedState) (args : Inst.AttenuateA.AttenuateArgs) (s' : RecChainedState) (a : Assignment)
+    (hno : ¬ LogColl S.LH ((Inst.AttenuateA.attenuateE D hD).view.getLog s')
+             ((Inst.AttenuateA.attenuateE D hD).postLog s args))
     (hsat : satisfiedE2 S (Inst.AttenuateA.attenuateE D hD) a)
     (hPI : PIBindsDigests S (Inst.AttenuateA.attenuateE D hD) s args s' a) :
     Spec.AuthorityAttenuation.AttenuateSpec s args.actor args.idx args.keep s' :=
   (Inst.AttenuateA.apex_iff_attenuateSpec D hD s args s').mp
     (effect2_extract S (Inst.AttenuateA.attenuateE D hD)
-      (Inst.AttenuateA.attenuateRestFrameDecodes S D hD hRest) hLog
-      (Inst.AttenuateA.attenuateGuardDecodes D hD) s args s' a hsat hPI)
+      (Inst.AttenuateA.attenuateRestFrameDecodes S D hD hRest) (Inst.AttenuateA.attenuateGuardDecodes D hD) s args s' a hno hsat hPI)
 
 theorem attenuateA_extract_emitted
     (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
-    (hRest : Inst.AttenuateA.RestIffNoCaps S.RH) (hLog : logHashInjective S.LH)
+    (hRest : Inst.AttenuateA.RestIffNoCaps S.RH)
     (name : String)
     (s : RecChainedState) (args : Inst.AttenuateA.AttenuateArgs) (s' : RecChainedState) (a : Assignment)
+    (hno : ¬ LogColl S.LH ((Inst.AttenuateA.attenuateE D hD).view.getLog s')
+             ((Inst.AttenuateA.attenuateE D hD).postLog s args))
     (hsat : satisfiedEmitted (emittedEffect2 name (Inst.AttenuateA.attenuateE D hD)) a)
     (hPI : PIBindsDigests S (Inst.AttenuateA.attenuateE D hD) s args s' a) :
     Spec.AuthorityAttenuation.AttenuateSpec s args.actor args.idx args.keep s' :=
   (Inst.AttenuateA.apex_iff_attenuateSpec D hD s args s').mp
     (effect2_extract_emitted S (Inst.AttenuateA.attenuateE D hD)
-      (Inst.AttenuateA.attenuateRestFrameDecodes S D hD hRest) hLog
-      (Inst.AttenuateA.attenuateGuardDecodes D hD) name s args s' a hsat hPI)
+      (Inst.AttenuateA.attenuateRestFrameDecodes S D hD hRest) (Inst.AttenuateA.attenuateGuardDecodes D hD) name s args s' a hno hsat hPI)
 
 theorem attenuateA_extract_rejects_wrong_caps
     (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
@@ -218,28 +233,30 @@ theorem attenuateA_extract_rejects_wrong_caps
 /-- **`delegate_extract`** — adversarial extraction for `delegate`. -/
 theorem delegate_extract
     (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
-    (hRest : Inst.Delegate.RestIffNoCaps S.RH) (hLog : logHashInjective S.LH)
+    (hRest : Inst.Delegate.RestIffNoCaps S.RH)
     (s : RecChainedState) (args : Inst.Delegate.DelegateArgs) (s' : RecChainedState) (a : Assignment)
+    (hno : ¬ LogColl S.LH ((Inst.Delegate.delegateE D hD).view.getLog s')
+             ((Inst.Delegate.delegateE D hD).postLog s args))
     (hsat : satisfiedE2 S (Inst.Delegate.delegateE D hD) a)
     (hPI : PIBindsDigests S (Inst.Delegate.delegateE D hD) s args s' a) :
     Spec.AuthorityUnattenuated.DelegateSpec s args.del args.recipient args.target s' :=
   (Inst.Delegate.apex_iff_delegateSpec D hD s args s').mp
     (effect2_extract S (Inst.Delegate.delegateE D hD)
-      (Inst.Delegate.delegateRestFrameDecodes S D hD hRest) hLog
-      (Inst.Delegate.delegateGuardDecodes D hD) s args s' a hsat hPI)
+      (Inst.Delegate.delegateRestFrameDecodes S D hD hRest) (Inst.Delegate.delegateGuardDecodes D hD) s args s' a hno hsat hPI)
 
 theorem delegate_extract_emitted
     (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
-    (hRest : Inst.Delegate.RestIffNoCaps S.RH) (hLog : logHashInjective S.LH)
+    (hRest : Inst.Delegate.RestIffNoCaps S.RH)
     (name : String)
     (s : RecChainedState) (args : Inst.Delegate.DelegateArgs) (s' : RecChainedState) (a : Assignment)
+    (hno : ¬ LogColl S.LH ((Inst.Delegate.delegateE D hD).view.getLog s')
+             ((Inst.Delegate.delegateE D hD).postLog s args))
     (hsat : satisfiedEmitted (emittedEffect2 name (Inst.Delegate.delegateE D hD)) a)
     (hPI : PIBindsDigests S (Inst.Delegate.delegateE D hD) s args s' a) :
     Spec.AuthorityUnattenuated.DelegateSpec s args.del args.recipient args.target s' :=
   (Inst.Delegate.apex_iff_delegateSpec D hD s args s').mp
     (effect2_extract_emitted S (Inst.Delegate.delegateE D hD)
-      (Inst.Delegate.delegateRestFrameDecodes S D hD hRest) hLog
-      (Inst.Delegate.delegateGuardDecodes D hD) name s args s' a hsat hPI)
+      (Inst.Delegate.delegateRestFrameDecodes S D hD hRest) (Inst.Delegate.delegateGuardDecodes D hD) name s args s' a hno hsat hPI)
 
 theorem delegate_extract_rejects_wrong_caps
     (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
@@ -253,30 +270,32 @@ theorem delegate_extract_rejects_wrong_caps
 /-- **`delegateAttenA_extract`** — adversarial extraction for `delegateAtten` (the attenuating delegation). -/
 theorem delegateAttenA_extract
     (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
-    (hRest : Inst.DelegateAttenA.RestIffNoCaps S.RH) (hLog : logHashInjective S.LH)
+    (hRest : Inst.DelegateAttenA.RestIffNoCaps S.RH)
     (s : RecChainedState) (args : Inst.DelegateAttenA.DelegateAttenArgs) (s' : RecChainedState)
     (a : Assignment)
+    (hno : ¬ LogColl S.LH ((Inst.DelegateAttenA.delegateAttenE D hD).view.getLog s')
+             ((Inst.DelegateAttenA.delegateAttenE D hD).postLog s args))
     (hsat : satisfiedE2 S (Inst.DelegateAttenA.delegateAttenE D hD) a)
     (hPI : PIBindsDigests S (Inst.DelegateAttenA.delegateAttenE D hD) s args s' a) :
     Spec.AuthorityAttenuation.DelegateAttenSpec s args.del args.recv args.t args.keep s' :=
   (Inst.DelegateAttenA.apex_iff_delegateAttenSpec D hD s args s').mp
     (effect2_extract S (Inst.DelegateAttenA.delegateAttenE D hD)
-      (Inst.DelegateAttenA.delAttenRestFrameDecodes S D hD hRest) hLog
-      (Inst.DelegateAttenA.delAttenGuardDecodes D hD) s args s' a hsat hPI)
+      (Inst.DelegateAttenA.delAttenRestFrameDecodes S D hD hRest) (Inst.DelegateAttenA.delAttenGuardDecodes D hD) s args s' a hno hsat hPI)
 
 theorem delegateAttenA_extract_emitted
     (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
-    (hRest : Inst.DelegateAttenA.RestIffNoCaps S.RH) (hLog : logHashInjective S.LH)
+    (hRest : Inst.DelegateAttenA.RestIffNoCaps S.RH)
     (name : String)
     (s : RecChainedState) (args : Inst.DelegateAttenA.DelegateAttenArgs) (s' : RecChainedState)
     (a : Assignment)
+    (hno : ¬ LogColl S.LH ((Inst.DelegateAttenA.delegateAttenE D hD).view.getLog s')
+             ((Inst.DelegateAttenA.delegateAttenE D hD).postLog s args))
     (hsat : satisfiedEmitted (emittedEffect2 name (Inst.DelegateAttenA.delegateAttenE D hD)) a)
     (hPI : PIBindsDigests S (Inst.DelegateAttenA.delegateAttenE D hD) s args s' a) :
     Spec.AuthorityAttenuation.DelegateAttenSpec s args.del args.recv args.t args.keep s' :=
   (Inst.DelegateAttenA.apex_iff_delegateAttenSpec D hD s args s').mp
     (effect2_extract_emitted S (Inst.DelegateAttenA.delegateAttenE D hD)
-      (Inst.DelegateAttenA.delAttenRestFrameDecodes S D hD hRest) hLog
-      (Inst.DelegateAttenA.delAttenGuardDecodes D hD) name s args s' a hsat hPI)
+      (Inst.DelegateAttenA.delAttenRestFrameDecodes S D hD hRest) (Inst.DelegateAttenA.delAttenGuardDecodes D hD) name s args s' a hno hsat hPI)
 
 theorem delegateAttenA_extract_rejects_wrong_caps
     (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
@@ -291,28 +310,30 @@ theorem delegateAttenA_extract_rejects_wrong_caps
 /-- **`introduceA_extract`** — adversarial extraction for `introduce` (a `caps` write to `DelegateSpec`). -/
 theorem introduceA_extract
     (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
-    (hRest : Inst.IntroduceA.RestIffNoCaps S.RH) (hLog : logHashInjective S.LH)
+    (hRest : Inst.IntroduceA.RestIffNoCaps S.RH)
     (s : RecChainedState) (args : Inst.IntroduceA.IntroduceArgs) (s' : RecChainedState) (a : Assignment)
+    (hno : ¬ LogColl S.LH ((Inst.IntroduceA.introduceE D hD).view.getLog s')
+             ((Inst.IntroduceA.introduceE D hD).postLog s args))
     (hsat : satisfiedE2 S (Inst.IntroduceA.introduceE D hD) a)
     (hPI : PIBindsDigests S (Inst.IntroduceA.introduceE D hD) s args s' a) :
     Spec.AuthorityUnattenuated.DelegateSpec s args.intro args.recip args.t s' :=
   (Inst.IntroduceA.apex_iff_delegateSpec D hD s args s').mp
     (effect2_extract S (Inst.IntroduceA.introduceE D hD)
-      (Inst.IntroduceA.introduceRestFrameDecodes S D hD hRest) hLog
-      (Inst.IntroduceA.introduceGuardDecodes D hD) s args s' a hsat hPI)
+      (Inst.IntroduceA.introduceRestFrameDecodes S D hD hRest) (Inst.IntroduceA.introduceGuardDecodes D hD) s args s' a hno hsat hPI)
 
 theorem introduceA_extract_emitted
     (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
-    (hRest : Inst.IntroduceA.RestIffNoCaps S.RH) (hLog : logHashInjective S.LH)
+    (hRest : Inst.IntroduceA.RestIffNoCaps S.RH)
     (name : String)
     (s : RecChainedState) (args : Inst.IntroduceA.IntroduceArgs) (s' : RecChainedState) (a : Assignment)
+    (hno : ¬ LogColl S.LH ((Inst.IntroduceA.introduceE D hD).view.getLog s')
+             ((Inst.IntroduceA.introduceE D hD).postLog s args))
     (hsat : satisfiedEmitted (emittedEffect2 name (Inst.IntroduceA.introduceE D hD)) a)
     (hPI : PIBindsDigests S (Inst.IntroduceA.introduceE D hD) s args s' a) :
     Spec.AuthorityUnattenuated.DelegateSpec s args.intro args.recip args.t s' :=
   (Inst.IntroduceA.apex_iff_delegateSpec D hD s args s').mp
     (effect2_extract_emitted S (Inst.IntroduceA.introduceE D hD)
-      (Inst.IntroduceA.introduceRestFrameDecodes S D hD hRest) hLog
-      (Inst.IntroduceA.introduceGuardDecodes D hD) name s args s' a hsat hPI)
+      (Inst.IntroduceA.introduceRestFrameDecodes S D hD hRest) (Inst.IntroduceA.introduceGuardDecodes D hD) name s args s' a hno hsat hPI)
 
 theorem introduceA_extract_rejects_wrong_caps
     (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
@@ -326,28 +347,30 @@ theorem introduceA_extract_rejects_wrong_caps
 /-- **`revoke_extract`** — adversarial extraction for `revoke`. -/
 theorem revoke_extract
     (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
-    (hRest : Inst.Revoke.RestIffNoCaps S.RH) (hLog : logHashInjective S.LH)
+    (hRest : Inst.Revoke.RestIffNoCaps S.RH)
     (s : RecChainedState) (args : Inst.Revoke.RevokeArgs) (s' : RecChainedState) (a : Assignment)
+    (hno : ¬ LogColl S.LH ((Inst.Revoke.revokeE D hD).view.getLog s')
+             ((Inst.Revoke.revokeE D hD).postLog s args))
     (hsat : satisfiedE2 S (Inst.Revoke.revokeE D hD) a)
     (hPI : PIBindsDigests S (Inst.Revoke.revokeE D hD) s args s' a) :
     Spec.AuthorityRevocation.RevokeSpec s args.holder args.t s' :=
   (Inst.Revoke.apex_iff_revokeSpec D hD s args s').mp
     (effect2_extract S (Inst.Revoke.revokeE D hD)
-      (Inst.Revoke.revokeRestFrameDecodes S D hD hRest) hLog
-      (Inst.Revoke.revokeGuardDecodes D hD) s args s' a hsat hPI)
+      (Inst.Revoke.revokeRestFrameDecodes S D hD hRest) (Inst.Revoke.revokeGuardDecodes D hD) s args s' a hno hsat hPI)
 
 theorem revoke_extract_emitted
     (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
-    (hRest : Inst.Revoke.RestIffNoCaps S.RH) (hLog : logHashInjective S.LH)
+    (hRest : Inst.Revoke.RestIffNoCaps S.RH)
     (name : String)
     (s : RecChainedState) (args : Inst.Revoke.RevokeArgs) (s' : RecChainedState) (a : Assignment)
+    (hno : ¬ LogColl S.LH ((Inst.Revoke.revokeE D hD).view.getLog s')
+             ((Inst.Revoke.revokeE D hD).postLog s args))
     (hsat : satisfiedEmitted (emittedEffect2 name (Inst.Revoke.revokeE D hD)) a)
     (hPI : PIBindsDigests S (Inst.Revoke.revokeE D hD) s args s' a) :
     Spec.AuthorityRevocation.RevokeSpec s args.holder args.t s' :=
   (Inst.Revoke.apex_iff_revokeSpec D hD s args s').mp
     (effect2_extract_emitted S (Inst.Revoke.revokeE D hD)
-      (Inst.Revoke.revokeRestFrameDecodes S D hD hRest) hLog
-      (Inst.Revoke.revokeGuardDecodes D hD) name s args s' a hsat hPI)
+      (Inst.Revoke.revokeRestFrameDecodes S D hD hRest) (Inst.Revoke.revokeGuardDecodes D hD) name s args s' a hno hsat hPI)
 
 theorem revoke_extract_rejects_wrong_caps
     (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
@@ -361,30 +384,32 @@ theorem revoke_extract_rejects_wrong_caps
 /-- **`revokeDelegationA_extract`** — adversarial extraction for `revokeDelegation`. -/
 theorem revokeDelegationA_extract
     (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
-    (hRest : Inst.RevokeDelegationA.RestIffNoCaps S.RH) (hLog : logHashInjective S.LH)
+    (hRest : Inst.RevokeDelegationA.RestIffNoCaps S.RH)
     (s : RecChainedState) (args : Inst.RevokeDelegationA.RevokeArgs) (s' : RecChainedState)
     (a : Assignment)
+    (hno : ¬ LogColl S.LH ((Inst.RevokeDelegationA.revokeDelegationE D hD).view.getLog s')
+             ((Inst.RevokeDelegationA.revokeDelegationE D hD).postLog s args))
     (hsat : satisfiedE2 S (Inst.RevokeDelegationA.revokeDelegationE D hD) a)
     (hPI : PIBindsDigests S (Inst.RevokeDelegationA.revokeDelegationE D hD) s args s' a) :
     Spec.AuthorityRevocation.RevokeSpec s args.holder args.t s' :=
   (Inst.RevokeDelegationA.apex_iff_revokeSpec D hD s args s').mp
     (effect2_extract S (Inst.RevokeDelegationA.revokeDelegationE D hD)
-      (Inst.RevokeDelegationA.revokeRestFrameDecodes S D hD hRest) hLog
-      (Inst.RevokeDelegationA.revokeGuardDecodes D hD) s args s' a hsat hPI)
+      (Inst.RevokeDelegationA.revokeRestFrameDecodes S D hD hRest) (Inst.RevokeDelegationA.revokeGuardDecodes D hD) s args s' a hno hsat hPI)
 
 theorem revokeDelegationA_extract_emitted
     (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
-    (hRest : Inst.RevokeDelegationA.RestIffNoCaps S.RH) (hLog : logHashInjective S.LH)
+    (hRest : Inst.RevokeDelegationA.RestIffNoCaps S.RH)
     (name : String)
     (s : RecChainedState) (args : Inst.RevokeDelegationA.RevokeArgs) (s' : RecChainedState)
     (a : Assignment)
+    (hno : ¬ LogColl S.LH ((Inst.RevokeDelegationA.revokeDelegationE D hD).view.getLog s')
+             ((Inst.RevokeDelegationA.revokeDelegationE D hD).postLog s args))
     (hsat : satisfiedEmitted (emittedEffect2 name (Inst.RevokeDelegationA.revokeDelegationE D hD)) a)
     (hPI : PIBindsDigests S (Inst.RevokeDelegationA.revokeDelegationE D hD) s args s' a) :
     Spec.AuthorityRevocation.RevokeSpec s args.holder args.t s' :=
   (Inst.RevokeDelegationA.apex_iff_revokeSpec D hD s args s').mp
     (effect2_extract_emitted S (Inst.RevokeDelegationA.revokeDelegationE D hD)
-      (Inst.RevokeDelegationA.revokeRestFrameDecodes S D hD hRest) hLog
-      (Inst.RevokeDelegationA.revokeGuardDecodes D hD) name s args s' a hsat hPI)
+      (Inst.RevokeDelegationA.revokeRestFrameDecodes S D hD hRest) (Inst.RevokeDelegationA.revokeGuardDecodes D hD) name s args s' a hno hsat hPI)
 
 theorem revokeDelegationA_extract_rejects_wrong_caps
     (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
@@ -405,29 +430,31 @@ NOT a `Function.Injective D` — the extractor consumes whatever obligation shap
 theorem noteCreateA_extract
     (S : Surface2) (LE : Nat → ℤ) (cN : List ℤ → ℤ)
     (hN : compressNInjective cN) (hLE : listLeafInjective LE)
-    (hRest : Inst.NoteCreateA.RestIffNoCommitments S.RH) (hLog : logHashInjective S.LH)
+    (hRest : Inst.NoteCreateA.RestIffNoCommitments S.RH)
     (s : RecChainedState) (args : Inst.NoteCreateA.NoteCreateArgs) (s' : RecChainedState) (a : Assignment)
+    (hno : ¬ LogColl S.LH ((Inst.NoteCreateA.noteCreateE LE cN hN hLE).view.getLog s')
+             ((Inst.NoteCreateA.noteCreateE LE cN hN hLE).postLog s args))
     (hsat : satisfiedE2 S (Inst.NoteCreateA.noteCreateE LE cN hN hLE) a)
     (hPI : PIBindsDigests S (Inst.NoteCreateA.noteCreateE LE cN hN hLE) s args s' a) :
     Spec.NoteCommitment.NoteCreateASpec s args.cm args.actor s' :=
   (Inst.NoteCreateA.apex_iff_noteCreateASpec LE cN hN hLE s args s').mp
     (effect2_extract S (Inst.NoteCreateA.noteCreateE LE cN hN hLE)
-      (Inst.NoteCreateA.noteCreateRestFrameDecodes S LE cN hN hLE hRest) hLog
-      (Inst.NoteCreateA.noteCreateGuardDecodes LE cN hN hLE) s args s' a hsat hPI)
+      (Inst.NoteCreateA.noteCreateRestFrameDecodes S LE cN hN hLE hRest) (Inst.NoteCreateA.noteCreateGuardDecodes LE cN hN hLE) s args s' a hno hsat hPI)
 
 theorem noteCreateA_extract_emitted
     (S : Surface2) (LE : Nat → ℤ) (cN : List ℤ → ℤ)
     (hN : compressNInjective cN) (hLE : listLeafInjective LE)
-    (hRest : Inst.NoteCreateA.RestIffNoCommitments S.RH) (hLog : logHashInjective S.LH)
+    (hRest : Inst.NoteCreateA.RestIffNoCommitments S.RH)
     (name : String)
     (s : RecChainedState) (args : Inst.NoteCreateA.NoteCreateArgs) (s' : RecChainedState) (a : Assignment)
+    (hno : ¬ LogColl S.LH ((Inst.NoteCreateA.noteCreateE LE cN hN hLE).view.getLog s')
+             ((Inst.NoteCreateA.noteCreateE LE cN hN hLE).postLog s args))
     (hsat : satisfiedEmitted (emittedEffect2 name (Inst.NoteCreateA.noteCreateE LE cN hN hLE)) a)
     (hPI : PIBindsDigests S (Inst.NoteCreateA.noteCreateE LE cN hN hLE) s args s' a) :
     Spec.NoteCommitment.NoteCreateASpec s args.cm args.actor s' :=
   (Inst.NoteCreateA.apex_iff_noteCreateASpec LE cN hN hLE s args s').mp
     (effect2_extract_emitted S (Inst.NoteCreateA.noteCreateE LE cN hN hLE)
-      (Inst.NoteCreateA.noteCreateRestFrameDecodes S LE cN hN hLE hRest) hLog
-      (Inst.NoteCreateA.noteCreateGuardDecodes LE cN hN hLE) name s args s' a hsat hPI)
+      (Inst.NoteCreateA.noteCreateRestFrameDecodes S LE cN hN hLE hRest) (Inst.NoteCreateA.noteCreateGuardDecodes LE cN hN hLE) name s args s' a hno hsat hPI)
 
 theorem noteCreateA_extract_rejects_wrong_commitment
     (S : Surface2) (LE : Nat → ℤ) (cN : List ℤ → ℤ)
@@ -445,29 +472,31 @@ double-spend non-membership). -/
 theorem noteSpendA_extract
     (S : Surface2) (LE : Nat → ℤ) (cN : List ℤ → ℤ)
     (hN : compressNInjective cN) (hLE : listLeafInjective LE)
-    (hRest : RestIffNoNullifiers S.RH) (hLog : logHashInjective S.LH)
+    (hRest : RestIffNoNullifiers S.RH)
     (s : RecChainedState) (args : Inst.NoteSpendA.NoteSpendArgs) (s' : RecChainedState) (a : Assignment)
+    (hno : ¬ LogColl S.LH ((Inst.NoteSpendA.noteSpendE LE cN hN hLE).view.getLog s')
+             ((Inst.NoteSpendA.noteSpendE LE cN hN hLE).postLog s args))
     (hsat : satisfiedE2 S (Inst.NoteSpendA.noteSpendE LE cN hN hLE) a)
     (hPI : PIBindsDigests S (Inst.NoteSpendA.noteSpendE LE cN hN hLE) s args s' a) :
     Spec.NoteNullifier.NoteSpendSpec s args.nf args.actor args.spendProof s' :=
   (Inst.NoteSpendA.apex_iff_noteSpendSpec LE cN hN hLE s args s').mp
     (effect2_extract S (Inst.NoteSpendA.noteSpendE LE cN hN hLE)
-      (Inst.NoteSpendA.noteSpendRestFrameDecodes S LE cN hN hLE hRest) hLog
-      (Inst.NoteSpendA.noteSpendGuardDecodes LE cN hN hLE) s args s' a hsat hPI)
+      (Inst.NoteSpendA.noteSpendRestFrameDecodes S LE cN hN hLE hRest) (Inst.NoteSpendA.noteSpendGuardDecodes LE cN hN hLE) s args s' a hno hsat hPI)
 
 theorem noteSpendA_extract_emitted
     (S : Surface2) (LE : Nat → ℤ) (cN : List ℤ → ℤ)
     (hN : compressNInjective cN) (hLE : listLeafInjective LE)
-    (hRest : RestIffNoNullifiers S.RH) (hLog : logHashInjective S.LH)
+    (hRest : RestIffNoNullifiers S.RH)
     (name : String)
     (s : RecChainedState) (args : Inst.NoteSpendA.NoteSpendArgs) (s' : RecChainedState) (a : Assignment)
+    (hno : ¬ LogColl S.LH ((Inst.NoteSpendA.noteSpendE LE cN hN hLE).view.getLog s')
+             ((Inst.NoteSpendA.noteSpendE LE cN hN hLE).postLog s args))
     (hsat : satisfiedEmitted (emittedEffect2 name (Inst.NoteSpendA.noteSpendE LE cN hN hLE)) a)
     (hPI : PIBindsDigests S (Inst.NoteSpendA.noteSpendE LE cN hN hLE) s args s' a) :
     Spec.NoteNullifier.NoteSpendSpec s args.nf args.actor args.spendProof s' :=
   (Inst.NoteSpendA.apex_iff_noteSpendSpec LE cN hN hLE s args s').mp
     (effect2_extract_emitted S (Inst.NoteSpendA.noteSpendE LE cN hN hLE)
-      (Inst.NoteSpendA.noteSpendRestFrameDecodes S LE cN hN hLE hRest) hLog
-      (Inst.NoteSpendA.noteSpendGuardDecodes LE cN hN hLE) name s args s' a hsat hPI)
+      (Inst.NoteSpendA.noteSpendRestFrameDecodes S LE cN hN hLE hRest) (Inst.NoteSpendA.noteSpendGuardDecodes LE cN hN hLE) name s args s' a hno hsat hPI)
 
 theorem noteSpendA_extract_rejects_wrong_nullifier
     (S : Surface2) (LE : Nat → ℤ) (cN : List ℤ → ℤ)
@@ -485,28 +514,30 @@ theorem noteSpendA_extract_rejects_wrong_nullifier
 /-- **`bridgeMintA_extract`** — adversarial extraction for `bridgeMintA`. -/
 theorem bridgeMintA_extract
     (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D)
-    (hRest : RestIffNoBal S.RH) (hLog : logHashInjective S.LH)
+    (hRest : RestIffNoBal S.RH)
     (s : RecChainedState) (args : Inst.BridgeMintA.BridgeMintArgs) (s' : RecChainedState) (a : Assignment)
+    (hno : ¬ LogColl S.LH ((Inst.BridgeMintA.bridgeMintE D hD).view.getLog s')
+             ((Inst.BridgeMintA.bridgeMintE D hD).postLog s args))
     (hsat : satisfiedE2 S (Inst.BridgeMintA.bridgeMintE D hD) a)
     (hPI : PIBindsDigests S (Inst.BridgeMintA.bridgeMintE D hD) s args s' a) :
     Spec.BridgeInboundMint.InboundMintSpec s args.actor args.cell args.a args.value s' :=
   (Inst.BridgeMintA.apex_iff_inboundMintSpec D hD s args s').mp
     (effect2_extract S (Inst.BridgeMintA.bridgeMintE D hD)
-      (Inst.BridgeMintA.bridgeMintRestFrameDecodes S D hD hRest) hLog
-      (Inst.BridgeMintA.bridgeMintGuardDecodes D hD) s args s' a hsat hPI)
+      (Inst.BridgeMintA.bridgeMintRestFrameDecodes S D hD hRest) (Inst.BridgeMintA.bridgeMintGuardDecodes D hD) s args s' a hno hsat hPI)
 
 theorem bridgeMintA_extract_emitted
     (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D)
-    (hRest : RestIffNoBal S.RH) (hLog : logHashInjective S.LH)
+    (hRest : RestIffNoBal S.RH)
     (name : String)
     (s : RecChainedState) (args : Inst.BridgeMintA.BridgeMintArgs) (s' : RecChainedState) (a : Assignment)
+    (hno : ¬ LogColl S.LH ((Inst.BridgeMintA.bridgeMintE D hD).view.getLog s')
+             ((Inst.BridgeMintA.bridgeMintE D hD).postLog s args))
     (hsat : satisfiedEmitted (emittedEffect2 name (Inst.BridgeMintA.bridgeMintE D hD)) a)
     (hPI : PIBindsDigests S (Inst.BridgeMintA.bridgeMintE D hD) s args s' a) :
     Spec.BridgeInboundMint.InboundMintSpec s args.actor args.cell args.a args.value s' :=
   (Inst.BridgeMintA.apex_iff_inboundMintSpec D hD s args s').mp
     (effect2_extract_emitted S (Inst.BridgeMintA.bridgeMintE D hD)
-      (Inst.BridgeMintA.bridgeMintRestFrameDecodes S D hD hRest) hLog
-      (Inst.BridgeMintA.bridgeMintGuardDecodes D hD) name s args s' a hsat hPI)
+      (Inst.BridgeMintA.bridgeMintRestFrameDecodes S D hD hRest) (Inst.BridgeMintA.bridgeMintGuardDecodes D hD) name s args s' a hno hsat hPI)
 
 theorem bridgeMintA_extract_rejects_wrong_supply
     (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D)
@@ -525,15 +556,16 @@ transition (no forged seal/unseal/refresh/archive). -/
 /-- **`cellSealA_extract`** — adversarial extraction for `cellSeal`. -/
 theorem cellSealA_extract
     (S : Surface2) (D : (CellId → Nat) → ℤ) (hD : Function.Injective D)
-    (hRest : Inst.CellSealA.RestIffNoLifecycle S.RH) (hLog : logHashInjective S.LH)
+    (hRest : Inst.CellSealA.RestIffNoLifecycle S.RH)
     (s : RecChainedState) (args : Inst.CellSealA.CellSealArgs) (s' : RecChainedState) (a : Assignment)
+    (hno : ¬ LogColl S.LH ((Inst.CellSealA.cellSealE D hD).view.getLog s')
+             ((Inst.CellSealA.cellSealE D hD).postLog s args))
     (hsat : satisfiedE2 S (Inst.CellSealA.cellSealE D hD) a)
     (hPI : PIBindsDigests S (Inst.CellSealA.cellSealE D hD) s args s' a) :
     Spec.CellLifecycle.CellSealSpec s args.actor args.cell s' :=
   (Inst.CellSealA.apex_iff_cellSealSpec D hD s args s').mp
     (effect2_extract S (Inst.CellSealA.cellSealE D hD)
-      (Inst.CellSealA.cellSealRestFrameDecodes S D hD hRest) hLog
-      (Inst.CellSealA.cellSealGuardDecodes D hD) s args s' a hsat hPI)
+      (Inst.CellSealA.cellSealRestFrameDecodes S D hD hRest) (Inst.CellSealA.cellSealGuardDecodes D hD) s args s' a hno hsat hPI)
 
 theorem cellSealA_extract_rejects_wrong_lifecycle
     (S : Surface2) (D : (CellId → Nat) → ℤ) (hD : Function.Injective D)
@@ -547,15 +579,16 @@ theorem cellSealA_extract_rejects_wrong_lifecycle
 /-- **`cellUnsealA_extract`** — adversarial extraction for `cellUnseal`. -/
 theorem cellUnsealA_extract
     (S : Surface2) (D : (CellId → Nat) → ℤ) (hD : Function.Injective D)
-    (hRest : Inst.CellUnsealA.RestIffNoLifecycle S.RH) (hLog : logHashInjective S.LH)
+    (hRest : Inst.CellUnsealA.RestIffNoLifecycle S.RH)
     (s : RecChainedState) (args : Inst.CellUnsealA.CellUnsealArgs) (s' : RecChainedState) (a : Assignment)
+    (hno : ¬ LogColl S.LH ((Inst.CellUnsealA.cellUnsealE D hD).view.getLog s')
+             ((Inst.CellUnsealA.cellUnsealE D hD).postLog s args))
     (hsat : satisfiedE2 S (Inst.CellUnsealA.cellUnsealE D hD) a)
     (hPI : PIBindsDigests S (Inst.CellUnsealA.cellUnsealE D hD) s args s' a) :
     Spec.CellLifecycle.CellUnsealSpec s args.actor args.cell s' :=
   (Inst.CellUnsealA.apex_iff_cellUnsealSpec D hD s args s').mp
     (effect2_extract S (Inst.CellUnsealA.cellUnsealE D hD)
-      (Inst.CellUnsealA.cellUnsealRestFrameDecodes S D hD hRest) hLog
-      (Inst.CellUnsealA.cellUnsealGuardDecodes D hD) s args s' a hsat hPI)
+      (Inst.CellUnsealA.cellUnsealRestFrameDecodes S D hD hRest) (Inst.CellUnsealA.cellUnsealGuardDecodes D hD) s args s' a hno hsat hPI)
 
 theorem cellUnsealA_extract_rejects_wrong_lifecycle
     (S : Surface2) (D : (CellId → Nat) → ℤ) (hD : Function.Injective D)
@@ -569,16 +602,17 @@ theorem cellUnsealA_extract_rejects_wrong_lifecycle
 /-- **`refreshDelegationA_extract`** — adversarial extraction for `refreshDelegation`. -/
 theorem refreshDelegationA_extract
     (S : Surface2) (D : (CellId → List Cap) × (CellId → Nat) → ℤ) (hD : Function.Injective D)
-    (hRest : Inst.RefreshDelegationA.RestIffNoDelegations S.RH) (hLog : logHashInjective S.LH)
+    (hRest : Inst.RefreshDelegationA.RestIffNoDelegations S.RH)
     (s : RecChainedState) (args : Inst.RefreshDelegationA.RefreshDelegationArgs) (s' : RecChainedState)
     (a : Assignment)
+    (hno : ¬ LogColl S.LH ((Inst.RefreshDelegationA.refreshDelegationE D hD).view.getLog s')
+             ((Inst.RefreshDelegationA.refreshDelegationE D hD).postLog s args))
     (hsat : satisfiedE2 S (Inst.RefreshDelegationA.refreshDelegationE D hD) a)
     (hPI : PIBindsDigests S (Inst.RefreshDelegationA.refreshDelegationE D hD) s args s' a) :
     Spec.RefreshDelegation.RefreshDelegationFullSpec s args.actor args.child s' :=
   (Inst.RefreshDelegationA.apex_iff_refreshDelegationSpec D hD s args s').mp
     (effect2_extract S (Inst.RefreshDelegationA.refreshDelegationE D hD)
-      (Inst.RefreshDelegationA.refreshDelegationRestFrameDecodes S D hD hRest) hLog
-      (Inst.RefreshDelegationA.refreshDelegationGuardDecodes D hD) s args s' a hsat hPI)
+      (Inst.RefreshDelegationA.refreshDelegationRestFrameDecodes S D hD hRest) (Inst.RefreshDelegationA.refreshDelegationGuardDecodes D hD) s args s' a hno hsat hPI)
 
 theorem refreshDelegationA_extract_rejects_wrong_delegations
     (S : Surface2) (D : (CellId → List Cap) × (CellId → Nat) → ℤ) (hD : Function.Injective D)
@@ -600,16 +634,17 @@ theorem refreshDelegationA_extract_rejects_wrong_delegations
 /-- **`receiptArchiveLifecycleA_extract`** — adversarial extraction for `receiptArchiveLifecycle`. -/
 theorem receiptArchiveLifecycleA_extract
     (S : Surface2) (D : (CellId → Nat) → ℤ) (hD : Function.Injective D)
-    (hRest : Inst.ReceiptArchiveLifecycleA.RestIffNoLifecycle S.RH) (hLog : logHashInjective S.LH)
+    (hRest : Inst.ReceiptArchiveLifecycleA.RestIffNoLifecycle S.RH)
     (s : RecChainedState) (args : Inst.ReceiptArchiveLifecycleA.ReceiptArchiveArgs) (s' : RecChainedState)
     (a : Assignment)
+    (hno : ¬ LogColl S.LH ((Inst.ReceiptArchiveLifecycleA.receiptArchiveLifecycleE D hD).view.getLog s')
+             ((Inst.ReceiptArchiveLifecycleA.receiptArchiveLifecycleE D hD).postLog s args))
     (hsat : satisfiedE2 S (Inst.ReceiptArchiveLifecycleA.receiptArchiveLifecycleE D hD) a)
     (hPI : PIBindsDigests S (Inst.ReceiptArchiveLifecycleA.receiptArchiveLifecycleE D hD) s args s' a) :
     Spec.CellStateAudit.ReceiptArchiveLifecycleSpec s args.actor args.cell s' :=
   (Inst.ReceiptArchiveLifecycleA.apex_iff_ReceiptArchiveLifecycleSpec D hD s args s').mp
     (effect2_extract S (Inst.ReceiptArchiveLifecycleA.receiptArchiveLifecycleE D hD)
-      (Inst.ReceiptArchiveLifecycleA.archiveRestFrameDecodes S D hD hRest) hLog
-      (Inst.ReceiptArchiveLifecycleA.archiveGuardDecodes D hD) s args s' a hsat hPI)
+      (Inst.ReceiptArchiveLifecycleA.archiveRestFrameDecodes S D hD hRest) (Inst.ReceiptArchiveLifecycleA.archiveGuardDecodes D hD) s args s' a hno hsat hPI)
 
 theorem receiptArchiveLifecycleA_extract_rejects_wrong_lifecycle
     (S : Surface2) (D : (CellId → Nat) → ℤ) (hD : Function.Injective D)

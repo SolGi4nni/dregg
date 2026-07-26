@@ -33,7 +33,7 @@ import Dregg2.Circuit.Poseidon2Binding
 namespace Dregg2.Circuit.WitnessExtract
 
 open Dregg2.Circuit
-open Dregg2.Circuit.StateCommit (logHashInjective)
+open Dregg2.Circuit.LogCommitRegrounded (LogColl noLogColl_of_inj)
 open Dregg2.Circuit.EffectCommit2
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Exec (RecordKernelState Turn)
@@ -161,26 +161,38 @@ WHOLE post-state: `E.apex pre args post`. The witness is NOT assumed equal to `e
 wires — the adversary keeps the root wires `64/65` and every `w ≥ 72`. The needed digest-wire agreement
 is exactly what a real verifier's public-input/boundary check enforces against the committed root
 (grounded injective by Poseidon2 CR, `Poseidon2Binding`), so this is the genuine ZK soundness
-obligation, not smuggled in as a free `hEnc`. -/
+obligation, not smuggled in as a free `hEnc`.
+
+⚑ LOG SIDE CONDITION, PER-INSTANCE (2026-07-25 cutover). `hno` is `¬ LogColl S.LH` at the EXACT pair
+the proof feeds the log binding — the claimed post-log and the spec-predicted post-log for THIS
+`(pre, args, post)`. It replaces the ∀-quantified `logHashInjective S.LH`, which this tree PROVES
+FALSE at deployed BabyBear parameters (`StateCommitFloorRegrounded.logHashInjective_false_babyBear`:
+a hash into a bounded field cannot be injective on `List Turn`), and which therefore made every
+theorem below VACUOUS. The old hypothesis implies the new one (`noLogColl_of_inj`), so the extractor
+is strictly STRONGER than before; `LogCommitCutoverCheck` pins both directions by kernel defeq. -/
 theorem effect2_extract {St Args : Type} (S : Surface2) (E : EffectSpec2 St Args)
-    (hRestF : RestFrameDecodes2 S E) (hLog : logHashInjective S.LH) (hGuard : GuardDecodes2 E)
+    (hRestF : RestFrameDecodes2 S E) (hGuard : GuardDecodes2 E)
     (pre : St) (args : Args) (post : St) (a : Assignment)
+    (hno : ¬ Dregg2.Circuit.LogCommitRegrounded.LogColl S.LH
+            (E.view.getLog post) (E.postLog pre args))
     (hsat : satisfiedE2 S E a)
     (hPI : PIBindsDigests S E pre args post a) :
     E.apex pre args post :=
-  effect2_circuit_full_sound S E hRestF (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) hGuard pre args post
+  effect2_circuit_full_sound S E hRestF (hno := hno) hGuard pre args post
     ((satisfiedE2_of_PIBindsDigests S E pre args post a hPI).mp hsat)
 
 /-- **`effect2_extract_emitted`** — the same extractor stated against the EMITTED (wire-form) circuit
 the Rust prover actually checks: a satisfying emitted descriptor on an arbitrary PI-bound `a` extracts
 the apex. (`emitEffect2Faithful` bridges emitted ⟺ `effectCircuit2`.) -/
 theorem effect2_extract_emitted {St Args : Type} (S : Surface2) (E : EffectSpec2 St Args)
-    (hRestF : RestFrameDecodes2 S E) (hLog : logHashInjective S.LH) (hGuard : GuardDecodes2 E)
+    (hRestF : RestFrameDecodes2 S E) (hGuard : GuardDecodes2 E)
     (name : String) (pre : St) (args : Args) (post : St) (a : Assignment)
+    (hno : ¬ Dregg2.Circuit.LogCommitRegrounded.LogColl S.LH
+            (E.view.getLog post) (E.postLog pre args))
     (hsat : Dregg2.Exec.CircuitEmit.satisfiedEmitted (emittedEffect2 name E) a)
     (hPI : PIBindsDigests S E pre args post a) :
     E.apex pre args post :=
-  effect2_extract S E hRestF hLog hGuard pre args post a
+  effect2_extract S E hRestF hGuard pre args post a hno
     ((emitEffect2Faithful name E a).mpr hsat) hPI
 
 /-! ## §4 — Poseidon2-grounded uniqueness: the PI digest binding PINS the state component.
@@ -232,17 +244,23 @@ theorem effect2_extract_rejects_wrong_component {St Args : Type} (S : Surface2) 
   exact effectCircuit2_rejects_wrong_component S E pre args post htamper hsat'
 
 /-- **`effect2_extract_rejects_log_forge`** — a claimed `post` whose post-log differs from the
-spec-predicted post-log has NO satisfying PI-bound witness (`logHashInjective`). (Log forgery rejected.) -/
+spec-predicted post-log has NO satisfying PI-bound witness. (Log forgery rejected.)
+
+The side condition is the PER-INSTANCE `¬ LogColl S.LH` at the ONE pair this statement is about —
+the claimed post-log and the spec-predicted one — not the ∀-quantified `logHashInjective S.LH` this
+tree PROVES FALSE at BabyBear (`StateCommitFloorRegrounded.logHashInjective_false_babyBear`). The old
+hypothesis IMPLIES this one (`noLogColl_of_inj`), so the statement is strictly STRONGER. -/
 theorem effect2_extract_rejects_log_forge {St Args : Type} (S : Surface2) (E : EffectSpec2 St Args)
-    (hLog : logHashInjective S.LH)
     (pre : St) (args : Args) (post : St) (a : Assignment)
+    (hno : ¬ Dregg2.Circuit.LogCommitRegrounded.LogColl S.LH
+            (E.view.getLog post) (E.postLog pre args))
     (hPI : PIBindsDigests S E pre args post a)
     (htamper : E.view.getLog post ≠ E.postLog pre args) :
     ¬ satisfiedE2 S E a := by
   intro hsat
   have hsat' : satisfiedE2 S E (encodeE2 S E pre args post) :=
     (satisfiedE2_of_PIBindsDigests S E pre args post a hPI).mp hsat
-  exact effectCircuit2_rejects_log_forge S E (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) pre args post htamper hsat'
+  exact effectCircuit2_rejects_log_forge S E (hno := hno) pre args post htamper hsat'
 
 /-! ## §5b — CONCRETE non-vacuity: the gates reject. A tampered trace whose component digest
 wire (`68`) disagrees with its expected wire (`69`) FAILS `cE2Bind` — UNSAT — so satisfaction is NOT

@@ -627,6 +627,7 @@ open Dregg2.Circuit.Inst.MintA (mintE mintRestFrameDecodes mintGuardDecodes apex
 open Dregg2.Circuit.Spec.SupplyCreation (MintASpec)
 open Dregg2.Circuit.EffectCommit2 (satisfiedE2 emittedEffect2)
 open Dregg2.Circuit.StateCommit (logHashInjective)
+open Dregg2.Circuit.LogCommitRegrounded (LogColl noLogColl_of_inj)
 
 /-- **`mintA_extract`** — the adversarial-witness extractor for mint. An ARBITRARY assignment `a` that
 (1) satisfies the mint effect circuit and (2) is `PIBindsDigests`-pinned (the verifier's public-input
@@ -635,27 +636,31 @@ proves the COMPLETE declarative `MintASpec` — NO dead `hEnc` over the whole tr
 state-extraction the dead hypothesis was smuggling: the satisfying trace DETERMINES the post-state. -/
 theorem mintA_extract
     (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D)
-    (hRest : RestIffNoBal S.RH) (hLog : logHashInjective S.LH)
+    (hRest : RestIffNoBal S.RH)
     (s : RecChainedState) (args : MintArgs) (s' : RecChainedState) (a : Assignment)
+    (hno : ¬ LogColl S.LH ((mintE D hD).view.getLog s')
+             ((mintE D hD).postLog s args))
     (hsat : satisfiedE2 S (mintE D hD) a)
     (hPI : PIBindsDigests S (mintE D hD) s args s' a) :
     MintASpec s args.actor args.cell args.a args.amt s' :=
   (apex_iff_mintASpec D hD s args s').mp
-    (effect2_extract S (mintE D hD) (mintRestFrameDecodes S D hD hRest) hLog (mintGuardDecodes D hD)
-      s args s' a hsat hPI)
+    (effect2_extract S (mintE D hD) (mintRestFrameDecodes S D hD hRest) (mintGuardDecodes D hD)
+      s args s' a hno hsat hPI)
 
 /-- **`mintA_extract_emitted`** — the same extractor against the EMITTED (Rust-prover) wire form: a
 satisfying emitted descriptor on an arbitrary PI-bound `a` extracts `MintASpec`. -/
 theorem mintA_extract_emitted
     (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D)
-    (hRest : RestIffNoBal S.RH) (hLog : logHashInjective S.LH)
+    (hRest : RestIffNoBal S.RH)
     (s : RecChainedState) (args : MintArgs) (s' : RecChainedState) (a : Assignment)
+    (hno : ¬ LogColl S.LH ((mintE D hD).view.getLog s')
+             ((mintE D hD).postLog s args))
     (hsat : satisfiedEmitted (emittedEffect2 mintAirName (mintE D hD)) a)
     (hPI : PIBindsDigests S (mintE D hD) s args s' a) :
     MintASpec s args.actor args.cell args.a args.amt s' :=
   (apex_iff_mintASpec D hD s args s').mp
-    (effect2_extract_emitted S (mintE D hD) (mintRestFrameDecodes S D hD hRest) hLog
-      (mintGuardDecodes D hD) mintAirName s args s' a hsat hPI)
+    (effect2_extract_emitted S (mintE D hD) (mintRestFrameDecodes S D hD hRest)
+      (mintGuardDecodes D hD) mintAirName s args s' a hno hsat hPI)
 
 /-- **`mintA_extract_rejects_wrong_supply`** — ANTI-GHOST tooth (W1): a claimed mint post `s'`
 whose ledger is NOT the issuer-move write `recTransferBal … a cell a amt` (a forged supply — e.g. a
