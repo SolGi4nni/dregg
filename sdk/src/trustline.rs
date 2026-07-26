@@ -636,7 +636,21 @@ mod tests {
         let issuer_pk = cclerk.public_key().0;
         let runtime = AgentRuntime::new_simple(cclerk, "trustline-test");
         let holder_pk = blake3::derive_key("trustline-test-holder-v1", b"holder");
-        let holder_cell = dregg_cell::Cell::with_balance(holder_pk, [0u8; 32], 500);
+        // THE COUNTERPARTY IS MINTED IN THE AGENT'S CURRENCY. `AgentRuntime`
+        // denominates its agent cell in `blake3(domain)`; a counterparty minted
+        // in the all-zero token is in a DIFFERENT asset, so every payment
+        // between them is a cross-asset teleport the executor correctly refuses
+        // (`turn/src/executor/apply.rs`). The tag stays where it belongs — in
+        // the NAME SALT — and `Cell::in_asset` sets the currency.
+        let issuer_asset = runtime
+            .ledger()
+            .lock()
+            .unwrap()
+            .get(&runtime.cell_id())
+            .expect("the runtime mints its own agent cell")
+            .asset();
+        let holder_cell =
+            dregg_cell::Cell::with_balance(holder_pk, [0u8; 32], 500).in_asset(issuer_asset);
         let holder = holder_cell.id();
         {
             let mut ledger = runtime.ledger().lock().unwrap();
@@ -964,11 +978,23 @@ mod tests {
         let cclerk = AgentCipherclerk::new();
         let issuer_pk = cclerk.public_key().0;
         let runtime = AgentRuntime::new_simple(cclerk, "trustline-purecredit-test");
+        // The holder is the ISSUER's key under a different NAME (`pc-holder`)
+        // — the one-cell-per-(owner, tag) shape the name salt exists for. It
+        // must still be denominated in the issuer's currency, or the bilateral
+        // settle between them is a cross-asset move.
+        let issuer_asset = runtime
+            .ledger()
+            .lock()
+            .unwrap()
+            .get(&runtime.cell_id())
+            .expect("the runtime mints its own agent cell")
+            .asset();
         let holder_cell = dregg_cell::Cell::with_balance(
             issuer_pk,
             *blake3::hash(b"pc-holder").as_bytes(),
             100_000,
-        );
+        )
+        .in_asset(issuer_asset);
         let holder = holder_cell.id();
         {
             let mut ledger = runtime.ledger().lock().unwrap();

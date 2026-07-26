@@ -244,7 +244,21 @@ mod tests {
         let payer_pk = cclerk.public_key().0;
         let runtime = AgentRuntime::new_simple(cclerk, "job-escrow-test");
         let worker_pk = blake3::derive_key("job-escrow-test-worker-v1", b"worker");
-        let worker_cell = dregg_cell::Cell::with_balance(worker_pk, [0u8; 32], 0);
+        // THE COUNTERPARTY IS MINTED IN THE AGENT'S CURRENCY. `AgentRuntime`
+        // denominates its agent cell in `blake3(domain)`; a counterparty minted
+        // in the all-zero token is in a DIFFERENT asset, so every payment
+        // between them is a cross-asset teleport the executor correctly refuses
+        // (`turn/src/executor/apply.rs`). The tag stays where it belongs — in
+        // the NAME SALT — and `Cell::in_asset` sets the currency.
+        let payer_asset = runtime
+            .ledger()
+            .lock()
+            .unwrap()
+            .get(&runtime.cell_id())
+            .expect("the runtime mints its own agent cell")
+            .asset();
+        let worker_cell =
+            dregg_cell::Cell::with_balance(worker_pk, [0u8; 32], 0).in_asset(payer_asset);
         let worker = worker_cell.id();
         {
             let mut ledger = runtime.ledger().lock().unwrap();
