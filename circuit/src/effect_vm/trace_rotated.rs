@@ -4898,7 +4898,7 @@ pub fn generate_rotated_heap_write_wide(
 /// row there is nothing left to recompute a patched AFTER block-commit into, and the wide carriers no
 /// longer sit at `HEAP_WRITE_HOST_WIDTH`. A tooth that patches the compacted row and re-runs
 /// [`append_wide_carriers`] re-inflates it to the raw width, and the prover then refuses on SHAPE
-/// (`base row width 3065 must equal descriptor trace_width 1963`) — a refusal the tooth reads as an
+/// (`base row width 3058 must equal descriptor trace_width 1955`) — a refusal the tooth reads as an
 /// unsat verdict while the forgery was never examined. `circuit/tests/heap_write_roundtrip.rs` pins
 /// that the two entries agree byte-for-byte, so this accessor cannot drift from what deploys.
 #[allow(clippy::too_many_arguments)]
@@ -5070,7 +5070,7 @@ pub fn generate_rotated_heap_write_wide_raw(
     debug_assert_eq!(
         trace[0].len(),
         HEAP_WRITE_HOST_WIDTH + 2 * WIDE_NUM_CARRIERS * 8
-    ); // 3065 (HEAP_WRITE_HOST_WIDTH + WIDE_CARRIER_APPENDIX — OPTION I after-spine host)
+    ); // 3058 (HEAP_WRITE_HOST_WIDTH 2098 + WIDE_CARRIER_APPENDIX 960 — OPTION I after-spine host)
     debug_assert_eq!(dpis.len(), 20); // 4 base (2 retired) + 16 wide
     Ok((trace, dpis, vec![heap_leaves.to_vec()]))
 }

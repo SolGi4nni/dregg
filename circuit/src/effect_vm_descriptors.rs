@@ -3453,6 +3453,17 @@ mod tests {
         // whose carrier block, refuse weld, or kill-set moved — a regen that legitimately moves a
         // member has to move its row here, deliberately and visibly. The RETIRED v1 (912-appendix)
         // widths stay structurally refused by `wide_carrier_geometry_version`.
+        //
+        // AND THAT IS EXACTLY WHAT HAPPENED ON 2026-07-26, one member at a time rather than all 57:
+        // the `siteHeapLeaf` arity-2 leaf-vestige flag-day (Lean `a0687f268`, bytes `c5f50424a`)
+        // dropped one graduated constraint from heapWrite — 7 chip-lane columns, plus an EIGHTH as
+        // the now-unbound carrier column fell into the E1 kill-set (`(104,188) → (103,188)`). So
+        // `heapWriteVmDescriptor2R24` moved 1963 → 1955 HERE, alone; every other row is byte-
+        // unchanged, which is the discrimination a shared whitelist could not have given. Its two
+        // sibling registries moved with it (narrow 1633 → 1626, umem-welded 1970 → 1962) but neither
+        // is pinned by a literal: the welded member is checked as `bare + 7` by
+        // `wide_umem_weld_registry_parity_and_no_narrowing`, and the narrow one rides the derived
+        // `HEAP_WRITE_HOST_WIDTH` / `HEAP_WRITE_READ_BASE`.
         const WIDE_MEMBER_GEOMETRY: [(&str, usize); 57] = [
             ("transferVmDescriptor2R24", 1610),
             ("burnVmDescriptor2R24", 1606),
@@ -3500,7 +3511,7 @@ mod tests {
             ("attenuateCapOpenEffVmDescriptor2R24", 2021),
             ("transferFeeVmDescriptor2R24", 1569),
             ("transferCapOpenTBVmDescriptor2R24", 1890),
-            ("heapWriteVmDescriptor2R24", 1963),
+            ("heapWriteVmDescriptor2R24", 1955),
             ("delegateWriteCapOpenVmDescriptor2R24", 1878),
             ("introduceWriteCapOpenVmDescriptor2R24", 1878),
             ("delegateAttenWriteCapOpenVmDescriptor2R24", 1878),
