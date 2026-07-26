@@ -30,8 +30,9 @@ use dregg_circuit::descriptor_ir2::{
 };
 use dregg_circuit::effect_vm::pi;
 use dregg_circuit::effect_vm::trace_rotated::{
-    RotatedBlockWitness, empty_caveat_manifest, generate_rotated_effect_vm_trace,
-    rotated_descriptor_name_for_effect, transfer_caveat_manifest,
+    RotatedBlockWitness, avail_pad_for_descriptor_name, empty_caveat_manifest,
+    generate_rotated_effect_vm_trace_avail, rotated_descriptor_name_for_effect,
+    transfer_caveat_manifest,
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
@@ -125,7 +126,18 @@ fn mint_rotated_leg_with_witnesses(
         _ => empty_caveat_manifest(),
     };
 
-    let (trace, dpis) = generate_rotated_effect_vm_trace(
+    // The producer face is a property of the DESCRIPTOR being proven, not of the effect. The
+    // deployed `transferVmDescriptor2R24` is the availability-hardened member
+    // (`dregg-effectvm-transfer-v1-avail-…`, pad 10): wires `[V1_WIDTH, V1_WIDTH + 10)` = 188..197
+    // are the weld witness — 188..193 are the 15-bit operand limbs range-checked against the
+    // committed `range_w15` table (id 84), 194/195 the borrow bits, 196/197 the credit carries —
+    // and every rotated appendix base shifts up by the pad to 198. The bare pad-0 generator lays
+    // the rotated BEFORE block at 188 instead, so a full ~30-bit block felt lands in a 15-bit limb
+    // slot and the prover's own range pre-flight refuses the honest trace. Read the pad off the
+    // parsed descriptor's wire name (`0` for every bare member, so this is a no-op for them).
+    let pad = avail_pad_for_descriptor_name(&desc.name);
+    let (trace, dpis) = generate_rotated_effect_vm_trace_avail(
+        pad,
         initial_state,
         &effects,
         &bridge(before_w),

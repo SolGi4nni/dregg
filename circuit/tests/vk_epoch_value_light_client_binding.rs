@@ -60,7 +60,8 @@ use dregg_circuit::effect_vm::columns::{
 };
 use dregg_circuit::effect_vm::trace_rotated::{
     AFTER_BASE, B_CAP_ROOT, B_CHAIN_BASE, B_IROOT, B_STATE_COMMIT, NUM_PRE_LIMBS, V1_PI_COUNT,
-    empty_caveat_manifest, generate_rotated_effect_vm_trace, rotated_descriptor_name_for_effect,
+    avail_pad_for_descriptor_name, empty_caveat_manifest, generate_rotated_effect_vm_trace_avail,
+    rotated_descriptor_name_for_effect,
 };
 use dregg_circuit::effect_vm::{CellState, Effect, fold_bytes32_to_bb};
 use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
@@ -133,8 +134,14 @@ fn refused(
 /// post-state `(balance, nonce, fields)` is the self-consistent post-cell the light client would
 /// accept on the wire. Mirrors `trace.rs` (V1 commit + bit-decomp) and `trace_rotated.rs::fill_block`
 /// (rotated AFTER chain), so the recompute is byte-identical to the live generator.
+///
+/// `pad` is the descriptor's availability-weld pad ([`avail_pad_for_descriptor_name`]): the
+/// hardened transfer/burn members widen the v1 face, so EVERY rotated appendix base shifts up by
+/// it. A hard-coded `AFTER_BASE` would rewrite the WELD WITNESS columns instead of the rotated
+/// AFTER block on those members.
 fn recompute_after_commitment(
     row: &mut [BabyBear],
+    pad: usize,
     balance: u64,
     nonce: u32,
     fields: &[BabyBear; 8],
@@ -169,7 +176,7 @@ fn recompute_after_commitment(
 
     // (d) The rotated AFTER block: re-run `fill_block`'s weld override + chained absorb so
     //     `AFTER_BASE + B_STATE_COMMIT` (the PUBLISHED commit) folds the forged welded limbs.
-    let base = AFTER_BASE;
+    let base = AFTER_BASE + pad;
     row[base + 1] = row[STATE_AFTER_BASE + state::BALANCE_LO]; // r0
     row[base + 2] = row[STATE_AFTER_BASE + state::NONCE]; // r1
     row[base + 3] = row[STATE_AFTER_BASE + state::BALANCE_HI]; // r2
@@ -202,6 +209,7 @@ fn recompute_after_commitment(
 /// forged post-state, and the chained NEW_COMMIT folds the last padding row's AFTER block.
 fn recompute_passthrough_row(
     row: &mut [BabyBear],
+    pad: usize,
     balance: u64,
     nonce: u32,
     fields: &[BabyBear; 8],
@@ -220,7 +228,7 @@ fn recompute_passthrough_row(
     row[STATE_BEFORE_BASE + state::STATE_COMMIT] =
         CellState::compute_commitment(balance, nonce, fields, cap_root, record_digest);
     // Also re-run the rotated BEFORE block weld so its STATE_COMMIT chain matches.
-    let base = dregg_circuit::effect_vm::trace_rotated::BEFORE_BASE;
+    let base = dregg_circuit::effect_vm::trace_rotated::BEFORE_BASE + pad;
     row[base + 1] = row[STATE_BEFORE_BASE + state::BALANCE_LO];
     row[base + 2] = row[STATE_BEFORE_BASE + state::NONCE];
     row[base + 3] = row[STATE_BEFORE_BASE + state::BALANCE_HI];
@@ -248,7 +256,7 @@ fn recompute_passthrough_row(
     row[base + B_STATE_COMMIT] = hash_many(&[d, row[base + B_IROOT]]);
 
     // AFTER columns to the same forged post-state.
-    recompute_after_commitment(row, balance, nonce, fields);
+    recompute_after_commitment(row, pad, balance, nonce, fields);
 }
 
 /// Patch the dpis that depend on the forged post-state: V1 `NEW_COMMIT[0..8]`, `FINAL_BAL_LO/HI`,
@@ -257,6 +265,7 @@ fn recompute_passthrough_row(
 fn patch_post_state_dpis(
     dpis: &mut [BabyBear],
     forged_last_row: &[BabyBear],
+    pad: usize,
     balance: u64,
     nonce: u32,
     fields: &[BabyBear; 8],
@@ -274,7 +283,7 @@ fn patch_post_state_dpis(
     dpis[pi::FINAL_BAL_LO] = BabyBear::new(lo);
     dpis[pi::FINAL_BAL_HI] = BabyBear::new(hi);
     // PI 43: rotated NEW commit = last row's rotated AFTER STATE_COMMIT.
-    dpis[V1_PI_COUNT + 1] = forged_last_row[AFTER_BASE + B_STATE_COMMIT];
+    dpis[V1_PI_COUNT + 1] = forged_last_row[AFTER_BASE + pad + B_STATE_COMMIT];
 }
 
 /// Build the honest rotated trace for a single VALUE effect over `(before_bal, before_nonce)`,
@@ -286,6 +295,8 @@ struct Honest {
     dpis: Vec<BabyBear>,
     mem_boundary: MemBoundaryWitness,
     map_heaps: Vec<Vec<dregg_circuit::heap_root::HeapLeaf>>,
+    /// The descriptor's availability-weld pad, read off its wire name. `0` for every bare member.
+    pad: usize,
 }
 
 fn build_honest(before_bal: i64, effect: Effect, after_cell: Cell, expect_name: &str) -> Honest {
@@ -326,8 +337,16 @@ fn build_honest(before_bal: i64, effect: Effect, after_cell: Cell, expect_name: 
         &Default::default(),
     );
 
+    // The deployed transfer/burn members are AVAILABILITY-HARDENED (`…-v1-avail`, pad 10 / 8):
+    // wires `[V1_WIDTH, V1_WIDTH + pad)` carry the weld witness — the first six are 15-bit operand
+    // limbs range-checked against the committed `range_w15` table — and the rotated appendix
+    // shifts up by the pad. The bare pad-0 generator lays the rotated BEFORE block at 188, so a
+    // full ~30-bit block felt lands in a 15-bit limb slot and the prover refuses the HONEST trace.
+    // The pad is a property of the descriptor being proven; read it off the parsed wire name.
+    let pad = avail_pad_for_descriptor_name(&desc.name);
     let caveat = empty_caveat_manifest();
-    let (trace, dpis) = generate_rotated_effect_vm_trace(
+    let (trace, dpis) = generate_rotated_effect_vm_trace_avail(
+        pad,
         &st,
         &effects,
         &bridge(&before_w),
@@ -342,6 +361,7 @@ fn build_honest(before_bal: i64, effect: Effect, after_cell: Cell, expect_name: 
         dpis,
         mem_boundary: MemBoundaryWitness::default(),
         map_heaps: vec![],
+        pad,
     }
 }
 
@@ -376,16 +396,17 @@ fn forge_post_state(
     let n = trace.len();
     // Row 0: the active effect row. Forge ONLY its AFTER commitment columns; its BEFORE (= init)
     // stays honest so the transition gate (`new = f(old, amount)`) is violated.
-    recompute_after_commitment(&mut trace[0], fbalance, fnonce, ffields);
+    recompute_after_commitment(&mut trace[0], h.pad, fbalance, fnonce, ffields);
     // Rows 1..n: passthrough at the forged post-state (BEFORE = AFTER = forged post).
     for r in 1..n {
-        recompute_passthrough_row(&mut trace[r], fbalance, fnonce, ffields);
+        recompute_passthrough_row(&mut trace[r], h.pad, fbalance, fnonce, ffields);
     }
     let mut dpis = h.dpis.clone();
     let last = trace[n - 1].clone();
     patch_post_state_dpis(
         &mut dpis,
         &last,
+        h.pad,
         fbalance,
         fnonce,
         ffields,
@@ -414,8 +435,8 @@ fn assert_balance_effect(h: Honest, forged_balance: u64, label: &str) {
     // Self-check: the published NEW_COMMIT genuinely absorbs the forged balance (wire view), and
     // it differs from the honest published commit.
     assert_ne!(
-        ftrace[ftrace.len() - 1][AFTER_BASE + B_STATE_COMMIT],
-        h.trace[h.trace.len() - 1][AFTER_BASE + B_STATE_COMMIT],
+        ftrace[ftrace.len() - 1][AFTER_BASE + h.pad + B_STATE_COMMIT],
+        h.trace[h.trace.len() - 1][AFTER_BASE + h.pad + B_STATE_COMMIT],
         "{label}: the forged post-balance must publish a DIFFERENT commit (else the forge is vacuous)"
     );
     assert!(
@@ -597,8 +618,8 @@ fn setfield_forced_on_wire_rejects_forged_field_anchor_disabled() {
     let (bal, _, _, _, _) = honest_post(&h);
     let (ftrace, fdpis) = forge_post_state(&h, bal, nonce, &forged_fields);
     assert_ne!(
-        ftrace[ftrace.len() - 1][AFTER_BASE + B_STATE_COMMIT],
-        h.trace[h.trace.len() - 1][AFTER_BASE + B_STATE_COMMIT],
+        ftrace[ftrace.len() - 1][AFTER_BASE + h.pad + B_STATE_COMMIT],
+        h.trace[h.trace.len() - 1][AFTER_BASE + h.pad + B_STATE_COMMIT],
         "setField: the forged field must publish a DIFFERENT commit (else vacuous)"
     );
     assert!(
@@ -646,8 +667,8 @@ fn incrementnonce_forced_on_wire_rejects_forged_nonce_anchor_disabled() {
     );
     let (ftrace, fdpis) = forge_post_state(&h, bal, forged_nonce, &fields);
     assert_ne!(
-        ftrace[ftrace.len() - 1][AFTER_BASE + B_STATE_COMMIT],
-        h.trace[h.trace.len() - 1][AFTER_BASE + B_STATE_COMMIT],
+        ftrace[ftrace.len() - 1][AFTER_BASE + h.pad + B_STATE_COMMIT],
+        h.trace[h.trace.len() - 1][AFTER_BASE + h.pad + B_STATE_COMMIT],
         "incrementNonce: the forged nonce must publish a DIFFERENT commit (else vacuous)"
     );
     assert!(
@@ -693,8 +714,8 @@ fn forge_machinery_is_faithful_identity_recompute_still_proves() {
 
     // The published commit is UNCHANGED (the recompute is byte-identical to the generator).
     assert_eq!(
-        id_trace[id_trace.len() - 1][AFTER_BASE + B_STATE_COMMIT],
-        h.trace[h.trace.len() - 1][AFTER_BASE + B_STATE_COMMIT],
+        id_trace[id_trace.len() - 1][AFTER_BASE + h.pad + B_STATE_COMMIT],
+        h.trace[h.trace.len() - 1][AFTER_BASE + h.pad + B_STATE_COMMIT],
         "identity recompute must reproduce the honest published commit (helper faithfulness)"
     );
     assert_eq!(
