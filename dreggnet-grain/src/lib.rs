@@ -390,7 +390,31 @@ impl Offering for GrainOffering {
     fn render(&self, session: &GrainSession) -> Surface {
         let actions = self.grain_actions(session);
 
+        // THE DIRECTIVE, first — every plaque here was `muted`/`genuine`, so the page opened on a
+        // state line (`turns 0/1000 · consumed 0 · headroom …`) and never said what to press. The
+        // shared web skin promotes the leading paragraph of an `accent` plaque to the page's lead.
+        let directive = if session.is_exhausted() {
+            format!(
+                "This grain has spent its whole grant — all {} metered turn(s) are gone, and a \
+                 further request is refused by the executor's own `calls_made` caveat rather than \
+                 by this page. Open a fresh grain to meter more work.",
+                session.budget
+            )
+        } else {
+            format!(
+                "Press a request below to spend ONE metered turn of this grain's grant: {} of {} \
+                 remain. The cap rides in the committed turn, so an over-cap press is refused \
+                 host-side instead of quietly dropped.",
+                session.headroom(),
+                session.budget
+            )
+        };
         let mut children = vec![
+            ViewNode::Section {
+                title: "Your next move".to_string(),
+                tag: "accent".to_string(),
+                children: vec![ViewNode::Text(directive)],
+            },
             ViewNode::Section {
                 title: "Grain".to_string(),
                 tag: "muted".to_string(),

@@ -877,6 +877,27 @@ impl Offering for CouncilOffering {
         self.render_as(session, Some(viewer))
     }
 
+    /// **The governance affordances AS `viewer` may fire them** — every row of
+    /// [`actions`](Offering::actions), with each one DIMMED for a viewer who is not in the
+    /// electorate.
+    ///
+    /// ⚑ Without this override the trait default falls back to the anonymous, fully-enabled
+    /// [`actions`](Offering::actions), so a visitor holding no seat on this council was served
+    /// live, undimmed Propose / Approve / Reject / Enact controls, every one of which `advance`
+    /// answers "not a council member" — the whole page was dead affordances, and the only way to
+    /// learn it was to press. The cap tooth is SHOWN, not hidden: the rows keep their turn and
+    /// `arg` (so a frontend validating a POST against this list still reaches the executor and
+    /// gets ITS refusal), and the executor stays the sole referee — `enabled` is decoration.
+    fn actions_for(&self, session: &CouncilSession, viewer: &DreggIdentity) -> Vec<Action> {
+        let mut all = self.actions(session);
+        if self.resolve_member(session, viewer).is_none() {
+            for action in &mut all {
+                action.enabled = false;
+            }
+        }
+        all
+    }
+
     /// Governance turns are free + verifiable (the substrate turn itself always is). A
     /// fuller offering could price a confined deliberation overlay; here every move is free.
     fn price(&self, _input: &Action) -> RunCost {

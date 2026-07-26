@@ -264,6 +264,48 @@ impl Offering for CompanionOffering {
     fn render(&self, s: &CompanionSession) -> Surface {
         let mut children: Vec<ViewNode> = Vec::new();
 
+        // THE DIRECTIVE, first — the one sentence saying what to do NOW. The shared skin promotes
+        // the leading paragraph of an `accent` plaque; without one, a page states only what IS.
+        let alive = s
+            .hatched
+            .iter()
+            .filter(|h| !s.roost.is_dead(&h.comp))
+            .count();
+        children.push(section(
+            "Your next move",
+            "accent",
+            vec![
+                text(if s.is_empty() {
+                    format!(
+                        "Hatch your first companion — pick one of the {} species below and press \
+                         Hatch. The roll is committed as a real turn, so the rarity you get is one \
+                         nobody could choose after seeing it.",
+                        s.species.len()
+                    )
+                } else if alive == 0 {
+                    "Every companion in this roost has died — a dead one can no longer be raised. \
+                     Hatch a new egg to start again."
+                        .to_string()
+                } else {
+                    format!(
+                        "Press Raise on one of your {alive} living companion(s) to spend a turn on \
+                         it: each Raise commits exactly one level. Or hatch another egg from the \
+                         species list."
+                    )
+                }),
+                row(vec![
+                    pill(
+                        format!("{} companion(s)", s.len()),
+                        if s.is_empty() { "muted" } else { "good" },
+                    ),
+                    pill(
+                        format!("{alive} living"),
+                        if alive == 0 { "bad" } else { "good" },
+                    ),
+                ]),
+            ],
+        ));
+
         children.push(section(
             "Roost",
             "muted",

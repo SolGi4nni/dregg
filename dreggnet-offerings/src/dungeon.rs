@@ -2339,9 +2339,12 @@ fn keep_standing(session: &DungeonSession, room_name: &str, actions: &[Action]) 
     };
     let mut children = vec![
         ViewNode::Text(directive),
-        // ⚑ THE PROSE MIRROR of the pill row. A `Pill` is a badge layer with NO plain-text form
-        // (`deos_view::text` drops it by design), so a chat channel would otherwise learn the
-        // phase, the turn and the crown's holder from nothing at all.
+        // ⚑ THE PROSE MIRROR of the pill row — the phase, the turn and the crown's holder, in a
+        // sentence.
+        //
+        // ⚠ ITS ORIGINAL REASON EXPIRED ON 2026-07-26 (see the same note in `campaign.rs`): the
+        // shared prose walk no longer drops `Pill`, so a chat reader now gets this sentence AND
+        // the badges. Redundant, not contradictory; left for a deliberate copy pass.
         ViewNode::Text(format!(
             "{phase} — turn {}, depth {depth}, the crown held by {}.",
             session.steps.len(),

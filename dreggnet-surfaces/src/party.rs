@@ -666,7 +666,34 @@ impl PartyOffering {
         } else {
             "FORMING"
         };
+        // THE DIRECTIVE, first — one sentence saying what this table is waiting on. Without it the
+        // page opened on `FORMING 0 / 4 roles · quorum 3`, which states the position and asks for
+        // nothing.
+        let seats = session.seat_count();
+        let quorum = session.quorum();
         let mut children = vec![section(
+            "Your next move",
+            "accent",
+            vec![text(if session.launched() {
+                "The party is LAUNCHED — the roles are locked and the fight is live. Each seat \
+                     contributes ONE committed action; the roster below says who has and who has \
+                     not."
+                    .to_string()
+            } else if seats == 0 {
+                format!(
+                    "Nobody has taken a seat yet — claim one of the four roles below. The \
+                         table launches at a quorum of {quorum} ready seats, and every claim is a \
+                         committed turn, so a seat cannot be taken twice."
+                )
+            } else {
+                format!(
+                    "{seats} of 4 roles are held and this table launches at {quorum} READY \
+                         seats — claim an open role, or mark your own seat ready. A launch below \
+                         quorum is refused by the lobby, not hidden by this page."
+                )
+            })],
+        )];
+        children.push(section(
             "Party table",
             "muted",
             vec![
@@ -679,7 +706,7 @@ impl PartyOffering {
                     session.lobby_revision(),
                 )),
             ],
-        )];
+        ));
 
         let mut rows = vec![row(vec![text("Role"), text("Holder"), text("Status")])];
         for role in Role::ALL {

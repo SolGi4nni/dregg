@@ -804,7 +804,33 @@ impl Offering for AshenmoorErrandOffering {
                 text(session.quest_world.read_var("reward").to_string()),
             ]),
         ]);
+        // THE DIRECTIVE, first. The page already carried the mechanism ("standing is committed
+        // first") in a `muted` plaque, which the skin does not promote and which says what the
+        // RULE is rather than what to press. This says the move.
+        let directive = if session.quest_completed() {
+            "The writ is accepted and this errand is final — nothing further can be committed. Its \
+             completion replays from the record, so the reward below is checkable, not asserted."
+                .to_string()
+        } else if standing.betrayed && !standing.unlocked {
+            "You pledged and then betrayed the Embers, so the Ember route is permanently closed — \
+             no standing you earn now reopens it. This errand cannot be undertaken on this \
+             identity."
+                .to_string()
+        } else if session.quest_opened() {
+            format!(
+                "The trial is cleared and the errand is LIVE — work the wards in order ({}/3 \
+                 done). Each ward is a committed turn in the quest world, and an out-of-order \
+                 press is refused by the executor rather than skipped.",
+                session.quest_steps_done()
+            )
+        } else {
+            "Pledge to the Embers and earn standing FIRST — the errand does not open until the \
+             faction world commits an unlocked standing, so the quest turns below stay shut until \
+             it does."
+                .to_string()
+        };
         let mut children = vec![
+            section("Your next move", "accent", vec![text(directive)]),
             section(
                 "One identity · two executor worlds",
                 "muted",

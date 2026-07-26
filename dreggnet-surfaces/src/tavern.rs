@@ -30,8 +30,8 @@ use dreggnet_offerings::{
     VerifyReport,
 };
 
-use crate::{pill, row, section, text};
-use deos_view::ViewNode;
+use crate::{menu, pill, row, section, text};
+use deos_view::{MenuItem, ViewNode};
 
 /// The link-out verb the render carries — the host resolves it to *opening the live tavern node*
 /// (the async transport), not to a synchronous surface commit. `advance` of it here is refused.
@@ -250,19 +250,34 @@ impl Offering for TavernOffering {
             children.push(section("Party", "genuine", vec![row(members)]));
         }
 
-        // The explicit LINK-OUT — the host resolves this button to opening the live tavern node
-        // (the async transport), where post/enter/party-up are real attributed turns. It rides the
-        // one ViewNode tree so every frontend surfaces the way to reach the real hall.
+        // The explicit LINK-OUT — the host resolves this to opening the live tavern node (the
+        // async transport), where post/enter/party-up are real attributed turns. It rides the one
+        // ViewNode tree so every frontend surfaces the way to reach the real hall.
+        //
+        // ⚑ **NOT a live control.** It used to be a `ViewNode::Button`, which every POST-form
+        // renderer paints as an ENABLED submit — and this offering's `actions()` is empty and its
+        // `advance` refuses everything, so on the web the one thing the page invited you to press
+        // answered "that affordance is not on the current surface". A control that can only refuse
+        // is worse than no control: it teaches a player the surface is broken. It is now a DIMMED
+        // row (the cap tooth shown, not hidden) beside prose that names where the real hall is, so
+        // the destination survives on every channel without promising a press that cannot land.
+        // The honest fix is a link-out node in the IR — `ViewNode` has no such variant today.
         children.push(section(
             "Join the live hall",
             "accent",
             vec![
-                text("This board is a live mirror — enter the hall to post, seat, and party up."),
-                ViewNode::Button {
-                    label: format!("Enter {}", s.hall),
+                text(format!(
+                    "This board is a READ MIRROR — posting, seating and partying up are real \
+                     attributed turns on the live {} node, not moves on this page, so nothing here \
+                     is pressable. Open the live hall to act.",
+                    s.hall
+                )),
+                menu(vec![MenuItem {
+                    label: format!("Enter {} (on the live tavern node)", s.hall),
                     turn: TURN_JOIN.to_string(),
                     arg: 0,
-                },
+                    enabled: false,
+                }]),
             ],
         ));
 

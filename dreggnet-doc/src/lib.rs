@@ -678,7 +678,42 @@ impl DocOffering {
             .map(|c| ViewNode::Text(format!("{} — {}", c.who.as_str(), c.role.label())))
             .collect();
 
+        // THE DIRECTIVE, first — the one sentence saying what to do NOW. The `Text` plaque below
+        // is `accent`, so the shared web skin would have promoted ITS first paragraph as the
+        // page's lead; on an EMPTY document that paragraph is the empty string and the renderer
+        // drops it, so the page opened saying nothing at all about what to do.
+        let may_edit = match actor {
+            Some(a) => session
+                .role_of(a)
+                .map(Role::holds_edit_cap)
+                .unwrap_or(false),
+            None => true,
+        };
+        let cell_count = session.cells().len();
+        let directive = if !may_edit {
+            "You are reading this document, not writing it — no edit cap has been granted to your \
+             identity, so every control below is inert and a crafted edit would be refused by the \
+             executor. Ask a collaborator to invite you."
+                .to_string()
+        } else if cell_count == 0 {
+            "This document is empty — open it by typing a first line into the insert affordance. \
+             Every edit lands as a real committed turn carrying its author, so the text below is \
+             always attributable and always replayable."
+                .to_string()
+        } else {
+            format!(
+                "Continue the document at the tip, or edit one of the {cell_count} cell(s) below. \
+                 An insert at an anchor another collaborator has already extended is REFUSED by \
+                 the landing gate rather than silently forked, so the text you read is the text \
+                 that committed."
+            )
+        };
         let mut children = vec![
+            ViewNode::Section {
+                title: "What to do now".to_string(),
+                tag: "accent".to_string(),
+                children: vec![ViewNode::Text(directive)],
+            },
             ViewNode::Section {
                 title: "Text".to_string(),
                 tag: "accent".to_string(),

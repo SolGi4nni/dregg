@@ -686,11 +686,20 @@ impl DescentCampaignOffering {
             tag: "accent".to_string(),
             children: vec![
                 ViewNode::Text(directive),
-                // ⚑ THE PROSE MIRROR of the pill row. A `Pill` is a badge layer with NO plain-text
-                // form (`deos_view::text` drops it by design), so a chat channel would otherwise
-                // learn the campaign's phase from nothing at all — the same hole
-                // `native_descent::descent_standing` exists to close for the expedition's own
-                // status word.
+                // ⚑ THE PROSE MIRROR of the pill row — the campaign's phase, in a sentence.
+                //
+                // ⚠ ITS ORIGINAL REASON EXPIRED ON 2026-07-26, one day after it was written. It
+                // said "`deos_view::text` drops `Pill` by design, so a chat channel would learn
+                // the campaign's phase from nothing at all". That hole is now closed AT THE
+                // SOURCE: a literal pill paints as `[badge]` in the shared prose walk (it was
+                // costing 15 of the 23 catalog offerings their status line, not two — see
+                // `dreggnet-web/tests/catalog_flow_harness.rs`, invariant `prose-parity`).
+                //
+                // So a chat reader now gets BOTH this sentence and `[EXPEDITION LIVE] [standing in
+                // …] [day …]`. That is mild redundancy, not a contradiction, and the badge row
+                // carries a datum (the day digest) the sentence does not — so it is LEFT for a
+                // deliberate copy pass rather than trimmed blind. FOLLOW-UP: decide which of the
+                // two says it, here and in `dungeon.rs`.
                 ViewNode::Text(format!(
                     "{phase} — standing in {name}, {crowned} of {total} location{} crowned.",
                     if total == 1 { "" } else { "s" }

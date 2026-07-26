@@ -475,6 +475,59 @@ impl Offering for TradeOffering {
         let mut children: Vec<ViewNode> = Vec::new();
         let painted = self.paint(s);
 
+        // THE DIRECTIVE, first — the stall used to open on `goods 9 · listed 0 · sold 0`, which
+        // says the position and asks for nothing. The shared skin promotes the leading paragraph
+        // of an `accent` plaque, so this is the sentence a stranger reads first.
+        let coins = s.coin_balance();
+        let listable = painted
+            .iter()
+            .enumerate()
+            .filter(|(i, g)| {
+                !g.sold && !g.listed && s.holder_of(*i).as_deref() == Some(s.seller.as_str())
+            })
+            .count();
+        let affordable = painted
+            .iter()
+            .filter(|g| !g.sold && g.listed && coins >= g.price)
+            .count();
+        children.push(section(
+            "Your next move",
+            "accent",
+            vec![
+                text(if affordable > 0 {
+                    format!(
+                        "{affordable} listed good(s) are within your {coins}◈ purse — press Buy and \
+                         the coin and the good change hands in ONE atomic turn, so there is no \
+                         state where you have paid and not received."
+                    )
+                } else if listable > 0 {
+                    format!(
+                        "Nothing on the board is both listed and inside your {coins}◈ purse yet — \
+                         press List on one of your {listable} unlisted good(s) to put it up. \
+                         Listing moves it into custody as a real owner-signed turn."
+                    )
+                } else {
+                    format!(
+                        "Nothing is listable and nothing is affordable at {coins}◈: every good \
+                         here is already sold, already listed above your purse, or held by \
+                         somebody else. A press on one of those is refused by the ownership gate, \
+                         not by this page."
+                    )
+                }),
+                row(vec![
+                    pill(format!("{coins}◈ purse"), "accent"),
+                    pill(
+                        format!("{listable} to list"),
+                        if listable > 0 { "good" } else { "muted" },
+                    ),
+                    pill(
+                        format!("{affordable} to buy"),
+                        if affordable > 0 { "good" } else { "muted" },
+                    ),
+                ]),
+            ],
+        ));
+
         // The stall summary.
         children.push(section(
             "Stall",

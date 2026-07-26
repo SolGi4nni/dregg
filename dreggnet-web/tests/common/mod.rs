@@ -123,6 +123,87 @@ pub fn first_offered_act(html: &str) -> Option<(String, i64)> {
     Some((turn.to_string(), arg.parse().ok()?))
 }
 
+/// **One act a rendered page OFFERS**, read off its own form — `{turn, arg}` plus the two things a
+/// bare `(turn, arg)` pair loses: whether the control is actually pressable, and what it SAYS.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OfferedAct {
+    /// The affordance verb (the form's hidden `turn`).
+    pub turn: String,
+    /// The affordance argument — an INDEX into the offering's live decision list, so never
+    /// hardcode one; read it here.
+    pub arg: i64,
+    /// `false` when the control is rendered `disabled` (the cap tooth SHOWN, not hidden). Pressing
+    /// one is a real executor refusal, so a test driving "a browser user's play lands" must pick an
+    /// ENABLED row.
+    pub enabled: bool,
+    /// The control's own text. ⚑ A label is user-facing state: tug leaked a seat's committed hand
+    /// through action-row labels while its fog *sections* were correct (`7f216ec8b`), so a fog test
+    /// that reads only the prose cannot see the leak. This is where it lives.
+    pub label: String,
+}
+
+/// **Every act a rendered page offers**, in document order — the affordance forms AND the clickable
+/// board cells, since a `CoordGrid` square is a real POST form too.
+///
+/// Use this instead of hardcoding a `(method, index)` pair; see [`first_offered_act`] for why.
+pub fn offered_acts(html: &str) -> Vec<OfferedAct> {
+    let mut out = Vec::new();
+    for chunk in html.split("<form ").skip(1) {
+        let form = match chunk.split_once("</form>") {
+            Some((form, _)) => form,
+            None => chunk,
+        };
+        let Some(turn) = attr_value(form, "turn") else {
+            continue;
+        };
+        let Some(arg) = attr_value(form, "arg").and_then(|a| a.parse::<i64>().ok()) else {
+            continue;
+        };
+        // The renderer emits ` disabled` on BOTH the arg input and the button of a `!enabled`
+        // affordance; a board cell is never disabled.
+        let enabled = !form.contains(" disabled");
+        let label = form
+            .split_once("<button")
+            .and_then(|(_, rest)| rest.split_once('>'))
+            .and_then(|(_, rest)| rest.split_once("</button>"))
+            .map(|(inner, _)| strip_tags(inner))
+            .unwrap_or_default();
+        out.push(OfferedAct {
+            turn,
+            arg,
+            enabled,
+            label,
+        });
+    }
+    out
+}
+
+/// The value of `name="{name}" value="…"` within one form chunk.
+fn attr_value(form: &str, name: &str) -> Option<String> {
+    let marker = format!("name=\"{name}\" value=\"");
+    let (_, rest) = form.split_once(&marker)?;
+    let (value, _) = rest.split_once('"')?;
+    Some(value.to_string())
+}
+
+/// Tags out, whitespace collapsed — a control's spoken text.
+fn strip_tags(html: &str) -> String {
+    let mut out = String::new();
+    let mut in_tag = false;
+    for c in html.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => {
+                in_tag = false;
+                out.push(' ');
+            }
+            c if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// The play-surface URI an act route hangs off — `…/session/{id}/act?q` → `…/session/{id}?q`.
 pub fn surface_uri_of(act_uri: &str) -> String {
     let (path, query) = match act_uri.split_once('?') {

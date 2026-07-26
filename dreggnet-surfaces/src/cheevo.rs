@@ -223,6 +223,30 @@ impl Offering for CheevoShowcase {
     fn render(&self, s: &CheevoSession) -> Surface {
         let mut children: Vec<ViewNode> = Vec::new();
 
+        // THE DIRECTIVE, first. A surface that only states what IS reads as a debug dump; the
+        // shared skin promotes the first paragraph of an `accent` plaque to a serif lead, so this
+        // is the sentence a stranger's eye lands on. For a read-only shelf the honest directive is
+        // that there is nothing to press HERE and where the next row actually comes from.
+        children.push(section(
+            "What this shelf is",
+            "accent",
+            vec![
+                text(if s.is_empty() {
+                    "Nothing to press here — a cheevo is EARNED by playing, never claimed on this \
+                     page. Clear a verified run in the Descent and it lands below, carrying the \
+                     run that witnesses it."
+                } else {
+                    "Nothing to press here — this is your proof shelf. Every row names what you \
+                     did, the run that witnesses it, and a seal that re-derives from the record, \
+                     so a tampered boast stops matching. Play on to earn the next one."
+                }),
+                row(vec![pill(
+                    format!("{} earned", s.len()),
+                    if s.is_empty() { "muted" } else { "good" },
+                )]),
+            ],
+        ));
+
         children.push(section(
             "Showcase",
             "muted",

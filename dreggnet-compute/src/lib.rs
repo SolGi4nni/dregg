@@ -68,6 +68,13 @@ use deos_view::{MenuItem, ViewNode};
 /// carries the job-spec payload (sealed as `SPEC_HASH`).
 pub const TURN_POST: &str = "post";
 
+/// **The budget a fresh POST affordance is PRESENTED with.** Not a policy — a requester types
+/// their own over it on any frontend that renders `arg` as a number — but it must be a value
+/// [`ComputeOffering::advance`] actually accepts, because a presented affordance a player fires
+/// unchanged has to LAND. It was `0`, which `do_post` refuses outright ("a job budget must be
+/// positive"), so the single control a fresh compute session offered could only ever refuse.
+pub const DEFAULT_JOB_BUDGET: i64 = 100;
+
 /// The affordance verb a **worker** fires to claim the job. `arg` is the claim PRICE — the cost the
 /// worker charges (`≤ budget`, the substrate's budget gate). The claim binds the worker as the sole
 /// `PROVIDER_HASH`; a double-claim is a real refusal.
@@ -426,10 +433,17 @@ impl Offering for ComputeOffering {
 
     fn actions(&self, session: &ComputeSession) -> Vec<Action> {
         if !session.is_posted() {
+            // ⚑ THE PRESENTED BUDGET MUST BE ONE THE EXECUTOR ACCEPTS. This affordance presented
+            // `arg = 0`, and `do_post` hard-refuses a zero budget ("a job budget must be
+            // positive") — so the ONLY control a fresh compute session offered was a dead one:
+            // pressing exactly what the page said, unchanged, always refused. A frontend that
+            // renders `arg` as an editable number (the web does) shows this as the DEFAULT, so it
+            // must be a value that lands. `DEFAULT_JOB_BUDGET` is that default; a requester still
+            // types their own over it.
             return vec![Action::new(
-                "Post a compute job (escrow a budget)",
+                format!("Post a compute job (escrow a budget — {DEFAULT_JOB_BUDGET} to start)"),
                 TURN_POST,
-                0,
+                DEFAULT_JOB_BUDGET,
                 true,
             )];
         }

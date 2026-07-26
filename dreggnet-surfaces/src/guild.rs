@@ -262,6 +262,37 @@ impl Offering for GuildPage {
         let mut children: Vec<ViewNode> = Vec::new();
         let stats = s.stats();
 
+        // THE DIRECTIVE, first — the shared skin promotes the leading paragraph of an `accent`
+        // plaque to the page's lead, so this is the sentence that says what to do now.
+        children.push(section(
+            "Your next move",
+            "accent",
+            vec![
+                text(if s.applicants.is_empty() {
+                    "No application is pending — there is nothing to admit right now. The roster \
+                     below is the live cap ledger, not a list: a name reads `member` only because \
+                     a real grant turn committed for it, and a stranger's identical write is \
+                     refused by the executor rather than by this page."
+                        .to_string()
+                } else {
+                    format!(
+                        "{} applicant(s) are waiting — press Admit to grant the guild cap and land \
+                         that member's first cap-bounded write as ONE real turn. Until you do, \
+                         their write is refused for want of the cap.",
+                        s.applicants.len()
+                    )
+                }),
+                row(vec![pill(
+                    format!("{} pending", s.applicants.len()),
+                    if s.applicants.is_empty() {
+                        "muted"
+                    } else {
+                        "warn"
+                    },
+                )]),
+            ],
+        ));
+
         children.push(section(
             "Guild",
             "muted",

@@ -294,6 +294,38 @@ impl Offering for InventoryOffering {
     fn render(&self, s: &InventorySession) -> Surface {
         let mut children: Vec<ViewNode> = Vec::new();
 
+        // THE DIRECTIVE, first. The shelf used to open with a state line and nothing else, so a
+        // reader was told what they own and never what they could do with it.
+        children.push(section(
+            "Your next move",
+            "accent",
+            vec![
+                text(if s.is_empty() {
+                    "This shelf is empty — nothing to move. Items arrive by clearing a run or by \
+                     buying one on the market; each carries the provenance chain that says where \
+                     it came from."
+                        .to_string()
+                } else if s.held_count() == 0 {
+                    "Every note below has already been gifted away, so none of them is yours to \
+                     move — a Gift of one you no longer hold is refused by the owner-signature \
+                     gate, not by this page."
+                        .to_string()
+                } else {
+                    format!(
+                        "{} note(s) are yours to move: press Gift to hand one to {FRIEND} as a \
+                         real owner-signed transfer, which lands as one committed turn and shows \
+                         up in that note's lineage. Selling for a price is the market, not this \
+                         shelf.",
+                        s.held_count()
+                    )
+                }),
+                row(vec![pill(
+                    format!("{} of {} held", s.held_count(), s.len()),
+                    if s.held_count() == 0 { "muted" } else { "good" },
+                )]),
+            ],
+        ));
+
         children.push(section(
             "Owner",
             "muted",

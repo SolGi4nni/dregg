@@ -284,6 +284,45 @@ impl Offering for CraftOffering {
     fn render(&self, s: &CraftSession) -> Surface {
         let mut children: Vec<ViewNode> = Vec::new();
 
+        // THE DIRECTIVE, first — what to press NOW, not merely what the forge holds. Taken under
+        // its own SHORT borrow, like the material snapshot below.
+        let (ready, benches): (usize, usize) = {
+            let w = s.world.read();
+            let benches = w.benches();
+            (
+                benches
+                    .iter()
+                    .filter(|b| w.live_inputs(b) >= b.recipe.input_count())
+                    .count(),
+                benches.len(),
+            )
+        };
+        children.push(section(
+            "Your next move",
+            "accent",
+            vec![
+                text(if ready > 0 {
+                    format!(
+                        "{ready} of the {benches} bench(es) below have every input live — press \
+                         Forge on one. The craft consumes those exact materials in the same \
+                         committed turn as it mints the output, so a forge you cannot pay for is \
+                         refused rather than half-applied."
+                    )
+                } else {
+                    format!(
+                        "No bench can fire yet — each of the {benches} recipes below is missing at \
+                         least one live input, and a Forge pressed short is refused by the \
+                         executor. Gather or craft the missing material first; the counts on each \
+                         row say how far off it is."
+                    )
+                }),
+                row(vec![pill(
+                    format!("{ready}/{benches} benches ready"),
+                    if ready > 0 { "good" } else { "muted" },
+                )]),
+            ],
+        ));
+
         children.push(section(
             "Forge",
             "muted",
