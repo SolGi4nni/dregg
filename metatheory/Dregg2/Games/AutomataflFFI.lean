@@ -331,6 +331,13 @@ def encodeWin : Option Pid → String
   | none => "-1"
   | some p => toString p
 
+/-- A nearest-goal distance token: the `Nat`, or `-1` for a seat that owns NO goal corner
+(`goalDistance = none`). Same absent-sentinel discipline as `encodeWin`, so a caller reading a
+negative number knows the seat is unseated rather than adjacent. -/
+def encodeDist : Option Nat → String
+  | none => "-1"
+  | some d => toString d
+
 /-! ## §4 — the verbs
 
 Each verb is the spec function it names, wrapped in the codec. The only composition added here is
@@ -427,6 +434,23 @@ def decide? (toks : List String) : Option String :=
     let (b, r1) ← parseBoard rest
     let (g, _) ← parseGoals b.size r1
     some (encodeWin (adjudicateCapped b.automaton g))
+  -- `dist BOARD GOALS` — the two NUMBERS `adjudicate` compares, alongside the verdict they produce:
+  -- `d0 d1 win`, where `dK` is `goalDistance` (the Manhattan distance from the automaton to seat
+  -- `K`'s NEAREST owned corner, `-1` when it owns none) and `win` is `adjudicateCapped`'s answer.
+  -- Same operands as `adjudicate`, a strictly larger payload — no new semantics, and every field is
+  -- a spec function applied to the decoded board.
+  --
+  -- ⚑ Why the verb exists: the played surface was rendering the threat numbers ("seat A · 9 steps
+  -- from a goal") from a Manhattan distance HAND-WRITTEN IN RUST, beside a verdict it took from
+  -- `adjudicate`. Two computations of the same quantity, one of them unproven, displayed together as
+  -- if they agreed. Now the number and the verdict come out of ONE call over `goalDistance` /
+  -- `adjudicateCapped`, which is the pair `adjudicate_sound` is stated about.
+  | "dist" :: rest => do
+    let (b, r1) ← parseBoard rest
+    let (g, _) ← parseGoals b.size r1
+    some (encodeDist (goalDistance b.automaton g 0) ++ " " ++
+          encodeDist (goalDistance b.automaton g 1) ++ " " ++
+          encodeWin (adjudicateCapped b.automaton g))
   | "legal" :: rest => do
     let (b, r1) ← parseBoard rest
     let (marks, r2) ← parseCoordList b.size r1
@@ -593,5 +617,29 @@ adjudication actually picks a winner, so `-1` above is a verdict rather than a s
 -- A malformed `adjudicate` wire fails CLOSED, like every other verb.
 #guard rulesFFI "adjudicate" == "0"
 #guard rulesFFI "adjudicate 5" == "0"
+
+/-! ### `dist` — the two numbers behind the verdict
+
+The played surface shows a THREAT reading per seat ("N steps from a goal"). These guards pin it to
+`goalDistance`, so the number on screen is the one `adjudicateCapped` actually compares and the one
+`adjudicate_sound` is a theorem about.
+
+Non-vacuity is the point of the three poles: the stock opening is 10/10 with a `-1` verdict (a dead
+heat, matching `stock_opening_adjudicates_draw`), and the two nudged boards report DIFFERENT numbers
+with a decisive verdict — so a reader can see that the pair moves, and moves together. `⟨10,2⟩` is
+the position the play harness actually froze on (`adjudicate_decisive_witness`): 2 from seat 0's
+`⟨10,0⟩`, 8 from seat 1's `⟨10,10⟩`. -/
+#guard rulesFFI ("dist " ++ encodeBoard stockTwoPlayer ++ " " ++ encodeGoals (stockGoals2 11))
+  == "1 10 10 -1"
+#guard rulesFFI ("dist " ++ encodeBoard (mkBoard 11 [] ⟨10, 2⟩) ++ " " ++
+  encodeGoals (stockGoals2 11)) == "1 2 8 0"
+#guard rulesFFI ("dist " ++ encodeBoard (mkBoard 11 [] ⟨3, 8⟩) ++ " " ++
+  encodeGoals (stockGoals2 11)) == "1 11 5 1"
+-- A seat that owns NO corner reports `-1` rather than `0`: an unseated player is not adjacent to a
+-- goal, and `adjudicate` hands the match to the seat that does own one (`adjudicate_seated`).
+#guard rulesFFI ("dist " ++ encodeBoard (mkBoard 11 [] ⟨5, 5⟩) ++ " 1 0 0 0") == "1 10 -1 0"
+-- Fail-closed, like every other verb.
+#guard rulesFFI "dist" == "0"
+#guard rulesFFI "dist 5" == "0"
 
 end Dregg2.Games.AutomataflFFI

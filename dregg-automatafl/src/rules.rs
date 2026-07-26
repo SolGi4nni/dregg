@@ -264,6 +264,43 @@ pub fn apply_turn(b: &Board, ms: &[Move]) -> Result<Board, String> {
     Ok(turn(b, &[], ms, &[])?.0)
 }
 
+/// **WHO IS AHEAD, and by how much** — `AutomataflRules.goalDistance` for both seats plus the
+/// `adjudicateCapped` verdict those two numbers produce, from ONE call (`dist BOARD GOALS`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Standing {
+    /// Each seat's Manhattan distance to its OWN nearest goal corner (`goalDistance`). `None` = the
+    /// seat owns no corner, which is not the same as being on one (that is `Some(0)`).
+    pub dist: [Option<u32>; 2],
+    /// Who would take the match if the clock ran out on this board — `adjudicateCapped`.
+    pub verdict: Option<u32>,
+}
+
+/// **The standing** ([`Standing`]) — the ruleset's own "who is ahead" reading of a board.
+///
+/// ⚑ This exists because the surface used to paint the threat numbers from a Manhattan distance
+/// HAND-WRITTEN IN RUST while taking the verdict from [`adjudicate_capped`] — two computations of
+/// one quantity, displayed side by side as though they were the same one, only one of them proven.
+/// Both now come out of `goalDistance` / `adjudicateCapped` in a single answer, which is the pair
+/// `adjudicate_sound` is stated about.
+pub fn standing(b: &Board, goals: &[(Coord, u32)]) -> Result<Standing, String> {
+    let toks = ask(&format!("dist {} {}", board_wire(b)?, goals_wire(goals)))?;
+    if toks.len() != 3 {
+        return Err(format!("dist reply has {} tokens, want 3", toks.len()));
+    }
+    let signed = |i: usize| -> Result<i64, String> {
+        toks[i]
+            .parse::<i64>()
+            .map_err(|e| format!("dist field {i} ({:?}): {e}", toks[i]))
+    };
+    // `-1` is the ABSENT sentinel in both fields (`encodeDist` / `encodeWin`): a seat that owns no
+    // corner has no distance, and no verdict is a genuine dead heat.
+    let opt = |v: i64| if v < 0 { None } else { Some(v as u32) };
+    Ok(Standing {
+        dist: [opt(signed(0)?), opt(signed(1)?)],
+        verdict: opt(signed(2)?),
+    })
+}
+
 /// **Move legality** (`AutomataflRules.moveLegalB`): distinct endpoints, rook-aligned, both in
 /// bounds, the source is not the automaton, and neither endpoint is a marked coordinate.
 pub fn move_legal(b: &Board, marks: &[Coord], m: &Move) -> Result<bool, String> {

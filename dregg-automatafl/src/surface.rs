@@ -304,6 +304,115 @@ fn sense_reading(b: &Board) -> (Coord, String) {
     (target, decision_why(&dec, axis_x))
 }
 
+/// ⚑ **ONE OF THE AUTOMATON'S FOUR SIGHTLINES** — the ray the LEAN cast along one axis direction
+/// (`Board.raycast`, carried out of [`rules::sense`]), read as squares on the board.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Sightline {
+    /// The on-screen word for the direction (`left` / `right` / `up` / `down`).
+    pub dir: &'static str,
+    /// The unit step along it.
+    pub step: Coord,
+    /// How far the ray travelled before it stopped — the LEAN's `Raycast.dist`.
+    pub dist: usize,
+    /// What stopped it: [`REP`] / [`ATT`], or [`VAC`] when the ray ran off the board (the WALL —
+    /// `raycastFuel` records vacuum plus the out-of-bounds step index).
+    pub what: u8,
+    /// The square it stopped on. OUT OF BOUNDS exactly when `what == VAC`.
+    pub end: Coord,
+}
+
+impl Sightline {
+    /// Where the ray points, as a phrase that reads after a distance (`4 squares to its left`,
+    /// `4 squares above it`) — `dir` alone gives "4 squares to its up".
+    fn whither(&self) -> &'static str {
+        match self.dir {
+            "left" => "to its left",
+            "right" => "to its right",
+            "up" => "above it",
+            _ => "below it",
+        }
+    }
+
+    /// What the ray found, in words.
+    pub fn found(&self) -> String {
+        match self.what {
+            ATT => format!("an attractor {} {}", squares(self.dist), self.whither()),
+            REP => format!("a repulsor {} {}", squares(self.dist), self.whither()),
+            // A vacuum ray reached the boundary: nothing stopped it but the edge of the board.
+            _ => format!("open board {} {}", squares(self.dist), self.whither()),
+        }
+    }
+
+    /// Is the end of this ray a real PIECE (as opposed to the board's edge)? A wall-terminated ray
+    /// stops one square OFF the board, so its `end` is not a square anybody can play.
+    pub fn caps_a_piece(&self) -> bool {
+        self.what == ATT || self.what == REP
+    }
+}
+
+/// **THE FOUR SIGHTLINES** of `b`, in `left, right, up, down` order.
+///
+/// The rays come out of the LEAN (`senseOf`'s own `xp / xn / yp / yn` raycasts, in that wire order);
+/// the only thing done here is turning the Lean's distance into the coordinate it designates.
+fn sightlines_of(b: &Board) -> Option<[Sightline; 4]> {
+    let s = rules::sense(b).ok()?;
+    // `senseOf` emits xp, xn, yp, yn. `-y` is UP the screen (row-major, `y = 0` at the top).
+    let spec: [(&'static str, Coord, usize); 4] = [
+        ("left", (-1, 0), 1),
+        ("right", (1, 0), 0),
+        ("up", (0, -1), 3),
+        ("down", (0, 1), 2),
+    ];
+    Some(spec.map(|(dir, step, i)| {
+        let r = s.rays[i];
+        Sightline {
+            dir,
+            step,
+            dist: r.dist,
+            what: r.what,
+            end: (
+                b.auto.0 + step.0 * r.dist as i32,
+                b.auto.1 + step.1 * r.dist as i32,
+            ),
+        }
+    }))
+}
+
+/// ⚑ **THE SQUARES THAT CAN CHANGE THE AUTOMATON'S MIND** — the union of the four sightline
+/// SEGMENTS, from the automaton's neighbour out to and including the square the ray stopped on
+/// (clipped to the board, since a wall-terminated ray stops one square off it).
+///
+/// It follows from the ruleset's own shape: `raycastFuel` steps outward and stops at the first
+/// non-vacuum square, and `evaluateAxis` reads nothing but the two `Raycast` values on its axis — so
+/// the automaton's whole decision is a function of these squares alone, and a move with neither
+/// endpoint here leaves every ray identical.
+///
+/// ⚑ HONEST SCOPE OF THAT CLAIM. It is a reading of the Lean's definitions plus an EXHAUSTIVE
+/// falsifier over the stock opening (`surface::tests::a_move_off_every_sightline_cannot_change_the_read`
+/// checks every legal move that misses the arms, and requires the on-arm set to contain a mover so
+/// the check cannot pass vacuously). It is NOT a machine-checked theorem quantified over all boards
+/// — nothing in `AutomataflRules` states it — so it is a well-tested fact about the shipped surface's
+/// hint, not part of the proof floor.
+///
+/// It is the answer to the single worst thing about the opening position: the stock board offers a
+/// seat **720 legal moves, of which 20 move the automaton at all** — so a player choosing by the
+/// legal-move highlight alone is choosing at random, from a set that is 97% noise.
+fn sightline_squares(b: &Board, lines: &[Sightline; 4]) -> Vec<Coord> {
+    let mut out = Vec::new();
+    for l in lines {
+        for k in 1..=l.dist {
+            let c = (
+                b.auto.0 + l.step.0 * k as i32,
+                b.auto.1 + l.step.1 * k as i32,
+            );
+            if b.in_bounds(c) && !out.contains(&c) {
+                out.push(c);
+            }
+        }
+    }
+    out
+}
+
 /// **The automatafl Offering** — hosts one n=2 match with a per-viewer sealed-move surface.
 /// Stateless; the live match lives in [`AutomataflSession`].
 pub struct AutomataflOffering;
@@ -481,14 +590,31 @@ impl AutomataflSession {
         sense_reading(&self.board)
     }
 
-    /// The fewest steps the automaton could possibly need to reach `seat`'s nearest goal corner
-    /// (Manhattan — it moves one orthogonal square per resolution). `0` = it is standing on one.
-    pub fn goal_distance(&self, seat: Seat) -> i32 {
-        seat.goals()
-            .iter()
-            .map(|g| (g.0 - self.board.auto.0).abs() + (g.1 - self.board.auto.1).abs())
-            .min()
-            .unwrap_or(0)
+    /// **WHO IS AHEAD** — the ruleset's own reading of the live board ([`rules::Standing`]): each
+    /// seat's `goalDistance` and the `adjudicateCapped` verdict those two numbers produce.
+    ///
+    /// ⚑ This is the game's ONLY running contest. `winOnEntry` is the ruleset's sole terminal
+    /// condition and a match that never walks the automaton into a corner never ends — measured
+    /// against this exact spec, *two competent seats draw 100% of the time*, freezing on the neutral
+    /// mid-line in 8–11 turns (`AutomataflRules` §6B). The cap's adjudication is what destroys that
+    /// free freeze, because parking is no longer as good as winning. It was decided at turn 64 and
+    /// shown NOWHERE, so the player could not see the contest they were in until it was over.
+    ///
+    /// `None` when the oracle cannot answer — the plaque then says so rather than guessing.
+    pub fn contest(&self) -> Option<rules::Standing> {
+        rules::standing(&self.board, goals().ok()?).ok()
+    }
+
+    /// The fewest steps the automaton could possibly need to reach `seat`'s nearest goal corner —
+    /// the LEAN's `goalDistance` (it moves one orthogonal square per resolution, so this is a floor
+    /// on the turns left). `Some(0)` = it is standing on one; `None` = the seat owns no corner, or
+    /// the oracle did not answer.
+    ///
+    /// ⚑ This was a Manhattan distance hand-written in Rust, painted beside a verdict taken from the
+    /// Lean — two computations of one quantity, one of them unproven. It is now the number
+    /// `adjudicateCapped` actually compares.
+    pub fn goal_distance(&self, seat: Seat) -> Option<u32> {
+        self.contest()?.dist[seat.idx()]
     }
 
     /// The reference board (the committed position).
@@ -825,6 +951,15 @@ impl AutomataflSession {
                     .iter()
                     .any(|w| self.committed[*w as usize].is_none()),
             };
+        // ⚑ THE AUTOMATON'S FOUR SIGHTLINES, ON THE BOARD. Public (a pure function of the visible
+        // position), and drawn as a GLYPH rather than a tag so it survives the PROSE projection —
+        // Discord and Telegram paint `coordgrid_text` and have no CSS to lean on, and the sightlines
+        // are the one thing a first-time player most needs to see.
+        let lines = sightlines_of(&self.board);
+        let sight: Vec<Coord> = lines
+            .as_ref()
+            .map(|l| sightline_squares(&self.board, l))
+            .unwrap_or_default();
 
         let mut cells = Vec::with_capacity(CELLS);
         for idx in 0..CELLS {
@@ -889,6 +1024,21 @@ impl AutomataflSession {
                     .expect("is_goal")
                     .label()
                     .to_lowercase();
+            } else if p == VAC && sight.contains(&c) {
+                // ⚑ AN EMPTY SQUARE THE AUTOMATON IS LOOKING THROUGH. The four sightlines are the
+                // ONLY squares a move can use to change what the daemon does, and an unmarked
+                // vacuum square is the one place there is room to say so — the pieces at the ends
+                // keep their own `R`/`A` glyph (naming them is the plaque's job) and a goal corner
+                // keeps its letter, because both of those outrank a hint.
+                //
+                // A square is on at most ONE line: the rank line needs `y == auto.y` and the file
+                // line needs `x == auto.x`, and both at once IS the automaton's own square.
+                glyph = if c.1 == self.board.auto.1 {
+                    "─"
+                } else {
+                    "│"
+                }
+                .to_string();
             }
 
             cells.push(CoordCell {
@@ -902,6 +1052,56 @@ impl AutomataflSession {
         ViewNode::CoordGrid { cols: N, cells }
     }
 
+    /// ⚑ **WHAT YOUR OWN MOVE ALONE WOULD DO** — the sentence that turns a sealed move from a
+    /// gamble into a PLAN.
+    ///
+    /// Asked of the LEAN (`turnOf` = `winOnEntry ∘ automatonStepCfg ∘ resolveMoves`, one call) over a
+    /// board on which only the moves this viewer is ENTITLED to know have landed: their own sealed
+    /// move, plus any LOCKED move (public — the ruleset published it when it marked the clash). It is
+    /// therefore computed from `viewer`'s own slot and public state ONLY: the opponent's sealed move
+    /// is not read, so nothing here narrows it and a spectator is never shown one at all.
+    ///
+    /// It is a COUNTERFACTUAL and it says so. The other seat is moving too — there is no pass in
+    /// automatafl — so the real resolution can differ, and that gap is the game. Before this the
+    /// surface explained the automaton's step beautifully in the PAST TENSE and said nothing at the
+    /// moment of choice, which is the moment that decides anything.
+    fn own_move_forecast(&self, seat: Seat, mv: &Move) -> Option<String> {
+        let goals = goals().ok()?;
+        let mut ms = self.locked.clone();
+        ms.push(*mv);
+        let (after, win) = rules::turn(&self.board, &self.marks, &ms, goals).ok()?;
+        let mine = self.contest().and_then(|s| s.dist[seat.idx()]);
+        let then = rules::standing(&after, goals)
+            .ok()
+            .and_then(|s| s.dist[seat.idx()]);
+        let closer = match (mine, then) {
+            (Some(a), Some(b)) if b < a => format!(" — {} NEARER your corner", a - b),
+            (Some(a), Some(b)) if b > a => format!(" — {} further from your corner", b - a),
+            _ => " — no nearer your corner".to_string(),
+        };
+        Some(match win {
+            Some(w) if w == seat.idx() as u32 => {
+                "⚑ IF YOURS IS THE ONLY MOVE THAT LANDS, THIS WINS THE MATCH — the automaton steps \
+                 into your own corner. The other seat is sealing right now and can take that away."
+                    .to_string()
+            }
+            Some(w) => format!(
+                "⚑ CAREFUL: if yours is the only move that lands, this hands the match to SEAT {} \
+                 — it walks the automaton into THEIR corner.",
+                Seat::from_idx(w).label()
+            ),
+            None if after.auto == self.board.auto => "Your move alone would leave the automaton \
+                                                     where it is. (The other seat is moving too, so \
+                                                     the round can still shift it.)"
+                .to_string(),
+            None => format!(
+                "Your move alone would send the automaton to ({},{}){closer}. The other seat is \
+                 sealing at the same time, so the real answer can differ — that gap is the game.",
+                after.auto.0, after.auto.1
+            ),
+        })
+    }
+
     /// The seat's move line — REVEALED to its owner, FOG to everyone else until the open.
     ///
     /// ⚑ A LOCKED seat's line says so, and says it PUBLICLY: which seats are locked is not a
@@ -912,10 +1112,29 @@ impl AutomataflSession {
     fn move_line(&self, seat: Seat, viewer: Option<Seat>) -> ViewNode {
         let own = viewer == Some(seat);
         let locked = !self.is_waiting(seat) && !self.marks.is_empty();
+        // ⚑ THE SURFACE NOW SAYS WHICH SEAT IS YOURS — and, when neither is, says THAT.
+        //
+        // Both panels read `Seat A — them` / `Seat B — them` to a seatless viewer, so a reader
+        // could not tell whether they were a player or a spectator
+        // (`docs/reference/UX-QA-SWEEP-2026-07-26.md`, the automatafl section — "the best of the
+        // four" surface, undone by this one word). "them" is only meaningful against a "you", and
+        // with no viewer there is none: a free seat is `OPEN`, a held one `held by the other
+        // player`, and the standing plaque above says which of the two you would take.
+        let whose = match viewer {
+            Some(_) if own => "YOURS".to_string(),
+            Some(_) => "them".to_string(),
+            // Exact about WHICH free seat is yours: `claimable_seat` takes A before B, so with both
+            // seats open only A is the one your first move would take.
+            None if self.claimable_seat() == Some(seat) => {
+                "OPEN — the seat your first move would claim".to_string()
+            }
+            None if self.seats[seat.idx()].is_none() => "OPEN".to_string(),
+            None => "held by another player".to_string(),
+        };
         let title = format!(
             "Seat {} — {}{}",
             seat.label(),
-            if own { "you" } else { "them" },
+            whose,
             if locked { " · LOCKED" } else { "" }
         );
         let body = match (self.committed[seat.idx()], self.revealed[seat.idx()]) {
@@ -952,12 +1171,16 @@ impl AutomataflSession {
                 if own { "you" } else { "they" },
             ),
             (Some(mv), false) if own => format!(
-                "YOUR sealed move: ({},{}) → ({},{}) · seal {:x}… (the opponent sees only the seal)",
+                "YOUR sealed move: ({},{}) → ({},{}) · seal {:x}… (the opponent sees only the seal){}",
                 mv.frm.0,
                 mv.frm.1,
                 mv.to.0,
                 mv.to.1,
-                self.seal[seat.idx()] >> 40
+                self.seal[seat.idx()] >> 40,
+                match self.own_move_forecast(seat, &mv) {
+                    Some(f) => format!("\n{f}"),
+                    None => String::new(),
+                }
             ),
             (Some(_), false) => format!(
                 "move SEALED · commitment {:x}… (hidden — revealed on the open)",
@@ -979,9 +1202,24 @@ impl AutomataflSession {
     /// tooth SHOWN, never hidden; the executor is still the referee on `advance`).
     fn action_menu(&self, viewer: Option<Seat>) -> ViewNode {
         let phase = self.phase();
+        // ⚑ **A SPECTATOR'S PHASE CONTROLS ARE DIMMED.** Found by
+        // `dreggnet-web/tests/catalog_flow_harness.rs`'s `fog` check and handed to this lane as a
+        // named, self-retiring allowance: the board CELLS already go inert for a spectator
+        // (`board_grid`'s `playable`), but this MENU was gated on the PHASE alone — so once both
+        // seats were taken, a viewer holding NEITHER was still served an ENABLED `Reveal` /
+        // `Resolve`. `advance` refuses them ("both seats are taken — you are a spectator"), which
+        // makes them controls that can ONLY refuse: a lie the page tells before the substrate gets
+        // a say.
+        //
+        // The gate is "no seat AND no seat to claim". A CLAIMANT keeps live controls, and correctly:
+        // `claim_seat` seats them on their first accepted move, so their press really does fire. As
+        // everywhere else, `enabled` is DECORATION — the executor stays the sole referee and a
+        // crafted POST of a dimmed row still reaches it and still gets its refusal.
+        let spectator = viewer.is_none() && self.claimable_seat().is_none();
         // Per-viewer: only while THIS seat is unopened. Publicly (the catalog surface): while EITHER
         // seat is unopened — the executor refuses a double reveal, so the control is honest.
-        let can_reveal = matches!(phase, Phase::Reveal)
+        let can_reveal = !spectator
+            && matches!(phase, Phase::Reveal)
             && match viewer {
                 Some(s) => self.is_waiting(s) && !self.revealed[s.idx()],
                 None => self.waiting.iter().any(|w| !self.revealed[*w as usize]),
@@ -1003,7 +1241,7 @@ impl AutomataflSession {
                     .to_string(),
                 turn: RESOLVE.to_string(),
                 arg: 0,
-                enabled: matches!(phase, Phase::Resolve),
+                enabled: !spectator && matches!(phase, Phase::Resolve),
             },
         ];
         ViewNode::Menu { items }
@@ -1049,6 +1287,48 @@ impl AutomataflSession {
              comes back clean, and the turn counter has not moved.",
             squares(&self.marks)
         ))];
+        // ⚑ **WHAT THE TWO SEATS ACTUALLY TRIED** — the collision itself, named.
+        //
+        // This is the one moment in the game where you get to see the other seat's intent, and it
+        // was being thrown away: the plaque said a square had been contested and never said WHO
+        // reached for what. `conflict_subs` already holds the pair the round considered (it is
+        // recorded for the fold), so the drama costs nothing but the sentence.
+        //
+        // NOT a fog regression — it is the ruleset's own disclosure. `roundStep` detects a clash by
+        // revealing every submission SIMULTANEOUSLY, so a move that took part in one was published
+        // before it was marked; the surface already tells both seats a LOCKED move on exactly that
+        // reasoning, and this applies it symmetrically when both seats clashed instead of one. What
+        // stays sealed is the RE-SUBMISSION, which is a fresh seal like any first one.
+        if let Some(subs) = self.conflict_subs.last() {
+            let tried = |s: Seat| {
+                let m = subs[s.idx()];
+                format!(
+                    "seat {} reached for ({},{}) and sent it to ({},{})",
+                    s.label(),
+                    m.frm.0,
+                    m.frm.1,
+                    m.to.0,
+                    m.to.1
+                )
+            };
+            let same_piece = subs[0].frm == subs[1].frm;
+            let same_landing = subs[0].to == subs[1].to;
+            kids.push(ViewNode::Text(format!(
+                "WHAT COLLIDED: {}, and {}. {} (Those two moves are public now — the ruleset opened \
+                 every submission at once to find the clash. What you seal NEXT is secret again.)",
+                tried(Seat::A),
+                tried(Seat::B),
+                if same_piece {
+                    "You both grabbed the SAME PIECE and pulled it two ways, so neither of you got \
+                     it."
+                } else if same_landing {
+                    "Two different pieces were sent to the SAME SQUARE, and only one thing can \
+                     stand there."
+                } else {
+                    "Their paths crossed on the marked square."
+                },
+            )));
+        }
         let waiting_seats: Vec<Seat> = self.waiting.iter().map(|w| Seat::from_idx(*w)).collect();
         let locked_seats: Vec<Seat> = [Seat::A, Seat::B]
             .into_iter()
@@ -1286,7 +1566,12 @@ impl AutomataflSession {
             let whose = match viewer {
                 Some(v) if v == s => " (you)",
                 Some(_) => " (them)",
-                None => "",
+                // A seatless viewer got a blank here, so both pills read `seat A · sealed` /
+                // `seat B · sealed` and the reader still could not place themselves. The pill now
+                // says which seat is free and which is the one they would take.
+                None if self.claimable_seat() == Some(s) => " (YOURS on your first move)",
+                None if self.seats[s.idx()].is_none() => " (open)",
+                None => " (another player)",
             };
             ViewNode::Pill {
                 text: format!("seat {}{whose} · {word}", s.label()),
@@ -1295,15 +1580,45 @@ impl AutomataflSession {
                 cases: Vec::<PillCase>::new(),
             }
         };
+        // ⚑ "EVERY CONTROL IS INERT" WAS FALSE, AND PROVABLY SO. This branch told a seatless viewer
+        // exactly that while `board_grid(None)` went on serving 121 cell buttons carrying no
+        // `disabled` attribute — and the QA reader proved it from a before/after pair: pressing an
+        // "inert" control changed their seat, their hand and the turn counter
+        // (`docs/reference/UX-QA-SWEEP-2026-07-26.md`, finding 2).
+        //
+        // The claim is now split by the state that decides it. A CLAIMANT (a seat is free) is told
+        // the truth: the board is live and their first landed press takes that seat. A SPECTATOR
+        // (both seats held) keeps the honest version — and it is honest twice over there, because
+        // the web spectator route additionally wraps the whole surface in a `disabled` fieldset
+        // (`dreggnet_web::table_door::spectate_page`) and `table_seats::enforce` refuses a seatless
+        // POST on a locked table outright.
         let who = match viewer {
             Some(s) => format!(
                 "You hold seat {} — your goal corners are {}.",
                 s.label(),
                 Self::goal_text(s)
             ),
-            None => "You are watching this table: BOTH sealed moves are fog to you, and every \
-                     control is inert."
-                .to_string(),
+            None => match self.claimable_seat() {
+                Some(seat) => format!(
+                    "You hold no seat here YET, so both sealed moves are fog to you — but the board \
+                     below is LIVE, not a picture. The first move you land CLAIMS seat {}, whose \
+                     goal corners are {}. Pick up a piece and the squares it can reach will light.",
+                    seat.label(),
+                    Self::goal_text(seat),
+                ),
+                // ⚑ NOT "every control is inert" HERE EITHER, and for a subtler reason. With both
+                // seats held there is nothing for this viewer to claim, but the board is the SHARED
+                // one the seated players press (Discord posts exactly this surface as the channel
+                // board), so its squares are still drawn as controls. "Inert" would be a claim about
+                // the MARKUP that is false; the true statement is about the EXECUTOR, which refuses
+                // an advance from an identity holding no seat ("both seats are taken — you are a
+                // spectator") and commits nothing.
+                None => "Both seats are held, so you are watching: BOTH sealed moves are fog to \
+                         you. The board still draws its squares — it is the same board the two \
+                         players press — but nothing you press can move it: the executor refuses a \
+                         move from an identity holding no seat, and commits nothing."
+                    .to_string(),
+            },
         };
         // The ladder is SEAL → OPEN → RESOLVE, plus the fourth station the ruleset adds: a clash
         // sends the round back to the start of the ladder with the contested square burned. It is
@@ -1379,14 +1694,47 @@ impl AutomataflSession {
                 )
             }));
         }
-        // HOW CLOSE IS IT TO ENDING THE MATCH. `1` means the very next resolution can decide it.
+        // ⚑ **WHAT IT CAN SEE** — the four rays, and the rule that follows from them. Without this
+        // the board is 121 squares of undifferentiated legality: the stock opening offers a seat 720
+        // legal moves and exactly 20 of them move the automaton at all, so a player picking off the
+        // rook-line highlight alone is picking from a set that is 97% noise. The four sightlines are
+        // WHY, and they are cheap to say because the rays are the Lean's own.
+        if !self.ended {
+            if let Some(lines) = sightlines_of(&self.board) {
+                let found = lines
+                    .iter()
+                    .map(Sightline::found)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let n = sightline_squares(&self.board, &lines).len();
+                let caps = lines.iter().filter(|l| l.caps_a_piece()).count();
+                kids.push(ViewNode::Text(format!(
+                    "WHAT IT CAN SEE — one arm along each direction of its rank and file: {found}. \
+                     Those are the whole of what it answers: each axis is a COMPARISON of the two \
+                     distances on it, so nothing off the arms reaches the decision at all. The arms \
+                     are drawn ─ and │ on the board and there are {n} squares on them, {caps} of \
+                     which hold the pieces that cap the rays. A move that neither LEAVES nor LANDS \
+                     ON one of those {n} squares cannot change what the automaton does, however \
+                     legal it is. That is where the game actually is.",
+                )));
+            }
+        }
+        // HOW CLOSE IS IT TO ENDING THE MATCH, and — the part that was never shown — WHO IS AHEAD.
+        //
+        // ⚑ The distance pills alone are not a stake signal: while the automaton sits anywhere on
+        // the neutral mid-line both seats read the SAME number, which is exactly the position two
+        // competent seats freeze on (`AutomataflRules` §6B: 100% draws, in 8–11 turns). The verdict
+        // is the ruleset's answer to that freeze, and it was computed once at turn 64 and shown
+        // nowhere — so the contest the players were actually in was invisible for the whole match.
+        let contest = self.contest();
         let dist_pill = |s: Seat| {
-            let d = self.goal_distance(s);
-            let (word, tag) = match d {
-                0 => ("ON a goal corner".to_string(), "bad"),
-                1 => ("1 step from a goal".to_string(), "bad"),
-                2..=3 => (format!("{d} steps from a goal"), "warn"),
-                _ => (format!("{d} steps from a goal"), ""),
+            let (word, tag) = match contest.and_then(|st| st.dist[s.idx()]) {
+                Some(0) => ("ON a goal corner".to_string(), "bad"),
+                Some(1) => ("1 step from a goal".to_string(), "bad"),
+                Some(d @ 2..=3) => (format!("{d} steps from a goal"), "warn"),
+                Some(d) => (format!("{d} steps from a goal"), ""),
+                // `goalDistance = none`: the seat owns no corner. NOT the same as standing on one.
+                None => ("owns no goal corner".to_string(), "muted"),
             };
             ViewNode::Pill {
                 text: format!("seat {} · {word}", s.label()),
@@ -1396,6 +1744,33 @@ impl AutomataflSession {
             }
         };
         kids.push(ViewNode::Row(vec![dist_pill(Seat::A), dist_pill(Seat::B)]));
+        if !self.ended {
+            let left = MAX_TURNS.saturating_sub(self.turn_no);
+            kids.push(ViewNode::Text(match contest {
+                Some(st) => format!(
+                    "ON THE CLOCK: {left} more resolution{} and the match is adjudicated where it \
+                     stands — the seat whose own corner is strictly nearer takes it. {} So a \
+                     position is not safe just because nobody has reached a corner.",
+                    if left == 1 { "" } else { "s" },
+                    match st.verdict {
+                        Some(w) => format!(
+                            "Right now it would go to SEAT {} — nearer its own corner on this \
+                             board.",
+                            Seat::from_idx(w).label()
+                        ),
+                        None =>
+                            "Right now it is a DEAD HEAT: both seats are exactly as far from their \
+                             own corners, so the adjudication draws. Parking here wins nobody the \
+                             match."
+                                .to_string(),
+                    }
+                ),
+                None => format!(
+                    "ON THE CLOCK: {left} more resolutions before the match is adjudicated where \
+                     it stands. (The game oracle did not answer, so who is ahead is unknown.)"
+                ),
+            }));
+        }
         ViewNode::Section {
             title: "The automaton".to_string(),
             tag: "accent".to_string(),

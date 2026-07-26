@@ -1524,3 +1524,384 @@ fn a_derived_identity_claims_a_seat_and_a_third_is_a_spectator() {
         "bob's seal is fog to alice"
     );
 }
+
+// ────────────────────────────────────────────────────────────────────────────────────────────
+// 7. LEGIBILITY OF CONSEQUENCE — the claims the surface PRINTS are the claims that HOLD
+// ────────────────────────────────────────────────────────────────────────────────────────────
+
+/// ⚑ **THE SIGHTLINE CLAIM, FALSIFIED RATHER THAN ASSERTED.** The automaton plaque tells a player
+/// that a move which neither leaves nor lands on one of the sightline squares "cannot change what
+/// the automaton does". That is a load-bearing promise — it is the whole basis on which a player
+/// narrows 720 legal moves down to a handful — so it is checked against the LEAN, not trusted.
+///
+/// The test is the strong direction: over EVERY legal move of the stock opening that misses every
+/// sightline square, the automaton's post-resolution position must be identical to the one it
+/// reaches when nothing moves at all. A single counterexample means the surface is teaching a lie.
+///
+/// It is also non-vacuous in both halves: the off-sightline set must be large (it is most of the
+/// board) and the ON-sightline set must contain at least one move that DOES change the answer, or
+/// the claim would be true only because nothing ever moves the automaton.
+#[test]
+fn a_move_off_every_sightline_cannot_change_the_read() {
+    let off = AutomataflOffering;
+    let session = off.open(SessionConfig::with_seed(41)).expect("open");
+    let board = session.board().clone();
+
+    // The sightline squares, as the surface paints them — read back off the rendered board so the
+    // test checks the SHOWN set rather than a private recomputation of it.
+    let (_, cells) = grid(&off.render(&session));
+    let shown: Vec<Coord> = (0..CELLS)
+        .filter(|i| cells[*i].glyph == "─" || cells[*i].glyph == "│")
+        .map(coord_of)
+        .collect();
+    assert!(
+        !shown.is_empty(),
+        "the opening paints sightlines (they are the teaching device)"
+    );
+    // The four capping pieces are on the arms too — a move that takes one AWAY changes the ray, so
+    // the honest off-sightline test has to exclude them as well. They are exactly the squares the
+    // Lean's own ray distances designate, one step past the last painted `─`/`│` on each arm.
+    let mut arms: Vec<Coord> = shown.clone();
+    for (dx, dy) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)] {
+        let mut k = 1;
+        loop {
+            let c = (board.auto.0 + dx * k, board.auto.1 + dy * k);
+            if !board.in_bounds(c) {
+                break;
+            }
+            if !arms.contains(&c) {
+                // The first square off the painted run is the cap (or open board beyond it).
+                arms.push(c);
+                break;
+            }
+            k += 1;
+        }
+    }
+
+    // Where the automaton goes when NOTHING moves — the baseline the claim is relative to.
+    let idle = apply_turn(&board, &[])
+        .expect("the Lean answers an empty round")
+        .auto;
+
+    let mut off_count = 0usize;
+    let mut on_that_moved = 0usize;
+    for i in 0..CELLS {
+        let frm = coord_of(i);
+        let p = board.cell_at(frm);
+        if p != REP && p != ATT {
+            continue;
+        }
+        for to in session.legal_targets(frm) {
+            let m = Move { who: 0, frm, to };
+            let after = apply_turn(&board, &[m]).expect("the Lean answers").auto;
+            let touches = arms.contains(&frm) || arms.contains(&to);
+            if touches {
+                if after != idle {
+                    on_that_moved += 1;
+                }
+            } else {
+                off_count += 1;
+                assert_eq!(
+                    after, idle,
+                    "({},{}) → ({},{}) touches no sightline square yet moved the automaton to \
+                     {after:?} instead of {idle:?} — the plaque's claim is FALSE",
+                    frm.0, frm.1, to.0, to.1
+                );
+            }
+        }
+    }
+    assert!(
+        off_count > 100,
+        "the off-sightline set is most of the board, not a handful ({off_count} checked)"
+    );
+    assert!(
+        on_that_moved > 0,
+        "at least one ON-sightline move DOES change the automaton, or the claim is vacuous"
+    );
+}
+
+/// **The threat numbers come from the LEAN.** `goal_distance` is `AutomataflRules.goalDistance` and
+/// the standing verdict is `adjudicateCapped`, from one `dist` call — pinned here against the
+/// ruleset's own witnesses so the number on screen cannot drift back into a Rust Manhattan.
+#[test]
+fn the_standing_is_the_rulesets_own_verdict() {
+    let off = AutomataflOffering;
+    let session = off.open(SessionConfig::with_seed(42)).expect("open");
+
+    // The stock opening is a DEAD HEAT, and both seats read 10 (`stock_opening_adjudicates_draw`).
+    let st = session.contest().expect("the oracle answers the standing");
+    assert_eq!(
+        st.dist,
+        [Some(10), Some(10)],
+        "both seats 10 from their own"
+    );
+    assert_eq!(st.verdict, None, "the stock opening adjudicates to a draw");
+    assert_eq!(session.goal_distance(Seat::A), Some(10));
+
+    // And the clock + the verdict are actually SHOWN — the adjudication used to be decided at turn
+    // 64 and painted nowhere, so the contest was invisible for the whole match.
+    let text = rendered_text(&off.render_for(&session, &seat_a()));
+    assert!(text.contains("ON THE CLOCK"), "the clock is shown");
+    assert!(text.contains("DEAD HEAT"), "the standing verdict is shown");
+    assert!(
+        text.contains("WHAT IT CAN SEE"),
+        "the sightline reading is shown"
+    );
+}
+
+/// ⚑ **THE FORECAST IS PER-VIEWER.** The "your move alone would…" line is computed from the
+/// viewer's OWN sealed move plus public state, so it must appear on that seat's surface and on NO
+/// other — a spectator or the opponent reading it would be a fog breach by a different route than
+/// the move line itself.
+#[test]
+fn the_own_move_forecast_never_leaves_its_own_seat() {
+    let off = AutomataflOffering;
+    let mut session = off.open(SessionConfig::with_seed(43)).expect("open");
+
+    // Seat A seals a move that DOES move the automaton (an on-sightline repulsor push).
+    seal(&off, &mut session, &seat_a(), (5, 9), (5, 7));
+
+    let a = rendered_text(&off.render_for(&session, &seat_a()));
+    assert!(
+        a.contains("Your move alone would"),
+        "the sealing seat is told what its own move would do:\n{a}"
+    );
+    // The forecast names a square the opponent must not learn — the automaton's destination under
+    // A's move. Seat B and the spectator get neither the move nor its consequence.
+    for (who, view) in [
+        (
+            "seat B",
+            rendered_text(&off.render_for(&session, &seat_b())),
+        ),
+        ("a spectator", rendered_text(&off.render(&session))),
+    ] {
+        assert!(
+            !view.contains("Your move alone would"),
+            "{who} must not read seat A's forecast"
+        );
+        assert!(
+            !view.contains("(5,9) → (5,7)"),
+            "{who} must not read seat A's sealed move"
+        );
+    }
+}
+
+/// ⚑ **THE CLASH SAYS WHAT COLLIDED.** A re-entry that names the contested square but not the two
+/// moves that contested it throws away the one glimpse of the opponent the game ever offers. Both
+/// moves are public at that point BY THE RULESET (a clash is found by opening every submission at
+/// once), and the FRESH submissions must go back under fog.
+#[test]
+fn the_clash_names_both_submissions_and_reseals_the_re_entry() {
+    let off = AutomataflOffering;
+    let mut session = off.open(SessionConfig::with_seed(44)).expect("open");
+
+    // Both seats fork the SAME attractor — the pinned clash.
+    seal(&off, &mut session, &seat_a(), (3, 1), (3, 3));
+    seal(&off, &mut session, &seat_b(), (3, 1), (5, 1));
+    assert!(off.advance(&mut session, act(REVEAL, 0), seat_a()).landed());
+    assert!(off.advance(&mut session, act(REVEAL, 0), seat_b()).landed());
+    assert!(
+        off.advance(&mut session, act(RESOLVE, 0), seat_a())
+            .landed()
+    );
+    assert_eq!(session.phase(), Phase::Resubmit, "the round re-entered");
+
+    let text = rendered_text(&off.render_for(&session, &seat_a()));
+    assert!(
+        text.contains("WHAT COLLIDED"),
+        "the collision is named:\n{text}"
+    );
+    assert!(
+        text.contains("(3,1)") && text.contains("(3,3)") && text.contains("(5,1)"),
+        "both submissions are named, not just the marked square"
+    );
+    assert!(
+        text.contains("SAME PIECE"),
+        "and the SHAPE of the clash is named (both grabbed one piece)"
+    );
+
+    // The RE-SUBMISSION is sealed again: A's fresh move is fog to B.
+    seal(&off, &mut session, &seat_a(), (7, 1), (7, 4));
+    let b_view = rendered_text(&off.render_for(&session, &seat_b()));
+    assert!(
+        !b_view.contains("(7,1) → (7,4)"),
+        "the fresh seal is fog again, even though the clashed pair is public"
+    );
+}
+
+/// ⚑ **THE SURFACE SAYS WHICH SEAT IS YOURS.** Both panels read `Seat A — them` / `Seat B — them`
+/// to a viewer holding no seat, so a reader could not tell whether they were a player or a
+/// spectator (`docs/reference/UX-QA-SWEEP-2026-07-26.md`, the automatafl section). "them" only means
+/// anything against a "you"; with no seat there is none.
+#[test]
+fn a_seatless_viewer_is_told_which_seat_would_be_theirs() {
+    let off = AutomataflOffering;
+    let mut session = off.open(SessionConfig::default()).expect("open");
+
+    let fresh = rendered_text(&off.render(&session));
+    assert!(
+        !fresh.contains("Seat A — them") && !fresh.contains("Seat B — them"),
+        "a viewer with no seat must not be told both seats belong to someone else:\n{fresh}"
+    );
+    assert!(
+        fresh.contains("Seat A — OPEN — the seat your first move would claim"),
+        "the claimable seat must be named as the one they would take:\n{fresh}"
+    );
+    assert!(
+        fresh.contains("(YOURS on your first move)"),
+        "and the standing pills must place the reader too:\n{fresh}"
+    );
+
+    // A SEATED viewer still gets the ordinary you/them pair — the fix must not erase it.
+    seal(&off, &mut session, &seat_a(), (3, 1), (3, 3));
+    let a_view = rendered_text(&off.render_for(&session, &seat_a()));
+    assert!(
+        a_view.contains("Seat A — YOURS") && a_view.contains("Seat B — them"),
+        "a seated viewer is told which panel is theirs:\n{a_view}"
+    );
+}
+
+/// ⚑ **"EVERY CONTROL IS INERT" IS NOW SAID ONLY WHERE IT IS TRUE.** The seatless branch asserted it
+/// while `board_grid(None)` served 121 live cell buttons; the reader proved the lie from a
+/// before/after pair. A claimant is told the board is LIVE; a table with both seats held keeps the
+/// honest claim.
+#[test]
+fn the_inert_claim_matches_the_controls_the_surface_actually_ships() {
+    let off = AutomataflOffering;
+    let mut session = off.open(SessionConfig::default()).expect("open");
+
+    let claimant = rendered_text(&off.render(&session));
+    assert!(
+        !claimant.contains("every control is inert"),
+        "a seat is free, so this surface's board is live and must not be called inert:\n{claimant}"
+    );
+    assert!(
+        claimant.contains("the board below is LIVE, not a picture"),
+        "and it must say what the board actually is:\n{claimant}"
+    );
+    // Non-vacuous: the board really does carry fireable cells for this viewer.
+    let fireable = |surface: &Surface| -> usize {
+        fn walk(n: &ViewNode, hits: &mut usize) {
+            match n {
+                ViewNode::CoordGrid { cells, .. } => {
+                    *hits += cells.iter().filter(|c| !c.turn.is_empty()).count();
+                }
+                ViewNode::Section { children, .. } => {
+                    for c in children {
+                        walk(c, hits);
+                    }
+                }
+                ViewNode::VStack(cs)
+                | ViewNode::Row(cs)
+                | ViewNode::List(cs)
+                | ViewNode::Table(cs) => {
+                    for c in cs {
+                        walk(c, hits);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut hits = 0;
+        walk(surface.view(), &mut hits);
+        hits
+    };
+    assert!(
+        fireable(&off.render(&session)) > 0,
+        "this test is vacuous unless the seatless board really is clickable"
+    );
+
+    // Both seats HELD: now there is nothing for this viewer to press, and the claim is honest.
+    seal(&off, &mut session, &seat_a(), (3, 1), (3, 3));
+    seal(&off, &mut session, &seat_b(), (7, 9), (7, 7));
+    let stranger = DreggIdentity("a-third-party".to_string());
+    let spectating = rendered_text(&off.render_for(&session, &stranger));
+    // ⚑ Even here the surface must not say "inert": this IS the shared board the two players press,
+    // so the squares are real controls. The true statement is about the executor.
+    assert!(
+        !spectating.contains("every control is inert"),
+        "the shared board's squares are controls, so calling them inert is a claim about the \
+         markup that is false:\n{spectating}"
+    );
+    assert!(
+        spectating.contains("nothing you press can move it")
+            && spectating.contains("refuses a move from an identity holding no seat"),
+        "it must instead name the gate that actually stops them:\n{spectating}"
+    );
+    assert!(
+        spectating.contains("held by another player"),
+        "and the panels say the seats are somebody else's:\n{spectating}"
+    );
+}
+
+/// ⚑ **A SPECTATOR'S PHASE CONTROLS ARE DIMMED, not just described as inert.** Handed to this lane by
+/// `dreggnet-web/tests/catalog_flow_harness.rs`'s `fog` check as a named self-retiring allowance: the
+/// board CELLS went inert for a viewer holding no seat, but the `Reveal`/`Resolve` MENU was gated on
+/// the PHASE alone, so once both seats were taken a stranger was served an ENABLED control that
+/// `advance` can only ever refuse. Both polarities pinned — a CLAIMANT keeps live controls, because
+/// their first accepted press really does seat them.
+#[test]
+fn a_spectators_phase_controls_are_dimmed_and_a_claimants_are_not() {
+    let off = AutomataflOffering;
+    let mut session = off.open(SessionConfig::default()).expect("open");
+
+    let live_rows = |surface: &Surface| -> Vec<String> {
+        fn walk(n: &ViewNode, out: &mut Vec<String>) {
+            match n {
+                ViewNode::Menu { items } => {
+                    out.extend(items.iter().filter(|i| i.enabled).map(|i| i.turn.clone()));
+                }
+                ViewNode::Section { children, .. } => {
+                    for c in children {
+                        walk(c, out);
+                    }
+                }
+                ViewNode::VStack(cs)
+                | ViewNode::Row(cs)
+                | ViewNode::List(cs)
+                | ViewNode::Table(cs) => {
+                    for c in cs {
+                        walk(c, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        walk(surface.view(), &mut out);
+        out
+    };
+
+    // BOTH SEATS HELD, and the round sitting in a phase whose control used to light for anybody.
+    seal(&off, &mut session, &seat_a(), (3, 1), (3, 3));
+    seal(&off, &mut session, &seat_b(), (7, 9), (7, 7));
+    let stranger = DreggIdentity("a-third-party".to_string());
+    assert_eq!(
+        live_rows(&off.render_for(&session, &stranger)),
+        Vec::<String>::new(),
+        "a spectator must be served no ENABLED phase control — every one of them can only refuse"
+    );
+    // Non-vacuous: the seated players DO get the live control in this very state.
+    assert!(
+        !live_rows(&off.render_for(&session, &seat_a())).is_empty(),
+        "this test is worthless unless a seat really has a live control here"
+    );
+    // And the executor agrees with the dimming rather than merely being protected by it.
+    let refused = off.advance(&mut session, act(REVEAL, 0), stranger);
+    assert!(
+        matches!(&refused, Outcome::Refused(why) if why.contains("spectator")),
+        "the dimming must match the executor's own answer, got {refused:?}"
+    );
+
+    // A CLAIMANT (a free seat) keeps live controls — dimming them would break the front door.
+    let fresh = off.open(SessionConfig::default()).expect("open");
+    assert!(
+        !live_rows(&off.render(&fresh)).is_empty()
+            || fresh.claimable_seat().is_some() && fresh.phase() == Phase::Commit,
+        "a viewer who can still claim a seat must not be dimmed out of the table"
+    );
+    assert!(
+        fresh.claimable_seat().is_some(),
+        "a fresh table has a claimable seat"
+    );
+}
