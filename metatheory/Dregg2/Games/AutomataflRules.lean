@@ -605,23 +605,34 @@ def stockTwoPlayer : Board :=
 
 /-! ## §6B  ⚑ ADJUDICATION AT THE TURN CAP — the terminal rule the ruleset never had
 
-**The design wound, measured.** `winOnEntry` is the game's ONLY terminal condition, so a match
-that never walks the Automaton into a corner never ends. It does not end. Driving this exact
-Lean spec (cross-checked `#eval`-against-`#eval` with the play harness that produced these
-numbers) with a one-ply simultaneous-minimax agent on `stockTwoPlayer`:
+**The design wound.** `winOnEntry` is the game's ONLY terminal condition, so a match that never
+walks the Automaton into a corner never ends. It does not end. That much is a fact about the
+rules and is why this section exists.
 
-  * **Two competent seats draw 100% of the time.** Every match froze — 6/6 at one search budget,
-    5/5 when seat 0 was given FIVE TIMES seat 1's search, including from `(10,2)`, two squares
-    from seat 0's own corner. The freeze arrives in **8–11 turns**, before the 10-turn
-    theoretical minimum win is even reachable.
-  * The reason is structural, not tactical. Each axis decision (`evaluateAxis`) is a COMPARISON
-    of the two raycast distances, and on the mirror-symmetric stock board each seat controls one
-    side of that comparison with equal ease. In a frozen position both seats had exactly `30 of
-    198` raycast-relevant moves that shift the Automaton at all, and **zero** that improve their
-    own goal-distance against every reply. Defence is strictly cheaper than attack, and
-    simultaneity denies the attacker the tempo that would break parity.
-  * Greedy-vs-greedy matches DO end (median 20 turns) only because a one-ply agent that ignores
-    the reply blunders into losing exchanges.
+⚠ **RETRACTED — the numbers that used to stand here.** This section previously reported that
+"two competent seats draw 100% of the time", froze in 8–11 turns, and had "30 of 198" useful
+moves, from a one-ply simultaneous-MINIMAX agent. That claim was withdrawn the same day in
+`docs/CLAIM-CORRECTIONS-2026-07-25.md` §4 and the retraction is the correct reading: two
+DETERMINISTIC agents on a MIRROR-SYMMETRIC board play mirror-symmetric games BY CONSTRUCTION, so
+the freeze was a property of the agents, not of automatafl. In a simultaneous-move game optimal
+play is generally MIXED, and a deterministic agent is not a weak player but the wrong kind of
+object. The harness was never committed and the numbers are not reproducible from this tree.
+
+**Re-measured 2026-07-26, with an instrument that survives that critique.** Both seats sample a
+MIXED-strategy equilibrium of the one-round matrix game (solved by LP), so symmetry no longer
+forces a lockstep line. Over 38 matches across two independent policies (sampled Nash; and pure
+maximin with a uniform random tie-break, which has no solver-vertex bias at all):
+
+  * draws **17–21%**, not 100%;
+  * outright corner wins **12–14%** — `winOnEntry` is LIVE, and a cooperative beam search reaches
+    a corner in **10 turns**, so the win is not a dead affordance;
+  * and the standing finding: **64–71% of matches are decided by this section's own cap rule**
+    rather than by the game's win condition.
+
+  ⚑ What DOES hold up, and is the real structural point: the value of a round is **0.000** at
+  every position sampled, every position has a PURE saddle (no seat is ever forced to randomise),
+  and a mean of **39 of 190** candidate moves are tied EXACTLY for best. The game is not frozen —
+  it is FLAT. That is a different diagnosis from the retracted one and it wants a different fix.
 
 **What the deployed game already did about it, unproven.** `dregg-automatafl/src/surface.rs`
 carries `const MAX_TURNS: u64 = 64` and calls the capped match *a draw* — a terminal rule that
@@ -630,19 +641,26 @@ outcome is decided by a constant no theorem here has ever seen.
 
 **What this section adds.** The cap's adjudication, in the ruleset, as a POSITIONAL decision
 rather than a blanket draw: at the cap the seat whose nearest own goal is strictly nearer the
-Automaton takes the match; exact parity is an honest dead heat. Measured, this converts about
-half of the dead draws into decisions and — the point — destroys the free freeze, because
-parking on the neutral line is no longer as good as winning. It does not touch `winOnEntry`,
+Automaton takes the match; exact parity is an honest dead heat. It does not touch `winOnEntry`,
 `roundStep` or the automaton, so every existing theorem and the emitted step descriptor are
-untouched.
+untouched. Re-measured, it leaves only 17–21% of matches drawn.
 
-⚠ The residual, stated at its real resolution: agents that PLAY for the adjudication still park
-on the exact mid-line `y = 5` in about half of matches, where the distances tie by the board's
-own `y ↦ 10 - y` symmetry. A "momentum" variant (the Automaton continues its last direction when
-no axis fires) was implemented and measured and did **not** help — 5/8 still drew, because the
-defender answers with an OPPOSING decision rather than a `.none`. Closing the residual needs an
-asymmetric opening or an attrition clock, which is a change to the creator's ruleset, not a
-tweak, and is not made here. -/
+⚑ **THE ARITHMETIC OF THIS RULE AT `stockGoals2`, which is worth stating plainly.** The two
+distances are `min(x, 10-x) + y` and `min(x, 10-x) + (10-y)`, so their difference is `2y - 10`:
+**the x term cancels, and `adjudicateCapped` is exactly `sign(5 - y)` on all 121 squares**
+(`adjudicate_midline_draws` is the `y = 5` slice of that identity). Two consequences:
+
+  * the Automaton's COLUMN is worth nothing to the capped verdict, and an exhaustive sweep of all
+    `33^4 = 1,185,921` ray configurations puts **46.9%** of its steps on that verdict-irrelevant
+    axis (it is frozen in only 4.4%, so it is not a metronome — it is loud and half-useless);
+  * the two `goalDistance` numbers a surface paints are only meaningful as a DIFFERENCE. 220 of
+    the 440 single steps that move them at all move BOTH by the same amount.
+
+⚠ The residual, restated honestly: the mid-line still draws, by the board's own `y ↦ 10 - y`
+symmetry. The withdrawn recommendation was "an asymmetric opening"; ember's ruling stands that
+automatafl needs no such thing, and it is NOT proposed here. The measured diagnosis is instead
+FLATNESS — a round is worth 0.000 and dozens of moves tie exactly — which points at giving the
+game a second currency rather than at breaking its symmetry. -/
 
 /-- Manhattan distance between two board coordinates. -/
 def manhattan (a b : Coord) : Nat :=

@@ -82,6 +82,13 @@ pub mod crown_ingest;
 /// (`GET /descent/leaderboard`) + a run-card that re-executes the recorded run to PASS/FAIL
 /// (`GET /descent/run/{id}`). Additive; see [`descent::descent_router`].
 pub mod descent;
+/// **A DESCENT RUN CAN CARRY A SIGNATURE, AND THE BOARD RE-CHECKS IT.** The Descent never touches
+/// `/act`: it plays in a tab and POSTs a WHOLE RUN, so the per-turn signed lane never reached the
+/// board where "it cannot be faked" is sold hardest. This is the per-run envelope — one short
+/// domain-separated message over the world, the ruleset, the name, the turn count and the run's own
+/// journal root, signed by the browser's device key and re-verified on every read beside the replay
+/// that checks the moves. See [`descent_attest`].
+pub mod descent_attest;
 /// THE SHARED RUN'S PICTURE — the run-card's shaft renderer (`GET /descent/native/run/{id}`). The
 /// share link is how a stranger first meets the game, so the card paints the LIVE surface's board
 /// (same glyphs, same one-column-per-relic shaft) as it stood when the run ended: what was banked,
@@ -4389,7 +4396,8 @@ fn cell_role_phrase(tag: &str, is_goal: bool) -> &'static str {
         // dashed outline is the only carrier and the square reads identically to a legal move —
         // which is the exact wound the outline exists to close, moved one sense over.
         "blocked" => {
-            ", blocked: a piece is in the way, so this move only runs if that piece is moved first"
+            ", blocked: the way is not clear, so this move runs only if every piece in the way is \
+             lifted this round, and each seat gets one move"
         }
         _ if is_goal => ", a goal corner",
         // The automaton's square needs no role: the piece name already carries it.

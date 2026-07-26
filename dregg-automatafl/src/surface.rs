@@ -246,7 +246,7 @@ fn decision_why(d: &Decision, axis_x: bool) -> String {
     match d.variant {
         // UnbalancedPair: an attractor ahead and a repulsor behind, both pushing the same way.
         3 => format!(
-            "an attractor {} to its {dir} and a repulsor {} to its {back} — both send it {dir}",
+            "an attractor {} to its {dir} and a repulsor {} to its {back} (both send it {dir})",
             squares(d.att_dist),
             squares(d.rep_dist),
         ),
@@ -1128,7 +1128,7 @@ impl AutomataflSession {
     fn board_legend() -> Vec<ViewNode> {
         vec![
             ViewNode::Text(format!(
-                "Columns are x (left to right), rows are y (top to bottom), both 0–{last} — the \
+                "Columns are x (left to right), rows are y (top to bottom), both 0–{last}: the \
                  same (x,y) every button names.",
                 last = N - 1
             )),
@@ -1166,19 +1166,19 @@ impl AutomataflSession {
             .ok()
             .and_then(|s| s.dist[seat.idx()]);
         let closer = match (mine, then) {
-            (Some(a), Some(b)) if b < a => format!(" — {} NEARER your corner", a - b),
-            (Some(a), Some(b)) if b > a => format!(" — {} further from your corner", b - a),
-            _ => " — no nearer your corner".to_string(),
+            (Some(a), Some(b)) if b < a => format!(", {} NEARER your corner", a - b),
+            (Some(a), Some(b)) if b > a => format!(", {} further from your corner", b - a),
+            _ => ", no nearer your corner".to_string(),
         };
         Some(match win {
             Some(w) if w == seat.idx() as u32 => {
-                "⚑ IF YOURS IS THE ONLY MOVE THAT LANDS, THIS WINS THE MATCH — the automaton steps \
+                "⚑ IF YOURS IS THE ONLY MOVE THAT LANDS, THIS WINS THE MATCH: the automaton steps \
                  into your own corner. The other seat is sealing right now and can take that away."
                     .to_string()
             }
             Some(w) => format!(
-                "⚑ CAREFUL: if yours is the only move that lands, this hands the match to SEAT {} \
-                 — it walks the automaton into THEIR corner.",
+                "⚑ CAREFUL: if yours is the only move that lands, this hands the match to SEAT {}; \
+                 it walks the automaton into THEIR corner.",
                 Seat::from_idx(w).label()
             ),
             None if after.auto == self.board.auto => "Your move alone would leave the automaton \
@@ -1187,7 +1187,7 @@ impl AutomataflSession {
                 .to_string(),
             None => format!(
                 "Your move alone would send the automaton to ({},{}){closer}. The other seat is \
-                 sealing at the same time, so the real answer can differ — that gap is the game.",
+                 sealing at the same time, so the real answer can differ; that gap is the game.",
                 after.auto.0, after.auto.1
             ),
         })
@@ -1217,13 +1217,13 @@ impl AutomataflSession {
             // Exact about WHICH free seat is yours: `claimable_seat` takes A before B, so with both
             // seats open only A is the one your first move would take.
             None if self.claimable_seat() == Some(seat) => {
-                "OPEN — the seat your first move would claim".to_string()
+                "OPEN (the seat your first move would claim)".to_string()
             }
             None if self.seats[seat.idx()].is_none() => "OPEN".to_string(),
             None => "held by another player".to_string(),
         };
         let title = format!(
-            "Seat {} — {}{}",
+            "Seat {} · {}{}",
             seat.label(),
             whose,
             if locked { " · LOCKED" } else { "" }
@@ -1233,11 +1233,11 @@ impl AutomataflSession {
                 let s = self.sel[seat.idx()];
                 if own {
                     match s {
-                        Some(c) => format!("selected ({},{}) — pick a destination", c.0, c.1),
+                        Some(c) => format!("selected ({},{}): pick a destination", c.0, c.1),
                         None if self.marks.is_empty() => {
-                            "no move sealed — select one of your pieces".to_string()
+                            "no move sealed: select one of your pieces".to_string()
                         }
-                        None => "you owe a FRESH move — select one of your pieces (the marked \
+                        None => "you owe a FRESH move: select one of your pieces (the marked \
                                  squares are dead)"
                             .to_string(),
                     }
@@ -1250,7 +1250,7 @@ impl AutomataflSession {
             // revealed before it was locked. Hiding it again would invent a rule. What stays fog is
             // the RE-SUBMISSION — a fresh seal, sealed exactly like a first one.
             (Some(mv), true) if locked => format!(
-                "{} move STANDS, untouched: ({},{}) → ({},{}) — {} not part of the clash, so {} do \
+                "{} move STANDS, untouched: ({},{}) → ({},{}). {} not part of the clash, so {} do \
                  not re-submit, and it executes when the round finally resolves. (It was revealed \
                  with the clash, so both seats can see it.)",
                 if own { "YOUR" } else { "their" },
@@ -1258,7 +1258,7 @@ impl AutomataflSession {
                 mv.frm.1,
                 mv.to.0,
                 mv.to.1,
-                if own { "you were" } else { "they were" },
+                if own { "You were" } else { "They were" },
                 if own { "you" } else { "they" },
             ),
             (Some(mv), false) if own => format!(
@@ -1274,7 +1274,7 @@ impl AutomataflSession {
                 }
             ),
             (Some(_), false) => format!(
-                "move SEALED · commitment {:x}… (hidden — revealed on the open)",
+                "move SEALED · commitment {:x}… (hidden; revealed on the open)",
                 self.seal[seat.idx()] >> 40
             ),
             (Some(mv), true) => format!(
@@ -1374,7 +1374,7 @@ impl AutomataflSession {
         let round = self.conflict_round_no();
         let mut kids = vec![ViewNode::Text(format!(
             "The seats CONTESTED the same square, so this round did NOT resolve. The ruleset does \
-             not throw the clashing moves away: it MARKS the contested coordinate — {} — and \
+             not throw the clashing moves away: it MARKS the contested coordinate ({}) and \
              re-opens the round. A marked square is dead for the rest of this turn: nobody may move \
              a piece off it, and nobody may move a piece onto it. The board is FROZEN until a round \
              comes back clean, and the turn counter has not moved.",
@@ -1407,7 +1407,7 @@ impl AutomataflSession {
             let same_piece = subs[0].frm == subs[1].frm;
             let same_landing = subs[0].to == subs[1].to;
             kids.push(ViewNode::Text(format!(
-                "WHAT COLLIDED: {}, and {}. {} (Those two moves are public now — the ruleset opened \
+                "WHAT COLLIDED: {}, and {}. {} (Those two moves are public now: the ruleset opened \
                  every submission at once to find the clash. What you seal NEXT is secret again.)",
                 tried(Seat::A),
                 tried(Seat::B),
@@ -1437,7 +1437,7 @@ impl AutomataflSession {
             "RE-SUBMITTING: {}{}. {}",
             names(&waiting_seats),
             match viewer {
-                Some(v) if waiting_seats.contains(&v) => " — that is YOU",
+                Some(v) if waiting_seats.contains(&v) => " (that is YOU)",
                 Some(_) => "",
                 None => "",
             },
@@ -1447,7 +1447,7 @@ impl AutomataflSession {
                     .to_string()
             } else {
                 format!(
-                    "LOCKED: {} — that move was not part of the clash, it stands untouched, and it \
+                    "LOCKED: {}. That move was not part of the clash, it stands untouched, and it \
                      executes when the round finally resolves.",
                     names(&locked_seats)
                 )
@@ -1460,7 +1460,7 @@ impl AutomataflSession {
         kids.push(ViewNode::Text(format!(
             "This turn has re-opened {} time{} and burned {} of the board's {} squares. Every \
              re-entry has to burn a NEW one, so the round runs out of squares before it runs \
-             forever — the executor refuses a re-entry that marks nothing.",
+             forever; the executor refuses a re-entry that marks nothing.",
             round,
             if round == 1 { "" } else { "s" },
             self.marks.len(),
@@ -1485,7 +1485,7 @@ impl AutomataflSession {
         }
         kids.push(ViewNode::Row(pills));
         Some(ViewNode::Section {
-            title: "The clash — this round did not resolve".to_string(),
+            title: "The clash · this round did not resolve".to_string(),
             tag: "bad".to_string(),
             children: kids,
         })
@@ -1514,7 +1514,7 @@ impl AutomataflSession {
             );
         }
         if self.ended {
-            return "The match is over: the clock ran out with the automaton on nobody's corner — \
+            return "The match is over: the clock ran out with the automaton on nobody's corner, \
                     a draw."
                 .to_string();
         }
@@ -1553,7 +1553,7 @@ impl AutomataflSession {
                     "Both moves are sealed. Each seat now opens its own seal.".to_string()
                 }
                 Phase::Resolve => {
-                    "Both moves are open — the round is one press from firing.".to_string()
+                    "Both moves are open: the round is one press from firing.".to_string()
                 }
                 Phase::Over => "The match is over.".to_string(),
             };
@@ -1564,20 +1564,20 @@ impl AutomataflSession {
         if !self.is_waiting(s) && !matches!(self.phase(), Phase::Resolve | Phase::Over) {
             return format!(
                 "Your move was NOT part of the clash, so it is LOCKED and stands exactly as you \
-                 sealed it — you owe nothing this round. Seat {} is choosing a fresh move; when \
+                 sealed it; you owe nothing this round. Seat {} is choosing a fresh move; when \
                  they seal and open, the round resolves and your move executes with theirs.",
                 other.label()
             );
         }
         match self.phase() {
             Phase::Commit if self.committed[i].is_some() => format!(
-                "Sealed. Waiting for seat {} to seal — this page updates by itself, so there is \
+                "Sealed. Waiting for seat {} to seal. This page updates by itself, so there is \
                  nothing to reload.",
                 other.label()
             ),
             Phase::Commit if self.sel[i].is_some() => {
-                "Your piece is picked up. Click one of the GLOWING squares to seal a move there — \
-                 the other seat cannot see where you sealed until you both open."
+                "Your piece is picked up. Click one of the GLOWING squares to seal a move there. \
+                 The other seat cannot see where you sealed until you both open."
                     .to_string()
             }
             Phase::Commit => {
@@ -1593,7 +1593,7 @@ impl AutomataflSession {
             Phase::Resubmit => format!(
                 "⚑ YOU CLASHED, so this round did not happen: the contested square{} {} now \
                  MARKED (the × squares) and dead for the rest of this turn, the board is frozen \
-                 exactly as it was, and you owe a FRESH move. Pick a piece and seal again — you \
+                 exactly as it was, and you owe a FRESH move. Pick a piece and seal again. You \
                  cannot use a marked square as a source or a destination.",
                 if self.marks.len() == 1 {
                     " is"
@@ -1613,12 +1613,10 @@ impl AutomataflSession {
                 "You have opened. Waiting for seat {} to open theirs.",
                 other.label()
             ),
-            Phase::Resolve => {
-                "Both moves are open. Press Resolve the round — if you contested the \
+            Phase::Resolve => "Both moves are open. Press Resolve the round: if you contested the \
                                same square it MARKS that square and re-opens the round; otherwise \
                                the moves apply and THEN the automaton takes its step."
-                    .to_string()
-            }
+                .to_string(),
             Phase::Over => "The match is over.".to_string(),
         }
     }
@@ -1687,13 +1685,13 @@ impl AutomataflSession {
         // POST on a locked table outright.
         let who = match viewer {
             Some(s) => format!(
-                "You hold seat {} — your goal corners are {}.",
+                "You hold seat {}. Your goal corners are {}.",
                 s.label(),
                 Self::goal_text(s)
             ),
             None => match self.claimable_seat() {
                 Some(seat) => format!(
-                    "You hold no seat here YET, so both sealed moves are fog to you — but the board \
+                    "You hold no seat here YET, so both sealed moves are fog to you, but the board \
                      below is LIVE, not a picture. The first move you land CLAIMS seat {}, whose \
                      goal corners are {}. Pick up a piece and the squares it can reach will light.",
                     seat.label(),
@@ -1707,8 +1705,8 @@ impl AutomataflSession {
                 // an advance from an identity holding no seat ("both seats are taken — you are a
                 // spectator") and commits nothing.
                 None => "Both seats are held, so you are watching: BOTH sealed moves are fog to \
-                         you. The board still draws its squares — it is the same board the two \
-                         players press — but nothing you press can move it: the executor refuses a \
+                         you. The board still draws its squares (it is the same board the two \
+                         players press), but nothing you press can move it: the executor refuses a \
                          move from an identity holding no seat, and commits nothing."
                     .to_string(),
             },
@@ -1760,29 +1758,29 @@ impl AutomataflSession {
     fn automaton_plaque(&self) -> ViewNode {
         let auto = self.board.auto;
         let mut kids = vec![ViewNode::Text(format!(
-            "The automaton stands at ({},{}). Nobody moves it directly — it answers the attractors \
+            "The automaton stands at ({},{}). Nobody moves it directly: it answers the attractors \
              and repulsors around it, one square per resolution, and whoever's corner it reaches \
              wins the match.",
             auto.0, auto.1
         ))];
         kids.push(ViewNode::Text(match &self.last_step {
-            None => "It has not stepped yet — the first resolution is its first step.".to_string(),
+            None => "It has not stepped yet: the first resolution is its first step.".to_string(),
             Some(s) if s.from == s.to => format!(
-                "Last turn (turn {}) it HELD at ({},{}) — {}.",
+                "Last turn (turn {}) it HELD at ({},{}): {}.",
                 s.turn_no, s.from.0, s.from.1, s.why
             ),
             Some(s) => format!(
-                "Last turn (turn {}) it stepped from ({},{}) onto ({},{}) — {}.",
+                "Last turn (turn {}) it stepped from ({},{}) onto ({},{}): {}.",
                 s.turn_no, s.from.0, s.from.1, s.to.0, s.to.1, s.why
             ),
         }));
         if !self.ended {
             let (target, why) = self.automaton_read();
             kids.push(ViewNode::Text(if target == auto {
-                format!("If nothing moved it would HOLD — {why}.")
+                format!("If nothing moved it would HOLD: {why}.")
             } else {
                 format!(
-                    "If nothing moved it would step onto ({},{}) — {why}.",
+                    "If nothing moved it would step onto ({},{}): {why}.",
                     target.0, target.1
                 )
             }));
@@ -1802,7 +1800,7 @@ impl AutomataflSession {
                 let n = sightline_squares(&self.board, &lines).len();
                 let caps = lines.iter().filter(|l| l.caps_a_piece()).count();
                 kids.push(ViewNode::Text(format!(
-                    "WHAT IT CAN SEE — one arm along each direction of its rank and file: {found}. \
+                    "WHAT IT CAN SEE · one arm along each direction of its rank and file: {found}. \
                      Those are the whole of what it answers: each axis is a COMPARISON of the two \
                      distances on it, so nothing off the arms reaches the decision at all. The arms \
                      are drawn ─ and │ on the board and there are {n} squares on them, {caps} of \
@@ -1814,11 +1812,22 @@ impl AutomataflSession {
         }
         // HOW CLOSE IS IT TO ENDING THE MATCH, and — the part that was never shown — WHO IS AHEAD.
         //
-        // ⚑ The distance pills alone are not a stake signal: while the automaton sits anywhere on
-        // the neutral mid-line both seats read the SAME number, which is exactly the position two
-        // competent seats freeze on (`AutomataflRules` §6B: 100% draws, in 8–11 turns). The verdict
-        // is the ruleset's answer to that freeze, and it was computed once at turn 64 and shown
-        // nowhere — so the contest the players were actually in was invisible for the whole match.
+        // ⚑ The distance pills alone are not a stake signal, and the reason is arithmetic, not
+        // taste. On `stockGoals2` the two distances are `min(x,10-x) + y` and `min(x,10-x) + (10-y)`,
+        // so their DIFFERENCE is `2y - 10`: the x term cancels, and `adjudicateCapped` is exactly
+        // `sign(5 - y)` on all 121 squares. Two consequences the pills hide:
+        //   * a SIDEWAYS step moves both pills by the same amount and changes nothing — 220 of the
+        //     440 automaton steps that move the pills at all are that case, i.e. HALF the pill
+        //     motion in this game is noise;
+        //   * only the pills' difference is a stake, and it is never shown.
+        // So the verdict line below is not decoration, it is the only stake signal on the plaque.
+        //
+        // ⚠ This comment used to cite `AutomataflRules` §6B ("100% draws in 8–11 turns") as the
+        // reason. That claim is RETRACTED — see docs/CLAIM-CORRECTIONS-2026-07-25.md §4: it came
+        // from two DETERMINISTIC agents on a MIRROR-SYMMETRIC board, which play mirror-symmetric
+        // games by construction. Re-measured with both seats sampling a MIXED equilibrium of the
+        // one-round matrix game, 14 matches under the shipped rules gave 3 draws, 9 adjudications
+        // and 2 outright corner wins. The freeze was an artifact of the agents, not the game.
         let contest = self.contest();
         let dist_pill = |s: Seat| {
             let (word, tag) = match contest.and_then(|st| st.dist[s.idx()]) {
@@ -1837,17 +1846,30 @@ impl AutomataflSession {
             }
         };
         kids.push(ViewNode::Row(vec![dist_pill(Seat::A), dist_pill(Seat::B)]));
+        // ⚑ WHAT THOSE TWO NUMBERS ARE WORTH. `adjudicateCapped` compares them; it does not read
+        // either one alone. So the stake is the GAP, and a step that shortens both by the same
+        // amount has changed nothing at all — which is half of everything the automaton does.
+        // Saying so is the difference between a number that reads like progress and a number that
+        // reads like what it is.
+        if !self.ended {
+            kids.push(ViewNode::Text(
+                "Read the GAP between those two, not either number: the adjudication compares \
+                 them, so shortening both by the same step leaves the match exactly where it was. \
+                 The automaton spends about half its steps doing precisely that."
+                    .to_string(),
+            ));
+        }
         if !self.ended {
             let left = MAX_TURNS.saturating_sub(self.turn_no);
             kids.push(ViewNode::Text(match contest {
                 Some(st) => format!(
                     "ON THE CLOCK: {left} more resolution{} and the match is adjudicated where it \
-                     stands — the seat whose own corner is strictly nearer takes it. {} So a \
+                     stands. The seat whose own corner is strictly nearer takes it. {} So a \
                      position is not safe just because nobody has reached a corner.",
                     if left == 1 { "" } else { "s" },
                     match st.verdict {
                         Some(w) => format!(
-                            "Right now it would go to SEAT {} — nearer its own corner on this \
+                            "Right now it would go to SEAT {}, nearer its own corner on this \
                              board.",
                             Seat::from_idx(w).label()
                         ),
@@ -1885,13 +1907,13 @@ impl AutomataflSession {
         let phase = self.phase();
         let headline = match (self.winner, self.ended) {
             (Some(w), _) => format!(
-                "Automatafl — the automaton reached seat {}'s goal · WINNER: {}",
+                "Automatafl · the automaton reached seat {}'s goal · WINNER: {}",
                 w.label(),
                 w.label()
             ),
-            (None, true) => "Automatafl — the clock ran out (a draw)".to_string(),
+            (None, true) => "Automatafl · the clock ran out (a draw)".to_string(),
             (None, false) => format!(
-                "Automatafl — turn {}{} · phase: {}",
+                "Automatafl · turn {}{} · phase: {}",
                 self.turn_no,
                 if self.marks.is_empty() {
                     String::new()
@@ -1900,9 +1922,9 @@ impl AutomataflSession {
                 },
                 match phase {
                     Phase::Commit => "COMMIT (both seats seal a move)",
-                    Phase::Resubmit => "⚑ RE-SUBMIT (the round clashed — the square is marked)",
-                    Phase::Reveal => "REVEAL (both moves sealed — open yours)",
-                    Phase::Resolve => "RESOLVE (both open — fire the round)",
+                    Phase::Resubmit => "⚑ RE-SUBMIT (the round clashed; the square is marked)",
+                    Phase::Reveal => "REVEAL (both moves sealed; open yours)",
+                    Phase::Resolve => "RESOLVE (both open; fire the round)",
                     Phase::Over => "over",
                 }
             ),
@@ -1945,8 +1967,12 @@ impl AutomataflSession {
                             "Pick up a piece and the squares it can actually REACH light up: a \
                              piece moves like a rook and stops at the first thing in its way, so \
                              the light stops there too. A square further along that line reads as \
-                             BLOCKED — you may still seal a move to it, and it runs only if the \
-                             other seat moves the piece that is in the way.{}",
+                             BLOCKED: you may still seal a move to it, but it runs only if the way \
+                             is clear when the round resolves. You cannot clear it yourself — the \
+                             blocked move IS your move — so it rides on the other seat, and each \
+                             seat gets ONE move a round. One piece in the way is a gamble on them \
+                             lifting exactly that piece; TWO OR MORE cannot be cleared this round \
+                             at all, whatever either of you does.{}",
                             if self.marks.is_empty() {
                                 ""
                             } else {
@@ -2100,8 +2126,10 @@ impl Offering for AutomataflOffering {
                         format!("Seal a move to ({},{})", c.0, c.1)
                     } else {
                         format!(
-                            "Seal a move to ({},{}) — BLOCKED: a piece is in the way, so it only \
-                             runs if the other seat moves that piece",
+                            "Seal a move to ({},{}) · BLOCKED: the way is not clear. It runs only \
+                             if every piece in the way is lifted this round, and each seat gets \
+                             ONE move — so a single blocker is a gamble on the other seat, and \
+                             two or more cannot be cleared at all",
                             c.0, c.1
                         )
                     },
@@ -2146,7 +2174,7 @@ impl Offering for AutomataflOffering {
         // A seat is claimed by the first identity that acts from it (so a web/Discord/Telegram user
         // really sits down); a third identity is a spectator and is refused.
         let Some(seat) = session.claim_seat(&actor) else {
-            return refuse("both seats are taken — you are a spectator");
+            return refuse("both seats are taken: you are a spectator");
         };
         let i = seat.idx();
 
@@ -2157,7 +2185,7 @@ impl Offering for AutomataflOffering {
                 }
                 if !session.is_waiting(seat) {
                     return refuse(
-                        "your move is LOCKED this round — it was not part of the clash, so it \
+                        "your move is LOCKED this round: it was not part of the clash, so it \
                          stands as sealed and you do not re-submit",
                     );
                 }
@@ -2174,7 +2202,7 @@ impl Offering for AutomataflOffering {
                 // later as a bare "illegal move".
                 if session.is_marked(c) {
                     return refuse(format!(
-                        "({},{}) is MARKED — a clash burned that square, and for the rest of this \
+                        "({},{}) is MARKED: a clash burned that square, and for the rest of this \
                          turn no piece may leave it or land on it",
                         c.0, c.1
                     ));
@@ -2208,7 +2236,7 @@ impl Offering for AutomataflOffering {
                 }
                 if !session.is_waiting(seat) {
                     return refuse(
-                        "your move is LOCKED this round — it was not part of the clash, so it \
+                        "your move is LOCKED this round: it was not part of the clash, so it \
                          stands as sealed and you do not re-submit",
                     );
                 }
@@ -2293,7 +2321,7 @@ impl Offering for AutomataflOffering {
                 }
                 if !session.is_waiting(seat) {
                     return refuse(
-                        "your move is LOCKED this round — you already opened it, and it stands",
+                        "your move is LOCKED this round: you already opened it, and it stands",
                     );
                 }
                 if session.revealed[i] {
@@ -2380,7 +2408,7 @@ impl Offering for AutomataflOffering {
                     if waiting.is_empty() {
                         return refuse(
                             "the ruleset marked a contested square but named no seat to \
-                             re-submit — the turn cannot continue, so nothing is committed",
+                             re-submit: the turn cannot continue, so nothing is committed",
                         );
                     }
                     // The termination fact, checked rather than assumed: the executor's `resubmit`
@@ -2389,7 +2417,7 @@ impl Offering for AutomataflOffering {
                     if marks.len() <= session.marks.len() {
                         return refuse(format!(
                             "the round re-entered without marking a new square ({} → {}), which \
-                             would let the turn re-enter forever — nothing is committed",
+                             would let the turn re-enter forever; nothing is committed",
                             session.marks.len(),
                             marks.len()
                         ));
