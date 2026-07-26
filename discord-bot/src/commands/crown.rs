@@ -1657,10 +1657,12 @@ mod tests {
              fixture: `DREGG_ALLOW_UNAUDITED_PQ=1 cargo run --release -p dregg-lightclient --bin \
              produce_history_envelope --features prover -- 3 7`, base64-decode the emitted \
              `proof_bytes_b64` into ugc-dregg/tests/fixtures/whole_history_proof.bin and write \
-             `anchor_hex` (no trailing newline) to whole_history_anchor.hex. NOTE (measured \
-             2026-07-25): that producer ITSELF fails at HEAD with \
-             `RecursionFailed(InvalidOpeningArgument(InputError(CapMismatch)))`, so the fold \
-             tower has to answer before any fixture can be re-baked."
+             `anchor_hex` (no trailing newline) to whole_history_anchor.hex. The producer used to \
+             fail at HEAD itself with \
+             `RecursionFailed(InvalidOpeningArgument(InputError(CapMismatch)))` (measured \
+             2026-07-25), which made the re-bake impossible; that is FIXED — it ran clean on \
+             2026-07-26 and produced the fixture in the tree now, so the command above is the \
+             whole fix."
         )
     }
 
