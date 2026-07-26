@@ -2693,23 +2693,32 @@ theorem bearer_teeth_same_wire :
     credentialValidG (liftForestG (bearerTurn 7 8 false).root).auth = false := by
   refine ⟨?_, ?_⟩ <;> rfl
 
-/-! ### §WG-eval-discharge — THE TOKEN-DISCHARGE TEETH (the bad-macaroon/biscuit-discharge rollback).
+/-! ### §WG-eval-discharge — THE TOKEN-CREDENTIAL TEETH (the substituted-credential rollback).
 
-This closes the Theme-2 discharge gap: the producer marshaller no longer DROPS the biscuit/macaroon
-`encoded`/`discharges` blobs (`auth_biscuit_issuer`/`auth_cell_macaroon` previously emitted `sig:0`/
-`proof:0`, so the gate authenticated the issuer key but was BLIND to the caveat-discharge chain). It
-now FOLDS `encoded ‖ discharges` into the wire `sig`/`proof` `Nat` (`token_chain_commitment`), so the
-verified WHO leg (`portalVerify .token key sig = CryptoKernel.verify key sig`, and `.custom` for the
-cell-scoped macaroon) is sensitive to the FULL chain: a tampered/absent discharge changes the folded
-`Nat` ⇒ the portal verdict. The same-wire contrast: a credential whose discharge chain DiScHaRgEs
-(the folded `sig` reproduces the issuer anchor, `.token 9 9`) COMMITS; one whose chain is BAD (the
-folded `sig` does NOT, `.token 9 8`) ROLLS BACK. (The `Crypto.Reference` portal models the discharge
-check as `key = sig`; the `@[extern]` realization runs the real biscuit/macaroon
-`from_encoded_with_discharges` over the chain the wire now carries.) -/
+This closes the Theme-2 token gap: the producer marshaller no longer DROPS the biscuit/macaroon
+`encoded` blob (`auth_biscuit_issuer`/`auth_cell_macaroon` previously emitted `sig:0`/`proof:0`, so
+the gate authenticated the issuer key but was BLIND to WHICH credential was presented). It now FOLDS
+`encoded` into the wire `sig`/`proof` `Nat` (`token_credential_commitment`), so the verified WHO leg
+(`portalVerify .token key sig = CryptoKernel.verify key sig`, and `.custom` for the cell-scoped
+macaroon) is sensitive to the credential: a substituted/absent token changes the folded `Nat` ⇒ the
+portal verdict. The same-wire contrast: a credential whose fold reproduces the issuer anchor
+(`.token 9 9`) COMMITS; one whose fold does NOT (`.token 9 8`) ROLLS BACK.
+
+⚠ SCOPE, stated at the resolution it actually holds. The `Crypto.Reference` portal models the
+credential check as `key = sig`; the Rust producer computes the fold that DECIDES which case the wire
+carries. It does NOT run a biscuit/macaroon verifier inside the kernel, and an earlier version of
+this note claimed the `@[extern]` realization ran `from_encoded_with_discharges` over a transported
+discharge chain. It never did — nothing in the tree calls that function. The chain it named came from
+an `Authorization::Token::discharges` wire field which is now DELETED (`turn/src/action.rs`): no
+accept path read it (`verify_token_authorization` took it as `_discharges`, because the one key_ref
+that carried discharges is refused unconditionally), so folding it made this leg sensitive to bytes
+the Rust verifier never checked — the appearance of reproducing a rejection that never happened.
+Folding `encoded`, which the Rust verifier really does decode and cryptographically verify, is the
+part that was ever real, and it is what these teeth now rest on. -/
 
 /-- A gated turn whose root carries a TOKEN credential `(issuerKey, sig)` on a transfer (30 of asset
-0). `sig = issuerKey` ⇒ the folded discharge chain reproduces the anchor (genuine); `sig ≠ issuerKey`
-⇒ a bad/absent discharge. Same transfer/state as `gatedDemoTurn`; only the token arm varies. -/
+0). `sig = issuerKey` ⇒ the folded credential reproduces the anchor (genuine); `sig ≠ issuerKey`
+⇒ a substituted/absent credential. Same transfer/state as `gatedDemoTurn`; only the token arm varies. -/
 def tokenTurn (issuerKey sig : Nat) : WTurn :=
   { agent := 0, nonce := 7, fee := 5, validUntil := 1000, prevHash := 0
     root := ⟨ .token issuerKey sig, [], .balanceA { actor := 0, src := 0, dst := 1, amt := 30 } 0, [] ⟩ }
@@ -2718,36 +2727,44 @@ def tokenTurn (issuerKey sig : Nat) : WTurn :=
 def tokenInput (issuerKey sig : Nat) : String :=
   encodeWWire { state := wideDemoState, turn := tokenTurn issuerKey sig }
 
-/-- GENUINE discharge: the folded chain `sig` (9) reproduces the issuer anchor (9) ⇒ WHO admits. -/
-def goodDischargeInput : String := tokenInput 9 9
-/-- BAD discharge: the folded chain `sig` (8) does NOT reproduce the anchor (9) ⇒ WHO fail-closes
-(exactly the case the OLD `sig:0` marshal admitted — the chain was dropped, so the gate could not see it). -/
-def badDischargeInput : String := tokenInput 9 8
+/-- GENUINE credential: the folded `encoded` commitment `sig` (9) reproduces the issuer anchor (9) ⇒
+WHO admits. -/
+def goodCredentialInput : String := tokenInput 9 9
+/-- SUBSTITUTED credential: the folded `sig` (8) does NOT reproduce the anchor (9) ⇒ WHO fail-closes
+(exactly the case the OLD `sig:0` marshal admitted — the credential was dropped, so the gate could
+not see WHICH token was presented). -/
+def badCredentialInput : String := tokenInput 9 8
 
--- THE TEETH (same wire path, only the folded discharge `sig` differs):
--- GENUINE discharge ⇒ body COMMITS (status:2/ok:1):
-#guard (wireOk1 (execFullForestAuthStep goodDischargeInput))
-#guard (wireStatusIs 2 (execFullForestAuthStep goodDischargeInput))  --  body-committed
--- BAD discharge ⇒ the WHO leg fail-closes ⇒ forest body ABORTS ⇒ status:1/ok:0 (prologue charged, REJECTED):
-#guard (wireOk0 (execFullForestAuthStep badDischargeInput))
-#guard (wireStatusIs 1 (execFullForestAuthStep badDischargeInput))  --  prologue-committed-body-failed
--- the contrast is EXACTLY the WHO leg (the folded discharge chain):
-#guard ((match parseWWire goodDischargeInput with
+-- THE TEETH (same wire path, only the folded credential `sig` differs):
+-- GENUINE credential ⇒ body COMMITS (status:2/ok:1):
+#guard (wireOk1 (execFullForestAuthStep goodCredentialInput))
+#guard (wireStatusIs 2 (execFullForestAuthStep goodCredentialInput))  --  body-committed
+-- SUBSTITUTED credential ⇒ the WHO leg fail-closes ⇒ forest body ABORTS ⇒ status:1/ok:0
+-- (prologue charged, REJECTED):
+#guard (wireOk0 (execFullForestAuthStep badCredentialInput))
+#guard (wireStatusIs 1 (execFullForestAuthStep badCredentialInput))  --  prologue-committed-body-failed
+-- the contrast is EXACTLY the WHO leg (the folded credential commitment):
+#guard ((match parseWWire goodCredentialInput with
        | some w => credentialValidG (liftForestG w.turn.root).auth
-       | none => false))  --  true  (good discharge ⇒ WHO admits)
-#guard ((match parseWWire badDischargeInput with
+       | none => false))  --  true  (genuine credential ⇒ WHO admits)
+#guard ((match parseWWire badCredentialInput with
        | some w => credentialValidG (liftForestG w.turn.root).auth
-       | none => false)) == false  --  false (bad discharge ⇒ WHO fail-closes)
--- ...whereas the UNGATED §W7 export COMMITS the bad-discharge turn (the chain is dead there — the gap):
-#guard (wireOk1 (execFullTurnWide badDischargeInput))
+       | none => false)) == false  --  false (substituted credential ⇒ WHO fail-closes)
+-- ...whereas the UNGATED §W7 export COMMITS the substituted-credential turn (the fold is dead there
+-- — the gap):
+#guard (wireOk1 (execFullTurnWide badCredentialInput))
 
-/-- **`discharge_teeth_same_wire` — THE DISCHARGE SOUNDNESS-GAP-CLOSED THEOREM (non-vacuous).** Over
-the SAME wire path, the lifted root's WHO leg ADMITS the good-discharge token (the folded chain
-reproduces the issuer anchor) and REJECTS the bad-discharge one (it does not). The ONLY difference is
-the carried `sig` — which now folds in the `encoded ‖ discharges` chain (not `0`). This proves the
-verified token WHO leg CONSULTS the transported discharge chain: a bad discharge fail-closes the gate
-⇒ whole-forest rollback. -/
-theorem discharge_teeth_same_wire :
+/-- **`credential_teeth_same_wire` — THE TOKEN-CREDENTIAL GAP-CLOSED THEOREM (non-vacuous).** Over
+the SAME wire path, the lifted root's WHO leg ADMITS the genuine-credential token (the folded
+commitment reproduces the issuer anchor) and REJECTS the substituted one (it does not). The ONLY
+difference is the carried `sig` — which now folds in the `encoded` credential (not `0`). This proves
+the verified token WHO leg CONSULTS the transported credential: a substituted token fail-closes the
+gate ⇒ whole-forest rollback.
+
+⚠ It does NOT prove anything about third-party caveat discharges. The earlier reading of this theorem
+claimed that; see the §WG-eval-discharge note above for why it was false and why the
+`Authorization::Token::discharges` field it rested on is deleted. -/
+theorem credential_teeth_same_wire :
     credentialValidG (liftForestG (tokenTurn 9 9).root).auth = true
     ∧
     credentialValidG (liftForestG (tokenTurn 9 8).root).auth = false := by
@@ -2936,7 +2953,7 @@ instances pull `Classical.choice`/`Quot.sound`). -/
 #assert_axioms caveat_teeth_same_wire
 #assert_axioms caveat_teeth_coordinated
 #assert_axioms bearer_teeth_same_wire
-#assert_axioms discharge_teeth_same_wire
+#assert_axioms credential_teeth_same_wire
 #assert_axioms signature_teeth_same_wire
 
 /-! # §WH — the credential-preserving HANDLER-CUTOVER complete-turn step.

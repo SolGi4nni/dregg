@@ -2400,21 +2400,23 @@ fn auth_to_wire(auth: &Authorization) -> dregg_lean_ffi::marshal::WireAuth {
             sig: sig64_to_nat(signature),
         },
         // The token's issuer key / cell-scoped anchor is the WHO-leg; carry it in full AND fold the
-        // `encoded` credential + its `discharges` caveat-chain into the `sig`/`proof` Nat. Before,
-        // `sig:0`/`proof:0` DROPPED the caveat chain — the verified gate authenticated the issuer
-        // key but was BLIND to the discharges, so a turn carrying a BAD discharge (a forged /
-        // missing third-party discharge the Rust `from_encoded_with_discharges` rejects,
-        // `authorize.rs:1795`) passed the Lean WHO leg unchanged. Now the `sig`/`proof` Nat is
-        // `bytes32_to_nat(blake3(encoded ‖ discharges))`, so it is sensitive to the ENTIRE caveat
-        // chain: a tampered/absent discharge changes the hash → the wire Nat → the verified WHO leg
-        // (`portalVerify .token key sig = verify key sig` / `.custom stmt pf`), so the gate can
-        // REPRODUCE the discharge-chain outcome rather than ignoring it.
-        Authorization::Token {
-            key_ref,
-            encoded,
-            discharges,
-        } => {
-            let chain_nat = bytes32_to_nat(&token_chain_hash(encoded, discharges));
+        // `encoded` credential into the `sig`/`proof` Nat. Before, `sig:0`/`proof:0` DROPPED the
+        // credential entirely — the verified gate authenticated the issuer key but was BLIND to
+        // WHICH token was presented, so swapping the credential under the same issuer passed the
+        // Lean WHO leg unchanged. Now the `sig`/`proof` Nat is `bytes32_to_nat(blake3(encoded))`,
+        // so it is sensitive to the presented credential: a substituted token changes the hash →
+        // the wire Nat → the verified WHO leg (`portalVerify .token key sig = verify key sig` /
+        // `.custom stmt pf`).
+        //
+        // The fold used to also cover an `Authorization::Token::discharges` blob. That field is
+        // DELETED (`turn/src/action.rs`): no accept path read it — `verify_token_authorization`
+        // took it as `_discharges` because the only key_ref that carried discharges is refused
+        // unconditionally — so folding it made the gate sensitive to bytes the Rust verifier never
+        // checked. It bought the appearance of reproducing a discharge rejection that never
+        // happened. Sensitivity to `encoded`, which the verifier DOES decode and verify, is the
+        // part that was ever real, and it is what remains.
+        Authorization::Token { key_ref, encoded } => {
+            let chain_nat = bytes32_to_nat(&token_credential_hash(encoded));
             match key_ref {
                 dregg_turn::action::TokenKeyRef::BiscuitIssuer { issuer_pubkey } => {
                     WireAuth::Token {
@@ -2450,21 +2452,20 @@ fn blake3_of(bytes: &[u8]) -> [u8; 32] {
     *blake3::hash(bytes).as_bytes()
 }
 
-/// Hash a Token credential's `encoded` blob TOGETHER WITH its `discharges` caveat-chain into a
-/// single 32-byte commitment (the WHO-leg's discharge-sensitive `sig`/`proof` Nat preimage). The
-/// length-prefixing makes the fold injective in the discharge SET (a different number of
-/// discharges, or a different discharge, yields a different commitment), so the verified gate's
-/// WHO leg is sensitive to the FULL caveat chain the Rust verifier checks — not just the issuer
-/// key. An EMPTY credential with no discharges hashes the empty preimage (a stable non-secret).
-fn token_chain_hash(encoded: &[u8], discharges: &[Vec<u8>]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("dregg-lean-shadow-token-chain-v1");
+/// Hash a Token credential's `encoded` blob into a 32-byte commitment (the WHO-leg's
+/// credential-sensitive `sig`/`proof` Nat preimage). Length-prefixed, so the fold is injective in
+/// the credential bytes: a substituted or truncated token yields a different commitment, and the
+/// verified gate's WHO leg is sensitive to WHICH credential was presented — not just to the issuer
+/// key. An EMPTY credential hashes the empty preimage (a stable non-secret).
+///
+/// This is exactly the credential the Rust verifier decodes and cryptographically checks
+/// (`verify_token_authorization`), which is why folding it is meaningful. It used to also fold an
+/// `Authorization::Token::discharges` blob; that field is deleted because no accept path read it,
+/// so its contribution here was sensitivity to unchecked bytes.
+fn token_credential_hash(encoded: &[u8]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-lean-shadow-token-credential-v2");
     hasher.update(&(encoded.len() as u64).to_le_bytes());
     hasher.update(encoded);
-    hasher.update(&(discharges.len() as u64).to_le_bytes());
-    for d in discharges {
-        hasher.update(&(d.len() as u64).to_le_bytes());
-        hasher.update(d);
-    }
     *hasher.finalize().as_bytes()
 }
 
@@ -2609,11 +2610,11 @@ mod producer_coverage_tests {
 }
 
 /// Theme-2 LEAN-SHADOW AUTH-SHAPES: the producer marshaller now carries the HARD auth shapes
-/// (caveats / bearer full-sig / token discharge-chain) the wire previously dropped, so the verified
+/// (caveats / bearer full-sig / token credential) the wire previously dropped, so the verified
 /// Lean kernel evaluates them rather than seeing a weaker turn. These tests pin the Rust HALF of
 /// each closure (the data crosses faithfully + is tamper-sensitive); the Lean HALF (the refusal
 /// teeth) is `FFI.lean`'s `caveat_teeth_same_wire` / `bearer_teeth_same_wire` /
-/// `discharge_teeth_same_wire`.
+/// `credential_teeth_same_wire`.
 #[cfg(test)]
 mod auth_shape_marshal_tests {
     use super::*;
@@ -2674,49 +2675,63 @@ mod auth_shape_marshal_tests {
         );
     }
 
-    /// (2) TOKEN DISCHARGE: `token_chain_hash` is sensitive to the FULL `encoded ‖ discharges`
-    /// chain — a tampered/added/removed discharge changes the commitment, so the verified WHO leg
-    /// can no longer be blind to the chain (the `sig:0` drop the ledger named).
+    /// (2) TOKEN CREDENTIAL: `token_credential_hash` is sensitive to the presented `encoded`
+    /// credential — a substituted or truncated token changes the commitment, so the verified WHO
+    /// leg cannot be blind to WHICH token was presented (the `sig:0` drop the ledger named).
+    ///
+    /// This replaces a discharge-sensitivity assertion. The fold used to cover an
+    /// `Authorization::Token::discharges` blob, and that field is DELETED: no accept path read it
+    /// (`verify_token_authorization` took it as `_discharges`), so sensitivity to it was
+    /// sensitivity to bytes the Rust verifier never checked. `encoded` is the ingredient the
+    /// verifier actually decodes and cryptographically checks, so it is the one worth binding.
     #[test]
-    fn token_chain_hash_is_discharge_sensitive() {
+    fn token_credential_hash_is_credential_sensitive() {
         let encoded = b"eb2_some_biscuit".to_vec();
-        let d1 = vec![b"discharge-a".to_vec()];
-        let d2 = vec![b"discharge-b".to_vec()]; // a DIFFERENT discharge
-        let d_extra = vec![b"discharge-a".to_vec(), b"discharge-b".to_vec()]; // an ADDED discharge
-        let h_none = token_chain_hash(&encoded, &[]);
-        let h1 = token_chain_hash(&encoded, &d1);
-        let h2 = token_chain_hash(&encoded, &d2);
-        let h_extra = token_chain_hash(&encoded, &d_extra);
-        assert_ne!(h1, h_none, "adding a discharge changes the commitment");
-        assert_ne!(h1, h2, "a different discharge changes the commitment");
-        assert_ne!(h1, h_extra, "the discharge SET cardinality is load-bearing");
-        // ...and the `encoded` blob is load-bearing too:
+        let h = token_credential_hash(&encoded);
         assert_ne!(
-            token_chain_hash(&encoded, &d1),
-            token_chain_hash(b"em2_other", &d1),
-            "the encoded credential is part of the commitment"
+            h,
+            token_credential_hash(b"em2_other"),
+            "a substituted credential changes the commitment"
+        );
+        assert_ne!(
+            h,
+            token_credential_hash(b"eb2_some_biscui"),
+            "a truncated credential changes the commitment"
+        );
+        assert_ne!(
+            h,
+            token_credential_hash(b""),
+            "an absent credential changes the commitment"
+        );
+        assert_eq!(
+            h,
+            token_credential_hash(&encoded),
+            "the fold is deterministic in the credential bytes"
         );
     }
 
     /// (2) TOKEN arm: the producer maps a biscuit Token to the wire `token` arm with a
-    /// discharge-folded `sig` (NOT `sig:0`), so a turn with a different discharge marshals to a
-    /// DIFFERENT wire credential (the verified WHO leg sees the change).
+    /// credential-folded `sig` (NOT `sig:0`), so a turn presenting a DIFFERENT token marshals to a
+    /// DIFFERENT wire credential (the verified WHO leg sees the change) — while the issuer anchor
+    /// still crosses byte-exact.
     #[test]
-    fn biscuit_token_wire_is_discharge_sensitive() {
+    fn biscuit_token_wire_is_credential_sensitive() {
         use dregg_lean_ffi::marshal::WireAuth;
         let key = [3u8; 32];
-        let mk = |discharges: Vec<Vec<u8>>| {
+        let mk = |encoded: &[u8]| {
             auth_to_wire(&Authorization::Token {
-                encoded: b"eb2_cred".to_vec(),
+                encoded: encoded.to_vec(),
                 key_ref: TokenKeyRef::BiscuitIssuer { issuer_pubkey: key },
-                discharges,
             })
         };
-        let a = mk(vec![b"good".to_vec()]);
-        let b = mk(vec![b"bad".to_vec()]);
+        let a = mk(b"eb2_cred_good");
+        let b = mk(b"eb2_cred_other");
         match (&a, &b) {
             (WireAuth::Token { sig: sa, .. }, WireAuth::Token { sig: sb, .. }) => {
-                assert_ne!(sa, sb, "a different discharge ⇒ a different wire token sig")
+                assert_ne!(
+                    sa, sb,
+                    "a different credential ⇒ a different wire token sig"
+                )
             }
             _ => panic!("biscuit Token must map to the wire token arm"),
         }

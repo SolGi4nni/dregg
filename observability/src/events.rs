@@ -306,8 +306,12 @@ pub enum AuthorizationPayload {
     /// First-class biscuit/macaroon credential authorization
     /// (`.docs-history-noclaude/TOKEN-CAPABILITY-UNIFICATION.md`). The encoded token is
     /// hashed (it can be large and is presented, not a secret); the key
-    /// reference and discharge count are surfaced so studio consumers can
-    /// see the trust anchor and third-party-caveat shape.
+    /// reference is surfaced so studio consumers can see the trust anchor.
+    ///
+    /// There is no `num_discharges`: the `discharges` wire field it counted is
+    /// deleted (`dregg_turn::action::Authorization::Token`) — it was hashed into
+    /// the action digest with no accept path reading it, and this counter was
+    /// its only reader anywhere in the tree.
     Token {
         /// Token format detected from the prefix (`biscuit`/`macaroon`/`unknown`).
         format: &'static str,
@@ -319,8 +323,6 @@ pub enum AuthorizationPayload {
         key_ref_kind: &'static str,
         /// The resolved key handle (issuer pubkey hex, or target cell id hex).
         key_ref: String,
-        /// Number of discharge tokens presented for third-party caveats.
-        num_discharges: usize,
     },
 }
 
@@ -459,11 +461,7 @@ impl AuthorizationPayload {
                     signature_prefix: hex_bytes(&sig_prefix),
                 }
             }
-            Authorization::Token {
-                encoded,
-                key_ref,
-                discharges,
-            } => {
+            Authorization::Token { encoded, key_ref } => {
                 let format = token_format_tag(encoded);
                 let (key_ref_kind, key_ref_hex) = match key_ref {
                     TokenKeyRef::BiscuitIssuer { issuer_pubkey } => {
@@ -479,7 +477,6 @@ impl AuthorizationPayload {
                     encoded_len: encoded.len(),
                     key_ref_kind,
                     key_ref: key_ref_hex,
-                    num_discharges: discharges.len(),
                 }
             }
         }

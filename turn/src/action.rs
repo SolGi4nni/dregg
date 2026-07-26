@@ -428,17 +428,33 @@ pub enum Authorization {
     /// `AuthRequest` facts differ. Expiry is block-height-bound (no
     /// wall-clock). Capability-cover is enforced (the token must grant
     /// ≥ what the cell requires). All checks fail closed.
+    ///
+    /// **There is no `discharges` field.** A `Vec<Vec<u8>>` of third-party
+    /// caveat discharges used to ride here and was hashed into
+    /// [`Action::hash`] — hence into the forest hash, the turn hash, the
+    /// signing message and the receipt chain — while NO accept path read it:
+    /// the only format that carried discharges (`CellScopedMacaroon`) is
+    /// refused unconditionally before any token is built, so
+    /// `verify_token_authorization` took the parameter as `_discharges`.
+    /// Every producer in the tree passed an empty vector, so the field could
+    /// only ever be filled by an external submitter, and the bytes reached
+    /// consensus with nothing checking their shape. Validating them was not
+    /// available: a discharge is verified against the macaroon root key, and
+    /// this executor's cell-scoped root "secret" is a KDF over two PUBLIC
+    /// values (`derive_cell_macaroon_secret`), so a discharge check under it
+    /// proves nothing; biscuit third-party blocks travel INSIDE the token and
+    /// are checked by `AuthToken::verify`. So the field carried no shape any
+    /// verifier could enforce and no reader any verifier consulted, and it is
+    /// deleted rather than left hashed-and-unvalidated. Restoring a real
+    /// per-cell macaroon secret is what re-earns the field — and it must
+    /// arrive together with the discharge verification, not before it.
+    /// `token_arm_digest_binds_exactly_encoded_and_key_ref` is the tooth.
     Token {
         /// Self-describing encoded credential (`eb2_…` biscuit /
         /// `em2_…` macaroon), as produced by `dregg_token`.
         encoded: Vec<u8>,
         /// How the verifier resolves the root key + trust anchor.
         key_ref: TokenKeyRef,
-        /// Optional discharge tokens satisfying third-party caveats
-        /// (each itself verifiable against a known gateway pubkey).
-        // Always serialize (postcard positional wire format — see witness_blobs).
-        #[serde(default)]
-        discharges: Vec<Vec<u8>>,
     },
     /// **HYBRID (ed25519 + ML-DSA-65) signature — the quantum-safe turn
     /// perimeter.** Both halves cover the SAME canonical signing message
@@ -1810,22 +1826,22 @@ impl Action {
                 // determine `P`, and `P` is what the signature binds.
                 let _ = signature;
             }
-            Authorization::Token {
-                encoded,
-                key_ref,
-                discharges,
-            } => {
+            Authorization::Token { encoded, key_ref } => {
                 hasher.update(&[9u8]);
                 hasher.update(&(encoded.len() as u64).to_le_bytes());
                 hasher.update(encoded);
                 let kr_bytes = postcard::to_allocvec(key_ref).unwrap_or_default();
                 hasher.update(&(kr_bytes.len() as u64).to_le_bytes());
                 hasher.update(&kr_bytes);
-                hasher.update(&(discharges.len() as u64).to_le_bytes());
-                for d in discharges {
-                    hasher.update(&(d.len() as u64).to_le_bytes());
-                    hasher.update(d);
-                }
+                // EXACTLY these two fields. Both are READ on the accept path
+                // (`verify_token_authorization` decodes `encoded` and
+                // trust-checks `key_ref`), so both are bound. A third field
+                // hashed here — the deleted `discharges` was one — would be
+                // caller-chosen bytes entering the forest hash, the turn hash
+                // and the receipt chain with no verifier consulting them;
+                // `token_arm_digest_binds_exactly_encoded_and_key_ref`
+                // recomputes this preimage independently and goes RED if the
+                // arm gains an ingredient.
             }
         }
         // Hash delegation mode.
@@ -2817,6 +2833,177 @@ impl Event {
 // The `linearity()` method itself is exhaustive at compile time; adding a
 // new `Effect` variant without answering the linearity question is a
 // `rustc` error, not a runtime surprise.
+// THE TOOTH for the deleted `Authorization::Token::discharges` field.
+//
+// The wound: `discharges` was a caller-settable `Vec<Vec<u8>>` hashed into
+// `Action::hash` — hence into the call-forest hash, the turn hash, the turn
+// signing message and the receipt chain — that NO accept path read. Every
+// producer in the tree passed it empty, so only an external submitter could
+// fill it, and `verify_token_authorization` took it as `_discharges` because
+// the one key_ref that carried discharges is refused unconditionally.
+//
+// Deleting the field is the close; these tests are what makes the close STAY
+// true rather than being a comment. They bite in three independent ways:
+//
+//   1. COMPILE-TIME. `token_arm_digest_binds_exactly_encoded_and_key_ref`
+//      destructures `Authorization::Token { encoded, key_ref }` with NO `..`
+//      rest-pattern. Re-adding any field to the variant is an E0027 on this
+//      test, so the field cannot come back silently.
+//   2. PREIMAGE-EXACT. The same test rebuilds the ENTIRE `Action::hash`
+//      preimage for a minimal Token action, naming every byte the arm may
+//      contribute, and asserts equality with `Action::hash`. Hashing one extra
+//      ingredient in the Token arm — a re-added `discharges`, or any other blob
+//      — diverges the recomputation and goes RED. So does DROPPING an
+//      ingredient, which is the other direction.
+//   3. NON-VACUOUS. `token_arm_digest_is_sensitive_to_both_bound_ingredients`
+//      proves the pin is not asserting a constant: the digest genuinely moves
+//      when `encoded` moves and when `key_ref` moves. A degenerate `hash` that
+//      ignored the credential would satisfy (2) and fail (3).
+#[cfg(test)]
+mod token_arm_digest_tests {
+    use super::*;
+
+    fn token_action(encoded: &[u8], key_ref: TokenKeyRef) -> Action {
+        Action {
+            target: CellId([7u8; 32]),
+            method: [9u8; 32],
+            args: Vec::new(),
+            authorization: Authorization::Token {
+                encoded: encoded.to_vec(),
+                key_ref,
+            },
+            preconditions: Preconditions::default(),
+            effects: Vec::new(),
+            may_delegate: DelegationMode::None,
+            commitment_mode: CommitmentMode::default(),
+            balance_change: None,
+            witness_blobs: Vec::new(),
+        }
+    }
+
+    /// The Token arm of the action digest commits to EXACTLY `encoded` and
+    /// `key_ref` — the two ingredients `verify_token_authorization` actually
+    /// reads — and to nothing else.
+    #[test]
+    fn token_arm_digest_binds_exactly_encoded_and_key_ref() {
+        let action = token_action(
+            b"eb2_a_presented_biscuit",
+            TokenKeyRef::BiscuitIssuer {
+                issuer_pubkey: [4u8; 32],
+            },
+        );
+
+        // NO `..` REST-PATTERN. This is half the tooth: if `Authorization::Token`
+        // regains a field, rustc rejects this destructure (E0027) and whoever
+        // added it has to come here and answer whether the new bytes are read on
+        // an accept path before they may be hashed into consensus.
+        let Authorization::Token { encoded, key_ref } = &action.authorization else {
+            panic!("fixture is a Token authorization");
+        };
+
+        // Rebuild the whole preimage. The fixture is minimal — no args, no
+        // effects, no witness blobs, default preconditions — so everything below
+        // the auth arm is a fixed short tail, and the interesting middle is the
+        // arm itself.
+        let mut expect = blake3::Hasher::new();
+        expect.update(b"dregg-action-v2:");
+        expect.update(action.target.as_bytes());
+        expect.update(&action.method);
+        // -- the Token arm, in full: discriminant, then EXACTLY two ingredients --
+        expect.update(&[9u8]);
+        expect.update(&(encoded.len() as u64).to_le_bytes());
+        expect.update(encoded);
+        let kr_bytes = postcard::to_allocvec(key_ref).unwrap_or_default();
+        expect.update(&(kr_bytes.len() as u64).to_le_bytes());
+        expect.update(&kr_bytes);
+        // -- end of the arm; nothing else from the authorization --
+        expect.update(&[action.may_delegate as u8]);
+        expect.update(&[action.commitment_mode as u8]);
+        expect.update(&[0u8]); // balance_change: None
+        // effects: empty (each effect would hash its own digest here)
+        let preconds_bytes = postcard::to_allocvec(&action.preconditions).unwrap_or_default();
+        expect.update(&preconds_bytes);
+        expect.update(&0u64.to_le_bytes()); // witness_blobs: empty
+
+        assert_eq!(
+            action.hash(),
+            *expect.finalize().as_bytes(),
+            "the Token arm must hash exactly (encoded, key_ref); an extra ingredient here is \
+             caller-controlled bytes entering the forest hash, the turn hash and the receipt \
+             chain, and the deleted `discharges` field is why this is pinned"
+        );
+
+        // ...and the ACTIVE refutation of the exact regression shape. The deleted
+        // `discharges: Vec<Vec<u8>>` contributed a `u64` count immediately after
+        // `key_ref` — so even an EMPTY discharge list put eight zero bytes into
+        // the preimage. Rebuild that variant and require the digest NOT to match
+        // it. This assertion goes red the moment anyone reintroduces a
+        // length-prefixed blob-list in that position, without waiting for anyone
+        // to notice the equality above drifting.
+        let mut with_readded_blob_list = blake3::Hasher::new();
+        with_readded_blob_list.update(b"dregg-action-v2:");
+        with_readded_blob_list.update(action.target.as_bytes());
+        with_readded_blob_list.update(&action.method);
+        with_readded_blob_list.update(&[9u8]);
+        with_readded_blob_list.update(&(encoded.len() as u64).to_le_bytes());
+        with_readded_blob_list.update(encoded);
+        with_readded_blob_list.update(&(kr_bytes.len() as u64).to_le_bytes());
+        with_readded_blob_list.update(&kr_bytes);
+        with_readded_blob_list.update(&0u64.to_le_bytes()); // <- the `discharges` count
+        with_readded_blob_list.update(&[action.may_delegate as u8]);
+        with_readded_blob_list.update(&[action.commitment_mode as u8]);
+        with_readded_blob_list.update(&[0u8]);
+        with_readded_blob_list.update(&preconds_bytes);
+        with_readded_blob_list.update(&0u64.to_le_bytes());
+
+        assert_ne!(
+            action.hash(),
+            *with_readded_blob_list.finalize().as_bytes(),
+            "the Token arm must NOT carry a trailing caller-settable blob list; this is the \
+             `discharges` shape, and it reached consensus with no accept path reading it"
+        );
+    }
+
+    /// The pin above is not a constant: both bound ingredients move the digest.
+    /// Without this, a `hash` that dropped the credential entirely would still
+    /// satisfy the preimage recomputation (both sides would drop it together).
+    #[test]
+    fn token_arm_digest_is_sensitive_to_both_bound_ingredients() {
+        let issuer = TokenKeyRef::BiscuitIssuer {
+            issuer_pubkey: [4u8; 32],
+        };
+        let base = token_action(b"eb2_cred", issuer.clone()).hash();
+
+        assert_ne!(
+            base,
+            token_action(b"eb2_other_cred", issuer.clone()).hash(),
+            "a substituted credential must change the action digest"
+        );
+        assert_ne!(
+            base,
+            token_action(
+                b"eb2_cred",
+                TokenKeyRef::BiscuitIssuer {
+                    issuer_pubkey: [5u8; 32],
+                },
+            )
+            .hash(),
+            "a substituted trust anchor must change the action digest"
+        );
+        assert_ne!(
+            base,
+            token_action(
+                b"eb2_cred",
+                TokenKeyRef::CellScopedMacaroon {
+                    cell: CellId([4u8; 32]),
+                },
+            )
+            .hash(),
+            "the key_ref VARIANT must change the action digest, not just its payload"
+        );
+    }
+}
+
 #[cfg(test)]
 mod linearity_tests {
     use super::*;

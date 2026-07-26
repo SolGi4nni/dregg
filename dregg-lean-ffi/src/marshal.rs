@@ -31,9 +31,9 @@
 //!   * all 30 `FullActionA` arms via `WireAction` (byte-exact with `encodeActionW`);
 //!   * dregg1 `GrantCapability` / `RevokeCapability` map to `Delegate` / `Revoke` on the wire;
 //!   * dregg1 `BiscuitIssuer` / `CellScopedMacaroon` map to `Token` / `Custom` via
-//!     `auth_biscuit_issuer` / `auth_cell_macaroon`, folding the `encoded`/`discharges`
-//!     caveat-chain into the `sig`/`proof` `Nat` (`token_chain_commitment`) so the WHO leg is
-//!     discharge-sensitive — not blind to the chain (the issuer key alone is no longer the whole leg).
+//!     `auth_biscuit_issuer` / `auth_cell_macaroon`, folding the `encoded` credential into the
+//!     `sig`/`proof` `Nat` (`token_credential_commitment`) so the WHO leg is credential-sensitive —
+//!     not blind to WHICH token was presented (the issuer key alone is no longer the whole leg).
 //!
 //! What is DEFERRED (documented, NEVER silently mis-encoded — a dropped field is worse
 //! than an error). See `MarshalError` and the `// GAP:` comments:
@@ -354,25 +354,25 @@ pub enum WireAuth {
     },
     /// {"token":["H64",P]} — token(issuerKey, sig). `issuer_key` is a full 256-bit digest
     /// (the biscuit issuer pubkey / macaroon root anchor the gate authenticates); `sig` carries the
-    /// `token_chain_commitment(encoded, discharges)` low-u64 so the WHO leg is sensitive to the
-    /// FULL caveat-discharge chain (a bad discharge ⇒ a different `sig`), not just the issuer key.
+    /// `token_credential_commitment(encoded)` low-u64 so the WHO leg is sensitive to WHICH
+    /// credential was presented (a substituted token ⇒ a different `sig`), not just the issuer key.
     Token { issuer_key: Digest, sig: u64 },
 }
 
-/// The 32-byte commitment to a Token credential's `encoded` blob AND its `discharges` caveat-chain
-/// (length-prefixed so it is injective in the discharge SET). This is the WHO-leg's
-/// discharge-sensitive `sig`/`proof` Nat preimage: a tampered/absent discharge changes the
-/// commitment, so the verified gate's WHO leg is sensitive to the FULL caveat chain — not just the
-/// issuer key. Mirrors `turn::lean_shadow::token_chain_hash`.
-pub fn token_chain_commitment(encoded: &[u8], discharges: &[Vec<u8>]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("dregg-lean-shadow-token-chain-v1");
+/// The 32-byte commitment to a Token credential's `encoded` blob (length-prefixed). This is the
+/// WHO-leg's credential-sensitive `sig`/`proof` Nat preimage: a substituted or truncated token
+/// changes the commitment, so the verified gate's WHO leg is sensitive to which credential was
+/// presented — not just to the issuer key. Mirrors `exec_lean::lean_shadow::token_credential_hash`.
+///
+/// It used to also fold an `Authorization::Token::discharges` blob. That field is DELETED
+/// (`dregg_turn::action`): no accept path read it — `verify_token_authorization` took it as
+/// `_discharges` — so folding it made the gate sensitive to bytes the Rust verifier never checked,
+/// which bought the appearance of reproducing a discharge rejection that never happened. `encoded`
+/// is what the verifier decodes and cryptographically checks, so it is what remains bound.
+pub fn token_credential_commitment(encoded: &[u8]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-lean-shadow-token-credential-v2");
     hasher.update(&(encoded.len() as u64).to_le_bytes());
     hasher.update(encoded);
-    hasher.update(&(discharges.len() as u64).to_le_bytes());
-    for d in discharges {
-        hasher.update(&(d.len() as u64).to_le_bytes());
-        hasher.update(d);
-    }
     *hasher.finalize().as_bytes()
 }
 
@@ -383,25 +383,25 @@ fn commitment_low_u64(c: &[u8; 32]) -> u64 {
 }
 
 /// Map dregg1 `BiscuitIssuer` to the wire `token` arm. The issuer pubkey crosses in full as the
-/// WHO-leg digest, and the `encoded` credential + its `discharges` caveat-chain are FOLDED into the
-/// `sig` `Nat` (`token_chain_commitment`) so the verified gate authenticates the issuer key AND is
-/// sensitive to the discharge chain (a bad discharge ⇒ a different `sig` ⇒ the WHO leg can
-/// reproduce the rejection). Previously `sig:0` dropped the chain entirely.
-pub fn auth_biscuit_issuer(issuer_key: Digest, encoded: &[u8], discharges: &[Vec<u8>]) -> WireAuth {
+/// WHO-leg digest, and the `encoded` credential is FOLDED into the `sig` `Nat`
+/// (`token_credential_commitment`) so the verified gate authenticates the issuer key AND is
+/// sensitive to which credential was presented (a substituted token ⇒ a different `sig` ⇒ the WHO
+/// leg can reproduce the rejection). Previously `sig:0` dropped the credential entirely.
+pub fn auth_biscuit_issuer(issuer_key: Digest, encoded: &[u8]) -> WireAuth {
     WireAuth::Token {
         issuer_key,
-        sig: commitment_low_u64(&token_chain_commitment(encoded, discharges)),
+        sig: commitment_low_u64(&token_credential_commitment(encoded)),
     }
 }
 
 /// Map dregg1 `CellScopedMacaroon` to the wire `custom` arm. The cell-scoped root anchor crosses as
-/// the `kind_stmt` digest, and the `encoded` macaroon + its `discharges` chain are FOLDED into the
-/// `proof` `Nat` (`token_chain_commitment`) so the verified gate is sensitive to the discharge
-/// chain. Previously `proof:0` dropped it.
-pub fn auth_cell_macaroon(cell: Digest, encoded: &[u8], discharges: &[Vec<u8>]) -> WireAuth {
+/// the `kind_stmt` digest, and the `encoded` macaroon is FOLDED into the `proof` `Nat`
+/// (`token_credential_commitment`) so the verified gate is sensitive to which macaroon was
+/// presented. Previously `proof:0` dropped it.
+pub fn auth_cell_macaroon(cell: Digest, encoded: &[u8]) -> WireAuth {
     WireAuth::Custom {
         kind_stmt: cell,
-        proof: commitment_low_u64(&token_chain_commitment(encoded, discharges)),
+        proof: commitment_low_u64(&token_credential_commitment(encoded)),
     }
 }
 

@@ -2746,8 +2746,8 @@ pub enum AuthorizationView {
         key_ref_kind: String,
         /// Resolved key handle (issuer pubkey hex, or target cell id hex).
         key_ref: String,
-        /// Number of discharge tokens for third-party caveats.
-        num_discharges: usize,
+        // No `num_discharges`: the `discharges` wire field is deleted — it was
+        // hashed into the action digest with no accept path reading it.
     },
 }
 
@@ -2846,11 +2846,7 @@ fn authorization_to_view(auth: &Authorization) -> AuthorizationView {
             blinding_scalar: hex_encode(blinding_scalar),
             signature: hex_encode(signature),
         },
-        Authorization::Token {
-            encoded,
-            key_ref,
-            discharges,
-        } => {
+        Authorization::Token { encoded, key_ref } => {
             let format = if encoded.starts_with(b"eb2_") {
                 "biscuit"
             } else if encoded.starts_with(b"em2_") {
@@ -2871,7 +2867,6 @@ fn authorization_to_view(auth: &Authorization) -> AuthorizationView {
                 encoded_len: encoded.len(),
                 key_ref_kind: key_ref_kind.to_string(),
                 key_ref: key_ref_hex,
-                num_discharges: discharges.len(),
             }
         }
     }

@@ -85,7 +85,6 @@ pub(super) fn parse_presented_cap(
         key_ref: dregg_turn::TokenKeyRef::BiscuitIssuer {
             issuer_pubkey: *issuer_pubkey,
         },
-        discharges: Vec::new(),
     })
 }
 

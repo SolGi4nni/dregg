@@ -1778,7 +1778,6 @@ impl SubAgent {
             key_ref: TokenKeyRef::BiscuitIssuer {
                 issuer_pubkey: self.cap_issuer,
             },
-            discharges: Vec::new(),
         }
     }
 

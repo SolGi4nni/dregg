@@ -188,18 +188,12 @@ impl TurnExecutor {
         // turn-side TokenAuthorityVerifier: cryptographic verify + caveat /
         // Datalog evaluation bound to THIS call's AuthRequest + capability
         // cover + block-height-bound expiry. Fail-closed.
-        if let Authorization::Token {
-            encoded,
-            key_ref,
-            discharges,
-        } = &action.authorization
-        {
+        if let Authorization::Token { encoded, key_ref } = &action.authorization {
             self.verify_token_authorization(
                 action,
                 target_cell,
                 encoded,
                 key_ref,
-                discharges,
                 path,
                 turn_nonce,
             )?;
@@ -1846,12 +1840,7 @@ impl TurnExecutor {
         scope_cell: &Cell,
         scope_method: crate::action::Symbol,
     ) -> Result<(), TurnError> {
-        let Authorization::Token {
-            encoded,
-            key_ref,
-            discharges,
-        } = credential
-        else {
+        let Authorization::Token { encoded, key_ref } = credential else {
             return Err(TurnError::InvalidAuthorization {
                 reason: "capability scope check requires an Authorization::Token credential"
                     .to_string(),
@@ -1874,16 +1863,8 @@ impl TurnExecutor {
             witness_blobs: Vec::new(),
         };
 
-        self.verify_token_authorization(
-            &scoped_action,
-            scope_cell,
-            encoded,
-            key_ref,
-            discharges,
-            &[0],
-            0,
-        )
-        .map_err(|(err, _path)| err)
+        self.verify_token_authorization(&scoped_action, scope_cell, encoded, key_ref, &[0], 0)
+            .map_err(|(err, _path)| err)
     }
 
     fn token_auth_request(&self, action: &Action) -> dregg_token::AuthRequest {
@@ -1927,26 +1908,30 @@ impl TurnExecutor {
     ///    action/resource) → `TokenInsufficientCapability`. Expiry-by-height
     ///    surfaces as a denial too (the time fact is the block height).
     ///
-    /// `_discharges` IS NOT READ. Third-party caveat discharges were only ever
-    /// consumed by the macaroon path, and that path is now refused before any
-    /// token is built (step 2), so there is nothing left to discharge against;
-    /// biscuit third-party blocks travel inside the token itself and are
-    /// checked by `AuthToken::verify`. This is fail-CLOSED — an unverified
-    /// discharge can never widen a token, because a macaroon never reaches the
-    /// verify step at all. The parameter is retained rather than removed so the
-    /// wiring is still here if a real (non-public-derived) per-cell secret ever
-    /// makes the macaroon arm sound; restoring that arm MUST also restore the
-    /// discharge verification this name currently only promises. Note that
-    /// `Authorization::Token::discharges` is still hashed into the action digest
-    /// (`action.rs`), so it is caller-controlled bytes committed into consensus
-    /// that nothing validates — bounded only by whatever limits action size.
+    /// **There are no discharges to take.** This function used to accept a
+    /// `_discharges: &[Vec<u8>]` it never read, fed from an
+    /// `Authorization::Token::discharges` wire field that `Action::hash`
+    /// nonetheless committed into the forest hash, the turn hash, the signing
+    /// message and the receipt chain — caller-chosen bytes in consensus that no
+    /// accept path validated. The field is DELETED (`action.rs`), so the
+    /// parameter is gone with it and the compiler, not a comment, keeps it gone.
+    ///
+    /// Why deletion and not validation: a discharge is checked against the
+    /// macaroon ROOT KEY, and the only key_ref that ever carried discharges
+    /// (`CellScopedMacaroon`) is refused at step 2 precisely because its root
+    /// "secret" is a KDF over two public values — a discharge check under a
+    /// public key proves nothing, so there was no enforceable shape to validate
+    /// against. Biscuit third-party blocks travel INSIDE the token and are
+    /// checked by `AuthToken::verify` below, which is why the biscuit path never
+    /// wanted the field either. A real per-cell secret is what re-earns a
+    /// macaroon arm, and the discharge verification must land in the SAME change
+    /// that restores it — never a field first and a check later.
     pub(super) fn verify_token_authorization(
         &self,
         action: &Action,
         target_cell: &Cell,
         encoded: &[u8],
         key_ref: &crate::action::TokenKeyRef,
-        _discharges: &[Vec<u8>],
         path: &[usize],
         _turn_nonce: u64,
     ) -> Result<(), (TurnError, Vec<usize>)> {
@@ -2898,7 +2883,6 @@ mod anonymity_tests {
             key_ref: TokenKeyRef::BiscuitIssuer {
                 issuer_pubkey: issuer,
             },
-            discharges: vec![],
         };
         let action = action_for(cid, method, auth);
         let exec = exec_at(100);
@@ -2923,7 +2907,6 @@ mod anonymity_tests {
             key_ref: TokenKeyRef::BiscuitIssuer {
                 issuer_pubkey: issuer,
             },
-            discharges: vec![],
         };
         let action = action_for(cid, other_method, auth);
         let exec = exec_at(100);
@@ -2951,7 +2934,6 @@ mod anonymity_tests {
             key_ref: TokenKeyRef::BiscuitIssuer {
                 issuer_pubkey: issuer,
             },
-            discharges: vec![],
         };
         let action = action_for(cid, method, auth);
         let exec = exec_at(100);
@@ -2981,7 +2963,6 @@ mod anonymity_tests {
             key_ref: TokenKeyRef::BiscuitIssuer {
                 issuer_pubkey: issuer,
             },
-            discharges: vec![],
         };
         let action = action_for(cid, method, auth);
         let exec = exec_at(10); // block height past not_after
@@ -3018,7 +2999,6 @@ mod anonymity_tests {
             key_ref: TokenKeyRef::BiscuitIssuer {
                 issuer_pubkey: issuer,
             },
-            discharges: vec![],
         };
         let action = action_for(cid, method, auth);
         let exec = exec_at(100);

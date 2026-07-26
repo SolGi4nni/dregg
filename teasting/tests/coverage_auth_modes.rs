@@ -408,7 +408,6 @@ fn token_auth(encoded: Vec<u8>, issuer: [u8; 32]) -> Authorization {
         key_ref: TokenKeyRef::BiscuitIssuer {
             issuer_pubkey: issuer,
         },
-        discharges: vec![],
     }
 }
 
@@ -617,7 +616,6 @@ fn token_macaroon_cross_cell_key_ref_refuses() {
     let auth = Authorization::Token {
         encoded,
         key_ref: TokenKeyRef::CellScopedMacaroon { cell: other_cell },
-        discharges: vec![],
     };
     let result = exec_action(
         &executor,
@@ -668,7 +666,6 @@ fn token_macaroon_same_cell_public_derivation_refuses() {
     let auth = Authorization::Token {
         encoded,
         key_ref: TokenKeyRef::CellScopedMacaroon { cell: cid },
-        discharges: vec![],
     };
     let result = exec_action(
         &executor,
