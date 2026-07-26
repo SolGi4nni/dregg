@@ -147,8 +147,11 @@ enum Commands {
         /// Cipherclerk passphrase (unlocks turn signing; sets it on a fresh node).
         #[arg(long)]
         passphrase: Option<String>,
-        /// Faucet amount to fund the operator cell with.
-        #[arg(long, default_value_t = 5000)]
+        /// Faucet amount to fund the operator cell with. The node's per-request
+        /// ceiling is 10000 and its per-cell limit is one request a minute, so
+        /// asking for the whole ceiling is what lets a second consecutive demo
+        /// run out of the same grant instead of waiting for the limit to lift.
+        #[arg(long, default_value_t = 10_000)]
         faucet: u64,
     },
 
