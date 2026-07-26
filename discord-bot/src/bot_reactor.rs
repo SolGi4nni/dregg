@@ -49,7 +49,7 @@ use dregg_turn::Effect;
 use crate::BotState;
 use crate::cipherclerk::UserCipherclerk;
 use crate::deos_drive::{
-    self, COMMAND_METHOD, DriveRequest, build_op_action, command_cell, decode_command,
+    self, CMD_SEQ_SLOT, COMMAND_METHOD, DriveRequest, build_op_action, command_cell, decode_command,
 };
 
 /// **The bot's command reactor** — a [`Reactor`] that watches the on-chain
@@ -224,16 +224,94 @@ async fn reflect_to_discord(
     }
 }
 
+/// **The committed command sequence** carried by the command cell's state — the
+/// value of [`CMD_SEQ_SLOT`]. A readable cell that has never carried a command has
+/// every slot zero, so `0` (nothing has ever been commanded) is the honest reading
+/// of an absent slot; a cell that could not be read at all is NOT this function's
+/// business (the caller passes `None` for that, and the reactor refuses to fire).
+fn committed_seq(effects: &[Effect]) -> u64 {
+    let cell = command_cell();
+    effects
+        .iter()
+        .find_map(|effect| match effect {
+            Effect::SetField {
+                cell: c,
+                index,
+                value,
+            } if *c == cell && *index == CMD_SEQ_SLOT as u64 => {
+                Some(u64::from_be_bytes(value[24..32].try_into().ok()?))
+            }
+            _ => None,
+        })
+        .unwrap_or(0)
+}
+
+/// What one poll of the command cell decides. Split out of the loop so the
+/// restart behaviour is testable without a node, a runtime or a `BotState`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReactorStep {
+    /// Fire NOTHING this tick. Either the cell was unreadable (so the cursor cannot
+    /// be trusted — the REFUSE floor) or the command at this seq is already handled.
+    Idle,
+    /// The cursor was ADOPTED from the cell's committed sequence. No reaction is
+    /// fired for it: the bot cannot know whether the pre-restart process already
+    /// reacted, and re-firing mints a fresh credential / re-leases a name / writes a
+    /// fresh presence epoch. Skipping is the recoverable direction.
+    Seeded { cursor: u64 },
+    /// A genuinely NEW command (seq beyond the cursor) — react to it.
+    Fire { seq: u64 },
+}
+
+/// **The reactor's restart rule, as one pure decision.**
+///
+/// `cursor` is what this process believes it has already handled (`None` = it has
+/// not read the chain yet, i.e. it just booted). `committed` is the sequence the
+/// command cell currently carries, or `None` when the cell could not be read.
+///
+/// * unreadable cell ⇒ [`ReactorStep::Idle`] — a boot that cannot reach the node
+///   fires nothing at all, rather than falling back to a `0` cursor that makes every
+///   standing command look new;
+/// * first successful read ⇒ [`ReactorStep::Seeded`] — adopt the on-chain cursor,
+///   react to nothing;
+/// * afterwards ⇒ react iff the sequence advanced.
+fn reactor_step(cursor: Option<u64>, committed: Option<u64>) -> ReactorStep {
+    match (cursor, committed) {
+        (_, None) => ReactorStep::Idle,
+        (None, Some(seq)) => ReactorStep::Seeded { cursor: seq },
+        (Some(handled), Some(seq)) if seq > handled => ReactorStep::Fire { seq },
+        _ => ReactorStep::Idle,
+    }
+}
+
 /// **Start the on-chain command reactor background task.** Polls the command
 /// cell's committed state; when a NEW command (advanced seq) lands, decodes the
 /// [`DriveRequest`] and fires the bot's reaction. The on-chain analogue of
 /// `activity_feed::start` — but reacting, not just reporting.
+///
+/// ⚑ **RESTART: REBUILD, with a REFUSE floor** (see
+/// `docs/reference/RESTART-SEMANTICS.md`). The dedupe cursor used to be a plain
+/// `let mut last_seq: u64 = 0;` — while the real cursor was already on-chain in
+/// [`CMD_SEQ_SLOT`] and simply never read at boot. Every restart therefore saw
+/// `seq >= 1 > 0` and re-fired the standing command as a REAL signed turn:
+/// `IssueCredential` minted a second credential, `RegisterName` re-leased the name
+/// at a fresh expiry, `AttestPresence` wrote a fresh on-ledger epoch. The cursor is
+/// now adopted from the cell itself on the first successful read, and until that
+/// read succeeds the reactor fires nothing.
+///
+/// **The trade, named:** a command issued while the bot was DOWN is skipped rather
+/// than fired late. The command cell holds exactly one pending command (the slot is
+/// overwritten, not queued), so the cost is bounded at one missed command per
+/// downtime — against an unbounded, silently-repeating credential mint on every
+/// restart. Re-issuing a skipped command is one more `/deos` press; un-minting a
+/// duplicate credential is not a thing.
 pub fn start(state: Arc<BotState>, http: Arc<Http>) {
     tokio::spawn(async move {
         info!("Bot command reactor started (watching the on-chain command cell)");
         let reactor = BotCommandReactor::from_state(&state);
         let command_cell_hex = hex::encode(command_cell().0);
-        let mut last_seq: u64 = 0;
+        // `None` = this process has not yet READ the chain, so it knows nothing about
+        // what was already handled and must not fire.
+        let mut cursor: Option<u64> = None;
 
         // Small initial delay to let the bot finish connecting.
         time::sleep(Duration::from_secs(3)).await;
@@ -241,23 +319,40 @@ pub fn start(state: Arc<BotState>, http: Arc<Http>) {
         loop {
             time::sleep(Duration::from_secs(5)).await;
 
-            let details = match state.devnet.get_cell_details(&command_cell_hex).await {
-                Ok(d) => d,
+            let effects = match state.devnet.get_cell_details(&command_cell_hex).await {
+                Ok(details) => Some(setfields_from_state(&details.fields)),
                 Err(e) => {
                     debug!("command reactor: command cell not readable yet: {e}");
-                    continue;
+                    None
                 }
             };
+            let committed = effects.as_deref().map(committed_seq);
 
-            let effects = setfields_from_state(&details.fields);
-            let Some((req, seq)) = decode_command(&effects) else {
-                continue;
-            };
-            if seq <= last_seq {
-                continue; // already handled (dedupe on the monotone command seq)
+            match reactor_step(cursor, committed) {
+                ReactorStep::Idle => continue,
+                ReactorStep::Seeded { cursor: adopted } => {
+                    cursor = Some(adopted);
+                    info!(
+                        seq = adopted,
+                        "bot reactor adopted the command cursor from the on-chain CMD_SEQ_SLOT \
+                         — nothing is replayed for it"
+                    );
+                }
+                ReactorStep::Fire { seq } => {
+                    // Advance FIRST: the committed state at a given seq is immutable, so a
+                    // payload this build cannot decode will never decode, and retrying it
+                    // forever would only re-warn every tick.
+                    cursor = Some(seq);
+                    let effects = effects.unwrap_or_default();
+                    match decode_command(&effects) {
+                        Some((req, _)) => fire(&state, &http, &reactor, &req, effects).await,
+                        None => warn!(
+                            seq,
+                            "command cell advanced but its payload did not decode — skipped"
+                        ),
+                    }
+                }
             }
-            last_seq = seq;
-            fire(&state, &http, &reactor, &req, effects).await;
         }
     });
 }
@@ -384,6 +479,106 @@ mod tests {
                 symbol("attest_presence")
             );
         }
+    }
+
+    // ── RESTART SEMANTICS (docs/reference/RESTART-SEMANTICS.md) ──────────────────
+    // The cursor is REBUILT from the committed CMD_SEQ_SLOT, with a REFUSE floor
+    // while the chain is unreadable. These drive `reactor_step` — the whole decision
+    // the poll loop takes — so the restart behaviour is pinned without a node.
+
+    /// The effects a command turn at `seq` commits (what `/api/cell` exposes and
+    /// `setfields_from_state` rebuilds).
+    fn command_effects(seq: u64) -> Vec<Effect> {
+        build_command_action(
+            &DriveRequest {
+                user_id: 4242,
+                guild_id: None,
+                op: BotOp::IssueCredential {
+                    schema: "kyc".to_string(),
+                    attributes: serde_json::json!({ "verified": true }),
+                },
+            },
+            seq,
+        )
+        .effects
+    }
+
+    /// ⚑ **THE RESTART.** A command at seq 3 is committed on-chain. A FRESH process
+    /// (cursor `None` — exactly what `start` begins with) must ADOPT that sequence,
+    /// not react to it: the pre-fix loop began at `last_seq = 0`, saw `3 > 0`, and
+    /// drove `deos_drive::drive` — minting a second credential / re-leasing a name /
+    /// writing a fresh presence epoch on EVERY restart.
+    #[test]
+    fn a_restart_adopts_the_committed_command_cursor_instead_of_replaying_it() {
+        let committed = committed_seq(&command_effects(3));
+        assert_eq!(
+            committed, 3,
+            "the seq rides CMD_SEQ_SLOT of the committed state"
+        );
+
+        // Boot: the cursor is unknown, the chain says 3.
+        let step = reactor_step(None, Some(committed));
+        assert_eq!(
+            step,
+            ReactorStep::Seeded { cursor: 3 },
+            "a fresh process must adopt the on-chain cursor, never fire for it"
+        );
+        assert!(
+            !matches!(step, ReactorStep::Fire { .. }),
+            "the standing command must NOT be replayed on restart"
+        );
+
+        // The same state on every later tick is already handled.
+        assert_eq!(reactor_step(Some(3), Some(3)), ReactorStep::Idle);
+        assert_eq!(reactor_step(Some(3), Some(2)), ReactorStep::Idle);
+
+        // NON-VACUOUS: a genuinely new command still fires.
+        assert_eq!(
+            reactor_step(Some(3), Some(committed_seq(&command_effects(4)))),
+            ReactorStep::Fire { seq: 4 },
+            "the reactor must still react to a command issued after it booted"
+        );
+    }
+
+    /// The REFUSE floor: a boot that cannot read the command cell fires NOTHING. It
+    /// must not fall back to a `0` cursor, because a `0` cursor makes every standing
+    /// command look new — which is the bug this replaces.
+    #[test]
+    fn an_unreadable_command_cell_fires_nothing_and_never_seeds_a_zero_cursor() {
+        assert_eq!(
+            reactor_step(None, None),
+            ReactorStep::Idle,
+            "an unreadable cell at boot fires nothing"
+        );
+        assert_eq!(
+            reactor_step(Some(7), None),
+            ReactorStep::Idle,
+            "an unreadable cell mid-run fires nothing"
+        );
+        // And once the cell IS readable, the cursor adopted is the CHAIN's, not 0.
+        assert_eq!(
+            reactor_step(None, Some(committed_seq(&command_effects(9)))),
+            ReactorStep::Seeded { cursor: 9 },
+        );
+    }
+
+    /// NON-VACUITY of the whole rule: on a node where NO command has ever been
+    /// committed, the cell reads as all-zero, the cursor seeds at 0, and the very
+    /// first command still fires. Adopting the cursor must not brick a fresh deploy.
+    #[test]
+    fn a_fresh_command_cell_seeds_at_zero_so_the_first_ever_command_still_fires() {
+        // A readable cell with no committed command: `/api/cell` reports zero fields.
+        let empty = setfields_from_state(&[]);
+        assert_eq!(committed_seq(&empty), 0);
+        assert_eq!(
+            reactor_step(None, Some(0)),
+            ReactorStep::Seeded { cursor: 0 }
+        );
+        assert_eq!(
+            reactor_step(Some(0), Some(committed_seq(&command_effects(1)))),
+            ReactorStep::Fire { seq: 1 },
+            "the first command ever issued on a fresh cell must fire"
+        );
     }
 
     #[test]

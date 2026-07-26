@@ -140,6 +140,7 @@ pub(crate) fn action_menu(actions: Vec<dreggnet_offerings::Action>) -> Vec<MenuI
             turn: a.turn,
             arg: a.arg,
             enabled: a.enabled,
+            wants_text: a.wants_text,
         })
         .collect()
 }

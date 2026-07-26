@@ -65,7 +65,8 @@
 use deos_view::{CoordCell, MenuItem, PillCase, ViewNode};
 use dreggnet_offerings::{
     Action, DreggIdentity, Offering, OfferingError, Outcome, RunCost, SessionConfig, Surface,
-    VerifyReport, refusal::refuse_world_error,
+    VerifyReport,
+    refusal::{refuse_rules_unavailable, refuse_world_error, stale_control_refresh},
 };
 
 use crate::board::{ATT, AUTO, Board, Coord, Decision, Move, REP, VAC};
@@ -2257,11 +2258,12 @@ impl Offering for AutomataflOffering {
                             frm.0, frm.1, to.0, to.1
                         ));
                     }
+                    // ⚑ NOT "the game oracle could not …". A verified rule-checker that cannot
+                    // answer is a BUILD fault (an absent Lean archive), not a fact about this move —
+                    // and naming our machinery told the reader nothing they could act on. The shared
+                    // commit-failure sentence, with the diagnostic logged.
                     Err(why) => {
-                        return refuse(format!(
-                            "the game oracle could not adjudicate ({},{}) → ({},{}): {why}",
-                            frm.0, frm.1, to.0, to.1
-                        ));
+                        return refuse(refuse_rules_unavailable("move_legal", &why));
                     }
                 }
                 let seal = session.seal_of(seat, &mv);
@@ -2329,7 +2331,7 @@ impl Offering for AutomataflOffering {
                 let stock_goals = match goals() {
                     Ok(g) => g,
                     Err(why) => {
-                        return refuse(format!("the goal assignment is unavailable: {why}"));
+                        return refuse(refuse_rules_unavailable("stock_goals2", &why));
                     }
                 };
                 // ⚑ **ONE ROUND, DECIDED ENTIRELY BY THE LEAN** — `AutomataflRules.roundStep`
@@ -2360,7 +2362,7 @@ impl Offering for AutomataflOffering {
                 ) {
                     Ok(o) => o,
                     Err(why) => {
-                        return refuse(format!("the game oracle could not run the round: {why}"));
+                        return refuse(refuse_rules_unavailable("roundStep", &why));
                     }
                 };
 
@@ -2461,9 +2463,7 @@ impl Offering for AutomataflOffering {
                 let mid = match rules::resolve_mid(&session.board, &session.marks, &all_moves) {
                     Ok(m) => m,
                     Err(why) => {
-                        return refuse(format!(
-                            "the game oracle could not resolve the moves: {why}"
-                        ));
+                        return refuse(refuse_rules_unavailable("resolve_mid", &why));
                     }
                 };
                 let (auto_to, auto_why) = sense_reading(&mid);
@@ -2525,8 +2525,9 @@ impl Offering for AutomataflOffering {
                                 session.revealed = before.4;
                                 session.turn_no = before.5;
                                 session.last_step = before.6;
-                                return refuse(format!(
-                                    "the game oracle could not adjudicate the capped match: {why}"
+                                return refuse(refuse_rules_unavailable(
+                                    "capped-match adjudication",
+                                    &why,
                                 ));
                             }
                         }
@@ -2583,7 +2584,11 @@ impl Offering for AutomataflOffering {
                 }
             }
 
-            other => refuse(format!("unknown action method `{other}`")),
+            // A verb this match does not have is the STALE-CONTROL condition, not a fact about the
+            // board: whatever drew that control is older than the game. Echoing the verb back as a
+            // "method" told the reader nothing they could use and gave them nowhere to go. The one
+            // shared sentence, the same one tug, the Descent, the web, Telegram and Discord say.
+            _ => refuse(stale_control_refresh()),
         }
     }
 

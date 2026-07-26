@@ -2809,10 +2809,17 @@ fn descent_map(sim: &Sim) -> ViewNode {
 pub(crate) fn descent_vitals_section(sim: &Sim) -> ViewNode {
     let (status, status_tag) = descent_status(sim);
     let light = BREATH.saturating_sub(sim.spent);
-    // Carrying rights ATTENUATE with depth: the deeper you stand, the less you may hold
-    // (`pack + depth ≤ CAP`), so the pack meter's ceiling MOVES as you descend. That is the
-    // other half of the game's tension and it has to be visible, not inferred.
-    let carry_rights = CAP.saturating_sub(sim.depth);
+    // Carrying rights ATTENUATE with depth AND with harm: the capacity law the mover enforces is
+    // `pack + depth + harm ≤ CAP` (`Sim::delve` / `Sim::lunge` / `Sim::loot` in
+    // `dungeon_on_dregg::descent`), so the pack meter's ceiling MOVES as you descend and MOVES
+    // AGAIN every time a lunge breaks your grip.
+    //
+    // ⚑ `harm` was missing from this denominator, and it was the one term a player could not infer.
+    // After a lunge the meter read `2/5` while `loot` would refuse at 2 — the bar showed room the
+    // run did not have, in the exact moment (a guardian just felled, a hoard just lit) where the
+    // decision it was supposed to inform is taken. `depth` at least announces itself in the floor
+    // title; a forfeited carry slot is invisible everywhere else.
+    let carry_rights = CAP.saturating_sub(sim.depth + sim.harm);
 
     // ── THE VITALS: one badge, three meters. The light is the clock; the pack is the ceiling;
     //    the guardian is the toll. Labels are padded to a common width so the bars stack into
@@ -3037,12 +3044,25 @@ fn descent_pressures(sim: &Sim) -> Vec<ViewNode> {
             owed * LIGHT_SMITE
         )));
     }
-    if sim.pack() + 1 + sim.depth > CAP {
+    // ⚑ THE SAME LAW THE MOVER ENFORCES, `pack + depth + harm ≤ CAP` (`Sim::loot`). `harm` was
+    // omitted here too, so a run that had lunged was told nothing at all in the one state where the
+    // warning matters most — it had LESS room than the meter beside it already overstated.
+    if sim.pack() + 1 + sim.depth + sim.harm > CAP {
+        let broken = if sim.harm == 0 {
+            String::new()
+        } else {
+            format!(
+                " and {} carry slot{} forfeit to the lunges",
+                sim.harm,
+                if sim.harm == 1 { "" } else { "s" }
+            )
+        };
         out.push(ViewNode::Text(format!(
-            "⚠ carrying rights are spent at this depth — the next relic would not fit ({} carried, {} + depth {} = the cap {CAP})",
+            "⚠ carrying rights are spent — the next relic would not fit ({} carried, standing on \
+             floor {}{}, against the cap of {CAP})",
             sim.pack(),
-            sim.pack(),
-            sim.depth
+            sim.depth,
+            broken
         )));
     }
     if sim.pack() > 0 {

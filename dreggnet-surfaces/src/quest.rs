@@ -26,6 +26,7 @@ use deos_view::ViewNode;
 use dregg_app_framework::{FieldElement, TurnReceipt, field_from_bytes};
 use dreggnet_faction::standing::{FactionStanding, read_standing};
 use dreggnet_faction::{ROOM_HALL as FACTION_HALL, Roster};
+use dreggnet_offerings::refusal::belongs_to_another_player;
 use dreggnet_offerings::{
     Action, DreggIdentity, Offering, OfferingError, Outcome, RunCost, SessionConfig, Surface,
     VerifyReport,
@@ -35,7 +36,7 @@ use dreggnet_quest::{
     ROOM_HALL as QUEST_HALL, deploy_quest, errand_compiled, errand_scene, reached_quest_win,
 };
 use spween::{Choice, PassageContent, Scene};
-use spween_dregg::{Driver, Playthrough, StepReceipt, WorldCell, WorldError};
+use spween_dregg::{Driver, Playthrough, StepReceipt, WorldCell};
 
 use crate::{action_menu, menu, pill, row, section, text};
 
@@ -207,10 +208,11 @@ impl AshenmoorErrandOffering {
         if let Some(owner) = &session.owner
             && owner != actor
         {
-            return Err(format!(
-                "this errand belongs to {}; {} cannot advance it",
-                owner.0, actor.0
-            ));
+            // ⚑ NEITHER KEY IS PRINTED. This only fires when `owner != actor`, so the reader never
+            // needed to tell the two 64-char hex strings apart — and could not read either. The
+            // shared sentence gives the ACCOUNT diagnosis, which is the actual cause almost every
+            // time (a second device deriving a second identity for one human).
+            return Err(belongs_to_another_player("errand"));
         }
         Ok(())
     }
@@ -285,8 +287,10 @@ impl AshenmoorErrandOffering {
                     ended: session.ended(),
                 }
             }
-            Err(WorldError::Refused(reason)) => Outcome::Refused(reason),
-            Err(error) => Outcome::Refused(error.to_string()),
+            // ONE arm, two audiences. A rules refusal is the errand's own text and comes back
+            // verbatim; every other variant is a fault on this server, so the player gets the shared
+            // commit-failure sentence and an operator gets the cause in a log line.
+            Err(error) => Outcome::Refused(dreggnet_offerings::refusal::refuse_world_error(&error)),
         }
     }
 

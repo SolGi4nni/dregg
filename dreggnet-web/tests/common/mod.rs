@@ -40,22 +40,31 @@ use axum::middleware::Next;
 use axum::response::Response;
 use tower::ServiceExt; // oneshot
 
-/// The four refusals [`dreggnet_web`]'s `presented_game_action_for` returns when the POST carried
-/// NO route authority at all — the exact signature of a dark test. A PRESENTED-but-wrong authority
-/// ("game form authority token did not verify", an address mismatch) is deliberately NOT here.
-pub const MISSING_AUTHORITY_MARKERS: [&str; 4] = [
-    "missing or malformed game_host_incarnation",
-    "missing game_session_generation",
-    "missing or malformed 32-byte game_expected_pre_head",
-    "missing or malformed game_form_token",
-];
-
-/// Does this `409` body say the POST presented no route authority at all?
-pub fn is_missing_authority_refusal(status: StatusCode, body: &str) -> bool {
+/// ⚑ **THE TRIPWIRE'S EYES MOVED FROM THE COPY TO A HEADER, and the move is the repair, not a
+/// weakening.**
+///
+/// This gate used to key on four PROSE markers in the response body —
+/// `"missing or malformed game_host_incarnation"` and friends — which worked only because the body of
+/// a refused act POST *was* the raw `to_string()` of a `GameSpineError`. That is the leak the
+/// player-facing refusal audit closed: `dreggnet_web::refused_game_route_response` now serves a styled
+/// page whose copy says the same thing to every reader in every one of these cases, because to a
+/// player they mean the same thing and have the same remedy.
+///
+/// Had the markers stayed, [`is_missing_authority_refusal`] would have silently gone to always-`false`
+/// and every guarded suite in this directory would be blind again — a hardening commit disarming a
+/// working guard. So the server stamps [`dreggnet_web::REFUSAL_KIND_HEADER`] instead, answered
+/// structurally by `GameSpineError::is_missing_route_authority` rather than by re-reading a sentence,
+/// and this gate reads that. A reworded refusal can no longer blind it AT ALL, which the prose version
+/// could only ever mitigate (by going red and asking to be repaired).
+///
+/// `no_silent_dark_act::a_bare_act_post_really_is_refused_for_a_missing_authority` is still the
+/// positive control: it pins the header against the live server.
+pub fn is_missing_authority_refusal(status: StatusCode, headers: &axum::http::HeaderMap) -> bool {
     status == StatusCode::CONFLICT
-        && MISSING_AUTHORITY_MARKERS
-            .iter()
-            .any(|marker| body.contains(marker))
+        && headers
+            .get(dreggnet_web::REFUSAL_KIND_HEADER)
+            .and_then(|v| v.to_str().ok())
+            == Some(dreggnet_web::REFUSAL_MISSING_GAME_AUTHORITY)
 }
 
 /// **THE TRIPWIRE.** Wrap a test's router so that an `…/act` POST refused for a MISSING route
@@ -86,12 +95,16 @@ async fn trip_on_dark_act(request: AxumRequest, next: Next) -> Response {
         .unwrap_or_default();
     let text = String::from_utf8_lossy(&bytes).to_string();
     assert!(
-        !is_missing_authority_refusal(parts.status, &text),
+        !is_missing_authority_refusal(parts.status, &parts.headers),
         "DARK ACT — `POST {uri}` presented NO game route authority, so the executor was never \
          reached and every assertion after this call is about a turn that did not happen.\n  \
-         server said: {text}\n  fix: post through `common::post_act` (or add \
-         `common::authority_suffix(...)` to the body), which reads the four hidden \
-         `game_*` fields off the viewer's own live page exactly as their browser does."
+         server said: {text}\n  (the machine-readable cause is the `{header}: {kind}` response \
+         header; the body is player copy and says the same thing for every stale route)\n  fix: \
+         post through `common::post_act` (or add `common::authority_suffix(...)` to the body), \
+         which reads the four hidden `game_*` fields off the viewer's own live page exactly as \
+         their browser does.",
+        header = dreggnet_web::REFUSAL_KIND_HEADER,
+        kind = dreggnet_web::REFUSAL_MISSING_GAME_AUTHORITY,
     );
     Response::from_parts(parts, Body::from(bytes))
 }
@@ -140,6 +153,14 @@ pub struct OfferedAct {
     /// through action-row labels while its fog *sections* were correct (`7f216ec8b`), so a fog test
     /// that reads only the prose cannot see the leak. This is where it lives.
     pub label: String,
+    /// **The form carries a text field** (`<input name="text">`) — the affordance DECLARED it wants
+    /// the user's prose (`MenuItem::wants_text`, from `Action::wants_text`).
+    ///
+    /// ⚑ A driver that ignores this posts `turn=&arg=` into a slot whose executor demands a string
+    /// and reads back a refusal, which is exactly the shape `hermes`/`names`/`doc` were stuck in — and
+    /// a test that *keeps* ignoring it cannot tell the missing carrier from a missing string. Press
+    /// one of these through [`post_act_typing`].
+    pub wants_text: bool,
 }
 
 /// **Every act a rendered page offers**, in document order — the affordance forms AND the clickable
@@ -168,11 +189,15 @@ pub fn offered_acts(html: &str) -> Vec<OfferedAct> {
             .and_then(|(_, rest)| rest.split_once("</button>"))
             .map(|(inner, _)| strip_tags(inner))
             .unwrap_or_default();
+        // Read off the RENDERED form, never guessed from the offering: the page itself states
+        // whether this affordance takes prose.
+        let wants_text = form.contains("name=\"text\"");
         out.push(OfferedAct {
             turn,
             arg,
             enabled,
             label,
+            wants_text,
         });
     }
     out
@@ -312,6 +337,68 @@ pub async fn post_act_with_cookie(
         .await
         .unwrap();
     (status, String::from_utf8_lossy(&bytes).to_string())
+}
+
+/// **POST one turn, TYPING into the affordance's text field** — [`post_act`] for an act whose form
+/// declared a free-text want ([`OfferedAct::wants_text`]).
+///
+/// `typed` is what a person would put in the box; `None` presses the button with the box left empty,
+/// which is a real (and legibly refused) thing a browser can do — it is how you check that the
+/// executor still demands the string rather than accepting a bare press.
+///
+/// ⚑ This is the driver half of the text carrier, and without it the renderer half is untestable:
+/// a `wants_text` affordance pressed through plain [`post_act`] posts no `text=` at all, so the
+/// executor refuses ("no prompt supplied … the button label is not a prompt") and the page looks
+/// exactly as broken as it did before the carrier existed.
+pub async fn post_act_typing(
+    app: &Router,
+    act_uri: &str,
+    turn: &str,
+    arg: i64,
+    typed: Option<&str>,
+    user: &str,
+) -> (StatusCode, String) {
+    let cookie = format!("dregg_user={user}");
+    let authority = authority_suffix(app, act_uri, Some(&cookie)).await;
+    let text = typed
+        .map(|t| format!("&text={}", form_encode(t)))
+        .unwrap_or_default();
+    let body = format!("turn={turn}&arg={arg}{text}{authority}");
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(act_uri)
+                .header("content-type", "application/x-www-form-urlencoded")
+                .header("cookie", &cookie)
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (status, String::from_utf8_lossy(&bytes).to_string())
+}
+
+/// Percent-encode one `application/x-www-form-urlencoded` field value. Deliberately tiny and
+/// conservative — everything outside the unreserved set is escaped, so a typed sentence (spaces,
+/// punctuation, `&`, `=`) survives the body intact instead of forging extra fields.
+fn form_encode(value: &str) -> String {
+    let mut out = String::new();
+    for byte in value.as_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*byte as char)
+            }
+            b' ' => out.push('+'),
+            other => out.push_str(&format!("%{other:02X}")),
+        }
+    }
+    out
 }
 
 /// [`post_act`] with no cookie at all (the bootstrap mints a visitor identity per request).

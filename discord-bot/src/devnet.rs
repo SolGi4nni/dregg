@@ -417,7 +417,30 @@ impl DevnetError {
     /// is a short verb phrase describing what the user was doing
     /// (e.g. "submit the transfer", "request faucet tokens") so the guidance
     /// reads naturally. This never leaks a raw HTML body or a bare status line.
+    ///
+    /// ⚑ **It also emits the operator half** ([`operator_diagnostic`](Self::operator_diagnostic))
+    /// whenever there is one, so the detail this sentence deliberately withholds cannot be lost by a
+    /// call site forgetting to log it — there are ~30 call sites and asking each to remember is how a
+    /// gate becomes optional. `#[track_caller]` names the refusing site in the log line.
+    #[track_caller]
     pub fn user_message(&self, action: &str) -> String {
+        if let Some(detail) = self.operator_diagnostic() {
+            let at = std::panic::Location::caller();
+            tracing::error!(
+                target: "dregg::refusal",
+                at = %at,
+                action,
+                detail = %detail,
+                "a node request failed for a reason only an operator can fix; the player was told \
+                 nothing was changed and that it is our side"
+            );
+        }
+        self.player_message(action)
+    }
+
+    /// The player's sentence alone (no logging) — the body of [`user_message`](Self::user_message),
+    /// split out so the copy is testable without a subscriber and so the logging cannot recurse.
+    fn player_message(&self, action: &str) -> String {
         match self {
             DevnetError::Http(e) => {
                 if e.is_timeout() {

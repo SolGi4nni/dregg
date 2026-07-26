@@ -743,10 +743,14 @@ fn operation_and_moves_restart_exactly_while_roster_order_substitution_fails_clo
     let mut wrong_host = host(&store, substituted);
     let wrong = wrong_host.resume_all();
     assert_eq!(wrong.len(), 1);
+    // The refusal reason is the SHARED wrong-player sentence
+    // (`dreggnet_offerings::refusal::belongs_to_another_player`) — it used to name seat 0's 64-char
+    // Ed25519 hex, which no reader could use and which this branch never needed (it only fires when
+    // the two keys differ).
     assert!(matches!(
         &wrong[0].1,
         Err(dreggnet_offerings::ResumeError::OperationRefused { reason, .. })
-            if reason.contains("only public seat 0")
+            if reason.contains("belongs to a different player")
     ));
     assert!(!wrong_host.is_open(KEY, &id));
 }
@@ -1058,10 +1062,16 @@ fn the_state_tree_is_one_public_statement_for_every_viewer() {
     use deos_view::web::render_html;
 
     // The projection is the REAL web DOM string a browser viewer is served, not the prose
-    // walk: `render_text` deliberately drops `Pill` and `Menu`, and this surface paints every
-    // assigned role as a Pill and every affordance as a Menu — so a prose-only differential
-    // would compare two pages with the disclosure and the controls both missing, and pass
-    // having checked nothing. (That is the same shape of blind spot as tug's spectator test.)
+    // walk: `render_text` drops the CONTROLS (`Menu`/`Button` ride the channel's own affordance
+    // carrier), and this surface paints every affordance as a Menu — so a prose-only differential
+    // would compare two pages with the controls missing, and pass having checked less than it
+    // looks like. (That is the same shape of blind spot as tug's spectator test.)
+    //
+    // ⚠ HALF OF THIS NOTE EXPIRED on 2026-07-26: `render_text` no longer drops `Pill` — a literal
+    // pill's words now reach the prose, because a phase/role badge carried ONLY by a pill was
+    // invisible to every Telegram and WeChat reader (15 of the 23 catalog offerings hit it; see
+    // `dreggnet-web/tests/catalog_flow_harness.rs`, invariant `prose-parity`). The DOM string is
+    // still the right projection here, for the `Menu` half.
 
     /// The page with its affordance menu removed — the STATE tree alone. `render_inner`
     /// paints the per-viewer action menu as a direct child of the outer section, so this is

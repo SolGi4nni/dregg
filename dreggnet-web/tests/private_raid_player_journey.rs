@@ -153,7 +153,14 @@ async fn shared_catalog_browser_raid_spends_the_proof_in_arena_and_restarts() {
 
         let (status, body) = response(&app, upload(&base, "bob", proof.clone())).await;
         assert_eq!(status, StatusCode::CONFLICT, "wrong proof seat: {body}");
-        assert!(body.contains("only public seat 0"), "{body}");
+        // ⚑ The refusal is the SHARED wrong-player sentence, and it must NOT contain either key:
+        // this branch only fires when the presser is not seat 0, so printing seat 0's 64-char hex
+        // (which it used to) was unreadable AND unnecessary.
+        assert!(body.contains("belongs to a different player"), "{body}");
+        assert!(
+            !body.contains("seat 0 ("),
+            "the old wording pasted seat 0's key into the parenthesis: {body}"
+        );
 
         let (status, body) = response(&app, upload(&base, "alice", proof)).await;
         assert_eq!(status, StatusCode::OK, "seat-zero proof upload: {body}");

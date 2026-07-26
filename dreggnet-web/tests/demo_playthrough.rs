@@ -106,7 +106,14 @@ async fn the_landing_and_grouped_catalog_render() {
 
     let (status, body) = get(&app, "/").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(body.contains("DreggNet Cloud"), "the landing renders");
+    assert!(
+        body.contains(dreggnet_web::PRODUCT_NAME),
+        "the landing renders under the current product name"
+    );
+    assert!(
+        !body.contains("DreggNet Cloud"),
+        "…and never under the retired layer name: {body}"
+    );
     assert!(
         body.contains("/offerings") && body.contains("/descent"),
         "the landing links the catalog + the leaderboard"
@@ -115,16 +122,16 @@ async fn the_landing_and_grouped_catalog_render() {
 
     let (status, body) = get(&app, "/offerings").await;
     assert_eq!(status, StatusCode::OK);
-    // The three grouped shelves (the polish: not one flat wall of cards).
-    for shelf in ["Games", "Feature surfaces", "Services"] {
-        assert!(
-            body.contains(shelf),
-            "the catalog groups the offerings into a `{shelf}` shelf"
-        );
-    }
+    // The shelves are GROUPING, and a shelf with no shipped cards renders as nothing — so the
+    // only one that must be here is the one the ship list actually fills. Asserting the grouped
+    // style rather than a hardcoded set of headings keeps this honest when the list changes.
     assert!(
         body.contains("group-h"),
-        "the shelves use the grouped-heading style"
+        "the shelf uses the grouped-heading style"
+    );
+    assert!(
+        body.contains("Games"),
+        "the shipped offerings sit on a named shelf"
     );
     // A play link from each category is present — and it is the RIGHT link. A SEAT-LOCKED game
     // (`tug`, `automatafl`) deliberately advertises its table-minting FRONT DOOR *instead of* a
@@ -144,12 +151,32 @@ async fn the_landing_and_grouped_catalog_render() {
             "and never re-advertises a shared, guessable {key} table id: {body}"
         );
     }
-    for key in ["trade", "doc"] {
+    // ⚑ THE SHELF IS THE SHIP LIST, read from it rather than re-listed here. Every shipped
+    // offering has a front door; nothing else is advertised at all.
+    for key in dreggnet_catalog::SHIPPED_KEYS {
+        let door = match dreggnet_web::table_seats::lock_for_key(key) {
+            Some(lock) => format!("href=\"{}\"", lock.route),
+            None => format!("/offerings/{key}/session/"),
+        };
         assert!(
-            body.contains(&format!("/offerings/{key}/session/")),
-            "the catalog lists a play link for {key}: {body}"
+            body.contains(&door),
+            "the catalog gives shipped `{key}` a front door: {body}"
         );
     }
+    for key in dreggnet_catalog::CATALOG_KEYS {
+        if dreggnet_catalog::is_shipped(key) {
+            continue;
+        }
+        assert!(
+            !body.contains(&format!("/offerings/{key}/session/")),
+            "`{key}` is off the ship list and must not be advertised: {body}"
+        );
+    }
+    // ⚑ NEVER PAINT A ZERO — `{key} · 0 open` on every card read as "nobody is here".
+    assert!(
+        !body.contains("0 open"),
+        "an idle card must say nothing about its population: {body}"
+    );
     sample("catalog.html", &body);
 }
 

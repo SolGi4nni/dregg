@@ -26,7 +26,7 @@ use dreggnet_offerings::native_descent::{
     LIGHT_FLEE, NativeDescentOffering, NativeDescentSession,
 };
 use dreggnet_offerings::{Action, DreggIdentity, Offering, Outcome, SessionConfig};
-use dungeon_on_dregg::descent::{ASCEND, DELVE, LOOT, RELICS as DESCENT_RELICS, SMITE};
+use dungeon_on_dregg::descent::{ASCEND, DELVE, LOOT, LUNGE, RELICS as DESCENT_RELICS, SMITE};
 
 /// The map's column count — the row marker, the way, the guardian, then one column per relic.
 const MAP_COLS: usize = 3 + DUNGEON_RELICS;
@@ -377,6 +377,84 @@ fn the_light_clock_and_the_attenuating_carry_ceiling_are_real_meters() {
         (0, session.day_world().guard_hp(1)),
         "a floor's guardian gets a vitality meter against its real hp — THIS DAY's, off the run's \
          own drawn map, not the day-0 table"
+    );
+}
+
+/// ⚑ **A LUNGE MOVES THE CARRY CEILING, AND THE METER HAS TO MOVE WITH IT.**
+///
+/// The capacity law the mover enforces is `pack + depth + harm ≤ CAP` — `Sim::delve`,
+/// `Sim::lunge` and `Sim::loot` in `dungeon_on_dregg::descent` each refuse on exactly that sum.
+/// The surface's denominator was `CAP - depth`, dropping `harm` entirely, so after a lunge the
+/// pack meter showed the player one more slot than the dungeon would give them — and it did so in
+/// the one state where the number is being used to decide something (a guardian just felled, its
+/// hoard just lit).
+///
+/// Both halves are pinned, and the second is what makes this non-vacuous: a fix that simply
+/// stopped painting the meter, or one that shrank the ceiling by a constant, fails the `loot`
+/// agreement below.
+#[test]
+fn a_lunge_forfeits_a_carry_slot_and_the_pack_meter_says_so() {
+    let offering = NativeDescentOffering::new();
+    let mut session = offering.open(SessionConfig::with_seed(7)).expect("open");
+
+    land(&offering, &mut session, DELVE, 0);
+    let before = meter(offering.render(&session).view(), "pack");
+    assert_eq!(
+        before,
+        (0, CARRY_CAP - 1),
+        "on floor one the ceiling is down by the one floor and nothing else"
+    );
+
+    // The lunge: the same wound as a press for one light instead of two, paid with `harm += 1`.
+    land(&offering, &mut session, LUNGE, 0);
+    let sim = session.game().sim();
+    assert_eq!(sim.harm, 1, "the lunge broke the grip");
+    assert_eq!(sim.depth, 1, "and it did not move the run");
+
+    assert_eq!(
+        meter(offering.render(&session).view(), "pack"),
+        (0, CARRY_CAP - 1 - 1),
+        "the forfeited carry slot is GONE from the meter's denominator — `pack + depth + harm ≤ \
+         CAP`, not `pack + depth ≤ CAP`"
+    );
+
+    // …and the ceiling the meter PAINTS is the ceiling the MOVER ENFORCES. Checked as a
+    // biconditional on real relics rather than by filling the pack to the brim: whether the
+    // dungeon admits the take must be exactly whether the bar still has room, at every step. This
+    // is the half that cannot pass by accident — under the old `CAP - depth` denominator the two
+    // sides disagree the moment `harm` is non-zero.
+    let world = session.game().day_world();
+    for blow in 1..world.guard_hp(1) {
+        assert!(blow < 8, "a guardian that cannot be felled is a map bug");
+        land(&offering, &mut session, SMITE, 0);
+    }
+    let hoard: Vec<usize> = (0..DESCENT_RELICS)
+        .filter(|&r| world.homes[r] == 1)
+        .collect();
+    assert!(
+        !hoard.is_empty(),
+        "floor one mints a hoard on this day; a floor that mints nothing is a map bug"
+    );
+    let mut checked = 0usize;
+    for relic in hoard {
+        let (carried, ceiling) = meter(offering.render(&session).view(), "pack");
+        let dungeon_admits = session.game().sim().loot(relic).is_ok();
+        assert_eq!(
+            dungeon_admits,
+            carried < ceiling,
+            "the pack meter reads {carried}/{ceiling} and the dungeon {} relic {relic} — the bar \
+             and the capacity law must agree at every step, or the bar is showing room the run \
+             does not have",
+            if dungeon_admits { "ACCEPTS" } else { "REFUSES" }
+        );
+        checked += 1;
+        if dungeon_admits {
+            land(&offering, &mut session, LOOT, relic as i64);
+        }
+    }
+    assert!(
+        checked > 0,
+        "the agreement check ran on no relic at all — it would have passed vacuously"
     );
 }
 

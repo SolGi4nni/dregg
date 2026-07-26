@@ -8,9 +8,12 @@
 //!
 //! Three legs, and each one can go red on its own:
 //!
-//! 1. **The positive control** — an UNGUARDED router really does refuse a bare act POST, with one
-//!    of the four marker strings [`common::MISSING_AUTHORITY_MARKERS`] names. If the server
-//!    rewords its refusal, this fails and the tripwire is repaired rather than silently blinded.
+//! 1. **The positive control** — an UNGUARDED router really does refuse a bare act POST, and stamps
+//!    the `x-dregg-refusal: missing-game-authority` header the tripwire keys on. It also asserts the
+//!    BODY is player copy and carries none of the wire field names it used to be. (This leg used to
+//!    key on four prose markers in the body; when the refusal audit made that body a styled player
+//!    notice, keying on prose would have silently gone to always-false — see
+//!    [`common::is_missing_authority_refusal`].)
 //! 2. **The tripwire fires** — the same POST through [`common::guard`] PANICS instead of returning
 //!    a body an assertion could skate over. (This test deliberately provokes one panic; the
 //!    backtrace printed beneath it is the mechanism working, not a failure.)
@@ -41,14 +44,20 @@ fn bare_act() -> Request<Body> {
         .unwrap()
 }
 
-/// **POSITIVE CONTROL.** The class is real and the markers the tripwire keys on are the server's
-/// actual words. Without this leg the guard could key on a string the server never emits and
-/// report a clean suite forever.
+/// **POSITIVE CONTROL.** The class is real and the signal the tripwire keys on is one the server
+/// really emits. Without this leg the guard could key on something the server never sends and report a
+/// clean suite forever.
+///
+/// ⚑ The signal is now the `x-dregg-refusal` HEADER, not four prose markers in the body — see
+/// [`common::is_missing_authority_refusal`] for why the move is the repair. This leg therefore also
+/// asserts the second half of that repair: **the body is player copy**, and carries none of the wire
+/// vocabulary it used to be.
 #[tokio::test]
 async fn a_bare_act_post_really_is_refused_for_a_missing_authority() {
     let app = catalog_router(Arc::new(CatalogState::new()));
     let response = app.oneshot(bare_act()).await.unwrap();
     let status = response.status();
+    let headers = response.headers().clone();
     let body = String::from_utf8_lossy(
         &axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
@@ -62,11 +71,33 @@ async fn a_bare_act_post_really_is_refused_for_a_missing_authority() {
         "a bare `turn=&arg=` on a spined key must be refused before the executor: {body}"
     );
     assert!(
-        common::is_missing_authority_refusal(status, &body),
-        "the tripwire keys on the server's own words, and they changed.\n  server said: {body}\n  \
-         expected one of: {:?}\n  update `common::MISSING_AUTHORITY_MARKERS` — until then every \
-         guarded suite is blind.",
-        common::MISSING_AUTHORITY_MARKERS
+        common::is_missing_authority_refusal(status, &headers),
+        "the tripwire keys on the server's `{}` header, and it is absent or changed.\n  \
+         headers: {headers:?}\n  body: {body}\n  until this is repaired every guarded suite is blind.",
+        dreggnet_web::REFUSAL_KIND_HEADER
+    );
+    // ⚑ AND THE BODY IS COPY. A bare POST used to be answered with the form field's own name — an
+    // unstyled `missing or malformed game_host_incarnation` with no page and no way back. A player
+    // cannot act on a wire field name, so it is not in the sentence any more; it is in the log.
+    for wire in [
+        "game_host_incarnation",
+        "game_session_generation",
+        "game_expected_pre_head",
+        "game_form_token",
+        "invalid game reference",
+    ] {
+        assert!(
+            !body.contains(wire),
+            "the refusal body must not name `{wire}` to a player: {body}"
+        );
+    }
+    assert!(
+        body.contains("This page is out of date") && body.contains("Nothing was played"),
+        "the styled stale-page notice must be what a reader gets: {body}"
+    );
+    assert!(
+        body.contains("notice refused") && body.contains("/offerings"),
+        "…with the house refusal styling and a way back: {body}"
     );
 }
 

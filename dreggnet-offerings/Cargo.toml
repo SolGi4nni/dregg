@@ -124,6 +124,14 @@ serde_json = { workspace = true }
 # non-trivial dep (`dregg-circuit`) is already in this graph via dregg-app-framework -> dregg-turn.
 dregg-lean-ffi = { path = "../dregg-lean-ffi" }
 
+# THE OPERATOR HALF OF A REFUSAL. A commit that fails for a reason that is not about the player's
+# move shows them one sentence (`refusal::COMMIT_FAILED_NOTHING_CHANGED`) and logs
+# `WorldError::operator_diagnostic()` here — the audience split `cell::program::ProgramError` landed,
+# and the reason sanding the string down is not a loss of detail. wasm32-CLEAN and NOT a new crate in
+# any graph: `dregg-turn` (via dregg-app-framework, and directly in `wasm`) already pulls `tracing`
+# unconditionally.
+tracing = { workspace = true }
+
 [dev-dependencies]
 # Dev-only: decode the real published drand `quicknet` round vector the daily-descent
 # driven test seeds "today's dungeon" from (genuine drand interop for the beacon leg).

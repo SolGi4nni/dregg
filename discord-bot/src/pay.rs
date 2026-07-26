@@ -34,8 +34,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use dregg_narrator::{
-    AttestationSummary, BudgetLedger, ConverseBackend, ConverseRequest, ConverseResponse,
-    DEFAULT_MODEL, ModelRegistry, NarratorError, OpenAiCompatClient, ToolDef, metered_converse,
+    AttestationEvidence, AttestationQuote, AttestationSummary, BudgetLedger, ConverseBackend,
+    ConverseRequest, ConverseResponse, DEFAULT_MODEL, ModelRegistry, NarratorError,
+    OpenAiCompatClient, PriceSource, Pricing, ToolDef, metered_converse,
 };
 use dregg_pay::{
     AccountFetcher, ChainId, CreditLedger, CreditOutcome, CreditStore, DepositAddress,
@@ -281,6 +282,11 @@ pub struct PaidNarrator {
     usd_per_run: f64,
     max_tokens: u32,
     ledger_dir: PathBuf,
+    /// The ARCHIVE seam for an attesting backend — the same object as `backend` when that backend
+    /// retains its evidence, held under the narrower trait so a receipt lane can pull the raw
+    /// quote behind a summary. `None` for every non-attesting provider, and `None` is why
+    /// [`Self::attestation_quote`] can never invent evidence for a call that did not attest.
+    evidence: Option<Arc<dyn AttestationEvidence>>,
 }
 
 // The backend is a trait object and the registry is a price book — neither is `Debug` — so print
@@ -315,6 +321,7 @@ impl PaidNarrator {
             usd_per_run,
             max_tokens,
             ledger_dir,
+            evidence: None,
         }
     }
 
@@ -324,6 +331,26 @@ impl PaidNarrator {
     pub fn with_provider(mut self, provider: PaidNarratorProvider) -> Self {
         self.provider = provider;
         self
+    }
+
+    /// Attach the backend's attestation-evidence handle, so a landed turn can be archived with the
+    /// raw quote rather than only the summary. Set from trusted configuration by the attested
+    /// constructor; every other constructor leaves it unset.
+    pub fn with_evidence(mut self, evidence: Option<Arc<dyn AttestationEvidence>>) -> Self {
+        self.evidence = evidence;
+        self
+    }
+
+    /// **The full evidence behind a summary this narrator produced**, by the summary's own quote
+    /// digest — the raw quote plus the nonce/instance-key pair that makes the provider's
+    /// `report_data` binding recomputable by someone who does not trust us.
+    ///
+    /// `None` means exactly "no evidence is available for that digest" — because this provider
+    /// does not attest, or because the backend's bounded retention has moved past it. It is NEVER
+    /// a place a record acquires bytes it was not given: the backend re-derives the digest from
+    /// the bytes before answering.
+    pub fn attestation_quote(&self, quote_sha256: &[u8; 32]) -> Option<AttestationQuote> {
+        self.evidence.as_ref()?.attestation_for(quote_sha256)
     }
 
     /// The model id this narrator targets.
@@ -351,11 +378,16 @@ impl PaidNarrator {
     /// `None` means the model is UNPRICED — [`metered_converse`] refuses every call fail-closed
     /// ([`NarratorError::UnpricedModel`]), so a narrator in that state narrates nothing. Surfaced
     /// so an operator can SEE the rate and, more importantly, its
-    /// [`dregg_narrator::PriceSource`]: a Chutes rate is necessarily an
-    /// `OperatorOverride` (nothing machine-verifies a Chutes catalog rate), which is trusted at
-    /// the operator's discretion and is NOT guaranteed to be an upper bound — set it below the
-    /// true cost and the per-run ceiling LEAKS. That is exactly the fact a status surface must
-    /// show rather than leave in a doc comment.
+    /// [`dregg_narrator::PriceSource`], because the two live sources are not equally trustworthy:
+    ///
+    /// * `verified` — read from the provider's own machine-readable catalog (the attested Chutes
+    ///   path does this: `GET /v1/models` publishes a per-model rate). Nobody typed it.
+    /// * `operator-override` — a rate an operator pinned via `DREGG_NARRATOR_PRICE_*` or the
+    ///   admin setting. Trusted at their discretion and NOT guaranteed to be an upper bound: set
+    ///   it below true cost and the per-run ceiling LEAKS.
+    ///
+    /// That distinction is exactly the fact a status surface must show rather than leave in a doc
+    /// comment.
     pub fn pricing(&self) -> Option<dregg_narrator::Pricing> {
         self.registry.pricing_for(&self.model)
     }
@@ -1920,7 +1952,7 @@ pub fn try_build_narrator(
         );
     }
 
-    let Some((backend, default_model, provider)) = build_backend_for(selection, builders)? else {
+    let Some((parts, provider)) = build_backend_for(selection, builders)? else {
         return Ok(None);
     };
 
@@ -1930,12 +1962,22 @@ pub fn try_build_narrator(
         .and_then(|s| s.model.clone())
         .map(|m| m.trim().to_string())
         .filter(|m| !m.is_empty())
-        .unwrap_or(default_model);
+        .unwrap_or_else(|| parts.model.clone());
 
-    // The price: `ModelRegistry::builtin()` has already applied any `DREGG_NARRATOR_PRICE_*` env
-    // pin to `DREGG_NARRATOR_MODEL`; the setting's rates then pin THIS model. A model that is
-    // still unpriced after both is refused here rather than at the first player's turn.
+    // The price, in ascending order of authority:
+    //   1. `ModelRegistry::builtin()` — the built-in pins plus any `DREGG_NARRATOR_PRICE_*` env
+    //      override already applied to `DREGG_NARRATOR_MODEL`;
+    //   2. the PROVIDER's own published catalog rate, adopted only where (1) left the model
+    //      unpriced (an operator override is never silently replaced);
+    //   3. the stored setting's rates, which are this admin's explicit intent and win outright.
+    // A model still unpriced after all three is refused HERE, at the switch, rather than
+    // discovered by the first player whose turn silently drops to the free tier.
     let mut registry = ModelRegistry::builtin();
+    // The discovered rate belongs to the model the CONSTRUCTOR resolved. A setting that renames
+    // the model is naming a different chute, whose rate this is not.
+    if model == parts.model {
+        adopt_provider_price(&mut registry, &model, parts.pricing.clone());
+    }
     let (price_in, price_out) = setting
         .map(|s| (s.price_input_per_1k, s.price_output_per_1k))
         .unwrap_or((None, None));
@@ -1950,14 +1992,15 @@ pub fn try_build_narrator(
 
     Ok(Some(
         PaidNarrator::new(
-            backend,
+            parts.backend,
             registry,
             model,
             narrator_usd_per_run(),
             run_max_tokens(),
             run_ledger_dir(),
         )
-        .with_provider(provider),
+        .with_provider(provider)
+        .with_evidence(parts.evidence),
     ))
 }
 
@@ -1971,8 +2014,37 @@ pub fn narrator_usd_per_run() -> f64 {
         .unwrap_or(0.05)
 }
 
-/// A hosted backend + the model id it serves.
-pub type PaidBackend = (Arc<dyn ConverseBackend + Send + Sync>, String);
+/// A hosted backend, the model id it serves, and the two things only SOME backends can supply:
+/// a handle on their attestation evidence, and the provider's own published price for the model.
+pub struct PaidBackend {
+    /// The metered backend itself.
+    pub backend: Arc<dyn ConverseBackend + Send + Sync>,
+    /// The model id it serves.
+    pub model: String,
+    /// The archive seam, when this backend retains the quotes it verified. `None` for every
+    /// unattested provider.
+    pub evidence: Option<Arc<dyn AttestationEvidence>>,
+    /// The rate the PROVIDER publishes for `model`, when it publishes one. `None` for a provider
+    /// with no machine-readable price list, which is what leaves the operator-pinned rate as the
+    /// only option there.
+    pub pricing: Option<Pricing>,
+}
+
+impl PaidBackend {
+    /// A backend with neither attestation evidence nor a provider-published rate — the shape of
+    /// every unattested constructor, and of a test double.
+    pub fn plain(
+        backend: Arc<dyn ConverseBackend + Send + Sync>,
+        model: impl Into<String>,
+    ) -> Self {
+        PaidBackend {
+            backend,
+            model: model.into(),
+            evidence: None,
+            pricing: None,
+        }
+    }
+}
 
 /// The three hosted-backend constructors, INJECTABLE on purpose: a test hands in an attested
 /// builder that refuses together with unattested builders that would happily succeed, and asserts
@@ -2012,7 +2084,7 @@ fn paid_narrator_from(
     selection: NarratorSelection,
     builders: &BackendBuilders<'_>,
 ) -> Option<PaidNarrator> {
-    let (backend, model, provider) = match build_backend_for(selection, builders) {
+    let (parts, provider) = match build_backend_for(selection, builders) {
         Ok(Some(parts)) => parts,
         Ok(None) => return None,
         Err(error) => {
@@ -2023,17 +2095,55 @@ fn paid_narrator_from(
             return None;
         }
     };
+    let mut registry = ModelRegistry::builtin();
+    adopt_provider_price(&mut registry, &parts.model, parts.pricing.clone());
     Some(
         PaidNarrator::new(
-            backend,
-            ModelRegistry::builtin(),
-            model,
+            parts.backend,
+            registry,
+            parts.model,
             narrator_usd_per_run(),
             run_max_tokens(),
             run_ledger_dir(),
         )
-        .with_provider(provider),
+        .with_provider(provider)
+        .with_evidence(parts.evidence),
     )
+}
+
+/// **Adopt the provider's own published rate for `model` — but never over an operator's.**
+///
+/// The rule, and why it is this way round:
+///
+/// * If `registry` ALREADY prices `model`, do nothing. That entry is either a built-in pin or the
+///   operator's `DREGG_NARRATOR_PRICE_*` env override, and an operator who typed a rate meant it.
+///   Silently replacing it would make the visible configuration a lie.
+/// * Otherwise pin `discovered`. It came from the provider's machine-readable catalog, so it is a
+///   materially better rate than the alternative — which is not "a slightly worse rate" but NO
+///   rate, i.e. the metered layer refusing every call.
+///
+/// The provenance stays honest either way: the adopted rate is stamped [`PriceSource::Verified`]
+/// naming the catalog it was read from, and an operator-pinned one keeps its
+/// [`PriceSource::OperatorOverride`] label.
+fn adopt_provider_price(registry: &mut ModelRegistry, model: &str, discovered: Option<Pricing>) {
+    let Some(pricing) = discovered else {
+        return;
+    };
+    if registry.pricing_for(model).is_some() {
+        tracing::info!(
+            model,
+            "narrator: the operator has pinned this model's rate, so the provider's published \
+             rate was NOT adopted (an operator override is never silently replaced)."
+        );
+        return;
+    }
+    tracing::info!(
+        model,
+        input_per_1k = pricing.input_per_1k,
+        output_per_1k = pricing.output_per_1k,
+        "narrator: priced from the PROVIDER's own published catalog rate."
+    );
+    registry.register(model, pricing);
 }
 
 /// Construct the BACKEND a selection names — the fail-closed dispatch itself, with the reason on
@@ -2048,17 +2158,10 @@ fn paid_narrator_from(
 fn build_backend_for(
     selection: NarratorSelection,
     builders: &BackendBuilders<'_>,
-) -> Result<
-    Option<(
-        Arc<dyn ConverseBackend + Send + Sync>,
-        String,
-        PaidNarratorProvider,
-    )>,
-    String,
-> {
+) -> Result<Option<(PaidBackend, PaidNarratorProvider)>, String> {
     match selection {
         NarratorSelection::ChutesTee => match (builders.tee)() {
-            Ok((backend, model)) => Ok(Some((backend, model, PaidNarratorProvider::ChutesTee))),
+            Ok(parts) => Ok(Some((parts, PaidNarratorProvider::ChutesTee))),
             Err(error) => Err(format!(
                 "the ATTESTED narrator (chutes-tee) could not be built: {error}. Refusing to \
                  narrate rather than falling back to an unattested endpoint — paid runs use the \
@@ -2066,7 +2169,7 @@ fn build_backend_for(
             )),
         },
         NarratorSelection::OpenAi(provider) => match (builders.openai)() {
-            Some((backend, model)) => Ok(Some((backend, model, provider))),
+            Some(parts) => Ok(Some((parts, provider))),
             None => Err(
                 "the OpenAI-compatible narrator is not configured (needs DREGG_NARRATOR_ENDPOINT \
                  and DREGG_NARRATOR_MODEL)"
@@ -2074,7 +2177,7 @@ fn build_backend_for(
             ),
         },
         NarratorSelection::Bedrock => match (builders.bedrock)() {
-            Some((backend, model)) => Ok(Some((backend, model, PaidNarratorProvider::Bedrock))),
+            Some(parts) => Ok(Some((parts, PaidNarratorProvider::Bedrock))),
             None => Err(
                 "the Bedrock narrator is not configured (needs AWS credentials on the standard \
                  credential chain)"
@@ -2101,12 +2204,16 @@ fn openai_provider_for_endpoint(endpoint: &str) -> PaidNarratorProvider {
 
 /// The OpenAI-compatible (Chutes / Bittensor) paid backend + its model id, or `None` if the
 /// endpoint or model id is missing. The model id must be explicit (a Chutes catalog id).
-fn openai_paid_backend() -> Option<(Arc<dyn ConverseBackend + Send + Sync>, String)> {
+fn openai_paid_backend() -> Option<PaidBackend> {
     let client = OpenAiCompatClient::from_env().ok()?;
     let model = std::env::var("DREGG_NARRATOR_MODEL")
         .ok()
         .filter(|m| !m.trim().is_empty())?;
-    Some((Arc::new(client), model))
+    // No attestation and no price discovery here: `DREGG_NARRATOR_ENDPOINT` may be ANY
+    // OpenAI-compatible host, and there is no catalog shape common to all of them. The rate stays
+    // the operator's to pin. (A Chutes endpoint reached this way is the deliberate UNATTESTED
+    // downgrade — the attested path is the one that reads Chutes' catalog.)
+    Some(PaidBackend::plain(Arc::new(client), model))
 }
 
 /// The ATTESTED paid backend + its model id: a [`dregg_chutes_e2ee::ChutesTeeBackend`] whose
@@ -2124,25 +2231,86 @@ fn chutes_tee_paid_backend() -> Result<PaidBackend, String> {
     let env = dregg_chutes_e2ee::TeeNarratorEnv::from_env()?;
     let model = env.model.clone();
     let ttl_secs = env.ttl_secs;
-    let backend = env.build_backend()?;
+
+    // Read the PROVIDER's published rate before the env is consumed. A catalog that is
+    // unreachable, or that publishes nothing usable for this model, is not fatal here — the
+    // operator's pin (if any) still applies, and a model left with NO rate is refused by the
+    // caller's own price check, which is the fail-closed behaviour that already existed.
+    let pricing = match env.provider_pricing() {
+        Ok(Some(rate)) => Some(Pricing {
+            input_per_1k: rate.input_per_1k,
+            output_per_1k: rate.output_per_1k,
+            source: PriceSource::Verified {
+                api: "Chutes GET /v1/models → pricing.{prompt,completion} (USD per 1M tokens)"
+                    .to_string(),
+                date: today_utc(),
+            },
+        }),
+        Ok(None) => {
+            tracing::warn!(
+                model = %model,
+                "chutes-tee: the Chutes catalog publishes no usable rate for this model — the \
+                 metered layer will use the operator's pinned rate, or refuse every call if \
+                 there is none."
+            );
+            None
+        }
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                model = %model,
+                "chutes-tee: could not read the Chutes price catalog — falling back to the \
+                 operator's pinned rate (an UNREACHABLE catalog is not a free model)."
+            );
+            None
+        }
+    };
+
+    let backend = Arc::new(env.build_backend()?);
     tracing::info!(
         model = %model,
         attestation_ttl_secs = ttl_secs,
+        priced_from_provider = pricing.is_some(),
         "Paid narrator: ATTESTED Chutes TDX backend selected (DCAP-verified enclave, \
          ML-KEM-768 end-to-end encrypted). A failed attestation refuses the turn — it never \
          falls through to a plain endpoint."
     );
-    Ok((Arc::new(backend), model))
+    Ok(PaidBackend {
+        // The SAME object under both handles: the metered backend, and the archive seam a
+        // receipt lane pulls raw quotes through.
+        evidence: Some(backend.clone() as Arc<dyn AttestationEvidence>),
+        backend,
+        model,
+        pricing,
+    })
+}
+
+/// Today's date as `YYYY-MM-DD` (UTC) — the `date` stamped onto a rate read from a provider
+/// catalog, so the snapshot's age is part of its provenance rather than implied.
+fn today_utc() -> String {
+    let days = now_secs().max(0) / 86_400;
+    // Civil-from-days (Howard Hinnant's algorithm), shifted to the 0000-03-01 era.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02}")
 }
 
 /// The Bedrock paid backend + its model id (a single `DREGG_NARRATOR_MODEL`, else the default).
-fn bedrock_paid_backend() -> Option<(Arc<dyn ConverseBackend + Send + Sync>, String)> {
+fn bedrock_paid_backend() -> Option<PaidBackend> {
     let client = dregg_narrator::BedrockClient::from_env().ok()?;
     let model = std::env::var("DREGG_NARRATOR_MODEL")
         .ok()
         .filter(|m| !m.trim().is_empty())
         .unwrap_or_else(|| DEFAULT_MODEL.to_string());
-    Some((Arc::new(client), model))
+    Some(PaidBackend::plain(Arc::new(client), model))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2390,13 +2558,13 @@ mod tests {
     /// A canned backend for a named model — the thing a constructor hands back. `reply` names
     /// itself so a leaked fallback is visible in the failure message rather than anonymous.
     fn mock_paid_backend(reply: &str, model: &str) -> PaidBackend {
-        (
+        PaidBackend::plain(
             Arc::new(MockBackend {
                 reply: reply.to_string(),
                 input_tokens: 12,
                 output_tokens: 9,
             }),
-            model.to_string(),
+            model,
         )
     }
 

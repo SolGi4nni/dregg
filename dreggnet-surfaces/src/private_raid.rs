@@ -74,6 +74,7 @@ use deos_view::ViewNode;
 use dregg_app_framework::{
     CellId, CellProgram, FieldElement, StateConstraint, TurnReceipt, field_from_u64,
 };
+use dreggnet_offerings::refusal::belongs_to_another_player;
 use dreggnet_offerings::{
     Action, BinaryOperationDescriptor, BinaryOperationError, BinaryOperationReceipt,
     BinaryOperationReplayMaterial, CollectiveDecision, DreggIdentity, Offering, OfferingError,
@@ -1196,9 +1197,10 @@ impl ProofAssignedRaidOffering {
         actor: DreggIdentity,
     ) -> Result<PreparedAssignment, BinaryOperationError> {
         if actor.as_str() != session.roster[0] {
-            return Err(BinaryOperationError::Refused(format!(
-                "only public seat 0 ({}) may bind the proof to this raid roster",
-                session.roster[0]
+            // The binary-operation twin of the two `advance` gates above — one condition, one
+            // sentence, and seat 0's key stays out of it.
+            return Err(BinaryOperationError::Refused(belongs_to_another_player(
+                "raid's proof upload",
             )));
         }
         let (receipt, canonical) = Self::decode_receipt(session, payload)?;
@@ -1278,23 +1280,26 @@ impl ProofAssignedRaidOffering {
         actor: &DreggIdentity,
     ) -> Result<(), String> {
         let Some(expected) = session.assigned_role_for(actor.as_str()) else {
-            return Err(format!(
-                "{} is not one of this proof's four public raid seats",
-                actor.as_str()
-            ));
+            return Err(belongs_to_another_player("raid"));
         };
+        // NOT the wrong-player condition — an ORDERING one, and the difference matters to the reader:
+        // the raid IS theirs, they are simply early. Its own sentence, and still no key in it (naming
+        // seat 0's 64-char hex told a waiting player nothing about who to wait for).
         if session.party.seat_count() == 0 && actor.as_str() != session.roster[0] {
-            return Err(format!(
-                "public seat 0 ({}) must establish the proof-bound raid leader first",
-                session.roster[0]
-            ));
+            return Err(
+                "The player who opened this raid has to take their seat before anyone else can \
+                 claim one. Nothing was changed — wait for them to claim, then claim yours."
+                    .to_string(),
+            );
         }
         if input.arg != expected.index() as i64 {
+            // The player's own key was echoed back at them here, which reads as an accusation. What
+            // they need is the role the proof gave them and the press that claims it.
             return Err(format!(
-                "assignment substitution refused: {} was proof-assigned {}, not role index {}",
-                actor.as_str(),
+                "The proof assigned you the {} role, and that is the only one you can claim. \
+                 Nothing was changed — claim {} instead.",
                 expected.name(),
-                input.arg
+                expected.name()
             ));
         }
         Ok(())
@@ -1550,10 +1555,11 @@ impl ProofAssignedRaidOffering {
             children.push(without_direct_actions(inner.0));
         }
         let actions = match (session.assignment(), viewer) {
-            // The ViewNode Menu vocabulary cannot preserve Action::wants_text.
-            // Chat adapters correctly paint `AudienceProjection.actions` beside
-            // the tree; web instead paints the owning binary-operation uploader.
-            // Do not emit a dead textless web button for a proof chunk.
+            // The pre-assignment affordance wants an OPAQUE PROOF CHUNK, not prose.
+            // `MenuItem` now preserves `Action::wants_text` (a text field on the web,
+            // free-text routing in chat), but a text box cannot carry a proof: web
+            // paints the owning binary-operation uploader and chat adapters paint
+            // `AudienceProjection.actions` beside the tree. Still no dead web button here.
             (None, _) => Vec::new(),
             (Some(_), Some(viewer)) => self.actions_for_viewer(session, viewer),
             (Some(_), None) => self.actions(session),
@@ -1756,10 +1762,12 @@ impl Offering for ProofAssignedRaidOffering {
                 return Outcome::Refused("the hiding assignment is already filled".to_string());
             }
             if actor.as_str() != session.roster[0] {
-                return Outcome::Refused(format!(
-                    "only public seat 0 ({}) may stream the proof receipt",
-                    session.roster[0]
-                ));
+                // ⚑ THE SEAT-0 KEY IS NOT PRINTED. This only fires when the presser is NOT seat 0,
+                // so naming seat 0's 64-char hex told the reader nothing they could use — and the
+                // real cause is nearly always that they are signed in as a different account than
+                // the one that opened the raid. Same shared sentence as every other wrong-player
+                // refusal in the product.
+                return Outcome::Refused(belongs_to_another_player("raid's proof upload"));
             }
             let Some(encoded) = input.text.as_deref() else {
                 return Outcome::Refused(
@@ -1779,10 +1787,8 @@ impl Offering for ProofAssignedRaidOffering {
                 return Outcome::Refused("the hiding assignment is already filled".to_string());
             }
             if actor.as_str() != session.roster[0] {
-                return Outcome::Refused(format!(
-                    "only public seat 0 ({}) may seal the proof receipt",
-                    session.roster[0]
-                ));
+                // The sibling of the stream gate above — one condition, one sentence.
+                return Outcome::Refused(belongs_to_another_player("raid's proof upload"));
             }
             if input.text.is_some() || input.arg != session.proof_upload.next_chunk() {
                 return Outcome::Refused(
@@ -1813,10 +1819,11 @@ impl Offering for ProofAssignedRaidOffering {
             );
         }
         let Some(seat) = session.seat_of(actor.as_str()) else {
-            return Outcome::Refused(format!(
-                "{} is not in this proof-bound raid roster",
-                actor.as_str()
-            ));
+            // ⚑ THE PRESSER'S OWN KEY IS NOT PRINTED EITHER. Echoing the 64-char hex of the identity
+            // that is not on the roster reads as an accusation and carries no next step; the shared
+            // sentence names the likely cause (a second device, a second account) and the one thing
+            // they can do about it.
+            return Outcome::Refused(belongs_to_another_player("raid"));
         };
         if input.turn == TURN_CLAIM
             && let Err(reason) = self.assigned_claim(session, &input, &actor)

@@ -277,6 +277,7 @@ impl Offering for TavernOffering {
                     turn: TURN_JOIN.to_string(),
                     arg: 0,
                     enabled: false,
+                    wants_text: false,
                 }]),
             ],
         ));

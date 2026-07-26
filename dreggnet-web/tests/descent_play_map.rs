@@ -27,6 +27,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt; // oneshot
 
+use dreggnet_offerings::native_descent::{LIGHT_ASCEND, LIGHT_FLEE};
 use dreggnet_web::make_app;
 use dungeon_on_dregg::descent::{BANKED, BREATH, CAP, CARRIED, FLOORS, RELICS, guard_hp};
 
@@ -65,6 +66,11 @@ async fn the_browser_mirror_of_the_worlds_constants_matches_the_game() {
         ("CAP", CAP),
         ("CARRIED", CARRIED),
         ("BANKED", BANKED),
+        // The two prices the WAY HOME is made of. The page words "the way home costs N light" off
+        // these, and it used to say "climbing out costs 1" from any depth — the exit's price alone,
+        // which reads as three spare breaths to a player standing on floor 3 with four left.
+        ("LIGHT_ASCEND", LIGHT_ASCEND),
+        ("LIGHT_FLEE", LIGHT_FLEE),
     ] {
         let decl = format!("const {name} = {value};");
         assert!(
@@ -132,6 +138,19 @@ async fn the_browser_takes_todays_guardian_vitalities_from_the_day_and_never_a_l
             "the guardian picture is sized off the day's table (`{reader}`)"
         );
     }
+    // ⚑ AND THE BOARD PRICES EVERY FLOOR, not only the one you stand on. The cell was a flat `G`
+    // everywhere, so the board said WHERE the relics were and never what reaching them costs — while
+    // the guardian table is the one thing the day-seed actually varies. The glyph is the blows the
+    // guardian still owes, so the whole light budget is readable from the mouth.
+    assert!(
+        js.contains("const owed = Math.max(0, vitality - (here ? sim.wounds : 0));")
+            && js.contains("String(owed)"),
+        "each floor's guardian cell must paint the blows it still owes, read off the day's table"
+    );
+    assert!(
+        !js.contains("const GLYPH_GUARDIAN = \"G\";"),
+        "a flat guardian letter on every floor hides the day's own escalation"
+    );
 }
 
 /// **The map is on the page.** Not "a map function exists somewhere" — the shaft grid, one column
@@ -191,6 +210,24 @@ async fn the_play_page_paints_the_light_and_the_carry_ceiling_as_meters() {
     assert!(
         js.contains("function pressures("),
         "the page says out loud what the player is about to lose to"
+    );
+    // ⚑ THE WAY HOME IS PRICED, AND THE FALSE PRICE CANNOT COME BACK. `flee` demands the surface, so
+    // the light a run may actually SPEND is what is left minus `depth` climbs plus the exit. The page
+    // used to say "climbing out costs 1" from any depth — three phantom spare breaths on floor 3.
+    assert!(
+        js.contains("function climbHome(") && js.contains("sim.depth * LIGHT_ASCEND + LIGHT_FLEE"),
+        "the page prices the climb home as `depth` climbs PLUS the exit — the clock the run really \
+         plays against"
+    );
+    assert!(
+        !js.contains("climbing out costs 1"),
+        "the sentence that told a player on floor 3 holding four light that they had three to \
+         spare must not return"
+    );
+    assert!(
+        js.contains("STRANDED"),
+        "a run whose light cannot pay the climb is already over while it can still move (the Lean \
+         `doomed_never_banks` window) and the page must say so instead of reading DELVING"
     );
     // The regression guard: the old surface.
     assert!(

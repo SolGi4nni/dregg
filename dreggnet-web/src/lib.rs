@@ -213,6 +213,10 @@ use deos_view::{CoordCell, MenuItem, SessionFormBackend, SurfaceBackend, ViewNod
 use dreggnet_offerings::BinaryOperationDescriptor;
 use dreggnet_offerings::dungeon::{DungeonOffering, DungeonSession};
 use dreggnet_offerings::player_turn_receipt::{PlayerReplaySurface, PlayerTurnReceipt};
+// ⚑ THE SHARED REFUSAL COPY. One condition, one sentence, every surface — see
+// `dreggnet_offerings::refusal`. The web says the same thing here that Telegram, Discord, tug and the
+// native Descent say, with only the "next step" clause differing (a page reloads; a chat does not).
+use dreggnet_offerings::refusal::stale_control;
 use dreggnet_offerings::{
     Action, Attribution, DreggIdentity, FileResumeStore, Frontend, HostError, Offering,
     OfferingHost, OfferingInfo, Outcome, PolicyRefusal, SessionConfig, SessionId, SessionPolicy,
@@ -698,8 +702,16 @@ async fn post_act(
     let notice = match collected {
         None => {
             // A POST for a control the surface never offered — an honest frontend-level refusal,
-            // before the substrate.
-            "Refused: that affordance is not on the current surface.".to_string()
+            // before the substrate. ⚑ It used to END THERE: one sentence, no statement that nothing
+            // had been played, and no way forward, which is how a page reads as broken rather than as
+            // refused. The shared sentence supplies both, and the *same* sentence is now what the
+            // chat surfaces and the game engines say for the same condition.
+            //
+            // ⚑ The `Refused: ` prefix is LOAD-BEARING, not decoration: `notice_html` picks the
+            // `.notice.refused` styling off it, so a refusal that drops it renders under a GREEN
+            // CHECKMARK. (That coupling is now belt-and-braces — `notice_html` also recognises the
+            // shared vocabulary — but the prefix is the house voice and stays.)
+            format!("Refused: {}", stale_control(RELOAD_NEXT_STEP))
         }
         Some((_sid, action, actor)) => {
             // The CORE resolves the collected action on the substrate — ONE real turn. A touch of
@@ -1879,6 +1891,27 @@ fn crumb(title: &str, id: &SessionId) -> String {
     )
 }
 
+/// ⚑ **Is this notice a REFUSAL** (red `✕`) rather than a landed turn (green `✓`)?
+///
+/// This used to be `n.starts_with("Refused")` inline, which is a **fail-DANGEROUS** default: any
+/// refusal whose copy did not begin with that exact word rendered under a green checkmark, telling the
+/// reader their move landed. Nothing enforced the prefix, so the coupling was invisible — and the
+/// refusal-copy pass walked straight into it (the shared stale-control sentence begins "That control
+/// …", and would have shipped a refusal painted as a success).
+///
+/// So the prefix is no longer the only signal: the shared refusal vocabulary
+/// ([`dreggnet_offerings::refusal`]) is recognised too. Both are checked, either suffices, and a new
+/// refusal wording has to opt OUT of red rather than remember to opt in.
+fn is_refusal_notice(notice: &str) -> bool {
+    notice.starts_with("Refused")
+        // The shared vocabulary's own distinctive clauses — one per condition, matched on the part
+        // that cannot be reworded without changing what the sentence MEANS.
+        || notice.contains("not on the current surface")
+        || notice.contains("belongs to a different player")
+        || notice.contains("nothing was changed")
+        || notice.contains("Nothing was changed")
+}
+
 /// The notice banner — *what just happened*. A refusal is honest and red; a landed turn is green.
 /// The `✓`/`✕` glyph is drawn by CSS (`.notice::before`), so the text stays clean for a reader.
 ///
@@ -1891,7 +1924,7 @@ fn crumb(title: &str, id: &SessionId) -> String {
 fn notice_html(notice: Option<&str>) -> String {
     notice
         .map(|n| {
-            let cls = if n.starts_with("Refused") {
+            let cls = if is_refusal_notice(n) {
                 "notice refused"
             } else {
                 "notice ok"
@@ -2137,6 +2170,15 @@ impl std::fmt::Display for CatalogGameError {
 }
 
 impl std::error::Error for CatalogGameError {}
+
+impl CatalogGameError {
+    /// Pass-through of [`GameSpineError::is_missing_route_authority`] — the structural answer to
+    /// "did this command present no route authority at all?", which
+    /// [`refused_game_route_response`] stamps into [`REFUSAL_KIND_HEADER`].
+    pub(crate) fn is_missing_route_authority(&self) -> bool {
+        matches!(self, Self::Spine(spine) if spine.is_missing_route_authority())
+    }
+}
 
 impl CatalogState {
     /// A fresh catalog over the full shared DreggNet portfolio (shared tables) plus an in-memory
@@ -2922,7 +2964,7 @@ async fn get_offering_session(
             return refused_open_response(&sid, &e);
         }
         Err(error) => {
-            return (StatusCode::CONFLICT, error.to_string()).into_response();
+            return refused_game_route_response(&sid, &error);
         }
     }
     // A GET is normally a full navigation (full page); an `X-Fragment: 1` GET (e.g. a script
@@ -3174,7 +3216,11 @@ async fn post_offering_act(
     let presented_game = if game_kind(&key).is_some() {
         match state.presented_game_action(&key, &sid, &form) {
             Ok(reference) => Some(reference),
-            Err(error) => return (StatusCode::CONFLICT, error.to_string()).into_response(),
+            // ⚑ THE REAL TURN HANDLER for every spined game. This arm used to answer an unstyled
+            // body carrying the form's own wire vocabulary ("missing or malformed
+            // game_host_incarnation", "game form authority token did not verify") — with no page, no
+            // backlink, and no way for the reader to know their move had not landed.
+            Err(error) => return refused_game_route_response(&sid, &error),
         }
     } else {
         None
@@ -3210,7 +3256,7 @@ async fn post_offering_act(
                 return refused_open_response(&sid, &e);
             }
             Err(error) => {
-                return (StatusCode::CONFLICT, error.to_string()).into_response();
+                return refused_game_route_response(&sid, &error);
             }
         }
     }
@@ -3465,12 +3511,24 @@ async fn post_offering_act(
         CatalogAct::CommittedButPublicationFailed { error, .. } => format!(
             "Turn committed, but its public receipt could not be rendered ({error}). Do not retry; refresh to inspect the committed state."
         ),
-        CatalogAct::NotOffered => {
-            "Refused: that affordance is not on the current surface.".to_string()
-        }
+        // ⚑ THE SHARED STALE-CONTROL SENTENCE. This arm used to be a full stop — "Refused: that
+        // affordance is not on the current surface." — with no statement that nothing had been played
+        // and no next step, which is the same dead end Telegram diagnosed and fixed for itself while
+        // this sibling kept it. One sentence now, from `dreggnet_offerings::refusal`.
+        CatalogAct::NotOffered => format!("Refused: {}", stale_control(RELOAD_NEXT_STEP)),
         CatalogAct::Missing => "Refused: no such offering session.".to_string(),
+        // The route's own `reason` is wire vocabulary (a spine error naming form fields and
+        // authority epochs), so it goes to the operator log at the refusal site
+        // ([`refused_game_route_response`]) and the reader gets the same sentence as every other
+        // stale control.
         CatalogAct::GameRouteRefused(reason) => {
-            format!("Refused: game-session route was stale or invalid: {reason}")
+            tracing::error!(
+                target: "dregg::refusal",
+                detail = %reason,
+                "a presented game route was stale or invalid on the act path; the player was shown \
+                 the shared stale-control sentence and nothing was committed"
+            );
+            format!("Refused: {}", stale_control(RELOAD_NEXT_STEP))
         }
     };
 
@@ -3531,6 +3589,111 @@ fn refused_open_response(id: &SessionId, err: &HostError) -> Response {
     }
     resp
 }
+
+/// **The web's `next_step` clause** for [`dreggnet_offerings::refusal::stale_control`] — the one
+/// working control a browser reader always has. The chat surfaces pass their own (a slash command);
+/// the game engines, which cannot know which frontend is reading, pass "refresh".
+pub const RELOAD_NEXT_STEP: &str =
+    "Reload the page to see the current board and pick up from there.";
+
+/// ⚑ **THE STALE-PAGE RESPONSE — the styled answer for a game-session route that no longer resolves.**
+///
+/// This is the fix for the loudest hole in the audit, and the fix already existed twelve lines above:
+/// [`refused_open_response`] builds a real `.notice.refused` box with a backlink, while the *sibling
+/// arm of the same `match`* answered with `(StatusCode::CONFLICT, error.to_string())` — a bare
+/// unstyled body, no page chrome, no way back, and the error's own wire vocabulary as the copy. It
+/// fired from `post_offering_act`, **the turn handler for every spined game**, with strings like
+/// "missing or malformed game_host_incarnation", "game form authority token did not verify" and
+/// "invalid game reference: …". Three sites in this file, and six more identical ones across the
+/// Discord-activity and Telegram-mini-app twins.
+///
+/// The player copy owns the cause and gives the one control that works. It deliberately says
+/// **nothing** about tokens, authorities or `game_*` form fields: every one of those conditions has
+/// the same meaning to a reader (*the page in front of me is older than the board*) and the same
+/// remedy (*reload*). The distinction between them is an operator's, so it goes to `tracing::error!`,
+/// which is also where the missing half of the old behavior lands — pasting the wire detail into the
+/// body was the only place it was recorded at all.
+///
+/// 409 for the same reason [`refused_open_response`] uses it: a stale presented route is the epoch
+/// gate WORKING (a real conflict with the live binding), never a server fault.
+///
+/// ⚑ The same condition on the CHAT surfaces says the same thing through
+/// `dreggnet_offerings::refusal::stale_control` — one condition, one sentence, five surfaces.
+pub(crate) fn refused_game_route_response(id: &SessionId, err: &CatalogGameError) -> Response {
+    let kind = if err.is_missing_route_authority() {
+        REFUSAL_MISSING_GAME_AUTHORITY
+    } else {
+        REFUSAL_STALE_GAME_ROUTE
+    };
+    stale_game_route_response(id, &err.to_string(), kind)
+}
+
+/// [`refused_game_route_response`] for the **SIGNED** act seam, whose `SignedAdvance::GameRouteRefused`
+/// carries the spine error already rendered to a string.
+///
+/// Three more sites of the identical hole — `act_signed`, and the Discord-activity and
+/// Telegram-mini-app signed twins — each `(StatusCode::CONFLICT, reason)`, an unstyled body carrying
+/// wire vocabulary. Same player copy, because it is the same condition; always
+/// [`REFUSAL_STALE_GAME_ROUTE`], because the signed seam's own missing-envelope cases are separate
+/// variants and never reach here.
+pub(crate) fn refused_game_route_reason(id: &SessionId, reason: &str) -> Response {
+    stale_game_route_response(id, reason, REFUSAL_STALE_GAME_ROUTE)
+}
+
+fn stale_game_route_response(id: &SessionId, detail: &str, kind: &'static str) -> Response {
+    tracing::error!(
+        target: "dregg::refusal",
+        session = %id.0,
+        kind,
+        detail,
+        "a presented game route did not resolve against the live binding; the player was shown the \
+         stale-page notice and nothing was committed"
+    );
+    let page = document(
+        &format!("{PRODUCT_NAME} — session {} is out of date", id.0),
+        "",
+        STALE_GAME_ROUTE_BODY,
+    );
+    let mut resp = (StatusCode::CONFLICT, Html(page)).into_response();
+    // ⚑ THE DARK-ACT TRIPWIRE'S NEW EYES — and the reason this change did not blind a working gate.
+    //
+    // `tests/common::guard` panics when an `…/act` POST is refused for a MISSING route authority,
+    // because that is the signature of a test that stopped presenting one and whose every later
+    // assertion is about a turn that never happened. It used to detect that by matching the four
+    // "missing or malformed game_*" strings IN THE RESPONSE BODY — which worked only because the body
+    // WAS the error's `to_string()`, i.e. only because of the leak this function exists to close.
+    //
+    // The machine detail belongs in a header, not in copy. A player never sees it, a reworded sentence
+    // cannot blind it, and the split it carries is answered structurally
+    // (`GameSpineError::is_missing_route_authority`, decided by the caller above) rather than by
+    // re-reading prose.
+    resp.headers_mut().insert(
+        axum::http::HeaderName::from_static(REFUSAL_KIND_HEADER),
+        axum::http::HeaderValue::from_static(kind),
+    );
+    resp
+}
+
+/// **The machine-readable refusal discriminator.** A response header, deliberately not copy: it lets
+/// a test (and an operator's log pipeline) tell two refusals apart that a PLAYER should not have to,
+/// because to a player they mean the same thing and have the same remedy.
+pub const REFUSAL_KIND_HEADER: &str = "x-dregg-refusal";
+
+/// [`REFUSAL_KIND_HEADER`]: the command presented NO game route authority at all — the signature of a
+/// caller that never stamped the four `game_*` fields. `tests/common::guard` treats this as fatal.
+pub const REFUSAL_MISSING_GAME_AUTHORITY: &str = "missing-game-authority";
+
+/// [`REFUSAL_KIND_HEADER`]: the command presented a route authority that no longer resolves — a real
+/// stale tab / restarted session / re-bound epoch. A legitimate property to assert, never fatal.
+pub const REFUSAL_STALE_GAME_ROUTE: &str = "stale-game-route";
+
+/// The one body [`refused_game_route_response`] serves. A `const` so the copy is asserted against
+/// verbatim by the refusal-copy gate rather than re-typed in a test.
+pub(crate) const STALE_GAME_ROUTE_BODY: &str = "<main class=\"session\"><div class=\"notice refused\" role=\"status\">This page is out of date \
+     — the board moved on since you loaded it. Nothing was played. Reload to see the current state \
+     and pick up from there.</div>\
+     <p class=\"prose\"><a class=\"backlink\" href=\"/offerings\">← Browse all games</a></p>\
+     </main>";
 
 /// The unsigned `/act` twin's audit-envelope skeleton (asserted-cookie attribution; the
 /// caller stamps decision + outcome). The `{turn, arg}` IS the trail — user content, §8.

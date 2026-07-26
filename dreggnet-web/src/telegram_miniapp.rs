@@ -89,7 +89,8 @@ use webauth_core::link_registry::LinkStore;
 
 use crate::{
     CatalogGameError, CatalogState, OfferingActForm, act_signed, audit, metrics, open_audit_parts,
-    refused_open_response, render_offering_response, wants_fragment,
+    refused_game_route_reason, refused_game_route_response, refused_open_response,
+    render_offering_response, wants_fragment,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -938,7 +939,7 @@ async fn get_tg_session(
         Err(CatalogGameError::Host(error)) => {
             return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
         }
-        Err(error) => return (StatusCode::CONFLICT, error.to_string()).into_response(),
+        Err(error) => return refused_game_route_response(&sid, &error),
     }
 
     Html(tg_native_fragment(
@@ -1228,7 +1229,7 @@ async fn post_tg_act(
             .presented_game_action_for(&key, &sid, &authority_form, &action)
         {
             Ok(reference) => Some(reference),
-            Err(error) => return (StatusCode::CONFLICT, error.to_string()).into_response(),
+            Err(error) => return refused_game_route_response(&sid, &error),
         }
     } else {
         None
@@ -1259,7 +1260,7 @@ async fn post_tg_act(
                 audit::log().emit(act_event(audit_detail).decided(kind, reason));
                 return refused_open_response(&sid, &e);
             }
-            Err(error) => return (StatusCode::CONFLICT, error.to_string()).into_response(),
+            Err(error) => return refused_game_route_response(&sid, &error),
         }
     }
 
@@ -1462,8 +1463,9 @@ async fn post_tg_act(
         act_signed::SignedAdvance::HostError(e @ HostError::Deploy(_)) => {
             return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
         }
+        // The signed twin of the stale-page hole, on the Mini App surface.
         act_signed::SignedAdvance::GameRouteRefused(reason) => {
-            return (StatusCode::CONFLICT, reason).into_response();
+            return refused_game_route_reason(&sid, &reason);
         }
     };
 

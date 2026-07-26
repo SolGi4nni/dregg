@@ -70,8 +70,8 @@ use dreggnet_offerings::{
 };
 
 use crate::{
-    CatalogGameError, CatalogState, audit, open_audit_parts, refused_open_response,
-    render_offering_response, wants_fragment,
+    CatalogGameError, CatalogState, audit, open_audit_parts, refused_game_route_reason,
+    refused_open_response, render_offering_response, wants_fragment,
 };
 
 pub(crate) enum SignedAdvance {
@@ -479,6 +479,18 @@ pub async fn post_offering_act_signed(
         "arg": decoded.signed_action.action.arg,
         "counter": decoded.signed_action.counter,
     });
+    // WHAT THE PLAYER DID, for the banner — captured before `decoded` moves into the host job.
+    //
+    // On this route the label rides in the SIGNED envelope (`decode` defaults it to the turn name
+    // when the client sends none), so it is the pressing client's own word for the action rather
+    // than a server-side lookup, and `notice_html` escapes it. It is presentation only, exactly as
+    // on the unsigned twin: the executor resolves the typed `{turn, arg}` and nothing else. Without
+    // this the signed banner had the same wound the QA sweep named on the unsigned one — a receipt
+    // hash and no statement of what happened.
+    let did = crate::named_act(
+        Some(&decoded.signed_action.action.label),
+        &decoded.signed_action.action.turn,
+    );
 
     // Authenticate before opening or privately projecting anything. A forged
     // victim key therefore cannot distinguish private affordance state by the
@@ -709,7 +721,7 @@ pub async fn post_offering_act_signed(
             publication,
             ..
         } => format!(
-            "Turn committed — {}",
+            "Turn committed — {did}{}",
             publication.as_ref().map_or_else(
                 || PlayerTurnReceipt::from_landed_signed(
                     &receipt,
@@ -730,7 +742,7 @@ pub async fn post_offering_act_signed(
             outcome: Outcome::Refused(why),
             ..
         } => {
-            format!("Refused: {why} (nothing committed — anti-ghost).")
+            format!("Refused: {did}{why} (nothing committed — anti-ghost).")
         }
         SignedAdvance::CommittedButPublicationFailed { error, .. } => format!(
             "Turn committed, but its public receipt card could not be rendered: {error}. Do not retry this command."
@@ -764,8 +776,10 @@ pub async fn post_offering_act_signed(
         SignedAdvance::HostError(e @ HostError::Deploy(_)) => {
             return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
         }
+        // ⚑ The SIGNED twin of the stale-page hole — same condition, same bare unstyled body, same
+        // wire vocabulary as the copy. One wrapper now, shared with the unsigned path.
         SignedAdvance::GameRouteRefused(reason) => {
-            return (StatusCode::CONFLICT, reason).into_response();
+            return refused_game_route_reason(&sid, &reason);
         }
     };
 

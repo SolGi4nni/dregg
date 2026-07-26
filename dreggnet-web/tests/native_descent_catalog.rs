@@ -11,6 +11,7 @@ use axum::http::{Request, StatusCode, header};
 use dreggnet_offerings::native_descent::NativeDescentOffering;
 use dreggnet_offerings::{FileResumeStore, OfferingHost};
 use dreggnet_web::{CatalogState, catalog_router};
+use dungeon_on_dregg::descent::FLOORS;
 use tower::ServiceExt;
 
 mod common;
@@ -154,7 +155,15 @@ async fn browser_drives_and_restarts_the_native_descent_without_a_state_blob() {
     let (status, landed) = act(&app, "delve", 0, &player_cookie).await;
     assert_eq!(status, StatusCode::OK);
     assert!(landed.contains("Turn committed"), "{landed}");
-    assert!(landed.contains("depth 1"), "{landed}");
+    // ⚑ THE STALE LITERAL. This read `"depth 1"` — the counter dump the surface emitted before the
+    // vitals painter was unified (`native_descent.rs`'s own note: it "used to render a flat
+    // `depth 2 · light spent 9 · wounds 1` counter dump beside a menu"). The surface has said
+    // "floor 1 of 4" since, so the test had been red at HEAD ever since. Derived from `FLOORS` now,
+    // so re-shaping the shaft moves the expectation with it.
+    assert!(
+        landed.contains(&format!("floor 1 of {FLOORS}")),
+        "the landed page must name the floor the delve reached: {landed}"
+    );
 
     // Actor ownership is enforced below HTML: another asserted browser actor
     // cannot move the first visitor's run, and the refusal extends no journal. This is
@@ -176,7 +185,11 @@ async fn browser_drives_and_restarts_the_native_descent_without_a_state_blob() {
     let (restarted, restarted_catalog) = app_over(dir.clone());
     let (status, after_restart) = get(&restarted, "", &player_cookie).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(after_restart.contains("depth 1"), "{after_restart}");
+    // Same stale literal as above: the surface names the FLOOR, not a `depth N` counter.
+    assert!(
+        after_restart.contains(&format!("floor 1 of {FLOORS}")),
+        "the re-driven run stands where the journal says it stood: {after_restart}"
+    );
     assert!(after_restart.contains("revision 1"), "{after_restart}");
     let (status, verified_again) = get(&restarted, "/verify", &player_cookie).await;
     assert_eq!(status, StatusCode::OK);

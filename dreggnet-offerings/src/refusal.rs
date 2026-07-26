@@ -64,7 +64,7 @@
 /// ```
 pub fn stale_control(next_step: &str) -> String {
     format!(
-        "That control is not on the current surface: the game moved on since this view was drawn, \
+        "That control is not on the current surface — the game moved on since this view was drawn, \
          so nothing was changed. {next_step}"
     )
 }
@@ -168,6 +168,34 @@ pub fn refuse_world_error(error: &spween_dregg::WorldError) -> String {
     error.player_message()
 }
 
+/// ⚑ **The sibling of [`refuse_world_error`] for a RULES ORACLE that could not answer.** Logs the
+/// operator half and returns [`COMMIT_FAILED_NOTHING_CHANGED`].
+///
+/// A shipped game's verified rule-checker is reached over the Lean FFI, and every one of those calls
+/// is `Result<_, String>` where the `String` is a machinery diagnostic — a missing export, an archive
+/// this binary was built without. Automatafl and Tug pasted those straight into refusals ("the game
+/// oracle could not run the round: …", "the goal assignment is unavailable: …", "the round cannot be
+/// adjudicated: …"), which names a piece of our machinery to a player and then tells them nothing they
+/// can do. The condition is real and fail-closed — the game refuses rather than guessing at a verdict —
+/// but a player did not choose it and cannot fix it.
+///
+/// `what` names the call for the log, not for the reader (`"roundStep"`, `"stock goals"`,
+/// `"adjudicate"`).
+#[track_caller]
+pub fn refuse_rules_unavailable(what: &str, detail: &str) -> String {
+    let at = std::panic::Location::caller();
+    tracing::error!(
+        target: "dregg::refusal",
+        at = %at,
+        call = what,
+        detail = detail,
+        "a verified rules oracle reached NO VERDICT, so the game refused fail-closed rather than \
+         guess at one; nothing was committed. This is a build/deployment fault — the linked Lean \
+         archive is absent or does not export what this game calls"
+    );
+    COMMIT_FAILED_NOTHING_CHANGED.to_string()
+}
+
 /// A banned shape found in a player-facing string by [`audit_player_text`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BannedShape {
@@ -249,44 +277,60 @@ const BANNED_COMPONENT_WORDS: &[&str] = &[
 /// mistaken for symbols. Kept deliberately tiny: a long allowlist is how a linter stops linting.
 const SYMBOL_ALLOWLIST: &[&str] = &["/cancel", "/close", "/offerings", "/start", "/status"];
 
-/// Phrases that constitute a **next action** — an instruction the reader can carry out. The list is
-/// the vocabulary the shipped copy actually uses, not an attempt at English.
+/// Phrases that constitute a **next action** — something the reader can actually do with what they
+/// have just been told. The list is the vocabulary the shipped copy uses, not an attempt at English.
+///
+/// ⚑ **The last group is the legitimate exception**, and it has to be here or the rule is a lie. For
+/// the class of refusal whose cause is missing SERVER machinery — the constraint oracle absent from a
+/// build, a node token an operator holds — there IS no action the reader can take, and inventing one
+/// ("try again") would be the dishonesty this whole audit is about. The honest next action is to say
+/// where the problem lives so they can escalate: *"that is a fault in how this server was built, not
+/// in what you did — the server log names the missing piece"*. That is the shape
+/// `cell::program::ProgramError::ConstraintOracleUnavailable` already ships, and it is the shape
+/// [`crate::session::PlayRefusal::OracleUnavailable`] now ships.
 const NEXT_ACTION_MARKERS: &[&str] = &[
+    // Do this instead.
     "reload",
     "refresh",
     "try again",
     "send /",
     "run /",
+    "open ",
     "press",
     "switch back",
     "check ",
     "use the",
     "start ",
     "pick ",
+    "claim ",
     "wait ",
+    "ask ",
     "close this page",
-    "ask an operator",
-    "tell an operator",
-    "contact",
     "sign in",
+    "contact",
+    // …or, honestly, nothing: here is whose problem it is.
+    "the server log",
+    "an operator",
+    "on our side",
+    "not in what you did",
     "just watching",
 ];
 
-/// Phrases that constitute a **loss statement** — an explicit answer to "did my move land?".
+/// Phrases that constitute a **loss statement** — an explicit answer to *"did my move land?"*.
+///
+/// ⚑ The primary marker is the bare word **"nothing"**, on purpose. It is this house's actual tell —
+/// "nothing was changed", "nothing committed — anti-ghost", "nothing was opened", "nothing was
+/// linked", "nothing was fired", "nothing was re-executed", "an unconfirmed link must record
+/// NOTHING" — and enumerating the past participles instead just meant the enumeration went stale
+/// (this list began as ten of them and missed "nothing was linked", which is the EXEMPLAR page's own
+/// wording). The remaining entries are the refusals that state the opposite: something DID land, and
+/// the copy's job is to say so rather than to reassure.
 const LOSS_MARKERS: &[&str] = &[
-    "nothing was changed",
-    "nothing changed",
-    "nothing was committed",
-    "nothing committed",
-    "nothing was opened",
-    "nothing was played",
-    "nothing was lost",
-    "nothing was recorded",
-    "nothing happened",
-    "nothing was fired",
+    "nothing ",
     "not a zero",
     "was committed",
     "did commit",
+    "was changed",
 ];
 
 /// **THE REFUSAL-COPY GATE, as a function.** Scan one player-facing string for the shapes this
@@ -306,7 +350,7 @@ const LOSS_MARKERS: &[&str] = &[
 /// them off.
 ///
 /// ```
-/// # use dreggnet_offerings::refusal::{audit_player_text, stale_control_refresh, BannedShape};
+/// # use dreggnet_offerings::refusal::{audit_player_text, stale_control_refresh};
 /// assert_eq!(audit_player_text(&stale_control_refresh(), true, true), Vec::new());
 /// let leak = "method `comp` does not name decision 3 (Secret { card: 9 })";
 /// assert!(!audit_player_text(leak, true, true).is_empty());
@@ -325,7 +369,7 @@ pub fn audit_player_text(
     //    like "decade" (6 hex letters) cannot trip it.
     {
         let mut run = String::new();
-        let mut flush = |run: &mut String, found: &mut Vec<BannedShape>| {
+        let flush = |run: &mut String, found: &mut Vec<BannedShape>| {
             if run.chars().count() >= 32 {
                 found.push(BannedShape::RawHexRun {
                     excerpt: run.chars().take(24).collect::<String>() + "…",
@@ -362,11 +406,32 @@ pub fn audit_player_text(
         }
     }
 
-    // ── A DOTTED MODULE PATH: `Dregg2.Apps.DelegAdmit.delegAdmit`, `crate::module::thing`.
+    // ── A RUST PATH: `crate::module::thing`, `dreggnet_web::refusal`.
     if text.contains("::") {
         found.push(BannedShape::SymbolAsFix {
             symbol: "::".to_string(),
         });
+    }
+
+    // ── A DOTTED MODULE PATH: `Dregg2.Apps.DelegAdmit.delegAdmit` — the Lean theorem path that was
+    //    sitting in `PlayRefusal::OracleUnavailable`, waiting for delegated play to be wired up.
+    //    THREE-or-more dot-joined alphanumeric parts of length ≥ 2, so ordinary prose ("e.g.", a
+    //    sentence ending before a capital, a version like `1.0.3`) cannot trip it: an English
+    //    sentence never joins three words with dots and no spaces.
+    for token in text.split_whitespace() {
+        let parts: Vec<&str> = token
+            .trim_matches(|c: char| !c.is_ascii_alphanumeric())
+            .split('.')
+            .collect();
+        if parts.len() >= 3
+            && parts
+                .iter()
+                .all(|p| p.len() >= 2 && p.chars().all(|c| c.is_ascii_alphanumeric()))
+        {
+            found.push(BannedShape::SymbolAsFix {
+                symbol: token.to_string(),
+            });
+        }
     }
 
     // ── A SYSTEM-COMPONENT NAME.

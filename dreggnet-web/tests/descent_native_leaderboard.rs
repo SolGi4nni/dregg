@@ -273,10 +273,28 @@ async fn native_browser_record_replays_shares_and_ranks_only_in_its_own_lane() {
         "{card}"
     );
 
+    // ⚑ THE RUN HAS A SINGLE COMPARABLE NUMBER, on the card and on the board.
+    assert!(
+        card.contains("<dt>score</dt>") && card.contains("counts the floor it was minted on"),
+        "the card must carry the score AND say what it counts: {card}"
+    );
+
     let (_, board) = get(&app, "/descent/leaderboard?day=native-day").await;
     assert!(board.contains("Lean-native browser ruleset"), "{board}");
     assert!(board.contains("web:native-browser"), "{board}");
     assert!(board.contains("verify native record"), "{board}");
+    // ⚑ THE SCORE IS A COLUMN, AND THE PAGE SAYS THE RANK IS NOT IT. A score shown beside a rank it
+    // does not drive is a thing a player will contest, so the page has to state which is which — and
+    // it must NOT quietly claim the score orders the table.
+    assert!(board.contains("<th>score</th>"), "{board}");
+    assert!(
+        board.contains("The ranking is still"),
+        "the board must say the rank is turns, not the score: {board}"
+    );
+    assert!(
+        board.contains("relic depth"),
+        "…and say what the score measures: {board}"
+    );
 }
 
 #[tokio::test]
@@ -520,10 +538,14 @@ async fn exact_non_crowned_native_settlement_is_shareable_but_never_ranked() {
     )
     .await;
     assert_eq!(prefix_status, StatusCode::BAD_REQUEST, "{prefix_refused}");
+    // ⚑ THE STALE LITERAL. This read `"no terminal flee settlement"` — the wording the endpoint gave
+    // up on 2026-07-25 (`ec07103a2`, "a run whose light died is FINISHED"), when a settled-by-a-dead-
+    // light run stopped being a prefix and the refusal was rewritten to name BOTH terminal shapes.
+    // The test kept asserting the old sentence and had been red at HEAD ever since.
     assert!(
         prefix_refused["error"]
             .as_str()
-            .is_some_and(|error| error.contains("no terminal flee settlement")),
+            .is_some_and(|error| error.contains("native record is an exact prefix")),
         "{prefix_refused}"
     );
 

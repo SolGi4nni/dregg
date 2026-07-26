@@ -135,6 +135,61 @@ impl std::fmt::Display for WorldError {
     }
 }
 
+/// ⚑ **THE PLAYER'S SENTENCE for a commit that failed on OUR side of the wire.** Not a phrase to
+/// re-type at a call site: it is `dreggnet_offerings::refusal::COMMIT_FAILED_NOTHING_CHANGED`, named
+/// here because this crate sits below that one and both must say the same thing. The literal is
+/// duplicated by necessity (no shared crate sits below both) and pinned identical by the
+/// refusal-copy gate, which asserts the two are equal.
+const COMMIT_FAILED_NOTHING_CHANGED: &str =
+    "Something went wrong committing that move — nothing was changed. Try again in a moment.";
+
+impl WorldError {
+    /// ⚑ **THE PLAYER HALF of this refusal.** [`Display`](std::fmt::Display) above is the OPERATOR's
+    /// string and always was — it prepends the name of an internal architecture ("world-cell turn
+    /// refused: …", "under-gated choice refused: method `select` did not lower fully to executor
+    /// teeth (handler-only gate; drive it through the runtime path)"). That string reached players
+    /// from ~12 sites, because it was the generic fallback for EVERY commit in Automatafl, Tug, the
+    /// dungeon and the native Descent: `Err(e) => Outcome::Refused(e.to_string())`.
+    ///
+    /// The split is by audience, and it falls out of the variants cleanly:
+    ///
+    /// - [`WorldError::Refused`] carries the receipt's own *why*, produced by the game's rules — it
+    ///   is already the sentence a player should read ("the purse is empty", "that action is already
+    ///   spent this round"), and it is handed back VERBATIM. Only `Display`'s prefix was the leak.
+    /// - Every other variant is about missing/broken machinery on this server and says nothing about
+    ///   the move: a gate that did not lower to checkable form, a durability write that would not
+    ///   land, a peer that would not confirm, a scene that would not compile, a target that is not in
+    ///   the story. There is nothing the reader could have chosen differently, so they get the one
+    ///   thing that changes what they do next, and the internals go to
+    ///   [`operator_diagnostic`](Self::operator_diagnostic).
+    ///
+    /// Mirrors `cell::program::ProgramError::operator_diagnostic` — the same split, landed the same
+    /// day, deliberately NOT a second pattern.
+    pub fn player_message(&self) -> String {
+        match self {
+            WorldError::Refused(why) => why.clone(),
+            WorldError::UnknownTarget(_)
+            | WorldError::UngatedChoice(_)
+            | WorldError::Compile(_)
+            | WorldError::Durability(_)
+            | WorldError::Federation(_) => COMMIT_FAILED_NOTHING_CHANGED.to_string(),
+        }
+    }
+
+    /// **THE OPERATOR HALF** — `Some(detail)` exactly when [`player_message`](Self::player_message)
+    /// declines to repeat the cause, `None` for a [`WorldError::Refused`] whose whole story the
+    /// player already got.
+    ///
+    /// `Option` rather than `String` so the two halves cannot silently double up: a caller that logs
+    /// `Some` beside the sentence it shows loses nothing, and never logs the same words twice.
+    pub fn operator_diagnostic(&self) -> Option<String> {
+        match self {
+            WorldError::Refused(_) => None,
+            other => Some(other.to_string()),
+        }
+    }
+}
+
 /// Canonical local executor image used by the file-backed durability layer.
 /// Runtime caches and locks are deliberately absent; restore reconstructs them
 /// from these cells plus the strictly linked receipt chain.

@@ -228,7 +228,11 @@ pub fn gallery_page() -> String {
          <code>Tile</code> node with this same renderer.</p></div>\
          <div class=\"sprite-grid\">{cells}</div></main>",
     );
-    document("dregg — sprite gallery", "gallery", &body)
+    document(
+        &format!("{} — sprite gallery", crate::PRODUCT_NAME),
+        "gallery",
+        &body,
+    )
 }
 
 /// One gallery cell — the sprite plus its kind + short asset address.

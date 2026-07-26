@@ -15,15 +15,6 @@ use dreggnet_catalog::{
 use dreggnet_offerings::SessionId;
 use dreggnet_offerings::player_turn_receipt::PlayerReplaySurface;
 
-fn hex32(bytes: &[u8; 32]) -> String {
-    use std::fmt::Write as _;
-    let mut out = String::with_capacity(64);
-    for byte in bytes {
-        let _ = write!(out, "{byte:02x}");
-    }
-    out
-}
-
 /// One cross-game public receipt sentence. It consumes only the viewer-blind
 /// publication object: no raw session, actor, action/operation name, payload,
 /// state head, or verifier diagnostic is available to accidentally interpolate.
@@ -35,10 +26,10 @@ pub fn public_receipt_text(receipt: &PublicGameReceipt, replay: PlayerReplaySurf
     // `dreggnet_offerings::signed::Custody` is a separate field this card does not carry, and the
     // adapters' default is a server-held custodial key. So the sentence stops at "checked".
     let provenance = match receipt.attribution {
-        PublicGameAttribution::Signed => "A signature was checked for the name on it.",
+        PublicGameAttribution::Signed => "The name on it was checked against a signature.",
         PublicGameAttribution::Asserted => {
-            "The name on it was taken at face value, so this says the move was legal — not who \
-             made it."
+            "This page trusts the name you are playing under: it is not checking a signature, only \
+             that your move followed the rules."
         }
     };
     let disposition = match &receipt.result {
@@ -46,16 +37,27 @@ pub fn public_receipt_text(receipt: &PublicGameReceipt, replay: PlayerReplaySurf
         PublicGameReceiptResult::Turn { ended: false } => "the session is still going.",
         PublicGameReceiptResult::Operation { .. } => "a verified operation landed.",
     };
-    // The ruleset family stays visible (a dungeon never becomes a bazaar merely because both use
-    // this grammar), and both 32-byte handles stay COMPLETE — a short prefix is decoration, not an
-    // audit join. They ride at the end, where a reader who does not want them can stop early.
+    // ⚑ **THE TWO 64-CHARACTER HANDLES ARE GONE.** They used to be glued into this sentence —
+    // `… · move 02f5…64 chars… · card 9b1e…64 chars…` — as if they were words, and this sentence is
+    // the FIRST thing a player reads after their first move ever.
+    //
+    // ⚑ **SAID AT THE RIGHT RESOLUTION: on the web they are gone from the PAGE, not merely from the
+    // prose.** It is tempting to write "they still appear in the record strip below" — they do not.
+    // `dreggnet_offerings::VerifyReport` carries exactly `{verified, turns, detail}` and
+    // `crate::receipt_html` renders exactly those, so nothing else on `/offerings/{key}/session/{id}`
+    // reprints either handle, and nothing on the web CONSUMES one either: the audit affordance on this
+    // surface is `GET …/verify`, which RE-EXECUTES the whole chain rather than looking a hash up. So
+    // this is a real subtraction of two copyable identifiers, taken deliberately, in exchange for the
+    // first screen a stranger reads. (The non-game offering banner keeps its hash —
+    // `PlayerTurnReceipt::compact_text` — so the two paths now differ; if the handles are ever wanted
+    // back here they belong in the mono voice beside the strip, not mid-sentence.)
+    //
+    // The ruleset family stays: a dungeon never becomes a bazaar merely because both use this grammar.
     format!(
-        "{} {} {} · move {} · card {}. {}",
+        "{} · {} {} {}",
+        receipt.kind.as_str(),
         disposition,
         provenance,
-        receipt.kind.as_str(),
-        hex32(&receipt.receipt_id),
-        hex32(&receipt.publication_id),
         replay.instruction(),
     )
 }

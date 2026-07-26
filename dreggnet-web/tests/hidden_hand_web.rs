@@ -34,6 +34,27 @@ fn text(surface: &dreggnet_offerings::Surface) -> String {
     format!("{:?}", surface.view())
 }
 
+/// **The `{turn, arg}` a fresh tug round opens with — DERIVED, never a literal.**
+///
+/// These tests posted `("comp", 3)`. That was a legal press while the engine ran a fixed per-seat
+/// action schedule; since `828df1f33` restored I-cut-you-choose, `arg` INDEXES the seat's
+/// `legal_decisions()` and index 3 is a `Secret`, so `advance` refuses with "method `comp` does not
+/// name decision 3" and both tests had been red at HEAD. `tug_table.rs` already derives its opening
+/// press for exactly this reason; this is the same derivation, so no fixed pair can go stale again.
+fn tug_opening_press() -> (String, i64) {
+    let offering = SeatedTug::new();
+    let session = offering
+        .open(SessionConfig::default())
+        .expect("a tug round opens");
+    let probe = web_identity("seat-probe");
+    let press = offering
+        .actions_for(&session, &probe)
+        .into_iter()
+        .find(|action| action.enabled)
+        .expect("the claimable seat is offered a real opening decision");
+    (press.turn, press.arg)
+}
+
 // ───────────────────────────────────────────────────────────────────────────────
 // 1. THE HOST BOUNDARY — a seated player sees their OWN hand; everyone else sees fog.
 // ───────────────────────────────────────────────────────────────────────────────
@@ -50,13 +71,14 @@ fn a_seated_tug_player_sees_their_own_hand_through_the_host_others_get_fog() {
     let sid = SessionId::new("tug-hidden-1");
     host.ensure_open("tug", &sid).expect("tug session opens");
 
-    // Alice CLAIMS seat A by playing the round's scheduled opening action (Competition).
+    // Alice CLAIMS seat A by playing an opening decision the surface itself offered her.
     let alice = web_identity("alice");
+    let (turn, arg) = tug_opening_press();
     let out = host
         .advance(
             "tug",
             &sid,
-            Action::new("comp", "comp", 3, true),
+            Action::new(turn.clone(), turn, arg, true),
             alice.clone(),
         )
         .expect("the tug session is live");
@@ -182,7 +204,10 @@ async fn the_web_session_page_shows_the_seated_user_their_own_hand() {
     let base = "/offerings/tug/session/tug-web-hidden";
 
     // Alice claims seat A by playing — the POST re-renders AS alice, so her hand is on the page.
-    let (_, body) = post_as(&app, &format!("{base}/act"), "comp", 3, "alice").await;
+    // The press is DERIVED (see `tug_opening_press`); the literal `("comp", 3)` this used to post
+    // stopped naming a Competition when `arg` became an index into `legal_decisions()`.
+    let (turn, arg) = tug_opening_press();
+    let (_, body) = post_as(&app, &format!("{base}/act"), &turn, arg, "alice").await;
     assert!(
         body.contains("Turn committed"),
         "alice's play lands: {body}"

@@ -698,13 +698,17 @@ impl Database {
         // actually landed on — the same identity `dregg_pay::SwapPool` keys on, and the
         // same identity a quadratic swap vote weighs.
         //
-        // WHY IT IS PERSISTED HERE: `SwapPool` is in-memory (`Mutex<PoolState>`, no
-        // store trait), so its attribution dies with the process. The swap vote's weight
-        // is QUADRATIC — `isqrt` — which is sybil-FAVOURABLE (`√a + √b > √(a+b)`, so
-        // splitting a stake across two addresses GAINS weight). That is a deliberate
-        // product decision, and the defence chosen alongside it is SOCIAL: someone
-        // notices and acts. A defence that depends on noticing needs a record that
-        // survives a restart, or there is nothing to notice with. This table is it.
+        // WHY IT IS PERSISTED HERE: the swap vote's weight is QUADRATIC — `isqrt` — which
+        // is sybil-FAVOURABLE (`√a + √b > √(a+b)`, so splitting a stake across two
+        // addresses GAINS weight). That is a deliberate product decision, and the defence
+        // chosen alongside it is SOCIAL: someone notices and acts. A defence that depends
+        // on noticing needs a record that survives a restart, or there is nothing to
+        // notice with. This table is it.
+        //
+        // It is ALSO the `dregg_pay::PoolStore` backing (`pay::SqlitePoolStore`), i.e. the
+        // durable state of the very `SwapPool` a liquidity vote reads — not a parallel
+        // report about it. One truth, read through the type that carries the rules
+        // (snapshot provenance, one dedup gate over pile AND electorate, retire-once).
         //
         // `first_seen`/`last_seen` are load-bearing, not decoration: the visible shape of
         // a split stake is several near-equal contributions that appeared close together.
@@ -717,6 +721,45 @@ impl Database {
                 first_seen      INTEGER NOT NULL,
                 last_seen       INTEGER NOT NULL
             )",
+        )
+        .execute(&pool)
+        .await?;
+
+        // The pool EPOCH — the retire-exactly-once tooth (`SwapPool::close`), durable.
+        // Without it a restart resets the epoch to 0 and a snapshot that was already
+        // swapped out becomes retire-able again, drawing the contribution ledger down a
+        // second time. Single row, same shape as `pay_treasury`.
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS pay_pool_state (
+                id    INTEGER PRIMARY KEY CHECK (id = 0),
+                epoch INTEGER NOT NULL DEFAULT 0
+            )",
+        )
+        .execute(&pool)
+        .await?;
+        sqlx::query("INSERT OR IGNORE INTO pay_pool_state (id, epoch) VALUES (0, 0)")
+            .execute(&pool)
+            .await?;
+
+        // The pool's OWN processed-reference set. `pay_processed` is the credit ledger's;
+        // this one gates the pile credit + the attribution, and the two must be able to
+        // move independently (a re-observed payment that the ledger already credited must
+        // still not re-bank into the treasury).
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS pay_pool_processed (
+                reference TEXT PRIMARY KEY
+            )",
+        )
+        .execute(&pool)
+        .await?;
+        // MIGRATION, one-shot and idempotent: before the `PoolStore` wiring the pool
+        // attribution was written under the CREDIT ledger's gate (`pay_processed`), so
+        // every reference in that table is already reflected in `pay_pool_contributions`
+        // and in `pay_treasury`. Seeding the pool's set from it is what stops the first
+        // boot after this change from re-banking historical payments.
+        sqlx::query(
+            "INSERT OR IGNORE INTO pay_pool_processed (reference)
+             SELECT reference FROM pay_processed",
         )
         .execute(&pool)
         .await?;

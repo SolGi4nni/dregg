@@ -1233,6 +1233,29 @@ pub enum GameSpineError {
 }
 
 impl GameSpineError {
+    /// ⚑ **Did the command present NO route authority at all**, as opposed to presenting one this
+    /// spine rejected?
+    ///
+    /// The distinction is not cosmetic and it is not the player's: a command carrying none of the four
+    /// `game_*` route fields is almost always a TEST that stopped presenting them (and whose every
+    /// downstream assertion is therefore about a turn that never happened), while a command carrying
+    /// wrong ones is a real stale tab — a property tests SHOULD assert. `dreggnet-web`'s dark-act
+    /// tripwire keys on exactly that split.
+    ///
+    /// It used to key on the refusal's PROSE, because the prose was in the response body — and the
+    /// prose was in the response body because the body was the raw `to_string()` of this error, which
+    /// is the leak the refusal audit closed. So the split has to be answerable HERE, structurally,
+    /// rather than by pattern-matching a sentence a player reads: the surface turns this into a
+    /// machine-readable header (`dreggnet_web::REFUSAL_KIND_HEADER`) and the player copy stays copy.
+    ///
+    /// The four "missing/malformed" reasons are the ones
+    /// `dreggnet_web::CatalogState::presented_game_action_for` mints for an ABSENT field, and each one
+    /// begins with `missing`. Keeping the predicate in the crate that owns those strings is the point:
+    /// a reworded reason is a change to this file, one line from its own predicate.
+    pub fn is_missing_route_authority(&self) -> bool {
+        matches!(self, Self::InvalidReference(reason) if reason.starts_with("missing"))
+    }
+
     fn operation_discovery(error: HostOperationError) -> Self {
         Self::Host(error.to_string())
     }
@@ -1253,13 +1276,18 @@ impl std::fmt::Display for GameSpineError {
                 session.offering(),
                 session.session_id().0
             ),
-            Self::AuthorityEpochMismatch {
-                session,
-                expected,
-                presented,
-            } => write!(
+            // ⚑ NO `{expected:?}` / `{presented:?}`. Those two `{:?}`s Debug-dumped a
+            // `GameSessionBinding` — an internal binding struct, braces and field names and all —
+            // and this error reaches players: it is a `CatalogGameError::Spine` on the act path, and
+            // the web/Discord/Telegram hosts render its `Display`. The two bindings are also
+            // redundant to the reader, since this variant only exists when they differ. What is left
+            // is the address of the session that moved on, which is the operator's coordinate; the
+            // sentence a PLAYER sees for this condition is
+            // `dreggnet_web::refused_game_route_response`'s stale-page copy, chosen at the surface.
+            Self::AuthorityEpochMismatch { session, .. } => write!(
                 f,
-                "game authority epoch mismatch for {} / {}: expected {expected:?}, presented {presented:?}",
+                "game authority epoch changed under a presented command for {} / {} (the session was \
+                 restarted or re-bound since the command was drawn)",
                 session.offering(),
                 session.session_id().0
             ),

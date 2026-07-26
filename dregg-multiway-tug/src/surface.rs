@@ -42,6 +42,7 @@ use deos_view::{CoordCell, MenuItem, PillCase, ViewNode};
 use dreggnet_offerings::{
     Action, DreggIdentity, Offering, OfferingError, Outcome, RunCost, SessionConfig, Surface,
     VerifyReport,
+    refusal::{refuse_rules_unavailable, refuse_world_error, stale_control_refresh},
 };
 
 use crate::hidden_hand::{HandTree, HiddenHandLedger, deck_guild};
@@ -718,6 +719,7 @@ impl TugSession {
                 turn: a.turn,
                 arg: a.arg,
                 enabled: a.enabled,
+                wants_text: a.wants_text,
             })
             .collect();
         ViewNode::Menu { items }
@@ -919,6 +921,7 @@ impl TugSession {
                                 turn: a.turn,
                                 arg: a.arg,
                                 enabled: a.enabled,
+                                wants_text: a.wants_text,
                             })
                             .collect(),
                     });
@@ -1218,8 +1221,13 @@ impl Offering for TugOffering {
             let mut scored = session.engine.clone();
             // The verdict is the PROVEN Lean's (`rules::adjudicate`); an oracle that cannot answer
             // refuses the turn rather than reporting a winner nothing decided.
+            //
+            // ⚑ But the refusal no longer SAYS that. "the round cannot be adjudicated: <FFI
+            // diagnostic>" named a piece of our machinery to a seat who cannot install it: an absent
+            // Lean archive is a BUILD fault, not a fact about this play. The reader gets the shared
+            // commit-failure sentence; an operator gets the diagnostic in a log line.
             if let Err(e) = scored.score() {
-                return Outcome::Refused(format!("the round cannot be adjudicated: {e}"));
+                return Outcome::Refused(refuse_rules_unavailable("adjudicate", &e));
             }
             return match session.runtime.score_projection(&scored.projection()) {
                 Ok(receipt) => {
@@ -1231,32 +1239,33 @@ impl Offering for TugOffering {
                         ended: true,
                     }
                 }
-                Err(error) => Outcome::Refused(error.to_string()),
+                Err(error) => Outcome::Refused(refuse_world_error(&error)),
             };
         }
         // THE DECISION. `arg` indexes the seat's `legal_decisions()`; `turn` names that
         // decision's dispatch method, and both must agree (a transport cannot splice a method
-        // onto someone else's decision). The executor is still the referee — this only keeps
+        // onto someone else's decision). The referee is still the substrate — this only keeps
         // an out-of-turn / out-of-range fire from committing anything at all (anti-ghost).
         if seat != session.engine.current_player() {
             return Outcome::Refused("not your turn".to_string());
         }
         let decisions = session.engine.legal_decisions();
+        // ⚑ BOTH ARMS BELOW ARE ONE CONDITION, and it is the stale-control condition: `arg` is an
+        // INDEX into the LIVE `legal_decisions()`, so a form/button drawn one move ago indexes a list
+        // that no longer exists. They used to be two bespoke sentences — "decision index 7 is out of
+        // range (this seat has 4 legal decisions)" and, worse, "method `comp` does not name decision
+        // 3 (Secret { card: 9 }, which dispatches under `secret`)", which Debug-dumped a Rust enum at
+        // a player AND told them about "methods" and "dispatch". Neither said whether anything had
+        // been played, and neither gave a way forward. One shared sentence now, from
+        // `dreggnet_offerings::refusal` — the same one the web, Telegram and Discord say.
         if input.arg < 0 || input.arg as usize >= decisions.len() {
-            return Outcome::Refused(format!(
-                "decision index {} is out of range (this seat has {} legal decisions)",
-                input.arg,
-                decisions.len()
-            ));
+            return Outcome::Refused(stale_control_refresh());
         }
         let decision = decisions[input.arg as usize];
         let pending = session.engine.pending_offer();
         let expected = decision_method(&decision, pending.as_ref());
         if input.turn != expected {
-            return Outcome::Refused(format!(
-                "method `{}` does not name decision {} ({decision:?}, which dispatches under `{expected}`)",
-                input.turn, input.arg
-            ));
+            return Outcome::Refused(stale_control_refresh());
         }
 
         // A RESPONSE places the escrow onto the two boards and consumes nothing from any hand,
@@ -1278,7 +1287,7 @@ impl Offering for TugOffering {
                         ended: false,
                     }
                 }
-                Err(error) => Outcome::Refused(error.to_string()),
+                Err(error) => Outcome::Refused(refuse_world_error(&error)),
             };
         }
 
@@ -1341,7 +1350,7 @@ impl Offering for TugOffering {
                     ended: false,
                 }
             }
-            Err(e) => Outcome::Refused(e.to_string()),
+            Err(e) => Outcome::Refused(refuse_world_error(&e)),
         }
     }
 
