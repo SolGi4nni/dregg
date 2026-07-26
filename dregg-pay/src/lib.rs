@@ -74,6 +74,10 @@ pub mod ledger;
 pub mod multichain;
 pub mod nft_mint;
 pub mod otc;
+/// WHO paid into the `$DREGG` pile, and what that stake is worth as a quadratic vote —
+/// the per-contributor attribution [`Treasury`]'s aggregate `dregg_balance` does not
+/// carry.
+pub mod pool;
 pub mod pricing;
 // Track C rung 2a — the protocol-native run-budget rail: a conserved cell balance
 // in an internal asset, spent by one conserving `Effect::Transfer` the user
@@ -91,7 +95,8 @@ pub use config::{
     Network, PayConfig, PayRole, SPL_TOKEN_PROGRAM_ID, Seed, UserId, parse_pubkey_base58,
 };
 pub use governance::{
-    APPROVE_OPTION, GovernanceError, LiquidityGovernance, LiquidityProposal, REJECT_OPTION,
+    APPROVE_OPTION, GovernanceError, LiquidityGovernance, LiquidityProposal, MARKET_MIN_OUT,
+    MarketSwapProposal, REJECT_OPTION,
 };
 pub use hd::{
     DepositAddressBook, DepositAddressProvider, HdDeposit, derive_deposit_address,
@@ -119,6 +124,7 @@ pub use otc::{
     OtcError, OtcQuote, OtcSettleError, OtcSettlement, otc_dregg_out, otc_quote, otc_settle,
     otc_settle_message,
 };
+pub use pool::{ContributionOutcome, PoolError, PoolSnapshot, SwapPool, quadratic_weight};
 pub use pricing::{
     HttpGet, JupiterPriceOracle, MockOracle, PriceError, PriceOracle, discount_factor,
     parse_jupiter_price, runs_for_payment,
@@ -136,7 +142,8 @@ pub use dregg_types::CellId;
 pub use swap::{
     BuiltSwap, GovernanceAuthority, HttpPost, JupiterQuote, JupiterSwap, JupiterVenue, MockSigner,
     MockSwapVenue, RouteHop, Signer, SignerError, SwapAuthorization, SwapError, SwapOutcome,
-    SwapRoute, SwapVenue, UnsignedSwapTx, parse_jupiter_quote, solana_sign_target, swap_message,
+    SwapRoute, SwapVenue, UnsignedSwapTx, parse_jupiter_quote, realized_slippage_bps,
+    solana_sign_target, swap_message,
 };
 pub use sweeper::{
     MockSweeper, SolanaSweeper, SweepError, SweepOutcome, SweepRequest, Sweeper, TxSubmitter,

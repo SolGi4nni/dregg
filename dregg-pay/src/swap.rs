@@ -753,6 +753,25 @@ impl From<crate::pricing::PriceError> for SwapError {
     }
 }
 
+/// The REALIZED slippage of a fill, in basis points, as a signed integer.
+///
+/// `(quoted − realized) · 10000 / quoted`: **positive** means the fill came in WORSE than
+/// the quote (the ordinary meaning of slippage), **negative** means better. Computed in
+/// `i128` and clamped into `i64`, so no input wraps; a `quoted` of `0` has no basis and
+/// reads `0`.
+///
+/// This exists because a market-price swap ACCEPTS whatever slippage the venue gives — and
+/// accepting it is not the same as not measuring it. Every [`SwapOutcome`] carries this
+/// beside the realized amount so the receipt says what the acceptance cost.
+pub fn realized_slippage_bps(quoted_out: u64, realized_out: u64) -> i64 {
+    if quoted_out == 0 {
+        return 0;
+    }
+    let drop = quoted_out as i128 - realized_out as i128;
+    let bps = drop * 10_000 / quoted_out as i128;
+    bps.clamp(i64::MIN as i128, i64::MAX as i128) as i64
+}
+
 /// The result of an executed swap.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SwapOutcome {
@@ -760,6 +779,13 @@ pub struct SwapOutcome {
     pub dregg_in: u64,
     /// Atomic USDC realized into the fuel tank.
     pub usdc_out: u64,
+    /// The atomic USDC the venue QUOTED before the fill — the baseline the realized
+    /// amount is measured against.
+    pub quoted_out: u64,
+    /// The REALIZED slippage in basis points ([`realized_slippage_bps`]): positive =
+    /// filled worse than quoted, negative = better. A market-price swap accepts whatever
+    /// this reads; the receipt records it regardless.
+    pub slippage_bps: i64,
     /// The new pile balance (atomic `$DREGG`) after the swap.
     pub pile_after: u64,
     /// The new fuel balance (atomic USDC) after the swap.
@@ -914,6 +940,8 @@ impl<V: SwapVenue> JupiterSwap<V> {
         Ok(SwapOutcome {
             dregg_in: auth.amount,
             usdc_out,
+            quoted_out: unsigned.quoted_out,
+            slippage_bps: realized_slippage_bps(unsigned.quoted_out, usdc_out),
             pile_after,
             fuel_after,
             tx_reference,
@@ -1135,6 +1163,70 @@ mod tests {
         assert_eq!(out.fuel_after, 500_000, "fuel filled by the swap");
         assert_eq!(t.dregg_balance(), 0);
         assert_eq!(t.usdc_balance(), 500_000);
+    }
+
+    #[test]
+    fn realized_slippage_is_measured_in_both_directions() {
+        // The pure measurement (positive = filled WORSE than quoted).
+        assert_eq!(realized_slippage_bps(1_000_000, 1_000_000), 0, "exact fill");
+        assert_eq!(realized_slippage_bps(1_000_000, 990_000), 100, "1% worse");
+        assert_eq!(
+            realized_slippage_bps(1_000_000, 500_000),
+            5_000,
+            "50% worse"
+        );
+        assert_eq!(realized_slippage_bps(1_000_000, 0), 10_000, "total loss");
+        assert_eq!(
+            realized_slippage_bps(1_000_000, 1_010_000),
+            -100,
+            "a BETTER fill reads negative, never a silent zero"
+        );
+        // No basis to measure against, and no panic/wrap at the extremes.
+        assert_eq!(realized_slippage_bps(0, 5), 0);
+        assert_eq!(realized_slippage_bps(1, u64::MAX), i64::MIN);
+        assert_eq!(realized_slippage_bps(u64::MAX, 0), 10_000);
+    }
+
+    #[test]
+    fn a_market_price_swap_accepts_slippage_and_records_it() {
+        // A market-price authorization carries min_out = 0, so the SlippageExceeded
+        // branch cannot fire and the swap fills at whatever the venue gives — but the
+        // receipt still says exactly what that cost.
+        let authority = GovernanceAuthority::from_seed([7u8; 32]);
+        let signer = MockSigner::from_seed([8u8; 32]);
+        // The venue fills at a tenth of the $0.005 reference rate — a catastrophic 90%
+        // haircut a floored authorization would have refused outright.
+        let swap = JupiterSwap::new(
+            MockSwapVenue::new(5, 10_000),
+            DREGG_MINT,
+            USDC_MINT,
+            authority.public_key(),
+        );
+        let t = treasury(100_000_000, 0);
+        let market = authority.authorize(100_000_000, 0, DREGG_MINT, USDC_MINT, [1u8; 32]);
+        let out = swap.execute(&market, &signer, &t).unwrap();
+        assert_eq!(out.usdc_out, 50_000, "filled at the terrible market price");
+        assert_eq!(out.quoted_out, 50_000, "the quote is on the receipt");
+        assert_eq!(out.slippage_bps, 0, "realized == quoted on the mock venue");
+        assert_eq!(t.dregg_balance(), 0, "the whole pile went");
+        assert_eq!(t.usdc_balance(), 50_000);
+
+        // THE CONTRAST that makes min_out = 0 load-bearing: the SAME venue and amount
+        // under a floored authorization is refused and moves nothing.
+        let t2 = treasury(100_000_000, 0);
+        let floored = authority.authorize(100_000_000, 400_000, DREGG_MINT, USDC_MINT, [2u8; 32]);
+        assert_eq!(
+            swap.execute(&floored, &signer, &t2),
+            Err(SwapError::SlippageExceeded {
+                realized: 50_000,
+                min_out: 400_000
+            }),
+        );
+        assert_eq!(
+            t2.dregg_balance(),
+            100_000_000,
+            "the floored path moved none"
+        );
     }
 
     #[test]
