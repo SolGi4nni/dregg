@@ -53,7 +53,7 @@ The program (recorded in `project-fri-soundness-reality`): (1) an object for an 
 | cost model | `Crypto/CostAdversary.lean` | deep-embedded `FreeOracle`, cost derived FROM SYNTAX, both poles (`bruteForce_not_polyTime`, `idAdv_polyTime`) | green; see §4 |
 | poly-time floor falsity | `Exec/SystemRootsBindingReduction.lean:489–530` | `shortCollAdv` + `isPolyTime_of_polySize_answers` ⟹ the instantiated poly-time sponge floor is **FALSE at BabyBear** | theorem |
 | keyed repair | `Crypto/KeyedRomFloor.lean` | `keyedRom_hard` + the counterexample dies two ways (`keyedChoiceAdv_excluded`, `fixedPairAdv_negl`) | green |
-| oracle verifier (Stage 1) | `Circuit/FriVerifierO.lean` | `verifyAlgoO` + faithfulness `verifyAlgoO_run_eq` + `permCallCount` budget | landed |
+| oracle verifier (Stage 1) | `metatheory/Dregg2/Circuit/FriVerifierO.lean` | `verifyAlgoO` + faithfulness `verifyAlgoO_run_eq` + `permCallCount` budget | landed |
 | FS ε (Stage 2→5) | `FriVerifierFS.lean`, `FriVerifierCompose.lean` §1 | freshness carrier **refuted** (`challenge_computing_adversary_is_not_log_fresh`) and replaced by `hit_cond` — per-query hit bound `Q·b/|R|`, no excluded adversary | landed |
 | Merkle extraction (Stage 3) | `FriVerifierMerkle.lean` | `findCollisionZ` (collision **as data**, VCVio shape) + birthday ε + `queriedFinset` | landed |
 | query leg (Stage 4) | `FriVerifierQuery.lean` | `epsilon_query_layer` — **fully proven at L=1 unique decoding**; Johnson kept as ONE named hypothesis, never assumed | landed |

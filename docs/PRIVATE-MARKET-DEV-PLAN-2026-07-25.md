@@ -33,7 +33,7 @@ to ONE elementary theorem (not open research), so discharging the FRI floor unlo
 Keep Paths 1/2 (the distributed committee — real crypto, needs only the ops perimeter) as the pragmatic fallback.
 
 ## DARK-POOL specifics (the third map)
-TWO "pools" + a front-end, NOT wired: (1) the shielded STARK pool (turn/apply.rs::apply_shielded_transfer +
+TWO "pools" + a front-end, NOT wired: (1) the shielded STARK pool (turn/src/executor/apply.rs::apply_shielded_transfer +
 circuit-prove/shielded/* — hides value, has NEVER held value, unreachable from any surface); (2) the
 dark-pool/dark-AMM market (dreggnet-market/ — moves REAL value but plaintext-custodied, single-process, no
 servers); (3) the DrEX terminal (separate product). A production dark pool needs #1's value-hiding + #2's real
@@ -59,7 +59,7 @@ no-single-viewer value-holding dark pool at demo scale.
 4. [BLOCKS→HARDENING] **Same-opening binding** — the ring↔wide-join is a ~31-bit legacy_binding felt, NOT a
    cryptographic same-opening (falsifier ShieldedWideJoinPin.dark_value_decouples landed). Wire the PROVED-BUT-DEAD
    same-opening gadget (Market.EmitSameOpeningGadget, zero Rust consumers, highest security-per-effort). + malicious
-   DKG (range proofs) + retire the trusted-dealer GF(256) turn-privacy scheme (used LIVE by intent/trustless.rs).
+   DKG (range proofs) + retire the trusted-dealer GF(256) turn-privacy scheme (used LIVE by intent/src/trustless.rs).
 5. [HARDENING / RESEARCH] Malicious-secure MPC (authenticated garbling, real triples, malicious OT), network
    transport, PQ value-commitment cutover (#17, ember-gated), and DISCHARGE THE FRI FLOOR (the Path-3 unlock +
    the whole-apex validator). Never claim the floor done ("verifies on a box" ≠ verified).

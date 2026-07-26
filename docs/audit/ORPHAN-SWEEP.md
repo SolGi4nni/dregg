@@ -192,8 +192,8 @@ member): `transferV3` (`RotatedKernelRefinement.lean:72`), `incNonceV3`
 
 ### F. Out-of-scope (Argus subtree, flagged for completeness)
 
-`compileEFold` (`Circuit/Argus/CompileE.lean:173`), `seqDescr` (`Circuit/Argus/CompileFold.lean:115`),
-`compileFold` (`:228`), `compileRevoke` (`Circuit/Argus/Effects/RevokeDelegation.lean:195`).
+`compileEFold` (`metatheory/Dregg2/Circuit/Argus/CompileE.lean:173`), `seqDescr` (`metatheory/Dregg2/Circuit/Argus/CompileFold.lean:115`),
+`compileFold` (`:228`), `compileRevoke` (`metatheory/Dregg2/Circuit/Argus/Effects/RevokeDelegation.lean:195`).
 
 ---
 

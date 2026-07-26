@@ -98,7 +98,7 @@ the MMR index-canonicity adapter — none of the twelve files is exclusively ref
 
 ---
 
-## 3. The UC / crypto layer — `Metatheory/*` (+ `Metatheory/Open/PerfectUC.lean`)
+## 3. The UC / crypto layer — `Metatheory/*` (+ `metatheory/Metatheory/Open/PerfectUC.lean`)
 
 The crux question: are these real UC-security proofs applied to a dregg construct, or an abstract
 theory shelf? **Answer: almost entirely an abstract, un-wired shelf. Exactly one file
@@ -199,7 +199,7 @@ capacities, gap 2).
 
 All gentian-floor files close `#assert_all_clean` under a single named `Poseidon2SpongeCR` /
 `DeclCommitBinds` collision-resistance hypothesis, never an axiom. Separately,
-`Circuit/CustomCarrierAttack.lean` (`deployed_admits_unbacked`, `:122`) is a NEGATIVE result — an
+`metatheory/Dregg2/Circuit/CustomCarrierAttack.lean` (`deployed_admits_unbacked`, `:122`) is a NEGATIVE result — an
 adversarial refutation that a *different* (custom-effect) carrier's `proofBind` gate is vacuous over
 the deployed AIR — unrelated to the capacity floor, listed so it is not mistaken for one.
 
@@ -289,7 +289,7 @@ the deployed AIR — unrelated to the capacity floor, listed so it is not mistak
    arithmetic backbone of the one-shot / no-double discharge discipline.
 
 8. **Settlement soundness, wired to the deployed model.** `settlement_soundness`
-   (`Metatheory/SettlementSoundness.lean:153`) + `revoke_before_tip_unsettleable` (`:192`): a settled
+   (`metatheory/Metatheory/SettlementSoundness.lean:153`) + `revoke_before_tip_unsettleable` (`:192`): a settled
    turn's authority was LIVE at the tip; a revoked-before-tip cap is *unsettleable*. Instantiated
    non-tautologically on `deployedSettle` (a restatement of the deployed circuit gate). The one
    genuinely-wired UC-flavored security-property.

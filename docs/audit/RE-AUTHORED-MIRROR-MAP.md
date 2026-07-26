@@ -99,12 +99,12 @@ doc calls load-bearing. The tested one is not the deployed one.*
   5. Add `pub fn slot_case_constraints(story: &CompiledStory, index: u8) -> Vec<StateConstraint>`
      matching `SlotChanged{index: ii} if *ii == index`. `case_constraints` (`lib.rs:460-470`) is
      `MethodIs`-only and must STAY that way — that is why the harness is blind.
-  6. `tests/roster_integration.rs:90` (`generated_teeth_are_real_per_faction`) currently would pass
+  6. `dreggnet-faction/tests/roster_integration.rs:90` (`generated_teeth_are_real_per_faction`) currently would pass
      byte-identically if every slot-bound gate in the crate were deleted. Extend it to assert
      per-faction `SlotChanged{quest}` carries `FieldGte(rep, f.threshold)` and `SlotChanged{rep}`
      carries `Monotonic(rep)`.
 - **CANARY (introspection is not the gate — a DRIVEN staple is)** — port both falsifiers to
-  `tests/roster_integration.rs` against `Roster::ashenmoor().deploy(seed)` + `roster.lines("embers")`:
+  `dreggnet-faction/tests/roster_integration.rs` against `Roster::ashenmoor().deploy(seed)` + `roster.lines("embers")`:
   `a_stapled_roster_unlock_cannot_ride_a_pledge` (apply_raw with `SetField{rep,1}, SetField{quest,1}`
   must be `Err(WorldError::Refused(_))`, `read_var(quest_var("embers")) == 0`, then two real pledges +
   the trial line still commit — the gate is a bar, not a ban) and
@@ -149,7 +149,7 @@ doc calls load-bearing. The tested one is not the deployed one.*
   no verified-engine variant of the weighted foreign-ballot path.** That is the real finding: dregg's
   cross-chain weighted tally has NO verified ballot box, and the alias is what conceals it.
 - **FIX part 1 (same-day, `dregg-interchain-gov` only; `dregg-governance` needs no change):**
-  1. `examples/cross_chain_vote.rs:27-29` + `tests/cross_chain_governance.rs:45` — import
+  1. `examples/cross_chain_vote.rs:27-29` + `dregg-interchain-gov/tests/cross_chain_governance.rs:45` — import
      `HostBallotBox, HostVoteEngine`. `examples:67` and `tests:463` → `HostBallotBox::new()`. Pure
      rename, zero behavior change (the alias IS the type) — it makes the use site read what it is.
   2. `examples/cross_chain_vote.rs:12-16` — strike "the CollectiveChoice engine" from the production
@@ -322,7 +322,7 @@ succinct whole-match lowering remain proof work.
      a party acting. Route it to a private `fn reclaim_unchecked(&mut self, trade, side)` holding the
      current body; the new pub `reclaim` becomes the thin authenticated wrapper. (Or pass `&seller`,
      already cloned at `:539`.)
-- **CANARY** — modelled on `dreggnet-guild/tests/guild.rs:287`, in `tests/atomic_trade.rs`: after Alice
+- **CANARY** — modelled on `dreggnet-guild/tests/guild.rs:287`, in `dreggnet-trade/tests/atomic_trade.rs`: after Alice
   deposits and Bob ghosts, `tw.reclaim(&mut trade, TradeSide::A, "bob")` must be
   `Err(TradeError::Escrow(EscrowError::NotYourLeg(Side::A)))` with NOTHING moved (Alice still not
   holding, leg still Deposited) — and the SAME call with `"alice"` succeeds. **Without the failing-side
@@ -564,7 +564,7 @@ succinct whole-match lowering remain proof work.
   `Gear` (`gear.rs:98-104`) is a Copy `{asset_id, stats}` with no ledger handle. **Nothing in the
   multislot world can call `Armory::prove_ownership` even in principle.**
 - **LIVE? The multislot path IS the mirror — it has no other.** `multislot` is `pub mod` at `lib.rs:36`,
-  re-exported at `lib.rs:42`; `tests/integration.rs:123-135` (`a_full_loadout_fires_its_set_bonus`) does
+  re-exported at `lib.rs:42`; `dreggnet-gear/tests/integration.rs:123-135` (`a_full_loadout_fires_its_set_bonus`) does
   `let gate = lo.deploy_set_bonus(); gate.equip(0/1/2); gate.use_set_bonus()` — the armory that forged
   the pieces is never consulted again. `multislot.rs:19-20` states it IS `gear.rs:48`'s named set-bonus
   residual "now built" — the delivered artifact, not scratch.
@@ -606,7 +606,7 @@ succinct whole-match lowering remain proof work.
   holder: &str) -> OwnedSet` (consuming self; the pieces move into the owned set). Keep bare
   `SetBonusGate::deploy` as the un-owned inner layer with an explicit doc line ("the inner tooth; use
   `OwnedSet` for the own-AND-equip conjunction" — the same relationship `EquipGate` has to `Loadout`).
-  Wire the drive path: `tests/integration.rs:123-135` must go through `OwnedSet::equip`.
+  Wire the drive path: `dreggnet-gear/tests/integration.rs:123-135` must go through `OwnedSet::equip`.
 - **CANARY** — mirroring `a_non_owner_cannot_equip` (`gear.rs:648-679`):
   `a_non_owner_cannot_fire_the_set_bonus` — forge the 3-piece set to "alice", deploy `OwnedSet` with
   holder "mallory"; `matches!(set.equip(0), Err(EquipError::NotOwner(_)))`; `!set.gate.is_equipped(0)`
@@ -631,7 +631,7 @@ re-checked gate stands.*
 - **CLAIM** — `dreggnet-guild/src/leaderboard.rs:19-21`: "And **the roster IS the cap set**: only a
   member's clears count. A clear recorded for a non-member is refused (`ClearError::NotAMember`)" ·
   `:36`/`:48-50` calls it "**the cap-set tooth, at the board**" · `lib.rs:8` headlines "**Membership IS
-  the capability set**" (also the `Cargo.toml` description) · `tests/guild.rs:169` comments "only the cap
+  the capability set**" (also the `Cargo.toml` description) · `dreggnet-guild/tests/guild.rs:169` comments "only the cap
   set counts" over an assertion that exercises a HashSet miss.
 - **TRUTH** — `leaderboard.rs:76` `members: HashSet<DreggIdentity>`; the gates at `:109` and `:131` are
   `self.members.contains(who)` — a HashSet lookup. `leaderboard.rs:23-29` imports **no `World`, no
@@ -1119,7 +1119,7 @@ highest-population variant, and the one that let the others ship.*
   identically 0; `acc` re-sums the same bits with the same weights, so `acc != diff` at `:172` is
   unreachable). **Zero coefficients are read in the 66-gate burst.**
 - **LIVE?** `harness.rs:56 kimchi_sim::evaluate(&handles.kimchi, &case.body.requirements)` → recorded as
-  `BK_KIMCHI` at `:61`; `tests/differential.rs:31 matrix.assert_all_agree()` gates the test. **Since the
+  `BK_KIMCHI` at `:61`; `dregg-dsl-differential/tests/differential.rs:31 matrix.assert_all_agree()` gates the test. **Since the
   vote is re-derived from `case.body.requirements` — the same IR `gen_rust` evaluates — `BK_KIMCHI` cannot
   disagree with `BK_RUST` regardless of what coefficients `gen_kimchi` emits. The row is structurally
   green.**

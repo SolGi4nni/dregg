@@ -40,7 +40,7 @@ FfiUnavailable refuses the ring)"` and explicitly flags one downstream consumer 
 same way and is not named anywhere in that commit or in `TESTQALOG.md`.** This audit is the
 first place that gap is named.
 
-Why: `intent/src/bin/drex_clear.rs` (the binary `drex-web-v2/serve.mjs` shells out to for
+Why: `exec-lean/src/bin/drex_clear.rs` (the binary `drex-web-v2/serve.mjs` shells out to for
 `POST /clear`, `serve.mjs:60-67,109-111`) never calls `register_intent_verified_gate` — and
 architecturally *cannot* without adding a new dependency: `dregg-intent`'s own `Cargo.toml` says
 so — `"FFI-FREE BY CONSTRUCTION… A native node installs the Lean-backed gate (from
@@ -59,7 +59,7 @@ instead of a standalone CLI. Neither is done.
 
 The only order book that currently "clears" through `/clear` is one with **no matching ring at
 all** (`solver.rs found no clearing ring over the revealed book`, verified: a single order
-returns `ok:false` cleanly, `intent/src/bin/drex_clear.rs:294-326`) — i.e., the demo works only
+returns `ok:false` cleanly, `exec-lean/src/bin/drex_clear.rs:294-326`) — i.e., the demo works only
 when there is nothing to settle. The UI itself is honest about the failure (`app.js:478`, "
 Matcher error." + raw error text) and correctly gates Settle behind a real ring
 (`app.js:466`: `if (!clearing.value || !clearing.value.ring) return;`) so it can't show a

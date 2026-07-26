@@ -533,7 +533,7 @@ proof/public-statement tamper refusal.
 ## 17. Private preference now has a cell-bound direct-IR2 carrier, fail-closed at the exact VK boundary
 
 `Dregg2/Games/PrivatePreferenceCellDescriptor.lean`,
-`circuit-prove/src/private_preference_cell.rs`, and `turn/src/private_preference_custom.rs` extend the
+`circuit-prove/src/private_preference_cell.rs`, and `turn-prover/src/private_preference_custom.rs` extend the
 standalone preference proof into a real cell-transition statement.  Its 27 public inputs are
 
 `[old_root8, new_root8, session, rule, ballot_root8, winner]`.
@@ -728,7 +728,7 @@ source/destination fields, so inactive slots are canonical zero without restrict
 witness; the regenerated SHA above and all four tests cover the repair.
 
 The remaining deployment boundary is integration rather than invention: the new Rust module is
-not yet exported from `circuit-prove/lib.rs`, and the descriptor/prover is not yet in the shared
+not yet exported from `circuit-prove/src/lib.rs`, and the descriptor/prover is not yet in the shared
 emit/registry/custom-carrier path or folded into receipt history.  The deployed parse circuit
 remains the one-bracket Dyck/CFG instance.  Adjacent old/new roots in this leaf are nevertheless the
 exact intended segment endpoints for arbitrary folded rewrite histories once those integrations and

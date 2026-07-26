@@ -68,7 +68,7 @@ document (`metatheory/CONSTRUCTIVE-KNOWLEDGE.md`) states the doctrine without he
 twin for authority: *"You hold a capability iff you can produce the witness for it — never
 merely assert it, never merely be named in a table. Authority is production under
 non-forgeability."* The two are formally the same object: capability-holding (`Holds`,
-`Metatheory/ConstructiveKnowledge.lean:76`) is literally the full-pocket special case of
+`metatheory/Metatheory/ConstructiveKnowledge.lean:76`) is literally the full-pocket special case of
 `Knows`, and `holds_iff_discharged_witness` is an `Iff.rfl` — *"knowledge = a verifiable
 witness, full stop — no hidden assertion channel."* Possession and production are the same
 act. The whole edifice is organized around one asymmetry, stated in the doc as its
@@ -398,7 +398,7 @@ what the stolen witness *discharges*:
   adversary-uncontrollable state: `gateOK_revoked_fails` — a revoked nullifier in the
   committed registry rejects the node and rolls back the entire forest, TOCTOU-free.
 - **Win the race to the tip.** The leaked-cap race has exact semantics
-  (`Metatheory/SettlementSoundness.lean` + `KeyLeak.lean`). `LiveAtTip`: settled
+  (`metatheory/Metatheory/SettlementSoundness.lean` + `KeyLeak.lean`). `LiveAtTip`: settled
   authority must be held *and* honored by the finalized revocation set at the settlement
   tip. `revoke_before_tip_unsettleable`: a revocation logged at origin `m` at time `τ`
   forecloses settlement at any tip with `τ + delay(m, tip) ≤ tip.time`. Both sides of the

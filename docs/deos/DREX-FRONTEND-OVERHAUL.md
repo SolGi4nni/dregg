@@ -53,7 +53,7 @@ product framing is a single-flow demo.
 |---|---|---|
 | **Server** | hand-rolled `node http`, raw ESM from disk, no bundler, single process | `drex-web/serve.mjs:450` |
 | **Book** | a **baked demo fixture** (`demoBook`), not real order entry | `drex-web/app.js:14`, `drex-web/drex-clearside.js:25` |
-| **Clearing** | REAL: `/clear` shells to `drex_clear` (solver.rs ring match → verified_settle.rs kernel fold) | `serve.mjs:455`, `intent/src/bin/drex_clear.rs` |
+| **Clearing** | REAL: `/clear` shells to `drex_clear` (solver.rs ring match → verified_settle.rs kernel fold) | `serve.mjs:455`, `exec-lean/src/bin/drex_clear.rs` |
 | **Shielded** | REAL engine: `/clear-shielded` (fhEgg PDHG + Cert-F) + `/prove-shielded` (Cert-F STARK) | `serve.mjs:467,484` |
 | **Settle** | REAL: `/settle` lands one turn on a **solo** dev node; no on-chain settle | `serve.mjs:549` |
 | **Wallet** | standalone wasm with **demo deterministic keys**; NOT the installed extension; no EVM leg | `drex-web/drex-wallet.mjs:65` |
@@ -351,5 +351,5 @@ node serve.mjs       # → http://127.0.0.1:8782
 - `docs/deos/PRIVATE-DREGG-PUBLIC-LAUNCHPAD-ARCHITECTURE.md` — the public RPC + attestor the shielded path rests on.
 - `extension/src/page.ts` — the real `window.dregg` API (evm / sealedBid / drex).
 - `extension/src/sealedbid.ts` — the sealed-bid commit→reveal crypto.
-- `intent/src/bin/drex_clear.rs` — the real Open-tier matcher the seed's `/clear` shells to.
+- `exec-lean/src/bin/drex_clear.rs` — the real Open-tier matcher the seed's `/clear` shells to.
 - `drex-web/drex-viz.js` — the clearing viz the tier-dial reuses.

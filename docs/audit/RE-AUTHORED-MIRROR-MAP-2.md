@@ -50,7 +50,7 @@ be RED before the fix — a falsifier that was never red proves nothing).
 
 ### M26 — TAD pins a test-only mirror to Lean while deploying a program that enforces strictly less · **HIGH / soundness-hole**
 
-- **CLAIM** — `tests/lean_differential.rs:9-11`: "the anti-drift tooth that keeps the running Rust
+- **CLAIM** — `starbridge-apps/tool-access-delegation/tests/lean_differential.rs:9-11`: "the anti-drift tooth that keeps the running Rust
   admission mirror == the proven Lean policy, so the formal `tool_invocation_commit_iff_admit` guarantees
   **actually describe what the deployed app enforces**." · `src/lib.rs:7-9`: the worker "can **NEVER**
   invoke the tool beyond the granted rate, scope, or deadline." · `src/lib.rs:152-154` calls `admit_table`
@@ -75,10 +75,10 @@ be RED before the fix — a falsifier that was never red proves nothing).
 - **LIVE? YES, INVERTED.** Deployed: `tad_factory_descriptor` (`:317`), AX3 service (`service.rs:67,142`),
   AX5 reactor (`reactor.rs:109`), AX2 deos surface (`lib.rs:653`). **The tested program is the one nothing
   deploys; the deployed program is the one nothing pins to Lean.**
-- **The tell** — `tests/lean_differential.rs:61-67` `scope_tooth_bites` proves the scope tooth **entirely
+- **The tell** — `starbridge-apps/tool-access-delegation/tests/lean_differential.rs:61-67` `scope_tooth_bites` proves the scope tooth **entirely
   against the mirror** (`assert!(!deleg_admit(&DEMO, 50, 99, 0, 1))`). No executor-driven wrong-tool test
   exists **because it is not expressible**. Contrast the deadline tooth, genuinely driven through the real
-  executor at `tests/deos_seam.rs:347-362`.
+  executor at `starbridge-apps/tool-access-delegation/tests/deos_seam.rs:347-362`.
 - **FIX** — ⚠ **CORRECTION to the obvious fix:** installing
   `AllowedTransitions{CALLS_MADE_SLOT, admit_table(g, now, tool)}` alone **does NOT restore SCOPE** —
   baking `tool` into the table at install time yields table `T77`, but the executor still never learns
@@ -99,11 +99,11 @@ be RED before the fix — a falsifier that was never red proves nothing).
   Then close the Lean seam: generalize `hprog` (`:188`) from caveat-list EQUALITY to "the installed
   caveats CONTAIN the admit-table" with a monotonicity-of-conjunction lemma, **or** make the deployed list
   literally equal `[.admitTable callsMadeSlot ...]`. Without one, the theorem still says nothing.
-- **CANARY (RED first)** — add an **executor-driven** wrong-tool rejection to `tests/deos_seam.rs`,
+- **CANARY (RED first)** — add an **executor-driven** wrong-tool rejection to `starbridge-apps/tool-access-delegation/tests/deos_seam.rs`,
   mirroring the deadline tooth at `:347-362`: a mandate scoped to tool 77, an `exercise` for tool 99, must
   be `Err`. **It cannot even be written today** (no tool argument) — that inexpressibility IS the finding.
   Then: revert (2) and confirm a `0 -> 3` jump commits (RED). Delete or demote `scope_tooth_bites`
-  (`tests/lean_differential.rs:61-67`) — it makes no claim about deployment.
+  (`starbridge-apps/tool-access-delegation/tests/lean_differential.rs:61-67`) — it makes no claim about deployment.
 
 ### M30 — the TS wire encoder drops `provenance`; its "drift killer" compares against a gitignored, two-week-old snapshot of itself · **HIGH / soundness-hole · PUBLISHED**
 
@@ -162,7 +162,7 @@ be RED before the fix — a falsifier that was never red proves nothing).
 
 ### M23 — the CWM Lean differential feeds COMPARTMENT labels where Lean feeds ROLE labels, so no row traverses a single graph edge · **medium**
 
-- **CLAIM** — `tests/cwm_lean_differential.rs:1-16`: "the **mirror-drift tooth**… A hand port can SILENTLY
+- **CLAIM** — `starbridge-apps/compartment-workflow-mandate/tests/cwm_lean_differential.rs:1-16`: "the **mirror-drift tooth**… A hand port can SILENTLY
   DRIFT… **That is the out-of-band seam this test kills**… **Drift on EITHER side fails**." · `:28-29`
   "the Lean **`charterMandate3` actor**" · `:37` "the Lean **`clerkMandate3` actor**."
 - **TRUTH** — Lean: `charterMandate3.actorLabels = [Label.named "officer"]`, `clerkMandate3 := { … with
@@ -187,7 +187,7 @@ be RED before the fix — a falsifier that was never red proves nothing).
   differential's inputs were never migrated when the impl was upgraded.** The corpus is pre-upgrade; the
   claim is post-upgrade.
 - **LIVE?** The harness is the live path for the *claim*. The **shipped** gate (the executor's root-bound
-  `ClearanceDominates`) IS genuinely exercised with the real role labels at `tests/deos_seam.rs:402-465`,
+  `ClearanceDominates`) IS genuinely exercised with the real role labels at `starbridge-apps/compartment-workflow-mandate/tests/deos_seam.rs:402-465`,
   both polarities — which is why this is a **dead tripwire**, not an open hole.
 - **AGGRAVATING** — `metatheory/Dregg2/Apps/VERIFICATION-TOOLKIT-GUIDE.md:171` names this exact file **THE
   TEMPLATE** for every new verified app's differential ("Template: `compartment-workflow-mandate/tests/
@@ -195,7 +195,7 @@ be RED before the fix — a falsifier that was never red proves nothing).
   (`metatheory/docs/deos/APPS-DEOS-INTEGRATION-CENSUS.md:46`). **The pattern propagates.**
 - **FIX — FOUR TOKENS, and the pinned literal does not change.** Both helpers are **already `pub`**
   (verified: `lib.rs:173` `pub fn officer_label`, `:177` `pub fn clerk_label`) and already used correctly
-  by `tests/deos_seam.rs:410,455`. Mirror the sibling that does it right — `src/colonist_job.rs:458-465`
+  by `starbridge-apps/compartment-workflow-mandate/tests/deos_seam.rs:410,455`. Mirror the sibling that does it right — `src/colonist_job.rs:458-465`
   `pub fn crafter_labels() -> Vec<FieldElement> { vec![crafter_label()] }`:
   ```rust
   fn officer_labels() -> Vec<FieldElement> { vec![officer_label()] }
@@ -452,7 +452,7 @@ be RED before the fix — a falsifier that was never red proves nothing).
 - **LIVE?** `route` is the sole producer of `RoutingFixture`; the committed
   `chain/test/fixtures/drex_routing.json` carries `"mirror_conserves": true` and is replayed by
   `chain/test/DrexRoutingE2E.t.sol` against `DreggVault.escrowRelease`. **CORRECTION to the reporter:**
-  `intent/src/bin/drex_clear.rs` and `intent/examples/drex_clear_book.rs` do **NOT** import `drex_routing`
+  `exec-lean/src/bin/drex_clear.rs` and `exec-lean/examples/drex_clear_book.rs` do **NOT** import `drex_routing`
   (verified by reading their use-blocks) — they rebuild the pipeline from `solver.rs` + `verified_settle.rs`.
   That narrows blast radius but does not refute: `generate_fixture` (`:285-314`) is a caller and its output
   is committed and consumed on-chain.
@@ -500,7 +500,7 @@ be RED before the fix — a falsifier that was never red proves nothing).
 - **HONEST QUALIFICATION (carry it)** — the fn's own sentence "a tampered receipt amount… fails" is
   **narrowly TRUE** (tamper one receipt without touching the line → sum mismatch). *That sentence survives.*
   The module-level and Cargo-level "every line traces to a settled turn receipt" do not. And the test does
-  drive real executor turns (`tests/billing_period_invoice.rs:183-193` pulls real `receipt.receipt_hash()`
+  drive real executor turns (`starbridge-apps/billing/tests/billing_period_invoice.rs:183-193` pulls real `receipt.receipt_hash()`
   from `exec.submit_action`; `:229-241` cross-checks `settled_hashes`) — **but that binding lives in the
   TEST's own bookkeeping, not the crate. The test holds ground truth the library cannot reach.**
 - **FIX — the truth is one crate away, same directory, same template** (`agent-orchestration/src/lib.rs:544-558`,
@@ -763,7 +763,7 @@ be RED before the fix — a falsifier that was never red proves nothing).
   unset, else `FfiDivergence` if the export reports `ok == true`.
   **TOOTH B** (pins the mirror): the mirror's fidelity rests on **prose** —
   `RingFFI.ffi_export_realises_settleRing_leg` is **Lean-to-Lean** and does **not** constrain
-  `rec_exec_asset`; the header itself dismisses `tests/ring_settlement_differential.rs` as "verified by
+  `rec_exec_asset`; the header itself dismisses `intent/tests/ring_settlement_differential.rs` as "verified by
   prose". Add a differential in `exec-lean/tests/` (the only crate that can reach the FFI) driving
   `rec_exec_asset` vs `ffi::settle_leg` over a corpus covering **both arms**.
 - **CANARY (RED first)** — mutate `rec_exec_asset`'s bound (e.g. `amount <= src_bal` → `<=

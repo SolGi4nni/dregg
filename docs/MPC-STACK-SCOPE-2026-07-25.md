@@ -8,23 +8,23 @@ MALICIOUS security (everything is semi-honest with trusted preprocessing). **No 
 an operational PERIMETER is missing around MPC that already computes correctly in a test harness.**
 
 ## By primitive (real / grade)
-- THRESHOLD SIGS: the DEPLOYED quorum (federation/frost.rs:169 HybridVotes) is a MULTISIG (count of distinct
+- THRESHOLD SIGS: the DEPLOYED quorum (federation/src/frost.rs:169 HybridVotes) is a MULTISIG (count of distinct
   ed25519+ML-DSA sigs), NOT a t-of-n threshold sig (ThresholdSignerRefinement.lean:34). Real threshold sigs exist:
   FROST VERIFY real/final (verify_frost_quorum RFC8032), FROST SIGN test-only (trusted FrostTestDealer, omits
   RFC9591 binding factors — "NOT for live concurrent signing"); hints BLS real (subset-dependent, right for certs);
   the BLS randomness beacon (beacon.rs) genuinely t-of-n-unbiasable. crypto-hermine/tanuki/traccoon = PRE-AUDIT
   references (toy challenge hash, splitmix64 not CSPRNG, non-constant-time; default-off, "must never sign live").
 - DKG: the STRONGEST part — real JF-DKG (GJKR Feldman commitments + complaints + QUAL + resharing, dkg.rs) + a
-  real slashable DKG SERVICE (node/dkg_service.rs) + fhegg bivariate-VSS DKG (threshold/quorum.rs). Gaps: transport
+  real slashable DKG SERVICE (node/src/dkg_service.rs) + fhegg bivariate-VSS DKG (threshold/quorum.rs). Gaps: transport
   modeled (PrivateShare "PLACEHOLDER for a ciphertext"), agreement assumed via blocklace, malicious range-proofs absent.
-- GARBLED + OT: REAL Chou-Orlandi OT (cell-crypto/oblivious_transfer.rs, cofactor checks) + REAL Yao garbling
-  (circuit/garbled.rs, Poseidon2 hash) + a REAL 2PC sealed-bid auction (demo-agent) — BUT single predicate (>=),
+- GARBLED + OT: REAL Chou-Orlandi OT (cell-crypto/src/oblivious_transfer.rs, cofactor checks) + REAL Yao garbling
+  (circuit/src/garbled.rs, Poseidon2 hash) + a REAL 2PC sealed-bid auction (demo-agent) — BUT single predicate (>=),
   2-party, output decoded BY THE GARBLER, semi-honest, and the integrity STARK is RETIRED (privacy holds,
   integrity vs a malicious evaluator does NOT).
 - FHE + THRESHOLD DECRYPT — TWO distinct schemes (do not conflate):
-  1. federation/threshold_decrypt.rs = the TURN-PRIVACY prototype, WEAK: GF(256) Shamir of a SYMMETRIC key that
+  1. federation/src/threshold_decrypt.rs = the TURN-PRIVACY prototype, WEAK: GF(256) Shamir of a SYMMETRIC key that
      RECONSTRUCTS the full key in one place (threshold KEY-reconstruction, not partial decryption), TRUSTED DEALER.
-     Used LIVE by intent/trustless.rs + sdk/council_seal.rs. Lean (Distributed/ThresholdDecrypt.lean) faithfully
+     Used LIVE by intent/src/trustless.rs + sdk/src/council_seal.rs. Lean (Distributed/ThresholdDecrypt.lean) faithfully
      proves t-privacy + fail-closed + tamper-detect — but of a trusted-dealer key-reconstruction scheme.
   2. fhegg_fhe::threshold = the REAL threshold FHE (real BFV/tfhe backend; real n-of-n retained ternary shares,
      s=Σsᵢ never constructed; partial_decrypt with smudging >= 80 bits Lean-pinned Bfv/Smudging.lean; real t-of-n
@@ -65,8 +65,8 @@ yields a COMMITTEE-FREE private DEX that structurally beats every competitor. Se
    around FINISHED crypto (fhegg_fhe::threshold), not new cryptography.
 2. [BLOCKS-LAUNCH] Malicious-secure DKG for the FHE committee — lattice range proofs (ternary/CBD shortness) +
    complaint ARBITRATION (fhegg/hermine DKGs are detection-only; port the federation JF-DKG QUAL/slash skeleton).
-3. [BLOCKS-LAUNCH] Retire the trusted-dealer GF(256) turn-privacy scheme (federation/threshold_decrypt.rs, used
-   live by intent/trustless.rs) — replace with the real fhegg asymmetric path or the Path-3 decrypt-nothing approach.
+3. [BLOCKS-LAUNCH] Retire the trusted-dealer GF(256) turn-privacy scheme (federation/src/threshold_decrypt.rs, used
+   live by intent/src/trustless.rs) — replace with the real fhegg asymmetric path or the Path-3 decrypt-nothing approach.
 4. [HARDENING] Malicious security for the 2PC/MPC compute (authenticated garbling / cut-and-choose, real
    correlated-randomness gen, malicious OT extension) — the retired garbling-integrity STARK is the first tell.
 5. [HARDENING] A publicly-deployed independently-pinned MPC-TLS notary (the real 2PC works; the default fixture

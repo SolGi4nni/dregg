@@ -5,7 +5,7 @@ SNP, TDX/DCAP) derive the trust anchor from a PINNED embedded constant (never th
 vendor signature OVER the actual attested payload with the leaf/VCEK/QE key chaining to that pinned root, and
 check measurement/report_data against EXTERNALLY-supplied expected values (a pinned measurement + a
 ledger-committed slot). No x==x / sig-over-self / read-off-the-same-doc anywhere. The binding weld
-(cell/tee_attest.rs:200-268) is the real authorization gate: measurement==commitment, report_data==input_
+(cell/src/tee_attest.rs:200-268) is the real authorization gate: measurement==commitment, report_data==input_
 commitment(slot), tcb_ok, fail-closed with no verifier. Third class/subsystem this campaign found largely-sound
 (after arithmetic + fail-open) — the crypto/trust floor is solid; the real work is deployed-surface DoS + edge-cases.
 
@@ -23,7 +23,7 @@ red herring). discord-bot DOES (chutes-tee → dcap-qvl, sound).
 - **F1 (MEDIUM, fix first) — SNP tcb_ok FAIL-OPEN default.** snp.rs:255,262-266 + meets() snp.rs:107-113:
   `min_tcb` defaults to TcbVersion::default() = all-zeros, and `meets()` returns true when every field >= min,
   so `reported_tcb.meets(&zeros)` is ALWAYS true → tcb_ok=true for ANY TCB. A genuine but DOWN-LEVEL /
-  vulnerable-microcode SNP chip is accepted; the weld's `if !claims.tcb_ok` gate (cell/tee_attest.rs:260)
+  vulnerable-microcode SNP chip is accepted; the weld's `if !claims.tcb_ok` gate (cell/src/tee_attest.rs:260)
   never fires unless the operator remembers `.with_min_tcb(...)`. FIX: make min_tcb non-defaultable (require
   at construction) or default to a sane per-product floor, matching TDX's strict {"UpToDate"} posture.
   (VERIFICATION NOTE: tee-verify → dregg-cell → dregg-circuit, so this fix is currently circuit-churn-blocked

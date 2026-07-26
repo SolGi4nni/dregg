@@ -277,7 +277,7 @@ which is precisely the gate that would have caught the current stale deploy, had
   admission is fail-closed (fresh executor, full replay, exact player/seed/root/revision/settlement/
   relic-set/crowned equality, `:10-23`), and it is explicitly *not* called the same thing as the
   FULL-STARK path (`:1-8`) — good discipline.
-  **Its only consumer in the entire repo is its own test file** (`tests/native_descent_board.rs:4`).
+  **Its only consumer in the entire repo is its own test file** (`dreggnet-game-board/tests/native_descent_board.rs:4`).
   `dreggnet-web`, `discord-bot`, `dreggnet-telegram` all do not import it.
 
 **The banked-relic hole, precisely.** `NativeDescentCompletion.banked_notes`

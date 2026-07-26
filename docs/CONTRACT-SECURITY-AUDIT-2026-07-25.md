@@ -16,7 +16,7 @@ deployer roles) + statement-binding (fold chain/contract/recipient/action into e
 - The Groth16 stack (DreggGroth16Verifier25 standard gnark template; adapter maps revert→false; upgradeable same
   math over storage VK): public inputs < R, precompiles enforce on-curve/subgroup on ALL proof points, Pedersen
   PoK gate + final pairing equation faithful.
-- cosmos-settlement/verifier.rs: full on-curve AND subgroup checks; VK matches the EVM VK BYTE-FOR-BYTE (all
+- cosmos-settlement/src/verifier.rs: full on-curve AND subgroup checks; VK matches the EVM VK BYTE-FOR-BYTE (all
   G1/G2 constants + 26 IC points cross-checked); the only divergences (#9) are strictly STRICTER on the Cosmos
   side (Cosmos ≤ EVM acceptance — can't settle anything false). No admin, no migrate entry point.
 

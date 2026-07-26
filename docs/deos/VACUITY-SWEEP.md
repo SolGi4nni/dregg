@@ -306,10 +306,10 @@ members of that class:
 
 | structure | field | file |
 |---|---|---|
-| `Cap8Scheme` | `chip8CR : Compress8CR` | `Circuit/DeployedCapTree.lean` |
-| `CapHashScheme` | `chipCR : Compress1CR` | `Circuit/DeployedCapTree.lean` |
+| `Cap8Scheme` | `chip8CR : Compress8CR` | `metatheory/Dregg2/Circuit/DeployedCapTree.lean` |
+| `CapHashScheme` | `chipCR : Compress1CR` | `metatheory/Dregg2/Circuit/DeployedCapTree.lean` |
 | `Compress2` | `compress1CR : Compress1CR` | `Crypto/CommitmentBinding.lean` |
-| `LeafRealization` / `LogRealization` | carry `Poseidon2SpongeCR` | `Circuit/Poseidon2Binding.lean` |
+| `LeafRealization` / `LogRealization` | carry `Poseidon2SpongeCR` | `metatheory/Dregg2/Circuit/Poseidon2Binding.lean` |
 | `Heap8Scheme` / `Fields8Scheme` | own `chip8CR` twins | `DeployedHeapTree` / `DeployedFieldsTree` |
 
 `FactoryBindingFloorRegrounded` already proves `Compress2` uninhabitable at deployed parameters, and

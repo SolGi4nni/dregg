@@ -2,8 +2,8 @@
 
 How to ship a new build of the node / bot / site without taking the chain
 down. The native pipeline is git-ffwd + rebuild-on-box + systemd restart
-(`deploy/aws/update.sh`); this runbook adds the discipline around it, and
-`deploy/aws/update-gated.sh` mechanizes the discipline: **snapshot → update →
+(`deploy/aws/SUPERSEDED/update.sh`); this runbook adds the discipline around it, and
+`deploy/aws/SUPERSEDED/update-gated.sh` mechanizes the discipline: **snapshot → update →
 health-gate → auto-revert**.
 
 ## The normal path
@@ -14,10 +14,10 @@ cd /opt/dregg
 sudo -E deploy/aws/update-gated.sh          # snapshot, update.sh, gate, auto-revert
 ```
 
-What it does (`deploy/aws/update-gated.sh`):
+What it does (`deploy/aws/SUPERSEDED/update-gated.sh`):
 1. snapshots the running release (binaries + git rev) into
    `/opt/dregg-releases/<utc>/` (keeps last 5);
-2. runs `deploy/aws/update.sh` (which refuses on a dirty tree, ffwd-merges
+2. runs `deploy/aws/SUPERSEDED/update.sh` (which refuses on a dirty tree, ffwd-merges
    `origin/main`, rebuilds, reinstalls units, restarts — its knobs
    `GATEWAY_ONLY=1` / `SKIP_SITE=1` pass straight through);
 3. polls the gateway `/health` and every active `dregg-node@N` member's port

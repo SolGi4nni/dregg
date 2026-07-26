@@ -27,7 +27,7 @@ Landed since the 07-22 cut (all committed; see `FHEGG-MALICE-ROADMAP-2026-07-25.
   GPU BFV ct×ct is built (`bfv_gpu_mul` spec'd); halls run CPU.
 - **`fhe` compiles to wasm32** (confirmed) → the distributed extension ceremony is real-viable; the wasm party
   needs a thin `fhegg-core` (GPU-excluded) — scoped, not yet built.
-- **DrEX `/clear` broken** by a named regression (`intent/verified_settle.rs:351`); `/prove-shielded`
+- **DrEX `/clear` broken** by a named regression (`intent/src/verified_settle.rs:351`); `/prove-shielded`
   structurally unreachable (ring3/market4 allowlist + hardcoded epsilon — a Lean-emission fix).
 
 Net: the crypto is proved + measured + running-in-test/simulation; the LIVE, DISTRIBUTED, MALICIOUS-SECURE,
@@ -409,7 +409,7 @@ Read these first:
 - `dreggnet-catalog/src/private_bazaar_worker.rs`
 - `dreggnet-catalog/src/private_bazaar_targets.rs`
 - `dreggnet-catalog/src/game_spine.rs`
-- `turn/src/descent_census_custom.rs`
+- `turn-prover/src/descent_census_custom.rs`
 
 Use narrow gates, never the debug workspace gauntlet:
 

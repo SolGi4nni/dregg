@@ -7,7 +7,7 @@ emit path, NOT a Rust patch (tripwire) · [DEPLOY]=config/ops · [AUDIT]=needs a
 
 ## 🔴 DoS / unbounded-resource — the rich hunt (live, ANON-reachable, DEPLOYED)
 - **T1 [RUST, FIX FIRST]** dreggnet-telegram game-session host is UNBOUNDED — PlayerWorlds's deployed sibling.
-  `dreggnet-telegram/runtime.rs:1292,1318 → telegram_default_host → dreggnet-catalog full_catalog_host →
+  `dreggnet-telegram/src/runtime.rs:1292,1318 → telegram_default_host → dreggnet-catalog full_catalog_host →
   OfferingHost::new()` with `SessionPolicy::is_unbounded()`; `admit_fresh_open` (host.rs:891) skips every gate.
   ANY Telegram user opening games mints unbounded durable sessions (mem+disk). Fix: arm a bounded SessionPolicy
   (max_sessions + idle_ttl + max_opens_per_actor), mirroring dreggnet-web `resolve_web_policy`/`host.rs:924`.
@@ -35,9 +35,9 @@ emit path, NOT a Rust patch (tripwire) · [DEPLOY]=config/ops · [AUDIT]=needs a
 
 ## 🟡 Completeness survey — next deep-audit targets (DEOS audit already LAUNCHED)
 - **DEOS #1 [AUDIT, running]** applet/agent capability boundary. Confirmed smells: pty_ws local-RCE (below);
-  applet turns commit `Unchecked` auth (deos-js-runtime/applet.rs:303,316 + deos-js:406,421) → in-band
+  applet turns commit `Unchecked` auth (deos-js-runtime/src/applet.rs:303,316 + deos-js:406,421) → in-band
   is_attenuation the only gate; **ToolGateway is a Rust twin of Lean delegAdmit with NO differential**
-  (sdk/tool_gateway.rs:207 ↔ ToolAccessDelegation.lean:126) **[TWIN — add to CI guard]**; deos-zed raw std::fs.
+  (sdk/src/tool_gateway.rs:207 ↔ ToolAccessDelegation.lean:126) **[TWIN — add to CI guard]**; deos-zed raw std::fs.
 - **pty_ws [RUST]** deos-terminal/src/bin/pty_ws.rs — spawns $SHELL per WebSocket with NO auth + NO Origin check
   (loopback default, not deployed, but a malicious web page → ws://localhost:7717 → shell). Add handshake token /
   Origin allowlist.
@@ -62,7 +62,7 @@ emit path, NOT a Rust patch (tripwire) · [DEPLOY]=config/ops · [AUDIT]=needs a
 - **[RUST] finality sibling fail-open** (blocklace_sync.rs:1780) — twin-#8 gated the primary tau-ORDER fallback
   (rust_tau_fallback_allowed at :1499) but the secondary consistency belt `VerifiedFinality::compute` at :1780 still
   fails OPEN per-poll on a runtime FFI fault (None → `if let Some(vf) {…}` no else). Extend the same gate to BOTH sites.
-- LOW/informational: wire/server.rs:3089 delivery_signature discarded (inert, not trusted — remove/pin); CLI
+- LOW/informational: wire/src/server.rs:3089 delivery_signature discarded (inert, not trusted — remove/pin); CLI
   proof/vote display defaults true (cosmetic — flip to false); DREGG_ALLOW_UNVERIFIED_CONSENSUS escape (deploy hygiene).
 
 ## Dispatch plan (fixes need the build lock — jammed; batch when it frees)

@@ -51,20 +51,20 @@ unchanged (validate-all-before-apply, `world.rs:518-536`).
   (scoped child, `instance.rs:46-57`); `open_instance` pins the parent value at
   birth (`world.rs:377-399`), `settle_instance` crosses the membrane to advance the
   durable hoard (`world.rs:590-636`). Driven end-to-end: instance A settles 40 → a
-  NEW instance B pins **40** not 0 (`tests/driven.rs:94-99`).
+  NEW instance B pins **40** not 0 (`realm-model/tests/driven.rs:94-99`).
 - **§9.5 canonical identity, surfaces DERIVE** — `mint_identity` exists first
   (`world.rs:230-265`); `bind_surface` writes a binding cell whose entire state is
   the canonical id (`world.rs:279-290`); there is deliberately **no**
   `identity_from_surface(...)`. Two surfaces resolve to the SAME id
-  (`tests/driven.rs:140-150`).
+  (`realm-model/tests/driven.rs:140-150`).
 - **§9.2 ruleset catalog = committed law** — membership is non-vacuous: stored
   VALUE == the root, so admission checks `get(key(C)) == Some(C)` (`catalog.rs:30-41`,
   `world.rs:467-477`). The canary: unlist a listed root and the SAME turn is now
-  refused (`tests/driven.rs:254-265`).
+  refused (`realm-model/tests/driven.rs:254-265`).
 - **Per-realm membrane** (ember's DECIDED "Both") — `PinAtBirth` vs `MovingParent`
   is COMMITTED on the realm cell (`realm.rs:17-31`, `world.rs:346-364`) and
   load-bearing: flip the membrane and the same instance's `visible_parent` flips
-  (`tests/membrane_per_realm.rs:117-139`). The additive settle is a conflict-free
+  (`realm-model/tests/membrane_per_realm.rs:117-139`). The additive settle is a conflict-free
   commutative accumulator; a non-commutative settle gets an OCC variant that DETECTS
   a moved head (`Refused::SettleConflict`) but the resolution policy is named as
   ember's call (`world.rs:653-679`, `membrane_per_realm.rs:182-239`).
@@ -73,10 +73,10 @@ unchanged (validate-all-before-apply, `world.rs:518-536`).
   (`dregg_turn::pq::MlDsaTurnKey`) from one seed (`identity.rs:94-144`), matching the
   shipped hybrid signer. Rotation gated by signer-commitment == committed current key
   (`world.rs:788-827`), K-of-N guardian recovery counting distinct valid guardians
-  (`world.rs:837-882`). Canaries driven in `tests/hybrid_identity_succession.rs`.
+  (`world.rs:837-882`). Canaries driven in `realm-model/tests/hybrid_identity_succession.rs`.
   A self-audit test even proves the honest limit: the ed leg is cofactored (small-order
   forgeable *in isolation*) but PINNED-BY-COMMITMENT at both callers, so not reachable
-  (`tests/classify_b_reachability_probe.rs` — verdict PINNED-KEY).
+  (`realm-model/tests/classify_b_reachability_probe.rs` — verdict PINNED-KEY).
 
 ### 1b. What is PROTOTYPE / NAMED (the crate's own honest scope)
 
@@ -125,7 +125,7 @@ edit (`lib.rs:31-45`). The PI layout is CONSTANT in the number of subjects — o
 subject (`src/pi.rs:1-33`), which is the precise cul-de-sac §9.3 forbids.
 
 Budget is measured, not asserted: the realistic `n4 p8 l8 k6` shape folds an
-**803-column** leaf, 221 under the 1024 cap, and `tests/prove_fold.rs` proves that
+**803-column** leaf, 221 under the 1024 cap, and `param-compose/tests/prove_fold.rs` proves that
 saturated shape as a single foldable leaf (`lib.rs:56-86`). Honest scope is
 enumerated in `lib.rs:107-137` (outcome-not-welded, identity faithfulness upstream,
 bounded 28-bit identity namespace goes vacuous past the margin and a defeating shape
@@ -152,7 +152,7 @@ wide plane at key ≥ 16, so they move the v9 commitment), the `param-compose` A
 the `Effect::Custom` Door, and the cell.
 
 The end-to-end test genuinely drives `TurnExecutor::execute` (not a helper):
-`tests/end_to_end.rs:204-269`. A real entity's params compose into a licensed outcome
+`entity-compose/tests/end_to_end.rs:204-269`. A real entity's params compose into a licensed outcome
 (`10·2 + (-2)·5·4 = -20`), the turn carries the sub-proof through the Door, PASSES the
 state weld against the entity's REAL commitment, and dies at the intentionally-
 unparseable rotated-leg parse (the fast terminus — the weld runs before the
@@ -160,7 +160,7 @@ minutes-slow leg). The **canary bites**: a proof about a DIFFERENT entity is ref
 by the weld (`TurnError::CustomProofStateBindingMismatch`, `end_to_end.rs:280-338`)
 and the sovereign commitment does not advance. Non-vacuity: an outcome the ruleset
 does not license has no satisfying witness (`end_to_end.rs:348-378`). And the SLOW
-truth exists: `tests/leaf_prove.rs` (`#[ignore]`, minutes, `--features prove`) mints
+truth exists: `entity-compose/tests/leaf_prove.rs` (`#[ignore]`, minutes, `--features prove`) mints
 a real foldable leaf whose in-circuit PI commitment BYTE-matches the host `WideHash`
 binding the `Effect::Custom` row carries, over the entity's real `old8/new8`
 (`leaf_prove.rs:64-108`) — and a forged outcome cannot mint a leaf (:113-156).

@@ -150,7 +150,7 @@ starbridge invariant "a refused action is shown as REFUSED, never faked"
 Three transport options, in increasing weld depth. **Phase 1 picks (a).**
 
 - **(a) Local dregg gateway over HTTP — RECOMMENDED FIRST.** dregg already
-  speaks this: `sdk/src/remote.rs:140 RemoteRuntime::connect(base_url, …)` →
+  speaks this: `dregg-sdk-net/src/remote.rs:140 RemoteRuntime::connect(base_url, …)` →
   `POST /turns/submit` of a signed turn envelope (`remote.rs:313
   submit_envelope`), returning a receipt. A small Rust binary
   (`hermes/dregg-gateway/`, reusing `AgentRuntime` + the node ingress) exposes
@@ -286,7 +286,7 @@ Concretely:
 1. Rust: `hermes-dregg/gateway/` — a binary wrapping `AgentRuntime`
    (`sdk/src/runtime.rs`) exposing `POST /authorize_tool {agent, toolset,
    tool, args_hash}` → `{verdict, receipt_hash, height}`. Reuse the existing
-   `/turns/submit` envelope path (`sdk/src/remote.rs`). The turn is one
+   `/turns/submit` envelope path (`dregg-sdk-net/src/remote.rs`). The turn is one
    `Action` with `Authorization::Token` + an `EmitEvent` witnessing the
    tool-call.
 2. Python: register a dregg execution-middleware via

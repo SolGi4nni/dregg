@@ -27,7 +27,7 @@ hands); the GM surface only in the operator's authoring runtime. Add a red-team 
 ## 🟡 F2 (MED) — ToolGateway executor backstop under-enforces the Lean spec (deadline absent)
 Lean `mandateSpec`/`tool_invocation_commit_iff_admit` (`ToolAccessDelegation.lean:149-159,186`) proves the
 executor commits IFF full `delegAdmit` = scope∧deadline∧rate. The deployed Rust `mandate_program`
-(`sdk/tool_gateway.rs:238-251`) carries ONLY `FieldLte{rate}` + `Monotonic` — scope is re-homed to the biscuit
+(`sdk/src/tool_gateway.rs:238-251`) carries ONLY `FieldLte{rate}` + `Monotonic` — scope is re-homed to the biscuit
 method-cover (defensible), but DEADLINE has NO executor realization (only in-band `deleg_admit` vs a
 caller-supplied `now`). The doc claim "even if a caller bypassed deleg_admit the executor rejects" is TRUE for
 rate, FALSE for deadline. Not model-exploitable today (hermes supplies `now` host-side), but the "executor is

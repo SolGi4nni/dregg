@@ -47,17 +47,17 @@ per-keystone discipline.
 | 7 | `reshareN_attenuates` (Deos/Membrane.lean:122) | HAS-BITING-TOOTH | `reshareN_attenuates_satisfiable` **(added 4b)** | `reshare_refuses_amplification` |
 | 8 | `reachable_total_zero` (Exec/ReachableConservation.lean:49) | HAS-BITING-TOOTH | `reachable_total_zero_satisfiable` | `reachable_total_zero_teeth` **(added 4b)** |
 | 9 | `deposit_price_non_decreasing` (Deos/Vault.lean:187) | HAS-BITING-TOOTH | `established_deposit_accepts` | `dilution_rejected` |
-| 10 | `settlement_soundness` (Metatheory/SettlementSoundness.lean:153) | HAS-BITING-TOOTH | `deployedSettle_nonvacuous` | `deployedSettle_revoke_unsettleable` |
-| 11 | `mintA_authorized` (Circuit/Spec/SupplyCreation.lean) | HAS-BITING-TOOTH | `mintA_authorized_satisfiable` | `mintA_rejects_unauthorized` |
+| 10 | `settlement_soundness` (metatheory/Metatheory/SettlementSoundness.lean:153) | HAS-BITING-TOOTH | `deployedSettle_nonvacuous` | `deployedSettle_revoke_unsettleable` |
+| 11 | `mintA_authorized` (metatheory/Dregg2/Circuit/Spec/supplycreation.lean) | HAS-BITING-TOOTH | `mintA_authorized_satisfiable` | `mintA_rejects_unauthorized` |
 | 12 | `captp/token/custom_sound` (Exec/AuthModes.lean) | HAS-BITING-TOOTH | `custom_sound_satisfiable` | `custom_sound_teeth` |
-| 13 | `custom_binding_from_fold` (Circuit/CustomBindingFromFold.lean:147) | HAS-BITING-TOOTH | `honest_companion_fires` | `forged_unsat_demo` |
-| 14 | `factory_binding_from_fold` (Circuit/FactoryBindingFromFold.lean:145) | HAS-BITING-TOOTH | `honest_companion_fires` | `forged_childvk_unsat_demo` |
-| 15 | `bridge_binding_from_fold` (Circuit/BridgeBindingFromFold.lean) | HAS-BITING-TOOTH | `honest_companion_fires` | `forged_mint_hash_unsat_demo` |
-| 16 | `sovereign_binding_from_fold` (Circuit/SovereignBindingFromFold.lean) | HAS-BITING-TOOTH | `honest_companion_fires` | `forged_keycommit_unsat_demo` |
-| 17 | `membership_binding_from_fold` (Circuit/MembershipBindingFromFold.lean) | HAS-BITING-TOOTH | `honest_companion_fires` | `forged_tuple_unsat_demo` |
-| 18 | `dsl_binding_from_fold` (Circuit/DslBindingFromFold.lean) | HAS-BITING-TOOTH | `honest_companion_fires` | `forged_rc_unsat_demo` |
-| 19 | `hatchery_binding_from_fold` (Circuit/HatcheryBindingFromFold.lean) | HAS-BITING-TOOTH | `honest_companion_fires` | `forged_contract_unsat_demo` |
-| 20 | `deco_binding_from_fold` (Circuit/DecoBindingFromFold.lean) | HAS-BITING-TOOTH | `honest_companion_fires` | `forged_payment_hash_unsat_demo` |
+| 13 | `custom_binding_from_fold` (metatheory/Dregg2/Circuit/CustomBindingFromFold.lean:147) | HAS-BITING-TOOTH | `honest_companion_fires` | `forged_unsat_demo` |
+| 14 | `factory_binding_from_fold` (metatheory/Dregg2/Circuit/FactoryBindingFromFold.lean:145) | HAS-BITING-TOOTH | `honest_companion_fires` | `forged_childvk_unsat_demo` |
+| 15 | `bridge_binding_from_fold` (metatheory/Dregg2/Circuit/BridgeBindingFromFold.lean) | HAS-BITING-TOOTH | `honest_companion_fires` | `forged_mint_hash_unsat_demo` |
+| 16 | `sovereign_binding_from_fold` (metatheory/Dregg2/Circuit/SovereignBindingFromFold.lean) | HAS-BITING-TOOTH | `honest_companion_fires` | `forged_keycommit_unsat_demo` |
+| 17 | `membership_binding_from_fold` (metatheory/Dregg2/Circuit/MembershipBindingFromFold.lean) | HAS-BITING-TOOTH | `honest_companion_fires` | `forged_tuple_unsat_demo` |
+| 18 | `dsl_binding_from_fold` (metatheory/Dregg2/Circuit/DslBindingFromFold.lean) | HAS-BITING-TOOTH | `honest_companion_fires` | `forged_rc_unsat_demo` |
+| 19 | `hatchery_binding_from_fold` (metatheory/Dregg2/Circuit/HatcheryBindingFromFold.lean) | HAS-BITING-TOOTH | `honest_companion_fires` | `forged_contract_unsat_demo` |
+| 20 | `deco_binding_from_fold` (metatheory/Dregg2/Circuit/DecoBindingFromFold.lean) | HAS-BITING-TOOTH | `honest_companion_fires` | `forged_payment_hash_unsat_demo` |
 | 21 | `sealedescrow_no_theft` (Deos/SealedEscrow.lean:753) | HAS-BITING-TOOTH | `honest_swap_reachable` | `halfopen_theft_unreachable` |
 | 22 | `deco_attestation_unforgeable` (Crypto/DecoUnforgeable.lean) | HAS-BITING-TOOTH | `attestation_fires` | `attestation_bites` |
 | 23 | `decoUC_realizes` — **WRAPPER-OF-22, NOT A DISTINCT SUMMIT** (Crypto/DecoUC.lean) | HAS-BITING-TOOTH (soundness leg only) | `decoSim_works` | `forge_not_ucRealizes` |
@@ -83,7 +83,7 @@ attestation IS `decoAuthenticated` (F_attestation would emit) and verifies. **bi
 `attestation_bites` (`Forge` namespace): a DECO forge-kernel over which a concrete `AttForgery` exists
 and the reduction extracts a genuine ed25519 `SigForgery` (sharpened by `attestation_bites_is_sig_forgery`).
 Both `#assert_axioms`-clean. Registered as `attestationDynamics` / `deco_attestation_via_schema` in the
-`governed_holds` schema (`Metatheory/Adversary/Instances.lean` §3.9), composing with — distinct from —
+`governed_holds` schema (`metatheory/Metatheory/Adversary/Instances.lean` §3.9), composing with — distinct from —
 `decoCarrierDynamics` (the fold-backing): unforgeability ∘ backing = the mint credited real money.
 
 **Row 23 — DECO "UC-realization": DOWNGRADED to a WRAPPER-OF-22 (rung 5 NOT reached).** ⚑ An adversarial

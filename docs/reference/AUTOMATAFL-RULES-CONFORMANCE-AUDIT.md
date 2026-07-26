@@ -25,7 +25,7 @@ reachable from Rust any more; the three that DESTROY MATERIAL are gone from the 
 
 `tests/differential_reference.rs` — the harness this document calls out for *"comparing a second
 copy of the same code against the first"* — is deleted too, along with the `automatafl-logic` git
-dev-dependency it drove. Its purpose is served by `tests/lean_oracle.rs`, which pins the ruleset's
+dev-dependency it drove. Its purpose is served by `dregg-automatafl/tests/lean_oracle.rs`, which pins the ruleset's
 answer on the audit's own witnesses (the 2-cycle 3.5a, the inclusive path check 3.2, ruling D on
 1.4) — inputs the deleted transcription answered differently, so the tests are evidence about
 *which object* answered.

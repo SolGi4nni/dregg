@@ -141,8 +141,8 @@ is no note_commitments today — grep empty). Design (mirror TurnExecutor.note_n
 - On apply_note_create (apply.rs:1549), after validating: `note_commitments.lock().insert(commitment,
   value)` — GROW-ONLY (a commitment is created once; a duplicate is an error, mirroring the double-create
   guard). No removal.
-- Feed limb 27 FAITHFULLY: node/turn_proving.rs + blocklace_sync feed `note_commitments.lock().root8()` into
-  V9RotationContext.commitments_root (change [u8;32]→Faithful8 like nullifier_root); cell/commitment.rs:1093
+- Feed limb 27 FAITHFULLY: node/src/turn_proving.rs + blocklace_sync feed `note_commitments.lock().root8()` into
+  V9RotationContext.commitments_root (change [u8;32]→Faithful8 like nullifier_root); cell/src/commitment.rs:1093
   `pre[27]=hash_bytes(ctx.commitments_root)` → `commitments_root.write_lanes([27,74,75,76,77,78,79,80])`
   (the circuit already binds commitmentsRootGroupCol at limb 27+completion lanes — same as nullifier at 26).
 - VERIFY like nullifier: a test commitments_root_faithful_8felt_and_cross_node_distinguishing (write

@@ -45,7 +45,7 @@ F X = Obs × (Adm → X)
 ```
 
 — "an observation now, and for each experiment, a next state." This is
-`Metatheory.Fobj` (`Metatheory/Categorical.lean:459`), definitionally identical to the
+`Metatheory.Fobj` (`metatheory/Metatheory/Categorical.lean:459`), definitionally identical to the
 kernel's own `Dregg2.Boundary.F`. A coalgebra map `V → F V` is exactly a transition
 structure; the repository calls the structure `Cell` (`Categorical.lean:475`), which is
 not a pun.
@@ -57,7 +57,7 @@ Now the classical move, and dregg actually performs it rather than gesturing: th
 νF.V  =  List Adm → Obs
 ```
 
-(`Metatheory/Open/FinalCoalgebra.lean:74`). Read that carrier. An element of the final
+(`metatheory/Metatheory/Open/FinalCoalgebra.lean:74`). Read that carrier. An element of the final
 coalgebra is *literally a function from finite experiment-words to observations*. It has
 no fields. It has no owner slot. It **is** "how you respond to every finite
 interrogation," and nothing else. Finality — that every coalgebra admits a *unique*
@@ -75,7 +75,7 @@ exactly one shadow in `νF`, and that shadow is its *identity*: any two states w
 same shadow are indistinguishable by every experiment you will ever be permitted to run.
 The equality that matters is bisimilarity, and the repository takes this seriously enough
 to run it against an adversary: `xcell_obsStream_eq`
-(`Metatheory/Open/CrossCellBisim.lean:261`) proves that two extensionally-equal ledgers
+(`metatheory/Metatheory/Open/CrossCellBisim.lean:261`) proves that two extensionally-equal ledgers
 produce identical observation streams under *any* adversarial interleaving, along the
 whole unbounded trajectory. The struct is replaceable. The unfold is not.
 

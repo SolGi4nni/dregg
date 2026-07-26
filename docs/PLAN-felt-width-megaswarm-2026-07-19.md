@@ -7,7 +7,7 @@ Not yet launched — this is the pre-swarm spec.
 
 ## The reusable proven primitive (every wide-hash lane calls into this)
 
-`metatheory/Dregg2/Market/WideCommitBoundary.lean` — `wireCommitR8`, `Poseidon2Width8`,
+`metatheory/Market/WideCommitBoundary.lean` — `wireCommitR8`, `Poseidon2Width8`,
 `Poseidon2WideCR`, `wireCommitR8_binds` (8-felt commitment binding, proven). Rust side:
 `hash_many_8` (`circuit/src/poseidon2.rs:409`), `single_perm_compress` (:454), `digest8_to_bytes32`
 (`cell/src/commitment.rs:681`). **No wide hash gets hand-authored** — reuse these.

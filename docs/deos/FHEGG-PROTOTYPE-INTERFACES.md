@@ -63,7 +63,7 @@ pub fn download(&self, h: &ResidentHandle) -> Vec<LeanCiphertext>; // the ONE re
 ```
 Tooth: a bench proving a RESIDENT fold-of-folds (upload once, fold K times on-device, download once) BEATS the CPU where the one-shot fold lost — the residency thesis, MEASURED. Parity: resident result == `bfv_lean::fold` bit-for-bit.
 
-### 4. `fhir/mod.rs` — the typed product DSL (the factory). FULLY DISJOINT from the crypto.
+### 4. `fhegg-fhe/src/fhir/mod.rs` — the typed product DSL (the factory). FULLY DISJOINT from the crypto.
 Implements the frontier-doc grammar (`FHEGG-PRODUCT-ORDER-FRONTIER.md`): three type axes (`visibility ∈ {public,committed,opened}` × `curvature ∈ {affine,convex,concave,discrete}` × `phase ∈ {payoff,price,clear,settle}`), the reject-list, and `compile(P) -> ClearingSpec`.
 ```
 pub enum Visibility { Public, Committed, Opened }
@@ -77,7 +77,7 @@ pub fn compile(p: &Program) -> std::result::Result<ClearingSpec, Rejection>;
 ```
 Tooth: the frontier reject-list is enforced (private-matrix × secret-variable REJECTS; a binary decision inside the optimizer REJECTS; an affine public program at Tier2 COMPILES) — each with a test that BITES.
 
-### 5. `tests/e2e_private_derivative.rs` — the INTEGRATION proof. Codes against 1-4's signatures.
+### 5. `fhegg-fhe/tests/e2e_private_derivative.rs` — the INTEGRATION proof. Codes against 1-4's signatures.
 Pick ONE real derivative (a 2-asset portfolio rebalance, or an option payoff), express it in `fhir`, `compile` to a `ClearingSpec`, run `convex_solve` at Tier 0 over collective-key-encrypted state, threshold-`combine` the result, and assert it matches a plaintext reference. This is the vision's integration proof — it compiles against the stubs from day one and goes GREEN as the modules land. Owns no module; it is the north-star test.
 
 ## The swarm shape (against this contract)

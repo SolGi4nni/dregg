@@ -32,7 +32,7 @@ Extended DrEX organs beyond the classic call auction (the "clearing does more th
 
 | op | code | device today |
 |---|---|---|
-| convex engine (private derivative/rebalance, T-iteration PDHG `x ← prox(x − τAx)`) | `convex_step.rs:246-310` (`signed_neg`/`signed_add`/`signed_scale`), `convex_engine.rs:301` (`convex_solve`); Lean-emitted plan `fhir/clearing_plan.rs`; e2e `tests/e2e_private_derivative.rs` | **CPU only — no GPU kernel** |
+| convex engine (private derivative/rebalance, T-iteration PDHG `x ← prox(x − τAx)`) | `convex_step.rs:246-310` (`signed_neg`/`signed_add`/`signed_scale`), `convex_engine.rs:301` (`convex_solve`); Lean-emitted plan `fhegg-fhe/src/fhir/clearing_plan.rs`; e2e `fhegg-fhe/tests/e2e_private_derivative.rs` | **CPU only — no GPU kernel** |
 | ct×ct multiply (Dark-AMM invariant `x·y = k`, one wrap-guarded multiply) | `dark_amm.rs:1064-1069` (`try_swap_proposed`) → `bfv_mul.rs:156` (`MulEngine::multiply`), `:183` (`product_sum`) = fhe.rs `Multiplicator` | **CPU only** — GPU NTT organ exists (`bfv_ntt_gpu.rs`, `RnsNttEngine`) but is *below* full ct×ct: no RNS basis extension, no tensor assembly, no relin on device (`bfv_ntt_gpu.rs:16-19`; named in `bfv_mul.rs:33-38`) |
 | plaintext-tier solver (transparent books): GPU histogram + resident PDHG | `fhegg-solver/src/gpu.rs:118` (`histogram`), `:190` (`solve_pdhg`) | GPU; measured 11.4× at N=1M on the 6750 XT (TESTQALOG:2929) — **plaintext**, cited as the shape the encrypted path should copy, not as an encrypted-path win |
 

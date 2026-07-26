@@ -124,7 +124,7 @@ decide every case below, and none of which are visible from the syntax:
 | `Exec/Program.lean` | 85 | 2567 → 2501 | 85 → **316** (3.72×) | ✅ **converted, green** |
 | `Claims.lean` | 229 | — | 229 → **0** | ⛔ **REFUSED — would destroy all 229** |
 | `AssuranceCase.lean` | 110 | — | 110 → 11 | ⛔ **REFUSED — would drop 99** |
-| `Circuit/Emit/EffectVmEmitRotationV3.lean` | 118 | — | — | ⏸ not attempted (another lane's area) |
+| `metatheory/Dregg2/Circuit/Emit/EffectVmEmitRotationV3.lean` | 118 | — | — | ⏸ not attempted (another lane's area) |
 
 Build evidence, my hand, this tree:
 ```

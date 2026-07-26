@@ -79,8 +79,8 @@ soundness chain is unconditional, keyed on the byte-pinned descriptor the loader
   `include_str!` of `descriptors/by-name/dyck-parse.json`); the loader-flip test (`:508`)
   checks the deployed dispatch serves the emitted, byte-pinned shape. Prove-path teeth:
   `circuit-prove/tests/dyck_parse_tamper.rs`.
-- **Refinement + capstone**: `Circuit/Emit/DyckStackRefine.lean` (row-level refinement) and
-  `Circuit/Emit/DyckStackReplay.lean`, culminating in
+- **Refinement + capstone**: `metatheory/Dregg2/Circuit/Emit/DyckStackRefine.lean` (row-level refinement) and
+  `metatheory/Dregg2/Circuit/Emit/DyckStackReplay.lean`, culminating in
   `parse_sat_imp_replay_emit_unconditional` (`DyckStackReplay.lean:934`): a trace satisfying
   the deployed, emit-authored descriptor has its **read-off** word (`decodedWord`, defined
   *from the trace*) accepted by the Dyck replay — no tape↔word hypothesis anywhere. Fired on

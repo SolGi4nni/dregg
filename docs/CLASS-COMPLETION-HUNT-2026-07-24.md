@@ -41,8 +41,8 @@ found the REST (fix the class, not the instance). Ranked most-dangerous first.
   Hazard: any NON-custodial caller must use `verify_predicate_proof_third_party`. Add a custody type-marker.
 - `wasm/src/lib.rs:736` (workspace-EXCLUDED browser demo; caller-supplied fact_commitment from the prover's
   own output = x==x in the demo flow). Doc/typing only.
-- SOUND (checked, not vacuous): bridge present.rs {2928,3017,3185}, sdk/verify.rs, federation.rs {311,328},
-  token/revocation.rs:327 (hybrid, pins enrolled key), credentials/revocation.rs:217, sdk privacy.rs:815.
+- SOUND (checked, not vacuous): bridge present.rs {2928,3017,3185}, sdk/src/verify.rs, federation.rs {311,328},
+  token/src/revocation.rs:327 (hybrid, pins enrolled key), credentials/src/revocation.rs:217, sdk privacy.rs:815.
 
 ## CLASS 2 also — benign/guarded (cleared): the other tee-verify files, circuit exact_nullifier (SHA-pin
 non-vacuity guard, exemplary), the include_bytes! source self-hash pins. `tdx_chutes.rs:143` real DCAP is

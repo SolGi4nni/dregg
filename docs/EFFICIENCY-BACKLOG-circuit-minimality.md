@@ -749,7 +749,7 @@ RETIREMENT (not a dead-code deletion).** Full-depth read of every `create_recurs
   (`ivc_turn_chain.rs:2661/:3898`). The 07-19 refutation's three "production-live" edges dissolve
   under reading: (1) `gpu_backend.rs:4459` passes `create_recursion_config()` into a parameter
   literally named `_cpu_config` — IGNORED (pure postcard re-tag, `:4468-4484`), and its sole
-  callers are `tests/gpu_recursion_fold_e2e.rs:159/:357` (production dispatch calls
+  callers are `circuit-prove/tests/gpu_recursion_fold_e2e.rs:159/:357` (production dispatch calls
   `_with_lookups` directly); (2) the pow-14-defaulted inner-FRI wrappers' only non-test
   reachability is the Golden-v1 chain below, which has NO producer; (3) the
   `node/src/mcp/proof.rs` "reference" is one stale comment (`:426`) naming a DELETED demo command

@@ -227,7 +227,7 @@ The language exists: fhIR + the convex/certificate tower (`CertQp`, `QpCertifica
 Missing: "general N-way no-viewer compression, distributed witness production, and a live
 settlement application."
 
-- **N-way netting IS the ring, revealed less.** `Market/Clearing.lean` + `Intent/Ring.lean`
+- **N-way netting IS the ring, revealed less.** `Market/Clearing.lean` + `metatheory/Dregg2/Intent/Ring.lean`
   already prove multilateral conservation/fairness/atomicity; the vault's delta is the LEAKAGE
   BUDGET: publish net per-party settlement only — the ring endpoints stay hidden openings, the
   net is an output note per party. FWS1's fixed 2-in/2-out swap generalizes to N-in/M-out with

@@ -10,7 +10,7 @@ BlindedSet verifier. But verify() is the crate's documented re-exported canonica
 ## Findings
 - **F1 CRIT — verify() never verifies the STARK.** verification.rs:143-366 verify_inner calls NO bridge verifier
   (verify_proof_complete/verify_presentation never appear in the crate); it matches the prover-controlled
-  proof.verification field + is_valid() (bridge/present.rs:335 checks only real_stark_proof.is_some() &&
+  proof.verification field + is_valid() (bridge/src/present.rs:335 checks only real_stark_proof.is_some() &&
   verification==Valid, NEVER running the STARK). Zero-secret attack: make your own IssuerKeys, issue yourself a
   credential with any attributes, present it, set proof.federation_root/revealed_facts_commitment to what the
   verifier expects → verify() returns Ok. The real_stark_proof can be a copy from an unrelated presentation.
@@ -46,7 +46,7 @@ BlindedSet verifier. But verify() is the crate's documented re-exported canonica
 - **F8 MED (latent under F1) — 30-bit disclosure narrowing** (presentation.rs:504 & ((1<<30)-1)): once F1 lands,
   disclosure integrity rests on a 30-bit collision bound (~2^30 to swap a disclosed value; attr_symbol shares the
   space → name collisions). The felt-width class. FIX: hash to full-width/multi-limb.
-- **F9 LOW (info)** — bridge/present.rs:426 AUDIT[P3] predicts F1 exactly ("a path that checks
+- **F9 LOW (info)** — bridge/src/present.rs:426 AUDIT[P3] predicts F1 exactly ("a path that checks
   proof.verification==Valid without re-running the STARK could short-circuit"). The field is pub + not serde-skip.
 
 ## Top 5 + status

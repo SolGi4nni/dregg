@@ -120,7 +120,7 @@ Adjacent to the bignum question but the most concrete width finding in this cens
 #### A2c. Lean/Rust effect-bit parity gap (reported, not inflated)
 `Dregg2/Exec/FacetAuthority.lean:148-156` defines **9** named `EFFECT_*` constants (bits 0-8)
 plus `EFFECT_ALL`. Rust deploys **28**. Bits 13, 16, 23 appear in Lean only as inline literals
-(`Emit/CapOpenEmit.lean:709,713`; `Circuit/DeployedCapOpen.lean:256`). **16 deployed effect bits
+(`Emit/CapOpenEmit.lean:709,713`; `metatheory/Dregg2/Circuit/DeployedCapOpen.lean:256`). **16 deployed effect bits
 have no Lean constant at all.** This is a coverage gap in the Lean facet model, not a bignum
 item; it is recorded here because it was found on the same accept path and bounds what the
 authority theorems can be *about*.
@@ -222,8 +222,8 @@ be wrong, not merely unnecessary.
 | group | files | why bignum does not apply |
 |---|---|---|
 | **ML-KEM / ML-DSA codecs** — `Crypto/MlKemCodec.lean`, `MlKemCodecSpec.lean`, `MlDsaCodec.lean`, `MlDsaKeygen.lean`, `MlDsaExpandA.lean`, `Fips204BitPack.lean`, `Fips203Kem.lean`, `MlKemDelta.lean`, `MlKemKeygenRefine.lean`, `VerifyCoreEqSpec.lean` | ~14 | Limbs are **polynomial coefficients mod q** (3329 / 8380417), not positional digits of one integer. `byteEncode`/`packBits`/`compress` are FIPS-mandated bit-packings whose *exact byte layout is the specification* — the spec is the authority, and any re-derivation must match FIPS byte-for-byte, not be "equivalent". `MlDsaExpandA.lean:86` (`b0 + 256·b1 + 65536·(b2 &&& 0x7F)`) looks like a base-256 pack but is FIPS 204 rejection sampling. |
-| **NTT / RLWE / BFV** — `Bfv/*`, `Market/PrivateBookBfvNttFamily.lean`, `PrivateBookBfvBindingAir.lean`, `PrivateBookBfvButterflyAir.lean`, `Crypto/WgpuBfvNttSpec.lean`, `Circuit/TfhePbsRefinement.lean` | ~7 | Limbs are **RNS residues / NTT evaluation points**. Their value is a CRT tuple, not `Σ dᵢBⁱ`; there is no carry, and "the integer it denotes" is the wrong semantics entirely. |
-| **Field-extension towers** — `Circuit/Emit/Bls12381Tower.lean`, `ExtFieldChallenge.lean`, `ExtChallengeOodSites.lean`, `Circuit/ChallengerFr.lean`, `Emit/GnarkVerifier/*` | ~9 | Limbs are **Fp2/Fp6/Fp12 extension coordinates** or a BN254 `Fr` embedding of BabyBear felts (`ChallengerFr.lean:269`, base-2^31 fold). Arithmetic is tower multiplication, not schoolbook. |
+| **NTT / RLWE / BFV** — `Bfv/*`, `Market/PrivateBookBfvNttFamily.lean`, `PrivateBookBfvBindingAir.lean`, `PrivateBookBfvButterflyAir.lean`, `Crypto/WgpuBfvNttSpec.lean`, `metatheory/Dregg2/Circuit/TfhePbsRefinement.lean` | ~7 | Limbs are **RNS residues / NTT evaluation points**. Their value is a CRT tuple, not `Σ dᵢBⁱ`; there is no carry, and "the integer it denotes" is the wrong semantics entirely. |
+| **Field-extension towers** — `metatheory/Dregg2/Circuit/Emit/Bls12381Tower.lean`, `ExtFieldChallenge.lean`, `ExtChallengeOodSites.lean`, `metatheory/Dregg2/Circuit/ChallengerFr.lean`, `Emit/GnarkVerifier/*` | ~9 | Limbs are **Fp2/Fp6/Fp12 extension coordinates** or a BN254 `Fr` embedding of BabyBear felts (`ChallengerFr.lean:269`, base-2^31 fold). Arithmetic is tower multiplication, not schoolbook. |
 | **Byte/hash gadgets** — `Emit/Sha256Gadget.lean`, `Ed25519Gadget.lean`, `Sha256MerkleFold.lean`, `Crypto/Pedersen.lean` | ~4 | Word decomposition serving a fixed hash/curve spec. |
 
 **Also class (b), and worth naming so it is not mistaken for a wound:**
@@ -257,7 +257,7 @@ against.
 | rank | target | radius | load-bearing? | what adopting buys |
 |---|---|---|---|---|
 | 1 | `Emit/PqIdentityAuthorityEmit.lean:78-97` | 1 | **yes** — VK-epoch freshness | `AddValid` + `add_overflow_unsat`: the no-wrap tooth becomes a theorem instead of an absent column |
-| 2 | `Circuit/DeployedCapTree.lean:357,373` + `Emit/CapOpenEmit.lean:143` | 10 + 14 | **yes** — capability authority | `bignumVal 65536` + `rangeClause_is_lookup`; retires a hand bit-decomposition on the authority path |
+| 2 | `metatheory/Dregg2/Circuit/DeployedCapTree.lean:357,373` + `Emit/CapOpenEmit.lean:143` | 10 + 14 | **yes** — capability authority | `bignumVal 65536` + `rangeClause_is_lookup`; retires a hand bit-decomposition on the authority path |
 | 3 | `Market/DarkBazaarPrivateDescriptor.lean:120-160` | 7 | family-shape | **Lane D owns this** — replaces a 4-term hand omega with generic digit uniqueness |
 | 4 | `Games/PrivatePreferenceDescriptor.lean:75-121` | 3 | no | same hand-omega collapse, two felts |
 | 5 | `Games/PrivateRaidAssignmentDescriptor.lean:84-146` | 2 | no | same, base-4096 |

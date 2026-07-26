@@ -28,7 +28,7 @@ Two web frontends over a **real** matching/clearing engine and STARK provers:
 "not built" fallbacks (no mock-as-real in the happy path).**
 
 - `drex-web/serve.mjs:330-348` `runClear` spawns the **real** `drex_clear` matcher
-  (`intent/src/bin/drex_clear.rs`, 16 KB of real solver→verified_settle). Local-first
+  (`exec-lean/src/bin/drex_clear.rs`, 16 KB of real solver→verified_settle). Local-first
   (`serve.mjs:317-327`), else ssh to the prebuilt binary on `persvati`.
 - `drex-web/serve.mjs:365-389` `runShieldedClear` spawns the **real** `fhegg_clear`
   (`fhegg-solver/src/bin/fhegg_clear.rs`); returns an honest "not built — run: cargo build …"

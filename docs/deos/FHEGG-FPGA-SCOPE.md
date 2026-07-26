@@ -47,7 +47,7 @@ place where constraints are hand-authored (roadmap `FHEGG-MATURITY-ROADMAP.md` �
 ### 1.1 RNS fold-add — NO (memory- and transfer-bound; the FPGA fixes neither)
 
 The fold is coefficient-wise conditional-subtract addition over three RNS rows
-(`fhegg-fhe/src/bfv_lean.rs:497` `add_row`; shader `fhegg-fhe/src/shaders/bfv_fold.wgsl` does the
+(`fhegg-core/src/bfv_lean.rs:497` `add_row`; shader `fhegg-fhe/src/shaders/bfv_fold.wgsl` does the
 identical `s = a+b; if s>=q { s-q }` per lane). There is no multiply anywhere on the path — it is
 pure memory bandwidth. Today's measurement on the deployed hardware
 (`FHEGG-GPU-AMD-NUMBERS-2026-07-24.md`):
@@ -151,7 +151,7 @@ already stated in this tree:
 
 **Scope.** One negacyclic odd-NTT compute unit on one VU47P: forward transform, pointwise
 modular multiply, inverse transform, for degree 4096 over exactly the three deployed RNS moduli
-`FOLD_MODULI = [0xffffee001, 0xffffc4001, 0x1ffffe0001]` (`fhegg-fhe/src/bfv_lean.rs:72`) —
+`FOLD_MODULI = [0xffffee001, 0xffffc4001, 0x1ffffe0001]` (`fhegg-core/src/bfv_lean.rs:72`) —
 which are the same numbers, in decimal, that the Lean root-order proofs pin: 68719403009,
 68719230977, 137438822401. Root and twist tables are *generated from the proved family*, not
 re-derived: `deployedPsi_isPrimitiveRoot` proves each deployed ψ has exact order 8192 = 2N

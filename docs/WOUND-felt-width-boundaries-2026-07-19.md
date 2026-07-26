@@ -177,7 +177,7 @@ readiness claim. Captured here so they ride the same campaign.
   `Digest := Lex (Fin 8 → ℤ)` gives the whole adjacency bracketing FOR FREE (the IMT/Heap8 wrappers are
   ℤ-typed but their proofs never touch ℤ arithmetic — mechanical generalization, machine-confirmable by a
   one-section spike). The genuine new work is bounded and nameable: **one lex-`<`-over-8-felts AIR gadget**
-  (✅ **LANDED / VERIFIED 2026-07-22** — `Circuit/Emit/LexCompare8Emit.lean::lexLt8_refines`: the emitted
+  (✅ **LANDED / VERIFIED 2026-07-22** — `metatheory/Dregg2/Circuit/Emit/LexCompare8Emit.lean::lexLt8_refines`: the emitted
   `lexLt8Descriptor` decides `toLex a < toLex b` as a proven iff (`lexLt8_sound`+`lexLt8_complete`, canonicity
   hypotheses explicit, teeth incl. LSB-decider limb-7 + p-boundary canary), with the order-corollaries +
   sorted-tree wiring bridge in `Crypto/Digest8KeySpike.lean` (`Digest8Key := Lex (Fin 8 → ℤ)`, `LinearOrder`
@@ -868,7 +868,7 @@ Sampled five; **four CONFIRMED, one FLIPPED to genuine (#23)**.
 each traced to its Rust twin **in both directions** (deployed-narrower-than-model AND
 model-narrower-than-deployed); (4) **cross-rung seam** — solana/cosmos settlement, eth-lightclient,
 `chain/` + all 10 Solidity contracts, `bridge/` action-binding, `federation/` (24 files), grain R1/R2/R3,
-the deployed per-turn verifier, the recursion apex, `sdk/verify.rs`.
+the deployed per-turn verifier, the recursion apex, `sdk/src/verify.rs`.
 
 **Re-verification standard applied here:** every claimed GENUINE finding was re-read at HEAD before
 being written down, and each was checked for a **dominating full-width compare in the same body** (the
@@ -1364,7 +1364,7 @@ files (`cell/src/commitment.rs`, `turn/src/rotation_witness.rs`,
   move (`hash_many_8([content_commit, template_commit, …])`, or any wide fold seeded from the
   EXISTING `BabyBear`s) launders ~31 bits into a ~124-bit-looking digest: the wide output is a
   function of a 31-bit input, so its collision set is exactly the narrow one. This is the already-
-  catalogued `finalSqueezeOnly_still_conflates` shape (#12, `Cell/InterfaceIdWidth.lean`) — proved
+  catalogued `finalSqueezeOnly_still_conflates` shape (#12, `metatheory/Dregg2/Cell/InterfaceIdWidth.lean`) — proved
   there that widening only the final squeeze STILL conflates. The **correct** derivation re-hashes
   the REAL PREIMAGES, 8-felt end-to-end with no 31-bit waist anywhere in the chain: the response /
   output BYTES, the template's own structural encoding (`PromptTemplate::template_hash`,

@@ -287,7 +287,7 @@ ordinary big-key FheUint32 block
 The new `extract_only` GPU terminal writes all 2,049 large-key LWE coefficients.
 The adapter restores tfhe-rs degree/noise/modulus/atomic-pattern metadata and the
 original high-level id, tag, rerandomization metadata, and untouched radix blocks.
-`tests/tfhe_high_level_wgpu.rs` compares its decrypted result to tfhe-rs's own
+`fhegg-fhe/tests/tfhe_high_level_wgpu.rs` compares its decrypted result to tfhe-rs's own
 `apply_lookup_table` and then feeds the GPU-produced value into a subsequent
 normal high-level homomorphic addition. The fail-closed hbox RX 6750 XT release
 gate passed 1/1 on 2026-07-21: exact compressed-key expansion, transform, and

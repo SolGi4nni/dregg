@@ -13,7 +13,7 @@ fired from thin context.*
   `maximize wᵀf s.t. A·f = 0, 0 ≤ f ≤ c` with a primal-dual certificate
   (`A f=0, 0≤f≤c, s≥0, Aᵀπ+s≥w, cᵀs−wᵀf ≤ ε`), `certifies_epsilon_optimal` the keystone. `A` is
   the PUBLIC incidence matrix of the trade graph. **No pool leg** — it's order-flow circulation only.
-- **`Market/DarkAmmPrivateSwap.lean`** + `DarkAmmPrivateDescriptor.lean` + `circuit-prove/dark_amm_private.rs`
+- **`Market/DarkAmmPrivateSwap.lean`** + `DarkAmmPrivateDescriptor.lean` + `circuit-prove/src/dark_amm_private.rs`
   (630 lines, new) — a Lean-authored, in-circuit, **single** hidden-reserve constant-product step:
   `x' = x+dx, y' = y−dy, x'·y' = k` (only `k, old_root, new_root` public; reserves/amounts witness;
   proven through `HidingFriPcs`; emit-sound). Honest boundary (its own header): pure integer semantic

@@ -54,7 +54,7 @@ does **not**:
 2. **Check the tooth's kind.** `collect_decl_names` registers `theorem | lemma | def | abbrev`. A
    `def bites := True` counts. Nothing forces a *theorem*.
 3. **Check the tooth lives in the file the row names.** The scan is global. A row citing
-   `@ Circuit/CustomBindingFromFold.lean:147` is satisfied by a decl of that name *anywhere* in the tree.
+   `@ metatheory/Dregg2/Circuit/CustomBindingFromFold.lean:147` is satisfied by a decl of that name *anywhere* in the tree.
 
 **Carrier-fires multiplicity hole (concrete).** Rows 13–20 (the eight `*_binding_from_fold` carriers)
 all register the SAME `fires: "honest_companion_fires"`. The gate only checks that *one* decl named
