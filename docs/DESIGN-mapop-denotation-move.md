@@ -801,8 +801,10 @@ And the mirror image, which nobody had looked at: `reconcileGates_insert_forces_
 the EXISTING arity-2 `.insert` model demands the row's key ALREADY committed, so
 `reconcileGates_insert_unsat_at_fresh_key` — **on every honest deployed insert row the model's
 hypothesis is FALSE**, exactly the `.absent` top-gap finding on a second arm. ⚠ The epoch's own
-`.insert` non-vacuity exhibit does not catch it: `MapOpsColumnLayout.toy_insert_gates` writes key
+`.insert` non-vacuity exhibit did not catch it: `MapOpsColumnLayout.toy_insert_gates` wrote key
 `20`, which `toyHeap` HOLDS (`toyGrown = Heap.set toyHeap 20 9` is an in-place update, same length).
+It is now `toy_insert_op_value_update_gates` / `_fires`, with
+`toy_insert_op_key_is_already_committed` as a theorem; see §13.
 **The `.insert` teeth have only ever been exercised on a value update.**
 
 ### 12.4 `.aafiInsert` — the pre-side law, and ⚑⚑ THE EIGHTH IMPOSSIBILITY

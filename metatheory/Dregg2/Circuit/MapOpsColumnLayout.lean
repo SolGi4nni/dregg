@@ -66,9 +66,18 @@ PER-DESCRIPTOR / per-deployment (each NAMED, none silently assumed):
     `DescriptorIR2` denotation sits on.
 
 Note on `.insert` vs `.write`: both denote `writesTo` (sorted insert-or-update) with the deployed
-`2^dep`-leaf PADDED vector (MIN/MAX sentinels are real entries of the modeled heap), so the
-modeled gate for both is the update-at-an-opened-leaf shape; `.insert` freshness is established
-SEPARATELY by the paired `.absent` op (exactly the noteSpend pattern, `DescriptorIR2.lean:251-256`).
+`2^dep`-leaf PADDED vector, so the modeled gate for both is the update-at-an-opened-leaf shape;
+`.insert` freshness is established SEPARATELY by the paired `.absent` op (exactly the noteSpend
+pattern, `DescriptorIR2.lean:251-256`).
+
+⚠ **SENTINEL OCCUPANCY — this note used to say "MIN/MAX sentinels are real entries of the modeled
+heap", and that is FALSE at HEAD.** The 2026-07-12 IMT move (`919b2b0b8d`) retired the stored MAX
+sentinel LEAF; it survives only as the terminal `next_addr` POINTER of the last leaf. The deployed
+occupancy is ONE stored sentinel — `heap_root.rs::HEAP_SENTINEL_LEAVES = 1`, the MIN leaf that
+`CanonicalHeapTree::genesis` prepends, and the constant exists precisely to name the occupancy the cap
+and fields trees do NOT share. The modeled-vs-deployed sentinel story is carried at the deployed shape
+by `MapDenotationSchema.imtChainOf` (the Lean twin of `relink_next_addrs`: each leaf points at its
+sorted successor, the last at the terminal sentinel) and by `MapPaddedDenotation.padImtSchema`.
 
 ## Heap safety
 
@@ -552,10 +561,17 @@ theorem leafOf_binds_or_collides (hash : List ℤ → ℤ) {e₁ e₂ : ℤ × �
     simp_all
   · exact Or.inr ⟨hpre, h⟩
 
-/-- The heap leaf `hash[addr, value]` binds its entry: the entry cannot be forged inside its
+/-- The ARITY-2 map leaf `hash[addr, value]` binds its entry: the entry cannot be forged inside its
 digest. ⚑ CUT OVER 2026-07-25 — the refuted `Poseidon2SpongeCR hash` premise is replaced by the
 per-instance, refutable side condition at the two NAMED preimages; same conclusion, and the old
-hypothesis implies the new one (`noLeafColl_of_CR`). -/
+hypothesis implies the new one (`noLeafColl_of_CR`).
+
+⚠ **NOT "the heap leaf" any more.** The deployed heap tree's leaf is the ARITY-3 IMT leaf
+`hash[addr, value, next_addr]` (`heap_root.rs::HeapLeaf::preimage`, `HEAP_LEAF_ARITY = 3`) and its
+injectivity is `IndexedMerkleTree.imtLeafHash_injective` / `MapAbsentImtGate.imtLeafHash_ne_heapLeafOf`.
+`Heap.leafOf` remains the leaf of the tree family that genuinely IS arity-2 — the universal-memory
+boundary fold (`Crypto.UMemCodec`, `Heap.root = rootWith (leafOf hash)`) and the accumulator/`mapRoot`
+model — so this theorem is live and correct at its own object; it is just not about `heap_root`. -/
 theorem leafOf_injective (hash : List ℤ → ℤ)
     {e₁ e₂ : ℤ × ℤ} (hno : ¬ IsSpongeColl hash (leafPre e₁, leafPre e₂))
     (h : Heap.leafOf hash e₁ = Heap.leafOf hash e₂) : e₁ = e₂ :=
@@ -1025,11 +1041,21 @@ the deployed `dep = 16` case is the SAME depth-generic theorems applied symbolic
 CR-PROVED reference sponge (`Poseidon2Binding.Reference.refSponge_CR` — no unproven hypothesis
 in any tooth).
 
-RESPECTING teeth: honest gate data for a `.read`, the `.absent` GAP, and an `.insert` all FIRE
-the law into the genuine openings. FORGED teeth: a read claiming a WRONG value, and an insert
-whose post-root column is FROZEN at the old root (exactly the
+RESPECTING teeth: honest gate data for a `.read`, the `.absent` GAP, and a VALUE UPDATE carried on
+an `.insert`-op row all FIRE the law into the genuine openings. FORGED teeth: a read claiming a
+WRONG value, and a value-update row whose post-root column is FROZEN at the old root (exactly the
 `kernel_set_insert_is_not_forced_by_the_live_descriptor` forgery), admit NO gate data at all —
-∀-quantified over every heap/path witness, refuted through the CR collision argument. -/
+∀-quantified over every heap/path witness, refuted through the CR collision argument.
+
+⚠ **THERE IS NO FRESH-KEY `.insert` TOOTH HERE, AND THERE CANNOT BE ONE.** The `.write`, `.insert`
+and `.aafiInsert` arms of `ReconcileGatesAt` are the SAME body (§5, lines 825-842): an old-leaf path
+to the PRE-root, which BINDS the row's key into the committed pre-heap
+(`MapKindImtGates.reconcileGates_insert_forces_key_present`). At a fresh key the model is therefore
+UNSATISFIABLE (`…_unsat_at_fresh_key`), while the deployed builders emit ONLY fresh-key rows
+(`heap_root.rs::insert_witness` `:1092` and `insert_witness_aafi` `:1167` both return
+`None` on a present key). The exhibits below are named for what they are — value updates wearing an
+insert's op tag — and the real fresh-key insert witness lives at the deployed shape and depth, in
+`MapInsertImtRepoint.bite_fresh_insert_row`. -/
 
 section Teeth
 
@@ -1104,7 +1130,9 @@ def toyAbsentEnv (hash : List ℤ → ℤ) : Assignment := fun c =>
   else if c = 1 then 25 else if c = 2 then 0
   else if c = 3 then mapRoot hash 2 toyHeap else 0
 
-/-- An honest INSERT row: key 20 ↦ 9; the post-root column carries the GROWN root. -/
+/-- An `.insert`-op row carrying a VALUE UPDATE: key 20 ↦ 9. ⚠ `toyHeap` ALREADY HOLDS key 20, so
+`toyGrown` is `Heap.set toyHeap 20 9` at the SAME length — the map does not grow. The post-root
+column carries the updated root. Named `Grown` for historical reasons; nothing grows. -/
 def toyInsertEnv (hash : List ℤ → ℤ) : Assignment := fun c =>
   if c = 0 then mapRoot hash 2 toyHeap
   else if c = 1 then 20 else if c = 2 then 9
@@ -1133,9 +1161,21 @@ theorem toy_absent_gates (hash : List ℤ → ℤ) :
       by norm_num [toyAbsentOp, toyAbsentEnv, EmittedExpr.eval],
       by norm_num [toyAbsentOp, toyAbsentEnv, EmittedExpr.eval]⟩, rfl⟩⟩
 
-/-- Honest INSERT gate data exists: the old-leaf path to the pre-root, the new-leaf path to the
-grown post-root. -/
-theorem toy_insert_gates (hash : List ℤ → ℤ) :
+/-- ⚠ **WHAT THIS EXHIBIT ACTUALLY SHOWS — read the name.** `toyHeap` holds key `20` at value `2`,
+so the row below is an IN-PLACE VALUE UPDATE, not an insert. Stated as a theorem rather than left to
+the `#guard`s, because this was read for a long time as the epoch's `.insert` non-vacuity witness and
+a name is a claim. -/
+theorem toy_insert_op_key_is_already_committed :
+    Heap.get toyHeap (20 : ℤ) = some 2 ∧ (Heap.set toyHeap 20 9).length = toyHeap.length :=
+  ⟨by decide, by decide⟩
+
+/-- Gate data exists for the `.insert`-op VALUE-UPDATE row: the old-leaf path to the pre-root (which
+is available precisely because key `20` is ALREADY COMMITTED — `toy_insert_op_key_is_already_committed`)
+and the new-leaf path to the updated post-root.
+
+⚠ RENAMED (was `toy_insert_gates`). It is a true and useful witness — a value-update row IS accepted
+— but it is NOT evidence about inserts, and no fresh-key twin of it exists: see the §7 header. -/
+theorem toy_insert_op_value_update_gates (hash : List ℤ → ℤ) :
     ReconcileGatesAt hash 2 (toyInsertEnv hash) toyInsertOp :=
   ⟨toyHeap, toyHeap_sorted, rfl, rfl,
     ⟨toySteps hash, 2, rfl, toySteps_recompute hash 2, toySteps_recompute hash 9⟩⟩
@@ -1156,14 +1196,16 @@ theorem toy_absent_fires :
   (reconcileGates_force_opening refSponge refSponge_CR 2 (toyAbsentEnv refSponge) toyAbsentOp
     (toy_absent_gates refSponge)).1
 
-/-- **RESPECTING TOOTH (a real map insert forces the write opening).** The insert gate data
-forces `writesToMerkle`: the post-root IS the root of the genuine sorted update
-(`toyGrown = Heap.set toyHeap 20 9`, `toyGrown_eq`). -/
-theorem toy_insert_fires :
+/-- **RESPECTING TOOTH (a value update forces the write opening).** The gate data forces
+`writesToMerkle`: the post-root IS the root of the genuine sorted update
+(`toyGrown = Heap.set toyHeap 20 9`, `toyGrown_eq`) — at a key the pre-heap already holds.
+⚠ RENAMED (was `toy_insert_fires`): the `.insert` arm of `ReconcileGatesAt` is the SAME body as its
+`.write` arm, so what fires here is the write opener. -/
+theorem toy_insert_op_value_update_fires :
     writesToMerkle refSponge 2 (mapRoot refSponge 2 toyHeap) 20 9
       (mapRoot refSponge 2 toyGrown) :=
   reconcileGates_force_opening refSponge refSponge_CR 2 (toyInsertEnv refSponge) toyInsertOp
-    (toy_insert_gates refSponge)
+    (toy_insert_op_value_update_gates refSponge)
 
 /-- **FORGED TOOTH 1 (a lying read value BITES).** Under CR there is NO gate data — for ANY
 heap and ANY path — opening the toy root at key 20 to the forged value 99: the law would force
@@ -1189,7 +1231,7 @@ theorem toy_frozen_insert_bites :
   have h := reconcileGates_force_opening refSponge refSponge_CR 2
     (toyFrozenInsertEnv refSponge) toyInsertOp hg
   have heq : mapRoot refSponge 2 toyHeap = mapRoot refSponge 2 toyGrown :=
-    writesToMerkle_functional refSponge refSponge_CR 2 h toy_insert_fires
+    writesToMerkle_functional refSponge refSponge_CR 2 h toy_insert_op_value_update_fires
   have : toyHeap = toyGrown := mapRoot_injective refSponge refSponge_CR 2 rfl rfl heq
   exact absurd this (by decide)
 
@@ -1204,10 +1246,11 @@ theorem toy_frozen_insert_bites :
 
 #assert_axioms toy_read_gates
 #assert_axioms toy_absent_gates
-#assert_axioms toy_insert_gates
+#assert_axioms toy_insert_op_key_is_already_committed
+#assert_axioms toy_insert_op_value_update_gates
 #assert_axioms toy_read_fires
 #assert_axioms toy_absent_fires
-#assert_axioms toy_insert_fires
+#assert_axioms toy_insert_op_value_update_fires
 #assert_axioms toy_forged_read_bites
 #assert_axioms toy_frozen_insert_bites
 

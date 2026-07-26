@@ -37,8 +37,10 @@ and `MAP_NEXT` is ONE column SHARED by the old- and new-leaf absorb.
   pre-root unconstrained. Plus `reconcileGates_insert_forces_key_present` /
   `reconcileGates_insert_unsat_at_fresh_key`: the EXISTING arity-2 `.insert` model is unsatisfiable
   at exactly the rows the deployed prover emits — the `.absent` finding, verbatim, on a second arm.
-  (And the epoch's own `.insert` non-vacuity exhibit, `MapOpsColumnLayout.toy_insert_gates`, writes
-  key `20` which `toyHeap` already HOLDS: it is a value update wearing an insert's name.)
+  (And the epoch's own `.insert` non-vacuity exhibit, `MapOpsColumnLayout.toy_insert_gates`, wrote
+  key `20` which `toyHeap` already HOLDS: a value update wearing an insert's name. RENAMED to
+  `toy_insert_op_value_update_gates`; the real fresh-key witness is
+  `MapInsertImtRepoint.bite_fresh_insert_row`.)
 * §7 `.aafiInsert` — `aafiImtRow_forces_absence_of_good` : an accepting row FORCES
   `opensToMerkleS (padImtSchema sent) hash dep root key none` (the double-spend tooth, at the
   deployed padded commitment), and §9d exhibits a row whose post-root IS the padded sorted commit,
@@ -749,10 +751,12 @@ deployed builder refuses an insert whose key is already present (`heap_root.rs::
 so on every honest deployed insert row the model's hypothesis is FALSE and every theorem over it is
 vacuous exactly where the prover operates.
 
-⚠ And the epoch's own non-vacuity exhibit does not catch it: `MapOpsColumnLayout.toy_insert_gates`
-writes key `20`, which `toyHeap` already HOLDS (`toyGrown = Heap.set toyHeap 20 9` is an in-place
-UPDATE, `toyHeap.length = toyGrown.length`). The `.insert` teeth have only ever been exercised on a
-value update. -/
+⚠ And the epoch's own non-vacuity exhibit did not catch it: `MapOpsColumnLayout.toy_insert_gates`
+wrote key `20`, which `toyHeap` already HOLDS (`toyGrown = Heap.set toyHeap 20 9` is an in-place
+UPDATE, `toyHeap.length = toyGrown.length`). The `.insert` teeth had only ever been exercised on a
+value update. It is now `toy_insert_op_value_update_gates`, with the fresh-key impossibility stated
+beside it; `MapInsertImtRepoint` carries the first real fresh-key `.insert` witness, and shows the
+SAME defect on `.aafiInsert` — the arm that is actually wired into deployed descriptors. -/
 
 /-- The arity-2 model's `.insert` arm FORCES the row's key into the committed pre-heap. -/
 theorem reconcileGates_insert_forces_key_present (hash : List ℤ → ℤ)
