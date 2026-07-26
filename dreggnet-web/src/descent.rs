@@ -1546,6 +1546,17 @@ fn leaderboard_page(day: &Day, rows: &[Row], native_rows: &[NativeRow]) -> Strin
     } else {
         // The table scans: a mono tabular-numeral rank (gold/silver/bronze for the podium), the
         // player as the row's subject, and the proof link as the mint call to action.
+        //
+        // ⚑ IT HAS A HEADING. The native lane below always announced itself ("Crowned native runs")
+        // and this one — the page's MAIN table — went straight from the page deck into a column
+        // header row, so a reader could not tell which ruleset the rows they were reading belonged
+        // to until they hit the second table and found out there had been two.
+        table.push_str(
+            "<section class=\"deos-section\"><p class=\"eyebrow\">Procgen choice-tape ruleset</p>\
+             <h2>Winning procgen runs</h2><p class=\"prose\">Each row re-executes its recorded \
+             passage choices in a fresh world drawn from this day's seed and is required to reach \
+             the hoard. <span class=\"mono\">depth</span> is how deep that replay actually got.</p>",
+        );
         table.push_str(
             "<div class=\"table-wrap\"><table class=\"board\">\
              <thead><tr><th>#</th><th>player</th><th>turns</th>\
@@ -1564,7 +1575,7 @@ fn leaderboard_page(day: &Day, rows: &[Row], native_rows: &[NativeRow]) -> Strin
                 href = esc(&run_share_path(&r.run_id)),
             ));
         }
-        table.push_str("</tbody></table></div>");
+        table.push_str("</tbody></table></div></section>");
     }
     let mut native_table = String::new();
     native_table.push_str(
@@ -1611,8 +1622,8 @@ fn leaderboard_page(day: &Day, rows: &[Row], native_rows: &[NativeRow]) -> Strin
          <div class=\"kv\">\
          <div><p class=\"k\">Day</p><p class=\"v mono\">{key}</p></div>\
          <div><p class=\"k\">Seed</p><p class=\"v mono\">{seed}</p></div>\
-         <div><p class=\"k\">Warden HP</p><p class=\"v mono\">{whp}</p></div>\
-         <div><p class=\"k\">Depth</p><p class=\"v mono\">{rooms}</p></div>\
+         <div><p class=\"k\">Warden HP</p><p class=\"v mono\">{whp} of {whp_max}</p></div>\
+         <div><p class=\"k\">Corridors</p><p class=\"v mono\">{rooms} of {rooms_max}</p></div>\
          </div>\
          {table}\
          {native_table}\
@@ -1624,7 +1635,18 @@ fn leaderboard_page(day: &Day, rows: &[Row], native_rows: &[NativeRow]) -> Strin
         key = esc(&day.key),
         seed = esc(&seed_tag(&day.seed)),
         whp = day.day.warden_hp,
+        // ⚑ EVERY DRAWN NUMBER SAYS WHAT IT IS OUT OF. A bare `Warden HP: 45` answers nothing —
+        // 45 of what? — and the field beside it was labelled `Depth`, which is ALSO the name of a
+        // column in the table below carrying a completely different quantity (how deep a run got),
+        // so the page contradicted itself in two places at once. The ceilings come from the
+        // generator's own published draws, never retyped here.
+        whp_max = dreggnet_offerings::daily_descent::WARDEN_HP_DRAWS
+            .iter()
+            .copied()
+            .max()
+            .expect("the warden draw table is non-empty"),
         rooms = day.day.deepening_rooms,
+        rooms_max = dreggnet_offerings::daily_descent::DEEPENING_ROOMS_MAX,
         table = table,
         native_table = native_table,
     );
@@ -1895,7 +1917,7 @@ fn run_card_page(
          <div><p class=\"k\">Character</p><p class=\"v\">level {level} · {class}</p></div>\
          <div><p class=\"k\">Status</p><p class=\"v\">{alive}</p></div>\
          <div><p class=\"k\">Chain</p><p class=\"v mono\">{turns} verified turns</p></div>\
-         <div><p class=\"k\">Warden HP</p><p class=\"v mono\">{whp}</p></div>\
+         <div><p class=\"k\">Warden HP</p><p class=\"v mono\">{whp} of {whp_max}</p></div>\
          </div>\
          {panel}\
          <a class=\"backlink\" href=\"/descent/leaderboard?day={key}\">← today's no-cheat \
@@ -1911,6 +1933,13 @@ fn run_card_page(
         alive = alive,
         turns = turns,
         whp = day.day.warden_hp,
+        // The heavier of the day's two possible draws, so the number says what it is out of (see the
+        // leaderboard's own kv). Read from the generator's published table, never retyped.
+        whp_max = dreggnet_offerings::daily_descent::WARDEN_HP_DRAWS
+            .iter()
+            .copied()
+            .max()
+            .expect("the warden draw table is non-empty"),
         panel = panel,
     );
     document(
@@ -1944,6 +1973,152 @@ fn run_missing(id: &str) -> String {
         id = esc(id),
     );
     document("The Descent — unknown run", "descent-board", &body)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// "WHICH OF THESE RUNS ARE MINE?" — the per-label read behind `GET /you`.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// **One recorded Descent run, re-verified on THIS read**, as [`DescentState::runs_for_labels`]
+/// answers it. Nothing is taken off a stored verdict: the procgen lane re-executes the recorded
+/// chain against a fresh identically-seeded world, and the native lane replays the whole portable
+/// envelope and reads `label` off the REPLAY — so a record that merely *claims* someone's label in
+/// its untrusted `actor` field never appears under that label.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BoardRun {
+    /// The run id — the last segment of [`path`](BoardRun::path).
+    pub run_id: String,
+    /// The day the run was recorded against.
+    pub day_key: String,
+    /// The label the run really is recorded under (the procgen `player`, or the REPLAYED native
+    /// actor — never the submitted claim).
+    pub label: String,
+    /// `true` for a Lean-native browser record (`/descent/native/run/{id}`), `false` for the
+    /// procgen move-tape board (`/descent/run/{id}`).
+    pub native: bool,
+    /// The existing per-run replay page for this run. This type never re-implements a run card; it
+    /// points at the one that already re-executes the run.
+    pub path: String,
+    /// Turns the re-verification counted.
+    pub turns: usize,
+    /// The deepest floor the run stood on (`0` when the day's world exposes no `depth`).
+    pub depth: u64,
+    /// Whether the run's chain re-executed cleanly on this read. `false` = a recorded row that no
+    /// longer replays; it is still listed (it is the viewer's own row) and honestly marked.
+    pub verified: bool,
+    /// Whether the run provably finished: the hoard on the procgen board, a crowned settlement on
+    /// the native lane. Only meaningful when [`verified`](BoardRun::verified).
+    pub finished: bool,
+    /// Relics banked (native lane only; `0` on the procgen board).
+    pub relics: usize,
+}
+
+impl DescentState {
+    /// **Every recorded run this board holds under one of `labels`.**
+    ///
+    /// `labels` is matched **exactly** — no prefix match, no [`RootResolver`] widening. The caller
+    /// passes only labels it can stand behind for the viewer it is rendering for, so an asserted
+    /// string cannot broaden the answer, and a viewer is never handed a run recorded under a label
+    /// that is merely *similar* to theirs.
+    ///
+    /// Every hit is re-verified by replay on this read, exactly as the board and the run cards do.
+    /// A run that no longer replays is still returned (it is the viewer's own record) with
+    /// `verified: false`; a NATIVE record whose replay disagrees about the actor is dropped.
+    pub fn runs_for_labels(&self, labels: &[String]) -> Vec<BoardRun> {
+        if labels.is_empty() {
+            return Vec::new();
+        }
+        let inner = self.inner.lock().unwrap();
+        let mut out: Vec<BoardRun> = Vec::new();
+
+        for run in inner.runs.values() {
+            if !labels.iter().any(|label| label == &run.player) {
+                continue;
+            }
+            let Some(day) = inner.days.get(&run.day_key) else {
+                continue;
+            };
+            // THE WIN CHECK is the board's own: re-execute the tape against the published universe
+            // and require the hoard. A run that does not win is not thereby a forgery, so the
+            // run-card's plain chain replay decides whether it is HONEST-but-lost or broken.
+            let completion = Completion {
+                universe: day.universe.id(),
+                player: run.player.clone(),
+                play: run.play.clone(),
+                claimed_turns: run.play.steps.len(),
+            };
+            let (verified, turns, finished) = match verify_completion(&day.universe, &completion) {
+                Ok(turns) => (true, turns, true),
+                Err(_) => {
+                    let honest = match WorldCell::deploy(&day.scene, DAILY_DEPLOY_SEED) {
+                        Ok(fresh) => verify(fresh, &day.scene, &run.play).is_ok(),
+                        Err(_) => false,
+                    };
+                    (honest, run.play.steps.len(), false)
+                }
+            };
+            out.push(BoardRun {
+                run_id: run.id.clone(),
+                day_key: run.day_key.clone(),
+                label: run.player.clone(),
+                native: false,
+                path: run_share_path(&run.id),
+                turns,
+                depth: final_var(day, &run.play, "depth"),
+                verified,
+                finished,
+                relics: 0,
+            });
+        }
+
+        for run in inner.native_runs.values() {
+            // The untrusted `actor` field only NARROWS the candidate set (a full replay per stored
+            // record on every page view would be absurd). It never decides ownership: the replay
+            // below re-derives the actor and the row is kept only if THAT matches.
+            let claims_us = run
+                .record
+                .actor
+                .as_ref()
+                .is_some_and(|actor| labels.iter().any(|label| label == actor));
+            if !claims_us {
+                continue;
+            }
+            let Some(day) = inner.days.get(&run.day_key) else {
+                continue;
+            };
+            let Ok(verified) =
+                verify_native_record(native_seed_for_committed_day(&day.seed), &run.record)
+            else {
+                continue;
+            };
+            if !labels.iter().any(|label| label == &verified.actor) {
+                continue;
+            }
+            out.push(BoardRun {
+                run_id: run.id.clone(),
+                day_key: run.day_key.clone(),
+                label: verified.actor.clone(),
+                native: true,
+                path: native_run_share_path(&run.id),
+                turns: verified.turns,
+                depth: verified.deepest_depth,
+                verified: true,
+                finished: verified.crowned(),
+                relics: verified.banked_relics(),
+            });
+        }
+
+        // A stable order the page can print without sorting again: newest-looking day first is not
+        // available (day keys are opaque), so sort by (day, lane, fewest turns, id).
+        out.sort_by(|a, b| {
+            a.day_key
+                .cmp(&b.day_key)
+                .then_with(|| a.native.cmp(&b.native))
+                .then_with(|| a.turns.cmp(&b.turns))
+                .then_with(|| a.run_id.cmp(&b.run_id))
+        });
+        out
+    }
 }
 
 #[cfg(test)]

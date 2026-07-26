@@ -111,12 +111,30 @@ pub fn descent_play_router() -> Router {
 
 /// `GET /descent/play` — the play page shell. No executable text is interpolated into the page;
 /// the strict-CSP same-origin controller builds the live surface with DOM text nodes.
-async fn get_descent_play() -> Response {
-    (
+///
+/// ⚑ **The one dynamic identity input**: a browser holding a CLAIMED identity
+/// ([`crate::seed_identity`]) gets its public key rendered into `data-claimed-actor`, and
+/// [`NATIVE_PLAY_APP_JS`]'s `browserActor()` prefers it over the pseudonym it would otherwise mint
+/// into `localStorage`. That is what makes a native run's actor — the name bound into the run's
+/// hash chain and printed on the native board — a thing the player can reproduce from 24 words
+/// instead of losing with their site data. A visitor with no claim is byte-for-byte unaffected: the
+/// attribute is absent and the old minted pseudonym is used.
+async fn get_descent_play(headers: axum::http::HeaderMap) -> Response {
+    let claimed = crate::seed_identity::claimed_pubkey(&headers);
+    let mut response = (
         [(header::CONTENT_SECURITY_POLICY, PLAY_CSP)],
-        Html(shell_page()),
+        Html(shell_page(claimed.as_deref())),
     )
-        .into_response()
+        .into_response();
+    // The page now varies by cookie. Without this a shared cache could serve one player's claimed
+    // actor to the next browser through the door.
+    if claimed.is_some() {
+        response.headers_mut().insert(
+            header::CACHE_CONTROL,
+            header::HeaderValue::from_static("private, no-store"),
+        );
+    }
+    response
 }
 
 /// `GET /descent/play/static/app.js` — the bootstrap module, served SAME-ORIGIN so the strict CSP
@@ -601,6 +619,19 @@ button.nd-cell:focus-visible{outline:2px solid var(--nd-proof-lit);outline-offse
 .nd-fatal{margin:1.4rem 0;padding:.95rem 1.05rem;border:1px solid rgba(201,106,94,.45);border-left:2px solid var(--nd-peril);border-radius:0 3px 3px 0;background:rgba(201,106,94,.06);color:var(--nd-peril-lit);font-family:var(--nd-serif);font-size:var(--nd-f3);line-height:1.55;overflow-wrap:anywhere}
 .nd-offline{margin:1.4rem 0;padding:.95rem 1.05rem;border:1px solid var(--nd-line);border-left:2px solid var(--nd-proof);border-radius:0 3px 3px 0;background:rgba(255,255,255,.015);color:var(--nd-soft);font-family:var(--nd-serif);font-size:var(--nd-f3);line-height:1.6}
 .nd-offline a{color:var(--nd-proof-lit)}
+/* ═══ THE RULES, IN ONE SCREEN — what a stranger needs before their first press ═══
+   Automatafl and the tug each carry this block on their own landing; the Descent had none, so a
+   first-time player met a shaft, a torch band and seven verbs with no statement of the objective.
+   Torch-lit rather than violet: these are the rules of the room, not a claim about proof. */
+.nd-rules{margin:clamp(1.4rem,4vw,2.2rem) 0 0;padding:1.05rem 1.15rem 1.15rem;border:1px solid var(--nd-line);border-left:3px solid var(--nd-torch-deep);border-radius:0 3px 3px 0;background:linear-gradient(180deg,rgba(19,17,24,.9),rgba(11,10,16,.92))}
+.nd-rules h2{margin:0 0 .75rem;font-family:var(--nd-serif);font-weight:600;font-size:var(--nd-f5);letter-spacing:-.01em;color:var(--nd-torch-hot)}
+.nd-rules ul{list-style:none;margin:0;padding:0;display:grid;gap:.55rem}
+.nd-rules li{position:relative;padding-left:1.05rem;font-family:var(--nd-serif);font-size:var(--nd-f3);line-height:1.6;color:var(--nd-soft);max-width:64ch}
+.nd-rules li::before{content:"";position:absolute;left:0;top:.66em;width:.32rem;height:.32rem;background:var(--nd-torch-deep);transform:rotate(45deg)}
+.nd-rules strong{color:var(--nd-ink);font-weight:650}
+.nd-rules p{margin:.9rem 0 0;font-family:var(--nd-serif);font-size:var(--nd-f2);line-height:1.62;color:var(--nd-faint);max-width:68ch}
+.nd-rules a{color:var(--nd-proof-lit)}
+.nd-rules code{font-family:var(--nd-mono);font-size:.9em;color:var(--nd-torch)}
 /* ═══ THE PHONE — one column, and the shaft still fits without a swipe ════ */
 @media(max-width:44rem){
 .nd-page{padding-left:.9rem!important;padding-right:.9rem!important}
@@ -632,14 +663,103 @@ button.nd-cell:focus-visible{outline:2px solid var(--nd-proof-lit);outline-offse
 }
 </style>"##;
 
+/// **The rules, in one screen** — the block automatafl (`automatafl_web::rules_html`) and the tug
+/// (`tug_web::rules_html`) each carry on their own landing, and which the Descent did not have at
+/// all. A first-time player arrived at a shaft, a torch band and seven verbs with no statement of
+/// the objective, no price list and no word on the one-life stake; the pattern already existed on
+/// two of the three shipped games, so this is the third rather than an invention.
+///
+/// Every number is read from the game's own constants (`dungeon_on_dregg::descent`, re-exported by
+/// `dreggnet_offerings::native_descent`), so a rules change that moves the light budget or the carry
+/// cap cannot leave this panel quietly wrong.
+///
+/// `live_beacon` decides the provenance paragraph rather than the copy hedging over both cases:
+/// **never let an absence speak for itself** (`docs/reference/UX-QA-SWEEP-2026-07-26.md`). A day
+/// that fell back to the date is *predictable*, and a page claiming "nobody could pick it in
+/// advance" on such a day would be lying — so the offline branch says the date derived it.
+fn rules_html(live_beacon: bool) -> String {
+    use dreggnet_offerings::native_descent::{
+        CARRY_CAP, DUNGEON_DAYS, DUNGEON_FLOORS, DUNGEON_RELICS, LIGHT_BREATH,
+    };
+    let provenance = if live_beacon {
+        format!(
+            "<p><strong>Everyone gets the same dungeon today.</strong> It was drawn from a public \
+             random number published today by a public randomness service — so nobody, us included, \
+             could pick it in advance. There are {DUNGEON_DAYS} possible dungeons, every one of them \
+             checked beforehand to be beatable, and on any given day the best possible line spends \
+             between 24 and {LIGHT_BREATH} of your {LIGHT_BREATH} breaths. There is almost no \
+             slack.</p>"
+        )
+    } else {
+        format!(
+            "<p><strong>Everyone gets the same dungeon today</strong> — but today's was derived \
+             from the date, because the public randomness service could not be reached. It is the \
+             same dungeon for everybody and it is beatable, and it was also predictable in advance; \
+             the label at the top of the run says which kind of day you are on. There are \
+             {DUNGEON_DAYS} possible dungeons and on any given day the best possible line spends \
+             between 24 and {LIGHT_BREATH} of your {LIGHT_BREATH} breaths.</p>"
+        )
+    };
+    format!(
+        "<section class=\"nd-rules\" aria-labelledby=\"nd-rules-h\">\
+         <h2 id=\"nd-rules-h\">The rules, in one screen</h2>\
+         <ul>\
+         <li><strong>Get to the bottom, take the prize, climb back out.</strong> The dungeon is \
+         {DUNGEON_FLOORS} floors deep and the prize lies on the lowest one. Nothing counts until you \
+         are standing on the surface again.</li>\
+         <li><strong>The torch is the clock and it never refills.</strong> You have {LIGHT_BREATH} \
+         breaths of light for the whole run, every button spends at least one, and there is no way \
+         to get more.</li>\
+         <li><strong>The climb costs a breath a floor, and it is the only way out.</strong> So the \
+         light you have left is never the real number — subtract how deep you are. Standing on the \
+         bottom floor, {DUNGEON_FLOORS} of your remaining breaths are already spoken for.</li>\
+         <li><strong>Three of the {DUNGEON_RELICS} relics are keys.</strong> A locked way opens only \
+         if you are carrying its key, and a key is never hidden behind the door it opens — so every \
+         way down is openable if you go and fetch the key first.</li>\
+         <li><strong>A guardian can be pressed or lunged at.</strong> Pressing costs two breaths and \
+         nothing else. Lunging does the same for one breath and permanently costs you one carrying \
+         slot for the rest of the run — cheap now, expensive at the bottom.</li>\
+         <li><strong>You can carry {CARRY_CAP}, minus how deep you are, minus any lunge damage.</strong> \
+         That is {shallow} slots on floor 1 and {deep} at the bottom — and the bottom needs three \
+         keys plus the prize, which is exactly {deep}. The dungeon gets stingier the further in you \
+         go, on purpose.</li>\
+         <li><strong>Banking ends the run, and you only get one.</strong> You can bank only on the \
+         surface. Everything you carried out is yours; everything still down there is gone. There is \
+         no second attempt today.</li>\
+         </ul>\
+         {provenance}\
+         <p><strong>Where your run lives.</strong> A run in progress is stored in this browser. By \
+         default you are identified by a browser cookie with no password and <strong>no \
+         recovery</strong>, so clearing your browser data loses it with no way back — if a recovery \
+         phrase is offered in the navigation, claiming one is what makes an identity survive that, \
+         and until you claim one it does not. A run you play to its end is submitted once to \
+         <a href=\"/descent\">the day's board</a>, which re-plays every move before it will rank \
+         it: a run that does not replay is shown as FAIL and never ranks.</p>\
+         </section>",
+        provenance = provenance,
+        shallow = CARRY_CAP - 1,
+        deep = CARRY_CAP - DUNGEON_FLOORS,
+    )
+}
+
 /// Static, strict-CSP chrome around the same-origin native wasm bootstrap.
-fn shell_page() -> String {
+///
+/// `claimed_actor` is the viewer's claimed public key when they hold one — rendered into
+/// `data-claimed-actor` so the run this tab records is filed under a recoverable identity. `None`
+/// (the anonymous default) omits the attribute entirely, leaving the page byte-identical to before.
+fn shell_page(claimed_actor: Option<&str>) -> String {
     let day = crate::descent::todays_day();
+    // Escaped like every other attribute here, even though a claimed actor is 64 chars of
+    // lowercase hex by construction (`parse_claim_label` refuses anything else): the escape is what
+    // makes that a belt-and-braces rather than a load-bearing assumption about a cookie's contents.
+    let claimed_attr = claimed_actor
+        .map(|actor| format!(" data-claimed-actor=\"{}\"", crate::esc(actor)))
+        .unwrap_or_default();
     format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
          <meta name=\"color-scheme\" content=\"dark\">\
-         <title>Play The Descent — DreggNet</title>{style}{play_style}</head><body>{topbar}\
+         <title>Play The Descent — {product}</title>{style}{play_style}</head><body>{topbar}\
          <main class=\"session nd-page\">\
          <header class=\"nd-intro\"><p class=\"nd-kicker\">Lean-authored · replayed in your tab</p>\
          <h1>The Descent</h1>\
@@ -648,16 +768,20 @@ fn shell_page() -> String {
          </header>\
          <div id=\"descent-play-root\" data-day-key=\"{day_key}\" \
          data-native-seed=\"{native_seed}\" data-day-source=\"{day_source}\" \
-         data-guard-hp=\"{guard_hp}\">\
+         data-guard-hp=\"{guard_hp}\"{claimed_attr}>\
          <p class=\"nd-boot\" role=\"status\">Striking a light…</p>\
          </div>\
          <noscript><p class=\"nd-offline\" role=\"status\">The Descent runs its whole ruleset \
          in this tab, in WebAssembly, which needs JavaScript on. With it off the same game is \
          playable server-side — a real board, a real turn per click, no client code — in \
          <a href=\"/offerings\">the shared offering host</a>.</p></noscript>\
+         {rules}\
          </main>{footer}\
          <script type=\"module\" src=\"/descent/play/static/app.js\"></script>\
          </body></html>",
+        // The `<title>` used to be hardcoded `DreggNet`, which the surface is no longer called;
+        // every other served page reads the one constant, so this one does too.
+        product = crate::PRODUCT_NAME,
         style = crate::STYLE,
         play_style = PLAY_STYLE,
         topbar = crate::topbar("descent"),
@@ -671,7 +795,12 @@ fn shell_page() -> String {
         // TODAY's guardian vitalities, so a tab whose `day.json` fetch fails still sizes its
         // guardian meter against the map it is actually playing. Empty when no map resolved.
         guard_hp = crate::esc(&todays_guard_hp_attr(&day)),
-        footer = crate::FOOTER,
+        claimed_attr = claimed_attr,
+        // THE RULES, BELOW THE BOARD — the same place automatafl and the tug put theirs. Passed
+        // today's day provenance so the panel states which kind of day this is rather than
+        // asserting the beacon on a date-derived fallback.
+        rules = rules_html(day.source.is_live_beacon()),
+        footer = crate::footer(),
     )
 }
 
@@ -746,7 +875,20 @@ function storedRemove(key) {
   try { localStorage.removeItem(key); } catch (_) {}
 }
 
+// WHO THIS RUN IS FILED UNDER.
+//
+// A CLAIMED identity wins over everything: the server put the viewer's public key in
+// `data-claimed-actor` because they hold 24 words that reproduce it, so binding the run's hash
+// chain to it means a cleared site-data costs them nothing they cannot type back. It also makes the
+// actor here byte-identical to the identity the catalog attributes their automatafl/tug turns to,
+// so one player is ONE name across all three shipped games.
+//
+// With no claim we keep the original behaviour exactly: a random per-browser pseudonym in
+// localStorage. It is durable-but-unrecoverable, which is the honest deal for someone who has not
+// asked for anything more, and the page's own copy says so.
 function browserActor() {
+  const claimed = root && root.dataset ? root.dataset.claimedActor : "";
+  if (claimed && claimed.length <= 512) return claimed;
   const old = storedGet(ACTOR_KEY);
   if (old && old.length <= 512) return old;
   const bytes = new Uint8Array(24);
@@ -873,6 +1015,11 @@ const BREATH = 30;
 const CAP = 8;
 const CARRIED = 8;
 const BANKED = 9;
+// The two prices the WAY HOME is made of. `flee` demands the surface and the climb buys one floor
+// at a time, so these are the numbers every decision below ground is weighed against — see
+// `climbHome`. Pinned against `dreggnet_offerings::native_descent::{LIGHT_ASCEND, LIGHT_FLEE}`.
+const LIGHT_ASCEND = 1;
+const LIGHT_FLEE = 1;
 
 // TODAY's `guardHp(depth)`, indexed by depth 0..FLOORS — the drawn map's, not day 0's. Populated
 // by `boot()` before anything renders; a page that could not resolve it opens no world at all,
@@ -901,7 +1048,8 @@ const GLYPH_EMPTY = "·";
 const GLYPH_YOU = ">";
 const GLYPH_WAY_OPEN = "/";
 const GLYPH_WAY_SHUT = "#";
-const GLYPH_GUARDIAN = "G";
+// A guardian still standing paints the BLOWS IT OWES (a digit) — see `buildMap`. This is the
+// fallen one.
 const GLYPH_GUARDIAN_SLAIN = "x";
 const GLYPH_CROWN = "C";
 const GLYPH_KEY = "k";
@@ -1043,10 +1191,25 @@ function buildMap(sim, actions) {
       open ? passable : openable,
       open ? "The way into floor " + floor + " is open" : "The way into floor " + floor + " is shut"));
 
-    const slain = here && sim.wounds >= GUARD_HP[floor];
-    row.append(mapCell(slain ? GLYPH_GUARDIAN_SLAIN : GLYPH_GUARDIAN,
-      here ? (slain ? "fallen" : "guard") : "dim", here ? can("smite", 0) : null,
-      slain ? "The floor " + floor + " guardian has fallen" : "The floor " + floor + " guardian stands"));
+    // ⚑ THE FLOOR'S PRICE, NOT JUST ITS OCCUPANT. This cell was a flat `G` on every floor, so the
+    // board showed WHERE the relics were and never what reaching them costs — and guardian vitality
+    // is drawn from the committed day-seed, so it IS the difference between today's dungeon and
+    // yesterday's. The glyph is the BLOWS THE GUARDIAN STILL OWES: on the floor you stand on, what
+    // is left of this fight (wounds are per-standing-floor); on a floor below, what that fight opens
+    // at. Read out of the day's own `GUARD_HP`, never a literal.
+    const vitality = GUARD_HP[floor];
+    const owed = Math.max(0, vitality - (here ? sim.wounds : 0));
+    const slain = here && vitality > 0 && owed === 0;
+    // A floor with no guardian minted on it says nothing stands here rather than calling an absence
+    // a corpse. No drawn day does this; the page still must not invent one.
+    const guardGlyph = vitality === 0 ? GLYPH_EMPTY
+      : owed === 0 ? GLYPH_GUARDIAN_SLAIN : String(owed);
+    row.append(mapCell(guardGlyph,
+      vitality === 0 ? "void" : here ? (slain ? "fallen" : "guard") : "dim",
+      here ? can("smite", 0) : null,
+      vitality === 0 ? "No guardian was minted on floor " + floor
+        : slain ? "The floor " + floor + " guardian has fallen"
+        : "The floor " + floor + " guardian owes " + owed + " more blow" + (owed === 1 ? "" : "s")));
 
     for (let relic = 0; relic < RELICS; relic += 1) {
       if (sim.custody[relic] === floor) {
@@ -1097,7 +1260,9 @@ function buildLegend() {
   entry(GLYPH_YOU, "you");
   entry(GLYPH_WAY_OPEN, "open way");
   entry(GLYPH_WAY_SHUT, "shut way");
-  entry(GLYPH_GUARDIAN, "guardian");
+  // A standing guardian paints the BLOWS IT OWES, so the legend names the digit rather than a
+  // letter — that number is what a floor costs before you commit the light to reach it.
+  entry("2", "blows the guardian owes");
   entry(GLYPH_GUARDIAN_SLAIN, "fallen");
   entry(GLYPH_CROWN, "the crown");
   entry(GLYPH_KEY, "way-key");
@@ -1120,11 +1285,33 @@ function narrateMap(sim, ended, carried, banked) {
     (ended ? "" : " Every move you may make now is a verb in the list below.");
 }
 
+// THE WAY HOME — the clock the run actually plays against.
+//
+// `flee` demands the SURFACE and the climb buys one floor at a time, so a run standing below ground
+// owes `depth` climbs plus the exit before it owes anything else. The page used to say "climbing out
+// costs 1" from any depth — the price of the exit ALONE — which told a player on floor 3 holding
+// 4 light that they had three to spare when they had none, and that is exactly the position that
+// strands a run for good.
+//
+// `{ ok: true, cost }` is what the way home will take; `{ ok: false, floors }` is the doomed case
+// (the light buys `floors` of climb and then dies), which the Lean model proves can never bank from
+// any continuation whatsoever (`Dungeon.doomed_never_banks`). Mirrors the offering's own
+// `climb_home`, which WALKS the mover's verbs rather than pricing them.
+function climbHome(sim) {
+  const light = Math.max(0, BREATH - sim.spent);
+  const cost = sim.depth * LIGHT_ASCEND + LIGHT_FLEE;
+  if (cost <= light) return { ok: true, cost: cost };
+  return { ok: false, floors: Math.min(sim.depth, Math.floor(light / LIGHT_ASCEND)) };
+}
+
 // The run's one-word state. `ended` is the record's own settled bit; a run that cannot pay the one
-// light every verb costs can never move again.
+// light every verb costs can never move again — and a run below ground whose light cannot pay the
+// climb is already over while it can still move, which is the most dramatic thing this game has to
+// say and used to read DELVING.
 function standing(sim, ended) {
   if (ended) return { word: "BANKED", tone: "good" };
   if (sim.spent + 1 > BREATH) return { word: "THE LIGHT IS DEAD", tone: "bad" };
+  if (!climbHome(sim).ok) return { word: "STRANDED", tone: "bad" };
   return { word: "DELVING", tone: "warn" };
 }
 
@@ -1137,6 +1324,12 @@ function standingLine(sim, ended, banked, hoardHere) {
         " came out with you.";
   }
   if (sim.depth === 0) return "You stand at the mouth of the shaft.";
+  if (!climbHome(sim).ok) {
+    const pack = countCustody(sim, CARRIED);
+    return "Floor " + sim.depth + " is as high as the light reaches. " + pack + " relic" +
+      (pack === 1 ? "" : "s") + " in the pack will never be banked, and no move from here " +
+      "changes that.";
+  }
   return "Floor " + sim.depth + " of " + FLOORS + " — " + (hoardHere === 0
     ? "nothing is left lying in the dark here."
     : hoardHere + " relic" + (hoardHere === 1 ? "" : "s") + " still lie" +
@@ -1157,8 +1350,10 @@ function torchState(light, ended) {
 function torchSay(light, ended) {
   if (ended) return "the torch is out; the record is closed.";
   if (light <= 0) return "the dark has closed — no verb can be paid for, and nothing more can be banked.";
-  if (light <= 4) return "guttering. the climb out is itself a verb, and it costs one of these.";
-  if (light <= 8) return "burning low. every verb costs one breath, the climb out included.";
+  // ⚑ The climb is a verb PER FLOOR, not one verb. This line used to say "it costs one of these",
+  // which is the price of the exit alone and the reason a player misreads the last four breaths.
+  if (light <= 4) return "guttering. the climb out is a breath PER FLOOR, and then the exit.";
+  if (light <= 8) return "burning low. every verb costs one breath, and the climb out is one per floor.";
   return "every verb costs one breath. what is not banked when the light dies was never yours.";
 }
 
@@ -1168,9 +1363,26 @@ function pressures(sim, ended) {
   const lines = [];
   if (ended) return lines;
   const light = Math.max(0, BREATH - sim.spent);
-  if (light <= 4) {
+  // ⚑ THE CLIMB GOES FIRST, EVERY TURN. Below ground the light a run may actually SPEND is what is
+  // left minus the way home, and that is the number every decision down here is weighed against —
+  // so it is stated always, not only once the band is nearly out. (See `climbHome`.)
+  if (sim.depth >= 1) {
+    const home = climbHome(sim);
+    if (home.ok) {
+      lines.push({ tone: light - home.cost <= 2 ? "peril" : "warn",
+        text: "the way home costs " + home.cost + " light — " + sim.depth + " floor" +
+          (sim.depth === 1 ? "" : "s") + " of climb and the exit itself. " +
+          (light - home.cost) + " light left to spend down here." });
+    } else {
+      lines.push({ tone: "peril", text: "STRANDED — " + light +
+        " light cannot buy the way out of floor " + sim.depth + ": it pays for " + home.floors +
+        " floor" + (home.floors === 1 ? "" : "s") + " of climb and then dies. Nothing in the pack " +
+        "will ever be banked." });
+    }
+  } else if (light <= 4) {
+    // At the mouth the way home IS the exit, so the old wording is true here and only here.
     lines.push({ tone: "peril", text: "the light is guttering — " + light +
-      " left, and climbing out costs 1" });
+      " left, and the exit itself costs " + LIGHT_FLEE });
   }
   if (sim.depth >= 1 && sim.wounds < GUARD_HP[sim.depth]) {
     const left = GUARD_HP[sim.depth] - sim.wounds;
@@ -1186,6 +1398,14 @@ function pressures(sim, ended) {
     lines.push({ tone: "proof", text: pack + " relic" + (pack === 1 ? "" : "s") +
       " ride" + (pack === 1 ? "s" : "") +
       " in the pack — nothing is yours until a proved exit banks it" });
+  }
+  // ⚑ NEVER LET AN ABSENCE SPEAK FOR ITSELF. With nothing pressing, the whole panel used to vanish —
+  // and a missing panel is indistinguishable from a broken one. That is exactly the page a first-time
+  // player opens on: turn 0, at the mouth. It is the only state that reaches here (below ground the
+  // climb always has a price, and a pack is always losable), so it can name itself precisely.
+  if (lines.length === 0) {
+    lines.push({ tone: "", text: "nothing presses on you yet — you stand at the mouth, the light " +
+      "is long and the pack is empty. Every floor you take costs a breath to leave again." });
   }
   return lines;
 }
@@ -1515,7 +1735,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_play_page_ships_a_strict_wasm_csp_and_mounts_the_native_root() {
-        let resp = super::get_descent_play().await;
+        let resp = super::get_descent_play(axum::http::HeaderMap::new()).await;
         let csp = resp
             .headers()
             .get("content-security-policy")
@@ -1533,7 +1753,7 @@ mod tests {
         assert!(!csp.contains("'unsafe-eval'") || csp.contains("'wasm-unsafe-eval'"));
         assert!(csp.contains("connect-src 'self'"), "same-origin wasm fetch");
 
-        let html = super::shell_page();
+        let html = super::shell_page(None);
         assert!(html.contains("id=\"descent-play-root\""));
         assert!(
             !html.contains("<dregg-descent"),
@@ -1738,7 +1958,7 @@ mod tests {
 
         // The shell's fallback attribute carries the same table, so a tab whose `day.json` fetch
         // fails still sizes its meter against today's dungeon rather than day 0's.
-        let html = super::shell_page();
+        let html = super::shell_page(None);
         let attr = format!(
             "data-guard-hp=\"{}\"",
             played
@@ -1776,7 +1996,7 @@ mod tests {
     /// Falsifier: paste a `@import url(https://fonts.googleapis.com/...)` into [`PLAY_STYLE`].
     #[test]
     fn the_play_surface_is_self_contained_and_typeset_from_resident_faces() {
-        let page = super::shell_page();
+        let page = super::shell_page(None);
         for smell in [
             "@import",
             "url(http",
@@ -1919,6 +2139,101 @@ mod tests {
         );
         unsafe {
             std::env::remove_var("DESCENT_PLAY_ASSET_DIR");
+        }
+    }
+
+    /// ⚑ THE PANEL EXISTS AND IS ON THE PAGE. Automatafl and the tug each carry a rules block on
+    /// their own landing; the Descent's play page carried none, so a first-time player met a shaft,
+    /// a torch band and seven priced verbs with no statement of the objective. Pinned as a
+    /// structural fact, not as prose: the heading and the section must reach the served shell.
+    #[test]
+    fn the_play_page_states_the_rules_before_the_first_press() {
+        let page = super::shell_page(None);
+        assert!(
+            page.contains("class=\"nd-rules\"") && page.contains("The rules, in one screen"),
+            "the play page must carry the rules block the other two shipped games carry"
+        );
+        assert!(
+            super::PLAY_STYLE.contains(".nd-rules{"),
+            "the rules block must be styled, not fall back to unstyled default HTML"
+        );
+        // The objective, the clock and the stake — the three a stranger cannot infer from a board.
+        for claim in ["climb back out", "never refills", "Banking ends the run"] {
+            assert!(page.contains(claim), "the rules omit `{claim}`");
+        }
+    }
+
+    /// The panel's numbers are the GAME's, so a rules change cannot leave it quietly wrong. Checked
+    /// against the constants rather than against the literals the panel happens to print today.
+    #[test]
+    fn the_rules_quote_the_games_own_constants() {
+        use dreggnet_offerings::native_descent::{CARRY_CAP, DUNGEON_FLOORS, LIGHT_BREATH};
+        let rules = super::rules_html(true);
+        assert!(
+            rules.contains(&format!("{LIGHT_BREATH} breaths")),
+            "the light budget must be the game's: {rules}"
+        );
+        assert!(
+            rules.contains(&format!("{DUNGEON_FLOORS} floors deep")),
+            "the depth must be the game's"
+        );
+        assert!(
+            rules.contains(&format!("carry {CARRY_CAP}")),
+            "the carry cap must be the game's"
+        );
+        // The bottom-floor squeeze is the whole design; it must be stated as the derived number.
+        assert!(
+            rules.contains(&format!("{} at the bottom", CARRY_CAP - DUNGEON_FLOORS)),
+            "the bottom-floor capacity must be derived, not typed: {rules}"
+        );
+    }
+
+    /// ⚑ NEVER LET AN ABSENCE SPEAK FOR ITSELF (`docs/reference/UX-QA-SWEEP-2026-07-26.md`). On a
+    /// beacon day the dungeon genuinely could not be picked in advance; on the date-derived
+    /// fallback it could. The panel must say which, and must NOT carry the unpredictability claim
+    /// on the day where it is false.
+    #[test]
+    fn the_provenance_claim_is_true_on_both_kinds_of_day() {
+        let beacon = super::rules_html(true);
+        assert!(
+            beacon.contains("could pick it in advance"),
+            "a beacon day may state the unpredictability: {beacon}"
+        );
+        let offline = super::rules_html(false);
+        assert!(
+            !offline.contains("could pick it in advance"),
+            "a date-derived day must not claim nobody could pick it in advance: {offline}"
+        );
+        assert!(
+            offline.contains("derived from the date"),
+            "the date-derived day must say so: {offline}"
+        );
+    }
+
+    /// The DEFAULT identity is an unsigned cookie with no recovery, and the in-progress run lives in
+    /// this browser. The panel must warn rather than reassure — a player who clears their browser
+    /// loses everything, and finding that out afterwards is the worst possible way.
+    ///
+    /// The claim is written to stay true while [`crate::seed_identity`] lands beside it: the cookie
+    /// default is what you get by DOING NOTHING, which no opt-in recovery phrase changes. Once that
+    /// route is live and settled, this paragraph should get stronger — it should name the phrase and
+    /// link it — and this test should tighten with it.
+    #[test]
+    fn the_rules_do_not_promise_a_durable_run() {
+        let rules = super::rules_html(true);
+        assert!(
+            rules.contains("no recovery"),
+            "the cookie default's lack of recovery must be stated: {rules}"
+        );
+        assert!(
+            rules.contains("clearing your browser data loses it"),
+            "the cookie/localStorage loss must be stated plainly: {rules}"
+        );
+        for lie in ["your account", "saved to your profile", "sign in", "log in"] {
+            assert!(
+                !rules.to_lowercase().contains(lie),
+                "the rules imply a durable identity with `{lie}`"
+            );
         }
     }
 }

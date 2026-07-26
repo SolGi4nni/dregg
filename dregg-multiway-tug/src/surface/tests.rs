@@ -959,6 +959,70 @@ fn the_claim_surface_leaks_no_favor_through_a_button_label() {
     );
 }
 
+/// **THE SAME LEAK AT THE AFFORDANCE DOOR — [`Offering::actions_for`].**
+///
+/// The trait default for `actions_for` is `actions`, which is the seat TO MOVE, and a to-move row's
+/// label names the exact favors that press would put up. So the OPPONENT (who may open the watch
+/// link) and every spectator read the live cut out of the button text through the seam that Discord,
+/// Telegram, and the seat adapter paint — while the rendered [`Surface`] beside it was correctly
+/// fogged. `surface_claim` closed this on the surface; this pins it closed on the buttons.
+///
+/// Non-vacuous by construction: the to-move seat's OWN list is asserted to carry the very favor text
+/// the others must not, so a build that stopped naming cuts to anybody cannot make this pass.
+#[test]
+fn the_action_list_leaks_no_favor_to_a_viewer_who_does_not_hold_the_seat() {
+    let off = TugOffering;
+    let session = off.open(SessionConfig::with_seed(11)).expect("open");
+    let to_move = session.engine.current_player();
+    let waiting = to_move.other();
+
+    let mover = off.actions_for(&session, &TugOffering::seat_identity(to_move));
+    let mover_text = mover
+        .iter()
+        .map(|action| action.label.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        mover_text.contains("(guild "),
+        "the seat to move must be told what its own press puts up, or the exclusions below hold \
+         vacuously:\n{mover_text}"
+    );
+
+    for (who, viewer) in [
+        ("the opponent", TugOffering::seat_identity(waiting)),
+        ("a spectator", DreggIdentity("nosy".to_string())),
+    ] {
+        let rows = off.actions_for(&session, &viewer);
+        let text = rows
+            .iter()
+            .map(|action| action.label.clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            !text.contains("(guild "),
+            "{who} read a concrete cut off the action list:\n{text}"
+        );
+        for id in seat_card_ids(&session, to_move) {
+            assert!(
+                !text.contains(&format!("#{id}(")),
+                "{who} read card #{id} of the hand to move off the action list:\n{text}"
+            );
+        }
+        // The rows survive the redaction: same count, same turn names, so a transport validating a
+        // POST against this list still reaches the executor and still gets ITS refusal.
+        assert_eq!(
+            rows.len(),
+            mover.len(),
+            "{who} lost rows rather than card text"
+        );
+        assert_eq!(
+            rows.iter().map(|a| a.turn.clone()).collect::<Vec<_>>(),
+            mover.iter().map(|a| a.turn.clone()).collect::<Vec<_>>(),
+            "{who}'s rows must name the same verbs"
+        );
+    }
+}
+
 /// **The win bars on the surface are the DEPLOYED ones.** `roundWinner`'s absolute clauses live in
 /// the Lean and reach Rust only as the compiled cell program; the plaque reads them out of it. A
 /// retyped `11` would keep rendering the old bar the day the metatheory raised it, so what is pinned
@@ -1020,4 +1084,187 @@ fn every_render_carries_the_standing_plaque_and_a_directive() {
         public.contains("BOTH hands are the fog form"),
         "a spectator is told what they are not being shown:\n{public}"
     );
+}
+
+/// ⚑ **THE SILENT SCOREBOARD, ANSWERED ON THE PAGE.** A first-time reader played a Secret, watched
+/// all seven lane rows come back byte-identical and concluded *"the button did nothing"*
+/// (`docs/reference/UX-QA-SWEEP-2026-07-26.md`). The page was right and mute. This pins BOTH halves
+/// of the cure: the surface states the rule (only a RESPONSE and the SCORE move a lane), and it
+/// prints the 21-favor account that DOES move when the lanes cannot — proved by playing a Secret and
+/// showing the lane rows unchanged while the account changed.
+#[test]
+fn a_sealed_play_leaves_the_lanes_still_and_the_page_says_why() {
+    let off = TugOffering;
+    let mut session = off.open(SessionConfig::with_seed(31)).expect("open");
+    let mover = session.to_move();
+
+    let before = rendered_text(&off.render(&session));
+    for needed in [
+        "SPENDING AN ACTION DOES NOT MOVE THESE ROWS",
+        "REVEAL & SCORE",
+        "A Secret changes these numbers by nothing until scoring",
+        "All 21 favors, right now",
+        "face down as Secrets",
+        "burnt by Discards",
+    ] {
+        assert!(
+            before.contains(needed),
+            "the lanes section must state {needed:?}:\n{before}"
+        );
+    }
+
+    // Play a real SECRET — the action that provably moves no lane.
+    let secret = session
+        .legal_decisions()
+        .iter()
+        .position(|d| d.kind() == Some(ActionKind::Secret))
+        .expect("a fresh round offers a Secret");
+    let outcome = off.advance(
+        &mut session,
+        Action::new("", ActionKind::Secret.method(), secret as i64, true),
+        TugOffering::seat_identity(mover),
+    );
+    assert!(outcome.landed(), "the Secret lands: {outcome:?}");
+
+    let after = rendered_text(&off.render(&session));
+    // The LANE ROWS really are unchanged — this test is worthless if the wound is not reproduced.
+    let lanes = |txt: &str| -> Vec<String> {
+        txt.lines()
+            .filter(|l| {
+                l.starts_with("Guild ") || l.contains("holds it") || *l == "nobody has pulled"
+            })
+            .map(str::to_string)
+            .collect()
+    };
+    assert_eq!(
+        lanes(&before),
+        lanes(&after),
+        "a Secret must not move a lane — if it does, the explanatory copy is now WRONG"
+    );
+    // And the account DID move: one favor left a hand for the face-down pile.
+    assert_ne!(
+        before.lines().find(|l| l.starts_with("All 21 favors")),
+        after.lines().find(|l| l.starts_with("All 21 favors")),
+        "the tally the page points a reader at must actually change:\nBEFORE {before}\nAFTER {after}"
+    );
+}
+
+/// **Every action row states an EFFECT and names a LANE, not just a price.** The four rows read
+/// `Secret — put up #4(guild 3·w3) (1 card)`: a cost, no effect, and nothing tied to the lanes the
+/// win condition is about. Checked for the seated menu AND the fogged claimant menu, because an
+/// effect is a RULE and rules are public — only the cards are the hidden thing.
+#[test]
+fn every_action_row_states_its_effect() {
+    let off = TugOffering;
+    let session = off.open(SessionConfig::with_seed(77)).expect("open");
+    let mover = session.to_move();
+
+    for (what, rows) in [
+        ("seated", session.affordances_showing_cuts(mover, true)),
+        ("claimant", session.affordances_showing_cuts(mover, false)),
+    ] {
+        assert_eq!(rows.len(), 4, "{what}: four once-per-round actions");
+        for row in &rows {
+            assert!(
+                row.label.contains("lane") || row.label.contains("reach no lane"),
+                "{what}: `{}` never mentions a lane",
+                row.label
+            );
+        }
+        let joined = rows
+            .iter()
+            .map(|r| r.label.as_str())
+            .collect::<Vec<_>>()
+            .join(" | ");
+        for effect in [
+            "at the reveal",       // Secret
+            "nobody ever scores",  // Discard
+            "take ONE onto their", // Gift
+            "ONE PAIR",            // Competition
+        ] {
+            assert!(
+                joined.contains(effect),
+                "{what}: no row states {effect:?}:\n{joined}"
+            );
+        }
+    }
+    // The fogged variant still names NO card (the fog assertion handle, both directions).
+    for row in session.affordances_showing_cuts(mover, false) {
+        assert!(
+            !row.label.contains("(guild "),
+            "claimant leak: {}",
+            row.label
+        );
+    }
+}
+
+/// ⚑ **"EVERY CONTROL IS INERT" IS ONLY SAID WHERE IT IS TRUE.** The claim surface appended a LIVE
+/// action menu underneath a plaque asserting inertness. A claimant is now told the controls are live
+/// and which seat they take; a true spectator (no menu at all) keeps the honest claim.
+#[test]
+fn the_inert_claim_is_made_only_to_a_viewer_with_no_controls() {
+    let off = TugOffering;
+    let session = off.open(SessionConfig::with_seed(12)).expect("open");
+    let claimant = session.to_move();
+
+    let claim = rendered_text(&session.surface_claim(claimant));
+    assert!(
+        !claim.contains("every control is inert"),
+        "the claim surface ships working controls and must not call them inert:\n{claim}"
+    );
+    assert!(
+        claim.contains("The controls below are NOT inert")
+            && claim.contains("the controls below are LIVE")
+            && claim.contains("they are live"),
+        "and it must say so positively — in the plaque, the directive AND the claim note:\n{claim}"
+    );
+    assert!(
+        claim.lines().any(|l| l.starts_with("MENU ")),
+        "this test is vacuous unless the claim surface really carries a menu:\n{claim}"
+    );
+
+    // The spectator surface (`render`) carries no menu NODE — but the same surface is posted as the
+    // shared Discord board with `Offering::actions` attached as buttons, so it must not claim
+    // inertness either. It names the EXECUTOR gate instead, which holds on every host.
+    let spectator = rendered_text(&off.render(&session));
+    assert!(
+        !spectator.lines().any(|l| l.starts_with("MENU ")),
+        "the spectator surface must carry no menu node:\n{spectator}"
+    );
+    assert!(
+        !spectator.contains("every control is inert"),
+        "the phrase is a claim about controls a host can falsify; drop it:\n{spectator}"
+    );
+    assert!(
+        spectator.contains("refuses a move from an actor holding no seat"),
+        "and the claim that does hold everywhere must be the one made:\n{spectator}"
+    );
+}
+
+/// **`guild`/`lane` and `favor`/`card` are EQUATED, not merely both used.** The two vocabularies were
+/// each used for one object and never once defined against each other.
+#[test]
+fn the_two_vocabularies_are_equated_on_the_page() {
+    let off = TugOffering;
+    let session = off.open(SessionConfig::with_seed(9)).expect("open");
+    let seated = rendered_text(&off.render_for(&session, &TugOffering::seat_identity(Player::A)));
+
+    assert!(
+        seated.contains("GUILDS are the seven LANES") && seated.contains("guild 3 is lane 3"),
+        "the guild=lane identity must be stated in words:\n{seated}"
+    );
+    assert!(
+        seated.contains("a favor IS a card"),
+        "the favor=card identity must be stated in words:\n{seated}"
+    );
+    // And every lane row carries both names, so the definition is never more than one row away.
+    for g in 0..N_GUILDS {
+        assert!(
+            seated.contains(&format!("Guild {g} · lane {g}")),
+            "lane row {g} must name itself both ways:\n{seated}"
+        );
+    }
+    // One noun for the lane tally, everywhere.
+    assert!(seated.contains("lanes led A:"), "{seated}");
+    assert!(!seated.contains("guilds A:"), "{seated}");
 }

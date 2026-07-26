@@ -180,6 +180,20 @@ const THEMES: [Theme; 4] = [
     },
 ];
 
+/// **The vitalities a day's warden can be drawn with**, ascending — [`daily_scene`]'s own draw, and
+/// the SINGLE place the numbers live.
+///
+/// A surface printing a bare `Warden HP: 45` tells a reader nothing: 45 of what? It is the LIGHTER
+/// of two draws, and the difference is whether measured blows alone suffice. The leaderboard reads
+/// this to say so, and because the generator indexes the same array a re-draw cannot leave the page
+/// quoting a range the world stopped using.
+pub const WARDEN_HP_DRAWS: [u64; 2] = [45, 60];
+
+/// The most connecting corridors a day can draw between the key room and the hoard gate (the floor
+/// is one). Published for the same reason as [`WARDEN_HP_DRAWS`]: a surface saying "2" needs to be
+/// able to say "of at most 3" without retyping the generator's bound.
+pub const DEEPENING_ROOMS_MAX: usize = 3;
+
 /// **The day's world spec** — the beacon-seeded permadeath scene plus the drawn parameters a
 /// driver / verifier needs. The `source` is the spween DSL text; everyone who derives today's
 /// [`CommittedSeed`] gets the byte-identical `source`.
@@ -226,11 +240,13 @@ pub fn daily_scene(seed: &CommittedSeed) -> DailyDescent {
     };
 
     let theme = &THEMES[pick(0, THEMES.len())];
-    // Warden HP ∈ {45, 60}: 45 is fellable by measured blows alone; 60 demands the one
-    // field-dressing to win (and a reckless line loses either way).
-    let warden_hp = 45 + 15 * pick(1, 2) as u64;
-    // 1..=3 connecting corridors between the key room and the hoard gate.
-    let deepening_rooms = 1 + pick(2, 3);
+    // Warden HP is one of [`WARDEN_HP_DRAWS`]: the lighter is fellable by measured blows alone; the
+    // heavier demands the one field-dressing to win (and a reckless line loses either way). The draw
+    // INDEXES that array so the constant a surface quotes and the number the world uses are one
+    // thing — it used to be `45 + 15 * pick(1, 2)`, a bound only this line knew.
+    let warden_hp = WARDEN_HP_DRAWS[pick(1, WARDEN_HP_DRAWS.len())];
+    // 1..=DEEPENING_ROOMS_MAX connecting corridors between the key room and the hoard gate.
+    let deepening_rooms = 1 + pick(2, DEEPENING_ROOMS_MAX);
 
     let sid: String = seed.as_bytes()[..4]
         .iter()

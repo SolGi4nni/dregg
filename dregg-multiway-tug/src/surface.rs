@@ -219,7 +219,12 @@ impl TugSession {
             };
             let weight_tag = if w >= 4 { "accent" } else { "muted" };
             rows.push(ViewNode::Row(vec![
-                ViewNode::Text(format!("Guild {g}")),
+                // ⚑ THE EQUATION, IN EVERY ROW. `guild` and `lane` were used interchangeably across
+                // this surface and never once equated, so a reader met two vocabularies for one
+                // object (`docs/reference/UX-QA-SWEEP-2026-07-26.md`). The row now says both names
+                // for itself, seven times, and the section prose says it in words above. Redundant
+                // on purpose: the redundancy IS the definition.
+                ViewNode::Text(format!("Guild {g} · lane {g}")),
                 ViewNode::Pill {
                     text: format!("worth {w}"),
                     tag: weight_tag.to_string(),
@@ -238,10 +243,85 @@ impl TugSession {
         ViewNode::Table(rows)
     }
 
+    /// ⚑ **WHY THE LANES DID NOT MOVE.** The one sentence a first-time reader needed and did not
+    /// get: they pressed a button, every one of the seven lane rows came back byte-identical, and
+    /// their verdict was *"I would have concluded the button did nothing"*
+    /// (`docs/reference/UX-QA-SWEEP-2026-07-26.md`).
+    ///
+    /// The page was CORRECT and silent, which is indistinguishable from broken. Only two events ever
+    /// move a lane counter, and neither is "you spent an action":
+    ///
+    /// * a **response** — a Gift or Competition puts its favors in ESCROW, and the split lands on the
+    ///   two sides only when the OTHER seat answers the cut;
+    /// * the **score** — each face-down Secret turns up onto its owner's side before control is
+    ///   counted (Lean `secret_is_scored`).
+    ///
+    /// A Secret and a Discard therefore move these rows by exactly nothing, forever and by design
+    /// (a Discard's two favors leave the round and nobody ever scores them). Said out loud, plus the
+    /// live 21-favor accounting from [`Self::favor_accounting`], the still scoreboard becomes a
+    /// reading of the game instead of a suspected bug.
+    fn lane_movement_rule(&self) -> String {
+        let pending = match self.engine.pending_offer() {
+            Some(offer) => format!(
+                " Right now seat {:?}'s {:?} is sitting in escrow: those favors have left their hand \
+                 and reached NO lane — seat {:?}'s answer is what places them.",
+                offer.proposer,
+                offer.kind(),
+                offer.responder(),
+            ),
+            None => String::new(),
+        };
+        format!(
+            "⚑ SPENDING AN ACTION DOES NOT MOVE THESE ROWS. Two things do, and only two: the other \
+             seat ANSWERING your Gift or Competition (which is what actually places the favors on \
+             the two sides), and the final REVEAL & SCORE (where every face-down Secret turns up \
+             onto its owner's side). A Secret changes these numbers by nothing until scoring, and a \
+             Discard's two favors leave the round for good — so a still scoreboard right after your \
+             move is the rules working, not a stuck page. The tally below is what moved.{pending}"
+        )
+    }
+
+    /// **Where all 21 favors are, right now** — the line that MOVES when the lanes cannot.
+    ///
+    /// Every favor is in exactly one of five places and the executor's conservation tooth pins the
+    /// total at [`crate::reference::DECK_SIZE`] every turn ([`Projection::conservation_sum`]), so this
+    /// is a complete account rather than a selection. It is also the honest home of the escrow: the
+    /// projection folds a pending offer's cards into the PROPOSER's hand entry (mirroring the Lean's
+    /// `pendingCards`), so the count is named as "held or in escrow" instead of quietly reading as
+    /// "still in hand".
+    fn favor_accounting(&self, proj: &Projection) -> String {
+        let held = proj.hand[0] + proj.hand[1];
+        let secrets = proj.secret_count[0] + proj.secret_count[1];
+        let placed = proj.board[0] + proj.board[1];
+        format!(
+            "All {total} favors, right now: {held} held or in escrow ({a_hand} · {b_hand}) · \
+             {secrets} face down as Secrets ({a_secret} · {b_secret}), which score at the reveal · \
+             {burnt} burnt by Discards, which nobody will ever score · {placed} placed on the lanes \
+             above ({a_board} · {b_board}) · {deck} still in the deck.",
+            total = crate::reference::DECK_SIZE,
+            held = held,
+            a_hand = proj.hand[0],
+            b_hand = proj.hand[1],
+            secrets = secrets,
+            a_secret = proj.secret_count[0],
+            b_secret = proj.secret_count[1],
+            burnt = proj.oop,
+            placed = placed,
+            a_board = proj.board[0],
+            b_board = proj.board[1],
+            deck = proj.deck,
+        )
+    }
+
     /// **The one sentence that says what to do right now** — the automatafl `next_step_line`
     /// convention, which the renderer promotes to a lead inside an `accent` plaque. A tug player's
     /// standing question is never "what are the rules", it is "is it me, and for what".
-    fn next_step_line(&self, viewer: Option<Player>) -> String {
+    ///
+    /// `claimant` is the seat a SEATLESS viewer would take on their first landed press (`None` for a
+    /// true spectator, both seats held). It exists because the two seatless states are genuinely
+    /// different — one has live controls, the other has none — and telling both of them the same
+    /// thing is what made the "every control is inert" line false.
+    fn next_step_line(&self, viewer: Option<Player>, claimant: Option<Player>) -> String {
         let proj = self.projection();
         if proj.scored == 1 {
             return match proj.winner {
@@ -301,10 +381,21 @@ impl TugSession {
                 "Waiting on seat {mover:?}. They are choosing which of their unspent actions to \
                  commit; your hand is untouched until it is your move again."
             )
+        } else if let Some(claim) = claimant {
+            // ⚑ NOT "every control is inert". This viewer holds no seat AND a seat is free, so the
+            // buttons below are LIVE and the first press that lands takes that seat. Saying they
+            // were inert while serving working controls was the exact falsehood the QA sweep
+            // proved from a before/after pair (finding 2).
+            format!(
+                "Seat {mover:?} is to move. You hold no seat YET — the controls below are LIVE, and \
+                 the first move you land CLAIMS seat {claim:?}. Both hands stay fog to you until \
+                 then."
+            )
         } else {
             format!(
-                "Seat {mover:?} is to move. You are watching: both hands are fog to you and every \
-                 control is inert."
+                "Seat {mover:?} is to move. Both seats are held, so you are watching: both hands \
+                 are fog to you, and a move from an actor holding no seat is REFUSED with nothing \
+                 committed."
             )
         }
     }
@@ -312,7 +403,7 @@ impl TugSession {
     /// **"Where the round stands"** — the status plaque. Which actions each seat has burned (the
     /// tug's phase: there are four, once each, and which are gone is the shape of the endgame), the
     /// one sentence above, the two standings, and who the viewer is.
-    fn round_standing(&self, viewer: Option<Player>) -> ViewNode {
+    fn round_standing(&self, viewer: Option<Player>, claimant: Option<Player>) -> ViewNode {
         let proj = self.projection();
         let mover = if proj.current == 0 {
             Player::A
@@ -369,20 +460,39 @@ impl TugSession {
             )));
             ViewNode::Row(cells)
         };
-        let who = match viewer {
-            Some(s) => format!(
+        // ⚑ THE SEATLESS LINE SPLITS IN TWO, because the two seatless states are not the same
+        // state. A CLAIMANT (a free seat exists) is handed working controls; a SPECTATOR (both
+        // seats held) is handed none and would be refused anyway. The old single sentence told
+        // both of them "every control is inert" — true of the spectator, provably false of the
+        // claimant, whose press changed their seat, their hand and the turn counter.
+        let who = match (viewer, claimant) {
+            (Some(s), _) => format!(
                 "You hold seat {s:?}. Your six favors are rendered to you and to nobody else; the \
                  other house sees only how many you hold and the committed root of the set."
             ),
-            None => "You are watching this table: BOTH hands are the fog form — a count and a \
-                     committed root — and every control is inert."
+            (None, Some(claim)) => format!(
+                "You hold no seat at this table: BOTH hands are the fog form — a count and a \
+                 committed root. The controls below are NOT inert. They are seat {claim:?}'s own \
+                 controls, and the first move you land takes that seat; only then are its favors \
+                 rendered to you."
+            ),
+            // ⚑ NOT "every control is inert" even here. This same surface is posted as the SHARED
+            // board on Discord, where the host attaches `Offering::actions` as real buttons
+            // (`commands::offering::surface_of`) — so "inert" is a claim about the CONTROLS that a
+            // host can falsify. The claim that holds on every host is about the EXECUTOR: it refuses
+            // an advance from an actor holding no seat ("actor holds no seat in this round") and
+            // commits nothing.
+            (None, None) => "You are watching this table: BOTH hands are the fog form — a count \
+                             and a committed root. Both seats are held, so nothing you press can \
+                             move this round: the executor refuses a move from an actor holding no \
+                             seat, and commits nothing."
                 .to_string(),
         };
         ViewNode::Section {
             title: "Where the round stands".to_string(),
             tag: "accent".to_string(),
             children: vec![
-                ViewNode::Text(self.next_step_line(viewer)),
+                ViewNode::Text(self.next_step_line(viewer, claimant)),
                 ViewNode::List(vec![seat_row(Player::A), seat_row(Player::B)]),
                 ViewNode::Text(format!(
                     "Turn {}/{ROUND_TURNS} of the round.",
@@ -560,17 +670,32 @@ impl TugSession {
             } else {
                 None
             };
+            // ⚑ EVERY ROW NOW STATES ITS EFFECT AND NAMES ITS LANES, not just its price.
+            //
+            // The four rows used to read `Secret — put up #4(guild 3·w3) (1 card)`: a COST, with no
+            // word on what the favor DOES, and nothing tying it to a lane — which is what the whole
+            // win condition is about (`docs/reference/UX-QA-SWEEP-2026-07-26.md`, the tug section).
+            // A player could not tell from the buttons that a Secret reaches no lane until scoring,
+            // that a Discard reaches none ever, or that a Gift's leftovers land on THEIR side.
+            //
+            // The FOGGED variant (`show_cuts = false`, the claimant's menu) states the same effect
+            // with no card and no lane — an effect is a rule, and rules are public; only the
+            // specific favors are the hidden thing. It must not print `(guild ` in any form:
+            // `surface::tests::the_claim_surface_leaks_no_favor_through_a_button_label` reads that
+            // token in both directions.
             let label = match aimed {
-                Some(i) if show_cuts => {
-                    format!(
-                        "{kind:?} — put up {} ({} card{})",
-                        cut_label(&decisions[i]),
-                        kind.card_count(),
-                        if kind.card_count() == 1 { "" } else { "s" }
-                    )
-                }
-                Some(_) => format!("{kind:?} — put up {} favors, face down", kind.card_count()),
-                None => format!("{kind:?}"),
+                Some(i) if show_cuts => format!(
+                    "{kind:?} — {} · {}",
+                    kind_effect(kind),
+                    cut_label(&decisions[i]),
+                ),
+                Some(_) => format!(
+                    "{kind:?} — {} · {} favor{}, not named until you hold the seat",
+                    kind_effect(kind),
+                    kind.card_count(),
+                    if kind.card_count() == 1 { "" } else { "s" }
+                ),
+                None => format!("{kind:?} — {}", kind_effect(kind)),
             };
             Action::new(
                 label,
@@ -614,10 +739,13 @@ impl TugSession {
                 .collect::<Vec<_>>(),
             "the rendered committed hand must be the engine hand"
         );
+        // ⚑ THE TWO WORD-PAIRS, EQUATED, where a player first meets both. `favor`/`card` and
+        // `guild`/`lane` were each used for one object and never once defined against each other.
         let mut lines = vec![ViewNode::Text(format!(
-            "{} favors, and the other house sees none of them — only the count and the committed \
-             root below. A favor's guild is the lane it pulls; its weight is what that lane pays \
-             whoever ends up leading it.",
+            "{} favors — a favor IS a card, these are the cards you hold, and the other house sees \
+             none of them (only the count and the committed root below). Each favor belongs to one \
+             GUILD, and a guild IS a LANE: that is the lane the favor pulls, and its pay is what \
+             that lane hands whoever ends up leading it.",
             ids.len()
         ))];
         let mut cells = Vec::with_capacity(ids.len());
@@ -632,12 +760,15 @@ impl TugSession {
             // `card #{id} ·` token is what `surface::tests::viewer_sees_own_hand_only` searches for
             // in BOTH directions (present in the owner's view, absent from the other's); it is the
             // fog's assertion handle, so keep the shape if this line is ever reworded.
-            lines.push(ViewNode::Text(format!("  card #{id} · guild {g} · w{w}")));
+            lines.push(ViewNode::Text(format!(
+                "  card #{id} · guild {g} (lane {g}) · pays {w}"
+            )));
             cells.push(CoordCell {
-                // A card FACE, not a bare row index: `#4 g3w3` says which favor it is, which lane
-                // it pulls and what that lane is worth — the three things a hand is read for. The
-                // renderer paints a multi-character glyph as a small mono chip.
-                glyph: format!("#{id} g{g}w{w}"),
+                // A card FACE, not a bare row index: `#4 lane3/3` says which favor it is, which lane
+                // it pulls and what that lane pays — the three things a hand is read for. It was
+                // `#4 g3w3`, two undefined single-letter columns; the legend below names the shape.
+                // The renderer paints a multi-character glyph as a small mono chip.
+                glyph: format!("#{id} lane{g}/{w}"),
                 tag: if w >= 4 {
                     "accent".into()
                 } else {
@@ -648,6 +779,9 @@ impl TugSession {
                 highlight: true, // the viewer's own cards — the active set
             });
         }
+        lines.push(ViewNode::Text(
+            "Each chip below reads `#card lane/pays`.".to_string(),
+        ));
         lines.push(ViewNode::CoordGrid {
             cols: HAND_SIZE,
             cells,
@@ -696,6 +830,18 @@ impl TugSession {
 
     /// Build the surface for `viewer` (`None` = a spectator: both hands are fog).
     fn surface_for(&self, viewer: Option<Player>) -> Surface {
+        self.surface_as(viewer, None)
+    }
+
+    /// [`Self::surface_for`], told which seat a SEATLESS viewer would claim.
+    ///
+    /// ⚑ The parameter exists because the two seatless states are not the same state, and the
+    /// surface was describing them identically. `claimant: Some(seat)` is a viewer who will be
+    /// handed working controls (their first landed press takes that seat); `None` is a viewer at a
+    /// table where both seats are held, who gets no menu at all and would be refused if they forged
+    /// one. Only [`Self::surface_claim`] passes `Some`, which is exactly the surface that appends the
+    /// live menu — so the copy can no longer disagree with the controls it ships beside.
+    fn surface_as(&self, viewer: Option<Player>, claimant: Option<Player>) -> Surface {
         let proj = self.projection();
         let to_move = if proj.current == 0 { "A" } else { "B" };
         let status = match (proj.scored, proj.winner) {
@@ -715,14 +861,16 @@ impl TugSession {
         };
         let mut kids = vec![
             ViewNode::Text(format!("Multiway-Tug — {status}")),
+            // `guilds A:2` became `lanes led A:2` — same number, and it now uses the same noun the
+            // seat rows, the decision plaque and the lane table all use.
             ViewNode::Text(format!(
-                "Influence A:{} / B:{} · guilds A:{} / B:{}",
+                "Influence A:{} / B:{} · lanes led A:{} / B:{}",
                 proj.charm[0], proj.charm[1], proj.guilds_controlled[0], proj.guilds_controlled[1]
             )),
             // THE TWO PLAQUES, the automatafl convention: where the turn stands (with the ONE
             // SENTENCE saying what to do now), then the thing the board cannot show — here, how the
             // round actually gets decided and what each side of a live cut is worth.
-            self.round_standing(viewer),
+            self.round_standing(viewer, claimant),
             self.decision_plaque(),
         ];
         // The cut on the table is PUBLIC — the presented favors are face-up, and everyone can
@@ -740,10 +888,17 @@ impl TugSession {
             title: "The seven lanes".to_string(),
             tag: String::new(),
             children: vec![
+                // THE EQUATION, in words, before the table that uses both nouns.
                 ViewNode::Text(
-                    "Guild · what leading it pays · favors placed (A · B) · who holds it now."
+                    "The seven contested GUILDS are the seven LANES — guild 3 is lane 3, and the \
+                     two words name one thing on this page. Each row: the lane · what leading it \
+                     pays · favors placed (A · B) · who holds it now."
                         .to_string(),
                 ),
+                // ⚑ WHY THE ROWS MAY NOT HAVE MOVED, said BEFORE the reader concludes the button
+                // did nothing, and the live tally that did move.
+                ViewNode::Text(self.lane_movement_rule()),
+                ViewNode::Text(self.favor_accounting(&proj)),
                 self.guild_lanes(&proj),
             ],
         });
@@ -786,8 +941,12 @@ impl TugSession {
     /// once the round is complete. The executor stays the referee on `advance` (an out-of-turn or
     /// spent-action POST is still refused).
     pub fn surface_claim(&self, claimant: Player) -> Surface {
-        let Surface(ViewNode::VStack(mut kids)) = self.surface_for(None) else {
-            return self.surface_for(None);
+        // ⚑ `surface_as(None, Some(claimant))`, not `surface_for(None)`. The fog branch used to tell
+        // this viewer "every control is inert" and then this function appended a LIVE menu below it
+        // — the page contradicting its own buttons. Naming the claimant makes the standing plaque
+        // describe the surface that is actually being built.
+        let Surface(ViewNode::VStack(mut kids)) = self.surface_as(None, Some(claimant)) else {
+            return self.surface_as(None, Some(claimant));
         };
         if !self.ended() {
             // ⚑ `show_cuts: false` IS THE FIX, not a caution. The doc above always promised
@@ -799,12 +958,14 @@ impl TugSession {
             // seat had acted once. The rows stay (same turn, same `arg`, same `enabled`, so the
             // controls a prospective claimant is handed still work); only the card text goes.
             //
-            // The line above it corrects what `surface_for(None)` just said: the fog branch tells a
-            // viewer every control is inert, which is true of a spectator and false of a claimant.
+            // This line no longer CORRECTS the plaque above (which now says the right thing for a
+            // claimant); it says the one extra thing only this surface knows — that the buttons
+            // below are deliberately card-less.
             kids.push(ViewNode::Text(format!(
-                "You hold no seat at this table yet — the first move you land CLAIMS seat \
-                 {claimant:?}, and only then are that seat's favors rendered to you. Until it \
-                 lands, the buttons name the action and not the cards."
+                "These are seat {claimant:?}'s controls and they are live: the first move you land \
+                 CLAIMS that seat, and only then are its favors rendered to you. Until it lands, \
+                 each button states what the action DOES and never which cards it would spend — \
+                 that would read the unclaimed hand out to anybody watching."
             )));
             kids.push(self.action_menu(claimant, false));
         }
@@ -812,11 +973,18 @@ impl TugSession {
     }
 }
 
-/// A compact rendering of a set of favors: `#id(guild G·wN)` each.
+/// A compact rendering of a set of favors: `#id(guild G · pays N)` each.
 ///
 /// The GUILD is here because it is the whole decision — a favor's only effect is to pull the lane
 /// it belongs to, and a label reading `#4(w3)` told a player the price of a card without telling
-/// them what it buys.
+/// them what it buys. `w3` became `pays 3` for the same reason: `w` is a column name, and what the
+/// number means is what that lane pays whoever ends up leading it.
+///
+/// ⚑ `(guild ` is the fog assertion handle
+/// (`surface::tests::the_claim_surface_leaks_no_favor_through_a_button_label` and
+/// `dreggnet-web/tests/tug_table.rs`'s `FAVOR` read it in BOTH directions — present wherever a
+/// concrete cut is disclosed, absent from every surface that must not disclose one). Keep the token
+/// if this is ever reworded.
 fn favor_list(cards: &[u8]) -> String {
     cards
         .iter()
@@ -827,10 +995,37 @@ fn favor_list(cards: &[u8]) -> String {
             } else {
                 0
             };
-            format!("#{c}(guild {g}·w{w})")
+            format!("#{c}(guild {g} · pays {w})")
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// **What each action DOES** — the effect, tied to a lane, in a player's words.
+///
+/// The four affordance rows stated only a COST (`put up 3 cards`). This is the other half, and it is
+/// the half that decides whether a still scoreboard reads as a rule or as a bug: a Secret reaches no
+/// lane until scoring, a Discard reaches none ever, and a Gift/Competition reaches one only when the
+/// other seat answers. All four sentences are RULES, so they are public — the fogged claimant menu
+/// prints them too, and only the specific favors are withheld.
+fn kind_effect(kind: ActionKind) -> &'static str {
+    match kind {
+        ActionKind::Secret => {
+            "hide 1 favor face down; it joins YOUR side of its lane at the reveal, and moves no \
+             lane before then"
+        }
+        ActionKind::Discard => {
+            "burn 2 favors out of the round; they reach no lane and nobody ever scores them"
+        }
+        ActionKind::Gift => {
+            "offer 3 favors; they take ONE onto their side of its lane and the other two land on \
+             yours — lanes move when they answer, not now"
+        }
+        ActionKind::Competition => {
+            "offer 2 pairs; they take ONE PAIR onto their side and the other pair lands on yours — \
+             lanes move when they answer, not now"
+        }
+    }
 }
 
 /// **A win bar, read off the DEPLOYED program** — the `fieldGte` guard on register `reg` in
@@ -973,6 +1168,37 @@ impl Offering for TugOffering {
     /// [`TugSession::legal_decisions`] for the full choice space.
     fn actions(&self, session: &Self::Session) -> Vec<Action> {
         session.affordances(session.engine.current_player())
+    }
+
+    /// **THE AFFORDANCE HALF OF THE FOG — and it was open.**
+    ///
+    /// [`Offering::actions_for`]'s default is [`Offering::actions`], which is the seat TO MOVE, whose
+    /// row labels name the exact favors that press would put up, read off that seat's own committed
+    /// hand. So every viewer who was not that seat — the OPPONENT most of all, and any spectator —
+    /// read the live cut out of the button text. This is the identical hole
+    /// [`TugSession::surface_claim`] closed on the claim SURFACE, at the other door: the surface path
+    /// asks `affordances(viewer_seat)` (whose cut is `None` off-turn) while this one asked for the
+    /// mover's rows and handed them to whoever was looking. It reaches every frontend that paints
+    /// this seam rather than the rendered [`Surface`] — the Discord/Telegram affordance lists, and
+    /// `dreggnet-catalog`'s seat adapter, which only dimmed `enabled` and left the labels intact.
+    ///
+    /// A seat gets ITS OWN rows, exactly as [`TugSession::surface_for`] serves them. Anyone else gets
+    /// the mover's rows with the card text withheld and every control inert — the turn names, `arg`s
+    /// and row count are unchanged, so a transport validating a POST against this list still reaches
+    /// the executor and still gets ITS refusal. A face-up RESPONSE keeps its full label either way:
+    /// the cut on the table is public by the rules, and hiding it would be a lie about the game.
+    fn actions_for(&self, session: &Self::Session, viewer: &DreggIdentity) -> Vec<Action> {
+        match TugOffering::seat_of(viewer) {
+            Some(seat) => session.affordances(seat),
+            None => session
+                .affordances_showing_cuts(session.engine.current_player(), false)
+                .into_iter()
+                .map(|action| Action {
+                    enabled: false,
+                    ..action
+                })
+                .collect(),
+        }
     }
 
     fn advance(&self, session: &mut Self::Session, input: Action, actor: DreggIdentity) -> Outcome {

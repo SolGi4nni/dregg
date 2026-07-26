@@ -945,8 +945,10 @@ impl NativeDescentOffering {
         }));
         actions.extend((0..RELICS).map(|relic| {
             Action::new(
+                // The VERB is built here; [`relic_label`] is the relic's NAME, because the pack, the
+                // vault line, and the minted-note list all read it as one.
                 format!(
-                    "{} {}{}",
+                    "{} Take the {}{}",
                     relic_glyph(relic),
                     relic_label(relic),
                     light_cost(LIGHT_LOOT)
@@ -2553,11 +2555,37 @@ fn completion(
     }
 }
 
+/// **A RELIC'S NAME — a noun, and the same noun everywhere.**
+///
+/// This used to return `"Take the key-relic for way 2"`, an imperative built for the LOOT button,
+/// and three other readers used it as a name: the pack and vault lines read `carried: Take the
+/// key-relic for way 2 · Take the Crown of the Deep` and the minted-note list read
+/// `Take treasure relic 4 (rare) 3f9c…`. A player cannot tell the story of a run whose relics are
+/// verbs and whose treasures are indices, so the noun lives here and the verb is built at the
+/// button ([`Self::actions_for_sim`] wraps it in "Take the …").
+///
+/// The names are per-SLOT identity — relic 0 is the prize on every drawn map and 1–3 are the way
+/// keys by construction (`homes (keyFor w) < w`) — so they are not a day fact and cannot go stale
+/// with the draw. Where a relic LIES is read from the day-world; only what it is called is fixed.
 fn relic_label(relic: usize) -> String {
     match relic {
-        0 => "Take the Crown of the Deep".to_string(),
-        1..=3 => format!("Take the key-relic for way {}", relic + 1),
-        _ => format!("Take treasure relic {relic}"),
+        0 => "Crown of the Deep".to_string(),
+        1..=3 => format!("Ward-key of the {} way", ordinal_word(relic + 1)),
+        4 => "Ashen Chalice".to_string(),
+        5 => "Verdigris Coil".to_string(),
+        6 => "Bone Astrolabe".to_string(),
+        _ => "Salt-Wept Idol".to_string(),
+    }
+}
+
+/// The ordinal a way is spoken by. Only ways `2..=FLOORS` are ever named (way 1 is the mouth and
+/// always open), so the fallback is the bare number rather than a wrong word.
+fn ordinal_word(way: usize) -> String {
+    match way {
+        2 => "second".to_string(),
+        3 => "third".to_string(),
+        4 => "fourth".to_string(),
+        other => format!("{other}th"),
     }
 }
 
@@ -2578,7 +2606,8 @@ const GLYPH_EMPTY: &str = "·";
 const GLYPH_YOU: &str = ">";
 const GLYPH_WAY_OPEN: &str = "/";
 const GLYPH_WAY_SHUT: &str = "#";
-const GLYPH_GUARDIAN: &str = "G";
+/// A guardian still standing paints the BLOWS IT OWES (a digit), not a letter — see the guardian
+/// column in [`descent_map`]. This is the fallen one.
 const GLYPH_GUARDIAN_SLAIN: &str = "x";
 const GLYPH_CROWN: &str = "C";
 const GLYPH_KEY: &str = "k";
@@ -2598,13 +2627,17 @@ const MAP_COLS: usize = 3 + RELICS;
 /// CONSEQUENCE ("Descend to floor 2 · 1 light") instead of a bare noun — the single most useful
 /// thing a stranger can be told, because the light IS the game. The mover still prices every turn;
 /// a label can only describe.
+///
+/// `pub` because the browser play page mirrors them to word the same sentences, and
+/// `dreggnet-web/tests/descent_play_map.rs` pins that mirror against THESE — a price that moves
+/// here must move there or the pin goes red.
 const LIGHT_DELVE: u64 = 1;
-const LIGHT_ASCEND: u64 = 1;
+pub const LIGHT_ASCEND: u64 = 1;
 const LIGHT_UNLOCK: u64 = 1;
 const LIGHT_SMITE: u64 = 2;
 const LIGHT_LUNGE: u64 = 1;
 const LIGHT_LOOT: u64 = 1;
-const LIGHT_FLEE: u64 = 1;
+pub const LIGHT_FLEE: u64 = 1;
 
 /// `"… · 2 light"` — the cost tail every affordance label carries.
 fn light_cost(cost: u64) -> String {
@@ -2679,15 +2712,31 @@ fn descent_map(sim: &Sim) -> ViewNode {
             passable_now || openable_now,
         ));
 
-        // The floor's guardian. Wounds are per-standing-floor, so only the guardian you face can
-        // read as slain; the rest stand.
-        let slain_here = standing_here && sim.wounds >= sim.guard_hp(floor);
+        // ⚑ THE FLOOR'S PRICE, NOT JUST ITS OCCUPANT. This cell used to be a flat `G` on every
+        // floor, so the board told you WHERE the relics were and never what reaching them costs —
+        // and guardian vitality is drawn from the committed day-seed, so it IS the difference
+        // between today's dungeon and yesterday's. A player who cannot read it cannot budget the
+        // light until they are already standing in the fight.
+        //
+        // The glyph is the BLOWS THE GUARDIAN STILL OWES: on the floor you stand on, what is left
+        // of this fight (wounds are per-standing-floor); on a floor below, what that fight opens at.
+        // Read off `sim.guard_hp` — the run's own drawn map — so it is a DAY fact, never a literal.
+        // One character, so the grid stays column-aligned on every text channel.
+        let vitality = sim.guard_hp(floor);
+        let owed = vitality.saturating_sub(if standing_here { sim.wounds } else { 0 });
+        let slain_here = standing_here && vitality > 0 && owed == 0;
+        let guardian_glyph = if vitality == 0 {
+            // No guardian was minted on this floor at all. Say nothing stands here rather than
+            // calling an absence a corpse — no drawn day does this, and the surface still must not
+            // invent one.
+            GLYPH_EMPTY.to_string()
+        } else if owed == 0 {
+            GLYPH_GUARDIAN_SLAIN.to_string()
+        } else {
+            owed.to_string()
+        };
         cells.push(map_cell(
-            if slain_here {
-                GLYPH_GUARDIAN_SLAIN
-            } else {
-                GLYPH_GUARDIAN
-            },
+            &guardian_glyph,
             match (standing_here, slain_here) {
                 (true, true) => "good",
                 (true, false) => "bad",
@@ -2831,20 +2880,60 @@ fn map_legend() -> Vec<ViewNode> {
         )),
         ViewNode::Text(format!(
             "{GLYPH_YOU} you are here · {GLYPH_WAY_OPEN} open way · {GLYPH_WAY_SHUT} shut way · \
-             {GLYPH_GUARDIAN} guardian · {GLYPH_GUARDIAN_SLAIN} slain · {GLYPH_CROWN} crown · \
-             {GLYPH_KEY} way-key · {GLYPH_TREASURE} treasure · [ ] you may act on it now"
+             a DIGIT in the guardian column is the blows that floor's guardian still owes \
+             ({LIGHT_SMITE} light each to press, {LIGHT_LUNGE} to lunge) · {GLYPH_GUARDIAN_SLAIN} \
+             fallen · {GLYPH_CROWN} crown · {GLYPH_KEY} way-key · {GLYPH_TREASURE} treasure · \
+             [ ] you may act on it now"
         )),
     ]
 }
 
-/// The run's ONE-WORD state, with its semantic palette tag: still delving, settled and banked, or
-/// stranded with the light out.
+/// **THE WAY HOME, WALKED BY THE MOVER — never priced here.**
+///
+/// `flee` demands the SURFACE and [`Sim::ascend`] buys one floor at a time, so a run standing below
+/// ground owes the climb before it owes anything else. That is the clock the descent really plays
+/// against (the Lean `Dungeon.toll`, a ratchet no verb rewinds), and it was the one number the
+/// surface never showed: the guttering line said "climbing out costs 1" — the price of the exit
+/// ALONE — and so told a player on floor 3 holding 4 light that they had three to spare when they
+/// had none, which is exactly the position that strands a run for good.
+///
+/// ⚑ Every step here is [`Sim::ascend`] / [`Sim::flee`] — a verb the mover itself declared legal at
+/// its own posted price — so this can never disagree with the referee and re-pricing the climb in
+/// Lean re-words this sentence with it. `Ok(cost)` is the light the way home will take; `Err(floors)`
+/// is the Lean `Dungeon.doomed_never_banks` case reached CONSTRUCTIVELY (the light buys `floors` of
+/// climb and then dies), so the surface can say the run is over while it can still move.
+fn climb_home(sim: &Sim) -> Result<u64, u64> {
+    let mut climbing = sim.clone();
+    let mut floors = 0;
+    while climbing.depth > 0 {
+        match climbing.ascend() {
+            Ok(next) => {
+                climbing = next;
+                floors += 1;
+            }
+            Err(_) => return Err(floors),
+        }
+    }
+    match climbing.flee() {
+        Ok(banked) => Ok(banked.spent - sim.spent),
+        Err(_) => Err(floors),
+    }
+}
+
+/// The run's ONE-WORD state, with its semantic palette tag: still delving, settled and banked,
+/// stranded below with the climb unpayable, or out of light altogether.
 fn descent_status(sim: &Sim) -> (&'static str, &'static str) {
     if sim.fate != 0 {
         ("BANKED", "good")
     } else if sim.spent + 1 > BREATH {
         // Every verb costs at least one light, so a run that cannot pay one can never move again.
         ("THE LIGHT IS DEAD", "bad")
+    } else if climb_home(sim).is_err() {
+        // ⚑ ALIVE, STILL ABLE TO MOVE, AND ALREADY OVER. Lean proves a run whose light cannot pay
+        // the climb can never bank from ANY continuation whatsoever (`Dungeon.doomed_never_banks`),
+        // and the status word used to read DELVING right through that window — the most dramatic
+        // thing the game can tell you, told by nobody.
+        ("STRANDED", "bad")
     } else {
         ("DELVING", "warn")
     }
@@ -2862,6 +2951,13 @@ fn descent_standing(sim: &Sim) -> String {
         ),
         "THE LIGHT IS DEAD" => format!(
             "{word} — {} relic{} still in the pack never became yours.",
+            sim.pack(),
+            if sim.pack() == 1 { "" } else { "s" }
+        ),
+        "STRANDED" => format!(
+            "{word} — floor {} is as high as the light reaches. {} relic{} in the pack will never \
+             be banked, and no move from here changes that.",
+            sim.depth,
             sim.pack(),
             if sim.pack() == 1 { "" } else { "s" }
         ),
@@ -2888,9 +2984,30 @@ fn descent_pressures(sim: &Sim) -> Vec<ViewNode> {
         return out;
     }
     let light = BREATH.saturating_sub(sim.spent);
-    if light <= 4 {
+    // ⚑ THE CLIMB IS THE CLOCK, AND IT GOES FIRST. Below the surface the light a run may actually
+    // SPEND is what is left minus the way home, and that is the number every decision down here is
+    // weighed against — so it is stated every turn rather than only once the band is nearly out.
+    // See [`climb_home`]: the cost is walked with the mover's own verbs, never priced here.
+    if sim.depth >= 1 {
+        match climb_home(sim) {
+            Ok(cost) => out.push(ViewNode::Text(format!(
+                "⚠ the way home costs {cost} light — {} floor{} of climb and the exit itself. {} \
+                 light left to spend down here.",
+                sim.depth,
+                if sim.depth == 1 { "" } else { "s" },
+                light.saturating_sub(cost)
+            ))),
+            Err(floors) => out.push(ViewNode::Text(format!(
+                "⚠ STRANDED — {light} light cannot buy the way out of floor {}: it pays for {floors} \
+                 floor{} of climb and then dies. Nothing in the pack will ever be banked.",
+                sim.depth,
+                if floors == 1 { "" } else { "s" }
+            ))),
+        }
+    } else if light <= 4 {
+        // At the mouth the way home IS the exit, so the old wording is true here and only here.
         out.push(ViewNode::Text(format!(
-            "⚠ the light is guttering — {light} left, and climbing out costs {LIGHT_FLEE}"
+            "⚠ the light is guttering — {light} left, and the exit itself costs {LIGHT_FLEE}"
         )));
     }
     // The toll is THIS DAY's: the drawn map decides how much vitality this floor's guardian has,
@@ -2919,6 +3036,18 @@ fn descent_pressures(sim: &Sim) -> Vec<ViewNode> {
             if sim.pack() == 1 { "" } else { "s" },
             if sim.pack() == 1 { "s" } else { "" }
         )));
+    }
+    // ⚑ NEVER LET AN ABSENCE SPEAK FOR ITSELF. A live run with nothing pressing on it emitted no
+    // line at all and the whole block disappeared — and a missing panel is indistinguishable from a
+    // broken one. That is exactly the state a first-time reader meets: turn 0, at the mouth, with
+    // everything still ahead of them. This is the only combination that reaches here (below ground
+    // the climb always has a price, and a pack is always losable), so it can name itself precisely.
+    if out.is_empty() {
+        out.push(ViewNode::Text(
+            "nothing presses on you yet — you stand at the mouth, the light is long and the pack is \
+             empty. Every floor you take costs a breath to leave again."
+                .to_string(),
+        ));
     }
     out
 }

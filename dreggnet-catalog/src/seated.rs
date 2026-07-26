@@ -162,13 +162,26 @@ impl Offering for SeatedTug {
     /// POST against this list still reaches the executor and gets ITS refusal ("not your turn").
     /// The executor remains the sole referee; `enabled` is decoration.
     fn actions_for(&self, session: &Self::Session, viewer: &DreggIdentity) -> Vec<Action> {
-        let mut all = self.inner.actions(&session.inner);
+        // ⚑ ROUTE THROUGH THE WRAPPED GAME'S OWN PER-VIEWER PROJECTION. This used to be
+        // `inner.actions(...)` — the seat TO MOVE, whose row labels name the exact favors that press
+        // would put up, off that seat's committed hand — and it only dimmed `enabled`. So the
+        // OPPONENT's page (and any spectator's) printed the live cut in the button text: the same
+        // hole `TugSession::surface_claim` closed, at the affordance door. A viewer who does not HOLD
+        // the seat is handed the cut-free rows even when the seat they would claim is the one to
+        // move, because on a seat-locked table the other player is free to open the watch link.
+        let held = session.seat_of(viewer);
+        let mut all = match held {
+            Some(seat) => self
+                .inner
+                .actions_for(&session.inner, &TugOffering::seat_identity(seat)),
+            None => self.inner.actions_for(&session.inner, viewer),
+        };
         if all.is_empty() {
             return all;
         }
         // The seat this viewer holds, or the one they would claim by acting — the same rule
         // `advance` applies, so a first-time visitor is offered what their first press would use.
-        let seat = session.seat_of(viewer).or_else(|| session.claimable_seat());
+        let seat = held.or_else(|| session.claimable_seat());
         let owes = match seat {
             // Every turn of the round is spent (8 actions + 4 responses) and it is waiting to be
             // revealed and scored. Either seat may fire that, so both owe it.
@@ -182,10 +195,13 @@ impl Offering for SeatedTug {
             // Both seats are held by other identities: a spectator.
             None => false,
         };
-        if !owes {
-            for action in &mut all {
-                action.enabled = false;
-            }
+        // `enabled` is set in BOTH directions, because the cut-free rows a not-yet-seated viewer now
+        // receives arrive inert (a seatless actor is refused outright by the bare `TugOffering`),
+        // and a prospective CLAIMANT here does own the next press. `arg >= 0` is the wrapped game's
+        // own "this row is a real decision" marker, so this reproduces its verdict rather than
+        // inventing one. The executor remains the sole referee; `enabled` is decoration.
+        for action in &mut all {
+            action.enabled = owes && action.arg >= 0;
         }
         all
     }
