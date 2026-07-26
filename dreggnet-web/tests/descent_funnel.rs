@@ -12,8 +12,17 @@
 //!    hardcoded `daily_seed(&[3;32])` demo world, so the re-execution could never verify:
 //!    `ranked:false`, no link, every time.
 //!
-//! The exclusion legs are what make these non-vacuous: a run submitted against a DIFFERENT
-//! (re-derivable, in-window) day does NOT rank, and a hostile day key is refused outright.
+//! The exclusion legs are what make these non-vacuous: a run submitted against a day whose world it
+//! cannot win does NOT rank, a run files under the day it names and never onto today's board, and a
+//! hostile day key is refused outright.
+//!
+//! ⚑ 2026-07-25 — the old exclusion leg ("the same run does not rank in a DIFFERENT day's world",
+//! submitted against tomorrow) was a **coin flip** and it lost: today's tape ranked in tomorrow's
+//! world. `daily_scene` draws only `warden_hp ∈ {45,60}` and `deepening_rooms ∈ {1,2,3}`, so two
+//! real days are mechanically identical about one time in six and one tape wins in both. The
+//! measurement is now a test of its own (`two_distinct_daily_worlds_can_accept_one_winning_tape`)
+//! and the exclusion leg is stated against a world that genuinely differs, so it is deterministic
+//! on every day of the year.
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -188,18 +197,74 @@ async fn a_run_submitted_with_its_day_key_ranks_and_yields_a_share_link() {
     assert!(board.contains("funnel-tester"), "the run ranks: {board}");
 }
 
-/// **NON-VACUOUS.** The same winning moves submitted against a DIFFERENT (real, re-derivable,
-/// in-window) day do NOT rank — the world is what decides, and the day key is load-bearing rather
-/// than decorative. This is precisely the silent failure the missing `day` produced.
+/// The world-shape a procgen day draws — the ONLY two parameters of `daily_scene` that a move tape
+/// can feel. Everything else the seed draws (the theme, the warden's name, every room's prose) is
+/// display: it changes the scene source and therefore the day's content-addressed `UniverseId`,
+/// but it does not change which choice index wins at which passage.
+fn day_shape(seed: &procgen_dregg::CommittedSeed) -> (u64, usize) {
+    let world = dreggnet_offerings::daily_descent::daily_scene(seed);
+    (world.warden_hp, world.deepening_rooms)
+}
+
+/// The winning move tape for a day's world — what a player submits.
+fn winning_tape(seed: procgen_dregg::CommittedSeed) -> Vec<usize> {
+    dreggnet_web::demo_win_for_seed(seed).0
+}
+
+/// The first real, re-derivable day at or after `from` that `want` accepts.
+fn find_day(
+    from: u64,
+    want: impl Fn(&procgen_dregg::descent_day::DescentDay) -> bool,
+) -> procgen_dregg::descent_day::DescentDay {
+    (from..from + 512)
+        .map(procgen_dregg::descent_day::offline_day)
+        .find(&want)
+        .expect("the 2x3 shape space is dense in the day space")
+}
+
+/// **THE DAY IS LOAD-BEARING — a tape is refused by a world it cannot win.**
+///
+/// ⚑ This REPLACES `the_same_run_does_not_rank_in_a_different_days_world`, which submitted today's
+/// tape against TOMORROW and required a refusal. That assertion was a **coin flip**, and on
+/// 2026-07-25 it lost: today's tape ranked in tomorrow's world (`{"ranked":true,"turns":11}`). The
+/// cause is measured by `two_distinct_daily_worlds_can_accept_one_winning_tape` below — `daily_scene`
+/// draws only `warden_hp ∈ {45,60}` and `deepening_rooms ∈ {1,2,3}`, so two different days are
+/// mechanically identical about one time in six, and the old test had been passing on luck.
+///
+/// The load-bearing property survives and is asserted HERE, deterministically: against a day whose
+/// world genuinely differs, the tape is refused by the executor and NOTHING ingests. The control day
+/// is opened on the state directly because `/descent/submit` only re-derives keys inside a ±1-day
+/// window — which is exactly why no in-window exclusion leg is guaranteed to exist on any given day.
 #[tokio::test]
-async fn the_same_run_does_not_rank_in_a_different_days_world() {
-    let app = make_app();
+async fn a_tape_is_refused_by_a_day_whose_world_actually_differs() {
     let today = dreggnet_web::descent::todays_day();
     let (moves, _l, _c) = demo_win();
+    let (my_hp, my_corridors) = day_shape(&today.seed);
 
-    // Tomorrow's day: a genuine, re-derivable world — just not the one these moves were played in.
-    let other = procgen_dregg::descent_day::offline_day(today.utc_day + 1);
-    assert_ne!(other.seed.as_bytes(), today.seed.as_bytes());
+    // ⚑ THE CONTROL DAY IS CHOSEN SO THE REFUSAL IS PROVABLE, NOT LIKELY. Two near-misses that a
+    // weaker rule walks straight into:
+    //
+    //  * "a different SHAPE" is not enough. The gate's extra moves are ABSORBED: the 11-move tape
+    //    for a (60 hp, 2 corridor) world is a legal, winning 11-move line in a (45, 2) world too —
+    //    three blows fell the weaker warden, the fourth heal and fifth blow are simply wasted, and
+    //    `press past` still passes its `warden_hp <= 0` guard. That is exactly the transfer that
+    //    made the deleted test go red on 2026-07-25.
+    //  * "a different tape LENGTH" is not enough either, because the choice indices ALIAS:
+    //    `CORRIDOR_ON`, `HOARD_FORCE` and `HOARD_SEIZE` are all `0`, so a miscounted corridor walk
+    //    slides along the winning line instead of erroring where you would expect it to.
+    //
+    // What IS airtight: the SAME warden (so the gate prefix replays move-for-move) and a DIFFERENT
+    // corridor count. Too few corridors in the tape and the run is exhausted before `END` (no win);
+    // too many and the surplus moves land on an ended scene (an illegal move). Both are refusals,
+    // and such a day exists for every warden HP because the corridor draw covers 1..=3.
+    let other = find_day(today.utc_day + 1, |d| {
+        day_shape(&d.seed) != (my_hp, my_corridors) && day_shape(&d.seed).0 == my_hp
+    });
+
+    let state = std::sync::Arc::new(dreggnet_web::DescentState::new());
+    state.ensure_today(); // today's world stays the default board
+    state.open_day(&other.key, other.seed);
+    let app = dreggnet_web::make_app_with_descent(state);
 
     let (status, v) = post_json(
         &app,
@@ -214,8 +279,171 @@ async fn the_same_run_does_not_rank_in_a_different_days_world() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "refused: {v}");
     assert_eq!(
         v["ranked"], false,
-        "a run cannot rank in a world it never played"
+        "a run cannot rank in a world its moves do not win: {v}"
     );
+
+    // …and nothing was retained on EITHER board.
+    for board in [
+        "/descent".to_string(),
+        format!("/descent/leaderboard?day={}", other.key),
+    ] {
+        let (_, body) = get(&app, &board).await;
+        assert!(
+            !body.contains("wrong-world"),
+            "a refused run must not create a row on {board}"
+        );
+    }
+
+    // POSITIVE CONTROL — the control day is a perfectly good, open, submittable world; it is the
+    // TAPE that it refused. Without this leg the refusal above would also be satisfied by a day the
+    // endpoint could not open at all, and the test would prove nothing about the world deciding.
+    let (status, v) = post_json(
+        &app,
+        "/descent/submit",
+        serde_json::json!({
+            "day": other.key,
+            "player": "right-world",
+            "moves": winning_tape(other.seed),
+        }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the control day itself is fine: {v}"
+    );
+    assert_eq!(v["ranked"], true, "its OWN winning tape ranks there: {v}");
+}
+
+/// **THE DAY IS THE BOARD — a run ranks on the day it names, and never on today's.**
+///
+/// This is the day-isolation property the product claim actually needs ("today's dungeon, the same
+/// for everyone, and yesterday's run does not count"), and unlike the tape-transfer property it is
+/// enforced by construction rather than by procgen luck: `ingest_run` files a run under its day key
+/// and the board renders one day at a time. It is deterministic on every day of the year.
+#[tokio::test]
+async fn a_run_ranks_on_the_day_it_names_and_never_on_todays_board() {
+    let today = dreggnet_web::descent::todays_day();
+    let (moves, level, class) = demo_win();
+
+    // A real day that is mechanically IDENTICAL to today — so the tape genuinely wins there and the
+    // run really does rank. That is the strongest form of this test: the run is admitted on the
+    // other day's board and STILL must not appear on today's.
+    let mine = day_shape(&today.seed);
+    let twin = find_day(today.utc_day + 1, |d| day_shape(&d.seed) == mine);
+
+    let state = std::sync::Arc::new(dreggnet_web::DescentState::new());
+    state.ensure_today();
+    state.open_day(&twin.key, twin.seed);
+    let app = dreggnet_web::make_app_with_descent(state);
+
+    let (status, v) = post_json(
+        &app,
+        "/descent/submit",
+        serde_json::json!({
+            "day": twin.key,
+            "player": "other-day-runner",
+            "level": level,
+            "class": class,
+            "moves": moves,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["ranked"], true, "it wins in that day's world: {v}");
+
+    let (_, other_board) = get(&app, &format!("/descent/leaderboard?day={}", twin.key)).await;
+    assert!(
+        other_board.contains("other-day-runner"),
+        "the run ranks on the day it named"
+    );
+    let (_, todays_board) = get(&app, "/descent").await;
+    assert!(
+        !todays_board.contains("other-day-runner"),
+        "a run filed under another day must NEVER appear on today's board: {todays_board}"
+    );
+}
+
+/// **THE MEASURED LIMIT — two DIFFERENT days can accept ONE winning tape.**
+///
+/// Stated out loud because it silently broke a test that had been green for weeks. `daily_scene`
+/// draws exactly two mechanical parameters — `warden_hp ∈ {45, 60}` and `deepening_rooms ∈ {1,2,3}`
+/// — so the daily world has **six** playable shapes. The theme, the warden's name and every room's
+/// prose also vary (the two worlds below are genuinely different objects: different seeds, different
+/// scene sources, different `UniverseId`s), but none of that is reachable by a move tape. So a tape
+/// that wins on one day wins on any other day sharing its shape, and "a run played yesterday cannot
+/// be submitted for today" is FALSE for roughly one adjacent day-pair in six.
+///
+/// This is a LIMIT, not a hole: the day's world is public and deterministic, so a winning tape can
+/// always be computed offline without playing — cross-day transfer buys an attacker nothing that
+/// solving today's world does not already give them. What the board enforces is the claim it makes:
+/// every ranked row is a move sequence that provably wins THAT day's world.
+///
+/// Falsifier: if `daily_scene` ever becomes day-discriminating (a per-day parameter a tape can
+/// feel), this test goes red — and the in-window exclusion leg deleted above becomes viable again.
+#[tokio::test]
+async fn two_distinct_daily_worlds_can_accept_one_winning_tape() {
+    let today = dreggnet_web::descent::todays_day();
+    let mine = day_shape(&today.seed);
+    let twin = find_day(today.utc_day + 1, |d| day_shape(&d.seed) == mine);
+
+    // The two worlds are DISTINCT objects — this is not "the same day twice".
+    assert_ne!(twin.seed.as_bytes(), today.seed.as_bytes());
+    let (a, b) = (
+        dreggnet_offerings::daily_descent::daily_scene(&today.seed),
+        dreggnet_offerings::daily_descent::daily_scene(&twin.seed),
+    );
+    assert_ne!(
+        a.source, b.source,
+        "different days, different scene sources"
+    );
+    println!(
+        "day {} [{}] warden_hp={} corridors={}  ==  day {} [{}] warden_hp={} corridors={}",
+        today.key,
+        a.title,
+        a.warden_hp,
+        a.deepening_rooms,
+        twin.key,
+        b.title,
+        b.warden_hp,
+        b.deepening_rooms
+    );
+    // The local calendar window, so the record shows the collision structure rather than asserting
+    // it from arithmetic. Adjacent days collide about one pair in six; when they do, the deleted
+    // exclusion leg went red for the day and green again the next — with no code change at all.
+    for offset in -2i64..=2 {
+        let d = procgen_dregg::descent_day::offline_day(
+            u64::try_from(i64::try_from(today.utc_day).expect("a sane utc day") + offset)
+                .expect("a sane utc day"),
+        );
+        println!("  {} shape = {:?}", d.key, day_shape(&d.seed));
+    }
+
+    // …and mechanically identical, so ONE tape wins in both.
+    let (moves, _, _) = demo_win();
+    let (twin_moves, _, _) = dreggnet_web::demo_win_for_seed(twin.seed);
+    assert_eq!(
+        moves, twin_moves,
+        "same shape {mine:?} ⇒ the same winning tape, in two different days' worlds"
+    );
+
+    let state = std::sync::Arc::new(dreggnet_web::DescentState::new());
+    state.ensure_today();
+    state.open_day(&twin.key, twin.seed);
+    let app = dreggnet_web::make_app_with_descent(state);
+    for (day, player) in [
+        (today.key.clone(), "shape-a"),
+        (twin.key.clone(), "shape-b"),
+    ] {
+        let (status, v) = post_json(
+            &app,
+            "/descent/submit",
+            serde_json::json!({ "day": day, "player": player, "moves": moves }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "the one tape wins in {day}: {v}");
+        assert_eq!(v["ranked"], true, "{day}: {v}");
+    }
 }
 
 #[tokio::test]

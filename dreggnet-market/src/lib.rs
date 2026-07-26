@@ -197,7 +197,7 @@ use dregg_app_framework::{
 };
 use dregg_cell::{CellMode, FactoryCreationParams};
 
-use dregg_intent::verified_settle::VerifiedLedger;
+use dregg_intent::verified_settle::{VerifiedLedger, VerifiedSettleError};
 
 use starbridge_sealed_auction::CellId as AuctionCellId;
 use starbridge_sealed_auction::{
@@ -822,6 +822,33 @@ impl MarketOffering {
             Err(AuctionError::NoWinner) => {
                 return Err("no valid revealed bid — the auction does not settle".into());
             }
+            // ⚑ NEVER BLAME THE AUCTION FOR AN ABSENT EXECUTOR. `settle_ring_verified` fails closed
+            // when no `IntentVerifiedGate` is registered, and reporting that as "settlement
+            // rejected" is a LIE about a legitimate award: the ring was not rejected, it was NEVER
+            // JUDGED. `exec-lean/src/bin/drex_clear.rs::fail_verified_core_absent` learned this the
+            // expensive way (a day spent debugging the matcher instead of the missing gate); this
+            // is the same split, at the market's own surface, because the two fixes are opposite —
+            // one is a HOST wiring bug fixed in code, the other a BUILD with no verified core.
+            Err(AuctionError::SettlementRejected(VerifiedSettleError::FfiUnavailable(detail))) => {
+                return Err(if detail.contains("no verified gate registered") {
+                    format!(
+                        "WIRING BUG in this host, not a problem with the auction: no verified \
+                         executor gate is installed, so the award was NEVER JUDGED — it was not \
+                         rejected. A host that settles must call \
+                         `dregg_exec_lean::register_distributed_gates()` at startup (as \
+                         `dreggnet_web::install_verified_settlement_gate` and `node/src/lib.rs` \
+                         do). This build will not settle an award with unverified Rust. \
+                         underlying: {detail}"
+                    )
+                } else {
+                    format!(
+                        "NO VERIFIED CORE in this build, not a problem with the auction: the gate \
+                         is installed but its Lean export could not run (no linked \
+                         `dregg-lean-ffi/libdregg_lean.a`, or Lean init failed), so the award was \
+                         NEVER JUDGED — it was not rejected. underlying: {detail}"
+                    )
+                });
+            }
             Err(error) => {
                 return Err(format!(
                     "settlement rejected by the verified executor: {error}"
@@ -846,6 +873,257 @@ impl MarketOffering {
                 pay_conserved: (pay_before, pay_after),
                 good_conserved: (good_before, good_after),
             },
+        })
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// THE SURFACE — a sealed auction a bidder can actually READ
+//
+// The old render was one `Section` of dot-separated counters ("reserve 100 · phase COMMIT (sealed
+// bids accepted) · sealed bids 3") plus a menu, and it was VIEWER-INVARIANT. Two consequences a
+// player felt: the phase was a substring rather than a state you could see at a glance, and a
+// bidder could not tell whether they had bid — their own sealed bid is the ONE thing a sealed
+// auction owes them and it was rendered to nobody. What follows is the automatafl plaque
+// convention: a status plaque whose first sentence says what to do right now, then the plaque for
+// the thing the surface cannot otherwise show — here, what the seal actually hides and from whom.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+impl MarketOffering {
+    /// The three phases as pills, the live one lit. Which phase an auction is in decides whether a
+    /// bid is even possible, and it used to be a word inside a run-on line.
+    fn phase_pills(session: &MarketSession) -> ViewNode {
+        let live = session.phase();
+        let pill = |p: Phase, label: &str| ViewNode::Pill {
+            text: label.to_string(),
+            tag: if live == Some(p) { "good" } else { "muted" }.to_string(),
+            slot: None,
+            cases: Vec::new(),
+        };
+        ViewNode::Row(vec![
+            pill(Phase::Commit, "1 · SEAL A BID"),
+            pill(Phase::Reveal, "2 · REVEAL"),
+            pill(Phase::Settled, "3 · CLEARED"),
+        ])
+    }
+
+    /// **The one sentence.** Who the viewer is at this auction decides what it says: the seller is
+    /// the only identity that can clear it, a bidder who has already bid cannot bid again (the
+    /// `WriteOnce` commit board refuses it), and everyone else is watching a count go up.
+    fn next_step_line(session: &MarketSession, viewer: Option<&DreggIdentity>) -> String {
+        if !session.is_listed() {
+            return "Nothing is up for auction yet. Open a listing — it seeds a real auction cell \
+                    with a reserve, and every bid after it is a sealed commitment on that cell's \
+                    write-once commit board."
+                .to_string();
+        }
+        let is_seller = viewer.is_some_and(|v| session.seller.as_ref() == Some(v));
+        let own = viewer.and_then(|v| session.bids.iter().find(|b| &b.who == v));
+        // ⚑ Led by `is_settled()` (the CLEARING record), not by the phase register: a settle refused
+        // for a below-reserve high bid can leave the phase moved with no clearing, and a page that
+        // then invited the seller to "settle whenever you like" would be lying about a dead auction.
+        if session.is_settled() {
+            return "This auction is cleared. Every sealed bid is open, the winner is the real high \
+                    bid, and the value move re-derives from the record — nothing further can be \
+                    committed."
+                .to_string();
+        }
+        match session.phase() {
+            _ if is_seller && session.bids.is_empty() => {
+                "You are the seller and no bid has landed yet. You cannot clear an empty board — \
+                 hand the session link to bidders and wait for the count to move."
+                    .to_string()
+            }
+            _ if is_seller => format!(
+                "You are the seller. {} sealed bid{} on the board and you may settle whenever you \
+                 like: settling OPENS every seal at once and clears to the highest.",
+                session.bid_count(),
+                if session.bid_count() == 1 {
+                    " is"
+                } else {
+                    "s are"
+                }
+            ),
+            _ if own.is_some() => {
+                "Your bid is sealed and on the board. You cannot change it — the \
+                                   commit slot is write-once, and a second bid from you is refused \
+                                   with nothing committed. It opens when the seller settles."
+                    .to_string()
+            }
+            Some(Phase::Commit) => "Place a sealed bid. Only its BLAKE3 seal lands now, so nobody \
+                                    — including the seller — can read your number until the \
+                                    auction is settled; but you get exactly one, so bid the number \
+                                    you mean."
+                .to_string(),
+            _ => "Bidding is closed on this listing; the seller has yet to clear it.".to_string(),
+        }
+    }
+
+    /// **Your own sealed bid** — the per-viewer disclosure, and the only one. Reads the single
+    /// `PlacedBid` whose `who` is the viewer; a viewer with no bid gets nothing, and no branch here
+    /// can reach another identity's entry.
+    fn own_bid_section(session: &MarketSession, viewer: &DreggIdentity) -> Option<ViewNode> {
+        let mine = session.bids.iter().find(|b| &b.who == viewer)?;
+        let seal = mine.seal();
+        let seal_hex: String = seal[..4].iter().map(|b| format!("{b:02x}")).collect();
+        Some(ViewNode::Section {
+            title: "Your sealed bid".into(),
+            tag: "accent".into(),
+            children: vec![
+                ViewNode::Text(format!(
+                    "You bid {} — visible here because you are the identity that placed it, and \
+                     nowhere else on this surface.",
+                    mine.bid.value
+                )),
+                ViewNode::Text(format!(
+                    "Its seal is {seal_hex}… , frozen into commit slot {} of the auction cell. That \
+                     digest is what the executor holds: it BINDS you to this number (the opening \
+                     has to match at settle) and hides it until then.",
+                    mine.slot
+                )),
+            ],
+        })
+    }
+
+    /// **"What the seal is"** — the domain plaque, the thing the board cannot show. A sealed
+    /// auction's whole mechanic is invisible by design, so a player who is not told plainly what is
+    /// hidden, from whom, and until when, is guessing at the only rule that matters.
+    ///
+    /// Every clause is the deployed behaviour, not a gloss: the seal is `BLAKE3(bidder‖value‖nonce)`
+    /// ([`Bid::seal`]), the double-bid refusal is the cell's `WriteOnce` commit slot, and the
+    /// clearing rule is first-price-highest-wins re-derived by the replay verifier.
+    fn seal_plaque(session: &MarketSession) -> ViewNode {
+        let mut kids =
+            vec![
+            ViewNode::Text(
+                "A bid is placed as a COMMITMENT, not a number: BLAKE3 over (bidder, value, \
+                 nonce) lands on the auction cell's write-once commit board, and the value itself \
+                 stays in the session until the reveal. Nobody can read a rival's bid off this \
+                 page, because the page has never been sent it."
+                    .into(),
+            ),
+            ViewNode::Text(
+                "The nonce is why that hides anything. Without it a seal of a small integer would \
+                 be brute-forceable in an instant; with it the digest tells an observer nothing \
+                 while still binding the bidder to exactly one number.".into(),
+            ),
+            ViewNode::Text(
+                "One bid per identity, enforced by the substrate rather than by this surface: a \
+                 second bid targets your own frozen commit slot and the executor's WriteOnce tooth \
+                 refuses the turn with nothing committed.".into(),
+            ),
+            ViewNode::Text(
+                "At SETTLE every seal opens at once and the highest bid wins at its own price. \
+                 That is the honest boundary of the hiding: the seller — and the operator of this \
+                 host — sees every number the moment the auction clears. This is a sealed auction, \
+                 not a private one.".into(),
+            ),
+        ];
+        if session.is_listed() && !session.is_settled() {
+            kids.push(ViewNode::Text(format!(
+                "Right now: {} seal{} on the board, reserve {}. A bid under the reserve is still \
+                 accepted onto the board — the reserve bites at SETTLE, where a high bid below it \
+                 is no sale and nothing moves at all.",
+                session.bid_count(),
+                if session.bid_count() == 1 { "" } else { "s" },
+                session.reserve
+            )));
+        }
+        ViewNode::Section {
+            title: "What the seal is".into(),
+            tag: "accent".into(),
+            children: kids,
+        }
+    }
+
+    /// The whole surface, for `viewer` (`None` = the public render: no bid is anyone's own).
+    fn render_as(&self, session: &MarketSession, viewer: Option<&DreggIdentity>) -> Surface {
+        let mut children: Vec<ViewNode> = Vec::new();
+
+        // THE STATUS PLAQUE — phase pills, then the one sentence, then who the viewer is here.
+        let mut standing = vec![Self::phase_pills(session)];
+        standing.push(ViewNode::Text(Self::next_step_line(session, viewer)));
+        let role = match viewer {
+            Some(v) if session.seller.as_ref() == Some(v) => {
+                "You are the SELLER of this listing — the only identity that may settle it."
+                    .to_string()
+            }
+            Some(v) if session.bids.iter().any(|b| &b.who == v) => {
+                "You are a BIDDER here and your bid is already sealed.".to_string()
+            }
+            Some(_) => {
+                "You hold no role at this auction yet; placing a sealed bid takes one.".to_string()
+            }
+            None => "You are watching this auction: every bid on the board is a seal to you."
+                .to_string(),
+        };
+        standing.push(ViewNode::Text(role));
+        if session.is_listed() {
+            standing.push(ViewNode::Text(format!(
+                "Reserve {} · {} sealed bid{} · {} verified turn{}.",
+                session.reserve,
+                session.bid_count(),
+                if session.bid_count() == 1 { "" } else { "s" },
+                session.receipts_len(),
+                if session.receipts_len() == 1 { "" } else { "s" }
+            )));
+        }
+        children.push(ViewNode::Section {
+            title: "Where the auction stands".into(),
+            tag: "accent".into(),
+            children: standing,
+        });
+
+        // THE PER-VIEWER DISCLOSURE — your own bid, and only ever your own.
+        if let Some(v) = viewer {
+            if let Some(mine) = Self::own_bid_section(session, v) {
+                children.push(mine);
+            }
+        }
+
+        if let Some(c) = &session.clearing {
+            children.push(ViewNode::Section {
+                title: "Cleared".into(),
+                tag: "genuine".into(),
+                children: vec![
+                    ViewNode::Text(format!(
+                        "Bidder #{} took it at {}. Every seal is open now and this is the real high \
+                         bid — the replay verifier re-derives the winner from the recorded bids and \
+                         refuses a record that names anyone else.",
+                        c.winner.bidder, c.winner.value
+                    )),
+                    ViewNode::Text(format!(
+                        "The value move conserves every asset (per-asset Σδ = 0: {}) — nothing was \
+                         minted or destroyed in the settlement, it was moved.",
+                        c.conserved()
+                    )),
+                ],
+            });
+        }
+
+        children.push(Self::seal_plaque(session));
+
+        let items: Vec<MenuItem> = self
+            .actions(session)
+            .into_iter()
+            .map(|a| MenuItem {
+                label: a.label,
+                turn: a.turn,
+                arg: a.arg,
+                enabled: a.enabled,
+            })
+            .collect();
+        if !items.is_empty() {
+            children.push(ViewNode::Section {
+                title: "Market actions".into(),
+                tag: "accent".into(),
+                children: vec![ViewNode::Menu { items }],
+            });
+        }
+
+        Surface(ViewNode::Section {
+            title: "DreggNet Market — sealed-bid auction".into(),
+            tag: "accent".into(),
+            children,
         })
     }
 }
@@ -1062,70 +1340,16 @@ impl Offering for MarketOffering {
     }
 
     fn render(&self, session: &MarketSession) -> Surface {
-        let mut children: Vec<ViewNode> = Vec::new();
+        self.render_as(session, None)
+    }
 
-        if !session.is_listed() {
-            children.push(ViewNode::Text(
-                "No listing yet. A seller opens a sealed auction.".into(),
-            ));
-        } else {
-            let phase = match session.phase() {
-                Some(Phase::Commit) => "COMMIT (sealed bids accepted)",
-                Some(Phase::Reveal) => "REVEAL",
-                Some(Phase::Settled) => "SETTLED",
-                None => "—",
-            };
-            children.push(ViewNode::Section {
-                title: "Listing".into(),
-                tag: "muted".into(),
-                children: vec![ViewNode::Text(format!(
-                    "reserve {} · phase {} · sealed bids {}",
-                    session.reserve,
-                    phase,
-                    session.bid_count()
-                ))],
-            });
-            if let Some(c) = &session.clearing {
-                children.push(ViewNode::Section {
-                    title: "Cleared".into(),
-                    tag: "genuine".into(),
-                    children: vec![ViewNode::Text(format!(
-                        "winner bidder#{} at price {} · value moved conservation-checked (Σδ=0: {})",
-                        c.winner.bidder, c.winner.value, c.conserved()
-                    ))],
-                });
-            }
-        }
-
-        children.push(ViewNode::Section {
-            title: "Verified turns".into(),
-            tag: "genuine".into(),
-            children: vec![ViewNode::Text(session.receipts_len().to_string())],
-        });
-
-        let items: Vec<MenuItem> = self
-            .actions(session)
-            .into_iter()
-            .map(|a| MenuItem {
-                label: a.label,
-                turn: a.turn,
-                arg: a.arg,
-                enabled: a.enabled,
-            })
-            .collect();
-        if !items.is_empty() {
-            children.push(ViewNode::Section {
-                title: "Market actions".into(),
-                tag: "accent".into(),
-                children: vec![ViewNode::Menu { items }],
-            });
-        }
-
-        Surface(ViewNode::Section {
-            title: "DreggNet Market — sealed-bid auction".into(),
-            tag: "accent".into(),
-            children,
-        })
+    /// **The per-viewer auction.** The one disclosure a sealed auction owes a bidder is THEIR OWN
+    /// SEALED BID — before this, a bidder could not tell from the page whether they had bid at all,
+    /// let alone what for, because the surface was viewer-invariant and showed only a count. It
+    /// reads `session.bids` for the entry whose `who` IS the viewer and nothing else, so a
+    /// spectator and a rival bidder are byte-identical to the public render until the clear.
+    fn render_for(&self, session: &MarketSession, viewer: &DreggIdentity) -> Surface {
+        self.render_as(session, Some(viewer))
     }
 
     fn price(&self, input: &Action) -> RunCost {
@@ -1242,6 +1466,48 @@ impl DarkBazaarOffering {
     /// register this offering under.
     pub const fn key(&self) -> &'static str {
         Self::KEY
+    }
+
+    /// The CRAWL disclosure block plus the market surface nested whole, painted for `viewer`
+    /// (`None` = the public render). One body behind both `render` and `render_for`, so the
+    /// bazaar's honest-grade preamble and the market's per-viewer fog can never disagree.
+    fn render_bazaar(
+        &self,
+        session: &DarkBazaarSession,
+        viewer: Option<&DreggIdentity>,
+    ) -> Surface {
+        let market_surface = match viewer {
+            Some(v) => self.market.render_as(&session.market, Some(v)).0,
+            None => self.market.render_as(&session.market, None).0,
+        };
+        let mut children = vec![ViewNode::Section {
+            title: format!("Offering key: {}", Self::KEY),
+            tag: "muted".into(),
+            children: vec![
+                ViewNode::Text(DARK_BAZAAR_CRAWL_DISCLOSURE.into()),
+                ViewNode::Text(
+                    "Real now: sealed commit/reveal executor turns and conservation-checked value settlement.".into(),
+                ),
+                ViewNode::Text(DARK_BAZAAR_TIE_POLICY.into()),
+            ],
+        }];
+        #[cfg(feature = "fhegg-settlement")]
+        if self.fhegg_verifier.is_some() {
+            children.push(ViewNode::Section {
+                title: "Shielded settlement operation".into(),
+                tag: "accent".into(),
+                children: vec![
+                    ViewNode::Text(fhegg_transport::FHEGG_SETTLEMENT_OPERATION.to_string()),
+                    ViewNode::Text(fhegg_transport::FHEGG_SETTLEMENT_DISCLOSURE.to_string()),
+                ],
+            });
+        }
+        children.push(market_surface);
+        Surface(ViewNode::Section {
+            title: "The Dark Bazaar — playable CRAWL".into(),
+            tag: "accent".into(),
+            children,
+        })
     }
 }
 
@@ -1371,37 +1637,16 @@ impl Offering for DarkBazaarOffering {
     }
 
     fn render(&self, session: &Self::Session) -> Surface {
-        let market_surface = self.market.render(&session.market).0;
-        let mut children = vec![
-            ViewNode::Section {
-                title: format!("Offering key: {}", Self::KEY),
-                tag: "muted".into(),
-                children: vec![
-                    ViewNode::Text(DARK_BAZAAR_CRAWL_DISCLOSURE.into()),
-                    ViewNode::Text(
-                        "Real now: sealed commit/reveal executor turns and conservation-checked value settlement.".into(),
-                    ),
-                    ViewNode::Text(DARK_BAZAAR_TIE_POLICY.into()),
-                ],
-            },
-        ];
-        #[cfg(feature = "fhegg-settlement")]
-        if self.fhegg_verifier.is_some() {
-            children.push(ViewNode::Section {
-                title: "Shielded settlement operation".into(),
-                tag: "accent".into(),
-                children: vec![
-                    ViewNode::Text(fhegg_transport::FHEGG_SETTLEMENT_OPERATION.to_string()),
-                    ViewNode::Text(fhegg_transport::FHEGG_SETTLEMENT_DISCLOSURE.to_string()),
-                ],
-            });
-        }
-        children.push(market_surface);
-        Surface(ViewNode::Section {
-            title: "The Dark Bazaar — playable CRAWL".into(),
-            tag: "accent".into(),
-            children,
-        })
+        self.render_bazaar(session, None)
+    }
+
+    /// The Dark Bazaar inherits the market's per-viewer disclosure: a bidder sees THEIR OWN sealed
+    /// bid here too. Without this override the bazaar took `Offering::render_for`'s default (fall
+    /// back to `render`) and nested the market's PUBLIC surface, so the same bidder was legible to
+    /// themselves on `/offerings/market/…` and blind on `/offerings/bazaar/…` — one hidden-info
+    /// policy expressed twice, which is how the two drift.
+    fn render_for(&self, session: &Self::Session, viewer: &DreggIdentity) -> Surface {
+        self.render_bazaar(session, Some(viewer))
     }
 
     fn binary_operations(&self, _session: &Self::Session) -> Vec<BinaryOperationDescriptor> {

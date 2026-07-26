@@ -205,18 +205,32 @@ async fn a_market_list_bid_settle_plays_through_the_catalog() {
     // ⚑ `contains("committed")` USED TO BE SATISFIED BY THE REFUSAL. The anti-ghost banner reads
     // "Refused: … (nothing committed — anti-ghost)", so the substring matched a settle that landed
     // NOTHING. Match the landed-receipt banner exactly, and say out loud that a refusal is not it.
+    //
+    // ⚑ AND THE OTHER WAY ROUND: `!contains("Refused")` was ALSO wrong. The page ships a
+    // client-side error handler whose SOURCE contains `status.textContent="Refused: "+err.message`,
+    // so once the settle actually started landing (2026-07-25 — nothing registered the verified
+    // settlement gate until `dreggnet_web::install_verified_settlement_gate`), the negative
+    // assertion tripped on the page's own JavaScript. A refusal is a rendered NOTICE ELEMENT; key
+    // on that exact markup, which no stylesheet or script can spell by accident.
     let (_s, bs) = post(&app, &act, "settle", 0, "alice").await;
     assert!(
-        !bs.contains("Refused"),
+        !bs.contains("class=\"notice refused\""),
         "the settle must LAND, not refuse: {bs}"
     );
     assert!(
-        bs.contains("Turn committed") || bs.contains("objective"),
-        "the auction cleared: {bs}"
+        bs.contains("Turn committed"),
+        "the auction cleared with a landed receipt: {bs}"
     );
     assert!(
-        bs.contains("Cleared") || bs.contains("winner"),
+        bs.contains("Cleared") && bs.contains("winner"),
         "the winner is shown: {bs}"
+    );
+    // The conservation verdict, pinned WHITESPACE-INSENSITIVELY. The claim (`Σδ = 0: true`) is what
+    // matters; its exact spacing is prose that the surface's copy has already re-flowed once.
+    let squashed: String = bs.chars().filter(|c| !c.is_whitespace()).collect();
+    assert!(
+        squashed.contains("Σδ=0:true"),
+        "the settlement's value conservation is shown as CHECKED: {bs}"
     );
 
     // The cleared chain re-verifies (winner is the real high bid, conservation holds).

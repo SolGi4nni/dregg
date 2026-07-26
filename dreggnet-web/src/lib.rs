@@ -148,9 +148,17 @@ pub mod tg_link_page;
 /// table + two unguessable seat links), `GET /tug/watch/{id}` (spectate with both hands fogged).
 /// The tug had none of this: every visitor was pointed at ONE global table. See [`tug_web`].
 pub mod tug_web;
+/// THE VERIFIED SETTLEMENT GATE — install `dregg-exec-lean`'s Lean-backed gate into the four
+/// FFI-free coordination seams, and PROVE it decides, once at startup. Without this the sealed-bid
+/// market's `settle` refuses (`no verified gate registered`) after the listing and the bids have
+/// already landed. See [`verified_settlement`].
+pub mod verified_settlement;
 mod web_identity_http;
 
 pub use descent::{DescentState, descent_router, run_share_path};
+pub use verified_settlement::{
+    install_failure_advice, install_verified_settlement_gate, verified_settlement_available,
+};
 
 use std::collections::HashMap;
 use std::sync::mpsc::{SyncSender, sync_channel};
@@ -1140,6 +1148,14 @@ main.af-table::before{content:"";position:fixed;inset:0;z-index:-1;pointer-event
 .af-board .coordgrid .cell.tag-sealed{background:#3d3020;box-shadow:inset 0 0 0 1px var(--br-lit),0 0 18px -4px rgba(216,180,126,.85);z-index:3}
 .af-board .coordgrid .cell.tag-sealed::after{content:"";position:absolute;inset:20%;border:2px solid var(--br-pale);border-radius:50%;opacity:.9;pointer-events:none}
 .af-board .coordgrid .cell.tag-accent{background:radial-gradient(circle at 50% 45%,#443e66,#0d0b16 74%);box-shadow:inset 0 0 0 1px var(--vio),0 0 22px -3px rgba(168,159,216,.85);z-index:4}
+/* ⚑ THE MARK — a square a CLASH burned. Deliberately the ONLY dead-looking thing on the board and
+   the LAST role in this block, so it wins over the goal inlay, the sealed ring and the automaton's
+   glow: nothing else on this board means "you cannot use this". No brass, no violet, no glow — a
+   flat ash square under a diagonal hatch, with a hard grey cross on it. `z-index` above them all,
+   `cursor:default` because there is genuinely nothing to click (the offering hands it no
+   affordance, so it renders as a plain span anyway). */
+.af-board .coordgrid .cell.tag-mark{background:repeating-linear-gradient(135deg,#191721 0 3px,#0d0c12 3px 6px);box-shadow:inset 0 0 0 1px rgba(120,116,132,.5);cursor:default;z-index:6}
+.af-board .coordgrid .cell.tag-mark .af-x{color:#8b8798;width:74%;height:74%;filter:none;opacity:.95}
 .af-board .coordgrid form.cell:hover{border:0;color:var(--n-ink);background:#39345a;transform:none;box-shadow:inset 0 0 0 2px var(--vio);z-index:5}
 .af-board .coordgrid form.cell:active{transform:none}
 /* THE KEY — the three shapes, named, under the board. A stranger never has to be told twice. */
@@ -1151,6 +1167,68 @@ main.af-table::before{content:"";position:fixed;inset:0;z-index:-1;pointer-event
 .af-key .k-tgt{border-radius:50%;background:var(--vio);box-shadow:0 0 7px var(--vio)}
 .af-key .k-sel{box-shadow:inset 0 0 0 2px var(--br-lit)}
 .af-key .k-seal{border-radius:50%;border:2px solid var(--br-pale);background:rgba(216,180,126,.2)}
+.af-key .k-mark{background:repeating-linear-gradient(135deg,#191721 0 2px,#0d0c12 2px 4px);box-shadow:inset 0 0 0 1px rgba(120,116,132,.55);position:relative}
+.af-key .k-mark::after{content:"×";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:.62rem;font-weight:800;line-height:1;color:#8b8798}
+/* ═══ THE SHARED BASELINE — the Night Record for EVERY offering ═══════════ */
+/* Everything above this line dressed ONE table. The rules below are game-agnostic: they read a
+   node's own shape (a plaque's first paragraph, a grid's column count, a glyph's length) and never
+   a game's name, so a surface that has never been looked at still lands in the brand's language. */
+/* THE DIRECTIVE. A plaque tagged `accent` is a STATUS plaque, and by the convention automatafl set
+   its FIRST paragraph is the one sentence saying what to do right now. Promoted so the eye lands
+   there before the pills: serif, lead-sized, on a violet rule. */
+.af-table .deos-section.tag-accent>.prose:first-of-type{font-family:var(--n-serif);font-size:var(--t-lead);line-height:1.5;color:var(--n-ink);margin:.5rem 0 .7rem;padding-left:.75rem;border-left:2px solid var(--vio)}
+/* THE WELL — the night surround for every NON-automatafl `CoordGrid` (the descent shaft, the tug
+   hand, the next game's board). Dimension-free: `--nr-n` is the real column count, from the data. */
+.nr-well{position:relative;width:100%;max-width:33rem;margin:.9rem auto .45rem;padding:.7rem .78rem;border:1px solid rgba(176,141,87,.3);border-radius:0 14px 14px 14px;background:radial-gradient(125% 105% at 50% -12%,#17131f,#08070c 72%);box-shadow:inset 0 1px 0 rgba(237,220,180,.05),0 26px 64px -34px #000}
+.af-table .nr-well>.coordgrid{margin:0;padding:0;max-width:none;gap:1px;border:1px solid var(--br-line);border-radius:0;background:rgba(176,141,87,.32);box-shadow:inset 0 0 60px -18px #000}
+.af-table .nr-well .cell{border:0;border-radius:0;background:#141220;color:var(--n-ink);box-shadow:none;font-family:var(--mono);transition:background .13s,box-shadow .13s}
+.af-table .nr-well :where(.coordgrid.checkered) .cell:nth-child(2n){background-image:none;background:#191628}
+.af-table .nr-well .cell.highlighted{color:var(--n-ink);box-shadow:inset 0 0 0 1px rgba(168,159,216,.45)}
+.af-table .nr-well .cell.tag-good{color:var(--vio-lit);background:#262240;box-shadow:inset 0 0 0 1px rgba(168,159,216,.45)}
+.af-table .nr-well .cell.tag-accent{color:var(--br-pale);background:radial-gradient(circle at 50% 45%,#3b3020,#0d0b16 76%);box-shadow:inset 0 0 0 1px var(--br-lit),0 0 18px -6px rgba(216,180,126,.7)}
+.af-table .nr-well .cell.tag-warn{color:var(--br-pale);background:#33291c;box-shadow:inset 0 0 0 1px var(--br-lit)}
+.af-table .nr-well .cell.tag-muted{color:rgba(164,159,180,.55);background:#100e18}
+.af-table .nr-well .cell.goal{border:0;background:linear-gradient(180deg,#2b2317,#1a1610);box-shadow:inset 0 0 0 1px rgba(176,141,87,.42)}
+.af-table .nr-well form.cell:hover{color:#fff8ea;background:#39345a;transform:none;box-shadow:inset 0 0 0 2px var(--vio);z-index:2}
+.af-table .nr-well form.cell:active{transform:none}
+/* GLYPH SHAPE, chosen from the glyph's own length — a SYMBOL reads large and centred, a LABEL
+   (`#17`, `L3`, `v2`) reads as a small mono chip instead of overflowing its square, and a VACANT
+   square recedes to a hairline dot rather than printing a full-strength `·`. */
+.af-table .nr-well .cell.nr-sym{font-size:1.25rem;font-weight:700}
+.af-table .nr-well .cell.nr-sym2{font-size:.95rem;letter-spacing:-.02em}
+.af-table .nr-well .cell.nr-label{font-size:.62rem;font-weight:700;letter-spacing:.02em;padding:.1rem;text-align:center;line-height:1.15;overflow-wrap:anywhere}
+.af-table .nr-well .cell.nr-label button{padding:.1rem;line-height:1.15;white-space:normal}
+.af-table .nr-well .cell.nr-void{color:transparent;position:relative}
+.af-table .nr-well .cell.nr-void::after{content:"";position:absolute;width:3px;height:3px;border-radius:50%;background:rgba(164,159,180,.22)}
+.af-table .nr-well .cell.nr-void.highlighted::after{width:22%;height:22%;background:var(--vio);box-shadow:0 0 8px 1px rgba(168,159,216,.55)}
+/* TABLES / LISTS in the record voice — a lane table is the scoreboard, not a debug dump. */
+.af-table .deos-table{border:1px solid var(--br-faint);border-radius:0 10px 10px 10px;background:rgba(7,6,11,.5)}
+/* ⚑ A row inside a TABLE or a LIST is a record, and its cells belong SIDE BY SIDE. The plaque rule
+   above (`.deos-row>.prose{flex:1 1 100%}`) exists so a long sentence beside a pill wraps to its own
+   line in a status plaque — but applied to a scoreboard it broke every lane into four stacked lines
+   (caught by screenshotting the real markup: the tug's seven lanes rendered as a 28-line wall).
+   Inside a table or list the cells share the row again, and the pills stay their natural width. */
+.af-table :is(.deos-table,.deos-list)>.deos-row>.prose{flex:1 1 auto;min-width:8rem}
+.af-table :is(.deos-table,.deos-list)>.deos-row{padding:.42rem .75rem;gap:.55rem}
+.af-table :is(.deos-table,.deos-list)>.deos-row>.pill{flex:0 0 auto}
+/* A TABLE row is a record — its columns hold their line. A LIST row is a group of chips and may
+   wrap (the tug's per-seat row is a seat pill, four action pills and a standing sentence). */
+.af-table .deos-list>.deos-row{flex-wrap:wrap}
+.af-table .deos-table>.deos-row{flex-wrap:nowrap;border-bottom:1px solid var(--br-faint)}
+.af-table .deos-table>.deos-row:hover{background:rgba(176,141,87,.06)}
+.af-table .deos-row.header,.af-table .deos-row.header:hover{background:rgba(7,6,11,.72);color:rgba(237,220,180,.55);font-family:var(--mono)}
+.af-table .deos-list{border:1px solid var(--br-faint);border-radius:0 10px 10px 10px;background:rgba(7,6,11,.5)}
+.af-table .icon{font-family:var(--mono)}
+.af-table .icon.tag-good{color:var(--vio-lit)}
+.af-table .icon.tag-accent{color:var(--br-lit)}
+.af-table .icon.tag-muted{color:rgba(164,159,180,.35)}
+/* METERS — a `Progress` is a brass gauge in a night channel, not a blue browser bar. Every
+   surface that emits one (the descent light clock, a standing bar, a quorum) gets this for free. */
+.af-table .progress-label{color:rgba(237,220,180,.5);font-family:var(--mono)}
+.af-table .progress-track{border:1px solid var(--br-faint);border-radius:0;background:rgba(7,6,11,.72);box-shadow:inset 0 1px 3px rgba(0,0,0,.6)}
+.af-table .progress-fill{border-radius:0;background:linear-gradient(90deg,rgba(176,141,87,.55),var(--br-lit));box-shadow:0 0 12px -4px var(--br-lit)}
+.af-table .progress-value{color:var(--n-ink)}
+.af-table .gauge{font-family:var(--mono);font-size:var(--t-micro);letter-spacing:.06em;color:rgba(237,220,180,.6)}
 /* PILLS + CONTROLS in the record voice — mono, uppercase, shaped. */
 .af-table .pill{font-family:var(--mono);font-size:var(--t-micro);letter-spacing:.07em;text-transform:uppercase;border-radius:0 7px 7px 7px;border:1px solid var(--br-faint);background:rgba(11,10,16,.55);color:var(--n-soft)}
 .af-table .pill.tag-good{color:var(--vio-lit);border-color:rgba(168,159,216,.5);background:rgba(168,159,216,.14)}
@@ -1171,6 +1249,11 @@ main.af-table::before{content:"";position:fixed;inset:0;z-index:-1;pointer-event
 .hero-art .legend .k-goal{border:1px solid var(--br-lit);border-radius:0;background:rgba(176,141,87,.28)}
 /* THE GAMETABLE — spwashi's overhead table (the games hero), scrimmed so the plaques stay legible. */
 .af-hero{position:relative;overflow:hidden;border:1px solid var(--br-faint);border-left:3px solid var(--br);border-radius:0 16px 16px 16px;margin:var(--s5) 0 var(--s4);padding:clamp(1.6rem,5vw,3rem) clamp(1.1rem,4vw,2.2rem);background:linear-gradient(105deg,rgba(7,6,11,.94) 0%,rgba(7,6,11,.86) 42%,rgba(7,6,11,.34) 78%,rgba(7,6,11,.5) 100%),url("/automatafl/art/gametable.jpg") center/cover no-repeat;background-color:var(--n1)}
+/* THE EXCHANGE — spwashi's `exchange` (two pairs of hands on a strung brass balance, a violet knot
+   pulled taut between them) is the tug's own painting: the game IS two houses pulling at shared
+   lanes. Same shaped plaque, same left-heavy scrim, its own hero class so neither door borrows the
+   other's art. The hands sit right-of-centre, so the scrim is held darker on the left. */
+.af-hero.hero-tug{background:linear-gradient(105deg,rgba(7,6,11,.95) 0%,rgba(7,6,11,.88) 40%,rgba(7,6,11,.36) 76%,rgba(7,6,11,.52) 100%),url("/tug/art/exchange.jpg") center/cover no-repeat;background-color:var(--n1)}
 .af-hero>*{position:relative;max-width:34ch}
 .af-hero h1{font-family:var(--n-serif);font-size:var(--t-display);font-weight:600;letter-spacing:-.01em;margin:0 0 .6rem;color:var(--br-pale)}
 .af-hero .deck{color:var(--n-ink)}
@@ -1262,6 +1345,9 @@ hr{border:0;border-top:1px solid var(--line-soft);margin:var(--s4) 0}
 /* per cell (484px) cannot fit a 360px viewport: the cell floor is sized to keep the WHOLE board */
 /* visible without horizontal scroll, and the per-square POST form stays the full cell. */
 .coordgrid{gap:.3rem;padding:.45rem;max-width:100%}
+.nr-well{padding:.5rem .55rem;max-width:100%}
+.af-table .nr-well>.coordgrid{gap:1px;padding:0}
+.af-table .nr-well .cell{min-width:0}
 .af-board{--af-gut:.9rem;padding:.55rem .6rem .5rem;max-width:100%}
 .af-board>.coordgrid{gap:1px;padding:0}
 .af-board .coordgrid .cell{min-width:0}
@@ -2408,6 +2494,18 @@ pub fn register_non_game_offerings(host: &mut OfferingHost) {
 /// **Build the multi-offering catalog router** over a shared [`CatalogState`]. Additive to
 /// [`router`] — mount both on one axum app (or serve the catalog alone).
 pub fn catalog_router(state: Arc<CatalogState>) -> Router {
+    // THE MARKET CANNOT SETTLE WITHOUT THIS. `/offerings/market/...` and the Dark Bazaar fold their
+    // award ring through `dregg_intent::verified_settle::settle_ring_verified`, which fail-closes
+    // when no verified gate is registered — so before 2026-07-25 a player landed a listing and two
+    // sealed bids and was then refused at the settle. Install once, here, where the offering routes
+    // are mounted (idempotent + cached; the server bin ALSO calls it and refuses to boot on
+    // failure). A library embedder that ignores the log gets a loud line rather than a silent hole.
+    if let Err(reason) = verified_settlement::install_verified_settlement_gate() {
+        tracing::error!(
+            advice = %verified_settlement::install_failure_advice(&reason),
+            "verified settlement gate NOT installed — market settle will refuse"
+        );
+    }
     Router::new()
         .route("/offerings", get(get_catalog))
         .route("/offerings/{key}/session/{id}", get(get_offering_session))
@@ -3293,14 +3391,12 @@ fn wants_fragment(headers: &HeaderMap) -> bool {
 pub fn render_catalog_forms(node: &ViewNode, key: &str, id: &str) -> String {
     let mut out = String::new();
     catalog_node(node, key, id, &mut out);
-    if key == automatafl_web::KEY {
-        // **THE NIGHT RECORD SKIN, SCOPED.** Every other offering keeps the generic catalog look;
-        // the automatafl table is the one surface dressed in the brand's own language (night glass,
-        // brass hairlines, violet for the machine). The wrapper is INSIDE the fragment, so it
-        // survives the realtime swap — the live board is skinned exactly like the served one.
-        return format!("<div class=\"af-table\">{out}</div>");
-    }
-    out
+    // **THE NIGHT RECORD SKIN — for EVERY offering.** It shipped scoped to `automatafl` alongside
+    // that board's painter; the skin itself is game-agnostic (plaques, pills, controls, night
+    // ground) and holding it on one key is exactly what left every other surface reading as a debug
+    // dump. The wrapper is INSIDE the fragment, so it survives the realtime swap — a live surface is
+    // skinned exactly like the served one.
+    format!("<div class=\"af-table\">{out}</div>")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────
@@ -3343,6 +3439,9 @@ const AF_SPRITES: &str = "<svg class=\"af-defs\" width=\"0\" height=\"0\" aria-h
      <g id=\"af-goal\">\
      <path d=\"M3 9V3h6M23 3h6v6M29 23v6h-6M9 29H3v-6\" fill=\"none\" stroke=\"currentColor\" \
      stroke-width=\"2.2\" stroke-linecap=\"square\"/></g>\
+     <g id=\"af-dead\">\
+     <path d=\"M7 7 25 25M25 7 7 25\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3.4\" \
+     stroke-linecap=\"square\"/></g>\
      </defs></svg>";
 
 /// The piece a board glyph names, as `(sprite id, class, spoken name)`. The glyph vocabulary is the
@@ -3381,10 +3480,14 @@ fn af_goal_owner(c: (i32, i32), glyph: &str) -> Option<char> {
 /// grid — so a click is the same real POST it always was.
 fn af_square(cell: &CoordCell, x: usize, y: usize, key: &str, id: &str) -> String {
     let piece = af_piece(&cell.glyph);
+    // ⚑ A MARKED SQUARE — a coordinate a CLASH burned for the rest of the turn (the offering's
+    // `mark` tag, and the `×` glyph the text frontends paint). It is not a role the square can
+    // share: it means "unusable", so it outranks the goal inlay, the piece art and every highlight.
+    let is_dead = cell.tag == "mark";
     // EXACTLY the generic renderer's goal predicate: the offering marks a VACANT corner with the
     // owner's lowercase letter and an OCCUPIED one with the `goal` tag; either signal is the
     // objective. Read off the DATA, so a board of any size marks its own goals.
-    let is_goal = cell.tag == "goal" || cell.glyph == "a" || cell.glyph == "b";
+    let is_goal = !is_dead && (cell.tag == "goal" || cell.glyph == "a" || cell.glyph == "b");
     let owner = if is_goal {
         af_goal_owner((x as i32, y as i32), &cell.glyph)
     } else {
@@ -3419,22 +3522,39 @@ fn af_square(cell: &CoordCell, x: usize, y: usize, key: &str, id: &str) -> Strin
             ));
         }
     }
-    match piece {
-        Some((sprite, pcls, _)) => art.push_str(&format!(
-            "<svg class=\"af-p {pcls}\" viewBox=\"0 0 32 32\" aria-hidden=\"true\">\
-             <use href=\"#{sprite}\"/></svg>"
-        )),
-        None => art.push_str("<span class=\"af-dot\" aria-hidden=\"true\"></span>"),
+    if is_dead {
+        // The cross IS the square's art. The offering replaced the glyph with `×` (so Discord and
+        // Telegram see the mark too), which means the renderer cannot know which piece is standing
+        // there — the clash plaque names it in prose instead, and here the square just reads dead.
+        art.push_str(
+            "<svg class=\"af-p af-x\" viewBox=\"0 0 32 32\" aria-hidden=\"true\">\
+             <use href=\"#af-dead\"/></svg>",
+        );
+    } else {
+        match piece {
+            Some((sprite, pcls, _)) => art.push_str(&format!(
+                "<svg class=\"af-p {pcls}\" viewBox=\"0 0 32 32\" aria-hidden=\"true\">\
+                 <use href=\"#{sprite}\"/></svg>"
+            )),
+            None => art.push_str("<span class=\"af-dot\" aria-hidden=\"true\"></span>"),
+        }
     }
 
     // THE SPOKEN SQUARE. The glyph alone ("·", "R") tells a screen-reader user nothing; the piece,
     // its coordinates and its role this turn make the board playable by keyboard in earnest.
     let what = match piece {
+        // A dead square's occupant is not in the data any more (the glyph is the cross), so the
+        // spoken name says what the square IS rather than guessing what is on it.
+        _ if is_dead => "marked square",
         Some((_, _, name)) => name,
         None if is_goal => "empty goal corner",
         None => "empty",
     };
     let role = match cell.tag.as_str() {
+        // ⚑ Spoken FIRST and spoken in full: a screen-reader user tabbing the board must be told
+        // this square is out of play, and told why, or the only signal they get is a button that
+        // vanished.
+        "mark" => ", MARKED by a clash — dead for the rest of this turn, at either end of a move",
         "warn" => ", picked up",
         "sealed" => ", where you sealed your move",
         "good" => ", a legal move",
@@ -3532,7 +3652,90 @@ const AF_KEY: &str = "<div class=\"af-key\" aria-hidden=\"true\">\
      <span><i class=\"k-sel\"></i>your piece</span>\
      <span><i class=\"k-tgt\"></i>legal move</span>\
      <span><i class=\"k-seal\"></i>your sealed move</span>\
+     <span><i class=\"k-mark\"></i>marked by a clash · dead this turn</span>\
      </div>";
+
+/// ⚑ **A MARKED SQUARE PAINTS AS OBVIOUSLY DEAD** — the conflict re-submission loop's visual half.
+///
+/// `dregg_automatafl`'s surface tags a coordinate a clash burned with `mark` and swaps its glyph for
+/// `×` (so the Discord / Telegram text grids, which read ONLY `glyph` and `highlight`, see it too).
+/// This pins the three things the browser must then do with that datum, and the negatives, because a
+/// mark that paints like an ordinary square is exactly the failure the plaque exists to prevent: a
+/// player who cannot see the square is dead keeps trying to use it.
+#[cfg(test)]
+mod automatafl_mark_paint {
+    use super::{AF_KEY, af_square};
+    use deos_view::CoordCell;
+
+    fn cell(glyph: &str, tag: &str, turn: &str, highlight: bool) -> CoordCell {
+        CoordCell {
+            glyph: glyph.to_string(),
+            tag: tag.to_string(),
+            turn: turn.to_string(),
+            arg: 0,
+            highlight,
+        }
+    }
+
+    #[test]
+    fn a_marked_square_is_painted_dead_and_says_so_to_a_screen_reader() {
+        let dead = af_square(&cell("×", "mark", "", false), 3, 1, "automatafl", "t1");
+        assert!(
+            dead.contains("tag-mark"),
+            "the dead class is on the square: {dead}"
+        );
+        assert!(
+            dead.contains("#af-dead"),
+            "and the cross sprite is its art: {dead}"
+        );
+        assert!(
+            dead.contains("MARKED by a clash"),
+            "and a screen reader is TOLD, in full: {dead}"
+        );
+        // NEGATIVES: no button (the offering hands a marked square no affordance), no goal inlay,
+        // no piece art, no highlight.
+        assert!(
+            !dead.contains("<button") && !dead.contains("<form"),
+            "a dead square is never clickable: {dead}"
+        );
+        assert!(
+            !dead.contains("#af-goal"),
+            "no goal inlay on a dead square: {dead}"
+        );
+        assert!(
+            !dead.contains("#af-att") && !dead.contains("#af-rep") && !dead.contains("#af-auto"),
+            "no piece art on a dead square: {dead}"
+        );
+        assert!(!dead.contains("highlighted"), "dead is not live: {dead}");
+        // The mark WINS over a goal corner: the four stock corners are goals, and a clash can burn
+        // one. Whichever tag the offering sends, `mark` must not degrade into `goal`.
+        let dead_corner = af_square(&cell("×", "mark", "", false), 0, 0, "automatafl", "t1");
+        assert!(dead_corner.contains("tag-mark"));
+        assert!(
+            !dead_corner.contains("#af-goal") && !dead_corner.contains("class=\"af-seat\""),
+            "a burned goal corner reads DEAD, not as an objective: {dead_corner}"
+        );
+        // And the legend names it, so a stranger is never left to infer what × means.
+        assert!(AF_KEY.contains("marked by a clash"));
+    }
+
+    /// The CONTROL: an ordinary occupied square is untouched by any of the above — the mark
+    /// treatment is keyed off the `mark` tag alone and cannot bleed onto a live square.
+    #[test]
+    fn an_unmarked_square_is_unaffected() {
+        let live = af_square(&cell("A", "good", "commit", true), 3, 3, "automatafl", "t1");
+        assert!(
+            live.contains("#af-att"),
+            "the attractor still paints: {live}"
+        );
+        assert!(live.contains("<button"), "and is still clickable: {live}");
+        assert!(
+            !live.contains("tag-mark") && !live.contains("#af-dead"),
+            "{live}"
+        );
+        assert!(!live.contains("MARKED"), "{live}");
+    }
+}
 
 fn catalog_node(node: &ViewNode, key: &str, id: &str, out: &mut String) {
     match node {
@@ -3594,6 +3797,16 @@ fn catalog_node(node: &ViewNode, key: &str, id: &str, out: &mut String) {
             // stripe). The renderer knows the real column count, so it decides here and the
             // stylesheet stays free of board sizes — a 5, an 11 or a 13 all render correctly.
             let checkered = if cols_n % 2 == 1 { " checkered" } else { "" };
+            // **THE WELL — the shared baseline lift.** Every `CoordGrid` that is not automatafl's
+            // (the descent shaft, the tug hand, anything a new game emits) used to sit on the page
+            // floor as a bare grid of glyphs. It is now recessed in the same night well the
+            // automatafl board earned, in a brass surround: the board reads as a BOARD before a
+            // single glyph is read. Zero game knowledge and no dimension is assumed — the well is
+            // handed the real column count as `--nr-n` and sizes itself from the DATA, so a 3-wide
+            // hand and a 9-wide shaft both land.
+            out.push_str(&format!(
+                "<div class=\"nr-well\" style=\"--nr-n:{cols_n}\">"
+            ));
             out.push_str(&format!(
                 "<div class=\"coordgrid{checkered}\" \
                  style=\"grid-template-columns:repeat({cols_n},1fr)\">",
@@ -3618,9 +3831,22 @@ fn catalog_node(node: &ViewNode, key: &str, id: &str, out: &mut String) {
                 } else {
                     ""
                 };
+                // **HOW WIDE IS THE GLYPH** — the other half of why a generic grid read as a debug
+                // dump. `⚑`, `═`, `A` and `·` are SYMBOLS and want to be large and centred; `#17`,
+                // `L3`, `v2` are LABELS and want mono, small, and a chip's contrast, or they overflow
+                // their square into a smear. Nothing here knows a game: the class is chosen from the
+                // glyph's own character count, and a vacant cell (empty / the conventional `·`) is
+                // marked so the stylesheet can recede it instead of printing a dot at full strength.
+                let shape = match cell.glyph.chars().count() {
+                    0 => " nr-void",
+                    1 if cell.glyph == "·" || cell.glyph == "." => " nr-void",
+                    1 => " nr-sym",
+                    2 => " nr-sym nr-sym2",
+                    _ => " nr-label",
+                };
                 if cell.turn.is_empty() {
                     out.push_str(&format!(
-                        "<span class=\"cell{hl}{tag}{goal}\">{glyph}</span>",
+                        "<span class=\"cell{hl}{tag}{goal}{shape}\">{glyph}</span>",
                         glyph = esc(&cell.glyph),
                     ));
                 } else {
@@ -3631,7 +3857,7 @@ fn catalog_node(node: &ViewNode, key: &str, id: &str, out: &mut String) {
                     // earnest, not just focusable. Visually hidden (`.sr-only`).
                     let (row, col) = (i / cols_n + 1, i % cols_n + 1);
                     out.push_str(&format!(
-                        "<form class=\"cell{hl}{tag}{goal}\" method=\"post\" \
+                        "<form class=\"cell{hl}{tag}{goal}{shape}\" method=\"post\" \
                          action=\"/offerings/{key}/session/{id}/act\">\
                          <input type=\"hidden\" name=\"turn\" value=\"{turn}\">\
                          <input type=\"hidden\" name=\"arg\" value=\"{arg}\">\
@@ -3648,7 +3874,7 @@ fn catalog_node(node: &ViewNode, key: &str, id: &str, out: &mut String) {
                     ));
                 }
             }
-            out.push_str("</div>");
+            out.push_str("</div></div>");
         }
         ViewNode::Pill { text, tag, .. } => {
             out.push_str(&format!(
@@ -4184,15 +4410,19 @@ fn offering_page(key: &str, title: &str, id: &SessionId, surface: &str) -> Strin
          data-result-kind=\"surface-and-receipt\" data-events=\"{events}\">{surface}</div>\
          </main>",
         crumb = crumb(name, id),
-        // THE NIGHT SKIN, at PAGE level for automatafl. The swapped fragment carries `.af-table`
-        // too (so the live board is skinned), but the full-viewport night ground must hang off an
-        // element OUTSIDE `#live-surface`: that region animates a `transform` on every swap, and a
-        // transformed ancestor would trap a `position:fixed` backdrop inside it for the duration.
-        skin = if key == automatafl_web::KEY {
-            " af-table"
-        } else {
-            ""
-        },
+        // THE NIGHT SKIN, at PAGE level, for EVERY offering — the shared lift. It arrived scoped to
+        // `key == automatafl_web::KEY` because the board painter landed with it, but the skin knows
+        // nothing about automatafl: it is the plaque, the pill, the control and the night ground —
+        // the Night Record, which is the product's ONE visual language (`dregg-site`'s `site.css`,
+        // the poster theme). Keeping it on one key is what left twenty-two surfaces reading as a
+        // debug dump, so the condition is gone. The class name stays `.af-table` because it is the
+        // hook ~60 rules below already select on, and renaming it is churn with no reader upside.
+        //
+        // The full-viewport night ground must hang off an element OUTSIDE `#live-surface`: that
+        // region animates a `transform` on every swap, and a transformed ancestor would trap a
+        // `position:fixed` backdrop inside it for the duration. The swapped fragment carries
+        // `.af-table` too, so a board inside the live region is skinned either way.
+        skin = " af-table",
         name = esc(name),
         tagline = tagline_html,
         session_rail = game_session::session_rail(key, &id.0).unwrap_or_default(),
@@ -6165,9 +6395,13 @@ mod bundle_measurement {
         );
         println!("  etag          {etag}");
         println!("  cache-control {cache}");
+        // ⚑ Read the status BEFORE `into_body` consumes the response. Asserting on `repeat.status()`
+        // afterwards was `E0382: borrow of moved value`, so this whole `#[cfg(test)]` module never
+        // compiled — `cargo test -p dreggnet-web --lib` failed at the build and every unit test in
+        // `lib.rs` was dark, not passing.
+        let revisit = repeat.status();
         println!(
-            "  revisit       {} (body {} B)\n",
-            repeat.status(),
+            "  revisit       {revisit} (body {} B)\n",
             axum::body::to_bytes(repeat.into_body(), usize::MAX)
                 .await
                 .unwrap()
@@ -6178,6 +6412,6 @@ mod bundle_measurement {
             compressed * 4 < plain,
             "the bundle must compress by well over 4x"
         );
-        assert_eq!(repeat.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(revisit, StatusCode::NOT_MODIFIED);
     }
 }

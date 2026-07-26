@@ -8232,6 +8232,8 @@ dependencies = [
  "deos-view",
  "dregg-automatafl",
  "dregg-circuit-prove",
+ "dregg-exec-lean",
+ "dregg-intent",
  "dregg-multiway-tug",
  "dregg-node-target",
  "dregg-stream-ingest",

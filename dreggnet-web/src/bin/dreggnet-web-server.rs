@@ -99,6 +99,27 @@ async fn main() {
         }
     };
 
+    // THE VERIFIED SETTLEMENT GATE — installed and PROVED before a listener exists.
+    //
+    // The sealed-bid market and the Dark Bazaar settle through the fail-closed verified ring fold;
+    // with no gate registered they refuse. Until 2026-07-25 nothing in this binary registered one,
+    // so the Bazaar's list → bid → bid → SETTLE ended in a refusal at the last step — the failure
+    // discovered itself at a player's third click. It discovers itself HERE now: install, run the
+    // two-polarity probe (a funded leg must commit, an under-funded leg must be refused), and
+    // REFUSE TO BOOT if the verified executor cannot decide. A server that cannot settle must not
+    // serve a market that offers to.
+    if let Err(reason) = dreggnet_web::install_verified_settlement_gate() {
+        tracing::error!(
+            advice = %dreggnet_web::install_failure_advice(&reason),
+            "REFUSING TO BOOT: the verified settlement gate is not installed"
+        );
+        std::process::exit(2);
+    }
+    tracing::info!(
+        "verified settlement gate installed and probed — the market settles through the linked \
+         verified executor"
+    );
+
     // The production bundle is allowed to leave an operation deliberately
     // unconfigured, but never to boot healthy after one half of a quorum/root
     // pair or invalid protected key material was supplied. This validates the

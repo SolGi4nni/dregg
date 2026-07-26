@@ -110,6 +110,23 @@ dreggnet-audit = { path = "../dreggnet-audit" }
 # — the same offerings the Discord bot's generic adapter serves, now on the web surface.
 dreggnet-council = { path = "../dreggnet-council" }
 dreggnet-market = { path = "../dreggnet-market" }
+# THE VERIFIED SETTLEMENT GATE, and the seam it is installed into.
+#
+# A market settle folds its award ring through `dregg_intent::verified_settle::settle_ring_verified`,
+# which is FAIL-CLOSED: with no `IntentVerifiedGate` registered it REFUSES rather than let an
+# unverified in-process Rust fold decide a settlement. Nothing here ever registered one, so
+# `/offerings/market/...` could list + bid + bid and then die on the settle
+# ("verified-executor FFI unavailable: no verified gate registered"). `dregg-exec-lean` is the ONE
+# crate that implements the four FFI-free coordination seams over `dregg-lean-ffi`, and its
+# `register_distributed_gates()` is what a native node calls at startup.
+#
+# ⚑ THIS ADDS NO COMPILATION AND NO LINK WEIGHT. Both crates are ALREADY in this crate's build
+# graph: `dregg-exec-lean` via `spween-dregg`/`dreggnet-telegram` → `dregg-sdk` (default feature
+# `exec-lean`), and `dregg-lean-ffi` (the archive itself) unconditionally via `dregg-automatafl` and
+# `dregg-bridge`. Naming them directly only makes an already-linked capability callable — verify with
+# `cargo tree -p dreggnet-web -e features -i dregg-exec-lean`.
+dregg-exec-lean = { path = "../exec-lean" }
+dregg-intent = { path = "../intent" }
 fhegg-fhe = { path = "../fhegg-fhe", optional = true }
 # THE TWO PORTFOLIO GAMES, registered in the web catalog (fully playable in the browser — and,
 # through the SAME deos `Surface`, on Discord / Telegram / WeChat via the do-once path):
