@@ -34,7 +34,7 @@ There is no third input and no file read. The check cannot go stale without lake
 ## What counts as a violation
 A declaration in our modules whose ELABORATED TYPE mentions a refuted floor, in any position,
 directly or through a `Prop`-def whose BODY carries one, or through a STRUCTURE one of whose
-FIELDS carries one. Five surfaces, all gated:
+FIELDS carries one — or a floor spelled INLINE rather than by name. Six surfaces, all gated:
 
   * **binder** — `theorem foo (hCR : Poseidon2SpongeCR hash) : …`. The visible class.
   * **prop-body** — `def descriptorRefines … : Prop := Poseidon2SpongeCR hash → …`. The floor
@@ -52,6 +52,17 @@ FIELDS carries one. Five surfaces, all gated:
     — the gate's prop-body fixpoint covered `Prop`-valued DEFS only and never propagated through
     structure fields, so 32 grandfathered bundles (`CommitSurface` alone reached by 409
     declarations) were a standing bypass anyone could take today.
+  * **inj-spelled** — ⚑ THE SPELLING HOLE, closed 2026-07-25. Every class above keys on a floor
+    NAME; `Poseidon2SpongeCR f` is DEFINITIONALLY `Function.Injective f` at `f : List ℤ → ℤ`, so
+    the identical hypothesis cost a build error under one spelling and nothing under the other.
+    The gate's own log printed the size of the bypass on every run ("N `Function.Injective`-spelled
+    sites ungated (known residual)"). It is a SPLIT, not a blanket gate — a compressing function
+    cannot be injective, a widening or structural one may genuinely be — and the split is DERIVED
+    from in-tree refutations, never from a list. See `Dregg2/Verify/InjSpelling.lean`. The refuted
+    half turned out to be worse than the named floors: ~600 sites bind `Function.Injective D` for a
+    whole-function digest `(CellId → AssetId → ℤ) → ℤ`, whose domain is UNCOUNTABLE, so no such
+    injection exists at ANY parameters (`Dregg2/Verify/InjSpelledFloors.lean`) — a cardinality
+    impossibility rather than an optimistic assumption about Poseidon2.
 
 The prop-body and bundle sets are computed to a JOINT fixpoint: a `Prop` def whose body mentions
 a floor bundle carries a floor, a structure with a floor-carrying-`Prop`-def field carries one,
@@ -92,8 +103,9 @@ hard-errors — never passes quietly — unless (a) the environment holds ≥ 50
 (whole-tree scale), (b) every sentinel floor resolves, (c) every sentinel the tree refutes is
 REDISCOVERED as refuted by the derivation above, (d) the `prop-body` keystone gates are
 rediscovered, (e) every sentinel BUNDLE is rediscovered as a floor-carrying structure, and
-(f) all eight `FloorRatchetSpecimens` classify exactly as documented. It shares (b)-(d) with
-`#floor_census` so the two instruments cannot drift apart.
+(f) all eight `antiFloor` `FloorRatchetSpecimens` classify exactly as documented, and (g) the
+DERIVED refuted inline-injectivity signature set is non-empty and its five specimens split exactly
+as documented. It shares (b)-(d) with `#floor_census` so the two instruments cannot drift apart.
 
 (e) and (f) are the B1/B2/B3/B4 teeth's own self-check. A fixpoint that stops propagating through
 fields, or an exemption predicate that degenerates in either direction, is INVISIBLE from a green
@@ -124,6 +136,8 @@ provably-false hypothesis", not that the surviving ~1650 are sound.
 import Lean
 import Dregg2.Verify.FloorCensus
 import Dregg2.Verify.FloorRatchetBaseline
+import Dregg2.Verify.FloorRatchetBaselineInline
+import Dregg2.Verify.InjSpelling
 
 set_option autoImplicit false
 
@@ -192,10 +206,29 @@ def specimenVerdicts : List (Name × Bool) :=
   , (`Dregg2.Verify.FloorRatchetSpecimens.specB4BinderOrderLaundry, false)
   , (`Dregg2.Verify.FloorRatchetSpecimens.specB4NegOtherFloorReordered, false) ]
 
+/-- The INLINE-INJECTIVITY SELF-TEST specimens and their required verdicts (`true` = must be
+GATED). The split this pins is the one thing about the inline tooth that can go wrong invisibly:
+
+  * degenerate toward GATED and every `Function.Injective` assumption in the tree becomes a build
+    error, including the genuinely true ones (a widening encoding, a coordinate embedding, a
+    parametric `β → ℤ` with `β` a type variable). A gate that noisy gets turned off, and then
+    there is no gate.
+  * degenerate toward EXEMPT and the residual comes back: a refuted floor spelled
+    `Function.Injective f` instead of `Poseidon2SpongeCR f`, for free.
+
+Both read as a green build with a different number, so both are asserted on every run. -/
+def injSpecimenVerdicts : List (Name × Bool) :=
+  [ (`Dregg2.Verify.FloorRatchetSpecimens.specInjSpelledDeployedFloor, true)
+  , (`Dregg2.Verify.FloorRatchetSpecimens.specInjSpelledWholeFunctionDigest, true)
+  , (`Dregg2.Verify.FloorRatchetSpecimens.specInjWideningEncoding, false)
+  , (`Dregg2.Verify.FloorRatchetSpecimens.specInjParametricComponent, false)
+  , (`Dregg2.Verify.FloorRatchetSpecimens.specInjRefutationOfInline, false) ]
+
 /-- The specimens are the instrument's own fixtures, not tree content: excluded from the carrier
 surface so they never occupy lines in a baseline whose only healthy direction is shorter. -/
 def specimens : NameSet :=
-  specimenVerdicts.foldl (fun a (n, _) => a.insert n) {}
+  injSpecimenVerdicts.foldl (fun a (n, _) => a.insert n)
+    (specimenVerdicts.foldl (fun a (n, _) => a.insert n) {})
 
 /-- ANTI-floor content, exempt from the gate: a declaration that REFUTES floor content and
 ASSUMES none. Precisely, reading the type as `∀ x₁:A₁ … xₙ:Aₙ, C`:
@@ -281,7 +314,7 @@ def antiFloor (content : Name → Bool) (ty : Expr) : Bool := Id.run do
 structure Carrier where
   name  : Name
   floor : Name          -- the refuted floor, `prop-body` def, or floor BUNDLE it carries
-  cls   : String        -- "binder" | "prop-body" | "propdef-user" | "bundle" | "bundle-user"
+  cls   : String        -- binder | prop-body | propdef-user | bundle | bundle-user | inj-spelled
   deriving Inhabited
 
 structure Surface where
@@ -289,7 +322,9 @@ structure Surface where
   propBody  : Array Name           -- Prop defs carrying a floor in their BODY (joint fixpoint)
   bundles   : Array Name           -- structures with a floor-carrying FIELD (joint fixpoint)
   carriers  : Array Carrier        -- sorted by name
-  shapeLeak : Nat                  -- `Function.Injective`-spelled sites (reported, ungated)
+  injSigs   : Array String         -- REFUTED inline `Function.Injective` signatures (derived)
+  shapeLeak : Nat                  -- inline-injectivity sites at UNREFUTED signatures (exempt)
+  injResid  : Array (String × Nat) -- those signatures, with site counts — the EXEMPT half, named
   total     : Nat                  -- constants in the environment
 
 /-- Names in our own trees, non-internal, plus the total constant count for the scale gate.
@@ -473,15 +508,59 @@ def surface : MetaM Surface := do
         little, writing a refutation has become a build error. Fix the predicate, or change the \
         specimen's expected verdict IN THE DIFF and say why."
 
+  -- ===== the INLINE-SPELLED refuted injectivity signatures (derived; see `Verify/InjSpelling`) =====
+  -- `Poseidon2SpongeCR f` IS `Function.Injective f` at `f : List ℤ → ℤ`, so until this landed the
+  -- SAME hypothesis cost a build error under one spelling and nothing under the other.
+  let injSigs ← InjSpelling.signatures ours floorArr
+  let injMemo ← IO.mkRef ({} : Std.HashMap String (Option Name))
+  -- (g) the inline tooth's own fail-closed check. A signature set that silently empties reports a
+  -- smaller surface and PASSES, which is indistinguishable from a port — the same failure mode
+  -- (e) exists for. `List ℤ → ℤ` must be there (Source A: it is `Poseidon2SpongeCR`'s own
+  -- signature, and the tree refutes that floor) and so must at least one Source-B signature (a
+  -- concrete type admitting NO injection at all).
+  if injSigs.isEmpty then
+    throwError "FLOOR-RATCHET FAIL-CLOSED: the refuted INLINE-injectivity signature set is EMPTY. \
+      Either `Verify/InjSpelling.signatures` broke, or every `¬ Function.Injective` refutation \
+      left the tree — either way every floor spelled `Function.Injective f` is ungated again, \
+      which is the bypass this tooth closed. Refusing to run."
+  for (spec, wantGated) in injSpecimenVerdicts do
+    let some sci := env.find? spec
+      | throwError "FLOOR-RATCHET FAIL-CLOSED: inline-injectivity specimen {spec} is not in the \
+          environment. `Dregg2/Verify/FloorRatchetSpecimens.lean` is unimported or renamed, so \
+          the inline classifier is running unchecked. Refusing to run."
+    let .defnInfo sdi := sci
+      | throwError "FLOOR-RATCHET FAIL-CLOSED: inline-injectivity specimen {spec} is not a def."
+    let got := (← InjSpelling.classify injSigs injMemo sdi.value).isSome
+    unless got == wantGated do
+      throwError "FLOOR-RATCHET FAIL-CLOSED: inline-injectivity specimen {spec} classified \
+        {(if got then "GATED" else "EXEMPT")}, expected \
+        {(if wantGated then "GATED" else "EXEMPT")}. \
+        The inline split has moved. Too GATED and a legitimate injectivity assumption \
+        (a widening encoding, a coordinate embedding, a parametric `β → ℤ`) is now a build error \
+        — a noisy gate gets disabled, which is how a gate is lost entirely. Too EXEMPT and a \
+        refuted floor spelled `Function.Injective f` walks through again. Fix the classifier, or \
+        change the specimen's expected verdict IN THE DIFF and say why."
   -- ===== the carrier surface =====
   let mut carriers : Array Carrier := #[]
   let mut shapeLeak := 0
+  let mut injResid : Std.HashMap String Nat := {}
   for nm in ours do
     if isGeneratedCompanion nm then continue
     if floors.contains nm then continue
     if specimens.contains nm then continue
     let some ci := env.find? nm | continue
-    if antiFloor content ci.type then continue
+    if antiFloor content ci.type then
+      -- ⚑ `antiFloor` reads floor content BY NAME, and `Function.Injective` is not a name in that
+      -- set. So a declaration binding an INLINE-spelled refuted floor and concluding `False` (or
+      -- `¬ SomeOtherFloor …`) walks straight out of the exemption — the B1/B2 laundry, one
+      -- spelling over, and it would have shipped inside the very tooth that closes the spelling
+      -- hole. The exemption is honoured only once the inline classifier has had its look; a real
+      -- refutation (`∀ D, ¬ Function.Injective D`) binds no injectivity and is unaffected, which
+      -- `specInjRefutationOfInline` pins on every run.
+      match ← InjSpelling.classify injSigs injMemo ci.type with
+      | some fl => carriers := carriers.push ⟨nm, fl, "inj-spelled"⟩
+      | none    => pure ()
+      continue
     if pb.contains nm then
       carriers := carriers.push ⟨nm, nm, "prop-body"⟩
       continue
@@ -514,10 +593,22 @@ def surface : MetaM Surface := do
     else if let some f := bnHit then
       carriers := carriers.push ⟨nm, f, "bundle-user"⟩
     else if injSeen then
-      shapeLeak := shapeLeak + 1
+      -- ⚑ THE INLINE SPELLING. A `Function.Injective f` HYPOTHESIS at a signature this tree
+      -- refutes is the same vacuity as a named floor binder; at any other signature it may be
+      -- perfectly true (a widening encoding, a constructor, a parametric `β → ℤ`) and gating it
+      -- would be noise. The split is decided by `Verify/InjSpelling`, from in-tree refutations.
+      match ← InjSpelling.classify injSigs injMemo ci.type with
+      | some fl => carriers := carriers.push ⟨nm, fl, "inj-spelled"⟩
+      | none =>
+        shapeLeak := shapeLeak + 1
+        for k in ← InjSpelling.residualKeys injSigs ci.type do
+          injResid := injResid.insert k ((injResid.getD k 0) + 1)
   let sorted := carriers.qsort (fun a b => a.name.toString < b.name.toString)
+  let residArr := injResid.toList.toArray.qsort (fun a b => a.2 > b.2 || (a.2 == b.2 && a.1 < b.1))
+  let sigKeys ← injSigs.mapM (fun s => do pure s!"{← InjSpelling.sigKey s.dom s.cod}  [{s.floor}]")
   return { floors := floorArr.qsort (fun a b => a.toString < b.toString)
-           propBody := pbArr, bundles := bnArr, carriers := sorted, shapeLeak, total }
+           propBody := pbArr, bundles := bnArr, carriers := sorted
+           injSigs := sigKeys.qsort (fun a b => a < b), shapeLeak, injResid := residArr, total }
 
 /-! ## The gate -/
 
@@ -602,9 +693,11 @@ def check (baseline : Array String) : MetaM Unit := do
   logInfo s!"floor-ratchet OK — {s.carriers.size} grandfathered carriers over \
     {s.floors.size} refuted floors ({s.propBody.size} prop-body defs, {s.bundles.size} floor \
     bundles); binder {byCls "binder"} + prop-body {byCls "prop-body"} + propdef-user \
-    {byCls "propdef-user"} + bundle {byCls "bundle"} + bundle-user {byCls "bundle-user"}; \
-    baseline {baseline.size}, slack {slack.size}; {s.shapeLeak} `Function.Injective`-spelled \
-    sites ungated (known residual); {s.total} constants."
+    {byCls "propdef-user"} + bundle {byCls "bundle"} + bundle-user {byCls "bundle-user"} \
+    + inj-spelled {byCls "inj-spelled"}; baseline {baseline.size}, slack {slack.size}; \
+    inline injectivity: {s.injSigs.size} REFUTED signatures gated, {s.shapeLeak} sites left at \
+    {s.injResid.size} UNREFUTED signatures (exempt — `#floor_ratchet_floors` lists them); \
+    {s.total} constants."
 
 /-! ## Auditing what the gate DERIVED
 
@@ -647,8 +740,16 @@ def report : MetaM Unit := do
     {String.intercalate ", " (s.propBody.toList.map (·.toString))}\n\
     carriers {s.carriers.size} = binder {byCls "binder"} + prop-body {byCls "prop-body"} \
     + propdef-user {byCls "propdef-user"} + bundle {byCls "bundle"} \
-    + bundle-user {byCls "bundle-user"}\n\
-    ungated `Function.Injective`-spelled sites: {s.shapeLeak}\n\
+    + bundle-user {byCls "bundle-user"} + inj-spelled {byCls "inj-spelled"}\n\
+    REFUTED inline-injectivity signatures ({s.injSigs.size}) — GATED, with the refutation each \
+    one rides on:\n\
+    {String.intercalate "\n" (s.injSigs.toList.map (fun k => s!"  {k}"))}\n\
+    UNREFUTED inline-injectivity signatures ({s.injResid.size}) — NOT gated, {s.shapeLeak} sites. \
+    Each is a `Function.Injective` hypothesis the tree does NOT prove false: a widening encoding, \
+    a coordinate embedding, a permutation, or a parametric domain. Gating them would be noise, \
+    and a noisy gate gets disabled. To gate one, REFUTE it (`Verify/InjSpelledFloors`) — the \
+    signature set is derived, so the same build picks it up:\n\
+    {String.intercalate "\n" (s.injResid.toList.map (fun (k, n) => s!"  {n}\t{k}"))}\n\
     constants in environment: {s.total}"
 
 /-! ## Emitting a new baseline (a dev tool; the OUTPUT side may touch the filesystem) -/
@@ -728,7 +829,8 @@ Invoked at the end of `Dregg2.lean`, so `lake build Dregg2` carries it. Both of 
 declaration anywhere in the tree changes — it cannot be replayed stale from cache. -/
 elab "#floor_ratchet" : command =>
   liftTermElabM (Dregg2.Verify.FloorRatchet.check
-    Dregg2.Verify.FloorRatchetBaseline.grandfathered)
+    (Dregg2.Verify.FloorRatchetBaseline.grandfathered
+      ++ Dregg2.Verify.FloorRatchetBaselineInline.inlineSpelled))
 
 /-- `#floor_ratchet_floors` — print the DERIVED refuted-floor set, the prop-body defs, and
 per-floor carrier counts. A diagnostic, not a gate: run it from a module that imports `Dregg2`
@@ -742,7 +844,8 @@ the floor, so this can never launder a fresh violation into the baseline. Run it
 to bank the win. -/
 elab "#floor_ratchet_emit" path:str : command =>
   liftTermElabM (Dregg2.Verify.FloorRatchet.emit
-    Dregg2.Verify.FloorRatchetBaseline.grandfathered path.getString false)
+    (Dregg2.Verify.FloorRatchetBaseline.grandfathered
+      ++ Dregg2.Verify.FloorRatchetBaselineInline.inlineSpelled) path.getString false)
 
 /-- `#floor_ratchet_emit! "…"` — RAISE the ratchet: grandfather every current carrier,
 including new ones. A different token on purpose, and the result is ADDED LINES in a
@@ -750,6 +853,7 @@ reviewable diff. Use only when a new declaration genuinely cannot be built witho
 floor, and say why in the commit message. -/
 elab "#floor_ratchet_emit!" path:str : command =>
   liftTermElabM (Dregg2.Verify.FloorRatchet.emit
-    Dregg2.Verify.FloorRatchetBaseline.grandfathered path.getString true)
+    (Dregg2.Verify.FloorRatchetBaseline.grandfathered
+      ++ Dregg2.Verify.FloorRatchetBaselineInline.inlineSpelled) path.getString true)
 
 end Dregg2.Verify.FloorRatchet

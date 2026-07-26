@@ -115,4 +115,54 @@ parameters and this says exactly as little as a floor binder does. -/
 def specB3BundleLaundry : Prop :=
   ∀ _S : CommitSurface, ∀ xs ys : List ℤ, xs = ys
 
+/-! ## The INLINE `Function.Injective` split (`FloorRatchet.injSpecimenVerdicts`)
+
+A second classifier, a second way to degenerate invisibly. `Verify/InjSpelling` decides whether a
+`Function.Injective f` HYPOTHESIS is the inline spelling of a REFUTED floor (gate it) or a
+legitimately-satisfiable assumption (leave it alone). Both directions are silent failures on a
+green build: gate everything and the campaign's honest injectivity assumptions become build
+errors until someone turns the gate off; gate nothing and the residual is a free bypass. These
+five pin the split at its two edges and at the boundary case in between.
+
+⚑ The two GATED specimens are deliberately spelled with `ℕ` rather than `CellId`/`AssetId`, which
+are `abbrev`s for it. That makes them a live test of the δ-fallback in `InjSpelling.classify`: a
+classifier that only compares signatures STRUCTURALLY would miss every site spelled through an
+alias, which is the same under-measurement this whole tooth exists to repair. -/
+
+/-- GATED. The residual, in one line: `Poseidon2SpongeCR f` IS `Function.Injective f` at
+`f : List ℤ → ℤ`, so this is the SAME hypothesis as `specB2FalseLaundry`'s, spelled to miss a
+name-keyed gate. Refuted at deployed BabyBear parameters
+(`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`). -/
+def specInjSpelledDeployedFloor : Prop :=
+  ∀ f : List ℤ → ℤ, Function.Injective f → ∀ xs ys : List ℤ, xs = ys
+
+/-- GATED, and WORSE than a deployed-parameter floor. A whole-function digest: the domain is a
+FUNCTION SPACE (uncountable — `2^ℵ₀` ledgers) and the codomain is `ℤ` (countable), so no injection
+exists at ANY parameters, for any hash, in any field
+(`Verify/InjSpelledFloors.balDigest_not_injective`). ~600 call sites of
+`Circuit/EffectCommit2.funcComponent` bind this. -/
+def specInjSpelledWholeFunctionDigest : Prop :=
+  ∀ D : (Nat → Nat → ℤ) → ℤ, Function.Injective D → ∀ xs ys : List ℤ, xs = ys
+
+/-- EXEMPT. A WIDENING encoding — `ℕ` into `List ℤ` — is genuinely, provably injective, and the
+tree holds no refutation at this signature. Gating it would be pure noise, and noise is how a gate
+gets disabled. -/
+def specInjWideningEncoding : Prop :=
+  ∀ g : ℕ → List ℤ, Function.Injective g → ∀ n : ℕ, n = n
+
+/-- EXEMPT. The PARAMETRIC shape — `funcComponent (D : β → ℤ) (hD : Function.Injective D)` with
+`β` a type VARIABLE. There are `β` at which this holds (`β = ℤ`), so the general statement is not
+vacuous; only its instantiations at function-space `β` are, and those are gated where they are
+WRITTEN. Gating the parametric form would be a claim the tree cannot back. -/
+def specInjParametricComponent : Prop :=
+  ∀ (β : Type) (D : β → ℤ), Function.Injective D → (0 : ℤ) = 0
+
+/-- EXEMPT. WRITING THE REFUTATION MUST STAY FREE. This is the shape of every theorem in
+`Verify/InjSpelledFloors` — inline injectivity in the CONCLUSION, under a negation, with no
+injectivity hypothesis anywhere. A classifier that gated on the mere PRESENCE of
+`Function.Injective` in the type would make the anti-floor content that ARMS this very gate a
+build error. -/
+def specInjRefutationOfInline : Prop :=
+  ∀ D : (Nat → Nat → ℤ) → ℤ, ¬ Function.Injective D
+
 end Dregg2.Verify.FloorRatchetSpecimens
