@@ -2215,16 +2215,16 @@ mod tests {
         // ⚑ A code a stranger forged the uid onto never reaches step two at all.
         let spliced = format!("111222333:{}", code.split(':').nth(1).expect("a challenge"));
         assert_eq!(
-            authenticate_code(&state, &spliced, NOW + 5),
-            Err(LinkRefusal::CodeNotOurs)
+            authenticate_code(&state, &spliced, NOW + 5).err(),
+            Some(LinkRefusal::CodeNotOurs)
         );
         assert_eq!(
-            authenticate_code(&state, "no-colon", NOW + 5),
-            Err(LinkRefusal::MalformedCode)
+            authenticate_code(&state, "no-colon", NOW + 5).err(),
+            Some(LinkRefusal::MalformedCode)
         );
         assert_eq!(
-            authenticate_code(&state, "not-a-uid:abc", NOW + 5),
-            Err(LinkRefusal::MalformedUid)
+            authenticate_code(&state, "not-a-uid:abc", NOW + 5).err(),
+            Some(LinkRefusal::MalformedUid)
         );
         // Step one is REACHED by an authenticate that failed, so a bad code costs no words either.
         let _ = std::fs::remove_dir_all(path.parent().expect("a parent dir"));
