@@ -130,7 +130,8 @@ commit. Every link is an in-circuit constraint or a verifier equality. The arith
 - Freshness (a): `revoc.revocation_root == expected canonical root`
   (`full_turn_proof.rs:4851-4877`); (b): `revoc.queried_item == effect nullifier`
   (`4880-5000`). The queried item is pinned in-circuit to the bracketed control row
-  (`circuit/src/dsl/revocation.rs`), not a free felt.
+  (the circuit crate's `dsl/revocation.rs`, since DELETED with the rest of the 1-felt
+  non-revocation rail — freshness now rides the limb-26 `.absent` map-op), not a free felt.
 - Cap-membership: `pi[CAP_ROOT] == caller's canonical capability_root` and
   `pi[LEAF_DIGEST] == digest of receipt-disclosed leaf` (`full_turn_proof.rs:5023-5060`).
   Both pinned in-circuit (row-0 / last-row boundaries); the AUTHORITY FLOOR forces a cap

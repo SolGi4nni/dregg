@@ -190,9 +190,12 @@ Rust fallback (`reference.rs` deleted 2026-07-25); the AIR is Lean-emitted and
 `game.rs: AutomataflGame` deploys the same match on a real WorldCell with a commit→reveal→resolve
 tooth discipline (idioms (a) and (b) in one game); `surface.rs: AutomataflOffering` renders the
 board as a `ViewNode::CoordGrid` with legal-move highlighting and sealed-move fog. Lean spec:
-`metatheory/Dregg2/Games/Automatafl.lean` (pure `applyTurn`, invariants proven no-sorry; the
-concrete Rust-AIR↔Lean `Refines` tie is the open leg). Real leaf→fold→light-client-accept:
-`dregg-automatafl/tests/prove_fold.rs` (`#[ignore]` SLOW).
+`metatheory/Dregg2/Games/Automatafl.lean` (pure `applyTurn`, invariants proven no-sorry), refined
+against the emitted legs in `metatheory/Dregg2/Circuit/Emit/AutomataflResolveRefine.lean` and
+`AutomataflStepRefine.lean`. Leaf→fold→light-client-accept lives in
+`dreggnet-game-board/tests/two_leg_board_window.rs`
+(`the_honest_two_leg_match_folds_and_the_light_client_reads_the_final_position`) — `#[ignore]` SLOW
+and **not yet run**; the PI- and constraint-level seam arms around it do run green.
 
 **Game-adjacent extras** (one line each): `mud-dregg` — multiplayer MUD where divergent player
 timelines are branch-stitched configs (playable binary); `interactive-fiction-demo` — crowd-voted

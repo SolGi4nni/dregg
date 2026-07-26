@@ -7,8 +7,8 @@ a generated corpus. This replaces the old `differential_reference.rs`, which com
 hand-written Rust reference against the `logic` crate — **mirror-vs-mirror**, unable to
 detect a shared divergence by construction.
 
-> **2026-07-25.** `differential_reference.rs` is now DELETED, with the
-> `dregg-automatafl/src/reference.rs` oracle it differenced and the `automatafl-logic` git
+> **2026-07-25.** `differential_reference.rs` is now DELETED, with the `dregg-automatafl`
+> `src/reference.rs` oracle it differenced and the `automatafl-logic` git
 > dev-dependency that drove it: `dregg-automatafl` computes every transition by calling the Lean
 > (`@[export] dregg_automatafl_rules`), so a Rust-vs-Rust differential has nothing left to compare.
 > The corpus below is the surviving differential, and it is the one that can find something: two

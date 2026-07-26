@@ -90,7 +90,8 @@ Poseidon2 compression carried by `Heap8Scheme` / `CanonicalHeapTree8`; its colli
 is the single named floor `Poseidon2SpongeCR` (`metatheory/Dregg2/Circuit/Poseidon2Binding`),
 the same floor the cap-root / heap / MMR advances already ride. The root is an 8-felt `Digest8`
 (~248-bit binding), **not** the legacy single ~31-bit felt of the deprecated
-`circuit/src/note_spending_air.rs` (see its own deprecation notice at `note_spending_air.rs:3`).
+`note_spending_air.rs` in the circuit crate (which carried its own deprecation notice at line 3,
+and has since been deleted).
 
 ### The algebraic-accumulator alternative (present, and why it is not the base structure)
 

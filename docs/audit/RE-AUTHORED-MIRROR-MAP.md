@@ -229,9 +229,9 @@ succinct whole-match lowering remain proof work.
   guild {g} · w{w}")` (`:182`) from `self.hands[seat.idx()].card_ids()` (`:171`) — the fabricated ids.
   Meanwhile `advance` (`:359`) plays `session.engine.play_next()` → `pick_lowest`/`pick_highest`
   (`reference.rs:417-429`) sorting `self.hands[p.idx()]` — the OTHER hand. **The card a player is shown
-  is not the card that gets played.** Frontends: `dreggnet-web/src/seated.rs:117` (the deployed hbox
-  games devnet), `dreggnet-telegram/src/seated.rs:119`, `dreggnet-wechat/src/seated.rs:119`,
-  `discord-bot/src/commands/portfolio.rs:144`.
+  is not the card that gets played.** Frontends, all four through the single adapter that now lives at
+  `dreggnet-catalog/src/seated.rs`: `dreggnet-web` (the deployed hbox games devnet),
+  `dreggnet-telegram`, `dreggnet-wechat`, and `discord-bot/src/commands/portfolio.rs:144`.
 - **The tooth is decorative too.** `advance` (`surface.rs:366-368`) removes the lowest surviving
   FABRICATED id, not the card `play_next` played — the remaining-hand root moves as bookkeeping over an
   unrelated multiset, so `hidden_hand.rs:26-29`'s "the crypto is the no-double-play tooth" does not
@@ -1353,7 +1353,7 @@ arithmetization bug behind its doc lie.*
      route to the Lean IR2 rail and are marked SKIP; operands >= 2^30 exceed the single-felt BabyBear
      encoding and are ALSO marked SKIP, casting no agreement vote."). **`lib.rs:35` is the sentence that
      must go** — until #3 exists the poles are carried by NOTHING; the honest text is that `emit_stark`'s
-     probe (`tests/_probe_stark.rs`, incl. the inequality bit-decomposition tooth) died with stark-kill
+     probe (a `_probe_stark.rs` test that no longer exists, incl. the inequality bit-decomposition tooth) died with stark-kill
      `f04b2dd1e` and its coverage is currently **UNREPLACED, with the replacement lane named**.
      `plonky3_runner.rs:20-22`'s "boolean indicator … matches u64 arithmetic" describes the harness's
      honesty, not a constraint — it dies with the indicator column in #2.

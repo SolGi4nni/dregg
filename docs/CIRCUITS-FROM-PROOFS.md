@@ -173,15 +173,16 @@ Its entries are:
 - **Named residuals** — see the horizon section below.
 
 The baseline is a ceiling, not a description: entries shrink under it without edits to
-the gate. At HEAD, `circuit/src/dsl/revocation.rs` holds **zero** constraint sites under
-its baseline entry of 40 — non-revocation proves through the Lean-emitted
-`dregg-non-revocation-adjacency::poseidon2-fact-v1`
-(`metatheory/Dregg2/Circuit/Emit/NonRevocationAdjacencyEmit.lean` →
-`circuit/descriptors/by-name/non-revocation-adjacency.json`, byte-pinned by
-`circuit-prove/tests/non_revocation_adjacency_emit_gate.rs` — the neighboring
-`non_revocation_emit_gate.rs` pins the historical depth-2 sorted-tree descriptor, not
-this one — dispatched at `dsl/revocation.rs:435` via `descriptor_by_name` +
-`prove_vm_descriptor2`).
+the gate. This paragraph used to record `dsl/revocation.rs` in the circuit crate holding
+**zero** constraint sites under its baseline entry of 40, with non-revocation proving
+through the Lean-emitted `dregg-non-revocation-adjacency::poseidon2-fact-v1`.
+⚑ 2026-07 (felt-width #11): the whole 1-felt non-revocation rail was RETIRED and deleted
+(`00c43af9c` + `d40f0b78a`) — sources, descriptors, emit modules and gate tests alike —
+because it was redundant against the limb-26 `nullifierFreshOp` `.absent` map-op, which is
+the freshness authority over exactly the same set with a ~124-bit 8-felt root instead of a
+1-felt one. The surviving accumulator rail is
+`metatheory/Dregg2/Circuit/Emit/AccumulatorNonRevocationEmit.lean` (with `...Refine.lean`
+and `...Complete.lean`).
 
 The net position, per the scope classification in
 [`../GOAL-STARK-KILL.md`](../GOAL-STARK-KILL.md) ("THE COMPLETE SCOPE, CLASSIFIED",

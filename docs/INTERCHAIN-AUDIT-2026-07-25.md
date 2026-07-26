@@ -39,7 +39,7 @@ E. NOT cross-chain (disambiguated): dregg-oracle=zkTLS web-fact; lightclient/=dr
   ETH leg asserts trust where Solana fail-closes — an inconsistency. Do before the relayer deploys.
 - #2 HIGH — ethereum_relayer.rs:840 storage_binds_deposit reads eth_getProof but does NOT verify the MPT proof
   (RPC-value vs RPC-amount, zero assurance). Contributory to #1.
-- #3 HIGH — dregg-pay/hd.rs+sweeper.rs: single HD seed derives all user keys, operator sweeps unilaterally (fully
+- #3 HIGH — dregg-pay/src/hd.rs + dregg-pay/src/sweeper.rs: single HD seed derives all user keys, operator sweeps unilaterally (fully
   custodial by design, documented interim). Seed leak/rogue op drains everyone.
 - #4 HIGH — cosmos-lock/src/lib.rs:207: escrow release binds via M-of-N ed25519 ORACLE multisig (+ isProvenRoot),
   NO Merkle inclusion of the leg into the proven root. Trust asymmetry vs the EVM twin (which uses an SP1 fill

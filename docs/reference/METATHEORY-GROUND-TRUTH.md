@@ -25,7 +25,7 @@ Then paste the **real signatures and absolute paths** into any subagent prompt. 
   `:258 interp_mintStmt_eq_recKMint`, `:272 interp_burnStmt_eq_recKBurn`,
   `Effects/MakeSovereign.lean:193 interp_makeSovereignStmt_eq_kernel`.
 - The deployed Rust `Effect` enum has **34 variants** (`turn/src/action.rs:1061`), applied by
-  `apply_effect_to_cell` (`turn/src/rotation_witness.rs:1332`). Any Lean `Effect` with six constructors over a
+  `apply_effect_to_cell` (`turn/src/rotation_witness.rs:638`). Any Lean `Effect` with six constructors over a
   scalar is **not** it.
 
 ### The circuit / turn-soundness apex

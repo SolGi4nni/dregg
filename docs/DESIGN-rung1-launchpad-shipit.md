@@ -68,7 +68,8 @@ A Node backend (`server.mjs`) plus a static frontend (`public/`). The design fac
 publishable off ember's laptop: **the backend holds no key.**
 
 - The browser drives the *real* contract with the user's own wallet (`window.ethereum`); the server
-  vends the ethers UMD build at `/vendor/ethers.js` and the config at `GET /api/config`
+  vends the ethers UMD build at the served route `http://127.0.0.1:18785/vendor/ethers.js` (a runtime
+  asset, not a repo path) and the config at `GET /api/config`
   (`server.mjs:81-86`) so the browser wires up `{rpc, address, abi}` and signs its own transactions.
 - The server only **reads** the chain over `LAUNCHPAD_RPC` (`server.mjs:43`), indexing launches for
   discovery (`GET /api/launches`, `:87`) and detail (`GET /api/launches/:id`, `:91`). It accepts one

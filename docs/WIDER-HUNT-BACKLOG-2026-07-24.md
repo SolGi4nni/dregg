@@ -35,7 +35,7 @@ emit path, NOT a Rust patch (tripwire) · [DEPLOY]=config/ops · [AUDIT]=needs a
 
 ## 🟡 Completeness survey — next deep-audit targets (DEOS audit already LAUNCHED)
 - **DEOS #1 [AUDIT, running]** applet/agent capability boundary. Confirmed smells: pty_ws local-RCE (below);
-  applet turns commit `Unchecked` auth (deos-js-runtime/src/applet.rs:303,316 + deos-js:406,421) → in-band
+  applet turns commit `Unchecked` auth (deos-js-runtime/src/applet.rs:235 + deos-js/src/applet.rs:340) → in-band
   is_attenuation the only gate; **ToolGateway is a Rust twin of Lean delegAdmit with NO differential**
   (sdk/src/tool_gateway.rs:207 ↔ ToolAccessDelegation.lean:126) **[TWIN — add to CI guard]**; deos-zed raw std::fs.
 - **pty_ws [RUST]** deos-terminal/src/bin/pty_ws.rs — spawns $SHELL per WebSocket with NO auth + NO Origin check

@@ -21,9 +21,10 @@ hand-maintained copies**:
 | wechat | `dreggnet-wechat/src/host.rs:490` `wechat_default_host` | third re-statement |
 | discord | no `OfferingHost` at all | bespoke: per-offering-TYPE `Store<O>` threads + `DiscordOffering` impls + an 18-arm static type match in `offering.rs:1337/:1400` |
 
-Plus **four byte-peer copies of `SeatedTug`** (the seat-claiming multiway-tug adapter):
-`dreggnet-web/src/seated.rs:25`, `dreggnet-telegram/src/seated.rs`,
-`dreggnet-wechat/src/seated.rs:27`, `discord-bot/src/commands/portfolio.rs` (~line 60).
+Plus **four byte-peer copies of `SeatedTug`** (the seat-claiming multiway-tug adapter) in
+`dreggnet-web`, `dreggnet-telegram`, `dreggnet-wechat` and `discord-bot`. ✅ Phase B landed: the one
+home is `dreggnet-catalog/src/seated.rs`, and the three frontend `src/seated.rs` modules are now
+compatibility re-exports of it (6-10 lines each).
 And **two byte-peer copies of `HostThread`** (the `!Send`-host job-channel handle):
 `dreggnet-web/src/lib.rs:1118`, `dreggnet-telegram/src/host.rs:83` (wechat has a third).
 

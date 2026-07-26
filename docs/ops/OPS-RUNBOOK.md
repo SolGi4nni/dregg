@@ -560,7 +560,7 @@ A tractable dry-run proved **hbox can host both demos**, bound to `127.0.0.1` on
   `GET /` → 200, `<title>dregg launchpad · fair launches</title>`;
   `GET /api/config` → 200 (rpc/address/abi JSON);
   `GET /api/launches` → **503 `indexer not ready`** (honest — no `LAUNCHPAD_ADDRESS`
-  wired); `GET /vendor/ethers.js` → 200, 526551 bytes. `LISTEN 127.0.0.1:18785`.
+  wired); `GET http://127.0.0.1:18785/vendor/ethers.js` → 200, 526551 bytes. `LISTEN 127.0.0.1:18785`.
 - **hbox → testnet RPC egress:** `eth_chainId` to `https://sepolia.base.org` →
   `0x14a34` (= 84532, Base-Sepolia). The indexer's connection leg reaches the
   testnet from the infra host.

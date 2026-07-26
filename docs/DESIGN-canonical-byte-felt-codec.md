@@ -536,8 +536,9 @@ flag. Named with its last consumer so the rewire is a bounded task.
 non-injective map); `circuit/src/effect_vm/helpers.rs:37` `bytes32_to_8_limbs`;
 `circuit/src/bridge_action_witness.rs:125` and `circuit/src/effect_action_air.rs:151` `encode_hash`;
 `cell/src/note.rs:176` `bytes32_to_limbs`; `circuit/src/note_spending_witness.rs:365`
-`bytes32_to_limbs` + `key_to_field_elements`; `cell/src/action.rs:576`
-`stark_delegation_bytes32_to_babybear`; the three nested `bytes32_to_8_felts` clones at
+`bytes32_to_limbs` + `key_to_field_elements`; `turn/src/action.rs`
+`stark_delegation_bytes32_to_babybear` (this list said `action.rs:576` under `cell/src/`; the crate was wrong
+and the body has since been collapsed into `circuit/src/effect_vm/helpers.rs`); the three nested `bytes32_to_8_felts` clones at
 `turn/src/executor/effect_vm_bridge.rs:278`, `sdk/src/cipherclerk.rs:6750`,
 `node/src/mcp/proof.rs:560`; `cell/src/commitment.rs:1447` `bytes32_to_felt8`;
 `bridge/src/present.rs:1760` `bytes_to_babybear_vec`.

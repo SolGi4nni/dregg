@@ -47,14 +47,16 @@ CI runs `cargo test --workspace` (`.github/workflows/ci.yml:431` macOS, `:456` L
   added for the felt-width repair**, reaching into `cell-crypto`, with no Lean emit. *The width fix
   went into Rust because the Rust AIR crate was right there* — the exact drift the law exists to stop.
 * **The ratchet cannot see the largest violation at all.** It scans only `circuit/src` +
-  `circuit-prove/src`. Outside: `param-compose/src/air.rs` (659 lines, 19 `b.assert_zero` sites) and
-  `param-compose/src/builder.rs` (369 lines, **`fn air_accepts()`**, plus a `Forgery` harness) — a
+  `circuit-prove/src`. Outside, in `param-compose`: `src/air.rs` (659 lines, 19 `b.assert_zero`
+  sites) and `src/builder.rs` (369 lines, **`fn air_accepts()`**, plus a `Forgery` harness) — a
   complete hand-written Rust AIR **with an `air_accepts` predicate**, live on the deployed
   `Effect::Custom` door via `entity-compose/src/lib.rs:78`, both crates in `default-members`, and
   **no Lean route exists**.
-* **The automatafl deletion did not delete the clone.** `param-compose/src/builder.rs:9-14` describes
+* **The automatafl deletion did not delete the clone.** That `src/builder.rs:9-14` described
   itself as *"a sibling of `dregg-automatafl`'s builder … duplicated rather than shared"*. It was
   copied out before that Rust AIR was deleted, and survived **outside the ratchet's scan scope**.
+* ⚑ **CLOSED (`9a34719e6`).** Both files are now deleted and the law-1 gate records the closure at
+  `circuit-prove/tests/law1_enforcement_gate.rs:111`; the two baseline rows went with them.
 
 ## The lessons, which are not new
 
@@ -176,9 +178,10 @@ the Rust program at 9 of 16 — the numbers that must appear are 219/379/803, 69
 
 ## The deletion commit itself
 
-Delete `param-compose/src/air.rs` (659) and `builder.rs` (369) **together with** the two law-1 BASELINE
-rows (`"param-compose/src/air.rs", 19` and `"builder.rs", 9`), or the ratchet's stale-entry check fires.
+Delete `param-compose`'s `src/air.rs` (659) and `src/builder.rs` (369) **together with** the two law-1
+BASELINE rows (`air.rs` at 19 and `builder.rs` at 9), or the ratchet's stale-entry check fires.
 Run `cargo test -p dregg-param-compose -p dregg-entity-compose` first.
+✅ Done in `9a34719e6`.
 
 **Ledger line that belongs IN that commit, not in a retrospective:** four things lose their only checker
 — the digest chains' root-is-the-fold induction, the ordering tooth's integer-level non-vacuity, the

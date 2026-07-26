@@ -1,7 +1,8 @@
 # DESIGN — shielded-pool soundness (C4) + dark value v4 (C5)
 
-**Design lane, 2026-07-23. Campaign tracks C4 + C5 of `docs/SPRINT-poster-honesty-closure-2026-07-23.md`
-(ember-greenlit 07-23).** This lane produces a design + first-slice scoping and lands ADDITIVE Lean
+**Design lane, 2026-07-23. Campaign tracks C4 + C5 of the release-arc sprint plan (ember-greenlit
+07-23) — ⚠ that plan, `SPRINT-poster-honesty-closure-2026-07-23`, was never committed under
+`docs/`.** This lane produces a design + first-slice scoping and lands ADDITIVE Lean
 model work only. It touches NO deployed descriptor, VK, wire format, or the frozen
 `NullifierAccumulator` gate (`metatheory/.../Exec/NullifierAccumulator.lean` — ember-fired only).
 
@@ -83,8 +84,8 @@ posture). The Rust-authored `spend_circuit.rs` AIR is debt to be deleted, never 
 
 The new Lean authoring is small because the constraint logic exists. The layout:
 
-- **Emit drivers (NEW):** `metatheory/EmitShieldedSpend.lean` + `metatheory/EmitShieldedValueLink.lean`
-  (or one `EmitShieldedTransferClear.lean`) — call the existing `shieldedSpendDesc` / `shieldedValueLinkDesc`
+- **Emit drivers (NEW, not yet written):** `EmitShieldedSpend.lean` + `EmitShieldedValueLink.lean`
+  under `metatheory/` (or one `EmitShieldedTransferClear.lean`) — call the existing `shieldedSpendDesc` / `shieldedValueLinkDesc`
   through the standard `emitVmJson2` path (as `EmitRotationV3` / `EmitWideRegistryProbe` do), producing the
   `circuit/descriptors/*.json` + a `PROVENANCE.json` sha256 row. This is the object the Rust decodes. It
   imports only the two existing `Emit/Shielded*Descriptor.lean` modules — no new constraint authoring.
@@ -286,8 +287,8 @@ BabyBear squeeze):
 
 **Next additive slices (cycle-2 lanes execute), in dependency order:**
 
-1. **`EmitShieldedSpend` / `EmitShieldedValueLink` drivers** (stage a.1). Files:
-   `metatheory/EmitShieldedSpend.lean`, `metatheory/EmitShieldedValueLink.lean`; regen
+1. **`EmitShieldedSpend` / `EmitShieldedValueLink` drivers** (stage a.1). Files to create under
+   `metatheory/`: `EmitShieldedSpend.lean`, `EmitShieldedValueLink.lean`; regen
    `circuit/descriptors/by-name/*.json` + `PROVENANCE.json`. Theorem/gate: `#guard` byte-pin on the emitted
    wire string; an emit-equality differential vs the Rust producer. Effort: **~1 lane** (calls existing
    descriptors through `emitVmJson2`; the risk is the emit-pipeline plumbing + the `traceWidth-1537` drift
@@ -295,13 +296,13 @@ BabyBear squeeze):
 2. **Wide-carrier discharge of C5 Fix B against the emitted object** — the twin of
    `ShieldedSpendPortDischarge`: connect `ShieldedWideJoinPin.wide_join_forces_same_opening` to the emitted
    wide-carrier + conservation descriptor (once the conservation runs over the wide cells), turning the
-   `Function.Injective WideBind` floor into the emitted `node8` CR floor. File:
-   `metatheory/Dregg2/Circuit/ShieldedWideJoinDischarge.lean`. Theorem:
+   `Function.Injective WideBind` floor into the emitted `node8` CR floor. File to create:
+   `Dregg2.Circuit.ShieldedWideJoinDischarge`. Theorem:
    `emitted_wide_join_forces_same_value`. Effort: **~1 lane** (bridge, no new constraint authoring), but
    **gated on the shared-witness / wide-binding conservation descriptor existing** (stage c).
 3. **The transfer-clearing composition descriptor** (the apex `connect` of §1.3) — Lean-authored, folds
-   `shieldedSpendDesc` per input + `shieldedValueLinkDesc` Σ block. File:
-   `metatheory/Dregg2/Circuit/Emit/ShieldedTransferClearDescriptor.lean`. Effort: **~1-2 lanes** (real
+   `shieldedSpendDesc` per input + `shieldedValueLinkDesc` Σ block. File to create:
+   `Dregg2.Circuit.Emit.ShieldedTransferClearDescriptor`. Effort: **~1-2 lanes** (real
    authoring — the "degenerate single-transfer clearing descriptor", drop the ring matcher gates, keep
    conservation/range/value-binding-connect).
 

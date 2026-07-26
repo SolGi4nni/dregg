@@ -1405,7 +1405,7 @@ files (`cell/src/commitment.rs`, `turn/src/rotation_witness.rs`,
   threads `FullTurnWitness::spent_nullifiers` → the limb-26 BEFORE tree; the `.absent` key IS the
   published nullifier `param0`; the BEFORE root8 is absorbed into the pinned OLD commit; forge
   test `circuit/tests/vk_epoch_notes_light_client_binding.rs`). DELETED: the whole 1-felt rail
-  (`circuit/src/dsl/revocation.rs`, `non_revocation{,_adjacency}_witness.rs`,
+  (in the circuit crate, `dsl/revocation.rs` and `non_revocation{,_adjacency}_witness.rs`;
   `NonRevocation{,Adjacency}Emit.lean` + the Refine/Rung2 satellite proofs + `descriptor_by_name`
   registration + the SDK `NonRevocationProof`/`NonRevocationWitness` component + verifier bindings
   (a)/(b) + `expected_revocation_root` threading). ADDED: `spendAncestorFreshOp` — the limb-37

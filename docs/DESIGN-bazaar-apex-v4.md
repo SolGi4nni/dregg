@@ -1,7 +1,8 @@
 # DESIGN — the Bazaar apex: v4 semantic legs on the FWS1 substrate + the four halls
 
-**Design lane D2, 2026-07-23** (`docs/SPRINT-poster-honesty-closure-2026-07-23.md` §DESIGN WAVE,
-§Campaign C5). Design + additive Lean law modules only; NO deployed descriptor / VK / wire / Rust
+**Design lane D2, 2026-07-23** (§DESIGN WAVE, §Campaign C5 of the release-arc sprint plan —
+⚠ that plan, `SPRINT-poster-honesty-closure-2026-07-23`, was never committed under `docs/`, so the
+section references below cannot be followed). Design + additive Lean law modules only; NO deployed descriptor / VK / wire / Rust
 change from this lane. Companion: `docs/DESIGN-shielded-dark-value-campaign.md` (`7fbef7341b`) owns
 the C4 routing plan and the two ember decisions (#17 posture, VK timing) — this doc does not fork
 them. Ledger of record: `docs/deos/THE-DARK-BAZAAR.md` (re-grounded 07-22).

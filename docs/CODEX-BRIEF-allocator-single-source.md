@@ -75,10 +75,13 @@ This session proved the layout foundation + a full narrow-graduation soundness t
   `rotated178_complete` (occupied.length = 178 ⇒ complete 0..177 tiling). Plus `GroupName` + a `groupCol`
   projection + `groupTable` (emit-ready). **This is the allocator's Lean core. The disjointness invariant
   that was a comment is now a machine-checked theorem.**
-- `metatheory/Dregg2/Circuit/Emit/RotatedLayoutBridge.lean` — proves all 7 deployed `*RootGroupCol` emit
-  defs EQUAL `rotated178.groupCol` (`cap/heap/fields/nullifier/commitments/revoked/cells`). So `rotated178`
-  is the PROVEN model of the emit's positions today — but the emit still hand-carries them (the bridge
-  proves equality, it doesn't yet make the emit DERIVE).
+- ⚑ **The bridge is retired because the goal it was a stepping-stone to LANDED.** A
+  `RotatedLayoutBridge.lean` under `metatheory/Dregg2/Circuit/Emit/` used to prove all 7 deployed
+  `*RootGroupCol` emit defs EQUAL `rotated178.groupCol` (`cap/heap/fields/nullifier/commitments/
+  revoked/cells`) while the emit still hand-carried the positions. The emit now DERIVES them:
+  `EffectVmEmitRotationV3.layoutGroupCol` (`:150`) is literally `(rotated178.groupCol name i).getD 0`
+  and every `*GroupCol` is defined through it, so the equalities are `rfl` by construction and the
+  bridge file was deleted rather than maintained.
 - `circuit/src/effect_vm/trace_rotated.rs` — a Rust `#[test] rotated_layout_is_a_complete_disjoint_tiling`
   asserts the Rust positions (bound to the `B_*` consts) form a complete disjoint tiling of `0..NUM_PRE_LIMBS`.
 - The narrow-graduation soundness tower (relevant only so you don't disturb it): `NarrowChip.lean`,

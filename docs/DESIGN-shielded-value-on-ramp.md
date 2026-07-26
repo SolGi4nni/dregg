@@ -178,7 +178,8 @@ constraint, i.e. once `shieldedValueLinkDesc`
 
 ### 2.4 The AIR — Lean-authored, three constraint blocks, all already modeled
 
-A new `metatheory/Dregg2/Circuit/Emit/ShieldedShieldDescriptor.lean`, emitted as
+A new module `Dregg2.Circuit.Emit.ShieldedShieldDescriptor` (to be created under
+`metatheory/Dregg2/Circuit/Emit/`), emitted as
 `dregg-shielded-shield::v1`. PIs: `(piVALUE, piASSET, piCM, piROOT_BEFORE, piROOT_AFTER)`.
 
 1. **C6 opening** — `piCM = hash_fact(piVALUE, [piASSET, owner, randomness])` over witness

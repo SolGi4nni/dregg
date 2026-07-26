@@ -107,30 +107,35 @@ Transcript-hiding crypto-ZK is a separate, later concern, named, not claimed.
 The deepest tier: the game's whole transition function is itself a hand-authored
 circuit, and "the move was legal" is the statement the proof proves — not a membership
 side-condition. automatafl lives here (`dregg-automatafl/src/lib.rs:1-15`): a
-Custom-VK AIR checking `new == apply_turn(old, moves)` in translation-validation shape
-(the mover computes the next board off-circuit; the circuit re-checks every rule
-against the witnessed result), built from low-degree DSL gates, one-hot random-access
-board reads, and a bit-decomposition range gadget — hash-free, so it folds through the
-generic custom-leaf path unchanged.
+Custom-VK AIR checking `new == apply_turn(old, moves)`, built from low-degree DSL
+gates, one-hot random-access board reads, and a bit-decomposition range gadget —
+hash-free, so it folds through the generic custom-leaf path unchanged.
 
-The AIR is staged — **D1** (automaton step only) → **D2** (+ single move apply) →
-**D3** (+ the n=2 simultaneous resolution with the fork/collide/survive table) — plus a
-sealed-move reveal leaf (Poseidon2 commitments) for the commit → reveal → resolve
-shape the Offering plays (`dregg-automatafl/src/surface.rs`). Two batteries gate it:
+⚑ 2026-07-25. The staging this section described (**D1** automaton-only → **D2** +
+single move → **D3** + the n=2 simultaneous resolution) belonged to a HAND-WRITTEN
+RUST AIR that is deleted (`f44e26e7b`), together with the two Rust batteries that
+gated it. Calling that arrangement "translation validation" was wrong: there is no
+formal semantics of Rust, so a Rust AIR differenced against a spec on cases proves
+nothing about all inputs. The AIR is now authored in Lean and emitted at n=11 — Leg R
+`automataflResolveDescN`
+(`metatheory/Dregg2/Circuit/Emit/AutomataflResolveEmit.lean`), Leg A
+`automataflStepDescN` (`.../AutomataflStepEmit.lean`), Leg C for conflict rounds
+(`.../AutomataflLegCEmit.lean`) — plus a sealed-move reveal leaf
+(`.../AutomataflRevealEmit.lean`) for the commit → reveal → resolve shape the Offering
+plays (`dregg-automatafl/src/surface.rs`). What gates it now:
 
-- the FAST refinement battery (`dregg-automatafl/tests/refinement.rs`): the AIR
-  accepts `(old, moves, next)` **iff** `next == apply_turn(old, moves)`, driven
-  against the vendored reference oracle (`src/reference.rs`, mirroring
-  `metatheory/Dregg2/Games/Automatafl.lean` and its `#guard`s) — and it is
-  non-vacuous: a wrong `next`, an invalid move, and a forged resolution are each
-  rejected;
-- the SLOW prove/fold gates (`dregg-automatafl/tests/prove_fold.rs`, `#[ignore]`,
-  minutes+ each): each stage proves as a real recursion-foldable leaf with its
-  in-circuit commitment byte-matching the host binding
-  (`prove_fold.rs:38`), a forged next board fails to prove (`prove_fold.rs:76`), the
-  leaf folds into a turn chain and `verify_history` accepts, and a spliced
-  `final_root` is rejected (`prove_fold.rs:552,607`) — so the acceptance is
-  non-vacuous end to end.
+- the acceptance battery (`dregg-automatafl/tests/lean_oracle.rs`): every transition,
+  legality verdict, conflict set and win is answered by `@[export]
+  dregg_automatafl_rules` over `Dregg2.Games.AutomataflRules`, with the first test
+  ASSERTING the export is linked so a thin archive fails RED instead of skipping;
+- the refinement, in Lean over the emitted descriptors
+  (`metatheory/Dregg2/Circuit/Emit/AutomataflResolveRefine.lean`,
+  `AutomataflStepRefine.lean`, and the capstones);
+- the seam canaries (`dreggnet-game-board/tests/two_leg_board_window.rs`,
+  `multi_round_fold.rs`) — PI-level and constraint-level arms run green; every
+  deployed-prover fold arm is `#[ignore]`d at tens of minutes and **has not been
+  run**, so end-to-end light-client acceptance of a played match is not a measured
+  result.
 
 Why Custom-VK and not the simple teeth: the 16-register `StateConstraint` vocabulary
 handles state shape, counts, and thresholds; it does not hold an 11×11 board or a
@@ -163,14 +168,16 @@ inspect hypotheses, so the statement is the honesty surface.
 
 ## Named residuals (labeled, not closed)
 
-- **automatafl width** — D2/D3 run the automaton gadget twice; at n=5 they exceed
-  `MAX_TRACE_WIDTH = 1024` (D2 = 1178, D3 = 1411; measured by
-  `dregg-automatafl/tests/size.rs`, numbers of record in
-  [`VERIFIED-GAME-PORTFOLIO.md`](VERIFIED-GAME-PORTFOLIO.md)). They fit and
-  prove-fold-verify at n=3 (D2 = 509, D3 = 661). The named close is the segmented
-  board-read scan toward N=11.
-- **automatafl move count** — the concrete gadget is staged to n≤2 simultaneous
-  moves; the general N=11 occlusion scan and full-SCC resolution are labeled residuals.
+- **automatafl width** — the D2/D3 numbers (1178 / 1411 at n=5, 509 / 661 at n=3) were
+  measured by a test that was deleted with the Rust AIR; they are RETRACTED, not
+  carried forward. The emitted legs at n=11 are 1273 columns (Leg R), 680 (Leg A) and
+  1208 (Leg C) — see the `#[ignore]` reasons in
+  `dreggnet-game-board/tests/two_leg_board_window.rs` and `multi_round_fold.rs`, and
+  [`VERIFIED-GAME-PORTFOLIO.md`](VERIFIED-GAME-PORTFOLIO.md).
+- **automatafl fold not run** — every n=11 deployed-prover arm is `#[ignore]`d at tens
+  of minutes and has not been run on the build box.
+- **automatafl move count** — the general N=11 occlusion scan and full-SCC resolution
+  are labeled residuals.
 - **multiway-tug privacy** — succinct, not zero-knowledge (see tier 2 above).
 - **The Descent's attested narrator** — the DM is always world-resolved (the AI
   proposes, the executor disposes), but the attestation's live pinned-notary session is

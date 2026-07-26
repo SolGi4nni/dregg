@@ -226,7 +226,8 @@ abutments and no deck.
 
 **Two DEAD anchors here:**
 
-1. **`extension/src/descent-play-entry.ts:1-19`** documents itself as the bundle entry for
+1. **`src/descent-play-entry.ts:1-19` under `extension/`** (⚑ DELETED by `beda81d86`, which acted on
+   this finding) documented itself as the bundle entry for
    `/descent/play/static/client.js`, referencing a `PLAY_APP_JS` constant in `descent_play.rs`.
    Neither the route nor the constant exists at HEAD (`descent_play.rs` has only
    `NATIVE_PLAY_APP_JS:292`). The file is not in `extension/build.mjs`'s entryPoints (4 entries,
@@ -401,9 +402,10 @@ both built and byte-pinned to each other, and **no page uses either**. One "sign
 extension" affordance on the web session page turns rung 2 of the identity ladder from two artifacts
 into one working path. Fix `extension/README.md:269`'s wrong route while there.
 
-**8. Delete the dead extension anchors.** `extension/src/descent-play-entry.ts` targets a route and a
-constant that no longer exist and is in no build. It is also, verbatim, the placeholder the live
-server is serving — deleting it removes the last thing that makes the stale deploy look intentional.
+**8. Delete the dead extension anchors.** ✅ DONE (`beda81d86`). `src/descent-play-entry.ts` targeted a
+route and a constant that no longer existed and was in no build; it was also, verbatim, the
+placeholder the live server was serving. It is deleted, and the same commit corrected the act-signed
+route.
 
 **9. Decide what `<dregg-descent>` is for.** It drives the OLD procgen `DescentWorld`
 (`extension/src/port.ts:2027-2065`) while `/descent/play` drives the Lean-native one. Either the

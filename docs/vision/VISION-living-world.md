@@ -456,9 +456,10 @@ at the *first* line of work, not a next-day discovery.
    but the answer is still never transcription.
 
 2. **LAW LIVES IN LEAN.** AIRs, constraint programs, gadgets, admission predicates — 
-   authored in Lean, proven there, **emitted**; Rust calls the artifact. Existing Rust AIRs
-   (`dregg-automatafl`, `param-compose/src/air.rs`) are debt to be replaced by the Foundry,
-   never foundations to extend. Say the substrate out loud at the start of every circuit
+   authored in Lean, proven there, **emitted**; Rust calls the artifact. The two Rust AIRs this
+   line named as debt — in `dregg-automatafl` and `param-compose` — have both since been DELETED
+   (`f44e26e7b`, `9a34719e6`) rather than extended; any that remain are debt to be replaced by the
+   Foundry, never foundations to extend. Say the substrate out loud at the start of every circuit
    task: "this is Lean-authored AIR" — or flag that it currently isn't.
 
 3. **EVERY MOVE IS A RECEIPT OVER OWNED STATE.** No host mover's output committed as truth.

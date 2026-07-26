@@ -117,7 +117,8 @@ operator holding user funds. That rail **already exists and is proven** — `res
 one `Signature`-gated conserving `Transfer` (`dregg-payable/src/payable.rs:24`,
 `turn/src/action.rs:1069`); the distance to it is custody. Critically, **there is no peg, oracle, or
 purchase path between computrons (the internal gas) and `$DREGG` anywhere in the code** — "$DREGG
-powers dregg compute" is unsupported at HEAD (`docs/TOKENOMICS.md:115-126`). The `$DREGG` bond is a
+powers dregg compute" is unsupported at HEAD (`docs/TOKENOMICS.md:68-76`, the "Not built yet"
+section — no native token standard, no burn accrual, and the mainnet payment flip still gated). The `$DREGG` bond is a
 quote-floored two-tranche design (`docs/deos/DREGG-BOND-DESIGN.md`), **DESIGNED not built**, that
 deliberately prices the correlated-devaluation problem a token-denominated bond would suffer.
 **Next rung: Rung 2a — the protocol-native run budget on an internal asset**

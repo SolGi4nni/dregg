@@ -36,9 +36,9 @@ only).
 step descriptor, the gated-step change, the appended PI families, the hold/reveal legs — is
 **Lean-authored AIR** (`metatheory/Dregg2/Circuit/Emit/Automatafl*.lean`, emitted through
 `metatheory/EmitByName.lean:107-114` into `circuit/descriptors/by-name/`). Rust in this design
-**fills traces and drives the fold**. It authors zero constraints. `dregg-automatafl/src/air.rs`,
-`moves.rs`, `builder.rs` are **DEBT**: they are read here as a *computation oracle* for
-witness-generation values, never extended as an AIR.
+**fills traces and drives the fold**. It authors zero constraints. The `dregg-automatafl` Rust AIR
+(`src/air.rs`, `src/moves.rs`, `src/builder.rs`) was **DEBT** — read here as a *computation oracle*
+for witness-generation values, never extended as an AIR — and has since been DELETED (`f44e26e7b`).
 
 ---
 
@@ -58,12 +58,14 @@ Three things are therefore **not** attested by a ranked leaderboard entry today:
 | **G2** | the boards form a **trajectory** | nothing connects turn `i`'s `packed_new` PIs to turn `i+1`'s `packed_old` PIs. The only cross-turn tooth is CELL rotated-root continuity, which is a nonce bump and is **content-independent** |
 | **G3** | the match started at the stock opening / ended at the claimed position | the artifact's `genesis_root`/`final_root` are the *cell* anchors, not the board |
 
-G2 is not a new discovery of this design — it is already **pinned by a live test**:
-`dregg-automatafl/tests/prove_11x11.rs:216`
-`mismatched_mid_diverges_board_roots_but_not_cell_continuity_11x11` demonstrates at PI level that a
-forged mid diverges the board roots and that the deployed cross-turn tooth does not see it. The
-`#[ignore]`d `mismatched_mid_fold_probe_11x11` (line ~550) exists precisely to *record* that the
-fold accepts it.
+G2 was not a new discovery of this design — it was pinned by a live test at the time,
+`mismatched_mid_diverges_board_roots_but_not_cell_continuity_11x11` in `dregg-automatafl`'s
+`prove_11x11.rs`, which demonstrated at PI level that a forged mid diverges the board roots
+while the deployed cross-turn tooth does not see it. ⚑ That test file went with the Rust AIR it
+drove (`f44e26e7b`); its successor is
+`dreggnet-game-board/tests/two_leg_board_window.rs::a_forged_mid_breaks_the_seam_though_both_legs_are_individually_valid`,
+which runs green at PI level. The deployed-prover arm that would settle whether the *fold* accepts
+a forged mid is `#[ignore]`d there and has not been run.
 
 So: **all three gaps close with ONE mechanism** — a fold-enforced equality between the *board*
 public inputs of adjacent leaves. That mechanism is what the Lean whole-turn capstone was built to
@@ -140,9 +142,10 @@ turn with two carriers:
               turn 2i+1  = Leg A  (step the automaton:      mid → new)
 ```
 
-This is the shape `dregg-automatafl/tests/prove_11x11.rs` already drives at the Rust-AIR level
-(`honest_11x11_two_subturn_folds_and_lightclient_accepts`) — the two legs as two turns on the same
-cell lineage, nonce `n → n+1 → n+2`.
+This is the shape `dregg-automatafl`'s `prove_11x11.rs` drove at the Rust-AIR level
+(`honest_11x11_two_subturn_folds_and_lightclient_accepts`) before that path was deleted — the two
+legs as two turns on the same cell lineage, nonce `n → n+1 → n+2`. The descriptor-path twin is
+`dreggnet-game-board/tests/two_leg_board_window.rs::a_played_round_lowers_to_a_resolve_leaf_then_a_step_leaf`.
 
 ### 2.2 What already chains them (and what does not)
 

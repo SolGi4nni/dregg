@@ -32,9 +32,12 @@ teeth — teeth handle the simple state-shape + validity; the Custom AIR proves 
    COLLECTION (the 16-register model doesn't hold a 121-cell board or a 21-card deck).
 3. The SIMPLE teeth lower via game-turn-slice's compiler (validity, counts, win-thresholds,
    conservation).
-4. The COMPLEX transition is a hand-authored CUSTOM AIR (a `Custom` leaf), TRANSLATION-VALIDATION
-   shape: the mover computes the next state off-circuit; the circuit re-checks each rule against the
-   witnessed next state.
+4. The COMPLEX transition is a CUSTOM AIR (a `Custom` leaf): the mover computes the next state
+   off-circuit; the circuit re-checks each rule against the witnessed next state. ⚑ For automatafl
+   that AIR is now **Lean-authored and emitted** — the hand-authored Rust one is deleted — and the
+   "translation-validation" label this list used to carry was wrong either way: there is no formal
+   semantics of Rust, so a Rust AIR differenced against a spec on cases is unit testing, not
+   validation.
 5. The LEAN: model the rules and connect the AIR to `applyTurn` — "the circuit accepts iff
    `next == applyTurn(old, moves)`", the game-level analogue of the `evalSimpleCtx_*_iff`
    constraint twins.
@@ -43,13 +46,23 @@ teeth — teeth handle the simple state-shape + validity; the Custom AIR proves 
 7. The Offering + frontends: the `open`/`actions`/`advance`/`verify`/`render`/`price` shape every
    dreggnet frontend (web / Discord / Telegram / WeChat) drives.
 
-## THE FOLD IS EXERCISED IN-TREE (the former "Lane-D" gate is behind us)
+## THE FOLD — WIRED IN-TREE, ITS ACCEPTANCE GATE NOT YET RUN
 
-`dregg-automatafl/tests/prove_fold.rs` builds a D1 automaton-step custom leaf, folds a multi-turn
-chain via `prove_turn_chain_recursive`, and `dregg_lightclient::verify_history` ACCEPTS — with a
-forged-chain arm (a spliced `final_root`) REJECTED, so the acceptance is non-vacuous. The same fold
-carries multiway-tug's membership-proven plays (`dregg-multiway-tug/src/fold.rs`): a whole private
-match becomes ONE `WholeChainProof`. Match-as-one-succinct-proof is a shipped path, not a gated plan.
+⚑ 2026-07-25 correction. This section used to cite a `prove_fold.rs` under `dregg-automatafl/tests/`
+for a green D1 leaf → fold → `verify_history` ACCEPTS. That test was deleted with the hand-written Rust
+AIR it drove, and the two-leg descriptor path that replaced it does not carry the same green.
+
+What is true now: `dreggnet-game-board/tests/two_leg_board_window.rs` chains Leg R
+(`automataflResolveDescN 11`) and Leg A (`automataflStepDescN 11`) and states its own three tiers —
+the PI level (windows carry the right values, a forged mid breaks the seam) and the constraint level
+(`dregg-circuit-prove::board_window_seam_tests`, a broken equality is a `connect` conflict) RUN
+GREEN; the deployed-prover arm, `the_honest_two_leg_match_folds_and_the_light_client_reads_the_final_position`,
+is `#[ignore]`d at tens of minutes and **has not been run**. Same shape in
+`dreggnet-game-board/tests/multi_round_fold.rs` (the Leg C conflict braid) and
+`dreggnet-prove-service/tests/match_fold.rs` (fast arm green, fold arm `--ignored`). So the seam is
+wired and its mechanism bites; a light client accepting a real automatafl match is not a measured
+result. The same fold carries multiway-tug's membership-proven plays
+(`dregg-multiway-tug/src/fold.rs`): a whole private match becomes ONE `WholeChainProof`.
 
 ## multiway-tug — the hidden-hand card game (all phases present)
 
@@ -101,35 +114,44 @@ raycast-decided step; win = steer the Daemon into your goal (no capture). What e
   is the state shape plus the wire, and there is no Rust fallback. ⚑ 2026-07-25: this replaced
   `src/reference.rs`, a hand transcription of `~/dev/automatafl/logic` (a non-canonical experiment)
   that swapped the pieces of a 2-cycle and let a mover destroy a stationary piece on its destination.
-  ⚠ The bullets below still describe the DELETED hand-written Rust AIR (`src/air.rs`,
-  `src/builder.rs`, `src/moves.rs`, `tests/refinement.rs`); the AIR is Lean-emitted now
-  (`automataflResolveDescN` / `automataflStepDescN`) and this section has not been rewritten for it.
-- **The staged board-transition AIR** (`src/air.rs`, `src/builder.rs`, `src/moves.rs`) — the
-  translation-validation Custom AIR, staged D1 (Daemon-only) → D2 (single move + occlusion) → D3
-  (n=2 simultaneous resolution with the fork/collide/survive truth table).
-- **The refinement battery** (`dregg-automatafl/tests/refinement.rs`) — the AIR accepts `(old, moves, next)` IFF
-  `next == apply_turn(old, moves)`, driven against the oracle; non-vacuous (a wrong `next`, an
-  invalid move, and a forged resolution are each REJECTED).
-- **The fold** (`dregg-automatafl/tests/prove_fold.rs`) — D1/D2/D3 leaves prove, fold, and `verify_history` accepts;
-  forged steps mint no leaf.
-- **The Lean** (`metatheory/Dregg2/Games/Automatafl.lean` + `AutomataflAir.lean`) — the pure
-  `applyTurn` model with its load-bearing properties, and the CONNECTED refinement:
-  `airAutomatafl_iff_applyTurn` (the staged circuit's admission relation IS the graph of
-  `applyTurn`), `conflictResolve_pair` (the D3 fork/collide/survive table matches the reference
-  resolution), fed into the §7 obligation `concreteAutomataflAIR_refines`. The gadget
-  arithmetizations' soundness is carried as the named `MoveSound`/`StepSound` hypotheses (like
-  `MerkleSound` upstream), not re-proven — that is the deployed circuit's job.
+- **The board-transition AIR — Lean-authored, the Rust one DELETED.** The hand-written Custom AIR
+  (`air.rs`, `builder.rs`, `moves.rs`) and its Rust batteries (`refinement.rs`, `prove_fold.rs`,
+  `size.rs`, `prove_11x11.rs`) were deleted in `f44e26e7b` / `e3c5bb8b9`; per house law #1 an AIR is
+  authored in Lean, and a Rust AIR carried no proof of anything. The deployed object is now two
+  emitted descriptors at n=11 — Leg R `automataflResolveDescN`
+  (`metatheory/Dregg2/Circuit/Emit/AutomataflResolveEmit.lean`, `old → mid`, move adjudication) and
+  Leg A `automataflStepDescN` (`metatheory/Dregg2/Circuit/Emit/AutomataflStepEmit.lean`, `mid →
+  new`, the automaton) — plus Leg C for conflict rounds
+  (`metatheory/Dregg2/Circuit/Emit/AutomataflLegCEmit.lean`).
+- **The acceptance battery** (`dregg-automatafl/tests/lean_oracle.rs`) — every board transition,
+  legality verdict, conflict set and win comes back through `@[export] dregg_automatafl_rules`, and
+  the first test ASSERTS the export is present so a thin archive fails RED rather than skipping.
+- **The refinement** — in Lean, over the ACTUAL emitted descriptors:
+  `metatheory/Dregg2/Circuit/Emit/AutomataflResolveRefine.lean` and `AutomataflStepRefine.lean`,
+  with the capstones `AutomataflResolveCapstone.lean` / `AutomataflStepCapstone.lean` /
+  `AutomataflTurnCapstone.lean`. The old Rust "refinement battery" was a differential test on cases
+  and proved nothing about all inputs.
+- **The Lean model** (`metatheory/Dregg2/Games/Automatafl.lean` + `AutomataflRules.lean`) — the pure
+  `applyTurn` with its load-bearing properties, `AutomataflFFI.lean` exporting it to the crate.
+  ⚠ `metatheory/Dregg2/Games/AutomataflAir.lean` (`airAutomatafl_iff_applyTurn`,
+  `concreteAutomataflAIR_refines`) is the ABSTRACT staged-AIR relation whose own header already
+  disclaimed any machine-checked tie to the deployed circuit; with the Rust AIR it described now
+  deleted, it models an object nothing runs. Read it as lineage, not as a deployed guarantee.
 - **The Offering** (`src/surface.rs`) — `AutomataflOffering` renders the board as a
   `ViewNode::CoordGrid` and runs the simultaneous-move shape as COMMIT → REVEAL → RESOLVE (sealed
   moves, opened against their commitments, one real turn applying `apply_turn`).
 
 **Named residuals (labeled, not closed):**
-- **Width** — D2/D3 run the automaton gadget twice, so at n=5 they EXCEED `MAX_TRACE_WIDTH = 1024`
-  (D2 = 1178, D3 = 1411; measured in `dregg-automatafl/tests/size.rs`). They fit and prove-fold-verify at n=3
-  (D2 = 509, D3 = 661). The named close is the segmented board-read scan (the N=11 follow).
-- **Move count** — the concrete gadget is staged to n≤2 simultaneous moves; the general N=11
-  occlusion scan and full-SCC resolution are the labeled residuals (`Automatafl.lean` §4,
-  `moves.rs`).
+- **Width** — the D2/D3 width numbers this section used to record (1178 / 1411 at n=5, 509 / 661 at
+  n=3, measured in the deleted `size.rs`) were measurements of the deleted Rust AIR and are
+  RETRACTED. The emitted legs at n=11 are 1273 columns (Leg R), 680 (Leg A) and 1208 (Leg C), per
+  the `#[ignore]` reasons in `dreggnet-game-board/tests/two_leg_board_window.rs` and
+  `multi_round_fold.rs`.
+- **The fold has not been run** — every deployed-prover arm at n=11 is `#[ignore]`d at tens of
+  minutes. Until one is run on the build box, "a played match folds and the light client accepts"
+  is a wiring claim, not a result.
+- **Move count** — the general N=11 occlusion scan and full-SCC resolution are the labeled
+  residuals (`metatheory/Dregg2/Games/Automatafl.lean` §4).
 
 ## The portfolio claim
 

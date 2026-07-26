@@ -1,6 +1,7 @@
 # DESIGN — the FRI adversary object, and the `FriLdtExtractV3` discharge ladder
 
-**Lane D1 of the release-arc design wave** (`docs/SPRINT-poster-honesty-closure-2026-07-23.md`).
+**Lane D1 of the release-arc design wave** (⚠ its sprint plan,
+`SPRINT-poster-honesty-closure-2026-07-23`, was never committed under `docs/`).
 Status: design + one additive Lean module. **Nothing deployed changes; no VK, no wire, no config.**
 Every file:theorem reference below was verified at HEAD 2026-07-23 by reading the statements, not
 grep. Predecessor: `docs/reference/FRI-EXTRACTION-FLOOR-DESIGN.md` (2026-07-16) — its Stages 1–5

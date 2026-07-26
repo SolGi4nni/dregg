@@ -7,9 +7,11 @@
 **Scope — TWO PLAYERS ONLY (m = 2).** The multiplayer (m ≤ 4) extensions never matured; they are
 future work. So: NO Tarjan-SCC engine, NO merge modes (Annihilate / BunchBeforeMerge / BunchedStacking),
 NO >2-cycles. At m=2 the move graph is ≤2 edges — the only cycle is a 2-cycle (stays put), two moves to
-one square is a collision-conflict, and the existing `dregg-automatafl/src/moves.rs::build_d3`
-(fork / collide / survive / flow-through) is **already the faithful m=2 resolution**. The remaining work
-is pure board scaling, not graph-algorithm-in-circuit.
+one square is a collision-conflict, and `build_d3` in `dregg-automatafl`'s `src/moves.rs`
+(fork / collide / survive / flow-through) was **already the faithful m=2 resolution**. The remaining work
+is pure board scaling, not graph-algorithm-in-circuit. ⚑ 2026-07-25: that Rust module is deleted
+(`f44e26e7b`); the m=2 resolution now lives in
+`metatheory/Dregg2/Circuit/Emit/AutomataflResolveEmit.lean`.
 
 ## The real game (not hnefatafl)
 It is **automatafl**: particles `{Vacuum, Repulsor, Attractor, Automaton}` on an 11×11 tafl-shaped board;
@@ -71,7 +73,11 @@ not two leaves under one receipt, to ride the deployed chain path.)
    across all rook moves on 11×11.
 5. **Win check in Leg A** (optional) — closes the currently-executor-only `winner` gap.
 
-**Foundation handed to every lane (absolute paths):** oracle `dregg-automatafl/src/reference.rs`;
-builder primitives `dregg-automatafl/src/builder.rs`; the seam `circuit-prove/src/joint_turn_recursive.rs`
+**Foundation handed to every lane (absolute paths):** oracle `dregg-automatafl/src/rules.rs` (which
+asks `@[export] dregg_automatafl_rules`); witness generators `dregg-automatafl/src/resolve_witness.rs`
++ `dregg-automatafl/src/witness.rs`; the seam `circuit-prove/src/joint_turn_recursive.rs`
 + `circuit-prove/src/ivc_turn_chain.rs`; the Lean contract `metatheory/Dregg2/Games/Automatafl.lean`; the
 automatafl ground truth `~/dev/automatafl/logic/src/{game,automaton,board}.rs`.
+⚑ 2026-07-25: this list originally handed lanes `src/reference.rs` (the Rust game oracle) and
+`src/builder.rs` (builder primitives). Both are deleted — the oracle because it had drifted from the
+Creator-Approved ruleset, the builder with the rest of the hand-written Rust AIR.

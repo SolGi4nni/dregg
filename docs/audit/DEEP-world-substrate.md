@@ -258,19 +258,27 @@ a Lean-emitted symbolic program loader (`program_loader.rs`) and a
 (matches) and `dreggnet-prove-service` (folds); reachable through the surface
 frontends and `wasm/src/bindings_multiway_tug.rs`.
 
-### 5c. `dregg-automatafl` — plays REAL, but the AIR is the flagged DEBT
+### 5c. `dregg-automatafl` — the flagged AIR debt has since been DELETED
 
 n=2 (and 11×11) board-transition game, served through `dreggnet-game-board` /
-`dreggnet-prove-service` and the offering surfaces. It genuinely plays and folds. BUT:
-its `air.rs`/`moves.rs`/`builder.rs` are a **hand-authored Custom-VK AIR** (813 + 1168
-+ 773 lines) — exactly the "hand-written Rust AIR debt" `~/.claude/CLAUDE.md` flags as
-"DEBT, not a foundation." Its `Cargo.toml` and `tests/refinement.rs` describe it as
-"Refines `Dregg2.Games.Automatafl.applyTurn`" with a differential oracle
-(`automatafl-logic` git dep) — but per project doctrine a Rust AIR carries no proof
-and "translation validation between a Rust AIR and a spec is a LIE" (no semantics of
-Rust). So: **REAL as a playable, folding match; the "refinement/verified" framing is
-the debt, not verification.** Contrast with 5a/5b, which source their programs from
-Lean.
+`dreggnet-prove-service` and the offering surfaces. When this section was written, the
+crate's `src/air.rs` / `src/moves.rs` / `src/builder.rs` were a **hand-authored
+Custom-VK AIR** (813 + 1168 + 773 lines) — exactly the "hand-written Rust AIR debt"
+`~/.claude/CLAUDE.md` flags as "DEBT, not a foundation" — and its `Cargo.toml` plus a
+Rust `refinement.rs` test called that arrangement a refinement of
+`Dregg2.Games.Automatafl.applyTurn`, which it was not: a Rust AIR carries no proof, and
+"translation validation between a Rust AIR and a spec is a LIE" (there is no semantics
+of Rust).
+
+⚑ 2026-07-25. That debt is gone. `f44e26e7b` deleted the Rust AIR and its batteries;
+`e3c5bb8b9` deleted the Rust game oracle too. The AIR is Lean-authored and emitted at
+n=11 (`metatheory/Dregg2/Circuit/Emit/AutomataflResolveEmit.lean` /
+`AutomataflStepEmit.lean` / `AutomataflLegCEmit.lean`), the refinement is a Lean
+theorem over the emitted object (`AutomataflResolveRefine.lean`,
+`AutomataflStepRefine.lean`), and every transition routes to `@[export]
+dregg_automatafl_rules` with no fallback. The crate now sources its program from Lean
+exactly as 5a/5b do. The residual moved: the n=11 deployed-prover fold arms in
+`dreggnet-game-board/tests/two_leg_board_window.rs` are `#[ignore]`d and not yet run.
 
 ---
 

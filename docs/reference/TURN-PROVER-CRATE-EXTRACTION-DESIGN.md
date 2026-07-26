@@ -382,7 +382,8 @@ workspace = true
   → `turn-prover/src/` (drop the `#![cfg(feature="prover")]` inner attribute; the crate
   is unconditionally the prover). Zero `turn`-internal edits — these touch no `crate::`
   internals.
-- `turn/src/aggregate_bilateral_prover.rs` → `turn-prover/src/`; its `not(prover)`
+- `aggregate_bilateral_prover.rs`, `turn/src/` → `turn-prover/src/` (DONE — it now lives at
+  `turn-prover/src/aggregate_bilateral_prover.rs`); its `not(prover)`
   error stubs collapse away (no more cfg). Repoint its `use crate::{bilateral_schedule,
   error::TurnError, turn::Turn, witnessed_receipt::WitnessedReceipt}` to
   `use dregg_turn::{...}` (all already `pub`).

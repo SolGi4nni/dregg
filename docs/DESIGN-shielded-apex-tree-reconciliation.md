@@ -318,7 +318,7 @@ This mirrors the automatafl SHIP series (`c8789758e8` and predecessors) that jus
    (`install_and_stamp → write_provenance`, `emit_descriptors.py:979`); each new row lands under
    `by_name_sha256` (hash over the emitted Lean bytes). Verify:
    `python3 scripts/emit_descriptors.py --verify-provenance --strict`.
-4. **Rust embed (shielded pattern):** a new `circuit-prove/src/shielded_spend_pinned.rs` (etc.) with
+4. **Rust embed (shielded pattern):** a new `shielded_spend_pinned.rs` (etc.) under `circuit-prove/src/` with
    `pub const DESCRIPTOR_JSON: &str = include_str!("../../circuit/descriptors/by-name/dregg-shielded-spend-pinned-root-v1.json")`,
    `PREDICATE_NAME`, a fail-closed `descriptor()` parse (`if descriptor.name != PREDICATE_NAME { … }`), and
    prove/verify wrappers — modeled on `shielded_whole_note_swap_substrate.rs:46-48,345-347`. Add

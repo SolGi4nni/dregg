@@ -1,10 +1,17 @@
 # Automatafl: wiring the deployed game to the Lean-authored AIR (and shipping a complete zk/trustless/distributed match)
 
-Status: DESIGN + scope. No cutover performed. This document maps the deployed
-path against ground truth (file:line @ HEAD 67b3d8a38), states the loader/
+Status: DESIGN + scope, written before the cutover; the cutover has SINCE HAPPENED. This document
+maps the deployed path against ground truth (file:line @ HEAD 67b3d8a38), states the loader/
 witness-gen/repoint/deletion plan, flags the drift that must be repaired first,
 and gives an ordered build plan. It is authoritative over any stale memory; where
 it and the code disagree, the code wins.
+
+⚑ 2026-07-25 — §4.3's deletion step is DONE, and went further than planned. `f44e26e7b` deleted the
+hand-written Rust AIR (`src/air.rs`, `src/moves.rs`, `src/builder.rs`) and its proving tests;
+`e3c5bb8b9` then also deleted `src/reference.rs`, which §4.3 planned to KEEP — the rules-conformance
+audit found the transcribed oracle divergent from the Creator-Approved ruleset, so every transition
+now routes to `@[export] dregg_automatafl_rules` with no Rust fallback. Read the file references
+below as a snapshot of the pre-cutover tree.
 
 House-law framing (CLAUDE.md #1): the automatafl AIR is authored in Lean and Rust
 must only CALL IN. Today the deployed match proves through a **hand-written Rust
@@ -198,10 +205,10 @@ scans (per step: prefix-sum in-bounds bit, gated shifted read, hit one-hot, `dis
 the back-end `decideAxis` truth table (×2 axes), `chooseOffset`, the step + board-update
 gates, and the packed-felt board commitments.
 
-- `dregg-automatafl/src/reference.rs` (the game oracle) computes only `old → new`
-  (`automaton_step`, `apply_turn`) — it does NOT produce the intermediate AIR columns.
-- `dregg-automatafl/src/builder.rs::automaton_gadget` DOES produce every intermediate
-  column value (that is how `air_accepts()` passes today), but into the diverged
+- `src/reference.rs` (the game oracle) computed only `old → new`
+  (`automaton_step`, `apply_turn`) — it did NOT produce the intermediate AIR columns.
+- `src/builder.rs::automaton_gadget` DID produce every intermediate
+  column value (that is how `air_accepts()` passed), but into the diverged
   269/32 Rust layout.
 
 ### 3.2 The design: reuse the front-end fill, rewrite the tail
@@ -293,7 +300,7 @@ Scaling the tail to n = 5 / n = 11: another ~1–2 days (and depends on §4).
 
 8. Once the Lean-descriptor path is the sole fold path and the differential gate is
    green across n = 5 / n = 11:
-   - **Delete** `dregg-automatafl/src/air.rs`, `moves.rs`, `builder.rs` and the AIR-
+   - **Delete** `src/air.rs`, `moves.rs`, `builder.rs` and the AIR-
      proving tests (`air_accepts` refinement battery, the D1/D2/D3 self-accept tests).
    - **Keep** `reference.rs` (the oracle the witness-gen runs) and the extracted
      witness-only value helpers (§3.3). If those helpers are lifted into a new

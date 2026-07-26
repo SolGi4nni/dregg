@@ -10,7 +10,7 @@ carries the per-file evidence). Git history preserves every prior location.
 | ERE-FORMALIZATION-ASSESSMENT.md | docs/deos/DERIVATIVE-MATCHING-DESIGN.md |
 | HERMES-INTEGRATION.md | deos-hermes/DESIGN.md + docs/deos/LOG-A-HERMES-IN.md |
 | NATIVE-PROOF-BRIDGES.md | docs/deos/ETH-NATIVE-WRAP.md |
-| STARK-PROVER-PERF-REVIEW.md | stark-kill: circuit/src/stark.rs is deleted; deployed proving rides the Lean-emitted p3/HidingFriPcs path |
+| STARK-PROVER-PERF-REVIEW.md | stark-kill: the circuit crate's `src/stark.rs` is deleted; deployed proving rides the Lean-emitted p3/HidingFriPcs path |
 | UPGRADE.md (ops) | deploy/aws/README.md ("build elsewhere, ship the image") + deploy/PRACTICES.md |
 | MEMORY-LEGS-SCOPE.md | docs/reference/STARK-SOUNDNESS-CENSUS.md |
 | PHASE2-ALL-EFFECTS-SOUNDNESS.md | docs/reference/STARK-SOUNDNESS-CENSUS.md |

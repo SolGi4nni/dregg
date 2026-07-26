@@ -1,8 +1,14 @@
 # STARK prover — mechanical-sympathy review (2026-07-06)
 
+> **SUPERSEDED.** The subject of this review — the hand-rolled prover in the circuit crate's
+> `src/stark.rs` — was DELETED by the stark-kill rather than rewritten. The file does not exist;
+> the circuit crate exposes only `stark_zk` (`circuit/src/lib.rs:323`) and deployed proving rides
+> the Lean-emitted p3 / `HidingFriPcs` path. Everything below is present-tense about deleted code
+> and is kept as the record of why the rewrite was never scheduled.
+
 Triggered by an observed symptom: the DSL STARK prover "isn't even using a full core."
 Confirmed, root-caused, and quantified. This is a **review + scoped plan**, not a landed
-fix — the prover is deployed, soundness-critical, and `circuit/src/stark.rs` is a
+fix — the prover is deployed, soundness-critical, and `src/stark.rs` is a
 shared file with a live concurrent lane. The rewrite is ember's call to schedule.
 
 ## The symptom, measured
@@ -22,7 +28,7 @@ not the O(n log n) a STARK prover is supposed to be. `top` during the run: **99%
 core**, the other 11 idle. So: not memory-bound — **single-threaded and
 super-linear-compute-bound**. Verify stays cheap (correct: it is O(queries · log n)).
 
-## Root cause — two textbook informatics mistakes, both in `circuit/src/stark.rs`
+## Root cause — two textbook informatics mistakes, both in `src/stark.rs`
 
 The prover builds its evaluation domains from **roots of unity**
 (`get_root_of_unity`, `build_evaluation_domain`, up to 2^27 — the exact structure that
@@ -68,7 +74,7 @@ scales to the 64 KB+ traces that currently never finish. Verify is already fine.
   swap must be gated by an exact equality test against the current path on random
   traces + the full existing STARK test suite, before it can be trusted — not a
   from-thin-context edit ([[feedback-be-thoughtful-not-trigger-happy]], never quick-fix).
-- **Shared file, live lane.** `circuit/src/stark.rs` sits beside `circuit/src/*` files a
+- **Shared file, live lane.** `src/stark.rs` sits beside `circuit/src/*` files a
   concurrent session is editing right now. Landing an NTT rewrite needs the coordination
   window, not a mid-swarm edit ([[feedback-swarm-shared-tree-clobber-hazard]]).
 - **It is a real, self-contained lane** (~a day: NTT + coset LDE + rayon + the equality

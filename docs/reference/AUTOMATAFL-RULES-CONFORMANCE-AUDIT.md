@@ -16,16 +16,16 @@ Creator-Approved ruleset · **Mode** audit only, nothing rewritten.
 
 The findings below were about two objects: the Lean spec (repaired in
 `metatheory/Dregg2/Games/AutomataflRules.lean`, the rules-faithful rewrite) and the Rust oracle
-`dregg-automatafl/src/reference.rs`, which was a hand transcription of `logic/src/game.rs` and
+`src/reference.rs` in `dregg-automatafl`, which was a hand transcription of `logic/src/game.rs` and
 therefore carried the same defects. **`reference.rs` is deleted.** `dregg-automatafl` now asks the
 Lean for every board transition, legality verdict, conflict set and win, through
 `@[export] dregg_automatafl_rules` (`Dregg2.Games.AutomataflFFI` over `AutomataflRules`) — see
 `dregg-automatafl/src/rules.rs`. There is no Rust fallback, so none of the divergences below is
 reachable from Rust any more; the three that DESTROY MATERIAL are gone from the deployed path.
 
-`tests/differential_reference.rs` — the harness this document calls out for *"comparing a second
-copy of the same code against the first"* — is deleted too, along with the `automatafl-logic` git
-dev-dependency it drove. Its purpose is served by `dregg-automatafl/tests/lean_oracle.rs`, which pins the ruleset's
+The crate's `differential_reference.rs` test — the harness this document calls out for *"comparing
+a second copy of the same code against the first"* — is deleted too, along with the
+`automatafl-logic` git dev-dependency it drove. Its purpose is served by `dregg-automatafl/tests/lean_oracle.rs`, which pins the ruleset's
 answer on the audit's own witnesses (the 2-cycle 3.5a, the inclusive path check 3.2, ruling D on
 1.4) — inputs the deleted transcription answered differently, so the tests are evidence about
 *which object* answered.
@@ -66,15 +66,16 @@ Priorities 1–4 and conform on every one. The only open question there is which
 rule names.
 
 The **resolution half is wrong**, and wrong in a specific, diagnosable way: it was mirrored off
-`logic/src/game.rs::apply_moves`, and the differential harness that guards it
-(`dregg-automatafl/tests/differential_reference.rs`) compares a *second copy of the same code*
+`logic/src/game.rs::apply_moves`, and the differential harness that guarded it (the crate's
+`differential_reference.rs` test, deleted 2026-07-25) compared a *second copy of the same code*
 against the first. Every clause of rules step 3 that the two implementations get wrong together,
 we get wrong too. **Nine divergences, six of them outcome-changing, three of them destroy pieces.**
 The smallest fires with **one move on a 3×3 board**.
 
-Every divergence below marked ⚑ is **machine-checked** against the built spec — probe file
-`scratchpad/AuditProbe.lean`, 24 `#guard`s, all passing, with a mutation canary confirming the
-harness bites.
+Every divergence below marked ⚑ was **machine-checked** against the built spec — 24 `#guard`s, all
+passing, with a mutation canary confirming the harness bites. ⚠ The probe was a scratch file that
+was never committed (see the Appendix), so those checks are not reproducible from this tree; the
+reproducible successor is `dregg-automatafl/tests/lean_oracle.rs`.
 
 ---
 
@@ -178,7 +179,7 @@ Rules step 3, quoted in full:
 
 | # | Rules clause | Our def | Verdict | What ours does |
 |---|---|---|---|---|
-| 5.1 | "In a two-player game, each player picks two corners **that are in the same row**" | — | **ABSENT (HIGH)** | `Automatafl.lean` has no `stockTwoPlayer`, no board layout, no corner set and no goal assignment. The 11×11 opening and `GOAL_CORNERS_2P` exist **only in hand-written Rust** (`dregg-automatafl/src/reference.rs`) — the substrate CLAUDE.md names as debt. (That Rust constant *is* rules-correct: P0 = `{(0,0),(10,0)}`, P1 = `{(0,10),(10,10)}`, each pair sharing a row. The old prototype's `DEFAULT_GOALS[2] = [[(0,0),(10,0)], [(10,0),(10,10)]]` is buggy — it repeats `(10,0)` and gives P1 a *column*. Do not transcribe the prototype.) |
+| 5.1 | "In a two-player game, each player picks two corners **that are in the same row**" | — | **ABSENT (HIGH)** | `Automatafl.lean` has no `stockTwoPlayer`, no board layout, no corner set and no goal assignment. The 11×11 opening and `GOAL_CORNERS_2P` exist **only in hand-written Rust** (the crate's now-deleted `src/reference.rs`) — the substrate CLAUDE.md names as debt. (That Rust constant *is* rules-correct: P0 = `{(0,0),(10,0)}`, P1 = `{(0,10),(10,10)}`, each pair sharing a row. The old prototype's `DEFAULT_GOALS[2] = [[(0,0),(10,0)], [(10,0),(10,10)]]` is buggy — it repeats `(10,0)` and gives P1 a *column*. Do not transcribe the prototype.) |
 | 5.2 | "In a four-player game, each player picks exactly one corner" | — | **ABSENT (MED)** | — |
 | 5.3 | "the game is won by whomever owns the corner" | `winner` / `winnerAux` over an arbitrary `goals : List (Coord × Pid)` | **PARTIAL (MED)** | The scan is right; nothing constrains `goals` to be corners, to be two-per-seat-sharing-a-row, or to be distinct. `winner_sound` proves only "the automaton is on a *declared* goal" — it cannot prove "…in a corner", because cornerhood is not in the model. `winnerAux` returns the first match, so overlapping goal entries resolve silently by list order. |
 | 5.4 | "When the Automaton **moves into** a corner" | `winner` reads occupancy of the final board | **DIVERGES (LOW)** | We test *sits on*, not *moved into*. The spec's own witness makes this visible: `#guard winner demoBoard [(⟨2,2⟩, 7)] = some 7` (Automatafl.lean:716) reports a win on a board where the automaton has not moved at all. Unreachable from the stock opening (the automaton starts centred), and `game.rs` inherits the same reading — but the clause says *moves into*. |
@@ -252,10 +253,10 @@ Emitted artifacts: `circuit/descriptors/by-name/automatafl-resolve.json` must be
 
 ### The mechanism of the drift — worth recording
 
-`dregg-automatafl/src/reference.rs::follow_chain` (line 353) is **verbatim the pre-fix chain** —
-it is `followChainBuggy`, landing on `nxt` unconditionally. So the Lean spec and the Rust
-reference it was ported from are **already two different functions**; defect #8 was fixed in Lean
-only. Meanwhile `dregg-automatafl/tests/differential_reference.rs` compares that Rust reference
+`follow_chain` in the crate's `src/reference.rs` (line 353) was **verbatim the pre-fix chain** —
+it was `followChainBuggy`, landing on `nxt` unconditionally. So the Lean spec and the Rust
+reference it was ported from were **already two different functions**; defect #8 was fixed in Lean
+only. Meanwhile `differential_reference.rs` compared that Rust reference
 against the o1 `logic` crate. Reading `logic/src/game.rs::apply_moves` Phase 4 + Phase 6: a chain
 ending on a square held by a non-source piece pushes that square onto the path and
 `final_placements` overwrites the occupant, which is never cleared — i.e. **o1 has divergence 3.2
@@ -347,8 +348,9 @@ later "fixed" into a bug.
 ### Phase 8 — descriptors and Rust
 
 Regenerate `automatafl-resolve.json` (and `automatafl-step.json` iff Q1 flips) through
-`EmitByName`. **Delete** `dregg-automatafl/src/reference.rs::follow_chain` and re-point
-`tests/differential_reference.rs` at the Lean-emitted reference. Add a rules-conformance suite
+`EmitByName`. **Delete** `follow_chain` (and, as it turned out, all of `src/reference.rs`) and re-point
+the differential at the Lean-emitted reference — done 2026-07-25 by deleting both and routing
+`dregg-automatafl/src/rules.rs` at `@[export] dregg_automatafl_rules`. Add a rules-conformance suite
 that is *not* a differential against o1 — o1 shares the defects, so agreement with it proves
 nothing. Per CLAUDE.md the AIR stays Lean-authored; the hand-written Rust AIR in `dregg-automatafl`
 is debt and must not be extended to cover the new cases.
@@ -394,8 +396,9 @@ it is proof about the wrong function.
 
 ## Appendix — the probe
 
-`scratchpad/AuditProbe.lean`, run with `lake env lean` against the built
+A scratch Lean file (`AuditProbe.lean`), run with `lake env lean` against the built
 `Dregg2.Games.Automatafl`. 24 `#guard`s, all passing; a deliberately-false guard was added and
-confirmed to fail, so the harness bites. Probes D1 (destination overwrite), D2 (2-cycle swap),
+confirmed to fail, so the harness bites. ⚠ It was never committed and is not in the tree, so this
+appendix records what was run, not something you can re-run. Probes D1 (destination overwrite), D2 (2-cycle swap),
 D3 (empty-square 2-cycle), D4a/D4b (conflicted-coordinate leakage), D5 (merge destruction +
 fairness refutation), D6 (empty-cycle capture).

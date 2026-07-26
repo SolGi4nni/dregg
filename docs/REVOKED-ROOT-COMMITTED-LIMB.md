@@ -101,9 +101,11 @@ current effect grows it"*). The `⊆` "grow-only" theorem is proved BY REFLEXIVI
 `revokeCredentialAcc`, and "the MDB root" are COMMENTS WITH NO DEFS, on both sides. **A perfect lock on an
 empty registry.** The reader is right; the writer was never built.
 
-**The semantics were already right in the circuit.** `circuit/src/dsl/revocation.rs` +
-`circuit/src/non_revocation_witness.rs` prove non-membership of an **`ancestor_hash`** against
-`[revocation_root, queried_item]`. That is seL4 MDB `revoke`-tears-down-the-subtree, achieved the cheap way:
+**The semantics were already right in the circuit.** The circuit crate's `dsl/revocation.rs` +
+`non_revocation_witness.rs` proved non-membership of an **`ancestor_hash`** against
+`[revocation_root, queried_item]`. ⚑ Both files are DELETED (`d40f0b78a`) — hole #139 was closed
+not by widening that root but by retiring the whole 1-felt rail in favour of the limb-26
+`.absent` map-op, whose root is already the committed 8-felt one. That is seL4 MDB `revoke`-tears-down-the-subtree, achieved the cheap way:
 each cap proves NO ANCESTOR OF MINE IS REVOKED. Revoking a parent kills descendants with ONE insert — no
 subtree walk, no O(N), and the executor never needs the CDT. **The ONLY defect: `revocation_root` is a
 wire-supplied single `BabyBear` PI instead of the committed 8-felt root.** That is the entirety of hole #139.

@@ -378,7 +378,8 @@ each is a genuine hole (not a terminal floor) with a concrete refutation to try.
 
    **(a) Cross-map (by reading the deployed source):** every `verifyAlgo` reject-tooth
    has a PRESENT counterpart in the deployed `p3_batch_stark::verify_batch` (reached
-   via `descriptor_ir2::verify_vm_descriptor2`, `verifier/mod.rs`): `vk.shapeMatches`→
+   via `descriptor_ir2::verify_vm_descriptor2` into `p3_batch_stark::verifier`, an external crate):
+   `vk.shapeMatches`→
    InstanceCountMismatch + trace-width checks; degree pin (`tableOk_rejects_wrong_degree`)
    →`validate_degree_bits` + the `LIMB_BITS` pin (`descriptor_ir2.rs:5080`);
    `foldConsistent`/`merkleRecompute_binds`→`pcs.verify` opening; quotient identity

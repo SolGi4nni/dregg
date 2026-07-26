@@ -257,11 +257,13 @@ This is the real prize of A: it moves shielded from a prover-trust surface into 
 the transfer-clearing descriptor to be **emitted from Lean**, not built as Rust `VmConstraint2`. Name the
 targets:
 
-- **`metatheory/Market/ShieldedSpendDescriptor.lean`** (NEW) — Lean-author the shielded-**spend** AIR
+- **`Dregg2.Circuit.Emit.ShieldedSpendDescriptor`** (NEW when this plan was written; it now exists at
+  `metatheory/Dregg2/Circuit/Emit/ShieldedSpendDescriptor.lean`, not the `metatheory/Market/` path
+  this plan named) — Lean-author the shielded-**spend** AIR
   (the C1–C7b currently in `spend_circuit.rs`), emitting an `EffectVmDescriptor2`/`CircuitDescriptor`
   the Rust `shielded_spend_to_descriptor2()` consumes instead of the hand-written
   `shielded_spend_descriptor()`. This retires the marquee house-law-1 debt for the spend leaf.
-- **`metatheory/Market/ShieldedTransferClearDescriptor.lean`** (NEW, or extend
+- **`Dregg2.Circuit.Emit.ShieldedTransferClearDescriptor`** (NEW, still unwritten; or extend
   `ShieldedRingEndpointDescriptor.lean`) — Lean-author the **degenerate transfer-clearing** descriptor
   of §1 (conservation + range + value-binding-connect + endpoint kernel commitment, no ring gates),
   emitting the object the routing folds.

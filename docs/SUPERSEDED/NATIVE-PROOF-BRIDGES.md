@@ -90,15 +90,16 @@ Solidity IDreggSettlement.settle(...) — one EIP-197 pairing check, ~250–300k
   Everything around the SNARK is built; dropping in a real prover is a localized
   change to `wrap_for_ethereum`.
 - **`chain/`** (standalone workspace) — an SP1-based STARK→Groth16 path:
-  `chain/program/src/main.rs` is an SP1 RISC-V guest that runs a STARK verifier and
-  whose execution SP1 wraps to Groth16/BN254; `chain/src/{prove,verify,bridge}.rs`
+  `program/src/main.rs` under it was an SP1 RISC-V guest that runs a STARK verifier and
+  whose execution SP1 wraps to Groth16/BN254 (⚑ the whole `chain/program/` crate was deleted
+  by stark-kill Gate 0, `21c42b223`); `chain/src/{prove,verify,bridge}.rs`
   drive it; `chain/contracts/{DreggVault,DreggCredentialGate}.sol` are the deployed
   withdraw/credential verifiers. `plans/evm-bridge-rich.md` generalizes this to
   arbitrary Effect-VM turns.
 
 ### The honest gap (bigger than "drop in a prover")
 
-The SP1 guest in `chain/program/src/main.rs` verifies a **legacy hand-rolled STARK
+The SP1 guest (`program/src/main.rs`, since deleted) verifies a **legacy hand-rolled STARK
 format** — `GuestStarkProof { trace_commitment, constraint_commitment,
 fri_commitments, fri_final_poly, query_proofs, … }` (`chain/src/prove.rs:18`).
 That is the **pre-Plonky3 bespoke verifier**, NOT the current `WholeChainProof`

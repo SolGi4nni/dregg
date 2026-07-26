@@ -306,7 +306,7 @@ be RED before the fix — a falsifier that was never red proves nothing).
   1. **DELETE** `circuit-prove/tests/adjacency_membership_golden_audit.json` (only reader repo-wide is
      `:41`).
   2. **ONE AUTHOR:** hoist the emit gate's Lean-pinned 34-constraint literal (`adjacency_membership_emit_gate.rs:44`)
-     into `circuit-prove/tests/common/adjacency_golden.rs` and have **both** tests read it via
+     into a new `common/adjacency_golden.rs` under `circuit-prove/tests/` and have **both** tests read it via
      `#[path = "common/adjacency_golden.rs"] mod adjacency_golden;`. The Lean `#guard emitVmJson2
      adjacencyDesc == …` (`AdjacencyMembershipEmit.lean:250`) then authors the audit too — **exactly the
      property the comment falsely asserted.** *Prefer this over `include_str!` of the by-name artifact: a
