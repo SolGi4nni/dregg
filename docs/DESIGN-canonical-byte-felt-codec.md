@@ -577,10 +577,17 @@ and `sdk/src/cipherclerk.rs:6823`, byte-identical to each other) use `field_limb
 = `from_be_bytes(v[28..32])`, the lo32 of the kernel u64 lane. Collision cost was FREE
 (plain truncation, no search) and in practice already total.
 
-Two sites this list missed: `node/src/mcp/proof.rs:243` `project_effects_for_mcp` and
-`node/src/api.rs:3459` `http_project_effects` (the live `/api/turns/submit` gate). All
-five now call `field_limbs8(v)[0]`. `storage/src/commitment.rs:485` `fe_to_bb` was already
-deleted. `turn/src/executor/mod.rs:182` `fe_to_bb` carried a false doc-comment claiming
+The catalogue's own three entries were also off. Two live sites it MISSED:
+`node/src/mcp/proof.rs:243` `project_effects_for_mcp` and `node/src/api.rs:3459`
+`http_project_effects` (the live `/api/turns/submit` gate) — all now on
+`field_limbs8(v)[0]`. And one entry that never existed: there is no `fe_to_bb` in
+`storage/` in any commit. The nearest real function there is
+`storage/src/commitment.rs:475` `tag_hash_31` (duplicated at `commit/src/typed.rs:518`),
+which truncates BLAKE3 of a **compile-time constant** `T::DOMAIN` string to 31 bits — a
+domain separator over a fixed finite input set that no adversary chooses. Benign, and not
+this class; delete it from the list rather than "fixing" it.
+
+`turn/src/executor/mod.rs:182` `fe_to_bb` carried a false doc-comment claiming
 its lane was "used everywhere else by the Effect VM's state column truncation" — its
 operands are compared *directly* against `initial_fields`/`final_fields`, which carry
 `field_limbs8[0]`, so `FieldGte` re-evaluated as `new >= 0`, a gate that could not go red.
