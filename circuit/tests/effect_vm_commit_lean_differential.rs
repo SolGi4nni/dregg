@@ -297,8 +297,10 @@ fn gentian_weld_31bit_authority_collision_separated_at_8_felt() {
         c
     }
 
-    let locked = make(false, 57684);
-    let open = make(true, 1393);
+    // Re-mined 2026-07-26 by `zz_mine_gentian_collision_salts` below (the old 57684/1393 pair stopped
+    // colliding when the authority-digest geometry moved; the premise assert went red, not the claim).
+    let locked = make(false, 281909);
+    let open = make(true, 3882);
 
     // The cells are GENUINELY different authority states (locked-down vs wide-open send permission).
     assert_eq!(locked.permissions.send, AuthRequired::Impossible);
