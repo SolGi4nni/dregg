@@ -1318,6 +1318,35 @@ impl Offering for NativeDescentOffering {
         })
     }
 
+    /// **The board as `viewer` sees it** — [`render`](Self::render) exactly, except that a run
+    /// already BOUND to somebody else paints every move dimmed.
+    ///
+    /// ⚑ **WITHOUT THIS THE GUARD WAS INVISIBLE AND THE PAGE LIED.**
+    /// [`actions_for`](Self::actions_for) has always disabled a non-owner's affordances, but
+    /// `render` builds its menu from [`actions`](Self::actions) — and a frontend that paints the
+    /// SURFACE (the web catalog does; `offering_surface_fragment` calls `render_for`) therefore drew
+    /// live, pressable buttons on somebody else's run. The press came back *"This Descent belongs to
+    /// a different player"*, which is the guard WORKING, arriving as if it were breakage. A control
+    /// that can only ever refuse must not be painted as a control that works.
+    ///
+    /// The rewrite is complete rather than partial: [`map_cell`] is explicit that the `Menu` is this
+    /// surface's SINGLE affordance carrier (the shaft's 66 squares are inert by construction so a
+    /// board never doubles every move on a button-budgeted host), so dimming the menu dims the
+    /// surface. `dreggnet-web/tests/descent_door.rs` drives both directions against the live app.
+    ///
+    /// An UNCLAIMED run is left alone, and that is the whole difference between this and a lock: a
+    /// Descent nobody has moved in yet is anybody's to take, and the first landed move is what binds
+    /// it.
+    fn render_for(&self, session: &Self::Session, viewer: &DreggIdentity) -> Surface {
+        let surface = self.render(session);
+        // The same condition `actions_for` gates on, spelled the same way, so the two cannot
+        // disagree about who is being shown a dimmed board.
+        if !session.actor.as_ref().is_some_and(|bound| bound != viewer) {
+            return surface;
+        }
+        Surface(dim_affordances(surface.0))
+    }
+
     #[cfg(any(
         feature = "private-preference-operation",
         feature = "private-raid-operation",
@@ -2681,6 +2710,36 @@ fn relic_tag(relic: usize) -> &'static str {
         0 => "accent",
         1..=3 => "warn",
         _ => "good",
+    }
+}
+
+/// **Dim every affordance in a rendered Descent surface** — the transform behind
+/// [`NativeDescentOffering::render_for`]'s non-owner paint.
+///
+/// It walks [`ViewNode::Section`] (the only container `render` builds) and rewrites the one
+/// [`ViewNode::Menu`] it finds. That is exhaustive rather than a sample: [`map_cell`] states, and
+/// enforces, that the menu is this surface's single affordance carrier.
+fn dim_affordances(node: ViewNode) -> ViewNode {
+    match node {
+        ViewNode::Menu { items } => ViewNode::Menu {
+            items: items
+                .into_iter()
+                .map(|item| MenuItem {
+                    enabled: false,
+                    ..item
+                })
+                .collect(),
+        },
+        ViewNode::Section {
+            title,
+            tag,
+            children,
+        } => ViewNode::Section {
+            title,
+            tag,
+            children: children.into_iter().map(dim_affordances).collect(),
+        },
+        other => other,
     }
 }
 

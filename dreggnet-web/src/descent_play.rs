@@ -869,10 +869,22 @@ impl Engine {
     }
 }
 
-/// The server-side entry — the SAME `NativeDescentOffering`, hosted, rendered as forms. This is the
-/// route the catalog already advertises for every non-table offering, named once so the play page
-/// and the catalog cannot point at two different front doors.
-const SERVER_ENGINE_HREF: &str = "/offerings/descent/session/descent-web";
+/// The server-side entry — the SAME `NativeDescentOffering`, hosted, rendered as forms. Named once
+/// so the primary CTA, the `<noscript>` fallback and the engine grid cannot drift into pointing at
+/// three different front doors.
+///
+/// ⚑ **IT IS THE DOOR NOW, NOT A SESSION, AND THAT IS THE REPAIR.** This used to be the literal id
+/// `/offerings/descent/session/descent-web` — one session, shared by every visitor, behind every
+/// server-side play CTA on the product. A native Descent binds its player on the first LANDED move
+/// (`NativeDescentOffering::advance`), so the first person ever to take a turn there owned the front
+/// door permanently and everybody after them was refused: *"This Descent belongs to a different
+/// player than the one you're signed in as."* The board painted dimmed controls and offered no way
+/// to begin a run of one's own, which made *"Start today's run →"* a false sentence.
+///
+/// [`crate::descent_door`] is the fix: a derived per-browser address, so pressing this opens YOUR
+/// run (and resumes it, and opens your next one once that one has ended). The ownership check is
+/// untouched; it was never what was broken.
+const SERVER_ENGINE_HREF: &str = crate::descent_door::DESCENT_RUN_PATH;
 
 /// **Is the browser bundle actually on this deployment?**
 ///
@@ -997,8 +1009,8 @@ fn start_here() -> String {
     format!(
         "<p class=\"nd-start\"><a class=\"nd-door-go nd-start-go\" href=\"{server}\">\
          Start today's run <span aria-hidden=\"true\">→</span></a>\
-         <span class=\"nd-alt\">Starts immediately · downloads nothing · plays with JavaScript \
-         off</span></p>",
+         <span class=\"nd-alt\">Opens a run of your own · starts immediately · downloads nothing · \
+         plays with JavaScript off</span></p>",
         server = SERVER_ENGINE_HREF,
     )
 }

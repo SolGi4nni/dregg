@@ -94,6 +94,13 @@ pub mod descent_attest;
 /// (same glyphs, same one-column-per-relic shaft) as it stood when the run ended: what was banked,
 /// what was still in the pack when the light died, how deep they got. See [`descent_card`].
 mod descent_card;
+/// ⚑ **THE DESCENT'S OWN DOOR** — `GET /descent/play/run`, the one address every server-side play
+/// CTA points at, sending each browser to a run it OWNS. Every one of those CTAs used to point at
+/// the single fixed session `descent-web`, and the native Descent binds its player on the first
+/// landed move: one visitor's smoke-test turn therefore owned the product's front door, and every
+/// visitor after them met a board they could not touch. The check that refused them is right; the
+/// shared, claimable entry point was the bug. See [`descent_door`].
+pub mod descent_door;
 /// THE PLAYABLE web front door for *The Descent* (backlog H1): `GET /descent/play` mounts a
 /// same-origin, strict-CSP DOM controller (`NATIVE_PLAY_APP_JS`) over the Lean-native
 /// `NativeDescentWorld` (the wasm `bindings_native_descent` executor) — NOT the `<dregg-descent>`
@@ -5920,12 +5927,25 @@ fn catalog_page(offerings: &[OfferingInfo]) -> String {
         // beside it. Removed outright rather than deprecated: `/offerings/tug/session/tug-web` is
         // no longer advertised anywhere, and a hand-typed ad-hoc id keeps the catalog's own open
         // behaviour (named, not fixed, in `table_seats`).
+        //
+        // ⚑ **AND THE DESCENT IS OFF IT TOO, FOR THE SAME REASON WITH ONE PLAYER INSTEAD OF TWO.**
+        // A native Descent binds its player on the first landed move, so the shared
+        // `descent-web` card sent every visitor at a run the first mover already owned: they got a
+        // board of dimmed controls and the wrong-player refusal. Not a race like the tables' was —
+        // a permanent claim, held by whoever moved first, for everybody who ever pressed "Play".
+        // The Descent gets its own door instead (`descent_door`), which sends each browser to a run
+        // of its own; `descent-web` is kept as the named demo and is advertised nowhere.
         let front_door = table_seats::lock_for_key(&o.key);
         let play_link = match front_door {
             Some(lock) => format!(
                 "<a class=\"play\" href=\"{route}\">Open your own table \
                  <span class=\"arr\" aria-hidden=\"true\">→</span></a>",
                 route = lock.route,
+            ),
+            None if o.key == descent_door::KEY => format!(
+                "<a class=\"play\" href=\"{route}\">Open your own run \
+                 <span class=\"arr\" aria-hidden=\"true\">→</span></a>",
+                route = descent_door::DESCENT_RUN_PATH,
             ),
             None => format!(
                 "<a class=\"play\" href=\"/offerings/{key}/session/{key}-web\">{verb} \
@@ -6115,10 +6135,18 @@ fn offering_page(key: &str, title: &str, id: &SessionId, surface: &str) -> Strin
          {session_rail}{live_say}\
          <div id=\"live-surface\" class=\"live-surface\" tabindex=\"-1\" \
          data-result-kind=\"surface-and-receipt\" data-events=\"{events}\">{surface}</div>\
-         {spectator_invite}\
+         {spectator_invite}{run_note}\
          </main>",
         live_say = LIVE_SAY,
         crumb = crumb(name, id),
+        // ⚑ **WHOSE DESCENT IS THIS, AND WHERE IS MINE.** `None` for every other offering. A hosted
+        // Descent belongs to whoever landed the first move in it, so a reader can arrive — from a
+        // bookmark, a shared link, or the wrong-player refusal itself — on a board of dimmed
+        // controls with no control anywhere that starts a run of their own. That was the whole of
+        // the dead end at `descent-web`. Outside `#live-surface` for `spectator_invite`'s reason:
+        // the enhancement script replaces that region's subtree on every turn, and the way out must
+        // not be a thing a move can delete.
+        run_note = descent_door::run_note(key, &id.0).unwrap_or_default(),
         // ⚑ **THE SPECTATOR LINK, ON THE TABLE YOU ARE ACTUALLY SITTING AT.** `{route}/watch/{id}`
         // has always worked and was reachable from exactly one page — the one-shot lobby response to
         // the mint — so a player already mid-match had no way to find it or hand it to anybody, and
@@ -7528,6 +7556,13 @@ fn make_app_parts_with_catalog(
         // `bindings_native_descent` executor), NOT the `<dregg-descent>` element. State-free +
         // additive; no route overlap with `descent_router`'s board/run/submit surface.
         .merge(descent_play::descent_play_router())
+        // ⚑ THE DESCENT'S OWN DOOR — `GET /descent/play/run`: the address every server-side play
+        // CTA now points at, which sends each browser to a run that browser OWNS instead of to the
+        // one shared `descent-web` session the first mover claimed for everybody. Needs the catalog
+        // (it asks the offering which of this browser's runs is still going) and carries the same
+        // visitor-cookie bootstrap the catalog routes do, so a stranger's first press works.
+        // Additive: the path overlaps neither the board router nor the play shell.
+        .merge(descent_door::descent_door_router(Arc::clone(&catalog)))
         // THE AUTOMATAFL FRONT DOOR — `GET /automatafl` (the rules + the CTA), `POST
         // /automatafl/table` (mint a seat-locked table + its two unguessable seat links), `GET
         // /automatafl/table/{id}` (take a seat), `GET /automatafl/watch/{id}` (spectate the fogged
