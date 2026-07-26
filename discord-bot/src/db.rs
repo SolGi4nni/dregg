@@ -1,6 +1,9 @@
 //! Database layer (SQLite via sqlx).
 
+use std::str::FromStr;
+
 use serde::Serialize;
+use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{Pool, Row, Sqlite, SqlitePool};
 
 /// How a Discord user identity is bound to a dregg cell.
@@ -204,10 +207,45 @@ pub struct Database {
     pool: Pool<Sqlite>,
 }
 
+/// Turn a `DATABASE_URL` into the connect options the bot actually wants on a **fresh box**.
+///
+/// `SqlitePool::connect(url)` alone is a FIRST-BOOT PANIC: sqlx 0.8 defaults
+/// `create_if_missing` to **false**, and the bot's own default URL (`sqlite:bot.db`,
+/// `config.rs`) carries no `?mode=rwc`. So a deploy onto a machine with no `bot.db` died at
+/// startup on `SQLITE_CANTOPEN` — the container image papered over it by setting
+/// `DATABASE_URL=sqlite:/data/bot.db?mode=rwc`, which is why the failure only ever showed up
+/// running the binary directly.
+///
+/// The default is now "create it": a bot with nowhere to persist is a bot that forgets
+/// everything, which is the whole class of bug this module is being repaired for. Operator
+/// intent still wins — an explicit `mode=` in the URL (`ro`, `rw`, `rwc`, `memory`) is honoured
+/// exactly as written and this adds nothing. Missing parent directories are created too, so
+/// `DATABASE_URL=sqlite:/var/lib/dregg/bot.db` boots on a box where only `/var/lib` exists.
+fn connect_options(url: &str) -> Result<SqliteConnectOptions, sqlx::Error> {
+    let options = SqliteConnectOptions::from_str(url)?;
+    // An explicit `mode=` is the operator speaking; never override it.
+    let explicit_mode = url.split_once('?').is_some_and(|(_, query)| {
+        query
+            .split('&')
+            .any(|pair| pair == "mode" || pair.starts_with("mode="))
+    });
+    if explicit_mode {
+        return Ok(options);
+    }
+    if let Some(parent) = options.get_filename().parent() {
+        if !parent.as_os_str().is_empty() {
+            // A failure here is not fatal on its own — the connect below reports the real
+            // reason (and a relative `bot.db` has no directory to make).
+            let _ = std::fs::create_dir_all(parent);
+        }
+    }
+    Ok(options.create_if_missing(true))
+}
+
 impl Database {
     /// Connect to the database and run migrations.
     pub async fn connect(url: &str) -> Result<Self, sqlx::Error> {
-        let pool = SqlitePool::connect(url).await?;
+        let pool = SqlitePool::connect_with(connect_options(url)?).await?;
 
         // Run schema initialization.
         sqlx::query(
@@ -759,6 +797,33 @@ impl Database {
         .execute(&pool)
         .await?;
 
+        // ─── 👑 The ranked crown folds (commands::crown) ───────────────────────────────
+        //
+        // A crown post is PUBLIC and carries a `.dreggproof` attachment and a "Re-verify
+        // (anyone, O(1))" button. The board that button re-verifies against lived only in RAM,
+        // so every crown ever posted went dead at the next restart: a stranger who found the
+        // post tomorrow and pressed verify got "✗ Re-verify refused." What is stored here is
+        // the proof ENVELOPE and the anchor it was ranked under — nothing else, and in
+        // particular NO MOVES, which is the property the crown exists to demonstrate. On boot
+        // the board re-runs the SAME O(1) light-client accept path over these bytes, so a
+        // tampered row is refused rather than resurrected.
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS crown_folds (
+                token            INTEGER PRIMARY KEY,
+                game             TEXT NOT NULL,
+                channel_id       TEXT NOT NULL,
+                player           TEXT NOT NULL,
+                turns            INTEGER NOT NULL,
+                vk_hex           TEXT NOT NULL,
+                genesis_root_hex TEXT NOT NULL,
+                win_root_hex     TEXT NOT NULL,
+                proof            BLOB NOT NULL,
+                created_at       INTEGER NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await?;
+
         // ─── The per-identity RPG world sessions (commands::rpg_world SessionResumeStore) ──
         // The durable backing of each player's PERSISTENT `/play` RPG world (trade / craft /
         // inventory / guild / companion / tavern / party / cheevos). Like the descent board it
@@ -1155,6 +1220,60 @@ impl Database {
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    // ─── 👑 The ranked crown folds (commands::crown) ──────────────────────────────────
+
+    /// Persist a RANKED crown fold — the proof envelope plus the board anchor it was accepted
+    /// against. Idempotent by `token` (`INSERT OR IGNORE`). Re-verified on boot by re-running
+    /// the board's own O(1) accept path over these bytes.
+    pub async fn persist_crown_fold(&self, row: &CrownFoldRow) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT OR IGNORE INTO crown_folds
+                (token, game, channel_id, player, turns, vk_hex, genesis_root_hex,
+                 win_root_hex, proof, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(row.token as i64)
+        .bind(&row.game)
+        .bind(&row.channel_id)
+        .bind(&row.player)
+        .bind(row.turns)
+        .bind(&row.vk_hex)
+        .bind(&row.genesis_root_hex)
+        .bind(&row.win_root_hex)
+        .bind(row.proof.as_slice())
+        .bind(row.created_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Every persisted crown fold, oldest token first — the boot-restore order, which matters:
+    /// the first accepted fold of a game is the one that pins its board anchor.
+    pub async fn list_crown_folds(&self) -> Result<Vec<CrownFoldRow>, sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT token, game, channel_id, player, turns, vk_hex, genesis_root_hex,
+                    win_root_hex, proof, created_at
+             FROM crown_folds ORDER BY token ASC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .map(|row| CrownFoldRow {
+                token: row.get::<i64, _>("token") as u64,
+                game: row.get("game"),
+                channel_id: row.get("channel_id"),
+                player: row.get("player"),
+                turns: row.get("turns"),
+                vk_hex: row.get("vk_hex"),
+                genesis_root_hex: row.get("genesis_root_hex"),
+                win_root_hex: row.get("win_root_hex"),
+                proof: row.get("proof"),
+                created_at: row.get("created_at"),
+            })
+            .collect())
     }
 
     /// Every persisted day-universe (the boot-replay source).
@@ -2774,6 +2893,28 @@ pub struct DescentCompletionRow {
     pub claimed_turns: i64,
 }
 
+/// A persisted RANKED crown fold — the plain DB shape of one accepted `WholeChainProof`
+/// submission. `crown_store::SqliteCrownStore` translates this to/from
+/// `commands::crown::StoredCrownFold` (kept out of the DB layer so `db` stays free of the
+/// proof types). The anchor columns are the board CONFIG the proof was verified against (VK +
+/// genesis + WIN roots); `proof` is the envelope the crown post attached. There is no move
+/// column, and there never will be — that is the property being persisted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CrownFoldRow {
+    pub token: u64,
+    pub game: String,
+    pub channel_id: String,
+    pub player: String,
+    pub turns: i64,
+    pub vk_hex: String,
+    /// The 8 canonical BabyBear limbs of the genesis anchor, as `,`-joined decimals.
+    pub genesis_root_hex: String,
+    /// The 8 canonical BabyBear limbs of the WIN anchor, as `,`-joined decimals.
+    pub win_root_hex: String,
+    pub proof: Vec<u8>,
+    pub created_at: i64,
+}
+
 /// A persisted RPG session open row — the plain DB shape of one `/play` world session's replay
 /// root (its seed, `"-"` for the offering default). `rpg_store::SqliteRpgResumeStore` translates
 /// this to/from `dreggnet_offerings::resume::SessionMoveLog` (kept out of the DB layer so `db`
@@ -2859,7 +3000,54 @@ async fn ensure_column(
 
 #[cfg(test)]
 mod tests {
-    use super::{Database, IdentityMode};
+    use super::{Database, IdentityMode, connect_options};
+
+    /// **THE FIRST-BOOT REPRO.** A fresh box has no `bot.db`, and the bot's default
+    /// `DATABASE_URL` (`sqlite:bot.db`) carries no `?mode=rwc`. Under sqlx 0.8's
+    /// `create_if_missing: false` default that connect returned `SQLITE_CANTOPEN` and
+    /// `main.rs`'s `.expect` turned it into a startup panic. The equivalent of
+    /// `rm -f bot.db && ./dregg-discord-bot`, without a Discord token.
+    #[tokio::test]
+    async fn a_missing_database_file_is_created_on_first_boot() {
+        let dir = tempfile::tempdir().unwrap();
+        // A path two levels below what exists — a real deploy target (`/var/lib/dregg/bot.db`).
+        let path = dir.path().join("state").join("bot.db");
+        assert!(!path.exists());
+        let url = format!("sqlite:{}", path.display());
+
+        let db = Database::connect(&url)
+            .await
+            .expect("a bot deployed onto a fresh box must create its database, not die at startup");
+        db.register_user("7", "cell-7").await.unwrap();
+        assert!(path.exists(), "the database file was created");
+
+        // And a SECOND boot on the same path reads back what the first wrote — the connect
+        // fix creates a missing file without truncating an existing one.
+        drop(db);
+        let db2 = Database::connect(&url).await.unwrap();
+        assert_eq!(
+            db2.get_user_identity("7").await.unwrap().unwrap().cell_id,
+            "cell-7",
+        );
+    }
+
+    /// Operator intent still wins: an explicit `mode=` in the URL is honoured exactly as
+    /// written, so `mode=ro` stays read-only rather than being silently upgraded to "create it".
+    #[tokio::test]
+    async fn an_explicit_mode_is_never_overridden() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("absent.db");
+        let ro = format!("sqlite:{}?mode=ro", path.display());
+        assert!(
+            connect_options(&ro).is_ok(),
+            "the URL still parses under the read-only mode"
+        );
+        assert!(
+            Database::connect(&ro).await.is_err(),
+            "an explicitly read-only URL must NOT create the file"
+        );
+        assert!(!path.exists());
+    }
 
     #[tokio::test]
     async fn hosted_identity_records_mode() {

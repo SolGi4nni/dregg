@@ -98,6 +98,13 @@ pub mod character_store;
 // module then loads + re-verifies the live board from it (regenerating each day-world from its
 // committed seed and replaying every winning run through the no-cheat gate). See [`descent_board_store`].
 pub mod descent_board_store;
+// 👑 The sqlite-backed `commands::crown::CrownStore` — the durable backing of the crown's ranked
+// proof-carrying board. A crown post is PUBLIC and carries a "Re-verify (anyone, O(1))" button;
+// without this the board it verifies against died with the process and every crown ever posted
+// answered "✗ Re-verify refused" after the next restart. On boot each stored envelope is
+// RE-SUBMITTED through the same O(1) light client, so a restored crown is one this process
+// verified itself. See [`crown_store`].
+pub mod crown_store;
 // The durable sqlite SessionResumeStore behind the per-identity `/play` RPG worlds
 // (`commands::rpg_world`): session opens + landed advances persist as reproducible
 // public input and reopen by replay (never a trusted state blob).
@@ -696,10 +703,27 @@ async fn main() {
         );
     }
 
-    // Connect to database.
-    let db = Database::connect(&config.database_url)
-        .await
-        .expect("failed to connect to database");
+    // Connect to database. A missing file is CREATED (`db::connect_options`) so a fresh box
+    // boots; anything else — a bad path, no write permission, an explicitly read-only URL — is
+    // reported with the URL that failed and the fix, never as a bare `.expect` backtrace.
+    let db = match Database::connect(&config.database_url).await {
+        Ok(db) => db,
+        Err(e) => {
+            eprintln!(
+                "error: could not open the bot database at `{}`",
+                config.database_url
+            );
+            eprintln!("  {e}");
+            eprintln!();
+            eprintln!("The bot persists identities, credits, the gallery, the descent board and");
+            eprintln!("the crown's ranked proofs here — it will not start without it.");
+            eprintln!("  · set DATABASE_URL to a writable path, e.g. sqlite:/var/lib/dregg/bot.db");
+            eprintln!("  · a missing file is created automatically; a missing PARENT directory is");
+            eprintln!("    created too, so this is usually a permissions problem");
+            eprintln!("  · `?mode=ro` in the URL means read-only and will never create the file");
+            std::process::exit(1);
+        }
+    };
     info!("Database connected");
 
     // Open the interaction-envelope audit log: default = the `audit/` sibling of the
@@ -720,6 +744,40 @@ async fn main() {
         });
         audit::install(audit::AuditLog::from_env(default_dir, "discord"));
         info!("Audit log ready (JSONL envelope; DREGG_AUDIT_DIR overrides, =off disables)");
+    }
+
+    // THE DURABLE SESSION STORE — every live offering session (a game in flight, a council
+    // round, an open document) used to die with the process. Sessions now write their
+    // reproducible public input (the seed + the ordered landed turns) through the offering
+    // core's own `FileResumeStore`, and a cold press REPLAYS that log through the real executor
+    // rather than deserializing a state blob. Default = the `sessions/` sibling of the sqlite
+    // db file; `DREGG_SESSION_DIR` overrides, `DREGG_SESSION_DIR=off` runs sessions in RAM only
+    // (the old behaviour, kept for throwaway dev bots).
+    {
+        let db_path = config
+            .database_url
+            .strip_prefix("sqlite:")
+            .unwrap_or(&config.database_url);
+        let db_path = db_path.split('?').next().unwrap_or(db_path);
+        let root = match std::env::var("DREGG_SESSION_DIR") {
+            Ok(v) if v.eq_ignore_ascii_case("off") => None,
+            Ok(v) if !v.trim().is_empty() => Some(std::path::PathBuf::from(v)),
+            _ => Some(match std::path::Path::new(db_path).parent() {
+                Some(p) if !p.as_os_str().is_empty() => p.join("sessions"),
+                _ => std::path::PathBuf::from("sessions"),
+            }),
+        };
+        match &root {
+            Some(dir) => info!(
+                "Offering session persistence ON at {} (a restart resumes by replay)",
+                dir.display()
+            ),
+            None => info!(
+                "Offering session persistence OFF (DREGG_SESSION_DIR=off) — live sessions die \
+                 with this process"
+            ),
+        }
+        commands::offering::install_resume_store(root);
     }
 
     // Install the durable UGC-gallery store and load + re-verify the live registry from
@@ -755,6 +813,23 @@ async fn main() {
         .expect("install descent board store");
     }
     info!("Descent board store installed (board loaded + re-verified from sqlite)");
+
+    // 👑 Install the durable CROWN store and put every persisted ranked fold back on the board
+    // by RE-SUBMITTING its proof through the O(1) whole-history light client. Done BEFORE any
+    // `/crown` press is served, on a blocking thread because `install_store` forces the
+    // dedicated (non-tokio) crown-board thread to spawn and restore now.
+    {
+        let store =
+            crown_store::SqliteCrownStore::new(db.clone(), tokio::runtime::Handle::current());
+        tokio::task::spawn_blocking(move || {
+            commands::crown::install_store(Box::new(store));
+        })
+        .await
+        .expect("install crown store");
+    }
+    info!(
+        "Crown store installed (ranked folds re-verified from sqlite — Re-verify survives a restart)"
+    );
 
     // Create devnet client.
     let devnet = DevnetClient::new(&config.devnet_url);

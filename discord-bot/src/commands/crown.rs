@@ -70,7 +70,8 @@ use dregg_circuit_prove::ivc_turn_chain::{RecursionVk, SEG_ANCHOR_WIDTH};
 use dregg_automatafl::AutomataflOffering;
 use dreggnet_game_board::{Game, GameBoard, MatchProof, ProofAnchor, UniverseId, match_anchor};
 use dreggnet_prove_service::{
-    AutomataflMatch, JobId, JobStatus, MatchProveService, PlayedMatch, match_prove_service,
+    AutomataflMatch, JobId, JobStatus, MatchProveService, MultiRoundTurn, PlayedMatch,
+    match_prove_service,
 };
 
 use crate::BotState;
@@ -738,25 +739,111 @@ fn folds_in(channel: u64) -> Vec<(u64, Game, String)> {
 /// about how the match was played (and, at the old 5×5 board, could not be minted at all: there
 /// is no emitted Lean descriptor at n=5).
 ///
-/// HONEST SCOPE: the fold attests CLEAN rounds. A round the players CLASHED on (a fork on a
-/// shared source, a clash on a shared destination) is REFUSED by name
-/// (`MatchError::ConflictingRound`) rather than folded, because the surface resolves a clash by
-/// dropping moves while the ruleset marks the square and re-enters the round. A match containing
-/// one is not crownable until the marks/re-entry braid is wired to the surface.
+/// ⚑ SCOPE, at the resolution the fold actually reaches. Two shapes are foldable and the third is
+/// named, not faked:
+///
+/// 1. **every turn CLEAN** → `PlayedMatch::Automatafl` (the two-leg chain above), any number of
+///    turns;
+/// 2. **exactly ONE turn, and it RE-ENTERED** → `PlayedMatch::AutomataflTurn`, a real
+///    [`MultiRoundTurn`] built from the surface's recorded per-round history: `k` Leg C conflict
+///    rounds on the 32-lane RoundState window (accumulating the marks) welded to the terminating
+///    marks-aware Leg RM + marks-carrying Leg A. This is the path the conflict protocol opened;
+/// 3. **≥2 turns with a conflicted one among them** → REFUSED, by name. The clean-handoff root
+///    admits exactly ONE width change (32 → 20), which is one conflicted turn's worth; there is no
+///    assembler that chains a second turn's leaves onto that root. Folding it as the plain two-leg
+///    chain instead would attest a transition in which the clash never happened, so it is refused.
 fn played_automatafl(channel: u64) -> Option<PlayedMatch> {
     offering::with_live::<AutomataflOffering, _>(channel, |live| {
         if !live.session.ended() {
             return None;
         }
-        // No resolved round ⇒ no played transition to attest. Nothing is minted (the old path
+        // No resolved turn ⇒ no played transition to attest. Nothing is minted (the old path
         // would have folded an automaton-only chain that says nothing about the players).
-        if live.session.rounds().is_empty() {
+        let turns = live.session.turns_played();
+        if turns.is_empty() {
             return None;
+        }
+        // THE CONFLICT BRAID, when the match is one re-entered turn. `conflict_subs` is the
+        // submissions of each conflict round in re-entry order — exactly `MultiRoundTurn`'s field —
+        // and `clean_subs` the pair that finally resolved.
+        if turns.len() == 1 && !turns[0].conflict_subs.is_empty() {
+            let t = &turns[0];
+            return Some(PlayedMatch::AutomataflTurn(MultiRoundTurn::new(
+                t.start.clone(),
+                t.conflict_subs.clone(),
+                t.clean_subs,
+            )));
         }
         Some(PlayedMatch::Automatafl(AutomataflMatch::played(
             live.session.start_board().clone(),
-            live.session.rounds().to_vec(),
+            live.session.rounds(),
         )))
+    })
+    .flatten()
+}
+
+/// ⚑ **WHY this channel's finished automatafl match cannot be folded, if it cannot** — the honest
+/// refusal, computed HERE (before the prover is handed anything) rather than surfacing minutes later
+/// as an opaque job failure.
+///
+/// One shape is genuinely blocked and it is blocked STRUCTURALLY, not for want of a witness: a match
+/// of ≥2 turns one of which RE-ENTERED. Its leaf chain would change window width twice (the clean
+/// turns' 20-lane two-leg rounds, the conflicted turn's 32-lane RoundState braid, and back), and the
+/// deployed mixed-width root admits exactly ONE change. Folding it as the plain two-leg chain
+/// instead is the trap: the terminating round of a re-entered turn IS clean, so the plain gate would
+/// pass it and attest a transition in which the clash never happened. Refused by name.
+///
+/// The cleanliness half is put to the PROVEN LEAN (`dregg_automatafl::rules::round_is_clean`,
+/// `@[export] dregg_automatafl_rules`) through the session's own
+/// [`AutomataflSession::unfoldable_round`](dregg_automatafl::surface::AutomataflSession::unfoldable_round);
+/// if the oracle cannot answer, the crown is refused rather than guessed.
+fn automatafl_fold_block(channel: u64) -> Option<String> {
+    offering::with_live::<AutomataflOffering, _>(channel, |live| {
+        let turns = live.session.turns_played();
+        let conflicted: Vec<usize> = turns
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| !t.conflict_subs.is_empty())
+            .map(|(i, _)| i + 1)
+            .collect();
+        if !conflicted.is_empty() {
+            if turns.len() == 1 {
+                // The conflict braid IS the fold (`PlayedMatch::AutomataflTurn`). Its rounds are
+                // gated leaf-by-leaf by the fail-closed Leg C witness canary, so nothing to add.
+                return None;
+            }
+            return Some(format!(
+                "This match has **{} turns**, and turn(s) **{}** went through the ruleset's \
+                 conflict RE-SUBMISSION loop (the square was marked and the round re-opened). \
+                 Both shapes fold on their own — a clash-free match through the two-leg chain, a \
+                 single re-entered turn through the Leg C conflict braid — but not *together*: the \
+                 deployed mixed-width root admits exactly ONE window-width change (32 → 20, the \
+                 clean handoff), and a match that alternates clean turns with a re-entered one \
+                 needs two.\n\n\
+                 So this is REFUSED rather than mis-attested. Folding it as the plain chain would \
+                 mint a succinct proof of a turn in which the clash never happened — the \
+                 terminating round of a re-entered turn *is* clean, which is exactly why that trap \
+                 has to be closed by name here.",
+                turns.len(),
+                conflicted
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ));
+        }
+        match live.session.unfoldable_round() {
+            Ok(None) => None,
+            Ok(Some(i)) => Some(format!(
+                "Turn **{}** of this match is not a clean round by the ruleset's own reckoning, so \
+                 the two-leg fold refuses it rather than attest a transition the rules never \
+                 licensed.",
+                i + 1
+            )),
+            Err(why) => Some(format!(
+                "The game oracle could not adjudicate this match, so nothing is attested: `{why}`."
+            )),
+        }
     })
     .flatten()
 }
@@ -890,67 +977,22 @@ fn enqueue_response(
             Vec::new(),
         );
     }
-    // An automatafl round the seats CLASHED on is refused HERE, by name, rather than shipped to
-    // the prover to fail opaquely minutes later. The two-leg fold attests a CLEAN resolution; under
-    // the ruleset a clash does not resolve at all — it MARKS the contested square and RE-ENTERS the
-    // round (the Leg C braid, not yet wired to the surface). Attesting anything else would be a
-    // succinct proof of a transition the rules never licensed.
-    //
-    // Both questions are put to the PROVEN LEAN (`dregg_automatafl::rules`, `@[export]
-    // dregg_automatafl_rules`); if it cannot answer, the crown is refused rather than guessed.
-    if let PlayedMatch::Automatafl(a) = &m {
-        let mut board = a.start.clone();
-        for (i, (ma, mb)) in a.rounds.iter().enumerate() {
-            let clean = match dregg_automatafl::rules::round_is_clean(&board, &[*ma, *mb]) {
-                Ok(c) => c,
-                Err(why) => {
-                    return (
-                        CreateEmbed::new()
-                            .title("This match folds no crown (yet)")
-                            .description(format!(
-                                "The game oracle could not adjudicate round **{}** of this match,                                  so nothing is attested: `{why}`.",
-                                i + 1,
-                            ))
-                            .color(COLOR_REFUSED),
-                        Vec::new(),
-                    );
-                }
-            };
-            if !clean {
-                return (
-                    CreateEmbed::new()
-                        .title("This match folds no crown (yet)")
-                        .description(format!(
-                            "Round **{}** of this match was a **clash** — both seats contested \
-                             the same square. The surface resolved it by dropping the moves; the \
-                             ruleset says a clash *marks* the square and *re-enters* the round, \
-                             and that braid (Leg C) is not yet wired to the played surface.\n\n\
-                             So this match is REFUSED rather than mis-attested: folding it \
-                             would mint a succinct proof of a transition the rules never \
-                             licensed. A clash-free match folds today.",
-                            i + 1,
-                        ))
-                        .color(COLOR_REFUSED),
-                    Vec::new(),
-                );
-            }
-            board = match dregg_automatafl::rules::apply_turn(&board, &[*ma, *mb]) {
-                Ok(b) => b,
-                Err(why) => {
-                    return (
-                        CreateEmbed::new()
-                            .title("This match folds no crown (yet)")
-                            .description(format!(
-                                "The game oracle could not replay round **{}** of this match, so \
-                                 nothing is attested: `{why}`.",
-                                i + 1,
-                            ))
-                            .color(COLOR_REFUSED),
-                        Vec::new(),
-                    );
-                }
-            };
-        }
+    // An automatafl match the fold cannot honestly attest is refused HERE, by name, rather than
+    // shipped to the prover to fail opaquely minutes later — see [`automatafl_fold_block`] for which
+    // shape is blocked and why. A single re-entered turn is no longer among them: it folds as the
+    // Leg C conflict braid (`PlayedMatch::AutomataflTurn`).
+    if matches!(
+        m,
+        PlayedMatch::Automatafl(_) | PlayedMatch::AutomataflTurn(_)
+    ) && let Some(why) = automatafl_fold_block(channel)
+    {
+        return (
+            CreateEmbed::new()
+                .title("This match folds no crown (yet)")
+                .description(why)
+                .color(COLOR_REFUSED),
+            Vec::new(),
+        );
     }
     match enqueue_fold(game, channel, player_hex, m) {
         Enqueued::Token(token) => (
@@ -1013,9 +1055,11 @@ fn ranked_post(game: Game, token: u64, facts: &Ranked) -> (CreateEmbed, Vec<Crea
              is not in this proof.**"
         }
         Game::Automatafl => {
-            "The folded chain is the committed D1 automaton-step chain (the game crate's named \
-             scope for the match fold) — the board transitions are proven; **no move list is \
-             posted anywhere**."
+            "The folded chain is the played BOARD chain — each round's adjudicated resolution (Leg \
+             R / the marks-aware Leg RM) then the automaton's step (Leg A), board-window chained, \
+             plus one Leg C leaf per conflict round when the turn went through the ruleset's \
+             re-submission loop. The board transitions are proven; **no move list is posted \
+             anywhere**."
         }
     };
     let body = format!(
@@ -1437,7 +1481,12 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_fold_is_answered_before_it_reaches_the_proving_pool() {
         use std::sync::{Arc, Mutex};
-        boot_the_test_board();
+        // Deliberately NOT `boot_the_test_board()`. What is under test is the ORDERING, and
+        // `enqueue_response` reaches its answer through `played_match_of` on an empty channel —
+        // it needs no ranked board and no fixture. Installing one only borrows that fixture's
+        // problems: it currently panics at load ("the shipped fixture proof verifies:
+        // AggregateInvalid(EnvelopeDecode …)"), which is the restart-gate's own red and has
+        // nothing to say about whether this handler answers before it works.
         let trace: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
 
         let ack_trace = Arc::clone(&trace);
@@ -1569,11 +1618,16 @@ mod tests {
     /// The ONE persisted crown this test process boots with — built from the real proof, with
     /// the anchor read off the light client's own attestation of it (exactly what
     /// `persist_fold` writes at rank time).
-    fn fixture_fold() -> StoredCrownFold {
+    ///
+    /// `None` when the shared fixture does not verify under HEAD. That is a REAL failure of the
+    /// tree, not of the crown, and it is separated from a panic here on purpose: the tests that
+    /// merely need *a board* (panic isolation) stay green and keep their signal, while the ones
+    /// that genuinely need a verifying proof go red through [`require_fixture_fold`] with the
+    /// reason spelled out. Silently skipping them instead would be a gate that cannot go red.
+    fn fixture_fold() -> Option<StoredCrownFold> {
         let (proof, vk) = real_proof();
-        let attested = dregg_lightclient::verify_history_bytes(&proof, &RecursionVk(vk))
-            .expect("the shipped fixture proof verifies");
-        StoredCrownFold {
+        let attested = dregg_lightclient::verify_history_bytes(&proof, &RecursionVk(vk)).ok()?;
+        Some(StoredCrownFold {
             token: 41,
             game: Game::Automatafl.slug().to_string(),
             channel: 777,
@@ -1583,16 +1637,42 @@ mod tests {
             genesis_root: attested.genesis_root.map(|f| f.0),
             win_root: attested.final_root.map(|f| f.0),
             proof,
-        }
+        })
+    }
+
+    /// [`fixture_fold`] or a LOUD, actionable failure. A stale fixture fails
+    /// `verify_history_bytes` with `EnvelopeDecode`, which reads exactly like a light-client
+    /// regression; this names what it actually is and how to fix it, the same tooth
+    /// `dreggnet-game-board/tests/support/mod.rs` grew over the same file.
+    fn require_fixture_fold() -> StoredCrownFold {
+        let (proof, vk) = real_proof();
+        let reason = match dregg_lightclient::verify_history_bytes(&proof, &RecursionVk(vk)) {
+            Ok(_) => return fixture_fold().expect("it just verified"),
+            Err(e) => e,
+        };
+        panic!(
+            "the shared whole-history proof fixture does not verify under HEAD ({reason:?}), so \
+             this test cannot be satisfied. This is NOT a crown regression — the crown's own \
+             plumbing is covered by `crown_store` and by the anchor/refusal tests. Re-bake the \
+             fixture: `DREGG_ALLOW_UNAUDITED_PQ=1 cargo run --release -p dregg-lightclient --bin \
+             produce_history_envelope --features prover -- 3 7`, base64-decode the emitted \
+             `proof_bytes_b64` into ugc-dregg/tests/fixtures/whole_history_proof.bin and write \
+             `anchor_hex` (no trailing newline) to whole_history_anchor.hex. NOTE (measured \
+             2026-07-25): that producer ITSELF fails at HEAD with \
+             `RecursionFailed(InvalidOpeningArgument(InputError(CapMismatch)))`, so the fold \
+             tower has to answer before any fixture can be re-baked."
+        )
     }
 
     /// Install the fixture store and force the board thread to spawn + restore. Process-global
     /// and idempotent (`install_store` is a `OnceLock`), so every crown test funnels through it.
+    /// An unverifiable fixture installs an EMPTY store rather than panicking — see
+    /// [`fixture_fold`].
     fn boot_the_test_board() {
         static BOOTED: OnceLock<()> = OnceLock::new();
         BOOTED.get_or_init(|| {
             install_store(Box::new(FixtureCrownStore {
-                rows: vec![fixture_fold()],
+                rows: fixture_fold().into_iter().collect(),
             }));
         });
     }
@@ -1618,6 +1698,9 @@ mod tests {
     /// A row that failed any of those would not be on the board and this would fail.
     #[test]
     fn a_ranked_crown_reverifies_after_a_restart() {
+        // Resolve the fixture FIRST, so a stale one fails with its own actionable message
+        // instead of surfacing as an inscrutable "no such fold" from the board.
+        let expected = require_fixture_fold();
         boot_the_test_board();
 
         let (game, turns, facts) = reverify_fold(41).unwrap_or_else(|e| {
@@ -1627,7 +1710,6 @@ mod tests {
             )
         });
         assert_eq!(game, Game::Automatafl);
-        let expected = fixture_fold();
         assert_eq!(
             turns, expected.turns,
             "the re-verification re-attests the SAME turn count the crown post claimed",
@@ -1655,7 +1737,7 @@ mod tests {
     /// honest answer for a proof that no longer verifies.
     #[test]
     fn a_tampered_persisted_crown_is_refused_on_restore() {
-        let mut fold = fixture_fold();
+        let mut fold = require_fixture_fold();
         // Flip a byte deep inside the proof envelope (past the header, so the failure is the
         // light client's verdict, not a decode error).
         let mid = fold.proof.len() / 2;
@@ -1679,6 +1761,43 @@ mod tests {
         assert!(
             board.leaderboard(Game::Automatafl).is_empty(),
             "nothing was ranked",
+        );
+    }
+
+    /// **A RESTART PRESERVES THE BOARD'S PINNED TRUST ANCHOR.**
+    ///
+    /// The anchor is the leaderboard's whole trust root: `submit_bytes` verifies every proof
+    /// against it, so a board that comes up with the WRONG anchor either refuses honest folds or —
+    /// far worse — ranks against an anchor a submitter chose. [`canonical_anchor`] ships no baked
+    /// anchor yet, so the live board BOOTSTRAPS one from the first honest fold and freezes it; the
+    /// only thing that carries that decision across a restart is the persisted row's own
+    /// `vk`/`genesis_root`/`win_root` columns being re-pinned by [`restore_folds`].
+    ///
+    /// That is the property here, and it is distinct from
+    /// `a_ranked_crown_reverifies_after_a_restart`: that test proves a fold re-verifies (which a
+    /// correct anchor makes possible), this one reads the pinned anchor back and compares it, limb
+    /// for limb, against what was on disk. Drop the anchor columns and re-mint the anchor from the
+    /// submitted proof and this goes red while a re-verification test could still pass.
+    #[test]
+    fn a_restart_restores_the_pinned_board_anchor() {
+        boot_the_test_board();
+
+        // The anchor the board is actually pinned to, reduced to comparable limbs (`ProofAnchor`
+        // is deliberately not `PartialEq` — it is configuration, not a value to shuffle around).
+        let pinned = run(|core| {
+            core.anchors
+                .get(&Game::Automatafl)
+                .map(|a| (a.vk.0, a.genesis_root.map(|f| f.0), a.win_root.map(|f| f.0)))
+        })
+        .expect("the crown board thread answers");
+
+        let row = require_fixture_fold();
+        assert_eq!(
+            pinned,
+            Some((row.vk, row.genesis_root, row.win_root)),
+            "the board must come up pinned to the anchor its persisted crown was ranked under — \
+             an anchor that is re-minted from a submitted proof, or lost with the process, hands \
+             the leaderboard's trust root to whoever folds first after a reboot",
         );
     }
 }
