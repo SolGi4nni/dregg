@@ -36,7 +36,7 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
             ctx,
             command,
             "Run In A Server",
-            "`/channel` claims a server channel — run it in a DreggNet Cloud server, not a DM.",
+            "`/channel` claims a server channel — run it in a dregg server, not a DM.",
         )
         .await;
     };
@@ -96,7 +96,7 @@ pub(crate) async fn execute_claim(
     let builder = CreateChannel::new(name)
         .kind(ChannelType::Text)
         .topic(format!(
-            "DreggNet Cloud — {}'s semi-private channel. Messages drive their confined Hermes (cap-gated, receipted). Admin-monitored.",
+            "dregg — {}'s semi-private channel. Messages drive their confined Hermes (cap-gated, receipted). Admin-monitored.",
             user.name
         ))
         .permissions(overwrites);

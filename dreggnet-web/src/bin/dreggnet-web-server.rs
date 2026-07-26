@@ -306,7 +306,7 @@ async fn main() {
 
     tracing::info!(
         %addr,
-        "DreggNet Cloud demo server up — GET / (landing) · /offerings (catalog) · \
+        "dregg demo server up — GET / (landing) · /offerings (catalog) · \
          /descent/leaderboard (no-cheat board) · /health"
     );
 

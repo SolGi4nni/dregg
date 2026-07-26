@@ -209,11 +209,10 @@ pub(crate) fn help_embed() -> CreateEmbed {
         )
         .field(
             "\u{1f3b2} Worlds",
-            "`/descent` — **the featured game**: the daily beacon-seeded permadeath roguelite \
-             with the no-cheat board · `/adventure` — the AI-narrated party dungeon · `/play` \
-             — 🧪 the Lab (tug, automatafl, the market, …: experimental engine surfaces, for \
-             the curious) · `/gallery` — publish + remix procgen worlds · `/leaderboard` — \
-             glory.",
+            "`/descent` — **the featured game**: a dungeon crawl, one a day, one life, no retries · \
+             `/play` — the other two games: **Automatafl** (a two-player board) and \
+             **Multiway-Tug** (hidden influence) · `/adventure` — the AI-narrated party \
+             dungeon · `/gallery` — publish + remix procgen worlds · `/leaderboard` — glory.",
             false,
         )
         .field(
@@ -254,11 +253,11 @@ pub(crate) fn help_embed() -> CreateEmbed {
 
 // ─── the guided first-5-minutes tour ─────────────────────────────────────────
 
-/// The tour intro — what DreggNet Cloud offers + the three steps ahead.
+/// The tour intro — what dregg offers + the three steps ahead.
 fn tour_intro_embed() -> CreateEmbed {
     embeds::dregg_embed("The 2-minute tour")
         .description(
-            "DreggNet Cloud is a small, live network where **you, or your agent, run real metered \
+            "dregg is a small, live network where **you, or your agent, run real metered \
              work bounded by a capability you hold, and every run leaves a verifiable receipt**. \
              It offers four things: durable metered cap-gated **compute**, a **BYO-key Hermes** you \
              drive by typing, **agent coordination** that settles atomically, and **verifiable \

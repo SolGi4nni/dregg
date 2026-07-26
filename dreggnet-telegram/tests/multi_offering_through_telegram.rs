@@ -69,16 +69,26 @@ fn the_host_lists_at_least_three_offerings_and_the_menu_opens_one() {
         .reply_markup
         .as_ref()
         .expect("the menu renders as an inline keyboard");
+    // ⚑ ONE BUTTON PER ADVERTISED OFFERING (`dreggnet_catalog::SHIPPED_KEYS`), each carrying its
+    // position in the FULL catalog — not its position in the painted keyboard. The arg is an index
+    // into `list_offerings()` and stays one, so taking an offering off the shelf never renumbers a
+    // button and an in-flight press still opens what it always opened.
+    let advertised: Vec<usize> = offs
+        .iter()
+        .enumerate()
+        .filter(|(_, o)| o.advertised)
+        .map(|(i, _)| i)
+        .collect();
     assert_eq!(
         kb.inline_keyboard.len(),
-        offs.len(),
-        "one open-button per registered offering"
+        advertised.len(),
+        "one open-button per advertised offering"
     );
-    for (i, row) in kb.inline_keyboard.iter().enumerate() {
+    for (row, catalog_index) in kb.inline_keyboard.iter().zip(&advertised) {
         assert_eq!(row.len(), 1, "one button per row");
         assert_eq!(
             row[0].callback_data,
-            encode_callback(TURN_OPEN, i as i64),
+            encode_callback(TURN_OPEN, *catalog_index as i64),
             "the button opens the offering at its catalog index"
         );
     }

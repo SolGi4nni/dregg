@@ -88,17 +88,17 @@ fn the_host_lists_at_least_three_offerings_and_the_menu_opens_one() {
         .frontend()
         .session(&psid)
         .expect("the menu surface is live");
+    // ⚑ The numbered menu is the SHIP LIST (`dreggnet_catalog::SHIPPED_KEYS`) — the numbers a
+    // WeChat user types are positions in what they were just shown, so this list is contiguous.
+    let shelf = h.list_advertised_offerings();
     assert_eq!(
         slot.presented.options.len(),
-        offs.len(),
-        "one numbered open-line per registered offering"
+        shelf.len(),
+        "one numbered open-line per ADVERTISED offering"
     );
     for (i, opt) in slot.presented.options.iter().enumerate() {
         assert_eq!(opt.turn, TURN_OPEN, "each option opens an offering");
-        assert_eq!(
-            opt.arg, i as i64,
-            "the option carries the offering catalog index"
-        );
+        assert_eq!(opt.arg, i as i64, "the option carries its menu index");
     }
     assert!(
         req.text.content.contains("1. "),
@@ -106,17 +106,34 @@ fn the_host_lists_at_least_three_offerings_and_the_menu_opens_one() {
         req.text.content
     );
 
-    // Reply with the market's number → the market opens (solo) in the user's conversation.
-    let market_idx = offs.iter().position(|o| o.key == "market").unwrap();
-    match h.reply(WeChatMessage::text(ALICE, (market_idx + 1).to_string())) {
-        WeChatReply::Opened(k) => assert_eq!(k, "market", "the menu reply opened the market"),
+    // Reply with a shipped offering's number → it opens (solo) in the user's conversation.
+    let (shelf_idx, first) = (
+        0usize,
+        shelf.first().expect("the shelf is not empty").clone(),
+    );
+    match h.reply(WeChatMessage::text(ALICE, (shelf_idx + 1).to_string())) {
+        WeChatReply::Opened(k) => assert_eq!(k, first.key, "the menu reply opened the offering"),
         other => panic!("a menu reply should open the offering, got {other:?}"),
     }
     assert_eq!(
-        h.active_offering(ALICE),
-        Some("market"),
-        "the user is now playing the market"
+        h.active_offering(ALICE).map(|k| k.to_string()),
+        Some(first.key.clone()),
+        "the user is now playing it"
     );
+
+    // ⚑ UNLISTED IS NOT DELETED — the market is off the numbered menu and still opens by key.
+    assert!(
+        !keys_of(&shelf).contains(&"market"),
+        "the market is off the shelf"
+    );
+    h.open("market", ALICE)
+        .expect("the market still opens by key");
+    assert_eq!(h.active_offering(ALICE), Some("market"));
+}
+
+/// The keys of an offering listing, for readable set assertions.
+fn keys_of(offs: &[dreggnet_offerings::OfferingInfo]) -> Vec<&str> {
+    offs.iter().map(|o| o.key.as_str()).collect()
 }
 
 /// A full winning DUNGEON line plays SOLO through the WeChat host — each numbered reply lands one

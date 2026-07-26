@@ -413,7 +413,7 @@ fn lobby_page(door: &TableDoor, id: &str) -> String {
         watch = esc(&door.lock.watch_link(id)),
         route = door.lock.route,
     );
-    document("DreggNet Cloud — table opened", "offerings", &body)
+    document("dregg — table opened", "offerings", &body)
 }
 
 /// The page a bad/absent seat key gets — honest, and it points at the thing they CAN do.
@@ -430,7 +430,7 @@ fn seat_refused_page(door: &TableDoor, id: &str) -> String {
         watch = esc(&door.lock.watch_link(id)),
         route = door.lock.route,
     );
-    document("DreggNet Cloud — seat refused", "offerings", &body)
+    document("dregg — seat refused", "offerings", &body)
 }
 
 /// The 303 body (a browser follows the `Location`; this is what a non-following client reads).
@@ -441,7 +441,7 @@ fn seat_taken_page(door: &TableDoor, id: &str) -> String {
          <p class=\"prose\"><a class=\"backlink\" href=\"{table}\">Go to the table →</a></p></main>",
         table = esc(&door.lock.table_link(id)),
     );
-    document("DreggNet Cloud — seat taken", "offerings", &body)
+    document("dregg — seat taken", "offerings", &body)
 }
 
 fn watch_missing_page(door: &TableDoor, id: &str) -> String {
@@ -455,7 +455,7 @@ fn watch_missing_page(door: &TableDoor, id: &str) -> String {
         id = esc(id),
         route = door.lock.route,
     );
-    document("DreggNet Cloud — no such table", "offerings", &body)
+    document("dregg — no such table", "offerings", &body)
 }
 
 /// The banner a resolved table wears, wherever it is shown. It says what the record IS — a lobby
@@ -487,7 +487,7 @@ fn resolved_page(door: &TableDoor, id: &str, resolution: &Resolution) -> String 
         watch = esc(&door.lock.watch_link(id)),
         route = door.lock.route,
     );
-    document("DreggNet Cloud — table over", "offerings", &body)
+    document("dregg — table over", "offerings", &body)
 }
 
 /// The spectator page. The live region carries `data-readonly`, and the served surface is wrapped
@@ -524,9 +524,5 @@ fn spectate_page(
         watch = esc(&door.lock.watch_link(id)),
         fragment = fragment,
     );
-    document(
-        &format!("DreggNet Cloud — spectating {id}"),
-        "offerings",
-        &body,
-    )
+    document(&format!("dregg — spectating {id}"), "offerings", &body)
 }

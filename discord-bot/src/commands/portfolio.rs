@@ -514,12 +514,23 @@ pub const DISCORD_OPT_IN_PLAY_KEYS: [&str; 1] = [PrivateBazaarRaidOffering::KEY]
 #[cfg(not(feature = "private-bazaar-live"))]
 pub const DISCORD_OPT_IN_PLAY_KEYS: [&str; 0] = [];
 
-/// The `/play` offering keys — **derived from the shared catalog**
+/// The `/play` offering CHOICES — **derived from the shared catalog**
 /// ([`dreggnet_catalog::CATALOG_KEYS`], the ONE statement of what the DreggNet portfolio is)
-/// minus the [`BESPOKE_COMMAND_KEYS`], plus the [`DISCORD_EXTRA_PLAY_KEYS`]. Registering a new
-/// offering in `dreggnet_catalog::build_full_catalog` automatically extends `/play`'s slash
-/// choices; the dispatch parity tests (here and in `commands::offering`) then fail until the
-/// press route exists, so a catalog offering can never be silently absent from Discord.
+/// minus the [`BESPOKE_COMMAND_KEYS`], plus the [`DISCORD_EXTRA_PLAY_KEYS`], and finally
+/// **narrowed to the SHIP LIST** (`dreggnet_catalog::SHIPPED_KEYS`).
+///
+/// ⚑ The discord-bot builds no `OfferingHost` — it drives per-type `Store<O>`s — so it cannot
+/// inherit the host-level shelf every other frontend gets from `apply_ship_list`. It reads the
+/// same array directly instead, which is what keeps Discord from advertising a set the web and
+/// the bots do not. To re-list something on Discord, add it to `SHIPPED_KEYS`; nothing here needs
+/// touching.
+///
+/// ⚠ **This narrows the `/play` picker only, and Discord enforces its own choice list**, so an
+/// unshipped key cannot be typed into `/play` even though it is still mounted. Its per-type
+/// component/modal routes (`commands::offering::route_component`, which covers every mounted
+/// type) and its bespoke subcommand, where it has one, are untouched — this is the one host where
+/// "unlisted is still reachable" is narrower than elsewhere, and it is Discord's constraint, not
+/// the ship list's.
 pub fn play_keys() -> Vec<&'static str> {
     dreggnet_catalog::CATALOG_KEYS
         .iter()
@@ -527,10 +538,11 @@ pub fn play_keys() -> Vec<&'static str> {
         .filter(|k| !BESPOKE_COMMAND_KEYS.contains(k))
         .chain(DISCORD_EXTRA_PLAY_KEYS)
         .chain(DISCORD_OPT_IN_PLAY_KEYS)
+        .filter(|k| dreggnet_catalog::is_shipped(k))
         .collect()
 }
 
-/// Register `/play <offering>` — open any of its twenty derived choices in this channel.
+/// Register `/play <offering>` — open any SHIPPED offering (`play_keys`) in this channel.
 pub fn register() -> CreateCommand {
     let mut option = CreateCommandOption::new(
         CommandOptionType::String,
@@ -1227,38 +1239,33 @@ mod tests {
         close_in::<PrivateBazaarRaidOffering>(channel);
     }
 
-    /// **The `/play` keys are the shared catalog's, by derivation** — every
-    /// `dreggnet_catalog::CATALOG_KEYS` entry is reachable on Discord (a bespoke `/<key>`
-    /// command or a `/play` choice), `/play` adds exactly the declared Discord extras beyond
-    /// the catalog, and the fifteen keys the old hand-list carried are all still served (no
-    /// regression in the derivation).
+    /// **The `/play` choices ARE the ship list** — derived, never hand-listed, so paring or
+    /// re-listing an offering in `dreggnet_catalog::SHIPPED_KEYS` moves Discord with everything
+    /// else and this test needs no edit.
+    ///
+    /// Both directions: every shipped offering is a `/play` choice (nothing we ship is
+    /// unreachable), and every `/play` choice is shipped (nothing we do not ship is advertised).
+    /// Separately: paring the PICKER must not unmount anything, so every catalog key — shipped or
+    /// not — is still in the generic component/modal router.
     #[test]
-    fn the_play_keys_are_derived_from_the_shared_catalog() {
+    fn the_play_choices_are_exactly_the_ship_list() {
         let keys = play_keys();
-        assert!(
-            keys.contains(&"bazaar"),
-            "the Dark Bazaar crawl is derived from the shared catalog"
-        );
-        assert!(
-            offering::generic_offering_keys().contains(&"bazaar"),
-            "the catalog-derived choice is mounted in the generic component/modal router"
-        );
-        assert_eq!(
-            DarkBazaarOffering::open_hint(),
-            "/play offering:bazaar",
-            "stale Bazaar presses point to the real catalog-derived opener"
-        );
-        for k in dreggnet_catalog::CATALOG_KEYS {
+
+        for k in dreggnet_catalog::SHIPPED_KEYS {
             assert!(
-                BESPOKE_COMMAND_KEYS.contains(&k) || keys.contains(&k),
-                "catalog offering `{k}` must be reachable: a bespoke command or a /play key"
+                keys.contains(&k),
+                "shipped offering `{k}` must be a /play choice"
             );
             assert!(
-                !(BESPOKE_COMMAND_KEYS.contains(&k) && keys.contains(&k)),
+                !BESPOKE_COMMAND_KEYS.contains(&k),
                 "`{k}` must not be served twice (bespoke AND /play)"
             );
         }
         for k in &keys {
+            assert!(
+                dreggnet_catalog::is_shipped(k),
+                "/play advertises `{k}`, which is not on dreggnet_catalog::SHIPPED_KEYS"
+            );
             assert!(
                 dreggnet_catalog::CATALOG_KEYS.contains(k)
                     || DISCORD_EXTRA_PLAY_KEYS.contains(k)
@@ -1266,36 +1273,26 @@ mod tests {
                 "/play key `{k}` is neither a catalog offering nor a declared Discord route"
             );
         }
-        // The former hand-maintained list, preserved by the derivation (the regression pin).
-        for want in [
-            "descent",
-            "descent-campaign",
-            "automatafl",
-            "private-raid",
-            "tug",
-            "names",
-            "compute",
-            "trade",
-            "inventory",
-            "cheevos",
-            "guild",
-            "craft",
-            "companion",
-            "quest",
-            "tavern",
-            "party",
-            "gear",
-            "talents",
-            "overworld",
-        ] {
-            assert!(keys.contains(&want), "`{want}` is a /play key");
-        }
         assert_eq!(
             keys.len(),
-            dreggnet_catalog::CATALOG_KEYS.len() - BESPOKE_COMMAND_KEYS.len()
-                + DISCORD_EXTRA_PLAY_KEYS.len()
-                + DISCORD_OPT_IN_PLAY_KEYS.len()
+            dreggnet_catalog::SHIPPED_KEYS.len(),
+            "the picker is the ship list exactly: {keys:?}"
         );
+
+        // ⚑ UNLISTED IS NOT UNMOUNTED. The Dark Bazaar is off the picker; its per-type
+        // component/modal route and its open hint are untouched, so a held press still lands.
+        assert!(!keys.contains(&"bazaar"), "the Bazaar is off the shelf");
+        assert!(
+            offering::generic_offering_keys().contains(&"bazaar"),
+            "…and still mounted in the generic component/modal router"
+        );
+        assert_eq!(DarkBazaarOffering::open_hint(), "/play offering:bazaar");
+        for k in dreggnet_catalog::CATALOG_KEYS {
+            assert!(
+                BESPOKE_COMMAND_KEYS.contains(&k) || offering::generic_offering_keys().contains(&k),
+                "catalog offering `{k}` must stay mounted even when it is off the picker"
+            );
+        }
     }
 
     /// **The bespoke-command catalog keys are reachable on the 13-command surface** — the

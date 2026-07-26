@@ -730,7 +730,7 @@ async fn get_verify(
 /// right now*).
 fn page(id: &SessionId, notice: Option<&str>, fragment: &str, verify: &VerifyReport) -> String {
     let body = format!(
-        "<div class=\"crumb\"><a href=\"/offerings\">← the Lab</a>\
+        "<div class=\"crumb\"><a href=\"/offerings\">← All games</a>\
          <span class=\"sep\">·</span><strong>The Warden's Keep</strong>\
          <span class=\"sep\">·</span><span class=\"sid\">session {id}</span></div>\
          <main class=\"session\">{notice}{fragment}{receipt}</main>",
@@ -743,7 +743,7 @@ fn page(id: &SessionId, notice: Option<&str>, fragment: &str, verify: &VerifyRep
             &format!("/session/{}/verify", esc(&id.0)),
         ),
     );
-    document(&format!("DreggNet Cloud — session {}", id.0), "", &body)
+    document(&format!("dregg — session {}", id.0), "", &body)
 }
 
 /// The page shown for a `POST` / verify against a session id that is not open.
@@ -751,11 +751,11 @@ fn page_missing(id: &SessionId) -> String {
     let body = format!(
         "<main class=\"session\"><div class=\"notice refused\" role=\"status\">No such session — \
          GET /session/{id} to open it.</div>\
-         <p class=\"prose\"><a class=\"backlink\" href=\"/offerings\">← Browse the Lab</a></p>\
+         <p class=\"prose\"><a class=\"backlink\" href=\"/offerings\">← Browse all games</a></p>\
          </main>",
         id = esc(&id.0),
     );
-    document(&format!("DreggNet Cloud — session {}", id.0), "", &body)
+    document(&format!("dregg — session {}", id.0), "", &body)
 }
 
 /// **Derive a web user's frontend-agnostic [`DreggIdentity`] label** — `blake3(user)` hex.
@@ -1419,6 +1419,21 @@ form.in-flight button[disabled]{cursor:progress}
 /// none of them can silently drift back to the board.
 pub const DESCENT_PLAY_PATH: &str = "/descent/play";
 
+/// ⚑ **THE PRODUCT NAME, in ONE place** — the brand text in the top bar and the `<title>` of every
+/// served page.
+///
+/// It is `dregg`: the name the project actually uses for itself (`README.md`, and the
+/// `www.dregg.net` / `arcade.dregg.net` domains this surface is deployed under). It replaced
+/// **"dregg"**, which was never a product name — it names the frontend-agnostic
+/// Offering/Session *library layer* (`dreggnet-offerings`), and `docs/DREGGNET-CLOUD-OFFERINGS.md`
+/// says so outright: *""dregg" names the shape, not a live service."* A layer name in the
+/// browser tab told a stranger nothing and dated the page.
+///
+/// ⚠ UNRESOLVED, and deliberately not decided here: whether the PLAY SURFACE wants its own name
+/// under the project (it is deployed at `arcade.dregg.net`, which suggests "dregg arcade"). The
+/// repo states no such name, so this uses the project's own rather than inventing one.
+pub const PRODUCT_NAME: &str = "dregg";
+
 /// The brand mark — four squares, one lit: a board where a move landed. Inline SVG (no external
 /// asset, no request), `aria-hidden` because the adjacent brand text is the accessible name.
 const MARK: &str = "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\">\
@@ -1446,14 +1461,18 @@ fn topbar(active: &str) -> String {
     };
     format!(
         "<header class=\"topbar\"><div class=\"topbar-in\">\
-         <a class=\"brand\" href=\"/\">{MARK}<span class=\"brand-name\">DreggNet Cloud</span></a>\
-         <nav class=\"topnav\" aria-label=\"Surfaces\">{play}{board}{offerings}{gallery}</nav>\
+         <a class=\"brand\" href=\"/\">{MARK}<span class=\"brand-name\">{PRODUCT_NAME}</span></a>\
+         <nav class=\"topnav\" aria-label=\"Surfaces\">{play}{board}{offerings}</nav>\
          </div></header>",
         MARK = MARK,
-        offerings = item("/offerings", "offerings", "The Lab"),
+        PRODUCT_NAME = PRODUCT_NAME,
+        // "All games", not "The Lab": the shelf is now the curated ship list
+        // (`dreggnet_catalog::SHIPPED_KEYS`), not a bin of experiments. The sprite gallery left
+        // the nav with the same reasoning — it is a curiosity, not a thing we ship; its route and
+        // its footer link are untouched.
+        offerings = item("/offerings", "offerings", "All games"),
         play = item(DESCENT_PLAY_PATH, "descent", "The Descent"),
         board = item("/descent", "descent-board", "Board"),
-        gallery = item("/gallery", "gallery", "Gallery"),
     )
 }
 
@@ -1577,10 +1596,11 @@ const ENHANCE_SCRIPT: &str = r##"<script>
 
 /// The page footer — states the one property the whole product rests on, and repeats the nav.
 const FOOTER: &str = "<footer class=\"foot\">\
-     <p>Verification is in-process re-execution — no node, no testnet.</p>\
+     <p>Every move is re-run against the rules before it counts — here, in this server, \
+     not on a blockchain.</p>\
      <nav aria-label=\"Footer\"><a href=\"/descent\">The Descent</a>\
      <a href=\"/automatafl\">Automatafl</a>\
-     <a href=\"/offerings\">The Lab</a><a href=\"/gallery\">Gallery</a>\
+     <a href=\"/offerings\">All games</a><a href=\"/gallery\">Gallery</a>\
      <a href=\"/health\">Status</a></nav></footer>";
 
 /// **Wrap a body fragment in the full product document** — head (charset / viewport / title / the
@@ -1624,7 +1644,7 @@ pub(crate) fn document_with_head(
 /// mono voice (it is verifiable material, like a hash or a seed).
 fn crumb(title: &str, id: &SessionId) -> String {
     format!(
-        "<div class=\"crumb\"><a href=\"/offerings\">← the Lab</a>\
+        "<div class=\"crumb\"><a href=\"/offerings\">← All games</a>\
          <span class=\"sep\">·</span><strong>{title}</strong>\
          <span class=\"sep\">·</span><span class=\"sid\">session {id}</span></div>",
         title = esc(title),
@@ -2359,11 +2379,17 @@ impl CatalogState {
         self.host.run(|h| live_session_count(h))
     }
 
-    /// The registered offerings (the catalog listing). Served from the shared host, which still
-    /// registers the RPG keys for metadata/listing (their sessions route per-identity, but the
-    /// catalog page still lists all of them).
+    /// **The FULL registry** — every mounted offering, advertised or not. The inventory view
+    /// (metrics, harnesses, parity tests). A page a stranger reads wants
+    /// [`list_advertised_offerings`](Self::list_advertised_offerings).
     pub fn list_offerings(&self) -> Vec<OfferingInfo> {
         self.host.run(|h| h.list_offerings())
+    }
+
+    /// **The SHELF** — the offerings on `dreggnet_catalog::SHIPPED_KEYS`. This is what
+    /// `GET /offerings`, the Mini App and the Discord Activity paint.
+    pub fn list_advertised_offerings(&self) -> Vec<OfferingInfo> {
+        self.host.run(|h| h.list_advertised_offerings())
     }
 
     /// Re-verify session `(key, id)`'s committed chain (`None` if absent) — the offering's own proof.
@@ -2531,10 +2557,12 @@ pub fn catalog_router(state: Arc<CatalogState>) -> Router {
         .with_state(state)
 }
 
-/// `GET /offerings` — the catalog page: a card per registered offering (title + live-session count)
-/// with a "play" link opening a browser session of it.
+/// `GET /offerings` — the catalog page: a card per ADVERTISED offering
+/// (`dreggnet_catalog::SHIPPED_KEYS`) with a "play" link opening a browser session of it. An
+/// offering that is mounted but not shipped is absent here and still fully openable at
+/// `/offerings/{key}/session/{id}` — the shelf is an advertising decision, not a gate.
 async fn get_catalog(State(state): State<Arc<CatalogState>>) -> Html<String> {
-    let offerings = state.list_offerings();
+    let offerings = state.list_advertised_offerings();
     Html(catalog_page(&offerings))
 }
 
@@ -3049,15 +3077,11 @@ fn refused_open_response(id: &SessionId, err: &HostError) -> Response {
     let body = format!(
         "<main class=\"session\"><div class=\"notice refused\" role=\"status\">Refused: {err}. \
          Nothing was opened.</div>\
-         <p class=\"prose\"><a class=\"backlink\" href=\"/offerings\">← Browse the Lab</a></p>\
+         <p class=\"prose\"><a class=\"backlink\" href=\"/offerings\">← Browse all games</a></p>\
          </main>",
         err = esc(&err.to_string()),
     );
-    let page = document(
-        &format!("DreggNet Cloud — session {} refused", id.0),
-        "",
-        &body,
-    );
+    let page = document(&format!("dregg — session {} refused", id.0), "", &body);
     let mut resp = (status, Html(page)).into_response();
     if let Some(secs) = retry_after {
         if let Ok(v) = axum::http::HeaderValue::from_str(&secs.to_string()) {
@@ -4186,14 +4210,19 @@ fn descent_play_cta(class: &str) -> String {
     out
 }
 
-/// The `GET /offerings` catalog page — The Descent featured on top (the flagship pointer), then
-/// the Lab shelf: a card + "play" link per registered offering, framed by the shared
-/// `dreggnet_catalog::{flagship_pointer, lab_intro}` copy.
+/// The `GET /offerings` catalog page — The Descent featured on top (the flagship pointer), then a
+/// card + "play" link per ADVERTISED offering, framed by the shared
+/// `dreggnet_catalog::{flagship_pointer, shelf_intro}` copy.
+///
+/// ⚑ `offerings` is the SHELF (`CatalogState::list_advertised_offerings` →
+/// `dreggnet_catalog::SHIPPED_KEYS`), not the full registry. This function paints whatever it is
+/// handed; **what goes on the shelf is decided in one array in `dreggnet-catalog`**, not here.
 fn catalog_page(offerings: &[OfferingInfo]) -> String {
-    // Group the catalog into coherent shelves so ~19 offerings read as three clear categories,
-    // not one flat wall of look-alike cards: the GAMES (play to win / verify), the RPG FEATURE
-    // surfaces (the do-once render path), and the verifiable SERVICES. Any offering outside the
-    // known sets falls into a catch-all "More" shelf (so a future registration still shows up).
+    // The shelves an offering is SORTED INTO once it is shipped — grouping only, so the page reads
+    // as categories rather than one flat wall of look-alike cards. These arrays are NOT the ship
+    // list: an offering absent from `SHIPPED_KEYS` never reaches this function at all, and a shelf
+    // with no cards renders as nothing. Any advertised key outside all three falls into the
+    // catch-all "More" shelf, so a new registration can never silently vanish.
     const GAMES: &[&str] = &[
         "descent",
         "descent-campaign",
@@ -4236,6 +4265,16 @@ fn catalog_page(offerings: &[OfferingInfo]) -> String {
         };
         // A live session is worth SEEING (a lit dot), not just counting.
         let live = if o.open_sessions > 0 { " live" } else { "" };
+        // ⚑ NEVER PAINT A ZERO. Every card used to end `{key} · 0 open`, and a first-time reader
+        // read the whole page as "nobody is using this right now". A population count is the one
+        // number a young surface must not volunteer: at zero it says nothing (the dot simply stays
+        // dark), and only above zero does it become worth saying — then it is an invitation, not a
+        // census. See `docs/reference/UX-QA-SWEEP-2026-07-26.md`.
+        let company = match o.open_sessions {
+            0 => String::new(),
+            1 => " · 1 game in progress".to_string(),
+            n => format!(" · {n} games in progress"),
+        };
         // THE SHARED-TABLE LINK IS GONE FOR THE HIDDEN-INFORMATION GAMES.
         //
         // Every other card still drops you into the fixed demo session `{key}-web`, which is fine
@@ -4266,13 +4305,13 @@ fn catalog_page(offerings: &[OfferingInfo]) -> String {
         };
         format!(
             "<div class=\"offering-card\"><h3>{name}</h3>{tagline}\
-             <p class=\"meta\"><span class=\"dot{live}\"></span>{key} · {n} open</p>\
+             <p class=\"meta\"><span class=\"dot{live}\"></span>{key}{company}</p>\
              {play_link}</div>",
             name = esc(name),
             tagline = tagline_html,
             live = live,
             key = esc(&o.key),
-            n = o.open_sessions,
+            company = company,
             play_link = play_link,
         )
     };
@@ -4322,53 +4361,53 @@ fn catalog_page(offerings: &[OfferingInfo]) -> String {
         )
     };
 
-    // THE LAB FRAMING (shared words: `dreggnet_catalog::{flagship_pointer, lab_intro}`) — the
-    // featured game leads, and the 23-offering shelf below is honestly the lab, not the product.
+    // THE SHELF FRAMING (shared words: `dreggnet_catalog::{flagship_pointer, shelf_intro}`) — the
+    // featured game leads, and the shelf below is the SHIP LIST, not a bin of experiments.
     // THE FUNNEL: the PLAY CTA leads (the served in-tab run at `/descent/play`) and the no-cheat
     // board is the secondary link. Previously this page offered the BOARD as its only always-present
     // affordance, so the flagship's front door on the catalog was a leaderboard.
     let descent_play = descent_play_cta("play");
     let body = format!(
         "<main class=\"catalog\"><div class=\"page-head\">\
-         <p class=\"eyebrow\">DreggNet Cloud</p>\
-         <h1>One game, and a lab full of parts.</h1>\
+         <p class=\"eyebrow\">{PRODUCT_NAME}</p>\
+         <h1>Every game here checks its own moves.</h1>\
+         <p class=\"deck\">{shelf}</p>\
          <p class=\"deck\">{flagship}</p>\
          <p class=\"prose\">{descent_play}<a class=\"play\" href=\"/descent\">\
-         See today's no-cheat board \
-         <span class=\"arr\" aria-hidden=\"true\">→</span></a></p>\
-         <p class=\"deck\">{lab} Every offering below is a confined, verifiable, per-session \
-         thing on the real dregg substrate — no node, no testnet: verification is in-process \
-         re-execution.</p></div>\
+         See today's finished runs \
+         <span class=\"arr\" aria-hidden=\"true\">→</span></a></p></div>\
          {games}{features}{services}{more}</main>",
+        PRODUCT_NAME = PRODUCT_NAME,
         flagship = esc(dreggnet_catalog::flagship_pointer()),
-        lab = esc(dreggnet_catalog::lab_intro()),
+        shelf = esc(dreggnet_catalog::shelf_intro()),
         games = group(
             "Games",
             "games",
-            "Play to win or verify — a board, a market, a hidden-hand tug. Every move commits a real \
-             receipt (or is refused).",
+            "Pick one and play. Nothing to install, nothing to sign up for.",
             GAMES,
             "Play",
         ),
+        // These two shelves render EMPTY (`group` returns "" for a shelf with no cards) while the
+        // ship list is games-only — they come back on their own the moment a feature surface or a
+        // service is added to `dreggnet_catalog::SHIPPED_KEYS`. Kept for exactly that reason:
+        // re-listing must stay a one-line change.
         features = group(
-            "Feature surfaces",
+            "Your character",
             "features",
-            "The RPG surfaces — trade, inventory, achievements, guilds, crafting, companions, taverns, \
-             parties. Each is a real render→turn surface on the substrate.",
+            "Things you carry between games — what you own, what you made, who you play with.",
             FEATURES,
             "Open",
         ),
         services = group(
-            "Services",
+            "Tools",
             "services",
-            "Verifiable infrastructure — a document store, a naming service, a compute market, metered \
-             grain, and a message relay.",
+            "Not games: small services built on the same checked-move machinery.",
             SERVICES,
             "Open",
         ),
         more = more_section,
     );
-    document("DreggNet Cloud — offerings", "offerings", &body)
+    document(&format!("{PRODUCT_NAME} — all games"), "offerings", &body)
 }
 
 /// Split a registered offering title `Name — the tagline` into its two halves (the tagline is `""`
@@ -4432,7 +4471,7 @@ fn offering_page(key: &str, title: &str, id: &SessionId, surface: &str) -> Strin
         events = format!("/offerings/{}/session/{}/events", esc(key), esc(&id.0)),
         surface = surface,
     );
-    document(&format!("DreggNet Cloud — {title}"), "offerings", &body)
+    document(&format!("dregg — {title}"), "offerings", &body)
 }
 
 /// The page shown for a `GET`/`POST` against an unregistered offering key.
@@ -4444,7 +4483,7 @@ fn catalog_missing_offering(key: &str) -> String {
          </main>",
         key = esc(key),
     );
-    document("DreggNet Cloud — unknown offering", "offerings", &body)
+    document("dregg — unknown offering", "offerings", &body)
 }
 
 // ═════════════════════════════════════════════════════════════════════════════════════════
@@ -6007,9 +6046,17 @@ fn hero_board() -> String {
     automatafl_still("hero-af")
 }
 
-/// `GET /` — the landing. One glance: **what this is** (play verifiable games — every move is a
-/// receipt), **what it looks like** (a real board mid-turn, with its colour language labelled), and
-/// **why it is different** (play → commit → re-verify), then the three surfaces.
+/// `GET /` — the landing. One glance: **what this is**, **what it looks like** (a real board
+/// mid-turn, with its colour language labelled), and **why it is different**, then the shipped
+/// surfaces.
+///
+/// ⚑ THE DECK IS WRITTEN FOR A STRANGER. A first-time reader given only this page and the catalog
+/// could not say what the site *is*, because the sentence that was supposed to tell them was
+/// written in this project's private vocabulary — `executor`, `substrate`, `receipt`, `refereed`,
+/// none of them defined anywhere on the page (`docs/reference/UX-QA-SWEEP-2026-07-26.md`). The
+/// honest claim is unchanged and is the whole point: moves are RE-RUN and CHECKED, not trusted.
+/// It just has to be said in words a newcomer already owns. Keep it that way — if a term here is
+/// one you learned from this repo, it does not belong in the deck.
 async fn index() -> Html<String> {
     // THE FUNNEL: the PLAY CTA always leads (the served in-tab run at `/descent/play`, plus Discord
     // when configured) and the no-cheat BOARD is the secondary action. Before this the landing's
@@ -6021,17 +6068,18 @@ async fn index() -> Html<String> {
     let body = format!(
         "<section class=\"hero\">\
          <div class=\"hero-copy\">\
-         <p class=\"eyebrow\">Verifiable games · node-free</p>\
-         <h1>Every move is a receipt.</h1>\
-         <p class=\"deck\">Play a board, a market, a hidden-hand tug — in your browser, with no \
-         client JavaScript. Every move is a real executor turn, refereed on the substrate. Nothing \
-         here is taken on trust: a run re-executes, or it fails.</p>\
+         <p class=\"eyebrow\">Play in a browser tab · nothing to install</p>\
+         <h1>Games that check their own moves.</h1>\
+         <p class=\"deck\">Three games you can play right now: a dungeon crawl, a board game, and \
+         a game of hidden influence. When you take a turn, the game re-runs it against the rules \
+         before it records anything — so an illegal move is refused instead of accepted, and when \
+         a game is over anyone can replay it move by move and see it really went that way.</p>\
          <div class=\"cta-row\">\
          {hero_play}\
-         <a class=\"btn {hero_board_class}\" href=\"/descent\">See today's no-cheat board \
+         <a class=\"btn {hero_board_class}\" href=\"/descent\">See today's finished runs \
          <span class=\"arr\" aria-hidden=\"true\">→</span></a>\
          <a class=\"btn btn-ghost\" href=\"/automatafl\">Play Automatafl</a>\
-         <a class=\"btn btn-ghost\" href=\"/offerings\">Browse the Lab</a>\
+         <a class=\"btn btn-ghost\" href=\"/offerings\">All games</a>\
          </div></div>\
          <div class=\"hero-art\">{board}\
          <div class=\"legend\">\
@@ -6042,39 +6090,42 @@ async fn index() -> Html<String> {
          <p class=\"hero-cap\">Automatafl · mid-turn</p></div>\
          </section>\
          <section class=\"steps\" aria-label=\"How it works\">\
-         <div class=\"step\"><span class=\"n\">1</span><h3>Play</h3>\
-         <p>Open an offering and take a turn. Every affordance is cap-gated, and the executor — \
-         never the page — is the sole referee.</p></div>\
-         <div class=\"step\"><span class=\"n\">2</span><h3>Commit</h3>\
-         <p>A legal move lands a real verified receipt. An illegal one is refused and nothing \
-         commits: no ghost state, no fake pass.</p></div>\
-         <div class=\"step\"><span class=\"n\">3</span><h3>Re-verify</h3>\
-         <p>Anyone can replay the whole committed chain. On the no-cheat board a forged run shows \
-         <strong>FAIL</strong> — it never ranks.</p></div>\
+         <div class=\"step\"><span class=\"n\">1</span><h3>Take a turn</h3>\
+         <p>Pick a game and make a move, the way you would anywhere else. No account, no wallet, \
+         no client-side JavaScript required.</p></div>\
+         <div class=\"step\"><span class=\"n\">2</span><h3>The game checks it</h3>\
+         <p>Your move is re-run against the rules before anything is written down. A move that \
+         is not allowed is refused and leaves no trace — the page cannot talk the game into it.</p>\
+         </div>\
+         <div class=\"step\"><span class=\"n\">3</span><h3>Anyone can re-check</h3>\
+         <p>A finished game replays from its first move to its last. On the daily board, a run \
+         that does not replay shows <strong>FAIL</strong> and never ranks.</p></div>\
          </section>\
          <main class=\"catalog\">\
          <section class=\"catalog-group\">\
          <h2 class=\"group-h\">Start here</h2>\
          <div class=\"card-grid\">\
          <div class=\"offering-card shelf-games\"><h3>The Descent</h3>\
-         <p class=\"tagline\">The featured game. One dungeon a day, seeded from a public beacon; \
-         one life, no reruns; every finished climb is proved onto the no-cheat board.</p>\
-         {card_play}<a class=\"play\" href=\"/descent\">See today's no-cheat board \
+         <p class=\"tagline\">A dungeon crawl. Everyone gets the same dungeon each day, drawn from \
+         a public random number nobody can pick in advance. One life, no retries — go deeper for \
+         better loot, and you only keep what you carry back out.</p>\
+         {card_play}<a class=\"play\" href=\"/descent\">See today's finished runs \
          <span class=\"arr\" aria-hidden=\"true\">→</span></a></div>\
-         <div class=\"offering-card shelf-services\"><h3>🧪 The Lab</h3>\
-         <p class=\"tagline\">Experimental engine surfaces — nine games, nine feature surfaces, \
-         five services. The parts the game is built from, on the shelf for the curious.</p>\
-         <a class=\"play\" href=\"/offerings\">Browse the Lab \
+         <div class=\"offering-card shelf-games\"><h3>Automatafl</h3>\
+         <p class=\"tagline\">A two-player board game. You both choose in secret, then both moves \
+         are revealed at once and a neutral piece reacts to them — so you are guessing at your \
+         opponent, not waiting on them.</p>\
+         <a class=\"play\" href=\"/automatafl\">Open a table \
          <span class=\"arr\" aria-hidden=\"true\">→</span></a></div>\
-         <div class=\"offering-card shelf-features\"><h3>Sprite gallery</h3>\
-         <p class=\"tagline\">Every asset's SVG sprite is a byte-identical function of its \
-         content address — re-derivable, like everything else here.</p>\
-         <a class=\"play\" href=\"/gallery\">Open the gallery \
+         <div class=\"offering-card shelf-games\"><h3>Multiway-Tug</h3>\
+         <p class=\"tagline\">A two-player game of hidden influence over seven guilds. You play \
+         cards face down; the pull only becomes public once both sides commit.</p>\
+         <a class=\"play\" href=\"/tug\">Open a table \
          <span class=\"arr\" aria-hidden=\"true\">→</span></a></div>\
          </div></section></main>",
         board = hero_board(),
     );
-    Html(document("DreggNet Cloud — play + verify", "", &body))
+    Html(document("dregg — play + verify", "", &body))
 }
 
 // ═════════════════════════════════════════════════════════════════════════════════════════

@@ -103,10 +103,13 @@ fn multi_step_menu_navigation_renders_at_every_step() {
         .visible(menu_1)
         .and_then(|req| req.reply_markup.as_ref())
         .expect("the menu carries an inline keyboard");
+    // One button per ADVERTISED offering. `menu_index` still resolves against the FULL list
+    // because that is what a button's callback arg is a position in — which is also why pressing
+    // an unadvertised offering's index below still opens it.
     assert_eq!(
         menu_keyboard.inline_keyboard.len(),
-        host.list_offerings().len(),
-        "one menu button per registered offering"
+        host.list_advertised_offerings().len(),
+        "one menu button per advertised offering"
     );
 
     // ── 2. Press "open dungeon" ON THE MENU MESSAGE — the submenu (the offering's surface).

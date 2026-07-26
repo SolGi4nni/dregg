@@ -873,14 +873,14 @@ async fn admin_index(State(state): State<Arc<BotState>>) -> Result<Html<String>,
 
     let mut h = String::new();
     h.push_str(
-        "<!doctype html><html><head><meta charset=utf-8><title>DreggNet Cloud — Admin</title>\
+        "<!doctype html><html><head><meta charset=utf-8><title>dregg — Admin</title>\
          <style>body{font-family:ui-monospace,Menlo,monospace;background:#0b1020;color:#cfe;margin:2rem;}\
          h1{color:#00b4d8}h2{color:#7fd;border-bottom:1px solid #244;padding-top:1rem}\
          table{border-collapse:collapse;width:100%;margin:.5rem 0;font-size:13px}\
          th,td{border:1px solid #244;padding:4px 8px;text-align:left}th{background:#11203a}\
          .ok{color:#5f8}.no{color:#f88}.muted{color:#789}code{color:#fc8}</style></head><body>",
     );
-    h.push_str("<h1>DreggNet Cloud — Admin Portal</h1>");
+    h.push_str("<h1>dregg — Admin Portal</h1>");
     h.push_str(&format!(
         "<p class=muted>Read-mostly operator view over the bot DB. Bot cell <code>{}</code>. \
          {} users · {} channels · {} Hermes events shown.</p>",

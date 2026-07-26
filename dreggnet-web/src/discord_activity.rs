@@ -1493,7 +1493,9 @@ async fn get_da_offerings(
         Err(resp) => return resp,
     };
     let ident = state.identity_for(user.user_id);
-    let offerings = state.catalog.list_offerings();
+    // THE SHELF, not the registry: `dreggnet_catalog::SHIPPED_KEYS`. An unadvertised
+    // offering keeps its session route here and stays openable by key.
+    let offerings = state.catalog.list_advertised_offerings();
     let ident16 = &ident.0[..16.min(ident.0.len())];
     let mut cards = String::new();
     for o in &offerings {
@@ -1509,7 +1511,7 @@ async fn get_da_offerings(
             path = crate::esc(&path),
         ));
     }
-    // THE LAB FRAMING (shared words: `dreggnet_catalog::{flagship_pointer, lab_intro}`) — the same
+    // THE SHELF FRAMING (shared words: `dreggnet_catalog::{flagship_pointer, shelf_intro}`) — the same
     // Descent-first shelf the `/tg` fragment paints, so the Activity is visually the SAME product.
     //
     // COHERENCE FIX (maturation cluster 5): the featured Descent used to carry a plain
@@ -1530,7 +1532,7 @@ async fn get_da_offerings(
          </div>\
          <p class=\"prose\" style=\"margin:.8rem 0 .4rem\">{lab}</p>",
         flagship = crate::esc(dreggnet_catalog::flagship_pointer()),
-        lab = crate::esc(dreggnet_catalog::lab_intro()),
+        lab = crate::esc(dreggnet_catalog::shelf_intro()),
     );
     // A discoverable entry to the cross-platform link ceremony. A PLAIN anchor (no
     // `data-da-session`) so the shell's click interceptor ignores it and the iframe navigates to

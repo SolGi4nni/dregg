@@ -49,7 +49,7 @@ const ID_GO_PREFIX: &str = "menu:go:";
 const ID_RUN_PREFIX: &str = "menu:run:";
 /// The `/play` arcade select — pick an offering to see how to open it.
 const ID_PICK_PLAY: &str = "menu:pick:play";
-/// The four game-shaped doors that best explain the shared session contract.
+/// The featured game doors — the ship list, one card each.
 const ID_PICK_GAME: &str = "menu:pick:game";
 
 /// One player-facing game door. This is Discord information architecture, not
@@ -66,42 +66,39 @@ struct GameDoor {
     special: &'static str,
 }
 
-const GAME_DOORS: [GameDoor; 4] = [
-    GameDoor {
-        key: "dungeon",
-        title: "The Dungeon",
-        rhythm: "collective crawl · write-once ballots · one plurality-resolved turn",
-        open: "/adventure dungeon start",
-        verify: "/adventure dungeon verify",
-        privacy: "The party state is public. Private producer receipts stay opaque and can land only their verified public effects. Chutes receives only the current public room, after explicit `confirm:true` opt-in.",
-        special: "/adventure dungeon chutes-turn confirm:true · /adventure dungeon operation",
-    },
+/// ⚑ **THE FEATURED DOORS MUST BE ON THE SHIP LIST.** This is a hand-written advertising shelf —
+/// the discord-bot builds no `OfferingHost`, so nothing filters it automatically and a stale entry
+/// here would keep promoting an offering we took off every other surface.
+/// `the_game_doors_are_exactly_the_ship_list` below is the gate. It previously featured `dungeon`,
+/// `bazaar` and `private-raid`, which is exactly the leak `dreggnet_catalog::SHIPPED_KEYS` exists
+/// to stop; those offerings all still open by key, they are just no longer advertised.
+const GAME_DOORS: [GameDoor; 3] = [
     GameDoor {
         key: "descent",
-        title: "The Descent — native",
-        rhythm: "solo custody crawl · the first landed move binds the actor",
+        title: "The Descent",
+        rhythm: "a dungeon crawl · one dungeon a day, the same for everyone · one life, no retries",
         open: "/play open offering:descent",
         verify: "/play open offering:descent action:verify",
-        privacy: "The run is actor-bound, but its Discord board is public state. It is not a hidden-hand surface; another identity cannot move the bound run.",
-        special: "bank relics · descend with finite light · share the terminal proof record",
+        privacy: "Your run belongs to you — nobody else can move it — but the board it plays on in this channel is public.",
+        special: "go deeper for better loot; you only keep what you carry back out",
     },
     GameDoor {
-        key: "bazaar",
-        title: "The Dark Bazaar",
-        rhythm: "list · sealed bids · settle · conservation-checked clear",
-        open: "/play open offering:bazaar",
-        verify: "/play open offering:bazaar action:verify",
-        privacy: "Bid values are sealed during commit and operator-visible at settlement. This playable CRAWL is not house-blind Tier-0 privacy.",
-        special: "the seller settles; the executor chooses the real high bid and refuses below-reserve clears",
+        key: "automatafl",
+        title: "Automatafl",
+        rhythm: "a two-player board game · you both choose in secret, then both moves are revealed at once",
+        open: "/play open offering:automatafl",
+        verify: "/play open offering:automatafl action:verify",
+        privacy: "Your sealed move is hidden until the reveal; the board itself is public.",
+        special: "a neutral piece reacts to both moves, so you are guessing at your opponent rather than waiting on them",
     },
     GameDoor {
-        key: "private-raid",
-        title: "The Ash Gate — private raid",
-        rhythm: "four public seats · proof-assigned roles · capability-gated raid",
-        open: "/play open offering:private-raid",
-        verify: "/play open offering:private-raid action:verify",
-        privacy: "The producer-private score/admissibility matrix stays hidden; the role assignment, verifier identity, and receipt are public. Discord accepts only the canonical proof attachment.",
-        special: "/play open offering:private-raid action:submit-raid-proof proof:<attachment>",
+        key: "tug",
+        title: "Multiway-Tug",
+        rhythm: "a two-player game of hidden influence over seven guilds · cards go down face down",
+        open: "/play open offering:tug",
+        verify: "/play open offering:tug action:verify",
+        privacy: "Your hand is yours alone; a pull becomes public only once both sides have committed.",
+        special: "one side cuts, the other chooses",
     },
 ];
 
@@ -782,34 +779,28 @@ fn back_row() -> CreateActionRow {
     )])
 }
 
-/// The `/play` arcade: four legible game doors first, then the complete engine
-/// catalog. They share a session/receipt/replay contract without pretending
-/// their mechanics are interchangeable.
+/// The `/play` arcade: the shipped game doors (`GAME_DOORS`, which IS
+/// `dreggnet_catalog::SHIPPED_KEYS`), then the same set as a selector. They share a
+/// session/receipt/replay contract without pretending their mechanics are interchangeable.
 fn play_view() -> (CreateEmbed, Vec<CreateActionRow>) {
     let embed = embeds::dregg_embed("🎮 The Arcade")
         .description(format!(
-            "{lab}\n\nThe common rhythm is **open → act → landed receipt or anti-ghost refusal \
-             → replay**. The Dungeon keeps its crowd ballot, Descent its custody crawl, the \
-             Bazaar its clearing, and the Ash Gate its private-proof assignment.",
-            lab = dreggnet_catalog::lab_intro(),
+            "{shelf}\n\nThe rhythm is the same in all of them: **take a turn → the game \
+             re-runs it against the rules → it lands, or it is refused and nothing is \
+             recorded → anyone can replay the whole thing afterwards.**",
+            shelf = dreggnet_catalog::shelf_intro(),
         ))
         .field(
-            "Four doors into one engine",
-            "**Dungeon** — collective + narrated · **Descent** — solo + actor-bound · \
-             **Dark Bazaar** — sealed market · **Ash Gate** — proof-assigned raid",
-            false,
-        )
-        .field(
-            "The wider shelf",
-            "`/play open offering:tug` — hidden hand · \
-             `/play open offering:automatafl` — simultaneous board · the complete selector \
-             below also carries campaigns, overworld, party, gear, craft, trade, and more",
+            "Three games",
+            "**The Descent** — a solo dungeon crawl, one a day · **Automatafl** — a \
+             two-player board where both moves reveal at once · **Multiway-Tug** — a \
+             two-player game of hidden influence",
             false,
         )
         .field(
             "One replay gesture",
             "`/play open offering:<key> action:verify` re-checks the live session's \
-             receipt chain. Dungeon keeps its own equivalent: `/adventure dungeon verify`.",
+             receipt chain.",
             false,
         )
         .field(
@@ -832,9 +823,8 @@ fn play_view() -> (CreateEmbed, Vec<CreateActionRow>) {
         .placeholder("Choose a game door…"),
     );
     // Discord rejects a string select with MORE than 25 options, which would fail the whole
-    // `/play` render. The offering shelf is under that today, but clamp so a growing catalog can
-    // never silently break the menu. (`.take(25)` keeps the catalog's leading keys; the full
-    // shelf is always reachable by `/play open offering:<key>` regardless.)
+    // `/play` render. The ship list is far under that, but clamp so a growing one can never
+    // silently break the menu.
     let offering_options: Vec<CreateSelectMenuOption> = commands::portfolio::play_keys()
         .into_iter()
         .take(25)
@@ -847,7 +837,7 @@ fn play_view() -> (CreateEmbed, Vec<CreateActionRow>) {
                 options: offering_options,
             },
         )
-        .placeholder("Browse every offering…"),
+        .placeholder("Browse the games…"),
     );
     (embed, vec![game_select, offering_select, back_row()])
 }
@@ -1585,6 +1575,23 @@ mod tests {
     /// serves; selector values are a closed vocabulary.
     #[test]
     fn game_doors_are_exact_replayable_routes() {
+        // ⚑ THE FEATURED DOORS ARE THE SHIP LIST, both directions — nothing unshipped is
+        // promoted here, and nothing shipped is missing a door.
+        for door in GAME_DOORS {
+            assert!(
+                dreggnet_catalog::is_shipped(door.key),
+                "the `{}` door advertises an offering that is not on \
+                 dreggnet_catalog::SHIPPED_KEYS",
+                door.key
+            );
+        }
+        for key in dreggnet_catalog::SHIPPED_KEYS {
+            assert!(
+                game_door(key).is_some(),
+                "`{key}` is shipped but has no featured door"
+            );
+        }
+
         let mut seen = BTreeSet::new();
         for door in GAME_DOORS {
             assert!(seen.insert(door.key), "duplicate game door `{}`", door.key);
@@ -1626,28 +1633,45 @@ mod tests {
         }
     }
 
-    /// Player-facing privacy text is part of the command UX. It must state
-    /// what becomes public and must not imply house-blindness or let hidden
-    /// inputs leak into a shared card.
+    /// Player-facing privacy text is part of the command UX. It must state what becomes public
+    /// and must not let hidden inputs leak into a shared card.
+    ///
+    /// ⚑ Driven over `GAME_DOORS` (which IS `dreggnet_catalog::SHIPPED_KEYS`), never over three
+    /// named keys: it used to assert exact sentences from the Dungeon, Bazaar and Ash Gate cards,
+    /// so paring the shelf blew it up instead of moving it. The PROPERTY is what matters — every
+    /// door a player can see must draw the public/hidden line for itself.
     #[test]
     fn game_door_cards_state_the_real_privacy_boundary() {
-        let dungeon = serde_json::to_value(game_door("dungeon").map(game_door_card).unwrap())
-            .unwrap()
-            .to_string();
-        assert!(dungeon.contains("current public room"), "{dungeon}");
-        assert!(dungeon.contains("verified public effects"), "{dungeon}");
-
-        let bazaar = serde_json::to_value(game_door("bazaar").map(game_door_card).unwrap())
-            .unwrap()
-            .to_string();
-        assert!(bazaar.contains("operator-visible"), "{bazaar}");
-        assert!(bazaar.contains("not house-blind Tier-0"), "{bazaar}");
-
-        let raid = serde_json::to_value(game_door("private-raid").map(game_door_card).unwrap())
-            .unwrap()
-            .to_string();
-        assert!(raid.contains("matrix stays hidden"), "{raid}");
-        assert!(raid.contains("receipt are public"), "{raid}");
+        for door in GAME_DOORS {
+            let text = serde_json::to_value(game_door_card(&door))
+                .unwrap()
+                .to_string();
+            assert!(
+                door.privacy.len() > 40,
+                "the `{}` card must actually explain its boundary, not gesture at one: {}",
+                door.key,
+                door.privacy
+            );
+            assert!(
+                door.privacy.contains("public"),
+                "the `{}` card must say what becomes PUBLIC: {}",
+                door.key,
+                door.privacy
+            );
+            assert!(
+                door.privacy.contains("hidden")
+                    || door.privacy.contains("secret")
+                    || door.privacy.contains("yours")
+                    || door.privacy.contains("belongs to you"),
+                "the `{}` card must say what stays private: {}",
+                door.key,
+                door.privacy
+            );
+            assert!(
+                text.contains("public"),
+                "and the boundary must reach the rendered card: {text}"
+            );
+        }
 
         for secret in [
             "sealed-card=ace",

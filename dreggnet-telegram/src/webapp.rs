@@ -91,7 +91,7 @@ pub fn build_play_menu_request(
         .collect();
     SendMessageRequest {
         chat_id,
-        text: "DreggNet Cloud — the rich web surface. Each button opens the Mini App for that \
+        text: "dregg — the rich web surface. Each button opens the Mini App for that \
                offering; every move there is the same real, verifiable executor turn (signed \
                attribution via the app's validated Telegram identity). The inline buttons here \
                in chat keep working as the lightweight tier."

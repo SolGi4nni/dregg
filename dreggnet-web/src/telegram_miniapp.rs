@@ -820,7 +820,9 @@ async fn get_tg_offerings(
         Err(resp) => return resp,
     };
     let ident = state.identity_for(user.user_id);
-    let offerings = state.catalog.list_offerings();
+    // THE SHELF, not the registry: `dreggnet_catalog::SHIPPED_KEYS`. An unadvertised
+    // offering keeps its session route here and stays openable by key.
+    let offerings = state.catalog.list_advertised_offerings();
     let ident16 = &ident.0[..16.min(ident.0.len())];
     let mut cards = String::new();
     for o in &offerings {
@@ -836,7 +838,7 @@ async fn get_tg_offerings(
             path = crate::esc(&path),
         ));
     }
-    // THE LAB FRAMING (shared words: `dreggnet_catalog::{flagship_pointer, lab_intro}`) —
+    // THE SHELF FRAMING (shared words: `dreggnet_catalog::{flagship_pointer, shelf_intro}`) —
     // The Descent featured first, then the catalog honestly labelled as the lab shelf.
     let featured = format!(
         "<div class=\"card\" style=\"margin:.6rem 0;padding:1rem;border:1px solid \
@@ -852,7 +854,7 @@ async fn get_tg_offerings(
         // arrived at a leaderboard. The board keeps its own (honestly labelled) link beside it.
         play = crate::DESCENT_PLAY_PATH,
         flagship = crate::esc(dreggnet_catalog::flagship_pointer()),
-        lab = crate::esc(dreggnet_catalog::lab_intro()),
+        lab = crate::esc(dreggnet_catalog::shelf_intro()),
     );
     let body = format!(
         "<div class=\"notice ok\" role=\"status\">Verified via Telegram — playing as \

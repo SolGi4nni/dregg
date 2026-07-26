@@ -246,6 +246,13 @@ impl<T: Transport> WeChatHost<T> {
         self.host.run(|h| h.list_offerings())
     }
 
+    /// **The SHELF** — the offerings on `dreggnet_catalog::SHIPPED_KEYS`. The numbered menu paints
+    /// THIS and numbered replies resolve against it, so the printed number and the offering it
+    /// opens can never disagree. An unadvertised offering stays openable by key.
+    pub fn list_advertised_offerings(&self) -> Vec<OfferingInfo> {
+        self.host.run(|h| h.list_advertised_offerings())
+    }
+
     /// Derive `openid`'s frontend-agnostic dregg identity (the replier attribution).
     pub fn identity(&self, openid: &str) -> DreggIdentity {
         self.frontend.identity(openid.to_string())
@@ -290,7 +297,7 @@ impl<T: Transport> WeChatHost<T> {
     /// participant's `wx:<openid>` [`SessionId`].
     pub fn present_offerings_menu(&mut self, openid: &str) -> SessionId {
         let psid = WeChatFrontend::<T>::session_id(openid);
-        let offerings = self.list_offerings();
+        let offerings = self.list_advertised_offerings();
         // The menu is a real affordance surface: each offering is a `TURN_OPEN` actuation carrying its
         // stable catalog index, so the shared `WeChatBackend` numbers it and a reply resolves it.
         let items: Vec<MenuItem> = offerings
@@ -304,7 +311,7 @@ impl<T: Transport> WeChatHost<T> {
             })
             .collect();
         let surface = Surface(ViewNode::Section {
-            title: "DreggNet Cloud — all offerings, any surface".to_string(),
+            title: "dregg — all games, any surface".to_string(),
             tag: "accent".to_string(),
             children: vec![
                 ViewNode::Text(
@@ -455,7 +462,7 @@ impl<T: Transport> WeChatHost<T> {
             if action.turn != TURN_OPEN {
                 return WeChatReply::NotOffered;
             }
-            let offerings = self.list_offerings();
+            let offerings = self.list_advertised_offerings();
             let Some(info) = offerings.get(action.arg as usize) else {
                 return WeChatReply::NotOffered;
             };

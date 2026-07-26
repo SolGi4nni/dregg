@@ -182,8 +182,8 @@ fn text_commands_route_through_the_shell() {
         .len();
     assert_eq!(
         rows,
-        h.list_offerings().len(),
-        "one open-button per registered offering"
+        h.list_advertised_offerings().len(),
+        "one open-button per advertised offering"
     );
 
     // /open (with the group-style @botname suffix) opens the offering in the chat.

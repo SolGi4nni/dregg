@@ -53,21 +53,34 @@ fn app() -> axum::Router {
     common::guard(catalog_router(Arc::new(CatalogState::new())))
 }
 
-/// `GET /offerings` lists the three registered offerings, each with a play link.
+/// `GET /offerings` lists the SHIPPED offerings (`dreggnet_catalog::SHIPPED_KEYS`), each with a
+/// front door — and nothing else. Driven from the curated list, so it does not go stale when the
+/// shelf changes.
 #[tokio::test]
-async fn the_catalog_lists_the_registered_offerings() {
+async fn the_catalog_lists_the_shipped_offerings() {
     let app = app();
     let (status, body) = get(&app, "/offerings").await;
     assert_eq!(status, StatusCode::OK);
-    for key in ["dungeon", "council", "market"] {
+    for key in dreggnet_catalog::SHIPPED_KEYS {
+        let door = match dreggnet_web::table_seats::lock_for_key(key) {
+            Some(lock) => format!("href=\"{}\"", lock.route),
+            None => format!("/offerings/{key}/session/"),
+        };
         assert!(
-            body.contains(&format!("/offerings/{key}/session/")),
-            "the catalog lists a play link for {key}: {body}"
+            body.contains(&door),
+            "the catalog gives shipped `{key}` a front door: {body}"
         );
     }
-    assert!(body.contains("Warden"), "the dungeon card is present");
-    assert!(body.contains("Council"), "the council card is present");
-    assert!(body.contains("Market"), "the market card is present");
+    // The Keep, the Council and the Market are all still MOUNTED (the rest of this file drives
+    // them at their own URLs) — they are simply no longer advertised.
+    assert!(
+        !body.contains("Warden"),
+        "the dungeon card is off the shelf"
+    );
+    assert!(
+        !body.contains("Council"),
+        "the council card is off the shelf"
+    );
 }
 
 /// A full winning DUNGEON line plays through the catalog — each POST lands a real turn, the Keep

@@ -73,7 +73,7 @@ pub const COMMANDS: &[BotCommand] = &[
         name: "/offerings",
         aliases: &["/menu"],
         args: "",
-        summary: "the lab shelf — a button per offering",
+        summary: "the game shelf — a button per game",
         detail: "Posts the catalog as an inline keyboard; a press opens that offering in this \
                  chat. Always posts a FRESH message at the bottom of the chat, so asking for the \
                  menu always produces something you can see.",
@@ -83,7 +83,7 @@ pub const COMMANDS: &[BotCommand] = &[
         name: "/open",
         aliases: &[],
         args: "<key>",
-        summary: "open an offering here (e.g. /open dungeon)",
+        summary: "open a game here (e.g. /open descent)",
         detail: "Opens (or re-presents) `<key>` in this chat as its own message. Keys come from \
                  /offerings. An offering that hides per-player state (tug, automatafl) is refused \
                  in a group or forum topic — a group's surface is ONE message every member reads \
@@ -184,11 +184,25 @@ pub const HELP_HEADER: &str = "Dregg games use one addressed session-and-receipt
     keeping different rulebooks.";
 
 /// The flagship pointers `/help` leads with — concrete openings, not an abstract catalog.
-const FLAGSHIP_LINES: &[&str] = &[
-    "⚔️ /open descent — the Lean-authored custody dungeon",
-    "🗝 /open dungeon — The Warden's Keep",
-    "🕯 /open bazaar — the playable Dark Bazaar crawl (not the encrypted apex)",
-    "🛡 /open private-raid — proof-assigned tactical party play",
+///
+/// ⚑ **THESE MUST BE ON THE SHIP LIST.** `/help` is a public shelf in prose: a line here
+/// advertises an offering just as loudly as a menu button, and no host-level filter can reach it.
+/// `the_help_flagships_are_all_shipped` below is the gate. To add a line, ship the offering first
+/// (`dreggnet_catalog::SHIPPED_KEYS`). It previously advertised `dungeon`, `bazaar` and
+/// `private-raid` alongside the Descent, which is precisely the leak the ship list exists to stop.
+const FLAGSHIP_LINES: &[(&str, &str)] = &[
+    (
+        "descent",
+        "⚔️ /open descent — a dungeon crawl: one dungeon a day, one life, no retries",
+    ),
+    (
+        "automatafl",
+        "♟ /open automatafl — a two-player board game where both moves are revealed at once",
+    ),
+    (
+        "tug",
+        "🪢 /open tug — a two-player game of hidden influence over seven guilds",
+    ),
 ];
 
 /// Strip a `@BotName` suffix and normalise a typed word to a lookup key. In a group, Telegram
@@ -221,11 +235,14 @@ pub fn help_text() -> String {
     let mut out = String::new();
     out.push_str(HELP_HEADER);
     out.push('\n');
-    for line in FLAGSHIP_LINES {
+    for (_key, line) in FLAGSHIP_LINES {
         out.push_str(line);
         out.push('\n');
     }
-    out.push_str("🧪 The Lab also exposes markets, councils, RPG systems, and services.\n\n");
+    // ⚑ No "…and there is also a Lab full of markets, councils and RPG systems" line here.
+    // /help is a public shelf in prose; naming the unshipped set in passing re-advertises
+    // exactly what `dreggnet_catalog::SHIPPED_KEYS` took off every other surface.
+    out.push('\n');
     out.push_str("Commands:\n");
     for command in COMMANDS {
         out.push_str(&format!("{} — {}\n", command.usage(), command.summary));
@@ -266,4 +283,38 @@ pub fn bot_father_commands() -> Vec<(String, String)> {
             (name, description)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod ship_list_tests {
+    use super::*;
+
+    /// ⚑ **`/help` cannot advertise something we do not ship.** The Telegram help text is a shelf
+    /// written in prose — no `OfferingHost` filter reaches it — so this is the gate that keeps it
+    /// in step with `dreggnet_catalog::SHIPPED_KEYS`. Both directions: a flagship line must name a
+    /// shipped offering, and every shipped offering must have a line, so paring the ship list can
+    /// never leave a stale pointer and adding to it can never leave a silent omission.
+    #[test]
+    fn the_help_flagships_are_exactly_the_ship_list() {
+        let listed: Vec<&str> = FLAGSHIP_LINES.iter().map(|(key, _)| *key).collect();
+        for key in &listed {
+            assert!(
+                dreggnet_catalog::is_shipped(key),
+                "/help advertises `{key}`, which is not on dreggnet_catalog::SHIPPED_KEYS"
+            );
+        }
+        for key in dreggnet_catalog::SHIPPED_KEYS {
+            assert!(
+                listed.contains(&key),
+                "`{key}` is shipped but /help never points at it"
+            );
+        }
+        let help = help_text();
+        for (key, line) in FLAGSHIP_LINES {
+            assert!(
+                help.contains(line),
+                "the `{key}` flagship line reaches /help"
+            );
+        }
+    }
 }

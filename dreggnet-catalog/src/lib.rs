@@ -10,6 +10,23 @@
 //! `dreggnet_telegram::host::telegram_default_host`, `dreggnet_wechat::host::wechat_default_host`,
 //! and discord-bot's bespoke per-type stores) that can silently disagree.
 //!
+//! ## ⚑ What EXISTS vs. what we ADVERTISE
+//!
+//! Two different lists, deliberately:
+//!
+//! - [`CATALOG_KEYS`] — the 23 offerings that EXIST. All mounted, all routable, all openable by
+//!   key or URL on every frontend. This is the parity contract.
+//! - [`SHIPPED_KEYS`] — **the SHIP LIST**: the small curated set we put in front of a stranger.
+//!   [`build_full_catalog`] stamps it onto the host ([`apply_ship_list`]), so every shelf that
+//!   paints `OfferingHost::list_advertised_offerings` — the web catalog page, the Telegram
+//!   `/offerings` and `/play` menus, the WeChat menu, the Mini App, the Discord Activity —
+//!   inherits it with no per-frontend filter. The discord-bot builds no host, so it reads
+//!   [`is_shipped`] in its `/play` choice list instead.
+//!
+//! **Unlisted is not deleted.** Nothing in the ship list gates opening, playing or verifying —
+//! `every_unshipped_offering_still_opens_and_verifies_by_key` in this module's tests is the guard.
+//! To re-list something, add its key to [`SHIPPED_KEYS`]. That is the whole change.
+//!
 //! ## What stays OUT of this crate
 //! Everything platform-specific. A frontend derives its users' identities with its own
 //! cipherclerk (`(bot_secret, platform_uid, federation_id)` → Ed25519 pubkey) and hands this
@@ -340,6 +357,9 @@ pub fn build_full_catalog(host: &mut OfferingHost, cfg: &CatalogConfig) {
     register_games(host, cfg);
     register_feature_surfaces(host);
     register_services(host, cfg);
+    // ⚑ All 23 stay MOUNTED and openable; [`apply_ship_list`] only decides which of them a
+    // browse list paints. The list itself is [`SHIPPED_KEYS`] — one array, one edit.
+    apply_ship_list(host);
 }
 
 /// Build a fresh [`OfferingHost`] carrying the full catalog — the convenience every
@@ -492,27 +512,98 @@ pub const CATALOG_KEYS: [&str; 23] = [
     "hermes",
 ];
 
-// ─────────────────────────────────────────────────────────────────────────────
-// THE LAB FRAMING — the one place the catalog's product words live
-// ─────────────────────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+// ⚑ THE SHIP LIST — the ONE place that decides what we ADVERTISE
+// ═════════════════════════════════════════════════════════════════════════════
 
-/// **The Lab intro** — the honest framing every catalog LISTING leads with, on every front
-/// door (web `GET /offerings`, the Mini App `/tg` fragment, Telegram `/offerings`, Discord
-/// `/play`). The 23 offerings are the engine's proving ground — real verifiable turns,
-/// deliberately rough — not the polished game. ONE string, so the three front doors cannot
-/// drift into three different stories about what the catalog is.
-pub fn lab_intro() -> &'static str {
-    "🧪 The Lab — experimental engine surfaces. Everything here runs real, verifiable \
-     turns on the dregg substrate; none of it is the polished game yet. These are the \
-     parts the game is built from, on the shelf for the curious."
+/// ⚑ **THE SHIP LIST. Edit THIS ARRAY to change what the public shelves show.**
+///
+/// [`CATALOG_KEYS`] is what EXISTS (23 offerings, all mounted, all openable). This is what we
+/// **advertise**: the small set we are actually ready to put in front of a stranger. Everything
+/// registered and not named here stays mounted, openable by key or URL, and fully playable — it
+/// simply is not on any shelf, in any menu, or in any bot's picker.
+///
+/// **To re-list an offering: add its key to this array. That is the whole change.** To take one
+/// off the shelf: delete its key. Nothing else moves — no route, no crate, no registration.
+///
+/// Where it takes effect (all downstream of this one array):
+/// - [`apply_ship_list`] marks every other registered key unadvertised on the host, so
+///   `OfferingHost::list_advertised_offerings` — which the web catalog page, the Telegram
+///   `/offerings` + `/play` menus, the WeChat menu, the Telegram Mini App and the Discord
+///   Activity all paint — carries only these.
+/// - the discord-bot builds no `OfferingHost`, so it reads [`is_shipped`] directly in its
+///   `/play` choice list.
+///
+/// **Why these three** (measured 2026-07-26 over `git log`, per-crate test counts, and the
+/// Lean sources each rides):
+/// - `descent` — the flagship. Its own code has the deepest recent history, it is the only
+///   offering with a bespoke served play surface *and* a durable leaderboard that re-verifies
+///   every stored run by replay on boot, and the landing already funnels to it.
+/// - `automatafl` — the most-worked game by every measure: its own crate, a Lean-authored
+///   rule set and AIR with a differential oracle test, a dedicated board front door, and a
+///   seat-locked table door. The one surface a first-time reader could actually act on.
+/// - `tug` — a Lean spec (`Dregg2/Games/MultiwayTug*.lean`) with an FFI oracle probe pinning
+///   the Rust engine to it, its own front door and table door.
+///
+/// Everything else is real work in progress, not a thing to hand a stranger: the nine RPG
+/// feature surfaces are demo mounts (four are literally registered from `::demo(…)`
+/// constructors, and trade/inventory/craft share ONE world named `"Adventurer"` across every
+/// viewer of a host), and no service crate carries a fraction of the effort the three games do.
+pub const SHIPPED_KEYS: [&str; 3] = ["descent", "automatafl", "tug"];
+
+/// Whether `key` is on the [ship list](SHIPPED_KEYS) — i.e. whether we advertise it.
+///
+/// ⚠ NOT an access check. An unshipped offering is still registered, still openable, and still
+/// verifiable; this only answers "does it go on a shelf".
+pub fn is_shipped(key: &str) -> bool {
+    SHIPPED_KEYS.contains(&key)
 }
 
-/// **The flagship pointer** — where the game begins. The Lean-authored Descent is registered in
-/// the common catalog so web, Telegram, and Discord all drive the same rules; dedicated
-/// `/descent` routes may provide richer presentation over that same core.
+/// **Stamp the [ship list](SHIPPED_KEYS) onto `host`** — every registered key not in
+/// [`SHIPPED_KEYS`] is marked unadvertised, every key in it is marked advertised.
+///
+/// [`build_full_catalog`] calls this last, so EVERY frontend that builds its host through the
+/// shared registrar inherits the same shelf without doing anything. A frontend that registers
+/// extra offerings of its own after `build_full_catalog` should call this again (or
+/// `set_advertised` for its own key) — a later `register` does not re-apply it.
+pub fn apply_ship_list(host: &mut OfferingHost) {
+    for key in host.keys() {
+        let shipped = is_shipped(&key);
+        host.set_advertised(&key, shipped);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE FRONT-DOOR COPY — the one place the shelf's product words live
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// **The shelf intro** — the sentence every catalog LISTING leads with, on every front door (web
+/// `GET /offerings`, the Mini App `/tg` fragment, Telegram `/offerings`, Discord `/play`). ONE
+/// string, so the front doors cannot drift into different stories about what this is.
+///
+/// ⚑ Written for someone who has never heard of this project: it names what you get (games, in a
+/// browser) BEFORE it makes any claim, and it makes the honest claim in words a newcomer owns —
+/// no `executor`, no `substrate`, no `receipt`, no `turn`. It used to open "🧪 The Lab —
+/// experimental engine surfaces… on the shelf for the curious", which was accurate about 23
+/// experiments and is the wrong thing to say about a curated shelf ([`SHIPPED_KEYS`]).
+pub fn shelf_intro() -> &'static str {
+    "🎲 Games you can play right now, in a browser tab — no install, no wallet, no sign-up. \
+     Every move you make is re-run against the rules before it is recorded, so an illegal move \
+     is refused rather than accepted, and a finished game can be replayed by anyone who wants \
+     to check it really went that way."
+}
+
+/// **The flagship pointer** — where the game begins. The Descent is registered in the common
+/// catalog so web, Telegram, and Discord all drive the same rules; dedicated `/descent` routes
+/// provide richer presentation over that same core.
+///
+/// Same rule as [`shelf_intro`]: a stranger has to be able to picture the game. It used to read
+/// "the Lean-authored custody dungeon… exercise attenuating keys… bank only on a proved exit",
+/// four private terms in one sentence.
 pub fn flagship_pointer() -> &'static str {
-    "⚔️ The Descent — the Lean-authored custody dungeon. Delve under a finite light clock; \
-     exercise attenuating keys; carry only what the descent permits; bank only on a proved exit."
+    "⚔️ The Descent — a dungeon crawl. Everyone gets the same dungeon each day, built from a \
+     public random number nobody can pick in advance. One life, no retries: go deeper for better \
+     loot, and you only keep what you carry back out."
 }
 
 #[cfg(test)]
@@ -532,6 +623,73 @@ mod tests {
         let mut want: Vec<&str> = CATALOG_KEYS.to_vec();
         want.sort();
         assert_eq!(keys, want);
+    }
+
+    /// **The ship list names only real offerings, and it is what a shelf paints.** Both
+    /// directions, so a typo in [`SHIPPED_KEYS`] (a key nothing registers) fails here rather than
+    /// silently shrinking every shelf on the platform.
+    #[test]
+    fn the_shelf_is_exactly_the_ship_list() {
+        let host = full_catalog_host(&CatalogConfig::default());
+        for key in SHIPPED_KEYS {
+            assert!(
+                host.has(key),
+                "SHIPPED_KEYS names `{key}`, which nothing registers"
+            );
+        }
+        let mut shelf: Vec<String> = host
+            .list_advertised_offerings()
+            .into_iter()
+            .map(|o| o.key)
+            .collect();
+        shelf.sort();
+        let mut want: Vec<String> = SHIPPED_KEYS.iter().map(|k| k.to_string()).collect();
+        want.sort();
+        assert_eq!(shelf, want, "the advertised shelf IS `SHIPPED_KEYS`");
+        assert!(
+            host.list_offerings().len() > shelf.len(),
+            "and the FULL registry is still bigger — unlisted is not deleted"
+        );
+    }
+
+    /// ⚑ **UNLISTED IS NOT DELETED.** Every offering we took off the shelf still deploys, still
+    /// takes a turn, and still verifies for anyone holding its key — the ship list is an
+    /// advertising decision, and this is the test that keeps it one.
+    #[test]
+    fn every_unshipped_offering_still_opens_and_verifies_by_key() {
+        use dreggnet_offerings::{SessionConfig, SessionId};
+
+        let mut host = full_catalog_host(&CatalogConfig::default());
+        for key in CATALOG_KEYS {
+            if is_shipped(key) {
+                continue;
+            }
+            assert!(!host.is_advertised(key), "{key} is off the shelf");
+            assert!(host.has(key), "…but `{key}` is still MOUNTED");
+            let id = SessionId::new(format!("unlisted-{key}"));
+            // The routing property is the one that matters: the key must never become
+            // `UnknownOffering`. An offering may still refuse its own deploy for its own reasons
+            // (that is its business, and identical to before the ship list existed).
+            match host.open_session(key, id.clone(), SessionConfig::with_seed(11)) {
+                Ok(()) => {
+                    assert!(
+                        host.render(key, &id).is_some(),
+                        "unlisted `{key}` opened, so it must still render"
+                    );
+                    // The VERIFIER must still be reachable. Its verdict on a genesis-only
+                    // session is the offering's own business (`market`, for one, does not
+                    // report `verified` on an empty book) and has nothing to do with the shelf.
+                    assert!(
+                        host.verify(key, &id).is_some(),
+                        "unlisted `{key}` opened, so its verifier must still be mounted"
+                    );
+                }
+                Err(dreggnet_offerings::HostError::UnknownOffering(k)) => {
+                    panic!("taking `{k}` off the shelf must NOT unroute it")
+                }
+                Err(_) => {}
+            }
+        }
     }
 
     /// The campaign is not merely named in the catalog: a generic host can drive it and recover

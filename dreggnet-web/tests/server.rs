@@ -99,28 +99,22 @@ async fn the_landing_page_renders() {
     );
 }
 
-/// `GET /offerings` lists BOTH the eight games AND the nine do-once feature surfaces — the merged
-/// demo host wires `register_surfaces` beside the games.
+/// ⚑ **`GET /offerings` lists EXACTLY the ship list** — read from
+/// `dreggnet_catalog::SHIPPED_KEYS`, never re-hardcoded here, so paring or re-listing an offering
+/// moves this test with it instead of leaving it stale.
+///
+/// Both directions: every shipped offering has a real front door on the page, and no offering we
+/// took off the shelf appears on it at all.
 #[tokio::test]
-async fn offerings_lists_the_games_and_the_do_once_surfaces() {
+async fn offerings_lists_exactly_the_ship_list() {
     let app = app();
     let (status, body) = get(&app, "/offerings").await;
     assert_eq!(status, StatusCode::OK);
 
-    // The eight games. `tug` and `automatafl` are SEAT-LOCKED: their card advertises the
-    // table-minting front door instead of a shared `/offerings/{key}/session/{key}-web` id (a
-    // printed shared id was a seat race, and an asserted label could render the opponent's private
-    // projection on it). Every other game still drops you into its shared demo session.
-    for key in [
-        "descent",
-        "descent-campaign",
-        "dungeon",
-        "council",
-        "market",
-        "bazaar",
-        "tug",
-        "automatafl",
-    ] {
+    for key in dreggnet_catalog::SHIPPED_KEYS {
+        // A SEAT-LOCKED game (`tug`, `automatafl`) advertises its table-minting front door instead
+        // of a shared `/offerings/{key}/session/{key}-web` id: a printed shared id was a seat race,
+        // and an asserted label could render the opponent's private projection on it.
         match dreggnet_web::table_seats::lock_for_key(key) {
             Some(door) => {
                 assert!(
@@ -135,25 +129,45 @@ async fn offerings_lists_the_games_and_the_do_once_surfaces() {
             }
             None => assert!(
                 body.contains(&format!("/offerings/{key}/session/")),
-                "the catalog lists the {key} game: {body}"
+                "the catalog lists the shipped {key}: {body}"
             ),
         }
     }
-    // The nine do-once feature surfaces (register_surfaces).
-    for key in [
-        "trade",
-        "inventory",
-        "cheevos",
-        "guild",
-        "craft",
-        "companion",
-        "quest",
-        "tavern",
-        "party",
-    ] {
+
+    for key in dreggnet_catalog::CATALOG_KEYS {
+        if dreggnet_catalog::is_shipped(key) {
+            continue;
+        }
         assert!(
-            body.contains(&format!("/offerings/{key}/session/")),
-            "the catalog lists the {key} feature surface: {body}"
+            !body.contains(&format!("/offerings/{key}/session/")),
+            "`{key}` is off the ship list and must not be advertised on the catalog page: {body}"
+        );
+    }
+}
+
+/// ⚑ **UNLISTED IS NOT DELETED.** Everything we took off the shelf still opens and renders at its
+/// own URL — the ship list decides what we ADVERTISE, never what works.
+#[tokio::test]
+async fn an_unlisted_offering_still_opens_at_its_own_url() {
+    let app = app();
+    for key in dreggnet_catalog::CATALOG_KEYS {
+        if dreggnet_catalog::is_shipped(key) {
+            continue;
+        }
+        let uri = format!("/offerings/{key}/session/{key}-unlisted-probe");
+        let (status, body) = get(&app, &uri).await;
+        // The property is ROUTING, not a 200: an offering may still refuse its own open for its
+        // own reasons (`descent-campaign` under a live day binding with no published day answers
+        // 409, exactly as it did before the ship list existed). What must never happen is the key
+        // becoming unknown.
+        assert_ne!(
+            status,
+            StatusCode::NOT_FOUND,
+            "unlisted {key} lost its route"
+        );
+        assert!(
+            !body.contains("No offering registered"),
+            "unlisted `{key}` must stay ROUTED, not unmounted: {body}"
         );
     }
 }

@@ -193,7 +193,7 @@ fn landing_page(notice: Option<&str>) -> String {
          {open}\
          {board}\
          {rules}\
-         <p class=\"prose\"><a class=\"backlink\" href=\"/offerings\">← the Lab</a></p>\
+         <p class=\"prose\"><a class=\"backlink\" href=\"/offerings\">← All games</a></p>\
          </main>",
         notice = notice
             .map(|n| format!(
@@ -205,7 +205,7 @@ fn landing_page(notice: Option<&str>) -> String {
         board = board_preview(),
         rules = rules_html(),
     );
-    document("DreggNet Cloud — Automatafl", "offerings", &body)
+    document("dregg — Automatafl", "offerings", &body)
 }
 
 #[cfg(test)]

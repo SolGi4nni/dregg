@@ -1928,7 +1928,7 @@ fn leaderboard_missing(key: Option<&str>) -> String {
     };
     let body = format!(
         "<main class=\"session\"><div class=\"notice refused\" role=\"status\">{what}</div>\
-         <p class=\"prose\"><a class=\"backlink\" href=\"/\">← Back to DreggNet Cloud</a></p>\
+         <p class=\"prose\"><a class=\"backlink\" href=\"/\">← Back to dregg</a></p>\
          </main>",
     );
     document("The Descent — leaderboard", "descent-board", &body)

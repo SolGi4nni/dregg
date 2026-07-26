@@ -97,7 +97,8 @@ fn play_command_presents_the_launch_menu_in_a_dm_and_refuses_honestly_elsewhere(
         "the launch menu IS the reply"
     );
     let menu = h.frontend().transport().last().expect("menu sent");
-    let offerings = h.list_offerings();
+    // The Mini App launch menu paints the SHELF; its buttons carry KEYS, not indices.
+    let offerings = h.list_advertised_offerings();
     let rows = &menu
         .reply_markup
         .as_ref()

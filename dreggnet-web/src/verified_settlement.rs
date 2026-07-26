@@ -88,6 +88,75 @@ fn install_and_probe() -> Result<(), String> {
     // intent seam is the one a market settle folds through.
     dregg_exec_lean::register_distributed_gates();
 
+    // ── THE DEPLOYED CONSTRAINT ORACLE — the SAME wound, one layer down ────────────────────────
+    //
+    // Found 2026-07-26 by putting a RELEASE build of `dreggnet-web-server` on a real box. It died
+    // at boot, before binding, with:
+    //
+    // ```text
+    // panicked at dreggnet-web/src/lib.rs:5471: today's descent opens: Deploy("world-cell turn
+    // refused: … no constraint oracle installed: this native node cannot decide a Lean-subset
+    // constraint without the verified dregg_constraint_admits oracle — fail-closed")
+    // ```
+    //
+    // `dregg_cell::program::eval` routes the Lean-evaluated `StateConstraint` subset through the
+    // installed oracle and FAILS CLOSED when there is none — but that gate is
+    // `#[cfg(all(not(debug_assertions), any(unix, windows)))]`, i.e. **native RELEASE only**.
+    // `dregg-cell` is a pervasive dependency and a plain `not(test)` refusal would have refused
+    // valid turns across every debug test build in the workspace, so release-gating it is right.
+    // The cost is that it is INVISIBLE to `cargo test`: every test in this repo builds debug, takes
+    // the Rust guest-path evaluator, and passes. Nothing goes red until a release binary opens a
+    // programmed cell on a box.
+    //
+    // `dregg_exec_lean::register_constraint_oracle()` had exactly ONE caller in the whole repo —
+    // `node/src/lib.rs` — so the NODE was armed and the web server was not. Same shape as the
+    // finding this module was written for: the capability is compiled in, linked, and simply never
+    // handed over. Registering it here rather than in the server bin arms every embedding of
+    // `dreggnet-web` (the bin, the tailnet funnel, the catalog tests) from the one place that is
+    // already contractually "installed and PROVED before a listener exists".
+    let constraint_oracle = dregg_exec_lean::register_constraint_oracle();
+    tracing::info!(
+        installed = constraint_oracle,
+        "constraint oracle: the deployed executor's Lean-subset StateConstraint/HeapAtom admission \
+         is decided by the verified `dregg_constraint_admits`"
+    );
+    // Refuse on the EXACT configuration `eval.rs` fails closed on, and no other. In debug (tests,
+    // dev) the guest-path evaluator legitimately decides and this must stay quiet; on a release
+    // native build without the oracle every programmed-cell turn is already dead, so booting only
+    // moves the discovery to a player.
+    #[cfg(all(not(debug_assertions), any(unix, windows)))]
+    if !constraint_oracle {
+        return Err(
+            "the verified deployed-constraint oracle did not register (the linked archive does \
+             not export `dregg_constraint_admits`). On a native RELEASE build `dregg-cell` fails \
+             CLOSED for the whole Lean-evaluated constraint subset, so every programmed-cell turn \
+             — the Descent, the dungeon, the campaign — would refuse"
+                .to_string(),
+        );
+    }
+
+    // ── THE CONSERVATION ORACLE (House Law #1) ────────────────────────────────────────────────
+    // Same treatment, opposite failure mode: with no oracle installed the executor does NOT fail
+    // closed here — `turn::executor::atomic` falls through to the hand-written Rust
+    // `BlockConservation` twin, the asset-blind decision that already drifted into an inflation
+    // bug once. `dregg-node` refuses to boot without it (`assert_conservation_oracle_installed`).
+    // A server that settles a market must hold the same line.
+    let conservation_oracle = dregg_exec_lean::register_conservation_oracle();
+    tracing::info!(
+        installed = conservation_oracle,
+        "conservation oracle: per-asset Σδ=0 is decided by the verified `dregg_cross_cell_conserves`"
+    );
+    #[cfg(all(not(debug_assertions), any(unix, windows)))]
+    if !conservation_oracle {
+        return Err(
+            "the verified cross-cell conservation oracle did not register (the linked archive \
+             does not export `dregg_cross_cell_conserves`). The executor would silently decide \
+             per-asset Σδ=0 with the UNVERIFIED Rust twin that already drifted into an inflation \
+             bug; refusing to serve a market on it"
+                .to_string(),
+        );
+    }
+
     // POLE 1 — a leg that MUST commit, with the exact post-column checked.
     let mut ledger = VerifiedLedger::new();
     ledger.add_account(PROBE_FROM);
@@ -139,10 +208,11 @@ fn install_and_probe() -> Result<(), String> {
 /// by the library's error log, so both say the same thing.
 pub fn install_failure_advice(reason: &str) -> String {
     format!(
-        "the verified settlement gate is NOT installed: {reason}. The sealed-bid market and the \
-         Dark Bazaar CANNOT settle in this process — a player would land a listing and bids and \
-         then be refused. This almost always means the linked Lean archive \
-         (`dregg-lean-ffi`'s libdregg_lean.a) is absent or stale for this build."
+        "the verified executor is NOT fully armed in this process: {reason}. Depending on which \
+         half failed, either the sealed-bid market and the Dark Bazaar cannot settle — a player \
+         lands a listing and bids and is then refused — or every programmed-cell turn refuses \
+         outright. This almost always means the linked Lean archive (`dregg-lean-ffi`'s \
+         libdregg_lean.a) is absent or stale for this build."
     )
 }
 

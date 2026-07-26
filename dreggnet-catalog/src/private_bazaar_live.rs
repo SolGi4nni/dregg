@@ -705,6 +705,9 @@ pub fn build_full_catalog_with_private_bazaar(
 ) {
     build_full_catalog(host, cfg);
     deployment.register(host);
+    // The live-bazaar raid registers AFTER `build_full_catalog` already stamped the ship list,
+    // so re-stamp: a key mounted later defaults to advertised, and this one is not shipped.
+    crate::apply_ship_list(host);
 }
 
 pub fn full_catalog_host_with_private_bazaar(

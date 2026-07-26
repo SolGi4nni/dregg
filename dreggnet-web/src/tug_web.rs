@@ -163,7 +163,7 @@ fn landing_page(notice: Option<&str>) -> String {
          {notice}\
          {open}\
          {rules}\
-         <p class=\"prose\"><a class=\"backlink\" href=\"/offerings\">← the Lab</a></p>\
+         <p class=\"prose\"><a class=\"backlink\" href=\"/offerings\">← All games</a></p>\
          </main>",
         notice = notice
             .map(|n| format!(
@@ -174,7 +174,7 @@ fn landing_page(notice: Option<&str>) -> String {
         open = open_a_table_section(&LOCK),
         rules = rules_html(),
     );
-    document("DreggNet Cloud — Multiway-Tug", "offerings", &body)
+    document("dregg — Multiway-Tug", "offerings", &body)
 }
 
 #[cfg(test)]

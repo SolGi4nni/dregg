@@ -57,10 +57,14 @@ fn demo_host_mounts_the_whole_portfolio() {
 async fn dark_bazaar_lists_opens_renders_and_discloses_its_crawl_grade() {
     let app = make_app();
 
+    // ⚑ The Bazaar is OFF THE SHIP LIST (`dreggnet_catalog::SHIPPED_KEYS`) — it is not advertised
+    // on the catalog page any more. It is still mounted, still opens, still discloses its exact
+    // grade: unlisted is an advertising decision, not a removal.
     let (status, listing) = get(&app, "/offerings").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(listing.contains("The Dark Bazaar"));
-    assert!(listing.contains("/offerings/bazaar/session/bazaar-web"));
+    assert!(!dreggnet_catalog::is_shipped("bazaar"));
+    assert!(!listing.contains("The Dark Bazaar"));
+    assert!(!listing.contains("/offerings/bazaar/session/bazaar-web"));
 
     let (status, body) = get(&app, "/offerings/bazaar/session/bazaar-portfolio-test").await;
     assert_eq!(status, StatusCode::OK);
@@ -73,14 +77,29 @@ async fn dark_bazaar_lists_opens_renders_and_discloses_its_crawl_grade() {
     assert!(body.contains("NOT source-bound"));
 }
 
-/// `GET /offerings` lists every non-game offering with its title.
+/// ⚑ **The five services are OFF THE SHELF** — none of them is on
+/// `dreggnet_catalog::SHIPPED_KEYS`, so none is advertised on `GET /offerings`. Driven from the
+/// curated list: put one back and this test follows it, rather than going stale.
+///
+/// The pair to this is [`each_non_game_offering_opens_and_renders`] below, which is unchanged and
+/// still passes — that is the whole point. Unlisted is not deleted.
 #[tokio::test]
-async fn catalog_lists_the_non_game_offerings() {
+async fn the_catalog_does_not_advertise_the_unshipped_services() {
     let app = make_app();
     let (status, body) = get(&app, "/offerings").await;
     assert_eq!(status, StatusCode::OK);
     for (key, title) in NON_GAME {
-        assert!(body.contains(title), "catalog missing {key} ({title})");
+        if dreggnet_catalog::is_shipped(key) {
+            assert!(
+                body.contains(title),
+                "shipped {key} must be listed ({title})"
+            );
+        } else {
+            assert!(
+                !body.contains(title),
+                "unshipped {key} must not be advertised ({title})"
+            );
+        }
     }
 }
 

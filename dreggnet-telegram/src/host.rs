@@ -879,9 +879,20 @@ impl<T: Transport> TelegramHost<T> {
         self.webapp_base.as_deref()
     }
 
-    /// The registered offerings (the catalog listing) — key + title + live-session count.
+    /// **The FULL registry** — every mounted offering, advertised or not. The inventory view; a
+    /// MENU wants [`list_advertised_offerings`](Self::list_advertised_offerings).
     pub fn list_offerings(&self) -> Vec<OfferingInfo> {
         self.host.run(|h| h.list_offerings())
+    }
+
+    /// **The SHELF** — the offerings on `dreggnet_catalog::SHIPPED_KEYS`. Everything a Telegram
+    /// user browses (`/offerings`, `/play`) paints THIS, and presses resolve against it, so the
+    /// painted button and the index it carries can never disagree.
+    ///
+    /// An offering that is off the shelf is still openable with `/open <key>` — the ship list is
+    /// what we advertise, not what we allow.
+    pub fn list_advertised_offerings(&self) -> Vec<OfferingInfo> {
+        self.host.run(|h| h.list_advertised_offerings())
     }
 
     /// Derive `uid`'s frontend-agnostic dregg identity (the presser attribution).
@@ -1019,20 +1030,30 @@ impl<T: Transport> TelegramHost<T> {
     }
 
     /// **Present the `/offerings` control message** in `chat_id` — a message whose inline keyboard
-    /// is one button per registered offering (a press opens that offering in the chat). Records the
+    /// is one button per ADVERTISED offering (a press opens that offering in the chat). Records the
     /// chat as "browsing the menu". Returns the chat-scoped [`SessionId`] and, if the send
     /// FAILED, the transport's own reason — so the command surface can say so instead of
     /// answering nothing at all.
+    ///
+    /// ⚑ The shelf is `dreggnet_catalog::SHIPPED_KEYS`; everything else stays openable with
+    /// `/open <key>`.
     pub fn present_offerings_menu_result(
         &mut self,
         chat_id: ChatId,
         topic: Option<i64>,
     ) -> (SessionId, Option<String>) {
         let sid = TelegramFrontend::<T>::session_id(chat_id, topic);
+        // ⚑ PAINT FROM THE FULL LIST, SKIP THE UNADVERTISED, KEEP THE FULL-LIST INDEX. A button's
+        // callback arg is a POSITION, and the press router resolves it against this same full
+        // list — so filtering the list before enumerating would renumber every button and make an
+        // in-flight press from an older keyboard open the WRONG offering. Skipping instead keeps
+        // every index it ever minted valid, which also means a callback captured before an
+        // offering left the shelf still opens exactly what it always did. Unlisted, not deleted.
         let offerings = self.list_offerings();
         let actions: Vec<Action> = offerings
             .iter()
             .enumerate()
+            .filter(|(_, o)| o.advertised)
             .map(|(i, o)| {
                 Action::new(
                     format!("▶ Play {}", o.title),
@@ -1059,7 +1080,7 @@ impl<T: Transport> TelegramHost<T> {
                     "One addressed session and receipt protocol; different games keep their own rulebooks, proof systems, and mood."
                         .to_string(),
                 ),
-                ViewNode::Text(dreggnet_catalog::lab_intro().to_string()),
+                ViewNode::Text(dreggnet_catalog::shelf_intro().to_string()),
                 ViewNode::Text(continuation.to_string()),
             ],
         });
@@ -1116,7 +1137,7 @@ impl<T: Transport> TelegramHost<T> {
             ));
         }
         let sid = TelegramFrontend::<T>::session_id(chat_id, topic);
-        let offerings = self.list_offerings();
+        let offerings = self.list_advertised_offerings();
         let req = crate::webapp::build_play_menu_request(chat_id, topic, &base, &sid, &offerings);
         self.frontend
             .send_raw(&req)
@@ -1859,6 +1880,11 @@ impl<T: Transport> TelegramHost<T> {
                 return HostPress::NotOffered;
             }
             // A menu press: open the offering the button names (by stable catalog index).
+            //
+            // ⚑ Resolved against the FULL list, exactly as `present_offerings_menu_result` paints
+            // it — the index is a position in `list_offerings()`, and it must stay one. Resolving
+            // against the advertised subset here would silently reinterpret every arg the moment
+            // the ship list changed.
             if turn != TURN_OPEN {
                 return HostPress::NotOffered;
             }

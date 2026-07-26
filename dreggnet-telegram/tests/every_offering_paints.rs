@@ -92,10 +92,12 @@ fn the_offerings_menu_paints_a_button_per_offering() {
         .reply_markup
         .as_ref()
         .expect("the menu carries an inline keyboard");
+    // One button per ADVERTISED offering (`dreggnet_catalog::SHIPPED_KEYS`) — the menu is the
+    // ship list, and the rest of this test still drives EVERY registered offering, shipped or not.
     assert_eq!(
         keyboard.inline_keyboard.len(),
-        host.list_offerings().len(),
-        "one button per registered offering"
+        host.list_advertised_offerings().len(),
+        "one button per advertised offering"
     );
     // Telegram's own limits, asserted on the real wire body rather than assumed.
     assert!(
