@@ -370,8 +370,20 @@ abbrev FeltHeap := List (ℤ × ℤ)
 (the design's "sorted-by-key-hash"). Distinct addresses ⇐ distinct pairs, under CR. -/
 def addrOf (hash : List ℤ → ℤ) (coll key : ℤ) : ℤ := hash [coll, key]
 
-/-- **`leafOf`** — the heap LEAF: `hash[addr, value]` — the generic-leaf generalization of the
-cap-edge leaf (the address pins WHERE, the value pins WHAT; tampering either moves the leaf). -/
+/-- **`leafOf`** — the GENERIC ARITY-2 map leaf: `hash[addr, value]` — the generic-leaf generalization of
+the cap-edge leaf (the address pins WHERE, the value pins WHAT; tampering either moves the leaf).
+
+⚠ **THIS WAS DOCUMENTED AS "the heap LEAF" AND IT IS NOT ONE.** The deployed `heap_root` tree became an
+INDEXED Merkle tree on 2026-07-12 (`919b2b0b8d`): its leaf is `hash[addr, value, next_addr]`
+(`heap_root.rs::HeapLeaf::preimage`, `HEAP_LEAF_ARITY = 3`), modelled by
+`Circuit.IndexedMerkleTree.imtLeafHash` and emitted by `Circuit.Emit.HeapOpenEmit.heapLeafInputs`. Under
+CR the two are never equal (`Circuit.MapAbsentImtGate.imtLeafHash_ne_heapLeafOf`).
+
+`leafOf` is LIVE and CORRECT at the trees that genuinely are arity-2 — the universal-memory boundary
+fold (`Crypto.UMemCodec`; `root = rootWith (leafOf hash)`), the receipt/history index leaf discipline,
+and the arity-2 model commitment `Circuit.MapMerkleRoot.mapRoot` (which is the conservativity anchor
+`MapDenotationSchema.narrowSchema`, NOT the deployed schema — that is
+`MapPaddedDenotation.padImtSchema`). Read the tree before quoting this as "the heap leaf". -/
 def leafOf (hash : List ℤ → ℤ) (e : ℤ × ℤ) : ℤ := hash [e.1, e.2]
 
 /-- **`root`** — the committed heap root: the sponge of the (sorted) leaf list. The value the

@@ -902,3 +902,168 @@ assumed. No floor carrier added; the FloorRatchet gate is unaffected.
 * §10.5's 20 punch-through sites / 40 asserted theorems are untouched by this lane; the
   recommendation to restate the per-effect teeth over `MapOp.holdsAtS S` additively still stands and
   is now backed by two arms' worth of gate-forced denotation.
+
+---
+
+## 13. ⚑⚑ THE EMIT SIDE — an arity-2 leaf site is in the DEPLOYED DESCRIPTOR BYTES (2026-07-25)
+
+Everything above §12 is about the **denotation**: Lean objects consumed by theorems. §1's surface is a
+list of *declarations*. It does not cover the **emit** side — the Lean that AUTHORS descriptor bytes a
+prover runs — and that is where the third recurrence of this divergence was found.
+
+### 13.1 The site, and the reach (established first, because it changes everything downstream)
+
+`Emit/EffectVmEmitHeapRoot.siteHeapLeaf` is an arity-2 `hash[addr, value]` hash site. It is **not**
+Lean-side-only. The reach, evidence in order:
+
+| hop | artifact |
+|---|---|
+| author | `EffectVmEmitHeapRoot.heapWriteSpliceVmDescriptor` (`hashSites := [siteHeapAddr, siteHeapLeaf]`) |
+| rotate+graduate | `RotatedKernelRefinementExercise.heapWriteV3 = graduateV1 (rotateV3 heapWriteSpliceVmDescriptor) ++ [.mapOp heapSpliceWriteOp]` |
+| emit | `metatheory/EmitRotationV3.lean:140` (`v3rot` line) and `EmitWideRegistryProbe.lean` |
+| serialize | `scripts/emit_descriptors.py` → `circuit/descriptors/rotation-v3-staged-registry.tsv` (narrow, line 47) and `rotation-wide-registry-staged.tsv` (WIDE) |
+| **live verify** | `turn/src/executor/proof_verify.rs:1088` resolves the member out of `WIDE_REGISTRY_STAGED_TSV`; `:1145`'s `LIVE_ONLY_BARE_KEYS` contains `"heapWriteVmDescriptor2R24"`, so the **bare wide member is what the light client checks** |
+| executed | `circuit/tests/heap_write_roundtrip.rs` proves + light-client-verifies against that exact member |
+
+NOT a by-name descriptor: it is absent from `EmitByName.byNameDescriptors` and `descriptor_by_name.rs`
+has no arm for it. So the "Lean-side only" disposition that applies to the attested-automaton family
+does **not** apply here.
+
+The site is in the bytes. Decoded from the committed TSVs, the `poseidon2_chip` lookups are:
+
+```
+narrow (dregg-effectvm-heapWrite-splice-v1-rot24-v3-staged, trace_width 1633):
+  arity 2, in0 70 (COLL),      in1 71 (KEY),   out0 102   ← siteHeapAddr
+  arity 2, in0 102 (HEAP_ADDR), in1 72 (VALUE), out0 103   ← siteHeapLeaf   ⚠ ARITY 2
+  map_op write  key 102  value 72  root [216, 247..253]  new_root [455, 486..492]
+
+wide (dregg-effectvm-heapWrite-v1-rot24-v3-write-heapopen, trace_width 1963):
+  arity 2, in0 70,  in1 71, out0 90                        ← siteHeapAddr  (compacted)
+  arity 2, in0 90,  in1 72, out0 91                        ← siteHeapLeaf  (compacted) ⚠ ARITY 2
+  map_op write  key 90  value 72  root [120, 151..157]  new_root [299, 330..336]
+```
+
+### 13.2 The disposition: a DEAD PIN, not a wrong binding — and the reason matters
+
+The urgent worry was that a descriptor might *model* an arity-2 leaf while `heap_root.rs` folds arity-3,
+i.e. that a refinement theorem would be about an object the prover never runs (the `.absent` pattern).
+Measured, the answer is narrower and better:
+
+* **The authenticating leaf in this descriptor is ALREADY arity-3, and correct.** The heap-open READ
+  appendix and the after-spine absorb `[addr, value, next_addr]` at NATIVE 8-felt width:
+  `Emit.HeapOpenEmit.heapLeafInputs` (`#guard`-pinned at length 3, with an explicit regression comment
+  naming the arity-2 emit as the drift it catches), `heapLeafDigest_sound8`, `afterSpineColsH`; Rust
+  side `fill_heap_open_read` / `fill_heap_after_spine` fold `HeapLeaf::digest8()`. That leg **was** moved
+  with the tree on 2026-07-12.
+* **Nothing reads `HEAP_LEAF`.** `EffectVmEmitHeapRoot.heapSpliceSites_never_read_HEAP_LEAF` decides it
+  over the emitted input lists; the splice `MapOp`'s key is `HEAP_ADDR` and its value is `prmCol VALUE`,
+  confirmed against the committed bytes by `heap_write_deployed_root_forced.rs`. ★ And measured across the
+  WHOLE committed constraint list, not just the hash layer: decoding both TSVs, the leaf column is
+  referenced by **exactly one** of the 161 (narrow, col 103) / 253 (wide, col 91) constraints — its own
+  arity-2 chip lookup — and there only at tuple position 17, the `out0` DIGEST slot. It is an input to
+  nothing; no gate, no boundary, no PI binding, no map-op mentions it.
+* So `siteHeapLeaf` **relaxes nothing**. It costs one Poseidon2 chip request per row and it makes a false
+  claim in the Lean. It is a vestige of the pre-IMT design that the 2026-07-12 sweep missed because the
+  sweep was scoped to Rust `HeapLeaf` sites.
+
+The residual is therefore a **naming/scope wound plus prover cost**, not a soundness hole — stated at
+that resolution deliberately, since the emit-side worry justified assuming worse until measured.
+
+### 13.3 The FLAG-DAY (authored, NOT taken — it moves deployed descriptor bytes)
+
+`EffectVmEmitHeapRoot.heapSpliceSitesImt = [siteHeapAddr]` and `heapWriteSpliceVmDescriptorImt` are
+authored in Lean now, unrouted, so the shape exists before the bytes move (house law #1). Taking it:
+
+1. flip `heapWriteSpliceVmDescriptor.hashSites` to `heapSpliceSitesImt`;
+2. `lake env lean --run EmitRotationV3.lean` → `scripts/emit_descriptors.py` — rewrites **both** TSVs
+   and `circuit/descriptors/PROVENANCE.json`;
+3. drop the producer's `leaf_digest_col` fill in
+   `trace_rotated.rs::generate_rotated_heap_write_wide_raw` (Rust calls the emission, so it follows);
+4. `heap_write_deployed_root_forced.rs` keeps its negative assertion on `HEAP_LEAF` and gains a positive
+   one that no arity-2 lookup targets it at all;
+5. ⚠ **VK EPOCH.** Descriptor bytes change ⇒ the VK for `heapWriteVmDescriptor2R24` changes ⇒ every
+   already-committed heapWrite turn was proven under the OLD VK. This is a VK-epoch flip, not a byte
+   tidy-up. **ember-gated.**
+
+What survives the flip is proved: `heapSpliceImt_addr_forced` (the splice KEY binding — the only thing
+this descriptor is relied on for), `goodSpliceRow_recomputes_imt` (the honest producer is not stranded),
+`forgedAddrRow_refused_imt` (the tooth still bites).
+
+### 13.4 The blast radius — theorems about the retired arity-2 heap commitment
+
+These are TRUE about `mapRoot`/`leafOf` and are **not** about the tree the prover folds. Any citation of
+them as a statement about `heap_root` is wrong.
+
+| theorem | file | why it is about the retired shape |
+|---|---|---|
+| `heapWrite_splice_forced` | `RotatedKernelRefinementExercise.lean:317` | concludes `writesTo` = `writesToMerkle` = arity-2 `mapRoot` |
+| `heapWrite_newRoot_splice_forced` | `:391` | same conclusion, through the readout |
+| `heapWrite_sat_rejects_wrong_splice_root` | `:420` | via `writesTo_functional` → `mapRoot_injective` |
+| `heapWrite_realizes_heapSet` | `:444` | conclusion names `mapRoot hash MAP_TREE_DEPTH` explicitly |
+| `heapWrite_sat_rejects_forged_root` | `:472` | hypothesis AND conclusion name `mapRoot`; uses `mapRoot_injective` |
+| `heapSplice_leaf_forced` | `EffectVmEmitHeapRoot` §4 | forces the arity-2 `leafOf` digest — the vestige |
+| `tampered_value_moves_leaf` / `tampered_addr_moves_leaf` | `EffectVmEmitHeapRoot` §6 | anti-ghosts on `leafOf`, arity 2 |
+
+Two facts that BOUND the radius, both checked:
+
+* **The vestige theorem has ZERO downstream consumers.** `RotatedKernelRefinementExercise`'s `open` list
+  imports `heapSpliceSites` and `heapSplice_addr_forced` and **not** `heapSplice_leaf_forced`, `leafOf`,
+  or `siteHeapLeaf`. Nothing outside the authoring module cites it.
+* The five `heapWrite_*` rows are the `writesTo` denotation's problem, not the emit side's — they are
+  exactly what §12's `MapKindImtGates.writeImtRow_writes_of_good` (at `padImtSchema`) is the replacement
+  for. Restating them over `MapOp.holdsAtS (padImtSchema sent)` is the stage-3 work already priced in
+  §12.8, not new scope.
+
+### 13.5 Prose asserting the retired shape — corrected in place
+
+Nine sites, each a comment claiming a shape that stopped existing on 2026-07-12. All were false at HEAD
+and are now corrected with the correction stated (not silently rewritten), because a doc-comment naming
+the wrong object is precisely how the `.absent` model went thirteen days unquestioned:
+
+* `Emit/EffectVmEmitHeapRoot.lean` — header (`leaf = hash[addr,value]`, `root = mapRoot`,
+  `SAT ⟹ mapRoot (Heap.set …)`, the cell≡circuit leaf leg), §2, §2.E, §3 `leafOf`, §4, §5
+* `Substrate/Heap.lean` — `leafOf` documented as "the heap LEAF"
+* `Circuit/MapMerkleRoot.lean` — §4 title "the deployed map COMMITMENT" and `mapRoot`'s
+  **"BYTE-IDENTICAL to `heap_root.rs`'s `CanonicalHeapTree::root`"** (a byte-identity claim to a Rust
+  object that moved — the sharpest of the nine)
+* `Circuit/MapDenotationSchema.lean` — `narrowSchema` documented **"The DEPLOYED-TODAY schema"** (see
+  §13.6) and `imtSchema` documented "The DEPLOYED-ACTUAL schema" (right leaf, DENSE occupancy — a
+  way-point, not the deployed instance)
+* `Circuit/MapPaddedDenotation.lean` — `narrowTeeth` documented "(deployed-today)", inheriting the above
+* `Circuit/MapOpsColumnLayout.lean:69` — "MIN/MAX sentinels are real entries of the modeled heap"
+  (deployed occupancy is `HEAP_SENTINEL_LEAVES = 1`: MIN only, MAX survives as the terminal pointer)
+* `Circuit/MapOpsColumnLayout.lean:555` — `leafOf_injective` documented as "The heap leaf"
+* `Circuit/Emit/CapInsertEmit.lean:17` — "`accumInsert_writesTo8` for the arity-2 heap tree"
+* `Circuit/Emit/AccumulatorOpenEmit.lean:70` — "the generic arity-2 `(key, value)` node8 membership",
+  describing an appendix (`effHeapOpenV3`) that absorbs THREE leaf columns
+* `Exec/UniversalBridge.lean:35,863` — `Heap.leafOf` called "the universal map's generic leaf". This one
+  is **correct at its own object** (the umem boundary tree genuinely is arity-2, `UMemCodec`'s
+  `rootWith (leafOf hash)`); it gained the scope qualifier so it is not read as covering `heap_root`.
+* `metatheory/Dregg2.lean:1028` — the orientation index's `heapWrite` annotation, **twice stale**: it
+  claimed heapWrite is "OUT-OF-LIVE-APEX (ABSENT from v3Registry)" with "RUST SCOPE … NOT done" (it is
+  in both registries, the apex ranges over it, and the light client resolves the wide member), and it
+  described the retired prepend-accumulator advance over `leafOf(addrOf coll key) value`.
+
+### 13.6 ⚑ `narrowSchema` was NAMED "DEPLOYED-TODAY" and that name was load-bearing
+
+`MapDenotationSchema.narrowSchema`'s doc-comment read **"The DEPLOYED-TODAY schema"**. It is not, and has
+not been since 2026-07-12 — in the same file whose header opens with the refutation
+(`imtRoot_ne_mapRoot`) that makes it false. A schema named "deployed" that is not deployed is the exact
+mechanism this document exists to unwind.
+
+Resolved by **re-documentation, not rename** — `MapKindImtGates.lean:113,1009` and
+`MapPaddedDenotation.lean:108,799` reference the identifier, and `MapKindImtGates` is another lane's
+live file; a rename would be churn for no gain, and the identifier `narrowSchema` is *accurate*
+(it is the narrow, arity-2 schema). What was wrong was only the word "deployed". It now reads "The
+RETIRED arity-2 schema — the CONSERVATIVITY ANCHOR, and NOT the deployed one", states the correction and
+its date, and names the deployed one.
+
+★ **THE DEPLOYED SCHEMA IS `MapPaddedDenotation.padImtSchema sent`** — arity-3 IMT leaves over the
+deployed relink AND the deployed SPARSE occupancy (`length ≤ 2 ^ d`), teeth `padImtTeeth sent`, arm laws
+in `MapKindImtGates`. Not `narrowSchema` (wrong leaf) and not `imtSchema` (right leaf, dense occupancy).
+
+**One citation leaned on the false name and was also wrong:** `MapPaddedDenotation.narrowTeeth`'s
+doc-comment said "TEETH FOR THE DENSE arity-2 schema (deployed-today)". Corrected. No *theorem* rested
+on it — the two uses of `narrowSchema` in `MapKindImtGates` (`:113` open, `:1009`
+`denseSchema_write_forces_key_present narrowSchema`) are legitimate instantiations of a general dense-
+schema law at the narrow instance, and say nothing about deployment.

@@ -67,7 +67,12 @@ set_option autoImplicit false
 /-! ## §4 — the AFTER-spine appendix, PARAMETRIC over the accumulator spec `(groupCol, keyCol, valueCol)`.
 
 The before-membership read appendix is REUSED verbatim from `HeapOpenEmit` (`effHeapOpenV3` /
-`effHeapOpenV3_core`): the generic arity-2 `(key, value)` node8 membership. The after-spine below welds the
+`effHeapOpenV3_core`): the generic ARITY-3 IMT `(key, value, nextAddr)` node8 membership. ⚠ This line
+said "arity-2" — false since the 2026-07-12 IMT move (`919b2b0b8d`). The appendix it names absorbs THREE
+leaf columns (`HeapOpenEmit.heapLeafInputs`, `#guard`-pinned at length 3, matching
+`heap_root.rs::HeapLeaf::digest8`), and the accumulator trees are literally built out of the same
+`heap_root::HeapLeaf` (see `trace_rotated.rs::lay_accum_insert_read_appendix`), so the pointer column is
+absorbed here too. The after-spine below welds the
 read's `capRoot` group to the committed BEFORE accumulator group (`groupCol EFFECT_VM_WIDTH`), the after
 `capRoot` group to the AFTER accumulator group (`groupCol (EFFECT_VM_WIDTH + 239)`), pins the key to the
 accumulator's published KEY column and the after-leaf value to the accumulator's VALUE column. -/

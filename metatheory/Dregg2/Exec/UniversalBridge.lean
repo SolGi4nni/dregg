@@ -32,7 +32,11 @@ Plus the two umem-lane adapters that arise here:
 
   (a) **the cap-leaf value codec** (`cap_leaf_value_codec`): today's live cap leaf
       `hash[holder, target, rights, op]` (`EffectVmEmitCapRoot.siteCapEdgeLeaf`) versus the
-      generic map leaf `hash[addr, value]` (`Heap.leafOf`) — encoding the cap tuple as the
+      UMEM-BOUNDARY generic map leaf `hash[addr, value]` (`Heap.leafOf`) — ⚠ that is the arity-2
+      universal-memory leaf (`Crypto.UMemCodec`, `root = rootWith (leafOf hash)`), which is the tree
+      this adapter is about; it is NOT the deployed `heap_root` leaf, which has been the arity-3 IMT
+      `hash[addr, value, next_addr]` since 2026-07-12 (`heap_root.rs::HEAP_LEAF_ARITY = 3`) —
+      encoding the cap tuple as the
       cell VALUE (`capCellValue = hash[target, rights, op]`) loses nothing: the generic leaf
       is injective in the full `(holder, target, rights, op)` tuple under the same named
       `Poseidon2SpongeCR` floor. A value-codec lemma, no new combinatorics
@@ -859,8 +863,11 @@ theorem create_is_memory_program (C : UCodec) {s s' : RecChainedState}
 /-! ## §5 — ADAPTER (a): the cap-leaf value codec (`.docs-history-noclaude/UNIVERSAL-MEMORY.md:138-144`).
 
 Today's live cap leaf is the FLAT 4-ary sponge `hash[holder, target, rights, op]`
-(`EffectVmEmitCapRoot.siteCapEdgeLeaf`); the universal map's generic leaf is the 2-ary
-`hash[addr, value]` (`Heap.leafOf`). The adapter: encode the cap tuple's value part as ONE
+(`EffectVmEmitCapRoot.siteCapEdgeLeaf`); the UNIVERSAL-MEMORY map's generic leaf is the 2-ary
+`hash[addr, value]` (`Heap.leafOf`, folded by `UMemCodec`'s `rootWith`). ⚠ SCOPE: the umem boundary tree
+is the arity-2 one; the deployed `heap_root` tree is the arity-3 IMT (`HeapLeaf::preimage`,
+`hash[addr, value, next_addr]`) and this codec says nothing about it. The adapter: encode the cap tuple's
+value part as ONE
 sponge value `capCellValue = hash[target, rights, op]` and key the cell by the holder. The
 lemma: under the SAME named CR floor, the generic leaf over the encoded value is injective
 in the FULL `(holder, target, rights, op)` tuple — nothing the flat leaf binds is lost. -/

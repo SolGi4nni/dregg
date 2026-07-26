@@ -55,6 +55,19 @@
     sorted-tree content (`heapWrite_newRoot_splice_forced`), and the deployed tooth
     `heapWrite_sat_rejects_wrong_splice_root` bites from `Satisfied2` itself via `writesTo_functional`.
 
+    ⚠⚠ **THE COMMITMENT NAMED IN THE LINE ABOVE IS RETIRED — read `heapWrite_sat_rejects_wrong_splice_root`'s
+    own SCOPE block (§3.5) before quoting any of this.** `mapRoot` is the ARITY-2 `Heap.leafOf` fold;
+    `heap_root.rs` has folded ARITY-3 IMT leaves since 2026-07-12 (`919b2b0b8d`) and
+    `MapReconcileImtRepoint.imtRoot_ne_mapRoot` rules the two apart under CR. All five `heapWrite_*`
+    theorems here therefore range over a commitment the prover does not compute. What IS bound on the
+    deployed path: the ADDRESS image (this descriptor's `siteHeapAddr`, byte-checked by
+    `circuit/tests/heap_write_deployed_root_forced.rs`) and the ARITY-3 leaf against the committed root at
+    native 8-felt width in the heap-open appendix (`Emit.HeapOpenEmit.heapLeafDigest_sound8`,
+    `#guard`-pinned at arity 3). The emit-side vestige — `EffectVmEmitHeapRoot.siteHeapLeaf`, an arity-2
+    leaf recompute still in BOTH committed registries and read by NOTHING
+    (`heapSpliceSites_never_read_HEAP_LEAF`) — is measured in `EffectVmEmitHeapRoot` §8, with its
+    VK-epoch flag-day named there and in `docs/DESIGN-mapop-denotation-move.md` §13.
+
     **THE PHASE-E RESIDUAL — CLOSED (the splice wired).** The deployed `heapWriteV3` now carries the
     `.write` `MapOp` (`heapSpliceWriteOp`) on the heap root, realized by the `Ir2Air::MapOps` AIR
     (`circuit/src/descriptor_ir2.rs`) — the genuine sorted-Merkle membership-open of the OLD leaf against
@@ -413,10 +426,24 @@ SAME `(addr, value)` against the SAME committed old root MUST publish the SAME `
 splice of the actual heap content has no satisfying witness — a content-mismatched root is impossible.
 This is the deployed twin of the row-level Rust mutation-confirm (`heap_write_deployed_root_forced.rs`).
 
-SCOPE: the binding is to `writesTo` (the binary-Merkle `mapRoot (Heap.set h k v)`, the DEPLOYED
-commitment, `circuit/src/heap_root.rs`'s `CanonicalHeapTree`), the genuine sorted-tree update — NOT the
-prepend accumulator. The Phase-E residual is CLOSED: the published root is now bound to the sorted-tree
-SPLICE, not merely an accumulator advance. -/
+SCOPE: the binding is to `writesTo` (the binary-Merkle `mapRoot (Heap.set h k v)`), the genuine
+sorted-tree update — NOT the prepend accumulator. The Phase-E residual is CLOSED: the published root is
+bound to the sorted-tree SPLICE, not merely an accumulator advance.
+
+⚠ **THIS SCOPE LINE CLAIMED `mapRoot` IS "the DEPLOYED commitment, `circuit/src/heap_root.rs`'s
+`CanonicalHeapTree`". IT IS NOT, and has not been since 2026-07-12 (`919b2b0b8d`).** `CanonicalHeapTree`
+became an INDEXED Merkle tree: leaf arity 2 → 3 with the successor pointer inside the digest
+(`HeapLeaf::preimage`, `HEAP_LEAF_ARITY = 3`), one stored sentinel (`HEAP_SENTINEL_LEAVES = 1`), over a
+sparse zero-padded vector. Under the CR floor an arity-3 IMT root is NEVER an arity-2 `mapRoot`
+(`MapReconcileImtRepoint.imtRoot_ne_mapRoot`), so this and its four siblings — `heapWrite_splice_forced`,
+`heapWrite_newRoot_splice_forced`, `heapWrite_realizes_heapSet`, `heapWrite_sat_rejects_forged_root` —
+are theorems about a DIFFERENT COMMITMENT over the same logical map, not about the tree the prover folds.
+They are TRUE; they are just not about `heap_root`. The deployed-shape replacements to compose are
+`MapKindImtGates.writeImtRow_writes_of_good` at `MapPaddedDenotation.padImtSchema` (arity-3 IMT leaves,
+deployed relink, sparse padded occupancy, teeth `padImtTeeth`, non-vacuous at `MAP_TREE_DEPTH = 16` over
+a SPARSE tree); the restatement over `MapOp.holdsAtS (padImtSchema sent)` is stage 3 of
+`docs/DESIGN-mapop-denotation-move.md` (§12.8, §13.4). The deployed-BYTE splice tooth that does NOT go
+through `mapRoot` is `circuit/tests/heap_write_deployed_root_forced.rs`. -/
 theorem heapWrite_sat_rejects_wrong_splice_root (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
     {minit₁ : ℤ → ℤ} {mfin₁ : ℤ → ℤ × Nat} {maddrs₁ : List ℤ} {t₁ : VmTrace}
     (hsat₁ : Satisfied2 hash heapWriteV3 minit₁ mfin₁ maddrs₁ t₁)

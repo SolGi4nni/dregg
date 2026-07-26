@@ -794,8 +794,11 @@ theorem oddSponge_ne_pad (xs : List ℤ) : oddSponge xs ≠ padDigest := by
 theorem oddSponge_padFree2 : PadFree2 oddSponge := fun _ => oddSponge_ne_pad _
 theorem oddSponge_padFree3 : PadFree3 oddSponge := fun _ => oddSponge_ne_pad _
 
-/-- **TEETH FOR THE DENSE arity-2 schema (deployed-today).** No padding, hence NO ghost: the residual
-is a genuine sponge collision and nothing else. This is the CONSERVATIVITY anchor of §8. -/
+/-- **TEETH FOR THE DENSE arity-2 schema (the RETIRED shape).** No padding, hence NO ghost: the residual
+is a genuine sponge collision and nothing else. This is the CONSERVATIVITY anchor of §8 — and that is
+all it is. ⚠ This doc-comment said "(deployed-today)", inheriting the false claim in
+`MapDenotationSchema.narrowSchema`'s own header: the deployed instance is `padImtSchema` below
+(arity-3 IMT leaves, deployed relink, sparse padded occupancy), with `padImtTeeth`. -/
 def narrowTeeth : MapLeafTeeth narrowSchema where
   Resid := fun hash d h₁ h₂ => SpongeColl hash (mapRootFind hash d h₁ h₂)
   binds := fun hash d _ _ _ _ hz₁ hz₂ he => mapRoot_binds_or_collides hash d hz₁ hz₂ he

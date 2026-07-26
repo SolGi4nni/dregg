@@ -23,7 +23,8 @@ existing definition changes, no deployed byte is touched, no `Satisfied2` gains 
 `MapLeafSchema` factors out of the map denotation the two things the arity change touches:
 
   * `commit` — **the leaf-schema-dependent COMMITMENT of a committed heap**, as a FUNCTION. At
-    `narrowSchema` it IS `MapMerkleRoot.mapRoot` (the deployed arity-2 binary fold); at
+    `narrowSchema` it IS `MapMerkleRoot.mapRoot` (the RETIRED arity-2 binary fold — the model's
+    commitment, not the deployed one; see `narrowSchema`'s own doc-comment); at
     `imtSchema sent` it is the arity-3 indexed-Merkle fold of the SAME heap, with the `next_addr`
     pointers relinked to each entry's sorted successor and the terminal pointer set to `sent`.
   * `HeapOk` — **the admissible committed heap**, the extraction premise's domain. At
@@ -132,10 +133,24 @@ structure MapLeafSchema where
   /-- **THE COMMITMENT.** The depth-`d` root this schema folds an admissible heap to. -/
   commit : (List ℤ → ℤ) → Nat → Heap.FeltHeap → ℤ
 
-/-- **The DEPLOYED-TODAY schema** — the arity-2 `Heap.leafOf` binary fold, whose `commit` IS
-`MapMerkleRoot.mapRoot`, whose `HeapOk` IS `Heap.SortedKeys`, and whose `SizeOk` IS the dense
-`h.length = 2 ^ d`. All three fields are the deployed objects themselves, which is precisely why
-§2's conservativity is `rfl`. -/
+/-- **The RETIRED arity-2 schema — the CONSERVATIVITY ANCHOR, and NOT the deployed one.**
+The arity-2 `Heap.leafOf` binary fold, whose `commit` IS `MapMerkleRoot.mapRoot`, whose `HeapOk` IS
+`Heap.SortedKeys`, and whose `SizeOk` IS the dense `h.length = 2 ^ d`. All three fields are the objects
+**the Lean model** commits, which is precisely why §2's conservativity is `rfl` — that is this
+definition's entire job, and its only job.
+
+⚠ **THIS DOC-COMMENT SAID "The DEPLOYED-TODAY schema" AND THAT WAS FALSE.** It was written against a
+tree that stopped existing on 2026-07-12 (`919b2b0b8d`): `heap_root.rs` became an indexed Merkle tree,
+arity 2 → 3 with the successor POINTER inside the digest, and under the CR floor an arity-3 IMT root is
+NEVER an arity-2 `mapRoot` (`MapReconcileImtRepoint.imtRoot_ne_mapRoot`) — the very refutation this
+file's own header opens with. A schema named "deployed" that is not deployed is how the `.absent` model
+went thirteen days unquestioned; the name is corrected here rather than left for the next reader to
+re-derive.
+
+★ **THE DEPLOYED SCHEMA IS `MapPaddedDenotation.padImtSchema sent`** (arity-3 IMT leaves over the
+deployed relink AND the deployed SPARSE occupancy `length ≤ 2 ^ d`), with teeth `padImtTeeth sent` and
+the four arm laws in `MapKindImtGates`. `imtSchema` below is the arity-3 fold at DENSE occupancy — the
+right leaf, not yet the right occupancy — i.e. a way-point, not the deployed object either. -/
 def narrowSchema : MapLeafSchema where
   HeapOk := Heap.SortedKeys
   heapOk_sorted := fun _ h => h
@@ -150,9 +165,14 @@ def imtChainOf (sent : ℤ) : Heap.FeltHeap → List ImtLeaf
   | [e] => [⟨e.1, e.2, sent⟩]
   | e :: e' :: rest => ⟨e.1, e.2, e'.1⟩ :: imtChainOf sent (e' :: rest)
 
-/-- **The DEPLOYED-ACTUAL schema** — the arity-3 indexed-Merkle fold of the same heap.
+/-- **The DEPLOYED LEAF at DENSE occupancy** — the arity-3 indexed-Merkle fold of the same heap.
 `commit` relinks and folds `imtLeafHash`; `HeapOk` adds the one thing sortedness does not give,
-namely that the terminal sentinel really is above every committed key. -/
+namely that the terminal sentinel really is above every committed key.
+
+⚠ This gets the LEAF right and the OCCUPANCY wrong: `SizeOk` here is the DENSE `h.length = 2 ^ d`,
+while the deployed tree is SPARSE and zero-PADDED (`CanonicalHeapTree::new` builds one live leaf plus a
+MIN sentinel in a `2^16` commitment). The fully deployed instance is
+`MapPaddedDenotation.padImtSchema sent` (`SizeOk := length ≤ 2 ^ d`, `commit := padImtRoot sent`). -/
 def imtSchema (sent : ℤ) : MapLeafSchema where
   HeapOk := fun h => Heap.SortedKeys h ∧ ∀ x ∈ Heap.keys h, x < sent
   heapOk_sorted := fun _ h => h.1

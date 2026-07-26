@@ -14,7 +14,9 @@ sorted position, and the tree REBUILDS. There is NO shared before/after path. Th
 after-spine therefore does NOT fit them (the exact accumulator obstruction, at the arity-7 cap tree).
 
 This file builds the CORRECT insert-shaped keystone — the cap twin of `AccumulatorInsertEmit`
-(`accumInsert_writesTo8` for the arity-2 heap tree), here over the arity-7 CAP tree keyed by
+(`accumInsert_writesTo8` for the arity-3 IMT heap/accumulator tree — ⚠ this said "arity-2", false since
+the 2026-07-12 IMT move `919b2b0b8d`; the leaf is `hash[addr, value, next_addr]`,
+`heap_root.rs::HEAP_LEAF_ARITY = 3`), here over the arity-7 CAP tree keyed by
 `CapLeaf.slot_hash`. The honest model of the sorted cap insert:
   (a) NON-MEMBERSHIP of the fresh cap key in BEFORE — the pred/succ bracket (`GapOpen.inner`:
       `pred < key < succ`, both present + adjacent in the sorted cap-tree) ⟹ `key ∉ keysOf beforeRoot`

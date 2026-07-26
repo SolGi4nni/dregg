@@ -179,18 +179,36 @@ theorem perfectRoot_injective (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR
     have hfold := ih hfl_x hfl_y hroot
     exact foldLevel_injective hash hCR (2 ^ d) (by omega) (by omega) hfold
 
-/-! ## §4 — `mapRoot`: the deployed map COMMITMENT (the binary fold of the sorted heap's leaf digests).
+/-! ## §4 — `mapRoot`: the ARITY-2 map COMMITMENT (the binary fold of the sorted heap's leaf digests).
+
+⚠ This section was titled "the deployed map COMMITMENT". It is not: since 2026-07-12 the deployed tree
+folds ARITY-3 IMT leaves over a sparse padded vector — see `mapRoot`'s doc-comment below for the full
+correction and the pointer to `MapPaddedDenotation.padImtRoot`.
 
 The sorted heap (`Heap.FeltHeap`, the abstract map MEANING) is committed by folding its leaf-digest list
-through the depth-`d` perfect binary tree — the deployed `CanonicalHeapTree::root`. The heap MEANING
+through the depth-`d` perfect binary tree. The heap MEANING
 (`Heap.get`/`Heap.SortedKeys`) is UNCHANGED; only the COMMITMENT FUNCTION moves from the flat sponge
 (`Heap.root hash h = hash (h.map leafOf)`) to this binary fold. The deployment pins every heap as the
 fixed-depth `2^d`-leaf padded vector; the `RootedAt` relation below carries that `length = 2^d`
 discipline so the root BINDS the heap (`mapRoot_injective`). -/
 
 /-- **`mapRoot hash d h`** — the depth-`d` binary-Merkle root of the sorted heap `h`: the perfect-tree
-fold of its leaf-digest list `h.map (Heap.leafOf hash)`. BYTE-IDENTICAL to `heap_root.rs`'s
-`CanonicalHeapTree::root` (arity-2 `leafOf` leaves, arity-2 `mapNode` nodes, depth `d`). -/
+fold of its leaf-digest list `h.map (Heap.leafOf hash)`.
+
+⚠ **THIS DOC-COMMENT CLAIMED "BYTE-IDENTICAL to `heap_root.rs`'s `CanonicalHeapTree::root` (arity-2
+`leafOf` leaves…)" AND THAT IS FALSE AT HEAD.** It was true when written and stopped being true on
+2026-07-12 (`919b2b0b8d`): `CanonicalHeapTree` became an INDEXED Merkle tree whose leaf is
+`hash[addr, value, next_addr]` (`HeapLeaf::preimage`, `HEAP_LEAF_ARITY = 3`, arity 2 → 3 with the
+successor pointer inside the digest) over a SPARSE zero-padded `2^d` vector with ONE stored sentinel
+(`HEAP_SENTINEL_LEAVES = 1`). Under the CR floor an arity-3 IMT root is NEVER an arity-2 `mapRoot`
+(`MapReconcileImtRepoint.imtRoot_ne_mapRoot`), so this is not a drifted constant — it is a DIFFERENT
+COMMITMENT over the same logical map. A byte-identity claim to a Rust object is exactly the kind of
+claim that must be re-read when that object moves.
+
+`mapRoot` itself is unchanged and still correct as the arity-2 model fold; the DEPLOYED commitment is
+`MapPaddedDenotation.padImtRoot sent` (schema `padImtSchema sent`, teeth `padImtTeeth sent`), and the
+NODE fold `mapNode` is still shared. Everything below is about `mapRoot`; nothing below should be quoted
+as being about `heap_root`. -/
 def mapRoot (hash : List ℤ → ℤ) (d : Nat) (h : Heap.FeltHeap) : ℤ :=
   perfectRoot hash d (h.map (Heap.leafOf hash))
 
