@@ -176,13 +176,26 @@ pub fn project_slot_caveat_manifest(
     let mut entries = [SlotCaveatEntry::zero(); pi::MAX_SLOT_CAVEATS];
     let mut count: usize = 0;
 
-    /// Project a 32-byte field-element to a BabyBear via the
-    /// low-4-bytes path used everywhere else by the Effect VM's
-    /// state column truncation.
+    /// Project a 32-byte field-element into the SAME one-felt lane the AIR's
+    /// `STATE_BEFORE_BASE` / `STATE_AFTER_BASE` field columns carry, because
+    /// `verify::verify_slot_caveat_manifest` compares these params directly against
+    /// `initial_fields[slot]` / `final_fields[slot]`.
+    ///
+    /// ⚠ CORRECTION. This used to be `u32::from_le_bytes(fe[0..4])` under the comment
+    /// "the low-4-bytes path used everywhere else by the Effect VM's state column
+    /// truncation". That was FALSE after the v13 fields-octet epoch: the state columns
+    /// carry `field_limbs8(f)[0]` = `u32::from_be_bytes(f[28..32])`, the lo32 of the
+    /// kernel u64 lane. So the params were skewed against the very columns they are
+    /// compared to, and — because `dregg_cell::field_from_u64` puts the payload in
+    /// bytes 24..32 — every canonically-encoded operand projected to `0`. That made
+    /// `FieldGte`/`Monotonic`-shaped re-evals VACUOUS (`new >= 0` always holds) and
+    /// `FieldEquals`/`FieldLte`/`FieldDelta` re-evals fail CLOSED on honest turns.
+    ///
+    /// Byte-safe to correct: no production caller populates
+    /// `EffectVmContext::slot_caveat_count` (it is `0` everywhere outside tests), so
+    /// no deployed PI vector changes.
     fn fe_to_bb(fe: &[u8; 32]) -> BabyBear {
-        let mut buf = [0u8; 4];
-        buf.copy_from_slice(&fe[0..4]);
-        BabyBear::new(u32::from_le_bytes(buf))
+        dregg_circuit::effect_vm::field_limbs8(fe)[0]
     }
 
     for c in constraints {

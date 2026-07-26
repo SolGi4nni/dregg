@@ -14,6 +14,29 @@ pub(super) fn grant_cap_entry_8(scalar: u32) -> [dregg_circuit::BabyBear; 8] {
     a
 }
 
+/// The ONE-felt lane a 32-byte `Effect::SetField` value projects to, byte-identical
+/// to the DEPLOYED executor bridge (`turn::executor::effect_vm_bridge`'s
+/// `field_element_to_bb`, which is this same `field_limbs8(value)[0]`).
+///
+/// `field_limbs8` lane 0 is `u32::from_be_bytes(value[28..32])` — the lo32 of the
+/// kernel's u64 field lane, i.e. the lane `dregg_cell::field_from_u64` writes and
+/// `field_to_u64` reads. The three node-side projectors previously took
+/// `u32::from_le_bytes(value[0..4])` instead, which is a DIFFERENT lane and is
+/// **identically zero** for every canonically-encoded field value (`field_from_u64`
+/// puts the payload in bytes 24..32), so every stat/inventory write projected to the
+/// same felt `0` and no two of them were distinguishable.
+///
+/// RESIDUAL, stated at its real resolution: one felt cannot carry 32 bytes. This lane
+/// binds the u64 lane's low 32 bits only; lanes 1..7 (`value[24..28]` hi32 and
+/// `value[0..24]`) ride the value8 completion seam, which is STAGED, not deployed
+/// (`circuit/tests/setfield_value8_epoch_flip.rs`). Two values differing only outside
+/// bytes 28..32 still share this felt — that is the deployed one-felt ceiling, not
+/// something this projector can fix.
+#[inline]
+pub(super) fn setfield_value_lane(value: &[u8; 32]) -> dregg_circuit::BabyBear {
+    dregg_circuit::effect_vm::field_limbs8(value)[0]
+}
+
 /// Parse a JSON effect descriptor into a turn `Effect`.
 ///
 /// Supports the subset needed for the two-AI handoff demo:
@@ -64,17 +87,22 @@ pub(super) fn parse_effect_json(value: &Value) -> Result<dregg_turn::Effect, Str
                 .get("index")
                 .and_then(|v| v.as_u64())
                 .ok_or_else(|| "effect.set_field missing 'index'".to_string())?;
-            let value_u32 = value
+            let value_u64 = value
                 .get("value")
                 .and_then(|v| v.as_u64())
-                .ok_or_else(|| "effect.set_field missing 'value'".to_string())?
-                as u32;
-            let mut value_bytes = [0u8; 32];
-            value_bytes[..4].copy_from_slice(&value_u32.to_le_bytes());
+                .ok_or_else(|| "effect.set_field missing 'value'".to_string())?;
+            // CANONICAL field encoding — `dregg_cell::field_from_u64` (the payload in
+            // bytes 24..32, BIG-endian), the SAME lane `field_to_u64` reads and every
+            // capacity gate evaluates over. This surface previously wrote
+            // `value_bytes[..4] = (value as u32).to_le_bytes()`, an MCP-local dialect
+            // that (a) silently dropped the high 32 bits of a u64 and (b) produced a
+            // field element the cell evaluator reads back as ZERO (`field_to_u64` reads
+            // bytes 24..32) and that `field_result_in_range` REFUSES outright (it
+            // requires `value[..24] == 0`).
             Ok(dregg_turn::Effect::SetField {
                 cell: dregg_cell::CellId(cell),
                 index,
-                value: value_bytes,
+                value: dregg_cell::field_from_u64(value_u64),
             })
         }
         other => Err(format!(
@@ -241,11 +269,9 @@ pub(super) fn project_effects_for_mcp(
                 });
             }
             dregg_turn::Effect::SetField { index, value, .. } => {
-                let mut le4 = [0u8; 4];
-                le4.copy_from_slice(&value[..4]);
                 vm_effects.push(dregg_circuit::effect_vm::Effect::SetField {
                     field_idx: *index as u32,
-                    value: dregg_circuit::BabyBear::new(u32::from_le_bytes(le4)),
+                    value: setfield_value_lane(value),
                 });
             }
             dregg_turn::Effect::IncrementNonce { .. } => {
@@ -383,18 +409,16 @@ pub(super) fn require_effect_vm_proof(
 /// via `BabyBear::new_canonical` and re-derives the witness_hash to check
 /// the binding.
 ///
-/// If `vm_effects` is empty, the checked helper returns an error. The tuple
-/// wrapper is retained for older tests that only call it with non-empty effects.
-pub(super) fn generate_effect_vm_proof(
-    initial_balance: u64,
-    initial_nonce: u64,
-    vm_effects: &[dregg_circuit::effect_vm::Effect],
-) -> (String, Vec<u64>, Vec<Vec<u32>>, String) {
-    match try_generate_effect_vm_proof(initial_balance, initial_nonce, vm_effects) {
-        Ok(material) => material.into_parts(),
-        Err(e) => panic!("{e}"),
-    }
-}
+/// If `vm_effects` is empty, the checked helper returns an error.
+///
+/// ⚠ REMOVED: the `generate_effect_vm_proof` tuple wrapper that `unwrap`ed this by
+/// `panic!`ing. Since the standalone v1 material was RETIRED,
+/// [`try_generate_effect_vm_proof`] returns `Err` UNCONDITIONALLY — so that wrapper
+/// turned every call of the four live starbridge MCP tools (`dregg_register_name`,
+/// `dregg_publish_subscription`, `dregg_issue_credential`, `dregg_register_service`)
+/// into a panic, AFTER the turn had already committed and gossiped, with no
+/// `catch_unwind` anywhere on the stdio dispatch path. Callers now surface the refusal
+/// as data.
 
 pub(super) fn try_generate_effect_vm_proof(
     initial_balance: u64,
@@ -532,11 +556,9 @@ pub(super) fn project_setfield_to_vm(
 ) -> Option<dregg_circuit::effect_vm::Effect> {
     match effect {
         dregg_turn::Effect::SetField { index, value, .. } => {
-            let mut le4 = [0u8; 4];
-            le4.copy_from_slice(&value[..4]);
             Some(dregg_circuit::effect_vm::Effect::SetField {
                 field_idx: *index as u32,
-                value: dregg_circuit::BabyBear::new(u32::from_le_bytes(le4)),
+                value: setfield_value_lane(value),
             })
         }
         dregg_turn::Effect::Transfer { amount, .. } => {
@@ -602,5 +624,171 @@ pub(super) fn ensure_cell_in_ledger(
             c.state.nonce(),
         ),
         None => (0, 0),
+    }
+}
+
+/// **THE TOOTH — SetField one-felt lane parity.**
+///
+/// Every node-side `Effect::SetField` → `effect_vm::Effect::SetField` projector must
+/// land in the SAME felt lane as the DEPLOYED executor bridge
+/// (`dregg_turn::executor::convert_turn_effects_to_vm`, whose `field_element_to_bb`
+/// is `field_limbs8(v)[0]`). A skew between two producers over the same value is
+/// worse than a narrow lane: the honest turn goes UNSAT and nothing says why.
+///
+/// These tests FAIL on the pre-fix code, where the node projectors took
+/// `u32::from_le_bytes(value[0..4])` — a different lane, and identically ZERO for
+/// every `dregg_cell::field_from_u64` value (payload in bytes 24..32).
+#[cfg(test)]
+mod setfield_value_lane_tooth {
+    use dregg_circuit::effect_vm::Effect as VmEffect;
+    use dregg_turn::Effect;
+
+    /// The canonical door the whole node must agree with.
+    fn bridge_lane(cell: dregg_cell::CellId, value: [u8; 32]) -> dregg_circuit::BabyBear {
+        let forest = super::build_forest_with_effects(
+            cell,
+            vec![Effect::SetField {
+                cell,
+                index: 3,
+                value,
+            }],
+        );
+        let turn = dregg_turn::Turn {
+            agent: cell,
+            nonce: 0,
+            fee: 0,
+            memo: None,
+            valid_until: None,
+            call_forest: forest,
+            depends_on: vec![],
+            previous_receipt_hash: None,
+            conservation_proof: None,
+            sovereign_witnesses: std::collections::HashMap::new(),
+            execution_proof: None,
+            execution_proof_cell: None,
+            execution_proof_new_commitment: None,
+            custom_program_proofs: None,
+            effect_binding_proofs: Vec::new(),
+            cross_effect_dependencies: Vec::new(),
+            effect_witness_index_map: Vec::new(),
+        };
+        match dregg_turn::executor::convert_turn_effects_to_vm(&cell, &turn).as_slice() {
+            [VmEffect::SetField { value, .. }] => *value,
+            other => panic!("expected exactly one VmEffect::SetField, got {other:?}"),
+        }
+    }
+
+    fn projected(cell: dregg_cell::CellId, value: [u8; 32]) -> dregg_circuit::BabyBear {
+        match super::project_setfield_to_vm(&Effect::SetField {
+            cell,
+            index: 3,
+            value,
+        }) {
+            Some(VmEffect::SetField { value, .. }) => value,
+            other => panic!("project_setfield_to_vm produced {other:?}"),
+        }
+    }
+
+    fn projected_bulk(cell: dregg_cell::CellId, value: [u8; 32]) -> dregg_circuit::BabyBear {
+        match super::project_effects_for_mcp(&[Effect::SetField {
+            cell,
+            index: 3,
+            value,
+        }])
+        .as_slice()
+        {
+            [VmEffect::SetField { value, .. }] => *value,
+            other => panic!("project_effects_for_mcp produced {other:?}"),
+        }
+    }
+
+    /// The canonical numeric encoding must SURVIVE the projection. Pre-fix this was
+    /// `0` for every value, because `field_from_u64` writes bytes 24..32.
+    #[test]
+    fn canonical_u64_values_survive_the_projection() {
+        let cell = dregg_cell::CellId([7u8; 32]);
+        for v in [1u64, 42, 9_999, 0x7FFF_FFFE, u32::MAX as u64] {
+            let value = dregg_cell::field_from_u64(v);
+            let got = projected(cell, value);
+            assert_eq!(
+                got,
+                bridge_lane(cell, value),
+                "project_setfield_to_vm must land in the executor bridge's lane for {v}"
+            );
+            assert_eq!(
+                got,
+                projected_bulk(cell, value),
+                "project_effects_for_mcp must agree with project_setfield_to_vm for {v}"
+            );
+            assert_ne!(
+                got,
+                dregg_circuit::BabyBear::ZERO,
+                "a nonzero canonical field value MUST NOT project to the zero felt ({v})"
+            );
+        }
+    }
+
+    /// **The falsifier.** Two values sharing their first four bytes but differing in
+    /// the kernel u64 lane MUST project to different felts. Pre-fix both were `0`.
+    #[test]
+    fn values_sharing_a_four_byte_prefix_are_distinguished() {
+        let cell = dregg_cell::CellId([7u8; 32]);
+        let a = dregg_cell::field_from_u64(1);
+        let b = dregg_cell::field_from_u64(9_999);
+        assert_eq!(
+            a[..4],
+            b[..4],
+            "the pair must share the old projector's lane"
+        );
+        assert_ne!(
+            projected(cell, a),
+            projected(cell, b),
+            "two stat writes differing only above byte 4 must NOT share a felt"
+        );
+    }
+
+    /// **The residual, pinned so nobody over-reads the fix.** One felt cannot carry
+    /// 32 bytes: bytes 0..28 ride `field_limbs8` lanes 1..7, which the deployed
+    /// SetField param does not publish (the STAGED value8 completion seam,
+    /// `circuit/tests/setfield_value8_epoch_flip.rs`). This is a FACT about the
+    /// deployed AIR, not a defect of the projector — and it is identical on the
+    /// executor bridge, so producer parity still holds.
+    #[test]
+    fn the_one_felt_ceiling_is_real_and_shared_with_the_bridge() {
+        let cell = dregg_cell::CellId([7u8; 32]);
+        let mut a = dregg_cell::field_from_u64(5);
+        let mut b = dregg_cell::field_from_u64(5);
+        a[0] = 0xAA;
+        b[0] = 0xBB;
+        assert_eq!(
+            projected(cell, a),
+            projected(cell, b),
+            "byte 0 rides lane 2 — the one-felt param cannot separate it (deployed ceiling)"
+        );
+        assert_eq!(projected(cell, a), bridge_lane(cell, a));
+        assert_eq!(projected(cell, b), bridge_lane(cell, b));
+    }
+
+    /// The MCP JSON surface must produce a field element the KERNEL can read back.
+    /// Pre-fix `{"value": 42}` became `2a000000…00`, which `field_to_u64` reads as 0.
+    #[test]
+    fn parse_effect_json_emits_the_canonical_field_encoding() {
+        let cell_hex = "07".repeat(32);
+        for v in [0u64, 42, u32::MAX as u64 + 1, u64::MAX] {
+            let json = serde_json::json!({
+                "type": "set_field",
+                "cell": cell_hex,
+                "index": 3,
+                "value": v,
+            });
+            match super::parse_effect_json(&json).expect("set_field parses") {
+                Effect::SetField { value, .. } => assert_eq!(
+                    value,
+                    dregg_cell::field_from_u64(v),
+                    "MCP set_field must emit dregg_cell::field_from_u64({v})"
+                ),
+                other => panic!("expected SetField, got {other:?}"),
+            }
+        }
     }
 }

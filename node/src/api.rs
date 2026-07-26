@@ -3446,6 +3446,22 @@ struct RotatableTurn {
     rotation: Option<dregg_sdk::RotationTurnWitness>,
 }
 
+/// Coverage predicate for the async-attestation gate: does this turn carry any
+/// Effect-VM-bearing effect at all?
+///
+/// ⚠ ONLY `.is_empty()` is read by the single caller ([`prepare_rotatable_turn`]);
+/// the felts themselves are DISCARDED. The real projection the proof binds is
+/// rebuilt from the turn-domain effects by the canonical door
+/// (`dregg_turn::executor::try_convert_turn_effects_to_vm`) inside the prove pool.
+/// The values are nonetheless kept lane-identical to that door so this cannot become
+/// a skewed producer if it is ever wired to something that binds.
+///
+/// NAMED, not fixed here: this hand-rolled twin covers only Transfer / SetField /
+/// IncrementNonce, while the canonical door also projects GrantCapability, EmitEvent,
+/// AttenuateCapability, Custom, … — so a turn made only of those is judged
+/// `NotRequired` and goes UNATTESTED. Converging this gate on the canonical door
+/// changes which committed turns get enqueued for proving (an availability/coverage
+/// change on the live submit path), so it is scoped work, not a drive-by.
 fn http_project_effects(effects: &[&dregg_turn::Effect]) -> Vec<dregg_circuit::effect_vm::Effect> {
     let mut vm_effects = Vec::new();
     for effect in effects {
@@ -3457,11 +3473,14 @@ fn http_project_effects(effects: &[&dregg_turn::Effect]) -> Vec<dregg_circuit::e
                 });
             }
             dregg_turn::Effect::SetField { index, value, .. } => {
-                let mut le4 = [0u8; 4];
-                le4.copy_from_slice(&value[..4]);
                 vm_effects.push(dregg_circuit::effect_vm::Effect::SetField {
                     field_idx: *index as u32,
-                    value: dregg_circuit::BabyBear::new(u32::from_le_bytes(le4)),
+                    // Lane parity with the DEPLOYED executor bridge
+                    // (`turn::executor::effect_vm_bridge`'s `field_element_to_bb`):
+                    // `field_limbs8(value)[0]` is the lo32 of the kernel u64 field lane.
+                    // The former `u32::from_le_bytes(value[0..4])` is a different lane and
+                    // is identically ZERO for every `field_from_u64`-encoded value.
+                    value: dregg_circuit::effect_vm::field_limbs8(value)[0],
                 });
             }
             dregg_turn::Effect::IncrementNonce { .. } => {
@@ -9321,6 +9340,50 @@ mod tests {
     /// Helper: create a deterministic key pair for testing.
     fn test_key(name: &str) -> [u8; 32] {
         *blake3::hash(format!("dregg-node-atomic-test:{name}").as_bytes()).as_bytes()
+    }
+
+    /// **THE TOOTH — HTTP-path SetField lane parity.** `http_project_effects` must
+    /// land in the same felt lane as the deployed producer
+    /// (`sdk::cipherclerk::convert_effects_to_vm` / `effect_vm_bridge`, both
+    /// `field_limbs8(v)[0]`). Today only `.is_empty()` is read from it, so a skew is
+    /// silent — which is exactly why it needs a test rather than a comment. FAILS on
+    /// the pre-fix `u32::from_le_bytes(value[0..4])`, which is identically zero for
+    /// every `field_from_u64` value.
+    #[test]
+    fn http_project_effects_uses_the_deployed_setfield_lane() {
+        let cell = dregg_cell::CellId([9u8; 32]);
+        let mk = |v: u64| Effect::SetField {
+            cell,
+            index: 2,
+            value: dregg_cell::field_from_u64(v),
+        };
+        let (a, b) = (mk(1), mk(9_999));
+        let refs: Vec<&Effect> = vec![&a, &b];
+        let projected = super::http_project_effects(&refs);
+        let lanes: Vec<dregg_circuit::BabyBear> = projected
+            .iter()
+            .map(|e| match e {
+                dregg_circuit::effect_vm::Effect::SetField { value, .. } => *value,
+                other => panic!("expected SetField, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            lanes,
+            vec![
+                dregg_circuit::effect_vm::field_limbs8(&dregg_cell::field_from_u64(1))[0],
+                dregg_circuit::effect_vm::field_limbs8(&dregg_cell::field_from_u64(9_999))[0],
+            ],
+            "http_project_effects must agree with the deployed field_limbs8 lane"
+        );
+        assert_ne!(
+            lanes[0], lanes[1],
+            "two writes sharing bytes 0..4 must not collapse to one felt"
+        );
+        assert_ne!(
+            lanes[0],
+            dregg_circuit::BabyBear::ZERO,
+            "a nonzero canonical value must not project to zero"
+        );
     }
 
     #[test]

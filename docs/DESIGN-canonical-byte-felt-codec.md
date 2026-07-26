@@ -567,9 +567,29 @@ collision *and* a hit on any chosen target felt are one linear solve). The repo'
 *Last consumers:* the 4 `accumulator_leaf` key sites, both projectors,
 `node/src/turn_proving.rs:1079` `nullifier_to_field`, `trace_rotated.rs:1459`.
 
-**Narrow-4-byte projectors (worse than F1 — 28 bytes discarded).**
-`storage/src/commitment.rs:485` `fe_to_bb`; `turn/src/executor/mod.rs:182` `fe_to_bb`;
-`node/src/mcp/proof.rs` inline `project_setfield_to_vm`.
+**Narrow-4-byte projectors — CLOSED, and the entry mis-priced them.** They did not discard
+28 bytes, they discarded 32: all of them took `u32::from_le_bytes(v[0..4])`, while
+`dregg_cell::field_from_u64` writes its payload BIG-endian into `v[24..32]`
+(`cell/src/program/eval.rs:3052`). Bytes 0..4 of a canonical field value are identically
+zero, so every such value projected to the *same felt* `0`. The right frame is not
+narrowness but SKEW: the deployed producers (`turn/src/executor/effect_vm_bridge.rs:94`
+and `sdk/src/cipherclerk.rs:6823`, byte-identical to each other) use `field_limbs8(v)[0]`
+= `from_be_bytes(v[28..32])`, the lo32 of the kernel u64 lane. Collision cost was FREE
+(plain truncation, no search) and in practice already total.
+
+Two sites this list missed: `node/src/mcp/proof.rs:243` `project_effects_for_mcp` and
+`node/src/api.rs:3459` `http_project_effects` (the live `/api/turns/submit` gate). All
+five now call `field_limbs8(v)[0]`. `storage/src/commitment.rs:485` `fe_to_bb` was already
+deleted. `turn/src/executor/mod.rs:182` `fe_to_bb` carried a false doc-comment claiming
+its lane was "used everywhere else by the Effect VM's state column truncation" — its
+operands are compared *directly* against `initial_fields`/`final_fields`, which carry
+`field_limbs8[0]`, so `FieldGte` re-evaluated as `new >= 0`, a gate that could not go red.
+No deployed byte moved (the mcp sites feed the RETIRED v1 material; the api.rs site has
+only `.is_empty()` read; nothing sets `EffectVmContext::slot_caveat_count`). Teeth:
+`node/src/mcp/proof.rs` `setfield_value_lane_tooth`,
+`node/src/api.rs::tests::http_project_effects_uses_the_deployed_setfield_lane`,
+`turn/tests/caveat_operand_lane_parity.rs` — each also pins the surviving one-felt
+ceiling, which is Stage 2/4 work, not a projector bug.
 
 **Redundant *correct* codecs (keep exactly one).** Delete `cell/src/note.rs:201`
 `bytes32_to_u16_limbs`, `circuit/src/exact_cap_root.rs:61` `bytes32_to_u16_le`,

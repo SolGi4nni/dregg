@@ -148,37 +148,28 @@ mod tests {
     /// 164) and `demo/two-ai-handoff/silver_helper.rs::cmd_make_recursive_witness`
     /// (line 1275), which set the same slot on their own paths.
     ///
-    /// v1 floor only: `generate_effect_vm_proof` produces a v1 hand-AIR proof, which is absent
-    /// under the prover build.
+    /// ⚠ STATUS CORRECTION. `try_generate_effect_vm_proof` now returns `Err`
+    /// UNCONDITIONALLY — the standalone v1 material is RETIRED — so the Issue-#72
+    /// producer contract above has no live producer to pin. This test therefore pins the
+    /// RETIREMENT itself: the helper must refuse BY NAME rather than fabricate material.
+    /// If someone revives the v1 lane, this goes red and the `PI[IS_AGENT_CELL] == 1`
+    /// assertion must be restored with it.
+    ///
+    /// v1 floor only: absent under the (default) prover build.
     #[cfg(not(feature = "prover"))]
     #[test]
-    fn generate_effect_vm_proof_pins_is_agent_cell_to_one() {
-        use dregg_circuit::effect_vm::pi as evm_pi;
-
+    fn standalone_v1_effect_vm_material_is_retired_and_refuses_by_name() {
         let vm_effects = vec![dregg_circuit::effect_vm::Effect::GrantCapability {
             cap_entry: grant_cap_entry_8(1),
             phase_b: None,
         }];
-
-        let (proof_hex, public_inputs, _trace, _witness_hash) =
-            generate_effect_vm_proof(100, 0, &vm_effects);
-
-        assert!(
-            !proof_hex.is_empty(),
-            "generate_effect_vm_proof must emit a proof for non-empty effects"
+        let err = try_generate_effect_vm_proof(100, 0, &vm_effects).expect_err(
+            "the standalone v1 effect-vm lane is retired; if it produces material again, \
+             restore the Issue-#72 PI[IS_AGENT_CELL]==1 assertion this test replaced",
         );
         assert!(
-            public_inputs.len() > evm_pi::IS_AGENT_CELL,
-            "PI vector must extend past IS_AGENT_CELL (have len={}, need >{})",
-            public_inputs.len(),
-            evm_pi::IS_AGENT_CELL,
-        );
-        assert_eq!(
-            public_inputs[evm_pi::IS_AGENT_CELL],
-            1,
-            "Issue #72: generate_effect_vm_proof MUST set PI[IS_AGENT_CELL]=1 \
-             for the v1 single-proof-per-WR replay shape; got {}",
-            public_inputs[evm_pi::IS_AGENT_CELL]
+            err.contains("retired"),
+            "the refusal must name the retirement, not fail for an incidental reason: {err}"
         );
     }
 

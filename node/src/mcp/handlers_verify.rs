@@ -616,12 +616,23 @@ pub(super) async fn tool_sign_sovereign_witness(
             amount: vm_effect_amount,
             direction: 1,
         }];
-        let (proof_hex, _pi, _trace, _wh) = generate_effect_vm_proof(
+        // The standalone v1 material is RETIRED, so this currently always refuses. It
+        // must NOT panic (this runs inside the stdio dispatch loop, which has no
+        // `catch_unwind` — a panic here kills the whole `dregg-node mcp` server), and it
+        // must NOT silently hand back a proof-less witness to a caller who explicitly
+        // asked for `attach_proof`: refuse by name instead.
+        match try_generate_effect_vm_proof(
             u64::try_from(cell.state.balance()).unwrap_or(0),
             cell.state.nonce(),
             &vm_effects,
-        );
-        proof_hex
+        ) {
+            Ok(material) => material.into_parts().0,
+            Err(e) => {
+                return McpToolResult::error(format!(
+                    "attach_proof was requested but no transition proof can be produced: {e}"
+                ));
+            }
+        }
     } else {
         String::new()
     };

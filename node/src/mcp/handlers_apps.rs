@@ -434,9 +434,24 @@ pub(super) async fn run_starbridge_action(
                 });
             }
 
-            // Generate Effect-VM proof.
-            let (proof_hex, public_inputs, trace_rows, witness_hash_hex) =
-                generate_effect_vm_proof(target_balance, target_nonce, &vm_effects);
+            // Generate Effect-VM proof. The standalone v1 material is RETIRED, so this
+            // currently ALWAYS refuses — report that as data. It used to `panic!`, which
+            // killed the whole `dregg-node mcp` stdio server on every call of this tool,
+            // after the turn had already committed and gossiped.
+            let (proof_error, proof_hex, public_inputs, trace_rows, witness_hash_hex) =
+                match try_generate_effect_vm_proof(target_balance, target_nonce, &vm_effects) {
+                    Ok(material) => {
+                        let (p, pi, tr, wh) = material.into_parts();
+                        (None, p, pi, tr, wh)
+                    }
+                    Err(e) => (
+                        Some(e),
+                        String::new(),
+                        Vec::new(),
+                        Vec::new(),
+                        String::new(),
+                    ),
+                };
 
             let proof_field = if proof_hex.is_empty() {
                 Value::Null
@@ -469,6 +484,19 @@ pub(super) async fn run_starbridge_action(
             );
             out.insert("effect_vm_trace_rows".into(), trace_field);
             out.insert("effect_vm_witness_hash_hex".into(), witness_hash_field);
+            out.insert(
+                "proof_status".into(),
+                Value::String(
+                    match &proof_error {
+                        None => "proved",
+                        Some(_) => "proof_generation_failed",
+                    }
+                    .to_string(),
+                ),
+            );
+            if let Some(e) = proof_error {
+                out.insert("effect_vm_proof_error".into(), Value::String(e));
+            }
             for (k, v) in extra_links {
                 out.insert(k, v);
             }
