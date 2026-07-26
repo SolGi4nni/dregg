@@ -70,7 +70,7 @@ byte-reproducible) · `metatheory/Dregg2/Tools/ConeCutover.lean` (TRANSACTIONAL 
   declarations (verify sole-floor status FIRST). ③ multi-floor only in whole floor-COMBO batches.
 - **⚑ ② AND ③ NOW HAVE THEIR NUMBERS** — `#floor_census` v2 RAN for the first time (2026-07-26, clean export of
   `e0160d116`; artifact + provenance `docs/artifacts/floor-census-v2-2026-07-26/`, reproduce with
-  `cd metatheory && lake env lean scripts/run_floor_census.lean`). It replaced two estimates this section was
+  `metatheory/scripts/run_floor_census.lean`, run under `lake env lean` from inside `metatheory/`). It replaced two estimates this section was
   planned on:
   - ③ is **547 multi-floor sites over 27 combos**, not 353 over ~16 — and it is far MORE concentrated than the
     guess: `cellLeaf+compress+compressN` 306 · `cellLeaf+compressN+logHash` 94 · `compressN+logHash` 42 ·
