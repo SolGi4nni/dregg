@@ -776,10 +776,7 @@ fn pill_survives(pill: &str, prose: &str) -> bool {
 fn prose_parity(host: &mut OfferingHost, key: &str, viewer: &DreggIdentity) -> (bool, String) {
     let id = SessionId::new(format!("prose-{key}"));
     if let Err(e) = host.ensure_open(key, &id) {
-        return (
-            false,
-            format!("the offering would not open for a chat viewer: {e}"),
-        );
+        return (false, format!("the offering would not open for a chat viewer: {e}"));
     }
     let mut worst: Option<String> = None;
     for step in ["on open", "after one turn"] {
@@ -818,10 +815,7 @@ fn prose_parity(host: &mut OfferingHost, key: &str, viewer: &DreggIdentity) -> (
     }
     match worst {
         Some(detail) => (false, detail),
-        None => (
-            true,
-            "every pill's words reach the prose projection".to_string(),
-        ),
+        None => (true, "every pill's words reach the prose projection".to_string()),
     }
 }
 
@@ -951,7 +945,8 @@ async fn every_offering_survives_being_driven_through_its_own_flow() {
             }
             Some(act) => {
                 let (status, response) =
-                    common::post_act(&app, &act_uri(key, &id), &act.turn, act.arg, DRIVER).await;
+                    common::post_act(&app, &act_uri(key, &id), &act.turn, act.arg, DRIVER)
+                        .await;
                 let refused = response.contains("class=\"notice refused\"");
                 let landed = response.contains("Turn committed") && !refused;
                 row.record(
@@ -1114,11 +1109,7 @@ async fn every_offering_survives_being_driven_through_its_own_flow() {
         if stale.is_empty() {
             String::new()
         } else {
-            format!(
-                "{} STALE ALLOWANCE(S):\n{}\n",
-                stale.len(),
-                stale.join("\n")
-            )
+            format!("{} STALE ALLOWANCE(S):\n{}\n", stale.len(), stale.join("\n"))
         },
         "\nEach line names the offering, the invariant, and the offending text. Fix it, or record \
          a named allowance in `EXEMPTIONS` with the design work it actually needs."
@@ -1183,8 +1174,7 @@ fn the_directive_detector_wants_a_direct_child_sentence() {
                        <div class=\"deos-list\"><p class=\"prose\">aria: looking for a healer</p>\
                        </div></section>";
     assert_eq!(
-        directive_of(nested_only),
-        None,
+        directive_of(nested_only), None,
         "a row of DATA nested inside the plaque is not a directive, however early it appears"
     );
 
@@ -1217,14 +1207,8 @@ fn the_page_readers_read_what_a_person_reads() {
 
     let acts = common::offered_acts(html);
     assert_eq!(acts.len(), 2);
-    assert_eq!(
-        (acts[0].turn.as_str(), acts[0].arg, acts[0].enabled),
-        ("gift", 2, true)
-    );
-    assert_eq!(
-        (acts[1].turn.as_str(), acts[1].arg, acts[1].enabled),
-        ("sell", 1, false)
-    );
+    assert_eq!((acts[0].turn.as_str(), acts[0].arg, acts[0].enabled), ("gift", 2, true));
+    assert_eq!((acts[1].turn.as_str(), acts[1].arg, acts[1].enabled), ("sell", 1, false));
     assert_eq!(
         first_enabled(html).map(|a| a.turn),
         Some("gift".to_string()),
@@ -1303,10 +1287,7 @@ async fn fog_check(app: &Router, peer: &mut OfferingHost, key: &str) -> (bool, S
     let id = format!("fog-{key}");
     let sid = SessionId::new(id.clone());
     if let Err(e) = peer.ensure_open(key, &sid) {
-        return (
-            false,
-            format!("the peer host would not open the table: {e}"),
-        );
+        return (false, format!("the peer host would not open the table: {e}"));
     }
     let seats = ["flowseata", "flowseatb"];
     let watcher = "flowwatch";
@@ -1376,11 +1357,7 @@ async fn fog_check(app: &Router, peer: &mut OfferingHost, key: &str) -> (bool, S
                 continue;
             }
             played[i].insert(act.turn.clone());
-            landed.push(format!(
-                "{}`{}`",
-                if i == 0 { "A:" } else { "B:" },
-                act.turn
-            ));
+            landed.push(format!("{}`{}`", if i == 0 { "A:" } else { "B:" }, act.turn));
             // The peer host is only useful while it is in LOCKSTEP with the router — its whole job
             // is to supply the viewer-blind public projection OF THIS STATE. A desync is reported
             // as a broken check, never as a pass.

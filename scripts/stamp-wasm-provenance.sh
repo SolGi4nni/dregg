@@ -20,7 +20,7 @@
 #   * /wasm-provenance.json + /wasm-provenance.html record what was included, from which
 #     run and commit, built when, and WHAT WAS MISSING;
 #   * a surface whose wasm is ABSENT gets a visible in-page marker (and a wholly absent
-#     surface gets a marker page where a 404 would otherwise be — "link broken", said
+#     surface gets a marker page where a 404 would otherwise be — "not yet built (staging)", said
 #     out loud, instead of a directory that quietly is not there);
 #   * a surface whose wasm is present but STALE (older than WASM_STALE_DAYS) gets a
 #     visible in-page marker naming its age and source run;
@@ -361,7 +361,7 @@ metatag = meta_tag()
 # Every route in the table is ADVERTISED by the landing/nav, so every route gets an
 # answer. Three cases, and none of them is silence:
 #   the page is not in this build at all -> stand up a marker PAGE where a bare 404
-#                                           would otherwise be ("link broken", said out loud)
+#                                           would otherwise be ("not yet built (staging)", said out loud)
 #   the page is here but its wasm is not -> the page ships, with an ABSENT marker
 #   the page and wasm are here, degraded -> the page ships, with a STALE / BROKEN marker
 for s in SURFACES:

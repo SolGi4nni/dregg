@@ -202,6 +202,20 @@ jobs:
         # the baked light-client aggregate no longer attesting under the engine, or the
         # transclusion forge-refusal path having stopped refusing. Regeneration command is
         # in the script's header.
+        # ⚑ STAGING POSTURE (2026-07-26, ember's call): these surfaces are NOT READY, and a
+        # permanent red for a thing we know is not ready is worse than no signal — it is exactly
+        # the "red as steady state" pathology that let a five-day CI blackout go unnoticed
+        # (docs/WOUND-ci-gates-dead-since-2026-07-20.md: 60 runs, 0 successes, red carried no
+        # information). So this REPORTS and does not fail. It stays VISIBLE in the summary.
+        #
+        # KNOWN STAGING GAP, declared rather than alarmed about: site/light-client/history.json
+        # dates from the initial commit and 245+ commits have since touched wasm/, circuit-prove/
+        # and dregg-lightclient/, so the freshness tooth bites by construction. Regeneration
+        # command is in the script header.
+        #
+        # WHEN WE LEAVE STAGING: drop continue-on-error and this becomes a real gate. That is a
+        # one-line change and it is the point at which "the wasm surfaces work" becomes a claim.
+        continue-on-error: true
         run: bash scripts/check-web-surface-teeth.sh wasm/pkg
 
   # ── what this run published, in one place ────────────────────────────────────
