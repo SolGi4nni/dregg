@@ -1045,12 +1045,22 @@ theorem logDecodeChain_frame_continuous (LH : List Turn → ℤ)
 the published LOG seam, so the full-state `seam` (`a.post = b.pre`, log included) is DERIVED on BOTH
 halves. `logDecode d` binds step `d`'s published log commitments to `d.pre.log`/`d.post.log`; `logPubPost`
 /`logPubPre` are the log column of the chained-root (one published `ℤ` per step boundary); `logPubSeam`
-equates them across each boundary (the log analog of `TurnDecodeChain.pubSeam`). `hLog` is the named
-realizable `logHashInjective LH` carrier. The full-state seam is then `turnDecodeChainLog_seam_full_derived`. -/
+equates them across each boundary (the log analog of `TurnDecodeChain.pubSeam`). The full-state seam is
+then `turnDecodeChainLog_seam_full_derived`.
+
+⚑ **DATA ONLY, AND IT IS INHABITED (2026-07-25 bundle cutover).** The `hLog : logHashInjective LH`
+field is GONE. It asserted that the receipt-chain accumulator is injective from the UNBOUNDED `List
+Turn` into ONE bounded BabyBear felt — which `StateCommitFloorRegrounded.logHashInjective_false_babyBear`
+REFUTES for every real deployed accumulator, so no deployed `TurnDecodeChainLog` value could be
+constructed and every theorem over the bundle below was VACUOUS. The three consumers now carry the
+binding as a PER-INSTANCE `NoLogSeamColl` argument at exactly the adjacencies the deleted field was fed
+(a theorem HAS argument positions; a field does not — the bundle-family design decision is recorded at
+`Dregg2.Shielded.RealCrypto` §2.0). `Circuit/TurnDecodeChainLogBundleCutoverCheck` constructs
+`honestTurnDecodeChainLog` — the honest prover's chained-root, publishing the true log digests — for an
+ARBITRARY `LH`, and instantiates it at a deployed accumulator whose `logHashInjective` that module
+REFUTES. -/
 structure TurnDecodeChainLog (hash : List ℤ → ℤ) (S : CommitSurface) (LH : List Turn → ℤ)
     {start fin : RecChainedState} (c : TurnDecodeChain hash S start fin) where
-  /-- the named realizable log-CR floor carrier (the log-hash is injective). -/
-  hLog       : logHashInjective LH
   /-- per step, its published OLD log commitment (the log column of the chained-root). -/
   logPubPre  : DecodedStep S → ℤ
   /-- per step, its published NEW log commitment. -/
@@ -1059,6 +1069,39 @@ structure TurnDecodeChainLog (hash : List ℤ → ℤ) (S : CommitSurface) (LH :
   logDecode  : ∀ d ∈ c.steps, LogDecode LH (logPubPre d) (logPubPost d) d.pre d.post
   /-- the published LOG commitments AGREE across each boundary (the log column of the chained-root). -/
   logPubSeam : List.IsChain (fun a b => logPubPost a = logPubPre b) c.steps
+
+/-- **`NoLogSeamColl LH postLog preLog steps`** — the PER-INSTANCE side condition that replaced the
+deleted `TurnDecodeChainLog.hLog` field. At EVERY adjacency of the decoded chain — precisely the pairs
+the old proof fed the refuted floor at, and no others — the two receipt chains the published log seam
+equates are NOT an equivocation of the deployed accumulator (`LogCommitRegrounded.LogColl`, which
+carries its own distinctness, so the condition is never satisfied vacuously by an equal pair).
+
+⚑ Stated over an ABSTRACT step type with the two log projections passed in, NOT over `List
+(DecodedStep S)`. That is deliberate and load-bearing: `DecodedStep S` drags in `S : CommitSurface`,
+which is itself a floor-carrying bundle, so the `List (DecodedStep S)`-shaped spelling would have made
+the CURE a carrier of a floor it has nothing to do with. The condition is about receipt chains; it is
+now typed that way.
+
+Implied by the deleted field at every pair via the grandfathered bridge
+`LogCommitRegrounded.noLogColl_of_inj` (one step through `noLogSeamColl_of_forall`), so every consumer
+below is strictly STRONGER than its pre-cutover form; and REFUTABLE at a constant accumulator, so it is
+not an empty ask (`TurnDecodeChainLogBundleCutoverCheck` §4). -/
+def NoLogSeamColl {α : Type} (LH : List Turn → ℤ) (postLog preLog : α → List Turn)
+    (steps : List α) : Prop :=
+  List.IsChain
+    (fun a b => ¬ Dregg2.Circuit.LogCommitRegrounded.LogColl LH (postLog a) (preLog b)) steps
+
+/-- **The uniform lift, FLOOR-FREE.** A non-equivocation claim holding at EVERY pair of receipt chains
+gives the per-adjacency side condition on any decoded chain. This is the one step between the
+grandfathered bridge `LogCommitRegrounded.noLogColl_of_inj` (`logHashInjective LH → ∀ xs ys, ¬ LogColl
+LH xs ys`) and `NoLogSeamColl`, so the pre-cutover statements are recovered by a single composition
+WITHOUT minting a new declaration on the refuted floor. -/
+theorem noLogSeamColl_of_forall {α : Type} {LH : List Turn → ℤ} {postLog preLog : α → List Turn}
+    {steps : List α}
+    (h : ∀ xs ys : List Turn, ¬ Dregg2.Circuit.LogCommitRegrounded.LogColl LH xs ys) :
+    NoLogSeamColl LH postLog preLog steps := by
+  rw [NoLogSeamColl, List.isChain_iff_getElem]
+  exact fun i _ => h _ _
 
 /-- **A membership-aware chain.** Every adjacency in `l` is between two elements OF `l` — the
 `isChain_iff_getElem` readout, repackaged so per-adjacency reasoning can read both endpoints' carried
@@ -1085,16 +1128,18 @@ published log commitment disagrees with the threaded receipt-log is REJECTED: th
 `seam` is certified by the `logHashInjective` binding, not taken on faith. -/
 theorem turnDecodeChainLog_seam_log_derived (hash : List ℤ → ℤ) (S : CommitSurface) (LH : List Turn → ℤ)
     {start fin : RecChainedState} {c : TurnDecodeChain hash S start fin}
-    (cl : TurnDecodeChainLog hash S LH c) :
+    (cl : TurnDecodeChainLog hash S LH c)
+    (hno : NoLogSeamColl LH (fun d : DecodedStep S => d.post.log)
+      (fun d : DecodedStep S => d.pre.log) c.steps) :
     List.IsChain (fun a b => a.post.log = b.pre.log) c.steps := by
-  -- zip the published-log seam with the membership chain, then discharge each adjacency via the log
-  -- tooth, reading both endpoints' `LogDecode` from the carried per-step binding.
-  have hmem := isChain_and cl.logPubSeam (isChain_mem_self c.steps)
+  -- zip the published-log seam, the per-adjacency side condition, and the membership chain, then
+  -- discharge each adjacency via the log tooth, reading both endpoints' `LogDecode` from the carried
+  -- per-step binding.
+  have hmem := isChain_and cl.logPubSeam (isChain_and hno (isChain_mem_self c.steps))
   refine List.IsChain.imp ?_ hmem
   intro a b hab
-  obtain ⟨hseam, ha, hb⟩ := hab
-  exact logDecodeChain_frame_continuous LH
-    (Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj cl.hLog) (cl.logDecode a ha) (cl.logDecode b hb) hseam
+  obtain ⟨hseam, hnc, ha, hb⟩ := hab
+  exact logDecodeChain_frame_continuous LH hnc (cl.logDecode a ha) (cl.logDecode b hb) hseam
 
 /-- **The FULL-state seam is DERIVED (kernel ⊕ log).** Combining the kernel tooth
 (`turnDecodeChain_seam_kernel_derived`, from the published kernel-root seam) with the log tooth
@@ -1106,10 +1151,12 @@ hash collision; a forged intermediate kernel cannot satisfy the published kernel
 turn-chain BINDS the full state — receipts included. -/
 theorem turnDecodeChainLog_seam_full_derived (hash : List ℤ → ℤ) (S : CommitSurface) (LH : List Turn → ℤ)
     {start fin : RecChainedState} {c : TurnDecodeChain hash S start fin}
-    (cl : TurnDecodeChainLog hash S LH c) :
+    (cl : TurnDecodeChainLog hash S LH c)
+    (hno : NoLogSeamColl LH (fun d : DecodedStep S => d.post.log)
+      (fun d : DecodedStep S => d.pre.log) c.steps) :
     List.IsChain (fun a b => a.post = b.pre) c.steps := by
   have hker := turnDecodeChain_seam_kernel_derived hash S c
-  have hlog := turnDecodeChainLog_seam_log_derived hash S LH cl
+  have hlog := turnDecodeChainLog_seam_log_derived hash S LH cl hno
   -- zip the kernel-continuity and log-continuity chains, then `a.post.kernel = b.pre.kernel ∧
   -- a.post.log = b.pre.log ⟹ a.post = b.pre` (structure eta).
   refine List.IsChain.imp ?_ (isChain_and hker hlog)
@@ -1130,10 +1177,12 @@ intermediate receipt-log, not just the kernels. -/
 theorem turnDecodeChainLog_rejects_forged_log (hash : List ℤ → ℤ) (S : CommitSurface) (LH : List Turn → ℤ)
     {start fin : RecChainedState} {c : TurnDecodeChain hash S start fin}
     (cl : TurnDecodeChainLog hash S LH c)
+    (hno : NoLogSeamColl LH (fun d : DecodedStep S => d.post.log)
+      (fun d : DecodedStep S => d.pre.log) c.steps)
     {i : Nat} (hi : i + 1 < c.steps.length)
     (hforge : (c.steps[i]'(by omega)).post.log ≠ (c.steps[i+1]'hi).pre.log) :
     False := by
-  have hchain := turnDecodeChainLog_seam_log_derived hash S LH cl
+  have hchain := turnDecodeChainLog_seam_log_derived hash S LH cl hno
   -- the forged boundary `(i, i+1)` is an adjacency in `c.steps`; the derived chain forces its log
   -- continuity, contradicting the forge.
   rw [List.isChain_iff_getElem] at hchain

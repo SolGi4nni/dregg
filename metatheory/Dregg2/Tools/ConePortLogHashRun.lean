@@ -25,12 +25,20 @@ is one bridge application (`sites=1, sideConds=1`), each one surgered on the ELA
 level-2 cone of the largest refuted floor in the tree, and it says the remaining 313 `logHashInjective`
 carriers are a codemod problem, not 313 re-proofs.
 
-The two pinned REFUSALS are the honest residual and the reason the number is 48 and not 50:
-`CircuitSoundness.turnDecodeChainLog_seam_log_derived` / `_rejects_forged_log` carry the floor as a
-STRUCTURE FIELD (`TurnDecodeChainLog.hLog : logHashInjective LH`), not as a telescope binder — the
-field-bundle class. A field has no argument position to be per-instance AT, so the port unit there is
-the BUNDLE (delete the field, thread the side condition through the structure's users), a design
-decision and not a mechanical rewrite. The tool says "not a carrier" and it is right to.
+The two pinned REFUSALS are `CircuitSoundness.turnDecodeChainLog_seam_log_derived` /
+`_rejects_forged_log`, and they are the reason the number is 48 and not 50. When this measurement was
+taken they carried the floor as a STRUCTURE FIELD (`TurnDecodeChainLog.hLog : logHashInjective LH`),
+not as a telescope binder — the field-bundle class, where a field has no argument position to be
+per-instance AT, so the port unit is the BUNDLE and not a mechanical rewrite.
+
+⚑ **THAT BUNDLE WAS CUT OVER (2026-07-25).** `TurnDecodeChainLog.hLog` is DELETED; both theorems now
+take `CircuitSoundness.NoLogSeamColl LH c.steps` — `¬ LogColl` at exactly the chain adjacencies the
+deleted field was fed — and the bundle is re-inhabited at a deployed accumulator whose
+`logHashInjective` is REFUTED (`Circuit/TurnDecodeChainLogBundleCutoverCheck`). Both pins therefore
+STAY `.refuse "not a carrier"`, and now for the strongest possible reason: the floor is not merely
+out of ConePort's reach at these names, it is gone from their types and out of their proof closure
+(`#assert_not_depends_on`, 2743/2745 constants scanned). The tool says "not a carrier" and it is
+right to; what changed is that the statement is now true of the deployed system.
 
 ⚑ WHAT THIS IS NOT: it is not a cutover, and the ports it builds live only in this module's
 environment as the measurement's evidence — no successor theorem is added to the tree beside a

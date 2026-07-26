@@ -154,7 +154,6 @@ private def c0 : Array String := #[
   "Dregg2.Circuit.CircuitSoundness.CommitSurface.leafInj",
   "Dregg2.Circuit.CircuitSoundness.CommitSurface.mk",
   "Dregg2.Circuit.CircuitSoundness.CommitSurface.mk.inj",
-  "Dregg2.Circuit.CircuitSoundness.TurnDecodeChainLog.hLog",
   "Dregg2.Circuit.CircuitSoundness.TurnDecodeChainLog.mk",
   "Dregg2.Circuit.CircuitSoundness.TurnDecodeChainLog.mk.inj",
   "Dregg2.Circuit.CircuitSoundness.descriptorRefines",
