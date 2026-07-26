@@ -1011,9 +1011,16 @@ mod tests {
             "craft".to_string(),
             0,
         );
+        // Asserts the EXECUTOR fact, not an attribution claim. This used to read
+        // "verified turn landed" — wording `3f5bd4195` deleted, because the surface was
+        // announcing "verified" one line above its own card reading "Recorded (asserted)",
+        // under a doc-comment saying `"Verified" would be a lie here`. A test pinning the
+        // old wording would have kept that claim alive by making its removal look like a
+        // regression, which is how prose-pinning tests defend the bug they describe.
+        assert!(landed.note.contains("The turn landed"), "{}", landed.note);
         assert!(
-            landed.note.contains("verified turn landed"),
-            "{}",
+            !landed.note.contains("verified turn landed"),
+            "the attribution grade belongs to the card's own lead phrase, not this header: {}",
             landed.note
         );
 
