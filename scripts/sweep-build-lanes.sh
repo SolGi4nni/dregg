@@ -36,6 +36,24 @@
 #   scripts/sweep-build-lanes.sh --lane crewbraid --apply
 #   scripts/sweep-build-lanes.sh --host hbox --apply
 #
+# ⚠⚠ KNOWN GAP, FOUND BY DOING IT TO MYSELF (2026-07-25): PROCESS-ABSENCE IS NOT LANE-OWNERSHIP.
+# `live_count` looks for cargo/rustc/lake/lean/cc/ld attributed to the lane. An agent that OWNS a
+# lane spends most of its wall-clock *not compiling* — reading files, thinking, writing a report. In
+# that window the lane reads idle and this script will sweep it. I swept `darkpool` and
+# `native-anchor` out from under two of my own live agents exactly that way.
+#
+# It is not corruption — a fingerprint miss is a rebuild, never a stale link (that is the whole
+# safety argument of this tool). But it makes the owning agent pay a rebuild it did not expect, and
+# if the sweep lands during a LINK the failure surfaces inside that agent as an unexplained error it
+# may well misdiagnose as its own bug. That is the expensive kind of wrong.
+#
+# THE FIX IS A LEASE, NOT A BETTER PROBE. No amount of process sniffing can see intent. A lane
+# should carry a claim file (`<lane>/.pbuild-lease` with owner + expiry, refreshed by pbuild on each
+# call) and this script should refuse any lane holding an unexpired lease, regardless of what is
+# running. `cv board claim` already implements exactly this shape for tasks and is unused here.
+# Until that exists: pass --lane explicitly for lanes you know are unowned, rather than trusting a
+# bare --apply to leave live agents alone.
+#
 # ⚠ A LIVE LANE IS SKIPPED, NOT SWEPT, and the reason is not politeness. Two builds
 #   of DIFFERENT configs in one lane (e.g. `cargo test -p X --lib` beside
 #   `cargo check -p Y --all-targets`) legitimately hold DIFFERENT hashes of the same
