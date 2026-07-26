@@ -43,6 +43,28 @@ pub struct UserIdentity {
     pub link_challenge: Option<String>,
 }
 
+/// One contributor's stake in the `$DREGG` pile — the durable per-address attribution behind
+/// the treasury's single aggregate pile number.
+///
+/// The vote weight is NOT stored: it is derived on read with `dregg_pay::quadratic_weight`,
+/// the very function the swap vote uses, so an operator view and a ballot can never be
+/// computing two different weights from the same stake.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PoolContribution {
+    /// The base58 deposit address the payment landed on — the voter identity.
+    pub deposit_address: String,
+    /// The Discord user id the address was derived for.
+    pub user: String,
+    /// Cumulative atomic `$DREGG` contributed.
+    pub contributed: u64,
+    /// How many distinct payments made it up.
+    pub payments: u64,
+    /// Unix seconds of the first and most recent attributed payment. A cluster of
+    /// near-equal stakes with near-equal timestamps is what a split stake looks like.
+    pub first_seen: i64,
+    pub last_seen: i64,
+}
+
 /// Materialized Starbridge app activity recorded by the Discord host.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct StarbridgeActivity {
@@ -668,6 +690,36 @@ impl Database {
         sqlx::query("INSERT OR IGNORE INTO pay_treasury (id, usdc, dregg) VALUES (0, 0, 0)")
             .execute(&pool)
             .await?;
+
+        // ─── WHO paid into the $DREGG pile (the swap-pool attribution) ───────
+        //
+        // The treasury carries the pile as ONE aggregate number; this is the
+        // per-contributor record behind it, keyed by the `DepositAddress` the payment
+        // actually landed on — the same identity `dregg_pay::SwapPool` keys on, and the
+        // same identity a quadratic swap vote weighs.
+        //
+        // WHY IT IS PERSISTED HERE: `SwapPool` is in-memory (`Mutex<PoolState>`, no
+        // store trait), so its attribution dies with the process. The swap vote's weight
+        // is QUADRATIC — `isqrt` — which is sybil-FAVOURABLE (`√a + √b > √(a+b)`, so
+        // splitting a stake across two addresses GAINS weight). That is a deliberate
+        // product decision, and the defence chosen alongside it is SOCIAL: someone
+        // notices and acts. A defence that depends on noticing needs a record that
+        // survives a restart, or there is nothing to notice with. This table is it.
+        //
+        // `first_seen`/`last_seen` are load-bearing, not decoration: the visible shape of
+        // a split stake is several near-equal contributions that appeared close together.
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS pay_pool_contributions (
+                deposit_address TEXT PRIMARY KEY,
+                user            TEXT NOT NULL,
+                contributed     INTEGER NOT NULL DEFAULT 0,
+                payments        INTEGER NOT NULL DEFAULT 0,
+                first_seen      INTEGER NOT NULL,
+                last_seen       INTEGER NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await?;
 
         // ─── UGC gallery (commands::gallery GalleryStore backing) ────────────
         // The durable backing of the `/gallery` universe registry: published
@@ -1870,6 +1922,108 @@ impl Database {
             presentation_json: presentation_json.to_string(),
             created_at,
         })
+    }
+
+    // ─── The $DREGG pile's per-contributor attribution ──────────────────────────
+
+    /// Attribute one NEWLY-observed `$DREGG` payment to the deposit address it landed on.
+    ///
+    /// Called only from inside [`crate::pay::PayState::poll_and_credit`]'s
+    /// already-newly-credited guard, so it inherits that guard's idempotency: a re-polled
+    /// payment never reaches here, and therefore never inflates a contributor's stake (an
+    /// inflated stake is an inflated VOTE, which is why this rides the same gate as the
+    /// treasury credit rather than a looser one of its own).
+    pub async fn pool_record_contribution(
+        &self,
+        deposit_address: &str,
+        user: &str,
+        amount: u64,
+        now: i64,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO pay_pool_contributions
+                 (deposit_address, user, contributed, payments, first_seen, last_seen)
+             VALUES (?, ?, ?, 1, ?, ?)
+             ON CONFLICT(deposit_address) DO UPDATE SET
+                 user        = excluded.user,
+                 contributed = pay_pool_contributions.contributed + excluded.contributed,
+                 payments    = pay_pool_contributions.payments + 1,
+                 last_seen   = excluded.last_seen",
+        )
+        .bind(deposit_address)
+        .bind(user)
+        .bind(amount as i64)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Every contributor to the `$DREGG` pile, heaviest stake first.
+    pub async fn pool_contributions(&self) -> Result<Vec<PoolContribution>, sqlx::Error> {
+        let rows: Vec<(String, String, i64, i64, i64, i64)> = sqlx::query_as(
+            "SELECT deposit_address, user, contributed, payments, first_seen, last_seen
+             FROM pay_pool_contributions
+             ORDER BY contributed DESC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(deposit_address, user, contributed, payments, first_seen, last_seen)| {
+                    PoolContribution {
+                        deposit_address,
+                        user,
+                        contributed: contributed.max(0) as u64,
+                        payments: payments.max(0) as u64,
+                        first_seen,
+                        last_seen,
+                    }
+                },
+            )
+            .collect())
+    }
+
+    // ─── Operator settings (the admin-settable runtime overrides) ───────────────
+    //
+    // Stored in the EXISTING `kv` table under a `setting:` prefix — the same table
+    // the faucet claim-times already use. A separate table would buy nothing: these
+    // are a handful of single-valued operator overrides, not a domain.
+    //
+    // The CONTRACT with the environment: a row here OVERRIDES the corresponding env
+    // var, and an ABSENT row means "follow the env". So `DREGG_NARRATOR` &co stay
+    // the bootstrap default an operator gets on a fresh box, and an admin change is
+    // the durable override. Clearing the row restores the env default exactly.
+
+    /// Read an operator setting. `None` = no row ⇒ the caller follows its env default.
+    pub async fn get_setting(&self, key: &str) -> Result<Option<String>, sqlx::Error> {
+        let row: Option<(String,)> = sqlx::query_as("SELECT value FROM kv WHERE key = ?")
+            .bind(format!("setting:{key}"))
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(|(v,)| v))
+    }
+
+    /// Write an operator setting (last write wins). Persisted, so it survives restart.
+    pub async fn set_setting(&self, key: &str, value: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)")
+            .bind(format!("setting:{key}"))
+            .bind(value)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Delete an operator setting — restores the environment default. Deleting an
+    /// absent setting is a no-op (`false`).
+    pub async fn clear_setting(&self, key: &str) -> Result<bool, sqlx::Error> {
+        let done = sqlx::query("DELETE FROM kv WHERE key = ?")
+            .bind(format!("setting:{key}"))
+            .execute(&self.pool)
+            .await?;
+        Ok(done.rows_affected() > 0)
     }
 
     // ─── Faucet rate limiting ───────────────────────────────────────────────────

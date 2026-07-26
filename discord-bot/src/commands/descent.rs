@@ -2839,8 +2839,7 @@ async fn narrate_room_gated(
     if state.pay.can_run_paid(&discord) {
         if let Some(paid) = state
             .pay
-            .paid
-            .clone()
+            .paid()
             .filter(|paid| !paid.provider().requires_explicit_game_opt_in())
         {
             let Ok(hold) = state.pay.hold_paid_credit(&discord) else {

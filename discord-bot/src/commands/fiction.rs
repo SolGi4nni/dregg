@@ -974,7 +974,7 @@ async fn handle_chutes_turn(ctx: &Context, command: &CommandInteraction, state: 
         })
         .and_then(|option| option.value.as_bool())
         .unwrap_or(false);
-    let Some(paid) = state.pay.paid.clone() else {
+    let Some(paid) = state.pay.paid() else {
         respond(
             ctx,
             command,
@@ -2511,7 +2511,7 @@ async fn narrate_room_gated(
     if !state.pay.can_run_paid(&discord) {
         return narrate_room(room_name, room_desc, continuity).await;
     }
-    let Some(paid) = state.pay.paid.clone() else {
+    let Some(paid) = state.pay.paid() else {
         return narrate_room(room_name, room_desc, continuity).await;
     };
     // Chutes may select and narrate a real typed turn only through the explicit

@@ -13,6 +13,11 @@
 // commit, then EDIT the deferred response after narration — a slow narrator can no longer
 // present a committed permadeath move as "This interaction failed" (backlog Tier-1 #1).
 pub mod ack;
+// `/dregg admin …` — the OPERATOR surface (narrator selection, deployment posture, treasury
+// refuel signal, run-credit inspect/grant). Folded into `/dregg` as a subcommand GROUP, NOT a
+// 14th top-level: the global slash surface stays exactly 13. Every subcommand is gated on
+// `Config::is_admin`, structurally (see `admin::plan`).
+pub mod admin;
 // `/channel` — claim a semi-private DreggNet Cloud channel to drive your Hermes
 // (`crate::channels` + `crate::hermes_channel`).
 pub mod channel;

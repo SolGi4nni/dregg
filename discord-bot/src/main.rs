@@ -435,7 +435,7 @@ impl EventHandler for Handler {
                 // The 13-command surface: each arm opens a menu or summons a
                 // world; the folded old commands re-nest through
                 // `commands::menus` onto their UNCHANGED handlers.
-                "dregg" => commands::dashboard::handle(&ctx, &command, &self.state).await,
+                "dregg" => commands::menus::handle_dregg(&ctx, &command, &self.state).await,
                 "descent" => commands::descent::handle(&ctx, &command, &self.state).await,
                 "play" => commands::menus::handle_play(&ctx, &command, &self.state).await,
                 "adventure" => commands::menus::handle_adventure(&ctx, &command, &self.state).await,
@@ -962,8 +962,51 @@ async fn main() {
         character_store::SqliteCharacterStore::new(db.clone(), tokio::runtime::Handle::current());
     info!("Character store ready (persistent leveling characters over sqlite; survive restart)");
 
+    // THE PERSISTED NARRATOR SETTING. The pay constructors above bootstrapped from the
+    // environment (they are sync and the setting lives in the async sqlite store); a stored
+    // admin override now REPLACES that. Stored wins outright — including over an environment
+    // that still carries credentials for some other backend — and a stored setting that cannot
+    // be built leaves NO narrator rather than the environment's, because "the stored setting
+    // failed" must never be a route onto a weaker (unattested) provider.
+    match pay::load_narrator_setting(&pay.db).await {
+        Ok(None) => {}
+        Ok(Some(setting)) => {
+            let for_build = setting.clone();
+            let built = tokio::task::spawn_blocking(move || {
+                pay::try_build_narrator(Some(&for_build), &pay::BackendBuilders::from_env())
+            })
+            .await
+            .unwrap_or_else(|e| Err(format!("narrator build panicked: {e}")));
+            match built {
+                Ok(narrator) => {
+                    info!(
+                        "Narrator: applied the stored admin setting (backend={}, model={})",
+                        setting.backend.as_deref().unwrap_or("(env)"),
+                        setting.model.as_deref().unwrap_or("(env)"),
+                    );
+                    pay.set_paid(narrator);
+                }
+                Err(reason) => {
+                    error!(
+                        "Narrator: the STORED setting could not be built ({reason}). Paid runs \
+                         use the FREE TIER — the environment default was deliberately NOT \
+                         substituted, because a failed stored setting must not silently land on \
+                         a different (possibly unattested) backend. Fix it, or run \
+                         `/dregg admin narrator reset:true`."
+                    );
+                    pay.set_paid(None);
+                }
+            }
+        }
+        Err(reason) => error!(
+            "Narrator: {reason}. Continuing on the environment default; \
+             `/dregg admin narrator` will overwrite the bad row."
+        ),
+    }
+
+    let narrator_status = pay.narrator_status();
     info!(
-        "Pay backend ready: network={:?} price_per_run={} custody={} paid_narrator={}",
+        "Pay backend ready: network={:?} price_per_run={} custody={} watcher={} narrator={}{}",
         pay.network(),
         pay.price_per_run(),
         if pay.deposits.is_watch_only() {
@@ -971,10 +1014,20 @@ async fn main() {
         } else {
             "custodial/devnet (seed in-process)"
         },
-        if pay.paid.is_some() {
-            "bedrock"
+        // The watcher, said out loud at boot: a mock here means `/buy-credits` issues deposit
+        // addresses that NOTHING polls.
+        pay.watcher_kind,
+        // Previously this printed the literal "bedrock" whenever ANY narrator was configured —
+        // so a box running the attested Chutes TDX backend logged "bedrock" at every boot. Report
+        // the provider that is actually wired, and whether it attests.
+        match &narrator_status.model {
+            Some(model) => format!("{}:{model}", narrator_status.backend_key),
+            None => "free-tier-only".to_string(),
+        },
+        if narrator_status.attested {
+            " (ATTESTED enclave)"
         } else {
-            "free-tier-only"
+            ""
         },
     );
 

@@ -194,6 +194,24 @@ impl PaidNarratorProvider {
         matches!(self, Self::Chutes | Self::ChutesTee)
     }
 
+    /// The [`NARRATOR_BACKENDS`] key that selects this provider — the inverse of
+    /// [`selection_for_backend_key`], so a status surface names the backend in exactly the
+    /// vocabulary the admin command accepts rather than inventing a second one.
+    pub const fn backend_key(self) -> &'static str {
+        match self {
+            Self::Bedrock => "bedrock",
+            Self::Chutes => "chutes",
+            Self::ChutesTee => "chutes-tee",
+            Self::OpenAiCompatible => "openai",
+        }
+    }
+
+    /// Whether narrations from this provider carry a TEE attestation. Only the attested TDX
+    /// backend does; every other provider's [`PaidNarration::attestation`] is always `None`.
+    pub const fn is_attested(self) -> bool {
+        matches!(self, Self::ChutesTee)
+    }
+
     /// Chutes-FAMILY provenance — plain Chutes or the attested TDX backend. Both are Bittensor
     /// inference through Chutes; the attested one additionally proves which enclave served it,
     /// so every surface that admits the plain provider admits the attested one. Used by the
@@ -265,6 +283,19 @@ pub struct PaidNarrator {
     ledger_dir: PathBuf,
 }
 
+// The backend is a trait object and the registry is a price book — neither is `Debug` — so print
+// the two fields that identify a narrator in a log line or a test failure: WHICH provider and
+// WHICH model. Nothing here can carry a secret (the API key lives inside the backend).
+impl std::fmt::Debug for PaidNarrator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PaidNarrator")
+            .field("provider", &self.provider)
+            .field("model", &self.model)
+            .field("usd_per_run", &self.usd_per_run)
+            .finish_non_exhaustive()
+    }
+}
+
 impl PaidNarrator {
     /// Build a paid narrator. `model` must be priced in `registry` or every call fails closed with
     /// [`NarratorError::UnpricedModel`]. `ledger_dir` holds the ephemeral per-run budget files.
@@ -303,6 +334,30 @@ impl PaidNarrator {
     /// Trusted operator-selected provider for this backend.
     pub const fn provider(&self) -> PaidNarratorProvider {
         self.provider
+    }
+
+    /// The per-run USD ceiling this narrator reserves against.
+    pub const fn usd_per_run(&self) -> f64 {
+        self.usd_per_run
+    }
+
+    /// The per-run output-token ceiling (what the reservation charges at the output rate).
+    pub const fn max_tokens(&self) -> u32 {
+        self.max_tokens
+    }
+
+    /// The PINNED PRICE this narrator's model is metered at, **with its provenance**.
+    ///
+    /// `None` means the model is UNPRICED — [`metered_converse`] refuses every call fail-closed
+    /// ([`NarratorError::UnpricedModel`]), so a narrator in that state narrates nothing. Surfaced
+    /// so an operator can SEE the rate and, more importantly, its
+    /// [`dregg_narrator::PriceSource`]: a Chutes rate is necessarily an
+    /// `OperatorOverride` (nothing machine-verifies a Chutes catalog rate), which is trusted at
+    /// the operator's discretion and is NOT guaranteed to be an upper bound — set it below the
+    /// true cost and the per-run ceiling LEAKS. That is exactly the fact a status surface must
+    /// show rather than leave in a doc comment.
+    pub fn pricing(&self) -> Option<dregg_narrator::Pricing> {
+        self.registry.pricing_for(&self.model)
     }
 
     /// The operator's per-call ceiling in integer micro-USD for bounded, deterministic public
@@ -572,10 +627,27 @@ pub struct PayState {
     /// (watch-only — no key, no seed), a [`MockWatcher`] only on the explicit
     /// devnet/mock paths. A mainnet config never rides the mock.
     pub watcher: Arc<dyn Watcher + Send + Sync>,
-    /// The bot database (for the user→deposit-index map).
+    /// The honest label of the watcher actually selected at construction
+    /// ([`SelectedWatcher::kind`]). Recorded so an operator can SEE whether this process
+    /// is watching a real chain or a mock: with no `DREGG_PAY_*` env the bot builds a
+    /// devnet config on a [`MockWatcher`], and `/buy-credits` then hands out deposit
+    /// addresses that NOTHING watches. That fact previously lived only in one boot log
+    /// line. Read-only — nothing can change it after construction, so no admin
+    /// affordance can move this process onto a mock (the selection rule in
+    /// [`select_watcher`] remains the only thing that decides it).
+    pub watcher_kind: &'static str,
+    /// The bot database (for the user→deposit-index map and the pool attribution).
     pub db: Database,
-    /// The real-AI paid narrator, if a hosted backend is configured (else paid runs fall back free).
-    pub paid: Option<PaidNarrator>,
+    /// The runtime to fall back to when a SYNC method here (the `Watcher`-driven
+    /// [`PayState::poll_and_credit`]) must drive an async DB write to completion from
+    /// outside a runtime worker — the same sync↔async bridge [`SqliteCreditStore`] uses.
+    handle: tokio::runtime::Handle,
+    /// The real-AI paid narrator, if a hosted backend is configured (else paid runs fall back
+    /// free). **Swappable at runtime** ([`PayState::set_paid`]) so an admin can change the
+    /// narrator without a redeploy; read through [`PayState::paid`], which hands back a clone
+    /// (the narrator is cheap to clone — the backend is an `Arc`) so no lock is ever held across
+    /// the blocking provider call.
+    paid: std::sync::RwLock<Option<PaidNarrator>>,
     /// In-flight per-player credit reservations. A reservation is logical (the persisted debit
     /// happens only after a verified game receipt), so every provider/parser/executor failure can
     /// release it without a compensating database write.
@@ -639,6 +711,46 @@ pub enum PaidRunResult {
 }
 
 impl PayState {
+    /// Drive an async DB future to completion from a SYNC method — the same bridge
+    /// [`SqliteCreditStore::block`] uses (inside a multi-thread runtime worker,
+    /// `block_in_place`; outside any runtime, the stored handle).
+    fn block<F: std::future::Future>(&self, fut: F) -> F::Output {
+        match tokio::runtime::Handle::try_current() {
+            Ok(current) => tokio::task::block_in_place(move || current.block_on(fut)),
+            Err(_) => self.handle.block_on(fut),
+        }
+    }
+
+    /// The ACTIVE paid narrator, cloned out of the swap slot. `None` = no hosted backend, so
+    /// every run uses the free tier. Cloning (rather than lending a guard) keeps the lock off
+    /// the blocking provider call entirely.
+    pub fn paid(&self) -> Option<PaidNarrator> {
+        self.paid
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .cloned()
+    }
+
+    /// Whether a hosted narrator is currently active.
+    pub fn has_paid(&self) -> bool {
+        self.paid
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()
+    }
+
+    /// **Swap the active narrator.** The one mutation point, used by the admin surface after it
+    /// has already BUILT (and therefore validated) the replacement — so a change can never leave
+    /// the bot pointing at a backend that does not exist. Passing `None` disables paid narration
+    /// (every run drops to the free tier), which is a legitimate, explicit operator choice.
+    ///
+    /// This deliberately cannot touch the pay/watcher path: the narrator is who writes the prose,
+    /// not who watches the money.
+    pub fn set_paid(&self, narrator: Option<PaidNarrator>) {
+        *self.paid.write().unwrap_or_else(|e| e.into_inner()) = narrator;
+    }
+
     /// The caller's deterministic Solana deposit address (same user ⇒ same address).
     ///
     /// # Panics
@@ -750,7 +862,7 @@ impl PayState {
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .contains(discord_id);
-        self.paid.is_some() && !held && self.balance(discord_id) > 0
+        self.has_paid() && !held && self.balance(discord_id) > 0
     }
 
     /// Persist the user→deposit-index assignment (first assignment wins, so the address is stable),
@@ -800,6 +912,35 @@ impl PayState {
                 CreditOutcome::Credited { .. } | CreditOutcome::BelowOneRun { .. }
             ) {
                 self.treasury.record_payment(p.asset, p.amount);
+                // AND attribute it. The treasury knows the pile as one number; a swap vote
+                // weighs WHO paid it in. `dregg_pay::SwapPool` holds that attribution in
+                // memory only, so it does not survive a restart — and the quadratic weight
+                // that vote uses is sybil-FAVOURABLE (`√a + √b > √(a+b)`), with a defence
+                // that is explicitly social: someone notices a split stake and acts. That
+                // requires a record which outlives the process, so the attribution is
+                // persisted here, under the SAME newly-credited guard as the treasury
+                // credit — an attribution written on a looser gate would be an inflated
+                // stake, which is an inflated vote.
+                if matches!(p.asset, dregg_pay::Asset::Dregg) {
+                    let address = p.deposit_address.to_base58();
+                    let user = p.user.0.clone();
+                    let amount = p.amount;
+                    let db = self.db.clone();
+                    let now = now_secs();
+                    if let Err(e) = self.block(async move {
+                        db.pool_record_contribution(&address, &user, amount, now)
+                            .await
+                    }) {
+                        // The credit and the treasury already landed; losing the attribution
+                        // row must not fail the payment. Loud, because a gap here is a blind
+                        // spot in the only sybil detector there is.
+                        tracing::error!(
+                            error = %e,
+                            "pool attribution write FAILED for a credited $DREGG payment — the \
+                             contributor view will understate this stake"
+                        );
+                    }
+                }
             }
             outcomes.push(outcome);
         }
@@ -895,7 +1036,7 @@ impl PayState {
                 ));
             }
         };
-        let Some(paid) = &self.paid else {
+        let Some(paid) = self.paid() else {
             return PaidRunResult::PaidFailed(NarratorError::Backend(
                 "no hosted narrator backend configured (set AWS creds or DREGG_NARRATOR=chutes/openai/bedrock)"
                     .to_string(),
@@ -930,8 +1071,11 @@ impl PayState {
         let store = SqliteCreditStore::new(db.clone(), handle.clone());
         let ledger = CreditLedger::new(store, config.price_per_run.max(1));
         let watcher: Arc<dyn Watcher + Send + Sync> = Arc::new(MockWatcher::new(MockChain::new()));
+        // This constructor's honest name IS the mock — record it so a status surface
+        // reports exactly what it is rather than inferring.
+        let watcher_kind = MOCK_WATCHER_KIND;
         let treasury = Treasury::new(
-            SqliteTreasuryStore::new(db.clone(), handle),
+            SqliteTreasuryStore::new(db.clone(), handle.clone()),
             config.usdc_decimals,
         );
         let treasury_view = build_treasury_view(&config);
@@ -940,8 +1084,10 @@ impl PayState {
             deposits,
             ledger,
             watcher,
+            watcher_kind,
             db,
-            paid: None,
+            handle,
+            paid: std::sync::RwLock::new(None),
             credit_holds: Arc::new(Mutex::new(HashSet::new())),
             treasury,
             treasury_view,
@@ -998,6 +1144,7 @@ impl PayState {
             config.network,
             config.rpc_endpoint
         );
+        let watcher_kind = selected.kind();
         let watcher = selected.into_watcher();
         // ── CUSTODY SPLIT ─────────────────────────────────────────────────────
         // This constructor builds the SEED-BEARING (custodial) deposit source: it
@@ -1027,9 +1174,12 @@ impl PayState {
         let deposits = DepositSource::Custodial(HdDeposit::new(&config));
         let store = SqliteCreditStore::new(db.clone(), handle.clone());
         let ledger = CreditLedger::new(store, config.price_per_run.max(1));
-        let paid = build_paid_narrator();
+        // BOOTSTRAP from the environment only. The persisted admin setting is applied AFTER
+        // construction (`main.rs` → `apply_stored_narrator`), because these constructors are sync
+        // and the setting lives in the async sqlite store.
+        let paid = build_paid_narrator(None);
         let treasury = Treasury::new(
-            SqliteTreasuryStore::new(db.clone(), handle),
+            SqliteTreasuryStore::new(db.clone(), handle.clone()),
             config.usdc_decimals,
         );
         let treasury_view = build_treasury_view(&config);
@@ -1038,8 +1188,10 @@ impl PayState {
             deposits,
             ledger,
             watcher,
+            watcher_kind,
             db,
-            paid,
+            handle,
+            paid: std::sync::RwLock::new(paid),
             credit_holds: Arc::new(Mutex::new(HashSet::new())),
             treasury,
             treasury_view,
@@ -1087,6 +1239,7 @@ impl PayState {
             config.network,
             config.rpc_endpoint
         );
+        let watcher_kind = selected.kind();
         let watcher = selected.into_watcher();
         let book_path = std::env::var("DREGG_PAY_ADDRESS_BOOK").map_err(|_| {
             dregg_pay::ConfigError::MissingEnv("DREGG_PAY_ADDRESS_BOOK".to_string())
@@ -1103,9 +1256,12 @@ impl PayState {
         let deposits = DepositSource::WatchOnly(book);
         let store = SqliteCreditStore::new(db.clone(), handle.clone());
         let ledger = CreditLedger::new(store, config.price_per_run.max(1));
-        let paid = build_paid_narrator();
+        // BOOTSTRAP from the environment only. The persisted admin setting is applied AFTER
+        // construction (`main.rs` → `apply_stored_narrator`), because these constructors are sync
+        // and the setting lives in the async sqlite store.
+        let paid = build_paid_narrator(None);
         let treasury = Treasury::new(
-            SqliteTreasuryStore::new(db.clone(), handle),
+            SqliteTreasuryStore::new(db.clone(), handle.clone()),
             config.usdc_decimals,
         );
         let treasury_view = build_treasury_view(&config);
@@ -1114,8 +1270,10 @@ impl PayState {
             deposits,
             ledger,
             watcher,
+            watcher_kind,
             db,
-            paid,
+            handle,
+            paid: std::sync::RwLock::new(paid),
             credit_holds: Arc::new(Mutex::new(HashSet::new())),
             treasury,
             treasury_view,
@@ -1183,6 +1341,13 @@ impl std::fmt::Display for WatcherSelectError {
 
 impl std::error::Error for WatcherSelectError {}
 
+/// The honest label of the REAL Solana-RPC watcher. Named so [`PayState::watcher_kind`] and
+/// [`SelectedWatcher::kind`] cannot drift into two different words for the same fact.
+pub const REAL_WATCHER_KIND: &str = "solana-rpc (real, watch-only)";
+/// The honest label of the mock watcher — the one an operator must be able to SEE, because a
+/// mock on a live-looking deposit address means nothing is watching the money.
+pub const MOCK_WATCHER_KIND: &str = "mock (explicit devnet/mock)";
+
 /// The watcher [`select_watcher`] chose — kept concrete so callers (and tests) can
 /// see WHICH path was selected before erasing to `Arc<dyn Watcher>`.
 pub enum SelectedWatcher {
@@ -1203,8 +1368,8 @@ impl SelectedWatcher {
     /// The honest label surfaced in the boot log.
     pub fn kind(&self) -> &'static str {
         match self {
-            SelectedWatcher::RealSolana(_) => "solana-rpc (real, watch-only)",
-            SelectedWatcher::Mock(_) => "mock (explicit devnet/mock)",
+            SelectedWatcher::RealSolana(_) => REAL_WATCHER_KIND,
+            SelectedWatcher::Mock(_) => MOCK_WATCHER_KIND,
         }
     }
 
@@ -1495,11 +1660,107 @@ fn devnet_mock_config(bot_secret: &[u8; 32]) -> PayConfig {
     cfg
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// THE NARRATOR SETTING — chutes-tee is the product; everything else is a labelled
+// degradation, and the whole thing is a RUNTIME setting, not a boot-time env read.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The kv key (under `db`'s `setting:` prefix) the narrator setting is persisted at.
+pub const NARRATOR_SETTING_KEY: &str = "narrator";
+
+/// The backend keys the admin surface accepts, **in the order it offers them**, each with the
+/// honest one-line description a picker shows.
+///
+/// `chutes-tee` is FIRST and it is the intended path: the same Chutes/Bittensor inference, run
+/// inside a DCAP-verified Intel TDX enclave, with the request ML-KEM-768-encapsulated to a key
+/// bound into a quote this process verified against a pinned measurement registry. Every other
+/// entry is a **labelled degradation** — the word UNATTESTED is in its description, and
+/// [`narrator_backend_is_attested`] is what code asks so the distinction is never a string
+/// comparison scattered across surfaces.
+pub const NARRATOR_BACKENDS: &[(&str, &str)] = &[
+    (
+        "chutes-tee",
+        "Chutes/Bittensor inside a DCAP-verified Intel TDX enclave — ATTESTED (the intended path)",
+    ),
+    (
+        "chutes",
+        "Chutes/Bittensor over plain HTTPS — UNATTESTED (a deliberate downgrade)",
+    ),
+    (
+        "openai",
+        "any other OpenAI-compatible endpoint — UNATTESTED (a deliberate downgrade)",
+    ),
+    (
+        "bedrock",
+        "AWS Bedrock — UNATTESTED (a deliberate downgrade)",
+    ),
+    (
+        "none",
+        "no hosted narrator at all — every run uses the free tier",
+    ),
+];
+
+/// Whether a backend key names the ATTESTED path. The single definition of that question.
+pub fn narrator_backend_is_attested(key: &str) -> bool {
+    key == "chutes-tee"
+}
+
+/// Whether a backend key is one this bot knows how to build.
+pub fn narrator_backend_is_known(key: &str) -> bool {
+    NARRATOR_BACKENDS.iter().any(|(k, _)| *k == key)
+}
+
+/// **The persisted, admin-settable narrator setting.** Serialized as JSON into one `kv` row.
+///
+/// Every field is an OVERRIDE of the corresponding environment variable, and `None` means
+/// "follow the environment". So `DREGG_NARRATOR` / `DREGG_NARRATOR_MODEL` /
+/// `DREGG_NARRATOR_PRICE_*` remain the bootstrap defaults an operator gets on a fresh box, and
+/// an admin change is a durable override that survives restart. Clearing the row restores the
+/// environment exactly — there is no third, hidden state.
+///
+/// `set_by` / `set_at` are on the row itself so "who changed the narrator, and when" survives
+/// the process that logged it.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct NarratorSetting {
+    /// The backend key (see [`NARRATOR_BACKENDS`]). `None` = follow `DREGG_NARRATOR`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
+    /// The model id. `None` = follow `DREGG_NARRATOR_MODEL`. On the attested path this must be a
+    /// `-TEE` chute; the plain id is a DIFFERENT, unattested chute.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// USD per 1,000 input tokens for `model`. `None` = follow `DREGG_NARRATOR_PRICE_INPUT_PER_1K`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price_input_per_1k: Option<f64>,
+    /// USD per 1,000 output tokens for `model`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price_output_per_1k: Option<f64>,
+    /// The Discord user id that set this, for the audit trail.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub set_by: Option<u64>,
+    /// Unix seconds this was set at.
+    #[serde(default)]
+    pub set_at: i64,
+}
+
+impl NarratorSetting {
+    /// Parse a stored row. A malformed row is `None` — the caller then follows the environment
+    /// and logs, rather than guessing at half-decoded settings.
+    pub fn parse(raw: &str) -> Option<NarratorSetting> {
+        serde_json::from_str(raw).ok()
+    }
+
+    /// Serialize for storage.
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).unwrap_or_else(|_| "{}".to_string())
+    }
+}
+
 /// WHICH hosted backend the operator environment names — a PURE function of that environment
 /// (see [`select_narrator`]), separated from actually building it so the fail-closed dispatch is
 /// testable without mutating the process environment or touching a network.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum NarratorSelection {
+pub enum NarratorSelection {
     /// `DREGG_NARRATOR=chutes-tee` — the ATTESTED TDX backend, and nothing else. This selection
     /// is terminal: if the attested backend cannot be built, the answer is NO narrator (the run
     /// falls to the free tier). It never degrades to an unattested endpoint, whatever else the
@@ -1525,7 +1786,7 @@ enum NarratorSelection {
 /// `DREGG_NARRATOR_ENDPOINT` and AWS credentials (the ordinary shape of a box that used to run
 /// an unattested narrator) must not be able to produce an unattested backend once the operator
 /// asked for the attested one.
-fn select_narrator(var: impl Fn(&str) -> Option<String>) -> NarratorSelection {
+pub fn select_narrator(var: impl Fn(&str) -> Option<String>) -> NarratorSelection {
     match var("DREGG_NARRATOR").as_deref() {
         Some("chutes-tee") => NarratorSelection::ChutesTee,
         Some("chutes") => NarratorSelection::OpenAi(PaidNarratorProvider::Chutes),
@@ -1547,29 +1808,178 @@ fn select_narrator(var: impl Fn(&str) -> Option<String>) -> NarratorSelection {
     }
 }
 
-/// Wire the paid narrator to a hosted backend when one appears configured, using a per-run USD
-/// budget. The provider follows `DREGG_NARRATOR` — see [`select_narrator`]. Returns `None` when no
-/// hosted backend is available (paid runs then fall back to the free tier).
+/// The [`NarratorSelection`] a backend KEY names. Total over [`NARRATOR_BACKENDS`]; `None` for
+/// anything else, which callers must treat as a refusal rather than a fallback.
+pub fn selection_for_backend_key(key: &str) -> Option<NarratorSelection> {
+    match key {
+        "chutes-tee" => Some(NarratorSelection::ChutesTee),
+        "chutes" => Some(NarratorSelection::OpenAi(PaidNarratorProvider::Chutes)),
+        "openai" => Some(NarratorSelection::OpenAi(
+            PaidNarratorProvider::OpenAiCompatible,
+        )),
+        "bedrock" => Some(NarratorSelection::Bedrock),
+        "none" => Some(NarratorSelection::None),
+        _ => None,
+    }
+}
+
+/// **Resolve the narrator selection: a stored admin setting WINS over the environment.**
 ///
-/// NOTE on the OpenAI/Chutes paths (attested or not): the model's price must be pinned via
-/// `DREGG_NARRATOR_PRICE_INPUT_PER_1K` / `_OUTPUT_PER_1K` (a Chutes catalog rate), or the metered
-/// layer refuses the (unpriced) model and the run falls back to the free tier — fail-closed, never
-/// an uncapped spend. A `-TEE` chute is priced per token like any other chute, so it needs that
-/// operator override too.
-fn build_paid_narrator() -> Option<PaidNarrator> {
-    let selection = select_narrator(|key| std::env::var(key).ok());
-    paid_narrator_from(selection, &BackendBuilders::from_env())
+/// Pure in both inputs, so the precedence rule is testable without a database or an env mutation.
+///
+/// * `stored` present and KNOWN ⇒ that backend, full stop. The environment is not consulted, not
+///   even for sniffing — an admin who selected a backend must not be overridden by whatever
+///   credentials happen to still be sitting in the unit file.
+/// * `stored` present and UNKNOWN (only reachable by hand-editing the database — the admin
+///   surface validates before it writes) ⇒ [`NarratorSelection::None`], i.e. the free tier. It
+///   deliberately does NOT fall through to the environment sniff: sniffing could resolve to an
+///   UNATTESTED backend, and "the stored setting is corrupt" must never be a route onto a weaker
+///   provider. No narration is the safe answer; the caller logs the reason.
+/// * `stored` absent ⇒ [`select_narrator`] over the environment (the bootstrap default).
+pub fn narrator_selection(
+    stored: Option<&str>,
+    var: impl Fn(&str) -> Option<String>,
+) -> NarratorSelection {
+    match stored {
+        Some(key) => selection_for_backend_key(key.trim()).unwrap_or(NarratorSelection::None),
+        None => select_narrator(var),
+    }
+}
+
+/// Wire the paid narrator to a hosted backend when one appears configured, using a per-run USD
+/// budget. The selection follows the persisted admin `setting` when present, else `DREGG_NARRATOR`
+/// — see [`narrator_selection`]. Returns `None` when no hosted backend is available (paid runs
+/// then fall back to the free tier).
+///
+/// NOTE on the OpenAI/Chutes paths (attested or not): the model's price must be pinned — via the
+/// setting's `price_*_per_1k` or `DREGG_NARRATOR_PRICE_INPUT_PER_1K` / `_OUTPUT_PER_1K` (a Chutes
+/// catalog rate) — or the metered layer refuses the (unpriced) model and the run falls back to the
+/// free tier: fail-closed, never an uncapped spend. A `-TEE` chute is priced per token like any
+/// other chute, so it needs that override too.
+pub fn build_paid_narrator(setting: Option<&NarratorSetting>) -> Option<PaidNarrator> {
+    match try_build_narrator(setting, &BackendBuilders::from_env()) {
+        Ok(narrator) => narrator,
+        Err(reason) => {
+            tracing::error!(
+                %reason,
+                "the selected narrator could not be built — paid runs use the FREE TIER until \
+                 this is fixed. Nothing was silently substituted."
+            );
+            None
+        }
+    }
+}
+
+/// **Build the narrator a setting names, or say why not.** The fallible form behind
+/// [`build_paid_narrator`], separated so the admin surface can report the exact reason a
+/// requested change was REFUSED instead of showing an anonymous "nothing happened".
+///
+/// The two properties that matter:
+///
+/// * **No silent substitution.** Every arm either produces the backend that was ASKED FOR or
+///   returns `Err`. The attested arm in particular never consults the unattested constructors
+///   (see [`paid_narrator_from`]); this wrapper only adds the *reason*.
+/// * **No unpriced narrator.** The model must be priced after the setting's overrides are
+///   applied, or this returns `Err` naming the missing rate. That check happens HERE, at
+///   build/selection time, rather than being discovered at the first player's turn — a narrator
+///   whose model has no pinned price refuses every call
+///   ([`NarratorError::UnpricedModel`]), so accepting one would be accepting a narrator that
+///   cannot narrate.
+pub fn try_build_narrator(
+    setting: Option<&NarratorSetting>,
+    builders: &BackendBuilders<'_>,
+) -> Result<Option<PaidNarrator>, String> {
+    let stored_backend = setting.and_then(|s| s.backend.as_deref());
+    if let Some(key) = stored_backend {
+        if !narrator_backend_is_known(key.trim()) {
+            return Err(format!(
+                "the stored narrator backend {key:?} is not one this build knows \
+                 ({}) — refusing to guess, and refusing to fall back to the environment (that \
+                 could land on an UNATTESTED backend). Set it again with a known key.",
+                NARRATOR_BACKENDS
+                    .iter()
+                    .map(|(k, _)| *k)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+    }
+    let selection = narrator_selection(stored_backend, |key| std::env::var(key).ok());
+
+    // Departing from the attested path is a real reduction in what the product claims, so it is
+    // LOUD — at build time, every time, not once in a comment.
+    if !matches!(
+        selection,
+        NarratorSelection::ChutesTee | NarratorSelection::None
+    ) {
+        tracing::warn!(
+            ?selection,
+            "narrator: running an UNATTESTED backend. chutes-tee (Chutes/Bittensor inside a \
+             DCAP-verified TDX enclave) is the intended path; this one carries no enclave \
+             attestation, so no narration produced on it can claim one."
+        );
+    }
+
+    let Some((backend, default_model, provider)) = build_backend_for(selection, builders)? else {
+        return Ok(None);
+    };
+
+    // The model: the setting's override, else whatever the backend constructor resolved from the
+    // environment.
+    let model = setting
+        .and_then(|s| s.model.clone())
+        .map(|m| m.trim().to_string())
+        .filter(|m| !m.is_empty())
+        .unwrap_or(default_model);
+
+    // The price: `ModelRegistry::builtin()` has already applied any `DREGG_NARRATOR_PRICE_*` env
+    // pin to `DREGG_NARRATOR_MODEL`; the setting's rates then pin THIS model. A model that is
+    // still unpriced after both is refused here rather than at the first player's turn.
+    let mut registry = ModelRegistry::builtin();
+    let (price_in, price_out) = setting
+        .map(|s| (s.price_input_per_1k, s.price_output_per_1k))
+        .unwrap_or((None, None));
+    registry.apply_price_override(&model, price_in, price_out);
+    if registry.pricing_for(&model).is_none() {
+        return Err(format!(
+            "model `{model}` has NO pinned price, so the metered layer would refuse every call \
+             (a budget cannot cap a cost we do not know). Supply BOTH a per-1k input and output \
+             rate for it — half a price pins nothing."
+        ));
+    }
+
+    Ok(Some(
+        PaidNarrator::new(
+            backend,
+            registry,
+            model,
+            narrator_usd_per_run(),
+            run_max_tokens(),
+            run_ledger_dir(),
+        )
+        .with_provider(provider),
+    ))
+}
+
+/// The per-run USD ceiling (`DREGG_NARRATOR_USD_PER_RUN`, default `0.05`). A non-finite or
+/// non-positive value falls back to the default rather than uncapping anything.
+pub fn narrator_usd_per_run() -> f64 {
+    std::env::var("DREGG_NARRATOR_USD_PER_RUN")
+        .ok()
+        .and_then(|v| v.trim().parse::<f64>().ok())
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .unwrap_or(0.05)
 }
 
 /// A hosted backend + the model id it serves.
-type PaidBackend = (Arc<dyn ConverseBackend + Send + Sync>, String);
+pub type PaidBackend = (Arc<dyn ConverseBackend + Send + Sync>, String);
 
 /// The three hosted-backend constructors, INJECTABLE on purpose: a test hands in an attested
 /// builder that refuses together with unattested builders that would happily succeed, and asserts
 /// that nothing unattested comes out. Without that seam "it does not fall back" is only readable,
 /// never falsifiable — the unattested constructors would simply fail for want of configuration in
 /// the test process, and a real fallback would look identical to none.
-struct BackendBuilders<'a> {
+pub struct BackendBuilders<'a> {
     /// The ATTESTED TDX backend. Fallible with a reason (never a silent `None`).
     tee: &'a dyn Fn() -> Result<PaidBackend, String>,
     /// The plain OpenAI-compatible endpoint (Chutes / any operator endpoint). UNATTESTED.
@@ -1580,7 +1990,7 @@ struct BackendBuilders<'a> {
 
 impl BackendBuilders<'static> {
     /// The production builders, each reading the operator environment.
-    fn from_env() -> BackendBuilders<'static> {
+    pub fn from_env() -> BackendBuilders<'static> {
         static TEE: fn() -> Result<PaidBackend, String> = chutes_tee_paid_backend;
         static OPENAI: fn() -> Option<PaidBackend> = openai_paid_backend;
         static BEDROCK: fn() -> Option<PaidBackend> = bedrock_paid_backend;
@@ -1602,46 +2012,77 @@ fn paid_narrator_from(
     selection: NarratorSelection,
     builders: &BackendBuilders<'_>,
 ) -> Option<PaidNarrator> {
-    let (backend, model, provider) = match selection {
-        NarratorSelection::ChutesTee => match (builders.tee)() {
-            Ok((backend, model)) => (backend, model, PaidNarratorProvider::ChutesTee),
-            Err(error) => {
-                tracing::error!(
-                    %error,
-                    "DREGG_NARRATOR=chutes-tee: the ATTESTED narrator could not be built. \
-                     Refusing to narrate rather than falling back to an unattested endpoint — \
-                     paid runs use the free tier until the attestation configuration is fixed."
-                );
-                return None;
-            }
-        },
-        NarratorSelection::OpenAi(provider) => {
-            let (backend, model) = (builders.openai)()?;
-            (backend, model, provider)
+    let (backend, model, provider) = match build_backend_for(selection, builders) {
+        Ok(Some(parts)) => parts,
+        Ok(None) => return None,
+        Err(error) => {
+            tracing::error!(
+                %error,
+                "the selected narrator backend could not be built; NOTHING was substituted for it"
+            );
+            return None;
         }
-        NarratorSelection::Bedrock => {
-            let (backend, model) = (builders.bedrock)()?;
-            (backend, model, PaidNarratorProvider::Bedrock)
-        }
-        NarratorSelection::None => return None,
     };
-
-    let usd_per_run = std::env::var("DREGG_NARRATOR_USD_PER_RUN")
-        .ok()
-        .and_then(|v| v.trim().parse::<f64>().ok())
-        .filter(|v| v.is_finite() && *v > 0.0)
-        .unwrap_or(0.05);
     Some(
         PaidNarrator::new(
             backend,
             ModelRegistry::builtin(),
             model,
-            usd_per_run,
+            narrator_usd_per_run(),
             run_max_tokens(),
             run_ledger_dir(),
         )
         .with_provider(provider),
     )
+}
+
+/// Construct the BACKEND a selection names — the fail-closed dispatch itself, with the reason on
+/// the `Err` arm. `Ok(None)` is only [`NarratorSelection::None`]: the explicit "no hosted
+/// narrator" choice.
+///
+/// **The attested arm never consults `builders.openai` / `builders.bedrock`.** A missing key, a
+/// missing `-TEE` model id, an unreachable measurement registry or a refused attestation all mean
+/// the operator gets NO narration rather than UNATTESTED narration — proved by
+/// `attested_narrator_never_falls_back_to_an_unattested_backend`, which wires the unattested
+/// constructors to SUCCEED and asserts they are never even called.
+fn build_backend_for(
+    selection: NarratorSelection,
+    builders: &BackendBuilders<'_>,
+) -> Result<
+    Option<(
+        Arc<dyn ConverseBackend + Send + Sync>,
+        String,
+        PaidNarratorProvider,
+    )>,
+    String,
+> {
+    match selection {
+        NarratorSelection::ChutesTee => match (builders.tee)() {
+            Ok((backend, model)) => Ok(Some((backend, model, PaidNarratorProvider::ChutesTee))),
+            Err(error) => Err(format!(
+                "the ATTESTED narrator (chutes-tee) could not be built: {error}. Refusing to \
+                 narrate rather than falling back to an unattested endpoint — paid runs use the \
+                 free tier until the attestation configuration is fixed."
+            )),
+        },
+        NarratorSelection::OpenAi(provider) => match (builders.openai)() {
+            Some((backend, model)) => Ok(Some((backend, model, provider))),
+            None => Err(
+                "the OpenAI-compatible narrator is not configured (needs DREGG_NARRATOR_ENDPOINT \
+                 and DREGG_NARRATOR_MODEL)"
+                    .to_string(),
+            ),
+        },
+        NarratorSelection::Bedrock => match (builders.bedrock)() {
+            Some((backend, model)) => Ok(Some((backend, model, PaidNarratorProvider::Bedrock))),
+            None => Err(
+                "the Bedrock narrator is not configured (needs AWS credentials on the standard \
+                 credential chain)"
+                    .to_string(),
+            ),
+        },
+        NarratorSelection::None => Ok(None),
+    }
 }
 
 /// Classify only the exact Chutes DNS zone. A lookalike host such as
@@ -1702,6 +2143,70 @@ fn bedrock_paid_backend() -> Option<(Arc<dyn ConverseBackend + Send + Sync>, Str
         .filter(|m| !m.trim().is_empty())
         .unwrap_or_else(|| DEFAULT_MODEL.to_string());
     Some((Arc::new(client), model))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The narrator STATUS read — what the operator surface reports.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A read-only description of the ACTIVE narrator. Every field comes from the live
+/// [`PaidNarrator`], never from configuration that may not have taken effect — the point of the
+/// surface is to answer "what is ACTUALLY running", which is a different question from "what does
+/// the env say".
+#[derive(Clone, Debug, PartialEq)]
+pub struct NarratorStatus {
+    /// The backend key ([`NARRATOR_BACKENDS`]), or `"none"` when paid narration is off.
+    pub backend_key: &'static str,
+    /// Whether this backend attests its enclave. `false` for `"none"` and every plain provider.
+    pub attested: bool,
+    /// The model id, when a narrator is active.
+    pub model: Option<String>,
+    /// The per-run USD ceiling.
+    pub usd_per_run: Option<f64>,
+    /// The per-run output-token ceiling.
+    pub max_tokens: Option<u32>,
+    /// `(input_per_1k, output_per_1k, price_source_tag)`. `None` = the model is UNPRICED, so the
+    /// metered layer refuses every call and this narrator narrates NOTHING.
+    pub price: Option<(f64, f64, &'static str)>,
+}
+
+impl PayState {
+    /// Describe the ACTIVE narrator — the honest read behind the admin status surface.
+    pub fn narrator_status(&self) -> NarratorStatus {
+        match self.paid() {
+            None => NarratorStatus {
+                backend_key: "none",
+                attested: false,
+                model: None,
+                usd_per_run: None,
+                max_tokens: None,
+                price: None,
+            },
+            Some(paid) => NarratorStatus {
+                backend_key: paid.provider().backend_key(),
+                attested: paid.provider().is_attested(),
+                model: Some(paid.model().to_string()),
+                usd_per_run: Some(paid.usd_per_run()),
+                max_tokens: Some(paid.max_tokens()),
+                price: paid
+                    .pricing()
+                    .map(|p| (p.input_per_1k, p.output_per_1k, p.source.tag())),
+            },
+        }
+    }
+}
+
+/// Read the persisted narrator setting. `Ok(None)` = no override (follow the environment). A row
+/// that does not parse is reported as `Err` rather than silently ignored — a corrupt setting is a
+/// fact an operator needs, not something to paper over.
+pub async fn load_narrator_setting(db: &Database) -> Result<Option<NarratorSetting>, String> {
+    match db.get_setting(NARRATOR_SETTING_KEY).await {
+        Ok(None) => Ok(None),
+        Ok(Some(raw)) => NarratorSetting::parse(&raw).map(Some).ok_or_else(|| {
+            format!("the stored narrator setting is not valid JSON ({raw:?}); it was IGNORED")
+        }),
+        Err(e) => Err(format!("could not read the stored narrator setting: {e}")),
+    }
 }
 
 /// The per-run narration output ceiling (also what the reservation charges at the output rate).
@@ -2165,6 +2670,211 @@ mod tests {
         );
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // THE RUNTIME NARRATOR SETTING — a stored admin choice OVERRIDES the
+    // environment, and a corrupt one falls to the FREE TIER rather than sniffing
+    // its way onto an unattested backend. All pure: no env mutation, no network.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// The precedence rule, in the environment that makes it matter: the box still carries an
+    /// unattested Chutes endpoint, its key, a plain model id AND AWS credentials — every
+    /// ingredient the sniffing path needs. A stored `chutes-tee` must win outright, and a stored
+    /// `bedrock` must win over the endpoint the sniffer would otherwise have preferred.
+    #[test]
+    fn a_stored_narrator_setting_overrides_the_environment() {
+        let loaded_box = |key: &str| match key {
+            "DREGG_NARRATOR" => Some("chutes".to_string()),
+            "DREGG_NARRATOR_ENDPOINT" => Some("https://llm.chutes.ai/v1".to_string()),
+            "DREGG_NARRATOR_MODEL" => Some("deepseek-ai/DeepSeek-V3-0324".to_string()),
+            "AWS_ACCESS_KEY_ID" => Some("AKIAEXAMPLE".to_string()),
+            _ => None,
+        };
+        // No stored setting ⇒ the environment decides (unchanged behaviour).
+        assert_eq!(
+            narrator_selection(None, loaded_box),
+            NarratorSelection::OpenAi(PaidNarratorProvider::Chutes)
+        );
+        // A stored setting decides instead — including UPGRADING to the attested path over an
+        // environment that says plain `chutes`.
+        assert_eq!(
+            narrator_selection(Some("chutes-tee"), loaded_box),
+            NarratorSelection::ChutesTee
+        );
+        assert_eq!(
+            narrator_selection(Some("bedrock"), loaded_box),
+            NarratorSelection::Bedrock
+        );
+        assert_eq!(
+            narrator_selection(Some("none"), loaded_box),
+            NarratorSelection::None,
+            "an admin can turn paid narration OFF even on a fully-configured box"
+        );
+        assert_eq!(
+            narrator_selection(Some("  chutes-tee  "), loaded_box),
+            NarratorSelection::ChutesTee,
+            "the stored key is trimmed"
+        );
+    }
+
+    /// **A corrupt stored setting must not become a downgrade.** The only way to get an unknown
+    /// key into the row is to hand-edit the database (the admin surface validates first), and the
+    /// tempting recovery — "fall back to the environment" — is exactly wrong here: this box's
+    /// environment resolves to an UNATTESTED backend, so falling back would silently move the bot
+    /// off attestation on account of a bad row. The free tier is the safe answer.
+    #[test]
+    fn an_unknown_stored_backend_falls_to_the_free_tier_not_to_the_environment() {
+        let unattested_env = |key: &str| match key {
+            "DREGG_NARRATOR_ENDPOINT" => Some("https://llm.chutes.ai/v1".to_string()),
+            "AWS_ACCESS_KEY_ID" => Some("AKIAEXAMPLE".to_string()),
+            _ => None,
+        };
+        assert_eq!(
+            narrator_selection(None, unattested_env),
+            NarratorSelection::OpenAi(PaidNarratorProvider::Chutes),
+            "the environment alone WOULD produce an unattested backend"
+        );
+        assert_eq!(
+            narrator_selection(Some("chutes-teee"), unattested_env),
+            NarratorSelection::None,
+            "…but a corrupt stored key must not be a route onto it"
+        );
+        assert_eq!(
+            narrator_selection(Some(""), unattested_env),
+            NarratorSelection::None
+        );
+    }
+
+    /// A build for an UNKNOWN stored backend is REFUSED with a reason (and never reaches a
+    /// constructor), so the admin surface can say what is wrong instead of showing a silent
+    /// "no narrator".
+    #[test]
+    fn an_unknown_stored_backend_is_refused_with_a_reason() {
+        let never_openai = || -> Option<PaidBackend> { panic!("a constructor was consulted") };
+        let never_tee = || -> Result<PaidBackend, String> { panic!("a constructor was consulted") };
+        let builders = BackendBuilders {
+            tee: &never_tee,
+            openai: &never_openai,
+            bedrock: &never_openai,
+        };
+        let setting = NarratorSetting {
+            backend: Some("chutes-teee".to_string()),
+            ..NarratorSetting::default()
+        };
+        let err = try_build_narrator(Some(&setting), &builders)
+            .expect_err("an unknown backend key must be refused");
+        assert!(err.contains("chutes-teee"), "{err}");
+        assert!(
+            err.contains("chutes-tee"),
+            "the reason lists the real keys: {err}"
+        );
+    }
+
+    /// **A narrator whose model has no pinned price is refused AT THE SWITCH**, not discovered by
+    /// the first player whose turn is silently dropped to the free tier. The complement is the
+    /// tooth: supply both rates and the same switch is accepted.
+    #[test]
+    fn switching_to_an_unpriced_model_is_refused_at_build_time() {
+        let attested = || -> Result<PaidBackend, String> {
+            Ok(mock_paid_backend("prose", "ignored-by-the-setting"))
+        };
+        let never = || -> Option<PaidBackend> { panic!("unattested constructor consulted") };
+        let builders = BackendBuilders {
+            tee: &attested,
+            openai: &never,
+            bedrock: &never,
+        };
+
+        let unpriced = NarratorSetting {
+            backend: Some("chutes-tee".to_string()),
+            model: Some("Qwen/Qwen3-32B-TEE".to_string()),
+            ..NarratorSetting::default()
+        };
+        let err = try_build_narrator(Some(&unpriced), &builders)
+            .expect_err("an unpriced model must be refused before it is committed");
+        assert!(err.contains("Qwen/Qwen3-32B-TEE"), "{err}");
+        assert!(err.contains("NO pinned price"), "{err}");
+
+        // Half a price still pins nothing — the refusal must survive it.
+        let half = NarratorSetting {
+            price_input_per_1k: Some(0.0003),
+            ..unpriced.clone()
+        };
+        assert!(
+            try_build_narrator(Some(&half), &builders).is_err(),
+            "half a price pins nothing, so the model is still unpriced"
+        );
+
+        // BOTH rates: accepted, and the narrator carries the model + provider that were asked for.
+        let priced = NarratorSetting {
+            price_input_per_1k: Some(0.0003),
+            price_output_per_1k: Some(0.0009),
+            ..unpriced
+        };
+        let narrator = try_build_narrator(Some(&priced), &builders)
+            .expect("a priced attested model is accepted")
+            .expect("a narrator is produced");
+        assert_eq!(narrator.provider(), PaidNarratorProvider::ChutesTee);
+        assert_eq!(narrator.model(), "Qwen/Qwen3-32B-TEE");
+        let pricing = narrator.pricing().expect("the model is priced");
+        assert_eq!(pricing.input_per_1k, 0.0003);
+        assert_eq!(
+            pricing.source.tag(),
+            "operator-override",
+            "an operator-supplied Chutes rate is labelled honestly — it is NOT a verified rate \
+             and NOT a guaranteed upper bound"
+        );
+    }
+
+    /// The stored setting round-trips through the single kv row, and an unparseable row is
+    /// reported rather than silently read as "no setting".
+    #[test]
+    fn the_narrator_setting_round_trips_and_rejects_garbage() {
+        let setting = NarratorSetting {
+            backend: Some("chutes-tee".to_string()),
+            model: Some("Qwen/Qwen3-32B-TEE".to_string()),
+            price_input_per_1k: Some(0.0003),
+            price_output_per_1k: Some(0.0009),
+            set_by: Some(192258292544700426),
+            set_at: 1_753_500_000,
+        };
+        let json = setting.to_json();
+        assert_eq!(NarratorSetting::parse(&json), Some(setting));
+        assert_eq!(NarratorSetting::parse("not json"), None);
+        // An empty object is a VALID setting meaning "override nothing" — distinct from garbage.
+        assert_eq!(
+            NarratorSetting::parse("{}"),
+            Some(NarratorSetting::default())
+        );
+    }
+
+    /// The backend catalogue and the selection function agree in both directions, so the admin
+    /// picker can never offer a key that `selection_for_backend_key` refuses.
+    #[test]
+    fn every_offered_backend_key_resolves_to_a_selection() {
+        for (key, _) in NARRATOR_BACKENDS {
+            assert!(
+                selection_for_backend_key(key).is_some(),
+                "`{key}` is offered but does not resolve"
+            );
+            assert!(narrator_backend_is_known(key));
+        }
+        assert!(selection_for_backend_key("ollama").is_none());
+        assert!(!narrator_backend_is_known("ollama"));
+        // The provider→key inverse agrees with the key→selection map.
+        for provider in [
+            PaidNarratorProvider::ChutesTee,
+            PaidNarratorProvider::Chutes,
+            PaidNarratorProvider::OpenAiCompatible,
+            PaidNarratorProvider::Bedrock,
+        ] {
+            assert!(narrator_backend_is_known(provider.backend_key()));
+            assert_eq!(
+                provider.is_attested(),
+                narrator_backend_is_attested(provider.backend_key())
+            );
+        }
+    }
+
     fn test_bot_secret() -> [u8; 32] {
         [7u8; 32]
     }
@@ -2200,6 +2910,7 @@ mod tests {
         let ledger = CreditLedger::new(store, price_per_run);
         let watcher: Arc<dyn Watcher + Send + Sync> =
             Arc::new(MockWatcher::for_asset(chain, asset));
+        let watcher_kind = MOCK_WATCHER_KIND;
         let paid = PaidNarrator::new(
             backend,
             ModelRegistry::builtin(),
@@ -2209,7 +2920,7 @@ mod tests {
             ledger_dir,
         );
         let treasury = Treasury::new(
-            SqliteTreasuryStore::new(db.clone(), handle),
+            SqliteTreasuryStore::new(db.clone(), handle.clone()),
             config.usdc_decimals,
         );
         let treasury_view = build_treasury_view(&config);
@@ -2218,8 +2929,10 @@ mod tests {
             deposits,
             ledger,
             watcher,
+            watcher_kind,
             db,
-            paid: Some(paid),
+            handle,
+            paid: std::sync::RwLock::new(Some(paid)),
             credit_holds: Arc::new(Mutex::new(HashSet::new())),
             treasury,
             treasury_view,

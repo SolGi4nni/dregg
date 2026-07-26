@@ -180,6 +180,35 @@ fn menu_sub() -> Value {
     sub("menu", "Open this surface's button menu")
 }
 
+/// ⚑ **The Cheat Code subcommand** — `/play cheat code:<anything>`, the one FREE-TEXT option on the
+/// `/play` surface.
+///
+/// It exists because `open`'s `offering` option is a Discord CHOICE ENUM: paring the public shelf to
+/// three games left an unlisted key untypeable here and only here, while every other host still
+/// opens one by key. Hand-built rather than folded because it is not a retired flat command — and
+/// its option is deliberately a plain string with no `choices`, which is the whole point.
+/// `commands::portfolio::handle_cheat` resolves it and dispatches through the SAME
+/// `open_offering_by_key` the picker uses.
+fn cheat_sub() -> Value {
+    let mut m = Map::new();
+    m.insert("type".into(), Value::from(1u64));
+    m.insert("name".into(), Value::String("cheat".into()));
+    m.insert(
+        "description".into(),
+        Value::String("Cheat Code — type a key to open something that is not on the shelf".into()),
+    );
+    let mut opt = Map::new();
+    opt.insert("type".into(), Value::from(3u64)); // STRING
+    opt.insert("name".into(), Value::String("code".into()));
+    opt.insert(
+        "description".into(),
+        Value::String("An offering key, or whatever you feel like trying".into()),
+    );
+    opt.insert("required".into(), Value::Bool(true));
+    m.insert("options".into(), Value::Array(vec![Value::Object(opt)]));
+    Value::Object(m)
+}
+
 /// A top-level chat-input command from parts.
 fn top(name: &str, description: &str, options: Vec<Value>) -> Value {
     let mut m = Map::new();
@@ -195,18 +224,25 @@ fn top(name: &str, description: &str, options: Vec<Value>) -> Value {
 /// with `crate::REGISTERED_COMMAND_NAMES` (asserted at boot and by test).
 pub fn global_commands() -> Vec<Value> {
     vec![
-        // 1. /dregg — the hub dashboard (bare; its buttons summon every other
-        //    surface; folds the retired /dashboard + /status behind buttons).
-        command_json(&commands::dashboard::register()),
+        // 1. /dregg — the hub dashboard (its buttons summon every other surface;
+        //    folds the retired /dashboard + /status behind buttons), plus the
+        //    operator-only `admin` GROUP.
+        dregg_command(),
         // 2. /descent — today's beacon-seeded daily roguelite world, unchanged.
         command_json(&commands::descent::register()),
-        // 3. /play — the Arcade shelf: open any portfolio offering; /market folds in.
+        // 3. /play — the Arcade shelf: open any portfolio offering; /market folds in; `cheat` is
+        //    the FREE-TEXT door (`commands::portfolio::handle_cheat`) that `open`'s choice enum
+        //    cannot be.
         top(
             "play",
-            "The Arcade — open a receipted game, market, or engine offering",
+            &format!(
+                "{} — open a receipted game in this channel",
+                dreggnet_catalog::SURFACE_NAME
+            ),
             vec![
                 menu_sub(),
                 fold(commands::portfolio::register(), Some("open")),
+                cheat_sub(),
                 fold(commands::market::register(), None),
             ],
         ),
@@ -268,6 +304,11 @@ pub fn global_commands() -> Vec<Value> {
                 fold(commands::federation::register_link(), None),
                 fold(commands::federation::register_unlink(), None),
                 fold(commands::link_proof::register(), None),
+                // `/identity link-web` — the ISSUER half of the phrase-link ceremony: a single-use
+                // code that proves THIS Discord account to the web identity page, so a player whose
+                // web identity is 24 words (not a browser-held root key, which is all `/tg/link` and
+                // `/da/link` can consume) can finally stop being two people on one leaderboard.
+                fold(commands::link_proof::register_link_web(), None),
                 fold(commands::key::register(), None),
                 // Discord roles as caps — folds as a GROUP (`show`/`unlock`/`grant`
                 // ride along), not a 14th top-level: the global surface stays 13.
@@ -309,6 +350,29 @@ pub fn global_commands() -> Vec<Value> {
             vec![],
         ),
     ]
+}
+
+/// `/dregg` — the hub, plus the operator-only `admin` group.
+///
+/// The `admin` group folds in HERE rather than becoming a 14th top-level command: the global
+/// slash surface is exactly 13 by ember's directive (`exactly_thirteen_commands_matching_the_router`),
+/// and the hub is where the bot's own controls belong — it is already the surface that folds the
+/// retired `/status` and `/dashboard` (ops) reads behind buttons.
+///
+/// Discord has no per-SUBCOMMAND permission, so the group is *visible* to everyone, exactly like
+/// the pre-existing `/federation cleanup`. Visibility is not authority: every subcommand under it
+/// is refused for a non-admin by `commands::admin::plan`, which is checked before the subcommand
+/// is even read.
+fn dregg_command() -> Value {
+    let base = command_json(&commands::dashboard::register());
+    let description = base
+        .get("description")
+        .and_then(Value::as_str)
+        .unwrap_or("Open your Starbridge app dashboard")
+        .to_string();
+    let mut options = options_of(&base);
+    options.push(fold(commands::admin::register(), None));
+    top("dregg", &description, options)
 }
 
 /// `/cipherclerk` — the module's own subcommands ride verbatim; the economy
@@ -416,6 +480,9 @@ pub const OLD_COMMAND_REACH: &[(&str, Reach)] = &[
     // Never a flat command — folded straight in as `/identity roles`. Listed here so
     // the coverage test holds the path open the same way it does for the retired ones.
     ("roles", Reach::Under("identity")),
+    // Likewise never flat: the operator surface folds straight in as `/dregg admin`, so the
+    // global surface stays 13. Listed so the coverage test keeps that path open.
+    ("admin", Reach::Under("dregg")),
 ];
 
 /// The subcommand / group names a registered top-level exposes (test + boot aid).
@@ -462,12 +529,29 @@ fn as_command(
     c
 }
 
-/// `/play` — `open` → the portfolio opener; `market` → the auction offering;
-/// otherwise the arcade menu.
+/// `/dregg` — `admin` → the operator surface (gated inside `commands::admin`); anything else is
+/// the hub dashboard, exactly as before.
+pub async fn handle_dregg(ctx: &Context, command: &CommandInteraction, state: &BotState) {
+    match take_fold(command) {
+        Some(("admin", inner)) => {
+            commands::admin::handle(ctx, &as_command(command, "admin", inner), state).await
+        }
+        _ => commands::dashboard::handle(ctx, command, state).await,
+    }
+}
+
+/// `/play` — `open` → the portfolio opener; `cheat` → the free-text Cheat Code door; `market` → the
+/// auction offering; otherwise the arcade menu.
 pub async fn handle_play(ctx: &Context, command: &CommandInteraction, state: &BotState) {
     match take_fold(command) {
         Some(("open", inner)) => {
             commands::portfolio::handle(ctx, &as_command(command, "play", inner), state).await
+        }
+        // The Cheat Code re-nests exactly like a folded subcommand so the handler reads the same
+        // flat option shape everything else does; it then routes through
+        // `portfolio::open_offering_by_key`, the very function the `open` arm above reaches.
+        Some(("cheat", inner)) => {
+            commands::portfolio::handle_cheat(ctx, &as_command(command, "play", inner), state).await
         }
         Some(("market", inner)) => {
             commands::market::handle(ctx, &as_command(command, "market", inner), state).await
@@ -615,6 +699,9 @@ pub async fn handle_identity(ctx: &Context, command: &CommandInteraction, state:
             commands::link_proof::handle(ctx, &as_command(command, "link-prove", inner), state)
                 .await
         }
+        // No options, so the interaction is passed straight through (the `cap-list` / `handoff-status`
+        // shape) rather than re-wrapped by `as_command`.
+        Some(("link-web", _)) => commands::link_proof::handle_link_web(ctx, command, state).await,
         Some(("key", inner)) => {
             commands::key::handle(ctx, &as_command(command, "key", inner), state).await
         }
@@ -783,7 +870,7 @@ fn back_row() -> CreateActionRow {
 /// `dreggnet_catalog::SHIPPED_KEYS`), then the same set as a selector. They share a
 /// session/receipt/replay contract without pretending their mechanics are interchangeable.
 fn play_view() -> (CreateEmbed, Vec<CreateActionRow>) {
-    let embed = embeds::dregg_embed("🎮 The Arcade")
+    let embed = embeds::dregg_embed(&format!("🎮 {}", dreggnet_catalog::SURFACE_NAME))
         .description(format!(
             "{shelf}\n\nThe rhythm is the same in all of them: **take a turn → the game \
              re-runs it against the rules → it lands, or it is refused and nothing is \
@@ -807,6 +894,17 @@ fn play_view() -> (CreateEmbed, Vec<CreateActionRow>) {
             "Crown a win",
             "`/verify crown` folds a finished match into ONE proof — prove you won \
              without revealing how.",
+            false,
+        )
+        // ⚑ The Cheat Code is ANNOUNCED but nothing unlisted is NAMED — the affordance is
+        // discoverable, the shelf stays three games long. Discord's `/play open` picker is a choice
+        // enum, so this is the only way to type a key it does not offer; every other host has
+        // always had one (a URL, `/open <key>`, a key entry).
+        .field(
+            "Cheat Code",
+            "`/play cheat code:<anything>` takes free text. If you know the key of something \
+             that is not on the shelf, type it and it opens — same rules, same receipts, no \
+             shortcuts. Wrong guesses are free.",
             false,
         );
     let game_options: Vec<CreateSelectMenuOption> = GAME_DOORS
