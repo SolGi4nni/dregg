@@ -43,6 +43,28 @@ run_gate() { # <root> <gate>  -> stdout=report, exit=gate's
 echo "mirror-gates canary — a gate that cannot bark is worse than none"
 echo
 
+# ── 0. THE FIXTURES MUST SURVIVE A FRESH CLONE ───────────────────────────────────────────────
+#
+# G2's fixture models an oracle directory whose `.gitignore` is a single `*` — and that `.gitignore`
+# IGNORES ITSELF, so a plain `git add` never staged it. The files sat on the author's disk, the
+# canary passed 20/20 locally, and CI (a fresh checkout with no `pkg/` at all) reported `G2 DID NOT
+# BARK — the gate is asleep` for ten days. The gate was fine; the fixture it needed was not there.
+#
+# So: a fixture file that is not TRACKED does not exist as far as CI is concerned. Check it here,
+# where the files are still on disk and the divergence is still visible — in CI the file is simply
+# absent and there is nothing left to notice. Local-green/CI-red is the shape this closes.
+if git -C "$HERE" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  untracked="$(find "$HERE/canary" -type f -print0 \
+    | xargs -0 git -C "$HERE" ls-files --others --ignored --exclude-standard -- 2>/dev/null)"
+  if [ -n "$untracked" ]; then
+    printf '\033[31mFAIL\033[0m fixture files exist on disk but are NOT TRACKED — CI will never see them,\n'
+    printf '     so the gates they arm will report "asleep" for a reason that is not the gate:\n'
+    printf '%s\n' "$untracked" | sed 's/^/       /'
+    printf '     Fix: git add -f the paths above (their own .gitignore may be ignoring them).\n'
+    exit 1
+  fi
+fi
+
 # The gate id of a mirror fixture (`A1`, `A2`, `D1`, … `G1`, `G2`) maps to the GATE to run: A1/A2
 # collapse onto gate A; every other id IS its gate.
 gate_of() { case "$1" in A1|A2) echo "A" ;; *) echo "$1" ;; esac; }
