@@ -2775,6 +2775,33 @@ fn cap_open_key_has_wide_twin(key: &str) -> bool {
 /// Resolve the committed WIDE cap-open descriptor JSON for a key (the `WIDE_REGISTRY_STAGED_TSV`
 /// twin of [`cap_open_descriptor_json_by_key`]).
 #[cfg(feature = "prover")]
+/// **THE EPOCH-1 COLUMN DELETION FOR A WIDE CAP-OPEN TRACE** — S2 then E1, in that order, at the
+/// Lean-emitted per-member kill-sets, so the produced rows match the COMMITTED wide descriptor.
+///
+/// ⚑ WHY THIS IS ONE FUNCTION (2026-07-26). The wide cap-open lift has four sibling branches in
+/// [`build_effect_vm_cap_open_leg`] — plain, attenuate-after-spine, insert-after-spine (the WRITE
+/// keystone) and remove-after-spine — and the S2+E1 cutover was open-coded into only TWO of them.
+/// The insert/remove WRITE branches produced the OLD, uncompacted geometry and then handed it to a
+/// prover holding the compacted descriptor, so every write-bearing cap-open leg died on shape:
+///
+///     cap-open IR-v2 proof (dregg-effectvm-delegate-v1-rot24-v3-insert-capopen):
+///     base row width 2936 must equal descriptor trace_width 1878
+///
+/// which is a pre-flight arity refusal, i.e. those legs never reached a single constraint. Routing
+/// all four branches through one function is what makes "the producer is at the committed member's
+/// geometry" a property of the builder rather than of remembering to paste two calls.
+#[cfg(feature = "prover")]
+fn compact_wide_cap_open_trace(
+    trace: &mut [Vec<BabyBear>],
+    effective_key: &str,
+) -> Result<(), SdkError> {
+    dregg_circuit::effect_vm::trace_rotated::compact_s2_columns(trace, effective_key)
+        .map_err(|e| SdkError::InvalidWitness(format!("S2 compact ({effective_key}): {e}")))?;
+    dregg_circuit::effect_vm::trace_rotated::compact_e1_columns(trace, effective_key)
+        .map_err(|e| SdkError::InvalidWitness(format!("E1 compact ({effective_key}): {e}")))?;
+    Ok(())
+}
+
 fn cap_open_wide_descriptor_json_by_key(key: &str) -> Result<&'static str, SdkError> {
     use dregg_circuit::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV;
     WIDE_REGISTRY_STAGED_TSV
@@ -3400,6 +3427,10 @@ fn build_effect_vm_cap_open_leg(
                 SdkError::InvalidWitness(format!(
                     "cap insert after-spine wide ({effective_key}): {e}"
                 ))
+            })
+            .and_then(|d| {
+                compact_wide_cap_open_trace(&mut trace, effective_key)?;
+                Ok(d)
             })?
         } else {
             let mut dpis = dpis;
@@ -3463,6 +3494,10 @@ fn build_effect_vm_cap_open_leg(
                     SdkError::InvalidWitness(format!(
                         "cap remove after-spine wide ({effective_key}): {e}"
                     ))
+                })
+                .and_then(|d| {
+                    compact_wide_cap_open_trace(&mut trace, effective_key)?;
+                    Ok(d)
                 })?
             } else {
                 let mut dpis = dpis;
@@ -3522,20 +3557,7 @@ fn build_effect_vm_cap_open_leg(
                 SdkError::InvalidWitness(format!("attenuate after-spine wide ({effective_key}): {e}"))
             })
             .and_then(|d| {
-                dregg_circuit::effect_vm::trace_rotated::compact_s2_columns(
-                    &mut trace,
-                    effective_key,
-                )
-                .map_err(|e| {
-                    SdkError::InvalidWitness(format!("S2 compact ({effective_key}): {e}"))
-                })?;
-                dregg_circuit::effect_vm::trace_rotated::compact_e1_columns(
-                    &mut trace,
-                    effective_key,
-                )
-                .map_err(|e| {
-                    SdkError::InvalidWitness(format!("E1 compact ({effective_key}): {e}"))
-                })?;
+                compact_wide_cap_open_trace(&mut trace, effective_key)?;
                 Ok(d)
             })?
         } else if go_wide {
@@ -3558,14 +3580,7 @@ fn build_effect_vm_cap_open_leg(
                     ))
                 })?;
             // THE S2 + E1 DELETION (Epoch 1): match the committed compact cap-open member.
-            dregg_circuit::effect_vm::trace_rotated::compact_s2_columns(&mut trace, effective_key)
-                .map_err(|e| {
-                    SdkError::InvalidWitness(format!("S2 compact ({effective_key}): {e}"))
-                })?;
-            dregg_circuit::effect_vm::trace_rotated::compact_e1_columns(&mut trace, effective_key)
-                .map_err(|e| {
-                    SdkError::InvalidWitness(format!("E1 compact ({effective_key}): {e}"))
-                })?;
+            compact_wide_cap_open_trace(&mut trace, effective_key)?;
             wide_pis
         } else {
             dpis
