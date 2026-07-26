@@ -21,8 +21,11 @@ Pipeline:
      the bytes `scripts/git-hooks/pre-commit` and `cargo fmt --all -- --check`
      produce — the two producers cannot disagree (see normalize_generated_rust).
 
-Idempotent: on a freshly-emitted tree it is a byte-identical NO-OP (nothing is
-written). Run `scripts/check-descriptor-drift.sh` to GATE on drift.
+Idempotent: on a freshly-emitted AND fully-stamped tree it is a NO-OP (nothing is
+written). "Byte-identical" alone is not enough for that — a descriptor whose bytes
+already equal the emission but which PROVENANCE.json does not COVER still gets
+stamped (ack-gated, mode=emit; see provenance_stamp_gap). Run
+`scripts/check-descriptor-drift.sh` to GATE on drift.
 
 MISUSE-RESISTANT REGEN GATE (docs/VK-REGEN-CONTROLS.md): regenerating a deployed
 descriptor set RE-KEYS the federation (the AIR fingerprint feeds the recursive
@@ -651,6 +654,65 @@ def build_provenance(mode: str, auth: dict,
 
 def write_provenance(prov: dict) -> None:
     (DESC / PROVENANCE_FILE).write_text(json.dumps(prov, indent=2) + "\n")
+
+
+def provenance_stamp_gap(written: dict[str, str]) -> list[str]:
+    """Why `PROVENANCE.json` does NOT already attest THIS emission — empty when it does.
+
+    The stamp is an artifact this driver owns, and its obligation is not a byte diff: a descriptor
+    can be byte-for-byte the Lean emission and still have NO row attesting it, which is the whole
+    state PROVENANCE.json exists to make impossible. `install_and_stamp`'s `changed` list compares
+    emitted bytes against disk and is structurally blind to that — so a byte-identical emission
+    returned NO-OP and left the stamp short, permanently, with the ONLY escape being
+    `--stamp-existing` (which re-stamps every file as a DISK re-hash, demoting `mode` from a Lean
+    witness to a self-consistency check for the other 138 descriptors as the price of covering 5).
+    MEASURED 2026-07-26: five tracked by-name descriptors — the four light-client verifiers and the
+    DFA routing table, every one of them a live `include_str!` target in `descriptor_by_name.rs` —
+    shipped unstamped while this driver printed NO-OP and exited 0.
+
+    Compared against the EMISSION, not against disk, so a clean answer means "the stamp covers what
+    Lean just emitted" rather than "the stamp is consistent with itself".
+
+    The two DESCRIPTOR legs ONLY. `fp_file_sha256` pins SOURCE files (`effect_vm_descriptors.rs`
+    among them) that legitimately change on any edit to their hand-written prose; folding that leg
+    in here would demand an ack — and therefore RED the no-ack drift gate — after every unrelated
+    source edit. It is a provenance snapshot, not a stable invariant, and the Rust mirror test
+    (`provenance_json_pins_match_checked_in_descriptor_bytes`) excludes it for the same reason."""
+    stamp_path = DESC / PROVENANCE_FILE
+    if not stamp_path.exists():
+        return [f"no {PROVENANCE_FILE} on disk — the descriptor set is UNSTAMPED"]
+    try:
+        prov = json.loads(stamp_path.read_text())
+    except json.JSONDecodeError as exc:
+        return [f"{PROVENANCE_FILE} does not parse ({exc}) — it attests nothing"]
+
+    emitted = {name: sha256_hex(content.encode()) for name, content in written.items()}
+    expected = {
+        "descriptor_sha256": {
+            name: h for name, h in emitted.items() if not name.startswith("by-name/")
+        },
+        "by_name_sha256": by_name_hashes_of(emitted),
+    }
+    findings: list[str] = []
+    for leg, expect in expected.items():
+        have = prov.get(leg)
+        if not isinstance(have, dict):
+            findings.append(f"{leg}: absent from the stamp (or not an object)")
+            continue
+        findings += [
+            f"{leg}: `{n}` was emitted but has NO row in the stamp"
+            for n in sorted(set(expect) - set(have))
+        ]
+        findings += [
+            f"{leg}: `{n}` is pinned by the stamp but NO emitter produces it"
+            for n in sorted(set(have) - set(expect))
+        ]
+        findings += [
+            f"{leg}: `{n}` pin does not equal the emitted bytes"
+            for n in sorted(set(expect) & set(have))
+            if have[n] != expect[n]
+        ]
+    return findings
 
 
 def append_audit(mode: str, auth: dict, changed: list[str]) -> None:
@@ -2258,7 +2320,8 @@ def install_and_stamp(written: dict[str, str]) -> None:
     """The INSTALL phase: diff the buffered emission against disk; a byte-changing
     descriptor install is ack-gated, provenance-stamped, and audit-logged. A generated-Rust-only
     change is byte-safe (it cannot re-key a descriptor) and installs without a VK-regeneration
-    acknowledgement. A byte-identical emission is a silent no-op."""
+    acknowledgement. A byte-identical emission whose bytes the stamp ALREADY attests is a silent
+    no-op; one the stamp does not cover still has to be stamped (see provenance_stamp_gap)."""
     # Nothing installs a module the drift gate cannot see: every buffered generated module must
     # be declared in GENERATED_RS_PATHS, and every FP-bearing source in RUST_FP_FILES. Together
     # those two tuples ARE `guarded_paths()`, which is what `check-descriptor-drift.sh` snapshots.
@@ -2286,10 +2349,20 @@ def install_and_stamp(written: dict[str, str]) -> None:
         + sorted(str(p.relative_to(ROOT)) for p in changed_gen)
     )
 
-    if not changed:
+    # The STAMP's obligation is COVERAGE, not a byte diff, and `changed` above cannot see it: a
+    # descriptor already carrying exactly the Lean bytes but with no row in PROVENANCE.json is
+    # invisible to every term of it. Ask the stamp directly.
+    stamp_gap = provenance_stamp_gap(written)
+    # `reasons` is what the operator is shown and what the audit row records — the byte change-set
+    # AND the stamp's shortfall, so a stamp-only regen is never logged as "(stamp only)" with no
+    # statement of what it was short of.
+    reasons = changed + [f"{PROVENANCE_FILE}: {g}" for g in stamp_gap]
+
+    if not changed and not stamp_gap:
         print(
             f"emit_descriptors: NO-OP — all {len(written)} descriptor files and "
-            f"{n_fp} FP constants are byte-identical to the Lean emission."
+            f"{n_fp} FP constants are byte-identical to the Lean emission, and "
+            f"{PROVENANCE_FILE} already attests exactly that set."
         )
         return
 
@@ -2298,7 +2371,11 @@ def install_and_stamp(written: dict[str, str]) -> None:
     # through the canonical emitter. Geometry changes remain protected: because the Lean descriptor
     # emit reads the same RotatedLayout, moving a consumed group column also changes descriptor bytes
     # and therefore enters the ack-gated branch below.
-    if not changed_desc and not fp_changes:
+    #
+    # A stamp shortfall does NOT ride this branch: writing PROVENANCE.json is a provenance CLAIM
+    # about which reviewed Lean tree minted these bytes, so it goes through the ack gate like any
+    # other, even when not one descriptor byte moves.
+    if not changed_desc and not fp_changes and not stamp_gap:
         for p, content in changed_gen.items():
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(content)
@@ -2308,7 +2385,7 @@ def install_and_stamp(written: dict[str, str]) -> None:
         )
         return
 
-    auth = require_regen_ack(changed, "this emission")
+    auth = require_regen_ack(reasons, "this emission")
 
     for name in changed_desc:
         (DESC / name).write_text(written[name])
@@ -2324,7 +2401,18 @@ def install_and_stamp(written: dict[str, str]) -> None:
         for p in RUST_FP_FILES if p.exists()
     }
     write_provenance(build_provenance("emit", auth, desc_hashes, fp_hashes))
-    append_audit("emit", auth, changed)
+    append_audit("emit", auth, reasons)
+    if not changed:
+        # The bytes were already the Lean emission — this run WITNESSED that (it re-derived every
+        # descriptor and found no difference) and is recording it. `mode` stays "emit", which is the
+        # true claim: these hashes come from the emitters, not from re-reading disk.
+        print(
+            f"emit_descriptors: STAMP-ONLY REGEN — all {len(written)} descriptor files were already "
+            f"byte-identical to the Lean emission, but {PROVENANCE_FILE} did not attest "
+            f"{len(stamp_gap)} of them; re-stamped from the emitted bytes (mode=emit, tree "
+            f"{auth['tree'][:12]}…); audit row appended to {AUDIT_LOG_REL}."
+        )
+        return
     print(
         f"emit_descriptors: AUTHORIZED REGEN — installed {len(changed_desc)} changed "
         f"descriptor files + {len(fp_changes)} FP-bearing Rust files "

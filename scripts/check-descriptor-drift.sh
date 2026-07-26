@@ -160,8 +160,13 @@ emit_rc=0
 "$ROOT/scripts/emit-descriptors.sh" || emit_rc=$?
 if [ "$emit_rc" -eq 3 ]; then
   echo "" >&2
-  echo "DESCRIPTOR DRIFT: the Lean emission and the checked-in JSON disagree." >&2
+  echo "DESCRIPTOR DRIFT: the Lean emission and the checked-in artifacts disagree." >&2
   echo "  (the regen gate refused the unauthorized install; the tree is UNTOUCHED)" >&2
+  echo "  READ THE DRIVER'S 'Would change:' LIST ABOVE for which disagreement it is." >&2
+  echo "  Two reach here: (a) a descriptor/FP byte differs from what Lean emits, or" >&2
+  echo "  (b) the bytes match but PROVENANCE.json does not COVER them — a descriptor" >&2
+  echo "  landed without the stamp ceremony, so nothing attests it. Same fix, same" >&2
+  echo "  ack; (b) changes only PROVENANCE.json + the audit row, no VK re-key." >&2
   echo "  To apply, review the Lean change, then run:" >&2
   echo "    DREGG_VK_REGEN_ACK=\"\$(git rev-parse HEAD:metatheory/Dregg2)\" scripts/emit-descriptors.sh" >&2
   echo "  and commit the result. (Lean is the source of truth; the JSON + *_FP" >&2

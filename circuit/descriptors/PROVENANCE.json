@@ -1,8 +1,8 @@
 {
   "version": 1,
   "mode": "emit",
-  "dregg2_tree_hash": "924e8b8d95b43475a2ea674e32a127a0ec569fb2",
-  "repo_head": "656120b19e98f5a2a13117f63faf02941c69037e",
+  "dregg2_tree_hash": "29fd778cb95220ccdc3dfde8f5d1b9464b7ca6fa",
+  "repo_head": "e132a08e172afde945208ca469ac120b2ee6d8c9",
   "source_dirty": true,
   "lean_toolchain": "leanprover/lean4:v4.30.0",
   "emitters": [
@@ -22,7 +22,7 @@
     "EmitCertF.lean",
     "EmitCertFMarket4.lean"
   ],
-  "generated_utc": "2026-07-25T00:26:45Z",
+  "generated_utc": "2026-07-26T06:20:45Z",
   "operator": "ember@nextop.local",
   "descriptor_sha256": {
     "dregg-bilateral-aggregation-v3.json": "6b8b58dbdd46115442f050990296aca7ccd79b5735f326b90db7b0058b49b365",
@@ -125,10 +125,15 @@
     "dark-bazaar-private-n4k4.json": "b1496db3ac9197cc81242e612d1a847cccf73571f9c0c2e6c08eb1d10a794bab",
     "derivation.json": "521485076a0396efc108b01d8e216fe6629ef8b638f6df55dad27e823aca43da",
     "descent-custody-census-fixed8-v1.json": "f61901fc2932de815f44823d77eb26301d786a60f0e6b9c5cc78130484fd8acb",
+    "dfa-routing-table-exact-public-v1.json": "31bea51b322bb38fa7167eaf3ce69dd280728b012bdac6b9fd7b531b62e5c97a",
     "dfa-routing.json": "8d90d41370c0e121fec046b0f2383337a2e5f1333aee0db221181c9aa440be69",
+    "dregg-eth-lightclient-verify-v1.json": "7488ecc8d169737f84744971de687ebd177a25663a99f809a9a69e4d10e809e9",
+    "dregg-midnight-lightclient-verify-v1.json": "78a079a617bda4204a5260d929fd8b39f468fac2c74f26f7ff6447cd06852527",
     "dregg-shielded-spend-pinned-root-v1.json": "9e957389671e15667defc2692a0bacf52e7ac064094b9fa001d85a71f84bff27",
     "dregg-shielded-value-link-conserve-ranged-v1.json": "faa9cae6077f49710e26335f4171475af3c24952cdaba3e95ebb4f212054e5e2",
     "dregg-shielded-wide-value-link-conserve-v1.json": "a1a90e3b83123b8c131888d7fc9088bba956e217534455135fb4695092989e1d",
+    "dregg-solana-lightclient-verify-v1.json": "551e8a95b582da2e0abd783fb5dd3624cde79da54d934e0b15acf068e20060a0",
+    "dregg-tm-lightclient-verify-v1.json": "c38475ab9c478c89c013a2f581835758828f704c32f440efced7814736e13fbb",
     "dyck-parse.json": "8bed9ebfd9d29f6a877e8b8d4e9119ecb475deff6216d5c8bd4a6ce9ced5f882",
     "faithful-note-spend-exact-v3.json": "dac87d07f12ec01cc32e34ec131db0786244b2492d5bc153f90bbf062e577b6e",
     "faithful-note-spend-v2.json": "113f8be9d1eb5804754756773e5b3a6c6dc1af2384d56fff3102f635096f1f3b",
@@ -168,8 +173,8 @@
   },
   "fp_file_sha256": {
     "circuit/src/bilateral_aggregation_air.rs": "752402369f555938fb30fa1a7e042ff8f2091e3badd077718a95a2f7e115ce21",
-    "circuit/src/cap_delegation_nonamp_descriptor.rs": "f634f39e6d96cec52c1cfea9851611a0e77de73f3bf28b6dad5f41c2ed17bd85",
-    "circuit/src/cap_reshape_descriptor.rs": "a5b53ea982184e470efb20692805687469eb82a4e4829de508b42ae2e152ee97",
+    "circuit/src/cap_delegation_nonamp_descriptor.rs": "a30d058fc3c32590d19fd45f825f0a2d5ca987efd6d93cf635f4d9a3ec9ca925",
+    "circuit/src/cap_reshape_descriptor.rs": "dde91b8af93dada783dbb4851108e779e4b285e46d6aa60171aaf44ad857a128",
     "circuit/src/effect_vm_descriptors.rs": "e97b75dcb11bb6a493659fe4d2181c67ae8a2648661e75b333d09a94f7a6b095",
     "circuit/src/lean_descriptor_air.rs": "aceffe54c45a905a2f34e333214b9b0e30606b40c0f8fd460726b0067d20ddb2"
   }

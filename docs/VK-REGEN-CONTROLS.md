@@ -84,9 +84,9 @@ requires an operator signing key over the stamp — deliberately not faked here.
 ### Control 2 — CONFIRMATION GATE (implemented)
 
 `scripts/emit_descriptors.py` now **buffers** the whole emission, diffs against
-disk, and treats a byte-identical result as an ungated no-op (so CI's drift gate
-and idempotent re-runs are untouched). A **byte-changing install refuses**
-(exit 3, tree untouched) unless:
+disk, and treats a byte-identical result **that PROVENANCE.json already attests**
+as an ungated no-op (so CI's drift gate and idempotent re-runs are untouched). A
+**byte-changing install refuses** (exit 3, tree untouched) unless:
 
 - `DREGG_VK_REGEN_ACK` equals the current `git rev-parse HEAD:metatheory/Dregg2`
   — the operator must *name the exact reviewed source tree*, so a stale shell
@@ -100,6 +100,25 @@ and idempotent re-runs are untouched). A **byte-changing install refuses**
 `scripts/check-descriptor-drift.sh` deliberately passes **no ack**: on drift it
 now reports and leaves the tree untouched (previously it left the tree silently
 regenerated — itself a misuse vector this closes).
+
+**Byte-identical is not the same as stamped** (fixed 2026-07-26). The no-op
+short-circuit compared *emitted bytes against disk*, so a descriptor already
+carrying exactly the Lean bytes but with **no row in the stamp** was invisible to
+it: the emit printed `NO-OP`, exited 0, and left the coverage hole permanently
+unreachable from the canonical ceremony — the only way to close one was
+`--stamp-existing`, which re-stamps every file as a **disk re-hash**, demoting
+`mode` from a Lean witness to self-consistency for the whole set as the price of
+covering the few. Found live: the four light-client verifiers and
+`dfa-routing-table-exact-public-v1.json`, all five live `include_str!` targets of
+`circuit/src/descriptor_by_name.rs`, tracked and shipping with nothing attesting
+their bytes. `provenance_stamp_gap()` now asks the stamp directly whether it
+covers the emission (the two descriptor legs only — `fp_file_sha256` pins source
+files that legitimately move), and a shortfall is a **stamp-only regen**: ack-gated
+like any other provenance claim, audit-logged with what it was short of, and
+written with `mode: "emit"`, which is the true claim — this run re-derived every
+descriptor from Lean and found them identical. The Rust mirror of the same
+invariant is `provenance_json_pins_match_checked_in_descriptor_bytes`
+(`circuit/src/effect_vm_descriptors.rs`), which was the detector that caught it.
 
 ### Control 3 — AUDIT TRAIL (implemented)
 
