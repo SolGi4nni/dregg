@@ -6,8 +6,22 @@ RE-AUTHORED Lean model, NOT of the deployed Rust lowering. `CellLocal`/`gateBody
 of the Rust `gate_body` / `cellprogram_to_descriptor2` table (`circuit/src/custom_leaf_lowering.rs`,
 `circuit-prove/src/custom_leaf_adapter.rs`), connected to it by PROSE ("term-for-term the Rust")
 only — no `@[export]`, no emit, no differential/byte pin (cell/ carries no Lean ffi). It covers
-just the 9-of-21 PURE-LOCAL kinds; the cryptographically hard kinds (hash / lookup / table-function)
-are omitted (REFUSED by the Rust adapter, not encoded here). And `CellLocalHolds` is DEFINED as the
+just the 9-of-21 PURE-LOCAL kinds.
+
+⚠ CORRECTED 2026-07-26 (this header previously said the uncovered kinds "are omitted (REFUSED by
+the Rust adapter, not encoded here)" — that reads as "unreachable", and it is FALSE at HEAD).
+Re-read against `circuit/src/custom_leaf_lowering.rs::lower_cellprogram`, the Rust adapter LOWERS,
+and this file does NOT encode or prove, EIGHT further kinds: `Hash2to1` / `Hash4to1` / `Hash3Cap` /
+`MerkleHash` (single-output `TID_P2` chip lookups with 7 allocated lane columns), `MerkleHash8`
+(the 8-lane multi-output site), `ChainedHash2to1` + its paired `SeedHash2to1` (a copy-forward
+accumulator column + `WindowGate` + first-row PI pin), and `TableFunction` (a bivariate-Lagrange
+gate body, `table_function_body`). Plus `BoundaryDef::PiBinding` / `Fixed`. The kinds the adapter
+genuinely REFUSES are only four: `Hash` (the capacity-tagged fact-sponge), a standalone
+`SeedHash2to1` no chain accumulates, an arbitrary-entry `Lookup`, and `BoundaryRow::Index`. So the
+uncovered surface is REACHABLE AND UNPROVEN, not refused — the Poseidon2 chip-lookup lowering in
+particular is where the cryptographic content of a custom leaf lives.
+
+And `CellLocalHolds` is DEFINED as the
 same `gateBody` vanishing that the encoded gate denotes, so `encodeLocal_holdsAt_iff` /
 `cell_to_descriptor_faithful` are a CARRIER-REDUCTION over the Lean model (proving the `.gate`
 carrier loses no info) — NOT an independent comparison of the Lean `gateBody` to the deployed Rust
@@ -82,21 +96,50 @@ structure PolyTerm where
   coeff : ℤ
   cols  : List Nat
 
-/-- `∏ var cⱼ` (empty product = `1`). -/
-def prodCols : List Nat → EmittedExpr
-  | []      => .const 1
-  | c :: cs => .mul (.var c) (prodCols cs)
+/-- One `PolyTerm`'s body, folded LEFT from the coefficient exactly as the Rust does
+(`prod = LeanExpr::Const(coeff)`, then `prod = mul(prod, Var(ci))` per column): `[c₀, c₁]` gives
+`((coeff · c₀) · c₁)`, and no columns gives the bare `coeff`.
 
-/-- `Σ coeffᵢ · ∏ colⱼ` (empty sum = `0`) — the Rust `Polynomial` lowering (algebraically the same
-fold; the head term is `coeff · prod` summed onto the rest). -/
+⚠ 2026-07-26: this WAS `.mul (.const coeff) (prodCols cols)` over a RIGHT-nested `prodCols` that
+appended a `.const 1` terminator — algebraically the same polynomial, but a DIFFERENT `EmittedExpr`
+tree, so the header's "term-for-term the Rust `gate_body`" was false here and at `atLeastOneBody`.
+Since the emitted descriptor JSON *is* the serialized tree, that drift is exactly what would have
+blocked ever turning this mirror into a byte pin. Re-shaped to the Rust fold. -/
+def polyTermBody (coeff : ℤ) : List Nat → EmittedExpr
+  | []      => .const coeff
+  | c :: cs => polyTermBodyAux (.mul (.const coeff) (.var c)) cs
+where
+  /-- The left-fold tail: `acc` already holds `coeff · c₀ · … `, multiply the remaining columns on. -/
+  polyTermBodyAux (acc : EmittedExpr) : List Nat → EmittedExpr
+    | []      => acc
+    | c :: cs => polyTermBodyAux (.mul acc (.var c)) cs
+
+/-- The left-fold tail of the term SUM: `acc` already holds `t₀ + … `, add the remaining terms on. -/
+def polySumAux (acc : EmittedExpr) : List PolyTerm → EmittedExpr
+  | []      => acc
+  | t :: ts => polySumAux (.add acc (polyTermBody t.coeff t.cols)) ts
+
+/-- `Σ coeffᵢ · ∏ colⱼ` — the Rust `Polynomial` lowering, LEFT-folded, with the FIRST term seeding
+the accumulator (so a single-term polynomial is the bare term, never `term + 0`) and an empty
+polynomial the zero constraint (`acc.unwrap_or(LeanExpr::Const(0))`). -/
 def polyBody : List PolyTerm → EmittedExpr
   | []      => .const 0
-  | t :: ts => .add (.mul (.const t.coeff) (prodCols t.cols)) (polyBody ts)
+  | t :: ts => polySumAux (polyTermBody t.coeff t.cols) ts
 
-/-- `∏ (1 − flagᵢ)` (empty = `1`) — the Rust `AtLeastOne` lowering. -/
+/-- One `AtLeastOne` factor `1 − flag`. -/
+def atLeastOneFactor (c : Nat) : EmittedExpr := subE (.const 1) (.var c)
+
+/-- The left-fold tail of the factor PRODUCT. -/
+def atLeastOneAux (acc : EmittedExpr) : List Nat → EmittedExpr
+  | []      => acc
+  | c :: cs => atLeastOneAux (.mul acc (atLeastOneFactor c)) cs
+
+/-- `∏ (1 − flagᵢ)` — the Rust `AtLeastOne` lowering, LEFT-folded, first factor seeding the
+accumulator; an empty flag list is the constant-`1` (unsatisfiable) gate, mirroring
+`acc.unwrap_or(LeanExpr::Const(1))`. -/
 def atLeastOneBody : List Nat → EmittedExpr
   | []      => .const 1
-  | c :: cs => .mul (subE (.const 1) (.var c)) (atLeastOneBody cs)
+  | c :: cs => atLeastOneAux (atLeastOneFactor c) cs
 
 /-- The PURE-LOCAL `ConstraintExpr` subset the adapter lowers to ONE `Base(Gate(body))`. -/
 inductive CellLocal where
