@@ -9,12 +9,18 @@
 //!   the DEFAULT ([`NodeTarget::Local`]) settle is a no-op (`Ok(None)`) — the committed suite +
 //!   the node-free demo are unaffected. This is the non-vacuity anchor: the SAME run in Local mode
 //!   stays in-process.
-//! * The [`federation_settle_lands_a_turn_on_a_running_node`] test is DEVNET-GATED: it runs its
-//!   real body only when `DREGG_NODE_URL` points at a running node (else it early-returns, so
-//!   `cargo test -p dreggnet-web` stays green with no node). It opens the demo day, submits the
-//!   demo WINNING run through the verify-gate, settles it, and asserts the node accepted +
-//!   FINALIZED the turn — `NodeTarget::route` returns `Ok(Some(Landed))` only after confirming the
-//!   turn hash is on the node's `GET /api/receipts` log.
+//! * The [`federation_settle_lands_a_turn_on_a_running_node`] test is DEVNET-GATED and therefore
+//!   `#[ignore]`d. It opens the demo day, submits the demo WINNING run through the verify-gate,
+//!   settles it, and asserts the node accepted + FINALIZED the turn — `NodeTarget::route` returns
+//!   `Ok(Some(Landed))` only after confirming the turn hash is on the node's `GET /api/receipts`
+//!   log.
+//!
+//! ⚑ WHY `#[ignore]` AND NOT AN EARLY RETURN. Both gated tests below used to open with
+//! `let Ok(..) = std::env::var(..) else { return };` — which reports `ok` in a run where they did
+//! nothing at all. A default run therefore counted two greens for a devnet drive and a bootstrap
+//! print that had not happened. `#[ignore]` is the honest encoding of the same gate: the harness
+//! prints a line naming what was skipped and why, the count of passing tests stops including them,
+//! and running them deliberately with the env var absent now FAILS instead of quietly passing.
 
 use dregg_node_target::NodeTarget;
 use dreggnet_web::demo_win_for_seed;
@@ -27,10 +33,12 @@ use procgen_dregg::daily_seed;
 /// so the games' anchor (an operator `EmitEvent`) is refused ("cell not found") until this cell is
 /// faucet-materialized once — the one-time devnet bring-up step. Run with `DREGG_OP_PUBKEY=<hex>`.
 #[test]
+#[ignore = "devnet bring-up helper, not a gate: prints the operator cell id. \
+            DREGG_OP_PUBKEY=<hex> cargo test -p dreggnet-web --test devnet_settle -- --ignored \
+            print_operator_cell_id --nocapture"]
 fn print_operator_cell_id() {
-    let Ok(pk_hex) = std::env::var("DREGG_OP_PUBKEY") else {
-        return;
-    };
+    let pk_hex = std::env::var("DREGG_OP_PUBKEY")
+        .expect("DREGG_OP_PUBKEY=<hex> — this helper is #[ignore]d precisely because it needs it");
     let pk: Vec<u8> = (0..pk_hex.len() / 2)
         .map(|i| u8::from_str_radix(&pk_hex[2 * i..2 * i + 2], 16).unwrap())
         .collect();
@@ -74,21 +82,18 @@ fn local_mode_settle_is_an_in_process_noop() {
     );
 }
 
-/// DEVNET-DRIVEN: a submitted Descent run is anchored on the running node's ledger. Runs its real
-/// body only with `DREGG_NODE_URL` set (a running node); otherwise early-returns green so the
-/// committed suite needs no node.
+/// DEVNET-DRIVEN: a submitted Descent run is anchored on the running node's ledger. Needs a node
+/// at `DREGG_NODE_URL`, so the committed suite reports it as ignored rather than as a pass.
 #[test]
+#[ignore = "needs a running dregg node: DREGG_NODE_URL=<url> cargo test -p dreggnet-web \
+            --test devnet_settle -- --ignored federation_settle --nocapture"]
 fn federation_settle_lands_a_turn_on_a_running_node() {
-    let Ok(url) = std::env::var("DREGG_NODE_URL") else {
-        eprintln!(
-            "DREGG_NODE_URL unset — skipping the live-node drive (committed suite stays node-free)"
-        );
-        return;
-    };
-    if url.trim().is_empty() {
-        eprintln!("DREGG_NODE_URL empty — skipping the live-node drive");
-        return;
-    }
+    let url = std::env::var("DREGG_NODE_URL")
+        .expect("DREGG_NODE_URL — this test is #[ignore]d precisely because it needs a live node");
+    assert!(
+        !url.trim().is_empty(),
+        "DREGG_NODE_URL is set but empty — name a running node"
+    );
 
     // Build a Federation target from the env (the real HTTP transport at DREGG_NODE_URL).
     let target = NodeTarget::from_env().expect("DREGG_NODE_URL builds a Federation target");
