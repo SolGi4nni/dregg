@@ -762,30 +762,29 @@ fn tg_native_fragment(html: String, key: &str, id: &str, fragment: bool) -> Stri
     let web_base = format!("/offerings/{}/session/{}", crate::esc(key), crate::esc(id));
     let native_base = tg_session_path(key, id);
     let web_verify = format!("{web_base}/verify");
-    let mut native = html.replace(
-        &format!("href=\"{web_base}\" rel=\"bookmark\""),
-        &format!(
-            "href=\"{native_base}\" data-tg-session=\"{native_base}\" rel=\"bookmark\""
-        ),
-    )
-    .replace(
-        &format!("href=\"{web_verify}\""),
-        &format!(
-            "href=\"{native_base}/verify\" data-tg-verify=\"{native_base}/verify\""
-        ),
-    )
-    .replace(
-        &format!("action=\"{web_base}"),
-        &format!("action=\"{native_base}"),
-    )
-    .replace(
-        "data-actor-attribution=\"asserted\"",
-        "data-actor-attribution=\"signed\"",
-    )
-    .replace(
-        "Browser actor attribution is asserted, not authenticated.",
-        "Telegram identity is authenticated by signed initData; turns carry custodial signed provenance.",
-    );
+    let mut native = html
+        .replace(
+            &format!("href=\"{web_base}\" rel=\"bookmark\""),
+            &format!("href=\"{native_base}\" data-tg-session=\"{native_base}\" rel=\"bookmark\""),
+        )
+        .replace(
+            &format!("href=\"{web_verify}\""),
+            &format!("href=\"{native_base}/verify\" data-tg-verify=\"{native_base}/verify\""),
+        )
+        .replace(
+            &format!("action=\"{web_base}"),
+            &format!("action=\"{native_base}"),
+        )
+        .replace(
+            "data-actor-attribution=\"asserted\"",
+            "data-actor-attribution=\"signed\"",
+        )
+        .replace(
+            "This page takes your player name at face value and checks no signature, so anyone who \
+         knows it can play as you.",
+            "Telegram proves who you are and this server checks that proof. Your moves are then \
+         signed with a key this server holds for you, not one on your device.",
+        );
     if fragment {
         if let Some(kind) = game_kind(key) {
             native = format!(
@@ -796,8 +795,10 @@ fn tg_native_fragment(html: String, key: &str, id: &str, fragment: bool) -> Stri
                  <strong>{}</strong><a href=\"{native_base}\" data-tg-session=\"{native_base}\" \
                  rel=\"bookmark\">Resume here</a></div>\
                  <p class=\"game-session-boundary\"><span aria-hidden=\"true\">◐</span>\
-                 Telegram identity is authenticated by signed initData; turns carry custodial signed provenance. \
-                 Private game fields remain scoped to their owning projection.</p></section>{native}",
+                 Telegram proves who you are and this server checks that proof. Your moves are \
+                 then signed with a key this server holds for you, not one on your device. What \
+                 other players are not shown stays unshown — but the whole session lives on this \
+                 server, which can read all of it.</p></section>{native}",
                 kind.as_str(),
                 crate::esc(id),
                 crate::esc(id),
@@ -1708,13 +1709,16 @@ fn shell_page(boot: Option<&str>) -> String {
     format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
-         <title>DreggNet — Telegram Mini App</title>\
+         <title>{name} — Telegram Mini App</title>\
          <script src=\"https://telegram.org/js/telegram-web-app.js\"></script>\
          {style}</head><body>\
          <main class=\"session\">\
-         <p class=\"prose\" id=\"tg-greet\">DreggNet offerings — every move is a receipt.</p>\
+         <p class=\"prose\" id=\"tg-greet\">{name} — games that check their own moves.</p>\
          <div id=\"tg-root\"{boot_attr}><p class=\"prose\">Loading the catalog…</p></div>\
          </main><script src=\"/tg/static/app.js\"></script></body></html>",
+        // ⚑ THE ARCADE'S NAME, not the LIBRARY LAYER's. This tab said `DreggNet`, which names
+        // `dreggnet-offerings` — a crate — and told a Telegram user nothing.
+        name = crate::PRODUCT_NAME,
         style = crate::STYLE,
         boot_attr = boot_attr,
     )
@@ -2288,8 +2292,10 @@ mod tests {
             .and_then(|(_, tail)| tail.split_once("</div>"))
             .map(|(notice, _)| notice)
             .expect("landed response has a status notice");
+        // The notice is built from the VIEWER-BLIND publication, not the raw receipt: the family
+        // name plus the two 32-byte handles are that projection's own grammar (`public_receipt_text`).
         assert!(
-            notice.contains("Verified dungeon receipt") && notice.contains("publication"),
+            notice.contains("dungeon · move ") && notice.contains(" · card "),
             "the notice consumes the common public game receipt: {notice}"
         );
         assert!(
@@ -2518,10 +2524,15 @@ mod tests {
         )
         .unwrap();
         assert!(body.contains("data-actor-attribution=\"signed\""), "{body}");
-        assert!(body.contains("custodial signed provenance"), "{body}");
+        // The custody disclosure, in the words the surface now uses: a signature happened, and the
+        // key that made it is the SERVER's derivation of this user, not a device key.
         assert!(
-            !body.contains("Browser actor attribution is asserted"),
+            body.contains("a key this server holds for you, not one on your device"),
             "{body}"
+        );
+        assert!(
+            !body.contains("takes your player name at face value"),
+            "the browser's asserted-identity sentence survived onto the Telegram rail: {body}"
         );
         assert!(
             body.contains("href=\"/tg/offerings/dungeon/session/hostile.tab-one\""),

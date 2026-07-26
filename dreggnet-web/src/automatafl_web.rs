@@ -101,8 +101,8 @@ pub fn automatafl_router(state: Arc<CatalogState>) -> Router {
             seat_note: "(Which side of the board you get — seat A or seat B — is settled by the \
                         game when you make your first move; the link decides only that the table \
                         is <em>yours</em>.)",
-            spectator_note: "Spectators see the live board with BOTH sealed moves fogged and every \
-                             control inert.",
+            spectator_note: "Watchers see the live board with both sealed moves hidden, and \
+                             cannot touch anything on it.",
         }))
 }
 
@@ -140,11 +140,11 @@ fn rules_html() -> String {
          <li><strong>You do not take turns.</strong> Both seats seal a move at the same time. The \
          round runs <em>commit → reveal → resolve</em>: you seal, your opponent seals, both open, \
          then ONE turn applies both.</li>\
-         <li><strong>The seal is the game.</strong> While a move is sealed the opponent is not \
-         shown it — they see only the commitment the executor holds. The hiding is by NON-REVEAL \
-         ON THIS SERVER: your move's plaintext sits in the session until you open it, so it is the \
-         host declining to tell them, not a commitment the two of you exchanged. Trust the host or \
-         do not play here.</li>\
+         <li><strong>The seal is the game.</strong> While your move is sealed your opponent is not \
+         shown it — but be clear about who is doing the hiding. Your move sits on this server in \
+         plain text until you open it, so what keeps it secret is this server declining to tell \
+         them, not a code the two of you exchanged that nobody else can read. Trust the host or do \
+         not play here.</li>\
          <li><strong>A CLASH marks the square and re-opens the round.</strong> If the two moves \
          fight over the same square, that round does not happen at all: the contested coordinate is \
          MARKED (it paints as a dead <code>×</code> square), the board FREEZES exactly as it was, \
@@ -156,9 +156,11 @@ fn rules_html() -> String {
          toward attractors and pushed from repulsors along each axis. Drive it onto one of YOUR two \
          goal corners and you win.</li>\
          </ul>\
-         <p class=\"prose\">Every press is one real executor turn: an illegal move is REFUSED with \
-         nothing committed, and a landed one returns a <code>TurnReceipt</code>. The whole match \
-         re-verifies by in-process replay — no node, no testnet.</p>\
+         <p class=\"prose\">Every press is re-run against the rules before anything is written \
+         down: an illegal move is refused and nothing happens. And when the match is over, anyone \
+         can replay it from the first move to the last and watch it come out the same way. That \
+         replay happens on this server — not on a blockchain, and no public network is \
+         involved.</p>\
          </section>",
         n = n,
     )
@@ -170,8 +172,8 @@ fn rules_html() -> String {
 fn board_preview() -> String {
     format!(
         "<section class=\"panel\"><h2>The board</h2>\
-         <p class=\"prose\">A real opening position, mid-turn: one attractor is picked up and its \
-         rook line is lit. This is the board you get.</p>\
+         <p class=\"prose\">A real opening position, mid-turn: one attractor has been picked up, \
+         and every square it can legally move to is lit. This is the board you get.</p>\
          {still}</section>",
         still = crate::automatafl_still(""),
     )
@@ -205,7 +207,11 @@ fn landing_page(notice: Option<&str>) -> String {
         board = board_preview(),
         rules = rules_html(),
     );
-    document("dregg — Automatafl", "offerings", &body)
+    document(
+        &format!("{} — Automatafl", crate::PRODUCT_NAME),
+        "offerings",
+        &body,
+    )
 }
 
 #[cfg(test)]
@@ -225,11 +231,28 @@ mod tests {
 
     #[test]
     fn the_rules_do_not_claim_a_cryptographic_commitment_between_clients() {
-        // `dregg-automatafl/src/surface.rs` stores the move PLAINTEXT server-side at commit time.
-        // Copy that says otherwise would be a lie, so pin the honest phrasing.
+        // `dregg-automatafl/src/surface.rs` stores the move PLAINTEXT server-side at commit time
+        // (`AutomataflSession::committed: [Option<Move>; 2]`). Copy that says otherwise would be a
+        // lie, so pin the honest phrasing. The wording moved out of shouted caps and into ordinary
+        // words; what is pinned is the CLAIM, not the typography.
         let rules = rules_html();
-        assert!(rules.contains("NON-REVEAL"), "{rules}");
+        assert!(
+            rules.contains("sits on this server in plain text"),
+            "{rules}"
+        );
         assert!(rules.contains("Trust the host"), "{rules}");
+        // …and it must never upgrade itself into a claim of client-to-client cryptography.
+        for lie in [
+            "end-to-end",
+            "encrypted",
+            "the server cannot",
+            "we cannot see",
+        ] {
+            assert!(
+                !rules.contains(lie),
+                "the seal copy claims `{lie}`, which the surface does not do: {rules}"
+            );
+        }
     }
 
     #[test]

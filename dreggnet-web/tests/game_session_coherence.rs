@@ -72,7 +72,10 @@ async fn four_rule_families_share_the_same_resumable_action_result_contract() {
             "data-game-session=\"true\"".to_string(),
             format!("data-game-family=\"{family}\""),
             "data-actor-attribution=\"asserted\"".to_string(),
-            "Browser actor attribution is asserted, not authenticated.".to_string(),
+            // The attribution disclosure, in the words the rail now uses. Same claim as the old
+            // "Browser actor attribution is asserted, not authenticated." — said so a player can
+            // act on it.
+            "takes your player name at face value and checks no signature".to_string(),
             "Choose an action".to_string(),
             "Read the result".to_string(),
             "rel=\"bookmark\">Resume here".to_string(),

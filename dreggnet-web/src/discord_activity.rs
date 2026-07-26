@@ -1456,8 +1456,10 @@ fn da_native_fragment(html: String, key: &str, id: &str, fragment: bool) -> Stri
         "data-actor-attribution=\"signed\"",
     )
     .replace(
-        "Browser actor attribution is asserted, not authenticated.",
-        "Discord identity is authenticated by OAuth ticket; turns carry custodial signed provenance.",
+        "This page takes your player name at face value and checks no signature, so anyone who \
+         knows it can play as you.",
+        "Discord proves who you are and this server checks that proof. Your moves are then signed \
+         with a key this server holds for you, not one on your device.",
     );
     if fragment {
         if let Some(kind) = game_kind(key) {
@@ -1469,8 +1471,10 @@ fn da_native_fragment(html: String, key: &str, id: &str, fragment: bool) -> Stri
                  <strong>{}</strong><a href=\"{native_base}\" data-da-session=\"{native_base}\" \
                  rel=\"bookmark\">Resume here</a></div>\
                  <p class=\"game-session-boundary\"><span aria-hidden=\"true\">◐</span>\
-                 Discord identity is authenticated by OAuth ticket; turns carry custodial signed provenance. \
-                 Private game fields remain scoped to their owning projection.</p></section>{native}",
+                 Discord proves who you are and this server checks that proof. Your moves are \
+                 then signed with a key this server holds for you, not one on your device. What \
+                 other players are not shown stays unshown — but the whole session lives on this \
+                 server, which can read all of it.</p></section>{native}",
                 kind.as_str(),
                 crate::esc(id),
                 crate::esc(id),
@@ -2197,15 +2201,17 @@ fn shell_page(client_id: &str) -> String {
     format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\">\
-         <title>DreggNet — Discord Activity</title>\
+         <title>{name} — Discord Activity</title>\
          {style}</head><body>\
          <main class=\"session\">\
-         <p class=\"prose\" id=\"da-greet\">DreggNet offerings — every move is a receipt.</p>\
+         <p class=\"prose\" id=\"da-greet\">{name} — games that check their own moves.</p>\
          <div id=\"da-root\" data-client-id=\"{client_id}\"><p class=\"prose\">Loading the catalog…</p></div>\
          </main>\
          <script src=\"/da/static/discord-sdk.js\"></script>\
          <script type=\"module\" src=\"/da/static/app.js\"></script>\
          </body></html>",
+        // ⚑ THE ARCADE'S NAME, not the LIBRARY LAYER's — `DreggNet` names a crate.
+        name = crate::PRODUCT_NAME,
         style = crate::STYLE,
         client_id = crate::esc(client_id),
     )
@@ -3667,8 +3673,10 @@ mod tests {
             .and_then(|(_, tail)| tail.split_once("</div>"))
             .map(|(notice, _)| notice)
             .expect("landed response has a status notice");
+        // The notice is built from the VIEWER-BLIND publication, not the raw receipt: the family
+        // name plus the two 32-byte handles are that projection's own grammar (`public_receipt_text`).
         assert!(
-            notice.contains("Verified dungeon receipt") && notice.contains("publication"),
+            notice.contains("dungeon · move ") && notice.contains(" · card "),
             "the notice consumes the common public game receipt: {notice}"
         );
         assert!(
@@ -3733,10 +3741,15 @@ mod tests {
         )
         .unwrap();
         assert!(body.contains("data-actor-attribution=\"signed\""), "{body}");
-        assert!(body.contains("custodial signed provenance"), "{body}");
+        // The custody disclosure, in the words the surface now uses: a signature happened, and the
+        // key that made it is the SERVER's derivation of this user, not a device key.
         assert!(
-            !body.contains("Browser actor attribution is asserted"),
+            body.contains("a key this server holds for you, not one on your device"),
             "{body}"
+        );
+        assert!(
+            !body.contains("takes your player name at face value"),
+            "the browser's asserted-identity sentence survived onto the Discord rail: {body}"
         );
         assert!(
             body.contains("href=\"/da/offerings/dungeon/session/hostile.tab-one\""),

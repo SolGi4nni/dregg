@@ -28,22 +28,34 @@ fn hex32(bytes: &[u8; 32]) -> String {
 /// publication object: no raw session, actor, action/operation name, payload,
 /// state head, or verifier diagnostic is available to accidentally interpolate.
 pub fn public_receipt_text(receipt: &PublicGameReceipt, replay: PlayerReplaySurface) -> String {
+    // ⚑ EVERY CALLER PREFIXES `"Turn committed — "` (and the web one an affordance label before
+    // that), so this string opens mid-sentence and must not restate that the move landed.
+    //
+    // ⚑ `Signed` says a signature was CHECKED. It does not say whose machine held the key —
+    // `dreggnet_offerings::signed::Custody` is a separate field this card does not carry, and the
+    // adapters' default is a server-held custodial key. So the sentence stops at "checked".
     let provenance = match receipt.attribution {
-        PublicGameAttribution::Signed => "signed actor provenance",
-        PublicGameAttribution::Asserted => "asserted actor provenance",
+        PublicGameAttribution::Signed => "A signature was checked for the name on it.",
+        PublicGameAttribution::Asserted => {
+            "The name on it was taken at face value, so this says the move was legal — not who \
+             made it."
+        }
     };
     let disposition = match &receipt.result {
-        PublicGameReceiptResult::Turn { ended: true } => "Session complete.",
-        PublicGameReceiptResult::Turn { ended: false } => "Session continues.",
-        PublicGameReceiptResult::Operation { .. } => "Verified operation applied.",
+        PublicGameReceiptResult::Turn { ended: true } => "that ended the session.",
+        PublicGameReceiptResult::Turn { ended: false } => "the session is still going.",
+        PublicGameReceiptResult::Operation { .. } => "a verified operation landed.",
     };
+    // The ruleset family stays visible (a dungeon never becomes a bazaar merely because both use
+    // this grammar), and both 32-byte handles stay COMPLETE — a short prefix is decoration, not an
+    // audit join. They ride at the end, where a reader who does not want them can stop early.
     format!(
-        "Verified {} receipt {} · publication {} · {}. {} {}",
+        "{} {} {} · move {} · card {}. {}",
+        disposition,
+        provenance,
         receipt.kind.as_str(),
         hex32(&receipt.receipt_id),
         hex32(&receipt.publication_id),
-        provenance,
-        disposition,
         replay.instruction(),
     )
 }
@@ -51,7 +63,15 @@ pub fn public_receipt_text(receipt: &PublicGameReceipt, replay: PlayerReplaySurf
 fn boundary(kind: GameKind) -> &'static str {
     match kind {
         GameKind::Descent | GameKind::DescentCampaign => {
-            "Private choices and proof witnesses stay with the player; committed moves and receipt roots are public."
+            // ⚑ THIS USED TO PROMISE PRIVACY THIS ROUTE DOES NOT HAVE. It read "Private choices
+            // and proof witnesses stay with the player" — but `/offerings/descent/session/{id}`
+            // runs the WHOLE game server-side: `NativeDescentOffering::advance` drives the `Sim`
+            // in the host process, the day's map is published before play, and there is no
+            // client-held secret and no zero-knowledge machinery anywhere on this path. (The
+            // browser-native run at `/descent/play` is a different surface and does not paint
+            // this rail.) Say the empty case out loud rather than letting a comforting sentence
+            // stand in for it.
+            "Nothing in this run is private: your moves, the dungeon and the result all live on this server, and anyone with this session's link can read them."
         }
         GameKind::Dungeon => {
             "Private ballots, cards, quest witnesses, and raid scores stay outside the rendered session; only verified outcomes land."
@@ -66,7 +86,15 @@ fn boundary(kind: GameKind) -> &'static str {
             "Encrypted swap inputs stay opaque to the browser surface; accepted public roots, commitments, and receipts are the rendered result."
         }
         GameKind::Council | GameKind::Market | GameKind::MultiwayTug | GameKind::Automatafl => {
-            "The current surface and ordinary moves are public; an opaque operation, when offered, keeps uploaded bytes out of rendered state."
+            // ⚑ TRUE OF ALL FOUR, CHECKED ONE BY ONE. Council hides nothing (`p.votes` records
+            // `(identity, option)` and the surface paints every voter). Market hides a bid from
+            // every rendered surface — including the seller's — while `MarketSession.bids` holds
+            // the opening in the clear from the moment it is placed. The tug's host holds both
+            // hands (`TugSession`'s reference `Engine`), and automatafl's holds both sealed moves
+            // (`AutomataflSession::committed`). So: a render filter, never a secret kept from the
+            // host — and the sentence must not read as "some of what you do is hidden", which
+            // would be false of the council.
+            "Anything this page keeps from another player is hidden by this server choosing not to show it, never by a code we cannot read. The whole session lives here in the clear."
         }
     }
 }
@@ -89,7 +117,8 @@ pub(crate) fn session_rail(key: &str, id: &str) -> Option<String> {
          <li><b>2</b><span>Choose an action</span></li>\
          <li><b>3</b><span>Read the result</span></li></ol>\
          <p class=\"game-session-boundary\"><span aria-hidden=\"true\">◐</span>\
-         Browser actor attribution is asserted, not authenticated. {boundary}</p>\
+         This page takes your player name at face value and checks no signature, so anyone who \
+         knows it can play as you. {boundary}</p>\
          </section>",
         family = kind.as_str(),
         boundary = crate::esc(boundary(kind)),
