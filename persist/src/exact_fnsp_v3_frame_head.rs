@@ -1531,6 +1531,9 @@ fn load_snapshot_from_read(
     let activation = collect_singleton(&read.open_table(EXACT_FNSP_V3_ACTIVATION)?)?;
     let head = collect_singleton(&read.open_table(EXACT_FNSP_V3_FRAME_HEAD)?)?;
     let records = collect_records(&read.open_table(EXACT_FNSP_V3_FRAME_RECORDS)?)?;
+    let Some(activation) = activation else {
+        return validate_snapshot_without_activation(head, records);
+    };
     let receipts = collect_receipts(&read.open_table(crate::tables::RECEIPT_CHAIN)?)?;
     validate_snapshot(activation, head, records, receipts, exact_head)
 }
@@ -1542,6 +1545,9 @@ fn load_snapshot_from_write(
     let activation = collect_singleton(&write.open_table(EXACT_FNSP_V3_ACTIVATION)?)?;
     let head = collect_singleton(&write.open_table(EXACT_FNSP_V3_FRAME_HEAD)?)?;
     let records = collect_records(&write.open_table(EXACT_FNSP_V3_FRAME_RECORDS)?)?;
+    let Some(activation) = activation else {
+        return validate_snapshot_without_activation(head, records);
+    };
     let receipts = collect_receipts(&write.open_table(crate::tables::RECEIPT_CHAIN)?)?;
     validate_snapshot(activation, head, records, receipts, exact_head)
 }
@@ -1870,24 +1876,46 @@ fn validate_active_epoch_receipts(
     Ok(())
 }
 
+/// The no-activation half of [`validate_snapshot`], split out so the receipt log is never even
+/// READ before an exact receipt epoch exists.
+///
+/// ⚑ THE WOUND THIS CLOSES (2026-07-26). `load_snapshot_from_{read,write}` used to call
+/// `collect_receipts` UNCONDITIONALLY and hand the result to `validate_snapshot`, which then
+/// discarded it on this branch. So a store that had bootstrapped the exact accumulator but had
+/// NOT yet activated the receipt epoch was required, at OPEN, for every row of its receipt log to
+/// be a canonical `postcard(TurnReceipt)` in a per-agent hash chain — while the WRITE path
+/// (`stage_receipt_head_on_append_in`) deliberately returns `Ok(())` before activation and imposes
+/// no such requirement. Write-accepts / open-refuses is a data-directory bricking bug: the store
+/// happily durably recorded receipts it could then never reopen over.
+///
+/// Nothing is weakened by deferring. The canonical-receipt requirement becomes load-bearing at
+/// activation, and both doors into that state re-derive it over the COMPLETE log:
+/// `install_exact_fnsp_v3_activation` runs `collect_receipts` before writing the activation row,
+/// and every activated snapshot below still collects and validates. It is also the O(receipts)
+/// decode that used to run on every pre-activation `PersistentStore::open`,
+/// `exact_fnsp_v3_activation()` and `exact_fnsp_v3_committed_frame_head()`.
+fn validate_snapshot_without_activation(
+    head_bytes: Option<Vec<u8>>,
+    record_rows: Vec<(u64, Vec<u8>)>,
+) -> StoreResult<ValidatedFrameSnapshot> {
+    if head_bytes.is_some() || !record_rows.is_empty() {
+        return Err(integrity(
+            ExactFnspV3FrameStoreError::FrameRowsWithoutActivation,
+        ));
+    }
+    Ok(ValidatedFrameSnapshot {
+        activation: None,
+        frames: Vec::new(),
+    })
+}
+
 fn validate_snapshot(
-    activation_bytes: Option<Vec<u8>>,
+    activation_bytes: Vec<u8>,
     head_bytes: Option<Vec<u8>>,
     record_rows: Vec<(u64, Vec<u8>)>,
     receipt_rows: ValidatedReceiptLog,
     exact_head: ExactFnspV3StateHeadV1,
 ) -> StoreResult<ValidatedFrameSnapshot> {
-    let Some(activation_bytes) = activation_bytes else {
-        if head_bytes.is_some() || !record_rows.is_empty() {
-            return Err(integrity(
-                ExactFnspV3FrameStoreError::FrameRowsWithoutActivation,
-            ));
-        }
-        return Ok(ValidatedFrameSnapshot {
-            activation: None,
-            frames: Vec::new(),
-        });
-    };
     let activation = UntrustedExactFnspV3ActivationV1::decode(&activation_bytes)?;
     validate_activation_cutover(&activation, &receipt_rows)?;
     validate_active_epoch_receipts(&activation, &receipt_rows)?;
@@ -2393,7 +2421,7 @@ mod tests {
     fn first_frame_activation_continues_nonempty_exact_prefix_atomically() {
         let store = PersistentStore::open_in_memory().expect("store");
         let initial = store
-            .initialize_exact_fnsp_v3_state([
+            .initialize_unaudited_exact_fnsp_v3_state([
                 dregg_circuit::exact_nullifier_aafi::ExactAppendRecord {
                     seq: 0,
                     raw: [0x11; 32],

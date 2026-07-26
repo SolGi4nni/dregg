@@ -504,8 +504,32 @@ impl PersistentStore {
     /// the live faithful nullifier image.  Production bootstrap is owned by
     /// `initialize_exact_fnsp_v3_state_from_faithful_nullifiers`, which derives every record from
     /// the validated durable legacy authority.
+    ///
+    /// This entry runs the SAME full faithful/exact prefix audit the production bootstrap runs
+    /// (and therefore installs the rolling bridge the same way), so a test cannot ACCIDENTALLY
+    /// leave behind a durable image that `PersistentStore::open` will refuse to reopen — the trap
+    /// this seeder used to be. A test whose SUBJECT is that divergence names it out loud via
+    /// [`Self::initialize_unaudited_exact_fnsp_v3_state`].
     #[cfg(test)]
     pub(crate) fn initialize_exact_fnsp_v3_state(
+        &self,
+        records: impl IntoIterator<Item = ExactAppendRecord>,
+    ) -> StoreResult<ExactFnspV3StateHeadV1> {
+        let write = self.db.begin_write()?;
+        let (write, head) = initialize_exact_fnsp_v3_state_in(write, records)?;
+        crate::commit_log::validate_exact_fnsp_v3_faithful_prefix_in(&write)?;
+        write.commit()?;
+        Ok(head)
+    }
+
+    /// [`Self::initialize_exact_fnsp_v3_state`] WITHOUT the faithful/exact prefix audit.
+    ///
+    /// Only for tests whose subject IS an exact authority that diverges from the faithful
+    /// nullifier image — the prefix gate's own refusal teeth, and the first-frame activation over
+    /// a synthetic non-empty exact prefix. The image it writes is deliberately one the boot audit
+    /// refuses; every other caller wants the audited entry above.
+    #[cfg(test)]
+    pub(crate) fn initialize_unaudited_exact_fnsp_v3_state(
         &self,
         records: impl IntoIterator<Item = ExactAppendRecord>,
     ) -> StoreResult<ExactFnspV3StateHeadV1> {

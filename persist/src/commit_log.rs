@@ -3255,17 +3255,59 @@ mod tests {
         out
     }
 
+    /// The activation executor's signing key. After activation EVERY appended receipt row must be
+    /// a canonical `postcard(TurnReceipt)` that is `Final`, carries the activation's federation id,
+    /// and is executor-signed by THIS key (`stage_receipt_head_on_append_in`), so tests that commit
+    /// past an activation must build their receipts with [`test_activated_receipt`].
+    const TEST_ACTIVATION_EXECUTOR_SEED: [u8; 32] = [0xe7; 32];
+    /// The federation id `install_test_exact_activation` binds into the activation.
+    const TEST_ACTIVATION_FEDERATION_ID: [u8; 32] = [0xe8; 32];
+
+    /// Build the canonical executor-signed receipt row the post-activation receipt authority
+    /// demands, and return `(encoded_bytes, receipt_hash)`.
+    ///
+    /// `previous` is the same agent's prior receipt hash — the per-agent causal chain
+    /// `stage_receipt_head_on_append_in` verifies against its derived head index.
+    fn test_activated_receipt(
+        commit: &CommitRecord,
+        previous: Option<[u8; 32]>,
+    ) -> (Vec<u8>, [u8; 32]) {
+        let key = dregg_types::SigningKey::from_bytes(&TEST_ACTIVATION_EXECUTOR_SEED);
+        let mut receipt = dregg_turn::TurnReceipt {
+            turn_hash: commit.turn_hash,
+            forest_hash: [0xe9; 32],
+            pre_state_hash: [0xea; 32],
+            post_state_hash: [0xeb; 32],
+            timestamp: 1_700_000_000,
+            agent: dregg_cell::CellId(commit.creator),
+            federation_id: TEST_ACTIVATION_FEDERATION_ID,
+            finality: dregg_turn::Finality::Final,
+            previous_receipt_hash: previous,
+            ..Default::default()
+        };
+        receipt.executor_signature = Some(
+            dregg_types::sign(&key, &receipt.canonical_executor_signed_message())
+                .0
+                .to_vec(),
+        );
+        let hash = receipt.receipt_hash();
+        (
+            postcard::to_stdvec(&receipt).expect("canonical receipt encoding"),
+            hash,
+        )
+    }
+
     fn install_test_exact_activation(
         store: &PersistentStore,
     ) -> crate::UntrustedExactFnspV3ActivationV1 {
         let initial = store
             .initialize_exact_fnsp_v3_state_from_faithful_nullifiers()
             .expect("exact prefix");
-        let signing_key = dregg_types::SigningKey::from_bytes(&[0xe7; 32]);
+        let signing_key = dregg_types::SigningKey::from_bytes(&TEST_ACTIVATION_EXECUTOR_SEED);
         let public_key = signing_key.public_key();
         let epoch = dregg_turn::ExactFnspV3ReceiptEpochV1::prepare(
             dregg_turn::ExactFnspV3ReceiptEpoch::new(7).expect("nonzero epoch"),
-            [0xe8; 32],
+            TEST_ACTIVATION_FEDERATION_ID,
             public_key.0,
             0,
             None,
@@ -4993,8 +5035,15 @@ mod tests {
 
         // Advancing the faithful height without a spend remains legal: exact-v3 shadows the
         // ordered nullifier history, not unrelated note/root-only turns.
+        //
+        // Both receipts are CANONICAL executor-signed rows. Past the activation the receipt
+        // authority is live (`stage_receipt_head_on_append_in`), so an opaque byte string is no
+        // longer an admissible receipt — this fixture used to append `b"post-activation-nonspend"`
+        // and the store correctly refused it as `FrameReceiptMismatch` before the property under
+        // test was ever reached.
         let first_block = [0x39; 32];
         let first_commit = faithful_commit_record(0, first_block);
+        let (first_receipt, _) = test_activated_receipt(&first_commit, None);
         let (first_anchor, first_edge) = plan_test_edge(&store, 1, first_block, &[]);
         let first_envelope = signer.sign_edge(first_edge.clone());
         let first_attested = test_attested(&signer, &first_commit, &first_edge);
@@ -5004,7 +5053,7 @@ mod tests {
                 &first_commit,
                 &[],
                 0,
-                b"post-activation-nonspend",
+                &first_receipt,
                 FinalizedFaithfulRootWeld {
                     initial_anchor: Some(&first_anchor),
                     envelope: &first_envelope,
@@ -5026,6 +5075,7 @@ mod tests {
         };
         let second_block = [0x3b; 32];
         let second_commit = faithful_commit_record(1, second_block);
+        let (second_receipt, _) = test_activated_receipt(&second_commit, None);
         let (second_anchor, second_edge) = plan_test_edge(&store, 2, second_block, &[]);
         let second_envelope = signer.sign_edge(second_edge.clone());
         let successor = store
@@ -5041,7 +5091,7 @@ mod tests {
                 &second_commit,
                 &[],
                 1,
-                b"must-not-land",
+                &second_receipt,
                 FinalizedFaithfulRootWeld {
                     initial_anchor: None,
                     envelope: &second_envelope,
@@ -5400,7 +5450,9 @@ mod tests {
             let write = store.db.begin_write().unwrap();
             append_fresh_nullifiers_in(&write, legacy, 0).unwrap();
             write.commit().unwrap();
-            store.initialize_exact_fnsp_v3_state(exact).unwrap();
+            store
+                .initialize_unaudited_exact_fnsp_v3_state(exact)
+                .unwrap();
             let write = store.db.begin_write().unwrap();
             assert!(matches!(
                 validate_exact_fnsp_v3_faithful_prefix_in(&write),
@@ -5720,6 +5772,17 @@ mod tests {
                     write, winner,
                 )
                 .unwrap();
+            // The competing writer is a REAL finalized-turn writer, so it also advances the
+            // faithful/exact rolling bridge — the O(1) induction boundary every exact commit
+            // checks FIRST (`commit_finalized_turn_welded`). Without this the image it leaves is
+            // incoherent (bridge 0 / faithful 1 / exact 1) and the commit below is refused by the
+            // bridge gate, never reaching the stale-CAS tooth this test exists for.
+            crate::exact_fnsp_v3_faithful_bridge::stage_matching_append_in(
+                &write,
+                winner.append_record(),
+                winner.append_record(),
+            )
+            .unwrap();
             write.commit().unwrap();
             head
         };
