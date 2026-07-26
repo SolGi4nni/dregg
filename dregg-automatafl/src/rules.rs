@@ -213,12 +213,53 @@ pub fn turn(
     Ok((board, if win < 0 { None } else { Some(win as u32) }))
 }
 
+/// **The CAPPED match's terminal rule** — `AutomataflRules.adjudicateCapped`.
+///
+/// The seat strictly nearer its own goal wins; a seat that owns goals beats one that owns none;
+/// exact parity is a genuine draw (`None`). This is the only terminal rule in the game with
+/// soundness theorems behind it: `adjudicate_seated` (the winner always OWNS a goal corner — the
+/// rule cannot award a match to an unseated player) and `adjudicate_sound` (when both seats own
+/// goals, the winner is genuinely nearer).
+///
+/// ⚑ Before this existed the surface called a turn-capped match a bare DRAW, which is a terminal
+/// rule no theorem had ever seen. A draw is now a *verdict* — the stock opening adjudicates to
+/// `None` because the automaton starts equidistant from both seats' corners, and nudging it one row
+/// picks a winner (pinned by `#guard`s in `AutomataflFFI.lean`).
+pub fn adjudicate_capped(b: &Board, goals: &[(Coord, u32)]) -> Result<Option<u32>, String> {
+    let toks = ask(&format!(
+        "adjudicate {} {}",
+        board_wire(b)?,
+        goals_wire(goals)
+    ))?;
+    let win_tok = toks
+        .first()
+        .ok_or_else(|| "adjudicate reply is empty".to_string())?;
+    let win: i64 = win_tok
+        .parse()
+        .map_err(|e| format!("adjudicate win token {win_tok:?}: {e}"))?;
+    Ok(if win < 0 { None } else { Some(win as u32) })
+}
+
 /// The board half of [`turn`] with no markers and no goals — `automatonStepCfg ∘ resolveMoves`, the
 /// two fold legs composed.
 ///
 /// ⚑ The WIN is not available from a board alone: the ruleset fires it on the automaton ENTERING a
 /// goal, so it is a property of the transition, not of the post-position. A caller that needs the
 /// winner calls [`turn`] and keeps what it returns.
+///
+/// ⚑⚑ **THIS IS NOT "WHAT A TURN DOES" ON A CONFLICTED ROUND, AND IT IS NOT A SAFE DEFAULT.** This
+/// and [`turn`] are the RESOLUTION LEGS. `resolveMoves` is guarded by `resolvableB`, which is the
+/// MERGE clause (`unresolved`) alone; the FORK and COLLIDE clauses live in [`round`]
+/// (`roundStep`), and neither of these verbs consults them. Handed a clashing pair they will
+/// happily resolve whatever survives the inclusive path check — and that is not a hypothetical: on
+/// the stock 11×11 opening, two seats forking the attractor at `(3,1)` to `(3,3)` and `(5,1)`
+/// EXECUTE seat A's move (seat B's is blocked mid-path, leaving A as the single unblocked edge) and
+/// discard seat B's with no trace, which is exactly the wrong outcome the played surface used to
+/// ship (`surface::tests::a_forced_clash_re_enters_the_round_instead_of_dropping_the_moves` pins
+/// it).
+///
+/// So: a caller adjudicating a REAL round calls [`round`]. Use these two only where the round is
+/// already known clean — after a [`round_is_clean`] gate, or to replay a recorded clean round.
 pub fn apply_turn(b: &Board, ms: &[Move]) -> Result<Board, String> {
     Ok(turn(b, &[], ms, &[])?.0)
 }

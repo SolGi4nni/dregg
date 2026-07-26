@@ -6,15 +6,14 @@
 //! `dregg-multiway-tug`'s `TugOffering`: where the tug paints a hidden HAND, automatafl paints a
 //! hidden MOVE on a shared BOARD.
 //!
-//! **The board is the STOCK 11×11 two-player game**, and every resolved round's two revealed moves
-//! are RECORDED ([`AutomataflSession::rounds`], [`AutomataflSession::start_board`]) — so a finished
-//! match hands the crown the exact object the two-leg fold attests
-//! (`AutomataflMatch::played(start, rounds)`: Leg R the players' adjudicated moves, Leg A the
-//! automaton's step, board-window chained). CLEAN rounds only: a round the seats CLASHED on is
-//! still played and still recorded, but [`AutomataflSession::unfoldable_round`] names it and the
-//! fold refuses it — the surface resolves a clash by DROPPING moves, which is not the rule the
-//! ruleset states (mark the square, re-enter the round), so attesting it would be a proof of a
-//! transition nobody licensed.
+//! **The board is the STOCK 11×11 two-player game**, and every resolved TURN is recorded WHOLE
+//! ([`PlayedTurn`] via [`AutomataflSession::turns_played`], with the genesis in
+//! [`AutomataflSession::start_board`]) — its start board, every CONFLICT round's submissions, and
+//! the pair that finally resolved. A clash-free match hands the crown the object the two-leg fold
+//! attests (`AutomataflMatch::played(start, rounds)`: Leg R the players' adjudicated moves, Leg A
+//! the automaton's step, board-window chained); a turn that RE-ENTERED is the object
+//! `MultiRoundTurn` folds (the Leg C conflict braid ∘ the marks-aware Leg RM ∘ the marks-carrying
+//! Leg A). [`AutomataflSession::unfoldable_round`] names which turns the plain path cannot attest.
 //!
 //! **The board is a [`deos_view::ViewNode::CoordGrid`]** — one [`deos_view::CoordCell`] per square,
 //! the particle as the glyph (`·` vacuum, `R` repulsor, `A` attractor, `@` automaton), the
@@ -25,14 +24,24 @@
 //! target (a diagonal, the source itself) is NOT.
 //!
 //! **The simultaneous-move shape, rendered.** Automatafl's turn is not alternating: both players
-//! move at once. So the surface runs COMMIT → REVEAL → RESOLVE:
+//! move at once, and a turn is N ROUNDS, not one. So the surface runs
+//! COMMIT → REVEAL → RESOLVE → (⚑ RE-SUBMIT → REVEAL → RESOLVE)*:
 //! 1. **commit** — each seat selects a source and seals a destination. The executor stores only the
 //!    COMMITMENT (a blake3 seal over the move + a per-turn nonce), never the plaintext;
 //! 2. **reveal** — each seat opens its seal (the plaintext lands on the cell, checked against the
 //!    commitment it opens);
-//! 3. **resolve** — ONE real turn asks the LEAN for `roundStep`'s clean-round arm
-//!    ([`crate::rules::turn`]): illegal moves filtered, the conflict set checked, the moves resolved,
-//!    the automaton takes its step, and the win is checked ON ENTRY.
+//! 3. **resolve** — ONE real turn asks the LEAN for `AutomataflRules.roundStep` WHOLE
+//!    ([`crate::rules::round`], one call per round) and gets back one of its two arms;
+//! 4. **⚑ re-submit** — the `again` arm. The round CLASHED, so it does not resolve: the contested
+//!    coordinate is MARKED, the board FREEZES, the moves that were not part of the clash are LOCKED,
+//!    and exactly the seats the ruleset NAMED owe a fresh move — which is re-checked against the
+//!    accumulated marks. The turn counter does not move. Every one of those five facts is the Lean's
+//!    answer, carried; none of them is computed here.
+//!
+//! The marks, locks and pending moves die when a round finally comes back clean
+//! (`model.py::ClearState`), and the re-entry TERMINATES because every re-entry must burn a NEW
+//! square: the deployed cell pins `marked` strictly monotone and `≤ CELLS` on its own `resubmit`
+//! case, so a turn re-enters at most n² times and a round that marks nothing is REFUSED.
 //!
 //! [`Offering::render_for`] paints the table AS A VIEWER SEES IT: the viewer's own committed move is
 //! shown in full (they know what they sealed), while the opponent's is FOG — a sealed commitment, no
@@ -61,8 +70,8 @@ use dreggnet_offerings::{
 
 use crate::board::{ATT, AUTO, Board, Coord, Decision, Move, REP, VAC};
 use crate::game::{
-    AutomataflGame, CELLS, COMMIT, MatchState, N, RESOLVE, REVEAL, SELECT, coord_of, goal_owner_at,
-    goals, goals_of, index_of, opening_board,
+    AutomataflGame, CELLS, COMMIT, MatchState, N, RESOLVE, RESUBMIT, REVEAL, SELECT, coord_of,
+    goal_owner_at, goals, goals_of, index_of, opening_board,
 };
 use crate::rules;
 
@@ -135,12 +144,51 @@ impl Seat {
 pub enum Phase {
     /// Both seats are sealing a move (select → commit).
     Commit,
+    /// ⚑ **THE CONFLICT ROUND.** The previous round CLASHED: the contested coordinate is MARKED,
+    /// the board is FROZEN, and exactly the seats the ruleset NAMED
+    /// ([`AutomataflSession::waiting`]) owe a FRESH move. A seat whose move was not part of the
+    /// clash is [`AutomataflSession::locked`] and owes nothing.
+    ///
+    /// Mechanically this is `Commit` again — a seal, then an open — but it is a distinct phase
+    /// because it means something different on a board: the turn has not advanced, the marks are
+    /// permanent for the rest of the turn, and only some seats are being waited on.
+    Resubmit,
     /// Both moves are sealed; each seat opens its commitment.
     Reveal,
     /// Both moves are open; the resolution is one real turn away.
     Resolve,
     /// The match is decided (a goal reached, or the clock ran out).
     Over,
+}
+
+impl Phase {
+    /// Is a seat SEALING a move in this phase? (`Commit` and `Resubmit` are the same affordance —
+    /// select a source, seal a destination — over different round states.)
+    pub fn is_sealing(self) -> bool {
+        matches!(self, Phase::Commit | Phase::Resubmit)
+    }
+}
+
+/// **ONE PLAYED TURN, WHOLE** — the turn-start board, every CONFLICT round's submissions in
+/// re-entry order, and the terminating CLEAN round's submissions.
+///
+/// This is exactly the shape `dreggnet_game_board::MultiRoundTurn` folds
+/// (`start` / `conflict_subs` / `clean_subs`): the conflict braid lowers to one Leg C leaf per
+/// entry on the 32-lane RoundState window, and `clean_subs` lowers to the marks-aware Leg RM +
+/// the marks-carrying Leg A. `conflict_subs` empty ⇒ the turn was clean and folds through the
+/// plain two-leg `AutomataflMatch::played` path.
+///
+/// ⚑ Recorded on a LANDED resolution only — a refused one restores the previous history
+/// (anti-ghost), so an unlanded round is not a played round.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlayedTurn {
+    /// The turn-start board — FROZEN across the whole turn, every round of it.
+    pub start: Board,
+    /// Each conflict round's move set, in re-entry order (`[seat A's, seat B's]`). A locked seat's
+    /// move appears again in the next round's entry, because that is what the round CONSIDERED.
+    pub conflict_subs: Vec<[Move; 2]>,
+    /// The terminating clean round's move set — the pair that actually resolved.
+    pub clean_subs: [Move; 2],
 }
 
 /// **What the automaton DID on the last resolution, and why.**
@@ -276,19 +324,42 @@ impl AutomataflOffering {
 pub struct AutomataflSession {
     /// The deployed executor game — every advance commits this state as ONE real verified turn.
     game: AutomataflGame,
-    /// The live board; every resolution is computed by the Lean ([`crate::rules::turn`]).
+    /// The live board — `AutomataflRules.RoundState.board` while a turn is in flight (frozen: only a
+    /// resolution writes it). Every resolution is computed by the Lean ([`crate::rules::round`]).
     board: Board,
     /// **The GENESIS position** — the board the match opened on, kept so the played match can be
     /// folded (`AutomataflMatch::played(start, rounds)`); the fold's first leaf declares this as
     /// its IN window and the root exposes it as the decodable `board_genesis`.
     start: Board,
-    /// **THE MOVE HISTORY** — every RESOLVED round's two revealed moves, in order. Without this
-    /// the surface threw every move away and the only foldable shape left was the automaton-only
-    /// chain, which attests K independent automaton steps and NO MOVE AT ALL. With it, a played
-    /// match folds through the TWO-LEG (Leg R resolve, Leg A step) chain that actually attests the
-    /// players' moves. Pushed on a LANDED resolution only (a refused resolution commits nothing
-    /// and records nothing — anti-ghost).
-    rounds: Vec<(Move, Move)>,
+    /// **THE TURN HISTORY** — every RESOLVED turn, whole: its start board, its conflict rounds'
+    /// submissions and its terminating clean round's ([`PlayedTurn`]).
+    ///
+    /// Without this the surface threw every move away and the only foldable shape left was the
+    /// automaton-only chain, which attests K independent automaton steps and NO MOVE AT ALL. With
+    /// the clean pairs alone ([`Self::rounds`], derived from this) a clash-free match folds through
+    /// the TWO-LEG (Leg R resolve, Leg A step) chain; with the CONFLICT rounds recorded too, a turn
+    /// the seats clashed on is the `MultiRoundTurn` the Leg C braid folds. Pushed on a LANDED
+    /// resolution only (a refused resolution commits nothing and records nothing — anti-ghost).
+    turns_played: Vec<PlayedTurn>,
+    /// **THE TURN-START BOARD** — `AutomataflRules.RoundState.board`, frozen for every round of the
+    /// current turn. Equal to [`Self::board`] (nothing but a resolution writes the board); held
+    /// separately so a recorded [`PlayedTurn`] carries the position its rounds were played against
+    /// even after the resolution has moved on.
+    turn_start: Board,
+    /// ⚑ **THE ACCUMULATED CONFLICT MARKERS** — `RoundState.marks`, exactly as
+    /// [`crate::rules::round`] returned them. A marked coordinate is illegal at EITHER endpoint for
+    /// EVERYONE for the rest of the turn, and the marks are cleared when the turn resolves
+    /// (`model.py::ClearState`). Never computed here: the Lean says which square was contested.
+    marks: Vec<Coord>,
+    /// **THE LOCKED MOVES** — `RoundState.locked`: the moves that were not part of the clash and
+    /// therefore STAND, unchanged, into the next round. Their seats owe nothing.
+    locked: Vec<Move>,
+    /// **THE SEATS THAT OWE A FRESH MOVE** — `RoundState.waiting`. `[0, 1]` at turn start
+    /// (`openRound`), and after a clash exactly the seats the ruleset NAMED.
+    waiting: Vec<u32>,
+    /// This turn's conflict rounds' submissions so far, in re-entry order — the `MultiRoundTurn`
+    /// braid under construction. Cleared when the turn resolves.
+    conflict_subs: Vec<[Move; 2]>,
     /// The seat holders. A seat is CLAIMED by the first identity that acts from it (so a web /
     /// Discord / Telegram user — whose identity is a derived key, not a fixed string — really
     /// sits down). The canonical [`AutomataflOffering::seat_identity`] claims work the same way.
@@ -320,17 +391,67 @@ pub struct AutomataflSession {
 }
 
 impl AutomataflSession {
-    /// The current phase.
+    /// **The current phase**, read off the ROUND STATE the Lean handed back.
+    ///
+    /// Only the seats in [`Self::waiting`] are waited on: a LOCKED seat (one whose move survived a
+    /// clash) has already sealed and opened, and the phase must not sit forever waiting for it to
+    /// do so again. `Resubmit` rather than `Commit` exactly when this turn has already had a
+    /// conflict round.
     pub fn phase(&self) -> Phase {
         if self.ended {
-            Phase::Over
-        } else if self.committed[0].is_none() || self.committed[1].is_none() {
-            Phase::Commit
-        } else if !self.revealed[0] || !self.revealed[1] {
+            return Phase::Over;
+        }
+        let owed = |f: &dyn Fn(usize) -> bool| self.waiting.iter().any(|w| f(*w as usize));
+        if owed(&|i| self.committed[i].is_none()) {
+            if self.conflict_subs.is_empty() {
+                Phase::Commit
+            } else {
+                Phase::Resubmit
+            }
+        } else if owed(&|i| !self.revealed[i]) {
             Phase::Reveal
         } else {
             Phase::Resolve
         }
+    }
+
+    /// ⚑ **This turn's MARKED coordinates** — `AutomataflRules.RoundState.marks`, as the Lean's
+    /// `round` verb returned them. A marked square is dead for the rest of the turn: illegal as a
+    /// source AND as a destination, for EVERY seat. PUBLIC (both viewers see the same marks; a mark
+    /// is not a secret, it is a scar on the board).
+    pub fn marks(&self) -> &[Coord] {
+        &self.marks
+    }
+
+    /// **The moves that STAND into the next round** — `RoundState.locked`. Their seats are not
+    /// waited on and their moves are carried into the next round untouched.
+    pub fn locked(&self) -> &[Move] {
+        &self.locked
+    }
+
+    /// **The seats that owe a fresh move this round** — `RoundState.waiting`. `[0, 1]` on a first
+    /// round; after a clash, exactly the seats the ruleset named.
+    pub fn waiting(&self) -> &[u32] {
+        &self.waiting
+    }
+
+    /// Whether `seat` owes a submission this round (it is in [`Self::waiting`]). A locked seat does
+    /// not.
+    pub fn is_waiting(&self, seat: Seat) -> bool {
+        self.waiting.contains(&(seat.idx() as u32))
+    }
+
+    /// **How many CONFLICT rounds this turn has already had.** `0` on a first round; each re-entry
+    /// marks at least one new square, so this is bounded by `N²` — the executor enforces exactly
+    /// that (`marked` is `StrictMonotonic` and `FieldLte CELLS` on the `resubmit` case).
+    pub fn conflict_round_no(&self) -> usize {
+        self.conflict_subs.len()
+    }
+
+    /// **THE TURN HISTORY** — every resolved turn, whole ([`PlayedTurn`]): the shape
+    /// `dreggnet_game_board::MultiRoundTurn` folds.
+    pub fn turns_played(&self) -> &[PlayedTurn] {
+        &self.turns_played
     }
 
     /// Whether the match has ended.
@@ -380,26 +501,43 @@ impl AutomataflSession {
         &self.start
     }
 
-    /// **The recorded move history** — each resolved round's `(seat A move, seat B move)`, in
-    /// order. This is the object `AutomataflMatch::played(start, rounds)` folds.
-    pub fn rounds(&self) -> &[(Move, Move)] {
-        &self.rounds
+    /// **The resolved turns' terminating moves** — each resolved turn's `(seat A move, seat B
+    /// move)`, in order. This is the object `AutomataflMatch::played(start, rounds)` folds, and it
+    /// is honest ONLY for a match with no conflict rounds: a turn that re-entered resolved against
+    /// ACCUMULATED MARKS, and the plain two-leg fold has no marks lane to consume them with (that is
+    /// Leg RM). Ask [`Self::unfoldable_round`] before folding this.
+    pub fn rounds(&self) -> Vec<(Move, Move)> {
+        self.turns_played
+            .iter()
+            .map(|t| (t.clean_subs[0], t.clean_subs[1]))
+            .collect()
     }
 
-    /// The index of the first recorded round that is NOT clean (a fork on a shared source or a
-    /// clash on a shared destination), or `None` when every round folds.
+    /// The index of the first recorded turn the PLAIN two-leg fold cannot attest, or `None` when
+    /// every turn folds through `AutomataflMatch::played`.
     ///
-    /// A conflicting round is refused by the fold ([`round_is_clean`]): the surface resolved it by
-    /// DROPPING the clashing moves, which is the audited-WRONG rule — the ruleset marks the
-    /// contested square and re-enters the round. Surfacing the index here lets a frontend say
-    /// WHICH round blocks the crown instead of reporting an opaque prover failure.
+    /// Two ways a turn fails that:
+    ///
+    /// 1. **it RE-ENTERED** — the turn had ≥1 conflict round, so its terminating round resolved
+    ///    against accumulated MARKS. Folding it as a plain Leg R + Leg A round would attest a
+    ///    transition in which the clash never happened. That turn is a `MultiRoundTurn`
+    ///    (`conflict braid ∘ Leg RM ∘ Leg A`), not a round of `played`.
+    /// 2. **its terminating round is not clean** — unreachable through this surface now that the
+    ///    resolution is the ruleset's own `roundStep` (a clash RE-ENTERS instead of resolving), and
+    ///    kept as a checked side condition: the answer comes from the LEAN
+    ///    ([`rules::round_is_clean`]), so if it ever fires the fold is refused rather than fed a
+    ///    round the rules never licensed.
     pub fn unfoldable_round(&self) -> Result<Option<usize>, String> {
         let mut b = self.start.clone();
-        for (i, (ma, mb)) in self.rounds.iter().enumerate() {
-            if !rules::round_is_clean(&b, &[*ma, *mb])? {
+        for (i, t) in self.turns_played.iter().enumerate() {
+            if !t.conflict_subs.is_empty() {
                 return Ok(Some(i));
             }
-            b = rules::apply_turn(&b, &[*ma, *mb])?;
+            let pair = [t.clean_subs[0], t.clean_subs[1]];
+            if !rules::round_is_clean(&b, &pair)? {
+                return Ok(Some(i));
+            }
+            b = rules::apply_turn(&b, &pair)?;
         }
         Ok(None)
     }
@@ -458,15 +596,21 @@ impl AutomataflSession {
     /// **Whether `seat` still owes a move in the CURRENT phase.** The whole simultaneous-move
     /// wound in one predicate: in `Phase::Reveal` the seat that already opened owes nothing while
     /// the one that never opened owes the reveal, so a host with a clock can tell WHICH seat
-    /// walked away instead of guessing or blaming both. Pure — reads the phase and that seat's own
-    /// commit/reveal flags, nothing else.
+    /// walked away instead of guessing or blaming both. Pure — reads the phase, the round's
+    /// `waiting` set and that seat's own commit/reveal flags, nothing else.
+    ///
+    /// ⚑ A seat the ruleset did NOT name for re-entry ([`Self::locked`]) owes nothing: its move
+    /// stands. Forfeiting it on a clock would punish the seat that did not cause the clash.
     pub fn owes_a_move(&self, seat: Seat) -> bool {
         if self.ended {
             return false;
         }
         let i = seat.idx();
+        if !self.is_waiting(seat) && !matches!(self.phase(), Phase::Resolve) {
+            return false;
+        }
         match self.phase() {
-            Phase::Commit => self.committed[i].is_none(),
+            Phase::Commit | Phase::Resubmit => self.committed[i].is_none(),
             Phase::Reveal => !self.revealed[i],
             // Either seat may fire the resolution, so both owe it: a table left sitting in
             // `Resolve` was abandoned by both, and recording that as a double abandonment is
@@ -523,9 +667,13 @@ impl AutomataflSession {
     }
 
     /// The full witnessed state the next turn commits.
+    ///
+    /// The committed `phase` register keeps its three values (`0 = sealing, 1 = opened, 2 = over`):
+    /// a re-submission IS a sealing phase, so it reads `0` — the thing that distinguishes a
+    /// conflict round on the cell is `marked`, which the `resubmit` case pins strictly monotone.
     fn state(&self) -> MatchState {
         let phase = match self.phase() {
-            Phase::Commit => 0,
+            Phase::Commit | Phase::Resubmit => 0,
             Phase::Reveal | Phase::Resolve => 1,
             Phase::Over => 2,
         };
@@ -555,6 +703,10 @@ impl AutomataflSession {
             frm: [revealed_frm(Seat::A), revealed_frm(Seat::B)],
             to: [revealed_to(Seat::A), revealed_to(Seat::B)],
             auto: self.board.auto,
+            // THE TERMINATION WITNESS: how many squares this turn has marked. `StrictMonotonic` on
+            // the `resubmit` case turns "the marks strictly grow" into a cell tooth, and
+            // `FieldLte CELLS` caps the re-entries at n².
+            marked: self.marks.len() as u64,
             cells: self.board.cells.clone(),
         }
     }
@@ -567,18 +719,31 @@ impl AutomataflSession {
     /// (ruling D + the inclusive path check), so it is in this set. The old Rust `move_valid` banned
     /// it, which is `logic/src/game.rs`'s reading rather than the README's.
     ///
+    /// ⚑ Asked WITH THIS TURN'S MARKS ([`Self::marks`]), so after a clash the offered rook line
+    /// shrinks: a marked square is not a legal destination for anyone, and the re-check is the
+    /// ruleset's own `moveLegalB`, not a Rust filter over the Lean's answer.
+    ///
     /// Empty when the oracle cannot answer — no affordance is offered for a move nobody can
     /// adjudicate, and `advance` re-asks before it commits anything.
     pub fn legal_targets(&self, src: Coord) -> Vec<Coord> {
-        rules::legal_targets(&self.board, &[], 0, src).unwrap_or_default()
+        rules::legal_targets(&self.board, &self.marks, 0, src).unwrap_or_default()
     }
 
     /// Whether `src` is a square a seat may move: a real (non-vacuum) particle that is not the
-    /// automaton. (Automatafl's pieces are SHARED — either seat may push any piece; that is what
-    /// makes the simultaneous conflict resolution the heart of the game.)
+    /// automaton, and NOT a marked square. (Automatafl's pieces are SHARED — either seat may push
+    /// any piece; that is what makes the simultaneous conflict resolution the heart of the game.)
+    ///
+    /// ⚑ The mark clause is a RULE, not decoration: `MoveLegal` requires `m.frm ∉ marks`, so a
+    /// marked square cannot be picked up for the rest of the turn. Offering it as a selection would
+    /// hand the player an affordance that can only end in a refusal.
     pub fn movable(&self, src: Coord) -> bool {
         let p = self.board.cell_at(src);
-        p != VAC && p != AUTO
+        p != VAC && p != AUTO && !self.marks.contains(&src)
+    }
+
+    /// Is `c` one of this turn's MARKED squares — dead at either endpoint, for everyone?
+    pub fn is_marked(&self, c: Coord) -> bool {
+        self.marks.contains(&c)
     }
 
     /// The glyph a particle paints in the board grid.
@@ -593,6 +758,10 @@ impl AutomataflSession {
 
     /// **The board as a [`ViewNode::CoordGrid`]** — one cell per square, painted for `viewer`.
     ///
+    /// * ⚑ a MARKED square (a coordinate a clash killed this turn) is tagged `mark`, carries the
+    ///   `×` glyph, and has NO affordance at all — it outranks every other role because it is the
+    ///   only one that says "you cannot use this square", and a player who cannot see it will keep
+    ///   trying to. PUBLIC: the marks are the same in every viewer's board;
     /// * the automaton square is marked (`@`, tag `accent`, in the highlight-set);
     /// * the viewer's SELECTED source is tagged `warn` and highlighted;
     /// * every LEGAL target of that source is tagged `good` and highlighted, and carries the
@@ -610,9 +779,17 @@ impl AutomataflSession {
     /// the union of both live selections and offers the same affordances. `advance` resolves a
     /// `commit` against the ACTOR's own selection, so the affordance means the same thing to both.
     fn board_grid(&self, viewer: Option<Seat>) -> ViewNode {
+        // The public board lights the union of the LIVE selections — a seat that is waiting and has
+        // not yet sealed. A LOCKED seat's selection is stale (its move is already sealed and stands),
+        // and painting its rook line publicly would offer affordances nobody can fire.
         let selections: Vec<Coord> = match viewer {
             Some(s) => self.sel[s.idx()].into_iter().collect(),
-            None => self.sel.iter().flatten().copied().collect(),
+            None => self
+                .waiting
+                .iter()
+                .filter(|w| self.committed[**w as usize].is_none())
+                .filter_map(|w| self.sel[*w as usize])
+                .collect(),
         };
         // **THE VIEWER'S OWN SEALED MOVE, ON THE BOARD.** Strictly per-viewer: read ONLY out of
         // `viewer`'s OWN slot, so a spectator (`None`) and the opponent get nothing here — the fog
@@ -636,7 +813,15 @@ impl AutomataflSession {
             Some(s) => self.committed[s.idx()].is_some(),
             None => self.committed[0].is_some() && self.committed[1].is_some(),
         };
-        let playable = !self.ended && matches!(self.phase(), Phase::Commit);
+        // A re-submission is the same affordance as a first submission, over a frozen board with
+        // marks on it — so the grid is playable in `Resubmit` too, and a seat that is NOT waiting
+        // (its move is locked) is offered nothing.
+        let playable = !self.ended
+            && self.phase().is_sealing()
+            && match viewer {
+                Some(s) => self.is_waiting(s),
+                None => self.waiting.iter().any(|w| self.committed[*w as usize].is_none()),
+            };
 
         let mut cells = Vec::with_capacity(CELLS);
         for idx in 0..CELLS {
@@ -648,7 +833,12 @@ impl AutomataflSession {
 
             let is_goal = Seat::owner_of_goal(c).is_some();
 
-            let (tag, highlight) = if is_auto {
+            let (tag, highlight) = if self.is_marked(c) {
+                // ⚑ THE MARK OUTRANKS EVERYTHING. It is the only tag that means "unusable", and it
+                // must survive a square that is also a goal corner, also the automaton's, also
+                // where you sealed last round. Not highlighted: the highlight means "live".
+                ("mark", false)
+            } else if is_auto {
                 ("accent", true)
             } else if own_sealed.map(|m| m.to) == Some(c) {
                 // WHERE YOU SEALED IT TO — its own treatment, and only ever on its own seat's
@@ -685,7 +875,13 @@ impl AutomataflSession {
             // stock corners, two per seat. An OCCUPIED corner keeps its particle glyph and is
             // marked by the `goal` tag above.
             let mut glyph = Self::glyph(p).to_string();
-            if p == VAC && is_goal {
+            // ⚑ A MARKED square says so in its GLYPH as well as its tag, because the text
+            // frontends (Discord / Telegram) paint the glyph literally and have no CSS to lean on.
+            // The piece standing there is still there — the square is dead, not empty — so the
+            // cross replaces the glyph and the plaque names the piece.
+            if self.is_marked(c) {
+                glyph = "×".to_string();
+            } else if p == VAC && is_goal {
                 glyph = Seat::owner_of_goal(c)
                     .expect("is_goal")
                     .label()
@@ -704,12 +900,20 @@ impl AutomataflSession {
     }
 
     /// The seat's move line — REVEALED to its owner, FOG to everyone else until the open.
+    ///
+    /// ⚑ A LOCKED seat's line says so, and says it PUBLICLY: which seats are locked is not a
+    /// secret (the ruleset named them out loud when it marked the square), and a seat that is not
+    /// being waited on needs to know it is not holding the table up. The locked seat's MOVE is
+    /// still fog to the opponent — it was revealed to the ruleset, not to the other player, and it
+    /// stays sealed on their surface until the turn resolves.
     fn move_line(&self, seat: Seat, viewer: Option<Seat>) -> ViewNode {
         let own = viewer == Some(seat);
+        let locked = !self.is_waiting(seat) && !self.marks.is_empty();
         let title = format!(
-            "Seat {} — {}",
+            "Seat {} — {}{}",
             seat.label(),
-            if own { "you" } else { "them" }
+            if own { "you" } else { "them" },
+            if locked { " · LOCKED" } else { "" }
         );
         let body = match (self.committed[seat.idx()], self.revealed[seat.idx()]) {
             (None, _) => {
@@ -717,12 +921,33 @@ impl AutomataflSession {
                 if own {
                     match s {
                         Some(c) => format!("selected ({},{}) — pick a destination", c.0, c.1),
-                        None => "no move sealed — select one of your pieces".to_string(),
+                        None if self.marks.is_empty() => {
+                            "no move sealed — select one of your pieces".to_string()
+                        }
+                        None => "you owe a FRESH move — select one of your pieces (the marked \
+                                 squares are dead)"
+                            .to_string(),
                     }
                 } else {
                     "thinking… (no move sealed yet)".to_string()
                 }
             }
+            // ⚑ A LOCKED move is PUBLIC, and that is the RULESET, not a leak: the clash was found
+            // by revealing every submission simultaneously, so a move that survived the clash was
+            // revealed before it was locked. Hiding it again would invent a rule. What stays fog is
+            // the RE-SUBMISSION — a fresh seal, sealed exactly like a first one.
+            (Some(mv), true) if locked => format!(
+                "{} move STANDS, untouched: ({},{}) → ({},{}) — {} not part of the clash, so {} do \
+                 not re-submit, and it executes when the round finally resolves. (It was revealed \
+                 with the clash, so both seats can see it.)",
+                if own { "YOUR" } else { "their" },
+                mv.frm.0,
+                mv.frm.1,
+                mv.to.0,
+                mv.to.1,
+                if own { "you were" } else { "they were" },
+                if own { "you" } else { "they" },
+            ),
             (Some(mv), false) if own => format!(
                 "YOUR sealed move: ({},{}) → ({},{}) · seal {:x}… (the opponent sees only the seal)",
                 mv.frm.0,
@@ -755,8 +980,8 @@ impl AutomataflSession {
         // seat is unopened — the executor refuses a double reveal, so the control is honest.
         let can_reveal = matches!(phase, Phase::Reveal)
             && match viewer {
-                Some(s) => !self.revealed[s.idx()],
-                None => !self.revealed[0] || !self.revealed[1],
+                Some(s) => self.is_waiting(s) && !self.revealed[s.idx()],
+                None => self.waiting.iter().any(|w| !self.revealed[*w as usize]),
             };
         let items = vec![
             MenuItem {
@@ -766,13 +991,128 @@ impl AutomataflSession {
                 enabled: can_reveal,
             },
             MenuItem {
-                label: "Resolve the turn (conflicts drop · the automaton steps)".to_string(),
+                // ⚑ The label used to promise "conflicts drop", which was the audited-WRONG rule
+                // the surface actually implemented. It does not drop them any more: a clash MARKS
+                // the square and RE-OPENS the round, and the button says which of the two can
+                // happen.
+                label: "Resolve the round (a clash MARKS the square and re-opens it · otherwise \
+                        the moves apply and the automaton steps)"
+                    .to_string(),
                 turn: RESOLVE.to_string(),
                 arg: 0,
                 enabled: matches!(phase, Phase::Resolve),
             },
         ];
         ViewNode::Menu { items }
+    }
+
+    /// ⚑ **"The clash"** — the plaque that exists because a re-entry is invisible otherwise.
+    ///
+    /// A simultaneous-move board that suddenly asks one seat for another move, with two squares
+    /// newly dead and the turn counter unmoved, is unreadable without being told: it looks like the
+    /// game lost the move. So this says, in order, WHAT was contested, WHO owes a fresh move, WHO is
+    /// locked, and HOW MANY squares the turn has burned.
+    ///
+    /// `None` when the turn has no marks (nothing has clashed) — the plaque appears exactly when
+    /// there is something to explain. Entirely PUBLIC: every fact here (which squares are marked,
+    /// which seats re-enter, which are locked) was produced by revealing every submission at once,
+    /// so none of it is per-viewer.
+    fn conflict_plaque(&self, viewer: Option<Seat>) -> Option<ViewNode> {
+        if self.marks.is_empty() {
+            return None;
+        }
+        // A marked square paints as a bare `×`, which loses WHICH piece is standing on it — so the
+        // prose names it. (The piece is still there: the square is dead, not empty.)
+        let squares = |cs: &[Coord]| {
+            cs.iter()
+                .map(|c| {
+                    let what = match self.board.cell_at(*c) {
+                        REP => ", where a repulsor stands",
+                        ATT => ", where an attractor stands",
+                        AUTO => ", the automaton's own square",
+                        _ => ", an empty square",
+                    };
+                    format!("({},{}){what}", c.0, c.1)
+                })
+                .collect::<Vec<_>>()
+                .join(" · ")
+        };
+        let round = self.conflict_round_no();
+        let mut kids = vec![ViewNode::Text(format!(
+            "The seats CONTESTED the same square, so this round did NOT resolve. The ruleset does \
+             not throw the clashing moves away: it MARKS the contested coordinate — {} — and \
+             re-opens the round. A marked square is dead for the rest of this turn: nobody may move \
+             a piece off it, and nobody may move a piece onto it. The board is FROZEN until a round \
+             comes back clean, and the turn counter has not moved.",
+            squares(&self.marks)
+        ))];
+        let waiting_seats: Vec<Seat> = self.waiting.iter().map(|w| Seat::from_idx(*w)).collect();
+        let locked_seats: Vec<Seat> = [Seat::A, Seat::B]
+            .into_iter()
+            .filter(|s| !self.is_waiting(*s))
+            .collect();
+        let names = |ss: &[Seat]| {
+            ss.iter()
+                .map(|s| format!("seat {}", s.label()))
+                .collect::<Vec<_>>()
+                .join(" and ")
+        };
+        kids.push(ViewNode::Text(format!(
+            "RE-SUBMITTING: {}{}. {}",
+            names(&waiting_seats),
+            match viewer {
+                Some(v) if waiting_seats.contains(&v) => " — that is YOU",
+                Some(_) => "",
+                None => "",
+            },
+            if locked_seats.is_empty() {
+                "Nobody is locked this round: every submission named a contested square, so every \
+                 seat owes a fresh move."
+                    .to_string()
+            } else {
+                format!(
+                    "LOCKED: {} — that move was not part of the clash, it stands untouched, and it \
+                     executes when the round finally resolves.",
+                    names(&locked_seats)
+                )
+            }
+        )));
+        // THE TERMINATION FACT, said out loud. Each re-entry marks at least one NEW square and the
+        // board has finitely many, so the turn cannot re-enter forever — and it is the deployed
+        // cell, not this sentence, that enforces it (`marked` is strictly monotone under
+        // `resubmit`).
+        kids.push(ViewNode::Text(format!(
+            "This turn has re-opened {} time{} and burned {} of the board's {} squares. Every \
+             re-entry has to burn a NEW one, so the round runs out of squares before it runs \
+             forever — the executor refuses a re-entry that marks nothing.",
+            round,
+            if round == 1 { "" } else { "s" },
+            self.marks.len(),
+            CELLS,
+        )));
+        let pill = |text: String, tag: &str| ViewNode::Pill {
+            text,
+            tag: tag.to_string(),
+            slot: None,
+            cases: Vec::<PillCase>::new(),
+        };
+        let mut pills = vec![pill(format!("round {} · RE-SUBMIT", round + 1), "bad")];
+        for c in &self.marks {
+            pills.push(pill(format!("× ({},{}) dead", c.0, c.1), "bad"));
+        }
+        for s in [Seat::A, Seat::B] {
+            pills.push(if self.is_waiting(s) {
+                pill(format!("seat {} · re-submitting", s.label()), "warn")
+            } else {
+                pill(format!("seat {} · locked", s.label()), "muted")
+            });
+        }
+        kids.push(ViewNode::Row(pills));
+        Some(ViewNode::Section {
+            title: "The clash — this round did not resolve".to_string(),
+            tag: "bad".to_string(),
+            children: kids,
+        })
     }
 
     /// **THE ONE SENTENCE that says what to do now.** The single largest legibility win on a
@@ -802,31 +1142,57 @@ impl AutomataflSession {
                     a draw."
                 .to_string();
         }
+        // The seats still owed a submission this round — `waiting` minus whoever has already
+        // sealed, which is the honest list on a re-entry (a LOCKED seat is not being waited on).
+        let still_to_seal = |f: &dyn Fn(usize) -> bool| -> Vec<&'static str> {
+            self.waiting
+                .iter()
+                .filter(|w| f(**w as usize))
+                .map(|w| Seat::from_idx(*w).label())
+                .collect()
+        };
         let Some(s) = viewer else {
             // The spectator's line — the same facts, in the third person.
             return match self.phase() {
-                Phase::Commit => {
-                    let waiting: Vec<&str> = [Seat::A, Seat::B]
+                Phase::Commit => format!(
+                    "Both seats are sealing a move at the same time. Still to seal: {}.",
+                    still_to_seal(&|i| self.committed[i].is_none()).join(" and ")
+                ),
+                Phase::Resubmit => format!(
+                    "⚑ The round CLASHED and did not resolve: {} marked, the board frozen, and \
+                     seat {} owe a FRESH move. Still to re-seal: {}.",
+                    self.marks
                         .iter()
-                        .filter(|s| self.committed[s.idx()].is_none())
-                        .map(|s| s.label())
-                        .collect();
-                    format!(
-                        "Both seats are sealing a move at the same time. Still to seal: {}.",
-                        waiting.join(" and ")
-                    )
-                }
+                        .map(|c| format!("({},{})", c.0, c.1))
+                        .collect::<Vec<_>>()
+                        .join(" · "),
+                    self.waiting
+                        .iter()
+                        .map(|w| Seat::from_idx(*w).label())
+                        .collect::<Vec<_>>()
+                        .join(" and "),
+                    still_to_seal(&|i| self.committed[i].is_none()).join(" and ")
+                ),
                 Phase::Reveal => {
                     "Both moves are sealed. Each seat now opens its own seal.".to_string()
                 }
                 Phase::Resolve => {
-                    "Both moves are open — the turn is one press from firing.".to_string()
+                    "Both moves are open — the round is one press from firing.".to_string()
                 }
                 Phase::Over => "The match is over.".to_string(),
             };
         };
         let i = s.idx();
         let other = s.other();
+        // A seat that is not being waited on this round: its move is LOCKED and it presses nothing.
+        if !self.is_waiting(s) && !matches!(self.phase(), Phase::Resolve | Phase::Over) {
+            return format!(
+                "Your move was NOT part of the clash, so it is LOCKED and stands exactly as you \
+                 sealed it — you owe nothing this round. Seat {} is choosing a fresh move; when \
+                 they seal and open, the round resolves and your move executes with theirs.",
+                other.label()
+            );
+        }
         match self.phase() {
             Phase::Commit if self.committed[i].is_some() => format!(
                 "Sealed. Waiting for seat {} to seal — this page updates by itself, so there is \
@@ -844,6 +1210,22 @@ impl AutomataflSession {
                  board until you have both sealed."
                     .to_string()
             }
+            Phase::Resubmit if self.committed[i].is_some() => format!(
+                "Re-sealed. Waiting for seat {} to re-seal after the clash.",
+                other.label()
+            ),
+            Phase::Resubmit => format!(
+                "⚑ YOU CLASHED, so this round did not happen: the contested square{} {} now \
+                 MARKED (the × squares) and dead for the rest of this turn, the board is frozen \
+                 exactly as it was, and you owe a FRESH move. Pick a piece and seal again — you \
+                 cannot use a marked square as a source or a destination.",
+                if self.marks.len() == 1 { " is" } else { "s are" },
+                self.marks
+                    .iter()
+                    .map(|c| format!("({},{})", c.0, c.1))
+                    .collect::<Vec<_>>()
+                    .join(" · "),
+            ),
             Phase::Reveal if !self.revealed[i] => {
                 "Both moves are sealed. Press Reveal your sealed move to open yours.".to_string()
             }
@@ -851,8 +1233,9 @@ impl AutomataflSession {
                 "You have opened. Waiting for seat {} to open theirs.",
                 other.label()
             ),
-            Phase::Resolve => "Both moves are open. Press Resolve the turn — conflicting moves \
-                               drop, the survivors apply, and THEN the automaton takes its step."
+            Phase::Resolve => "Both moves are open. Press Resolve the round — if you contested the \
+                               same square it MARKS that square and re-opens the round; otherwise \
+                               the moves apply and THEN the automaton takes its step."
                 .to_string(),
             Phase::Over => "The match is over.".to_string(),
         }
@@ -863,21 +1246,33 @@ impl AutomataflSession {
     /// what to do now.
     fn standing(&self, viewer: Option<Seat>) -> ViewNode {
         let phase = self.phase();
+        // `Resubmit` IS the sealing station, so station 1 lights for it too — the round is back at
+        // the start of the ladder, which is the whole point of the fourth pill below.
         let phase_pill = |p: Phase, label: &str| ViewNode::Pill {
             text: label.to_string(),
-            tag: if p == phase { "good" } else { "muted" }.to_string(),
+            tag: if p == phase || (p == Phase::Commit && phase == Phase::Resubmit) {
+                "good"
+            } else {
+                "muted"
+            }
+            .to_string(),
             slot: None,
             cases: Vec::<PillCase>::new(),
         };
-        // A seat's PUBLIC standing this turn (never its move): choosing → sealed → opened.
+        // A seat's PUBLIC standing this turn (never its move): choosing → sealed → opened, or
+        // LOCKED once a clash has taken it out of the waiting set.
         let seat_pill = |s: Seat| {
             let i = s.idx();
-            let (word, tag) = if self.revealed[i] {
+            let (word, tag) = if !self.marks.is_empty() && !self.is_waiting(s) {
+                ("LOCKED · move stands", "muted")
+            } else if self.revealed[i] {
                 ("opened", "good")
             } else if self.committed[i].is_some() {
                 ("sealed", "accent")
-            } else {
+            } else if self.marks.is_empty() {
                 ("still choosing", "warn")
+            } else {
+                ("RE-SUBMITTING", "bad")
             };
             let whose = match viewer {
                 Some(v) if v == s => " (you)",
@@ -901,15 +1296,34 @@ impl AutomataflSession {
                      control is inert."
                 .to_string(),
         };
+        // The ladder is SEAL → OPEN → RESOLVE, plus the fourth station the ruleset adds: a clash
+        // sends the round back to the start of the ladder with the contested square burned. It is
+        // shown always (greyed when the round is clean) so the possibility is legible BEFORE it
+        // happens rather than appearing out of nowhere when it does.
+        let mut ladder = vec![
+            phase_pill(Phase::Commit, "1 · SEAL"),
+            phase_pill(Phase::Reveal, "2 · OPEN"),
+            phase_pill(Phase::Resolve, "3 · RESOLVE"),
+        ];
+        ladder.push(ViewNode::Pill {
+            text: if self.marks.is_empty() {
+                "↺ CLASH → RE-SUBMIT".to_string()
+            } else {
+                format!(
+                    "↺ CLASH → RE-SUBMIT · round {} · {} marked",
+                    self.conflict_round_no() + 1,
+                    self.marks.len()
+                )
+            },
+            tag: if self.marks.is_empty() { "muted" } else { "bad" }.to_string(),
+            slot: None,
+            cases: Vec::<PillCase>::new(),
+        });
         ViewNode::Section {
             title: "Where the turn stands".to_string(),
             tag: "accent".to_string(),
             children: vec![
-                ViewNode::Row(vec![
-                    phase_pill(Phase::Commit, "1 · SEAL"),
-                    phase_pill(Phase::Reveal, "2 · OPEN"),
-                    phase_pill(Phase::Resolve, "3 · RESOLVE"),
-                ]),
+                ViewNode::Row(ladder),
                 ViewNode::Text(self.next_step_line(viewer)),
                 ViewNode::Row(vec![seat_pill(Seat::A), seat_pill(Seat::B)]),
                 ViewNode::Text(who),
@@ -995,12 +1409,18 @@ impl AutomataflSession {
             ),
             (None, true) => "Automatafl — the clock ran out (a draw)".to_string(),
             (None, false) => format!(
-                "Automatafl — turn {} · phase: {}",
+                "Automatafl — turn {}{} · phase: {}",
                 self.turn_no,
+                if self.marks.is_empty() {
+                    String::new()
+                } else {
+                    format!(" · round {}", self.conflict_round_no() + 1)
+                },
                 match phase {
                     Phase::Commit => "COMMIT (both seats seal a move)",
+                    Phase::Resubmit => "⚑ RE-SUBMIT (the round clashed — the square is marked)",
                     Phase::Reveal => "REVEAL (both moves sealed — open yours)",
-                    Phase::Resolve => "RESOLVE (both open — fire the turn)",
+                    Phase::Resolve => "RESOLVE (both open — fire the round)",
                     Phase::Over => "over",
                 }
             ),
@@ -1032,18 +1452,28 @@ impl AutomataflSession {
                 title: "The board".to_string(),
                 tag: String::new(),
                 children: vec![
-                    ViewNode::Text(
+                    ViewNode::Text(format!(
                         "Attractors (A) are the round brass discs; repulsors (R) are the angular \
                          pale blades; the automaton (@) is the violet ring; the four brass corners \
                          are the goals (a/b). Click a piece to pick it up — its rook line lights \
-                         up, and clicking a lit square seals a move there."
-                            .to_string(),
-                    ),
+                         up, and clicking a lit square seals a move there.{}",
+                        if self.marks.is_empty() {
+                            ""
+                        } else {
+                            " ⚑ A × square is MARKED: a clash burned it, and for the rest of this \
+                             turn nobody may move a piece off it or onto it."
+                        }
+                    )),
                     self.board_grid(viewer),
                 ],
             },
-            self.automaton_plaque(),
         ];
+        // The clash plaque goes ABOVE the automaton's: when a round has re-opened, "why am I being
+        // asked for another move" is the reader's first question and the daemon's step is not.
+        if let Some(clash) = self.conflict_plaque(viewer) {
+            kids.push(clash);
+        }
+        kids.push(self.automaton_plaque());
         kids.push(self.move_line(Seat::A, viewer));
         kids.push(self.move_line(Seat::B, viewer));
         kids.push(self.action_menu(viewer));
@@ -1068,8 +1498,15 @@ impl Offering for AutomataflOffering {
         let session = AutomataflSession {
             game,
             start: board.clone(),
+            turn_start: board.clone(),
             board,
-            rounds: Vec::new(),
+            turns_played: Vec::new(),
+            // `AutomataflRules.openRound board [0, 1]` — no markers, no locks, every seat owes a
+            // move. A fresh round state per turn IS `model.py::ClearState`.
+            marks: Vec::new(),
+            locked: Vec::new(),
+            waiting: vec![0, 1],
+            conflict_subs: Vec::new(),
             seats: [None, None],
             sel: [None, None],
             committed: [None, None],
@@ -1099,7 +1536,11 @@ impl Offering for AutomataflOffering {
         }
         let phase = session.phase();
         let mut out = Vec::new();
-        if matches!(phase, Phase::Commit) {
+        // `Resubmit` offers exactly the same affordances as `Commit` — select a piece, seal a
+        // destination — over a board with marks on it. The marked squares are already absent from
+        // `movable` / `legal_targets` (the LEAN's `moveLegalB` with this turn's marks), so no
+        // affordance here can name one.
+        if phase.is_sealing() {
             // ORDER MATTERS on a button-budgeted frontend. The Discord/Telegram renderers paint
             // the first ≤25 actions as buttons and silently drop the rest; at 11×11 the stock
             // opening has 36 movable pieces, so putting the SEAL targets after every select left
@@ -1112,6 +1553,9 @@ impl Offering for AutomataflOffering {
             // own board grid shows only its own; the executor re-checks the seat on advance).
             let mut targets: Vec<usize> = Vec::new();
             for seat in [Seat::A, Seat::B] {
+                if !session.is_waiting(seat) {
+                    continue;
+                }
                 if let Some(src) = session.sel[seat.idx()] {
                     for t in session.legal_targets(src) {
                         if let Some(i) = index_of(t) {
@@ -1174,16 +1618,33 @@ impl Offering for AutomataflOffering {
 
         match input.turn.as_str() {
             SELECT => {
-                if !matches!(session.phase(), Phase::Commit) {
-                    return refuse("the commit phase is closed this turn");
+                if !session.phase().is_sealing() {
+                    return refuse("the commit phase is closed this round");
+                }
+                if !session.is_waiting(seat) {
+                    return refuse(
+                        "your move is LOCKED this round — it was not part of the clash, so it \
+                         stands as sealed and you do not re-submit",
+                    );
                 }
                 if session.committed[i].is_some() {
-                    return refuse("your move is already sealed this turn");
+                    return refuse("your move is already sealed this round");
                 }
                 let Some(idx) = usize::try_from(input.arg).ok().filter(|&i| i < CELLS) else {
                     return refuse(format!("square {} is off the board", input.arg));
                 };
                 let c = coord_of(idx);
+                // ⚑ THE MARKS RE-CHECK, at the SOURCE end. A marked coordinate is illegal as a
+                // source for everyone for the rest of the turn (`MoveLegal`: `m.frm ∉ marks`), so a
+                // marked square cannot even be picked up — refused by NAME rather than left to fail
+                // later as a bare "illegal move".
+                if session.is_marked(c) {
+                    return refuse(format!(
+                        "({},{}) is MARKED — a clash burned that square, and for the rest of this \
+                         turn no piece may leave it or land on it",
+                        c.0, c.1
+                    ));
+                }
                 if !session.movable(c) {
                     return refuse(format!(
                         "({},{}) holds no movable piece (a vacuum square, or the automaton)",
@@ -1208,11 +1669,17 @@ impl Offering for AutomataflOffering {
             }
 
             COMMIT => {
-                if !matches!(session.phase(), Phase::Commit) {
-                    return refuse("the commit phase is closed this turn");
+                if !session.phase().is_sealing() {
+                    return refuse("the commit phase is closed this round");
+                }
+                if !session.is_waiting(seat) {
+                    return refuse(
+                        "your move is LOCKED this round — it was not part of the clash, so it \
+                         stands as sealed and you do not re-submit",
+                    );
                 }
                 if session.committed[i].is_some() {
-                    return refuse("your move is already sealed this turn");
+                    return refuse("your move is already sealed this round");
                 }
                 let Some(frm) = session.sel[i] else {
                     return refuse("select one of your pieces first");
@@ -1227,10 +1694,29 @@ impl Offering for AutomataflOffering {
                     to,
                 };
                 // THE LEGALITY TOOTH — the LEAN's `moveLegalB` (rook-line, distinct, in-bounds,
-                // and the automaton is banned as a SOURCE). An illegal move commits NOTHING, and a
-                // move nobody can adjudicate commits nothing either.
-                match rules::move_legal(&session.board, &[], &mv) {
+                // the automaton banned as a SOURCE, and ⚑ NEITHER ENDPOINT A MARKED COORDINATE).
+                // The marks are passed, so on a re-submission this IS the ruleset's marks-legality
+                // re-check: a move onto (or off) a square a clash burned is REFUSED here, and
+                // nothing commits. An illegal move commits NOTHING, and a move nobody can
+                // adjudicate commits nothing either.
+                match rules::move_legal(&session.board, &session.marks, &mv) {
                     Ok(true) => {}
+                    Ok(false) if session.is_marked(frm) || session.is_marked(to) => {
+                        return refuse(format!(
+                            "({},{}) → ({},{}) names a MARKED square: a clash burned {}, and for \
+                             the rest of this turn it is illegal as a source AND as a destination, \
+                             for both seats",
+                            frm.0,
+                            frm.1,
+                            to.0,
+                            to.1,
+                            if session.is_marked(frm) {
+                                format!("({},{})", frm.0, frm.1)
+                            } else {
+                                format!("({},{})", to.0, to.1)
+                            }
+                        ));
+                    }
                     Ok(false) => {
                         return refuse(format!(
                             "illegal move ({},{}) → ({},{}): a move is a rook line to a distinct \
@@ -1270,8 +1756,13 @@ impl Offering for AutomataflOffering {
                 if !matches!(session.phase(), Phase::Reveal) {
                     return refuse("both moves must be sealed before a reveal");
                 }
+                if !session.is_waiting(seat) {
+                    return refuse(
+                        "your move is LOCKED this round — you already opened it, and it stands",
+                    );
+                }
                 if session.revealed[i] {
-                    return refuse("you already revealed this turn");
+                    return refuse("you already revealed this round");
                 }
                 let mv = session.committed[i].expect("the reveal phase implies a sealed move");
                 // The opened plaintext must be the one the seal binds (the commitment tooth).
@@ -1298,33 +1789,143 @@ impl Offering for AutomataflOffering {
 
             RESOLVE => {
                 if !matches!(session.phase(), Phase::Resolve) {
-                    return refuse("both seats must reveal before the turn resolves");
+                    return refuse("both seats must reveal before the round resolves");
                 }
                 let ma = session.committed[0].expect("sealed");
                 let mb = session.committed[1].expect("sealed");
-                // THE RESOLUTION AND THE WIN, BOTH FROM THE LEAN — `roundStep`'s clean-round arm:
-                // legality filter → conflict check → resolve → the automaton's step → the win
-                // checked ON ENTRY (`winOnEntry`: the automaton must have MOVED into a goal, not
-                // merely be sitting on one). This is the object the AIR is refined against.
                 let stock_goals = match goals() {
                     Ok(g) => g,
                     Err(why) => {
                         return refuse(format!("the goal assignment is unavailable: {why}"));
                     }
                 };
-                let (next, win) = match rules::turn(&session.board, &[], &[ma, mb], stock_goals) {
-                    Ok(pair) => pair,
+                // ⚑ **ONE ROUND, DECIDED ENTIRELY BY THE LEAN** — `AutomataflRules.roundStep`
+                // through `@[export] dregg_automatafl_rules`, ONE call:
+                //
+                //   round TIE BOARD GOALS marks locked waiting subs
+                //     → `A marks locked waiting`   (re-enter: the clash is MARKED)
+                //     → `R win BOARD`              (resolved: the moves applied, the daemon stepped,
+                //                                   the win checked ON ENTRY)
+                //
+                // Nothing below computes the clash set, the marks, the freeze, the lock set or the
+                // waiting set: `round` returns all five. The surface's only job is to CARRY them.
+                //
+                // `subs` is the WAITING seats' submissions; a locked seat's move rides in `locked`,
+                // which is where `roundStep` expects it (`all := rs.locked ++ fresh`).
+                let subs: Vec<Move> = session
+                    .waiting
+                    .iter()
+                    .filter_map(|w| session.committed[*w as usize])
+                    .collect();
+                let outcome = match rules::round(
+                    &session.board,
+                    stock_goals,
+                    &session.marks,
+                    &session.locked,
+                    &session.waiting,
+                    &subs,
+                ) {
+                    Ok(o) => o,
                     Err(why) => {
-                        return refuse(format!(
-                            "the game oracle could not resolve the turn: {why}"
-                        ));
+                        return refuse(format!("the game oracle could not run the round: {why}"));
                     }
                 };
+
+                // ── THE CONFLICT ARM: the round did NOT resolve. ────────────────────────────────
+                if let rules::RoundOutcome::Again {
+                    marks,
+                    locked,
+                    waiting,
+                } = outcome
+                {
+                    // A re-entry that names NO seat would deadlock the turn (the same round would
+                    // repeat forever with nobody able to submit). At n=2 this is unreachable — a
+                    // fork/collide over two moves always names both — but it is refused rather than
+                    // hung, because a surface that can hang is worse than one that says no.
+                    if waiting.is_empty() {
+                        return refuse(
+                            "the ruleset marked a contested square but named no seat to \
+                             re-submit — the turn cannot continue, so nothing is committed",
+                        );
+                    }
+                    // The termination fact, checked rather than assumed: the executor's `resubmit`
+                    // case pins `marked` strictly monotone, so a re-entry that marks nothing is
+                    // refused THERE — this is the same refusal, by name, before any write.
+                    if marks.len() <= session.marks.len() {
+                        return refuse(format!(
+                            "the round re-entered without marking a new square ({} → {}), which \
+                             would let the turn re-enter forever — nothing is committed",
+                            session.marks.len(),
+                            marks.len()
+                        ));
+                    }
+                    let before = (
+                        session.marks.clone(),
+                        session.locked.clone(),
+                        session.waiting.clone(),
+                        session.conflict_subs.clone(),
+                        session.sel,
+                        session.committed,
+                        session.seal,
+                        session.revealed,
+                    );
+                    // THE ROUND, RECORDED — the move set this round CONSIDERED (`locked ++ subs`,
+                    // as the pair the seats hold). This is one `MultiRoundTurn::conflict_subs`
+                    // entry, and it is what the Leg C leaf for this round is filled from.
+                    session.conflict_subs.push([ma, mb]);
+                    session.marks = marks;
+                    session.locked = locked;
+                    session.waiting = waiting;
+                    // RE-OPEN COMMIT FOR EXACTLY THE WAITING SEATS. A locked seat keeps its
+                    // selection, its seal, its plaintext and its reveal — its move STANDS. A waiting
+                    // seat is wound back to "choose a piece", carrying the marks forward, so its
+                    // next submission is re-checked against them (`COMMIT`'s `move_legal` above).
+                    for w in session.waiting.clone() {
+                        let k = w as usize;
+                        session.sel[k] = None;
+                        session.committed[k] = None;
+                        session.seal[k] = 0;
+                        session.revealed[k] = false;
+                    }
+                    // ONE REAL TURN under the `resubmit` method: board + turn_no + winner immutable,
+                    // `marked` strictly monotone and ≤ CELLS (M3's n² bound, as a cell tooth).
+                    return match session.game.commit_state(RESUBMIT, &session.state()) {
+                        Ok(receipt) => {
+                            session.turns += 1;
+                            Outcome::Landed {
+                                receipt,
+                                ended: false,
+                            }
+                        }
+                        Err(e) => {
+                            // Nothing committed — restore the whole round state (anti-ghost). An
+                            // unlanded re-entry is not a re-entry: the seats keep their moves.
+                            session.marks = before.0;
+                            session.locked = before.1;
+                            session.waiting = before.2;
+                            session.conflict_subs = before.3;
+                            session.sel = before.4;
+                            session.committed = before.5;
+                            session.seal = before.6;
+                            session.revealed = before.7;
+                            refuse(e.to_string())
+                        }
+                    };
+                }
+
+                // ── THE RESOLVED ARM: the round was clean. ──────────────────────────────────────
+                let rules::RoundOutcome::Resolved { board: next, win } = outcome else {
+                    unreachable!("the `Again` arm returned above");
+                };
                 // THE DAEMON'S STEP, RECORDED. The turn is `automatonStepCfg ∘ resolveMoves`, so the
-                // board the automaton actually senses is the MID board (the players' moves already
+                // board the automaton actually senses is the MID board (the round's moves already
                 // applied) — read it there, exactly once, and keep the reading for the surface. The
                 // step used to leave no trace at all: the reader saw two boards and had to diff.
-                let mid = match rules::resolve_mid(&session.board, &[], &[ma, mb]) {
+                // The MID is asked for WITH THIS TURN'S MARKS, so on a turn that re-entered it is
+                // the same mid the resolution used.
+                let mut all_moves = session.locked.clone();
+                all_moves.extend(subs.iter().copied());
+                let mid = match rules::resolve_mid(&session.board, &session.marks, &all_moves) {
                     Ok(m) => m,
                     Err(why) => {
                         return refuse(format!(
@@ -1349,6 +1950,11 @@ impl Offering for AutomataflOffering {
                     session.revealed,
                     session.turn_no,
                     session.last_step.clone(),
+                    session.turn_start.clone(),
+                    session.marks.clone(),
+                    session.locked.clone(),
+                    session.waiting.clone(),
+                    session.conflict_subs.clone(),
                 );
                 session.last_step = Some(step);
                 session.board = next;
@@ -1375,6 +1981,17 @@ impl Offering for AutomataflOffering {
                             // took three unrelated lanes down with it for hours.
                             Ok(adjudicated) => adjudicated.map(Seat::from_idx),
                             Err(why) => {
+                                // ANTI-GHOST. This arm used to return with the surface already
+                                // advanced — the board moved, the turn counter moved, the seals were
+                                // cleared — while the executor had committed NOTHING. Restore the
+                                // pre-resolution state first, so a refusal is a refusal.
+                                session.board = before.0;
+                                session.sel = before.1;
+                                session.committed = before.2;
+                                session.seal = before.3;
+                                session.revealed = before.4;
+                                session.turn_no = before.5;
+                                session.last_step = before.6;
                                 return refuse(format!(
                                     "the game oracle could not adjudicate the capped match: {why}"
                                 ));
@@ -1384,9 +2001,22 @@ impl Offering for AutomataflOffering {
                     None => None,
                 };
                 session.ended = session.winner.is_some() || capped;
-                // RECORD THE ROUND — the two revealed moves, in seat order, appended only once
-                // the executor accepts the resolution below (a refused resolution pops it).
-                session.rounds.push((ma, mb));
+                // RECORD THE TURN, WHOLE — its start board, every conflict round it went through,
+                // and the pair that finally resolved. Appended only once the executor accepts the
+                // resolution below (a refused resolution pops it). This is the `MultiRoundTurn`
+                // the Leg C braid folds when `conflict_subs` is non-empty.
+                session.turns_played.push(PlayedTurn {
+                    start: before.7.clone(),
+                    conflict_subs: std::mem::take(&mut session.conflict_subs),
+                    clean_subs: [ma, mb],
+                });
+                // ⚑ CLEAR STATE (`model.py::ClearState`): markers, locks and pending moves die at
+                // turn end, and the next turn opens on the resolved board with every seat owing a
+                // move — `AutomataflRules.openRound`.
+                session.marks.clear();
+                session.locked.clear();
+                session.waiting = vec![0, 1];
+                session.turn_start = session.board.clone();
 
                 match session.game.commit_state(RESOLVE, &session.state()) {
                     Ok(receipt) => {
@@ -1398,7 +2028,8 @@ impl Offering for AutomataflOffering {
                     }
                     Err(e) => {
                         // Nothing committed — restore the pre-resolution surface (anti-ghost),
-                        // INCLUDING the move history: an unlanded round is not a played round.
+                        // INCLUDING the turn history and the whole round state: an unlanded round is
+                        // not a played round, and the seats keep the moves they had opened.
                         session.board = before.0;
                         session.sel = before.1;
                         session.committed = before.2;
@@ -1406,9 +2037,14 @@ impl Offering for AutomataflOffering {
                         session.revealed = before.4;
                         session.turn_no = before.5;
                         session.last_step = before.6;
+                        session.turn_start = before.7;
+                        session.marks = before.8;
+                        session.locked = before.9;
+                        session.waiting = before.10;
+                        session.conflict_subs = before.11;
                         session.winner = None;
                         session.ended = false;
-                        session.rounds.pop();
+                        session.turns_played.pop();
                         refuse(e.to_string())
                     }
                 }
@@ -1442,6 +2078,21 @@ impl Offering for AutomataflOffering {
         }
         if committed.turn_no != session.turn_no {
             return VerifyReport::broken(turns, "the committed turn counter diverged");
+        }
+        // ⚑ THE ROUND STATE IS COMMITTED TOO. `marked` is the cell's record of how many squares this
+        // turn has burned, and it is what the `resubmit` case pins strictly monotone — so a session
+        // whose marks disagree with the cell's count has a termination tooth reading a number nobody
+        // is standing behind.
+        if committed.marked != session.marks.len() as u64 {
+            return VerifyReport::broken(
+                turns,
+                format!(
+                    "the committed marked-square count ({}) diverged from the round state's {} \
+                     marks",
+                    committed.marked,
+                    session.marks.len()
+                ),
+            );
         }
         VerifyReport::ok(turns)
     }
@@ -1491,10 +2142,16 @@ impl Offering for AutomataflOffering {
         };
         let i = seat.idx();
         let phase = session.phase();
+        // ⚑ A LOCKED seat is offered NOTHING but the resolve: it does not re-submit, and a clock
+        // that reads this list must not forfeit it for failing to press a button it was never
+        // handed. That is what makes `owes_a_move` and this list agree.
+        let waiting = session.is_waiting(seat);
         for action in &mut all {
             let mine = match action.turn.as_str() {
-                SELECT | COMMIT => matches!(phase, Phase::Commit) && session.committed[i].is_none(),
-                REVEAL => matches!(phase, Phase::Reveal) && !session.revealed[i],
+                SELECT | COMMIT => {
+                    waiting && phase.is_sealing() && session.committed[i].is_none()
+                }
+                REVEAL => waiting && matches!(phase, Phase::Reveal) && !session.revealed[i],
                 RESOLVE => matches!(phase, Phase::Resolve),
                 _ => false,
             };

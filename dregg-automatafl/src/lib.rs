@@ -69,5 +69,5 @@ pub mod witness;
 pub use board::{Board, Move};
 pub use game::{AutomataflGame, Deployment, MatchState};
 pub use rules::{apply_turn, automaton_step};
-pub use surface::{AutomataflOffering, AutomataflSession, Phase, Seat};
+pub use surface::{AutomataflOffering, AutomataflSession, Phase, PlayedTurn, Seat};
 pub use witness::placeholder_roots;

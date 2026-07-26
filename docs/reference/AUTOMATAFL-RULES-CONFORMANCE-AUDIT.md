@@ -32,8 +32,31 @@ answer on the audit's own witnesses (the 2-cycle 3.5a, the inclusive path check 
 
 Two of the divergences below therefore now show up as CHANGED BEHAVIOUR in the deployed surface,
 deliberately: naming the automaton's square as a move DESTINATION is legal to propose (1.4, ruling
-D) and so appears in the rook-line highlight set; and a conflicted round does not resolve its moves
-at all (it marks and re-enters) rather than dropping the clashing pair.
+D) and so appears in the rook-line highlight set; and a conflicted round MARKS the contested square
+and RE-ENTERS rather than resolving anything (§2.4 below, now CLOSED on the played surface).
+
+### ⚑ 2026-07-25 — §2.4 is CLOSED on the played surface, and this document's own claim about the
+### old behaviour was WRONG
+
+The conflict RE-SUBMISSION loop is wired to `AutomataflOffering`: `Phase::Resubmit`, the
+`RoundState` (`marks` / `locked` / `waiting`) on the session, and ONE `rules::round` call per round
+(`AutomataflRules.roundStep` through `@[export] dregg_automatafl_rules`) that returns the clash set,
+the marks, the freeze, the lock set and the waiting set together. So 2.4a (re-entry), 2.4b (the
+marker, illegal at either endpoint for everyone, re-checked at the commit gate), 2.4c (illegal FOR
+EVERYONE) and 2.4d (recursion) are all live in play. The 2.4 rows below are kept as the HISTORY of
+`Automatafl.lean`'s `conflictResolve`, which is what they were written about.
+
+**And the correction.** An earlier revision of this header said the deployed surface "does not
+resolve its moves at all" on a clash — i.e. that the drop was at least harmless to the board. That
+is FALSE, and it is now pinned by a test
+(`dregg-automatafl/src/surface/tests.rs::a_forced_clash_re_enters_the_round_instead_of_dropping_the_moves`).
+`rules::turn` / `apply_turn` are the RESOLUTION LEGS — `resolveMoves` is guarded by `resolvableB`,
+which is the MERGE clause (`unresolved`) ALONE; the fork/collide clauses live in `roundStep` and
+those verbs never consult them. On the stock 11×11 opening, two seats forking the attractor at
+`(3,1)` to `(3,3)` and `(5,1)` made seat B's move blocked mid-path (a repulsor stands on `(4,1)`),
+which left seat A's as the single unblocked edge out of `(3,1)` — and it **EXECUTED**. So the old
+surface did not drop both moves: it silently picked one seat's move, discarded the other, and
+advanced the turn. `rules::apply_turn`'s doc comment now carries that warning at the call site.
 
 ## 0. The headline
 
@@ -88,6 +111,13 @@ rules in any direction: it forfeits turns the rules would let players re-take (2
 moves execute that the rules make illegal (2.4c), and because it never marks a coordinate it
 cannot express the recursion's fixed point (2.4d). It changes which pieces are on the board at
 the end of a turn, so it is not sound even for the automaton step that follows.
+
+> **STATUS (2026-07-25): these four rows are CLOSED on the played surface** — see the dated note in
+> the header. `AutomataflRules.roundStep` is the surface's resolution verb, and the marks / locks /
+> waiting set it returns are carried on the session rather than recomputed. The rows stay as the
+> record of what `Automatafl.lean`'s `conflictResolve` did, and as the falsifier set: a surface that
+> resolves a clash instead of re-entering it fails
+> `dregg-automatafl/src/surface/tests.rs` §5b.
 
 ### (3) Resolution — `occluded` / `nextOf` / `followChain` / `applyMoves`
 

@@ -81,7 +81,8 @@ use std::thread::JoinHandle;
 use std::time::Instant;
 
 pub use dreggnet_game_board::{
-    AutomataflMatch, Game, LeafBundle, MatchError, MatchProof, ProveError, TugMatch, TugWin,
+    AutomataflMatch, Game, LeafBundle, MatchError, MatchProof, MultiRoundTurn, ProveError,
+    TugMatch, TugWin,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -415,8 +416,20 @@ impl<I, O> Drop for ProveService<I, O> {
 pub enum PlayedMatch {
     /// A played multiway-tug match (ranks with the HAND never revealed).
     Tug(TugMatch),
-    /// A played automatafl match (ranks with the MOVES never posted).
+    /// A played automatafl match (ranks with the MOVES never posted). CLEAN rounds only — the
+    /// plain two-leg chain has no marks lane, so a turn that RE-ENTERED belongs in
+    /// [`PlayedMatch::AutomataflTurn`].
     Automatafl(AutomataflMatch),
+    /// ⚑ **ONE automatafl TURN that went through the ruleset's CONFLICT re-submission loop** — `k`
+    /// conflict rounds (the Leg C braid on the 32-lane RoundState window, accumulating the marks)
+    /// welded to the terminating clean round (the marks-aware Leg RM + the marks-carrying Leg A),
+    /// folded by [`MultiRoundTurn::prove`] into ONE `WholeChainProof`.
+    ///
+    /// A separate variant rather than a field on [`AutomataflMatch`] because it is a genuinely
+    /// different fold SHAPE: the clean-handoff root has exactly one width change (32 → 20), which is
+    /// what the deployed mixed-width verifier accepts, and chaining a second turn onto it is not
+    /// built. So this variant carries a SINGLE turn, and the crown says so.
+    AutomataflTurn(MultiRoundTurn),
 }
 
 impl PlayedMatch {
@@ -424,7 +437,7 @@ impl PlayedMatch {
     pub fn game(&self) -> Game {
         match self {
             PlayedMatch::Tug(_) => Game::MultiwayTug,
-            PlayedMatch::Automatafl(_) => Game::Automatafl,
+            PlayedMatch::Automatafl(_) | PlayedMatch::AutomataflTurn(_) => Game::Automatafl,
         }
     }
 }
@@ -453,6 +466,10 @@ pub fn fold_played_match(m: PlayedMatch) -> Result<MatchProof, String> {
         PlayedMatch::Automatafl(a) => {
             dreggnet_game_board::prove_automatafl_match(&a).map_err(|e: ProveError| e.to_string())
         }
+        // ⚑ THE CONFLICT BRAID. `MultiRoundTurn::prove` lowers the `k` Leg C conflict rounds and the
+        // terminating Leg RM + Leg A, folds them across the one clean-handoff width change, and
+        // self-attests the mixed-width root through the SAME verifier the board runs.
+        PlayedMatch::AutomataflTurn(t) => t.prove().map_err(|e: ProveError| e.to_string()),
     }
 }
 

@@ -314,3 +314,87 @@ fn a_fork_conflicts_and_re_enters_instead_of_resolving() {
         other => panic!("a clean round must RESOLVE, got {other:?}"),
     }
 }
+
+/// ⚑ **THE RULESET LOCKS A SEAT THAT WAS NOT PART OF THE CLASH, AND THE LOCKED MOVE EXECUTES.**
+///
+/// This is `AutomataflRules.lean`'s own LOCKING witness (`lockBoard` / `d5A` / `d5B` / `lkC`, §2.4),
+/// driven through the wire at three seats — because at the DEPLOYED two seats `locked` is
+/// structurally always empty: a fork needs two moves out of one square and a collide two moves into
+/// one, so with two submissions every clash names both and `roundStep` returns
+/// `locked = [], waiting = [0,1]` every time. So the surface's lock-carry is exercised against a
+/// STATE in `surface::tests`, and the RULE that produces such a state is exercised here.
+///
+/// Round 1: seats 0 and 1 fork `(0,0)`; seat 2's move out of `(4,0)` touches neither endpoint.
+/// The ruleset marks `(0,0)`, LOCKS seat 2's move, and re-enters seats 0 and 1 only.
+/// Round 2: the two re-entering seats submit a clean pair, and the round resolves with seat 2's
+/// LOCKED move executed alongside them — untouched, from the same origin it was sealed at.
+#[test]
+fn a_locked_seats_move_stands_and_executes() {
+    // `lockBoard`: attractors at (0,0) and (4,0), a repulsor at (0,4), the automaton parked at (4,4).
+    let b = mk(5, &[((0, 0), ATT), ((4, 0), ATT), ((0, 4), REP)], (4, 4));
+    let d5a = Move {
+        who: 0,
+        frm: (0, 0),
+        to: (0, 2),
+    };
+    let d5b = Move {
+        who: 1,
+        frm: (0, 0),
+        to: (2, 0),
+    };
+    let lkc = Move {
+        who: 2,
+        frm: (4, 0),
+        to: (4, 2),
+    };
+
+    let (marks, locked, waiting) =
+        match rules::round(&b, &[], &[], &[], &[0, 1, 2], &[d5a, d5b, lkc])
+            .expect("the oracle answers `round`")
+        {
+            rules::RoundOutcome::Again {
+                marks,
+                locked,
+                waiting,
+            } => (marks, locked, waiting),
+            other => panic!("a fork must come back `Again`, got {other:?}"),
+        };
+    assert_eq!(marks, vec![(0, 0)], "the forked SOURCE is marked");
+    assert_eq!(
+        locked,
+        vec![lkc],
+        "the seat that named neither endpoint of the clash is LOCKED, move intact"
+    );
+    assert_eq!(
+        waiting,
+        vec![0, 1],
+        "and it does NOT re-enter — only the clashing seats do"
+    );
+
+    // ROUND 2 — the two re-entering seats submit a clean pair off the repulsor at (0,4). Neither
+    // names the mark. `locked` rides along, as `roundStep`'s `all := rs.locked ++ fresh`.
+    let re0 = Move {
+        who: 0,
+        frm: (0, 4),
+        to: (0, 2),
+    };
+    let board = match rules::round(&b, &[], &marks, &locked, &waiting, &[re0])
+        .expect("the oracle answers `round`")
+    {
+        rules::RoundOutcome::Resolved { board, .. } => board,
+        other => panic!("a clean second round must RESOLVE, got {other:?}"),
+    };
+    // ⚑ THE LOCKED MOVE EXECUTED: seat 2's attractor left (4,0) and arrived at (4,2).
+    assert_eq!(board.cell_at((4, 2)), ATT, "the LOCKED move executed");
+    assert_eq!(board.cell_at((4, 0)), VAC, "and vacated its source");
+    // …the re-submitted move executed too…
+    assert_eq!(board.cell_at((0, 2)), REP, "the re-submitted move executed");
+    assert_eq!(board.cell_at((0, 4)), VAC);
+    // …and the MARKED square still holds the piece nobody could move off it: a mark freezes a
+    // square, it does not empty one.
+    assert_eq!(
+        board.cell_at((0, 0)),
+        ATT,
+        "the marked square's attractor stayed put — it was illegal to move all turn"
+    );
+}

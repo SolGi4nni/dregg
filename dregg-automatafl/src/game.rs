@@ -8,9 +8,10 @@
 //! drives (every move is a receipt).
 //!
 //! The STATE is declared as a [`dregg_schema::Schema`] and lowered by the CONSUMED allocator
-//! ([`allocate_checked`]) to a Legal slot/heap layout: 15 scalar registers (the turn counter, the
+//! ([`allocate_checked`]) to a Legal slot/heap layout: 16 scalar registers (the turn counter, the
 //! phase, the two sealed commitments, the two selections, the two revealed moves, the automaton
-//! coordinates, the winner) and the 121 board squares on heap keys `16..137`.
+//! coordinates, the winner, the turn's marked-square count) and the 121 board squares on heap keys
+//! `17..138`.
 //!
 //! **THE BOARD IS THE STOCK 11×11 TWO-PLAYER GAME** ([`crate::rules::stock_two_player`], computed by
 //! the Lean `AutomataflRules.stockTwoPlayer`) with the ruleset's own four-corner goal assignment
@@ -28,10 +29,17 @@
 //!   immutable; `commits` [`StateConstraint::StrictMonotonic`] (a replayed commit cannot land).
 //! * **`reveal`** — open your sealed move. Board + `turn_no` + BOTH commitments immutable (a
 //!   reveal that rewrites the seal it is opening is REFUSED); `reveals` strictly monotone.
+//! * **`resubmit`** — ⚑ THE CONFLICT ROUND. A round the seats clashed on does not resolve: the
+//!   ruleset MARKS the contested coordinate, freezes the board and re-opens the round for the named
+//!   seats. Board + `turn_no` + `winner` immutable, and `marked` (the count of this turn's marked
+//!   squares) [`StateConstraint::StrictMonotonic`] and `FieldLte` [`CELLS`] — M3's TERMINATION
+//!   bound as a cell tooth: every re-entry marks a NEW square and a turn can re-enter at most n²
+//!   times.
 //! * **`resolve`** — the resolution: `turn_no` strictly monotone, every board square pinned to a
 //!   real particle code by [`HeapAtom::MemberOf`] `{0,1,2,3}` (a conjured particle is REFUSED), the
 //!   automaton coordinates range-pinned to the board, and `winner` [`StateConstraint::WriteOnce`]
-//!   (a claimed win cannot be overwritten).
+//!   (a claimed win cannot be overwritten). `marked` is unconstrained here so the markers can die
+//!   at turn end (`model.py::ClearState`).
 //!
 //! `genesis` is the one permissive case (it seeds the opening board + the registers the relational
 //! teeth read as an `old` value). The BOARD TRANSITION itself (`new == apply_turn(old, moves)`) is
@@ -64,8 +72,17 @@ pub const SELECT: &str = "select";
 pub const COMMIT: &str = "commit";
 /// Open your sealed move.
 pub const REVEAL: &str = "reveal";
-/// Resolve the simultaneous turn (conflicts dropped, moves applied, the automaton steps).
+/// Resolve the simultaneous turn (the round's moves applied, the automaton steps).
 pub const RESOLVE: &str = "resolve";
+/// **RE-ENTER the turn after a CLASH** — the ruleset's conflict round
+/// (`AutomataflRules.roundStep`'s `again` arm): the contested coordinate is MARKED, the board is
+/// FROZEN, the named seats owe a fresh move. The turn does NOT advance.
+///
+/// This method exists because a conflicted round is not a resolution: committing it under
+/// [`RESOLVE`] would have to advance `turn_no` (that case carries `StrictMonotonic`), and
+/// committing it under [`COMMIT`] would claim a seal was sealed. Its own case carries the
+/// TERMINATION tooth — see [`Deployment::build_program`].
+pub const RESUBMIT: &str = "resubmit";
 
 /// The board edge — the REAL stock two-player game, 11×11, and the size the Lean descriptors are
 /// emitted at. The played surface and the proven descriptors are the SAME `n`: this is what makes
@@ -79,8 +96,8 @@ pub const CELLS: usize = N * N;
 // ────────────────────────────────────────────────────────────────────────────────────────────
 //
 // `turn.fee` is the executor's computron LIMIT for the turn, and this world writes its state
-// WHOLE on every turn (`AutomataflGame::effects_for` — 15 registers + every board square, so
-// the executor's relational teeth read a complete `old`/`new` pair). At 11×11 that is 137
+// WHOLE on every turn (`AutomataflGame::effects_for` — 16 registers + every board square, so
+// the executor's relational teeth read a complete `old`/`new` pair). At 11×11 that is 138
 // `SetField`s on the seeding turn, and the framework's shared
 // [`dregg_app_framework::DEFAULT_TURN_FEE`] of 10 000 cannot pay for them: `Offering::open`
 // died on the GENESIS turn with `BudgetExceeded { limit: 10000, used: 10016 }`.
@@ -101,9 +118,9 @@ const SET_FIELD_COMPUTRONS: u64 = 122;
 /// 2 × 200). One action per world turn.
 const TURN_BASE_COMPUTRONS: u64 = 100 + 400;
 
-/// The writes in the most expensive turn: the 15 registers + every board square + the ONE
+/// The writes in the most expensive turn: the 16 registers + every board square + the ONE
 /// genesis-sentinel write `WorldCell::commit` injects on the seeding turn (the `0 → 1` on
-/// `GENESIS_DONE_EXT_KEY`). 137 at 11×11 — a select/commit/reveal/resolve turn is one write
+/// `GENESIS_DONE_EXT_KEY`). 138 at 11×11 — a select/commit/reveal/resolve turn is one write
 /// cheaper.
 const WIDEST_TURN_WRITES: u64 = REGISTERS.len() as u64 + CELLS as u64 + 1;
 
@@ -117,7 +134,7 @@ const FEE_HEADROOM_WRITES: u64 = 16;
 /// [`AutomataflGame::deploy`] via [`WorldCell::with_metered_turn_fee`], so it applies to the
 /// genesis seed and to every play, and to no other app.
 ///
-/// `500 + 122 × (137 + 16) = 19_166` at 11×11 — 1.11× the widest turn's real cost of 17 214,
+/// `500 + 122 × (138 + 16) = 19_288` at 11×11 — 1.11× the widest turn's real cost of 17 336,
 /// and it tracks `N`: a board resize moves it automatically (the cost grows as `N²`, which is
 /// why 16-over was never going to be the whole story). If you add writes to a turn, add them
 /// to `WIDEST_TURN_WRITES`; do not raise the shared framework default, which every
@@ -125,8 +142,8 @@ const FEE_HEADROOM_WRITES: u64 = 16;
 ///
 /// ⚠ CEILING, not charge. It was a flat charge for one commit, and that was measurably wrong:
 /// the executor debits `turn.fee` IN FULL from the world agent's fixed 1M endowment on every
-/// turn, so sizing it to the 137-write genesis seed made a two-write `select` pay 19 166 too —
-/// `1_000_000 / 19_166 = 52` turns, about SEVEN automatafl rounds, and then
+/// turn, so sizing it to the 138-write genesis seed made a two-write `select` pay 19 288 too —
+/// `1_000_000 / 19_288 = 51` turns, about SEVEN automatafl rounds, and then
 /// `InsufficientBalance` with the board still live. Metered, the seed pays for its own writes
 /// once and a `select` pays ~744, so the endowment bounds the WORK a match does rather than the
 /// number of turns it takes. `dregg-automatafl/tests/match_length_purse.rs` is the falsifier for
@@ -134,8 +151,8 @@ const FEE_HEADROOM_WRITES: u64 = 16;
 pub const TURN_FEE: u64 =
     TURN_BASE_COMPUTRONS + SET_FIELD_COMPUTRONS * (WIDEST_TURN_WRITES + FEE_HEADROOM_WRITES);
 
-/// The 15 register components, in allocation order (slots `0..15`).
-const REGISTERS: [&str; 15] = [
+/// The 16 register components, in allocation order (slots `0..16`).
+const REGISTERS: [&str; 16] = [
     "turn_no",  // the resolved-turn counter (strictly monotone on `resolve`)
     "phase",    // 0 = commit, 1 = reveal, 2 = over
     "winner",   // 0 = none, 1 = seat A, 2 = seat B (write-once)
@@ -151,6 +168,7 @@ const REGISTERS: [&str; 15] = [
     "b_to",     // seat B's revealed destination
     "auto_x",   // the automaton's x (range-pinned on `resolve`)
     "auto_y",   // the automaton's y
+    "marked",   // this TURN's marked-square count (strictly monotone on `resubmit`, ≤ CELLS)
 ];
 
 /// The heap component name of board square `idx` (`idx = y*N + x`).
@@ -158,7 +176,7 @@ pub fn cell_name(idx: usize) -> String {
     format!("cell_{idx}")
 }
 
-/// The declared schema: 15 register components + the [`CELLS`] board squares as heap collections.
+/// The declared schema: 16 register components + the [`CELLS`] board squares as heap collections.
 pub fn schema() -> Schema {
     let mut s = Schema::new(SCENE_ID)
         .stat("turn_no", 0, 1024)
@@ -175,7 +193,8 @@ pub fn schema() -> Schema {
         .stat("b_frm", 0, CELLS as u64)
         .stat("b_to", 0, CELLS as u64)
         .stat("auto_x", 0, (N - 1) as u64)
-        .stat("auto_y", 0, (N - 1) as u64);
+        .stat("auto_y", 0, (N - 1) as u64)
+        .stat("marked", 0, CELLS as u64);
     for idx in 0..CELLS {
         s = s.collection(cell_name(idx));
     }
@@ -306,6 +325,30 @@ impl Deployment {
             index: self.reg("reveals"),
         });
 
+        // ⚑ `resubmit`: THE CONFLICT ROUND, and the tooth that makes the turn TERMINATE.
+        //
+        // A round the seats clashed on does not resolve: the ruleset MARKS the contested
+        // coordinate, freezes the board, and re-opens the round for the named seats
+        // (`AutomataflRules.roundStep`'s `again` arm). So the board and the turn counter are
+        // IMMUTABLE here — a re-entry that moved a piece or advanced the turn is refused.
+        //
+        // `marked` is this turn's marked-square count, and `StrictMonotonic` on it is M3's
+        // TERMINATION BOUND made executable: every re-entry must mark at least one NEW square,
+        // and `FieldLte{CELLS}` caps the count at n², so a turn can re-enter at most n² times and
+        // a round that re-enters without marking anything is REFUSED BY THE CELL — not by the
+        // surface's own good manners. (The markers die at turn end, `model.py::ClearState`: the
+        // `resolve` case below leaves `marked` unconstrained so it can drop back to 0.)
+        let mut resubmit = self.board_immutable();
+        resubmit.push(StateConstraint::Immutable { index: turn_no });
+        resubmit.push(StateConstraint::Immutable { index: winner });
+        resubmit.push(StateConstraint::StrictMonotonic {
+            index: self.reg("marked"),
+        });
+        resubmit.push(StateConstraint::FieldLte {
+            index: self.reg("marked"),
+            value: field_from_u64(CELLS as u64),
+        });
+
         // `resolve`: the turn advances, every square holds a real particle, the automaton stays on
         // the board, and a declared winner is write-once.
         let mut resolve = self.board_particles();
@@ -334,7 +377,13 @@ impl Deployment {
         // genesis becomes the `0 → 1` sentinel transition, and each play case freezes the
         // sentinel so no move can reset it.
         let genesis = if oneshot {
-            for teeth in [&mut select, &mut commit, &mut reveal, &mut resolve] {
+            for teeth in [
+                &mut select,
+                &mut commit,
+                &mut reveal,
+                &mut resubmit,
+                &mut resolve,
+            ] {
                 teeth.push(genesis_sentinel_freeze());
             }
             genesis_oneshot_teeth()
@@ -347,6 +396,7 @@ impl Deployment {
             case(SELECT, select),
             case(COMMIT, commit),
             case(REVEAL, reveal),
+            case(RESUBMIT, resubmit),
             case(RESOLVE, resolve),
         ])
     }
@@ -406,6 +456,11 @@ pub struct MatchState {
     pub to: [u64; 2],
     /// The automaton's coordinates.
     pub auto: Coord,
+    /// **How many squares this TURN has MARKED** — the size of `AutomataflRules.RoundState.marks`.
+    /// `0` at turn start and after every resolution (the markers die at turn end); strictly
+    /// increasing across the turn's conflict rounds, which is the executor's termination tooth
+    /// ([`Deployment::build_program`]'s [`RESUBMIT`] case).
+    pub marked: u64,
     /// The [`CELLS`] board squares (`cells[y*N + x]` ∈ `{0,1,2,3}`).
     pub cells: Vec<u8>,
 }
@@ -466,7 +521,7 @@ impl AutomataflGame {
         self.world.cell_id()
     }
 
-    /// Every `SetField` effect writing `st` in full (15 registers + [`CELLS`] board keys).
+    /// Every `SetField` effect writing `st` in full (16 registers + [`CELLS`] board keys).
     fn effects_for(&self, st: &MatchState) -> Vec<Effect> {
         let cell = self.cell();
         let mut effects = Vec::with_capacity(REGISTERS.len() + CELLS);
@@ -492,6 +547,7 @@ impl AutomataflGame {
         set("b_to", st.to[1]);
         set("auto_x", st.auto.0.max(0) as u64);
         set("auto_y", st.auto.1.max(0) as u64);
+        set("marked", st.marked);
         drop(set);
         for idx in 0..CELLS {
             effects.push(Effect::SetField {
@@ -509,9 +565,9 @@ impl AutomataflGame {
     /// The post-state is identical either way: a `SetField` to a field's current value is a no-op
     /// on the cell, so the executor's teeth read exactly the same `(old, new)` pair and every
     /// `Immutable` / `MemberOf` / `StrictMonotonic` / `WriteOnce` atom decides exactly as before.
-    /// What changes is the PRICE. A `select` moves one register out of 136 fields; writing the
-    /// other 135 back onto themselves cost 16 470 computrons of the turn's metered budget and
-    /// bought nothing.
+    /// What changes is the PRICE. A `select` moves one register out of 137 fields; writing the
+    /// other 136 back onto themselves costs ~16 592 computrons of the turn's metered budget and
+    /// buys nothing.
     ///
     /// ⚠ NOT for the GENESIS seed, which must write the board WHOLE. The 121 board squares live
     /// on heap keys, and this world's [`CompiledStory`] declares no ext keys, so `WorldCell`
@@ -555,6 +611,7 @@ impl AutomataflGame {
             st.auto.1.max(0) as u64,
             committed.auto.1.max(0) as u64,
         );
+        set("marked", st.marked, committed.marked);
         drop(set);
         for idx in 0..CELLS {
             if st.cells[idx] != committed.cells[idx] {
@@ -637,6 +694,7 @@ impl AutomataflGame {
                 self.read_reg("auto_x") as i32,
                 self.read_reg("auto_y") as i32,
             ),
+            marked: self.read_reg("marked"),
             cells: (0..CELLS).map(|i| self.read_cell(i)).collect(),
         }
     }

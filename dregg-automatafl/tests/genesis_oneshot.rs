@@ -38,6 +38,7 @@ fn opening_state() -> MatchState {
         frm: [0, 0],
         to: [0, 0],
         auto: board.auto,
+        marked: 0,
         cells: board.cells.clone(),
     }
 }

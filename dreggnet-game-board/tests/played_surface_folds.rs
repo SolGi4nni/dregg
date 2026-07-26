@@ -24,11 +24,11 @@
 //! `end_to_end.rs` gate. What runs here is the lowering, which is exactly the step that was
 //! IMPOSSIBLE before.
 
+use dregg_automatafl::board::{Coord, Move};
 use dregg_automatafl::game::{COMMIT, RESOLVE, REVEAL, SELECT, index_of};
-use dregg_automatafl::reference::{Coord, Move};
 use dregg_automatafl::surface::{AutomataflOffering, AutomataflSession, Seat};
 use dregg_circuit::field::BabyBear;
-use dreggnet_game_board::{AutomataflMatch, MatchError};
+use dreggnet_game_board::AutomataflMatch;
 use dreggnet_offerings::{Action, DreggIdentity, Offering, SessionConfig};
 
 fn act(turn: &str, arg: i64) -> Action {
@@ -115,10 +115,16 @@ fn a_round_played_on_the_surface_lowers_to_the_proven_lean_descriptors() {
     // The surface RECORDED the round (the change that makes any of this possible).
     assert_eq!(
         session.rounds(),
-        &[(ma, mb)],
+        vec![(ma, mb)],
         "the played round is on the session, in seat order"
     );
-    assert_eq!(session.unfoldable_round(), None, "the round is clean");
+    assert_eq!(
+        session
+            .unfoldable_round()
+            .expect("the Lean game oracle (`dregg_automatafl_rules`) answers"),
+        None,
+        "the round is clean"
+    );
 
     let start = session.start_board().clone();
     let n = start.n;
@@ -140,10 +146,12 @@ fn a_round_played_on_the_surface_lowers_to_the_proven_lean_descriptors() {
         "Leg R SATISFIES the proven Lean resolve descriptor — the players' moves, in-circuit"
     );
 
-    // The adjudicated mid is the board the surface itself played through (`resolve_mid`).
+    // The adjudicated mid is the board the surface itself played through (the SPEC's
+    // `resolveMoves`, asked of the Lean).
     let layout = dregg_automatafl::resolve_layout::ResolveLayout::new(n);
     let mid = rt.mid_board(&layout);
-    let oracle_mid = dregg_automatafl::reference::resolve_mid(&start, &[ma, mb]);
+    let oracle_mid = dregg_automatafl::rules::resolve_mid(&start, &[], &[ma, mb])
+        .expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
     assert_eq!(
         mid.cells, oracle_mid.cells,
         "the descriptor's adjudicated mid IS the board the surface resolved"
@@ -193,14 +201,23 @@ fn a_round_played_on_the_surface_lowers_to_the_proven_lean_descriptors() {
     );
 }
 
-/// **A CONFLICTING ROUND REFUSES TO FOLD, BY NAME.** Both seats fork the same source: the surface
-/// resolves it by DROPPING both moves (the audited-WRONG rule — the ruleset marks the contested
-/// square and re-enters the round, the Leg C braid that is not wired to the surface). The round is
-/// genuinely played and genuinely recorded, and the fold refuses it as
-/// [`MatchError::ConflictingRound`] rather than mint a proof of a transition the rules never
-/// licensed. Fast: the gate fires before any witness generation.
+/// ⚑ **A CLASHING ROUND NEVER BECOMES A FOLDABLE ROUND — because it never becomes a TURN.**
+///
+/// RED BEFORE: this test used to assert `session.rounds().len() == 1` — that the surface DROPPED
+/// both moves, resolved anyway, and recorded the result as a played round which the fold then
+/// refused as `MatchError::ConflictingRound(0)`. That was the audited-WRONG rule, and it was worse
+/// than "dropped": `resolveMoves` is guarded by the MERGE clause alone, so on this exact pair seat
+/// A's move EXECUTED (seat B's is blocked mid-path by the repulsor on `(4,1)`) and seat B's
+/// vanished. See `dregg-automatafl/src/surface/tests.rs` §5b.
+///
+/// NOW: the clash RE-ENTERS. Nothing resolves, so there is no played turn at all, so the plain
+/// two-leg fold has nothing to be offered and nothing to refuse — the wrong round is unreachable
+/// rather than caught. The refusal that remains is for a turn that DID resolve after re-entering
+/// (below).
 #[test]
-fn a_conflicting_round_refuses_to_fold_blocked_not_faked() {
+fn a_clashing_round_re_enters_and_never_reaches_the_fold() {
+    use dregg_automatafl::surface::Phase;
+
     let ma = Move {
         who: 0,
         frm: (3, 1),
@@ -213,22 +230,79 @@ fn a_conflicting_round_refuses_to_fold_blocked_not_faked() {
     };
     let session = play_one_round(0xC0DE, ma, mb);
     assert_eq!(
-        session.rounds().len(),
-        1,
-        "the round WAS played and recorded"
+        session.phase(),
+        Phase::Resubmit,
+        "the clash re-opened the round for re-submission"
     );
     assert_eq!(
-        session.unfoldable_round(),
-        Some(0),
-        "the session names the round that blocks the crown"
+        session.marks(),
+        [(3, 1)].as_slice(),
+        "the Lean marked the fork source"
     );
-
-    let err = AutomataflMatch::played(session.start_board().clone(), session.rounds().to_vec())
+    assert!(
+        session.turns_played().is_empty(),
+        "NOTHING is recorded as played — a clashing round is not a turn"
+    );
+    assert!(
+        session.rounds().is_empty(),
+        "…so the plain two-leg fold is offered no round at all"
+    );
+    // And the plain path over an empty history is `MatchError::Empty`, not a mis-attested round.
+    let err = AutomataflMatch::played(session.start_board().clone(), session.rounds())
         .leaves()
         .err();
+    assert!(err.is_some(), "an empty history mints nothing; got {err:?}");
+}
+
+/// ⚑ **A TURN THAT RE-ENTERED IS REFUSED BY THE PLAIN TWO-LEG PATH, BY NAME.**
+///
+/// Once the round finally comes back clean the turn IS recorded — and its terminating pair is
+/// genuinely clean, which is the trap: `AutomataflMatch::played` receives only the terminating pairs,
+/// so it CANNOT see that the turn re-entered and would happily mint a two-leg round for it. That
+/// would attest a transition in which the clash never happened.
+///
+/// ⚠ NAMED RESIDUAL: the refusal therefore lives at the CALLER
+/// ([`AutomataflSession::unfoldable_round`], which the bot's `crown::automatafl_fold_block` reads),
+/// not inside `AutomataflMatch::leaves`. It is a real gate with a real falsifier — this test — but it
+/// is a gate on the way in, not an impossibility. The turn's HONEST fold is `MultiRoundTurn` (see
+/// `tests/conflict_turn_from_the_played_surface.rs`), which consumes the conflict braid and the
+/// accumulated marks.
+#[test]
+fn a_re_entered_turn_is_refused_by_the_plain_two_leg_path() {
+    let off = AutomataflOffering;
+    let mut s = off.open(SessionConfig::with_seed(0xC0DF)).expect("open");
+
+    // Round 1 CLASHES (fork on (3,1)); round 2 is clean and resolves the turn.
+    for (a, b) in [
+        (((3, 1), (3, 3)), ((3, 1), (5, 1))),
+        (((3, 9), (3, 7)), ((7, 9), (7, 7))),
+    ] {
+        seal(&off, &mut s, Seat::A, a.0, a.1);
+        seal(&off, &mut s, Seat::B, b.0, b.1);
+        assert!(off.advance(&mut s, act(REVEAL, 0), seat(Seat::A)).landed());
+        assert!(off.advance(&mut s, act(REVEAL, 0), seat(Seat::B)).landed());
+        assert!(off.advance(&mut s, act(RESOLVE, 0), seat(Seat::A)).landed());
+    }
+    assert_eq!(s.turn_no(), 1, "one turn, two rounds");
+    assert_eq!(s.turns_played().len(), 1);
     assert!(
-        matches!(err, Some(MatchError::ConflictingRound(0))),
-        "a conflicting round is BLOCKED by name, not folded and not faked; got {err:?}"
+        !s.turns_played()[0].conflict_subs.is_empty(),
+        "the turn carries its conflict round"
+    );
+    // The terminating pair IS clean — which is exactly why the caller-side gate has to exist.
+    assert!(
+        dregg_automatafl::rules::round_is_clean(
+            &s.turns_played()[0].start,
+            &s.turns_played()[0].clean_subs
+        )
+        .expect("the Lean game oracle answers"),
+        "the terminating round is clean, so a cleanliness check ALONE would pass it"
+    );
+    assert_eq!(
+        s.unfoldable_round()
+            .expect("the Lean game oracle (`dregg_automatafl_rules`) answers"),
+        Some(0),
+        "…and the session refuses it anyway, because the turn RE-ENTERED"
     );
 }
 
@@ -242,7 +316,7 @@ fn a_conflicting_round_refuses_to_fold_blocked_not_faked() {
 fn the_played_round_mints_two_chained_leaves() {
     let (ma, mb) = clean_round();
     let session = play_one_round(0xF01D, ma, mb);
-    let m = AutomataflMatch::played(session.start_board().clone(), session.rounds().to_vec());
+    let m = AutomataflMatch::played(session.start_board().clone(), session.rounds());
     let leaves = m.leaves().expect("the played clean round lowers at n=11");
 
     assert_eq!(leaves.len(), 2, "ONE round == TWO chained legs (R then A)");

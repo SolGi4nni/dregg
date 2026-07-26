@@ -586,8 +586,25 @@ fn a_full_turn_resolves_exactly_as_the_ruleset() {
     );
     assert_eq!(
         session.rounds(),
-        &[(ma, mb)],
+        vec![(ma, mb)],
         "the resolved round recorded BOTH seats' revealed moves, in seat order"
+    );
+    // …and the TURN is recorded whole: its start board, its (empty) conflict braid, and the pair
+    // that resolved — the `MultiRoundTurn` shape, with `conflict_subs` empty because nothing clashed.
+    assert_eq!(session.turns_played().len(), 1);
+    assert_eq!(session.turns_played()[0].start.cells, before.cells);
+    assert!(
+        session.turns_played()[0].conflict_subs.is_empty(),
+        "a clean turn has NO conflict rounds — it folds through the plain two-leg path"
+    );
+    assert_eq!(session.turns_played()[0].clean_subs, [ma, mb]);
+    // And the round state is CLEARED for the next turn (`model.py::ClearState` / `openRound`).
+    assert!(session.marks().is_empty(), "the markers die at turn end");
+    assert!(session.locked().is_empty());
+    assert_eq!(
+        session.waiting(),
+        [0, 1].as_slice(),
+        "both seats owe the next turn"
     );
     assert_eq!(
         session
@@ -617,60 +634,723 @@ fn a_refused_resolution_records_no_round() {
     );
 }
 
-/// **A CONFLICTING round is recorded but is NOT foldable** — and it says so by name. Both seats
-/// fork the SAME source: conflict resolution drops both moves (the surface's audited-WRONG rule;
-/// the ruleset marks the square and re-enters the round). The round IS played and IS recorded —
-/// the history is the truth of what happened — but [`AutomataflSession::unfoldable_round`] names
-/// it, and the fold refuses it rather than minting a proof of an unlicensed transition.
+// ────────────────────────────────────────────────────────────────────────────────────────────
+// 5b. ⚑ THE CONFLICT RE-SUBMISSION LOOP — the ruleset's real turn structure, on the surface.
+//
+// Every decision in this section is the LEAN's: `crate::rules::round` is `AutomataflRules.roundStep`
+// through `@[export] dregg_automatafl_rules`, and it returns the clash set, the marks, the freeze,
+// the lock set and the waiting set in one reply. The tests assert the surface CARRIES them.
+//
+// RED BEFORE: the previous surface resolved a clash by DROPPING both moves and advancing the turn
+// (the test these replace asserted exactly that — "the conflicting round still RESOLVES on the
+// surface (both moves dropped)"), which the rules-conformance audit rates ABSENT/HIGH on four
+// clauses. Every assertion below fails against that surface: there was no `Phase::Resubmit`, no
+// `marks()`, no `waiting()`, and the turn counter moved.
+// ────────────────────────────────────────────────────────────────────────────────────────────
+
+/// The 11×11 stock opening's attractor at `(3,1)`, forked by both seats — the smallest clash the
+/// played board admits.
+const FORK_SRC: Coord = (3, 1);
+
+/// Drive both seats through seal → open → resolve for one round, returning the resolution outcome.
+fn play_round(
+    off: &AutomataflOffering,
+    s: &mut AutomataflSession,
+    a: Option<(Coord, Coord)>,
+    b: Option<(Coord, Coord)>,
+) -> Outcome {
+    if let Some((frm, to)) = a {
+        seal(off, s, &seat_a(), frm, to);
+    }
+    if let Some((frm, to)) = b {
+        seal(off, s, &seat_b(), frm, to);
+    }
+    for (waiting, who) in [(a.is_some(), seat_a()), (b.is_some(), seat_b())] {
+        if waiting {
+            assert!(
+                off.advance(s, act(REVEAL, 0), who).landed(),
+                "the reveal lands a real turn"
+            );
+        }
+    }
+    assert!(matches!(s.phase(), Phase::Resolve));
+    off.advance(s, act(RESOLVE, 0), seat_a())
+}
+
+/// ⚑ **A FORCED CLASH RE-ENTERS THE ROUND — it does not drop the moves.** Both seats fork the
+/// attractor at `(3,1)`. Under the ruleset that round does not resolve at all: the contested
+/// coordinate is MARKED, the board FREEZES, the turn counter does NOT advance, and both seats owe a
+/// FRESH move. Every one of those is read back off the session, and the negatives are asserted too
+/// (the board did not move, the turn did not advance, no turn was recorded as played).
 #[test]
-fn a_conflicting_round_is_played_but_refuses_to_fold() {
+fn a_forced_clash_re_enters_the_round_instead_of_dropping_the_moves() {
     let off = AutomataflOffering;
     let mut session = off.open(SessionConfig::with_seed(20)).expect("open");
-
-    // A FORK: both seats move the attractor at (3,1), to different squares.
     let before = session.board().clone();
-    seal(&off, &mut session, &seat_a(), (3, 1), (3, 3));
-    seal(&off, &mut session, &seat_b(), (3, 1), (5, 1));
-    assert!(off.advance(&mut session, act(REVEAL, 0), seat_a()).landed());
-    assert!(off.advance(&mut session, act(REVEAL, 0), seat_b()).landed());
+
+    let out = play_round(
+        &off,
+        &mut session,
+        Some((FORK_SRC, (3, 3))),
+        Some((FORK_SRC, (5, 1))),
+    );
     assert!(
-        off.advance(&mut session, act(RESOLVE, 0), seat_a())
-            .landed(),
-        "the conflicting round still RESOLVES on the surface (both moves dropped)"
+        out.landed(),
+        "the re-entry is a REAL turn on the executor (the `resubmit` method), not a soft state flip"
     );
 
-    // The RULESET's answer: a conflicted round does not resolve its moves at all (`resolveMoves` is
-    // guarded by `resolvableB`), so the board only took the automaton's step. The old Rust twin
-    // reached the same board here by DROPPING the two forking moves; the ruleset gets there by not
-    // resolving the round — which is why the fold still refuses it below.
+    // ── THE PHASE. A fourth station the surface did not have.
+    assert_eq!(
+        session.phase(),
+        Phase::Resubmit,
+        "a clash re-opens the round for re-submission"
+    );
+    assert_eq!(session.conflict_round_no(), 1, "one conflict round so far");
+
+    // ── THE MARK, from the LEAN. `roundStep`'s `cs` for a fork is the shared SOURCE.
+    assert_eq!(
+        session.marks(),
+        [FORK_SRC].as_slice(),
+        "the contested coordinate is marked — the Lean's own conflict set"
+    );
+
+    // ── THE FREEZE (a negative). Nothing resolved, so the board is byte-identical, automaton
+    // INCLUDED: the daemon does not step on a round that never happened.
     assert_eq!(
         session.board().cells,
-        apply_turn(
-            &before,
-            &[
+        before.cells,
+        "a conflicted round resolves nothing — the board is FROZEN"
+    );
+    assert_eq!(
+        session.board().auto,
+        before.auto,
+        "the automaton does NOT step on a conflicted round"
+    );
+    assert_eq!(session.turn_no(), 0, "the turn counter does not advance");
+    assert!(
+        session.turns_played().is_empty(),
+        "no turn is recorded as played — the turn is still in flight"
+    );
+    assert!(
+        session.last_step().is_none(),
+        "no automaton step is recorded for a round that did not resolve"
+    );
+
+    // ── WHO RE-SUBMITS. A fork over two moves names both, so both seats re-enter and nothing locks.
+    assert_eq!(
+        session.waiting(),
+        [0, 1].as_slice(),
+        "both seats owe a fresh move"
+    );
+    assert!(session.locked().is_empty(), "nothing is locked at n=2 here");
+    for seat in [Seat::A, Seat::B] {
+        assert!(session.is_waiting(seat));
+        assert!(
+            session.owes_a_move(seat),
+            "seat {} owes a fresh move",
+            seat.label()
+        );
+        assert!(
+            session.committed[seat.idx()].is_none(),
+            "the re-entering seat's seal is WOUND BACK — it has a fresh move to make"
+        );
+        assert!(!session.revealed[seat.idx()]);
+        assert!(session.sel[seat.idx()].is_none());
+    }
+
+    // ── ⚑ RED-BEFORE, MEASURED — and it pins WHY the old bug was invisible.
+    //
+    // The old surface resolved this exact pair with `rules::turn`, whose type cannot express a
+    // re-entry: it returns `(board, win)`, so a clash could only ever come back as a finished turn.
+    // Ask both verbs the same question and the disagreement is in the TURN STRUCTURE.
+    let forced = apply_turn(
+        &before,
+        &[
+            Move {
+                who: 0,
+                frm: FORK_SRC,
+                to: (3, 3),
+            },
+            Move {
+                who: 1,
+                frm: FORK_SRC,
+                to: (5, 1),
+            },
+        ],
+    )
+    .expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
+    // ⚑ THE FINDING, and it is worse than "both moves drop". `turn`/`apply_turn` are the RESOLUTION
+    // legs (`automatonStepCfg ∘ resolveMoves`), and `resolveMoves` is guarded by `resolvableB` —
+    // which is the MERGE clause (`unresolved`) ONLY. The fork/collide clauses live in `roundStep`,
+    // and `turn` never consults them. So on this input the old path did not drop both moves: the
+    // inclusive path check blocked seat B's move (a repulsor stands on (4,1), mid-path), which left
+    // seat A's as the single unblocked edge out of (3,1) — and it EXECUTED. One seat's move landed,
+    // the other silently evaporated, and the turn advanced.
+    assert_ne!(
+        forced.cells, before.cells,
+        "the verb the OLD surface called MOVED A PIECE on a clashed round"
+    );
+    assert_eq!(
+        forced.cell_at((3, 3)),
+        ATT,
+        "…specifically seat A's move EXECUTED (it was the surviving unblocked edge)"
+    );
+    assert_eq!(
+        forced.cell_at(FORK_SRC),
+        VAC,
+        "…vacating the contested source"
+    );
+    assert_eq!(
+        forced.cell_at((5, 1)),
+        REP,
+        "…while seat B's move vanished with no trace at all"
+    );
+    // The ruleset's answer is the opposite on every count: nothing moved, nothing was chosen
+    // between, and the round is still open. (Asserted in full above; restated here as the direct
+    // contrast to the line above it.)
+    assert_eq!(
+        session.board().cell_at(FORK_SRC),
+        ATT,
+        "the ruleset moved NOTHING"
+    );
+    assert_eq!(session.board().cell_at((3, 3)), VAC);
+    // So the divergence is entirely in the turn structure, and it is total: the ruleset says this
+    // round does not resolve, and the old surface had no way to say that.
+    assert!(
+        matches!(
+            rules::round(
+                &before,
+                goals().expect("the goal assignment"),
+                &[],
+                &[],
+                &[0, 1],
+                &[
+                    Move {
+                        who: 0,
+                        frm: FORK_SRC,
+                        to: (3, 3)
+                    },
+                    Move {
+                        who: 1,
+                        frm: FORK_SRC,
+                        to: (5, 1)
+                    },
+                ],
+            )
+            .expect("the oracle answers `round`"),
+            rules::RoundOutcome::Again { .. }
+        ),
+        "the RULESET's answer for this pair is `again` — a round that does not resolve"
+    );
+
+    // ── THE EXECUTOR SAW IT. `marked` is the committed termination witness.
+    let committed = session.game().read_state();
+    assert_eq!(
+        committed.marked, 1,
+        "the cell holds the marked-square count"
+    );
+    assert_eq!(committed.turn_no, 0, "the committed turn did not advance");
+    assert_eq!(
+        committed.cells, before.cells,
+        "the committed board is frozen too"
+    );
+
+    // ── AND IT IS VISIBLE. The board paints the marked square dead, with no affordance; the plaque
+    // says what happened, who re-submits and why.
+    let (_, cells) = grid(&off.render(&session));
+    let mark_cell = &cells[index_of(FORK_SRC).expect("in bounds")];
+    assert_eq!(mark_cell.tag, "mark", "the marked square gets its own tag");
+    assert_eq!(
+        mark_cell.glyph, "×",
+        "and its own glyph, for the text frontends"
+    );
+    assert!(
+        mark_cell.turn.is_empty(),
+        "a marked square carries NO affordance — clicking it can only be refused"
+    );
+    assert!(!mark_cell.highlight, "a dead square is not a live one");
+    let text = rendered_text(&off.render_for(&session, &seat_a()));
+    assert!(text.contains("The clash"), "the clash plaque is rendered");
+    assert!(text.contains("RE-SUBMITTING: seat A and seat B"), "{text}");
+    assert!(
+        text.contains("MARKS the contested coordinate — (3,1)"),
+        "{text}"
+    );
+}
+
+/// ⚑ **A RE-SUBMITTED MOVE ONTO A MARKED SQUARE IS REFUSED** — the marks-legality RE-CHECK, which
+/// is a real rule (`MoveLegal`: `m.frm ∉ marks ∧ m.to ∉ marks`) and not decoration. Both endpoints,
+/// both seats, and NOTHING commits either way.
+#[test]
+fn a_re_submitted_move_naming_a_marked_square_is_refused() {
+    let off = AutomataflOffering;
+    let mut session = off.open(SessionConfig::with_seed(21)).expect("open");
+    assert!(
+        play_round(
+            &off,
+            &mut session,
+            Some((FORK_SRC, (3, 3))),
+            Some((FORK_SRC, (5, 1))),
+        )
+        .landed()
+    );
+    assert_eq!(session.marks(), [FORK_SRC].as_slice());
+    let commits_before = session.game().read_reg("commits");
+    let marked_src = index_of(FORK_SRC).expect("in bounds") as i64;
+
+    // (a) THE MARKED SQUARE AS A SOURCE. It still holds an attractor, so it looks movable — the
+    // mark is why it is not, and the refusal says so by name.
+    assert!(
+        session.board().cell_at(FORK_SRC) == ATT,
+        "the piece is still there"
+    );
+    assert!(
+        !session.movable(FORK_SRC),
+        "a marked square cannot be picked up"
+    );
+    match off.advance(&mut session, act(SELECT, marked_src), seat_a()) {
+        Outcome::Refused(why) => assert!(
+            why.contains("MARKED"),
+            "the refusal names the mark, not a generic illegality: {why}"
+        ),
+        other => panic!("selecting a MARKED square must be refused, got {other:?}"),
+    }
+
+    // (b) THE MARKED SQUARE AS A DESTINATION. Pick up the repulsor at (4,1) — its rook line runs
+    // straight through (3,1) — and try to seal a move ONTO the mark.
+    assert!(
+        off.advance(
+            &mut session,
+            act(SELECT, index_of((4, 1)).unwrap() as i64),
+            seat_b()
+        )
+        .landed()
+    );
+    match off.advance(&mut session, act(COMMIT, marked_src), seat_b()) {
+        Outcome::Refused(why) => {
+            assert!(why.contains("MARKED"), "the refusal names the mark: {why}")
+        }
+        other => panic!("sealing a move ONTO a MARKED square must be refused, got {other:?}"),
+    }
+
+    // …and it is not merely refused, it is not OFFERED: the marked square is absent from the rook
+    // line the surface paints for that very piece, because the LEAN's `moveLegalB` was asked WITH
+    // the marks.
+    assert!(
+        !session.legal_targets((4, 1)).contains(&FORK_SRC),
+        "the marked square is not in the offered target set"
+    );
+    let (_, cells) = grid(&off.render_for(&session, &seat_b()));
+    assert_eq!(cells[marked_src as usize].tag, "mark");
+    assert!(cells[marked_src as usize].turn.is_empty());
+
+    // ANTI-GHOST: neither refusal sealed anything.
+    assert_eq!(
+        session.game().read_reg("commits"),
+        commits_before,
+        "a refused re-submission commits NOTHING"
+    );
+    assert!(session.committed[1].is_none(), "seat B still owes a move");
+}
+
+/// ⚑ **THE MARKS ACCUMULATE ACROSS ≥2 CONFLICT ROUNDS, AND THEY STRICTLY GROW** (M3's termination
+/// bound). Two forks in a row on two different sources leave two marks, and the deployed cell's
+/// `marked` register grows `0 → 1 → 2` — which is exactly what makes the re-entry terminate.
+#[test]
+fn the_marks_accumulate_across_two_conflict_rounds_and_strictly_grow() {
+    let off = AutomataflOffering;
+    let mut session = off.open(SessionConfig::with_seed(22)).expect("open");
+    let before = session.board().clone();
+
+    // Round 1: fork (3,1).
+    assert!(
+        play_round(
+            &off,
+            &mut session,
+            Some((FORK_SRC, (3, 3))),
+            Some((FORK_SRC, (5, 1))),
+        )
+        .landed()
+    );
+    assert_eq!(session.marks(), [FORK_SRC].as_slice());
+    assert_eq!(session.game().read_reg("marked"), 1);
+
+    // Round 2: fork the OTHER `y = 1` attractor, (7,1). Neither move names the first mark, so both
+    // are legal — and the round clashes again.
+    assert!(
+        play_round(
+            &off,
+            &mut session,
+            Some(((7, 1), (7, 3))),
+            Some(((7, 1), (9, 1))),
+        )
+        .landed()
+    );
+
+    assert_eq!(session.phase(), Phase::Resubmit, "still re-submitting");
+    assert_eq!(session.conflict_round_no(), 2, "two conflict rounds");
+    let marks = session.marks();
+    assert_eq!(marks.len(), 2, "the marks ACCUMULATE: {marks:?}");
+    assert!(
+        marks.contains(&FORK_SRC) && marks.contains(&(7, 1)),
+        "{marks:?}"
+    );
+    assert_eq!(
+        session.game().read_reg("marked"),
+        2,
+        "the committed marked count STRICTLY GREW — the executor's termination tooth"
+    );
+    // Still frozen, still turn 0, after TWO conflict rounds.
+    assert_eq!(session.board().cells, before.cells);
+    assert_eq!(session.turn_no(), 0);
+    // The n² bound, said as an invariant rather than a hope: each re-entry marked ≥1 new square, so
+    // the count is at least the round number and at most the board.
+    assert!(session.marks().len() >= session.conflict_round_no());
+    assert!(session.marks().len() <= CELLS);
+
+    // ── ROUND 3 RESOLVES, and it resolves the moves that were actually submitted — the accumulated
+    // marks are still in force for its legality (both moves avoid them).
+    assert!(
+        play_round(
+            &off,
+            &mut session,
+            Some(((3, 9), (3, 7))),
+            Some(((7, 9), (7, 7))),
+        )
+        .landed()
+    );
+    assert_eq!(session.turn_no(), 1, "NOW the turn advances");
+    assert_eq!(session.phase(), Phase::Commit, "and a fresh turn opens");
+    assert!(
+        session.marks().is_empty(),
+        "the markers DIE at turn end (`model.py::ClearState`)"
+    );
+    assert_eq!(
+        session.game().read_reg("marked"),
+        0,
+        "and the cell's count drops back with them"
+    );
+
+    // ── THE TURN IS RECORDED WHOLE — the `MultiRoundTurn` the Leg C braid folds: the frozen start
+    // board, the TWO conflict rounds' submissions in re-entry order, and the pair that resolved.
+    assert_eq!(session.turns_played().len(), 1, "ONE turn, three rounds");
+    let t = &session.turns_played()[0];
+    assert_eq!(
+        t.start.cells, before.cells,
+        "the turn-start board is the frozen one"
+    );
+    assert_eq!(
+        t.conflict_subs,
+        vec![
+            [
                 Move {
                     who: 0,
-                    frm: (3, 1),
+                    frm: FORK_SRC,
                     to: (3, 3)
                 },
                 Move {
                     who: 1,
-                    frm: (3, 1),
+                    frm: FORK_SRC,
                     to: (5, 1)
                 },
-            ]
-        )
-        .expect("the Lean game oracle (`dregg_automatafl_rules`) answers")
-        .cells
+            ],
+            [
+                Move {
+                    who: 0,
+                    frm: (7, 1),
+                    to: (7, 3)
+                },
+                Move {
+                    who: 1,
+                    frm: (7, 1),
+                    to: (9, 1)
+                },
+            ],
+        ],
+        "both conflict rounds are recorded, in re-entry order"
     );
-    assert_eq!(session.rounds().len(), 1, "the round is recorded as played");
+    assert_eq!(
+        t.clean_subs,
+        [
+            Move {
+                who: 0,
+                frm: (3, 9),
+                to: (3, 7)
+            },
+            Move {
+                who: 1,
+                frm: (7, 9),
+                to: (7, 7)
+            },
+        ]
+    );
+    // …and the PLAIN two-leg fold must refuse this turn BY NAME: it resolved against accumulated
+    // marks, and Leg R has no marks lane. It is a `MultiRoundTurn`, not a round of `played`.
     assert_eq!(
         session
             .unfoldable_round()
             .expect("the Lean game oracle (`dregg_automatafl_rules`) answers"),
         Some(0),
-        "round 0 CONFLICTS — the fold must refuse it by name, not fake a leaf"
+        "a turn that RE-ENTERED is not foldable by the plain path"
     );
+}
+
+/// ⚑ **THE TERMINATION TOOTH IS THE DEPLOYED CELL'S, not the surface's good manners.** After a real
+/// clash, a raw `resubmit` turn that does NOT mark a new square is REFUSED by
+/// `StrictMonotonic{marked}`, and one that claims more marks than the board has squares is REFUSED
+/// by `FieldLte{marked ≤ CELLS}` — which together bound a turn at n² re-entries.
+#[test]
+fn the_cell_refuses_a_re_entry_that_marks_nothing_new() {
+    use crate::game::RESUBMIT;
+
+    let off = AutomataflOffering;
+    let mut session = off.open(SessionConfig::with_seed(23)).expect("open");
+    assert!(
+        play_round(
+            &off,
+            &mut session,
+            Some((FORK_SRC, (3, 3))),
+            Some((FORK_SRC, (5, 1))),
+        )
+        .landed()
+    );
+    assert_eq!(session.game().read_reg("marked"), 1);
+
+    // (a) A re-entry that marks NOTHING NEW — the non-termination shape.
+    assert!(
+        session
+            .game()
+            .commit_raw(RESUBMIT, vec![session.game().reg_effect("marked", 1)])
+            .is_err(),
+        "a `resubmit` that does not burn a NEW square is REFUSED — that is the n² bound"
+    );
+    // (b) A re-entry claiming MORE marks than the board has squares.
+    assert!(
+        session
+            .game()
+            .commit_raw(
+                RESUBMIT,
+                vec![session.game().reg_effect("marked", CELLS as u64 + 1)]
+            )
+            .is_err(),
+        "a marked count above the board's square count is REFUSED"
+    );
+    // (c) …and a `resubmit` may not move the board or the turn either.
+    assert!(
+        session
+            .game()
+            .commit_raw(
+                RESUBMIT,
+                vec![
+                    session.game().reg_effect("marked", 2),
+                    session.game().reg_effect("turn_no", 1),
+                ]
+            )
+            .is_err(),
+        "a re-entry that ADVANCES the turn is REFUSED — a conflicted round is not a resolution"
+    );
+    assert_eq!(
+        session.game().read_reg("marked"),
+        1,
+        "and none of the three refusals wrote anything"
+    );
+}
+
+/// ⚑ **A LOCKED SEAT'S MOVE SURVIVES THE RE-ENTRY UNTOUCHED, AND EXECUTES** when the round finally
+/// resolves.
+///
+/// ⚠ SCOPE, said plainly: at the DEPLOYED n=2 the ruleset never produces a non-empty `locked`. A
+/// fork needs two moves out of one square and a collide two moves into one, so with two
+/// submissions every clash names both — `roundStep` returns `locked = []` and `waiting = [0,1]`
+/// every time (the previous test observes exactly that). The ruleset really does lock a third seat
+/// (`tests/lean_oracle.rs::a_locked_seats_move_stands_and_executes` drives `roundStep` at three
+/// seats and watches the locked move execute), so what is under test HERE is the SURFACE'S CARRY:
+/// given a round state with a lock in it, does the surface leave that seat's move alone, refuse to
+/// re-open it, hand it to the Lean as `locked`, and let it execute? The round state is therefore
+/// installed directly (this test is inside the module) — the lock is a STATE, not a rule decision,
+/// and every rule decision below is still the Lean's.
+#[test]
+fn a_locked_seats_move_survives_the_re_entry_and_executes() {
+    let off = AutomataflOffering;
+    let mut session = off.open(SessionConfig::with_seed(24)).expect("open");
+    let before = session.board().clone();
+
+    let ma = Move {
+        who: 0,
+        frm: (3, 1),
+        to: (3, 3),
+    };
+    let mb_dropped = Move {
+        who: 1,
+        frm: (7, 1),
+        to: (7, 3),
+    };
+    seal(&off, &mut session, &seat_a(), ma.frm, ma.to);
+    seal(&off, &mut session, &seat_b(), mb_dropped.frm, mb_dropped.to);
+    assert!(off.advance(&mut session, act(REVEAL, 0), seat_a()).landed());
+    assert!(off.advance(&mut session, act(REVEAL, 0), seat_b()).landed());
+
+    // THE ROUND STATE, INSTALLED (see the scope note): a mark on a square neither move names, seat
+    // A's move LOCKED, seat B alone re-entering.
+    let mark: Coord = (5, 0);
+    session.conflict_subs.push([ma, mb_dropped]);
+    session.marks = vec![mark];
+    session.locked = vec![ma];
+    session.waiting = vec![1];
+    session.sel[1] = None;
+    session.committed[1] = None;
+    session.seal[1] = 0;
+    session.revealed[1] = false;
+
+    // ── THE LOCKED SEAT IS UNTOUCHED, and is not waited on.
+    assert_eq!(session.phase(), Phase::Resubmit);
+    assert_eq!(
+        session.committed[0],
+        Some(ma),
+        "the locked seat's move is intact — plaintext, seal and reveal all stand"
+    );
+    assert!(session.revealed[0]);
+    assert!(!session.is_waiting(Seat::A));
+    assert!(
+        !session.owes_a_move(Seat::A),
+        "a LOCKED seat owes nothing — a clock must not forfeit it"
+    );
+    assert!(
+        session.owes_a_move(Seat::B),
+        "the re-entering seat owes a move"
+    );
+
+    // ── AND IT IS REFUSED IF IT TRIES TO MOVE AGAIN (the negative).
+    for turn in [SELECT, COMMIT] {
+        match off.advance(
+            &mut session,
+            act(turn, index_of((4, 4)).unwrap() as i64),
+            seat_a(),
+        ) {
+            Outcome::Refused(why) => assert!(
+                why.contains("LOCKED"),
+                "a locked seat's `{turn}` is refused by name: {why}"
+            ),
+            other => panic!("a LOCKED seat may not `{turn}` again, got {other:?}"),
+        }
+    }
+    // The locked seat is offered nothing but the resolve, and its plaque says why.
+    let mine = off.actions_for(&session, &seat_a());
+    assert!(
+        mine.iter().all(|a| !a.enabled || a.turn == RESOLVE),
+        "a locked seat is offered no submission affordance: {:?}",
+        mine.iter()
+            .filter(|a| a.enabled)
+            .map(|a| a.turn.clone())
+            .collect::<Vec<_>>()
+    );
+    let text = rendered_text(&off.render_for(&session, &seat_a()));
+    assert!(text.contains("LOCKED"), "{text}");
+    assert!(
+        text.contains("YOUR move STANDS, untouched: (3,1) → (3,3)"),
+        "{text}"
+    );
+
+    // ── THE ROUND RESOLVES, and the LOCKED move executes with the fresh one. Only seat B submits.
+    let mb_fresh = Move {
+        who: 1,
+        frm: (7, 9),
+        to: (7, 7),
+    };
+    seal(&off, &mut session, &seat_b(), mb_fresh.frm, mb_fresh.to);
+    assert!(off.advance(&mut session, act(REVEAL, 0), seat_b()).landed());
+    assert_eq!(session.phase(), Phase::Resolve, "seat A is already opened");
+    assert!(
+        off.advance(&mut session, act(RESOLVE, 0), seat_b())
+            .landed()
+    );
+
+    // The LEAN's answer for the pair {locked, fresh} — and the board is it.
+    let expect = apply_turn(&before, &[ma, mb_fresh])
+        .expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
+    assert_eq!(
+        session.board().cells,
+        expect.cells,
+        "the locked move EXECUTED alongside the re-submitted one"
+    );
+    assert_eq!(
+        session.board().cell_at((3, 3)),
+        ATT,
+        "seat A's attractor arrived"
+    );
+    assert_eq!(
+        session.board().cell_at((3, 1)),
+        VAC,
+        "and vacated its source"
+    );
+    assert_eq!(session.turn_no(), 1);
+    let t = &session.turns_played()[0];
+    assert_eq!(t.conflict_subs, vec![[ma, mb_dropped]]);
+    assert_eq!(
+        t.clean_subs,
+        [ma, mb_fresh],
+        "the terminating round's pair is the LOCKED move plus the fresh one"
+    );
+}
+
+/// ⚑ **THE FOG HOLDS ACROSS A RE-SUBMISSION.** A re-submitted move is sealed exactly like a first
+/// one: its own seat reads it, the opponent reads a commitment, a spectator reads neither. The
+/// MARKS are the opposite — public in every view, because the ruleset produced them by revealing
+/// every submission at once.
+#[test]
+fn a_re_submitted_move_is_sealed_exactly_like_a_first_one() {
+    let off = AutomataflOffering;
+    let mut session = off.open(SessionConfig::with_seed(25)).expect("open");
+    assert!(
+        play_round(
+            &off,
+            &mut session,
+            Some((FORK_SRC, (3, 3))),
+            Some((FORK_SRC, (5, 1))),
+        )
+        .landed()
+    );
+
+    // Seat A re-submits; seat B has not yet.
+    seal(&off, &mut session, &seat_a(), (3, 9), (3, 7));
+
+    let a_view = rendered_text(&off.render_for(&session, &seat_a()));
+    let b_view = rendered_text(&off.render_for(&session, &seat_b()));
+    let watcher = rendered_text(&off.render(&session));
+
+    assert!(
+        a_view.contains("YOUR sealed move: (3,9) → (3,7)"),
+        "the re-submitting seat reads its own fresh move: {a_view}"
+    );
+    for (name, view) in [("the opponent", &b_view), ("a spectator", &watcher)] {
+        assert!(
+            !view.contains("(3,9) → (3,7)") && !view.contains("(3,9)"),
+            "{name} must NOT read the re-submitted plaintext: {view}"
+        );
+        assert!(
+            view.contains("move SEALED"),
+            "{name} reads a commitment instead: {view}"
+        );
+        // …but the MARK is public: it is a scar on the shared board, not a secret.
+        assert!(
+            view.contains("(3,1)"),
+            "{name} sees the marked square: {view}"
+        );
+    }
+
+    // The board itself: seat A's own sealed destination is painted for A and for nobody else, and
+    // the mark is painted for everyone.
+    let dest = index_of((3, 7)).expect("in bounds");
+    let marked = index_of(FORK_SRC).expect("in bounds");
+    let (_, a_cells) = grid(&off.render_for(&session, &seat_a()));
+    let (_, b_cells) = grid(&off.render_for(&session, &seat_b()));
+    let (_, w_cells) = grid(&off.render(&session));
+    assert_eq!(a_cells[dest].tag, "sealed", "A sees where A sealed");
+    assert_ne!(b_cells[dest].tag, "sealed", "B does not");
+    assert_ne!(w_cells[dest].tag, "sealed", "nor does a spectator");
+    for cells in [&a_cells, &b_cells, &w_cells] {
+        assert_eq!(cells[marked].tag, "mark", "the mark is in EVERY view");
+    }
 }
 
 /// The automaton REACHES a goal and the match is WON — a real terminal turn (`ended: true`), with

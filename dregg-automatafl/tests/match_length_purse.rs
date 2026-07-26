@@ -23,7 +23,7 @@
 //!     board back onto itself.
 //!
 //! Drop either one and this test goes red: without metering, a two-write `select` is still charged
-//! for 137 writes; without the delta, a `select` still MAKES 137 writes and metering has nothing to
+//! for 138 writes; without the delta, a `select` still MAKES 138 writes and metering has nothing to
 //! discount.
 
 use dregg_automatafl::AutomataflOffering;

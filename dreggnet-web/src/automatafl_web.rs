@@ -145,12 +145,16 @@ fn rules_html() -> String {
          ON THIS SERVER: your move's plaintext sits in the session until you open it, so it is the \
          host declining to tell them, not a commitment the two of you exchanged. Trust the host or \
          do not play here.</li>\
-         <li><strong>Conflicts drop.</strong> If the two moves fight over a square, the resolution \
-         drops them and the round still ends. (The published ruleset instead marks the square and \
-         re-enters the round; this surface does not, and a match containing such a round is \
-         refused by the match fold rather than attested.)</li>\
-         <li><strong>The automaton then steps</strong>, pulled toward attractors and pushed from \
-         repulsors along each axis. Drive it onto one of YOUR two goal corners and you win.</li>\
+         <li><strong>A CLASH marks the square and re-opens the round.</strong> If the two moves \
+         fight over the same square, that round does not happen at all: the contested coordinate is \
+         MARKED (it paints as a dead <code>×</code> square), the board FREEZES exactly as it was, \
+         and the seats the clash named owe a FRESH move — which may not use a marked square at \
+         either end. The turn counter does not move until a round comes back clean, and the markers \
+         die when it does. Every re-entry has to burn a NEW square, so a turn cannot re-open \
+         forever.</li>\
+         <li><strong>The automaton then steps</strong> — once the round finally resolves — pulled \
+         toward attractors and pushed from repulsors along each axis. Drive it onto one of YOUR two \
+         goal corners and you win.</li>\
          </ul>\
          <p class=\"prose\">Every press is one real executor turn: an illegal move is REFUSED with \
          nothing committed, and a landed one returns a <code>TurnReceipt</code>. The whole match \
