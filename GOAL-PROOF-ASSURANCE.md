@@ -243,6 +243,39 @@ you is not a bug in either half.
 - **I retracted a wrong correction**: I compared a *past CI run* to a *present tree*. Recorded in the
   wound doc, since that doc exists to stop exactly that reasoning.
 
+
+## ⚑⚑ HAZARD IN THE WORKING TREE — read before touching the shielded cone
+
+The `wide_value_binding` sidecar swap lane was **killed mid-write** (its last words were literally
+"Now I'll write the swapped file") when the box hit OOM pressure. Left uncommitted and **never compiled**:
+
+* `circuit-prove/src/shielded/wide_value_binding.rs` — **MIXED STATE**: 7 references to the new
+  `Plonky3HidingFriReference` / `Ir2BatchProof` path landed *alongside* 5 surviving authoring remnants
+  (`wide_value_binding_descriptor`, `constant_gate`, `mod col`). It **parses** but is partially
+  converted and almost certainly not type-correct.
+* `turn/src/action.rs` — 7 swap references, same story.
+* `circuit-prove/tests/{shielded_wide_value_binding,wide_value_binding_lean_route}.rs`.
+
+**Do not build on it and do not assume it works.** `git diff` those paths first. It was NOT reverted
+deliberately — `git checkout` is banned here and a partial diff is recoverable information, whereas a
+discarded one is not.
+
+The *proof* side is complete and committed and is unaffected: the whole AIR is authored in Lean
+(`WideValueBindingEmit`, byte-pinned), every emitted constraint carries a theorem
+(`WideValueBindingRefine`), and the file already has **0 law-1 ratchet sites**. The swap is plumbing:
+route the sidecar off `prove_dsl_zk`/v1 `DslCircuit` onto the hiding IR-v2 backend. **Cleared as safe**:
+`set_shielded_transfer_verifier` has no call site and there is no non-test `Effect::Shield`, so the
+proof-bytes change touches nothing deployed.
+
+## ⚑ A RED THAT IS OURS, FROM TODAY
+
+`provenance_json_pins_match_checked_in_descriptor_bytes` fails its **coverage** leg: five descriptors are
+tracked in git but absent from `circuit/descriptors/PROVENANCE.json` and not exempt — the DFA routing
+table and the four lightclient-verify AIRs, from commits `056e3506b5`, `807eca1839`, `70243691a4`, **all
+from today**. Every pin that *exists* matches, so this is coverage, not drift: those lanes added
+descriptors without re-running `scripts/emit_descriptors.py`. By that test's own doctrine a
+tracked-but-unstamped descriptor is a real provenance hole, and a `commit -a` could promote it to HEAD.
+
 ## Done log
 - **`∀ S` — the fold chain is de-honested** (`7f655b5c55`). Every survival theorem instantiated
   `Strategy := honestStrategy`; now generalized under a path-local fold-consistency gate, with
