@@ -489,8 +489,8 @@ gate ("never quote a cost without a `Satisfied2Public` witness") is met by const
 -- ONE table of 3 rows, 3 forced trace rows, ZERO nonlinear multiplications — AREA 9.
 #guard costOf (nodbRunDesc sepSyms) ==
   { traceWidth := 3, piCount := 2, constraints := 4, tables := 1
-  , declaredRows := 3, forcedTraceRows := 3, nonlinearMults := 0 }
-#guard (costOf (nodbRunDesc sepSyms)).area == 9
+  , declaredRows := 3, forcedTraceRows := .pinned 3, nonlinearMults := 0 }
+#guard (costOf (nodbRunDesc sepSyms)).area == some 9
 #guard jsonBytes (nodbRunDesc sepSyms) == 616
 
 end Deployed
@@ -660,8 +660,8 @@ theorem pair_circuit_exposes_the_weakening :
 -- circuit area; only the wire bytes move (the longer name and the larger packed states).
 #guard costOf (pairRunDesc sepSyms2) ==
   { traceWidth := 3, piCount := 2, constraints := 4, tables := 1
-  , declaredRows := 3, forcedTraceRows := 3, nonlinearMults := 0 }
-#guard (costOf (pairRunDesc sepSyms2)).area == 9
+  , declaredRows := 3, forcedTraceRows := .pinned 3, nonlinearMults := 0 }
+#guard (costOf (pairRunDesc sepSyms2)).area == some 9
 #guard jsonBytes (pairRunDesc sepSyms2) == 628
 
 end Pair
