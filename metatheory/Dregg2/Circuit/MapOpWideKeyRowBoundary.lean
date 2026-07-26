@@ -96,7 +96,7 @@ capability `Poseidon2Binding` already records the deployed sponge as NOT having.
 ## Non-vacuity
 
 Every row-level statement fires on the epoch's existing concrete accepting rows —
-`demoAbsentGateW_accepts`, `demoInsertGateW_accepts`, `demoAafiGateW_accepts`,
+`demoAbsentGateW_accepts`, `demoValueUpdateGateW_accepts`, `demoAafiGateW_accepts`,
 `demoAbsentGateW2_accepts`, `demo_concrete_excludes` — through `rowOfKey`, which builds a real
 `MapOpW` whose eight key columns are the constant cells of a given key.
 
@@ -140,7 +140,7 @@ open Dregg2.Circuit.MapOpWideKeyWeld (opensAtW keysOfW_opensAtW absentGatesW_for
   gates_force_holdsKindW_aafiInsert gates_insertW_absentW_jointly_unsat
   gates_aafiInsertW_absentW_jointly_unsat gates_jointly_unsat_via_abstract
   gates_jointly_unsat_via_abstract' aafiGatesW_no_rewitnessW aafiGatesW_force_sortedChainW
-  imtToHeapW demoRootW2 demoInsertGateW_accepts demoAbsentGateW2_accepts demo_concrete_excludes
+  imtToHeapW demoRootW2 demoValueUpdateGateW_accepts demoAbsentGateW2_accepts demo_concrete_excludes
   demoAafiChainW demoAafiChainW_sorted demoAafiChainW_low_mem demoAafiGateW_accepts)
 open Dregg2.Circuit.MapOpWideKeyCanonDischarge (canonFelt canonKey canonKey_isCanon canonKey_id
   canonKey_idem keyAtCanon keyAtCanon_eq_keyAt keyAtCanon_of_block absentGateW_of_lexBlocks_canon
@@ -757,7 +757,7 @@ theorem demoRowE_absence_post_write (hash : List ℤ → ℤ) (hCR : Poseidon2Sp
     (by rw [demoRowE_keyAtCanon]; exact demoAbsentGateW2_accepts hash)).1
 
 /-- **★ ROW-LEVEL FIRING #5 — THE DOUBLE-SPEND, BETWEEN TWO ROWS.** The gate lane's accepting
-widened write row (`demoInsertGateW_accepts`, key `keyLo`) and ANY `.absent` row whose CANONICAL key
+widened VALUE-UPDATE row (`demoValueUpdateGateW_accepts`, key `keyLo`, which `demoHeapW` ALREADY HOLDS) and ANY `.absent` row whose CANONICAL key
 matches it are jointly UNSAT at the post-write root, for every claimed value. -/
 theorem demoRow_insert_then_absent_unsat (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
     (aI aA : Assignment) (v' : ℤ) :
@@ -768,7 +768,7 @@ theorem demoRow_insert_then_absent_unsat (hash : List ℤ → ℤ) (hCR : Poseid
     (demoRowLo MapOpKind.insert) (demoRowLo MapOpKind.absent) aI aA ?_ ?_ habs
   · rw [demoRowLo_keyAtCanon, demoRowLo_keyAtCanon]
   · rw [demoRowLo_keyAtCanon]
-    exact demoInsertGateW_accepts hash
+    exact demoValueUpdateGateW_accepts hash
 
 /-- …and the same refusal routed through the ABSTRACT blocker-#1 theorem, at the row. -/
 theorem demoRow_insert_then_absent_unsat_via_abstract (hash : List ℤ → ℤ)
@@ -780,7 +780,7 @@ theorem demoRow_insert_then_absent_unsat_via_abstract (hash : List ℤ → ℤ)
     (demoRowLo MapOpKind.insert) (demoRowLo MapOpKind.absent) aI aA ?_ ?_ habs
   · rw [demoRowLo_keyAtCanon, demoRowLo_keyAtCanon]
   · rw [demoRowLo_keyAtCanon]
-    exact demoInsertGateW_accepts hash
+    exact demoValueUpdateGateW_accepts hash
 
 /-- **★ ROW-LEVEL FIRING #6 — THE AAFI ROW.** The gate lane's accepting widened AAFI row, keyed at
 a ROW's canonical key: after it, no pointer-bracket absence witness for that key exists against the

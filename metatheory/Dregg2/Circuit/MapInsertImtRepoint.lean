@@ -882,9 +882,22 @@ list `MapAbsentImtGate`'s §5 produced for `.absent`; it is what tells the next 
 (`:399`), `.demoRow_insert_then_absent_unsat` (`:762`), `.…_via_abstract` (`:774`);
 `MapOpWideKeyGate.insertW_absentW_jointly_unsat'` (`:928`); `MapOpWideKey.insertW_sound` (`:409`),
 `.insertW_then_absentW_unsat` (`:432`).
-⚑ NINE of these are registered keystones in `Dregg2/Verify/FloorRatchetBaseline.lean` (`:941`,
-`:942`, `:945`, `:973`, `:984`, `:985`, `:988`, `:2042`, `:2046`) — so the vacuity is load-bearing in
-the assurance case, not decorative.
+⚠ **CORRECTED 2026-07-26 (`MapAafiLiveRepoint` §10).** This paragraph read *"NINE of these are
+registered keystones in `Dregg2/Verify/FloorRatchetBaseline.lean` (`:941`, `:942`, `:945`, `:973`,
+`:984`, `:985`, `:988`, `:2042`, `:2046`) — so the vacuity is load-bearing in the assurance case"*.
+Three things were wrong. (i) `FloorRatchetBaseline` is NOT a keystone registry: its header says every
+name there *"is a declaration whose type takes a hypothesis this tree PROVES FALSE at deployed
+BabyBear parameters, so the declaration is VACUOUS"* — registration is a recorded ADMISSION, not a
+claim. (ii) The keystone instrument is `Verify/KeystoneLint`'s `@[load_bearing_keystone]` +
+`#keystone_audit`, and ZERO of these names carry it. (iii) The line numbers: one of the nine
+(`:941`) lands on a name this list discusses, `:945`/`:973` are the `.read` legs this list itself
+calls SOUND, `:984`/`:988` are group B, `:2042`/`:2046` are in unrelated modules. The real count is
+**TEN**, at `:940`, `:941`, `:944`, `:965`, `:966`, `:972`, `:2066`, `:2068`, `:2070`, `:2072`, and
+each is adjudicated by name in `MapAafiLiveRepoint` §10. ⚑ The corrected finding is SHARPER, not
+softer: the premise vacuity is invisible to the floor ratchet (which sees only the refuted
+`Poseidon2SpongeCR`), invisible to `#keystone_audit`, and invisible to the preflight — it is
+UNDETECTED, not load-bearing. And a baseline line for a LIVE carrier must not be deleted:
+`FloorRatchet.check` errors on any carrier absent from the baseline.
 
 **(A′) THE SAME, on the LIVE `.aafiInsert` arm (§8).** `MapOpWideKeyWeld.gates_force_holdsKindW_aafiInsert`
 (`:313`), `.gates_aafiInsertW_absentW_jointly_unsat` (`:348`), `.gates_jointly_unsat_via_abstract`
@@ -921,11 +934,15 @@ it too — that repoint fixed `.absent` ONLY, and routes every other kind to the
 `MapOpsColumnLayout.toy_insert_op_value_update_gates` / `_fires` / `toy_frozen_insert_bites` (renamed
 and restated this session) — key `20`, which `toyHeap` HOLDS.
 ⚑ AND THE WIDE TWIN HAS THE SAME BLIND SPOT, unflagged until now:
-`MapOpWideKeyWeld.demoInsertGateW_accepts` (`:454`) runs `MapOpKind.insert` over
+`MapOpWideKeyWeld.demoInsertGateW_accepts` (`:454`) ran `MapOpKind.insert` over
 `demoHeapW = [(keyLo,1),(keyHi,2)] → demoHeapW2 = [(keyLo,5),(keyHi,2)]` — `keyLo` is ALREADY in the
 heap and the two heaps have the SAME length. It is a value update at the wide key, and it is what
-feeds `demoRow_insert_then_absent_unsat` (a registered keystone). The `.insert` teeth have never been
-exercised on an insert, at either key width.
+feeds `demoRow_insert_then_absent_unsat` (a floor-ratchet baseline entry, not a keystone — see the
+correction above). ⚑ FIXED 2026-07-26: RENAMED `demoValueUpdateGateW_accepts`, with
+`demoValueUpdateGateW_key_is_already_committed` promoted to a theorem beside it, and
+`MapAafiLiveRepoint.wide_insert_never_grows_the_map` proves FLOOR-FREE that a fresh-key twin cannot
+be written at any `LaneEnc` or depth. The `.insert` teeth have never been exercised on an insert, at
+either key width, and at the wide width they never can be.
 
 ⚠ NOT in the blast radius, and this is the point of the repoint: `insertImtRow_post_opens_of_good`,
 `MapOpImtInsertHoldsAt`, §4's fresh-key exhibits and §6's composition are stated over the deployed

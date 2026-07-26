@@ -70,7 +70,8 @@ So the wide twin is available at its natural home and needs no re-placement:
 The gate lane's `demoAbsentGateW_accepts` (depth 1, arbitrary hash, every path obligation `rfl`) is
 REUSED: `demoAbsentGateW_forces_keysOfW_absence` and `demo_concrete_excludes` derive the SAME
 absence of `keyE` by two independent routes (emitted gate; abstract keystone) at the concrete
-predicate. `demoInsertGateW_accepts` is a real ACCEPTING widened write row, and
+predicate. `demoValueUpdateGateW_accepts` (⚠ RENAMED 2026-07-26 from `demoInsertGateW_accepts`,
+which over-claimed: `keyLo` is ALREADY in `demoHeapW`) is a real ACCEPTING widened VALUE-UPDATE row, and
 `demoInsert_then_absent_unsat` REFUSES every `.absent` gate for its key at the post-root — the
 double-spend witness at the concrete layer. `demoAafiGateW_accepts` is a real accepting widened AAFI
 row over an arbitrary hash whose post-chain is `ImtSorted` and admits no re-witness.
@@ -448,14 +449,39 @@ theorem demoHeapW2_length : demoHeapW2.length = 2 ^ 1 := rfl
 /-- The post-write committed root. -/
 noncomputable def demoRootW2 (hash : List ℤ → ℤ) : ℤ := mapRootW hash wideEnc 1 demoHeapW2
 
-/-- **★ A REAL ACCEPTING WIDENED WRITE ROW.** The old leaf `(keyLo, 1)` and the new leaf
-`(keyLo, 5)` recompute to the pre- and post-roots along the SAME sibling path; every obligation
-closes by `rfl`, over an ARBITRARY hash. -/
-theorem demoInsertGateW_accepts (hash : List ℤ → ℤ) :
+/-- **★ A REAL ACCEPTING WIDENED ROW — AND IT IS A VALUE UPDATE, NOT AN INSERT.** The old leaf
+`(keyLo, 1)` and the new leaf `(keyLo, 5)` recompute to the pre- and post-roots along the SAME
+sibling path; every obligation closes by `rfl`, over an ARBITRARY hash.
+
+⚠ **RENAMED 2026-07-26 — the old name `demoInsertGateW_accepts` was a CLAIM this row does not
+support.** `demoHeapW` ALREADY HOLDS `keyLo`, so the row is an in-place value update wearing an
+insert's `MapOpKind`: the WIDE twin of the narrow blind spot that
+`MapOpsColumnLayout.toy_insert_op_value_update_gates` was renamed for on 2026-07-25. See
+`demoValueUpdateGateW_key_is_already_committed` immediately below for the fact as a theorem, and
+`MapAafiLiveRepoint.wide_insert_never_grows_the_map` for the proof that a FRESH-key twin of this row
+cannot be written at ANY `LaneEnc` and ANY depth — the extraction premise is DENSE
+(`h.length = 2 ^ dep` on both sides of the write), and that obstruction is floor-free. -/
+theorem demoValueUpdateGateW_accepts (hash : List ℤ → ℤ) :
     ReconcileGatesAtW hash wideEnc 1 (demoRootW hash) keyLo 5 (demoRootW2 hash)
       MapOpKind.insert :=
   ⟨demoHeapW, demoHeapW_ok, demoHeapW_length, rfl,
    [(false, leafOfW hash wideEnc (keyHi, 2))], 1, rfl, rfl, rfl⟩
+
+/-- ⚠ **WHAT THE ROW ABOVE ACTUALLY SHOWS — read the name.** `demoHeapW` holds `keyLo` at value `1`,
+`demoHeapW2` IS `Heap.set demoHeapW keyLo 5`, and the two heaps have the SAME length: the map does
+not grow. Promoted from prose to a THEOREM so the fact cannot drift back out of view. -/
+theorem demoValueUpdateGateW_key_is_already_committed :
+    Heap.get demoHeapW keyLo = some 1
+      ∧ Heap.set demoHeapW keyLo 5 = demoHeapW2
+      ∧ demoHeapW2.length = demoHeapW.length := by
+  refine ⟨?_, ?_, rfl⟩
+  · show Heap.get [(keyLo, (1 : ℤ)), (keyHi, (2 : ℤ))] keyLo = some 1
+    exact Heap.get_cons_self keyLo 1 [(keyHi, 2)]
+  · show Heap.set [(keyLo, (1 : ℤ)), (keyHi, (2 : ℤ))] keyLo 5
+      = [(keyLo, (5 : ℤ)), (keyHi, (2 : ℤ))]
+    simp only [Heap.set]
+    rw [if_neg (lt_irrefl keyLo)]
+    simp
 
 /-- The post-root really commits the written key (the discrimination side of the refusal). -/
 theorem demoRootW2_opens_keyLo (hash : List ℤ → ℤ) :
@@ -474,7 +500,7 @@ theorem demoInsert_then_absent_unsat (hash : List ℤ → ℤ) (hCR : Poseidon2S
     ¬ ReconcileGatesAtW hash wideEnc 1 (demoRootW2 hash) keyLo v' (demoRootW2 hash)
         MapOpKind.absent := fun habs =>
   gates_insertW_absentW_jointly_unsat hash hCR wideEnc 1 (demoRootW hash) keyLo 5
-    (demoRootW2 hash) v' (demoInsertGateW_accepts hash) habs
+    (demoRootW2 hash) v' (demoValueUpdateGateW_accepts hash) habs
 
 /-- …and the same refusal routed through the ABSTRACT blocker-#1 theorem, so the abstract statement
 is demonstrably inhabited by emitted rows rather than by a hypothesis. -/
@@ -483,7 +509,7 @@ theorem demoInsert_then_absent_unsat_via_abstract (hash : List ℤ → ℤ)
     ¬ ReconcileGatesAtW hash wideEnc 1 (demoRootW2 hash) keyLo v' (demoRootW2 hash)
         MapOpKind.absent := fun habs =>
   gates_jointly_unsat_via_abstract' hash hCR 1 (demoRootW hash) keyLo 5 (demoRootW2 hash) v'
-    (demoInsertGateW_accepts hash) habs
+    (demoValueUpdateGateW_accepts hash) habs
 
 /-- **★ ANTI-DOS TOOTH — THE REFUSAL IS TARGETED, NOT BLANKET.** The SAME post-write root still
 ACCEPTS a widened `.absent` gate for the genuinely-fresh 8-felt key `keyE` (bracket `keyLo < keyE`
@@ -715,7 +741,8 @@ existing named `Poseidon2SpongeCR` floor. No new floor was introduced. -/
 #assert_axioms demo_concrete_excludes
 #assert_axioms demoAbsentGateW_forces_keysOfW_absence
 #assert_axioms demoAbsentGateW_forces_holdsKindW
-#assert_axioms demoInsertGateW_accepts
+#assert_axioms demoValueUpdateGateW_accepts
+#assert_axioms demoValueUpdateGateW_key_is_already_committed
 #assert_axioms demoRootW2_opens_keyLo
 #assert_axioms demoRootW2_keyLo_in_keysOfW
 #assert_axioms demoInsert_then_absent_unsat
