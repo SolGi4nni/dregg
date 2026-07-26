@@ -331,11 +331,78 @@ if [ ! -f "${SRC%/}/${LEAN_ARCHIVE}" ]; then
     "        DREGG_ALLOW_UNAUDITED_PQ=1 to run marshal-only knowing what you traded away." >&2
 fi
 
+# ---- SHIP .git (2026-07-25) ------------------------------------------------
+# For as long as this script existed it did `--exclude='.git/'`, and that exclusion was never
+# justified — it was inherited. It has a specific, expensive consequence.
+#
+# `scripts/lean-seed-key.sh` derives the seed's content key from
+# `git rev-parse HEAD:metatheory/Dregg2` (line 58) — the COMMITTED tree object. With no `.git` it
+# silently falls back to a sha256 of concatenated `.lean` files (lines 61-65). That fallback is a
+# DIFFERENT KEY SPACE: it can never equal a git tree-object id, so it can never name a published
+# asset. Therefore `scripts/fetch-lean-seed.sh` could NEVER succeed inside a lane, which is why
+# every persvati lane sat with no `libdregg_lean.a` while CI published a platform-native one on
+# every push to main. The consequence is not a slow build, it is FALSE REDS: an oracle-backed test
+# with no archive aborts with a bare SIGABRT, and a lane reads that as its own bug (measured
+# elsewhere in this repo as 405/28 remote vs 422/14 local, the whole delta being the archive).
+#
+# Shipping `.git` fixes that at the root rather than by a side-channel: the lane computes the SAME
+# key the publisher did, so fetch simply works, and a lane can also answer "what commit is this?".
+#
+# COST, measured 2026-07-25 by `rsync --dry-run --stats`: 832 MB / 3,710 files on the first sync
+# per lane, incremental after. `.git` here is 1.3 GB, but 525 MB of that is `.git/lfs` — a local
+# blob cache the lane never needs, since the checked-out files are already in the tree. Excluded.
+#
+# CONCURRENCY: this repo has ~10 terminals committing at once, so the copy is taken while `.git`
+# is being written. That is safe for this use. Git writes objects and packfiles temp-then-rename,
+# so anything visible is immutable and complete, and a ref only advances AFTER its objects are
+# durable — so a copy can be slightly STALE but not incoherent, and `rev-parse HEAD:<path>` stays
+# consistent. `*.lock` and in-flight `tmp_*` are excluded so a torn lock never lands.
+# `.git` deliberately does NOT get `--delete` protection concerns: nothing on the remote writes it.
+#
+# ⚠ DEFAULT OFF, AND THE REASON IS A MEASUREMENT, NOT CAUTION (2026-07-25).
+# Predicted ~1 min for 832 MB on a LAN. MEASURED: 594 MB in ~25 minutes into a real lane, i.e.
+# ~0.5 MB/s. The bytes are not the problem — the FILE COUNT is. `.git` here is 3,710 files of which
+# ~400 are tiny loose objects, and rsync-over-ssh pays a round trip per file. So enabling this by
+# default would add ~25 minutes to the NEXT pbuild call of every lane, which is a worse tax than the
+# problem it solves.
+#
+# rsync is simply the wrong transport for a git directory. The right fixes, in order:
+#   1. `git gc` / `git repack -ad` locally first — collapsing ~400 loose objects into a pack turns
+#      thousands of round trips into a handful of large sequential transfers.
+#   2. Better: skip rsync for this entirely. `git bundle create` + one file copy, or
+#      `git clone --shared --no-checkout` on the remote against a single synced bare mirror, gives
+#      the lane a real `.git` for a fraction of the calls.
+# Until one of those lands, this stays opt-in:  PBUILD_SHIP_GIT=1 scripts/pbuild <lane> <cmd>
+#
+# WHAT IT BUYS when you do enable it (verified as the mechanism, not yet end-to-end): the lane can
+# run `git rev-parse HEAD:metatheory/Dregg2`, so `scripts/lean-seed-key.sh` computes the SAME key
+# the publisher used instead of falling into the file-hash fallback — which is the only reason
+# `scripts/fetch-lean-seed.sh` cannot currently work in a lane.
+# ⚠ NOT YET DEMONSTRATED END-TO-END: mid-sync the lane had HEAD but not all objects, so
+# `rev-parse HEAD:<path>` still failed and the key still fell back. Whoever finishes this must show
+# the in-lane key EQUAL to the local one before claiming it works.
+GIT_FILTER=()
+if [ "${PBUILD_SHIP_GIT:-0}" = 1 ] && [ -d "${SRC%/}/.git" ]; then
+  # ⚠ ORDER IS LOAD-BEARING: rsync takes the FIRST matching rule, so every exclusion must be
+  # listed BEFORE the broad include. Written the other way round, `--include='/.git/**'` matches
+  # `.git/lfs/<blob>` first and ships all 525 MB of the cache this is meant to skip.
+  GIT_FILTER=(
+    --exclude='/.git/lfs/'            # 525 MB local blob cache; the worktree already has the files
+    --exclude='/.git/lfs/**'          # (both forms: the bare dir entry AND its contents)
+    --exclude='/.git/**/*.lock'       # never ship a lock taken mid-commit by another terminal
+    --exclude='/.git/objects/**/tmp_*'
+    --include='/.git/'  --include='/.git/**'
+  )
+else
+  GIT_FILTER=(--exclude='.git/')
+fi
+
 # shellcheck disable=SC2029 # REMOTE is a locally-owned, validated lane path.
 ssh "$HOST" "mkdir -p '${REMOTE}'"
 rsync -az --delete \
   "${ARCHIVE_FILTER[@]}" \
-  --filter=':- .gitignore' --exclude='.git/' \
+  "${GIT_FILTER[@]}" \
+  --filter=':- .gitignore' \
   "$SRC" "${HOST}:${REMOTE}/"
 
 # ---- FETCH mathlib, never compile it (2026-07-25) --------------------------
