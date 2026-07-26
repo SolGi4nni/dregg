@@ -403,15 +403,25 @@ impl SharedResourceBudget {
     /// # Parameters
     /// - `blocklace`: The local blocklace view.
     /// - `resource_id`: The 32-byte resource identifier to filter debits for.
-    pub fn sync_from_blocklace(&mut self, blocklace: &Blocklace, resource_id: &[u8; 32]) {
+    /// Returns `Err(UnknownParticipant)` naming a creator that debited this resource
+    /// without being one of its participants. The attributable debits are still
+    /// applied before the error is returned — an unattributable one is reported, never
+    /// absorbed.
+    pub fn sync_from_blocklace(
+        &mut self,
+        blocklace: &Blocklace,
+        resource_id: &[u8; 32],
+    ) -> Result<(), SharedBudgetError> {
         // One pass over the DAG, grouping each block's debit-for-this-resource by its
         // creator — instead of calling `virtual_chain` (a full filter+sort of the whole
         // DAG) once per participant. O(P·N) → O(N). The per-creator sum is order-
         // independent, so dropping `virtual_chain`'s seq-sort changes nothing.
-        let mut spent_by_creator: HashMap<[u8; 32], u64> = HashMap::new();
+        let mut spent_by_creator: HashMap<ParticipantId, u64> = HashMap::new();
         for (_id, block) in blocklace.iter() {
             if let Some(amount) = extract_debit_for_resource(block, resource_id) {
-                *spent_by_creator.entry(block.creator).or_insert(0) += amount;
+                *spent_by_creator
+                    .entry(debiting_participant(block))
+                    .or_insert(0) += amount;
             }
         }
         // Collect participants to avoid borrow conflict (participants borrows self
@@ -419,11 +429,17 @@ impl SharedResourceBudget {
         // participants in `self.participants` that already have an allowance.
         let participants: Vec<ParticipantId> = self.participants.clone();
         for participant in &participants {
-            let creator_key: [u8; 32] = *participant.as_bytes();
-            let total_spent = spent_by_creator.get(&creator_key).copied().unwrap_or(0);
+            let total_spent = spent_by_creator.remove(participant).unwrap_or(0);
             if let Some(allowance) = self.allowances.get_mut(participant) {
                 allowance.spent = total_spent;
             }
+        }
+        // Whatever is left debited this resource without an allowance to debit from.
+        // This assignment loop ZEROES every participant it does not find, so a mis-keyed
+        // lookup here does not merely lose the new debits — it erases the recorded ones.
+        match spent_by_creator.keys().next() {
+            Some(agent) => Err(SharedBudgetError::UnknownParticipant { agent: *agent }),
+            None => Ok(()),
         }
     }
 
@@ -440,11 +456,23 @@ impl SharedResourceBudget {
     /// # Parameters
     /// - `blocks`: Newly received blocks (from dissemination or delta-merge).
     /// - `resource_id`: The 32-byte resource identifier to filter debits for.
-    pub fn sync_from_blocklace_blocks(&mut self, blocks: &[BlocBlock], resource_id: &[u8; 32]) {
+    ///
+    /// Returns `Err(UnknownParticipant)` if any block in the batch debited this
+    /// resource without being one of its participants. The rest of the batch is still
+    /// applied and the escalation check still runs before the error is returned, so a
+    /// single stray block cannot wedge observation — but it also cannot pass unnoticed.
+    pub fn sync_from_blocklace_blocks(
+        &mut self,
+        blocks: &[BlocBlock],
+        resource_id: &[u8; 32],
+    ) -> Result<(), SharedBudgetError> {
+        let mut unattributed = None;
         for block in blocks {
             if let Some(amount) = extract_debit_for_resource(block, resource_id) {
-                let agent = CellId::from_bytes(block.creator);
-                self.record_observed_debit(agent, amount);
+                let agent = debiting_participant(block);
+                if let Err(e) = self.record_observed_debit(agent, amount) {
+                    unattributed.get_or_insert(e);
+                }
             }
         }
         // Check if new observations trigger overspend -> escalate
@@ -452,6 +480,10 @@ impl SharedResourceBudget {
             self.state = ResourceState::Closing {
                 conflicting: Vec::new(),
             };
+        }
+        match unattributed {
+            Some(e) => Err(e),
+            None => Ok(()),
         }
     }
 
@@ -499,9 +531,23 @@ impl SharedResourceBudget {
     ///
     /// This is called incrementally (on each new block) rather than re-scanning
     /// the entire virtual chain.
-    pub fn record_observed_debit(&mut self, agent: ParticipantId, amount: ResourceAmount) {
-        if let Some(allowance) = self.allowances.get_mut(&agent) {
-            allowance.spent = allowance.spent.saturating_add(amount);
+    ///
+    /// A debit against an agent with no allowance on this resource is REFUSED, not
+    /// dropped. It used to be dropped, which made this the whole overspend detector's
+    /// blind spot: `total_spent()` sums allowances, so an unattributable debit that
+    /// vanished here could carry the pool past `total_balance` without
+    /// [`Self::is_overspent`] ever going true.
+    pub fn record_observed_debit(
+        &mut self,
+        agent: ParticipantId,
+        amount: ResourceAmount,
+    ) -> Result<(), SharedBudgetError> {
+        match self.allowances.get_mut(&agent) {
+            Some(allowance) => {
+                allowance.spent = allowance.spent.saturating_add(amount);
+                Ok(())
+            }
+            None => Err(SharedBudgetError::UnknownParticipant { agent }),
         }
     }
 
@@ -757,15 +803,24 @@ impl SharedBudgetObserver {
     /// For each block, checks if it contains a resource debit. If so, records it
     /// and triggers escalation if overspend is detected.
     ///
-    /// Returns a list of resource IDs that entered escalation as a result.
-    pub fn on_blocklace_update(&mut self, new_blocks: &[&BlocBlock]) -> Vec<[u8; 32]> {
+    /// Returns a list of resource IDs that entered escalation as a result, or
+    /// `Err(UnknownParticipant)` if a block debited a REGISTERED resource without being
+    /// one of its participants. A debit against a resource this observer does not watch
+    /// at all stays a silent skip — that is a scope question, not an unattributed debit.
+    pub fn on_blocklace_update(
+        &mut self,
+        new_blocks: &[&BlocBlock],
+    ) -> Result<Vec<[u8; 32]>, SharedBudgetError> {
         let mut escalated = Vec::new();
+        let mut unattributed = None;
 
         for block in new_blocks {
             if let Some((resource_id, amount)) = extract_resource_debit(block) {
-                let agent = CellId::from_bytes(block.creator);
+                let agent = debiting_participant(block);
                 if let Some(budget) = self.budgets.get_mut(&resource_id) {
-                    budget.record_observed_debit(agent, amount);
+                    if let Err(e) = budget.record_observed_debit(agent, amount) {
+                        unattributed.get_or_insert(e);
+                    }
                     if budget.is_overspent() && budget.state == ResourceState::Open {
                         // Escalate with an empty conflicting set. The caller should
                         // provide the actual conflicting blocks from their blocklace
@@ -777,11 +832,33 @@ impl SharedBudgetObserver {
             }
         }
 
-        escalated
+        match unattributed {
+            Some(e) => Err(e),
+            None => Ok(escalated),
+        }
     }
 }
 
 // ─── Payload Debit Extraction ───────────────────────────────────────────────
+
+/// The participant a block's debit is charged to.
+///
+/// `Block::creator` is NOT the ed25519 verify key any more. Since the hybrid cutover it
+/// is `H(ed25519_pubkey ‖ ml_dsa_pubkey)` — an identity COMMITMENT — while a
+/// [`ParticipantId`] here is `CellId(ed25519_verify_key)`, because that is what
+/// `add_participant` / `SharedResourceBudget::new` are handed. Reading `creator` into a
+/// `CellId` therefore produced a participant that matches nobody, and every debit
+/// derived from a block went to an agent with no allowance.
+///
+/// The ed25519 half is carried separately on the block, so the charge is attributable
+/// again. What binds `block.ed25519` to `block.creator` is `Block::verify_hybrid`
+/// against the creator's ENROLLED ML-DSA key, which happens at blocklace admission —
+/// nothing in this module re-checks it. Feed these methods blocks the blocklace already
+/// accepted; a block that never passed that gate carries an ed25519 field an author
+/// chose freely.
+fn debiting_participant(block: &BlocBlock) -> ParticipantId {
+    CellId::from_bytes(block.ed25519)
+}
 
 /// Debit payload format (encoded in Turn payloads):
 ///
@@ -1705,7 +1782,9 @@ mod tests {
         );
 
         // Feed blocks through sync_from_blocklace_blocks.
-        budget.sync_from_blocklace_blocks(&[block_a1, block_a2, block_b1], &resource_id);
+        budget
+            .sync_from_blocklace_blocks(&[block_a1, block_a2, block_b1], &resource_id)
+            .expect("every creator is a participant");
 
         // Agent A: 300 + 200 = 500 spent.
         assert_eq!(budget.remaining(&agent_a), Some(ceiling - 500));
@@ -1751,7 +1830,9 @@ mod tests {
         );
 
         // Feed all blocks. Total = 600 > 500 → should escalate.
-        budget.sync_from_blocklace_blocks(&[block_a, block_b, block_c], &resource_id);
+        budget
+            .sync_from_blocklace_blocks(&[block_a, block_b, block_c], &resource_id)
+            .expect("every creator is a participant");
 
         assert_eq!(budget.total_spent(), 600);
         assert!(budget.is_overspent());
@@ -1779,11 +1860,53 @@ mod tests {
             vec![],
         );
 
-        budget.sync_from_blocklace_blocks(&[block], &our_resource);
+        budget
+            .sync_from_blocklace_blocks(&[block], &our_resource)
+            .expect("a debit for another resource is not this budget's business");
 
         // No spending recorded.
         assert_eq!(budget.total_spent(), 0);
         assert_eq!(budget.state, ResourceState::Open);
+    }
+
+    #[test]
+    fn test_sync_from_blocklace_blocks_refuses_a_nonparticipant_debit() {
+        // A block that debits THIS resource but whose creator holds no allowance used to
+        // be dropped on the floor: `total_spent()` sums allowances, so the debit left no
+        // trace anywhere and the pool could be drained past `total_balance` with
+        // `is_overspent()` still false. Now it is reported.
+        let (sk_a, agent_a) = signing_key_and_participant(1);
+        let (_sk_b, agent_b) = signing_key_and_participant(2);
+        let (_sk_c, agent_c) = signing_key_and_participant(3);
+        let (sk_outsider, outsider) = signing_key_and_participant(9);
+
+        let agents = vec![agent_a, agent_b, agent_c];
+        let mut budget = SharedResourceBudget::new(pool_resource(), 5000, agents, 1).unwrap();
+        let resource_id = [0xBB; 32];
+
+        let good = BlocBlock::new(
+            &sk_a,
+            1,
+            Payload::Turn(encode_debit_payload(&resource_id, 400)),
+            vec![],
+        );
+        let stray = BlocBlock::new(
+            &sk_outsider,
+            1,
+            Payload::Turn(encode_debit_payload(&resource_id, 900)),
+            vec![],
+        );
+
+        let outcome = budget.sync_from_blocklace_blocks(&[good, stray], &resource_id);
+        assert!(
+            matches!(
+                outcome,
+                Err(SharedBudgetError::UnknownParticipant { agent }) if agent == outsider
+            ),
+            "an unattributable debit must be named, got {outcome:?}"
+        );
+        // The rest of the batch still landed — one stray block does not wedge observation.
+        assert_eq!(budget.total_spent(), 400);
     }
 
     // ── try_optimistic_debit Tests ─────────────────────────────────────
