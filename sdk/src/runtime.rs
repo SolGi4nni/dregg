@@ -358,6 +358,96 @@ pub(crate) fn ensure_verified_mldsa_identity_cores_installed() {
     });
 }
 
+/// **Install the verified deployed-executor oracles** — the constraint oracle and the
+/// conservation oracle — once per process, at SDK agent-runtime startup.
+///
+/// # Why this belongs HERE and not in each binary
+///
+/// `dregg_exec_lean::register_constraint_oracle()` had, until this line, exactly TWO callers in the
+/// whole repo: `node/src/lib.rs` and `dreggnet-web/src/verified_settlement.rs`. Every OTHER
+/// SDK-hosted process that drives a turn in-process was unarmed, and the failure is silent-then-fatal:
+/// `dregg_cell::program::eval` routes the Lean-evaluated `StateConstraint` subset through the
+/// installed oracle and FAILS CLOSED when there is none, but only under
+/// `#[cfg(all(not(debug_assertions), any(unix, windows)))]` — **native RELEASE only**. Every test in
+/// this repo builds debug, takes the Rust guest-path evaluator, and passes. Nothing goes red until a
+/// release binary opens a programmed cell on a box.
+///
+/// Measured on the deployed edge, 2026-07-26, with both bots built from a HEAD-matching archive
+/// (135 `dregg_*` text symbols each — the archive was never the problem):
+///
+///   * `dreggnet-telegram-bot` PANICS at startup — `dreggnet-surfaces/src/cheevo.rs:155`, because
+///     its self-check drives a real turn;
+///   * `dregg-discord-bot` boots, connects, registers its slash commands and looks completely
+///     healthy while `reveal_cron: Daily reveal did not fire` on every tick, forever.
+///
+/// The second one is the reason this lives in `AgentRuntime::new` rather than in the two bots: a
+/// per-binary fix leaves the next SDK consumer to rediscover it from a cron that quietly never
+/// fires. `AgentRuntime::new` is the one place every SDK-hosted turn-driver already passes through,
+/// and it is already where the verified PQ cores are installed for exactly the same reason.
+///
+/// # Warn, do not abort
+///
+/// Unlike the PQ sign/verify cores (which abort at `dregg-pq`'s audit gate), an absent oracle is
+/// reported and execution continues: the fail-closed refusal already lives downstream in
+/// `dregg_cell::program::eval`, which is the correct place for it and which a debug/test build
+/// legitimately does not reach. Aborting here would break every `default-features = false`
+/// (wasm/zkvm) embedding that has no archive to install from and no need of one.
+/// # Why `not(debug_assertions)` — the blast radius this deliberately does NOT have
+///
+/// `dregg_cell::program::eval` uses an installed oracle on **every** target; it is only the
+/// *no-oracle refusal* that is release-gated. So installing from `AgentRuntime::new` unconditionally
+/// would re-route every programmed-cell decision in every DEBUG test across the workspace from the
+/// Rust guest-path evaluator to the Lean oracle — a workspace-wide behaviour change, shipped from a
+/// deploy lane, that no one had run the suite against.
+///
+/// The bug being fixed is native-RELEASE-only by construction, so the fix is too. Debug and test
+/// builds keep the guest evaluator and stay exactly as green (or as red) as they were, which is the
+/// documented intent in `eval.rs`'s own note: `not(debug_assertions)` is "cell's OWN production
+/// convention". The oracle path still has direct coverage in
+/// `exec-lean/tests/constraint_oracle_reality_gate.rs`, which installs it explicitly.
+#[cfg(all(feature = "exec-lean", not(debug_assertions)))]
+fn ensure_deployed_executor_oracles_installed() {
+    use std::sync::Once;
+    static LOGGED: Once = Once::new();
+    let constraint = dregg_exec_lean::register_constraint_oracle();
+    let conservation = dregg_exec_lean::register_conservation_oracle();
+    LOGGED.call_once(|| {
+        if constraint {
+            tracing::info!(
+                "constraint oracle: the deployed executor's Lean-subset StateConstraint/HeapAtom \
+                 admission is decided by the verified `dregg_constraint_admits` for this process"
+            );
+        } else {
+            tracing::warn!(
+                "constraint oracle: the linked Lean archive does NOT export \
+                 `dregg_constraint_admits` — NO oracle is installed, so on a native RELEASE build \
+                 `dregg-cell` fails CLOSED for the whole Lean-evaluated constraint subset and EVERY \
+                 programmed-cell turn (the Descent, the dungeon, the campaign) will be refused. \
+                 Rebuild against a HEAD-matching archive."
+            );
+        }
+        if conservation {
+            tracing::info!(
+                "conservation oracle: per-asset Σδ=0 is decided by the verified \
+                 `dregg_cross_cell_conserves` for this process"
+            );
+        } else {
+            tracing::warn!(
+                "conservation oracle: the linked Lean archive does NOT export \
+                 `dregg_cross_cell_conserves` — the executor will decide per-asset Σδ=0 with the \
+                 UNVERIFIED Rust twin that already drifted into an inflation bug once. This does not \
+                 fail closed; it silently decides."
+            );
+        }
+    });
+}
+
+/// No-op without `exec-lean` (a wasm/zkvm embedding links no archive and `dregg-cell`'s release-only
+/// fail-closed gate is unreachable there), and no-op in DEBUG (see the note above: debug keeps the
+/// guest-path evaluator, and arming it here would change every test in the workspace).
+#[cfg(any(not(feature = "exec-lean"), debug_assertions))]
+fn ensure_deployed_executor_oracles_installed() {}
+
 /// Perform the once-per-process ML-KEM DECAPS-core install at SDK agent-runtime startup, logging once.
 fn ensure_verified_mlkem_decaps_core_installed() {
     use dregg_pq::MlKemDecapsCoreInstall as D;
@@ -643,6 +733,12 @@ impl AgentRuntime {
         // Route this SDK-hosted process's ML-DSA IDENTITY keygen through the Lean-verified core
         // (warn-and-continue on ExportAbsent -- identity keygen WARNS, it does not abort). Once-per-process.
         ensure_verified_mldsa_keygen_core_installed();
+        // Install the DEPLOYED-EXECUTOR oracles (constraint + conservation). Without the first,
+        // `dregg_cell::program::eval` fails CLOSED for the whole Lean-evaluated constraint subset on
+        // a native RELEASE build, so every programmed-cell turn is refused -- which is how the
+        // Telegram bot came to panic at startup and the Discord bot came to run for hours looking
+        // healthy while its daily Descent reveal never fired. See the fn doc.
+        ensure_deployed_executor_oracles_installed();
         let cell_id;
         let public_key;
         {
@@ -705,6 +801,11 @@ impl AgentRuntime {
         // Route this SDK-hosted process's ML-DSA IDENTITY keygen through the Lean-verified core
         // (warn-and-continue on ExportAbsent -- identity keygen WARNS, it does not abort). Once-per-process.
         ensure_verified_mldsa_keygen_core_installed();
+        // Same deployed-executor oracle install as `new` (independent construction path). This one is
+        // NOT optional cosmetics here: `with_ledger` is the path a DURABLE, restored-from-storage
+        // host takes, which is exactly the shape both bots use -- so an oracle installed only in
+        // `new` would have left them both unarmed anyway.
+        ensure_deployed_executor_oracles_installed();
         let cell_id = cipherclerk
             .read()
             .unwrap_or_else(|e| e.into_inner())
