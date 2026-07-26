@@ -67,6 +67,7 @@ use dreggnet_catalog::{
     PublicGameReceipt, execute_bound_asserted_game_command, execute_bound_asserted_game_turn,
     game_kind, inspect_bound_game_session, is_rpg_key, project_public_game_receipt,
 };
+use dreggnet_offerings::shelf::{self, ShelfEntry, ShelfSurface};
 use dreggnet_offerings::{
     Action, Audience, BinaryOperationDescriptor, BinaryOperationReceipt, ChatBinaryOperationPolicy,
     DreggIdentity, Frontend, HostError, OfferingHost, OfferingInfo, Outcome, SessionId,
@@ -110,6 +111,60 @@ fn bound_game_callback(reference: &GameActionRef) -> String {
         "g.{}",
         base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(reference.routing_preimage_id())
     )
+}
+
+/// **THE ADVANCE WARNING for a shelf painted into a shared chat** — `None` when every advertised
+/// offering plays right here (which is every DM, and a group whose whole shelf is
+/// full-information).
+///
+/// A dimmed button with no explanation is a mystery, and a mystery reads as a broken bot. This is
+/// the sentence that turns the dim row into a lesson plus a route: WHICH games are inert, WHY (the
+/// shared-surface constraint, in the player's words, authored once in
+/// [`shelf::ShelfBlock::why`]), the exact gesture that fixes it, and what still plays here.
+///
+/// ⚑ Every name and every key is READ OFF the shelf, which read them off
+/// [`dreggnet_offerings::Offering::hidden_information`]. Nothing here names a game, so it cannot
+/// name the wrong one when a game changes its declaration — including the case where ALL of them
+/// do, which this says outright rather than pointing at an empty group shelf.
+fn shelf_note_for(rows: &[ShelfEntry]) -> Option<String> {
+    let blocked = shelf::blocked(rows);
+    let first = blocked.first()?;
+    let names: Vec<&str> = blocked.iter().map(|e| e.name()).collect();
+    let routes: Vec<String> = blocked
+        .iter()
+        .map(|e| format!("/open {}", e.info.key))
+        .collect();
+    // ONE reason for the whole group of them: they are blocked for the same declared reason, so
+    // repeating it per game would be noise. `why` names a game, so it takes the first — and the
+    // list right before it says who else it covers.
+    let mut note = format!(
+        "🔒 Dimmed above, and refused if you press it here: {}. {} \
+         To play: DM me and send {} — or /play there for the richer Mini App (Telegram allows \
+         those in a private chat only).",
+        shelf::name_list(&names),
+        first
+            .block
+            .expect("a blocked row carries its block")
+            .why(first.name()),
+        routes.join(" · "),
+    );
+    let playable = shelf::playable(rows);
+    if playable.is_empty() {
+        // Not a hypothetical to leave unsaid: if every shipped game declares hidden information,
+        // a group chat has NOTHING on the shelf, and the menu must say so instead of presenting a
+        // wall of locks as if one of them might work.
+        note.push_str(
+            " Nothing else on the shelf plays in a group chat either — every game we ship keeps \
+             per-player state, so a DM is where all of them play.",
+        );
+    } else {
+        let live: Vec<&str> = playable.iter().map(|e| e.name()).collect();
+        note.push_str(&format!(
+            " Playable right here in the group: {}.",
+            shelf::name_list(&live)
+        ));
+    }
+    Some(note)
 }
 
 /// Select the only projection a Telegram message with this readership may
@@ -895,6 +950,40 @@ impl<T: Transport> TelegramHost<T> {
         self.host.run(|h| h.list_advertised_offerings())
     }
 
+    /// **Does the offering under `key` hide per-viewer state?** — the declaration
+    /// ([`dreggnet_offerings::Offering::hidden_information`]) this adapter's shared-chat rules are
+    /// built on, answered without a session. `None` for an unregistered key.
+    ///
+    /// Exposed so a caller (and the crate's tests) can read the same signal the shelf and the open
+    /// gate read, instead of re-listing which games are which — a list that goes stale the first
+    /// time a game changes its mind.
+    pub fn hidden_information(&self, key: &str) -> Option<bool> {
+        let key = key.to_string();
+        self.host.run(move |h| h.hidden_information(&key))
+    }
+
+    /// **The advertised shelf for THIS chat, with the audience gate applied** — one row per shipped
+    /// offering, each carrying its stable full-list index and whether this chat may host it
+    /// ([`dreggnet_offerings::shelf::advertised_shelf`]).
+    ///
+    /// A group / forum topic is a shared surface, so a row declaring hidden information comes back
+    /// blocked; a DM is single-reader and nothing is blocked there. Computed in ONE hop to the
+    /// host's owning thread so the whole shelf is a consistent reading.
+    pub fn chat_shelf(&self, chat_id: ChatId, topic: Option<i64>) -> Vec<ShelfEntry> {
+        let surface = ShelfSurface::shared_if(ChatKind::classify(chat_id, topic).is_collective());
+        self.host.run(move |h| shelf::advertised_shelf(h, surface))
+    }
+
+    /// **The advance warning this chat's shelf needs** — `None` when every shipped offering plays
+    /// here. Naming which rows are inert, why, and the gesture that fixes it (the private
+    /// `shelf_note_for` authors the copy).
+    ///
+    /// `/offerings` folds it into the menu message; `/help` appends it, because a help text that
+    /// says "`/open tug`" in a group is a route to a refusal.
+    pub fn shelf_note(&self, chat_id: ChatId, topic: Option<i64>) -> Option<String> {
+        shelf_note_for(&self.chat_shelf(chat_id, topic))
+    }
+
     /// Derive `uid`'s frontend-agnostic dregg identity (the presser attribution).
     pub fn identity(&self, uid: TelegramUserId) -> dreggnet_offerings::DreggIdentity {
         self.frontend.identity(uid)
@@ -1037,6 +1126,14 @@ impl<T: Transport> TelegramHost<T> {
     ///
     /// ⚑ The shelf is `dreggnet_catalog::SHIPPED_KEYS`; everything else stays openable with
     /// `/open <key>`.
+    ///
+    /// ⚑ **In a GROUP the shelf is HONEST BEFORE THE PRESS.** A hidden-information offering cannot
+    /// be hosted on a shared surface ([`hidden_in_shared_chat`](Self::hidden_in_shared_chat)), so
+    /// its row is painted INERT (`enabled: false` → a dim [`crate::api::LOCK_GLYPH`] label) and
+    /// [`shelf_note`](Self::shelf_note) says why and where to go instead. It is not FILTERED: a
+    /// game missing from the menu reads as one that does not exist, while a dimmed one teaches the
+    /// constraint. The row keeps its full-list index and its `callback_data`, so pressing it
+    /// anyway still reaches the SAME refusal it always did — this adds the warning, not the gate.
     pub fn present_offerings_menu_result(
         &mut self,
         chat_id: ChatId,
@@ -1049,17 +1146,30 @@ impl<T: Transport> TelegramHost<T> {
         // in-flight press from an older keyboard open the WRONG offering. Skipping instead keeps
         // every index it ever minted valid, which also means a callback captured before an
         // offering left the shelf still opens exactly what it always did. Unlisted, not deleted.
-        let offerings = self.list_offerings();
-        let actions: Vec<Action> = offerings
+        //
+        // `advertised_shelf` does exactly that AND takes the audience verdict per row, so the two
+        // filters stay visibly separate: the ROWS are the ship list, the LIVENESS is the shelf
+        // gate. Same reason the index is the full-list one — this gate reshapes the shelf PER
+        // CHAT, which is precisely the renumbering hazard a stable index exists to survive.
+        let rows = self.chat_shelf(chat_id, topic);
+        let actions: Vec<Action> = rows
             .iter()
-            .enumerate()
-            .filter(|(_, o)| o.advertised)
-            .map(|(i, o)| {
+            .map(|entry| {
+                let label = match entry.block {
+                    None => format!("▶ Play {}", entry.info.title),
+                    // The presentation layer prepends the lock glyph to any `!enabled` label (so
+                    // 🔒 stands where ▶ stands on a live row), and this carries the one thing the
+                    // glyph cannot: that there IS a place this works and it is not here. The SHORT
+                    // name, not the full tagline — a row whose whole job is to say "not here" must
+                    // not bury that under a sentence of ad copy.
+                    Some(block) => format!("Play {} — {}", entry.name(), block.tag()),
+                };
                 Action::new(
-                    format!("▶ Play {}", o.title),
+                    label,
                     TURN_OPEN,
-                    i64::try_from(i).expect("the bounded offering catalog fits the callback wire"),
-                    true,
+                    i64::try_from(entry.catalog_index)
+                        .expect("the bounded offering catalog fits the callback wire"),
+                    entry.live(),
                 )
             })
             .collect();
@@ -1071,18 +1181,24 @@ impl<T: Transport> TelegramHost<T> {
         } else {
             "Open a session here with the buttons below; the inline surface is fully playable without a web view."
         };
+        let mut children = vec![
+            ViewNode::Text(dreggnet_catalog::flagship_pointer().to_string()),
+            ViewNode::Text(
+                "One addressed session and receipt protocol; different games keep their own rulebooks, proof systems, and mood."
+                    .to_string(),
+            ),
+            ViewNode::Text(dreggnet_catalog::shelf_intro().to_string()),
+            ViewNode::Text(continuation.to_string()),
+        ];
+        // A dim button alone is a mystery. The note names which rows are inert, why, and the ONE
+        // gesture that fixes it — derived from the shelf, so it cannot name the wrong games.
+        if let Some(note) = shelf_note_for(&rows) {
+            children.push(ViewNode::Text(note));
+        }
         let surface = Surface(ViewNode::Section {
             title: "🧪 Dregg games & operations".to_string(),
             tag: "accent".to_string(),
-            children: vec![
-                ViewNode::Text(dreggnet_catalog::flagship_pointer().to_string()),
-                ViewNode::Text(
-                    "One addressed session and receipt protocol; different games keep their own rulebooks, proof systems, and mood."
-                        .to_string(),
-                ),
-                ViewNode::Text(dreggnet_catalog::shelf_intro().to_string()),
-                ViewNode::Text(continuation.to_string()),
-            ],
+            children,
         });
         // The menu gets its OWN surface too ([`MENU_KEY`] is not a registered offering key, so it
         // never collides). That keeps the menu message live and pressable AFTER an offering is
@@ -1119,7 +1235,14 @@ impl<T: Transport> TelegramHost<T> {
     /// registered offering, each opening the rich web surface for that offering at this chat's
     /// session id ([`crate::webapp::build_play_menu_request`]). A control message OUTSIDE the
     /// session-slot bookkeeping (`web_app` buttons produce no callbacks to match), so the
-    /// chat's active offering / presented keyboard are untouched. `Err` carries the honest
+    /// chat's active offering / presented keyboard are untouched.
+    ///
+    /// ⚑ **No shelf gate here, and none is needed**: this menu exists ONLY in a private chat
+    /// (Telegram honors `web_app` inline buttons nowhere else — the `web_app_allowed` guard below
+    /// is the first thing it checks), and the Mini App it launches renders in the launching user's
+    /// own web view. Every surface it can reach is single-reader
+    /// ([`ShelfSurface::Private`](dreggnet_offerings::shelf::ShelfSurface::Private)), so every
+    /// advertised offering is legitimately live. `Err` carries the honest
     /// human reply when the tier cannot serve here: no base armed, a non-private chat
     /// (Telegram refuses `web_app` inline buttons in groups), or a transport failure.
     pub fn present_play_menu(&mut self, chat_id: ChatId, topic: Option<i64>) -> Result<(), String> {

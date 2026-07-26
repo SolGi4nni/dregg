@@ -1,12 +1,17 @@
-//! The 13-command menu surface — every old flat slash command folded behind
-//! a menu-driven top-level command.
+//! The curated menu surface — every old flat slash command folded behind a
+//! menu-driven top-level command, and then the menu itself PARED to what we ship.
 //!
-//! The bot's global slash surface is EXACTLY thirteen commands (`/dregg` + 12);
-//! each one either summons a world (`/descent`) or opens a menu (an embed +
-//! action-row buttons / a select), and every one of the ~53 retired flat
-//! commands is folded in as a subcommand (its options preserved verbatim) or a
-//! menu button — the handlers themselves are UNCHANGED; only the front door
-//! moved.
+//! [`SLASH_SURFACE`] is the ONE list: one row per top-level command, each row
+//! naming the [`Door`] it is. An **offering-shaped** row is advertised *iff* its key
+//! is on `dreggnet_catalog::SHIPPED_KEYS`, so paring or re-listing an offering moves
+//! Discord's `/` menu with every other host and nothing here needs touching. A row
+//! that is not offering-shaped (`/help`, `/verify`) has to say why it earns a slot.
+//!
+//! ⚑ **UN-ADVERTISED IS NOT DELETED.** A [`Door::Lab`] row keeps its module, its
+//! handler, its `menu:`/component/modal routes and its `main.rs` router arm; only the
+//! front door comes off the global `/` menu, and `DREGG_LAB_GUILD_ID` puts every one
+//! of them back inside one guild ([`lab_commands`]). What that costs is written into
+//! each row and re-checked by `the_lab_rows_name_what_they_cost`.
 //!
 //! Two mechanisms carry the fold:
 //!
@@ -72,6 +77,18 @@ struct GameDoor {
 /// `the_game_doors_are_exactly_the_ship_list` below is the gate. It previously featured `dungeon`,
 /// `bazaar` and `private-raid`, which is exactly the leak `dreggnet_catalog::SHIPPED_KEYS` exists
 /// to stop; those offerings all still open by key, they are just no longer advertised.
+///
+/// ⚑ **Every door here stays LIVE in a guild channel, and unlike Telegram that is honest.** The
+/// second, orthogonal filter (`dreggnet_offerings::shelf`) withholds a live control for an offering
+/// declaring `Offering::hidden_information` when the surface has more than one reader, because
+/// Telegram's group session is ONE message the whole room reads and a hidden-information game
+/// simply cannot be hosted there — its `/offerings` shelf dims those rows. Discord has a
+/// single-reader surface *inside* a shared channel: `commands::offering::channel_surfaces` posts
+/// the VIEWER-BLIND board to the channel and the player's own hidden state as an EPHEMERAL
+/// companion (with `private_act_plaque` saying where the controls live). So automatafl and tug play
+/// here, in a guild, with two readerships out of one session — which is why the `privacy` field
+/// below is a real boundary statement and not an apology. If that split is ever unwired, THIS shelf
+/// becomes the dishonest one and the gate belongs here too.
 const GAME_DOORS: [GameDoor; 3] = [
     GameDoor {
         key: "descent",
@@ -119,7 +136,7 @@ fn game_door_card(door: &GameDoor) -> CreateEmbed {
         .field("Distinctive affordance", door.special, false)
 }
 
-// ─── registration: fold existing builders into 13 menu commands ─────────────
+// ─── registration: fold existing builders into the curated menu commands ────
 
 /// Serialize an existing `CreateCommand` builder to its Discord JSON body.
 fn command_json(cmd: &serenity::all::CreateCommand) -> Value {
@@ -220,20 +237,221 @@ fn top(name: &str, description: &str, options: Vec<Value>) -> Value {
     Value::Object(m)
 }
 
-/// The EXACT 13 global slash commands, in registration order. Kept in sync
-/// with `crate::REGISTERED_COMMAND_NAMES` (asserted at boot and by test).
-pub fn global_commands() -> Vec<Value> {
-    vec![
-        // 1. /dregg — the hub dashboard (its buttons summon every other surface;
-        //    folds the retired /dashboard + /status behind buttons), plus the
-        //    operator-only `admin` GROUP.
-        dregg_command(),
-        // 2. /descent — today's beacon-seeded daily roguelite world, unchanged.
-        command_json(&commands::descent::register()),
-        // 3. /play — the Arcade shelf: open any portfolio offering; /market folds in; `cheat` is
-        //    the FREE-TEXT door (`commands::portfolio::handle_cheat`) that `open`'s choice enum
-        //    cannot be.
-        top(
+// ─── THE CURATED SLASH SURFACE — the ONE list ────────────────────────────────
+
+/// **Why a top-level command has a slot on Discord's `/` menu.** The whole taste
+/// judgement, one variant per reason, so that "should this be advertised?" is answered
+/// by a rule and not by whoever last edited a `vec![]`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Door {
+    /// **A door to ONE offering** — advertised *iff* that key is on
+    /// `dreggnet_catalog::SHIPPED_KEYS`. This is the DERIVATION: paring or re-listing an
+    /// offering moves Discord's `/` menu in step with the web, Telegram and WeChat
+    /// shelves, and nothing in this file needs touching
+    /// (`the_offering_doors_follow_the_ship_list`).
+    Offering(&'static str),
+    /// **Not offering-shaped, and a player needs it anyway** — the explicit allow-list.
+    /// The string is the reason it earns a slot, and this variant is the ONLY way a
+    /// non-offering command reaches an ordinary player's `/` menu.
+    Player(&'static str),
+    /// **An operator tool.** Registered globally, but stamped with Discord's
+    /// `default_member_permissions: "0"`, which the client honours by HIDING the command
+    /// from any member who cannot use it — so it is off a player's `/` menu while ember
+    /// (Administrator in their own guild) keeps it, and it stays usable in a DM with the
+    /// bot where guild permissions do not apply.
+    ///
+    /// Visibility was never the authority in either direction: every subcommand under an
+    /// operator row re-checks `Config::is_admin` (`commands::admin::plan`) or the pinned
+    /// `admin_discord_id` (`handle_cleanup`) before it reads its arguments.
+    Operator(&'static str),
+    /// **Deliberately off the menu.** ⚑ UN-ADVERTISED IS NOT DELETED: the module, the
+    /// handler, the `menu:`/component/modal routes and the `main.rs` router arm are all
+    /// untouched — only the front door comes off the GLOBAL surface, and setting
+    /// `DREGG_LAB_GUILD_ID` re-registers every one of these inside that one guild
+    /// ([`lab_commands`]), which is how ember keeps the whole workshop without putting it
+    /// in a stranger's autocomplete.
+    ///
+    /// The string names WHAT A PLAYER LOSES while it is unset. Discord will not route a
+    /// command it has not been given, so this is the one variant that genuinely takes a
+    /// typed path away, and it has to say so.
+    Lab(&'static str),
+}
+
+/// One top-level command and the [`Door`] it is.
+#[derive(Clone, Copy, Debug)]
+pub struct Slash {
+    pub name: &'static str,
+    pub door: Door,
+}
+
+/// ⚑ **THE ONE LIST.** Every top-level command the bot knows how to build, and whether we
+/// advertise it. [`global_commands`] and [`lab_commands`] are both derived from this by
+/// [`advertises`]; `crate::main`'s boot registration, its unknown-command audit check and
+/// the teeth in this file all read it rather than restating it.
+///
+/// To change the menu, change a row. To ship or pare an OFFERING, edit
+/// `dreggnet_catalog::SHIPPED_KEYS` and its [`Door::Offering`] row follows on its own.
+pub const SLASH_SURFACE: &[Slash] = &[
+    // ── the operator row ────────────────────────────────────────────────────
+    Slash {
+        name: "dregg",
+        door: Door::Operator(
+            "the hub dashboard plus `/dregg admin` (narrator, posture, treasury, the \
+             $DREGG pool, run-credits) and `/dregg cleanup`",
+        ),
+    },
+    // ── the games ───────────────────────────────────────────────────────────
+    // Advertised because `descent` is on the ship list. `/descent` is the DAILY
+    // beacon-seeded world with its own reveal cron, board and tournament — a different
+    // object from the actor-bound `/play open offering:descent` mount, which is why both
+    // exist and why the daily keeps a command of its own.
+    Slash {
+        name: "descent",
+        door: Door::Offering("descent"),
+    },
+    Slash {
+        name: "play",
+        door: Door::Player(
+            "the arcade: `open` (its choices ARE the ship list), the free-text `cheat` \
+             door for a key the picker cannot offer, and the auction `market`",
+        ),
+    },
+    // `dungeon` came off the ship list, so the narrative-worlds command comes off the
+    // menu with it. Re-ship `dungeon` and `/adventure` returns with no edit here.
+    Slash {
+        name: "adventure",
+        door: Door::Offering("dungeon"),
+    },
+    // ── you ─────────────────────────────────────────────────────────────────
+    Slash {
+        name: "cipherclerk",
+        door: Door::Player(
+            "you: your cell and keys, DEC balance/send/history/faucet, $DREGG \
+             run-credits, and `link-web` — the one ceremony that stops a player being \
+             two people on one leaderboard",
+        ),
+    },
+    Slash {
+        name: "verify",
+        door: Door::Player(
+            "the proof surface — the thing that makes a receipted game worth playing: \
+             fetch AND verify a turn's STARK, browse committed state, fold a win into \
+             one O(1) crown",
+        ),
+    },
+    Slash {
+        name: "help",
+        door: Door::Player("onboarding, the 2-minute tour, and the map of this menu"),
+    },
+    // ── the lab: registered only in `DREGG_LAB_GUILD_ID` ────────────────────
+    Slash {
+        name: "gallery",
+        door: Door::Lab(
+            "publishing and remixing procgen universes (`list`/`show`/`play`/`publish`) \
+             — the whole UGC registry, which no shipped game needs",
+        ),
+    },
+    // `council` is off the ship list, so the DAO surface goes with it.
+    Slash {
+        name: "govern",
+        door: Door::Offering("council"),
+    },
+    Slash {
+        name: "identity",
+        door: Door::Lab(
+            "CapTP cap-share/accept/delegate/list/revoke/peer, signed handoffs, the \
+             external-cell link+unlink ceremonies (and `link-prove`, which only ever \
+             answered a challenge `link-cipherclerk` issued), your own LLM key, and \
+             roles-as-capabilities. `link-web` is the one piece a player needs, and it \
+             is folded into `/cipherclerk` so it survives this row",
+        ),
+    },
+    // `hermes` is off the ship list; `grain` and `doc` ride inside it.
+    Slash {
+        name: "hermes",
+        door: Door::Offering("hermes"),
+    },
+    Slash {
+        name: "federation",
+        door: Door::Lab(
+            "federation status/peers/setup, presence attestation, the atomic \
+             two-agent `coordinate` settle, `channel` (claim your semi-private DreggNet \
+             Cloud channel — the Hermes typing surface) and the `deos` cap-gated \
+             affordance cards. ⚑ `channel` is the biggest single loss here; the \
+             `start:channel` BUTTON on `/help` still claims one",
+        ),
+    },
+    Slash {
+        name: "leaderboard",
+        door: Door::Lab(
+            "the top-DEC-holders board. The GAME boards are elsewhere and stay \
+             advertised: `/descent board`, `/descent tournament`, `/verify crown`",
+        ),
+    },
+];
+
+/// Whether a [`Door`] reaches an ordinary player's `/` menu. The offering arm is the
+/// derivation from `dreggnet_catalog::SHIPPED_KEYS`; the others are the declared intent.
+pub fn advertises(door: &Door) -> bool {
+    match door {
+        Door::Offering(key) => dreggnet_catalog::is_shipped(key),
+        Door::Player(_) | Door::Operator(_) => true,
+        Door::Lab(_) => false,
+    }
+}
+
+/// The advertised top-level names, in [`SLASH_SURFACE`] order — what a stranger sees when
+/// they press `/`. `crate::main` reads this instead of keeping its own copy.
+pub fn advertised_names() -> Vec<&'static str> {
+    SLASH_SURFACE
+        .iter()
+        .filter(|s| advertises(&s.door))
+        .map(|s| s.name)
+        .collect()
+}
+
+/// The un-advertised (lab) top-level names, in [`SLASH_SURFACE`] order.
+pub fn lab_names() -> Vec<&'static str> {
+    SLASH_SURFACE
+        .iter()
+        .filter(|s| !advertises(&s.door))
+        .map(|s| s.name)
+        .collect()
+}
+
+/// Every name this build can route — advertised plus lab. The router keeps an arm for all
+/// of them (a lab command still arrives when `DREGG_LAB_GUILD_ID` is set), so this, not
+/// [`advertised_names`], is what "is this a command we know?" must be asked against.
+pub fn all_surface_names() -> Vec<&'static str> {
+    SLASH_SURFACE.iter().map(|s| s.name).collect()
+}
+
+/// **The guild that gets the un-advertised surface**, from `DREGG_LAB_GUILD_ID`.
+///
+/// Read here rather than in `Config` deliberately: it is a REGISTRATION-TIME fact about
+/// which guild receives which command set, consumed once in `Handler::ready`, and it
+/// authorizes nothing. Unset = the lab commands are registered nowhere, which
+/// `crate::main` reports at boot by NAME rather than leaving as a silent subtraction.
+pub fn lab_guild_id() -> Option<u64> {
+    let raw = std::env::var("DREGG_LAB_GUILD_ID").ok()?;
+    raw.trim().parse().ok().filter(|id| *id != 0)
+}
+
+/// Build one top-level command by name. ONE construction site per command, whichever
+/// surface it lands on — [`global_commands`] and [`lab_commands`] only decide *where* the
+/// same JSON is registered, so a lab command cannot drift from the shape it had when it
+/// was advertised.
+fn command_for(name: &str) -> Value {
+    match name {
+        // The hub dashboard (its buttons summon the rest; the retired /dashboard +
+        // /status fold in as buttons), plus the operator-only `admin` GROUP.
+        "dregg" => dregg_command(),
+        // Today's beacon-seeded daily roguelite world, unchanged.
+        "descent" => command_json(&commands::descent::register()),
+        // The Arcade shelf: open any SHIPPED offering; /market folds in; `cheat` is the
+        // FREE-TEXT door (`commands::portfolio::handle_cheat`) that `open`'s choice enum
+        // cannot be.
+        "play" => top(
             "play",
             &format!(
                 "{} — open a receipted game in this channel",
@@ -246,8 +464,8 @@ pub fn global_commands() -> Vec<Value> {
                 fold(commands::market::register(), None),
             ],
         ),
-        // 4. /adventure — the narrative worlds; /dungeon (the party crawl) folds in.
-        top(
+        // The narrative worlds; /dungeon (the party crawl) folds in.
+        "adventure" => top(
             "adventure",
             "Narrative worlds — the shared AI-narrated party dungeon and its kin",
             vec![
@@ -255,13 +473,13 @@ pub fn global_commands() -> Vec<Value> {
                 fold(commands::fiction::register(), Some("dungeon")),
             ],
         ),
-        // 5. /cipherclerk — you + your funds: the cipherclerk identity view and
-        //    the whole economy (send/history/faucet/credits/treasury) fold in.
-        cipherclerk_command(),
-        // 6. /gallery — the UGC universe registry, unchanged.
-        command_json(&commands::gallery::register()),
-        // 7. /govern — the DAO surface: council, approvals, bounties, intents.
-        top(
+        // You + your funds: the cipherclerk identity view, the whole economy, and the
+        // web-identity link ceremony.
+        "cipherclerk" => cipherclerk_command(),
+        // The UGC universe registry, unchanged.
+        "gallery" => command_json(&commands::gallery::register()),
+        // The DAO surface: council, approvals, bounties, intents.
+        "govern" => top(
             "govern",
             "The DAO surface — councils, approvals, bounties, and signed intents",
             vec![
@@ -273,8 +491,8 @@ pub fn global_commands() -> Vec<Value> {
                 fold(commands::intent::register(), None),
             ],
         ),
-        // 8. /verify — the proof surface: fetch + verify artifacts, browse state.
-        top(
+        // The proof surface: fetch + verify artifacts, browse state.
+        "verify" => top(
             "verify",
             "The proof surface — fetch, verify, and browse committed state",
             vec![
@@ -286,8 +504,8 @@ pub fn global_commands() -> Vec<Value> {
                 fold(commands::card::register(), None),
             ],
         ),
-        // 9. /identity — granting authority: caps, handoffs, link ceremonies, keys.
-        top(
+        // Granting authority: caps, handoffs, link ceremonies, keys, roles.
+        "identity" => top(
             "identity",
             "Grant authority — capabilities, handoffs, link ceremonies, and your LLM key",
             vec![
@@ -304,21 +522,20 @@ pub fn global_commands() -> Vec<Value> {
                 fold(commands::federation::register_link(), None),
                 fold(commands::federation::register_unlink(), None),
                 fold(commands::link_proof::register(), None),
-                // `/identity link-web` — the ISSUER half of the phrase-link ceremony: a single-use
-                // code that proves THIS Discord account to the web identity page, so a player whose
-                // web identity is 24 words (not a browser-held root key, which is all `/tg/link` and
-                // `/da/link` can consume) can finally stop being two people on one leaderboard.
+                // Also folded into `/cipherclerk`, which is the copy a player can reach:
+                // the two registrations are the same builder on the same handler, so this
+                // is one route spelled in two places, not a second mechanism.
                 fold(commands::link_proof::register_link_web(), None),
                 fold(commands::key::register(), None),
-                // Discord roles as caps — folds as a GROUP (`show`/`unlock`/`grant`
-                // ride along), not a 14th top-level: the global surface stays 13.
+                // Discord roles as caps — folds as a GROUP (`show`/`unlock`/`grant` ride
+                // along) rather than taking a top-level slot of its own.
                 fold(crate::roles_caps::register(), None),
             ],
         ),
-        // 10. /hermes — the confined agent, plus the confined grain + shared doc.
-        hermes_command(),
-        // 11. /federation — the network: status, peers, presence, coordination.
-        top(
+        // The confined agent, plus the confined grain + shared doc.
+        "hermes" => hermes_command(),
+        // The network: status, peers, presence, coordination.
+        "federation" => top(
             "federation",
             "The network — federation status, peers, presence, and coordination",
             vec![
@@ -331,38 +548,73 @@ pub fn global_commands() -> Vec<Value> {
                 fold(commands::channel::register(), None),
                 fold(commands::presence::register(), None),
                 fold(commands::deos::register(), None),
-                // Admin-only maintenance: de-duplicate the `dreggnet-*` offering
-                // categories a restart accreted (gated in the handler on
-                // `config.admin_discord_id`; strictly scoped, never touches
-                // custodial `dregg-<id>` or feed channels).
-                sub(
-                    "cleanup",
-                    "Admin: de-duplicate dreggnet-* offering categories left by restarts",
-                ),
             ],
         ),
-        // 12. /leaderboard — glory, unchanged.
-        command_json(&commands::social::register_leaderboard()),
-        // 13. /help — onboarding + the tour (the old /start) + the map.
-        top(
+        // Glory, unchanged.
+        "leaderboard" => command_json(&commands::social::register_leaderboard()),
+        // Onboarding + the tour (the old /start) + the map.
+        "help" => top(
             "help",
             "How the bot works — onboarding, the 2-minute tour, and the command map",
             vec![],
         ),
-    ]
+        other => panic!(
+            "`{other}` is on SLASH_SURFACE but has no builder in `command_for` \
+             (`every_surface_row_has_a_builder` is the tooth that should have caught this)"
+        ),
+    }
 }
 
-/// `/dregg` — the hub, plus the operator-only `admin` group.
+/// Stamp Discord's `default_member_permissions: "0"` onto a command — no guild member may
+/// invoke it (so the client hides it) unless a guild overwrite grants it or they hold
+/// Administrator. Applied to [`Door::Operator`] rows only.
+fn hide_from_players(mut v: Value) -> Value {
+    if let Value::Object(m) = &mut v {
+        m.insert(
+            "default_member_permissions".into(),
+            Value::String("0".into()),
+        );
+    }
+    v
+}
+
+/// **The GLOBAL slash surface** — the advertised rows of [`SLASH_SURFACE`], in order.
+/// Registered with a bulk PUT, so a name that leaves this list disappears from Discord on
+/// the next boot.
+pub fn global_commands() -> Vec<Value> {
+    SLASH_SURFACE
+        .iter()
+        .filter(|s| advertises(&s.door))
+        .map(|s| {
+            let v = command_for(s.name);
+            if matches!(s.door, Door::Operator(_)) {
+                hide_from_players(v)
+            } else {
+                v
+            }
+        })
+        .collect()
+}
+
+/// **The LAB slash surface** — the un-advertised rows, byte-identical to the JSON they
+/// registered when they were global (same [`command_for`], same handlers). `crate::main`
+/// PUTs these into [`lab_guild_id`] when it is set, and names them in a boot warning when
+/// it is not.
+pub fn lab_commands() -> Vec<Value> {
+    SLASH_SURFACE
+        .iter()
+        .filter(|s| !advertises(&s.door))
+        .map(|s| command_for(s.name))
+        .collect()
+}
+
+/// `/dregg` — the hub, plus the operator-only `admin` group and the category reaper.
 ///
-/// The `admin` group folds in HERE rather than becoming a 14th top-level command: the global
-/// slash surface is exactly 13 by ember's directive (`exactly_thirteen_commands_matching_the_router`),
-/// and the hub is where the bot's own controls belong — it is already the surface that folds the
-/// retired `/status` and `/dashboard` (ops) reads behind buttons.
-///
-/// Discord has no per-SUBCOMMAND permission, so the group is *visible* to everyone, exactly like
-/// the pre-existing `/federation cleanup`. Visibility is not authority: every subcommand under it
-/// is refused for a non-admin by `commands::admin::plan`, which is checked before the subcommand
-/// is even read.
+/// Discord has no per-SUBCOMMAND permission, so nothing here relies on hiding a
+/// subcommand: the whole command carries `default_member_permissions: "0"`
+/// ([`Door::Operator`]), and every subcommand under it re-checks the admin gate anyway —
+/// `commands::admin::plan` before it reads its arguments, and [`handle_cleanup`] against
+/// the pinned `admin_discord_id`.
 fn dregg_command() -> Value {
     let base = command_json(&commands::dashboard::register());
     let description = base
@@ -372,6 +624,14 @@ fn dregg_command() -> Value {
         .to_string();
     let mut options = options_of(&base);
     options.push(fold(commands::admin::register(), None));
+    // De-duplicate the `dreggnet-*` offering categories a restart accreted. It lives on
+    // the operator command rather than under `/federation` (where it used to ride)
+    // BECAUSE it is a per-guild action: it must be runnable in whichever guild grew the
+    // duplicates, and `/federation` is now registered only in the lab guild.
+    options.push(sub(
+        "cleanup",
+        "Admin: de-duplicate dreggnet-* offering categories left by restarts",
+    ));
     top("dregg", &description, options)
 }
 
@@ -388,6 +648,14 @@ fn cipherclerk_command() -> Value {
     options.push(fold(commands::pay::register_balance(), None));
     options.push(fold(commands::pay::register_buy(), None));
     options.push(fold(commands::pay::register_treasury(), None));
+    // ⚑ `/cipherclerk link-web` — the ISSUER half of the phrase-link ceremony: a
+    // single-use code that proves THIS Discord account to the web identity page, so a
+    // player whose web identity is 24 words (not a browser-held root key, which is all
+    // `/tg/link` and `/da/link` can consume) can stop being two people on one
+    // leaderboard. It is the ONE thing off the `/identity` surface that a player of a
+    // shipped game actually needs, so it is folded here — onto the same handler — rather
+    // than left behind in the lab.
+    options.push(fold(commands::link_proof::register_link_web(), None));
     top(
         "cipherclerk",
         "You + your funds — identity, balance, tokens, and the DEC/$DREGG economy",
@@ -411,8 +679,11 @@ fn hermes_command() -> Value {
 
 // ─── the coverage ledger: every retired flat command → its new home ─────────
 
-/// How a retired flat command is reached now. Every entry is asserted
-/// structurally against [`global_commands`] by the coverage test below.
+/// How a retired flat command is reached now. Every entry is asserted structurally
+/// against [`global_commands`] **and** [`lab_commands`] by the coverage test below — the
+/// question it answers is "did any old command lose its typed path in the code?", not
+/// "is it advertised?". Whether the home it names is on the player's `/` menu is the
+/// separate question that `the_lab_surface_is_not_registered_globally` answers.
 pub enum Reach {
     /// Still a top-level command (same name).
     Top,
@@ -485,9 +756,17 @@ pub const OLD_COMMAND_REACH: &[(&str, Reach)] = &[
     ("admin", Reach::Under("dregg")),
 ];
 
-/// The subcommand / group names a registered top-level exposes (test + boot aid).
+/// The subcommand / group names a top-level exposes (test + boot aid).
+///
+/// Searches BOTH surfaces — the advertised one and the lab one — because "does this old
+/// command still have a typed path?" is a question about the code we register, not about
+/// what we currently advertise. Which surface a path landed on is the separate question,
+/// answered by [`advertised_names`] / [`lab_names`] and asserted separately.
 pub fn subcommand_names(top_name: &str) -> Vec<String> {
     global_commands()
+        .into_iter()
+        .chain(lab_commands())
+        .collect::<Vec<_>>()
         .iter()
         .find(|c| c.get("name").and_then(Value::as_str) == Some(top_name))
         .map(|c| {
@@ -529,13 +808,15 @@ fn as_command(
     c
 }
 
-/// `/dregg` — `admin` → the operator surface (gated inside `commands::admin`); anything else is
-/// the hub dashboard, exactly as before.
+/// `/dregg` — `admin` → the operator surface (gated inside `commands::admin`); `cleanup` →
+/// the per-guild category reaper (gated in [`handle_cleanup`]); anything else is the hub
+/// dashboard, exactly as before.
 pub async fn handle_dregg(ctx: &Context, command: &CommandInteraction, state: &BotState) {
     match take_fold(command) {
         Some(("admin", inner)) => {
             commands::admin::handle(ctx, &as_command(command, "admin", inner), state).await
         }
+        Some(("cleanup", _)) => handle_cleanup(ctx, command, state).await,
         _ => commands::dashboard::handle(ctx, command, state).await,
     }
 }
@@ -584,6 +865,10 @@ pub async fn handle_cipherclerk(ctx: &Context, command: &CommandInteraction, sta
         Some(("credits", _)) => commands::pay::handle_balance(ctx, command, state).await,
         Some(("buy-credits", _)) => commands::pay::handle_buy(ctx, command, state).await,
         Some(("treasury", _)) => commands::pay::handle_treasury(ctx, command, state).await,
+        // The web-identity link ceremony, on the SAME handler `/identity link-web` calls.
+        // No options, so the interaction passes straight through rather than being
+        // re-wrapped by `as_command`.
+        Some(("link-web", _)) => commands::link_proof::handle_link_web(ctx, command, state).await,
         // create / balance / address / export / mint / attenuate / tokens /
         // authorize — the cipherclerk module's own dispatch, original shape.
         Some(_) => commands::cipherclerk::handle(ctx, command, state).await,
@@ -745,12 +1030,14 @@ pub async fn handle_federation(ctx: &Context, command: &CommandInteraction, stat
         Some(("deos", inner)) => {
             commands::deos::handle(ctx, &as_command(command, "deos", inner), state).await
         }
-        Some(("cleanup", _)) => handle_cleanup(ctx, command, state).await,
+        // `cleanup` moved to `/dregg cleanup`: it is a per-guild maintenance action and
+        // `/federation` is now registered only in the lab guild, so leaving it here would
+        // have made the reaper unrunnable in whichever guild grew the duplicates.
         _ => respond_menu(ctx, command, federation_view()).await,
     }
 }
 
-/// `/federation cleanup` — ADMIN-ONLY maintenance: de-duplicate this guild's
+/// `/dregg cleanup` — ADMIN-ONLY maintenance: de-duplicate this guild's
 /// `dreggnet-<offering>` offering categories (the restart-duplicate reaper) and
 /// report the counts.
 ///
@@ -1007,6 +1294,12 @@ fn cipherclerk_view() -> (CreateEmbed, Vec<CreateActionRow>) {
             "The three monies",
             "**DEC** — the on-network currency (faucet, send, fees). **$DREGG** — buys \
              run-credits for real-AI runs. **computrons** — what a turn meters.",
+            false,
+        )
+        .field(
+            "One player, one board",
+            "`/cipherclerk link-web` — get a single-use code that proves this Discord \
+             account to your web identity, so a leaderboard sees one of you instead of two.",
             false,
         );
     let rows = vec![
@@ -1481,24 +1774,261 @@ mod tests {
             .collect()
     }
 
-    /// EXACTLY 13 global commands, and they are the names main.rs routes —
-    /// registration, router, and the const stay one surface.
+    /// ⚑ **THE REGISTERED SURFACE IS THE CURATED TABLE.** Reads [`SLASH_SURFACE`] through
+    /// [`advertised_names`], never a second list, so changing ember's mind is one row and
+    /// this test needs no edit — which is the only reason it will still be true next month.
     #[test]
-    fn exactly_thirteen_commands_matching_the_router() {
-        let cmds = global_commands();
+    fn the_registered_surface_is_exactly_the_advertised_rows() {
         assert_eq!(
-            cmds.len(),
-            13,
-            "ember directive: exactly 13 global commands"
-        );
-        assert_eq!(
-            names(&cmds),
-            crate::REGISTERED_COMMAND_NAMES
+            names(&global_commands()),
+            advertised_names()
                 .iter()
                 .map(|s| s.to_string())
                 .collect::<Vec<_>>(),
-            "the registered JSON and REGISTERED_COMMAND_NAMES must agree, in order"
+            "the registered JSON IS the advertised rows of SLASH_SURFACE, in order"
         );
+        assert_eq!(
+            names(&lab_commands()),
+            lab_names()
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>(),
+            "the lab JSON IS the un-advertised rows of SLASH_SURFACE, in order"
+        );
+        // The two surfaces partition the table: nothing is registered twice, nothing is
+        // built and then registered nowhere.
+        let advertised: BTreeSet<&str> = advertised_names().into_iter().collect();
+        let lab: BTreeSet<&str> = lab_names().into_iter().collect();
+        assert!(
+            advertised.is_disjoint(&lab),
+            "a command cannot be both advertised and lab"
+        );
+        assert_eq!(
+            advertised.len() + lab.len(),
+            SLASH_SURFACE.len(),
+            "SLASH_SURFACE has a duplicate name"
+        );
+    }
+
+    /// ⚑ **A PLAYER'S `/` MENU IS SMALL, AND THIS IS THE NUMBER.** Not a derived
+    /// tautology: the count is written down so that quietly re-advertising a surface has
+    /// to come past ember. Ordinary members see the `Player` + `Offering` rows; the
+    /// `Operator` row is registered but hidden from them by Discord.
+    #[test]
+    fn a_stranger_sees_only_the_small_menu() {
+        let visible_to_players: Vec<&str> = SLASH_SURFACE
+            .iter()
+            .filter(|s| advertises(&s.door) && !matches!(s.door, Door::Operator(_)))
+            .map(|s| s.name)
+            .collect();
+        assert_eq!(
+            visible_to_players,
+            vec!["descent", "play", "cipherclerk", "verify", "help"],
+            "the player-visible `/` menu changed — if that is the intent, change this line \
+             too, deliberately"
+        );
+        assert_eq!(
+            advertised_names(),
+            vec!["dregg", "descent", "play", "cipherclerk", "verify", "help"],
+            "the registered set changed — same rule"
+        );
+    }
+
+    /// ⚑ **THE OFFERING-SHAPED DOORS FOLLOW THE SHIP LIST**, both directions. This is the
+    /// derivation the whole design rests on: pare `dreggnet_catalog::SHIPPED_KEYS` and the
+    /// command comes off Discord's menu; re-list it and the command comes back. Nothing
+    /// here re-types a key.
+    #[test]
+    fn the_offering_doors_follow_the_ship_list() {
+        let advertised: BTreeSet<&str> = advertised_names().into_iter().collect();
+        let mut checked = 0usize;
+        for row in SLASH_SURFACE {
+            if let Door::Offering(key) = row.door {
+                checked += 1;
+                assert_eq!(
+                    advertised.contains(row.name),
+                    dreggnet_catalog::is_shipped(key),
+                    "`/{}` is a door to `{key}`, so it must be advertised exactly when \
+                     `{key}` is on dreggnet_catalog::SHIPPED_KEYS",
+                    row.name
+                );
+            }
+        }
+        assert!(
+            checked >= 3,
+            "the offering arm must actually be exercised — {checked} offering-shaped rows"
+        );
+        // And the ones we DO ship are all reachable: as their own advertised command, or
+        // as a `/play open` choice (which is itself derived from the ship list).
+        let play_choices = commands::portfolio::play_keys();
+        for key in dreggnet_catalog::SHIPPED_KEYS {
+            let own_command = SLASH_SURFACE
+                .iter()
+                .any(|s| s.door == Door::Offering(key) && advertised.contains(s.name));
+            assert!(
+                own_command || play_choices.contains(&key),
+                "`{key}` is shipped but has neither an advertised command nor a `/play \
+                 open` choice"
+            );
+        }
+    }
+
+    /// ⚑ **THE LAB IS REGISTERED NOWHERE GLOBAL.** The point of the pare-down: a lab
+    /// command must not be in the bulk-PUT global set, or it is back in every stranger's
+    /// autocomplete. It stays in [`lab_commands`] (and so in `DREGG_LAB_GUILD_ID`), and it
+    /// keeps its router arm — which `crate::main`'s router-surface test asserts.
+    #[test]
+    fn the_lab_surface_is_not_registered_globally() {
+        let global: BTreeSet<String> = names(&global_commands()).into_iter().collect();
+        for name in lab_names() {
+            assert!(
+                !global.contains(name),
+                "`/{name}` is a lab row but is in the global set"
+            );
+        }
+        assert!(
+            !lab_names().is_empty(),
+            "this test is vacuous with an empty lab — if the lab is genuinely empty, delete \
+             it and the DREGG_LAB_GUILD_ID path rather than leaving a gate that cannot fire"
+        );
+    }
+
+    /// ⚑ **EVERY LAB ROW SAYS WHAT IT COSTS.** `Door::Lab` is the one variant that takes a
+    /// typed path away from a player, so a bare marker is not allowed: the row has to name
+    /// the capability that goes with it, in enough words to be read as a loss.
+    #[test]
+    fn the_lab_rows_name_what_they_cost() {
+        for row in SLASH_SURFACE {
+            let (kind, why) = match row.door {
+                Door::Offering(_) => continue,
+                Door::Player(why) => ("Player", why),
+                Door::Operator(why) => ("Operator", why),
+                Door::Lab(why) => ("Lab", why),
+            };
+            assert!(
+                why.len() > 40,
+                "the {kind} row `/{}` must state its reason, not gesture at one: {why:?}",
+                row.name
+            );
+        }
+    }
+
+    /// ⚑ **NO ADVERTISED SURFACE ADVERTISES A LAB COMMAND.** The registration JSON is not
+    /// the only shelf: a menu embed or the `/help` map naming `/gallery` is just as loud,
+    /// and a pointer at a command Discord will refuse to route is worse than no pointer.
+    /// Driven over [`lab_names`], so re-listing something fixes this test too.
+    #[test]
+    fn no_advertised_surface_names_a_lab_command() {
+        let mut shelves: Vec<(String, String)> = vec![(
+            "the registered JSON".to_string(),
+            serde_json::to_value(global_commands()).unwrap().to_string(),
+        )];
+        for (label, view) in [
+            ("/play menu", play_view()),
+            ("/cipherclerk menu", cipherclerk_view()),
+            ("/verify menu", verify_view()),
+            ("/descent menu", descent_view()),
+            ("/help map", help_view()),
+        ] {
+            let (embed, rows) = view;
+            let mut text = serde_json::to_value(embed).unwrap().to_string();
+            text.push_str(&serde_json::to_value(rows).unwrap().to_string());
+            shelves.push((label.to_string(), text));
+        }
+        for name in lab_names() {
+            for (label, text) in &shelves {
+                assert!(
+                    !mentions_command(text, name),
+                    "{label} advertises `/{name}`, which this build does not register \
+                     globally — either re-list it on SLASH_SURFACE or stop pointing at it"
+                );
+            }
+        }
+        // Not vacuous: the same scan DOES fire on an advertised command's own name.
+        assert!(
+            mentions_command(
+                &serde_json::to_value(play_view().0).unwrap().to_string(),
+                "play"
+            ),
+            "the scanner must be able to see a command mention at all"
+        );
+    }
+
+    /// Whether `text` names the slash command `/{name}` — a whole path segment, so
+    /// `/api/federations` is not a mention of `/federation` and `/identity` inside
+    /// `/api/identity/credentials` is not a mention of `/identity`.
+    fn mentions_command(text: &str, name: &str) -> bool {
+        let token = format!("/{name}");
+        let bytes = text.as_bytes();
+        text.match_indices(&token).any(|(at, _)| {
+            let before_ok = at == 0 || !bytes[at - 1].is_ascii_alphanumeric();
+            let after = at + token.len();
+            let after_ok = after >= bytes.len()
+                || !(bytes[after].is_ascii_alphanumeric()
+                    || bytes[after] == b'-'
+                    || bytes[after] == b'_'
+                    || bytes[after] == b'/');
+            before_ok && after_ok
+        })
+    }
+
+    /// ⚑ **THE OPERATOR ROW IS HIDDEN AND THE PLAYER ROWS ARE NOT.** The mechanism, not
+    /// the intention: `default_member_permissions: "0"` is what actually keeps `/dregg`
+    /// out of a member's autocomplete, and stamping it on a player command would hide the
+    /// games from everyone.
+    #[test]
+    fn only_the_operator_rows_are_hidden_from_players() {
+        let cmds = global_commands();
+        for row in SLASH_SURFACE.iter().filter(|s| advertises(&s.door)) {
+            let json = cmds
+                .iter()
+                .find(|c| c["name"].as_str() == Some(row.name))
+                .expect("an advertised row is registered");
+            let perms = json
+                .get("default_member_permissions")
+                .and_then(Value::as_str);
+            if matches!(row.door, Door::Operator(_)) {
+                assert_eq!(
+                    perms,
+                    Some("0"),
+                    "`/{}` is an operator row and must carry default_member_permissions=0",
+                    row.name
+                );
+            } else {
+                assert_eq!(
+                    perms, None,
+                    "`/{}` is a player-facing row and must NOT be permission-gated",
+                    row.name
+                );
+            }
+        }
+        // ⚑ Ember does not lose the operator surface: it is REGISTERED (globally, so it is
+        // present in every guild and in a DM with the bot), merely hidden from members who
+        // cannot use it. An operator row that stopped being registered would be a genuine
+        // loss of access, so assert the registration and not just the flag.
+        assert!(
+            SLASH_SURFACE
+                .iter()
+                .any(|s| matches!(s.door, Door::Operator(_)) && advertises(&s.door)),
+            "at least one operator row must stay registered, or ember loses ops access"
+        );
+    }
+
+    /// Every row builds, and `command_for` has no orphan arm claiming a name the table
+    /// does not carry. (`command_for` panics on an unknown name; this is the other
+    /// direction, and it is what makes that panic unreachable in production.)
+    #[test]
+    fn every_surface_row_has_a_builder() {
+        for row in SLASH_SURFACE {
+            let v = command_for(row.name);
+            assert_eq!(
+                v["name"].as_str(),
+                Some(row.name),
+                "`command_for({:?})` built a command named {:?}",
+                row.name,
+                v["name"]
+            );
+        }
     }
 
     /// Discord structural limits: ≤25 options per command, groups contain only
@@ -1547,7 +2077,11 @@ mod tests {
                 other => panic!("unexpected option type {other} for {name}"),
             }
         }
-        for cmd in global_commands() {
+        // BOTH surfaces: the lab set is PUT to a guild the same way the global set is PUT
+        // to the application, so malformed lab JSON is a 400 that takes the whole guild
+        // registration with it — exactly as invisible as an unregistered command, and
+        // exactly the kind of silent subtraction this file is trying to stop.
+        for cmd in global_commands().into_iter().chain(lab_commands()) {
             let name = cmd["name"].as_str().expect("command name");
             assert!(name.len() <= 32);
             let desc = cmd["description"].as_str().expect("command description");
@@ -1574,11 +2108,16 @@ mod tests {
         }
     }
 
-    /// EVERY retired flat command keeps a path: still a top-level, a folded
-    /// subcommand/group under its new home, or a button on a menu that exists.
+    /// EVERY retired flat command keeps a path IN THE CODE: still a top-level, a folded
+    /// subcommand/group under its new home, or a button on a menu that exists — on the
+    /// advertised surface or the lab one. Paring the menu is allowed to move a path; it is
+    /// not allowed to silently delete one.
     #[test]
     fn every_old_command_is_still_reachable() {
-        let cmds = global_commands();
+        let cmds: Vec<Value> = global_commands()
+            .into_iter()
+            .chain(lab_commands())
+            .collect();
         let tops: BTreeSet<String> = names(&cmds).into_iter().collect();
         for (old, reach) in OLD_COMMAND_REACH {
             match reach {

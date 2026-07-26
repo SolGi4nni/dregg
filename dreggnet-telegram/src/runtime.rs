@@ -811,15 +811,39 @@ pub fn route_text_decided<T: Transport>(
     };
     match cmd {
         "/help" => {
+            // ⚑ `/help` is a SHELF IN PROSE: its flagship lines say `/open automatafl` in as many
+            // words, and in a group two of those three are a route to a refusal. So the chat's own
+            // shelf note rides along — derived from `Offering::hidden_information`, `None` in a DM,
+            // so a group reader is told the constraint here too and not only at the menu. It is
+            // APPENDED rather than folded into the generated text so `help_text()` stays the pure,
+            // chat-independent registry rendering every other caller and test reads.
+            let note = host.shelf_note(chat_id, topic);
+            let with_note = |mut text: String| {
+                if let Some(note) = &note {
+                    // Telegram refuses a `sendMessage` over its ceiling outright, so a help text
+                    // that would not fit keeps the help and drops the note: the menu carries the
+                    // same warning, and answering a lost user with NOTHING is the worse failure.
+                    if text.chars().count() + note.chars().count() + 2
+                        <= crate::api::TELEGRAM_TEXT_LIMIT
+                    {
+                        text.push_str("\n\n");
+                        text.push_str(note);
+                    }
+                }
+                text
+            };
             // `/help <cmd>` renders one entry; an unrecognised argument says so and falls back to
             // the full list rather than silently showing everything.
             if rest.is_empty() {
-                return (Some(help_text()), TextDecision::Help);
+                return (Some(with_note(help_text())), TextDecision::Help);
             }
             match crate::commands::command_help(rest) {
-                Some(one) => (Some(one), TextDecision::Help),
+                Some(one) => (Some(with_note(one)), TextDecision::Help),
                 None => (
-                    Some(format!("No command `{rest}`.\n\n{}", help_text())),
+                    Some(with_note(format!(
+                        "No command `{rest}`.\n\n{}",
+                        help_text()
+                    ))),
                     TextDecision::Help,
                 ),
             }

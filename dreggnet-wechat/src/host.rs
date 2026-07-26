@@ -295,6 +295,20 @@ impl<T: Transport> WeChatHost<T> {
     /// reply list is one line per registered offering (a reply of its number opens that offering in
     /// the user's conversation). Records the participant as "browsing the menu". Returns the
     /// participant's `wx:<openid>` [`SessionId`].
+    ///
+    /// ⚑ **Every option here is live, and that is correct on this transport** — no
+    /// [`dreggnet_offerings::shelf`] gate applies. That gate withholds a live control for an
+    /// offering declaring [`dreggnet_offerings::Offering::hidden_information`] when the surface has
+    /// MORE THAN ONE READER (Telegram's group message, which every member reads and every move
+    /// edits in place). A WeChat OA surface never is: the conversation is strictly 1:1, so this
+    /// numbered list and the surfaces it opens are
+    /// [`ShelfSurface::Private`](dreggnet_offerings::shelf::ShelfSurface::Private) by
+    /// construction — including [`join`](Self::join), where several openids act on ONE room session
+    /// but each reads their OWN per-participant projection in their OWN conversation (the private
+    /// `present_room` renders `render_for` per psid). A hidden hand reaches
+    /// exactly the hand's owner here, so there is nothing to dim and nothing to refuse. If WeChat
+    /// ever grows a genuinely multi-reader surface (a Mini-Program group view), THAT surface is
+    /// where the gate goes.
     pub fn present_offerings_menu(&mut self, openid: &str) -> SessionId {
         let psid = WeChatFrontend::<T>::session_id(openid);
         let offerings = self.list_advertised_offerings();
@@ -308,10 +322,14 @@ impl<T: Transport> WeChatHost<T> {
                 turn: TURN_OPEN.to_string(),
                 arg: i as i64,
                 enabled: true,
+                wants_text: false,
             })
             .collect();
         let surface = Surface(ViewNode::Section {
-            title: "dregg — all games, any surface".to_string(),
+            title: format!(
+                "{} — all games, any surface",
+                dreggnet_catalog::SURFACE_NAME
+            ),
             tag: "accent".to_string(),
             children: vec![
                 ViewNode::Text(

@@ -76,7 +76,10 @@ pub const COMMANDS: &[BotCommand] = &[
         summary: "the game shelf — a button per game",
         detail: "Posts the catalog as an inline keyboard; a press opens that offering in this \
                  chat. Always posts a FRESH message at the bottom of the chat, so asking for the \
-                 menu always produces something you can see.",
+                 menu always produces something you can see. In a group, a game that has to keep \
+                 part of itself hidden from the other player is shown DIMMED (🔒) with the reason \
+                 and the DM route, because a group's board is one message every member reads — the \
+                 shelf says so before you press, not after.",
         in_menu: true,
     },
     BotCommand {
@@ -85,11 +88,11 @@ pub const COMMANDS: &[BotCommand] = &[
         args: "<key>",
         summary: "open a game here (e.g. /open descent)",
         detail: "Opens (or re-presents) `<key>` in this chat as its own message. Keys come from \
-                 /offerings. An offering that hides per-player state (tug, automatafl) is refused \
-                 in a group or forum topic — a group's surface is ONE message every member reads \
-                 — and redirects you to a DM. Re-opening something already open reposts its live \
-                 surface at the bottom of the chat rather than editing a message you have \
-                 scrolled past.",
+                 /offerings. An offering that hides per-player state is refused in a group or \
+                 forum topic — a group's surface is ONE message every member reads — and redirects \
+                 you to a DM; /offerings dims exactly those rows and names them, so you do not \
+                 have to guess which. Re-opening something already open reposts its live surface \
+                 at the bottom of the chat rather than editing a message you have scrolled past.",
         in_menu: true,
     },
     BotCommand {
