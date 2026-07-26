@@ -10,7 +10,25 @@ rule in it was paid for by an incident in the last session.
 
 | Box | Role | Reachable via | Public surface |
 |---|---|---|---|
-| **edge** (`dreggnet-staging`) | AWS t3.medium, us-east-1c, `i-03365e2bcf4ea08b2`, EIP `34.224.208.52`. Tailnet exit + docker stack. | EC2 Instance Connect (recipe in [`aws/README.md`](aws/README.md)) | EIP; node `:8420`/`:9420-udp` bound `0.0.0.0` |
+| **edge** (`dreggnet-staging`) | AWS t3.medium, us-east-1c, `i-03365e2bcf4ea08b2`, EIP `34.224.208.52`. Tailnet exit + docker stack. | EC2 Instance Connect (recipe in [`aws/README.md`](aws/README.md)) | EIP; node `:8420`/`:9420-udp` bound `0.0.0.0`; **and five DNS names — see below** |
+
+### ⚠ The edge's public surface is bigger than this repo says
+
+Corrected 2026-07-26 by probing every name that resolves to `34.224.208.52`.
+The row above described the ports and missed the names. All five of these are
+that one box:
+
+| name | probe | what it is |
+|---|---|---|
+| `arcade.dregg.net` | `/` `/health` `/descent/play` `/offerings` `/tg` all **200** | A live play surface (`DreggNet Cloud — play + verify`) including the Telegram mini-app entry. **Undocumented** — `rg arcade` finds no hostname match anywhere in this repo, and it has no unit, no Caddyfile entry, and no compose service. Not a node: `/status` and `/api/cells` 404 while `node/src/api.rs` routes both. |
+| `headscale.dreggnet.fg-goose.online` | **200** | Tailnet A's control plane. See `~/dev/dregg-infra/edge/RUNBOOK.md`. |
+| `portal.dregg.studio` | **200**, `Last-Modified: 2026-06-28` | The static "live network" portal. Frozen bytes, still served. |
+| `hello.dregg.works` | https **000**, http **308** | Broken. Caddy holds no cert for the name. |
+| `devnet.dregg.fg-goose.online` | https **000**, http **308** | Same failure. The retired devnet-era name. |
+
+So "restart the container, not the instance" is not the only hazard here — a
+takedown of this box takes a working play surface with it. The ordering lives in
+`~/dev/dregg-infra/edge/RUNBOOK.md`.
 | **hbox** (`hbox-dregg`) | AMD Navi22 GPU, 24c/123G. **Build + prove box AND the live games demo host** (this is a problem — see PRACTICES §1). | `ssh hbox` / tailnet `100.95.240.73` | `https://hbox-dregg.skunk-emperor.ts.net` via `tailscale funnel` |
 | **persvati** | CPU build/test box. On **both** tailnets. | `ssh persvati` | none |
 
