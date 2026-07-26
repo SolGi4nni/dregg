@@ -199,7 +199,15 @@ impl TurnExecutor {
                 public_key,
                 token_id,
                 balance,
-            } => self.apply_create_cell(ledger, path, journal, public_key, token_id, *balance),
+            } => self.apply_create_cell(
+                ledger,
+                path,
+                action_target,
+                journal,
+                public_key,
+                token_id,
+                *balance,
+            ),
             Effect::CreateHybridCell {
                 public_key,
                 token_id,
@@ -209,6 +217,7 @@ impl TurnExecutor {
             } => self.apply_create_hybrid_cell(
                 ledger,
                 path,
+                action_target,
                 journal,
                 public_key,
                 token_id,
@@ -350,6 +359,7 @@ impl TurnExecutor {
             } => self.apply_create_cell_from_factory(
                 ledger,
                 path,
+                action_target,
                 journal,
                 factory_vk,
                 owner_pubkey,
@@ -660,8 +670,17 @@ impl TurnExecutor {
         // move `recKExecAsset` (`Dregg2.Exec.RecordKernel.lean:655`, via
         // `recTransferBal`) rewrites ONLY the `a` column of the
         // `CellId → AssetId → ℤ` ledger — it debits `src` and credits `dst` in
-        // ONE asset. A cell's committed `token_id` IS its asset identity, so a
-        // faithful single-column move requires `from.token_id() == to.token_id()`.
+        // ONE asset. A cell's committed `asset` IS its asset identity, so a
+        // faithful single-column move requires `from.asset() == to.asset()`.
+        //
+        // `asset()`, NOT `token_id()`: those were the same field until the
+        // name-salt/currency split (see the `dregg_cell::Cell` type docs), and
+        // reading the salt as a currency is what made every factory-born cell
+        // its own asset class and therefore unfundable. The guard is UNCHANGED
+        // in strength — for any cell that predates the split `asset() ==
+        // from_bytes(token_id())`, so this rejects exactly what it rejected
+        // before, plus it now rejects a cell whose salt happens to match but
+        // whose currency does not.
         // A CROSS-asset Transfer (source asset X, dest asset Y, X ≠ Y) is NOT a
         // single-column move: it debits Σbal[X] and credits Σbal[Y], minting
         // value in asset Y out of worthless asset X. The apply-time Transfer path
@@ -670,12 +689,12 @@ impl TurnExecutor {
         // per-asset `Σδ=0` gate cannot see this teleport — the guard MUST live
         // here. A value SWAP is two same-asset transfers (or a dedicated effect),
         // never one cross-asset Transfer.
-        if from_cell.token_id() != to_cell.token_id() {
+        if from_cell.asset() != to_cell.asset() {
             return Err((
                 TurnError::InvalidEffect {
                     reason: format!(
                         "cross-asset Transfer rejected: source {from} and destination {to} hold \
-                         different asset classes (token_id) — a Transfer moves a SINGLE asset \
+                         different asset classes — a Transfer moves a SINGLE asset \
                          column (kernel recTransferBal); a value swap is two same-asset transfers \
                          or a dedicated effect, never one cross-asset Transfer"
                     ),
@@ -1040,10 +1059,39 @@ impl TurnExecutor {
         Ok(())
     }
 
+    /// THE ASSET A CELL IS BORN IN: the asset of the cell whose authority the
+    /// creating action exercises (`action_target` — the parent).
+    ///
+    /// The `token_id` an effect carries is the child's NAME SALT (the second
+    /// `derive_raw` input, which is what lets one owner key have many per-tag
+    /// cells); it is NOT a currency the effect gets to conjure. Before the
+    /// split those were one field, so `CreateCell { token_id: <a tag> }` minted
+    /// a cell in a private currency nobody could ever fund — the whole
+    /// create-then-fund pattern in `dregg_sdk::factories` and the node's
+    /// channel / DKG / trustline / bond services was refused by the
+    /// `apply_transfer` guard for exactly that reason.
+    ///
+    /// Inheriting the parent's asset STRICTLY NARROWS what a turn can mint:
+    /// before, an effect chose the new cell's asset freely from its payload;
+    /// now a cell can only be born into a currency the creator already holds a
+    /// cell in. It moves no value either way (creation forces balance 0), and
+    /// creating a genuinely NEW asset remains what it always was — a direct
+    /// `Cell::new` at genesis, not an effect.
+    ///
+    /// A parent absent from the ledger (only reachable for a target the caller
+    /// could not have acted through) falls back to the pre-split reading.
+    fn birth_asset(ledger: &Ledger, action_target: &CellId, token_id: &[u8; 32]) -> CellId {
+        ledger
+            .get(action_target)
+            .map(|parent| parent.asset())
+            .unwrap_or_else(|| CellId::from_bytes(*token_id))
+    }
+
     fn apply_create_cell(
         &self,
         ledger: &mut Ledger,
         path: &[usize],
+        action_target: &CellId,
         journal: &mut LedgerJournal,
         public_key: &[u8; 32],
         token_id: &[u8; 32],
@@ -1058,7 +1106,8 @@ impl TurnExecutor {
                 path.to_vec(),
             ));
         }
-        let new_cell = Cell::with_balance(*public_key, *token_id, 0);
+        let asset = Self::birth_asset(ledger, action_target, token_id);
+        let new_cell = Cell::with_balance(*public_key, *token_id, 0).in_asset(asset);
         let id = new_cell.id();
         ledger
             .insert_cell(new_cell)
@@ -1067,10 +1116,12 @@ impl TurnExecutor {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn apply_create_hybrid_cell(
         &self,
         ledger: &mut Ledger,
         path: &[usize],
+        action_target: &CellId,
         journal: &mut LedgerJournal,
         public_key: &[u8; 32],
         token_id: &[u8; 32],
@@ -1108,6 +1159,7 @@ impl TurnExecutor {
                 path.to_vec(),
             ));
         }
+        let asset = Self::birth_asset(ledger, action_target, token_id);
         let new_cell = Cell::with_hybrid_balance(*public_key, ml_dsa_public_key, *token_id, 0)
             .map_err(|error| {
                 (
@@ -1116,7 +1168,8 @@ impl TurnExecutor {
                     },
                     path.to_vec(),
                 )
-            })?;
+            })?
+            .in_asset(asset);
         ledger
             .insert_cell(new_cell)
             .map_err(|_| (TurnError::CellAlreadyExists { id }, path.to_vec()))?;
@@ -2876,9 +2929,13 @@ impl TurnExecutor {
         let now = self.current_timestamp as u64;
         let snapshot: Vec<dregg_cell::CapabilityRef> =
             parent_cell_data.capabilities.iter().cloned().collect();
+        // The child is born in the PARENT's currency (`Self::birth_asset`);
+        // `child_token_id` is its name salt.
+        let child_asset = parent_cell_data.asset();
 
         let child_id = CellId::derive_raw(child_public_key, child_token_id);
-        let mut child_cell = Cell::with_balance(*child_public_key, *child_token_id, 0);
+        let mut child_cell =
+            Cell::with_balance(*child_public_key, *child_token_id, 0).in_asset(child_asset);
         child_cell.delegate = Some(*action_target);
         let clist_bytes = postcard::to_allocvec(&snapshot).unwrap_or_default();
         let clist_commitment = dregg_cell::DelegatedRef::compute_clist_commitment(&clist_bytes);
@@ -3076,10 +3133,12 @@ impl TurnExecutor {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn apply_create_cell_from_factory(
         &self,
         ledger: &mut Ledger,
         path: &[usize],
+        action_target: &CellId,
         journal: &mut LedgerJournal,
         factory_vk: &[u8; 32],
         owner_pubkey: &[u8; 32],
@@ -3156,12 +3215,18 @@ impl TurnExecutor {
             }
         };
 
-        // Create the cell.
+        // Create the cell. THE ASSET IS INHERITED, THE SALT IS THE PAYLOAD'S:
+        // `token_id` names this deal (one settlement cell per owner per deal),
+        // and the born cell is denominated in the creating cell's currency so
+        // the fund `Transfer` that immediately follows is a same-asset move.
+        // See `Self::birth_asset`.
         let new_cell_id = CellId::derive_raw(owner_pubkey, token_id);
+        let asset = Self::birth_asset(ledger, action_target, token_id);
         let mut new_cell = match params.mode {
             dregg_cell::CellMode::Hosted => Cell::new_hosted(*owner_pubkey, *token_id),
             dregg_cell::CellMode::Sovereign => Cell::new(*owner_pubkey, *token_id),
-        };
+        }
+        .in_asset(asset);
 
         // Set initial fields.
         for (idx, val) in &params.initial_fields {
@@ -3527,8 +3592,11 @@ impl TurnExecutor {
         // POSITIVE here (it accumulates burned value), not negative; the
         // per-turn delta is still exactly zero. Self-burn stays permissionless
         // (no mint-auth gate — that is Stage 3).
-        let token_id = match ledger.get(target) {
-            Some(c) => *c.token_id(),
+        // The well lives in the target's CURRENCY (`asset()`), not its name
+        // salt: a burn is a conserving holder→well MOVE and the guard in
+        // `apply_transfer` is welded to the same reading.
+        let asset_bytes = match ledger.get(target) {
+            Some(c) => *c.asset().as_bytes(),
             None => return Err((TurnError::CellNotFound { id: *target }, path.to_vec())),
         };
         let well_id = self
@@ -3559,7 +3627,7 @@ impl TurnExecutor {
             // target's asset class; its creation is journaled so a later effect
             // failure rolls it back (the cell is removed).
             if !ledger.contains(&well_id) {
-                let (well_pubkey, derived_id) = Self::derive_issuer_well(&token_id);
+                let (well_pubkey, derived_id) = Self::derive_issuer_well(&asset_bytes);
                 // The well id must be the content-addressed id of the cell we
                 // create — guaranteed because `issuer_well_for` derived it the
                 // same way for an unregistered asset. A registered (override)
@@ -3579,7 +3647,7 @@ impl TurnExecutor {
                         path.to_vec(),
                     ));
                 }
-                let well_cell = Cell::with_balance(well_pubkey, token_id, 0);
+                let well_cell = Cell::with_balance(well_pubkey, asset_bytes, 0);
                 ledger.insert_cell(well_cell).map_err(|e| {
                     (
                         TurnError::InvalidEffect {
@@ -3716,10 +3784,10 @@ impl TurnExecutor {
             ));
         }
 
-        // Resolve the target asset's ISSUER WELL (from `target`'s token_id, NOT
-        // a field — same resolution as burn).
-        let token_id = match ledger.get(target) {
-            Some(c) => *c.token_id(),
+        // Resolve the target asset's ISSUER WELL (from `target`'s ASSET, NOT
+        // a field and NOT its name salt — same resolution as burn).
+        let asset_bytes = match ledger.get(target) {
+            Some(c) => *c.asset().as_bytes(),
             None => return Err((TurnError::CellNotFound { id: *target }, path.to_vec())),
         };
         let well_id = self
@@ -3754,7 +3822,7 @@ impl TurnExecutor {
         // Lazily materialize the well if absent — journaled, rollback-safe;
         // identical to burn's lazy-create (the derived id must match).
         if !ledger.contains(&well_id) {
-            let (well_pubkey, derived_id) = Self::derive_issuer_well(&token_id);
+            let (well_pubkey, derived_id) = Self::derive_issuer_well(&asset_bytes);
             if well_id != derived_id {
                 return Err((
                     TurnError::InvalidEffect {
@@ -3765,7 +3833,7 @@ impl TurnExecutor {
                     path.to_vec(),
                 ));
             }
-            let well_cell = Cell::with_balance(well_pubkey, token_id, 0);
+            let well_cell = Cell::with_balance(well_pubkey, asset_bytes, 0);
             ledger.insert_cell(well_cell).map_err(|e| {
                 (
                     TurnError::InvalidEffect {

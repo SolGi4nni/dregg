@@ -230,6 +230,20 @@ pub fn compute_canonical_state_commitment(cell: &Cell) -> [u8; 32] {
             hasher.update(&[0]);
         }
     }
+    // ---- Asset (v12) ----
+    // The cell's currency, absorbed ONLY when it diverges from the name salt
+    // already absorbed just above — `Cell::asset` is normalized so `None` means
+    // "the salt IS the asset", which is the byte-for-byte pre-split reading.
+    // Absorbing nothing in that case is what keeps every pre-split cell's
+    // canonical commitment, Merkle leaf and rotated authority digest EXACTLY as
+    // they were; it is the same shape `authority_residue_bytes` already uses for
+    // a bound PQ identity. The domain-separated tag means a split cell can never
+    // collide with an unsplit one (an unsplit cell absorbs the fixed-shape mode
+    // byte next, never a 19-byte tag).
+    if let Some(asset) = &cell.asset {
+        hasher.update(b"dregg-cell:asset-v1");
+        hasher.update(asset.as_bytes());
+    }
 
     // ---- Mode ----
     let mode_byte: u8 = match cell.mode {
@@ -984,6 +998,16 @@ pub fn authority_residue_bytes(cell: &Cell) -> Vec<u8> {
         bytes.extend_from_slice(b"dregg-cell:pq-identity-v1");
         bytes.extend_from_slice(&identity.key_epoch.to_le_bytes());
         bytes.extend_from_slice(&identity.ml_dsa_key_commitment);
+    }
+    // The cell's ASSET is authority-bearing: it decides which single balance
+    // column an `Effect::Transfer` is allowed to move (`apply.rs`), so a
+    // rotated descriptor that did not carry it could be substituted for one in
+    // another currency. Same residue shape as the PQ identity directly above —
+    // absorbed only when it diverges from the salt, so every pre-split
+    // descriptor stays byte-stable across all eight authority-digest lanes.
+    if let Some(asset) = &cell.asset {
+        bytes.extend_from_slice(b"dregg-cell:asset-v1");
+        bytes.extend_from_slice(asset.as_bytes());
     }
 
     // ---- Mode ----

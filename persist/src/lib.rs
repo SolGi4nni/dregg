@@ -246,7 +246,17 @@ pub struct PersistentStore {
 impl PersistentStore {
     /// Canonical-state re-genesis epoch installed in [`tables::METADATA`].
     /// Epoch 11 pairs the exact fields-root leaf with ledger-root v3.
-    pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = 11;
+    ///
+    /// Epoch 12 splits `Cell.token_id` into a NAME SALT plus a separate
+    /// [`dregg_cell::Cell::asset`] (the currency the cell's balance is
+    /// denominated in). `asset` is a trailing serialized field and postcard is
+    /// positional, so a pre-v12 `LedgerCheckpoint` cannot be decoded — the gate
+    /// below refuses such a store outright ("re-genesis is required") rather
+    /// than reinterpreting it. That refusal IS the migration: no live ledger
+    /// carries value on this tree (the devnet was decommissioned 2026-06-22 and
+    /// no `*.redb` is tracked in git), so the correct answer for an existing
+    /// store is to re-genesis it, exactly as the v10→v11 fields-root change did.
+    pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = 12;
 
     /// Open a persistent store backed by a file on disk.
     ///

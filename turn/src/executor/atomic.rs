@@ -297,16 +297,24 @@ impl TurnExecutor {
     // legs until every prover leg populates the class.
 
     /// Derive the asset / issuer-cell class for a cell from its committed
-    /// `token_id` (dregg3: AssetId := issuer-cell). Folds the 32-byte token_id
+    /// `asset` (dregg3: AssetId := issuer-cell). Folds the 32-byte asset id
     /// to a single field element (the `BabyBear` the cross-cell collector
-    /// partitions on). A cell absent from the ledger (or with the zero token_id,
+    /// partitions on). A cell absent from the ledger (or with the zero asset,
     /// the native computron asset) derives a stable class.
+    ///
+    /// `asset()`, not `token_id()`: the conservation partition must group by
+    /// CURRENCY, and since the salt/asset split the name salt is not one. For
+    /// any pre-split cell the two are equal, so every existing partition is
+    /// unchanged.
     pub(super) fn asset_class_for_cell(
         ledger: &Ledger,
         cell: &CellId,
     ) -> dregg_circuit::field::BabyBear {
-        let token_id: [u8; 32] = ledger.get(cell).map(|c| *c.token_id()).unwrap_or([0u8; 32]);
-        Self::fold_token_id_to_asset(&token_id)
+        let asset: [u8; 32] = ledger
+            .get(cell)
+            .map(|c| *c.asset().as_bytes())
+            .unwrap_or([0u8; 32]);
+        Self::fold_token_id_to_asset(&asset)
     }
 
     /// Fold a 32-byte `token_id` to a single asset-class field element.

@@ -2252,8 +2252,9 @@ impl TurnExecutor {
     /// EVERY asset. The well's signing key is a domain-separated derivation
     /// over the asset, and its id is the ordinary content-addressed
     /// `CellId::derive_raw(pubkey, token_id)` — so the well is a real signed
-    /// cell in the SAME asset class as its holders (its `token_id` matches), a
-    /// negative-capable `−supply` account.
+    /// cell in the SAME asset class as its holders — the well's name salt IS
+    /// the asset, so `well.asset() == asset` — a negative-capable `−supply`
+    /// account.
     ///
     /// SUPPLY-MODEL Stage 1 (`.docs-history-noclaude/SUPPLY-MODEL.md`): this is the lazy
     /// per-asset well that makes burn a CONSERVING move (holder→well) for any
@@ -2272,21 +2273,26 @@ impl TurnExecutor {
         (well_pubkey, well_id)
     }
 
-    /// Resolve the ISSUER WELL for a cell's asset (`token_id`): the explicitly
-    /// registered well if one exists (genesis override), else the deterministic
+    /// Resolve the ISSUER WELL for a cell's ASSET: the explicitly registered
+    /// well if one exists (genesis override), else the deterministic
     /// lazily-derived per-asset well. Returns `None` only when the cell itself
     /// is absent from the ledger (no asset to resolve).
+    ///
+    /// Keyed on `cell.asset()`, NOT on its name salt: a burn is a
+    /// holder→well MOVE and must therefore land in the holder's CURRENCY. For
+    /// any cell that predates the salt/asset split the two coincide, so the
+    /// registered genesis wells resolve exactly as before.
     ///
     /// SUPPLY-MODEL Stage 1: EVERY asset now resolves a well, so a burn is
     /// always a conserving holder→well move — the bare-debit (`Σδ≠0`) path is
     /// retired.
     pub(super) fn issuer_well_for(&self, ledger: &Ledger, cell: &CellId) -> Option<CellId> {
-        let token_id = *ledger.get(cell)?.token_id();
+        let asset = *ledger.get(cell)?.asset().as_bytes();
         Some(
             self.issuer_wells
-                .get(&token_id)
+                .get(&asset)
                 .copied()
-                .unwrap_or_else(|| Self::derive_issuer_well(&token_id).1),
+                .unwrap_or_else(|| Self::derive_issuer_well(&asset).1),
         )
     }
 

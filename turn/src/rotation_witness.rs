@@ -536,10 +536,13 @@ pub fn produce(
 
     let iroot_val = iroot(receipt_hashes);
     let state_commit = wire_commit(&pre_limbs, iroot_val);
-    // The per-cell asset class (the fold of the cell's committed token_id) the
-    // light-client conservation partition keys on — the SAME fold the executor's
-    // collector uses, so the proof-bound class agrees with the ledger class.
-    let asset_class = dregg_circuit::block_conservation::fold_token_id_to_asset(cell.token_id());
+    // The per-cell asset class (the fold of the cell's committed ASSET — its
+    // currency, not its name salt) the light-client conservation partition keys
+    // on — the SAME fold the executor's collector uses
+    // (`atomic::asset_class_for_cell`), so the proof-bound class agrees with
+    // the ledger class.
+    let asset_class =
+        dregg_circuit::block_conservation::fold_token_id_to_asset(cell.asset().as_bytes());
     RotationWitness {
         pre_limbs,
         iroot: iroot_val,

@@ -307,11 +307,33 @@ pub fn ml_dsa_public_key_commitment(public_key: &[u8]) -> Result<[u8; 32], CellP
 /// A Cell is an isolated agent execution context.
 /// This is the agent-model analog of a Mina zkApp account.
 ///
-/// Audit P0-1 sealing: the identity-bearing fields `id`, `public_key`, and
-/// `token_id` are `pub(crate)` rather than `pub` — external code must use the
-/// accessors [`Cell::id`], [`Cell::public_key`], [`Cell::token_id`] for reads
-/// and go through `Ledger::update_with` for mutations. This preserves the
-/// content-address invariant `id == derive_raw(public_key, token_id)` (P2-3).
+/// Audit P0-1 sealing: the identity-bearing fields `id`, `public_key`,
+/// `token_id` and `asset` are `pub(crate)` rather than `pub` — external code
+/// must use the accessors [`Cell::id`], [`Cell::public_key`],
+/// [`Cell::token_id`], [`Cell::asset`] for reads and go through
+/// `Ledger::update_with` for mutations. This preserves the content-address
+/// invariant `id == derive_raw(public_key, token_id)` (P2-3).
+///
+/// # `token_id` is a NAME SALT; `asset` is the CURRENCY
+///
+/// `token_id` used to do two incompatible jobs: it was the second input to
+/// `derive_raw` (so it is the only free axis an app has for "one cell per
+/// (owner, tag)") AND it was read as the cell's asset class by the
+/// single-asset-column `Effect::Transfer` guard
+/// (`turn/src/executor/apply.rs`). Those two readings collide: every app that
+/// needs a per-tag cell (`channels_service::channel_token_id`,
+/// `dkg_service::dkg_ceremony_token_id`, `trustline_service`'s per-line hash,
+/// the settlement factories in `dregg_sdk::factories`) put its NAME in the only
+/// free axis and thereby minted a private currency it never asked for — so the
+/// create-then-fund pattern every one of them uses was refused
+/// `cross-asset Transfer rejected`. The refusal was correct; the encoding was
+/// not. There is no way out with one field: pinning `token_id` to the funder's
+/// asset collides the derived id with the funder's own cell.
+///
+/// So the axes are now separate. `token_id` keeps its ONE structural job — the
+/// derivation salt in `derive_raw(public_key, token_id)`, the thing that makes
+/// distinct per-tag cells for one owner — and [`Cell::asset`] carries the
+/// currency the cell's scalar `balance` is denominated in.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Cell {
     /// Content-addressed identity: BLAKE3(public_key || token_id).
@@ -334,7 +356,11 @@ pub struct Cell {
     /// Used for snapshot+refresh E-style delegation. The child acts using this
     /// snapshot; acceptors check freshness via `max_staleness`.
     pub delegation: Option<DelegatedRef>,
-    /// Which token domain this cell belongs to. See `id` for sealing rationale.
+    /// The cell's NAME SALT: the second input to
+    /// `CellId::derive_raw(public_key, token_id)`, i.e. the axis that gives one
+    /// owner key many distinct cells. It is NOT the cell's currency — read
+    /// [`Cell::asset`] for that. See `id` for sealing rationale, and the type
+    /// docs for why the two were split.
     pub(crate) token_id: [u8; 32],
     /// The c-list: what other cells this cell can reference.
     pub capabilities: CapabilitySet,
@@ -366,6 +392,38 @@ pub struct Cell {
     /// store-level schema migration rather than silently decoding as unbound.
     #[serde(default)]
     pub(crate) pq_identity: Option<CellPqIdentity>,
+    /// The asset (currency) this cell's scalar `state.balance` is denominated
+    /// in — an INDEPENDENT axis from the [`Cell::token_id`] name salt.
+    ///
+    /// A `CellId` because that is already how every other asset-bearing heap in
+    /// this crate names an asset (`allowance::AllowanceTerms::asset`,
+    /// `escrow_sealed`, `prepaid_lease`, `vault`, `obligation_standing`) — one
+    /// notion of asset, not a third.
+    ///
+    /// # `None` means "the salt is also the asset"
+    ///
+    /// CANONICAL REPRESENTATION: `Some(a)` only when `a` DIFFERS from
+    /// `CellId::from_bytes(token_id)`; [`Cell::in_asset`] normalizes. So `None`
+    /// is exactly the pre-split reading — a cell whose asset IS its salt — and
+    /// [`Cell::asset`] resolves the two representations. Two consequences that
+    /// are the whole reason for the `Option`:
+    ///
+    /// * every cell that existed before the split keeps its EXACT semantics
+    ///   (`asset() == from_bytes(token_id)`), so no call site changes meaning
+    ///   by accident; and
+    /// * `compute_canonical_state_commitment` absorbs NOTHING for `None`
+    ///   (the [`CellPqIdentity`] precedent above), so every pre-split cell's
+    ///   canonical commitment, Merkle leaf and rotated authority digest are
+    ///   BYTE-IDENTICAL to before. Only a genuinely split cell — which could
+    ///   not exist before — moves its digest.
+    ///
+    /// WIRE: this is the v12 schema extension, appended at the serialized tail
+    /// for the same reason `pq_identity` was appended at the v10 tail. Postcard
+    /// is positional and rejects a missing trailing field, so pre-v12 durable
+    /// snapshots are refused by `PersistentStore`'s re-genesis gate
+    /// (`CANONICAL_STATE_SCHEMA_EPOCH`), never silently reinterpreted.
+    #[serde(default)]
+    pub(crate) asset: Option<CellId>,
     /// Cached canonical Merkle-leaf digest (`.docs-history-noclaude/INCREMENTAL-COMMITMENT.md`
     /// step 3). Read ONLY by `Ledger::hash_cell`; invalidated at every ledger
     /// `&mut`-handoff seam. `#[serde(skip)]` ⇒ reconstructs dirty on decode;
@@ -448,8 +506,24 @@ impl CellConfig {
     }
 }
 
+/// The canonical encoding of "this cell is denominated in `asset`" against a
+/// given name salt: `None` when the asset IS the salt (the pre-split reading),
+/// `Some` otherwise. Keeping this in one place is what makes the two
+/// representations non-ambiguous — see [`Cell::asset`].
+#[inline]
+pub(crate) fn normalize_asset(asset: CellId, token_id: &[u8; 32]) -> Option<CellId> {
+    if asset.as_bytes() == token_id {
+        None
+    } else {
+        Some(asset)
+    }
+}
+
 impl Cell {
-    /// Create a new cell with default permissions and the given public key and token domain.
+    /// Create a new cell with default permissions and the given public key and
+    /// name salt. The cell is denominated in the salt (`asset() ==
+    /// from_bytes(token_id)`); chain [`Cell::in_asset`] to denominate it in a
+    /// different currency.
     ///
     /// Defaults to `CellMode::Sovereign` (Phase 4). Use `Cell::new_hosted()` for
     /// explicit hosted creation.
@@ -469,6 +543,7 @@ impl Cell {
             program: CellProgram::None,
             mode: CellMode::Sovereign,
             lifecycle: CellLifecycle::Live,
+            asset: None,
             leaf_cache: LeafDigestCache::default(),
         }
     }
@@ -492,6 +567,7 @@ impl Cell {
             program: CellProgram::None,
             mode: CellMode::Hosted,
             lifecycle: CellLifecycle::Live,
+            asset: None,
             leaf_cache: LeafDigestCache::default(),
         }
     }
@@ -515,6 +591,7 @@ impl Cell {
             program: CellProgram::None,
             mode: CellMode::Hosted,
             lifecycle: CellLifecycle::Live,
+            asset: None,
             leaf_cache: LeafDigestCache::default(),
         }
     }
@@ -607,6 +684,7 @@ impl Cell {
             program: CellProgram::None,
             mode: CellMode::Hosted,
             lifecycle: CellLifecycle::Live,
+            asset: None,
             leaf_cache: LeafDigestCache::default(),
         }
     }
@@ -628,6 +706,7 @@ impl Cell {
             program: config.program.unwrap_or(CellProgram::None),
             mode: config.mode,
             lifecycle: CellLifecycle::Live,
+            asset: None,
             leaf_cache: LeafDigestCache::default(),
         }
     }
@@ -734,7 +813,11 @@ impl Cell {
         self.invalidate_leaf_cache();
     }
 
-    /// Read accessor for the cell's token-domain ID. Sealed for P0-1.
+    /// Read accessor for the cell's NAME SALT — the second `derive_raw` input.
+    /// Sealed for P0-1.
+    ///
+    /// This is NOT the cell's currency. Anything asking "what asset is this
+    /// balance in" must call [`Cell::asset`]; see the [`Cell`] type docs.
     ///
     /// External code cannot mutate this field directly:
     /// ```compile_fail
@@ -745,6 +828,47 @@ impl Cell {
     #[inline]
     pub fn token_id(&self) -> &[u8; 32] {
         &self.token_id
+    }
+
+    /// The asset this cell's `state.balance` is denominated in.
+    ///
+    /// Resolves the two representations of the [`Cell::asset`] field: an
+    /// unsplit cell (`None`) is denominated in its own salt, which is exactly
+    /// the pre-split reading, so this accessor is a drop-in for every site that
+    /// used to read `token_id()` AS AN ASSET (the `Effect::Transfer` guard, the
+    /// per-asset conservation fold, the issuer-well derivation).
+    ///
+    /// External code cannot mutate this field directly:
+    /// ```compile_fail
+    /// # use dregg_cell::{Cell, CellId};
+    /// let mut cell = Cell::new([0u8; 32], [0u8; 32]);
+    /// cell.asset = Some(CellId::from_bytes([1u8; 32]));
+    /// ```
+    #[inline]
+    pub fn asset(&self) -> CellId {
+        match self.asset {
+            Some(asset) => asset,
+            None => CellId::from_bytes(self.token_id),
+        }
+    }
+
+    /// Denominate this cell in `asset`, leaving its id/salt untouched.
+    ///
+    /// CONSUMING on purpose. A cell's asset is fixed at birth: this is
+    /// reachable only on an owned, not-yet-inserted `Cell`, so it cannot
+    /// re-denominate a cell already carrying a balance in the ledger (ledger
+    /// cells are only ever handed out as `&mut`). `derive_raw(public_key,
+    /// token_id)` does not read the asset, so `verify_id_integrity` is
+    /// preserved by construction.
+    ///
+    /// Normalizes to the canonical representation: an asset equal to the salt
+    /// stores `None`, so "denominated in X" has ONE encoding and one digest.
+    #[inline]
+    #[must_use]
+    pub fn in_asset(mut self, asset: CellId) -> Self {
+        self.asset = normalize_asset(asset, &self.token_id);
+        self.invalidate_leaf_cache();
+        self
     }
 
     /// Compute the canonical commitment to this cell's current state.
@@ -977,6 +1101,7 @@ impl Cell {
             program: CellProgram::None,
             mode: CellMode::Hosted,
             lifecycle: CellLifecycle::Live,
+            asset: normalize_asset(self.asset(), &child_token_id),
             leaf_cache: LeafDigestCache::default(),
         }
     }
@@ -1033,6 +1158,7 @@ impl Cell {
             program: CellProgram::None,
             mode: CellMode::Hosted,
             lifecycle: CellLifecycle::Live,
+            asset: normalize_asset(self.asset(), &child_token_id),
             leaf_cache: LeafDigestCache::default(),
         }
     }

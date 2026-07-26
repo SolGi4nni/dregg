@@ -169,3 +169,273 @@ fn same_asset_transfer_succeeds_and_conserves() {
         "a same-asset Transfer CONSERVES the asset total (debit and credit cancel)"
     );
 }
+
+// =============================================================================
+// The NAME-SALT / ASSET split (`dregg_cell::Cell::asset`)
+// =============================================================================
+//
+// `Cell.token_id` used to be read as BOTH the `derive_raw` name salt and the
+// cell's asset class. Splitting them is what made a factory-born cell fundable
+// (it is born in its creator's currency, with the deal tag as its salt), and it
+// opens exactly one new question the two tests above cannot answer: the guard
+// used to get "same salt ⇒ same asset" FOR FREE. It no longer does. So the
+// falsifier is re-run against the split shape.
+
+/// A live, fully-open cell whose NAME SALT and ASSET differ — the shape that
+/// did not exist before the split.
+fn make_split_cell(seed: u8, name_salt: [u8; 32], asset: [u8; 32], balance: i64) -> Cell {
+    let mut pk = [0u8; 32];
+    pk[0] = seed;
+    pk[31] = seed.wrapping_mul(37);
+    let mut cell = Cell::with_balance(pk, name_salt, balance).in_asset(CellId::from_bytes(asset));
+    cell.permissions = open_permissions();
+    cell
+}
+
+fn effects_turn(agent: CellId, effects: Vec<Effect>, nonce: u64) -> Turn {
+    effects_turn_after(agent, effects, nonce, None)
+}
+
+/// As [`effects_turn`], but chained onto the agent's previous receipt (the
+/// executor's per-agent receipt chain refuses a second turn that claims none).
+fn effects_turn_after(
+    agent: CellId,
+    effects: Vec<Effect>,
+    nonce: u64,
+    previous_receipt_hash: Option<[u8; 32]>,
+) -> Turn {
+    let mut forest = CallForest::new();
+    forest.add_root(Action {
+        target: agent,
+        method: [0u8; 32],
+        args: vec![],
+        authorization: Authorization::Unchecked,
+        preconditions: Default::default(),
+        effects,
+        may_delegate: DelegationMode::None,
+        commitment_mode: Default::default(),
+        balance_change: None,
+        witness_blobs: vec![],
+    });
+    Turn {
+        agent,
+        nonce,
+        call_forest: forest,
+        fee: 0,
+        memo: None,
+        valid_until: None,
+        previous_receipt_hash,
+        depends_on: vec![],
+        conservation_proof: None,
+        sovereign_witnesses: std::collections::HashMap::new(),
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
+        custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
+    }
+}
+
+/// THE REGRESSION THAT MATTERS MOST. A COLLIDING NAME SALT DOES NOT LAUNDER A
+/// CROSS-ASSET MOVE.
+///
+/// Both cells carry the IDENTICAL `token_id` (`ASSET_X` used purely as a name),
+/// so a guard still reading the salt would wave this through — and it is a real
+/// teleport: the source's 1000 units are denominated in X, the destination's
+/// balance in Y, so a credit here inflates `Σbal[Y]` out of X exactly as the
+/// pre-guard hole did. The guard reads `asset()`, so it is refused.
+#[test]
+fn a_colliding_name_salt_does_not_launder_a_cross_asset_transfer() {
+    // Same salt, different currency.
+    let agent = make_split_cell(5, ASSET_X, ASSET_X, 1_000);
+    let peer = make_split_cell(6, ASSET_X, ASSET_Y, 0);
+    let (agent_id, peer_id) = (agent.id(), peer.id());
+    assert_eq!(
+        agent.token_id(),
+        peer.token_id(),
+        "fixture invariant: the two cells share a name salt (the laundering attempt)"
+    );
+    assert_ne!(
+        agent.asset(),
+        peer.asset(),
+        "fixture invariant: but they hold DIFFERENT currencies"
+    );
+
+    let mut ledger = Ledger::new();
+    ledger.insert_cell(agent).unwrap();
+    ledger.insert_cell(peer).unwrap();
+
+    let executor = TurnExecutor::new(ComputronCosts::zero());
+    let turn = transfer_turn(agent_id, agent_id, peer_id, 250, 0);
+
+    match executor.execute(&turn, &mut ledger) {
+        TurnResult::Rejected { reason, .. } => match reason {
+            TurnError::InvalidEffect { reason } => assert!(
+                reason.contains("cross-asset"),
+                "a salt collision must NOT launder a cross-asset move, got: {reason}"
+            ),
+            other => panic!("expected InvalidEffect (cross-asset), got {other:?}"),
+        },
+        other => panic!(
+            "cross-asset Transfer must be REJECTED even under a salt collision, got {other:?}"
+        ),
+    }
+    assert_eq!(
+        ledger.get(&peer_id).unwrap().state.balance(),
+        0,
+        "no value may be minted into asset Y"
+    );
+    assert_eq!(
+        ledger.get(&agent_id).unwrap().state.balance(),
+        1_000,
+        "the source is untouched (rolled back)"
+    );
+}
+
+/// The FIX, end to end: a cell created by an effect under a NAME tag is born in
+/// its CREATOR's currency, and the create-then-fund pattern therefore commits.
+///
+/// `NAME_TAG` is the only free axis an app has for "one cell per (owner, deal)"
+/// — it goes in the salt. It must NOT become a private currency; that is what
+/// made every factory-born cell unfundable.
+#[test]
+fn a_created_cell_is_born_in_its_creators_asset_and_can_be_funded() {
+    const NAME_TAG: [u8; 32] = [0x77u8; 32];
+    let creator = make_cell(7, ASSET_X, 10_000);
+    let creator_id = creator.id();
+
+    let mut ledger = Ledger::new();
+    ledger.insert_cell(creator).unwrap();
+
+    let child_pk = [0x5Au8; 32];
+    let child_id = CellId::derive_raw(&child_pk, &NAME_TAG);
+
+    let executor = TurnExecutor::new(ComputronCosts::zero());
+    let create_receipt = match executor.execute(
+        &effects_turn(
+            creator_id,
+            vec![Effect::CreateCell {
+                public_key: child_pk,
+                token_id: NAME_TAG,
+                balance: 0,
+            }],
+            0,
+        ),
+        &mut ledger,
+    ) {
+        TurnResult::Committed { receipt, .. } => receipt.receipt_hash(),
+        other => panic!("the create turn must COMMIT, got {other:?}"),
+    };
+
+    let born = ledger.get(&child_id).expect("the child cell exists");
+    assert_eq!(
+        born.token_id(),
+        &NAME_TAG,
+        "the name axis still works: the payload tag IS the child's salt"
+    );
+    assert_eq!(
+        born.asset(),
+        CellId::from_bytes(ASSET_X),
+        "but the child is denominated in its CREATOR's currency, not in its own name"
+    );
+
+    // Now fund it — the move the whole create-then-fund pattern depends on.
+    match executor.execute(
+        &effects_turn_after(
+            creator_id,
+            vec![Effect::Transfer {
+                from: creator_id,
+                to: child_id,
+                amount: 2_500,
+            }],
+            1,
+            Some(create_receipt),
+        ),
+        &mut ledger,
+    ) {
+        TurnResult::Committed { .. } => {}
+        other => panic!("funding a freshly created cell must COMMIT, got {other:?}"),
+    }
+    assert_eq!(
+        ledger.get(&child_id).unwrap().state.balance(),
+        2_500,
+        "the created cell holds the funded value"
+    );
+    assert_eq!(
+        ledger.get(&creator_id).unwrap().state.balance(),
+        7_500,
+        "the funder was debited the same amount (same-asset move conserves)"
+    );
+}
+
+/// AND THE GUARD DID NOT GET CHEAPER: an effect payload cannot conjure a
+/// currency. A creator holding asset X cannot birth a cell into asset Y by
+/// naming Y in the payload — the child is in X, so a Y-holder funding it is
+/// still refused. Inheritance NARROWS what a turn can mint (before the split,
+/// the payload chose the new cell's asset outright).
+#[test]
+fn an_effect_payload_cannot_birth_a_cell_into_a_foreign_asset() {
+    let creator = make_cell(8, ASSET_X, 10_000);
+    let y_holder = make_cell(9, ASSET_Y, 10_000);
+    let (creator_id, y_holder_id) = (creator.id(), y_holder.id());
+
+    let mut ledger = Ledger::new();
+    ledger.insert_cell(creator).unwrap();
+    ledger.insert_cell(y_holder).unwrap();
+
+    // The payload NAMES asset Y. The creator holds only X.
+    let child_pk = [0x6Bu8; 32];
+    let child_id = CellId::derive_raw(&child_pk, &ASSET_Y);
+
+    let executor = TurnExecutor::new(ComputronCosts::zero());
+    match executor.execute(
+        &effects_turn(
+            creator_id,
+            vec![Effect::CreateCell {
+                public_key: child_pk,
+                token_id: ASSET_Y,
+                balance: 0,
+            }],
+            0,
+        ),
+        &mut ledger,
+    ) {
+        TurnResult::Committed { .. } => {}
+        other => panic!("the create turn must COMMIT, got {other:?}"),
+    }
+    assert_eq!(
+        ledger.get(&child_id).unwrap().asset(),
+        CellId::from_bytes(ASSET_X),
+        "naming Y in the payload does NOT denominate the child in Y"
+    );
+
+    // So the Y holder cannot pay into it.
+    match executor.execute(
+        &effects_turn(
+            y_holder_id,
+            vec![Effect::Transfer {
+                from: y_holder_id,
+                to: child_id,
+                amount: 100,
+            }],
+            0,
+        ),
+        &mut ledger,
+    ) {
+        TurnResult::Rejected {
+            reason: TurnError::InvalidEffect { reason },
+            ..
+        } => assert!(
+            reason.contains("cross-asset"),
+            "a Y-funded X cell is a cross-asset move and must be refused, got: {reason}"
+        ),
+        other => panic!("expected a cross-asset refusal, got {other:?}"),
+    }
+    assert_eq!(
+        ledger.get(&child_id).unwrap().state.balance(),
+        0,
+        "no value crossed the asset boundary"
+    );
+}
