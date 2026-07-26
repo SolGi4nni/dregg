@@ -15,7 +15,9 @@ fn tok(n: u64) -> [u8; 32] {
 }
 
 #[test]
-#[ignore]
+#[ignore = "BENCH with NO assertion: builds 2k- and 20k-cell ledgers and prints the whole-map-clone \
+            vs apply_delta ratio. It cannot go red, so un-ignoring it would cost CI time and add zero \
+            coverage. The apply_delta correctness teeth live in cell/src/ledger.rs."]
 fn bench_apply_delta_single_transfer() {
     for &n in &[2000usize, 20000usize] {
         let mut ledger = Ledger::new();

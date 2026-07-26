@@ -102,7 +102,9 @@ fn fields_root_gentian_31bit_collision_separated_at_8_felt() {
 /// (it is the GENERATOR for the pinned `COLLIDE_KEY_*` constants, not a CI assertion). Run with
 /// `--ignored --nocapture` and paste the printed pair into the constants above.
 #[test]
-#[ignore]
+#[ignore = "GENERATOR, not an assertion: a birthday scan over up to 200M keys that MINTS the pinned \
+            COLLIDE_KEY_A/B above. Re-run only when the fields-root digest changes; the CI tooth is \
+            fields_root_gentian_31bit_collision_separated_at_8_felt, which asserts against the pinned pair."]
 fn search_fields_lane0_collision() {
     use std::collections::HashMap;
     let mut seen: HashMap<u32, u64> = HashMap::new();

@@ -534,7 +534,9 @@ fn forged_running_hash_refuses() {
 /// Perf probe (run with `--ignored --nocapture`): times the descriptor decode, prove, and verify
 /// legs separately so we know where the wall-clock actually goes (dispatch µs vs prove/verify ms).
 #[test]
-#[ignore]
+#[ignore = "PERF PROBE with NO assertion: 1000 descriptor decodes + 30 proves + 30 verifies, printing \
+            only a timing breakdown. It cannot go red. The correctness teeth for this descriptor are the \
+            always-on honest/forgery tests above."]
 fn perf_prove_verify_breakdown() {
     use std::time::Instant;
     let (trace, pis) = honest_witness(0, 1, BabyBear::new(7));

@@ -583,7 +583,10 @@ mod tests {
     /// the speedup ratio is not). Run with:
     ///   cargo test -p dregg-circuit --lib field::tests::ab_microbench_old_vs_new -- --ignored --nocapture
     #[test]
-    #[ignore]
+    #[ignore = "MICROBENCH with NO assertion: 50M iterations each of the old %-based and new Barrett \
+                mul/add, printing only a speedup ratio. It cannot go red, so un-ignoring it would add \
+                CI minutes and zero coverage. The correctness tooth is arith_differential_random_corpus \
+                (always-on, 2M random operands); the loop-bound tooth is the Barrett corner test above."]
     fn ab_microbench_old_vs_new() {
         use std::time::Instant;
         let p = BABYBEAR_P;

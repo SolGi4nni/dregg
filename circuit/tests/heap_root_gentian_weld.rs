@@ -107,7 +107,9 @@ fn heap_leaf_digest8_lane0_matches_1felt() {
 /// (it is the GENERATOR for the pinned `COLLIDE_SALT_*` constants, not a CI assertion). Run with
 /// `--ignored --nocapture` and paste the printed pair into the constants above.
 #[test]
-#[ignore]
+#[ignore = "GENERATOR, not an assertion: a birthday scan that MINTS the pinned COLLIDE_SALT_A/B above. \
+            Re-run only when the heap-leaf digest changes; the CI tooth is \
+            heap_root_gentian_31bit_collision_separated_at_8_felt, which asserts against the pinned pair."]
 fn search_heap_lane0_collision() {
     use std::collections::HashMap;
     let mut seen: HashMap<u32, u32> = HashMap::new();

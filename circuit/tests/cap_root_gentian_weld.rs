@@ -99,7 +99,9 @@ fn cap_root_gentian_31bit_collision_separated_at_8_felt() {
 /// (it is the GENERATOR for the pinned `COLLIDE_SALT_*` constants, not a CI assertion). Run with
 /// `--ignored --nocapture` and paste the printed pair into the constants above.
 #[test]
-#[ignore]
+#[ignore = "GENERATOR, not an assertion: a birthday scan over up to 40M salts that MINTS the pinned \
+            COLLIDE_SALT_A/B above. Re-run only when cap_leaf_digest/cap_node change; the CI tooth is \
+            cap_root_gentian_31bit_collision_separated_at_8_felt, which asserts against the pinned pair."]
 fn search_cap_lane0_collision() {
     use std::collections::HashMap;
     let mut seen: HashMap<u32, u32> = HashMap::new();

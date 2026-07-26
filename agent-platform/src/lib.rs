@@ -3108,7 +3108,8 @@ mod tests {
     /// `DREGG_LLM_API_KEY=… cargo test -p agent-platform --features live-brain -- --ignored`
     #[cfg(feature = "live-brain")]
     #[test]
-    #[ignore]
+    #[ignore = "NEEDS A PROVIDER KEY + NETWORK: drives a real model over the grain's granted tools. \
+                Run with DREGG_LLM_API_KEY=… cargo test -p agent-platform --features live-brain -- --ignored"]
     fn a_rented_grain_thinks_live() {
         let wd = workdir();
         let platform = AgentPlatform::new();
