@@ -65,6 +65,16 @@ GATES=(
   # just as happily when the reader is broken. ~1s, no cargo.
   "player-copy-punctuation|180|python3 scripts/check-player-copy-punctuation.py"
   "player-copy-punct-red|60|python3 scripts/check-player-copy-punctuation.py --self-test"
+  # The JavaScript inside a Rust `r##"…"##` is a `&str` to rustc and to every reader
+  # downstream of it. `dreggnet-web/src/telegram_miniapp.rs` shipped a SyntaxError in
+  # `TG_SHELL_SCRIPT` for FOUR DAYS: a dead Mini App serving 200, `cargo test` green,
+  # this table green, because nothing here had ever parsed a line of it. `node --check`
+  # over every embedded bundle, ~4s, no cargo. Paired with its own can-it-go-red run —
+  # like `player-copy-punct-red` and `feature-t3-ratchet`, it is a NEGATIVE assertion,
+  # and it also asserts a MINIMUM unit count so a dead extractor cannot read as clean.
+  # ⚠ It needs `node`, and it FAILS rather than skips without one. That is the point.
+  "embedded-js|180|python3 scripts/check-embedded-js.py"
+  "embedded-js-red|120|python3 scripts/check-embedded-js.py --self-test"
 )
 # Expensive — only under --all, each with the reason it is not in the cheap set.
 GATES_ALL=(
