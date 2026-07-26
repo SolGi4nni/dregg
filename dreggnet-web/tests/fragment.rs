@@ -236,7 +236,7 @@ async fn a_full_turn_advances_through_the_fragment_path() {
     assert_eq!(status, StatusCode::OK);
     assert_is_fragment(&frag);
     assert!(
-        frag.contains("Automatafl — turn 1"),
+        frag.contains("Automatafl · turn 1"),
         "the resolved turn counter advanced, via the fragment path: {frag}"
     );
     assert!(

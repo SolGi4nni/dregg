@@ -378,7 +378,7 @@ async fn a_full_automatafl_turn_plays_through_the_merged_app() {
     let (_, body) = post(&app, &act, "resolve", 0, "alice").await;
     assert!(body.contains("Turn committed"), "the resolution lands");
     assert!(
-        body.contains("Automatafl — turn 1"),
+        body.contains("Automatafl · turn 1"),
         "the resolved turn counter advanced in the browser: {body}"
     );
     assert!(body.contains("coordgrid"), "the resolved board re-paints");

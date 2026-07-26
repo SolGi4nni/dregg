@@ -55,6 +55,20 @@
 /** The domain tag every offering-turn signature is bound under (ASCII). */
 export const TURN_SIGNING_DOMAIN = "dregg-offering-turn-v1:";
 
+/**
+ * The domain tag a finished Lean-native Descent RUN is attested under.
+ *
+ * ⚑ A per-RUN envelope, not a per-turn one, because the Descent never uses
+ * `/act`: it plays entirely in this tab and POSTs a whole finished record to
+ * `/descent/native/submit`. A turn signature has nothing to attach to on that
+ * path, so the board where "it cannot be faked" is sold hardest was the one
+ * lane with no signature at all.
+ *
+ * Disjoint from TURN_SIGNING_DOMAIN by construction: a run signature can never
+ * be replayed as a turn signature or the reverse, whatever the trailing bytes.
+ */
+export const DESCENT_NATIVE_RUN_DOMAIN = "dregg-descent-native-run-v1:";
+
 const DB_NAME = "dregg-device-key";
 const DB_VERSION = 1;
 const STORE = "keys";
@@ -295,6 +309,91 @@ export function signingMessage(params) {
     at += p.length;
   }
   return out;
+}
+
+/**
+ * Build the canonical signing message for one finished native Descent run.
+ * Byte-for-byte the layout `descent_attest.rs::native_signing_message` builds
+ * and re-checks; the Rust pin test carries the same hand-built vector.
+ *
+ * ⚑ What it covers, and what it deliberately does not:
+ *
+ *   daySeedHex  the WORLD, not the day's label. Two labels can name one world,
+ *               and the server lands a run on whichever is already open, so
+ *               signing the label would make the signature depend on an alias.
+ *   rulesetId   the hash of the emitted program the run was played under.
+ *   actor       the name the run is filed under. Bound because a signature that
+ *               did not cover the name would let a captured run be re-filed
+ *               under a different one, which is worse than not signing at all.
+ *   turns       how many moves landed, which is what the board ranks on.
+ *   rootHex     the run's actor-bound hash-chained journal head. THIS is how
+ *               the whole move tape is covered without pushing megabytes of
+ *               JSON through the signer: every landed event is chained into the
+ *               root, the day-seed is in its genesis, and the server's own
+ *               replay is what proves the submitted record produces exactly it.
+ *
+ * NOT covered: whether the moves were legal (the server replays them, and that
+ * is a separate claim the run card states separately), and who discovered the
+ * line (anyone may replay a run they have seen and file it honestly under their
+ * own name). There is no epoch here on purpose: a run submission is
+ * content-addressed and idempotent, so a captured envelope lands the identical
+ * row under the identical name and there is nothing for an epoch to prevent.
+ *
+ * @param {{daySeedHex: string, rulesetId: string, actor: string,
+ *          turns: bigint|number|string, rootHex: string}} params
+ * @returns {Uint8Array}
+ */
+export function descentRunSigningMessage(params) {
+  const parts = [
+    encoder.encode(DESCENT_NATIVE_RUN_DOMAIN),
+    utf8("the day", params.daySeedHex),
+    new Uint8Array([0]),
+    utf8("the rules", params.rulesetId),
+    new Uint8Array([0]),
+    utf8("the name", params.actor),
+    new Uint8Array([0]),
+    u64le(params.turns, "the number of moves"),
+    new Uint8Array([0]),
+    // The root rides LAST and unterminated: nothing follows it that a shifted
+    // boundary could steal bytes from.
+    utf8("the run root", params.rootHex),
+  ];
+  // `utf8` appends no terminator of its own, so the trailing entry above is the
+  // bare root bytes and the message ends there.
+  let len = 0;
+  for (const p of parts) len += p.length;
+  const out = new Uint8Array(len);
+  let at = 0;
+  for (const p of parts) {
+    out.set(p, at);
+    at += p.length;
+  }
+  return out;
+}
+
+/**
+ * Sign one finished native Descent run with this browser's device key.
+ *
+ * @returns {Promise<{signer_pubkey_hex: string, signature_hex: string,
+ *                    ruleset_id: string} | null>} `null` when this browser
+ *   holds no device key, which the caller MUST treat as "post the run without
+ *   an attestation" rather than as an error. A player must never lose a run
+ *   because the stronger claim was unavailable.
+ */
+export async function signDescentRun(params) {
+  const key = await currentDeviceKey();
+  if (!key) return null;
+  const message = descentRunSigningMessage(params);
+  const signature = await crypto.subtle.sign(
+    { name: "Ed25519" },
+    key.privateKey,
+    message,
+  );
+  return {
+    signer_pubkey_hex: key.publicKeyHex,
+    signature_hex: toHex(new Uint8Array(signature)),
+    ruleset_id: params.rulesetId,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

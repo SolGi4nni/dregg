@@ -176,7 +176,7 @@ async fn a_full_automatafl_turn_plays_through_the_catalog() {
     let (_, body) = post(&app, &format!("{base}/act"), "resolve", 0, "alice").await;
     assert!(body.contains("Turn committed"), "the resolution lands");
     assert!(
-        body.contains("Automatafl — turn 1"),
+        body.contains("Automatafl · turn 1"),
         "the resolved turn counter advanced in the browser: {body}"
     );
     // The board MOVED: the attractor that was at (3,1) is gone from that square, and the pieces

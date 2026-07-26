@@ -239,7 +239,7 @@ async fn automatafl_full_playthrough_with_goal_squares() {
     let (_, body) = post_act(&app, &format!("{base}/act"), "resolve", 0, "alice").await;
     assert!(body.contains("Turn committed"), "the resolution lands");
     assert!(
-        body.contains("Automatafl — turn 1"),
+        body.contains("Automatafl · turn 1"),
         "the turn counter advanced: {body}"
     );
 

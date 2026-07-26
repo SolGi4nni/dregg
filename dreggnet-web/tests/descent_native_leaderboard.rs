@@ -14,7 +14,7 @@ use dregg_node_target::{NodeTarget, StubNode};
 use dreggnet_offerings::native_descent::{
     MAX_NATIVE_DESCENT_EVENTS, NativeDescentMove, NativeDescentOffering, NativeDescentRecord,
 };
-use dreggnet_offerings::{Offering, SessionConfig};
+use dreggnet_offerings::{Offering, SessionConfig, TurnSigner};
 use dreggnet_web::descent_store::{
     DescentRunStore, InMemoryDescentRunStore, SqliteDescentRunStore, StoredDay,
 };
@@ -885,5 +885,135 @@ async fn conflicting_persisted_day_key_never_claims_a_durable_native_artifact() 
     assert!(
         card.contains("No such run"),
         "non-durable conflict resurrected after restart: {card}"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ⚑ THE RUN IS SIGNED, NOT MERELY ASSERTED — and the board is NOT gated on it.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// The signer, and the run filed under the signer's OWN public key. That is the self-vouching case
+/// of `may_sign_for`, so the test needs no link store and cannot be perturbed by one that happens to
+/// exist on the machine running it.
+fn signed_attestation(
+    signer: &TurnSigner,
+    day_seed: &CommittedSeed,
+    record: &NativeDescentRecord,
+) -> serde_json::Value {
+    let message = dreggnet_web::descent_attest::native_signing_message(
+        &hex(day_seed.as_bytes()),
+        dreggnet_web::descent_attest::native_ruleset_id(),
+        signer.pubkey_hex(),
+        record.events.len() as u64,
+        &hex(&record.root),
+    )
+    .expect("the run's fields are nameable");
+    serde_json::json!({
+        "signer_pubkey_hex": signer.pubkey_hex(),
+        "signature_hex": signer
+            .sign_detached(&message)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>(),
+        "ruleset_id": dreggnet_web::descent_attest::native_ruleset_id(),
+    })
+}
+
+/// ⚑ THE WHOLE POINT, over the real route: a finished run carries a signature, the board admits it,
+/// the row wears the signed chip, and the run records the ruleset it was earned under.
+///
+/// NON-VACUOUS in the direction that matters: the SAME record submitted with a TAMPERED signature is
+/// refused with nothing ingested, and then lands unsigned on the retry, which is the property that
+/// keeps "a player never loses a run because signing was unavailable" true.
+#[tokio::test]
+async fn a_signed_native_run_lands_signed_and_a_forged_one_is_refused_without_losing_the_run() {
+    let day_seed = daily_seed(&[73; 32]);
+    let signer = TurnSigner::from_seed([0x2c; 32]);
+    let state = Arc::new(DescentState::new());
+    state.open_day("signed-day", day_seed);
+    let app = descent_router(state);
+
+    let native = crowned_record(&day_seed, signer.pubkey_hex());
+    let record = portable(&native);
+    let attestation = signed_attestation(&signer, &day_seed, &native);
+
+    // ── A FORGED SIGNATURE FIRST, so the accept below cannot be a gate that never says no. ──
+    let mut forged = attestation.clone();
+    forged["signature_hex"] = serde_json::json!("00".repeat(64));
+    let (status, refused) = post(
+        &app,
+        "/descent/native/submit",
+        serde_json::json!({ "day": "signed-day", "record": record.clone(), "attestation": forged }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    assert_eq!(
+        refused["signature_refused"], true,
+        "a signature refusal must be distinguishable from a replay refusal: {refused}"
+    );
+    // NOTHING was ingested by the refusal: the board has no row for this run yet.
+    let (_, board) = get(&app, "/descent/leaderboard?day=signed-day").await;
+    assert!(
+        !board.contains(signer.pubkey_hex()),
+        "a refused attestation must not have ingested the run: {board}"
+    );
+
+    // ── AND THE RUN IS NOT LOST: the identical record, posted without a signature, ranks. ──
+    let (status, unsigned) = post(
+        &app,
+        "/descent/native/submit",
+        serde_json::json!({ "day": "signed-day", "record": record.clone() }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{unsigned}");
+    assert_eq!(unsigned["verified"], true, "{unsigned}");
+    assert_eq!(unsigned["ranked"], true, "{unsigned}");
+    assert_eq!(
+        unsigned["signed"], false,
+        "an unsigned run must say so rather than borrow the stronger claim: {unsigned}"
+    );
+    assert_eq!(
+        unsigned["ruleset"],
+        serde_json::json!(dreggnet_web::descent_attest::native_ruleset_id()),
+        "every run records the rules it was earned under: {unsigned}"
+    );
+
+    // ── THE GENUINE SIGNATURE: same content-addressed run, now attested. ──
+    let (status, accepted) = post(
+        &app,
+        "/descent/native/submit",
+        serde_json::json!({
+            "day": "signed-day",
+            "record": record,
+            "attestation": attestation,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{accepted}");
+    assert_eq!(accepted["signed"], true, "{accepted}");
+    assert_eq!(
+        accepted["run_id"], unsigned["run_id"],
+        "the signature rides beside the run, never inside its content address"
+    );
+
+    // The BOARD re-checks it on render and wears the chip; the run card says what it proves.
+    // ⚑ Counted rather than merely `contains`: the legend at the foot of the board prints one chip
+    // of EVERY grade, so a bare substring test would pass on a board whose row was still attributed.
+    // Exactly one `att-plain` on this page means the legend's, and none on the row.
+    let (_, board) = get(&app, "/descent/leaderboard?day=signed-day").await;
+    assert_eq!(
+        board.matches("att att-plain").count(),
+        1,
+        "the signed row must not still read as attributed (only the legend may): {board}"
+    );
+    assert!(
+        board.matches("att att-bot").count() >= 2 || board.matches("att att-self").count() >= 2,
+        "the signed row must wear a signed chip beside the legend's: {board}"
+    );
+    let (_, card) = get(&app, accepted["share"].as_str().expect("a share path")).await;
+    assert!(card.contains("Who filed this run"), "{card}");
+    assert!(
+        card.contains("does not say the moves were legal"),
+        "the card must say what the signature does NOT prove: {card}"
     );
 }

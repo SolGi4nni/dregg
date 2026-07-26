@@ -602,7 +602,7 @@ fn unlink_page(
              the two go back to being separate players, your record stops counting the other side, \
              and the row disappears from your linking page.</p>\
              <p class=\"prose\">Three things it deliberately does not do. It does not delete \
-             anything you played — the record only ever grows, so a removal is a later entry rather \
+             anything you played: the record only ever grows, so a removal is a later entry rather \
              than an erasure, and your past runs stay exactly where they are. It does not take a \
              chat account's key away from whoever runs that bot; that key was theirs to derive \
              before you ever linked and it still is. And it is not a way to reach into somebody \

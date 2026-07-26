@@ -231,6 +231,16 @@ async fn get_play_day_json() -> Response {
         // normalization in the game boundary rather than mirroring it here.
         "nativeSeed": native_seed_for_day(&day),
         "utcDay": day.utc_day,
+        // ⚑ THE COMMITTED SEED, IN FULL — the world this day's key is a LABEL for. The tab signs
+        // its finished run over this rather than over the key, because two keys can name one world
+        // and a signature must not depend on which alias the board happened to resolve.
+        "daySeedHex": crate::descent::day_seed_hex(&day),
+        // ⚑ THE RULESET a run played here is earned under: the hash of the Lean-emitted dungeon
+        // program this build installs. The tab echoes it into the signature it attaches to a
+        // finished run, so the run says what rules it was played under. A rules overhaul is
+        // imminent; nothing consumes this yet, and a run landing today should still be able to
+        // answer the question.
+        "rulesetId": crate::descent_attest::native_ruleset_id(),
         // HONEST PROVENANCE, carried so the surface can never render the offline day as a fresh
         // reveal: `beacon` = a BLS-verified drand round, `offline-date` = the date-derived day.
         "source": if day.source.is_live_beacon() { "beacon" } else { "offline-date" },
@@ -1025,6 +1035,7 @@ fn shell_page(claimed_actor: Option<&str>, engine: Engine) -> String {
          {start}{door}\
          <div id=\"descent-play-root\" data-engine=\"{engine}\" data-day-key=\"{day_key}\" \
          data-native-seed=\"{native_seed}\" data-day-source=\"{day_source}\" \
+         data-day-seed=\"{day_seed}\" data-ruleset-id=\"{ruleset_id}\" \
          data-guard-hp=\"{guard_hp}\"{claimed_attr}>{root_body}\
          </div>\
          <noscript><p class=\"nd-offline\" role=\"status\">The browser engine needs JavaScript \
@@ -1063,6 +1074,10 @@ fn shell_page(claimed_actor: Option<&str>, engine: Engine) -> String {
         },
         day_key = crate::esc(&day.key),
         native_seed = native_seed_for_day(&day),
+        // The WORLD and the RULES a run played here would be signed over, carried in the shell so a
+        // tab whose `day.json` fetch fails still signs the same two values the server will check.
+        day_seed = crate::esc(&crate::descent::day_seed_hex(&day)),
+        ruleset_id = crate::esc(crate::descent_attest::native_ruleset_id()),
         day_source = if day.source.is_live_beacon() {
             "beacon"
         } else {
@@ -1208,6 +1223,36 @@ function clearAnchored() {
   if (key) storedRemove(key);
 }
 
+// ⚑ SIGN THE FINISHED RUN, IF THIS BROWSER CAN.
+//
+// The Descent never touches `/act`, so the per-turn signed lane never reached this board: a run
+// arrived as a whole record under whatever name the tab chose, and every row honestly read
+// "attributed". This attaches a signature over the run itself, made by the browser's own
+// non-extractable device key, so the board can say who filed it as well as that the moves re-ran.
+//
+// EVERY failure path returns null and the run is posted UNSIGNED, on purpose and in this order: no
+// device key enrolled, an older browser, a module that will not load, a record with no actor bound
+// yet, a signing call that throws. A player must never lose a run because the stronger claim was
+// unavailable, and the weaker path is the one that has always worked.
+async function signFinishedRun(record) {
+  try {
+    if (!record || !record.actor || !record.rootHex) return null;
+    const daySeedHex = root.dataset.daySeed;
+    const rulesetId = root.dataset.rulesetId;
+    if (!daySeedHex || !rulesetId) return null;
+    const dk = await import("/identity/device/static/device-key.js");
+    return await dk.signDescentRun({
+      daySeedHex,
+      rulesetId,
+      actor: record.actor,
+      turns: Array.isArray(record.events) ? record.events.length : 0,
+      rootHex: record.rootHex,
+    });
+  } catch (_) {
+    return null;
+  }
+}
+
 // Submit the full native record to the board's native lane — SHARED by the automatic
 // on-completion anchor (`auto = true`) and the manual "Publish verified run" button
 // (`auto = false`). The server runs the same exact-replay no-cheat gate either way, so a
@@ -1223,15 +1268,26 @@ async function submitVerifiedRun(auto) {
     render();
   }
   try {
-    const response = await fetch("/descent/native/submit", {
+    const record = JSON.parse(world.recordJson());
+    const attestation = await signFinishedRun(record);
+    const post = (withAttestation) => fetch("/descent/native/submit", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         day: root.dataset.dayKey,
-        record: JSON.parse(world.recordJson()),
+        record: record,
+        attestation: withAttestation ? attestation : undefined,
       }),
     });
-    const result = await response.json();
+    let response = await post(attestation !== null);
+    let result = await response.json();
+    // THE FALL-THROUGH THAT KEEPS THE RUN. A signature refusal means the run was never judged and
+    // nothing was ingested, so re-posting the identical record without one is a FIRST submission
+    // rather than a second. Any other refusal is about the run itself and there is nothing to retry.
+    if (!response.ok && result && result.signature_refused === true) {
+      response = await post(false);
+      result = await response.json();
+    }
     if (!response.ok || !result.verified) {
       throw new Error(result.error || result.detail || "native replay was refused");
     }
@@ -1244,10 +1300,15 @@ async function submitVerifiedRun(auto) {
     const anchored = result.settled === true
       ? " Anchored on the devnet node's ledger."
       : "";
+    // WHO FILED IT, said beside WHAT HAPPENED. Never phrased as a failure when unsigned: playing
+    // without a signing key is the ordinary way a browser plays and the run counts the same.
+    const named = result.signed === true
+      ? " The board has it signed by this browser's own key."
+      : " The board has it filed under your name, without a signature.";
     const outcome = lastShareRanked
       ? "Exact server replay passed. This crowned run now ranks in the native lane."
       : "Exact server replay passed. This settlement is shareable but did not crown, so it does not rank.";
-    say("good", (auto ? "Run settled: auto-anchored to the board. " : "") + outcome + durability + anchored);
+    say("good", (auto ? "Run settled: auto-anchored to the board. " : "") + outcome + named + durability + anchored);
   } catch (e) {
     lastShare = null;
     say("bad", (auto
@@ -1970,6 +2031,15 @@ async function boot() {
   }
   root.dataset.dayKey = dayKey;
   root.dataset.nativeSeed = String(nativeSeed);
+  // The two values a finished run is signed over. Preferred from the descriptor (which is
+  // no-store and therefore current) and falling back to the shell attributes, so a tab whose
+  // day.json fetch failed still signs the values this server will check.
+  if (today && typeof today.daySeedHex === "string" && today.daySeedHex.length > 0) {
+    root.dataset.daySeed = today.daySeedHex;
+  }
+  if (today && typeof today.rulesetId === "string" && today.rulesetId.length > 0) {
+    root.dataset.rulesetId = today.rulesetId;
+  }
   // A verified beacon day carries its raw drand pair; a fresh open then binds the run's provenance
   // to that revealed round through `fromBeacon` (the in-tab BLS check). The offline day omits it.
   if (today && today.source === "beacon"

@@ -8,7 +8,11 @@
 //! - a procgen run's **MOVE SEQUENCE** (the choice indices) + player + display metadata;
 //! - a browser-native run's complete portable verb/receipt/state/root envelope. This larger record
 //!   is necessary because the native executor receipt is part of that public format, but every byte
-//!   is untrusted and independently reproduced before the row can be restored.
+//!   is untrusted and independently reproduced before the row can be restored;
+//! - a run's **signature and the ruleset it was earned under** ([`StoredAttestation`], its own
+//!   additive table). Also reproducible public input: the canonical message is rebuilt from the
+//!   REPLAYED run on every read and the signature re-checked, so an edited row stops being a
+//!   signature rather than becoming a forged one.
 //!
 //! On boot [`DescentState::load_from_store`](crate::descent::DescentState::load_from_store)
 //! **re-verifies every persisted run by REPLAY**: procgen rows use
@@ -75,6 +79,36 @@ pub struct StoredNativeRun {
     pub record_json: String,
 }
 
+/// **One run's signature and the rules it was earned under**, in its own row rather than as columns
+/// on [`StoredRun`] / [`StoredNativeRun`].
+///
+/// ⚑ A SEPARATE TABLE ON PURPOSE, two reasons. First, those two tables hold the *reproducible public
+/// input* and nothing else, which is what makes "persist only what replay can re-check" a shape you
+/// can see rather than a rule you have to remember. Second, a new table is `CREATE TABLE IF NOT
+/// EXISTS`, while a new column on an existing table needs an `ALTER` that every deployed database
+/// has to survive; an additive table cannot break a board that is already running.
+///
+/// Every field is untrusted, exactly like the run it belongs to: boot re-derives the canonical
+/// message from the REPLAYED run and re-checks the signature, so an edited row simply stops being a
+/// signature and the run reverts to the ordinary attributed grade rather than carrying a forged one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoredAttestation {
+    /// The run this attests (`descent_runs.run_id` or `descent_native_runs.run_id`).
+    pub run_id: String,
+    /// `native` or `procgen` — which lane's canonical message was signed. Persisted because the two
+    /// domains are disjoint and a row that named the wrong one would simply never re-verify.
+    pub lane: String,
+    /// The ruleset id the run was earned under (the emitted program's hash).
+    pub ruleset_id: String,
+    /// The signer's public key, lowercase hex.
+    pub signer_pubkey_hex: String,
+    /// The signature, 128 hex characters. Retained so every READ can check it again.
+    pub signature_hex: String,
+    /// The custody grade recorded at submit (`u` user-held, `c` custodial). Provenance, not crypto;
+    /// an unknown tag reads as custodial, which is the direction that cannot overstate.
+    pub custody_tag: String,
+}
+
 /// The durable store trait — **sync** (`&self`), so [`DescentState`](crate::descent::DescentState)
 /// holds it behind an `Arc` with no async boundary. Persist methods MUST be idempotent by PK, so a
 /// double write / a double boot never duplicates a day or a run.
@@ -85,12 +119,16 @@ pub trait DescentRunStore: Send + Sync {
     fn persist_run(&self, run: &StoredRun) -> Result<(), String>;
     /// Persist a browser-native portable record (idempotent by `run_id`).
     fn persist_native_run(&self, run: &StoredNativeRun) -> Result<(), String>;
+    /// Persist one run's signature + ruleset (idempotent by `run_id`).
+    fn persist_attestation(&self, attestation: &StoredAttestation) -> Result<(), String>;
     /// Every persisted day (the boot-replay source).
     fn list_days(&self) -> Result<Vec<StoredDay>, String>;
     /// Every persisted run (re-verified by replay on boot).
     fn list_runs(&self) -> Result<Vec<StoredRun>, String>;
     /// Every persisted browser-native record (replayed exactly on boot).
     fn list_native_runs(&self) -> Result<Vec<StoredNativeRun>, String>;
+    /// Every persisted attestation (re-checked against the replayed run on boot).
+    fn list_attestations(&self) -> Result<Vec<StoredAttestation>, String>;
 }
 
 /// A thread-safe in-memory [`DescentRunStore`] — the fallback when no `DATABASE_URL` is set (so the
@@ -106,6 +144,7 @@ struct InMem {
     days: Vec<StoredDay>,
     runs: Vec<StoredRun>,
     native_runs: Vec<StoredNativeRun>,
+    attestations: Vec<StoredAttestation>,
 }
 
 impl InMemoryDescentRunStore {
@@ -150,6 +189,20 @@ impl DescentRunStore for InMemoryDescentRunStore {
         }
         Ok(())
     }
+    fn persist_attestation(&self, attestation: &StoredAttestation) -> Result<(), String> {
+        let mut g = self
+            .inner
+            .lock()
+            .map_err(|_| "store poisoned".to_string())?;
+        if !g
+            .attestations
+            .iter()
+            .any(|stored| stored.run_id == attestation.run_id)
+        {
+            g.attestations.push(attestation.clone());
+        }
+        Ok(())
+    }
     fn list_days(&self) -> Result<Vec<StoredDay>, String> {
         Ok(self
             .inner
@@ -172,6 +225,14 @@ impl DescentRunStore for InMemoryDescentRunStore {
             .lock()
             .map_err(|_| "store poisoned".to_string())?
             .native_runs
+            .clone())
+    }
+    fn list_attestations(&self) -> Result<Vec<StoredAttestation>, String> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(|_| "store poisoned".to_string())?
+            .attestations
             .clone())
     }
 }
@@ -198,6 +259,14 @@ CREATE TABLE IF NOT EXISTS descent_native_runs (
     record_json TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_descent_native_runs_day ON descent_native_runs (day_key);
+CREATE TABLE IF NOT EXISTS descent_run_attestations (
+    run_id            TEXT PRIMARY KEY,
+    lane              TEXT NOT NULL,
+    ruleset_id        TEXT NOT NULL,
+    signer_pubkey_hex TEXT NOT NULL,
+    signature_hex     TEXT NOT NULL,
+    custody_tag       TEXT NOT NULL
+);
 ";
 
 /// A [`DescentRunStore`] persisted in a sqlite database (rusqlite). One `Mutex<Connection>` — the
@@ -272,6 +341,25 @@ impl DescentRunStore for SqliteDescentRunStore {
         Ok(())
     }
 
+    fn persist_attestation(&self, attestation: &StoredAttestation) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|_| "store poisoned".to_string())?;
+        conn.execute(
+            "INSERT OR IGNORE INTO descent_run_attestations
+                (run_id, lane, ruleset_id, signer_pubkey_hex, signature_hex, custody_tag)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            (
+                &attestation.run_id,
+                &attestation.lane,
+                &attestation.ruleset_id,
+                &attestation.signer_pubkey_hex,
+                &attestation.signature_hex,
+                &attestation.custody_tag,
+            ),
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     fn list_days(&self) -> Result<Vec<StoredDay>, String> {
         let conn = self.conn.lock().map_err(|_| "store poisoned".to_string())?;
         let mut stmt = conn
@@ -321,6 +409,30 @@ impl DescentRunStore for SqliteDescentRunStore {
                     run_id: row.get(0)?,
                     day_key: row.get(1)?,
                     record_json: row.get(2)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
+    }
+
+    fn list_attestations(&self) -> Result<Vec<StoredAttestation>, String> {
+        let conn = self.conn.lock().map_err(|_| "store poisoned".to_string())?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT run_id, lane, ruleset_id, signer_pubkey_hex, signature_hex, custody_tag
+                 FROM descent_run_attestations",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(StoredAttestation {
+                    run_id: row.get(0)?,
+                    lane: row.get(1)?,
+                    ruleset_id: row.get(2)?,
+                    signer_pubkey_hex: row.get(3)?,
+                    signature_hex: row.get(4)?,
+                    custody_tag: row.get(5)?,
                 })
             })
             .map_err(|e| e.to_string())?;

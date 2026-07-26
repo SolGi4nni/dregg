@@ -1968,8 +1968,8 @@ impl AutomataflSession {
                              piece moves like a rook and stops at the first thing in its way, so \
                              the light stops there too. A square further along that line reads as \
                              BLOCKED: you may still seal a move to it, but it runs only if the way \
-                             is clear when the round resolves. You cannot clear it yourself — the \
-                             blocked move IS your move — so it rides on the other seat, and each \
+                             is clear when the round resolves. You cannot clear it yourself: the \
+                             blocked move IS your move, so it rides on the other seat, and each \
                              seat gets ONE move a round. One piece in the way is a gamble on them \
                              lifting exactly that piece; TWO OR MORE cannot be cleared this round \
                              at all, whatever either of you does.{}",
@@ -2128,7 +2128,7 @@ impl Offering for AutomataflOffering {
                         format!(
                             "Seal a move to ({},{}) · BLOCKED: the way is not clear. It runs only \
                              if every piece in the way is lifted this round, and each seat gets \
-                             ONE move — so a single blocker is a gamble on the other seat, and \
+                             ONE move, so a single blocker is a gamble on the other seat, and \
                              two or more cannot be cleared at all",
                             c.0, c.1
                         )

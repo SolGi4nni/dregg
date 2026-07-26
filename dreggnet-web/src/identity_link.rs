@@ -1362,7 +1362,7 @@ fn link_form(prefill_code: Option<&str>, confirm: Option<(LinkPlatform, &str)>) 
          <h3>This code is for {platform} account {uid}</h3>\
          <p>We checked that with {platform} itself, so this is the account the code was really \
          issued for and not just what the code says. <strong>Is that your account?</strong></p>\
-         <p>If it is not — if somebody sent you this code or this link — stop here and close the \
+         <p>If it is not, if somebody sent you this code or this link, stop here and close the \
          page. Nothing has happened yet and your words have not been asked for. Linking somebody \
          else's account would put their play on your record; you could \
          <a href=\"/identity/unlink\">undo it afterwards</a>, but not having done it is \
@@ -1370,7 +1370,7 @@ fn link_form(prefill_code: Option<&str>, confirm: Option<(LinkPlatform, &str)>) 
          <form class=\"lk-form\" method=\"post\" action=\"/identity/link\">\
          <input type=\"hidden\" name=\"code\" value=\"{code}\">\
          <label class=\"lk-check\"><input type=\"checkbox\" name=\"mine\" value=\"yes\">\
-         <span>Yes — {platform} account {uid} is <strong>mine</strong>.</span></label>\
+         <span>Yes, {platform} account {uid} is <strong>mine</strong>.</span></label>\
          <label for=\"phrase\">Your 24 words</label>\
          <textarea id=\"phrase\" name=\"phrase\" rows=\"3\" autocomplete=\"off\" \
          spellcheck=\"false\" autocapitalize=\"none\" placeholder=\"abandon ability able about …\"\
@@ -1385,7 +1385,7 @@ fn link_form(prefill_code: Option<&str>, confirm: Option<(LinkPlatform, &str)>) 
          written to disk or to a log.</p>\
          <div class=\"id-actions\" style=\"display:flex;gap:.6rem;flex-wrap:wrap;margin:1.1rem 0 0\">\
          <button class=\"btn btn-primary\" type=\"submit\">Prove and link</button>\
-         <a class=\"btn btn-ghost\" href=\"/identity/link\">No — start over</a></div></form>",
+         <a class=\"btn btn-ghost\" href=\"/identity/link\">No · start over</a></div></form>",
         platform = esc(platform.display()),
         uid = esc(uid),
         code = esc(prefill_code.unwrap_or_default()),

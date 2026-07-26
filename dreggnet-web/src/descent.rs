@@ -35,6 +35,7 @@
 //! recorded playthrough themselves); the `deos-js` live cell render. The bot links to a run by
 //! putting [`run_share_path`] in its result embed.
 
+use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -48,6 +49,7 @@ use axum::{
 use serde::Deserialize;
 
 use dregg_node_target::{Landed, NodeError, NodeTarget, SubmittedTurn};
+use dreggnet_offerings::Custody;
 use dreggnet_offerings::daily_descent::{DAILY_DEPLOY_SEED, DailyDescent, HOARD_GOLD, daily_scene};
 use dreggnet_offerings::native_descent::Rarity;
 // ⚑ THE WIRE IS NOT DECLARED HERE. `dreggnet_offerings::native_descent_wire` owns the ONE
@@ -70,9 +72,21 @@ use spween_dregg::{
 use ugc_dregg::{Completion, Universe, record_playthrough, verify_completion};
 use webauth_core::identity_resolve::RootResolver;
 
+use crate::attribution::ActorGrade;
+use crate::descent_attest::{
+    AttestRefusal, RunAttestation, RunAttestationWire, native_ruleset_id, native_signing_message,
+    procgen_ruleset_id, procgen_signing_message, verify_attestation,
+};
 use crate::descent_card::{CARD_STYLE, Ending, RunScore, RunStory};
-use crate::descent_store::{DescentRunStore, StoredDay, StoredNativeRun, StoredRun};
+use crate::descent_store::{
+    DescentRunStore, StoredAttestation, StoredDay, StoredNativeRun, StoredRun,
+};
 use crate::{document, document_with_head, esc};
+
+/// The lane tag a [`StoredAttestation`] wears for a Lean-native record.
+const LANE_NATIVE: &str = "native";
+/// The lane tag a [`StoredAttestation`] wears for a procgen choice-tape run.
+const LANE_PROCGEN: &str = "procgen";
 
 /// The author label the day's world is published under (a stable content-address input; the daily
 /// world is anonymous-authored on the no-cheat board).
@@ -198,6 +212,17 @@ struct Run {
     class: u64,
     /// The recorded receipt chain — the un-retconnable material the surface re-executes.
     play: Playthrough,
+    /// The stable choice tape this run was re-recorded from. Retained because it is what the
+    /// procgen lane's canonical signing message binds (that lane commits no chained root, so the
+    /// tape rides in the message), and a board that re-checks a signature on every read needs the
+    /// tape on every read. Empty for a run ingested without one, which is also a run that can carry
+    /// no attestation.
+    moves: Vec<u64>,
+    /// **The signature this run arrived with, if any**, plus the rules it was earned under.
+    /// UNTRUSTED, exactly like the playthrough beside it: every read rebuilds the canonical message
+    /// from the run's own re-verified facts and checks the signature again. `None` is the ordinary
+    /// case and stays ordinary.
+    attestation: Option<StoredAttestation>,
 }
 
 /// An untrusted browser-native record retained only so every read can replay it again. The wire is
@@ -207,6 +232,9 @@ struct NativeRun {
     id: String,
     day_key: String,
     record: PortableRecord,
+    /// The run's signature + ruleset, when one came with it. Re-checked on every read against the
+    /// REPLAYED actor / turn count / journal root, never against the submitted claim.
+    attestation: Option<StoredAttestation>,
 }
 
 /// The size bound `POST /descent/native/submit` enforces on the record itself — pinned to the
@@ -431,8 +459,68 @@ impl DescentState {
         class: u64,
         moves: &[usize],
     ) -> Result<usize, String> {
-        let turns = self.reverify_and_ingest(day_key, run_id, player, level, class, moves)?;
+        self.submit_run_attested(day_key, run_id, player, level, class, moves, None)
+            .map_err(|error| error.message)
+    }
+
+    /// [`submit_run`](Self::submit_run) with an OPTIONAL signature over the run.
+    ///
+    /// ⚑ `attestation = None` is the ordinary path and is byte-identical to the unsigned behaviour
+    /// this board has always had: a stranger who plays a run and posts it still ranks, and the row
+    /// honestly reads `attributed`. A signature is a stronger claim AVAILABLE, never a requirement.
+    ///
+    /// A signature that is PRESENT and does not check out is fail-closed (`Err`, nothing ingested,
+    /// nothing persisted) rather than silently downgraded: a client that believes it signed must be
+    /// told it did not, and quietly filing the run as attributed would make that indistinguishable
+    /// from a tampered submission. The refusal carries [`SubmitRefusal::attestation`] so a caller can
+    /// retry WITHOUT the signature rather than lose the run.
+    pub fn submit_run_attested(
+        &self,
+        day_key: &str,
+        run_id: &str,
+        player: &str,
+        level: u64,
+        class: u64,
+        moves: &[usize],
+        attestation: Option<&RunAttestationWire>,
+    ) -> Result<usize, SubmitRefusal> {
+        // THE SIGNATURE GATE RUNS FIRST, so a refused attestation ingests nothing at all.
+        let attested = match attestation {
+            Some(wire) => {
+                let (seed_hex, ruleset_id) = self
+                    .day_provenance(day_key)
+                    .ok_or_else(|| SubmitRefusal::run(format!("no such day: {day_key}")))?;
+                let stable_moves: Vec<u64> = moves
+                    .iter()
+                    .copied()
+                    .map(|choice| u64::try_from(choice).unwrap_or(u64::MAX))
+                    .collect();
+                let message =
+                    procgen_signing_message(&seed_hex, &ruleset_id, player, &stable_moves)
+                        .map_err(|_| SubmitRefusal::attest(AttestRefusal::UnnameableRun))?;
+                let verified =
+                    verify_attestation(&RootResolver::load(), &ruleset_id, player, &message, wire)
+                        .map_err(SubmitRefusal::attest)?
+                        .with_custody();
+                Some(stored_attestation(run_id, LANE_PROCGEN, &verified))
+            }
+            None => None,
+        };
+        let turns = self
+            .reverify_and_ingest(
+                day_key,
+                run_id,
+                player,
+                level,
+                class,
+                moves,
+                attested.clone(),
+            )
+            .map_err(SubmitRefusal::run)?;
         if let Some(store) = &self.store {
+            if let Some(attested) = &attested {
+                let _ = store.persist_attestation(attested);
+            }
             let stable_moves: Vec<u64> = moves
                 .iter()
                 .copied()
@@ -463,13 +551,14 @@ impl DescentState {
         &self,
         day_key: &str,
         record: PortableRecord,
-    ) -> Result<(String, VerifiedNativeRun, bool), String> {
+        attestation: Option<&RunAttestationWire>,
+    ) -> Result<(String, VerifiedNativeRun, bool, Option<StoredAttestation>), SubmitRefusal> {
         let (expected_seed, stored_day) = {
             let inner = self.inner.lock().unwrap();
             let day = inner
                 .days
                 .get(day_key)
-                .ok_or_else(|| format!("no such day: {day_key}"))?;
+                .ok_or_else(|| SubmitRefusal::run(format!("no such day: {day_key}")))?;
             (
                 native_seed_for_committed_day(&day.seed),
                 StoredDay {
@@ -478,35 +567,62 @@ impl DescentState {
                 },
             )
         };
-        let verified = verify_native_record(expected_seed, &record)?;
+        let verified = verify_native_record(expected_seed, &record).map_err(SubmitRefusal::run)?;
         if !verified.is_terminal() {
-            return Err(
+            return Err(SubmitRefusal::run(
                 "native record is an exact prefix: it neither settled on a proved exit nor ran \
                  out of light, so there is no finished run to share yet"
                     .to_string(),
-            );
+            ));
         }
         let run_id = derive_native_run_id(day_key, &record);
         let record_json = serde_json::to_string(&record)
-            .map_err(|error| format!("native record serialization: {error}"))?;
+            .map_err(|error| SubmitRefusal::run(format!("native record serialization: {error}")))?;
+
+        // ⚑ THE SIGNATURE GATE, over facts the REPLAY just re-derived — the replayed actor, the
+        // replayed turn count, and the replayed journal root — never over the submitted claim. It
+        // runs BEFORE ingest, so a refused attestation leaves the board untouched.
+        let attested = match attestation {
+            Some(wire) => Some(attest_native_run(
+                &run_id,
+                &stored_day.seed_hex,
+                &verified,
+                wire,
+            )?),
+            None => None,
+        };
 
         {
             let mut inner = self.inner.lock().unwrap();
             let day = inner
                 .days
                 .get_mut(day_key)
-                .ok_or_else(|| format!("no such day: {day_key}"))?;
+                .ok_or_else(|| SubmitRefusal::run(format!("no such day: {day_key}")))?;
             if !day.native_run_ids.iter().any(|id| id == &run_id) {
                 day.native_run_ids.push(run_id.clone());
             }
-            inner
-                .native_runs
-                .entry(run_id.clone())
-                .or_insert(NativeRun {
-                    id: run_id.clone(),
-                    day_key: day_key.to_string(),
-                    record,
-                });
+            // ⚑ AN ATTESTATION IS ONLY EVER ADDED, NEVER TAKEN AWAY BY A RESUBMISSION. The run id is
+            // a content address, so publishing the same run twice is idempotent by design — but the
+            // SIGNATURE rides beside the content, so a first (unsigned) publish followed by a signed
+            // one must be able to upgrade the row, and a later unsigned publish of an already-signed
+            // run must not silently strip it. Neither direction can forge anything: the signature is
+            // verified against the replayed run above before it can be attached, and re-checked on
+            // every read after.
+            match inner.native_runs.entry(run_id.clone()) {
+                Entry::Occupied(mut slot) => {
+                    if attested.is_some() && slot.get().attestation.is_none() {
+                        slot.get_mut().attestation = attested.clone();
+                    }
+                }
+                Entry::Vacant(slot) => {
+                    slot.insert(NativeRun {
+                        id: run_id.clone(),
+                        day_key: day_key.to_string(),
+                        record,
+                        attestation: attested.clone(),
+                    });
+                }
+            }
         }
         let durable = if let Some(store) = &self.store {
             // `persist_day` is idempotent-by-key (`INSERT OR IGNORE` for sqlite). Confirm the row
@@ -527,7 +643,10 @@ impl DescentState {
         } else {
             false
         };
-        Ok((run_id, verified, durable))
+        if let (Some(store), Some(attested)) = (&self.store, &attested) {
+            let _ = store.persist_attestation(attested);
+        }
+        Ok((run_id, verified, durable, attested))
     }
 
     /// **Anchor a ranked run's winning turn on the devnet node** — the opt-in bridge from the
@@ -647,6 +766,7 @@ impl DescentState {
         level: u64,
         class: u64,
         moves: &[usize],
+        attestation: Option<StoredAttestation>,
     ) -> Result<usize, String> {
         let universe = {
             let inner = self.inner.lock().unwrap();
@@ -670,8 +790,36 @@ impl DescentState {
         let turns = verify_completion(&universe, &completion)
             .map_err(|e| format!("verification failed: {e:?}"))?;
         // Only a provably-winning run reaches here — record it (the render path re-verifies again).
-        self.ingest_run(day_key, run_id, player, level, class, play);
+        let stable_moves: Vec<u64> = moves
+            .iter()
+            .copied()
+            .map(|choice| u64::try_from(choice).unwrap_or(u64::MAX))
+            .collect();
+        self.ingest_run_attested(
+            day_key,
+            run_id,
+            player,
+            level,
+            class,
+            play,
+            stable_moves,
+            attestation,
+        );
         Ok(turns)
+    }
+
+    /// **The day's committed seed hex and its procgen ruleset id** — the two values a procgen run
+    /// attestation's canonical message binds. `None` when the day is not open.
+    ///
+    /// The seed, not the key: a day key is a LABEL and two labels can name one world, so signing the
+    /// label would make a signature depend on which alias the board happened to resolve.
+    fn day_provenance(&self, day_key: &str) -> Option<(String, String)> {
+        let inner = self.inner.lock().unwrap();
+        let day = inner.days.get(day_key)?;
+        Some((
+            hex32(day.seed.as_bytes()),
+            procgen_ruleset_id(&day.day.source),
+        ))
     }
 
     /// **BOOT REPLAY + RE-VERIFY.** Reconstruct the board from the durable store: regenerate every
@@ -690,6 +838,16 @@ impl DescentState {
                 self.open_day(&d.key, CommittedSeed::from_bytes(bytes));
             }
         }
+        // The persisted signatures, indexed by run. ⚑ Restored, NOT believed: a restored row is
+        // re-checked against the run's own replayed facts on every read exactly as it was at submit,
+        // so an edited row simply stops being a signature and the run reverts to the ordinary
+        // attributed grade. That is why boot can carry them across without re-running the ceremony.
+        let attestations: HashMap<String, StoredAttestation> = store
+            .list_attestations()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|row| (row.run_id.clone(), row))
+            .collect();
         for r in store.list_runs().unwrap_or_default() {
             let Ok(stable_moves) = serde_json::from_str::<Vec<u64>>(&r.moves_json) else {
                 continue;
@@ -698,8 +856,15 @@ impl DescentState {
                 continue;
             };
             // A drop here is silent-and-correct: the row no longer re-verifies.
-            let _ = self
-                .reverify_and_ingest(&r.day_key, &r.run_id, &r.player, r.level, r.class, &moves);
+            let _ = self.reverify_and_ingest(
+                &r.day_key,
+                &r.run_id,
+                &r.player,
+                r.level,
+                r.class,
+                &moves,
+                attestations.get(&r.run_id).cloned(),
+            );
         }
         for r in store.list_native_runs().unwrap_or_default() {
             if r.record_json.len() > MAX_NATIVE_PORTABLE_BYTES {
@@ -713,7 +878,22 @@ impl DescentState {
             if derive_native_run_id(&r.day_key, &record) != r.run_id {
                 continue;
             }
-            let _ = self.submit_native_record(&r.day_key, record);
+            let restored = self.submit_native_record(&r.day_key, record, None);
+            if let (Ok((run_id, _, _, _)), Some(row)) =
+                (&restored, attestations.get(&r.run_id).cloned())
+            {
+                self.restore_native_attestation(run_id, row);
+            }
+        }
+    }
+
+    /// Re-attach a persisted signature to a native run restored by boot replay. The row is never
+    /// checked here and never needs to be: the render path rebuilds the canonical message from the
+    /// replayed run and re-checks the signature every time it draws a grade.
+    fn restore_native_attestation(&self, run_id: &str, row: StoredAttestation) {
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(run) = inner.native_runs.get_mut(run_id) {
+            run.attestation = Some(row);
         }
     }
 
@@ -804,10 +984,45 @@ impl DescentState {
         class: u64,
         play: Playthrough,
     ) -> bool {
+        self.ingest_run_attested(
+            day_key,
+            run_id,
+            player,
+            level,
+            class,
+            play,
+            Vec::new(),
+            None,
+        )
+    }
+
+    /// [`ingest_run`](Self::ingest_run) carrying the run's choice tape and an already-VERIFIED
+    /// attestation. Private, because the only honest way to obtain one is [`verify_attestation`]
+    /// over a message built from facts this board re-derived; a public setter would be a door onto
+    /// the board's strongest claim.
+    #[allow(clippy::too_many_arguments)]
+    fn ingest_run_attested(
+        &self,
+        day_key: &str,
+        run_id: &str,
+        player: &str,
+        level: u64,
+        class: u64,
+        play: Playthrough,
+        moves: Vec<u64>,
+        attestation: Option<StoredAttestation>,
+    ) -> bool {
         let mut inner = self.inner.lock().unwrap();
         if !inner.days.contains_key(day_key) {
             return false;
         }
+        // Same rule as the native lane: a resubmission may ADD a signature and may never strip one.
+        let attestation = attestation.or_else(|| {
+            inner
+                .runs
+                .get(run_id)
+                .and_then(|existing| existing.attestation.clone())
+        });
         inner.runs.insert(
             run_id.to_string(),
             Run {
@@ -817,6 +1032,8 @@ impl DescentState {
                 level,
                 class,
                 play,
+                moves,
+                attestation,
             },
         );
         if let Some(day) = inner.days.get_mut(day_key) {
@@ -899,6 +1116,190 @@ impl Default for DescentState {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// THE RUN ATTESTATION — a signature over WHO FILED THIS, beside the replay's WHAT HAPPENED.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Why a submit was refused, and WHICH of the two gates said no.
+///
+/// ⚑ The split is load-bearing rather than tidy. A run refused by the REPLAY is a run that does not
+/// exist under these rules and there is nothing to retry. A run refused by the SIGNATURE is a real,
+/// legal run whose stronger claim could not be established — and the client must be able to tell
+/// those apart, because for the second one the right move is to file the run WITHOUT the signature
+/// rather than to lose it. `attestation` is what the wire carries so a browser can do exactly that.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SubmitRefusal {
+    /// The sentence to show. For an attestation refusal this is the shared refusal vocabulary's own
+    /// wording ([`AttestRefusal::message`]), which passes the player-copy gate.
+    pub message: String,
+    /// `true` when the SIGNATURE was refused and the run itself was never judged. A client that
+    /// signed may retry the identical body with the signature removed; nothing was ingested, so the
+    /// retry is a first submission and not a second one.
+    pub attestation: bool,
+}
+
+impl SubmitRefusal {
+    /// A refusal by the run's own re-execution. Not retryable: the run is not a run under these
+    /// rules.
+    fn run(message: String) -> SubmitRefusal {
+        SubmitRefusal {
+            message,
+            attestation: false,
+        }
+    }
+
+    /// A refusal by the signature gate. The run was never ingested and never judged.
+    fn attest(refusal: AttestRefusal) -> SubmitRefusal {
+        SubmitRefusal {
+            message: refusal.message(),
+            attestation: true,
+        }
+    }
+}
+
+/// The persisted shape of one verified attestation.
+fn stored_attestation(run_id: &str, lane: &str, verified: &RunAttestation) -> StoredAttestation {
+    StoredAttestation {
+        run_id: run_id.to_string(),
+        lane: lane.to_string(),
+        ruleset_id: verified.ruleset_id.clone(),
+        signer_pubkey_hex: verified.signer_pubkey_hex.clone(),
+        signature_hex: verified
+            .signature
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect(),
+        custody_tag: verified.custody_tag().to_string(),
+    }
+}
+
+/// The wire form of a persisted attestation, so a re-check on render runs the SAME verifier the
+/// submit ran rather than a second implementation of it.
+fn attestation_wire(row: &StoredAttestation) -> RunAttestationWire {
+    RunAttestationWire {
+        signer_pubkey_hex: row.signer_pubkey_hex.clone(),
+        signature_hex: row.signature_hex.clone(),
+        ruleset_id: row.ruleset_id.clone(),
+    }
+}
+
+/// **Check a native run's signature against the facts the REPLAY just produced.** The message is
+/// built from `verified` — the replayed actor, the replayed event count, the replayed journal root —
+/// so this is a check on the run, not a comparison of a client's story with itself.
+fn attest_native_run(
+    run_id: &str,
+    day_seed_hex: &str,
+    verified: &VerifiedNativeRun,
+    wire: &RunAttestationWire,
+) -> Result<StoredAttestation, SubmitRefusal> {
+    let ruleset = native_ruleset_id();
+    let turns = u64::try_from(verified.turns)
+        .map_err(|_| SubmitRefusal::attest(AttestRefusal::UnnameableRun))?;
+    let message = native_signing_message(
+        day_seed_hex,
+        ruleset,
+        &verified.actor,
+        turns,
+        &verified.root_hex,
+    )
+    .map_err(|_| SubmitRefusal::attest(AttestRefusal::UnnameableRun))?;
+    let attested = verify_attestation(
+        &RootResolver::load(),
+        ruleset,
+        &verified.actor,
+        &message,
+        wire,
+    )
+    .map_err(SubmitRefusal::attest)?
+    .with_custody();
+    Ok(stored_attestation(run_id, LANE_NATIVE, &attested))
+}
+
+/// **The grade a NATIVE row wears, re-derived on THIS read.** No stored verdict is consulted: the
+/// canonical message is rebuilt from the replay and the retained signature is checked again. A row
+/// whose signature no longer checks out falls back to [`ActorGrade::Asserted`], which is the honest
+/// floor — the run is still a real run and still ranks; only the stronger claim is gone.
+fn native_row_grade(
+    resolver: &RootResolver,
+    day_seed_hex: &str,
+    verified: &VerifiedNativeRun,
+    row: Option<&StoredAttestation>,
+) -> ActorGrade {
+    let Some(row) = row else {
+        return ActorGrade::Asserted;
+    };
+    // The lane and the rules must both be the ones this board is keeping score with. The ruleset
+    // check is belt-and-braces rather than the tooth: a run played under a different emitted program
+    // fails the REPLAY and never reaches a grade at all. It is here so the two lanes read alike.
+    if row.lane != LANE_NATIVE || row.ruleset_id != native_ruleset_id() {
+        return ActorGrade::Asserted;
+    }
+    let Ok(turns) = u64::try_from(verified.turns) else {
+        return ActorGrade::Asserted;
+    };
+    let Ok(message) = native_signing_message(
+        day_seed_hex,
+        &row.ruleset_id,
+        &verified.actor,
+        turns,
+        &verified.root_hex,
+    ) else {
+        return ActorGrade::Asserted;
+    };
+    match verify_attestation(
+        resolver,
+        &row.ruleset_id,
+        &verified.actor,
+        &message,
+        &attestation_wire(row),
+    ) {
+        // ⚑ The custody grade is taken from the ROW, not re-derived here, and that is deliberate:
+        // custody is provenance (whose machine held the key), not crypto, so it is not part of what
+        // re-verification can establish. An unknown tag reads as custodial — the direction that
+        // cannot overstate.
+        Ok(_) => ActorGrade::signed_with(RunAttestation::custody_from_tag(&row.custody_tag)),
+        Err(_) => ActorGrade::Asserted,
+    }
+}
+
+/// [`native_row_grade`] for the procgen lane: same discipline, over that lane's own message (the
+/// choice tape rides in the message, since procgen commits no chained root).
+fn procgen_row_grade(
+    resolver: &RootResolver,
+    day_seed_hex: &str,
+    ruleset_id: &str,
+    player: &str,
+    moves: &[u64],
+    row: Option<&StoredAttestation>,
+) -> ActorGrade {
+    let Some(row) = row else {
+        return ActorGrade::Asserted;
+    };
+    if row.lane != LANE_PROCGEN || row.ruleset_id != ruleset_id {
+        return ActorGrade::Asserted;
+    }
+    let Ok(message) = procgen_signing_message(day_seed_hex, ruleset_id, player, moves) else {
+        return ActorGrade::Asserted;
+    };
+    match verify_attestation(
+        resolver,
+        ruleset_id,
+        player,
+        &message,
+        &attestation_wire(row),
+    ) {
+        Ok(_) => ActorGrade::signed_with(RunAttestation::custody_from_tag(&row.custody_tag)),
+        Err(_) => ActorGrade::Asserted,
+    }
+}
+
+/// **A day's committed seed as hex** — the WORLD a day key labels, and the value a run attestation's
+/// canonical message binds. Published to the play page (`day.json`) so the tab signs over the world
+/// rather than over whichever alias of it the board resolves.
+pub fn day_seed_hex(day: &DescentDay) -> String {
+    hex32(day.seed.as_bytes())
+}
+
 /// **The shareable link shape** for a run — the path the bot's result embed points a stranger at
 /// (`https://<host>/descent/run/{run_id}`). Opening it re-verifies the run and shows the proof.
 pub fn run_share_path(run_id: &str) -> String {
@@ -964,6 +1365,13 @@ pub struct SubmitRun {
     pub class: u64,
     /// The move sequence — the choice index at each passage, in order.
     pub moves: Vec<u64>,
+    /// ⚑ **OPTIONAL.** A signature over this run's canonical message
+    /// ([`crate::descent_attest::procgen_signing_message`]). Absent is the ordinary case and the
+    /// board is NOT gated on it: an unsigned run ranks exactly as it always has and its row honestly
+    /// reads `attributed`. Present and unverifiable is fail-closed, with a refusal that tells the
+    /// caller it may retry without one.
+    #[serde(default)]
+    pub attestation: Option<RunAttestationWire>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -971,6 +1379,12 @@ struct SubmitNativeRun {
     #[serde(default)]
     day: Option<String>,
     record: serde_json::Value,
+    /// The optional run signature. Deliberately OUTSIDE `record`: the portable record is
+    /// `deny_unknown_fields` and is the byte-for-byte object the exact-replay gate reproduces, so a
+    /// field added inside it would be a lockstep edit across the browser bundle and this server, and
+    /// would change every run id. The envelope carries the signature; the record stays the record.
+    #[serde(default)]
+    attestation: Option<RunAttestationWire>,
 }
 
 /// Receive the exact `NativeDescentWorld.recordJson()` envelope. This endpoint exists because its
@@ -999,8 +1413,8 @@ async fn post_native_submit(
         Ok(day) => day,
         Err(error) => return native_submit_refused(error),
     };
-    match state.submit_native_record(&day, record) {
-        Ok((run_id, verified, durable)) => {
+    match state.submit_native_record(&day, record, body.attestation.as_ref()) {
+        Ok((run_id, verified, durable, attested)) => {
             let ranked = verified.crowned();
             let banked_relics = verified.banked_relics();
             // The verified notes themselves — the first wire consumer. These are the replayed
@@ -1028,6 +1442,18 @@ async fn post_native_submit(
                 "banked_relics": banked_relics,
                 "banked_notes": banked_notes,
                 "durable": durable,
+                // ⚑ THE RULESET THIS RUN WAS EARNED UNDER — one string, the emitted program's hash.
+                // Nothing consumes it yet; a rules overhaul is imminent and a run landing today
+                // should be able to say what it was played under rather than leaving a later reader
+                // to infer it from a date.
+                "ruleset": native_ruleset_id(),
+                // Whether the NAME on this run was checked, and how strongly. Reported separately
+                // from `verified` (which is about the MOVES) because they are different claims.
+                "signed": attested.is_some(),
+                "custody": attested
+                    .as_ref()
+                    .map(|row| row.custody_tag.clone())
+                    .unwrap_or_default(),
                 "detail": detail,
             });
             // AUTO-ANCHOR THE NATIVE LANE. A crowned run already ranks in-process; if a devnet is
@@ -1075,19 +1501,40 @@ async fn post_native_submit(
             }
             (StatusCode::OK, Json(resp))
         }
-        Err(error) => native_submit_refused(error),
+        Err(refusal) => native_submit_refusal(refusal),
     }
 }
 
 fn native_submit_refused(error: String) -> (StatusCode, Json<serde_json::Value>) {
+    native_submit_refusal(SubmitRefusal {
+        message: error,
+        attestation: false,
+    })
+}
+
+/// The `400` a refused native submit answers with.
+///
+/// ⚑ `signature_refused` is the field that keeps the rule *"a player must never lose a run because
+/// signing was unavailable"* true across a process boundary. A SIGNATURE refusal means the run was
+/// never judged and nothing was ingested, so the client may re-post the identical body without the
+/// attestation and that is a first submission, not a second one. A REPLAY refusal carries `false`
+/// and there is nothing to retry: the run is not a run under these rules.
+fn native_submit_refusal(refusal: SubmitRefusal) -> (StatusCode, Json<serde_json::Value>) {
+    let detail = if refusal.attestation {
+        "the signature on this record was refused; the run itself was never judged and nothing was \
+         retained. The identical record may be submitted again without a signature."
+    } else {
+        "native re-execution rejected the record; nothing was retained"
+    };
     (
         StatusCode::BAD_REQUEST,
         Json(serde_json::json!({
             "verified": false,
             "ranked": false,
             "kind": "exact-native-replay",
-            "error": error,
-            "detail": "native re-execution rejected the record; nothing was retained",
+            "signature_refused": refusal.attestation,
+            "error": refusal.message,
+            "detail": detail,
         })),
     )
 }
@@ -1131,7 +1578,16 @@ async fn post_submit(
         }
     };
     let run_id = derive_run_id(&day, &body.player, &moves);
-    match state.submit_run(&day, &run_id, &body.player, body.level, body.class, &moves) {
+    let signed = body.attestation.is_some();
+    match state.submit_run_attested(
+        &day,
+        &run_id,
+        &body.player,
+        body.level,
+        body.class,
+        &moves,
+        body.attestation.as_ref(),
+    ) {
         Ok(turns) => {
             // The run ranks in-process. If a devnet is opted in (`DREGG_NODE_URL`), ALSO anchor its
             // winning turn on the running node's ledger — a real committed turn on-chain, confirmed
@@ -1142,6 +1598,14 @@ async fn post_submit(
                 "run_id": run_id,
                 "turns": turns,
                 "share": run_share_path(&run_id),
+                // ⚑ THE RULESET THIS RUN WAS EARNED UNDER — this lane's program is the day's own
+                // generated scene, so its id is that scene's hash. Nothing consumes it yet.
+                "ruleset": state
+                    .day_provenance(&day)
+                    .map(|(_, ruleset)| ruleset)
+                    .unwrap_or_default(),
+                // Whether the NAME was checked, reported separately from `ranked` (the MOVES).
+                "signed": signed,
                 "detail": "re-executed + no-cheat-verified; the run now ranks on the board",
             });
             if state.settles_to_a_node() {
@@ -1181,13 +1645,21 @@ async fn post_submit(
             }
             (StatusCode::OK, Json(resp))
         }
-        // Fail-closed: a forged / losing / illegal run is refused before it can rank.
-        Err(why) => (
+        // Fail-closed: a forged / losing / illegal run is refused before it can rank, and so is a
+        // run whose PRESENT signature did not check out. The two are told apart on the wire so a
+        // caller that signed can re-post without the signature rather than lose the run.
+        Err(refusal) => (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
                 "ranked": false,
-                "error": why,
-                "detail": "rejected by re-execution: nothing ingested (no-cheat)",
+                "signature_refused": refusal.attestation,
+                "error": refusal.message,
+                "detail": if refusal.attestation {
+                    "the signature on this run was refused; the run itself was never judged and \
+                     nothing was ingested. The identical run may be submitted again without one."
+                } else {
+                    "rejected by re-execution: nothing ingested (no-cheat)"
+                },
             })),
         ),
     }
@@ -1319,6 +1791,11 @@ async fn get_leaderboard(
         return Html(leaderboard_missing(Some(&key)));
     };
 
+    // The two values every attestation on this board is bound to: the world (the committed SEED,
+    // never the day's label) and the rules. Computed once for the whole render, like the resolver.
+    let day_seed_hex = hex32(day.seed.as_bytes());
+    let procgen_ruleset = procgen_ruleset_id(&day.day.source);
+
     // Re-verify EVERY candidate on render. Only a provable win ranks; anything else is excluded.
     let mut rows: Vec<Row> = Vec::new();
     for rid in &day.run_ids {
@@ -1347,6 +1824,18 @@ async fn get_leaderboard(
                 human: resolver.resolve(&run.player),
                 turns,
                 depth,
+                // ⚑ THE OTHER CLAIM, re-checked on THIS read exactly as the moves were. No stored
+                // verdict: the canonical message is rebuilt from the run's own material and the
+                // retained signature is verified again. A run with none is `Asserted`, which is the
+                // ordinary way a browser plays and is not a lesser run.
+                grade: procgen_row_grade(
+                    &resolver,
+                    &day_seed_hex,
+                    &procgen_ruleset,
+                    &run.player,
+                    &run.moves,
+                    run.attestation.as_ref(),
+                ),
             });
         }
     }
@@ -1371,6 +1860,14 @@ async fn get_leaderboard(
                 // THE SCORE — read off THIS replay's own final state and this day's drawn map, like
                 // every other number in the row. It does not decide the rank; see `NativeRow::score`.
                 let score = verified.story().map(|story| story.score());
+                // The name's grade, re-derived on this read from the REPLAY's own actor, turn count
+                // and journal root — the same three facts the signature covers.
+                let grade = native_row_grade(
+                    &resolver,
+                    &day_seed_hex,
+                    &verified,
+                    run.attestation.as_ref(),
+                );
                 native_rows.push(NativeRow {
                     run_id: run.id.clone(),
                     // The actor comes off the REPLAY, never off the submitted claim — the resolution
@@ -1380,6 +1877,7 @@ async fn get_leaderboard(
                     turns: verified.turns,
                     relics,
                     score,
+                    grade,
                 });
             }
         }
@@ -1457,8 +1955,43 @@ async fn get_run_card(
     let won = ended && gold == HOARD_GOLD;
     let fell = downed == 1;
 
+    // ⚑ WHO FILED IT, beside WHAT HAPPENED — the same two claims the board draws, re-checked here
+    // on this read. Printed for an unsigned run too: an absence is not readable.
+    let day_seed_hex = hex32(day.seed.as_bytes());
+    let procgen_ruleset = procgen_ruleset_id(&day.day.source);
+    let signature_block = match run.attestation.as_ref() {
+        Some(row) => match procgen_row_grade(
+            &RootResolver::load(),
+            &day_seed_hex,
+            &procgen_ruleset,
+            &run.player,
+            &run.moves,
+            Some(row),
+        ) {
+            ActorGrade::Asserted => crate::descent_attest::unsigned_panel(&procgen_ruleset),
+            grade => crate::descent_attest::signature_panel(
+                if grade == ActorGrade::SignedUserHeld {
+                    Custody::UserHeld
+                } else {
+                    Custody::Custodial
+                },
+                &row.signer_pubkey_hex,
+                &row.ruleset_id,
+            ),
+        },
+        None => crate::descent_attest::unsigned_panel(&procgen_ruleset),
+    };
+
     Html(run_card_page(
-        day, run, verified, won, fell, ended, depth, gold,
+        day,
+        run,
+        verified,
+        won,
+        fell,
+        ended,
+        depth,
+        gold,
+        &signature_block,
     ))
 }
 
@@ -1468,7 +2001,7 @@ async fn get_native_run_card(
     State(state): State<Arc<DescentState>>,
     Path(id): Path<String>,
 ) -> Html<String> {
-    let (record, day_key, title, seed, expected_seed) = {
+    let (record, day_key, title, seed, expected_seed, day_seed_hex, attestation) = {
         let inner = state.inner.lock().unwrap();
         let Some(run) = inner.native_runs.get(&id) else {
             return Html(run_missing(&id));
@@ -1482,11 +2015,42 @@ async fn get_native_run_card(
             day.day.title.clone(),
             seed_tag(&day.seed),
             native_seed_for_committed_day(&day.seed),
+            hex32(day.seed.as_bytes()),
+            run.attestation.clone(),
         )
     };
     let replay = verify_native_record(expected_seed, &record);
+    // ⚑ THE NAME'S PANEL, re-checked on THIS read like everything else on this page. It is rendered
+    // whether or not a signature came with the run: an absence cannot be read, and on a page whose
+    // job is to make a stranger believe a result, silence about the name is itself a claim.
+    let signature_block = match (&replay, &attestation) {
+        (Ok(verified), Some(row)) => {
+            match native_row_grade(&RootResolver::load(), &day_seed_hex, verified, Some(row)) {
+                // The retained signature no longer checks out against this replay: say `attributed`,
+                // which is the honest floor, rather than printing a signature panel about a
+                // signature that just failed.
+                ActorGrade::Asserted => crate::descent_attest::unsigned_panel(&row.ruleset_id),
+                grade => crate::descent_attest::signature_panel(
+                    if grade == ActorGrade::SignedUserHeld {
+                        Custody::UserHeld
+                    } else {
+                        Custody::Custodial
+                    },
+                    &row.signer_pubkey_hex,
+                    &row.ruleset_id,
+                ),
+            }
+        }
+        _ => crate::descent_attest::unsigned_panel(native_ruleset_id()),
+    };
     Html(native_run_card_page(
-        &id, &day_key, &title, &seed, &record, replay,
+        &id,
+        &day_key,
+        &title,
+        &seed,
+        &record,
+        replay,
+        &signature_block,
     ))
 }
 
@@ -1519,6 +2083,10 @@ struct Row {
     human: String,
     turns: usize,
     depth: u64,
+    /// **How the NAME on this row was established**, re-derived on this render. Beside the row's
+    /// re-executed moves, not instead of them: the two are different questions and the board answers
+    /// both.
+    grade: ActorGrade,
 }
 
 /// One crowned browser-native run, verified under the Lean-native ruleset on this render.
@@ -1543,6 +2111,9 @@ struct NativeRow {
     /// so in prose so a reader is never left inferring the ordering from a column that does not drive
     /// it. Whether the board SHOULD rank by score is an open decision, deliberately not taken here.
     score: Option<RunScore>,
+    /// **How the NAME on this row was established**, re-derived on this render from the replayed
+    /// actor, turn count and journal root.
+    grade: ActorGrade,
 }
 
 /// Hex-encode 32 bytes (a committed seed, for durable persistence — the full round-trip encoding).
@@ -1613,14 +2184,13 @@ fn leaderboard_page(day: &Day, rows: &[Row], native_rows: &[NativeRow]) -> Strin
                  <td><a href=\"{href}\">verify this run \
                  <span class=\"arr\" aria-hidden=\"true\">→</span></a></td></tr>",
                 rank = i + 1,
-                // ⚑ HOW THE NAME WAS ESTABLISHED, beside the name, in the shared vocabulary.
-                // A procgen run arrives as an ordinary form POST under whatever name the browser
-                // was signed in as, and nothing signs it — so every row here is honestly
-                // `Asserted`. That is the current state of this lane, not a placeholder, and a
-                // board that sells verifiability owes the reader the difference between "the moves
-                // re-ran" (which the proof link is) and "this is who ran them" (which nothing on
-                // this lane checks yet).
-                grade = crate::attribution::ActorGrade::Asserted.chip(),
+                // ⚑ HOW THE NAME WAS ESTABLISHED, beside the name, in the shared vocabulary — and
+                // RE-CHECKED on this render, not read off a stored flag. A run submitted without a
+                // signature is honestly `Asserted` (the ordinary way a browser plays); a run whose
+                // signature verifies again right now wears the stronger chip. The board owes the
+                // reader the difference between "the moves re-ran" (which the proof link is) and
+                // "this is who ran them" (which the chip is), because they are different claims.
+                grade = r.grade.chip(),
                 player = esc(&r.player),
                 turns = r.turns,
                 depth = r.depth,
@@ -1667,10 +2237,11 @@ fn leaderboard_page(day: &Day, rows: &[Row], native_rows: &[NativeRow]) -> Strin
                  <td><a href=\"{href}\">verify native record \
                  <span class=\"arr\" aria-hidden=\"true\">→</span></a></td></tr>",
                 rank = index + 1,
-                // Same fact, same words, same chip as every other surface. The native submit takes
-                // a whole run envelope and no signature, so the actor on a native record is a
-                // string the browser chose — said, rather than left to be inferred from silence.
-                grade = crate::attribution::ActorGrade::Asserted.chip(),
+                // Same fact, same words, same chip as every other surface. A native record may now
+                // arrive with a signature over the run's replayed actor, turn count and journal
+                // root; this chip is that signature re-checked on this render, or the honest
+                // `attributed` when none came with it.
+                grade = row.grade.chip(),
                 actor = esc(&row.actor),
                 turns = row.turns,
                 relics = row.relics,
@@ -1719,11 +2290,13 @@ fn leaderboard_page(day: &Day, rows: &[Row], native_rows: &[NativeRow]) -> Strin
         names = "<p class=\"prose\" style=\"margin-top:1.4rem\">Re-verification decides which \
                  runs appear here, and it is about the moves: every row was re-executed under the \
                  rules and reached the end. Who played it is a separate question, and this board \
-                 answers it separately — the mark beside each name says how that name was \
-                 established, which today is the same for every row on both lanes because neither \
-                 way of submitting a run signs it yet. A player whose browser signs their turns \
-                 reaches the stronger mark on the shared tables now; carrying a signature into a \
-                 whole-run submission is the step this board is waiting on.</p>",
+                 answers it separately. The mark beside each name says how that name was \
+                 established, and it is checked on this page load exactly as the moves are: a run \
+                 that arrived with a signature has that signature verified again, right now, \
+                 against the run it came with. A run that arrived without one reads as attributed, \
+                 which is the ordinary way a browser plays and counts for just as much. If you want \
+                 your own runs to carry the stronger mark, <a href=\"/identity/device\">let this \
+                 browser sign for you</a>.</p>",
         legend = crate::attribution::legend(),
         title = esc(&day.day.title),
         key = esc(&day.key),
@@ -1767,6 +2340,7 @@ fn native_run_card_page(
     seed: &str,
     record: &PortableRecord,
     replay: Result<VerifiedNativeRun, String>,
+    signature_block: &str,
 ) -> String {
     let story = replay.as_ref().ok().and_then(VerifiedNativeRun::story);
     let (verified, actor, turns, root, banked, notes, crowned, detail) = match replay {
@@ -1901,11 +2475,15 @@ fn native_run_card_page(
          <div><p class=\"k\">Banked relics</p><p class=\"v mono\">{banked}</p></div>\
          <div><p class=\"k\">Minted notes</p><p class=\"v mono\">{notes}</p></div>\
          <div><p class=\"k\">Journal root</p><p class=\"v mono\">{root}</p></div></div>\
+         {signature_block}\
+         {att_style}\
          {share_block}\
          <p class=\"prose\" style=\"margin-top:var(--s5)\">\
          <a class=\"btn btn-primary\" href=\"/descent/play\">Take your own light down \
          <span class=\"arr\" aria-hidden=\"true\">→</span></a></p>\
          </main>",
+        signature_block = signature_block,
+        att_style = crate::attribution::ATTRIBUTION_STYLE,
         day = esc(day_key),
         actor = esc(&actor),
         id = esc(run_id),
@@ -1941,6 +2519,7 @@ fn run_card_page(
     ended: bool,
     depth: u64,
     gold: u64,
+    signature_block: &str,
 ) -> String {
     // THE VERDICT — the whole point of the page, so it is built like a certificate rather than
     // another look-alike navy panel: a stamped PASS/FAIL badge over a mint/rose field. (The old
@@ -2014,9 +2593,13 @@ fn run_card_page(
          <div><p class=\"k\">Warden HP</p><p class=\"v mono\">{whp} of {whp_max}</p></div>\
          </div>\
          {panel}\
+         {signature_block}\
+         {att_style}\
          <a class=\"backlink\" href=\"/descent/leaderboard?day={key}\">← today's no-cheat \
          leaderboard</a>\
          </main>",
+        signature_block = signature_block,
+        att_style = crate::attribution::ATTRIBUTION_STYLE,
         player = esc(&run.player),
         title = esc(&day.day.title),
         key = esc(&day.key),
@@ -2252,6 +2835,7 @@ mod funnel_tests {
             human: human.into(),
             turns,
             depth: 1,
+            grade: ActorGrade::Asserted,
         }
     }
 
@@ -2284,6 +2868,7 @@ mod funnel_tests {
             turns,
             relics: 0,
             score: None,
+            grade: ActorGrade::Asserted,
         }
     }
 
