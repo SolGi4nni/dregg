@@ -17,10 +17,10 @@
 //!
 //! The seed cases mirror the Lean `#eval` fixtures in FFI.lean §WG so the bytes are
 //! cross-checkable against the source of truth:
-//!   * `wideDemoState`   (FFI.lean:2745) — 2 cells, caps, all 5 side-tables populated;
-//!   * `gatedDemoTurn`   (FFI.lean:3044) — transfer 30 (cell0->cell1, asset0) under a
-//!     genuine `.signature 7 7` + a monotone caveat, with a child escrow under `.token 3 3`.
-//!     Both credentials pass the §1 portal ⇒ the gated tree COMMITS (ok:1).
+//!   * `wideDemoState`   (FFI.lean:2068) — 2 cells, caps, all 5 side-tables populated;
+//!   * `gatedDemoTurn`   (FFI.lean:2416) — transfer 30 (cell0->cell1, asset0) under a
+//!     genuine `.signature 7 7` + a monotone caveat, no children. The credential passes the
+//!     §1 portal ⇒ the gated tree COMMITS (ok:1).
 
 // Force an rlib edge to the `dregg_lean_ffi` lib so this bin inherits the build script's
 // PROPAGATED native-lib link directives (the shim + Lean closure via `links = "dregg_lean"`).
@@ -129,9 +129,10 @@ fn wide_demo_state() -> WireState {
 /// trivially true on the pre-state). The credential passes the §1 portal (proof echoes the
 /// statement) and the caveat discharges ⇒ the gated tree COMMITS, conserving asset 0
 /// (100+5 = 70+35). This is `gatedDemoTurn`'s credential shape minus the child escrow, so the
-/// balance delta is the CLEAN conserved transfer (loglen:1) rather than the escrow-debited
-/// 60/35 (loglen:2) the full `gatedDemoTurn` produces — keeping the conservation assertion
-/// crisp. The expected wire is GOLDEN_INPUT below.
+/// balance delta is the CLEAN conserved transfer (loglen:1), keeping the conservation assertion
+/// crisp. This is byte-for-byte the Lean `gatedDemoTurn` (FFI.lean:2416) — whose `children` is
+/// `[]`, notwithstanding its own doc-comment's mention of a child escrow. The expected wire is
+/// GOLDEN_INPUT below.
 fn gated_demo_turn() -> WireTurn {
     WireTurn {
         agent: 0,
@@ -163,11 +164,32 @@ fn gated_demo_turn() -> WireTurn {
     }
 }
 
-/// The EXACT golden input wire the Lean side emits for `wide_demo_state()` + `gated_demo_turn()`
-/// (captured from `IO.println (encodeWState wideDemoState ++ encodeWTurn myTurn)` against
-/// metatheory/Dregg2/Exec/FFI.lean). `marshal_turn` must reproduce this BYTE-FOR-BYTE — that
+/// The EXACT golden input wire the LEAN side emits for `wide_demo_state()` + `gated_demo_turn()`,
+/// i.e. the Lean literal `gatedDemoInput = encodeWWire { state := wideDemoState, turn := gatedDemoTurn }`
+/// (metatheory/Dregg2/Exec/FFI.lean §WG). `marshal_turn` must reproduce this BYTE-FOR-BYTE — that
 /// is the Layer-0 byte-equality gate, the strongest possible check short of the live parser.
-const GOLDEN_INPUT: &str = "{\"host\":{\"now\":0,\"block_height\":0,\"frozen\":[],\"stored_head\":0,\"budget\":1000000000},\"state\":{\"cells\":[[0,{\"rec\":[[\"balance\",{\"int\":100}],[\"nonce\",{\"int\":7}]]}],[1,{\"rec\":[[\"balance\",{\"int\":5}]]}]],\"caps\":[[9,[{\"node\":0}]]],\"bal\":[[0,0,100],[1,0,5]],\"escrows\":[[1,0,1,7,0,0,0,{\"none\":0},{\"none\":0}]],\"nullifiers\":[111],\"commitments\":[222],\"queues\":[[1,0,4,[333,444]]],\"swiss\":[[5,0,1,[0,1],1,{\"some\":99}]],\"revoked\":[]},\"turn\":{\"agent\":0,\"nonce\":7,\"fee\":5,\"valid_until\":1000,\"prev\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"root\":{\"auth\":{\"sig\":[\"0000000000000000000000000000000000000000000000000000000000000007\",7]},\"caveats\":[[0,0,0,0]],\"action\":{\"bal\":[0,0,1,30,0]},\"children\":[]}}}";
+///
+/// RE-CAPTURE RECIPE — run this VERBATIM; it prints exactly the string below, and nothing else:
+///
+/// ```sh
+/// cd metatheory
+/// printf 'import Dregg2.Exec.FFI\n#eval IO.println Dregg2.Exec.FFI.Wide.gatedDemoInput\n' > /tmp/cap.lean
+/// lake env lean /tmp/cap.lean
+/// ```
+///
+/// (~15 s against a warm `.lake`. Lean builds stay local.) Then re-escape the `"` for Rust.
+///
+/// The golden MUST come from that command, NEVER from pasting `marshal_turn`'s own output — a
+/// golden copied off the thing it checks is an assertion comparing a value to itself, and would
+/// pass no matter what either side emits. Its entire value is that Lean authored it independently.
+///
+/// Drift history: this const was three fields stale (2026-07-26). Lean's `encodeWState` grew
+/// `lifecycle` / `deathCert` / `delegate` after `revoked`; the Rust `WireState` grew the matching
+/// fields and emitted them correctly (it had to — Lean's `parseWState` requires all three via a
+/// strict sequential `lit` chain, and every semantic case parsed), but nobody re-ran the capture.
+/// The failure read "the marshaller is NOT byte-correct"; the marshaller was fine, the const was
+/// not. The recipe above is here so the next widening is a command, not an archaeology exercise.
+const GOLDEN_INPUT: &str = "{\"host\":{\"now\":0,\"block_height\":0,\"frozen\":[],\"stored_head\":0,\"budget\":1000000000},\"state\":{\"cells\":[[0,{\"rec\":[[\"balance\",{\"int\":100}],[\"nonce\",{\"int\":7}]]}],[1,{\"rec\":[[\"balance\",{\"int\":5}]]}]],\"caps\":[[9,[{\"node\":0}]]],\"bal\":[[0,0,100],[1,0,5]],\"escrows\":[[1,0,1,7,0,0,0,{\"none\":0},{\"none\":0}]],\"nullifiers\":[111],\"commitments\":[222],\"queues\":[[1,0,4,[333,444]]],\"swiss\":[[5,0,1,[0,1],1,{\"some\":99}]],\"revoked\":[],\"lifecycle\":[],\"deathCert\":[],\"delegate\":[]},\"turn\":{\"agent\":0,\"nonce\":7,\"fee\":5,\"valid_until\":1000,\"prev\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"root\":{\"auth\":{\"sig\":[\"0000000000000000000000000000000000000000000000000000000000000007\",7]},\"caveats\":[[0,0,0,0]],\"action\":{\"bal\":[0,0,1,30,0]},\"children\":[]}}}";
 
 /// A forged-credential turn (FFI.lean:3072 `forgedGatedTurn`): the SAME transfer under
 /// `.signature 7 8` (proof does NOT echo the statement ⇒ the §1 portal REJECTS ⇒ rollback).
