@@ -1023,7 +1023,8 @@ mod tests {
                 for new in 0i64..=ceiling + 2 {
                     assert_eq!(
                         consume_admit(ceiling, old, new),
-                        deleg_admit(&g, 0, 7, old, new).expect("the Lean oracle reached a verdict"),
+                        deleg_admit(&g, 0, 7, old, new)
+                            .expect("the Lean oracle reached a verdict"),
                         "guard consume_admit must equal the verified counter+ceiling \
                          (ceiling={ceiling}, old={old}, new={new})"
                     );

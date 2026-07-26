@@ -244,28 +244,34 @@ you is not a bug in either half.
   wound doc, since that doc exists to stop exactly that reasoning.
 
 
-## ⚑⚑ HAZARD IN THE WORKING TREE — read before touching the shielded cone
+## ⚑ HAZARD RESOLVED — and it was not where I said it was (2026-07-26)
 
-The `wide_value_binding` sidecar swap lane was **killed mid-write** (its last words were literally
-"Now I'll write the swapped file") when the box hit OOM pressure. Left uncommitted and **never compiled**:
+I recorded the half-written `wide_value_binding` swap as a working-tree hazard. **`git diff` on all four
+paths was EMPTY.** Commit `94f36b127` *"sweep-up commit (sorry claudes)"* (07-25 23:35:53) had already
+swept the mixed state into `main` — so the half-converted file was **in HEAD, unverified**, and a
+`git diff` review would have found nothing. My handoff would have sent the next lane looking in the
+wrong place.
 
-* `circuit-prove/src/shielded/wide_value_binding.rs` — **MIXED STATE**: 7 references to the new
-  `Plonky3HidingFriReference` / `Ir2BatchProof` path landed *alongside* 5 surviving authoring remnants
-  (`wide_value_binding_descriptor`, `constant_gate`, `mod col`). It **parses** but is partially
-  converted and almost certainly not type-correct.
-* `turn/src/action.rs` — 7 swap references, same story.
-* `circuit-prove/tests/{shielded_wide_value_binding,wide_value_binding_lean_route}.rs`.
+And the killed lane's final write had actually **completed**: `constant_gate` is gone entirely,
+`wide_value_binding_descriptor` now returns the Lean golden, `mod col` survives only as an
+index-mirror with a live detector, and `turn/src/action.rs` was doc-comment-only (+7/−0), never
+half-converted. What had *never happened* was compiling it.
 
-**Do not build on it and do not assume it works.** `git diff` those paths first. It was NOT reverted
-deliberately — `git checkout` is banned here and a partial diff is recoverable information, whereas a
-discarded one is not.
+**Now verified:** 7 runs `EXIT=0`, **28 tests, 0 failed, 0 ignored** — including
+`law1_enforcement_gate` 9/9. `wide_value_binding.rs` is **gone from the law-1 BASELINE** (was 7 sites),
+which the ratchet's stale-entry check *forced*. Net −115 lines (639 → 524).
 
-The *proof* side is complete and committed and is unaffected: the whole AIR is authored in Lean
-(`WideValueBindingEmit`, byte-pinned), every emitted constraint carries a theorem
-(`WideValueBindingRefine`), and the file already has **0 law-1 ratchet sites**. The swap is plumbing:
-route the sidecar off `prove_dsl_zk`/v1 `DslCircuit` onto the hiding IR-v2 backend. **Cleared as safe**:
-`set_shielded_transfer_verifier` has no call site and there is no non-test `Effect::Shield`, so the
-proof-bytes change touches nothing deployed.
+Claims checked rather than accepted: **ZK is not lost** — the retired `prove_dsl_zk` and the new
+`Plonky3HidingFriReference` both call the same `create_zk_config()`; the golden was re-parsed
+independently (29874 B, 162 cols, 158 = 138 gates + 3 lookups + 17 PI pins).
+
+**Residuals, honest:** `lake build` was NOT run this pass, so the Lean theorems' machine-checking is
+unverified *here* (they are committed and textually clean, 17 `#assert_axioms`). The last row remains
+unconstrained by the gates — documented, not closed. And green means little: the whole path is
+undeployed.
+
+**Lesson:** a "working-tree hazard" can be swept into HEAD by another lane between the diagnosis and the
+handoff. State the *commit* the evidence lives in, not just the paths.
 
 ## ⚑ A RED THAT IS OURS, FROM TODAY
 
