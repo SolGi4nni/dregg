@@ -169,6 +169,58 @@ pub(crate) async fn await_balance(
     }
 }
 
+/// Append ONE receipt belonging to a STRANGER to the node-wide receipt log, and
+/// return its hash. After this, `cclerk.receipt_chain().last()` is the stranger's
+/// receipt while every OTHER agent's own causal head is untouched.
+///
+/// That divergence is the precondition every `receipt_chain().last()` defect needs,
+/// and nothing else. It is produced here through the REAL
+/// `AgentCipherclerk::append_receipt`, whose only continuity check is agent-scoped
+/// (`agent_receipt_head_hash(&receipt.agent)`) — so a stranger's genesis receipt is
+/// a legal append and the resulting state is byte-for-byte what a faucet grant
+/// leaves behind. Using it instead of driving a real grant lets a fixture with no
+/// consensus loop running still reproduce the bug.
+pub(crate) fn append_stranger_receipt(
+    s: &mut crate::state::NodeStateInner,
+    stranger: dregg_cell::CellId,
+) -> [u8; 32] {
+    let receipt = dregg_turn::TurnReceipt {
+        turn_hash: *blake3::hash(b"stranger-turn").as_bytes(),
+        forest_hash: [0x11; 32],
+        pre_state_hash: [0x22; 32],
+        post_state_hash: [0x33; 32],
+        timestamp: 1_700_000_000,
+        effects_hash: [0x44; 32],
+        computrons_used: 1,
+        action_count: 1,
+        // The stranger's FIRST turn: genesis predecessor. This is what makes the
+        // append legal without any prior state for that agent.
+        previous_receipt_hash: None,
+        agent: stranger,
+        federation_id: s.federation_id,
+        routing_directives: Vec::new(),
+        introduction_exports: Vec::new(),
+        derivation_records: Vec::new(),
+        emitted_events: Vec::new(),
+        executor_signature: None,
+        finality: dregg_turn::Finality::Final,
+        was_encrypted: false,
+        was_burn: false,
+        consumed_capabilities: vec![],
+    };
+    let hash = receipt.receipt_hash();
+    s.cclerk
+        .append_receipt(receipt)
+        .expect("a stranger's genesis receipt is a legal agent-scoped append");
+    assert_eq!(
+        s.cclerk.receipt_log().last().map(|r| r.agent),
+        Some(stranger),
+        "the node-wide log head must now belong to the stranger, or this helper has \
+         not created the divergence its callers depend on"
+    );
+    hash
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn faucet_grant_credits_the_recipient_after_finalization() {
     let (state, app, faucet_cell_id, _tmp) = faucet_node().await;

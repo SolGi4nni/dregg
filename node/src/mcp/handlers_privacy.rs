@@ -252,7 +252,20 @@ pub(super) async fn tool_private_transfer(params: &Value, state: &NodeState) -> 
         range_proof: None,
     }];
 
-    let nonce = s.cclerk.receipt_chain_length() as u64;
+    // The ACTING CELL's replay nonce, off the ledger. `receipt_chain_length()` is the
+    // number of receipts in the node-WIDE log across every agent — the same wrong scope
+    // as the predecessor hash above, and refused by the same turn: the executor compares
+    // `turn.nonce` against `cell.state.nonce()` and rejects `nonce replay: expected 0,
+    // got 1` as soon as any other agent has committed once.
+    let nonce = s
+        .ledger
+        .get(&agent_cell_id)
+        .map(|c| c.state.nonce())
+        .unwrap_or(0);
+    // The MCP agent cell's own causal head — `append_receipt` below is agent-scoped
+    // (`agent_receipt_head_hash(&receipt.agent)`), so the node-wide log head was refused
+    // as soon as any other agent committed. Seeded onto the fresh executor too.
+    let previous_receipt_hash = s.cclerk.agent_receipt_head_hash(&agent_cell_id);
     let turn = Turn {
         agent: agent_cell_id,
         nonce,
@@ -261,7 +274,7 @@ pub(super) async fn tool_private_transfer(params: &Value, state: &NodeState) -> 
         valid_until: None,
         call_forest: build_forest_with_effects(from_cell_id, effects),
         depends_on: vec![],
-        previous_receipt_hash: s.cclerk.receipt_chain().last().map(|r| r.receipt_hash()),
+        previous_receipt_hash,
         conservation_proof: None,
         sovereign_witnesses: std::collections::HashMap::new(),
         execution_proof: None,
@@ -276,6 +289,9 @@ pub(super) async fn tool_private_transfer(params: &Value, state: &NodeState) -> 
     let turn_hash = hex_encode(&turn.hash());
 
     let executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
+    if let Some(head) = previous_receipt_hash {
+        executor.set_last_receipt_hash(agent_cell_id, head);
+    }
     let exec_result = executor.execute(&turn, &mut s.ledger);
 
     match exec_result {

@@ -90,11 +90,11 @@ pub struct PreparedSlashSubmit {
 ///   (0 for a never-seen client — ingress `claim_signer_actor_cell`
 ///   materializes exactly that cell).
 /// * **Expiry.** `valid_until` is stamped when absent.
-/// * **Receipt-chain binding.** A solo node gates the receipt-chain append
-///   on the NODE head (`AgentCipherclerk::append_receipt`'s strict prev
-///   check), and the ingress requires the node head whenever the acting
-///   agent IS the node operator's own cell — in both regimes the turn is
-///   re-bound to the node chain head. Otherwise (a foreign client on a
+/// * **Receipt-chain binding.** `AgentCipherclerk::append_receipt`'s strict prev
+///   check is AGENT-SCOPED (`agent_receipt_head_hash`), not node-wide: the
+///   immutable log interleaves every agent the node ever committed for. A solo
+///   node, and any node acting as its own operator cell, therefore re-binds the
+///   turn to THAT AGENT's causal head. Otherwise (a foreign client on a
 ///   multi-party node) the turn's OWN claimed prev is kept: the finalized
 ///   pass on every node is authoritative for it.
 /// * **Fee.** A zero fee is sized by `new_submit_executor(s).estimate_cost`
@@ -153,11 +153,17 @@ pub fn prepare_slash_submit(
         turn.valid_until = Some(now + SLASH_TURN_VALIDITY_SECS);
     }
 
-    // Receipt-chain binding (see the doc comment): node head for solo or the
-    // operator's own agent; the client's own claimed prev otherwise.
+    // Receipt-chain binding (see the doc comment): re-bind to THIS AGENT's own causal
+    // head when the node is the authority for it, and keep the client's claimed prev
+    // otherwise. The condition is unchanged; the value is. It used to be the node-WIDE
+    // log head, on the premise (still written in the doc comment above until now) that
+    // `append_receipt` gates on a single node chain. It does not — `append_receipt` calls
+    // `agent_receipt_head_hash(&receipt.agent)` — so on a solo node with a foreign intake
+    // cipherclerk this stamped some other agent's receipt and the envelope was refused,
+    // and even for the operator it broke the moment the faucet committed.
     let is_solo = s.solo_consensus.as_ref().is_some_and(|sc| sc.is_solo);
     if is_solo || turn.agent == local_agent_cell(s) {
-        turn.previous_receipt_hash = s.cclerk.receipt_chain().last().map(|r| r.receipt_hash());
+        turn.previous_receipt_hash = s.cclerk.agent_receipt_head_hash(&turn.agent);
     }
 
     // Size the fee (= the executor's computron budget cap) to the estimated
@@ -482,5 +488,79 @@ mod tests {
                 .expect_err("a turn acting as someone else's cell must be refused");
             assert!(err.contains("agent"), "got: {err}");
         }
+    }
+
+    /// The receipt-chain binding is the INTAKE AGENT's own head, not the node's.
+    ///
+    /// On a solo node this function re-binds the prepared turn's
+    /// `previous_receipt_hash`. It used to bind the node-WIDE log head, on the premise
+    /// (which the doc comment stated until 2026-07-26) that `append_receipt` gates a
+    /// single node chain. It does not: it calls
+    /// `agent_receipt_head_hash(&receipt.agent)`. So with a foreign intake cipherclerk
+    /// — the module's whole point — the prepared envelope carried a STRANGER's receipt
+    /// as its predecessor and the ingress refused it.
+    ///
+    /// The intake agent here has no chain of its own, so the correct answer is `None`;
+    /// the wide head is `Some(stranger)`. Those disagreeing is the whole defect, and
+    /// this asserts the prepared turn takes the first.
+    #[tokio::test]
+    async fn prepared_turn_binds_the_intake_agents_own_head_not_the_node_wide_head() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let state = NodeState::new(tmp.path(), vec![]).expect("node state");
+        {
+            let mut s = state.write().await;
+            s.unlocked = true;
+            let sk = s.cclerk.gossip_signing_key().to_bytes();
+            s.solo_consensus = Some(dregg_federation::solo::SoloConsensusState::new(sk));
+        }
+
+        let node_federation_id = {
+            let s = state.read().await;
+            crate::executor_setup::federation_id_for_executor(&s)
+        };
+        let cclerk = AppCipherclerk::new(AgentCipherclerk::new(), node_federation_id);
+        let intake_agent = cclerk.cell_id();
+
+        // A stranger commits first — the faucet's role on any real node.
+        let stranger_head = {
+            let mut s = state.write().await;
+            crate::faucet_grant_e2e::append_stranger_receipt(&mut s, CellId::from_bytes([0xEE; 32]))
+        };
+
+        let evidence = EvidenceOfDrop::from_receipt(demo_receipt());
+        let inbox = dropped_inbox(&evidence);
+        let DisputeIntake::Convicted { turn, .. } = intake_dispute(
+            &cclerk,
+            &evidence,
+            &inbox,
+            CellId::from_bytes([0x11u8; 32]),
+            RelaySlots {
+                bond_amount: 10_000,
+                bond_min: 1_000,
+                dispute_count: 0,
+            },
+            POLICY,
+        ) else {
+            panic!("a genuine drop must convict");
+        };
+
+        let s = state.read().await;
+        assert_eq!(
+            s.cclerk.receipt_log().last().map(|r| r.receipt_hash()),
+            Some(stranger_head),
+            "precondition: the node-wide log head is the stranger's"
+        );
+        assert_eq!(
+            s.cclerk.agent_receipt_head_hash(&intake_agent),
+            None,
+            "precondition: the intake agent has no chain of its own"
+        );
+
+        let prepared = prepare_slash_submit(&s, &cclerk, &turn).expect("prepare must succeed");
+        assert_eq!(
+            prepared.signed.turn.previous_receipt_hash, None,
+            "the prepared turn must claim the INTAKE AGENT's head (genesis), not the \
+             node-wide log head {stranger_head:?} — the ingress compares the former"
+        );
     }
 }

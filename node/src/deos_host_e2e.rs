@@ -240,7 +240,11 @@ async fn headless_node_hosts_deos_server_client_discovers_and_fires() {
             .get(&player_cell)
             .map(|c| c.state.nonce())
             .unwrap_or(0);
-        let prev = s.cclerk.receipt_chain().last().map(|r| r.receipt_hash());
+        // The PLAYER's own causal head — the value `post_submit_signed_turn` checks
+        // (`agent_receipt_head_hash(&signed.turn.agent)`). The node-wide log head is a
+        // different question and only agrees here because the fixture's earlier commits
+        // happen to be the player's.
+        let prev = s.cclerk.agent_receipt_head_hash(&player_cell);
 
         let action = player_cclerk.make_action(player_cell, "knock", vec![knock], &exec_fed);
         let mut call_forest = CallForest::new();

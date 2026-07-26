@@ -463,11 +463,16 @@ pub(crate) fn run_signed_turn(
     let mut call_forest = CallForest::new();
     call_forest.add_root(action);
 
-    let previous_receipt_hash = if is_operator_turn {
-        s.cclerk.receipt_chain().last().map(|r| r.receipt_hash())
-    } else {
-        None
-    };
+    // `agent`'s own causal head, whoever `agent` is. The old shape asked a different
+    // question — "is this the operator? then the node-WIDE log head, else genesis" —
+    // and got both halves wrong once the node had more than one author: the operator
+    // branch stamped whatever agent committed last (the faucet, typically), and the
+    // cell-agent branch hardcoded `None` even for a cell that already had a chain. The
+    // executor's `check_previous_receipt_hash` and `append_receipt` are both agent-scoped,
+    // so the agent-scoped head is the only value either accepts. For a cell agent that has
+    // never had a receipt appended — the documented one-time-adopt case — this is still
+    // `None`, so that path is unchanged.
+    let previous_receipt_hash = s.cclerk.agent_receipt_head_hash(&agent);
     let nonce = s.ledger.get(&agent).map(|c| c.state.nonce()).unwrap_or(0);
 
     let now = std::time::SystemTime::now()
@@ -504,7 +509,12 @@ pub(crate) fn run_signed_turn(
     turn.fee = fixed_fee.unwrap_or_else(|| executor.estimate_cost(&turn));
     let turn_hash = turn.hash();
 
-    if is_operator_turn && let Some(head) = previous_receipt_hash {
+    // Re-assert `agent`'s head on the fresh executor. `configure_turn_executor` already
+    // restored every per-agent head from the same log, so this now agrees with what is
+    // there instead of overriding it — and it no longer skips the non-operator case,
+    // which would have left a cell agent with a real chain checked against its restored
+    // head while the turn claimed genesis.
+    if let Some(head) = previous_receipt_hash {
         executor.set_last_receipt_hash(agent, head);
     }
 
@@ -1663,6 +1673,93 @@ mod tests {
         }
         assert_eq!(tl_slot(&state, tl, TL_CEILING_SLOT).await, LINE);
         assert_eq!(tl_slot(&state, tl, TL_STATE_SLOT).await, STATE_OPEN);
+    }
+
+    /// An operator turn with a STRANGER's receipt at the head of the node-wide log —
+    /// what a faucet grant leaves behind on any node a newcomer touches.
+    ///
+    /// `run_signed_turn` asked "is this the operator? then the node-WIDE log head,
+    /// else genesis". Both halves are the wrong question: the executor's
+    /// `check_previous_receipt_hash` and `append_receipt` are both agent-scoped, so
+    /// the operator branch stamped whatever agent happened to commit last and every
+    /// operator trustline turn was refused from that moment on.
+    ///
+    /// THE CANARY: restore the `if is_operator_turn { receipt_chain().last() } else
+    /// { None }` shape and this goes red on the first call — `receipt chain mismatch:
+    /// expected None, got Some(..)`.
+    ///
+    /// This drives `run_signed_turn` directly rather than the `/trustline/open` route.
+    /// That route is independently RED on this tree for an unrelated reason (its escrow
+    /// `Effect::Transfer` moves value from the operator cell, minted in
+    /// `blake3("default")`, into the factory-born trustline cell, minted in the per-line
+    /// token, and the executor refuses a cross-asset Transfer), so routing this
+    /// assertion through it would only ever report that.
+    #[tokio::test]
+    async fn run_signed_turn_still_commits_when_the_wide_log_head_is_a_stranger() {
+        let (state, _holder, _dir) = funded_state().await;
+        let mut s = state.write().await;
+
+        crate::faucet_grant_e2e::append_stranger_receipt(&mut s, CellId([0xEE; 32]));
+        let operator = crate::executor_setup::local_agent_cell(&s);
+        assert_ne!(
+            s.cclerk.receipt_log().last().map(|r| r.agent),
+            Some(operator),
+            "the wide head must belong to the stranger for this test to bite"
+        );
+        assert_eq!(
+            s.cclerk.agent_receipt_head_hash(&operator),
+            None,
+            "the operator is still at genesis; the two heads disagree, which is the bug"
+        );
+
+        let probe = |round: u8, value: u8| Effect::SetField {
+            cell: operator,
+            index: u64::from(round),
+            value: [value; 32],
+        };
+
+        run_signed_turn(
+            &mut s,
+            operator,
+            operator,
+            "receipt_head_probe",
+            vec![probe(3, 0xcd)],
+            None,
+            None,
+        )
+        .unwrap_or_else(|e| panic!("the operator's own turn was refused: {e:?}"));
+
+        let head_after_first = s.cclerk.agent_receipt_head_hash(&operator);
+        assert!(
+            head_after_first.is_some(),
+            "the committed turn must have advanced the operator's own causal head"
+        );
+
+        // A SECOND operator turn, now against a non-genesis operator head — the case a
+        // wide-head stamp would still get wrong even on a node with no other authors.
+        run_signed_turn(
+            &mut s,
+            operator,
+            operator,
+            "receipt_head_probe_2",
+            vec![probe(4, 0xef)],
+            None,
+            None,
+        )
+        .unwrap_or_else(|e| panic!("the operator's SECOND turn was refused: {e:?}"));
+
+        assert_ne!(
+            s.cclerk.agent_receipt_head_hash(&operator),
+            head_after_first,
+            "the second turn must have advanced the chain, not silently no-opped"
+        );
+        assert_eq!(
+            s.ledger
+                .get(&operator)
+                .and_then(|c| c.state.get_field(4).copied()),
+            Some([0xef; 32]),
+            "the second turn's effect must be on the authoritative ledger"
+        );
     }
 
     // ── (b) draw: within line / over line / double-draw ─────────────────────

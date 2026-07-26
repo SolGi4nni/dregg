@@ -175,7 +175,24 @@ pub(super) async fn tool_submit_turn(params: &Value, state: &NodeState) -> McpTo
     let mut forest = CallForest::new();
     forest.add_root(action);
 
-    let nonce = s.cclerk.receipt_chain_length() as u64;
+    // The ACTING CELL's replay nonce, off the ledger. `receipt_chain_length()` is the
+    // number of receipts in the node-WIDE log across every agent — the same wrong scope
+    // as the predecessor hash above, and refused by the same turn: the executor compares
+    // `turn.nonce` against `cell.state.nonce()` and rejects `nonce replay: expected 0,
+    // got 1` as soon as any other agent has committed once.
+    let nonce = s
+        .ledger
+        .get(&agent_cell_id)
+        .map(|c| c.state.nonce())
+        .unwrap_or(0);
+    // The MCP agent cell's OWN causal head. `receipt_chain()` is the node-wide
+    // observation log across every agent; `append_receipt` below checks
+    // `agent_receipt_head_hash(&receipt.agent)`, so the wide head was refused as soon
+    // as any other agent committed. The fresh `TurnExecutor` a few lines down carries
+    // an EMPTY per-agent head map, so the same value is seeded onto it — without that,
+    // swapping the accessor alone would only move the failure to this agent's SECOND
+    // turn.
+    let previous_receipt_hash = s.cclerk.agent_receipt_head_hash(&agent_cell_id);
     let turn = Turn {
         agent: agent_cell_id,
         nonce,
@@ -184,7 +201,7 @@ pub(super) async fn tool_submit_turn(params: &Value, state: &NodeState) -> McpTo
         valid_until: None,
         call_forest: forest,
         depends_on: vec![],
-        previous_receipt_hash: s.cclerk.receipt_chain().last().map(|r| r.receipt_hash()),
+        previous_receipt_hash,
         conservation_proof: None,
         sovereign_witnesses: std::collections::HashMap::new(),
         execution_proof: None,
@@ -212,6 +229,9 @@ pub(super) async fn tool_submit_turn(params: &Value, state: &NodeState) -> McpTo
     let mut executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
     executor.set_local_federation_id(federation_id);
     executor.set_executor_signing_key(s.cclerk.gossip_signing_key().to_bytes());
+    if let Some(head) = previous_receipt_hash {
+        executor.set_last_receipt_hash(agent_cell_id, head);
+    }
     let lean_producer_enabled = s.lean_producer_enabled;
     let exec_result = crate::executor_setup::execute_via_producer(
         &executor,
@@ -827,7 +847,16 @@ pub(super) async fn tool_captp_deliver(params: &Value, state: &NodeState) -> Mcp
 
     let agent_cell_id = target_cell_id;
 
-    let turn_nonce = s.cclerk.receipt_chain_length() as u64;
+    // The ACTING CELL's replay nonce, off the ledger. `receipt_chain_length()` is the
+    // number of receipts in the node-WIDE log across every agent — the same wrong scope
+    // as the predecessor hash above, and refused by the same turn: the executor compares
+    // `turn.nonce` against `cell.state.nonce()` and rejects `nonce replay: expected 0,
+    // got 1` as soon as any other agent has committed once.
+    let turn_nonce = s
+        .ledger
+        .get(&agent_cell_id)
+        .map(|c| c.state.nonce())
+        .unwrap_or(0);
     let federation_id = s.federation_id;
     let signing_msg = dregg_turn::Authorization::captp_delivered_signing_message_for_federation(
         &federation_id,
@@ -871,6 +900,11 @@ pub(super) async fn tool_captp_deliver(params: &Value, state: &NodeState) -> Mcp
     let mut forest = CallForest::new();
     forest.add_root(action);
 
+    // The DELIVERY TARGET is this turn's agent (`agent_cell_id = target_cell_id` above),
+    // so the causal head that matters is the target's, not the node-wide log head — and
+    // the target is by construction a cell OTHER than the node operator, which is exactly
+    // where the two diverge. Seeded onto the fresh executor too (empty per-agent map).
+    let previous_receipt_hash = s.cclerk.agent_receipt_head_hash(&agent_cell_id);
     let turn = Turn {
         agent: agent_cell_id,
         nonce: turn_nonce,
@@ -879,7 +913,7 @@ pub(super) async fn tool_captp_deliver(params: &Value, state: &NodeState) -> Mcp
         valid_until: None,
         call_forest: forest,
         depends_on: vec![],
-        previous_receipt_hash: s.cclerk.receipt_chain().last().map(|r| r.receipt_hash()),
+        previous_receipt_hash,
         conservation_proof: None,
         sovereign_witnesses: std::collections::HashMap::new(),
         execution_proof: None,
@@ -895,6 +929,9 @@ pub(super) async fn tool_captp_deliver(params: &Value, state: &NodeState) -> Mcp
     let mut executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
     executor.set_local_federation_id(federation_id);
     executor.set_executor_signing_key(s.cclerk.gossip_signing_key().to_bytes());
+    if let Some(head) = previous_receipt_hash {
+        executor.set_last_receipt_hash(agent_cell_id, head);
+    }
     let exec_result = executor.execute(&turn, &mut s.ledger);
 
     match exec_result {
@@ -1091,7 +1128,20 @@ pub(super) async fn tool_bilateral_action(params: &Value, state: &NodeState) -> 
     let mut forest = CallForest::new();
     forest.add_root(action);
 
-    let turn_nonce = s.cclerk.receipt_chain_length() as u64;
+    // The ACTING CELL's replay nonce, off the ledger. `receipt_chain_length()` is the
+    // number of receipts in the node-WIDE log across every agent — the same wrong scope
+    // as the predecessor hash above, and refused by the same turn: the executor compares
+    // `turn.nonce` against `cell.state.nonce()` and rejects `nonce replay: expected 0,
+    // got 1` as soon as any other agent has committed once.
+    let turn_nonce = s
+        .ledger
+        .get(&agent_cell_id)
+        .map(|c| c.state.nonce())
+        .unwrap_or(0);
+    // The FROM cell is this turn's agent (`agent_cell_id = from_cell` above) — a
+    // caller-named counterparty, not the node operator — so its own causal head is the
+    // one `append_receipt` checks. Seeded onto the fresh executor below.
+    let previous_receipt_hash = s.cclerk.agent_receipt_head_hash(&agent_cell_id);
     let turn = Turn {
         agent: agent_cell_id,
         nonce: turn_nonce,
@@ -1100,7 +1150,7 @@ pub(super) async fn tool_bilateral_action(params: &Value, state: &NodeState) -> 
         valid_until: None,
         call_forest: forest,
         depends_on: vec![],
-        previous_receipt_hash: s.cclerk.receipt_chain().last().map(|r| r.receipt_hash()),
+        previous_receipt_hash,
         conservation_proof: None,
         sovereign_witnesses: std::collections::HashMap::new(),
         execution_proof: None,
@@ -1182,6 +1232,9 @@ pub(super) async fn tool_bilateral_action(params: &Value, state: &NodeState) -> 
         };
 
     let executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
+    if let Some(head) = previous_receipt_hash {
+        executor.set_last_receipt_hash(agent_cell_id, head);
+    }
     let exec_result = executor.execute(&turn, &mut s.ledger);
 
     let (committed_receipt_opt, error_str) = match exec_result {

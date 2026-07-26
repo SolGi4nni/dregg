@@ -760,7 +760,14 @@ fn commit_operator_turn(
     let mut call_forest = CallForest::new();
     call_forest.add_root(action);
 
-    let previous_receipt_hash = s.cclerk.receipt_chain().last().map(|r| r.receipt_hash());
+    // The OPERATOR agent's own causal head, not the node-wide log head. Both are the
+    // same value only while the operator is the sole author on this node; the faucet
+    // grant that funds it is already a second author. Note what the wide head cost here
+    // specifically: `set_last_receipt_hash` below OVERWRITES the per-agent head
+    // `new_submit_executor` correctly restored, so the executor's own check passed on the
+    // wrong value, `execute` MUTATED `s.ledger`, and only `append_receipt` refused —
+    // leaving the storage op applied to the ledger and reported as `turn-rejected`.
+    let previous_receipt_hash = s.cclerk.agent_receipt_head_hash(&agent_cell);
     let nonce = s
         .ledger
         .get(&agent_cell)
@@ -1413,6 +1420,53 @@ mod tests {
                 StorageOp::Put.demo_cost() + StorageOp::Get.demo_cost(),
             );
         }
+    }
+
+    /// The same PUT, but with a STRANGER's receipt sitting at the head of the
+    /// node-wide log first — the state any faucet grant leaves behind.
+    ///
+    /// `commit_operator_turn` stamped `previous_receipt_hash` from
+    /// `cclerk.receipt_chain().last()` AND then pushed that same wide head onto the
+    /// executor with `set_last_receipt_hash`, overwriting the correct per-agent head
+    /// `new_submit_executor` had just restored. So the executor's own check passed on
+    /// the wrong value, `execute` MUTATED the ledger, and only `append_receipt`
+    /// refused: the storage op landed on the gateway cell and the route reported
+    /// `turn-rejected`. This test pins both halves — the call succeeds, and the
+    /// gateway's committed volume matches exactly one PUT.
+    ///
+    /// THE CANARY: restore `receipt_chain().last()` at `commit_operator_turn` and this
+    /// goes red on the PUT's status with a receipt-chain mismatch.
+    #[tokio::test]
+    async fn put_still_commits_when_the_wide_log_head_belongs_to_a_stranger() {
+        let (state, gateway, _dir) = seeded_state().await;
+
+        {
+            let mut s = state.write().await;
+            crate::faucet_grant_e2e::append_stranger_receipt(&mut s, CellId([0xEE; 32]));
+            let operator_cell = crate::executor_setup::local_agent_cell(&s);
+            assert_ne!(
+                s.cclerk.receipt_log().last().map(|r| r.agent),
+                Some(operator_cell),
+                "the wide head must belong to the stranger for this test to bite"
+            );
+        }
+
+        let body = b"a put taken after somebody else committed";
+        let (status, json) = do_put(&state, Some("uploads/after-stranger.txt"), body).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the operator's own storage op must commit even though the node-wide log \
+             head belongs to another agent: {json}"
+        );
+
+        let s = state.write().await;
+        assert_eq!(
+            gateway_slot_u64(&s, gateway, VOLUME_SPENT_SLOT),
+            StorageOp::Put.demo_cost(),
+            "exactly one PUT is committed — not zero (refused) and not a half-applied \
+             mutation from a turn whose receipt was then rejected"
+        );
     }
 
     // ── refusal 1: no capability ─────────────────────────────────────────────

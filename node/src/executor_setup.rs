@@ -592,7 +592,15 @@ pub fn commit_effects_as(
 
     let exec_federation_id = federation_id_for_executor(s);
     let nonce = s.ledger.get(&agent).map(|c| c.state.nonce()).unwrap_or(0);
-    let prev = s.cclerk.receipt_chain().last().map(|r| r.receipt_hash());
+    // `agent`'s OWN causal head. `receipt_chain()` is the node-WIDE observation log,
+    // which interleaves every agent this node ever committed for; both gates this turn
+    // passes are agent-scoped — `TurnExecutor::check_previous_receipt_hash` against the
+    // per-agent map `configure_turn_executor` restores from the same log, and
+    // `AgentCipherclerk::append_receipt`'s own `agent_receipt_head_hash` check on the way
+    // out. Stamping the wide head made `commit_effects_as` reject with `receipt chain
+    // mismatch` from the first moment any OTHER agent (the faucet, every newcomer's first
+    // step) committed.
+    let prev = s.cclerk.agent_receipt_head_hash(&agent);
 
     let action = s
         .cclerk
@@ -721,5 +729,81 @@ mod tests {
         assert!(pq_admission_required(Some("1"), Some("1")));
         assert!(!pq_admission_required(Some("0"), Some("1")));
         assert!(!pq_admission_required(Some("FALSE"), Some("1")));
+    }
+
+    /// `commit_effects_as` is the in-process committed-turn entry the `deos-host`
+    /// program uses. It stamped `previous_receipt_hash` from
+    /// `cclerk.receipt_chain().last()` — the node-WIDE observation log head — while
+    /// both gates the turn then has to pass are agent-scoped: the executor's
+    /// `check_previous_receipt_hash` against the per-agent map
+    /// `configure_turn_executor` restores from that same log, and `append_receipt`'s
+    /// own check. So the helper worked exactly until a second agent committed
+    /// anything, and the first thing that happens on a new node is another agent (the
+    /// faucet) committing.
+    ///
+    /// THE CANARY: put `s.cclerk.receipt_chain().last().map(|r| r.receipt_hash())`
+    /// back in `commit_effects_as` and this goes red on `rejected: receipt chain
+    /// mismatch: expected None, got Some(..)`.
+    ///
+    /// ADJACENT GAP, deliberately not exercised here: `commit_effects_as` cannot act
+    /// on a cell the FAUCET funded, for an unrelated reason. The faucet leaves a
+    /// zero-pk landing stub, and this helper — unlike `api.rs::post_submit_turn` —
+    /// never calls `signed_turn_validation::claim_signer_actor_cell`, so the executor
+    /// verifies the action against the stub's pk and refuses with `hybrid: Ed25519
+    /// (classical) signature half failed`. Driving the stranger receipt in directly
+    /// keeps this test on the defect it is about.
+    #[tokio::test]
+    async fn commit_effects_as_commits_when_the_wide_log_head_is_a_stranger() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = crate::state::NodeState::new(dir.path(), vec![]).expect("node state");
+        let mut s = state.write().await;
+        s.unlocked = true;
+
+        // The operator's own agent cell on the ledger, funded to pay the metered fee.
+        let operator = local_agent_cell(&s);
+        let operator_pk = s.cclerk.public_key().0;
+        let cell = dregg_cell::Cell::with_balance(operator_pk, default_token_id(), 0);
+        assert_eq!(cell.id(), operator, "agent-cell derivation must match");
+        s.ledger.insert_cell(cell).expect("insert operator cell");
+        assert!(
+            s.ledger
+                .get_mut(&operator)
+                .expect("operator cell")
+                .state
+                .credit_balance(1_000_000),
+            "operator accepts funding"
+        );
+
+        crate::faucet_grant_e2e::append_stranger_receipt(&mut s, dregg_cell::CellId([0xEE; 32]));
+        assert_eq!(
+            s.cclerk.agent_receipt_head_hash(&operator),
+            None,
+            "precondition: the operator is at genesis while the wide head is not"
+        );
+
+        let receipt_hash = commit_effects_as(
+            &mut s,
+            operator,
+            "receipt_head_probe",
+            vec![dregg_turn::action::Effect::SetField {
+                cell: operator,
+                index: 3,
+                value: [0xcd; 32],
+            }],
+        )
+        .unwrap_or_else(|e| panic!("commit_effects_as refused the operator's own turn: {e}"));
+
+        assert_eq!(
+            s.cclerk.agent_receipt_head_hash(&operator),
+            Some(receipt_hash),
+            "the operator's causal head must now be the receipt this call produced"
+        );
+        assert_eq!(
+            s.ledger
+                .get(&operator)
+                .and_then(|c| c.state.get_field(3).copied()),
+            Some([0xcd; 32]),
+            "the effect must be on the authoritative ledger, not merely accepted"
+        );
     }
 }

@@ -109,7 +109,11 @@ async fn fire_signed(
         let s = state.read().await;
         let exec_fed = crate::executor_setup::federation_id_for_executor(&s);
         let nonce = s.ledger.get(&agent).map(|c| c.state.nonce()).unwrap_or(0);
-        let prev = s.cclerk.receipt_chain().last().map(|r| r.receipt_hash());
+        // `agent`'s own causal head — what `post_submit_signed_turn` compares against
+        // (`agent_receipt_head_hash`). The node-wide log head only coincides with it
+        // while a single agent has ever committed, which is why this fixture passed:
+        // it fires every turn as the same cell. A MUD with two players would not.
+        let prev = s.cclerk.agent_receipt_head_hash(&agent);
         let action = signer.make_action(agent, method, vec![effect], &exec_fed);
         let mut call_forest = CallForest::new();
         call_forest.add_root(action);

@@ -57,6 +57,11 @@ mod handlers_privacy;
 mod handlers_verify;
 mod proof;
 mod protocol;
+/// Every MCP tool that commits a turn stamps its own `previous_receipt_hash`.
+/// This drives the reachable ones through `dispatch_tool` after a foreign agent
+/// has committed — the state a faucet grant leaves behind.
+#[cfg(test)]
+mod receipt_head_e2e;
 mod tools_def;
 
 // Re-import every submodule namespace so the shared helpers below, the
