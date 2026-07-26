@@ -83,6 +83,20 @@
     <div id="receipts"><span class="loading">reading…</span></div>
   </div>
 
+  <!-- ============ 3b. THE RECEIPT-LOG COMMITMENT ============ -->
+  <div class="panel" id="panel-index">
+    <h2>What the node commits to <span class="tag">GET /api/receipts/index/head</span></h2>
+    <p class="hint">
+      One root over the <em>whole</em> receipt log, signed by this node. The root binds the log:
+      alter a receipt, drop one, append one, or swap two, and the root moves — so a head the node
+      has served is a claim it cannot quietly walk back. What it is <strong>not</strong> is a
+      committee's word. It is one node's signature over its own log, and whether that log is
+      anchored to anything a quorum pinned is reported separately below, because those two are
+      routinely read as one.
+    </p>
+    <div id="index-head"><span class="loading">reading…</span></div>
+  </div>
+
   <!-- ============ 4. BLOCKLACE ============ -->
   <div class="panel" id="panel-lace">
     <h2>The blocklace <span class="tag">GET /api/blocklace/blocks</span></h2>
@@ -96,12 +110,13 @@
 
   <!-- ============ 5. ATTESTED ROOTS ============ -->
   <div class="panel" id="panel-roots">
-    <h2>Attested roots <span class="tag">GET /api/blocks</span></h2>
+    <h2>Attested roots <span class="tag">GET /api/federation/roots</span></h2>
     <p class="hint">
-      The route is named <code>/api/blocks</code> but its handler is
-      <code>get_federation_roots</code>: these are quorum-attested <em>ledger roots</em>, not
-      blocks. Each is a commitment to the whole ledger at some height, with the signature count
-      the node holds for it.
+      A quorum-attested <em>ledger root</em> is a commitment to the whole ledger at some height —
+      not a block, and not a list of what changed. Each row is one such commitment with the
+      signature count the node holds for it. This is the anchor the cell check at the bottom of the
+      page compares against, which is why an empty table here is worth reading: it means a proof
+      can still be folded, but it is anchored to nothing.
     </p>
     <div id="roots"><span class="loading">reading…</span></div>
   </div>
@@ -125,17 +140,13 @@
 
   <div class="foot">
     <p>
-      Every panel above is a rendering of one public node route, reachable in a second tab through
-      this page's read-only hop: <code>/explorer/node/&lt;route&gt;</code> (for example
-      <code>/explorer/node/api/cells</code>). If a rendering here disagrees with that JSON, the
-      rendering is wrong.
+      Every panel above is a rendering of one public node route, reachable as raw JSON in a second
+      tab. If a rendering here disagrees with that JSON, the rendering is wrong.
     </p>
-    <p>
-      The hop is GET-only, path-allowlisted and sends no credentials, so it exposes strictly less
-      than the node's own anonymous surface. Routes the node keeps behind its bearer gate —
-      including <code>/api/node/health</code>, which looks public but is not — are not reachable
-      through it.
-    </p>
+    <!-- Filled by explorer.js: how to reach those routes differs between the two
+         deployments (served by the site behind a hop, or served by the node
+         itself), and only the running page knows which one it is. -->
+    <p id="foot-reach"></p>
   </div>
 
 </div>

@@ -31,7 +31,7 @@
  *      establishes; anything it cannot check is listed as not checked.
  */
 
-import { verifyLedgerRoot, LEDGER_ROOT_CONTEXT } from "/explorer/blake3.js";
+import { verifyLedgerRoot, LEDGER_ROOT_CONTEXT, blake3, bytesToHex } from "/explorer/blake3.js";
 
 // ---------------------------------------------------------------------------
 // tiny DOM helpers
@@ -69,6 +69,21 @@ function ts(unixSeconds) {
 // ---------------------------------------------------------------------------
 
 /**
+ * The prefix node routes are read under. Two deployments share this one file:
+ *
+ *   * SITE — the web tier serves this page at /explorer/ and reaches a remote
+ *     node through its GET-only, path-allowlisted hop at /explorer/node/.
+ *   * NODE — the node serves this page itself, at /. It IS the origin, so a
+ *     route is read directly and no hop exists.
+ *
+ * Which one is in force is DECLARED by the server in /explorer/target, never
+ * inferred from the URL: a wrong guess here would read nothing and render as
+ * "unreachable", which is the one failure mode this page exists to keep apart
+ * from "empty".
+ */
+let HOP = "/explorer/node/";
+
+/**
  * Fetch one node route through the read-only hop.
  *
  * Returns a tagged result rather than throwing, because the DIFFERENCE between
@@ -80,7 +95,7 @@ async function nodeGet(path, params) {
   const qs = params ? `?${new URLSearchParams(params)}` : "";
   let res;
   try {
-    res = await fetch(`/explorer/node/${path}${qs}`, { headers: { accept: "application/json" } });
+    res = await fetch(`${HOP}${path}${qs}`, { headers: { accept: "application/json" } });
   } catch (e) {
     return { kind: "transport", detail: String(e) };
   }
@@ -526,6 +541,178 @@ function renderReceipts(receipts, cellCount, eventCount) {
 }
 
 // ---------------------------------------------------------------------------
+// 3b. the receipt-log commitment
+// ---------------------------------------------------------------------------
+
+/**
+ * The empty-MMR root, as the node's own hasher defines it: `blake3` over the
+ * arity-0 domain tag from `dregg-query/src/mmr.rs`. Recomputing it here is what
+ * lets an EMPTY log be reported as a checked fact instead of a shrug — the two
+ * readings of `len: 0` (nothing has happened / the log was lost) are the exact
+ * pair this panel exists to keep apart.
+ */
+const MMR_EMPTY_TAG = "dregg-query-mmr-v1:empty";
+
+function renderIndexHead(head, eventCount, receiptCount) {
+  const checks = [];
+  const len = Number(head.len || 0);
+  const root = String(head.root || "");
+
+  // --- the root ------------------------------------------------------------
+  if (len === 0) {
+    const expected = bytesToHex(blake3(MMR_EMPTY_TAG));
+    checks.push(
+      root.toLowerCase() === expected
+        ? checkRow(
+            "pass",
+            "the served root is the root of an EMPTY log",
+            `Your browser hashed <code>${esc(MMR_EMPTY_TAG)}</code> with its own BLAKE3 and got
+             <code>${esc(expected)}</code>, which is the root the node served. Establishes: the node
+             is committing to a log with nothing in it — it did not serve a stale or arbitrary root
+             and call it empty.`,
+          )
+        : checkRow(
+            "fail",
+            "the served root is the root of an EMPTY log",
+            `The node reports <code>len: 0</code>, but its root is <code>${esc(root)}</code> and an
+             empty log's root is <code>${esc(expected)}</code>. Those two answers contradict each
+             other.`,
+          ),
+    );
+  } else {
+    checks.push(
+      checkRow(
+        "skip",
+        "recompute the root from the log",
+        `The root commits to ${len} receipt(s), and this page did not fetch them to re-fold it.
+         Doing so takes the certified slices at <code>/api/receipts/index/range</code>, which carry
+         the openings that make omission detectable; this panel reads only the head.`,
+      ),
+    );
+  }
+
+  // --- the signature -------------------------------------------------------
+  checks.push(
+    checkRow(
+      "skip",
+      "the node's signature over this head",
+      `The head is signed by <code>${esc(shortHex(head.signer, 10, 8))}</code> and the signature is
+       served, but nothing on this page verifies it. Believing it means believing that key is this
+       node's — a binding this page has no way to establish. Treat the signature as
+       <em>evidence you could take elsewhere</em>, not as something checked here.`,
+    ),
+  );
+
+  // --- the consensus anchor ------------------------------------------------
+  // The node signs an explicitly UNANCHORED framing when it holds no attested
+  // root: null block id, height 0, zero ledger root. That is a distinct claim
+  // from an anchored one, and rendering it as "height 0" alone would read as a
+  // young chain rather than as "pinned to nothing".
+  const zeroRoot = /^0*$/.test(String(head.merkle_root || ""));
+  const anchored = head.block_id !== null && head.block_id !== undefined && !zeroRoot;
+  checks.push(
+    anchored
+      ? checkRow(
+          // Not a tick: this is READ off the response, not checked. The claim
+          // that the signature covers these coordinates is only worth anything
+          // once the signature is verified, and the row above says it was not.
+          "skip",
+          "the head names attested consensus coordinates",
+          `It reports blocklace block <code>${esc(shortHex(head.block_id, 10, 8))}</code> at height
+           ${esc(String(head.height))}, ledger root <code>${esc(shortHex(head.merkle_root, 10, 8))}</code>.
+           The node's signing message covers those coordinates, so a verifier that checks the
+           signature learns the node cannot re-anchor this log elsewhere without producing a second,
+           conflicting one. This page did not check the signature, so for now these are reported
+           values, not established ones.`,
+        )
+      : checkRow(
+          "warn",
+          "the head is explicitly UNANCHORED",
+          `This node holds no attested root yet, so it signed the unanchored framing — null block
+           id, height 0, zero ledger root. The signature is real and the root still binds the log,
+           but nothing ties that log to a position any committee agreed on.`,
+        ),
+  );
+
+  // --- the cross-check the two routes make possible ------------------------
+  // `/api/events` and this head describe the same activity from different
+  // stores. When they disagree the disagreement IS the finding, and the shape
+  // of it says which failure it is.
+  if (len === 0 && eventCount > 0) {
+    checks.push(
+      checkRow(
+        "warn",
+        "this empty log disagrees with the committed-event log",
+        `The receipt index is empty while the node reports ${eventCount} committed event(s). An
+         empty index alongside a non-empty event log means <em>the receipt log did not survive</em>
+         — not that nothing ever happened. Read the panel above, not this root, for what this node
+         has done.`,
+      ),
+    );
+  } else if (len > 0 && eventCount === 0) {
+    checks.push(
+      checkRow(
+        "warn",
+        "the committed-event log is empty and this one is not",
+        `This root binds ${len} receipt(s) while <code>/api/events</code> reports nothing. The event
+         log is a bounded in-memory window and does not survive a restart; the receipt log does.
+         Observed directly on a restarted node — so an empty "What has happened" panel above is a
+         statement about that window, not about this node's history.`,
+      ),
+    );
+  } else if (len > 0 && len < receiptCount) {
+    checks.push(
+      checkRow(
+        "fail",
+        "the committed length is smaller than the receipts served",
+        `The head commits to ${len} receipt(s) but <code>/api/receipts</code> served
+         ${receiptCount}. A root cannot bind fewer entries than the log it is taken over.`,
+      ),
+    );
+  }
+
+  const cards = [
+    factCard(
+      "receipts committed",
+      String(len),
+      len > 0 ? "good" : "warn",
+      `the number of log entries this root binds — derived by the node, and pinned by the root
+       itself, which encodes the length in its peak structure.`,
+    ),
+    factCard(
+      "receipt-log root",
+      shortHex(root, 12, 10),
+      "info",
+      `<code>${esc(root)}</code>`,
+    ),
+    anchored
+      ? factCard(
+          "anchored at height",
+          String(head.height),
+          "good",
+          `ledger root <code>${esc(shortHex(head.merkle_root, 10, 8))}</code>, blocklace block
+           <code>${esc(shortHex(head.block_id, 10, 8))}</code>.`,
+        )
+      : factCard(
+          "consensus anchor",
+          "none",
+          "warn",
+          `signed as explicitly unanchored — no attested root exists to pin this log to.`,
+        ),
+    factCard(
+      "signed by",
+      shortHex(head.signer, 8, 6),
+      "info",
+      `federation <code>${esc(shortHex(head.federation_id, 8, 6))}</code>. Not verified on this
+       page — see below.`,
+    ),
+  ].join("");
+
+  return `<div class="posture">${cards}</div>
+    <ul class="checks" style="margin-top:0.9rem">${checks.join("")}</ul>`;
+}
+
+// ---------------------------------------------------------------------------
 // 4. the blocklace DAG
 // ---------------------------------------------------------------------------
 
@@ -907,12 +1094,14 @@ function setConn(cls, state, url) {
 }
 
 async function load() {
-  for (const id of ["#posture", "#events", "#cells", "#receipts", "#lace", "#roots"]) {
+  for (const id of ["#posture", "#events", "#cells", "#receipts", "#index-head", "#lace", "#roots"]) {
     $(id).innerHTML = '<span class="loading">reading…</span>';
   }
 
   // Which node, if any? This is asked first and separately so "unconfigured"
-  // can never be mistaken for "empty".
+  // can never be mistaken for "empty". The same answer carries the deployment:
+  // a node serving its own explorer replies `self_hosted`, and reads then go
+  // straight to the origin instead of through the site's hop.
   let target = { configured: false, node_url: null };
   try {
     const res = await fetch("/explorer/target");
@@ -920,11 +1109,28 @@ async function load() {
   } catch {
     /* fall through to the unconfigured rendering */
   }
+  if (target.self_hosted) {
+    HOP = "/";
+    // The node cannot know the URL the browser reached it by; the origin in the
+    // address bar is that URL, so report it rather than a placeholder.
+    target = { configured: true, node_url: location.origin, self_hosted: true };
+  }
+  $("#foot-reach").innerHTML = target.self_hosted
+    ? `This page is served by the node it reads, so every route above is one hop away in the
+       address bar: <code>/api/cells</code>, <code>/api/events</code>, <code>/status</code>. Only
+       the node's anonymous surface is read here; routes behind its bearer gate are not touched,
+       and nothing on this page writes.`
+    : `This page is served by the web tier, which reaches the node through a read-only hop:
+       <code>/explorer/node/&lt;route&gt;</code> (for example
+       <code>/explorer/node/api/cells</code>). The hop is GET-only, path-allowlisted and sends no
+       credentials, so it exposes strictly less than the node's own anonymous surface. Routes the
+       node keeps behind its bearer gate — including <code>/api/node/health</code>, which looks
+       public but is not — are not reachable through it.`;
 
   if (!target.configured) {
     setConn("bad", "no node configured", `${target.env || "DREGG_NODE_URL"} is unset`);
     const msg = failState({ kind: "no-node-configured" });
-    for (const id of ["#posture", "#events", "#cells", "#receipts", "#lace", "#roots"]) {
+    for (const id of ["#posture", "#events", "#cells", "#receipts", "#index-head", "#lace", "#roots"]) {
       $(id).innerHTML = msg;
     }
     $("#verify-out").innerHTML = msg;
@@ -936,7 +1142,7 @@ async function load() {
   const statusR = await nodeGet("status");
   if (statusR.kind !== "ok") {
     setConn("bad", statusR.kind, target.node_url);
-    for (const id of ["#posture", "#events", "#cells", "#receipts", "#lace", "#roots"]) {
+    for (const id of ["#posture", "#events", "#cells", "#receipts", "#index-head", "#lace", "#roots"]) {
       $(id).innerHTML = failState(statusR, "this node's state");
     }
     return;
@@ -948,11 +1154,12 @@ async function load() {
     target.node_url,
   );
 
-  const [producerR, eventsR, cellsR, receiptsR, laceR, rootsR] = await Promise.all([
+  const [producerR, eventsR, cellsR, receiptsR, headR, laceR, rootsR] = await Promise.all([
     nodeGet("api/node/producer"),
     nodeGet("api/events", { limit: "200" }),
     nodeGet("api/cells", { limit: "200" }),
     nodeGet("api/receipts"),
+    nodeGet("api/receipts/index/head"),
     nodeGet("api/blocklace/blocks", { limit: "200" }),
     // ATTESTED ROOTS. This used to read `api/blocks`, which served roots under a
     // name that promises blocks; that path now serves blocks, and the roots kept
@@ -970,14 +1177,16 @@ async function load() {
   $("#cells").innerHTML =
     cellsR.kind === "ok" ? renderCells(cells) : failState(cellsR, "the cell list");
 
+  const receipts = receiptsR.kind === "ok" && Array.isArray(receiptsR.body) ? receiptsR.body : [];
   $("#receipts").innerHTML =
     receiptsR.kind === "ok"
-      ? renderReceipts(
-          Array.isArray(receiptsR.body) ? receiptsR.body : [],
-          cells.length,
-          events.length,
-        )
+      ? renderReceipts(receipts, cells.length, events.length)
       : failState(receiptsR, "the receipt chain");
+
+  $("#index-head").innerHTML =
+    headR.kind === "ok" && headR.body
+      ? renderIndexHead(headR.body, events.length, receipts.length)
+      : failState(headR, "the signed receipt-log head");
 
   $("#lace").innerHTML =
     laceR.kind === "ok"

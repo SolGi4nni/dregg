@@ -1930,6 +1930,17 @@ pub fn router_with_cors(
 
     // Public routes (no auth required)
     let mut public_routes = Router::new()
+        // The built-in explorer. A node that serves 86 JSON routes and no way to
+        // look at them is only legible to someone already holding `curl` and the
+        // route list, so `/` is the explorer that reads those routes. It is the
+        // SAME page `dreggnet-web` serves at `/explorer` — one source in
+        // `site/explorer/`, compiled in, so the binary needs nothing installed
+        // beside it. Read-only: every route it touches is a public GET.
+        .route("/", get(get_explorer_page))
+        .route("/explorer/explorer.css", get(get_explorer_css))
+        .route("/explorer/explorer.js", get(get_explorer_js))
+        .route("/explorer/blake3.js", get(get_explorer_blake3_js))
+        .route("/explorer/target", get(get_explorer_target))
         .route("/status", get(get_status))
         .route("/health", get(get_status))
         .route("/api/node/producer", get(get_producer_status))
@@ -2334,6 +2345,75 @@ pub fn router_with_cors(
             cors_middleware,
         ))
         .with_state(state)
+}
+
+// =============================================================================
+// The built-in explorer
+// =============================================================================
+//
+// The page, its stylesheet and its two scripts live in `site/explorer/` — the
+// directory that already owned this surface, and that `dreggnet-web` already
+// compiles in the same way. Serving a COPY here would give the project two
+// explorers that drift; `include_str!` gives it one that ships twice.
+//
+// The page is written to run in either deployment and asks `/explorer/target`
+// which one it is in. Behind the web tier that answer names a remote node URL;
+// here it says `self_hosted`, and the page reads this node's routes directly.
+
+/// One compiled-in asset, with the content type the browser needs to honour it
+/// (a stylesheet served as `text/plain` is silently ignored, and a module
+/// script served as anything but JavaScript is refused outright).
+fn explorer_asset(content_type: &'static str, body: &'static str) -> Response {
+    let mut res = Response::new(axum::body::Body::from(body));
+    res.headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    res
+}
+
+/// `GET /` — the explorer page.
+async fn get_explorer_page() -> Response {
+    explorer_asset(
+        "text/html; charset=utf-8",
+        include_str!("../../site/explorer/index.html"),
+    )
+}
+
+async fn get_explorer_css() -> Response {
+    explorer_asset(
+        "text/css; charset=utf-8",
+        include_str!("../../site/explorer/explorer.css"),
+    )
+}
+
+async fn get_explorer_js() -> Response {
+    explorer_asset(
+        "text/javascript; charset=utf-8",
+        include_str!("../../site/explorer/explorer.js"),
+    )
+}
+
+async fn get_explorer_blake3_js() -> Response {
+    explorer_asset(
+        "text/javascript; charset=utf-8",
+        include_str!("../../site/explorer/blake3.js"),
+    )
+}
+
+/// `GET /explorer/target` — which node this explorer reads.
+///
+/// The page asks this before anything else so that "no node configured" stays a
+/// distinct state from "the node is empty" and from "the node is unreachable".
+/// Served by the node itself the question has only one answer, and `self_hosted`
+/// is what tells the page to drop the web tier's hop prefix.
+async fn get_explorer_target() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "configured": true,
+        "self_hosted": true,
+        // The node has no idea what URL a browser reached it by (proxies,
+        // port-forwards, tunnels), so it does not guess one. The page fills this
+        // in from its own origin, which IS the URL that worked.
+        "node_url": serde_json::Value::Null,
+    }))
 }
 
 // =============================================================================

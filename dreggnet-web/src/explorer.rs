@@ -138,7 +138,16 @@ fn allow_node_path(path: &str) -> bool {
         ["api", "node", "producer"] => true,
         ["api", "node", "identity"] => true,
         // Federation / committee.
-        ["api", "blocks"] => true, // = attested roots (get_federation_roots)
+        //
+        // `/api/blocks` used to serve attested roots, which is why the page once
+        // read it for them. The node split the two on 2026-07-25 — `/api/blocks`
+        // now serves blocklace blocks and the roots kept their own name — and
+        // the page followed, but this list did not, so the attested-roots panel
+        // has been rendering "ROUTE NOT ON THE ALLOWLIST" on the site ever since.
+        // `page_reads_only_allowlisted_routes` below is the gate that makes that
+        // drift impossible to reintroduce silently.
+        ["api", "blocks"] => true,
+        ["api", "federation", "roots"] => true,
         ["api", "federations"] => true,
         ["api", "membership"] => true,
         // Owned state.
@@ -423,6 +432,7 @@ mod tests {
             "api/node/producer",
             "api/node/identity",
             "api/blocks",
+            "api/federation/roots",
             "api/federations",
             "api/membership",
             "api/cells",
@@ -557,6 +567,59 @@ mod tests {
         // surface stays self-contained.
         let caps = include_str!("../../site/explorer/caps-as-rows.html");
         assert!(caps.contains("caps-as-rows.js"));
+    }
+
+    #[test]
+    /// Every route the page actually reads must be on the allowlist.
+    ///
+    /// The list above and the page are two halves of one contract that live in
+    /// different languages, and nothing forced them to agree: when the node
+    /// renamed its attested-roots route the page followed and the allowlist did
+    /// not, so a whole panel read "ROUTE NOT ON THE ALLOWLIST" on the deployed
+    /// site while every test here stayed green — `public_read_routes_are_allowed`
+    /// asserted the routes someone remembered to type into it, which by then
+    /// were not the routes the page asked for.
+    ///
+    /// This reads the call sites out of the compiled-in script instead, so the
+    /// only way to add a read is to add it to both.
+    #[test]
+    fn page_reads_only_allowlisted_routes() {
+        let src = include_str!("../../site/explorer/explorer.js");
+        let hex = "a".repeat(64);
+        let mut found = Vec::new();
+        // `nodeGet("api/cells")` and the one template form,
+        // `nodeGet(`api/cell/${cellId}/proof`)`. An interpolation stands for a
+        // cell id, which is what every one of them is.
+        for rest in src.split("nodeGet(").skip(1) {
+            let Some(quote) = rest.chars().next() else {
+                continue;
+            };
+            if quote != '"' && quote != '`' {
+                continue;
+            }
+            let Some(end) = rest[1..].find(quote) else {
+                continue;
+            };
+            let mut route = rest[1..1 + end].to_string();
+            while let Some(open) = route.find("${") {
+                let Some(close) = route[open..].find('}') else {
+                    break;
+                };
+                route.replace_range(open..open + close + 1, &hex);
+            }
+            found.push(route);
+        }
+        assert!(
+            found.len() >= 8,
+            "expected to find the page's node reads, got {found:?} — the scan is looking for the \
+             wrong call shape, which would make this test vacuous"
+        );
+        for route in &found {
+            assert!(
+                allow_node_path(route),
+                "explorer.js reads `{route}`, which the hop refuses — add it to allow_node_path"
+            );
+        }
     }
 
     #[test]
