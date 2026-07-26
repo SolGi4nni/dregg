@@ -201,7 +201,11 @@ inv_falsifiers() {
     set -e
     if grep -Eq "test .*${fn}[^A-Za-z0-9_]* \.\.\. FAILED" "$log"; then
       bad "$crate :: $fn — RED (the falsifier failed / panicked in setup)."
-      note "        $(grep -E "panicked|assertion|Error" "$log" | head -1)"
+      # The panic line and the two lines under it (a `panicked at <file>:<line>:` header carries its
+      # message on the NEXT line). Anchored on the panic/assert marker, not a bare /Error/ — the
+      # loose match kept winning on a compiler warning that happened to list `StripeMirrorError` in
+      # an import, so the one line CI printed about a real STALE FIXTURE panic was an import list.
+      note "        $(grep -aE -A 2 'panicked at |^assertion .*failed' "$log" | head -3 | tr '\n' ' ' | cut -c1-400)"
     elif grep -Eq "test .*${fn}[^A-Za-z0-9_]* \.\.\. ok" "$log" && [ "$rc" -eq 0 ]; then
       ok "$crate :: $fn"
     else
