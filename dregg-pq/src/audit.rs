@@ -45,7 +45,13 @@
 //!   `catch_unwind`, and `panic = "abort"` is not something a leaf can assume.
 //!   `process::abort()` cannot be caught, cannot be unwound past, and cannot be
 //!   swallowed by a task boundary. The message goes to stderr directly (not
-//!   through `log`/`tracing`, which may be unconfigured or filtered at startup).
+//!   through `log`/`tracing`, which may be unconfigured or filtered at startup)
+//!   — and "directly" now means a raw write to FILE DESCRIPTOR 2, not `eprintln!`.
+//!   `eprintln!` goes through `std::io::stderr()`, which honours
+//!   `std::io::set_output_capture`, which is what libtest installs around every
+//!   test — so under `cargo test` the banner landed in a per-test capture buffer
+//!   that `abort()` never flushes, and the refusal was a bare SIGABRT with no
+//!   output. See [`eprintln_fd2`].
 //!
 //! * **Why an env opt-in rather than unconditional refusal?** An unconditional
 //!   refusal would break legitimate work that has no verified core available and
@@ -275,6 +281,37 @@ pub(crate) fn note_verified_answer(site: PqSite) {
     VERIFIED_ANSWERS[site.idx()].fetch_add(1, Ordering::Relaxed);
 }
 
+/// Write `msg` (plus a newline) to FILE DESCRIPTOR 2, stepping around `std::io::stderr()`.
+///
+/// ⚑ `eprintln!` IS NOT "straight to the fd", and every message in this module depended on
+/// believing that it was. `std::io::stderr()` honours `std::io::set_output_capture`, and that is
+/// precisely what libtest installs around each test it runs — so under `cargo test` the refusal
+/// banner went into a per-test capture buffer that `process::abort()` never flushes. In the one
+/// context where this gate fires most often (a test binary that reaches an ML-DSA primitive before
+/// anything installed a core) the process died as a bare SIGABRT with NO OUTPUT AT ALL. Recovering
+/// the reason took reading a macOS `.ips` crash report for the stack; `--nocapture` was the only
+/// way to see the banner this module was written to make impossible to miss.
+///
+/// A raw `write(2)` is not intercepted, so the message survives libtest, and the subprocess arms in
+/// `tests/unaudited_refusal.rs` — which read these needles off a pipe — see byte-identical text.
+fn eprintln_fd2(msg: &str) {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::fd::FromRawFd;
+        // SAFETY: fd 2 is stderr for the whole life of the process. `ManuallyDrop` keeps the
+        // `File` from closing it on drop, so this borrows the descriptor rather than owning it.
+        let mut fd2 = std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(2) });
+        // One write, so a concurrent writer cannot split the banner down the middle.
+        let _ = fd2.write_all(format!("{msg}\n").as_bytes());
+        let _ = fd2.flush();
+    }
+    #[cfg(not(unix))]
+    {
+        eprintln!("{msg}");
+    }
+}
+
 /// Record that the UNAUDITED crate answered `site`, and say so ONCE PER SITE.
 ///
 /// The per-site latch is the point: [`warn_once_permitted`] fires once for the whole
@@ -312,7 +349,7 @@ pub(crate) fn note_unaudited_answer(
             "dregg-pq's own #[cfg(test)] override is active (this is a dregg-pq unit-test binary, \
              which cannot link the archive at all)"
         };
-        eprintln!(
+        eprintln_fd2(&format!(
             "WARNING: dregg-pq PQ PROVENANCE [{label}] — the UNAUDITED `{unaudited_crate}` crate \
              answered `{op}` in this process: no Lean-verified core is installed for it, and \
              {permitted_by}, so the DECLARED bypass held. Route it to the verified core with \
@@ -320,7 +357,7 @@ pub(crate) fn note_unaudited_answer(
              of a bypass. Any assurance claim resting on the verified core is VOID for `{op}` in \
              this process.{verdict}",
             label = site.label(),
-        );
+        ));
     }
 }
 
@@ -334,7 +371,7 @@ pub(crate) fn note_unaudited_answer(
 pub(crate) fn note_verified_core_fault(site: PqSite) {
     VERIFIED_CORE_FAULTS[site.idx()].fetch_add(1, Ordering::Relaxed);
     if !FAULT_WARNED[site.idx()].swap(true, Ordering::Relaxed) {
-        eprintln!(
+        eprintln_fd2(&format!(
             "ERROR: dregg-pq PQ PROVENANCE [{label}] — a Lean-verified core IS installed for this \
              direction and it FAULTED (no usable answer out of the FFI). The operation REFUSES; the \
              unaudited crate is NOT consulted, because falling back here would silently re-admit \
@@ -342,7 +379,7 @@ pub(crate) fn note_verified_core_fault(site: PqSite) {
              this is a BROKEN ARCHIVE, not a policy choice. Watch \
              dregg_pq_verified_core_faults_total{{site=\"{label}\"}} for the rate.",
             label = site.label(),
-        );
+        ));
     }
 }
 
@@ -360,7 +397,7 @@ pub(crate) fn refuse_unaudited(op: &str, unaudited_crate: &str, install_fn: &str
     // already taken, and reading it would send them looking for a bug that is not there.
     let revoked_by_require_lean = require_verified_lean_gate() && unaudited_pq_accepted();
     if revoked_by_require_lean {
-        eprintln!(
+        eprintln_fd2(&format!(
             "\n\
              ================================================================================\n\
              FATAL: dregg-pq refused UNAUDITED post-quantum crypto — {REQUIRE_LEAN_ENV}=1\n\
@@ -380,7 +417,7 @@ pub(crate) fn refuse_unaudited(op: &str, unaudited_crate: &str, install_fn: &str
                * link an archive that EXPORTS the six verified PQ cores and install them, or\n\
                * unset {REQUIRE_LEAN_ENV} to take the declared unaudited bypass deliberately.\n\
              ================================================================================\n"
-        );
+        ));
         std::process::abort()
     }
     refuse_unaudited_no_optin(op, unaudited_crate, install_fn)
@@ -393,7 +430,7 @@ pub(crate) fn refuse_unaudited(op: &str, unaudited_crate: &str, install_fn: &str
 fn refuse_unaudited_no_optin(op: &str, unaudited_crate: &str, install_fn: &str) -> ! {
     // Straight to the fd. No `log`/`tracing` (may be unconfigured or filtered),
     // no allocation-heavy formatting machinery beyond what `eprintln!` needs.
-    eprintln!(
+    eprintln_fd2(&format!(
         "\n\
          ================================================================================\n\
          FATAL: dregg-pq refused to run UNAUDITED post-quantum crypto.\n\
@@ -423,7 +460,7 @@ fn refuse_unaudited_no_optin(op: &str, unaudited_crate: &str, install_fn: &str) 
          Do NOT set it in production, in a validator, or in anything whose output is\n\
          presented as verified.\n\
          ================================================================================\n"
-    );
+    ));
     std::process::abort()
 }
 
@@ -438,7 +475,7 @@ fn refuse_unaudited_no_optin(op: &str, unaudited_crate: &str, install_fn: &str) 
 #[inline(never)]
 pub(crate) fn abort_verified_core_fault(site: PqSite, op: &str, export_sym: &str) -> ! {
     note_verified_core_fault(site);
-    eprintln!(
+    eprintln_fd2(&format!(
         "\n\
          ================================================================================\n\
          FATAL: dregg-pq verified core FAULTED (installed but returned garbage).\n\
@@ -451,7 +488,7 @@ pub(crate) fn abort_verified_core_fault(site: PqSite, op: &str, export_sym: &str
          to the unaudited crate here would silently re-admit what the verified path removed, so\n\
          the process is aborting instead. There is NO opt-out for a faulting core.\n\
          ================================================================================\n"
-    );
+    ));
     std::process::abort()
 }
 
@@ -516,13 +553,13 @@ pub(crate) fn guard_no_verified_core(site: PqSite, op: &str, unaudited_crate: &s
     UNAUDITED_ANSWERS[site.idx()].fetch_add(1, Ordering::Relaxed);
     static WARNED: OnceLock<()> = OnceLock::new();
     if WARNED.set(()).is_ok() {
-        eprintln!(
+        eprintln_fd2(&format!(
             "WARNING: dregg-pq is generating a post-quantum key ({op}) with the UNAUDITED \
              `{unaudited_crate}` crate primitive because NO Lean-verified core is installed in \
              this process. The verified core is NOT the authority for this key ({guards}). \
              Deployed, archive-linked processes install the verified core; this process cannot \
              link it. Any assurance claim resting on the verified core is VOID for keys minted here."
-        );
+        ));
     }
 }
 
@@ -532,12 +569,12 @@ pub(crate) fn guard_no_verified_core(site: PqSite, op: &str, unaudited_crate: &s
 fn warn_once_permitted() {
     static WARNED: OnceLock<()> = OnceLock::new();
     if WARNED.set(()).is_ok() {
-        eprintln!(
+        eprintln_fd2(&format!(
             "WARNING: {ALLOW_UNAUDITED_PQ_ENV}=1 — dregg-pq is answering post-quantum \
              operations with UNAUDITED crate primitives (fips204 / ml-kem). The Lean-verified \
              cores are NOT the authority in this process. Any assurance claim that depends on \
              them is VOID for this run."
-        );
+        ));
     }
 }
 
