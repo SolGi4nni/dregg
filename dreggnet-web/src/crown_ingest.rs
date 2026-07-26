@@ -128,6 +128,11 @@ pub const CROWN_INGEST_TOKEN_ENV: &str = "CROWN_INGEST_TOKEN";
 /// The durable store's location — the SAME `DATABASE_URL` the Descent board uses, so one
 /// deployment variable covers both. Unset ⇒ in-RAM (a restart forgets every admitted crown; they
 /// are re-POSTable, and the sender's own store still holds them).
+///
+/// ⚑ It is the same FILE as the Descent board's, opened through a SECOND `rusqlite::Connection`.
+/// The tables are disjoint (`crown_folds` vs `descent_*`) and both boards are single-writer and
+/// low-traffic, so this is fine — but it is a second writer on one sqlite file, and if the deploy
+/// ever gets busy that is where `SQLITE_BUSY` would first appear. Named rather than discovered.
 pub const CROWN_DATABASE_URL_ENV: &str = "DATABASE_URL";
 
 /// The request-body ceiling for `POST /crown/ingest`. A `WholeChainProof` envelope is the whole

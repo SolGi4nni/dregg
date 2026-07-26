@@ -583,9 +583,13 @@ fn you_page(
          holding open for you, the matches you have already finished, the runs the board has under \
          your name, and the receipts your own moves minted. Every link here goes to the page that \
          re-runs the thing rather than to a copy of its result.</p></div>\
-         {identity}{accounts}{tables}{finished}{runs}{receipts}\
+         {identity}{accounts}{tables}{finished}{runs}{receipts}{legend}\
          <p class=\"prose\"><a class=\"backlink\" href=\"/offerings\">← All games</a></p>\
          </main>",
+        // ⚑ The legend is not optional decoration. The chips above are three-word abbreviations,
+        // and an abbreviation nobody expands is how a distinction turns into a badge; this is the
+        // one place on the page that says what each of them actually means.
+        legend = crate::attribution::legend(),
         identity = identity_panel(label, me),
         accounts = accounts_panel(label, links),
         tables = tables_panel(tables),
@@ -596,7 +600,10 @@ fn you_page(
     document_with_head(
         &format!("{PRODUCT_NAME} · you"),
         "you",
-        &format!("{YOU_STYLE}{LOCAL_RUN_SCRIPT}"),
+        &format!(
+            "{YOU_STYLE}{}{LOCAL_RUN_SCRIPT}",
+            crate::attribution::ATTRIBUTION_STYLE
+        ),
         &body,
     )
 }
@@ -777,6 +784,36 @@ fn accounts_panel(label: &str, links: &[LinkedPlatform]) -> String {
     )
 }
 
+/// **How this player's turns here were established**, in the one vocabulary every surface uses.
+///
+/// ⚑ The grade shown is the FLOOR over the turns counted, never the best of them. A session with
+/// nine signed turns and one asserted one is an asserted session for this purpose, because the
+/// weakest link is what the reader needs in order to know what the row proves — and rounding up
+/// would be the overstatement `Custody` exists to refuse.
+///
+/// `via_linked` is still named separately rather than folded in. A turn that landed under a linked
+/// platform's custodial key IS that key's turn; saying so is the difference between joining two
+/// records and pretending there was only ever one.
+fn attribution_note(signed: usize, mine: usize, via_linked: usize) -> String {
+    use crate::attribution::ActorGrade;
+    // Every one of MY turns carried a signature, and at least one landed under a linked chat
+    // account, whose key the operator can derive — so the honest grade is the custodial one.
+    let grade = if mine == 0 || signed < mine {
+        ActorGrade::Asserted
+    } else if via_linked > 0 {
+        ActorGrade::SignedCustodial
+    } else {
+        ActorGrade::SignedUserHeld
+    };
+    match (grade, signed) {
+        (ActorGrade::Asserted, 0) => format!("your turns {}", grade.chip()),
+        // A partial count is the interesting case and the one a bare chip would hide: say the
+        // number, and let the chip carry the floor.
+        (ActorGrade::Asserted, n) => format!("{n} of them signed, the rest {}", grade.chip()),
+        (_, n) => format!("all {n} signed {}", grade.chip()),
+    }
+}
+
 /// The seat line for a table, or the plain "you have moved here" line.
 fn table_meta(table: &MyTable) -> String {
     let mut parts: Vec<String> = Vec::new();
@@ -790,11 +827,12 @@ fn table_meta(table: &MyTable) -> String {
         total = table.total,
         s = if table.total == 1 { "" } else { "s" },
     ));
-    parts.push(if table.signed > 0 {
-        format!("{} signed", table.signed)
-    } else {
-        "asserted attribution".to_string()
-    });
+    // ⚑ THE SHARED VOCABULARY, not a local phrasing. This line used to read "3 signed" or
+    // "asserted attribution" — two ad-hoc strings for a distinction that four other surfaces also
+    // had to describe, which is exactly how one fact acquires five wordings. It is now
+    // `crate::attribution`'s chip, so `/you`, the boards and the link page say the same words and a
+    // reword is a diff to one file.
+    parts.push(attribution_note(table.signed, table.mine, table.via_linked));
     // The union is NAMED per table rather than folded into one number: a turn that landed under a
     // linked platform's custodial key is still that key's turn, and saying so is the difference
     // between joining two records and pretending there was only ever one.
@@ -929,11 +967,7 @@ fn finished_panel(finished: &[FinishedMatch]) -> String {
                 total = game.total,
                 s = if game.total == 1 { "" } else { "s" },
             ));
-            parts.push(if game.signed > 0 {
-                format!("{} signed", game.signed)
-            } else {
-                "asserted attribution".to_string()
-            });
+            parts.push(attribution_note(game.signed, game.mine, game.via_linked));
             if game.via_linked > 0 {
                 parts.push(format!(
                     "{} of them landed on a linked account (custodial key)",

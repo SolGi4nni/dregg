@@ -57,6 +57,10 @@ pub mod act_signed;
 /// `GET /offerings/{key}/session/{id}/events` share. See [`automatafl_web`].
 pub mod automatafl_web;
 
+/// **The one vocabulary for "how do we know who did this"** — the signed / signed-by-the-bot /
+/// attributed distinction, rendered the same way on every surface that shows a result. See
+/// [`attribution`].
+pub mod attribution;
 /// The audit emitter — the interaction envelope around every catalog/Mini-App decision
 /// (docs/BOT-AUDIT-LOGGING-DESIGN.md).
 pub mod audit;
@@ -94,6 +98,12 @@ pub mod descent_play;
 /// reproducible public input (the day seed + the move sequence), re-verified by REPLAY on boot so
 /// the board survives restart and a tampered row cannot resurrect a cheat. See [`descent_store`].
 pub mod descent_store;
+/// **The browser's own signing key** — the asserted→signed step for the web. The canonical turn
+/// message carries no hash, so signing a turn needs Ed25519 and nothing else; the browser mints a
+/// non-extractable key in `crypto.subtle`, the phrase enrols it, and turns it signs land
+/// [`dreggnet_offerings::Attribution::Signed`] + [`dreggnet_offerings::Custody::UserHeld`] — the
+/// server having never seen the secret. See [`device_key`].
+pub mod device_key;
 /// THE DISCORD ACTIVITY surface's trust root (`/da` scope): the server-minted **activity ticket**
 /// (`mint_ticket`) and its PURE, gate-ordered validator (`validate_ticket_at`) — the OAuth-verified
 /// analog of Telegram's initData envelope, over the SAME custodial identity the in-chat Discord bot
@@ -130,6 +140,12 @@ pub mod guide;
 /// custody difference intact — only the VIEW unions. Mounted iff a platform identity secret
 /// resolves. See [`identity_link`].
 pub mod identity_link;
+/// **The un-link door** — the removal `identity_link`'s residual list opened with. A binding made
+/// by mistake (or on a code a stranger handed the player) used to be permanent; it is now revocable
+/// by a signature from the phrase that made it, over the UNLINK attestation `webauth_core::link_kel`
+/// has carried since the deep version's brick 2 and which had no shallow consumer until now. Same
+/// door for a chat account and for a browser signing key. See [`identity_unlink`].
+pub mod identity_unlink;
 /// Prometheus metrics for the web surface (the `node/src/metrics.rs` pattern): the idempotent
 /// process-global recorder + the `GET /metrics` handler + the named emit helpers this surface's
 /// call sites bump (session opens/evictions, policy refusals, executor refusals, anchor + resume
@@ -1765,12 +1781,42 @@ const ENHANCE_SCRIPT: &str = r##"<script>
     form.classList.add("in-flight","pending");
     if(btn)btn.disabled=true;
     var body=new URLSearchParams(new FormData(form)).toString();
-    fetch(action,{
-      method:"POST",
-      headers:{"X-Fragment":"1","Content-Type":"application/x-www-form-urlencoded","Accept":"text/html"},
-      body:body,
-      credentials:"same-origin"
-    }).then(function(r){
+    /* ⚑ THE SIGNED LANE, PREFERRED WHEN THIS BROWSER HOLDS A KEY.
+       `/act-signed` has verified real signatures since rung 1, but nothing in a browser ever posted
+       to it: the only signer was the extension. If this browser has enrolled a device key
+       (`/identity/device`) the same button now signs the canonical turn message with a key
+       `crypto.subtle` will use but will not hand over, and the move lands SIGNED + user-held
+       instead of asserted.
+       Every failure here falls through to `postUnsigned()`, on purpose and in this order: no device
+       key, an older browser, a module that will not load, a counter read that failed, a refused
+       signature. A player must never lose a move because the stronger path was unavailable — the
+       weaker path is the one that has always worked, and it still does. */
+    function postUnsigned(){
+      return fetch(action,{
+        method:"POST",
+        headers:{"X-Fragment":"1","Content-Type":"application/x-www-form-urlencoded","Accept":"text/html"},
+        body:body,
+        credentials:"same-origin"
+      });
+    }
+    function postTurn(){
+      var m=/^\/offerings\/([^/]+)\/session\/([^/]+)\/act$/.exec(action);
+      if(!m||!window.crypto||!window.crypto.subtle)return postUnsigned();
+      var data=new FormData(form);
+      var turn=data.get("turn"),arg=data.get("arg"),text=data.get("text");
+      if(turn===null||arg===null)return postUnsigned();
+      return import("/identity/device/static/device-key.js").then(function(dk){
+        return dk.postSignedTurn(decodeURIComponent(m[1]),decodeURIComponent(m[2]),{
+          turn:String(turn),arg:String(arg),text:text===null?null:String(text)
+        });
+      }).then(function(r){
+        /* `null` = this browser holds no key; a non-ok response = the signed attempt was refused,
+           and re-posting unsigned would be a SECOND move rather than a retry only if the first had
+           landed — it did not, because a refused signature commits nothing (anti-ghost). */
+        return (r&&r.ok)?r:postUnsigned();
+      }).catch(function(){return postUnsigned();});
+    }
+    postTurn().then(function(r){
       if(!r.ok)throw new Error("HTTP "+r.status);
       return r.text();
     }).then(function(html){
@@ -2868,6 +2914,15 @@ pub fn catalog_router(state: Arc<CatalogState>) -> Router {
     Router::new()
         .route("/offerings", get(get_catalog))
         .route("/offerings/{key}/session/{id}", get(get_offering_session))
+        // ⚑ THE COUNTER FLOOR — the one thing a browser signer could not previously learn.
+        // `/act-signed` refuses a stale replay counter, and the extension's own README fetches this
+        // value from "YOUR server" via a `fetchNextCounter` that did not exist anywhere in the tree:
+        // the verifying half of the signed lane shipped without the read the signing half needs, so
+        // the only clients that ever reached it were ones that guessed. See `get_next_counter`.
+        .route(
+            "/offerings/{key}/session/{id}/next-counter",
+            get(get_next_counter),
+        )
         // THE REALTIME SEAM — one open `EventSource` per viewer; the server pushes THAT VIEWER's
         // re-rendered surface whenever it changes. Additive and degradable: a client without
         // `EventSource` never opens it and keeps the reload path.
@@ -3195,6 +3250,64 @@ fn pressed_label<'a>(
 /// posted `{turn, arg}` against it (a turn the surface does not offer is refused before the
 /// substrate), and [`OfferingHost::advance`]s ONE real turn. A legal move lands a real receipt; an
 /// illegal / crafted one is a real executor [`Outcome::Refused`] (anti-ghost). Re-renders.
+/// The `?actor=` of [`get_next_counter`] — the public key a signer is about to sign under.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct NextCounterQuery {
+    /// The signer's Ed25519 public key, hex. Attacker-choosable and that is FINE — see
+    /// [`get_next_counter`].
+    #[serde(default)]
+    pub actor: Option<String>,
+}
+
+/// `GET /offerings/{key}/session/{id}/next-counter?actor=<pubkey hex>` — **the lowest replay
+/// counter this host will accept from that key**, as `{"next":"<decimal>"}`.
+///
+/// ⚑ **Why this is not a leak, stated rather than assumed.** Everything here is already public or
+/// already the caller's own: the key is a public key, and the answer is one more than the highest
+/// counter that key has successfully signed under in this session. An `actor` nobody has signed
+/// under answers `0`, which is the same answer an unopened session gives, so the endpoint is not an
+/// oracle for "does this player exist" or "has this player moved". It is unauthenticated for the
+/// same reason: requiring a credential to learn a number you can also learn by signing once and
+/// reading the refusal would be ceremony with no property behind it.
+///
+/// ⚑ **And it is not a gate.** Nothing about this response is trusted on the way back in: a client
+/// that asks for the floor and then signs at a lower one is refused by
+/// [`verify_signed`](dreggnet_offerings::verify_signed) exactly as a client that never asked. That
+/// is the whole reason it is safe to answer — the counter is a FLOOR the verifier enforces, not a
+/// ticket this route issues.
+///
+/// It exists because the signing half of the lane shipped without it. `extension/README.md`'s
+/// step 2 calls a `fetchNextCounter(offeringKey, sessionId)` against "YOUR server" and no such
+/// route existed in this tree, so every browser-side signer had to guess a counter and interpret a
+/// `403` to correct it.
+async fn get_next_counter(
+    State(state): State<Arc<CatalogState>>,
+    Path((key, id)): Path<(String, String)>,
+    Query(query): Query<NextCounterQuery>,
+) -> Response {
+    let sid = SessionId::new(id);
+    let actor = query.actor.unwrap_or_default().to_ascii_lowercase();
+    // A malformed key gets the floor for "has never signed", not an error: it is exactly as true,
+    // and distinguishing the two would turn a shape check into a key-existence oracle.
+    let viewer = DreggIdentity(actor.clone());
+    let key_for_job = key.clone();
+    let sid_for_job = sid.clone();
+    let last = state.run_offering(&key, &viewer, move |host| {
+        host.signed_counter(&key_for_job, &sid_for_job, &actor)
+    });
+    // `last + 1`, saturating: an exhausted lane reports `u64::MAX` rather than wrapping to a value
+    // the verifier would then accept as fresh.
+    let next = last.map_or(0, |last| last.saturating_add(1));
+    (
+        [
+            (header::CONTENT_TYPE, "application/json"),
+            (header::CACHE_CONTROL, "private, no-store"),
+        ],
+        format!("{{\"next\":\"{next}\"}}"),
+    )
+        .into_response()
+}
+
 async fn post_offering_act(
     State(state): State<Arc<CatalogState>>,
     Path((key, id)): Path<(String, String)>,
@@ -7201,6 +7314,20 @@ fn make_app_parts_with_catalog(
     // unlinked player — web, Discord, or a casual cookie visitor — is byte-identical to before,
     // because link resolution treats an unlinked key as its own human.
     let app = app.merge(identity_link::identity_link_from_env());
+
+    // ⚑ THE SIGNING DOOR + THE UN-LINK DOOR. Both are ALWAYS mounted, for the same reason the link
+    // door is: `/identity`, `/you` and the link page all point at them, and an env gate would turn
+    // those into 404s. Neither needs any platform secret — a device key is minted by the BROWSER and
+    // enrolled by the player's own phrase, and a removal is authorised by that same phrase, so
+    // neither ceremony has an operator-supplied half that could be missing.
+    //
+    // Additive: `/identity/device` and `/identity/unlink` overlap nothing, and a player who enrols
+    // no key and removes nothing is byte-identical to before. In particular the CASUAL PATH is
+    // untouched — a visitor who wants to click a game still clicks it, still lands
+    // `Attribution::Asserted` under a cookie, and never sees either page unless they go looking.
+    let app = app
+        .merge(device_key::device_key_from_env())
+        .merge(identity_unlink::identity_unlink_from_env());
 
     // THE TRANSPORT LAYERS, applied to the WHOLE merged surface (see `PLAY_STATIC_CACHE_CONTROL`).
     // Order matters and reads inside-out: `revalidate_play_static` is the inner layer, so it hashes

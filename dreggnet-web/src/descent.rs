@@ -1608,11 +1608,19 @@ fn leaderboard_page(day: &Day, rows: &[Row], native_rows: &[NativeRow]) -> Strin
         );
         for (i, r) in rows.iter().enumerate() {
             table.push_str(&format!(
-                "<tr><td class=\"rank\">{rank}</td><td class=\"player\">{player}</td>\
+                "<tr><td class=\"rank\">{rank}</td><td class=\"player\">{player}{grade}</td>\
                  <td class=\"num\">{turns}</td><td class=\"num\">{depth}</td>\
                  <td><a href=\"{href}\">verify this run \
                  <span class=\"arr\" aria-hidden=\"true\">→</span></a></td></tr>",
                 rank = i + 1,
+                // ⚑ HOW THE NAME WAS ESTABLISHED, beside the name, in the shared vocabulary.
+                // A procgen run arrives as an ordinary form POST under whatever name the browser
+                // was signed in as, and nothing signs it — so every row here is honestly
+                // `Asserted`. That is the current state of this lane, not a placeholder, and a
+                // board that sells verifiability owes the reader the difference between "the moves
+                // re-ran" (which the proof link is) and "this is who ran them" (which nothing on
+                // this lane checks yet).
+                grade = crate::attribution::ActorGrade::Asserted.chip(),
                 player = esc(&r.player),
                 turns = r.turns,
                 depth = r.depth,
@@ -1653,12 +1661,16 @@ fn leaderboard_page(day: &Day, rows: &[Row], native_rows: &[NativeRow]) -> Strin
         );
         for (index, row) in native_rows.iter().enumerate() {
             native_table.push_str(&format!(
-                "<tr><td class=\"rank\">{rank}</td><td class=\"player\">{actor}</td>\
+                "<tr><td class=\"rank\">{rank}</td><td class=\"player\">{actor}{grade}</td>\
                  <td class=\"num\">{turns}</td><td class=\"num\">{relics}</td>\
                  <td class=\"num\">{score}</td>\
                  <td><a href=\"{href}\">verify native record \
                  <span class=\"arr\" aria-hidden=\"true\">→</span></a></td></tr>",
                 rank = index + 1,
+                // Same fact, same words, same chip as every other surface. The native submit takes
+                // a whole run envelope and no signature, so the actor on a native record is a
+                // string the browser chose — said, rather than left to be inferred from silence.
+                grade = crate::attribution::ActorGrade::Asserted.chip(),
                 actor = esc(&row.actor),
                 turns = row.turns,
                 relics = row.relics,
@@ -1695,7 +1707,24 @@ fn leaderboard_page(day: &Day, rows: &[Row], native_rows: &[NativeRow]) -> Strin
          <div class=\"receipt ok\"><span class=\"dot\"></span>\
          <span class=\"label\">independent by construction</span>\
          <span class=\"detail\">open any run to re-verify it yourself</span></div>\
+         {att_style}{names}{legend}\
          </main>",
+        // ⚑ THE OTHER HALF OF "NO-CHEAT", SAID OUT LOUD. The deck above promises that a forged run
+        // is excluded by re-verification, and that is true — about the MOVES. It says nothing about
+        // the NAME, and on a board whose whole pitch is that it cannot be faked, silence about the
+        // name reads as a claim about it. The chip beside each player and this block are the one
+        // vocabulary `crate::attribution` defines, so the board, `/you` and the identity pages
+        // cannot drift into three wordings of one fact.
+        att_style = crate::attribution::ATTRIBUTION_STYLE,
+        names = "<p class=\"prose\" style=\"margin-top:1.4rem\">Re-verification decides which \
+                 runs appear here, and it is about the moves: every row was re-executed under the \
+                 rules and reached the end. Who played it is a separate question, and this board \
+                 answers it separately — the mark beside each name says how that name was \
+                 established, which today is the same for every row on both lanes because neither \
+                 way of submitting a run signs it yet. A player whose browser signs their turns \
+                 reaches the stronger mark on the shared tables now; carrying a signature into a \
+                 whole-run submission is the step this board is waiting on.</p>",
+        legend = crate::attribution::legend(),
         title = esc(&day.day.title),
         key = esc(&day.key),
         seed = esc(&seed_tag(&day.seed)),

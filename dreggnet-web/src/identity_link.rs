@@ -114,7 +114,9 @@
 //! `GET /identity/link?code=…` prefills the code box, and the bot's ephemeral reply carries a
 //! tappable link with the code in it — so a player reading Discord on a phone taps once and only has
 //! to add their words. See [`LinkQuery`] for the cost of a code in a URL and the three bounds on it,
-//! and [`whose_account_note`] for the disclosure that makes a forwarded link safe to look at.
+//! and [`link_form`] for the two-step flow (code -> "this is account N, is that you?" -> words)
+//! that makes a forwarded link safe to look at: a prefilled code now lands on a screen with no
+//! phrase box on it at all.
 //!
 //! ## Named residuals (work not done, said as such)
 //!
@@ -318,6 +320,9 @@ impl IdentityLinkState {
 pub fn identity_link_router(state: Arc<IdentityLinkState>) -> Router {
     Router::new()
         .route("/identity/link", get(get_link).post(post_link))
+        // ⚑ STEP ONE of the two-step flow: a code alone, checked, answering "whose account is
+        // this?" before any box on this site has asked for 24 words. See `authenticate_code`.
+        .route("/identity/link/account", post(post_link_account))
         .with_state(state)
 }
 
@@ -542,9 +547,9 @@ impl LinkRefusal {
             LinkRefusal::AccountNotConfirmed { platform, uid } => format!(
                 "Refused: nothing was linked, because the confirmation box was not ticked. This code \
                  is for {} account {uid}. If that is not YOUR account (if somebody sent you this \
-                 code or this link), stop here: linking it would put their play on your record, and \
-                 there is no way to undo a link yet. Your 24 words were not stored and your code was \
-                 not spent either way.",
+                 code or this link), stop here: linking it would put their play on your record. You \
+                 can undo a link now, on the removal page, but not having made it is better. Your 24 \
+                 words were not stored and your code was not spent either way.",
                 platform.display()
             ),
             LinkRefusal::BadPhrase(detail) => format!(
@@ -584,6 +589,52 @@ fn phrase_detail(error: &dregg_sdk::mnemonic::MnemonicError) -> String {
              swapped."
             .to_string(),
     }
+}
+
+/// **Parse and AUTHENTICATE a link code, naming the account it is really for.**
+///
+/// ⚑ This is the half of [`prove_and_record`] that the **two-step flow** needs on its own. The
+/// residual it closes was stated plainly in this module's own list: *"The consent box and the phrase
+/// ride in the SAME `POST`, so a player who was going to be fooled has already transmitted their
+/// words by the time they see the account id … A two-step flow (code → 'this is account N, is that
+/// you?' → words) would make that structural instead of advisory."*
+///
+/// Two things make the step-one page worth having rather than cosmetic:
+///
+/// * the account it names is **verified, not read out of the paste**. The retired note read the
+///   plaintext uid half and the page had to admit it was unchecked; this recomputes
+///   [`account_challenge_key`] per `(platform, uid)` and refuses a code presented under a uid it was
+///   not minted for — so the number on the confirmation page is one the bot actually issued;
+/// * it is reached **before any box asks for 24 words**, so the disclosure cannot arrive after the
+///   words are already on the wire. That is the structural part.
+///
+/// Nothing is spent here. The single-use nonce is consumed at the END of [`prove_and_record`]
+/// (step 7), so a player who reads the account id and stops has an unspent code and has transmitted
+/// nothing but the code they were given.
+fn authenticate_code<'s>(
+    state: &'s IdentityLinkState,
+    raw_code: &str,
+    now: u64,
+) -> Result<(&'s ConfiguredPlatform, String), LinkRefusal> {
+    if state.platforms.is_empty() {
+        return Err(LinkRefusal::NoPlatformConfigured);
+    }
+    let (uid_str, chal) = parse_link_code(raw_code).ok_or(LinkRefusal::MalformedCode)?;
+    // Shape-check the uid here as well as in the caller: a non-numeric uid is a malformed code, and
+    // saying so is more use than "this server cannot authenticate that code".
+    uid_str
+        .parse::<u64>()
+        .map_err(|_| LinkRefusal::MalformedUid)?;
+    let uid_str = uid_str.to_string();
+    let configured = state
+        .platforms
+        .iter()
+        .find(|p| {
+            let key = account_challenge_key(&p.base_key, p.platform.wire(), &uid_str);
+            challenge::verify(&key, chal, now).is_ok()
+        })
+        .ok_or(LinkRefusal::CodeNotOurs)?;
+    Ok((configured, uid_str))
 }
 
 /// What a successful link produced — the two rows appended, plus the platform, for the page.
@@ -643,22 +694,11 @@ fn prove_and_record(
         return Err(LinkRefusal::NoPlatformConfigured);
     }
 
-    // 1. Parse. Authenticates nothing — step 2 is the gate.
-    let (uid_str, chal) = parse_link_code(raw_code).ok_or(LinkRefusal::MalformedCode)?;
+    // 1 + 2. Parse and AUTHENTICATE. Shared with the step-one route, so the account a player is
+    //        asked to confirm is decided by the same code that decides what gets recorded.
+    let (configured, uid_str) = authenticate_code(state, raw_code, now)?;
+    let (_, chal) = parse_link_code(raw_code).ok_or(LinkRefusal::MalformedCode)?;
     let uid: u64 = uid_str.parse().map_err(|_| LinkRefusal::MalformedUid)?;
-    let uid_str = uid_str.to_string();
-
-    // 2. THE PLATFORM'S HALF OF THE PROOF. The challenge key is derived per (platform, uid), so
-    //    this loop is not a guess: at most one platform's key can authenticate the code, and a code
-    //    re-presented under a different uid authenticates under NONE of them.
-    let configured = state
-        .platforms
-        .iter()
-        .find(|p| {
-            let key = account_challenge_key(&p.base_key, p.platform.wire(), &uid_str);
-            challenge::verify(&key, chal, now).is_ok()
-        })
-        .ok_or(LinkRefusal::CodeNotOurs)?;
     let platform = configured.platform;
     let account_key = account_challenge_key(&configured.base_key, platform.wire(), &uid_str);
 
@@ -787,7 +827,11 @@ fn linked_platforms_in(store: &dyn LinkStore, root_pubkey_hex: &str) -> Vec<Link
         .unwrap_or_default()
         .into_iter()
         .map(|r| LinkedPlatform {
-            operator_derivable: r.platform != WEB_PLATFORM,
+            // ⚑ NOT `platform != "web"`. That spelling was right while the web self-row was the only
+            // self-held row, and became wrong the moment a browser device key could be one: it would
+            // have printed "an operator can derive this key" beside the single key in the system
+            // that nobody but that browser can produce. See `device_key::platform_is_self_held`.
+            operator_derivable: !crate::device_key::platform_is_self_held(&r.platform),
             platform: r.platform,
             platform_uid: r.platform_uid,
             custodial_pubkey_hex: r.custodial_pubkey_hex,
@@ -852,17 +896,6 @@ pub struct LinkForm {
     /// [`LinkRefusal::AccountNotConfirmed`] for the attack this exists against.
     #[serde(default)]
     pub mine: Option<String>,
-}
-
-/// **The account id a code names, read straight out of its plaintext uid half.**
-///
-/// ⚑ NOT a verified fact, and the page says so: anybody can write any number before the colon. Its
-/// job is not proof but DISCLOSURE — a player who was handed a link by somebody else needs to see
-/// *whose account* they are about to be bound to, in the same glance as the box asking for their 24
-/// words. The verification happens at submit ([`prove_and_record`] step 2), where a code presented
-/// under a uid it was not minted for authenticates under nothing.
-fn code_names_account(code: &str) -> Option<&str> {
-    parse_link_code(code).map(|(uid, _)| uid)
 }
 
 /// `GET /identity/link?code=…` — **the one-tap phone path.**
@@ -950,6 +983,86 @@ async fn get_link(
     ))
 }
 
+/// The step-one form: a code, and nothing else.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CodeForm {
+    /// The code the bot handed the player.
+    pub code: String,
+}
+
+/// `POST /identity/link/account` — **STEP ONE: whose account is this?**
+///
+/// Checks the code and renders the account it is really for, beside the box that then asks for the
+/// 24 words. Nothing is derived, nothing is spent, and no record is written; a player who reads
+/// "this is Discord account 6913…" and does not recognise it can close the page having given up
+/// nothing at all.
+///
+/// ⚑ Before this route the disclosure was a paragraph beside the phrase box that read the account
+/// number out of the paste and said, honestly, that it was unchecked until submit. Both halves of
+/// that were the weakness: the number could be anything, and by the time it was checked the words
+/// had already been transmitted. Now the number is verified before it is shown, and the words are
+/// asked for on the far side of the reader saying "yes, that is mine".
+async fn post_link_account(
+    State(state): State<Arc<IdentityLinkState>>,
+    headers: HeaderMap,
+    Form(form): Form<CodeForm>,
+) -> Response {
+    let claimed =
+        read_cookie(&headers, CLAIM_COOKIE).and_then(|l| seed_identity::parse_claim_label(&l));
+    // The same gate 0 the recording route runs. A cross-origin submit here writes nothing, but it
+    // would render an attacker's chosen account onto the player's screen as though the player had
+    // asked about it, which is the first move of the same con.
+    if !seed_identity::same_origin_post(&headers) {
+        let message = LinkRefusal::NotFromOurPage.message();
+        return (
+            LinkRefusal::NotFromOurPage.http_status(),
+            no_store(link_page(
+                &state.kinds(),
+                &state.store_path,
+                claimed.as_deref(),
+                None,
+                Some(&message),
+                None,
+            )),
+        )
+            .into_response();
+    }
+    match authenticate_code(&state, &form.code, unix_now()) {
+        Ok((configured, uid)) => no_store(link_page_with(
+            &state.kinds(),
+            &state.store_path,
+            claimed.as_deref(),
+            None,
+            None,
+            Some(&form.code),
+            Some((configured.platform, uid.as_str())),
+        )),
+        Err(refusal) => {
+            let status = refusal.http_status();
+            let message = refusal.message();
+            (
+                status,
+                no_store(link_page(
+                    &state.kinds(),
+                    &state.store_path,
+                    claimed.as_deref(),
+                    None,
+                    Some(&message),
+                    // The code is handed back only when re-typing it could help. A code this
+                    // server cannot authenticate is dead, and re-filling the box would invite the
+                    // player to keep submitting something that can never work.
+                    matches!(
+                        &refusal,
+                        LinkRefusal::MalformedCode | LinkRefusal::MalformedUid
+                    )
+                    .then_some(form.code.as_str()),
+                )),
+            )
+                .into_response()
+        }
+    }
+}
+
 /// `POST /identity/link` — run the ceremony. On success re-renders the page with the new link
 /// listed; on refusal re-renders with the named gate and nothing recorded.
 ///
@@ -976,8 +1089,8 @@ async fn post_link(
             ?origin,
             "REFUSED a POST /identity/link that could not show it came from a page on this site — \
              nothing was derived, no code was spent and NO RECORD WAS WRITTEN. A cross-origin submit \
-             would otherwise bind an attacker-chosen account to this browser's identity, and there \
-             is no un-link door"
+             would otherwise bind an attacker-chosen account to this browser's identity, which the \
+             player would then have to notice and undo by hand"
         );
         let message = LinkRefusal::NotFromOurPage.message();
         return (
@@ -1144,6 +1257,13 @@ fn platforms_block(store_path: &std::path::Path, root_pubkey_hex: &str) -> Strin
                     "This key is <strong>custodial</strong>: the bot's operator can derive it. \
                      Linking did not change that.",
                 )
+            } else if link.platform == crate::device_key::DEVICE_PLATFORM {
+                (
+                    " class=\"self\"",
+                    "This key is <strong>self-held</strong>, and more so than any other key here: \
+                     the browser made it and will not give it back, so neither we nor your 24 words \
+                     can reproduce it. Turns it signs are recorded as yours.",
+                )
             } else {
                 (
                     " class=\"self\"",
@@ -1156,6 +1276,8 @@ fn platforms_block(store_path: &std::path::Path, root_pubkey_hex: &str) -> Strin
                 platform = esc(link.platform.as_str()),
                 uid = if link.platform == WEB_PLATFORM {
                     " · this browser's identity".to_string()
+                } else if link.platform == crate::device_key::DEVICE_PLATFORM {
+                    format!(" · browser {}", esc(&link.platform_uid))
                 } else {
                     format!(" · account {}", esc(&link.platform_uid))
                 },
@@ -1183,30 +1305,100 @@ fn prefilled_note(prefilled: bool) -> &'static str {
      grouping, never a key.</p>"
 }
 
-/// ⚑ **NAME THE ACCOUNT, in the same glance as the box asking for 24 words.**
+/// ⚑ **RETIRED by the two-step flow, and kept only as the answer to "what did this used to do".**
 ///
-/// This is the anti-phishing disclosure, and it is the reason the uid rides in the *plaintext* half of
-/// a code rather than being sealed inside it: a player who was handed a link by somebody else must be
-/// able to READ whose account it is before they act. The number is unverified until submit and the
-/// copy says so — its job is to make "this is not my account" visible, not to prove anything.
+/// It read the account id out of a code's PLAINTEXT uid half and printed it beside the box asking
+/// for 24 words. Its own doc had to admit the number was unverified — anybody can write any number
+/// before the colon — so its job was disclosure rather than proof, and the disclosure arrived on the
+/// same screen as the phrase box rather than before it.
 ///
-/// Empty when nothing was prefilled: the player pasted their own code, so the checkbox's own wording
-/// carries the warning and inventing a number to display would be worse than saying nothing.
-fn whose_account_note(prefill_code: Option<&str>) -> String {
-    match prefill_code.and_then(code_names_account) {
-        Some(uid) => format!(
-            "<p class=\"prose\" style=\"margin:.9rem 0 0\">This code says it is for \
-             <strong>account {uid}</strong>. <strong>Is that your account?</strong> If it is not (if \
-             this link came from somebody else), close this page. Linking somebody else's account to \
-             your words would file their play under your name, and there is no un-link door yet. \
-             (The number is what the code claims; it is checked for real when you submit.)</p>",
-            uid = esc(uid),
-        ),
-        None => String::new(),
-    }
+/// [`link_form`]'s step two does both halves properly: the account is named only after
+/// [`authenticate_code`] has verified which account the code was really minted for, and there is no
+/// phrase box on the page until that has happened. This function is gone rather than deprecated
+/// because a page that could still call it would be a page that could still show an unchecked
+/// number where a checked one belongs.
+/// ⚑ **THE TWO-STEP FORM.** Step one asks for a code and nothing else; step two — reachable only
+/// after [`authenticate_code`] has said which account the code is genuinely for — names that
+/// account and then asks for the words.
+///
+/// The residual this closes was stated in this module's own list: *"The consent box and the phrase
+/// ride in the SAME `POST`, so a player who was going to be fooled has already transmitted their
+/// words by the time they see the account id … A two-step flow would make that structural instead
+/// of advisory."* Two things changed and both matter:
+///
+/// * **the account named is verified**, not read out of the paste. the old note could only
+///   print what the code claimed and had to admit so; the confirmation below prints an account a bot
+///   this server shares a secret with actually minted a code for.
+/// * **there is no phrase box until the reader has seen it.** That is the structural half. A
+///   phishing prefill now spends its one shot on a screen that gives it nothing: the reader either
+///   recognises the account or closes the page, and either way no words were on the wire.
+///
+/// The step-two form still carries the consent box. It is no longer load-bearing on its own, but a
+/// reader who scrolled past the account line should still have to say the word "mine" before their
+/// words go anywhere.
+fn link_form(prefill_code: Option<&str>, confirm: Option<(LinkPlatform, &str)>) -> String {
+    let Some((platform, uid)) = confirm else {
+        // STEP ONE. No phrase box exists on this page at all.
+        return format!(
+            "<form class=\"lk-form\" method=\"post\" action=\"/identity/link/account\">\
+             <label for=\"code\">The code the bot gave you</label>\
+             <input id=\"code\" name=\"code\" type=\"text\" autocomplete=\"off\" spellcheck=\"false\" \
+             autocapitalize=\"none\" placeholder=\"1234567:AbCd…\" value=\"{code}\">\
+             <p class=\"prose\" style=\"opacity:.75;font-size:.88rem;margin:.9rem 0 0\">\
+             Nothing here asks for your 24 words yet. We check the code first and tell you which \
+             account it is really for; only then is there a box for your words. If the account we \
+             name is not yours, you can close the page having given away nothing, and the code is \
+             not used up.</p>\
+             <div class=\"id-actions\" style=\"display:flex;gap:.6rem;flex-wrap:wrap;margin:1.1rem 0 0\">\
+             <button class=\"btn btn-primary\" type=\"submit\">Check this code</button>\
+             <a class=\"btn btn-ghost\" href=\"/you\">Back to your record</a></div></form>",
+            code = esc(prefill_code.unwrap_or_default()),
+        );
+    };
+    // STEP TWO. The account is checked; now, and only now, the words.
+    format!(
+        "<div class=\"lk-asym\" style=\"border-color:rgba(140,160,220,.45);\
+         border-left-color:rgba(140,160,220,.85);background:rgba(140,160,220,.06)\">\
+         <h3>This code is for {platform} account {uid}</h3>\
+         <p>We checked that with {platform} itself, so this is the account the code was really \
+         issued for and not just what the code says. <strong>Is that your account?</strong></p>\
+         <p>If it is not — if somebody sent you this code or this link — stop here and close the \
+         page. Nothing has happened yet and your words have not been asked for. Linking somebody \
+         else's account would put their play on your record; you could \
+         <a href=\"/identity/unlink\">undo it afterwards</a>, but not having done it is \
+         better.</p></div>\
+         <form class=\"lk-form\" method=\"post\" action=\"/identity/link\">\
+         <input type=\"hidden\" name=\"code\" value=\"{code}\">\
+         <label class=\"lk-check\"><input type=\"checkbox\" name=\"mine\" value=\"yes\">\
+         <span>Yes — {platform} account {uid} is <strong>mine</strong>.</span></label>\
+         <label for=\"phrase\">Your 24 words</label>\
+         <textarea id=\"phrase\" name=\"phrase\" rows=\"3\" autocomplete=\"off\" \
+         spellcheck=\"false\" autocapitalize=\"none\" placeholder=\"abandon ability able about …\"\
+         ></textarea>\
+         <p class=\"prose\" style=\"opacity:.75;font-size:.88rem;margin:.9rem 0 0\">\
+         <strong>Why your words, here.</strong> The link is a signature by the key your words \
+         derive, and that key exists only while the words are in hand; nothing on the server or in \
+         this browser holds it. So the signing happens inside this one request: the words are turned \
+         into a key, one link claim is signed, and every byte of secret material is wiped before the \
+         response goes out. This is the same path <a href=\"/identity\">restoring an identity</a> \
+         already takes, with the same cost: the words pass through the server once. They are never \
+         written to disk or to a log.</p>\
+         <div class=\"id-actions\" style=\"display:flex;gap:.6rem;flex-wrap:wrap;margin:1.1rem 0 0\">\
+         <button class=\"btn btn-primary\" type=\"submit\">Prove and link</button>\
+         <a class=\"btn btn-ghost\" href=\"/identity/link\">No — start over</a></div></form>",
+        platform = esc(platform.display()),
+        uid = esc(uid),
+        code = esc(prefill_code.unwrap_or_default()),
+    )
 }
 
-/// `GET`/`POST /identity/link`'s single page.
+/// `GET`/`POST /identity/link`'s page at **step one** — the code box, and no phrase box.
+///
+/// Kept as a six-argument wrapper over [`link_page_with`] so that every existing caller and every
+/// existing test renders the step-one page unchanged; only the route that has just AUTHENTICATED a
+/// code passes the seventh argument. (A default-argument-shaped wrapper rather than seven `None`s
+/// sprinkled through a dozen call sites: the sprinkling is how a new parameter silently acquires
+/// the wrong value at the one site nobody re-read.)
 fn link_page(
     platforms: &[LinkPlatform],
     store_path: &std::path::Path,
@@ -1214,6 +1406,31 @@ fn link_page(
     just_linked: Option<&Linked>,
     refusal: Option<&str>,
     prefill_code: Option<&str>,
+) -> String {
+    link_page_with(
+        platforms,
+        store_path,
+        root_pubkey_hex,
+        just_linked,
+        refusal,
+        prefill_code,
+        None,
+    )
+}
+
+/// The page, with the **step-two** state made explicit.
+///
+/// `confirm = Some((platform, uid))` means a code has been checked and names that account; the page
+/// then shows the account, the consent box and the phrase box. `None` is step one: a code box and
+/// nothing that asks for 24 words.
+fn link_page_with(
+    platforms: &[LinkPlatform],
+    store_path: &std::path::Path,
+    root_pubkey_hex: Option<&str>,
+    just_linked: Option<&Linked>,
+    refusal: Option<&str>,
+    prefill_code: Option<&str>,
+    confirm: Option<(LinkPlatform, &str)>,
 ) -> String {
     let notice = match just_linked {
         Some(linked) => notice_html(Some(&format!(
@@ -1316,31 +1533,7 @@ fn link_page(
              page with the code already filled in, so the only thing left is your 24 words. \
              Otherwise copy the whole code (it looks like <code>1234567:AbCd…</code>) and paste it \
              below. A code is good for {minutes} minutes and works once.</li>\
-             </ol>{prefilled}\
-             <form class=\"lk-form\" method=\"post\" action=\"/identity/link\">\
-             <label for=\"code\">The code the bot gave you</label>\
-             <input id=\"code\" name=\"code\" type=\"text\" autocomplete=\"off\" spellcheck=\"false\" \
-             autocapitalize=\"none\" placeholder=\"1234567:AbCd…\" value=\"{code}\">\
-             {whose}\
-             <label class=\"lk-check\"><input type=\"checkbox\" name=\"mine\" value=\"yes\">\
-             <span>The account this code belongs to is <strong>mine</strong>. \
-             (If somebody else sent you this code or this link, it is <em>theirs</em>; linking it \
-             would put their play on your record, and links cannot be undone yet.)</span></label>\
-             <label for=\"phrase\">Your 24 words</label>\
-             <textarea id=\"phrase\" name=\"phrase\" rows=\"3\" autocomplete=\"off\" \
-             spellcheck=\"false\" autocapitalize=\"none\" placeholder=\"abandon ability able about …\"\
-             ></textarea>\
-             <p class=\"prose\" style=\"opacity:.75;font-size:.88rem;margin:.9rem 0 0\">\
-             <strong>Why your words, here.</strong> The link is a signature by the key your words \
-             derive, and that key exists only while the words are in hand; nothing on the server or \
-             in this browser holds it. So the signing happens inside this one request: the words are \
-             turned into a key, one link claim is signed, and every byte of secret material is wiped \
-             before the response goes out. This is the same path <a href=\"/identity\">restoring an \
-             identity</a> already takes, with the same cost: the words pass through the server once. \
-             They are never written to disk or to a log.</p>\
-             <div class=\"id-actions\" style=\"display:flex;gap:.6rem;flex-wrap:wrap;margin:1.1rem 0 0\">\
-             <button class=\"btn btn-primary\" type=\"submit\">Prove and link</button>\
-             <a class=\"btn btn-ghost\" href=\"/you\">Back to your record</a></div></form>\
+             </ol>{prefilled}{form}\
              {asym}{honest}{strip}</main>",
             names = esc(&names.join(" or ")),
             notice = notice,
@@ -1348,8 +1541,7 @@ fn link_page(
             how = how,
             minutes = code_window_minutes(),
             prefilled = prefilled_note(prefill_code.is_some()),
-            code = esc(prefill_code.unwrap_or_default()),
-            whose = whose_account_note(prefill_code),
+            form = link_form(prefill_code, confirm),
             asym = asymmetry_block(),
             honest = honest_limits_html(),
             // Only ship the address-bar cleanup when there is something to clean. A page reached with
@@ -1954,21 +2146,27 @@ mod tests {
         assert!(message.contains("Discord"), "{message}");
         assert!(message.contains("not YOUR account"), "{message}");
         assert!(
-            message.contains("no way to undo a link yet"),
-            "the residual must be named where it bites: {message}"
+            message.contains("undo a link now"),
+            "the refusal must point at the removal page now that one exists: {message}"
         );
         // ⚑ And the code is NOT spent — a player who ticks the box then succeeds.
         assert!(prove_and_record(&state, &code, &phrase, true, NOW + 6).is_ok());
         let _ = std::fs::remove_dir_all(path.parent().expect("a parent dir"));
     }
 
-    /// The prefilled page PRINTS the account the code names, beside the box asking for 24 words —
-    /// which is the actual defence against being handed a link. Unverified, and it says so.
+    /// ⚑ THE TWO-STEP TOOTH. Step one has **no phrase box at all**, and step two names an account
+    /// that was CHECKED rather than read out of the paste. Both halves are the residual this
+    /// replaces: the old page showed an unverified number beside the box that already had the
+    /// player's words in it.
     #[test]
-    fn a_prefilled_page_names_the_account_before_asking_for_words() {
+    fn a_prefilled_code_reaches_no_phrase_box_until_the_account_is_confirmed() {
         let path = tmp_store("whose");
+        let state = state(path.clone(), false);
         let code = mint_link_code(&BOT_SECRET, LinkPlatform::Discord, 999_888_777, NOW, 900);
-        let page = link_page(
+
+        // STEP ONE, even with the code prefilled off a tapped link: the code box, and nothing that
+        // asks for 24 words. This is the screen a phishing prefill lands on.
+        let step_one = link_page(
             &[LinkPlatform::Discord],
             &path,
             None,
@@ -1976,23 +2174,59 @@ mod tests {
             None,
             Some(&code),
         );
-        assert!(page.contains("account 999888777"), "{page}");
-        assert!(page.contains("Is that your account?"), "{page}");
-        assert!(page.contains("close this page"), "{page}");
+        assert!(step_one.contains("Check this code"), "{step_one}");
         assert!(
-            page.contains("checked for real when you submit"),
-            "the number must not be presented as verified: {page}"
+            !step_one.contains("name=\"phrase\""),
+            "step one must not contain a phrase box: {step_one}"
         );
-        // The consent box ships on every render, prefilled or not.
-        assert!(page.contains("name=\"mine\""), "{page}");
-        let bare = link_page(&[LinkPlatform::Discord], &path, None, None, None, None);
-        assert!(bare.contains("name=\"mine\""), "{bare}");
-        // With nothing prefilled we invent no account number.
-        assert!(!bare.contains("Is that your account?"), "{bare}");
-        // A malformed code names nothing rather than echoing junk as an account.
-        assert!(whose_account_note(Some("garbage")).is_empty());
-        assert_eq!(code_names_account(&code), Some("999888777"));
-        assert_eq!(code_names_account("no-colon"), None);
+        assert!(
+            !step_one.contains("name=\"mine\""),
+            "nor the consent box, which belongs beside the account it consents to: {step_one}"
+        );
+        assert!(step_one.contains("given away nothing"), "{step_one}");
+
+        // The code AUTHENTICATES, and to the account it was really minted for.
+        let (configured, uid) =
+            authenticate_code(&state, &code, NOW + 5).expect("a fresh bot code authenticates");
+        assert_eq!(configured.platform, LinkPlatform::Discord);
+        assert_eq!(uid, "999888777");
+
+        // STEP TWO: the account is named, the consent box sits beside it, and NOW there are words.
+        let step_two = link_page_with(
+            &[LinkPlatform::Discord],
+            &path,
+            None,
+            None,
+            None,
+            Some(&code),
+            Some((LinkPlatform::Discord, "999888777")),
+        );
+        assert!(step_two.contains("account 999888777"), "{step_two}");
+        assert!(step_two.contains("Is that your account?"), "{step_two}");
+        assert!(step_two.contains("close the page"), "{step_two}");
+        assert!(step_two.contains("name=\"mine\""), "{step_two}");
+        assert!(step_two.contains("name=\"phrase\""), "{step_two}");
+        // …and it does NOT hedge the number, because this one was checked.
+        assert!(
+            !step_two.contains("checked for real when you submit"),
+            "a verified account must not be presented as unverified: {step_two}"
+        );
+
+        // ⚑ A code a stranger forged the uid onto never reaches step two at all.
+        let spliced = format!("111222333:{}", code.split(':').nth(1).expect("a challenge"));
+        assert_eq!(
+            authenticate_code(&state, &spliced, NOW + 5),
+            Err(LinkRefusal::CodeNotOurs)
+        );
+        assert_eq!(
+            authenticate_code(&state, "no-colon", NOW + 5),
+            Err(LinkRefusal::MalformedCode)
+        );
+        assert_eq!(
+            authenticate_code(&state, "not-a-uid:abc", NOW + 5),
+            Err(LinkRefusal::MalformedUid)
+        );
+        // Step one is REACHED by an authenticate that failed, so a bad code costs no words either.
         let _ = std::fs::remove_dir_all(path.parent().expect("a parent dir"));
     }
 
