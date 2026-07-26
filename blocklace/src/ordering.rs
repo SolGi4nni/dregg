@@ -511,8 +511,9 @@ fn xsort(cache: &PastCache, blocklace: &Blocklace, blocks: &HashSet<BlockId>) ->
 /// Returns block IDs in their finalized total order. For each finalized leader,
 /// the ordered segment is drawn from the UNION of the causal pasts of all
 /// wave-end blocks that ratify that leader (which is broader than the leader's
-/// own causal past), minus what earlier leaders already covered, and excluding
-/// blocks from creators that equivocated (as visible from the leader).
+/// own causal past), minus what earlier leaders already covered, excluding
+/// blocks from creators that equivocated (as visible from the leader), and — since the
+/// enrollment repair — excluding blocks from creators that are not in `participants`.
 ///
 /// Uses default configuration (wavelength = 3).
 ///
@@ -604,7 +605,45 @@ pub fn tau_with_config(
         prev_covered = coverage;
     }
 
+    // ── THE ENROLLMENT FILTER — the differential mirror of the verified rule's `enrolledId` ──────
+    //
+    // `coverage` is the union of the causal pasts of the wave-end blocks that ratify the leader,
+    // and the `new_blocks` filter above subtracts only `prev_covered` and equivocators. So a block
+    // from a creator that is NOT in `participants` is ordered — and served to the executor — the
+    // moment one honest node acks it. Measured on a 4-creator / 3-round lace with 3 enrolled: the
+    // finalized set was 12 coordinates, 100% of the lace, including all three of the unenrolled
+    // creator's blocks. `participants` was consulted for the round-robin leader schedule and the
+    // supermajority count, and NEVER for who may be ordered at all.
+    //
+    // This function's docstring used to carry that as a PRECONDITION ("assumes all blocks belong to
+    // participants"), which `tau_unified` below states explicitly as the difference between the two.
+    // The precondition is not enforceable on the live path: the pinned-ingest roster
+    // (`finality.rs::enroll_pq`) is INSERT-ONLY while the constitution's participant set shrinks on
+    // a membership change, and `finality.rs::from_checkpoint_trusted` — the node's restart path —
+    // re-inserts every persisted block with no signature, roster or closure check. So the rule
+    // enforces it itself, and this is a plain subtraction: on a lace where every creator IS a
+    // participant the filter is the identity (`BlocklaceFinality.tauOrder_enrolled_eq_unfiltered`
+    // proves exactly that, and its `#guard`s witness it on `trace3`/`traceMW4`).
+    //
+    // ⚑ THIS IS THE DIFFERENTIAL SIBLING, NOT THE RULE. The authoritative order is the Lean
+    // `BlocklaceFinality.tauOrder` via `@[export] dregg_tau_order`; the filter LIVES there
+    // (`enrolledId`, proved by `tauOrder_only_enrolled`) and this mirrors it so
+    // `poll_finalized_blocks`' per-poll `coord(&lean_order) != coord(&rust_order)` check stays
+    // silent on an attacked lace instead of alarming on a divergence that is the fix working.
+    //
+    // Applied to the whole order rather than inside `new_blocks` (where `tau_unified` puts it) to
+    // stay line-for-line with the Lean `tauOrder`. Same value: `prev_covered` is set from
+    // `coverage`, never from the segment, so filtering a segment cannot change a later one.
+    // `None => true` mirrors `enrolledId`'s `none` branch — an id absent from the lace is not this
+    // filter's business; `poll_finalized_blocks` treats it as an invariant breach and says so.
+    let participant_set: HashSet<[u8; 32]> = participants.iter().copied().collect();
     ordered
+        .into_iter()
+        .filter(|bid| match blocklace.get(bid) {
+            Some(block) => participant_set.contains(&block.creator),
+            None => true,
+        })
+        .collect()
 }
 
 // ─── Cordiality Check ────────────────────────────────────────────────────────
@@ -826,16 +865,31 @@ fn compute_rounds_filtered(
 
 /// Compute total ordering over a SUBSET of strands in the blocklace.
 ///
-/// Unlike `tau` which assumes all blocks belong to participants,
-/// `tau_unified` works on a shared blocklace where non-participant
-/// blocks may be present. They are simply ignored for ordering purposes.
+/// # Why there are two orderings, and what each is for
+///
+/// `tau` is the FEDERATION ordering: one reference group, whose participant set the node reads
+/// from the constitution each poll, over a lace that is supposed to hold only that group's blocks.
+/// `tau_unified` is the UNIFIED-LACE ordering: several `ReferenceGroup`s coexisting as VIEWS over
+/// one shared DAG, each finalizing its own strands and ignoring everyone else's. They are not two
+/// implementations of one rule — `tau` has one participant set and no notion of an outsider,
+/// `tau_unified` is parameterised by which view you are asking about. Neither replaces the other.
+///
+/// What DID change (the enrollment repair): `tau`'s docstring used to carry "assumes all blocks
+/// belong to participants" as an unchecked PRECONDITION, and the live path cannot honour it — the
+/// pinned-ingest roster is insert-only while the constitution's participant set shrinks, and
+/// `finality.rs::from_checkpoint_trusted` reloads the persisted DAG with no check at all. So `tau`
+/// now enforces item (5) below for itself. It still does NOT do (1)–(4): a non-participant's blocks
+/// are still counted for ROUNDS and can still contribute to a RATIFIER count. That is the residual,
+/// and it is a different shape of harm — wave-timing and finalization LIVENESS, not "an unenrolled
+/// creator's state transition reaches the executor", which is what (5) closes. `tau_unified`
+/// remains the only one of the two that is sound on a lace it does not own.
 ///
 /// The algorithm is the same as `tau_with_config`, but:
 /// 1. `compute_rounds_filtered` only counts blocks from `reference_group.participants`
 /// 2. Wave assignment uses filtered rounds
 /// 3. Leader selection from reference group only
 /// 4. Approval/ratification counts from reference group only
-/// 5. Output only contains blocks from reference group participants
+/// 5. Output only contains blocks from reference group participants (`tau` now does this too)
 ///
 /// External blocks in the DAG are IGNORED (not counted for rounds, waves, or finality).
 pub fn tau_unified(
@@ -1261,6 +1315,133 @@ mod tests {
                 make_key(1),
                 "equivocator excluded — matches Lean BlocklaceFinality traceEquiv #guard"
             );
+        }
+    }
+
+    /// DIFFERENTIAL (the ENROLLMENT tooth): the Rust `tau` finalizes NO block from a creator that
+    /// is not in `participants`, agreeing with the Lean model's `traceUnenrolled` `#guard`s
+    /// (`tauOrder traceUnenrolled … all creator ≠ 9`, length 9, golden == `trace3`'s).
+    ///
+    /// This is the Rust face of the finding `node/src/finality_gate.rs:379` measured: a fourth
+    /// creator with a perfectly valid key that was never enrolled produces well-formed blocks at
+    /// every round, fully cross-linked into the honest DAG, and the honest nodes ack them back —
+    /// so they sit in the honest leader's causal past and `leaderCoverage` sweeps them into the
+    /// finalized order. Before the enrollment filter this lace finalized 12 of 12 blocks, all
+    /// three of the unenrolled creator's included.
+    ///
+    /// BOTH HALVES, because a rule that refuses everyone is not a fix:
+    ///   * the unenrolled creator contributes NOTHING, and
+    ///   * every one of the three ENROLLED participants' nine blocks still finalizes, in the same
+    ///     round-cohort order as the un-attacked 3-node lace.
+    /// Plus the anti-vacuity check that the adversary is genuinely IN the lace and genuinely
+    /// REFERENCED by honest blocks — otherwise "refused" would just mean "never present".
+    #[test]
+    fn test_tau_differential_unenrolled_creator_excluded() {
+        let participants = vec![make_key(1), make_key(2), make_key(3)];
+        let unenrolled = make_key(9);
+        assert!(
+            !participants.contains(&unenrolled),
+            "the unenrolled creator must not be enrolled — else this test has no adversary"
+        );
+        let all_creators = vec![make_key(1), make_key(2), make_key(3), unenrolled];
+        let (bl, blocks_by_round) = build_full_blocklace(&all_creators, 3);
+
+        // ANTI-VACUITY 1 — the adversary is genuinely in the lace, at every round.
+        let unenrolled_in_lace = bl
+            .blocks
+            .values()
+            .filter(|b| b.creator == unenrolled)
+            .count();
+        assert_eq!(
+            unenrolled_in_lace, 3,
+            "the unenrolled creator must have a block at every round — else nothing to refuse"
+        );
+        // ANTI-VACUITY 2 — honest blocks ACK it, so it is load-bearing in the causal past and
+        // cannot be refused by ignoring an unreferenced subgraph.
+        let unenrolled_r1: Vec<BlockId> = blocks_by_round[0]
+            .iter()
+            .copied()
+            .filter(|id| bl.get(id).map(|b| b.creator) == Some(unenrolled))
+            .collect();
+        assert_eq!(unenrolled_r1.len(), 1);
+        assert!(
+            blocks_by_round[1]
+                .iter()
+                .filter(|id| bl.get(id).map(|b| b.creator) != Some(unenrolled))
+                .all(|id| bl.get(id).unwrap().predecessors.contains(&unenrolled_r1[0])),
+            "every honest round-2 block must ack the unenrolled creator's genesis — else the \
+             adversary is not in the honest leader's causal past and the refusal is free"
+        );
+
+        let result = tau(&bl, &participants);
+
+        // HALF 1 — THE REFUSAL. No finalized block is from the unenrolled creator.
+        for id in &result {
+            let block = bl.get(id).unwrap();
+            assert_ne!(
+                block.creator, unenrolled,
+                "tau finalized a block from an UNENROLLED creator — an unenrolled node can inject \
+                 state transitions into the executor (Lean: BlocklaceFinality traceUnenrolled #guard)"
+            );
+        }
+
+        // HALF 2 — THE ENROLLED PARTICIPANTS STILL FINALIZE, all nine of them, in the same
+        // round-cohort order as the clean 3-node lace. Without this, HALF 1 is satisfied by a
+        // rule that finalizes nothing.
+        assert_eq!(
+            result.len(),
+            9,
+            "all NINE enrolled blocks must still finalize (3 participants x 3 rounds) — a rule \
+             that refuses everyone is not a fix"
+        );
+        let mut projected: Vec<(u8, u64)> = result
+            .iter()
+            .filter_map(|id| bl.get(id).map(|b| (b.creator[0], b.sequence)))
+            .collect();
+        let seqs: Vec<u64> = projected.iter().map(|(_, s)| *s).collect();
+        assert!(
+            seqs.windows(2).all(|w| w[0] <= w[1]),
+            "the surviving order is still round-major, matching the Lean model"
+        );
+        projected.sort();
+        assert_eq!(
+            projected,
+            vec![
+                (1, 0),
+                (1, 1),
+                (1, 2),
+                (2, 0),
+                (2, 1),
+                (2, 2),
+                (3, 0),
+                (3, 1),
+                (3, 2)
+            ],
+            "the finalized (creator, seq) set must be exactly the three enrolled participants' \
+             nine blocks — the Lean `tauGolden traceUnenrolled == tauGolden trace3` guard"
+        );
+    }
+
+    /// The enrollment filter is the IDENTITY on an ENROLLED lace — the Rust face of the Lean
+    /// `tauOrder_enrolled_eq_unfiltered` theorem and its `#guard`s. Nothing an honest federation
+    /// produces is dropped: same blocks, same order, same length as before the filter existed.
+    /// This is the liveness half of the enrollment change, stated where it can fail.
+    #[test]
+    fn test_tau_enrollment_filter_is_identity_on_enrolled_lace() {
+        for n in 3..=5usize {
+            let participants: Vec<[u8; 32]> = (1..=n as u8).map(make_key).collect();
+            let (bl, _) = build_full_blocklace(&participants, 3);
+            let result = tau(&bl, &participants);
+            assert_eq!(
+                result.len(),
+                n * 3,
+                "on an ENROLLED lace every block still finalizes at n={n} — the enrollment filter \
+                 must be a pure subtraction of NON-participants, never a liveness trade"
+            );
+            // and every finalized creator is a participant (trivially, but it pins the direction).
+            for id in &result {
+                assert!(participants.contains(&bl.get(id).unwrap().creator));
+            }
         }
     }
 

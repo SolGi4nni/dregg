@@ -280,10 +280,63 @@ def tauStep (B : Lace) (participants : List AuthorId) (wavelength : Nat)
   (acc.1 ++ leaderSegment B participants wavelength acc.2 l,
    leaderCoverage B participants l wavelength)
 
-/-- **`tauOrder B participants wavelength`** — the computed total order (`ordering.rs::tau`). -/
-def tauOrder (B : Lace) (participants : List AuthorId) (wavelength : Nat) : List BlockId :=
+/-- **`tauOrderUnfiltered B participants wavelength`** — the leader-loop fold WITHOUT the
+enrollment filter: the rule exactly as it stood before `enrolledId` was introduced.
+
+⚑ THIS IS NOT THE FINALIZATION RULE. It is kept, named, and NOT exported for one reason: it is the
+falsification witness for `tauOrder`. The §9 `#guard`s run it against `traceUnenrolled` and show it
+DOES finalize a block whose creator is not in `participants` — so the filter in `tauOrder` below is
+demonstrably load-bearing rather than a no-op that "obviously" changes nothing. Nothing else may
+call it; the `@[export]`s (`FinalityGate.finalizeGate` / `tauOrderGate`) route through `tauOrder`
+and `tauOrderFast`. -/
+def tauOrderUnfiltered (B : Lace) (participants : List AuthorId) (wavelength : Nat) : List BlockId :=
   ((findAllFinalLeaders B participants wavelength).foldl
     (tauStep B participants wavelength) ([], [])).1
+
+/-- **`enrolledId B participants bid`** — the ENROLLMENT PREDICATE: the block at `bid` was created
+by a member of the reference participant set.
+
+**Why this exists** (`node/src/finality_gate.rs`'s falsifier
+`attacker_block_from_unenrolled_creator_is_refused_by_the_verified_rule`). `leaderCoverage` is the
+union of the causal pasts of the wave-end blocks that ratify the leader, and `leaderSegment`
+subtracts only `prevCovered` and equivocators. A block from a creator that is NOT in `participants`
+sits in the honest leader's causal past as soon as one honest node acks it — so the rule EMITTED it,
+and the node fed it to the executor. Measured on a 4-creator / 3-round lace with 3 enrolled: the
+finalized set was 12 coordinates, 100% of the lace, including all three of the unenrolled creator's
+blocks. `participants` was consulted for the round-robin leader schedule and the supermajority
+count, and NEVER for who is allowed to be ordered at all.
+
+The Rust sibling `blocklace/src/ordering.rs::tau_unified` already carried this filter (
+"FILTER: only include blocks from reference group participants"); `ordering.rs::tau` — the one the
+node runs — did not, because its docstring's precondition is "all blocks belong to participants".
+That precondition is NOT enforceable on the live path (see the module header of
+`node/src/finality_gate.rs` and `blocklace/src/finality.rs::from_checkpoint_trusted`), so the rule
+enforces it itself.
+
+**`none ⇒ true` is deliberate.** An id that does not resolve in `B` is not the enrollment filter's
+business: it is an invariant breach (`tauOrder` only ever emits ids drawn from `leaderCoverage`,
+which is drawn from causal pasts of present blocks), and the CALLER owns it — `tauBlocks`'
+`filterMap B.lookup`, the Rust `compute_order`'s `id_to_block` filter_map, and
+`poll_finalized_blocks`' `error!("finalized block id not present in the lace")`. Making this branch
+`false` would silently convert a breach into a drop and hide it; it would also make the
+honest-lace identity theorem below false for a reason that has nothing to do with enrollment. -/
+def enrolledId (B : Lace) (participants : List AuthorId) (bid : BlockId) : Bool :=
+  match B.lookup bid with
+  | some b => participants.contains b.creator
+  | none   => true
+
+/-- **`tauOrder B participants wavelength`** — the computed total order (`ordering.rs::tau`),
+RESTRICTED TO ENROLLED CREATORS.
+
+The filter is applied to the fold's output rather than inside `leaderSegment` (where the Rust
+`tau_unified` puts it). The two are the SAME VALUE, not merely the same set: `tauStep`'s second
+component is `leaderCoverage`, which does not read the segment, so the accumulator — and therefore
+every later segment — is unaffected by filtering; and the first component is a `++`-fold of
+segments, over which `List.filter` distributes. Filtering here instead buys the two theorems below
+(`tauOrder_only_enrolled` / `tauOrder_enrolled_eq_unfiltered`) without any reasoning about
+`xsortBy`'s `Array.qsort`, for which this toolchain has no permutation lemma. -/
+def tauOrder (B : Lace) (participants : List AuthorId) (wavelength : Nat) : List BlockId :=
+  (tauOrderUnfiltered B participants wavelength).filter (enrolledId B participants)
 
 /-! ## 6b. THE MEMOIZED FAST PATH — the SAME `tauOrder`, with the causal past computed ONCE.
 
@@ -532,18 +585,30 @@ theorem tauStepC_eq (B : Lace) (participants : List AuthorId) (wavelength : Nat)
 with BOTH the causal past (`mkPastCache B`) AND the round map (`mkRoundCache B`) memoized ONCE, shared
 by the whole fold. This is the function the live gate exports run; both whole-lace derived maps are
 built once instead of being re-derived per `roundOf`/`causalPastIncl` call. -/
-def tauOrderFast (B : Lace) (participants : List AuthorId) (wavelength : Nat) : List BlockId :=
+def tauOrderFastUnfiltered (B : Lace) (participants : List AuthorId) (wavelength : Nat) : List BlockId :=
   let cache := mkPastCache B
   let rc := mkRoundCache B
   ((findAllFinalLeadersC B cache rc participants wavelength).foldl
     (tauStepC B cache rc participants wavelength) ([], [])).1
+
+/-- **`tauOrderFastUnfiltered_eq`** — the memoized fold computes EXACTLY the pure fold
+(order-faithful, not merely set-equal). The memoization half of `tauOrderFast_eq`, stated on the
+pre-enrollment-filter objects so the two changes (memoization, enrollment) stay separable. -/
+theorem tauOrderFastUnfiltered_eq (B : Lace) (participants : List AuthorId) (wavelength : Nat) :
+    tauOrderFastUnfiltered B participants wavelength = tauOrderUnfiltered B participants wavelength := by
+  simp only [tauOrderFastUnfiltered, tauOrderUnfiltered, findAllFinalLeadersC_eq, tauStepC_eq]
+
+/-- **`tauOrderFast B participants wavelength`** — the memoized fast path with the SAME enrollment
+filter `tauOrder` applies. This is the function the live gate exports run. -/
+def tauOrderFast (B : Lace) (participants : List AuthorId) (wavelength : Nat) : List BlockId :=
+  (tauOrderFastUnfiltered B participants wavelength).filter (enrolledId B participants)
 
 /-- **`tauOrderFast_eq`** — the memoized fast path computes EXACTLY the pure `tauOrder` (order-faithful,
 not merely set-equal). So every theorem and `#guard` that names `tauOrder` transfers to `tauOrderFast`
 by rewriting, and the live gate may run the fast path with no loss of the verified guarantee. -/
 theorem tauOrderFast_eq (B : Lace) (participants : List AuthorId) (wavelength : Nat) :
     tauOrderFast B participants wavelength = tauOrder B participants wavelength := by
-  simp only [tauOrderFast, tauOrder, findAllFinalLeadersC_eq, tauStepC_eq]
+  simp only [tauOrderFast, tauOrder, tauOrderFastUnfiltered_eq]
 
 /-! ## 6c. THE RUNTIME FAST PATH — `@[implemented_by]` over `Std.HashMap`/`Std.HashSet`.
 
@@ -718,15 +783,33 @@ def fastTauStep (B : Lace) (pm : Std.HashMap BlockId (List BlockId)) (rm : Std.H
   (acc.1 ++ fastLeaderSegment B pm rm participants wavelength acc.2 l,
    fastLeaderCoverage B pm rm participants l wavelength)
 
+/-- Runtime twin of the `enrolledId` filter pass: builds the `bid ↦ creator` map and the enrolled
+`AuthorId` set as `Std.HashMap`/`Std.HashSet` ONCE, then filters in O(1) per id. Value-identical to
+`ids.filter (enrolledId B participants)` — the creator map is FIRST-WINS (`if m.contains … then m
+else m.insert`), matching `Lace.lookup`'s `List.find?` first-hit and `fastPastMap`'s own discipline,
+and the `none` branch keeps the id exactly as `enrolledId` does. §9-guarded against the pure def. -/
+def fastEnrolledFilter (B : Lace) (participants : List AuthorId) (ids : List BlockId) : List BlockId :=
+  let ps : Std.HashSet AuthorId :=
+    participants.foldl (fun s p => s.insert p) (∅ : Std.HashSet AuthorId)
+  let cm : Std.HashMap BlockId AuthorId :=
+    B.foldl (fun m b => if m.contains b.id then m else m.insert b.id b.creator)
+      (∅ : Std.HashMap BlockId AuthorId)
+  ids.filter (fun bid => match cm.get? bid with
+                          | some c => ps.contains c
+                          | none   => true)
+
 /-- **`tauOrderFastImpl`** — the runtime twin of `tauOrderFast`: builds the past + round maps as
 `Std.HashMap`s ONCE (O(|B|) HashSet-BFS calls + one topological fold), then runs the SAME fold with
 O(1) lookups. This is the `@[implemented_by]` target for `tauOrderFast` (below) — the function the
-exported `dregg_tau_order` / `dregg_blocklace_finalize` actually execute. TRUSTED; §9-guarded. -/
+exported `dregg_tau_order` / `dregg_blocklace_finalize` actually execute. TRUSTED; §9-guarded. It
+applies the enrollment filter through `fastEnrolledFilter` (above), exactly as `tauOrderFast`
+applies `enrolledId`. -/
 def tauOrderFastImpl (B : Lace) (participants : List AuthorId) (wavelength : Nat) : List BlockId :=
   let pm := fastPastMap B
   let rm := fastRoundMap B
-  ((fastFindAllFinalLeaders B pm rm participants wavelength).foldl
-    (fastTauStep B pm rm participants wavelength) ([], [])).1
+  fastEnrolledFilter B participants
+    ((fastFindAllFinalLeaders B pm rm participants wavelength).foldl
+      (fastTauStep B pm rm participants wavelength) ([], [])).1
 
 /-! Route the exported `tauOrderFast` (hence both `dregg_tau_order` and `dregg_blocklace_finalize`)
 through the `Std.HashMap`/`Std.HashSet` runtime twin. Proofs are unaffected (`@[implemented_by]` is
@@ -812,6 +895,63 @@ theorem finalLeaders_one_per_wave (B : Lace) (participants : List AuthorId) (wav
     (h₂ : finalLeaderAt B participants wave wavelength = some l₂) :
     l₁ = l₂ :=
   finalLeaderAt_unique B participants wave wavelength l₁ l₂ h₁ h₂
+
+/-! ## 7b. THE ENROLLMENT TOOTH — the finalized order carries ONLY enrolled creators, and on an
+enrolled lace the filter is the IDENTITY.
+
+These are the two halves the node's falsifier
+(`node/src/finality_gate.rs::attacker_block_from_unenrolled_creator_is_refused_by_the_verified_rule`)
+demands, and the first is the statement `finality_gate.rs`'s `VerifiedFinality::admits` doc-comment
+CLAIMED and did not have: "an attacker key that does not match an enrolled hybrid participant is
+never interned and never admitted". The interning half was false (`build_wire::next_extra` interns
+every creator it meets) and the admission half was false (`tauOrder` had no identity filter). The
+interning half stays false ON PURPOSE — an unenrolled creator IS put on the wire, so the refusal
+below is the RULE declining, never a `HashMap` miss. -/
+
+/-- **`EnrolledLace B participants`** — every block in the lace was created by a participant. This
+is the precondition `ordering.rs::tau`'s docstring ASSERTED ("assumes all blocks belong to
+participants") and the live path cannot enforce: `receive_block_pinned`'s roster is INSERT-ONLY
+(`blocklace/src/finality.rs::enroll_pq`) while the constitution's participant set shrinks on a
+membership change, and `from_checkpoint_trusted` (the restart path) re-inserts every persisted block
+with no check at all. Satisfiable (`trace3`, `traceMW4`, `lagGrown`) and REFUTABLE
+(`traceUnenrolled`), which is what makes the identity theorem below carry information. -/
+def EnrolledLace (B : Lace) (participants : List AuthorId) : Prop :=
+  ∀ b ∈ B, participants.contains b.creator = true
+
+/-- **`tauOrder_only_enrolled` (THE SAFETY HALF).** Every block the verified rule finalizes was
+created by an ENROLLED participant. No hypothesis on the lace: this holds on a lace stuffed with
+unenrolled creators' blocks, which is precisely the case that mattered — an unenrolled node can no
+longer inject a state transition into the executor through the finalized order. -/
+theorem tauOrder_only_enrolled (B : Lace) (participants : List AuthorId) (wavelength : Nat)
+    (bid : BlockId) (b : Block)
+    (hmem : bid ∈ tauOrder B participants wavelength)
+    (hlook : B.lookup bid = some b) :
+    participants.contains b.creator = true := by
+  simp only [tauOrder] at hmem
+  have h := (List.mem_filter.mp hmem).2
+  simp only [enrolledId, hlook] at h
+  exact h
+
+/-- **`tauOrder_enrolled_eq_unfiltered` (THE LIVENESS HALF).** On a lace whose every block is from a
+participant — an HONEST lace, the only kind a correct federation produces — the enrollment filter
+changes NOTHING: the finalized order is bit-identical to the pre-fix rule's, same blocks, same
+order, same length. So this is a pure subtraction of unenrolled blocks, not a liveness trade: no
+legitimate block is dropped, and no honest node's finalization is delayed by one wave.
+
+Together with `tauOrder_only_enrolled` this is the whole content of the change: OFF the enrolled
+lace it removes exactly the unenrolled blocks; ON the enrolled lace it is the identity. -/
+theorem tauOrder_enrolled_eq_unfiltered (B : Lace) (participants : List AuthorId) (wavelength : Nat)
+    (h : EnrolledLace B participants) :
+    tauOrder B participants wavelength = tauOrderUnfiltered B participants wavelength := by
+  simp only [tauOrder]
+  apply List.filter_eq_self.mpr
+  intro bid _
+  simp only [enrolledId]
+  cases hl : B.lookup bid with
+  | none => rfl
+  | some b =>
+    have hmem : b ∈ B := List.mem_of_find?_eq_some hl
+    exact h b hmem
 
 /-! ## 8. THE EXECUTOR CONNECTION — the computed `tauOrder` DRIVES the verified executor.
 
@@ -919,6 +1059,23 @@ def traceMW4R4 : Lace :=
 def traceMW4 : Lace := traceMW4R1 ++ traceMW4R2 ++ traceMW4R3 ++ traceMW4R4
 def traceMW4Participants : List AuthorId := [1, 2, 3, 4]
 
+/-- **THE UNENROLLED-CREATOR TRACE** — `trace3`'s three ENROLLED creators (`trace3Participants =
+[1,2,3]`) plus a fourth creator `9` that is NOT enrolled, at EVERY round, fully cross-linked: the
+honest blocks ACK the unenrolled creator's blocks (ids 90/91/92 appear in the honest `preds`), so
+they are load-bearing in the honest leader's causal past and cannot be refused by ignoring an
+unreferenced subgraph. This is the Lean twin of the node falsifier's lace
+(`node/src/finality_gate.rs`: 4 creators, 3 rounds, 3 enrolled, attacker `key(99)`), and it is what
+makes the enrollment filter's `#guard`s below a RED/GREEN PAIR rather than a claim. -/
+def traceUnenrolledR1 : Lace :=
+  [⟨10,1,0,[],true⟩, ⟨20,2,0,[],true⟩, ⟨30,3,0,[],true⟩, ⟨90,9,0,[],true⟩]
+def traceUnenrolledR2 : Lace :=
+  [⟨11,1,1,[10,20,30,90],true⟩, ⟨21,2,1,[10,20,30,90],true⟩,
+   ⟨31,3,1,[10,20,30,90],true⟩, ⟨91,9,1,[10,20,30,90],true⟩]
+def traceUnenrolledR3 : Lace :=
+  [⟨12,1,2,[11,21,31,91],true⟩, ⟨22,2,2,[11,21,31,91],true⟩,
+   ⟨32,3,2,[11,21,31,91],true⟩, ⟨92,9,2,[11,21,31,91],true⟩]
+def traceUnenrolled : Lace := traceUnenrolledR1 ++ traceUnenrolledR2 ++ traceUnenrolledR3
+
 /-- **THE DIFFERENTIAL GOLDEN VECTOR** — the finalized order projected to `(creator, seq)` pairs.
 This is the level at which the Lean model and the Rust `ordering.rs::tau` are compared: the abstract
 `BlockId` is a `Nat` here vs. a blake3 hash in Rust, but the `(creator, seq)` coordinate of each
@@ -953,6 +1110,39 @@ theorem tauGoldenFast_eq (B : Lace) (participants : List AuthorId) (wavelength :
 #guard (tauOrder traceEquiv trace3Participants 3).all
         (fun id => match traceEquiv.lookup id with | some b => b.creator != 1 | none => true)
 #guard hasEquivInPast traceEquiv 11 1   -- the fork IS detected from a downstream observer.
+
+/-! ### THE ENROLLMENT `#guard`s — a RED/GREEN PAIR on ONE lace.
+
+The whole point of keeping `tauOrderUnfiltered` is that the first guard below is the WOUND, executed:
+on `traceUnenrolled` the pre-filter rule FINALIZES the unenrolled creator `9`'s blocks. If the
+enrollment filter were vacuous — if the rule had "obviously" never emitted a non-participant — that
+guard would be FALSE and the build would break. It is the Lean-side answer to "prove it can go red",
+and unlike a reverted-and-restored source edit it stays in the tree forever. -/
+
+-- (RED) THE WOUND: without the filter the rule finalizes the UNENROLLED creator 9's blocks — all
+-- three of them, the whole lace, exactly what `node/src/finality_gate.rs:379` measured (12 of 12).
+#guard (tauOrderUnfiltered traceUnenrolled trace3Participants 3).length == 12
+#guard (tauOrderUnfiltered traceUnenrolled trace3Participants 3).any
+        (fun id => match traceUnenrolled.lookup id with | some b => b.creator == 9 | none => false)
+-- (GREEN) THE REFUSAL: the verified rule finalizes NO block from the unenrolled creator.
+#guard (tauOrder traceUnenrolled trace3Participants 3).all
+        (fun id => match traceUnenrolled.lookup id with | some b => b.creator != 9 | none => true)
+-- (GREEN, NON-VACUITY) …and it is NOT refusing everyone: all NINE enrolled blocks still finalize,
+-- in the SAME order and with the SAME golden (creator, seq) vector as the un-attacked `trace3`.
+-- A gate that refuses everyone is not a fix; this is the both-halves check, executably.
+#guard (tauOrder traceUnenrolled trace3Participants 3).length == 9
+#guard tauOrder traceUnenrolled trace3Participants 3 == [10,20,30,11,21,31,12,22,32]
+#guard tauGolden traceUnenrolled trace3Participants 3 == tauGolden trace3 trace3Participants 3
+-- the `EnrolledLace` hypothesis of `tauOrder_enrolled_eq_unfiltered` is genuinely REFUTED here (so
+-- the identity theorem is not silently applying to this lace) and genuinely HOLDS on `trace3`.
+#guard !traceUnenrolled.all (fun b => trace3Participants.contains b.creator)
+#guard trace3.all (fun b => trace3Participants.contains b.creator)
+-- the IDENTITY half, executably: on the enrolled lace the filter changes NOTHING.
+#guard tauOrder trace3 trace3Participants 3 == tauOrderUnfiltered trace3 trace3Participants 3
+#guard tauOrder traceMW4 traceMW4Participants 3 == tauOrderUnfiltered traceMW4 traceMW4Participants 3
+-- and the memoized + runtime-twin paths carry the filter too (the exports run `tauOrderFast`).
+#guard tauOrderFast traceUnenrolled trace3Participants 3 == tauOrder traceUnenrolled trace3Participants 3
+#guard tauGoldenFast traceUnenrolled trace3Participants 3 == tauGolden traceUnenrolled trace3Participants 3
 
 -- THE MEMOIZED FAST PATH agrees with the pure rule on the concrete traces (the live gate exports run
 -- `tauOrderFast`/`tauGoldenFast`; the exponential re-traversal is gone, the order is IDENTICAL).
@@ -1008,3 +1198,6 @@ constrain a REAL, non-trivial finalized order, and the model reproduces the node
 #assert_axioms cachedPast_eq
 #assert_axioms tauOrderFast_eq
 #assert_axioms tauGoldenFast_eq
+#assert_axioms tauOrderFastUnfiltered_eq
+#assert_axioms tauOrder_only_enrolled
+#assert_axioms tauOrder_enrolled_eq_unfiltered

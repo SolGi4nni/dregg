@@ -41,6 +41,36 @@
 //! the operator's `DREGG_ALLOW_UNVERIFIED_CONSENSUS=1`. `DREGG_REQUIRE_LEAN=1` revokes both. The
 //! bypasses are declared in `scripts/ci-invariants/gate-dataflow.tsv` (invariant 6), which slices
 //! the disposition and reddens if the gate-absent path can admit.
+//!
+//! # ⚑ The enrollment repair — the rule now knows WHO IS ENROLLED
+//!
+//! [`VerifiedFinality::admits`] used to document that an unenrolled key "is never interned and
+//! never admitted". Both halves were false, and
+//! `tests::attacker_block_from_unenrolled_creator_is_refused_by_the_verified_rule` FAILED on it:
+//! the verified rule finalized 100% of a 4-creator lace with 3 enrolled, including all three of
+//! the unenrolled creator's blocks. The rule consulted `participants` for the round-robin leader
+//! schedule and the supermajority count, and NEVER for who may be ordered at all.
+//!
+//! REACHABILITY — this was NOT only defence-in-depth. `receive_block_pinned`'s
+//! `BlockError::UnenrolledCreator` is the sole enrollment filter on the live ingest path, and two
+//! production paths get past it without any attack on it:
+//!   * **rotation-out.** The pinned roster is INSERT-ONLY (`blocklace/src/finality.rs::enroll_pq`;
+//!     `blocklace_sync.rs::apply_committee_change` says so outright) while
+//!     `constitution.current.participants` SHRINKS on a passed membership proposal
+//!     (`blocklace_sync.rs::apply_passed_proposal`). A removed validator's NEW blocks keep passing
+//!     the pinned ingest while it is absent from the `participants` slice this gate is handed —
+//!     the falsifier's exact configuration, reached by an ordinary governance action.
+//!   * **restart.** `blocklace/src/finality.rs::from_checkpoint_trusted`, reached from
+//!     `blocklace_sync.rs`'s boot `store.load_blocklace`, rebuilds the whole lace by raw
+//!     postcard-decode-and-insert: no signature check, no roster check, no causal-closure check.
+//!     Anything that ever landed comes back unverified.
+//!
+//! THE FIX is in the verified rule, in Lean, where the rule lives:
+//! `BlocklaceFinality.enrolledId` + `tauOrder`/`tauOrderFast`/`tauOrderFastImpl`, with
+//! `tauOrder_only_enrolled` (every finalized block's creator is a participant, NO hypothesis on
+//! the lace) and `tauOrder_enrolled_eq_unfiltered` (on an all-enrolled lace the filter is the
+//! identity — a pure subtraction, not a liveness trade). `blocklace/src/ordering.rs::tau` carries
+//! the mirror so the live per-poll Rust↔Lean differential stays silent on an attacked lace.
 
 use std::collections::HashMap;
 
@@ -211,10 +241,30 @@ impl VerifiedFinality {
 
     /// Whether the verified rule finalizes a block — by its `(creator hybrid id, seq)`. `creator` is
     /// the `Block::creator` hybrid id `H(ed25519 ‖ ml_dsa)`, the same key the participant set interns
-    /// under, so an attacker key that does not match an enrolled hybrid participant is never interned
-    /// and never admitted. The node calls this per Rust-finalized block before slicing it to the
-    /// executor: `true` ⇒ admit, `false` ⇒ REFUSE (the verified rule did not finalize it). Mirrors
-    /// the Lean `gateAdmits` predicate.
+    /// under. The node calls this per Rust-finalized block before slicing it to the executor:
+    /// `true` ⇒ admit, `false` ⇒ REFUSE (the verified rule did not finalize it). Mirrors the Lean
+    /// `gateAdmits` predicate.
+    ///
+    /// ⚑ CORRECTED. This used to read "an attacker key that does not match an enrolled hybrid
+    /// participant is never interned and never admitted". BOTH clauses were false, and
+    /// `tests::attacker_block_from_unenrolled_creator_is_refused_by_the_verified_rule` measured it:
+    /// [`Self::build_wire`]'s `next_extra` DOES intern every creator it meets, and the verified
+    /// `BlocklaceFinality.tauOrder` had NO identity filter — `leaderCoverage` is the union of the
+    /// causal pasts of the ratifying wave-end blocks, so an unenrolled creator's blocks were swept
+    /// into the finalized order the moment one honest node acked them. On a 4-creator / 3-round
+    /// lace with 3 enrolled, the verified rule finalized 12 of 12 coordinates, all three of the
+    /// attacker's included.
+    ///
+    /// What is true NOW, and why the two clauses are different:
+    ///   * INTERNED — YES, still, ON PURPOSE. `build_wire` puts the unenrolled creator on the wire
+    ///     with an `AuthorId` past `participants.len()`. That is what makes a `false` here the
+    ///     VERIFIED RULE declining, not a `HashMap` miss — the falsifier asserts the interning
+    ///     explicitly so the refusal cannot be laundered into a lookup failure.
+    ///   * NEVER ADMITTED — YES, and now by a theorem rather than a hope.
+    ///     `BlocklaceFinality.enrolledId` filters the finalized order to enrolled creators and
+    ///     `tauOrder_only_enrolled` proves every finalized block's creator is in `participants`,
+    ///     with NO hypothesis on the lace. `tauOrder_enrolled_eq_unfiltered` proves the filter is
+    ///     the identity on a lace whose every creator IS enrolled, so honest finality is unchanged.
     pub fn admits(&self, creator: &[u8; 32], seq: u64) -> bool {
         match self.creator_ids.get(creator) {
             Some(cid) => self.finalized.contains(&(*cid, seq)),
@@ -251,7 +301,9 @@ mod tests {
     ///
     /// `receive_block` (ed25519-only) is deliberate: it does NOT filter by enrollment, so a caller can
     /// put a non-participant's blocks into the lace and let the FINALITY GATE be the thing under test.
-    /// The live wire uses `receive_block_pinned`, which would refuse them one layer earlier.
+    /// The live wire uses `receive_block_pinned` — which refuses an unenrolled creator, but see the
+    /// falsifier's HONEST SCOPE below for the two production paths that reach the same lace state
+    /// (roster rotation-out, and `from_checkpoint_trusted` on restart) without that check applying.
     fn cross_linked_lace(creators: &[SigningKey]) -> Blocklace {
         let mut lace = Blocklace::new(creators[0].clone(), 3);
         let mut round_prev: Vec<BlockId> = Vec::new();
@@ -280,12 +332,23 @@ mod tests {
     /// not check identity), and the honest nodes reference them back. The block passes
     /// `receive_block`'s own verification — this is not a malformed-input test.
     ///
-    /// HONEST SCOPE: on the live wire the node ingests via `receive_block_pinned`, which ALSO refuses
-    /// an unenrolled creator (`BlockError::UnenrolledCreator`) — so this gate is the second layer, not
-    /// the only one. That is why the test is worth having: a defence-in-depth layer nobody exercises
-    /// is a defence-in-depth layer nobody knows is armed. `receive_block` (ed25519-only, used for DAG
-    /// reconstruction) is the correct ingest here precisely because it does NOT filter by enrollment —
-    /// it puts the adversary in front of the gate under test rather than in front of its predecessor.
+    /// HONEST SCOPE — ⚑ CORRECTED, upward. This used to say "on the live wire the node ingests via
+    /// `receive_block_pinned`, which ALSO refuses an unenrolled creator — so this gate is the second
+    /// layer, not the only one." `receive_block_pinned` IS the only other enrollment filter on the
+    /// live path, but it is not a layer this configuration has to defeat, because two ORDINARY
+    /// production paths produce it without touching that check:
+    ///   * ROTATION-OUT. The pinned roster is INSERT-ONLY (`blocklace/src/finality.rs::enroll_pq`;
+    ///     `blocklace_sync.rs::apply_committee_change` states it) while
+    ///     `constitution.current.participants` shrinks on a passed membership proposal
+    ///     (`blocklace_sync.rs::apply_passed_proposal`), and `poll_finalized_blocks` re-reads the
+    ///     constitution every poll. A removed validator's NEW blocks keep passing the pinned ingest
+    ///     while it is absent from the `participants` this gate is handed — exactly the lace below,
+    ///     produced by governance rather than by an attacker.
+    ///   * RESTART. `blocklace/src/finality.rs::from_checkpoint_trusted` rebuilds the lace from
+    ///     redb by raw postcard-decode-and-insert: no signature, no roster, no closure check.
+    /// So this is not a spare tyre. `receive_block` (ed25519-only) is still the right ingest for the
+    /// test — it puts the adversary in front of the rule under test rather than in front of a
+    /// predecessor that, on these two paths, is not there.
     ///
     /// This is NOT a vacuous "unknown creator" lookup. `build_wire` DOES intern the attacker: its
     /// `next_extra` counter assigns every non-participant creator its own `AuthorId` past

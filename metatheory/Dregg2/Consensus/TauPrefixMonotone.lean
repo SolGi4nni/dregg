@@ -85,17 +85,28 @@ the growth to `B'`:
   splices a segment mid-order);
 * `fold_agrees` — replaying the OLD leaders through `B'`'s segment computation
   (`tauStep B'`) reproduces the `B` fold exactly: same emitted segments AND same coverage
-  sets (no late wave-end ratifier grew an old wave's coverage).
+  sets (no late wave-end ratifier grew an old wave's coverage);
+* `enrollment_agrees` — the growth does not RECLASSIFY an already-ordered block's creator:
+  `enrolledId` returns the same verdict in `B` and `B'` for every id the old fold emitted.
+  Added with `BlocklaceFinality.enrolledId` (the enrollment filter that closed the
+  unenrolled-creator hole). It is a real condition, not bookkeeping: `enrolledId` reads the
+  lace (`Lace.lookup`), so a growth that first orders an id the lace does not yet hold and
+  LATER supplies it with an unenrolled creator would drop an already-executed entry — a
+  rollback, exactly what T5 forbids. On the growths that matter it is free: `Lace.lookup` is
+  `List.find?`, so a `B' = B ++ new` extension resolves every id already in `B` to the same
+  block, and both §5's `trace6` growth and §4's `lagGrown` satisfy it (`#guard`s below).
 
 This is the exact boundary of T5: `tau_finalized_prefix_monotone` proves it SUFFICIENT,
 and `lagBase → lagGrown` (§4) witnesses that dropping `fold_agrees` admits an honest,
-insert-valid reorder. The node currently checks NEITHER field (the finding). -/
+insert-valid reorder. The node currently checks NONE of the fields (the finding). -/
 structure FinalizedRegionStable (B B' : Lace) (P : List AuthorId) (wl : Nat) : Prop where
   leaders_extend :
     findAllFinalLeaders B P wl <+: findAllFinalLeaders B' P wl
   fold_agrees :
     (findAllFinalLeaders B P wl).foldl (tauStep B' P wl) ([], [])
       = (findAllFinalLeaders B P wl).foldl (tauStep B P wl) ([], [])
+  enrollment_agrees :
+    ∀ bid ∈ tauOrderUnfiltered B P wl, enrolledId B P bid = enrolledId B' P bid
 
 /-- **`stableCheck`** — the executable `Bool` mirror of `FinalizedRegionStable` (what a
 node WOULD evaluate before advancing `executed_up_to` to sit inside the theorem). -/
@@ -103,13 +114,16 @@ def stableCheck (B B' : Lace) (P : List AuthorId) (wl : Nat) : Bool :=
   (findAllFinalLeaders B P wl).isPrefixOf (findAllFinalLeaders B' P wl)
   && decide ((findAllFinalLeaders B P wl).foldl (tauStep B' P wl) ([], [])
            = (findAllFinalLeaders B P wl).foldl (tauStep B P wl) ([], []))
+  && (tauOrderUnfiltered B P wl).all (fun bid => enrolledId B P bid == enrolledId B' P bid)
 
 /-- The mirror is faithful: a `true` `stableCheck` yields the `Prop`-level hypothesis. -/
 theorem FinalizedRegionStable.of_check {B B' : Lace} {P : List AuthorId} {wl : Nat}
     (h : stableCheck B B' P wl = true) : FinalizedRegionStable B B' P wl := by
   unfold stableCheck at h
-  rw [Bool.and_eq_true] at h
-  exact ⟨List.isPrefixOf_iff_prefix.mp h.1, of_decide_eq_true h.2⟩
+  rw [Bool.and_eq_true, Bool.and_eq_true] at h
+  refine ⟨List.isPrefixOf_iff_prefix.mp h.1.1, of_decide_eq_true h.1.2, ?_⟩
+  intro bid hbid
+  exact eq_of_beq (List.all_eq_true.mp h.2 bid (by simpa using hbid))
 
 /-- **`fold_agrees_of_pointwise`** — the prose-level sufficient condition for
 `fold_agrees`: every already-final leader's SEGMENT function and COVERAGE are unchanged by
@@ -174,9 +188,15 @@ theorem tau_finalized_prefix_monotone {B B' : Lace} {P : List AuthorId} {wl : Na
   obtain ⟨rest, hrest⟩ :=
     foldl_tauStep_fst_extend B' P wl T
       ((findAllFinalLeaders B P wl).foldl (tauStep B' P wl) ([], []))
-  refine ⟨rest, ?_⟩
+  -- The UNFILTERED fold only appends (the structural half, unchanged by the enrollment filter).
+  have hunf : tauOrderUnfiltered B' P wl = tauOrderUnfiltered B P wl ++ rest := by
+    unfold tauOrderUnfiltered
+    rw [← hT, List.foldl_append, hrest, h.fold_agrees]
+  -- The filter then distributes over the append, and `enrollment_agrees` says the old prefix's
+  -- verdicts are unchanged by the growth — so the filtered order extends too.
+  refine ⟨rest.filter (enrolledId B' P), ?_⟩
   unfold tauOrder
-  rw [← hT, List.foldl_append, hrest, h.fold_agrees]
+  rw [hunf, List.filter_append, List.filter_congr h.enrollment_agrees]
 
 /-- **`tau_executed_prefix_fixed`** — the node-shaped corollary: under stability, the
 first `(tauOrder B).length` entries of the grown order — the region `executed_up_to`

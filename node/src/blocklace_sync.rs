@@ -1533,6 +1533,25 @@ impl BlocklaceHandle {
         //   * projection covers all admitted → run the verified multi-party tau order.
         let ordered = if admitted.len() <= 1 {
             // Solo: all actionable blocks are ordered by sequence.
+            //
+            // ⚑ NAMED RESIDUAL — the ENROLLMENT hole's sibling, left OPEN on purpose, not missed.
+            // The multi-party arm below now finalizes only ENROLLED creators (the verified
+            // `BlocklaceFinality.enrolledId` filter, mirrored in `ordering::tau`, proved by
+            // `tauOrder_only_enrolled` — see `crate::finality_gate`'s module header). THIS arm has
+            // no such filter: it finalizes EVERY actionable block in the lace regardless of who
+            // created it. That is not hypothetical on a lace that once held more creators — a
+            // federation shrunk to n=1, or a restart through
+            // `blocklace/src/finality.rs::from_checkpoint_trusted`, which re-inserts every
+            // persisted block with no signature, roster or closure check.
+            //
+            // NOT fixed here because the safe filter is not local. This arm deliberately skips the
+            // hybrid-id projection ("no leader schedule, no projection needed"), and the only sound
+            // creator key to filter against is the projected hybrid id — so adding the filter makes
+            // SOLO BOOTSTRAP depend on a COMMITTED ML-DSA key and inherits the fail-closed halt of
+            // the `participants.len() != admitted.len()` arm below. A filter here that is one key
+            // short does not refuse a stranger, it refuses the node's own blocks and the chain
+            // never starts. That trade needs the solo/devnet boot path exercised, which the
+            // enrollment work did not do.
             let mut all_blocks: Vec<(u64, BlockId)> = lace
                 .iter()
                 .filter_map(|(id, block)| match &block.payload {
