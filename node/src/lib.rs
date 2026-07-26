@@ -81,13 +81,13 @@ mod init;
 // node-WIDE receipt-log head as the agent's predecessor, so the faucet grant one
 // step earlier made the next operator turn unsubmittable.
 #[cfg(test)]
+mod operator_turn_receipt_head_e2e;
+#[cfg(test)]
 mod mailbox_crank_e2e;
 pub mod mcp;
 pub mod metrics;
 #[cfg(test)]
 mod node_integrator_e2e;
-#[cfg(test)]
-mod operator_turn_receipt_head_e2e;
 // The operator onboarding dance (gen-validator-key / join / add-validator) — the
 // slick, reusable path for folding a node + validator into a federation.
 #[cfg(test)]
