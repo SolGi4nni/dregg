@@ -5770,13 +5770,21 @@ fn catalog_page(offerings: &[OfferingInfo]) -> String {
     // board is the secondary link. Previously this page offered the BOARD as its only always-present
     // affordance, so the flagship's front door on the catalog was a leaderboard.
     let descent_play = descent_play_cta("play", "");
+    // ⚑ THE `&nbsp;` BETWEEN THE TWO CTAs IS LOAD-BEARING, not typography. Both are `a.play`, which
+    // is `inline-flex`, so with no text node between them their boxes ABUT. Measured at 390px the
+    // gap was 0px between two 18px-tall targets that go to DIFFERENT places (the run, and the
+    // board), which on a phone is one thumb and a coin toss. `/guide` already writes this exact
+    // pair with a `&nbsp;` (`guide.rs:157`); this brings the catalog into line rather than
+    // inventing a rule. It stays in the markup rather than becoming an `a.play+a.play` CSS rule
+    // because `.play` is also the whole-card overlay link on the shelf below, where the two forms
+    // stack vertically and want no horizontal gap at all.
     let body = format!(
         "<main class=\"catalog\"><div class=\"page-head\">\
          <p class=\"eyebrow\">{PRODUCT_NAME}</p>\
          <h1>Every game here checks its own moves.</h1>\
          <p class=\"deck\">{shelf}</p>\
          <p class=\"deck\">{flagship}</p>\
-         <p class=\"prose\">{descent_play}<a class=\"play\" href=\"/descent\">\
+         <p class=\"prose\">{descent_play} &nbsp; <a class=\"play\" href=\"/descent\">\
          See today's finished runs \
          <span class=\"arr\" aria-hidden=\"true\">→</span></a></p></div>\
          {games}{features}{services}{more}</main>",
