@@ -3674,3 +3674,88 @@ DARK-tier UX latency (network-MPC rounds are the bottleneck, not the fold) are i
 
 Did NOT touch: `fhegg-fhe/src/gpu_arena.rs`, `bfv_gpu.rs`, any shader, any `Cargo.toml`,
 `lib.rs`, any other lane's file. Commit: NOTHING.
+
+---
+
+## 2026-07-26 — spine test census — the spine is 4202/187, and NO single `cargo test` configuration can run it
+
+**Environment, stated because the numbers are meaningless without it.** Host persvati (24-core,
+Linux x86_64) via `scripts/pbuild crewbraid`. `--test-threads=4`. `DREGG_ALLOW_UNAUDITED_PQ=1`.
+**Lean archive PRESENT** in the lane (`dregg-lean-ffi/libdregg_lean.a`, adopted, all six verified PQ
+cores exported per `nm -g`; the per-`OUT_DIR` working archive carried 161 `dregg_*` exports). Tree
+moved ~26 commits under the run — this is a shared working tree.
+
+| crate | bins | passed | failed | ignored |
+|---|---|---|---|---|
+| dregg-types | 2 | 42 | 0 | 0 |
+| dregg-cell | 19 | 834 | 0 | 1 |
+| dregg-turn | 57 | 901 | 6 | 1 |
+| dregg-circuit | 89 | 1155 | 18 | 14 |
+| dregg-verifier | 6 | 50 | 7 | 0 |
+| dregg-storage | 3 | 290 | 0 | 0 |
+| dregg-sdk | 43 | 437 | 105 | 3 |
+| dregg-node | 16 | 493 | 51 | 5 |
+| **TOTAL** | **235** | **4202** | **187** | **24** |
+
+**The finding that outranks the table: the configuration is inconsistent, so nobody can run the
+spine in one command.** `dregg-turn` and `dregg-verifier` depend on `dregg-pq` but NOT on
+`dregg-lean-ffi`, so their test processes can never install a verified PQ core; the first test that
+derives an ML-DSA key hits the fail-closed `process::abort()`. `cargo test -p dregg-turn` therefore
+dies on SIGABRT partway through and always has. Meanwhile `sdk/tests/mlkem_sdk_kem_verified.rs`
+asserts `DREGG_ALLOW_UNAUDITED_PQ` is UNSET, on purpose and correctly. One suite requires the
+variable; another requires its absence.
+
+**What the abort was hiding.** Without the bypass, 7 binaries died on SIGABRT and never printed a
+verdict: `dregg_node --lib` (506 declared), `dregg_turn --lib` (686), `dregg_verifier --lib` (42),
+`hybrid_pq_turn`, `mldsa_live_sign`, `mlkem_live_decaps`, `pq_cell_identity`. 1243 declared tests,
+210 accounted for — **~1033 never ran**, and the failures inside them were invisible. `dregg-turn`
+reads 213 passed in that configuration and 901 in this one.
+
+⚠ A bare SIGABRT here did NOT mean a missing archive. The archive was present and the FIRST test of
+`mldsa_live_sign` passed against it. Confirm the archive before believing that diagnosis.
+
+**Failure classes, by size** (188 failures collapse to ~8 causes):
+- **98 · cross-asset `Transfer` refused** (68 sdk, 30 node). `turn/src/executor/apply.rs:675`, added
+  by `b1a370194` (2026-07-25) to close a real teleport. The guard is right; the sdk/node fixtures
+  fund cells across differing `token_id`s and were never migrated. All 29 node `403 != 200` service
+  failures are this one class surfacing through HTTP.
+- **11 · `base row width N must equal descriptor trace_width M`** (2936 vs 1878 cap-open, 2936 vs
+  1892 wide noteCreate, 22 vs 8 DFA route). Rust producer / emitted-descriptor geometry desync;
+  takes down the whole cap-open family on the deployed wide path.
+- **11 · `transferVmDescriptor2R24: row 0: range wire 188 value 668304541 >= 2^15`.** An HONEST
+  transfer does not prove. Kills all 7 of `verifier/tests/integration_rotated_replay_chain.rs` and 4
+  light-client binding teeth in circuit.
+- **18 · p3 `constraints not satisfied on row 0`** (`[#0,#11]` in `dregg-turn`'s
+  `executor::membership_verifier`, `[#125]`/`[#121,#122]` in sdk `factory_settlement_e2e`).
+- **6 · `map op 0: insert key N already present or collides with sentinels`**
+  (`circuit/tests/effect_vm_umem_real_turn.rs`) — GAP-#5 IMT fallout.
+- **4 · gentian-weld pinned collisions drifted.** `fields_root_gentian_weld.rs`,
+  `heap_root_gentian_weld.rs`, `effect_vm_commit_lean_differential.rs` pin mined lane-0 collisions;
+  the arity-3 `HeapLeaf` change (`1809c9897`) invalidated them, so the teeth no longer demonstrate
+  the hole they close. Each file ships its own `#[ignore]`d miner — the repair is to re-mine and
+  re-pin, NOT to relax the assertion. NOT DONE.
+- **2 · `descriptor … has no INSERT map-op`** (`accumulator_completion_lane_forge.rs`). The deployed
+  noteCreate v3 moved `Insert` → `AafiInsert` (`8c88b6666`). Retargeting is not a one-liner: the
+  test computes its honest post-root with a SORTED insert, which AAFI does not produce.
+- **1 · descriptor PROVENANCE coverage** — found unstamped (5 by-name light-client descriptors),
+  independently fixed mid-run by `ebd0d5e5c`.
+
+⚑ **`node/src/finality_gate.rs:379` FAILS**: *"the VERIFIED rule FINALIZED a block created by an
+UNENROLLED identity — the gate is OPEN."* It is a well-built falsifier (it has explicit anti-vacuity
+guards for "finalized nothing" and "refuses everyone"). **Its verdict is currently UNOBTAINABLE in
+the fail-closed configuration** — without `DREGG_ALLOW_UNAUDITED_PQ=1` the binary aborts before the
+test runs, so whether this is a live soundness hole or an artifact of the crate-fallback keygen
+CANNOT be determined until `dregg-node`'s lib tests install the verified cores. Needs ember.
+
+**Fixed here** (three commits): `circuit/src/refusal.rs` `catch_quietly` silenced the panic hook
+process-wide, so at `--test-threads>1` it ate unrelated threads' failure messages — six umem reds
+reported an EMPTY stdout block across two census runs and now name their file, line and reason;
+`node/tests/mldsa_live_sign.rs` and `node/tests/mlkem_live_decaps.rs` were each one verified-core
+install short and aborted their own binaries (now 2/2 and 1/1 with the bypass UNSET, which also
+STRENGTHENS them — the keygen and encaps now route through Lean); and
+`turn/tests/zz_prov_oracle_m30_scratch.rs`, a scratch measurement whose own first line said "DELETE
+after capture. Not committed.", removed — it read an unset env var and so was a permanent
+uninformative red.
+
+**Not fixed, deliberately:** everything above. No test was weakened, `#[ignore]`d, or deleted to
+make a number better.
