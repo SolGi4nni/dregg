@@ -25,14 +25,24 @@ dregg-app-framework = { path = "../../app-framework" }
 dregg-cell = { path = "../../cell", default-features = false }
 dregg-turn = { path = "../../turn" }
 dregg-types = { path = "../../types" }
-# The verified counter+ceiling we REUSE (do not hand-roll): its `deleg_admit` is
-# the byte-for-byte mirror of the Lean `delegAdmit` counter+ceiling half, and the
-# differential test pins our per-subject consume budget to it.
+# The verified counter+ceiling we REUSE (do not hand-roll): its `deleg_admit` no
+# longer decides anything in Rust — it MARSHALS to the Lean `delegAdmit`
+# (`dregg_deleg_admit`), the five-conjunct predicate
+# `tool_invocation_commit_iff_admit` is proven over. The reuse pin below holds our
+# per-subject consume budget against that oracle's verdict, so it is a pin against
+# the PROVEN predicate, not against a second Rust copy of it.
 starbridge-tool-access-delegation = { path = "../tool-access-delegation" }
 
 blake3 = "1"
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+# Test-only: the reuse pin calls the Lean admission oracle through
+# `starbridge-tool-access-delegation`, and an absent archive must be an HONEST skip
+# locally and a PANIC under `DREGG_TEST_REQUIRE_LEAN=1` — that is what
+# `demand_lean` decides. Nothing in `src/` links this; the pin is the only caller.
+dregg-lean-ffi = { path = "../../dregg-lean-ffi" }
 
 [lints]
 workspace = true

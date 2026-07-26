@@ -937,6 +937,18 @@ mod tests {
         CellId::from_bytes([5u8; 32])
     }
 
+    /// The linked archive answers the delegated-policy question, or the reuse pin below is
+    /// honestly skipped — and PANICS instead under `DREGG_TEST_REQUIRE_LEAN=1`, so a
+    /// verification lane cannot report `ok` having asserted nothing. Same helper, same
+    /// wording, as `starbridge_tool_access_delegation`'s own tests: the seam belongs to the
+    /// oracle, not to each crate that pins against it.
+    fn lean_answers() -> bool {
+        dregg_lean_ffi::demand_lean(
+            dregg_lean_ffi::deleg_admit_available(),
+            "dregg_deleg_admit (the delegated tool-access admission oracle)",
+        )
+    }
+
     #[test]
     fn factory_descriptor_is_stable() {
         assert_eq!(
@@ -988,8 +1000,17 @@ mod tests {
     /// `delegAdmit`): with the tool scope + deadline neutralized (in-scope,
     /// in-window), the two decide the metered advance identically over the whole
     /// grid. A drift on either side fails here.
+    ///
+    /// `deleg_admit` returns `Result` because it MARSHALS to the Lean oracle rather than
+    /// deciding in Rust: `Err` is **no verdict** (the archive lacks the export, or this
+    /// target cannot link it), never a refusal. So the pin `expect`s a verdict and is
+    /// gated on [`lean_answers`] — an absent archive skips honestly instead of quietly
+    /// comparing against a fallback that no longer exists.
     #[test]
     fn consume_ceiling_agrees_with_the_verified_tool_access_counter_ceiling() {
+        if !lean_answers() {
+            return;
+        }
         for ceiling in 0i64..=6 {
             // Neutralize tool + deadline so `deleg_admit` reduces to its
             // counter+ceiling half (`new == old+1 && 0 <= old && new <= rate_limit`).
@@ -1002,7 +1023,7 @@ mod tests {
                 for new in 0i64..=ceiling + 2 {
                     assert_eq!(
                         consume_admit(ceiling, old, new),
-                        deleg_admit(&g, 0, 7, old, new),
+                        deleg_admit(&g, 0, 7, old, new).expect("the Lean oracle reached a verdict"),
                         "guard consume_admit must equal the verified counter+ceiling \
                          (ceiling={ceiling}, old={old}, new={new})"
                     );
