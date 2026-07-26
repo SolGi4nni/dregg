@@ -37,7 +37,8 @@
 //! demonstrated; the test then FAILS LOUDLY with the exact blocker rather than passing vacuously.
 
 use dregg_node::{
-    MlKemDecapsCoreInstall, MlKemKeygenCoreInstall, install_mlkem_verified_decaps_core,
+    MlKemDecapsCoreInstall, MlKemEncapsCoreInstall, MlKemKeygenCoreInstall,
+    install_mlkem_verified_decaps_core, install_mlkem_verified_encaps_core,
     install_mlkem_verified_keygen_core,
 };
 use ml_kem::kem::Encapsulate as _;
@@ -93,6 +94,18 @@ fn deployed_ml_kem_decaps_routes_through_lean_core() {
             MlKemKeygenCoreInstall::Installed | MlKemKeygenCoreInstall::AlreadyInstalled
         ),
         "the deployed hybrid path requires the verified ML-KEM keygen authority"
+    );
+    // …and the ENCAPS authority, because leg (4) below drives `hybrid_kem::initiate`, which
+    // encapsulates. Without this the process reached `dregg_pq`'s fail-closed audit gate for
+    // ML-KEM-768 Encaps, and that gate does not return an error — it `process::abort()`s. The whole
+    // test binary died on SIGABRT with no libtest verdict, which reads exactly like a missing or
+    // broken Lean archive. The archive was fine; the process was one install short.
+    assert!(
+        matches!(
+            install_mlkem_verified_encaps_core(),
+            MlKemEncapsCoreInstall::Installed | MlKemEncapsCoreInstall::AlreadyInstalled
+        ),
+        "the deployed hybrid path requires the verified ML-KEM encaps authority"
     );
     // ── DRIVE THE NODE'S STARTUP INSTALL (the exact production function) ────────────────────────
     let outcome = install_mlkem_verified_decaps_core();

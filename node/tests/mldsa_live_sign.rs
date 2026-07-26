@@ -32,7 +32,8 @@
 //!       core AND the `fips204` crate verifier. The crate has left the SIGN TCB.
 
 use dregg_node::{
-    MlDsaSignCoreInstall, MlDsaSignCoreRealInstall, MlDsaVerifyCoreInstall,
+    MlDsaKeygenCoreRealInstall, MlDsaSignCoreInstall, MlDsaSignCoreRealInstall,
+    MlDsaVerifyCoreInstall, install_mldsa_verified_keygen_core_real,
     install_mldsa_verified_sign_core, install_mldsa_verified_sign_core_real,
     install_mldsa_verified_verify_core,
 };
@@ -154,6 +155,19 @@ fn deployed_byte_sign_is_lean_produced_crate_leaves_tcb() {
                 "BLOCKER: archive lacks `dregg_fips204_verify_real`; rebuild against a HEAD-matching archive."
             )
         }
+    }
+
+    // And the REAL KEYGEN core, because the line below derives the key the deployed signer signs
+    // with. Without it `MlDsaKey::from_ed25519_seed` reaches `dregg_pq`'s fail-closed audit gate —
+    // which does not return a `Result`, it `process::abort()`s the whole binary. That is why this
+    // file used to kill its own test process: test (A) passed, then (B) aborted the harness before
+    // libtest could print a verdict, so the SIGABRT read as a broken archive rather than a missing
+    // install. The archive was fine; the process was three installs short of the four it uses.
+    match install_mldsa_verified_keygen_core_real() {
+        MlDsaKeygenCoreRealInstall::Installed | MlDsaKeygenCoreRealInstall::AlreadyInstalled => {}
+        MlDsaKeygenCoreRealInstall::ExportAbsent => panic!(
+            "BLOCKER: archive lacks `dregg_mldsa_keygen_real`; rebuild against a HEAD-matching archive."
+        ),
     }
 
     let seed = [3u8; 32];
