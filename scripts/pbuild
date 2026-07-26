@@ -63,18 +63,51 @@ WARM_DEPS="${PBUILD_WARM_DEPS:-100}"
 # cgroup wrapper and a free-space reserve without duplicating pbuild's protocol.
 REMOTE_WRAPPER="${PBUILD_REMOTE_WRAPPER:-}"
 MIN_FREE_GIB="${PBUILD_MIN_FREE_GIB:-0}"
+# ---- the LANE LEASE (contract, 2026-07-25) ---------------------------------
+# pbuild is the WRITER of `<lane>/.pbuild-lease`; scripts/sweep-build-lanes.sh is the READER
+# and refuses to reclaim any lane whose lease exists AND has not expired. Exactly one line:
+#
+#   owner=<string> pid=<int> host=<string> expires=<unix-seconds>
+#
+# It is a HINT WITH AN EXPIRY, never a lock: pbuild does not check anyone else's lease and
+# never blocks on one, and a lease left by a crashed run ages out on its own. `pid`/`host`
+# name the CLIENT process that owns the lane (the pbuild that wrote it) — the lease file
+# itself already says which box it is on, so naming the box again would carry no
+# information, whereas the client pair lets a human find the session responsible.
+# `expires` is computed ON THE BOX (`date +%s` there), so a reader on the box never has to
+# trust the client's clock. Measured skew today was 1s to persvati and 2s to hbox; correct
+# by construction beats small-enough.
+LEASE_TTL="${PBUILD_LEASE_TTL:-3600}"
+LEASE_CLIENT_HOST="$(hostname -s 2>/dev/null || echo unknown)"
+LEASE_OWNER="${PBUILD_LEASE_OWNER:-pbuild:$(id -un 2>/dev/null || echo unknown)@${LEASE_CLIENT_HOST}}"
+# The lease line is fixed-shape and space-delimited, so no field may contain a space.
+LEASE_OWNER="${LEASE_OWNER// /_}"
+LEASE_CLIENT_HOST="${LEASE_CLIENT_HOST// /_}"
 
-case "$MIN_FREE_GIB" in
-  ''|*[!0-9]*)
-    echo "pbuild: PBUILD_MIN_FREE_GIB must be a non-negative integer" >&2
-    exit 2
-    ;;
-esac
+for _pb_int in MIN_FREE_GIB LEASE_TTL; do
+  case "${!_pb_int}" in
+    ''|*[!0-9]*)
+      echo "pbuild: PBUILD_${_pb_int} must be a non-negative integer" >&2
+      exit 2
+      ;;
+  esac
+done
 
 FORCE_COLD=0
 if [ "${1:-}" = "--force-cold" ]; then FORCE_COLD=1; shift; fi
 LANE="${1:?usage: pbuild [--force-cold] <lane> <command...>}"; shift
 [ "$#" -ge 1 ] || { echo "pbuild: no command given" >&2; exit 2; }
+
+# The lane name is interpolated into remote shell strings (the warmth probe, the archive
+# provisioner, the lease write) and into rsync paths. Constrain it to a charset that cannot
+# carry a quote or a path escape, so none of those interpolations can be broken by a lane
+# name. Every lane in use on either box is already within this set.
+case "$LANE" in
+  ''|*[!A-Za-z0-9._-]*|.|..|-*)
+    echo "pbuild: lane name '$LANE' must be non-empty [A-Za-z0-9._-] and not start with '-'" >&2
+    exit 2
+    ;;
+esac
 
 # ---- THE VERDICT LINE -----------------------------------------------------
 # Agents are told "check the VERDICT line, never the exit code". Until 2026-07-25
@@ -302,6 +335,10 @@ fi
 # rule. If the archive is absent locally the rule is simply a no-op, and the preflight
 # below says so out loud rather than letting the remote discover it as a signal 6.
 LEAN_ARCHIVE="dregg-lean-ffi/libdregg_lean.a"
+# Written by the provisioner below; read by it on the next call so an 8-second `nm` scan over a
+# ~478 MB archive is not paid on every invocation. It records the archive's size+mtime, so an
+# archive that changed underneath it invalidates the record instead of being vouched for.
+LEAN_ARCHIVE_PROV="dregg-lean-ffi/.libdregg_lean.a.provenance"
 
 # ⚠ THE ARCHIVE IS AN ARCH-SPECIFIC BUILD PRODUCT — never ship it cross-platform.
 # The first version of this fix rsync'd it unconditionally and immediately broke a
@@ -316,19 +353,11 @@ REMOTE_PLATFORM="$(ssh "$HOST" 'echo "$(uname -s)-$(uname -m)"' 2>/dev/null || e
 ARCHIVE_FILTER=()
 if [ "$LOCAL_PLATFORM" = "$REMOTE_PLATFORM" ]; then
   ARCHIVE_FILTER=(--filter="+ /${LEAN_ARCHIVE}")
-else
+elif [ -f "${SRC%/}/${LEAN_ARCHIVE}" ]; then
   echo "pbuild: host is ${LOCAL_PLATFORM}, ${HOST} is ${REMOTE_PLATFORM} — NOT shipping" >&2
   echo "        ${LEAN_ARCHIVE} (it is arch-specific; a cross-shipped archive links as" >&2
-  echo "        'neither ET_REL nor LLVM bitcode'). The lane must build its own." >&2
-fi
-
-if [ ! -f "${SRC%/}/${LEAN_ARCHIVE}" ]; then
-  printf '%s\n' \
-    "pbuild: WARNING — ${LEAN_ARCHIVE} is absent locally, so the lane will not receive it." \
-    "        Executor-touching tests on ${HOST} will abort with a bare SIGABRT and no panic" \
-    "        message (ML-DSA keygen without the verified cores). That is an ENVIRONMENT" \
-    "        fault, not your code. Seed it with ./scripts/bootstrap.sh, or set" \
-    "        DREGG_ALLOW_UNAUDITED_PQ=1 to run marshal-only knowing what you traded away." >&2
+  echo "        'neither ET_REL nor LLVM bitcode'). The lane gets a platform-native one from" >&2
+  echo "        the release instead — see ARCHIVE PROVISIONING below." >&2
 fi
 
 # ---- SHIP .git (2026-07-25) ------------------------------------------------
@@ -417,9 +446,51 @@ else
   GIT_FILTER=(--exclude='.git/')
 fi
 
-# shellcheck disable=SC2029 # REMOTE is a locally-owned, validated lane path.
-ssh "$HOST" "mkdir -p '${REMOTE}'"
+# ---- PROTECT the remote-owned files from --delete --------------------------
+# Three files live in the lane, are OWNED BY THE REMOTE SIDE, and have no local counterpart:
+# the Lean archive (arch-specific, usually fetched by the provisioner below), its provenance
+# sidecar, and the lease. `--delete` removes anything on the receiver that the sender does not
+# have, and only EXCLUDED files are spared — so each of these needs to be either gitignored or
+# explicitly protected.
+#
+# ⚠ ORDER IS LOAD-BEARING, AND `+` IS A DELETION RISK. For the receiver's delete scan rsync
+# reads the SAME filter list and takes the FIRST matching rule, where `-` protects, `+` RISKS,
+# and `P`/`R` are the delete-only equivalents. So the pre-existing `+ /dregg-lean-ffi/…a` rule
+# (added so a same-platform host receives the archive) also CANCELS the gitignore protection it
+# was relying on: on a Linux→Linux pbuild with no local archive, that include is what would have
+# let `--delete` remove a perfectly good 478 MB archive out of the lane. `P` must therefore come
+# BEFORE the include — it protects from deletion without affecting the transfer, so a host that
+# CAN ship the archive still ships it.
+#
+# Only the archive is covered by a .gitignore (`dregg-lean-ffi/.gitignore`: `*.a`). The sidecar
+# and the lease are not, and protecting them here rather than editing a shared `.gitignore`
+# keeps the whole mechanism inside this script.
+PROTECT_FILTER=(
+  --filter="P /${LEAN_ARCHIVE}"
+  --filter="P /${LEAN_ARCHIVE_PROV}"
+  --filter="P /.pbuild-lease"
+)
+
+# ---- claim the lane (the lease) --------------------------------------------
+# Written HERE, before rsync, and not later: rsync into a cold lane has been measured at 25
+# minutes, and that window — where the lane is half-written and holds no build yet — is exactly
+# when a sweeper reclaiming it does the most damage. Folded into the mkdir round trip so the
+# lease costs no extra ssh. `expires` is computed on the box; the temp-then-rename means a
+# reader never sees a torn line.
+#
+# A REFUSAL NEVER LEASES: every guard above exits before this point, so a lane that pbuild
+# declined (cold, no wrapper, no disk) is not left claimed for an hour by a run that never
+# touched it. That is a deliberate reading of "on every invocation" — an invocation that does
+# not take the lane does not claim it.
+# shellcheck disable=SC2029 # REMOTE/LEASE_* are locally owned and charset-validated above.
+ssh "$HOST" "set -e; mkdir -p '${REMOTE}'; \
+  printf 'owner=%s pid=%s host=%s expires=%s\n' \
+    '${LEASE_OWNER}' '$$' '${LEASE_CLIENT_HOST}' \"\$(( \$(date +%s) + ${LEASE_TTL} ))\" \
+    > '${REMOTE}/.pbuild-lease.tmp.$$'; \
+  mv -f '${REMOTE}/.pbuild-lease.tmp.$$' '${REMOTE}/.pbuild-lease'"
+
 rsync -az --delete \
+  "${PROTECT_FILTER[@]}" \
   "${ARCHIVE_FILTER[@]}" \
   "${GIT_FILTER[@]}" \
   --filter=':- .gitignore' \
@@ -449,6 +520,514 @@ if [ "${SEED_LEAN_CACHE:-0}" -eq 1 ] || [ "${PBUILD_ALWAYS_CACHE_GET:-0}" -eq 1 
     lake exe cache get 2>&1 | tail -2" \
     || echo "pbuild: WARNING — mathlib cache fetch failed; the lane will COMPILE mathlib \
 instead (hours). Check network/elan on ${HOST} before blaming the build." >&2
+fi
+
+# ═══ ARCHIVE PROVISIONING — killing the FALSE-RED class (2026-07-25) ═════════
+# THE WOUND. A lane with no `dregg-lean-ffi/libdregg_lean.a` builds MARSHAL-ONLY, and an
+# executor-touching test binary there dies with a BARE SIGABRT and no Rust panic message (the PQ
+# audit gate `process::abort()`s rather than let the unaudited crate answer). Nothing on that path
+# says "environment", so lanes read it as their own bug: measured 405/28 remote vs 422/14 local,
+# the entire delta being the archive, and three separate lanes burned hours on it in one night.
+# 3 of 18 persvati lanes and 3 of 32 hbox lanes held an archive when this was written, and every
+# one of those was placed BY HAND.
+#
+# WHY IT COULD NOT FIX ITSELF. `scripts/fetch-lean-seed.sh` exists and works — but the key it
+# resolves comes from `scripts/lean-seed-key.sh`, which derives the Dregg2 half from
+# `git rev-parse HEAD:metatheory/Dregg2`. A lane has no `.git` (pbuild excludes it), so that call
+# fails, and the script SILENTLY falls back to a sha256 of concatenated `.lean` files — a
+# DIFFERENT KEY SPACE that can never equal a git tree id, hence can never name a published asset.
+# So fetch could never succeed inside a lane, for as long as lanes have existed.
+#
+# ⚠ AND `.git` CANNOT BE RSYNC'd. Proven, not feared (2026-07-25): a COMPLETED opt-in sync left a
+# lane where `git rev-parse --short HEAD` was correct but `git ls-tree HEAD` was EMPTY. Both packs
+# landed, 807 MB, object store healthy — what was missing was the ROOT TREE of the commit the ref
+# named. rsync walks once in directory order and that walk took 25 MINUTES; commits landed during
+# it, so it copied a ref NEWER THAN THE OBJECTS it had already copied. With ~10 terminals
+# committing, that is the expected outcome, not a risk. The transport would have to be a
+# CONSISTENT SNAPSHOT (`git bundle`, or one synced bare mirror + `git clone --shared`).
+#
+# ⚠ SO THIS DOES NOT SHIP `.git` AT ALL — IT SHIPS THE ONE MISSING FACT.
+# The lane does not need a repository. It needs exactly one value it cannot compute: the git tree
+# oid of `metatheory/Dregg2`. pbuild runs LOCALLY, where `.git` is real and coherent, so it reads
+# the oid here and injects it into the lane through a `git` shim on PATH that answers ONLY
+# `rev-parse <rev>:metatheory/Dregg2` and delegates everything else to the real git. Then the
+# lane's OWN `lean-seed-key.sh` + `fetch-lean-seed.sh` run unmodified and do all the real work:
+# platform detection (correct BY CONSTRUCTION there — no cross-platform key guessing), toolchain
+# and mathlib pin from the synced files, asset naming, download, sha256 verification against the
+# published sidecar, the seven-export check, atomic install. NOTHING about the key recipe, the
+# asset naming, or the acceptance criteria is duplicated in this script — a duplicate would drift,
+# and the whole point is that a lane resolves the SAME key the publisher used. The shim carries a
+# SELF-CHECK (`PB_SEED_TREE=shimprobe git rev-parse HEAD:metatheory/Dregg2` must echo shimprobe)
+# because the failure it prevents is silent: lean-seed-key.sh swallows a git error and falls into
+# that other key space, which would look exactly like "no seed has been published".
+#
+# ⚠ THE PUBLISHER IS NOW MANUAL-ONLY, SO "MATCHES HEAD" IS NOT AN OPTION. .github/workflows/
+# lean-seed.yml lost its `push` trigger AND its nightly on 2026-07-25 (it saturated hbox for 19-25
+# min on every metatheory commit, and hbox is triple-booked). An asset for the CURRENT
+# `HEAD:metatheory/Dregg2` therefore usually does NOT exist — at the time of writing HEAD's key
+# had no asset and 150 assets were published. A design that only accepted an exact match would be
+# a design that refuses almost always.
+#   So the candidates are HEAD's Dregg2 tree AND ITS ANCESTORS', walked back through the commit
+#   history, newest first. Every candidate key is computed with the CURRENT platform, toolchain and
+#   mathlib pin — only the Dregg2 tree varies — so a hit is a precise statement: "this seed was
+#   built by CI from an ANCESTOR of this checkout, on the same toolchain and the same mathlib
+#   revision", not a guess that some archive is probably close enough. Measured on the tree this
+#   landed in: HEAD missed, and the nearest hit was 12 commits back (a667abe45).
+#   Staleness is then REPORTED, never hidden — and it is not this script's call to make anyway:
+#   dregg-lean-ffi/build.rs re-splices the current Dregg2 slice over the seed from a warm `.lake`,
+#   warns loudly when the objects it is about to link do not correspond to HEAD, and REFUSES
+#   outright under DREGG_REQUIRE_LEAN=1. pbuild's job is PRESENCE plus LEGIBLE PROVENANCE; the
+#   build is the authority on whether that exact archive is acceptable.
+#
+# THE LADDER, in order, and what each costs (measured on persvati 2026-07-25):
+#   0. KEEP        — the lane's archive is vouched by its provenance sidecar (size+mtime match,
+#                    exports already checked). 0 s, no network. The steady state.
+#   0b. ADOPT      — an archive is present with no sidecar (hand-placed, like 3 lanes today). Its
+#                    exports are scanned and it is adopted with provenance UNKNOWN, said out loud.
+#                    8 s. A hand-placed archive is never deleted for lacking paperwork.
+#   1. RELEASE     — fetch the keyed asset for HEAD or the nearest published ancestor:
+#                    13.8 s download (35.8 MB) + 0.1 s sha256 + 0.8 s unzstd (→ 478 MB) + 8.1 s
+#                    export scan ≈ 23 s. Every lane pays this once.
+#   2. DONOR       — copy from a sibling lane on the same box that holds a verified archive. This
+#                    is the cheap half of "build it once on the box and copy it into lanes", and
+#                    it is what keeps the box working with no network and no published seed.
+#   3. REFUSE      — legibly, naming the exact asset that does not exist and the exact command
+#                    that would publish it. Never a bare signal 6, and never a silent
+#                    marshal-only.
+# What is NOT implemented: building the seed from source on the box (hours of leanc). It is named
+# in the refusal, not started — a build tool that silently launches an hours-long box-saturating
+# compile is the spike the cold-lane guard above exists to prevent.
+#
+# KNOBS:
+#   PBUILD_PROVISION_ARCHIVE=0   skip this block entirely (pre-2026-07-25 behaviour)
+#   PBUILD_REQUIRE_ARCHIVE=auto  auto (default) = REFUSE only when the command runs tests/binaries
+#                                (cargo test/nextest/run/bench); 1 = always refuse; 0 = never
+#   PBUILD_REFRESH_ARCHIVE=1     re-provision even when the lane's archive is acceptable
+#   PBUILD_SEED_ANCESTORS=<n>    how far back to look for a published ancestor (default 40)
+#   PBUILD_SEED_SOURCES=release,donor   which rungs may be used (default both). `release` alone
+#                                is the strict policy: only a seed whose sha256 matched its
+#                                PUBLISHED sidecar, never a copy of whatever a neighbouring lane
+#                                happens to hold. It is also how the REFUSAL path is exercised on
+#                                a box that has donors — a refusal nobody can reach is not one.
+#   PBUILD_SEED_DONOR_LANE=<l>   try this lane first as a donor
+#   PBUILD_SEED_TAG / PBUILD_SEED_REPO   override the release tag / owner-repo
+if [ "${PBUILD_PROVISION_ARCHIVE:-1}" = 1 ]; then
+  SEED_ANCESTORS="${PBUILD_SEED_ANCESTORS:-40}"
+  case "$SEED_ANCESTORS" in
+    ''|*[!0-9]*)
+      echo "pbuild: PBUILD_SEED_ANCESTORS='${SEED_ANCESTORS}' is not a number; using 40." >&2
+      SEED_ANCESTORS=40 ;;
+  esac
+  SEED_TAG="${PBUILD_SEED_TAG:-${DREGG_SEED_TAG:-$(sed -n 's/^TAG=//p' "${SRC%/}/dregg-lean-ffi/lean-seed.pin" 2>/dev/null | head -1)}}"
+  SEED_TAG="${SEED_TAG:-lean-seed}"
+  SEED_REPO="${PBUILD_SEED_REPO:-${DREGG_SEED_REPO:-}}"
+  if [ -z "$SEED_REPO" ]; then
+    SEED_REPO="$(git -C "${SRC%/}" remote get-url origin 2>/dev/null \
+      | sed -E 's#(git@github.com:|https://github.com/)##; s#\.git$##' || true)"
+  fi
+
+  # Every one of these values is interpolated into a single-quoted string inside the remote
+  # shell script below, so a single quote in any of them would end that string and the rest
+  # would be executed. The tag and the repo slug come from a committed file and a git remote —
+  # both editable by anyone who can push — so this is a guard, not a formality.
+  for _pb_v in SEED_TAG SEED_REPO PBUILD_REFRESH_ARCHIVE PBUILD_SEED_SOURCES PBUILD_SEED_DONOR_LANE; do
+    case "${!_pb_v:-}" in
+      *[!A-Za-z0-9._,:/@-]*)
+        echo "pbuild: REFUSING — ${_pb_v}='${!_pb_v}' contains a character that cannot be safely" >&2
+        echo "        passed to the remote shell ([A-Za-z0-9._,:/@-] only)." >&2
+        exit 2 ;;
+    esac
+  done
+
+  # ---- the candidate Dregg2 trees, computed HERE where .git is real ---------
+  # ONE `rev-list` + ONE `cat-file --batch-check` (not N `rev-parse` forks): `<rev>:<path>` is a
+  # valid batch input, so the whole walk is two processes. `paste` re-attaches the commit each
+  # tree came from, and the paste line number IS the distance from HEAD, so the FIRST time a tree
+  # is seen we also learn the nearest commit that carries it. Columns: tree, commit, distance.
+  SEED_TREE_INFO=""
+  if git -C "${SRC%/}" rev-parse --git-dir >/dev/null 2>&1; then
+    SEED_TREE_INFO="$(paste \
+      <(git -C "${SRC%/}" rev-list -n "$SEED_ANCESTORS" HEAD 2>/dev/null \
+          | sed 's|$|:metatheory/Dregg2|' \
+          | git -C "${SRC%/}" cat-file --batch-check 2>/dev/null) \
+      <(git -C "${SRC%/}" rev-list -n "$SEED_ANCESTORS" HEAD 2>/dev/null) \
+      | awk '$2 == "tree" && !seen[$1]++ { print $1 "\t" $4 "\t" (NR - 1) }' || true)"
+  fi
+  SEED_TREES="$(printf '%s\n' "$SEED_TREE_INFO" | awk 'NF { print $1 }')"
+  SEED_HEAD_TREE="$(printf '%s\n' "$SEED_TREE_INFO" | awk 'NR == 1 { print $1 }')"
+  if [ -z "$SEED_TREES" ]; then
+    echo "pbuild: WARNING — could not read metatheory/Dregg2 tree oids from git here, so the" >&2
+    echo "        release fast path has nothing to ask for. Only the donor path is available." >&2
+  fi
+
+  # Describe a tree oid the way a human needs it: which commit, how far back.
+  _pb_tree_desc() {
+    local _t="$1" _row
+    [ -n "$_t" ] && [ "$_t" != "-" ] || { printf 'UNKNOWN (no provenance recorded)'; return; }
+    _row="$(printf '%s\n' "$SEED_TREE_INFO" | awk -v t="$_t" '$1 == t { print $2, $3; exit }')"
+    if [ -z "$_row" ]; then
+      printf 'tree %s — NOT any of the last %s commits of this history' "${_t:0:12}" "$SEED_ANCESTORS"
+    elif [ "$_t" = "$SEED_HEAD_TREE" ]; then
+      printf 'EXACT — HEAD:metatheory/Dregg2 (%s)' "${_t:0:12}"
+    else
+      printf 'commit %s, %s commits behind HEAD' \
+        "$(git -C "${SRC%/}" rev-parse --short "${_row%% *}" 2>/dev/null || echo "${_row%% *}")" \
+        "${_row##* }"
+    fi
+  }
+
+  # ---- run the provisioner on the box (one round trip) ---------------------
+  PROV_STATUS=0
+  # shellcheck disable=SC2087 # LANE/SEED_* are charset-validated locals, deliberately interpolated.
+  PROV_OUT="$(ssh "$HOST" "bash -s" 2>&1 <<PROV_EOF
+set -u
+LANE_DIR="\$HOME/dregg-build/${LANE}"
+ARCH="\$LANE_DIR/${LEAN_ARCHIVE}"
+PROV="\$LANE_DIR/${LEAN_ARCHIVE_PROV}"
+FETCH="\$LANE_DIR/scripts/fetch-lean-seed.sh"
+KEYSH="\$LANE_DIR/scripts/lean-seed-key.sh"
+TAG='${SEED_TAG}'
+SLUG='${SEED_REPO}'
+REFRESH='${PBUILD_REFRESH_ARCHIVE:-0}'
+SOURCES='${PBUILD_SEED_SOURCES:-release,donor}'
+DONOR_PREF='${PBUILD_SEED_DONOR_LANE:-}'
+SELF_LANE='${LANE}'
+TREES='${SEED_TREES}'
+T0=\$(date +%s)
+
+say() { printf 'pbuild:   %s\n' "\$*"; }
+res() { printf 'PROVRESULT %s\n' "\$*"; }
+st_size()  { stat -c %s "\$1" 2>/dev/null || stat -f %z "\$1" 2>/dev/null || echo 0; }
+st_mtime() { stat -c %Y "\$1" 2>/dev/null || stat -f %m "\$1" 2>/dev/null || echo 0; }
+
+# ---- the required exports: the LANE'S OWN fetch script is the source ------
+# Hardcoding this list here would be a second place to update, and the failure of a drifted copy
+# is a REJECTED GOOD ARCHIVE (fail-closed, invisible). So it is read out of the acceptance block
+# of the lane's fetch-lean-seed.sh. The pinned list below is a FALLBACK for when that parse yields
+# fewer than the seven known symbols — and it says so out loud rather than quietly disagreeing.
+SYMS="\$(sed -n '/for sym in/,/^[[:space:]]*do[[:space:]]*\$/p' "\$FETCH" 2>/dev/null \\
+  | grep -oE 'dregg_[a-z0-9_]+' | sort -u)"
+NSYMS=\$(printf '%s\n' "\$SYMS" | grep -c . || true)
+if [ "\${NSYMS:-0}" -lt 7 ]; then
+  say "WARNING — parsed only \${NSYMS:-0} required exports out of scripts/fetch-lean-seed.sh"
+  say "          (expected at least 7). Falling back to the pinned list; that parse has DRIFTED."
+  SYMS='dregg_exec_full_forest_auth
+dregg_fips204_verify_real
+dregg_fips204_sign_real
+dregg_mldsa_keygen_real
+dregg_mlkem_encaps_real
+dregg_mlkem_decaps_real
+dregg_mlkem_keygen_real'
+fi
+
+# Prints the MISSING symbols, one per line; prints __NO_NM__ when it cannot look.
+missing_exports() {
+  command -v nm >/dev/null 2>&1 || { echo __NO_NM__; return 0; }
+  _pat="\$(printf '%s\n' "\$SYMS" | paste -sd'|' -)"
+  # NEVER \`nm … | grep -q\`: grep -q exits at the first match and SIGPIPEs nm, and a pipefail
+  # shell then reports FAILURE for a symbol that was FOUND. fetch-lean-seed.sh documents that
+  # exact bug. This grep reads to EOF and keeps only the seven names, so the result stays tiny.
+  _have="\$(nm "\$1" 2>/dev/null | grep -oE "(\$_pat)" | sort -u || true)"
+  for _s in \$SYMS; do
+    case "\$_have" in *"\$_s"*) ;; *) echo "\$_s" ;; esac
+  done
+}
+
+prov_read() {
+  P_KEY=unknown; P_TREE=-; P_SRC=-; P_ASSET=-; P_SIZE=0; P_MTIME=0; P_EXPORTS=no
+  [ -f "\$1" ] || return 1
+  for _kv in \$(cat "\$1" 2>/dev/null); do
+    case "\$_kv" in
+      key=*)     P_KEY="\${_kv#key=}" ;;
+      tree=*)    P_TREE="\${_kv#tree=}" ;;
+      source=*)  P_SRC="\${_kv#source=}" ;;
+      asset=*)   P_ASSET="\${_kv#asset=}" ;;
+      size=*)    P_SIZE="\${_kv#size=}" ;;
+      mtime=*)   P_MTIME="\${_kv#mtime=}" ;;
+      exports=*) P_EXPORTS="\${_kv#exports=}" ;;
+    esac
+  done
+  return 0
+}
+# key tree source asset  — size/mtime/checked are read off the file that is actually there.
+prov_write() {
+  printf 'key=%s tree=%s source=%s asset=%s size=%s mtime=%s exports=ok checked=%s by=pbuild\n' \\
+    "\$1" "\$2" "\$3" "\$4" "\$(st_size "\$ARCH")" "\$(st_mtime "\$ARCH")" \\
+    "\$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "\$PROV.tmp.\$\$"
+  mv -f "\$PROV.tmp.\$\$" "\$PROV"
+}
+
+# ---- the git shim: inject the ONE fact a lane cannot compute --------------
+SHIM="\$(mktemp -d)"
+trap 'rm -rf "\$SHIM"' EXIT
+PB_REAL_GIT="\$(command -v git 2>/dev/null || true)"
+export PB_REAL_GIT
+cat > "\$SHIM/git" <<'SHIM_EOF'
+#!/bin/sh
+# pbuild shim. Answers ONLY \`rev-parse <rev>:metatheory/Dregg2\`, from \$PB_SEED_TREE — the one
+# value a lane cannot know because it has no .git. Everything else goes to the real git.
+for _a in "\$@"; do
+  case "\$_a" in
+    *:metatheory/Dregg2)
+      if [ -n "\${PB_SEED_TREE:-}" ]; then printf '%s\n' "\$PB_SEED_TREE"; exit 0; fi ;;
+  esac
+done
+[ -n "\${PB_REAL_GIT:-}" ] || exit 1
+exec "\$PB_REAL_GIT" "\$@"
+SHIM_EOF
+chmod +x "\$SHIM/git"
+   # Probed through a FRESH shell, the way lean-seed-key.sh will reach it: a \`git\` already
+   # hashed by this shell would resolve without consulting PATH and the probe would prove nothing
+   # about the nested call that actually matters.
+if [ "\$(PB_SEED_TREE=shimprobe PATH="\$SHIM:\$PATH" bash -c 'git rev-parse HEAD:metatheory/Dregg2' 2>/dev/null)" != shimprobe ]; then
+  say "the git shim did NOT take effect on this box — abandoning the release path rather than"
+  say "letting lean-seed-key.sh fall into its file-hash fallback (a different key space, which"
+  say "can never name a published asset and would look exactly like 'nothing is published')."
+  TREES=""
+fi
+
+asset_of() { PB_SEED_TREE="\$1" PATH="\$SHIM:\$PATH" bash "\$KEYSH" --asset 2>/dev/null || true; }
+key_of()   { PB_SEED_TREE="\$1" PATH="\$SHIM:\$PATH" bash "\$KEYSH" --key   2>/dev/null || true; }
+
+# ---- 0. is what the lane already has usable? -----------------------------
+USABLE=0
+P_KEY=unknown; P_TREE=-; P_SRC=-; P_ASSET=-; P_SIZE=0; P_MTIME=0; P_EXPORTS=no
+if [ -f "\$ARCH" ]; then
+  _sz=\$(st_size "\$ARCH"); _mt=\$(st_mtime "\$ARCH")
+  prov_read "\$PROV" || true
+  if [ "\$P_EXPORTS" = ok ] && [ "\$P_SIZE" = "\$_sz" ] && [ "\$P_MTIME" = "\$_mt" ]; then
+    USABLE=1
+    say "archive present, vouched by its provenance record (skipping the ~8s export rescan)."
+  else
+    say "archive present with no valid provenance record — scanning its exports (~8s at 478 MB)…"
+    _miss="\$(missing_exports "\$ARCH")"
+    case "\$_miss" in
+      "")
+        USABLE=1; P_KEY=unknown; P_TREE=-; P_SRC=adopted
+        prov_write unknown - adopted -
+        say "ADOPTED it: every required export is present. Provenance UNKNOWN — pbuild did not"
+        say "place this file, so which Dregg2 tree it was built from cannot be established here." ;;
+      __NO_NM__)
+        USABLE=1
+        say "WARNING — no \\\`nm\\\` on this box, so the exports could NOT be checked. Treating the"
+        say "          archive as present and UNVERIFIED." ;;
+      *)
+        say "the archive in this lane is MISSING required exports — it cannot back a verified run:"
+        printf 'pbuild:     - %s\n' \$_miss
+        _bad="\$ARCH.rejected-\$(date +%s).bak"
+        mv -f "\$ARCH" "\$_bad" && rm -f "\$PROV"
+        say "moved aside to \$_bad (kept, not deleted — a .bak is gitignored here so it neither"
+        say "reaches git nor survives as a surprise input). Re-provisioning." ;;
+    esac
+  fi
+fi
+
+# Snapshot what the lane already has: the P_* globals get reused when reading a DONOR's record.
+U_KEY="\$P_KEY"; U_TREE="\$P_TREE"; U_SRC="\$P_SRC"; U_ASSET="\$P_ASSET"
+if [ "\$USABLE" = 1 ] && [ "\$REFRESH" != 1 ]; then
+  res "state=kept key=\$U_KEY tree=\$U_TREE source=\$U_SRC asset=\$U_ASSET elapsed=\$(( \$(date +%s) - T0 ))"
+  exit 0
+fi
+
+# ---- 1. the release fast path -------------------------------------------
+rung_enabled() { case ",\$SOURCES," in *",\$1,"*) return 0 ;; *) return 1 ;; esac; }
+
+from_release() {
+  rung_enabled release || { say "the 'release' rung is disabled by PBUILD_SEED_SOURCES=\$SOURCES."; return 1; }
+  [ -n "\$TREES" ] || { say "no candidate Dregg2 trees available — skipping the release path."; return 1; }
+  [ -n "\$SLUG" ]  || { say "no owner/repo for the seed release (set PBUILD_SEED_REPO)."; return 1; }
+  command -v zstd >/dev/null 2>&1 || { say "zstd is absent on this box; a seed asset cannot be decompressed."; return 1; }
+  _list=""
+  if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+    _list="\$(gh release view "\$TAG" --repo "\$SLUG" --json assets --jq '.assets[].name' 2>/dev/null || true)"
+  fi
+  if [ -z "\$_list" ]; then
+    _list="\$(curl -fsSL "https://api.github.com/repos/\$SLUG/releases/tags/\$TAG" 2>/dev/null \\
+      | grep -oE '"name": *"libdregg_lean[^"]*"' | sed 's/.*"\\(libdregg_lean[^"]*\\)"/\\1/' || true)"
+  fi
+  if [ -z "\$_list" ]; then
+    say "could not list assets of release '\$TAG' in \$SLUG (no gh auth here and no API reach)."
+    return 1
+  fi
+  # A seed decompresses to ~478 MB. /tmp on these boxes is a tmpfs, i.e. RAM — 12.4 GB of
+  # unreclaimable tmpfs inside the build cgroup was reclaimed on hbox today. Stage inside the
+  # lane's own gitignored target/ instead: it is on disk, and on the SAME filesystem as the
+  # destination, which is also what makes fetch-lean-seed.sh's final \`mv\` a real atomic rename
+  # rather than a cross-device copy another build could read half of.
+  _stage="\$LANE_DIR/target/.pbuild-seed"
+  mkdir -p "\$_stage"
+  _tried=0
+  for _t in \$TREES; do
+    _a="\$(asset_of "\$_t")"
+    [ -n "\$_a" ] || continue
+    case "\$_list" in *"\$_a"*) ;; *) continue ;; esac
+    _tried=\$((_tried + 1))
+    say "published asset found for Dregg2 tree \$_t:"
+    say "  \$_a"
+    _out="\$(PB_SEED_TREE="\$_t" PATH="\$SHIM:\$PATH" DREGG_SEED_REPO="\$SLUG" DREGG_SEED_TAG="\$TAG" \\
+             TMPDIR="\$_stage" bash "\$FETCH" --force 2>&1)"; _st=\$?
+    printf '%s\n' "\$_out" | sed 's/^/pbuild:     /'
+    if [ "\$_st" -eq 0 ] && [ -f "\$ARCH" ]; then
+      prov_write "\$(key_of "\$_t")" "\$_t" release "\$_a"
+      prov_read "\$PROV" || true
+      res "state=placed source=release key=\$P_KEY tree=\$_t asset=\$_a elapsed=\$(( \$(date +%s) - T0 ))"
+      return 0
+    fi
+    say "that fetch FAILED (status \$_st) — trying the next candidate."
+  done
+  say "no published asset for HEAD or any of \$(printf '%s\n' \$TREES | grep -c .) ancestor Dregg2 trees (\$_tried attempted)."
+  return 1
+}
+
+# ---- 2. the donor path: another lane on this same box --------------------
+from_donor() {
+  rung_enabled donor || { say "the 'donor' rung is disabled by PBUILD_SEED_SOURCES=\$SOURCES."; return 1; }
+  _cands=""
+  [ -n "\$DONOR_PREF" ] && [ -f "\$HOME/dregg-build/\$DONOR_PREF/${LEAN_ARCHIVE}" ] && _cands="\$DONOR_PREF"
+  # Newest archive first — on this box that is the closest thing to "most recently provisioned".
+  for _d in \$(ls -dt "\$HOME"/dregg-build/*/dregg-lean-ffi/libdregg_lean.a 2>/dev/null); do
+    _l="\${_d#\$HOME/dregg-build/}"; _l="\${_l%%/*}"
+    [ "\$_l" = "\$SELF_LANE" ] && continue
+    [ "\$_l" = "\$DONOR_PREF" ] && continue
+    _cands="\$_cands \$_l"
+  done
+  [ -n "\$_cands" ] || { say "no other lane on this box holds an archive to copy."; return 1; }
+  for _l in \$_cands; do
+    _src="\$HOME/dregg-build/\$_l/${LEAN_ARCHIVE}"
+    [ -f "\$_src" ] || continue
+    _sprov="\$HOME/dregg-build/\$_l/${LEAN_ARCHIVE_PROV}"
+    _dkey=unknown; _dtree=-
+    if prov_read "\$_sprov" \\
+       && [ "\$P_EXPORTS" = ok ] \\
+       && [ "\$P_SIZE" = "\$(st_size "\$_src")" ] && [ "\$P_MTIME" = "\$(st_mtime "\$_src")" ]; then
+      _dkey="\$P_KEY"; _dtree="\$P_TREE"
+      say "donor lane '\$_l' is vouched by its own provenance record."
+    else
+      say "checking donor lane '\$_l' exports…"
+      _miss="\$(missing_exports "\$_src")"
+      case "\$_miss" in
+        "") ;;
+        __NO_NM__) say "  cannot check exports here (no nm) — refusing to copy an unverifiable donor."; continue ;;
+        *) say "  donor '\$_l' is missing required exports; skipping it:"
+           printf 'pbuild:     - %s\n' \$_miss; continue ;;
+      esac
+    fi
+    say "copying the archive from lane '\$_l' …"
+    if cp --reflink=auto "\$_src" "\$ARCH.tmp.\$\$" 2>/dev/null || cp "\$_src" "\$ARCH.tmp.\$\$"; then
+      mv -f "\$ARCH.tmp.\$\$" "\$ARCH"
+      prov_write "\$_dkey" "\$_dtree" "donor:\$_l" -
+      res "state=placed source=donor:\$_l key=\$_dkey tree=\$_dtree asset=- elapsed=\$(( \$(date +%s) - T0 ))"
+      return 0
+    fi
+    rm -f "\$ARCH.tmp.\$\$"
+    say "  the copy from '\$_l' failed."
+  done
+  return 1
+}
+
+if from_release || from_donor; then exit 0; fi
+if [ "\$USABLE" = 1 ]; then
+  say "a refresh was requested but nothing better was reachable — keeping the archive already here."
+  res "state=kept key=\$U_KEY tree=\$U_TREE source=\$U_SRC asset=\$U_ASSET elapsed=\$(( \$(date +%s) - T0 ))"
+  exit 0
+fi
+# Name the asset that does NOT exist — but only if a real tree oid was injected. With no
+# candidates the shim is inert, KEYSH falls into its file-hash fallback, and the "expected asset"
+# it would print is a name from a key space no publisher ever used. Printing that as the thing to
+# go publish would send someone hunting for an asset that could never exist.
+_head_asset="-"
+if [ -n "\$TREES" ]; then _head_asset="\$(asset_of "\$(printf '%s\n' \$TREES | head -1)")"; fi
+res "state=unprovisioned head_asset=\${_head_asset:--} elapsed=\$(( \$(date +%s) - T0 ))"
+exit 7
+PROV_EOF
+)" || PROV_STATUS=$?
+  printf '%s\n' "$PROV_OUT" | grep -v '^PROVRESULT ' >&2 || true
+
+  _pb_prov_field() {
+    printf '%s\n' "$PROV_OUT" \
+      | awk -v k="$1" '/^PROVRESULT /{for(i=2;i<=NF;i++){n=index($i,"=");if(n>0&&substr($i,1,n-1)==k)v=substr($i,n+1)}} END{print v}'
+  }
+  PROV_STATE="$(_pb_prov_field state)"
+  PROV_TREE="$(_pb_prov_field tree)"
+  PROV_SOURCE="$(_pb_prov_field source)"
+  PROV_ELAPSED="$(_pb_prov_field elapsed)"
+
+  # Is the archive REQUIRED for this command? `cargo build` with no archive degrades to
+  # marshal-only and says so; a command that RUNS a binary is where the bare SIGABRT lands, and
+  # that is the false red worth refusing over. Compound shell commands are matched on the same
+  # text, so `pbuild lane 'cd x && cargo test -p y'` is caught too.
+  ARCHIVE_REQUIRED=0
+  case "${PBUILD_REQUIRE_ARCHIVE:-auto}" in
+    1) ARCHIVE_REQUIRED=1 ;;
+    0) ARCHIVE_REQUIRED=0 ;;
+    *) case "$PBUILD_CMD_DESC" in
+         *"cargo test"*|*"cargo nextest"*|*"nextest run"*|*"cargo run"*|*"cargo bench"*)
+           ARCHIVE_REQUIRED=1 ;;
+       esac ;;
+  esac
+  # An explicit operator opt-in to the unaudited path is a decision already taken; do not
+  # second-guess it, but never let it pass silently either.
+  if [ "${DREGG_ALLOW_UNAUDITED_PQ:-0}" = 1 ] && [ "$ARCHIVE_REQUIRED" = 1 ]; then
+    ARCHIVE_REQUIRED=0
+    echo "pbuild: DREGG_ALLOW_UNAUDITED_PQ=1 is set, so a missing archive will not refuse — you" >&2
+    echo "        have asked for the UNAUDITED marshal-only path and will get it." >&2
+  fi
+
+  if [ "$PROV_STATUS" -eq 0 ] && [ -n "$PROV_STATE" ]; then
+    echo "pbuild: lean archive ${PROV_STATE} in lane '${LANE}' (${PROV_SOURCE:-?}, ${PROV_ELAPSED:-?}s)" >&2
+    echo "        Dregg2 provenance: $(_pb_tree_desc "$PROV_TREE")" >&2
+    if [ -n "$(git -C "${SRC%/}" status --porcelain -- metatheory/Dregg2 2>/dev/null)" ]; then
+      echo "        ⚠ metatheory/Dregg2 is DIRTY here, and the lane received the WORKING tree while" >&2
+      echo "          a seed is keyed to a COMMITTED one — so no published asset can correspond to" >&2
+      echo "          the sources being built. dregg-lean-ffi/build.rs is the authority: it splices" >&2
+      echo "          the current slice over the seed from a warm .lake and refuses a stale one" >&2
+      echo "          under DREGG_REQUIRE_LEAN=1." >&2
+    fi
+  elif [ "$ARCHIVE_REQUIRED" = 1 ]; then
+    {
+      echo ""
+      echo "pbuild: REFUSING — lane '${LANE}' on ${HOST} has NO usable ${LEAN_ARCHIVE},"
+      echo "        and the command you gave RUNS test binaries. Without that archive the build is"
+      echo "        marshal-only and every executor-touching test dies with a BARE SIGABRT and no"
+      echo "        panic message — an ENVIRONMENT fault that reads exactly like your own bug."
+      echo "        Refusing is the whole point: nothing may be read off that log."
+      echo ""
+      echo "        WHAT IS MISSING — the platform-native seed for this checkout:"
+      _pb_head_asset="$(_pb_prov_field head_asset)"
+      if [ -n "$_pb_head_asset" ] && [ "$_pb_head_asset" != "-" ]; then
+        echo "          release ${SEED_TAG} in ${SEED_REPO:-<unknown repo>} has no asset named"
+        echo "            ${_pb_head_asset}"
+        echo "          nor one for any of the last ${SEED_ANCESTORS} commits' Dregg2 trees."
+        echo "          What each rung actually reported — release, then donor — is in the"
+        echo "          provisioner lines above; read those rather than assuming which one failed."
+      else
+        echo "          the expected asset name could not even be COMPUTED — see the provisioner"
+        echo "          output above (no git history to read Dregg2 tree oids from, or the box"
+        echo "          could not run the lane's own scripts/lean-seed-key.sh)."
+      fi
+      echo ""
+      echo "        HOW TO GET ONE (in increasing cost):"
+      echo "          • publish a seed for THIS tree — the workflow is MANUAL-ONLY since 2026-07-25:"
+      echo "              gh workflow run lean-seed.yml -f platforms=linux-x86_64"
+      echo "            it is idempotent on the content key, and ~19-25 min on hbox when it must"
+      echo "            actually build. Then re-run this pbuild; the fetch is ~23 s."
+      echo "          • commit your metatheory/Dregg2 changes first if they are uncommitted: the key"
+      echo "            is over the COMMITTED tree, so CI cannot publish a seed for a dirty worktree."
+      echo "          • seed a donor lane from source on the box (HOURS of leanc, saturates it):"
+      echo "              ssh ${HOST} 'cd dregg-build/${LANE} && ./scripts/bootstrap.sh'"
+      echo ""
+      echo "        OR STATE THE TRADE EXPLICITLY, and it will run:"
+      echo "          PBUILD_REQUIRE_ARCHIVE=0 scripts/pbuild ${LANE} $*   # no archive, tests may abort"
+      echo "          DREGG_ALLOW_UNAUDITED_PQ=1 …                          # marshal-only, unverified PQ"
+      echo ""
+    } >&2
+    exit 5
+  else
+    echo "pbuild: WARNING — no usable ${LEAN_ARCHIVE} in lane '${LANE}', and this command does not" >&2
+    echo "        run test binaries, so pbuild is not refusing. Anything that DOES run one here" >&2
+    echo "        will build marshal-only and abort with a bare SIGABRT. See the provisioner output" >&2
+    echo "        above for what was missing." >&2
+  fi
 fi
 
 # ---- forward the DREGG_* build knobs to the remote shell ------------------
