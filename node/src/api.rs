@@ -3701,7 +3701,15 @@ async fn post_submit_turn(
     let agent_bytes = dregg_cell::CellId::derive_raw(&s.cclerk.public_key().0, &default_token_id).0;
     let agent_cell = CellId(agent_bytes);
     let agent = hex_encode(&agent_bytes);
-    let previous_receipt_hash = s.cclerk.receipt_chain().last().map(|r| r.receipt_hash());
+    // The agent's OWN causal head, not the last entry in the node-wide observation
+    // log. `receipt_chain()` interleaves every agent the node has ever committed
+    // for — its documentation says so and points here — so the moment any other
+    // agent committed (the faucet grant is the first one every newcomer triggers)
+    // this stamped a foreign receipt as this agent's predecessor and the executor
+    // refused the turn with `receipt chain mismatch: expected None, got Some(..)`.
+    // That made `dregg demo` steps 3 and 4 mutually exclusive: fund the cell and
+    // the very next turn from that cell could not commit.
+    let previous_receipt_hash = s.cclerk.agent_receipt_head_hash(&agent_cell);
 
     // Build the call forest from the request's actions. Each action is signed
     // by the operator's cipherclerk over its canonical bytes
