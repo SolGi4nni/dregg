@@ -1409,33 +1409,40 @@ async fn post_tg_act(
             outcome: Outcome::Landed { receipt, ended },
             publication,
             ..
-        } => format!(
-            "Turn committed · {}",
-            publication.as_ref().map_or_else(
-                || PlayerTurnReceipt::from_landed_signed(
-                    &receipt,
-                    ended,
-                    Custody::Custodial,
-                    viewer.0.clone(),
-                )
-                .compact_text(PlayerReplaySurface::Telegram),
-                |publication| crate::game_session::public_receipt_text(
-                    publication,
-                    PlayerReplaySurface::Telegram,
-                ),
-            )
+        } => crate::Notice::with_record(
+            "Turn committed · ",
+            &publication.as_ref().map_or_else(
+                || {
+                    PlayerTurnReceipt::from_landed_signed(
+                        &receipt,
+                        ended,
+                        Custody::Custodial,
+                        viewer.0.clone(),
+                    )
+                    .compact_text(PlayerReplaySurface::Telegram)
+                },
+                |publication| {
+                    crate::game_session::public_receipt_text(
+                        publication,
+                        PlayerReplaySurface::Telegram,
+                    )
+                },
+            ),
         ),
         // The signature verified; the executor refused the move itself — the anti-ghost banner.
+        // `whole`: the reason IS the message, and the live region must carry it (`crate::Notice`).
         act_signed::SignedAdvance::Advanced {
             outcome: Outcome::Refused(why),
             ..
         } => {
             metrics::inc_turn_refused();
-            format!("Refused: {why} (nothing committed · anti-ghost).")
+            crate::Notice::whole(format!("Refused: {why} (nothing committed · anti-ghost)."))
         }
-        act_signed::SignedAdvance::CommittedButPublicationFailed { error, .. } => format!(
-            "Turn committed, but its public receipt could not be rendered ({error}). Do not retry; refresh to inspect the committed state."
-        ),
+        act_signed::SignedAdvance::CommittedButPublicationFailed { error, .. } => {
+            crate::Notice::whole(format!(
+                "Turn committed, but the public record of it could not be drawn ({error}). Do not retry; refresh to see the committed state."
+            ))
+        }
         // On the CUSTODIAL path the server signed for itself in the same atomic job, so a
         // verifier refusal is a server bug, not client input — log loudly, refuse honestly.
         act_signed::SignedAdvance::HostError(HostError::Signature(e)) => {

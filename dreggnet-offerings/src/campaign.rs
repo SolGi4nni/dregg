@@ -271,8 +271,8 @@ impl DescentCampaignOffering {
         if !session.region.is_cleared(&here) {
             // ⚑ The native label is passed through UNPREFIXED. It used to be
             // `"{location} · {label}"`, which pushed the actual verb past a chat frontend's button
-            // truncation (Discord cuts at 78 characters, and `"The Warden's Keep · ⚡ Lunge — one
-            // light, one carry slot forfeit (0/2 grip broken) · 1 light"` is well past it), so the
+            // truncation (Discord cuts at 78 characters, and `"The Warden's Keep · ⚡ Lunge · one
+            // carry slot forfeit (0/2 grip broken) · 1 light"` is still past it), so the
             // one thing a player needed to read was the one thing that got cut. The surface names
             // the location in its own title, its phase pill and its standing plaque; the buttons
             // are for the move.

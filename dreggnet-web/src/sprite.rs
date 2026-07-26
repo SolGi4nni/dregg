@@ -210,6 +210,18 @@ const GALLERY_CARDS: &[&str] = &[
 
 /// **Render the sprite gallery page** — a grid of the deterministic gear + card sprites, each a live
 /// SVG with its asset address shown (the short content-address the art is a pure function of).
+///
+/// ⚑ **THIS PAGE HAD NOWHERE TO GO.** Measured on the served page at 390px: `<main>` held 87 words
+/// and **zero** links, buttons, inputs or `<summary>`s — not one thing to press. Every other surface
+/// in the product ends by handing a reader the next move; this one described a property and stopped,
+/// so a visitor who followed `Gallery` out of the footer had the browser's back button and nothing
+/// else. The twelve pictures were the whole page and none of them was a door.
+///
+/// The fix is staging, not new machinery: the page now says what these pictures ARE FOR (they are
+/// the same renderer the catalog paints an item with, which was already true and already written
+/// here in a clause nobody reads as an invitation), and ends on the three destinations a reader who
+/// came in from a footer link plausibly wanted. No control is invented and no claim is softened —
+/// the derivation sentence is untouched, because it is the reason the page exists.
 pub fn gallery_page() -> String {
     let mut cells = String::new();
     for label in GALLERY_GEAR {
@@ -226,7 +238,18 @@ pub fn gallery_page() -> String {
          byte-identical function of that address (<code>dreggnet-sprite</code>). Same asset ⇒ same \
          art: reload and re-derive the identical SVG. The catalog paints an item's \
          <code>Tile</code> node with this same renderer.</p></div>\
-         <div class=\"sprite-grid\">{cells}</div></main>",
+         <div class=\"sprite-grid\">{cells}</div>\
+         <section class=\"deos-section tag-muted\">\
+         <h2>Where you meet these</h2>\
+         <p class=\"prose\">This is a shelf, not a game. The same renderer draws the item pictures \
+         inside the games, so a piece of gear looks the way it does because of its address and not \
+         because someone drew it that way. Nothing here is yours to collect yet.</p>\
+         <div class=\"cta-row\">\
+         <a class=\"btn btn-primary\" href=\"/offerings\">All games \
+         <span class=\"arr\" aria-hidden=\"true\">→</span></a>\
+         <a class=\"btn btn-ghost\" href=\"/descent/play\">Play The Descent</a>\
+         <a class=\"btn btn-ghost\" href=\"/guide\">How to play</a>\
+         </div></section></main>",
     );
     document(
         &format!("{} · sprite gallery", crate::PRODUCT_NAME),

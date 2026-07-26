@@ -233,7 +233,7 @@ use axum::{
     extract::{Form, Path, Query, State},
     http::{HeaderMap, StatusCode, header},
     middleware,
-    response::{Html, IntoResponse, Json, Response},
+    response::{Html, IntoResponse, Json, Redirect, Response},
     routing::{get, post},
 };
 use serde::Deserialize;
@@ -625,7 +625,7 @@ impl WebState {
     /// Re-derive the current surface + actions from the live session, tell the frontend to
     /// present them (keeping the affordance surface current for the next `collect`), render the
     /// fragment, and wrap it in a full HTML page with `notice` and the live verify status.
-    fn render_page(&self, id: &SessionId, notice: Option<&str>) -> String {
+    fn render_page(&self, id: &SessionId, notice: Option<&Notice>) -> String {
         let (surface, actions, verify) = {
             let mut sessions = self.sessions.lock().unwrap();
             let rendered = match sessions.map.get(id) {
@@ -741,7 +741,7 @@ async fn post_act(
             // `.notice.refused` styling off it, so a refusal that drops it renders under a GREEN
             // CHECKMARK. (That coupling is now belt-and-braces — `notice_html` also recognises the
             // shared vocabulary — but the prefix is the house voice and stays.)
-            format!("Refused: {}", stale_control(RELOAD_NEXT_STEP))
+            Notice::whole(format!("Refused: {}", stale_control(RELOAD_NEXT_STEP)))
         }
         Some((_sid, action, actor)) => {
             // The CORE resolves the collected action on the substrate — ONE real turn. A touch of
@@ -760,25 +760,27 @@ async fn post_act(
                 // The session was LRU-evicted between `ensure_open` and now (only reachable under a
                 // concurrent flood of other ids). An honest refusal — never a panic (that would
                 // reintroduce a DoS while closing one).
-                None => "Refused: the session is no longer live (evicted under load). Reload the \
-                         page to resume from its committed state."
-                    .to_string(),
+                None => Notice::whole(
+                    "Refused: the session is no longer live (evicted under load). Reload the \
+                     page to resume from its committed state.",
+                ),
                 Some(Outcome::Landed { receipt, ended }) => {
                     let card = PlayerTurnReceipt::from_landed(&receipt, ended)
                         .compact_text(PlayerReplaySurface::Web);
                     if ended {
-                        format!(
-                            "The Keep is cleared: the objective is met, one real turn at a time. {card}"
+                        Notice::with_record(
+                            "The Keep is cleared: the objective is met, one real turn at a time. ",
+                            &card,
                         )
                     } else {
-                        format!("Turn committed · {card}")
+                        Notice::with_record("Turn committed · ", &card)
                     }
                 }
                 // The executor is the sole referee: a crafted POST of a dimmed / ineligible
                 // affordance lands as a REAL refusal — nothing committed, the world unmoved.
                 Some(Outcome::Refused(why)) => {
                     metrics::inc_turn_refused();
-                    format!("Refused: {why} (nothing committed · anti-ghost).")
+                    Notice::whole(format!("Refused: {why} (nothing committed · anti-ghost)."))
                 }
             }
         }
@@ -815,14 +817,14 @@ async fn get_verify(
 /// Wrap an HTML fragment in the full product document: the breadcrumb, the notice banner (*what
 /// just happened*), the surface itself, and the receipt strip (*the chain, re-verified by replay,
 /// right now*).
-fn page(id: &SessionId, notice: Option<&str>, fragment: &str, verify: &VerifyReport) -> String {
+fn page(id: &SessionId, notice: Option<&Notice>, fragment: &str, verify: &VerifyReport) -> String {
     let body = format!(
         "<div class=\"crumb\"><a href=\"/offerings\">← All games</a>\
          <span class=\"sep\">·</span><strong>The Warden's Keep</strong>\
          <span class=\"sep\">·</span><span class=\"sid\">session {id}</span></div>\
          <main class=\"session\">{notice}{fragment}{receipt}</main>",
         id = esc(&id.0),
-        notice = notice_html(notice),
+        notice = notice_banner(notice),
         fragment = fragment,
         receipt = receipt_html(
             verify,
@@ -973,8 +975,17 @@ strong{font-weight:700;color:var(--fg)}
 .brand svg rect.lit{fill:var(--good)}
 .brand:hover svg rect{fill:#43608f}
 .brand:hover svg rect.lit{fill:var(--accent)}
-.topnav{display:flex;gap:.1rem;font-size:var(--t-sm)}
-.topnav a{color:var(--fg-3);text-decoration:none;padding:.35rem .6rem;border-radius:var(--r-sm);font-weight:600;transition:color .14s,background .14s}
+/* ⚑ THE GAP IS A TARGET, NOT A MARGIN. Five nav items, each a DIFFERENT destination, sat `.1rem`
+   apart: measured on a 390px phone, 1.59px between one adjacent pair and the next, four times over.
+   A thumb is ~9mm and lands on a ~44px disc; between two of these the miss does not degrade, it
+   navigates somewhere else, and the reader only finds out after the page has changed.
+     The row has NO slack to spend — measured, the nav's right edge is flush against the shell's
+   own padding (ends at 375.6px inside a 375.6px content box), so widening the gaps overflows. The
+   fix is therefore a REDISTRIBUTION, not an addition: the same pixels move out of each item's
+   horizontal padding and into the space between items. The tap target keeps its full height
+   (52.8px measured) and loses only ink it was not using. */
+.topnav{display:flex;gap:.35rem;font-size:var(--t-sm)}
+.topnav a{color:var(--fg-3);text-decoration:none;padding:.35rem .5rem;border-radius:var(--r-sm);font-weight:600;transition:color .14s,background .14s}
 .topnav a:hover{color:var(--fg);background:rgba(255,255,255,.055)}
 .topnav a[aria-current=page]{color:var(--fg);background:rgba(92,201,255,.13);box-shadow:inset 0 0 0 1px rgba(92,201,255,.24)}
 .foot{max-width:var(--shell);margin:var(--s7) auto 0;padding:var(--s5) 1.25rem var(--s6);border-top:1px solid var(--line-soft);display:flex;flex-wrap:wrap;gap:var(--s2) var(--s5);align-items:center;justify-content:space-between;font-size:var(--t-sm);color:var(--fg-3)}
@@ -982,7 +993,13 @@ strong{font-weight:700;color:var(--fg)}
 /* The lineage line ("Dragon's Arcade is the play surface of the dregg project") sits below the
    property claim rather than beside it — it is an identification, not a headline. */
 .foot .lineage{flex:1 1 100%;color:var(--fg-3);opacity:.85}
-.foot nav{display:flex;gap:var(--s4)}
+/* ⚑ SIX ITEMS IN ONE UNBREAKABLE ROW. A `display:flex` row does not wrap unless told to, so the
+   footer nav had ONE width and did not care what it was given: measured at 320px, the nav (and the
+   two paragraphs sharing its flex container) reported `right:359` against a 320px viewport, and
+   `body{overflow-x:hidden}` means the last item was CLIPPED, not scrolled — `Status` sat entirely
+   off-screen, from x=320 to x=359. The same defect class as `p.needs` above, from the other side.
+   It measured clean at 390px, which is why a phone sweep at that width never saw it. */
+.foot nav{display:flex;flex-wrap:wrap;gap:var(--s2) var(--s4)}
 .foot a{color:var(--fg-2);text-decoration:none}
 .foot a:hover{color:var(--accent)}
 .session{max-width:var(--measure);margin:0 auto;padding:var(--s5) 1.25rem 0}
@@ -1122,7 +1139,19 @@ strong{font-weight:700;color:var(--fg)}
 .binary-operation{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.55rem;align-items:center;padding:.75rem 0;border-top:1px solid var(--line-soft)}
 .binary-operation:first-of-type{margin-top:.75rem}
 .binary-operation label{grid-column:1/-1;color:var(--head);font-weight:700}
-.binary-operation .operation-disclosure{grid-column:1/-1;margin:0;color:var(--fg-3);font-size:var(--t-xs);line-height:1.55}
+/* THE DISCLOSURE, FOLDED. It is a `<details>` now, not a `<p>` (see `render_operation_uploaders`):
+   three of these paragraphs, 60 to 164 words each, used to stand between a player and the three
+   controls they describe. The summary IS the question, the same device `.receipt-gloss`, `.af-moves`
+   and `.rules-more` already use here, and the text is unchanged and still in the document. The
+   summary carries the 2.75rem tap floor because a control a thumb cannot open has only moved the
+   wall, not removed it. */
+.binary-operation .operation-disclosure{grid-column:1/-1;margin:0;color:var(--fg-3);font-size:var(--t-sm);line-height:1.55}
+.binary-operation .operation-disclosure>summary{display:flex;align-items:center;gap:.35rem;min-height:2.75rem;cursor:pointer;list-style:none;color:#c9b5ff;font-weight:650}
+.binary-operation .operation-disclosure>summary::-webkit-details-marker{display:none}
+.binary-operation .operation-disclosure>summary::before{content:"›";color:rgba(168,126,255,.75);font-size:1.1em;transition:transform .16s var(--ease)}
+.binary-operation .operation-disclosure[open]>summary::before{transform:rotate(90deg)}
+.binary-operation .operation-disclosure>summary:hover{color:#e2d6ff}
+.binary-operation .operation-disclosure p{margin:.3rem 0 .55rem;max-width:64ch}
 .binary-operation input[type=file]{min-width:0;padding:.5rem;border:1px solid var(--line);border-radius:10px;background:var(--ink-950);color:var(--fg-2);font:inherit;font-size:var(--t-xs)}
 .binary-operation button{padding:.58rem .8rem;border-radius:10px;border:1px solid rgba(168,126,255,.45);background:rgba(79,55,126,.55);color:#efe9ff;font:inherit;font-weight:700;cursor:pointer}
 .binary-operation [role=status]{grid-column:1/-1;min-height:1.2em;color:var(--fg-3);font-size:var(--t-xs);overflow-wrap:anywhere}
@@ -1584,7 +1613,10 @@ hr{border:0;border-top:1px solid var(--line-soft);margin:var(--s4) 0}
 .game-session-boundary{grid-column:1}
 .kv{grid-template-columns:repeat(auto-fit,minmax(7rem,1fr))}
 }
-@media (max-width:26rem){.topnav a{padding:.35rem .45rem}}
+/* The narrowest phones. Padding comes down again so the wider gap above still fits on one row —
+   the same trade, taken once more. Measured at 390px: gap 1.59px → 6.4px, and the row still ends
+   inside the shell's padding with room to spare. */
+@media (max-width:26rem){.topnav{gap:.4rem}.topnav a{padding:.35rem .3rem}}
 /* ═══ LIVE REGION — the fragment the progressive-enhancement script swaps ═ */
 /* The surface region a POST-act swaps in place (JS on); with JS off it is a plain container the */
 /* full server-rendered page fills — ONE render path, so no-JS and JS look identical. `:focus` is */
@@ -1623,6 +1655,35 @@ form.in-flight button[disabled]{cursor:progress}
 /* ═══ MOTION — only where it clarifies, and never against the user ═══════ */
 @media (prefers-reduced-motion:reduce){
 *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}
+}
+/* ═══ FORCED COLOURS — the headline must SURVIVE having its palette taken ═ */
+/* ⚑ THE FRONT DOOR'S H1 WAS INVISIBLE IN WINDOWS HIGH CONTRAST. `.hero h1` paints its words with a
+   gradient clipped to the glyphs (`background-clip:text` + `color:transparent`). In forced-colours
+   mode the UA overrides `color`, which would restore the text — but it does NOT override
+   `-webkit-text-fill-color`, and `background-clip:text` sets that to transparent in every WebKit
+   and Blink engine. So `color` came back and the fill stayed transparent: "Games that check their
+   own moves." rendered as a 32px band of nothing, and the page opened with no headline at all.
+   Measured before: computed `color` AND `-webkit-text-fill-color` both `rgba(0,0,0,0)`, with ZERO
+   `forced-colors` rules anywhere in the sheet.
+     This block is deliberately SMALL and only names things whose MEANING is carried by a paint the
+   mode removes. `prefers-reduced-motion` is already handled above, so the habit exists; this is the
+   sibling query, not a new practice. */
+@media (forced-colors:active){
+/* The gradient is decoration; the sentence is the page. Hand the glyphs back to the system ink. */
+.hero h1,.af-hero h1{background:none;color:CanvasText;-webkit-text-fill-color:CanvasText}
+/* A vacant board square hides its glyph and draws a dot with a background — and a background is
+   not painted in this mode, so the square went blank in both channels at once. Show the glyph. */
+.af-table .nr-well .cell.nr-void{color:CanvasText;-webkit-text-fill-color:CanvasText}
+/* Colour IS the meaning on a status chip, a banner and the record strip (good / warn / bad), and
+   the mode flattens every one of them to the same ink. A border is the one property forced colours
+   keeps, so the distinction survives as a SHAPE instead of vanishing with the hue. */
+.notice,.pill,.receipt,.verdict{border:1px solid currentColor}
+/* The brand mark is four SVG squares, one lit; `fill` is not forced, so all four read alike and the
+   mark stops saying what it says. The lit square keeps a system highlight. */
+.brand svg rect{fill:CanvasText}
+.brand svg rect.lit{fill:Highlight}
+/* A focus ring drawn in a brand colour is invisible against a forced background. */
+:focus-visible{outline:2px solid Highlight}
 }
 </style>"##;
 
@@ -1742,11 +1803,15 @@ const ENHANCE_SCRIPT: &str = r##"<script>
      replacement inside one is announced in full — up to 121 sr-only squares per move, and on the
      spectator page every 400ms). This copies TWO short lines out of the fragment into the page's one
      persistent status line: the notice's `data-say` (the server's own short form of "what just
-     happened", cut before the 64-character receipt hex nobody wants read aloud), and the surface's
-     headline state paragraph — automatafl's "turn 3 · phase: REVEAL", a market's standing. Writing to
-     a node that ALREADY EXISTS is what makes this announce at all; re-inserting a live region does
-     not reliably. Guarded on the text having CHANGED, so an SSE pulse that re-renders the same
-     position says nothing. */
+     happened"), and the surface's headline state paragraph — automatafl's "turn 3 · phase: REVEAL",
+     a market's standing. Writing to a node that ALREADY EXISTS is what makes this announce at all;
+     re-inserting a live region does not reliably. Guarded on the text having CHANGED, so an SSE
+     pulse that re-renders the same position says nothing.
+     ⚑ `data-say` is BUILT by the server beside the banner (`Notice`), never re-derived from it. It
+     used to be the banner cut at its first ` · `, which in this grammar is the separator between a
+     button's label and its cost — so a refusal announced the button a player had pressed and NOT the
+     reason it failed, while the visible banner carried the reason. Whatever the reason is, both
+     channels now carry it, because they are written from the same value. */
   function announce(root){
     var say=document.getElementById(SAY);
     if(!say||!root||!root.querySelector)return;
@@ -1899,6 +1964,14 @@ const ENHANCE_SCRIPT: &str = r##"<script>
 /// is the play surface of the `dregg` project. Repeating the pair anywhere else turns a name into
 /// noise, and dropping it entirely would leave a visitor with no way to connect the arcade to the
 /// project whose domain they are on.
+///
+/// ⚑ **`Status` USED TO POINT AT A MACHINE.** `/health` answers `{"status":"ok"}` as
+/// `application/json` for the fronting proxy's liveness check: no markup, no heading, no link back.
+/// A reader who followed the one footer item that sounds like "is this thing working" landed in a
+/// dead end and had to use the browser's back button to escape a page that is not a page. (`/status`
+/// itself 404'd, and nothing linked to it.) The probe is unchanged and still at `/health` — it is
+/// load-bearing for ops and a test pins it — and the NAV item now points at [`status_page`], which
+/// is written for a person and carries the ways out.
 pub(crate) fn footer() -> String {
     format!(
         "<footer class=\"foot\">\
@@ -1909,10 +1982,30 @@ pub(crate) fn footer() -> String {
          <a href=\"/automatafl\">Automatafl</a>\
          <a href=\"/offerings\">All games</a><a href=\"/guide\">How to play</a>\
          <a href=\"/gallery\">Gallery</a>\
-         <a href=\"/health\">Status</a></nav></footer>",
+         <a href=\"/status\">Status</a></nav></footer>",
         lineage = esc(dreggnet_catalog::arcade_lineage()),
     )
 }
+
+/// ⚑ **THE TAB ICON** — declared in every page head, so no browser ever probes `/favicon.ico` and
+/// no tab shows the blank-page glyph.
+///
+/// It is the SAME four-squares-one-lit mark the top bar draws ([`MARK`]), at the one size a favicon
+/// needs, carrying its own colours (a tab strip has no page stylesheet to read `--good` from). SVG
+/// rather than an `.ico`: it is 200 bytes, it scales to every density, and it can be `include`d in
+/// the binary instead of shipped as an asset the deploy could forget.
+const FAVICON_SVG: &str = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\">\
+     <rect width=\"24\" height=\"24\" rx=\"5\" fill=\"#080d1a\"></rect>\
+     <rect x=\"3.5\" y=\"3.5\" width=\"8\" height=\"8\" rx=\"2.2\" fill=\"#334c73\"></rect>\
+     <rect x=\"12.5\" y=\"3.5\" width=\"8\" height=\"8\" rx=\"2.2\" fill=\"#334c73\"></rect>\
+     <rect x=\"3.5\" y=\"12.5\" width=\"8\" height=\"8\" rx=\"2.2\" fill=\"#334c73\"></rect>\
+     <rect x=\"12.5\" y=\"12.5\" width=\"8\" height=\"8\" rx=\"2.2\" fill=\"#4fdca0\"></rect></svg>";
+
+/// The head markup every page carries for its tab icon. `rel="icon"` with an explicit type is what
+/// stops the automatic `/favicon.ico` request; the `apple-touch-icon` is the same mark for a
+/// home-screen tile.
+const ICON_LINKS: &str = "<link rel=\"icon\" type=\"image/svg+xml\" href=\"/favicon.svg\">\
+     <link rel=\"apple-touch-icon\" href=\"/favicon.svg\">";
 
 /// **Wrap a body fragment in the full product document** — head (charset / viewport / title / the
 /// inlined [`STYLE`]) + the shared [`topbar`] + the fragment + the [`FOOTER`]. Every served surface
@@ -1940,8 +2033,10 @@ pub(crate) fn document_with_head(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
          <meta name=\"color-scheme\" content=\"dark\">\
-         <title>{title}</title>{head_extra}{style}</head><body>{topbar}{body}{footer}{script}</body></html>",
+         <title>{title}</title>{icon}{head_extra}{style}</head>\
+         <body>{topbar}{body}{footer}{script}</body></html>",
         title = esc(title),
+        icon = ICON_LINKS,
         head_extra = head_extra,
         style = STYLE,
         topbar = topbar(active),
@@ -1984,31 +2079,106 @@ fn is_refusal_notice(notice: &str) -> bool {
         || notice.contains("Nothing was changed")
 }
 
+/// ⚑ **WHAT JUST HAPPENED, IN THE TWO REGISTERS A PAGE OWES** — the banner a reader SEES and the
+/// one line the page's single live region ([`LIVE_SAY`]) SAYS.
+///
+/// **This type exists because the two drifted, and a blind player was told the wrong thing.** The
+/// short form used to be *derived* from the banner by cutting at its first ` · `. That was a guess
+/// about a grammar in which ` · ` is the UNIVERSAL separator — it separates the verb label from its
+/// cost, the cost from the refusal reason, and the reason from the record tail — so the cut landed
+/// wherever the sentence happened to put its first one. Measured live on
+/// `/offerings/descent/session/descent-web`, pressing a guardian at the mouth of the shaft:
+///
+/// | channel | text |
+/// |---|---|
+/// | seen | `Refused: ⚔ Press the guardian · 2 light · mover: no guardian on the surface (nothing committed · anti-ghost).` |
+/// | announced | `Refused: ⚔ Press the guardian · DELVING: you stand at the mouth; 4 floors lie below.` |
+///
+/// The REASON — *no guardian on the surface* — never reached the live region at all; what did reach
+/// it was the pressed button's label glued to an unrelated status line, which reads as a statement
+/// about the game rather than as a refusal. A sighted player learned why the move failed and a blind
+/// player did not. (The same cut also truncated a LANDED turn to the bare words `Turn committed`,
+/// dropping the action name the old doc comment claimed it kept.)
+///
+/// So the short form is no longer inferred from the sentence — it is **built beside it**, at the one
+/// place where both halves are in hand, and the compiler now requires every notice to say which
+/// register it means. The only thing the live region drops is the standing record tail
+/// (`PlayerTurnReceipt::compact_text`'s 64-character executor receipt hex, the replay instruction,
+/// the attribution vocabulary) — material that is identical on every move and belongs to the page,
+/// not to the event. Everything that says *what happened and why* is carried by BOTH channels,
+/// verbatim, by construction.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Notice {
+    /// The banner text, shown in full.
+    shown: String,
+    /// The line the live region announces.
+    said: String,
+}
+
+impl Notice {
+    /// **One sentence, both channels** — the reader and the live region get the SAME words. This is
+    /// the right shape for every refusal: a refusal IS its reason, and there is nothing in it a
+    /// screen reader should be spared.
+    pub(crate) fn whole(text: impl Into<String>) -> Self {
+        let text = text.into();
+        Self {
+            said: text.clone(),
+            shown: text,
+        }
+    }
+
+    /// **An event plus the standing record grammar.** `head` is what just happened (announced AND
+    /// shown); `tail` is the record tail that follows it on screen — the receipt id, the session
+    /// disposition, the replay instruction, the attribution note. The tail is the same on every
+    /// move, so announcing it per move is noise; the head is the news.
+    ///
+    /// A trailing ` · ` on `head` is the grammar's own join to the tail and is trimmed off the
+    /// announced line, so it reads as a finished clause rather than a dangling separator.
+    pub(crate) fn with_record(head: impl Into<String>, tail: &str) -> Self {
+        let head = head.into();
+        let said = head
+            .trim_end()
+            .trim_end_matches('·')
+            .trim_end()
+            .to_string();
+        Self {
+            shown: format!("{head}{tail}"),
+            said,
+        }
+    }
+
+    /// The banner text — what a reader sees.
+    pub(crate) fn shown(&self) -> &str {
+        &self.shown
+    }
+}
+
 /// The notice banner — *what just happened*. A refusal is honest and red; a landed turn is green.
 /// The `✓`/`✕` glyph is drawn by CSS (`.notice::before`), so the text stays clean for a reader.
 ///
-/// `data-say` is the SHORT form, for [`LIVE_SAY`]: the banner itself carries
-/// `PlayerTurnReceipt::compact_text`, whose second clause is a 64-character executor receipt hex, and
-/// a screen reader spelling out 64 hex digits after every move is not an announcement. The cut is the
-/// receipt grammar's own first ` · ` separator, so the announced line is the clause that says what
-/// happened ("Turn committed — Select (3,1)") and the full text stays on screen, verbatim, for anyone
-/// who wants the id. A refusal has no separator and is announced whole — it is already one sentence.
-fn notice_html(notice: Option<&str>) -> String {
+/// `data-say` carries [`Notice::said`](Notice) for [`LIVE_SAY`]; see [`Notice`] for why it is
+/// carried rather than re-derived.
+fn notice_banner(notice: Option<&Notice>) -> String {
     notice
         .map(|n| {
-            let cls = if is_refusal_notice(n) {
+            let cls = if is_refusal_notice(&n.shown) {
                 "notice refused"
             } else {
                 "notice ok"
             };
-            let say = n.split(" · ").next().unwrap_or(n);
             format!(
                 "<div class=\"{cls}\" role=\"status\" data-say=\"{say}\">{}</div>",
-                esc(n),
-                say = esc(say),
+                esc(&n.shown),
+                say = esc(&n.said),
             )
         })
         .unwrap_or_default()
+}
+
+/// [`notice_banner`] for a notice that is ONE sentence — the identity, single-surface, single-page
+/// refusals (an identity claim, a device enrolment, an unlink). Both channels carry it whole.
+fn notice_html(notice: Option<&str>) -> String {
+    notice_banner(notice.map(Notice::whole).as_ref())
 }
 
 /// The receipt strip — the product's signature line, in the mono voice: the chain, re-verified by
@@ -3357,7 +3527,7 @@ async fn post_offering_act(
             &state,
             &key,
             &sid,
-            Some(&format!("Refused: {why}.")),
+            Some(&Notice::whole(format!("Refused: {why}."))),
             &actor,
             wants_fragment(&headers),
         ))
@@ -3613,14 +3783,13 @@ async fn post_offering_act(
         CatalogAct::Advanced {
             outcome: Outcome::Landed { receipt, ended },
             did,
-        } => {
+        } => Notice::with_record(
             format!(
-                "Turn committed · {}{}",
-                named_act(did.as_deref(), &form.turn),
-                PlayerTurnReceipt::from_landed(&receipt, ended)
-                    .compact_text(PlayerReplaySurface::Web)
-            )
-        }
+                "Turn committed · {}",
+                named_act(did.as_deref(), &form.turn)
+            ),
+            &PlayerTurnReceipt::from_landed(&receipt, ended).compact_text(PlayerReplaySurface::Web),
+        ),
         CatalogAct::Advanced {
             outcome: Outcome::Refused(why),
             did,
@@ -3628,45 +3797,56 @@ async fn post_offering_act(
             metrics::inc_turn_refused();
             // A REFUSAL names the action too. "Refused: not your turn" left a reader guessing which
             // of four buttons they had just pressed.
-            format!(
+            //
+            // ⚑ AND IT IS `whole`, NOT `with_record`: a refusal has no record tail, and the REASON
+            // is the entire content of the message. This is the notice whose short form used to be
+            // cut back to the button label alone (see [`Notice`]), which is how a blind player was
+            // told "Refused: ⚔ Press the guardian" and never told why.
+            Notice::whole(format!(
                 "Refused: {}{why} (nothing committed · anti-ghost).",
                 named_act(did.as_deref(), &form.turn)
-            )
+            ))
         }
         CatalogAct::AdvancedGame {
             outcome: Outcome::Landed { .. },
             publication: Some(publication),
             did,
-        } => format!(
-            "Turn committed · {}{}",
-            named_act(did.as_deref(), &form.turn),
-            game_session::public_receipt_text(&publication, PlayerReplaySurface::Web)
+        } => Notice::with_record(
+            format!(
+                "Turn committed · {}",
+                named_act(did.as_deref(), &form.turn)
+            ),
+            &game_session::public_receipt_text(&publication, PlayerReplaySurface::Web),
         ),
         CatalogAct::AdvancedGame {
             outcome: Outcome::Landed { .. },
             publication: None,
             ..
-        } => "Refused: a landed game turn lacked its public receipt projection.".to_string(),
+        } => Notice::whole(
+            "Refused: the turn landed, but this page could not build the public record of it.",
+        ),
         CatalogAct::AdvancedGame {
             outcome: Outcome::Refused(why),
             did,
             ..
         } => {
             metrics::inc_turn_refused();
-            format!(
+            Notice::whole(format!(
                 "Refused: {}{why} (nothing committed · anti-ghost).",
                 named_act(did.as_deref(), &form.turn)
-            )
+            ))
         }
-        CatalogAct::CommittedButPublicationFailed { error, .. } => format!(
-            "Turn committed, but its public receipt could not be rendered ({error}). Do not retry; refresh to inspect the committed state."
-        ),
+        CatalogAct::CommittedButPublicationFailed { error, .. } => Notice::whole(format!(
+            "Turn committed, but the public record of it could not be drawn ({error}). Do not retry; refresh to see the committed state."
+        )),
         // ⚑ THE SHARED STALE-CONTROL SENTENCE. This arm used to be a full stop — "Refused: that
         // affordance is not on the current surface." — with no statement that nothing had been played
         // and no next step, which is the same dead end Telegram diagnosed and fixed for itself while
         // this sibling kept it. One sentence now, from `dreggnet_offerings::refusal`.
-        CatalogAct::NotOffered => format!("Refused: {}", stale_control(RELOAD_NEXT_STEP)),
-        CatalogAct::Missing => "Refused: no such offering session.".to_string(),
+        CatalogAct::NotOffered => {
+            Notice::whole(format!("Refused: {}", stale_control(RELOAD_NEXT_STEP)))
+        }
+        CatalogAct::Missing => Notice::whole("Refused: no such offering session."),
         // The route's own `reason` is wire vocabulary (a spine error naming form fields and
         // authority epochs), so it goes to the operator log at the refusal site
         // ([`refused_game_route_response`]) and the reader gets the same sentence as every other
@@ -3678,7 +3858,7 @@ async fn post_offering_act(
                 "a presented game route was stale or invalid on the act path; the player was shown \
                  the shared stale-control sentence and nothing was committed"
             );
-            format!("Refused: {}", stale_control(RELOAD_NEXT_STEP))
+            Notice::whole(format!("Refused: {}", stale_control(RELOAD_NEXT_STEP)))
         }
     };
 
@@ -4004,7 +4184,7 @@ fn offering_surface_fragment(
     state: &CatalogState,
     key: &str,
     id: &SessionId,
-    notice: Option<&str>,
+    notice: Option<&Notice>,
     viewer: &DreggIdentity,
 ) -> Option<String> {
     let rendered = if game_kind(key).is_some() {
@@ -4119,7 +4299,7 @@ fn offering_surface_fragment(
     // else to the shared host, so this reads the same log the turn was written into.
     let seat_locked =
         table_seats::lock_for_key(key).is_some_and(|lock| lock.is_locked_table(&id.0));
-    let keep = if !seat_locked && notice.is_some_and(|n| n.starts_with("Turn committed")) {
+    let keep = if !seat_locked && notice.is_some_and(|n| n.shown().starts_with("Turn committed")) {
         let k = key.to_string();
         let sid = id.clone();
         let me = viewer.clone();
@@ -4134,7 +4314,7 @@ fn offering_surface_fragment(
     };
     Some(format!(
         "{notice}{keep}{forms}{operation_forms}{receipt}",
-        notice = notice_html(notice),
+        notice = notice_banner(notice),
         keep = keep,
         forms = forms,
         operation_forms = operation_forms,
@@ -4181,6 +4361,39 @@ fn keep_this_run_offer(my_landed_moves: usize) -> String {
 /// the normal playable page. The browser never decodes the file: it sends the
 /// exact bytes and advertised media type to the same generic route used by the
 /// Telegram Mini App and Discord Activity wrappers.
+///
+/// ⚑ **THREE BUTTONS WITH THE SAME NAME, BEHIND 340 WORDS.** On the native-descent session page
+/// with all three private operations offered, this section rendered:
+///
+/// > Verify a shielded party preference · *68 words* · Maximum canonical input: 8388608 bytes. ·
+/// > \[file\] · **Verify & apply**
+/// > Verify a shielded raid assignment · *60 words* · Maximum canonical input: 8388608 bytes. ·
+/// > \[file\] · **Verify & apply**
+/// > Verify a private shuffle or deal · *164 words* · Maximum canonical input: 8388608 bytes. ·
+/// > \[file\] · **Verify & apply**
+///
+/// The labels differed; the CONTROLS did not. `Verify & apply` was a literal in this loop, so N
+/// descriptors produced N byte-identical buttons — and a screen-reader user tabbing the page heard
+/// the same three words three times with no way to tell which operation each would fire. Between a
+/// reader and those buttons sat the three verbatim disclosures, and between each label and its own
+/// control sat that operation's whole paragraph, so the page read as a wall rather than as three
+/// choices.
+///
+/// **Two changes, both staging.** Nothing is deleted and no control is invented:
+///
+/// * The button NAMES ITS OPERATION ([`game_session::public_operation_noun`], derived from the same
+///   stable operation name the label already uses, so the two cannot disagree). It still opens with
+///   the exact words `Verify & apply`, which is the house's verb for this act and what the goldens
+///   pin.
+/// * The disclosure MOVES behind a `<details>` whose summary is the question it answers — the same
+///   device `.receipt-gloss` and `.af-moves` already use on this product. It is not shortened and
+///   not softened: `BinaryOperationDescriptor::disclosure` is the security statement every renderer
+///   must show VERBATIM, and it still is, in the document, in full. A `<details>` keeps every word
+///   in the page text, so a screen reader, a `curl` and a page-text search all still find it; what
+///   it stops doing is standing between a player and the control it describes.
+///
+/// The byte ceiling moves in there too, and gains its human unit beside the exact figure rather
+/// than instead of it — `8388608 bytes (8 MiB)`, not one or the other.
 #[cfg(feature = "hosted-binary-operations")]
 fn render_operation_uploaders(
     operations: &[BinaryOperationDescriptor],
@@ -4192,21 +4405,26 @@ fn render_operation_uploaders(
     }
     let mut out = String::from(
         "<section class=\"operation-uploader\"><h2>Proof-bearing operations</h2>\
-         <p class=\"prose\">Submit a canonical receipt produced by your private client. \
-         Verification happens before the game state changes.</p>",
+         <p class=\"prose\">Submit the proof file your own client produced. It is checked \
+         before anything in the game changes.</p>",
     );
     for (index, operation) in operations.iter().enumerate() {
         let status_id = format!("operation-status-{index}");
+        let noun = game_session::public_operation_noun(&operation.name);
         out.push_str(&format!(
             "<form class=\"binary-operation\" method=\"post\" \
              action=\"/offerings/{key}/session/{id}/operations/{name}\" \
              data-media=\"{media}\" data-session-action=\"private-operation\" \
              data-private-boundary=\"opaque-upload\">\
              <label for=\"operation-file-{index}\">{title}</label>\
-             <p class=\"operation-disclosure\">{disclosure} Maximum canonical input: {max} bytes.</p>\
+             <details class=\"operation-disclosure\">\
+             <summary>What this checks, and what it never sees</summary>\
+             <p>{disclosure}</p>\
+             <p>Largest file this will read: {max} bytes{human}. Anything bigger is \
+             refused before it is opened.</p></details>\
              <input id=\"operation-file-{index}\" type=\"file\" required \
              accept=\"{media}\" aria-describedby=\"{status_id}\">\
-             <button type=\"submit\">Verify &amp; apply</button>\
+             <button type=\"submit\">Verify &amp; apply this {noun}</button>\
              <span id=\"{status_id}\" role=\"status\" aria-live=\"polite\"></span>\
              </form>",
             key = esc(key),
@@ -4216,10 +4434,34 @@ fn render_operation_uploaders(
             title = esc(game_session::public_operation_title(&operation.name)),
             disclosure = esc(&operation.disclosure),
             max = operation.max_input_bytes,
+            human = human_byte_gloss(operation.max_input_bytes),
+            noun = esc(noun),
         ));
     }
     out.push_str("</section>");
     out
+}
+
+/// ⚑ **A HUMAN UNIT BESIDE AN EXACT FIGURE, OR NOTHING** — never a rounded one INSTEAD of it.
+///
+/// The byte ceiling is the real contract and it stays, in full, always. This adds the scale a reader
+/// can hold (`8388608 bytes (8 MiB)`), and it is deliberately allowed to add NOTHING: the first cut
+/// of this said `(0 MiB)` next to the 33-byte commitment and the 16384-byte narration ceiling, which
+/// is not a simplification of the number, it is a false one. Where the byte count is already the
+/// legible figure, this returns the empty string and the sentence reads exactly as it did.
+#[cfg(feature = "hosted-binary-operations")]
+fn human_byte_gloss(bytes: usize) -> String {
+    const KIB: usize = 1024;
+    const MIB: usize = 1024 * 1024;
+    // Only whole units. A ceiling is a round number in practice, and "7.8 MiB" beside "8191999
+    // bytes" earns a reader nothing the exact figure did not already give them.
+    if bytes >= MIB && bytes % MIB == 0 {
+        format!("&nbsp;({}&nbsp;MiB)", bytes / MIB)
+    } else if bytes >= KIB && bytes % KIB == 0 {
+        format!("&nbsp;({}&nbsp;KiB)", bytes / KIB)
+    } else {
+        String::new()
+    }
 }
 
 /// The offering title (registered `Name — tagline`), or the key if none is registered.
@@ -4240,7 +4482,7 @@ fn render_offering_page(
     state: &CatalogState,
     key: &str,
     id: &SessionId,
-    notice: Option<&str>,
+    notice: Option<&Notice>,
     viewer: &DreggIdentity,
 ) -> String {
     let Some(surface) = offering_surface_fragment(state, key, id, notice, viewer) else {
@@ -4250,7 +4492,7 @@ fn render_offering_page(
         // drop the refusal and tell the player their table never existed, which is both wrong and
         // the opposite of the thing the archive exists to say.
         return match notice {
-            Some(said) => retired_session_page(key, &id.0, said),
+            Some(said) => retired_session_page(key, &id.0, said.shown()),
             None => page_missing(id),
         };
     };
@@ -4266,7 +4508,7 @@ fn render_offering_response(
     state: &CatalogState,
     key: &str,
     id: &SessionId,
-    notice: Option<&str>,
+    notice: Option<&Notice>,
     viewer: &DreggIdentity,
     fragment_only: bool,
 ) -> String {
@@ -7258,6 +7500,18 @@ fn make_app_parts_with_catalog(
     let app = Router::new()
         .route("/", get(index))
         .route("/health", get(health))
+        // THE HUMAN HALF OF `/health`. The probe above is for the fronting proxy; this is the page
+        // the footer's `Status` item points at, written for the person who clicked it.
+        .route("/status", get(status))
+        // THE TAB ICON. `/favicon.svg` is the mark; `/favicon.ico` REDIRECTS to it rather than
+        // serving SVG bytes under an `.ico` name, so a client that asks for the legacy path gets an
+        // honest content type instead of a mislabelled body. Neither existed, so every tab on the
+        // product showed the blank-page glyph.
+        .route("/favicon.svg", get(favicon))
+        .route(
+            "/favicon.ico",
+            get(|| async { Redirect::permanent("/favicon.svg") }),
+        )
         .merge(router(web))
         .merge(catalog_router(Arc::clone(&catalog)))
         .merge(descent_router(Arc::clone(&descent)))
@@ -7491,8 +7745,66 @@ fn resolve_node_target_off_runtime() -> dregg_node_target::NodeTarget {
 
 /// `GET /health` — a liveness probe. 200 `{"status":"ok"}`; the fronting Caddy / an uptime check
 /// hits it to know the server is up.
+///
+/// ⚑ A PROBE, AND ONLY A PROBE. Nothing a person navigates to points here any more: the footer's
+/// `Status` item used to, and `application/json` with no markup and no link out is a dead end for a
+/// reader. [`status`] is the page; this stays the machine's answer, byte for byte.
 async fn health() -> impl IntoResponse {
     Json(serde_json::json!({ "status": "ok" }))
+}
+
+/// `GET /favicon.svg` — the tab icon ([`FAVICON_SVG`]), served with a long cache: the mark is part
+/// of the binary, so a new icon can only arrive with a new deploy.
+async fn favicon() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "image/svg+xml; charset=utf-8"),
+            (header::CACHE_CONTROL, "public, max-age=604800"),
+        ],
+        FAVICON_SVG,
+    )
+}
+
+/// `GET /status` — **the page a person gets when they click `Status`.**
+///
+/// It says only what it can prove on the spot. That it loaded is the whole of the liveness claim,
+/// and the page says so in those words rather than dressing a tautology up as a dashboard. What it
+/// adds is the thing a reader actually wants next: "up" is not a promise that any past game was
+/// played fairly, and the way to check THAT is a link on the game itself, named here so it is
+/// findable from the word a worried player reaches for.
+///
+/// Deliberately absent: which integrations this deployment has configured, whether a store is
+/// attached, and every counter. Some of that is ops topology that is not a visitor's to read, and
+/// the rest cannot be stated honestly from here — the durability decisions are made once at boot and
+/// have a fallback path, so a page that re-read the environment would confidently report durable
+/// while the process was running in RAM. A status page that can be wrong is worse than no page.
+async fn status() -> Html<String> {
+    Html(document(
+        &format!("{PRODUCT_NAME} · status"),
+        "",
+        "<main class=\"catalog\"><div class=\"page-head\">\
+         <p class=\"eyebrow\">Service status</p>\
+         <h1>Up. This page came from the server that runs the games.</h1>\
+         <p class=\"deck\">There is no cluster and no third party between you and a table: one \
+         server holds the games, and it just answered you.</p></div>\
+         <section class=\"deos-section tag-good\"><h2>What &ldquo;up&rdquo; does and does not mean \
+         here</h2>\
+         <p class=\"prose\">Up means the games are reachable and a move you make now will be \
+         re-run against the rules before it is recorded. It is not a claim about a game that is \
+         already over.</p>\
+         <p class=\"prose\">You do not have to take our word for that one either. Every table and \
+         every run carries a <strong>Replay-verify</strong> link under the board, which re-plays \
+         the whole session from its first move and tells you whether anything changed. That link \
+         is the real status page for a game you care about.</p></section>\
+         <section class=\"deos-section tag-muted\"><h2>For an uptime checker</h2>\
+         <p class=\"prose\"><code>GET /health</code> answers <code>{&quot;status&quot;:&quot;ok&quot;}</code>. \
+         It is JSON for a machine, not a page, so it is not linked in the navigation.</p></section>\
+         <div class=\"cta-row\">\
+         <a class=\"btn btn-primary\" href=\"/offerings\">All games \
+         <span class=\"arr\" aria-hidden=\"true\">→</span></a>\
+         <a class=\"btn btn-ghost\" href=\"/guide\">How to play</a>\
+         <a class=\"btn btn-ghost\" href=\"/\">Front page</a></div></main>",
+    ))
 }
 
 /// **A still of a real automatafl mid-turn**, painted by the SAME [`automatafl_board`] painter the

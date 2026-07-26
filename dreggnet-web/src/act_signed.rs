@@ -720,33 +720,37 @@ pub async fn post_offering_act_signed(
             outcome: Outcome::Landed { receipt, ended },
             publication,
             ..
-        } => format!(
-            "Turn committed · {did}{}",
-            publication.as_ref().map_or_else(
-                || PlayerTurnReceipt::from_landed_signed(
-                    &receipt,
-                    ended,
-                    Custody::UserHeld,
-                    verified_actor.0.clone(),
-                )
-                .compact_text(PlayerReplaySurface::Web),
-                |publication| crate::game_session::public_receipt_text(
-                    publication,
-                    PlayerReplaySurface::Web,
-                ),
-            )
+        } => crate::Notice::with_record(
+            format!("Turn committed · {did}"),
+            &publication.as_ref().map_or_else(
+                || {
+                    PlayerTurnReceipt::from_landed_signed(
+                        &receipt,
+                        ended,
+                        Custody::UserHeld,
+                        verified_actor.0.clone(),
+                    )
+                    .compact_text(PlayerReplaySurface::Web)
+                },
+                |publication| {
+                    crate::game_session::public_receipt_text(publication, PlayerReplaySurface::Web)
+                },
+            ),
         ),
         // The signature VERIFIED; the executor refused the move itself — the same anti-ghost
-        // banner (and status) the unsigned twin gives a refused move.
+        // banner (and status) the unsigned twin gives a refused move. `whole`, so the live region
+        // announces the REASON and not just the pressed control (see `crate::Notice`).
         SignedAdvance::Advanced {
             outcome: Outcome::Refused(why),
             ..
-        } => {
-            format!("Refused: {did}{why} (nothing committed · anti-ghost).")
+        } => crate::Notice::whole(format!(
+            "Refused: {did}{why} (nothing committed · anti-ghost)."
+        )),
+        SignedAdvance::CommittedButPublicationFailed { error, .. } => {
+            crate::Notice::whole(format!(
+                "Turn committed, but the public record card for it could not be drawn: {error}. Do not retry this command."
+            ))
         }
-        SignedAdvance::CommittedButPublicationFailed { error, .. } => format!(
-            "Turn committed, but its public receipt card could not be rendered: {error}. Do not retry this command."
-        ),
         // A malformed KEY is a request-shape problem (the envelope never named a verifiable
         // signer) — 400, like every other malformation.
         SignedAdvance::HostError(HostError::Signature(e @ SignedError::MalformedKey)) => {

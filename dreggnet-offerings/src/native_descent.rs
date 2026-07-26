@@ -896,9 +896,22 @@ impl NativeDescentOffering {
             // The same wound for half the light. The label names BOTH prices, because the
             // second one is the whole decision: a forfeited carry slot is invisible until
             // the bottom, where capacity is `CAP - FLOORS` and the prize needs all of it.
+            //
+            // ⚑ AND IT NAMED THE FIRST PRICE TWICE, DIFFERENTLY. The authored prose opened with
+            // "one light, " while `light_cost` appends the same fact as "· 1 light" to EVERY verb
+            // in this table, so the rendered control read `⚡ Lunge · one light, one carry slot
+            // forfeit (0/2 grip broken) · 1 light` — one button quoting its own cost twice, in two
+            // spellings, with the carry-slot clause sandwiched between them. A player comparing it
+            // with the press above ("⚔ Press the guardian · 2 light") has to work out whether
+            // "one light" and "1 light" are one charge or two.
+            // The light price is not dropped, it MOVES to the one place every other verb keeps it:
+            // the `light_cost` tail. The carry-slot forfeit and its `harm/HARMCAP` counter — the
+            // half no other verb has and the half the comment above exists for — stay exactly as
+            // they were. Each price is now stated once. (This also buys back 12 characters against
+            // the 78-character Discord truncation `campaign.rs` measures on this very string.)
             Action::new(
                 format!(
-                    "⚡ Lunge · one light, one carry slot forfeit ({}/{} grip broken){}",
+                    "⚡ Lunge · one carry slot forfeit ({}/{} grip broken){}",
                     sim.harm,
                     HARMCAP,
                     light_cost(LIGHT_LUNGE)

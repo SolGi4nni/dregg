@@ -129,6 +129,13 @@ pub(crate) fn session_rail(key: &str, id: &str) -> Option<String> {
 
 /// A descriptor title is public metadata, so it must not carry session-local
 /// actor/head material. Labels are derived only from the stable operation name.
+///
+/// ⚑ **THE SHUFFLE ARM USED TO COLLAPSE THREE OPERATIONS INTO ONE NAME.** The dungeon offers the
+/// fair deal as three ordered, separately-uploaded stages — `…fair-shuffle.commit.v1`,
+/// `….prove.v1`, `….reveal.v1` — and all three matched `contains("shuffle")` first, so the session
+/// page rendered *Verify a private shuffle or deal* three times over three different controls that
+/// take three different files, in an order that matters. Measured on the served `dungeon` session
+/// page: seven uploaders, three of them named identically. The stage is now part of the name.
 pub fn public_operation_title(operation: &str) -> &'static str {
     let lower = operation.to_ascii_lowercase();
     if lower.contains("preference") || lower.contains("ballot") {
@@ -136,15 +143,70 @@ pub fn public_operation_title(operation: &str) -> &'static str {
     } else if lower.contains("raid") || lower.contains("assignment") {
         "Verify a shielded raid assignment"
     } else if lower.contains("shuffle") || lower.contains("deal") {
-        "Verify a private shuffle or deal"
+        // Step 1 seals each seat's pick, step 2 proves the deal was not biased, step 3 opens one
+        // card. Checked before the generic shuffle name so a staged upload is never mislabelled.
+        if lower.contains("commit") {
+            "Seal your card for the shuffle (step 1 of 3)"
+        } else if lower.contains("prove") {
+            "Verify the shuffle was fair (step 2 of 3)"
+        } else if lower.contains("reveal") || lower.contains("open") {
+            "Open the dealt card (step 3 of 3)"
+        } else {
+            "Verify a private shuffle or deal"
+        }
     } else if lower.contains("quest") {
         "Verify a shielded quest transition"
     } else if lower.contains("settle") || lower.contains("clearing") {
         "Verify a private clearing"
     } else if lower.contains("amm") || lower.contains("swap") {
         "Verify a shielded pool update"
+    } else if lower.contains("narrat") || lower.contains("chutes") {
+        // Not a proof at all: a paid model narration the player opted into. The generic
+        // "proof-bearing" fallback said the one thing about it that is not true.
+        "Verify a narrated turn"
     } else {
         "Verify a proof-bearing operation"
+    }
+}
+
+/// ⚑ **THE SAME CLASSIFICATION, AS A NOUN** — what a control that fires this operation should call
+/// the thing it is about.
+///
+/// It exists because three uploaders on one session page carried three byte-identical buttons
+/// (`Verify & apply`), so the only thing distinguishing them was a `<label>` bound to the FILE INPUT
+/// rather than to the button, and a tab-by-tab reader heard the same three words three times.
+///
+/// It is deliberately the same `if` ladder over the same stable operation name as
+/// [`public_operation_title`], arm for arm, rather than a second opinion derived some other way: a
+/// button that named a different operation from the label above it would be worse than a button
+/// that named none. Same input, same branch, same answer. Public metadata only — no session-local
+/// actor or head material, for the reason stated on the title above.
+pub fn public_operation_noun(operation: &str) -> &'static str {
+    let lower = operation.to_ascii_lowercase();
+    if lower.contains("preference") || lower.contains("ballot") {
+        "party preference"
+    } else if lower.contains("raid") || lower.contains("assignment") {
+        "raid assignment"
+    } else if lower.contains("shuffle") || lower.contains("deal") {
+        if lower.contains("commit") {
+            "sealed card"
+        } else if lower.contains("prove") {
+            "shuffle proof"
+        } else if lower.contains("reveal") || lower.contains("open") {
+            "card opening"
+        } else {
+            "shuffle or deal"
+        }
+    } else if lower.contains("quest") {
+        "quest transition"
+    } else if lower.contains("settle") || lower.contains("clearing") {
+        "clearing"
+    } else if lower.contains("amm") || lower.contains("swap") {
+        "pool update"
+    } else if lower.contains("narrat") || lower.contains("chutes") {
+        "narrated turn"
+    } else {
+        "proof"
     }
 }
 
