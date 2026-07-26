@@ -298,6 +298,9 @@ fn measure(p: &Point, reps: usize) -> (f64, usize, usize, usize, usize) {
 /// `/usr/bin/time -p` and subtract the `PACKED_REPS=0` baseline. `PACKED_REPS=0` still runs
 /// the prove+verify witness leg, so the baseline itself proves the timed object is satisfiable.
 #[test]
+#[ignore = "MEASUREMENT DRIVER, not a test: with PACKED_ONE unset it returns immediately and \
+            reported PASSED, a green that asserted nothing. Ignored so it reports SKIPPED instead. \
+            Run it as PACKED_ONE=W:16:4 PACKED_REPS=20 … -- --ignored --exact packed_one_point."]
 fn packed_one_point() {
     let Ok(spec) = std::env::var("PACKED_ONE") else {
         return;

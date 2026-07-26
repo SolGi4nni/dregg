@@ -355,6 +355,9 @@ fn shape_a_vs_b_head_to_head() {
 /// User CPU time is charged only when this process actually runs, so a busy box inflates WALL
 /// time, not this.
 #[test]
+#[ignore = "MEASUREMENT DRIVER, not a test: with MEGAFAST_ONE unset it returns immediately and \
+            reported PASSED, a green that asserted nothing. Ignored so it reports SKIPPED instead. \
+            Run it as MEGAFAST_ONE=A:4:16 MEGAFAST_REPS=20 … -- --ignored --exact one_point."]
 fn one_point() {
     let Ok(spec) = std::env::var("MEGAFAST_ONE") else {
         return;

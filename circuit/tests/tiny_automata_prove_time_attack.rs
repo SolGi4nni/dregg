@@ -647,6 +647,9 @@ fn grid_measure(label: &str, json: &str, k: usize, n: usize, reps: usize) {
 /// + the one witness prove/verify) from the user time. `ATTACK_REPS=0` still runs the WITNESS
 /// LEG, so the baseline is itself proof that the timed object is satisfiable.
 #[test]
+#[ignore = "MEASUREMENT DRIVER, not a test: with ATTACK_ONE unset it returns immediately and \
+            reported PASSED, a green that asserted nothing. Ignored so it reports SKIPPED instead. \
+            Run it as ATTACK_ONE=A:4:16:1:100:0 … -- --ignored --exact attack_one_point."]
 fn attack_one_point() {
     let Ok(spec) = std::env::var("ATTACK_ONE") else {
         return;
