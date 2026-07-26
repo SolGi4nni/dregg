@@ -1,5 +1,33 @@
 /-
 
+⚑ THE DEPLOYED CEILING — READ THIS ALONGSIDE THE COST LAW BELOW. Established by reading
+`circuit/src/descriptor_ir2.rs`, not by measurement:
+
+  const MAX_EXACT_PUBLIC_ROWS  : usize = 128     (:378)
+  const MAX_EXACT_PUBLIC_CELLS : usize = 4_096   (:380)
+  enforced at :1487 as `rows.len() > MAX_EXACT_PUBLIC_ROWS || rows.len()*arity > MAX_EXACT_PUBLIC_CELLS`
+
+The check is **PER TABLE** — there is no aggregate cap across tables and no instance-count cap. The
+run table has arity 3 (current, symbol, next), so the CELL bound would allow 1365 rows and the ROW
+bound binds first. Therefore:
+
+  * product-first : ONE run table of |w| rows      ⇒ **|w| ≤ 128, for any k**
+  * parallel lanes: k run tables of |w| rows EACH  ⇒ **|w| ≤ 128, also independent of k**
+
+⇒ THE CEILING IS ON WORD LENGTH, NOT ON k. (An earlier reading of mine divided the 128 by k and
+concluded "32 symbols at k=4" — WRONG, because the cap is per-table; corrected here before it
+travelled.) The composition law below is unaffected — both routes cap identically — but the honest
+statement of what SHIPS is: **the deployed run-table carrier cannot prove a word longer than 128
+symbols at all.**
+
+⚑ AND THAT IS WHY PER-ROW PACKING IS A CAPABILITY UNLOCK, NOT MERELY A SPEEDUP. With s automaton
+steps per row an n-symbol word occupies ⌈n/s⌉ rows, so the ceiling becomes n ≤ 128·s:
+    s = 1 → 128    s = 2 → 256    s = 4 → 512    s = 8 → 1024    s = 16 → 2048
+i.e. s = 8 is exactly what would bring the n = 1024 point into reach for the shipping shape. Note
+that the widely-quoted n = 1024 timing was measured on the SHARED-TABLE shape (2 instances, a
+`sem:"range"` table), which is NOT the deployed carrier and is not subject to this cap — see the
+retraction at the top of `circuit/tests/tiny_automata_prove_time_attack.rs`.
+
 ⚠ SCOPE OF THE COST LAW BELOW (an adversarial verify checked this; read before quoting §7).
 
 WITNESSED (a satisfying `Satisfied2Public` trace exists, so the cost is the cost of a PROVABLE object):
