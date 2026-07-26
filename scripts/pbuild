@@ -382,7 +382,19 @@ fi
 # `SWARM_MEM_MAX=64G scripts/hbuild …` was consumed by the local process and the
 # remote build ran at the 96G default with the caller believing otherwise. A lane
 # could SEE the cap was the problem and still have no way to change it.
-PBUILD_ENV_ALLOW_RE='^(DREGG_[A-Z0-9_]*|SWARM_MEM_MAX|LEAN_NUM_THREADS|RUST_BACKTRACE|RUSTFLAGS)$'
+#
+# CARGO_PROFILE_DEV_* is allowlisted so a lane can measure a profile change WITHOUT editing
+# Cargo.toml (2026-07-25). Editing `[profile.dev]` changes the fingerprint of EVERY artifact in the
+# workspace and invalidates every cache in every lane — a full fleet-wide rebuild. The env form
+# invalidates only the lane that opts in, so the measurement is affordable and nobody else pays.
+# The measurement that motivated it: a `dreggnet_web_server` debug binary is 1.46 GB, of which
+# 83.4% is DWARF (.debug_str 490 MB, .debug_info 375 MB, .debug_loc 226 MB) against 107 MB of
+# .text. `.debug_loc` is that large because of `opt-level = 3`, not because of `debug` — an
+# optimized variable needs a location LIST per live range instead of one stack slot. So:
+#   CARGO_PROFILE_DEV_DEBUG=line-tables-only scripts/pbuild <lane> cargo test -p <crate>
+# keeps file:line in panics (this repo has many panic-based `must_refuse` teeth) and should drop
+# roughly 1.15 GB of the 1.21 GB. MEASURE it on one lane before proposing the shared-profile flip.
+PBUILD_ENV_ALLOW_RE='^(DREGG_[A-Z0-9_]*|SWARM_MEM_MAX|LEAN_NUM_THREADS|RUST_BACKTRACE|RUSTFLAGS|CARGO_PROFILE_DEV_[A-Z0-9_]*|CARGO_INCREMENTAL)$'
 REMOTE_ENV=""
 _pb_fwd_names=""
 while IFS= read -r _v; do
