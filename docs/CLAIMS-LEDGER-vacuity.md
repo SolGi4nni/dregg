@@ -22,6 +22,13 @@ its hypothesis is false at the parameters we ship.
 | **RE-GROUND** | The claim is real; the floor under it is refuted; a specific repair is named. **Do not cite until the repair lands.** Where the replacement already exists in-tree, the row names it — that one *is* citable today. |
 | **DO-NOT-CITE** | Vacuous. The one-line honest restatement is given. Nothing to salvage as stated; the row says delete, restate, or leave it as a record. |
 
+⚑ **A false CITABLE is the worst defect this document can carry** — it licenses quoting a vacuous
+guarantee. The check that catches it is mechanical, and §4 states it: **for each hypothesis, ask whether
+it is refuted _at the instantiation the theorem actually uses_.** `Poseidon2SpongeCR hash` at a bound
+variable is parametric and may be fine; `Poseidon2SpongeCR poseidon2Hash` at the deployed constant is a
+closed proposition the tree refutes, and any theorem carrying it is vacuous. Run that check on every row
+added here.
+
 A note on what "vacuous" means here, because two different strengths appear:
 
 * **∅-ALWAYS** — the hypothesis is false *for every choice of parameters*, by cardinality. No
@@ -36,6 +43,12 @@ A note on what "vacuous" means here, because two different strengths appear:
 ---
 
 ## Measurement provenance
+
+⛑ **RE-VERIFIED 2026-07-26 against `00ca2a8a4`** (audit of the CITABLE tier + every coordinate in the
+document). **All line numbers below are HEAD-`00ca2a8a4` coordinates**, mechanically checked
+declaration-by-declaration; **14 were stale** and are corrected. Two verdicts changed (#42, #43) and one
+row was added (#47) — each change is annotated in place. Every file this audit re-read was byte-identical
+between HEAD and the working tree at the time. No Lean was modified.
 
 * Clean export: `git archive e0160d116` → statements read from the export, never the working tree.
 * All **50** distinct source files carrying these claims are **byte-identical** between HEAD and the
@@ -54,8 +67,8 @@ A note on what "vacuous" means here, because two different strengths appear:
 | §1 Tier 0 — ∅-ALWAYS | 17 |
 | §2 Tier 1 — crypto assurance | 13 (11 from the sweep + the 2 exempt Hermine claims) |
 | §3 Tier 2 — ∅-DEPLOYED CR family | 85 (§3.1 = 8, §3.2 = 14 + 28 + 20 + 13 + 2 = 77) |
-| §4 CITABLE | 8 |
-| **Total** | **123 = 121 swept + 2 exempt** |
+| §4 audited-as-CITABLE | 9 (8 original + #47, added by the 2026-07-26 audit) |
+| **Total** | **124 = 121 swept + 2 exempt + 1 added** |
 
 The assurance-shaped set the brief asked to cover completely — consensus, fork, forgery, downgrade,
 omission — is §2 in full (all 13) plus the omission rows (`Deos/CapacityCarrier` ×2,
@@ -113,7 +126,7 @@ Sorted by blast radius. `dep` = in-tree consumer modules (ratchet bookkeeping ex
 
 | # | Claim | dep | Verdict | Honest restatement / repair |
 |---|---|---|---|---|
-| 1 | `metatheory/Dregg2/Circuit/CircuitSoundness.lean:1130` `turnDecodeChainLog_rejects_forged_log` | 2 | RE-GROUND | Reads as "the published turn-chain binds the intermediate receipt-log". Says: *if a commitment surface existed (none does), a forged seam would be unsat.* Repair: split `CommitSurface`; the seam argument is `logPubSeam` + `logDecode`, structural. |
+| 1 | `metatheory/Dregg2/Circuit/CircuitSoundness.lean:1177` `turnDecodeChainLog_rejects_forged_log` | 2 | RE-GROUND | Reads as "the published turn-chain binds the intermediate receipt-log". Says: *if a commitment surface existed (none does), a forged seam would be unsat.* Repair: split `CommitSurface`; the seam argument is `logPubSeam` + `logDecode`, structural. |
 | 2 | `metatheory/Dregg2/Circuit/CrossTurnFreshness.lean:177` `replay_rejected_after_apply` | 2 | RE-GROUND | "A replayed proof is rejected after the anchor advances." The proof is commitment-advancement, not CR — it needs the five primitives, not the five injectivity fields. Survives the split verbatim. |
 | 3 | `metatheory/Dregg2/Circuit/Freshness.lean:137` `replay_rejected_after_apply` | 2 | RE-GROUND | As #2 (the pre-cross-turn twin). |
 | 4 | `metatheory/Dregg2/Circuit/CrossTurnFreshness.lean:1356` `witnessChain_replay_rejected` | 1 | RE-GROUND | As #2, at the witness-chain. |
@@ -274,7 +287,7 @@ the **keyed, query-counted collision game**.
 | 31 | `metatheory/Dregg2/Storage/BucketCommitment.lean:178` `objectLeaf_injective_of_binds_or_collides` | RE-GROUND ✅ | `metatheory/Dregg2/Storage/BucketCommitment.lean:77` `objectLeaf_binds_or_collides` — unconditional. |
 | 32 | `metatheory/Dregg2/Storage/BucketCommitment.lean:186` `contentRoot_injective_of_binds_or_collides` | RE-GROUND ✅ | `metatheory/Dregg2/Storage/BucketCommitment.lean:139` `contentRoot_binds_or_collides`. |
 | 33 | `metatheory/Dregg2/Storage/BucketCommitment.lean:194` `read_sound_of_binds_or_collides` | RE-GROUND ✅ | `metatheory/Dregg2/Storage/BucketCommitment.lean:154` `read_sound_or_collides`. |
-| 34 | `metatheory/Dregg2/Storage/Deployed.lean:84` `contentRootDeployed_injective_of_binds_or_collides` | RE-GROUND ✅ | `metatheory/Dregg2/Storage/Deployed.lean:143` `contentRootDeployed_binds_or_collides` — unconditional, at the deployed hash. |
+| 34 | `metatheory/Dregg2/Storage/Deployed.lean:153` `contentRootDeployed_injective_of_binds_or_collides` | RE-GROUND ✅ | `metatheory/Dregg2/Storage/Deployed.lean:143` `contentRootDeployed_binds_or_collides` — unconditional, at the deployed hash. ⚑ This is the **one concrete** member of §3.1 (its `hCR` is `Poseidon2SpongeCR poseidon2Hash`, not a parameter), so it is the one whose port-certificate content is **nil** — see the note under the table, and #42. |
 | 35 | `metatheory/Dregg2/Storage/Retrievability.lean:125` `por_sound_of_or_collides` | RE-GROUND ✅ | `metatheory/Dregg2/Storage/Retrievability.lean:67` `por_sound_or_collides`. |
 | 36 | `metatheory/Dregg2/Storage/Retrievability.lean:133` `por_refuses_substitution_of_or_collides` | RE-GROUND ✅ | `metatheory/Dregg2/Storage/Retrievability.lean:83` `por_substitution_forces_collision` — note the honest conclusion is *"a substitution exhibits a collision"*, not *"a substitution is impossible"*. |
 | 37 | `metatheory/Dregg2/Storage/Retrievability.lean:141` `por_holds_committed_of_or_collides` | RE-GROUND ✅ | `metatheory/Dregg2/Storage/Retrievability.lean:102` `por_holds_committed_or_collides`. |
@@ -282,8 +295,17 @@ the **keyed, query-counted collision game**.
 
 These eight are **port certificates**: their job is to prove the cutover surrendered nothing
 ("under the deleted theorem's own hypothesis, the migrated form delivers the deleted conclusion").
-That is a real and citable fact *about the port*. They are not, and must never be quoted as, evidence
-that storage reads or MMR peaks bind at deployment — the migrated twins are what say that.
+For the seven that are **parametric in the hash** that is a real fact *about the port*: it holds for
+every hash, including the injective ones where the old hypothesis is satisfiable. They are not, and
+must never be quoted as, evidence that storage reads or MMR peaks bind at deployment — the migrated
+twins are what say that.
+
+⚑ **#34 is the exception and it is the pattern to watch for.** Its hypothesis is
+`Poseidon2SpongeCR poseidon2Hash` at the **concrete deployed constant**, and that closed proposition is
+refuted in-tree (#47). A port certificate whose hypothesis cannot be met at its only instantiation has
+**no port content either** — there is nothing to hand back. Its RE-GROUND verdict is right; the
+"citable fact about the port" sentence is not true of it. The same theorem, restated at the deployed
+hash, is #42, which is why #42 was mislabelled.
 
 ### 3.2 The rest of Tier 2 — DO-NOT-CITE, uniform restatement above
 
@@ -293,19 +315,19 @@ Grouped by subsystem. `dep` counts real consumers.
 
 | Claim | dep |
 |---|---|
-| `metatheory/Dregg2/Circuit/MapOpWideKeyWeld.lean:348` `gates_aafiInsertW_absentW_jointly_unsat` | 3 |
+| `metatheory/Dregg2/Circuit/MapOpWideKeyWeld.lean:349` `gates_aafiInsertW_absentW_jointly_unsat` | 3 |
 | `metatheory/Dregg2/Circuit/MapMerkleRoot.lean:261` `opensToMerkle_some_excludes_none` | 2 |
-| `metatheory/Dregg2/Circuit/MapOpWideKeyGate.lean:315` `opensToMerkleW_some_excludes_none` | 2 |
-| `metatheory/Dregg2/Circuit/MapOpWideKeyWeld.lean:339` `gates_insertW_absentW_jointly_unsat` | 2 |
-| `metatheory/Dregg2/Circuit/MapOpWideKeyWeld.lean:361` `gates_jointly_unsat_via_abstract` | 2 |
-| `metatheory/Dregg2/Circuit/MapOpWideKeyWeld.lean` `gates_jointly_unsat_via_abstract'` | 2 |
+| `metatheory/Dregg2/Circuit/MapOpWideKeyGate.lean:318` `opensToMerkleW_some_excludes_none` | 2 |
+| `metatheory/Dregg2/Circuit/MapOpWideKeyWeld.lean:340` `gates_insertW_absentW_jointly_unsat` | 2 |
+| `metatheory/Dregg2/Circuit/MapOpWideKeyWeld.lean:362` `gates_jointly_unsat_via_abstract` | 2 |
+| `metatheory/Dregg2/Circuit/MapOpWideKeyWeld.lean:371` `gates_jointly_unsat_via_abstract'` | 2 |
 | `metatheory/Dregg2/Circuit/MapOpWideKeyRowBoundary.lean:376` `gates_insertW_absentW_jointly_unsat_row` | 1 |
 | `metatheory/Dregg2/Circuit/MapOpWideKeyRowBoundary.lean:387` `gates_aafiInsertW_absentW_jointly_unsat_row` | 1 |
-| `metatheory/Dregg2/Circuit/MapOpWideKeyRowBoundary.lean:399` `gates_jointly_unsat_via_abstract_row` | 1 |
-| `metatheory/Dregg2/Circuit/MapOpWideKeyRowBoundary.lean` `gates_jointly_unsat_via_abstract_row'` | 1 |
+| `metatheory/Dregg2/Circuit/MapOpWideKeyRowBoundary.lean:409` `gates_jointly_unsat_via_abstract_row` | 1 |
+| `metatheory/Dregg2/Circuit/MapOpWideKeyRowBoundary.lean:399` `gates_jointly_unsat_via_abstract_row'` | 1 |
 | `metatheory/Dregg2/Circuit/DescriptorIR2.lean:553` `opensTo_some_excludes_none` | 1 |
-| `metatheory/Dregg2/Circuit/MapOpWideKeyWeld.lean:325` `writeW_then_absentW_unsat` | 0 |
-| `metatheory/Dregg2/Circuit/MapAbsentImtGateWide.lean:587` `aafiInsertW_then_absentImtW_unsat` | 0 |
+| `metatheory/Dregg2/Circuit/MapOpWideKeyWeld.lean:326` `writeW_then_absentW_unsat` | 0 |
+| `metatheory/Dregg2/Circuit/MapAbsentImtGateWide.lean:590` `aafiInsertW_then_absentImtW_unsat` | 0 |
 | `metatheory/Dregg2/Circuit/MapMerkleRoot.lean:673` `opensToMerkle8_some_excludes_none_of_injective` | 0 |
 
 ⚑ The last one carries `Compress8CR` — the 8-felt digest. Note for the felt-width campaign: **widening
@@ -313,7 +335,7 @@ did not fix this floor**, because the domain is still infinite. Only the game mi
 
 **Rotated-kernel refinement / lifecycle — "the circuit rejects a wrong X" (28)**
 
-`metatheory/Dregg2/Circuit/RotatedKernelRefinementExercise.lean:472` `heapWrite_sat_rejects_forged_root` (dep 1) ·
+`metatheory/Dregg2/Circuit/RotatedKernelRefinementExercise.lean:503` `heapWrite_sat_rejects_forged_root` (dep 1) ·
 `…LifecycleDisc.lean:276` `cellSeal_disc_rejects_frozen` (1) · `…:297` `cellUnseal_disc_rejects_unrevived` (1) ·
 `…:307` `cellDestroy_disc_rejects_resurrection` (1) · `…:288` `cellSeal_disc_rejects_wrong_after` ·
 `…:329` `receiptArchive_disc_rejects_wrong_after` · `…Birth.lean:269` `createCell_descriptorRefines_rejects_wrong_accounts` ·
@@ -368,21 +390,31 @@ a port certificate for the deleted `nonmember_refused`; citable as such only.
 
 ---
 
-## §4 — CITABLE (8 rows)
+## §4 — the rows audited as CITABLE (9 rows; 7 survive, 2 were mislabelled)
 
-These survive at deployed parameters. Five are **wound reports** — quote them as evidence of what is
-broken, never as assurance.
+⚑ **THE DISCRIMINATOR, EARNED HERE 2026-07-26 AND APPLICABLE TO EVERY FUTURE CITABLE ROW.** A floor
+hypothesis at a **universally quantified** hash/deployment/surface is a legitimately parametric
+statement: it is satisfiable (at an injective hash), so the theorem has content. The *same* floor at a
+**concrete deployed constant** — `Poseidon2SpongeCR poseidon2Hash` rather than `Poseidon2SpongeCR hash`
+— is a **closed proposition the tree refutes**, and the theorem carrying it is vacuous with nothing left
+to salvage, not even a port certificate. **Read the binder, not the name.** This audit found exactly one
+row on the wrong side of that line (#42); the other seven CITABLE rows were re-read statement by
+statement and hold.
 
-| # | Claim | Scope |
-|---|---|---|
-| 39 | `metatheory/Dregg2/Circuit/StateCommitFloorRegrounded.lean:193` `leafRealization_uninhabitable_babyBear` | **Wound.** A `LeafRealization` whose sponge is BabyBear-range-bounded cannot exist. So `cellLeafInjective` is discharged only at a sponge no deployment runs. dep 2. |
-| 40 | `metatheory/Dregg2/Circuit/StateCommitFloorRegrounded.lean:202` `logRealization_uninhabitable_babyBear` | **Wound.** Same on the log side — and it names the live consumer: `Verify/KeystoneAuditArgusReceipt.LH₀_inj` stands on `refLogRealization`, whose sponge is `Encodable.encode` (unbounded range). The receipt's carrier is discharged, and at BabyBear it could not be. dep 3. |
-| 41 | `metatheory/Dregg2/Circuit/S5Closure.lean:119` `deployed_collision_refutes_domainSepCR` | **Tooth.** A genuine collision at any tag gives a constructed fixed-pair finder positive advantage, refuting `DomainSeparatedCR`. Nothing re-assumed; the finder is a real term. |
-| 42 | `metatheory/Dregg2/Storage/DeployedFloorRegrounded.lean:397` `storage_migration_strictly_stronger` | **Port certificate.** Cite as "the storage cutover surrendered nothing", with its own half (b): the surrendered hypothesis is FALSE at the deployed hash, so the deleted theorem delivered nothing there. |
-| 43 | `metatheory/Dregg2/Storage/DeployedFloorRegrounded.lean:410` `mmr_migration_strictly_stronger` | As #42, at the MMR. |
-| 44 | `metatheory/Dregg2/Storage/DeployedFloorRegrounded.lean:148` `poseidon2SpongeCR_gives_game_floor` | **Port certificate.** The old injectivity floor implies the new game floor — the no-strength-lost direction of the CR migration, read at the sentinel's name. |
-| 45 | `metatheory/Dregg2/Storage/DeployedFloorRegrounded.lean:427` `storage_collision_disjunct_refutable` | **Non-vacuity control, with a scope caveat.** It proves the collision disjunct is refutable *at an injective sponge*. ⚑ It therefore does **not** establish that the migrated keystones are non-trivial at the deployed sponge, where the disjunction may well be dischargeable by its collision branch. Cite the fact; do not cite the consequence. |
-| 46 | `metatheory/Dregg2/Tools/ConePortListCommitRun.lean:62` `leakyExhibit` | **Tool control.** A deliberately leaky specimen the cutover tool must refuse — the ~22% leaky class reproduced in miniature. Citable as instrument documentation only. |
+Of the seven that survive, two are **wound reports** and two are **teeth** — quote them as evidence of
+what is broken, never as assurance.
+
+| # | Claim | Verdict | Scope / honest restatement |
+|---|---|---|---|
+| 39 | `metatheory/Dregg2/Circuit/StateCommitFloorRegrounded.lean:193` `leafRealization_uninhabitable_babyBear` | **CITABLE** | **Wound.** A `LeafRealization` whose sponge is BabyBear-range-bounded cannot exist. So `cellLeafInjective` is discharged only at a sponge no deployment runs. Binders are `{CH}`, `R`, `hb` — all parametric, and the conclusion `False` *is* the refutation. dep 2. |
+| 40 | `metatheory/Dregg2/Circuit/StateCommitFloorRegrounded.lean:202` `logRealization_uninhabitable_babyBear` | **CITABLE** | **Wound.** Same on the log side — and it names the live consumer: `Verify/KeystoneAuditArgusReceipt.LH₀_inj` stands on `refLogRealization`, whose sponge is `Encodable.encode` (unbounded range). The receipt's carrier is discharged, and at BabyBear it could not be. dep 3. |
+| 41 | `metatheory/Dregg2/Circuit/S5Closure.lean:119` `deployed_collision_refutes_domainSepCR` | **CITABLE** | **Tooth.** A genuine collision at any tag gives a constructed fixed-pair finder positive advantage, refuting `DomainSeparatedCR`. Nothing re-assumed; the finder is a real term. ⚑ Scope: `D` and the collision witness `hcol` are both **supplied** — it does not itself exhibit a collision of the deployed sponge, it converts one. |
+| 42 | `metatheory/Dregg2/Storage/DeployedFloorRegrounded.lean:466` `storage_migration_strictly_stronger` | **DO-NOT-CITE** ⚑ *was CITABLE — corrected 2026-07-26* | **Vacuous at its only instantiation.** Its hypothesis is `hCR : Poseidon2SpongeCR poseidon2Hash` — the **concrete deployed hash, not a parameter** — and that exact proposition is refuted **seven lines below**, at `:473` (#47). It says: *if the deployed Poseidon2 sponge were injective on all of `List ℤ`, which it provably is not, then two distinct object lists could not share a deployed content root.* Nothing about the deployed system follows. There is no port content to fall back on either: it is #34 applied at `poseidon2Hash`, and #34 is RE-GROUND. **Cite instead:** #47 for the strictness half, and `metatheory/Dregg2/Storage/Deployed.lean:143` `contentRootDeployed_binds_or_collides` — unconditional, at the deployed hash — for the binding. |
+| 43 | `metatheory/Dregg2/Storage/DeployedFloorRegrounded.lean:479` `mmr_migration_strictly_stronger` | **RE-GROUND ✅** ⚑ *was CITABLE — corrected 2026-07-26* | **Not #42's defect — read the binder.** Here `hash` is **universally quantified** (`(hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)`), so nothing in the tree refutes this statement; it is `MMR.mroot_injective` in contradiction form and it is satisfiable at an injective hash. But at the only instantiation that would license a deployed claim (`hash := poseidon2Hash`) the hypothesis is false, so it is a **port certificate exactly like §3.1's parametric seven** and it takes their verdict, not a CITABLE one. Its previous scope note ("As #42") inherited #42's framing and was wrong on both counts. **Cite instead:** `metatheory/Dregg2/Lightclient/MMR.lean:477` `mroot_binds_or_collides` — unconditional. |
+| 44 | `metatheory/Dregg2/Storage/DeployedFloorRegrounded.lean:158` `poseidon2SpongeCR_gives_game_floor` | **CITABLE** | **Port certificate, PARAMETRIC.** The old injectivity floor implies the new game floor — the no-strength-lost direction of the CR migration, read at the sentinel's name. ⚑ `D : SpongeDeployment` is universally quantified, so this is **not** #42's defect; but instantiating at `deployedSponge` makes `hCR` false (#47 at its single tag), so it licenses nothing about the deployed sponge — only the **ordering of the two floors**. |
+| 45 | `metatheory/Dregg2/Storage/DeployedFloorRegrounded.lean:496` `storage_collision_disjunct_refutable` | **CITABLE** | **Non-vacuity control, with a scope caveat.** `hash` is parametric. It proves the collision disjunct is refutable *at an injective sponge*. ⚑ It therefore does **not** establish that the migrated keystones are non-trivial at the deployed sponge, where the disjunction may well be dischargeable by its collision branch. Cite the fact; do not cite the consequence. |
+| 46 | `metatheory/Dregg2/Tools/ConePortListCommitRun.lean:62` `leakyExhibit` | **CITABLE** | **Tool control.** A deliberately leaky specimen the cutover tool must refuse — the ~22% leaky class reproduced in miniature. It carries `compressNInjective cN` at a parametric `cN`; that is the point, since what the tool must recognise is its *shape*. Citable as instrument documentation only. |
+| 47 | `metatheory/Dregg2/Storage/DeployedFloorRegrounded.lean:473` `storage_old_hypothesis_unavailable` | **CITABLE** | **Tooth, at the deployed constant.** `¬ Poseidon2SpongeCR poseidon2Hash`, discharged by `DeployedFloorRefuted.deployed_floor_false` (an `rfl` collision of the deployed hash). Closed, unconditional, no parameters. This is the honest half of what #42 was being cited for, and it is the very theorem that makes #42 vacuous. ⚑ **Added by the 2026-07-26 audit; the original sweep could not flag it because it carries no floor** — which is exactly why the citable statement was missing while its vacuous neighbour was listed. |
 
 ---
 
@@ -427,5 +459,12 @@ a grandfathered carrier and still be quoted next week in a launch post as if it 
 because the record lives in the gate and the claim lives in prose.
 
 **Before any public security claim: find the theorem in this ledger. If it is not here, check its
-binders for a floor before you write the sentence.** The three verdicts are written to be pasted into
-a review comment as-is.
+binders for a floor before you write the sentence** — and if there is one, check whether it stands at a
+**concrete deployed constant** rather than a bound variable, because that is the difference between a
+parametric theorem and a vacuous one (§4). The three verdicts are written to be pasted into a review
+comment as-is.
+
+⛑ **And the ledger is not exempt from its own rule.** #42 sat here as CITABLE with a hypothesis refuted
+seven lines below itself in the same file, and the row that *should* have been cited (#47) was absent
+because the sweep only listed floor-*carriers* — so the vacuous statement was listed and the true one was
+not. Every CITABLE row must be re-read at the statement level, not matched by name.
