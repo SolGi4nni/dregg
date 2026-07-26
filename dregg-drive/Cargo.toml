@@ -1,0 +1,66 @@
+# `dregg-drive` — the INTERACTIVE SURFACE DRIVER.
+#
+# A static screenshot of one rendered surface finds one class of defect (a false
+# statement, a mislabelled control). It cannot find the class that only exists in a
+# SEQUENCE or in a PROJECTION:
+#   - a `/offerings` that EDITS a scrolled-away message, so the SECOND invocation is
+#     invisible (a single-step test never issues a second one);
+#   - a button that dies across a redeploy, because the message index was in memory;
+#   - a `ViewNode` variant with no projection on some channel, so that channel silently
+#     learns nothing (a fog-correct surface leaking through a BUTTON LABEL).
+#
+# This crate is the driver those need: it steps a REAL session through a REAL surface's
+# REAL projection and prints exactly what that surface would show a chosen viewer, with
+# `restart` (rebuild the host from the durable store mid-session), `as <viewer>` (switch
+# who is looking WITHOUT resetting state), `stale` (press a control from a previous
+# frame), and `transcript` (the sequence back as a replayable script).
+#
+# NOTHING HERE IS SIMULATED. `--surface telegram` goes through `dreggnet_telegram`'s own
+# `TelegramHost` + `route_text`/`route_callback` over a recording `Transport`;
+# `--surface web` goes through `dreggnet_web`'s own `axum` router by
+# `tower::ServiceExt::oneshot`; `--surface prose` walks the offering's `ViewNode` through
+# `deos_view::text::render_text` — the identical function `TelegramBackend` renders with.
+# A surface whose rendering needs a live token is REPORTED AS UNREACHABLE, never faked:
+# a fake projection would make every finding worthless.
+#
+# A workspace MEMBER but deliberately NOT a `default-member` (it pulls dreggnet-web +
+# dreggnet-telegram, both members-not-default). Build/run:
+#   cargo run -p dregg-drive -- --surface telegram --offering automatafl --as alice
+[package]
+name = "dregg-drive"
+version = "0.1.0"
+edition = "2024"
+description = "Interactively drive a complete flow through any dreggnet surface's real view model — restart, viewer-switch, stale-press, replayable transcript — to find sequence and projection defects a static render cannot show."
+
+[[bin]]
+name = "dregg-drive"
+path = "src/main.rs"
+
+[dependencies]
+# The offering core: `OfferingHost`, `Action`, `Surface`, `SessionId`, `DreggIdentity`.
+dreggnet-offerings = { path = "../dreggnet-offerings" }
+# The catalog: `SHIPPED_KEYS`, `GameEpochLedger`, `PlayerWorlds`, the pinned descent day.
+dreggnet-catalog = { path = "../dreggnet-catalog" }
+# THE REAL TELEGRAM SURFACE — `TelegramHost`, `route_text`, `route_callback`, the pure
+# `api::build_present_request` wire body, and the `Transport` seam this crate records on.
+dreggnet-telegram = { path = "../dreggnet-telegram" }
+# THE REAL WEB SURFACE — `CatalogState`, `catalog_router`, `demo_host_resumed_from`,
+# `web_identity`. Driven with no port through `tower::ServiceExt::oneshot`.
+dreggnet-web = { path = "../dreggnet-web" }
+# The view IR + the two ungated projections this crate needs: `text::render_text` (the
+# prose/chat projection) and `actuations` (the affordance enumeration). `web` matches the
+# feature dreggnet-web already selects, so this dep adds no new resolve.
+#
+# ⚑ `discord` is DELIBERATELY NOT ENABLED. `deos_view::discord::render_card` is a pure
+# function and would be a fine third projection, but the feature pulls serenity
+# (builder+model+rustls) and feature-unifies onto every other consumer of deos-view in
+# this workspace resolve — dreggnet-web included. Paying that on every lane's build to
+# print one more projection is the wrong trade; `--surface discord` says so and names the
+# other half of the reason (the discord-bot's own routing is a SEPARATE workspace).
+deos-view = { path = "../deos-view", default-features = false, features = ["web"] }
+# The web surface is an axum Router; driving it needs the Router + a body reader.
+axum = { version = "0.8" }
+# `ServiceExt::oneshot` — call the real handlers with no listener and no port.
+tower = { version = "0.5", features = ["util"] }
+# A current-thread runtime is enough: the driver issues one request at a time.
+tokio = { version = "1", features = ["rt", "macros"] }

@@ -1,0 +1,27 @@
+# THE RESTART-ORDER PROBE — two orders of the same three events, one of which recovers.
+#
+#   dregg-drive --surface telegram --offering tug --as alice \
+#       --script dregg-drive/scripts/restart-order.drive
+#
+# `route_callback`'s auto-resume fires ONLY on `HostPress::NoSession`. So whether a stale
+# post-restart button recovers depends on whether the chat has acquired ANY live surface
+# first — and `/offerings` is exactly what every refusal message tells the user to send.
+# The existing restart test presses FIRST, so it only ever exercises order A.
+
+open
+press 0
+verify
+
+# ── ORDER A: press FIRST after the restart (the tested path) ────────────────
+restart
+stale 0
+verify
+
+# ── ORDER B: send /offerings FIRST, THEN press the stale button ─────────────
+#    (`/offerings` binds a chat-level menu surface, so the game press now answers
+#     NotOffered instead of NoSession and the auto-resume never runs)
+restart
+send /offerings
+stale 0
+verify
+again

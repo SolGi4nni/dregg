@@ -1,0 +1,38 @@
+# THE CHAT RE-PRESENT HUNT — the sequence a single-step test can never issue.
+#
+#   dregg-drive --surface telegram --offering tug --as alice --script dregg-drive/scripts/chat-menu.drive
+#
+# Every command surface here is issued at least TWICE, because the second invocation is the
+# one that can EDIT instead of POST. Watch the PAINT line: `SEND` is visible, `EDIT` is only
+# visible if that message is still on screen, and a frame with neither is a dead bot.
+
+# ── the command surface, twice each ─────────────────────────────────────────
+send /help
+send /help
+send /offerings
+send /offerings
+send /offerings
+
+# ── open, twice, then a turn, then open again ──────────────────────────────
+open
+open
+press 0
+open
+
+# ── a second offering in the SAME chat: now two live keyboards ─────────────
+send /open dungeon
+send /offerings
+again
+
+# ── the menu after a restart: the buttons on screen are from a dead process ─
+restart
+send /offerings
+stale 0
+
+# ── nonsense on the command surface ───────────────────────────────────────
+send /nope
+send /open not-a-thing
+send /verify
+send just talking in the group
+send /
+controls

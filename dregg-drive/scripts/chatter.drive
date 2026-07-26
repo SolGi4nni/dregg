@@ -1,0 +1,24 @@
+# THE CHATTER PROBE — does ordinary conversation wake the bot?
+#
+#   dregg-drive --surface telegram --offering tug --as alice --chat -1001234 \
+#       --script dregg-drive/scripts/chatter.drive
+#
+# `route_text`'s own doc says "ordinary chatter is ignored". That is true of the REPLY and
+# was never true of the PAINT: a chat holding persisted-but-unbound sessions resumes and
+# REPOSTS every one of them on any non-command message. In a group, an unrelated human
+# conversation is a stream of non-command messages.
+
+open
+send /open dungeon
+press 0
+
+# ── chatter with the chat already BOUND: expected silent ────────────────────
+send hey what are you all up to
+send lol
+send anyway
+
+# ── now unbind by restarting, and chatter again ─────────────────────────────
+restart
+send hey what are you all up to
+send lol
+send anyway

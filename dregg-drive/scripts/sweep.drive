@@ -1,0 +1,49 @@
+# THE SWEEP — the generic weirdness hunt, replayable on any surface/offering pair.
+#
+#   cargo run -p dregg-drive -- --surface web --offering tug --as alice \
+#       --state-dir /tmp/sweep-tug-web --script dregg-drive/scripts/sweep.drive
+#
+# Every line here is one of the failure classes a single-step render test cannot reach.
+# `#` comments and blank lines are skipped, so this file IS the transcript language.
+
+# ── 1. the first look, and the SECOND look ──────────────────────────────────
+# A second request is where the re-present bug lives: on a chat surface an EDIT to a
+# message that has scrolled away is indistinguishable from a dead bot.
+open
+again
+
+# ── 2. play ─────────────────────────────────────────────────────────────────
+press 0
+again
+press 0
+
+# ── 3. FOG — switch who is looking, nothing else. `as` re-requests and diffs
+#        the CONTROL LABELS, because a leak has hidden in a button while the
+#        prose sections were correct.
+as bob
+press 0
+as alice
+
+# ── 4. the chain still re-verifies through the surface's own verify path ────
+verify
+
+# ── 5. ⚑ RESTART — rebuild the host from the durable store, mid-session. The
+#        messages/tab the user is looking at do NOT vanish; the bot's memory of
+#        them does. Then press what is still on their screen.
+restart
+stale 0
+press 0
+verify
+
+# ── 6. WRONG INPUT — a refusal that is illegible is a defect, and the only way
+#        to find that out is to try. Out-of-range index, a verb from no phase,
+#        an unknown command.
+press 99
+act nonsense 999
+act press -1
+send /help
+send hello are you alive
+
+# ── 7. where we ended up ────────────────────────────────────────────────────
+again
+controls

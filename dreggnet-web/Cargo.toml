@@ -227,6 +227,20 @@ zeroize = { workspace = true }
 #    webauth-core's challenge uses.
 # The ticket's HMAC chain reuses the hmac/sha2/subtle trio already pulled in for initData above.
 dreggnet-discord-identity = { path = "../dreggnet-discord-identity" }
+# THE SEED-PHRASE IDENTITY (src/seed_identity.rs) — `dregg_sdk::mnemonic::{generate_mnemonic,
+# mnemonic_to_seed, derive_keypair}` + `dregg_sdk::wordlist::WORDLIST` (the 2048-word BIP39 English
+# list). NO new crypto is authored for the identity door: the phrase generation (256 bits of
+# `getrandom` entropy + an 8-bit SHA-256 checksum), the checksum-validating parse, and the BLAKE3
+# `derive_key` → ed25519-dalek derivation are all already here, and `cli/src/commands/id.rs` pins
+# the SAME derivation path (`dregg/0`) — which is what makes a phrase claimed in the browser
+# reproduce the CLI's signing key instead of a second, silently-forked identity.
+#
+# ⚑ THIS ADDS NO COMPILATION. `dregg-sdk` is ALREADY in this crate's build graph, and already
+# resolved with its FULL default feature set (`prover` + `exec-lean` + `fhegg`), via
+# `spween-dregg` / `dreggnet-telegram` / `dreggnet-catalog`. `default-features = false` matches how
+# those two name it, so naming it directly cannot pull a new feature into the resolve; verify with
+#   cargo tree -p dreggnet-web -e features | grep 'dregg-sdk feature'
+dregg-sdk = { path = "../sdk", default-features = false }
 base64 = "0.22"
 # THE ONE OUTBOUND HTTP CALL-SITE — `POST /da/token`'s Discord OAuth `code`→`oauth2/token`→
 # `/users/@me` exchange (docs/DISCORD-ACTIVITIES-DESIGN.md §1). NOT a new heavy dep: `dregg-node-target`
