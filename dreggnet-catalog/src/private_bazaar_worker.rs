@@ -32,7 +32,7 @@ const LEGACY_SPOOL_FILE_NAMES: [&str; 2] = [
     "finalized-private-bazaar-v1.spool",
     "finalized-private-bazaar-v2.spool",
 ];
-const SPOOL_FILE_NAME: &str = "finalized-private-bazaar-v3.spool";
+pub(crate) const SPOOL_FILE_NAME: &str = "finalized-private-bazaar-v3.spool";
 const SPOOL_MAGIC: &[u8; 8] = b"DBSP0003";
 const SPOOL_DOMAIN: &str = "dregg.private-bazaar-finalized-spool.v3";
 const SEMANTIC_CORE_DOMAIN: &str = "dregg.private-bazaar-settlement-core.v1";

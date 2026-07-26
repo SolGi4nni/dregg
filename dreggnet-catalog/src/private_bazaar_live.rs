@@ -780,7 +780,17 @@ mod tests {
         .unwrap()
     }
 
+    /// Stand this process up the way a native node does.
+    ///
+    /// TWO independent verified installs are required and NEITHER is waived. The
+    /// gate registration was MISSING here, which is why every settling test in
+    /// this module refused with "no verified executor gate is installed, so the
+    /// award was NEVER JUDGED": `dregg-intent`'s ring settlement fails closed
+    /// without it, so no proof-authorized SETTLE could ever land and these tests
+    /// could not go green on any host. `tests/private_bazaar_production_relation.rs`
+    /// always registered it; this module did not.
     fn install_verified_test_pq_runtime() {
+        dregg_exec_lean::register_distributed_gates();
         assert!(std::env::var_os("DREGG_ALLOW_UNAUDITED_PQ").is_none());
         assert!(matches!(
             install_verified_mldsa_keygen_core_real(),
@@ -998,7 +1008,7 @@ mod tests {
         let spool_path = temp
             .path()
             .join("private-worker")
-            .join("finalized-private-bazaar-v2.spool");
+            .join(crate::private_bazaar_worker::SPOOL_FILE_NAME);
         let mut spool = OpenOptions::new().append(true).open(spool_path).unwrap();
         spool.write_all(&[0xFF]).unwrap();
         spool.sync_all().unwrap();
