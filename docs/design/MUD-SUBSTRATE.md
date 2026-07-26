@@ -383,8 +383,17 @@ modeled here.
 ### The receipt-chain dependency — what makes realm persistence *real*
 
 `RealmWorld` chains receipts with `previous_receipt_hash` — an ordered,
-hash-linked history of admitted turns. **This is the load-bearing dependency for
-realm persistence, and it is not served today.**
+hash-linked history of admitted turns. **This was the load-bearing dependency
+for realm persistence, and it is now SERVED** — the STATUS block above records
+it as the keystone. `persist`'s `RECEIPT_CHAIN` (`persist/src/tables.rs:295`) +
+`install_receipt_chain_durability` (`node/src/state.rs:914`) are driven by
+`receipt_chain_and_mmr_head_survive_node_restart` (`node/src/state.rs:3727`),
+and the realm substrate rides the same discipline on `REALM_LOG`
+(`persist/src/tables.rs:314`), replayed fail-closed by `NodeRealms::restore`
+(`node/src/realm_service.rs:367`) and canaried across restart by
+`realm_through_http_ingress_survives_restart_and_refuses_uncatalogued_ruleset`
+(`node/src/realm_service.rs:2075`). The paragraphs below record the state that
+made it load-bearing; read them as the history of the dependency, not its status.
 
 - `dregg_turn::Turn` already has a `previous_receipt_hash` field, and
   `TurnReceipt::receipt_hash()` chains it (`turn/src/turn.rs`).

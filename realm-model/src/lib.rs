@@ -36,8 +36,20 @@
 //! cell-backed state + the admission gate are a **working model** driven by
 //! `tests/driven.rs`; the *committed-law enforcement point* is modeled HERE in
 //! [`world::RealmWorld::admit`] but in production belongs inside the executor's
-//! proof-verify path (named in the doc); durable realm persistence depends on a
-//! node-served **receipt chain** that does not yet exist (§ "honest scope").
+//! proof-verify path (named in the doc).
+//!
+//! ⚑ The dependency this line used to name as missing — "durable realm
+//! persistence depends on a node-served **receipt chain** that does not yet
+//! exist" — is **BUILT**, and this crate is its consumer. `persist`'s
+//! `RECEIPT_CHAIN` (`persist/src/tables.rs:295`) plus
+//! `install_receipt_chain_durability` (`node/src/state.rs:914`) are driven by
+//! `receipt_chain_and_mmr_head_survive_node_restart` (`node/src/state.rs:3727`),
+//! and `node/src/realm_service.rs` rides the same durable-append discipline for
+//! the realm substrate on `persist`'s `REALM_LOG` (`persist/src/tables.rs:314`),
+//! replayed fail-closed by `NodeRealms::restore`. What remains modeled is the
+//! *kernel* enforcement point above: `ruleset_root` is still absent from
+//! `dregg_turn::Turn`, so a `/realm/*` turn is gate-routed by the node, not by
+//! the executor's proof-verify path (`docs/design/DESIGN-realm-kernel-perimeter.md`).
 
 pub mod catalog;
 pub mod identity;
