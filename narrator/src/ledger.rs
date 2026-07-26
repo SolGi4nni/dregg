@@ -44,7 +44,17 @@ pub const DEFAULT_CAP_USD: f64 = 20.00;
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(tag = "kind")]
 pub enum PriceSource {
-    /// A machine-verified rate (from the AWS Pricing API / bulk price list).
+    /// A rate read from the PROVIDER'S OWN machine-readable price list — the AWS Pricing API /
+    /// bulk price list, or a provider catalog endpoint that publishes per-model rates (Chutes'
+    /// `GET /v1/models` → `pricing.{prompt,completion}`). `api` names the exact source and
+    /// `date` when it was read.
+    ///
+    /// It is "verified" in the sense that matters here: nobody typed the number in, so it cannot
+    /// be a typo or a wishful under-estimate the way an [`Self::OperatorOverride`] can. It is
+    /// still a SNAPSHOT — a provider may raise a published rate afterwards, and a process holding
+    /// this would keep metering at the old one until it re-read. That residual is bounded by how
+    /// often the rate is re-read (for a catalog read at construction: one process lifetime), and
+    /// it is the reason `date` is part of the provenance rather than decoration.
     Verified { api: String, date: String },
     /// A deliberate over-estimate pinned because no verified rate exists. It can only trip the
     /// ceiling early. `rationale` records WHY the bound is safe (which dominating rate it uses).

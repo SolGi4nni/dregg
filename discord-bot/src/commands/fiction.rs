@@ -235,6 +235,20 @@ impl RunHistory {
 /// spun thread's id when threaded, else the invoking channel) — the SAME key the adapter's
 /// live session is stored under. A module-global so it needs no change to `BotState`; every
 /// access locks briefly and never holds the guard across an `.await`.
+///
+/// ⚑ **RESTART: split** (`docs/reference/RESTART-SEMANTICS.md`).
+///
+/// * The DISPLAY half — `narrator`, `last_narration`, `current_room`, `history`, `adventurers`,
+///   `orchestrated_key` — is answer 3, **PROCEED**: it is prose already on screen and a rolling
+///   narrator memory, none of it a gate. An adversary who forces a restart gets a run whose
+///   narrator forgot the last few rooms; the durable character sheets (`SqliteCharacterStore`)
+///   and the receipt chain are untouched.
+/// * The GATE half — `opener` and `round_opened_at` — is answer 2, **REBUILD**. It is the
+///   `/dungeon close` authorization ground truth, and it lived ONLY here while the session itself
+///   resumes by replay, so every restart opened the gate. It is now mirrored into the durable
+///   `dungeon_host:` row (`crate::db::Database::set_dungeon_host`) and recovered by
+///   [`close_ground_truth`], whose floor is REFUSE (no host, window restarts) rather than a
+///   fall-through close.
 fn meta() -> &'static Mutex<HashMap<u64, DungeonMeta>> {
     static META: OnceLock<Mutex<HashMap<u64, DungeonMeta>>> = OnceLock::new();
     META.get_or_init(|| Mutex::new(HashMap::new()))
@@ -491,6 +505,11 @@ pub fn register() -> CreateCommand {
             "verify",
             "Re-verify this channel's playthrough by replay (the real receipt chain)",
         ))
+        .add_option(CreateCommandOption::new(
+            CommandOptionType::SubCommand,
+            "attestation",
+            "Download the raw TDX quote behind this run's attested narration and check it yourself",
+        ))
         .add_option(
             CreateCommandOption::new(
                 CommandOptionType::SubCommand,
@@ -541,6 +560,7 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
         "start" => handle_start(ctx, command, state).await,
         "close" => handle_close(ctx, command, state).await,
         "verify" => handle_verify(ctx, command).await,
+        "attestation" => handle_attestation(ctx, command, state).await,
         "chutes-turn" => handle_chutes_turn(ctx, command, state).await,
         "operation" => {
             let round_changed =
@@ -766,6 +786,8 @@ async fn handle_start(ctx: &Context, command: &CommandInteraction, state: &BotSt
         ack::edit_slash(ctx, command, embed, vec![]).await;
         return;
     }
+    let host = command.user.id.get();
+    let round_opened_at = now_secs();
     meta().lock().unwrap_or_else(|e| e.into_inner()).insert(
         target_channel,
         DungeonMeta {
@@ -777,10 +799,13 @@ async fn handle_start(ctx: &Context, command: &CommandInteraction, state: &BotSt
             adventurers: BTreeMap::new(),
             // The invoker is the run's HOST — the only member who may close a round early — and
             // the opening round starts its fair voting window now.
-            opener: command.user.id.get(),
-            round_opened_at: now_secs(),
+            opener: host,
+            round_opened_at,
         },
     );
+    // …and DURABLY, because the map above is empty at boot while the session itself resumes by
+    // replay. Without this row the close gate has no host to check after a restart.
+    remember_host(state, target_channel, host, round_opened_at).await;
 
     // Snapshot the first room from the store, then narrate OUTSIDE any lock (narration hits
     // the network). A fresh run has no history yet, so the map's trail is just the opening room
@@ -847,6 +872,10 @@ async fn handle_start(ctx: &Context, command: &CommandInteraction, state: &BotSt
                 m.insert(invoking_channel, moved);
             }
         }
+        // The durable host record moves with the run, or the re-keyed channel would have no host
+        // on record and its first post-restart close would land on the floor instead of the host.
+        forget_host(state, target_channel).await;
+        remember_host(state, invoking_channel, host, round_opened_at).await;
     }
 
     let embed = round_embed(&snap, &narration, &provenance);
@@ -1126,6 +1155,10 @@ async fn handle_chutes_turn(ctx: &Context, command: &CommandInteraction, state: 
     let prompt = format!(
         "The party is in `{room}`. Select one offered command and narrate the attempt in one or two vivid sentences. Do not use curly braces."
     );
+    // A second handle on the SAME narrator (the backend is an `Arc`), kept because the one below
+    // is moved into the blocking worker. It is how the archive reaches the raw quote behind the
+    // summary this call is about to return — see [`archive_attestation`].
+    let evidence_source = paid.clone();
     let provider = match tokio::task::spawn_blocking(move || {
         paid.converse_with_tools(system, &prompt, vec![tool])
     })
@@ -1336,6 +1369,22 @@ async fn handle_chutes_turn(ctx: &Context, command: &CommandInteraction, state: 
         }
     };
 
+    // ARCHIVE THE ATTESTATION, before the credit commit and before anything is rendered. The
+    // receipt is already on the chain and already binds this enclave's identity; if the evidence
+    // behind that identity is not written down here it is gone for good, because it lives in the
+    // narrator process's bounded memory and nowhere else. A failure to archive is logged and does
+    // NOT undo the turn — the turn is committed substrate, the archive is a record of it — but it
+    // is loud, because an attested turn with no retrievable quote is a claim nobody can check.
+    archive_attestation(
+        state,
+        &evidence_source,
+        channel,
+        receipt_id,
+        &model,
+        &narration_provenance,
+    )
+    .await;
+
     let public_receipt = ViewerBlindChutesReceipt::new(
         model,
         command_label.clone(),
@@ -1494,6 +1543,56 @@ enum CloseAuth {
     Denied { wait_secs: i64 },
 }
 
+/// **The `opener` value that means "this run has no host we can prove".** Discord snowflakes are
+/// never `0`, so no invoker can ever match it — [`authorize_close`] additionally refuses the
+/// `Opener` branch outright when the opener is this, so the property is structural and not an
+/// accident of Discord's id space. It is what [`close_ground_truth`] falls back to when nothing
+/// about a run's host survived a restart.
+const NO_HOST: u64 = 0;
+
+/// **The close gate's ground truth, and what it does when nothing survived a restart.**
+///
+/// ⚑ **RESTART: REBUILD, with a REFUSE floor** (`docs/reference/RESTART-SEMANTICS.md`).
+/// `remembered` is `(opener, round_opened_at)` as recovered from the process-local [`meta`] map
+/// first and the durable `dungeon_host:` row second. `None` means neither survived — and the
+/// pre-fix gate answered that by *falling through and closing the round*, because its refusal was
+/// a `if let Some((_, CloseAuth::Denied { .. }))` that an absent record simply did not match. After
+/// any restart, any member could close any party's round, repeatedly, each one landing a real
+/// committed crowd turn.
+///
+/// The floor is **no host, and the fair window restarts now**: nobody inherits the early-close
+/// power, and every close is refused until [`MIN_ROUND_SECS`] has elapsed from the moment the bot
+/// first noticed the run again. Fail-closed WITHOUT stranding the party — the caller must persist
+/// the returned stamp (see [`handle_close`]), because a floor recomputed from `now` on every
+/// invocation would deny the round forever, which is a different outage, not a fix.
+fn close_ground_truth(remembered: Option<(u64, i64)>, now: i64) -> (u64, i64) {
+    remembered.unwrap_or((NO_HOST, now))
+}
+
+/// Write the run's host + current-round stamp to the durable store (the half of the record that
+/// survives a restart). Best-effort and LOUD on failure: losing the row does not break the run —
+/// the close gate falls to its [`close_ground_truth`] floor, which refuses rather than opens.
+async fn remember_host(state: &BotState, channel: u64, opener: u64, round_opened_at: i64) {
+    if let Err(e) = state
+        .db
+        .set_dungeon_host(channel, opener, round_opened_at)
+        .await
+    {
+        tracing::warn!(
+            error = %e, channel,
+            "could not persist the dungeon host record — after a restart this run will have no \
+             host on record and every close will wait out the fair window"
+        );
+    }
+}
+
+/// Drop a channel's durable host record (the run ended, or moved to another channel).
+async fn forget_host(state: &BotState, channel: u64) {
+    if let Err(e) = state.db.clear_dungeon_host(channel).await {
+        tracing::warn!(error = %e, channel, "could not clear the dungeon host record");
+    }
+}
+
 /// **The `/dungeon close` authorization gate** (backlog: close authz/quorum/timing). Authorized iff
 /// the invoker OPENED the run, OR a restricted electorate has fully voted, OR the fair voting window
 /// has elapsed. For the default open-crowd dungeon (`electorate == None`) the electorate branch
@@ -1507,7 +1606,9 @@ fn authorize_close(
     electorate: Option<&[String]>,
     voted: &[String],
 ) -> CloseAuth {
-    if invoker == opener {
+    // [`NO_HOST`] is the post-restart floor, not a user: it must never open the early-close door,
+    // even to an invoker whose id somehow reads as `0`.
+    if opener != NO_HOST && invoker == opener {
         return CloseAuth::Opener;
     }
     if let Some(eligible) = electorate {
@@ -1534,41 +1635,71 @@ async fn handle_close(ctx: &Context, command: &CommandInteraction, state: &BotSt
     // voted. So refuse a premature close: only the run's HOST closes early, else the fair voting
     // window must elapse (or a restricted electorate must have fully voted). This runs pre-defer —
     // it is local + fast — and answers ephemerally without resolving the round.
-    let gate = {
-        let host = meta()
-            .lock()
-            .ok()
-            .and_then(|m| m.get(&channel).map(|d| (d.opener, d.round_opened_at)));
-        host.map(|(opener, opened_at)| {
-            let (electorate, voted) =
-                with_live::<DungeonOffering, _>(channel, |l| match l.round.as_ref() {
-                    Some(r) => (
-                        r.electorate.clone(),
-                        r.ballots.keys().cloned().collect::<Vec<String>>(),
-                    ),
-                    None => (None, Vec::new()),
-                })
-                .unwrap_or((None, Vec::new()));
-            (
-                opener,
-                authorize_close(
-                    invoker,
-                    opener,
-                    now_secs(),
-                    opened_at,
-                    electorate.as_deref(),
-                    &voted,
-                ),
-            )
-        })
+    //
+    // ⚑ The host record is REBUILT (`docs/reference/RESTART-SEMANTICS.md`): the process-local
+    // `meta()` map first, then the durable `dungeon_host:` row, and only then the
+    // [`close_ground_truth`] floor. The gate is now UNCONDITIONAL — every path produces a
+    // `CloseAuth`, so there is no longer an `else` that closes the round by falling through.
+    let now = now_secs();
+    let remembered = match meta()
+        .lock()
+        .ok()
+        .and_then(|m| m.get(&channel).map(|d| (d.opener, d.round_opened_at)))
+    {
+        Some(live) => Some(live),
+        None => state
+            .db
+            .get_dungeon_host(channel)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!(error = %e, channel, "could not read the dungeon host record");
+                None
+            }),
     };
-    if let Some((opener, CloseAuth::Denied { wait_secs })) = gate {
+    let (opener, opened_at) = close_ground_truth(remembered, now);
+    if remembered.is_none() {
+        // ADOPTED the floor. PERSIST the stamp, or the window would restart on every invocation
+        // and the party would be denied forever — the trap this whole fix has to walk around.
+        if let Err(e) = state.db.set_dungeon_host(channel, NO_HOST, opened_at).await {
+            tracing::warn!(
+                error = %e, channel,
+                "could not persist the adopted dungeon close window — a party may have to wait \
+                 out the fair window again after the next restart"
+            );
+        }
+    }
+    let (electorate, voted) =
+        with_live::<DungeonOffering, _>(channel, |l| match l.round.as_ref() {
+            Some(r) => (
+                r.electorate.clone(),
+                r.ballots.keys().cloned().collect::<Vec<String>>(),
+            ),
+            None => (None, Vec::new()),
+        })
+        .unwrap_or((None, Vec::new()));
+    if let CloseAuth::Denied { wait_secs } = authorize_close(
+        invoker,
+        opener,
+        now,
+        opened_at,
+        electorate.as_deref(),
+        &voted,
+    ) {
+        // A `<@0>` mention renders as a broken ping, and there is no host to name anyway — say
+        // what is true instead of pointing at a user who does not exist.
+        let who_may = if opener == NO_HOST {
+            "This run's host is not on record (the bot restarted mid-run), so nobody can close \
+             early"
+                .to_string()
+        } else {
+            format!("Only the run's host <@{opener}> can close early")
+        };
         let embed = warn_embed(
             "Not yet — the voting window is still open",
             &format!(
                 "Closing now would lock the current tally and move the party on, denying anyone \
-                 who has not voted. Only the run's host <@{opener}> can close early; everyone else \
-                 can close in about **{wait_secs}s**, or once every eligible voter has cast."
+                 who has not voted. {who_may}; everyone else can close in about **{wait_secs}s**, \
+                 or once every eligible voter has cast."
             ),
         );
         respond(ctx, command, embed, vec![], true).await;
@@ -1743,15 +1874,24 @@ async fn handle_close(ctx: &Context, command: &CommandInteraction, state: &BotSt
                     &continuity,
                 )
                 .await;
-                if let Ok(mut m) = meta().lock() {
-                    if let Some(d) = m.get_mut(&channel) {
+                // The next round is now live for voting — start its fair window fresh, so a
+                // matured PREVIOUS round does not leak permission to close the new one early.
+                let next_round_opened_at = now_secs();
+                let host = if let Ok(mut m) = meta().lock() {
+                    m.get_mut(&channel).map(|d| {
                         d.narrator = provenance.clone();
                         d.last_narration = narration.clone();
                         d.current_room = next_room_name.clone();
-                        // The next round is now live for voting — start its fair window fresh, so a
-                        // matured PREVIOUS round does not leak permission to close the new one early.
-                        d.round_opened_at = now_secs();
-                    }
+                        d.round_opened_at = next_round_opened_at;
+                        d.opener
+                    })
+                } else {
+                    None
+                };
+                // Refresh the DURABLE window too, so a restart between rounds does not hand the
+                // new round the previous one's (already matured) clock.
+                if let Some(host) = host {
+                    remember_host(state, channel, host, next_round_opened_at).await;
                 }
                 let embed = with_adventurers(
                     resolution_then_round_embed(&resolution, &snap, &narration, &provenance),
@@ -1763,6 +1903,9 @@ async fn handle_close(ctx: &Context, command: &CommandInteraction, state: &BotSt
             None => {
                 let embed = with_adventurers(resolution_final_embed(&resolution), channel);
                 ack::edit_slash(ctx, command, embed, vec![]).await;
+                // The run is over — drop its durable host record rather than leaving a row that
+                // remembers a host for a channel with nothing left to close.
+                forget_host(state, channel).await;
                 // The run ended: if it had its own spun thread, TEAR IT DOWN — archive the
                 // surface, unlink the queue, and revoke every capability cell it held. A
                 // best-effort archive: a failure here does not un-end the run.
@@ -1902,6 +2045,355 @@ async fn handle_verify(ctx: &Context, command: &CommandInteraction) {
         )
     };
     ack::edit_slash(ctx, command, embed, vec![]).await;
+}
+
+// ─── The DURABLE ATTESTATION ARCHIVE + `/dungeon attestation` ─────────────────
+//
+// The footer has named the serving enclave for a while, and the receipt has bound its identity
+// for a while. Neither was CHECKABLE: the raw TDX quote existed only inside the narrator
+// process, so the honest measurement in the footer was still something a player could only take
+// on faith. These two halves close that — the archive writes the evidence down per landed turn,
+// and `/dungeon attestation` hands it over.
+//
+// The claim does not grow. A verified quote establishes WHERE the text was produced — an enclave
+// measuring to this value, at this TCB verdict — and nothing about the text. Every string below
+// is written to that ceiling, matching the footer's own wording rather than exceeding it.
+
+/// Archive one landed attested turn's FULL evidence against the receipt it produced.
+///
+/// A no-op when the narration carried no attestation: an unattested turn has nothing to archive,
+/// and this function is not a place one can acquire evidence it was not given.
+///
+/// Fail-closed on a MISMATCH. The evidence is pulled by the summary's own quote digest and its
+/// identity fields are then re-checked against that summary — because the summary is what the
+/// receipt committed to, and archiving a quote whose identity differs from the committed one
+/// would file real bytes under a turn they do not describe. On any mismatch nothing is written
+/// and the operator gets a line; a missing record is a visible gap, a wrong record is a lie.
+async fn archive_attestation(
+    state: &BotState,
+    paid: &crate::pay::PaidNarrator,
+    channel: u64,
+    receipt_id: [u8; 32],
+    model: &str,
+    provenance: &NarrationProvenance,
+) {
+    let Some(summary) = provenance.attestation.as_ref() else {
+        return;
+    };
+    let receipt_hex = hex::encode(receipt_id);
+    let Some(evidence) = paid.attestation_quote(&summary.quote_sha256) else {
+        tracing::error!(
+            channel,
+            receipt = %receipt_hex,
+            quote_sha256 = %summary.quote_sha256_hex(),
+            "an ATTESTED turn landed but its quote could not be retrieved — the receipt names an \
+             enclave whose evidence is now unarchivable, so `/dungeon attestation` will have \
+             nothing to hand a player for this turn"
+        );
+        return;
+    };
+    if evidence.measurement != summary.measurement
+        || evidence.instance_id != summary.instance_id
+        || evidence.tcb_status != summary.tcb_status
+    {
+        tracing::error!(
+            channel,
+            receipt = %receipt_hex,
+            "the retrieved attestation evidence does not match the summary the receipt bound — \
+             REFUSING to archive it (a record filed under the wrong turn is worse than none)"
+        );
+        return;
+    }
+
+    let row = crate::db::NarrationAttestationRow {
+        receipt_hex: receipt_hex.clone(),
+        channel_id: channel.to_string(),
+        // The trusted, configuration-derived provider label — never anything model output chose.
+        provider: paid.provider().backend_key().to_string(),
+        model: model.to_string(),
+        instance_id: evidence.instance_id,
+        measurement_hex: summary.measurement_hex(),
+        tcb_status: evidence.tcb_status,
+        quote_sha256_hex: summary.quote_sha256_hex(),
+        nonce_hex: evidence.nonce_hex,
+        e2e_pubkey_b64: evidence.e2e_pubkey_b64,
+        quote: evidence.quote_bytes,
+        created_at: now_secs(),
+    };
+    if let Err(error) = state.db.persist_narration_attestation(&row).await {
+        tracing::error!(
+            %error,
+            channel,
+            receipt = %receipt_hex,
+            "could not archive the attestation for a landed attested turn"
+        );
+    }
+}
+
+/// What re-checking an archived record **from the stored bytes alone** established.
+///
+/// Both fields are TAMPER checks on the archive, not attestations. The attestation happened once,
+/// live, against fresh collateral and a nonce generated moments earlier; it is not re-derivable
+/// from bytes at rest and nothing here claims it is. What these catch is a row that has been
+/// EDITED since it was written — which is exactly the failure a stored record is otherwise
+/// silently vulnerable to.
+struct ArchiveRecheck {
+    /// `SHA-256(quote)` equals the digest stored beside it — so the blob is the one this row
+    /// claims, and the one the receipt's commitment was computed over.
+    digest_matches: bool,
+    /// The quote's `report_data[0..32]` equals `SHA-256(ascii(nonce) ‖ ascii(pubkey))` — so the
+    /// stored nonce/instance-key pair is the one this quote commits to. `Err` carries why not.
+    binding: Result<(), String>,
+}
+
+impl ArchiveRecheck {
+    /// Re-derive both checks from the row's own bytes.
+    fn of(row: &crate::db::NarrationAttestationRow) -> ArchiveRecheck {
+        ArchiveRecheck {
+            digest_matches: dregg_chutes_e2ee::quote_sha256_hex(&row.quote) == row.quote_sha256_hex,
+            binding: dregg_chutes_e2ee::recheck_archived_binding(
+                &row.quote,
+                &row.nonce_hex,
+                &row.e2e_pubkey_b64,
+            ),
+        }
+    }
+
+    /// Whether the record is internally consistent on both counts.
+    fn intact(&self) -> bool {
+        self.digest_matches && self.binding.is_ok()
+    }
+}
+
+/// The commitment the LANDED RECEIPT binds for this attestation, recomputed from the archived
+/// fields — the link between "these bytes" and "that turn on the verified chain".
+///
+/// It is the same domain-separated hash `/dungeon chutes-turn` required the receipt to carry
+/// before it would commit a credit, over the same four preimages. Recomputing it here means a
+/// player can check the tie themselves rather than being told it holds: this value must appear on
+/// the receipt named in the record, and that receipt must survive `/dungeon verify`'s replay.
+fn archived_provenance_commit(row: &crate::db::NarrationAttestationRow) -> Option<String> {
+    let measurement: [u8; 32] = hex::decode(&row.measurement_hex).ok()?.try_into().ok()?;
+    let quote_sha256: [u8; 32] = hex::decode(&row.quote_sha256_hex).ok()?.try_into().ok()?;
+    Some(hex::encode(tee_provenance_commitment(&TeeProvenance::new(
+        measurement,
+        row.instance_id.clone(),
+        row.tcb_status.clone(),
+        quote_sha256,
+    ))))
+}
+
+/// How many archived attestations the panel lists (the newest in full, the rest as one line each).
+const ATTESTATION_PANEL_ROWS: i64 = 6;
+
+/// `/dungeon attestation` — **hand the player the evidence.**
+///
+/// The most recent attested turn in this channel, rendered as the things that can actually be
+/// compared against something outside this bot (the enclave measurement against Chutes' published
+/// registry; the receipt against `/dungeon verify`'s replay), plus the raw TDX quote as a file so
+/// a third-party DCAP verifier can be pointed at it.
+async fn handle_attestation(ctx: &Context, command: &CommandInteraction, state: &BotState) {
+    ack::defer_slash(ctx, command, false).await;
+    let channel = command.channel_id.get();
+
+    let rows = match state
+        .db
+        .narration_attestations(&channel.to_string(), ATTESTATION_PANEL_ROWS)
+        .await
+    {
+        Ok(rows) => rows,
+        Err(error) => {
+            tracing::warn!(%error, channel, "could not read the attestation archive");
+            let embed = error_embed(
+                "The attestation archive could not be read",
+                "Something went wrong reading this channel's records. Nothing about the \
+                 playthrough is affected — `/dungeon verify` still re-verifies the receipt chain.",
+            );
+            ack::edit_slash(ctx, command, embed, vec![]).await;
+            return;
+        }
+    };
+
+    let Some(newest) = rows.first() else {
+        // The honest empty case. It is REACHABLE in normal play — the collective ballot path
+        // never runs the attested backend — so it explains rather than apologises.
+        let embed = base_embed(&format!("{KEEP_NAME} — no attested narration here yet"))
+            .description(
+                "Nothing in this channel has been narrated inside an attested enclave yet, so \
+                 there is no quote to hand you.\n\n\
+                 The shared ballot rounds (`/dungeon start` → buttons → `/dungeon close`) narrate \
+                 on the free tier or an ordinary hosted model — neither attests anything, and the \
+                 footer says so. A turn gets an enclave attestation only through \
+                 `/dungeon chutes-turn confirm:true`, which runs the model inside a DCAP-verified \
+                 Intel TDX enclave and binds that enclave's identity into the receipt it lands.",
+            )
+            .footer(footer(&NarrationProvenance::scripted()));
+        ack::edit_slash(ctx, command, embed, vec![]).await;
+        return;
+    };
+
+    let recheck = ArchiveRecheck::of(newest);
+    let embed = attestation_embed(newest, &recheck, &rows[1..]);
+    let short: String = newest.receipt_hex.chars().take(12).collect();
+    let quote_file = serenity::all::CreateAttachment::bytes(
+        newest.quote.clone(),
+        format!("dungeon-attestation-{short}.tdx-quote.bin"),
+    );
+    let sidecar = serenity::all::CreateAttachment::bytes(
+        attestation_sidecar_json(newest).into_bytes(),
+        format!("dungeon-attestation-{short}.json"),
+    );
+    let result = command
+        .edit_response(
+            &ctx.http,
+            serenity::all::EditInteractionResponse::new()
+                .embed(embed)
+                .new_attachment(quote_file)
+                .new_attachment(sidecar),
+        )
+        .await;
+    ack::warn_dropped_edit(&result, "slash", "dungeon attestation");
+}
+
+/// The machine-readable sidecar: everything needed to re-run the checks, in one JSON object
+/// beside the raw quote. Deliberately field-for-field the archived row (minus the blob, which is
+/// the other attachment) so nothing about the record is only visible in prose.
+fn attestation_sidecar_json(row: &crate::db::NarrationAttestationRow) -> String {
+    serde_json::to_string_pretty(&serde_json::json!({
+        "what_this_establishes":
+            "WHERE this narration was produced: inside an Intel TDX enclave whose folded code \
+             identity is `measurement_hex`, accepted by DCAP at `tcb_status`. It is NOT a claim \
+             about the narration itself. The dregg executor, not the model, moves the world.",
+        "receipt_hex": row.receipt_hex,
+        "provider": row.provider,
+        "model": row.model,
+        "instance_id": row.instance_id,
+        "measurement_hex": row.measurement_hex,
+        "tcb_status": row.tcb_status,
+        "quote_sha256_hex": row.quote_sha256_hex,
+        "quote_len": row.quote.len(),
+        "report_data_binding": {
+            "rule": "report_data[0..32] == SHA-256(ascii(nonce_hex) || ascii(e2e_pubkey_b64))",
+            "nonce_hex": row.nonce_hex,
+            "e2e_pubkey_b64": row.e2e_pubkey_b64,
+        },
+        "receipt_binding": {
+            "rule":
+                "BLAKE3(\"dungeon-on-dregg/tee-provenance-v1:\" || measurement || \
+                 len(instance_id) || instance_id || len(tcb_status) || tcb_status || \
+                 quote_sha256), bound into the receipt named above",
+            "tee_provenance_commit_hex": archived_provenance_commit(row),
+        },
+        "measurement_registry": dregg_chutes_e2ee::narrator_backend::DEFAULT_MEASUREMENTS_URL,
+        "archived_at_unix": row.created_at,
+    }))
+    .unwrap_or_else(|_| "{}".to_string())
+}
+
+/// The `/dungeon attestation` panel.
+fn attestation_embed(
+    row: &crate::db::NarrationAttestationRow,
+    recheck: &ArchiveRecheck,
+    older: &[crate::db::NarrationAttestationRow],
+) -> CreateEmbed {
+    let short_measurement: String = row.measurement_hex.chars().take(24).collect();
+    let short_receipt: String = row.receipt_hex.chars().take(24).collect();
+
+    let mut embed = base_embed(&format!("{KEEP_NAME} — the attested narration, in full"))
+        .description(format!(
+            "One turn in this channel was narrated **inside a DCAP-verified Intel TDX enclave**. \
+             Attached is the raw attestation quote and a JSON sidecar — the same bytes this bot \
+             checked, so you do not have to take its word for any of it.\n\n\
+             **What that establishes:** _where_ the text was produced — an enclave whose code \
+             identity folds to the measurement below, accepted at TCB `{tcb}`. **It is not a \
+             claim about the text.** The prose has no authority over the world in either case; \
+             only a move the executor admits changes anything.",
+            tcb = truncate(&row.tcb_status, 32),
+        ))
+        .field(
+            "🔐 The enclave",
+            format!(
+                "```\nmeasurement  {short_measurement}…\ninstance     {}\nTCB          {}\nmodel        {}\nprovider     {}\n```",
+                truncate(&row.instance_id, 48),
+                truncate(&row.tcb_status, 32),
+                truncate(&row.model, 48),
+                truncate(&row.provider, 24),
+            ),
+            false,
+        )
+        .field(
+            "🧾 Four things you can check yourself",
+            format!(
+                "**1. The quote is the one named.** `sha256` of the attached `.bin` must equal \
+                 `{}…`\n\
+                 **2. The quote was minted for this session.** its `report_data[0..32]` must \
+                 equal `SHA-256(ascii(nonce) ‖ ascii(e2e_pubkey))` — both strings are in the \
+                 sidecar. Without this a quote proves only that *some* enclave signed *something*.\n\
+                 **3. The enclave is a Chutes one.** its MRTD + RTMR0..2 must match an entry in \
+                 the published registry: <{registry}>\n\
+                 **4. The turn is this turn.** the sidecar's `tee_provenance_commit_hex` is bound \
+                 into receipt `{short_receipt}…`, and `/dungeon verify` re-verifies that receipt \
+                 chain by replay.\n\n\
+                 A full DCAP verification of the attached quote (signature chain to the Intel SGX \
+                 Root CA, QE identity, TCB) is what any DCAP verifier will do with the file.",
+                truncate(&row.quote_sha256_hex, 24),
+                registry = dregg_chutes_e2ee::narrator_backend::DEFAULT_MEASUREMENTS_URL,
+            ),
+            false,
+        )
+        .field(
+            "📼 This record, re-checked from its own stored bytes",
+            recheck_text(recheck),
+            false,
+        );
+
+    if !older.is_empty() {
+        let mut lines = String::new();
+        for old in older {
+            lines.push_str(&format!(
+                "{}… · {} · {}\n",
+                old.receipt_hex.chars().take(12).collect::<String>(),
+                old.measurement_hex.chars().take(12).collect::<String>(),
+                truncate(&old.tcb_status, 20),
+            ));
+        }
+        embed = embed.field(
+            format!("Earlier attested turns in this channel ({})", older.len()),
+            format!("```{}```", truncate(&lines, 900)),
+            false,
+        );
+    }
+
+    embed.footer(footer(&NarrationProvenance::from_paid(
+        crate::pay::PaidNarratorProvider::ChutesTee,
+        None,
+    )))
+}
+
+/// The re-check panel's wording. It states plainly what these checks are for, so an intact record
+/// is never mistaken for a re-run attestation — and a BROKEN one is unmissable.
+fn recheck_text(recheck: &ArchiveRecheck) -> String {
+    let digest = if recheck.digest_matches {
+        "✓ the stored quote hashes to the stored digest"
+    } else {
+        "✗ **the stored quote does NOT hash to the stored digest**"
+    };
+    let binding = match &recheck.binding {
+        Ok(()) => "✓ the stored nonce + instance key are the pair this quote's `report_data` \
+                   commits to"
+            .to_string(),
+        Err(why) => format!("✗ **{}**", truncate(why, 300)),
+    };
+    let verdict = if recheck.intact() {
+        "These two say the record is UNALTERED since it was written. They are tamper checks on a \
+         stored row — they are **not** a re-run of the attestation, which happened once, live, \
+         against fresh collateral and a nonce generated moments before. Re-running it is what the \
+         attached quote is for."
+    } else {
+        "**This record has been altered since it was written.** Do not rely on it. The receipt \
+         chain is a separate matter — run `/dungeon verify`."
+    };
+    format!("{digest}\n{binding}\n\n{verdict}")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2788,6 +3280,287 @@ mod tests {
         );
     }
 
+    // ── THE DURABLE ATTESTATION ARCHIVE + what a player can actually check ────
+
+    /// A row shaped like the one an attested turn archives. `quote` is deliberately NOT a real
+    /// TDX quote here — the quote-parsing half of the re-check is proved against the real Chutes
+    /// fixture in `dregg-chutes-e2ee`'s `archive_recheck` tests; what this file owns is the
+    /// storage round-trip, the digest half, and the wording.
+    fn sample_attestation_row(
+        channel: u64,
+        receipt: [u8; 32],
+    ) -> crate::db::NarrationAttestationRow {
+        let quote = vec![0x5Au8; 4_782];
+        crate::db::NarrationAttestationRow {
+            receipt_hex: hex::encode(receipt),
+            channel_id: channel.to_string(),
+            provider: "chutes-tee".to_string(),
+            model: "Qwen/Qwen3-32B-TEE".to_string(),
+            instance_id: "1d5fdd83-8c1a-4f2e-9b77-2a5f0c9e4411".to_string(),
+            measurement_hex: "a5".repeat(32),
+            tcb_status: "UpToDate".to_string(),
+            quote_sha256_hex: dregg_chutes_e2ee::quote_sha256_hex(&quote),
+            nonce_hex: "9f".repeat(32),
+            e2e_pubkey_b64: "QVRURVNURUQ=".to_string(),
+            quote,
+            created_at: 1_753_500_000,
+        }
+    }
+
+    /// **The gap this closes.** Before the archive, an attested turn's quote lived only in the
+    /// narrator process: the footer named an enclave and a player could never check it. Now the
+    /// evidence outlives the process, byte for byte, and a row that has been EDITED since it was
+    /// written says so.
+    ///
+    /// Every assertion below can go red on its own: drop the blob column and the round-trip
+    /// fails; drop the digest re-derivation and the tamper cases pass silently; make the insert
+    /// non-idempotent and the replacement case overwrites a receipt already on the chain.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_archived_attestation_outlives_the_process_and_a_tampered_row_is_caught() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db_url = format!(
+            "sqlite://{}?mode=rwc",
+            tmp.path().join("attest.db").display()
+        );
+        let channel = 771_700_u64;
+        let row = sample_attestation_row(channel, [0x11; 32]);
+
+        {
+            let db = crate::db::Database::connect(&db_url).await.unwrap();
+            db.persist_narration_attestation(&row).await.unwrap();
+        }
+
+        // A FRESH process opening the same file finds the whole record, quote bytes included.
+        let db = crate::db::Database::connect(&db_url).await.unwrap();
+        let stored = db
+            .narration_attestation(&row.receipt_hex)
+            .await
+            .unwrap()
+            .expect("the archived attestation survived a fresh open");
+        assert_eq!(stored, row, "the record round-trips field for field");
+        assert_eq!(
+            stored.quote, row.quote,
+            "the raw quote is stored verbatim — it is the artifact handed to a player"
+        );
+        let listed = db
+            .narration_attestations(&channel.to_string(), 6)
+            .await
+            .unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].receipt_hex, row.receipt_hex);
+        // Another channel's panel must not show it.
+        assert!(
+            db.narration_attestations("771701", 6)
+                .await
+                .unwrap()
+                .is_empty(),
+            "an archive row belongs to the channel that produced it"
+        );
+
+        // IDEMPOTENT by receipt: a receipt is landed once, and a later write must never be able
+        // to REPLACE the evidence filed under a receipt already on the chain.
+        let mut impostor = sample_attestation_row(channel, [0x11; 32]);
+        impostor.measurement_hex = "ff".repeat(32);
+        impostor.instance_id = "attacker-instance".to_string();
+        db.persist_narration_attestation(&impostor).await.unwrap();
+        let after = db
+            .narration_attestation(&row.receipt_hex)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            after, row,
+            "a second write under the same receipt must NOT replace the archived evidence"
+        );
+
+        // THE TAMPER CHECK, RED. Flip one byte of the stored quote: the digest no longer matches,
+        // so the record is not intact and the panel says so in plain sight.
+        let mut flipped = stored.clone();
+        flipped.quote[2_000] ^= 0x01;
+        let check = ArchiveRecheck::of(&flipped);
+        assert!(
+            !check.digest_matches,
+            "one flipped quote byte must break the stored digest"
+        );
+        assert!(!check.intact());
+        assert!(
+            recheck_text(&check).contains("has been altered"),
+            "a broken record must be unmissable: {}",
+            recheck_text(&check)
+        );
+
+        // …and rewriting the DIGEST instead of the bytes is caught the same way.
+        let mut relabelled = stored.clone();
+        relabelled.quote_sha256_hex = "00".repeat(32);
+        assert!(!ArchiveRecheck::of(&relabelled).digest_matches);
+
+        // A quote column that is not a quote at all fails the binding half rather than passing
+        // it — garbage must never read as "checks out". (The GREEN binding case runs against the
+        // real Chutes TDX fixture in `dregg-chutes-e2ee`'s `archive_recheck` tests.)
+        assert!(
+            ArchiveRecheck::of(&stored).binding.is_err(),
+            "a non-quote blob must not satisfy the report_data binding"
+        );
+    }
+
+    /// The record recomputes the SAME commitment the landed receipt binds — the link between
+    /// "these bytes" and "that turn on the replay-verified chain" — and it is sensitive to every
+    /// field it is computed over, so a record cannot be edited into matching a different turn.
+    #[test]
+    fn the_archived_record_recomputes_the_receipts_own_provenance_commitment() {
+        let row = sample_attestation_row(771_701, [0x22; 32]);
+        let commit = archived_provenance_commit(&row).expect("a well-formed row commits");
+        assert_eq!(commit.len(), 64);
+
+        // It IS the receipt-side commitment, not a look-alike: the same function, over the same
+        // four preimages, that `/dungeon chutes-turn` required the receipt to carry.
+        let expected = hex::encode(tee_provenance_commitment(&TeeProvenance::new(
+            [0xa5; 32],
+            row.instance_id.clone(),
+            row.tcb_status.clone(),
+            hex::decode(&row.quote_sha256_hex)
+                .unwrap()
+                .try_into()
+                .unwrap(),
+        )));
+        assert_eq!(commit, expected);
+
+        for mutate in [
+            |r: &mut crate::db::NarrationAttestationRow| r.measurement_hex = "b6".repeat(32),
+            |r: &mut crate::db::NarrationAttestationRow| r.instance_id = "other".to_string(),
+            |r: &mut crate::db::NarrationAttestationRow| r.tcb_status = "OutOfDate".to_string(),
+            |r: &mut crate::db::NarrationAttestationRow| r.quote_sha256_hex = "01".repeat(32),
+        ] {
+            let mut altered = row.clone();
+            mutate(&mut altered);
+            assert_ne!(
+                archived_provenance_commit(&altered),
+                Some(commit.clone()),
+                "every committed field must move the commitment"
+            );
+        }
+
+        // A malformed row commits to NOTHING rather than to a guess.
+        let mut broken = row.clone();
+        broken.measurement_hex = "not hex".to_string();
+        assert!(archived_provenance_commit(&broken).is_none());
+    }
+
+    /// **The claim does not grow.** The panel's re-check wording must say what these checks are
+    /// (tamper checks on a stored row) and what they are NOT (a re-run attestation) — the same
+    /// ceiling the `/dungeon` footer already holds. An intact record that read as "attestation
+    /// re-verified" would be exactly the over-claim the footer avoids.
+    #[test]
+    fn the_recheck_wording_never_claims_a_re_run_attestation() {
+        let intact = ArchiveRecheck {
+            digest_matches: true,
+            binding: Ok(()),
+        };
+        assert!(intact.intact());
+        let text = recheck_text(&intact);
+        assert!(text.contains('✓'), "{text}");
+        assert!(
+            text.contains("not** a re-run of the attestation"),
+            "an intact record must not read as a re-verified attestation: {text}"
+        );
+        assert!(
+            text.contains("UNALTERED"),
+            "it must say what it DOES establish: {text}"
+        );
+
+        let broken = ArchiveRecheck {
+            digest_matches: false,
+            binding: Err(
+                "the archived nonce/instance-key pair is NOT what this quote's \
+                          report_data commits to"
+                    .to_string(),
+            ),
+        };
+        assert!(!broken.intact());
+        let text = recheck_text(&broken);
+        assert!(
+            text.contains('✗') && text.contains("has been altered"),
+            "{text}"
+        );
+        assert!(
+            text.contains("`/dungeon verify`"),
+            "a broken record still points at the chain, which is a separate question: {text}"
+        );
+    }
+
+    /// The panel itself: it names the enclave, hands over the checks, and — the tooth — never
+    /// exceeds what an attestation establishes.
+    #[test]
+    fn the_attestation_panel_is_checkable_and_bounded_in_what_it_claims() {
+        let wire = serde_json::to_value(register()).expect("serialize command registration");
+        assert!(
+            wire["options"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|option| option["name"] == "attestation"),
+            "the affordance is registered"
+        );
+
+        let row = sample_attestation_row(771_702, [0x33; 32]);
+        let check = ArchiveRecheck::of(&row);
+        let embed = attestation_embed(&row, &check, &[]);
+        let json = serde_json::to_string(&embed).expect("the panel serializes");
+
+        // The things a player compares against something OUTSIDE this bot.
+        assert!(
+            json.contains("a5a5a5a5a5a5a5a5"),
+            "the measurement is legible"
+        );
+        assert!(
+            json.contains(dregg_chutes_e2ee::narrator_backend::DEFAULT_MEASUREMENTS_URL),
+            "the published registry to compare it against is named"
+        );
+        assert!(
+            json.contains(&"33".repeat(8)),
+            "the receipt the turn landed is named"
+        );
+        assert!(
+            json.contains("/dungeon verify"),
+            "the panel points at the replay that ties the receipt to the chain"
+        );
+        assert!(
+            json.contains("report_data"),
+            "the session binding a player recomputes is stated"
+        );
+
+        // THE CEILING: where, not what. The panel must carry the same bound the footer does.
+        assert!(
+            json.contains("It is not a **claim about the text.**")
+                || json.contains("It is not a claim about the text"),
+            "the panel must say the attestation is not a claim about the text: {json}"
+        );
+        assert!(
+            !json.contains("verified narration")
+                && !json.contains("proves the narration")
+                && !json.contains("guaranteed accurate"),
+            "the panel must never claim the PROSE was verified: {json}"
+        );
+
+        // The sidecar carries the same bound, machine-readably.
+        let sidecar: serde_json::Value =
+            serde_json::from_str(&attestation_sidecar_json(&row)).expect("the sidecar is JSON");
+        assert_eq!(sidecar["receipt_hex"], row.receipt_hex);
+        assert_eq!(sidecar["quote_sha256_hex"], row.quote_sha256_hex);
+        assert_eq!(sidecar["report_data_binding"]["nonce_hex"], row.nonce_hex);
+        assert_eq!(
+            sidecar["report_data_binding"]["e2e_pubkey_b64"],
+            row.e2e_pubkey_b64
+        );
+        assert_eq!(
+            sidecar["receipt_binding"]["tee_provenance_commit_hex"],
+            serde_json::json!(archived_provenance_commit(&row).unwrap())
+        );
+        let what = sidecar["what_this_establishes"].as_str().unwrap();
+        assert!(what.contains("WHERE"), "{what}");
+        assert!(what.contains("NOT a claim about the narration"), "{what}");
+    }
+
     #[test]
     fn discord_chutes_cards_are_bounded_viewer_blind_and_replay_legible() {
         let consent = ViewerBlindChutesConsent::new("deepseek-ai/DeepSeek-V3", 50_000)
@@ -3304,6 +4077,203 @@ mod tests {
             ),
             "a partly-voted restricted electorate must still wait out the window",
         );
+    }
+
+    // ── RESTART SEMANTICS for the close gate (docs/reference/RESTART-SEMANTICS.md) ──
+    //
+    // The gate above is only as good as the record it reads. That record lived ONLY in
+    // `meta()` — an empty `HashMap` at boot — while `DungeonOffering::rebuild()` is `Some`,
+    // so runs genuinely resume by replay. The pre-fix gate was
+    //
+    //     if let Some((_, CloseAuth::Denied { .. })) = gate { … return; }
+    //
+    // over a `gate: Option<…>` built from that map, so an absent record matched NO arm and
+    // fell straight through to `close_round` — after any restart, ANY member could close ANY
+    // party's round, repeatedly, each one landing a real committed crowd turn.
+
+    /// A temp db path for one test (unique per test AND per process, so `--test-threads=4`
+    /// cannot make two tests share a file).
+    fn temp_db_url(tag: &str) -> (std::path::PathBuf, String) {
+        let dir = std::env::temp_dir().join(format!("dregg-fiction-tests-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join(format!("{tag}.db"));
+        let _ = std::fs::remove_file(&path);
+        let url = format!("sqlite:{}?mode=rwc", path.display());
+        (path, url)
+    }
+
+    /// ⚑ **THE RESTART, for real**: the host record is written, the `Database` handle is
+    /// DROPPED (which is what a process exit is), a fresh handle re-opens the same file, and
+    /// the gate decides off what came back. Asserts on the DECISION, not on the bytes.
+    #[tokio::test]
+    async fn the_close_gate_rebuilds_its_host_and_window_across_a_restart() {
+        let (path, url) = temp_db_url("dungeon-host-restart");
+        let channel = 990_001_u64;
+        let host = 111_u64;
+        let passer_by = 222_u64;
+        let opened_at = 1_000_000_i64;
+
+        // The run opens under the pre-restart process.
+        {
+            let db = crate::db::Database::connect(&url).await.expect("db opens");
+            db.set_dungeon_host(channel, host, opened_at)
+                .await
+                .expect("the host record persists");
+        } // ← the pool drops here. `meta()` never had an entry for this channel.
+
+        // THE RESTART: a brand-new handle over the same file, and an empty `meta()`.
+        let db = crate::db::Database::connect(&url)
+            .await
+            .expect("db reopens");
+        let remembered = db.get_dungeon_host(channel).await.expect("readable");
+        assert_eq!(
+            remembered,
+            Some((host, opened_at)),
+            "the host record must survive the process"
+        );
+
+        let now = opened_at + 5; // a YOUNG round: 5s in, far under MIN_ROUND_SECS
+        let (opener, window_from) = close_ground_truth(remembered, now);
+        assert_eq!((opener, window_from), (host, opened_at));
+
+        // AUTHORITY, after the restart: the passer-by is STILL refused.
+        let verdict = authorize_close(
+            passer_by,
+            opener,
+            now,
+            window_from,
+            None,
+            &[ident("driveby").0],
+        );
+        assert!(
+            matches!(verdict, CloseAuth::Denied { .. }),
+            "after a restart a non-host must still be refused a young round, got {verdict:?}"
+        );
+        // …and the host keeps exactly the power the row remembered for them.
+        assert_eq!(
+            authorize_close(host, opener, now, window_from, None, &[]),
+            CloseAuth::Opener,
+            "the rebuilt record must restore the host, not merely deny everyone"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// **The floor**: when NOTHING survived (a run opened before the record existed, or a
+    /// failed write), the gate inherits no host and restarts the fair window — it must not
+    /// fall through and close. And it must not strand the party either.
+    #[test]
+    fn a_run_with_no_host_on_record_refuses_every_close_until_the_window_matures() {
+        let now = 5_000_000_i64;
+        let (opener, window_from) = close_ground_truth(None, now);
+        assert_eq!(opener, NO_HOST, "no host may be inherited from nothing");
+        assert_eq!(window_from, now, "the fair window restarts at adoption");
+
+        // Nobody closes early — including an invoker whose id somehow reads as the NO_HOST
+        // sentinel, which is why `authorize_close` refuses the `Opener` branch structurally.
+        for invoker in [111_u64, 222_u64, NO_HOST] {
+            let verdict = authorize_close(invoker, opener, now, window_from, None, &[ident("a").0]);
+            assert!(
+                matches!(verdict, CloseAuth::Denied { wait_secs } if wait_secs == MIN_ROUND_SECS),
+                "an unhosted run must refuse invoker {invoker}, got {verdict:?}"
+            );
+        }
+
+        // NOT STRANDED: once the fair window elapses the party moves on without a host.
+        assert_eq!(
+            authorize_close(
+                222,
+                opener,
+                now + MIN_ROUND_SECS,
+                window_from,
+                None,
+                &[ident("a").0]
+            ),
+            CloseAuth::Matured,
+            "a hostless run must still be closable after the fair window, or the party is stranded"
+        );
+    }
+
+    /// The adopted floor is **persisted**, and that is load-bearing: a floor recomputed from
+    /// `now` on every invocation would deny the round forever. This drives the same write the
+    /// gate performs, across a real restart, and shows the window then MATURES.
+    #[tokio::test]
+    async fn the_adopted_close_window_persists_so_it_matures_instead_of_restarting() {
+        let (path, url) = temp_db_url("dungeon-host-adopted");
+        let channel = 990_002_u64;
+        let adopted_at = 2_000_000_i64;
+
+        {
+            let db = crate::db::Database::connect(&url).await.expect("db opens");
+            assert_eq!(
+                db.get_dungeon_host(channel).await.expect("readable"),
+                None,
+                "nothing is on record before the adoption"
+            );
+            // What `handle_close` writes when it adopts the floor.
+            db.set_dungeon_host(channel, NO_HOST, adopted_at)
+                .await
+                .expect("the adopted stamp persists");
+        }
+
+        let db = crate::db::Database::connect(&url)
+            .await
+            .expect("db reopens");
+        let remembered = db.get_dungeon_host(channel).await.expect("readable");
+        assert_eq!(remembered, Some((NO_HOST, adopted_at)));
+
+        // A close attempted a full window LATER now matures off the REMEMBERED stamp …
+        let (opener, window_from) = close_ground_truth(remembered, adopted_at + MIN_ROUND_SECS);
+        assert_eq!(window_from, adopted_at, "the stamp must not be re-minted");
+        assert_eq!(
+            authorize_close(
+                222,
+                opener,
+                adopted_at + MIN_ROUND_SECS,
+                window_from,
+                None,
+                &[ident("a").0]
+            ),
+            CloseAuth::Matured,
+        );
+        // … while a close one second in is still refused.
+        assert!(matches!(
+            authorize_close(
+                222,
+                opener,
+                adopted_at + 1,
+                window_from,
+                None,
+                &[ident("a").0]
+            ),
+            CloseAuth::Denied { .. }
+        ));
+
+        // And the run ending forgets it, so the row does not outlive the run.
+        assert!(db.clear_dungeon_host(channel).await.expect("clears"));
+        assert_eq!(db.get_dungeon_host(channel).await.expect("readable"), None);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A corrupt/unparseable host row decodes as `None` — "I do not know who hosts this run",
+    /// which routes to the REFUSE floor. It must never decode as a fabricated host.
+    #[tokio::test]
+    async fn an_unparseable_host_row_reads_as_no_record_not_as_a_host() {
+        let (path, url) = temp_db_url("dungeon-host-corrupt");
+        let channel = 990_003_u64;
+        let db = crate::db::Database::connect(&url).await.expect("db opens");
+        for junk in ["", "notanumber:5", "111:notatime", "111", "111:5:9"] {
+            db.write_raw_kv(&format!("dungeon_host:{channel}"), junk)
+                .await
+                .expect("raw write");
+            assert_eq!(
+                db.get_dungeon_host(channel).await.expect("readable"),
+                None,
+                "a malformed host row must decode as absent, not as a host: {junk:?}"
+            );
+        }
+        let _ = std::fs::remove_file(&path);
     }
 
     /// The gate reads the REAL live round's shape (electorate + ballots) the same way

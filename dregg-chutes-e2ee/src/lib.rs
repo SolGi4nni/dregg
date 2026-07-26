@@ -51,7 +51,8 @@ pub mod narrator_backend;
 pub mod session;
 
 pub use attest::{
-    attest_chute, AttestationRecord, AttestedInstance, CollateralSource, VerifierConfig,
+    attest_chute, quote_sha256_hex, recheck_archived_binding, AttestationRecord, AttestedInstance,
+    CollateralSource, VerifierConfig,
 };
 pub use client::{attested_chat_completion, invoke_encrypted, InvokeError, E2E_PATH};
 pub use crypto::{
@@ -60,7 +61,8 @@ pub use crypto::{
     SHARED_SECRET_SIZE, TAG_SIZE,
 };
 pub use discovery::{
-    discover, resolve_chute_id, InstanceInfo, Instances, DEFAULT_API_BASE, DEFAULT_MODELS_BASE,
+    discover, model_pricing, resolve_chute_id, InstanceInfo, Instances, ProviderPricing,
+    DEFAULT_API_BASE, DEFAULT_MODELS_BASE,
 };
 pub use error::ClientError;
 pub use narrator_backend::{attested_narrator_from_env, ChutesTeeBackend, Invoker, TeeNarratorEnv};

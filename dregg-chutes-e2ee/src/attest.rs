@@ -79,16 +79,34 @@ pub struct AttestedInstance {
     pub measurement: [u8; 32],
     pub tcb_status: String,
     pub quote_bytes: Vec<u8>,
+    /// The FRESH attestation nonce this quote was fetched with. Carried out of the verification
+    /// (rather than dropped on the floor) because it is half of the `report_data` binding: with
+    /// `nonce_hex` + `e2e_pubkey_b64` anyone holding the quote can recompute
+    /// `SHA-256(ascii(nonce) ‖ ascii(pubkey))` and see the quote was minted for THIS key. Without
+    /// it an archived quote proves only that some enclave with these measurements signed
+    /// something, at no particular time.
+    pub nonce_hex: String,
 }
 
 /// The attestation record returned alongside a completion — a portable receipt of WHICH
 /// enclave served the request and under what code identity / TCB.
+///
+/// It carries the two binding preimages (`nonce_hex`, `e2e_pubkey_b64`) alongside the quote so a
+/// receipt lane can archive something a THIRD PARTY can check, not just something we assert. What
+/// the archived record establishes is unchanged from what the live verification established:
+/// where the inference ran, under which code identity and TCB verdict — never anything about the
+/// tokens that came back.
 #[derive(Debug, Clone)]
 pub struct AttestationRecord {
     pub instance_id: String,
     pub measurement: [u8; 32],
     pub tcb_status: String,
     pub quote_bytes: Vec<u8>,
+    /// The fresh 64-hex attestation nonce bound into `report_data`.
+    pub nonce_hex: String,
+    /// The base64 ML-KEM-768 instance key bound into `report_data` — the key the request was
+    /// encapsulated to.
+    pub e2e_pubkey_b64: String,
 }
 
 impl From<&AttestedInstance> for AttestationRecord {
@@ -98,6 +116,8 @@ impl From<&AttestedInstance> for AttestationRecord {
             measurement: a.measurement,
             tcb_status: a.tcb_status.clone(),
             quote_bytes: a.quote_bytes.clone(),
+            nonce_hex: a.nonce_hex.clone(),
+            e2e_pubkey_b64: a.e2e_pubkey_b64.clone(),
         }
     }
 }
@@ -123,6 +143,49 @@ struct TeeInstanceEvidence {
     #[allow(dead_code)]
     #[serde(default)]
     certificate: Option<String>,
+}
+
+/// Lowercase-hex SHA-256 of a raw quote — the ONE definition of the handle that links an
+/// `AttestationSummary` to the bytes behind it, exposed so an archive re-deriving it from stored
+/// bytes computes exactly what the summary carried rather than its own near-miss of it.
+pub fn quote_sha256_hex(quote_bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(quote_bytes);
+    hex::encode(hasher.finalize())
+}
+
+/// **Re-check an ARCHIVED attestation record's internal consistency. THIS IS NOT AN
+/// ATTESTATION.**
+///
+/// Given a quote and the `nonce_hex` / `e2e_pubkey_b64` it was archived alongside, this
+/// recomputes `SHA-256(ascii(nonce_hex) ‖ ascii(e2e_pubkey_b64))` and requires it to equal the
+/// quote's `report_data[0..32]` — the same binding [`attest_chute`] enforced when the quote was
+/// actually verified.
+///
+/// What it catches: an archive row whose nonce or instance key has been EDITED away from the
+/// pair the quote commits to. What it emphatically does NOT do: verify the DCAP signature chain,
+/// the PCK root, the TCB status or the measurements. A quote an attacker fabricated from nothing
+/// passes this happily, because the attacker also picks the `report_data`. The attestation
+/// happened once, at [`attest_chute`] time, against live collateral and a nonce we had just
+/// generated; it cannot be re-derived from stored bytes, and nothing here pretends otherwise.
+///
+/// Use it to say "this record is the one we archived", never "this record is attested".
+pub fn recheck_archived_binding(
+    quote_bytes: &[u8],
+    nonce_hex: &str,
+    e2e_pubkey_b64: &str,
+) -> Result<(), String> {
+    let report_data = dregg_tee_verify::report_data_structural_unverified(quote_bytes)?;
+    let want = dregg_tee_verify::chutes_report_data_binding(nonce_hex, e2e_pubkey_b64);
+    if report_data[..32] != want[..] {
+        return Err(
+            "the archived nonce/instance-key pair is NOT what this quote's report_data commits \
+             to — the record has been altered since it was written"
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 /// Generate a fresh 64-hex-char (32-byte) attestation nonce, per chutes-api
@@ -269,6 +332,9 @@ pub fn attest_chute(
             measurement: rep.measurement,
             tcb_status: rep.status.clone(),
             quote_bytes,
+            // The nonce this evidence request was made with — the one `apply_chutes_bindings`
+            // just checked `report_data` against, so the pair travels with the quote.
+            nonce_hex: nonce_hex.clone(),
         });
     }
 

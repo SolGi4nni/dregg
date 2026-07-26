@@ -303,7 +303,37 @@ dregg-dsl-runtime = { path = "../dregg-dsl-runtime" }
 # workspace member (its `workspace = true` deps resolve against the root manifest it lives
 # under); it brings dregg-tee-verify → dcap-qvl + PQClean ML-KEM C into this graph — that C is
 # the attestation stack, not the bot's PQ signing posture (`DREGG_ALLOW_UNAUDITED_PQ`).
-dregg-chutes-e2ee = { path = "../dregg-chutes-e2ee" }
+#
+# `collateral-fetch` is ON for THIS binary, and the reason is not convenience.
+#
+# The crate's default (pre-fetched `CHUTES_COLLATERAL_JSON`) suits a deployment that knows which
+# platform its enclave runs on. This bot does not: Chutes answers from a FLEET, and DCAP
+# collateral is per-platform (keyed by the quote's FMSPC/TCB) — `attest::load_collateral` hands
+# the SAME pre-fetched blob back for every quote, so the moment a different Chutes host answers,
+# verification fails. It also EXPIRES: collateral carries validity windows the verifier checks
+# against wall-clock now, so a file pinned once ages into a fail-closed refusal with no signal
+# other than "paid runs quietly use the free tier".
+#
+# Without this feature `CHUTES_PCCS_URL` is INERT and `TeeNarratorEnv::from_env` refuses outright
+# — i.e. `DREGG_NARRATOR=chutes-tee` cannot be brought up on the edge at all.
+#
+# What it costs, both halves, so the trade is visible where it is made:
+#
+#   * TRUST: nothing. The verify path makes an outbound fetch, but collateral is Intel-signed and
+#     the chain is re-rooted at this crate's own pinned Intel SGX Root CA, so a hostile or wrong
+#     PCCS can only DENY service (refused attestation → free tier), never manufacture an
+#     acceptance.
+#   * SUPPLY CHAIN: real. It turns on dcap-qvl's `report` feature, which pulls a SECOND reqwest
+#     major (0.13) and its default stack — hickory-resolver, moka, rustls-platform-verifier — into
+#     this binary. That is the price of not pinning collateral by hand.
+#
+# The alternative, if that price is judged too high: drop `features` here and give the edge a
+# `CHUTES_COLLATERAL_JSON` file instead, accepting that it must be refreshed before it expires and
+# that it only covers the platform it was fetched for.
+#
+# `dregg-chutes-e2ee`'s own default stays off, so its offline tests and every other consumer are
+# unaffected — this is one binary's deployment choice, declared where it is made.
+dregg-chutes-e2ee = { path = "../dregg-chutes-e2ee", features = ["collateral-fetch"] }
 
 [dev-dependencies]
 # The shared, viewer-blind Bazaar receipt CONTRACT FIXTURES. `dreggnet-market` is a

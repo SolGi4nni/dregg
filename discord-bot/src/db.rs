@@ -2451,11 +2451,16 @@ impl Database {
         &self,
         channel_id: u64,
     ) -> Result<Option<(u64, i64)>, sqlx::Error> {
-        let row: Option<(String,)> = None; // MUTANT-M2b: nothing survives the restart
-        let _ = channel_id;
-        Ok(row.and_then(|(v,)| {
-            let (opener, opened_at) = v.split_once(':')?;
-            Some((opener.parse::<u64>().ok()?, opened_at.parse::<i64>().ok()?))
+        let row: Option<(String,)> = sqlx::query_as("SELECT value FROM kv WHERE key = ?")
+            .bind(Self::dungeon_host_key(channel_id))
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(|(v,)| {
+            // MUTANT-M2c: guess a host rather than reporting the row unreadable
+            match v.split_once(':') {
+                Some((o, t)) => (o.parse::<u64>().unwrap_or(0), t.parse::<i64>().unwrap_or(0)),
+                None => (0, 0),
+            }
         }))
     }
 

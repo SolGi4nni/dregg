@@ -432,6 +432,8 @@ mod tests {
                         measurement: [0xAB; 32],
                         tcb_status: "UpToDate".to_string(),
                         quote_bytes: vec![n as u8; 16],
+                        nonce_hex: format!("{n:064x}"),
+                        e2e_pubkey_b64: format!("pubkey-{n}"),
                     },
                 },
                 self.batch(&format!("est{n}")),

@@ -27,8 +27,8 @@ pub mod ollama;
 pub mod openai;
 
 pub use backend::{
-    metered_converse, AttestationSummary, ConverseBackend, ConverseMessage, ConverseRequest,
-    ConverseResponse, Role, ToolCall, ToolDef,
+    metered_converse, AttestationEvidence, AttestationQuote, AttestationSummary, ConverseBackend,
+    ConverseMessage, ConverseRequest, ConverseResponse, Role, ToolCall, ToolDef,
 };
 pub use bedrock::BedrockClient;
 pub use ledger::{BudgetLedger, LedgerState, ModelSpend, PriceSource, Pricing, Reservation};

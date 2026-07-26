@@ -18,8 +18,11 @@
 //! decrypted with an ephemeral key only this process holds. What that buys is confidentiality and
 //! code identity of the SERVING enclave — it is not a proof about the model weights or the
 //! sampled tokens. [`dregg_narrator::AttestationSummary`] on the response says exactly which
-//! enclave, under which measurement and TCB status; the full quote stays retrievable from
-//! [`ChutesTeeBackend::last_attestation`] for a receipt lane to commit.
+//! enclave, under which measurement and TCB status; the full quote — plus the nonce and instance
+//! key that make its `report_data` binding recomputable by anyone — stays retrievable through
+//! [`dregg_narrator::AttestationEvidence::attestation_for`], keyed by the summary's own quote
+//! digest, for a receipt lane to archive. ([`ChutesTeeBackend::last_attestation`] is the older,
+//! unkeyed read; it cannot say WHICH call a record belongs to, so an archive uses the keyed one.)
 //!
 //! ## Fail-closed
 //!
@@ -29,6 +32,7 @@
 //! `HostedProvider::ExternalAttested`, which contributes NO built-in backend, so a missing
 //! composition yields no narration rather than unattested narration.
 
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -36,13 +40,13 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use dregg_narrator::{
-    build_chat_body, parse_chat_response, AttestationSummary, ConverseBackend, ConverseRequest,
-    ConverseResponse, Narrator,
+    build_chat_body, parse_chat_response, AttestationEvidence, AttestationQuote,
+    AttestationSummary, ConverseBackend, ConverseRequest, ConverseResponse, Narrator,
 };
 
 use crate::attest::{AttestationRecord, CollateralSource, VerifierConfig};
 use crate::client::{invoke_encrypted, InvokeError};
-use crate::discovery::{DEFAULT_API_BASE, DEFAULT_MODELS_BASE};
+use crate::discovery::{model_pricing, ProviderPricing, DEFAULT_API_BASE, DEFAULT_MODELS_BASE};
 use crate::error::ClientError;
 use crate::session::{AttestedSession, Attestor, ChutesAttestor, SessionCache, DEFAULT_TTL_SECS};
 
@@ -107,6 +111,15 @@ impl Invoker for ChutesInvoker {
     }
 }
 
+/// How many distinct attestation records the backend keeps retrievable by quote digest.
+///
+/// A verification is reused for a whole TTL window and is per-model, so the live working set is
+/// "one record per configured model", i.e. one. The window exists so a receipt lane that reads
+/// the evidence one turn after the response still finds it, and so a model switch or a
+/// re-attestation mid-archive does not evict the record the caller is holding a summary for.
+/// It is a BOUND, not a history: an archive that wants the bytes forever must persist them.
+const RETAINED_ATTESTATIONS: usize = 8;
+
 /// A [`ConverseBackend`] whose inference runs inside a DCAP-verified Intel TDX enclave.
 pub struct ChutesTeeBackend {
     attestor: Arc<dyn Attestor>,
@@ -114,6 +127,11 @@ pub struct ChutesTeeBackend {
     cache: SessionCache,
     temperature: f32,
     last: Mutex<Option<AttestationRecord>>,
+    /// The bounded, DIGEST-KEYED retention behind [`AttestationEvidence`]. Keyed by digest
+    /// because `last` cannot answer "the evidence for THIS summary" — under two interleaved
+    /// models it answers "the evidence for whichever call finished most recently", and an
+    /// archive built on that would file a real quote under the wrong turn.
+    retained: Mutex<VecDeque<([u8; 32], AttestationRecord)>>,
 }
 
 impl ChutesTeeBackend {
@@ -130,6 +148,7 @@ impl ChutesTeeBackend {
             cache,
             temperature,
             last: Mutex::new(None),
+            retained: Mutex::new(VecDeque::new()),
         }
     }
 
@@ -172,6 +191,18 @@ impl ChutesTeeBackend {
 
     fn record_last(&self, record: &AttestationRecord) {
         *self.last.lock().unwrap_or_else(|e| e.into_inner()) = Some(record.clone());
+
+        let digest = quote_digest(&record.quote_bytes);
+        let mut retained = self.retained.lock().unwrap_or_else(|e| e.into_inner());
+        // A cached verification is replayed on every turn of its TTL window, so the same digest
+        // arrives over and over: re-inserting would evict the OTHER models' records for nothing.
+        if retained.iter().any(|(d, _)| *d == digest) {
+            return;
+        }
+        retained.push_back((digest, record.clone()));
+        while retained.len() > RETAINED_ATTESTATIONS {
+            retained.pop_front();
+        }
     }
 
     /// Parse the decrypted OpenAI envelope and stamp it with the attestation that covered it.
@@ -188,18 +219,48 @@ impl ChutesTeeBackend {
     }
 }
 
+/// SHA-256 of a raw quote — the ONE definition of the handle that links an
+/// [`AttestationSummary`] to the [`AttestationRecord`] behind it.
+fn quote_digest(quote_bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(quote_bytes);
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&hasher.finalize());
+    out
+}
+
 /// Summarize an attestation record for the narrator response (light: digest, not the quote).
 pub fn summarize(record: &AttestationRecord) -> AttestationSummary {
-    let mut hasher = Sha256::new();
-    hasher.update(&record.quote_bytes);
-    let mut quote_sha256 = [0u8; 32];
-    quote_sha256.copy_from_slice(&hasher.finalize());
     AttestationSummary {
         instance_id: record.instance_id.clone(),
         measurement: record.measurement,
         tcb_status: record.tcb_status.clone(),
-        quote_sha256,
+        quote_sha256: quote_digest(&record.quote_bytes),
         quote_len: record.quote_bytes.len(),
+    }
+}
+
+impl AttestationEvidence for ChutesTeeBackend {
+    /// The retained evidence whose quote hashes to `quote_sha256`.
+    ///
+    /// The digest is RE-DERIVED from the stored bytes on the way out, not read off the key, so a
+    /// record can only be returned under the digest it actually has. A caller archiving this can
+    /// therefore treat "the digest in my summary" and "the bytes I got" as the same object
+    /// without trusting the map.
+    fn attestation_for(&self, quote_sha256: &[u8; 32]) -> Option<AttestationQuote> {
+        let retained = self.retained.lock().unwrap_or_else(|e| e.into_inner());
+        let (_, record) = retained.iter().find(|(d, _)| d == quote_sha256)?;
+        if quote_digest(&record.quote_bytes) != *quote_sha256 {
+            return None;
+        }
+        Some(AttestationQuote {
+            instance_id: record.instance_id.clone(),
+            measurement: record.measurement,
+            tcb_status: record.tcb_status.clone(),
+            nonce_hex: record.nonce_hex.clone(),
+            e2e_pubkey_b64: record.e2e_pubkey_b64.clone(),
+            quote_bytes: record.quote_bytes.clone(),
+        })
     }
 }
 
@@ -278,12 +339,14 @@ fn describe(e: InvokeError) -> String {
 /// | `DREGG_NARRATOR_TEMPERATURE` | sampling temperature | `0.7` |
 /// | `DREGG_NARRATOR_HTTP_TIMEOUT_SECS` | HTTP timeout | `120` |
 ///
-/// PRICING: the model must also be priced, or the metered layer refuses it fail-closed. Chutes
-/// charges `-TEE` models per token like any other (no confidential-compute premium), so the
-/// operator-override path prices it: set `DREGG_NARRATOR_MODEL` to the `-TEE` id and BOTH
-/// `DREGG_NARRATOR_PRICE_INPUT_PER_1K` and `DREGG_NARRATOR_PRICE_OUTPUT_PER_1K` to its published
-/// rate. Half a price pins nothing (the model stays unpriced and is refused) — see
-/// `ModelRegistry::apply_price_override`.
+/// PRICING: the model must also be priced, or the metered layer refuses it fail-closed. It no
+/// longer has to be priced BY HAND: Chutes' catalog publishes a machine-readable per-model rate
+/// (`GET {models_base}/v1/models` → `pricing.{prompt,completion}`, USD per 1,000,000 tokens) for
+/// `-TEE` chutes as for any other, and [`TeeNarratorEnv::provider_pricing`] reads it. An operator
+/// who sets BOTH `DREGG_NARRATOR_PRICE_INPUT_PER_1K` and `_OUTPUT_PER_1K` still wins — their
+/// intent is not overridden — but the pinned rate is then labelled honestly as an override rather
+/// than as a verified rate. Half a price pins nothing (the model stays unpriced and is refused) —
+/// see `ModelRegistry::apply_price_override`.
 pub struct TeeNarratorEnv {
     /// The `-TEE` model id.
     pub model: String,
@@ -343,6 +406,23 @@ impl TeeNarratorEnv {
             temperature: parse_var("DREGG_NARRATOR_TEMPERATURE", DEFAULT_TEMPERATURE),
             timeout_secs,
         })
+    }
+
+    /// **The provider's own published rate for [`Self::model`]**, in USD per 1,000 tokens, read
+    /// from the Chutes catalog (`GET {models_base}/v1/models`).
+    ///
+    /// Call this BEFORE [`Self::build_backend`] (which consumes `self`) so the metered layer can
+    /// price the model from the provider's numbers rather than an operator's typed-in guess.
+    ///
+    /// `Ok(None)` = the catalog does not publish a usable rate pair for this model; the caller
+    /// falls back to whatever it was already going to use. `Err` = the catalog was UNREACHABLE,
+    /// which is deliberately distinguishable from "it says nothing" — the caller must not read a
+    /// network failure as an absent price.
+    pub fn provider_pricing(&self) -> Result<Option<ProviderPricing>, String> {
+        let http = crate::client::http_client_with_timeout(self.timeout_secs)
+            .map_err(|e| format!("chutes-tee: http client for the price catalog: {e}"))?;
+        model_pricing(&http, &self.verifier.models_base, &self.model, &self.cpk)
+            .map_err(|e| format!("chutes-tee: read the price catalog: {e}"))
     }
 
     /// Build the backend this configuration describes.
@@ -534,6 +614,8 @@ mod tests {
                         measurement: [0x7d; 32],
                         tcb_status: "UpToDate".to_string(),
                         quote_bytes: b"quote-bytes".to_vec(),
+                        nonce_hex: "ab".repeat(32),
+                        e2e_pubkey_b64: "QVRURVNURUQ=".to_string(),
                     },
                 },
                 (0..16).map(|i| format!("nonce-{i}")).collect(),
@@ -814,6 +896,91 @@ mod tests {
         assert_eq!(att.quote_sha256_hex().len(), 64);
     }
 
+    /// **The archive seam.** A receipt lane holding only the response's summary can pull the FULL
+    /// evidence by the summary's own quote digest — the raw quote plus the nonce/pubkey pair that
+    /// makes the provider's `report_data` binding recomputable by a third party.
+    ///
+    /// The teeth are the two negatives: a digest that was never attested yields NOTHING (the
+    /// backend does not hand out "the closest record"), and the returned bytes hash to the digest
+    /// that was asked for.
+    #[test]
+    fn the_full_evidence_is_retrievable_by_the_summarys_quote_digest() {
+        let be = backend(
+            FakeAttestor::ok(),
+            RecordingInvoker::new(completion()),
+            DEFAULT_TTL_SECS,
+        );
+        let summary = be
+            .converse(&request())
+            .unwrap()
+            .attestation
+            .expect("attested response");
+
+        let evidence = be
+            .attestation_for(&summary.quote_sha256)
+            .expect("the evidence behind the summary is retained");
+        assert_eq!(evidence.quote_bytes, b"quote-bytes".to_vec());
+        assert_eq!(evidence.instance_id, summary.instance_id);
+        assert_eq!(evidence.measurement, summary.measurement);
+        assert_eq!(evidence.tcb_status, summary.tcb_status);
+        // The binding preimages travel, so an archive of this is checkable rather than asserted.
+        assert_eq!(evidence.nonce_hex.len(), 64);
+        assert_eq!(evidence.e2e_pubkey_b64, "QVRURVNURUQ=");
+        let mut h = Sha256::new();
+        h.update(&evidence.quote_bytes);
+        assert_eq!(
+            h.finalize().as_slice(),
+            summary.quote_sha256.as_slice(),
+            "the bytes handed back hash to the digest that was asked for"
+        );
+
+        // A digest we never attested gets nothing — not the nearest record, not the last one.
+        assert!(
+            be.attestation_for(&[0xFF; 32]).is_none(),
+            "an unknown digest must not resolve to some other call's quote"
+        );
+    }
+
+    /// A digest is retrievable ONLY after a real attested call, and a refused attestation retains
+    /// nothing — the archive can never acquire evidence for a turn that did not attest.
+    #[test]
+    fn a_refused_attestation_retains_no_evidence() {
+        let be = backend(
+            FakeAttestor::refusing(),
+            Arc::new(PanicInvoker),
+            DEFAULT_TTL_SECS,
+        );
+        assert!(be.converse(&request()).is_err());
+        let mut h = Sha256::new();
+        h.update(b"quote-bytes");
+        let mut digest = [0u8; 32];
+        digest.copy_from_slice(&h.finalize());
+        assert!(be.attestation_for(&digest).is_none());
+    }
+
+    /// The retention is BOUNDED and the cached-verification replay does not churn it: twelve
+    /// turns on one cached attestation keep exactly one record (not twelve), and it stays
+    /// retrievable throughout.
+    #[test]
+    fn retention_is_bounded_and_a_reused_verification_does_not_churn_it() {
+        let be = backend(
+            FakeAttestor::ok(),
+            RecordingInvoker::new(completion()),
+            DEFAULT_TTL_SECS,
+        );
+        let mut digest = None;
+        for _ in 0..12 {
+            let summary = be.converse(&request()).unwrap().attestation.unwrap();
+            digest = Some(summary.quote_sha256);
+        }
+        assert_eq!(
+            be.retained.lock().unwrap().len(),
+            1,
+            "one verification reused across 12 turns is ONE retained record"
+        );
+        assert!(be.attestation_for(&digest.unwrap()).is_some());
+    }
+
     // ── FAIL-CLOSED ──────────────────────────────────────────────────────────────────────────
 
     /// THE POINT: a failed attestation returns `Err` and NO inference is attempted. The invoker
@@ -964,6 +1131,8 @@ mod tests {
             measurement: [1u8; 32],
             tcb_status: "UpToDate".to_string(),
             quote_bytes: vec![9u8; 4096],
+            nonce_hex: "cd".repeat(32),
+            e2e_pubkey_b64: "QVRURVNURUQ=".to_string(),
         };
         let s = summarize(&record);
         assert_eq!(s.quote_len, 4096);

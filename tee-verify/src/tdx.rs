@@ -153,6 +153,34 @@ pub fn fold_tdx_measurement(
     h.finalize().into()
 }
 
+/// **A STRUCTURAL read of a TDX quote's `report_data`. IT VERIFIES NOTHING.**
+///
+/// This parses the quote envelope and returns the TD report's 64-byte `report_data` field. It
+/// does NOT check the PCK chain, the QE signature, the quote signature, the TCB status, or the
+/// measurements — a quote fabricated wholesale by an attacker parses exactly as well as a real
+/// one. Nothing about the value returned here is evidence of anything on its own.
+///
+/// It exists for ONE job: re-deriving the Chutes nonce/pubkey binding of an **already-verified**
+/// quote that was archived alongside the nonce and pubkey it was verified against, so that
+/// archive is self-checking — a stored `nonce_hex`/`e2e_pubkey_b64` that has been edited no
+/// longer satisfies [`chutes_report_data_binding`] against the stored quote bytes. That is a
+/// TAMPER check on a record, not an attestation; the attestation happened at
+/// [`TdxVerifier::verify_chutes_tdx`] time and cannot be re-derived from the quote alone.
+pub fn report_data_structural_unverified(quote: &[u8]) -> Result<[u8; 64], String> {
+    let parsed = Quote::parse(quote).map_err(|e| format!("TDX quote parse: {e}"))?;
+    if parsed.header.tee_type != TEE_TYPE_TDX {
+        return Err(format!(
+            "not a TDX quote: tee_type=0x{:x} (want TEE_TYPE_TDX=0x{:x})",
+            parsed.header.tee_type, TEE_TYPE_TDX
+        ));
+    }
+    let td = parsed
+        .report
+        .as_td10()
+        .ok_or("quote does not carry a TDX TD report")?;
+    Ok(td.report_data)
+}
+
 /// The Chutes `report_data` binding: `SHA-256( ascii(nonce_hex) ‖ ascii(e2e_pubkey_b64) )`.
 ///
 /// **Both arguments are the ASCII STRINGS Chutes concatenates**, not raw bytes:

@@ -134,6 +134,53 @@ impl AttestationSummary {
     }
 }
 
+/// **The FULL evidence behind an [`AttestationSummary`]** — everything an independent verifier
+/// needs to re-run the check, rather than take our word for the summary.
+///
+/// [`AttestationSummary`] travels on every response because it is small; this does not, because
+/// the quote is kilobytes. Splitting them lets the narration path stay light while a receipt lane
+/// pulls the bytes exactly once, per turn, and archives them. `quote_sha256` of `quote_bytes` is
+/// the link between the two halves, and a consumer that persists this MUST re-derive it rather
+/// than trust the pairing (see [`AttestationEvidence::attestation_for`]).
+///
+/// `nonce_hex` and `e2e_pubkey_b64` are here for a specific reason: without them the quote alone
+/// establishes only "some enclave with these measurements signed something". WITH them anyone can
+/// recompute the provider's `report_data` binding and see that this quote was minted fresh for
+/// this key — which is what makes an archived record checkable instead of decorative.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AttestationQuote {
+    /// The enclave instance that served the call.
+    pub instance_id: String,
+    /// The folded code-identity measurement that matched the pinned registry.
+    pub measurement: [u8; 32],
+    /// The TCB status the verifier accepted.
+    pub tcb_status: String,
+    /// The fresh attestation nonce this quote was requested with (provider-specific encoding;
+    /// for Chutes, the 64-char hex string hashed into `report_data`).
+    pub nonce_hex: String,
+    /// The instance public key bound into the quote (for Chutes, the base64 ML-KEM-768 key the
+    /// request was encapsulated to).
+    pub e2e_pubkey_b64: String,
+    /// The raw attestation quote — the bytes an independent DCAP verifier consumes.
+    pub quote_bytes: Vec<u8>,
+}
+
+/// A backend that RETAINS the full evidence of the attestations it verified, keyed by quote
+/// digest, so a receipt lane can archive the bytes behind a summary it was handed.
+///
+/// Keyed by digest and not "the last one" on purpose: a `converse` result and a later
+/// `last_attestation()` are two reads with turns in between, and pairing a summary with whatever
+/// record happened to be current is exactly how an archive acquires a quote that does not belong
+/// to the response it is filed under.
+pub trait AttestationEvidence: Send + Sync {
+    /// The full evidence for the attestation whose quote hashes to `quote_sha256`, or `None` if
+    /// this backend no longer retains it (it keeps a bounded window, not a history).
+    ///
+    /// Implementations MUST return only a record whose `quote_bytes` actually hash to
+    /// `quote_sha256`.
+    fn attestation_for(&self, quote_sha256: &[u8; 32]) -> Option<AttestationQuote>;
+}
+
 /// Lowercase hex of a 32-byte digest — a 6-line local encoder so naming an attestation costs
 /// the light narrator crate no new dependency.
 fn hex32(bytes: &[u8; 32]) -> String {
