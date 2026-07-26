@@ -91,3 +91,16 @@ rhlp-web
 .hol
 .spw/_workbench
 .ignore/
+
+# Build-lane OWNERSHIP LEASE (scripts/lane-lease.sh, read by scripts/sweep-build-lanes.sh).
+# Remote per-lane runtime state, never source — but this line is also LOAD-BEARING, not
+# hygiene. `scripts/pbuild` syncs with `rsync -az --delete --filter=':- .gitignore'`, and
+# the lease lives at the ROOT of that destination (`<lane>/.pbuild-lease`). An rsync
+# exclude is a receiver-side PROTECT rule as well as a sender-side hide, so this entry is
+# the ONLY thing standing between a live lease and the next pbuild call. MEASURED
+# 2026-07-26 with this line absent, on the real tree and the real command:
+#   rsync -az --delete --dry-run -i --exclude='.git/' --filter=':- .gitignore' ./ persvati:dregg-build/crewbraid/
+#   → *deleting   .pbuild-lease
+# i.e. agent B's build would silently strip agent A's claim and the next sweep would then
+# see an unleased lane and delete its artifacts. Do not remove this line.
+.pbuild-lease
