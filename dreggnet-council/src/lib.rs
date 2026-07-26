@@ -300,6 +300,289 @@ pub struct CouncilOffering {
 }
 
 impl CouncilOffering {
+    /// The council surface, painted for `viewer` (`None` = the public render).
+    fn render_as(&self, session: &CouncilSession, viewer: Option<&DreggIdentity>) -> Surface {
+        // ── THE STATUS PLAQUE. The council had the best scoreboard of any offering and said
+        //    NOTHING about where the turn stood: no phase, no whose-move, not even "you have not
+        //    voted on this". The tallies were there; the reader had to be the state machine.
+        let open = session
+            .proposals
+            .iter()
+            .filter(|p| p.enacted.is_none())
+            .count();
+        let passed = session
+            .proposals
+            .iter()
+            .enumerate()
+            .filter(|(pi, p)| {
+                p.enacted.is_none() && session.tally_of(*pi).unwrap_or((0, 0)).1 >= session.quorum_m
+            })
+            .count();
+        let enacted = session
+            .proposals
+            .iter()
+            .filter(|p| p.enacted.is_some())
+            .count();
+        let unproposed = self.catalog.len().saturating_sub(session.proposals.len());
+        let voted_here = |pi: usize| -> Option<bool> {
+            let v = viewer?;
+            session
+                .proposals
+                .get(pi)?
+                .votes
+                .iter()
+                .find_map(|(who, opt)| (who == v).then_some(*opt == APPROVE_OPTION))
+        };
+
+        // The ONE SENTENCE, in the order a council actually blocks: enact what has passed, then
+        // vote on what is open, then open something.
+        let directive = if passed > 0 {
+            format!(
+                "{passed} proposal{} already at quorum and waiting. ENACT one — enacting is what \
+                 writes the policy value onto the council cell; a passing tally on its own changes \
+                 nothing.",
+                if passed == 1 { " is" } else { "s are" }
+            )
+        } else if open > 0 {
+            let mine_left = (0..session.proposals.len())
+                .filter(|pi| session.proposals[*pi].enacted.is_none() && voted_here(*pi).is_none())
+                .count();
+            if viewer.is_some() && mine_left > 0 {
+                format!(
+                    "{open} proposal{} open and you have not voted on {mine_left} of them. Approve \
+                     or reject — each ballot is one cap-gated executor turn and you get one per \
+                     proposal.",
+                    if open == 1 { " is" } else { "s are" }
+                )
+            } else if viewer.is_some() {
+                format!(
+                    "You have voted on every open proposal. {open} still short of quorum — nothing \
+                     enacts until approvals reach {}.",
+                    session.quorum_m
+                )
+            } else {
+                format!(
+                    "{open} proposal{} open, none yet at quorum ({} approvals needed).",
+                    if open == 1 { " is" } else { "s are" },
+                    session.quorum_m
+                )
+            }
+        } else if unproposed > 0 {
+            format!(
+                "Nothing is on the floor. Propose one of the {unproposed} candidate{} — a proposal \
+                 opens a per-option-gated poll and is itself a verified turn.",
+                if unproposed == 1 { "" } else { "s" }
+            )
+        } else {
+            "Every candidate in the catalog has been decided. There is nothing left to put on the \
+             floor."
+                .to_string()
+        };
+
+        let pill = |text: String, tag: &str| ViewNode::Pill {
+            text,
+            tag: tag.to_string(),
+            slot: None,
+            cases: Vec::new(),
+        };
+        let mut standing = vec![
+            ViewNode::Row(vec![
+                pill(
+                    format!("{open} open"),
+                    if open > 0 { "accent" } else { "muted" },
+                ),
+                pill(
+                    format!("{passed} at quorum"),
+                    if passed > 0 { "good" } else { "muted" },
+                ),
+                pill(
+                    format!("{enacted} enacted"),
+                    if enacted > 0 { "good" } else { "muted" },
+                ),
+                pill(format!("{unproposed} not yet proposed"), "muted"),
+            ]),
+            ViewNode::Text(directive),
+        ];
+        standing.push(ViewNode::Text(match viewer {
+            Some(_) => format!(
+                "A ballot needs {} approval{} to pass{}. Your vote is attributed to your identity \
+                 and published — this is a council, not a secret ballot.",
+                session.quorum_m,
+                if session.quorum_m == 1 { "" } else { "s" },
+                if session.is_weighted() {
+                    format!(" (by WEIGHT, of {} granted)", session.total_weight())
+                } else {
+                    String::new()
+                }
+            ),
+            None => format!(
+                "{} member{} · a ballot needs {} approval{} to pass{}. Every vote here is public.",
+                session.members.len(),
+                if session.members.len() == 1 { "" } else { "s" },
+                session.quorum_m,
+                if session.quorum_m == 1 { "" } else { "s" },
+                if session.is_weighted() {
+                    format!(" (by WEIGHT, of {} granted)", session.total_weight())
+                } else {
+                    String::new()
+                }
+            ),
+        }));
+        standing.push(ViewNode::Text(format!(
+            "{} member{} · {} verified turn{} committed.",
+            session.members.len(),
+            if session.members.len() == 1 { "" } else { "s" },
+            session.committed_turns(),
+            if session.committed_turns() == 1 {
+                ""
+            } else {
+                "s"
+            }
+        )));
+
+        let mut children = vec![ViewNode::Section {
+            title: "Where the council stands".to_string(),
+            tag: "accent".to_string(),
+            children: standing,
+        }];
+
+        // ── THE DOMAIN PLAQUE — what a vote here IS. Invisible on any tally: that the ballot is a
+        //    real cap-gated turn, that the gate (not this page) is what stops a stranger or a second
+        //    vote, and that enactment is a separate write.
+        children.push(ViewNode::Section {
+            title: "What a vote here actually is".to_string(),
+            tag: "accent".to_string(),
+            children: vec![
+                ViewNode::Text(
+                    "Each ballot is ONE cap-gated executor turn against the council cell, not a \
+                     row in a database this page keeps. A vote from an identity holding no council \
+                     capability is REFUSED by the substrate with nothing committed, and so is a \
+                     second vote from an identity that has already cast one — the page dims those \
+                     buttons as a courtesy, but the executor is what enforces it."
+                        .to_string(),
+                ),
+                ViewNode::Text(format!(
+                    "Passing and ENACTING are two different events. A proposal passes the moment \
+                     approvals reach {}, and that changes nothing on its own; enacting is the turn \
+                     that writes the candidate's value into the council's policy slot, and the \
+                     replay verifier refuses a record where a policy slot moved without a passing \
+                     decision behind it.",
+                    session.quorum_m
+                )),
+            ],
+        });
+
+        for (pi, p) in session.proposals.iter().enumerate() {
+            let cand = &self.catalog[p.catalog_index];
+            let (reject, approve) = session.tally_of(pi).unwrap_or((0, 0));
+            let (status, status_tag) = if p.enacted.is_some() {
+                (
+                    format!("ENACTED — the policy slot now reads {}", cand.value),
+                    "good",
+                )
+            } else if approve >= session.quorum_m {
+                (
+                    "AT QUORUM — it passes, and waits for someone to enact it".to_string(),
+                    "warn",
+                )
+            } else {
+                (
+                    format!(
+                        "OPEN — {} more approval{} carries it",
+                        session.quorum_m - approve,
+                        if session.quorum_m - approve == 1 {
+                            ""
+                        } else {
+                            "s"
+                        }
+                    ),
+                    "accent",
+                )
+            };
+            let cast = p
+                .votes
+                .iter()
+                .map(|(who, opt)| {
+                    let short: String = who.as_str().chars().take(8).collect();
+                    let label = if *opt == APPROVE_OPTION {
+                        "approve"
+                    } else {
+                        "reject"
+                    };
+                    let mine = viewer.is_some_and(|v| v == who);
+                    ViewNode::Text(format!(
+                        "{short}…{} voted {label}",
+                        if mine { " (you)" } else { "" }
+                    ))
+                })
+                .collect::<Vec<_>>();
+            let mut kids = vec![
+                ViewNode::Row(vec![pill(status, status_tag)]),
+                // The tally as a real bar against the bar it has to clear — a count next to a
+                // quorum is arithmetic the reader was left to do.
+                ViewNode::Progress {
+                    value: approve,
+                    max: session.quorum_m.max(1),
+                    label: "approvals".to_string(),
+                },
+                ViewNode::Text(format!(
+                    "approve {approve} · reject {reject} — {}",
+                    if session.is_weighted() {
+                        "tallied by granted WEIGHT, on the verified cast_weighted path"
+                    } else {
+                        "one member, one vote"
+                    }
+                )),
+            ];
+            if viewer.is_some() {
+                kids.push(ViewNode::Text(match voted_here(pi) {
+                    Some(true) => "You voted APPROVE on this. You cannot vote again — a second \
+                                   ballot from you is refused with nothing committed."
+                        .to_string(),
+                    Some(false) => "You voted REJECT on this. You cannot vote again — a second \
+                                    ballot from you is refused with nothing committed."
+                        .to_string(),
+                    None if p.enacted.is_some() => {
+                        "You never voted on this one, and it is already enacted.".to_string()
+                    }
+                    None => "You have NOT voted on this yet.".to_string(),
+                }));
+            }
+            kids.push(ViewNode::Section {
+                title: "Votes cast".to_string(),
+                tag: "muted".to_string(),
+                children: cast,
+            });
+            children.push(ViewNode::Section {
+                title: format!("Proposal {pi}: {}", cand.title),
+                tag: "accent".to_string(),
+                children: kids,
+            });
+        }
+
+        let items = self
+            .actions(session)
+            .into_iter()
+            .map(|a| MenuItem {
+                label: a.label,
+                turn: a.turn,
+                arg: a.arg,
+                enabled: a.enabled,
+            })
+            .collect();
+        children.push(ViewNode::Section {
+            title: "Affordances".to_string(),
+            tag: "accent".to_string(),
+            children: vec![ViewNode::Menu { items }],
+        });
+
+        Surface(ViewNode::Section {
+            title: "DreggNet Council".to_string(),
+            tag: "accent".to_string(),
+            children,
+        })
+    }
+
     /// A council over `members` (the electorate), able to open/vote/enact the given
     /// `catalog` of candidate proposals, at quorum `quorum_m` (APPROVE must reach this
     /// for a proposal to enact). `catalog` is truncated to [`MAX_CATALOG`].
@@ -583,83 +866,15 @@ impl Offering for CouncilOffering {
     /// Render the council as a deos affordance [`Surface`]: the quorum, each proposal with
     /// its live `(reject, approve)` tally + enactment state, and the cap-gated affordances.
     fn render(&self, session: &CouncilSession) -> Surface {
-        let mut children = vec![ViewNode::Section {
-            title: "Council".to_string(),
-            tag: "muted".to_string(),
-            children: vec![ViewNode::Text(format!(
-                "{} members · quorum {}{} · {} verified turns",
-                session.members.len(),
-                session.quorum_m,
-                if session.is_weighted() {
-                    format!(
-                        " by WEIGHT (of {} granted, on the verified cast_weighted path)",
-                        session.total_weight()
-                    )
-                } else {
-                    String::new()
-                },
-                session.committed_turns(),
-            ))],
-        }];
+        self.render_as(session, None)
+    }
 
-        for (pi, p) in session.proposals.iter().enumerate() {
-            let cand = &self.catalog[p.catalog_index];
-            let (reject, approve) = session.tally_of(pi).unwrap_or((0, 0));
-            let status = if p.enacted.is_some() {
-                format!("ENACTED (policy set to {})", cand.value)
-            } else if approve >= session.quorum_m {
-                "PASSED — ready to enact".to_string()
-            } else {
-                "pending".to_string()
-            };
-            let cast = p
-                .votes
-                .iter()
-                .map(|(who, opt)| {
-                    let short: String = who.as_str().chars().take(8).collect();
-                    let label = if *opt == APPROVE_OPTION {
-                        "approve"
-                    } else {
-                        "reject"
-                    };
-                    ViewNode::Text(format!("{short}… voted {label}"))
-                })
-                .collect::<Vec<_>>();
-            children.push(ViewNode::Section {
-                title: format!("Proposal {pi}: {}", cand.title),
-                tag: "accent".to_string(),
-                children: vec![
-                    ViewNode::Text(format!("approve {approve} · reject {reject} — {status}")),
-                    ViewNode::Section {
-                        title: "Votes cast".to_string(),
-                        tag: "muted".to_string(),
-                        children: cast,
-                    },
-                ],
-            });
-        }
-
-        let items = self
-            .actions(session)
-            .into_iter()
-            .map(|a| MenuItem {
-                label: a.label,
-                turn: a.turn,
-                arg: a.arg,
-                enabled: a.enabled,
-            })
-            .collect();
-        children.push(ViewNode::Section {
-            title: "Affordances".to_string(),
-            tag: "accent".to_string(),
-            children: vec![ViewNode::Menu { items }],
-        });
-
-        Surface(ViewNode::Section {
-            title: "DreggNet Council".to_string(),
-            tag: "accent".to_string(),
-            children,
-        })
+    /// **The council as `viewer` stands in it.** Nothing here is secret — every ballot is published
+    /// with the identity that cast it, which is the point of a council — but "have I voted, and can
+    /// I" was previously answerable only by scanning a list of truncated hashes for your own. The
+    /// per-viewer render answers it in a sentence.
+    fn render_for(&self, session: &CouncilSession, viewer: &DreggIdentity) -> Surface {
+        self.render_as(session, Some(viewer))
     }
 
     /// Governance turns are free + verifiable (the substrate turn itself always is). A

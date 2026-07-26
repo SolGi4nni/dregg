@@ -445,3 +445,177 @@ async fn nothing_advertises_the_old_global_tug_table() {
         "the catalog must route the tug through its own door"
     );
 }
+
+/// **The tug's front door has a painting, and it is served out of the binary.** The automatafl door
+/// established the shape: spwashi's own art, downscaled, `include_bytes!`-compiled so there is no
+/// `ServeDir`, no external host in the CSP and no file-system read at request time — and CREDITED on
+/// the page. `exchange` (two pairs of hands on a strung brass balance) is the tug's, because the game
+/// is two houses pulling at shared lanes.
+#[tokio::test]
+async fn the_landing_serves_its_own_credited_painting_from_the_binary() {
+    let (app, _state) = app();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/tug/art/exchange.jpg")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers().get("content-type").unwrap(),
+        "image/jpeg",
+        "the hero must be served as an image"
+    );
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert!(
+        bytes.len() > 10_000,
+        "the painting is {} bytes — that is not the art",
+        bytes.len()
+    );
+    assert_eq!(&bytes[..2], b"\xff\xd8", "not a JPEG");
+
+    // The landing wears it and names the painter.
+    let (status, page) = get_as(&app, "/tug", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        page.contains("hero-tug"),
+        "the landing does not wear its own hero"
+    );
+    assert!(
+        page.contains("Art · spwashi"),
+        "the art is uncredited: {}",
+        &page[..page.len().min(1200)]
+    );
+    assert!(
+        page.contains("<em>exchange</em>"),
+        "the credit does not name the painting"
+    );
+}
+
+/// **A spectator reads no favor, anywhere on the page — including out of a BUTTON.**
+///
+/// The hand sections were always fogged for a non-seat, and `tug_table`'s existing fog test pinned
+/// that. What it could not see was the ACTION MENU: `TugSession::surface_claim` — the surface served
+/// to any viewer holding no seat — labelled each row with the exact favors that press would put up,
+/// read off the claimable seat's own committed hand. On a seat-locked table the opponent may open the
+/// watch link, so the hidden hand was legible to them in the button text before that seat had ever
+/// acted.
+///
+/// Non-vacuous by construction: the SEATED page of the same table is asserted to carry the very
+/// favor token the spectator page must not, so a render that stopped showing favors to anybody
+/// cannot make this pass.
+#[tokio::test]
+async fn a_spectator_reads_no_favor_out_of_the_page_or_its_buttons() {
+    let (app, _state) = app();
+    let id = mint(&app).await;
+    let seat_a = table_seats::TUG.seat_label(&id, SeatSlot::A);
+
+    // `favor_list`'s signature — every rendering of a concrete favor in this game carries it.
+    const FAVOR: &str = "(guild ";
+
+    // ⚑ CLAIM THE SEAT FIRST. `SeatedTug` binds a seat on the first LANDED act, not on a GET, so
+    // before this a seat link renders the unseated CLAIM surface — and the test would be comparing
+    // two fogged pages and passing having checked nothing.
+    let (turn, arg) = opening_turn();
+    let (status, body) = post_act(&app, &id, &turn, arg, &seat_a).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.contains("Turn committed"),
+        "seat A's opening press did not land, so the seat is unclaimed: {}",
+        &body[..body.len().min(600)]
+    );
+
+    let (status, seated) =
+        get_as(&app, &format!("/offerings/tug/session/{id}"), Some(&seat_a)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        seated.contains(FAVOR),
+        "the seated page shows no favor at all, so this test would pass vacuously:\n{}",
+        &seated[..seated.len().min(2000)]
+    );
+    assert!(
+        seated.contains("card #"),
+        "the seat's own hand is not being rendered to it"
+    );
+
+    for (who, label) in [
+        (None, "an anonymous spectator"),
+        (Some("nosy"), "a stranger"),
+    ] {
+        let (status, watch) = get_as(&app, &format!("/tug/watch/{id}"), who).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            !watch.contains(FAVOR),
+            "{label} read a concrete favor off the watch page:\n{}",
+            &watch[..watch.len().min(3000)]
+        );
+        assert!(
+            !watch.contains("card #"),
+            "{label} read a card id off the watch page"
+        );
+        assert!(
+            watch.contains("(hidden)"),
+            "{label} was not shown the fog form of a hand"
+        );
+    }
+}
+
+/// **The table says what is happening and what to do about it.** The two plaques automatafl
+/// established: "where it stands", carrying the ONE SENTENCE that says what to do right now, and the
+/// domain plaque for the thing the surface cannot otherwise show — for the tug, how the round is
+/// actually decided (the DEPLOYED win bars, read out of the program the executor runs) and what each
+/// side of a live cut is worth.
+#[tokio::test]
+async fn the_table_states_the_phase_the_directive_and_how_the_round_ends() {
+    let (app, _state) = app();
+    let id = mint(&app).await;
+    let seat_a = table_seats::TUG.seat_label(&id, SeatSlot::A);
+    // Claim the seat (it binds on the first LANDED act, never on a GET) so this really is the
+    // SEATED page and "you hold seat A" is a claim the surface can make.
+    let (turn, arg) = opening_turn();
+    assert_eq!(
+        post_act(&app, &id, &turn, arg, &seat_a).await.0,
+        StatusCode::OK
+    );
+    let (status, page) = get_as(&app, &format!("/offerings/tug/session/{id}"), Some(&seat_a)).await;
+    assert_eq!(status, StatusCode::OK);
+
+    for marker in [
+        "Where the round stands",    // the status plaque
+        "How this round is decided", // the domain plaque
+        "to move",                   // whose turn, as a pill
+        "of the round.",             // where in the round it is
+        "You hold seat",             // who the viewer is
+        "influence or",              // the distance-to-the-bar pills
+    ] {
+        assert!(
+            page.contains(marker),
+            "the table never says `{marker}`:\n{}",
+            &page[..page.len().min(3000)]
+        );
+    }
+    // The lanes name what leading one PAYS and who holds each, rather than printing a bare letter
+    // in a column of numbers.
+    assert!(
+        page.contains("worth "),
+        "the lanes do not say what leading one pays"
+    );
+    assert!(
+        page.contains("nobody has pulled")
+            || page.contains("holds it (+")
+            || page.contains("contested"),
+        "no lane states its standing in words"
+    );
+    // The one sentence is a sentence, not a state dump.
+    assert!(
+        page.contains("Your move.") || page.contains("Waiting on seat"),
+        "no directive sentence on the page"
+    );
+}

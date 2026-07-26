@@ -52,6 +52,9 @@
 use std::sync::Arc;
 
 use axum::Router;
+use axum::http::header;
+use axum::response::{IntoResponse, Response};
+use axum::routing::get;
 
 use crate::table_door::{TableDoor, open_a_table_section, table_router};
 use crate::table_seats::{self, TableLock};
@@ -69,6 +72,31 @@ pub const LOCK: TableLock = table_seats::TUG;
 /// **Assemble the multiway-tug front door.** Merged into the demo app by `make_app`; additive — it
 /// adds no route that overlaps the catalog's `/offerings/**` surface.
 pub fn tug_router(state: Arc<CatalogState>) -> Router {
+    Router::new()
+        .route("/tug/art/exchange.jpg", get(get_exchange_art))
+        .merge(tug_door(state))
+}
+
+/// **The tug's hero painting** — spwashi's `exchange`: two pairs of hands on a strung brass
+/// balance, a violet knot pulled taut in the middle. The game is two houses pulling at shared
+/// lanes, so it is the painting rather than a decoration. Compiled INTO the binary
+/// (`include_bytes!`, the same way `/automatafl/art/gametable.jpg` is served), so the landing has no
+/// external asset, no `ServeDir`, no file-system read at request time and a trivial CSP story.
+const EXCHANGE_JPEG: &[u8] = include_bytes!("../../assets/games/multiway-tug/hero/exchange.jpg");
+
+/// `GET /tug/art/exchange.jpg` — the landing hero's backdrop.
+async fn get_exchange_art() -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "image/jpeg"),
+            (header::CACHE_CONTROL, "public, max-age=604800, immutable"),
+        ],
+        EXCHANGE_JPEG,
+    )
+        .into_response()
+}
+
+fn tug_door(state: Arc<CatalogState>) -> Router {
     table_router(TableDoor {
         lock: LOCK,
         catalog: state,
@@ -124,12 +152,13 @@ fn rules_html() -> String {
 fn landing_page(notice: Option<&str>) -> String {
     let body = format!(
         "<main class=\"session af-table\">\
-         <section class=\"af-hero\">\
+         <section class=\"af-hero hero-tug\">\
          <p class=\"eyebrow\">Hidden hands · seven guilds · one round</p>\
          <h1>Multiway-Tug</h1>\
          <p class=\"deck\">Two houses pull at seven guilds with favors neither can see the other \
          holding. Every play is a real executor turn carrying its own membership witness — the \
          hand stays hidden and the round still proves.</p>\
+         <p class=\"credit\">Art · spwashi, <em>exchange</em></p>\
          </section>\
          {notice}\
          {open}\
