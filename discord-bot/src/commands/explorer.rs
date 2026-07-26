@@ -399,7 +399,7 @@ async fn handle_feed(ctx: &Context, command: &CommandInteraction, state: &BotSta
                 .await;
         }
         Err(e) => {
-            let embed = embeds::error_embed("Database Error", &e.to_string());
+            let embed = embeds::store_unavailable_embed(&e);
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;
@@ -1261,7 +1261,7 @@ async fn handle_watch(ctx: &Context, command: &CommandInteraction, state: &BotSt
                 .await;
         }
         Err(e) => {
-            let embed = embeds::error_embed("Database Error", &e.to_string());
+            let embed = embeds::store_unavailable_embed(&e);
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;
@@ -1292,7 +1292,7 @@ async fn handle_unwatch(ctx: &Context, command: &CommandInteraction, state: &Bot
                 .await;
         }
         Err(e) => {
-            let embed = embeds::error_embed("Database Error", &e.to_string());
+            let embed = embeds::store_unavailable_embed(&e);
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;

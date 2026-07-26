@@ -58,7 +58,7 @@ pub fn todays_descent_day() -> Option<CommittedSeed> {
     Some(crate::commands::descent::resolve_todays_day().0.seed)
 }
 
-/// **The LIVE native Descent** — the constructor `/play offering:descent` opens through.
+/// **The LIVE native Descent** — the constructor `/play open offering:descent` opens through.
 ///
 /// The day is re-resolved at EVERY open (the bot process outlives many UTC days), and the run
 /// deploys on `native_descent_run_day_seed(day, seed)`. It never degrades to the pre-computable
@@ -147,10 +147,6 @@ impl DiscordOffering for NativeDescentOffering {
     fn store() -> &'static Store<Self> {
         static SESSIONS: OnceLock<Store<NativeDescentOffering>> = OnceLock::new();
         SESSIONS.get_or_init(Store::spawn)
-    }
-
-    fn open_hint() -> String {
-        "/play offering:descent".to_string()
     }
 
     fn status_line(&self, session: &Self::Session) -> String {
@@ -262,7 +258,7 @@ async fn publish(base: &str, finished: &FinishedRun) -> Result<String, String> {
     Ok(format!("{base}{share}"))
 }
 
-/// **Publish a finished native run to the channel** — the one place `/play offering:descent` emits
+/// **Publish a finished native run to the channel** — the one place `/play open offering:descent` emits
 /// a run link, and it emits the NATIVE card (`/descent/native/run/{id}`), the page that paints the
 /// shaft. Called after every press has been rendered; a no-op until the run is over, and at most
 /// once per run.

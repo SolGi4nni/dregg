@@ -357,7 +357,9 @@ async fn handle_open(
             move || council_weighted::make_council(members, weights, catalog, quorum),
             SessionConfig::with_seed(channel),
         )
-        .map_err(|e| format!("The council cell failed to come alive: {e}"))?;
+        // `OfferingError`'s `Display` is the whole player sentence now (the substrate's own words
+        // went to the operator log at the refusal), so it is not prefixed.
+        .map_err(|e| format!("The council did not come alive — {e}."))?;
         // NEVER A SILENT DROP. The session ALREADY OPENED; if the render then finds nothing (a
         // concurrent close, or the store thread refusing the read) this used to `return` without
         // ever answering the interaction — so the opener saw "This interaction failed" on a
@@ -582,7 +584,7 @@ mod tests {
         match press(channel, TURN_ENACT, 0, &ids[0]) {
             Outcome::Refused(why) => assert!(
                 why.contains("quorum") || why.contains("approved"),
-                "the executor's own reason: {why}"
+                "the substrate's own reason: {why}"
             ),
             other => panic!("a below-quorum ENACT must be refused, got {other:?}"),
         }

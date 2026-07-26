@@ -60,15 +60,31 @@ const ID_PICK_GAME: &str = "menu:pick:game";
 /// One player-facing game door. This is Discord information architecture, not
 /// a second game registry: the `key` is checked against the real `/play` and
 /// `/adventure` routes below, while the game keeps its own verbs and rules.
+///
+/// ⚑ **THE INVOCATIONS ARE NOT FIELDS.** They used to be — `open: "/play open offering:tug"` —
+/// and this shelf held the only CORRECT spelling in the whole bot while eighteen
+/// `DiscordOffering::open_hint()` impls still returned the pre-fold `/play offering:tug`. A
+/// hand-written string that happens to be right is not a source; [`GameDoor::open`] derives from
+/// [`offering_door`], which every other player-facing "open it with…" string derives from too.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct GameDoor {
     key: &'static str,
     title: &'static str,
     rhythm: &'static str,
-    open: &'static str,
-    verify: &'static str,
     privacy: &'static str,
     special: &'static str,
+}
+
+impl GameDoor {
+    /// The exact invocation that opens this game, derived from the registered command tree.
+    fn open(&self) -> String {
+        open_invocation(self.key)
+    }
+
+    /// The exact invocation that re-verifies its live session's receipt chain.
+    fn verify(&self) -> String {
+        verify_invocation(self.key)
+    }
 }
 
 /// ⚑ **THE FEATURED DOORS MUST BE ON THE SHIP LIST.** This is a hand-written advertising shelf —
@@ -94,8 +110,6 @@ const GAME_DOORS: [GameDoor; 3] = [
         key: "descent",
         title: "The Descent",
         rhythm: "a dungeon crawl · one dungeon a day, the same for everyone · one life, no retries",
-        open: "/play open offering:descent",
-        verify: "/play open offering:descent action:verify",
         privacy: "Your run belongs to you — nobody else can move it — but the board it plays on in this channel is public.",
         special: "go deeper for better loot; you only keep what you carry back out",
     },
@@ -103,8 +117,6 @@ const GAME_DOORS: [GameDoor; 3] = [
         key: "automatafl",
         title: "Automatafl",
         rhythm: "a two-player board game · you both choose in secret, then both moves are revealed at once",
-        open: "/play open offering:automatafl",
-        verify: "/play open offering:automatafl action:verify",
         privacy: "Your sealed move is hidden until the reveal; the board itself is public.",
         special: "a neutral piece reacts to both moves, so you are guessing at your opponent rather than waiting on them",
     },
@@ -112,8 +124,6 @@ const GAME_DOORS: [GameDoor; 3] = [
         key: "tug",
         title: "Multiway-Tug",
         rhythm: "a two-player game of hidden influence over seven guilds · cards go down face down",
-        open: "/play open offering:tug",
-        verify: "/play open offering:tug action:verify",
         privacy: "Your hand is yours alone; a pull becomes public only once both sides have committed.",
         special: "one side cuts, the other chooses",
     },
@@ -130,8 +140,8 @@ fn game_door_card(door: &GameDoor) -> CreateEmbed {
              typed affordance, receive a landed receipt or an anti-ghost refusal, then replay it.",
         )
         .field("How it moves", door.rhythm, false)
-        .field("Open", format!("`{}`", door.open), false)
-        .field("Replay / verify", format!("`{}`", door.verify), false)
+        .field("Open", format!("`{}`", door.open()), false)
+        .field("Replay / verify", format!("`{}`", door.verify()), false)
         .field("Privacy boundary", door.privacy, false)
         .field("Distinctive affordance", door.special, false)
 }
@@ -312,8 +322,9 @@ pub const SLASH_SURFACE: &[Slash] = &[
     Slash {
         name: "play",
         door: Door::Player(
-            "the arcade: `open` (its choices ARE the ship list), the free-text `cheat` \
-             door for a key the picker cannot offer, and the auction `market`",
+            "the arcade: `open` (its choices ARE the ship list), the read-only `status` \
+             re-post of your own hidden hand, the free-text `cheat` door for a key the \
+             picker cannot offer, and the auction `market`",
         ),
     },
     // `dungeon` came off the ship list, so the narrative-worlds command comes off the
@@ -460,6 +471,15 @@ fn command_for(name: &str) -> Value {
             vec![
                 menu_sub(),
                 fold(commands::portfolio::register(), Some("open")),
+                // ⚑ `status` — the READ-ONLY re-post of your own private view. It exists because
+                // the hidden-hand plaque told a player to "ask for status again to refresh it"
+                // while `/play` had no status action at all: the only path left was a re-open,
+                // which lands on `open_guard`'s wipe-confirm card over a live two-player match,
+                // and neither of that card's buttons shows the player their hand. Built from
+                // `portfolio::register_status` (the SAME derived offering picker `open` carries,
+                // with none of the acting options) rather than folded, because it is not a
+                // retired flat command.
+                fold(commands::portfolio::register_status(), None),
                 cheat_sub(),
                 fold(commands::market::register(), None),
             ],
@@ -788,6 +808,245 @@ pub fn subcommand_names(top_name: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+// ─── THE TYPED DOORS: one spelling of every "open it with …" string ──────────
+//
+// ⚑ WHY THIS SECTION EXISTS. `24e47322b` folded `/play` into subcommands, so the invocation
+// became `/play open offering:<key>` — and nothing swept the strings. Eighteen
+// `DiscordOffering::open_hint()` impls kept returning the flat `/play offering:<key>`, which
+// Discord will not route, and they reach players through `offering::no_session_text` and
+// `not_durable_note`: the stale-board message and the post-restart message, i.e. exactly the
+// moment a player most needs a working instruction. A test even PINNED the broken literal.
+//
+// The repair is not eighteen edits. It is that there is now ONE place a player-facing
+// invocation is spelled, it is built out of the same names `command_for` registers, and
+// `tests::no_player_facing_string_names_an_unregistered_command_path` walks the registered JSON
+// to prove every one of them is a path Discord will actually route.
+
+/// The `/play` arcade opener, in parts. Every player-facing "open it with …" string is built
+/// from THESE names and nothing else.
+const PLAY_TOP: &str = "play";
+const PLAY_OPEN_SUB: &str = "open";
+const PLAY_STATUS_SUB: &str = "status";
+const PLAY_OFFERING_OPT: &str = "offering";
+const PLAY_ACTION_OPT: &str = "action";
+const PLAY_VERIFY_ACTION: &str = "verify";
+
+/// The opening VERB of an offering served by its OWN command.
+///
+/// This is the one thing that cannot be derived: `/adventure dungeon` opens a party crawl with
+/// `start`, everything else with `open`, and only the command knows which. The NESTING — which
+/// top-level it rides, whether it is a group — is NOT stated here; [`offering_door`] reads it out
+/// of the registered tree, because the nesting is the half that goes stale (`doc` and `grain`
+/// moved under `/hermes` and two hand-written copies of that fact rotted unnoticed).
+const BESPOKE_OPEN_VERB: [(&str, &str); 6] = [
+    ("dungeon", "start"),
+    ("council", "open"),
+    ("market", "open"),
+    ("doc", "open"),
+    ("grain", "open"),
+    ("hermes", "open"),
+];
+
+/// **Where one offering's typed doors are, and whether a player can reach them.**
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OfferingDoor {
+    /// The complete invocation that OPENS a fresh session, exactly as a player must type it.
+    pub open: String,
+    /// The complete invocation that RE-POSTS the player's own private view of a live session,
+    /// read-only — the destination the hidden-hand plaque's "ask for status again" needs.
+    pub status: String,
+    /// The complete invocation that re-verifies the live session's receipt chain.
+    pub verify: String,
+    /// **Whether Discord will offer the top-level these paths ride to an ordinary player.** `false` means the
+    /// command is built, routed and registered ONLY inside `DREGG_LAB_GUILD_ID`
+    /// ([`Door::Lab`], or a [`Door::Offering`] row whose key came off the ship list), so a
+    /// player-facing string must say the offering is not currently open rather than name a
+    /// command their client will not show them.
+    pub reachable: bool,
+}
+
+/// Whether a top-level command name is advertised — its [`SLASH_SURFACE`] row passes
+/// [`advertises`]. `false` for a name this build does not carry at all.
+fn advertises_top(name: &str) -> bool {
+    SLASH_SURFACE
+        .iter()
+        .any(|s| s.name == name && advertises(&s.door))
+}
+
+/// **The typed doors of one offering key**, or `None` when this build gives it none.
+///
+/// Two shapes, one derivation each:
+///
+/// * a `/play`-mounted offering (`commands::portfolio::all_play_keys`, itself derived from
+///   `dreggnet_catalog::CATALOG_KEYS`) gets the arcade spelling, built from the constants above;
+/// * an offering with its own command gets `/<top> <key> <verb>` (or `/<key> <verb>` when it IS
+///   the top-level), with the nesting looked up in the registered tree.
+///
+/// The `/play` arm is checked FIRST on purpose: `descent` is both a `/play` mount (the
+/// actor-bound run) and a top-level `/descent` (today's beacon-seeded daily). They are different
+/// objects, and the one an offering's `open_hint` means is the mount.
+pub fn offering_door(key: &str) -> Option<OfferingDoor> {
+    if commands::portfolio::all_play_keys().contains(&key) {
+        let open = format!("/{PLAY_TOP} {PLAY_OPEN_SUB} {PLAY_OFFERING_OPT}:{key}");
+        return Some(OfferingDoor {
+            status: format!("/{PLAY_TOP} {PLAY_STATUS_SUB} {PLAY_OFFERING_OPT}:{key}"),
+            verify: format!("{open} {PLAY_ACTION_OPT}:{PLAY_VERIFY_ACTION}"),
+            open,
+            reachable: advertises_top(PLAY_TOP),
+        });
+    }
+    let (_, verb) = BESPOKE_OPEN_VERB.iter().find(|(k, _)| *k == key)?;
+    let (top, prefix) = match all_surface_names().into_iter().find(|name| *name == key) {
+        // The offering IS a top-level command (`/hermes open`).
+        Some(top) => (top, format!("/{top}")),
+        // It folded under one (`/hermes doc open`, `/govern council open`, `/play market open`).
+        None => {
+            let top = all_surface_names()
+                .into_iter()
+                .find(|top| subcommand_names(top).iter().any(|s| s == key))?;
+            (top, format!("/{top} {key}"))
+        }
+    };
+    Some(OfferingDoor {
+        open: format!("{prefix} {verb}"),
+        status: format!("{prefix} status"),
+        verify: format!("{prefix} verify"),
+        reachable: advertises_top(top),
+    })
+}
+
+/// **The invocation that opens `key`** — the ONE source `DiscordOffering::open_hint` reads.
+///
+/// The fallback is the `/play` mount spelling, which is where an offering with no bespoke
+/// command is in fact mounted. It is not load-bearing: the tooth walks every key this build
+/// serves through [`offering_door`], so a production key reaching the fallback is a red test,
+/// not a wrong string in front of a player.
+pub fn open_invocation(key: &str) -> String {
+    offering_door(key)
+        .map(|d| d.open)
+        .unwrap_or_else(|| format!("/{PLAY_TOP} {PLAY_OPEN_SUB} {PLAY_OFFERING_OPT}:{key}"))
+}
+
+/// **The invocation that re-posts `key`'s own private view, read-only.** The destination the
+/// hidden-information plaque names (`offering::private_act_plaque`): the plaque used to say "ask
+/// for status again" when no status action existed, so the only path a player could find was a
+/// re-open — which lands on the wipe-confirm dialog over a live two-player match.
+pub fn status_invocation(key: &str) -> String {
+    offering_door(key)
+        .map(|d| d.status)
+        .unwrap_or_else(|| format!("/{PLAY_TOP} {PLAY_STATUS_SUB} {PLAY_OFFERING_OPT}:{key}"))
+}
+
+/// **The invocation that re-verifies `key`'s live chain.**
+pub fn verify_invocation(key: &str) -> String {
+    offering_door(key).map(|d| d.verify).unwrap_or_else(|| {
+        format!(
+            "/{PLAY_TOP} {PLAY_OPEN_SUB} {PLAY_OFFERING_OPT}:{key} \
+             {PLAY_ACTION_OPT}:{PLAY_VERIFY_ACTION}"
+        )
+    })
+}
+
+/// **Whether `path` is a command path this build actually registers.** The instrument behind the
+/// no-player-facing-string-names-an-unregistered-command-path tooth, and the reason the tooth is
+/// a real gate rather than a spell-check: `/play offering:tug` is a perfectly plausible string
+/// that Discord silently refuses to route, and only walking the tree can tell it from
+/// `/play open offering:tug`.
+///
+/// Walks the SAME JSON `crate::main` PUTs to Discord — advertised **and** lab, because a lab path
+/// IS registered (in one guild), merely not advertised; whether a shelf should be *pointing* at it
+/// is [`advertises`]'s separate question, answered by
+/// `tests::no_advertised_surface_names_a_lab_command`.
+///
+/// The grammar it accepts is the grammar the menu embeds write:
+///
+/// * the first word is a top-level command name;
+/// * a bare word is a subcommand or group AT THE CURRENT NODE, so `/hermes doc open` requires
+///   `doc` under `/hermes` and `open` under `doc`;
+/// * `a|b|c` is the sibling shorthand a menu field uses (`open|status|verify`) — EVERY
+///   alternative must be a subcommand there;
+/// * `name:value` names an OPTION at the current node; the value is the player's business, and
+///   from the first such token on, bare words are part of a value (`spec:<what you want>`) rather
+///   than command names;
+/// * a `<placeholder>` or `…` is prose and is skipped.
+///
+/// A TEST INSTRUMENT, and `discord-bot` is a pure binary crate, so `pub` does not exempt it from
+/// dead-code analysis in a plain build — hence the `cfg_attr`, which keeps the analysis on under
+/// `cfg(test)` where it is genuinely called.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn path_is_registered(path: &str) -> bool {
+    fn is_prose(word: &str) -> bool {
+        word.is_empty() || word.contains('<') || word.contains('>') || word.contains('…')
+    }
+    fn child<'a>(node: &'a Value, name: &str) -> Option<&'a Value> {
+        node.get("options")
+            .and_then(Value::as_array)?
+            .iter()
+            .find(|o| {
+                o.get("name").and_then(Value::as_str) == Some(name)
+                    && matches!(o.get("type").and_then(Value::as_u64), Some(1) | Some(2))
+            })
+    }
+    fn has_option(node: &Value, name: &str) -> bool {
+        node.get("options")
+            .and_then(Value::as_array)
+            .is_some_and(|opts| {
+                opts.iter()
+                    .any(|o| o.get("name").and_then(Value::as_str) == Some(name))
+            })
+    }
+
+    let registered: Vec<Value> = global_commands()
+        .into_iter()
+        .chain(lab_commands())
+        .collect();
+    let mut words = path.trim().trim_start_matches('/').split_whitespace();
+    let Some(top) = words.next() else {
+        return false;
+    };
+    let Some(root) = registered
+        .iter()
+        .find(|c| c.get("name").and_then(Value::as_str) == Some(top))
+    else {
+        return false;
+    };
+
+    let mut node = root;
+    let mut in_options = false;
+    for word in words {
+        if let Some((name, _)) = word.split_once(':') {
+            in_options = true;
+            if is_prose(name) {
+                continue;
+            }
+            if !has_option(node, name) {
+                return false;
+            }
+            continue;
+        }
+        // Past the first `name:value`, a bare word belongs to that value.
+        if in_options || is_prose(word) {
+            continue;
+        }
+        let mut descend: Option<&Value> = None;
+        for alternative in word.split('|') {
+            if is_prose(alternative) {
+                continue;
+            }
+            match child(node, alternative) {
+                Some(found) => descend = Some(found),
+                None => return false,
+            }
+        }
+        match descend {
+            Some(found) => node = found,
+            // Every alternative was prose; there is nothing to descend into.
+            None => continue,
+        }
+    }
+    true
+}
+
 // ─── dispatch: re-nest the interaction and call the existing handler ────────
 
 /// The invoked top-level subcommand/group name and its inner options.
@@ -832,12 +1091,19 @@ pub async fn handle_dregg(ctx: &Context, command: &CommandInteraction, state: &B
     }
 }
 
-/// `/play` — `open` → the portfolio opener; `cheat` → the free-text Cheat Code door; `market` → the
-/// auction offering; otherwise the arcade menu.
+/// `/play` — `open` → the portfolio opener; `status` → the read-only private-view re-post;
+/// `cheat` → the free-text Cheat Code door; `market` → the auction offering; otherwise the arcade
+/// menu.
 pub async fn handle_play(ctx: &Context, command: &CommandInteraction, state: &BotState) {
     match take_fold(command) {
         Some(("open", inner)) => {
             commands::portfolio::handle(ctx, &as_command(command, "play", inner), state).await
+        }
+        // READ-ONLY: this arm never reaches `open_offering_by_key`, so it cannot open, replace or
+        // wipe a session — see `portfolio::handle_status`.
+        Some(("status", inner)) => {
+            commands::portfolio::handle_status(ctx, &as_command(command, "play", inner), state)
+                .await
         }
         // The Cheat Code re-nests exactly like a folded subcommand so the handler reads the same
         // flat option shape everything else does; it then routes through
@@ -1184,8 +1450,23 @@ fn play_view() -> (CreateEmbed, Vec<CreateActionRow>) {
         )
         .field(
             "One replay gesture",
-            "`/play open offering:<key> action:verify` re-checks the live session's \
-             receipt chain.",
+            format!(
+                "`{}` re-checks the live session's receipt chain.",
+                verify_invocation("<key>")
+            ),
+            false,
+        )
+        // ⚑ The read-only door onto your own side of a hidden game. A player who dismissed the
+        // ephemeral holding their hand had, before this, exactly one thing left to try — opening
+        // the game again — and that lands on a card whose live button WIPES the match.
+        .field(
+            "Lost your private view?",
+            format!(
+                "`{}` re-posts your own hand / sealed move as a fresh private message. It reads \
+                 the live session and changes nothing — no turn, no receipt, and the match in \
+                 the channel is untouched.",
+                status_invocation("<key>")
+            ),
             false,
         )
         .field(
@@ -1270,9 +1551,12 @@ fn adventure_view() -> (CreateEmbed, Vec<CreateActionRow>) {
         )
         .field(
             "Its neighboring worlds",
-            "The actor-bound native crawl is `/play open offering:descent`; today's \
-             beacon-seeded season remains `/descent play`; the sealed market is \
-             `/play open offering:bazaar`.",
+            format!(
+                "The actor-bound native crawl is `{descent}`; today's beacon-seeded season \
+                 remains `/descent play`; the sealed market is `{bazaar}`.",
+                descent = open_invocation("descent"),
+                bazaar = open_invocation("bazaar"),
+            ),
             false,
         );
     let rows = vec![CreateActionRow::Buttons(vec![
@@ -1345,7 +1629,10 @@ fn govern_view() -> (CreateEmbed, Vec<CreateActionRow>) {
         )
         .field(
             "Approvals",
-            "`/govern council-status cell:<id>` · `/govern council-approve`",
+            // The option really is `proposal-cell` (`commands::polis::register_council_status`).
+            // It read `cell:<id>` here, which Discord does not accept — found by the
+            // no-unregistered-path tooth below, which walks the option names too.
+            "`/govern council-status proposal-cell:<id>` · `/govern council-approve`",
             false,
         )
         .field(
@@ -1617,10 +1904,7 @@ async fn view_for(
         "leaderboard" => leaderboard_view(),
         "help" => help_view(),
         _ => (
-            embeds::warning_embed(
-                "Unknown Surface",
-                "This menu destination isn't recognised by this bot build.",
-            ),
+            embeds::warning_embed("Out of date", &embeds::stale_control_text()),
             vec![back_row()],
         ),
     }
@@ -1686,10 +1970,12 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
                         CreateInteractionResponse::Message(
                             CreateInteractionResponseMessage::new()
                                 .content(format!(
-                                    "**{key}** — open it in a channel with \
-                                     `/play open offering:{key}` \u{2022} re-check its live \
-                                     session anytime with `/play open offering:{key} \
-                                     action:verify`."
+                                    "**{key}** — open it in a channel with `{open}` \u{2022} \
+                                     re-post your own private view with `{status}` \u{2022} \
+                                     re-check its live session anytime with `{verify}`.",
+                                    open = open_invocation(key),
+                                    status = status_invocation(key),
+                                    verify = verify_invocation(key),
                                 ))
                                 .ephemeral(true),
                         ),
@@ -1725,10 +2011,7 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
                 vec![],
             ),
             _ => (
-                embeds::warning_embed(
-                    "Unknown Control",
-                    "This menu action isn't recognised by this bot build.",
-                ),
+                embeds::warning_embed("Out of date", &embeds::stale_control_text()),
                 vec![],
             ),
         };
@@ -1747,8 +2030,8 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
             CreateInteractionResponse::Message(
                 CreateInteractionResponseMessage::new()
                     .embed(embeds::warning_embed(
-                        "Unknown Control",
-                        "This menu control isn't recognised by this bot build.",
+                        "Out of date",
+                        &embeds::stale_control_text(),
                     ))
                     .ephemeral(true),
             ),
@@ -1963,6 +2246,114 @@ mod tests {
             ),
             "the scanner must be able to see a command mention at all"
         );
+    }
+
+    /// ⚑⚑ **NO PLAYER-FACING STRING NAMES AN UNREGISTERED COMMAND PATH.**
+    ///
+    /// The tooth the `/play` fold needed and did not have. `24e47322b` turned the invocation into
+    /// `/play open offering:<key>`; eighteen `DiscordOffering::open_hint()` impls kept returning
+    /// the flat `/play offering:<key>`, which Discord silently refuses to route, and they surface
+    /// through `offering::no_session_text` and `not_durable_note` — the stale-board and
+    /// post-restart messages, i.e. exactly when a player most needs a working instruction. Nothing
+    /// caught it because the only test touching `open_hint` asserted the broken literal. The same
+    /// hole is what let `/govern council-status cell:<id>` name an option that is really
+    /// `proposal-cell`, and it is the shape of the `/identity link-web` problem: a string is only
+    /// as good as the tree it is checked against.
+    ///
+    /// It harvests every ``/…`` code span out of the RENDERED surfaces — the embeds a player
+    /// actually reads, not the source — and walks each one through [`path_is_registered`].
+    ///
+    /// ⚠ **SCOPE, stated rather than implied.** This covers the menu surfaces and the `/help` map:
+    /// every rendered view in [`view_for`], the featured game cards, and `commands::start`'s help
+    /// embed. It does NOT yet sweep the whole bot — `commands::devnet`, `commands::coordinate`,
+    /// `crate::hermes_channel` and others carry their own `/…` prose which this cannot see from
+    /// here, and at least some of it is stale (`/faucet`, `/status`, `/key set` are pre-fold
+    /// spellings). That is a named residual, not a claim of coverage; extending the harvest to
+    /// those modules is the follow-up. What is covered is hard-asserted — no allow-list, no
+    /// report-only arm.
+    #[test]
+    fn no_player_facing_string_names_an_unregistered_command_path() {
+        /// Every ``/…`` code span in a rendered surface's JSON — the command paths a player is
+        /// told to type. A span not starting with `/` is a key, an option value or a file path and
+        /// is none of this test's business.
+        fn command_paths_in(text: &str) -> Vec<String> {
+            text.split('`')
+                // Odd indices are the inside of a span (JSON has no backtick escape).
+                .skip(1)
+                .step_by(2)
+                .filter(|span| span.starts_with('/'))
+                .map(|span| span.to_string())
+                .collect()
+        }
+
+        let mut surfaces: Vec<(&str, String)> = Vec::new();
+        for (label, (embed, rows)) in [
+            ("/play menu", play_view()),
+            ("/adventure menu", adventure_view()),
+            ("/cipherclerk menu", cipherclerk_view()),
+            ("/govern menu", govern_view()),
+            ("/verify menu", verify_view()),
+            ("/identity menu", identity_view()),
+            ("/hermes menu", hermes_view()),
+            ("/federation menu", federation_view()),
+            ("/gallery menu", gallery_view()),
+            ("/descent menu", descent_view()),
+            ("/leaderboard menu", leaderboard_view()),
+            ("/help map", help_view()),
+        ] {
+            let mut text = serde_json::to_value(embed).unwrap().to_string();
+            text.push_str(&serde_json::to_value(rows).unwrap().to_string());
+            surfaces.push((label, text));
+        }
+        for door in GAME_DOORS {
+            surfaces.push((
+                door.key,
+                serde_json::to_value(game_door_card(&door))
+                    .unwrap()
+                    .to_string(),
+            ));
+        }
+
+        let mut checked = 0usize;
+        for (label, text) in &surfaces {
+            for path in command_paths_in(text) {
+                checked += 1;
+                assert!(
+                    path_is_registered(&path),
+                    "{label} tells a player to type `{path}`, which this build does not register \
+                     — Discord will not route it, so the instruction does nothing at all"
+                );
+            }
+        }
+        assert!(
+            checked > 30,
+            "only {checked} command paths were harvested from {} surfaces — the harvester is \
+             blind and this gate cannot fire",
+            surfaces.len()
+        );
+
+        // ⚑ THE NEGATIVE CONTROLS. Both halves: the harvester must SEE a path, and the checker
+        // must REJECT a plausible-but-unrouted one. Without these the sweep above could be green
+        // because nothing was found, or because everything passes.
+        assert_eq!(
+            command_paths_in("open it with `/play open offering:tug` or press a button"),
+            vec!["/play open offering:tug".to_string()],
+            "the harvester must find a code span at all"
+        );
+        for shipped in [
+            "/play offering:tug",
+            "/crown board",
+            "/dungeon start",
+            "/play",
+        ] {
+            let registered = path_is_registered(shipped);
+            assert_eq!(
+                registered,
+                shipped == "/play",
+                "`{shipped}`: only the bare advertised command is a registered path here — the \
+                 other three are pre-fold spellings this gate exists to catch"
+            );
+        }
     }
 
     /// Whether `text` names the slash command `/{name}` — a whole path segment, so
@@ -2314,10 +2705,25 @@ mod tests {
         let mut seen = BTreeSet::new();
         for door in GAME_DOORS {
             assert!(seen.insert(door.key), "duplicate game door `{}`", door.key);
-            assert!(door.open.starts_with('/'));
-            assert!(door.verify.starts_with('/'));
-            assert_ne!(door.open, door.verify);
-            assert!(door.verify.contains("verify"));
+            assert!(door.open().starts_with('/'));
+            assert!(door.verify().starts_with('/'));
+            assert_ne!(door.open(), door.verify());
+            assert!(door.verify().contains("verify"));
+            // ⚑ And the card's routes are ROUTES. These were `&'static str` fields, and this
+            // shelf held the only correct spelling in the bot while every `open_hint` carried the
+            // pre-fold one — a hand-written string that happens to be right is not a source.
+            assert!(
+                path_is_registered(&door.open()),
+                "the `{}` card names `{}`, which this build does not register",
+                door.key,
+                door.open()
+            );
+            assert!(
+                path_is_registered(&door.verify()),
+                "the `{}` card names `{}`, which this build does not register",
+                door.key,
+                door.verify()
+            );
             if door.key == "dungeon" {
                 assert!(
                     subcommand_names("adventure")
@@ -2334,8 +2740,8 @@ mod tests {
             }
             let wire = serde_json::to_value(game_door_card(&door)).expect("game card serializes");
             let text = wire.to_string();
-            assert!(text.contains(door.open), "{text}");
-            assert!(text.contains(door.verify), "{text}");
+            assert!(text.contains(&door.open()), "{text}");
+            assert!(text.contains(&door.verify()), "{text}");
         }
         for substituted in [
             "Bazaar",

@@ -57,7 +57,14 @@ impl PlayerReplaySurface {
         match self {
             Self::Discord => "Use the re-verify chain control to replay the record.",
             Self::DiscordDungeon => "Run `/dungeon verify` to replay-verify the session.",
-            Self::Web => "Open Replay-verify to replay the record.",
+            // ⚑ WHAT REPLAY-VERIFY DOES, not just where it is. "Open Replay-verify to replay the
+            // record" told a first-time player nothing they could act on — it named a control and a
+            // noun they had no meaning for. The offer is the same offer; it just says what pressing
+            // it buys.
+            Self::Web => {
+                "Want proof? Replay-verify below re-runs this whole session from its first move and \
+                 reports whether anything changed."
+            }
             Self::Telegram => "Run `/verify` to replay the record.",
         }
     }

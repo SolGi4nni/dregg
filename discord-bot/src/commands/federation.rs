@@ -238,7 +238,7 @@ pub async fn handle_link(ctx: &Context, command: &CommandInteraction, state: &Bo
             return;
         }
         Err(e) => {
-            let embed = embeds::error_embed("Database Error", &e.to_string());
+            let embed = embeds::store_unavailable_embed(&e);
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;
@@ -332,7 +332,7 @@ pub async fn handle_unlink(ctx: &Context, command: &CommandInteraction, state: &
                 .await;
         }
         Err(e) => {
-            let embed = embeds::error_embed("Database Error", &e.to_string());
+            let embed = embeds::store_unavailable_embed(&e);
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;

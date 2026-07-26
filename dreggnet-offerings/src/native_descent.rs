@@ -88,6 +88,7 @@ pub use procgen_dregg::CommittedSeed;
 use procgen_dregg::beacon::DailyBeacon;
 use spween_dregg::WorldError;
 
+use crate::refusal::{belongs_to_another_player, refuse_world_error, stale_control_refresh};
 use crate::{
     Action, DreggIdentity, Offering, OfferingError, Outcome, RecordVerify, RunCost, SessionConfig,
     Surface, VerifyReport,
@@ -202,10 +203,16 @@ impl NativeDescentMove {
                     .expect("the matched native relic argument is non-negative"),
             }),
             (FLEE, 0) => Ok(Self::Flee),
+            // ⚑ BOTH ARMS ARE THE STALE-CONTROL CONDITION, and both used to `{verb:?}` a raw wire
+            // string at the reader (a `Debug` dump, quotes and escapes included, of a value that was
+            // never theirs to see). A verb this build knows carrying an argument the run does not
+            // offer, and a verb this build does not know at all, are the same thing from the reader's
+            // side: the control they used is not one the live Descent offers. One shared sentence,
+            // from `crate::refusal` — the same one tug, the web, Telegram and Discord say.
             (verb, _) if matches!(verb, DELVE | ASCEND | UNLOCK | SMITE | LUNGE | LOOT | FLEE) => {
-                Err(format!("invalid argument for native Descent verb {verb:?}"))
+                Err(stale_control_refresh())
             }
-            (verb, _) => Err(format!("unknown native Descent affordance {verb:?}")),
+            _ => Err(stale_control_refresh()),
         }
     }
 
@@ -1077,11 +1084,10 @@ impl Offering for NativeDescentOffering {
         }
         if let Some(bound) = &session.actor {
             if bound != &actor {
-                return Outcome::Refused(format!(
-                    "this Descent is bound to {}; {} cannot move it",
-                    bound.as_str(),
-                    actor.as_str()
-                ));
+                // ⚑ NEITHER KEY IS PRINTED. This branch only fires when `bound != actor`, so the
+                // reader never needed to tell the two 64-char hex strings apart — and could not read
+                // either. What they need is the ACCOUNT diagnosis, which the shared sentence gives.
+                return Outcome::Refused(belongs_to_another_player("Descent"));
             }
         }
         let command = match NativeDescentMove::from_action(&input) {
@@ -1090,8 +1096,9 @@ impl Offering for NativeDescentOffering {
         };
         let receipt = match command.execute(&mut session.game) {
             Ok(receipt) => receipt,
-            Err(WorldError::Refused(reason)) => return Outcome::Refused(reason),
-            Err(error) => return Outcome::Refused(error.to_string()),
+            // ONE arm: `refuse_world_error` hands a rules refusal back verbatim and answers every
+            // machinery fault with the shared commit-failure sentence + an operator log line.
+            Err(error) => return Outcome::Refused(refuse_world_error(&error)),
         };
 
         // A refused first click cannot seize the session: identity binds only
@@ -1164,6 +1171,7 @@ impl Offering for NativeDescentOffering {
                         turn: action.turn.clone(),
                         arg: action.arg,
                         enabled: action.enabled,
+                        wants_text: action.wants_text,
                     })
                     .collect(),
             });
@@ -1774,10 +1782,11 @@ fn validate_live_private_context(
         )
     })?;
     if claimed.actor != expected.actor {
-        return Err(BinaryOperationError::Refused(format!(
-            "private operation names actor {}, but this Descent is bound to {}",
-            claimed.actor.as_str(),
-            expected.actor.as_str()
+        // ⚑ NEITHER KEY IS PRINTED — same condition, same shared sentence as `advance`'s binding
+        // check. The two 64-char hex strings this used to print were unreadable and, since the branch
+        // only fires when they differ, unnecessary.
+        return Err(BinaryOperationError::Refused(belongs_to_another_player(
+            "Descent",
         )));
     }
     if claimed.revision != expected.revision {
@@ -2871,7 +2880,14 @@ pub(crate) fn descent_shaft_section(sim: &Sim) -> ViewNode {
     }
 }
 
-/// The two lines that make the board readable without a manual.
+/// The lines that make the board readable without a manual.
+///
+/// ⚑ The BRACKET half is [`deos_view::coordgrid_legend`], not words of ours. It used to be a
+/// hand-written `[ ] you may act on it now` clause, which was the whole vocabulary while the shared
+/// projection painted the bracket from `highlight` alone. That projection now paints the CELL'S ROLE
+/// too (a `warn` cell you may act on — here, a way-key — reads `(k)`), and a legend that names one
+/// mark while the board paints five is worse than no legend. Reading it from the projection means it
+/// cannot drift again.
 fn map_legend() -> Vec<ViewNode> {
     vec![
         ViewNode::Text(format!(
@@ -2882,9 +2898,9 @@ fn map_legend() -> Vec<ViewNode> {
             "{GLYPH_YOU} you are here · {GLYPH_WAY_OPEN} open way · {GLYPH_WAY_SHUT} shut way · \
              a DIGIT in the guardian column is the blows that floor's guardian still owes \
              ({LIGHT_SMITE} light each to press, {LIGHT_LUNGE} to lunge) · {GLYPH_GUARDIAN_SLAIN} \
-             fallen · {GLYPH_CROWN} crown · {GLYPH_KEY} way-key · {GLYPH_TREASURE} treasure · \
-             [ ] you may act on it now"
+             fallen · {GLYPH_CROWN} crown · {GLYPH_KEY} way-key · {GLYPH_TREASURE} treasure"
         )),
+        ViewNode::Text(deos_view::coordgrid_legend()),
     ]
 }
 

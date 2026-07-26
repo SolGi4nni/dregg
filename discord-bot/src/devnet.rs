@@ -436,10 +436,16 @@ impl DevnetError {
                 let hint = body_hint(body);
                 match *code {
                     400 | 422 => format!(
-                        "The node rejected the request to {action} (HTTP {code}).{hint} This usually means a malformed turn or a value the executor wouldn't accept."
+                        "The node rejected the request to {action} (HTTP {code}).{hint} Nothing was changed. This usually means a malformed turn, or a value the rules would not accept."
                     ),
+                    // ⚑ NEVER NAME THE ENV VAR. This was the purest "name a symbol as the fix"
+                    // instance in the tree: it told a PLAYER to set `DEVNET_API_TOKEN` "for the bot",
+                    // which they cannot do, on a machine they do not have, for a process they do not
+                    // run. The env var is the OPERATOR's fix and lives in
+                    // [`DevnetError::operator_diagnostic`]; the player gets the two things that are
+                    // true for them — nothing landed, and this is our side.
                     401 | 403 => format!(
-                        "Not authorized to {action} (HTTP {code}).{hint} This node gates writes behind an operator token — set `DEVNET_API_TOKEN` for the bot, or use a node that accepts public turns."
+                        "This node will not accept a write to {action} from us, so nothing was changed. That is a permission problem on our side, not with what you asked for — the server log names what an operator has to set."
                     ),
                     404 => format!(
                         "The node has no record for this {action} request (HTTP 404).{hint} The cell/turn/name may not exist yet — try `/faucet` to materialize your cell first."
@@ -473,6 +479,30 @@ impl DevnetError {
             DevnetError::Unsupported(msg) => {
                 format!("That isn't available on this node yet ({msg}).")
             }
+        }
+    }
+
+    /// ⚑ **THE OPERATOR HALF** — `Some(detail)` exactly for the class of failure where the fix is
+    /// something only an operator can do, `None` when [`user_message`](Self::user_message) already
+    /// tells the whole story.
+    ///
+    /// This exists because the 401/403 sentence used to BE the operator's note: it told a player to
+    /// "set `DEVNET_API_TOKEN` for the bot", naming an environment variable on a machine they have no
+    /// access to. Removing that from the player copy without filing it somewhere would have traded one
+    /// bad failure mode for another, so it is filed here — the same audience split as
+    /// `cell::program::ProgramError::operator_diagnostic`. Callers emit it at `tracing::error!` beside
+    /// the message they show.
+    pub fn operator_diagnostic(&self) -> Option<String> {
+        match self {
+            DevnetError::Status {
+                code: code @ (401 | 403),
+                body,
+            } => Some(format!(
+                "the node refused a WRITE as unauthorized (HTTP {code}): it gates writes behind an \
+                 operator token. Set `DEVNET_API_TOKEN` for this bot process, or point \
+                 `DREGG_NODE_URL` at a node that accepts public turns. Node body: {body}"
+            )),
+            _ => None,
         }
     }
 }
@@ -1298,8 +1328,35 @@ mod tests {
             body: String::new(),
         };
         let m = auth.user_message("submit the transfer");
-        assert!(m.contains("Not authorized"), "got: {m}");
-        assert!(m.contains("DEVNET_API_TOKEN"), "should hint the token: {m}");
+        // ⚑ THE ENV VAR MUST NOT BE IN THE PLAYER'S SENTENCE. It used to be — this test ASSERTED it
+        // was, which is how the purest "name a symbol as the fix" instance in the tree survived: the
+        // gate was pointed the wrong way. A player cannot set an environment variable on our host.
+        assert!(
+            !m.contains("DEVNET_API_TOKEN"),
+            "a player cannot set an env var; that is the operator's half: {m}"
+        );
+        assert!(
+            m.contains("nothing was changed"),
+            "a refusal must say whether anything landed: {m}"
+        );
+        assert!(
+            m.contains("on our side"),
+            "the refusal must not blame the player for a permission we hold: {m}"
+        );
+        // …and the token IS still named, to the audience that can act on it.
+        let operator = auth
+            .operator_diagnostic()
+            .expect("an unauthorized write is an operator condition");
+        assert!(operator.contains("DEVNET_API_TOKEN"), "got: {operator}");
+        assert!(
+            DevnetError::Status {
+                code: 429,
+                body: String::new(),
+            }
+            .operator_diagnostic()
+            .is_none(),
+            "a rate limit is not an operator's misconfiguration"
+        );
 
         let rate = DevnetError::Status {
             code: 429,

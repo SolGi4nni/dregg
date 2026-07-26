@@ -325,12 +325,7 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
             .await;
         }
         Err(e) => {
-            return edit(
-                ctx,
-                command,
-                embeds::error_embed("Database Error", &e.to_string()),
-            )
-            .await;
+            return edit(ctx, command, embeds::store_unavailable_embed(&e)).await;
         }
     };
 

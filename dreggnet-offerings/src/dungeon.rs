@@ -47,8 +47,8 @@ use dungeon_on_dregg::narrator::{RecordedNarration, verify_narration_binding};
 use dungeon_on_dregg::{KP_CAST_WARD, KP_CLIMB_BACK, KP_DESCEND, KP_TRADE_BLOWS};
 use spween::{CompareOp, ConditionClause, ConditionExpr, PassageContent, Scene};
 use spween_dregg::{
-    CompiledStory, StepReceipt, WorldCell, WorldError, field_to_u64, value_to_u64, verify,
-    verify_by_replay, verify_receipts_anchored,
+    CompiledStory, StepReceipt, WorldCell, field_to_u64, value_to_u64, verify, verify_by_replay,
+    verify_receipts_anchored,
 };
 
 #[cfg(feature = "private-preference-operation")]
@@ -952,7 +952,9 @@ impl Offering for DungeonOffering {
     /// **Apply a choice as ONE real cap-bounded turn** (the factored `RealSession::apply_winner`
     /// + the anti-ghost tooth). `input.arg` is the scene choice index. A legal move commits a
     /// real [`TurnReceipt`] (recorded onto the playthrough + the actor log); an illegal / stale
-    /// / forged one is a real [`WorldError::Refused`] — nothing commits, no step recorded.
+    /// / forged one is a real [`spween_dregg::WorldError::Refused`] — nothing commits, no step
+    /// recorded, and the player is shown the refusal's own text
+    /// ([`crate::refusal::refuse_world_error`]).
     fn advance(
         &self,
         session: &mut DungeonSession,
@@ -1137,8 +1139,13 @@ impl Offering for DungeonOffering {
                 let ended = session.world.read_passage().is_none();
                 Outcome::Landed { receipt, ended }
             }
-            Err(WorldError::Refused(why)) => Outcome::Refused(why),
-            Err(e) => Outcome::Refused(e.to_string()),
+            // ONE arm, two audiences. A rules refusal (`WorldError::Refused`) is the keep's own text
+            // and comes back verbatim; every other variant is a fault on this server, so the player
+            // gets the shared commit-failure sentence and an operator gets the cause in a log line.
+            // This used to be `Err(e) => Outcome::Refused(e.to_string())` — the generic fallback that
+            // put "under-gated choice refused: method `select` did not lower fully to executor teeth"
+            // on a player's screen.
+            Err(e) => Outcome::Refused(crate::refusal::refuse_world_error(&e)),
         }
     }
 
@@ -1354,6 +1361,7 @@ impl Offering for DungeonOffering {
                     turn: a.turn.clone(),
                     arg: a.arg,
                     enabled: a.enabled,
+                    wants_text: a.wants_text,
                 })
                 .collect();
             children.push(ViewNode::Section {

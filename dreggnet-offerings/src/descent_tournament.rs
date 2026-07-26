@@ -368,6 +368,7 @@ impl DescentStandings {
                     arg: i64::try_from(row.seed)
                         .expect("the bounded tournament field fits the stable action wire"),
                     enabled: false,
+                    wants_text: false,
                 }
             })
             .collect();

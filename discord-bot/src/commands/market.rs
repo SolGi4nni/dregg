@@ -133,10 +133,6 @@ impl DiscordOffering for DarkBazaarOffering {
         }
     }
 
-    fn open_hint() -> String {
-        "/play offering:bazaar".to_string()
-    }
-
     fn status_line(&self, session: &DarkBazaarSession) -> String {
         if !session.is_listed() {
             return "CRAWL · nothing listed yet · 0 verified turns · operator-visible at settle"
@@ -245,12 +241,13 @@ async fn handle_open(ctx: &Context, command: &CommandInteraction, _state: &BotSt
                 &ctx.http,
                 CreateInteractionResponse::Message(
                     CreateInteractionResponseMessage::new()
-                        .embed(
-                            CreateEmbed::new()
-                                .title("The market did not open")
-                                .description(format!("The session failed to deploy: {e}"))
-                                .color(0xE63946),
-                        )
+                        // `OfferingError`'s `Display` is now the whole player sentence (the
+                        // engineer's text went to the operator log at the refusal), so prefixing
+                        // it would stutter. Title = WHAT, description = WHY.
+                        .embed(offering::deploy_refusal_embed(
+                            "The market did not open",
+                            &e,
+                        ))
                         .ephemeral(true),
                 ),
             )
@@ -343,7 +340,13 @@ mod tests {
             <DarkBazaarOffering as DiscordOffering>::KEY,
             DarkBazaarOffering::KEY
         );
-        assert_eq!(DarkBazaarOffering::open_hint(), "/play offering:bazaar");
+        // Against the registered tree, not a literal — the literal it used to pin
+        // (`/play offering:bazaar`) is the path `24e47322b` retired.
+        assert!(
+            crate::commands::menus::path_is_registered(&DarkBazaarOffering::open_hint()),
+            "the Bazaar's open hint must be typeable: {}",
+            DarkBazaarOffering::open_hint()
+        );
         assert!(
             DarkBazaarOffering::TAGLINE.contains("operator-visible at settle"),
             "the current privacy grade is player-visible"

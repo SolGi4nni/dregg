@@ -167,7 +167,9 @@ async fn handle_open(ctx: &Context, command: &CommandInteraction, state: &BotSta
                 &ctx.http,
                 CreateInteractionResponse::Message(
                     CreateInteractionResponseMessage::new()
-                        .content(format!("The document did not open: {e}"))
+                        // `Display` is the player sentence now (the raw text went to the operator
+                        // log at the refusal), so it stands on its own after the title clause.
+                        .content(format!("The document did not open — {e}."))
                         .ephemeral(true),
                 ),
             )

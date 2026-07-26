@@ -143,14 +143,14 @@ async fn handle_open(ctx: &Context, command: &CommandInteraction, _state: &BotSt
                 &ctx.http,
                 CreateInteractionResponse::Message(
                     CreateInteractionResponseMessage::new()
-                        .embed(
-                            CreateEmbed::new()
-                                .title("The grain was not admitted")
-                                .description(format!(
-                                    "The executor refused to admit the grain worker: {e}"
-                                ))
-                                .color(0xE63946),
-                        )
+                        // Two defects in the old line: "The executor" is machinery a player has
+                        // never been introduced to, and `{e}` was the substrate's raw text. Both
+                        // are handled at the seam now — `Display` is the player sentence, and the
+                        // engineer's half went to the operator log at the moment of refusal.
+                        .embed(offering::deploy_refusal_embed(
+                            "The grain worker did not start",
+                            &e,
+                        ))
                         .ephemeral(true),
                 ),
             )

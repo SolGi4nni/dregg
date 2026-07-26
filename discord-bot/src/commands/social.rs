@@ -52,7 +52,7 @@ pub(crate) async fn execute_faucet(state: &BotState, user_id: u64) -> serenity::
                 "You need a cipherclerk to use the faucet. Use `/start` → **Create my cipherclerk** first.",
             );
         }
-        Err(e) => return embeds::error_embed("Database Error", &e.to_string()),
+        Err(e) => return embeds::store_unavailable_embed(&e),
     };
 
     // Check rate limit (1 per hour).
@@ -77,7 +77,7 @@ pub(crate) async fn execute_faucet(state: &BotState, user_id: u64) -> serenity::
             }
         }
         Ok(None) => {} // First claim ever.
-        Err(e) => return embeds::error_embed("Database Error", &e.to_string()),
+        Err(e) => return embeds::store_unavailable_embed(&e),
     }
 
     // Request from devnet faucet.

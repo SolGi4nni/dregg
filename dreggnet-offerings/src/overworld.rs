@@ -47,6 +47,7 @@ use dungeon_on_dregg::overworld::{
 };
 use spween_dregg::Driver;
 
+use crate::refusal::belongs_to_another_player;
 use crate::{
     Action, DreggIdentity, Offering, OfferingError, Outcome, RecordVerify, RunCost, SessionConfig,
     Surface, VerifyReport,
@@ -325,6 +326,25 @@ impl std::fmt::Display for ClearError {
 
 impl std::error::Error for ClearError {}
 
+impl ClearError {
+    /// ⚑ **THE PLAYER HALF.** [`Display`](std::fmt::Display) above is written for a log: it SHOUTS
+    /// "REFUSED" and, on two variants, names the audience it is shouting at — `"REFUSED (actor): …"`
+    /// and `"REFUSED (executor): …"`. Both of those reach a player through
+    /// `Outcome::Refused(error.to_string())` on the travel and credit paths, so the second one was
+    /// putting the word *executor* on a traveller's screen.
+    ///
+    /// The inner text of those two is already the sentence to show — [`ClearError::ActorRefused`]
+    /// carries [`crate::refusal::belongs_to_another_player`] and [`ClearError::ClearRefused`] carries
+    /// the region cell's own refusal — so the fix is to stop wrapping it. Every other variant
+    /// describes the traveller's own situation in plain words and passes straight through.
+    pub fn player_message(&self) -> String {
+        match self {
+            ClearError::ActorRefused(why) | ClearError::ClearRefused(why) => why.clone(),
+            other => other.to_string(),
+        }
+    }
+}
+
 /// **The overworld offering** — a stateless factory over a [`RegionMap`]. Each [`open`](Self::open)
 /// deploys a fresh [`OverworldSession`] (a real region cell) for a player. Additive: the underlying
 /// [`crate::dungeon::DungeonOffering`] / [`crate::character::AdventurerOffering`] are untouched; this
@@ -463,10 +483,11 @@ impl OverworldOffering {
         }
         if let Some(bound) = &session.actor {
             if bound != actor {
-                return Err(ClearError::ActorRefused(format!(
-                    "this traversal is bound to {}; {} cannot move it",
-                    bound.as_str(),
-                    actor.as_str()
+                // ⚑ NEITHER KEY IS PRINTED — this branch only fires when `bound != actor`, so the
+                // reader never needed to tell two 64-char hex strings apart (and could not read
+                // either). The shared sentence gives them the ACCOUNT diagnosis instead.
+                return Err(ClearError::ActorRefused(belongs_to_another_player(
+                    "traversal",
                 )));
             }
         }
@@ -551,7 +572,7 @@ impl OverworldOffering {
         actor: DreggIdentity,
     ) -> Outcome {
         if let Err(error) = self.validate_actor(session, &actor) {
-            return Outcome::Refused(error.to_string());
+            return Outcome::Refused(error.player_message());
         }
         if session.events.len() >= MAX_OVERWORLD_EVENTS {
             return Outcome::Refused("overworld journal reached its fixed bound".to_string());
@@ -849,11 +870,9 @@ impl Offering for OverworldOffering {
         }
         if let Some(bound) = &session.actor {
             if bound != &actor {
-                return Outcome::Refused(format!(
-                    "this traversal is bound to {}; {} cannot move it",
-                    bound.as_str(),
-                    actor.as_str()
-                ));
+                // Same condition, same sentence as `validate_actor` above — the sibling that used to
+                // carry its own copy of the two-hex wording.
+                return Outcome::Refused(belongs_to_another_player("traversal"));
             }
         }
         let command = match self.move_from_action(session, &input) {
@@ -883,7 +902,7 @@ impl Offering for OverworldOffering {
                             ended: session.cleared_count() == self.map.locations.len(),
                         }
                     }
-                    Err(error) => Outcome::Refused(error.to_string()),
+                    Err(error) => Outcome::Refused(error.player_message()),
                 }
             }
         }
@@ -932,6 +951,7 @@ impl Offering for OverworldOffering {
                     turn: action.turn,
                     arg: action.arg,
                     enabled: action.enabled,
+                    wants_text: action.wants_text,
                 })
                 .collect(),
         });

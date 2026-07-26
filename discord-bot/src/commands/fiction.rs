@@ -700,10 +700,15 @@ async fn handle_start(ctx: &Context, command: &CommandInteraction, state: &BotSt
     // deterministic seed is the invoking channel id, so a re-open reproduces the same world
     // identity (what the replay verifier leans on).
     if let Err(e) = offering().open(SessionConfig::with_seed(invoking_channel)) {
-        let embed = error_embed(
-            "The Keep did not deploy",
-            &format!("The world-cell deploy failed: {e}"),
-        );
+        // ⚑ This pre-flight calls `Offering::open` DIRECTLY, bypassing `offering::open_in` — so it
+        // is also the one open path that must emit the operator half itself, or the substrate's own
+        // words are lost between here and the player sentence below.
+        if let Some(detail) = e.operator_diagnostic() {
+            tracing::error!(offering = "dungeon", channel = invoking_channel, "{detail}");
+        }
+        // `OfferingError`'s `Display` is the player sentence now, and "world-cell" is machinery a
+        // player has never been introduced to.
+        let embed = error_embed("The Keep did not open", &format!("{e}."));
         respond(ctx, command, embed, vec![], true).await;
         return;
     }
@@ -755,10 +760,9 @@ async fn handle_start(ctx: &Context, command: &CommandInteraction, state: &BotSt
         offering,
         SessionConfig::with_seed(invoking_channel),
     ) {
-        let embed = error_embed(
-            "The Keep did not deploy",
-            &format!("The world-cell deploy failed: {e}"),
-        );
+        // `OfferingError`'s `Display` is the player sentence now, and "world-cell" is machinery a
+        // player has never been introduced to. The substrate's own words are in the operator log.
+        let embed = error_embed("The Keep did not open", &format!("{e}."));
         ack::edit_slash(ctx, command, embed, vec![]).await;
         return;
     }
@@ -1790,16 +1794,21 @@ fn describe_outcome(outcome: &MoveOutcome) -> ResultView {
     match outcome {
         MoveOutcome::Landed { .. } => ResultView {
             headline: "A turn landed, receipted.".to_string(),
-            body:
-                "The world resolved the party's choice — a real, committed, executor-admitted turn."
-                    .to_string(),
+            body: "The world resolved the party's choice — a real, committed turn.".to_string(),
             landed: true,
         },
+        // ⚑ The dungeon's OWN copy of `offering::outcome_note`'s refusal — the "same condition,
+        // five wordings" shape. "The executor" is machinery a player has never been introduced to
+        // (`commands::start::help_embed` defines "receipt", "committed" and "turn", never that), so
+        // both halves say what happened in words the reader owns. The loss clause — room unchanged,
+        // no receipt — is the good part and is kept verbatim.
         MoveOutcome::Refused(why) => ResultView {
             headline:
                 "Refused — the crowd decided, the world disposed: room unchanged, no receipt."
                     .to_string(),
-            body: format!("The executor refused the move: {why}"),
+            body: format!(
+                "The world re-ran the party's choice against the rules and did not allow it: {why}"
+            ),
             landed: false,
         },
     }

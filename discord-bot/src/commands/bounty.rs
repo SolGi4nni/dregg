@@ -432,12 +432,7 @@ async fn require_hosted(
             None
         }
         Err(e) => {
-            edit_embed(
-                ctx,
-                command,
-                embeds::error_embed("Database Error", &e.to_string()),
-            )
-            .await;
+            edit_embed(ctx, command, embeds::store_unavailable_embed(&e)).await;
             None
         }
     }

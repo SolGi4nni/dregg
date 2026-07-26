@@ -133,7 +133,7 @@ pub(crate) async fn execute_transfer(
                 "You don't have a cipherclerk yet. Use `/start` → **Create my cipherclerk** first.",
             );
         }
-        Err(e) => return embeds::error_embed("Database Error", &e.to_string()),
+        Err(e) => return embeds::store_unavailable_embed(&e),
     };
 
     // Verify recipient has a cclerk.
@@ -147,7 +147,7 @@ pub(crate) async fn execute_transfer(
                 ),
             );
         }
-        Err(e) => return embeds::error_embed("Database Error", &e.to_string()),
+        Err(e) => return embeds::store_unavailable_embed(&e),
     };
 
     // Pre-flight balance check so the user gets a clear "top up" message rather
@@ -251,7 +251,7 @@ pub(crate) async fn execute_first_payment(
                 "Do the first two steps first: `/start` → **Create my identity**, then **Get test DEC**.",
             );
         }
-        Err(e) => return embeds::error_embed("Database Error", &e.to_string()),
+        Err(e) => return embeds::store_unavailable_embed(&e),
     };
 
     let community = UserCipherclerk::derive(

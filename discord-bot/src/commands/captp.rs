@@ -259,7 +259,7 @@ pub async fn handle_delegate(ctx: &Context, command: &CommandInteraction, state:
             return;
         }
         Err(e) => {
-            let embed = embeds::error_embed("Database Error", &e.to_string());
+            let embed = embeds::store_unavailable_embed(&e);
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;
@@ -515,7 +515,7 @@ async fn handle_handoff_redeem(
             return;
         }
         Err(e) => {
-            let embed = embeds::error_embed("Database Error", &e.to_string());
+            let embed = embeds::store_unavailable_embed(&e);
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;
@@ -607,7 +607,7 @@ async fn ensure_user_can_manage_cell(
             "No Cipherclerk",
             "Create a hosted cipherclerk with `/cipherclerk create` before managing capabilities.",
         )),
-        Err(e) => Err(embeds::error_embed("Database Error", &e.to_string())),
+        Err(e) => Err(embeds::store_unavailable_embed(&e)),
     }
 }
 

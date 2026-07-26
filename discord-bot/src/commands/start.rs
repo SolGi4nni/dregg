@@ -461,10 +461,10 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
             edit_followup(
                 ctx,
                 component,
-                embeds::warning_embed(
-                    "Unknown Control",
-                    "This control isn't recognised by this bot build.",
-                ),
+                // The SHARED stale-control sentence (`embeds::stale_control_text`) — the
+                // condition is the same one twelve other Discord sites answered in twelve
+                // wordings, all of them naming "this bot build" and most giving no next step.
+                embeds::warning_embed("Out of date", &embeds::stale_control_text()),
             )
             .await;
         }
@@ -531,10 +531,8 @@ pub async fn handle_modal(ctx: &Context, modal: &ModalInteraction, state: &BotSt
     let embed = match modal.data.custom_id.as_str() {
         ID_MODAL_SEND => submit_send(state, modal).await,
         ID_MODAL_KEY => submit_key(state, modal).await,
-        _ => embeds::warning_embed(
-            "Unknown Form",
-            "This form isn't recognised by this bot build.",
-        ),
+        // Same condition, same shared sentence as the component arm above.
+        _ => embeds::warning_embed("Out of date", &embeds::stale_control_text()),
     };
     let result = modal
         .edit_response(

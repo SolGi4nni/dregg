@@ -792,13 +792,58 @@ pub async fn handle_verify(
         }
         None => CreateEmbed::new()
             .title(format!("{title} — verify"))
+            // Derived, not spelled: this line carried the pre-fold `/play offering:<key>` too.
             .description(format!(
                 "You have not opened this surface yet, so there is no chain of yours to \
-                 re-verify. `/play offering:{key}` opens your persistent world."
+                 re-verify. `{}` opens your persistent world.",
+                crate::commands::menus::open_invocation(key)
             ))
             .color(0xE63946),
     };
     ack::edit_slash(ctx, command, embed, Vec::new()).await;
+}
+
+/// **`/play status offering:<rpg-key>` — re-post the invoker's own persistent-world surface.
+/// READ-ONLY.**
+///
+/// The RPG counterpart of `commands::offering::handle_status`, and read-only by construction: it
+/// renders through [`surface_from_host`] WITHOUT calling `host.ensure_open`, so asking for status
+/// can never mint a session or a world that did not already exist. [`with_player_host`] does replay
+/// the player's persisted log to rebuild the host — that is a read of their own record, the same
+/// thing `handle_verify` does — and nothing here advances a turn.
+///
+/// Ephemeral: a persistent world is one player's, and its projection is not the channel's business.
+pub async fn handle_status(
+    ctx: &Context,
+    command: &CommandInteraction,
+    state: &BotState,
+    key: &str,
+) {
+    ack::defer_slash(ctx, command, true).await;
+    let db = state.db.clone();
+    let handle = tokio::runtime::Handle::current();
+    let player = identity_of(state, command.user.id.get()).0;
+    let owned = key.to_string();
+    let rendered = with_player_host(db, handle, player, move |host, viewer| {
+        surface_from_host(host, &owned, viewer)
+    })
+    .ok()
+    .flatten();
+    let (title, color, _) = meta(key).unwrap_or(("Offering", 0xE63946, ""));
+    match rendered {
+        Some((embed, rows)) => ack::edit_slash(ctx, command, embed, rows).await,
+        None => {
+            let embed = CreateEmbed::new()
+                .title(format!("{title} — nothing of yours open"))
+                .description(format!(
+                    "You have not opened this surface yet, so there is no view of yours to \
+                     re-post. Nothing was changed. `{}` opens your persistent world.",
+                    crate::commands::menus::open_invocation(key)
+                ))
+                .color(color);
+            ack::edit_slash(ctx, command, embed, Vec::new()).await;
+        }
+    }
 }
 
 /// Route an `offering:` component press whose key is an RPG-world key: one real turn in the

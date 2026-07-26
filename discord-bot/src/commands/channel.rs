@@ -83,7 +83,7 @@ pub(crate) async fn execute_claim(
                 .field("Cell", format!("`{}`", short(&existing.cell_id)), true);
         }
         Ok(None) => {}
-        Err(e) => return embeds::error_embed("Database Error", &e.to_string()),
+        Err(e) => return embeds::store_unavailable_embed(&e),
     }
 
     // Build the semi-private permission plan (pure; tested offline).
@@ -126,7 +126,7 @@ pub(crate) async fn execute_claim(
         )
         .await
     {
-        return embeds::error_embed("Database Error", &e.to_string());
+        return embeds::store_unavailable_embed(&e);
     }
 
     embeds::success_embed("Channel Claimed")

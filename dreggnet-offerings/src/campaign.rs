@@ -961,6 +961,7 @@ impl Offering for DescentCampaignOffering {
                         turn: action.turn,
                         arg: action.arg,
                         enabled: action.enabled,
+                        wants_text: action.wants_text,
                     })
                     .collect(),
             });

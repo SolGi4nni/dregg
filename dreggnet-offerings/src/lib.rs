@@ -433,10 +433,9 @@ impl std::fmt::Display for OfferingError {
             //
             // Nothing a player could have typed avoids a deploy refusal — they asked for a game
             // and the server could not build one — so there is no variant here that wants the
-            // detail on screen.
-            // Written to pass [`crate::refusal::audit_player_text`] under the whole-message rules:
-            // it names the failing cause in plain words, says what was lost, and gives one next
-            // action a reader can actually carry out.
+            // detail on screen. Written to pass [`crate::refusal::audit_player_text`] under the
+            // whole-message rules: it names the failing cause in plain words, says what was lost,
+            // and gives one next action a reader can actually carry out.
             OfferingError::Deploy(_) => write!(
                 f,
                 "this offering could not be opened on this server: something it needs did not come \

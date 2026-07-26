@@ -456,11 +456,28 @@ where
         None
     }
 
-    /// The EXACT invocation that opens a fresh session of this offering — the hint a stale
-    /// press gets. `/play`-mounted offerings override this (`/play offering:<key>`); bespoke
-    /// commands keep the `/<key> open` default.
+    /// The EXACT invocation that opens a fresh session of this offering — the hint a stale press,
+    /// a stale board ([`no_session_text`]) and a post-restart quarantine ([`not_durable_note`])
+    /// all get.
+    ///
+    /// ⚑ **DERIVED, AND NOT OVERRIDABLE IN PRACTICE.** This used to be a `format!` with an
+    /// eighteen-impl override, and `24e47322b` (which folded `/play` behind subcommands) made
+    /// every one of them name a path Discord refuses to route — including both shipped
+    /// hidden-information games — while a test pinned the broken literal. It now reads
+    /// `commands::menus::open_invocation`, which builds the string out of the same names
+    /// `commands::menus::command_for` registers, and
+    /// `menus::tests::no_player_facing_string_names_an_unregistered_command_path` walks the
+    /// registered JSON to prove it. Do not override this: put the offering's door in
+    /// `menus::offering_door` instead, where the tooth can see it.
     fn open_hint() -> String {
-        format!("/{} open", Self::KEY)
+        crate::commands::menus::open_invocation(Self::KEY)
+    }
+
+    /// The EXACT invocation that re-posts THIS player's own private view of a live session,
+    /// read-only — the destination [`private_act_plaque`] names. Derived, for the same reason
+    /// [`DiscordOffering::open_hint`] is.
+    fn status_hint() -> String {
+        crate::commands::menus::status_invocation(Self::KEY)
     }
 
     /// Whether this offering runs as a **collective ballot** — many write-once voters per round,
@@ -503,8 +520,29 @@ pub fn open_in<O: DiscordOffering>(
     // call site changing. This used to hardcode `resume_store: None` while the store-attaching
     // constructor beside it had only `#[cfg(test)]` callers: persistence was built, tested, and
     // never reached a running bot.
-    open_core::<O>(channel, make, cfg, || Ok(durable_store()))
-        .map_err(dreggnet_offerings::OfferingError::Deploy)
+    open_core::<O>(channel, make, cfg, || Ok(durable_store())).map_err(|why| {
+        // ⚑ **THE TRANSLATION SEAM** — the ONE place a deploy refusal crosses from the substrate
+        // into a Discord response, so the two audiences get the two halves at the same instant.
+        //
+        // `why` is the engineer's text: `dungeon_on_dregg`'s "fail-closed", "Lean-subset",
+        // "install_constraint_oracle" — the exact copy ember was shown on the live bot. It used to
+        // ride out through `OfferingError::Deploy`'s bare-passthrough `Display` into an embed, and
+        // since `dungeon_on_dregg` also backs `native_descent`, `descent` and `campaign`, the
+        // FLAGSHIP game was one missing-oracle deploy from doing it too. So the operator half is
+        // logged HERE, at the moment of refusal, and the player half is
+        // `OfferingError`'s (now player-facing) `Display` — the same split
+        // `dregg_cell::ProgramError::operator_diagnostic` already makes.
+        //
+        // The `Deploy` payload is kept rather than dropped: it is the operator's string, reachable
+        // through `OfferingError::operator_diagnostic`, and nothing renders it to a player.
+        tracing::error!(
+            offering = O::KEY,
+            channel,
+            "the {} session refused to deploy: {why}",
+            O::KEY,
+        );
+        dreggnet_offerings::OfferingError::Deploy(why)
+    })
 }
 
 /// Open a fresh live session with an OfferingHost-compatible durable replay
@@ -532,9 +570,14 @@ fn open_core<O: DiscordOffering>(
     O::store()
         .run(move |sessions| {
             let offering = make();
-            let session = offering
-                .open(cfg.clone())
-                .map_err(|error| error.to_string())?;
+            // The substrate's OWN words, kept for the operator log (`open_in` emits them). Using
+            // `Display` here would already have collapsed the refusal to the player sentence, and
+            // then nothing downstream could tell an operator which piece was missing.
+            let session = offering.open(cfg.clone()).map_err(|error| {
+                error
+                    .operator_diagnostic()
+                    .unwrap_or_else(|| error.to_string())
+            })?;
             // A collective offering opens with a live round over the session's first actions (an open
             // crowd — a restricted electorate is set with [`open_round`]); a direct offering has none.
             let round = if O::collective() {
@@ -663,7 +706,12 @@ pub fn resume_in<O: DiscordOffering>(channel: u64) -> Result<usize, ResumeRefusa
             };
             let mut session = offering
                 .open(log.cfg.clone())
-                .map_err(|e| ResumeRefusal::Deploy(e.to_string()))?;
+                // OPERATOR-facing: `ensure_live` logs a `ResumeRefusal` at `tracing::warn!` and no
+                // player ever reads one, so this keeps the substrate's own detail rather than the
+                // player sentence `Display` now renders.
+                .map_err(|e| {
+                    ResumeRefusal::Deploy(e.operator_diagnostic().unwrap_or_else(|| e.to_string()))
+                })?;
             for (index, m) in log.moves.iter().enumerate() {
                 if matches!(m.attribution, Attribution::Signed { .. }) {
                     return Err(ResumeRefusal::ForeignAttribution(index));
@@ -1597,6 +1645,16 @@ pub const PRIVATE_ACT_FIELD: &str = "🔒 Yours alone — act on the board above
 /// `dregg_automatafl::surface`'s `next_step_line`), so restating either here would make the embed
 /// longer and less legible. What no renderer can know is that THIS copy is ephemeral, private, and
 /// that its controls live somewhere else — so that is what the plaque says.
+///
+/// ⚑ **AND THE REFRESH IT NAMES HAS TO EXIST.** This plaque shipped saying "ask for status again
+/// to refresh it" when `/play` had **no status action**: its `action` option offered exactly
+/// `verify` and `submit raid proof`. A player who dismissed or lost this ephemeral — and both
+/// shipped hidden-information games (automatafl, tug) carry this plaque — had one thing left to
+/// try, `/play open offering:<key>`, which finds the live session and renders
+/// `commands::open_guard::refuse_with_confirm`: *"Opening a new one would **wipe it**… Press
+/// **Replace it**… or **Keep it**."* Neither button shows them their hand, and the live one
+/// destroys a two-player match. The bot's own self-help pointed at that card. It now names
+/// [`DiscordOffering::status_hint`], a read-only path.
 fn private_act_plaque<O: DiscordOffering>(embed: CreateEmbed) -> CreateEmbed {
     embed.field(
         PRIVATE_ACT_FIELD,
@@ -1606,9 +1664,12 @@ fn private_act_plaque<O: DiscordOffering>(embed: CreateEmbed) -> CreateEmbed {
              which is the whole game.\n\n\
              **There are no buttons here, on purpose.** Moves are made on the shared **{title}** \
              board posted in this channel: scroll up and press there, so one board stays the truth \
-             for every player. This private copy does not update itself — ask for status again to \
-             refresh it.",
+             for every player.\n\n\
+             This private copy does not update itself. To get a fresh one — now, or after you \
+             dismiss this — run `{status}`. That only reads; it never opens, replaces or ends the \
+             game in this channel.",
             title = O::TITLE,
+            status = O::status_hint(),
         ),
         false,
     )
@@ -1710,8 +1771,15 @@ pub fn outcome_note(outcome: &Outcome) -> String {
                 card.compact_text(PlayerReplaySurface::Discord)
             )
         }
+        // ⚑ "THE EXECUTOR" WAS UNDEFINED JARGON ON THE BOT'S HIGHEST-TRAFFIC NEGATIVE MESSAGE.
+        // This line renders on EVERY refused move in EVERY offering, and `commands::start`'s
+        // `help_embed` defines "receipt", "committed" and "turn" for a player — never "executor".
+        // The clause that carries the meaning is `nothing committed, no receipt`, which is kept
+        // verbatim: it is the anti-ghost promise the whole product rests on. What is replaced is
+        // the machine's name with the thing it did, in words a player already owns.
         Outcome::Refused(why) => format!(
-            "**Refused — nothing committed, no receipt.**\n> The executor refused the move: {why}"
+            "**Refused — nothing committed, no receipt.**\n> The game re-ran your move against \
+             the rules and did not allow it: {why}"
         ),
     }
 }
@@ -2470,10 +2538,10 @@ async fn modal_unrouted(ctx: &Context, modal: &ModalInteraction) {
             &ctx.http,
             CreateInteractionResponse::Message(
                 CreateInteractionResponseMessage::new()
-                    .content(
-                        "That form is from a surface this bot build no longer decodes — nothing \
-                         was fired.",
-                    )
+                    // The SHARED stale-control sentence. This one already said "nothing was
+                    // fired" — the rule the other eleven broke — but said it in its own words and
+                    // named "this bot build", which is deployment language a reader cannot use.
+                    .content(crate::embeds::stale_control_text())
                     .ephemeral(true),
             ),
         )
@@ -2819,6 +2887,22 @@ async fn update_surface<O: DiscordOffering>(
     }
 }
 
+/// **The PLAYER's half of a deploy refusal, as an embed** — the frontend end of the translation
+/// seam [`open_in`] opens.
+///
+/// One function so no handler has to decide how much of an `OfferingError` a person should read:
+/// the answer is `Display`, which is now a sentence written for them (and carries its own loss
+/// statement and next action, per `dreggnet_offerings::refusal`'s house style), while the
+/// engineer's text is already in the operator log by the time this is called. Handlers used to
+/// prefix it ("The session failed to deploy: {e}"), which reads as a stutter once `Display` is
+/// itself a full sentence — so the title carries the WHAT and this carries the WHY.
+pub fn deploy_refusal_embed(title: &str, err: &dreggnet_offerings::OfferingError) -> CreateEmbed {
+    CreateEmbed::new()
+        .title(title)
+        .description(format!("{err}."))
+        .color(0xE63946)
+}
+
 fn no_session_text<O: DiscordOffering>() -> String {
     // This used to tell the player "sessions live in bot memory and do NOT survive a bot restart".
     // That is no longer true — a session's move log is persisted and replayed back on the first
@@ -2962,12 +3046,10 @@ pub fn generic_offering_keys() -> Vec<&'static str> {
 /// Dispatch an `offering:` component press to the offering that owns the key.
 pub async fn route_component(ctx: &Context, component: &ComponentInteraction, state: &BotState) {
     let Some(key) = key_of(&component.data.custom_id) else {
-        component_ephemeral(
-            ctx,
-            component,
-            "That button is from a stale surface this bot build no longer decodes.",
-        )
-        .await;
+        // A `custom_id` this process cannot decode — the stale-control condition, and the one
+        // shared sentence for it. The old wording gave no next step and no statement that nothing
+        // had fired.
+        component_ephemeral(ctx, component, &crate::embeds::stale_control_text()).await;
         return;
     };
     // ── The eight identity-owned RPG feature surfaces route to the PER-IDENTITY PERSISTENT world
@@ -2999,12 +3081,15 @@ pub async fn route_component(ctx: &Context, component: &ComponentInteraction, st
         };
     }
     for_each_generic_offering!(try_component);
-    component_ephemeral(
-        ctx,
-        component,
-        &format!("No offering with key `{key}` is mounted in this bot build."),
-    )
-    .await;
+    // A key this process decoded but does not mount. To the reader that is the SAME condition as
+    // an undecodable id — the control they used is not one the live bot offers — so it gets the same
+    // sentence. The key itself is an operator's coordinate, and goes to the log.
+    tracing::error!(
+        target: "dregg::refusal",
+        key = %key,
+        "an offering component press named a key this build does not mount"
+    );
+    component_ephemeral(ctx, component, &crate::embeds::stale_control_text()).await;
 }
 
 /// Dispatch an `offering:` modal submit to the offering that owns the key.
@@ -3015,9 +3100,7 @@ pub async fn route_modal(ctx: &Context, modal: &ModalInteraction, state: &BotSta
                 &ctx.http,
                 CreateInteractionResponse::Message(
                     CreateInteractionResponseMessage::new()
-                        .content(
-                            "That form is from a stale surface this bot build no longer decodes.",
-                        )
+                        .content(crate::embeds::stale_control_text())
                         .ephemeral(true),
                 ),
             )
@@ -3040,9 +3123,7 @@ pub async fn route_modal(ctx: &Context, modal: &ModalInteraction, state: &BotSta
             &ctx.http,
             CreateInteractionResponse::Message(
                 CreateInteractionResponseMessage::new()
-                    .content(format!(
-                        "No offering with key `{key}` is mounted in this bot build."
-                    ))
+                    .content(crate::embeds::stale_control_text())
                     .ephemeral(true),
             ),
         )
@@ -3589,7 +3670,14 @@ mod tests {
         assert!(note.contains("nothing committed, no receipt"), "{note}");
         assert!(
             note.contains("below quorum"),
-            "the executor's own reason survives: {note}"
+            "the substrate's own reason survives: {note}"
+        );
+        // ⚑ And the sentence carrying it is in a player's vocabulary. "The executor refused the
+        // move" shipped on every refusal in every offering while `start::help_embed` defined
+        // "receipt", "committed" and "turn" — and never "executor".
+        assert!(
+            !note.contains("executor"),
+            "the highest-traffic negative message must not name internal machinery: {note}"
         );
 
         let mut receipt = dregg_app_framework::TurnReceipt {

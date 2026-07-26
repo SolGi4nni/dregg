@@ -451,6 +451,6 @@ async fn ensure_hosted_owner(
             "No Cipherclerk",
             "Create a hosted cipherclerk with `/cipherclerk create` first.",
         )),
-        Err(e) => Err(embeds::error_embed("Database Error", &e.to_string())),
+        Err(e) => Err(embeds::store_unavailable_embed(&e)),
     }
 }

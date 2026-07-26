@@ -141,12 +141,10 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
         return;
     }
     // Never a silent drop (backlog #31): an unrecognized govprop press says so.
-    refuse(
-        ctx,
-        component,
-        "This governance control is not recognized by this bot build.",
-    )
-    .await;
+    // Never a silent drop — AND never deployment language. "this bot build" described our
+    // release process to somebody with no access to it, and framed their screen as the problem.
+    // The shared sentence says what happened, that nothing changed, and which control works.
+    refuse(ctx, component, &embeds::stale_control_text()).await;
 }
 
 /// The Governance panel's **Proposals** press: list recent proposals in this guild, each with

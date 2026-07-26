@@ -106,6 +106,20 @@ fn game_of_key(key: &str) -> Option<Game> {
     }
 }
 
+/// The OFFERING KEY a board [`Game`] is played through — the inverse of [`game_of_key`], and the
+/// only thing a player-facing "go win one" pointer may be built from.
+///
+/// ⚑ `Game::slug()` is NOT that key. It is the board's own universe slug (`multiway-tug`), and the
+/// crown's own copy used it as one — `format!("/play {}", game.slug())` produced
+/// `/play multiway-tug`, which is wrong twice over: `/play` needs `open offering:` since
+/// `24e47322b`, and `multiway-tug` is not a `/play` choice at all (the key is `tug`).
+fn offering_key_of(game: Game) -> &'static str {
+    match game {
+        Game::MultiwayTug => "tug",
+        Game::Automatafl => "automatafl",
+    }
+}
+
 /// The game's **committed canonical board anchor** — the submission-independent trust root
 /// (fixed VK + committed genesis + canonical WIN root) a baked reference fold pins, so the board
 /// verifies every player's proof against a genesis / win it did NOT choose.
@@ -946,10 +960,10 @@ fn enqueue_response(
             CreateEmbed::new()
                 .title("Nothing crowned to fold here")
                 .description(format!(
-                    "No finished, WON `{}` match is live in this channel. Win one — \
-                     `/play {}` — and the crown appears.",
+                    "No finished, WON `{}` match is live in this channel. Win one — `{}` — and \
+                     the crown appears.",
                     game.slug(),
-                    game.slug(),
+                    crate::commands::menus::open_invocation(offering_key_of(game)),
                 ))
                 .color(COLOR_REFUSED),
             Vec::new(),
@@ -1039,7 +1053,7 @@ fn dropped_job_card() -> (CreateEmbed, Vec<CreateActionRow>) {
             .description(
                 "The crown service did not run the enqueue, so nothing here can honestly be \
                  called \"proving\". The match itself is untouched — every move of it is still a \
-                 committed, verified turn. Check `/crown status` and try again.",
+                 committed, verified turn. Check `/verify crown action:status` and try again.",
             )
             .color(COLOR_REFUSED),
         Vec::new(),
@@ -1131,10 +1145,14 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
                 Some(None) => (
                     CreateEmbed::new()
                         .title("Nothing crowned to fold here")
-                        .description(
-                            "No finished, WON match is live in this channel. Win a `/play tug` \
-                             or `/play automatafl` match first — then fold it to one proof.",
-                        )
+                        // Derived: `/play tug` and `/play automatafl` were both pre-fold spellings
+                        // AND missing `offering:`.
+                        .description(format!(
+                            "No finished, WON match is live in this channel. Win a `{tug}` or \
+                             `{af}` match first — then fold it to one proof.",
+                            tug = crate::commands::menus::open_invocation("tug"),
+                            af = crate::commands::menus::open_invocation("automatafl"),
+                        ))
                         .color(COLOR_REFUSED),
                     Vec::new(),
                 ),
@@ -1149,7 +1167,8 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
                 .await
                 .unwrap_or_default();
             let body = if rows.is_empty() {
-                "No folds in this channel yet. Win a match, then `/crown fold`.".to_string()
+                "No folds in this channel yet. Win a match, then `/verify crown action:fold`."
+                    .to_string()
             } else {
                 rows.iter()
                     .map(|(t, g, s)| format!("**fold #{t}** ({}) — {s}", g.slug()))
@@ -1222,8 +1241,10 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
                 component_ephemeral(
                     ctx,
                     component,
-                    "That fold button names a game this bot build no longer crowns — nothing \
-                     was enqueued. Run `/crown status`.",
+                    // The shared stale-control stem with this press's own specific next step.
+                    &dreggnet_offerings::refusal::stale_control(
+                        "Run `/verify crown action:status` to see where your fold stands.",
+                    ),
                 )
                 .await;
                 return;
@@ -1246,8 +1267,9 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
                 component_ephemeral(
                     ctx,
                     component,
-                    "That fold button is from a surface this bot build no longer decodes — \
-                     nothing was checked. Run `/crown status`.",
+                    &dreggnet_offerings::refusal::stale_control(
+                        "Run `/verify crown action:status` to see where your fold stands.",
+                    ),
                 )
                 .await;
                 return;
@@ -1282,7 +1304,7 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
                         ctx,
                         component,
                         "No such fold (the bot may have restarted — pending folds are \
-                         in-process; re-fold the match with `/crown fold`).",
+                         in-process; re-fold the match with `/verify crown action:fold`).",
                     )
                     .await;
                 }
@@ -1359,9 +1381,10 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
                         ctx,
                         component,
                         &format!(
+                            // `/crown` folded under `/verify` and this pointer did not follow it.
                             "👑 Fold #{token} ({}) is already RANKED — {} turns attested, \
                              rank #{}. Press **Re-verify** on its crown post (or run \
-                             `/crown board`).",
+                             `/verify crown action:board`).",
                             game.slug(),
                             facts.turns,
                             facts.rank,

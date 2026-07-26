@@ -86,8 +86,10 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, _
     crate::commands::offering::component_ephemeral(
         ctx,
         component,
-        "That re-verify button belongs to a surface this bot build no longer serves — nothing \
-         was checked. Re-open the offering and press the button on the fresh board.",
+        // The shared stale-control stem with THIS press's own (better, more specific) next step.
+        &dreggnet_offerings::refusal::stale_control(
+            "Re-open the offering and press the re-verify button on the fresh board.",
+        ),
     )
     .await;
 }

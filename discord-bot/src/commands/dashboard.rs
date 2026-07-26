@@ -350,8 +350,8 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
         _ => {
             let msg = CreateInteractionResponseMessage::new()
                 .embed(embeds::warning_embed(
-                    "Unknown Control",
-                    "This dashboard control is not recognized by this bot build.",
+                    "Out of date",
+                    &embeds::stale_control_text(),
                 ))
                 .ephemeral(true);
             let _ = component
@@ -407,10 +407,7 @@ pub async fn handle_modal(ctx: &Context, modal: &ModalInteraction, state: &BotSt
             }
         }
         ID_SUB_SUBSCRIBE => submit_subscription_subscribe(modal, state).await,
-        _ => embeds::warning_embed(
-            "Unknown Form",
-            "This submitted form is not recognized by this bot build.",
-        ),
+        _ => embeds::warning_embed("Out of date", &embeds::stale_control_text()),
     };
 
     let _ = modal
@@ -1139,7 +1136,7 @@ async fn submit_credential_verify(modal: &ModalInteraction, state: &BotState) ->
                 ),
             );
         }
-        Err(e) => return embeds::error_embed("Database Error", &e.to_string()),
+        Err(e) => return embeds::store_unavailable_embed(&e),
     };
 
     // Generate a REAL unlinkable predicate STARK over the held attributes, then verify. The prove
@@ -1671,7 +1668,7 @@ async fn user_cell(user_id: u64, state: &BotState) -> Result<String, CreateEmbed
             "No Cipherclerk",
             "Create a hosted cipherclerk with `/cipherclerk create` first.",
         )),
-        Err(e) => Err(embeds::error_embed("Database Error", &e.to_string())),
+        Err(e) => Err(embeds::store_unavailable_embed(&e)),
     }
 }
 
@@ -1686,7 +1683,7 @@ async fn hosted_user_cell(user_id: u64, state: &BotState) -> Result<String, Crea
             "No Cipherclerk",
             "Create a hosted cipherclerk with `/cipherclerk create` first.",
         )),
-        Err(e) => Err(embeds::error_embed("Database Error", &e.to_string())),
+        Err(e) => Err(embeds::store_unavailable_embed(&e)),
     }
 }
 

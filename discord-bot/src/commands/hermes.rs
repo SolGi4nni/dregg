@@ -162,14 +162,12 @@ async fn handle_open(ctx: &Context, command: &CommandInteraction, _state: &BotSt
                 &ctx.http,
                 CreateInteractionResponse::Message(
                     CreateInteractionResponseMessage::new()
-                        .embed(
-                            CreateEmbed::new()
-                                .title("The agent did not deploy")
-                                .description(format!(
-                                    "The confined agent failed to come alive: {e}"
-                                ))
-                                .color(0xE63946),
-                        )
+                        // `OfferingError`'s `Display` is the whole player sentence now; a prefix
+                        // would stutter, and the engineer's text is already in the operator log.
+                        .embed(offering::deploy_refusal_embed(
+                            "The agent did not start",
+                            &e,
+                        ))
                         .ephemeral(true),
                 ),
             )

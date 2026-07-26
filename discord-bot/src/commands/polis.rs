@@ -368,7 +368,7 @@ async fn hosted_cclerk(
             "No Cipherclerk",
             "Create a hosted cipherclerk with `/cipherclerk create` before approving proposals.",
         )),
-        Err(e) => Err(embeds::error_embed("Database Error", &e.to_string())),
+        Err(e) => Err(embeds::store_unavailable_embed(&e)),
     }
 }
 

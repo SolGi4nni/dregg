@@ -426,10 +426,13 @@ pub fn played_tug_match(channel: u64) -> Option<dreggnet_prove_service::PlayedMa
 ///
 /// ⚑ **THESE ARE THE KEYS THE CHEAT CODE CANNOT OPEN**, because [`all_play_keys`] subtracts
 /// them: `open_offering_by_key` has no arm for a bespoke frontend, so `/play cheat code:dungeon`
-/// NAMES the command instead ([`OWN_COMMANDS`]) rather than routing to it. Five of the six are
-/// now off the ship list, and their commands are off the advertised surface with it — so the
-/// invocation the Cheat Code names is a `DREGG_LAB_GUILD_ID` route, which is exactly what
-/// [`OWN_COMMANDS`] has to say.
+/// answers [`CheatCode::OwnCommand`] rather than routing to it. This array is therefore also the
+/// SET that resolves to that variant — the hand-written `OWN_COMMANDS` table that used to restate
+/// these six keys with their invocations beside them is gone, and
+/// `commands::menus::offering_door` supplies both the invocation and whether a player can reach
+/// it. Five of the six are off the ship list, and their commands are off the advertised surface
+/// with them, so what the Cheat Code has to say for those is that the offering is not open here —
+/// naming a `DREGG_LAB_GUILD_ID` route would be an instruction they cannot follow.
 pub const BESPOKE_COMMAND_KEYS: [&str; 6] =
     ["dungeon", "council", "market", "doc", "grain", "hermes"];
 
@@ -548,11 +551,13 @@ pub fn register() -> CreateCommand {
 /// hazard. Same picker as `open` ([`offering_option`]); none of `open`'s acting options.
 pub fn register_status() -> CreateCommand {
     CreateCommand::new("status")
+        // Covers both audiences honestly: a hidden-information offering answers with the invoker's
+        // OWN private view as a fresh ephemeral; a public one re-posts its board to the channel.
         .description(
-            "Re-post your own private view of a live game here — reads only, changes nothing",
+            "Show a live game in this channel — your own private view if it has one. Reads only",
         )
         .add_option(offering_option(
-            "Which live offering's own private view to re-post",
+            "Which live offering to show — your own view of it if it is a hidden game",
         ))
 }
 
@@ -929,7 +934,7 @@ pub async fn handle_cheat(ctx: &Context, command: &CommandInteraction, state: &B
                          plays. It is just not on this server's command list at the moment, so \
                          there is nothing for you to type and nothing was opened: it came off the \
                          shelf, and un-listing things is how the shelf stays short.\n\nWhat IS \
-                         open: {}. `/play menu` shows them properly.",
+                         open: {}. Pick one of those, or run `/play menu` to see them properly.",
                         shelf_sentence()
                     )),
             };
@@ -990,8 +995,9 @@ async fn cheat_reply(ctx: &Context, command: &CommandInteraction, embed: CreateE
 /// (`/hermes status`, `/govern council status`), reused rather than re-built — the brief's
 /// instruction and the right one: that function already threads the requester's derived identity
 /// through `surface_for`, already drops the controls and re-attaches the plaque for a
-/// hidden-information offering, and already answers EPHEMERALLY so a hand never lands in the
-/// channel.
+/// hidden-information offering, and already makes THAT answer ephemeral — a hand or a sealed move
+/// can never land in the channel — while a public offering's board stays channel-visible, which is
+/// the same split `channel_surfaces` makes on open.
 ///
 /// ⚑ **WHY IT CANNOT TOUCH THE LIVE SESSION.** It never reaches [`open_offering_by_key`], so it
 /// never reaches `open_and_post`, so it never reaches `commands::open_guard` — there is no path
@@ -1007,6 +1013,17 @@ async fn cheat_reply(ctx: &Context, command: &CommandInteraction, embed: CreateE
 /// The eight identity-owned RPG keys route to the invoker's persistent world
 /// (`commands::rpg_world::handle_status`), which is read-only by the same argument: it renders out
 /// of the replayed host WITHOUT `ensure_open`, so asking for status cannot mint a world either.
+///
+/// ⚠ **RESIDUAL, inherited not introduced.** [`offering::handle_status`] answers with
+/// `create_response` rather than a defer, because Discord wants the ephemeral flag at DEFER time
+/// and this surface only learns whether the offering is hidden-information after it renders. On a
+/// channel whose session is merely COLD, `ensure_live` replays the whole log first, and a long
+/// enough replay can pass the 3-second window. That is the shape every `/… status` in the bot has
+/// always had (`/hermes status`, `/govern council status`, `/play market status`), and it does not
+/// touch the case this door exists for — a player who just lost the ephemeral of a LIVE game, where
+/// `ensure_live` returns on its first branch. Fixing it means giving `handle_status` an explicit
+/// ephemerality argument and a deferred body at all five existing call sites, which is a change to
+/// that function and not a second copy of it.
 pub async fn handle_status(ctx: &Context, command: &CommandInteraction, state: &BotState) {
     let key = command
         .data
@@ -1060,8 +1077,9 @@ pub async fn handle_status(ctx: &Context, command: &CommandInteraction, state: &
                     CreateInteractionResponse::Message(
                         CreateInteractionResponseMessage::new()
                             .content(format!(
-                                "`{other}` is not an offering this bot serves, so there is no \
-                                 private view of it to re-post. Nothing was changed."
+                                "`{other}` is not an offering served here, so there is no private \
+                                 view of it to re-post. Nothing was changed. Pick one from \
+                                 `/play menu`."
                             ))
                             .ephemeral(true),
                     ),
@@ -2066,6 +2084,40 @@ mod tests {
                  `{needle}`): {text}",
             );
         }
+
+        // ⚑⚑ **2b. AND THE REFRESH IT OFFERS IS A REAL, READ-ONLY DESTINATION.**
+        //
+        // THE HEADLINE DEFECT. The plaque shipped saying "ask for status again to refresh it" and
+        // `/play` had no status action — its `action` option offered `verify` and `submit raid
+        // proof` and nothing else. So the one piece of copy explaining the public/private split
+        // sent a player who had lost their hand to `/play open offering:automatafl`, which finds
+        // the live session and renders `open_guard::refuse_with_confirm` — "Opening a new one
+        // would **wipe it**… Press **Replace it**… or **Keep it**" — whose only live button
+        // DESTROYS a two-player match, and neither of whose buttons shows them their hand.
+        //
+        // Three assertions, because the wound had three parts: the plaque must NAME a path, that
+        // path must be one Discord ROUTES, and it must not be the open path.
+        let status = <AutomataflOffering as DiscordOffering>::status_hint();
+        assert!(
+            text.contains(&status),
+            "the plaque must name the exact refresh path `{status}`, or the player is back to \
+             guessing and the only thing left to guess is a re-open: {text}",
+        );
+        assert!(
+            crate::commands::menus::path_is_registered(&status),
+            "the plaque names `{status}`, which this build does not register — the pre-fix copy \
+             pointed at nothing at all, which is how it ended up pointing at the wipe dialog",
+        );
+        let open = <AutomataflOffering as DiscordOffering>::open_hint();
+        assert_ne!(
+            status, open,
+            "the refresh must not be the OPEN path — that is the defect verbatim",
+        );
+        assert!(
+            !text.contains(&open),
+            "the plaque must not name the open path anywhere: for a live session that path IS \
+             the wipe-confirm card ({open})",
+        );
 
         // 3. And that instruction is TRUE: the public board really does carry the presses.
         let public_buttons: usize = public_rows

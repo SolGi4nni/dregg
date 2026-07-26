@@ -191,7 +191,7 @@ pub(crate) async fn execute_create(state: &BotState, user_id: u64) -> serenity::
                 "You already have a cipherclerk. Use `/cipherclerk balance` to see it.",
             );
         }
-        Err(e) => return embeds::error_embed("Database Error", &e.to_string()),
+        Err(e) => return embeds::store_unavailable_embed(&e),
         _ => {}
     }
 
@@ -218,7 +218,7 @@ pub(crate) async fn execute_create(state: &BotState, user_id: u64) -> serenity::
         .register_user_with_mode(&discord_id, &cell_id, IdentityMode::Hosted, None)
         .await
     {
-        return embeds::error_embed("Database Error", &e.to_string());
+        return embeds::store_unavailable_embed(&e);
     }
 
     embeds::success_embed("Cipherclerk Created")
@@ -247,7 +247,7 @@ pub(crate) async fn execute_balance(state: &BotState, user_id: u64) -> serenity:
                 "You don't have a cipherclerk yet. Use `/cipherclerk create` first.",
             );
         }
-        Err(e) => return embeds::error_embed("Database Error", &e.to_string()),
+        Err(e) => return embeds::store_unavailable_embed(&e),
     };
 
     match state.devnet.get_balance(&cell_id).await {
@@ -286,7 +286,7 @@ async fn handle_address(ctx: &Context, command: &CommandInteraction, state: &Bot
             return;
         }
         Err(e) => {
-            let embed = embeds::error_embed("Database Error", &e.to_string());
+            let embed = embeds::store_unavailable_embed(&e);
             respond_ephemeral(ctx, command, embed).await;
             return;
         }
@@ -376,7 +376,7 @@ async fn handle_export(ctx: &Context, command: &CommandInteraction, state: &BotS
             return;
         }
         Err(e) => {
-            let embed = embeds::error_embed("Database Error", &e.to_string());
+            let embed = embeds::store_unavailable_embed(&e);
             respond_ephemeral(ctx, command, embed).await;
             return;
         }
@@ -486,7 +486,7 @@ async fn require_cclerk(
             None
         }
         Err(e) => {
-            let embed = embeds::error_embed("Database Error", &e.to_string());
+            let embed = embeds::store_unavailable_embed(&e);
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;

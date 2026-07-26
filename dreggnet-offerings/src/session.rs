@@ -343,32 +343,108 @@ pub enum PlayRefusal {
     },
 }
 
+/// ⚑ **`Display` IS THE PLAYER'S SENTENCE HERE**, because there is no second string on this path: a
+/// [`PlayRefusal`] travels up as the refusal a delegated-play surface shows, and nothing between here
+/// and the screen re-words it. The internals that used to sit in these sentences moved to
+/// [`PlayRefusal::operator_diagnostic`] — the same split
+/// `cell::program::ProgramError::operator_diagnostic` landed, and NOT a second pattern.
+///
+/// ⚑ THE DORMANT LANDMINE THIS CLOSES. [`PlayRefusal::OracleUnavailable`] read
+///
+/// > turn refused fail-closed — the verified admission oracle (dregg_deleg_admit /
+/// > Dregg2.Apps.DelegAdmit.delegAdmit) reached NO VERDICT: {reason}
+///
+/// — **a C-ABI export name and a Lean theorem path in player copy.** It has no live callers today, so
+/// nobody could hit it; it would have shipped silently the day delegated play was wired up, repeating
+/// exactly the mistake already caught and fixed in `cell/src/program/error.rs`. Fixed while it costs
+/// nothing, which is the only time this class is cheap to fix.
+///
+/// The same pass took the two 64-char public keys out of [`PlayRefusal::WrongHolderKey`] (the wrong-
+/// player condition, which every other surface answers with
+/// [`crate::refusal::belongs_to_another_player`]) and the `{grant:?}` `Debug` dump out of
+/// [`PlayRefusal::OutOfScope`].
 impl std::fmt::Display for PlayRefusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PlayRefusal::OutOfScope { presented, grant } => write!(
+            // The `{grant:?}` Debug-dumped a `PlayScope`. Which offering the key is scoped to is not
+            // the reader's problem — that they are playing the wrong one with this key is.
+            PlayRefusal::OutOfScope { .. } => write!(
                 f,
-                "turn out of scope: played offering {presented}, session key grants {grant:?}"
+                "This play pass is for a different game than the one you just moved in. Nothing was \
+                 changed — open the game this pass was made for, or start a fresh session here"
             ),
-            PlayRefusal::PastDeadline { now, deadline } => write!(
+            PlayRefusal::PastDeadline { .. } => write!(
                 f,
-                "turn past deadline: presented at height {now}, session expired at {deadline}"
+                "Your play session has expired, so this move was not taken. Nothing was changed — \
+                 start a new session to keep playing"
+            ),
+            PlayRefusal::OverTurnBudget { turns_taken, .. } => write!(
+                f,
+                "Your play session is out of moves — it covered {turns_taken} and they are used up. \
+                 Nothing was changed, and nothing was charged for this one. Start a new session to \
+                 keep playing"
+            ),
+            // ⚑ NEITHER KEY IS PRINTED. This is the wrong-player condition, it only fires when the
+            // two keys differ, and neither was ever readable — so it says exactly what every other
+            // surface says for it.
+            PlayRefusal::WrongHolderKey { .. } => {
+                write!(
+                    f,
+                    "{}",
+                    crate::refusal::belongs_to_another_player("session")
+                )
+            }
+            // ⚑ NOT the export name, NOT the Lean path. This is a fault in how this server was built:
+            // the verified rule-checker the delegation needs is not installed, so the key refuses
+            // every turn rather than deciding its own caveats. The missing piece is named in the log
+            // ([`PlayRefusal::operator_diagnostic`]), which is the only audience that can install it.
+            PlayRefusal::OracleUnavailable { .. } => write!(
+                f,
+                "This server cannot check a delegated move right now: the verified rule-checker it \
+                 needs is not installed, so it refuses every such move rather than guess at one. \
+                 Nothing was changed and nothing was charged. That is a fault in how this server was \
+                 built, not in what you did — the server log names the missing piece"
+            ),
+        }
+    }
+}
+
+impl PlayRefusal {
+    /// **THE OPERATOR HALF** — `Some(detail)` for the refusals whose cause is a fact about this
+    /// deployment or the caveats themselves rather than about the player's move, `None` never (every
+    /// variant sanded a coordinate out of its sentence, and every coordinate is worth a log line).
+    ///
+    /// A caller that renders a [`PlayRefusal`] to a person is expected to emit this beside it at
+    /// `tracing::error!`. Sanding the sentence down would be a WORSE failure mode than the leak if the
+    /// detail vanished with it.
+    pub fn operator_diagnostic(&self) -> String {
+        match self {
+            PlayRefusal::OutOfScope { presented, grant } => format!(
+                "session-key play refused, out of scope: played offering {presented}, key grants \
+                 {grant:?}"
+            ),
+            PlayRefusal::PastDeadline { now, deadline } => format!(
+                "session-key play refused, past deadline: presented at height {now}, key expired at \
+                 {deadline}"
             ),
             PlayRefusal::OverTurnBudget {
                 turns_taken,
                 turn_budget,
-            } => write!(
-                f,
-                "turn over budget: {turns_taken} turns already taken, session grants {turn_budget}"
+            } => format!(
+                "session-key play refused, over budget: {turns_taken} turns already taken, key \
+                 grants {turn_budget}"
             ),
-            PlayRefusal::WrongHolderKey { presented, bound } => write!(
-                f,
-                "turn driven under the wrong holder key: presented {presented}, key is bound to {bound}"
+            PlayRefusal::WrongHolderKey { presented, bound } => format!(
+                "session-key play refused, wrong holder key: driven under {presented}, key is bound \
+                 to {bound}"
             ),
-            PlayRefusal::OracleUnavailable { reason } => write!(
-                f,
-                "turn refused fail-closed — the verified admission oracle \
-                 (dregg_deleg_admit / Dregg2.Apps.DelegAdmit.delegAdmit) reached NO VERDICT: {reason}"
+            PlayRefusal::OracleUnavailable { reason } => format!(
+                "session-key play refused FAIL-CLOSED: the verified admission oracle \
+                 `dregg_deleg_admit` (the C-ABI entry over `Dregg2.Apps.DelegAdmit.delegAdmit`) \
+                 reached NO VERDICT: {reason}. Either the linked `libdregg_lean.a` does not export \
+                 it (a build without a HEAD-matching Lean archive) or this is a target that cannot \
+                 link the archive at all — wasm32, where `deleg_admit_available()` is FALSE by \
+                 construction and this refusal is the CORRECT answer, never a Rust fallback"
             ),
         }
     }

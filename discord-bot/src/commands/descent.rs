@@ -1674,8 +1674,10 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
         respond_ephemeral(
             ctx,
             component,
-            "That button is from a Descent surface this bot build no longer decodes — nothing \
-             was committed. Run `/descent room` for your current room and its live buttons.",
+            // The shared stale-control stem with this press's own specific next step.
+            &dreggnet_offerings::refusal::stale_control(
+                "Run `/descent room` for your current room and its live buttons.",
+            ),
         )
         .await;
         return;
@@ -2583,8 +2585,9 @@ async fn handle_reverify(ctx: &Context, component: &ComponentInteraction, cid_he
         respond_ephemeral(
             ctx,
             component,
-            "That re-verify button carries an id this bot build can no longer read — nothing was \
-             re-executed. Open `/descent board` for the live board and its current buttons.",
+            &dreggnet_offerings::refusal::stale_control(
+                "Open `/descent board` for the live board and its current buttons.",
+            ),
         )
         .await;
         return;

@@ -114,7 +114,10 @@ impl Offering for OverworldPlay {
                     receipt,
                     ended: false,
                 },
-                Err(e) => Outcome::Refused(e.to_string()),
+                // `ClearError`'s `Display` is the OPERATOR's string — it SHOUTS "REFUSED" and, on two
+                // variants, names the audience ("REFUSED (executor): …"). `player_message()` is the
+                // half a traveller should read.
+                Err(e) => Outcome::Refused(e.player_message()),
             },
             other => Outcome::Refused(format!("`{other}` is not an overworld turn")),
         }

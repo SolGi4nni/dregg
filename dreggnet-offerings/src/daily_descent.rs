@@ -590,8 +590,9 @@ impl<S: CharacterStore> DailyDescentOffering<S> {
                 let ended = run.world.read_passage().is_none();
                 Outcome::Landed { receipt, ended }
             }
-            Err(WorldError::Refused(why)) => Outcome::Refused(why),
-            Err(e) => Outcome::Refused(e.to_string()),
+            // ONE arm, two audiences — see `dungeon::advance`. A rules refusal comes back verbatim;
+            // a machinery fault becomes the shared commit-failure sentence plus an operator log line.
+            Err(e) => Outcome::Refused(crate::refusal::refuse_world_error(&e)),
         }
     }
 
