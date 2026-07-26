@@ -284,7 +284,7 @@ impl Offering for InventoryOffering {
                 let name = s.name_of(i).unwrap_or_else(|| format!("item #{i}"));
                 return VerifyReport::broken(
                     n,
-                    format!("`{name}` provenance broke: {:?}", report.reasons),
+                    format!("`{name}` provenance broke: {}", report.reasons.join("; ")),
                 );
             }
         }

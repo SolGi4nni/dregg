@@ -1015,8 +1015,229 @@ fn live_adapter_sources_keep_the_text_and_binary_routes_the_flow_requires() {
     assert!(discord.contains("dreggnet_surfaces::HostedProofAssignedRaidOffering"));
     assert!(discord.contains("Action::new(turn.clone(), turn, arg, true).with_text(text)"));
     assert!(telegram.contains(".find(|a| a.turn == turn && a.arg == arg && a.wants_text"));
-    assert!(telegram.contains("let action = pending.with_text(text.to_string())"));
+    // The pin follows the live source: the armed-reply path clones the pending affordance
+    // before attaching the player's text. (It read `pending.with_text(...)` before the host
+    // began reusing `pending`; a stale pin here reds this file for no real reason.)
+    assert!(telegram.contains("let action = pending.clone().with_text(text.to_string())"));
     assert!(web.contains("h.binary_operations(&k, &id)"));
     assert!(web.contains("render_operation_uploaders(&operations"));
     assert!(web_operation.contains("host.invoke_binary_operation("));
+}
+
+/// **THE FOG QUESTION, ANSWERED WITH A TOOTH.**
+///
+/// A reviewer sweeping the web surfaces flagged this offering for a "viewer-invariant state
+/// tree" — `proof_section` shows every seat's assigned role to everybody once the proof
+/// lands — and could not tell whether that was intended. It is, and this is the tooth that
+/// pins it: `roles[4]` is a PUBLIC INPUT of the HidingFri statement, recomputable by anyone
+/// holding the receipt, so fogging it would hide nothing and make the page lie about what
+/// it knows. What is genuinely secret — the 4x4 suitability scores, the admissibility
+/// matrix, the blinding, the aggregate score — never reaches this host at all.
+///
+/// The test is NON-VACUOUS in three independent ways, because "two renders are equal" is
+/// exactly the assertion a broken render can satisfy for free:
+///
+/// 1. **The token is really there.** Each viewer's state tree is asserted to carry EVERY
+///    seat's role name — including seats that are not the viewer's own, the very tokens a
+///    hidden-information offering would have to omit. Equality of two empty pages cannot
+///    pass.
+/// 2. **The viewer is really consulted.** The same `render_for` calls are asserted to
+///    produce DIFFERENT affordance menus per viewer (a claimant is offered a turn a
+///    spectator is not), so the equality of the state trees is a decision this surface
+///    makes, not an artifact of the viewer being ignored.
+/// 3. **No witness material rides along.** The private score matrix's own debug image, the
+///    proof bytes' hex, and the `Debug` array dump of the public input root are all
+///    asserted absent, while the canonical hex form of that root is asserted present.
+///
+/// Coverage matches the shape of the leak this class produced in tug: the OPPONENT (a
+/// teammate holding a different seat), a SPECTATOR holding no seat at all, and the
+/// ANONYMOUS viewer-blind `render`.
+#[test]
+fn the_state_tree_is_one_public_statement_for_every_viewer() {
+    use deos_view::ViewNode;
+    use deos_view::web::render_html;
+
+    // The projection is the REAL web DOM string a browser viewer is served, not the prose
+    // walk: `render_text` deliberately drops `Pill` and `Menu`, and this surface paints every
+    // assigned role as a Pill and every affordance as a Menu — so a prose-only differential
+    // would compare two pages with the disclosure and the controls both missing, and pass
+    // having checked nothing. (That is the same shape of blind spot as tug's spectator test.)
+
+    /// The page with its affordance menu removed — the STATE tree alone. `render_inner`
+    /// paints the per-viewer action menu as a direct child of the outer section, so this is
+    /// the boundary between "what the page says" and "what this viewer may press".
+    fn state_tree(surface: &dreggnet_offerings::Surface) -> String {
+        let stripped = match surface.view().clone() {
+            ViewNode::Section {
+                title,
+                tag,
+                children,
+            } => ViewNode::Section {
+                title,
+                tag,
+                children: children
+                    .into_iter()
+                    .filter(|child| !matches!(child, ViewNode::Menu { .. }))
+                    .collect(),
+            },
+            other => other,
+        };
+        render_html(&stripped, &[])
+    }
+
+    /// Only the affordance half of the same page.
+    fn menu_html(surface: &dreggnet_offerings::Surface) -> String {
+        match surface.view() {
+            ViewNode::Section { children, .. } => children
+                .iter()
+                .filter(|child| matches!(child, ViewNode::Menu { .. }))
+                .map(|menu| render_html(menu, &[]))
+                .collect(),
+            other => render_html(other, &[]),
+        }
+    }
+
+    let offering = HostedProofAssignedRaidOffering::new();
+    // The DECLARATION the frontends read before they choose a surface. Both offerings must
+    // agree, because the hosted one delegates every live render to the fixed-roster one.
+    assert!(
+        !offering.hidden_information(),
+        "the catalog raid declares no hidden information: its state tree IS the public statement"
+    );
+    assert!(
+        !ProofAssignedRaidOffering::new(roster())
+            .expect("four distinct seats")
+            .hidden_information(),
+        "the fixed-roster raid must agree with the catalog wrapper it is rendered through"
+    );
+
+    let mut session = muster(&offering);
+
+    // ── BEFORE THE PROOF ── there is nothing per-seat in existence yet, so a differential
+    //    between viewers would say "safe" even for a genuinely hidden-information offering
+    //    (the trait's own warning). Assert it anyway: it is the state a spectator sees most.
+    let seat_before = state_tree(&offering.render_for(&session, &actor("alice")));
+    let spectator_before = state_tree(&offering.render_for(&session, &actor("nemesis")));
+    let anonymous_before = state_tree(&offering.render(&session));
+    assert_eq!(seat_before, spectator_before);
+    assert_eq!(seat_before, anonymous_before);
+    assert!(
+        seat_before.contains("AWAITING HIDING PROOF"),
+        "the pre-proof page states its own phase: {seat_before}"
+    );
+
+    // ── LAND THE PROOF AND POPULATE THE TABLE ── every seat's capability committed and one
+    //    sigil burned, so every column of `proof_section` carries live per-seat state. A
+    //    fogging bug hides most easily in a rich state, not an empty one. This deliberately
+    //    stops SHORT of launching the Arena: every column of the flagged `proof_section` is
+    //    already live here, and the launched-encounter path is covered by
+    //    `hiding_assignment_authorizes_exact_capability_claims_and_a_real_arena_turn`.
+    offering
+        .invoke_binary_operation(
+            &mut session,
+            ASSIGN_OPERATION,
+            proof_bytes(),
+            actor("alice"),
+        )
+        .expect("the owning-file upload reaches the verifier");
+    for name in ["alice", "bob", "cara", "devi"] {
+        drive_offered(&offering, &mut session, name, TURN_CLAIM);
+    }
+    drive_offered(&offering, &mut session, "alice", TURN_PRIME_TACTIC);
+    assert!(
+        session.tactic_primed_for(actor("alice").as_str()),
+        "seat 0's sigil is burned, so the table shows both a burned and an unspent seat"
+    );
+    let assignment = session
+        .assignment()
+        .expect("the verified assignment is installed");
+
+    // Every seat's PUBLIC role name, in seat order — the tokens a hidden-information
+    // offering would have to strip from an un-seated view.
+    let role_names: Vec<&'static str> = (0..4)
+        .map(|seat| {
+            assignment
+                .role_for_seat(seat)
+                .expect("a verified assignment has four seats")
+                .name()
+        })
+        .collect();
+
+    let anonymous = state_tree(&offering.render(&session));
+    // The three viewer classes the tug leak was reachable through, plus every other seat.
+    for (who, description) in [
+        ("alice", "seat 0, who submitted the proof"),
+        (
+            "bob",
+            "seat 1 — the OPPONENT class: a teammate holding a different seat",
+        ),
+        ("cara", "seat 2"),
+        ("devi", "seat 3"),
+        ("nemesis", "a SPECTATOR holding no seat on a formed roster"),
+    ] {
+        let viewer = actor(who);
+        let seen = state_tree(&offering.render_for(&session, &viewer));
+        assert_eq!(
+            seen, anonymous,
+            "{description} must read the SAME state tree as the viewer-blind render — this \
+             surface's disclosure is the proof's public statement, not a per-seat hand"
+        );
+        // (1) NON-VACUITY: the page really carries every seat's role, so the equality above
+        //     is not equality of two blank pages.
+        for (seat, role) in role_names.iter().enumerate() {
+            assert!(
+                seen.contains(role),
+                "{description} must read seat {seat}'s public role `{role}`: {seen}"
+            );
+        }
+        assert!(
+            seen.contains("Proof-assigned role (public)"),
+            "the column that a reviewer read as `private` now names itself: {seen}"
+        );
+    }
+
+    // (2) NON-VACUITY: the viewer argument is genuinely consulted on those same calls — a
+    //     claimant is offered a turn the spectator is not — so the state-tree equality is a
+    //     decision, not the viewer being dropped on the floor.
+    let seat_menu = menu_html(&offering.render_for(&session, &actor("bob")));
+    let spectator_menu = menu_html(&offering.render_for(&session, &actor("nemesis")));
+    assert_ne!(
+        seat_menu, spectator_menu,
+        "render_for must still differ per viewer in its AFFORDANCES, or this test proves nothing"
+    );
+    assert!(
+        spectator_menu.is_empty() || !spectator_menu.contains("Burn proof-assigned"),
+        "a seatless spectator is offered no seat's executor turn: {spectator_menu}"
+    );
+
+    // (3) NO WITNESS MATERIAL, and no Debug dump, reaches the page.
+    let painted = format!("{anonymous}{seat_menu}");
+    assert!(
+        painted.contains(
+            &assignment
+                .input_root()
+                .into_iter()
+                .map(|felt| format!("{felt:08x}"))
+                .collect::<String>()
+        ),
+        "the public input root is painted as one canonical hex commitment: {painted}"
+    );
+    assert!(
+        !painted.contains(&format!("{:?}", assignment.input_root())),
+        "no `{{:?}}` array dump of the public root reaches the page: {painted}"
+    );
+    assert!(
+        !painted.contains(&format!("{:?}", scores())),
+        "the producer-private suitability matrix never reaches this host, let alone the page"
+    );
+    for row in scores() {
+        assert!(
+            !painted.contains(&format!("{row:?}")),
+            "no row of the private suitability matrix appears on the page"
+        );
+    }
+    assert!(
+        !painted.contains(&lower_hex(&proof_bytes()[..64])),
+        "the opaque proof bytes are not painted into the page"
+    );
 }

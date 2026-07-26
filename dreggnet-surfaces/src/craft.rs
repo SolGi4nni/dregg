@@ -257,7 +257,11 @@ impl Offering for CraftOffering {
             if !report.verified {
                 return VerifyReport::broken(
                     s.turns,
-                    format!("`{}` provenance broke: {:?}", r.name, report.reasons),
+                    format!(
+                        "`{}` provenance broke: {}",
+                        r.name,
+                        report.reasons.join("; ")
+                    ),
                 );
             }
         }

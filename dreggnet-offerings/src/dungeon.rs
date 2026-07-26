@@ -39,12 +39,16 @@ use narrated::{
 };
 
 use deos_view::{MenuItem, ViewNode};
-use dregg_app_framework::{FieldElement, TurnReceipt, field_from_bytes};
+use dregg_app_framework::{
+    CellProgram, FieldElement, StateConstraint, TransitionGuard, TurnReceipt, field_from_bytes,
+    symbol,
+};
 use dungeon_on_dregg::narrator::{RecordedNarration, verify_narration_binding};
+use dungeon_on_dregg::{KP_CAST_WARD, KP_CLIMB_BACK, KP_DESCEND, KP_TRADE_BLOWS};
 use spween::{CompareOp, ConditionClause, ConditionExpr, PassageContent, Scene};
 use spween_dregg::{
-    StepReceipt, WorldCell, WorldError, value_to_u64, verify, verify_by_replay,
-    verify_receipts_anchored,
+    CompiledStory, StepReceipt, WorldCell, WorldError, field_to_u64, value_to_u64, verify,
+    verify_by_replay, verify_receipts_anchored,
 };
 
 #[cfg(feature = "private-preference-operation")]
@@ -70,7 +74,7 @@ use dungeon_on_dregg::private_quest::{
 };
 #[cfg(feature = "private-raid-operation")]
 use dungeon_on_dregg::private_raid::{
-    RaidAssignmentReceipt, RaidAssignmentSession, RaidPartyAssignment, RaidRole,
+    RaidAssignmentReceipt, RaidAssignmentSession, RaidPartyAssignment, RaidRole, roles_line,
 };
 #[cfg(feature = "private-raid-operation")]
 use dungeon_on_dregg::{KP_PRIVATE_RAID_MENDER_CHOICES, ROOM_SANCTUM};
@@ -477,6 +481,151 @@ impl DungeonSession {
             self.read_var("mana_spent"),
         )
     }
+
+    /// Read var `name` out of a committed step SNAPSHOT.
+    ///
+    /// A snapshot is [`WorldCell::snapshot`]'s layout — the 16 register slots, then every compiled
+    /// EXT var in ascending key order — so the index is derived from the same compiled story the
+    /// world was deployed with, never from a guessed position.
+    fn var_in(&self, snapshot: &[u64], name: &str) -> Option<u64> {
+        let story = self.world.story();
+        let key = story.var_key(name)?;
+        let index = if (key as usize) < spween_dregg::STATE_SLOTS {
+            key as usize
+        } else {
+            spween_dregg::STATE_SLOTS + story.ext_keys().iter().position(|k| *k == key)?
+        };
+        snapshot.get(index).copied()
+    }
+
+    /// The passage a committed step SNAPSHOT stands in (`None` once the scene has ended).
+    fn passage_in(&self, snapshot: &[u64]) -> Option<String> {
+        let raw = snapshot.get(spween_dregg::PASSAGE_SLOT).copied()?;
+        if raw == spween_dregg::PASSAGE_ENDED {
+            return None;
+        }
+        self.scene
+            .passages
+            .get(raw as usize)
+            .map(|passage| passage.name.to_string())
+    }
+
+    /// **WHAT THE LAST COMMITTED TURN DID** — the surface's answer to "what just happened",
+    /// DERIVED from the session's own committed record rather than kept beside it.
+    ///
+    /// ⚑ This is the hole it closes. The dungeon surface was STATIC: authored room prose, a
+    /// counter line, a turn count. A player who lost 20 HP to the gate-warden — a move that
+    /// returns to the SAME passage, so the prose does not change — had to diff two renders in
+    /// their head to learn that anything happened at all, and on a chat frontend where the
+    /// previous message has scrolled away they could not. The move's consequence was
+    /// structurally unrecoverable from the surface.
+    ///
+    /// Every field here comes out of the committed chain: the room and choice index off the
+    /// [`StepReceipt`], the prose off the same scene the executor was driven with, the deltas by
+    /// differencing this step's committed snapshot against the previous one (the post-genesis
+    /// snapshot for the first step), the driver off the actor log, and the binding off the real
+    /// receipt hash. So it cannot claim a consequence the executor did not commit, and a
+    /// tamper-verified record re-derives exactly the same sentence.
+    pub fn last_outcome(&self) -> Option<DungeonTurnOutcome> {
+        let steps = self.steps.len();
+        let last = self.steps.last()?;
+        let before: &[u64] = if steps >= 2 {
+            &self.steps[steps - 2].state
+        } else {
+            &self.genesis_state
+        };
+        let after = &last.state;
+        let changes = KEEP_PARTY_VARS
+            .iter()
+            .filter_map(|(var, label)| {
+                let before = self.var_in(before, var)?;
+                let after = self.var_in(after, var)?;
+                (before != after).then_some(DungeonSlotChange {
+                    var: (*var).to_string(),
+                    label: (*label).to_string(),
+                    before,
+                    after,
+                })
+            })
+            .collect();
+        Some(DungeonTurnOutcome {
+            turn: steps,
+            room: last.passage.clone(),
+            choice: nth_choice(&self.scene, &last.passage, last.choice_index)
+                .map(|choice| choice.text.to_string())
+                .unwrap_or_else(|| format!("choice #{}", last.choice_index)),
+            actor: self.actors.get(steps - 1).cloned(),
+            arrived: self.passage_in(after),
+            changes,
+            voters: self
+                .collectives
+                .get(steps - 1)
+                .and_then(|slot| slot.as_ref())
+                .map(|decision| decision.electorate.len()),
+            narrated: self
+                .narrations
+                .get(steps - 1)
+                .is_some_and(|slot| slot.is_some()),
+            receipt: last.receipt.receipt_hash(),
+        })
+    }
+}
+
+/// The party vars a turn can move, with the words a player reads them by. The surface diffs
+/// exactly these across a committed turn; a var the Keep never writes simply never appears.
+const KEEP_PARTY_VARS: [(&str, &str); 6] = [
+    ("hp", "HP"),
+    ("depth", "depth"),
+    ("gold", "gold"),
+    ("mana_spent", "will spent"),
+    ("relic_owner", "crown"),
+    ("raid_mending_used", "Mender recovery"),
+];
+
+/// One committed slot movement — a party var the last turn actually moved, `before → after`, both
+/// values read out of committed snapshots.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DungeonSlotChange {
+    /// The compiled var name (`hp`, `depth`, …).
+    pub var: String,
+    /// The word a player reads it by (`HP`, `will spent`, …).
+    pub label: String,
+    /// The committed value before this turn.
+    pub before: u64,
+    /// The committed value after it.
+    pub after: u64,
+}
+
+impl DungeonSlotChange {
+    /// The signed movement (`after − before`), for a `+20` / `−20` reading.
+    pub fn delta(&self) -> i64 {
+        self.after as i64 - self.before as i64
+    }
+}
+
+/// **The last committed turn, as a consequence** — [`DungeonSession::last_outcome`]'s answer.
+/// Everything here is derived from the committed chain, so it is exactly as trustworthy as the
+/// receipt it names.
+#[derive(Clone, Debug)]
+pub struct DungeonTurnOutcome {
+    /// Which committed turn this was (1-based over choice steps; genesis is turn 0).
+    pub turn: usize,
+    /// The room the move was taken IN.
+    pub room: String,
+    /// The authored text of the choice that was pressed.
+    pub choice: String,
+    /// Who drove it (for a crowd turn, the decision's carrier).
+    pub actor: Option<DreggIdentity>,
+    /// The room the turn LEFT the party in (`None` once the Keep has ended).
+    pub arrived: Option<String>,
+    /// The party vars it moved, `before → after`.
+    pub changes: Vec<DungeonSlotChange>,
+    /// The size of the electorate, when the turn was a crowd decision.
+    pub voters: Option<usize>,
+    /// Whether a narration was bound into the turn's receipt.
+    pub narrated: bool,
+    /// The receipt hash the whole consequence is bound into.
+    pub receipt: [u8; 32],
 }
 
 /// Bind the public result of the hiding proof and the actual enacting actor to
@@ -1038,10 +1187,23 @@ impl Offering for DungeonOffering {
         }
     }
 
-    /// Render the current room as a **deos affordance [`Surface`]**: the room prose + the party
-    /// state + verified-turn count, and the choices as a cap-gated affordance [`Menu`] (each row
-    /// a `{turn: "choose", arg: choice_index}` affordance; an ineligible choice is a dimmed
-    /// `!enabled` row — the cap tooth shown, not hidden).
+    /// Render the current room as a **deos affordance [`Surface`]** — the authored room prose, the
+    /// two plaques, WHAT THE LAST TURN DID, and the choices as a cap-gated affordance [`Menu`]
+    /// (each row a `{turn: "choose", arg: choice_index}` affordance; an ineligible choice is a
+    /// dimmed `!enabled` row — the cap tooth shown, not hidden).
+    ///
+    /// ⚑ The composition is the plaque convention (`dregg-automatafl`'s `standing` /
+    /// `automaton_plaque`): where the party stands *with the one sentence saying what to do right
+    /// now*, then the DOMAIN plaque for what a player cannot read off the prose — the executor teeth
+    /// that decide which of these choices can land, READ OUT OF THE DEPLOYED PROGRAM.
+    ///
+    /// ⚑ And the thing this surface could not do at all: SAY WHAT HAPPENED. The authored prose
+    /// reads well and is STATIC — trading blows with the gate-warden returns to the same passage, so
+    /// a 20-HP loss re-rendered with the same prose, the same objective, the same sections, and the
+    /// consequence was recoverable only by diffing two renders in your head.
+    /// [`DungeonSession::last_outcome`] derives it from the committed chain instead, and the plaque
+    /// below names the room, the choice, the driver, every party var the turn moved and the receipt
+    /// it is bound into.
     fn render(&self, session: &DungeonSession) -> Surface {
         let room_name = session
             .current_passage_name()
@@ -1050,29 +1212,17 @@ impl Offering for DungeonOffering {
 
         let mut children = vec![
             ViewNode::Text(session.current_prose()),
-            ViewNode::Section {
-                title: "Party".to_string(),
-                tag: "muted".to_string(),
-                children: vec![ViewNode::Text(session.state_line())],
-            },
-            ViewNode::Section {
-                title: "Objective".to_string(),
-                tag: "muted".to_string(),
-                children: vec![ViewNode::Text(KEEP_OBJECTIVE.to_string())],
-            },
-            ViewNode::Section {
-                title: "Verified turns".to_string(),
-                tag: "genuine".to_string(),
-                children: vec![ViewNode::Text(session.receipts_len().to_string())],
-            },
+            keep_standing(session, &room_name, &actions),
+            last_turn_plaque(session),
+            keep_teeth_plaque(session),
         ];
 
         #[cfg(feature = "private-raid-operation")]
         {
             let state = match session.private_raid_assignment() {
                 Some(assignment) => format!(
-                    "verified shared roles: {:?} · receipt uploaded by {} (provenance only)",
-                    assignment.roles(),
+                    "verified shared roles: {} · receipt uploaded by {} (provenance only)",
+                    roles_line(assignment.roles()),
                     session
                         .private_raid_actor()
                         .map(|actor| actor.0.as_str())
@@ -1167,7 +1317,7 @@ impl Offering for DungeonOffering {
                 .map(|history| {
                     (
                         history.receipt_count(),
-                        format!("{:?}", history.head().current_root),
+                        hex_felts(history.head().current_root),
                     )
                 })
                 .unwrap_or_else(|| (0, "not established".to_string()));
@@ -1212,6 +1362,22 @@ impl Offering for DungeonOffering {
                 children: vec![ViewNode::Menu { items }],
             });
         }
+
+        // The bookkeeping nobody needs to read to PLAY, below the moves.
+        children.push(ViewNode::Section {
+            title: "The record".to_string(),
+            tag: "muted".to_string(),
+            children: vec![
+                ViewNode::Text(format!(
+                    "{} verified turn{} — genesis plus {} committed choice{}.",
+                    session.receipts_len(),
+                    if session.receipts_len() == 1 { "" } else { "s" },
+                    session.steps.len(),
+                    if session.steps.len() == 1 { "" } else { "s" }
+                )),
+                ViewNode::Text(format!("committed state — {}", session.state_line())),
+            ],
+        });
 
         Surface(ViewNode::Section {
             title: format!("{KEEP_NAME} — {room_name}"),
@@ -1473,11 +1639,8 @@ impl Offering for DungeonOffering {
                 receipt_id,
                 public_fields: vec![
                     ("session".to_string(), assignment.session().to_string()),
-                    (
-                        "inputRoot".to_string(),
-                        format!("{:?}", assignment.input_root()),
-                    ),
-                    ("roles".to_string(), format!("{:?}", assignment.roles())),
+                    ("inputRoot".to_string(), hex_felts(assignment.input_root())),
+                    ("roles".to_string(), roles_line(assignment.roles())),
                 ],
             });
         }
@@ -1517,10 +1680,7 @@ impl Offering for DungeonOffering {
                 receipt_id,
                 public_fields: vec![
                     ("session".to_string(), decision.session().to_string()),
-                    (
-                        "ballotRoot".to_string(),
-                        format!("{:?}", decision.ballot_root()),
-                    ),
+                    ("ballotRoot".to_string(), hex_felts(decision.ballot_root())),
                     ("winner".to_string(), decision.winner().to_string()),
                     (
                         "plan".to_string(),
@@ -1614,7 +1774,7 @@ impl Offering for DungeonOffering {
                     ),
                     (
                         "dealRoot".to_string(),
-                        format!("{:?}", receipt.statement().deal_root),
+                        hex_felts(receipt.statement().deal_root),
                     ),
                 ],
             });
@@ -1703,12 +1863,9 @@ impl Offering for DungeonOffering {
                     ("domain".to_string(), statement.domain.to_string()),
                     ("session".to_string(), statement.session.to_string()),
                     ("index".to_string(), statement.index.to_string()),
-                    ("oldRoot".to_string(), format!("{:?}", statement.old_root)),
-                    ("newRoot".to_string(), format!("{:?}", statement.new_root)),
-                    (
-                        "rulesetRoot".to_string(),
-                        format!("{:?}", statement.ruleset_root),
-                    ),
+                    ("oldRoot".to_string(), hex_felts(statement.old_root)),
+                    ("newRoot".to_string(), hex_felts(statement.new_root)),
+                    ("rulesetRoot".to_string(), hex_felts(statement.ruleset_root)),
                 ],
             });
         }
@@ -1833,6 +1990,23 @@ fn hex_bytes(bytes: &[u8]) -> String {
         out.push(HEX[(byte & 0x0f) as usize] as char);
     }
     out
+}
+
+/// Render a felt-limb public digest as canonical lowercase hex.
+///
+/// The AIR's public roots are `[u32; 8]`; a `Debug` dump of that array reads as an
+/// internals spill, and these values are painted into a browser page and a chat message.
+#[cfg(any(
+    feature = "private-raid-operation",
+    feature = "private-preference-operation",
+    feature = "private-fair-shuffle-operation",
+    feature = "private-quest-operation",
+))]
+fn hex_felts(felts: [u32; 8]) -> String {
+    felts
+        .into_iter()
+        .map(|felt| format!("{felt:08x}"))
+        .collect()
 }
 
 /// Verify the application-level half of the private-result carrier. The generic
@@ -1972,6 +2146,544 @@ fn verify_private_result_enactments(
 /// indexes with `choice_method(passage, n)`). `None` if the passage or index is absent — a
 /// non-panicking lookup used when applying a possibly-stale ballot winner. (Factored verbatim
 /// from `fiction.rs`.)
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// THE SURFACE — the two plaques and the last-outcome node.
+//
+// PRESENTATION ONLY. Every number below is either a committed read (`read_var`, a step
+// snapshot) or a constraint lifted out of the DEPLOYED `CellProgram`; nothing here restates a
+// rule, and the executor stays the sole referee for every move.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+/// The register slot holding var `name` in the deployed story, when it lives on the register
+/// plane (which is where a `StateConstraint`'s `u8` index can name it at all).
+fn keep_slot_of(story: &CompiledStory, name: &str) -> Option<u8> {
+    let key = story.var_key(name)?;
+    (key < spween_dregg::STATE_SLOTS as u64).then_some(key as u8)
+}
+
+/// The constraints the DEPLOYED program carries on the case guarded by `method`.
+fn method_case<'a>(story: &'a CompiledStory, method: &str) -> Option<&'a [StateConstraint]> {
+    let wanted = symbol(method);
+    let CellProgram::Cases(cases) = &story.program else {
+        return None;
+    };
+    cases
+        .iter()
+        .find(
+            |case| matches!(&case.guard, TransitionGuard::MethodIs { method } if *method == wanted),
+        )
+        .map(|case| case.constraints.as_slice())
+}
+
+/// The constraints the DEPLOYED program carries on the non-dispatching case that fires whenever
+/// slot `index` MOVES — the write-bound teeth (`bind_slot_write`), which are the ones that hold
+/// against a staple onto some other method's turn.
+fn slot_case(story: &CompiledStory, index: u8) -> Option<&[StateConstraint]> {
+    let CellProgram::Cases(cases) = &story.program else {
+        return None;
+    };
+    cases
+        .iter()
+        .find(
+            |case| matches!(&case.guard, TransitionGuard::SlotChanged { index: i } if *i == index),
+        )
+        .map(|case| case.constraints.as_slice())
+}
+
+/// The `FieldGte` threshold the deployed case demands on `slot`.
+fn gte_on(constraints: &[StateConstraint], slot: u8) -> Option<u64> {
+    constraints.iter().find_map(|c| match c {
+        StateConstraint::FieldGte { index, value } if *index == slot => Some(field_to_u64(value)),
+        _ => None,
+    })
+}
+
+/// The `FieldLte` ceiling the deployed case demands on `slot`.
+fn lte_on(constraints: &[StateConstraint], slot: u8) -> Option<u64> {
+    constraints.iter().find_map(|c| match c {
+        StateConstraint::FieldLte { index, value } if *index == slot => Some(field_to_u64(value)),
+        _ => None,
+    })
+}
+
+/// The exact `FieldDelta` the deployed case pins on `slot`, read back as a signed movement (a
+/// decrement is encoded as the additive inverse, so the `u64` lane reinterpreted as `i64` is the
+/// number a player sees).
+fn delta_on(constraints: &[StateConstraint], slot: u8) -> Option<i64> {
+    constraints.iter().find_map(|c| match c {
+        StateConstraint::FieldDelta { index, delta } if *index == slot => {
+            Some(field_to_u64(delta) as i64)
+        }
+        _ => None,
+    })
+}
+
+/// Whether the deployed case carries `WriteOnce` on `slot`.
+fn write_once_on(constraints: &[StateConstraint], slot: u8) -> bool {
+    constraints
+        .iter()
+        .any(|c| matches!(c, StateConstraint::WriteOnce { index } if *index == slot))
+}
+
+/// Whether the deployed case carries `Monotonic` on `slot`.
+fn monotonic_on(constraints: &[StateConstraint], slot: u8) -> bool {
+    constraints
+        .iter()
+        .any(|c| matches!(c, StateConstraint::Monotonic { index } if *index == slot))
+}
+
+/// The Keep's method for the gate-warden trade — the case carrying the HP floor and the exact blow.
+fn trade_blows_method() -> String {
+    spween_dregg::choice_method(dungeon_on_dregg::ROOM_GATEHALL, KP_TRADE_BLOWS)
+}
+
+/// The exact HP a gate-warden trade costs, and the post-state floor the executor holds it to —
+/// **read off the deployed case**, so the price a player is quoted is the price the tooth enforces.
+fn deployed_blow(story: &CompiledStory) -> Option<(i64, u64)> {
+    let hp = keep_slot_of(story, "hp")?;
+    let case = method_case(story, &trade_blows_method())?;
+    Some((delta_on(case, hp)?, gte_on(case, hp)?))
+}
+
+/// The party's HP CEILING as the deployed program spells it — the `FieldLte` the certified Mender
+/// recovery is held to, which is the only place the 50-HP limit exists as a tooth.
+fn deployed_hp_ceiling(story: &CompiledStory) -> Option<u64> {
+    let hp = keep_slot_of(story, "hp")?;
+    let CellProgram::Cases(cases) = &story.program else {
+        return None;
+    };
+    cases.iter().find_map(|case| lte_on(&case.constraints, hp))
+}
+
+/// The whole hoard, as the deployed write-bound `gold` tooth pins it: gained ONCE, by exactly this
+/// delta. `None` when the tooth is not installed — reported, never guessed.
+fn deployed_hoard(story: &CompiledStory) -> Option<i64> {
+    let gold = keep_slot_of(story, "gold")?;
+    delta_on(slot_case(story, gold)?, gold)
+}
+
+/// How many more gate-warden trades the party can take at `hp` — the largest `n` with
+/// `hp + n·cost ≥ floor`, where `cost` is the deployed (negative) blow and `floor` the deployed
+/// post-state bound. Both operands come off the installed program, so this is arithmetic over the
+/// executor's own numbers rather than a second rule.
+fn blows_left(hp: u64, cost: i64, floor: u64) -> i64 {
+    if cost >= 0 {
+        return 0;
+    }
+    let headroom = hp as i64 - floor as i64;
+    if headroom < 0 { 0 } else { headroom / -cost }
+}
+
+/// The crown's owner, by banner.
+fn crown_holder(owner: u64) -> &'static str {
+    match owner {
+        1 => "the Red Hand",
+        2 => "the Blue Hand",
+        _ => "nobody",
+    }
+}
+
+/// **WHERE THE PARTY STANDS** — the phase pills, the ONE SENTENCE saying what to do right now, the
+/// party meters, and the ⚠ pressure lines.
+///
+/// The directive is the FIRST paragraph on purpose: a `tag: "accent"` plaque paints its first
+/// paragraph as the serif lead, so the sentence a player must act on reads first. Every number is a
+/// committed read; the blow's price comes off the deployed tooth.
+fn keep_standing(session: &DungeonSession, room_name: &str, actions: &[Action]) -> ViewNode {
+    let story = session.world.story();
+    let hp = session.read_var("hp");
+    let depth = session.read_var("depth");
+    let gold = session.read_var("gold");
+    let spent = session.read_var("mana_spent");
+    let budget = session.read_var("mana_budget");
+    let owner = session.read_var("relic_owner");
+    let live = actions.iter().filter(|action| action.enabled).count();
+    let blow = deployed_blow(story);
+
+    // THE DIRECTIVE — the next unmet leg of the objective, read off the committed state, plus how
+    // many of the room's choices can actually land.
+    let directive = if session.is_ended() {
+        format!(
+            "The Keep is closed: {gold} gold came out of the hoard, and every turn that took it \
+             re-verifies."
+        )
+    } else if live == 0 {
+        format!(
+            "Every choice in {room_name} is barred right now — the executor would refuse each one, \
+             so this run has no legal move left."
+        )
+    } else {
+        let leg = if room_name == dungeon_on_dregg::ROOM_GATEHALL {
+            "Get past the gate-warden into the plundered hall".to_string()
+        } else if depth == 0 && owner == 0 {
+            "Claim the crown, then descend the collapsing stair".to_string()
+        } else if depth == 0 {
+            format!(
+                "Descend the collapsing stair — the crown is already {}'s",
+                crown_holder(owner)
+            )
+        } else {
+            "Seize the hoard".to_string()
+        };
+        format!(
+            "{leg}: {live} of {} choices here can land right now, and the dimmed ones are moves \
+             the executor would refuse.",
+            actions.len()
+        )
+    };
+
+    let phase = if session.is_ended() {
+        "KEEP CLEARED".to_string()
+    } else {
+        room_name.to_uppercase()
+    };
+    let mut children = vec![
+        ViewNode::Text(directive),
+        // ⚑ THE PROSE MIRROR of the pill row. A `Pill` is a badge layer with NO plain-text form
+        // (`deos_view::text` drops it by design), so a chat channel would otherwise learn the
+        // phase, the turn and the crown's holder from nothing at all.
+        ViewNode::Text(format!(
+            "{phase} — turn {}, depth {depth}, the crown held by {}.",
+            session.steps.len(),
+            crown_holder(owner)
+        )),
+        ViewNode::Row(vec![
+            ViewNode::Pill {
+                text: phase.clone(),
+                tag: if session.is_ended() { "good" } else { "accent" }.to_string(),
+                slot: None,
+                cases: Vec::new(),
+            },
+            ViewNode::Pill {
+                text: format!("turn {}", session.steps.len()),
+                tag: "muted".to_string(),
+                slot: None,
+                cases: Vec::new(),
+            },
+            ViewNode::Pill {
+                text: format!("depth {depth}"),
+                tag: if depth == 0 { "muted" } else { "warn" }.to_string(),
+                slot: None,
+                cases: Vec::new(),
+            },
+            ViewNode::Pill {
+                text: if owner == 0 {
+                    "crown unclaimed".to_string()
+                } else {
+                    format!("crown: {}", crown_holder(owner))
+                },
+                tag: if owner == 0 { "muted" } else { "good" }.to_string(),
+                slot: None,
+                cases: Vec::new(),
+            },
+        ]),
+    ];
+
+    // ── THE METERS. These were bare integers in a `HP 50 · depth 0 · gold 0 · …` counter line; a
+    //    `Progress` paints as a brass gauge on every renderer that carries the Night Record skin,
+    //    and a gauge answers "how much is left" without arithmetic. Labels padded to a common
+    //    width so they stack into an aligned column on the prose channels too.
+    children.push(ViewNode::Progress {
+        value: hp,
+        // The ceiling is the DEPLOYED `FieldLte` the Mender recovery is held to. With no such
+        // tooth the meter falls back to the live value, which reads full rather than lying.
+        max: deployed_hp_ceiling(story).unwrap_or(hp.max(1)),
+        label: "party HP".to_string(),
+    });
+    children.push(ViewNode::Progress {
+        value: spent,
+        // The budget is a COMMITTED slot, and it is the very slot the executor's
+        // `FieldLteField{mana_spent, mana_budget}` tooth compares against.
+        max: budget.max(1),
+        label: "will    ".to_string(),
+    });
+    if let Some(hoard) = deployed_hoard(story) {
+        children.push(ViewNode::Progress {
+            value: gold,
+            max: u64::try_from(hoard).unwrap_or(1).max(1),
+            label: "hoard   ".to_string(),
+        });
+    }
+
+    // ── THE PRESSURES — what the party is about to lose to, said out loud. Each is derived from a
+    //    committed read plus a deployed tooth, so none can disagree with the referee.
+    if !session.is_ended() {
+        // The warden's toll is a pressure only where the trade is actually on the ballot. Quoting
+        // "two blows left" in the sanctum would be true of the party's HP and false about anything
+        // it can DO — a pressure line is what you are about to lose to now, not a rulebook entry
+        // (that is the teeth plaque's job).
+        if let Some((cost, floor)) = blow.filter(|_| room_name == dungeon_on_dregg::ROOM_GATEHALL) {
+            let next = hp as i64 + cost;
+            if next < floor as i64 {
+                children.push(ViewNode::Text(format!(
+                    "⚠ the gate-warden trade is spent — at {hp} HP the next blow lands on {next}, \
+                     under the floor of {floor} the executor holds the case to, so it commits \
+                     nothing"
+                )));
+            } else if cost < 0 {
+                let left = blows_left(hp, cost, floor);
+                children.push(ViewNode::Text(format!(
+                    "⚠ {left} blow{} left in the party at {hp} HP — each costs exactly {} and the \
+                     one that would break the floor of {floor} is refused",
+                    if left == 1 { "" } else { "s" },
+                    -cost
+                )));
+            }
+        }
+        if spent >= budget {
+            children.push(ViewNode::Text(format!(
+                "⚠ the will reserve is spent — {spent} of {budget}, and a ward whose post-state \
+                 would pass the budget is refused"
+            )));
+        }
+        if depth >= 1 {
+            children.push(ViewNode::Text(
+                "⚠ the stair collapsed behind you — `depth` may only rise, so climbing back is \
+                 refused"
+                    .to_string(),
+            ));
+        }
+        if owner != 0 {
+            children.push(ViewNode::Text(format!(
+                "⚠ the crown is {}'s and cannot change hands — the rival claim is refused for good",
+                crown_holder(owner)
+            )));
+        }
+    }
+
+    children.push(ViewNode::Text(format!("The objective: {KEEP_OBJECTIVE}.")));
+
+    ViewNode::Section {
+        title: format!("Where the party stands — {room_name}"),
+        tag: "accent".to_string(),
+        children,
+    }
+}
+
+/// **WHAT THE LAST TURN DID** — the node that makes "what just happened" recoverable at all.
+///
+/// One sentence naming the room, the choice and the driver, then one pill per party var the turn
+/// actually moved (`HP −20 · 50 → 30`), then the receipt the whole consequence is bound into. With
+/// no committed turn yet it says so, which is itself the distinction a static surface could not
+/// make: turn 0 no longer looks like turn 1.
+fn last_turn_plaque(session: &DungeonSession) -> ViewNode {
+    let Some(outcome) = session.last_outcome() else {
+        return ViewNode::Section {
+            title: "What the last turn did".to_string(),
+            tag: "muted".to_string(),
+            children: vec![ViewNode::Text(
+                "Nothing yet — this is the Keep exactly as its genesis turn committed it. The next \
+                 press will be turn 1, and this plaque will say what it moved."
+                    .to_string(),
+            )],
+        };
+    };
+    let driver = match (&outcome.actor, outcome.voters) {
+        (Some(actor), Some(voters)) => format!(
+            "carried by {} for an electorate of {voters}",
+            actor.as_str()
+        ),
+        (Some(actor), None) => format!("driven by {}", actor.as_str()),
+        (None, _) => "driven by an unrecorded actor".to_string(),
+    };
+    let went = match &outcome.arrived {
+        Some(room) if *room == outcome.room => format!("and left the party in {room}"),
+        Some(room) => format!("and moved the party from {} to {room}", outcome.room),
+        None => "and ended the Keep".to_string(),
+    };
+    let moved = if outcome.changes.is_empty() {
+        "It moved no party var at all.".to_string()
+    } else {
+        format!(
+            "It moved {}.",
+            outcome
+                .changes
+                .iter()
+                .map(|change| format!("{} {} → {}", change.label, change.before, change.after))
+                .collect::<Vec<String>>()
+                .join(", ")
+        )
+    };
+    let mut children = vec![ViewNode::Text(format!(
+        "Turn {} pressed “{}” in {}, {went} — {driver}. {moved}",
+        outcome.turn, outcome.choice, outcome.room
+    ))];
+    if !outcome.changes.is_empty() {
+        children.push(ViewNode::Row(
+            outcome
+                .changes
+                .iter()
+                .map(|change| {
+                    let delta = change.delta();
+                    ViewNode::Pill {
+                        text: format!(
+                            "{} {}{} · {} → {}",
+                            change.label,
+                            if delta > 0 { "+" } else { "" },
+                            delta,
+                            change.before,
+                            change.after
+                        ),
+                        // Down is loss, up is gain — except `will spent`, where rising IS the
+                        // cost, so it reads as the warning it is.
+                        tag: match (change.var.as_str(), delta) {
+                            ("mana_spent", _) => "warn",
+                            (_, d) if d < 0 => "bad",
+                            _ => "good",
+                        }
+                        .to_string(),
+                        slot: None,
+                        cases: Vec::new(),
+                    }
+                })
+                .collect(),
+        ));
+    }
+    if outcome.narrated {
+        children.push(ViewNode::Text(
+            "A narration was bound into this turn's receipt, and this surface's verify re-derives \
+             it from the prose beside it."
+                .to_string(),
+        ));
+    }
+    children.push(ViewNode::Text(format!(
+        "Every word of that is derived from the committed step, bound into receipt {}.",
+        short_receipt(outcome.receipt)
+    )));
+    ViewNode::Section {
+        title: "What the last turn did".to_string(),
+        tag: "genuine".to_string(),
+        children,
+    }
+}
+
+/// **"What the executor will not let you do"** — the Keep's domain plaque: the teeth that decide
+/// which of the room's choices can land, and none of them is visible in the authored prose.
+///
+/// ⚑ Every clause is LIFTED OUT OF THE DEPLOYED `CellProgram` — the exact cases
+/// [`dungeon_on_dregg::keep_compiled`] installed and the executor admits turns under — rather than
+/// retyped here. So a blow re-priced, a ceiling moved or a tooth removed in the substrate moves
+/// this plaque, and a tooth that is NOT there is reported as missing instead of promised.
+fn keep_teeth_plaque(session: &DungeonSession) -> ViewNode {
+    let story = session.world.story();
+    let hp = session.read_var("hp");
+    let mut children = vec![ViewNode::Text(
+        "The prose does not say which of these presses can land — the installed cell program does, \
+         and every rule below is read back out of it rather than restated here."
+            .to_string(),
+    )];
+    let mut found = 0usize;
+
+    match deployed_blow(story) {
+        Some((cost, floor)) => {
+            found += 1;
+            let left = blows_left(hp, cost, floor);
+            children.push(ViewNode::Text(format!(
+                "THE WARDEN'S TOLL — the trade moves HP by exactly {cost}, and the case is \
+                 admitted only while the post-state keeps HP ≥ {floor}. At {hp} HP that is {left} \
+                 more blow{}; the next one after that is a real refusal that commits nothing, not \
+                 a death.",
+                if left == 1 { "" } else { "s" }
+            )));
+        }
+        None => children.push(ViewNode::Text(
+            "⚠ THE WARDEN'S TOLL could not be read out of the deployed program, so it is not \
+             stated here rather than guessed."
+                .to_string(),
+        )),
+    }
+
+    if let Some(owner) = keep_slot_of(story, "relic_owner") {
+        if slot_case(story, owner).is_some_and(|case| write_once_on(case, owner)) {
+            found += 1;
+            children.push(ViewNode::Text(
+                "THE CROWN IS WRITE-ONCE, AND BOUND TO THE WRITE — the first hand to close on it \
+                 holds it, and a rival claim is refused on ANY method, including one stapled onto \
+                 someone else's turn."
+                    .to_string(),
+            ));
+        }
+    }
+
+    if let Some(depth) = keep_slot_of(story, "depth") {
+        let ratchet = [
+            spween_dregg::choice_method(dungeon_on_dregg::ROOM_HALL, KP_DESCEND),
+            spween_dregg::choice_method(dungeon_on_dregg::ROOM_SANCTUM, KP_CLIMB_BACK),
+        ]
+        .iter()
+        .any(|method| method_case(story, method).is_some_and(|case| monotonic_on(case, depth)));
+        if ratchet {
+            found += 1;
+            children.push(ViewNode::Text(
+                "THE STAIR IS ONE-WAY — `depth` is monotonic, so the descent commits and the \
+                 climb back is refused: the stair really has collapsed behind you."
+                    .to_string(),
+            ));
+        }
+    }
+
+    if let (Some(spent), Some(budget)) = (
+        keep_slot_of(story, "mana_spent"),
+        keep_slot_of(story, "mana_budget"),
+    ) {
+        let cross = method_case(
+            story,
+            &spween_dregg::choice_method(dungeon_on_dregg::ROOM_SANCTUM, KP_CAST_WARD),
+        )
+        .is_some_and(|case| {
+            case.iter().any(|c| {
+                matches!(c, StateConstraint::FieldLteField { left_index, right_index }
+                if *left_index == spent && *right_index == budget)
+            })
+        });
+        if cross {
+            found += 1;
+            children.push(ViewNode::Text(format!(
+                "THE WILL IS FINITE — a ward is admitted only while the post-state keeps \
+                 `mana_spent ≤ mana_budget`, a live comparison of two committed slots ({} of {}). \
+                 The overspending ward commits nothing.",
+                session.read_var("mana_spent"),
+                session.read_var("mana_budget")
+            )));
+        }
+    }
+
+    if let (Some(gold), Some(hoard)) = (keep_slot_of(story, "gold"), deployed_hoard(story)) {
+        if slot_case(story, gold).is_some_and(|case| write_once_on(case, gold)) {
+            found += 1;
+            children.push(ViewNode::Text(format!(
+                "THE HOARD IS ONE PAYOUT — gold is write-once and pinned to exactly {hoard} on \
+                 ANY method, so the total that can ever leave this Keep is provably that, gained \
+                 once."
+            )));
+        }
+    }
+
+    if found == 0 {
+        children.push(ViewNode::Text(
+            "⚠ NONE of the Keep's teeth could be read out of the deployed program. That is a \
+             report, not a reassurance: this plaque can say nothing about what will land until the \
+             installed cases can be read."
+                .to_string(),
+        ));
+    }
+
+    ViewNode::Section {
+        title: "What the executor will not let you do".to_string(),
+        tag: "accent".to_string(),
+        children,
+    }
+}
+
+/// The first six bytes of a receipt hash as hex — a handle a player can match against a verify
+/// report without a 64-character wall.
+fn short_receipt(digest: [u8; 32]) -> String {
+    digest[..6]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 fn nth_choice(scene: &Scene, passage_name: &str, n: usize) -> Option<spween::Choice> {
     let passage = scene
         .passages

@@ -254,7 +254,7 @@ impl Offering for CompanionOffering {
             if !report.verified {
                 return VerifyReport::broken(
                     s.turns,
-                    format!("`{}` identity broke: {:?}", h.name, report.reasons),
+                    format!("`{}` identity broke: {}", h.name, report.reasons.join("; ")),
                 );
             }
         }

@@ -49,6 +49,32 @@ pub enum RaidRole {
     Pathfinder = 3,
 }
 
+impl RaidRole {
+    /// The player-facing name of this public role.
+    ///
+    /// Lives here so the three consumers that paint an assignment (the dungeon's raid
+    /// muster, native Descent's campaign card, and the `private-raid` offering) cannot
+    /// drift, and so no surface has to `Debug`-dump the enum to say what it is.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Bulwark => "Bulwark",
+            Self::Striker => "Striker",
+            Self::Mender => "Mender",
+            Self::Pathfinder => "Pathfinder",
+        }
+    }
+}
+
+/// The four assigned roles as one player-facing line, seat-numbered and in seat order.
+pub fn roles_line(roles: [RaidRole; RAID_SEATS]) -> String {
+    roles
+        .iter()
+        .enumerate()
+        .map(|(seat, role)| format!("seat {seat} {}", role.name()))
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
 impl TryFrom<u8> for RaidRole {
     type Error = RaidAssignmentError;
 

@@ -80,7 +80,7 @@ use dungeon_on_dregg::private_preference::{
 };
 #[cfg(feature = "private-raid-operation")]
 use dungeon_on_dregg::private_raid::{
-    RaidAssignmentReceipt, RaidAssignmentSession, RaidPartyAssignment,
+    RaidAssignmentReceipt, RaidAssignmentSession, RaidPartyAssignment, roles_line,
 };
 /// A run day-seed / beacon day, re-exported so a consumer can name (and re-derive under) a
 /// record's provenance root without its own dependency on the procgen layer.
@@ -1151,72 +1151,7 @@ impl Offering for NativeDescentOffering {
             .as_ref()
             .map(|actor| actor.as_str())
             .unwrap_or("unclaimed — the first landed move binds the player");
-        let (status, status_tag) = descent_status(sim);
-        let light = BREATH.saturating_sub(sim.spent);
-        // Carrying rights ATTENUATE with depth: the deeper you stand, the less you may hold
-        // (`pack + depth ≤ CAP`), so the pack meter's ceiling MOVES as you descend. That is the
-        // other half of the game's tension and it has to be visible, not inferred.
-        let carry_rights = CAP.saturating_sub(sim.depth);
-
-        // ── THE VITALS: one badge, three meters. The light is the clock; the pack is the ceiling;
-        //    the guardian is the toll. Labels are padded to a common width so the bars stack into
-        //    an aligned column on the prose channels too. ──
-        let mut vitals = vec![
-            ViewNode::Pill {
-                text: status.to_string(),
-                tag: status_tag.to_string(),
-                slot: None,
-                cases: Vec::new(),
-            },
-            ViewNode::Text(descent_standing(sim)),
-            ViewNode::Progress {
-                value: light,
-                max: BREATH,
-                label: "light   ".to_string(),
-            },
-            ViewNode::Progress {
-                value: sim.pack(),
-                max: carry_rights,
-                label: "pack    ".to_string(),
-            },
-        ];
-        if sim.depth >= 1 {
-            vitals.push(ViewNode::Progress {
-                value: sim.wounds,
-                // THIS DAY's guardian, off the run's own drawn map — never the day-0 table. A
-                // meter reading `0/1` where today's guardian has two points of vitality tells a
-                // player one blow will open the hoard, and it will not.
-                max: sim.guard_hp(sim.depth),
-                label: "guardian".to_string(),
-            });
-        }
-        vitals.push(ViewNode::Progress {
-            value: sim.bank(),
-            max: RELICS as u64,
-            label: "banked  ".to_string(),
-        });
-        vitals.extend(descent_pressures(sim));
-
-        // ── THE MAP: the shaft itself. ──
-        let mut shaft = vec![descent_map(sim)];
-        shaft.extend(map_legend());
-
-        let mut children = vec![
-            ViewNode::Section {
-                title: match (sim.fate, sim.depth) {
-                    (0, 0) => "The living descent — at the mouth".to_string(),
-                    (0, depth) => format!("The living descent — floor {depth} of {FLOORS}"),
-                    _ => "The banked tomb".to_string(),
-                },
-                tag: if sim.fate == 0 { "accent" } else { "genuine" }.to_string(),
-                children: vitals,
-            },
-            ViewNode::Section {
-                title: "The shaft".to_string(),
-                tag: "accent".to_string(),
-                children: shaft,
-            },
-        ];
+        let mut children = vec![descent_vitals_section(sim), descent_shaft_section(sim)];
         let actions = self.actions(session);
         if !actions.is_empty() {
             children.push(ViewNode::Menu {
@@ -1319,8 +1254,8 @@ impl Offering for NativeDescentOffering {
                 tag: "genuine".to_string(),
                 children: vec![
                     ViewNode::Text(format!(
-                        "roles {:?} at revision {} · root {}",
-                        raid.assignment.roles(),
+                        "roles {} at revision {} · root {}",
+                        roles_line(raid.assignment.roles()),
                         raid.context.revision,
                         short_digest(raid.context.root)
                     )),
@@ -1342,7 +1277,10 @@ impl Offering for NativeDescentOffering {
                         deal.context.revision,
                         short_digest(deal.context.root)
                     )),
-                    ViewNode::Text(format!("hidden deal root {:?}", deal.deal_root)),
+                    ViewNode::Text(format!(
+                        "commitment to the hidden deal: {}",
+                        hex_felts(deal.deal_root)
+                    )),
                     ViewNode::Text(
                         "the full permutation, seven cards, rank, and contributions remain hidden"
                             .to_string(),
@@ -1934,10 +1872,7 @@ fn apply_private_preference(
             ("revision".to_string(), context.revision.to_string()),
             ("root".to_string(), hex_digest(context.root)),
             ("proofSession".to_string(), decision.session().to_string()),
-            (
-                "ballotRoot".to_string(),
-                format!("{:?}", decision.ballot_root()),
-            ),
+            ("ballotRoot".to_string(), hex_felts(decision.ballot_root())),
             ("winner".to_string(), decision.winner().to_string()),
             (
                 "plan".to_string(),
@@ -2018,11 +1953,8 @@ fn apply_private_raid(
             ("revision".to_string(), context.revision.to_string()),
             ("root".to_string(), hex_digest(context.root)),
             ("proofSession".to_string(), assignment.session().to_string()),
-            (
-                "inputRoot".to_string(),
-                format!("{:?}", assignment.input_root()),
-            ),
-            ("roles".to_string(), format!("{:?}", assignment.roles())),
+            ("inputRoot".to_string(), hex_felts(assignment.input_root())),
+            ("roles".to_string(), roles_line(assignment.roles())),
         ],
     })
 }
@@ -2263,7 +2195,7 @@ fn apply_private_deal(
                 "proofSession".to_string(),
                 native_descent_private_deal_proof_session(&context).to_string(),
             ),
-            ("dealRoot".to_string(), format!("{deal_root:?}")),
+            ("dealRoot".to_string(), hex_felts(deal_root)),
             ("initiativeSeat".to_string(), "0".to_string()),
             ("initiativeCard".to_string(), initiative_card.to_string()),
         ],
@@ -2808,6 +2740,88 @@ fn descent_map(sim: &Sim) -> ViewNode {
     }
 }
 
+/// **THE VITALS PLAQUE — the Descent's own reading of a [`Sim`].** One status badge, the prose
+/// standing, the light/pack/guardian/banked meters, then the ⚠ pressure lines.
+///
+/// `pub(crate)` because the CAMPAIGN wraps this exact `Sim` ([`crate::campaign`] opens a native
+/// expedition per region location) and must speak this exact vocabulary. It used to render a flat
+/// `depth 2 · light spent 9 · wounds 1` counter dump beside a menu while the whole reading sat one
+/// module away — two descriptions of one state, and only one of them was legible. There is now one
+/// painter and both surfaces call it, so a meter added here reaches both.
+pub(crate) fn descent_vitals_section(sim: &Sim) -> ViewNode {
+    let (status, status_tag) = descent_status(sim);
+    let light = BREATH.saturating_sub(sim.spent);
+    // Carrying rights ATTENUATE with depth: the deeper you stand, the less you may hold
+    // (`pack + depth ≤ CAP`), so the pack meter's ceiling MOVES as you descend. That is the
+    // other half of the game's tension and it has to be visible, not inferred.
+    let carry_rights = CAP.saturating_sub(sim.depth);
+
+    // ── THE VITALS: one badge, three meters. The light is the clock; the pack is the ceiling;
+    //    the guardian is the toll. Labels are padded to a common width so the bars stack into
+    //    an aligned column on the prose channels too. ──
+    let mut vitals = vec![
+        ViewNode::Pill {
+            text: status.to_string(),
+            tag: status_tag.to_string(),
+            slot: None,
+            cases: Vec::new(),
+        },
+        ViewNode::Text(descent_standing(sim)),
+        ViewNode::Progress {
+            value: light,
+            max: BREATH,
+            label: "light   ".to_string(),
+        },
+        ViewNode::Progress {
+            value: sim.pack(),
+            max: carry_rights,
+            label: "pack    ".to_string(),
+        },
+    ];
+    if sim.depth >= 1 {
+        vitals.push(ViewNode::Progress {
+            value: sim.wounds,
+            // THIS DAY's guardian, off the run's own drawn map — never the day-0 table. A
+            // meter reading `0/1` where today's guardian has two points of vitality tells a
+            // player one blow will open the hoard, and it will not.
+            max: sim.guard_hp(sim.depth),
+            label: "guardian".to_string(),
+        });
+    }
+    vitals.push(ViewNode::Progress {
+        value: sim.bank(),
+        max: RELICS as u64,
+        label: "banked  ".to_string(),
+    });
+    vitals.extend(descent_pressures(sim));
+    ViewNode::Section {
+        title: descent_floor_title(sim),
+        tag: if sim.fate == 0 { "accent" } else { "genuine" }.to_string(),
+        children: vitals,
+    }
+}
+
+/// Where the run STANDS, as a section title — the mouth, a numbered floor, or the frozen tomb.
+pub(crate) fn descent_floor_title(sim: &Sim) -> String {
+    match (sim.fate, sim.depth) {
+        (0, 0) => "The living descent — at the mouth".to_string(),
+        (0, depth) => format!("The living descent — floor {depth} of {FLOORS}"),
+        _ => "The banked tomb".to_string(),
+    }
+}
+
+/// **THE SHAFT — the board plus the two lines that read it.** The other half of the Descent's
+/// vocabulary the campaign reuses; a `CoordGrid` lands in the shared night well on every renderer.
+pub(crate) fn descent_shaft_section(sim: &Sim) -> ViewNode {
+    let mut shaft = vec![descent_map(sim)];
+    shaft.extend(map_legend());
+    ViewNode::Section {
+        title: "The shaft".to_string(),
+        tag: "accent".to_string(),
+        children: shaft,
+    }
+}
+
 /// The two lines that make the board readable without a manual.
 fn map_legend() -> Vec<ViewNode> {
     vec![
@@ -2932,4 +2946,20 @@ fn short_digest(digest: [u8; 32]) -> String {
 
 fn hex_digest(digest: [u8; 32]) -> String {
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// Render a felt-limb public digest as canonical lowercase hex.
+///
+/// The AIR's public roots are `[u32; 8]`; a `Debug` dump of that array reads as an
+/// internals spill, and these values are painted into a browser page and a chat message.
+#[cfg(any(
+    feature = "private-raid-operation",
+    feature = "private-preference-operation",
+    feature = "private-fair-shuffle-operation",
+))]
+fn hex_felts(felts: [u32; 8]) -> String {
+    felts
+        .into_iter()
+        .map(|felt| format!("{felt:08x}"))
+        .collect()
 }

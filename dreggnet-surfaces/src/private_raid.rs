@@ -36,6 +36,34 @@
 //! prerequisite action, not half of the later party/Arena transaction. The Tier-1 proof
 //! producer still sees the private
 //! matrix, while players and hosts see the public assigned roles.
+//!
+//! ## Who sees what, and when — this is NOT a hidden-information offering
+//!
+//! The name says "private" about the OPTIMIZER'S INPUTS, never about its output, and the
+//! surface is deliberately **viewer-invariant in its state tree**:
+//!
+//! - **Before the proof lands** there is nothing per-seat to see. Every viewer reads the
+//!   same awaiting-proof section: the expected proof session, how many receipt bytes have
+//!   been assembled, and [`ASSIGN_DISCLOSURE`].
+//! - **After the proof lands** every viewer — an assigned seat, a teammate, a spectator
+//!   holding no seat, an anonymous reader — reads the SAME four `(seat, identity, role)`
+//!   rows, because `roles[4]` is a *public input* of the HidingFri statement. Anyone
+//!   holding the receipt recomputes it against the pinned verifier key; fogging it would
+//!   hide nothing and would only make the page lie about what it knows.
+//! - **What is actually secret** never enters this crate: the 4x4 suitability scores, the
+//!   independent admissibility matrix, the blinding, and the aggregate score stay with the
+//!   Tier-1 producer. `RaidAssignmentReceipt` is documented to carry none of them, and the
+//!   rendered `input root` is a *commitment* to them.
+//!
+//! So [`Offering::hidden_information`] is **`false`**, declared explicitly on both
+//! offerings rather than inherited, and a shared surface (a Telegram group's one editable
+//! message, a Discord channel post, a projector) may paint this offering in full. The only
+//! per-viewer projection is the ACTION SET — which seat may claim, burn, or spend — the
+//! "dims cap-gated affordances" case that the trait documents as `false`. Every action
+//! label names only public material (a role name, a short identity), so the
+//! button-label class of fog leak has no purchase here.
+//! `tests/private_raid.rs::the_state_tree_is_one_public_statement_for_every_viewer`
+//! is the tooth: it fails if a future change makes the state tree viewer-dependent.
 //! The underlying descriptor's documented finite modular-to-integer bridge from emitted
 //! AIR facts to the exact `OptimalLex` relation is still a named proof gate; this module
 //! consumes the existing verifier at its current assurance level and does not promote it.
@@ -1393,7 +1421,11 @@ impl ProofAssignedRaidOffering {
         let mut rows = vec![row(vec![
             text("Seat"),
             text("Authenticated identity"),
-            text("Private optimizer result"),
+            // NOT "private optimizer result". The optimizer's INPUTS are private; its
+            // OUTPUT is `roles[4]`, a public input of the statement every viewer can
+            // re-verify. Naming this column "private" claimed a secrecy this offering
+            // does not have and cost a reviewer a leak investigation.
+            text("Proof-assigned role (public)"),
             text("Real party capability"),
             text("Claim"),
             text("Tactical sigil"),
@@ -1438,14 +1470,20 @@ impl ProofAssignedRaidOffering {
             vec![
                 pill("HIDING PROOF VERIFIED", "good"),
                 text(format!(
-                    "proof session {} · receipt {} · public input root {:?}",
+                    "proof session {} · receipt {} · public input root {}",
                     assignment.session(),
                     receipt,
-                    assignment.input_root(),
+                    hex_felts(assignment.input_root()),
                 )),
                 ViewNode::Table(rows),
                 text(
                     "Each public result mints one receipt-context-bound sigil cell. The assigned seat holds its only capability; burning it is a WriteOnce + FieldDelta(+1) executor turn and gates that seat's Arena contribution. Roster/role interpretation remains a replay-checked host binding, not an ObservedFieldEquals transition from the proof receipt.",
+                ),
+                // The honest boundary, said on the surface rather than only in a doc
+                // comment: this table is not a fogged hand, it is the STATEMENT, and it
+                // is the same table for a seat, a teammate, a spectator and a stranger.
+                text(
+                    "WHAT IS SECRET AND WHAT IS NOT: this table is the proof's PUBLIC STATEMENT, so every viewer — seated, teammate, spectator, or anonymous — reads the same four roles, and must, because anyone can recompute them from the receipt against the pinned verifier key. The private half never reaches this host at all: the 4x4 suitability scores, the admissibility matrix, the blinding, and the aggregate score stay with the Tier-1 producer, and the input root above is a commitment to them, not a window into them. This offering therefore declares no hidden information, and a shared chat may paint it in full.",
                 ),
             ],
         )
@@ -1906,6 +1944,16 @@ impl Offering for ProofAssignedRaidOffering {
         self.render_inner(session, Some(viewer))
     }
 
+    /// **Declared `false`, not inherited** — see the module's "Who sees what, and when".
+    /// The verified `roles[4]` permutation is a PUBLIC INPUT of the HidingFri statement, so
+    /// the state tree is the same for every viewer by design; the only per-viewer
+    /// projection is which affordance is offered, and no label carries private material.
+    /// The private half (scores, admissibility, blinding, aggregate) never reaches this
+    /// host. A shared chat may therefore paint this surface in full.
+    fn hidden_information(&self) -> bool {
+        false
+    }
+
     fn binary_operations(&self, session: &Self::Session) -> Vec<BinaryOperationDescriptor> {
         if session.assignment().is_some() || !session.proof_upload.is_pristine() {
             return Vec::new();
@@ -1963,10 +2011,7 @@ impl Offering for ProofAssignedRaidOffering {
             receipt_id,
             public_fields: vec![
                 ("proofSession".to_string(), assignment.session().to_string()),
-                (
-                    "inputRoot".to_string(),
-                    format!("{:?}", assignment.input_root()),
-                ),
+                ("inputRoot".to_string(), hex_felts(assignment.input_root())),
                 (
                     "roles".to_string(),
                     assignment
@@ -2424,6 +2469,15 @@ impl Offering for HostedProofAssignedRaidOffering {
         }
     }
 
+    /// **Declared `false`, not inherited** — it must agree with the fixed-roster offering
+    /// this delegates every live render to (see
+    /// [`ProofAssignedRaidOffering::hidden_information`]). The lobby it renders before the
+    /// raid forms is public too: a join is a public turn, and the seat order it establishes
+    /// is exactly what the proof statement's `session` is derived from.
+    fn hidden_information(&self) -> bool {
+        false
+    }
+
     fn binary_operations(&self, session: &Self::Session) -> Vec<BinaryOperationDescriptor> {
         match &session.raid {
             Some(raid) => ProofAssignedRaidOffering::new(raid.roster.clone())
@@ -2574,13 +2628,10 @@ fn proof_stream_hasher() -> blake3::Hasher {
     blake3::Hasher::new_derive_key("dregg-private-raid-chat-proof-stream-v1")
 }
 
+/// The one naming of a public raid role lives on [`RaidRole`] itself, so this surface, the
+/// dungeon's raid muster, and native Descent's campaign card cannot drift apart.
 fn raid_role_name(role: RaidRole) -> &'static str {
-    match role {
-        RaidRole::Bulwark => "Bulwark",
-        RaidRole::Striker => "Striker",
-        RaidRole::Mender => "Mender",
-        RaidRole::Pathfinder => "Pathfinder",
-    }
+    role.name()
 }
 
 fn short_identity(identity: &str) -> String {
@@ -2626,6 +2677,19 @@ fn hex_prefix(bytes: &[u8; 32]) -> String {
     bytes[..4]
         .iter()
         .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// Render a felt-limb public digest as one canonical lowercase-hex string.
+///
+/// The AIR's public roots are `[u32; 8]` limbs, and a `Debug` dump of that array
+/// (`[1234567, 89, …]`) reads as an internals spill rather than a commitment a
+/// viewer can compare against another copy of the same statement. Every digest a
+/// player is shown is this shape.
+fn hex_felts(felts: [u32; 8]) -> String {
+    felts
+        .into_iter()
+        .map(|felt| format!("{felt:08x}"))
         .collect()
 }
 

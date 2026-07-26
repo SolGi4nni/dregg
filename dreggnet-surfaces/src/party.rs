@@ -718,14 +718,25 @@ impl PartyOffering {
             if let Some(encounter) = session.encounter.as_ref() {
                 let arena = encounter.arena();
                 let active = arena.active();
-                let mut tactical = vec![text(format!(
-                    "event {} · active {} · {:?} · shared focus {}/{}",
-                    encounter.revision(),
-                    combatant_name(active),
-                    arena.outcome(),
-                    session.focus_spent(),
-                    FOCUS_BUDGET,
-                ))];
+                let (resolution, resolution_tag) = arena_resolution(arena.outcome());
+                let mut tactical = vec![
+                    pill(resolution, resolution_tag),
+                    // "active {name}" is the wording the cross-surface web pins read
+                    // (`party_cross_surface.rs`); keep it while the resolution moves to a pill
+                    // and the focus pool moves to a gauge.
+                    text(format!(
+                        "event {} · active {}",
+                        encounter.revision(),
+                        combatant_name(active),
+                    )),
+                    // The shared focus pool is a budget, so it paints as the gauge every
+                    // backend already renders rather than as "3/8" buried in a sentence.
+                    ViewNode::Progress {
+                        value: session.focus_spent(),
+                        max: FOCUS_BUDGET,
+                        label: "shared focus spent".to_string(),
+                    },
+                ];
                 let mut combat = vec![row(vec![text("Combatant"), text("HP"), text("Condition")])];
                 for combatant in [RANGER, CLERIC, WARDEN, HOUND] {
                     let condition = if arena.is_down(combatant) {
@@ -964,9 +975,18 @@ impl Offering for PartyOffering {
         for (idx, step) in session.history.iter().enumerate() {
             let outcome = self.apply_solo(&mut replay, step.input.clone(), step.actor.clone());
             if !outcome.landed() {
+                // `VerifyReport::detail` is painted into the page, so give the executor's own
+                // refusal reason rather than a `Debug` dump of the whole `Outcome`.
+                let why = match &outcome {
+                    Outcome::Refused(reason) => reason.as_str(),
+                    Outcome::Landed { .. } => "the replay landed after all",
+                };
                 return VerifyReport::broken(
                     idx,
-                    format!("hosted party replay refused at step {idx}: {outcome:?}"),
+                    format!(
+                        "hosted party replay refused at step {idx} ({}): {why}",
+                        step.input.turn
+                    ),
                 );
             }
         }
@@ -1021,6 +1041,18 @@ fn role_from_arg(arg: i64) -> Option<Role> {
 
 fn arena_seed(seed: u64) -> u8 {
     seed.to_le_bytes().into_iter().fold(0u8, u8::wrapping_add)
+}
+
+/// The fight's resolution as a player-readable pill instead of a `Debug` variant name.
+///
+/// `{:?}` on [`ArenaOutcome`] painted the bare Rust identifier (`Ongoing`) into the page,
+/// which reads as a debug view and says nothing a player recognises.
+fn arena_resolution(outcome: ArenaOutcome) -> (&'static str, &'static str) {
+    match outcome {
+        ArenaOutcome::Ongoing => ("THE FIGHT IS LIVE", "warn"),
+        ArenaOutcome::Victory => ("VICTORY — EVERY ENEMY IS DOWN", "good"),
+        ArenaOutcome::Defeat => ("DEFEAT — EVERY HERO IS DOWN", "bad"),
+    }
 }
 
 fn open_role_actions(session: &PartySession) -> Vec<Action> {

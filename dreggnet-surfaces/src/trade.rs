@@ -428,7 +428,11 @@ impl Offering for TradeOffering {
             if !report.verified {
                 return VerifyReport::broken(
                     s.turns,
-                    format!("`{}` provenance broke: {:?}", g.name, report.reasons),
+                    format!(
+                        "`{}` provenance broke: {}",
+                        g.name,
+                        report.reasons.join("; ")
+                    ),
                 );
             }
             let holder = s.world.write().holder_label(ids[i]);
@@ -437,8 +441,9 @@ impl Offering for TradeOffering {
                     return VerifyReport::broken(
                         s.turns,
                         format!(
-                            "`{}` sold but is held by {holder:?}, expected `{BUYER}`",
-                            g.name
+                            "`{}` sold but is held by `{}`, expected `{BUYER}`",
+                            g.name,
+                            holder.as_deref().unwrap_or("nobody"),
                         ),
                     );
                 }
@@ -447,8 +452,9 @@ impl Offering for TradeOffering {
                     return VerifyReport::broken(
                         s.turns,
                         format!(
-                            "`{}` listed but is held by {holder:?}, expected `{CUSTODY}`",
-                            g.name
+                            "`{}` listed but is held by `{}`, expected `{CUSTODY}`",
+                            g.name,
+                            holder.as_deref().unwrap_or("nobody"),
                         ),
                     );
                 }
