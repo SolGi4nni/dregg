@@ -37,12 +37,18 @@
 //! 2. **Constraint level (runs, green, in `dregg-circuit-prove::board_window_seam_tests`).** That a
 //!    broken equality is a `connect` CONFLICT — a witness that does not exist — for every one of
 //!    the 11 lanes. That is the seam's *force*.
-//! 3. **Deployed prover (`#[ignore]`d, NOT RUN).**
-//!    `a_mismatched_mid_does_not_fold_on_the_deployed_prover` — a real fold, tens of minutes. Only
-//!    this settles that a forged mid yields no verifying artifact end to end.
+//! 3. **Deployed prover (`#[ignore]`d for COST — but RUN, and GREEN).** On 2026-07-26 the whole
+//!    ignored set was executed on a 12-core M-series and every arm passed:
+//!    `the_honest_two_leg_match_folds_and_the_light_client_reads_the_final_position` in 754s
+//!    (12m34s) — a real n=11 two-leg fold that `verify_history` ACCEPTS, whose attestation carries
+//!    the genesis and final positions — and the six leg-minting arms in 993s at
+//!    `--test-threads=2`. They stay `#[ignore]`d because they cost minutes, not because they are
+//!    doubted; the reason strings carry the measurements.
 //!
-//! So: green means *the seam is wired, carries the right values, and its mechanism bites*. It does
-//! NOT mean a forged mid was proven unfoldable on the deployed prover.
+//! So: a green in a DEFAULT run means *the seam is wired, carries the right values, and its
+//! mechanism bites* — it does not by itself mean a forged mid was proven unfoldable on the
+//! deployed prover. That last claim now rests on an actual measured run of tier 3 (above), not on
+//! an unexecuted test.
 //!
 //! ⚠ Tier 3 is a NEW test. `dregg-automatafl/tests/prove_11x11.rs::mismatched_mid_fold_probe_11x11`
 //! builds its leaves on the RUST-AIR path (`descriptor_state_leaf: None`), which declares no
@@ -50,8 +56,9 @@
 //!
 //! ⚠ Several tests here need a MINTED LEG (and therefore `board_window_of_chain`, the host mirror).
 //! They were `#[ignore]`d as BLOCKED on a wide-`Custom`-leg break (`compact_e1_columns` row-width
-//! panic); that E1-compaction break is now FIXED (see `WIDE_LEG_BLOCKED`), so the two-leg fold
-//! EXECUTES and they are re-marked SLOW — they mint wide Custom legs (~50s each), run `--ignored`.
+//! panic). That E1-compaction break is FIXED (see `WIDE_LEG_BLOCKED`) — CONFIRMED by running them,
+//! not just by reading the fix — so they are re-marked SLOW with measured costs (~108s per minted
+//! leg). Run with `--ignored`.
 
 use dregg_automatafl::board::{Board, Move};
 use dregg_automatafl::rules::{automaton_step, resolve_mid, stock_two_player};
@@ -181,6 +188,10 @@ fn window_of(board: &Board) -> Vec<BabyBear> {
 /// So the canaries split in two. The ones below that need only the DESCRIPTORS and their PIs run
 /// today and gate the seam. The ones that need a minted leg are `#[ignore]`d with this reason —
 /// BLOCKED, not faked — and go green unchanged the moment the E1 table and the generator agree.
+#[allow(
+    dead_code,
+    reason = "a historical note the #[ignore] reason strings point at by name"
+)]
 const WIDE_LEG_BLOCKED: &str = "FIXED: mint_custom_leg's wide Custom leg USED to panic with \
      `compact_e1_columns: customVmDescriptor2R24 row width 1627 < E1 band end 1675` — the E1 \
      compaction cutover (bd21266e6b) had emitted an E1 kill-set that reached into the prove-time \
@@ -414,9 +425,10 @@ fn a_forged_mid_breaks_the_seam_though_both_legs_are_individually_valid() {
 /// **TWO LEAVES PER ROUND, ON THE LEAN DESCRIPTORS.** A played round lowers to Leg R then Leg A —
 /// not one automaton leaf — and each declares its own IN/OUT window.
 #[test]
-#[ignore = "SLOW (~50s/leg): round_leaves fills the door via mint_custom_leg — the two-leg fold now \
-            EXECUTES; the E1-compaction block (bd21266e6b `compact_e1_columns` row-width panic) is \
-            FIXED. Run with `--ignored`. See WIDE_LEG_BLOCKED"]
+#[ignore = "SLOW, MEASURED: round_leaves fills the door via mint_custom_leg — 216s alone (two legs) \
+            on a 12-core M-series. RUN AND GREEN; the E1-compaction block (bd21266e6b \
+            `compact_e1_columns` row-width panic) is FIXED. Run with `--ignored`. See \
+            WIDE_LEG_BLOCKED"]
 fn a_played_round_lowers_to_a_resolve_leaf_then_a_step_leaf() {
     let (a, b) = round_one();
     let m = AutomataflMatch::played(
@@ -464,9 +476,10 @@ fn a_played_round_lowers_to_a_resolve_leaf_then_a_step_leaf() {
 /// `R_0.OUT == A_0.IN` (the mid seam) and `A_0.OUT == R_1.IN` (the carry). Every one of these
 /// equalities becomes an in-circuit `connect`.
 #[test]
-#[ignore = "SLOW (~50s/leg): needs a MINTED LEG (mint_custom_leg) — the two-leg fold now EXECUTES; \
-            the E1-compaction block (bd21266e6b `compact_e1_columns` row-width panic) is FIXED. Run \
-            with `--ignored`. See WIDE_LEG_BLOCKED"]
+#[ignore = "SLOW, MEASURED: needs a MINTED LEG (mint_custom_leg), ~108s/leg on a 12-core M-series \
+            (the six leg-minting tests here take 993s wall at --test-threads=2). RUN AND GREEN — the \
+            E1-compaction block (bd21266e6b `compact_e1_columns` row-width panic) is FIXED; see \
+            WIDE_LEG_BLOCKED. Run with `--ignored`"]
 fn the_windows_chain_leaf_to_leaf_across_the_mid_and_across_rounds() {
     let (a, b) = round_one();
     let start =
@@ -526,9 +539,10 @@ fn the_windows_chain_leaf_to_leaf_across_the_mid_and_across_rounds() {
 /// pack — to the actual boards the match started from and reached. This is what lets a light
 /// client read the final position in the clear and check the win condition with no extra circuit.
 #[test]
-#[ignore = "SLOW (~50s/leg): needs a MINTED LEG (mint_custom_leg) — the two-leg fold now EXECUTES; \
-            the E1-compaction block (bd21266e6b `compact_e1_columns` row-width panic) is FIXED. Run \
-            with `--ignored`. See WIDE_LEG_BLOCKED"]
+#[ignore = "SLOW, MEASURED: needs a MINTED LEG (mint_custom_leg), ~108s/leg on a 12-core M-series \
+            (the six leg-minting tests here take 993s wall at --test-threads=2). RUN AND GREEN — the \
+            E1-compaction block (bd21266e6b `compact_e1_columns` row-width panic) is FIXED; see \
+            WIDE_LEG_BLOCKED. Run with `--ignored`"]
 fn the_root_window_is_the_genesis_and_final_board_in_the_clear() {
     let (a, b) = round_one();
     let start =
@@ -641,9 +655,10 @@ fn hand_built_round(
 /// same window, no refusal. Without this the negative below would be unfalsifiable (a
 /// hand-construction that ALWAYS fails proves nothing).
 #[test]
-#[ignore = "SLOW (~50s/leg): needs a MINTED LEG (mint_custom_leg) — the two-leg fold now EXECUTES; \
-            the E1-compaction block (bd21266e6b `compact_e1_columns` row-width panic) is FIXED. Run \
-            with `--ignored`. See WIDE_LEG_BLOCKED"]
+#[ignore = "SLOW, MEASURED: needs a MINTED LEG (mint_custom_leg), ~108s/leg on a 12-core M-series \
+            (the six leg-minting tests here take 993s wall at --test-threads=2). RUN AND GREEN — the \
+            E1-compaction block (bd21266e6b `compact_e1_columns` row-width panic) is FIXED; see \
+            WIDE_LEG_BLOCKED. Run with `--ignored`"]
 fn the_hand_built_honest_round_is_accepted_and_matches_the_generated_one() {
     let (a, b) = round_one();
     let start =
@@ -684,9 +699,10 @@ fn the_hand_built_honest_round_is_accepted_and_matches_the_generated_one() {
 /// This is the case `mismatched_mid_diverges_board_roots_but_not_cell_continuity_11x11` shows the
 /// deployed fold does NOT catch today.
 #[test]
-#[ignore = "SLOW (~50s/leg): needs a MINTED LEG (mint_custom_leg) — the two-leg fold now EXECUTES; \
-            the E1-compaction block (bd21266e6b `compact_e1_columns` row-width panic) is FIXED. Run \
-            with `--ignored`. See WIDE_LEG_BLOCKED"]
+#[ignore = "SLOW, MEASURED: needs a MINTED LEG (mint_custom_leg), ~108s/leg on a 12-core M-series \
+            (the six leg-minting tests here take 993s wall at --test-threads=2). RUN AND GREEN — the \
+            E1-compaction block (bd21266e6b `compact_e1_columns` row-width panic) is FIXED; see \
+            WIDE_LEG_BLOCKED. Run with `--ignored`"]
 fn a_mismatched_mid_breaks_the_board_window_seam_and_is_refused() {
     let (a, b) = round_one();
     let start =
@@ -723,9 +739,10 @@ fn a_mismatched_mid_breaks_the_board_window_seam_and_is_refused() {
 /// packed board identical) is refused too. `hseamAutoX`/`hseamAutoY` are separate hypotheses of
 /// the whole-turn theorem for a reason.
 #[test]
-#[ignore = "SLOW (~50s/leg): needs a MINTED LEG (mint_custom_leg) — the two-leg fold now EXECUTES; \
-            the E1-compaction block (bd21266e6b `compact_e1_columns` row-width panic) is FIXED. Run \
-            with `--ignored`. See WIDE_LEG_BLOCKED"]
+#[ignore = "SLOW, MEASURED: needs a MINTED LEG (mint_custom_leg), ~108s/leg on a 12-core M-series \
+            (the six leg-minting tests here take 993s wall at --test-threads=2). RUN AND GREEN — the \
+            E1-compaction block (bd21266e6b `compact_e1_columns` row-width panic) is FIXED; see \
+            WIDE_LEG_BLOCKED. Run with `--ignored`"]
 fn a_forged_automaton_coordinate_alone_breaks_the_seam() {
     let (a, b) = round_one();
     let start =
@@ -758,7 +775,7 @@ fn a_forged_automaton_coordinate_alone_breaks_the_seam() {
 }
 
 // ============================================================================
-// THE ACCEPTANCE GATE — the REAL fold. SLOW; `#[ignore]`d.
+// THE ACCEPTANCE GATE — the REAL fold. `#[ignore]`d for COST, and BOTH ARMS HAVE RUN.
 // ============================================================================
 //
 // ⚠ READ THIS BEFORE TRUSTING A GREEN. `dregg-automatafl/tests/prove_11x11.rs`'s
@@ -766,15 +783,31 @@ fn a_forged_automaton_coordinate_alone_breaks_the_seam() {
 // RUST-AIR path, which declares NO board window — so it probes a chain this seam does not touch
 // and will keep recording the hole. THESE are the twins that go through the two-leg
 // descriptor+window path, and THEIR sign is what settles whether the seam is closed on the
-// deployed prover. Neither has been run: a real n=11 two-leg fold is tens of minutes.
+// deployed prover.
+//
+// ⚑ RUN 2026-07-26, 12-core M-series, debug. BOTH PASS.
+//   * the honest fold: 754s. A real n=11 two-leg fold; `verify_history` ACCEPTS; the attestation
+//     carries genesis and final. This is the first executable end-to-end leaf → fold →
+//     verify_history acceptance in the tree since `dregg-automatafl/tests/prove_fold.rs` was
+//     deleted, which several docs still cite.
+//   * the mismatched mid: 219s, REFUSED — "board-window seam broken: turn 0's OUT window does not
+//     equal turn 1's IN window".
+//
+// ⚠ AND THE PART THAT IS NOT YET SETTLED. That refusal landed at the FIRST of the two places this
+// test accepts: the HOST MIRROR, before any proving. So what is measured is "the host refuses to
+// assemble a forged chain", NOT "the aggregation node's in-circuit `connect` is UNSAT on one". The
+// latter is the claim the seam ultimately rests on, and reaching it needs a run that bypasses the
+// mirror's early refusal. `dregg-circuit-prove::board_window_seam_tests` covers the connect
+// conflict at constraint level (tier 2), which is the evidence for it today.
 //
 //   cargo test -p dreggnet-game-board --test two_leg_board_window -- --ignored --nocapture
 
 /// **THE HONEST TWO-LEG FOLD.** The real deployed prover folds Leg R then Leg A, the light client
 /// ACCEPTS, and the attestation carries the genesis and final positions — decodable in the clear.
 #[test]
-#[ignore = "SLOW: a real n=11 two-leg fold (1273-col Leg R + 680-col Leg A, each recursion-wrapped, \
-            plus the tree) is tens of minutes. Run on the build box with --ignored"]
+#[ignore = "SLOW, MEASURED 754s (12m34s) on a 12-core M-series: a real n=11 two-leg fold (1273-col \
+            Leg R + 680-col Leg A, each recursion-wrapped, plus the tree). RUN AND GREEN — \
+            verify_history ACCEPTS and the attestation carries genesis and final. Run with --ignored"]
 fn the_honest_two_leg_match_folds_and_the_light_client_reads_the_final_position() {
     use dregg_lightclient::verify_history;
     use dregg_multiway_tug::fold::fold_match;
@@ -876,9 +909,10 @@ fn the_two_leg_claim_widths_are_the_ones_the_verifier_was_extended_to() {
 /// the mixed shape, and degrading to the plain combine would drop the seam exactly where a forger
 /// wants it dropped.
 #[test]
-#[ignore = "SLOW (~50s/leg): needs a MINTED LEG (mint_custom_leg) — the two-leg fold now EXECUTES; \
-            the E1-compaction block (bd21266e6b `compact_e1_columns` row-width panic) is FIXED. Run \
-            with `--ignored`. See WIDE_LEG_BLOCKED"]
+#[ignore = "SLOW, MEASURED: needs a MINTED LEG (mint_custom_leg), ~108s/leg on a 12-core M-series \
+            (the six leg-minting tests here take 993s wall at --test-threads=2). RUN AND GREEN — the \
+            E1-compaction block (bd21266e6b `compact_e1_columns` row-width panic) is FIXED; see \
+            WIDE_LEG_BLOCKED. Run with `--ignored`"]
 fn a_chain_mixing_windowed_and_plain_turns_is_refused() {
     let (a, b) = round_one();
     let start =
