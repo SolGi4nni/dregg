@@ -38,6 +38,21 @@ id = "aws-access-key-id"
 description = "AWS access key id (AKIA/ASIA…)"
 regex = '''(AKIA|ASIA)[0-9A-Z]{16}'''
 keywords = ["AKIA", "ASIA"]
+# A 20-char upper-alnum shape has a birthday problem inside a large base64 artifact.
+# `grain-verify-wasm/web/grain-verify.html` inlines a 323 KB wasm module on ONE line (the page is
+# deliberately network-free), and at offset 39207 that blob happens to spell `AKIA` + 16 upper-alnum
+# chars. Any base64 blob that long eventually contains any fixed 20-char shape, and an AWS key
+# embedded in a contiguous base64 run is not a recoverable credential anyway — so this exempts
+# exactly that: a hit whose surrounding context is an unbroken ≥200-char base64 run.
+#
+# Deliberately RULE-scoped, not global and not path-pinned: every other rule still bites on the
+# same line (verified: a PEM header planted mid-blob is still caught), a real `AKIA…` in ordinary
+# text is still caught, and the carve-out survives a rebuild or a move of the generated artifact.
+# `regexTarget = "line"` is a truncated window around the match, not the whole line — matching on
+# the leading `const WASM_B64` or the `AGFzbQ` wasm magic does NOT work here.
+[rules.allowlist]
+regexTarget = "line"
+regexes = ['''[A-Za-z0-9+/]{200,}''']
 
 [[rules]]
 id = "private-key-block"
