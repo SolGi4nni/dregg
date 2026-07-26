@@ -820,7 +820,10 @@ impl AutomataflSession {
             && self.phase().is_sealing()
             && match viewer {
                 Some(s) => self.is_waiting(s),
-                None => self.waiting.iter().any(|w| self.committed[*w as usize].is_none()),
+                None => self
+                    .waiting
+                    .iter()
+                    .any(|w| self.committed[*w as usize].is_none()),
             };
 
         let mut cells = Vec::with_capacity(CELLS);
@@ -1219,7 +1222,11 @@ impl AutomataflSession {
                  MARKED (the × squares) and dead for the rest of this turn, the board is frozen \
                  exactly as it was, and you owe a FRESH move. Pick a piece and seal again — you \
                  cannot use a marked square as a source or a destination.",
-                if self.marks.len() == 1 { " is" } else { "s are" },
+                if self.marks.len() == 1 {
+                    " is"
+                } else {
+                    "s are"
+                },
                 self.marks
                     .iter()
                     .map(|c| format!("({},{})", c.0, c.1))
@@ -1233,10 +1240,12 @@ impl AutomataflSession {
                 "You have opened. Waiting for seat {} to open theirs.",
                 other.label()
             ),
-            Phase::Resolve => "Both moves are open. Press Resolve the round — if you contested the \
+            Phase::Resolve => {
+                "Both moves are open. Press Resolve the round — if you contested the \
                                same square it MARKS that square and re-opens the round; otherwise \
                                the moves apply and THEN the automaton takes its step."
-                .to_string(),
+                    .to_string()
+            }
             Phase::Over => "The match is over.".to_string(),
         }
     }
@@ -1315,7 +1324,12 @@ impl AutomataflSession {
                     self.marks.len()
                 )
             },
-            tag: if self.marks.is_empty() { "muted" } else { "bad" }.to_string(),
+            tag: if self.marks.is_empty() {
+                "muted"
+            } else {
+                "bad"
+            }
+            .to_string(),
             slot: None,
             cases: Vec::<PillCase>::new(),
         });
@@ -2148,9 +2162,7 @@ impl Offering for AutomataflOffering {
         let waiting = session.is_waiting(seat);
         for action in &mut all {
             let mine = match action.turn.as_str() {
-                SELECT | COMMIT => {
-                    waiting && phase.is_sealing() && session.committed[i].is_none()
-                }
+                SELECT | COMMIT => waiting && phase.is_sealing() && session.committed[i].is_none(),
                 REVEAL => waiting && matches!(phase, Phase::Reveal) && !session.revealed[i],
                 RESOLVE => matches!(phase, Phase::Resolve),
                 _ => false,
