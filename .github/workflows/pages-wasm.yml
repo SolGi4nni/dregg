@@ -1,0 +1,237 @@
+name: Build the Pages wasm surfaces
+
+# THE HEAVY HALF OF THE PAGES DEPLOY.
+#
+# Until 2026-07-26 the three `wasm-pack build --release` jobs below lived inside
+# `pages.yml`, and their weight is what made that workflow `workflow_dispatch`-ONLY. Three
+# consequences, all from the one coupling:
+#   1. the website could not update automatically — a typst or docs fix sat behind three
+#      release wasm builds and a manual dispatch;
+#   2. `--features gpui-web` therefore fired on NO recurring job, so the wasm target was
+#      effectively unchecked (a feature-surface audit flagged it as the weakest coverage
+#      claim in the tree);
+#   3. a heavy build failure blocked a static-content deploy that did not need it.
+#
+# So the deploy is split. This workflow BUILDS the wasm on a schedule and publishes it as
+# artifacts. `pages.yml` — the fast path — assembles the site from typst plus the artifacts
+# published here, on every push, with no cargo and no wasm-pack anywhere in it.
+#
+# WHAT THIS PUBLISHES (the exact artifact names pages.yml resolves against)
+#   wasm-webimage   starbridge-v2/web/pkg          -> /deos/
+#   wasm-gpui       starbridge-v2/web/pkg-gpui     -> /cockpit-gpui/   (may be absent)
+#   wasm-cards      wasm/pkg                       -> /cards/ /light-client/ /transclusion/
+#   cards-baked     deos-view/target/web-out/dist  -> the baked gallery pages
+# A run that produces wasm-webimage + wasm-cards + cards-baked is CONSUMABLE by the fast
+# path even if it concluded RED (see "FAILURE BELONGS HERE" below).
+#
+# FAILURE BELONGS HERE. This is the workflow that is allowed — expected — to go red. The
+# artifact uploads deliberately come BEFORE the browser-surface teeth, so a genuine break
+# turns THIS run red while still publishing what it managed to build; the fast path then
+# ships those surfaces with a visible in-page "known broken" marker rather than refusing
+# to deploy a docs fix. The fast path never inherits a red from here.
+#
+# THE FULL BUILD IS STILL ONE COMMAND. Dispatching this workflow ends in a deployed site:
+# it builds all three surfaces, and `pages.yml`'s `workflow_run` trigger then assembles and
+# deploys from this run's artifacts.
+#   gh workflow run "Build the Pages wasm surfaces" --ref main
+#   gh workflow run "Build the Pages wasm surfaces" --ref main -f gpui=false
+#
+# NOTE ON THE SCHEDULE: GitHub disables `schedule` triggers after 60 days with no repository
+# activity. If the weekly run stops appearing, that is why — dispatch it once to re-arm.
+on:
+  schedule:
+    # Mondays 07:17 UTC. WASM_STALE_DAYS in pages.yml is 10, deliberately just over this
+    # cadence: one missed weekly run makes the deployed site declare itself stale.
+    - cron: "17 7 * * 1"
+  workflow_dispatch:
+    inputs:
+      gpui:
+        description: "Build the heavy gpui-web cockpit (/cockpit-gpui/)"
+        type: boolean
+        default: true
+  push:
+    # A release tag rebuilds every surface, which is what makes pages.yml's one-line
+    # repoint-at-a-release work: that run's artifacts are pinnable by tag name.
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  # Its OWN group — never the `pages` group. A long wasm build must not queue behind (or
+  # ahead of) a content deploy.
+  group: pages-wasm
+  cancel-in-progress: false
+
+jobs:
+  # ── the three wasm surfaces, in parallel ─────────────────────────────────────
+  wasm-webimage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true   # the include_str!'d staged registries live in LFS (see .gitattributes)
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: pages-wasm-webimage
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Fetch the plonky3-recursion fork (starbridge-v2 [patch]es it at a pinned rev)
+        # Keep this rev == the root Cargo.toml's p3-* git pin lockstep (the pushed
+        # fork tip); the sibling path-patch shadows that pin, so a stale clone here
+        # builds a DIFFERENT circuit than a fresh `cargo` resolve would.
+        # scripts/check-p3-rev.sh enforces the lockstep and names THIS file.
+        run: |
+          set -euo pipefail
+          if [ ! -d ../plonky3-recursion/.git ]; then
+            git clone --no-checkout https://github.com/emberian/plonky3-recursion ../plonky3-recursion
+            git -C ../plonky3-recursion fetch --depth 1 origin 0a4a554e144f4e60107555ea7a11cd9969d6208b
+            git -C ../plonky3-recursion checkout 0a4a554e144f4e60107555ea7a11cd9969d6208b
+          fi
+      - name: Build the WebImage cockpit wasm (starbridge-v2/web, default features)
+        run: wasm-pack build starbridge-v2/web --target web --out-dir pkg --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-webimage
+          path: starbridge-v2/web/pkg
+          if-no-files-found: error
+
+  wasm-gpui:
+    # Builds on the schedule and on a tag ALWAYS; only a manual dispatch can opt out.
+    # This is the job that stops `--features gpui-web` being dark: before the split it
+    # fired on no recurring trigger at all.
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.gpui }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true   # the include_str!'d staged registries live in LFS (see .gitattributes)
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: pages-wasm-gpui
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Fetch the plonky3-recursion fork (starbridge-v2 [patch]es it at a pinned rev)
+        run: |
+          set -euo pipefail
+          if [ ! -d ../plonky3-recursion/.git ]; then
+            git clone --no-checkout https://github.com/emberian/plonky3-recursion ../plonky3-recursion
+            git -C ../plonky3-recursion fetch --depth 1 origin 0a4a554e144f4e60107555ea7a11cd9969d6208b
+            git -C ../plonky3-recursion checkout 0a4a554e144f4e60107555ea7a11cd9969d6208b
+          fi
+      - name: Build the full gpui-web cockpit wasm (starbridge-v2/web --features gpui-web)
+        # Carries the documented matrix+zed `links="sqlite3"` resolution wall
+        # (starbridge-v2/Cargo.toml "BLOCKER 1"). When it collides, THIS job goes red and
+        # the fast path ships the site without /cockpit-gpui/ — as a marker page naming
+        # this artifact, not as a bare 404.
+        run: wasm-pack build starbridge-v2/web --target web --out-dir pkg-gpui --release -- --features gpui-web
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-gpui
+          path: starbridge-v2/web/pkg-gpui
+          if-no-files-found: error
+
+  wasm-cards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true   # the include_str!'d staged registries live in LFS (see .gitattributes)
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: pages-wasm-cards
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Fetch the plonky3-recursion fork (the wasm/ workspace [patch]es it too)
+        run: |
+          set -euo pipefail
+          if [ ! -d ../plonky3-recursion/.git ]; then
+            git clone --no-checkout https://github.com/emberian/plonky3-recursion ../plonky3-recursion
+            git -C ../plonky3-recursion fetch --depth 1 origin 0a4a554e144f4e60107555ea7a11cd9969d6208b
+            git -C ../plonky3-recursion checkout 0a4a554e144f4e60107555ea7a11cd9969d6208b
+          fi
+      - name: Build the card-world wasm (wasm/) with the light-client stack headroom
+        # BOTH FLAGS TRAVEL TOGETHER OR NEITHER WORKS. `.cargo/config.toml` sets
+        # `--cfg getrandom_backend="wasm_js"` under [target.wasm32-unknown-unknown]
+        # rustflags, and cargo does NOT merge that with the RUSTFLAGS environment
+        # variable — env WINS OUTRIGHT and the config flags are dropped entirely. This
+        # job previously set only the stack size, which silently deleted the getrandom
+        # backend selection (getrandom 0.3/0.4 are both in wasm/Cargo.lock and refuse to
+        # compile for wasm32 without it). The hazard was documented in
+        # scripts/build-web-artifacts.sh and left unfixed here because this workflow was
+        # dispatch-only; it now has a recurring trigger, so it is fixed.
+        #   -C link-arg=-zstack-size=33554432 : 32 MiB linear-memory stack. The in-tab
+        #   recursion verifier the light-client page runs overflows wasm's 1 MiB default.
+        run: |
+          RUSTFLAGS='--cfg getrandom_backend="wasm_js" -C link-arg=-zstack-size=33554432' \
+            wasm-pack build wasm --target web --out-dir pkg --release
+      - name: Bake the card gallery pages (deos-view native example)
+        run: cd deos-view && cargo run -q --no-default-features --features web --example web_render_card
+
+      # UPLOADS BEFORE THE TEETH, DELIBERATELY. A tooth that bites below must turn THIS
+      # run red without withholding the artifacts — the fast path then deploys them with a
+      # visible "known broken" marker instead of refusing to publish a docs change. Move
+      # the teeth above these steps and you re-create the coupling the split removed.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-cards
+          path: wasm/pkg
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cards-baked
+          path: deos-view/target/web-out/dist
+          if-no-files-found: error
+
+      - name: The browser-surface teeth (light-client freshness + transclusion polarities)
+        # The SAME script scripts/build-pages-dist.sh runs. Here it is green-or-bust: this
+        # job built that wasm, so a bite is a real break in what this run just produced —
+        # the baked light-client aggregate no longer attesting under the engine, or the
+        # transclusion forge-refusal path having stopped refusing. Regeneration command is
+        # in the script's header.
+        run: bash scripts/check-web-surface-teeth.sh wasm/pkg
+
+  # ── what this run published, in one place ────────────────────────────────────
+  summary:
+    needs: [wasm-webimage, wasm-gpui, wasm-cards]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report the surfaces and what the fast path will find
+        # Purely informational — the run's red/green comes from the build jobs themselves.
+        env:
+          R_WEBIMAGE: ${{ needs.wasm-webimage.result }}
+          R_GPUI: ${{ needs.wasm-gpui.result }}
+          R_CARDS: ${{ needs.wasm-cards.result }}
+        run: |
+          set -uo pipefail
+          {
+            echo "### Pages wasm surfaces — run ${GITHUB_RUN_ID}"
+            echo
+            echo "| surface | artifact | result |"
+            echo "|---|---|---|"
+            echo "| /deos/ | \`wasm-webimage\` | ${R_WEBIMAGE} |"
+            echo "| /cockpit-gpui/ | \`wasm-gpui\` | ${R_GPUI} |"
+            echo "| /cards/ /light-client/ /transclusion/ | \`wasm-cards\` + \`cards-baked\` | ${R_CARDS} |"
+            echo
+            if [ "$R_WEBIMAGE" = "success" ] && [ "$R_CARDS" = "success" ]; then
+              echo "This run is CONSUMABLE by the fast Pages path."
+            else
+              echo "This run is NOT consumable: the fast path needs \`wasm-webimage\` +"
+              echo "\`wasm-cards\` + \`cards-baked\` from a single run, and will fall back to"
+              echo "the newest earlier run that has them (stamping which one into the site)."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

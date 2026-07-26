@@ -13,169 +13,102 @@ name: Deploy deos to GitHub Pages
 #   /papers/direct-logic-arithmetization/direct-logic-arithmetization.pdf
 #                  the direct-logic research report, when its Typst source exists
 #   /atlas/        the interactive atlas
-# scripts/build-pages-dist.sh assembles site/dist; this workflow builds + uploads it.
+#   /wasm-provenance.html + /wasm-provenance.json
+#                  WHAT WASM THIS DEPLOY ACTUALLY SHIPPED, and from where
 #
-# SHAPE — the site is never hostage to one serial wasm build. The three wasm
-# surfaces build as PARALLEL jobs, each handing its pkg to a fast cargo-free
-# `assemble` job (the script's REUSE_WASM=1 mode + the freshness/transclusion
-# teeth), which uploads the Pages artifact. Deploy latency = the slowest wasm
-# build, not the sum; a static-content refresh can skip the wasm builds entirely:
+# ── THIS IS THE FAST PATH. IT DOES NOT BUILD WASM. ──────────────────────────────────
+# Typst + a cargo-free `REUSE_WASM=1` assembly + deploy. No cargo, no wasm-pack, no
+# `cargo run` anywhere in it. The three `wasm-pack build --release` jobs that used to live
+# here — and whose weight is the entire reason this workflow was `workflow_dispatch`-only —
+# now live in `.github/workflows/pages-wasm.yml`, on a weekly schedule. That split is what
+# buys push-to-publish for the website, and it is what finally gives `--features gpui-web`
+# a recurring trigger instead of no coverage at all.
 #
-#   static_only=true  — SKIP the wasm jobs; reuse the wasm artifacts of the most
-#                       recent successful run that retained them. EXPLICIT reuse,
-#                       provenance stamped into the run summary, fail-hard when no
-#                       retained artifacts exist (never a silent stale fallback).
-#   gpui=false        — ship without /cockpit-gpui/ (the heavy gpui-web build; it
-#                       carries the documented matrix+zed sqlite3-links wall).
-#                       The dist simply omits the surface — nothing stale.
-
-# DEPLOY CONTROL — this workflow is MANUAL-ONLY (workflow_dispatch). Committing or
-# pushing the site source does NOT publish it. The owner goes live on purpose by
-# running the workflow:
+# ── IT DEPLOYS EVEN WHEN THE WASM IS MISSING OR STALE. THAT IS DELIBERATE. ──────────
+# A red deploy job blocks a typo fix on the landing page, which is exactly the coupling
+# this split removes. So a missing or weeks-old wasm artifact NEVER fails this workflow.
+# Instead the degradation is made visible IN THE RENDERED SITE:
+#   * every wasm-serving page carries <meta name="dregg-wasm-provenance"> naming the run,
+#     commit, build time, age and what was missing;
+#   * a surface whose wasm is absent gets an in-page MISSING-wasm marker, and a surface
+#     whose page cannot exist at all gets a marker PAGE where a bare 404 would be;
+#   * a surface older than WASM_STALE_DAYS gets a visible STALE marker;
+#   * /wasm-provenance.{json,html} record the whole thing, durably, per deploy.
+# The invariant is NO SILENT DEGRADATION, not "no degradation". Failures belong to
+# `pages-wasm.yml`; this workflow's job is to publish the site, always.
+# See scripts/stamp-wasm-provenance.sh, which does the stamping and the marking.
+#
+# ── WHAT STILL NEEDS THE HEAVY PATH ─────────────────────────────────────────────────
+# The BAKED card gallery pages (`cards-baked`) are produced by a `cargo run` example, so
+# editing the card templates in `deos-view/` needs a `pages-wasm.yml` run — not just a push.
+# Everything under `site/`, `paper/`, `papers/` and `dregg-atlas/site/` is pure fast path.
+#
+# ── HOW TO RUN IT ───────────────────────────────────────────────────────────────────
+#   (push to main touching the paths below)         the site republishes automatically
 #   gh workflow run "Deploy deos to GitHub Pages" --ref main
-#   gh workflow run "Deploy deos to GitHub Pages" --ref main -f static_only=true
-# (or the green "Run workflow" button on the Actions tab). To restore push-to-publish,
-# re-add the `push:` trigger below.
+#                                                   re-deploy now, reusing the newest wasm
+#   gh workflow run "Deploy deos to GitHub Pages" --ref main -f wasm_source_run_id=12345
+#                                                   re-deploy pinned to one heavy run
+#   gh workflow run "Build the Pages wasm surfaces" --ref main
+#                                                   THE FULL BUILD: rebuilds all three wasm
+#                                                   surfaces, then the workflow_run trigger
+#                                                   below assembles and deploys from them
 on:
+  push:
+    branches: [main]
+    # Everything scripts/build-pages-dist.sh reads that is NOT a wasm artifact. Kept
+    # exhaustive on purpose; a dispatch covers anything this list misses.
+    paths:
+      - "site/**"
+      - "paper/**"
+      - "papers/**"
+      - "dregg-atlas/site/**"
+      - "starbridge-v2/web/cockpit_gpui.html"
+      - "scripts/build-pages-dist.sh"
+      - "scripts/stamp-wasm-provenance.sh"
+      - "scripts/check-web-surface-teeth.sh"
+      - ".github/workflows/pages.yml"
   workflow_dispatch:
     inputs:
-      static_only:
-        description: "Skip the wasm builds; reuse the wasm artifacts from the last successful full run (fails if none are retained)"
-        type: boolean
-        default: false
-      gpui:
-        description: "Build the heavy gpui-web cockpit (/cockpit-gpui/); false ships the site without it"
-        type: boolean
-        default: true
+      wasm_source_run_id:
+        description: "Pin the wasm to one pages-wasm.yml run id (blank = newest run that has the artifacts)"
+        type: string
+        default: ""
+  workflow_run:
+    # A finished heavy run publishes its surfaces straight to the site, so dispatching
+    # pages-wasm.yml remains a ONE-COMMAND full build ending in a deploy.
+    workflows: ["Build the Pages wasm surfaces"]
+    types: [completed]
 
 permissions:
   contents: read
   pages: write
   id-token: write
-  actions: read
+  actions: read   # listing + downloading another workflow run's artifacts
 
 concurrency:
   group: pages
   cancel-in-progress: false
 
+env:
+  # ── WHERE THE WASM COMES FROM ──────────────────────────────────────────────────────
+  WASM_SOURCE_WORKFLOW: pages-wasm.yml
+  # ── THE ONE LINE THAT REPOINTS PAGES AT RELEASE ARTIFACTS ──────────────────────────
+  # Empty = the newest `pages-wasm.yml` run on ANY ref that still retains the artifacts.
+  # To make Pages serve a RELEASE's wasm instead, set this to the tag name — e.g.
+  #     WASM_SOURCE_HEAD: "v0.1.0"
+  # and the resolver will only ever consider the heavy run that tag triggered
+  # (pages-wasm.yml already builds on `push: tags: [v*]`, so such a run exists). That is
+  # the whole change: one line, no new plumbing. There is no release process here to
+  # invent — this just pins consumption to a tag once one exists.
+  WASM_SOURCE_HEAD: ""
+  # Older than this and the deployed pages carry a visible STALE marker. 10 days is
+  # deliberately just over pages-wasm.yml's weekly cadence: one missed run shows up.
+  WASM_STALE_DAYS: "10"
+
 jobs:
-  # ── the three wasm surfaces, in parallel ─────────────────────────────────────
-  wasm-webimage:
-    if: ${{ !inputs.static_only }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          lfs: true   # the include_str!'d staged registries live in LFS (see .gitattributes)
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly
-          targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: pages-wasm-webimage
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-      - name: Fetch the plonky3-recursion fork (starbridge-v2 [patch]es it at a pinned rev)
-        # Keep this rev == the root Cargo.toml's p3-* git pin lockstep (the pushed
-        # fork tip); the sibling path-patch shadows that pin, so a stale clone here
-        # builds a DIFFERENT circuit than a fresh `cargo` resolve would.
-        run: |
-          set -euo pipefail
-          if [ ! -d ../plonky3-recursion/.git ]; then
-            git clone --no-checkout https://github.com/emberian/plonky3-recursion ../plonky3-recursion
-            git -C ../plonky3-recursion fetch --depth 1 origin 0a4a554e144f4e60107555ea7a11cd9969d6208b
-            git -C ../plonky3-recursion checkout 0a4a554e144f4e60107555ea7a11cd9969d6208b
-          fi
-      - name: Build the WebImage cockpit wasm (starbridge-v2/web, default features)
-        run: wasm-pack build starbridge-v2/web --target web --out-dir pkg --release
-      - uses: actions/upload-artifact@v4
-        with:
-          name: wasm-webimage
-          path: starbridge-v2/web/pkg
-          if-no-files-found: error
-
-  wasm-gpui:
-    if: ${{ !inputs.static_only && inputs.gpui }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          lfs: true   # the include_str!'d staged registries live in LFS (see .gitattributes)
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly
-          targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: pages-wasm-gpui
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-      - name: Fetch the plonky3-recursion fork (starbridge-v2 [patch]es it at a pinned rev)
-        run: |
-          set -euo pipefail
-          if [ ! -d ../plonky3-recursion/.git ]; then
-            git clone --no-checkout https://github.com/emberian/plonky3-recursion ../plonky3-recursion
-            git -C ../plonky3-recursion fetch --depth 1 origin 0a4a554e144f4e60107555ea7a11cd9969d6208b
-            git -C ../plonky3-recursion checkout 0a4a554e144f4e60107555ea7a11cd9969d6208b
-          fi
-      - name: Build the full gpui-web cockpit wasm (starbridge-v2/web --features gpui-web)
-        run: wasm-pack build starbridge-v2/web --target web --out-dir pkg-gpui --release -- --features gpui-web
-      - uses: actions/upload-artifact@v4
-        with:
-          name: wasm-gpui
-          path: starbridge-v2/web/pkg-gpui
-          if-no-files-found: error
-
-  wasm-cards:
-    if: ${{ !inputs.static_only }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          lfs: true   # the include_str!'d staged registries live in LFS (see .gitattributes)
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly
-          targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: pages-wasm-cards
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-      - name: Fetch the plonky3-recursion fork (the wasm/ workspace [patch]es it too)
-        run: |
-          set -euo pipefail
-          if [ ! -d ../plonky3-recursion/.git ]; then
-            git clone --no-checkout https://github.com/emberian/plonky3-recursion ../plonky3-recursion
-            git -C ../plonky3-recursion fetch --depth 1 origin 0a4a554e144f4e60107555ea7a11cd9969d6208b
-            git -C ../plonky3-recursion checkout 0a4a554e144f4e60107555ea7a11cd9969d6208b
-          fi
-      - name: Build the card-world wasm (wasm/) with the light-client stack headroom
-        run: RUSTFLAGS="-C link-arg=-zstack-size=33554432" wasm-pack build wasm --target web --out-dir pkg --release
-      - name: Bake the card gallery pages (deos-view native example)
-        run: cd deos-view && cargo run -q --no-default-features --features web --example web_render_card
-      - uses: actions/upload-artifact@v4
-        with:
-          name: wasm-cards
-          path: wasm/pkg
-          if-no-files-found: error
-      - uses: actions/upload-artifact@v4
-        with:
-          name: cards-baked
-          path: deos-view/target/web-out/dist
-          if-no-files-found: error
-
-  # ── cargo-free assembly: script REUSE_WASM mode + the teeth + upload ─────────
+  # ── cargo-free assembly: typst + the script's REUSE_WASM mode + the stamp + upload ──
   assemble:
-    needs: [wasm-webimage, wasm-gpui, wasm-cards]
-    # Run when nothing FAILED: full mode (all built), gpui=false (that job skipped
-    # → the dist ships without /cockpit-gpui/), or static_only (all three skipped
-    # → the wasm comes from a prior run's retained artifacts, resolved below).
-    if: ${{ !cancelled()
-            && needs.wasm-webimage.result != 'failure'
-            && needs.wasm-gpui.result != 'failure'
-            && needs.wasm-cards.result != 'failure' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -189,71 +122,154 @@ jobs:
         with:
           typst-version: "0.15.0"
 
-      - name: Resolve which run's wasm artifacts to assemble
-        id: src
+      - name: Resolve which pages-wasm.yml run supplies the wasm surfaces
+        id: wasm
+        # NEVER FAILS. If it cannot find a usable run it says so loudly and reports
+        # found=false; the assembly then produces a site that declares the absence on
+        # every affected page. `set -e` is deliberately NOT on.
         env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          OVERRIDE_RUN_ID: ${{ inputs.wasm_source_run_id }}
+          TRIGGER_RUN_ID: ${{ github.event.workflow_run.id }}
+          SITE_SHA: ${{ github.sha }}
         run: |
-          set -euo pipefail
-          if [ "${{ inputs.static_only }}" != "true" ]; then
-            echo "run_id=${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+          set -uo pipefail
+          REQUIRED="wasm-webimage wasm-cards cards-baked"
+
+          # Candidates in priority order. One code path, so there is no second, subtly
+          # different resolution rule to drift: an explicit pin, then the heavy run that
+          # triggered us (workflow_run), then the newest completed heavy runs.
+          candidates=""
+          [ -n "${OVERRIDE_RUN_ID:-}" ] && candidates="$OVERRIDE_RUN_ID"
+          [ -n "${TRIGGER_RUN_ID:-}" ] && candidates="$candidates $TRIGGER_RUN_ID"
+
+          # status=completed, NOT status=success. The real question is "does this run have
+          # the artifacts I need", and a heavy run whose gpui job failed still has perfectly
+          # good webimage + cards. Filtering on success would discard them and leave the
+          # site with no wasm because an unrelated surface broke.
+          q="repos/$REPO/actions/workflows/$WASM_SOURCE_WORKFLOW/runs?status=completed&per_page=30"
+          [ -n "${WASM_SOURCE_HEAD:-}" ] && q="$q&branch=$WASM_SOURCE_HEAD"
+          more="$(gh api "$q" --jq '.workflow_runs[].id' 2>/dev/null)" || more=""
+          candidates="$candidates $more"
+
+          FOUND=""; NAMES=""
+          for id in $candidates; do
+            [ -n "$id" ] || continue
+            names="$(gh api "repos/$REPO/actions/runs/$id/artifacts?per_page=100" \
+                       --jq '.artifacts[] | select(.expired | not) | .name' 2>/dev/null)" || names=""
+            ok=1
+            for r in $REQUIRED; do
+              printf '%s\n' "$names" | grep -qx "$r" || ok=0
+            done
+            if [ "$ok" = "1" ]; then FOUND="$id"; NAMES="$names"; break; fi
+          done
+
+          if [ -z "$FOUND" ]; then
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "gpui=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=No wasm artifacts available::No completed '$WASM_SOURCE_WORKFLOW' run retains wasm-webimage + wasm-cards + cards-baked (90-day artifact retention lapsed, or none has ever run). The site WILL deploy, with every wasm surface marked MISSING in the rendered page. Fix by running: gh workflow run \"Build the Pages wasm surfaces\" --ref main"
+            {
+              echo "### wasm resolution: NOTHING FOUND"
+              echo
+              echo "No completed \`$WASM_SOURCE_WORKFLOW\` run retains all of"
+              echo "\`wasm-webimage\` + \`wasm-cards\` + \`cards-baked\`."
+              echo "Deploying the static content anyway, with in-page MISSING markers."
+            } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          # static_only: the most recent successful run that still RETAINS the wasm
-          # artifacts. Fail-hard when none exists — an explicit refusal, never a
-          # silent stale fallback.
-          RUN_ID=""
-          for id in $(gh api "repos/${{ github.repository }}/actions/workflows/pages.yml/runs?status=success&per_page=15" --jq '.workflow_runs[].id'); do
-            if gh api "repos/${{ github.repository }}/actions/runs/$id/artifacts" \
-                 --jq '.artifacts[] | select(.expired | not) | .name' | grep -qx 'wasm-webimage'; then
-              RUN_ID="$id"; break
-            fi
-          done
-          if [ -z "$RUN_ID" ]; then
-            echo "ERROR: static_only deploy, but no prior successful run retains wasm artifacts (90-day retention lapsed?). Run a full deploy." >&2
-            exit 1
-          fi
-          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
-          echo "static_only deploy: wasm surfaces reused from run https://github.com/${{ github.repository }}/actions/runs/$RUN_ID" >> "$GITHUB_STEP_SUMMARY"
 
+          meta="$(gh api "repos/$REPO/actions/runs/$FOUND" \
+                    --jq '[.head_sha, .head_branch, .run_started_at, .html_url, .conclusion] | @tsv' 2>/dev/null)" || meta=""
+          head_sha="$(printf '%s' "$meta" | cut -f1)"
+          head_branch="$(printf '%s' "$meta" | cut -f2)"
+          started="$(printf '%s' "$meta" | cut -f3)"
+          html_url="$(printf '%s' "$meta" | cut -f4)"
+          conclusion="$(printf '%s' "$meta" | cut -f5)"
+
+          gpui=false
+          printf '%s\n' "$NAMES" | grep -qx 'wasm-gpui' && gpui=true
+
+          # How far the site content has moved past the wasm. One compare call — no deep
+          # clone needed, so the checkout stays shallow and this job stays fast.
+          ahead="$(gh api "repos/$REPO/compare/$head_sha...$SITE_SHA" --jq '.ahead_by' 2>/dev/null)" || ahead=""
+
+          {
+            echo "found=true"
+            echo "run_id=$FOUND"
+            echo "run_url=$html_url"
+            echo "head_sha=$head_sha"
+            echo "head_branch=$head_branch"
+            echo "started=$started"
+            echo "gpui=$gpui"
+            echo "commits_ahead=$ahead"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "resolved wasm source: run $FOUND ($html_url) conclusion=$conclusion gpui=$gpui"
+          if [ "$conclusion" != "success" ]; then
+            echo "::warning title=Reusing wasm from a RED heavy run::run $FOUND concluded '$conclusion' but retains the required artifacts, so they are being used. Check $html_url for which surface broke."
+          fi
+
+      # continue-on-error on ALL of these: a download hiccup must degrade the SITE, never
+      # fail the deploy. Whatever fails to land is marked in the rendered page by the stamp.
       - uses: actions/download-artifact@v4
+        if: ${{ steps.wasm.outputs.found == 'true' }}
+        continue-on-error: true
         with:
           name: wasm-webimage
           path: starbridge-v2/web/pkg
-          run-id: ${{ steps.src.outputs.run_id }}
+          run-id: ${{ steps.wasm.outputs.run_id }}
           github-token: ${{ github.token }}
       - uses: actions/download-artifact@v4
-        # Absent when the gpui job was skipped (gpui=false) or the source run shipped
-        # without it — the script's REUSE_WASM branch then omits /cockpit-gpui/.
+        # Absent whenever the source run shipped without it (the gpui job was skipped by a
+        # dispatch input, or its documented matrix+zed sqlite3 wall bit). /cockpit-gpui/
+        # then becomes a marker page naming this artifact.
+        if: ${{ steps.wasm.outputs.found == 'true' && steps.wasm.outputs.gpui == 'true' }}
         continue-on-error: true
         with:
           name: wasm-gpui
           path: starbridge-v2/web/pkg-gpui
-          run-id: ${{ steps.src.outputs.run_id }}
+          run-id: ${{ steps.wasm.outputs.run_id }}
           github-token: ${{ github.token }}
       - uses: actions/download-artifact@v4
+        if: ${{ steps.wasm.outputs.found == 'true' }}
+        continue-on-error: true
         with:
           name: wasm-cards
           path: wasm/pkg
-          run-id: ${{ steps.src.outputs.run_id }}
+          run-id: ${{ steps.wasm.outputs.run_id }}
           github-token: ${{ github.token }}
       - uses: actions/download-artifact@v4
+        if: ${{ steps.wasm.outputs.found == 'true' }}
+        continue-on-error: true
         with:
           name: cards-baked
           path: deos-view/target/web-out/dist
-          run-id: ${{ steps.src.outputs.run_id }}
+          run-id: ${{ steps.wasm.outputs.run_id }}
           github-token: ${{ github.token }}
 
       - name: Assemble the layered deos site (REUSE_WASM — no cargo in this job)
-        # GREEN-OR-BUST still holds: every wasm surface was BUILT (this run or the
-        # provenance-stamped source run) — never stale-as-fallback — and the script's
-        # freshness + transclusion teeth run here against the exact pkgs shipping.
+        # The script's REUSE_WASM mode: it assembles from the pkgs above, records what was
+        # and was not there, runs the browser-surface teeth against the exact bundles that
+        # are shipping, and finishes by stamping provenance + markers into the dist. In this
+        # mode a missing surface or a bitten tooth is REPORTED IN THE SITE, not fatal — see
+        # the script header for why the polarity differs from a full build.
+        env:
+          WASM_PROV_SOURCE: ${{ steps.wasm.outputs.found == 'true' && 'reused-run' || 'none-available' }}
+          WASM_PROV_RUN_ID: ${{ steps.wasm.outputs.run_id }}
+          WASM_PROV_RUN_URL: ${{ steps.wasm.outputs.run_url }}
+          WASM_PROV_COMMIT: ${{ steps.wasm.outputs.head_sha }}
+          WASM_PROV_HEAD: ${{ steps.wasm.outputs.head_branch }}
+          WASM_PROV_BUILT_AT: ${{ steps.wasm.outputs.started }}
+          WASM_PROV_COMMITS_BEHIND: ${{ steps.wasm.outputs.commits_ahead }}
+          WASM_PROV_SITE_COMMIT: ${{ github.sha }}
         run: REUSE_WASM=1 scripts/build-pages-dist.sh
 
       - name: Sanity-check the dist
         run: |
           set -euo pipefail
-          # the sober landing + shared green stylesheet
+          # ── THE STATIC CONTENT: hard requirements. This is what the fast path exists to
+          # ship, so its absence IS a deploy failure.
           test -f site/dist/index.html
           test -f site/dist/assets/style.css
           grep -q 'A turn is the exercise' site/dist/index.html
@@ -271,12 +287,6 @@ jobs:
           else
             test ! -e "$report_pdf"
           fi
-          # the deos cockpit (WebImage skin)
-          test -f site/dist/deos/index.html
-          test -s site/dist/deos/pkg/starbridge_web_bg.wasm
-          # the card gallery (re-themed green) — all five cards
-          test -s site/dist/cards/pkg/dregg_wasm_bg.wasm
-          for c in index counter inspector tally kvstore doccollab; do test -f "site/dist/cards/$c.html"; done
           # the reclaimed surfaces
           test -f site/dist/explorer/index.html
           test -f site/dist/explorer/caps-as-rows.js
@@ -303,6 +313,52 @@ jobs:
             'version https://gi'*)
               echo "ERROR: atlas image is an unmaterialized LFS pointer — checkout needs lfs:true" && exit 1 ;;
           esac
+
+          # ── THE WASM SURFACES: presence is NOT required. What IS required is that the
+          # site never lies about them. For each surface: the provenance record must agree
+          # with what is actually on disk, and an absent one must SAY SO on its own route.
+          # A gate that cannot go red is not a gate, so this one bites on silence — a
+          # surface that vanished without a marker fails the deploy even though the missing
+          # wasm itself does not.
+          test -s site/dist/wasm-provenance.json
+          test -s site/dist/wasm-provenance.html
+          python3 - <<'PY'
+          import json, os, sys
+          d = json.load(open("site/dist/wasm-provenance.json"))
+          # the page that each surface's own route serves
+          ROUTE_PAGE = {
+              "webimage": "deos/index.html",
+              "cockpit_gpui": "cockpit-gpui/index.html",
+              "cards": "cards/index.html",
+          }
+          bad = []
+          for key, s in d["surfaces"].items():
+              blob = os.path.join("site/dist", s["blob"])
+              on_disk = os.path.exists(blob) and os.path.getsize(blob) > 0
+              if on_disk != s["included"]:
+                  bad.append(f"{key}: record says included={s['included']}, on disk={on_disk}")
+              page = os.path.join("site/dist", ROUTE_PAGE[key])
+              if not os.path.exists(page):
+                  bad.append(f"{key}: route page {ROUTE_PAGE[key]} is missing entirely "
+                             f"(the stamp should have stood a marker page up)")
+                  continue
+              html = open(page, encoding="utf-8", errors="replace").read()
+              if 'name="dregg-wasm-provenance"' not in html:
+                  bad.append(f"{key}: {ROUTE_PAGE[key]} carries no provenance meta tag")
+              if not on_disk and ("dregg-provenance-marker" not in html
+                                  and "is not in this build" not in html):
+                  bad.append(f"{key}: wasm is ABSENT and {ROUTE_PAGE[key]} does not say so "
+                             f"— that is the silent degradation this check exists to catch")
+          if bad:
+              print("ERROR: the deployed site misdescribes its own wasm:")
+              for b in bad:
+                  print("  - " + b)
+              sys.exit(1)
+          w = d["wasm"]
+          age = f"{w['age_days']}d" if w["age_days"] is not None else "unknown"
+          print(f"wasm: source={w['source']} run={w['run_id']} age={age} "
+                f"stale={w['stale']} included={d['included']} missing={d['missing']}")
+          PY
           echo "dist OK: $(find site/dist -type f | wc -l) files"
 
       - name: Upload Pages artifact

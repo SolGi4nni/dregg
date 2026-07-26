@@ -28,16 +28,25 @@ rev 0a4a554e144f4e60107555ea7a11cd9969d6208b
 ```
 
 This rev is pinned in lockstep by the three workflows that build the wasm:
-`.github/workflows/pages.yml`, `.github/workflows/extension.yml`, and
-`.github/workflows/publish-sdk-ts.yml` (grep `REV=` / the clone step). To build
-the wasm locally:
+`.github/workflows/pages-wasm.yml`, `.github/workflows/extension.yml`, and
+`.github/workflows/publish-sdk-ts.yml` (grep `REV=` / the clone step).
+`scripts/check-p3-rev.sh` enforces the lockstep and fails if any of them drifts or
+loses the pin. (The Pages wasm jobs lived in `pages.yml` until 2026-07-26; that
+workflow is now the cargo-free content path and pins nothing.) To build the wasm
+locally:
 
 ```sh
 git clone https://github.com/emberian/plonky3-recursion ../plonky3-recursion
 git -C ../plonky3-recursion checkout 0a4a554e144f4e60107555ea7a11cd9969d6208b
-cd wasm && RUSTFLAGS="-C link-arg=-zstack-size=33554432" \
+cd wasm && RUSTFLAGS='--cfg getrandom_backend="wasm_js" -C link-arg=-zstack-size=33554432' \
   wasm-pack build . --target web --out-dir pkg --release
 ```
+
+Both RUSTFLAGS travel together or neither works: `.cargo/config.toml` sets the
+`getrandom_backend` cfg under `[target.wasm32-unknown-unknown]`, and cargo does
+**not** merge that with the `RUSTFLAGS` environment variable — env wins outright and
+the config flags are dropped, after which getrandom 0.3/0.4 refuse to compile for
+wasm32.
 
 (The root workspace pins the same four crates at the SAME rev `0a4a554e` for
 the native lanes — `Cargo.toml:236-239`, plain git deps, no `[patch]`. The revs

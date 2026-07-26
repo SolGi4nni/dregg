@@ -54,7 +54,12 @@ status=0
 blind_files=(
   ".github/workflows/extension.yml"
   ".github/workflows/publish-sdk-ts.yml"
-  ".github/workflows/pages.yml"
+  # Was pages.yml until 2026-07-26. The Pages deploy split in two: the three wasm-pack
+  # jobs (the only things that clone the sibling fork) moved to pages-wasm.yml, and
+  # pages.yml is now a cargo-free content path that pins nothing. This gate's own
+  # vanished-mirror check would have caught the move as a FAIL — which is the gate
+  # working — so the mirror is re-pointed rather than dropped.
+  ".github/workflows/pages-wasm.yml"
   "wasm/Cargo.toml"
 )
 for rel in "${blind_files[@]}"; do

@@ -36,8 +36,27 @@
 #   GPUI=0 scripts/build-pages-dist.sh    # skip the heavy gpui-web cockpit build
 #   ATLAS=0 scripts/build-pages-dist.sh   # skip the atlas copy
 #   REUSE_WASM=1 scripts/build-pages-dist.sh  # reuse already-built wasm pkgs + baked
-#                                             # cards (fast local assembly/verify; no
-#                                             # recompile). CI uses the full build.
+#                                             # cards; no recompile, no cargo.
+#
+# TWO MODES, TWO FAILURE POLARITIES — this is the load-bearing distinction.
+#
+#   FULL BUILD (REUSE_WASM=0). This script BUILDS the wasm. A surface that is missing
+#   afterwards, or a browser-surface tooth that bites, is a REAL BREAK in the thing this
+#   invocation just produced, and it ABORTS. That is where a failure belongs, and it is
+#   what `.github/workflows/pages-wasm.yml` (the heavy, scheduled wasm workflow) runs
+#   its equivalent of.
+#
+#   REUSE_WASM=1. This script only ASSEMBLES, from wasm somebody else built — in CI, the
+#   fast content path (`.github/workflows/pages.yml`) downloading artifacts from the most
+#   recent heavy run. Here a missing or stale surface is NOT this build's fault and MUST
+#   NOT fail it: a red deploy job would block a typo fix on the landing page, which is
+#   the exact coupling the split exists to remove. So the assembly CONTINUES and the
+#   degradation is made VISIBLE IN THE RENDERED SITE instead — see
+#   `scripts/stamp-wasm-provenance.sh`, which this script always runs last, and which
+#   writes /wasm-provenance.{json,html} plus in-page markers on every affected surface.
+#
+# The invariant is NO SILENT DEGRADATION, not "no degradation". Every surface this build
+# could not ship says so on the page where it would have been.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -65,6 +84,39 @@ greenify() {
 echo "=== clean dist ==="
 rm -rf "$DIST"
 mkdir -p "$DIST"
+
+# Facts about THIS assembly that scripts/stamp-wasm-provenance.sh turns into the
+# deployed provenance record and the in-page markers. Consumed and deleted there, so it
+# never ships.
+NOTES="$DIST/.assembly-notes"
+note() { echo "$1" >>"$NOTES"; }
+
+# The mtime of the SOURCE blob, i.e. when that wasm was actually built. Recorded because
+# `cp -R` does NOT preserve mtimes, so the copy inside the dist is stamped with the COPY
+# time — reading it would report every bundle as built seconds ago, which is precisely the
+# "assume fresh" answer a staleness signal must never give. Only consulted when no CI run
+# provenance was supplied (a local run); in CI, WASM_PROV_BUILT_AT is authoritative.
+note_src_built_at() {
+  local key="$1" path="$2" ts
+  ts="$(python3 -c 'import os,sys,datetime as d;print(d.datetime.fromtimestamp(os.path.getmtime(sys.argv[1]),d.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$path" 2>/dev/null || true)"
+  [ -n "$ts" ] && note "surface.$key.src_built_at=$ts"
+  return 0
+}
+
+# A surface this mode is not allowed to ship silently. In REUSE_WASM the absence is
+# recorded and the assembly continues (the site will carry a marker); in a full build the
+# same absence means the build we just ran is broken, so it aborts.
+absent_surface() {
+  local key="$1" what="$2" fix="$3"
+  note "surface.$key=absent"
+  if [ "$REUSE_WASM" = "1" ]; then
+    echo "=== $what is ABSENT — the site will ship a MISSING-wasm marker for it ===" >&2
+    return 0
+  fi
+  echo "=== $what is ABSENT after a FULL build — that is a break, not a reuse gap ===" >&2
+  echo "    $fix" >&2
+  exit 1
+}
 
 # ── 0. THE LANDING (sober, static, green) ────────────────────────────────────────
 echo "=== 0/6 the sober landing + shared green assets ==="
@@ -142,8 +194,17 @@ if [ "$REUSE_WASM" = "0" ]; then
 fi
 mkdir -p "$DIST/deos"
 cp "$ROOT/site/deos/index.html" "$DIST/deos/index.html"
-cp -R "$ROOT/starbridge-v2/web/pkg" "$DIST/deos/pkg"
-test -s "$DIST/deos/pkg/starbridge_web_bg.wasm"
+# The page ships EITHER WAY. Without the pkg the cockpit cannot boot, and the stamp puts a
+# visible MISSING-wasm marker on it rather than serving a dead app with no explanation.
+if [ -s "$ROOT/starbridge-v2/web/pkg/starbridge_web_bg.wasm" ]; then
+  cp -R "$ROOT/starbridge-v2/web/pkg" "$DIST/deos/pkg"
+  test -s "$DIST/deos/pkg/starbridge_web_bg.wasm"
+  note "surface.webimage=present"
+  note_src_built_at webimage "$ROOT/starbridge-v2/web/pkg/starbridge_web_bg.wasm"
+else
+  absent_surface webimage "the WebImage cockpit pkg (starbridge-v2/web/pkg)" \
+    "wasm-pack build starbridge-v2/web --target web --out-dir pkg --release"
+fi
 
 # ── 2. THE FULL gpui-web COCKPIT (WebGPU canvas), node-less ──────────────────────
 # The gpui-web build pulls deos-matrix AND zed's sqlez — the one `links="sqlite3"`
@@ -153,24 +214,35 @@ test -s "$DIST/deos/pkg/starbridge_web_bg.wasm"
 # than failing the whole deploy. GPUI=1 REQUIRES it (fail-hard); default soft.
 if [ "$GPUI" = "0" ]; then
   echo "=== 2/6 SKIPPED the gpui-web cockpit (GPUI=0) ==="
-elif [ "$REUSE_WASM" = "1" ] && [ -d "$ROOT/starbridge-v2/web/pkg-gpui" ]; then
+  note "surface.cockpit_gpui=skipped-by-request"
+elif [ "$REUSE_WASM" = "1" ] && [ -s "$ROOT/starbridge-v2/web/pkg-gpui/starbridge_web_bg.wasm" ]; then
   echo "=== 2/6 reuse the prebuilt gpui-web cockpit ==="
   mkdir -p "$DIST/cockpit-gpui"
   cp "$ROOT/starbridge-v2/web/cockpit_gpui.html" "$DIST/cockpit-gpui/index.html"
   cp -R "$ROOT/starbridge-v2/web/pkg-gpui" "$DIST/cockpit-gpui/pkg-gpui"
+  note "surface.cockpit_gpui=present"
+  note_src_built_at cockpit_gpui "$ROOT/starbridge-v2/web/pkg-gpui/starbridge_web_bg.wasm"
 elif [ "$REUSE_WASM" = "1" ]; then
-  echo "=== 2/6 SKIPPED the gpui-web cockpit (REUSE_WASM, no prebuilt pkg-gpui) ==="
+  # WAS THE SILENT ONE. Until 2026-07-26 this branch omitted /cockpit-gpui/ entirely and
+  # said so only on stderr: the deployed site simply had no such directory, and a visitor
+  # following the landing page's own link got a bare 404 with no account of why. The
+  # omission stays non-fatal — that is correct — but the stamp now stands a marker page up
+  # at that route naming the artifact that was missing.
+  echo "=== 2/6 NO prebuilt pkg-gpui — /cockpit-gpui/ ships as a MISSING-wasm marker ===" >&2
+  note "surface.cockpit_gpui=absent"
 elif wasm-pack build "$ROOT/starbridge-v2/web" --target web --out-dir pkg-gpui --release -- --features gpui-web; then
   echo "=== 2/6 gpui-web cockpit built ==="
   mkdir -p "$DIST/cockpit-gpui"
   cp "$ROOT/starbridge-v2/web/cockpit_gpui.html" "$DIST/cockpit-gpui/index.html"
   cp -R "$ROOT/starbridge-v2/web/pkg-gpui" "$DIST/cockpit-gpui/pkg-gpui"
   test -s "$DIST/cockpit-gpui/pkg-gpui/starbridge_web_bg.wasm"
+  note "surface.cockpit_gpui=present"
 elif [ "${GPUI}" = "1" ]; then
   echo "=== 2/6 gpui-web cockpit FAILED and GPUI=1 (required) — failing ===" >&2
   exit 1
 else
   echo "=== 2/6 gpui-web cockpit did not resolve (the matrix+zed sqlite pair) — shipping without it ===" >&2
+  note "surface.cockpit_gpui=absent"
 fi
 
 # ── 3. THE CARD GALLERY: the deos-js cards (wasm/ runtime bindings), node-less ────
@@ -188,73 +260,75 @@ fi
 #     > site/light-client/history.json
 # Regenerate it whenever the circuit/VK or the WholeChainProofBytes wire format moves
 # (e.g. the v12 geometry epoch turned the scalar roots into 8-felt sequences) — the
-# FRESHNESS TOOTH below refuses to assemble a dist whose baked demo the tab would refuse.
+# FRESHNESS TOOTH below (scripts/check-web-surface-teeth.sh) catches a baked demo the
+# visitor's tab would refuse: it ABORTS a full build, and marks the shipped page as
+# known-broken in REUSE_WASM mode.
 test -s "$ROOT/site/light-client/history.json"
 mkdir -p "$DIST/cards"
-for card in index counter inspector tally kvstore doccollab; do
-  cp "$ROOT/deos-view/target/web-out/dist/$card.html" "$DIST/cards/$card.html"
-  greenify "$DIST/cards/$card.html"
-done
-cp -R "$ROOT/wasm/pkg" "$DIST/cards/pkg"
-test -s "$DIST/cards/pkg/dregg_wasm_bg.wasm"
+# TWO independent inputs from the heavy path: the BAKED gallery pages (artifact
+# `cards-baked`) and the card-world wasm (artifact `wasm-cards`). Either can be absent in
+# REUSE_WASM mode, and each gets its own marker rather than aborting the content deploy.
+if [ -s "$ROOT/deos-view/target/web-out/dist/index.html" ]; then
+  for card in index counter inspector tally kvstore doccollab; do
+    cp "$ROOT/deos-view/target/web-out/dist/$card.html" "$DIST/cards/$card.html"
+    greenify "$DIST/cards/$card.html"
+  done
+  note "cards_baked=present"
+else
+  absent_surface cards_baked "the baked card gallery pages (deos-view/target/web-out/dist)" \
+    "cd deos-view && cargo run -q --no-default-features --features web --example web_render_card"
+fi
+if [ -s "$ROOT/wasm/pkg/dregg_wasm_bg.wasm" ]; then
+  cp -R "$ROOT/wasm/pkg" "$DIST/cards/pkg"
+  test -s "$DIST/cards/pkg/dregg_wasm_bg.wasm"
+  note "surface.cards=present"
+  note_src_built_at cards "$ROOT/wasm/pkg/dregg_wasm_bg.wasm"
+else
+  absent_surface cards "the card-world wasm (wasm/pkg)" \
+    "RUSTFLAGS=... wasm-pack build wasm --target web --out-dir pkg --release"
+fi
 
-# FRESHNESS TOOTH (green-or-bust): the committed history.json must ATTEST under the
-# just-built wasm engine. A circuit/VK epoch that obsoletes the baked artifact fails
-# the assembly loudly (regenerate with the produce_history_envelope command above)
-# instead of shipping a demo the visitor's tab will refuse.
-node --input-type=module -e "
-import { readFileSync } from 'node:fs';
-const m = await import('$DIST/cards/pkg/dregg_wasm.js');
-await m.default({ module_or_path: readFileSync('$DIST/cards/pkg/dregg_wasm_bg.wasm') });
-const baked = JSON.parse(readFileSync('$ROOT/site/light-client/history.json', 'utf8'));
-let v;
-try { v = m.verify_devnet_history(JSON.stringify(baked.envelope), baked.anchor_hex); }
-catch (e) { v = { attested: false, named_floor: String(e?.message ?? e) }; }
-if (!v.attested) {
-  console.error('ERROR: site/light-client/history.json does NOT attest under the just-built engine — the circuit/VK moved since the artifact was folded. Regenerate it (see the comment above this tooth). Refusal: ' + v.named_floor);
-  process.exit(1);
-}
-console.log('light-client freshness tooth: the baked aggregate attests (' + v.num_turns + ' turns)');
-"
-
-# TRANSCLUSION TOOTH (green-or-bust): /transclusion/ drives these exact entry points
-# from the SAME /cards/pkg engine. Run the demo's spine headless and assert BOTH
-# polarities: a verified include SHOWS the committed bytes, a LIVE read FOLLOWS an
-# amend, and a byte-tamper forge is REFUSED with the named ContentHashMismatch. A
-# wasm surface that stops refusing (or stops verifying) fails the assembly loudly
-# instead of shipping a demo whose teaching claims went stale.
-node --input-type=module -e "
-import { readFileSync } from 'node:fs';
-const m = await import('$DIST/cards/pkg/dregg_wasm.js');
-await m.default({ module_or_path: readFileSync('$DIST/cards/pkg/dregg_wasm_bg.wasm') });
-const h = m.transclusion_create();
-const body = '<h1>the charter</h1>';
-m.transclusion_publish(h, 'constitution', body, 'dregg://constitution');
-m.transclusion_publish(h, 'essay', '<p>an essay</p>', 'dregg://essay');
-const q = m.transclusion_include_into(h, 'essay', 'constitution');
-if (!q.verifies || q.text !== body || !q.finalized) {
-  console.error('ERROR: transclusion include did not verify the committed bytes: ' + JSON.stringify(q));
-  process.exit(1);
-}
-const bl = m.transclusion_backlinks(h, 'constitution');
-if (bl.count !== 1 || bl.observers[0].observer_name !== 'essay') {
-  console.error('ERROR: the include did not record a receipt-pinned backlink: ' + JSON.stringify(bl));
-  process.exit(1);
-}
-const amended = '<h1>the charter, amended</h1>';
-m.transclusion_amend(h, 'constitution', amended);
-const live = m.transclusion_read_live(h, 'constitution');
-if (live.text !== amended || !live.verifies) {
-  console.error('ERROR: the live read did not follow the amend: ' + JSON.stringify(live));
-  process.exit(1);
-}
-const forge = m.transclusion_forge_attempt(h, 'constitution', '<h1>PWNED</h1>');
-if (!forge.refused || forge.reason !== 'ContentHashMismatch') {
-  console.error('ERROR: the forge was NOT refused with ContentHashMismatch: ' + JSON.stringify(forge));
-  process.exit(1);
-}
-console.log('transclusion tooth: include verifies + backlink pinned + live follows + the forge is refused (' + forge.reason + ')');
-"
+# THE BROWSER-SURFACE TEETH — the light-client freshness check and the transclusion
+# both-polarities check. They now live in scripts/check-web-surface-teeth.sh (one source)
+# so the HEAVY wasm workflow can run the SAME two checks against the wasm it just built
+# and go RED there, which is where a genuine circuit/VK or refusal-path break belongs.
+#
+# The polarity here follows the mode (see this script's header):
+#   full build  — a tooth that bites ABORTS. This invocation built that wasm; it is broken.
+#   REUSE_WASM  — a tooth that bites is RECORDED, and the site ships a visible "this demo
+#                 is known broken in this build" marker on the affected pages. A content
+#                 deploy is not hostage to a baked artifact somebody else needs to re-fold.
+if [ -s "$DIST/cards/pkg/dregg_wasm_bg.wasm" ]; then
+  teeth_log="$(mktemp)"
+  # NOT `... | tee`: a pipeline reports the LAST command's status, so piping would read
+  # tee's success as the teeth's success and the gate would never be able to bite.
+  set +e
+  bash "$ROOT/scripts/check-web-surface-teeth.sh" "$DIST/cards/pkg" >"$teeth_log" 2>&1
+  teeth_rc=$?
+  set -e
+  cat "$teeth_log"
+  teeth_detail="$(tr '\n' ' ' <"$teeth_log" | tr -s ' ' | cut -c1-400)"
+  rm -f "$teeth_log"
+  if [ "$teeth_rc" -eq 0 ]; then
+    note "teeth.web_surface=green"
+  elif [ "$teeth_rc" -eq 2 ]; then
+    # The script could not test (no node, or no baked aggregate). Recorded, never assumed
+    # green — an untested surface that reports "fine" is the hole this repo keeps finding.
+    note "teeth.web_surface=not-run"
+    note "teeth.web_surface.detail=$teeth_detail"
+  elif [ "$REUSE_WASM" = "1" ]; then
+    echo "=== a browser-surface tooth BIT on REUSED wasm — the site ships a KNOWN-BROKEN" >&2
+    echo "    marker on the affected pages and the content deploy continues ===" >&2
+    note "teeth.web_surface=bit"
+    note "teeth.web_surface.detail=$teeth_detail"
+  else
+    echo "=== a browser-surface tooth BIT on wasm THIS BUILD produced — failing ===" >&2
+    exit 1
+  fi
+else
+  note "teeth.web_surface=not-run"
+  note "teeth.web_surface.detail=no card-world wasm in this build, so the teeth had nothing to test"
+fi
 
 # ── 4. THE ATLAS (relative paths, works at any subpath) ──────────────────────────
 if [ "$ATLAS" = "1" ] && [ -d "$ROOT/dregg-atlas/site" ]; then
@@ -269,6 +343,14 @@ fi
 # ── 5. .nojekyll so /pkg/ + dotfiles ship verbatim ───────────────────────────────
 echo "=== 5/6 finalize ==="
 touch "$DIST/.nojekyll"
+
+# ── 6. STAMP THE PROVENANCE + MARK EVERY SURFACE THIS BUILD COULD NOT SHIP ───────
+# Always runs, in both modes. It consumes $DIST/.assembly-notes (written above), writes
+# /wasm-provenance.{json,html}, puts a <meta name="dregg-wasm-provenance"> on every
+# wasm-serving page, and stands a visible marker where a surface is absent, stale, or
+# known-broken. It exits non-zero ONLY if the static content itself failed to assemble.
+echo "=== 6/6 stamp the wasm provenance into the dist ==="
+DIST="$DIST" bash "$ROOT/scripts/stamp-wasm-provenance.sh"
 
 echo
 echo "dist ready: $DIST"
