@@ -7,8 +7,10 @@ onto the collision GAME the tree already had.
 `Storage.DeployedFloorRefuted` proves three things and this file builds on all three:
 
   * `Poseidon2Binding.Poseidon2SpongeCR` is LITERAL INJECTIVITY, `∀ xs ys, sponge xs = sponge ys → xs = ys`;
-  * `deployed_collides : poseidon2Hash [-1] = poseidon2Hash [0] := rfl` — `Storage/Deployed.lean:32-33`
-    routes every limb through `x.toNat.toUInt64` and `Int.toNat` CLAMPS negatives to zero;
+  * `deployed_collides` — a free `rfl` collision of the deployed hash. ⛑ Its WITNESS moved on
+    2026-07-26: it used to be `poseidon2Hash [-1] = poseidon2Hash [0]`, from the `x.toNat.toUInt64`
+    clamp (an encoder BUG, now fixed — `Storage.canonLimb`); it is now
+    `poseidon2Hash [0] = poseidon2Hash [p]`, from the mod-`p` reduction (correct field semantics);
   * so `deployed_floor_false` REFUTES the floor at the deployed hash, and no encoder repairs it —
     `poseidon2Hash` factors through `UInt64`, a finite image over an infinite domain, so exact
     injectivity is unsatisfiable at ANY encoding. The floor is MIS-SPECIFIED, not mis-implemented.
@@ -43,9 +45,9 @@ family. Copying it would have been the same disease one costume along.
   * **SATISFIABLE** — `hashCRHardQuant_of_injective` (§2): a family injective at every key satisfies it
     at EVERY class, `HashFloorHonesty.idFamily_CR` exhibits one. Not empty.
   * **REFUTABLE** — and, at the deployed encoder, ACTUALLY REFUTED (§4):
-    `deployedFloor_refuted_by_clamp` proves the floor FALSE for any class containing the CONSTANT finder
-    `fun _ _ => ([-1], [0])`, whose advantage is the constant `1` because the clamp collision holds by
-    `rfl`. A constant finder is efficient under any cost model worth the name.
+    `deployedFloor_refuted_by_modp_alias` proves the floor FALSE for any class containing the CONSTANT
+    finder `fun _ _ => ([0], [p])`, whose advantage is the constant `1` because the alias collision holds
+    by `rfl`. A constant finder is efficient under any cost model worth the name.
   * **NOT PROVABLE** — `Eff` is a parameter with no cost model in this repository
     (`FloorGames` §8); at `Eff := ⊤` the floor is FALSE for every compressing family, so it cannot be a
     theorem, and at `Eff := ⊥` it is vacuous (`hashCRHardQuant_bot_vacuous`). Both poles are proved
@@ -54,11 +56,19 @@ family. Copying it would have been the same disease one costume along.
 ## ⚑ AND THE DIFFERENCE THE CUTOVER MAKES, STATED SHARPLY
 
 Injectivity was refuted at the deployed hash for an UNFIXABLE reason (cardinality). The game floor is
-refuted at the deployed hash for a FIXABLE one (§4.1: the `Int.toNat` clamp is a plain encoder bug —
-`babyBearLimb` separates `-1` from `0` where `toNat` merges them). That is the whole point of having a
-floor that can go red for a REASON: a hash that fails injectivity tells you nothing, a hash that fails
-the collision game hands you the collision. The clamp is a live storage bug this file NAMES; it is not
-repaired here, because `Storage/Deployed.lean`'s limb encoder is on the deployed FFI path.
+refuted at the deployed hash for a FIXABLE one (§4.1: the `Int.toNat` clamp was a plain encoder bug —
+the canonical reduction separates `-1` from `0` where `toNat` merged them). That is the whole point of
+having a floor that can go red for a REASON: a hash that fails injectivity tells you nothing, a hash
+that fails the collision game hands you the collision.
+
+⛑ **AND THE BUG THIS FILE NAMED HAS BEEN FIXED (2026-07-26).** `Storage/Deployed.lean` now encodes
+limbs with `canonLimb` (`(x % babyBearP).toNat.toUInt64`) instead of the clamping `x.toNat.toUInt64`.
+The negative-integer ghost channel is CLOSED — `Storage.prefix_ghost_pair_costs_a_sponge_collision`
+proves the `key = -1` / `key = 0` pair now costs a genuine Poseidon2 collision instead of being free
+by `rfl`. The floor is still RED at the deployed encoder (§4), but the witness moved to the mod-`p`
+ALIAS, which is correct field semantics rather than a defect — and that residual is a WIRE-contract
+question, not an encoder one (§4.1). This is the floor earning its keep twice: it diagnosed a real
+bug, the bug got fixed, and it kept pointing at what is still open.
 
 ## What is migrated
 
@@ -272,11 +282,17 @@ lifted into the family (its `hashAt` is `poseidon2Hash` at every tag, by `rfl`),
 there at any class containing a constant adversary — because `deployed_collides` is a KNOWN collision,
 so a finder can simply hardcode it.
 
-Read the two refutations side by side. Injectivity fails at the deployed hash because `List ℤ` is
-infinite and the image is not: nothing fixes it. The GAME fails at the deployed hash because
-`x.toNat.toUInt64` clamps `-1` and `0` onto the same limb: an encoder bug, with a name and a fix
-(§4.1). A floor whose failure is diagnosable is doing its job; the old one could not tell the two cases
-apart because it was false in both. -/
+⛑ **THE WITNESS MOVED WITH THE 2026-07-26 ENCODER REPAIR, AND THE MOVE IS THE FINDING.** It used to be
+the CLAMP pair `([-1], [0])`: a bug. It is now the mod-`p` ALIAS pair `([0], [p])`, because `canonLimb`
+is a reduction and those two integers denote ONE BabyBear element. So the game floor is still red at
+the deployed encoder, but for a reason that is no longer an implementation defect — it is the wire
+admitting integers where the field has residues. That distinction is exactly what a diagnosable floor
+buys and what literal injectivity could never draw: it was false at both encoders and could not tell
+a bug from a type error at the boundary.
+
+Read the three refutations side by side. Injectivity fails because `List ℤ` is infinite and the image
+is not: nothing fixes it. The GAME failed at the CLAMP: fixed, §4.1. The GAME still fails at the
+ALIAS: fixable, but at the WIRE (a range check in `contentRootFFI`), not in the hash. -/
 
 /-- **THE DEPLOYED SPONGE, AS THE KEYED FAMILY.** One effective tag (the deployed Poseidon2 is unkeyed;
 its domain separation IS its key, and there is exactly one here), whose sponge is literally
@@ -294,87 +310,140 @@ idealization of it. -/
 theorem deployedSponge_is_poseidon2Hash (n : ℕ) :
     (spongeFamily deployedSponge).H n () = poseidon2Hash := rfl
 
-/-- **THE CLAMP FINDER.** The adversary that simply outputs the collision the deployed encoder hands it
-for free. It is CONSTANT — no search, no key-dependence, no oracle: efficient under any cost model this
-tree could ever adopt. -/
-def clampFinder : Adversary (hashGame (spongeFamily deployedSponge)) where
-  run := fun _ _ => ([(-1 : ℤ)], [(0 : ℤ)])
+/-- **THE ALIAS FINDER.** The adversary that simply outputs the collision the deployed encoder hands it
+for free: `0` and `p`, two integer spellings of one BabyBear element. It is CONSTANT — no search, no
+key-dependence, no oracle: efficient under any cost model this tree could ever adopt.
 
-/-- The clamp finder wins at EVERY key: its pair is distinct, and `deployed_collides` (an `rfl`) makes
+⛑ Until 2026-07-26 this was the CLAMP finder `([-1], [0])`, and that pair was available because of an
+encoder BUG. It has been fixed (`Storage.canonLimb`); this finder is the surviving witness, and it wins
+for a structural reason the encoder cannot remove — only the WIRE can (§4.1). -/
+def aliasFinder : Adversary (hashGame (spongeFamily deployedSponge)) where
+  run := fun _ _ => ([(0 : ℤ)], [(2013265921 : ℤ)])
+
+/-- The alias finder wins at EVERY key: its pair is distinct, and `deployed_collides` (an `rfl`) makes
 the images equal. -/
-theorem clampFinder_hit (l : ℕ) (t : (hashGame (spongeFamily deployedSponge)).Inst l) :
-    clampFinder.hit l t = true := by
-  refine (Adversary.hit_eq_true clampFinder l t).mpr ⟨?_, deployed_collides⟩
-  show ([(-1 : ℤ)] : List ℤ) ≠ ([0] : List ℤ)
+theorem aliasFinder_hit (l : ℕ) (t : (hashGame (spongeFamily deployedSponge)).Inst l) :
+    aliasFinder.hit l t = true := by
+  refine (Adversary.hit_eq_true aliasFinder l t).mpr ⟨?_, deployed_collides⟩
+  show ([(0 : ℤ)] : List ℤ) ≠ ([2013265921] : List ℤ)
   decide
 
-/-- The clamp finder's advantage is the constant `1`. -/
-theorem clampFinder_adv :
-    gameAdv (hashGame (spongeFamily deployedSponge)) clampFinder = fun _ => (1 : ℝ) := by
+/-- The alias finder's advantage is the constant `1`. -/
+theorem aliasFinder_adv :
+    gameAdv (hashGame (spongeFamily deployedSponge)) aliasFinder = fun _ => (1 : ℝ) := by
   funext l
-  have hall : clampFinder.hit l = fun _ => true := by
-    funext t; exact clampFinder_hit l t
+  have hall : aliasFinder.hit l = fun _ => true := by
+    funext t; exact aliasFinder_hit l t
   show @winProb ((hashGame (spongeFamily deployedSponge)).Inst l)
-      ((hashGame (spongeFamily deployedSponge)).instFin l) (clampFinder.hit l) = 1
+      ((hashGame (spongeFamily deployedSponge)).instFin l) (aliasFinder.hit l) = 1
   rw [hall]
   exact @winProb_top _ ((hashGame (spongeFamily deployedSponge)).instFin l)
     ((hashGame (spongeFamily deployedSponge)).instNe l)
 
-/-- **⚑ THE TOOTH — THE GAME FLOOR IS REFUTED AT THE DEPLOYED ENCODER.** For ANY adversary class
-containing the constant clamp finder, the deployed sponge's collision floor is FALSE: that finder's
+/-- **⚑ THE TOOTH — THE GAME FLOOR IS STILL REFUTED AT THE DEPLOYED ENCODER.** For ANY adversary class
+containing the constant alias finder, the deployed sponge's collision floor is FALSE: that finder's
 advantage is the constant `1`, which is not negligible.
 
-This is the floor doing exactly what a floor must — going RED on a broken hash. It is also a live
-storage finding: `Storage/Deployed.lean`'s limb encoder gives away a collision for free, so the bucket
-content root binds NOTHING against an adversary that knows one integer. -/
-theorem deployedFloor_refuted_by_clamp
+This is the floor doing exactly what a floor must — going RED on a hash that gives a collision away.
+The live finding is now narrower than it was, and located somewhere else: the HASH is fine, the WIRE
+(`contentRootFFI`, which parses arbitrary `String.toInt?`) admits two spellings of one field element. -/
+theorem deployedFloor_refuted_by_modp_alias
     (Eff : Adversary (hashGame (spongeFamily deployedSponge)) → Prop)
-    (hIn : Eff clampFinder) :
+    (hIn : Eff aliasFinder) :
     ¬ HashCRHardQuant (spongeFamily deployedSponge) Eff := by
   intro hHard
-  have h := hHard clampFinder hIn
-  rw [clampFinder_adv] at h
+  have h := hHard aliasFinder hIn
+  rw [aliasFinder_adv] at h
   exact not_negl_one h
 
-/-- **⚑ AND THE REFUTATION BITES THE STORAGE KEYSTONE.** The equivocator that presents two buckets
-differing only in a limb the clamp merges wins the break game at every tag, so `contentRootDeployed`
-genuinely fails to bind at the deployed encoder — this is not a hypothetical.
+/-- **⚑ AND THE REFUTATION STILL BITES THE STORAGE KEYSTONE — NARROWER.** An object with `key = 0` and
+the same object with `key = p` have the SAME deployed leaf, hence the same content root, while being
+DIFFERENT `Object`s. Since `contentRootFFI` accepts arbitrary decimal integers, this ghost object is
+reachable across the FFI boundary today.
 
-Concretely: an object with `key = -1` and the same object with `key = 0` have the SAME deployed leaf,
-hence the same content root, while being DIFFERENT objects. -/
+⚠ Note precisely what this is and is not. As FIELD elements those two keys are equal, so the hash is
+behaving correctly; the defect is a TYPE ERROR AT THE WIRE — `Object.key : ℤ` where the encoder's
+domain is `ZMod p`. §4.1 gives the recipe. -/
 theorem deployed_ghost_object_exists :
-    ({key := -1, contentType := 0, bodyDigest := 0} : Object)
-        ≠ {key := 0, contentType := 0, bodyDigest := 0}
-    ∧ contentRootDeployed [{key := -1, contentType := 0, bodyDigest := 0}]
-        = contentRootDeployed [{key := 0, contentType := 0, bodyDigest := 0}] :=
+    ({key := 0, contentType := 0, bodyDigest := 0} : Object)
+        ≠ {key := 2013265921, contentType := 0, bodyDigest := 0}
+    ∧ contentRootDeployed [{key := 0, contentType := 0, bodyDigest := 0}]
+        = contentRootDeployed [{key := 2013265921, contentType := 0, bodyDigest := 0}] :=
   ⟨by decide, rfl⟩
 
-/-! ### §4.1 — the cause, ISOLATED: the clamp is an ENCODER bug, and it has a fix.
+/-- **⛑ THE PRE-FIX GHOST OBJECT IS DEAD — the repair, cited at the exact pair that broke.** The
+`key = -1` / `key = 0` pair no longer shares a content root for free: equal roots there now yield a
+GENUINE sponge collision, which is the guarantee `contentRootDeployed_binds_or_collides` was always
+supposed to deliver and which the clamp was stealing.
 
-The point of the whole cutover, in two `decide`s: the deployed limb map merges `-1` and `0`, while the
-canonical BabyBear reduction separates them. The collision is therefore a property of
-`Storage/Deployed.lean:33`, not of Poseidon2 — which is precisely the distinction literal injectivity
-could never draw, being false at both encoders.
+⚠ The honest limit, restated here so this cannot be read up: this is NOT "the fixed root separates the
+pair". `p2compress` is `opaque`, so no theorem in this tree can evaluate the two folds and show their
+outputs differ. Separating one exhibited pair would not be injectivity anyway — and injectivity is
+UNREACHABLE here (finite `UInt64` image over an infinite domain), which is the whole reason this file
+exists. The claim that IS available is the game floor, above. -/
+theorem prefix_clamp_ghost_is_closed
+    (h : contentRootDeployed [{key := -1, contentType := 0, bodyDigest := 0}]
+        = contentRootDeployed [{key := 0, contentType := 0, bodyDigest := 0}]) :
+    SpongeColl poseidon2Hash
+      (contentRootFind poseidon2Hash [{key := -1, contentType := 0, bodyDigest := 0}]
+        [{key := 0, contentType := 0, bodyDigest := 0}]) :=
+  Storage.prefix_ghost_pair_costs_a_sponge_collision h
 
-⚑ **NOT REPAIRED HERE.** `poseidon2Hash` is on the deployed FFI path (`@[export
-dregg_storage_content_root]`); changing its limb encoding changes emitted roots and is a wire change.
-This file NAMES the bug and proves it is the cause; the flip is a separate, ember-visible change. -/
+/-! ### §4.1 — the cause, ISOLATED: the clamp WAS an encoder bug, and it is now FIXED.
 
-/-- The deployed limb map (`Storage/Deployed.lean:33`), isolated. -/
-def deployedLimb (x : ℤ) : UInt64 := x.toNat.toUInt64
+The point of the whole cutover, in two `decide`s: the pre-fix limb map merged `-1` and `0`, while the
+canonical BabyBear reduction separates them. The collision was therefore a property of
+`Storage/Deployed.lean`'s limb encoder, not of Poseidon2 — precisely the distinction literal
+injectivity could never draw, being false at both encoders.
 
-/-- The canonical BabyBear limb map: reduce into `[0, p)` first. `Int.emod` is non-negative for a
-positive modulus, so no clamping occurs. -/
-def babyBearLimb (x : ℤ) : UInt64 := (x % 2013265921).toNat.toUInt64
+⛑ **REPAIRED 2026-07-26.** `Storage.canonLimb` is now what `poseidon2Hash` uses. The migration cost was
+NIL and that is a theorem-adjacent fact about the Rust side, not an aspiration:
+`dregg_poseidon2_2to1` (`circuit/src/storage_ffi.rs:12-16`) already reduces its arguments `% BABYBEAR_P`,
+so for every limb `0 ≤ x < 2^64` the old and new encoders feed the primitive the SAME field element and
+every root over correctly-encoded data is byte-identical. Only mis-encoded limbs move.
 
-/-- **THE CAUSE.** The deployed limb map MERGES `-1` and `0` — the entire content of
+⚑ **WHAT IS STILL OPEN, AND WHERE.** The residual (§4's alias finder) is NOT in the hash and cannot be
+fixed there: `canonLimb` is a reduction, so `p`-congruent integers necessarily share a limb, and that is
+correct. The defect is that `Object.key/contentType/bodyDigest : ℤ` and `contentRootFFI` parses
+arbitrary `String.toInt?`, so the WIRE offers many spellings of one field element. THE RECIPE, named and
+deliberately not taken here because it is a wire-contract change and belongs to ember:
+
+  * make `contentRootFFI` reject any parsed limb outside `[0, babyBearP)` and return a value that
+    cannot be confused with a root (`"ERR"`, the spelling `lean_mlkem_encaps_real` already uses — NOT
+    `"0"`, which is the genuine root of the empty bucket); and
+  * state the guarantee conditionally in Lean: on canonical objects the limb map is injective, so the
+    alias finder has no canonical witness.
+
+Until that lands, the honest statement is the one §4 proves: at the deployed encoder the collision game
+is refuted by a constant finder, so `contentRootDeployed` binds only against callers that range-check
+their own limbs. -/
+
+/-- The PRE-FIX limb map, retained as the SUBJECT of the repair so the defect keeps a name. This is
+`Storage.clampLimb`; nothing calls it. -/
+def preFixLimb (x : ℤ) : UInt64 := Storage.clampLimb x
+
+/-- The canonical BabyBear limb map — reduce into `[0, p)` first. `Int.emod` is non-negative for a
+positive modulus, so no clamping occurs. ⛑ This is `Storage.canonLimb`, i.e. what is NOW DEPLOYED. -/
+def babyBearLimb (x : ℤ) : UInt64 := Storage.canonLimb x
+
+/-- **THE CAUSE (historical).** The pre-fix limb map MERGED `-1` and `0` — the entire content of the old
 `deployed_collides`, with no Poseidon2 anywhere in sight. -/
-theorem deployedLimb_collides : deployedLimb (-1) = deployedLimb 0 := by decide
+theorem preFixLimb_collides : preFixLimb (-1) = preFixLimb 0 := by decide
 
-/-- **THE FIX DIRECTION.** The canonical reduction SEPARATES them, so the collision is a property of the
+/-- **THE FIX.** The canonical reduction SEPARATES them, so the old collision was a property of the
 encoder and not of the field or of the hash. (This does not prove the fixed hash collision-resistant —
-that is the floor, and it is not provable. It proves the specific refutation of §4 stops firing.) -/
+that is the floor, and it is not provable. It proves the CLAMP refutation stops firing.) -/
 theorem babyBearLimb_separates : babyBearLimb (-1) ≠ babyBearLimb 0 := by decide
+
+/-- **THE FLIP IS LANDED, NOT DESCRIBED.** `babyBearLimb` is definitionally the limb map
+`Storage.poseidon2Hash` now calls. Without this line the two `decide`s above would be a claim about a
+function nothing uses — which is exactly what they were before 2026-07-26. -/
+theorem babyBearLimb_is_the_deployed_limb : babyBearLimb = Storage.canonLimb := rfl
+
+/-- **AND THE RESIDUAL, AT THE SAME RESOLUTION.** The deployed limb map still merges `0` and `p`. This
+is the alias finder's witness at the encoder level, and it is correct field behaviour — see §4.1's
+recipe for where it actually has to be closed. -/
+theorem babyBearLimb_aliases_mod_p : babyBearLimb 2013265921 = babyBearLimb 0 := by decide
 
 /-! ## §5 — ⚑ EVERY MIGRATED THEOREM IS STRICTLY STRONGER.
 
@@ -442,12 +511,15 @@ theorem storage_collision_disjunct_refutable (hash : List ℤ → ℤ) (hCR : Po
 #assert_axioms contentRoot_binds_advantage_bound
 #assert_axioms the_repaired_bucket_bound_fires
 #assert_axioms deployedSponge_is_poseidon2Hash
-#assert_axioms clampFinder_hit
-#assert_axioms clampFinder_adv
-#assert_axioms deployedFloor_refuted_by_clamp
+#assert_axioms aliasFinder_hit
+#assert_axioms aliasFinder_adv
+#assert_axioms deployedFloor_refuted_by_modp_alias
 #assert_axioms deployed_ghost_object_exists
-#assert_axioms deployedLimb_collides
+#assert_axioms prefix_clamp_ghost_is_closed
+#assert_axioms preFixLimb_collides
 #assert_axioms babyBearLimb_separates
+#assert_axioms babyBearLimb_is_the_deployed_limb
+#assert_axioms babyBearLimb_aliases_mod_p
 #assert_axioms storage_migration_strictly_stronger
 #assert_axioms storage_old_hypothesis_unavailable
 #assert_axioms mmr_migration_strictly_stronger
