@@ -325,6 +325,9 @@ fn teeth_lowering_table() {
 
 use dregg_cell::Ledger;
 use dregg_circuit::descriptor_ir2::{UMemBoundaryWitness, prove_vm_descriptor2_for_config};
+use dregg_circuit::effect_vm::custom_state_binding::{
+    CUSTOM_PI_STATE_PREFIX_LEN, custom_pi_state_prefix,
+};
 use dregg_circuit::effect_vm::trace_rotated::{
     NUM_PRE_LIMBS, RotatedBlockWitness, WIDE_COMMIT_CARRIER, WIDE_NUM_CARRIERS,
     empty_caveat_manifest, generate_rotated_effect_vm_descriptor_and_trace_wide,
@@ -372,7 +375,18 @@ fn bridge(w: &rw::RotationWitness) -> RotatedBlockWitness {
 /// THE GAME `CellProgram` — a combat turn's referee, authored in the circuit DSL:
 ///   * `hp_new - hp_old + dmg == 0`  (damage conservation — the `SumEquals`/`FieldDelta` tooth)
 ///   * `alive in {0,1}`              (a boolean flag — the `Binary` tooth)
-/// cols: hp_old=0, dmg=1, hp_new=2, alive=3. PIs: [hp_old, hp_new].
+/// cols: hp_old=0, dmg=1, hp_new=2, alive=3.
+///
+/// PIs are `[old8 ‖ new8 ‖ hp_old ‖ hp_new]` — 18, not 2. The deployed prover REQUIRES the
+/// `custom_state_binding` ABI of a folded custom sub-proof: the state-binding leaf
+/// (`prove_custom_leaf_with_state_commitment`) refuses a sub-program publishing fewer than
+/// `CUSTOM_PI_STATE_PREFIX_LEN` PIs rather than zero-padding it into a false prefix, and the
+/// per-turn node then `connect`s that prefix to the leg's REAL rotated roots. This fixture used to
+/// publish only `[hp_old, hp_new]`, from before that ABI: the honest fold tooth below died on the
+/// typed refusal ("the sub-program publishes 2 public input(s), but the state-binding ABI requires
+/// at least 16") and the FORGED-commitment tooth — which accepts any error — passed on that same
+/// refusal instead of on the binding it claims to measure. Same 18-PI shape as the audited template
+/// this file mirrors (`circuit-prove/tests/custom_binding_deployed_tooth.rs::state_binding_program`).
 fn combat_program() -> CellProgram {
     let descriptor = CircuitDescriptor {
         name: "dregg-game-combat-v1".to_string(),
@@ -420,7 +434,7 @@ fn combat_program() -> CellProgram {
             },
         ],
         boundaries: vec![],
-        public_input_count: 2,
+        public_input_count: CUSTOM_PI_STATE_PREFIX_LEN + 2,
         lookup_tables: vec![],
     };
     CellProgram::new(descriptor, 1)
@@ -437,18 +451,45 @@ fn combat_witness() -> (HashMap<String, Vec<BabyBear>>, usize) {
     (w, rows)
 }
 
-/// The combat program's public inputs (the commitment preimage): [hp_old, hp_new].
-fn combat_pis() -> Vec<BabyBear> {
-    vec![BabyBear::new(20), BabyBear::new(15)]
+/// The combat program's public inputs (the commitment preimage): `[old8 ‖ new8 ‖ hp_old, hp_new]`.
+///
+/// `old8`/`new8` are the state-binding prefix the deployed per-turn node connects to the LEG's real
+/// wide rotated roots (its last 16 descriptor PIs, the v9 chip commit the executor enforces the
+/// prefix against). A folded turn MUST pass the leg's real anchors here
+/// ([`combat_leg_real_roots`]); a leaf-only test that never folds against a leg passes zeros and
+/// says so, since there is no leg for the prefix to be a claim about.
+fn combat_pis(old8: &[BabyBear; 8], new8: &[BabyBear; 8]) -> Vec<BabyBear> {
+    let mut pis = custom_pi_state_prefix(old8, new8).to_vec();
+    pis.push(BabyBear::new(20));
+    pis.push(BabyBear::new(15));
+    pis
 }
 
-fn honest_bundle() -> CustomWitnessBundle {
+/// The REAL wide 8-felt rotated anchors `(old8, new8)` of the combat leg over
+/// `(CHAIN_BALANCE, nonce) -> (CHAIN_BALANCE, nonce + 1)` — probed with a ZERO claimed commitment,
+/// because the anchors come from the rotation witness over the cells' limbs + iroot and are
+/// independent of the claimed commitment. Two-phase, exactly as the audited template's
+/// `leg_real_roots`: probe the anchors, build the sub-proof PIs over them, then mint the real leg
+/// carrying the commitment of those PIs.
+fn combat_leg_real_roots(nonce: u64) -> ([BabyBear; 8], [BabyBear; 8]) {
+    let probe = mint_custom_leg(CHAIN_BALANCE, nonce, [BabyBear::ZERO; 8], None);
+    (
+        probe
+            .wide_old_root8()
+            .expect("the deployed wide custom leg is wide-anchored"),
+        probe
+            .wide_new_root8()
+            .expect("the deployed wide custom leg is wide-anchored"),
+    )
+}
+
+fn honest_bundle(pis: Vec<BabyBear>) -> CustomWitnessBundle {
     let (w, rows) = combat_witness();
     CustomWitnessBundle {
         program: combat_program(),
         witness_values: w,
         num_rows: rows,
-        public_inputs: combat_pis(),
+        public_inputs: pis,
         app_root_binding: None,
         descriptor_state_leaf: None,
     }
@@ -578,13 +619,26 @@ fn plain_nonce_turn(balance: i64, nonce: u64) -> FinalizedTurn {
     FinalizedTurn::new(DescriptorParticipant::rotated(leg))
 }
 
-/// Build the K=2 chain: turn 0 is the bundled combat turn claiming `commit`; turn 1 is a
-/// plain custom turn linking off turn 0's post-state `(b, nonce+1)`.
-fn build_chain(commit: [BabyBear; 8]) -> Vec<FinalizedTurn> {
-    let balance = 1000i64;
-    let t0_leg = mint_custom_leg(balance, 0, commit, Some(honest_bundle()));
+/// The balance every leg in the K=2 chain rides (constant across the chain — only the nonce moves).
+const CHAIN_BALANCE: i64 = 1000;
+
+/// Turn 0's HONEST material: the leg's real rotated anchors, the sub-proof PIs over them, and the
+/// genuine commitment of those PIs. Returned together so a tooth can forge EXACTLY one thing (the
+/// commitment) while the PIs stay honest — the shape that makes the forged-commitment tooth measure
+/// the binding rather than some upstream shape refusal.
+fn combat_turn0_material() -> (Vec<BabyBear>, [BabyBear; 8]) {
+    let (old8, new8) = combat_leg_real_roots(0);
+    let pis = combat_pis(&old8, &new8);
+    let commit = custom_proof_pi_commitment(&pis);
+    (pis, commit)
+}
+
+/// Build the K=2 chain: turn 0 is the bundled combat turn claiming `commit` over `pis`; turn 1 is a
+/// plain nonce-bump turn linking off turn 0's post-state `(b, nonce+1)`.
+fn build_chain(commit: [BabyBear; 8], pis: Vec<BabyBear>) -> Vec<FinalizedTurn> {
+    let t0_leg = mint_custom_leg(CHAIN_BALANCE, 0, commit, Some(honest_bundle(pis)));
     let t0 = FinalizedTurn::new(DescriptorParticipant::rotated(t0_leg));
-    let t1 = plain_nonce_turn(balance, 1);
+    let t1 = plain_nonce_turn(CHAIN_BALANCE, 1);
     assert_eq!(
         t0.new_root(),
         t1.old_root(),
@@ -688,7 +742,10 @@ fn game_rule_proves_as_foldable_leaf_with_bound_commitment() {
 
     let program = combat_program();
     let (w, rows) = combat_witness();
-    let pis = combat_pis();
+    // LEAF-ONLY: this leaf is never folded against a leg, so its state-binding prefix is not a
+    // claim about any leg's roots — zeros, said out loud. The FOLD teeth below pass the leg's REAL
+    // anchors (`combat_leg_real_roots`), which is where the prefix becomes load-bearing.
+    let pis = combat_pis(&[BabyBear::ZERO; 8], &[BabyBear::ZERO; 8]);
     let config = ir2_leaf_wrap_config();
 
     // Real proving: the honest combat transition MUST prove as a foldable leaf.
@@ -724,7 +781,11 @@ fn forged_combat_witness_does_not_prove() {
     w.insert("dmg".into(), vec![BabyBear::new(5); rows]);
     w.insert("hp_new".into(), vec![BabyBear::new(16); rows]); // FORGED: conservation forces 15
     w.insert("alive".into(), vec![BabyBear::new(1); rows]);
-    let pis = vec![BabyBear::new(20), BabyBear::new(16)];
+    // LEAF-ONLY (as above): no leg, so the prefix claims nothing; the FORGERY under test is
+    // `hp_new = 16` against a conservation constraint that forces 15.
+    let mut pis = custom_pi_state_prefix(&[BabyBear::ZERO; 8], &[BabyBear::ZERO; 8]).to_vec();
+    pis.push(BabyBear::new(20));
+    pis.push(BabyBear::new(16));
     let config = ir2_leaf_wrap_config();
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -752,9 +813,10 @@ fn game_turn_folds_and_lightclient_accepts() {
     // clears automatically once Lane D re-derives the constants, and the fold below runs unchanged.
     gate_full_fold_on_geometry();
 
-    // The honest claimed commitment IS the genuine sub-proof PI commitment.
-    let real = custom_proof_pi_commitment(&combat_pis());
-    let turns = build_chain(real);
+    // The honest claimed commitment IS the genuine sub-proof PI commitment, over PIs whose
+    // state-binding prefix IS the leg's real rotated roots.
+    let (pis, real) = combat_turn0_material();
+    let turns = build_chain(real, pis);
 
     let mut whole = prove_turn_chain_recursive(&turns)
         .expect("the honest combat-bearing chain must fold through the deployed prover");
@@ -801,12 +863,14 @@ fn game_turn_folds_and_lightclient_accepts() {
 fn forged_game_commitment_rejected() {
     gate_full_fold_on_geometry();
 
-    let real = custom_proof_pi_commitment(&combat_pis());
+    // The bundle keeps proving the HONEST PIs (prefix = the leg's real roots), so the ONLY forged
+    // thing is the claimed commitment — the in-circuit `connect` to the genuine one is the conflict.
+    let (pis, real) = combat_turn0_material();
     let mut forged = real;
     forged[0] = BabyBear::new((real[0].0 + 1) % BABYBEAR_P);
     assert_ne!(forged, real);
 
-    let turns = build_chain(forged);
+    let turns = build_chain(forged, pis);
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         prove_turn_chain_recursive(&turns)
