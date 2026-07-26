@@ -627,8 +627,16 @@ impl CanonicalHeapTree {
     /// Build a sorted INSERT witness for a FRESH address: the new leaf is
     /// spliced into its unique sorted position, the tree is rebuilt, and a
     /// membership path for the new leaf against the NEW root is returned.
-    /// Returns `None` if the address is already present (use `update_witness`)
-    /// or collides with the sentinels.
+    /// Returns `None` if the address is already present (use `update_witness`),
+    /// collides with the sentinels, or falls outside its predecessor's pointer
+    /// gap (the `ImtAbsent` bracket — see below).
+    ///
+    /// # The insertability predicate
+    ///
+    /// Insertable means exactly the Lean `Dregg2.Circuit.IndexedMerkleTree.ImtAbsent`:
+    /// `∃ low ∈ chain, low.addr < key < low.next_addr`. The HI bracket is the low
+    /// leaf's POINTER, never a physical neighbour — which is the whole point of the
+    /// IMT and the reason [`HEAP_SENTINEL_LEAVES`] can be 1.
     pub fn insert_witness(&self, new_leaf: HeapLeaf) -> Option<HeapInsertWitness> {
         let key = new_leaf.addr;
         if key == SENTINEL_MIN || key.as_u32() >= SENTINEL_MAX.as_u32() {
@@ -637,13 +645,35 @@ impl CanonicalHeapTree {
         if self.position_of(key).is_some() {
             return None;
         }
-        // Insertion position in the sentinel-bracketed sorted leaf list.
-        // First index whose `addr > key`, found by binary search on the sorted
-        // leaves (O(log n)). `partition_point` returns `len` when no such leaf
-        // exists (only when `key >= SENTINEL_MAX`), matching the old
-        // `position(...)?` early-return.
+        // Insertion position in the sentinel-headed sorted leaf list: the first index
+        // whose `addr > key`, by binary search (O(log n)).
+        //
+        // ⚠ `pos == len` is NOT a refusal. It means `key` sorts above every STORED
+        // leaf, and under ONE-sentinel occupancy ([`HEAP_SENTINEL_LEAVES`]) that is the
+        // ORDINARY APPEND: the MAX sentinel is no longer a stored leaf, so nothing sorts
+        // after the largest real leaf and every append lands here — including the FIRST
+        // insert into a genesis tree, whose only leaf is the MIN sentinel at addr 0.
+        // Under the RETIRED two-sentinel occupancy `pos == len` was reachable only for
+        // `key >= SENTINEL_MAX`, already refused above; the check was dead there, and
+        // survived the 2026-07-12 IMT retirement as a LIVENESS BREAK — an honest
+        // ascending sorted-insert chain died at op 0.
         let pos = self.sorted_leaves.partition_point(|l| l.addr <= key);
-        if pos == self.sorted_leaves.len() {
+        // THE POINTER-BRACKET GATE (`ImtAbsent`) — the real "cannot be inserted", and
+        // the gate the AAFI path ([`CanonicalHeapTree8::insert_witness_aafi`]) and the
+        // deployed AIR (`descriptor_ir2` `MAP_CMP_LO0`/`MAP_CMP_HI0`) already impose.
+        // `pos - 1` is the predecessor (the unique low leaf, since `key` is absent), and
+        // its `next_addr` is the hi bracket. On the LARGEST leaf that pointer IS
+        // `SENTINEL_MAX` — which is where MAX lives now — so an append is bracketed by
+        // `(last.addr, MAX)` and only a key at/above MAX falls out of it.
+        //
+        // Honest about its reach: on a tree from `new()` this cannot fire for a key that
+        // cleared the two checks above — `relink_next_addrs` makes the chain well-linked,
+        // so the predecessor's pointer is the successor's `addr` (> key) or the terminal
+        // MAX (> key, guarded above). It is the model's predicate written where the
+        // decision is made, so the next reader derives the IMT rule and not the position
+        // count; the REACHABLE refusals are the two above.
+        let low = self.sorted_leaves.get(pos.checked_sub(1)?)?;
+        if !(low.addr.as_u32() < key.as_u32() && key.as_u32() < low.next_addr.as_u32()) {
             return None;
         }
         let new_real: Vec<HeapLeaf> = self.sorted_leaves[..pos]
@@ -1083,7 +1113,13 @@ impl CanonicalHeapTree8 {
     }
 
     /// Build an 8-felt sorted INSERT witness for a FRESH address. The 8-felt
-    /// twin of [`CanonicalHeapTree::insert_witness`].
+    /// twin of [`CanonicalHeapTree::insert_witness`] — same insertability
+    /// predicate (the `ImtAbsent` pointer bracket), documented there.
+    ///
+    /// ⚠ THIS is the copy the deployed MapOps reconciliation drives
+    /// (`descriptor_ir2` `MapKind::Insert`), so its refusal set is what a
+    /// `map op N: insert key K already present or collides with sentinels`
+    /// actually reports.
     pub fn insert_witness(&self, new_leaf: HeapLeaf) -> Option<HeapInsertWitness8> {
         let key = new_leaf.addr;
         if key == SENTINEL_MIN || key.as_u32() >= SENTINEL_MAX.as_u32() {
@@ -1092,12 +1128,22 @@ impl CanonicalHeapTree8 {
         if self.position_of(key).is_some() {
             return None;
         }
-        // First index whose `addr > key`, found by binary search on the sorted
-        // leaves (O(log n)). `partition_point` returns `len` when no such leaf
-        // exists (only when `key >= SENTINEL_MAX`), matching the old
-        // `position(...)?` early-return.
+        // Insertion position: the first index whose `addr > key`, by binary search
+        // (O(log n)).
+        //
+        // ⚠ `pos == len` is NOT a refusal — it is the ORDINARY APPEND under ONE-sentinel
+        // occupancy ([`HEAP_SENTINEL_LEAVES`]). See
+        // [`CanonicalHeapTree::insert_witness`] for the full account of why the retired
+        // two-sentinel check became a liveness break here.
         let pos = self.sorted_leaves.partition_point(|l| l.addr <= key);
-        if pos == self.sorted_leaves.len() {
+        // THE POINTER-BRACKET GATE (`ImtAbsent`): `low.addr < key < low.next_addr`, the
+        // same gate [`CanonicalHeapTree8::insert_witness_aafi`] runs below. The hi
+        // bracket is the predecessor's POINTER, and on the largest leaf that pointer IS
+        // `SENTINEL_MAX` — where MAX lives under one-sentinel occupancy. Same reach note
+        // as the 1-felt twin: unreachable on a `new()`-built (relinked) chain for a key
+        // that cleared the two checks above.
+        let low = self.sorted_leaves.get(pos.checked_sub(1)?)?;
+        if !(low.addr.as_u32() < key.as_u32() && key.as_u32() < low.next_addr.as_u32()) {
             return None;
         }
         let new_real: Vec<HeapLeaf> = self.sorted_leaves[..pos]
@@ -1609,6 +1655,101 @@ mod tests {
         assert_eq!(cur, w.new_root, "witness path must open to the new root");
         // A present address has no insert witness.
         assert!(tree.insert_witness(entry(1, 1, 99)).is_none());
+    }
+
+    /// **THE ONE-SENTINEL APPEND — BOTH POLES, BOTH WIDTHS.**
+    ///
+    /// Under [`HEAP_SENTINEL_LEAVES`] = 1 the MAX sentinel is a POINTER, not a stored
+    /// leaf, so an insert above every present key is the ORDINARY APPEND: its low leaf
+    /// is the terminal one and its bracket is `(last.addr, SENTINEL_MAX)`. That is the
+    /// entire shape of an ascending sorted-insert chain (`whole_image_fold`), and it is
+    /// what the retired two-sentinel positional guard refused at op 0.
+    ///
+    /// The existing `insert_witness_recomputes_post_root` above cannot see this: its
+    /// addresses are `heap_addr` HASHES, so which of them sorts last is an accident of
+    /// Poseidon2, and the case never landed on the append. These leaves are RAW and
+    /// ascending, so the append is forced.
+    ///
+    ///   * LIVENESS pole — a strictly ascending chain from genesis inserts at EVERY
+    ///     step, and each post-root equals the independently rebuilt tree's root;
+    ///   * SOUNDNESS pole — a key AT `SENTINEL_MAX`, a key AT `SENTINEL_MIN`, and a
+    ///     genuine duplicate (interior AND of the LARGEST present key, the case
+    ///     adjacent to the widened branch) are ALL still refused.
+    #[test]
+    fn ascending_append_inserts_and_still_refuses_invalid_keys() {
+        let raw = |a: u32, v: u32| HeapLeaf::entry(BabyBear::new(a), BabyBear::new(v));
+        const CHAIN: [(u32, u32); 4] = [(2, 20), (4, 40), (6, 60), (9, 90)];
+
+        // ── LIVENESS (1-felt): ascending chain from genesis ──
+        let mut acc: Vec<HeapLeaf> = Vec::new();
+        for (i, &(a, v)) in CHAIN.iter().enumerate() {
+            let tree = CanonicalHeapTree::new(acc.clone(), HEAP_TREE_DEPTH);
+            let w = tree
+                .insert_witness(raw(a, v))
+                .unwrap_or_else(|| panic!("ascending append #{i} (key {a}) must insert"));
+            assert_eq!(w.old_root, tree.root(), "append #{i} opens the pre-root");
+            acc.push(raw(a, v));
+            assert_eq!(
+                w.new_root,
+                compute_heap_root(acc.clone()),
+                "append #{i} post-root must equal the rebuilt tree root"
+            );
+        }
+
+        // ── LIVENESS (8-felt): the SAME chain on the tree the MapOps AIR drives ──
+        let mut acc8: Vec<HeapLeaf> = Vec::new();
+        for (i, &(a, v)) in CHAIN.iter().enumerate() {
+            let tree = CanonicalHeapTree8::new(acc8.clone(), HEAP_TREE_DEPTH);
+            let w = tree
+                .insert_witness(raw(a, v))
+                .unwrap_or_else(|| panic!("8-felt ascending append #{i} (key {a}) must insert"));
+            assert_eq!(
+                w.old_root,
+                tree.root8().limbs(),
+                "8-felt append #{i} opens the pre-root"
+            );
+            acc8.push(raw(a, v));
+            assert_eq!(
+                w.new_root,
+                CanonicalHeapTree8::new(acc8.clone(), HEAP_TREE_DEPTH)
+                    .root8()
+                    .limbs(),
+                "8-felt append #{i} post-root must equal the rebuilt tree root"
+            );
+            assert_eq!(
+                recompose_membership_8(w.new_leaf.digest8(), &w.siblings, &w.directions),
+                w.new_root,
+                "8-felt append #{i} witness path must open to the new root"
+            );
+            // The appended leaf is the largest, so its POINTER is the terminal MAX —
+            // the bracket that makes the append legal at all.
+            assert_eq!(
+                w.new_leaf.next_addr, SENTINEL_MAX,
+                "the largest leaf's pointer IS the terminal MAX sentinel"
+            );
+        }
+
+        // ── SOUNDNESS: what the widened guard must NOT have opened ──
+        let tree = CanonicalHeapTree::new(acc.clone(), HEAP_TREE_DEPTH);
+        let tree8 = CanonicalHeapTree8::new(acc8.clone(), HEAP_TREE_DEPTH);
+        for (why, key) in [
+            ("the MAX sentinel itself", SENTINEL_MAX),
+            ("the MIN sentinel itself", SENTINEL_MIN),
+            ("a duplicate of an interior key", BabyBear::new(4)),
+            ("a duplicate of the LARGEST present key", BabyBear::new(9)),
+        ] {
+            let leaf = HeapLeaf::entry(key, BabyBear::new(1));
+            assert!(
+                tree.insert_witness(leaf).is_none(),
+                "1-felt: {why} ({}) must still be refused",
+                key.as_u32()
+            );
+            assert!(
+                tree8.insert_witness(leaf).is_none(),
+                "8-felt: {why} ({}) must still be refused",
+                key.as_u32()
+            );
+        }
     }
 
     /// The in-place `apply_value_update` reproduces the rebuilt-tree root
