@@ -1561,9 +1561,7 @@ impl DarkBazaarSession {
     /// from work that must still be done. No frontend rendering path reaches it.
     #[cfg(feature = "private-clearing")]
     #[doc(hidden)]
-    pub fn verified_private_clearing(
-        &self,
-    ) -> Option<&private_clearing::PrivateClearingReceipt> {
+    pub fn verified_private_clearing(&self) -> Option<&private_clearing::PrivateClearingReceipt> {
         self.verified_private_clearing_receipt.as_ref()
     }
 
