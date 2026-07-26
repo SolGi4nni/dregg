@@ -2005,7 +2005,7 @@ fn token_balance_at(
         let owner = parse_pubkey(
             entry.get("owner").and_then(|o| o.as_str()).ok_or_else(|| {
                 WatchError::Rpc(
-                    "token balance missing `owner` — this RPC cannot attribute a transfer; \
+                    "token balance missing `owner`: this RPC cannot attribute a transfer; \
                      upgrade the cluster endpoint"
                         .to_string(),
                 )
@@ -2018,7 +2018,7 @@ fn token_balance_at(
                 .and_then(|p| p.as_str())
                 .ok_or_else(|| {
                     WatchError::Rpc(
-                        "token balance missing `programId` — this RPC cannot prove the account \
+                        "token balance missing `programId`: this RPC cannot prove the account \
                          is SPL-Token owned; upgrade the cluster endpoint"
                             .to_string(),
                     )
@@ -2333,23 +2333,23 @@ pub const NARRATOR_SETTING_KEY: &str = "narrator";
 pub const NARRATOR_BACKENDS: &[(&str, &str)] = &[
     (
         "chutes-tee",
-        "Chutes/Bittensor inside a DCAP-verified Intel TDX enclave — ATTESTED (the intended path)",
+        "Chutes/Bittensor inside a DCAP-verified Intel TDX enclave: ATTESTED (the intended path)",
     ),
     (
         "chutes",
-        "Chutes/Bittensor over plain HTTPS — UNATTESTED (a deliberate downgrade)",
+        "Chutes/Bittensor over plain HTTPS: UNATTESTED (a deliberate downgrade)",
     ),
     (
         "openai",
-        "any other OpenAI-compatible endpoint — UNATTESTED (a deliberate downgrade)",
+        "any other OpenAI-compatible endpoint: UNATTESTED (a deliberate downgrade)",
     ),
     (
         "bedrock",
-        "AWS Bedrock — UNATTESTED (a deliberate downgrade)",
+        "AWS Bedrock: UNATTESTED (a deliberate downgrade)",
     ),
     (
         "none",
-        "no hosted narrator at all — every run uses the free tier",
+        "no hosted narrator at all: every run uses the free tier",
     ),
 ];
 
@@ -2547,7 +2547,7 @@ pub fn try_build_narrator(
         if !narrator_backend_is_known(key.trim()) {
             return Err(format!(
                 "the stored narrator backend {key:?} is not one this build knows \
-                 ({}) — refusing to guess, and refusing to fall back to the environment (that \
+                 ({}): refusing to guess, and refusing to fall back to the environment (that \
                  could land on an UNATTESTED backend). Set it again with a known key.",
                 NARRATOR_BACKENDS
                     .iter()
@@ -2607,7 +2607,7 @@ pub fn try_build_narrator(
         return Err(format!(
             "model `{model}` has NO pinned price, so the metered layer would refuse every call \
              (a budget cannot cap a cost we do not know). Supply BOTH a per-1k input and output \
-             rate for it — half a price pins nothing."
+             rate for it: half a price pins nothing."
         ));
     }
 
@@ -2785,7 +2785,7 @@ fn build_backend_for(
             Ok(parts) => Ok(Some((parts, PaidNarratorProvider::ChutesTee))),
             Err(error) => Err(format!(
                 "the ATTESTED narrator (chutes-tee) could not be built: {error}. Refusing to \
-                 narrate rather than falling back to an unattested endpoint — paid runs use the \
+                 narrate rather than falling back to an unattested endpoint; paid runs use the \
                  free tier until the attestation configuration is fixed."
             )),
         },

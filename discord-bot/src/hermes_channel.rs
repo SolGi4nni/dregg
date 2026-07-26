@@ -171,7 +171,7 @@ impl HermesVerdict {
             let r = self.receipt.as_deref().unwrap_or("");
             let short = &r[..r.len().min(16)];
             format!(
-                "✅ `{}` ({}) — cap-gated turn committed · receipt `{}…` · {} calls left",
+                "✅ `{}` ({}) · cap-gated turn committed · receipt `{}…` · {} calls left",
                 self.call.tool,
                 self.call.kind.as_str(),
                 short,
@@ -179,7 +179,7 @@ impl HermesVerdict {
             )
         } else {
             format!(
-                "⛔ `{}` ({}) refused in-band — {}",
+                "⛔ `{}` ({}) refused in-band: {}",
                 self.call.tool,
                 self.call.kind.as_str(),
                 self.reason.as_deref().unwrap_or("no mandate")
@@ -507,7 +507,7 @@ impl LlmVerdict {
             let r = self.receipt.as_deref().unwrap_or("");
             let short = &r[..r.len().min(16)];
             format!(
-                "🧠 `{}`/`{}` — authorized · receipt `{}…` · {} tokens of {} budget · {} calls left",
+                "🧠 `{}`/`{}` · authorized · receipt `{}…` · {} tokens of {} budget · {} calls left",
                 self.provider.as_str(),
                 self.model,
                 short,
@@ -517,7 +517,7 @@ impl LlmVerdict {
             )
         } else {
             format!(
-                "⛔ `{}`/`{}` LLM call refused in-band — {}",
+                "⛔ `{}`/`{}` LLM call refused in-band: {}",
                 self.provider.as_str(),
                 self.model,
                 self.reason.as_deref().unwrap_or("no mandate")
@@ -640,11 +640,11 @@ pub async fn on_message(
                     .channel_id
                     .say(
                         &ctx.http,
-                        "I don't have an LLM key for you yet, so I can't answer chat — \
+                        "I don't have an LLM key for you yet, so I can't answer chat; \
                          no turn was spent on this message. Run `/key set` to port in \
                          your own provider key (it opens a private form; the key is \
-                         encrypted at rest and metered). Tool verbs — `read` / `search` \
-                         / `fetch` / `run` / `write` — work without one.",
+                         encrypted at rest and metered). Tool verbs (`read` / `search` \
+                         / `fetch` / `run` / `write`) work without one.",
                     )
                     .await;
             }
@@ -654,7 +654,7 @@ pub async fn on_message(
                     .say(
                         &ctx.http,
                         format!(
-                            "⚠️ Couldn't check your key store right now ({e}) — nothing \
+                            "⚠️ Couldn't check your key store right now ({e}); nothing \
                              was spent. Try again in a moment."
                         ),
                     )
@@ -774,7 +774,7 @@ async fn llm_brain_message(
         match run_live_llm(state, owner, provider, &model, content).await {
             Ok(text) => {
                 let footer = format!(
-                    "\n\n— {} tokens of {} budget · {} calls left",
+                    "\n\n· {} tokens of {} budget · {} calls left",
                     verdict.tokens_spent,
                     verdict.token_budget,
                     verdict.remaining_calls.unwrap_or_default()
@@ -797,7 +797,7 @@ async fn llm_brain_message(
             .say(
                 &ctx.http,
                 format!(
-                    "{}\n_(live calls disabled — set `HERMES_LIVE_LLM=1` to call your provider with your key)_",
+                    "{}\n_(live calls disabled: set `HERMES_LIVE_LLM=1` to call your provider with your key)_",
                     verdict.summary()
                 ),
             )
@@ -824,7 +824,7 @@ async fn run_live_llm(
     let sealed = crate::key_vault::EncryptedKey::from_b64(&rec.nonce_b64, &rec.ciphertext_b64)
         .map_err(|e| e.to_string())?;
     let key = crate::key_vault::open(&state.config.bot_secret, owner, provider.as_str(), &sealed)
-        .map_err(|_| "could not decrypt your key — re-set it with /key".to_string())?;
+        .map_err(|_| "could not decrypt your key; re-set it with /key".to_string())?;
     let client = reqwest::Client::new();
     crate::llm_provider::live_complete(&client, provider, model, &key, prompt, 1024)
         .await

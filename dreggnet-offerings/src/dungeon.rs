@@ -1576,17 +1576,22 @@ impl Offering for DungeonOffering {
             let narrated = request.narrated_for(&view)?;
             let command = narrated.command.clone();
             let keyword = dungeon_on_dregg::narrator::legal_commands(&view)
-                .into_iter()
-                .find_map(|(keyword, candidate)| (candidate == command).then_some(keyword))
+                .iter()
+                .find(|offered| offered.command == command)
+                .map(|offered| offered.keyword.clone())
                 .ok_or_else(|| {
                     BinaryOperationError::Refused(
                         "the admitted narrated command left the live room's closed vocabulary"
                             .to_string(),
                     )
-                })?
-                .to_string();
+                })?;
+            // The canonical request carries the enclave provenance when there is one, so the
+            // turn this operation lands binds exactly the same narration event on the first
+            // invoke and on a journal replay. Passing `None` here (what this lane used to do,
+            // because the wire had no slot for it) would have reported "no enclave" for an
+            // attested narration and made a replay produce a different receipt.
             let landed = session
-                .advance_narrated_receipt(&narrated, actor)
+                .advance_narrated_receipt_in_enclave(&narrated, actor, request.tee_provenance())
                 .map_err(BinaryOperationError::Refused)?;
             if landed.narrated.command != command {
                 return Err(BinaryOperationError::Refused(

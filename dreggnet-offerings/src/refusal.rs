@@ -236,7 +236,7 @@ pub const NARRATOR_PROSE_UNDISPLAYABLE: &str = "The narrator's story text came b
 /// plus the free path that still works — and the operator gets the detail at `tracing::error!`
 /// beside it.
 pub const NARRATOR_MISCONFIGURED: &str = "The hosted narrator on this server is not set up correctly, so no narration ran, nothing was \
-     changed, and no credit was held. That is on our side, not in what you did — the server log \
+     changed, and no credit was held. That is on our side, not in what you did; the server log \
      names the missing piece. The free narrated turns still work in the meantime.";
 
 /// A banned shape found in a player-facing string by [`audit_player_text`].

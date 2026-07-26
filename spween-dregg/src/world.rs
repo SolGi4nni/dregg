@@ -23,6 +23,7 @@ use dregg_app_framework::{
     AgentCipherclerk, AppCipherclerk, AuthRequired, CellId, Effect, EmbeddedExecutor, Event,
     ExecutorSubmitError, FieldElement, TurnReceipt, field_from_bytes, field_from_u64, symbol,
 };
+use dregg_cell::program::{ProgramError, TransitionMeta};
 use dregg_cell::{Cell, Ledger};
 use dregg_node_target::{NodeTarget, SubmittedTurn};
 use serde::{Deserialize, Serialize};
@@ -132,6 +133,40 @@ impl std::fmt::Display for WorldError {
             }
             WorldError::Federation(m) => write!(f, "federation routing failed: {m}"),
         }
+    }
+}
+
+/// **What [`WorldCell::probe_choice`] can say about a choice** — the executor's own
+/// admission predicate, dry-run against the committed state, with an explicit
+/// "cannot decide" answer instead of a guess.
+///
+/// The third value is the load-bearing one. A dry run has no `EvalContext`, witness
+/// bundle, or capability set, so the contextual constraint families (heights, temporal
+/// gates, sender authorization, preimage reveals, witnessed predicates, the Lean oracle
+/// when its archive is absent) are not decidable here. Collapsing those onto either
+/// boolean would be a lie in one direction or the other: onto `Refuses` it would silently
+/// delete legal moves from a game; onto `Admits` it would claim an admission this probe
+/// never established. A caller that filters an offer list on this probe keeps
+/// [`ChoiceAdmission::Undecided`] moves OFFERED — the executor still refuses them if they
+/// are ineligible, so the cost is a wasted round-trip, not a broken gate.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ChoiceAdmission {
+    /// The installed program's teeth accept this choice against the committed state.
+    Admits,
+    /// The installed teeth REFUSE it against the committed state (a violated constraint or
+    /// default-deny), or [`WorldCell::apply_choice`] would refuse it for being under-gated.
+    /// Carries the executor's own description.
+    Refuses(String),
+    /// The probe could not decide: the choice's gate reaches material only the executor
+    /// holds. Treat as offered; the executor is still the referee.
+    Undecided(String),
+}
+
+impl ChoiceAdmission {
+    /// Whether a caller filtering an offer list should keep this choice. `Admits` and
+    /// `Undecided` both stay; only a decisive refusal is dropped.
+    pub fn offerable(&self) -> bool {
+        !matches!(self, ChoiceAdmission::Refuses(_))
     }
 }
 
@@ -715,6 +750,129 @@ impl WorldCell {
         let mut effects = self.choice_effects(choice)?;
         effects.push(set_field(self.cell, DECISION_EXT_KEY, commitment));
         self.commit(&method, effects)
+    }
+
+    /// **Apply a choice as ONE cap-bounded turn, with EXTRA receipt-only effects riding
+    /// the SAME turn.** Identical to [`apply_choice`](Self::apply_choice) in every
+    /// admission respect — the same [`require_fully_gated`](Self::require_fully_gated)
+    /// fail-closed check, the same [`choice_effects`](Self::choice_effects) lowering, the
+    /// same `MethodIs` case — and then appends `extra` to the effect list before the turn
+    /// is signed.
+    ///
+    /// This exists so a caller that must bind an extra fact into the turn (the narrator's
+    /// narration-commitment `EmitEvent`) does not have to reach for
+    /// [`apply_raw`](Self::apply_raw). `apply_raw` is BELOW the choice layer: it skips
+    /// `require_fully_gated`, so a choice whose condition did not lower fully to executor
+    /// teeth would commit with NOTHING on that path checking it — the exact fail-open
+    /// `require_fully_gated` exists to close. Reaching it also forced callers to
+    /// re-implement `choice_effects`, and a re-implementation drifts (the narrator's copy
+    /// silently ended the scene on an unknown navigation target where the canonical
+    /// lowering raises [`WorldError::UnknownTarget`]).
+    ///
+    /// `extra` is appended AFTER the choice's own effects and the passage advance, so it
+    /// can never displace the move: a caller cannot use it to overwrite the navigation or
+    /// re-write a var the choice just set to a different value, because the choice's write
+    /// is already in the list and the executor's teeth see the whole post-state either way.
+    /// What it CAN do is add a write of its own, which is why every tooth on this method's
+    /// case — and every `SlotChanged` invariant case — still applies to the composed turn.
+    pub fn apply_choice_with_effects(
+        &self,
+        passage_name: &str,
+        choice_index: usize,
+        choice: &Choice,
+        extra: Vec<Effect>,
+    ) -> Result<TurnReceipt, WorldError> {
+        let method = choice_method(passage_name, choice_index);
+        self.require_fully_gated(&method)?;
+        let mut effects = self.choice_effects(choice)?;
+        effects.extend(extra);
+        self.commit(&method, effects)
+    }
+
+    /// **Would the installed program admit this choice RIGHT NOW?** — a DRY RUN of the
+    /// executor's own admission predicate against the committed state, committing nothing.
+    ///
+    /// This is not a re-implementation of the gate: it lowers the choice through the same
+    /// [`choice_effects`](Self::choice_effects) the real turn uses, applies those writes to
+    /// a CLONE of the committed [`CellState`](dregg_cell::state::CellState), and hands the
+    /// `(old, new)` pair to [`CellProgram::evaluate_with_meta`] — the same call
+    /// `dregg_turn`'s `execute_tree` makes at admission, under a
+    /// [`TransitionMeta`](dregg_cell::program::TransitionMeta) built the same way (the
+    /// method symbol plus the OR of the effects' `effect_kind_mask()`). On a native build
+    /// with the constraint oracle installed, that evaluator routes the Lean-decided subset
+    /// to the verified `dregg_constraint_admits`, so the probe inherits the same decision
+    /// procedure rather than paraphrasing it.
+    ///
+    /// It is deliberately THREE-valued. A dry run has no `EvalContext`, no witness bundle,
+    /// and no capability set, so the contextual / witnessed / oracle-backed constraint
+    /// families cannot be decided here. Those surface as
+    /// [`ChoiceAdmission::Undecided`] — never as a refusal — because the only sound
+    /// reading of "I could not evaluate this" is "ask the executor", and a caller that
+    /// filters an offer list on this probe must keep an undecidable move OFFERED.
+    ///
+    /// The two decisive answers are the executor's own: a violated constraint
+    /// (`ProgramError::ConstraintViolated`) and default-deny
+    /// (`ProgramError::NoTransitionCaseMatched`). A method whose gate did not lower fully
+    /// to executor teeth is [`ChoiceAdmission::Refuses`] too — not because the teeth refuse
+    /// it, but because [`apply_choice`](Self::apply_choice) does, and this probe answers for
+    /// that path.
+    ///
+    /// ⚠ It answers for the state as it is NOW. A later turn can flip either way, which is
+    /// why it is a filter on what to OFFER and never a substitute for committing the turn.
+    pub fn probe_choice(
+        &self,
+        passage_name: &str,
+        choice_index: usize,
+        choice: &Choice,
+    ) -> ChoiceAdmission {
+        let method = choice_method(passage_name, choice_index);
+        if let Err(refusal) = self.require_fully_gated(&method) {
+            return ChoiceAdmission::Refuses(refusal.to_string());
+        }
+        let effects = match self.choice_effects(choice) {
+            Ok(effects) => effects,
+            Err(refusal) => return ChoiceAdmission::Refuses(refusal.to_string()),
+        };
+        let Some(old) = self.exec.cell_state(self.cell) else {
+            return ChoiceAdmission::Undecided(
+                "the world-cell is not in the embedded ledger".to_string(),
+            );
+        };
+        let mut new = old.clone();
+        for effect in &effects {
+            match effect {
+                Effect::SetField { cell, index, value } if *cell == self.cell => {
+                    new.set_field_ext(*index, *value);
+                }
+                // The choice's `Call` effects are receipt-only (they mutate no field), and
+                // `choice_effects` emits nothing else. Anything unrecognised means this
+                // probe does not model the post-state, so it must not answer.
+                Effect::EmitEvent { .. } => {}
+                other => {
+                    return ChoiceAdmission::Undecided(format!(
+                        "the choice lowers to an effect this probe does not model: {other:?}"
+                    ));
+                }
+            }
+        }
+        let effects_mask: u32 = effects
+            .iter()
+            .fold(0u32, |mask, effect| mask | effect.effect_kind_mask());
+        let meta = TransitionMeta::new(symbol(&method), effects_mask);
+        match self
+            .story
+            .program
+            .evaluate_with_meta(&new, Some(&old), None, &meta)
+        {
+            Ok(()) => ChoiceAdmission::Admits,
+            Err(ProgramError::ConstraintViolated { description, .. }) => {
+                ChoiceAdmission::Refuses(description)
+            }
+            Err(ProgramError::NoTransitionCaseMatched) => ChoiceAdmission::Refuses(
+                "no installed transition case dispatches this method".to_string(),
+            ),
+            Err(undecidable) => ChoiceAdmission::Undecided(undecidable.to_string()),
+        }
     }
 
     /// **Fail-closed on an under-gated choice.** `apply_choice*` drives the executor as

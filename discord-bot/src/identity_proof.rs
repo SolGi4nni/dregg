@@ -61,7 +61,7 @@ impl std::fmt::Display for PredicateParseError {
         match self {
             PredicateParseError::NoComparator => write!(
                 f,
-                "no comparator found — use one of `>=`, `<=`, `>`, `<`, `!=` (e.g. `age>=18`)"
+                "no comparator found; use one of `>=`, `<=`, `>`, `<`, `!=` (e.g. `age>=18`)"
             ),
             PredicateParseError::EmptyAttribute => {
                 write!(f, "the attribute name (left of the comparator) is empty")

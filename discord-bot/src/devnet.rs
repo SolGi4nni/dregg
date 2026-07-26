@@ -445,7 +445,7 @@ impl DevnetError {
             DevnetError::Http(e) => {
                 if e.is_timeout() {
                     format!(
-                        "The node didn't respond in time while trying to {action}. The devnet may be busy — try again in a moment."
+                        "The node didn't respond in time while trying to {action}. The devnet may be busy; try again in a moment."
                     )
                 } else if e.is_connect() {
                     format!(
@@ -468,19 +468,19 @@ impl DevnetError {
                     // [`DevnetError::operator_diagnostic`]; the player gets the two things that are
                     // true for them — nothing landed, and this is our side.
                     401 | 403 => format!(
-                        "This node will not accept a write to {action} from us, so nothing was changed. That is a permission problem on our side, not with what you asked for — the server log names what an operator has to set."
+                        "This node will not accept a write to {action} from us, so nothing was changed. That is a permission problem on our side, not with what you asked for; the server log names what an operator has to set."
                     ),
                     404 => format!(
-                        "The node has no record for this {action} request (HTTP 404).{hint} The cell/turn/name may not exist yet — try `/faucet` to materialize your cell first."
+                        "The node has no record for this {action} request (HTTP 404).{hint} The cell/turn/name may not exist yet; try `/faucet` to materialize your cell first."
                     ),
                     409 => format!(
-                        "Conflict while trying to {action} (HTTP 409).{hint} Someone may have taken this name, or your nonce is stale — try again."
+                        "Conflict while trying to {action} (HTTP 409).{hint} Someone may have taken this name, or your nonce is stale; try again."
                     ),
                     429 => format!(
-                        "Rate limited while trying to {action} (HTTP 429). The node caps turns per minute — wait a bit and retry."
+                        "Rate limited while trying to {action} (HTTP 429). The node caps turns per minute; wait a bit and retry."
                     ),
                     500..=599 => format!(
-                        "The node hit an internal error trying to {action} (HTTP {code}).{hint} This is a node-side fault, not your input — try again or check `/status`."
+                        "The node hit an internal error trying to {action} (HTTP {code}).{hint} This is a node-side fault, not your input; try again or check `/status`."
                     ),
                     _ => format!("The node returned HTTP {code} while trying to {action}.{hint}"),
                 }

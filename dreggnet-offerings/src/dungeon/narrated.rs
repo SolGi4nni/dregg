@@ -3,8 +3,8 @@
 //! This is the production offering boundary for a confined narrator such as Chutes:
 //! the provider may propose one of Dungeon's native typed commands and some prose, but
 //! it never supplies an [`Effect`](dregg_app_framework::Effect). This module rechecks
-//! the command against [`dungeon_on_dregg::narrator::legal_commands`] for the session's
-//! current room, then delegates the transition to the existing real-world
+//! the command against the closed vocabulary the session's own
+//! [`SceneView`] derives for its current room, then delegates the transition to the real-world
 //! [`narrate_turn`](dungeon_on_dregg::narrator::narrate_turn) path. That path lowers the
 //! typed command, lets the installed `CellProgram` referee it, and binds the narration
 //! commitment as a receipt-only event in the same turn.
@@ -17,7 +17,7 @@
 
 use dungeon_on_dregg::narrator::{
     BrainRefusal, NarrateError, Narrated, NarratedReceipt, RecordedNarration, SceneView,
-    TeeProvenance, legal_commands, narrate_turn_in_enclave, parse_confined_response, scene_view,
+    TeeProvenance, narrate_turn_in_enclave, parse_confined_response, scene_view,
 };
 use spween_dregg::{StepReceipt, WorldError};
 
@@ -34,11 +34,22 @@ pub const CHUTES_NARRATED_MEDIA_TYPE: &str =
 /// A Chutes response is deliberately compact; frontends reject larger bodies before buffering.
 pub const MAX_CHUTES_NARRATED_REQUEST_BYTES: usize = 16 * 1024;
 /// The disclosure rendered beside the operation on every frontend.
-pub const CHUTES_NARRATED_DISCLOSURE: &str = "The player explicitly opts into one paid Chutes narration. The canonical request retains the public model id, operator cost ceiling and spend, exact consent value, closed command, and public narration for deterministic restart replay. It contains no player identity, balance, provider credential, hidden game input, prompt, tool transcript, or token count. The model can name only one command from the current room's finite vocabulary; the real executor decides the effect. A provider, parser, stale-command, or executor refusal commits no turn and authorizes no player charge.";
+pub const CHUTES_NARRATED_DISCLOSURE: &str = "The player explicitly opts into one paid Chutes narration. The canonical request retains the public model id, operator cost ceiling and spend, exact consent value, closed command, public narration, and, when the narrator ran inside a verified enclave, that enclave's public measurement and platform verdict, so a restart replays exactly the turn that landed. It contains no player identity, balance, provider credential, hidden game input, prompt, tool transcript, or token count. The model can name only one command from the current room's finite vocabulary; the real executor decides the effect. A provider, parser, stale-command, or executor refusal commits no turn and authorizes no player charge.";
 
 const CHUTES_WIRE_MAGIC: [u8; 8] = *b"DREGGCHU";
-const CHUTES_WIRE_VERSION: u8 = 1;
+
+/// The wire version carrying `{model, cap, spend, consent, provider_output}` and nothing else.
+const CHUTES_WIRE_V1: u8 = 1;
+
+/// The wire version that ALSO carries the enclave-provenance preimage. Chosen by
+/// [`ChutesNarratedRequest::encode`] purely on whether a provenance is present, so a request
+/// without one encodes to the byte-identical v1 wire it always did.
+const CHUTES_WIRE_V2: u8 = 2;
+
 const MAX_CHUTES_RESPONSE_BYTES: usize = 8 * 1024;
+/// Bound on the two variable-length enclave-provenance strings, which are a DCAP instance id
+/// and a TCB verdict; both are short, machine-produced identifiers.
+const MAX_PROVENANCE_FIELD_BYTES: usize = 256;
 
 /// Canonical input to one explicitly consented Chutes-backed Dungeon operation.
 ///
@@ -52,6 +63,7 @@ pub struct ChutesNarratedRequest {
     operator_spend_micro_usd: u64,
     consent: String,
     provider_output: String,
+    tee_provenance: Option<TeeProvenance>,
 }
 
 impl ChutesNarratedRequest {
@@ -93,7 +105,66 @@ impl ChutesNarratedRequest {
             operator_spend_micro_usd,
             consent,
             provider_output,
+            tee_provenance: None,
         })
+    }
+
+    /// [`Self::new`], additionally retaining WHERE the narration was produced.
+    ///
+    /// ## Why the preimage belongs on the canonical request
+    ///
+    /// The operation lane is the only durable record of a narrated turn: the journal keeps
+    /// these exact bytes, digest-checked, and a restart re-invokes the operation from them and
+    /// requires the resulting receipt to be EQUAL to the journaled one. A turn that bound an
+    /// enclave provenance therefore cannot be replayed at all unless the provenance travels
+    /// with the request, because the narration event's TEE slot is part of the receipt. Without
+    /// this field the lane silently downgraded every attested narration to an unattested one,
+    /// which is the honest sentinel for "no enclave" and would have been a false report.
+    ///
+    /// Every component is PUBLIC: a code-identity measurement, a serving instance id, a
+    /// platform verdict, and the hash of a quote that stays with the backend that verified it.
+    /// None of it is a player fact, a credential, or a model input.
+    ///
+    /// The provenance comes from the trusted transport that ran the DCAP verification, never
+    /// from model output, so a narrator cannot author its own attestation claim. What a bound
+    /// provenance does and does NOT assert is on
+    /// [`TeeProvenance`](dungeon_on_dregg::narrator::TeeProvenance): it says the text came out
+    /// of an enclave with that measurement under that verdict, and says nothing about the text
+    /// being correct, honest, or un-jailbroken.
+    pub fn new_in_enclave(
+        model: impl Into<String>,
+        operator_cap_micro_usd: u64,
+        operator_spend_micro_usd: u64,
+        consent: impl Into<String>,
+        provider_output: impl Into<String>,
+        tee_provenance: Option<TeeProvenance>,
+    ) -> Result<Self, BinaryOperationError> {
+        let mut request = Self::new(
+            model,
+            operator_cap_micro_usd,
+            operator_spend_micro_usd,
+            consent,
+            provider_output,
+        )?;
+        if let Some(provenance) = &tee_provenance {
+            for (what, value) in [
+                ("instance id", provenance.instance_id.as_str()),
+                ("TCB status", provenance.tcb_status.as_str()),
+            ] {
+                if value.is_empty() || value.len() > MAX_PROVENANCE_FIELD_BYTES {
+                    return Err(BinaryOperationError::Malformed(format!(
+                        "enclave {what} is empty or exceeds {MAX_PROVENANCE_FIELD_BYTES} bytes"
+                    )));
+                }
+                if value.chars().any(char::is_control) {
+                    return Err(BinaryOperationError::Malformed(format!(
+                        "enclave {what} carries a control character"
+                    )));
+                }
+            }
+        }
+        request.tee_provenance = tee_provenance;
+        Ok(request)
     }
 
     pub fn model(&self) -> &str {
@@ -110,6 +181,13 @@ impl ChutesNarratedRequest {
 
     pub fn provider_output(&self) -> &str {
         &self.provider_output
+    }
+
+    /// The enclave provenance this request retains, if the narration was produced in one.
+    /// `None` is the honest default and means exactly "this turn carries no enclave
+    /// provenance", never "attestation passed".
+    pub const fn tee_provenance(&self) -> Option<&TeeProvenance> {
+        self.tee_provenance.as_ref()
     }
 
     /// Encode the one canonical owning wire accepted by [`crate::OfferingHost`].
@@ -135,7 +213,14 @@ impl ChutesNarratedRequest {
                 + self.provider_output.len(),
         );
         out.extend_from_slice(&CHUTES_WIRE_MAGIC);
-        out.push(CHUTES_WIRE_VERSION);
+        // The version is a FUNCTION of the content, not a build-time constant: a request with
+        // no enclave provenance encodes to exactly the v1 bytes it always did, so every
+        // already-journaled row still re-encodes canonically.
+        out.push(if self.tee_provenance.is_some() {
+            CHUTES_WIRE_V2
+        } else {
+            CHUTES_WIRE_V1
+        });
         out.extend_from_slice(&model_len.to_be_bytes());
         out.extend_from_slice(self.model.as_bytes());
         out.extend_from_slice(&self.operator_cap_micro_usd.to_be_bytes());
@@ -144,6 +229,20 @@ impl ChutesNarratedRequest {
         out.extend_from_slice(self.consent.as_bytes());
         out.extend_from_slice(&response_len.to_be_bytes());
         out.extend_from_slice(self.provider_output.as_bytes());
+        if let Some(provenance) = &self.tee_provenance {
+            let instance_len = u16::try_from(provenance.instance_id.len()).map_err(|_| {
+                BinaryOperationError::Malformed("enclave instance id exceeds the wire".into())
+            })?;
+            let tcb_len = u16::try_from(provenance.tcb_status.len()).map_err(|_| {
+                BinaryOperationError::Malformed("enclave TCB status exceeds the wire".into())
+            })?;
+            out.extend_from_slice(&provenance.measurement);
+            out.extend_from_slice(&instance_len.to_be_bytes());
+            out.extend_from_slice(provenance.instance_id.as_bytes());
+            out.extend_from_slice(&tcb_len.to_be_bytes());
+            out.extend_from_slice(provenance.tcb_status.as_bytes());
+            out.extend_from_slice(&provenance.quote_sha256);
+        }
         if out.len() > MAX_CHUTES_NARRATED_REQUEST_BYTES {
             return Err(BinaryOperationError::Malformed(format!(
                 "Chutes request is {} bytes; maximum is {MAX_CHUTES_NARRATED_REQUEST_BYTES}",
@@ -168,7 +267,7 @@ impl ChutesNarratedRequest {
             ));
         }
         let version = reader.byte()?;
-        if version != CHUTES_WIRE_VERSION {
+        if version != CHUTES_WIRE_V1 && version != CHUTES_WIRE_V2 {
             return Err(BinaryOperationError::Malformed(format!(
                 "unsupported Chutes request wire version {version}"
             )));
@@ -185,8 +284,25 @@ impl ChutesNarratedRequest {
             )
         })?;
         let provider_output = reader.utf8(response_len)?;
+        let tee_provenance = if version == CHUTES_WIRE_V2 {
+            let measurement = reader.array::<32>()?;
+            let instance_len = usize::from(reader.u16()?);
+            let instance_id = reader.utf8(instance_len)?;
+            let tcb_len = usize::from(reader.u16()?);
+            let tcb_status = reader.utf8(tcb_len)?;
+            let quote_sha256 = reader.array::<32>()?;
+            Some(TeeProvenance::new(
+                measurement,
+                instance_id,
+                tcb_status,
+                quote_sha256,
+            ))
+        } else {
+            None
+        };
         reader.finish()?;
-        let request = Self::new(model, cap, spend, consent, provider_output)?;
+        let request =
+            Self::new_in_enclave(model, cap, spend, consent, provider_output, tee_provenance)?;
         if request.encode()? != bytes {
             return Err(BinaryOperationError::Malformed(
                 "Chutes request is not canonically encoded".to_string(),
@@ -350,7 +466,7 @@ impl DungeonSession {
     /// An owned, read-only narrator view of the session's authoritative current room.
     ///
     /// A provider seam calls this immediately before deriving its
-    /// [`legal_commands`] tool schema. It exposes no `WorldCell`, executor handle, or
+    /// [`dungeon_on_dregg::narrator::legal_commands`] tool schema. It exposes no `WorldCell`, executor handle, or
     /// effect surface, and a later call observes any intervening landed turn.
     pub fn narrated_view(&self) -> SceneView {
         scene_view(&self.world, &self.scene)
@@ -404,9 +520,7 @@ impl DungeonSession {
         provenance: Option<&TeeProvenance>,
     ) -> Result<NarratedSessionTurn, String> {
         let view = self.narrated_view();
-        let admitted = legal_commands(&view)
-            .into_iter()
-            .any(|(_, command)| command == narrated.command);
+        let admitted = view.offers(&narrated.command);
         if !admitted {
             return Err(crate::refusal::NARRATOR_MOVE_NOT_OFFERED.to_string());
         }
@@ -427,7 +541,8 @@ impl DungeonSession {
                     receipt: narrated_receipt.receipt.clone(),
                     state: self.world.snapshot(),
                     // The Chutes/narrator lane carries no certified private-result
-                    // authority. Those choices are excluded by `legal_commands` above.
+                    // authority. The derived view's own gate probe drops those choices,
+                    // so they were never in the set checked above.
                     decision_commitment: None,
                 });
                 self.actors.push(actor);

@@ -11,8 +11,8 @@
 //! outcome is unchanged: **prose is not power.**
 
 use dungeon_on_dregg::narrator::{
-    Brain, Command, Narrated, SceneView, ScriptedBrain, bound_attestation_commit,
-    bound_narration_commit, narrate_turn, narrate_turn_attested,
+    Brain, Command, Narrated, ScriptedBrain, bound_attestation_commit, bound_narration_commit,
+    legal_commands, narrate_turn, narrate_turn_attested, scene_view,
 };
 use dungeon_on_dregg::{deploy_keep, keep_scene};
 use spween_dregg::Value;
@@ -40,9 +40,16 @@ fn main() {
         Command::trade_blows(),
         "You trade a ringing blow with the gate-warden; his notched greatsword throws sparks.",
     )]);
-    let view = SceneView {
-        room: Some("gatehall".into()),
-    };
+    // The view is DERIVED from the live world, never authored: it carries the room, its
+    // prose, and the closed set of moves the installed teeth would admit right now.
+    let view = scene_view(&world, &scene);
+    println!(
+        "room           : {}",
+        view.room.as_deref().unwrap_or("(ended)")
+    );
+    for offered in legal_commands(&view) {
+        println!("offers         : {}  ({})", offered.keyword, offered.prompt);
+    }
     let proposal = brain.propose(&view);
 
     println!("brain narrates : {}", proposal.narration);

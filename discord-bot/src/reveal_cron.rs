@@ -220,7 +220,7 @@ async fn announce(http: &Http, reveal: &DailyReveal) {
         return;
     };
     let body = format!(
-        "**{}** — today's Descent is open. A beacon-seeded, permadeath run everyone plays; a WON \
+        "**{}** · today's Descent is open. A beacon-seeded, permadeath run everyone plays; a WON \
          run ranks on the no-cheat board. Descend with `/descent play`.",
         reveal.title
     );

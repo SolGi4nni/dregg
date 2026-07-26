@@ -192,7 +192,7 @@ pub fn run_pair_round_broken(
     let legs = vec![
         // The PRODUCER's off-chain work FAILS — its promise breaks.
         CoordinationLeg::new(producer, "produce", move |_inputs| {
-            Err("producer could not complete the task — promise broken".to_string())
+            Err("producer could not complete the task; promise broken".to_string())
         }),
         // The CONSUMER would have pipelined a payment against the producer's
         // promise; the broken promise propagates here and the round rolls back.

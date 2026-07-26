@@ -278,7 +278,7 @@ fn run_pair_round_broken(
     ledger.set(consumer.0, &COORD_ASSET, 1000);
     let legs = vec![
         CoordinationLeg::new(producer, "produce", move |_| {
-            Err("producer could not complete the task — promise broken".to_string())
+            Err("producer could not complete the task; promise broken".to_string())
         }),
         CoordinationLeg::new(consumer, "consume", move |_| {
             Ok(LegOutput::compute(b"paid".to_vec()))

@@ -251,7 +251,7 @@ impl Denied {
     pub fn message(&self) -> String {
         match self.granting_role {
             Some(role) => format!(
-                "This needs the **{}** capability. In this server that is the <@&{}> role — \
+                "This needs the **{}** capability. In this server that is the <@&{}> role; \
                  earn or request it, then try again.",
                 self.needed.label(),
                 role.get()
@@ -342,7 +342,7 @@ impl GrantOutcome {
                 format!("Granted the <@&{}> role.", role.get())
             }
             GrantOutcome::AlreadyHeld { role } => {
-                format!("Already holds the <@&{}> role — nothing to do.", role.get())
+                format!("Already holds the <@&{}> role, nothing to do.", role.get())
             }
             GrantOutcome::NoMapping { cap } => format!(
                 "No role is wired to the **{}** capability in this server ({}). \
@@ -513,12 +513,12 @@ impl RoleCapMap {
 /// The honest-boundary blurb, surfaced verbatim in `/identity roles show` so a user reads it in
 /// the product, not just the source.
 pub fn attestation_boundary() -> &'static str {
-    "A Discord role here is an **attestation by this server** — convenient, revocable, \
+    "A Discord role here is an **attestation by this server**: convenient, revocable, \
      and exactly as trustworthy as who hands roles out. It can GATE a surface (a cheap \
      first filter and a nice UX), but it is NOT a dregg proof. Where authority must be \
-     cryptographic, the referee is the real cap system — the executor (a turn is refused \
+     cryptographic, the referee is the real cap system: the executor (a turn is refused \
      or it lands) and your macaroon tokens (`/cipherclerk authorize`, \
-     `AgentCipherclerk::verify_token`) — never the role."
+     `AgentCipherclerk::verify_token`), never the role."
 }
 
 // ─── The `roles` surface — folded under `/identity` ──────────────────────────
@@ -560,7 +560,7 @@ use crate::embeds;
 pub fn register() -> CreateCommand {
     CreateCommand::new("roles")
         .description(
-            "Discord roles as dregg capabilities — what they gate, and how proofs grant them",
+            "Discord roles as dregg capabilities · what they gate, and how proofs grant them",
         )
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,
@@ -576,7 +576,7 @@ pub fn register() -> CreateCommand {
             CreateCommandOption::new(
                 CommandOptionType::SubCommand,
                 "grant",
-                "(admin) Grant an achievement's role to a member — the proof→role demo",
+                "(admin) Grant an achievement's role to a member · the proof→role demo",
             )
             .add_sub_option(
                 CreateCommandOption::new(CommandOptionType::User, "user", "Who earned it")
@@ -615,7 +615,7 @@ async fn handle_show(ctx: &Context, command: &CommandInteraction) {
     let caps = map.member_caps(command.member.as_deref());
 
     let held = if caps.is_empty() {
-        "_none — no cap-bearing roles_".to_string()
+        "_none · no cap-bearing roles_".to_string()
     } else {
         caps.iter()
             .map(|c| {
@@ -662,10 +662,10 @@ async fn handle_unlock(ctx: &Context, command: &CommandInteraction) {
         .unwrap_or(&[]);
 
     let embed = match map.gate(roles, DreggCap::VerifiedHolder) {
-        Ok(()) => embeds::success_embed("Unlocked — Verified Holders' Table")
+        Ok(()) => embeds::success_embed("Unlocked · Verified Holders' Table")
             .description(
                 "Your **Verified Holder** role opened this surface. (A real cryptographic \
-                 action here would still re-verify on the executor / your macaroon — the role \
+                 action here would still re-verify on the executor / your macaroon; the role \
                  only decided whether to show you the door.)",
             )
             .field("Offering", "the verified-only lounge", false),
@@ -702,7 +702,7 @@ async fn handle_grant(ctx: &Context, command: &CommandInteraction, _state: &BotS
             "Admins Only",
             "This is the manual demo of the proof→role grant. In production the grant fires \
              automatically from the verified achievement (a re-verified Descent win, a \
-             `/credential verify` success) — no admin press needed.",
+             `/credential verify` success), no admin press needed.",
         );
         let _ = command
             .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
