@@ -50,10 +50,33 @@ fn perm_anyof(perms: &[Permission]) -> Caveat {
     ))
 }
 
+/// Install the Lean-verified ML-DSA-65 KEYGEN and SIGN cores before the first credential mint,
+/// once per process.
+///
+/// Minting walks `dregg_auth::credential::RootKey::mint`, which derives a fresh ML-DSA-65 keypair
+/// per chain block through `dregg_pq::MlDsaKey::from_ed25519_seed` and then SIGNS the block with it. `dregg-auth` is a deliberately
+/// light leaf — it depends on nothing that can link the Lean archive — so NOTHING on that path
+/// installs a verified core, and dregg-pq answers by refusing: `process::abort()`, no panic, no
+/// message under libtest capture. This crate CAN reach the archive (via `dregg-app-framework` →
+/// `dregg-sdk`), so it installs at the point of use. `membership_lifecycle` aborted without it, at
+/// every thread count.
+///
+/// Export-gated and idempotent: an archive that does not export the real cores installs
+/// nothing and the refusal still stands. This decides WHICH keygen answers, never WHETHER one may.
+fn ensure_verified_keygen_core() {
+    use std::sync::Once;
+    static INSTALLED: Once = Once::new();
+    INSTALLED.call_once(|| {
+        let _ = dregg_app_framework::install_verified_mldsa_keygen_core_real();
+        let _ = dregg_app_framework::install_verified_mldsa_sign_core_real();
+    });
+}
+
 /// Mint the **owner grant** — the org-owner's full, org-scoped authority. Every
 /// role-cap is an attenuation of this. Held by the founding owner; re-minted by
 /// the org authority to issue each member's role-cap.
 pub fn org_owner_grant(root: &RootKey, org_id: &str) -> Credential {
+    ensure_verified_keygen_core();
     root.mint([
         // The org-scoping tooth: pinned for the whole descent.
         Caveat::FirstParty(Pred::AttrEq {
