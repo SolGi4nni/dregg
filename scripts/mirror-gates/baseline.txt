@@ -18,7 +18,7 @@
 
 A1:accumulator_nonrev_emit_gate.rs:GOLDEN_JSON:dregg-accumulator-nonrev-emit-v2  # A/A1-second-author
 A1:adjacency_membership_emit_gate.rs:GOLDEN_JSON:dregg-membership-adjacency::poseidon2-v1  # A/A1-second-author
-A1:bilateral_aggregation_emit_gate.rs:GOLDEN_JSON:dregg-bilateral-aggregation-v2  # A/A1-second-author
+A1:bilateral_aggregation_emit_gate.rs:GOLDEN_JSON:dregg-bilateral-aggregation-v3  # A/A1-second-author  [re-keyed v2->v3 by the b15b30972 descriptor cutover; same file, same const, same unwelded literal]
 A1:bridge_action_emit_gate.rs:GOLDEN_JSON:bridge-action-leaf::bridge_action_air_v1  # A/A1-second-author
 A1:derivation_emit_audit_extra.rs:GOLDEN_JSON:dregg-derivation-v1  # A/A1-second-author
 A1:derivation_emit_gate.rs:GOLDEN_JSON:dregg-derivation-v1  # A/A1-second-author
@@ -26,8 +26,6 @@ A1:dfa_routing_audit_extra.rs:GOLDEN_JSON:dfa-routing-toggle-2state::poseidon2-v
 A1:dfa_routing_emit_gate.rs:GOLDEN_JSON:dfa-routing-toggle-2state::poseidon2-v1  # A/A1-second-author
 A1:lean_descriptor_air.rs:TRANSFER_VM_DESCRIPTOR_JSON:dregg-effectvm-transfer-v1  # A/A1-second-author
 A1:merkle_membership_emit_gate.rs:GOLDEN_JSON:merkle-membership-depth2-4ary::poseidon2-v1  # A/A1-second-author
-A1:non_revocation_audit_boundary.rs:GOLDEN_JSON:dregg-non-revocation-sorted-tree::poseidon2-v1  # A/A1-second-author
-A1:non_revocation_emit_gate.rs:GOLDEN_JSON:dregg-non-revocation-sorted-tree::poseidon2-v1  # A/A1-second-author
 A1:note_spending_emit_gate.rs:GOLDEN_JSON:note-spend-leaf::dregg-note-spending-dsl-v3  # A/A1-second-author
 A1:poseidon2_hash_emit_audit_extra.rs:GOLDEN_JSON:poseidon2-hash-arity2::poseidon2-v1  # A/A1-second-author
 A1:predicates_arithmetic_boundary_audit.rs:GOLDEN_JSON:dregg-predicate-arith-ge::threshold-v1  # A/A1-second-author
@@ -35,7 +33,7 @@ A1:presentation_emit_gate.rs:GOLDEN_JSON:dregg-presentation-freshness::summary-v
 A1:quantified_absence_emit_gate.rs:GOLDEN_JSON:quantified-absence-quotient-accumulator::babybear4-v1  # A/A1-second-author
 A1:temporal_predicate_audit_extra.rs:GOLDEN_JSON:dregg-temporal-predicate-gte::dsl-v1  # A/A1-second-author
 A1:temporal_predicate_emit_gate.rs:GOLDEN_JSON:dregg-temporal-predicate-gte::dsl-v1  # A/A1-second-author
-A2:bilateral_aggregation_adversarial_audit.rs:GOLDEN_JSON:circuit/descriptors/dregg-bilateral-aggregation-v2.json  # A/A2-golden-is-the-artifact
+A2:bilateral_aggregation_adversarial_audit.rs:GOLDEN_JSON:circuit/descriptors/dregg-bilateral-aggregation-v3.json  # A/A2-golden-is-the-artifact  [re-keyed v2->v3 by the b15b30972 descriptor cutover; same file, same const, same self-include]
 A2:blinded_membership_witness.rs:GOLDEN_JSON:circuit/descriptors/by-name/blinded-membership.json  # A/A2-golden-is-the-artifact
 A2:bound_presentation_witness.rs:GOLDEN_JSON:circuit/descriptors/by-name/bound-presentation.json  # A/A2-golden-is-the-artifact
 A2:predicates_arithmetic_emit_gate.rs:GOLDEN_JSON:circuit/descriptors/by-name/predicate-arith.json  # A/A2-golden-is-the-artifact
