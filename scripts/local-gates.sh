@@ -59,6 +59,7 @@ GATES=(
   "ci-invariants-structural|900|bash scripts/ci-invariants.sh structural"
   "descriptor-drift|900|bash scripts/check-descriptor-drift.sh"
   "wasm-freshness|120|bash scripts/check-wasm-freshness.sh"
+  "effect-payload-shape|900|bash scripts/check-effect-payload-shape.sh"
 )
 # Expensive — only under --all, each with the reason it is not in the cheap set.
 GATES_ALL=(
