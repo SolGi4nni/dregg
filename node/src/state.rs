@@ -805,6 +805,91 @@ fn recovery_read_error_is_fatal(cursor: Result<u64, dregg_persist::StoreError>) 
     }
 }
 
+/// Boot torn-tail recovery, with the ONE case where a non-converging walk is
+/// INCONCLUSIVE rather than fatal.
+///
+/// [`PersistentStore::recover_to_last_consistent`] reconstructs
+/// `base ⊕ checkpoint ⊕ overlay` and keeps the last commit ordinal whose
+/// reconstructed root matches the root that record committed — with an EMPTY
+/// base. That comparison is only meaningful when a ledger CHECKPOINT exists,
+/// because a checkpoint is a full snapshot that carries the genesis cells, while
+/// the commit-log overlay carries only the cells a turn TOUCHED and every
+/// record's `ledger_root` commits the FULL ledger (genesis ⊕ touched).
+///
+/// With NO checkpoint the reconstruction is the touched-cell delta on an empty
+/// base, so it mismatches at EVERY ordinal and the walk reports "no salvageable
+/// prefix" for a perfectly consistent image. persist proves exactly this about
+/// its own no-baseline variant (`recover_from_base_does_not_falsely_strand_a_sub_checkpoint_image`,
+/// persist/src/commit_log.rs) and ships the remedy —
+/// `recover_to_last_consistent_from_base` — which had NO production caller.
+///
+/// It is not theoretical. Measured 2026-07-26: `kill -9` on a devnet node that
+/// had finalized three faucet turns and never checkpointed left an image that
+/// REFUSED TO BOOT AGAIN ("NO commit-log prefix reconstructs to its recorded
+/// root"). The first ledger checkpoint lands at `--checkpoint-interval` blocks
+/// (default 1000) or on graceful shutdown, so every young node — every devnet —
+/// sits inside that window, where any crash that is not a clean SIGTERM is
+/// terminal for the data dir.
+///
+/// SEMANTICS, out loud: what is skipped is the tail TRUNCATION, never the
+/// integrity VERDICT. "No converging prefix" is exactly the case where there is
+/// no last-good ordinal to truncate TO, so truncation could not have helped
+/// anyway; when a prefix DOES converge the tail is still truncated as before.
+/// The verdict belongs to [`NodeStateInner::verify_recovery_convergence`] — which
+/// `run_node` calls after `reseed_genesis_then_overlay` rebuilds the genesis
+/// baseline, which exits the process on mismatch, and which carries the
+/// quorum-signed-anchor and anti-rollback legs.
+///
+/// That deferral is the design this file already documents twice: the overlay
+/// step ~130 lines below ("the recovery-convergence verdict is DEFERRED to
+/// `verify_recovery_convergence` ... comparing against it before the genesis
+/// baseline is rebuilt would fail-close every legitimate sub-checkpoint
+/// restart"), and the tests `convergence_root_mismatch_refuses_to_start` and
+/// `dropped_removal_resurrects_and_diverges_the_root`, which assert construction
+/// SUCCEEDS and "the verdict is a separate step". Both of those tests were RED —
+/// the early fatal had been overriding the intent, unnoticed.
+///
+/// A non-Integrity store error is a different animal — a broken database rather
+/// than a comparison that cannot be made — and stays FATAL.
+fn run_boot_torn_tail_recovery(store: &PersistentStore) -> Result<(), String> {
+    let error = match store.recover_to_last_consistent() {
+        Ok(0) => return Ok(()),
+        Ok(n) => {
+            tracing::warn!(
+                truncated = n,
+                "boot recovery: truncated {n} divergent commit-log record(s) to the \
+                 last-consistent ordinal (torn-tail crash recovery); peers will backfill"
+            );
+            return Ok(());
+        }
+        Err(e) => e,
+    };
+
+    if !matches!(error, dregg_persist::StoreError::Integrity(_)) {
+        return Err(format!(
+            "boot recovery (recover_to_last_consistent) failed: {error}"
+        ));
+    }
+
+    // Was the base the walk used able to reproduce a full-ledger root at all?
+    // Only a checkpoint carries the genesis cells. `latest_ledger_checkpoint_height`
+    // cannot answer this — a real checkpoint AT height 0 is exactly what a
+    // graceful shutdown writes on a young node — so ask for the checkpoint itself.
+    let checkpointed = matches!(store.load_latest_ledger_checkpoint(), Ok(Some(_)));
+    tracing::warn!(
+        error = %error,
+        checkpointed,
+        "boot recovery: the torn-tail walk found NO converging commit-log prefix, so there \
+         is no last-good ordinal to truncate to and the tail is left intact. With no ledger \
+         checkpoint this is INCONCLUSIVE rather than a corruption finding — the walk \
+         reconstructs the touched-cell delta on an EMPTY base and cannot reproduce any \
+         record's full-ledger root. The verdict is deferred to verify_recovery_convergence, \
+         which runs once the genesis baseline is reseeded and still REFUSES to start on \
+         genuine divergence"
+    );
+    Ok(())
+}
+
 /// Make the cipherclerk's receipt chain durable across a restart.
 ///
 /// THE WELD the deep-reads converged on: the served `/api/receipts*` chain and
@@ -1002,23 +1087,10 @@ impl NodeState {
         // REFUSE the whole image and strand the node (observed 2026-06-29 after a
         // homelab PSU swap). Truncate any divergent tail to the last commit ordinal
         // whose reconstructed root matches; peers backfill the dropped turn(s) via
-        // normal blocklace sync. No-op (returns 0) when already consistent; a
-        // genuinely divergent image with NO matching prefix still Errs (fail-closed
-        // on tampering). Uses the existing `PersistentStore::recover_to_last_consistent`
-        // (persist/src/commit_log.rs); mirrors starbridge `World::open_recovering`.
-        match store.recover_to_last_consistent() {
-            Ok(0) => {}
-            Ok(n) => tracing::warn!(
-                truncated = n,
-                "boot recovery: truncated {n} divergent commit-log record(s) to the \
-                 last-consistent ordinal (torn-tail crash recovery); peers will backfill"
-            ),
-            Err(e) => {
-                return Err(format!(
-                    "boot recovery (recover_to_last_consistent) failed: {e}"
-                ));
-            }
-        }
+        // normal blocklace sync. See `run_boot_torn_tail_recovery` for the one case
+        // the walk cannot adjudicate (no checkpoint => empty base => the recorded
+        // full-ledger root is unreproducible) and what still fails closed.
+        run_boot_torn_tail_recovery(&store)?;
 
         // Resolve key file path: absolute paths are used as-is,
         // relative paths are resolved from the data directory.
@@ -1341,23 +1413,10 @@ impl NodeState {
         // REFUSE the whole image and strand the node (observed 2026-06-29 after a
         // homelab PSU swap). Truncate any divergent tail to the last commit ordinal
         // whose reconstructed root matches; peers backfill the dropped turn(s) via
-        // normal blocklace sync. No-op (returns 0) when already consistent; a
-        // genuinely divergent image with NO matching prefix still Errs (fail-closed
-        // on tampering). Uses the existing `PersistentStore::recover_to_last_consistent`
-        // (persist/src/commit_log.rs); mirrors starbridge `World::open_recovering`.
-        match store.recover_to_last_consistent() {
-            Ok(0) => {}
-            Ok(n) => tracing::warn!(
-                truncated = n,
-                "boot recovery: truncated {n} divergent commit-log record(s) to the \
-                 last-consistent ordinal (torn-tail crash recovery); peers will backfill"
-            ),
-            Err(e) => {
-                return Err(format!(
-                    "boot recovery (recover_to_last_consistent) failed: {e}"
-                ));
-            }
-        }
+        // normal blocklace sync. See `run_boot_torn_tail_recovery` for the one case
+        // the walk cannot adjudicate (no checkpoint => empty base => the recorded
+        // full-ledger root is unreproducible) and what still fails closed.
+        run_boot_torn_tail_recovery(&store)?;
 
         let mut cclerk = AgentCipherclerk::from_key_bytes(zeroize::Zeroizing::new(key_bytes));
         // Restore the durable receipt chain into the cipherclerk and arm its
@@ -4004,6 +4063,126 @@ mod crash_recovery_overlay_tests {
             .insert_cell(cell(seed, overlay_balance))
             .expect("post-overlay cell");
         crate::blocklace_sync::canonical_ledger_root(&ledger)
+    }
+
+    /// THE HARD-CRASH BRICK (measured 2026-07-26 on a real devnet node).
+    ///
+    /// `kill -9` on a node that had finalized three faucet turns and never
+    /// written a ledger checkpoint left a data dir that REFUSED TO BOOT AGAIN:
+    /// "NO commit-log prefix reconstructs to its recorded root". The boot walk
+    /// reconstructs `empty ⊕ overlay`, but every record's `ledger_root` commits
+    /// the FULL ledger (genesis ⊕ touched), so nothing converges — and the node
+    /// turned that into a fatal store-integrity verdict. The first checkpoint
+    /// lands at `--checkpoint-interval` blocks (default 1000) or on graceful
+    /// shutdown, so every young node sits inside that window and only a clean
+    /// SIGTERM was survivable.
+    ///
+    /// Two poles, so this cannot pass by being lenient:
+    ///   * NO checkpoint + a CONSISTENT sub-checkpoint image → boots (the fix),
+    ///     while the raw no-baseline walk still reports Integrity (the wound is
+    ///     still there to be exercised).
+    ///   * A checkpoint present + a genuinely DIVERGENT image → still REFUSES.
+    #[tokio::test]
+    async fn hard_crash_before_first_checkpoint_boots_but_a_divergent_store_still_refuses() {
+        // ── pole 1: the crash window ──────────────────────────────────────────
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = PersistentStore::open(&tmp.path().join("dregg.redb")).expect("open store");
+
+        // Genesis baseline: cells genesis established that NO turn touches, so
+        // the commit-log overlay cannot carry them and — with no checkpoint —
+        // nothing can. High seeds so they never collide with the touched cells.
+        let mut ledger = Ledger::new();
+        for seed in [0xf0u8, 0xf1, 0xf2] {
+            ledger
+                .insert_cell(cell(seed, 1_000_000))
+                .expect("genesis baseline cell");
+        }
+
+        // Finalized turns whose recorded root commits genesis ⊕ touched — the
+        // real shape a node commits. No checkpoint is ever written.
+        for k in 0u64..3 {
+            let touched = cell(k as u8, 100 + k as i64);
+            let _ = ledger.remove(&touched.id());
+            ledger.insert_cell(touched.clone()).expect("touched cell");
+            let rec = dregg_persist::CommitRecord {
+                ordinal: k,
+                height: k + 1,
+                block_id: [0u8; 32],
+                block_executed_up_to: 0,
+                turn_hash: [0xc0 | k as u8; 32],
+                creator: [0u8; 32],
+                receipt_hash: [0xd0 | k as u8; 32],
+                ledger_root: crate::blocklace_sync::canonical_ledger_root(&ledger),
+                touched_cells: vec![touched],
+                removed: Vec::new(),
+            };
+            store.commit_finalized_turn(k, &rec).expect("commit turn");
+        }
+
+        assert!(
+            store
+                .load_latest_ledger_checkpoint()
+                .expect("read checkpoint")
+                .is_none(),
+            "the crash window is DEFINED by having no checkpoint yet"
+        );
+        // THE WOUND, still real: the no-baseline walk cannot reproduce any
+        // record's full-ledger root, so it calls a consistent image unsalvageable.
+        assert!(
+            store.recover_to_last_consistent().is_err(),
+            "the no-baseline walk must still misread this consistent image — if it \
+             stops, this test no longer exercises the hard-crash mechanism"
+        );
+
+        // THE FIX: the node reads that as INCONCLUSIVE (empty base, no checkpoint)
+        // and boots, deferring the verdict to verify_recovery_convergence.
+        run_boot_torn_tail_recovery(&store)
+            .expect("a hard crash before the first checkpoint must not brick the data dir");
+
+        // ── pole 2: the lenient branch must not launder a CORRUPT store ───────
+        // The adversarial case for the change above: a store in the SAME
+        // no-checkpoint crash window, but genuinely divergent — its records
+        // commit a root the ledger does not reconstruct to. Boot recovery lets it
+        // through (it cannot tell), so the deferred verdict is the whole defence.
+        // If this stops refusing, the crash-window branch has become a hole.
+        let tmp2 = tempfile::tempdir().expect("tempdir");
+        let store2 = PersistentStore::open(&tmp2.path().join("dregg.redb")).expect("open store");
+        let touched = cell(0x5e, 500);
+        let rec = dregg_persist::CommitRecord {
+            ordinal: 0,
+            height: 1,
+            block_id: [0u8; 32],
+            block_executed_up_to: 0,
+            turn_hash: [0xe1; 32],
+            creator: [0u8; 32],
+            receipt_hash: [0xe2; 32],
+            ledger_root: [0xde; 32], // deliberately NOT the post-overlay root
+            touched_cells: vec![touched],
+            removed: Vec::new(),
+        };
+        store2.commit_finalized_turn(0, &rec).expect("commit turn");
+        assert!(
+            store2
+                .load_latest_ledger_checkpoint()
+                .expect("read checkpoint")
+                .is_none(),
+            "pole 2 must sit in the SAME no-checkpoint window as pole 1"
+        );
+        drop(store2);
+
+        // Construction proceeds (the verdict is the separate step) …
+        let state = NodeState::new_with_key_file(tmp2.path(), vec![], "node.key")
+            .expect("construction reconstructs the overlay; the verdict is a separate step");
+        // … and the deferred verdict REFUSES the divergent store.
+        let err = state
+            .verify_recovery_convergence()
+            .await
+            .err()
+            .expect("a divergent store recovered in the crash window must still FAIL CLOSED");
+        assert!(
+            err.contains("convergence"),
+            "the refusal must name the convergence failure; got: {err}"
+        );
     }
 
     /// Build a store whose checkpoint at height 1 holds `cell(seed)` HOSTED, then
