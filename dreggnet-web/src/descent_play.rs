@@ -1,11 +1,43 @@
 //! # `descent_play` — the Lean-authored Descent, playable in a plain browser.
 //!
-//! `GET /descent/play` is the flagship web front door. It drives wasm
-//! `NativeDescentWorld`, which is a transport wrapper around
-//! `dreggnet_offerings::native_descent::NativeDescentOffering`; every click therefore crosses the
-//! same executor-backed `Offering::advance` boundary as Discord, Telegram, and `/offerings/descent`.
+//! `GET /descent/play` is the flagship web front door. It offers the SAME
+//! `dreggnet_offerings::native_descent::NativeDescentOffering` through two engines, and the reader
+//! picks which one runs it ([`Engine`]):
+//!
+//! * **`?engine=` absent — the SERVER, and this is the default.** The offering runs here and the
+//!   page is `/offerings/descent/session/…`: plain HTML, one form POST per verb, nothing
+//!   downloaded, works with JavaScript off.
+//! * **`?engine=browser` — the reader's own tab, opted into by name.** wasm `NativeDescentWorld`, a
+//!   transport wrapper around the same offering, so every click still crosses the same
+//!   executor-backed `Offering::advance` boundary as Discord, Telegram, and `/offerings/descent`.
+//!
+//! **Why it is opt-in.** Running the whole ruleset in a tab costs a tens-of-megabytes one-time
+//! download and a visibly slower first paint, and it used to be imposed on every visitor who
+//! pressed the flagship CTA — on a deployment with no bundle, that CTA was a dead end reading *"The
+//! native WebAssembly artifact is unavailable; no substitute game was opened"* while a complete,
+//! working, server-side copy of the same game sat one URL away and was never mentioned.
+//!
+//! **What the browser engine BUYS**, so the opt-in has a reason attached rather than being a toggle
+//! nobody understands: it is the mode where you do not have to trust this server about your run. The
+//! tab verifies today's drand beacon by BLS pairing ITSELF before it will open a day
+//! (`NativeDescentWorld.fromBeacon`, fail-closed), it replays its own receipts locally (`Verify full
+//! record`), and the run lives in `localStorage` rather than in this server's session store — where
+//! the hosted page states outright that your moves, the dungeon and the result all live here and
+//! anyone with the link can read them. That is the whole of the difference, and it is the only part
+//! worth a download.
+//!
 //! The installed game program is the checked-in Lean emission. This module contains presentation
 //! and persistence glue only: it does not reproduce a move rule.
+//!
+//! ## What a deployment has to serve (the funnel's contract)
+//!
+//! The browser engine's bundle is a BUILD OUTPUT, never a committed blob — `wasm/pkg/.gitignore` is
+//! a single `*`, so a fresh clone has none. Build it with `scripts/build-descent-wasm.sh` (the one
+//! build path: the flag pair, the name-section strip, the provenance stamp, and the freshness gate)
+//! and point [`DESCENT_PLAY_ASSET_DIR`](play_asset_dirs) at the resulting directory. Three routes
+//! read out of it and nothing else does: `dregg_wasm.js`, `dregg_wasm_bg.wasm`, and `snippets/**`.
+//! A deployment that skips the build is not broken — [`browser_bundle_present`] answers `false`, the
+//! door says the browser engine is unavailable here, and the server engine carries the page.
 //!
 //! The browser retains a versioned public-input record in `localStorage`. Reopening imports that
 //! record only by fresh native replay and exact receipt/state/root comparison. Ordinary in-progress
@@ -77,6 +109,16 @@ const PLAY_CSP: &str = "default-src 'none'; \
 /// same-origin-asset routes use).
 const JS_CT: &str = "text/javascript; charset=utf-8";
 
+/// The play page's query string. One field, and it is the engine opt-in
+/// ([`Engine::from_query`]); `serde` defaults it to `None`, so a bare `/descent/play` is the server
+/// engine.
+#[derive(Debug, Default, serde::Deserialize)]
+pub(crate) struct PlayQuery {
+    /// `browser` (or `wasm`) selects the in-tab WebAssembly executor. Anything else is the server.
+    #[serde(default)]
+    engine: Option<String>,
+}
+
 /// The route serving TODAY's resolved day as JSON — the same-origin descriptor the bootstrap reads
 /// so the page opens the day the BOARD is keeping score on, not a fixture.
 const DAY_JSON_PATH: &str = "/descent/play/static/day.json";
@@ -119,11 +161,21 @@ pub fn descent_play_router() -> Router {
 /// hash chain and printed on the native board — a thing the player can reproduce from 24 words
 /// instead of losing with their site data. A visitor with no claim is byte-for-byte unaffected: the
 /// attribute is absent and the old minted pseudonym is used.
-async fn get_descent_play(headers: axum::http::HeaderMap) -> Response {
+///
+/// ⚑ **The engine is chosen by `?engine=`, and it defaults to the SERVER.** In-browser execution is
+/// a large one-time download and a slower start, so it is opted into by name
+/// ([`Engine::from_query`]) rather than imposed on everyone who presses the flagship CTA. Every
+/// other value — absent, empty, misspelt — lands on the server engine, which is the direction a
+/// default should fail in.
+async fn get_descent_play(
+    headers: axum::http::HeaderMap,
+    axum::extract::Query(query): axum::extract::Query<PlayQuery>,
+) -> Response {
     let claimed = crate::seed_identity::claimed_pubkey(&headers);
+    let engine = Engine::from_query(query.engine.as_deref());
     let mut response = (
         [(header::CONTENT_SECURITY_POLICY, PLAY_CSP)],
-        Html(shell_page(claimed.as_deref())),
+        Html(shell_page(claimed.as_deref(), engine)),
     )
         .into_response();
     // The page now varies by cookie. Without this a shared cache could serve one player's claimed
@@ -619,6 +671,34 @@ button.nd-cell:focus-visible{outline:2px solid var(--nd-proof-lit);outline-offse
 .nd-fatal{margin:1.4rem 0;padding:.95rem 1.05rem;border:1px solid rgba(201,106,94,.45);border-left:2px solid var(--nd-peril);border-radius:0 3px 3px 0;background:rgba(201,106,94,.06);color:var(--nd-peril-lit);font-family:var(--nd-serif);font-size:var(--nd-f3);line-height:1.55;overflow-wrap:anywhere}
 .nd-offline{margin:1.4rem 0;padding:.95rem 1.05rem;border:1px solid var(--nd-line);border-left:2px solid var(--nd-proof);border-radius:0 3px 3px 0;background:rgba(255,255,255,.015);color:var(--nd-soft);font-family:var(--nd-serif);font-size:var(--nd-f3);line-height:1.6}
 .nd-offline a{color:var(--nd-proof-lit)}
+/* ═══ THE ENGINE DOOR — where the game runs, chosen rather than assumed ═══════════
+   Two cards, side by side, both real. The LIVE one wears the torch (this is the engine you are on);
+   the other is stated at full contrast rather than dimmed into an afterthought, because the whole
+   point is that both are the same game and neither is a downgrade. The unavailable browser card is
+   the one thing that greys out — an option this deployment genuinely does not have. */
+.nd-doors{margin:clamp(1.1rem,3vw,1.7rem) 0 0}
+.nd-doors h2{margin:0 0 .7rem;font-family:var(--nd-mono);font-size:var(--nd-f1);letter-spacing:.2em;text-transform:uppercase;color:var(--nd-torch-deep);font-weight:700}
+.nd-door-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,17rem),1fr));gap:.75rem}
+.nd-door{padding:.95rem 1.05rem 1.05rem;border:1px solid var(--nd-line);border-left:2px solid var(--nd-line-lit);border-radius:0 3px 3px 0;background:linear-gradient(180deg,rgba(19,17,24,.9),rgba(11,10,16,.92))}
+.nd-door.nd-door-live{border-left-color:var(--nd-torch-deep);background:linear-gradient(180deg,rgba(216,180,126,.05),rgba(11,10,16,.92))}
+.nd-door h3{margin:0 0 .45rem;display:flex;flex-wrap:wrap;align-items:baseline;gap:.5rem;font-family:var(--nd-serif);font-weight:600;font-size:var(--nd-f4);letter-spacing:-.01em;color:var(--nd-ink)}
+.nd-door-tag{font-family:var(--nd-mono);font-size:var(--nd-f1);letter-spacing:.17em;text-transform:uppercase;color:var(--nd-torch);font-weight:700}
+.nd-door p{margin:0 0 .6rem;font-family:var(--nd-serif);font-size:var(--nd-f2);line-height:1.6;color:var(--nd-soft);max-width:46ch}
+.nd-door p:last-child{margin-bottom:0}
+.nd-door-go{display:inline-block;padding:.5rem .95rem;border:1px solid var(--nd-torch-deep);border-radius:2px;background:rgba(216,180,126,.1);color:var(--nd-torch-hot);font-family:var(--nd-mono);font-size:var(--nd-f2);font-weight:700;letter-spacing:.04em;text-decoration:none}
+.nd-door-go:hover{background:rgba(216,180,126,.18);border-color:var(--nd-torch);color:#f7e6c8}
+.nd-door-state{font-family:var(--nd-mono);font-size:var(--nd-f1);letter-spacing:.05em;color:var(--nd-faint)}
+.nd-door-state a{color:var(--nd-torch)}
+.nd-door-off{color:var(--nd-peril-lit)}
+/* ⚑ THE START BUTTON — one press, at the top, into the hosted game. It is bigger and warmer than
+   `.nd-door-go` because it is not one option among two any more: on the default engine it is the
+   page's ONE action, and the in-tab alternative below it is a sentence. */
+.nd-start{display:flex;flex-wrap:wrap;align-items:center;gap:.8rem;margin:clamp(1rem,2.6vw,1.5rem) 0 0}
+.nd-start-go{padding:.68rem 1.35rem;font-size:var(--nd-f3);box-shadow:0 0 34px -14px rgba(216,180,126,.5)}
+.nd-alt{font-family:var(--nd-mono);font-size:var(--nd-f1);letter-spacing:.08em;text-transform:uppercase;color:var(--nd-faint)}
+.nd-alt a{color:var(--nd-torch)}
+/* The demoted engine offer: a full sentence in the page's serif voice, not a card and not a chooser. */
+.nd-alt-block{display:block;margin:.9rem 0 0;max-width:58ch;font-family:var(--nd-serif);font-size:var(--nd-f2);letter-spacing:0;text-transform:none;line-height:1.62;color:var(--nd-soft)}
 /* ═══ THE RULES, IN ONE SCREEN — what a stranger needs before their first press ═══
    Automatafl and the tug each carry this block on their own landing; the Descent had none, so a
    first-time player met a shaft, a torch band and seven verbs with no statement of the objective.
@@ -742,12 +822,188 @@ fn rules_html(live_beacon: bool) -> String {
     )
 }
 
+/// **WHICH ENGINE RUNS THE GAME** — the choice the page is now explicit about.
+///
+/// Both engines execute the SAME `NativeDescentOffering` over the same Lean-authored ruleset and
+/// the same committed day, so neither is a lesser game. What differs is WHERE the executor runs and
+/// therefore what you have to trust and what you have to download.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Engine {
+    /// **The default.** The offering runs on this server; the page is plain HTML and one form POST
+    /// per verb. No WebAssembly, no download, works with JavaScript off, starts instantly.
+    Server,
+    /// **Opt-in.** The whole ruleset is compiled to WebAssembly and executed in the reader's own
+    /// tab. It costs a tens-of-megabytes one-time download and a slower first paint, and it is not
+    /// available at all on a deployment whose bundle was never built.
+    Browser,
+}
+
+impl Engine {
+    /// The engine a `?engine=` value names. Anything else — absent, empty, misspelt — is
+    /// [`Engine::Server`]: the browser engine is opt-IN, so it is never reached by accident, by a
+    /// stale link, or by a typo.
+    fn from_query(value: Option<&str>) -> Engine {
+        match value.map(str::trim) {
+            Some("browser") | Some("wasm") => Engine::Browser,
+            _ => Engine::Server,
+        }
+    }
+
+    /// The `data-engine` attribute value the bootstrap reads. `app.js` boots the wasm module ONLY
+    /// for `browser`, so the default page issues no `import()`, no `.wasm` fetch and no BLS work.
+    fn attr(self) -> &'static str {
+        match self {
+            Engine::Server => "server",
+            Engine::Browser => "browser",
+        }
+    }
+}
+
+/// The server-side entry — the SAME `NativeDescentOffering`, hosted, rendered as forms. This is the
+/// route the catalog already advertises for every non-table offering, named once so the play page
+/// and the catalog cannot point at two different front doors.
+const SERVER_ENGINE_HREF: &str = "/offerings/descent/session/descent-web";
+
+/// **Is the browser bundle actually on this deployment?**
+///
+/// A `metadata()` probe, NOT [`read_play_asset`] — the blob is tens of megabytes and the question is
+/// "does it exist", asked on every page render. Mirrors [`play_asset_dirs`] exactly, so a deployment
+/// pointing `DESCENT_PLAY_ASSET_DIR` somewhere empty answers `false` here and gets a door that says
+/// so, instead of a button that boots into a `TypeError`.
+fn browser_bundle_present() -> bool {
+    play_asset_dirs().into_iter().any(|mut path| {
+        path.push("dregg_wasm_bg.wasm");
+        std::fs::metadata(&path).is_ok_and(|meta| meta.is_file() && meta.len() > 0)
+    })
+}
+
+/// ⚑ **THE ENGINE DOOR** — the block that makes in-browser execution a CHOICE.
+///
+/// The page used to boot WebAssembly unconditionally, which meant the flagship "Play" CTA was, for
+/// every visitor, a tens-of-megabytes download before the first frame — and on a deployment with no
+/// bundle it was a dead end reading *"The native WebAssembly artifact is unavailable; no substitute
+/// game was opened"* beside a stack trace, with a fully working server-side copy of the same game
+/// one URL away and never mentioned.
+///
+/// So the default is the server, the browser engine is opted into by name, and the trade is stated
+/// rather than implied: **what the browser engine buys is not needing to trust this server about
+/// your run.** It verifies the day's drand beacon by BLS pairing in your own tab (`fromBeacon`), it
+/// replays its own receipts locally (`Verify full record`), and the run lives in your browser rather
+/// than in this server's session store — the hosted page says plainly that your moves, the dungeon
+/// and the result all live here. That is a real difference and it is the only one worth a download.
+///
+/// ⚑ **BUT ON THE DEFAULT ENGINE IT IS DEMOTED TO A LINE, because it was standing between a player
+/// and the game.** On `Engine::Server` this page renders an EMPTY mount div (that is correct — see
+/// [`shell_page`]'s `root_body`: a spinner for a load that never starts is worse), so what a visitor
+/// who pressed the product's flagship "Play" CTA actually got was an intro, a *"Where do you want it
+/// to run?"* chooser, and a rules block — a page ABOUT the game, with the game one more click away
+/// inside a card. The two-card grid now renders only for a player who has already CHOSEN the browser
+/// engine, where it is the switch-back control they need; the default gets [`start_here`]'s primary
+/// CTA at the top of the page and this offer as one quiet sentence.
+fn engine_door(engine: Engine, bundle: bool) -> String {
+    // THE DEFAULT PATH: one line, below the CTA that already starts the game. Same URL, same
+    // opt-in-by-name, same honest cost — just no longer shaped like a decision the player must make
+    // before they may play.
+    if engine == Engine::Server {
+        return if bundle {
+            "<p class=\"nd-alt nd-alt-block\">Or <a href=\"/descent/play?engine=browser\">run the \
+             whole game inside this tab instead</a> — nothing about the run leaves your browser, and \
+             the tab checks today's public random number itself rather than taking this server's word \
+             for it. It costs a large one-time download and is slower to start.</p>"
+                .to_string()
+        } else {
+            // Absent bundle, said BEFORE the click. `wasm/pkg` is gitignored, so this is the honest
+            // state of any deployment that did not run `scripts/build-descent-wasm.sh`.
+            "<p class=\"nd-alt nd-alt-block nd-door-off\">Running the game inside your own tab is \
+             not available on this deployment — the WebAssembly bundle was not built here. The \
+             hosted game above is the whole game.</p>"
+                .to_string()
+        };
+    }
+    let browser_card = if bundle {
+        "<p class=\"nd-door-state\">Running in your browser now. \
+         <a href=\"/descent/play\">Switch back to the server</a> if it is slow.</p>"
+            .to_string()
+    } else {
+        "<p class=\"nd-door-state nd-door-off\">Not available on this deployment — the \
+         WebAssembly bundle was not built here. The server engine above is the whole game.</p>"
+            .to_string()
+    };
+    format!(
+        "<section class=\"nd-doors\" aria-labelledby=\"nd-doors-h\">\
+         <h2 id=\"nd-doors-h\">Where do you want it to run?</h2>\
+         <div class=\"nd-door-grid\">\
+         <div class=\"nd-door{server_live}\">\
+         <h3>On the server <span class=\"nd-door-tag\">default</span></h3>\
+         <p>Starts immediately, downloads nothing, and works with JavaScript turned off. Your \
+         moves, the dungeon and the result live on this server, and anyone with your session link \
+         can read them.</p>\
+         <p><a class=\"nd-door-go\" href=\"{server}\">Play now</a></p>\
+         </div>\
+         <div class=\"nd-door{browser_live}\">\
+         <h3>In your browser</h3>\
+         <p>The whole ruleset is compiled to WebAssembly and runs in this tab. Nothing about the \
+         run leaves your browser, and the tab checks today's public random beacon itself rather \
+         than taking this server's word for it. It costs a large one-time download and is slower \
+         to start.</p>\
+         {browser_card}\
+         </div>\
+         </div>\
+         </section>",
+        server = SERVER_ENGINE_HREF,
+        // The early return above means only the BROWSER engine reaches this grid, so the server card
+        // is never the live one here and the browser card is live exactly when it can actually run.
+        server_live = "",
+        browser_live = if bundle { " nd-door-live" } else { "" },
+        browser_card = browser_card,
+    )
+}
+
+/// ⚑ **THE PAGE'S PRIMARY ACTION, AT THE TOP, GOING STRAIGHT INTO THE GAME.**
+///
+/// Measured click count from the landing page to a first legal move was **three**: the product's
+/// "Play The Descent" CTA landed here, and here you got an intro, a *"Where do you want it to run?"*
+/// chooser and a rules block, with the game itself behind a "Play now" link inside one of the two
+/// cards — a page ABOUT the game rather than the game. The middle click was not a decision anybody
+/// arrived wanting to make. This is the button that was missing.
+///
+/// **Why a CTA and not the playable surface mounted here** (the other repair on the table):
+/// * this route's own [`PLAY_CSP`] carries `form-action 'none'`, and the server engine IS plain HTML
+///   forms — one per move. A server-rendered board on this page could not submit a single turn
+///   without relaxing the exact directive the route exists to hold.
+/// * [`descent_play_router`] is deliberately additive and **state-free** — it holds no
+///   `CatalogState`, so there is nothing here to render an offering session FROM.
+/// * `#descent-play-root` is the wasm controller's own DOM root and `notice()`/`render()` call
+///   `replaceChildren` on it, so server-rendered forms parked there would be erased the moment
+///   anyone switched engines.
+/// * `dreggnet-web/tests/descent_funnel.rs` pins `GET /descent/play` at `200` carrying
+///   `id="descent-play-root"` — this URL serving the shell is already a decided property, so a
+///   redirect straight to the session would contradict a pinned decision rather than a preference.
+///
+/// So each engine keeps ONE home and this is the door to it, one press wide. The hosted game's
+/// address is [`SERVER_ENGINE_HREF`] — the same URL the `<noscript>` fallback and the demoted engine
+/// line point at, so there is exactly one hosted-game address on the page.
+fn start_here() -> String {
+    format!(
+        "<p class=\"nd-start\"><a class=\"nd-door-go nd-start-go\" href=\"{server}\">\
+         Start today's run <span aria-hidden=\"true\">→</span></a>\
+         <span class=\"nd-alt\">Starts immediately · downloads nothing · plays with JavaScript \
+         off</span></p>",
+        server = SERVER_ENGINE_HREF,
+    )
+}
+
 /// Static, strict-CSP chrome around the same-origin native wasm bootstrap.
 ///
 /// `claimed_actor` is the viewer's claimed public key when they hold one — rendered into
 /// `data-claimed-actor` so the run this tab records is filed under a recoverable identity. `None`
 /// (the anonymous default) omits the attribute entirely, leaving the page byte-identical to before.
-fn shell_page(claimed_actor: Option<&str>) -> String {
+///
+/// `engine` decides whether the in-tab executor boots at all: the root carries `data-engine`, and
+/// [`NATIVE_PLAY_APP_JS`]'s `boot()` returns immediately unless it reads `browser`. On the default
+/// the page therefore issues no dynamic `import()` and fetches no `.wasm`.
+fn shell_page(claimed_actor: Option<&str>, engine: Engine) -> String {
+    let bundle = browser_bundle_present();
     let day = crate::descent::todays_day();
     // Escaped like every other attribute here, even though a claimed actor is 64 chars of
     // lowercase hex by construction (`parse_claim_label` refuses anything else): the escape is what
@@ -761,20 +1017,19 @@ fn shell_page(claimed_actor: Option<&str>) -> String {
          <meta name=\"color-scheme\" content=\"dark\">\
          <title>Play The Descent — {product}</title>{style}{play_style}</head><body>{topbar}\
          <main class=\"session nd-page\">\
-         <header class=\"nd-intro\"><p class=\"nd-kicker\">Lean-authored · replayed in your tab</p>\
+         <header class=\"nd-intro\"><p class=\"nd-kicker\">Lean-authored · every move re-checked</p>\
          <h1>The Descent</h1>\
          <p>You go down carrying a torch that does not refill. Every verb spends one breath of it, \
          the climb out included — and a relic is only yours once a proved exit banks it.</p>\
          </header>\
-         <div id=\"descent-play-root\" data-day-key=\"{day_key}\" \
+         {start}{door}\
+         <div id=\"descent-play-root\" data-engine=\"{engine}\" data-day-key=\"{day_key}\" \
          data-native-seed=\"{native_seed}\" data-day-source=\"{day_source}\" \
-         data-guard-hp=\"{guard_hp}\"{claimed_attr}>\
-         <p class=\"nd-boot\" role=\"status\">Striking a light…</p>\
+         data-guard-hp=\"{guard_hp}\"{claimed_attr}>{root_body}\
          </div>\
-         <noscript><p class=\"nd-offline\" role=\"status\">The Descent runs its whole ruleset \
-         in this tab, in WebAssembly, which needs JavaScript on. With it off the same game is \
-         playable server-side — a real board, a real turn per click, no client code — in \
-         <a href=\"/offerings\">the shared offering host</a>.</p></noscript>\
+         <noscript><p class=\"nd-offline\" role=\"status\">The browser engine needs JavaScript \
+         on. The server engine does not — it is plain HTML and one form per move, and it is the \
+         same game: <a href=\"{server}\">play it here</a>.</p></noscript>\
          {rules}\
          </main>{footer}\
          <script type=\"module\" src=\"/descent/play/static/app.js\"></script>\
@@ -785,6 +1040,27 @@ fn shell_page(claimed_actor: Option<&str>) -> String {
         style = crate::STYLE,
         play_style = PLAY_STYLE,
         topbar = crate::topbar("descent"),
+        // The primary CTA rides only on the DEFAULT engine, where the mount below it is empty and the
+        // game lives at another URL. On the browser engine the game is already in this tab, so a
+        // button sending the player somewhere else would be the wrong offer in the loudest place.
+        start = match engine {
+            Engine::Server => start_here(),
+            Engine::Browser => String::new(),
+        },
+        door = engine_door(engine, bundle),
+        engine = engine.attr(),
+        server = SERVER_ENGINE_HREF,
+        // The mount point is EMPTY on the default engine. "Striking a light…" is a promise that
+        // something is about to boot, and on the server engine nothing is — leaving it there was a
+        // spinner for a load that never starts.
+        root_body = match (engine, bundle) {
+            (Engine::Browser, true) => "<p class=\"nd-boot\" role=\"status\">Striking a light…</p>",
+            (Engine::Browser, false) =>
+                "<p class=\"nd-fatal\" role=\"status\">This deployment \
+                 has no WebAssembly bundle, so the browser engine cannot start. Nothing was \
+                 downloaded. Use the server engine above — it is the same game.</p>",
+            (Engine::Server, _) => "",
+        },
         day_key = crate::esc(&day.key),
         native_seed = native_seed_for_day(&day),
         day_source = if day.source.is_live_beacon() {
@@ -1530,7 +1806,6 @@ function render() {
   const mapwrap = node("div", "nd-mapwrap");
   mapwrap.append(buildMap(sim, actions));
   shaft.append(mapwrap);
-  shaft.append(node("p", "sr-only", narrateMap(sim, snapshot.ended, carried, banked)));
   shaft.append(buildLegend());
   shaft.append(node("p", "nd-legend-note",
     "One column per relic, kept for the whole run: you watch a relic travel out of the dark, " +
@@ -1568,10 +1843,19 @@ function render() {
   shell.append(actionMenu);
 
   // ── THE LOG: what just happened. It animates only when the sentence CHANGED. ──
+  // ⚑ AND WHERE THE BOARD NOW STANDS. `narrateMap` — the board said ONCE, as a sentence, instead of
+  // sixty-six cells read aloud — used to sit beside the map in a plain `sr-only` paragraph with no
+  // live region anywhere on the page, so after a move NOTHING pointed a screen-reader user at the
+  // updated position: the map is redrawn silently and the only announced line was the log. It is now
+  // the second half of this one `role="status"` element (implicitly `aria-atomic`, so both are read
+  // together): what happened, then where that leaves you. The board itself stays out of every live
+  // region — the whole point of narrating it once.
   const message = node("p",
     ["nd-message", lastKind, logStamp !== paintedStamp ? "fresh" : ""].filter(Boolean).join(" "),
     lastMessage);
   message.setAttribute("role", "status");
+  message.append(node("span", "sr-only",
+    " " + narrateMap(sim, snapshot.ended, carried, banked)));
   paintedStamp = logStamp;
   shell.append(message);
 
@@ -1641,12 +1925,21 @@ function render() {
 
 async function boot() {
   if (!root) return;
+  // ⚑ THE OPT-IN GATE. The server renders data-engine="server" unless the reader asked for the
+  // browser engine by name, and on the server engine this module does NOTHING: no dynamic import,
+  // no .wasm fetch, no day.json request, no BLS pairing. Running the whole ruleset in a tab is a
+  // tens-of-megabytes download and a slow first paint, so it happens because somebody chose it.
+  // The server-side door is rendered above this mount point by `engine_door`, in plain HTML, so it
+  // is there whether or not this script ever runs.
+  if (root.dataset.engine !== "browser") return;
   let wasm;
   try {
     wasm = await import("/descent/play/static/dregg_wasm.js");
     await wasm.default();
   } catch (e) {
-    notice("The native WebAssembly artifact is unavailable; no substitute game was opened. " + errorText(e));
+    notice("The browser engine could not start: this deployment is not serving a WebAssembly "
+      + "bundle. Nothing is lost — the same game runs on the server, from the link above. ("
+      + errorText(e) + ")");
     return;
   }
   if (typeof wasm.NativeDescentWorld !== "function") {
@@ -1735,7 +2028,11 @@ mod tests {
 
     #[tokio::test]
     async fn the_play_page_ships_a_strict_wasm_csp_and_mounts_the_native_root() {
-        let resp = super::get_descent_play(axum::http::HeaderMap::new()).await;
+        let resp = super::get_descent_play(
+            axum::http::HeaderMap::new(),
+            axum::extract::Query(super::PlayQuery::default()),
+        )
+        .await;
         let csp = resp
             .headers()
             .get("content-security-policy")
@@ -1753,7 +2050,7 @@ mod tests {
         assert!(!csp.contains("'unsafe-eval'") || csp.contains("'wasm-unsafe-eval'"));
         assert!(csp.contains("connect-src 'self'"), "same-origin wasm fetch");
 
-        let html = super::shell_page(None);
+        let html = super::shell_page(None, super::Engine::Browser);
         assert!(html.contains("id=\"descent-play-root\""));
         assert!(
             !html.contains("<dregg-descent"),
@@ -1773,9 +2070,87 @@ mod tests {
         );
         // No CDN / external script origin (the /tg/link discipline).
         assert!(!html.contains("esm.sh") && !html.contains("https://cdn"));
+        // The no-script fallback is the SERVER ENGINE — the same offering, hosted, as forms.
         assert!(
-            html.contains("href=\"/offerings\""),
-            "no-script host fallback"
+            html.contains("<noscript>") && html.contains(super::SERVER_ENGINE_HREF),
+            "no-script fallback points at the server engine"
+        );
+    }
+
+    /// ⚑ **IN-BROWSER EXECUTION IS OPT-IN.** A bare `/descent/play` must mount the SERVER engine:
+    /// no `data-engine="browser"`, so `app.js`'s `boot()` returns before it imports anything, and no
+    /// visitor pays a tens-of-megabytes download for pressing the flagship CTA. The browser engine
+    /// is reached only by asking for it by name.
+    #[test]
+    fn the_browser_engine_is_opt_in_and_the_server_engine_is_the_default() {
+        let default_page = super::shell_page(None, super::Engine::Server);
+        assert!(
+            default_page.contains("data-engine=\"server\""),
+            "the default page mounts the server engine"
+        );
+        assert!(
+            !default_page.contains("data-engine=\"browser\""),
+            "nothing on the default page asks the bootstrap to load WebAssembly"
+        );
+        // The server engine is not merely the default — it is REACHABLE from the default page, as a
+        // real link, in server-rendered HTML that does not need the script to run.
+        assert!(
+            default_page.contains(&format!("href=\"{}\"", super::SERVER_ENGINE_HREF)),
+            "the default page links to the hosted game"
+        );
+        // And the browser engine is offered BY NAME, with its cost stated, never silently entered.
+        assert!(
+            default_page.contains("href=\"/descent/play?engine=browser\"")
+                || default_page.contains("was not built here"),
+            "the browser engine is an explicit choice (or is honestly reported as unavailable)"
+        );
+
+        // Only the named values select it, and every other input falls to the server — a default
+        // must fail toward the cheap, always-available engine.
+        assert_eq!(
+            super::Engine::from_query(Some("browser")),
+            super::Engine::Browser
+        );
+        assert_eq!(
+            super::Engine::from_query(Some("wasm")),
+            super::Engine::Browser
+        );
+        for miss in [None, Some(""), Some("Browser"), Some("server"), Some("yes")] {
+            assert_eq!(
+                super::Engine::from_query(miss),
+                super::Engine::Server,
+                "{miss:?} must not opt anyone into the browser engine"
+            );
+        }
+
+        // The opted-in page really does mount it (so the assertions above are not vacuous).
+        let opted = super::shell_page(None, super::Engine::Browser);
+        assert!(opted.contains("data-engine=\"browser\""));
+    }
+
+    /// ⚑ **THE BOOTSTRAP OBEYS THE GATE.** The opt-in is only worth anything if the module honours
+    /// it, so pin the guard in the served JavaScript itself: `boot()` returns before its dynamic
+    /// `import()` unless the root says `browser`.
+    #[tokio::test]
+    async fn the_bootstrap_refuses_to_load_wasm_unless_the_browser_engine_was_chosen() {
+        use axum::body::to_bytes;
+        let resp = super::get_play_app_js().await.into_response();
+        let js = String::from_utf8(
+            to_bytes(resp.into_body(), 1 << 22)
+                .await
+                .expect("app.js body")
+                .to_vec(),
+        )
+        .expect("app.js is utf-8");
+        let gate = js
+            .find(r#"if (root.dataset.engine !== "browser") return;"#)
+            .expect("boot() carries the engine gate");
+        let import = js
+            .find(r#"import("/descent/play/static/dregg_wasm.js")"#)
+            .expect("boot() imports the glue");
+        assert!(
+            gate < import,
+            "the gate must precede the import, or the download happens anyway"
         );
     }
 
@@ -1958,7 +2333,7 @@ mod tests {
 
         // The shell's fallback attribute carries the same table, so a tab whose `day.json` fetch
         // fails still sizes its meter against today's dungeon rather than day 0's.
-        let html = super::shell_page(None);
+        let html = super::shell_page(None, super::Engine::Browser);
         let attr = format!(
             "data-guard-hp=\"{}\"",
             played
@@ -1996,7 +2371,7 @@ mod tests {
     /// Falsifier: paste a `@import url(https://fonts.googleapis.com/...)` into [`PLAY_STYLE`].
     #[test]
     fn the_play_surface_is_self_contained_and_typeset_from_resident_faces() {
-        let page = super::shell_page(None);
+        let page = super::shell_page(None, super::Engine::Browser);
         for smell in [
             "@import",
             "url(http",
@@ -2148,7 +2523,7 @@ mod tests {
     /// structural fact, not as prose: the heading and the section must reach the served shell.
     #[test]
     fn the_play_page_states_the_rules_before_the_first_press() {
-        let page = super::shell_page(None);
+        let page = super::shell_page(None, super::Engine::Browser);
         assert!(
             page.contains("class=\"nd-rules\"") && page.contains("The rules, in one screen"),
             "the play page must carry the rules block the other two shipped games carry"

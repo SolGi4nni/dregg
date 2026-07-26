@@ -359,9 +359,18 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 // ─────────────────────────────────────────────────────────────────────────────────────────
 
 /// The block every landing page carries: what a minted table is, and the button that mints one.
+///
+/// ⚑ **THE REQUIREMENT LEADS, AND SO DOES THE WAY OUT OF IT.** This block already disclosed that a
+/// table means two seat links and that you send one yourself — but it disclosed it as the third
+/// sentence of a paragraph, to a reader who had already committed a click to get here. A lone visitor
+/// read "send the other" and had nowhere to go. So the two-player fact is now a chip above the fold
+/// (`.needs`, uppercase, scannable), and the block ends by naming the two things a person with nobody
+/// to play against can actually do: hold both seats (the lobby page tells them how), or go play the
+/// game that is meant to be played alone. A disclosure with no exit is still a dead end.
 pub fn open_a_table_section(lock: &TableLock) -> String {
     format!(
         "<section class=\"panel\"><h2>Open a table</h2>\
+         <p class=\"needs\">Two players · no matchmaking here — you invite them yourself</p>\
          <p class=\"prose\">A table is minted with two seat links. Keep one, send the other — \
          whoever opens a link takes that seat, and nobody else can. There is no shared lobby to \
          race for and no public table to wander into.</p>\
@@ -370,13 +379,31 @@ pub fn open_a_table_section(lock: &TableLock) -> String {
          waiting forever.</p>\
          <form method=\"post\" action=\"{route}/table\" class=\"affordance\">\
          <button type=\"submit\">Open a table</button></form>\
+         <p class=\"prose\"><strong>Here on your own?</strong> Open a table anyway and play both \
+         sides — the next page shows you how, and it is the real game under the real rules, not a \
+         demo. Or play <a href=\"{play}\">The Descent</a>, which is a game for one.</p>\
          </section>",
         minutes = table_seats::turn_limit().as_secs() / 60,
         route = lock.route,
+        play = crate::DESCENT_PLAY_PATH,
     )
 }
 
-/// The lobby page a mint returns — the two seat links plus the spectator link.
+/// The lobby page a mint returns — the two seat links, the **play-both-sides** practice path, and the
+/// spectator link.
+///
+/// ⚑ **PLAY-BOTH-SIDES IS A NAMED AFFORDANCE, AND IT SAYS WHICH WINDOW.** It used to be the
+/// parenthetical `(or take this side yourself)` hanging off the invite — an accidental byproduct of
+/// the two-link scheme, findable only by a reader who noticed it. It is the only thing a lone visitor
+/// can do with a two-player game on this product, so it gets a heading.
+///
+/// And the parenthetical was worse than obscure: it was a **footgun**, which is why the link is gone
+/// rather than merely renamed. A seat is installed as the `dregg_user` cookie at `Path=/`
+/// ([`get_seat_link`]), and a browser profile holds exactly one of those — so clicking the second
+/// seat link in the same browser overwrites the first seat with the second and silently hands away
+/// the seat you were already holding. Two TABS are one viewer. Two cookie jars are two viewers: a
+/// private window, a second browser, or a phone. That is why this section hands over the link as text
+/// to carry somewhere else instead of as something to click here.
 fn lobby_page(door: &TableDoor, id: &str) -> String {
     let a = door.lock.seat_link(id, SeatSlot::A);
     let b = door.lock.seat_link(id, SeatSlot::B);
@@ -395,7 +422,18 @@ fn lobby_page(door: &TableDoor, id: &str) -> String {
          <p class=\"prose\">Send this to your opponent. It <em>is</em> the seat — anyone holding it \
          can sit down and nobody else can, so send it the way you would send a key.</p>\
          <p class=\"invite\"><code>{b}</code></p>\
-         <p><a class=\"seat-link\" href=\"{b}\">(or take this side yourself)</a></p>\
+         </section>\
+         <section class=\"panel\"><h2>Play both sides (practice)</h2>\
+         <p class=\"needs solo\">No second person needed</p>\
+         <p class=\"prose\">You can hold both seats yourself. It is the real game under the real \
+         rules — every move is checked the same way and the match replays the same way afterwards; \
+         the only thing missing is somebody to surprise you.</p>\
+         <p class=\"prose\"><strong>It has to be a second window, not a second tab.</strong> Your \
+         seat is kept in one cookie for the whole browser, so opening the invite in the same browser \
+         takes the invite's seat and gives up the one you were holding. Copy the invite link above \
+         into a <strong>private window</strong> (or another browser, or your phone), sit down there, \
+         and the two windows are two players: each one is shown its own side and neither is shown \
+         the other's until the round opens.</p>\
          </section>\
          <section class=\"panel\"><h2>Anyone else</h2>\
          <p class=\"prose\">{spectator_note}</p>\
@@ -522,6 +560,12 @@ fn resolved_page(door: &TableDoor, id: &str, resolution: &Resolution) -> String 
 /// A spectator who re-enables the controls by hand gains nothing they did not already have: their
 /// POST would land under the spectator identity, exactly as any anonymous visitor's already can on
 /// an ad-hoc table — and on a seat-locked table [`crate::table_seats::enforce`] refuses it outright.
+///
+/// ⚑ **THIS PAGE IS WHY THE BOARD IS NOT A LIVE REGION.** `#live-surface` here is fed by an SSE
+/// stream on a **400ms server pulse**, and it carried `aria-live="polite"` around the whole board —
+/// so a spectator using a screen reader was read the entire position, unprompted, several times a
+/// second, forever. It now carries no live region at all; [`crate::LIVE_SAY`] is the one short status
+/// line, and the script writes it only when the line has actually changed.
 fn spectate_page(
     door: &TableDoor,
     id: &str,
@@ -535,12 +579,13 @@ fn spectate_page(
          <main class=\"session af-table\">\
          <div class=\"page-head\" style=\"padding-top:var(--s4)\"><h1>Spectating</h1>\
          <p class=\"deck\">{spectator_note}</p></div>\
-         {banner}\
+         {banner}{live_say}\
          <div id=\"live-surface\" class=\"live-surface spectating\" tabindex=\"-1\" \
-         aria-live=\"polite\" data-readonly=\"1\" \
+         data-readonly=\"1\" \
          data-events=\"{watch}/events\">\
          <fieldset class=\"spectate-lock\" disabled>{fragment}</fieldset></div>\
          </main>",
+        live_say = crate::LIVE_SAY,
         route = door.lock.route,
         game = esc(door.lock.game),
         id = esc(id),

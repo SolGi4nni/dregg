@@ -950,7 +950,9 @@ strong{font-weight:700;color:var(--fg)}
 .crumb a:hover{color:var(--accent)}
 .crumb .sep{color:var(--line-lit)}
 .crumb strong{color:var(--fg)}
-.crumb .sid{font-family:var(--mono);font-size:var(--t-micro);color:var(--fg-3)}
+/* Same exposure as `.notice`, lower stakes: a session id is a single unbroken mono token in a
+   `flex-wrap` strip, so a long one clipped instead of wrapping. */
+.crumb .sid{font-family:var(--mono);font-size:var(--t-micro);color:var(--fg-3);min-width:0;overflow-wrap:anywhere}
 /* ═══ TYPE ═══════════════════════════════════════════════════════════════ */
 .page-head{padding:var(--s6) 0 var(--s2)}
 .page-head h1{font-size:var(--t-h1);margin:0 0 .5rem;color:var(--fg)}
@@ -970,6 +972,18 @@ strong{font-weight:700;color:var(--fg)}
 .hero h1{font-size:var(--t-display);line-height:1.02;letter-spacing:-.035em;margin:0 0 .8rem;font-weight:800;background:linear-gradient(176deg,#fff 8%,#a9c4ea);-webkit-background-clip:text;background-clip:text;color:transparent}
 .hero .deck{margin:0 0 var(--s5);max-width:36ch}
 .cta-row{display:flex;flex-wrap:wrap;gap:.65rem}
+/* ⚑ THE PLAYER COUNT, AT THE MOMENT OF CHOICE. There is no matchmaking, no queue and no bot here: a
+   two-player table mints two seat links and you send one yourself. That requirement was disclosed
+   one click LATER (above the "Open a table" button) and stated in `/guide`, but the choice itself —
+   a hero button, a card in a grid — said nothing, so a lone visitor could pick a game needing a
+   second human, read "send this link to your opponent", and leave. This chip is deliberately loud
+   (uppercase, warn/good, its own line on a card) because it has to survive a SCAN, not reward a
+   careful reader; `.solo` is its green counterpart so "you can start this one alone" is equally
+   scannable and the pair reads as one axis. */
+.needs{display:inline-flex;align-items:center;gap:.3rem;font-size:var(--t-micro);font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--warn);white-space:nowrap}
+.needs.solo{color:var(--good)}
+.btn .needs{font-size:.625rem;letter-spacing:.06em;opacity:.9}
+.offering-card>.needs{margin:.15rem 0 0;white-space:normal}
 .hero-art{display:flex;flex-direction:column;align-items:center;gap:.7rem}
 .hero-art .af-board{margin:0}
 .hero-cap{margin:0;font-size:var(--t-micro);text-transform:uppercase;letter-spacing:.11em;color:var(--fg-3);text-align:center}
@@ -979,7 +993,11 @@ strong{font-weight:700;color:var(--fg)}
 .step h3{margin:0 0 .25rem;font-size:var(--t-h3);color:var(--fg)}
 .step p{margin:0;font-size:var(--t-sm);color:var(--fg-3);line-height:1.6}
 /* ═══ BUTTONS ════════════════════════════════════════════════════════════ */
-.btn{display:inline-flex;align-items:center;gap:.45rem;padding:.7rem 1.15rem;border-radius:11px;font-family:inherit;font-weight:700;font-size:var(--t-body);text-decoration:none;border:1px solid transparent;cursor:pointer;transition:transform .1s var(--ease),box-shadow .18s,background .18s,border-color .18s,color .18s}
+/* `min-height:2.75rem` is the 44px tap-target floor, STATED. It is a no-op at today's padding
+   (25.6px line-box + 22.4px = 48px) — which is exactly the problem it fixes: the target cleared 44px
+   only INCIDENTALLY, so any future padding or font-size trim would have dropped it below the floor
+   with nothing to catch it. Now the floor is a rule, not an accident. */
+.btn{display:inline-flex;align-items:center;min-height:2.75rem;gap:.45rem;padding:.7rem 1.15rem;border-radius:11px;font-family:inherit;font-weight:700;font-size:var(--t-body);text-decoration:none;border:1px solid transparent;cursor:pointer;transition:transform .1s var(--ease),box-shadow .18s,background .18s,border-color .18s,color .18s}
 .btn .arr{transition:transform .18s var(--ease)}
 .btn:hover .arr{transform:translateX(3px)}
 .btn:active{transform:translateY(0) scale(.99)}
@@ -1068,13 +1086,24 @@ strong{font-weight:700;color:var(--fg)}
 .game-session-boundary{grid-column:1/-1;display:flex;gap:.55rem;align-items:flex-start;margin:0;padding-top:.65rem;border-top:1px solid var(--line-soft);color:var(--fg-3);font-size:var(--t-xs);line-height:1.5}
 .game-session-boundary span{color:var(--violet);font-size:1rem;line-height:1.1}
 /* ═══ NOTICE — what just happened ════════════════════════════════════════ */
-.notice{display:flex;align-items:flex-start;gap:.6rem;padding:.7rem .9rem;border-radius:var(--r-md);margin:0 0 var(--s4);font-size:var(--t-sm);font-weight:600;border:1px solid var(--line);animation:notice-in .26s var(--ease) both}
+/* ⚑ `overflow-wrap:anywhere` IS LOAD-BEARING, not tidying. The success banner carries
+   `PlayerTurnReceipt::compact_text`, whose middle is a 64-character executor receipt hex — ONE
+   unbroken word, in proportional text, not in a `<code>` well. `body{overflow-x:hidden}` means an
+   unbreakable line is CLIPPED, not scrolled, so on a phone the receipt id (and everything after it)
+   was silently GONE. `anywhere` rather than `break-word` deliberately: only `anywhere` shrinks the
+   min-content size, which is what a flex item — the banner's anonymous text item — is measured by. */
+.notice{display:flex;align-items:flex-start;gap:.6rem;padding:.7rem .9rem;border-radius:var(--r-md);margin:0 0 var(--s4);font-size:var(--t-sm);font-weight:600;border:1px solid var(--line);overflow-wrap:anywhere;animation:notice-in .26s var(--ease) both}
 .notice::before{flex:0 0 auto;width:1.15rem;height:1.15rem;border-radius:50%;display:grid;place-items:center;font-size:.7rem;font-weight:800;margin-top:.06rem}
 .notice.ok{background:rgba(79,220,160,.09);color:#a9f5d1;border-color:rgba(79,220,160,.32)}
 .notice.ok::before{content:"✓";background:rgba(79,220,160,.18);color:var(--good)}
 .notice.refused{background:rgba(255,123,134,.09);color:#ffc0c5;border-color:rgba(255,123,134,.32)}
 .notice.refused::before{content:"✕";background:rgba(255,123,134,.18);color:var(--bad)}
 @keyframes notice-in{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:none}}
+/* The keep-this-run offer, shown ONCE (the screen after a first move). Deliberately quieter than a
+   `.notice` — it is an offer, not a result — and it must not read as a warning the player has to
+   clear before playing on. One line, one link, gone by the next press. */
+.keep-run{margin:0 0 var(--s4);padding:.55rem .8rem;border-left:2px solid var(--warn);border-radius:0 var(--r-sm) var(--r-sm) 0;background:rgba(245,200,92,.055);font-size:var(--t-sm);color:var(--fg-2);line-height:1.55;max-width:64ch}
+.keep-run a{font-weight:700;white-space:nowrap}
 /* ═══ RECEIPT — the product's signature line ═════════════════════════════ */
 .receipt{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem;margin:var(--s4) 0 0;padding:.6rem .8rem;border:1px solid var(--line-soft);border-radius:var(--r-md);background:rgba(5,8,15,.55);font-family:var(--mono);font-size:var(--t-micro);color:var(--fg-3);line-height:1.5}
 .receipt .dot{flex:0 0 auto;width:.42rem;height:.42rem;border-radius:50%;background:var(--fg-3)}
@@ -1088,8 +1117,16 @@ strong{font-weight:700;color:var(--fg)}
 .receipt.refused .dot{background:var(--bad);box-shadow:0 0 9px var(--bad)}
 .receipt.refused .verdict{color:var(--bad)}
 /* The register gloss under the receipt strip: quiet prose, NOT the mono voice — it explains the
-   mono line above it and would read as more verifiable material if it wore the same face. */
+   mono line above it and would read as more verifiable material if it wore the same face. FOLDED:
+   the summary is the QUESTION, so the answer costs a click and never sits under the move buttons of
+   a player who has not asked it. `<details>` is native — no script, and it still prints/reads whole. */
 .receipt-gloss{margin:.45rem 0 0;font-size:var(--t-micro);line-height:1.55;color:var(--fg-3);max-width:60ch}
+.receipt-gloss>summary{cursor:pointer;list-style:none;display:inline-flex;align-items:baseline;gap:.35rem;color:var(--fg-3);font-weight:600}
+.receipt-gloss>summary::-webkit-details-marker{display:none}
+.receipt-gloss>summary::before{content:"›";color:var(--line-lit);transition:transform .16s var(--ease)}
+.receipt-gloss[open]>summary::before{transform:rotate(90deg)}
+.receipt-gloss>summary:hover{color:var(--fg-2)}
+.receipt-gloss p{margin:.35rem 0 0}
 .receipt-gloss strong{color:var(--fg-2);font-weight:700}
 .backlink{display:inline-flex;align-items:center;gap:.4rem;margin:var(--s5) 0 0;font-size:var(--t-sm);color:var(--fg-2);text-decoration:none;font-weight:600}
 .backlink:hover{color:var(--accent)}
@@ -1126,7 +1163,13 @@ strong{font-weight:700;color:var(--fg)}
 .coordgrid .cell.tag-accent{color:#f2fbff;border-color:var(--accent);background:radial-gradient(circle at 50% 42%,rgba(92,201,255,.36),rgba(13,24,48,.9) 72%);box-shadow:inset 0 0 0 1px var(--accent),0 0 18px -4px var(--accent)}
 /* VACANT — recedes. The dot is a whisper, not a wall of debris (an untagged cell is a PIECE and */
 /* keeps the bright base colour — the fix for a board that read as `· · A ·`). */
-.coordgrid .cell.tag-muted{color:#3f5074;font-size:.72rem}
+/* ⚑ `#3f5074` computed 2.10–2.38:1 against every cell ground it lands on (WCAG relative luminance)
+   at .72rem — a CONTRAST FAILURE on text that names board state, not decoration. `#7688b1` measures
+   4.77:1 on the lightest ground (the generic cell over `#0d1731`) and 4.99–5.40:1 on the rest, so it
+   clears AA everywhere. It is still DIMMER than `--fg-3` (#8a9cbe), the page's quietest ink, so the
+   "vacant recedes" reading the comment above asks for survives — the recession is now carried by the
+   size and by the untagged cell's much brighter `--fg`, not by unreadability. */
+.coordgrid .cell.tag-muted{color:#7688b1;font-size:.72rem}
 /* THE GOAL SQUARE — a teal dashed objective ring; distinct from a plain vacant (dim) cell and */
 /* still legible when the goal is also a lit legal-move target (green). */
 .coordgrid .cell.goal{border:1px dashed var(--head);color:var(--head);font-size:.92rem;background:radial-gradient(circle at 50% 50%,rgba(140,227,228,.13),rgba(13,24,48,.4) 70%);box-shadow:inset 0 0 0 1px rgba(140,227,228,.24)}
@@ -1242,7 +1285,9 @@ main.af-table::before{content:"";position:fixed;inset:0;z-index:-1;pointer-event
 .af-board .coordgrid form.cell:hover{border:0;color:var(--n-ink);background:#39345a;transform:none;box-shadow:inset 0 0 0 2px var(--vio);z-index:5}
 .af-board .coordgrid form.cell:active{transform:none}
 /* THE KEY — the three shapes, named, under the board. A stranger never has to be told twice. */
-.af-key{grid-column:1/-1;grid-row:3;display:flex;flex-wrap:wrap;gap:.28rem .8rem;margin-top:.5rem;padding-top:.5rem;border-top:1px solid var(--br-faint);font-family:var(--mono);font-size:.585rem;letter-spacing:.05em;text-transform:uppercase;color:rgba(164,159,180,.7)}
+/* `.7` measured 4.11–4.25:1 at .585rem — a MARGINAL AA FAIL on the one element a colour-blind or
+   low-vision player reads to decode every other colour on the board. `.86` measures 5.55:1. */
+.af-key{grid-column:1/-1;grid-row:3;display:flex;flex-wrap:wrap;gap:.28rem .8rem;margin-top:.5rem;padding-top:.5rem;border-top:1px solid var(--br-faint);font-family:var(--mono);font-size:.585rem;letter-spacing:.05em;text-transform:uppercase;color:rgba(164,159,180,.86)}
 .af-key span{display:inline-flex;align-items:center;gap:.3rem;white-space:nowrap}
 .af-board .af-key .af-p{width:1.05rem;height:1.05rem;flex:0 0 auto}
 .af-key i{width:.55rem;height:.55rem;flex:0 0 auto;font-style:normal}
@@ -1253,6 +1298,28 @@ main.af-table::before{content:"";position:fixed;inset:0;z-index:-1;pointer-event
 .af-key .k-seal{border-radius:50%;border:2px solid var(--br-pale);background:rgba(216,180,126,.2)}
 .af-key .k-mark{background:repeating-linear-gradient(135deg,#191721 0 2px,#0d0c12 2px 4px);box-shadow:inset 0 0 0 1px rgba(120,116,132,.55);position:relative}
 .af-key .k-mark::after{content:"×";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:.62rem;font-weight:800;line-height:1;color:#8b8798}
+/* ⚑ THE MOVE LIST — automatafl's SECOND input path (see `af_move_list`).
+   A phone cell is 21.6px and that is the right tradeoff for keeping an 11-wide board visible; this is
+   the way to act that does not depend on hitting one. Every row is a 48px-tall full-width control in
+   the surface's existing `.affordance` language — no fourth control vocabulary — and it is a
+   `<details>`, collapsed, so on a desktop where the squares are hittable it costs one line.
+   `list-style:none` because the button IS the item; the count in the summary is the affordance's own. */
+.af-moves{max-width:33rem;margin:.2rem auto .9rem;border:1px solid var(--br-faint);border-radius:0 10px 10px 10px;background:rgba(7,6,11,.5)}
+/* `display` is deliberately LEFT ALONE — a `<summary>` is a `list-item`, and giving it `flex` (or
+   anything else) deletes its disclosure triangle, which is the only thing that says "this opens". */
+.af-moves>summary{padding:.7rem .85rem .75rem;min-height:2.75rem;font-family:var(--mono);font-size:var(--t-micro);letter-spacing:.07em;text-transform:uppercase;color:var(--br-lit);cursor:pointer;border-radius:inherit}
+.af-moves>summary:hover{background:rgba(176,141,87,.07)}
+.af-moves>summary::marker{color:var(--br)}
+.af-moves-why{display:block;margin-top:.2rem;font-family:var(--font);font-size:var(--t-sm);font-weight:400;letter-spacing:0;text-transform:none;color:var(--n-soft);line-height:1.45}
+/* Bounded height so 36 selects cannot become a page of scrolling; `overscroll-behavior` keeps a thumb
+   from scroll-chaining the whole page the instant the list bottoms out. */
+.af-moves>ul{list-style:none;margin:0;padding:.2rem .55rem .6rem;display:flex;flex-direction:column;gap:.3rem;max-height:26rem;overflow-y:auto;overscroll-behavior:contain}
+.af-moves>ul>li{margin:0;min-width:0}
+/* 3rem = 48px, the target `descent_play`'s verb list already gives a motor-impaired player. The
+   `.af-table` prefix is deliberate: it outranks `.af-table .affordance button` (same specificity,
+   later in the file) so these rows do not depend on source order to keep their floor or their face. */
+.af-table .af-moves .affordance button{min-height:3rem;width:100%;text-align:left;white-space:normal;font-family:var(--font);font-weight:600;letter-spacing:0;line-height:1.35}
+.af-table .af-moves .affordance button b{font-family:var(--mono);font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--br-pale)}
 /* ═══ THE SHARED BASELINE — the Night Record for EVERY offering ═══════════ */
 /* Everything above this line dressed ONE table. The rules below are game-agnostic: they read a
    node's own shape (a plaque's first paragraph, a grid's column count, a glyph's length) and never
@@ -1271,7 +1338,11 @@ main.af-table::before{content:"";position:fixed;inset:0;z-index:-1;pointer-event
 .af-table .nr-well .cell.tag-good{color:var(--vio-lit);background:#262240;box-shadow:inset 0 0 0 1px rgba(168,159,216,.45)}
 .af-table .nr-well .cell.tag-accent{color:var(--br-pale);background:radial-gradient(circle at 50% 45%,#3b3020,#0d0b16 76%);box-shadow:inset 0 0 0 1px var(--br-lit),0 0 18px -6px rgba(216,180,126,.7)}
 .af-table .nr-well .cell.tag-warn{color:var(--br-pale);background:#33291c;box-shadow:inset 0 0 0 1px var(--br-lit)}
-.af-table .nr-well .cell.tag-muted{color:rgba(164,159,180,.55);background:#100e18}
+/* Same class of fault as the base `.cell.tag-muted` above and found in the same sweep: `.55` on
+   `#100e18` measures 3.04:1. It matters where a muted cell carries a real LABEL glyph (`#17`, `L3`)
+   rather than the vacant dot, which is drawn by `.nr-void::after` and not by this colour. `.78`
+   measures 4.93:1. */
+.af-table .nr-well .cell.tag-muted{color:rgba(164,159,180,.78);background:#100e18}
 .af-table .nr-well .cell.goal{border:0;background:linear-gradient(180deg,#2b2317,#1a1610);box-shadow:inset 0 0 0 1px rgba(176,141,87,.42)}
 .af-table .nr-well form.cell:hover{color:#fff8ea;background:#39345a;transform:none;box-shadow:inset 0 0 0 2px var(--vio);z-index:2}
 .af-table .nr-well form.cell:active{transform:none}
@@ -1318,7 +1389,11 @@ main.af-table::before{content:"";position:fixed;inset:0;z-index:-1;pointer-event
 .af-table .pill.tag-good{color:var(--vio-lit);border-color:rgba(168,159,216,.5);background:rgba(168,159,216,.14)}
 .af-table .pill.tag-accent{color:var(--br-lit);border-color:var(--br-line);background:rgba(176,141,87,.14)}
 .af-table .pill.tag-warn{color:var(--br-pale);border-color:rgba(237,220,180,.3);background:rgba(237,220,180,.07)}
-.af-table .pill.tag-muted{color:rgba(164,159,180,.4);border-color:rgba(164,159,180,.13);background:transparent}
+/* ⚑ THIS PILL IS LIVE TEXT A PLAYER MUST READ — "seat B (you) · waiting", "nobody has pulled" — and
+   `.4` over a transparent background measured 2.15–2.16:1 on all three grounds it sits on (the list,
+   the plaque, the night ground). `.82` measures 4.78–5.43:1. `muted` still reads as the quietest pill
+   on the surface: at full strength `--n-soft` would be 7.59:1. */
+.af-table .pill.tag-muted{color:rgba(164,159,180,.82);border-color:rgba(164,159,180,.13);background:transparent}
 .af-table .pill.tag-bad{color:#f3b7b0;border-color:rgba(243,183,176,.42);background:rgba(243,183,176,.1)}
 .af-table .affordance button{border-radius:0 9px 9px 9px;border:1px solid var(--br-line);background:linear-gradient(180deg,rgba(176,141,87,.24),rgba(176,141,87,.09));color:var(--br-pale);font-family:var(--mono);font-size:var(--t-sm);letter-spacing:.03em}
 .af-table .affordance button:hover{border-color:var(--br-lit);background:linear-gradient(180deg,rgba(216,180,126,.32),rgba(176,141,87,.16));color:#fff8ea;box-shadow:0 8px 22px -14px var(--br-lit)}
@@ -1480,7 +1555,10 @@ form.in-flight button[disabled]{cursor:progress}
 /* reads as key material to be copied whole rather than prose to be skimmed. */
 .invite{margin:.5rem 0 0}
 .invite code{display:block;overflow-x:auto;white-space:nowrap;padding:.55rem .7rem;border:1px dashed var(--line);border-radius:10px;background:rgba(255,255,255,.02);color:var(--head);font-family:var(--mono);font-size:var(--t-sm);user-select:all}
-.seat-link{display:inline-flex;align-items:center;gap:.4rem;margin:.7rem 0 0;font-weight:700;color:var(--accent);text-decoration:none}
+/* ⚑ This had NO padding and NO min-height, so its tap target was the text LINE-BOX — about 26px on a
+   link whose whole job is "sit down at this table". `min-height` + a little vertical padding make the
+   target 44px without moving the text (the `margin` is trimmed by the padding it gains). */
+.seat-link{display:inline-flex;align-items:center;min-height:2.75rem;gap:.4rem;margin:.35rem 0 0;padding:.35rem .2rem;font-weight:700;color:var(--accent);text-decoration:none}
 .seat-link:hover{text-decoration:underline}
 /* SPECTATING. The read-only rendering is a native `disabled` fieldset (no markup rewriting), so */
 /* the lock cannot drift from the surface it wraps; this only makes the state legible. */
@@ -1569,6 +1647,21 @@ fn topbar(active: &str) -> String {
     )
 }
 
+/// ⚑ **THE ONE LIVE REGION ON A SESSION PAGE** — a single short line, not the board.
+///
+/// The board used to live inside `aria-live="polite"` and the whole subtree is replaced on every
+/// swap, so a move queued up to 121 square descriptions for announcement (and the spectator page's
+/// 400ms SSE pulse did it unprompted). This is the whole live region now: `role="status"` on one
+/// empty sr-only paragraph that [`ENHANCE_SCRIPT`] writes the short "what just happened · where the
+/// game stands" line into after a swap. It is emitted OUTSIDE the swapped region, so it is a node
+/// that already exists at announcement time — the case screen readers handle reliably.
+///
+/// Empty on a fresh page load ON PURPOSE: a live region is for CHANGES, and everything a first load
+/// has to say is in the document a reader is about to read anyway (the `.notice` banner keeps its own
+/// `role="status"`).
+pub(crate) const LIVE_SAY: &str = "<p id=\"live-say\" class=\"sr-only\" role=\"status\" aria-live=\"polite\" \
+     aria-atomic=\"true\"></p>";
+
 /// **The progressive-enhancement script** — the ONLY client JS on the whole product, inlined (the
 /// CSP + no-build reality forbid an external file). It makes the affordance play loop feel LIVE
 /// without a framework, a router, or a state store: the server stays authoritative and the client
@@ -1589,7 +1682,29 @@ const ENHANCE_SCRIPT: &str = r##"<script>
 (function(){
   "use strict";
   var REGION="live-surface";
+  var SAY="live-say";
   function reduced(){return window.matchMedia&&window.matchMedia("(prefers-reduced-motion: reduce)").matches;}
+  /* ANNOUNCE THE CHANGE, NOT THE BOARD. The swapped region is no longer a live region (a whole-subtree
+     replacement inside one is announced in full — up to 121 sr-only squares per move, and on the
+     spectator page every 400ms). This copies TWO short lines out of the fragment into the page's one
+     persistent status line: the notice's `data-say` (the server's own short form of "what just
+     happened", cut before the 64-character receipt hex nobody wants read aloud), and the surface's
+     headline state paragraph — automatafl's "turn 3 · phase: REVEAL", a market's standing. Writing to
+     a node that ALREADY EXISTS is what makes this announce at all; re-inserting a live region does
+     not reliably. Guarded on the text having CHANGED, so an SSE pulse that re-renders the same
+     position says nothing. */
+  function announce(root){
+    var say=document.getElementById(SAY);
+    if(!say||!root||!root.querySelector)return;
+    var parts=[];
+    var n=root.querySelector(".notice");
+    var said=n?(n.getAttribute("data-say")||n.textContent||""):"";
+    if(said)parts.push(said);
+    var head=root.querySelector(".af-table>p.prose")||root.querySelector("p.prose");
+    if(head&&head.textContent)parts.push(head.textContent);
+    var text=parts.join(" · ").replace(/\s+/g," ").trim();
+    if(text&&say.textContent!==text)say.textContent=text;
+  }
   document.addEventListener("submit",function(ev){
     var form=ev.target;
     if(!form||form.tagName!=="FORM")return;
@@ -1646,6 +1761,7 @@ const ENHANCE_SCRIPT: &str = r##"<script>
       cur.classList.remove("swap-in");
       void cur.offsetWidth; /* restart the transition */
       cur.classList.add("swap-in");
+      announce(cur);
       try{cur.focus({preventScroll:true});}catch(e){cur.focus();}
       var board=cur.querySelector(".coordgrid")||cur;
       if(board&&board.scrollIntoView)board.scrollIntoView({block:"nearest",behavior:reduced()?"auto":"smooth"});
@@ -1680,6 +1796,10 @@ const ENHANCE_SCRIPT: &str = r##"<script>
       cur.classList.remove("swap-in");
       void cur.offsetWidth;
       cur.classList.add("swap-in");
+      /* ⚑ The 400ms pulse used to land INSIDE a live region, so a spectator with a screen reader was
+         read the whole board over and over with nothing having happened. `announce` speaks only when
+         the short line actually changed. */
+      announce(cur);
     };
   }
   if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",subscribe,false);
@@ -1761,6 +1881,13 @@ fn crumb(title: &str, id: &SessionId) -> String {
 
 /// The notice banner — *what just happened*. A refusal is honest and red; a landed turn is green.
 /// The `✓`/`✕` glyph is drawn by CSS (`.notice::before`), so the text stays clean for a reader.
+///
+/// `data-say` is the SHORT form, for [`LIVE_SAY`]: the banner itself carries
+/// `PlayerTurnReceipt::compact_text`, whose second clause is a 64-character executor receipt hex, and
+/// a screen reader spelling out 64 hex digits after every move is not an announcement. The cut is the
+/// receipt grammar's own first ` · ` separator, so the announced line is the clause that says what
+/// happened ("Turn committed — Select (3,1)") and the full text stays on screen, verbatim, for anyone
+/// who wants the id. A refusal has no separator and is announced whole — it is already one sentence.
 fn notice_html(notice: Option<&str>) -> String {
     notice
         .map(|n| {
@@ -1769,7 +1896,12 @@ fn notice_html(notice: Option<&str>) -> String {
             } else {
                 "notice ok"
             };
-            format!("<div class=\"{cls}\" role=\"status\">{}</div>", esc(n))
+            let say = n.split(" · ").next().unwrap_or(n);
+            format!(
+                "<div class=\"{cls}\" role=\"status\" data-say=\"{say}\">{}</div>",
+                esc(n),
+                say = esc(say),
+            )
         })
         .unwrap_or_default()
 }
@@ -1783,7 +1915,9 @@ fn receipt_html(verify: &VerifyReport, label: &str, verify_href: &str) -> String
          <span class=\"label\">{label}</span><span class=\"verdict\">{v}</span>\
          <span>{turns}</span><span class=\"detail\">{detail}</span>\
          <a class=\"replay-verify\" rel=\"nofollow\" href=\"{verify_href}\">Replay-verify</a></div>\
-         <p class=\"receipt-gloss\">{gloss}</p>",
+         <details class=\"receipt-gloss\">\
+         <summary>Why does this line say &ldquo;verified&rdquo; when my move says \
+         &ldquo;asserted&rdquo;?</summary><p>{gloss}</p></details>",
         cls = cls,
         label = esc(label),
         v = if verify.verified {
@@ -1811,6 +1945,16 @@ fn receipt_html(verify: &VerifyReport, label: &str, verify_href: &str) -> String
 /// paragraph of vocabulary repeated per move is noise, while the distinction is a standing property
 /// of the page. A signed act (`act_signed`) reads `Signed by …` in the banner instead, at which point
 /// the second half of this sentence stops applying to it — and says so.
+///
+/// ⚑ **AND IT IS FOLDED, because the fix for a jargon complaint became a new instance of it.** This
+/// paragraph shipped OPEN, appended by [`receipt_html`] to every offering-session render — which put
+/// a lesson in the product's own vocabulary directly under the move buttons on the FIRST screen,
+/// before the player had moved at all, pre-empting a question nobody had yet asked. It is true and it
+/// is worth keeping, so it stays; it now sits behind a `<details>` whose summary IS the question
+/// ("why does this say verified when my move says asserted?"). A reader who wondered gets the whole
+/// answer in one click; a reader who did not never reads a vocabulary note to reach the game. Nothing
+/// is hidden from a text-mode reader either: `<summary>` and the paragraph are both plain document
+/// text, so a screen reader, a `curl`, and a page-text search all still find every word.
 const RECEIPT_REGISTER_GLOSS: &str = "Two different words, two different subjects. \
      <strong>verified</strong> is about the MOVES: every turn in this session was re-run against the \
      rules just now and came out the same. <strong>asserted</strong>, on a move's own receipt, is \
@@ -3637,9 +3781,48 @@ fn offering_surface_fragment(
     let operation_forms = render_operation_uploaders(&operations, key, &id.0);
     #[cfg(not(feature = "hosted-binary-operations"))]
     let operation_forms = String::new();
+    // ⚑ **THIS VIEWER'S OWN FIRST LANDED MOVE**, counted off `SessionMoveLog::moves` — the only
+    // signal that means the same thing everywhere. Two wrong answers were tried and both are gates
+    // that could not fire:
+    //
+    // * `verify.turns` — the dungeon's is `1 + steps` and the tug's is `1 + round_actions + scored`,
+    //   so genesis is turn 1 and a first move already reads 2; automatafl's is `session.turns`, a
+    //   count of RESOLVED ROUNDS, still 0 after a seat has selected and sealed. No single value of it
+    //   means "one move in".
+    // * the log's LENGTH — `/offerings/descent/session/descent-web` is a SHARED host session (descent
+    //   is not an `is_rpg_key`), so its log is global: length 1 happens once for the whole deployment,
+    //   to whoever moved first, and never again for anybody.
+    //
+    // `LoggedMove::actor` fixes both: exactly one landed move attributed to THIS viewer is this
+    // viewer's first move in this session, on a shared table or a private world alike.
+    //
+    // ⚑ AND NEVER ON A SEAT-LOCKED TABLE. Claiming a phrase REWRITES `dregg_user`
+    // (`seed_identity::post_confirm` sets the acting cookie to the claim label) — and on a minted
+    // automatafl/tug table `dregg_user` IS the seat, so accepting this offer mid-match would hand the
+    // seat away. An offer that costs the reader the thing it claims to protect must not be made.
+    //
+    // Read ONLY when a turn actually landed, so a plain GET and the 400ms realtime pulse never pay
+    // the host round trip. `run_offering` routes an RPG key to that viewer's own world and everything
+    // else to the shared host, so this reads the same log the turn was written into.
+    let seat_locked =
+        table_seats::lock_for_key(key).is_some_and(|lock| lock.is_locked_table(&id.0));
+    let keep = if !seat_locked && notice.is_some_and(|n| n.starts_with("Turn committed")) {
+        let k = key.to_string();
+        let sid = id.clone();
+        let me = viewer.clone();
+        let mine = state.run_offering(key, viewer, move |h| {
+            h.move_log(&k, &sid)
+                .map(|log| log.moves.iter().filter(|m| m.actor == me).count())
+                .unwrap_or_default()
+        });
+        keep_this_run_offer(mine)
+    } else {
+        String::new()
+    };
     Some(format!(
-        "{notice}{forms}{operation_forms}{receipt}",
+        "{notice}{keep}{forms}{operation_forms}{receipt}",
         notice = notice_html(notice),
+        keep = keep,
         forms = forms,
         operation_forms = operation_forms,
         receipt = receipt_html(
@@ -3648,6 +3831,37 @@ fn offering_surface_fragment(
             &format!("/offerings/{}/session/{}/verify", esc(key), esc(&id.0)),
         ),
     ))
+}
+
+/// ⚑ **THE ONE MOMENT IDENTITY IS WORTH INTERRUPTING FOR — the turn right after the first one.**
+///
+/// `/identity` is not in the top nav and is reachable only from `/you` or from inline prose, which is
+/// the right call for a surface a stranger should be able to play without an account: it never
+/// interrupts play. But the consequence is that it also never appears at the ONE moment it is worth
+/// something — the moment a player first has a run to lose. The default identity is an unsigned
+/// `dregg_user` cookie with no password and no recovery ([`web_identity_http`]), so a cleared browser
+/// costs them everything they just did, silently, with no warning anywhere on the path they walked.
+///
+/// So: ONE line, ONCE. `my_landed_moves` is how many landed moves in this session are attributed to
+/// THIS viewer, counted by the caller only on a render that follows a landed turn — so this fires on
+/// exactly the screen after that viewer's FIRST move and on no screen before or after it. Not a wall,
+/// not a modal, not a gate: one sentence and one link, above the board, gone on the next press.
+///
+/// It is worded to be true whether or not the reader already holds a phrase. This function is not
+/// given the claim cookie (`seed_identity::claimed_pubkey` needs `HeaderMap`, which would mean a new
+/// argument on [`offering_surface_fragment`], [`render_offering_page`] and the `pub(crate)`
+/// [`render_offering_response`] that four transports call), so it must not say anything that only
+/// holds for an unclaimed browser: "the only thing holding this name is this browser" is a fact about
+/// the cookie either way, and `/identity` shows a browser that already claimed its existing identity
+/// rather than nagging it for a second one. Firing once is what keeps that acceptable.
+fn keep_this_run_offer(my_landed_moves: usize) -> String {
+    if my_landed_moves != 1 {
+        return String::new();
+    }
+    "<p class=\"keep-run\">That is your first move on the board. The only thing holding the name it \
+     landed under is this browser — clear it and the run is gone, with no way back. \
+     <a href=\"/identity\">Keep it with a 24-word phrase →</a></p>"
+        .to_string()
 }
 
 /// Render discoverable opaque-proof operations as raw file upload controls on
@@ -3857,20 +4071,84 @@ fn af_goal_owner(c: (i32, i32), glyph: &str) -> Option<char> {
     }
 }
 
+/// ⚑ **THE SPOKEN ROLE OF A SQUARE — ONE SOURCE, BOTH PAINTERS.**
+///
+/// This was written inside [`af_square`] and reachable only from automatafl's bespoke painter, which
+/// is why a screen-reader user could play automatafl and NOT the tug: the generic
+/// [`ViewNode::CoordGrid`] branch said `"{turn} row X, column Y"` — a coordinate and an internal verb
+/// string, with no piece, no state and no reason a square was unusable. It is not automatafl
+/// knowledge: `tag` is `deos-view`'s own cell vocabulary, emitted by every offering that draws a
+/// grid, so every future `CoordGrid` game gets these sentences for free the moment it tags a cell.
+///
+/// The leading `", "` is part of each phrase: it is appended to `"{what} at {x},{y}"`, and an
+/// untagged square contributes nothing rather than a dangling comma.
+fn cell_role_phrase(tag: &str, is_goal: bool) -> &'static str {
+    match tag {
+        // ⚑ Spoken FIRST and spoken in full: a screen-reader user tabbing the board must be told
+        // this square is out of play, and told why, or the only signal they get is a button that
+        // vanished.
+        "mark" => ", MARKED by a clash — dead for the rest of this turn, at either end of a move",
+        "warn" => ", picked up",
+        "sealed" => ", where you sealed your move",
+        "good" => ", a legal move",
+        // ⚑ A screen-reader user gets the SAME third state a sighted one does. Without this the
+        // dashed outline is the only carrier and the square reads identically to a legal move —
+        // which is the exact wound the outline exists to close, moved one sense over.
+        "blocked" => {
+            ", blocked — a piece is in the way, so this move only runs if that piece is moved first"
+        }
+        _ if is_goal => ", a goal corner",
+        // The automaton's square needs no role: the piece name already carries it.
+        _ => "",
+    }
+}
+
+/// The two predicates the whole board painter turns on, read off the DATA — `(is_dead, is_goal)`.
+///
+/// * **dead** — a coordinate a CLASH burned for the rest of the turn (the offering's `mark` tag, and
+///   the `×` glyph the text frontends paint). It is not a role the square can share: it means
+///   "unusable", so it outranks the goal inlay, the piece art and every highlight.
+/// * **goal** — EXACTLY the generic renderer's goal predicate: the offering marks a VACANT corner
+///   with the owner's lowercase letter and an OCCUPIED one with the `goal` tag; either signal is the
+///   objective. So a board of any size marks its own goals.
+///
+/// One function because three places now need the same answer: the square's classes, its spoken name,
+/// and the small-screen move list.
+fn af_square_kind(cell: &CoordCell) -> (bool, bool) {
+    let is_dead = cell.tag == "mark";
+    let is_goal = !is_dead && (cell.tag == "goal" || cell.glyph == "a" || cell.glyph == "b");
+    (is_dead, is_goal)
+}
+
+/// **THE SPOKEN SQUARE** — the glyph alone ("·", "R") tells a screen-reader user nothing; the piece,
+/// its coordinates and its role this turn make the board playable by keyboard in earnest.
+///
+/// Also the VISIBLE label of every row of [`af_move_list`], which is why it is a function and not an
+/// expression inside the painter: the small-screen move list must name a move in exactly the words
+/// the square itself is named in, or a player is reading two different boards.
+fn af_spoken(cell: &CoordCell, x: usize, y: usize) -> String {
+    let (is_dead, is_goal) = af_square_kind(cell);
+    let what = match af_piece(&cell.glyph) {
+        // A dead square's occupant is not in the data any more (the glyph is the cross), so the
+        // spoken name says what the square IS rather than guessing what is on it.
+        _ if is_dead => "marked square",
+        Some((_, _, name)) => name,
+        None if is_goal => "empty goal corner",
+        None => "empty",
+    };
+    format!(
+        "{what} at {x},{y}{role}",
+        role = cell_role_phrase(&cell.tag, is_goal)
+    )
+}
+
 /// One square of the automatafl board, as HTML. `cell` is the offering's own [`CoordCell`]; the
 /// square's ROLE this turn is entirely in `cell.tag` / `cell.highlight` (the surface decides, the
 /// renderer only paints), and its affordance is `cell.turn`/`cell.arg` exactly as on the generic
 /// grid — so a click is the same real POST it always was.
 fn af_square(cell: &CoordCell, x: usize, y: usize, key: &str, id: &str) -> String {
     let piece = af_piece(&cell.glyph);
-    // ⚑ A MARKED SQUARE — a coordinate a CLASH burned for the rest of the turn (the offering's
-    // `mark` tag, and the `×` glyph the text frontends paint). It is not a role the square can
-    // share: it means "unusable", so it outranks the goal inlay, the piece art and every highlight.
-    let is_dead = cell.tag == "mark";
-    // EXACTLY the generic renderer's goal predicate: the offering marks a VACANT corner with the
-    // owner's lowercase letter and an OCCUPIED one with the `goal` tag; either signal is the
-    // objective. Read off the DATA, so a board of any size marks its own goals.
-    let is_goal = !is_dead && (cell.tag == "goal" || cell.glyph == "a" || cell.glyph == "b");
+    let (is_dead, is_goal) = af_square_kind(cell);
     let owner = if is_goal {
         af_goal_owner((x as i32, y as i32), &cell.glyph)
     } else {
@@ -3923,35 +4201,7 @@ fn af_square(cell: &CoordCell, x: usize, y: usize, key: &str, id: &str) -> Strin
         }
     }
 
-    // THE SPOKEN SQUARE. The glyph alone ("·", "R") tells a screen-reader user nothing; the piece,
-    // its coordinates and its role this turn make the board playable by keyboard in earnest.
-    let what = match piece {
-        // A dead square's occupant is not in the data any more (the glyph is the cross), so the
-        // spoken name says what the square IS rather than guessing what is on it.
-        _ if is_dead => "marked square",
-        Some((_, _, name)) => name,
-        None if is_goal => "empty goal corner",
-        None => "empty",
-    };
-    let role = match cell.tag.as_str() {
-        // ⚑ Spoken FIRST and spoken in full: a screen-reader user tabbing the board must be told
-        // this square is out of play, and told why, or the only signal they get is a button that
-        // vanished.
-        "mark" => ", MARKED by a clash — dead for the rest of this turn, at either end of a move",
-        "warn" => ", picked up",
-        "sealed" => ", where you sealed your move",
-        "good" => ", a legal move",
-        // ⚑ A screen-reader user gets the SAME third state a sighted one does. Without this the
-        // dashed outline is the only carrier and the square reads identically to a legal move —
-        // which is the exact wound the outline exists to close, moved one sense over.
-        "blocked" => {
-            ", blocked — a piece is in the way, so this move only runs if that piece is moved first"
-        }
-        _ if is_goal => ", a goal corner",
-        // The automaton's square needs no role: `what` already names it.
-        _ => "",
-    };
-    let spoken = format!("{what} at {x},{y}{role}");
+    let spoken = af_spoken(cell, x, y);
 
     // `data-glyph` keeps the underlying datum on the square: the letter the offering emitted, which
     // the text frontends paint literally. Nothing is styled off it — it is the board's own value,
@@ -4024,6 +4274,86 @@ fn automatafl_board(cols: usize, cells: &[CoordCell], key: &str, id: &str, out: 
     out.push_str("</div>");
     out.push_str(AF_KEY);
     out.push_str("</div>");
+    // ⚑ THE SECOND WAY IN. Outside `.af-board` deliberately: that element is an explicit 3-row CSS
+    // grid whose rows are already spoken for, and the list is not part of the board.
+    out.push_str(&af_move_list(cells, cols_n, key, id));
+}
+
+/// ⚑ **AUTOMATAFL'S SECOND INPUT PATH — the board's squares are not the only way to move.**
+///
+/// The measured defect: at the ≤44rem breakpoint a cell is `min-width:1.35rem` ≈ 21.6px, half the
+/// 44px tap-target floor. **That is the right call and this does not change it** — 11 squares × 44px
+/// is 484px and cannot fit a 360px viewport, so the cell floor buys a whole visible board, exactly as
+/// the comment on that rule says. What was missing is the thing `descent_play` has and automatafl did
+/// not: an ALTERNATIVE. Descent's verb list gives a motor-impaired player 48px targets for every legal
+/// move; on automatafl the 21.6px squares were the ONLY affordance, so a player who cannot hit them
+/// could not act at all.
+///
+/// **It invents nothing.** Every row is a cell that already carries an affordance, its label is
+/// [`af_spoken`] — the same sentence that square's own accessible name uses — and its POST is the
+/// cell's own `{turn, arg}`, so the list and the board are the same move by construction and cannot
+/// drift. Zero board dimensions, zero game rules, no second vocabulary to keep in sync.
+///
+/// **Bounded** three ways: it is a `<details>`, collapsed, so it costs one line until asked for; the
+/// summary states the count up front; and the rows are ORDERED the way `AutomataflSurface::actions`
+/// orders its own button budget — the targets the phase is waiting on (`good`, then the proposable-but
+/// -`blocked` ones) ahead of the selects, because on the stock opening there are 36 movable pieces and
+/// a player hunting for the seal should not scroll past all of them.
+///
+/// Empty string when no cell carries an affordance — a spectator's board, a finished match, and the
+/// landing page's still (which passes `turn: ""` on every square) emit nothing at all.
+fn af_move_list(cells: &[CoordCell], cols_n: usize, key: &str, id: &str) -> String {
+    // (index, cell) for the squares that are actually actionable, in the order described above.
+    let mut live: Vec<(usize, &CoordCell)> = cells
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| !c.turn.is_empty())
+        .collect();
+    if live.is_empty() {
+        return String::new();
+    }
+    // A stable sort, so within a rank the rows stay in board order (top-left to bottom-right).
+    live.sort_by_key(|(_, c)| match c.tag.as_str() {
+        "good" => 0u8,
+        "blocked" => 1,
+        _ => 2,
+    });
+
+    let mut out = format!(
+        "<details class=\"af-moves\"><summary>Moves you can take now \
+         ({n})<span class=\"af-moves-why\">Every square you can press, as a list — for a thumb, or a \
+         keyboard, when the squares are too small to hit</span></summary><ul>",
+        n = live.len(),
+    );
+    for (i, cell) in live {
+        let (x, y) = (i % cols_n, i / cols_n);
+        // The verb, capitalised, is the offering's OWN turn name (`select` / `commit` — the same word
+        // the phase line on this page already prints as "phase: COMMIT"). Deriving it beats restating
+        // the surface's prose label: there is no second string here to fall out of date.
+        let mut verb_shown = cell.turn.clone();
+        if let Some(first) = verb_shown.get_mut(0..1) {
+            first.make_ascii_uppercase();
+        }
+        // `class="affordance"` is load-bearing, not cosmetic: it is the class the enhancement script
+        // recognises (`form.affordance` / `form.cell`), so a row swaps the surface in place exactly as
+        // a square press does instead of falling back to a full navigation — and the authority-field
+        // injection in `offering_surface_fragment` finds this form's `turn` input like every other.
+        out.push_str(&format!(
+            "<li><form class=\"affordance\" method=\"post\" \
+             action=\"/offerings/{key}/session/{id}/act\">\
+             <input type=\"hidden\" name=\"turn\" value=\"{turn}\">\
+             <input type=\"hidden\" name=\"arg\" value=\"{arg}\">\
+             <button type=\"submit\"><b>{verb_shown}</b> {spoken}</button></form></li>",
+            key = esc(key),
+            id = esc(id),
+            turn = esc(&cell.turn),
+            arg = cell.arg,
+            verb_shown = esc(&verb_shown),
+            spoken = esc(&af_spoken(cell, x, y)),
+        ));
+    }
+    out.push_str("</ul></details>");
+    out
 }
 
 /// **The key**, under the board: the three pieces in the shapes and colours the board actually
@@ -4275,6 +4605,52 @@ mod binding_labels {
             html.contains("checks no signature"),
             "and must not leave `asserted` sounding like a weaker `verified`: {html}"
         );
+        // ⚑ AND IT IS FOLDED, so it is not a vocabulary lesson under the move buttons of a player who
+        // has not moved yet. The summary must be the QUESTION — a fold whose handle is a label
+        // ("about attribution") is a worse offer than the open paragraph was.
+        assert!(
+            html.contains("<details class=\"receipt-gloss\">") && html.contains("<summary>"),
+            "the gloss must be behind a disclosure, not appended open to every render: {html}"
+        );
+        let summary = html
+            .split_once("<summary>")
+            .and_then(|(_, tail)| tail.split_once("</summary>"))
+            .map(|(s, _)| s)
+            .expect("the disclosure has a summary");
+        assert!(
+            summary.contains('?'),
+            "the summary must ask the reader's question, not name a topic: {summary:?}"
+        );
+    }
+
+    /// ⚑ **THE KEEP-THIS-RUN OFFER FIRES ONCE, AND THE GATE CAN GO RED IN BOTH DIRECTIONS.** Two
+    /// earlier formulations of this condition were gates that could never fire at all (`verify.turns`
+    /// counts genesis, and the shared `descent-web` log's LENGTH is global — see
+    /// [`super::offering_surface_fragment`]), so the polarity is pinned here rather than assumed: no
+    /// offer before a move, the offer on the viewer's first, and silence forever after.
+    #[test]
+    fn the_keep_this_run_offer_is_made_exactly_once() {
+        assert_eq!(
+            super::keep_this_run_offer(0),
+            "",
+            "no offer before the viewer has anything to lose"
+        );
+        let first = super::keep_this_run_offer(1);
+        assert!(
+            first.contains("class=\"keep-run\"") && first.contains("href=\"/identity\""),
+            "the offer names the one route that makes an identity durable: {first}"
+        );
+        assert!(
+            !first.contains("<dialog") && !first.contains("<form"),
+            "an offer at the moment of play is a sentence, never a wall or a modal: {first}"
+        );
+        for after in [2_usize, 3, 26] {
+            assert_eq!(
+                super::keep_this_run_offer(after),
+                "",
+                "the offer must not become a nag on move {after}"
+            );
+        }
     }
 }
 
@@ -4461,33 +4837,50 @@ fn catalog_node(node: &ViewNode, key: &str, id: &str, out: &mut String) {
                     2 => " nr-sym nr-sym2",
                     _ => " nr-label",
                 };
+                // ⚑ **THE SPOKEN SQUARE — the SAME sentence the bespoke painter speaks.** This
+                // branch used to say `"{turn} row X, column Y"`: a coordinate and an internal verb
+                // string, with no identity and no state, which is why a screen-reader user could
+                // play automatafl (whose painter narrated in full) and could NOT play the tug. The
+                // role sentence now comes from [`cell_role_phrase`] — ONE function, over
+                // `deos-view`'s own `tag` vocabulary — so the tug's hand and every future
+                // `CoordGrid` game are narrated the moment they tag a cell, with no per-game code.
+                //
+                // Identity is whatever the DATA carries: the glyph, or "empty" for the vacant cell
+                // the shape rule already recognised. Coordinates stay 1-based "row/column" rather
+                // than the game's own origin, because a generic grid does not know one.
+                let (row, col) = (i / cols_n + 1, i % cols_n + 1);
+                let what = if shape == " nr-void" {
+                    "empty".to_string()
+                } else {
+                    esc(&cell.glyph)
+                };
+                let spoken = format!(
+                    "{what} at row {row}, column {col}{role}",
+                    role = cell_role_phrase(&cell.tag, !goal.is_empty()),
+                );
+                // ⚑ AND THE GLYPH IS `aria-hidden`, exactly as on the bespoke board. Left visible to
+                // the accessibility tree it was CONCATENATED with the sr-only text, so the accessible
+                // name of a target square was the symbol followed by an internal verb — "· select row
+                // 4, column 7". The glyph is the picture; the sr-only span is the meaning.
+                let glyph = format!("<span aria-hidden=\"true\">{}</span>", esc(&cell.glyph));
                 if cell.turn.is_empty() {
                     out.push_str(&format!(
-                        "<span class=\"cell{hl}{tag}{goal}{shape}\">{glyph}</span>",
-                        glyph = esc(&cell.glyph),
+                        "<span class=\"cell{hl}{tag}{goal}{shape}\">{glyph}\
+                         <span class=\"sr-only\">{spoken}</span></span>",
                     ));
                 } else {
-                    // A clickable square's accessible name: the glyph alone ("·", "R") tells a
-                    // screen-reader user nothing. The verb plus the square's row/column — derived
-                    // purely from the cell's position in the row-major grid, so no game knowledge
-                    // is assumed and no logic is touched — makes the board keyboard-playable in
-                    // earnest, not just focusable. Visually hidden (`.sr-only`).
-                    let (row, col) = (i / cols_n + 1, i % cols_n + 1);
                     out.push_str(&format!(
                         "<form class=\"cell{hl}{tag}{goal}{shape}\" method=\"post\" \
                          action=\"/offerings/{key}/session/{id}/act\">\
                          <input type=\"hidden\" name=\"turn\" value=\"{turn}\">\
                          <input type=\"hidden\" name=\"arg\" value=\"{arg}\">\
                          <button type=\"submit\">{glyph}\
-                         <span class=\"sr-only\">{turn} row {row}, column {col}</span>\
+                         <span class=\"sr-only\">{turn} {spoken}</span>\
                          </button></form>",
                         key = esc(key),
                         id = esc(id),
                         turn = esc(&cell.turn),
                         arg = cell.arg,
-                        glyph = esc(&cell.glyph),
-                        row = row,
-                        col = col,
                     ));
                 }
             }
@@ -4973,11 +5366,25 @@ fn catalog_page(offerings: &[OfferingInfo]) -> String {
                 verb = verb,
             ),
         };
+        // ⚑ THE PLAYER-COUNT CHIP, DERIVED — never a second list to keep in step. A key with a seat
+        // lock IS a two-player table (that is what the lock exists for), and there is no matchmaking
+        // anywhere on this product, so the requirement has to be readable BEFORE the click that
+        // reveals it. `descent` is the one shipped solo game and says so in the same slot, so the two
+        // chips read as one axis rather than as a warning on some cards and nothing on others.
+        let player_count = match (front_door.is_some(), o.key.as_str()) {
+            (true, _) => "<p class=\"needs\">Needs a 2nd player · or hold both seats yourself</p>"
+                .to_string(),
+            (false, "descent" | "descent-campaign") => {
+                "<p class=\"needs solo\">Play alone</p>".to_string()
+            }
+            (false, _) => String::new(),
+        };
         format!(
-            "<div class=\"offering-card\"><h3>{name}</h3>{tagline}\
+            "<div class=\"offering-card\"><h3>{name}</h3>{player_count}{tagline}\
              <p class=\"meta\"><span class=\"dot{live}\"></span>{key}{company}</p>\
              {play_link}</div>",
             name = esc(name),
+            player_count = player_count,
             tagline = tagline_html,
             live = live,
             key = esc(&o.key),
@@ -5108,16 +5515,28 @@ fn offering_page(key: &str, title: &str, id: &SessionId, surface: &str) -> Strin
         )
     };
     // `#live-surface` is the region the progressive-enhancement script swaps. `tabindex="-1"` makes
-    // it a programmatic focus target (keyboard continuity after a swap); `aria-live="polite"` has a
-    // screen reader announce the updated surface. With JS off it is just the container the
-    // server-rendered surface fills — the fallback is the current behaviour, untouched.
+    // it a programmatic focus target (keyboard continuity after a swap). With JS off it is just the
+    // container the server-rendered surface fills — the fallback is the current behaviour, untouched.
+    //
+    // ⚑ **IT IS NOT A LIVE REGION, AND MUST NOT BE.** It carried `aria-live="polite"` while the
+    // enhancement script replaces its ENTIRE subtree (`cur.innerHTML=html`). Per the ARIA spec a
+    // wholesale replacement inside a live region is announced in its entirety, so an 11×11 board put
+    // up to 121 sr-only square descriptions in the announcement queue on every single move — and the
+    // spectator page pointed the same live region at an SSE feed on a 400ms server pulse, which made
+    // that an UNPROMPTED whole-board re-announcement several times a second.
+    //
+    // The pattern copied here is `descent_play`'s: no live region on the board, and one short
+    // "what just happened" line with `role="status"`. [`LIVE_SAY`] is that line. It sits OUTSIDE the
+    // swapped region deliberately — it is a node that already exists when the announcement happens,
+    // which is the case screen readers handle reliably; a freshly-inserted live region is not.
     let body = format!(
         "{crumb}<main class=\"session{skin}\">\
          <div class=\"page-head\" style=\"padding-top:var(--s4)\"><h1>{name}</h1>{tagline}</div>\
-         {session_rail}\
-         <div id=\"live-surface\" class=\"live-surface\" tabindex=\"-1\" aria-live=\"polite\" \
+         {session_rail}{live_say}\
+         <div id=\"live-surface\" class=\"live-surface\" tabindex=\"-1\" \
          data-result-kind=\"surface-and-receipt\" data-events=\"{events}\">{surface}</div>\
          </main>",
+        live_say = LIVE_SAY,
         crumb = crumb(name, id),
         // THE NIGHT SKIN, at PAGE level, for EVERY offering — the shared lift. It arrived scoped to
         // `key == automatafl_web::KEY` because the board painter landed with it, but the skin knows
@@ -6817,6 +7236,14 @@ fn hero_board() -> String {
 /// honest claim is unchanged and is the whole point: moves are RE-RUN and CHECKED, not trusted.
 /// It just has to be said in words a newcomer already owns. Keep it that way — if a term here is
 /// one you learned from this repo, it does not belong in the deck.
+///
+/// ⚑ **AND EVERY CHOICE ON IT SAYS HOW MANY PEOPLE IT TAKES.** The deck problem is solved; the next
+/// one was structural. There is no matchmaking on this product, so two of the three shipped games
+/// need a second human the visitor has to invite personally — and that fact lived only in prose a
+/// scanner skips ("A two-player board game…") and above a button one click further in. A stranger
+/// arriving ALONE could pick a two-player game first, meet "send this link to your opponent", and
+/// leave without ever seeing the solo game. So the hero button and every card carry a `.needs` chip
+/// before any click. Do not remove one without removing the wall it describes.
 async fn index() -> Html<String> {
     // THE FUNNEL: the PLAY CTA always leads (the served in-tab run at `/descent/play`, plus Discord
     // when configured) and the no-cheat BOARD is the secondary action. Before this the landing's
@@ -6838,7 +7265,8 @@ async fn index() -> Html<String> {
          {hero_play}\
          <a class=\"btn {hero_board_class}\" href=\"/descent\">See today's finished runs \
          <span class=\"arr\" aria-hidden=\"true\">→</span></a>\
-         <a class=\"btn btn-ghost\" href=\"/automatafl\">Play Automatafl</a>\
+         <a class=\"btn btn-ghost\" href=\"/automatafl\">Play Automatafl \
+         <span class=\"needs\">needs a 2nd player</span></a>\
          <a class=\"btn btn-ghost\" href=\"/guide\">How to play</a>\
          <a class=\"btn btn-ghost\" href=\"/offerings\">All games</a>\
          </div></div>\
@@ -6868,18 +7296,21 @@ async fn index() -> Html<String> {
          <h2 class=\"group-h\">Start here</h2>\
          <div class=\"card-grid\">\
          <div class=\"offering-card shelf-games\"><h3>The Descent</h3>\
+         <p class=\"needs solo\">Play alone · a new dungeon every day</p>\
          <p class=\"tagline\">A dungeon crawl. Everyone gets the same dungeon each day, drawn from \
          a public random number nobody can pick in advance. One life, no retries — go deeper for \
          better loot, and you only keep what you carry back out.</p>\
          {card_play}<a class=\"play\" href=\"/descent\">See today's finished runs \
          <span class=\"arr\" aria-hidden=\"true\">→</span></a></div>\
          <div class=\"offering-card shelf-games\"><h3>Automatafl</h3>\
+         <p class=\"needs\">Needs a 2nd player · or hold both seats yourself</p>\
          <p class=\"tagline\">A two-player board game. You both choose in secret, then both moves \
          are revealed at once and a neutral piece reacts to them — so you are guessing at your \
          opponent, not waiting on them.</p>\
          <a class=\"play\" href=\"/automatafl\">Open a table \
          <span class=\"arr\" aria-hidden=\"true\">→</span></a></div>\
          <div class=\"offering-card shelf-games\"><h3>Multiway-Tug</h3>\
+         <p class=\"needs\">Needs a 2nd player · or hold both seats yourself</p>\
          <p class=\"tagline\">A two-player game of hidden influence over seven guilds. You play \
          cards face down; the pull only becomes public once both sides commit.</p>\
          <a class=\"play\" href=\"/tug\">Open a table \
