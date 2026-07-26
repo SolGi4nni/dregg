@@ -38,7 +38,12 @@ const SNAPSHOT_MAGIC: [u8; 8] = *b"DREGGNDB";
 /// v4 carries the season's run day-seed. A v3 image could only describe a seed-derived season
 /// and carries no day to restart under, so it is refused rather than restarted on a guess.
 const SNAPSHOT_VERSION: u8 = 4;
-const SNAPSHOT_DIGEST_DOMAIN: &str = "dregg.native-descent-board.snapshot.v4";
+/// The snapshot digest's domain separator. `pub` because the corruption-detection tests must
+/// RECOMPUTE the digest to prove that refreshing it does not buy a replay bypass, and a private
+/// constant meant they hand-copied the string: the copy sat at `…v3` after this moved to v4, so
+/// every substitution they built was rejected as a plain digest mismatch and the replay tooth
+/// underneath was never reached.
+pub const SNAPSHOT_DIGEST_DOMAIN: &str = "dregg.native-descent-board.snapshot.v4";
 const MAX_SNAPSHOT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_ENTRIES: usize = 10_000;
 const MAX_ACTOR_BYTES: usize = 512;

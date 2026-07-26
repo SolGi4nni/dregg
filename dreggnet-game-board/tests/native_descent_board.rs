@@ -3,32 +3,66 @@
 
 use dreggnet_game_board::native_descent_board::{
     NATIVE_DESCENT_BOARD_ASSURANCE, NativeBoardError, NativeDescentSeasonBoard,
+    SNAPSHOT_DIGEST_DOMAIN,
 };
 use dreggnet_offerings::native_descent::{
     NativeDescentCompletion, NativeDescentOffering, NativeDescentRecord,
 };
 use dreggnet_offerings::{Action, DreggIdentity, Offering, Outcome, RecordVerify, SessionConfig};
+use dungeon_on_dregg::descent::{
+    ASCEND, DELVE, FLEE, FLOORS, LOOT, SMITE, crowned_line, day_world,
+};
 
-const CROWNED_LINE: [(&str, i64); 18] = [
-    ("delve", 0),
-    ("smite", 0),
-    ("loot", 1),
-    ("unlock", 2),
-    ("delve", 0),
-    ("smite", 0),
-    ("loot", 2),
-    ("unlock", 3),
-    ("delve", 0),
-    ("smite", 0),
-    ("smite", 0),
-    ("loot", 3),
-    ("unlock", 4),
-    ("delve", 0),
-    ("smite", 0),
-    ("smite", 0),
-    ("loot", 0),
-    ("flee", 0),
-];
+/// The family index the `raw_seed` world deploys on. `NativeDescentOffering::new()` binds
+/// `DayBinding::SeedDerived`, so the MAP — and therefore every driven tape below — is a function
+/// of the session seed, not a constant.
+fn day_of(raw_seed: u64) -> usize {
+    NativeDescentOffering::new()
+        .open(SessionConfig::with_seed(raw_seed))
+        .expect("native world opens")
+        .game()
+        .day()
+}
+
+/// ⚑ THIS seed's crowned line, regenerated from the map the session actually deploys on.
+///
+/// This used to be an eighteen-entry literal. That tape was true of the single hard-coded dungeon
+/// that predated the day-seeded draw and false on most of the sixteen maps that exist now — seed 7
+/// draws a floor-1 guardian that takes TWO blows, so its third command `loot(1)` was offered but
+/// DISABLED and all five tests in this file died on `driven command loot(1) is enabled`. It also
+/// predated the climb: `flee` now demands `depth == 0`, so a tape that banks from below is refused
+/// outright. `descent::crowned_line` mirrors the Lean `crownedRun` off the day's own `DayWorld`,
+/// and `dungeon-on-dregg`'s `every_days_crowned_line_banks_the_prize_within_the_light` proves the
+/// derived tape banks the prize inside the light on all sixteen draws.
+fn crowned_for(raw_seed: u64) -> Vec<(&'static str, i64)> {
+    crowned_line(day_of(raw_seed))
+}
+
+/// A SHORT banked run on `raw_seed`'s map — the non-crowned run the leaderboard tests need the
+/// crowned one to outrank. Fell floor 1's guardian (however many blows THIS day's map asks for),
+/// take the way-2 key, climb out, bank.
+///
+/// Relic 1 is the way-2 key and the draw guarantees `homes(keyFor w) < w`, so it always lies on
+/// floor 1 — asserted here rather than assumed.
+fn short_banked_for(raw_seed: u64) -> Vec<(&'static str, i64)> {
+    short_banked_on(day_of(raw_seed))
+}
+
+/// The same short banked run, for a map named by family index directly — the beacon-bound path
+/// deploys on the DAY's map, not the one seed 7 derives.
+fn short_banked_on(day: usize) -> Vec<(&'static str, i64)> {
+    let world = day_world(day);
+    assert_eq!(
+        world.homes[1], 1,
+        "the way-2 key is minted on floor 1 on every day the draw can produce"
+    );
+    let mut line = vec![(DELVE, 0)];
+    line.extend(std::iter::repeat_n((SMITE, 0), world.guard_hp(1) as usize));
+    line.push((LOOT, 1));
+    line.push((ASCEND, 0));
+    line.push((FLEE, 0));
+    line
+}
 
 fn actor(name: &str) -> DreggIdentity {
     DreggIdentity(name.to_string())
@@ -71,16 +105,14 @@ fn played(
     (offering.export_record(&session), completion)
 }
 
-fn short_banked_line() -> Vec<(&'static str, i64)> {
-    vec![("delve", 0), ("smite", 0), ("loot", 1), ("flee", 0)]
-}
-
 #[test]
 fn exact_native_replay_ranks_crown_relics_depth_and_turns() {
     let alice = actor("alice-cipherclerk");
     let bob = actor("bob-cipherclerk");
-    let (short_record, short_completion) = played(7, &alice, &short_banked_line());
-    let (crown_record, crown_completion) = played(7, &bob, &CROWNED_LINE);
+    let short_line = short_banked_for(7);
+    let crowned = crowned_for(7);
+    let (short_record, short_completion) = played(7, &alice, &short_line);
+    let (crown_record, crown_completion) = played(7, &bob, &crowned);
 
     let mut board = NativeDescentSeasonBoard::open(42, 7).expect("season opens");
     assert_eq!(board.assurance(), NATIVE_DESCENT_BOARD_ASSURANCE);
@@ -94,7 +126,11 @@ fn exact_native_replay_ranks_crown_relics_depth_and_turns() {
     assert!(!short.standing.crowned);
     assert_eq!(short.standing.banked_relics, vec![1]);
     assert_eq!(short.standing.peak_depth, 1);
-    assert_eq!(short.standing.turns, 4);
+    assert_eq!(
+        short.standing.turns,
+        short_line.len(),
+        "a run is ranked on the commands it actually landed"
+    );
 
     let crown = board
         .submit(bob.clone(), &crown_record, &crown_completion)
@@ -104,9 +140,15 @@ fn exact_native_replay_ranks_crown_relics_depth_and_turns() {
         "a crowned settlement outranks a short retreat"
     );
     assert!(crown.standing.crowned);
+    // Day-independent, and the whole content of "crowned": the prize (relic 0) plus all three
+    // way-keys are banked, and the run stood on the deepest floor.
     assert_eq!(crown.standing.banked_relics, vec![0, 1, 2, 3]);
-    assert_eq!(crown.standing.peak_depth, 4);
-    assert_eq!(crown.standing.turns, 18);
+    assert_eq!(crown.standing.peak_depth, FLOORS);
+    assert_eq!(crown.standing.turns, crowned.len());
+    assert!(
+        crown.standing.turns > short.standing.turns,
+        "the crowned line is the longer run"
+    );
 
     let standings = board.leaderboard();
     assert_eq!(standings.len(), 2);
@@ -128,7 +170,7 @@ fn exact_native_replay_ranks_crown_relics_depth_and_turns() {
 fn duplicate_actor_completion_and_world_substitutions_are_anti_ghost() {
     let alice = actor("alice-cipherclerk");
     let mallory = actor("mallory-cipherclerk");
-    let (record, completion) = played(7, &alice, &CROWNED_LINE);
+    let (record, completion) = played(7, &alice, &crowned_for(7));
     let mut board = NativeDescentSeasonBoard::open(42, 7).expect("season opens");
 
     assert!(matches!(
@@ -168,7 +210,7 @@ fn duplicate_actor_completion_and_world_substitutions_are_anti_ghost() {
     ));
     assert_eq!(board.leaderboard().len(), 1, "duplicate is anti-ghost");
 
-    let (foreign_record, foreign_completion) = played(19, &actor("foreign"), &short_banked_line());
+    let (foreign_record, foreign_completion) = played(19, &actor("foreign"), &short_banked_for(19));
     assert!(matches!(
         board.submit(actor("foreign"), &foreign_record, &foreign_completion),
         Err(NativeBoardError::WrongWorldSeed { .. })
@@ -179,8 +221,8 @@ fn duplicate_actor_completion_and_world_substitutions_are_anti_ghost() {
 fn canonical_restart_redrives_runs_and_refuses_tampered_witnesses() {
     let alice = actor("alice-cipherclerk");
     let bob = actor("bob-cipherclerk");
-    let (alice_record, alice_completion) = played(7, &alice, &CROWNED_LINE);
-    let (bob_record, bob_completion) = played(7, &bob, &short_banked_line());
+    let (alice_record, alice_completion) = played(7, &alice, &crowned_for(7));
+    let (bob_record, bob_completion) = played(7, &bob, &short_banked_for(7));
 
     let mut first = NativeDescentSeasonBoard::open(42, 7).expect("season opens");
     first
@@ -218,17 +260,27 @@ fn canonical_restart_redrives_runs_and_refuses_tampered_witnesses() {
 #[test]
 fn recomputing_the_snapshot_digest_does_not_bypass_native_replay() {
     let alice = actor("alice-cipherclerk");
-    let (record, completion) = played(7, &alice, &CROWNED_LINE);
+    let (record, completion) = played(7, &alice, &crowned_for(7));
     let mut board = NativeDescentSeasonBoard::open(42, 7).expect("season opens");
     board
         .submit(alice.clone(), &record, &completion)
         .expect("authentic run accepts");
     let snapshot = board.export_canonical();
 
-    // Header = magic/version/season/seed/genesis/count. The sole entry then
-    // begins actor-len/actor/command-count; change its first command from
+    // The sole entry then begins actor-len/actor/command-count; change its first command from
     // `delve(0)` to `smite(0)`, and recompute the public corruption digest.
-    let first_entry = 8 + 1 + 8 + 1 + 32 + 4;
+    //
+    // ⚑ This sum was `8 + 1 + 8 + 1 + 32 + 4` and silently DROPPED the 32-byte day-seed the season
+    // gained when runs became beacon-bound (`export_canonical` writes magic, version, season_id,
+    // seed, day_seed, genesis_root, count — two 32-byte fields, not one). It pointed 32 bytes short
+    // and read a genesis-root byte. Spelled out per field so the next header change moves it.
+    let first_entry = 8   // SNAPSHOT_MAGIC
+        + 1               // SNAPSHOT_VERSION
+        + 8               // season_id: u64
+        + 1               // seed: u8
+        + 32              // day_seed
+        + 32              // genesis_root
+        + 4; // entry count: u32
     let command_tag = first_entry + 2 + alice.as_str().len() + 2;
     assert_eq!(snapshot[command_tag], 0, "first command is delve");
 
@@ -236,10 +288,11 @@ fn recomputing_the_snapshot_digest_does_not_bypass_native_replay() {
     substituted[command_tag] = 2;
     refresh_snapshot_digest(&mut substituted);
 
-    assert!(matches!(
-        NativeDescentSeasonBoard::import_canonical(&substituted),
-        Err(NativeBoardError::ReplayRefused(_)) | Err(NativeBoardError::CompletionSubstitution)
-    ));
+    match NativeDescentSeasonBoard::import_canonical(&substituted).map(|_| ()) {
+        Err(NativeBoardError::ReplayRefused(_)) | Err(NativeBoardError::CompletionSubstitution) => {
+        }
+        other => panic!("a substituted first command must not import: {other:?}"),
+    }
 
     let mut target_wide_relic = snapshot;
     target_wide_relic[command_tag] = 3;
@@ -259,7 +312,7 @@ fn recomputing_the_snapshot_digest_does_not_bypass_native_replay() {
 
 fn refresh_snapshot_digest(snapshot: &mut [u8]) {
     let body_len = snapshot.len() - 32;
-    let mut hasher = blake3::Hasher::new_derive_key("dregg.native-descent-board.snapshot.v3");
+    let mut hasher = blake3::Hasher::new_derive_key(SNAPSHOT_DIGEST_DOMAIN);
     hasher.update(&snapshot[..body_len]);
     let digest = *hasher.finalize().as_bytes();
     snapshot[body_len..].copy_from_slice(&digest);
@@ -306,7 +359,14 @@ fn a_beacon_bound_run_belongs_to_its_days_season_and_no_other() {
     let beacon = procgen_dregg::beacon::pinned_fallback_beacon();
     let day = beacon.seed().expect("the pinned published round verifies");
     let alice = actor("alice-cipherclerk");
-    let (record, completion) = played_on_day(7, day, &alice, &short_banked_line());
+    // The beacon-bound world deploys on the BEACON's map, which is generally not the one seed 7
+    // derives — so the tape has to come from that day's own `DayWorld`.
+    let beacon_day = NativeDescentOffering::on_day(day)
+        .open(SessionConfig::with_seed(7))
+        .expect("native world opens on the day")
+        .game()
+        .day();
+    let (record, completion) = played_on_day(7, day, &alice, &short_banked_on(beacon_day));
 
     // The run's provenance root is the day's, not the deploy seed's.
     assert_ne!(

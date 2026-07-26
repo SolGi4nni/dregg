@@ -58,3 +58,7 @@ blake3 = "1"
 # `tests/native_descent_board.rs` drives a season over a REAL verified drand reveal (the pinned
 # published round) — the day binding a live daily surface's runs carry.
 procgen-dregg = { path = "../procgen-dregg" }
+# `tests/native_descent_board.rs` needs `descent::crowned_line` / `day_world` to derive its driven
+# tapes from the map each session actually deploys on. `dreggnet-offerings` re-exports `DayWorld`
+# but not the tape generator, and a hard-coded tape is only correct on one of the sixteen days.
+dungeon-on-dregg = { path = "../dungeon-on-dregg" }
