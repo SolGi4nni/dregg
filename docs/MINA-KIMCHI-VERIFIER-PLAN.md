@@ -57,3 +57,23 @@ the forcing discipline) · =nil; Placeholder (the only prior cryptographic Kimch
 All on hbox (`swarm-build`), House Law #1 (Lean-authored/generated), named-file commits, honest KAT/forcing scope,
 NO overclaiming a working pairing/verify until the whole chain composes. Claude gates each on axiom-cleanliness +
 reading the actual theorem statements (not the summary).
+
+## K4 design (kimi worked it out before hitting its quota; NOT yet built)
+**Scalar-mult decision — one unified gadget, complete, no case splits.** kimi analyzed the a=0 short-Weierstrass
+formulas and concluded: use the **RCB (Renes–Costello–Batina) complete addition** formula for BOTH the double and
+the add step (add-2015-rcb is *strongly unified*, and RCB completeness holds for prime-order curves — Pasta has
+cofactor 1). So `[k]P` via GLV/Shamir over the two ~128-bit halves is ONE curve-op gadget, exception-free (handles
+P=±Q, O), avoiding the exceptional-case handling naive Jacobian doubling needs.
+- Honest gate count: RCB-add ≈ 41 core gates (12 mul + 29 add) → full-generator ≈ 14.9K gates; the GLV scalar-mult
+  ≈ 129 bits × (cAdd(acc,acc) + 2-way select + cAdd(acc,S)) ≈ **2.46M gates** — 3.4× better than naive
+  constant-time (~8.3M). (Projective dbl-2015-rcb is ~expensive as the add, so unified-add-for-both is both simpler
+  AND best.)
+- The dbl-specific gadget is NOT worth building in this gate model (named micro-opt, saves nothing).
+
+## K5 design crux (from KIMCHI-VERIFY-SPEC.md 63726f561): DEFER the MSM
+The dominant cost (C9's s-vector MSM `⟨s,G⟩`) is a **65536-element non-native Vesta MSM ≈ 10^7–10^8 gates**, two
+orders beyond everything else. **Pickles DEFERS it** (the `sg` split, ipa.rs:335-336) rather than verifying it
+in-circuit — accumulated across recursion, checked once at the end. So K5 must be built **deferral-first**: verify
+everything cheap in-circuit, ACCUMULATE the MSM as a deferred obligation, don't brute-force it. This is the whole
+"as gas-efficient as possible" answer. (Design decision approved: derive the batching `rand_base` Fiat-Shamir from
+the transcript, since in-circuit RNG is unavailable.)
