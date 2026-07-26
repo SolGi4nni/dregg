@@ -128,8 +128,13 @@ impl DiscordOffering for NativeDescentOffering {
     const KEY: &'static str = "descent";
     const TITLE: &'static str = "The Descent";
     const COLOR: u32 = 0xB58B4A;
-    const TAGLINE: &'static str =
-        "Lean-authored custody dungeon · finite light · attenuating keys · banked relics";
+    // ⚑ THIS USED TO SAY "attenuating keys", WHICH IS NOT ON THIS PATH. `dreggnet-offerings`
+    // really does have an attenuating capability layer (`PlayGrant` / `SessionKey` / `play_admit`),
+    // and the Descent touches none of it: `NativeDescentOffering::advance` takes a bare actor
+    // string and no capability token is minted, presented, attenuated or verified during a run.
+    // What IS real is the relic keys — `unlock(w)` requires the matching relic CARRIED, and the
+    // emitted program guards the door on it — so the tagline says that instead.
+    const TAGLINE: &'static str = "One torch of light, no refills · locked ways need the key in hand · you keep only what you carry out";
 
     /// **Deliberately not resumable.** Descent opens on TODAY's verified beacon day
     /// (`live_offering`), and this process outlives UTC days. A rebuild tomorrow would replay a

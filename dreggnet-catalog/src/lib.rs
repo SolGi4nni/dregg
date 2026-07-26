@@ -381,7 +381,12 @@ pub fn register_games(host: &mut OfferingHost, cfg: &CatalogConfig) {
     // reveal, so no relic id exists — to anyone — before the round matures.
     host.register(
         "descent",
-        "The Descent — the Lean-authored custody dungeon (delve · unlock · smite · loot · bank)",
+        // ⚑ A SHIPPED TITLE, so it is read by a stranger before anything else on the shelf. It used
+        // to say "the Lean-authored custody dungeon (delve · unlock · smite · loot · bank)" — four
+        // private terms and the engine's own verb list. Every clause below is the game's, read out
+        // of `dungeon_on_dregg::descent`: BREATH is spent by every verb and never refills, the day
+        // picks one of DAYS maps, and `flee` banks only what is CARRIED (floor relics stay).
+        "The Descent — a solo dungeon crawl on one torch of light. Everyone gets the same dungeon today, and you keep only what you carry back out.",
         cfg.native_descent(),
     );
     host.register(
@@ -419,12 +424,20 @@ pub fn register_games(host: &mut OfferingHost, cfg: &CatalogConfig) {
     // telegram/wechat/discord byte-peers) claims seats for the first two identities that act.
     host.register(
         "tug",
-        "Multiway-Tug — a hidden-hand tug of influence (seven guilds · you cut, they choose)",
+        // ⚑ "seven guilds" read as seven PLAYERS to a stranger; it is seven scoring lanes in a
+        // TWO-seat game (`N_GUILDS = 7`, `Player` has two variants). "You cut, they choose" is
+        // exact — a Gift or Competition only presents cards, and the responder takes one share
+        // while the proposer keeps the other — but it needed a subject.
+        "Multiway-Tug — two hidden hands of cards pulling at seven contested lanes. You cut the offer; your opponent chooses which side they take.",
         seated::SeatedTug::new(),
     );
     host.register(
         "automatafl",
-        "Automatafl — the simultaneous-move board (seal a move · reveal · the automaton steps)",
+        // ⚑ The old tagline named the three phases of the round rather than the game. Both clauses
+        // are the ruleset's: no move executes until both seats have sealed and opened, and the
+        // automaton is the one piece neither seat may move (`moveLegalB` bans it as a source) and
+        // the only one that wins the game.
+        "Automatafl — two players move at the same time, in secret, and the piece that decides it is the one neither of you controls.",
         AutomataflOffering,
     );
     host.register(
@@ -576,6 +589,32 @@ pub fn apply_ship_list(host: &mut OfferingHost) {
 // ─────────────────────────────────────────────────────────────────────────────
 // THE FRONT-DOOR COPY — the one place the shelf's product words live
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// ⚑ **THE NAME OF THE PLAY SURFACE, in ONE place.** `Dragon's Arcade` — the shelf a stranger
+/// arrives at, deployed at `arcade.dregg.net`, painted by every host that builds its catalog
+/// through this crate (the web top bar and every `<title>`, the Telegram Mini App entry, the
+/// WeChat menu card, the discord-bot's admin portal).
+///
+/// **It does NOT rename the project.** `dregg` is the project, the workspace, the token and the
+/// `www.dregg.net` domain, and none of that moves; this names the ARCADE — the one surface people
+/// play on. The two are related the way a storefront is related to the company: exactly one place
+/// says both, [`arcade_lineage`], which every page footer carries.
+///
+/// It is also NOT `DreggNet Cloud`. That phrase names the frontend-agnostic Offering/Session
+/// *library layer*, and `docs/DREGGNET-CLOUD-OFFERINGS.md` says outright that it "names the shape,
+/// not a live service" — correct in the library docs, wrong in a browser tab.
+///
+/// The apostrophe is the ASCII `'`, deliberately: it survives a `<title>`, a Telegram plain-text
+/// message, a grep and a terminal identically, and no HTML escaper in this workspace touches it
+/// (`dreggnet_web::esc` escapes `& < > "` only).
+pub const SURFACE_NAME: &str = "Dragon's Arcade";
+
+/// **The one line that says both names** — where the arcade sits inside the project. Every host's
+/// footer/about carries this and nothing else does, so "Dragon's Arcade" reads as a product and
+/// `dregg` stays the project without either name being repeated into noise.
+pub fn arcade_lineage() -> &'static str {
+    "Dragon's Arcade is the play surface of the dregg project."
+}
 
 /// **The shelf intro** — the sentence every catalog LISTING leads with, on every front door (web
 /// `GET /offerings`, the Mini App `/tg` fragment, Telegram `/offerings`, Discord `/play`). ONE

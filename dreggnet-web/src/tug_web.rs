@@ -28,26 +28,29 @@
 //! spectator route renders as an identity holding no seat, so it takes the `None` branch and BOTH
 //! hands are the fog form. That much is a real per-viewer projection over a real commitment.
 //!
-//! ## What a tug player currently decides — READ THIS BEFORE WRITING ANY COPY
+//! ## What a tug player decides — READ THIS BEFORE WRITING ANY COPY
 //!
-//! Almost nothing, and the pages here must not pretend otherwise. Verified at the definitions in
-//! `dregg-multiway-tug/src/reference.rs`:
+//! ⚑ THIS SECTION USED TO DESCRIBE AN ENGINE THAT NO LONGER EXISTS, and it said so in the register
+//! of a standing wound: a hardcoded `[ActionKind; 4]` order, engine-chosen cards
+//! (`pick_lowest`/`pick_highest`), and a `max_by_key(INFLUENCE)` standing in for the opponent — "a
+//! whole tug match is a function of the deal seed". All three are gone (see
+//! `dregg-multiway-tug/src/reference.rs`'s own header): the seat chooses WHICH action, THE CUT it
+//! presents, and — answering — WHICH SIDE it takes, each licensed by a theorem in
+//! `metatheory/Dregg2/Games/MultiwayTug.lean`. `tug_web`'s own
+//! `the_rules_describe_the_decisions_the_engine_actually_offers` already checks the copy against the
+//! live decision space rather than against these sentences, which is why the lie survived here.
 //!
-//! * the four actions are played in a FIXED schedule (`Engine::order` is a hardcoded
-//!   `[ActionKind; 4]`, identical for both seats; `play_next` reads `order[order_pos[p]]`), and
-//!   `TugOffering::advance` refuses anything that is not `peek_next_action()` — so the player does
-//!   not choose which action to play, only when to press it;
-//! * which CARDS an action spends is chosen by the engine (`pick_lowest` / `pick_highest`), not by
-//!   the player — `advance` takes no card argument at all;
-//! * the "opponent's blind pick" that `lib.rs` and `reference.rs` describe as *"a real choice"* /
-//!   *"an adversarial decision made by the other agent"* is [`dregg_multiway_tug::reference`]'s
-//!   `opponent_gift_pick` / `opponent_comp_pick`: `max_by_key(INFLUENCE)` and a two-way weight
-//!   comparison. Deterministic functions of the presented cards. Nobody decides anything.
+//! What the copy below must still be honest about:
 //!
-//! A whole tug match is therefore a function of the deal seed, and the eight presses are the two
-//! players taking turns advancing a movie. That is a REAL wound in the game and it is not this
-//! module's to fix — but a front door that advertised "outplay your opponent" would be a lie, so
-//! the rules copy below says what the game currently is.
+//! * ⚑ **A play does not move the lanes.** Only a RESPONSE (which places an escrowed cut) and the
+//!   final REVEAL & SCORE (which turns each Secret up onto its owner's side) touch a lane counter. A
+//!   Secret moves nothing until scoring; a Discard's favors leave the round and score for nobody. A
+//!   page that does not say this reads as broken to a first-time player, who presses a button and
+//!   watches all seven rows come back identical (`docs/reference/UX-QA-SWEEP-2026-07-26.md`).
+//! * a round is ONE round — no match, no alternating opener, and the seat answering the last cut has
+//!   a real measured edge;
+//! * the hidden hand hides by non-reveal plus a Poseidon2 commitment the executor checks membership
+//!   against; the host can read both hands.
 
 use std::sync::Arc;
 
@@ -103,9 +106,9 @@ fn tug_door(state: Arc<CatalogState>) -> Router {
         landing: landing_page,
         seat_note: "(Which side you get — seat A or seat B — is settled by the game when you make \
                     your first move; the link decides only that the table is <em>yours</em>.)",
-        spectator_note: "Spectators see the guild lanes and the score with BOTH hands fogged — a \
-                         card count and each hand's committed root, never a card — and every \
-                         control inert.",
+        spectator_note: "Watchers see the lanes and the score, and both hands only as a card \
+                         count and a fingerprint of the hand — never a card. They cannot touch \
+                         anything on the table.",
     })
 }
 
@@ -116,32 +119,43 @@ fn rules_html() -> String {
     format!(
         "<section class=\"panel\"><h2>The rules, in one screen</h2>\
          <ul class=\"rules\">\
-         <li><strong>{guilds} guilds</strong> are contested, weighted <code>2 2 2 3 3 4 5</code> — \
-         {deck} favor cards in all, and that {deck} is a conservation tooth the executor enforces: \
-         no favor is conjured or destroyed for the length of a round.</li>\
+         <li><strong>{guilds} guilds are the {guilds} lanes</strong> — one thing, two names, and \
+         this page uses both: guild 3 <em>is</em> lane 3. They are weighted \
+         <code>2 2 2 3 3 4 5</code>, and there are {deck} <strong>favor cards</strong> in all — a \
+         favor <em>is</em> a card. That {deck} is a conservation tooth the executor enforces: no \
+         favor is conjured or destroyed for the length of a round.</li>\
          <li><strong>Each seat holds six favors</strong>, hidden. Your opponent sees only how many \
          cards you hold and the committed root of your hand; the cards themselves are rendered to \
-         you and to nobody else.</li>\
-         <li><strong>Four actions, once each per round</strong> — Secret, Discard, Gift, \
-         Competition — spending 1, 2, 3 and 4 cards. Whoever leads a guild lane takes its weight. \
-         <strong>Win at 11 influence or 4 guilds</strong>; short of that the round is still \
+         you and to nobody else. Every favor belongs to one lane — that is the lane it pulls, and \
+         what the lane pays is what it pays whoever ends up leading it.</li>\
+         <li><strong>Four actions, once each per round</strong> — Secret (1 card), Discard (2), \
+         Gift (3), Competition (4). Whoever leads a lane takes its whole weight. \
+         <strong>Win at 11 influence or 4 lanes</strong>; short of that the round is still \
          decided — on total influence, then on lanes held — and only an exact dead heat on both \
          is a draw. Every one of those clauses is a tooth: the executor refuses a claimed win the \
          rules do not make.</li>\
+         <li>⚑ <strong>Spending an action does not move the lanes.</strong> This is the part that \
+         looks broken and is not. A <strong>Secret</strong> goes face down and reaches no lane \
+         until the reveal. A <strong>Discard</strong> burns two favors out of the round and they \
+         reach no lane ever. A <strong>Gift</strong> or <strong>Competition</strong> puts its \
+         favors in escrow, and they land on the two sides only when your opponent ANSWERS. So the \
+         seven lane rows will often sit perfectly still right after your own move: that is the \
+         rules working. The running account of where all {deck} favors are — held, face down, \
+         burnt, placed — is what moves, and the table prints it.</li>\
          <li><strong>A Gift or a Competition only PRESENTS favors.</strong> You cut; your opponent \
          chooses which side they take, and you cannot answer your own cut. Which of your four \
          actions to spend, in which order, and which cards to put in the cut, are all yours.</li>\
-         <li><strong>Then reveal and score.</strong> The Secret is turned face up onto its owner's \
-         side before control is counted.</li>\
+         <li><strong>Then reveal and score.</strong> Each seat's Secret is turned face up onto its \
+         owner's side of its lane, and only then is control counted.</li>\
          </ul>\
-         <p class=\"prose\">Every press is one real executor turn: the rules action and the \
-         hidden-hand membership witness land together or not at all, an out-of-order press is \
-         REFUSED with nothing committed, and the whole round re-verifies by replaying every \
-         accepted input through a fresh executor.</p>\
+         <p class=\"prose\">Every press is re-run against the rules before anything is written \
+         down. The move and the proof that the card came from your own dealt hand land together \
+         or not at all, a press out of turn is refused with nothing recorded, and the whole round \
+         can be replayed afterwards from its accepted moves and come out the same way.</p>\
          <p class=\"prose\"><strong>Honest about the play:</strong> a round is one round — there \
          is no match, no alternating opener, and the seat that answers the last cut has a real \
-         measured edge. The rules themselves are authored in Lean and the winner is decided by \
-         that proof, not by this page.</p>\
+         measured edge. And the winner is not this page's opinion: the rules decide it, and if \
+         they cannot, the round refuses to end rather than name somebody.</p>\
          <p class=\"prose\">Mechanics derived from Hanamikoji (Kota Nakayama); this is an original \
          re-theming.</p>\
          </section>"
@@ -156,8 +170,8 @@ fn landing_page(notice: Option<&str>) -> String {
          <p class=\"eyebrow\">Hidden hands · seven guilds · one round</p>\
          <h1>Multiway-Tug</h1>\
          <p class=\"deck\">Two houses pull at seven guilds with favors neither can see the other \
-         holding. Every play is a real executor turn carrying its own membership witness — the \
-         hand stays hidden and the round still proves.</p>\
+         holding. Every play is checked against the rules and against your own dealt hand, so a \
+         hidden hand is still not a hand you can invent cards from.</p>\
          <p class=\"credit\">Art · spwashi, <em>exchange</em></p>\
          </section>\
          {notice}\
@@ -174,7 +188,11 @@ fn landing_page(notice: Option<&str>) -> String {
         open = open_a_table_section(&LOCK),
         rules = rules_html(),
     );
-    document("dregg — Multiway-Tug", "offerings", &body)
+    document(
+        &format!("{} — Multiway-Tug", crate::PRODUCT_NAME),
+        "offerings",
+        &body,
+    )
 }
 
 #[cfg(test)]
