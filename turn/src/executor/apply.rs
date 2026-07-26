@@ -3232,10 +3232,19 @@ impl TurnExecutor {
         for (idx, val) in &params.initial_fields {
             let idx = *idx as usize;
             if idx < dregg_cell::state::STATE_SLOTS {
-                // Zero-pad to 32 bytes.
-                let mut field = [0u8; 32];
-                field[..8].copy_from_slice(&val.to_le_bytes());
-                new_cell.state.fields[idx] = field;
+                // The canonical u64 lane (big-endian bytes 24..32) — NOT little-endian
+                // into 0..8. To be precise about what this fixes: the factory turn
+                // itself proved either way (a birth routes to `factoryVmDescriptor2R24`
+                // and the born cell's bytes never enter that AIR — the acting cell's
+                // fields octet is unchanged, and the accounts-tree leaf carries the key,
+                // not the state). What a `0..8` write DID break is (1) no kernel-side
+                // reader could see the value — `field_to_u64` / `field_to_i128` read
+                // 24..32, so a born field read back as 0, and it collided with
+                // `dregg-deploy`'s own `u64_to_field` on this very path, so a manifest's
+                // `initial_fields` could never satisfy its own `FieldEquals`; and (2) it
+                // left the born cell's frozen completion lanes NONZERO, so any LATER
+                // self-`SetField` on that slot was UNSAT.
+                new_cell.state.fields[idx] = dregg_cell::field_from_u64(*val);
             }
         }
 

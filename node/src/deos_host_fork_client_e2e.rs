@@ -57,15 +57,11 @@ fn agent_cell_for(pubkey: &[u8; 32]) -> CellId {
 }
 
 fn pack_u64(v: u64) -> dregg_cell::state::FieldElement {
-    let mut fe = [0u8; 32];
-    fe[..8].copy_from_slice(&v.to_le_bytes());
-    fe
+    dregg_cell::field_from_u64(v)
 }
 
 fn unpack_u64(fe: &dregg_cell::state::FieldElement) -> u64 {
-    let mut b = [0u8; 8];
-    b.copy_from_slice(&fe[..8]);
-    u64::from_le_bytes(b)
+    dregg_cell::field_to_u64(fe)
 }
 
 async fn instance_field0(state: &NodeState, cell: &CellId) -> u64 {

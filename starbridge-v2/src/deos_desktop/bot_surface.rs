@@ -376,10 +376,15 @@ pub use card::{activity_card, build_bot_surface_view, card_row_count};
 
 // ─── Pure helpers ────────────────────────────────────────────────────────────────
 
+/// A `u64` on the canonical lane (`dregg_cell::field_from_u64`, big-endian bytes `24..32`).
+///
+/// ⚠ This file used to hold BOTH lanes: `fe_u64_be` (big-endian `24..32`) and this one
+/// (little-endian `0..8`), with three production `set_field`s on the LE one and two on the BE one.
+/// A `0..8` write lands in lanes the deployed `setFieldVmDescriptor2-{slot}R24` FREEZES, so it
+/// could not prove and no kernel-side reader could see it. Both names now mean the same lane.
+/// Gate: `circuit/tests/setfield_encoder_window_gate.rs`.
 fn fe_u64(v: u64) -> dregg_cell::FieldElement {
-    let mut fe = [0u8; 32];
-    fe[..8].copy_from_slice(&v.to_le_bytes());
-    fe
+    dregg_cell::field_from_u64(v)
 }
 
 /// A deterministic 64-bit fold of a name into a field value (FNV-1a) — the

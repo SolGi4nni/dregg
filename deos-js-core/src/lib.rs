@@ -53,20 +53,29 @@ use serde::{Deserialize, Serialize};
 /// A model slot index (a cell-state field). Both engines index the applet model by this.
 pub type Slot = usize;
 
-/// Pack a `u64` into a [`FieldElement`] (little-endian low 8 bytes) — the model's scalar
-/// shape. This is THE codec both engines pack/unpack the counter/register scalars with;
-/// the previously-duplicated per-engine copies are gone.
+/// Pack a `u64` into a [`FieldElement`] — the model's scalar shape. This is THE codec both
+/// engines pack/unpack the counter/register scalars with; the previously-duplicated per-engine
+/// copies are gone.
+///
+/// ⚠ THE LANE: this delegates to `dregg_cell::field_from_u64` (big-endian into bytes `24..32`),
+/// the u64 lane the verified kernel defines a `fields[]` slot to BE. It used to write
+/// little-endian into bytes `0..8`, which is the OPPOSITE end of the value, and that made every
+/// nonzero write UNPROVABLE: the deployed `setFieldVmDescriptor2-{slot}R24` freezes a written
+/// slot's 7 completion lanes BEFORE↔AFTER, so only bytes `28..32` of a field value may change on
+/// a setField turn (`circuit/src/effect_vm/helpers.rs:133` `field_limbs8`). A `0..8` write lit a
+/// FROZEN lane, so `pack_u64(1)` did not truncate — it failed to prove at all, and the Lean
+/// producer's `field_fits_wire_carrier` (`exec-lean/src/lean_shadow.rs:2499`, "bytes `0..24` must
+/// be zero") bailed the turn as ineligible. Gate: `circuit/tests/setfield_encoder_window_gate.rs`.
 pub fn pack_u64(v: u64) -> FieldElement {
-    let mut fe = [0u8; 32];
-    fe[..8].copy_from_slice(&v.to_le_bytes());
-    fe
+    dregg_cell::field_from_u64(v)
 }
 
 /// Read a `u64` back out of a [`FieldElement`] (the inverse of [`pack_u64`]).
+///
+/// Moved to the u64 lane together with [`pack_u64`] — the pair must stay on the same lane or every
+/// stored value reads back as garbage.
 pub fn unpack_u64(fe: &FieldElement) -> u64 {
-    let mut b = [0u8; 8];
-    b.copy_from_slice(&fe[..8]);
-    u64::from_le_bytes(b)
+    dregg_cell::field_to_u64(fe)
 }
 
 /// A read-only view of an applet's MODEL (the cell's live state) — the positions of the

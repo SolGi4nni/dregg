@@ -41,20 +41,20 @@ use dregg_cell::count_ge_set_commitment;
 use dregg_cell::interface::{ArgsSchema, InterfaceDescriptor, MethodSig, Semantics, method_symbol};
 use dregg_cell::program::SimpleStateConstraint;
 
-/// Pack a `u64` into a 32-byte field element — little-endian into the low 8 bytes.
-/// Byte-identical to `deos_js::applet::pack_u64` (the native applet's slot encoding).
+/// Pack a `u64` into a 32-byte field element's u64 lane. Byte-identical to
+/// `deos_js::applet::pack_u64` (the native applet's slot encoding). the canonical u64 lane (`dregg_cell::field_from_u64`, big-endian bytes `24..32`) — the lane the
+/// verified kernel defines a `fields[]` slot to BE. It previously wrote little-endian into bytes
+/// `0..8`, the OPPOSITE end, which the deployed `setFieldVmDescriptor2-{slot}R24` completion freeze
+/// makes UNPROVABLE for any nonzero value (only bytes `28..32` may change on a setField turn).
+/// Gate: `circuit/tests/setfield_encoder_window_gate.rs`.
 fn pack_u64(v: u64) -> [u8; 32] {
-    let mut fe = [0u8; 32];
-    fe[..8].copy_from_slice(&v.to_le_bytes());
-    fe
+    dregg_cell::field_from_u64(v)
 }
 
-/// Read a `u64` back out of a field element's low 8 bytes. Mirrors
+/// Read a `u64` back out of a field element's u64 lane. Mirrors
 /// `deos_js::applet::unpack_u64`.
 fn unpack_u64(fe: &[u8; 32]) -> u64 {
-    let mut b = [0u8; 8];
-    b.copy_from_slice(&fe[..8]);
-    u64::from_le_bytes(b)
+    dregg_cell::field_to_u64(fe)
 }
 
 /// Collect the model `slot` of every `bind` node in a view-tree JSON, in

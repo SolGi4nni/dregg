@@ -179,7 +179,7 @@ pub use predicate::{
 };
 pub use program::{
     CellProgram, HeapAtom, ProgramError, StateConstraint, count_ge_set_commitment, field_from_u64,
-    field_from_u64_be,
+    field_from_u64_be, field_to_u64,
 };
 pub use revocation_channel::{
     ChannelId, RevocationChannel, RevocationChannelError, RevocationChannelSet,

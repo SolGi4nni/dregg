@@ -63,20 +63,20 @@ pub const VIEW_FOCUS_SLOT: usize = 2;
 /// bytes of the element).
 pub const VIEW_PRESENT_IDX_SLOT: usize = 3;
 
-/// Pack a `u64` into the low 8 bytes of a field element (little-endian); the rest
-/// is zero. The inverse of [`unpack_u64`].
+/// Pack a `u64` into a field element's u64 lane (big-endian bytes `24..32`); the rest
+/// is zero. The inverse of [`unpack_u64`]. the canonical u64 lane (`dregg_cell::field_from_u64`, big-endian bytes `24..32`) — the lane the
+/// verified kernel defines a `fields[]` slot to BE. It previously wrote little-endian into bytes
+/// `0..8`, the OPPOSITE end, which the deployed `setFieldVmDescriptor2-{slot}R24` completion freeze
+/// makes UNPROVABLE for any nonzero value (only bytes `28..32` may change on a setField turn).
+/// Gate: `circuit/tests/setfield_encoder_window_gate.rs`.
 fn pack_u64(v: u64) -> FieldElement {
-    let mut fe = [0u8; 32];
-    fe[..8].copy_from_slice(&v.to_le_bytes());
-    fe
+    dregg_cell::field_from_u64(v)
 }
 
-/// Read a `u64` back out of the low 8 bytes of a field element (the inverse of
+/// Read a `u64` back out of a field element's u64 lane (the inverse of
 /// [`pack_u64`]).
 fn unpack_u64(fe: &FieldElement) -> u64 {
-    let mut b = [0u8; 8];
-    b.copy_from_slice(&fe[..8]);
-    u64::from_le_bytes(b)
+    dregg_cell::field_to_u64(fe)
 }
 
 /// The all-zero element — the `None`-focus sentinel for [`VIEW_FOCUS_SLOT`].

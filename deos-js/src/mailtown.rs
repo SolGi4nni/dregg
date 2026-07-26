@@ -76,15 +76,11 @@ pub const SLOT_LAST_SENDER: usize = 3;
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn pack_u64(v: u64) -> FieldElement {
-    let mut fe = [0u8; 32];
-    fe[..8].copy_from_slice(&v.to_le_bytes());
-    fe
+    dregg_cell::field_from_u64(v)
 }
 
 fn unpack_u64(fe: &FieldElement) -> u64 {
-    let mut b = [0u8; 8];
-    b.copy_from_slice(&fe[..8]);
-    u64::from_le_bytes(b)
+    dregg_cell::field_to_u64(fe)
 }
 
 /// The low 8 bytes of a cell id, as a u64 (the on-ledger attribution witness).

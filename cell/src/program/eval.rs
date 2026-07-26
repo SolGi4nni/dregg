@@ -2842,7 +2842,16 @@ fn hash_preimage32(hash_kind: &HashKind, preimage: &[u8; 32]) -> [u8; 32] {
 // ============================================================================
 
 /// Interpret a field element as a big-endian u64 (last 8 bytes).
-pub(crate) fn field_to_u64(field: &FieldElement) -> u64 {
+/// The canonical DECODER paired with [`field_from_u64`] — reads the u64-lane (big-endian bytes
+/// 24..32) back out of a field element.
+///
+/// ⚠ This was `pub(crate)` while `field_from_u64` was public, so every downstream crate that needed
+/// to store a scalar in a cell field hand-rolled its OWN pair — and picked the natural-feeling
+/// little-endian-into-bytes-`0..8`, which the deployed `setFieldVmDescriptor2-*R24` freeze makes
+/// UNSAT (only bytes 28..32 of a field value are writable on a setField turn; see
+/// `circuit/tests/setfield_encoder_window_gate.rs`). Exporting the pair is what makes rewiring
+/// those sites to a single encoder possible.
+pub fn field_to_u64(field: &FieldElement) -> u64 {
     let mut bytes = [0u8; 8];
     bytes.copy_from_slice(&field[24..32]);
     u64::from_be_bytes(bytes)

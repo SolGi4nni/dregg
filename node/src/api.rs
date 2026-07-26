@@ -575,9 +575,11 @@ pub enum TurnEffectSpec {
 /// Parse a value string into a 32-byte field element.
 ///
 /// Accepts either a full 64-char hex field element (used verbatim) or a
-/// shorter hex (`0x…`) / decimal scalar, which is encoded little-endian into
-/// the low 8 bytes. This mirrors the wasm runtime's `value_hex` convention so
-/// the HTTP path and the in-browser preview agree on encoding.
+/// shorter hex (`0x…`) / decimal scalar, which rides the CANONICAL u64 lane
+/// (`dregg_cell::field_from_u64`, big-endian bytes `24..32`). Both branches now
+/// land on the same lane; the scalar branch used to write little-endian into
+/// bytes `0..8`, so one endpoint served two incompatible encodings and the
+/// scalar one could not prove.
 fn parse_field_element(s: &str) -> Result<[u8; 32], String> {
     let t = s.trim();
     if t.len() == 64 && t.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -12043,19 +12045,30 @@ mod tests {
         assert_eq!(req.actions[0].effects.len(), 3);
     }
 
-    /// `parse_field_element` accepts both a full hex field element and a
-    /// short decimal/hex scalar (little-endian into the low 8 bytes).
+    /// `parse_field_element` accepts both a full hex field element and a short
+    /// decimal/hex scalar, and the scalar rides the CANONICAL u64 lane.
+    ///
+    /// The read side moved WITH the encoder: this test asserted
+    /// `u64::from_le_bytes(dec[..8])` and `dec[8..] == 0`, which pinned the very
+    /// encoding that made `{"kind":"set_field","value":"42"}` unprovable. It now
+    /// decodes with `dregg_cell::field_to_u64` and asserts the frozen prefix
+    /// (bytes `0..24`) is CLEAR — the property the deployed setField descriptor
+    /// actually requires.
     #[test]
     fn parse_field_element_handles_hex_and_scalar() {
         let full = parse_field_element(&"ab".repeat(32)).unwrap();
         assert_eq!(full, [0xab; 32]);
 
         let dec = parse_field_element("42").unwrap();
-        assert_eq!(u64::from_le_bytes(dec[..8].try_into().unwrap()), 42);
-        assert!(dec[8..].iter().all(|b| *b == 0));
+        assert_eq!(dregg_cell::field_to_u64(&dec), 42);
+        assert!(
+            dec[..24].iter().all(|b| *b == 0),
+            "a scalar must leave the frozen prefix clear or the setField cannot prove"
+        );
 
         let hex = parse_field_element("0xff").unwrap();
-        assert_eq!(u64::from_le_bytes(hex[..8].try_into().unwrap()), 255);
+        assert_eq!(dregg_cell::field_to_u64(&hex), 255);
+        assert!(hex[..24].iter().all(|b| *b == 0));
 
         assert!(parse_field_element("not-a-number").is_err());
     }

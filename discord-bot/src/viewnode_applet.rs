@@ -63,19 +63,19 @@ use crate::embeds;
 /// A model slot (a cell-state index). The card's bound values read these.
 type Slot = usize;
 
-/// Pack a u64 into a [`FieldElement`] (little-endian low 8 bytes) — the scalar shape
-/// of the card's bound model (a tally count), matching the native applet's packing.
+/// Pack a u64 into a [`FieldElement`]'s u64 lane — the scalar shape of the card's bound
+/// model (a tally count), matching the native applet's packing. the canonical u64 lane (`dregg_cell::field_from_u64`, big-endian bytes `24..32`) — the lane the
+/// verified kernel defines a `fields[]` slot to BE. It previously wrote little-endian into bytes
+/// `0..8`, the OPPOSITE end, which the deployed `setFieldVmDescriptor2-{slot}R24` completion freeze
+/// makes UNPROVABLE for any nonzero value (only bytes `28..32` may change on a setField turn).
+/// Gate: `circuit/tests/setfield_encoder_window_gate.rs`.
 fn pack_u64(v: u64) -> FieldElement {
-    let mut fe = [0u8; 32];
-    fe[..8].copy_from_slice(&v.to_le_bytes());
-    fe
+    dregg_cell::field_from_u64(v)
 }
 
 /// Read a u64 back out of a [`FieldElement`].
 fn unpack_u64(fe: &FieldElement) -> u64 {
-    let mut b = [0u8; 8];
-    b.copy_from_slice(&fe[..8]);
-    u64::from_le_bytes(b)
+    dregg_cell::field_to_u64(fe)
 }
 
 /// A read-only projection of the card applet's MODEL (the cell's live state) — the

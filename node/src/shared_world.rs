@@ -70,11 +70,13 @@ fn hex_of(id: &CellId) -> String {
     dregg_types::hex_encode(id.as_bytes())
 }
 
-/// Pack a u64 into a `FieldElement` (LE low 8 bytes) — matches deos-js `pack_u64`.
+/// Pack a u64 into a `FieldElement`'s u64 lane — matches deos-js `pack_u64`. the canonical u64 lane (`dregg_cell::field_from_u64`, big-endian bytes `24..32`) — the lane the
+/// verified kernel defines a `fields[]` slot to BE. It previously wrote little-endian into bytes
+/// `0..8`, the OPPOSITE end, which the deployed `setFieldVmDescriptor2-{slot}R24` completion freeze
+/// makes UNPROVABLE for any nonzero value (only bytes `28..32` may change on a setField turn).
+/// Gate: `circuit/tests/setfield_encoder_window_gate.rs`.
 fn pack_u64(v: u64) -> dregg_cell::state::FieldElement {
-    let mut fe = [0u8; 32];
-    fe[..8].copy_from_slice(&v.to_le_bytes());
-    fe
+    dregg_cell::field_from_u64(v)
 }
 
 fn decode_hex(s: &str) -> Option<Vec<u8>> {
@@ -91,15 +93,15 @@ fn decode_hex(s: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// Read a u64 back out of a hex-encoded `FieldElement` (LE low 8 bytes).
+/// Read a u64 back out of a hex-encoded `FieldElement` (the u64 lane, BE bytes `24..32`).
 fn unpack_u64_hex(field_hex: &str) -> u64 {
     let bytes = match decode_hex(field_hex) {
-        Some(b) if b.len() >= 8 => b,
+        Some(b) if b.len() >= 32 => b,
         _ => return 0,
     };
-    let mut b = [0u8; 8];
-    b.copy_from_slice(&bytes[..8]);
-    u64::from_le_bytes(b)
+    let mut fe = [0u8; 32];
+    fe.copy_from_slice(&bytes[..32]);
+    dregg_cell::field_to_u64(&fe)
 }
 
 /// Derive an agent cell id the way the node's signed-turn ingress does.

@@ -78,15 +78,11 @@ pub const XP_PER_LEVEL: u64 = 100;
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn pack_u64(v: u64) -> FieldElement {
-    let mut fe = [0u8; 32];
-    fe[..8].copy_from_slice(&v.to_le_bytes());
-    fe
+    dregg_cell::field_from_u64(v)
 }
 
 fn unpack_u64(fe: &FieldElement) -> u64 {
-    let mut b = [0u8; 8];
-    b.copy_from_slice(&fe[..8]);
-    u64::from_le_bytes(b)
+    dregg_cell::field_to_u64(fe)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -648,7 +644,10 @@ mod tests {
         let reach = w.reach(hero);
         assert!(reach.can_observe(&tavern), "hero can reach the tavern");
         assert!(reach.can_observe(&road), "...and the road (exit)");
-        assert!(reach.can_observe(&cave), "...and the cave (transitive exit)");
+        assert!(
+            reach.can_observe(&cave),
+            "...and the cave (transitive exit)"
+        );
 
         // ── PLAYER MOVES: the hero walks tavern→road→cave (cap-gated navigation).
         w.player_move(player.clone(), hero, road).unwrap();
@@ -716,15 +715,34 @@ mod tests {
         // Inside instance A, the GM buffs the goblin; instance B and the shared world
         // are UNAFFECTED (independent forks).
         inst_a.world().gm_react(gm.clone(), goblin, 50).unwrap();
-        assert_eq!(inst_a.stat(goblin, SLOT_NPC_AGGRO), 55, "instance A diverged");
-        assert_eq!(inst_b.stat(goblin, SLOT_NPC_AGGRO), 5, "instance B is its own copy");
-        assert_eq!(w.stat(goblin, SLOT_NPC_AGGRO), 5, "the shared world is untouched");
+        assert_eq!(
+            inst_a.stat(goblin, SLOT_NPC_AGGRO),
+            55,
+            "instance A diverged"
+        );
+        assert_eq!(
+            inst_b.stat(goblin, SLOT_NPC_AGGRO),
+            5,
+            "instance B is its own copy"
+        );
+        assert_eq!(
+            w.stat(goblin, SLOT_NPC_AGGRO),
+            5,
+            "the shared world is untouched"
+        );
 
         // The instance carries the SAME hero: it can level independently.
-        inst_b.world().gm_set_stat(gm.clone(), hero, SLOT_XP, 200).unwrap();
+        inst_b
+            .world()
+            .gm_set_stat(gm.clone(), hero, SLOT_XP, 200)
+            .unwrap();
         let inst_lvl = inst_b.world().level_up(gm.clone(), hero).unwrap();
         assert_eq!(inst_lvl, 3, "instance B leveled the hero independently");
-        assert_eq!(w.stat(hero, SLOT_LEVEL), 2, "shared-world hero is still level 2");
+        assert_eq!(
+            w.stat(hero, SLOT_LEVEL),
+            2,
+            "shared-world hero is still level 2"
+        );
     }
 
     /// The cap asymmetry in isolation: a player CANNOT satisfy the GM floor.

@@ -59,16 +59,12 @@ fn default_token_id() -> [u8; 32] {
 
 /// Pack a u64 into a `FieldElement` (LE low 8 bytes) — matches deos-js `pack_u64`.
 fn pack_u64(v: u64) -> dregg_cell::state::FieldElement {
-    let mut fe = [0u8; 32];
-    fe[..8].copy_from_slice(&v.to_le_bytes());
-    fe
+    dregg_cell::field_from_u64(v)
 }
 
 /// Read a u64 back out of a `FieldElement` (LE low 8 bytes).
 fn unpack_u64(fe: &dregg_cell::state::FieldElement) -> u64 {
-    let mut b = [0u8; 8];
-    b.copy_from_slice(&fe[..8]);
-    u64::from_le_bytes(b)
+    dregg_cell::field_to_u64(fe)
 }
 
 fn hex_of(id: &CellId) -> String {

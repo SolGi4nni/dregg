@@ -73,11 +73,13 @@ pub const SOLO_SLOT: usize = 9;
 
 /// Pack a `u64` into a [`FieldElement`] — little-endian low 8 bytes. This is the
 /// SAME encoding `deos-js`'s `applet::pack_u64` uses, so a deos-js model read of a
-/// node-self-cell slot (`field_u64`) decodes the live status verbatim.
+/// node-self-cell slot (`field_u64`) decodes the live status verbatim. the canonical u64 lane (`dregg_cell::field_from_u64`, big-endian bytes `24..32`) — the lane the
+/// verified kernel defines a `fields[]` slot to BE. It previously wrote little-endian into bytes
+/// `0..8`, the OPPOSITE end, which the deployed `setFieldVmDescriptor2-{slot}R24` completion freeze
+/// makes UNPROVABLE for any nonzero value (only bytes `28..32` may change on a setField turn).
+/// Gate: `circuit/tests/setfield_encoder_window_gate.rs`.
 fn pack_u64(v: u64) -> FieldElement {
-    let mut fe = [0u8; 32];
-    fe[..8].copy_from_slice(&v.to_le_bytes());
-    fe
+    dregg_cell::field_from_u64(v)
 }
 
 /// Pack a `bool` as `1`/`0` (so a deos-js `bind(() => s[slot] === 1)` reads it).
@@ -393,17 +395,15 @@ mod tests {
     }
 
     /// Read a node-self-cell slot back as a u64 the SAME way deos-js's
-    /// `CellModel::field_u64` would (little-endian low 8 bytes) — the bridge that
+    /// `CellModel::field_u64` would (the canonical u64 lane) — the bridge that
     /// makes a deos-js `bind(() => s[slot])` read the live status verbatim.
     fn slot_u64(cell: &Cell, slot: usize) -> u64 {
         let fe = cell.state.get_field(slot).copied().unwrap_or([0u8; 32]);
-        let mut b = [0u8; 8];
-        b.copy_from_slice(&fe[..8]);
-        u64::from_le_bytes(b)
+        dregg_cell::field_to_u64(&fe)
     }
 
     /// The node-self-cell carries the live status on its slots, decodable with the
-    /// SAME little-endian shape deos-js reads — not a static/opaque stub.
+    /// SAME u64-lane shape deos-js reads — not a static/opaque stub.
     #[test]
     fn self_cell_slots_carry_live_status() {
         let status = fixture();

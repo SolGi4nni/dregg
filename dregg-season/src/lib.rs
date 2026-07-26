@@ -495,11 +495,15 @@ pub fn advance_season(
 // Cell encoding — a carried champion / prestige badge is a content-addressed cell.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Pack a `u64` little-endian into the low 8 bytes of a 32-byte cell field.
+/// Pack a `u64` into a 32-byte cell field's canonical u64 lane (`dregg_cell::field_from_u64`,
+/// big-endian bytes `24..32`).
+///
+/// ⚠ Was little-endian into bytes `0..8`. These values go into `cell.state.fields[0..3]` — the
+/// FIXED octet the deployed `setFieldVmDescriptor2-{slot}R24` completion-freezes — so a `0..8`
+/// write made the badge cell's fields unprovable and invisible to every kernel-side reader.
+/// Gate: `circuit/tests/setfield_encoder_window_gate.rs`.
 fn u64_field(v: u64) -> [u8; 32] {
-    let mut f = [0u8; 32];
-    f[0..8].copy_from_slice(&v.to_le_bytes());
-    f
+    dregg_cell::field_from_u64(v)
 }
 
 /// Encode a [`Champion`] as a content-addressed [`Cell`]. The identity is the cell's

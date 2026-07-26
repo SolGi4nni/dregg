@@ -1561,16 +1561,22 @@ pub fn side_rights(side: Side) -> AuthRequired {
 /// `SetField` writes into the board cell state (the unit's new position). Stored in
 /// the first two bytes (row, col) with a domain tag, so [`unpack_coord`] inverts it.
 fn pack_coord(coord: Coord) -> [u8; 32] {
+    // Inside the WRITABLE WINDOW: the deployed `setFieldVmDescriptor2-{slot}R24` freezes a written
+    // slot's completion lanes, so only bytes 28..32 of a field value may change on a setField turn.
+    // This used to write row/col/tag into bytes 0..3 — the FROZEN high lanes — which made EVERY
+    // board move unprovable. Row, col and the 0xC0 domain tag now ride the low lane, big-endian, so
+    // the packed coordinate is `0x00C0_RRCC` as a u32. Gate:
+    // `circuit/tests/setfield_encoder_window_gate.rs`.
+    let packed = 0x00C0_0000u32 | ((coord.row as u32) << 8) | (coord.col as u32);
     let mut v = [0u8; 32];
-    v[0] = coord.row;
-    v[1] = coord.col;
-    v[2] = 0xC0; // a domain tag marking this as a packed coordinate
+    v[28..32].copy_from_slice(&packed.to_be_bytes());
     v
 }
 
 /// Invert [`pack_coord`] — read the destination back out of a move's field value.
 fn unpack_coord(value: &[u8; 32]) -> Coord {
-    Coord::new(value[0], value[1])
+    // Moved to the low lane together with `pack_coord`.
+    Coord::new(value[30], value[31])
 }
 
 /// The canonical name of a move affordance: `move:<unit>:<r>-<c>`.
