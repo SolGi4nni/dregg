@@ -1912,11 +1912,14 @@ impl TurnExecutor {
     ///      authority — "I minted this credential against my own key"), or
     ///      the cell's verification-key bytes. An untrusted issuer is
     ///      rejected even if the token verifies cryptographically.
-    ///    - `CellScopedMacaroon { cell }`: `cell` MUST equal the target cell;
-    ///      the root secret is derived deterministically from the cell id via
-    ///      a domain-separated KDF. Cross-cell macaroons (secret not held)
-    ///      are rejected because their HMAC will not verify under the derived
-    ///      key.
+    ///    - `CellScopedMacaroon { .. }`: REFUSED UNCONDITIONALLY. The root
+    ///      "secret" this arm would derive is a domain-separated KDF over the
+    ///      federation id and the cell id — both PUBLIC — so possession of it
+    ///      proves nothing and every reader could mint a bare macaroon that
+    ///      reached `Ok(())`. See the refusal arm's own comment for the
+    ///      bypass, and `token_macaroon_same_cell_public_derivation_refuses`
+    ///      for the falsifier. Cell-authorized credentials go through the
+    ///      biscuit arm, which anchors on the cell's own key.
     /// 3. **Cryptographically verify + caveat/Datalog evaluate** the token
     ///    against the call-bound `AuthRequest` (`AuthToken::verify`). A
     ///    crypto failure → `TokenAuthInvalid`; a policy/caveat denial (the
@@ -1924,15 +1927,26 @@ impl TurnExecutor {
     ///    action/resource) → `TokenInsufficientCapability`. Expiry-by-height
     ///    surfaces as a denial too (the time fact is the block height).
     ///
-    /// Discharges (third-party caveats) are passed through for the macaroon
-    /// path; biscuit third-party blocks are carried inside the token itself.
+    /// `_discharges` IS NOT READ. Third-party caveat discharges were only ever
+    /// consumed by the macaroon path, and that path is now refused before any
+    /// token is built (step 2), so there is nothing left to discharge against;
+    /// biscuit third-party blocks travel inside the token itself and are
+    /// checked by `AuthToken::verify`. This is fail-CLOSED — an unverified
+    /// discharge can never widen a token, because a macaroon never reaches the
+    /// verify step at all. The parameter is retained rather than removed so the
+    /// wiring is still here if a real (non-public-derived) per-cell secret ever
+    /// makes the macaroon arm sound; restoring that arm MUST also restore the
+    /// discharge verification this name currently only promises. Note that
+    /// `Authorization::Token::discharges` is still hashed into the action digest
+    /// (`action.rs`), so it is caller-controlled bytes committed into consensus
+    /// that nothing validates — bounded only by whatever limits action size.
     pub(super) fn verify_token_authorization(
         &self,
         action: &Action,
         target_cell: &Cell,
         encoded: &[u8],
         key_ref: &crate::action::TokenKeyRef,
-        discharges: &[Vec<u8>],
+        _discharges: &[Vec<u8>],
         path: &[usize],
         _turn_nonce: u64,
     ) -> Result<(), (TurnError, Vec<usize>)> {

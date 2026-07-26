@@ -2109,7 +2109,10 @@ mod tests {
     }
 
     async fn send_one(state: &Arc<RwLock<RelayState>>, owner: [u8; 32], tag: [u8; 4]) {
-        handle_send(
+        // The Ok-ness IS the assertion this helper makes; the response body is
+        // not what the flood tests read (they inspect RelayState directly), so
+        // the `Json` is bound away rather than left to trip `must_use`.
+        let _sent = handle_send(
             State(state.clone()),
             Path(hex_encode(&owner)),
             Json(SendRequest {

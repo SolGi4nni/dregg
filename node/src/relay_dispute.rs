@@ -647,7 +647,11 @@ pub async fn handle_dispute(
     // proxy (promotion binds the real minted cell — see module docs).
     let relay_cell = CellId::from_bytes(s.config.operator_key);
 
-    let (slash, plan) = referee_then_plan(
+    // `plan.is_some()` IS the adjudication verdict: `plan_slash` returns `None`
+    // whenever the referee declined, and `Some` in every case where it did not.
+    // So the `if let Some(plan)` below IS the adjudication gate, and the separate
+    // bool would be a second copy of the same decision — dropped deliberately.
+    let (_slash, plan) = referee_then_plan(
         &evidence,
         &inbox,
         prior_bond,
