@@ -14,8 +14,8 @@
 //!
 //! What it pins:
 //! - the Night Record skin reaches a game, a feature surface and a service — not one key;
-//! - a `CoordGrid` that is NOT automatafl's is painted in the shared well (the descent shaft), with
-//!   its column count carried as data rather than hardcoded;
+//! - a `CoordGrid` that is NOT automatafl's is painted in the shared well, with its column count
+//!   carried as DATA rather than hardcoded (hermetically, through `render_catalog_forms` itself);
 //! - glyph-shape classes are chosen from the glyph, so a symbol and a label paint differently;
 //! - automatafl still gets its OWN board painter (`.af-board`), i.e. the shared lift did not eat the
 //!   bespoke one.
@@ -69,42 +69,21 @@ async fn every_offering_session_page_is_served_in_the_night_record() {
     }
 }
 
-/// **A non-automatafl board is a BOARD.** The native Descent's shaft is a `CoordGrid`, and it used
-/// to render as a bare grid of glyphs on the page floor. It is now recessed in the shared night well
-/// — and the well is handed the REAL column count as `--nr-n`, from the node, so no board size is
-/// hardcoded anywhere in the renderer or the stylesheet.
-#[tokio::test]
-async fn a_generic_coordgrid_is_painted_in_the_shared_night_well() {
-    let app = app();
-    let (status, body) = get(&app, "/offerings/descent/session/nr-well-descent").await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(
-        body.contains("class=\"nr-well\""),
-        "the descent shaft is not in the shared well: {}",
-        &body[..body.len().min(2000)]
-    );
-    // The well's dimension is DATA. Whatever the shaft's width is, it must arrive as a variable
-    // and be a real column count rather than a literal baked into the CSS.
-    let n = body
-        .split("--nr-n:")
-        .nth(1)
-        .and_then(|rest| rest.split(['"', ';']).next())
-        .expect("the well carries its column count")
-        .parse::<usize>()
-        .expect("the column count is a number");
-    assert!(n >= 1, "a well with {n} columns is not a board");
-    assert!(
-        body.contains(&format!("grid-template-columns:repeat({n},1fr)")),
-        "the grid and its well disagree about the column count"
-    );
-    // The glyph-shape hint is chosen from the glyph itself — the shaft is full of single symbols
-    // (`⚑`, `═`, `☖`), so at least one square must have been classed as a symbol.
-    assert!(
-        body.contains("nr-sym"),
-        "no square was classed by its glyph shape, so a label and a symbol paint identically"
-    );
-}
-
+/// ⚑ The HTTP-level check that a real page paints a real board in the shared well lives in
+/// `tug_table::a_spectator_reads_no_favor_out_of_the_page_or_its_buttons`, not here. It was written
+/// against the native Descent's shaft first — the widest generic `CoordGrid` in the portfolio — and
+/// that surface REFUSES TO OPEN offline, by design and correctly:
+///
+/// ```text
+/// 409: this Descent is bound to the live daily beacon and no verified day is resolved right now —
+///      refusing to open on a pre-computable provenance root
+/// ```
+///
+/// A test that needs today's drand round to check a CSS wrapper is a test that goes red for a
+/// reason it is not about. The tug's hand is the other non-automatafl `CoordGrid` and it opens
+/// deterministically once a seat is claimed, so the end-to-end assertion sits there; the painter
+/// choice, the data-driven column count and the glyph-shape classes are all pinned hermetically
+/// below, at the exact function the route calls.
 /// **The shared lift did not eat the bespoke painter, and the guard is still the KEY.** Driven
 /// straight at the renderer with one hand-built `CoordGrid`, so it needs no session and cannot be
 /// confused by any game's open path: the same node painted under automatafl's key goes to the

@@ -517,8 +517,16 @@ async fn a_spectator_reads_no_favor_out_of_the_page_or_its_buttons() {
     let id = mint(&app).await;
     let seat_a = table_seats::TUG.seat_label(&id, SeatSlot::A);
 
-    // `favor_list`'s signature — every rendering of a concrete favor in this game carries it.
+    // The two DISTINCT disclosure tokens, and they are not interchangeable — the first version of
+    // this test conflated them and its own non-vacuity guard caught it:
+    //   * `card #`   — the own-hand reveal (`own_hand` prints `card #4 · guild 3 · w3`). Present on
+    //     a seated page whenever that seat holds cards, which is what makes the check non-vacuous.
+    //   * `(guild `  — `favor_list`'s signature, i.e. a CONCRETE CUT. It appears only where a cut is
+    //     named: the to-move seat's own button labels, or a face-up offer. A page can legitimately
+    //     lack it (a seat that just moved is no longer to move), so it is an EXCLUSION here, never
+    //     the non-vacuity handle.
     const FAVOR: &str = "(guild ";
+    const OWN_HAND: &str = "card #";
 
     // ⚑ CLAIM THE SEAT FIRST. `SeatedTug` binds a seat on the first LANDED act, not on a GET, so
     // before this a seat link renders the unseated CLAIM surface — and the test would be comparing
@@ -536,13 +544,20 @@ async fn a_spectator_reads_no_favor_out_of_the_page_or_its_buttons() {
         get_as(&app, &format!("/offerings/tug/session/{id}"), Some(&seat_a)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(
-        seated.contains(FAVOR),
-        "the seated page shows no favor at all, so this test would pass vacuously:\n{}",
+        seated.contains(OWN_HAND),
+        "the seat's own hand is not rendered to it, so the exclusions below would pass \
+         vacuously:\n{}",
         &seated[..seated.len().min(2000)]
     );
+
+    // THE STATE THAT LEAKED. Seat A has moved, so seat B is now BOTH to-move and unclaimed — which
+    // is exactly when `surface_claim` used to label its buttons with seat B's real cut. Any viewer
+    // holding no seat lands on that surface, including the opponent, who may open the watch link.
+    let (_, board) = get_as(&app, &format!("/offerings/tug/session/{id}"), Some(&seat_a)).await;
     assert!(
-        seated.contains("card #"),
-        "the seat's own hand is not being rendered to it"
+        board.contains("class=\"nr-well\""),
+        "the hand is not painted in the shared night well — the only non-automatafl CoordGrid that \
+         opens without a live daily beacon, so this is where the well is checked on a real page"
     );
 
     for (who, label) in [
@@ -557,7 +572,7 @@ async fn a_spectator_reads_no_favor_out_of_the_page_or_its_buttons() {
             &watch[..watch.len().min(3000)]
         );
         assert!(
-            !watch.contains("card #"),
+            !watch.contains(OWN_HAND),
             "{label} read a card id off the watch page"
         );
         assert!(
