@@ -4818,12 +4818,21 @@ pub fn generate_rotated_stripe_mint_wide(
 /// (`effHeapWriteV3_forces_write8`) — never the lane-0 squeeze the map_op-only host would leave. The
 /// wide carriers land at THIS host width.
 pub const HEAP_WRITE_HOST_WIDTH: usize =
-    (GRAD_ROT_WIDTH - 14) + CAP_OPEN_SPAN + CAP_OPEN_AFTER_SPINE_SPAN; // 2105 (wide 3065 − WIDE_CARRIER_APPENDIX); the graduated Class-A heap base is 14 columns narrower than the rotated cohort base (1633 = 1647 − 14, invariant across v11/v12/v13)
+    (GRAD_ROT_WIDTH - HEAP_BASE_NARROWING) + CAP_OPEN_SPAN + CAP_OPEN_AFTER_SPINE_SPAN; // 2098 = 1626 + 329 + 143
+/// How many columns the graduated Class-A heap base is NARROWER than the rotated cohort base:
+/// `7 × (cohort graduated constraints − heapWrite's)`, because `graduateV1` gives every graduated
+/// constraint its own 7-column chip-lane block. **It was 14 (two blocks) until 2026-07-26, when the
+/// arity-2 leaf vestige `EffectVmEmitHeapRoot.siteHeapLeaf` was deleted from the emit and took a third
+/// block with it** — the narrow committed member went `trace_width 1633 → 1626`. This is the one
+/// producer-side number the deletion did not move on its own; `heap_write_roundtrip.rs` asserts
+/// producer width == committed descriptor width, so a stale value here REDs there rather than laying
+/// the membership appendix against the wrong columns.
+const HEAP_BASE_NARROWING: usize = 21;
 // NB: the READ appendix base is `HEAP_WRITE_HOST_WIDTH − CAP_OPEN_SPAN − AFTER_SPINE_SPAN`
-// (the graduated Class-A heap base, v12 = 1145); see [`HEAP_WRITE_READ_BASE`] below.
+// (the graduated Class-A heap base); see [`HEAP_WRITE_READ_BASE`] below.
 /// The heap-open READ appendix base column (the splice base `heapWriteV3`'s trace width = the
-/// graduated Class-A heap base, `GRAD_ROT_WIDTH − 14`): `HEAP_WRITE_HOST_WIDTH −
-/// CAP_OPEN_SPAN(329) − AFTER_SPINE_SPAN(143) = 2105 − 472 = 1633`. Derived, so it tracks the
+/// graduated Class-A heap base, `GRAD_ROT_WIDTH − HEAP_BASE_NARROWING`): `HEAP_WRITE_HOST_WIDTH −
+/// CAP_OPEN_SPAN(329) − AFTER_SPINE_SPAN(143) = 2098 − 472 = 1626`. Derived, so it tracks the
 /// graduated base. (Historically a too-low literal here laid the membership columns against
 /// zero-padding and the deployed after-spine constraints rejected.)
 pub const HEAP_WRITE_READ_BASE: usize =

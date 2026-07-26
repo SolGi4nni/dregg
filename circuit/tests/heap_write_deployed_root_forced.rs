@@ -9,7 +9,8 @@
 //! WHAT IS FORCED (the PHASE-E splice — wired):
 //!   The deployed descriptor carries the genuine sorted-Merkle SPLICE as a `.write` `MapOp` on the
 //!   heap root, realized by the `Ir2Air::MapOps` AIR (`circuit/src/descriptor_ir2.rs`):
-//!     addr     = hash[ COLL(70), KEY(71) ]               → HEAP_ADDR(102)   (the kept address site)
+//!     addr     = hash[ COLL(70), KEY(71) ]               → HEAP_ADDR(102)   (the ONLY hash site, since
+//!                                                                            the 2026-07-26 flag-day)
 //!     newRoot  = writesTo( HEAP_ROOT_BEFORE(65), addr=HEAP_ADDR(102), value=VALUE(72) )
 //!                                                        → HEAP_ROOT_AFTER(87)
 //!   So `HEAP_ROOT_AFTER` is the genuine binary-Merkle sorted insert-or-update of the arity-3 IMT
@@ -43,7 +44,9 @@
 //! emission is DEFINED over (`v3RegistryWide = wideAppend` over these members), so a splice that
 //! vanished here would silently vanish from the wide member too.
 
-use dregg_circuit::descriptor_ir2::{MapKind, MapOpSpec, VmConstraint2, parse_vm_descriptor2};
+use dregg_circuit::descriptor_ir2::{
+    LookupSpec, MapKind, MapOpSpec, VmConstraint2, parse_vm_descriptor2,
+};
 use dregg_circuit::effect_vm::layout_generated::HEAP_ROOT_GROUP;
 use dregg_circuit::effect_vm::trace_rotated::{AFTER_BASE, BEFORE_BASE};
 use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
@@ -118,10 +121,47 @@ fn has_chip_recompute(
     })
 }
 
+/// The RETIRED arity-2 leaf carrier (`EffectVmEmitHeapRoot.HEAP_LEAF`). Nothing binds it since the
+/// 2026-07-26 flag-day; [`deployed_heapwrite_has_no_arity2_leaf_lookup`] is what keeps that true.
+const HEAP_LEAF: usize = 103;
+
+/// Every `{"t":"var","v":N}` occurrence of column `col` in the COMMITTED member JSON.
+///
+/// Deliberately over the emitted BYTES rather than a typed walk of `VmConstraint2`: a hand-written
+/// walker has to enumerate every constraint kind (`Base`/`Lookup`/`MemOp`/`MapOp`/`UMemOp`/
+/// `ProofBind`/`WindowGate`) and a kind added to the IR later would silently escape it — the exact
+/// shape of a gate that stops gating. A column reference cannot escape the bytes it is encoded in.
+/// The matcher's own liveness is asserted at both poles in the test below.
+fn var_mentions(json: &str, col: usize) -> usize {
+    let needle = format!("{{\"t\":\"var\",\"v\":{col}}}");
+    json.matches(needle.as_str()).count()
+}
+
+/// The arity-2 chip lookup the 2026-07-26 flag-day DELETED, rebuilt here as the falsifier witness:
+/// `hash[HEAP_ADDR, VALUE] → HEAP_LEAF` in the 25-wide `poseidon2_chip` tuple shape (arity tag, 16
+/// inputs, `out0`, 7 digest lanes). Splicing this back into a parsed descriptor is the machine-run
+/// "re-add the site" experiment — the tooth must flip RED against it.
+fn retired_arity2_leaf_lookup() -> LookupSpec {
+    let mut tuple = vec![
+        LeanExpr::Const(2),
+        LeanExpr::Var(HEAP_ADDR),
+        LeanExpr::Var(VALUE),
+    ];
+    tuple.resize(CHIP_DIGEST_IDX, LeanExpr::Const(0)); // pad inputs 2..15
+    tuple.push(LeanExpr::Var(HEAP_LEAF)); // out0
+    for lane in 0..7 {
+        tuple.push(LeanExpr::Var(HEAP_LEAF + 1 + lane)); // the 7 completion lanes
+    }
+    LookupSpec {
+        table: P2_CHIP_TABLE,
+        tuple,
+    }
+}
+
 /// The deployed heapWrite descriptor binds `HEAP_ADDR` to the in-row recompute of the bound
 /// `(coll, key)` — the address site that gives the splice MapOp its genuine sorted KEY. The
-/// accumulator advance is GONE (it is replaced by the splice); only the address site survives as a
-/// chip recompute.
+/// accumulator advance is GONE (it is replaced by the splice); the address site is the ONLY hash site
+/// this descriptor carries since the 2026-07-26 vestige deletion.
 #[test]
 fn deployed_heapwrite_forces_addr_recompute() {
     let desc = parse_vm_descriptor2(rotated_descriptor_json(HEAP_WRITE_KEY))
@@ -135,7 +175,6 @@ fn deployed_heapwrite_forces_addr_recompute() {
 
     // The advance recompute is GONE: col 87 (HEAP_ROOT_AFTER) is no longer pinned by a chip lookup
     // `hash[leaf, old_root]` — it is pinned by the splice MapOp instead (col 87 cannot be doubly bound).
-    const HEAP_LEAF: usize = 103;
     assert!(
         !has_chip_recompute(&desc, HEAP_LEAF, HEAP_ROOT_BEFORE, HEAP_ROOT_AFTER),
         "the accumulator advance hash[leaf, old_root] → HEAP_ROOT_AFTER must be ABSENT (replaced by \
@@ -145,6 +184,98 @@ fn deployed_heapwrite_forces_addr_recompute() {
     eprintln!(
         "DEPLOYED HEAP-ADDR FORCING: heapWriteVmDescriptor2R24 binds HEAP_ADDR({HEAP_ADDR}) = \
          hash[coll, key] via a poseidon2-chip lookup; the accumulator advance is replaced by the splice."
+    );
+}
+
+/// **★ THE ARITY-2 LEAF VESTIGE IS ABSENT FROM THE DEPLOYED BYTES — and this tooth can go RED.**
+///
+/// Until 2026-07-26 this member carried a second arity-2 chip lookup, `hash[HEAP_ADDR, VALUE] →
+/// HEAP_LEAF` (`EffectVmEmitHeapRoot.siteHeapLeaf`), and it was a DEAD PIN: measured at byte level it
+/// was referenced by exactly ONE of the member's constraints — its own lookup, at the `out0` slot — so
+/// no gate, boundary, PI binding or map-op read it. It committed an arity-2 `hash[addr, value]` leaf
+/// that stopped being any leaf of any deployed tree when `heap_root.rs` became an IMT on 2026-07-12
+/// (`919b2b0b8d`, `HEAP_LEAF_ARITY = 3`). It relaxed nothing, it cost one Poseidon2 chip request per
+/// row, and it made a false claim. Re-POINTING it at arity 3 was refused as a felt-width regression —
+/// a second 1-felt commitment of a fact the heap-open appendix already forces at 8 felts — so the
+/// flag-day was DELETION, at the price of the member's VK.
+///
+/// The Lean half (over the emitted site list, where the AIR is authored) is
+/// `EffectVmEmitHeapRoot.heapSpliceSites_have_no_HEAP_LEAF_site` with
+/// `readding_siteHeapLeaf_breaks_the_tooth` as its refutation. This is the half over the BYTES.
+///
+/// **Four legs, two of them poles that keep it from going vacuous:**
+///  * POLE A (the matcher is LIVE) — `var_mentions` finds the surviving `HEAP_ADDR` references, so a
+///    zero for `HEAP_LEAF` is an ABSENCE and not a stale needle;
+///  * the TOOTH, typed — no arity-2 chip lookup binds `hash[HEAP_ADDR, VALUE] → HEAP_LEAF`;
+///  * the TOOTH, total — no constraint of ANY kind mentions the retired column at all;
+///  * POLE B (the FALSIFIER) — splice the retired lookup back into the parsed descriptor and inject
+///    its column reference into the JSON, and BOTH legs must flip. Re-add the site → RED, run rather
+///    than asserted.
+#[test]
+fn deployed_heapwrite_has_no_arity2_leaf_lookup() {
+    let json = rotated_descriptor_json(HEAP_WRITE_KEY);
+    let desc = parse_vm_descriptor2(json).expect("heapWriteVmDescriptor2R24 parses");
+
+    // POLE A — the needle spelling is the emitter's. HEAP_ADDR must appear (the surviving site's out0
+    // AND the splice map-op's key), or this test is searching for a string the emitter never writes.
+    let addr_mentions = var_mentions(json, HEAP_ADDR);
+    assert!(
+        addr_mentions >= 2,
+        "var_mentions found {addr_mentions} references to the LIVE column HEAP_ADDR({HEAP_ADDR}) — \
+         the needle no longer matches how the emitter spells a column reference, so this tooth's \
+         zero for HEAP_LEAF would be a broken matcher rather than an absence"
+    );
+
+    // THE TOOTH (typed): the retired arity-2 leaf lookup is gone from the parsed constraint list.
+    assert!(
+        !has_chip_recompute(&desc, HEAP_ADDR, VALUE, HEAP_LEAF),
+        "the RETIRED arity-2 leaf lookup hash[HEAP_ADDR({HEAP_ADDR}), VALUE({VALUE})] → \
+         HEAP_LEAF({HEAP_LEAF}) is BACK in the deployed bytes. It commits an arity-2 leaf no deployed \
+         tree folds (heap_root.rs is an arity-3 IMT since 919b2b0b8d) and costs a Poseidon2 chip \
+         request per row. It was deleted in the 2026-07-26 VK epoch — do not re-emit it, and do not \
+         'repair' it to arity 3 (that is a felt-width regression against the 8-felt heap-open leaf)."
+    );
+
+    // THE TOOTH (total, over the bytes): nothing mentions the retired column, in any constraint kind.
+    let leaf_mentions = var_mentions(json, HEAP_LEAF);
+    assert_eq!(
+        leaf_mentions, 0,
+        "the RETIRED leaf carrier HEAP_LEAF({HEAP_LEAF}) is referenced by {leaf_mentions} \
+         constraint expression(s) in the committed bytes; it must be referenced by NONE. Either the \
+         arity-2 vestige came back, or something new was allocated onto a column the producer no \
+         longer fills (trace_rotated.rs leaves it at zero) — both are live faults."
+    );
+
+    // POLE B — THE FALSIFIER, RUN. Re-add the site and both legs must flip; otherwise the two
+    // assertions above are true of every descriptor and pin nothing.
+    let mut readded = desc.clone();
+    readded
+        .constraints
+        .push(VmConstraint2::Lookup(retired_arity2_leaf_lookup()));
+    assert!(
+        has_chip_recompute(&readded, HEAP_ADDR, VALUE, HEAP_LEAF),
+        "FALSIFIER FAILED: re-adding the retired arity-2 leaf lookup did NOT trip the typed leg — \
+         has_chip_recompute cannot see the vestige, so the tooth above is vacuous"
+    );
+    let readded_json = json.replacen(
+        "\"constraints\":[",
+        &format!("\"constraints\":[{{\"t\":\"var\",\"v\":{HEAP_LEAF}}},"),
+        1,
+    );
+    assert_eq!(
+        var_mentions(&readded_json, HEAP_LEAF),
+        1,
+        "FALSIFIER FAILED: an injected reference to HEAP_LEAF({HEAP_LEAF}) was NOT counted — the \
+         byte-level leg is blind and its zero above means nothing"
+    );
+
+    eprintln!(
+        "VESTIGE DELETED, PINNED: heapWriteVmDescriptor2R24 carries NO arity-2 lookup at \
+         HEAP_LEAF({HEAP_LEAF}) and NO constraint of any kind mentions the column ({leaf_mentions} \
+         references); the live HEAP_ADDR({HEAP_ADDR}) column is referenced {addr_mentions} times, so \
+         the matcher is live. Re-adding the site trips BOTH legs — the tooth is falsifiable, not \
+         decorative. The only heap-leaf commitment left in this member is the arity-3 IMT leaf at \
+         native 8-felt width in the heap-open appendix."
     );
 }
 

@@ -67,7 +67,7 @@ pub const S2_COMPACT_TABLE: &[(&str, usize, usize)] = &[
     ("attenuateCapOpenEffVmDescriptor2R24", 188, 737),
     ("transferFeeVmDescriptor2R24", 204, 753),
     ("transferCapOpenTBVmDescriptor2R24", 198, 747),
-    ("heapWriteVmDescriptor2R24", 188, 723),
+    ("heapWriteVmDescriptor2R24", 188, 716),
     ("delegateWriteCapOpenVmDescriptor2R24", 188, 737),
     ("introduceWriteCapOpenVmDescriptor2R24", 188, 737),
     ("delegateAttenWriteCapOpenVmDescriptor2R24", 188, 737),

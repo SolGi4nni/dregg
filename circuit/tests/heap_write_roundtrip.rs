@@ -72,10 +72,22 @@
 //! `roundtrip_v3_live_descriptor` and `after_root_forge_is_unsat_against_DEPLOYED_v3_registry` paired
 //! the wide producer's TRUNCATED trace with the narrow `V3_STAGED_REGISTRY_TSV` member. That member
 //! is STRANDED at HEAD: no producer emits its geometry (there is no `Effect::HeapWrite` variant, so no
-//! narrow V3 path reaches it), and its S2 bands `[367,427) ∪ [606,666) ∪ [723,1563)` all lie inside
-//! the v3 width 1633, so no prefix or re-inflation of the wide row recovers it. Both legs were RED,
-//! and the premise they rested on (that v3-live is the deployed registry) is false. Their distinct
-//! assertions are PORTED onto the wide tooth below, marked `PORTED`.
+//! narrow V3 path reaches it), and its S2 bands (read off `S2_COMPACT_TABLE`, not transcribed — they
+//! moved at the 2026-07-26 vestige flag-day) all lie inside the narrow v3 width, so no prefix or
+//! re-inflation of the wide row recovers it. Both legs were RED, and the premise they rested on (that
+//! v3-live is the deployed registry) is false. Their distinct assertions are PORTED onto the wide tooth
+//! below, marked `PORTED`.
+//!
+//! ## The 2026-07-26 VESTIGE FLAG-DAY, and why this file is the arbiter of it
+//!
+//! `EffectVmEmitHeapRoot.siteHeapLeaf` — an arity-2 `hash[addr, value]` chip lookup that stopped being
+//! any leaf of any deployed tree when `heap_root.rs` became an IMT on 2026-07-12 — was DELETED from the
+//! emit, moving this member's bytes in all three committed registries and therefore its VK. The
+//! deletion is structurally pinned in `heap_write_deployed_root_forced.rs`; what THIS file supplies is
+//! the executed verdict, and it is the one that matters: the honest producer still PROVES and the light
+//! client still VERIFIES against the exact member the wire runs, and the after-root forge is still
+//! UNSAT. Every geometry here is DERIVED (host + carriers − S2 − E1, columns pushed through the
+//! deployed compaction), so it followed the moved bytes rather than needing a hand edit.
 
 use dregg_cell::{AuthRequired, Cell, Ledger, Permissions};
 use dregg_circuit::descriptor_ir2::{

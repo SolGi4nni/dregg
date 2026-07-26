@@ -905,7 +905,7 @@ assumed. No floor carrier added; the FloorRatchet gate is unaffected.
 
 ---
 
-## 13. ⚑⚑ THE EMIT SIDE — an arity-2 leaf site is in the DEPLOYED DESCRIPTOR BYTES (2026-07-25)
+## 13. ⚑⚑ THE EMIT SIDE — an arity-2 leaf site was in the DEPLOYED DESCRIPTOR BYTES (2026-07-25), and is DELETED (2026-07-26)
 
 Everything above §12 is about the **denotation**: Lean objects consumed by theorems. §1's surface is a
 list of *declarations*. It does not cover the **emit** side — the Lean that AUTHORS descriptor bytes a
@@ -918,7 +918,7 @@ Lean-side-only. The reach, evidence in order:
 
 | hop | artifact |
 |---|---|
-| author | `EffectVmEmitHeapRoot.heapWriteSpliceVmDescriptor` (`hashSites := [siteHeapAddr, siteHeapLeaf]`) |
+| author | `EffectVmEmitHeapRoot.heapWriteSpliceVmDescriptor` (`hashSites := [siteHeapAddr, siteHeapLeaf]` — **`[siteHeapAddr]` since 2026-07-26, see §13.3**) |
 | rotate+graduate | `RotatedKernelRefinementExercise.heapWriteV3 = graduateV1 (rotateV3 heapWriteSpliceVmDescriptor) ++ [.mapOp heapSpliceWriteOp]` |
 | emit | `metatheory/EmitRotationV3.lean:140` (`v3rot` line) and `EmitWideRegistryProbe.lean` |
 | serialize | `scripts/emit_descriptors.py` → `circuit/descriptors/rotation-v3-staged-registry.tsv` (narrow, line 47) and `rotation-wide-registry-staged.tsv` (WIDE) |
@@ -929,7 +929,8 @@ NOT a by-name descriptor: it is absent from `EmitByName.byNameDescriptors` and `
 has no arm for it. So the "Lean-side only" disposition that applies to the attested-automaton family
 does **not** apply here.
 
-The site is in the bytes. Decoded from the committed TSVs, the `poseidon2_chip` lookups are:
+The site was in the bytes. Decoded from the committed TSVs **as of 2026-07-25**, the `poseidon2_chip`
+lookups were:
 
 ```
 narrow (dregg-effectvm-heapWrite-splice-v1-rot24-v3-staged, trace_width 1633):
@@ -943,6 +944,25 @@ wide (dregg-effectvm-heapWrite-v1-rot24-v3-write-heapopen, trace_width 1963):
   map_op write  key 90  value 72  root [120, 151..157]  new_root [299, 330..336]
 ```
 
+★ **AND THE THIRD REGISTRY.** `rotation-wide-umem-welded-registry-staged.tsv`
+(`…-umem-wide-welded-staged`, trace_width 1970) carried the SAME compacted lookup at `in0 90, in1 72,
+out0 91`. This table said "both TSVs" throughout; it was three. Corrected here because the flag-day
+below had to move all three.
+
+★ **AFTER THE 2026-07-26 DELETION (§13.3), measured the same way:**
+
+| member | trace_width | constraints | chip lookups | arity-2 | JSON bytes | refs to the leaf col |
+|---|---|---|---|---|---|---|
+| narrow | 1633 → **1626** | 161 → **160** | 132 → **131** | 5 → **4** | 75 483 → **74 942** | 1 → **0** |
+| wide | 1963 → **1955** | 253 → **252** | 166 → **165** | 3 → **2** | 204 120 → **203 570** | 1 → **0** |
+| umem-welded | 1970 → **1962** | 254 → **253** | 166 → **165** | 3 → **2** | 204 523 → **203 973** | 1 → **0** |
+
+The narrow member sheds exactly 7 columns — `graduateV1` gives each graduated constraint its own 7-column
+chip-lane block, and one constraint left. The two wide members shed **8**: the same 7, plus the retired
+carrier column itself, which the E1 kill-set reclaimed once it went dead (`e1_compact_generated.rs`'s
+heapWrite run `(104, 188)` became `(103, 188)`; the S2 lane base moved `723 → 716`). Committed registry
+files: −541 / −550 / −550 bytes. Per proving row the member now issues ONE fewer Poseidon2 chip request.
+
 ### 13.2 The disposition: a DEAD PIN, not a wrong binding — and the reason matters
 
 The urgent worry was that a descriptor might *model* an arity-2 leaf while `heap_root.rs` folds arity-3,
@@ -955,7 +975,8 @@ Measured, the answer is narrower and better:
   naming the arity-2 emit as the drift it catches), `heapLeafDigest_sound8`, `afterSpineColsH`; Rust
   side `fill_heap_open_read` / `fill_heap_after_spine` fold `HeapLeaf::digest8()`. That leg **was** moved
   with the tree on 2026-07-12.
-* **Nothing reads `HEAP_LEAF`.** `EffectVmEmitHeapRoot.heapSpliceSites_never_read_HEAP_LEAF` decides it
+* **Nothing read `HEAP_LEAF`** (the pin is now the stronger `heapSpliceSites_have_no_HEAP_LEAF_site`,
+  since the site is gone rather than merely unread). It decided
   over the emitted input lists; the splice `MapOp`'s key is `HEAP_ADDR` and its value is `prmCol VALUE`,
   confirmed against the committed bytes by `heap_write_deployed_root_forced.rs`. ★ And measured across the
   WHOLE committed constraint list, not just the hash layer: decoding both TSVs, the leaf column is
@@ -969,25 +990,42 @@ Measured, the answer is narrower and better:
 The residual is therefore a **naming/scope wound plus prover cost**, not a soundness hole — stated at
 that resolution deliberately, since the emit-side worry justified assuming worse until measured.
 
-### 13.3 The FLAG-DAY (authored, NOT taken — it moves deployed descriptor bytes)
+### 13.3 The FLAG-DAY — ★ TAKEN 2026-07-26 (ember-authorized VK epoch)
 
-`EffectVmEmitHeapRoot.heapSpliceSitesImt = [siteHeapAddr]` and `heapWriteSpliceVmDescriptorImt` are
-authored in Lean now, unrouted, so the shape exists before the bytes move (house law #1). Taking it:
+`heapWriteSpliceVmDescriptor.hashSites = [ siteHeapAddr ]`. The `*Imt` twins authored ahead of the
+flag-day (`heapSpliceSitesImt`, `heapWriteSpliceVmDescriptorImt`, `heapSpliceImt_addr_forced`,
+`goodSpliceRow_recomputes_imt`) ARE the deployed objects now and were collapsed into the mainline names
+rather than kept as duplicates. What was done, in order:
 
-1. flip `heapWriteSpliceVmDescriptor.hashSites` to `heapSpliceSitesImt`;
-2. `lake env lean --run EmitRotationV3.lean` → `scripts/emit_descriptors.py` — rewrites **both** TSVs
-   and `circuit/descriptors/PROVENANCE.json`;
-3. drop the producer's `leaf_digest_col` fill in
+1. flip `heapWriteSpliceVmDescriptor.hashSites` to the address site alone;
+2. `scripts/emit_descriptors.py` under `DREGG_VK_REGEN_ACK` — which rewrote **THREE** TSVs, not two:
+   narrow `rotation-v3-staged-registry.tsv`, WIDE `rotation-wide-registry-staged.tsv`, **and
+   `rotation-wide-umem-welded-registry-staged.tsv`** (the welded member carries the same lookup and was
+   missing from this recipe), plus `effect_vm_descriptors.rs`'s `*_FP` pins,
+   `{s2,e1}_compact_generated.rs`, `PROVENANCE.json`, and the `docs/VK-REGEN-LOG.md` row;
+3. dropped the producer's `leaf_digest_col` fill in
    `trace_rotated.rs::generate_rotated_heap_write_wide_raw` (Rust calls the emission, so it follows);
-4. `heap_write_deployed_root_forced.rs` keeps its negative assertion on `HEAP_LEAF` and gains a positive
-   one that no arity-2 lookup targets it at all;
-5. ⚠ **VK EPOCH.** Descriptor bytes change ⇒ the VK for `heapWriteVmDescriptor2R24` changes ⇒ every
-   already-committed heapWrite turn was proven under the OLD VK. This is a VK-epoch flip, not a byte
-   tidy-up. **ember-gated.**
+4. `heap_write_deployed_root_forced.rs` keeps its negative assertion on `HEAP_LEAF` and gains
+   `deployed_heapwrite_has_no_arity2_leaf_lookup` — no arity-2 lookup targets the column AND no
+   constraint of any kind mentions it — **with the falsifier run in-test**: the retired lookup is
+   spliced back into the parsed descriptor and both legs must flip;
+5. ⚠ **VK EPOCH, and it was the real price.** Descriptor bytes moved ⇒ the AIR fingerprint feeding
+   `compute_recursive_vk_hash` moved ⇒ `heapWriteVmDescriptor2R24`'s VK moved. Priced per
+   `498d27a2b8` / `f97c561c8b`: nothing is deployed and the devnet ledger was already lost on reboot, so
+   this is a **RE-GENESIS, not a migration**. For this member the reading is stronger still — there is no
+   `Effect::HeapWrite` variant anywhere in `turn/` or `node/`, so no live selector reaches it and no
+   committed turn of it exists.
 
-What survives the flip is proved: `heapSpliceImt_addr_forced` (the splice KEY binding — the only thing
-this descriptor is relied on for), `goodSpliceRow_recomputes_imt` (the honest producer is not stranded),
-`forgedAddrRow_refused_imt` (the tooth still bites).
+★ **WHY DELETION AND NOT REPAIR-TO-ARITY-3.** Re-pointing the site at arity 3 is a felt-width
+REGRESSION: it would add a second, 1-felt commitment of a fact the heap-open READ appendix and
+after-spine already force at NATIVE 8 felts. One heap-leaf commitment, at the wide width, is the shape;
+two, with the narrow one "corrected", is worse than the vestige.
+
+What survives is proved: `heapSplice_addr_forced` (the splice KEY binding — the only thing this
+descriptor is relied on for), `goodSpliceRow_recomputes` (the honest producer is not stranded),
+`forgedAddrRow_refused` (the tooth still bites). The EXECUTED verdict — the honest producer still proves
+and the light client still verifies against the exact live member, and the after-root 8-felt forge is
+still UNSAT — is `circuit/tests/heap_write_roundtrip.rs`.
 
 ### 13.4 The blast radius — theorems about the retired arity-2 heap commitment
 
@@ -1001,14 +1039,21 @@ them as a statement about `heap_root` is wrong.
 | `heapWrite_sat_rejects_wrong_splice_root` | `:420` | via `writesTo_functional` → `mapRoot_injective` |
 | `heapWrite_realizes_heapSet` | `:444` | conclusion names `mapRoot hash MAP_TREE_DEPTH` explicitly |
 | `heapWrite_sat_rejects_forged_root` | `:472` | hypothesis AND conclusion name `mapRoot`; uses `mapRoot_injective` |
-| `heapSplice_leaf_forced` | `EffectVmEmitHeapRoot` §4 | forces the arity-2 `leafOf` digest — the vestige |
-| `tampered_value_moves_leaf` / `tampered_addr_moves_leaf` | `EffectVmEmitHeapRoot` §6 | anti-ghosts on `leafOf`, arity 2 |
+| ~~`heapSplice_leaf_forced`~~ | `EffectVmEmitHeapRoot` §4 | forced the arity-2 `leafOf` digest — **DELETED 2026-07-26 with the site** |
+| ~~`tampered_value_moves_leaf` / `tampered_addr_moves_leaf`~~ | `EffectVmEmitHeapRoot` §6 | anti-ghosts on `leafOf`, arity 2 — **DELETED 2026-07-26**, replaced by `tampered_key_moves_addr` at the surviving address binding |
+
+The last three rows are struck because the flag-day (§13.3) removed them rather than re-scoping them:
+they were theorems about a descriptor that no longer exists, and `heapSplice_leaf_forced` was the one
+name in the file that invited the wrong reading (its own docstring had to forbid citing it as "the heap
+leaf is forced"). The five `heapWrite_*` rows above them are untouched — they are the denotation's
+problem, not the emit's.
 
 Two facts that BOUND the radius, both checked:
 
-* **The vestige theorem has ZERO downstream consumers.** `RotatedKernelRefinementExercise`'s `open` list
-  imports `heapSpliceSites` and `heapSplice_addr_forced` and **not** `heapSplice_leaf_forced`, `leafOf`,
-  or `siteHeapLeaf`. Nothing outside the authoring module cites it.
+* **The vestige theorem had ZERO downstream consumers**, which is why deleting it cost nothing.
+  `RotatedKernelRefinementExercise`'s `open` list imports `heapSpliceSites` and `heapSplice_addr_forced`
+  and **not** `heapSplice_leaf_forced`, `leafOf`, or `siteHeapLeaf`. Nothing outside the authoring module
+  cited it.
 * The five `heapWrite_*` rows are the `writesTo` denotation's problem, not the emit side's — they are
   exactly what §12's `MapKindImtGates.writeImtRow_writes_of_good` (at `padImtSchema`) is the replacement
   for. Restating them over `MapOp.holdsAtS (padImtSchema sent)` is the stage-3 work already priced in
