@@ -24,13 +24,15 @@
 
 use dreggnet_asset::AssetWorld;
 use dreggnet_offerings::native_descent::{
-    NativeDescentBankedNote, NativeDescentOffering, NativeDescentRecord,
-    native_descent_run_day_seed,
+    NativeDescentBankedNote, NativeDescentCompletion, NativeDescentOffering, NativeDescentRecord,
+    NativeDescentSession, native_descent_run_day_seed,
 };
 use dreggnet_offerings::{
     DreggIdentity, Offering, Outcome, RecordVerify, SessionConfig, VerifyReport,
 };
-use dungeon_on_dregg::descent::{BANKED, DELVE, FLEE, LOOT, SMITE, day_seed_from_deploy_seed};
+use dungeon_on_dregg::descent::{
+    ASCEND, BANKED, DELVE, FLEE, LOOT, RELICS, SMITE, day_seed_from_deploy_seed,
+};
 use dungeon_on_dregg::loot::{LootError, LootVault, banked_relic_chest, banked_relic_drop};
 use procgen_dregg::CommittedSeed;
 use procgen_dregg::beacon::DailyBeacon;
@@ -47,6 +49,14 @@ const PLAYER: &str = "descent-player:alice";
 /// The session seed. `Offering::open` normalizes it to `seed % 251 + 1`.
 const SESSION_SEED: u64 = 0x5A;
 const NORMALIZED_SEED: u8 = ((SESSION_SEED % 251) + 1) as u8;
+
+/// **The one relic slot that is a WORLD-INVARIANT, not a day-fact.** Way `w`'s key is relic
+/// `w - 1`, and the draw guarantees a key is minted above the door it opens
+/// (`homes (keyFor w) < w`), so the way-2 key always lies on floor 1 — on every one of the sixteen
+/// maps the committed day-seed can draw. It is the relic two different days can be compared over.
+/// `floor_one_mints` re-checks the invariant on the map actually in play, so if the draw ever
+/// stops guaranteeing it, this battery says so instead of quietly measuring nothing.
+const WAY_TWO_KEY: u64 = 1;
 
 fn todays_beacon() -> DailyBeacon {
     DailyBeacon::quicknet(
@@ -80,26 +90,54 @@ fn land(
     }
 }
 
-/// Drive a real run that banks the three floor-1 relics (custody slots 1, 4, 5 — the way-2 key
-/// and two treasures, whose Lean `homeFloors` are floor 1): delve, fell the guardian, loot each,
-/// then flee — the terminal bank that ratchets custody to BANKED and settles the run.
+/// **Every relic THIS RUN's drawn map mints on floor 1** — the ground truth the whole battery
+/// measures the mint against, read off the session's own `DayWorld`.
+///
+/// This used to be the literal `[1, 4, 5]` ("the way-2 key and two treasures"), which was a fact
+/// about the single hard-coded dungeon that existed before the map became a function of the
+/// committed day-seed. These sessions open on a REAL drand beacon, so the day — and with it floor
+/// 1's hoard and its guardian's vitality — is not knowable when the test is written. A literal
+/// that encodes a world-fact outlives the world.
+fn floor_one_mints(session: &NativeDescentSession) -> Vec<u64> {
+    let homes = session.day_world().homes;
+    let mints: Vec<u64> = (0..RELICS)
+        .filter(|&relic| homes[relic] == 1)
+        .map(|relic| relic as u64)
+        .collect();
+    assert!(
+        !mints.is_empty(),
+        "floor 1 mints nothing on this day ({homes:?}); every floor is supposed to stay live"
+    );
+    assert!(
+        mints.contains(&WAY_TWO_KEY),
+        "the way-2 key must lie on floor 1 on every drawn map ({homes:?}); the cross-day \
+         comparison in this battery is built on that invariant"
+    );
+    mints
+}
+
+/// Drive a real run that banks FLOOR 1's whole hoard: delve, fell the guardian for however many
+/// blows this day prices it at, loot every relic minted here, CLIMB BACK OUT (`flee` demands the
+/// mouth — you do not teleport out with the loot), then flee: the terminal bank that ratchets
+/// custody to BANKED and settles the run.
 fn run_that_banks_floor_one(
     offering: &NativeDescentOffering,
     who: &DreggIdentity,
-) -> dreggnet_offerings::native_descent::NativeDescentSession {
+) -> NativeDescentSession {
     let mut session = offering
         .open(SessionConfig::with_seed(SESSION_SEED))
         .expect("the Lean-authored descent deploys");
-    for (turn, arg) in [
-        (DELVE, 0),
-        (SMITE, 0),
-        (LOOT, 1),
-        (LOOT, 4),
-        (LOOT, 5),
-        (FLEE, 0),
-    ] {
-        land(offering, &mut session, who, turn, arg);
+    land(offering, &mut session, who, DELVE, 0);
+    let hp = session.day_world().guard_hp(1);
+    assert!(hp > 0, "floor 1 has no guardian to fell");
+    for _ in 0..hp {
+        land(offering, &mut session, who, SMITE, 0);
     }
+    for relic in floor_one_mints(&session) {
+        land(offering, &mut session, who, LOOT, relic as i64);
+    }
+    land(offering, &mut session, who, ASCEND, 0);
+    land(offering, &mut session, who, FLEE, 0);
     session
 }
 
@@ -127,19 +165,30 @@ fn a_settled_native_descent_mints_banked_relics_whose_provenance_replays_to_the_
         "a beacon-bound day does not fall back to the deploy-seed-derived provenance root"
     );
 
-    // The committed custody banked exactly relics 1, 4, 5 — the ground truth the mint reads.
-    for relic in [1usize, 4, 5] {
-        assert_eq!(
-            session.game().read_relic(relic),
-            BANKED,
-            "relic {relic} is a committed BANKED custody entry on the cell"
-        );
+    // The committed custody banked exactly this day's floor-1 hoard, and NOTHING else — the
+    // ground truth the mint reads. (Both halves matter: a mint that banked the whole dungeon
+    // would satisfy the positive half alone.)
+    let banked = floor_one_mints(&session);
+    for relic in 0..RELICS {
+        let custody = session.game().read_relic(relic);
+        if banked.contains(&(relic as u64)) {
+            assert_eq!(
+                custody, BANKED,
+                "relic {relic} lay on floor 1 and was carried out — a committed BANKED custody \
+                 entry on the cell"
+            );
+        } else {
+            assert_ne!(
+                custody, BANKED,
+                "relic {relic} was never touched, so nothing may have banked it"
+            );
+        }
     }
 
     let completion = session
         .completion()
         .expect("the terminal flee settles the run");
-    assert_eq!(completion.banked_relics, vec![1, 4, 5]);
+    assert_eq!(completion.banked_relics, banked);
     assert!(!completion.crowned, "the crown stayed on floor 4");
 
     // ⚑ THE WIRE: the completion carries REAL notes, one per banked relic, in slot order.
@@ -150,7 +199,7 @@ fn a_settled_native_descent_mints_banked_relics_whose_provenance_replays_to_the_
     );
     assert_eq!(
         session.loot_vault().item_count(),
-        3,
+        banked.len(),
         "one note per banked relic in the session vault, no more"
     );
 
@@ -201,25 +250,44 @@ fn a_settled_native_descent_mints_banked_relics_whose_provenance_replays_to_the_
         );
     }
 
-    // A DIFFERENT day's beacon mints DIFFERENT notes from the identical verb line: the
-    // provenance root rides the day, so yesterday's record cannot claim today's relic.
+    // A DIFFERENT day mints DIFFERENT notes for THE SAME BANKED RELIC: the provenance root rides
+    // the day, so yesterday's record cannot claim today's relic.
+    //
+    // The comparison used to lean on "the same verb line banks the same relics" — true only while
+    // both runs played one hard-coded dungeon. Two days draw two maps and two hoards, so the
+    // shared quantity is named instead: the WAY-2 KEY, relic 1, which every drawn map mints on
+    // floor 1 (the draw guarantees a key lies above the door it opens, `homes (keyFor w) < w`),
+    // and which both runs therefore carry out.
     let other_day = CommittedSeed::from_bytes([0x5D; 32]);
     let other = NativeDescentOffering::on_day(other_day);
     let other_session = run_that_banks_floor_one(&other, &alice);
     let other_completion = other_session
         .completion()
         .expect("the other day settles too");
-    assert_eq!(
-        other_completion.banked_relics, completion.banked_relics,
-        "the same verb line banks the same relics"
+    let key_note = |completion: &NativeDescentCompletion| {
+        completion
+            .banked_notes
+            .iter()
+            .find(|note| note.relic == WAY_TWO_KEY)
+            .copied()
+            .expect("the way-2 key lies on floor 1 on every drawn map, so every run banks it")
+    };
+    assert_ne!(
+        key_note(other_completion).asset_id,
+        key_note(completion).asset_id,
+        "the SAME banked relic on a different day is a different note"
     );
+    let mine: Vec<_> = completion
+        .banked_notes
+        .iter()
+        .map(|note| note.asset_id)
+        .collect();
     assert!(
         other_completion
             .banked_notes
             .iter()
-            .zip(&completion.banked_notes)
-            .all(|(a, b)| a.asset_id != b.asset_id),
-        "a different day's run mints entirely different notes"
+            .all(|note| !mine.contains(&note.asset_id)),
+        "a different day's run shares NO note with this one"
     );
 }
 
@@ -285,7 +353,7 @@ fn the_record_re_mints_the_notes_and_a_swapped_day_seed_is_refused() {
     assert_eq!(resumed.day_seed(), session.day_seed());
     assert_eq!(
         resumed.loot_vault().item_count(),
-        3,
+        floor_one_mints(&session).len(),
         "the resumed session re-minted the banked relics into its own vault"
     );
     for note in &session.completion().expect("settled").banked_notes {
@@ -325,12 +393,13 @@ fn the_banked_note_is_owner_gated_and_its_world_is_the_market_asset_world() {
     let offering = NativeDescentOffering::on_beacon(&todays_beacon()).expect("beacon binds");
     let alice = actor(PLAYER);
     let session = run_that_banks_floor_one(&offering, &alice);
+    assert!(floor_one_mints(&session).contains(&WAY_TWO_KEY));
     let note: NativeDescentBankedNote = session
         .completion()
         .expect("settled")
         .banked_notes
         .iter()
-        .find(|note| note.relic == 1)
+        .find(|note| note.relic == WAY_TWO_KEY)
         .copied()
         .expect("the banked way-2 key minted");
 

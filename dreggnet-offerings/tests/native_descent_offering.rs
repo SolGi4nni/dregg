@@ -4,14 +4,59 @@
 //! than calling `Descent` directly. The executor remains the referee: disabled,
 //! malformed, and wrong-player actions must be anti-ghost refusals.
 
+use std::collections::BTreeSet;
+
 use dreggnet_offerings::native_descent::{
-    NativeDescentMove, NativeDescentOffering, NativeDescentRecord,
+    NativeDescentMove, NativeDescentOffering, NativeDescentRecord, NativeDescentSession,
 };
 use dreggnet_offerings::{Action, DreggIdentity, Offering, Outcome, RecordVerify, SessionConfig};
-use dungeon_on_dregg::descent::{BANKED, DELVE, FLEE, LOOT, SMITE, UNLOCK};
+use dungeon_on_dregg::descent::{
+    ASCEND, BANKED, DELVE, FLEE, FLOORS, LOOT, LUNGE, RELICS, SMITE, UNLOCK, crowned_line,
+};
 
 fn actor(name: &str) -> DreggIdentity {
     DreggIdentity(name.to_string())
+}
+
+/// **The complete anti-ghost vocabulary** — every verb the native Descent wire speaks, expanded
+/// over its whole argument domain, whether or not any of it is legal right now.
+///
+/// The argument fan-out is DERIVED from the world's shape (`FLOORS` gives the ways, `RELICS` the
+/// relic columns) rather than counted. This used to be the literal `15`, which one new verb turned
+/// red while saying nothing about what changed — and a count could never have told a missing relic
+/// column from a duplicated one anyway. The VERB ROSTER is still written down on purpose: "the
+/// locked catalogue stays visible" is the claim this suite exists to make, so deriving the roster
+/// from the surface's own output would make it a tautology. It is a list of the crate's exported
+/// verb constants, so a new verb is a compile-visible edit here, not a mystery integer.
+fn complete_vocabulary() -> BTreeSet<(&'static str, i64)> {
+    [(DELVE, 0), (SMITE, 0), (LUNGE, 0), (ASCEND, 0), (FLEE, 0)]
+        .into_iter()
+        .chain((2..=FLOORS).map(|way| (UNLOCK, way as i64)))
+        .chain((0..RELICS).map(|relic| (LOOT, relic as i64)))
+        .collect()
+}
+
+/// The relics THIS DAY mints on floor `depth` — read off the run's own drawn map.
+fn mints_on(session: &NativeDescentSession, depth: u64) -> Vec<i64> {
+    let homes = session.day_world().homes;
+    (0..RELICS)
+        .filter(|&relic| homes[relic] == depth)
+        .map(|relic| relic as i64)
+        .collect()
+}
+
+/// Fell the standing floor's guardian, however many blows THIS DAY's map prices it at.
+fn fell_the_guardian(
+    offering: &NativeDescentOffering,
+    session: &mut NativeDescentSession,
+    who: &DreggIdentity,
+) {
+    let depth = session.game().sim().depth;
+    let hp = session.day_world().guard_hp(depth);
+    assert!(hp > 0, "floor {depth} has no guardian to fell");
+    for _ in 0..hp {
+        land(offering, session, who, SMITE, 0);
+    }
 }
 
 fn offered(
@@ -73,8 +118,19 @@ fn complete_crowned_run_banks_on_a_real_terminal_receipt() {
     assert_eq!(session.root(), before_root);
     assert_eq!(session.game().sim(), &before);
 
+    // ⚑ THIS DAY's crowned line, regenerated from the map the session actually deployed on. It
+    // used to be a seventeen-entry literal introduced as "the exact crowned line from the Lean
+    // model" — true of the one hard-coded dungeon that predated the day-seeded draw, and false on
+    // most of the sixteen maps that exist now (seed 7 draws a floor-1 guardian that takes TWO
+    // blows, so `loot` after one smite was refused). `descent::crowned_line` mirrors the Lean
+    // `crownedRun` off the day's own `DayWorld`, and `dungeon-on-dregg` proves in its own suite
+    // that the derived tape banks the prize inside the light on all sixteen draws.
+    let line = crowned_line(session.game().day());
+    assert_eq!(line.first().copied(), Some((DELVE, 0)));
+    assert_eq!(line.last().copied(), Some((FLEE, 0)));
+
     // The first actual executor-landed move binds Alice.
-    land(&offering, &mut session, &alice, DELVE, 0);
+    land(&offering, &mut session, &alice, line[0].0, line[0].1);
     assert_eq!(session.actor(), Some(&alice));
 
     // A valid native verb from a substituted actor cannot reach the executor.
@@ -87,45 +143,35 @@ fn complete_crowned_run_banks_on_a_real_terminal_receipt() {
     assert_eq!(session.root(), before_root);
     assert_eq!(session.game().sim(), &before);
 
-    // The exact crowned line from the Lean model / emitted-program battery.
-    for (turn, arg) in [
-        (SMITE, 0),
-        (LOOT, 1),
-        (UNLOCK, 2),
-        (DELVE, 0),
-        (SMITE, 0),
-        (LOOT, 2),
-        (UNLOCK, 3),
-        (DELVE, 0),
-        (SMITE, 0),
-        (SMITE, 0),
-        (LOOT, 3),
-        (UNLOCK, 4),
-        (DELVE, 0),
-        (SMITE, 0),
-        (SMITE, 0),
-        (LOOT, 0),
-        (FLEE, 0),
-    ] {
+    // The rest of the day's crowned line, move by move through the generic seam.
+    for (turn, arg) in line[1..].iter().copied() {
         land(&offering, &mut session, &alice, turn, arg);
     }
 
-    assert_eq!(session.revision(), 18);
+    assert_eq!(session.revision(), line.len() as u64);
     assert_eq!(session.game().sim().fate, 1);
     assert!(offering.actions(&session).is_empty());
     let completion = session.completion().expect("flee settles the run");
-    assert_eq!(completion.revision, 18);
+    assert_eq!(completion.revision, line.len() as u64);
     assert_eq!(completion.actor, alice);
-    assert_eq!(completion.banked_relics, vec![0, 1, 2, 3]);
+    // ⚑ WHAT THE CROWN IS, on every day: the prize (relic 0) and all three way-keys (relics
+    // 1..FLOORS) banked, and the four treasures deliberately left lying — at the bottom the pack
+    // holds exactly `CAP - FLOORS`, so a treasure would price the crown out of reach. That is a
+    // property of the crowned line itself, not of any one drawn map, so it stays pinned exactly.
+    assert_eq!(completion.banked_relics, (0..FLOORS).collect::<Vec<u64>>());
     assert!(completion.crowned);
-    for relic in [0, 1, 2, 3] {
+    for relic in 0..FLOORS as usize {
         assert_eq!(session.game().sim().custody[relic], BANKED);
     }
     assert_ne!(completion.settlement_receipt_hash, [0; 32]);
 
     let report = offering.verify(&session);
     assert!(report.verified, "exact native replay: {}", report.detail);
-    assert_eq!(report.turns, 19, "genesis plus eighteen player turns");
+    assert_eq!(
+        report.turns,
+        line.len() + 1,
+        "genesis plus every player turn of the crowned line"
+    );
     let rendered = format!("{:?}", offering.render(&session));
     assert!(rendered.contains("Crowned settlement"));
     assert!(rendered.contains("Lean-authored"));
@@ -136,9 +182,20 @@ fn public_record_resumes_by_reexecution_and_rejects_tampering() {
     let offering = NativeDescentOffering::new();
     let mut session = offering.open(SessionConfig::with_seed(41)).expect("open");
     let alice = actor("alice-cipherclerk");
-    for (turn, arg) in [(DELVE, 0), (SMITE, 0), (LOOT, 1), (UNLOCK, 2)] {
-        land(&offering, &mut session, &alice, turn, arg);
-    }
+
+    // A short REAL prefix: enter the shaft, fell floor 1's guardian for however many blows this
+    // day prices it at, take the way-2 key, exercise it. The blow count is derived; relic 1 is not
+    // a guess — the draw guarantees a way's key is minted ABOVE the door it opens
+    // (`homes (keyFor w) < w`), so the way-2 key always lies on floor 1. Asserted, not assumed.
+    land(&offering, &mut session, &alice, DELVE, 0);
+    assert!(
+        mints_on(&session, 1).contains(&1),
+        "the way-2 key must be minted on floor 1 on every drawn map: {:?}",
+        session.day_world().homes
+    );
+    fell_the_guardian(&offering, &mut session, &alice);
+    land(&offering, &mut session, &alice, LOOT, 1);
+    land(&offering, &mut session, &alice, UNLOCK, 2);
 
     let authentic: NativeDescentRecord = offering.export_record(&session);
     let report = offering.verify_record(&session, &authentic);
@@ -170,7 +227,12 @@ fn public_record_resumes_by_reexecution_and_rejects_tampering() {
     assert!(!offering.verify_record(&session, &wrong_actor).verified);
 
     let mut wrong_post = authentic.clone();
-    wrong_post.events[1].post.depth += 1;
+    wrong_post
+        .events
+        .last_mut()
+        .expect("the prefix has events")
+        .post
+        .depth += 1;
     assert!(!offering.verify_record(&session, &wrong_post).verified);
 
     // A once-current record remains a valid restart prefix, but is not falsely
@@ -192,10 +254,20 @@ fn affordances_follow_the_native_mover_and_refusals_are_anti_ghost() {
     let alice = actor("alice-cipherclerk");
 
     let actions = offering.actions(&session);
+    let advertised: BTreeSet<(&str, i64)> = actions
+        .iter()
+        .map(|action| (action.turn.as_str(), action.arg))
+        .collect();
+    assert_eq!(
+        advertised,
+        complete_vocabulary(),
+        "every verb, expanded over every way and every relic, stays advertised — locked entries \
+         included, because their real executor refusals are the anti-ghost surface"
+    );
     assert_eq!(
         actions.len(),
-        15,
-        "six verbs expanded over ways and relics (the climb joined them)"
+        advertised.len(),
+        "and nothing is advertised twice"
     );
     assert!(offered(&offering, &session, DELVE, 0).enabled);
     assert!(offered(&offering, &session, FLEE, 0).enabled);
@@ -231,15 +303,42 @@ fn affordances_follow_the_native_mover_and_refusals_are_anti_ghost() {
 
     land(&offering, &mut session, &alice, DELVE, 0);
     assert!(offered(&offering, &session, SMITE, 0).enabled);
-    assert!(!offered(&offering, &session, LOOT, 1).enabled);
-    land(&offering, &mut session, &alice, SMITE, 0);
-    for relic in [1, 4, 5] {
+
+    // WHICH relics floor 1 mints, and HOW MANY blows its guardian takes, are both facts about the
+    // day the committed seed drew. They used to be the literals `[1, 4, 5]` and one smite — day
+    // 0's furniture, and wrong on seed 99's map, where the guardian takes two. Derived, the
+    // assertion is also STRONGER than it was: `loot` is enabled for EXACTLY this floor's mints.
+    let here = mints_on(&session, 1);
+    let elsewhere: Vec<i64> = (0..RELICS as i64).filter(|r| !here.contains(r)).collect();
+    assert!(!here.is_empty(), "floor 1 mints nothing on this day");
+    assert!(
+        !elsewhere.is_empty(),
+        "floor 1 mints EVERYTHING on this day, so the negative half of this check is vacuous"
+    );
+
+    // While the guardian stands the whole hoard is shut, wherever it lies.
+    for relic in 0..RELICS as i64 {
         assert!(
-            offered(&offering, &session, LOOT, relic).enabled,
+            !offered(&offering, &session, LOOT, relic).enabled,
+            "relic {relic} must not be takeable while the guardian stands"
+        );
+    }
+
+    for _ in 0..session.day_world().guard_hp(1) {
+        land(&offering, &mut session, &alice, SMITE, 0);
+    }
+    for relic in &here {
+        assert!(
+            offered(&offering, &session, LOOT, *relic).enabled,
             "floor-one relic {relic} became lootable when its guardian fell"
         );
     }
-    assert!(!offered(&offering, &session, LOOT, 2).enabled);
+    for relic in &elsewhere {
+        assert!(
+            !offered(&offering, &session, LOOT, *relic).enabled,
+            "relic {relic} does not lie on floor 1, so felling its guardian cannot free it"
+        );
+    }
 
     let bob = actor("bob-cipherclerk");
     assert!(

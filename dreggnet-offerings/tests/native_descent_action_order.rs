@@ -4,9 +4,29 @@
 //! the Offering's action list in order. The executor remains the referee and the complete locked
 //! action vocabulary stays visible; this test pins only the player-facing priority bands.
 
+use std::collections::BTreeSet;
+
 use dreggnet_offerings::native_descent::NativeDescentOffering;
 use dreggnet_offerings::{DreggIdentity, Offering, Outcome, SessionConfig};
-use dungeon_on_dregg::descent::{ASCEND, DELVE, FLEE, LOOT, RELICS, SMITE};
+use dungeon_on_dregg::descent::{ASCEND, DELVE, FLEE, FLOORS, LOOT, LUNGE, RELICS, SMITE, UNLOCK};
+
+/// **The complete anti-ghost vocabulary** — every verb the native Descent wire speaks, expanded
+/// over its whole argument domain, locked entries included.
+///
+/// The argument fan-out is DERIVED from the world's shape (`FLOORS` ways, `RELICS` relic columns).
+/// This assertion used to be the literal `15`; the arrival of one new verb turned it red while
+/// saying nothing about what changed, and a bare count could never have told a missing relic
+/// column from a duplicated one. The VERB ROSTER stays written down deliberately — "the locked
+/// catalogue remains visible" is the claim this test exists to make, and deriving the roster from
+/// the surface's own output would make it a tautology. It is a list of the crate's exported verb
+/// constants, so a new verb is a legible edit here rather than a mystery integer.
+fn complete_vocabulary() -> BTreeSet<(&'static str, i64)> {
+    [(DELVE, 0), (SMITE, 0), (LUNGE, 0), (ASCEND, 0), (FLEE, 0)]
+        .into_iter()
+        .chain((2..=FLOORS).map(|way| (UNLOCK, way as i64)))
+        .chain((0..RELICS).map(|relic| (LOOT, relic as i64)))
+        .collect()
+}
 
 fn land(
     offering: &NativeDescentOffering,
@@ -37,10 +57,19 @@ fn enabled_moves_lead_locked_catalogue_and_exit_follows_nonterminal_play() {
     let actor = DreggIdentity("cross-surface-player".to_string());
 
     let fresh = offering.actions(&session);
+    let advertised: BTreeSet<(&str, i64)> = fresh
+        .iter()
+        .map(|action| (action.turn.as_str(), action.arg))
+        .collect();
+    assert_eq!(
+        advertised,
+        complete_vocabulary(),
+        "the complete anti-ghost vocabulary remains — every verb over every way and every relic"
+    );
     assert_eq!(
         fresh.len(),
-        15,
-        "the complete anti-ghost vocabulary remains (the climb joined it)"
+        advertised.len(),
+        "and nothing is advertised twice"
     );
     assert_eq!(fresh[0].turn, DELVE);
     assert_eq!(fresh[1].turn, FLEE);

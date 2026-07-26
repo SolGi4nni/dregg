@@ -4,28 +4,35 @@ use dreggnet_offerings::campaign::{
     CAMPAIGN_TRAVEL, DescentCampaignMove, DescentCampaignOffering, DescentCampaignSession,
 };
 use dreggnet_offerings::{Action, DreggIdentity, Offering, Outcome, RecordVerify, SessionConfig};
-use dungeon_on_dregg::descent::{DELVE, FLEE, LOOT, SMITE, UNLOCK};
+use dungeon_on_dregg::descent::{DELVE, FLEE, crowned_line};
 
-const CROWNED_LINE: [(&str, i64); 18] = [
-    (DELVE, 0),
-    (SMITE, 0),
-    (LOOT, 1),
-    (UNLOCK, 2),
-    (DELVE, 0),
-    (SMITE, 0),
-    (LOOT, 2),
-    (UNLOCK, 3),
-    (DELVE, 0),
-    (SMITE, 0),
-    (SMITE, 0),
-    (LOOT, 3),
-    (UNLOCK, 4),
-    (DELVE, 0),
-    (SMITE, 0),
-    (SMITE, 0),
-    (LOOT, 0),
-    (FLEE, 0),
-];
+/// **THIS EXPEDITION's crowned line** — the tape that reaches the prize and banks it, regenerated
+/// from the map the campaign's active descent actually deployed on.
+///
+/// This used to be an eighteen-entry `const`: one delve, one smite, loot relic 1, and so on, ending
+/// in a `flee` from the bottom floor. Every one of those entries was a fact about the single
+/// hard-coded dungeon that existed before the map became a function of the committed day-seed —
+/// how many blows floor 1's guardian takes, which relics that floor mints, and (since the climb
+/// landed) whether you can bank without walking out. The campaign draws a *location*-seeded day per
+/// location, so the constant was describing a dungeon nobody in this test is playing.
+/// `descent::crowned_line` derives the tape from the day's own `DayWorld`, and
+/// `dungeon-on-dregg`'s own `every_days_crowned_line_banks_the_prize_within_the_light` proves the
+/// derivation actually crowns on all sixteen draws — so a refused move here is a real regression in
+/// the campaign wire, not a stale literal.
+fn crowned_line_here(session: &DescentCampaignSession) -> Vec<(&'static str, i64)> {
+    let line = crowned_line(session.active_descent().game().day());
+    assert_eq!(
+        line.last().copied(),
+        Some((FLEE, 0)),
+        "the crowned line ends by banking at the mouth"
+    );
+    assert_eq!(
+        line.first().copied(),
+        Some((DELVE, 0)),
+        "the crowned line starts by entering the shaft"
+    );
+    line
+}
 
 fn actor(name: &str) -> DreggIdentity {
     DreggIdentity(name.to_string())
@@ -93,11 +100,14 @@ fn crown_is_manually_played_and_is_the_only_region_unlock() {
     assert_eq!(session.revision(), 0);
     assert!(!session.is_cleared("keep"));
 
-    // Seventeen independent player actions are still not a completion.
-    for (turn, arg) in CROWNED_LINE[..17].iter().copied() {
+    let line = crowned_line_here(&session);
+    let last = line.len() - 1;
+
+    // Every independent player action SHORT OF THE LAST is still not a completion.
+    for (turn, arg) in line[..last].iter().copied() {
         assert!(!land(&offering, &mut session, &alice, turn, arg));
     }
-    assert_eq!(session.revision(), 17);
+    assert_eq!(session.revision(), last as u64);
     assert!(!session.is_cleared("keep"));
     let before_forged_travel = session.root();
     assert_refused(offering.advance(
@@ -107,10 +117,10 @@ fn crown_is_manually_played_and_is_the_only_region_unlock() {
     ));
     assert_eq!(session.root(), before_forged_travel);
 
-    // The eighteenth submitted native action settles the Crown. That exact
-    // move carries both a native receipt and the real region clear receipt.
+    // The LAST submitted native action settles the Crown. That exact move carries both a native
+    // receipt and the real region clear receipt.
     assert!(!land(&offering, &mut session, &alice, FLEE, 0));
-    assert_eq!(session.revision(), 18);
+    assert_eq!(session.revision(), line.len() as u64);
     assert!(session.is_cleared("keep"));
     let crown = session.events().last().expect("crown event");
     assert!(crown.crowned);
@@ -123,7 +133,7 @@ fn crown_is_manually_played_and_is_the_only_region_unlock() {
     assert_eq!(session.current_location(), "vault");
     assert_eq!(session.active_descent().revision(), 0);
     assert!(!session.is_cleared("vault"));
-    assert_eq!(session.revision(), 19);
+    assert_eq!(session.revision(), line.len() as u64 + 1);
 
     let report = offering.verify(&session);
     assert!(
@@ -131,7 +141,11 @@ fn crown_is_manually_played_and_is_the_only_region_unlock() {
         "fresh dual-executor replay: {}",
         report.detail
     );
-    assert_eq!(report.turns, 20, "genesis plus nineteen player commands");
+    assert_eq!(
+        report.turns,
+        line.len() + 2,
+        "genesis plus the whole crowned line plus the one travel"
+    );
 }
 
 #[test]
@@ -165,7 +179,15 @@ fn restart_and_hostile_substitutions_reexecute_exactly() {
         .expect("campaign deploys");
     let alice = actor("alice-cipherclerk");
 
-    for (turn, arg) in CROWNED_LINE[..8].iter().copied() {
+    let line = crowned_line_here(&session);
+    // Break the run in HALF and resume there: a mid-expedition checkpoint, wherever the day's own
+    // line puts its midpoint, rather than "after the eighth move of the one dungeon I wrote down".
+    let split = line.len() / 2;
+    assert!(
+        split >= 5,
+        "a crowned line short enough to make this checkpoint trivial is itself the finding: {line:?}"
+    );
+    for (turn, arg) in line[..split].iter().copied() {
         land(&offering, &mut session, &alice, turn, arg);
     }
     let prefix = offering.export_record(&session);
@@ -181,8 +203,8 @@ fn restart_and_hostile_substitutions_reexecute_exactly() {
     );
 
     // Continue only from the replayed checkpoint. No helper synthesizes the
-    // result; ten more explicit inputs are required.
-    for (turn, arg) in CROWNED_LINE[8..].iter().copied() {
+    // result; every remaining move is an explicit input.
+    for (turn, arg) in line[split..].iter().copied() {
         land(&offering, &mut resumed, &alice, turn, arg);
     }
     assert!(resumed.is_cleared("keep"));
