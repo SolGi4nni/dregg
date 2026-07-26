@@ -602,9 +602,23 @@ pub fn commit_effects_as(
     // step) committed.
     let prev = s.cclerk.agent_receipt_head_hash(&agent);
 
-    let action = s
-        .cclerk
-        .make_action(agent, method, effects, &exec_federation_id);
+    // Signed over `nonce` — the value THIS turn carries, read from `agent`'s own
+    // ledger cell — because `dregg-action-sig-v3` binds the turn nonce into the
+    // canonical action signing message and the executor re-derives it as
+    // `compute_signing_message(action, federation_id, turn.nonce)`. The
+    // convenience `make_action` signs over the clerk's `next_turn_nonce()`
+    // instead: the receipt count of the clerk's DEFAULT agent, i.e. the operator
+    // cell, whoever `agent` happens to be. Those two are the same number only
+    // while `agent` IS the operator and every one of its turns committed, so
+    // this entry refused any other agent with `hybrid: Ed25519 (classical)
+    // signature half failed` the moment the operator's chain had moved. Same
+    // footgun `api.rs`'s faucet path closed in `0329df216` and
+    // `trustline_service::run_signed_turn` in this one.
+    let action = s.cclerk.sign_action_hybrid(
+        dregg_sdk::raw::unsigned_action_named(agent, method, effects),
+        &exec_federation_id,
+        nonce,
+    );
     let mut call_forest = CallForest::new();
     call_forest.add_root(action);
 

@@ -457,12 +457,6 @@ pub(crate) fn run_signed_turn(
     let operator_cell = crate::executor_setup::local_agent_cell(s);
     let is_operator_turn = agent == operator_cell;
 
-    let action = s
-        .cclerk
-        .make_action(target, method, effects, &federation_id);
-    let mut call_forest = CallForest::new();
-    call_forest.add_root(action);
-
     // `agent`'s own causal head, whoever `agent` is. The old shape asked a different
     // question — "is this the operator? then the node-WIDE log head, else genesis" —
     // and got both halves wrong once the node had more than one author: the operator
@@ -474,6 +468,41 @@ pub(crate) fn run_signed_turn(
     // `None`, so that path is unchanged.
     let previous_receipt_hash = s.cclerk.agent_receipt_head_hash(&agent);
     let nonce = s.ledger.get(&agent).map(|c| c.state.nonce()).unwrap_or(0);
+
+    // THE ACTION SIGNATURE IS BOUND TO THE TURN NONCE (`dregg-action-sig-v3`):
+    // the executor recomputes `compute_signing_message(action, federation_id,
+    // turn.nonce)` and verifies both halves of the hybrid authorization against
+    // it. So the action must be signed over `nonce` — the value the turn built
+    // below actually carries, read from `agent`'s ledger cell, which is also the
+    // only value the executor's replay gate accepts (`agent.state.nonce() ==
+    // turn.nonce`).
+    //
+    // The convenience `make_action` does NOT do that: it delegates to
+    // `AgentCipherclerk::sign_action`, which signs over the clerk's own
+    // `next_turn_nonce()` — the receipt count of the clerk's DEFAULT agent, i.e.
+    // the OPERATOR cell — regardless of who `agent` is. The two agree only while
+    // `agent` IS the operator and every one of its turns committed. They diverge
+    // on exactly the shape this function exists to serve: a CELL-AGENT turn (the
+    // one-time adopt) rides the cell's own replay counter, which starts at 0,
+    // while the operator's receipt count has already advanced past 0 on the
+    // create/fund turns immediately before it. The signature was then pinned to
+    // the wrong nonce and the executor refused the whole turn with `hybrid:
+    // Ed25519 (classical) signature half failed` — every `/channels/create`,
+    // `/trustline/open`, `/dkg/*` and `/court/bond` route, because all four
+    // build their adopt turn here. `api.rs`'s faucet path hit the same footgun
+    // and closed it the same way (`0329df216`).
+    //
+    // `run_signed_turn_signs_over_the_agents_own_nonce_not_the_operators` is the
+    // tooth; it also pins that a FORGED signature over the right nonce is still
+    // refused, so this is a correction of the message, never a weakening of the
+    // check.
+    let action = s.cclerk.sign_action_hybrid(
+        dregg_sdk::raw::unsigned_action_named(target, method, effects),
+        &federation_id,
+        nonce,
+    );
+    let mut call_forest = CallForest::new();
+    call_forest.add_root(action);
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1528,7 +1557,17 @@ mod tests {
                 "operator accepts funding"
             );
             let holder_pk = blake3::derive_key("trustline-node-test-v1", b"holder");
-            let holder_cell = dregg_cell::Cell::with_balance(holder_pk, [0u8; 32], 500);
+            // The holder is a SETTLEMENT COUNTERPARTY: `/trustline/settle` moves
+            // the net position out of the trustline cell into this one, and the
+            // trustline cell is born in its creator's asset — the operator's
+            // `blake3("default")`. Minting the holder in the all-zero asset made
+            // every settle a genuine cross-asset teleport that the executor
+            // refused (`apply.rs`, welded to the kernel's `recTransferBal`).
+            // Same fixture family `08aa16af1` closed in relay_slash_intake and
+            // mailbox_crank_e2e; `in_asset` leaves the holder's id (and so its
+            // salt) exactly where it was.
+            let holder_cell = dregg_cell::Cell::with_balance(holder_pk, [0u8; 32], 500)
+                .in_asset(dregg_cell::CellId(crate::executor_setup::default_token_id()));
             let holder = holder_cell.id();
             s.ledger.insert_cell(holder_cell).expect("holder inserts");
             holder
@@ -1760,6 +1799,223 @@ mod tests {
             Some([0xef; 32]),
             "the second turn's effect must be on the authoritative ledger"
         );
+    }
+
+    /// `run_signed_turn` must sign the action over the nonce THE TURN CARRIES —
+    /// `agent`'s own on-ledger replay counter — and not the operator's receipt
+    /// count.
+    ///
+    /// THE WOUND. `dregg-action-sig-v3` binds `turn.nonce` into the canonical
+    /// action signing message, and the executor re-derives it as
+    /// `compute_signing_message(action, federation_id, turn.nonce)` before
+    /// verifying either half of the hybrid authorization. `run_signed_turn`
+    /// built its action with `AgentCipherclerk::make_action`, which signs over
+    /// the clerk's own `next_turn_nonce()` — the receipt count of the clerk's
+    /// DEFAULT agent, the OPERATOR cell — while stamping `turn.nonce` from
+    /// `agent`'s ledger cell. On the CELL-AGENT turn every caller of this
+    /// function builds (the one-time adopt), those two are different numbers:
+    /// the cell is newborn at 0 and the operator has already committed the
+    /// create and fund turns. The executor then refused the entire turn with
+    /// `invalid authorization: hybrid: Ed25519 (classical) signature half
+    /// failed`, taking `/channels/create`, `/trustline/open`, `/dkg/*` and
+    /// `/court/bond` down with it.
+    ///
+    /// THE CANARY: put `s.cclerk.make_action(target, method, effects,
+    /// &federation_id)` back in `run_signed_turn` and the adopt below goes red
+    /// with exactly that string. The `assert_ne!` on the two nonces is what
+    /// keeps this test from passing vacuously — it fails first if the fixture
+    /// ever stops putting the operator's count ahead of the cell's counter.
+    ///
+    /// THE SECOND HALF is the one that matters: the repair moved the MESSAGE,
+    /// never the check. A stranger's signature over the same, correct nonce is
+    /// still refused on the ed25519 half, and its effect never reaches the
+    /// ledger.
+    #[tokio::test]
+    async fn run_signed_turn_signs_over_the_agents_own_nonce_not_the_operators() {
+        let (state, _holder, _dir) = funded_state().await;
+        let mut s = state.write().await;
+        let operator = crate::executor_setup::local_agent_cell(&s);
+        let operator_pk = s.cclerk.public_key().0;
+
+        // The adopt shape, minus the factories: create a cell owned by the
+        // operator's key, fund its fee, then act AS that cell.
+        let salt = blake3::derive_key("dregg-node-run-signed-turn-nonce-tooth-v1", b"cell-agent");
+        let cell = CellId::derive_raw(&operator_pk, &salt);
+
+        run_signed_turn(
+            &mut s,
+            operator,
+            operator,
+            "nonce_tooth_create",
+            vec![Effect::CreateCell {
+                public_key: operator_pk,
+                token_id: salt,
+                balance: 0,
+            }],
+            None,
+            None,
+        )
+        .unwrap_or_else(|e| panic!("the operator's create turn was refused: {e:?}"));
+
+        run_signed_turn(
+            &mut s,
+            operator,
+            operator,
+            "nonce_tooth_fund",
+            vec![Effect::Transfer {
+                from: operator,
+                to: cell,
+                // Four fees, not one: the adopt burns one, and the two FORGERY
+                // probes below must each be able to PAY. The executor charges
+                // the fee before it checks the authorization, so a cell drained
+                // to zero would refuse a forged turn on `insufficient balance`
+                // and the signature gate would never be reached — a refusal
+                // that proves nothing about the signature.
+                amount: ADOPT_TURN_FEE * 4,
+            }],
+            None,
+            None,
+        )
+        .unwrap_or_else(|e| panic!("the operator's fund turn was refused: {e:?}"));
+
+        // NON-VACUITY. The two nonces must genuinely disagree at this point or
+        // the broken shape would satisfy the adopt below by coincidence.
+        let operator_signing_nonce = s.cclerk.next_turn_nonce();
+        let agent_turn_nonce = s.ledger.get(&cell).map(|c| c.state.nonce()).unwrap_or(0);
+        assert_eq!(agent_turn_nonce, 0, "the newborn cell agent rides nonce 0");
+        assert_ne!(
+            operator_signing_nonce, agent_turn_nonce,
+            "the fixture must leave the operator's receipt count AHEAD of the cell's \
+             replay counter — that divergence is the whole bug under test"
+        );
+
+        // THE ADOPT — a cell-agent turn. Red before the repair.
+        run_signed_turn(
+            &mut s,
+            cell,
+            cell,
+            "nonce_tooth_adopt",
+            vec![Effect::SetField {
+                cell,
+                index: 7,
+                value: [0xa7; 32],
+            }],
+            Some(ADOPT_TURN_FEE),
+            None,
+        )
+        .unwrap_or_else(|e| panic!("the cell-agent turn was refused: {e:?}"));
+
+        assert_eq!(
+            s.ledger
+                .get(&cell)
+                .and_then(|c| c.state.get_field(7).copied()),
+            Some([0xa7; 32]),
+            "the cell-agent turn's effect must be on the authoritative ledger"
+        );
+
+        // ── THE CHECK IS NOT WEAKENED ───────────────────────────────────────
+        // Two probes, each carrying the nonce and the causal head the executor
+        // agrees are correct AND a balance that covers the fee, so the ONLY
+        // thing left that can refuse them is the signature itself:
+        //
+        //   1. a STRANGER's signature over the right message;
+        //   2. the OWNER's signature over a DIFFERENT nonce.
+        //
+        // (1) is the forgery. (2) says the repair moved the message to the right
+        // nonce and did not loosen `dregg-action-sig-v3`'s bind to it.
+        let federation_id = crate::executor_setup::federation_id_for_executor(&s);
+        let stranger =
+            dregg_sdk::AgentCipherclerk::from_key_bytes(zeroize::Zeroizing::new([0x5A; 32]));
+        assert_ne!(
+            stranger.public_key().0,
+            operator_pk,
+            "the forger must not be the cell's owner, or this proves nothing"
+        );
+
+        for (slot, what, action) in [
+            (8usize, "a stranger's signature", {
+                let live = s.ledger.get(&cell).map(|c| c.state.nonce()).unwrap_or(0);
+                stranger.sign_action_hybrid(
+                    dregg_sdk::raw::unsigned_action_named(
+                        cell,
+                        "nonce_tooth_forgery",
+                        vec![Effect::SetField {
+                            cell,
+                            index: 8,
+                            value: [0xff; 32],
+                        }],
+                    ),
+                    &federation_id,
+                    live,
+                )
+            }),
+            (9usize, "the owner's signature over another nonce", {
+                let live = s.ledger.get(&cell).map(|c| c.state.nonce()).unwrap_or(0);
+                s.cclerk.sign_action_hybrid(
+                    dregg_sdk::raw::unsigned_action_named(
+                        cell,
+                        "nonce_tooth_stale",
+                        vec![Effect::SetField {
+                            cell,
+                            index: 9,
+                            value: [0x99; 32],
+                        }],
+                    ),
+                    &federation_id,
+                    live + 7,
+                )
+            }),
+        ] {
+            let live_nonce = s.ledger.get(&cell).map(|c| c.state.nonce()).unwrap_or(0);
+            let balance = s.ledger.get(&cell).map(|c| c.state.balance()).unwrap_or(0);
+            assert!(
+                balance >= ADOPT_TURN_FEE as i64,
+                "{what}: the probe must be able to PAY (have {balance}, need {ADOPT_TURN_FEE}) — \
+                 otherwise the fee gate refuses it before the signature is ever checked"
+            );
+
+            let mut forest = CallForest::new();
+            forest.add_root(action);
+            let probe = Turn {
+                agent: cell,
+                nonce: live_nonce,
+                fee: ADOPT_TURN_FEE,
+                memo: None,
+                valid_until: Some(i64::MAX / 2),
+                call_forest: forest,
+                depends_on: vec![],
+                previous_receipt_hash: s.cclerk.agent_receipt_head_hash(&cell),
+                conservation_proof: None,
+                sovereign_witnesses: std::collections::HashMap::new(),
+                execution_proof: None,
+                execution_proof_cell: None,
+                execution_proof_new_commitment: None,
+                custom_program_proofs: None,
+                effect_binding_proofs: Vec::new(),
+                cross_effect_dependencies: Vec::new(),
+                effect_witness_index_map: Vec::new(),
+            };
+            let executor = crate::executor_setup::new_submit_executor(&s);
+            match executor.execute(&probe, &mut s.ledger) {
+                dregg_turn::TurnResult::Rejected { reason, .. } => {
+                    let reason = reason.to_string();
+                    assert!(
+                        reason.contains("Ed25519 (classical) signature half failed"),
+                        "{what} must be refused on the ed25519 half, got: {reason}"
+                    );
+                }
+                other => panic!("{what} must NEVER authorize this cell's turn, got {other:?}"),
+            }
+            // Every state slot exists from birth (they are a fixed array), so
+            // "untouched" is the all-zero default, not absence.
+            assert_eq!(
+                s.ledger
+                    .get(&cell)
+                    .and_then(|c| c.state.get_field(slot).copied()),
+                Some([0u8; 32]),
+                "{what}: the refused turn's effect must never reach the ledger"
+            );
+        }
     }
 
     // ── (b) draw: within line / over line / double-draw ─────────────────────
