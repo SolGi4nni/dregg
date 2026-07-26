@@ -5705,6 +5705,40 @@ impl AgentCipherclerk {
             })?
             .clone();
 
+        // 1a. THE AFTER-CELL COVERAGE GATE (fail closed; runs BEFORE the cohort dispatch so BOTH
+        //     producers are covered). The AFTER block this producer derives feeds `rw::produce` →
+        //     the 8-felt wide commit → `execution_proof_new_commitment`, and `executor::execute`'s
+        //     PHASE 3 does ZERO state manipulation for a proof-carrying turn: it verifies and writes
+        //     that one commitment. For a sovereign cell the commitment IS the state.
+        //
+        //     So an effect the shared weld does not project is not a bookkeeping omission — the
+        //     proof would BIND an after-cell in which the effect's write did not happen, and nothing
+        //     would catch it: `verify_and_commit_proof_rotated` anchors the after-commit PIs to
+        //     `bytes32_to_felt8(turn.execution_proof_new_commitment)` (the prover's own claim), and
+        //     its off-cell record-pin re-derivation is `Anchor::None` for every lead outside the
+        //     eight-variant record-pin family. `Effect::Burn` is the sharpest instance: the deployed
+        //     projector mints a DEBITING `VmEffect::Transfer { direction: 1 }` row for it while the
+        //     weld leaves the balance untouched.
+        //
+        //     `dregg_turn::rotation_witness::weld_coverage` is the ONE wildcard-free list (grounded
+        //     against the live weld by `turn/tests/sovereign_after_cell_weld_ledger.rs`). Refusing is
+        //     the only response that neither binds a false transition nor rewrites the commitment a
+        //     turn already committed under — landing a weld arm for one of these MOVES the AFTER
+        //     commit an honest turn publishes, which is a witness migration, not a projection fix.
+        if let Some((effect, why)) = effects.iter().find_map(|e| {
+            match dregg_turn::rotation_witness::weld_coverage(e, cell_id) {
+                dregg_turn::rotation_witness::WeldCoverage::UnprojectedMover(why) => Some((e, why)),
+                _ => None,
+            }
+        }) {
+            return Err(SdkError::InvalidWitness(format!(
+                "the rotated sovereign producer refuses this turn: {why}. The shared \
+                 `apply_effect_to_cell` weld does not project that write onto the acting cell, so \
+                 the AFTER block would be byte-identical to the BEFORE block and the committed NEW \
+                 commitment would attest a transition that did not happen (effect: {effect:?})"
+            )));
+        }
+
         // 1b. WHOLE-TURN FOREST (foolable gap #2 producer half): a heterogeneous turn splits into
         //     more than one maximal homogeneous cohort run. The single-leg wide prover fails closed on
         //     such a turn (`prove_effect_vm_rotated_wide` rejects a heterogeneous slice), so we mint ONE
@@ -5725,124 +5759,22 @@ impl AgentCipherclerk {
             }
         }
 
-        // 2. Apply effects locally to derive the after-state cell (same projection the
-        //    v1 path uses; the cipherclerk only models the variants whose AIR coverage
-        //    it can soundly prove — others are NoOp at the circuit boundary).
+        // 2. Derive the after-state cell through the SHARED `apply_effect_to_cell` weld — the
+        //    SINGLE source for this projection. This used to be an eleven-arm HAND-WRITTEN match
+        //    beside eight arms that already delegated here, against a projector
+        //    (`convert_effects_to_vm`) that mints a real VM row for 29 variants: two lists over the
+        //    same semantics, and the delta was value-bound into the AFTER block (see the coverage
+        //    gate at step 1a, which now fails closed on every verb the weld does not project). The
+        //    weld absorbed the three arms that had no twin here (`Transfer` / `SetField` /
+        //    `IncrementNonce`), so this loop is byte-identical to the eleven arms it replaces AND the
+        //    multi-cohort producer (`prove_sovereign_cohort_chain`, which built its `full_after_cell`
+        //    from the weld alone) now sees them too. Both sides of the rotated record-pin gate route
+        //    through this one function: the VERIFIER anchors
+        //    `compute_authority_digest_8(apply_effect_to_cell(trusted pre))`, so a producer that
+        //    diverged from it would have its own HONEST proof rejected.
         let mut after_cell = before_cell.clone();
         for effect in &effects {
-            match effect {
-                Effect::Transfer { from, to, amount } => {
-                    if from == cell_id {
-                        after_cell
-                            .state
-                            .set_balance(after_cell.state.balance().saturating_sub(*amount as i64));
-                    }
-                    if to == cell_id {
-                        after_cell
-                            .state
-                            .set_balance(after_cell.state.balance().saturating_add(*amount as i64));
-                    }
-                }
-                Effect::SetField { cell, index, value } if cell == cell_id => {
-                    after_cell.state.set_field_ext(*index as u64, *value);
-                }
-                Effect::IncrementNonce { cell } if cell == cell_id => {
-                    let _ = after_cell.state.increment_nonce();
-                }
-                // The setPermissions BEACHHEAD (rotated record-pin, record-digest limb 24): project
-                // the new permissions onto the after-cell through the SHARED `apply_effect_to_cell`
-                // weld so the producer's `last[AFTER_BASE + B_RECORD_DIGEST]` (= the after-cell's
-                // `compute_authority_digest_felt`, seeded at step 3 below for the rotated leg) MOVES to
-                // exactly the felt the verifier anchors PI 38 to (`verify_and_commit_proof_rotated`'s
-                // record-pin anchor). The two sides MUST move together — both route through this one
-                // function — or an HONEST setPermissions proof would be rejected (the after-digest
-                // would not equal the anchored PI 38).
-                Effect::SetPermissions { cell, .. } if cell == cell_id => {
-                    dregg_turn::rotation_witness::apply_effect_to_cell(
-                        &mut after_cell,
-                        cell_id,
-                        effect,
-                        block_height,
-                    );
-                }
-                // setVK (record-digest limb 24): same anti-drift weld as setPermissions. The
-                // producer's after-cell installs the VK so its r23 authority digest (the AFTER
-                // block's `B_RECORD_DIGEST` limb) MOVES to exactly the felt the verifier anchors PI 38
-                // to. Both sides route through `apply_effect_to_cell`; the producer projects
-                // `SetVerificationKey → VmEffect::SetVerificationKey` and so does the executor bridge,
-                // so the descriptor (`setVKVmDescriptor2R24`) reconstructs identically.
-                Effect::SetVerificationKey { cell, .. } if cell == cell_id => {
-                    dregg_turn::rotation_witness::apply_effect_to_cell(
-                        &mut after_cell,
-                        cell_id,
-                        effect,
-                        block_height,
-                    );
-                }
-                // The LIFECYCLE record-pin family (limb 29) + the Refusal record-digest pin: project
-                // through the SHARED `apply_effect_to_cell` so the producer's AFTER block carries the
-                // forced limb (`lifecycle_felt` for the lifecycle effects, `record_digest`/`fields_root`
-                // for refusal) the verifier independently anchors PI 38 to. CellSeal's `sealed_at`
-                // depends on `block_height`, so the producer MUST apply at the SAME height the verifier
-                // will run at (threaded in from the federation height) or the honest seal's lifecycle
-                // felt would not equal the verifier's anchor.
-                Effect::CellSeal { target, .. } if target == cell_id => {
-                    dregg_turn::rotation_witness::apply_effect_to_cell(
-                        &mut after_cell,
-                        cell_id,
-                        effect,
-                        block_height,
-                    );
-                }
-                Effect::CellUnseal { target } if target == cell_id => {
-                    dregg_turn::rotation_witness::apply_effect_to_cell(
-                        &mut after_cell,
-                        cell_id,
-                        effect,
-                        block_height,
-                    );
-                }
-                Effect::CellDestroy { target, .. } if target == cell_id => {
-                    dregg_turn::rotation_witness::apply_effect_to_cell(
-                        &mut after_cell,
-                        cell_id,
-                        effect,
-                        block_height,
-                    );
-                }
-                Effect::ReceiptArchive { checkpoint, .. } if checkpoint.cell_id == *cell_id => {
-                    dregg_turn::rotation_witness::apply_effect_to_cell(
-                        &mut after_cell,
-                        cell_id,
-                        effect,
-                        block_height,
-                    );
-                }
-                Effect::Refusal { cell, .. } if cell == cell_id => {
-                    dregg_turn::rotation_witness::apply_effect_to_cell(
-                        &mut after_cell,
-                        cell_id,
-                        effect,
-                        block_height,
-                    );
-                }
-                // makeSovereign (record-digest limb 24 via the folded MODE byte): project the
-                // Hosted→Sovereign promotion onto the after-cell through the SHARED
-                // `apply_effect_to_cell` weld (which sets `after_cell.mode = Sovereign`) so the
-                // producer's AFTER `B_RECORD_DIGEST` limb (= `compute_authority_digest_felt(after_cell)`,
-                // folding the flipped mode byte) MOVES to exactly the felt the verifier independently
-                // anchors PI 46 to (`verify_one_cohort_run`'s record-pin anchor, MakeSovereign arm).
-                // Both sides route through this one function, so an HONEST promotion proof verifies.
-                Effect::MakeSovereign { cell } if cell == cell_id => {
-                    dregg_turn::rotation_witness::apply_effect_to_cell(
-                        &mut after_cell,
-                        cell_id,
-                        effect,
-                        block_height,
-                    );
-                }
-                _ => {}
-            }
+            rw::apply_effect_to_cell(&mut after_cell, cell_id, effect, block_height);
         }
 
         // 3. The Effect-VM marshalling + circuit pre-state (cap-root-seeded), identical
@@ -6570,30 +6502,32 @@ impl AgentCipherclerk {
             .map(|r| r.receipt_hash())
             .collect();
 
-        // The FULL kernel after-cell (all effects applied through the SHARED weld + the balance
-        // moves). The FINAL run's after-block witness is produced over this, so the last leg's
-        // after8 == the turn's claimed NEW commitment.
+        // The FULL kernel after-cell, every effect applied through the SHARED weld. The FINAL run's
+        // after-block witness is produced over this, so the last leg's after8 == the turn's claimed
+        // NEW commitment.
+        //
+        // ⚠ The duplicate hand-written `Transfer` debit/credit that used to sit BESIDE this loop is
+        // gone: the weld now carries `Transfer`, and leaving both in would debit the acting cell
+        // TWICE.
+        //
+        // ⚠ THIS CHANGES PUBLISHED PROOF CONTENT, and only here. The weld previously lacked
+        // `SetField` / `IncrementNonce`, so this loop built a `full_after_cell` missing those writes;
+        // the FINAL leg's after-block witness is produced over it, so the turn's committed NEW
+        // commitment was derived from a state the turn's own effects did not produce, AND
+        // `self.sovereign_cells` was advanced to that same short state. Measured on a
+        // `[Transfer, SetField(0x5E70)]` turn against a fixed cell, the committed commitment moves
+        // `54f22234…` → `5017505a…`. Nothing already proven becomes unverifiable (the executor anchors
+        // the after-commit PIs to the prover's own `execution_proof_new_commitment` and never
+        // re-derives it), and a cell that took such a turn was already stranded: its local state no
+        // longer matched the stored commitment, so its NEXT turn's OLD_COMMIT reconstruction would
+        // have failed. Still a witness-migration question for any live cell — see the lane report.
+        //
+        // Pinned by `turn/tests/sovereign_after_cell_weld_ledger.rs` (the projection) and
+        // `sdk/tests/sovereign_producer_refuses_unwelded_movers.rs` (the chained end-to-end: the
+        // write reaches the advanced local state, and the debit lands exactly once).
         let mut full_after_cell = before_cell.clone();
         for effect in &effects {
             rw::apply_effect_to_cell(&mut full_after_cell, cell_id, effect, block_height);
-            if let Effect::Transfer { from, to, amount } = effect {
-                if from == cell_id {
-                    full_after_cell.state.set_balance(
-                        full_after_cell
-                            .state
-                            .balance()
-                            .saturating_sub(*amount as i64),
-                    );
-                }
-                if to == cell_id {
-                    full_after_cell.state.set_balance(
-                        full_after_cell
-                            .state
-                            .balance()
-                            .saturating_add(*amount as i64),
-                    );
-                }
-            }
         }
 
         // ONE turn-context ledger (the turn's before-cell) feeds EVERY `produce` — `cells_root`/`iroot`

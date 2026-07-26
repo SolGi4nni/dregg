@@ -645,6 +645,48 @@ pub fn apply_effect_to_cell(
     block_height: u64,
 ) {
     match effect {
+        // ── The VALUE / FIELD / NONCE welds (absorbed from the sovereign producer, 2026-07-26) ──
+        // These three used to live as HAND-WRITTEN arms inside
+        // `sdk::cipherclerk::prove_sovereign_turn_rotated`'s step-2 after-cell derivation, beside
+        // eight arms that already delegated here. Two lists over the same semantics: the single-leg
+        // producer had all eleven, while the MULTI-COHORT producer
+        // (`prove_sovereign_cohort_chain`) called ONLY this weld plus its own duplicate `Transfer`
+        // — so a heterogeneous sovereign turn carrying a `SetField` or `IncrementNonce` built its
+        // `full_after_cell` without that write, and BOTH the final leg's after-block witness (hence
+        // the committed NEW commitment — the proof-carrying path does ZERO state manipulation, so
+        // the 8-felt commit IS the state) and the SDK's own advanced local state came from that
+        // short state. Both producers now route every effect through this one function.
+        //
+        // balance (limbs 1 `r0` lo / 3 `r2` hi): mirrors `apply_transfer`'s debit/credit as a
+        // cell-local projection. `from == to == cell_id` nets to zero, exactly as the producer's
+        // arm did. `saturating_*` matches the producer byte-for-byte (a saturating projection is
+        // what the v9 commitment binds; the executor's own over/underflow refusal happens at the
+        // apply leg BEFORE a turn reaches a rotated anchor).
+        Effect::Transfer { from, to, amount } => {
+            if from == cell_id {
+                cell.state
+                    .set_balance(cell.state.balance().saturating_sub(*amount as i64));
+            }
+            if to == cell_id {
+                cell.state
+                    .set_balance(cell.state.balance().saturating_add(*amount as i64));
+            }
+        }
+        // fields (limbs 4..=11 lane-0 ‖ the 56 completion lanes, and limb 36 `fields_root` for an
+        // EXT key): mirrors `apply_set_field`'s state write. `set_field_ext` routes a key below
+        // `STATE_SLOTS` to the octet and an overflow key into `fields_map` (recomputing
+        // `fields_root`), which is what `produce` reads for both limb groups.
+        Effect::SetField {
+            cell: target,
+            index,
+            value,
+        } if target == cell_id => {
+            cell.state.set_field_ext(*index, *value);
+        }
+        // nonce (limb 2 `r1`): mirrors `apply_increment_nonce`.
+        Effect::IncrementNonce { cell: target } if target == cell_id => {
+            let _ = cell.state.increment_nonce();
+        }
         // The setPermissions BEACHHEAD (record-digest limb 24): set the cell's permissions to the
         // effect's new value — byte-identical to the executor's `apply_set_permissions`. This moves
         // `compute_authority_digest_felt` (permissions are folded into the v9 authority residue).
@@ -729,6 +771,243 @@ pub fn apply_effect_to_cell(
             cell.mode = dregg_cell::CellMode::Sovereign;
         }
         _ => {}
+    }
+}
+
+/// How [`apply_effect_to_cell`] relates to the executor's apply leg for ONE effect against ONE cell.
+///
+/// The weld's contract is that `apply_effect_to_cell(before, e)` equals the cell state
+/// `turn::executor::apply`'s leg for `e` leaves behind, restricted to the fields
+/// [`produce`] reads into `pre_limbs`. This enum is the CHECKED statement of where that contract
+/// holds — see [`weld_coverage`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WeldCoverage {
+    /// The weld projects this effect's write onto `cell_id`. `apply_effect_to_cell` moves the
+    /// cell exactly as the executor's apply leg does.
+    Projected,
+    /// The executor's apply leg writes NO field of `cell_id` that [`produce`] reads, so the weld's
+    /// no-op is the CORRECT projection (the effect's real target is a different cell, a
+    /// ledger-level accumulator the rotated witness carries as a separate root parameter, the
+    /// journal, or the apply leg refuses the effect outright).
+    NoCellStateChange,
+    /// The executor's apply leg DOES write a field of `cell_id` that [`produce`] reads, and the
+    /// weld does not project it. A producer that derived an AFTER block from this weld would bind
+    /// a state transition in which the write never happened — and on the proof-carrying sovereign
+    /// path the 8-felt commit IS the state (`executor::execute` does zero state manipulation for a
+    /// turn carrying an `execution_proof`), so the committed cell would silently lose the write.
+    /// The payload names the field and the limb it lands in.
+    UnprojectedMover(&'static str),
+}
+
+/// **The weld's coverage ledger — the ONE list the sovereign producers refuse from.**
+///
+/// A `match` over EVERY `Effect` variant with **no `_ =>` arm**: adding a kernel verb does not
+/// compile until it is classified here. The classification is grounded, per variant, against the
+/// live weld by `turn/tests/sovereign_after_cell_weld_ledger.rs` (which runs the weld and diffs the
+/// rotated `pre_limbs`), so narrowing a weld arm — or landing one for a declared
+/// [`WeldCoverage::UnprojectedMover`] — reds that test by name.
+///
+/// `cell_id` is load-bearing: the same verb is a mover for one endpoint and a no-op for the other
+/// (`GrantCapability` writes the GRANTEE's `capabilities`, never the granter's; `Introduce` writes
+/// the RECIPIENT's). The deployed projector `convert_effects_to_vm` mints a VM row for BOTH
+/// endpoints, which is exactly why this must be decided per cell and not per verb.
+///
+/// The [`WeldCoverage::UnprojectedMover`] rows are the residual the sovereign producers
+/// (`sdk::cipherclerk::prove_sovereign_turn_rotated` / `prove_sovereign_cohort_chain`) FAIL CLOSED
+/// on: refusing to mint is the only response that neither binds a false transition nor moves the
+/// proof bytes of a turn that already committed. Landing a weld arm for one of them changes the
+/// AFTER commit an honest turn publishes, which is a witness-migration decision, not a projection
+/// fix — see the module note on `apply_effect_to_cell`.
+///
+/// # Reachability of the ten movers (measured, not reasoned)
+///
+/// `sdk/tests/wide_completeness_ledger.rs::provability_scoreboard_deployed_wide_path` drives every
+/// effect through the deployed wide producer and prints a PROVABLE / UNPROVABLE board. Cross-reading
+/// it against these ten:
+///
+/// * **Reachable — the wound was live**: `Burn`, `Introduce`, `RefreshDelegation`,
+///   `ExerciseViaCapability` all prove on the deployed wide path, so before this gate each minted a
+///   verifying proof whose AFTER block was byte-identical to its BEFORE block for the field its apply
+///   leg writes. `Burn` is the sharpest: the projector mints a DEBITING
+///   `VmEffect::Transfer { direction: 1 }` row, so the row and the AFTER block disagreed outright.
+/// * **Already fails closed downstream (the gate makes it EARLY and NAMED, not newly safe)**:
+///   `GrantCapability`, `RevokeCapability`, `AttenuateCapability` and `RevokeDelegation` carry an
+///   in-circuit cap-tree / revoked-tree `map_op` write for which the bare wide route threads no
+///   witness, so they die inside the prover ("no `CapWriteWideWitness`" / "no witness heap with
+///   root8 …"). Their real route is the separate cap-open weld.
+/// * **Dropped before the wide route, but reachable in a MIXED turn**: `SetProgram` is one of the
+///   five verbs the projector mints no row for, so a lone `SetProgram` turn fails at descriptor
+///   resolution — while `[SetPermissions, SetProgram]` projects to a single `[SetPermissions]`
+///   cohort, proves, and commits with the program swap in `effects_hash` but in no row and in no
+///   after-cell. `RotatePqIdentity` is refused by name by the CHECKED projector.
+pub fn weld_coverage(effect: &Effect, cell_id: &dregg_cell::CellId) -> WeldCoverage {
+    use WeldCoverage::{NoCellStateChange, Projected, UnprojectedMover};
+    // A verb whose target is a DIFFERENT cell is a no-op on this one by construction — the rotated
+    // sovereign proof is over a single cell's transition. Each arm below therefore decides against
+    // its own endpoint test, and falls to `NoCellStateChange` when this cell is not that endpoint.
+    match effect {
+        // ── Projected: the weld moves this cell exactly as the apply leg does ────────────────────
+        Effect::Transfer { from, to, .. } => {
+            if from == cell_id || to == cell_id {
+                Projected
+            } else {
+                NoCellStateChange
+            }
+        }
+        Effect::SetField { cell, .. } => guard(cell == cell_id, Projected),
+        Effect::IncrementNonce { cell } => guard(cell == cell_id, Projected),
+        Effect::SetPermissions { cell, .. } => guard(cell == cell_id, Projected),
+        Effect::SetVerificationKey { cell, .. } => guard(cell == cell_id, Projected),
+        Effect::Refusal { cell, .. } => guard(cell == cell_id, Projected),
+        Effect::CellSeal { target, .. } => guard(target == cell_id, Projected),
+        Effect::CellUnseal { target } => guard(target == cell_id, Projected),
+        Effect::CellDestroy { target, .. } => guard(target == cell_id, Projected),
+        Effect::ReceiptArchive { checkpoint, .. } => {
+            guard(checkpoint.cell_id == *cell_id, Projected)
+        }
+        Effect::MakeSovereign { cell } => guard(cell == cell_id, Projected),
+
+        // ── UnprojectedMover: the apply leg writes a committed field the weld does not ───────────
+        // `capabilities.grant_ref_provenanced` on the GRANTEE (`apply_grant_capability`): pushes a
+        // cap ref + bumps `next_slot`, moving `compute_canonical_capability_root_8` (limb 25 ‖
+        // 52..=58). The granter is read-only, so a `from == cell_id` grant is a genuine no-op here.
+        Effect::GrantCapability { to, .. } => guard(
+            to == cell_id,
+            UnprojectedMover(
+                "GrantCapability writes the grantee's `capabilities` (cap-root limb 25 ‖ 52..=58)",
+            ),
+        ),
+        // `capabilities.revoke(slot)` (`apply_revoke_capability`): removes the ref and tombstones
+        // the slot — cap-root limb 25 ‖ 52..=58.
+        Effect::RevokeCapability { cell, .. } => guard(
+            cell == cell_id,
+            UnprojectedMover(
+                "RevokeCapability removes a cap ref + tombstones the slot (cap-root limb 25 ‖ 52..=58)",
+            ),
+        ),
+        // `capabilities.attenuate_in_place` (`apply_attenuate_capability`, which ENFORCES
+        // `cell == actor`): narrows the slot's permissions / allowed effects / expiry in place —
+        // cap-root limb 25 ‖ 52..=58.
+        Effect::AttenuateCapability { cell, .. } => guard(
+            cell == cell_id,
+            UnprojectedMover(
+                "AttenuateCapability narrows a cap slot in place (cap-root limb 25 ‖ 52..=58)",
+            ),
+        ),
+        // `child_mut.delegation = Some(DelegatedRef::new(..))` (`apply_refresh_delegation`, which
+        // ENFORCES `child == action_target`): the `delegation` leaves are folded by
+        // `compute_authority_digest_8` — limbs 12..=18 + 24.
+        Effect::RefreshDelegation { child, .. } => guard(
+            child == cell_id,
+            UnprojectedMover(
+                "RefreshDelegation rewrites the child's `delegation` (authority digest limbs 12..=18, 24)",
+            ),
+        ),
+        // `parent_mut.state.bump_delegation_epoch()` (`apply_revoke_delegation`) on the ACTING
+        // parent — `epoch_felt` is limb 30. (The child's `delegation = None` moves the CHILD's
+        // authority digest, so a sovereign cell that IS the child is a mover too.)
+        Effect::RevokeDelegation { child } => {
+            if child == cell_id {
+                UnprojectedMover(
+                    "RevokeDelegation clears the child's `delegation` (authority digest limbs 12..=18, 24)",
+                )
+            } else {
+                // The acting parent's epoch bump is not addressable from the effect payload (the
+                // effect names only the child), so a parent-side revoke cannot be decided here by
+                // cell id. It is refused unconditionally: `bump_delegation_epoch` moves limb 30.
+                UnprojectedMover(
+                    "RevokeDelegation bumps the acting parent's `delegation_epoch` (limb 30)",
+                )
+            }
+        }
+        // `cm.state.debit_balance(amount)` (`apply_burn`; a self-burn where `actor == target` is the
+        // permissionless case) — balance limbs 1 / 3. The deployed projector already mints a
+        // DEBITING `VmEffect::Transfer { direction: 1 }` row for it, so the row and the AFTER block
+        // disagree about the balance.
+        Effect::Burn { target, .. } => guard(
+            target == cell_id,
+            UnprojectedMover("Burn debits `state.balance` (limbs 1 lo / 3 hi)"),
+        ),
+        // `recipient_cell.capabilities.grant_provenanced` (`apply_introduce`) — cap-root limb 25 ‖
+        // 52..=58 on the RECIPIENT. The introducer and target are read-only.
+        Effect::Introduce { recipient, .. } => guard(
+            recipient == cell_id,
+            UnprojectedMover(
+                "Introduce grants into the recipient's `capabilities` (cap-root limb 25 ‖ 52..=58)",
+            ),
+        ),
+        // `c.program = program.clone()` (`apply_set_program`) — `program` is folded by
+        // `compute_authority_digest_8` (limbs 12..=18, 24). SetProgram is ALSO one of the five
+        // variants the deployed projector mints no VM row for, so such a turn is doubly invisible:
+        // no row and no after-cell move.
+        Effect::SetProgram { cell, .. } => guard(
+            cell == cell_id,
+            UnprojectedMover(
+                "SetProgram rewrites `cell.program` (authority digest limbs 12..=18, 24)",
+            ),
+        ),
+        // `apply_exercise_via_capability` recurses into `inner_effects` with `action_target`
+        // re-pointed at the capability's target, so the exercise's real writes are the INNER
+        // effects' — none of which the weld or the projector sees (the exercise mints ONE row). An
+        // exercise wrapping a `SetPermissions` would bind a frozen authority digest.
+        Effect::ExerciseViaCapability { inner_effects, .. } => guard(
+            !inner_effects.is_empty(),
+            UnprojectedMover(
+                "ExerciseViaCapability applies its `inner_effects`, which are neither projected to \
+                 VM rows nor welded onto the after-cell",
+            ),
+        ),
+        // `target.set_pq_identity(..)` (`apply_rotate_pq_identity`) — `pq_identity` is folded by
+        // `compute_authority_digest_8` (limbs 12..=18, 24). Already refused earlier by the CHECKED
+        // projector (no AIR row for the PQ identity plane); classified honestly here so a future
+        // descriptor landing cannot quietly reach a frozen after-cell.
+        Effect::RotatePqIdentity { cell, .. } => guard(
+            cell == cell_id,
+            UnprojectedMover(
+                "RotatePqIdentity rewrites `cell.pq_identity` (authority digest limbs 12..=18, 24)",
+            ),
+        ),
+
+        // ── NoCellStateChange: the apply leg writes no committed field of THIS cell ──────────────
+        // Journal only (`journal.record_event_emitted`); the receipt/journal stream reaches `iroot`,
+        // which the rotated witness carries as its own argument, not a `pre_limb`.
+        Effect::EmitEvent { .. } => NoCellStateChange,
+        // BIRTHS. The actor is read-only (`birth_asset` reads `parent.asset()`); every write lands
+        // on the NEW cell, and the cell-ID set growth is the in-circuit accounts grow-gate's job
+        // (limb 0 ‖ 169..=175), which the dedicated wide producers force — not an off-cell projection.
+        Effect::CreateCell { .. }
+        | Effect::CreateCellFromFactory { .. }
+        | Effect::SpawnWithDelegation { .. }
+        | Effect::CreateHybridCell { .. } => NoCellStateChange,
+        // LEDGER-LEVEL ACCUMULATORS carried as separate rotated roots, never cell fields:
+        // `note_nullifiers` → the `nullifier_root` argument (limb 26 ‖ 68..=74); `note_commitments`
+        // → `commitments_root` (limb 27 ‖ 75..=81); `bridged_nullifiers` is its own set and feeds no
+        // rotated limb; the reactive registry / `reactive_nullifiers` likewise.
+        Effect::NoteSpend { .. }
+        | Effect::NoteCreate { .. }
+        | Effect::ShieldedTransfer { .. }
+        | Effect::BridgeMint { .. }
+        | Effect::Promise { .. }
+        | Effect::Notify { .. }
+        | Effect::React { .. } => NoCellStateChange,
+        // `apply_mint` REJECTS `actor == target || actor == well`, so no write to the acting cell is
+        // reachable: the well is debited and a THIRD cell credited.
+        Effect::Mint { .. } => NoCellStateChange,
+        // Apply legs that always error, so no state write exists to project: `apply_pipelined_send`
+        // returns `PreconditionFailed` unconditionally, and `Custom` returns
+        // `CustomEffectRequiresProofCarryingTurn` (its state movement rides the BOUND sub-proof's
+        // own transition, which `enforce_custom_proof_state_binding` ties to this turn's endpoints).
+        Effect::PipelinedSend { .. } | Effect::Custom { .. } => NoCellStateChange,
+    }
+}
+
+/// `weld_coverage`'s endpoint test: `verdict` when this cell IS the effect's endpoint, else the
+/// no-op that a different-cell target makes correct.
+fn guard(is_endpoint: bool, verdict: WeldCoverage) -> WeldCoverage {
+    if is_endpoint {
+        verdict
+    } else {
+        WeldCoverage::NoCellStateChange
     }
 }
 
