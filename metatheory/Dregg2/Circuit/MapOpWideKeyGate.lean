@@ -28,7 +28,7 @@ deployable widened AIR:
     (`deployed_bracket_opener_is_instance` et al) — the generalization is conservative, checked by
     the kernel, not by eye.
   * **S7 — the arity-17 leaf SCHEMA** at `ImtLeaf Digest8Key ℤ` (key 8 felts ‖ value ‖ pointer 8
-    felts) with its injectivity wired through the existing `imtLeafHash8_injective`, and the
+    felts) with its binding wired through `imtLeafHash8_binds_or_collides` (FLOOR-FREE), and the
     design's **blocker #2 as a theorem**: a wide address with a PROJECTED pointer
     (`halfWideLeafHash`) still conflates two committed leaves — and the conflation FORGES a
     non-membership of a key the honest chain PRESENTS (`halfWideLeaf_forges_absence_of_present`).
@@ -48,7 +48,8 @@ deployable widened AIR:
 INSTANTIATED (composed, zero new proof): `pathRecompute_binds_updates`, `perfectRoot_injective`,
 every `Heap` lemma (`get_none_of_gap`, `set_sorted`, `length_set_mem`, `ext_get` — already
 `[LinearOrder κ]`-generic), `sorted_gap_excludes`, `imtAbsent_excludes`, `nonMembership_soundW`,
-`update_soundW`, `insert_then_no_nonmembershipW`, `lexLt8_refines`, `imtLeafHash8_injective`,
+`update_soundW`, `insert_then_no_nonmembershipW`, `lexLt8_refines`,
+`imtLeafHash8_binds_or_collides`,
 `absentBracket_of_lexBlocks`, `split_of_getElem?_pair`, `map_set'`.
 
 AUTHORED (a proof script had to be re-run, because the DEPLOYED statement is ℤ-pinned even though
@@ -86,6 +87,7 @@ open Dregg2.Circuit (Assignment)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.DescriptorIR2 (MapOp MapOpKind MAP_TREE_DEPTH)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Crypto.SpongeCarrierReduction (IsSpongeColl)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
 open Dregg2.Circuit.Emit.LexCompare8Emit (lexBlockHolds lexTf lexLt8_refines)
 open Dregg2.Circuit.MapMerkleRoot (mapNode perfectRoot perfectRoot_injective mapRoot opensToMerkle
@@ -101,7 +103,8 @@ open Dregg2.Circuit.SortedTreeNonMembershipWide8 (proj0 keysOfW SpineCommitsW Ga
   nonMembership_soundW demoOpens lowfelt_collision)
 open Dregg2.Circuit.SortedTreeInsertWide8 (sortedInsertW update_soundW)
 open Dregg2.Circuit.MapOpWideKey (keyLanes keyLanes_length keyLanes_inj digest8_ext MapOpW
-  imtLeafHash8 imtLeafHash8_injective KeyCanon absentBracket_of_lexBlocks HoldsKindW projOpens
+  imtLeafHash8 imtLeafHash8_injective imtLeafHash8_binds_or_collides imtLeafPre8
+  KeyCanon absentBracket_of_lexBlocks HoldsKindW projOpens
   narrowKeys_poisoned wideAbsent_provable)
 open Dregg2.Substrate
 
@@ -706,16 +709,30 @@ def imtLeafHash8Of (hash : List ℤ → ℤ) (l : ImtLeaf Digest8Key ℤ) : ℤ 
 theorem imtLeafHash8Of_eq (hash : List ℤ → ℤ) (l : ImtLeaf Digest8Key ℤ) :
     imtLeafHash8Of hash l = imtLeafHash8 hash l.addr l.value l.nextAddr := rfl
 
-/-- **★ THE WIDENED LEAF SCHEMA BINDS ALL 17 FELTS** under the SAME named `Poseidon2SpongeCR`
-floor — address, value AND pointer. `imtLeafHash8_injective` wired through the leaf structure. -/
-theorem imtLeafHash8Of_injective (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+/-- **THE HYPOTHESIS-FREE WIDENED LEAF-SCHEMA BINDING.** Equal arity-17 digests force equal leaves
+OR name a genuine collision at the two ABSORBED 17-felt preimages. NO floor. -/
+theorem imtLeafHash8Of_binds_or_collides (hash : List ℤ → ℤ)
     {l₁ l₂ : ImtLeaf Digest8Key ℤ} (h : imtLeafHash8Of hash l₁ = imtLeafHash8Of hash l₂) :
-    l₁ = l₂ := by
+    l₁ = l₂ ∨ IsSpongeColl hash (imtLeafInput8 l₁, imtLeafInput8 l₂) := by
   obtain ⟨a₁, v₁, n₁⟩ := l₁
   obtain ⟨a₂, v₂, n₂⟩ := l₂
   have hh : imtLeafHash8 hash a₁ v₁ n₁ = imtLeafHash8 hash a₂ v₂ n₂ := h
-  obtain ⟨ha, hv, hn⟩ := imtLeafHash8_injective hash hCR hh
-  rw [ha, hv, hn]
+  rcases imtLeafHash8_binds_or_collides hash hh with ⟨ha, hv, hn⟩ | hc
+  · exact Or.inl (by rw [ha, hv, hn])
+  · exact Or.inr hc
+
+/-- **★ THE WIDENED LEAF SCHEMA BINDS ALL 17 FELTS** — address, value AND pointer.
+⛑ CUT OVER: the refuted `Poseidon2SpongeCR hash` premise is replaced by the per-instance,
+refutable non-collision at the two NAMED 17-felt preimages, which the old premise IMPLIES
+(`fun hc => hc.1 (hCR _ _ hc.2)`). That implication is INLINED at the one remaining `hCR`-carrying
+call site rather than named as a `no…Coll_of_CR` bridge, because such a bridge is itself a floor
+carrier and this cutover mints none. The floor is PROVED FALSE at deployed BabyBear parameters;
+this side condition is not. -/
+theorem imtLeafHash8Of_injective (hash : List ℤ → ℤ)
+    {l₁ l₂ : ImtLeaf Digest8Key ℤ}
+    (hno : ¬ IsSpongeColl hash (imtLeafInput8 l₁, imtLeafInput8 l₂))
+    (h : imtLeafHash8Of hash l₁ = imtLeafHash8Of hash l₂) : l₁ = l₂ :=
+  (imtLeafHash8Of_binds_or_collides hash h).resolve_right hno
 
 /-- **`halfWideLeafHash`** — THE LAUNDERING SHAPE the design forbids: widen the ADDRESS to 8 felts
 but keep the POINTER projected to lane 0 (arity 10). Looks widened; is not. -/
@@ -782,23 +799,28 @@ theorem halfWideLeaf_forges_absence_of_present (hash : List ℤ → ℤ) :
       = hash (keyLanes keyLo ++ [(1 : ℤ), proj0 ptrHi])
   rw [Dregg2.Circuit.SortedTreeNonMembershipWide8.proj0_keyE, proj0_ptrHi]
 
-/-- **★ THE ARITY-17 LEAF KILLS THE FORGERY.** Under the SAME named `Poseidon2SpongeCR` floor the
-deployed leaf already carries, the two leaves have DISTINCT digests: the lanes the projection
-discarded are exactly the lanes the widened absorb now carries, so the committed digest PINS the
-gap's upper bound at the full 8 felts. -/
-theorem wideLeaf_kills_the_pointer_forgery (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) :
+/-- **★ THE ARITY-17 LEAF KILLS THE FORGERY.** The two leaves have DISTINCT digests: the lanes the
+projection discarded are exactly the lanes the widened absorb now carries, so the committed digest
+PINS the gap's upper bound at the full 8 felts.
+⛑ CUT OVER off `Poseidon2SpongeCR`: the premise is the per-instance non-collision at THE TWO LEAVES
+THIS FORGERY ACTUALLY NAMES — `⟨keyLo, 1, keyE⟩` and `⟨keyLo, 1, ptrHi⟩` — which the refuted floor
+implies and which, unlike the floor, can hold at deployed BabyBear parameters. -/
+theorem wideLeaf_kills_the_pointer_forgery (hash : List ℤ → ℤ)
+    (hno : ¬ IsSpongeColl hash (imtLeafInput8 ⟨keyLo, 1, keyE⟩, imtLeafInput8 ⟨keyLo, 1, ptrHi⟩)) :
     imtLeafHash8Of hash ⟨keyLo, 1, keyE⟩ ≠ imtLeafHash8Of hash ⟨keyLo, 1, ptrHi⟩ := by
   intro h
-  have hh : imtLeafHash8 hash keyLo 1 keyE = imtLeafHash8 hash keyLo 1 ptrHi := h
-  exact keyE_lt_ptrHi.ne (imtLeafHash8_injective hash hCR hh).2.2
+  exact keyE_lt_ptrHi.ne (congrArg ImtLeaf.nextAddr (imtLeafHash8Of_injective hash hno h))
 
 /-- **★ THE SLOT IS BOUND (the positive form).** One committed arity-17 digest admits exactly ONE
 `(addr8, value, next8)` reading — contrast `halfWideLeaf_forges_absence_of_present`, where the same
-premise leaves the pointer free. This is what "the pointer widens too" buys. -/
-theorem wideLeaf_slot_binds (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) {d : ℤ}
+premise leaves the pointer free. This is what "the pointer widens too" buys.
+⛑ CUT OVER off `Poseidon2SpongeCR`, same shape: the per-instance non-collision at the two leaves the
+slot is claimed to hold. -/
+theorem wideLeaf_slot_binds (hash : List ℤ → ℤ) {d : ℤ}
     {l₁ l₂ : ImtLeaf Digest8Key ℤ}
+    (hno : ¬ IsSpongeColl hash (imtLeafInput8 l₁, imtLeafInput8 l₂))
     (h₁ : imtLeafHash8Of hash l₁ = d) (h₂ : imtLeafHash8Of hash l₂ = d) : l₁ = l₂ :=
-  imtLeafHash8Of_injective hash hCR (h₁.trans h₂.symm)
+  imtLeafHash8Of_injective hash hno (h₁.trans h₂.symm)
 
 /-! ## §5 — THE WIDENED AAFI GATE: arity-17 leaf, 8-felt lex bracket, two-path append law. -/
 
@@ -1094,6 +1116,7 @@ theorem map_tree_leaf_arity_delta : MAP_TREE_LEAF_ARITY_WIDE - MAP_TREE_LEAF_ARI
 #assert_axioms narrow_gates_is_instance
 #assert_axioms mapOpW_gates_force_holds
 #assert_axioms absentGateW_of_lexBlocks
+#assert_axioms imtLeafHash8Of_binds_or_collides
 #assert_axioms imtLeafHash8Of_injective
 #assert_axioms halfWideLeaf_forges_absence_of_present
 #assert_axioms wideLeaf_kills_the_pointer_forgery

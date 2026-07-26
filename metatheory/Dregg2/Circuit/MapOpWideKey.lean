@@ -38,7 +38,10 @@ widened pointer-bracket keystone.
      completeness twin `absentBracket_realizable` says an honest bracket ADMITS those blocks (the
      gate is not a DoS).
   3. **The wide IMT leaf** `imtLeafHash8` (arity 17 = 8 addr ‖ value ‖ 8 next) with
-     `imtLeafHash8_injective` under the SAME named `Poseidon2SpongeCR` floor, and the
+     `imtLeafHash8_binds_or_collides` — FLOOR-FREE, up to a named collision at the two
+     ABSORBED 17-felt preimages — and `imtLeafHash8_injective` cut over to that per-instance
+     side condition (⛑ 2026-07-26; it USED to carry `Poseidon2SpongeCR`, which is PROVED FALSE
+     at deployed BabyBear parameters and therefore made the statement vacuous there), and the
      anti-launder tooth `narrowLeaf_conflates` / `wideLeaf_separates`: pre-folding the 8-felt
      address to lane 0 and THEN hashing still conflates two distinct keys (the
      `finalSqueezeOnly_still_conflates` shape, at the map leaf).
@@ -77,6 +80,7 @@ open Dregg2.Circuit (Assignment)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.DescriptorIR2 (MapOp MapOpKind)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Crypto.SpongeCarrierReduction (IsSpongeColl)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
 open Dregg2.Circuit.Emit.LexCompare8Emit (lexBlockHolds lexTf lexLt8_refines)
 open Dregg2.Circuit.IndexedMerkleTree (ImtLeaf ImtSorted ImtAbsent imtAddrs)
@@ -277,19 +281,54 @@ address lanes and all 8 pointer lanes are absorbed; nothing is pre-folded. -/
 def imtLeafHash8 (hash : List ℤ → ℤ) (addr : Digest8Key) (value : ℤ) (next : Digest8Key) : ℤ :=
   hash (keyLanes addr ++ value :: keyLanes next)
 
-/-- The widened leaf binds all three fields under the SAME named `Poseidon2SpongeCR` floor the
-deployed 3-felt leaf carries — the crypto input the widened MapOps AIR needs, and its only one. -/
-theorem imtLeafHash8_injective (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {a₁ a₂ n₁ n₂ : Digest8Key} {v₁ v₂ : ℤ}
-    (h : imtLeafHash8 hash a₁ v₁ n₁ = imtLeafHash8 hash a₂ v₂ n₂) :
-    a₁ = a₂ ∧ v₁ = v₂ ∧ n₁ = n₂ := by
-  simp only [imtLeafHash8] at h
-  have hl := hCR _ _ h
-  simp only [keyLanes, List.cons_append, List.nil_append, List.cons.injEq, and_true] at hl
-  obtain ⟨p0, p1, p2, p3, p4, p5, p6, p7, hv, q0, q1, q2, q3, q4, q5, q6, q7⟩ := hl
+/-- **`imtLeafPre8 addr value next`** — the arity-17 leaf's sponge PREIMAGE, named so the
+per-instance collision event below is stated at exactly the list the widened digest absorbs
+(`imtLeafHash8 hash a v n = hash (imtLeafPre8 a v n)`, `rfl`). -/
+def imtLeafPre8 (addr : Digest8Key) (value : ℤ) (next : Digest8Key) : List ℤ :=
+  keyLanes addr ++ value :: keyLanes next
+
+theorem imtLeafHash8_eq_pre (hash : List ℤ → ℤ) (addr : Digest8Key) (value : ℤ)
+    (next : Digest8Key) : imtLeafHash8 hash addr value next = hash (imtLeafPre8 addr value next) :=
+  rfl
+
+/-- The arity-17 preimage DETERMINES all three fields: 8 address lanes, the value, 8 pointer lanes,
+recovered by list decomposition alone. No hash hypothesis. -/
+theorem imtLeafPre8_inj {a₁ a₂ n₁ n₂ : Digest8Key} {v₁ v₂ : ℤ}
+    (h : imtLeafPre8 a₁ v₁ n₁ = imtLeafPre8 a₂ v₂ n₂) : a₁ = a₂ ∧ v₁ = v₂ ∧ n₁ = n₂ := by
+  simp only [imtLeafPre8, keyLanes, List.cons_append, List.nil_append, List.cons.injEq,
+    and_true] at h
+  obtain ⟨p0, p1, p2, p3, p4, p5, p6, p7, hv, q0, q1, q2, q3, q4, q5, q6, q7⟩ := h
   refine ⟨digest8_ext ?_, hv, digest8_ext ?_⟩
   · intro i; fin_cases i <;> assumption
   · intro i; fin_cases i <;> assumption
+
+/-- **THE HYPOTHESIS-FREE WIDENED-LEAF BINDING.** Equal arity-17 leaf digests force equal
+`(addr8, value, next8)` triples OR name a genuine collision of the deployed sponge at the two
+ABSORBED preimages. NO floor — the `IndexedMerkleTree.imtLeafHash_binds_or_collides` idiom at the
+widened leaf. -/
+theorem imtLeafHash8_binds_or_collides (hash : List ℤ → ℤ)
+    {a₁ a₂ n₁ n₂ : Digest8Key} {v₁ v₂ : ℤ}
+    (h : imtLeafHash8 hash a₁ v₁ n₁ = imtLeafHash8 hash a₂ v₂ n₂) :
+    (a₁ = a₂ ∧ v₁ = v₂ ∧ n₁ = n₂)
+      ∨ IsSpongeColl hash (imtLeafPre8 a₁ v₁ n₁, imtLeafPre8 a₂ v₂ n₂) := by
+  by_cases hpre : imtLeafPre8 a₁ v₁ n₁ = imtLeafPre8 a₂ v₂ n₂
+  · exact Or.inl (imtLeafPre8_inj hpre)
+  · exact Or.inr ⟨hpre, h⟩
+
+/-- The widened leaf binds all three fields — address, value AND pointer.
+⛑ CUT OVER: the refuted `Poseidon2SpongeCR hash` premise is replaced by the per-instance,
+refutable side condition at the two NAMED preimages — which the old premise IMPLIES
+(`fun hc => hc.1 (hCR _ _ hc.2)`, inlined at the one remaining `hCR`-carrying call site rather than
+named, so the cutover mints NO new floor carrier) — exactly as
+`IndexedMerkleTree.imtLeafHash_injective` was cut over on
+2026-07-25. `Poseidon2SpongeCR` is PROVED FALSE at deployed BabyBear parameters, so the old
+statement said nothing about the shipping system; this one is a statement at the deployed sponge. -/
+theorem imtLeafHash8_injective (hash : List ℤ → ℤ)
+    {a₁ a₂ n₁ n₂ : Digest8Key} {v₁ v₂ : ℤ}
+    (hno : ¬ IsSpongeColl hash (imtLeafPre8 a₁ v₁ n₁, imtLeafPre8 a₂ v₂ n₂))
+    (h : imtLeafHash8 hash a₁ v₁ n₁ = imtLeafHash8 hash a₂ v₂ n₂) :
+    a₁ = a₂ ∧ v₁ = v₂ ∧ n₁ = n₂ :=
+  (imtLeafHash8_binds_or_collides hash h).resolve_right hno
 
 /-- **The ANTI-LAUNDER leaf** — the "widen it by hashing the narrow felt" move: fold the 8-felt
 address to lane 0 FIRST, then absorb. The wide-looking output is a function of a ~31-bit input. -/
@@ -305,13 +344,16 @@ theorem narrowLeaf_conflates (hash : List ℤ → ℤ) (value : ℤ) (next : Dig
   refine ⟨?_, lowfelt_collision.2⟩
   simp only [narrowLeafHash, lowfelt_collision.1]
 
-/-- **★ THE FIX IS SOUND.** The arity-17 leaf SEPARATES the same pair under the named CR floor —
-the lanes the projection discards are exactly what the absorb now carries. -/
-theorem wideLeaf_separates (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    (value : ℤ) (next : Digest8Key) :
+/-- **★ THE FIX IS SOUND.** The arity-17 leaf SEPARATES the same pair — the lanes the projection
+discards are exactly what the absorb now carries.
+⛑ CUT OVER off `Poseidon2SpongeCR`: the premise is now the per-instance non-collision at the TWO
+NAMED preimages this row actually absorbs, which the refuted floor implies
+(`noWideLeafColl_of_CR`). Unlike the floor, it is satisfiable at deployed BabyBear parameters. -/
+theorem wideLeaf_separates (hash : List ℤ → ℤ) (value : ℤ) (next : Digest8Key)
+    (hno : ¬ IsSpongeColl hash (imtLeafPre8 keyE value next, imtLeafPre8 keyLo value next)) :
     imtLeafHash8 hash keyE value next ≠ imtLeafHash8 hash keyLo value next := by
   intro h
-  exact lowfelt_collision.2 (imtLeafHash8_injective hash hCR h).1
+  exact lowfelt_collision.2 (imtLeafHash8_injective hash hno h).1
 
 /-! ## §3 — THE WELD: the emitted lex-8 compare gadget bolted to the widened pointer bracket.
 
@@ -565,6 +607,8 @@ theorem demoAncestorOpW_holds :
 #assert_axioms ofNarrow_keyAt
 #assert_axioms narrow_ofNarrow
 #assert_axioms MapOpW.rowAt_length
+#assert_axioms imtLeafPre8_inj
+#assert_axioms imtLeafHash8_binds_or_collides
 #assert_axioms imtLeafHash8_injective
 #assert_axioms narrowLeaf_conflates
 #assert_axioms wideLeaf_separates

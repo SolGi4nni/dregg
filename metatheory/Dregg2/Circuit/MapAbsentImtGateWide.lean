@@ -270,7 +270,10 @@ theorem absentImtGatesW_force_absence (hash : List ℤ → ℤ) (hCR : Poseidon2
     | some l =>
       rw [he] at hmem
       simp only [Option.map_some, Option.some.injEq] at hmem
-      obtain rfl := imtLeafHash8Of_injective hash hCR hmem
+      -- ⛑ `imtLeafHash8Of_injective` was cut over off `Poseidon2SpongeCR` to a per-instance,
+      -- refutable non-collision at the two NAMED 17-felt preimages. This row still carries the
+      -- refuted floor, and the floor IMPLIES that side condition, so nothing is lost here.
+      obtain rfl := imtLeafHash8Of_injective hash (fun hc => hc.1 (hCR _ _ hc.2)) hmem
       exact List.mem_of_getElem? he
   have hnotin : key ∉ imtAddrs c :=
     imtAbsent_excludes_digest8 hs ⟨⟨lowAddr, lowValue, lowNext⟩, hlow, hlk, hkn⟩
