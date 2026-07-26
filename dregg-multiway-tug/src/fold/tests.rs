@@ -285,6 +285,89 @@ fn mint_custom_leg_wide_geometry_is_coherent_fast() {
     );
 }
 
+/// ⚑ THE NON-IGNORED FILLER-LEG GATE — BOTH POLES OF THE ARM-SELECTION GUARD, IN MILLISECONDS.
+///
+/// The linking tail turn of every real-cell fold (`fold_win_over_cell`,
+/// `fold_win_over_cell_state_node_canary`, `fold_membership_play_over_cell`) is a plain nonce bump.
+/// It used to be minted as a `Custom` leg publishing the literal `[1..8]` as its
+/// `custom_proof_commitment` with NO carrier witness — a claim about a sub-proof that did not
+/// exist, riding the fold's plain-segment arm where nothing constrains it. The deployed fold now
+/// refuses that arm selection structurally (`require_no_unbacked_proof_bind`), so the tail rides
+/// `cell_plain_nonce_leg` (`incrementNonceVmDescriptor2R24`) instead.
+///
+/// This drives BOTH poles of the real guard against the descriptors these two minters ACTUALLY
+/// emit, through the fast wide-dispatch half (no STARK — the fold that would exercise it end to end
+/// is `#[ignore]`d and takes minutes):
+///   * the filler leg the tail rides is ACCEPTED on the plain arm (no proof-bind declared);
+///   * the custom leg the tail used to ride is REFUSED there (it declares one).
+/// A future filler swapped back to a proof-bind member, or a guard that stopped firing, fails HERE
+/// on every `cargo test`.
+#[test]
+fn the_tail_filler_leg_clears_the_arm_selection_guard_and_the_custom_leg_does_not_fast() {
+    use dregg_circuit::effect_vm_descriptors::{
+        proof_bind_declarations, require_no_unbacked_proof_bind,
+    };
+    use dregg_circuit::field::BabyBear;
+
+    // The EXACT two-turn shape `fold_win_over_cell` builds: the head turn over `cell @ n -> n+1`,
+    // the tail filler over `n+1 -> n+2`.
+    let cell = producer_cell(1000, 0);
+    let bumped = super::nonce_bumped(&cell);
+    let twice = super::nonce_bumped(&bumped);
+
+    // POLE 1 — the filler the tail turn now rides: allowed on the plain (no-witness) arm.
+    let (filler, _t, tail_pis, _mh, _mb) = super::plain_nonce_leg_wide_desc_trace(&bumped, &twice)
+        .expect("the plain nonce-bump wide dispatch must not err");
+    assert!(
+        filler.name.contains("incrementNonce"),
+        "the tail filler must be the deployed plain nonce-bump member, got '{}'",
+        filler.name
+    );
+    assert_eq!(
+        proof_bind_declarations(&filler),
+        0,
+        "the filler declares no recursive proof-binding"
+    );
+    require_no_unbacked_proof_bind(&filler)
+        .expect("the filler leg is ALLOWED on the fold's plain-segment arm");
+    assert_eq!(
+        tail_pis.len(),
+        filler.public_input_count,
+        "filler PI count must match its committed descriptor"
+    );
+
+    // POLE 2 — the custom leg the tail USED to ride: REFUSED on that same arm. (This is also the
+    // head turn's member, which is fine there: the head DOES carry a carrier witness.)
+    let (custom, _t, head_pis, _mh, _mb) =
+        super::custom_leg_wide_desc_trace(&cell, &bumped, [BabyBear::ZERO; 8])
+            .expect("the wide custom dispatch must not err");
+    let refusal = require_no_unbacked_proof_bind(&custom)
+        .expect_err("a proof-bind member with no carrier witness must be REFUSED on the plain arm");
+    assert_eq!(refusal.declarations, 1);
+    assert_eq!(refusal.name, custom.name);
+
+    // THE LINK the swap must not break: the head's AFTER 8-felt anchor IS the tail's BEFORE anchor
+    // (`turn_anchors8` continuity, the last 16 PIs of each leg). Changing the tail's descriptor
+    // family would be a silent chain break if the anchors were derived differently — they are not.
+    let (hn, tn) = (head_pis.len(), tail_pis.len());
+    let head_new8 = &head_pis[hn - 8..];
+    let tail_old8 = &tail_pis[tn - 16..tn - 8];
+    assert_eq!(
+        head_new8, tail_old8,
+        "the custom head turn's AFTER anchor must equal the incrementNonce tail's BEFORE anchor"
+    );
+    assert_eq!(
+        head_new8,
+        &cell_wire_commit8(&bumped)[..],
+        "and both are the shared no-STARK v9 chip commitment of the once-bumped cell"
+    );
+    assert_ne!(
+        tail_old8,
+        &tail_pis[tn - 8..],
+        "a nonce bump MOVES the anchor — the link check above is not 0 == 0"
+    );
+}
+
 /// ⚑ THE NON-IGNORED OCTET-POSITION CANARY (the offset-drift gate).
 ///
 /// `probe_leg_field_octet` and the DEPLOYED app-root arm both locate the wide custom leg's committed

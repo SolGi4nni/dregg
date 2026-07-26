@@ -257,6 +257,66 @@ fn bridge(w: &rw::RotationWitness) -> RotatedBlockWitness {
     RotatedBlockWitness::new(w.pre_limbs.clone(), w.iroot).expect("pre-iroot limbs")
 }
 
+/// The BEFORE/AFTER rotated block witnesses for a `before_cell -> after_cell` transition — the
+/// limbs + iroot the wide carriers re-absorb into the leg's 8-felt anchors
+/// (`wide_old_root8`/`wide_new_root8`). Shared by every leg minter here so the anchors of a custom
+/// leg and of the plain filler leg over the SAME cells are computed by the SAME route and therefore
+/// LINK (`turn_anchors8` continuity in `prove_turn_chain_recursive`); an anchor derived two ways is
+/// a chain break waiting for a flag-day.
+fn cell_block_witnesses(
+    before_cell: &Cell,
+    after_cell: &Cell,
+) -> (RotatedBlockWitness, RotatedBlockWitness) {
+    let mut ledger = Ledger::new();
+    ledger.insert_cell(after_cell.clone()).expect("ledger seed");
+    let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
+    let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32]];
+    let produce = |cell: &Cell| {
+        bridge(&rw::produce(
+            cell,
+            &ledger,
+            &nullifier_root,
+            &commitments_root,
+            &dregg_turn::rotation_witness::empty_revoked_root_8(),
+            &receipt_log,
+            &Default::default(),
+        ))
+    };
+    (produce(before_cell), produce(after_cell))
+}
+
+/// **ROUTE THE REAL COMMITTED FIELDS INTO THE EFFECTVM STATE.** The v1 EffectVM state the wide
+/// producer lays its BEFORE/AFTER blocks from, for a nonce-bump transition over a real cell.
+///
+/// The wide leg exposes the AFTER-block `fields[0..8]` octet (leg PIs `custom_leg_field_octet_lo(n)
+/// .. +8`, currently 66..74 at the deployed `public_input_count = 98`) that the app-root weld's
+/// `field_key` indexes; but that octet is `fill_block`-OVERRIDDEN from the v1 EffectVM
+/// AFTER-state-block fields (`row[STATE_AFTER_BASE + FIELD_BASE + i]` = `st.fields[i]`,
+/// `EffectVmEmitRotationV3.weldsAt`), NOT from the rotation witness — so with the default
+/// `CellState::new` (fields all zero) the octet is ALL ZEROS and NO `field_key` can ever read the
+/// committed winner. Populate `st.fields` with the cell's real lane-0 field octet
+/// (`field_limbs8(fields[i])[0]`, the SAME lane the v9 commitment absorbs) so the v1 state block,
+/// the appendix octet, and the wide anchors all carry the real committed values and the octet
+/// exposes `field[7] == winner`. Neither a `Custom` nor an `IncrementNonce` effect mutates fields,
+/// so the AFTER block (which the octet reads) carries exactly these. Fields 8..15 have no lane-0
+/// limb and are unaffected.
+///
+/// `CellState::new` stored `state_commitment` over the (default-zero) fields; it is recomputed here
+/// now that `fields` carry the real values, or the trace's committed-state column is stale vs the
+/// hash the descriptor recomputes over the real fields (a STARK constraint violation at prove time).
+fn cell_state_with_committed_fields(before_cell: &Cell, after_cell: &Cell) -> CellState {
+    let mut st = CellState::new(
+        after_cell.state.balance() as u64,
+        before_cell.state.nonce() as u32,
+    );
+    for i in 0..8 {
+        st.fields[i] = dregg_circuit::effect_vm::field_limbs8(&after_cell.state.fields[i])[0];
+    }
+    st.refresh_commitment();
+    st
+}
+
 /// **THE WORLDCELL → LEAF BRIDGE.** Mint a wide `customVmDescriptor2R24` leg whose cell
 /// transition is `before_cell -> after_cell` — the REAL committed cells the caller snapshots
 /// around a played WorldCell turn (`spween_dregg::WorldCell::cell_snapshot`), carrying their
@@ -291,56 +351,12 @@ pub fn custom_leg_wide_desc_trace(
     ),
     String,
 > {
-    let mut st = CellState::new(
-        after_cell.state.balance() as u64,
-        before_cell.state.nonce() as u32,
-    );
-    // ROUTE THE REAL COMMITTED FIELDS INTO THE EFFECTVM STATE. The wide leg exposes the AFTER-block
-    // `fields[0..8]` octet (leg PIs `custom_leg_field_octet_lo(n) .. +8`, currently 66..74 at the
-    // deployed `public_input_count = 98`) that the app-root weld's `field_key` indexes; but that octet
-    // is `fill_block`-OVERRIDDEN from the v1 EffectVM AFTER-state-block fields
-    // (`row[STATE_AFTER_BASE + FIELD_BASE + i]` = `st.fields[i]`, `EffectVmEmitRotationV3.weldsAt`), NOT
-    // from `after_w` — so with the default `CellState::new` (fields all zero) the octet is ALL ZEROS and
-    // NO `field_key` can ever read the committed winner. Populate `st.fields` with the cell's real
-    // lane-0 field octet (`field_limbs8(fields[i])[0]`, the SAME lane the v9 commitment absorbs) so the
-    // v1 state block, the appendix octet, and the wide anchors all carry the real committed values and
-    // the octet exposes `field[7] == winner`. A `Custom` effect never mutates fields, so the AFTER block
-    // (which the octet reads) carries exactly these. Fields 8..15 have no lane-0 limb and are unaffected.
-    for i in 0..8 {
-        st.fields[i] = dregg_circuit::effect_vm::field_limbs8(&after_cell.state.fields[i])[0];
-    }
-    // `CellState::new` stored `state_commitment` over the (default-zero) fields; recompute it now that
-    // `fields` carry the real values, or the trace's committed-state column is stale vs the hash the
-    // descriptor recomputes over the real fields (a STARK constraint violation at prove time).
-    st.refresh_commitment();
+    let st = cell_state_with_committed_fields(before_cell, after_cell);
     let effects = vec![Effect::Custom {
         program_vk_hash: [BabyBear::new(9); 8],
         proof_commitment: commit,
     }];
-
-    let mut ledger = Ledger::new();
-    ledger.insert_cell(after_cell.clone()).expect("ledger seed");
-    let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32]];
-    let before_w = bridge(&rw::produce(
-        before_cell,
-        &ledger,
-        &nullifier_root,
-        &commitments_root,
-        &dregg_turn::rotation_witness::empty_revoked_root_8(),
-        &receipt_log,
-        &Default::default(),
-    ));
-    let after_w = bridge(&rw::produce(
-        after_cell,
-        &ledger,
-        &nullifier_root,
-        &commitments_root,
-        &dregg_turn::rotation_witness::empty_revoked_root_8(),
-        &receipt_log,
-        &Default::default(),
-    ));
+    let (before_w, after_w) = cell_block_witnesses(before_cell, after_cell);
 
     generate_rotated_effect_vm_descriptor_and_trace_wide(
         &st,
@@ -353,6 +369,97 @@ pub fn custom_leg_wide_desc_trace(
         None,
         None,
     )
+}
+
+/// **THE FAST HALF of [`cell_plain_nonce_leg`] — the NON-CUSTOM filler leg's wide dispatch WITHOUT
+/// the STARK prove.** Build the `incrementNonceVmDescriptor2R24` leg's committed DESCRIPTOR +
+/// producer TRACE + PI vector for the plain nonce bump `before_cell -> after_cell`, through the SAME
+/// shared wide dispatcher [`custom_leg_wide_desc_trace`] routes through (widen → S2-compact →
+/// E1-compact → descriptor-tail pairing) and over the SAME block witnesses, so its 8-felt anchors
+/// are computed identically and LINK to a custom leg over the same cells.
+///
+/// `Effect::IncrementNonce` is the deployed selector for exactly this transition: the AIR is full
+/// state passthrough (balance, fields and cap-root unchanged) with the nonce advancing by one, which
+/// IS the whole content of a linking tail turn. Everything the leg publishes is constrained by its
+/// own rotated AIR — there is no external claim, so `None` is the sanctioned re-exec rung for it and
+/// `require_no_unbacked_proof_bind` passes (the member declares no `DescriptorIR2.ProofBind` op).
+#[allow(clippy::type_complexity)]
+pub fn plain_nonce_leg_wide_desc_trace(
+    before_cell: &Cell,
+    after_cell: &Cell,
+) -> Result<
+    (
+        dregg_circuit::descriptor_ir2::EffectVmDescriptor2,
+        Vec<Vec<BabyBear>>,
+        Vec<BabyBear>,
+        Vec<Vec<dregg_circuit::heap_root::HeapLeaf>>,
+        dregg_circuit::descriptor_ir2::MemBoundaryWitness,
+    ),
+    String,
+> {
+    let st = cell_state_with_committed_fields(before_cell, after_cell);
+    let effects = vec![Effect::IncrementNonce];
+    let (before_w, after_w) = cell_block_witnesses(before_cell, after_cell);
+
+    generate_rotated_effect_vm_descriptor_and_trace_wide(
+        &st,
+        &effects,
+        &before_w,
+        &after_w,
+        &empty_caveat_manifest(),
+        None,
+        None,
+        None,
+        None,
+    )
+}
+
+/// **THE PLAIN FILLER LEG** — a proven wide `incrementNonceVmDescriptor2R24` leg for the nonce bump
+/// `before_cell -> after_cell`. The non-custom twin of [`cell_custom_leg`], for the LINKING TAIL of
+/// a real-cell fold: a turn that carries no sub-proof and claims nothing about one.
+///
+/// This leg rides the fold's plain-segment arm (`carrier_witness: None`) LEGITIMATELY. A custom leg
+/// cannot: `customVmDescriptor2R24` declares a `DescriptorIR2.ProofBind`, publishing an 8-felt
+/// commitment at IR2 PI 46..53 that the deployed evaluator does NOT constrain (`Ir2Air::Main` has no
+/// `ProofBind` arm), so the ONLY thing that can make that claim mean anything is the Custom arm's
+/// connect to a re-proven sub-proof leaf — and a tail turn has no sub-proof to connect. Filling the
+/// commitment with a literal and dropping the witness would ship a prover-chosen number no proof
+/// backs; minting a throwaway sub-proof just to satisfy the pairing would ship a fabricated one.
+/// Both are forgeries inside the honest path. The honest tail simply does not make the claim, and
+/// the assertion below pins that structurally, at mint time, on the SAME detector
+/// `require_no_unbacked_proof_bind` uses at fold time.
+fn cell_plain_nonce_leg(before_cell: &Cell, after_cell: &Cell) -> RotatedParticipantLeg {
+    let (desc, trace, dpis, map_heaps, mb) =
+        plain_nonce_leg_wide_desc_trace(before_cell, after_cell)
+            .expect("plain nonce-bump wide dispatch");
+    assert_eq!(
+        dregg_circuit::effect_vm_descriptors::proof_bind_declarations(&desc),
+        0,
+        "the filler leg's committed descriptor '{}' must declare NO recursive proof-binding — it \
+         rides the fold's plain-segment arm with no carrier witness, and a proof-bind member on \
+         that arm publishes a claim nothing backs (refused at the fold by \
+         `require_no_unbacked_proof_bind`)",
+        desc.name
+    );
+
+    let config = ir2_leaf_wrap_config();
+    let proof = prove_vm_descriptor2_for_config(
+        &desc,
+        &trace,
+        &dpis,
+        &mb,
+        &map_heaps,
+        &UMemBoundaryWitness::default(),
+        &config,
+    )
+    .expect("plain nonce-bump wide leg proves under the leaf-wrap config");
+
+    RotatedParticipantLeg {
+        proof,
+        descriptor: desc,
+        public_inputs: dpis,
+        carrier_witness: None,
+    }
 }
 
 fn cell_custom_leg(
@@ -660,11 +767,17 @@ pub fn win_leaf_bound(
     }
 }
 
-/// A plain nonce-bump Custom leg over `cell` (no bundle) — the linking tail turn of a
-/// real-cell win fold.
+/// The LINKING TAIL TURN of a real-cell fold: a plain nonce bump `cell @ n -> n+1` over the same
+/// real cell, carrying no sub-proof and claiming none.
+///
+/// It rides [`cell_plain_nonce_leg`] — the deployed `incrementNonceVmDescriptor2R24` member, whose
+/// AIR is exactly "full state passthrough, nonce + 1". It used to ride a `Custom` leg whose
+/// `custom_proof_commitment` was the literal `[1,2,3,4,5,6,7,8]` with no carrier witness attached:
+/// a claim about a sub-proof that did not exist, published into the fold's plain-segment arm where
+/// nothing constrains it. That is refused now (`require_no_unbacked_proof_bind`), and correctly —
+/// the repair is to stop making the claim, not to manufacture a sub-proof to back a filler.
 fn plain_turn_over_cell(cell: &Cell) -> FinalizedTurn {
-    let commit = core::array::from_fn(|i| BabyBear::new((i + 1) as u32));
-    let leg = cell_custom_leg(cell, &nonce_bumped(cell), commit, None);
+    let leg = cell_plain_nonce_leg(cell, &nonce_bumped(cell));
     FinalizedTurn::new(DescriptorParticipant::rotated(leg))
 }
 
