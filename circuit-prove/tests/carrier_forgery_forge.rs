@@ -241,10 +241,16 @@ fn bridge_deployed_binds_per_turn_identity_but_not_cross_turn_uniqueness() {
     // BridgedNullifierSet, off the LC fold.) There is no committed nullifier column in the mint row's
     // PIs to key such a table on — the residual is structural, not a missing constraint over a
     // present column.
+    // BOTH insert shapes count. Matching `MapKind::Insert` alone would let an `AafiInsert`
+    // set-table sit here unseen and turn this into a vacuous "no dedup exists" — the same blind
+    // spot that took `circuit/tests/accumulator_completion_lane_forge.rs` down when the deployed
+    // noteCreate members moved to `aafi_insert`. Today `mintVmDescriptor2R24` carries NO map-op of
+    // any kind, so the verdict is unchanged; the widened match is what keeps it honest if one lands.
     let has_nullifier_set_table = desc.constraints.iter().any(|c| {
         matches!(c, VmConstraint2::MapOp(m) if matches!(
             m.op,
             dregg_circuit::descriptor_ir2::MapKind::Insert
+                | dregg_circuit::descriptor_ir2::MapKind::AafiInsert
         ))
     });
     assert!(

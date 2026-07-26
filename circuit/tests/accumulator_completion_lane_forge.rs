@@ -104,11 +104,20 @@ fn bridge(w: &rw::RotationWitness) -> RotatedBlockWitness {
     RotatedBlockWitness::new(w.pre_limbs.clone(), w.iroot).expect("pre-iroot limbs")
 }
 
-/// The `.insert` map-op's `new_root` 8-felt group COLUMNS, read straight off the parsed descriptor.
+/// The insert-shaped map-op's `new_root` 8-felt group COLUMNS, read straight off the parsed
+/// descriptor.
+///
+/// BOTH insert kinds count. The deployed noteCreate members route `MapKind::AafiInsert`
+/// (append-at-free-index) — `dregg-effectvm-noteCreate-v1-rot24-v3-insert-heapopen-gentian-deployed-\
+/// bare-refuse` carries exactly one map-op and its `op` is `aafi_insert`. This helper used to match
+/// `MapKind::Insert` ALONE, so on the deployed descriptor it found nothing and panicked "has no
+/// INSERT map-op", taking both teeth in this file down with it. Which of the two insert shapes the
+/// emit picks is not what this file is auditing — the audit is whether the `new_root` COMPLETION
+/// LANES are bound — so it accepts either and forges the same 8-felt group.
 fn insert_new_root_cols(desc: &EffectVmDescriptor2) -> Vec<usize> {
     for c in &desc.constraints {
         if let VmConstraint2::MapOp(m) = c {
-            if m.op == MapKind::Insert {
+            if matches!(m.op, MapKind::Insert | MapKind::AafiInsert) {
                 return m
                     .new_root
                     .iter()
@@ -120,7 +129,10 @@ fn insert_new_root_cols(desc: &EffectVmDescriptor2) -> Vec<usize> {
             }
         }
     }
-    panic!("descriptor {} has no INSERT map-op", desc.name);
+    panic!(
+        "descriptor {} has no insert-shaped map-op (neither Insert nor AafiInsert)",
+        desc.name
+    );
 }
 
 /// `true` iff prove/verify REFUSES (Err or panic) on the given trace + PIs — the light-client verdict.

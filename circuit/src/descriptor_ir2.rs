@@ -548,8 +548,13 @@ pub enum MapKind {
     /// at its stable position (PATH1), updates its `next_addr := k` giving an intermediate
     /// root `R1`, then appends `(k, v, low_oldNext)` at a distinct EMPTY free slot (PATH2)
     /// giving `new_root` — positions STABLE, no shift. Consumes `AafiInsertWitness8`
-    /// (`heap_root.rs`). ADDITIVE: nothing emits this op yet (the atomic routing flip is a
-    /// later single-owned commit); op≤3 rows are byte-identical.
+    /// (`heap_root.rs`).
+    ///
+    /// ⚠ "ADDITIVE: nothing emits this op yet" used to sit here and is FALSE at HEAD: the routing
+    /// flip landed and the deployed noteCreate members
+    /// (`dregg-effectvm-noteCreate-v1-rot24-v3-insert-heapopen-gentian-deployed-bare-refuse` in the
+    /// wide registry, and its narrow twin) carry exactly one map-op whose `op` is `aafi_insert`.
+    /// Code that matches `MapKind::Insert` alone will silently miss the deployed accumulator write.
     AafiInsert,
 }
 
