@@ -24,9 +24,18 @@
 //!     logical value `1` proves under the canonical big-endian-into-24..32 encoding and is REFUSED
 //!     under the `pack_u64`-style little-endian-into-0..8 encoding, on the real deployed descriptor.
 //!   * `the_canonical_pair_round_trips_through_the_writable_window` — encode/decode is identity for
-//!     every value the window admits, so moving a call site cannot lose data.
-//!   * `every_frozen_prefix_writer_in_the_tree_is_registered` — the wildcard-free source walk: any
-//!     NEW hand-rolled scalar-into-the-frozen-prefix encoder fails this test by name.
+//!     every value the window admits, so moving a call site cannot lose data; and the `2^32`
+//!     ceiling is pinned, so widening it must be deliberate.
+//!   * `the_repaired_casualties_now_prove` — the exact values the repaired production encoders now
+//!     emit (the HTTP decimal path, factory-birth, the bridge ledger, a packed board coord) each
+//!     prove against the deployed descriptor.
+//!   * `every_setfield_encoder_writes_inside_the_u64_lane` — the TOOTH, and it is TYPE-directed
+//!     rather than name-directed: it walks the tree for functions that take a `u64`/`i64` and
+//!     return a 32-byte field element, and fails any that write below byte 24. A new encoder is
+//!     caught by its SHAPE whatever it is named; landing one means using the canonical pair or
+//!     registering it in `REGISTERED_NON_SETFIELD_ENCODERS` with the reason its value never
+//!     reaches a `fields[]` slot (the HEAP codecs are registered there — `set_field_ext` rides a
+//!     different descriptor and is NOT completion-frozen).
 
 use dregg_cell::{Cell, Ledger, field_from_u64};
 use dregg_circuit::descriptor_ir2::{
@@ -157,7 +166,8 @@ fn accepts(b: &Built) -> bool {
 
 /// How the hand-rolled `pack_u64` zoo encoded a scalar: LITTLE-endian into bytes `0..8`.
 /// Reproduced here (not imported) precisely because the point of this gate is that NO shipping
-/// crate may contain this function any more — see `every_frozen_prefix_writer_in_the_tree_is_registered`.
+/// crate may contain this shape any more — see `every_setfield_encoder_writes_inside_the_u64_lane`,
+/// which is why this file is the one path that walk skips.
 fn le_prefix_encoding(v: u64) -> [u8; 32] {
     let mut fe = [0u8; 32];
     fe[..8].copy_from_slice(&v.to_le_bytes());
