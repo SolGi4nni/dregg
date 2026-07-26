@@ -374,8 +374,16 @@ fn evaluate_constraint_full(
         // below, explicitly non-verified. THIS gate is RELEASE-only — see
         // `undecided_subset_disposition` — so debug/test builds across the workspace keep the guest
         // evaluator and stay green; a deployed release node without the oracle fails closed.)
-        #[cfg(all(not(debug_assertions), any(unix, windows)))]
-        if let Some(disposition) = undecided_subset_disposition(constraint) {
+        //
+        // The predicate is `oracle::constraint_subset_fails_closed_without_oracle()` rather than an
+        // inline `#[cfg]` so that ONE `const fn` both GATES this refusal and ANSWERS "does this build
+        // refuse?" for every other crate. Three crates had hand-copied the cfg into their startup
+        // logic; a copy can drift from the gate it claims to describe, and this one is the gate.
+        // A `const fn` returning `false` folds the whole branch out, so debug/wasm codegen is
+        // unchanged.
+        if super::oracle::constraint_subset_fails_closed_without_oracle()
+            && let Some(disposition) = undecided_subset_disposition(constraint)
+        {
             return disposition;
         }
     }

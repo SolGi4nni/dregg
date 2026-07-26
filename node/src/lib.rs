@@ -637,6 +637,47 @@ pub fn install_verified_distributed_gates() {
     dregg_exec_lean::register_distributed_gates();
 }
 
+/// Arm the verified-Lean DEPLOYED-EXECUTOR oracles — the CONSTRAINT oracle (the deployed
+/// `StateConstraint`/`HeapAtom` subset decided by the proven `dregg_constraint_admits`) and the
+/// CONSERVATION oracle (per-asset `Σδ=0` decided by the proven `dregg_cross_cell_conserves`).
+/// Idempotent (both registrations are `OnceLock`-backed), so every entry into a node may call it.
+///
+/// ⚑ SAME SHAPE AS [`install_verified_distributed_gates`], ONE LAYER DOWN, and it was missed when
+/// that one was fixed (2026-07-26): the two oracle registrations were still inline in [`run`], so
+/// the distributed gates got armed by [`crate::state::NodeState::new`] while the oracles did not.
+/// The dispositions do not match in severity, which is why this matters more than the tidiness:
+///
+/// * with no CONSTRAINT oracle, `dregg_cell::program::eval` FAILS CLOSED for the whole Lean subset
+///   on a native release build (`constraint_subset_fails_closed_without_oracle`), so an embedder that
+///   builds a node through `NodeState::new` could serve nothing programmed — it can only refuse; and
+/// * with no CONSERVATION oracle the executor does NOT fail closed — it silently decides `Σδ=0`
+///   with the unverified Rust twin that already drifted into an inflation bug.
+///
+/// This installs unconditionally (not release-gated, unlike the SDK's `AgentRuntime` arming): a node
+/// is always native and always the deployed configuration, and [`run`] has depended on the debug
+/// install for `assert_conservation_oracle_installed` since it was written.
+pub fn install_verified_executor_oracles() {
+    // The deployed executor's pure-subset admission, computed BY the Lean source
+    // (`Dregg2.Exec.DeployedConstraint.admits`) rather than `eval.rs`'s hand-authored Rust `match`.
+    // `dregg-cell`/`dregg-turn` cannot link the archive (wasm32 + SP1 zkVM guest), so the backend
+    // comes from `dregg-exec-lean` at native startup. When the archive lacks the export (a stale or
+    // `DREGG_REQUIRE_LEAN=0` build) this is a no-op — and on a release build every programmed-cell
+    // turn then refuses. Such a build cannot boot a node anyway: the SAME missing archive leaves the
+    // conservation oracle absent, and `assert_conservation_oracle_installed()` in `run` panics on it.
+    if dregg_exec_lean::register_constraint_oracle() {
+        tracing::debug!("constraint oracle: verified Lean deployed-constraint evaluator installed");
+    }
+    // Per-asset `Σδ=0` via `Dregg2.Circuit.CrossCellConserveDecision.conservesFFI`, proved EQUAL to
+    // the committed `CrossCellConservation` AIR boundary by
+    // `CrossCellConserveRefine.decision_conserves_iff_air_boundary`, replacing the hand-written
+    // `dregg_circuit::block_conservation::BlockConservation` twin.
+    if dregg_exec_lean::register_conservation_oracle() {
+        tracing::debug!(
+            "conservation oracle: verified Lean cross-cell per-asset Σδ=0 decision installed"
+        );
+    }
+}
+
 /// Run the node from a parsed [`Cli`]. This is the library entry point the thin
 /// `main.rs` binary calls after `Cli::parse()`. It installs process-wide runtime
 /// facilities (the rustls crypto provider, the verified-Lean distributed gates,
@@ -649,31 +690,11 @@ pub async fn run(cli: Cli) {
 
     install_verified_distributed_gates();
 
-    // Arm the verified-Lean CONSTRAINT ORACLE (game-proof LARP-audit collapse): route the deployed
-    // executor's pure-subset `StateConstraint`/`HeapAtom` admission through the PROVEN Lean
-    // `dregg_constraint_admits` (`Dregg2.Exec.DeployedConstraint.admits`) instead of `eval.rs`'s
-    // hand-authored Rust `match`. `dregg-cell`/`dregg-turn` cannot link the archive (wasm32 + SP1 zkVM
-    // guest), so this installs the Lean backend from `dregg-exec-lean` at native startup. When the
-    // archive lacks the export (stale seed), this is a no-op and the Rust guest-path evaluator decides.
-    if dregg_exec_lean::register_constraint_oracle() {
-        tracing::debug!("constraint oracle: verified Lean deployed-constraint evaluator installed");
-    }
+    // Arm the verified-Lean deployed-executor oracles (constraint + conservation). One named
+    // installer, shared with `NodeState::new` — see `install_verified_executor_oracles` for why the
+    // inline copy that used to live here was the same class of bug as the distributed gates above.
+    install_verified_executor_oracles();
 
-    // Arm the verified-Lean CONSERVATION ORACLE (House Law #1, twin-deletion #1): route the deployed
-    // executor's per-asset `Σδ=0` value-conservation gate through the PROVEN Lean
-    // `dregg_cross_cell_conserves` (`Dregg2.Circuit.CrossCellConserveDecision.conservesFFI`, proved
-    // EQUAL to the committed `CrossCellConservation` AIR boundary by
-    // `CrossCellConserveRefine.decision_conserves_iff_air_boundary`) instead of the hand-written Rust
-    // `dregg_circuit::block_conservation::BlockConservation` twin (the asset-inflation boundary that
-    // already drifted once). `dregg-turn` cannot link the archive (wasm32 + zkVM guest), so this
-    // installs the Lean backend from `dregg-exec-lean` at native startup. When the archive lacks the
-    // export (stale seed), this is a no-op and the labeled Rust fallback in `turn::executor::atomic`
-    // decides (the interim; the deployed full node installs the verified decision here).
-    if dregg_exec_lean::register_conservation_oracle() {
-        tracing::debug!(
-            "conservation oracle: verified Lean cross-cell per-asset Σδ=0 decision installed"
-        );
-    }
     // FAIL-CLOSED (twin-deletion #1, gap #2): a native full-Lean node MUST decide per-asset
     // conservation with the verified Lean oracle installed above. If registration was a no-op
     // (missing/stale `libdregg_lean.a`, or the archive lacks the `dregg_cross_cell_conserves`

@@ -22,6 +22,16 @@
 >    `DREGG_ALLOW_UNAUDITED_PQ=1` clears (1) but NOT (2) — it is a different gate.
 > 3. **The unblock is a real Lean archive** matching HEAD (`pbuild` is shipping one). Until
 >    then a rebuilt game surface cannot serve turns, so do not redeploy one.
+> 4. **(2026-07-26) The symptom is now ANNOUNCED, not silent** — the diagnosis above stands
+>    unchanged, but you no longer have to infer it from a cron that never fires. The oracles are
+>    armed at the derivation point (`dregg_sdk::AgentRuntime::new`, which every world-cell deploy
+>    passes through), and the discord bot prints at second zero, at `ERROR`:
+>    `GAMES ARE DEAD IN THIS BUILD — NO VERIFIED CONSTRAINT ORACLE in this process …`.
+>    Grep the first ten lines of `journalctl --user -u dregg-discord-bot` for `GAMES ARE DEAD`
+>    to decide in one command whether a binary can serve a turn. The bot still boots on purpose
+>    (identity, wallet, gallery, explorer, payments all work); only the games are dead. And a
+>    player who hits it now gets a sentence instead of the name of a Rust function — the internal
+>    detail moved to a `tracing::error!` beside the refusal.
 >
 > **If you deploy anyway:** back up first, install with an atomic rename (`cp` to `.new` then
 > `mv -f` — a plain `cp` over the running binary fails `Text file busy`), and after a
@@ -30,9 +40,22 @@
 > web surface avoided a third outage.
 
 **Status: LIVE on hbox (2026-07-17).** Rehosted off the AWS edge — AWS is now
-caddy/gateway ONLY. Connected to Discord as "Dragon's Egg", 52 global slash
-commands, offerings bootstrapped, the daily-Descent cron live (rolls today's
-world from a real drand beacon).
+caddy/gateway ONLY. Connected to Discord as "Dragon's Egg", offerings
+bootstrapped, the daily-Descent cron live (rolls today's world from a real drand
+beacon).
+
+**The slash surface** is whatever `commands::menus::SLASH_SURFACE` advertises —
+`/dregg` `/descent` `/play` `/cipherclerk` `/verify` `/help`, of which `/dregg`
+is operator-only (`default_member_permissions: "0"`, so Discord hides it from
+members who cannot use it). The boot log prints the exact list; grep
+`Registered .* global slash commands` in `journalctl --user -u
+dregg-discord-bot` rather than trusting a number written here.
+
+The un-advertised (lab) commands — `/gallery` `/govern` `/identity` `/hermes`
+`/federation` `/leaderboard` `/adventure` — are registered ONLY in
+`DREGG_LAB_GUILD_ID`. Unset, the boot log warns and names every one of them, and
+they are typeable nowhere. Set it to a guild id to get the whole workshop back
+inside that one guild without putting it in a stranger's autocomplete.
 
 ## Where it runs
 - systemd USER unit `dregg-discord-bot.service` on **hbox** (this dir's unit),

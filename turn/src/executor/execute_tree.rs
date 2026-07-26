@@ -1181,6 +1181,20 @@ impl TurnExecutor {
                 &witnesses,
             );
             if let Err(e) = result {
+                // ⚑ THE TWO AUDIENCES OF A REFUSAL. `reason` is carried up and rendered to a
+                // PLAYER (`ProgramError`'s `Display`), so a refusal caused by missing server
+                // machinery must not hand them an internal symbol to go install — it did, on the
+                // live Discord bot, 2026-07-26. The operator's half is emitted here, at the
+                // instant the refusal is produced, so the fix and the apology are simultaneous.
+                // `None` for every ordinary constraint violation, so this adds no log volume to
+                // the refusals that ARE about the caller's move.
+                if let Some(diagnostic) = e.operator_diagnostic() {
+                    tracing::error!(
+                        cell = %cell_id,
+                        diagnostic = %diagnostic,
+                        "REFUSED a programmed-cell turn for a reason the player cannot fix"
+                    );
+                }
                 return Err((
                     TurnError::ProgramViolation {
                         cell: *cell_id,

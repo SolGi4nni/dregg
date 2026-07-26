@@ -1079,6 +1079,14 @@ impl NodeState {
         // A node exists ⇒ its verified coordination gates are armed. See
         // [`crate::install_verified_distributed_gates`] for why this cannot live only in `run()`.
         crate::install_verified_distributed_gates();
+        // ⚑ AND ITS DEPLOYED-EXECUTOR ORACLES. This was the half left behind when the gates above
+        // were lifted out of `run()`: the constraint + conservation registrations stayed inline in
+        // the CLI, so a node obtained any other way (this constructor, the in-process axum router,
+        // an embedder linking `dregg-node` as a library) had its coordination seams armed and its
+        // executor oracles absent. On a native release build an absent constraint oracle makes
+        // `dregg_cell::program::eval` refuse the ENTIRE Lean constraint subset, so such a node could
+        // only ever refuse a programmed-cell turn. See [`crate::install_verified_executor_oracles`].
+        crate::install_verified_executor_oracles();
         let db_path = data_dir.join("dregg.redb");
         let store = Arc::new(
             PersistentStore::open(&db_path).map_err(|e| format!("failed to open store: {e}"))?,

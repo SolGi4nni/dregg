@@ -222,6 +222,13 @@ pub use turns::{AuthorizedTurn, TurnBuilder};
 
 // The identity, its runtime, and the effect vocabulary the verbs speak.
 pub use cipherclerk::{AgentCipherclerk, SignedTurn};
+/// **Does THIS build refuse a Lean-subset `StateConstraint` when no oracle is installed?** — the ONE
+/// source for the deployed executor's fail-closed gate, re-exported for the same reason as the
+/// `dregg-pq` outcomes above: a host (`dreggnet-web`, a bot, a funnel) must be able to ask the
+/// question that decides whether it can serve a turn without taking a direct `dregg-cell`
+/// dependency, and above all without hand-copying the gate's `cfg` into its own startup logic. Every
+/// copy of that predicate in the tree has drifted from the gate at least once.
+pub use dregg_cell::program::constraint_subset_fails_closed_without_oracle;
 pub use dregg_cell::{CellId, Ledger};
 /// The verify-core install outcome (from `dregg-pq`), re-exported so SDK-hosted processes can match on
 /// [`install_verified_mldsa_verify_core`]'s result without a direct `dregg-pq` dependency.
@@ -236,10 +243,11 @@ pub use dregg_turn::Effect;
 pub use dregg_types::{PublicKey, Signature};
 pub use error::SdkError;
 pub use runtime::{
-    AgentRuntime, SubAgent, executor_pubkey_from_seed, install_verified_mldsa_keygen_core_real,
-    install_verified_mldsa_sign_core_real, install_verified_mldsa_verify_core,
-    install_verified_mlkem_decaps_core, install_verified_mlkem_encaps_core,
-    install_verified_mlkem_keygen_core,
+    AgentRuntime, SubAgent, deployed_executor_arming_attempted,
+    deployed_executor_arming_deficiency, executor_pubkey_from_seed,
+    install_verified_mldsa_keygen_core_real, install_verified_mldsa_sign_core_real,
+    install_verified_mldsa_verify_core, install_verified_mlkem_decaps_core,
+    install_verified_mlkem_encaps_core, install_verified_mlkem_keygen_core,
 };
 
 // ORGAN 4 — THE GATEWAY surface: the delegated tool-access seam for a live

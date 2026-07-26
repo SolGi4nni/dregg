@@ -81,3 +81,29 @@ pub(crate) fn installed_oracle() -> Option<&'static dyn ConstraintOracle> {
 pub fn constraint_oracle_installed() -> bool {
     ORACLE.get().is_some()
 }
+
+/// **Whether THIS build of `dregg-cell` REFUSES the Lean-evaluated constraint subset when no oracle
+/// is installed** — the single source for the release-only fail-closed gate.
+///
+/// [`eval`](super::eval)'s no-oracle branch calls exactly this (it is a `const fn`, so a `false`
+/// return const-folds the refusal out of the build entirely). Nothing else may restate the `cfg`.
+/// Two copies of it exist at the time of writing and both are outside this crate:
+/// `dreggnet-web/src/verified_settlement.rs` hand-repeats
+/// `all(not(debug_assertions), any(unix, windows))` verbatim (twice), and `dregg-sdk`'s
+/// `AgentRuntime` arming gates on the WEAKER `all(feature = "exec-lean", not(debug_assertions))` —
+/// which omits `any(unix, windows)`, so those two predicates already do not agree about what a
+/// deployed build is. A copied predicate is a claim that the gate it describes may have moved; call
+/// this instead, from any crate, and the answer IS the gate.
+///
+/// * `true` — native (unix/windows) **release**: an absent oracle REFUSES every Lean-subset
+///   constraint, so a deployed binary that does not install one can only ever refuse. Any such
+///   binary MUST arm the oracle at startup (`dregg_exec_lean::register_constraint_oracle`, which the
+///   SDK does from `AgentRuntime::new`).
+/// * `false` — DEBUG builds (the workspace's whole test suite: `dregg-cell` is a pervasive
+///   dependency and a `not(test)` refusal would refuse valid turns everywhere), and wasm32 / the SP1
+///   zkVM guest, neither of which can link `libdregg_lean.a`. Those take [`eval`](super::eval)'s
+///   Rust guest-path evaluator, explicitly labeled unverified — that is the documented intent, NOT
+///   a hole to close: the browser light client has no archive to install from.
+pub const fn constraint_subset_fails_closed_without_oracle() -> bool {
+    cfg!(all(not(debug_assertions), any(unix, windows)))
+}

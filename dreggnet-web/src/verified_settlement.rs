@@ -124,8 +124,12 @@ fn install_and_probe() -> Result<(), String> {
     // dev) the guest-path evaluator legitimately decides and this must stay quiet; on a release
     // native build without the oracle every programmed-cell turn is already dead, so booting only
     // moves the discovery to a player.
-    #[cfg(all(not(debug_assertions), any(unix, windows)))]
-    if !constraint_oracle {
+    //
+    // "EXACT" is now enforced rather than asserted: this ASKS the gate
+    // (`dregg_sdk::constraint_subset_fails_closed_without_oracle()`, re-exported from `dregg-cell` —
+    // the same `const fn` `eval.rs` branches on) instead of hand-repeating its `cfg`. A copied
+    // predicate is a claim that the gate may have moved, and this file carried two copies of it.
+    if dregg_sdk::constraint_subset_fails_closed_without_oracle() && !constraint_oracle {
         return Err(
             "the verified deployed-constraint oracle did not register (the linked archive does \
              not export `dregg_constraint_admits`). On a native RELEASE build `dregg-cell` fails \
@@ -146,8 +150,14 @@ fn install_and_probe() -> Result<(), String> {
         installed = conservation_oracle,
         "conservation oracle: per-asset Σδ=0 is decided by the verified `dregg_cross_cell_conserves`"
     );
-    #[cfg(all(not(debug_assertions), any(unix, windows)))]
-    if !conservation_oracle {
+    // The SAME predicate, read here as "is this the deployed native-release configuration" rather
+    // than as a statement about conservation: it reproduces this refusal's original
+    // `all(not(debug_assertions), any(unix, windows))` cfg exactly, so the behaviour is unchanged.
+    // (Conservation's own requirement predicate is BROADER —
+    // `dregg_turn::executor::native_build_requires_oracle()` is `any(unix, windows)` with no profile
+    // clause, which is why `dregg-node` panics on a missing conservation oracle in debug too. This
+    // surface deliberately keeps the narrower release-only refusal it shipped with.)
+    if dregg_sdk::constraint_subset_fails_closed_without_oracle() && !conservation_oracle {
         return Err(
             "the verified cross-cell conservation oracle did not register (the linked archive \
              does not export `dregg_cross_cell_conserves`). The executor would silently decide \

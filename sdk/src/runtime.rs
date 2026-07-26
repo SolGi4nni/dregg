@@ -405,10 +405,27 @@ pub(crate) fn ensure_verified_mldsa_identity_cores_installed() {
 /// documented intent in `eval.rs`'s own note: `not(debug_assertions)` is "cell's OWN production
 /// convention". The oracle path still has direct coverage in
 /// `exec-lean/tests/constraint_oracle_reality_gate.rs`, which installs it explicitly.
-#[cfg(all(feature = "exec-lean", not(debug_assertions)))]
+///
+/// ⚑ THE PROFILE HALF OF THAT GATE IS NO LONGER RESTATED HERE. It reads
+/// `dregg_cell::program::constraint_subset_fails_closed_without_oracle()` — the same `const fn`
+/// `eval.rs` branches on — instead of a hand-copied `not(debug_assertions)`. The two had already
+/// drifted: this function's copy omitted `any(unix, windows)`, so it and the gate did not agree
+/// about what a deployed build is. Two further effects, both wanted: the install body is now
+/// TYPE-CHECKED in a debug build (before, it compiled only in release — a whole code path `cargo
+/// test` could never see), and the `feature = "exec-lean"` half stays a `cfg` because it gates the
+/// existence of the dependency, which is a link-time fact and not a profile one.
+#[cfg(feature = "exec-lean")]
 fn ensure_deployed_executor_oracles_installed() {
     use std::sync::Once;
     static LOGGED: Once = Once::new();
+    ARMING_REACHED.store(true, std::sync::atomic::Ordering::Relaxed);
+    // Install exactly where `dregg-cell`'s refusal bites, and nowhere else — asking the gate rather
+    // than describing it. `false` here (every DEBUG build, wasm32, the zkVM guest) means `eval` runs
+    // its Rust guest-path evaluator and arming the oracle would silently re-route every
+    // programmed-cell decision in the workspace's suite.
+    if !dregg_cell::program::constraint_subset_fails_closed_without_oracle() {
+        return;
+    }
     let constraint = dregg_exec_lean::register_constraint_oracle();
     let conservation = dregg_exec_lean::register_conservation_oracle();
     LOGGED.call_once(|| {
@@ -442,11 +459,82 @@ fn ensure_deployed_executor_oracles_installed() {
     });
 }
 
-/// No-op without `exec-lean` (a wasm/zkvm embedding links no archive and `dregg-cell`'s release-only
-/// fail-closed gate is unreachable there), and no-op in DEBUG (see the note above: debug keeps the
-/// guest-path evaluator, and arming it here would change every test in the workspace).
-#[cfg(any(not(feature = "exec-lean"), debug_assertions))]
-fn ensure_deployed_executor_oracles_installed() {}
+/// Installs nothing without `exec-lean`: a wasm / zkVM / `default-features = false` embedding links
+/// no archive to install FROM, and `dregg-cell`'s fail-closed gate is inactive on those targets
+/// anyway, so the Rust guest-path evaluator is that build's documented (labeled-unverified) path. It
+/// still RECORDS that the arming point was reached — see the `ARMING_REACHED` note below, which is
+/// why this is not simply an empty body.
+#[cfg(not(feature = "exec-lean"))]
+fn ensure_deployed_executor_oracles_installed() {
+    ARMING_REACHED.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// **Was the deployed-executor arming point REACHED in this process?** — set by
+/// [`ensure_deployed_executor_oracles_installed`] on EVERY target and EVERY profile, including the
+/// builds where it deliberately installs nothing.
+///
+/// ⚑ WHY A SEPARATE FLAG FROM "the oracle is installed". The bug this exists to detect is *nothing
+/// called the installer*, and that bug is invisible to a test that asks whether the oracle is
+/// installed: the answer is legitimately `false` in every DEBUG build (the install is
+/// release-gated), so such a test is VACUOUS exactly where the whole workspace runs its suite. It
+/// survived a full day of lanes for that reason — four of them saw `no constraint oracle installed`
+/// and filed it as co-tenant churn.
+///
+/// Splitting the two makes the missing-call class detectable in a plain `cargo test`: whether the
+/// arming point was reached is a property of the CALL GRAPH, identical in debug and release, while
+/// whether an oracle came out of it depends on the target and the linked archive. `spween-dregg`'s
+/// `constraint_oracle_armed` tooth asserts the first after a real world-cell deploy — delete the
+/// `ensure_deployed_executor_oracles_installed()` call from [`AgentRuntime::new`] and it goes red in
+/// debug, on a laptop, in seconds.
+static ARMING_REACHED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether this process has passed through the deployed-executor arming point (an [`AgentRuntime`]
+/// has been constructed, by any route). See the `ARMING_REACHED` note above for why this is asked
+/// separately from "is the oracle installed".
+///
+/// `false` after driving a programmed-cell turn means the turn ran on a path that never reaches
+/// [`AgentRuntime`] — a new host that builds a `dregg_turn::TurnExecutor` directly, say — and on a
+/// native release build that path can only ever refuse.
+pub fn deployed_executor_arming_attempted() -> bool {
+    ARMING_REACHED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// **The one operator sentence a BINARY should print at startup**, or `None` when this build is
+/// correctly configured (or is a build that legitimately has no oracle).
+///
+/// Arms the oracles (idempotent — an [`AgentRuntime`] anywhere in the process has already done it)
+/// and then answers the only question that matters to whoever is watching a boot log: *can this
+/// binary serve a programmed-cell turn at all?* The answer is `Some(_)` in exactly one
+/// configuration — the build where `dregg_cell`'s
+/// `constraint_subset_fails_closed_without_oracle()` holds and no oracle installed — and that
+/// configuration cannot serve a single dungeon, Descent or campaign turn.
+///
+/// ⚑ THIS IS FOR BINARIES THAT MUST NOT REFUSE TO BOOT. `dreggnet-web-server` refuses to bind a
+/// listener (`dreggnet_web::install_verified_settlement_gate`) and `dregg-node` refuses to run, both
+/// correctly: they exist to serve turns. A chat bot does not — its identity, wallet, gallery and
+/// explorer commands all work fine without an oracle — so it should say this LOUDLY at second zero
+/// and keep serving what it can, rather than crash-loop. What it must never do is what the Discord
+/// bot did for a week: boot, report `active`, and refuse every game silently.
+pub fn deployed_executor_arming_deficiency() -> Option<String> {
+    ensure_deployed_executor_oracles_installed();
+    if !dregg_cell::program::constraint_subset_fails_closed_without_oracle() {
+        return None;
+    }
+    if dregg_cell::program::constraint_oracle_installed() {
+        return None;
+    }
+    Some(
+        "NO VERIFIED CONSTRAINT ORACLE in this process, and this build fails CLOSED without one: \
+         every programmed-cell turn will be refused — the dungeon, the Descent, the campaign, the \
+         daily reveal — while every other command keeps working, so the process will look healthy. \
+         Two builds land here: one whose linked `libdregg_lean.a` does not export \
+         `dregg_constraint_admits` (a `DREGG_REQUIRE_LEAN=0` or stale-archive build degrades to \
+         exactly this — check the `constraint oracle:` warning above), and one compiled with \
+         `dregg-sdk`'s `exec-lean` feature off, which links no verified executor at all. Rebuild \
+         against a HEAD-matching archive, with default features, before serving games."
+            .to_string(),
+    )
+}
 
 /// Perform the once-per-process ML-KEM DECAPS-core install at SDK agent-runtime startup, logging once.
 fn ensure_verified_mlkem_decaps_core_installed() {
