@@ -108,6 +108,11 @@ pub mod explorer;
 pub mod fhegg_operation;
 /// The one browser interaction grammar shared by every game offering.
 pub mod game_session;
+/// **`GET /guide` — how to play**, for a reader who has never heard of any of this. The product's
+/// only guide material was developer-facing (`docs/guide/`), so a stranger who wanted to know what a
+/// turn was had a leaderboard, a card grid and a board, and nothing that answered. Under a
+/// no-private-vocabulary rule enforced by its own tests. See [`guide`].
+pub mod guide;
 /// Prometheus metrics for the web surface (the `node/src/metrics.rs` pattern): the idempotent
 /// process-global recorder + the `GET /metrics` handler + the named emit helpers this surface's
 /// call sites bump (session opens/evictions, policy refusals, executor refusals, anchor + resume
@@ -121,6 +126,13 @@ pub mod overlay;
 /// actor is a derived internal label, never the game's canonical seat string). See
 /// [`seated::SeatedTug`].
 pub mod seated;
+/// **A DURABLE, RECOVERABLE PLAYER IDENTITY** — `GET /identity` plus the claim/confirm/restore/
+/// release posts. 24 BIP39 words (`dregg_sdk::mnemonic`, path `dregg/0` — the CLI's own constant)
+/// derive an Ed25519 keypair whose PUBLIC KEY *is* the [`DreggIdentity`], so the same words
+/// reproduce the same player on any device and a phrase-holding client can sign as them on
+/// `/act-signed`. An OPT-IN upgrade over the anonymous visitor cookie, never a wall in front of
+/// play. Read the module doc for where the key lives and what that exposes. See [`seed_identity`].
+pub mod seed_identity;
 /// The deterministic generative art surface: a `dreggnet_asset::AssetId` → a byte-identical SVG
 /// sprite (`dreggnet-sprite`), served at `GET /sprite/{kind}/{ref}`, painted onto an asset-bearing
 /// deos `Tile`, and shown in a `GET /gallery`. See [`sprite`].
@@ -154,11 +166,18 @@ pub mod tug_web;
 /// already landed. See [`verified_settlement`].
 pub mod verified_settlement;
 mod web_identity_http;
+/// **`GET /you` (and `/me`) — the page where a player sees their own record**: the tables this
+/// server is holding open for them, the Descent runs the board has under their label, and the
+/// receipts their own landed moves minted. Pure assembly over stores that already exist, and
+/// deliberately flat about what it cannot know (a `?user=` label is REFUSED here; the browser's
+/// Descent pseudonym lives in that tab's local storage, not in the cookie). See [`you`].
+pub mod you;
 
 pub use descent::{DescentState, descent_router, run_share_path};
 pub use verified_settlement::{
     install_failure_advice, install_verified_settlement_gate, verified_settlement_available,
 };
+pub use you::{YouState, you_router};
 
 use std::collections::HashMap;
 use std::sync::mpsc::{SyncSender, sync_channel};
@@ -216,7 +235,13 @@ fn catalog_route_viewer(key: &str, user: &str, established: bool) -> (String, Dr
             web_identity(ANONYMOUS_RPG_LABEL),
         )
     } else {
-        (user.to_string(), web_identity(user))
+        // `resolve_identity`, not `web_identity`: a mac-valid CLAIMED label
+        // (`dregg-id-<pubkey_hex>.<mac>`, minted only by `seed_identity`) resolves to the public
+        // key ITSELF, so a phrase-backed player is the same `DreggIdentity` the signed
+        // `/act-signed` route verifies to. Every other label — visitor token, seat label, explicit
+        // `?user=`, the council electorate — takes the historical `blake3(label)` path, byte for
+        // byte unchanged.
+        (user.to_string(), seed_identity::resolve_identity(user))
     }
 }
 
@@ -316,8 +341,13 @@ impl Frontend for WebFrontend {
     /// Derive `user`'s internal [`DreggIdentity`] label — blake3(user) hex. Deterministic: the SAME
     /// asserted web user always maps to the SAME actor. This hash is not a login or proof of key
     /// ownership.
+    ///
+    /// One exception, and it is the opposite of a weakening: a **claimed** label
+    /// ([`seed_identity::claim_label`] — a public key plus a server-only mac) resolves to the public
+    /// key itself rather than a hash of it, so the legacy `/session/{id}` surface attributes a
+    /// phrase-backed player to the same identity every other surface does.
     fn identity(&self, user: String) -> DreggIdentity {
-        web_identity(&user)
+        seed_identity::resolve_identity(&user)
     }
 
     /// Open an (empty) surface slot for `session`.
@@ -743,7 +773,7 @@ fn page(id: &SessionId, notice: Option<&str>, fragment: &str, verify: &VerifyRep
             &format!("/session/{}/verify", esc(&id.0)),
         ),
     );
-    document(&format!("dregg — session {}", id.0), "", &body)
+    document(&format!("{PRODUCT_NAME} — session {}", id.0), "", &body)
 }
 
 /// The page shown for a `POST` / verify against a session id that is not open.
@@ -755,7 +785,7 @@ fn page_missing(id: &SessionId) -> String {
          </main>",
         id = esc(&id.0),
     );
-    document(&format!("dregg — session {}", id.0), "", &body)
+    document(&format!("{PRODUCT_NAME} — session {}", id.0), "", &body)
 }
 
 /// **Derive a web user's frontend-agnostic [`DreggIdentity`] label** — `blake3(user)` hex.
@@ -892,6 +922,9 @@ strong{font-weight:700;color:var(--fg)}
 .topnav a[aria-current=page]{color:var(--fg);background:rgba(92,201,255,.13);box-shadow:inset 0 0 0 1px rgba(92,201,255,.24)}
 .foot{max-width:var(--shell);margin:var(--s7) auto 0;padding:var(--s5) 1.25rem var(--s6);border-top:1px solid var(--line-soft);display:flex;flex-wrap:wrap;gap:var(--s2) var(--s5);align-items:center;justify-content:space-between;font-size:var(--t-sm);color:var(--fg-3)}
 .foot p{margin:0}
+/* The lineage line ("Dragon's Arcade is the play surface of the dregg project") sits below the
+   property claim rather than beside it — it is an identification, not a headline. */
+.foot .lineage{flex:1 1 100%;color:var(--fg-3);opacity:.85}
 .foot nav{display:flex;gap:var(--s4)}
 .foot a{color:var(--fg-2);text-decoration:none}
 .foot a:hover{color:var(--accent)}
@@ -1032,6 +1065,10 @@ strong{font-weight:700;color:var(--fg)}
 .receipt.refused{border-color:rgba(255,123,134,.3);background:rgba(255,123,134,.05)}
 .receipt.refused .dot{background:var(--bad);box-shadow:0 0 9px var(--bad)}
 .receipt.refused .verdict{color:var(--bad)}
+/* The register gloss under the receipt strip: quiet prose, NOT the mono voice — it explains the
+   mono line above it and would read as more verifiable material if it wore the same face. */
+.receipt-gloss{margin:.45rem 0 0;font-size:var(--t-micro);line-height:1.55;color:var(--fg-3);max-width:60ch}
+.receipt-gloss strong{color:var(--fg-2);font-weight:700}
 .backlink{display:inline-flex;align-items:center;gap:.4rem;margin:var(--s5) 0 0;font-size:var(--t-sm);color:var(--fg-2);text-decoration:none;font-weight:600}
 .backlink:hover{color:var(--accent)}
 /* ═══ THE BOARD — the hero surface ═══════════════════════════════════════ */
@@ -1420,19 +1457,15 @@ form.in-flight button[disabled]{cursor:progress}
 pub const DESCENT_PLAY_PATH: &str = "/descent/play";
 
 /// ⚑ **THE PRODUCT NAME, in ONE place** — the brand text in the top bar and the `<title>` of every
-/// served page.
+/// served page. A re-export of [`dreggnet_catalog::SURFACE_NAME`], which is where the name is
+/// DECIDED: the web, Telegram, WeChat and the discord-bot's admin portal all read that one
+/// constant, so the arcade cannot be called two things on two hosts.
 ///
-/// It is `dregg`: the name the project actually uses for itself (`README.md`, and the
-/// `www.dregg.net` / `arcade.dregg.net` domains this surface is deployed under). It replaced
-/// **"dregg"**, which was never a product name — it names the frontend-agnostic
-/// Offering/Session *library layer* (`dreggnet-offerings`), and `docs/DREGGNET-CLOUD-OFFERINGS.md`
-/// says so outright: *""dregg" names the shape, not a live service."* A layer name in the
-/// browser tab told a stranger nothing and dated the page.
-///
-/// ⚠ UNRESOLVED, and deliberately not decided here: whether the PLAY SURFACE wants its own name
-/// under the project (it is deployed at `arcade.dregg.net`, which suggests "dregg arcade"). The
-/// repo states no such name, so this uses the project's own rather than inventing one.
-pub const PRODUCT_NAME: &str = "dregg";
+/// It is **Dragon's Arcade** (ember, 2026-07-26). The previously-flagged ambiguity is closed: the
+/// PROJECT is still `dregg` (`README.md`, `www.dregg.net`, the workspace, the token) and does not
+/// move; this names the play SURFACE, the thing at `arcade.dregg.net`. Exactly one string on the
+/// product says both — [`dreggnet_catalog::arcade_lineage`], in the footer.
+pub const PRODUCT_NAME: &str = dreggnet_catalog::SURFACE_NAME;
 
 /// The brand mark — four squares, one lit: a board where a move landed. Inline SVG (no external
 /// asset, no request), `aria-hidden` because the adjacent brand text is the accessible name.
@@ -1462,7 +1495,7 @@ fn topbar(active: &str) -> String {
     format!(
         "<header class=\"topbar\"><div class=\"topbar-in\">\
          <a class=\"brand\" href=\"/\">{MARK}<span class=\"brand-name\">{PRODUCT_NAME}</span></a>\
-         <nav class=\"topnav\" aria-label=\"Surfaces\">{play}{board}{offerings}</nav>\
+         <nav class=\"topnav\" aria-label=\"Surfaces\">{play}{board}{offerings}{guide}{you}</nav>\
          </div></header>",
         MARK = MARK,
         PRODUCT_NAME = PRODUCT_NAME,
@@ -1473,6 +1506,13 @@ fn topbar(active: &str) -> String {
         offerings = item("/offerings", "offerings", "All games"),
         play = item(DESCENT_PLAY_PATH, "descent", "The Descent"),
         board = item("/descent", "descent-board", "Board"),
+        // LAST, deliberately: the nav's job is to get someone into a game, and a reader who wants
+        // the rules first will look for this word rather than needing it put in front of them.
+        guide = item("/guide", "guide", "How to play"),
+        // ⚑ AND THE WAY BACK. Without a nav item the YOU page is exactly as unfindable as it was
+        // when it did not exist — "is there a place I go to see my stats?" is answered by a LINK,
+        // not by a route. It sits at the end because it is the return trip, not the way in.
+        you = item(you::YOU_PATH, "you", "You"),
     )
 }
 
@@ -1594,14 +1634,28 @@ const ENHANCE_SCRIPT: &str = r##"<script>
 })();
 </script>"##;
 
-/// The page footer — states the one property the whole product rests on, and repeats the nav.
-const FOOTER: &str = "<footer class=\"foot\">\
-     <p>Every move is re-run against the rules before it counts — here, in this server, \
-     not on a blockchain.</p>\
-     <nav aria-label=\"Footer\"><a href=\"/descent\">The Descent</a>\
-     <a href=\"/automatafl\">Automatafl</a>\
-     <a href=\"/offerings\">All games</a><a href=\"/gallery\">Gallery</a>\
-     <a href=\"/health\">Status</a></nav></footer>";
+/// The page footer — states the one property the whole product rests on, names where the arcade
+/// sits inside the project, and repeats the nav.
+///
+/// ⚑ THE FOOTER IS THE ONE PLACE THAT SAYS BOTH NAMES. The top bar and every `<title>` say
+/// `Dragon's Arcade` (the surface); `dreggnet_catalog::arcade_lineage` says once, quietly, that it
+/// is the play surface of the `dregg` project. Repeating the pair anywhere else turns a name into
+/// noise, and dropping it entirely would leave a visitor with no way to connect the arcade to the
+/// project whose domain they are on.
+pub(crate) fn footer() -> String {
+    format!(
+        "<footer class=\"foot\">\
+         <p>Every move is re-run against the rules before it counts — here, in this server, \
+         not on a blockchain.</p>\
+         <p class=\"lineage\">{lineage}</p>\
+         <nav aria-label=\"Footer\"><a href=\"/descent\">The Descent</a>\
+         <a href=\"/automatafl\">Automatafl</a>\
+         <a href=\"/offerings\">All games</a><a href=\"/guide\">How to play</a>\
+         <a href=\"/gallery\">Gallery</a>\
+         <a href=\"/health\">Status</a></nav></footer>",
+        lineage = esc(dreggnet_catalog::arcade_lineage()),
+    )
+}
 
 /// **Wrap a body fragment in the full product document** — head (charset / viewport / title / the
 /// inlined [`STYLE`]) + the shared [`topbar`] + the fragment + the [`FOOTER`]. Every served surface
@@ -1635,7 +1689,7 @@ pub(crate) fn document_with_head(
         style = STYLE,
         topbar = topbar(active),
         body = body,
-        footer = FOOTER,
+        footer = footer(),
         script = ENHANCE_SCRIPT,
     )
 }
@@ -1675,7 +1729,8 @@ fn receipt_html(verify: &VerifyReport, label: &str, verify_href: &str) -> String
         "<div class=\"receipt {cls}\"><span class=\"dot\"></span>\
          <span class=\"label\">{label}</span><span class=\"verdict\">{v}</span>\
          <span>{turns}</span><span class=\"detail\">{detail}</span>\
-         <a class=\"replay-verify\" rel=\"nofollow\" href=\"{verify_href}\">Replay-verify</a></div>",
+         <a class=\"replay-verify\" rel=\"nofollow\" href=\"{verify_href}\">Replay-verify</a></div>\
+         <p class=\"receipt-gloss\">{gloss}</p>",
         cls = cls,
         label = esc(label),
         v = if verify.verified {
@@ -1686,8 +1741,29 @@ fn receipt_html(verify: &VerifyReport, label: &str, verify_href: &str) -> String
         turns = turn_count(verify.turns),
         detail = esc(&verify.detail),
         verify_href = esc(verify_href),
+        gloss = RECEIPT_REGISTER_GLOSS,
     )
 }
+
+/// ⚑ **THE TWO WORDS, RECONCILED — once, where they sit next to each other.**
+///
+/// A first-time reader found `Recorded (asserted)` in the success banner and `verified` in the
+/// receipt strip *describing the same action on the same page* — one hedging, one certain, with
+/// nothing saying why (`docs/reference/UX-QA-SWEEP-2026-07-26.md`, finding 5). They are not two
+/// grades of the same claim: they have DIFFERENT SUBJECTS. `verified` is about the MOVES (the chain
+/// re-ran against the rules and matched); `asserted` is about the NAME (this surface takes your
+/// label at face value and checks no signature — `PlayerAttributionGrade::Asserted`).
+///
+/// It lives HERE, beside the strip, rather than in the banner: the banner fires on every press and a
+/// paragraph of vocabulary repeated per move is noise, while the distinction is a standing property
+/// of the page. A signed act (`act_signed`) reads `Signed by …` in the banner instead, at which point
+/// the second half of this sentence stops applying to it — and says so.
+const RECEIPT_REGISTER_GLOSS: &str = "Two different words, two different subjects. \
+     <strong>verified</strong> is about the MOVES: every turn in this session was re-run against the \
+     rules just now and came out the same. <strong>asserted</strong>, on a move's own receipt, is \
+     about the NAME on it: this page takes the name you gave at face value and checks no signature, \
+     so it can say the move was legal and cannot say who made it. A move signed with a key reads \
+     <strong>Signed by</strong> instead.";
 
 /// `"1 verified turn"` / `"5 verified turns"` — the count, pluralised properly (the old line always
 /// said "turns", so a one-turn session read "1 verified turns").
@@ -2724,12 +2800,18 @@ impl GameFormAuthority {
 /// The result of collecting + resolving a catalog POST.
 enum CatalogAct {
     /// The affordance was offered and resolved on the substrate (a real landed receipt / refusal).
-    Advanced(Outcome),
+    /// `did` is the LABEL of the affordance that was pressed, read off the surface the act was
+    /// collected against — see [`pressed_label`].
+    Advanced {
+        outcome: Outcome,
+        did: Option<String>,
+    },
     /// A game turn crossed the authority-bound common spine and was reduced
     /// to the viewer-blind publication grammar before leaving the host thread.
     AdvancedGame {
         outcome: Outcome,
         publication: Option<PublicGameReceipt>,
+        did: Option<String>,
     },
     /// The executor committed, but the post-commit viewer-blind projection
     /// failed. This must never be reported as a refusal: retrying could land a
@@ -2741,6 +2823,65 @@ enum CatalogAct {
     Missing,
     /// The common game spine refused an internally inconsistent/stale route.
     GameRouteRefused(String),
+}
+
+/// **The label of the affordance that was pressed** — `(turn, arg)` matched against the surface the
+/// act was collected from, exact pair first and the turn alone as a fallback (a `CoordGrid` cell or
+/// an `Input` fires a turn whose `arg` is the user's, so no row carries that exact pair).
+///
+/// ⚑ WHY THIS EXISTS. The success banner used to read `Turn committed — Recorded (asserted) ·
+/// executor receipt 02f5138e…`: a 64-character hex and no item, no price, no action. A first-time
+/// reader's verdict was *"the confirmation confirms that SOMETHING happened, not WHAT"*
+/// (`docs/reference/UX-QA-SWEEP-2026-07-26.md`, finding 3). The label is the only string in the whole
+/// path that knows what the player meant — the executor is handed a typed `{turn, arg}` and the
+/// receipt is a hash — so it has to be carried from the surface to the banner deliberately.
+///
+/// It is presentation, never authority: the label is read off the same projection the press was
+/// VALIDATED against, and the executor still resolves the typed pair alone. An empty label yields
+/// `None` and the banner falls back to naming the raw turn.
+/// **The banner's opening clause: WHAT the player did.** `"Sealed a move to (3,3) · "` from the
+/// pressed affordance's own label, or `"`select` · "` from the raw turn name when the surface
+/// offered no label at all. Always ends in a separator so the caller can concatenate the receipt
+/// card straight after it.
+///
+/// The label is trimmed and clipped: an affordance label is button text, but a `CoordGrid` glyph or
+/// a generated row can be long, and a banner is one line.
+pub(crate) fn named_act(did: Option<&str>, turn: &str) -> String {
+    let name = match did.map(str::trim).filter(|l| !l.is_empty()) {
+        Some(label) if label.chars().count() <= 90 => label.to_string(),
+        Some(label) => {
+            let head: String = label.chars().take(87).collect();
+            format!("{head}…")
+        }
+        // No label to be had (a bare `CoordGrid` cell, a crafted POST the surface still offers). The
+        // turn NAME is not prose, but it is the true answer to "what did I just fire" and beats a
+        // bare hash.
+        None if !turn.trim().is_empty() => format!("`{}`", turn.trim()),
+        None => return String::new(),
+    };
+    format!("{name} · ")
+}
+
+fn pressed_label<'a>(
+    offered: impl Iterator<Item = &'a Action>,
+    turn: &str,
+    arg: i64,
+) -> Option<String> {
+    let mut by_turn: Option<&Action> = None;
+    for action in offered {
+        if action.turn != turn {
+            continue;
+        }
+        if action.arg == arg {
+            return Some(action.label.clone()).filter(|l| !l.trim().is_empty());
+        }
+        if by_turn.is_none() {
+            by_turn = Some(action);
+        }
+    }
+    by_turn
+        .map(|a| a.label.clone())
+        .filter(|l| !l.trim().is_empty())
 }
 
 /// `POST /offerings/{key}/session/{id}/act` — the real-turn seam for ANY offering. Reads the web
@@ -2863,6 +3004,19 @@ async fn post_offering_act(
                 }) {
                     return CatalogAct::NotOffered;
                 }
+                // WHAT THE PLAYER JUST DID, in the words they read on the button — captured HERE,
+                // against the very surface the act was collected from, because it is the only place
+                // the label still exists (the executor sees a typed `{turn, arg}` and nothing else).
+                let did = pressed_label(
+                    view.affordances
+                        .iter()
+                        .filter_map(|affordance| match affordance {
+                            GameAffordance::Turn { action, .. } => Some(action),
+                            _ => None,
+                        }),
+                    &turn,
+                    arg,
+                );
                 let action = Action::new(turn.clone(), turn, arg, true);
                 match execute_bound_asserted_game_turn(
                     host,
@@ -2891,6 +3045,7 @@ async fn post_offering_act(
                         CatalogAct::AdvancedGame {
                             outcome: execution.outcome,
                             publication,
+                            did,
                         }
                     }
                     Err(error) => CatalogAct::GameRouteRefused(error.to_string()),
@@ -2916,10 +3071,15 @@ async fn post_offering_act(
             if !actions.iter().any(|a| a.turn == turn) {
                 return CatalogAct::NotOffered;
             }
+            // WHAT THE PLAYER JUST DID — the pressed row's own label, off the same `actions_for`
+            // projection the press was validated against. It never reaches the executor (which
+            // resolves the TYPED `{turn, arg}` and nothing else); it exists so the confirmation can
+            // say WHAT happened and not only that something did.
+            let did = pressed_label(actions.iter(), &turn, arg);
             // The label + enabled are decoration; the executor resolves the TYPED (turn, arg).
             let action = Action::new(turn.clone(), turn, arg, true);
             match h.advance(&k, &sid, action, inner_actor) {
-                Some(o) => CatalogAct::Advanced(o),
+                Some(o) => CatalogAct::Advanced { outcome: o, did },
                 None => CatalogAct::Missing,
             }
         })
@@ -2929,17 +3089,20 @@ async fn post_offering_act(
     // join (`hex(TurnReceipt.turn_hash)`); an executor refusal is `routed` (the substrate was
     // reached — the refusal is ITS decision), a not-offered/missing is the frontend's.
     audit::log().emit(match &acted {
-        CatalogAct::Advanced(Outcome::Landed { receipt, ended }) => act_audit_event(
-            &user, &actor, &key, &sid, &form,
-        )
-        .with_outcome(audit::AuditOutcome::Landed {
-            turn_hash: audit::hex32(&receipt.turn_hash),
-            ended: *ended,
-        }),
-        CatalogAct::Advanced(Outcome::Refused(why)) => {
-            act_audit_event(&user, &actor, &key, &sid, &form)
-                .with_outcome(audit::AuditOutcome::Refused { why: why.clone() })
-        }
+        CatalogAct::Advanced {
+            outcome: Outcome::Landed { receipt, ended },
+            ..
+        } => act_audit_event(&user, &actor, &key, &sid, &form).with_outcome(
+            audit::AuditOutcome::Landed {
+                turn_hash: audit::hex32(&receipt.turn_hash),
+                ended: *ended,
+            },
+        ),
+        CatalogAct::Advanced {
+            outcome: Outcome::Refused(why),
+            ..
+        } => act_audit_event(&user, &actor, &key, &sid, &form)
+            .with_outcome(audit::AuditOutcome::Refused { why: why.clone() }),
         CatalogAct::AdvancedGame {
             outcome: Outcome::Landed { receipt, ended },
             ..
@@ -2982,48 +3145,68 @@ async fn post_offering_act(
     // clock measures PROGRESS, not clicking. A no-op on every id that is not a minted table.
     if matches!(
         &acted,
-        CatalogAct::Advanced(Outcome::Landed { .. })
-            | CatalogAct::AdvancedGame {
-                outcome: Outcome::Landed { .. },
-                ..
-            }
-            | CatalogAct::CommittedButPublicationFailed {
-                outcome: Outcome::Landed { .. },
-                ..
-            }
+        CatalogAct::Advanced {
+            outcome: Outcome::Landed { .. },
+            ..
+        } | CatalogAct::AdvancedGame {
+            outcome: Outcome::Landed { .. },
+            ..
+        } | CatalogAct::CommittedButPublicationFailed {
+            outcome: Outcome::Landed { .. },
+            ..
+        }
     ) {
         table_seats::record_landed_act(&key, &sid.0, &user);
     }
 
     let notice = match acted {
-        CatalogAct::Advanced(Outcome::Landed { receipt, ended }) => {
+        CatalogAct::Advanced {
+            outcome: Outcome::Landed { receipt, ended },
+            did,
+        } => {
             format!(
-                "Turn committed — {}",
+                "Turn committed — {}{}",
+                named_act(did.as_deref(), &form.turn),
                 PlayerTurnReceipt::from_landed(&receipt, ended)
                     .compact_text(PlayerReplaySurface::Web)
             )
         }
-        CatalogAct::Advanced(Outcome::Refused(why)) => {
+        CatalogAct::Advanced {
+            outcome: Outcome::Refused(why),
+            did,
+        } => {
             metrics::inc_turn_refused();
-            format!("Refused: {why} (nothing committed — anti-ghost).")
+            // A REFUSAL names the action too. "Refused: not your turn" left a reader guessing which
+            // of four buttons they had just pressed.
+            format!(
+                "Refused: {}{why} (nothing committed — anti-ghost).",
+                named_act(did.as_deref(), &form.turn)
+            )
         }
         CatalogAct::AdvancedGame {
             outcome: Outcome::Landed { .. },
             publication: Some(publication),
+            did,
         } => format!(
-            "Turn committed — {}",
+            "Turn committed — {}{}",
+            named_act(did.as_deref(), &form.turn),
             game_session::public_receipt_text(&publication, PlayerReplaySurface::Web)
         ),
         CatalogAct::AdvancedGame {
             outcome: Outcome::Landed { .. },
             publication: None,
+            ..
         } => "Refused: a landed game turn lacked its public receipt projection.".to_string(),
         CatalogAct::AdvancedGame {
             outcome: Outcome::Refused(why),
+            did,
             ..
         } => {
             metrics::inc_turn_refused();
-            format!("Refused: {why} (nothing committed — anti-ghost).")
+            format!(
+                "Refused: {}{why} (nothing committed — anti-ghost).",
+                named_act(did.as_deref(), &form.turn)
+            )
         }
         CatalogAct::CommittedButPublicationFailed { error, .. } => format!(
             "Turn committed, but its public receipt could not be rendered ({error}). Do not retry; refresh to inspect the committed state."
@@ -3081,7 +3264,11 @@ fn refused_open_response(id: &SessionId, err: &HostError) -> Response {
          </main>",
         err = esc(&err.to_string()),
     );
-    let page = document(&format!("dregg — session {} refused", id.0), "", &body);
+    let page = document(
+        &format!("{PRODUCT_NAME} — session {} refused", id.0),
+        "",
+        &body,
+    );
     let mut resp = (status, Html(page)).into_response();
     if let Some(secs) = retry_after {
         if let Ok(v) = axum::http::HeaderValue::from_str(&secs.to_string()) {
@@ -3410,8 +3597,12 @@ fn wants_fragment(headers: &HeaderMap) -> bool {
 /// `<p>`, a [`Section`](ViewNode::Section) → a titled `<section>`, a [`Menu`](ViewNode::Menu) row /
 /// a [`Button`](ViewNode::Button) → one POST form; containers recurse. A `!enabled` affordance is
 /// rendered `disabled` + dimmed (the cap tooth SHOWN, not hidden — a decoration; the executor still
-/// refuses a crafted POST of it). A value-taking turn's `arg` is an editable number input (so a
-/// market bid's value can be typed); a fixed-choice affordance defaults it to the presented arg.
+/// refuses a crafted POST of it).
+///
+/// ⚑ **`arg` rides HIDDEN on every fixed-choice control** ([`catalog_form`]); only a
+/// [`ViewNode::Input`], which declares that it wants a user value, gets an editable number box
+/// ([`catalog_form_value`]). It used to be editable everywhere, which made every button label
+/// non-binding — see [`catalog_form`] for the whole account.
 pub fn render_catalog_forms(node: &ViewNode, key: &str, id: &str) -> String {
     let mut out = String::new();
     catalog_node(node, key, id, &mut out);
@@ -3686,6 +3877,115 @@ const AF_KEY: &str = "<div class=\"af-key\" aria-hidden=\"true\">\
 /// This pins the three things the browser must then do with that datum, and the negatives, because a
 /// mark that paints like an ordinary square is exactly the failure the plaque exists to prevent: a
 /// player who cannot see the square is dead keeps trying to use it.
+#[cfg(test)]
+mod binding_labels {
+    use super::{named_act, pressed_label, render_catalog_forms};
+    use deos_view::{MenuItem, ViewNode};
+    use dreggnet_offerings::Action;
+
+    /// ⚑ **A BUTTON LABEL IS BINDING AGAIN.** The catalog walker used to draw `arg` as an editable
+    /// number beside a button whose text already named its target, so a reader could change the
+    /// number and act on something else. Both polarities are pinned: a fixed-choice affordance's
+    /// `arg` is HIDDEN, and the one node that asks for a user value still gets its box.
+    #[test]
+    fn a_fixed_affordance_hides_its_arg_and_an_input_node_keeps_its_box() {
+        let menu = ViewNode::Menu {
+            items: vec![
+                MenuItem {
+                    label: "List Ember Cloak (legendary★ · 3◈)".into(),
+                    turn: "list".into(),
+                    arg: 3,
+                    enabled: true,
+                },
+                MenuItem {
+                    label: "List Ember Cloak (legendary★ · 2◈)".into(),
+                    turn: "list".into(),
+                    arg: 2,
+                    enabled: true,
+                },
+            ],
+        };
+        let html = render_catalog_forms(&menu, "trade", "s1");
+        assert!(
+            html.contains("<input type=\"hidden\" name=\"arg\" value=\"3\">")
+                && html.contains("<input type=\"hidden\" name=\"arg\" value=\"2\">"),
+            "a fixed-choice affordance carries its arg HIDDEN: {html}"
+        );
+        assert!(
+            !html.contains("type=\"number\""),
+            "no editable number may sit beside a button whose label names its target: {html}"
+        );
+        // Both rows are still FIREABLE and still distinguishable — hiding the box must not collapse
+        // two rows that differ only by index into one.
+        assert_eq!(html.matches("name=\"arg\"").count(), 2, "{html}");
+
+        let input = ViewNode::Input {
+            bind_view: "draft".into(),
+            fire_turn: "bid".into(),
+            submit_label: "Bid".into(),
+        };
+        let html = render_catalog_forms(&input, "market", "s1");
+        assert!(
+            html.contains("class=\"arg\" type=\"number\" name=\"arg\"") && html.contains(">Bid<"),
+            "an Input node ASKS for a value, so it keeps the editable box: {html}"
+        );
+    }
+
+    /// The pressed row is identified by the exact `(turn, arg)` pair, falling back to the turn alone
+    /// — otherwise two rows differing only by index would confirm each other's action.
+    #[test]
+    fn the_named_action_is_the_row_that_was_actually_pressed() {
+        let offered = vec![
+            Action::new("List Ember Cloak (2◈)", "list", 2, true),
+            Action::new("List Ember Cloak (3◈)", "list", 3, true),
+            Action::new("Cancel your listing", "cancel", 0, true),
+        ];
+        assert_eq!(
+            pressed_label(offered.iter(), "list", 3).as_deref(),
+            Some("List Ember Cloak (3◈)")
+        );
+        assert_eq!(
+            pressed_label(offered.iter(), "cancel", 0).as_deref(),
+            Some("Cancel your listing")
+        );
+        // A board cell / value-taking turn carries an arg no row declares: name the turn's row.
+        assert_eq!(
+            pressed_label(offered.iter(), "list", 99).as_deref(),
+            Some("List Ember Cloak (2◈)")
+        );
+        assert_eq!(pressed_label(offered.iter(), "nothing", 0), None);
+
+        // And the banner clause: a label when there is one, the turn name when there is not, and
+        // nothing at all when there is neither.
+        assert_eq!(named_act(Some("Seal (3,3)"), "seal"), "Seal (3,3) · ");
+        assert_eq!(named_act(None, "seal"), "`seal` · ");
+        assert_eq!(named_act(Some("   "), "seal"), "`seal` · ");
+        assert_eq!(named_act(None, ""), "");
+        let long = "x".repeat(200);
+        assert!(named_act(Some(&long), "t").chars().count() < 95);
+    }
+
+    /// **The two registers are reconciled where they meet.** A page carrying a receipt strip also
+    /// carries the sentence that says `verified` is about the MOVES and `asserted` is about the NAME.
+    #[test]
+    fn the_receipt_strip_glosses_its_own_vocabulary() {
+        let report = dreggnet_offerings::VerifyReport::ok(3);
+        let html = super::receipt_html(&report, "chain re-verified by replay", "/v");
+        assert!(
+            html.contains("verified") && html.contains("3 verified turns"),
+            "{html}"
+        );
+        assert!(
+            html.contains("about the MOVES") && html.contains("about the NAME"),
+            "the strip must say which subject each word has: {html}"
+        );
+        assert!(
+            html.contains("checks no signature"),
+            "and must not leave `asserted` sounding like a weaker `verified`: {html}"
+        );
+    }
+}
+
 #[cfg(test)]
 mod automatafl_mark_paint {
     use super::{AF_KEY, af_square};
@@ -4077,7 +4377,8 @@ fn catalog_node(node: &ViewNode, key: &str, id: &str, out: &mut String) {
                     arg: 0,
                     enabled: true,
                 };
-                out.push_str(&catalog_form(key, id, &it));
+                // THE ONE EDITABLE-ARG CONTROL on this walker: an `Input` node ASKS for a value.
+                out.push_str(&catalog_form_value(key, id, &it));
             }
         }
         // ── STATIC-PROJECTION leaves — DISPLAYED (visible, matching the session route), never a
@@ -4147,11 +4448,27 @@ fn catalog_node(node: &ViewNode, key: &str, id: &str, out: &mut String) {
 }
 
 /// One affordance POST-form control for the catalog: `<form method=post
-/// action="/offerings/{key}/session/{id}/act">` carrying the affordance's `{turn, arg}` — `turn` as
-/// a hidden input, `arg` as an EDITABLE number input defaulting to the presented value (so a
-/// value-taking turn, a market bid, takes a typed value while a fixed-choice affordance just
-/// submits its default). A `!enabled` row is dimmed + `disabled` (a decoration; the executor is the
-/// referee).
+/// action="/offerings/{key}/session/{id}/act">` carrying the affordance's `{turn, arg}` as HIDDEN
+/// inputs plus a submit button whose label names the target. A `!enabled` row is dimmed +
+/// `disabled` (a decoration; the executor is the referee).
+///
+/// ⚑ **`arg` IS HIDDEN, and that closes a real wound.** This walker used to render `arg` as a
+/// VISIBLE EDITABLE `<input type="number">` beside a button whose text already fully named its
+/// target (`List Ember Cloak (legendary★ · 3◈)`), so the label was NOT BINDING: change the box,
+/// press the button, act on something else. It bit hardest where two rows differ only by index —
+/// trade ships two Ember Cloaks distinguishable only by that number, and the tug's `0, 7, 28, 63`
+/// read as leaked internals against seven lanes and a six-card hand
+/// (`docs/reference/UX-QA-SWEEP-2026-07-26.md`, finding 1).
+///
+/// **Why hiding it breaks nothing.** A `MenuItem`/`Button`/`Halo`/`Breadcrumb`/`CoordCell` carries a
+/// FIXED `{turn, arg}` chosen by the offering, and that is exactly what [`deos_view::actuations`] —
+/// the canonical carrier behind Telegram's keyboard, WeChat's numbered list and Discord's buttons —
+/// hands those hosts. On all three the number was never typeable, so no offering can have depended
+/// on a user editing it; this walker was the single surface where the label and the payload could
+/// disagree. The one node that genuinely wants a user value is [`ViewNode::Input`], which declares
+/// it (`fire_turn`) and renders through [`catalog_form_value`] instead. The sibling backend
+/// `deos_view::web` has always drawn exactly this distinction (`session_form` vs
+/// `session_form_arg`) — this is the catalog walker catching up to it.
 fn catalog_form(key: &str, id: &str, it: &MenuItem) -> String {
     let (disabled, cls) = if it.enabled {
         ("", "affordance")
@@ -4162,8 +4479,7 @@ fn catalog_form(key: &str, id: &str, it: &MenuItem) -> String {
         "<form class=\"{cls}\" method=\"post\" action=\"/offerings/{key}/session/{id}/act\" \
          data-session-action=\"turn\" data-turn=\"{turn}\">\
          <input type=\"hidden\" name=\"turn\" value=\"{turn}\">\
-         <input class=\"arg\" type=\"number\" name=\"arg\" value=\"{arg}\" step=\"1\" \
-         inputmode=\"numeric\" aria-label=\"{turn} value\"{disabled}>\
+         <input type=\"hidden\" name=\"arg\" value=\"{arg}\">\
          <button type=\"submit\"{disabled}>{label}</button></form>",
         cls = cls,
         key = esc(key),
@@ -4171,6 +4487,30 @@ fn catalog_form(key: &str, id: &str, it: &MenuItem) -> String {
         turn = esc(&it.turn),
         arg = it.arg,
         disabled = disabled,
+        label = esc(&it.label),
+    )
+}
+
+/// [`catalog_form`] for the ONE affordance that genuinely wants a user-supplied number: a
+/// [`ViewNode::Input`] whose committed draft parses into its `fire_turn`'s `arg`. Here the box is
+/// the point — the button label is a verb (`Insert`, `Bid`) and the value is the user's, so there is
+/// nothing for the number to contradict.
+///
+/// The `aria-label` names the turn the value belongs to, and the box is labelled in prose by the
+/// `Input` node's own surrounding copy.
+fn catalog_form_value(key: &str, id: &str, it: &MenuItem) -> String {
+    format!(
+        "<form class=\"affordance input\" method=\"post\" \
+         action=\"/offerings/{key}/session/{id}/act\" \
+         data-session-action=\"turn\" data-turn=\"{turn}\">\
+         <input type=\"hidden\" name=\"turn\" value=\"{turn}\">\
+         <input class=\"arg\" type=\"number\" name=\"arg\" value=\"{arg}\" step=\"1\" \
+         inputmode=\"numeric\" aria-label=\"{turn} value\">\
+         <button type=\"submit\">{label}</button></form>",
+        key = esc(key),
+        id = esc(id),
+        turn = esc(&it.turn),
+        arg = it.arg,
         label = esc(&it.label),
     )
 }
@@ -4471,7 +4811,7 @@ fn offering_page(key: &str, title: &str, id: &SessionId, surface: &str) -> Strin
         events = format!("/offerings/{}/session/{}/events", esc(key), esc(&id.0)),
         surface = surface,
     );
-    document(&format!("dregg — {title}"), "offerings", &body)
+    document(&format!("{PRODUCT_NAME} — {title}"), "offerings", &body)
 }
 
 /// The page shown for a `GET`/`POST` against an unregistered offering key.
@@ -4483,7 +4823,11 @@ fn catalog_missing_offering(key: &str) -> String {
          </main>",
         key = esc(key),
     );
-    document("dregg — unknown offering", "offerings", &body)
+    document(
+        &format!("{PRODUCT_NAME} — unknown offering"),
+        "offerings",
+        &body,
+    )
 }
 
 // ═════════════════════════════════════════════════════════════════════════════════════════
@@ -5777,7 +6121,15 @@ fn make_app_parts_with_catalog(
         .route("/health", get(health))
         .merge(router(web))
         .merge(catalog_router(Arc::clone(&catalog)))
-        .merge(descent_router(descent))
+        .merge(descent_router(Arc::clone(&descent)))
+        // ⚑ THE YOU PAGE — `GET /you` (and `/me`): the one surface that answers "where do I see my
+        // own games?". It was missing entirely, which is why a player who closed the tab could not
+        // find their table and could not see their own row's history on the daily board. Reads the
+        // two stores that already hold that record (the catalog host's live sessions + move logs,
+        // and the Descent board), joins them to the viewer by the seat lock / the logged actor / an
+        // EXACT label match, and refuses an asserted `?user=` outright. Additive — `/you` and `/me`
+        // overlap nothing above.
+        .merge(you::you_router(Arc::clone(&catalog), descent))
         // THE PLAYABLE web front door (backlog H1): `GET /descent/play` serves an in-tab
         // same-origin DOM controller over the Lean-native `NativeDescentWorld` (via the wasm
         // `bindings_native_descent` executor), NOT the `<dregg-descent>` element. State-free +
@@ -5795,12 +6147,23 @@ fn make_app_parts_with_catalog(
         // (spectate with BOTH hands fogged). This replaces the one global `tug-web` table the
         // catalog page used to point every visitor at.
         .merge(tug_web::tug_router(Arc::clone(&catalog)))
+        // HOW TO PLAY — `GET /guide` (+ the `/how-to-play` alias a stranger is as likely to type).
+        // The one page that starts from zero: what the surface is in words a newcomer already owns,
+        // the two things we are not good at yet, then the three games. Additive + state-free; every
+        // game landing keeps its own rules panel, which this does not replace.
+        .merge(guide::guide_router())
         .merge(sprite::sprite_router())
         // THE CHAIN EXPLORER — `GET /explorer`: what has been happening on the node this surface
         // is pointed at (`DREGG_NODE_URL`). Always mounted: with no node configured the page's
         // job is to SAY that, which it cannot do from a route that does not exist. Additive —
         // the `/explorer` prefix overlaps nothing above.
         .merge(explorer::explorer_router())
+        // THE IDENTITY DOOR — `GET /identity` + the claim/confirm/restore/release posts: 24 words
+        // that reproduce a player's identity on any device. Additive (the `/identity` prefix
+        // overlaps nothing above) and deliberately merged OUTSIDE the visitor-cookie bootstrap:
+        // reading the page that explains identity must not silently mint one. State-free — the
+        // whole mechanism is a derivation, so there is nothing to hold.
+        .merge(seed_identity::identity_router())
         .merge(overlay_router);
     #[cfg(feature = "hosted-binary-operations")]
     let app = app.merge(fhegg_operation::router(Arc::clone(&catalog)));
@@ -6079,6 +6442,7 @@ async fn index() -> Html<String> {
          <a class=\"btn {hero_board_class}\" href=\"/descent\">See today's finished runs \
          <span class=\"arr\" aria-hidden=\"true\">→</span></a>\
          <a class=\"btn btn-ghost\" href=\"/automatafl\">Play Automatafl</a>\
+         <a class=\"btn btn-ghost\" href=\"/guide\">How to play</a>\
          <a class=\"btn btn-ghost\" href=\"/offerings\">All games</a>\
          </div></div>\
          <div class=\"hero-art\">{board}\
@@ -6125,7 +6489,11 @@ async fn index() -> Html<String> {
          </div></section></main>",
         board = hero_board(),
     );
-    Html(document("dregg — play + verify", "", &body))
+    Html(document(
+        &format!("{PRODUCT_NAME} — play + verify"),
+        "",
+        &body,
+    ))
 }
 
 // ═════════════════════════════════════════════════════════════════════════════════════════
