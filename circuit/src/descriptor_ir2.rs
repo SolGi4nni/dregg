@@ -229,8 +229,8 @@ use crate::lean_descriptor_air::{
 use crate::lean_descriptor_air::i64_to_babybear;
 use crate::lean_descriptor_air::{EffectVmDescriptor, RangeSpec};
 use crate::plonky3_prover::{
-    POSEIDON2_PERM_AUX_COLS, POSEIDON2_WIDTH, create_config_with_fri, poseidon2_permute_expr_lanes,
-    to_p3,
+    POSEIDON2_PERM_AUX_COLS, POSEIDON2_WIDTH, create_config_with_fri, from_p3,
+    poseidon2_permute_expr_lanes, to_p3,
 };
 // The concrete permutation aux-witness fill is prover-only (`perm_aux`).
 use crate::plonky3_prover::poseidon2_permute_aux_witness;
@@ -1760,7 +1760,8 @@ impl<'a> InteractionBuilder for Ir2RowLocalBuilder<'a> {
 }
 
 /// **THE REAL-EVALUATOR ROW-LOCAL ACCEPT ORACLE.** Build the DEPLOYED `Ir2Air::Main` AIR for
-/// `desc`, fill the per-table layout columns over `base_rows`, and run the ACTUAL
+/// `desc`, complete each base row with the per-table layout columns THE DEPLOYED PROVER WOULD
+/// FILL (`fill_main_layout_row`, shared verbatim with `build_traces`), and run the ACTUAL
 /// `Ir2Air::eval` (the deployed verifier's constraint evaluator) ROW-BY-ROW. Returns `true` iff
 /// every ROW-LOCAL constraint vanishes on every row.
 ///
@@ -1773,12 +1774,19 @@ impl<'a> InteractionBuilder for Ir2RowLocalBuilder<'a> {
 /// arms — `Base(Gate)`, `Base(Transition)`, `WindowGate{on_transition}`, the every-row
 /// `WindowGate`, plus the range-recomposition + submask bit gates — and SILENT on the bus arms.
 ///
-/// `base_rows` are the `desc.trace_width`-column main rows. The layout columns (range limbs,
-/// submask bits) appended past `trace_width` are NOT filled here: callers that exercise the
-/// row-local arms use descriptors with NO range/submask lookups (so `MainLayout` adds no
-/// columns and the recomposition gates are absent). A descriptor that DOES declare such lookups
-/// will see those gates fire over zero-filled limb columns; that path is out of this oracle's
-/// row-local-faithful scope and the caller must not rely on it.
+/// `base_rows` are the `desc.trace_width`-column main rows (shorter rows are zero-extended to
+/// that width; a longer row is REFUSED — layout columns are this oracle's to fill, never the
+/// caller's). The layout columns appended past `trace_width` — range byte-limbs, submask
+/// keep/held bits — are filled HERE by the prover's own filler, so a descriptor that declares
+/// range or submask lookups is decided honestly rather than being rejected outright by
+/// recomposition gates reading zeros.
+///
+/// WHAT THE RANGE ARM THEREFORE DECIDES: `eval_decomp`'s ROW-LOCAL half — the recomposition
+/// `Σ limbᵢ·2^(4i) = wire` and, at a non-multiple-of-4 width, the top limb's boolean bit
+/// decomposition. Under the honest fill those pin `wire < 2^bits` at every declared width. The
+/// per-limb nibble bound is a BYTE-BUS lookup and stays swallowed like every other bus arm, and
+/// a base row with NO honest completion (range wire `≥ 2^bits`, submask operand out of range)
+/// is reported as a reject — it is a row the deployed prover refuses to assemble.
 pub fn ir2_eval_accepts(
     desc: &EffectVmDescriptor2,
     base_rows: &[Vec<P3BabyBear>],
@@ -1791,25 +1799,25 @@ pub fn ir2_eval_accepts(
     if base_rows.is_empty() || public_inputs.len() != desc.public_input_count {
         return false;
     }
+    // Materialize the full-width rows: base columns + THE PROVER'S layout fill.
+    let height = base_rows.len();
+    let mut byte_hist = [0u64; BYTE_TABLE_HEIGHT]; // the byte bus is not a row-local arm
+    let mut rows: Vec<Vec<P3BabyBear>> = Vec::with_capacity(height);
+    for (ri, r) in base_rows.iter().enumerate() {
+        if r.len() > desc.trace_width {
+            return false;
+        }
+        let mut base: Vec<BabyBear> = r.iter().map(|&x| from_p3(x)).collect();
+        base.resize(desc.trace_width, BabyBear::ZERO);
+        let Ok(filled) = fill_main_layout_row(&base, &layout, ri, &mut byte_hist, false) else {
+            return false;
+        };
+        rows.push(filled.iter().map(|&x| to_p3(x)).collect());
+    }
     let air = Ir2Air::Main {
         desc: desc.clone(),
         layout: MainLayoutPub(layout),
     };
-    let width = match &air {
-        Ir2Air::Main { layout, .. } => layout.0.width,
-        _ => unreachable!(),
-    };
-    // Materialize the full-width rows (base columns + zero-filled layout columns).
-    let height = base_rows.len();
-    let mut rows: Vec<Vec<P3BabyBear>> = Vec::with_capacity(height);
-    for r in base_rows {
-        if r.len() > width {
-            return false;
-        }
-        let mut row = r.clone();
-        row.resize(width, P3BabyBear::ZERO);
-        rows.push(row);
-    }
     for row_index in 0..height {
         let next_index = (row_index + 1) % height;
         let mut builder = Ir2RowLocalBuilder {
@@ -2186,16 +2194,29 @@ where
 /// The DECLARED leaf-input column list for a `MapOp` absorb, parametric in the value
 /// column (`MAP_VALUE` for the new leaf, `MAP_OLD_VALUE` for the committed old leaf).
 ///
-/// LAW#1: the leaf-absorb arity is DATA, not a hardcoded `2`. Both the AIR (`chip_absorb_tuple`)
-/// and the trace assembly (`absorb_tuple` in `assemble`) read the SAME list, so prover and
-/// verifier agree on the leaf shape by construction. Today the `MapOp` leaf is the 2-field sorted-
-/// `Heap` leaf `hash[key, value]` (Lean `Substrate.Heap.leafOf hash e = hash[e.1, e.2]`, the
-/// denotation `MapOp.holdsAt` opens against); the function is the single seam a wider declared map
-/// leaf would extend (the absorb code paths are already arity-generic). The 7-field cap leaf is a
-/// SEPARATE object (a binary-Merkle opening via generic chip `Lookup`s — Lean `DeployedCapOpen`),
-/// not a `MapOp` leaf; see the module-level note and the returned ledger.
+/// LAW#1: the leaf-absorb arity is DATA, not a hardcoded constant. Both the AIR
+/// (`chip_absorb_tuple`) and the trace assembly (`absorb_tuple` in `assemble`) read the SAME
+/// list, so prover and verifier agree on the leaf shape by construction.
+///
+/// Today the `MapOp` leaf is the arity-`HEAP_LEAF_ARITY` indexed-Merkle-tree leaf
+/// `hash[addr, value, next_addr]` — the SAME ordered preimage
+/// `heap_root::HeapLeaf::preimage` folds, so the producer's committed digest and this
+/// declared column list are one schema, not two transcriptions of one. The arity moved 2 → 3
+/// on 2026-07-12 (`919b2b0b8d`) when the map tree became an IMT and the MAX sentinel leaf was
+/// retired into the terminal pointer.
+///
+/// ⚠ The Lean DENOTATION has not moved with it: `DescriptorIR2.opensTo` / `writesTo` still
+/// commit arity-2 `Substrate.Heap.leafOf` leaves, and under the CR floor an arity-3 IMT root
+/// is NEVER an arity-2 `mapRoot` (`Dregg2.Circuit.MapReconcileImtRepoint.imtRoot_ne_mapRoot`),
+/// so `MapOp.holdsAt` is refuted at every deployed pre-root. The cutover is
+/// `docs/DESIGN-mapop-denotation-move.md`. Do NOT describe this list as "what the denotation
+/// opens against" until that lands.
+///
+/// The 7-field cap leaf is a SEPARATE object (a binary-Merkle opening via generic chip
+/// `Lookup`s — Lean `DeployedCapOpen`), not a `MapOp` leaf; see the module-level note and the
+/// returned ledger.
 #[inline]
-fn map_leaf_input_cols(value_col: usize) -> [usize; 3] {
+fn map_leaf_input_cols(value_col: usize) -> [usize; crate::heap_root::HEAP_LEAF_ARITY] {
     // IMT leaf `hash[addr, value, next_addr]` (arity 2 → 3): the Lean `imtLeafHash`. Both the old
     // and new leaf share the same key column and the same `MAP_NEXT` pointer column (a value update
     // holds the pointer fixed; the pointer binds the linked chain into the committed digest).
@@ -3294,8 +3315,8 @@ where
                 // declares its leaf as a list of INPUT COLUMNS (`map_leaf_input_cols`), and the
                 // absorb tuple is built generically from that list by `chip_absorb_tuple` — the
                 // Rust twin of the Lean `chipLookupTuple` (`arity :: padTo CHIP_RATE ins ++
-                // [digest]`). Today the declared list is the 2-field `[key, value]` shape (the
-                // sorted-`Heap` leaf `hash[addr, value]` the `MapOp` denotation pins); a wider
+                // [digest]`). Today the declared list is the arity-3 IMT shape
+                // `[MAP_KEY, value, MAP_NEXT]` (`heap_root::HeapLeaf::preimage`); a wider
                 // leaf would extend the column list with ZERO new branches here. The 7-field cap
                 // leaf does NOT ride this op — it is a binary-Merkle membership opening realized
                 // as generic chip `Lookup`s (Lean `DeployedCapOpen.leafLookup`, arity 7), the
@@ -4172,6 +4193,65 @@ fn fill_decomp(
     }
 }
 
+/// **THE SINGLE SOURCE FOR THE MAIN-TRACE LAYOUT FILL.** Complete one `desc.trace_width` base
+/// row to the full `layout.width` by appending the aux columns the `MainLayout` reserved: the
+/// per-range byte-limb blocks (`fill_decomp`) and the per-submask keep/held bit blocks.
+///
+/// BOTH the deployed prove path ([`build_traces`]) and the row-local accept oracle
+/// ([`ir2_eval_accepts`]) call this, so the oracle evaluates the SAME extended row the prover
+/// commits — a second, drifting filler is exactly the failure this consolidates away.
+///
+/// `hist` accumulates the byte-table histogram the limb lookups send; the oracle passes a
+/// scratch histogram and discards it (the byte bus is not a row-local arm). `check_submask`
+/// gates the prover-side non-amplification PRE-FLIGHT (`keep ⊆ held`) — the in-circuit submask
+/// gates enforce it on every row regardless, so the oracle passes `false` and lets the AIR
+/// speak rather than pre-empting it.
+///
+/// `Err` is the prover's OWN refusal: a value with NO honest layout completion (a range wire
+/// outside `2^bits`, a submask operand outside `2^SUBMASK_BITS`, or an amplified submask under
+/// `check_submask`). Such a base row is unprovable, so the oracle reports it as a reject.
+fn fill_main_layout_row(
+    base_row: &[BabyBear],
+    layout: &MainLayout,
+    ri: usize,
+    hist: &mut [u64; BYTE_TABLE_HEIGHT],
+    check_submask: bool,
+) -> Result<Vec<BabyBear>, String> {
+    let mut row = base_row.to_vec();
+    for rb in &layout.ranges {
+        let v = base_row[rb.wire].as_u32();
+        if (v as u64) >= (1u64 << rb.bits) {
+            return Err(format!(
+                "row {ri}: range wire {} value {v} >= 2^{}",
+                rb.wire, rb.bits
+            ));
+        }
+        fill_decomp(v, rb.bits, &mut row, hist);
+    }
+    for sb in &layout.submasks {
+        let keep = eval_c(&sb.keep, base_row).as_u32();
+        let held = eval_c(&sb.held, base_row).as_u32();
+        for v in [keep, held] {
+            if (v as u64) >= (1u64 << SUBMASK_BITS) {
+                return Err(format!("row {ri}: submask operand {v} >= 2^{SUBMASK_BITS}"));
+            }
+        }
+        if check_submask && (keep & held) != keep {
+            return Err(format!(
+                "row {ri}: submask violation: keep {keep:#x} ⊄ held {held:#x}"
+            ));
+        }
+        for i in 0..SUBMASK_BITS {
+            row.push(BabyBear::new((keep >> i) & 1));
+        }
+        for i in 0..SUBMASK_BITS {
+            row.push(BabyBear::new((held >> i) & 1));
+        }
+    }
+    debug_assert_eq!(row.len(), layout.width);
+    Ok(row)
+}
+
 fn next_pow2(n: usize) -> usize {
     n.next_power_of_two().max(MIN_TABLE_HEIGHT)
 }
@@ -4466,42 +4546,18 @@ fn build_traces(
         }
     }
 
-    // ---- main: base wires + range limb blocks + submask bit blocks. ----
+    // ---- main: base wires + range limb blocks + submask bit blocks. `fill_main_layout_row`
+    //      is the SINGLE SOURCE for that completion — `ir2_eval_accepts` runs the very same
+    //      fill, so the row-local oracle sees the row this prover commits. ----
     let mut main: Vec<Vec<BabyBear>> = Vec::with_capacity(base_trace.len());
     for (ri, base_row) in base_trace.iter().enumerate() {
-        let mut row = base_row.clone();
-        for rb in &layout.ranges {
-            let v = base_row[rb.wire].as_u32();
-            if (v as u64) >= (1u64 << rb.bits) {
-                return Err(format!(
-                    "row {ri}: range wire {} value {v} >= 2^{}",
-                    rb.wire, rb.bits
-                ));
-            }
-            fill_decomp(v, rb.bits, &mut row, &mut byte_hist);
-        }
-        for sb in &layout.submasks {
-            let keep = eval_c(&sb.keep, base_row).as_u32();
-            let held = eval_c(&sb.held, base_row).as_u32();
-            for v in [keep, held] {
-                if (v as u64) >= (1u64 << SUBMASK_BITS) {
-                    return Err(format!("row {ri}: submask operand {v} >= 2^{SUBMASK_BITS}"));
-                }
-            }
-            if check && (keep & held) != keep {
-                return Err(format!(
-                    "row {ri}: submask violation: keep {keep:#x} ⊄ held {held:#x}"
-                ));
-            }
-            for i in 0..SUBMASK_BITS {
-                row.push(BabyBear::new((keep >> i) & 1));
-            }
-            for i in 0..SUBMASK_BITS {
-                row.push(BabyBear::new((held >> i) & 1));
-            }
-        }
-        debug_assert_eq!(row.len(), layout.width);
-        main.push(row);
+        main.push(fill_main_layout_row(
+            base_row,
+            layout,
+            ri,
+            &mut byte_hist,
+            check,
+        )?);
     }
 
     // ---- chip histograms: absorb tuples from the main rows' chip lookups; fact tuples

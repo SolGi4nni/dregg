@@ -709,10 +709,7 @@ async fn main() {
     let db = match Database::connect(&config.database_url).await {
         Ok(db) => db,
         Err(e) => {
-            eprintln!(
-                "error: could not open the bot database at `{}`",
-                config.database_url
-            );
+            eprintln!("error: could not open the bot database at `{}`", config.database_url);
             eprintln!("  {e}");
             eprintln!();
             eprintln!("The bot persists identities, credits, the gallery, the descent board and");
@@ -819,17 +816,14 @@ async fn main() {
     // `/crown` press is served, on a blocking thread because `install_store` forces the
     // dedicated (non-tokio) crown-board thread to spawn and restore now.
     {
-        let store =
-            crown_store::SqliteCrownStore::new(db.clone(), tokio::runtime::Handle::current());
+        let store = crown_store::SqliteCrownStore::new(db.clone(), tokio::runtime::Handle::current());
         tokio::task::spawn_blocking(move || {
             commands::crown::install_store(Box::new(store));
         })
         .await
         .expect("install crown store");
     }
-    info!(
-        "Crown store installed (ranked folds re-verified from sqlite — Re-verify survives a restart)"
-    );
+    info!("Crown store installed (ranked folds re-verified from sqlite — Re-verify survives a restart)");
 
     // Create devnet client.
     let devnet = DevnetClient::new(&config.devnet_url);
