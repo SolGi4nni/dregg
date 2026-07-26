@@ -357,12 +357,46 @@ def clashOf (b : Board) (marks : List Coord) (ms : List Move) : List Coord :=
   if clash.isEmpty then unresolved b all else clash
 
 /-- **Every legal destination of `frm`** for seat `who` — `moveLegalB` applied over the whole board.
-The playable surface paints exactly this set as the rook-line highlight, so the affordance a player
-sees is the ruleset's own legality and not a Rust re-derivation of it. -/
+This is the PROPOSABLE set: what the rules let a seat submit.
+
+⚑ It says NOTHING about what stands in the way. `MoveLegal` is a rook line, distinct endpoints, both
+in bounds, the automaton banned as a SOURCE, and neither endpoint marked — occupancy is not one of
+its clauses, by ruling (D). A surface that paints this as its legal-move set therefore lights
+straight through every piece on the rook line. `liveTargetsOf` below is the set that would actually
+EXECUTE. -/
 def targetsOf (b : Board) (marks : List Coord) (who : Pid) (frm : Coord) : List Coord :=
   (List.range (b.size * b.size)).filterMap (fun i =>
     let c : Coord := ⟨i % b.size, i / b.size⟩
     if moveLegalB b marks ⟨who, frm, c⟩ then some c else none)
+
+/-- **Every destination of `frm` that would actually EXECUTE** — `moveLegalB` AND the ruleset's own
+inclusive path check (`blockedB`), against `ms` as the ambient move set plus the proposed move.
+
+This is the composed predicate the two halves of §2/§4 make: `moveLegalB` answers *"may this be
+PROPOSED?"* and `blockedB` answers *"will it RUN?"*. They are different questions and the ruleset
+means them to be — the author's *"designating a move to an occupied square is fine, it just fails to
+execute, it doesn't generate a conflict and shouldn't"*. A playable surface needs BOTH: the
+proposable set is what it may accept, the live set is what it may promise.
+
+⚑ **IT IS CONDITIONAL, AND THAT IS WHY BOTH SETS EXIST.** Every submitted move's SOURCE is PASSABLE
+while the round resolves (`mark_passable` / `PC_F_PASSABLE`), whether or not that move itself
+executes. So a destination flips from blocked to live the moment somebody picks the blocker up, and
+`liveTargetsOf b marks [] who frm ⊆ liveTargetsOf b marks ms who frm` is NOT a theorem of this
+definition — the answer moves with `ms`. A caller passes what it is entitled to know: the round's
+LOCKED moves (public — the ruleset published them when it marked the clash), never an opponent's
+sealed one. So this answers *"would it execute against the pieces standing there and the moves
+already public"*, which is the only version of the question a highlight can honestly ask. -/
+def liveTargetsOf (b : Board) (marks : List Coord) (ms : List Move) (who : Pid) (frm : Coord) :
+    List Coord :=
+  (targetsOf b marks who frm).filter (fun c =>
+    let m : Move := ⟨who, frm, c⟩
+    !blockedB b (m :: ms) m)
+
+/-- The live set is a SUBSET of the proposable one: nothing executes that could not be proposed. -/
+theorem liveTargetsOf_sub_targetsOf (b : Board) (marks : List Coord) (ms : List Move) (who : Pid)
+    (frm : Coord) : ∀ c ∈ liveTargetsOf b marks ms who frm, c ∈ targetsOf b marks who frm := by
+  intro c hc
+  exact List.mem_of_mem_filter hc
 
 /-- The move-resolved intermediate board (Leg R): `resolveMoves` over the legal submissions. -/
 def midOf (b : Board) (marks : List Coord) (ms : List Move) : Board :=
@@ -466,6 +500,20 @@ def decide? (toks : List String) : Option String :=
       let who ← natOf? whoT
       let frm ← coordOf? b.size xT yT
       some (encodeCoords (targetsOf b marks who frm))
+    | _ => none
+  -- `livetargets BOARD COORDS MOVES who fX fY` — the destinations that would actually EXECUTE.
+  -- Same shape as `targets` with the ambient MOVES operand inserted (board first, then the marks,
+  -- then the move list, all decoded against `b.size`), because blocking is a fact about the whole
+  -- round's move set and not about the proposed move alone.
+  | "livetargets" :: rest => do
+    let (b, r1) ← parseBoard rest
+    let (marks, r2) ← parseCoordList b.size r1
+    let (ms, r3) ← parseMoveList b.size r2
+    match r3 with
+    | whoT :: xT :: yT :: _ => do
+      let who ← natOf? whoT
+      let frm ← coordOf? b.size xT yT
+      some (encodeCoords (liveTargetsOf b marks ms who frm))
     | _ => none
   | "clash" :: rest => do
     let (b, r1) ← parseBoard rest
@@ -584,6 +632,51 @@ def blockBoard : Board :=
   "1 8 1 0 2 0 3 0 4 0 0 1 0 2 0 3 0 4"
 -- From the automaton's own square nothing is legal (it is banned as a SOURCE).
 #guard rulesFFI ("targets " ++ encodeBoard cycBoard ++ " 0 0 4 4") == "1 0"
+
+/-! ### `livetargets` — the destinations that would EXECUTE
+
+⚑ These are the teeth for the wound the guard directly above DOCUMENTS: `targets` from `(0,0)` on
+`cycBoard` includes `(0,1)` — where a repulsor stands — and `(0,2)`/`(0,3)`/`(0,4)` BEHIND it, and it
+is right to, because naming an occupied square is a legal proposal. A surface reading that set as
+"squares you can move to" lights straight through the blocker, which is what
+`dregg-automatafl/src/surface.rs` painted until this verb existed. -/
+-- The same source, the same board, the EXECUTABLE half: the empty row-0 rook line only. The four
+-- column-0 squares are gone — `(0,1)` is the repulsor's own square (a destination-inclusive block)
+-- and `(0,2)`/`(0,3)`/`(0,4)` sit behind it.
+#guard rulesFFI ("livetargets " ++ encodeBoard cycBoard ++ " 0 0 0 0 0") ==
+  "1 4 1 0 2 0 3 0 4 0"
+-- ⚑ CONDITIONAL, NOT ABSOLUTE. Hand the SAME question the fact that seat 1 is moving the repulsor
+-- off `(0,1)`: a mover's source is PASSABLE, so all eight proposable squares become live — including
+-- `(0,1)` itself, which empties. The two sets COINCIDE here, which is exactly why the surface may
+-- not treat "blocked" as "illegal".
+#guard rulesFFI ("livetargets " ++ encodeBoard cycBoard ++ " 0 1 1 0 1 2 1 0 0 0") ==
+  rulesFFI ("targets " ++ encodeBoard cycBoard ++ " 0 0 0 0")
+-- From the automaton's own square nothing executes either (nothing is even proposable).
+#guard rulesFFI ("livetargets " ++ encodeBoard cycBoard ++ " 0 0 0 4 4") == "1 0"
+-- Fail-closed on a truncated wire, like every other verb.
+#guard rulesFFI "livetargets" == "0"
+#guard rulesFFI ("livetargets " ++ encodeBoard cycBoard ++ " 0 0 0") == "0"
+
+/-! ⚑ **THE SHIPPED BOARD, AND THE EXACT SQUARES A PLAYER WAS LIED TO ABOUT.**
+
+ember selected the stock opening's attractor at `⟨3,1⟩` on the live 11×11 table and the surface lit
+`⟨3,10⟩` — the far end of the file, BEHIND the attractor standing on `⟨3,9⟩` — plus the whole of row
+1 behind the three repulsors at `⟨4,1⟩`/`⟨5,1⟩`/`⟨6,1⟩`. Nine of the twenty painted squares could not
+have executed. Both polarities are pinned so neither half can regress into the other. -/
+#guard (targetsOf stockTwoPlayer [] 0 ⟨3, 1⟩).length == 20
+#guard (liveTargetsOf stockTwoPlayer [] [] 0 ⟨3, 1⟩).length == 11
+-- PROPOSABLE, and it must stay so — the ruleset lets you name it.
+#guard (targetsOf stockTwoPlayer [] 0 ⟨3, 1⟩).contains ⟨3, 10⟩
+#guard (targetsOf stockTwoPlayer [] 0 ⟨3, 1⟩).contains ⟨8, 1⟩
+-- NOT LIVE — the two squares from the screenshot, by name.
+#guard !((liveTargetsOf stockTwoPlayer [] [] 0 ⟨3, 1⟩).contains ⟨3, 10⟩)
+#guard !((liveTargetsOf stockTwoPlayer [] [] 0 ⟨3, 1⟩).contains ⟨8, 1⟩)
+-- NON-VACUOUS: the ray does reach `⟨3,8⟩`, the square in FRONT of the blocker, so the live set is a
+-- real rook line and not an empty one.
+#guard (liveTargetsOf stockTwoPlayer [] [] 0 ⟨3, 1⟩).contains ⟨3, 8⟩
+-- And the whole live set, in the wire's own row-major order.
+#guard rulesFFI ("livetargets " ++ encodeBoard stockTwoPlayer ++ " 0 0 0 3 1") ==
+  "1 11 3 0 0 1 1 1 2 1 3 2 3 3 3 4 3 5 3 6 3 7 3 8"
 
 -- A FORK (one source, two destinations) is a conflict on that source; a clean round has none.
 #guard rulesFFI ("clash " ++ encodeBoard cycBoard ++ " 0 2 0 0 0 0 3 1 0 0 3 0") == "1 1 0 0"

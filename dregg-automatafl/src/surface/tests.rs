@@ -158,12 +158,17 @@ fn the_board_renders_as_a_coordgrid() {
 // 2. ROOK-LINE LEGAL-MOVE HIGHLIGHTING — NON-VACUOUS
 // ────────────────────────────────────────────────────────────────────────────────────────────
 
-/// Selecting a piece LIGHTS ITS ROOK LINE and nothing else: every legal target (same row/column,
-/// distinct, in-bounds, not the automaton) is highlighted and carries the `commit` affordance; an
-/// ILLEGAL target (a diagonal, an off-line square, the source itself) is NOT highlighted and
-/// carries no commit affordance.
+/// Selecting a piece lights EXACTLY THE SQUARES IT COULD REACH — the LEAN's composed
+/// `moveLegalB && !blockedB` (`executable_targets`), not the bare `moveLegalB` proposable set. A
+/// square off the rook line is not highlighted and carries no `commit`; a square that is proposable
+/// but blocked is not highlighted either, and DOES keep its `commit` (the ruleset licenses the
+/// proposal — see `a_blocker_stops_the_highlight_and_the_far_side_is_not_lit`).
+///
+/// ⚑ This assertion used to be `move_legal`, and that is the bug it therefore could not see: it
+/// demanded `tag == "good"` for every PROPOSABLE square, which is exactly what the surface was
+/// wrongly painting, so the test and the defect agreed with each other.
 #[test]
-fn selecting_a_piece_highlights_exactly_its_legal_moves() {
+fn selecting_a_piece_highlights_exactly_the_moves_that_would_execute() {
     let off = AutomataflOffering;
     let mut session = off.open(SessionConfig::with_seed(12)).expect("open");
 
@@ -186,8 +191,8 @@ fn selecting_a_piece_highlights_exactly_its_legal_moves() {
 
     let (_, cells) = grid(&off.render_for(&session, &seat_a()));
 
-    // The LEAN's own legal set (the tooth the highlight must mirror).
-    let expected: Vec<usize> = (0..CELLS)
+    // The LEAN's own PROPOSABLE set (`moveLegalB`) — what a seal may name.
+    let proposable: Vec<usize> = (0..CELLS)
         .filter(|&i| {
             move_legal(
                 session.board(),
@@ -204,19 +209,41 @@ fn selecting_a_piece_highlights_exactly_its_legal_moves() {
     // Rook line of (3,1) on an 11×11: row y=1 minus (3,1) → 10; column x=3 minus (3,1) → 10. The
     // automaton is at (5,5) — on neither, so nothing is excluded here.
     assert_eq!(
-        expected.len(),
+        proposable.len(),
         20,
         "the rook line of (3,1) is twenty squares"
     );
 
+    // The LEAN's EXECUTABLE set (`moveLegalB && !blockedB`) — what the highlight must mirror.
+    let expected: Vec<usize> = session
+        .executable_targets(src)
+        .into_iter()
+        .map(|c| index_of(c).expect("in bounds"))
+        .collect();
+    // NON-VACUITY, BOTH WAYS: the executable set is neither empty (a highlight that lights nothing
+    // would pass every assertion below) nor equal to the proposable one (which is the defect).
+    assert!(
+        !expected.is_empty() && expected.len() < proposable.len(),
+        "the executable set is a PROPER, non-empty subset: {} of {}",
+        expected.len(),
+        proposable.len()
+    );
+    for &i in &expected {
+        assert!(
+            proposable.contains(&i),
+            "nothing executes that could not be proposed: {:?}",
+            coord_of(i)
+        );
+    }
+
     for &i in &expected {
         assert!(
             cells[i].highlight,
-            "the legal target {:?} is highlighted",
+            "the reachable target {:?} is highlighted",
             coord_of(i)
         );
         assert_eq!(cells[i].tag, "good");
-        assert_eq!(cells[i].turn, COMMIT, "a legal target fires the seal");
+        assert_eq!(cells[i].turn, COMMIT, "a reachable target fires the seal");
         assert_eq!(cells[i].arg, i as i64);
     }
 
@@ -224,11 +251,37 @@ fn selecting_a_piece_highlights_exactly_its_legal_moves() {
     assert!(cells[src_idx].highlight);
     assert_eq!(cells[src_idx].tag, "warn");
 
-    // NON-VACUITY: every square that is NOT a legal target (and not the source / the automaton) is
+    // ⚑ THE PROPOSABLE-BUT-BLOCKED COMPLEMENT: not highlighted, not `good`, and STILL SEALABLE. The
+    // ruleset lets a seat name an obstructed square, so removing the affordance would be this crate
+    // narrowing `moveLegalB` in Rust — the exact class of divergence the deleted twin carried.
+    for &i in &proposable {
+        if expected.contains(&i) {
+            continue;
+        }
+        assert!(
+            !cells[i].highlight,
+            "the BLOCKED target {:?} is not painted as a legal move",
+            coord_of(i)
+        );
+        assert_eq!(
+            cells[i].tag,
+            "blocked",
+            "the blocked target {:?} says so",
+            coord_of(i)
+        );
+        assert_eq!(
+            cells[i].turn,
+            COMMIT,
+            "the blocked target {:?} is still legal to PROPOSE",
+            coord_of(i)
+        );
+    }
+
+    // NON-VACUITY: every square that is NOT even proposable (and not the source / the automaton) is
     // NOT highlighted and offers no seal.
     let auto_idx = index_of((5, 5)).unwrap();
     for i in 0..CELLS {
-        if expected.contains(&i) || i == src_idx || i == auto_idx {
+        if proposable.contains(&i) || i == src_idx || i == auto_idx {
             continue;
         }
         assert!(
@@ -293,6 +346,164 @@ fn selecting_a_piece_highlights_exactly_its_legal_moves() {
         )
         .expect("the Lean game oracle (`dregg_automatafl_rules`) answers"),
         "the automaton is never a move SOURCE"
+    );
+}
+
+/// ⚑ **THE HIGHLIGHT STOPS AT THE BLOCKER, AND THE FAR SIDE IS NOT LIT.**
+///
+/// The regression test for what ember saw on the live 11×11 board: the attractor at `(3,1)` picked
+/// up, and the surface lighting `(3,10)` — behind the attractor standing on `(3,9)` — and `(8,1)`,
+/// `(9,1)`, `(10,1)`, all behind the three repulsors at `(4,1)`/`(5,1)`/`(6,1)`. Nine of the twenty
+/// painted squares could not have executed, and a player reads a dot as "I can go there".
+///
+/// The cause was that the board painted `moveLegalB` — *may this be PROPOSED* — as its legal-move
+/// set. `MoveLegal` has no occupancy clause at all (ruling D), so it runs the rook line straight
+/// through every piece on it; `blockedB` is the clause that decides execution, and the two were
+/// never composed on this path. The composition is now the LEAN's own `liveTargetsOf`.
+///
+/// Every square below is named EXPLICITLY rather than derived from the same call the surface makes,
+/// so this test cannot follow the implementation into a new wrong answer.
+#[test]
+fn a_blocker_stops_the_highlight_and_the_far_side_is_not_lit() {
+    let off = AutomataflOffering;
+    let mut session = off.open(SessionConfig::with_seed(31)).expect("open");
+
+    // The stock opening really does put those pieces there — check the premise, or the whole test
+    // could pass on an empty file.
+    assert_eq!(
+        session.board().cell_at((3, 9)),
+        ATT,
+        "an attractor stands on (3,9), five squares down the file from the selection"
+    );
+    for c in [(4, 1), (5, 1), (6, 1)] {
+        assert_eq!(
+            session.board().cell_at(c),
+            REP,
+            "a repulsor stands on {c:?}, on the selection's rank"
+        );
+    }
+
+    let src = (3, 1);
+    assert!(
+        off.advance(
+            &mut session,
+            act(SELECT, index_of(src).unwrap() as i64),
+            seat_a()
+        )
+        .landed(),
+        "the select lands a real turn"
+    );
+    let (_, cells) = grid(&off.render_for(&session, &seat_a()));
+
+    // ── THE SQUARES BEHIND A BLOCKER ARE NOT LEGAL-MOVE SQUARES. ──
+    // (3,9) is the blocker's OWN square (the path check is destination-INCLUSIVE, so landing on an
+    // occupied square fails too); (3,10) is past it; (7,1) is the far attractor on the rank and
+    // (8,1)/(9,1)/(10,1) are past the whole repulsor wall.
+    for c in [(3, 9), (3, 10), (4, 1), (7, 1), (8, 1), (9, 1), (10, 1)] {
+        let i = index_of(c).unwrap();
+        assert!(
+            !cells[i].highlight,
+            "{c:?} is behind (or is) a piece in the way — it must not be lit as a legal move"
+        );
+        assert_ne!(
+            cells[i].tag, "good",
+            "{c:?} is behind (or is) a piece in the way — it must not be tagged as a legal move"
+        );
+        // ...and it is NOT hidden either: still proposable, still tagged as the blocked third state.
+        assert_eq!(cells[i].tag, "blocked", "{c:?} says why it is not lit");
+        assert_eq!(
+            cells[i].turn, COMMIT,
+            "{c:?} is still legal to PROPOSE — the ruleset allows naming an obstructed square"
+        );
+        assert!(
+            move_legal(
+                session.board(),
+                &[],
+                &Move {
+                    who: 0,
+                    frm: src,
+                    to: c
+                }
+            )
+            .expect("the Lean game oracle (`dregg_automatafl_rules`) answers"),
+            "{c:?} really is a legal PROPOSAL — the surface must not have narrowed the ruleset"
+        );
+    }
+
+    // ── AND THE RAY REACHES THE SQUARE IN FRONT OF THE BLOCKER. ──
+    // Without this the test passes on a highlight-set that lights NOTHING, which is the other way to
+    // be wrong. (3,8) is the last empty square before the attractor; (3,0) is the file's other
+    // direction; (0,1)/(1,1)/(2,1) are the clear half of the rank.
+    for c in [(3, 2), (3, 8), (3, 0), (0, 1), (1, 1), (2, 1)] {
+        let i = index_of(c).unwrap();
+        assert!(
+            cells[i].highlight,
+            "{c:?} is reachable — nothing stands between it and (3,1)"
+        );
+        assert_eq!(cells[i].tag, "good", "{c:?} is a legal move");
+        assert_eq!(cells[i].turn, COMMIT);
+    }
+
+    // The exact split, so a change to either half is visible as a number: twenty proposable,
+    // eleven of them reachable.
+    assert_eq!(session.legal_targets(src).len(), 20);
+    assert_eq!(session.executable_targets(src).len(), 11);
+
+    // ⚑ AND THE ORACLE AGREES ABOUT WHY. Resolving the move to (3,10) alone leaves the board
+    // untouched — that is what "blocked" MEANS, checked against the ruleset rather than against this
+    // surface's own opinion of it.
+    let far = Move {
+        who: 0,
+        frm: src,
+        to: (3, 10),
+    };
+    let after = crate::rules::resolve_mid(session.board(), &[], &[far])
+        .expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
+    assert_eq!(
+        after.cells,
+        session.board().cells,
+        "the move to (3,10) does not execute: the attractor on (3,9) is in the way"
+    );
+}
+
+/// ⚑ **BLOCKED IS CONDITIONAL, NOT ILLEGAL** — the reason the board paints a third state instead of
+/// simply hiding the obstructed squares.
+///
+/// A submitted move's SOURCE is passable while the round resolves (`PC_F_PASSABLE`), so the very
+/// same destination becomes reachable once somebody is moving the piece in the way. Sealing behind a
+/// blocker is therefore a real play — a bet on the other seat — and a surface that refused the click
+/// would be inventing a rule.
+#[test]
+fn a_blocked_target_goes_live_when_the_blocker_is_itself_moving() {
+    let off = AutomataflOffering;
+    let session = off.open(SessionConfig::with_seed(32)).expect("open");
+    let board = session.board().clone();
+    let src = (3, 1);
+
+    // With nobody moving the attractor on (3,9), the far square is out of reach.
+    let alone = crate::rules::executable_targets(&board, &[], &[], 0, src)
+        .expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
+    assert!(!alone.contains(&(3, 10)), "(3,10) is blocked on its own");
+
+    // Tell the oracle seat 1 is carrying that attractor away, and the same square is reachable —
+    // including (3,9) itself, which empties.
+    let clearing = [Move {
+        who: 1,
+        frm: (3, 9),
+        to: (7, 9),
+    }];
+    let with_clearance = crate::rules::executable_targets(&board, &[], &clearing, 0, src)
+        .expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
+    assert!(
+        with_clearance.contains(&(3, 10)) && with_clearance.contains(&(3, 9)),
+        "the blocker is moving, so the file opens: {with_clearance:?}"
+    );
+    assert!(
+        with_clearance.len() > alone.len(),
+        "the reachable set GREW ({} → {}), so 'blocked' is a fact about the round and not about \
+         the move",
+        alone.len(),
+        with_clearance.len()
     );
 }
 

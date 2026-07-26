@@ -319,9 +319,16 @@ pub fn move_legal(b: &Board, marks: &[Coord], m: &Move) -> Result<bool, String> 
     }
 }
 
-/// **Every legal destination of `frm`** for seat `who` (`AutomataflFFI.targetsOf` = `moveLegalB` over
-/// the whole board) — the rook-line highlight set the playable surface paints, so what a player is
-/// offered is the ruleset's own legality rather than a Rust re-derivation of it.
+/// **Every PROPOSABLE destination of `frm`** for seat `who` (`AutomataflFFI.targetsOf` =
+/// `moveLegalB` over the whole board) — a rook line, distinct endpoints, in bounds, the automaton
+/// banned as a SOURCE, neither endpoint marked. This is what [`move_legal`] admits, so it is what
+/// the executor will accept.
+///
+/// ⚑ **IT IS NOT "WHERE YOU CAN GO".** `MoveLegal` has no occupancy clause: naming a square a piece
+/// is standing on — or a square behind one — is a legal PROPOSAL that then simply fails to execute
+/// (ruling D + the inclusive path check). So this set runs the full rook line straight through every
+/// blocker, and a surface painting it as its legal-move dots tells the player they can reach squares
+/// they cannot. That set is [`executable_targets`]; both are needed and they mean different things.
 pub fn legal_targets(
     b: &Board,
     marks: &[Coord],
@@ -339,6 +346,41 @@ pub fn legal_targets(
     let (cs, rest) = coords_from_wire(&r)?;
     if !rest.is_empty() {
         return Err(format!("targets reply: {} trailing tokens", rest.len()));
+    }
+    Ok(cs)
+}
+
+/// **Every destination of `frm` that would actually EXECUTE** (`AutomataflFFI.liveTargetsOf` =
+/// `moveLegalB` AND `!blockedB`) — the composed predicate, computed by the LEAN in one call.
+///
+/// `ms` is the ambient move set the caller is entitled to know: the round's LOCKED moves (public —
+/// the ruleset published them when it marked the clash), empty on a clean round. It is load-bearing,
+/// not decoration: every submitted move's SOURCE is passable while the round resolves, so a
+/// destination behind a piece somebody is moving IS reachable. Passing the wrong `ms` gives a
+/// different, still-honest answer to a different question — never a Rust-side approximation of this
+/// one, because nothing here scans a path.
+///
+/// ⚑ The answer is a strict subset of [`legal_targets`] and the GAP IS REAL: on the stock opening,
+/// the attractor at `(3,1)` has twenty proposable destinations and eleven executable ones.
+pub fn executable_targets(
+    b: &Board,
+    marks: &[Coord],
+    ms: &[Move],
+    who: u32,
+    frm: Coord,
+) -> Result<Vec<Coord>, String> {
+    let toks = ask(&format!(
+        "livetargets {} {} {} {} {}",
+        board_wire(b)?,
+        coords_wire(marks),
+        moves_wire(ms),
+        who,
+        Board::wire_coord(frm)
+    ))?;
+    let r = refs(&toks);
+    let (cs, rest) = coords_from_wire(&r)?;
+    if !rest.is_empty() {
+        return Err(format!("livetargets reply: {} trailing tokens", rest.len()));
     }
     Ok(cs)
 }

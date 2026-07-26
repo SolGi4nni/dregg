@@ -837,13 +837,20 @@ impl AutomataflSession {
         }
     }
 
-    /// The LEGAL TARGETS of `src` — the set the LEAN admits (`AutomataflRules.moveLegalB` over the
-    /// board: same row or column, distinct, in-bounds, and never the automaton as a SOURCE). The
-    /// highlight-set the board paints.
+    /// The PROPOSABLE targets of `src` — the set the LEAN admits (`AutomataflRules.moveLegalB` over
+    /// the board: same row or column, distinct, in-bounds, and never the automaton as a SOURCE).
+    /// This is what [`Offering::advance`]'s legality tooth accepts, so it is exactly the set of
+    /// destinations a seal can name without being refused.
     ///
     /// ⚑ Naming the automaton's square as a DESTINATION is legal to propose and then FAILS to execute
     /// (ruling D + the inclusive path check), so it is in this set. The old Rust `move_valid` banned
     /// it, which is `logic/src/game.rs`'s reading rather than the README's.
+    ///
+    /// ⚑ **THIS IS NOT THE LEGAL-MOVE HIGHLIGHT AND MUST NEVER BE PAINTED AS ONE.** `MoveLegal` has
+    /// no occupancy clause, so this runs the whole rook line THROUGH every piece standing on it —
+    /// ember selected the stock attractor at `(3,1)` on the live board and was shown a lit `(3,10)`,
+    /// behind the attractor on `(3,9)`, plus all of row 1 behind three repulsors. Nine of the twenty
+    /// squares could not have executed. [`Self::executable_targets`] is the set that would.
     ///
     /// ⚑ Asked WITH THIS TURN'S MARKS ([`Self::marks`]), so after a clash the offered rook line
     /// shrinks: a marked square is not a legal destination for anyone, and the re-check is the
@@ -853,6 +860,27 @@ impl AutomataflSession {
     /// adjudicate, and `advance` re-asks before it commits anything.
     pub fn legal_targets(&self, src: Coord) -> Vec<Coord> {
         rules::legal_targets(&self.board, &self.marks, 0, src).unwrap_or_default()
+    }
+
+    /// ⚑ **THE TARGETS THAT WOULD ACTUALLY EXECUTE** — `AutomataflFFI.liveTargetsOf`, the LEAN's own
+    /// `moveLegalB && !blockedB` in one call. The legal-move dots on the board are this set, and
+    /// only this set.
+    ///
+    /// Asked against the round's LOCKED moves, which is what a viewer is entitled to know (the
+    /// ruleset published them when it marked the clash) and never an opponent's sealed move. That
+    /// operand matters: a mover's SOURCE is passable while the round resolves, so a square behind a
+    /// piece a locked move is already carrying away IS reachable — the Lean is told, and answers.
+    ///
+    /// ⚑ **BLOCKED IS NOT ILLEGAL.** The complement of this set inside [`Self::legal_targets`] is
+    /// still proposable, and proposing it is a real play: seal a move behind a blocker, betting the
+    /// other seat picks the blocker up, and the same destination becomes live. That is why the board
+    /// paints a third state instead of hiding those squares — hiding them would be this crate
+    /// narrowing the ruleset's own legality in Rust, which is precisely what the deleted twin did.
+    ///
+    /// Empty when the oracle cannot answer; the board then offers no dots rather than guessing.
+    pub fn executable_targets(&self, src: Coord) -> Vec<Coord> {
+        rules::executable_targets(&self.board, &self.marks, &self.locked, 0, src)
+            .unwrap_or_default()
     }
 
     /// Whether `src` is a square a seat may move: a real (non-vacuum) particle that is not the
@@ -890,8 +918,17 @@ impl AutomataflSession {
     ///   trying to. PUBLIC: the marks are the same in every viewer's board;
     /// * the automaton square is marked (`@`, tag `accent`, in the highlight-set);
     /// * the viewer's SELECTED source is tagged `warn` and highlighted;
-    /// * every LEGAL target of that source is tagged `good` and highlighted, and carries the
-    ///   `{turn: "commit", arg: index}` affordance a click fires (the rook-line highlighting);
+    /// * ⚑ every target of that source that would EXECUTE ([`Self::executable_targets`]) is tagged
+    ///   `good` and highlighted, and carries the `{turn: "commit", arg: index}` affordance a click
+    ///   fires. **This used to be [`Self::legal_targets`], which is the PROPOSABLE set** — it has no
+    ///   occupancy clause, so the rook line lit straight through every piece standing on it and the
+    ///   player read a dot as "I can go there" for squares nothing could reach. On the stock opening
+    ///   that was nine of twenty;
+    /// * ⚑ a target that is proposable but BLOCKED right now is tagged `blocked`, is NOT highlighted,
+    ///   and KEEPS its `commit` affordance. It is not illegal and the surface may not pretend it is:
+    ///   the ruleset lets a seat name it and eat the refusal, and — because a mover's source is
+    ///   passable — the same square goes live the moment somebody picks the blocker up. Sealing one
+    ///   is a bet on the other seat, which is a real play in a simultaneous-move game;
     /// * a movable piece carries `{turn: "select", arg: index}` while the viewer has not sealed;
     /// * once the VIEWER has sealed, the stale rook line is dropped and their own move is painted
     ///   instead: the source `warn`, the destination `sealed`. Per-viewer, out of the viewer's own
@@ -923,12 +960,22 @@ impl AutomataflSession {
         // affordance left on those squares) and painting it lies about what is pending; the two
         // squares that matter are the piece it sealed and where it sealed it TO.
         let own_sealed: Option<Move> = viewer.and_then(|s| self.committed[s.idx()]);
+        // ⚑ TWO SETS, BOTH THE LEAN'S. `targets` is what a seal may NAME (`moveLegalB`); `live` is
+        // what would actually RUN (`moveLegalB && !blockedB`, one call). Nothing here scans a path or
+        // decides what occludes what — the difference between the two lists IS the oracle's answer,
+        // and the board paints them as two different things because they mean two different things.
         let mut targets: Vec<Coord> = Vec::new();
+        let mut live: Vec<Coord> = Vec::new();
         if own_sealed.is_none() {
             for &src in &selections {
                 for t in self.legal_targets(src) {
                     if !targets.contains(&t) {
                         targets.push(t);
+                    }
+                }
+                for t in self.executable_targets(src) {
+                    if !live.contains(&t) {
+                        live.push(t);
                     }
                 }
             }
@@ -968,6 +1015,10 @@ impl AutomataflSession {
             let is_auto = c == self.board.auto;
             let is_selected = selections.contains(&c);
             let is_target = targets.contains(&c);
+            // The LEAN's composed answer: proposable AND unobstructed. Never `is_target && !live`
+            // computed the other way round — the blocked set is the difference between two lists the
+            // oracle handed back, not a Rust judgement about what is in the way.
+            let is_live = live.contains(&c);
 
             let is_goal = Seat::owner_of_goal(c).is_some();
 
@@ -986,8 +1037,15 @@ impl AutomataflSession {
                 ("warn", true)
             } else if is_selected {
                 ("warn", true)
-            } else if is_target {
+            } else if is_live {
                 ("good", true)
+            } else if is_target {
+                // ⚑ PROPOSABLE BUT BLOCKED — legal to name, and it would not run against the board
+                // as it stands. Deliberately NOT highlighted: the highlight is the promise "this
+                // move happens", and it was being made for squares behind a piece. The affordance
+                // stays (below), because the ruleset licenses the proposal and the other seat can
+                // clear the way; what changes is that the board stops calling it a legal move.
+                ("blocked", false)
             } else if is_goal {
                 // THE OBJECTIVE RING on an OCCUPIED goal corner. A vacant one is already legible by
                 // its `a`/`b` glyph, but the stock opening starts with a repulsor on all four
@@ -1000,7 +1058,9 @@ impl AutomataflSession {
                 ("", false)
             };
 
-            // The affordance: a legal target commits; a movable piece selects (while unsealed).
+            // The affordance: a PROPOSABLE target commits (blocked ones included — `advance`'s
+            // legality tooth is `moveLegalB`, so refusing the click here would be this crate
+            // narrowing the ruleset in Rust); a movable piece selects (while unsealed).
             let (turn, arg) = if playable && !sealed && is_target {
                 (COMMIT.to_string(), idx as i64)
             } else if playable && !sealed && self.movable(c) {
@@ -1488,9 +1548,9 @@ impl AutomataflSession {
                     .to_string()
             }
             Phase::Commit => {
-                "YOUR MOVE. Click any piece to pick it up; its rook line lights up, and clicking a \
-                 lit square seals a move there. Both seats move at once, so nothing happens on the \
-                 board until you have both sealed."
+                "YOUR MOVE. Click any piece to pick it up; the squares it can reach light up, and \
+                 clicking a lit square seals a move there. Both seats move at once, so nothing \
+                 happens on the board until you have both sealed."
                     .to_string()
             }
             Phase::Resubmit if self.committed[i].is_some() => format!(
@@ -1844,8 +1904,11 @@ impl AutomataflSession {
                     ViewNode::Text(format!(
                         "Attractors (A) are the round brass discs; repulsors (R) are the angular \
                          pale blades; the automaton (@) is the violet ring; the four brass corners \
-                         are the goals (a/b). Click a piece to pick it up — its rook line lights \
-                         up, and clicking a lit square seals a move there.{}",
+                         are the goals (a/b). Click a piece to pick it up. The squares it can \
+                         actually REACH light up — a piece moves like a rook and stops at the first \
+                         thing in its way, so the light stops there too. Squares further along the \
+                         line are drawn dimmed and outlined: you may still seal a move to one, and \
+                         it runs only if the other seat moves the piece that is blocking it.{}",
                         if self.marks.is_empty() {
                             ""
                         } else {
@@ -1938,9 +2001,16 @@ impl Offering for AutomataflOffering {
             // then the selects. The WEB board is unaffected either way: every square of the
             // `CoordGrid` is its own POST form, so the browser never reads this list.
             //
-            // One `commit` affordance per legal target of EITHER seat's live selection (a seat's
-            // own board grid shows only its own; the executor re-checks the seat on advance).
+            // One `commit` affordance per PROPOSABLE target of EITHER seat's live selection (a
+            // seat's own board grid shows only its own; the executor re-checks the seat on advance).
+            //
+            // ⚑ AND THE LABEL SAYS WHICH KIND IT IS. On Discord / Telegram / WeChat there is no CSS
+            // and no `data-tag`: the button label is the whole of what a player reads, so a target
+            // that would not execute has to say so IN ITS NAME or those frontends keep the exact bug
+            // the board just stopped painting. The proposal stays offered — it is legal, and a
+            // blocked square goes live the moment the other seat lifts the piece in the way.
             let mut targets: Vec<usize> = Vec::new();
+            let mut live: Vec<usize> = Vec::new();
             for seat in [Seat::A, Seat::B] {
                 if !session.is_waiting(seat) {
                     continue;
@@ -1953,13 +2023,28 @@ impl Offering for AutomataflOffering {
                             }
                         }
                     }
+                    for t in session.executable_targets(src) {
+                        if let Some(i) = index_of(t) {
+                            if !live.contains(&i) {
+                                live.push(i);
+                            }
+                        }
+                    }
                 }
             }
             targets.sort_unstable();
             for idx in targets {
                 let c = coord_of(idx);
                 out.push(Action::new(
-                    format!("Seal a move to ({},{})", c.0, c.1),
+                    if live.contains(&idx) {
+                        format!("Seal a move to ({},{})", c.0, c.1)
+                    } else {
+                        format!(
+                            "Seal a move to ({},{}) — BLOCKED: a piece is in the way, so it only \
+                             runs if the other seat moves that piece",
+                            c.0, c.1
+                        )
+                    },
                     COMMIT,
                     idx as i64,
                     true,
