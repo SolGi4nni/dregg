@@ -11856,7 +11856,9 @@ and "hbox is triple-booked" were the same sampling artifact read in opposite dir
   `hygiene`; does not exist yet, named without a path deliberately).
 - **PROCESS NOTE — two doctrine writers converged on the same task in the shared tree.** A second
   writer was mid-rewrite of `docs/BUILD-BUDGET.md` into the same routing doctrine, from the same
-  measurements, while this lane drafted a separate `docs/BUILD-ROUTING-DOCTRINE.md`. **The draft was
+  measurements, while this lane drafted a separate `BUILD-ROUTING-DOCTRINE.md` under `docs/`
+  (named here without a path, like `box-health.sh` above, because it deliberately does not exist).
+  **The draft was
   DELETED rather than shipped** — two competing routing doctrines in `docs/` is precisely the
   disease being cured, since a lane then finds the wrong one. Surviving file is
   `docs/BUILD-BUDGET.md`; this lane contributed only what was additive (the two-knob correction, the
