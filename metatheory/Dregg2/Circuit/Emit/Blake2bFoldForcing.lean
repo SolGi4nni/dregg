@@ -685,6 +685,37 @@ theorem getD_map_range (f : Nat → Nat) (n i : Nat) (hi : i < n) :
   rw [List.getD_eq_getElem?_getD, List.getElem?_map, List.getElem?_range hi]
   rfl
 
+/-- `getD` on the left half of an append. -/
+theorem gdaL (l1 l2 : List Nat) (i : Nat) (h : i < l1.length) :
+    (l1 ++ l2).getD i 0 = l1.getD i 0 := by
+  rw [List.getD_eq_getElem?_getD, List.getElem?_append_left h, ← List.getD_eq_getElem?_getD]
+
+/-- `getD` on the right half of an append. -/
+theorem gdaR (l1 l2 : List Nat) (i : Nat) (h : l1.length ≤ i) :
+    (l1 ++ l2).getD i 0 = l2.getD (i - l1.length) 0 := by
+  rw [List.getD_eq_getElem?_getD, List.getElem?_append_right h, ← List.getD_eq_getElem?_getD]
+
+/-- **`refInitV` in append form**: the input state `hVals` followed by `[IV0..3, IV4⊕t0, IV5⊕t1,
+IV6⊕f0, IV7⊕f1]` — for clean per-index reads in the init forcing. -/
+theorem refInitV_eq_append (hVals : List Nat) (t0 t1 f0 f1 : Nat) (hlen : hVals.length = 8) :
+    refInitV hVals t0 t1 f0 f1 = hVals ++
+      [Ref.IV.getD 0 0, Ref.IV.getD 1 0, Ref.IV.getD 2 0, Ref.IV.getD 3 0,
+       Ref.xorw (Ref.IV.getD 4 0) t0, Ref.xorw (Ref.IV.getD 5 0) t1,
+       Ref.xorw (Ref.IV.getD 6 0) f0, Ref.xorw (Ref.IV.getD 7 0) f1] := by
+  have g12 : (hVals ++ Ref.IV).getD 12 0 = Ref.IV.getD 4 0 := by rw [gdaR _ _ 12 (by omega), hlen]
+  have g13 : (hVals ++ Ref.IV).getD 13 0 = Ref.IV.getD 5 0 := by rw [gdaR _ _ 13 (by omega), hlen]
+  have g14 : (hVals ++ Ref.IV).getD 14 0 = Ref.IV.getD 6 0 := by rw [gdaR _ _ 14 (by omega), hlen]
+  have g15 : (hVals ++ Ref.IV).getD 15 0 = Ref.IV.getD 7 0 := by rw [gdaR _ _ 15 (by omega), hlen]
+  simp only [refInitV]
+  rw [g12, getD_set_ne' _ 12 13 _ 0 (by decide), g13,
+      getD_set_ne' _ 13 14 _ 0 (by decide), getD_set_ne' _ 12 14 _ 0 (by decide), g14,
+      getD_set_ne' _ 14 15 _ 0 (by decide), getD_set_ne' _ 13 15 _ 0 (by decide),
+      getD_set_ne' _ 12 15 _ 0 (by decide), g15,
+      List.set_append_right _ _ (by omega), List.set_append_right _ _ (by omega),
+      List.set_append_right _ _ (by omega), List.set_append_right _ _ (by omega)]
+  simp only [hlen]
+  rfl
+
 /-- **`blake2bFinalize_forces`** — the digest fold forces each of the 8 output words to
 `h_i ⊕ vf_i ⊕ vf_{i+8}` (`= (refDigest hVals vf)_i`), by `xor3Word_forces` per word (carry base
 `fresh + 64·i`, matching `blake2bFinalize`'s fresh threading). -/
@@ -703,7 +734,137 @@ theorem blake2bFinalize_forces (a : Assignment) (hbool : AllBool a)
   rw [refDigest, getD_map_range _ 8 i hi]
   exact hforce
 
-/-! ## §9 — Axiom hygiene (CI hard-gate). The composition rungs are pinned kernel-clean. -/
+/-- **`blake2bInit_forces`** — the init gadget forces the 16-word initial work vector `refInitV`:
+`v[0..7]` relabel the input state (`hBases` hold `hVals`), `v[8..11]` are the pinned `IV[0..3]`
+constants (`h8..h11` from `constWord_forces`), and `v[12..15]` are the counter/flag XOR-folded into
+`IV[4..7]` (`h12..h15` from `xorConstWord_forces`, XOR commuting). -/
+theorem blake2bInit_forces (a : Assignment) (hBases : List Nat) (t0B t1B f0B f1B fresh : Nat)
+    (hVals : List Nat) (t0 t1 f0 f1 : Nat) (hlen : hVals.length = 8)
+    (hh : ∀ i, i < 8 → Holds a (hBases.getD i 0) (hVals.getD i 0))
+    (h8 : Holds a fresh (Ref.IV.getD 0 0)) (h9 : Holds a (fresh + 64) (Ref.IV.getD 1 0))
+    (h10 : Holds a (fresh + 128) (Ref.IV.getD 2 0)) (h11 : Holds a (fresh + 192) (Ref.IV.getD 3 0))
+    (h12 : Holds a (fresh + 256) (t0 ^^^ Ref.IV.getD 4 0))
+    (h13 : Holds a (fresh + 320) (t1 ^^^ Ref.IV.getD 5 0))
+    (h14 : Holds a (fresh + 384) (f0 ^^^ Ref.IV.getD 6 0))
+    (h15 : Holds a (fresh + 448) (f1 ^^^ Ref.IV.getD 7 0)) :
+    StateHolds a (blake2bInit hBases t0B t1B f0B f1B fresh).2.1 (refInitV hVals t0 t1 f0 f1) := by
+  have hvB : (blake2bInit hBases t0B t1B f0B f1B fresh).2.1 =
+      [hBases.getD 0 0, hBases.getD 1 0, hBases.getD 2 0, hBases.getD 3 0, hBases.getD 4 0,
+       hBases.getD 5 0, hBases.getD 6 0, hBases.getD 7 0, fresh, fresh + 64, fresh + 128,
+       fresh + 192, fresh + 256, fresh + 320, fresh + 384, fresh + 448] := rfl
+  refine ⟨by simp [hvB], ?_, ?_⟩
+  · rw [refInitV_eq_append _ _ _ _ _ hlen]; simp [hlen]
+  · intro i hi
+    rw [hvB, refInitV_eq_append _ _ _ _ _ hlen]
+    rcases Nat.lt_or_ge i 8 with h8i | h8i
+    · rw [gdaL _ _ i (by omega)]
+      interval_cases i <;>
+        simp only [List.getD_cons_zero, List.getD_cons_succ] <;> exact hh _ (by omega)
+    · rw [gdaR _ _ i (by omega), hlen]
+      interval_cases i <;>
+        simp only [List.getD_cons_zero, List.getD_cons_succ] <;>
+        first
+          | exact h8 | exact h9 | exact h10 | exact h11
+          | (unfold Ref.xorw; rw [Nat.xor_comm]; exact h12)
+          | (unfold Ref.xorw; rw [Nat.xor_comm]; exact h13)
+          | (unfold Ref.xorw; rw [Nat.xor_comm]; exact h14)
+          | (unfold Ref.xorw; rw [Nat.xor_comm]; exact h15)
+
+/-- **`blake2bF_forces`** — the whole-block compression gadget forces `Ref.compress`: the 12-round
+compression carries the init work vector to `vFinal` (`hcomp`, from `blake2bInit_forces` +
+`blake2bCompress_forces`), then the digest fold (`hfin`) lands the 8 output words on `Ref.compress`'s
+digest — via `refCompress_eq`. This is ONE block of the multi-block absorb. -/
+theorem blake2bF_forces (a : Assignment) (hbool : AllBool a)
+    (hBases vFinal outBases hVals mVals : List Nat) (t0 t1 f0 f1 fresh : Nat)
+    (hh : ∀ i, i < 8 → Holds a (hBases.getD i 0) (hVals.getD i 0))
+    (hcomp : StateHolds a vFinal
+      ((List.range 12).foldl (cRStep mVals) (refInitV hVals t0 t1 f0 f1)))
+    (hfin : ∀ i, i < 8 → ∀ j, j < 64 →
+        evalH (xorHead [hBases.getD i 0 + j, vFinal.getD i 0 + j, vFinal.getD (i + 8) 0 + j]
+               (outBases.getD i 0 + j) (fresh + 64 * i + j)) a = 0) :
+    ∀ i, i < 8 → Holds a (outBases.getD i 0) ((Ref.compress hVals mVals t0 t1 f0 f1).getD i 0) := by
+  obtain ⟨_, _, hvf⟩ := hcomp
+  have hfinal := blake2bFinalize_forces a hbool hBases vFinal outBases hVals
+    ((List.range 12).foldl (cRStep mVals) (refInitV hVals t0 t1 f0 f1)) fresh hh hvf hfin
+  intro i hi
+  rw [refCompress_eq]
+  exact hfinal i hi
+
+/-! ## §9 — The multi-block absorb and the discharge of Midnight's `hfold`. -/
+
+/-- The reconstructed 8-word BLAKE2b state at a list of 8 column-bases. -/
+def Holds8 (a : Assignment) (bases vals : List Nat) : Prop :=
+  vals.length = 8 ∧ ∀ i, i < 8 → Holds a (bases.getD i 0) (vals.getD i 0)
+
+/-- **`absorb_forces`** — the multi-block absorb composes free: chaining `blake2bF` block by block
+(block `k`'s 8 output words are block `k+1`'s input state, `nextBases`) forces the reconstructed final
+state = `LightClientMidHashFold.absorb` of the block VALUES, by one `foldl_forces` over the schedule.
+Each block's step is `blake2bF_forces` (the `hstep` hypothesis). RESIDUAL #1's "× #rows" — as a proof. -/
+theorem absorb_forces (a : Assignment) (s : List (List Nat × Nat × Nat))
+    (nextBases : List Nat → (List Nat × Nat × Nat) → List Nat)
+    (hstep : ∀ (bases vals : List Nat) (e : List Nat × Nat × Nat), e ∈ s →
+        Holds8 a bases vals →
+        Holds8 a (nextBases bases e) (Ref.compress vals e.1 e.2.1 0 e.2.2 0))
+    (h0Bases h0Vals : List Nat) (h0 : Holds8 a h0Bases h0Vals) :
+    Holds8 a (s.foldl nextBases h0Bases) (LightClientMidHashFold.absorb h0Vals s) := by
+  unfold LightClientMidHashFold.absorb
+  exact foldl_forces s nextBases (fun h e => Ref.compress h e.1 e.2.1 0 e.2.2 0)
+    (fun b v => Holds8 a b v) h0Bases h0Vals h0 (fun b v e he hR => hstep b v e he hR)
+
+/-- Two `Nat` lists of equal length that agree at every `getD` index are equal. -/
+theorem list_ext_getD (l1 l2 : List Nat) (hl : l1.length = l2.length)
+    (h : ∀ i, i < l1.length → l1.getD i 0 = l2.getD i 0) : l1 = l2 := by
+  apply List.ext_getElem hl
+  intro i h1 h2
+  have hi := h i h1
+  rwa [List.getD_eq_getElem?_getD, List.getD_eq_getElem?_getD,
+       List.getElem?_eq_getElem h1, List.getElem?_eq_getElem h2, Option.getD_some,
+       Option.getD_some] at hi
+
+/-- **`midHfold_discharged`** — Midnight's `hfold` is DERIVED, not assumed. Given the reconstructed
+authority-set root (`hchain`, from `absorb_forces` over the exhibited rows) and the in-circuit pin of
+those root words to the WS-anchor root (`hpin` — the coordinate equality gates), the BLAKE2b absorb
+reconstructs into the anchor: `authSetRootRef rows = anchor`. This IS the `hfold` hypothesis
+`LightClientMidHashFold.verifyAuthSet_from_fold` / `mid_authset_from_fold_slots_into_no_forgery` assume —
+now a CONCLUSION of the chained gates. -/
+theorem midHfold_discharged (a : Assignment) (rows : List (Nat × Nat)) (rootBases anchor : List Nat)
+    (hchain : Holds8 a rootBases (LightClientMidHashFold.authSetRootRef rows))
+    (hanchorLen : anchor.length = 8)
+    (hpin : ∀ i, i < 8 → Holds a (rootBases.getD i 0) (anchor.getD i 0)) :
+    LightClientMidHashFold.authSetRootRef rows = anchor := by
+  obtain ⟨hrootLen, hroot⟩ := hchain
+  apply list_ext_getD _ _ (by omega)
+  intro i hi'
+  have hi : i < 8 := by omega
+  rw [← hroot i hi]
+  exact hpin i hi
+
+section Payoff
+open Dregg2.Bridge.LightClientMidnight
+open Dregg2.Circuit.Emit.LightClientMidHashFold
+
+/-- **THE PAYOFF** — the Midnight/GRANDPA no-forgery guarantee with `AUTHSET_OK` FOLDED OUT: given the
+EC-arc/in-AIR results and a satisfying witness whose exhibited authority rows' chained-`blake2bF` absorb
+reconstructs into the pinned WS-anchor root (`hchain` from `absorb_forces` + `hpin` the root-pin gates),
+the update is Midnight-VALID. `mid_authset_from_fold_slots_into_no_forgery`'s `hfold` leg is now DERIVED
+by `midHfold_discharged`, not assumed — the composition wall closed end-to-end. -/
+theorem mid_forgery_from_absorb (a : Assignment)
+    (ts : MidTrustedState midBlakeLeaf) (u : MidUpdate midBlakeLeaf) (rootBases : List Nat)
+    (hcr : midBlakeLeaf.authSetCR)
+    (hpos : 0 < totalWeight midBlakeLeaf u)
+    (hthr : 2 * totalWeight midBlakeLeaf u < 3 * signedWeight midBlakeLeaf u)
+    (hed : edOk midBlakeLeaf u = true) (hround : roundOk midBlakeLeaf u = true)
+    (hera : eraOk midBlakeLeaf ts u = true)
+    (hchain : Holds8 a rootBases (authSetRootRef (u.authSet.map authRow)))
+    (hanchorLen : ts.anchorRoot.length = 8)
+    (hpin : ∀ i, i < 8 → Holds a (rootBases.getD i 0) (ts.anchorRoot.getD i 0)) :
+    MidValidAt midBlakeLeaf ts u :=
+  mid_authset_from_fold_slots_into_no_forgery hcr ts u hpos hthr hed hround hera
+    (midHfold_discharged a (u.authSet.map authRow) rootBases ts.anchorRoot hchain hanchorLen hpin)
+
+end Payoff
+
+/-! ## §10 — Axiom hygiene (CI hard-gate). The composition rungs are pinned kernel-clean. -/
 
 #assert_axioms testBit_bitsToNat
 #assert_axioms testBit_rotr64
@@ -719,8 +880,16 @@ theorem blake2bFinalize_forces (a : Assignment) (hbool : AllBool a)
 #assert_axioms xorConstWord_forces
 #assert_axioms refCompress_eq
 #assert_axioms blake2bFinalize_forces
+#assert_axioms refInitV_eq_append
+#assert_axioms blake2bInit_forces
+#assert_axioms blake2bF_forces
+#assert_axioms absorb_forces
+#assert_axioms midHfold_discharged
+#assert_axioms mid_forgery_from_absorb
 
 #print axioms blakeG_forces
 #print axioms blake2bCompress_forces
+#print axioms midHfold_discharged
+#print axioms mid_forgery_from_absorb
 
 end Dregg2.Circuit.Emit.Blake2bFoldForcing
