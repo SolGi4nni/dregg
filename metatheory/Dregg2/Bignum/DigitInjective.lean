@@ -151,10 +151,13 @@ theorem chunkedVal_injective {B : ℤ} (hB : 0 < B) (width : Nat) :
 /-- POSITIVE: distinct base-128 four-limb vectors have distinct values. -/
 example : bignumVal 128 [1, 0, 0, 0] ≠ bignumVal 128 [0, 1, 0, 0] := by decide
 
-/-- The keystone actually FIRES: equal values force equal limbs. -/
-example : ([3, 5, 7] : List ℤ) = [3, 5, 7] :=
-  bignumVal_injective (by norm_num : (0 : ℤ) < 128) [3, 5, 7] [3, 5, 7] rfl
-    (by decide) (by decide) rfl
+/-- The keystone's TOOTH, in the contrapositive form a commitment argument actually consumes:
+two ranged base-128 limb vectors of the same length that DIFFER anywhere have DIFFERENT values.
+(An `xs = xs` instance would prove nothing — it is `rfl` with the keystone spelt over it.) -/
+example {xs ys : List ℤ} (hlen : xs.length = ys.length)
+    (hx : Ranged 128 xs) (hy : Ranged 128 ys) (hne : xs ≠ ys) :
+    bignumVal 128 xs ≠ bignumVal 128 ys :=
+  fun h => hne (bignumVal_injective (by norm_num) xs ys hlen hx hy h)
 
 /-- NEGATIVE (the range check is LOAD-BEARING, not decoration): drop `Ranged` and the
 conclusion is FALSE — `[128, 0]` and `[0, 1]` are distinct limb vectors with the SAME base-128
