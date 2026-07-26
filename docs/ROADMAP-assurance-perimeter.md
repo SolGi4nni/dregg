@@ -37,6 +37,53 @@ a trusted key. **Nothing trusted, nothing duplicated.**
 | 9 | `system_roots_digest` | trusted-Rust | ⏳ later — small; make it an AIR-bound or Lean-authored value |
 | 10 | effect state-transition | Lean-authored | ✅ deployed `produce_via_lean` (covered set); residual: the root (#2) + wasm/unmapped fallback |
 
+## ⚑ VACUITY AXIS (07-24→25) — the accrual gate, and the strategy that had to be corrected
+
+A second, orthogonal disease to the `⟺` axis: a hypothesis **PROVABLY FALSE at deployed BabyBear params** makes
+every theorem assuming it **VACUOUS** — true, and saying nothing about the deployed system.
+
+**LANDED.** `#floor_ratchet` (`Dregg2/Verify/FloorRatchet.lean`, end of `Dregg2.lean`): a NEW declaration taking
+a refuted floor is a **BUILD ERROR**. Adversarially proven (8 probes, every evasion class red). CI-armed via
+`scripts/floor_ratchet_check.sh` (`16f7719341`) — **presence-then-build**, because a deleted command raises no
+error. Holes found and closed: **B3** bundle-user, **B4** binder-order (`Γ → F → False` *is* `Γ → ¬F`, so the old
+rule keyed on a spelling the author controls), **inj-spelling** (`Verify/InjSpelling.lean` — the refuted set is
+DERIVED from in-tree refutation theorems, never hardcoded, so it self-updates). `1c20b7290`, `9e0f13d2f`.
+⚑ `9e0f13d2f` records the headline: the gate was *"blind to 24 bundles and **laundering 105 security claims**"* —
+theorems that READ as assurance while assuming something false. **That named list is the campaign's most valuable
+artifact.**
+
+**TOOLING.** `Verify/FloorCensus.lean` (semantic census over ELABORATED terms, 27 floors — text cannot see
+`variable` binders nor tell endpoint from threader) · `Tools/ConePort.lean` (codemod, 100% of its eligible class,
+byte-reproducible) · `Tools/ConeCutover.lean` (TRANSACTIONAL delete+rewire+pin-move, falsified with 5 probes) ·
+`scripts/binding_surface_complete.py` (coarse textual ruler — blind to 20 of 27 floors, treat as an UNDERCOUNT).
+
+**STATE: accrual STOPPED** (34 commits / 366 new declaration headers, tier-A flat). **Removal still NET-NEGATIVE**
+(1 declaration out, 6 in). The gate stopped the bleeding; nothing drains yet.
+
+**⚑ THE MEASURED STRATEGY CORRECTION — read before planning any removal wave.**
+- The endpoint→cone unlock model is **FALSE, measured at 0.5**: 20 endpoints ported freed only 10 threaders, and
+  the threader class went **UP** (1177→1184). CAUSE: **multi-floor declarations** — a declaration stays a carrier
+  while ANY floor remains, so shedding one floor of four is real proof work with **zero** realized reduction.
+  Proof: cellleaf shed `cellLeafInjective` from 13 sites; all 13 reappeared carrying other floors.
+- **Work order by measured ratio:** ① **BUNDLES** (floor-FIELD deletions; 3 bought −6). Remaining:
+  `CircuitSoundness.lean:117`, `:1050`, `ClosureLog.lean:86`, `DeployedCapTree.lean:139`. ② **SOLE-FLOOR**
+  declarations (verify sole-floor status FIRST). ③ multi-floor only in whole floor-COMBO batches (~16 combos).
+- **BUNDLE RULE** (`Shielded/RealCrypto.lean` §2.0): DELETE the floor field; **never** swap in a `noColl` field —
+  a field has no argument position, so it must quantify over a pre-chosen set (empty carries nothing; non-trivial
+  is uninhabitable again). That is laundering. Re-inhabit with a **constructed deployed inhabitant whose own
+  carriers REFUTE the deleted field** (`deployedCap8Scheme`, `deployedPoseidon2Tree`, `deployedCompress2`).
+
+**⚑ THREE OPERATIONAL LAWS PAID FOR IN LOST TIME:**
+1. **A red root build DELETES a build-embedded gate rather than failing it.** `#floor_ratchet` emitted nothing for
+   **111 commits** because two committed modules referenced providers that were never committed at any revision
+   (`a71b631a8e`). Treat root-build-green as a load-bearing invariant, and guard the gate's *presence* out of band.
+2. **Never measure a repo-wide metric in the working tree** — it carries other people's uncommitted providers and
+   yields a green no other checkout reproduces. Use a clean `git archive` export, md5-verify the instrument across
+   compared trees.
+3. **Ask where a number came from.** "112/121 endpoints" was never real — the ruler counts 86, and every 121 in
+   the tree is **automatafl's n²=121**. A campaign was sized off a game board because it was only ever checked for
+   internal consistency.
+
 ## Cycles
 - **Cycle 1 — DONE.** template · heap hole · state-commit flagship · CI-wiring · receipt resolver (held).
 - **Cycle 2 — ✅ COMPLETE.** note-spend `cb2567872` · garbled `ba38e878b` · cap found-already-closed `c8f443e37` ·
