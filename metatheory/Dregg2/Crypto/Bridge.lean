@@ -369,22 +369,52 @@ example : ∃ (vD salt : Int), BridgeRelation refCompress 107 50 100 vD salt := 
 
 /-- A degenerate reference bridge verifier kernel over `ℤ` (`def`, not a global `instance`).
 `verify` accepts iff the disclosed commitment is the toy `compress` of SOME observed value's digest that
-clears the threshold — decided here directly against the canonical observation; `extractable := True`.
+clears the threshold — decided here directly against the canonical observation.
 `extract` rebuilds the satisfying trace from the accepted statement via `bridge_complete`. For this toy
 we model the observed value as `stmt.c - 7` opening with salt `7` (the `compress a 7 = a + 7` inverse),
-and accept iff it clears the threshold. -/
+and accept iff it clears the threshold.
+
+⚑ **CARRIER REPAIR (2026-07-25).** `extractable` was `True`; it is now the genuine
+extractability-SHAPED `Prop` over THIS oracle, `extract := fun h => h` (PortalFloor style), PROVED at
+`refKernel_extractable` and REFUTED at `forgeKernel_not_extractable`. -/
 @[reducible] def refKernel : BridgeVerifierKernel Int Unit where
   compress := refCompress
   verify stmt _ := decide (stmt.threshold ≤ stmt.c - 7)
-  extractable := True
-  extract := by
-    intro _ stmt _ haccept
-    simp only [decide_eq_true_eq] at haccept
-    -- observed value v = stmt.c - 7, vDigest = stmt.c - 7, salt = 7 ⇒ compress vDigest salt = stmt.c.
-    refine ⟨stmt.c - 7, ?_⟩
-    have hrel : BridgeRelation refCompress stmt.c stmt.threshold (stmt.c - 7) (stmt.c - 7) 7 :=
-      ⟨by show stmt.c = (stmt.c - 7) + 7; ring, haccept⟩
-    exact bridge_complete refCompress stmt.c stmt.threshold (stmt.c - 7) (stmt.c - 7) 7 hrel
+  extractable :=
+    ∀ (stmt : Statement Int) (_proof : Unit), decide (stmt.threshold ≤ stmt.c - 7) = true →
+      ∃ (v : Int) (circuit : CircuitIR Int),
+        Satisfies refCompress circuit stmt.c stmt.threshold v
+  extract := fun h => h
+
+/-- **THE REFERENCE CARRIER HOLDS** — a theorem: the accepted statement really does carry a satisfying
+bridge trace, at observed value `stmt.c - 7` opening with salt `7`. -/
+theorem refKernel_extractable : refKernel.extractable := by
+  intro stmt _ haccept
+  simp only [decide_eq_true_eq] at haccept
+  -- observed value v = stmt.c - 7, vDigest = stmt.c - 7, salt = 7 ⇒ compress vDigest salt = stmt.c.
+  refine ⟨stmt.c - 7, ?_⟩
+  have hrel : BridgeRelation refCompress stmt.c stmt.threshold (stmt.c - 7) (stmt.c - 7) 7 :=
+    ⟨by show stmt.c = (stmt.c - 7) + 7; ring, haccept⟩
+  exact bridge_complete refCompress stmt.c stmt.threshold (stmt.c - 7) (stmt.c - 7) 7 hrel
+
+/-- **FORGE KERNEL** — same carrier SHAPE over a node hash that collapses every opening to `0` and an
+oracle that accepts EVERY statement. Nothing can open a non-zero commitment under that hash. -/
+@[reducible] def forgeKernel : BridgeVerifierKernel Int Unit where
+  compress _ _ := 0
+  verify _ _ := true
+  extractable :=
+    ∀ (stmt : Statement Int) (_proof : Unit), (true : Bool) = true →
+      ∃ (v : Int) (circuit : CircuitIR Int),
+        Satisfies (fun _ _ => (0 : Int)) circuit stmt.c stmt.threshold v
+  extract := fun h => h
+
+/-- **THE CARRIER IS FALSE HERE.** At the disclosed commitment `c = 1` the claimed trace's opening
+boundary says `1 = 0`. So the reference carrier has CONTENT — it is refutable, which `True` is not. -/
+theorem forgeKernel_not_extractable : ¬ forgeKernel.extractable := by
+  intro h
+  obtain ⟨_, _, hsat⟩ := h { c := 1, threshold := 0 } () rfl
+  have hopen : (1 : Int) = 0 := hsat.2
+  exact absurd hopen (by decide)
 
 /-- The empty base registry over the toy `ℤ` bridge statement/`Unit` proof. -/
 def base : Registry (Statement Int) Unit := fun _ => none
@@ -393,7 +423,7 @@ def base : Registry (Statement Int) Unit := fun _ => none
 value opens against the commitment and clears the threshold. -/
 example : ∃ (v : Int) (vD salt : Int),
     BridgeRelation refCompress sampleStmt.c sampleStmt.threshold v vD salt :=
-  bridge_verify_sound (K := refKernel) trivial sampleStmt () (by decide)
+  bridge_verify_sound (K := refKernel) refKernel_extractable sampleStmt () (by decide)
 
 /-- Non-vacuity of the FULL cascade: at the reference kernel an accepted proof both `Discharged`s the
 registry predicate AND proves the bridge relation. A NAMED witness so its axiom footprint is checkable. -/
@@ -402,7 +432,7 @@ theorem reference_cascade_nonvacuous :
         (verifiableOfRegistry (@bridgeReg Int _ Unit refKernel base) .bridge) sampleStmt ())
       ∧ ∃ (v : Int) (vD salt : Int),
           BridgeRelation refCompress sampleStmt.c sampleStmt.threshold v vD salt :=
-  bridge_registry_cascade (K := refKernel) trivial base sampleStmt () (by decide)
+  bridge_registry_cascade (K := refKernel) refKernel_extractable base sampleStmt () (by decide)
 
 -- Non-vacuity axiom footprint: rests only on the standard kernel axioms.
 #print axioms reference_cascade_nonvacuous
@@ -410,7 +440,7 @@ theorem reference_cascade_nonvacuous :
 /-- Non-vacuity of the dial wiring: the floor is `selective`, the dial's bottom notch is the verifier's
 bit, and an accepting proof proves the bridge relation. -/
 example : (bridgeKindObligation Int).dialFloor = Dial.selective :=
-  (bridge_dial_wired (K := refKernel) trivial base sampleStmt ()).1
+  (bridge_dial_wired (K := refKernel) refKernel_extractable base sampleStmt ()).1
 
 end Reference
 
@@ -421,5 +451,9 @@ end Reference
 #assert_axioms bridge_verify_sound
 #assert_axioms bridge_registry_cascade
 #assert_axioms bridge_dial_wired
+
+-- Carrier non-vacuity pins (PortalFloor §9c discipline): reference carrier HOLDS, forge carrier FALSE.
+#assert_axioms Reference.refKernel_extractable
+#assert_axioms Reference.forgeKernel_not_extractable
 
 end Dregg2.Crypto.Bridge

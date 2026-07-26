@@ -59,11 +59,11 @@
 //! guard on the retired 11-lane plain step (section (d)). The whole-turn end-to-end is un-blocked — the
 //! tier-3 gate in section (d) is `#[ignore]`-free. See `MultiRoundTurn`'s type doc.
 
+use dregg_automatafl::board::{ATT, AUTO, Board, Coord, Move, VAC};
 use dregg_automatafl::legc_layout::LegCLayout;
 use dregg_automatafl::legc_witness::{
     LegCTrace, RoundStateIn, automatafl_legc_trace, legc_descriptor_ident, legc_trace_accepts,
 };
-use dregg_automatafl::reference::{ATT, AUTO, Board, Coord, Move, VAC};
 use dregg_circuit::descriptor_by_name::descriptor_by_name;
 use dregg_circuit::descriptor_ir2::EffectVmDescriptor2;
 use dregg_circuit::effect_vm::custom_state_binding::{

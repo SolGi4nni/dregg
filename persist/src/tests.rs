@@ -50,10 +50,14 @@ fn receipt_index_head_anchor_round_trips_across_reopen() {
             None,
             "a fresh store has no receipt-index head anchor"
         );
-        store.persist_receipt_index_head(7, &root1).expect("persist");
+        store
+            .persist_receipt_index_head(7, &root1)
+            .expect("persist");
         assert_eq!(store.load_receipt_index_head().unwrap(), Some((7, root1)));
         // Idempotent overwrite advances the anchor forward.
-        store.persist_receipt_index_head(9, &root2).expect("persist 2");
+        store
+            .persist_receipt_index_head(9, &root2)
+            .expect("persist 2");
         assert_eq!(store.load_receipt_index_head().unwrap(), Some((9, root2)));
     }
     // Reopen the SAME file: the anchor survives the restart.

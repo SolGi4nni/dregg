@@ -8,13 +8,13 @@
 //!
 //! ## What this establishes, and what it does NOT
 //!
-//! ESTABLISHES: the Lean-emitted object is wire-compatible with `parse_vm_descriptor2`, and its
-//! census matches the LIVE Rust `wide_value_binding_descriptor()` form for form — the 128 boolean
-//! limb pins, the 8 limb recompositions, the 2 compatibility reductions, the 2 domain-separated
-//! `node8` sites, the compatibility `hash_fact` site, and all 17 PI bindings — with the ONLY
-//! difference being the three constant-pinned columns (`domain_a`, `domain_b`, `zero`) and their
-//! three `constant_gate`s, which the Lean family replaces with literal constants in the chip tuples.
-//! Those numbers are read off the Rust descriptor here, not transcribed, so the delta cannot rot.
+//! ESTABLISHES: the Lean-emitted object is wire-compatible with `parse_vm_descriptor2`; its census
+//! is exactly the 128 boolean limb pins, the 8 limb recompositions, the 2 compatibility reductions,
+//! the 2 domain-separated `node8` sites, the compatibility `hash_fact` site, and all 17 PI
+//! bindings; it PROVES and VERIFIES through the deployed IR-v2 engine on an honest full-`u64`
+//! witness and refuses a forged public lane; and it is the SAME object the deployed sidecar loads
+//! (`the_sidecar_loads_exactly_this_golden`), so the production path cannot drift onto a different
+//! relation than the one exercised here.
 //!
 //! DOES NOT: prove anything semantic. Semantic faithfulness is
 //! `WideValueBindingRefine.limb_canonical` / `seventeenth_bit_unsat` / `wideA_lanes_forced` /
@@ -22,47 +22,48 @@
 //! object. A Rust assertion about a decoded descriptor is a shape check; it is not refinement, not
 //! translation validation, and not verification.
 //!
-//! ## Why it exists (the file it replaces)
+//! ## The rewiring this test called for — DONE
 //!
-//! `circuit-prove/src/shielded/wide_value_binding.rs` hand-writes this AIR in Rust — 144
-//! `ConstraintExpr` values and 17 `BoundaryDef`s built by Rust helper functions — which is exactly
-//! what the Lean-authored-AIR law forbids, and it was authored FOR THE FELT-WIDTH REPAIR. The Lean
-//! family here is the replacement route; this test is the evidence the route REACHES Rust.
+//! `circuit-prove/src/shielded/wide_value_binding.rs` used to hand-write this AIR in Rust (144
+//! `ConstraintExpr` values and 17 `BoundaryDef`s built by Rust helper functions), which is exactly
+//! what the Lean-authored-AIR law forbids, and it was authored FOR THE FELT-WIDTH REPAIR. That half
+//! of the file is DELETED. The sidecar now:
 //!
-//! ## The remaining rewiring (NOT done here, stated precisely)
-//!
-//! `prove_wide_value_binding` / `verify_wide_value_binding` currently build a v1 `DslCircuit` and
-//! run `prove_dsl_zk` / `verify_dsl_zk` (the hiding p3 path). The replacement route already exists
-//! and is ALSO hiding, so the sidecar does not lose its zero-knowledge property:
-//!
-//!   1. `DescriptorStatement::try_from_json(WIDE_VALUE_BINDING_GOLDEN, pis)` — the parsed relation
+//!   1. reads `WIDE_VALUE_BINDING_GOLDEN` out of the Lean source with the same `include_str!` +
+//!      raw-string split this test uses, and parses it into a `DescriptorStatement`
 //!      (`circuit/src/descriptor_proof_backend.rs`);
-//!   2. a WITNESS PRODUCER filling the Lean column layout — which is
-//!      `generate_wide_value_binding_trace` with the three constant-pinned cells (`domain_a`,
-//!      `domain_b`, `zero`) removed and every index at or above `legacy_binding` shifted down by 3
-//!      (`WideValueBindingEmit` §6 pins that accounting on the Lean side, per column);
-//!   3. `Plonky3HidingFriReference::prove` / `::verify` — the DEPLOYED hiding IR-v2 backend
-//!      (`create_zk_config`, salted-leaf MMCS). `trace_with_chip_lanes` fills the Poseidon2 lane
-//!      columns, so the producer supplies only the main trace.
+//!   2. produces its witness in the LEAN column layout — `generate_wide_value_binding_trace` with
+//!      the three constant-pinned cells (`domain_a`, `domain_b`, `zero`) removed and every index at
+//!      or above `legacy_binding` shifted down by 3 (`WideValueBindingEmit` §6 pins that accounting
+//!      on the Lean side, per column);
+//!   3. proves and verifies through `Plonky3HidingFriReference` — the DEPLOYED hiding IR-v2 backend
+//!      (`create_zk_config`, salted-leaf MMCS, four random codewords: the SAME config the retired
+//!      `prove_dsl_zk` route used, so no zero-knowledge is lost). `trace_with_chip_lanes` fills the
+//!      Poseidon2 lane columns, so the producer supplies only the main trace.
 //!
-//! What that changes is the PROOF BYTES: `WideValueBindingProof::proof_bytes` becomes an
-//! `Ir2BatchProof<DreggZkStarkConfig>` postcard rather than a `DslZkProof`, so the Turn wire field
-//! (`turn/src/action.rs:995`, and `turn-prover/src/shielded_transfer_verifier.rs` which decodes it)
-//! moves with it. That is a deploy decision this test does not make. The 17 public inputs and their
-//! canonical-BabyBear decode (`from_serialized_parts`) are UNCHANGED by the swap.
+//! `WideValueBindingProof::proof_bytes` is therefore an `Ir2BatchProof<DreggZkStarkConfig>`
+//! postcard rather than a `DslZkProof`. The Turn wire field is `Vec<u8>`
+//! (`turn/src/action.rs:999`) and `turn-prover/src/shielded_transfer_verifier.rs` decodes through
+//! `from_serialized_parts`, so neither has a shape change; only the bytes moved, and nothing
+//! registers the verifier on a node today. The 17 public inputs and their canonical-BabyBear decode
+//! are UNCHANGED by the swap.
 //!
-//! Two descriptor-level fields have no IR-v2 counterpart and are simply gone: `max_degree` (the
-//! IR-v2 prover derives its blowup from the config, not from a descriptor field) and the per-column
-//! `ColumnDef` name/kind metadata. Nothing in the AIR depends on either; the ONLY consumer of the
-//! names is `circuit-prove/tests/shielded_wide_value_binding.rs`'s `column(descriptor, "…")` helper,
-//! which would index the Lean layout by its Lean-side offsets instead.
+//! Two v1 descriptor-level fields have no IR-v2 counterpart and are simply gone with the Rust
+//! descriptor: `max_degree` (the IR-v2 prover derives its blowup from the config, not from a
+//! descriptor field) and the per-column `ColumnDef` name/kind metadata. Nothing in the AIR depended
+//! on either; the only consumer of the names was
+//! `circuit-prove/tests/shielded_wide_value_binding.rs`'s `column(descriptor, "…")` helper, which
+//! now indexes the Lean layout through `shielded::wide_value_binding::col`.
+//!
+//! The Rust-vs-Lean census cross-check that used to live here (`lean.trace_width + 3 ==
+//! rust.trace_width`, and the same delta of 3 in the constraint count) cannot outlive the object it
+//! compared against. Its numbers are pinned on the Lean side in `WideValueBindingEmit` §6.
 
 use dregg_circuit::cap_root::cap_node8;
 use dregg_circuit::descriptor_ir2::{
     EffectVmDescriptor2, MemBoundaryWitness, VmConstraint2, parse_vm_descriptor2,
     prove_vm_descriptor2, verify_vm_descriptor2,
 };
-use dregg_circuit::dsl::circuit::ConstraintExpr;
 use dregg_circuit::field::{BABYBEAR_P, BabyBear};
 use dregg_circuit::lean_descriptor_air::VmConstraint;
 use dregg_circuit::poseidon2::hash_fact;
@@ -150,78 +151,13 @@ fn lean_wide_value_binding_golden_parses_with_exact_shape() {
     assert!(desc.public_input_count <= dregg_circuit::dsl::circuit::MAX_PUBLIC_INPUTS);
 }
 
-/// THE STRUCTURAL CROSS-CHECK. Every number on the right-hand side is read off the LIVE Rust
-/// `wide_value_binding_descriptor()`, so this cannot drift into a hand-transcribed comparison. The
-/// Lean census is the Rust census minus exactly the three constant-pinned columns and the three
-/// `constant_gate`s that pinned them; a constant in a chip tuple cannot be tampered, so that delta
-/// is a strengthening, and its being EXACTLY 3 in both dimensions is the evidence nothing else moved.
+/// THE ROUTE IS THE DEPLOYED ONE. This test parses the golden out of the Lean source itself; the
+/// sidecar (`circuit-prove/src/shielded/wide_value_binding.rs`) does its own `include_str!` + split
+/// of the same `def`. Equality of the two parsed objects is what forbids the sidecar from quietly
+/// loading a different relation than the one this file exercises.
 #[test]
-fn lean_census_is_the_rust_census_minus_the_constant_pins() {
-    let lean = lean_descriptor();
-    let rust = wide_value_binding_descriptor();
-
-    // Columns: 165 → 162.
-    assert_eq!(lean.trace_width + 3, rust.trace_width);
-    assert_eq!(rust.trace_width, rust.columns.len());
-    // The three columns the Lean family drops, named.
-    for name in ["domain_a", "domain_b", "zero"] {
-        assert!(
-            rust.columns.iter().any(|c| c.name == name),
-            "Rust still allocates the constant-pinned column {name}"
-        );
-    }
-
-    // Public inputs: identical.
-    assert_eq!(lean.public_input_count, rust.public_input_count);
-
-    // Boolean limb pins: identical, and they are the felt-width repair.
-    let rust_binary = rust
-        .constraints
-        .iter()
-        .filter(|c| matches!(c, ConstraintExpr::Binary { .. }))
-        .count();
-    assert_eq!(rust_binary, 2 * 4 * 16);
-
-    // `node8` carriers: identical count.
-    let rust_node8 = rust
-        .constraints
-        .iter()
-        .filter(|c| matches!(c, ConstraintExpr::MerkleHash8 { .. }))
-        .count();
-    assert_eq!(rust_node8, 2);
-    assert_eq!(
-        lookup_widths(&lean, dregg_circuit::descriptor_ir2::TID_P2).len(),
-        rust_node8
-    );
-
-    // Compatibility `hash_fact` sites: identical count.
-    let rust_fact = rust
-        .constraints
-        .iter()
-        .filter(|c| matches!(c, ConstraintExpr::Hash { .. }))
-        .count();
-    assert_eq!(rust_fact, 1);
-    assert_eq!(
-        lookup_widths(&lean, dregg_circuit::descriptor_ir2::TID_P2_NARROW).len(),
-        rust_fact
-    );
-
-    // Polynomial gates: Rust carries the 8 limb recompositions + 2 reductions + 3 constant gates;
-    // Lean carries the first two groups only. The Binary form is a separate Rust variant, so the
-    // Lean gate count is `rust_polynomial - 3 + rust_binary`.
-    let rust_poly = rust
-        .constraints
-        .iter()
-        .filter(|c| matches!(c, ConstraintExpr::Polynomial { .. }))
-        .count();
-    assert_eq!(rust_poly, 2 * 4 + 2 + 3);
-    assert_eq!(gate_count(&lean) + 3, rust_poly + rust_binary);
-
-    // Whole census: Rust `constraints + boundaries` is 161; Lean is 158 — the SAME delta of 3.
-    assert_eq!(
-        lean.constraints.len() + 3,
-        rust.constraints.len() + rust.boundaries.len()
-    );
+fn the_sidecar_loads_exactly_this_golden() {
+    assert_eq!(&lean_descriptor(), wide_value_binding_descriptor());
 }
 
 // ---------------------------------------------------------------------------

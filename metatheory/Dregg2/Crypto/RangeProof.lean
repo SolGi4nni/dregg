@@ -421,29 +421,88 @@ determines the in-range fact about `v`. Real Pedersen (`v·V + r·R`) hides `v`;
 it exists only to witness the kernel laws non-vacuously over `ℤ`. -/
 def refCommit : Int → Int → Int := fun v _ => v
 
+/-- **`BindingShape commit`** — the DLog opening-uniqueness the `binding` carrier NAMES, as a
+function of the commitment: two openings of one commitment agree on the value. Stating it as a
+function of `commit` is what makes it refutable at a colliding commitment
+(`collidingCommit_not_binding` below) — the `PortalFloor.Reference.instPedersenKernel.binding`
+discipline. -/
+def BindingShape (commit : Int → Int → Int) : Prop :=
+  ∀ v v' r r' : Int, commit v r = commit v' r' → v = v'
+
+/-- The reference commitment IS binding (it carries the value, so two openings agree). -/
+theorem refCommit_binding : BindingShape refCommit := by
+  intro v v' r r' h
+  simpa only [refCommit] using h
+
+/-- A COLLIDING commitment (everything commits to `0`) is NOT binding — the same carrier shape,
+FALSE. This is why `binding` at the reference kernel is not `True` in disguise. -/
+theorem collidingCommit_not_binding : ¬ BindingShape (fun _ _ => (0 : Int)) := by
+  intro h
+  exact absurd (h 1 2 0 0 rfl) (by decide)
+
 /-- A degenerate reference range kernel over `ℤ` (`def`, not a global `instance`). `commit v r := v`
 (commitment carries the value, blinding ignored); `verifyRange c lo hi _` accepts iff `c` lies in
-`[lo, hi]` — i.e. `decide (lo ≤ c ∧ c ≤ hi)`; `extractable`/`binding := True`. `extract` rebuilds a
-satisfying trace from the accepted bound via `range_complete_step` (`value := c`, so `commit c 0 = c`). -/
+`[lo, hi]` — i.e. `decide (lo ≤ c ∧ c ≤ hi)`. `extract` rebuilds a
+satisfying trace from the accepted bound via `range_complete_step` (`value := c`, so `commit c 0 = c`).
+
+⚑ **CARRIER REPAIR (2026-07-25).** BOTH carriers were `True`. `extractable` is now the genuine
+extractability-SHAPED `Prop` over THIS oracle (PROVED at `refKernel_extractable`, REFUTED at
+`forgeKernel_not_extractable` — a verifier that accepts OUT-OF-RANGE statements); `binding` is now
+the genuine DLog opening-uniqueness shape (PROVED at `refCommit_binding`, REFUTED at
+`collidingCommit_not_binding`). `extract := fun h _ => h`: the extraction content comes from
+`extractable`, and `binding` stays the separately-named DLog carrier `range_verify_sound` and
+`committed_inequality_via_range` consume. -/
 @[reducible] def refKernel : RangeProofKernel Int Int where
   commit := refCommit
   proveRange _ _ _ := 0
   verifyRange c lo hi _ := decide (lo ≤ c ∧ c ≤ hi)
-  extractable := True
-  binding := True
-  extract := by
-    intro _ _ commitment lo hi _ haccept
-    simp only [decide_eq_true_eq] at haccept
-    obtain ⟨circuit, hv, hsat⟩ := range_complete_step lo hi commitment haccept
-    -- `range_complete_step` already gives a trace whose value is `commitment` (hv); `commit _ _ = value`.
-    subst hv
-    exact ⟨circuit, by simp only [refCommit], hsat⟩
+  extractable :=
+    ∀ (commitment lo hi : Int) (_proof : Int), decide (lo ≤ commitment ∧ commitment ≤ hi) = true →
+      ∃ circuit : CircuitIR,
+        refCommit circuit.value circuit.blinding = commitment ∧ Satisfies circuit lo hi
+  binding := BindingShape refCommit
+  extract := fun h _ => h
   honest_range_verifies := by
     intro v r lo hi h
     obtain ⟨hlo, hhi⟩ := h
     -- commit v r = v, so verifyRange = decide (lo ≤ v ∧ v ≤ hi), true by the InRange hypothesis.
     simp only [refCommit, decide_eq_true_eq]
     exact ⟨hlo, hhi⟩
+
+/-- **THE REFERENCE `extractable` HOLDS** — a theorem: an accepted bound really does carry a
+satisfying range trace whose value is the commitment. -/
+theorem refKernel_extractable : refKernel.extractable := by
+  intro commitment lo hi _ haccept
+  simp only [decide_eq_true_eq] at haccept
+  obtain ⟨circuit, hv, hsat⟩ := range_complete_step lo hi commitment haccept
+  -- `range_complete_step` already gives a trace whose value is `commitment` (hv); `commit _ _ = value`.
+  subst hv
+  exact ⟨circuit, by simp only [refCommit], hsat⟩
+
+/-- **FORGE KERNEL** — same carrier SHAPE over a range verifier that accepts EVERY statement,
+including out-of-range ones. Its `binding` is the honest one: the break is in the verifier alone. -/
+@[reducible] def forgeKernel : RangeProofKernel Int Int where
+  commit := refCommit
+  proveRange _ _ _ := 0
+  verifyRange _ _ _ _ := true
+  extractable :=
+    ∀ (commitment lo hi : Int) (_proof : Int), (true : Bool) = true →
+      ∃ circuit : CircuitIR,
+        refCommit circuit.value circuit.blinding = commitment ∧ Satisfies circuit lo hi
+  binding := BindingShape refCommit
+  extract := fun h _ => h
+  honest_range_verifies := by intro _ _ _ _ _; rfl
+
+/-- **THE `extractable` CARRIER IS FALSE HERE.** At commitment `25` with bounds `[10, 20]` the
+claimed trace's value would be `25` and in `[10, 20]` (`range_sound_step`). So the reference carrier
+has CONTENT — it is refutable, which `True` is not. -/
+theorem forgeKernel_not_extractable : ¬ forgeKernel.extractable := by
+  intro h
+  obtain ⟨circuit, hc, hsat⟩ := h 25 10 20 0 rfl
+  have hrange : InRange 10 20 circuit.value := range_sound_step circuit 10 20 hsat
+  have hval : circuit.value = 25 := by simpa only [refCommit] using hc
+  rw [hval] at hrange
+  exact absurd hrange.2 (by decide)
 
 /-- The empty base registry over the toy `ℤ` range statement/proof. -/
 def base : Registry (Statement Int) Int := fun _ => none
@@ -480,7 +539,7 @@ example : refKernel.verifyRange outRangeStmt.commitment outRangeStmt.lo outRange
 /-- **Non-vacuity #3 (`range_verify_sound`).** An accepted proof for the in-range statement yields a
 `(v, r)` with `commit v r = 15` and `v ∈ [10, 20]`. -/
 example : ∃ v r : Int, refKernel.commit v r = inRangeStmt.commitment ∧ InRange inRangeStmt.lo inRangeStmt.hi v :=
-  range_verify_sound (K := refKernel) trivial trivial
+  range_verify_sound (K := refKernel) refKernel_extractable refCommit_binding
     inRangeStmt.commitment inRangeStmt.lo inRangeStmt.hi 0 (by decide)
 
 /-- **Non-vacuity #4 (the LADDER CONNECTION `committed_inequality_via_range`).** With the value `15`
@@ -488,7 +547,7 @@ committed by `refCommit 15 0 = 15` and the reference binding (concretely, `refCo
 uniqueness at blinding 0), a verifying range proof discharges `15 ∈ [10, 20]` — the executor enforces
 the inequality reading only the commitment and the proof. -/
 example : InRange 10 20 15 :=
-  committed_inequality_via_range (K := refKernel) trivial trivial
+  committed_inequality_via_range (K := refKernel) refKernel_extractable refCommit_binding
     15 0 10 20 0
     (by intro v' r' h; simpa only [refCommit] using h)
     (by decide)
@@ -499,14 +558,16 @@ theorem reference_cascade_nonvacuous :
     (@Discharged (Statement Int) Int
         (verifiableOfRegistry (@rangeReg Int Int refKernel refVk base) (.custom refVk)) inRangeStmt 0)
       ∧ ∃ v r : Int, refKernel.commit v r = inRangeStmt.commitment ∧ InRange inRangeStmt.lo inRangeStmt.hi v :=
-  range_registry_cascade (K := refKernel) trivial trivial refVk base inRangeStmt 0 (by decide)
+  range_registry_cascade (K := refKernel) refKernel_extractable refCommit_binding refVk base
+    inRangeStmt 0 (by decide)
 
 -- The reference cascade rests only on the standard kernel axioms.
 #print axioms reference_cascade_nonvacuous
 
 /-- Non-vacuity of the dial wiring: the floor is `selective`. -/
 example : (rangeKindObligation Int).dialFloor = Dial.selective :=
-  (range_dial_wired (K := refKernel) trivial trivial refVk base inRangeStmt 0).1
+  (range_dial_wired (K := refKernel) refKernel_extractable refCommit_binding refVk base inRangeStmt
+    0).1
 
 end Reference
 
@@ -518,5 +579,12 @@ end Reference
 #assert_axioms committed_inequality_via_range
 #assert_axioms range_registry_cascade
 #assert_axioms range_dial_wired
+
+-- Carrier non-vacuity pins (PortalFloor §9c discipline): BOTH reference carriers HOLD, and BOTH are
+-- FALSE at a broken sibling (an accept-everything verifier / a colliding commitment).
+#assert_axioms Reference.refKernel_extractable
+#assert_axioms Reference.forgeKernel_not_extractable
+#assert_axioms Reference.refCommit_binding
+#assert_axioms Reference.collidingCommit_not_binding
 
 end Dregg2.Crypto.RangeProof

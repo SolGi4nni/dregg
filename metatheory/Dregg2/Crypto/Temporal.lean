@@ -275,23 +275,50 @@ example : InWindow 10 20 15 := by
   exact temporal_sound circuit 10 20 15 hsat
 
 /-- A degenerate reference temporal verifier kernel over `ℤ` (`def`, not a global `instance`).
-`verify` accepts iff `stmt.lo ≤ stmt.t ∧ stmt.t ≤ stmt.hi` (the decidable window check directly);
-`extractable := True`. `extract` rebuilds the satisfying trace from the accepted window via
-`temporal_complete`. -/
+`verify` accepts iff `stmt.lo ≤ stmt.t ∧ stmt.t ≤ stmt.hi` (the decidable window check directly).
+
+⚑ **CARRIER REPAIR (2026-07-25).** `extractable` was `True`; it is now the genuine
+extractability-SHAPED `Prop` over THIS oracle, `extract := fun h => h` (PortalFloor style), PROVED at
+`refKernel_extractable` and REFUTED at `forgeKernel_not_extractable`. -/
 @[reducible] def refKernel : TemporalVerifierKernel Int where
   verify stmt _ := decide (stmt.lo ≤ stmt.t ∧ stmt.t ≤ stmt.hi)
-  extractable := True
-  extract := by
-    intro _ stmt _ haccept
-    simp only [decide_eq_true_eq] at haccept
-    exact temporal_complete stmt.lo stmt.hi stmt.t haccept
+  extractable :=
+    ∀ (stmt : Statement) (_proof : Int),
+      decide (stmt.lo ≤ stmt.t ∧ stmt.t ≤ stmt.hi) = true →
+        ∃ circuit : CircuitIR, Satisfies circuit stmt.lo stmt.hi stmt.t
+  extract := fun h => h
+
+/-- **THE REFERENCE CARRIER HOLDS** — a theorem, not an assumption: the accepted window really does
+carry a satisfying trace (the two boolean decompositions), via `temporal_complete`. -/
+theorem refKernel_extractable : refKernel.extractable := by
+  intro stmt _ haccept
+  simp only [decide_eq_true_eq] at haccept
+  exact temporal_complete stmt.lo stmt.hi stmt.t haccept
+
+/-- **FORGE KERNEL** — same carrier SHAPE, an oracle that accepts EVERY statement, including windows
+the event time is nowhere near. -/
+@[reducible] def forgeKernel : TemporalVerifierKernel Int where
+  verify _ _ := true
+  extractable :=
+    ∀ (stmt : Statement) (_proof : Int), (true : Bool) = true →
+      ∃ circuit : CircuitIR, Satisfies circuit stmt.lo stmt.hi stmt.t
+  extract := fun h => h
+
+/-- **THE CARRIER IS FALSE HERE.** At the statement `{lo := 10, hi := 20, t := 99}` the claimed trace
+would prove `99 ∈ [10, 20]` through the fully-proved `temporal_bridge`. So the reference carrier has
+CONTENT: it is refutable, which `True` never is. -/
+theorem forgeKernel_not_extractable : ¬ forgeKernel.extractable := by
+  intro h
+  have hin : InWindow 10 20 99 :=
+    (temporal_bridge 10 20 99).1 (h { lo := 10, hi := 20, t := 99 } 0 rfl)
+  exact absurd hin.2 (by decide)
 
 /-- The empty base registry over the toy `ℤ` temporal statement/proof. -/
 def base : Registry Statement Int := fun _ => none
 
 /-- Non-vacuity of `temporal_verify_sound`: an accepted proof proves the event lies in the window. -/
 example : InWindow sampleStmt.lo sampleStmt.hi sampleStmt.t :=
-  temporal_verify_sound (K := refKernel) trivial sampleStmt 0 (by decide)
+  temporal_verify_sound (K := refKernel) refKernel_extractable sampleStmt 0 (by decide)
 
 /-- Non-vacuity of the full cascade: an accepted proof both `Discharged`s the registry predicate and
 proves window membership. Named so its axiom footprint is checkable with `#print axioms`. -/
@@ -299,7 +326,7 @@ theorem reference_cascade_nonvacuous :
     (@Discharged Statement Int
         (verifiableOfRegistry (@temporalReg Int refKernel base) .temporal) sampleStmt 0)
       ∧ InWindow sampleStmt.lo sampleStmt.hi sampleStmt.t :=
-  temporal_registry_cascade (K := refKernel) trivial base sampleStmt 0 (by decide)
+  temporal_registry_cascade (K := refKernel) refKernel_extractable base sampleStmt 0 (by decide)
 
 -- The reference cascade rests only on the three standard kernel axioms.
 #print axioms reference_cascade_nonvacuous
@@ -307,7 +334,7 @@ theorem reference_cascade_nonvacuous :
 /-- Non-vacuity of the dial wiring: the floor is `selective`, the dial's bottom notch is the verifier's
 bit, and an accepting proof proves the window membership. -/
 example : temporalKindObligation.dialFloor = Dial.selective :=
-  (temporal_dial_wired (K := refKernel) trivial base sampleStmt 0).1
+  (temporal_dial_wired (K := refKernel) refKernel_extractable base sampleStmt 0).1
 
 end Reference
 
@@ -318,5 +345,9 @@ end Reference
 #assert_axioms temporal_verify_sound
 #assert_axioms temporal_registry_cascade
 #assert_axioms temporal_dial_wired
+
+-- Carrier non-vacuity pins (PortalFloor §9c discipline): reference carrier HOLDS, forge carrier FALSE.
+#assert_axioms Reference.refKernel_extractable
+#assert_axioms Reference.forgeKernel_not_extractable
 
 end Dregg2.Crypto.Temporal

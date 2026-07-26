@@ -2503,5 +2503,5 @@ pub mod conservation_oracle;
 pub use conservation_oracle::{
     ConservationOracle, assert_conservation_oracle_installed, conservation_oracle_installed,
     ensure_conservation_oracle_installed, install_conservation_oracle,
-    native_build_requires_oracle,
+    native_build_requires_oracle, require_verified_conservation_gate,
 };

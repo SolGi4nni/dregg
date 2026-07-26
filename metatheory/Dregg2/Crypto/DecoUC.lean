@@ -264,7 +264,7 @@ theorem ref_ucRealizes :
         Reference.refKernel.compress Reference.refKernel.encode) :=
   decoUC_realizes _ _
     (decoUC_realization (KD := Reference.refKernel)
-      Reference.refSigKernel Reference.refMacKernel rfl rfl trivial
+      Reference.refSigKernel Reference.refMacKernel rfl rfl Reference.refKernel_extractable
       (fun _ _ _ h => of_decide_eq_true h) trivial
       True True True True True trivial trivial trivial trivial trivial)
 

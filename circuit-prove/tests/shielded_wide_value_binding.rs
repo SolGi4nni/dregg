@@ -1,21 +1,29 @@
 //! Both-polarity gate for the full-u64 shielded value/asset binding.
 //!
-//! Turn now carries one proof and all sixteen public lanes per input, and the
-//! live no-mint transcript absorbs the carrier.  The remaining migration seam
-//! is earlier: note creation/tree membership must precommit the same wide value
-//! before the compatibility C7 join can be retired completely.
+//! The AIR is AUTHORED IN LEAN (`metatheory/Dregg2/Circuit/Emit/WideValueBindingEmit.lean`,
+//! byte-pinned there; semantics in `WideValueBindingRefine.lean`). These are Rust harness checks
+//! over the DEPLOYED sidecar path — they are shape and behaviour tests, not refinement, not
+//! translation validation, and not verification.
+//!
+//! Turn carries one proof and all sixteen public lanes per input, and the live no-mint transcript
+//! absorbs the carrier. The remaining migration seam is earlier: note creation/tree membership must
+//! precommit the same wide value before the compatibility C7 join can be retired completely.
 
 use dregg_circuit::cap_root::cap_node8;
-use dregg_circuit::dsl::circuit::CircuitDescriptor;
-use dregg_circuit::dsl::dsl_p3_air::{DslP3Air, prove_dsl_zk};
+use dregg_circuit::descriptor_ir2::{MemBoundaryWitness, UMemBoundaryWitness, VmConstraint2};
+use dregg_circuit::descriptor_proof_backend::{
+    DescriptorProofProver, DescriptorStatement, Plonky3HidingFriReference, Plonky3HidingFriWitness,
+};
 use dregg_circuit::field::{BABYBEAR_P, BabyBear};
+use dregg_circuit::lean_descriptor_air::VmConstraint;
 use dregg_circuit::poseidon2::hash_fact;
+use dregg_circuit_prove::shielded::wide_value_binding::{DOMAIN_A, DOMAIN_B, col};
 use dregg_circuit_prove::shielded::{
     BINDING_BLIND_LANES, ShieldedSpendWitness, ShieldedTransferWitness, ShieldedValueLeg,
     WideValueBindingError, WideValueBindingProof, WideValueBindingWitness,
     generate_wide_value_binding_trace, prove_wide_value_binding, transfer_from_witnesses,
     verify_stark_with_wide_bindings, verify_wide_value_binding, wide_transfer_message,
-    wide_value_binding_circuit, wide_value_binding_descriptor,
+    wide_value_binding_descriptor,
 };
 
 fn spend_witness(value: BabyBear, asset: BabyBear, randomness: BabyBear) -> ShieldedSpendWitness {
@@ -44,37 +52,56 @@ fn blind() -> [BabyBear; BINDING_BLIND_LANES] {
     core::array::from_fn(|i| BabyBear::new(0x1000 + (i as u32) * 0x111))
 }
 
+/// The relation the DEPLOYED sidecar proves against is the Lean-emitted one, and the felt-width
+/// repair (128 boolean limb pins) is present in it. `wide_value_binding_lean_route.rs` checks the
+/// same object straight out of the Lean source; this checks what `prove_wide_value_binding` and
+/// `verify_wide_value_binding` actually load.
 #[test]
-fn descriptor_is_p3_clean_and_exposes_the_wide_claim() {
-    let circuit = wide_value_binding_circuit();
-    DslP3Air::try_from_dsl(&circuit).expect("wide binding must lower to the hiding p3 AIR");
+fn the_deployed_relation_is_the_lean_emitted_one() {
+    let desc = wide_value_binding_descriptor();
+    assert_eq!(
+        desc.name,
+        "dregg-shielded-wide-value-binding-v1::poseidon2-node8"
+    );
+    assert_eq!(desc.trace_width, col::WIDTH);
+    assert_eq!(desc.trace_width, 162);
+    assert_eq!(desc.public_input_count, 17);
+    assert_eq!(desc.constraints.len(), 158);
 
-    let descriptor = wide_value_binding_descriptor();
-    assert_eq!(descriptor.public_input_count, 17);
-    assert_eq!(
-        descriptor
-            .constraints
-            .iter()
-            .filter(|c| matches!(
-                c,
-                dregg_circuit::dsl::circuit::ConstraintExpr::Binary { .. }
-            ))
-            .count(),
-        2 * 4 * 16,
-        "all four 16-bit limbs of both u64 inputs are range constrained"
-    );
-    assert_eq!(
-        descriptor
-            .constraints
-            .iter()
-            .filter(|c| matches!(
-                c,
-                dregg_circuit::dsl::circuit::ConstraintExpr::MerkleHash8 { .. }
-            ))
-            .count(),
-        2,
-        "two domain-separated node8 sites provide sixteen public lanes"
-    );
+    // 128 boolean limb pins + 8 limb recompositions + 2 compatibility reductions, all as IR-v2
+    // base gates; plus the 17 first-row PI pins.
+    let gates = desc
+        .constraints
+        .iter()
+        .filter(|c| matches!(c, VmConstraint2::Base(VmConstraint::Gate(_))))
+        .count();
+    assert_eq!(gates, 2 * 4 * 16 + 2 * 4 + 2);
+    let pins = desc
+        .constraints
+        .iter()
+        .filter(|c| matches!(c, VmConstraint2::Base(VmConstraint::PiBinding { .. })))
+        .count();
+    assert_eq!(pins, 17);
+
+    // The two domain-separated `node8` carriers and the one compatibility `hash_fact` join.
+    let wide_sites = desc
+        .constraints
+        .iter()
+        .filter(|c| {
+            matches!(c, VmConstraint2::Lookup(l)
+                if l.table == dregg_circuit::descriptor_ir2::TID_P2)
+        })
+        .count();
+    assert_eq!(wide_sites, 2);
+    let fact_sites = desc
+        .constraints
+        .iter()
+        .filter(|c| {
+            matches!(c, VmConstraint2::Lookup(l)
+                if l.table == dregg_circuit::descriptor_ir2::TID_P2_NARROW)
+        })
+        .count();
+    assert_eq!(fact_sites, 1);
 }
 
 #[test]
@@ -115,56 +142,49 @@ fn hostile_turn_wire_decode_is_canonical_and_exact() {
     ));
 }
 
-fn column(descriptor: &CircuitDescriptor, name: &str) -> usize {
-    descriptor
-        .columns
-        .iter()
-        .find(|c| c.name == name)
-        .unwrap_or_else(|| panic!("missing {name} column"))
-        .index
-}
-
 /// Recompute every hash/output cell after a malicious trace edit, so a failed
 /// proof isolates the canonical-limb range gate rather than an incidental hash
 /// mismatch.
-fn refill_public_hashes(descriptor: &CircuitDescriptor, row: &mut [BabyBear]) -> [BabyBear; 17] {
-    let left = |row: &[BabyBear], domain: &str| {
+///
+/// Indexing is by the Lean column layout (`col`, the mirror of
+/// `WideValueBindingEmit.lean` §2). The v1 descriptor's per-column `ColumnDef` name/kind metadata
+/// — which the old `column(descriptor, "…")` helper looked names up in — has no IR-v2 counterpart
+/// and is gone with the Rust descriptor; `domain_a`/`domain_b`/`zero` are no longer columns at all
+/// (Lean pins them as literal constants inside the chip tuples).
+fn refill_public_hashes(row: &mut [BabyBear]) -> [BabyBear; 17] {
+    let left = |row: &[BabyBear], domain: u32| {
         [
-            row[column(descriptor, domain)],
-            row[column(descriptor, "value_limb_0")],
-            row[column(descriptor, "value_limb_1")],
-            row[column(descriptor, "value_limb_2")],
-            row[column(descriptor, "value_limb_3")],
-            row[column(descriptor, "asset_limb_0")],
-            row[column(descriptor, "asset_limb_1")],
-            row[column(descriptor, "asset_limb_2")],
+            BabyBear::new(domain),
+            row[col::limb(0, 0)],
+            row[col::limb(0, 1)],
+            row[col::limb(0, 2)],
+            row[col::limb(0, 3)],
+            row[col::limb(1, 0)],
+            row[col::limb(1, 1)],
+            row[col::limb(1, 2)],
         ]
     };
     let right = [
-        row[column(descriptor, "asset_limb_3")],
-        row[column(descriptor, "randomness")],
-        row[column(descriptor, "binding_blind_0")],
-        row[column(descriptor, "binding_blind_1")],
-        row[column(descriptor, "binding_blind_2")],
-        row[column(descriptor, "binding_blind_3")],
-        row[column(descriptor, "binding_blind_4")],
-        row[column(descriptor, "binding_blind_5")],
+        row[col::limb(1, 3)],
+        row[col::RANDOMNESS],
+        row[col::BLIND],
+        row[col::BLIND + 1],
+        row[col::BLIND + 2],
+        row[col::BLIND + 3],
+        row[col::BLIND + 4],
+        row[col::BLIND + 5],
     ];
-    let a = cap_node8(left(row, "domain_a"), right);
-    let b = cap_node8(left(row, "domain_b"), right);
+    let a = cap_node8(left(row, DOMAIN_A), right);
+    let b = cap_node8(left(row, DOMAIN_B), right);
     for i in 0..8 {
-        row[column(descriptor, &format!("wide_a_{i}"))] = a[i];
-        row[column(descriptor, &format!("wide_b_{i}"))] = b[i];
+        row[col::WIDE_A + i] = a[i];
+        row[col::WIDE_B + i] = b[i];
     }
     let legacy = hash_fact(
-        row[column(descriptor, "value_mod_p")],
-        &[
-            row[column(descriptor, "asset_mod_p")],
-            row[column(descriptor, "randomness")],
-            row[column(descriptor, "zero")],
-        ],
+        row[col::VALUE_MOD_P],
+        &[row[col::ASSET_MOD_P], row[col::RANDOMNESS], BabyBear::ZERO],
     );
-    row[column(descriptor, "legacy_binding")] = legacy;
+    row[col::LEGACY_BINDING] = legacy;
     let mut pis = [BabyBear::ZERO; 17];
     pis[0] = legacy;
     pis[1..9].copy_from_slice(&a);
@@ -180,25 +200,36 @@ fn a_seventeenth_limb_bit_has_no_satisfying_trace() {
         legacy_randomness: BabyBear::new(77),
         binding_blind: blind(),
     };
-    let circuit = wide_value_binding_circuit();
-    let descriptor = wide_value_binding_descriptor();
     let (mut trace, _) = generate_wide_value_binding_trace(&witness);
 
     // Forge limb 0 to 2^16 while leaving its sixteen binary cells all zero.
     // Update value_mod_p, BOTH wide hashes, the compatibility hash, and every
     // public input to match the forgery. Thus only the exact 16-bit limb
     // recomposition is violated.
-    let limb = column(&descriptor, "value_limb_0");
-    let reduced = column(&descriptor, "value_mod_p");
     let mut forged_pis = [BabyBear::ZERO; 17];
     for row in &mut trace {
-        row[limb] = BabyBear::new(1 << 16);
-        row[reduced] = BabyBear::new(1 << 16);
-        forged_pis = refill_public_hashes(&descriptor, row);
+        row[col::limb(0, 0)] = BabyBear::new(1 << 16);
+        row[col::VALUE_MOD_P] = BabyBear::new(1 << 16);
+        forged_pis = refill_public_hashes(row);
     }
 
+    let statement = DescriptorStatement::try_new(
+        wide_value_binding_descriptor().clone(),
+        forged_pis.iter().map(|f| f.as_u32()).collect(),
+    )
+    .expect("the forged claim is still canonical and correctly sized");
+    let mem = MemBoundaryWitness::default();
+    let umem = UMemBoundaryWitness::default();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        prove_dsl_zk(&circuit, &trace, &forged_pis)
+        Plonky3HidingFriReference::prove(
+            &statement,
+            Plonky3HidingFriWitness {
+                base_trace: &trace,
+                mem_boundary: &mem,
+                map_heaps: &[],
+                umem_boundary: &umem,
+            },
+        )
     }));
     assert!(
         !matches!(result, Ok(Ok(_))),
@@ -260,7 +291,7 @@ fn full_u64_alias_is_distinguished_and_each_join_lane_is_load_bearing() {
     .expect("current shielded spend should prove");
 
     let mut honest = prove_wide_value_binding(&honest_witness)
-        .expect("full-u64 wide binding should prove through hiding p3");
+        .expect("full-u64 wide binding should prove through the hiding IR-v2 backend");
     verify_stark_with_wide_bindings(&transfer, core::slice::from_ref(&honest))
         .expect("current spend plus faithful full-u64 sidecar should verify");
 

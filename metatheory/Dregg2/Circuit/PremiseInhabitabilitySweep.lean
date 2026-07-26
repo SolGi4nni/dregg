@@ -111,8 +111,10 @@ NOT SETTLED, and NOT to be read as settled:
     §B and is not closed.
   * R5's nine `*LeafFriFloor` classes are machine-checked only at the `Custom` member; the other
     eight are reported as READ, not as separately proved.
-  * The family-wide `extractable := True` finding (§5) is machine-checked at the Merkle kernel only;
-    the other seven are READ at the cited `file:line`, not proved here.
+  * The family-wide `extractable := True` finding (§5) was machine-checked at the Merkle kernel only;
+    the other seven were READ at the cited `file:line`, not proved here. ⚑ REPAIRED 2026-07-25 — all
+    eight now carry a PROVED, separately-REFUTED carrier (`Dregg2/Crypto/CarrierContent.lean`). The
+    repair does not move the DEPLOYMENT verdict in R11 one inch: those are toy oracles.
   * R9–R16 were examined at reading resolution only, or not at all where the row says so.
   * The `#assert_axioms` lines below check what the proofs REST ON. They are structurally blind to
     the wound this module measures — that is the whole reason this module exists (`PremiseInhabitability`
@@ -438,11 +440,19 @@ buys: the gated conclusion is reached on an actual run.
 reference kernel in this family sets `extractable := True`: `VerifierKernel.lean:65`,
 `NonMembership.lean:467`, `Pedersen.lean:486`, `Custom.lean:300`, `Deco.lean:498`,
 `Temporal.lean:283`, `Bridge.lean:379`, `BlindedSet.lean:342` — eight for eight. Only the Merkle one
-is machine-checked here (`referenceMerkleKernel_carrier_is_content_free`); the other seven are
-reported as READ at those lines. So the mode-1 half of the criterion is, family-wide, met by writing
-`True` — while `PortalFloor.lean` (`instVerifierKernel_extractable` proved, `instVerifierForge_not_extractable`
-refuted) shows the same tree knows how to give a carrier content. This is not a defect in any one
-instance; it is the family's default. -/
+was machine-checked here; the other seven were reported as READ at those lines. So the mode-1 half of
+the criterion was, family-wide, met by writing `True` — while `PortalFloor.lean`
+(`instVerifierKernel_extractable` proved, `instVerifierForge_not_extractable` refuted) shows the same
+tree knows how to give a carrier content. This was not a defect in any one instance; it was the
+family's default.
+
+⚑ **REPAIRED 2026-07-25.** All EIGHT now carry the genuine extractability-SHAPED `Prop` over their own
+oracle (`extract := fun h => h`), each PROVED (`*_extractable`) and each REFUTED at a forge sibling
+(`*forge*_not_extractable`) in the PortalFloor style. `referenceMerkleKernel_carrier_has_content`
+below records it at the kernel this module measures; `Dregg2/Crypto/CarrierContent.lean` carries the
+reusable criterion (`CarrierAudit`, whose `refuted` field a `True` carrier can never supply) and
+fires it at all eight. The DEPLOYMENT verdict in row R11 is UNCHANGED: those carriers are proved at
+TOY reference oracles, and no instantiation at any deployed verifier exists in-tree. -/
 
 /-- **MODE 1, generically.** A conclusion gated on a FALSE carrier is arbitrary: the gated shape
 holds for EVERY `Q`, so it carries no information — the carrier form of
@@ -563,21 +573,37 @@ theorem referenceMerkleKernel_accepts_a_run :
 
 /-- **THE ONE IN-TREE INSTANCE OF THIS CLASS PASSES THE CRITERION** — `Dregg2.Crypto.Reference`'s
 kernel is `CarrierLive`, so `merkle_verify_sound` genuinely fires there. Read the next theorem
-before reading this as reassurance. -/
+before reading this as reassurance.
+
+⚑ **2026-07-25**: the carrier half is no longer `trivial`. It is
+`instMerkleVerifierKernel_extractable`, a PROVED theorem over the reference oracle (see the repair
+note on the next theorem). -/
 theorem referenceMerkleKernel_carrierLive :
     CarrierLive Dregg2.Crypto.Reference.instMerkleVerifierKernel.extractable
       (merkleAcc Dregg2.Crypto.Reference.instMerkleVerifierKernel) :=
-  ⟨trivial, ⟨(2, 1, 2), referenceMerkleKernel_accepts_a_run⟩⟩
+  ⟨Dregg2.Crypto.Reference.instMerkleVerifierKernel_extractable,
+   ⟨(2, 1, 2), referenceMerkleKernel_accepts_a_run⟩⟩
 
-/-- **…AND IT PASSES WITH A CARRIER THAT HAS NO CONTENT.** `Reference`'s `extractable` is literally
-`True` — dischargeable by `trivial` — so the mode-1 half of the criterion is met by assumption
-rather than by argument. `Dregg2/Crypto/PortalFloor.lean` is the contrasting discipline in the same
-tree: its `instVerifierKernel.extractable` is an extractability-SHAPED `Prop` that is separately
-PROVED (`instVerifierKernel_extractable`) and separately REFUTED at a forgery instance
-(`instVerifierForge_not_extractable`). That is what a carrier check looks like when it checks
-something; a `True` carrier is the named-carrier form of the same emptiness this module measures. -/
-theorem referenceMerkleKernel_carrier_is_content_free :
-    Dregg2.Crypto.Reference.instMerkleVerifierKernel.extractable := trivial
+/-- **…AND IT USED TO PASS WITH A CARRIER THAT HAD NO CONTENT — REPAIRED 2026-07-25.**
+
+As measured by this sweep, `Reference`'s `extractable` was literally `True` — dischargeable by
+`trivial` — so the mode-1 half of the criterion was met by assumption rather than by argument, at all
+EIGHT reference kernels of the family. `Dregg2/Crypto/PortalFloor.lean` was the contrasting
+discipline in the same tree: its `instVerifierKernel.extractable` is an extractability-SHAPED `Prop`
+separately PROVED (`instVerifierKernel_extractable`) and separately REFUTED at a forgery instance
+(`instVerifierForge_not_extractable`).
+
+The eight have since been repaired to that pattern, and this theorem records the repair AT THE
+KERNEL THIS MODULE MEASURED: the carrier is a theorem, and the SAME carrier shape is FALSE at
+`forgeMerkleKernel` (a legal kernel whose node hash collapses to `0` while its verifier accepts every
+triple). A `True` carrier can never have the second conjunct — that is the whole content of the
+repair. `Dregg2/Crypto/CarrierContent.lean` carries the criterion (`CarrierAudit`,
+`carrierAudit_shape_is_not_true`) and fires it at all eight. -/
+theorem referenceMerkleKernel_carrier_has_content :
+    Dregg2.Crypto.Reference.instMerkleVerifierKernel.extractable
+      ∧ ¬ Dregg2.Crypto.Reference.forgeMerkleKernel.extractable :=
+  ⟨Dregg2.Crypto.Reference.instMerkleVerifierKernel_extractable,
+   Dregg2.Crypto.Reference.forgeMerkleKernel_not_extractable⟩
 
 /-! ## §6 — THE REPAIR'S DEBT, LOCALIZED TO EXACTLY ONE CONJUNCT.
 
@@ -641,7 +667,7 @@ deployed arguments and is recorded as unsettled, not as passing.
 | R8 | `DeployedTraceExtract.TraceWitnessed` | `DeployedTraceExtract.lean:176` | NO CONTRADICTION FOUND | `MainAirAcceptF` + legs + `tracePublishedCommit t = pi.toPublished`, all about the existentially bound `t`; the only run-linked conjunct routes through `opaque tracePublishedCommit` (`CircuitSoundness.lean:467`), which acceptance does not constrain. Same verdict as `PremiseInhabitability` §7's S1/S3 and for the same reason. |
 | R9 | `FriExtractNonCircular.TranscriptOfPolynomial` | `FriExtractNonCircular.lean:235` | UNKNOWN | its antecedent is `ChildSatColumns`-derived data over an abstract `friAccepts`, with no deployed instantiation; the module itself labels it "open in general". Not settled here. |
 | R10 | `Emit/AccumulatorNonRevocationComplete.Accepts` `:381`, `NonMemberWitness` `:92` | see left | UNKNOWN | not examined at the resolution the other entries were; recorded so the sweep's coverage is not overstated. |
-| R11 | the THIRTEEN carrier-gated kernels: `Crypto/VerifierKernel.lean:35`, `PortalFloor.lean:77`, `Pedersen.lean:279`, `NonMembership.lean:249`, `Custom.lean:122`, `Deco.lean:285`, `Temporal.lean:130`, `Dfa.lean:188`, `DfaAcceptanceAir.lean:512`, `Cfg.lean:110`, `Bridge.lean:192`, `BlindedSet.lean:177`, `RangeProof.lean:183` | see left | **UNKNOWN at deployment** (no instantiation at any deployed verifier exists in-tree), **PROVED to admit TWO INDEPENDENT VACUITY MODES** | §5. Mode 1 (`falseCarrierMerkleKernel_soundness_never_fires`): `extractable := False` keeps the class inhabited and the derived theorem true while making it unappliable — with the verifier accepting EVERY triple. Mode 2 (`deadVerifierMerkleKernel_soundness_is_vacuous`): the empty-acceptance wound. `the_two_vacuity_modes_are_independent` shows neither check subsumes the other; `CarrierLive` + `carrierLive_fires` is the criterion. The one in-tree instance of `MerkleVerifierKernel` passes (`referenceMerkleKernel_carrierLive`) with a carrier that is literally `True` (`referenceMerkleKernel_carrier_is_content_free`) — and so do the OTHER SEVEN reference kernels of the family: `extractable := True` at `VerifierKernel.lean:65`, `NonMembership.lean:467`, `Pedersen.lean:486`, `Custom.lean:300`, `Deco.lean:498`, `Temporal.lean:283`, `Bridge.lean:379`, `BlindedSet.lean:342` (eight for eight; only the Merkle one is machine-checked here, the rest are READ at those lines). `PortalFloor` is the contrasting in-tree discipline: carrier PROVED at a reference instance and REFUTED at a forge instance. |
+| R11 | the THIRTEEN carrier-gated kernels: `Crypto/VerifierKernel.lean:35`, `PortalFloor.lean:77`, `Pedersen.lean:279`, `NonMembership.lean:249`, `Custom.lean:122`, `Deco.lean:285`, `Temporal.lean:130`, `Dfa.lean:188`, `DfaAcceptanceAir.lean:512`, `Cfg.lean:110`, `Bridge.lean:192`, `BlindedSet.lean:177`, `RangeProof.lean:183` | see left | **UNKNOWN at deployment** (no instantiation at any deployed verifier exists in-tree), **PROVED to admit TWO INDEPENDENT VACUITY MODES** | §5. Mode 1 (`falseCarrierMerkleKernel_soundness_never_fires`): `extractable := False` keeps the class inhabited and the derived theorem true while making it unappliable — with the verifier accepting EVERY triple. Mode 2 (`deadVerifierMerkleKernel_soundness_is_vacuous`): the empty-acceptance wound. `the_two_vacuity_modes_are_independent` shows neither check subsumes the other; `CarrierLive` + `carrierLive_fires` is the criterion. AS MEASURED, the one in-tree instance of `MerkleVerifierKernel` passed (`referenceMerkleKernel_carrierLive`) with a carrier that was literally `True` — and so did the OTHER SEVEN reference kernels of the family: `extractable := True` at `VerifierKernel.lean:65`, `NonMembership.lean:467`, `Pedersen.lean:486`, `Custom.lean:300`, `Deco.lean:498`, `Temporal.lean:283`, `Bridge.lean:379`, `BlindedSet.lean:342` (eight for eight; only the Merkle one machine-checked here, the rest READ at those lines). `PortalFloor` is the contrasting in-tree discipline: carrier PROVED at a reference instance and REFUTED at a forge instance. ⚑ **REPAIRED 2026-07-25**: all eight now carry a proved, separately-REFUTED carrier in the PortalFloor style (`referenceMerkleKernel_carrier_has_content` here; `Dregg2/Crypto/CarrierContent.lean` for the criterion + all eight audits). Two MORE `extractable := True` reference instances were found while repairing and are NOT repaired: `RangeProof.lean:432` (whose `binding := True` sits beside it) and `DecoUnforgeable.lean:339`; `Pedersen`'s `binding := True` also remains. The DEPLOYMENT verdict is UNCHANGED — UNKNOWN, toy oracles only. |
 | R12 | `Crypto/LightClientUC.ExtractsTo` `:146` (with `Foolable` `:97`) | see left | NOT RE-CHECKED HERE — **already self-checked in-module** | the `Extracts` shape over an abstract `verify`; the module carries its own non-vacuity apparatus — `badNotExtracts` `:244` REFUTES `ExtractsTo` at a concrete broken verifier, `refFoolingBreaksFloor` `:250` fires the contrapositive reduction on it, and `Reference.refResidual` `:371` inhabits the residual at a sound instance. No tooth added rather than duplicate one; recorded so the family is not silently counted as unexamined. |
 | R13 | `Realizability/AssemblyRegularCoverage.RangeSoundFor` `:481` | see left | **NOT WOUNDED — companion-checked in-module** (reasoned from the definitions, not re-proved here) | it is paired with `CompleteFor` `:476` (`∀ x, ∃ proof, V.verify (f x) proof = true`), which ASSERTS the accepting set is inhabited — precisely the companion the FRI bundles lack — and the module exhibits a complete-but-range-unsound backend (`alwaysAcceptBool_not_rangeSound`), so the pair is discriminating rather than decorative. |
 | R14 | `Circuit/AirSoundness.airChecks` `:232` | see left | UNKNOWN | acceptance is DEFINED by an existential requiring the opened trace tail to be `[]` (`openTr com = (⟨old, eff, new⟩, [])`) — the known "one side requires the list empty" shape — but `openTr`/`verifyLD` are abstract parameters with no deployed instantiation, so there is nothing to refute against. Flagged, not settled. |
@@ -701,7 +727,7 @@ table-opening conjunct is refuted at the only run anyone can exhibit. -/
 #assert_axioms the_two_vacuity_modes_are_independent
 #assert_axioms referenceMerkleKernel_accepts_a_run
 #assert_axioms referenceMerkleKernel_carrierLive
-#assert_axioms referenceMerkleKernel_carrier_is_content_free
+#assert_axioms referenceMerkleKernel_carrier_has_content
 #assert_axioms at_the_only_exhibited_pole_the_repair_is_half_realized
 
 end Dregg2.Circuit.PremiseInhabitabilitySweep

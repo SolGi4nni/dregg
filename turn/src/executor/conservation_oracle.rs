@@ -21,11 +21,21 @@
 //!
 //! * **Oracle installed** (deployed native node via `dregg-exec-lean`): the verified Lean decision is
 //!   authoritative — the executor NEVER decides conservation in Rust.
-//! * **No oracle, wasm / zkVM guest** (cannot link Lean): the per-asset boundary is decided by the
-//!   LABELED, NON-VERIFIED Rust arithmetic in [`super::atomic`] — a degradation, not "the check".
-//! * **No oracle, native (stale archive / startup did not register)**: currently the same labeled Rust
-//!   fallback runs (the interim). Flipping this to fail-CLOSED (and deleting the Rust `BlockConservation`
-//!   decision outright) is the final step, gated on verifying the archive relink fires the oracle.
+//! * **No oracle, native RELEASE build** (a deployed node whose archive is stale/absent, or whose
+//!   startup install did not fire): **FAIL CLOSED** —
+//!   [`super::atomic::AtomicTurnError::ConservationGateUnavailable`]. The Rust `BlockConservation`
+//!   fallback is not merely unreachable there, it is **NOT COMPILED**
+//!   (`#[cfg(not(all(any(unix, windows), not(debug_assertions))))]`), so no refactor can route back
+//!   into it. This is the hole that was open: a missing archive silently returned the deployed node
+//!   to the unverified decider on the ASSET-INFLATION boundary with only a build warning.
+//! * **No oracle, wasm / zkVM guest** (cannot link Lean by construction): the per-asset boundary is
+//!   decided by the LABELED, NON-VERIFIED Rust arithmetic in [`super::atomic`] — a degradation, not
+//!   "the check".
+//! * **No oracle, native DEBUG build** (`cargo test` across the workspace, which can never link the
+//!   archive): the same labeled fallback, so the debug test suite still exercises the arithmetic —
+//!   and [`require_verified_conservation_gate`] (`DREGG_REQUIRE_LEAN=1`) promotes it to the same hard
+//!   refusal, which is how `turn/tests/conservation_fails_closed_without_gate.rs` drives the
+//!   fail-closed pole without a release build.
 
 use std::sync::OnceLock;
 
@@ -70,17 +80,51 @@ pub fn conservation_oracle_installed() -> bool {
     ORACLE.get().is_some()
 }
 
+/// Whether a per-asset conservation decision reached with NO installed oracle must be REFUSED even
+/// on a build where the labeled Rust `BlockConservation` fallback is compiled (the wasm32 / zkVM
+/// guest, and native DEBUG builds).
+///
+/// A native RELEASE build does not consult this: there the refusal is a COMPILE-TIME fact (the
+/// fallback is not compiled at all). This is the runtime promotion for the two builds that do keep
+/// the fallback, driven by the tree's existing "I demand the verified artifact" signal
+/// `DREGG_REQUIRE_LEAN=1` (the same variable `dregg-lean-ffi/build.rs` uses to turn a missing-export
+/// degrade into a hard failure). It can only ever TIGHTEN the posture — there is no value of it that
+/// re-opens a path a release build would refuse.
+///
+/// `turn/tests/conservation_fails_closed_without_gate.rs` sets it to drive the fail-closed pole in a
+/// debug `cargo test`.
+#[inline]
+pub fn require_verified_conservation_gate() -> bool {
+    #[cfg(not(any(unix, windows)))]
+    {
+        // wasm32 / the SP1 zkVM guest: no archive by construction, and no process environment worth
+        // consulting. Same discrimination as `native_build_requires_oracle`.
+        false
+    }
+    #[cfg(any(unix, windows))]
+    {
+        std::env::var_os("DREGG_REQUIRE_LEAN")
+            .is_some_and(|v| matches!(v.to_string_lossy().trim(), "1" | "true" | "on" | "yes"))
+    }
+}
+
 /// Whether THIS build expects a Lean-backed conservation oracle to be installed.
 ///
 /// `true` on **native** (full-Lean) builds — the deployed node links `libdregg_lean.a` via
 /// `dregg-exec-lean` and MUST route the per-asset `Σδ=0` decision through the verified Lean
 /// `conservesFFI`. `false` on the **wasm32 / zkVM guest**, which cannot link the archive and
-/// legitimately decides with the labeled Rust fallback in [`super::atomic`]. The only cfg the
-/// crate actually distinguishes is `target_arch = "wasm32"`; the zkVM guest is compiled for a
-/// non-host target the same way, so "native" == "not wasm32".
+/// legitimately decides with the labeled Rust fallback in [`super::atomic`].
+///
+/// "Native" is `any(unix, windows)` — the SAME discrimination
+/// [`super::atomic::TurnExecutor::check_per_asset_conservation_by_asset`] fails closed on, and the
+/// one `dregg-deploy::refine` already used. This deliberately replaces the older
+/// `not(target_arch = "wasm32")`, which mis-classified the SP1 zkVM guest (a `riscv32`, `target_os =
+/// "zkvm"` target that is not wasm32) as native and would have demanded an archive it cannot link.
+/// The two predicates must agree or the startup check and the decision path disagree about what a
+/// deployed node is.
 #[inline]
 pub const fn native_build_requires_oracle() -> bool {
-    cfg!(not(target_arch = "wasm32"))
+    cfg!(any(unix, windows))
 }
 
 /// FAIL-CLOSED startup check: on a native full-Lean build the conservation oracle MUST be

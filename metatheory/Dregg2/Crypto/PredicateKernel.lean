@@ -146,15 +146,15 @@ example (leaf : Int) :
         (verifiableOfRegistry (merkleReg base) .merkleMembership)
         (leaf + leaf, leaf) (leaf + leaf))
       ∧ MerkleMembers (Digest := Int) (· + ·) (leaf + leaf) leaf :=
-  merkle_registry_cascade (K := instMerkleVerifierKernel) trivial base (leaf + leaf) leaf
-    (leaf + leaf) (decide_eq_true ⟨rfl, rfl⟩)
+  merkle_registry_cascade (K := instMerkleVerifierKernel) instMerkleVerifierKernel_extractable
+    base (leaf + leaf) leaf (leaf + leaf) (decide_eq_true ⟨rfl, rfl⟩)
 
 /-- Non-vacuity: the dial wiring holds at the reference kernel — the floor is `acceptanceOnly`,
 the dial's bottom notch is the verifier's bit, and an accepting proof proves membership. -/
 example (leaf : Int) :
     (merkleKindObligation (Digest := Int) (Proof := Int)).dialFloor = Dial.acceptanceOnly :=
-  (merkle_dial_wired (K := instMerkleVerifierKernel) trivial base (leaf + leaf) leaf
-    (leaf + leaf)).1
+  (merkle_dial_wired (K := instMerkleVerifierKernel) instMerkleVerifierKernel_extractable base
+    (leaf + leaf) leaf (leaf + leaf)).1
 
 end Reference
 

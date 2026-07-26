@@ -996,6 +996,13 @@ pub struct ShieldedInputPayload {
     /// Canonical postcard bytes of the hiding membership/nullifier proof.
     pub spend_proof: Vec<u8>,
     /// Canonical postcard bytes of the hiding full-width value/asset proof.
+    ///
+    /// These are `Ir2BatchProof<DreggZkStarkConfig>` bytes — the relation is AUTHORED IN LEAN
+    /// (`metatheory/Dregg2/Circuit/Emit/WideValueBindingEmit.lean`) and proven through
+    /// `Plonky3HidingFriReference` on `create_zk_config` (salted-leaf hiding MMCS + four random
+    /// codewords). They were a v1 `DslZkProof` before the Lean cutover; the FIELD shape did not
+    /// move, only the bytes inside it. `dregg_circuit_prove::shielded::WideValueBindingProof
+    /// ::from_serialized_parts` is the only decoder.
     pub wide_value_proof: Vec<u8>,
 }
 

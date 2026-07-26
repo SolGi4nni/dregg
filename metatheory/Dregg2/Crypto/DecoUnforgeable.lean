@@ -336,14 +336,23 @@ and pass). So the STARK accepts and extraction succeeds — but the LIFT to `Sig
   compress := refCompress
   encode := refEncode
   verify stmt _ := decide (1 ≤ stmt.facts.amountCents)
-  extractable := True
-  extract := by
-    intro _ stmt _ haccept
-    have hamt : 1 ≤ stmt.facts.amountCents := of_decide_eq_true haccept
-    refine deco_complete forgeSig refMac refCompress refEncode stmt
-      { sessionKey := 0, sig := 0, transcriptCommit := refEncode stmt.facts + 7, tag := 0,
-        fieldsDigest := refEncode stmt.facts, salt := 7, amtBits := [] } ?_
-    exact ⟨rfl, rfl, rfl, rfl, hamt⟩
+  extractable :=
+    ∀ (stmt : Statement Int) (_proof : Unit), decide (1 ≤ stmt.facts.amountCents) = true →
+      ∃ circuit : CircuitIR Int, Satisfies forgeSig refMac refCompress refEncode circuit stmt
+  extract := fun h => h
+
+/-- **THE FORGE KERNEL'S EXTRACTION CARRIER HOLDS — AND THAT IS THE POINT.** ⚑ CARRIER REPAIR
+(2026-07-25): this was `extractable := True`, which made the demonstration weaker than it is. The
+genuine extractability shape over this oracle is a THEOREM here: the STARK really does extract a
+satisfying trace. The forgery below is therefore NOT an artifact of a content-free carrier — it is a
+break of the LIFT from a satisfying trace to `Signed`, with extraction fully intact. -/
+theorem forgeDeco_extractable : forgeDeco.extractable := by
+  intro stmt _ haccept
+  have hamt : 1 ≤ stmt.facts.amountCents := of_decide_eq_true haccept
+  refine deco_complete forgeSig refMac refCompress refEncode stmt
+    { sessionKey := 0, sig := 0, transcriptCommit := refEncode stmt.facts + 7, tag := 0,
+      fieldsDigest := refEncode stmt.facts, salt := 7, amtBits := [] } ?_
+  exact ⟨rfl, rfl, rfl, rfl, hamt⟩
 
 /-- **(BITES, the forgery exists)** a CONCRETE `AttForgery` on the forge kernel: the sample statement
 verifies, yet no genuine session backs it (`decoAuthenticated` is FALSE — `Signed` never holds). -/
@@ -360,7 +369,8 @@ an ed25519 `SigForgery` OR an HMAC `MacForgery`. -/
 theorem attestation_bites :
     (∃ pk m s, SigForgery forgeSigKernel pk m s) ∨
       (∃ key msg t, MacForgery refMacKernel key msg t) :=
-  forgery_yields_break (KD := forgeDeco) forgeSigKernel refMacKernel rfl rfl trivial sampleStmt ()
+  forgery_yields_break (KD := forgeDeco) forgeSigKernel refMacKernel rfl rfl forgeDeco_extractable
+    sampleStmt ()
     forge_attestation_forgery
 
 /-- The bite is SHARP: it is a genuine ed25519 `SigForgery` (the accept-all reference MAC cannot be

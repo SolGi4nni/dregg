@@ -293,15 +293,57 @@ example : eqRegistration.Satisfies eqRegistration.circuit 5 5 ↔ (5 : Int) = 5 
 
 /-- A degenerate reference custom verifier kernel over the equality registration (`def`, not a
 global `instance`). `verify stmt proof` accepts iff `stmt = proof` (the equality check, here the
-proof IS the claimed equal witness); `extractable := True`. `extract` rebuilds the satisfying trace:
-acceptance means `stmt = proof`, so `eqSatisfies {} stmt proof` holds at witness `proof`. -/
+proof IS the claimed equal witness).
+
+⚑ **CARRIER REPAIR (2026-07-25).** `extractable` was `True`; it is now the genuine
+extractability-SHAPED `Prop` over THIS oracle and THIS registration, `extract := fun h => h`
+(PortalFloor style), PROVED at `refKernel_extractable` and REFUTED at `forgeKernel_not_extractable`
+(a registration whose relation holds of NOTHING, with an oracle that accepts everything — the direct
+analogue of `PortalFloor.Reference.instVerifierForge`). -/
 @[reducible] def refKernel : CustomVerifierKernel eqRegistration Int where
   verify stmt proof := decide (stmt = proof)
-  extractable := True
-  extract := by
-    intro _ stmt proof haccept
-    simp only [decide_eq_true_eq] at haccept
-    exact ⟨proof, haccept⟩
+  extractable :=
+    ∀ (stmt : eqRegistration.Statement) (proof : Int), decide (stmt = proof) = true →
+      ∃ wit : eqRegistration.Witness, eqRegistration.Satisfies eqRegistration.circuit stmt wit
+  extract := fun h => h
+
+/-- **THE REFERENCE CARRIER HOLDS** — a theorem: acceptance means `stmt = proof`, so the registered
+equality circuit is satisfied at witness `proof`. -/
+theorem refKernel_extractable : refKernel.extractable := by
+  intro stmt proof haccept
+  simp only [decide_eq_true_eq] at haccept
+  exact ⟨proof, haccept⟩
+
+/-- **A FORGE REGISTRATION** — same shape, a relation that holds of NOTHING (`False`), with the
+bridge still discharged (`Iff.rfl`): a lawful `CustomRegistration` whose kind certifies nothing. -/
+@[reducible] def emptyRegistration : CustomRegistration.{0} where
+  vk := 9
+  Circuit := EqCircuit
+  Statement := Int
+  Witness := Int
+  Relation := fun _ _ => False
+  circuit := {}
+  Satisfies := fun _ _ _ => False
+  bridge := fun _ _ => Iff.rfl
+  dialFloor := Dial.fullDisclosure
+
+/-- **FORGE KERNEL** — the empty registration with an oracle that accepts EVERY proof. Carrier shape
+identical to the reference kernel's, instantiated here. -/
+@[reducible] def forgeKernel : CustomVerifierKernel emptyRegistration Int where
+  verify _ _ := true
+  extractable :=
+    ∀ (stmt : emptyRegistration.Statement) (_proof : Int), (true : Bool) = true →
+      ∃ wit : emptyRegistration.Witness,
+        emptyRegistration.Satisfies emptyRegistration.circuit stmt wit
+  extract := fun h => h
+
+/-- **THE CARRIER IS FALSE HERE.** No witness satisfies the empty registration's circuit, so the
+extraction claim fails at the very first accepted proof. The reference carrier is therefore not
+`True` in disguise — it is refutable, which `True` never is. -/
+theorem forgeKernel_not_extractable : ¬ forgeKernel.extractable := by
+  intro h
+  obtain ⟨_, hf⟩ := h 0 0 rfl
+  exact hf.elim
 
 /-- The empty base registry over the toy `ℤ` custom statement/proof. -/
 def base : Registry Int Int := fun _ => none
@@ -309,7 +351,7 @@ def base : Registry Int Int := fun _ => none
 /-- Non-vacuity of `custom_verify_sound`: at the reference kernel an accepted proof (here proof `5`
 at statement `5`) yields SOME witness satisfying the registered relation (`5 = 5`). -/
 example : ∃ wit : Int, eqRegistration.Relation 5 wit :=
-  custom_verify_sound eqRegistration (K := refKernel) trivial 5 5 (by decide)
+  custom_verify_sound eqRegistration (K := refKernel) refKernel_extractable 5 5 (by decide)
 
 /-- Non-vacuity of the FULL cascade: at the reference kernel an accepted proof both `Discharged`s
 the registry predicate at `custom 7` AND proves the registered relation. A NAMED witness so its
@@ -319,7 +361,7 @@ theorem reference_cascade_nonvacuous :
         (verifiableOfRegistry (@customReg eqRegistration Int refKernel base) (.custom 7))
         5 5)
       ∧ ∃ wit : Int, eqRegistration.Relation 5 wit :=
-  custom_registry_cascade eqRegistration (K := refKernel) trivial base 5 5 (by decide)
+  custom_registry_cascade eqRegistration (K := refKernel) refKernel_extractable base 5 5 (by decide)
 
 -- Non-vacuity axiom footprint: rests only on the standard kernel axioms.
 #print axioms reference_cascade_nonvacuous
@@ -329,7 +371,7 @@ bare equality kind), the dial's bottom notch is the verifier's bit, and an accep
 the registered relation. -/
 example :
     (customKindObligation eqRegistration).dialFloor = Dial.fullDisclosure :=
-  (custom_dial_wired eqRegistration (K := refKernel) trivial base 5 5).1
+  (custom_dial_wired eqRegistration (K := refKernel) refKernel_extractable base 5 5).1
 
 /-- The open extension point separates by `vk` (content-addressing): a DIFFERENT `vk` is a distinct
 registry slot, so the equality kind at `custom 7` is not consulted for `custom 8` — `Predicate`'s
@@ -346,5 +388,9 @@ end Reference
 #assert_axioms custom_verify_sound
 #assert_axioms custom_registry_cascade
 #assert_axioms custom_dial_wired
+
+-- Carrier non-vacuity pins (PortalFloor §9c discipline): reference carrier HOLDS, forge carrier FALSE.
+#assert_axioms Reference.refKernel_extractable
+#assert_axioms Reference.forgeKernel_not_extractable
 
 end Dregg2.Crypto.Custom

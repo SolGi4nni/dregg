@@ -458,23 +458,69 @@ theorem nonmembership_complete_teeth : ¬ NonMember sampleLeaves (1 : Int) :=
 
 /-- A degenerate reference non-membership verifier kernel over `ℤ` (`def`, not a global `instance`).
 `compress := (+)`; `verify` accepts iff `stmt.elem = 2 ∧ stmt.root = 2` (the toy "2 is absent from the
-committed `[1,3]` rooted at 2" check); `extractable := True`. `extract` rebuilds the satisfying trace
+committed `[1,3]` rooted at 2" check). `extract` rebuilds the satisfying trace
 from `sampleLeaves` via the bracketing of `1`/`3` (both present at root `2`), through
-`nonmembership_complete`. -/
+`nonmembership_complete`.
+
+⚑ **CARRIER REPAIR (2026-07-25).** `extractable` was `True`; it is now the genuine
+extractability-SHAPED `Prop` over THIS oracle, `extract := fun h => h` (PortalFloor style), PROVED at
+`refKernel_extractable` and REFUTED at `forgeKernel_not_extractable`. -/
 @[reducible] def refKernel : NonMembershipVerifierKernel Int Int where
   compress := refCompress
   verify stmt _ := decide (stmt.elem = 2 ∧ stmt.root = 2)
-  extractable := True
-  extract := by
-    intro _ stmt _ haccept
-    obtain ⟨root, elem⟩ := stmt
-    simp only [decide_eq_true_eq] at haccept
-    obtain ⟨he, hr⟩ := haccept
-    subst he; subst hr
-    obtain ⟨circuit, hsat⟩ :=
-      nonmembership_complete refCompress 2 2 sampleLeaves 1 3 sampleLeaves_sorted
-        sampleLeaves_adjacent (by norm_num) (by norm_num) ref_present_1 ref_present_3
-    exact ⟨sampleLeaves, circuit, hsat⟩
+  extractable :=
+    ∀ (stmt : Statement Int) (_proof : Int), decide (stmt.elem = 2 ∧ stmt.root = 2) = true →
+      ∃ (leaves : List Int) (circuit : CircuitIR Int),
+        Satisfies refCompress circuit stmt.root stmt.elem leaves
+  extract := fun h => h
+
+/-- **THE REFERENCE CARRIER HOLDS** — a theorem: the accepted statement is the toy "2 absent from
+`[1,3]` rooted at 2" claim, and the bracketing of `1`/`3` really does give a satisfying trace. -/
+theorem refKernel_extractable : refKernel.extractable := by
+  intro stmt _ haccept
+  obtain ⟨root, elem⟩ := stmt
+  simp only [decide_eq_true_eq] at haccept
+  obtain ⟨he, hr⟩ := haccept
+  subst he; subst hr
+  obtain ⟨circuit, hsat⟩ :=
+    nonmembership_complete refCompress 2 2 sampleLeaves 1 3 sampleLeaves_sorted
+      sampleLeaves_adjacent (by norm_num) (by norm_num) ref_present_1 ref_present_3
+  exact ⟨sampleLeaves, circuit, hsat⟩
+
+/-- A collapsing node hash sends every non-empty Merkle path to `0`, whatever the leaf (the same
+lemma `Crypto.VerifierKernel`'s forge uses; restated locally because this module does not import
+that one). -/
+theorem recompose_collapse (path : List (Merkle.Step Int)) :
+    ∀ leaf : Int, path ≠ [] → Merkle.recompose (fun _ _ => (0 : Int)) leaf path = 0 := by
+  induction path with
+  | nil => intro _ h; exact absurd rfl h
+  | cons _ rest ih =>
+    intro leaf _
+    cases rest with
+    | nil => rfl
+    | cons t ts => exact ih 0 (by simp)
+
+/-- **FORGE KERNEL** — same carrier SHAPE over a node hash that collapses every pair to `0` and an
+oracle that accepts EVERY statement: the two Merkle sub-proofs cannot pin a non-zero root. -/
+@[reducible] def forgeKernel : NonMembershipVerifierKernel Int Int where
+  compress _ _ := 0
+  verify _ _ := true
+  extractable :=
+    ∀ (stmt : Statement Int) (_proof : Int), (true : Bool) = true →
+      ∃ (leaves : List Int) (circuit : CircuitIR Int),
+        Satisfies (fun _ _ => (0 : Int)) circuit stmt.root stmt.elem leaves
+  extract := fun h => h
+
+/-- **THE CARRIER IS FALSE HERE.** At committed root `1` the claimed trace's first Merkle sub-proof
+would give a non-empty path recomposing `1` under a hash that collapses to `0`. So the reference
+carrier has CONTENT — it is refutable, which `True` is not. -/
+theorem forgeKernel_not_extractable : ¬ forgeKernel.extractable := by
+  intro h
+  obtain ⟨_, circuit, hsat⟩ := h { root := 1, elem := 0 } 0 rfl
+  obtain ⟨path, hne, hrec⟩ :=
+    (Merkle.merkle_bridge (fun _ _ => (0 : Int)) 1 circuit.lo).mp ⟨circuit.loCircuit, hsat.1⟩
+  rw [recompose_collapse path circuit.lo hne] at hrec
+  exact absurd hrec (by decide)
 
 /-- The empty base registry over the toy `ℤ` non-membership statement/proof. -/
 def base : Registry (Statement Int) Int := fun _ => none
@@ -486,7 +532,7 @@ def absentStmt : Statement Int := { root := 2, elem := 2 }
 /-- Non-vacuity of `nonmembership_verify_sound`: at the reference kernel an accepted proof yields a
 committed list from which `stmt.elem = 2` is absent. -/
 example : ∃ leaves : List Int, NonMember leaves absentStmt.elem :=
-  nonmembership_verify_sound (K := refKernel) trivial absentStmt 0 (by decide)
+  nonmembership_verify_sound (K := refKernel) refKernel_extractable absentStmt 0 (by decide)
 
 /-- Non-vacuity of the FULL cascade: at the reference kernel an accepted proof both `Discharged`s the
 registry predicate AND proves absence. A NAMED witness so its axiom footprint is checkable. -/
@@ -495,7 +541,7 @@ theorem reference_cascade_nonvacuous :
         (verifiableOfRegistry (@nonMembershipReg Int _ Int refKernel base) .nonMembership)
         absentStmt 0)
       ∧ ∃ leaves : List Int, NonMember leaves absentStmt.elem :=
-  nonmembership_registry_cascade (K := refKernel) trivial base absentStmt 0 (by decide)
+  nonmembership_registry_cascade (K := refKernel) refKernel_extractable base absentStmt 0 (by decide)
 
 -- Non-vacuity axiom footprint: rests only on the standard kernel axioms.
 #print axioms reference_cascade_nonvacuous
@@ -504,7 +550,7 @@ theorem reference_cascade_nonvacuous :
 verifier's bit, and an accepting proof proves absence. -/
 example :
     (nonMembershipKindObligation (Digest := Int)).dialFloor = Dial.acceptanceOnly :=
-  (nonmembership_dial_wired (K := refKernel) trivial base absentStmt 0).1
+  (nonmembership_dial_wired (K := refKernel) refKernel_extractable base absentStmt 0).1
 
 -- keystone-audit companions (named satisfiable + teeth), kernel-triple clean.
 #assert_axioms nonmembership_sound_satisfiable
@@ -521,5 +567,9 @@ end Reference
 #assert_axioms nonmembership_verify_sound
 #assert_axioms nonmembership_registry_cascade
 #assert_axioms nonmembership_dial_wired
+
+-- Carrier non-vacuity pins (PortalFloor §9c discipline): reference carrier HOLDS, forge carrier FALSE.
+#assert_axioms Reference.refKernel_extractable
+#assert_axioms Reference.forgeKernel_not_extractable
 
 end Dregg2.Crypto.NonMembership

@@ -2,7 +2,8 @@
 //! the game's own teeth bite at lowering (a fabricated / replayed card has no leaf; a board
 //! transition that is not the automaton step has no honest D1 witness). No proving here.
 
-use dregg_automatafl::reference::{ATT, AUTO, Board, VAC, automaton_step, stock_two_player};
+use dregg_automatafl::board::{ATT, AUTO, Board, VAC};
+use dregg_automatafl::rules::{automaton_step, stock_two_player};
 use dregg_circuit::field::BabyBear;
 use dregg_multiway_tug::hidden_hand::{HandTree, card_leaf};
 use dreggnet_game_board::{AutomataflMatch, MatchError, TugMatch, TugWin};
@@ -143,11 +144,12 @@ fn a_fabricated_or_replayed_card_has_no_leaf() {
 #[test]
 fn a_played_automatafl_match_lowers_to_d1_leaves() {
     let m = AutomataflMatch::automaton_only(demo_board(), 2);
-    let boards = m.boards();
+    let boards = m.boards().expect("the spec walk answers");
     assert_eq!(boards.len(), 3, "start + 2 stepped boards");
     assert_eq!(
         boards[1],
-        automaton_step(&boards[0]),
+        automaton_step(&boards[0])
+            .expect("the Lean game oracle (`dregg_automatafl_rules`) answers"),
         "the played boards ARE the automaton's steps"
     );
     assert_ne!(boards[1], boards[0], "the automaton actually moved");
@@ -185,7 +187,10 @@ fn a_played_automatafl_match_lowers_to_d1_leaves() {
 /// over these leaves is the `end_to_end.rs` `#[ignore]` gate.
 #[test]
 fn n11_stock_match_lowers_through_the_lean_descriptor() {
-    let m = AutomataflMatch::automaton_only(stock_two_player(), 3);
+    let m = AutomataflMatch::automaton_only(
+        stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers"),
+        3,
+    );
     let leaves = m
         .leaves()
         .expect("the n=11 stock match lowers to D1 leaves");

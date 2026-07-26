@@ -243,3 +243,162 @@ fn the_surface_tracks_the_market() {
     let surface = off.render(&s);
     let _ = surface.view(); // paints a real deos ViewNode
 }
+
+/// Every string a viewer can read off a rendered surface — text nodes, section titles, pill labels,
+/// menu-item labels — so a test can assert what a bidder can and cannot see.
+fn rendered_text(surface: &dreggnet_offerings::Surface) -> String {
+    use deos_view::ViewNode;
+    fn walk(n: &ViewNode, out: &mut String) {
+        match n {
+            ViewNode::Text(t) => {
+                out.push_str(t);
+                out.push('\n');
+            }
+            ViewNode::Pill { text, .. } => {
+                out.push_str(text);
+                out.push('\n');
+            }
+            ViewNode::Progress {
+                label, value, max, ..
+            } => {
+                out.push_str(&format!("{label} {value}/{max}\n"));
+            }
+            ViewNode::Section {
+                title, children, ..
+            } => {
+                out.push_str(title);
+                out.push('\n');
+                for c in children {
+                    walk(c, out);
+                }
+            }
+            ViewNode::Menu { items } => {
+                for it in items {
+                    out.push_str(&it.label);
+                    out.push('\n');
+                }
+            }
+            ViewNode::VStack(cs) | ViewNode::Row(cs) | ViewNode::List(cs) | ViewNode::Table(cs) => {
+                for c in cs {
+                    walk(c, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = String::new();
+    walk(surface.view(), &mut out);
+    out
+}
+
+/// **THE SEAL SURVIVES THE PER-VIEWER RENDER.** The surface now discloses one thing it never did: a
+/// bidder's OWN sealed bid, because "have I bid, and for what" is the one question a sealed auction
+/// owes the person who bid. The disclosure must be exactly that and no wider — a rival bidder, the
+/// SELLER, and a spectator must each read their own position and nobody else's, right up until the
+/// clear opens every seal by the rules.
+///
+/// Non-vacuous by construction: each bidder's own view is asserted to CONTAIN its own number, so a
+/// render that simply stopped printing bid values cannot make this pass.
+#[test]
+fn a_bidders_own_bid_is_disclosed_to_them_and_to_nobody_else() {
+    let off = MarketOffering::new();
+    let mut s = off
+        .open(SessionConfig::with_seed(11))
+        .expect("market opens");
+    assert!(matches!(list(&off, &mut s, 25), Outcome::Landed { .. }));
+
+    // Distinct, unambiguous values: no one number is a substring of another, and none collides
+    // with the reserve (25), a bid count, or a turn count.
+    let book = [("alice", 137), ("bob", 941), ("carol", 663)];
+    for (who, v) in book {
+        assert!(
+            matches!(bid(&off, &mut s, who, v), Outcome::Landed { .. }),
+            "bid {who} must land"
+        );
+    }
+
+    // The seal DIGEST is hex, and hex digits are decimal digits — a 3-digit bid value can appear
+    // inside a commitment by coincidence, which would make the exclusion scan below fail for a
+    // reason that is not a leak. Drop the digest lines before scanning for numbers; they are
+    // asserted separately.
+    let scannable = |surface: &dreggnet_offerings::Surface| -> String {
+        rendered_text(surface)
+            .lines()
+            .filter(|l| !l.contains("Its seal is"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    for (who, v) in book {
+        let mine = scannable(&off.render_for(&s, &bidder(who)));
+        assert!(
+            mine.contains("Your sealed bid"),
+            "{who} is not shown their own bid section:\n{mine}"
+        );
+        assert!(
+            rendered_text(&off.render_for(&s, &bidder(who))).contains("Its seal is"),
+            "{who} is not shown the commitment their bid is frozen under"
+        );
+        assert!(
+            mine.contains(&v.to_string()),
+            "{who} cannot read their own bid ({v}) — the disclosure is missing, so the exclusion \
+             below would pass vacuously:\n{mine}"
+        );
+        // …and nothing of anyone else's.
+        for (other, ov) in book {
+            if other == who {
+                continue;
+            }
+            assert!(
+                !mine.contains(&ov.to_string()),
+                "{who} read {other}'s sealed bid ({ov}) off their own surface:\n{mine}"
+            );
+        }
+    }
+
+    // The SELLER holds the settle capability and still may not read a seal before opening it.
+    let sellers = scannable(&off.render_for(&s, &seller()));
+    // A spectator (an identity with no role at this auction) likewise.
+    let spectator = scannable(&off.render_for(&s, &DreggIdentity("nosy".to_string())));
+    let public = scannable(&off.render(&s));
+    for (label, view) in [
+        ("the seller", &sellers),
+        ("a spectator", &spectator),
+        ("the public render", &public),
+    ] {
+        for (who, v) in book {
+            assert!(
+                !view.contains(&v.to_string()),
+                "{label} read {who}'s sealed bid ({v}) before the clear:\n{view}"
+            );
+        }
+        assert!(
+            !view.contains("Your sealed bid"),
+            "{label} was served an own-bid section it has no bid for"
+        );
+    }
+    // The seller is still TOLD they are the seller and what they can do — fog is not silence.
+    assert!(
+        sellers.contains("You are the SELLER"),
+        "the seller is not told their role:\n{sellers}"
+    );
+    assert!(
+        public.contains("What the seal is"),
+        "the domain plaque explaining the hiding is missing from the public render"
+    );
+
+    // AFTER THE CLEAR the seals are open by the rules, and the winner is public to everyone.
+    //
+    // ⚑ Conditioned on the settle actually landing, and deliberately so: `settle_ring_verified` is
+    // FAIL-CLOSED without a registered verified-executor gate, and this crate's test harness
+    // installs none (the refusal says so in as many words). That is a host-wiring fact about the
+    // test binary, not a property of the fog — every unconditional assertion above is the fog, and
+    // the settle path itself is covered by `list_bid_settle_clears_to_the_winning_bid_conserved`.
+    if let Outcome::Landed { .. } = settle(&off, &mut s) {
+        let after = scannable(&off.render(&s));
+        assert!(
+            after.contains("941"),
+            "the cleared auction does not publish the winning bid:\n{after}"
+        );
+    }
+}

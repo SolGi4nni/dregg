@@ -606,10 +606,12 @@ The reference §8 carriers are the toy witnesses (`rfl`/`trivial`), exactly as i
 theorem attestation_accept_satisfiable :
     ∃ c, (attestationDynamics (KD := Dregg2.Crypto.Deco.Reference.refKernel)
         Dregg2.Crypto.Deco.Reference.refSigKernel Dregg2.Crypto.Deco.Reference.refMacKernel
-        rfl rfl trivial (fun _ _ _ h => of_decide_eq_true h) trivial).accept
+        rfl rfl Dregg2.Crypto.Deco.Reference.refKernel_extractable
+        (fun _ _ _ h => of_decide_eq_true h) trivial).accept
       ((attestationDynamics (KD := Dregg2.Crypto.Deco.Reference.refKernel)
         Dregg2.Crypto.Deco.Reference.refSigKernel Dregg2.Crypto.Deco.Reference.refMacKernel
-        rfl rfl trivial (fun _ _ _ h => of_decide_eq_true h) trivial).run c) :=
+        rfl rfl Dregg2.Crypto.Deco.Reference.refKernel_extractable
+        (fun _ _ _ h => of_decide_eq_true h) trivial).run c) :=
   ⟨(Dregg2.Crypto.Deco.Reference.sampleStmt, ()), Dregg2.Crypto.DecoUC.decoSim_works.2⟩
 
 /-! ### §3.9b — DECO ATTESTATION: the rung-4 soundness leg re-exported (NOT a rung-5 summit).

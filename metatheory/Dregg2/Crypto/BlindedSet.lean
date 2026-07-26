@@ -333,23 +333,57 @@ example : ∃ circuit : CircuitIR Int, Satisfies refCompress circuit 3 1 :=
 
 /-- A degenerate reference blinded-set verifier kernel over `ℤ` (`def`, not a global `instance`).
 `compress := (+)`; `verify` accepts iff `stmt.root = 3 ∧ stmt.blindedMember = 0` (the toy "some
-member of the set rooted at 3 is authorized; the member is blinded to 0" check); `extractable :=
-True`. `extract` rebuilds the membership trace for member `1` (authorized at root `3` via the
-self-hash path), through `blindedset_complete`. -/
+member of the set rooted at 3 is authorized; the member is blinded to 0" check).
+`extract` rebuilds the membership trace for member `1` (authorized at root `3` via the
+self-hash path), through `blindedset_complete`.
+
+⚑ **CARRIER REPAIR (2026-07-25).** `extractable` was `True`; it is now the genuine
+extractability-SHAPED `Prop` over THIS oracle, `extract := fun h => h` (PortalFloor style), PROVED at
+`refKernel_extractable` and REFUTED at `forgeKernel_not_extractable`. -/
 @[reducible] def refKernel : BlindedSetVerifierKernel Int Int where
   compress := refCompress
   verify stmt _ := decide (stmt.root = 3 ∧ stmt.blindedMember = 0)
-  extractable := True
-  extract := by
-    intro _ stmt _ haccept
-    obtain ⟨root, bm⟩ := stmt
-    simp only [decide_eq_true_eq] at haccept
-    obtain ⟨hr, _⟩ := haccept
-    subst hr
-    obtain ⟨circuit, hsat⟩ :=
-      blindedset_complete refCompress 3 1
-        (by have := ref_member_at 1 2; norm_num at this; exact this)
-    exact ⟨1, circuit, hsat⟩
+  extractable :=
+    ∀ (stmt : Statement Int) (_proof : Int),
+      decide (stmt.root = 3 ∧ stmt.blindedMember = 0) = true →
+        ∃ (member : Int) (circuit : CircuitIR Int),
+          Satisfies refCompress circuit stmt.root member
+  extract := fun h => h
+
+/-- **THE REFERENCE CARRIER HOLDS** — a theorem: the accepted statement pins the issuer root to `3`,
+where member `1` really is authorized (self-hash path with sibling `2`). -/
+theorem refKernel_extractable : refKernel.extractable := by
+  intro stmt _ haccept
+  obtain ⟨root, bm⟩ := stmt
+  simp only [decide_eq_true_eq] at haccept
+  obtain ⟨hr, _⟩ := haccept
+  subst hr
+  obtain ⟨circuit, hsat⟩ :=
+    blindedset_complete refCompress 3 1
+      (by have := ref_member_at 1 2; norm_num at this; exact this)
+  exact ⟨1, circuit, hsat⟩
+
+/-- **FORGE KERNEL** — same carrier SHAPE over a node hash that collapses every pair to `0` and an
+oracle that accepts EVERY statement: no non-empty path can recompose a non-zero issuer root. -/
+@[reducible] def forgeKernel : BlindedSetVerifierKernel Int Int where
+  compress _ _ := 0
+  verify _ _ := true
+  extractable :=
+    ∀ (stmt : Statement Int) (_proof : Int), (true : Bool) = true →
+      ∃ (member : Int) (circuit : CircuitIR Int),
+        Satisfies (fun _ _ => (0 : Int)) circuit stmt.root member
+  extract := fun h => h
+
+/-- **THE CARRIER IS FALSE HERE.** At issuer root `1` the claimed trace would give `MemberOf`
+through the fully-proved `blindedset_bridge` — a non-empty path recomposing `1` under a hash that
+collapses to `0`. So the reference carrier has CONTENT: it is refutable, which `True` is not. -/
+theorem forgeKernel_not_extractable : ¬ forgeKernel.extractable := by
+  intro h
+  obtain ⟨member, circuit, hsat⟩ := h { root := 1, blindedMember := 0 } 0 rfl
+  obtain ⟨path, hne, hrec⟩ :=
+    (blindedset_bridge (fun _ _ => (0 : Int)) 1 member).mp ⟨circuit, hsat⟩
+  rw [Dregg2.Crypto.Reference.recompose_collapse path member hne] at hrec
+  exact absurd hrec (by decide)
 
 /-- The empty base registry over the toy `ℤ` blinded-set statement/proof. -/
 def base : Registry (Statement Int) Int := fun _ => none
@@ -361,7 +395,7 @@ def authStmt : Statement Int := { root := 3, blindedMember := 0 }
 /-- Non-vacuity of `blindedset_verify_sound`: at the reference kernel an accepted proof yields
 SOME member in the issuer's authorized set rooted at `3`. -/
 example : ∃ member : Int, MemberOf refCompress authStmt.root member :=
-  blindedset_verify_sound (K := refKernel) trivial authStmt 0 (by decide)
+  blindedset_verify_sound (K := refKernel) refKernel_extractable authStmt 0 (by decide)
 
 /-- Non-vacuity of the FULL cascade: at the reference kernel an accepted proof both `Discharged`s
 the registry predicate AND proves authorized membership (holder hidden). A NAMED witness so its
@@ -371,7 +405,7 @@ theorem reference_cascade_nonvacuous :
         (verifiableOfRegistry (@blindedSetReg Int Int refKernel base) .blindedSet)
         authStmt 0)
       ∧ ∃ member : Int, MemberOf refCompress authStmt.root member :=
-  blindedset_registry_cascade (K := refKernel) trivial base authStmt 0 (by decide)
+  blindedset_registry_cascade (K := refKernel) refKernel_extractable base authStmt 0 (by decide)
 
 -- Non-vacuity axiom footprint: rests only on the standard kernel axioms.
 #print axioms reference_cascade_nonvacuous
@@ -398,7 +432,7 @@ example (m m' : Int)
 verifier's bit, and an accepting proof proves authorized membership. -/
 example :
     (blindedSetKindObligation (Digest := Int)).dialFloor = Dial.acceptanceOnly :=
-  (blindedset_dial_wired (K := refKernel) trivial base authStmt 0).1
+  (blindedset_dial_wired (K := refKernel) refKernel_extractable base authStmt 0).1
 
 end Reference
 
@@ -409,5 +443,9 @@ end Reference
 #assert_axioms blindedset_hides_holder
 #assert_axioms blindedset_registry_cascade
 #assert_axioms blindedset_dial_wired
+
+-- Carrier non-vacuity pins (PortalFloor §9c discipline): reference carrier HOLDS, forge carrier FALSE.
+#assert_axioms Reference.refKernel_extractable
+#assert_axioms Reference.forgeKernel_not_extractable
 
 end Dregg2.Crypto.BlindedSet

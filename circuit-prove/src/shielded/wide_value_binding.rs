@@ -1,10 +1,26 @@
 //! Faithful full-`u64` value/asset binding for the shielded-transfer cutover.
 //!
+//! **THE AIR IS AUTHORED IN LEAN.** `metatheory/Dregg2/Circuit/Emit/WideValueBindingEmit.lean`
+//! emits the whole relation — 162 columns, 17 public inputs, 158 IR-v2 constraints — and byte-pins
+//! it there with an `emitVmJson2` `#guard`. This module reads that pinned wire string straight out
+//! of the Lean source ([`EMIT_LEAN`]), so there is no hand-transcription hop between the author and
+//! the consumer. Nothing in this file constructs a constraint; it produces the WITNESS, decodes the
+//! Turn wire, and calls the deployed hiding IR-v2 backend.
+//!
+//! The semantic content lives in `WideValueBindingRefine.lean`, over the ACTUAL emitted object:
+//! `limb_canonical` (each limb is FORCED into `[0, 2^16)` — canonicality produced, not assumed),
+//! `seventeenth_bit_unsat`, `forged_lane_unsat`, `legacy_is_hash_fact`,
+//! `legacy_join_cannot_separate_aliases` (which needs no hypotheses and no crypto: on the pair `v`
+//! and `v + p` the legacy site's four inputs are IDENTICAL, so the one-felt join is provably blind
+//! for ANY hash), and `alias_separated_by_the_wide_carrier`.
+//!
+//! ## What the relation says
+//!
 //! The deployed shielded-spend circuit still exposes a one-felt
 //! `hash_fact(value mod p, [asset mod p, randomness, 0])`.  That statement is
 //! useful as a compatibility join, but it is not injective on either `u64`:
 //! values separated by the BabyBear modulus alias before hashing.  This module
-//! adds the native wide carrier that the Turn/no-mint boundary can consume
+//! carries the native wide carrier that the Turn/no-mint boundary can consume
 //! without making that false claim:
 //!
 //! * value and asset are each represented by four canonical 16-bit limbs;
@@ -22,16 +38,40 @@
 //! creation precommits this wide carrier (or the combined transfer AIR replaces
 //! that tree), the compatibility join alone cannot choose between two distinct
 //! full-width openings that reduce to the same felt.
+//!
+//! ## The backend, and why hiding is not lost
+//!
+//! Proving/verifying goes through [`Plonky3HidingFriReference`], whose `prove`/`verify` call
+//! `prove_vm_descriptor2_for_config` / `verify_vm_descriptor2_with_config` on `create_zk_config()`
+//! — the SAME config the retired v1 route (`prove_dsl_zk`) used: salted-leaf hiding MMCS
+//! (`HidingFriPcs`, `Pcs::ZK == true`) plus four random extension-field codewords. Value, asset and
+//! the seven blinding felts stay witness-only exactly as before.
+//!
+//! ## The row-domain delta this swap introduces (stated, not hidden)
+//!
+//! IR-v2 evaluates `VmConstraint2::Base(VmConstraint::Gate _)` inside `builder.when_transition()`
+//! (`circuit/src/descriptor_ir2.rs`), whereas the retired v1 `DslP3Air` asserted every
+//! `ConstraintExpr` on EVERY row. Lookups carry no row guard and all 17 PI pins are first-row, so
+//! the published claim is row 0's — and row 0 is a transition row on any trace of height >= 2, so
+//! every gate that constrains the published cells still fires on the row that carries them. The
+//! LAST ROW is left unconstrained by the gates and is read by nothing. Closing that would be a
+//! `.boundary .last` twin per gate (138 more constraints) on the Lean side; it is not emitted.
+
+use std::sync::LazyLock;
 
 use super::transfer::{ShieldedError, ShieldedTransfer};
 use dregg_circuit::cap_root::cap_node8;
-use dregg_circuit::dsl::circuit::{
-    BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, DslCircuit,
-    PolyTerm,
+use dregg_circuit::descriptor_ir2::{
+    EffectVmDescriptor2, Ir2BatchProof, MemBoundaryWitness, UMemBoundaryWitness,
+    parse_vm_descriptor2,
 };
-use dregg_circuit::dsl::dsl_p3_air::{DslZkProof, prove_dsl_zk, verify_dsl_zk};
+use dregg_circuit::descriptor_proof_backend::{
+    DescriptorProofProver, DescriptorProofVerifier, DescriptorStatement, Plonky3HidingFriReference,
+    Plonky3HidingFriWitness,
+};
 use dregg_circuit::field::{BABYBEAR_P, BabyBear};
 use dregg_circuit::poseidon2::hash_fact;
+use dregg_circuit::stark_zk::DreggZkStarkConfig;
 
 /// Number of 16-bit limbs in a canonical `u64` encoding.
 pub const U64_LIMBS: usize = 4;
@@ -42,29 +82,90 @@ pub const WIDE_VALUE_BINDING_LANES: usize = 16;
 /// Extra field-valued blinding lanes, in addition to the legacy randomness felt.
 pub const BINDING_BLIND_LANES: usize = 6;
 
-// Two distinct in-band domain separators.  `MerkleHash8` seeds all sixteen
-// permutation lanes directly, so the domain is an explicit first input.
-const DOMAIN_A: u32 = 0x5642_4e30; // "VBN0"
-const DOMAIN_B: u32 = 0x5642_4e31; // "VBN1"
+// Two distinct in-band domain separators.  `node8` seeds all sixteen permutation
+// lanes directly, so the domain is an explicit first input.  The Lean family pins
+// these as literal constants inside the chip tuples (a constant in a tuple cannot
+// be tampered), which is why it needs no `domain_a`/`domain_b`/`zero` column.
+pub const DOMAIN_A: u32 = 0x5642_4e30; // "VBN0"
+pub const DOMAIN_B: u32 = 0x5642_4e31; // "VBN1"
 
-mod col {
+/// The Lean module that AUTHORS this AIR and byte-pins its wire string.
+const EMIT_LEAN: &str =
+    include_str!("../../../metatheory/Dregg2/Circuit/Emit/WideValueBindingEmit.lean");
+
+/// Split a `def <NAME> : String := r#"…"#` raw-string golden out of a Lean module.
+fn lean_raw_golden(source: &'static str, name: &str) -> &'static str {
+    let open = format!("def {name} : String := r#\"");
+    let (_, after) = source
+        .split_once(open.as_str())
+        .unwrap_or_else(|| panic!("the Lean module still exposes {name}"));
+    let (json, _) = after
+        .split_once("\"#")
+        .unwrap_or_else(|| panic!("{name} remains a raw string"));
+    json
+}
+
+/// The byte-pinned IR-v2 wire string, read out of the Lean source.
+pub fn wide_value_binding_descriptor_json() -> &'static str {
+    lean_raw_golden(EMIT_LEAN, "WIDE_VALUE_BINDING_GOLDEN")
+}
+
+/// Parse-once cache of the Lean-emitted relation.
+///
+/// The two asserts are the DETECTOR for this file's witness-layout mirror: if the Lean author
+/// moves the width or the public-input count, first use of the sidecar goes red here rather than
+/// silently producing a witness for a layout that no longer exists.
+static LEAN_DESCRIPTOR: LazyLock<EffectVmDescriptor2> = LazyLock::new(|| {
+    let desc = parse_vm_descriptor2(wide_value_binding_descriptor_json())
+        .expect("the Lean-emitted wide value binding descriptor parses as IR-v2");
+    assert_eq!(
+        desc.trace_width,
+        col::WIDTH,
+        "the Lean column layout moved; `col` no longer mirrors WideValueBindingEmit.lean §2"
+    );
+    assert_eq!(
+        desc.public_input_count,
+        pi::COUNT,
+        "the Lean public-input layout moved; `pi` no longer mirrors WideValueBindingEmit.lean §3"
+    );
+    desc
+});
+
+/// The Lean-emitted full-`u64` value/asset binding relation.
+pub fn wide_value_binding_descriptor() -> &'static EffectVmDescriptor2 {
+    &LEAN_DESCRIPTOR
+}
+
+/// **Witness-layout mirror** of the Lean column layout (`WideValueBindingEmit.lean` §2, whose
+/// `#guard`s pin every index below).  This authors no algebra — it only says where the trace
+/// producer must place each cell — and [`LEAN_DESCRIPTOR`] checks it against the emitted width.
+pub mod col {
     use super::{BINDING_BLIND_LANES, LIMB_BITS, U64_LIMBS};
 
+    /// `cV i` — value limb `i` (little-endian).
     pub const VALUE_LIMBS: usize = 0;
+    /// `cA i` — asset limb `i`.
     pub const ASSET_LIMBS: usize = VALUE_LIMBS + U64_LIMBS;
+    /// `cVMOD` — the compatibility felt `value mod p`.
     pub const VALUE_MOD_P: usize = ASSET_LIMBS + U64_LIMBS;
+    /// `cAMOD` — the compatibility felt `asset mod p`.
     pub const ASSET_MOD_P: usize = VALUE_MOD_P + 1;
+    /// `cRAND` — the legacy randomness felt.
     pub const RANDOMNESS: usize = ASSET_MOD_P + 1;
+    /// `cBL i` — binding blind lane `i`.
     pub const BLIND: usize = RANDOMNESS + 1;
-    pub const DOMAIN_A: usize = BLIND + BINDING_BLIND_LANES;
-    pub const DOMAIN_B: usize = DOMAIN_A + 1;
-    pub const ZERO: usize = DOMAIN_B + 1;
-    pub const LEGACY_BINDING: usize = ZERO + 1;
+    /// `cLEGACY` — the compatibility one-felt binding.
+    pub const LEGACY_BINDING: usize = BLIND + BINDING_BLIND_LANES;
+    /// `cWA j` — `DOMAIN_A` carrier lane `j`.
     pub const WIDE_A: usize = LEGACY_BINDING + 1;
+    /// `cWB j` — `DOMAIN_B` carrier lane `j`.
     pub const WIDE_B: usize = WIDE_A + 8;
+    /// `BITS_BASE` — base of the bit-decomposition block.
     pub const BITS: usize = WIDE_B + 8;
+    /// `WVB_WIDTH` — the main-trace width.
     pub const WIDTH: usize = BITS + 2 * U64_LIMBS * LIMB_BITS;
 
+    /// `cLimb k i`.
     pub const fn limb(kind: usize, i: usize) -> usize {
         if kind == 0 {
             VALUE_LIMBS + i
@@ -73,12 +174,14 @@ mod col {
         }
     }
 
+    /// `cBit k i b`.
     pub const fn bit(kind: usize, limb: usize, bit: usize) -> usize {
         BITS + (kind * U64_LIMBS + limb) * LIMB_BITS + bit
     }
 }
 
-/// Public-input layout `[legacy_binding, wide_binding[0..16]]`.
+/// **Public-input layout mirror** `[legacy_binding, wide_binding[0..16]]`
+/// (`WideValueBindingEmit.lean` §3).
 pub mod pi {
     /// Compatibility join to the current shielded-spend C7 public input.
     pub const LEGACY_BINDING: usize = 0;
@@ -96,239 +199,13 @@ fn u64_mod_p(value: u64) -> BabyBear {
     BabyBear::new((value % BABYBEAR_P as u64) as u32)
 }
 
-fn limb_weight(i: usize) -> BabyBear {
-    let shift = i * LIMB_BITS;
-    BabyBear::new(((1u64 << shift) % BABYBEAR_P as u64) as u32)
-}
-
-fn constant_gate(col: usize, value: BabyBear) -> ConstraintExpr {
-    ConstraintExpr::Polynomial {
-        terms: vec![
-            PolyTerm {
-                coeff: BabyBear::ONE,
-                col_indices: vec![col],
-            },
-            PolyTerm {
-                coeff: -value,
-                col_indices: vec![],
-            },
-        ],
-    }
-}
-
-fn limb_recompose(kind: usize, limb: usize) -> ConstraintExpr {
-    let mut terms = vec![PolyTerm {
-        coeff: BabyBear::ONE,
-        col_indices: vec![col::limb(kind, limb)],
-    }];
-    for bit in 0..LIMB_BITS {
-        terms.push(PolyTerm {
-            coeff: -BabyBear::new(1u32 << bit),
-            col_indices: vec![col::bit(kind, limb, bit)],
-        });
-    }
-    ConstraintExpr::Polynomial { terms }
-}
-
-fn u64_recompose(kind: usize, output: usize) -> ConstraintExpr {
-    let mut terms = vec![PolyTerm {
-        coeff: BabyBear::ONE,
-        col_indices: vec![output],
-    }];
-    for limb in 0..U64_LIMBS {
-        terms.push(PolyTerm {
-            coeff: -limb_weight(limb),
-            col_indices: vec![col::limb(kind, limb)],
-        });
-    }
-    ConstraintExpr::Polynomial { terms }
-}
-
-fn wide_input_columns(domain: usize) -> ([usize; 8], [usize; 8]) {
-    // [domain, value limbs 0..4, asset limbs 0..3] ||
-    // [asset limb 3, legacy randomness, blind 0..6]
-    let left = [
-        domain,
-        col::VALUE_LIMBS,
-        col::VALUE_LIMBS + 1,
-        col::VALUE_LIMBS + 2,
-        col::VALUE_LIMBS + 3,
-        col::ASSET_LIMBS,
-        col::ASSET_LIMBS + 1,
-        col::ASSET_LIMBS + 2,
-    ];
-    let right = [
-        col::ASSET_LIMBS + 3,
-        col::RANDOMNESS,
-        col::BLIND,
-        col::BLIND + 1,
-        col::BLIND + 2,
-        col::BLIND + 3,
-        col::BLIND + 4,
-        col::BLIND + 5,
-    ];
-    (left, right)
-}
-
-/// The faithful full-u64 value/asset binding circuit.
-pub fn wide_value_binding_descriptor() -> CircuitDescriptor {
-    let mut constraints = Vec::new();
-
-    // Canonical 16-bit encodings: there is exactly one limb vector per u64.
-    for kind in 0..2 {
-        for limb in 0..U64_LIMBS {
-            for bit in 0..LIMB_BITS {
-                constraints.push(ConstraintExpr::Binary {
-                    col: col::bit(kind, limb, bit),
-                });
-            }
-            constraints.push(limb_recompose(kind, limb));
-        }
-    }
-
-    // Compatibility values are derived from, never independent of, the full
-    // limbs.  This is the exact field reduction the v1 spend circuit sees.
-    constraints.push(u64_recompose(0, col::VALUE_MOD_P));
-    constraints.push(u64_recompose(1, col::ASSET_MOD_P));
-
-    constraints.push(constant_gate(col::DOMAIN_A, BabyBear::new(DOMAIN_A)));
-    constraints.push(constant_gate(col::DOMAIN_B, BabyBear::new(DOMAIN_B)));
-    constraints.push(constant_gate(col::ZERO, BabyBear::ZERO));
-
-    let (left_a, right) = wide_input_columns(col::DOMAIN_A);
-    let (left_b, _) = wide_input_columns(col::DOMAIN_B);
-    constraints.push(ConstraintExpr::MerkleHash8 {
-        output_cols: core::array::from_fn(|i| col::WIDE_A + i),
-        left_cols: left_a,
-        right_cols: right,
-    });
-    constraints.push(ConstraintExpr::MerkleHash8 {
-        output_cols: core::array::from_fn(|i| col::WIDE_B + i),
-        left_cols: left_b,
-        right_cols: right,
-    });
-
-    // Byte-for-byte semantic twin of shielded_spend_circuit C7 after the
-    // canonical limbs have been reduced into its compatibility field view.
-    constraints.push(ConstraintExpr::Hash {
-        output_col: col::LEGACY_BINDING,
-        input_cols: vec![
-            col::VALUE_MOD_P,
-            col::ASSET_MOD_P,
-            col::RANDOMNESS,
-            col::ZERO,
-        ],
-    });
-
-    let mut boundaries = vec![BoundaryDef::PiBinding {
-        row: BoundaryRow::First,
-        col: col::LEGACY_BINDING,
-        pi_index: pi::LEGACY_BINDING,
-    }];
-    for lane in 0..WIDE_VALUE_BINDING_LANES {
-        boundaries.push(BoundaryDef::PiBinding {
-            row: BoundaryRow::First,
-            col: if lane < 8 {
-                col::WIDE_A + lane
-            } else {
-                col::WIDE_B + lane - 8
-            },
-            pi_index: pi::WIDE_BINDING + lane,
-        });
-    }
-
-    let mut columns = Vec::with_capacity(col::WIDTH);
-    for i in 0..U64_LIMBS {
-        columns.push(ColumnDef {
-            name: format!("value_limb_{i}"),
-            index: col::VALUE_LIMBS + i,
-            kind: ColumnKind::Value,
-        });
-    }
-    for i in 0..U64_LIMBS {
-        columns.push(ColumnDef {
-            name: format!("asset_limb_{i}"),
-            index: col::ASSET_LIMBS + i,
-            kind: ColumnKind::Value,
-        });
-    }
-    for (name, index, kind) in [
-        ("value_mod_p", col::VALUE_MOD_P, ColumnKind::Value),
-        ("asset_mod_p", col::ASSET_MOD_P, ColumnKind::Value),
-        ("randomness", col::RANDOMNESS, ColumnKind::Value),
-    ] {
-        columns.push(ColumnDef {
-            name: name.into(),
-            index,
-            kind,
-        });
-    }
-    for i in 0..BINDING_BLIND_LANES {
-        columns.push(ColumnDef {
-            name: format!("binding_blind_{i}"),
-            index: col::BLIND + i,
-            kind: ColumnKind::Value,
-        });
-    }
-    for (name, index) in [
-        ("domain_a", col::DOMAIN_A),
-        ("domain_b", col::DOMAIN_B),
-        ("zero", col::ZERO),
-    ] {
-        columns.push(ColumnDef {
-            name: name.into(),
-            index,
-            kind: ColumnKind::Value,
-        });
-    }
-    columns.push(ColumnDef {
-        name: "legacy_binding".into(),
-        index: col::LEGACY_BINDING,
-        kind: ColumnKind::Hash,
-    });
-    for lane in 0..8 {
-        columns.push(ColumnDef {
-            name: format!("wide_a_{lane}"),
-            index: col::WIDE_A + lane,
-            kind: ColumnKind::Hash,
-        });
-    }
-    for lane in 0..8 {
-        columns.push(ColumnDef {
-            name: format!("wide_b_{lane}"),
-            index: col::WIDE_B + lane,
-            kind: ColumnKind::Hash,
-        });
-    }
-    for kind in 0..2 {
-        let prefix = if kind == 0 { "value" } else { "asset" };
-        for limb in 0..U64_LIMBS {
-            for bit in 0..LIMB_BITS {
-                columns.push(ColumnDef {
-                    name: format!("{prefix}_limb_{limb}_bit_{bit}"),
-                    index: col::bit(kind, limb, bit),
-                    kind: ColumnKind::Binary,
-                });
-            }
-        }
-    }
-    debug_assert_eq!(columns.len(), col::WIDTH);
-
-    CircuitDescriptor {
-        name: "dregg-shielded-wide-value-binding-v1".into(),
-        trace_width: col::WIDTH,
-        max_degree: 7,
-        columns,
-        constraints,
-        boundaries,
-        public_input_count: pi::COUNT,
-        lookup_tables: vec![],
-    }
-}
-
-/// The faithful full-u64 value/asset binding circuit.
-pub fn wide_value_binding_circuit() -> DslCircuit {
-    DslCircuit::new(wide_value_binding_descriptor())
+/// The backend-neutral statement: the Lean relation plus these canonical public inputs.
+fn statement_for(public_inputs: &[BabyBear]) -> Result<DescriptorStatement, WideValueBindingError> {
+    DescriptorStatement::try_new(
+        wide_value_binding_descriptor().clone(),
+        public_inputs.iter().map(|f| f.as_u32()).collect(),
+    )
+    .map_err(|reason| WideValueBindingError::StatementRejected { reason })
 }
 
 /// Private witness for one input's wide value/asset binding sidecar.
@@ -393,7 +270,10 @@ impl WideValueBindingWitness {
     }
 }
 
-/// Generate a constant two-row trace and its public claim.
+/// Generate a constant two-row trace in the LEAN column layout, and its public claim.
+///
+/// The returned matrix is the descriptor-width MAIN trace; the IR-v2 prover fills the Poseidon2
+/// chip lanes itself (`trace_with_chip_lanes`).
 pub fn generate_wide_value_binding_trace(
     witness: &WideValueBindingWitness,
 ) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
@@ -415,8 +295,6 @@ pub fn generate_wide_value_binding_trace(
     row[col::ASSET_MOD_P] = u64_mod_p(witness.asset_type);
     row[col::RANDOMNESS] = witness.legacy_randomness;
     row[col::BLIND..col::BLIND + BINDING_BLIND_LANES].copy_from_slice(&witness.binding_blind);
-    row[col::DOMAIN_A] = BabyBear::new(DOMAIN_A);
-    row[col::DOMAIN_B] = BabyBear::new(DOMAIN_B);
     row[col::LEGACY_BINDING] = legacy;
     row[col::WIDE_A..col::WIDE_A + 8].copy_from_slice(&wide[..8]);
     row[col::WIDE_B..col::WIDE_B + 8].copy_from_slice(&wide[8..]);
@@ -450,14 +328,14 @@ impl WideValueBindingClaim {
 pub struct WideValueBindingProof {
     /// Public carrier claim.
     pub claim: WideValueBindingClaim,
-    /// Hiding uni-STARK proof; value, asset and blinding remain witness-only.
-    pub proof: DslZkProof,
+    /// Hiding IR-v2 batch proof; value, asset and blinding remain witness-only.
+    pub proof: Ir2BatchProof<DreggZkStarkConfig>,
 }
 
 impl WideValueBindingProof {
     /// Canonical postcard encoding for the Turn input's wide-proof field.
     pub fn proof_bytes(&self) -> Vec<u8> {
-        postcard::to_allocvec(&self.proof).expect("DslZkProof postcard serialize")
+        postcard::to_allocvec(&self.proof).expect("Ir2BatchProof postcard serialize")
     }
 
     /// Reconstruct hostile Turn-wire parts.  Every public field element must
@@ -501,12 +379,20 @@ impl WideValueBindingProof {
 pub fn prove_wide_value_binding(
     witness: &WideValueBindingWitness,
 ) -> Result<WideValueBindingProof, WideValueBindingError> {
-    let circuit = wide_value_binding_circuit();
     let (trace, pis) = generate_wide_value_binding_trace(witness);
-    let proof =
-        prove_dsl_zk(&circuit, &trace, &pis).map_err(|e| WideValueBindingError::ProveFailed {
-            reason: format!("{e}"),
-        })?;
+    let statement = statement_for(&pis)?;
+    let mem = MemBoundaryWitness::default();
+    let umem = UMemBoundaryWitness::default();
+    let proof = Plonky3HidingFriReference::prove(
+        &statement,
+        Plonky3HidingFriWitness {
+            base_trace: &trace,
+            mem_boundary: &mem,
+            map_heaps: &[],
+            umem_boundary: &umem,
+        },
+    )
+    .map_err(|reason| WideValueBindingError::ProveFailed { reason })?;
     let mut wide_binding = [BabyBear::ZERO; WIDE_VALUE_BINDING_LANES];
     wide_binding.copy_from_slice(&pis[pi::WIDE_BINDING..pi::COUNT]);
     Ok(WideValueBindingProof {
@@ -526,14 +412,9 @@ pub fn verify_wide_value_binding(
     if sidecar.claim.legacy_binding != expected_legacy_binding {
         return Err(WideValueBindingError::LegacyBindingMismatch);
     }
-    verify_dsl_zk(
-        &wide_value_binding_circuit(),
-        &sidecar.proof,
-        &sidecar.claim.public_inputs(),
-    )
-    .map_err(|e| WideValueBindingError::ProofRejected {
-        reason: format!("{e}"),
-    })
+    let statement = statement_for(&sidecar.claim.public_inputs())?;
+    Plonky3HidingFriReference::verify(&statement, &sidecar.proof)
+        .map_err(|reason| WideValueBindingError::ProofRejected { reason })
 }
 
 /// Verify the current hidden-membership STARK and exactly one faithful wide
@@ -598,6 +479,7 @@ pub enum WideValueBindingError {
     ProveFailed { reason: String },
     ProofDecode { reason: String },
     ProofRejected { reason: String },
+    StatementRejected { reason: String },
     NonCanonicalPublicField { lane: usize, value: u32 },
     LegacyBindingMismatch,
     SidecarCountMismatch { inputs: usize, sidecars: usize },
@@ -611,6 +493,9 @@ impl core::fmt::Display for WideValueBindingError {
             Self::ProveFailed { reason } => write!(f, "wide binding proving failed: {reason}"),
             Self::ProofDecode { reason } => write!(f, "wide binding proof decode failed: {reason}"),
             Self::ProofRejected { reason } => write!(f, "wide binding proof rejected: {reason}"),
+            Self::StatementRejected { reason } => {
+                write!(f, "wide binding statement rejected: {reason}")
+            }
             Self::NonCanonicalPublicField { lane, value } => write!(
                 f,
                 "wide binding public lane {lane} is not canonical BabyBear: {value}"

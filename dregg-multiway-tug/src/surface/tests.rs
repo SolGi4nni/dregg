@@ -918,3 +918,106 @@ fn forged_ui_hand_commitment_fails_fresh_replay() {
         report.detail
     );
 }
+
+/// **The claimant menu names no card.** [`TugSession::surface_claim`] is served to every viewer who
+/// holds no seat — including, on a seat-locked table, the OPPONENT, who may open the watch link
+/// freely. Its action rows used to be labelled with the exact favors the press would put up, read
+/// off the claimable seat's own committed hand, so the hidden-hand fog held in the hand sections
+/// and leaked through the button text. Non-vacuous by construction: the SEATED render of the same
+/// table is asserted to carry the very token the claim render must not.
+#[test]
+fn the_claim_surface_leaks_no_favor_through_a_button_label() {
+    let off = TugOffering;
+    let session = off.open(SessionConfig::with_seed(11)).expect("open");
+    let to_move = session.engine.current_player();
+
+    // The seat that is TO MOVE is the worst case: only a to-move row is aimed at a concrete cut,
+    // so this is the render that leaked.
+    let claim = rendered_text(&session.surface_claim(to_move));
+    let seated = rendered_text(&off.render_for(&session, &TugOffering::seat_identity(to_move)));
+
+    // `favor_list`'s signature — every rendering of a concrete favor carries it.
+    assert!(
+        seated.contains("(guild "),
+        "the seated view must show its own favors, or this test is checking nothing:\n{seated}"
+    );
+    assert!(
+        !claim.contains("(guild "),
+        "an unseated claimant was shown a concrete favor:\n{claim}"
+    );
+    for id in seat_card_ids(&session, to_move) {
+        assert!(
+            !claim.contains(&format!("#{id}(")),
+            "an unseated claimant was shown card #{id} of the seat they have not claimed:\n{claim}"
+        );
+    }
+    // The controls SURVIVE the redaction — the point is a menu without card text, not no menu.
+    assert!(
+        menu_lines(&claim).len() >= 4,
+        "the claimant lost their opening controls: {:?}",
+        menu_lines(&claim)
+    );
+}
+
+/// **The win bars on the surface are the DEPLOYED ones.** `roundWinner`'s absolute clauses live in
+/// the Lean and reach Rust only as the compiled cell program; the plaque reads them out of it. A
+/// retyped `11` would keep rendering the old bar the day the metatheory raised it, so what is pinned
+/// here is that the guard is FOUND (no silent fallback) and that the number on the page is the one
+/// the program carries.
+#[test]
+fn the_decision_plaque_states_the_programs_own_win_bars() {
+    let charm = deployed_bar("a_charm").expect("the deployed program carries an a_charm bar");
+    let guilds = deployed_bar("a_guilds").expect("the deployed program carries an a_guilds bar");
+    assert_eq!(
+        deployed_bar("b_charm"),
+        Some(charm),
+        "the two seats' influence bars must be the same number"
+    );
+    assert_eq!(deployed_bar("b_guilds"), Some(guilds));
+
+    let off = TugOffering;
+    let session = off.open(SessionConfig::with_seed(5)).expect("open");
+    let text = rendered_text(&off.render(&session));
+    assert!(
+        text.contains(&format!("{charm} influence")),
+        "the plaque must state the deployed influence bar ({charm}):\n{text}"
+    );
+    assert!(
+        text.contains(&format!("{guilds} lanes")),
+        "the plaque must state the deployed lane bar ({guilds}):\n{text}"
+    );
+    assert!(
+        !text.contains("could not be read"),
+        "the bars were not found and the plaque fell back to saying so:\n{text}"
+    );
+}
+
+/// **The plaques answer the four questions on every viewer's card** — whose turn, what phase, what
+/// to do now, and what the viewer is. The public (spectator) render answers them too, and says the
+/// hands are fog rather than leaving a reader to notice the absence.
+#[test]
+fn every_render_carries_the_standing_plaque_and_a_directive() {
+    let off = TugOffering;
+    let session = off.open(SessionConfig::with_seed(21)).expect("open");
+    for view in [
+        rendered_text(&off.render(&session)),
+        rendered_text(&off.render_for(&session, &TugOffering::seat_identity(Player::A))),
+        rendered_text(&off.render_for(&session, &TugOffering::seat_identity(Player::B))),
+    ] {
+        assert!(view.contains("Where the round stands"), "{view}");
+        assert!(view.contains("How this round is decided"), "{view}");
+        assert!(
+            view.contains("to move"),
+            "a seat is named as on move:\n{view}"
+        );
+        assert!(
+            view.contains("Turn 0/12") || view.contains("Turn 1/12"),
+            "the turn counter is stated:\n{view}"
+        );
+    }
+    let public = rendered_text(&off.render(&session));
+    assert!(
+        public.contains("BOTH hands are the fog form"),
+        "a spectator is told what they are not being shown:\n{public}"
+    );
+}

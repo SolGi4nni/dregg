@@ -416,6 +416,17 @@ def decide? (toks : List String) : Option String :=
     let (ms, _) ← parseMoveList b.size r4
     let (after, win) := turnOf tb g b marks ms
     some (encodeWin win ++ " " ++ encodeBoard after)
+  -- `adjudicate BOARD GOALS` — the CAPPED match's terminal rule. The seat strictly nearer its own
+  -- goal wins; a seat that owns goals beats one that owns none; exact parity is a genuine draw
+  -- (`-1`). This is the verb that replaces a bare turn-cap draw, and it is the only terminal rule
+  -- with soundness theorems behind it: `adjudicate_seated` (the winner always OWNS a goal corner —
+  -- the rule cannot award a match to an unseated player) and `adjudicate_sound` (when both seats own
+  -- goals, the winner is genuinely NEARER). Operands mirror `turn`: board first, goals decoded
+  -- against `b.size`.
+  | "adjudicate" :: rest => do
+    let (b, r1) ← parseBoard rest
+    let (g, _) ← parseGoals b.size r1
+    some (encodeWin (adjudicateCapped b.automaton g))
   | "legal" :: rest => do
     let (b, r1) ← parseBoard rest
     let (marks, r2) ← parseCoordList b.size r1
@@ -568,5 +579,19 @@ def blockBoard : Board :=
 #guard rulesFFI "mid 5" == "0"
 #guard rulesFFI "mid 5 000 0 0 1 0 0" == "0"
 #guard rulesFFI "step 7 5 0000000000000000000000000 4 4 1" == "0"
+
+/-! ### `adjudicate` — the capped match's terminal rule
+
+The stock opening is a GENUINE draw, not an accident of the encoding: the automaton starts at `⟨5,5⟩`,
+seat 0 owns the `y = 0` corners and seat 1 the `y = 10` corners, so on an 11×11 both seats sit exactly
+5 away. The two direct guards below are the anti-vacuity poles — nudge the automaton one row and the
+adjudication actually picks a winner, so `-1` above is a verdict rather than a stuck default. -/
+#guard rulesFFI ("adjudicate " ++ encodeBoard stockTwoPlayer ++ " " ++ encodeGoals (stockGoals2 11))
+  == "1 -1"
+#guard adjudicateCapped ⟨5, 4⟩ (stockGoals2 11) == some 0
+#guard adjudicateCapped ⟨5, 6⟩ (stockGoals2 11) == some 1
+-- A malformed `adjudicate` wire fails CLOSED, like every other verb.
+#guard rulesFFI "adjudicate" == "0"
+#guard rulesFFI "adjudicate 5" == "0"
 
 end Dregg2.Games.AutomataflFFI

@@ -17,7 +17,7 @@
 
 mod support;
 
-use dregg_automatafl::reference::{ATT, AUTO, Board, VAC};
+use dregg_automatafl::board::{ATT, AUTO, Board, VAC};
 use dregg_circuit_prove::ivc_turn_chain::WholeChainProofBytes;
 use dregg_lightclient::verify_history_bytes;
 use dreggnet_game_board::{

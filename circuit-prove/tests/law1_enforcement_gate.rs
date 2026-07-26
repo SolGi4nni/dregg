@@ -732,9 +732,14 @@ const AIR_ACCEPTS_LEDGER: &[(&str, &str)] = &[
     // over a hand-authored Rust AIR, paired with tamper() for forgery tests — is DELETED with the
     // AIR (2026-07-25), so it needs no ledger line. It was retired exactly as this ledger demanded:
     // with the AIR, not separately.
-    ("entity-compose/src/lib.rs",
-     "⚑ DEBT, derived: rebuilds the param-compose AIR and calls ITS air_accepts. It is the production \
-      consumer that makes the param-compose AIR live rather than dead code."),
+    // `entity-compose/src/lib.rs` — RETIRED 2026-07-25. Its line claimed the crate "rebuilds the
+    // param-compose AIR and calls ITS air_accepts". Both halves are now false: entity-compose defines
+    // no `air_accepts` at all, and it references neither `param_compose::air` nor `::builder` — it
+    // proves the Lean-emitted descriptor directly. The line survived a lane's deletion because THIS
+    // LEDGER HAD NO STALE-CHECK: the test below only hunted NEW entries, so a row describing an
+    // object that no longer exists passed green while lying. That check now exists (see
+    // `stale` in `law1_no_new_rust_authored_air_accepts`), which is why this row could be removed
+    // instead of quietly rotting.
 ];
 
 fn print_baseline(found: &BTreeMap<String, Counts>) {
@@ -862,6 +867,28 @@ fn law1_no_new_rust_authored_air_accepts() {
          never by a Rust function that re-implements the AIR. If a new one is genuinely a delegating\n\
          oracle, add it to AIR_ACCEPTS_LEDGER *with the reason*.\n",
         new_ones.join("\n")
+    );
+
+    // STALE-ENTRY CHECK. Without this the ledger passes green while LYING: a row survives the file
+    // it describes, and the debt it records reads as live when the object is gone. That happened —
+    // `entity-compose/src/lib.rs` sat here after the crate stopped defining `air_accepts` at all.
+    // A ledger that cannot go red about its own rot is not a ledger.
+    let stale: Vec<&str> = AIR_ACCEPTS_LEDGER
+        .iter()
+        .map(|(f, _)| *f)
+        .filter(|rel| {
+            match std::fs::read_to_string(root.join(rel)) {
+                Ok(raw) => !defines_air_accepts(&blank_noncode(&raw)),
+                Err(_) => true, // the file itself is gone
+            }
+        })
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "\n\nSTALE AIR_ACCEPTS_LEDGER ENTRY — the law WON here, the ledger just did not notice.\n{}\n\n\
+         Each listed file no longer defines `air_accepts` (or no longer exists), so its ledger line\n\
+         describes an object that is not there and overstates the remaining debt. Delete the line.\n",
+        stale.join("\n")
     );
 }
 

@@ -476,32 +476,79 @@ theorem map_commit_noteOf (l : List Int) :
 
 /-- A degenerate reference Pedersen verifier kernel over `ℤ` (`def`, not a global `instance`).
 `commit := (+)`; `verify` accepts iff the disclosed input/output commitment sums are equal
-(`stmt.insC.sum = stmt.outsC.sum`); `extractable`/`binding := True`. `extract` rebuilds a trivial
+(`stmt.insC.sum = stmt.outsC.sum`). `extract` rebuilds a trivial
 satisfying trace from the disclosed commitments via `noteOf` (so `commit 0 c = c`, `bits = []`
-gives the `0`-value range gadget). -/
+gives the `0`-value range gadget).
+
+⚑ **CARRIER REPAIR (2026-07-25), PARTIAL — read the second paragraph.** `extractable` was `True`; it
+is now the genuine extractability-SHAPED `Prop` over THIS oracle, `extract := fun h => h`
+(PortalFloor style), PROVED at `refKernel_extractable` and REFUTED at `forgeKernel_not_extractable`.
+
+`binding` is STILL `True` and is NOT repaired here, for a reason worth recording rather than
+papering over: this reference `commit v r := v + r` is NOT binding — `5 = 2 + 3 = 1 + 4` opens one
+commitment to two values — so writing the honest DLog-binding shape (opening-uniqueness, as
+`PortalFloor.Reference.instPedersenKernel.binding` states it for its own degenerate `Opens`) would
+make the reference carrier FALSE, i.e. vacuity MODE 1 rather than a repair. The honest fix is a
+non-degenerate reference commitment, which is a larger change than a carrier repair. Nothing in this
+file consumes `binding` (it is a named decoration with no unpacking field), so nothing here is
+weakened by leaving it; the hole is real and is reported, not closed. -/
 @[reducible] def refKernel : PedersenVerifierKernel Int Int where
   commit := refCommit
   commit_hom := by intro v w r s; simp only [refCommit]; ring
   verify stmt _ := decide (stmt.insC.sum = stmt.outsC.sum)
-  extractable := True
+  extractable :=
+    ∀ (stmt : Statement Int) (_proof : Int), decide (stmt.insC.sum = stmt.outsC.sum) = true →
+      ∃ circuit : CircuitIR,
+        statementOf refCommit circuit = stmt ∧ Satisfies refCommit stmt circuit
   binding := True
-  extract := by
-    intro _ stmt _ haccept
-    simp only [decide_eq_true_eq] at haccept
-    refine ⟨{ ins := stmt.insC.map noteOf, outs := stmt.outsC.map noteOf }, ?_, ?_⟩
-    · -- statementOf rebuilds stmt: map (commit 0 c) = map id = stmt
-      cases stmt with
-      | mk insC outsC => simp only [statementOf]; rw [map_commit_noteOf insC, map_commit_noteOf outsC]
-    · -- Satisfies: PiBindings, the trivial (empty-bits) range gadgets, and the sum equality
-      refine ⟨(map_commit_noteOf stmt.insC).symm, (map_commit_noteOf stmt.outsC).symm, ?_, ?_, haccept⟩
-      · intro nt hnt
-        simp only [List.mem_map] at hnt
-        obtain ⟨c, _, rfl⟩ := hnt
-        exact ⟨by intro b hb; simp [noteOf] at hb, rfl⟩
-      · intro nt hnt
-        simp only [List.mem_map] at hnt
-        obtain ⟨c, _, rfl⟩ := hnt
-        exact ⟨by intro b hb; simp [noteOf] at hb, rfl⟩
+  extract := fun h => h
+
+/-- **THE REFERENCE CARRIER HOLDS** — a theorem: an accepted (balanced) statement really does carry a
+satisfying trace, rebuilt from the disclosed commitments via `noteOf`. -/
+theorem refKernel_extractable : refKernel.extractable := by
+  intro stmt _ haccept
+  simp only [decide_eq_true_eq] at haccept
+  refine ⟨{ ins := stmt.insC.map noteOf, outs := stmt.outsC.map noteOf }, ?_, ?_⟩
+  · -- statementOf rebuilds stmt: map (commit 0 c) = map id = stmt
+    cases stmt with
+    | mk insC outsC => simp only [statementOf]; rw [map_commit_noteOf insC, map_commit_noteOf outsC]
+  · -- Satisfies: PiBindings, the trivial (empty-bits) range gadgets, and the sum equality
+    refine ⟨(map_commit_noteOf stmt.insC).symm, (map_commit_noteOf stmt.outsC).symm, ?_, ?_, haccept⟩
+    · intro nt hnt
+      simp only [List.mem_map] at hnt
+      obtain ⟨c, _, rfl⟩ := hnt
+      exact ⟨by intro b hb; simp [noteOf] at hb, rfl⟩
+    · intro nt hnt
+      simp only [List.mem_map] at hnt
+      obtain ⟨c, _, rfl⟩ := hnt
+      exact ⟨by intro b hb; simp [noteOf] at hb, rfl⟩
+
+/-- **FORGE KERNEL** — same carrier SHAPE over a commitment that collapses every note to `0` (still a
+lawful homomorphism, so the class's `commit_hom` obligation is met) and an oracle that accepts EVERY
+statement. No trace can reproduce a disclosed commitment of `5`. -/
+@[reducible] def forgeKernel : PedersenVerifierKernel Int Int where
+  commit _ _ := 0
+  commit_hom := by intro v w r s; simp
+  verify _ _ := true
+  extractable :=
+    ∀ (stmt : Statement Int) (_proof : Int), (true : Bool) = true →
+      ∃ circuit : CircuitIR,
+        statementOf (fun _ _ => (0 : Int)) circuit = stmt
+          ∧ Satisfies (fun _ _ => (0 : Int)) stmt circuit
+  binding := True
+  extract := fun h => h
+
+/-- **THE CARRIER IS FALSE HERE.** The disclosed input commitment `5` would have to be the commitment
+of some note, and every note commits to `0`. So the reference carrier has CONTENT — it is refutable,
+which `True` is not. -/
+theorem forgeKernel_not_extractable : ¬ forgeKernel.extractable := by
+  intro h
+  obtain ⟨circuit, _, hsat⟩ := h { insC := [5], outsC := [5] } 0 rfl
+  have hins : ([5] : List Int) = circuit.ins.map (noteCommit (fun _ _ => (0 : Int))) := hsat.1
+  have h5 : (5 : Int) ∈ circuit.ins.map (noteCommit (fun _ _ => (0 : Int))) := by
+    rw [← hins]; simp
+  obtain ⟨nt, _, hnt⟩ := List.mem_map.mp h5
+  simp [noteCommit] at hnt
 
 /-- The empty base registry over the toy `ℤ` Pedersen statement/proof. -/
 def base : Registry (Statement Int) Int := fun _ => none
@@ -515,7 +562,7 @@ trace whose disclosed commitments are `balancedStmt` and which CONSERVES. -/
 example :
     ∃ circuit : CircuitIR,
       statementOf refKernel.commit circuit = balancedStmt ∧ Conserves refKernel.commit circuit :=
-  pedersen_verify_sound (K := refKernel) trivial balancedStmt 0 (by decide)
+  pedersen_verify_sound (K := refKernel) refKernel_extractable balancedStmt 0 (by decide)
 
 /-- Non-vacuity of the FULL cascade: at the reference kernel an accepted proof both `Discharged`s
 the registry predicate AND proves conservation. -/
@@ -524,13 +571,13 @@ example :
         (verifiableOfRegistry (@pedersenReg Int _ Int refKernel base) .pedersen) balancedStmt 0)
       ∧ ∃ circuit : CircuitIR,
           statementOf refKernel.commit circuit = balancedStmt ∧ Conserves refKernel.commit circuit :=
-  pedersen_registry_cascade (K := refKernel) trivial base balancedStmt 0 (by decide)
+  pedersen_registry_cascade (K := refKernel) refKernel_extractable base balancedStmt 0 (by decide)
 
 /-- Non-vacuity of the dial wiring: the floor is `selective`, the dial's bottom notch is the
 verifier's bit, and an accepting proof proves conservation. -/
 example :
     (pedersenKindObligation (Digest := Int)).dialFloor = Dial.selective :=
-  (pedersen_dial_wired (K := refKernel) trivial base balancedStmt 0).1
+  (pedersen_dial_wired (K := refKernel) refKernel_extractable base balancedStmt 0).1
 
 end Reference
 
@@ -544,5 +591,11 @@ end Reference
 #assert_axioms pedersen_verify_sound
 #assert_axioms pedersen_registry_cascade
 #assert_axioms pedersen_dial_wired
+
+-- Carrier non-vacuity pins (PortalFloor §9c discipline): reference `extractable` HOLDS, forge
+-- `extractable` is FALSE. `binding` is still `True` at the reference kernel — see `refKernel`'s
+-- docstring for why a faithful binding carrier would REFUTE this degenerate `commit`.
+#assert_axioms Reference.refKernel_extractable
+#assert_axioms Reference.forgeKernel_not_extractable
 
 end Dregg2.Crypto.Pedersen

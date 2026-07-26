@@ -247,8 +247,10 @@ impl TugSession {
             return match proj.winner {
                 1 => "The round is over — seat A took it. Nothing further can be committed.",
                 2 => "The round is over — seat B took it. Nothing further can be committed.",
-                _ => "The round is over — an exact dead heat on influence AND on lanes held, \
-                      which is the only draw the rules admit.",
+                _ => {
+                    "The round is over — an exact dead heat on influence AND on lanes held, \
+                      which is the only draw the rules admit."
+                }
             }
             .to_string();
         }
@@ -258,7 +260,11 @@ impl TugSession {
                     rule names the winner."
                 .to_string();
         }
-        let mover = if proj.current == 0 { Player::A } else { Player::B };
+        let mover = if proj.current == 0 {
+            Player::A
+        } else {
+            Player::B
+        };
         let yours = viewer == Some(mover);
         if let Some(offer) = self.engine.pending_offer() {
             let answering = offer.responder();
@@ -308,7 +314,11 @@ impl TugSession {
     /// one sentence above, the two standings, and who the viewer is.
     fn round_standing(&self, viewer: Option<Player>) -> ViewNode {
         let proj = self.projection();
-        let mover = if proj.current == 0 { Player::A } else { Player::B };
+        let mover = if proj.current == 0 {
+            Player::A
+        } else {
+            Player::B
+        };
         let seat_row = |s: Player| {
             let i = s.idx();
             let whose = match viewer {
@@ -351,7 +361,11 @@ impl TugSession {
                 "{} influence · {} lane{}",
                 proj.charm[i],
                 proj.guilds_controlled[i],
-                if proj.guilds_controlled[i] == 1 { "" } else { "s" }
+                if proj.guilds_controlled[i] == 1 {
+                    ""
+                } else {
+                    "s"
+                }
             )));
             ViewNode::Row(cells)
         };

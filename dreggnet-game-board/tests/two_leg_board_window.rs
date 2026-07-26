@@ -53,7 +53,8 @@
 //! panic); that E1-compaction break is now FIXED (see `WIDE_LEG_BLOCKED`), so the two-leg fold
 //! EXECUTES and they are re-marked SLOW — they mint wide Custom legs (~50s each), run `--ignored`.
 
-use dregg_automatafl::reference::{Board, Move, automaton_step, resolve_mid, stock_two_player};
+use dregg_automatafl::board::{Board, Move};
+use dregg_automatafl::rules::{automaton_step, resolve_mid, stock_two_player};
 use dregg_circuit::field::BabyBear;
 use dregg_circuit_prove::ivc_turn_chain::board_window_of_chain;
 use dregg_multiway_tug::fold::{LeafBundle, build_match_turns, fixture_rotated_roots};
@@ -78,11 +79,11 @@ fn round_one() -> (Move, Move) {
     )
 }
 
-/// Find a legal, resolvable, seat-independent move pair on `b` by searching the real oracle
-/// (`move_valid`) and gating on the real Lean-descriptor witness-gen (the `leaves()` call in the
-/// caller). Rook moves only, distinct rows/columns per seat so the two never interact.
+/// Find a legal, resolvable, seat-independent move pair on `b` by asking the PROVEN LEAN for
+/// legality (`moveLegalB`) and gating on the real Lean-descriptor witness-gen (the `leaves()` call in
+/// the caller). Rook moves only, distinct rows/columns per seat so the two never interact.
 fn second_round(b: &Board) -> Option<(Move, Move)> {
-    use dregg_automatafl::reference::move_valid;
+    use dregg_automatafl::rules::move_legal;
     let mut found: Vec<Move> = Vec::new();
     for y in 0..b.n {
         for x in 0..b.n {
@@ -100,7 +101,7 @@ fn second_round(b: &Board) -> Option<(Move, Move)> {
                     frm: (x as i32, y as i32),
                     to: (tx as i32, ty as i32),
                 };
-                if m.frm == m.to || !move_valid(b, &m) {
+                if m.frm == m.to || !move_legal(b, &[], &m).unwrap_or(false) {
                     continue;
                 }
                 // Keep the two seats' moves on disjoint rows AND columns so no clash is possible.
@@ -230,7 +231,10 @@ fn round_windows_direct(
         .ok_or("Leg R's declared window is not expressible in its PIs")?;
     let a = extract_custom_pi_board_window(&st.public_inputs, &awin)
         .ok_or("Leg A's declared window is not expressible in its PIs")?;
-    Ok(([r, a], automaton_step(&mid)))
+    Ok((
+        [r, a],
+        automaton_step(&mid).expect("the Lean game oracle (`dregg_automatafl_rules`) answers"),
+    ))
 }
 
 /// Read a leaf's declared `(IN, OUT)` windows straight off its public inputs, through the SAME
@@ -260,8 +264,11 @@ fn leaf_windows(b: &LeafBundle) -> (Vec<BabyBear>, Vec<BabyBear>) {
 #[test]
 fn the_mid_seam_holds_on_a_real_round() {
     let (a, b) = round_one();
-    let ([r, leg_a], _) = round_windows_direct(&stock_two_player(), (a, b))
-        .expect("the honest 11x11 round satisfies both Lean descriptors");
+    let ([r, leg_a], _) = round_windows_direct(
+        &stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers"),
+        (a, b),
+    )
+    .expect("the honest 11x11 round satisfies both Lean descriptors");
 
     assert_eq!(r.0.len(), 11, "Leg R IN is pack(9) ‖ auto(2)");
     assert_eq!(leg_a.1.len(), 11, "Leg A OUT is pack(9) ‖ auto(2)");
@@ -283,17 +290,20 @@ fn the_mid_seam_holds_on_a_real_round() {
 #[test]
 fn every_window_decodes_to_the_board_the_oracle_produces() {
     let (a, b) = round_one();
-    let start = stock_two_player();
+    let start =
+        stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
     let ([r, leg_a], produced) =
         round_windows_direct(&start, (a, b)).expect("the honest round lowers");
 
-    let mid = resolve_mid(&start, &[a, b]);
+    let mid = resolve_mid(&start, &[], &[a, b])
+        .expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
     assert_eq!(
         produced,
-        automaton_step(&mid),
+        automaton_step(&mid).expect("the Lean game oracle (`dregg_automatafl_rules`) answers"),
         "the board Leg A produced IS the oracle's post-round board"
     );
-    let new = automaton_step(&mid);
+    let new =
+        automaton_step(&mid).expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
     assert_eq!(r.0, window_of(&start), "Leg R IN  == pack(old) ‖ auto(old)");
     assert_eq!(r.1, window_of(&mid), "Leg R OUT == pack(mid) ‖ auto(mid)");
     assert_eq!(
@@ -321,14 +331,19 @@ fn every_window_decodes_to_the_board_the_oracle_produces() {
 #[test]
 fn the_inter_round_carry_holds_across_two_real_rounds() {
     let (a, b) = round_one();
-    let start = stock_two_player();
-    let after_one = automaton_step(&resolve_mid(&start, &[a, b]));
+    let start =
+        stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
+    let after_one = automaton_step(
+        &resolve_mid(&start, &[], &[a, b])
+            .expect("the Lean game oracle (`dregg_automatafl_rules`) answers"),
+    )
+    .expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
     let (r2a, r2b) =
         second_round(&after_one).expect("the board after round one admits a legal pair");
 
     let ([r0, a0], produced0) = round_windows_direct(&start, (a, b)).expect("round 0 lowers");
     // Round 1 starts from the board round 0's Leg A ACTUALLY PRODUCED — the same chaining
-    // `AutomataflMatch::round_leaves` does (`board = automaton_step(&mid)`).
+    // `AutomataflMatch::round_leaves` does (`board = automaton_step(&mid)?`).
     let ([r1, a1], produced1) =
         round_windows_direct(&produced0, (r2a, r2b)).expect("round 1 lowers");
 
@@ -361,11 +376,15 @@ fn a_forged_mid_breaks_the_seam_though_both_legs_are_individually_valid() {
     use dregg_circuit::effect_vm::custom_state_binding::extract_custom_pi_board_window;
 
     let (a, b) = round_one();
-    let start = stock_two_player();
+    let start =
+        stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
     let ([r, honest_a], _) = round_windows_direct(&start, (a, b)).expect("the honest round lowers");
     assert_eq!(r.1, honest_a.0, "control: the honest seam holds");
 
-    let forged_mid = forge_one_cell(&resolve_mid(&start, &[a, b]));
+    let forged_mid = forge_one_cell(
+        &resolve_mid(&start, &[], &[a, b])
+            .expect("the Lean game oracle (`dregg_automatafl_rules`) answers"),
+    );
     let sdesc = descriptor_by_name(&step_descriptor_name(start.n)).expect("step descriptor");
     let awin = step_board_window(start.n, &sdesc).expect("step window");
     let st = automatafl_step_trace(&forged_mid, &sdesc).expect("Leg A builds on the forged mid");
@@ -400,7 +419,10 @@ fn a_forged_mid_breaks_the_seam_though_both_legs_are_individually_valid() {
             FIXED. Run with `--ignored`. See WIDE_LEG_BLOCKED"]
 fn a_played_round_lowers_to_a_resolve_leaf_then_a_step_leaf() {
     let (a, b) = round_one();
-    let m = AutomataflMatch::played(stock_two_player(), vec![(a, b)]);
+    let m = AutomataflMatch::played(
+        stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers"),
+        vec![(a, b)],
+    );
     let leaves = m.leaves().expect("the honest 11x11 round lowers");
 
     assert_eq!(
@@ -447,11 +469,16 @@ fn a_played_round_lowers_to_a_resolve_leaf_then_a_step_leaf() {
             with `--ignored`. See WIDE_LEG_BLOCKED"]
 fn the_windows_chain_leaf_to_leaf_across_the_mid_and_across_rounds() {
     let (a, b) = round_one();
-    let start = stock_two_player();
+    let start =
+        stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
     // A SECOND round on the board round one reaches. Rather than hand-pick coordinates that a
     // descriptor change could silently invalidate, SEARCH for a pair the real witness-gen accepts
     // — the whole two-round lowering is the gate.
-    let after_one = automaton_step(&resolve_mid(&start, &[a, b]));
+    let after_one = automaton_step(
+        &resolve_mid(&start, &[], &[a, b])
+            .expect("the Lean game oracle (`dregg_automatafl_rules`) answers"),
+    )
+    .expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
     let (r2a, r2b) = second_round(&after_one).expect(
         "the 11x11 board after round one admits SOME legal, resolvable, independent move pair",
     );
@@ -504,7 +531,8 @@ fn the_windows_chain_leaf_to_leaf_across_the_mid_and_across_rounds() {
             with `--ignored`. See WIDE_LEG_BLOCKED"]
 fn the_root_window_is_the_genesis_and_final_board_in_the_clear() {
     let (a, b) = round_one();
-    let start = stock_two_player();
+    let start =
+        stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
     let m = AutomataflMatch::played(start.clone(), vec![(a, b)]);
     let leaves = m.leaves().expect("the honest round lowers");
     let turns = build_match_turns(&leaves);
@@ -513,7 +541,11 @@ fn the_root_window_is_the_genesis_and_final_board_in_the_clear() {
         .expect("an honest two-leg chain has a well-formed board window")
         .expect("a two-leg chain DECLARES a board window");
 
-    let final_board = automaton_step(&resolve_mid(&start, &[a, b]));
+    let final_board = automaton_step(
+        &resolve_mid(&start, &[], &[a, b])
+            .expect("the Lean game oracle (`dregg_automatafl_rules`) answers"),
+    )
+    .expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
     assert_eq!(
         w.first_in,
         window_of(&start),
@@ -524,8 +556,8 @@ fn the_root_window_is_the_genesis_and_final_board_in_the_clear() {
         window_of(&final_board),
         "the root's last.OUT IS the final position (pack is injective)"
     );
-    // And the same boards the match's own reference walk reports.
-    let walked = m.round_boards();
+    // And the same boards the match's own spec-sourced walk reports.
+    let walked = m.round_boards().expect("the spec walk answers");
     assert_eq!(walked.first().map(window_of), Some(w.first_in.clone()));
     assert_eq!(walked.last().map(window_of), Some(w.last_out.clone()));
 }
@@ -614,8 +646,10 @@ fn hand_built_round(
             with `--ignored`. See WIDE_LEG_BLOCKED"]
 fn the_hand_built_honest_round_is_accepted_and_matches_the_generated_one() {
     let (a, b) = round_one();
-    let start = stock_two_player();
-    let mid = resolve_mid(&start, &[a, b]);
+    let start =
+        stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
+    let mid = resolve_mid(&start, &[], &[a, b])
+        .expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
 
     let hand = hand_built_round(&start, (a, b), &mid).expect("the honest hand-built round builds");
     let hand_turns = build_match_turns(&hand);
@@ -655,8 +689,10 @@ fn the_hand_built_honest_round_is_accepted_and_matches_the_generated_one() {
             with `--ignored`. See WIDE_LEG_BLOCKED"]
 fn a_mismatched_mid_breaks_the_board_window_seam_and_is_refused() {
     let (a, b) = round_one();
-    let start = stock_two_player();
-    let honest_mid = resolve_mid(&start, &[a, b]);
+    let start =
+        stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
+    let honest_mid = resolve_mid(&start, &[], &[a, b])
+        .expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
 
     let forged_mid = forge_one_cell(&honest_mid);
     assert_ne!(forged_mid, honest_mid, "the forgery must actually differ");
@@ -692,8 +728,10 @@ fn a_mismatched_mid_breaks_the_board_window_seam_and_is_refused() {
             with `--ignored`. See WIDE_LEG_BLOCKED"]
 fn a_forged_automaton_coordinate_alone_breaks_the_seam() {
     let (a, b) = round_one();
-    let start = stock_two_player();
-    let honest_mid = resolve_mid(&start, &[a, b]);
+    let start =
+        stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
+    let honest_mid = resolve_mid(&start, &[], &[a, b])
+        .expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
 
     let mut moved_auto = honest_mid.clone();
     // Relocate the automaton one square west onto a vacant cell — the leg then publishes an
@@ -742,7 +780,8 @@ fn the_honest_two_leg_match_folds_and_the_light_client_reads_the_final_position(
     use dregg_multiway_tug::fold::fold_match;
 
     let (a, b) = round_one();
-    let start = stock_two_player();
+    let start =
+        stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
     let leaves = AutomataflMatch::played(start.clone(), vec![(a, b)])
         .leaves()
         .expect("the honest round lowers");
@@ -752,7 +791,11 @@ fn the_honest_two_leg_match_folds_and_the_light_client_reads_the_final_position(
     let attested = verify_history(&whole, &vk).expect("the light client must ACCEPT");
 
     assert_eq!(attested.num_turns, 2, "one round == two folded turns");
-    let final_board = automaton_step(&resolve_mid(&start, &[a, b]));
+    let final_board = automaton_step(
+        &resolve_mid(&start, &[], &[a, b])
+            .expect("the Lean game oracle (`dregg_automatafl_rules`) answers"),
+    )
+    .expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
     assert_eq!(
         attested.board_genesis.as_deref(),
         Some(window_of(&start).as_slice()),
@@ -781,8 +824,12 @@ fn a_mismatched_mid_does_not_fold_on_the_deployed_prover() {
     use dregg_multiway_tug::fold::fold_match;
 
     let (a, b) = round_one();
-    let start = stock_two_player();
-    let forged_mid = forge_one_cell(&resolve_mid(&start, &[a, b]));
+    let start =
+        stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
+    let forged_mid = forge_one_cell(
+        &resolve_mid(&start, &[], &[a, b])
+            .expect("the Lean game oracle (`dregg_automatafl_rules`) answers"),
+    );
 
     let forged = hand_built_round(&start, (a, b), &forged_mid)
         .expect("both legs satisfy their own descriptors — that is the point");
@@ -834,7 +881,8 @@ fn the_two_leg_claim_widths_are_the_ones_the_verifier_was_extended_to() {
             with `--ignored`. See WIDE_LEG_BLOCKED"]
 fn a_chain_mixing_windowed_and_plain_turns_is_refused() {
     let (a, b) = round_one();
-    let start = stock_two_player();
+    let start =
+        stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
     let mut leaves = AutomataflMatch::played(start.clone(), vec![(a, b)])
         .leaves()
         .expect("the honest round lowers");
