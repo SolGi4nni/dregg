@@ -50,7 +50,7 @@ be RED before the fix — a falsifier that was never red proves nothing).
 
 ### M26 — TAD pins a test-only mirror to Lean while deploying a program that enforces strictly less · **HIGH / soundness-hole**
 
-- **CLAIM** — `starbridge-apps/tool-access-delegation/tests/lean_differential.rs:9-11`: "the anti-drift tooth that keeps the running Rust
+- **CLAIM** — the file header as it read at audit time (`starbridge-apps/tool-access-delegation/tests/lean_differential.rs:9-11`; ⚑ that header has since been REWRITTEN — the helpers now marshal across `dregg_deleg_admit` and decide nothing): "the anti-drift tooth that keeps the running Rust
   admission mirror == the proven Lean policy, so the formal `tool_invocation_commit_iff_admit` guarantees
   **actually describe what the deployed app enforces**." · `src/lib.rs:7-9`: the worker "can **NEVER**
   invoke the tool beyond the granted rate, scope, or deadline." · `src/lib.rs:152-154` calls `admit_table`
@@ -75,7 +75,7 @@ be RED before the fix — a falsifier that was never red proves nothing).
 - **LIVE? YES, INVERTED.** Deployed: `tad_factory_descriptor` (`:317`), AX3 service (`service.rs:67,142`),
   AX5 reactor (`reactor.rs:109`), AX2 deos surface (`lib.rs:653`). **The tested program is the one nothing
   deploys; the deployed program is the one nothing pins to Lean.**
-- **The tell** — `starbridge-apps/tool-access-delegation/tests/lean_differential.rs:61-67` `scope_tooth_bites` proves the scope tooth **entirely
+- **The tell** — `starbridge-apps/tool-access-delegation/tests/lean_differential.rs:100-107` `scope_tooth_bites` proves the scope tooth **entirely
   against the mirror** (`assert!(!deleg_admit(&DEMO, 50, 99, 0, 1))`). No executor-driven wrong-tool test
   exists **because it is not expressible**. Contrast the deadline tooth, genuinely driven through the real
   executor at `starbridge-apps/tool-access-delegation/tests/deos_seam.rs:347-362`.
@@ -103,7 +103,7 @@ be RED before the fix — a falsifier that was never red proves nothing).
   mirroring the deadline tooth at `:347-362`: a mandate scoped to tool 77, an `exercise` for tool 99, must
   be `Err`. **It cannot even be written today** (no tool argument) — that inexpressibility IS the finding.
   Then: revert (2) and confirm a `0 -> 3` jump commits (RED). Delete or demote `scope_tooth_bites`
-  (`starbridge-apps/tool-access-delegation/tests/lean_differential.rs:61-67`) — it makes no claim about deployment.
+  (`starbridge-apps/tool-access-delegation/tests/lean_differential.rs:100-107`) — it makes no claim about deployment.
 
 ### M30 — the TS wire encoder drops `provenance`; its "drift killer" compares against a gitignored, two-week-old snapshot of itself · **HIGH / soundness-hole · PUBLISHED**
 

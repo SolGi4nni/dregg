@@ -4,6 +4,15 @@
 
 33 adversarially-confirmed findings → **32 after dedup** (credentials predicate-vacuity merged across two call sites). Ranked severity → blast-radius, split by owner. **Fix-first: the two CRITICALs (asset inflation, predicate forgery) are live-surface soundness breaks — everything else waits behind them.**
 
+> ⚠ **Line anchors are `@HEAD 2026-07-23` and several have DRIFTED.** The crate paths were corrected
+> 2026-07-26 (the table had been dropping each crate's `src/`), which made the `:NNN` anchors
+> resolvable and therefore checkable — and at least these rows now point at the wrong line: the SDK
+> dimension gate (`sdk/src/runtime.rs`, `can_authorize` is at `:1737`), the journal-rollback row
+> (`turn/src/journal.rs`), both `collective-choice/src/lib.rs` rows (`resolve` is at `:895`), the
+> `dreggnet-party` / `dreggnet-web` / `dreggnet-telegram` / `dreggnet-offerings` /
+> `discord-bot` rows, and both `node/src/blocklace_sync.rs` rows. Re-derive the anchor from the named
+> symbol before acting on a row; the findings themselves were not re-audited here.
+
 ---
 
 ## MINE-to-fix (executor / offerings / webauth / identity / frontends / deploy)

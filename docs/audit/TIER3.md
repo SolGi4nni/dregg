@@ -49,7 +49,7 @@ axiom-clean.** Pin counts survive: `CircuitSoundness.lean` (17), `AssuranceCase.
 
 ### 1b. The apex + 5 guarantees — present + clean
 
-- `lightclient_unfoolable` (`metatheory/Dregg2/Circuit/CircuitSoundness.lean:453`, pin `:1058`) — built clean.
+- `lightclient_unfoolable` (`metatheory/Dregg2/Circuit/CircuitSoundness.lean:571`, `#assert_axioms` pin `:1229`) — built clean.
 - The 5 guarantee apexes (`Dregg2/AssuranceCase.lean`): A Authority `:166`, B
   Conservation `:259`, C Integrity `:412`, D Freshness `:581`, E Unfoolability
   `:666` — all in the built module, `#assert_axioms`-clean (113 pins hold).

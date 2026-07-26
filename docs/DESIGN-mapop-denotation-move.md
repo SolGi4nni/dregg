@@ -483,7 +483,7 @@ idiom.**
 | `MapDenotationSchema.lean:218` | `narrow_holdsAtS_is_instance` | `unfold … MapOp.holdsAt … opensTo … writesTo` | §2's transport |
 | `MapReconcileImtRepoint.lean:196` | `mapOpHoldsAt_unsat_at_imtRoot` | **guard application** | **NOT in §1** |
 | `Emit/RotWideCompactS2.lean:670` (+`:698`) | `holdsAt_transport` (`.mapOp` case) | **`intro hg` + `simp only [MapOp.holdsAt]` + per-kind `cases`** | **NOT in §1** |
-| `metatheory/Dregg2/Metatheory/EffectVmDescriptor2PassiveOptimization.lean:290` | `holdsAt_project` (a documented copy of `holdsAt_transport`) | **same** | **NOT in §1 — a whole tier §1 never mentions** |
+| `metatheory/Dregg2/Metatheory/EffectVmDescriptor2PassiveOptimization.lean:225` | `holdsAt_project` (a documented copy of `holdsAt_transport`) | **same** | **NOT in §1 — a whole tier §1 never mentions** |
 | `RotatedKernelRefinementExercise.lean:327` | `heapWrite_splice_forced` (**tooth: heapWriteV3**) | **guard application** + `.write`-arm content | §1(c) last row, understated |
 | `Emit/EffectVmEmitV2.lean:1077` | `attenuateV2_held_determined`, `attenuateV2_non_amp` | **guard application** ×2 + `.read`-arm `.1` | idem |
 | `Emit/EffectVmEmitV2.lean:1164` | `revokeV2_removes` / `_held_determined` / `_post_determined` | **guard application** ×2 | idem |
@@ -1032,7 +1032,7 @@ the wrong object is precisely how the `.absent` model went thirteen days unquest
 * `metatheory/Dregg2/Circuit/MapPaddedDenotation.lean` — `narrowTeeth` documented "(deployed-today)", inheriting the above
 * `metatheory/Dregg2/Circuit/MapOpsColumnLayout.lean:69` — "MIN/MAX sentinels are real entries of the modeled heap"
   (deployed occupancy is `HEAP_SENTINEL_LEAVES = 1`: MIN only, MAX survives as the terminal pointer)
-* `metatheory/Dregg2/Circuit/MapOpsColumnLayout.lean:555` — `leafOf_injective` documented as "The heap leaf"
+* `metatheory/Dregg2/Circuit/MapOpsColumnLayout.lean:575` — `leafOf_injective` documented as "The heap leaf"
 * `metatheory/Dregg2/Circuit/Emit/CapInsertEmit.lean:17` — "`accumInsert_writesTo8` for the arity-2 heap tree"
 * `metatheory/Dregg2/Circuit/Emit/AccumulatorOpenEmit.lean:70` — "the generic arity-2 `(key, value)` node8 membership",
   describing an appendix (`effHeapOpenV3`) that absorbs THREE leaf columns

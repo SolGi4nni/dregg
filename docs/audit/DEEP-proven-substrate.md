@@ -298,7 +298,7 @@ question of §4a; the injectivity itself bottoms on `Poseidon2SpongeCR`/`Compres
 ### 5b. The apex `lightclient_unfoolable` — a conditional the ledger never discharges
 
 From `verifyBatch (vkOfRegistry R) pi π = accept` (a client that runs nothing) the apex
-(`metatheory/Dregg2/Circuit/CircuitSoundness.lean:453`; fold headline `ClosureFinal.lean:162`) concludes
+(`metatheory/Dregg2/Circuit/CircuitSoundness.lean:571`; fold headline `ClosureFinal.lean:162`) concludes
 **single-transition authenticity** — the accepted batch decodes to a real kernel step whose endpoint
 commitments ARE the published PIs. It is an explicit **conditional**: it takes `hacc : verifyBatch …
 = accept` as a *given input* and `[StarkSound]` as an *assumed typeclass* (`StarkSound.extract`,
