@@ -61,6 +61,7 @@ use dreggnet_offerings::chutes_consent::{
     ChutesReplaySurface, ViewerBlindChutesConsent, ViewerBlindChutesReceipt,
 };
 use dreggnet_offerings::dungeon::{DungeonOffering, KEEP_NAME, KEEP_OBJECTIVE};
+use dreggnet_offerings::refusal::NARRATOR_MISCONFIGURED;
 use dreggnet_offerings::{
     BinaryOperationDescriptor, DreggIdentity, Offering, Outcome, SessionConfig,
 };
@@ -638,20 +639,20 @@ async fn respond(
 
 async fn handle_list(ctx: &Context, command: &CommandInteraction) {
     let desc = format!(
-        "**{KEEP_NAME}** — a dungeon hosted on the REAL dregg executor.\n\n\
+        "**{KEEP_NAME}** · a dungeon hosted on the REAL dregg executor.\n\n\
          Every move is one cap-bounded turn the verified executor admits; every rule below is \
          enforced by the executor itself, not app bookkeeping:\n\
-         • **the gate-warden** — a killing blow past the HP floor is refused\n\
-         • **the reliquary crown** — the first hand to close on it holds it; a rival re-claim \
+         • **the gate-warden** · a killing blow past the HP floor is refused\n\
+         • **the reliquary crown** · the first hand to close on it holds it; a rival re-claim \
          is refused (that slot writes once, ever)\n\
-         • **the collapsing stair** — descent is one-way; climbing back is refused (depth only \
+         • **the collapsing stair** · descent is one-way; climbing back is refused (depth only \
          ever grows)\n\
-         • **the sealing ward** — will is a finite budget; an over-spend is refused\n\n\
+         • **the sealing ward** · will is a finite budget; an over-spend is refused\n\n\
          Open it with `/dungeon start`. Each button is a write-once ballot (one vote per \
          dregg identity); `/dungeon close` applies the party's plurality choice as a real \
          turn; `/dungeon verify` re-verifies the receipt chain by replay."
     );
-    let embed = base_embed(&format!("{KEEP_NAME} — the hosted world"))
+    let embed = base_embed(&format!("{KEEP_NAME} · the hosted world"))
         .description(desc)
         .footer(footer(&NarrationProvenance::scripted()));
     respond(ctx, command, embed, vec![], true).await;
@@ -706,7 +707,7 @@ fn plan_thread_spin(
         .in_thread(invoking_channel)
         .public()
         .queue("dungeon-run")
-        .announce("The dungeon awakens — the party plays here.")
+        .announce("The dungeon awakens. The party plays here.")
         .topic("a dregg dungeon run"),
     )
 }
@@ -845,7 +846,7 @@ async fn handle_start(ctx: &Context, command: &CommandInteraction, state: &BotSt
             )
             .await;
         if posted.is_ok() {
-            let ping = base_embed(&format!("{KEEP_NAME} — your run has its own thread"))
+            let ping = base_embed(&format!("{KEEP_NAME} · your run has its own thread"))
                 .description(format!(
                     "The party plays in <#{target_channel}>. Vote the buttons there; run \
                      `/dungeon close` and `/dungeon verify` from inside the thread."
@@ -1045,15 +1046,21 @@ async fn handle_chutes_turn(ctx: &Context, command: &CommandInteraction, state: 
     ) {
         Ok(disclosure) => disclosure,
         Err(error) => {
+            // An OPERATOR's misconfiguration, discovered by whichever player asked for a turn.
+            // The two audiences split: the player gets the one sentence they can act on (it is
+            // not their fault, nothing was charged, the free path still works), and the operator
+            // gets the validator's actual complaint here, where they will find it.
+            tracing::error!(
+                %error,
+                model = paid.model(),
+                "the configured narrator model identity failed validation, so the paid narrated \
+                 turn refused fail-closed; no provider call ran, no credit was held, and the \
+                 player was shown the generic misconfiguration sentence"
+            );
             respond(
                 ctx,
                 command,
-                error_embed(
-                    "Unsafe Chutes disclosure configuration",
-                    &format!(
-                        "The configured public model identity was refused: {error}. No provider call ran and no credit was held."
-                    ),
-                ),
+                error_embed("Narrated turns are unavailable", NARRATOR_MISCONFIGURED),
                 vec![],
                 true,
             )
@@ -1299,8 +1306,11 @@ async fn handle_chutes_turn(ctx: &Context, command: &CommandInteraction, state: 
         }
         let turn = live
             .session
-            .advance_narrated_receipt_in_enclave(&bound, actor, tee_provenance.as_ref())
-            .map_err(|error| format!("the executor refused the proposal: {error}"))?;
+            // The refusal is ALREADY the player's sentence — the offering's narrator vocabulary
+            // for a move the room does not offer / prose it cannot show, or the game's own rules
+            // talking through a world refusal. Prefixing it named a piece of our machinery to the
+            // reader and put the two sanded-down sentences behind the word `executor`.
+            .advance_narrated_receipt_in_enclave(&bound, actor, tee_provenance.as_ref())?;
         let committed = narration_commitment(&bound.narration);
         if turn.narrated.narration != bound.narration
             || turn.narrated.narration_commit != committed
@@ -1486,7 +1496,7 @@ async fn handle_chutes_turn(ctx: &Context, command: &CommandInteraction, state: 
             .await;
         }
         None => {
-            let embed = base_embed(&format!("{KEEP_NAME} — Chutes carried the final turn"))
+            let embed = base_embed(&format!("{KEEP_NAME} · Chutes carried the final turn"))
                 .description(truncate(
                     &format!(
                         "{}\n\n**The executor ended the run.**\n\n{}",
@@ -1660,6 +1670,12 @@ async fn handle_close(ctx: &Context, command: &CommandInteraction, state: &BotSt
     if remembered.is_none() {
         // ADOPTED the floor. PERSIST the stamp, or the window would restart on every invocation
         // and the party would be denied forever — the trap this whole fix has to walk around.
+        //
+        // Unconditional on purpose: a `/dungeon close` in a channel with no run reaches here too
+        // and writes one small `kv` row. Gating that on "is a session live" would need
+        // `offering::ensure_live`, which REPLAYS the whole move log — inside Discord's 3-second
+        // pre-defer window. One row per channel someone typed the command in is the cheaper of
+        // the two, and it is overwritten by `/dungeon start` and dropped when a run ends.
         if let Err(e) = state.db.set_dungeon_host(channel, NO_HOST, opened_at).await {
             tracing::warn!(
                 error = %e, channel,
@@ -1687,21 +1703,21 @@ async fn handle_close(ctx: &Context, command: &CommandInteraction, state: &BotSt
     ) {
         // A `<@0>` mention renders as a broken ping, and there is no host to name anyway — say
         // what is true instead of pointing at a user who does not exist.
-        let who_may = if opener == NO_HOST {
-            "This run's host is not on record (the bot restarted mid-run), so nobody can close \
-             early"
-                .to_string()
+        let lead = "Closing now would lock the current tally and move the party on, denying \
+                    anyone who has not voted.";
+        let body = if opener == NO_HOST {
+            format!(
+                "{lead} This run's host is not on record (the bot restarted mid-run), so nobody \
+                 can close it early. Anyone can close in about **{wait_secs}s**, or once every \
+                 eligible voter has cast."
+            )
         } else {
-            format!("Only the run's host <@{opener}> can close early")
+            format!(
+                "{lead} Only the run's host <@{opener}> can close early; everyone else can close \
+                 in about **{wait_secs}s**, or once every eligible voter has cast."
+            )
         };
-        let embed = warn_embed(
-            "Not yet — the voting window is still open",
-            &format!(
-                "Closing now would lock the current tally and move the party on, denying anyone \
-                 who has not voted. {who_may}; everyone else can close in about **{wait_secs}s**, \
-                 or once every eligible voter has cast."
-            ),
-        );
+        let embed = warn_embed("Not yet · the voting window is still open", &body);
         respond(ctx, command, embed, vec![], true).await;
         return;
     }
@@ -1937,7 +1953,7 @@ fn describe_outcome(outcome: &MoveOutcome) -> ResultView {
     match outcome {
         MoveOutcome::Landed { .. } => ResultView {
             headline: "A turn landed, receipted.".to_string(),
-            body: "The world resolved the party's choice — a real, committed turn.".to_string(),
+            body: "The world resolved the party's choice: a real, committed turn.".to_string(),
             landed: true,
         },
         // ⚑ The dungeon's OWN copy of `offering::outcome_note`'s refusal — the "same condition,
@@ -1947,7 +1963,7 @@ fn describe_outcome(outcome: &MoveOutcome) -> ResultView {
         // no receipt — is the good part and is kept verbatim.
         MoveOutcome::Refused(why) => ResultView {
             headline:
-                "Refused — the crowd decided, the world disposed: room unchanged, no receipt."
+                "Refused · the crowd decided, the world disposed: room unchanged, no receipt."
                     .to_string(),
             body: format!(
                 "The world re-ran the party's choice against the rules and did not allow it: {why}"
@@ -2030,14 +2046,14 @@ async fn handle_verify(ctx: &Context, command: &CommandInteraction) {
         } => (verified, count, name, break_msg),
     };
     let embed = if verified {
-        base_embed(&format!("✓ {name} — playthrough re-verifies by replay"))
+        base_embed(&format!("✓ {name} · playthrough re-verifies by replay"))
             .description(format!(
-                "**{count} verified turns** re-verify: a fresh, identically-seeded world-cell, re-driven through the recorded choices, reproduces exactly this committed state chain in passage order.\n\nA reordered, mutated, or forged (ineligible) choice would break replay — the executor refuses on re-drive, or the reproduced state diverges."
+                "**{count} verified turns** re-verify: a fresh, identically-seeded world-cell, re-driven through the recorded choices, reproduces exactly this committed state chain in passage order.\n\nA reordered, mutated, or forged (ineligible) choice would break replay: the executor refuses on re-drive, or the reproduced state diverges."
             ))
             .footer(footer(&NarrationProvenance::scripted()))
     } else {
         error_embed(
-            &format!("✗ {name} — replay BREAKS"),
+            &format!("✗ {name} · replay BREAKS"),
             &format!(
                 "The playthrough did not re-verify:\n`{}`",
                 break_msg.unwrap_or_default()
@@ -2207,7 +2223,7 @@ async fn handle_attestation(ctx: &Context, command: &CommandInteraction, state: 
             let embed = error_embed(
                 "The attestation archive could not be read",
                 "Something went wrong reading this channel's records. Nothing about the \
-                 playthrough is affected — `/dungeon verify` still re-verifies the receipt chain.",
+                 playthrough is affected; `/dungeon verify` still re-verifies the receipt chain.",
             );
             ack::edit_slash(ctx, command, embed, vec![]).await;
             return;
@@ -2217,12 +2233,12 @@ async fn handle_attestation(ctx: &Context, command: &CommandInteraction, state: 
     let Some(newest) = rows.first() else {
         // The honest empty case. It is REACHABLE in normal play — the collective ballot path
         // never runs the attested backend — so it explains rather than apologises.
-        let embed = base_embed(&format!("{KEEP_NAME} — no attested narration here yet"))
+        let embed = base_embed(&format!("{KEEP_NAME} · no attested narration here yet"))
             .description(
                 "Nothing in this channel has been narrated inside an attested enclave yet, so \
                  there is no quote to hand you.\n\n\
                  The shared ballot rounds (`/dungeon start` → buttons → `/dungeon close`) narrate \
-                 on the free tier or an ordinary hosted model — neither attests anything, and the \
+                 on the free tier or an ordinary hosted model. Neither attests anything, and the \
                  footer says so. A turn gets an enclave attestation only through \
                  `/dungeon chutes-turn confirm:true`, which runs the model inside a DCAP-verified \
                  Intel TDX enclave and binds that enclave's identity into the receipt it lands.",
@@ -2299,13 +2315,13 @@ fn attestation_embed(
     let short_measurement: String = row.measurement_hex.chars().take(24).collect();
     let short_receipt: String = row.receipt_hex.chars().take(24).collect();
 
-    let mut embed = base_embed(&format!("{KEEP_NAME} — the attested narration, in full"))
+    let mut embed = base_embed(&format!("{KEEP_NAME} · the attested narration, in full"))
         .description(format!(
             "One turn in this channel was narrated **inside a DCAP-verified Intel TDX enclave**. \
-             Attached is the raw attestation quote and a JSON sidecar — the same bytes this bot \
+             Attached is the raw attestation quote and a JSON sidecar: the same bytes this bot \
              checked, so you do not have to take its word for any of it.\n\n\
-             **What that establishes:** _where_ the text was produced — an enclave whose code \
-             identity folds to the measurement below, accepted at TCB `{tcb}`. **It is not a \
+             **What that establishes:** _where_ the text was produced (an enclave whose code \
+             identity folds to the measurement below, accepted at TCB `{tcb}`). **It is not a \
              claim about the text.** The prose has no authority over the world in either case; \
              only a move the executor admits changes anything.",
             tcb = truncate(&row.tcb_status, 32),
@@ -2327,7 +2343,7 @@ fn attestation_embed(
                 "**1. The quote is the one named.** `sha256` of the attached `.bin` must equal \
                  `{}…`\n\
                  **2. The quote was minted for this session.** its `report_data[0..32]` must \
-                 equal `SHA-256(ascii(nonce) ‖ ascii(e2e_pubkey))` — both strings are in the \
+                 equal `SHA-256(ascii(nonce) ‖ ascii(e2e_pubkey))`. Both strings are in the \
                  sidecar. Without this a quote proves only that *some* enclave signed *something*.\n\
                  **3. The enclave is a Chutes one.** its MRTD + RTMR0..2 must match an entry in \
                  the published registry: <{registry}>\n\
@@ -2386,12 +2402,12 @@ fn recheck_text(recheck: &ArchiveRecheck) -> String {
     };
     let verdict = if recheck.intact() {
         "These two say the record is UNALTERED since it was written. They are tamper checks on a \
-         stored row — they are **not** a re-run of the attestation, which happened once, live, \
+         stored row; they are **not** a re-run of the attestation, which happened once, live, \
          against fresh collateral and a nonce generated moments before. Re-running it is what the \
          attached quote is for."
     } else {
         "**This record has been altered since it was written.** Do not rely on it. The receipt \
-         chain is a separate matter — run `/dungeon verify`."
+         chain is a separate matter. Run `/dungeon verify`."
     };
     format!("{digest}\n{binding}\n\n{verdict}")
 }
@@ -2760,7 +2776,7 @@ fn status_panel(snap: &RenderSnapshot) -> String {
 fn party_panel(snap: &RenderSnapshot) -> String {
     let mut out = String::new();
     if snap.voters.is_empty() {
-        out.push_str("Party: (no ballots yet — vote a button below)\n");
+        out.push_str("Party: (no ballots yet · vote a button below)\n");
     } else {
         let shown: Vec<String> = snap.voters.iter().take(8).cloned().collect();
         let extra = snap.voters.len().saturating_sub(shown.len());
@@ -2815,7 +2831,7 @@ fn round_embed(
         desc.push_str(&format!("_{}_", truncate(&snap.room_desc, 800)));
     }
 
-    let mut embed = base_embed(&format!("{} — {}", snap.world_name, snap.room_name))
+    let mut embed = base_embed(&format!("{} · {}", snap.world_name, snap.room_name))
         .description(truncate(&desc, 4000))
         .field(
             "🗺 Map & status",
@@ -2830,7 +2846,7 @@ fn round_embed(
             true,
         )
         .field(
-            "🎭 The party's move — vote a button below",
+            "🎭 The party's move · vote a button below",
             format!("```{}```", party_panel(snap)),
             false,
         );
@@ -2872,7 +2888,7 @@ fn resolution_final_embed(res: &ResolvedRound) -> CreateEmbed {
     let (title, verdict) = if res.ended && res.result.landed {
         (
             "🏆 The Keep is cleared",
-            "The objective is met — the crowd carried it out together, one real turn at a time.",
+            "The objective is met: the crowd carried it out together, one real turn at a time.",
         )
     } else {
         ("The round closed", "")
@@ -2893,7 +2909,7 @@ fn resolution_final_embed(res: &ResolvedRound) -> CreateEmbed {
         verdict,
         res.receipts,
     );
-    base_embed(&format!("{} — {}", res.world_name, title))
+    base_embed(&format!("{} · {}", res.world_name, title))
         .description(truncate(&body, 4000))
         .footer(footer(&NarrationProvenance::scripted()))
 }
@@ -2979,7 +2995,7 @@ fn attestation_note(attestation: &AttestationSummary) -> String {
     let measurement = attestation.measurement_hex();
     let short: String = measurement.chars().take(16).collect();
     format!(
-        "attested enclave {short}… · TCB {} (where the text was produced — not a claim about it)",
+        "attested enclave {short}… · TCB {} (where the text was produced, not a claim about it)",
         truncate(&attestation.tcb_status, 32),
     )
 }
@@ -3250,7 +3266,7 @@ mod tests {
             "the accepted TCB status is named:\n{text}"
         );
         assert!(
-            text.contains("where the text was produced — not a claim about it"),
+            text.contains("where the text was produced, not a claim about it"),
             "the note bounds what the attestation establishes:\n{text}"
         );
         assert!(

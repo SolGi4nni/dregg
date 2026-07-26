@@ -5,6 +5,7 @@
 //! Dungeon step, with prose bound into the receipt but unable to alter executor state.
 
 use dreggnet_offerings::dungeon::DungeonOffering;
+use dreggnet_offerings::refusal;
 use dreggnet_offerings::{DreggIdentity, Offering, Outcome, SessionConfig};
 use dungeon_on_dregg::narrator::{
     Command, Narrated, bound_narration_commit, legal_commands, narration_commitment,
@@ -79,7 +80,7 @@ fn stale_wrong_room_and_injecting_proposals_are_anti_ghost_refusals() {
     );
     assert!(matches!(
         session.advance_narrated(&wrong_room, mover.clone()),
-        Outcome::Refused(why) if why.contains("current room")
+        Outcome::Refused(why) if why == refusal::NARRATOR_MOVE_NOT_OFFERED
     ));
 
     let injecting = Narrated::new(
@@ -88,8 +89,27 @@ fn stale_wrong_room_and_injecting_proposals_are_anti_ghost_refusals() {
     );
     assert!(matches!(
         session.advance_narrated(&injecting, mover),
-        Outcome::Refused(why) if why.contains("injection")
+        Outcome::Refused(why) if why == refusal::NARRATOR_PROSE_UNDISPLAYABLE
     ));
+
+    // ⚑ The two sentences above are the ONLY thing a player sees when the confinement bites, and
+    // both of them used to be the check's own jargon ("closed legal set", "`{{` injection
+    // delimiter"). Asserting equality with the shared const alone would be a gate that cannot go
+    // red — a future re-wording moves both sides at once — so the wording is checked against the
+    // house rule instead: no component name, no symbol, no hex, and it must say what was lost and
+    // what to do next.
+    for copy in [
+        refusal::NARRATOR_MOVE_NOT_OFFERED,
+        refusal::NARRATOR_NO_PROSE,
+        refusal::NARRATOR_PROSE_UNDISPLAYABLE,
+        refusal::NARRATOR_MISCONFIGURED,
+    ] {
+        assert_eq!(
+            refusal::audit_player_text(copy, true, true),
+            Vec::new(),
+            "narrator refusal copy is not player-facing: {copy}"
+        );
+    }
 
     assert_eq!(session.receipts_len(), 1, "both refusals committed nothing");
     assert_eq!(session.read_var("hp"), 50);

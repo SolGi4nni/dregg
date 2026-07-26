@@ -64,7 +64,7 @@
 /// ```
 pub fn stale_control(next_step: &str) -> String {
     format!(
-        "That control is not on the current surface — the game moved on since this view was drawn, \
+        "That control is not on the current surface: the game moved on since this view was drawn, \
          so nothing was changed. {next_step}"
     )
 }
@@ -103,7 +103,7 @@ pub fn stale_control_refresh() -> String {
 pub fn belongs_to_another_player(noun: &str) -> String {
     format!(
         "This {noun} belongs to a different player than the one you're signed in as. Nothing was \
-         changed. If it's yours from another device, switch back to that account — otherwise you're \
+         changed. If it's yours from another device, switch back to that account; otherwise you're \
          just watching."
     )
 }
@@ -119,7 +119,7 @@ pub fn belongs_to_another_player(noun: &str) -> String {
 /// Kept as a `const` rather than a function because it takes no parameters and is asserted against
 /// verbatim by the refusal-copy gate.
 pub const COMMIT_FAILED_NOTHING_CHANGED: &str =
-    "Something went wrong committing that move — nothing was changed. Try again in a moment.";
+    "Something went wrong committing that move; nothing was changed. Try again in a moment.";
 
 /// **The generic server-side-store refusal** — the ONE sentence for "we could not read or write our
 /// own records", the condition ~30 Discord command sites answered by pasting raw `sqlx` text
@@ -134,7 +134,7 @@ pub const COMMIT_FAILED_NOTHING_CHANGED: &str =
 /// honestly say "nothing was changed" must say what it does know instead — see `pay.rs`'s explicit
 /// "this is NOT a zero" copy, which is the model for that case.
 pub const STORE_FAILED_NOTHING_CHANGED: &str =
-    "Something went wrong on our end — nothing was changed. Try again in a moment.";
+    "Something went wrong on our end; nothing was changed. Try again in a moment.";
 
 /// ⚑ **THE ONE CALL that replaces `Outcome::Refused(e.to_string())`.** Logs the operator half of a
 /// world-cell commit failure and returns the player half — so the two audiences cannot be collapsed
@@ -196,6 +196,49 @@ pub fn refuse_rules_unavailable(what: &str, detail: &str) -> String {
     COMMIT_FAILED_NOTHING_CHANGED.to_string()
 }
 
+/// **The narrator-proposed-an-unoffered-move refusal.** The AI narrator named a command that is
+/// not in the room's closed vocabulary at the moment the turn was submitted — an invented move, a
+/// move belonging to another room, a private-result move the narrated lane never carries, or a
+/// move the room stopped offering while the model was answering.
+///
+/// The old wording was *"the narrated command is not in the current room's closed legal set"*, which
+/// is set theory: it names the shape of the check rather than what happened, tells the reader
+/// nothing about whether their turn landed, and offers no way forward. The condition itself is the
+/// confinement WORKING — the model cannot leave the room's list — so the sentence should read as
+/// the referee doing its job, not as breakage.
+pub const NARRATOR_MOVE_NOT_OFFERED: &str = "The narrator picked a move this room does not offer, so nothing was changed. Pick a move from \
+     the room's own list, or ask for another narrated turn.";
+
+/// **The narrator-returned-no-prose refusal.** The model produced a command but no displayable
+/// narration, so there is nothing to show beside the move and nothing to bind to the turn.
+pub const NARRATOR_NO_PROSE: &str = "The narrator sent back no story text to show, so nothing was changed. Ask for another narrated \
+     turn, or take a free turn instead.";
+
+/// **The narration-carries-a-template-delimiter refusal.** The prose contains `{{`, the handlebars
+/// interpolation delimiter, which every narration path refuses before it can bind.
+///
+/// The old wording was *"the narrated turn carries a refused `{{` injection delimiter"* — three
+/// pieces of jargon a player has no use for, and it framed a formatting rule as an accusation. What
+/// a reader needs is that the text came back unusable, that their turn did not happen, and that
+/// asking again is free of consequence. The threat model stays in the doc comments where the people
+/// who need it read them.
+pub const NARRATOR_PROSE_UNDISPLAYABLE: &str = "The narrator's story text came back with characters this game will not display, so nothing was \
+     changed. Ask for another narrated turn, or take a free turn instead.";
+
+/// **The narrator-is-misconfigured refusal** — the ONE sentence for *"this server's hosted narrator
+/// was set up wrong, and the player who asked for a turn is the one who found out"*.
+///
+/// The condition is real and fail-closed (a model identity that fails validation must not reach a
+/// provider), but it is an OPERATOR's mistake, and the surfaces answered it with operator
+/// diagnostics wearing a player's costume: a red embed titled *"Unsafe Chutes disclosure
+/// configuration"* quoting a byte-range validator. A player can do nothing with that. They get the
+/// escalation shape this module's next-action vocabulary keeps a slot for — whose problem it is,
+/// plus the free path that still works — and the operator gets the detail at `tracing::error!`
+/// beside it.
+pub const NARRATOR_MISCONFIGURED: &str = "The hosted narrator on this server is not set up correctly, so no narration ran, nothing was \
+     changed, and no credit was held. That is on our side, not in what you did — the server log \
+     names the missing piece. The free narrated turns still work in the meantime.";
+
 /// A banned shape found in a player-facing string by [`audit_player_text`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BannedShape {
@@ -233,27 +276,27 @@ impl std::fmt::Display for BannedShape {
         match self {
             BannedShape::RawHexRun { excerpt } => write!(
                 f,
-                "a raw hex run (`{excerpt}`) — a player cannot read a key, and it is never the next action"
+                "a raw hex run (`{excerpt}`): a player cannot read a key, and it is never the next action"
             ),
             BannedShape::DebugDump { excerpt } => write!(
                 f,
-                "a Debug dump (`{excerpt}`) — an internal Rust value reached a person's screen"
+                "a Debug dump (`{excerpt}`): an internal Rust value reached a person's screen"
             ),
             BannedShape::SymbolAsFix { symbol } => write!(
                 f,
-                "a symbol as the fix (`{symbol}`) — a player cannot set an env var or call a function"
+                "a symbol as the fix (`{symbol}`): a player cannot set an env var or call a function"
             ),
             BannedShape::ComponentName { word } => write!(
                 f,
-                "a system-component name (`{word}`) — name the failing CHECK, not the machinery"
+                "a system-component name (`{word}`): name the failing CHECK, not the machinery"
             ),
             BannedShape::NoNextAction => write!(
                 f,
-                "no next action — a refusal with no way forward reads as broken, not as refused"
+                "no next action: a refusal with no way forward reads as broken, not as refused"
             ),
             BannedShape::NoLossStatement => write!(
                 f,
-                "no statement of what was lost — the reader cannot tell whether their move landed"
+                "no statement of what was lost: the reader cannot tell whether their move landed"
             ),
         }
     }

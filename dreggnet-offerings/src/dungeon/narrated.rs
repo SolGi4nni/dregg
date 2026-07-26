@@ -408,15 +408,13 @@ impl DungeonSession {
             .into_iter()
             .any(|(_, command)| command == narrated.command);
         if !admitted {
-            return Err(
-                "the narrated command is not in the current room's closed legal set".to_string(),
-            );
+            return Err(crate::refusal::NARRATOR_MOVE_NOT_OFFERED.to_string());
         }
         if narrated.narration.trim().is_empty() {
-            return Err("the narrated turn has empty prose".to_string());
+            return Err(crate::refusal::NARRATOR_NO_PROSE.to_string());
         }
         if narrated.narration.contains("{{") {
-            return Err("the narrated turn carries a refused `{{` injection delimiter".to_string());
+            return Err(crate::refusal::NARRATOR_PROSE_UNDISPLAYABLE.to_string());
         }
 
         let passage = narrated.command.room.clone();
