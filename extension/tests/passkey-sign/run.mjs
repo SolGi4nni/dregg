@@ -151,6 +151,33 @@ test("sign path via CustodyProvider: extension byte-identical, passkey signs a r
     const rederivedPub = await page.evaluate((m) => window.__sign.rederivePub(m), MNEMONIC);
     const storedSeed = await page.evaluate((m) => window.__sign.deriveSeed(m), MNEMONIC);
 
+    // ⚑ THE SHIPPED BUNDLE IS THE THING UNDER TEST HERE. Every other assertion in this file
+    // is internally consistent — it compares the wasm to itself through different custody
+    // seams, so a WRONG key derived identically everywhere stays green. That is exactly what
+    // happened: the pre-2026-07-26 wasm fed `blake3::hash(mnemonic_bytes)` to the KDF in place
+    // of the BIP39-validated entropy and skipped the checksum, so these 24 words named
+    // `900be4c3…` in the extension while dregg_sdk / the `dregg` CLI / dreggnet-web's
+    // /identity all named `dd2219e9…`. Since the extension is the ONLY surface that reaches
+    // Attribution::Signed + Custody::UserHeld, that filed a person's SIGNED play under a
+    // different identity than their ASSERTED play.
+    //
+    // This pins the bundle to the outside world. It is the same vector as
+    // wasm/tests/mnemonic_derivation_matches_the_sdk.rs and
+    // extension/test/derivation.test.mjs.
+    //
+    // ⚑ IF THIS FAILS WITH `900be4c3…`, THE COMMITTED `extension/dregg_wasm{.js,_bg.wasm}`
+    // ARE STALE — the Rust fix is in `wasm/src/lib.rs` but the artifacts have not been
+    // regenerated. Fix by rebuilding, not by moving the constant:  ./extension/build.sh wasm
+    const SDK_IDENTITY_FOR_MNEMONIC =
+      "dd2219e93ac26578be7d4677fa2d6de7ac0d78f196438f445ebbae7fcfd7ef95";
+    assert.equal(
+      rederivedPub,
+      SDK_IDENTITY_FOR_MNEMONIC,
+      "the SHIPPED wasm bundle derives a different identity from these 24 words than " +
+        "dregg_sdk::mnemonic does. Either the derivation regressed, or extension/dregg_wasm* " +
+        "is a stale artifact — rebuild with ./extension/build.sh wasm",
+    );
+
     // ── The OLD direct path (assemble over the seed) — the byte-identity baseline.
     const direct = await page.evaluate(
       ([m, t]) => window.__sign.directEnvelope(m, t),

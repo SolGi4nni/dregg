@@ -1,24 +1,44 @@
 // Golden key-derivation vector — the extension's third pin.
 //
-// The dregg identity derivation is:
+// The dregg identity derivation, END TO END, is:
 //
-//   blake3::derive_key("dregg/0", seed64) -> 32-byte Ed25519 seed -> pubkey
+//   24 BIP39 words --validate (wordlist + SHA-256 checksum)--> 32-byte entropy
+//     -> blake3::derive_key("dregg mnemonic seed v1 <pass>",        entropy) = seed[0..32]
+//        blake3::derive_key("dregg mnemonic seed v1 extend <pass>", entropy) = seed[32..64]
+//     -> blake3::derive_key("dregg/0", seed64) -> 32-byte Ed25519 seed -> pubkey
 //
-// implemented in Rust in sdk/src/mnemonic.rs (`AgentCipherclerk::from_seed`),
-// replicated in cli/src/commands/id.rs, and performed for the extension by
-// the wasm crate (wasm/src/lib.rs `derive_keypair_from_mnemonic`, the
-// `blake3::derive_key("dregg/0", &seed)` step). All three Rust sites pin the
-// SAME golden vector (seed = 00..3f); this test pins it in JS with an
+// implemented in Rust in sdk/src/mnemonic.rs (`mnemonic_to_seed` + `derive_keypair`,
+// which `AgentCipherclerk::from_mnemonic` and cli/src/commands/id.rs both route
+// through), and performed for the extension by the wasm crate
+// (wasm/src/lib.rs `derive_identity_keypair`). This test pins it in JS with an
 // independent BLAKE3 implementation + node:crypto Ed25519, so if ANY
 // implementation drifts, its golden test fails alongside these.
 //
-// Golden vector (sdk/src/profiles.rs + cli/src/commands/id.rs):
-//   seed   = 000102...3f (64 bytes)
-//   pubkey = 335840a9ca2a7a62bcfb83e3df15933c7e091c2dfd9083c26d93a8c468058b9a
+// ⚑ THE SECOND HALF USED TO BE ALL THIS FILE PINNED, AND THAT IS HOW THE SPLIT SURVIVED.
+// Until 2026-07-26 the wasm computed the seed itself as
+// `blake3::hash(mnemonic_bytes)` used in place of the BIP39 entropy, with NO checksum
+// check — so the same 24 words derived a DIFFERENT key in the browser than in the
+// CLI/SDK/web. This file was green throughout, because it started from an arbitrary
+// 64-byte seed (00..3f) and only checked `derive_key("dregg/0", seed)` onward: the wound
+// was upstream of the first assertion. The `from the 24 words` test below closes that gap.
+// Because the extension is the ONLY surface reaching `Attribution::Signed` +
+// `Custody::UserHeld` (a page can only assert), that split filed a person's SIGNED play
+// under a different identity than their ASSERTED play.
+//
+// Golden vectors:
+//   second half (sdk/src/profiles.rs + cli/src/commands/id.rs):
+//     seed   = 000102...3f (64 bytes)
+//     pubkey = 335840a9ca2a7a62bcfb83e3df15933c7e091c2dfd9083c26d93a8c468058b9a
+//   whole pipeline (wasm/tests/mnemonic_derivation_matches_the_sdk.rs pins the same):
+//     phrase = 23x "abandon" + "art"  (entropy 00..00, checksum 0x66)
+//     pubkey = dd2219e93ac26578be7d4677fa2d6de7ac0d78f196438f445ebbae7fcfd7ef95
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createPrivateKey, createPublicKey } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+import { createHash, createPrivateKey, createPublicKey } from 'node:crypto';
 
 // ---------------------------------------------------------------------------
 // Minimal BLAKE3 (single-chunk inputs <= 1024 bytes — ample for key
@@ -188,4 +208,101 @@ test('derivation is deterministic and seed-sensitive', () => {
   assert.notEqual(hex(blake3DeriveKey('dregg/0', tweaked)), hex(a));
   // Context separation: a different path yields a different key.
   assert.notEqual(hex(blake3DeriveKey('dregg/1', seed)), hex(a));
+});
+
+// ---------------------------------------------------------------------------
+// THE WHOLE PIPELINE, FROM THE 24 WORDS — the half that was never pinned.
+// ---------------------------------------------------------------------------
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+/** The wordlist the extension ships (pinned word-for-word to dregg_sdk::wordlist by
+ *  wasm/tests/mnemonic_derivation_matches_the_sdk.rs — the order IS the encoding). */
+const WORDLIST = readFileSync(path.join(__dirname, '..', 'bip39_english.txt'), 'utf8')
+  .trim()
+  .split('\n');
+
+/** The canonical all-zero-entropy 24-word BIP39 phrase (checksum word "art"). */
+const PHRASE = `${'abandon '.repeat(23)}art`;
+/** The dregg identity those words name at dregg/0 with no BIP39 passphrase. */
+const PHRASE_PUBKEY = 'dd2219e93ac26578be7d4677fa2d6de7ac0d78f196438f445ebbae7fcfd7ef95';
+/** ⚑ What the PRE-FIX wasm produced for the SAME words. Never again. */
+const PHRASE_PUBKEY_PRE_FIX = '900be4c39477e441a3f28635bb668224df12c7a242040dfe312ef7c08fa94bdd';
+
+/** BIP39 validation: 24 words, all in the list, checksum matches. Returns the entropy. */
+function bip39Entropy(mnemonic) {
+  const words = mnemonic.trim().split(/\s+/);
+  if (words.length !== 24) throw new Error(`invalid word count: expected 24, got ${words.length}`);
+  const bits = new Array(264);
+  words.forEach((word, i) => {
+    const index = WORDLIST.indexOf(word);
+    if (index === -1) throw new Error(`unknown word: ${word}`);
+    for (let b = 0; b < 11; b++) bits[i * 11 + b] = (index >> (10 - b)) & 1;
+  });
+  const entropy = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) {
+    for (let b = 0; b < 8; b++) if (bits[i * 8 + b]) entropy[i] |= 1 << (7 - b);
+  }
+  let checksum = 0;
+  for (let b = 0; b < 8; b++) if (bits[256 + b]) checksum |= 1 << (7 - b);
+  const expected = new Uint8Array(createHash('sha256').update(entropy).digest())[0];
+  if (checksum !== expected) throw new Error('invalid checksum');
+  return entropy;
+}
+
+/** sdk/src/mnemonic.rs `seed_from_entropy` — two BLAKE3 derive_key rounds into 64 bytes. */
+function seedFromEntropy(entropy, passphrase) {
+  const seed = new Uint8Array(64);
+  seed.set(blake3DeriveKey(`dregg mnemonic seed v1 ${passphrase}`, entropy), 0);
+  seed.set(blake3DeriveKey(`dregg mnemonic seed v1 extend ${passphrase}`, entropy), 32);
+  return seed;
+}
+
+/** The whole thing: 24 words -> the dregg identity public key. */
+function pubkeyFromMnemonic(mnemonic, passphrase = '', derivationPath = 'dregg/0') {
+  const seed = seedFromEntropy(bip39Entropy(mnemonic), passphrase);
+  return hex(ed25519PublicKey(blake3DeriveKey(derivationPath, seed)));
+}
+
+test('golden vector: the 24 words -> dregg identity dd2219e9..ef95 (the CLI/SDK/web key)', () => {
+  assert.equal(
+    pubkeyFromMnemonic(PHRASE),
+    PHRASE_PUBKEY,
+    'the extension-side phrase->identity derivation diverged from dregg_sdk::mnemonic ' +
+    '(sdk/src/mnemonic.rs) — the same 24 words would name different people in the ' +
+    'extension and in the CLI / dreggnet-web /identity',
+  );
+  // ⚑ The regression tripwire: the pre-fix wasm hashed the phrase STRING as entropy.
+  assert.notEqual(
+    pubkeyFromMnemonic(PHRASE),
+    PHRASE_PUBKEY_PRE_FIX,
+    'the phrase-hash shortcut is back — see wasm/src/lib.rs derive_identity_keypair',
+  );
+});
+
+test('a broken phrase is REFUSED, not silently turned into a different identity', () => {
+  const words = PHRASE.split(' ');
+
+  // One wrong (but real) word: the checksum's entire reason for existing.
+  const mistyped = [...words];
+  mistyped[5] = 'ability';
+  assert.throws(() => bip39Entropy(mistyped.join(' ')), /invalid checksum/);
+
+  // A word outside the 2048.
+  const unknown = [...words];
+  unknown[5] = 'xyzzyplugh';
+  assert.throws(() => bip39Entropy(unknown.join(' ')), /unknown word/);
+
+  // Wrong count.
+  assert.throws(() => bip39Entropy('one two three'), /invalid word count/);
+
+  // The fixture the pre-fix wasm tests used, which USED to derive a key.
+  const nonsense = Array.from({ length: 24 }, (_, i) => `word${i}`).join(' ');
+  assert.throws(() => bip39Entropy(nonsense), /unknown word/);
+});
+
+test('the BIP39 passphrase and the derivation path both change the identity', () => {
+  const base = pubkeyFromMnemonic(PHRASE);
+  assert.notEqual(pubkeyFromMnemonic(PHRASE, 'hunter2'), base, 'passphrase ignored');
+  assert.notEqual(pubkeyFromMnemonic(PHRASE, '', 'dregg/1'), base, 'path ignored');
+  assert.equal(WORDLIST.length, 2048, 'the shipped wordlist must hold exactly 2048 words');
 });

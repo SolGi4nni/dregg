@@ -19,35 +19,40 @@ use dregg_intent::sse::{SealedBox, generate_search_token, seal_decrypt, seal_enc
 /// Derive stealth keys from a mnemonic + passphrase.
 ///
 /// Returns JSON: { spend_pubkey, spend_privkey, view_pubkey, view_privkey }
-/// All keys are 32-byte arrays. The public keys are BLAKE3 derivations of the
-/// private keys (matching the SDK's deterministic derivation). The extension uses
-/// these with its own Ed25519/X25519 library for the full DH protocol.
+/// All keys are 32-byte arrays.
+///
+/// ⚑ **This was the SECOND copy of the phrase-hash bug.** It computed the 64-byte KDF seed
+/// itself — `blake3::hash(mnemonic.as_bytes())` as the entropy, no BIP39 validation, no
+/// checksum — so the stealth keys a phrase named here were not the ones
+/// `AgentCipherclerk::from_mnemonic` names for the same words. It now takes the 32-byte
+/// Ed25519 signing seed from [`crate::derive_identity_keypair`] (the one derivation in this
+/// crate) and applies the SAME two context strings
+/// `dregg_sdk::cipherclerk::AgentCipherclerk::derive_stealth_keys` applies to
+/// `signing_key.to_bytes()` — which is that same seed. So the *private* halves now agree with
+/// the SDK exactly.
+///
+/// ⚑ **Named divergence, deliberately NOT changed here.** `spend_pubkey` below is
+/// `blake3::hash(spend_privkey)`, whereas `dregg_cell_crypto::StealthKeys::meta_address()`
+/// makes it a real **Ed25519** public key. That is a pre-existing, *documented* handoff (the
+/// extension derives the Ed25519 spend key from the private half with its own library), not
+/// the silent split this commit closes — changing it would move a value the extension already
+/// consumes. It is called out so it is a known seam rather than a discovery.
 #[wasm_bindgen]
 pub fn derive_stealth_keys(mnemonic: &str, passphrase: &str) -> Result<JsValue, JsError> {
-    // Derive deterministic view and spend keys from mnemonic seed.
-    let mnemonic_bytes = mnemonic.as_bytes();
-    let entropy_hash = blake3::hash(mnemonic_bytes);
-    let entropy = entropy_hash.as_bytes();
+    // ONE derivation: the BIP39-validated, checksum-checked `dregg_sdk::mnemonic` pipeline.
+    // A bad phrase is REFUSED here rather than producing usable-looking stealth keys for an
+    // identity nobody holds.
+    let (_identity_pubkey, signing_key_bytes) =
+        crate::derive_identity_keypair(mnemonic, passphrase, crate::DERIVATION_PATH)
+            .map_err(|error| JsError::new(&error.to_string()))?;
 
-    // Derive seed (same path as derive_keypair_from_mnemonic in lib.rs)
-    let context_a = format!("dregg mnemonic seed v1 {}", passphrase);
-    let first_half = blake3::derive_key(&context_a, entropy);
-    let mut seed = [0u8; 64];
-    seed[..32].copy_from_slice(&first_half);
-    seed[32..].copy_from_slice(&blake3::derive_key(
-        &format!("dregg mnemonic seed v1 extend {}", passphrase),
-        entropy,
-    ));
-
-    // Derive stealth keys using same context strings as SDK cclerk.
+    // Derive stealth keys using the same context strings as the SDK cclerk.
     // P2 audit fix: hold intermediate private-key material in Zeroizing so the
     // linear-memory residue is scrubbed on drop. The final Vec<u8> copies that
     // serde-wasm-bindgen hands to JS are unavoidable but at least the stack
     // arrays don't linger after this function returns.
     // SAFETY: The Zeroizing guard scrubs the array on drop; do not extract the
     // raw 32-byte slices into longer-lived owners.
-    let signing_key_bytes: Zeroizing<[u8; 32]> =
-        Zeroizing::new(blake3::derive_key("dregg/0", &seed));
     let view_private_key: Zeroizing<[u8; 32]> = Zeroizing::new(blake3::derive_key(
         "dregg-stealth-view-key-v1",
         &signing_key_bytes[..],

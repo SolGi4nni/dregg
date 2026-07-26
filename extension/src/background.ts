@@ -504,106 +504,71 @@ async function decryptWithPassphrase(encrypted: EncryptedEnvelope, passphrase: s
 }
 
 // ---------------------------------------------------------------------------
-// BIP39 Mnemonic
+// BIP39 Mnemonic — ONE implementation, and it is `dregg_sdk::mnemonic`'s
 // ---------------------------------------------------------------------------
+//
+// ⚑ This block used to hold a SECOND BIP39 implementation: an entropy → 24-words
+// encoder and a checksum validator, written in TypeScript, reading a SECOND copy of
+// the wordlist (`bip39_english.txt`). They were framed as fallbacks — `if (wasm &&
+// wasm.generate_mnemonic)` — but the wasm never exported `generate_mnemonic` or
+// `validate_mnemonic`, so the "fallback" was the ONLY path that ever ran. A guard that
+// cannot be reached is not a fallback, it is the implementation, hidden.
+//
+// That is the same class of wound as the one this commit closes in
+// `wasm/src/lib.rs`: N implementations of one derivation, no test forcing them to
+// agree, drift invisible because everything compiles and every screen looks right. The
+// wasm now exports both (routing to `dregg_sdk::mnemonic`, the same code the `dregg`
+// CLI and `dreggnet-web`'s `/identity` run), so these are thin calls and there is
+// nothing left to diverge.
+//
+// The refusals below are deliberate, and they are NOT a regression in resilience: a
+// phrase this worker generates is useless without `derive_keypair_from_mnemonic`, which
+// already hard-required the wasm (`requireWasm`). Minting a phrase we cannot turn into a
+// key was never a working degraded mode — it was a way to hand somebody 24 words that
+// name nothing. Refusing names the real problem (a stale bundle) instead.
+//
+// `bip39_english.txt` is consequently no longer read by any extension script. It is
+// still SHIPPED (`manifest.json` `web_accessible_resources`, `build.sh`'s `BASE_FILES`)
+// and is pinned word-for-word to `dregg_sdk::wordlist` by
+// `wasm/tests/mnemonic_derivation_matches_the_sdk.rs`; dropping it from the package is a
+// packaging decision, not a code one.
 
-let _wordlistCache: string[] | null = null;
-
-async function getWordlist(): Promise<string[] | null> {
-  if (_wordlistCache) return _wordlistCache;
-  try {
-    const url = chrome.runtime.getURL("bip39_english.txt");
-    const resp = await fetch(url);
-    const text = await resp.text();
-    _wordlistCache = text.trim().split("\n");
-    if (_wordlistCache.length === 2048) return _wordlistCache;
-  } catch (e: unknown) {
-    const err = e as Error;
-    console.warn("[dregg] Failed to load wordlist from bundle:", err.message);
-  }
-  _wordlistCache = null;
-  return null;
+/** The message for a bundle whose glue predates a wasm export this code needs. */
+function staleBundle(exportName: string): Error {
+  return new Error(
+    `WASM module does not export ${exportName} — extension/dregg_wasm.js and ` +
+    `dregg_wasm_bg.wasm are stale relative to wasm/src. Rebuild: ./extension/build.sh wasm`
+  );
 }
 
+/** A fresh 24-word BIP39 phrase from `dregg_sdk::mnemonic::generate_mnemonic`. */
 async function generateMnemonic(): Promise<string> {
-  if (wasm && wasm.generate_mnemonic) {
-    try {
-      return wasm.generate_mnemonic();
-    } catch (e: unknown) {
-      const err = e as Error;
-      console.warn("[dregg] WASM generate_mnemonic failed, using JS fallback:", err.message);
-    }
-  }
-  const entropy = crypto.getRandomValues(new Uint8Array(32));
-  const hashBuffer = await crypto.subtle.digest("SHA-256", entropy);
-  const checksum = new Uint8Array(hashBuffer)[0];
-  const bits = new Array<number>(264);
-  for (let i = 0; i < 32; i++) {
-    for (let bit = 0; bit < 8; bit++) {
-      bits[i * 8 + bit] = (entropy[i] >> (7 - bit)) & 1;
-    }
-  }
-  for (let bit = 0; bit < 8; bit++) {
-    bits[256 + bit] = (checksum >> (7 - bit)) & 1;
-  }
-  const indices: number[] = [];
-  for (let i = 0; i < 24; i++) {
-    let index = 0;
-    for (let bit = 0; bit < 11; bit++) {
-      if (bits[i * 11 + bit]) {
-        index |= 1 << (10 - bit);
-      }
-    }
-    indices.push(index);
-  }
-  const wordlist = await getWordlist();
-  if (!wordlist) throw new Error("Wordlist unavailable for mnemonic generation");
-  return indices.map(i => wordlist[i]).join(" ");
+  requireWasm("generateMnemonic");
+  if (typeof wasm!.generate_mnemonic !== "function") throw staleBundle("generate_mnemonic");
+  return wasm!.generate_mnemonic();
 }
 
+/**
+ * Whether these words are a valid BIP39 phrase — count, wordlist membership, and the
+ * SHA-256 checksum — via `dregg_sdk::mnemonic::validate_mnemonic`.
+ *
+ * THROWS (rather than returning `false`) when the wasm cannot answer, so a missing
+ * module is never reported to the user as "your recovery phrase is wrong".
+ */
 async function validateMnemonic(mnemonic: string): Promise<boolean> {
-  if (wasm && wasm.validate_mnemonic) {
-    try {
-      return wasm.validate_mnemonic(mnemonic);
-    } catch (_e) {
-      // Fall through to JS validation.
-    }
-  }
-  const words = mnemonic.trim().split(/\s+/);
-  if (words.length !== 24) return false;
-  const wordlist = await getWordlist();
-  if (!wordlist) return false;
-  const indices: number[] = [];
-  for (const word of words) {
-    const idx = wordlist.indexOf(word);
-    if (idx === -1) return false;
-    indices.push(idx);
-  }
-  const bits = new Array<number>(264);
-  for (let i = 0; i < 24; i++) {
-    for (let bit = 0; bit < 11; bit++) {
-      bits[i * 11 + bit] = (indices[i] >> (10 - bit)) & 1;
-    }
-  }
-  const entropyBytes = new Uint8Array(32);
-  for (let i = 0; i < 32; i++) {
-    for (let bit = 0; bit < 8; bit++) {
-      if (bits[i * 8 + bit]) {
-        entropyBytes[i] |= 1 << (7 - bit);
-      }
-    }
-  }
-  let checksumByte = 0;
-  for (let bit = 0; bit < 8; bit++) {
-    if (bits[256 + bit]) {
-      checksumByte |= 1 << (7 - bit);
-    }
-  }
-  const hashBuffer = await crypto.subtle.digest("SHA-256", entropyBytes);
-  const expectedChecksum = new Uint8Array(hashBuffer)[0];
-  return checksumByte === expectedChecksum;
+  requireWasm("validateMnemonic");
+  if (typeof wasm!.validate_mnemonic !== "function") throw staleBundle("validate_mnemonic");
+  return wasm!.validate_mnemonic(mnemonic);
 }
 
+/**
+ * The 24 words to the dregg identity keypair.
+ *
+ * ⚑ The `"dregg/0"` third argument is now HONORED. It used to be silently discarded:
+ * the wasm export took only `(mnemonic, passphrase)`, so wasm-bindgen dropped the extra
+ * argument and the path was a hardcoded constant inside the wasm that merely happened to
+ * match. See `wasm/src/lib.rs::DERIVATION_PATH`.
+ */
 async function deriveKeypairFromMnemonic(
   mnemonic: string,
   passphrase: string,
@@ -1504,7 +1469,15 @@ async function recoverFromMnemonic(
   bip39Passphrase: string,
   walletPassphrase: string,
 ): Promise<{ success: boolean; publicKey?: number[]; error?: string }> {
-  const valid = await validateMnemonic(mnemonic);
+  // `validateMnemonic` THROWS when the wasm cannot answer, so distinguish "your phrase is
+  // wrong" from "this build cannot check it" — telling somebody holding a correct piece of
+  // paper that their words are bad is the worst possible message here.
+  let valid: boolean;
+  try {
+    valid = await validateMnemonic(mnemonic);
+  } catch (e: unknown) {
+    return { success: false, error: (e as Error).message || "Cannot validate recovery phrase" };
+  }
   if (!valid) {
     return { success: false, error: "Invalid mnemonic (bad checksum or unknown words)" };
   }

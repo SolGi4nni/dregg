@@ -115,24 +115,44 @@ export class TokenOps {
   }
 
   /**
-   * Derive a keypair from a BIP39 mnemonic using dregg's BLAKE3 derivation path.
+   * Derive the dregg identity keypair from a BIP39 mnemonic.
    *
-   * Returns 64 bytes: first 32 are the secret key seed, last 32 are reserved
-   * for the public key (computed externally with Ed25519).
+   * The derivation is `dregg_sdk::mnemonic` — BIP39 validation (word count, wordlist,
+   * SHA-256 checksum) then BLAKE3 at `dregg/0` into an Ed25519 key — so the key returned
+   * here is the SAME one the `dregg` CLI (`dregg id import`) and `dreggnet-web`'s
+   * `/identity/restore` produce for the same words.
    *
-   * @param mnemonic - A 24-word BIP39 mnemonic.
-   * @param passphrase - Optional passphrase (empty string for none).
-   * @returns 64-byte Uint8Array with the derived key material.
+   * ⚑ This used to be broken twice over, silently. (1) It documented a flat 64-byte return
+   * whose "last 32 are reserved for the public key", long after the wasm switched to
+   * `{ public_key, secret_key }` — and `new Uint8Array(someObject)` does not throw, it
+   * yields a **zero-length** array, so every caller got an empty "key" and no error.
+   * (2) The wasm's derivation itself hashed the phrase string in place of the BIP39
+   * entropy and skipped the checksum, so it named a different identity than every other
+   * dregg surface. Both are fixed; the return type is now the real shape.
+   *
+   * @param mnemonic - A 24-word BIP39 mnemonic. A wrong word count, an off-list word, or a
+   *   failed checksum THROWS rather than deriving some other identity.
+   * @param passphrase - BIP39 passphrase; empty string for none.
+   * @param path - Derivation path; defaults to `dregg/0` (the identity every dregg surface
+   *   pins). Sub-identities are `dregg/1`, `dregg/2`, …
+   * @returns The 32-byte Ed25519 public key (the identity) and the 32-byte secret seed.
    * @throws Error if the mnemonic is invalid.
    */
   async deriveKeypairFromMnemonic(
     mnemonic: string,
-    passphrase: string = ""
-  ): Promise<Uint8Array> {
+    passphrase: string = "",
+    path: string = "dregg/0"
+  ): Promise<{ publicKey: Uint8Array; secretKey: Uint8Array }> {
     try {
-      return new Uint8Array(
-        (this.wasm as any).derive_keypair_from_mnemonic(mnemonic, passphrase)
-      );
+      const kp = (this.wasm as any).derive_keypair_from_mnemonic(
+        mnemonic,
+        passphrase,
+        path
+      ) as { public_key: Uint8Array; secret_key: Uint8Array };
+      return {
+        publicKey: new Uint8Array(kp.public_key),
+        secretKey: new Uint8Array(kp.secret_key),
+      };
     } catch (e) {
       throw new Error(`Failed to derive keypair: ${extractError(e)}`);
     }

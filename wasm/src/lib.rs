@@ -1877,67 +1877,86 @@ pub fn prove_anonymous_membership(
 }
 
 // ============================================================================
-// Mnemonic / Key Derivation (BLAKE3 path, matching dregg-sdk)
+// Mnemonic / Key Derivation — ONE derivation, and it is `dregg_sdk::mnemonic`'s
 // ============================================================================
 
-/// Derive an Ed25519 keypair from a BIP39 mnemonic using the dregg BLAKE3 derivation path.
+/// The BLAKE3 derivation path for the primary identity key.
 ///
-/// This uses the same BLAKE3-based derivation as `dregg-sdk`'s `mnemonic_to_seed` +
-/// `derive_keypair`. The Ed25519 public key is computed in-WASM via ed25519-dalek.
+/// ⚑ **A CROSS-SURFACE CONTRACT, not a local choice.** `cli/src/commands/id.rs`,
+/// `dregg_sdk::cipherclerk::AgentCipherclerk::from_mnemonic` and
+/// `dreggnet_web::seed_identity::DERIVATION_PATH` all pin this same `"dregg/0"`. Change it
+/// here and the same 24 words stop naming the same person in the browser as they do in the
+/// CLI — the identity silently splits.
+/// `wasm/tests/mnemonic_derivation_matches_the_sdk.rs` is the tripwire.
+pub const DERIVATION_PATH: &str = "dregg/0";
+
+/// **THE derivation** — 24 words to an Ed25519 keypair — and the ONLY place in this crate
+/// that turns a phrase into a key.
+///
+/// ⚑ **Why this delegates instead of deriving.** Until 2026-07-26 this crate had its own
+/// pipeline: it fed `blake3::hash(mnemonic.as_bytes())` to the KDF in place of the
+/// BIP39-validated *entropy*, and skipped the checksum entirely. Both halves were wrong in
+/// the same direction — the same 24 words named a DIFFERENT identity here than in
+/// `dregg_sdk` / the `dregg` CLI / `dreggnet-web`'s `/identity`, and a mistyped word was
+/// accepted as somebody else rather than refused. Because the browser extension is the only
+/// surface that reaches `Attribution::Signed` + `Custody::UserHeld` (a page can only assert),
+/// that split filed a person's *signed* play under one key and their *asserted* play under
+/// another. A second implementation is what caused it, so there is not one here:
+/// `mnemonic_to_seed` validates word count, wordlist membership and the SHA-256 checksum,
+/// then `derive_keypair` does the BLAKE3 → Ed25519 step.
+///
+/// The 64-byte KDF seed is zeroized here. The 32-byte Ed25519 seed rides out in
+/// [`zeroize::Zeroizing`] so it is wiped when the caller's binding drops, even on an early
+/// return.
+pub fn derive_identity_keypair(
+    mnemonic: &str,
+    passphrase: &str,
+    path: &str,
+) -> Result<([u8; 32], zeroize::Zeroizing<[u8; 32]>), dregg_sdk::mnemonic::MnemonicError> {
+    use zeroize::Zeroize;
+
+    let mut seed = dregg_sdk::mnemonic::mnemonic_to_seed(mnemonic, passphrase)?;
+    let (public, secret) = dregg_sdk::mnemonic::derive_keypair(&seed, path);
+    seed.zeroize();
+    Ok((public, zeroize::Zeroizing::new(secret)))
+}
+
+/// Derive an Ed25519 keypair from a BIP39 mnemonic at the dregg derivation path.
+///
+/// Routes through [`derive_identity_keypair`] — i.e. through `dregg_sdk::mnemonic` — so the
+/// key this returns is byte-identical to the one `dregg id import` and
+/// `dreggnet-web`'s `/identity/restore` produce for the same words.
 ///
 /// Returns an object `{ public_key: Vec<u8>(32), secret_key: Vec<u8>(32) }`.
 ///
 /// # Arguments
-/// * `mnemonic` - A 24-word BIP39 mnemonic string.
-/// * `passphrase` - Optional passphrase (use empty string for none).
+/// * `mnemonic` - A 24-word BIP39 mnemonic string (checksum is CHECKED).
+/// * `passphrase` - BIP39 passphrase; pass an empty string for none.
+/// * `path` - Derivation path. Omit / pass `null` for [`DERIVATION_PATH`] (`"dregg/0"`).
+///   ⚑ Previously this argument did not exist and `extension/src/custody.ts` passed a third
+///   `DREGG_KEY_PATH` argument that wasm-bindgen silently DROPPED; the path is now honored,
+///   and a caller that passes nothing still gets `"dregg/0"` (so `sdk-ts`'s two-argument call
+///   is unchanged).
 ///
 /// # Errors
-/// Returns an error if the mnemonic is invalid.
+/// **REFUSES** rather than deriving anything for a phrase that is not exactly 24 words, uses
+/// a word outside the 2048-word BIP39 English list, or fails its own SHA-256 checksum. One
+/// mistyped word is a checksum failure, and getting an error there is the whole point: the
+/// alternative is being silently handed a different, empty identity.
 ///
 /// # Security
-/// Intermediate seed material is wrapped in `Zeroizing` to scrub linear-memory
-/// residues on drop. The returned secret/public key bytes are necessarily
-/// copied into a JS object by `serde_wasm_bindgen`; callers in background
-/// workers should overwrite or drop those buffers when done.
+/// Intermediate seed material is zeroized. The returned secret/public key bytes are
+/// necessarily copied into a JS object by `serde_wasm_bindgen`; callers in background
+/// workers should overwrite or drop those buffers when done (`custody.ts::zeroize`).
 #[wasm_bindgen]
-pub fn derive_keypair_from_mnemonic(mnemonic: &str, passphrase: &str) -> Result<JsValue, JsError> {
-    use zeroize::Zeroizing;
-
-    // Validate: 24 words.
-    let words: Vec<&str> = mnemonic.split_whitespace().collect();
-    if words.len() != 24 {
-        return Err(JsError::new(&format!(
-            "invalid word count: expected 24, got {}",
-            words.len()
-        )));
-    }
-
-    // BLAKE3 seed derivation (matches dregg-sdk's seed_from_entropy path).
-    let context_a = format!("dregg mnemonic seed v1 {}", passphrase);
-    let context_b = format!("dregg mnemonic seed v1 extend {}", passphrase);
-
-    let mnemonic_bytes = mnemonic.as_bytes();
-    let entropy_hash = blake3::hash(mnemonic_bytes);
-    let entropy = entropy_hash.as_bytes();
-
-    let first_half = blake3::derive_key(&context_a, entropy);
-    let second_half = blake3::derive_key(&context_b, entropy);
-
-    // Hold the seed in zeroizing memory.
-    let seed: Zeroizing<[u8; 64]> = {
-        let mut s = Zeroizing::new([0u8; 64]);
-        s[..32].copy_from_slice(&first_half);
-        s[32..].copy_from_slice(&second_half);
-        s
-    };
-
-    // Derive keypair at "dregg/0" path (main agent identity).
-    // The derived 32 bytes are the Ed25519 secret-key seed.
-    let secret_seed: Zeroizing<[u8; 32]> = Zeroizing::new(blake3::derive_key("dregg/0", &seed[..]));
-
-    // Compute the Ed25519 public key from the secret seed.
-    let signing_key = ed25519_dalek::SigningKey::from_bytes(&secret_seed);
-    let public_key = signing_key.verifying_key().to_bytes();
+pub fn derive_keypair_from_mnemonic(
+    mnemonic: &str,
+    passphrase: &str,
+    path: Option<String>,
+) -> Result<JsValue, JsError> {
+    let path = path.unwrap_or_else(|| DERIVATION_PATH.to_string());
+    let (public_key, secret_seed) = derive_identity_keypair(mnemonic, passphrase, &path)
+        .map_err(|error| JsError::new(&error.to_string()))?;
 
     #[derive(Serialize)]
     struct KeypairResult {
@@ -1950,6 +1969,33 @@ pub fn derive_keypair_from_mnemonic(mnemonic: &str, passphrase: &str) -> Result<
         secret_key: secret_seed.to_vec(),
     };
     Ok(serde_wasm_bindgen::to_value(&result)?)
+}
+
+/// **Generate a fresh 24-word BIP39 phrase** — 256 bits of `getrandom` entropy plus its
+/// 8-bit SHA-256 checksum, over `dregg_sdk::wordlist::WORDLIST`.
+///
+/// ⚑ This export exists to RETIRE a reimplementation. `extension/src/background.ts` carried
+/// its own entropy → words encoder in TypeScript (plus its own copy of the wordlist,
+/// `extension/bip39_english.txt`) because it probed for `wasm.generate_mnemonic` and the wasm
+/// never exported it — so the JS branch was not a fallback, it was the only path. The
+/// probe now succeeds and the SDK is what runs.
+#[wasm_bindgen]
+pub fn generate_mnemonic() -> String {
+    dregg_sdk::mnemonic::generate_mnemonic()
+}
+
+/// **Whether these 24 words are a valid BIP39 phrase** — word count, wordlist membership,
+/// and the SHA-256 checksum, via `dregg_sdk::mnemonic::validate_mnemonic`.
+///
+/// ⚑ This export ARMS a guard that was fail-open. `extension/src/passkey.ts::enroll` reads
+/// `if (this.wasm.validate_mnemonic && !this.wasm.validate_mnemonic(mnemonic))` — with the
+/// export absent the `&&` short-circuited and passkey custody would enroll ANY string as a
+/// phrase. The precise reason for a rejection is available from
+/// [`derive_keypair_from_mnemonic`]'s error; this returns the boolean
+/// `extension/src/custody.ts::CustodyWasm` declares.
+#[wasm_bindgen]
+pub fn validate_mnemonic(mnemonic: &str) -> bool {
+    dregg_sdk::mnemonic::validate_mnemonic(mnemonic).is_ok()
 }
 
 // ============================================================================
@@ -3031,12 +3077,15 @@ mod audit_tests {
     use serde::Deserialize;
 
     fn test_mnemonic() -> String {
-        // 24 arbitrary words — the derivation is BLAKE3-based and doesn't
-        // verify the BIP39 wordlist, only the word count.
-        (0..24)
-            .map(|i| format!("word{}", i))
-            .collect::<Vec<_>>()
-            .join(" ")
+        // ⚑ A REAL BIP39 phrase (the canonical all-zero-entropy 24-word vector, checksum
+        // word "art"). This used to be `word0 word1 … word23` — 24 arbitrary tokens —
+        // with the comment "the derivation is BLAKE3-based and doesn't verify the BIP39
+        // wordlist, only the word count". That comment was an accurate description of the
+        // bug: the derivation hashed the phrase STRING, so nonsense words derived a key.
+        // It now validates the wordlist and the checksum, so the fixture has to be a
+        // phrase a person could actually hold.
+        // 23 × "abandon" + "art" = 24 words, entropy 0x00…00, checksum 0x66.
+        format!("{}art", "abandon ".repeat(23))
     }
 
     #[derive(Deserialize)]
@@ -3051,8 +3100,8 @@ mod audit_tests {
         // with [secret | zeros] — the "public key" was all-zeros, which any
         // consumer slicing the first 32 bytes would silently treat as a real
         // identity. We now compute the real Ed25519 pubkey.
-        let result = derive_keypair_from_mnemonic(&test_mnemonic(), "")
-            .expect("derive should succeed for 24-word mnemonic");
+        let result = derive_keypair_from_mnemonic(&test_mnemonic(), "", None)
+            .expect("derive should succeed for a checksum-valid 24-word mnemonic");
         let kp: KeypairOut =
             serde_wasm_bindgen::from_value(result).expect("output is a struct, not a flat Vec");
 
@@ -3086,8 +3135,8 @@ mod audit_tests {
         // The old shape was `Vec<u8>` of length 64. After the fix it's an
         // object `{public_key, secret_key}`. A consumer that tries to read it
         // as a flat Vec<u8> would now fail to deserialize.
-        let result =
-            derive_keypair_from_mnemonic(&test_mnemonic(), "").expect("derive should succeed");
+        let result = derive_keypair_from_mnemonic(&test_mnemonic(), "", None)
+            .expect("derive should succeed");
         let flat: Result<Vec<u8>, _> = serde_wasm_bindgen::from_value(result);
         assert!(
             flat.is_err(),
@@ -3098,9 +3147,64 @@ mod audit_tests {
     #[test]
     fn adversarial_derive_keypair_rejects_wrong_word_count() {
         let too_short = "one two three";
-        let err = derive_keypair_from_mnemonic(too_short, "").unwrap_err();
+        let err = derive_keypair_from_mnemonic(too_short, "", None).unwrap_err();
         let msg = format!("{:?}", err);
         assert!(msg.to_lowercase().contains("word"), "{msg}");
+    }
+
+    /// ⚑ THE SPLIT, IN THE TAB. The words that reproduce an identity everywhere else must
+    /// reproduce it here, and a phrase that is not a phrase must be REFUSED rather than
+    /// silently naming somebody. The pinned key is the one
+    /// `wasm/tests/mnemonic_derivation_matches_the_sdk.rs` establishes on the host; this is
+    /// the same claim asserted through the real `#[wasm_bindgen]` export under
+    /// `wasm-pack test`, so a wasm-only divergence (a different `blake3`/`ed25519-dalek`
+    /// backend on wasm32) cannot hide behind a green host run.
+    #[test]
+    fn adversarial_derive_keypair_agrees_with_the_sdk_and_refuses_a_non_phrase() {
+        let result = derive_keypair_from_mnemonic(&test_mnemonic(), "", None)
+            .expect("the canonical BIP39 phrase derives");
+        let kp: KeypairOut = serde_wasm_bindgen::from_value(result).expect("struct shape");
+        let hex: String = kp.public_key.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(
+            hex, "dd2219e93ac26578be7d4677fa2d6de7ac0d78f196438f445ebbae7fcfd7ef95",
+            "the browser's key for these 24 words diverged from dregg_sdk / the CLI"
+        );
+        // The pre-fix implementation (blake3 of the phrase STRING as entropy) produced this
+        // for the same words. It must never come back.
+        assert_ne!(
+            hex, "900be4c39477e441a3f28635bb668224df12c7a242040dfe312ef7c08fa94bdd",
+            "the phrase-hash shortcut is back — see derive_identity_keypair's doc"
+        );
+
+        // An explicit path is honored now (it used to be dropped on the floor), and it is a
+        // DIFFERENT identity — which is why dropping it was not harmless.
+        let sub = derive_keypair_from_mnemonic(&test_mnemonic(), "", Some("dregg/1".into()))
+            .expect("a sub-agent path derives");
+        let sub: KeypairOut = serde_wasm_bindgen::from_value(sub).expect("struct shape");
+        assert_ne!(
+            sub.public_key, kp.public_key,
+            "the path argument is ignored"
+        );
+
+        // One wrong word inside a real phrase: the checksum catches it.
+        let mut words: Vec<String> = test_mnemonic().split(' ').map(str::to_string).collect();
+        words[5] = "ability".to_string();
+        let err = derive_keypair_from_mnemonic(&words.join(" "), "", None).unwrap_err();
+        assert!(
+            format!("{err:?}").to_lowercase().contains("checksum"),
+            "one mistyped word must fail the checksum, got {err:?}"
+        );
+        // A word outside the 2048-word list.
+        words[5] = "xyzzyplugh".to_string();
+        assert!(derive_keypair_from_mnemonic(&words.join(" "), "", None).is_err());
+
+        // The generator's own output validates, and the validator is armed.
+        let fresh = generate_mnemonic();
+        assert_eq!(fresh.split_whitespace().count(), 24);
+        assert!(validate_mnemonic(&fresh));
+        assert!(validate_mnemonic(&test_mnemonic()));
+        assert!(!validate_mnemonic("one two three"));
+        assert!(!validate_mnemonic(&words.join(" ")));
     }
 
     #[test]

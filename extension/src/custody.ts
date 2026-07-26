@@ -34,8 +34,20 @@ export interface CustodyWasm {
    * Derive the hybrid keypair from a BIP39 mnemonic. `secret_key` is the 32-byte
    * ed25519 seed the SDK expands into BOTH the ed25519 identity and the ML-DSA-65
    * key; `public_key` is the 32-byte ed25519 verifying key (the custody identity).
-   * (`path` is accepted for signature-compatibility with the extension's call; the
-   * derivation path is fixed inside the wasm.)
+   *
+   * ⚑ `path` is REAL now. This doc used to read "accepted for signature-compatibility
+   * with the extension's call; the derivation path is fixed inside the wasm" — that was
+   * accurate and it was a hole: the wasm export took only two arguments, so wasm-bindgen
+   * discarded the third and `DREGG_KEY_PATH` below documented a contract nothing enforced.
+   * The export now takes an optional path and honors it (omit it and you still get
+   * `"dregg/0"`, so two-argument callers such as `sdk-ts` are unaffected).
+   *
+   * ⚑ The derivation itself is `dregg_sdk::mnemonic` — the SAME code the `dregg` CLI and
+   * `dreggnet-web`'s `/identity` run. It was NOT, until 2026-07-26: the wasm hashed the
+   * phrase string in place of the BIP39 entropy and skipped the checksum, so the extension
+   * signed as a different identity than the one the words name everywhere else. The pin is
+   * `extension/tests/passkey-sign/run.mjs` (the shipped bundle) plus
+   * `wasm/tests/mnemonic_derivation_matches_the_sdk.rs` (the source).
    */
   derive_keypair_from_mnemonic(
     mnemonic: string,
@@ -84,7 +96,13 @@ export interface CustodyProvider {
   label(): string;
 }
 
-/** The wasm's fixed derivation path selector (ignored by the wasm; kept for parity). */
+/**
+ * The dregg identity derivation path. ⚑ A CROSS-SURFACE CONTRACT: `cli/src/commands/id.rs`,
+ * `dregg_sdk::cipherclerk::AgentCipherclerk::from_mnemonic`,
+ * `dreggnet_web::seed_identity::DERIVATION_PATH` and `wasm/src/lib.rs::DERIVATION_PATH` all
+ * pin this same string. It used to be labelled "ignored by the wasm; kept for parity" —
+ * it is now actually passed and actually used.
+ */
 export const DREGG_KEY_PATH = "dregg/0";
 
 /**

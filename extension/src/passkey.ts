@@ -220,6 +220,13 @@ export class PasskeyCustody implements CustodyProvider {
     // 1. Obtain the mnemonic to protect (fresh, or the caller's), and its public identity.
     const mnemonicBytes = mnemonicSeed ? new Uint8Array(mnemonicSeed) : this.freshMnemonicBytes();
     const mnemonic = new TextDecoder().decode(mnemonicBytes);
+    // ⚑ THIS GUARD WAS FAIL-OPEN UNTIL THE WASM EXPORTED `validate_mnemonic`. The `&&`
+    // short-circuited on an absent export, so passkey custody would enroll ANY string as a
+    // phrase — and the derivation behind it accepted anything too, so nothing downstream
+    // complained either. `wasm/src/lib.rs` exports it now (routing to
+    // `dregg_sdk::mnemonic::validate_mnemonic`), which ARMS this line. The optionality is
+    // kept because `CustodyWasm` still declares the member optional for third-party hosts;
+    // against the dregg bundle it is always present.
     if (this.wasm.validate_mnemonic && !this.wasm.validate_mnemonic(mnemonic)) {
       zeroize(mnemonicBytes);
       throw new Error("passkey custody: refusing to enroll an invalid BIP39 mnemonic");
