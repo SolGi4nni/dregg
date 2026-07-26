@@ -15,6 +15,9 @@ use std::time::Duration;
 
 use dreggnet_market::private_clearing::PrivateSealedIngressBook;
 
+use crate::private_bazaar_ingress::{
+    MAX_INGRESS_SETTLES_PER_TICK, PrivateBazaarIngressProgress, PrivateBazaarSealedIngressQueue,
+};
 use crate::private_bazaar_live::PrivateBazaarLiveDeployment;
 use crate::private_bazaar_targets::PrivateBazaarDurableTargetRegistry;
 use crate::private_bazaar_worker::{
@@ -50,6 +53,7 @@ pub struct PrivateBazaarSourceCapture {
 pub struct PrivateBazaarAuthenticatedReceiptSource {
     deployment: PrivateBazaarLiveDeployment,
     spool: PrivateBazaarReceiptSpool,
+    ingress: PrivateBazaarSealedIngressQueue,
     scan_after_seed: Option<u64>,
 }
 
@@ -67,9 +71,11 @@ impl PrivateBazaarAuthenticatedReceiptSource {
         deployment: PrivateBazaarLiveDeployment,
     ) -> Result<Self, PrivateBazaarWorkerError> {
         let spool = deployment.private_receipt_spool()?;
+        let ingress = deployment.private_sealed_ingress()?;
         Ok(Self {
             deployment,
             spool,
+            ingress,
             scan_after_seed: None,
         })
     }
@@ -118,6 +124,63 @@ impl PrivateBazaarAuthenticatedReceiptSource {
             .settle_private_clearing_verified(seed, book, new_commitment_blinding)
             .map_err(|error| PrivateBazaarWorkerError::PrivateClearingRefused(error.to_string()))?;
         self.capture_once()
+    }
+
+    /// PRODUCTION: drain the deployment's sealed-ingress queue.
+    ///
+    /// This is the call that closes the loop. `capture_once` can only observe
+    /// receipts something else already produced, and until this method the only
+    /// thing that could produce one was a test. Each pending submission is
+    /// decoded — re-passing the proved-family type gate on the way out of the
+    /// durable record — and handed to the real relation.
+    ///
+    /// Fail-closed, precisely:
+    ///
+    /// * a refused clearing does NOT advance the ingress cursor, so the exact
+    ///   submission stays on the queue for an operator; the supervisor classifies
+    ///   the refusal as Integrity and stops rather than grinding a retry loop
+    ///   toward acceptance;
+    /// * a submission whose market is ALREADY terminal is acknowledged rather
+    ///   than refused. That is the crash window between a landed executor
+    ///   settlement and its durable acknowledgement, not an attack: only this
+    ///   queue can settle, and the worker-private commitment binding already
+    ///   refuses any book other than the bound one.
+    pub(crate) fn settle_pending_ingress(
+        &mut self,
+        max: usize,
+    ) -> Result<PrivateBazaarIngressProgress, PrivateBazaarWorkerError> {
+        let mut progress = PrivateBazaarIngressProgress::default();
+        for _ in 0..max {
+            let Some(pending) = self.ingress.next_pending()? else {
+                break;
+            };
+            match self.deployment.settle_private_clearing_verified(
+                pending.session_seed,
+                &pending.book,
+                pending.blinding,
+            ) {
+                Ok(_) => {
+                    self.ingress.acknowledge(pending.sequence)?;
+                    progress.settled += 1;
+                }
+                Err(error) => {
+                    if self
+                        .deployment
+                        .private_clearing_is_finalized(pending.session_seed)
+                        .unwrap_or(false)
+                    {
+                        self.ingress.acknowledge(pending.sequence)?;
+                        progress.already_terminal += 1;
+                        continue;
+                    }
+                    return Err(PrivateBazaarWorkerError::PrivateClearingRefused(
+                        error.to_string(),
+                    ));
+                }
+            }
+        }
+        progress.pending = self.ingress.pending()?;
+        Ok(progress)
     }
 }
 
@@ -298,6 +361,13 @@ pub struct PrivateBazaarWorkerHealth {
     pub processed: u64,
     pub ticks: u64,
     pub source_appends: u64,
+    /// Sealed ingress submissions this worker cleared under a verified proof.
+    pub ingress_settled: u64,
+    /// Submissions found already terminal on restart (the settle/acknowledge
+    /// crash window), acknowledged rather than re-run.
+    pub ingress_already_terminal: u64,
+    /// Submissions accepted but not yet cleared.
+    pub ingress_pending: u64,
     pub consecutive_failures: u32,
     pub last_failure: Option<PrivateBazaarWorkerFaultClass>,
 }
@@ -310,6 +380,9 @@ impl Default for PrivateBazaarWorkerHealth {
             processed: 0,
             ticks: 0,
             source_appends: 0,
+            ingress_settled: 0,
+            ingress_already_terminal: 0,
+            ingress_pending: 0,
             consecutive_failures: 0,
             last_failure: None,
         }
@@ -502,17 +575,33 @@ fn run_service(
             break;
         }
 
-        let result = match source.capture_once() {
-            Ok(capture) => {
+        // ORDER IS THE WHOLE POINT. Settle first: the deployed loop now RUNS the
+        // proven relation over books a production submitter left on the durable
+        // ingress queue, instead of only ever observing receipts something else
+        // produced. Capture and dispatch then carry that receipt through the
+        // spool and the consequence authority in the same tick.
+        let result = source
+            .settle_pending_ingress(MAX_INGRESS_SETTLES_PER_TICK)
+            .and_then(|ingress| {
+                let mut health = lock_health(&shared);
+                health.ingress_settled = health
+                    .ingress_settled
+                    .saturating_add(ingress.settled as u64);
+                health.ingress_already_terminal = health
+                    .ingress_already_terminal
+                    .saturating_add(ingress.already_terminal as u64);
+                health.ingress_pending = ingress.pending;
+                drop(health);
+                source.capture_once()
+            })
+            .and_then(|capture| {
                 let mut health = lock_health(&shared);
                 health.source_appends = health
                     .source_appends
                     .saturating_add(capture.appended as u64);
                 drop(health);
                 worker.tick()
-            }
-            Err(error) => Err(error),
-        };
+            });
 
         let delay = match result {
             Ok(poll) => {

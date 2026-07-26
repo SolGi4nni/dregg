@@ -1554,6 +1554,17 @@ impl DarkBazaarSession {
         self.market.clearing()
     }
 
+    /// The proof-verified private settlement this live market retains, if the
+    /// hiding relation has already authorized one. Worker-only: it answers
+    /// "has this seed already cleared?" without re-running the relation, which
+    /// is what lets a restarted ingress drain distinguish work that succeeded
+    /// from work that must still be done. No frontend rendering path reaches it.
+    #[cfg(feature = "private-clearing")]
+    #[doc(hidden)]
+    pub fn verified_private_clearing(&self) -> Option<&private_clearing::PrivateClearingReceipt> {
+        self.verified_private_clearing_receipt.as_ref()
+    }
+
     /// The frontend-agnostic identity whose sealed bid won the verified clear.
     pub fn winning_actor(&self) -> Option<&DreggIdentity> {
         self.market.winning_actor()

@@ -12,7 +12,7 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
-use dregg_turn::{Finality, TurnReceipt};
+use dregg_turn::{EmittedEvent, Finality, TurnReceipt};
 use dregg_types::CellId;
 use dreggnet_market::private_bazaar_authority::PrivateBazaarAuthorityPhase;
 use dreggnet_market::private_bazaar_game_adapter::{
@@ -28,10 +28,13 @@ use crate::private_bazaar_live::PrivateBazaarLiveDeployment;
 const MAX_POLL_BATCH: usize = 32;
 const MAX_RUN_TICKS: usize = 1_024;
 const MAX_SPOOL_WINNER_BYTES: usize = 256;
-const LEGACY_SPOOL_FILE_NAME: &str = "finalized-private-bazaar-v1.spool";
-const SPOOL_FILE_NAME: &str = "finalized-private-bazaar-v2.spool";
-const SPOOL_MAGIC: &[u8; 8] = b"DBSP0002";
-const SPOOL_DOMAIN: &str = "dregg.private-bazaar-finalized-spool.v2";
+const LEGACY_SPOOL_FILE_NAMES: [&str; 2] = [
+    "finalized-private-bazaar-v1.spool",
+    "finalized-private-bazaar-v2.spool",
+];
+const SPOOL_FILE_NAME: &str = "finalized-private-bazaar-v3.spool";
+const SPOOL_MAGIC: &[u8; 8] = b"DBSP0003";
+const SPOOL_DOMAIN: &str = "dregg.private-bazaar-finalized-spool.v3";
 const SEMANTIC_CORE_DOMAIN: &str = "dregg.private-bazaar-settlement-core.v1";
 const CLAIM_MAGIC: &[u8; 8] = b"DBWK0001";
 const CURSOR_MAGIC: &[u8; 8] = b"DBWC0001";
@@ -39,11 +42,39 @@ const CLAIM_DOMAIN: &str = "dregg.private-bazaar-worker-claim.v1";
 const CURSOR_DOMAIN: &str = "dregg.private-bazaar-worker-cursor.v1";
 const CLAIM_LEN: usize = 8 + 1 + 8 + 8 + (3 * 32) + 32;
 const CURSOR_LEN: usize = 8 + 8 + 32;
-// v2 is deliberately fixed-width. It supports the SETTLE receipt shape only:
-// variable routing/introduction/derivation/event/capability collections must
-// all be empty and an optional executor signature is exactly 64 bytes. Every
-// integer is big-endian, every presence/bool flag is exactly 0 or 1, absent
-// fixed slots and winner padding are zero, and no suffix bytes are accepted.
+// v3 is deliberately fixed-width, and it carries the REAL settlement receipt.
+//
+// v2 could not. A Dark Bazaar SETTLE is one atomic executor turn of
+// `close_commit` + one `reveal_bid` per sealed bid + `resolve`, and every one of
+// those actions emits an event (`auction-closed`, `auction-reveal`,
+// `auction-resolved`). v2 refused any receipt with a non-empty `emitted_events`,
+// so the durable leg of the deployed worker had only ever carried SYNTHETIC
+// receipts and structurally could not carry a production one. Since
+// `TurnReceipt::receipt_hash` binds the events (domain `dregg-receipt-v5`), a
+// record that drops them cannot reconstruct the hash the live market will be
+// compared against — so carrying them is not optional, it is the whole
+// difference between a spool that works in production and one that does not.
+//
+// The events region is therefore fixed-capacity, not unbounded: at most
+// `MAX_SPOOL_EVENTS` events of at most `MAX_SPOOL_EVENT_FIELDS` felts each,
+// which covers the settle shape (`PROVEN_MAX_SEALED_BIDS` + 2 = 5 events, 2
+// felts each) with headroom. Anything larger is still refused BY NAME rather
+// than truncated. The other variable collections (routing directives,
+// introduction exports, derivation records, consumed capabilities) are empty on
+// this turn and stay refused if they ever appear, because silently dropping a
+// disclosure the receipt hash binds is exactly the failure v2 had.
+//
+// Every integer is big-endian, every presence/bool flag is exactly 0 or 1,
+// absent fixed slots and winner/event padding are zero, and no suffix bytes are
+// accepted.
+const MAX_SPOOL_EVENTS: usize = 8;
+const MAX_SPOOL_EVENT_FIELDS: usize = 4;
+const SPOOL_EVENT_SLOT_LEN: usize = 1 // present flag
+    + 32 // emitting cell
+    + 32 // topic symbol
+    + 1 // field count
+    + (MAX_SPOOL_EVENT_FIELDS * 32);
+const SPOOL_EVENTS_REGION_LEN: usize = 1 + (MAX_SPOOL_EVENTS * SPOOL_EVENT_SLOT_LEN);
 const SPOOL_RECORD_LEN: usize = 8 // magic/version
     + 8 // cursor
     + 8 // hosted session seed
@@ -70,6 +101,7 @@ const SPOOL_RECORD_LEN: usize = 8 // magic/version
     + 1 // finality (v1 accepts Final only)
     + 1 // encrypted flag
     + 1 // burn flag
+    + SPOOL_EVENTS_REGION_LEN // bounded emitted events, bound by receipt_hash
     + 32 // reconstructed TurnReceipt hash
     + 32; // record checksum / next-record chain anchor
 
@@ -94,6 +126,18 @@ impl PrivateBazaarSpoolScope {
             executor_federation,
             policy_id,
         }
+    }
+
+    pub(crate) const fn deployment_id(&self) -> [u8; 32] {
+        self.deployment_id
+    }
+
+    pub(crate) const fn executor_federation(&self) -> [u8; 32] {
+        self.executor_federation
+    }
+
+    pub(crate) const fn policy_id(&self) -> [u8; 32] {
+        self.policy_id
     }
 }
 
@@ -224,7 +268,10 @@ impl PrivateBazaarReceiptSpool {
         let root = fs::canonicalize(root)
             .map_err(|error| PrivateBazaarWorkerError::io("pin receipt spool directory", error))?;
         let path = root.join(SPOOL_FILE_NAME);
-        if root.join(LEGACY_SPOOL_FILE_NAME).exists() {
+        if LEGACY_SPOOL_FILE_NAMES
+            .iter()
+            .any(|name| root.join(name).exists())
+        {
             return Err(PrivateBazaarWorkerError::LegacySpoolRequiresMigration);
         }
         let created = !path.exists();
@@ -991,9 +1038,18 @@ fn encode_spool_record(
             "derivation records",
         ));
     }
-    if !turn.emitted_events.is_empty() {
+    if turn.emitted_events.len() > MAX_SPOOL_EVENTS {
         return Err(PrivateBazaarWorkerError::UnsupportedReceiptField(
-            "emitted events",
+            "emitted event count",
+        ));
+    }
+    if turn
+        .emitted_events
+        .iter()
+        .any(|event| event.data.len() > MAX_SPOOL_EVENT_FIELDS)
+    {
+        return Err(PrivateBazaarWorkerError::UnsupportedReceiptField(
+            "emitted event field count",
         ));
     }
     if !turn.consumed_capabilities.is_empty() {
@@ -1066,6 +1122,31 @@ fn encode_spool_record(
     out.push(1); // Finality::Final is the only v1 value.
     out.push(u8::from(turn.was_encrypted));
     out.push(u8::from(turn.was_burn));
+    out.push(
+        u8::try_from(turn.emitted_events.len())
+            .expect("bounded private Bazaar spool event count fits u8"),
+    );
+    for slot in 0..MAX_SPOOL_EVENTS {
+        match turn.emitted_events.get(slot) {
+            Some(emitted) => {
+                out.push(1);
+                out.extend_from_slice(emitted.cell.as_bytes());
+                out.extend_from_slice(&emitted.topic);
+                out.push(
+                    u8::try_from(emitted.data.len())
+                        .expect("bounded private Bazaar spool event field count fits u8"),
+                );
+                for field in &emitted.data {
+                    out.extend_from_slice(field);
+                }
+                out.resize(
+                    out.len() + ((MAX_SPOOL_EVENT_FIELDS - emitted.data.len()) * 32),
+                    0,
+                );
+            }
+            None => out.resize(out.len() + SPOOL_EVENT_SLOT_LEN, 0),
+        }
+    }
     out.extend_from_slice(&turn.receipt_hash());
     let checksum = checksum(SPOOL_DOMAIN, &out);
     out.extend_from_slice(&checksum);
@@ -1173,6 +1254,57 @@ fn decode_spool_record(bytes: &[u8]) -> Result<DecodedSpoolRecord, PrivateBazaar
     }
     let was_encrypted = decode_bool(reader.u8()?, "receipt spool encrypted flag")?;
     let was_burn = decode_bool(reader.u8()?, "receipt spool burn flag")?;
+    let event_count = usize::from(reader.u8()?);
+    if event_count > MAX_SPOOL_EVENTS {
+        return Err(PrivateBazaarWorkerError::Corrupt(
+            "receipt spool event count",
+        ));
+    }
+    let mut emitted_events = Vec::with_capacity(event_count);
+    for slot in 0..MAX_SPOOL_EVENTS {
+        let present = decode_bool(reader.u8()?, "receipt spool event presence flag")?;
+        let cell = reader.array::<32>()?;
+        let topic = reader.array::<32>()?;
+        let field_count = usize::from(reader.u8()?);
+        let mut fields = Vec::with_capacity(field_count.min(MAX_SPOOL_EVENT_FIELDS));
+        for index in 0..MAX_SPOOL_EVENT_FIELDS {
+            let field = reader.array::<32>()?;
+            if index < field_count {
+                fields.push(field);
+            } else if field != [0; 32] {
+                return Err(PrivateBazaarWorkerError::Corrupt(
+                    "receipt spool event field padding",
+                ));
+            }
+        }
+        // Presence is positional: exactly the first `event_count` slots carry an
+        // event, and every trailing slot is all zero. Anything else is a second
+        // encoding of the same list, which the record checksum would happily
+        // sign.
+        if present != (slot < event_count) {
+            return Err(PrivateBazaarWorkerError::Corrupt(
+                "receipt spool event slot presence",
+            ));
+        }
+        if !present {
+            if cell != [0; 32] || topic != [0; 32] || field_count != 0 {
+                return Err(PrivateBazaarWorkerError::Corrupt(
+                    "receipt spool absent event slot",
+                ));
+            }
+            continue;
+        }
+        if field_count > MAX_SPOOL_EVENT_FIELDS {
+            return Err(PrivateBazaarWorkerError::Corrupt(
+                "receipt spool event field count",
+            ));
+        }
+        emitted_events.push(EmittedEvent {
+            cell: CellId(cell),
+            topic,
+            data: fields,
+        });
+    }
     let expected_receipt_hash = reader.array::<32>()?;
     let record_checksum = reader.array::<32>()?;
     if !reader.is_finished() {
@@ -1196,7 +1328,7 @@ fn decode_spool_record(bytes: &[u8]) -> Result<DecodedSpoolRecord, PrivateBazaar
         routing_directives: Vec::new(),
         introduction_exports: Vec::new(),
         derivation_records: Vec::new(),
-        emitted_events: Vec::new(),
+        emitted_events,
         executor_signature,
         finality: Finality::Final,
         was_encrypted,
@@ -1472,7 +1604,7 @@ fn encode_cursor(cursor: u64) -> Vec<u8> {
     out
 }
 
-fn checksum(domain: &str, bytes: &[u8]) -> [u8; 32] {
+pub(crate) fn checksum(domain: &str, bytes: &[u8]) -> [u8; 32] {
     *blake3::Hasher::new_derive_key(domain)
         .update(bytes)
         .finalize()
@@ -1525,13 +1657,13 @@ const fn test_spool_scope(tag: u8) -> PrivateBazaarSpoolScope {
     )
 }
 
-fn array_at<const N: usize>(bytes: &[u8], offset: usize) -> [u8; N] {
+pub(crate) fn array_at<const N: usize>(bytes: &[u8], offset: usize) -> [u8; N] {
     bytes[offset..offset + N]
         .try_into()
         .expect("fixed worker record length checked")
 }
 
-fn private_options() -> OpenOptions {
+pub(crate) fn private_options() -> OpenOptions {
     let mut options = OpenOptions::new();
     options.write(true);
     #[cfg(unix)]
@@ -1606,7 +1738,7 @@ impl SpoolFileIdentity {
     }
 }
 
-fn ensure_private_directory(path: &Path) -> Result<(), PrivateBazaarWorkerError> {
+pub(crate) fn ensure_private_directory(path: &Path) -> Result<(), PrivateBazaarWorkerError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -1648,7 +1780,10 @@ pub(crate) fn acquire_private_worker_lease(root: &Path) -> Result<File, PrivateB
     Ok(file)
 }
 
-fn secure_private_file_handle(file: &File, parent: &Path) -> Result<(), PrivateBazaarWorkerError> {
+pub(crate) fn secure_private_file_handle(
+    file: &File,
+    parent: &Path,
+) -> Result<(), PrivateBazaarWorkerError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -1669,7 +1804,7 @@ fn secure_private_file_handle(file: &File, parent: &Path) -> Result<(), PrivateB
     validate_private_file_handle(file, parent)
 }
 
-fn validate_private_file_handle(
+pub(crate) fn validate_private_file_handle(
     file: &File,
     parent: &Path,
 ) -> Result<(), PrivateBazaarWorkerError> {
@@ -1733,7 +1868,7 @@ fn write_new_or_verify(path: &Path, expected: &[u8]) -> Result<(), PrivateBazaar
     atomic_replace(path, expected)
 }
 
-fn atomic_replace(path: &Path, bytes: &[u8]) -> Result<(), PrivateBazaarWorkerError> {
+pub(crate) fn atomic_replace(path: &Path, bytes: &[u8]) -> Result<(), PrivateBazaarWorkerError> {
     let temp = path.with_extension("next");
     let mut options = private_options();
     options.create(true).truncate(true);
@@ -1757,7 +1892,7 @@ fn sync_parent(path: &Path) -> Result<(), PrivateBazaarWorkerError> {
     sync_directory(parent)
 }
 
-fn sync_directory(path: &Path) -> Result<(), PrivateBazaarWorkerError> {
+pub(crate) fn sync_directory(path: &Path) -> Result<(), PrivateBazaarWorkerError> {
     File::open(path)
         .and_then(|directory| directory.sync_all())
         .map_err(|error| PrivateBazaarWorkerError::io("sync worker directory", error))
@@ -1826,7 +1961,7 @@ pub enum PrivateBazaarWorkerError {
 }
 
 impl PrivateBazaarWorkerError {
-    fn io(operation: &'static str, error: io::Error) -> Self {
+    pub(crate) fn io(operation: &'static str, error: io::Error) -> Self {
         Self::Io {
             operation,
             detail: error.to_string(),
@@ -2053,12 +2188,17 @@ mod tests {
 
     #[test]
     fn semantic_spool_refuses_cross_deployment_and_corrupt_core() {
-        let legacy = tempfile::tempdir().unwrap();
-        fs::write(legacy.path().join(LEGACY_SPOOL_FILE_NAME), []).unwrap();
-        assert!(matches!(
-            PrivateBazaarReceiptSpool::open_test(legacy.path()),
-            Err(PrivateBazaarWorkerError::LegacySpoolRequiresMigration)
-        ));
+        for name in LEGACY_SPOOL_FILE_NAMES {
+            let legacy = tempfile::tempdir().unwrap();
+            fs::write(legacy.path().join(name), []).unwrap();
+            assert!(
+                matches!(
+                    PrivateBazaarReceiptSpool::open_test(legacy.path()),
+                    Err(PrivateBazaarWorkerError::LegacySpoolRequiresMigration)
+                ),
+                "a {name} spool must demand migration, never be silently ignored"
+            );
+        }
 
         let cross = tempfile::tempdir().unwrap();
         let scope_a = test_spool_scope(0x31);
@@ -2097,19 +2237,24 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("worker");
         let mut spool = PrivateBazaarReceiptSpool::open_test(&root).unwrap();
+        // Emitted events ARE supported as of v3 (a real SETTLE emits them and
+        // the receipt hash binds them); the OTHER variable collections are not,
+        // and dropping one would silently discard a disclosure the receipt hash
+        // binds. That is the failure v2 shipped, so it stays a named refusal.
         let mut unsupported = receipt(0x31);
         unsupported
             .settlement_turn
-            .emitted_events
-            .push(dregg_turn::EmittedEvent {
-                cell: CellId([0x32; 32]),
-                topic: [0x33; 32],
-                data: Vec::new(),
+            .introduction_exports
+            .push(dregg_turn::IntroductionExport {
+                target: CellId([0x32; 32]),
+                recipient: CellId([0x33; 32]),
+                authorizing_turn: [0x34; 32],
+                expires: None,
             });
         assert!(matches!(
             spool.append(1, 7, unsupported),
             Err(PrivateBazaarWorkerError::UnsupportedReceiptField(
-                "emitted events"
+                "introduction exports"
             ))
         ));
 
@@ -2197,8 +2342,135 @@ mod tests {
     }
 
     #[test]
-    fn fixed_spool_v2_record_length_is_pinned() {
-        assert_eq!(SPOOL_RECORD_LEN, 935);
+    fn fixed_spool_v3_record_length_is_pinned() {
+        assert_eq!(SPOOL_EVENT_SLOT_LEN, 194);
+        assert_eq!(SPOOL_EVENTS_REGION_LEN, 1553);
+        assert_eq!(SPOOL_RECORD_LEN, 2488);
+    }
+
+    /// THE v2 DEFECT IS CLOSED: a receipt carrying emitted events round-trips.
+    ///
+    /// A real Dark Bazaar SETTLE emits `auction-closed`, one `auction-reveal`
+    /// per sealed bid, and `auction-resolved`. v2 refused any such receipt, so
+    /// the durable leg could only ever carry synthetic receipts. The decoder's
+    /// `receipt_hash()` equality check is what proves the round-trip is exact:
+    /// events are bound by `dregg-receipt-v5`, so a dropped or altered event
+    /// cannot reconstruct the hash.
+    #[test]
+    fn the_spool_carries_the_settle_shaped_emitted_events() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut spooled = receipt(0x91);
+        spooled.settlement_turn.emitted_events = settle_shaped_events();
+        let events = spooled.settlement_turn.emitted_events.clone();
+        let expected_hash = spooled.settlement_turn.receipt_hash();
+
+        let mut spool = PrivateBazaarReceiptSpool::open_test(temp.path()).unwrap();
+        spool.append(1, 0xE1, spooled).unwrap();
+        let polled = spool.poll_bounded(0, 1).unwrap();
+        assert_eq!(polled.len(), 1);
+        let turn = &polled[0].receipt.settlement_turn;
+        assert_eq!(turn.emitted_events.len(), events.len());
+        for (found, expected) in turn.emitted_events.iter().zip(events.iter()) {
+            assert_eq!(found.cell, expected.cell);
+            assert_eq!(found.topic, expected.topic);
+            assert_eq!(found.data, expected.data);
+        }
+        assert_eq!(turn.receipt_hash(), expected_hash);
+    }
+
+    /// The bound is a REFUSAL, never a truncation. Both directions are named.
+    #[test]
+    fn the_spool_refuses_an_event_list_beyond_its_fixed_capacity() {
+        let too_many = tempfile::tempdir().unwrap();
+        let mut spooled = receipt(0x92);
+        spooled.settlement_turn.emitted_events = (0..=MAX_SPOOL_EVENTS)
+            .map(|index| EmittedEvent {
+                cell: CellId([index as u8; 32]),
+                topic: [0x5A; 32],
+                data: Vec::new(),
+            })
+            .collect();
+        let mut spool = PrivateBazaarReceiptSpool::open_test(too_many.path()).unwrap();
+        assert!(matches!(
+            spool.append(1, 0xE2, spooled),
+            Err(PrivateBazaarWorkerError::UnsupportedReceiptField(
+                "emitted event count"
+            ))
+        ));
+        assert_eq!(fs::metadata(&spool.path).unwrap().len(), 0);
+
+        let too_wide = tempfile::tempdir().unwrap();
+        let mut spooled = receipt(0x93);
+        spooled.settlement_turn.emitted_events = vec![EmittedEvent {
+            cell: CellId([0x11; 32]),
+            topic: [0x5B; 32],
+            data: vec![[0x01; 32]; MAX_SPOOL_EVENT_FIELDS + 1],
+        }];
+        let mut spool = PrivateBazaarReceiptSpool::open_test(too_wide.path()).unwrap();
+        assert!(matches!(
+            spool.append(1, 0xE3, spooled),
+            Err(PrivateBazaarWorkerError::UnsupportedReceiptField(
+                "emitted event field count"
+            ))
+        ));
+        assert_eq!(fs::metadata(&spool.path).unwrap().len(), 0);
+    }
+
+    /// A hostile rewrite of the events region — with the record checksum
+    /// RECOMPUTED, so the cheap tooth is bypassed — is still refused, because
+    /// the reconstructed `receipt_hash()` no longer matches the bound one.
+    #[test]
+    fn a_rewritten_event_with_a_valid_checksum_is_still_refused() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut spooled = receipt(0x94);
+        spooled.settlement_turn.emitted_events = settle_shaped_events();
+        let mut spool = PrivateBazaarReceiptSpool::open_test(temp.path()).unwrap();
+        spool.append(1, 0xE4, spooled).unwrap();
+        let path = spool.path.clone();
+        drop(spool);
+
+        let mut bytes = fs::read(&path).unwrap();
+        // The first event slot's topic sits immediately after its presence flag
+        // and emitting cell, inside the events region.
+        let region = SPOOL_RECORD_LEN - 32 - 32 - SPOOL_EVENTS_REGION_LEN;
+        let topic = region + 1 + 1 + 32;
+        bytes[topic] ^= 0xFF;
+        let recomputed = checksum(SPOOL_DOMAIN, &bytes[..SPOOL_RECORD_LEN - 32]);
+        bytes[SPOOL_RECORD_LEN - 32..].copy_from_slice(&recomputed);
+        fs::write(&path, bytes).unwrap();
+
+        assert!(matches!(
+            PrivateBazaarReceiptSpool::open_test(temp.path()),
+            Err(PrivateBazaarWorkerError::Corrupt(
+                "receipt spool reconstructed receipt hash"
+            ))
+        ));
+    }
+
+    fn settle_shaped_events() -> Vec<EmittedEvent> {
+        let cell = CellId([0x77; 32]);
+        vec![
+            EmittedEvent {
+                cell,
+                topic: [0xA0; 32],
+                data: Vec::new(),
+            },
+            EmittedEvent {
+                cell,
+                topic: [0xA1; 32],
+                data: vec![[0x01; 32], [0x02; 32]],
+            },
+            EmittedEvent {
+                cell,
+                topic: [0xA1; 32],
+                data: vec![[0x03; 32], [0x04; 32]],
+            },
+            EmittedEvent {
+                cell,
+                topic: [0xA2; 32],
+                data: vec![[0x03; 32], [0x04; 32]],
+            },
+        ]
     }
 
     #[cfg(unix)]

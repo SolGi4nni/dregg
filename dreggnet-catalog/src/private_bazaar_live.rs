@@ -35,6 +35,7 @@ use dreggnet_market::{DarkBazaarOffering, TURN_BID};
 use dreggnet_offerings::{Action, DreggIdentity, Offering, OfferingHost, Outcome};
 use dungeon_on_dregg::progression::DungeonWorldCell;
 
+use crate::private_bazaar_ingress::PrivateBazaarSealedIngressQueue;
 use crate::private_bazaar_service::{
     PRIVATE_BAZAAR_WORKER_INITIAL_BACKOFF_MS_ENV, PRIVATE_BAZAAR_WORKER_MAX_BACKOFF_MS_ENV,
     PRIVATE_BAZAAR_WORKER_POLL_MS_ENV, PrivateBazaarAuthenticatedReceiptSource,
@@ -222,8 +223,44 @@ impl PrivateBazaarLiveDeployment {
         PrivateBazaarLiveRuntime::start(self.clone(), targets)
     }
 
+    /// Open the deployment-custodied sealed-ingress queue: the out-of-band
+    /// SUBMISSION half of the private clearing.
+    ///
+    /// This is what a production bid collector holds. It is deliberately not
+    /// reachable from any frontend action: `OfferingHost` routes carry Enter and
+    /// nothing else, and a book submitted here never crosses a browser or chat
+    /// boundary. The supervisor drains this queue and runs the real relation on
+    /// what it finds; an out-of-family book is refused here, by name, before a
+    /// single BID turn touches the executor board.
+    pub fn private_sealed_ingress(
+        &self,
+    ) -> Result<PrivateBazaarSealedIngressQueue, PrivateBazaarWorkerError> {
+        PrivateBazaarSealedIngressQueue::open(self)
+    }
+
     pub(crate) fn private_worker_root(&self) -> PathBuf {
         self.authority_dir.join("private-worker")
+    }
+
+    pub(crate) fn private_ingress_root(&self) -> PathBuf {
+        self.authority_dir.join("private-ingress")
+    }
+
+    /// Has this deterministic hosted seed already produced a proof-verified
+    /// private clearing? Used to close the crash window between a landed
+    /// settlement and its durable ingress acknowledgement: without it a restart
+    /// would replay a submission whose market is already terminal, be refused
+    /// `AlreadySettled`, and wedge the queue on work that in fact succeeded.
+    pub(crate) fn private_clearing_is_finalized(
+        &self,
+        seed: u64,
+    ) -> Result<bool, PrivateBazaarWorkerError> {
+        self.registry
+            .with_entered_typed(seed, |market, _| {
+                Ok::<_, ()>(market.verified_private_clearing().is_some())
+            })
+            .map_err(PrivateBazaarWorkerError::from)?
+            .map_err(|()| PrivateBazaarWorkerError::StaleLiveMarket)
     }
 
     pub(crate) fn private_target_root(&self) -> PathBuf {
@@ -1378,5 +1415,285 @@ mod tests {
 
     fn hex(bytes: &[u8; 32]) -> String {
         bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    const INGRESS_LOW_BIDDER: &str = "catalog-private-low-bidder";
+    const INGRESS_WINNER: &str = "catalog-private-winner";
+
+    fn ingress_bids() -> Vec<(DreggIdentity, i64)> {
+        vec![
+            (DreggIdentity(INGRESS_LOW_BIDDER.to_owned()), 2),
+            (DreggIdentity(INGRESS_WINNER.to_owned()), 3),
+        ]
+    }
+
+    /// THE DEPLOYED LOOP RUNS THE PROVEN RELATION, END TO END.
+    ///
+    /// Before this wiring the supervisor could only ever OBSERVE receipts, and
+    /// the only thing in the tree that produced one was a test — so a shipped
+    /// deployment polled a source no production caller could fill. Here a book
+    /// is submitted out of band, the production supervisor thread picks it up,
+    /// mints and verifies the real `HidingFriPcs` proof of the Lean-emitted
+    /// `N=4,K=4` descriptor, lands the executor SETTLE, carries the receipt
+    /// through the durable v3 spool, and dispatches the exact pinned Dungeon
+    /// consequence. Nothing in this path is a stub and no step is simulated.
+    ///
+    /// SUBSTRATE, out loud: the constraints are Lean-authored
+    /// (`metatheory/Market/DarkBazaarPrivateDescriptor.lean` → the emitted
+    /// `dark-bazaar-private-n4k4.json` descriptor). Rust only calls the emitted
+    /// artifact; nothing here hand-writes an AIR.
+    #[test]
+    fn the_deployed_supervisor_clears_a_submitted_sealed_book_end_to_end() {
+        install_verified_test_pq_runtime();
+        let temp = tempfile::tempdir().unwrap();
+        let authority_dir = temp.path().join("authority");
+        let hero = Arc::new(deploy_hero(0x9C));
+        hero.set_executor_signing_key([0xB4; 32]);
+        let deployment =
+            PrivateBazaarLiveDeployment::open(playable_policy(&hero), 1, &authority_dir).unwrap();
+        let mut host =
+            full_catalog_host_with_private_bazaar(&CatalogConfig::default(), &deployment);
+        let id = SessionId::new("catalog-private-bazaar-ingress");
+        let seed = 0xB4_2A_C1;
+        enter_hosted_raid(&mut host, &id, seed);
+        let xp_before = hero.read_var("xp");
+
+        // OUT OF BAND. This is the one production ingress, and no frontend
+        // action can reach it: the mounted offering's only route is Enter.
+        let mut ingress = deployment.private_sealed_ingress().unwrap();
+        let accepted = ingress
+            .submit(seed, ingress_bids(), Some([0x0011_57F1; 8]))
+            .unwrap();
+        assert_eq!(accepted.sequence, 1);
+        assert_eq!(ingress.pending().unwrap(), 1);
+
+        // A queued submission is NOT a settlement. Nothing has cleared, and the
+        // executor board is untouched by the mere act of accepting a book.
+        assert!(
+            deployment
+                .finalized_private_receipts(None, 8)
+                .unwrap()
+                .0
+                .is_empty()
+        );
+        assert_eq!(hero.read_var("xp"), xp_before);
+
+        let targets = PrivateBazaarWorkerTargets::from_worlds([Arc::clone(&hero)]).unwrap();
+        let config = PrivateBazaarWorkerServiceConfig::for_deployment_with_timing(
+            &deployment,
+            Duration::from_millis(5),
+            Duration::from_millis(5),
+            Duration::from_millis(20),
+        )
+        .unwrap();
+        let supervisor =
+            PrivateBazaarWorkerSupervisor::start(deployment.clone(), targets, config).unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(180);
+        loop {
+            let health = supervisor.health();
+            assert_ne!(
+                health.phase,
+                PrivateBazaarWorkerServicePhase::Faulted,
+                "the production loop faulted instead of clearing the submission: {health:?}"
+            );
+            if health.ingress_settled >= 1 && health.processed >= 1 {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the production loop never cleared the queued book: {health:?}"
+            );
+            thread::sleep(Duration::from_millis(25));
+        }
+        let health = supervisor.shutdown().unwrap();
+        assert_eq!(health.ingress_settled, 1);
+        assert_eq!(health.ingress_already_terminal, 0);
+        assert_eq!(health.ingress_pending, 0);
+        assert!(
+            health.source_appends >= 1,
+            "the REAL settlement receipt must reach the durable spool: {health:?}"
+        );
+        assert!(health.processed >= 1, "{health:?}");
+
+        // The receipt is real, on the live path, at the real first price.
+        let (finalized, _, _) = deployment.finalized_private_receipts(None, 8).unwrap();
+        assert_eq!(finalized.len(), 1);
+        assert_eq!(finalized[0].0, seed);
+        assert_eq!((finalized[0].1.price(), finalized[0].1.volume()), (3, 1));
+        assert_eq!(
+            finalized[0].1.winner,
+            DreggIdentity(INGRESS_WINNER.to_owned())
+        );
+        assert_ne!(finalized[0].1.settlement_turn.turn_hash, [0; 32]);
+        assert!(
+            !finalized[0].1.settlement_turn.emitted_events.is_empty(),
+            "a real SETTLE emits events — that is exactly what the v2 spool could not carry"
+        );
+
+        // And the exact pinned game consequence landed, exactly once.
+        assert_eq!(hero.read_var("xp"), xp_before + 144);
+
+        // The queue is drained and stays drained across a reopen.
+        assert_eq!(
+            deployment
+                .private_sealed_ingress()
+                .unwrap()
+                .pending()
+                .unwrap(),
+            0
+        );
+    }
+
+    /// AN OUT-OF-FAMILY BOOK IS REFUSED AT INGRESS, BY NAME, AND NEVER QUEUED.
+    ///
+    /// The refusal happens at the API boundary, before anything durable exists
+    /// and long before a BID turn could touch the executor board. Nothing is
+    /// truncated to three bids and nothing is clamped into the price family.
+    #[test]
+    fn sealed_ingress_refuses_an_out_of_family_book_and_names_the_limit() {
+        install_verified_test_pq_runtime();
+        let temp = tempfile::tempdir().unwrap();
+        let hero = Arc::new(deploy_hero(0x9D));
+        hero.set_executor_signing_key([0xB5; 32]);
+        let deployment =
+            PrivateBazaarLiveDeployment::open(playable_policy(&hero), 1, temp.path()).unwrap();
+        let mut ingress = deployment.private_sealed_ingress().unwrap();
+        let seed = 0xB4_2A_C2;
+
+        let too_many = ingress.submit(
+            seed,
+            vec![
+                (DreggIdentity(INGRESS_LOW_BIDDER.to_owned()), 0),
+                (DreggIdentity(INGRESS_WINNER.to_owned()), 1),
+                (DreggIdentity("catalog-private-seller".to_owned()), 2),
+                (DreggIdentity(INGRESS_WINNER.to_owned()), 3),
+            ],
+            None,
+        );
+        let named = too_many.as_ref().unwrap_err().to_string();
+        assert!(
+            named.contains("4 sealed bids exceeds PROVEN_MAX_SEALED_BIDS = 3"),
+            "the refusal must name the limit that was exceeded: {named}"
+        );
+
+        let too_wide = ingress.submit(
+            seed,
+            vec![(DreggIdentity(INGRESS_WINNER.to_owned()), 4)],
+            None,
+        );
+        let named = too_wide.as_ref().unwrap_err().to_string();
+        assert!(
+            named.contains("bid limit 4 is outside the proved price family 0..4"),
+            "{named}"
+        );
+
+        let negative = ingress.submit(
+            seed,
+            vec![(DreggIdentity(INGRESS_WINNER.to_owned()), -1)],
+            None,
+        );
+        assert!(
+            negative
+                .as_ref()
+                .unwrap_err()
+                .to_string()
+                .contains("bid limit -1 is outside the proved price family"),
+            "{negative:?}"
+        );
+
+        let empty = ingress.submit(seed, Vec::new(), None);
+        assert!(matches!(
+            empty,
+            Err(crate::private_bazaar_ingress::PrivateBazaarIngressError::OutsideProvenFamily(_))
+        ));
+
+        // A bidder the deployment's immutable policy roster does not name is
+        // refused too: the winner drives a pinned Dungeon consequence, so an
+        // unknown winner has no target and must never reach the relation.
+        let stranger = ingress.submit(
+            seed,
+            vec![(DreggIdentity("not-on-the-roster".to_owned()), 3)],
+            None,
+        );
+        assert!(
+            stranger
+                .as_ref()
+                .unwrap_err()
+                .to_string()
+                .contains("outside the deployment's immutable policy roster"),
+            "{stranger:?}"
+        );
+
+        // Not one of those five attempts left a durable trace.
+        assert_eq!(ingress.pending().unwrap(), 0);
+
+        // And the type gate is the same one, so an in-family book still passes.
+        assert_eq!(
+            ingress.submit(seed, ingress_bids(), None).unwrap().sequence,
+            1
+        );
+        assert_eq!(ingress.pending().unwrap(), 1);
+    }
+
+    /// THE RESTART PATH KNOWS WHO BID — BECAUSE THE COMMITMENT BINDING DOES NOT.
+    ///
+    /// The durable worker-private commitment binding pins the canonical ORDER
+    /// records, `(side, qty, limit)`, because that is all the circuit commits
+    /// to; a bidder identity is not in the relation at all. So the binding
+    /// CANNOT distinguish `{low:2, winner:3}` from `{stranger:2, other:3}` —
+    /// asserted below, so the hole is demonstrated rather than asserted about —
+    /// while the WINNER, and therefore the pinned XP target, differs. The
+    /// durable ingress record is what closes it: it carries the identities, and
+    /// a restarted drain replays the exact submitted book.
+    #[test]
+    fn the_restart_path_replays_the_exact_bidders_the_binding_cannot_see() {
+        install_verified_test_pq_runtime();
+        let temp = tempfile::tempdir().unwrap();
+        let authority_dir = temp.path().join("authority");
+        let hero = Arc::new(deploy_hero(0x9E));
+        hero.set_executor_signing_key([0xB6; 32]);
+        let policy = playable_policy(&hero);
+        let seed = 0xB4_2A_C3;
+
+        // The hole, demonstrated: same limits, different bidders, IDENTICAL
+        // canonical orders — which is exactly what the binding digests.
+        let submitted = PrivateSealedIngressBook::new(ingress_bids()).unwrap();
+        let substituted = PrivateSealedIngressBook::new(vec![
+            (DreggIdentity("catalog-private-seller".to_owned()), 2),
+            (DreggIdentity(INGRESS_LOW_BIDDER.to_owned()), 3),
+        ])
+        .unwrap();
+        assert_eq!(
+            submitted.canonical_orders(),
+            substituted.canonical_orders(),
+            "the commitment binding is blind to WHO bid; that is why the ingress \
+             record must carry identities"
+        );
+
+        {
+            let deployment =
+                PrivateBazaarLiveDeployment::open(policy.clone(), 1, &authority_dir).unwrap();
+            deployment
+                .private_sealed_ingress()
+                .unwrap()
+                .submit(seed, ingress_bids(), Some([0x0011_57F2; 8]))
+                .unwrap();
+        }
+
+        // Full restart: a fresh deployment over the same authority directory.
+        let restarted = PrivateBazaarLiveDeployment::open(policy, 1, &authority_dir).unwrap();
+        let ingress = restarted.private_sealed_ingress().unwrap();
+        assert_eq!(ingress.pending().unwrap(), 1);
+        let pending = ingress.next_pending().unwrap().expect("the queued book");
+        assert_eq!(pending.sequence, 1);
+        assert_eq!(pending.session_seed, seed);
+        assert_eq!(pending.blinding, Some([0x0011_57F2; 8]));
+        assert_eq!(
+            pending.book.sealed_bids().to_vec(),
+            ingress_bids(),
+            "the restarted drain must replay the EXACT bidders, not merely a book \
+             with the same multiset of limits"
+        );
     }
 }

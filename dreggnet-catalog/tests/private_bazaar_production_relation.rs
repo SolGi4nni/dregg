@@ -32,7 +32,6 @@ use dregg_app_framework::{
 use dreggnet_catalog::private_bazaar_live::{
     PrivateBazaarLiveDeployment, PrivateBazaarLiveDeploymentError,
 };
-use dreggnet_catalog::private_bazaar_worker::PrivateBazaarWorkerError;
 use dreggnet_catalog::{CatalogConfig, full_catalog_host_with_private_bazaar};
 use dreggnet_market::private_bazaar_journey::{
     PrivateBazaarDeploymentPin, PrivateBazaarRaidPolicy,
@@ -232,26 +231,25 @@ fn the_production_worker_mints_and_verifies_the_real_private_book_proof() {
     );
 }
 
-/// PINNED DEFECT — the durable spool cannot carry a REAL settlement receipt.
+/// CLOSED DEFECT — the durable spool now CARRIES a real settlement receipt.
 ///
-/// This is not a feature and this test is not an endorsement. The worker's
-/// append-only v2 spool uses a FIXED-length record (`SPOOL_RECORD_LEN`) and its
-/// decoder rebuilds a `TurnReceipt` out of those fixed fields, while
-/// `validate_worker_spool_live_settlement` compares `receipt_hash()` against the
-/// live turn. So the codec cannot drop a field and must refuse any receipt
-/// carrying one it has no room for. A real Dark Bazaar SETTLE emits events, so
-/// it is refused: `UnsupportedReceiptField("emitted events")`.
+/// What this test used to pin: the worker's append-only v2 spool refused any
+/// receipt with a non-empty `emitted_events`, and a real Dark Bazaar SETTLE is
+/// one atomic turn of `close_commit` + one `reveal_bid` per sealed bid +
+/// `resolve`, every one of which emits an event. So the durable leg had only
+/// ever been exercised against SYNTHETIC receipts built from
+/// `TurnReceipt::default()`, and a production receipt was structurally
+/// unspoolable — which meant the deployed worker would have FAULTED on the
+/// first real book it ever settled.
 ///
-/// The consequence is exact and worth stating plainly: the clearing itself is
-/// real and lands (asserted below), but the spool leg of the deployed worker has
-/// only ever been exercised against SYNTHETIC receipts built from
-/// `TurnReceipt::default()`. It has never carried a production receipt and, at
-/// this schema, cannot. Carrying one requires a variable-length record — a
-/// schema project, deliberately not attempted here.
-///
-/// This test FIRES the moment that changes, so the residual cannot rot quietly.
+/// v3 carries them, in a fixed-capacity region sized for exactly this shape
+/// (`PROVEN_MAX_SEALED_BIDS` + 2 events, two felts each, with headroom); a
+/// larger list is still refused BY NAME rather than truncated, because
+/// `TurnReceipt::receipt_hash` binds the events and dropping one would forge a
+/// different outcome under the same executor signature. The round-trip below is
+/// what the old test demanded as the condition for its own replacement.
 #[test]
-fn pinned_defect_the_durable_spool_refuses_a_real_settlement_receipt() {
+fn the_durable_spool_carries_a_real_settlement_receipt() {
     let temp = tempfile::tempdir().expect("scratch authority dir");
     let deployment = deployment(temp.path());
     let seed = 0x9E_11_A6;
@@ -260,36 +258,30 @@ fn pinned_defect_the_durable_spool_refuses_a_real_settlement_receipt() {
     let mut source = deployment
         .private_authenticated_receipt_source()
         .expect("production authenticated source");
-    let captured = source.settle_and_capture(seed, &in_family_book(), Some([17; 8]));
-
-    match captured {
-        Err(PrivateBazaarWorkerError::PrivateClearingRefused(why)) => panic!(
-            "the CLEARING must not be what fails here — the relation and its settlement are \
-             expected to succeed, and only the spool encode is expected to refuse; got: {why}"
-        ),
-        Err(PrivateBazaarWorkerError::UnsupportedReceiptField(field)) => {
-            assert_eq!(
-                field, "emitted events",
-                "the known schema gap is the emitted-events field"
-            );
-        }
-        other => panic!(
-            "spool encode of a real receipt unexpectedly changed behaviour — if the schema was \
-             widened, this pinned defect is FIXED and this test must be replaced with a \
-             round-trip assertion; got: {other:?}"
-        ),
-    }
-
-    // The clearing itself was real and DID land: the refusal above is the spool
-    // transport, not the proof, the relation, or the executor settlement.
-    let (_, _, settled) = board_state(&deployment, seed);
-    assert!(
-        settled,
-        "the proof-authorized executor SETTLE landed even though the spool refused it"
+    let captured = source
+        .settle_and_capture(seed, &in_family_book(), Some([17; 8]))
+        .expect("the real clearing is produced AND reaches the durable spool");
+    assert_eq!(captured.observed, 1);
+    assert_eq!(
+        captured.appended, 1,
+        "a production receipt must be appended, not refused: {captured:?}"
     );
+
+    let (_, _, settled) = board_state(&deployment, seed);
+    assert!(settled, "the proof-authorized executor SETTLE landed");
     let found = finalized(&deployment, None);
     assert_eq!(found.len(), 1);
     assert_eq!((found[0].1.price(), found[0].1.volume()), (3, 1));
+    assert!(
+        !found[0].1.settlement_turn.emitted_events.is_empty(),
+        "a real SETTLE emits events — if it stopped, this test no longer covers the \
+         schema gap it was written for"
+    );
+
+    // Re-capture is idempotent rather than a second consequence.
+    let again = source.capture_once().expect("a second capture is bounded");
+    assert_eq!(again.observed, 1);
+    assert_eq!(again.appended, 0);
 }
 
 /// A BOOK LARGER THAN THE PROVEN SHAPE IS REFUSED — NEVER SILENTLY ACCEPTED.

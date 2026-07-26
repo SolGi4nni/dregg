@@ -59,6 +59,8 @@ pub mod game_publication;
 pub mod game_spine;
 pub mod player_worlds;
 #[cfg(feature = "private-bazaar-live")]
+pub mod private_bazaar_ingress;
+#[cfg(feature = "private-bazaar-live")]
 pub mod private_bazaar_live;
 #[cfg(feature = "private-bazaar-live")]
 pub mod private_bazaar_service;
@@ -91,6 +93,11 @@ pub use game_spine::{
     sign_game_action, verify_signed_game_action,
 };
 pub use player_worlds::{PlayerWorlds, RPG_KEYS, build_player_host, is_rpg_key};
+#[cfg(feature = "private-bazaar-live")]
+pub use private_bazaar_ingress::{
+    PrivateBazaarIngressError, PrivateBazaarIngressProgress, PrivateBazaarIngressSubmission,
+    PrivateBazaarSealedIngressQueue,
+};
 #[cfg(feature = "private-bazaar-live")]
 pub use private_bazaar_live::{
     PRIVATE_BAZAAR_RAID_TITLE, PrivateBazaarLiveDeployment, build_full_catalog_with_private_bazaar,
