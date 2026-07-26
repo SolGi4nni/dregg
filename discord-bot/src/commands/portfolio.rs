@@ -1435,6 +1435,176 @@ mod tests {
         close_in::<AutomataflOffering>(channel);
     }
 
+    /// The JSON text of a rendered embed — every title/description/field value in one string, so an
+    /// assertion about what the player can READ does not depend on which slot carried it.
+    fn embed_text(embed: &CreateEmbed) -> String {
+        serde_json::to_string(embed).expect("an embed serialises")
+    }
+
+    /// **THE PRIVATE VIEW SAYS WHERE TO ACT — it is a READING surface, and it now admits it.**
+    ///
+    /// The concrete defect: for a hidden-information offering `channel_surfaces` returns the public
+    /// fogged board plus a PRIVATE ephemeral companion carrying the viewer's own secret — and that
+    /// companion shipped with `Vec::new()` for its button rows and NOT ONE WORD about why. The
+    /// player could read their sealed move privately and was then left to work out on their own
+    /// that they had to scroll up and act on the public board. ember's standard, from the web
+    /// surface they rejected: "it looks like a debug view, I can't tell what's happening."
+    ///
+    /// The controls staying public is a DELIBERATE decision, not an oversight (all presses ride one
+    /// board message, so a private press can never leave the public board stale) — so this test
+    /// pins the decision AND the honesty it owes:
+    ///
+    ///   * the companion carries NO controls (no half-built private control surface), and
+    ///   * its embed TELLS the player where to act, and
+    ///   * that instruction is TRUE — the public board it points at really does carry the presses.
+    ///
+    /// The third assertion is what keeps this from being a spell-check: a plaque saying "press on
+    /// the board" over a board with no buttons would pass the text check and still strand the
+    /// player.
+    #[test]
+    fn the_private_view_tells_the_player_where_to_act() {
+        let channel = 771_150u64;
+        close_in::<AutomataflOffering>(channel);
+        offering::open_in(
+            channel,
+            || AutomataflOffering,
+            SessionConfig::with_seed(channel),
+        )
+        .expect("automatafl opens");
+        let me = actor("pv");
+
+        let ((public_embed, public_rows), private) =
+            with_live::<AutomataflOffering, _>(channel, move |live| {
+                assert!(
+                    live.offering.hidden_information(),
+                    "this test is about the hidden-information split; automatafl must be one",
+                );
+                channel_surfaces::<AutomataflOffering>(live, &me)
+            })
+            .expect("a live automatafl session renders");
+
+        let (private_embed, private_rows) = private.expect(
+            "a hidden-information offering must return a PRIVATE companion — the viewer's own \
+             sealed move may never be painted into the shared channel",
+        );
+
+        // 1. No half-built private control surface.
+        assert!(
+            private_rows.is_empty(),
+            "the private companion deliberately carries no controls (one board message owns every \
+             press); it must not sprout a second control surface that can strand the public board",
+        );
+
+        // 2. It says so, and says where to go instead.
+        let text = embed_text(&private_embed);
+        assert!(
+            text.contains(offering::PRIVATE_ACT_FIELD),
+            "the private view must carry the where-to-act plaque, or the player is left reading a \
+             secret with no idea what to do next: {text}",
+        );
+        for needle in ["board", "press"] {
+            assert!(
+                text.to_lowercase().contains(needle),
+                "the plaque must name the board and the act of pressing on it (missing \
+                 `{needle}`): {text}",
+            );
+        }
+
+        // 3. And that instruction is TRUE: the public board really does carry the presses.
+        let public_buttons: usize = public_rows
+            .iter()
+            .map(|row| format!("{row:?}").matches("CreateButton").count())
+            .sum();
+        assert!(
+            public_buttons > 0,
+            "the plaque sends the player to the public board, so the public board MUST carry \
+             controls — otherwise the instruction is a lie and the player is stranded",
+        );
+        // The public board is the FOGGED one — the private secret never crosses into the channel.
+        let public_text = embed_text(&public_embed);
+        assert_ne!(
+            public_text, text,
+            "the public board and the private companion must be different renders (fog vs reveal)",
+        );
+
+        // 4. THE NEGATIVE CONTROL — the object that actually shipped.
+        //
+        // `surface_for` is the bare viewer projection `channel_surfaces` used to hand back
+        // untouched, and it is still exactly what a caller gets without the plaque. Asserting that
+        // it does NOT carry the guidance is what keeps assertion 2 from being unfalsifiable: if the
+        // plaque were ever unwired from `channel_surfaces`, the two halves of this test would
+        // agree and 2 would fail. It also pins that the plaque is added by the CHANNEL split and
+        // not smuggled into every render (the public board must not carry a "yours alone" note).
+        let bare = with_live::<AutomataflOffering, _>(channel, move |live| {
+            embed_text(&surface_for::<AutomataflOffering>(live, &actor("pv")).0)
+        })
+        .expect("the bare viewer projection renders");
+        assert!(
+            !bare.contains(offering::PRIVATE_ACT_FIELD),
+            "the bare viewer projection is the PRE-FIX object — it must not already contain the \
+             plaque, or assertion 2 proves nothing about the channel split adding it",
+        );
+        assert!(
+            !public_text.contains(offering::PRIVATE_ACT_FIELD),
+            "the PUBLIC board must not carry the private plaque — it is not yours alone, and it \
+             is where the controls already are",
+        );
+
+        close_in::<AutomataflOffering>(channel);
+    }
+
+    /// **THE PLAYED AUTOMATAFL FOLD IS MINTABLE AT THE SIZE DISCORD ACTUALLY PLAYS.**
+    ///
+    /// The dead path this pins: `/crown` folds a played automatafl match through
+    /// [`dreggnet_game_board::AutomataflMatch::played`], whose leaves resolve the PROVEN Lean
+    /// descriptors for the played board's size (`Leg R` = resolve, `Leg A` = step). The Discord
+    /// surface played 5×5, and no descriptor was ever emitted at n=5 — so **every** automatafl fold
+    /// failed, 100% of the time, with `MatchError::NoDescriptor(5, _)`.
+    ///
+    /// Nothing caught it, and the reason is worth keeping: `dreggnet-game-board`'s own
+    /// `n5_has_no_descriptor_blocked_not_faked` pinned the REFUSAL as *correct* (blocked, not
+    /// faked) — it asserted the guard works, never that the SHIPPED surface stayed on the right
+    /// side of it. The coupling between "the size the bot plays" and "the sizes the fold can mint"
+    /// was the untested edge, so that is what this asserts, reading the size off a REAL live
+    /// Discord session rather than a constant.
+    ///
+    /// Deliberately NOT `assert_eq!(n, 11)`: the board may move again (it has once), and what must
+    /// hold is not "11" but "a size whose descriptors exist". Written this way it keeps biting.
+    #[test]
+    fn a_played_automatafl_fold_is_mintable_at_the_live_board_size() {
+        use dregg_automatafl::resolve_witness::resolve_descriptor_ident;
+        use dregg_automatafl::witness::step_descriptor_name;
+        use dregg_circuit::descriptor_by_name::descriptor_by_name;
+
+        let channel = 771_160u64;
+        close_in::<AutomataflOffering>(channel);
+        offering::open_in(
+            channel,
+            || AutomataflOffering,
+            SessionConfig::with_seed(channel),
+        )
+        .expect("automatafl opens");
+
+        // The size the bot ACTUALLY deals a board at, read from the live session.
+        let n = with_live::<AutomataflOffering, _>(channel, |live| live.session.start_board().n)
+            .expect("a live automatafl board");
+
+        assert!(
+            descriptor_by_name(&step_descriptor_name(n)).is_some(),
+            "the live Discord automatafl board is {n}×{n}, and NO Lean step descriptor is emitted \
+             at n={n}: every /crown fold of a played match refuses with NoDescriptor({n}, \
+             \"step\"). Either emit the descriptor at this size or do not deal this size.",
+        );
+        assert!(
+            descriptor_by_name(resolve_descriptor_ident(n)).is_some(),
+            "the live Discord automatafl board is {n}×{n}, and NO Lean resolve descriptor is \
+             emitted at n={n}: the played fold's Leg R cannot be lowered, so /crown refuses every \
+             match played on this board.",
+        );
+
+        close_in::<AutomataflOffering>(channel);
+    }
+
     /// **The multiway-tug hidden hand threads the viewer on Discord** — a seated player sees THEIR
     /// OWN card ids through the viewer-aware render path while a different viewer (and the old
     /// viewer-blind render) sees fog; the two seats' hands DIFFER. This is the `hidden_hand_web.rs`

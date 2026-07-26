@@ -130,6 +130,13 @@ dregg-turn = { path = "../turn" }
 # Already in the build graph via dregg-sdk / dregg-app-framework; named directly
 # so `/credential verify` emits a genuine STARK proof, not a null placeholder.
 dregg-circuit = { path = "../circuit" }
+# `RecursionVk` / `SEG_ANCHOR_WIDTH` — the crown's DURABLE board anchor (`src/crown_store.rs`).
+# A ranked crown must survive a restart or its public "Re-verify (anyone, O(1))" button dies, and
+# rebuilding the pinned `ProofAnchor` from its stored columns needs the VK newtype. Already in
+# this graph via `dreggnet-game-board` (whose own manifest names it for the same types), so this
+# adds NOTHING to the closure — it is named directly for the type, exactly as `dregg-circuit`
+# above is named for `BabyBear`.
+dregg-circuit-prove = { path = "../circuit-prove" }
 starbridge-governed-namespace = { path = "../starbridge-apps/governed-namespace" }
 starbridge-nameservice = { path = "../starbridge-apps/nameservice" }
 starbridge-identity = { path = "../starbridge-apps/identity" }
@@ -315,6 +322,11 @@ tower = { version = "0.5", features = ["util"] }
 # rolls a new dungeon" case deterministically without a network. Already in the closure via
 # procgen-dregg; named directly for the test's `dregg_dice::HashChainBeacon`.
 dregg-dice = { path = "../dice" }
+# `verify_history_bytes` — the crown's restart test reads the in-tree REAL folded whole-history
+# proof and asks the light client for its attested anchors, so the persisted `StoredCrownFold`
+# under test is built exactly as `persist_fold` builds one at rank time (never hand-typed roots).
+# Already in the closure via `dreggnet-game-board`; named here for the function.
+dregg-lightclient = { path = "../lightclient" }
 # A self-cleaning temp dir for the sqlite-CreditStore persistence-across-restart test
 # and the per-run narrator budget-ledger files (no /tmp litter). Already in the root lock
 # (narrator dev-deps it); named here for the standalone bot workspace.

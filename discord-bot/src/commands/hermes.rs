@@ -44,6 +44,13 @@ impl DiscordOffering for HermesOffering {
     const TAGLINE: &'static str =
         "one cap-bounded, metered, receipted turn at a time · it cannot exceed its cell's mandate";
 
+    /// **Deliberately not resumable.** A Hermes session is bound to the brain it was opened
+    /// with (the resident model, or the opener's BYO key) and to a metered budget. Neither is in
+    /// the move log, and re-driving prompts through a different brain is not the same session.
+    fn rebuild() -> Option<Self> {
+        None
+    }
+
     fn store() -> &'static Store<Self> {
         static SESSIONS: OnceLock<Store<HermesOffering>> = OnceLock::new();
         SESSIONS.get_or_init(Store::spawn)

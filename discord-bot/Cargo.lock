@@ -2212,6 +2212,7 @@ dependencies = [
  "dregg-cell",
  "dregg-circuit",
  "dregg-circuit-prove",
+ "dregg-lean-ffi",
  "dregg-schema",
  "dreggnet-offerings",
  "spween-dregg",
@@ -2526,10 +2527,12 @@ dependencies = [
  "dregg-cell",
  "dregg-chutes-e2ee",
  "dregg-circuit",
+ "dregg-circuit-prove",
  "dregg-dfa",
  "dregg-dice",
  "dregg-dsl-runtime",
  "dregg-ipfs",
+ "dregg-lightclient",
  "dregg-multiway-tug",
  "dregg-narrator",
  "dregg-pay",
@@ -2675,6 +2678,7 @@ dependencies = [
  "ed25519-dalek",
  "postcard",
  "serde",
+ "serde_json",
  "tracing",
 ]
 
@@ -2849,6 +2853,7 @@ dependencies = [
  "dregg-cell",
  "dregg-circuit",
  "dregg-circuit-prove",
+ "dregg-lean-ffi",
  "dregg-lightclient",
  "dregg-schema",
  "dregg-turn",
@@ -3424,6 +3429,7 @@ dependencies = [
  "dreggnet-offerings",
  "dreggnet-trade",
  "dungeon-on-dregg",
+ "getrandom 0.3.4",
  "starbridge-sealed-auction",
 ]
 
@@ -3448,6 +3454,7 @@ dependencies = [
  "blake3",
  "deos-view",
  "dregg-app-framework",
+ "dregg-lean-ffi",
  "dregg-node-target",
  "dregg-pay",
  "dregg-types",

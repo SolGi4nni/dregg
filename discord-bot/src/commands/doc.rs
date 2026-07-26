@@ -44,6 +44,13 @@ impl DiscordOffering for DocOffering {
     const COLOR: u32 = DOC_COLOR;
     const TAGLINE: &'static str = "every edit one cap-gated finalized executor turn · a conflict/unauthorized edit refused · replay-verified";
 
+    /// Rebuilt from a deterministic, argument-free constructor — identical to the
+    /// factory production opens it with — so a persisted session of this offering
+    /// resumes by replay into the SAME world its turns landed in.
+    fn rebuild() -> Option<Self> {
+        Some(DocOffering::new())
+    }
+
     fn store() -> &'static Store<Self> {
         static SESSIONS: OnceLock<Store<DocOffering>> = OnceLock::new();
         SESSIONS.get_or_init(Store::spawn)

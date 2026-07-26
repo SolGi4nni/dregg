@@ -1,6 +1,15 @@
 //! A tiny per-user token-bucket rate limiter — defense-in-depth for the executor-driving
 //! interaction funnels (session opens / turn presses / re-verifications).
 //!
+//! **This state is DELIBERATELY EPHEMERAL and must stay that way.** When the persistence sweep
+//! went through the bot's in-RAM stores (sessions, the crown board), this one was examined and
+//! left alone on purpose. A token bucket is *recovery* state: the only thing persisting it could
+//! do is carry a penalty across a restart. It authorizes nothing — a full bucket and a fresh
+//! bucket are indistinguishable by construction (see [`PRUNE_THRESHOLD`], which already discards
+//! idle buckets mid-run for exactly that reason), so "forgetting" on restart is not a loss of a
+//! guarantee, it is the same forgetting the limiter does every few minutes anyway. The abuse
+//! ceiling that actually matters is the executor's, and that is durable.
+//!
 //! This is NOT a security boundary. The verified executor is still the referee: every turn a
 //! press drives is cap-bounded and audited on its own, and no throttle decision authorizes
 //! anything. This is a conservative shock absorber so that one Discord user pressing across

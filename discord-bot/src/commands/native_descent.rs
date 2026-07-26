@@ -131,6 +131,14 @@ impl DiscordOffering for NativeDescentOffering {
     const TAGLINE: &'static str =
         "Lean-authored custody dungeon · finite light · attenuating keys · banked relics";
 
+    /// **Deliberately not resumable.** Descent opens on TODAY's verified beacon day
+    /// (`live_offering`), and this process outlives UTC days. A rebuild tomorrow would replay a
+    /// run into a different drawn dungeon — a resume in name and a different world in fact. The
+    /// run's own durable record is the board's (`descent_board_store`), which survives already.
+    fn rebuild() -> Option<Self> {
+        None
+    }
+
     fn store() -> &'static Store<Self> {
         static SESSIONS: OnceLock<Store<NativeDescentOffering>> = OnceLock::new();
         SESSIONS.get_or_init(Store::spawn)

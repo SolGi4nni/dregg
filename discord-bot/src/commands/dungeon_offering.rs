@@ -45,6 +45,13 @@ impl DiscordOffering for DungeonOffering {
     const COLOR: u32 = DUNGEON_COLOR;
     const TAGLINE: &'static str = "the crowd decides · the world disposes · the chain remembers";
 
+    /// Rebuilt from a deterministic, argument-free constructor — identical to the
+    /// factory production opens it with — so a persisted session of this offering
+    /// resumes by replay into the SAME world its turns landed in.
+    fn rebuild() -> Option<Self> {
+        Some(DungeonOffering::new())
+    }
+
     fn store() -> &'static Store<Self> {
         static SESSIONS: OnceLock<Store<DungeonOffering>> = OnceLock::new();
         SESSIONS.get_or_init(Store::spawn)

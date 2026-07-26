@@ -46,6 +46,13 @@ impl DiscordOffering for MarketOffering {
     const TAGLINE: &'static str =
         "sealed bids · the executor clears · conservation checked (Σδ=0) · the chain remembers";
 
+    /// **Deliberately not resumable.** The market's VALUE carries its pricing/settlement
+    /// configuration, chosen at open and absent from the move log; replaying bids against a
+    /// different price table would reconstruct a clearing that never happened.
+    fn rebuild() -> Option<Self> {
+        None
+    }
+
     fn store() -> &'static Store<Self> {
         static SESSIONS: OnceLock<Store<MarketOffering>> = OnceLock::new();
         SESSIONS.get_or_init(Store::spawn)
@@ -97,6 +104,13 @@ impl DiscordOffering for DarkBazaarOffering {
     const COLOR: u32 = 0x5B3A8E;
     const TAGLINE: &'static str =
         "CRAWL · sealed during commit · operator-visible at settle · replay + conservation checked";
+
+    /// Rebuilt from a deterministic, argument-free constructor — identical to the
+    /// factory production opens it with — so a persisted session of this offering
+    /// resumes by replay into the SAME world its turns landed in.
+    fn rebuild() -> Option<Self> {
+        Some(DarkBazaarOffering::new())
+    }
 
     fn store() -> &'static Store<Self> {
         static SESSIONS: OnceLock<Store<DarkBazaarOffering>> = OnceLock::new();

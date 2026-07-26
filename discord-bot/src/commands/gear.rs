@@ -42,6 +42,13 @@ impl DiscordOffering for LoadoutOffering {
     const COLOR: u32 = 0x8C5A2B;
     const TAGLINE: &'static str =
         "forge · equip · use — the ability unlocks via a KERNEL cross-cell ownership predicate";
+    /// Rebuilt from a deterministic, argument-free constructor — identical to the
+    /// factory production opens it with — so a persisted session of this offering
+    /// resumes by replay into the SAME world its turns landed in.
+    fn rebuild() -> Option<Self> {
+        Some(dreggnet_gear::LoadoutOffering::new())
+    }
+
     fn store() -> &'static Store<Self> {
         static SESSIONS: OnceLock<Store<LoadoutOffering>> = OnceLock::new();
         SESSIONS.get_or_init(Store::spawn)
@@ -57,6 +64,13 @@ impl DiscordOffering for TalentTreeOffering {
     const COLOR: u32 = 0x5A3A8C;
     const TAGLINE: &'static str =
         "class-gated, prereq-chained claims priced in banked echoes · respec is real";
+    /// Rebuilt from a deterministic, argument-free constructor — identical to the
+    /// factory production opens it with — so a persisted session of this offering
+    /// resumes by replay into the SAME world its turns landed in.
+    fn rebuild() -> Option<Self> {
+        Some(dreggnet_gear::TalentTreeOffering::new())
+    }
+
     fn store() -> &'static Store<Self> {
         static SESSIONS: OnceLock<Store<TalentTreeOffering>> = OnceLock::new();
         SESSIONS.get_or_init(Store::spawn)

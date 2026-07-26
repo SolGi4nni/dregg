@@ -1130,6 +1130,26 @@ struct Slot {
 }
 
 /// The world the store thread owns: every player's live run + the day's no-cheat board.
+///
+/// **The two halves have DIFFERENT durability, on purpose.**
+///
+/// * `board` is DURABLE. It is loaded and re-verified from sqlite on this thread's spawn
+///   ([`load_board`]) and written through on every accepted win, because a board entry is an
+///   external claim — a ranked position other people read, and the thing `/export` mints an NFT
+///   against. (So "the descent world dies on restart" is only half true: the *board* has
+///   survived since the `DescentBoardStore` landed.)
+/// * `slots` — the live in-flight runs — are deliberately EPHEMERAL, and this is the one place
+///   where "resume it" would be actively wrong. A run is bound to a *day*: its world is drawn
+///   from that day's verified drand beacon, and this process routinely outlives a UTC day
+///   boundary. Reopening yesterday's half-finished run against today's beacon would hand the
+///   player a different dungeon under the same name — a resume in the UI and a different world
+///   in fact. The same reasoning makes
+///   `NativeDescentOffering::rebuild` return `None` in the generic adapter; the two decisions
+///   are the same decision.
+///
+/// What a player actually loses on restart is one unfinished expedition. What they keep is
+/// everything that carried a claim: their board wins (here), and their character progression
+/// (`crate::character_store`, sqlite, validated against the real XP curve on load).
 struct DescentWorld {
     slots: HashMap<u64, Slot>,
     board: Registry,

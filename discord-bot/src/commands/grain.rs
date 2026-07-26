@@ -40,6 +40,13 @@ impl DiscordOffering for GrainOffering {
     const COLOR: u32 = GRAIN_COLOR;
     const TAGLINE: &'static str = "cap-gated to its grant · the executor's calls_made caveat refuses an over-cap turn host-side";
 
+    /// **Deliberately not resumable.** The grain's VALUE carries the rate budget its mandate was
+    /// granted under; replaying its invocations under a freshly-minted grant would re-spend a cap
+    /// the original session had already consumed.
+    fn rebuild() -> Option<Self> {
+        None
+    }
+
     fn store() -> &'static Store<Self> {
         static SESSIONS: OnceLock<Store<GrainOffering>> = OnceLock::new();
         SESSIONS.get_or_init(Store::spawn)

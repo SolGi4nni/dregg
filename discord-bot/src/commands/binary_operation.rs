@@ -380,7 +380,7 @@ mod tests {
     use super::*;
     use crate::commands::offering::{
         CollectiveClose, Store, close_in, close_round, open_in, open_in_with_resume_store,
-        with_live,
+        quench_in, with_live,
     };
 
     const PREFERENCE: &str = "dungeon.private-party-preference.v1";
@@ -872,7 +872,10 @@ mod tests {
         assert_eq!(logs[0].operations.len(), 1);
         assert_eq!(logs[0].moves.len(), 1);
         assert_eq!(logs[0].operations[0].after_moves, 1);
-        close_in::<Fixture>(channel); // simulated process death; durable log remains
+        // A CRASH, not a close: `quench_in` drops the live session and KEEPS the durable
+        // record (`close_in` now forgets it — a close is a decision that the session is
+        // over, and leaving its log behind would let the next press resurrect it).
+        quench_in::<Fixture>(channel);
 
         let mut restarted = OfferingHost::new().with_resume_store(Box::new(store));
         restarted.register(Fixture::KEY, Fixture::TITLE, Fixture);

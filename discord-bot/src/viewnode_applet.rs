@@ -406,6 +406,16 @@ fn open_permissions() -> Permissions {
 /// The per-(user, card) registry of live embedded card applets — the in-process
 /// substance the interactive loop drives (the named seam). Keyed by Discord user id +
 /// card name so each user drives their OWN card with its OWN receipt chain.
+///
+/// **DELIBERATELY EPHEMERAL.** Examined during the persistence sweep alongside the offering
+/// sessions and the crown board, and left in RAM on purpose. A tally card is a self-contained
+/// demonstration of the cap-gated turn loop: it holds one counter, makes no claim to anyone but
+/// its own presser, and is not referenced by any public artifact. Its receipt chain is real, but
+/// nothing outside this process ever links to it — so a restart losing it costs a number in an
+/// embed, not a verification affordance somebody was promised. (Contrast the crown, whose entire
+/// point is that a stranger can check it *later*; that one is persisted.) If a card ever grows a
+/// claim someone else relies on, it earns a durable store the same way the sessions did — the
+/// per-store decision lives here, not in a global default.
 #[derive(Default)]
 pub struct CardApplets {
     map: Mutex<HashMap<(u64, String), CardApplet>>,

@@ -3227,11 +3227,14 @@ mod tests {
         .expect("the offering opens");
 
         // Two real turns, through the SAME sync core a live button press takes. Each equip is
-        // one cap-gated executor turn attributed to the presser's derived dregg identity.
+        // one cap-gated executor turn attributed to the presser's derived dregg identity. The
+        // affordance is the surface's FIRST, exactly as `gear_opens_and_equips_on_discord`
+        // drives it — the substrate is the referee, so `enabled` is not filtered on here.
         let me = actor("g1");
+        let mut landed = 0usize;
         for n in 0..2 {
             let stamp = control_stamp_in::<LoadoutOffering>(channel).expect("a live stamp");
-            let action = first_enabled::<LoadoutOffering>(channel)
+            let action = first_action::<LoadoutOffering>(channel)
                 .unwrap_or_else(|| panic!("the loadout offers an affordance before turn {n}"));
             let id = fire_id_at(
                 <LoadoutOffering as DiscordOffering>::KEY,
@@ -3244,16 +3247,21 @@ mod tests {
                 matches!(driven, Driven::Fired(Outcome::Landed { .. })),
                 "pre-restart turn {n} must land: {driven:?}",
             );
+            landed += 1;
         }
+        assert_eq!(landed, 2);
         let before = with_live::<LoadoutOffering, _>(channel, |live| {
             (live.journal.moves.len(), live.control_stamp())
         })
         .expect("the session is live");
-        assert_eq!(before.0, 2, "two turns are on the durable journal");
+        assert_eq!(
+            before.0, landed,
+            "every landed turn is on the durable journal"
+        );
 
         // The exact control a player left in the channel, minted BEFORE the crash — the same
         // custom-id string Discord is holding in a message right now.
-        let next = first_enabled::<LoadoutOffering>(channel).expect("an affordance remains");
+        let next = first_action::<LoadoutOffering>(channel).expect("an affordance remains");
         let pre_restart_button = fire_id_at(
             <LoadoutOffering as DiscordOffering>::KEY,
             before.1,
@@ -3289,8 +3297,9 @@ mod tests {
         })
         .expect("the session is live");
         assert_eq!(
-            after.0, 3,
-            "two pre-restart turns plus the one that landed after it"
+            after.0,
+            landed + 1,
+            "the pre-restart turns plus the one that landed after it"
         );
         assert_eq!(
             after.1, before.1.generation,
@@ -3312,13 +3321,11 @@ mod tests {
         close_in::<LoadoutOffering>(channel);
     }
 
-    /// The first affordance the channel's live session offers that its own render marks eligible.
-    fn first_enabled<O: DiscordOffering>(channel: u64) -> Option<Action> {
+    /// The first affordance the channel's live session offers (unfiltered — the executor, not
+    /// the frontend, decides what lands).
+    fn first_action<O: DiscordOffering>(channel: u64) -> Option<Action> {
         with_live::<O, _>(channel, |live| {
-            live.offering
-                .actions(&live.session)
-                .into_iter()
-                .find(|a| a.enabled)
+            live.offering.actions(&live.session).into_iter().next()
         })
         .flatten()
     }

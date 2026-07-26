@@ -168,6 +168,13 @@ impl DiscordOffering for OverworldPlay {
     const COLOR: u32 = 0x2E8B57;
     const TAGLINE: &'static str =
         "the region map above the dungeons · travel is executor-gated on VERIFIED clears";
+    /// Rebuilt from a deterministic, argument-free constructor — identical to the
+    /// factory production opens it with — so a persisted session of this offering
+    /// resumes by replay into the SAME world its turns landed in.
+    fn rebuild() -> Option<Self> {
+        Some(OverworldPlay::new())
+    }
+
     fn store() -> &'static Store<Self> {
         static SESSIONS: OnceLock<Store<OverworldPlay>> = OnceLock::new();
         SESSIONS.get_or_init(Store::spawn)
