@@ -1109,7 +1109,11 @@ fn non_empty_env(key: &str) -> Option<String> {
 /// Decode exactly 64 hex chars into the 32-byte `BOT_SECRET` — the SAME parse
 /// `discord-bot/src/config.rs` applies (`hex::decode` → `[u8; 32]`), so the two processes resolve
 /// byte-identical identity secrets. `None` on any other shape.
-fn bot_secret_from_hex(s: &str) -> Option<[u8; 32]> {
+///
+/// `pub(crate)` so [`crate::identity_link`] resolves `BOT_SECRET` through THIS parse rather than a
+/// second one beside it: two parses of one env var is how a deployment ends up with two identity
+/// roots for one user.
+pub(crate) fn bot_secret_from_hex(s: &str) -> Option<[u8; 32]> {
     let bytes = s.trim().as_bytes();
     if bytes.len() != 64 {
         return None;
@@ -1881,6 +1885,10 @@ async fn post_da_act(
         let authority_form = OfferingActForm {
             turn: action.turn.clone(),
             arg: action.arg,
+            // Carry the action's own text, so a text-soliciting affordance authorises the SAME
+            // move it will execute. `None` here would authorise a different (textless) action
+            // than the one presented.
+            text: action.text.clone(),
             game_host_incarnation: form.game_host_incarnation,
             game_session_generation: form.game_session_generation,
             game_expected_pre_head: form.game_expected_pre_head,

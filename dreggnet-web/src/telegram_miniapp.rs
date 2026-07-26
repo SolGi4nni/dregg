@@ -1214,6 +1214,10 @@ async fn post_tg_act(
         let authority_form = OfferingActForm {
             turn: action.turn.clone(),
             arg: action.arg,
+            // Carry the action's own text, so a text-soliciting affordance authorises the SAME
+            // move it will execute. `None` here would authorise a different (textless) action
+            // than the one presented.
+            text: action.text.clone(),
             game_host_incarnation: form.game_host_incarnation,
             game_session_generation: form.game_session_generation,
             game_expected_pre_head: form.game_expected_pre_head,
