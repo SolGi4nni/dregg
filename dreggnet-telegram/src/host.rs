@@ -2194,19 +2194,13 @@ impl<T: Transport> TelegramHost<T> {
     /// an offering input). A stale arm (the surface moved on, so the affordance is no longer
     /// presented) is dropped.
     pub fn pending_text_action(&self, sid: &SessionId) -> Option<Action> {
-        // Resolve the SURFACE: `sid` may already name one (`tg:-5#doc`), or be the chat-scoped id,
-        // in which case the chat's most recent offering owns the text slot. Only a real offering
-        // (not the offerings menu) solicits text.
-        let key = match TelegramFrontend::<T>::offering_of(sid) {
-            Some(k) => k.to_string(),
-            None => self.active_offering(sid)?.to_string(),
-        };
-        let (chat_id, topic) = TelegramFrontend::<T>::chat_of(sid)?;
-        let surface_sid = TelegramFrontend::<T>::surface_id(chat_id, topic, &key);
+        let surface_sid = self.text_arm_surface(sid)?;
         // The chat must have ARMED a text affordance on THAT surface (a deliberate press) …
         let armed = self.armed.get(&surface_sid)?;
         // … recently enough. An arm older than [`TEXT_ARM_TTL`] has been forgotten by whoever
         // made it; honouring it would swallow an unrelated message hours later into an offering.
+        // ⚑ EXPIRY IS NOT SILENCE: `take_expired_text_arm` is how the caller learns this happened,
+        // because the bot said it was waiting and must say when it stopped.
         if armed.expired() {
             return None;
         }
@@ -2218,6 +2212,39 @@ impl<T: Transport> TelegramHost<T> {
             .iter()
             .any(|a| a.turn == armed.turn && a.arg == armed.arg && a.wants_text)
             .then(|| armed.clone())
+    }
+
+    /// The surface id whose text slot `sid` addresses — the chat's own surface when `sid` names an
+    /// offering (`tg:-5#doc`), else the chat's most recent offering's. `None` when the chat has no
+    /// active offering (or is browsing the menu, which never solicits text).
+    fn text_arm_surface(&self, sid: &SessionId) -> Option<SessionId> {
+        let key = match TelegramFrontend::<T>::offering_of(sid) {
+            Some(k) => k.to_string(),
+            None => self.active_offering(sid)?.to_string(),
+        };
+        let (chat_id, topic) = TelegramFrontend::<T>::chat_of(sid)?;
+        Some(TelegramFrontend::<T>::surface_id(chat_id, topic, &key))
+    }
+
+    /// ⚑ **TAKE the chat's EXPIRED text arm, if that is why nothing is pending** — the answer to a
+    /// prompt that timed out.
+    ///
+    /// Pressing a `wants_text` affordance replies *"Selected … — now send your text and I will fill
+    /// it in"* and arms a [`TEXT_ARM_TTL`] window. When the player typed after that window closed,
+    /// [`pending_text_action`](Self::pending_text_action) answered `None` and the free-text
+    /// fallthrough treated the message as ordinary chatter: **total silence**. The bot said it was
+    /// waiting, then stopped waiting without ever saying so, and the player's text — often the
+    /// whole point of the interaction — vanished with no account of where it went.
+    ///
+    /// REMOVES the arm as it reports it, so the answer is given exactly once and the next message is
+    /// honestly ordinary chatter rather than a second copy of the same notice. Returns the affordance
+    /// that had been armed, so the caller can name it in the reply.
+    pub fn take_expired_text_arm(&mut self, sid: &SessionId) -> Option<Action> {
+        let surface_sid = self.text_arm_surface(sid)?;
+        if !self.armed.get(&surface_sid)?.expired() {
+            return None;
+        }
+        self.armed.remove(&surface_sid).map(|armed| armed.action)
     }
 
     /// Backdate every armed free-text slot by `by` — the seam a test uses to drive the

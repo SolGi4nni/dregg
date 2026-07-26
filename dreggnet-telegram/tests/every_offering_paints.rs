@@ -74,6 +74,24 @@ fn every_registered_offering_opens_into_something_visible_or_says_why_not() {
         painted.len() >= keys.len() / 2,
         "most of the catalog must actually paint; painted={painted:?} refused={refused:?}"
     );
+
+    // ⚑ AND A SHIPPED GAME MAY NOT REFUSE. The half-the-catalog floor above is a vacuity guard, not
+    // a product claim: it stays green while any single offering is wholly unpaintable. That is the
+    // exact hole the parse-mode work flagged — automatafl's Telegram message grew ~471 chars, and if
+    // its worst case (a mid-clash round: the conflict plaque, the marked-square clause, the own-move
+    // forecast and both move lines) crosses `TELEGRAM_TEXT_LIMIT`, `present_result` refuses
+    // fail-closed, this loop takes the `err: Some` branch, replies politely — and the assertion
+    // above still passes with the flagship SILENTLY BROKEN ON TELEGRAM. The three offerings we
+    // advertise are the ones a stranger is sent to, so for them a refusal IS the failure.
+    for key in dreggnet_catalog::SHIPPED_KEYS {
+        assert!(
+            painted.iter().any(|painted| painted == key),
+            "the SHIPPED offering `{key}` did not paint on Telegram — it is advertised to strangers, \
+             so a polite refusal is still a broken game. refused={refused:?}\n  \
+             first suspect: the 4096-char message cap (`TELEGRAM_TEXT_LIMIT`), which refuses \
+             fail-closed and is reported as a refusal, not a panic."
+        );
+    }
 }
 
 /// The same demand for the MENU itself, which is the entry point every user meets first.
@@ -92,12 +110,19 @@ fn the_offerings_menu_paints_a_button_per_offering() {
         .reply_markup
         .as_ref()
         .expect("the menu carries an inline keyboard");
-    // One button per ADVERTISED offering (`dreggnet_catalog::SHIPPED_KEYS`) — the menu is the
+    // One BUTTON per ADVERTISED offering (`dreggnet_catalog::SHIPPED_KEYS`) — the menu is the
     // ship list, and the rest of this test still drives EVERY registered offering, shipped or not.
+    // Counted over buttons rather than rows: the renderer packs short labels several to a row (and
+    // bounds the total), so a row count is a fact about label widths, not about the shelf.
     assert_eq!(
-        keyboard.inline_keyboard.len(),
+        keyboard.inline_keyboard.iter().flatten().count(),
         host.list_advertised_offerings().len(),
         "one button per advertised offering"
+    );
+    assert!(
+        keyboard.inline_keyboard.len() <= dreggnet_telegram::api::TELEGRAM_KEYBOARD_MAX_ROWS,
+        "the menu keyboard is bounded like every other: {} rows",
+        keyboard.inline_keyboard.len()
     );
     // Telegram's own limits, asserted on the real wire body rather than assumed.
     assert!(

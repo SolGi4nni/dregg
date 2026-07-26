@@ -91,15 +91,19 @@ pub fn build_play_menu_request(
         .collect();
     SendMessageRequest {
         chat_id,
-        text: "dregg — the rich web surface. Each button opens the Mini App for that \
-               offering; every move there is the same real, verifiable executor turn (signed \
-               attribution via the app's validated Telegram identity). The inline buttons here \
-               in chat keep working as the lightweight tier."
-            .to_string(),
+        text: format!(
+            "{name} — the rich web surface. Each button opens the Mini App for that offering; \
+             every move there is the same real, verifiable executor turn (signed attribution via \
+             the app's validated Telegram identity). The inline buttons here in chat keep working \
+             as the lightweight tier.",
+            name = dreggnet_catalog::SURFACE_NAME,
+        ),
         reply_markup: Some(InlineKeyboardMarkup {
             inline_keyboard: rows,
         }),
         message_thread_id: topic,
+        // A plain control message: no board, so no parse mode and nothing to escape.
+        parse_mode: None,
     }
 }
 
@@ -119,5 +123,6 @@ pub fn build_link_request(chat_id: ChatId, topic: Option<i64>, base: &str) -> Se
             )]],
         }),
         message_thread_id: topic,
+        parse_mode: None,
     }
 }

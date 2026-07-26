@@ -94,6 +94,10 @@ where
             turn: it.turn.clone(),
             arg: it.arg,
             enabled: enabled_for(&it.turn).unwrap_or(it.enabled),
+            // The gate decides whether a row may FIRE; it has no opinion on whether the row wants
+            // the user's prose. Carried through, or this pre-walk would silently un-declare a
+            // text affordance on every gated surface — the same drop the flag exists to close.
+            wants_text: it.wants_text,
         }
     }
     fn halo_handle(h: &HaloHandle, enabled_for: &dyn Fn(&str) -> Option<bool>) -> HaloHandle {
@@ -376,12 +380,14 @@ mod tests {
                     turn: "vote".into(),
                     arg: 1,
                     enabled: true,
+                    wants_text: false,
                 },
                 MenuItem {
                     label: "Other".into(),
                     turn: "other".into(),
                     arg: 0,
                     enabled: true,
+                    wants_text: false,
                 },
             ],
         };

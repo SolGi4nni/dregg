@@ -65,7 +65,7 @@
 use deos_view::{CoordCell, MenuItem, PillCase, ViewNode};
 use dreggnet_offerings::{
     Action, DreggIdentity, Offering, OfferingError, Outcome, RunCost, SessionConfig, Surface,
-    VerifyReport,
+    VerifyReport, refusal::refuse_world_error,
 };
 
 use crate::board::{ATT, AUTO, Board, Coord, Decision, Move, REP, VAC};
@@ -879,7 +879,8 @@ impl AutomataflSession {
     ///
     /// Empty when the oracle cannot answer; the board then offers no dots rather than guessing.
     pub fn executable_targets(&self, src: Coord) -> Vec<Coord> {
-        rules::executable_targets(&self.board, &self.marks, &self.locked, 0, src).unwrap_or_default()
+        rules::executable_targets(&self.board, &self.marks, &self.locked, 0, src)
+            .unwrap_or_default()
     }
 
     /// Whether `src` is a square a seat may move: a real (non-vacuum) particle that is not the
@@ -1111,6 +1112,36 @@ impl AutomataflSession {
         ViewNode::CoordGrid { cols: N, cells }
     }
 
+    /// ⚑ **THE LINES THAT MAKE THE BOARD READABLE WITHOUT A MANUAL** — the glyph vocabulary, the
+    /// axes, and (from [`deos_view::coordgrid_legend`], so it cannot drift from what the projection
+    /// actually paints) what each bracket around a square means.
+    ///
+    /// This exists because the prose above the board describes the WEB board: brass discs, a violet
+    /// ring, squares "drawn dimmed and outlined". On Discord / Telegram / WeChat there is no colour,
+    /// no outline and no tooltip — the glyph and its brackets are the entire board — and this
+    /// surface shipped without a single line telling a reader what either meant. The native
+    /// Descent's own map legend is the pattern being mirrored (`native_descent::map_legend`).
+    ///
+    /// Every renderer gets these lines: on the web they are a caption under the board and read as
+    /// one, and a caption that agrees with the text channels is the point.
+    fn board_legend() -> Vec<ViewNode> {
+        vec![
+            ViewNode::Text(format!(
+                "Columns are x (left to right), rows are y (top to bottom), both 0–{last} — the \
+                 same (x,y) every button names.",
+                last = N - 1
+            )),
+            ViewNode::Text(
+                "A attractor · R repulsor · @ the automaton · a / b an EMPTY goal corner (whose \
+                 seat's letter it is) · × a MARKED square, dead at both ends for the rest of the \
+                 turn · ─ or │ an empty square the automaton is looking along (the only squares a \
+                 move can change what it does) · · plain empty."
+                    .to_string(),
+            ),
+            ViewNode::Text(deos_view::coordgrid_legend()),
+        ]
+    }
+
     /// ⚑ **WHAT YOUR OWN MOVE ALONE WOULD DO** — the sentence that turns a sealed move from a
     /// gamble into a PLAN.
     ///
@@ -1289,6 +1320,7 @@ impl AutomataflSession {
                 turn: REVEAL.to_string(),
                 arg: 0,
                 enabled: can_reveal,
+                wants_text: false,
             },
             MenuItem {
                 // ⚑ The label used to promise "conflicts drop", which was the audited-WRONG rule
@@ -1301,6 +1333,7 @@ impl AutomataflSession {
                 turn: RESOLVE.to_string(),
                 arg: 0,
                 enabled: !spectator && matches!(phase, Phase::Resolve),
+                wants_text: false,
             },
         ];
         ViewNode::Menu { items }
@@ -1899,24 +1932,32 @@ impl AutomataflSession {
             ViewNode::Section {
                 title: "The board".to_string(),
                 tag: String::new(),
-                children: vec![
-                    ViewNode::Text(format!(
-                        "Attractors (A) are the round brass discs; repulsors (R) are the angular \
-                         pale blades; the automaton (@) is the violet ring; the four brass corners \
-                         are the goals (a/b). Click a piece to pick it up. The squares it can \
-                         actually REACH light up — a piece moves like a rook and stops at the first \
-                         thing in its way, so the light stops there too. Squares further along the \
-                         line are drawn dimmed and outlined: you may still seal a move to one, and \
-                         it runs only if the other seat moves the piece that is blocking it.{}",
-                        if self.marks.is_empty() {
-                            ""
-                        } else {
-                            " ⚑ A × square is MARKED: a clash burned it, and for the rest of this \
-                             turn nobody may move a piece off it or onto it."
-                        }
-                    )),
-                    self.board_grid(viewer),
-                ],
+                children: {
+                    // The RULE, and only the rule. What each glyph and bracket MEANS moved to
+                    // `board_legend` below — it used to be said here, in words that only worked in
+                    // pixels ("the round brass discs", "the angular pale blades", "drawn dimmed
+                    // and outlined"), which is no help at all on a channel that paints one
+                    // character per square. The web page's own richer piece prose still lives in
+                    // `dreggnet_web::automatafl_web` and the guide.
+                    let mut board = vec![
+                        ViewNode::Text(format!(
+                            "Pick up a piece and the squares it can actually REACH light up: a \
+                             piece moves like a rook and stops at the first thing in its way, so \
+                             the light stops there too. A square further along that line reads as \
+                             BLOCKED — you may still seal a move to it, and it runs only if the \
+                             other seat moves the piece that is in the way.{}",
+                            if self.marks.is_empty() {
+                                ""
+                            } else {
+                                " ⚑ A × square is MARKED: a clash burned it, and for the rest of \
+                                 this turn nobody may move a piece off it or onto it."
+                            }
+                        )),
+                        self.board_grid(viewer),
+                    ];
+                    board.extend(Self::board_legend());
+                    board
+                },
             },
         ];
         // The clash plaque goes ABOVE the automaton's: when a round has re-opened, "why am I being
@@ -1932,8 +1973,13 @@ impl AutomataflSession {
     }
 }
 
-/// The reason an advance was refused (an honest executor-level / offering-level refusal — nothing
+/// The reason an advance was refused (an honest referee-level / offering-level refusal — nothing
 /// commits either way).
+///
+/// ⚑ `why` is **PLAYER copy** and every caller here writes it as a sentence about the board. The one
+/// class that did not was `refuse(e.to_string())` on a `spween_dregg::WorldError`, which pasted an
+/// internal architecture's name onto a player's screen at five sites in this file; those call
+/// [`refuse_world_error`], which splits the audiences (player sentence back, operator detail logged).
 fn refuse(why: impl Into<String>) -> Outcome {
     Outcome::Refused(why.into())
 }
@@ -1992,13 +2038,27 @@ impl Offering for AutomataflOffering {
         // `movable` / `legal_targets` (the LEAN's `moveLegalB` with this turn's marks), so no
         // affordance here can name one.
         if phase.is_sealing() {
-            // ORDER MATTERS on a button-budgeted frontend. The Discord/Telegram renderers paint
-            // the first ≤25 actions as buttons and silently drop the rest; at 11×11 the stock
-            // opening has 36 movable pieces, so putting the SEAL targets after every select left
-            // a Discord player able to select a piece and never able to seal it. The live
-            // selection's targets therefore come FIRST (the affordance the phase is waiting on),
-            // then the selects. The WEB board is unaffected either way: every square of the
-            // `CoordGrid` is its own POST form, so the browser never reads this list.
+            // ORDER MATTERS on a button-budgeted frontend, and the budget is REAL — but it is the
+            // renderer's, not this list's, and it is not the number this comment used to name.
+            //
+            // ⚑ THE CORRECTION. This said "the Discord/Telegram renderers paint the first ≤25
+            // actions as buttons and silently drop the rest". Discord's 25 is a hard API ceiling on
+            // components. Telegram had NO cap of any kind: `build_present_request*` made every
+            // action its own row, so a fresh 11×11 opening painted 36 separate `Select (x,y)` rows
+            // and a sealed seat painted the whole ~50-row list lock-prefixed. A comment asserting a
+            // bound that did not exist is exactly why that survived — so read the renderer, not
+            // this line: `dreggnet_telegram::api::TELEGRAM_KEYBOARD_MAX_ROWS` (16 rows, short
+            // labels packed several per row) and `TELEGRAM_KEYBOARD_MAX_LOCKED` (12). Neither drops
+            // anything silently: what does not fit is counted in the message text, and every action
+            // stays recorded as presented, so `/act` still reaches it.
+            //
+            // What the order buys, given a budget of any size: at 11×11 the stock opening has 36
+            // movable pieces, so putting the SEAL targets after every select left a Discord player
+            // able to select a piece and never able to seal it. The live selection's targets
+            // therefore come FIRST (the affordance the phase is waiting on), then the selects — and
+            // the Telegram renderer's own live-before-locked sort preserves this order inside each
+            // band rather than reshuffling it. The WEB board is unaffected either way: every square
+            // of the `CoordGrid` is its own POST form, so the browser never reads this list.
             //
             // One `commit` affordance per PROPOSABLE target of EITHER seat's live selection (a
             // seat's own board grid shows only its own; the executor re-checks the seat on advance).
@@ -2136,7 +2196,7 @@ impl Offering for AutomataflOffering {
                     }
                     Err(e) => {
                         session.sel[i] = prev; // nothing committed — roll the surface back
-                        refuse(e.to_string())
+                        refuse(refuse_world_error(&e))
                     }
                 }
             }
@@ -2220,7 +2280,7 @@ impl Offering for AutomataflOffering {
                         session.committed[i] = None;
                         session.seal[i] = 0;
                         session.commits -= 1;
-                        refuse(e.to_string())
+                        refuse(refuse_world_error(&e))
                     }
                 }
             }
@@ -2255,7 +2315,7 @@ impl Offering for AutomataflOffering {
                     Err(e) => {
                         session.revealed[i] = false;
                         session.reveals -= 1;
-                        refuse(e.to_string())
+                        refuse(refuse_world_error(&e))
                     }
                 }
             }
@@ -2381,7 +2441,7 @@ impl Offering for AutomataflOffering {
                             session.committed = before.5;
                             session.seal = before.6;
                             session.revealed = before.7;
-                            refuse(e.to_string())
+                            refuse(refuse_world_error(&e))
                         }
                     };
                 }
@@ -2518,7 +2578,7 @@ impl Offering for AutomataflOffering {
                         session.winner = None;
                         session.ended = false;
                         session.turns_played.pop();
-                        refuse(e.to_string())
+                        refuse(refuse_world_error(&e))
                     }
                 }
             }

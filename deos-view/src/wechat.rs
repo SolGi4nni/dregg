@@ -217,12 +217,14 @@ mod tests {
                         turn: "fight".into(),
                         arg: 1,
                         enabled: true,
+                        wants_text: false,
                     },
                     MenuItem {
                         label: "Open the vault".into(),
                         turn: "vault".into(),
                         arg: 0,
                         enabled: false, // the gate refused it — SHOWN locked, not hidden
+                        wants_text: false,
                     },
                 ],
             },

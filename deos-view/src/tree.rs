@@ -358,6 +358,26 @@ pub struct MenuItem {
     pub turn: String,
     pub arg: i64,
     pub enabled: bool,
+    /// **Whether this row SOLICITS the user's free text** — the surface-level "this slot wants a
+    /// string" signal, carried through the IR so a renderer can tell "this affordance asks for a
+    /// value" apart from "this affordance's `arg` IS its identity".
+    ///
+    /// It is the IR half of `dreggnet_offerings::Action::wants_text` (a document INSERT /
+    /// set-title, a Hermes PROMPT, a name to register). Before it existed, lowering an `Action`
+    /// into a `MenuItem` DROPPED the flag, so a text-taking affordance arrived at every renderer
+    /// byte-identical to a fixed-index button: the web painted a bare button, the press carried no
+    /// string, and the executor correctly refused it as "no prompt/name supplied". Three offerings
+    /// were dead on the web for exactly that reason.
+    ///
+    /// It is **additive and defaults `false`**, so every fixed-press row is unchanged. A renderer
+    /// that cannot solicit text (a Telegram keyboard button, a WeChat numbered reply — see
+    /// [`crate::backend::actuations`], which carries FIXED presses only) is free to ignore it; the
+    /// server-form web paths render a real text input beside the button and POST what was typed.
+    ///
+    /// ⚑ It is NOT a licence to re-expose `arg`. `arg` stays hidden on every fixed affordance (the
+    /// label is binding); a declared text want is a SEPARATE control, and the number box remains
+    /// the sole property of [`ViewNode::Input`], the node that declares it wants a user value.
+    pub wants_text: bool,
 }
 
 /// A `halo` handle — a `{glyph, turn, arg}` affordance the renderer rings around the target,
@@ -562,6 +582,11 @@ pub struct RawItem {
     pub arg: i64,
     #[serde(default = "raw_item_enabled_default")]
     pub enabled: bool,
+    /// The row's declared free-text want (see [`MenuItem::wants_text`]). Defaults `false` — a row
+    /// that does not say it wants text does not get a text box. Accepted under the JS prelude's
+    /// camelCase spelling too (`wantsText`), the same way `onClick` is.
+    #[serde(default, alias = "wantsText")]
+    pub wants_text: bool,
 }
 
 /// A `RawItem`'s `enabled` defaults to `true` (a row fires unless explicitly dimmed by the cap).
@@ -695,6 +720,7 @@ impl RawNode {
                         turn: i.turn,
                         arg: i.arg,
                         enabled: i.enabled,
+                        wants_text: i.wants_text,
                     })
                     .collect(),
             },
@@ -797,12 +823,68 @@ impl MountSource for MapMountSource {
     }
 }
 
-/// **Render a [`ViewNode::CoordGrid`] as a plain-text grid** — `cols`-wide rows of cell glyphs,
-/// a highlighted cell bracketed `[g]`, an inert cell padded ` g `. The ONE text projection the
-/// text renderers (discord / telegram / wechat) share so the board reads identically across them
-/// (the same spirit as [`pill_display`]). An empty glyph paints `·`.
+/// **Render a [`ViewNode::CoordGrid`] as a plain-text grid** — `cols`-wide rows of cell glyphs in a
+/// FIXED 3-character field, so the rows line up into columns wherever the channel guarantees a
+/// monospace font (a Discord code fence, a Telegram `<pre>`, a WeChat reply block). The ONE text
+/// projection the text renderers (discord / telegram / wechat) share so the board reads identically
+/// across them (the same spirit as [`pill_display`]). An empty glyph paints `·`.
+///
+/// ⚑ **THE CELL'S ROLE SURVIVES THE PROSE, not just its glyph.** The bracket pair is chosen from
+/// [`CoordCell::tag`] as well as [`CoordCell::highlight`] — [`coordgrid_legend`] is the ONE reading
+/// of that vocabulary and cannot drift from this function. It used to read `highlight` alone, so on
+/// a board whose whole state lives in the tag (automatafl: a selected piece `warn`, a live target
+/// `good`, your own sealed destination `sealed`, a proposable-but-obstructed square `blocked`) all
+/// four roles painted the identical `[g]` and the text channels were served a board with its
+/// meaning deleted. `highlight` still OWNS `[ ]` — it means "you may act on this square now" on
+/// every board that paints one, and a tag never takes that promise away from a highlighted cell
+/// except where the tag says something strictly stronger (`sealed`/`blocked`, both of which mean
+/// the move is no longer pending on you).
+///
+/// ⚑ **AXIS LABELS, when the grid is COORDINATE-ADDRESSED** ([`coordgrid_is_addressed`]): a column
+/// header of x labels and a y label down the left, so the board speaks the same `(x,y)` the
+/// affordance labels do. The labels are derived from the SAME numbers the cells carry on the
+/// affordance wire, so they cannot disagree with the buttons. A grid that numbers nothing (a
+/// diagram — the descent shaft, a hand of cards) gets no axes: its rows and columns are named by
+/// its own legend, and a numeric axis over them would be noise at best.
 pub fn coordgrid_text(cols: usize, cells: &[CoordCell]) -> String {
+    let rows = if cols > 0 {
+        cells.len().div_ceil(cols)
+    } else {
+        usize::from(!cells.is_empty())
+    };
+    // Axis labels only on a grid that is a labelable BOARD, all four clauses load-bearing:
+    //  * it declares its own coordinate addressing ([`coordgrid_is_addressed`]);
+    //  * it has more than one ROW — a single row has no y axis to label, and its x labels are the
+    //    positions the glyphs already sit in. (This is also what keeps a HAND out: the multiway
+    //    tug's hand is one row of cells keyed by card id, and a deal of cards `0..n` would
+    //    otherwise satisfy `arg == index` by coincidence);
+    //  * the labels FIT the 3-character cell field (2 digits + a separating space);
+    //  * every glyph is ONE character, i.e. the field really is 3 wide. An axis label is an
+    //    alignment annotation, and annotating a grid that does not align would be a lie about it.
+    let axes = coordgrid_is_addressed(cols, cells)
+        && rows >= 2
+        && cols <= 99
+        && rows <= 99
+        && cells.iter().all(|c| c.glyph.chars().count() <= 1);
+    let stub = if axes {
+        // The y label's field: as wide as the widest row number, plus the space before column 0.
+        if rows > 10 {
+            3
+        } else {
+            2
+        }
+    } else {
+        0
+    };
+
     let mut lines: Vec<String> = Vec::new();
+    if axes {
+        let mut header = " ".repeat(stub);
+        for x in 0..cols {
+            header.push_str(&format!("{x:>2} "));
+        }
+        lines.push(header);
+    }
     let mut row: Vec<String> = Vec::new();
     for cell in cells {
         let g = if cell.glyph.is_empty() {
@@ -810,20 +892,79 @@ pub fn coordgrid_text(cols: usize, cells: &[CoordCell]) -> String {
         } else {
             cell.glyph.as_str()
         };
-        row.push(if cell.highlight {
-            format!("[{g}]")
-        } else {
-            format!(" {g} ")
-        });
+        let (open, close) = coordgrid_cell_marks(&cell.tag, cell.highlight);
+        row.push(format!("{open}{g}{close}"));
         if cols > 0 && row.len() == cols {
-            lines.push(row.join(""));
+            lines.push(coordgrid_row(lines.len().saturating_sub(1), stub, &row));
             row.clear();
         }
     }
     if !row.is_empty() {
-        lines.push(row.join(""));
+        lines.push(coordgrid_row(lines.len().saturating_sub(1), stub, &row));
     }
     lines.join("\n")
+}
+
+/// One rendered row, y-labelled when `stub > 0` (`stub` counts the label field INCLUDING its
+/// trailing space, so the label is right-aligned in `stub - 1`).
+fn coordgrid_row(y: usize, stub: usize, row: &[String]) -> String {
+    let cells = row.join("");
+    if stub == 0 {
+        cells
+    } else {
+        format!("{y:>width$} {cells}", width = stub - 1)
+    }
+}
+
+/// **Is this grid COORDINATE-ADDRESSED?** — true exactly when every cell's
+/// [`arg`](CoordCell::arg) is its own index, i.e. the grid numbers its squares with the same
+/// numbers its affordances carry, so `(x, y) = (arg % cols, arg / cols)` is the coordinate the
+/// buttons name. A board built that way (automatafl) is a candidate for the axis labels
+/// [`coordgrid_text`] paints; a DIAGRAM grid whose cells carry a different arg or none (the descent
+/// shaft's inert cells, whose rows are FLOORS and whose columns are named in its own legend) is not,
+/// because a numeric axis over named rows is noise at best and a second, disagreeing numbering at
+/// worst.
+///
+/// A single cell is never enough evidence (`arg == 0` at index 0 is met by every inert grid). Being
+/// addressed is NECESSARY but not sufficient for axis labels — see [`coordgrid_text`] for the layout
+/// clauses that go with it.
+pub fn coordgrid_is_addressed(cols: usize, cells: &[CoordCell]) -> bool {
+    cols > 0 && cells.len() > 1 && cells.iter().enumerate().all(|(i, c)| c.arg == i as i64)
+}
+
+/// **The bracket pair a cell paints in**, from its `tag` and `highlight` — the ONE table behind
+/// both [`coordgrid_text`] and [`coordgrid_legend`], so a board's marks and its legend can never
+/// describe different vocabularies. Always exactly one character each, keeping the cell field 3
+/// wide (the alignment the whole projection rests on).
+fn coordgrid_cell_marks(tag: &str, highlight: bool) -> (&'static str, &'static str) {
+    match (tag, highlight) {
+        // SEALED and BLOCKED both say the move is not pending on you, which outranks the
+        // highlight's "you may act now" — a sealed destination is already committed, and a blocked
+        // target would not run against the board as it stands.
+        ("sealed", _) => ("{", "}"),
+        ("blocked", _) => ("-", "-"),
+        // CHOSEN: the piece in your hand this round (a `warn` square you may still act on).
+        ("warn", true) => ("(", ")"),
+        // LIVE: the highlight's own promise, unchanged, on every board that paints one.
+        (_, true) => ("[", "]"),
+        // An OBJECTIVE square that is not actionable — a goal corner under an occupying piece,
+        // which is otherwise indistinguishable from an ordinary piece once the tag is dropped.
+        ("goal", false) => ("*", "*"),
+        (_, false) => (" ", " "),
+    }
+}
+
+/// **The one line that reads a [`coordgrid_text`] board's marks** — the bracket vocabulary, in
+/// words, for a surface to print beside its board (the pattern the native descent's own map legend
+/// established: a board a stranger can read without a manual). Driven by the same table the cells
+/// are painted from, so it cannot describe a mark the grid does not paint.
+///
+/// A surface prints this NEXT TO its own glyph legend: what the glyphs mean is the game's to say,
+/// what the brackets mean is this projection's.
+pub fn coordgrid_legend() -> String {
+    "[x] you may act on it now · (x) the piece you have chosen · {x} your sealed destination · \
+     -x- legal to name but BLOCKED right now · *x* an objective square · plain: nothing to do here"
+        .to_string()
 }
 
 /// The FALLBACK width, in glyph cells, of a plain-text meter bar ([`meter_text`]) — used only when

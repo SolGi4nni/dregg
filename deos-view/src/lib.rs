@@ -83,10 +83,11 @@ pub use grain_run_card::{
 };
 pub use source_health::{Banner, SourceHealth, SurfaceNote};
 pub use tree::{
-    coordgrid_text, disclose, meter_bar, meter_text, meter_text_width, parse_view_tree,
-    pill_display, progress_text, resolve_mounts, CoordCell, Crumb, Disclosure, HaloHandle,
-    MapMountSource, MenuItem, MountSource, PillCase, RawItem, RawNode, RawPillCase, RawProps,
-    ViewNode, COUNTABLE_METER_MAX, MAX_MOUNT_DEPTH, MAX_MOUNT_NODES, METER_TEXT_WIDTH,
+    coordgrid_is_addressed, coordgrid_legend, coordgrid_text, disclose, meter_bar, meter_text,
+    meter_text_width, parse_view_tree, pill_display, progress_text, resolve_mounts, CoordCell,
+    Crumb, Disclosure, HaloHandle, MapMountSource, MenuItem, MountSource, PillCase, RawItem,
+    RawNode, RawPillCase, RawProps, ViewNode, COUNTABLE_METER_MAX, MAX_MOUNT_DEPTH,
+    MAX_MOUNT_NODES, METER_TEXT_WIDTH,
 };
 
 // ── THE INTEGRATION SEAM (feature `integration`, folded into `native`): the ONE gate +
@@ -183,7 +184,12 @@ pub use discord::{
 #[cfg(feature = "telegram")]
 pub mod telegram;
 #[cfg(feature = "telegram")]
+// ⚑ [`telegram::render_html`] is deliberately NOT re-exported at the crate root: the WEB backend
+// already owns that name here (`web::render_html`, the HTML/DOM document renderer) and they are
+// different renderers for different channels. Reach the Telegram one by its module —
+// `deos_view::telegram::render_html`.
 pub use telegram::{render_text, TelegramBackend};
+pub use text::{escape_telegram_html, render_text_styled, ChatTextStyle};
 
 // ── The WECHAT backend: the SAME `ViewNode` → a WeChat Official-Account text message + its
 //    NUMBERED REPLY LIST (the OA channel has no buttons: the user replies with the number). The

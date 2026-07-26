@@ -20,9 +20,11 @@
 
 use dreggnet_offerings::dungeon::{DungeonOffering, KEEP_NAME, TURN_CHOOSE};
 use dreggnet_offerings::{Frontend, Offering, Outcome, SessionConfig};
-use dreggnet_telegram::api::{LOCK_GLYPH, decode_callback, encode_callback};
+use dreggnet_telegram::api::{
+    LOCK_GLYPH, TELEGRAM_KEYBOARD_MAX_ROWS, TELEGRAM_PARSE_MODE, decode_callback, encode_callback,
+};
 use dreggnet_telegram::cipherclerk::TelegramCipherclerk;
-use dreggnet_telegram::render::render_surface_text;
+use dreggnet_telegram::render::render_surface_html;
 use dreggnet_telegram::transport::MockTransport;
 use dreggnet_telegram::{CallbackQuery, ChatKind, TelegramFrontend};
 use dungeon_on_dregg::{KP_CLAIM_RED, KP_PRESS_ON, KP_TRADE_BLOWS};
@@ -63,30 +65,46 @@ fn present_builds_a_message_and_one_keyboard_button_per_affordance() {
         "the message text names the Keep + room: {:?}",
         req.text
     );
-    // The text half is the deos surface walked to prose — the Menu is NOT duplicated into text.
+    // The text half is the deos surface walked to prose — the Menu is NOT duplicated into text —
+    // in the WIRE form: entity-escaped, with any board fenced, matching the `parse_mode` below.
     assert_eq!(
         req.text,
-        render_surface_text(&surface),
-        "the message text is the rendered surface"
+        render_surface_html(&surface),
+        "the message text is the rendered surface, in the form the parse mode declares"
+    );
+    assert_eq!(
+        req.parse_mode.as_deref(),
+        Some(TELEGRAM_PARSE_MODE),
+        "an interactive surface declares its parse mode, or its board is laid out proportionally"
     );
 
     let kb = req
         .reply_markup
         .as_ref()
         .expect("a non-terminal room offers an inline keyboard");
+    // ONE BUTTON per cap-gated affordance — but not one ROW each: the renderer packs short labels
+    // several to a row and bounds the total (`TELEGRAM_KEYBOARD_MAX_ROWS`), so the shape to assert
+    // is the button set, not the row count. The gatehall is well under the bound, so nothing is
+    // dropped and the buttons appear in the offering's own order.
+    let buttons: Vec<_> = kb.inline_keyboard.iter().flatten().collect();
     assert_eq!(
-        kb.inline_keyboard.len(),
+        buttons.len(),
         acts.len(),
-        "one keyboard row per cap-gated affordance"
+        "one keyboard button per cap-gated affordance"
     );
-    for (row, act) in kb.inline_keyboard.iter().zip(acts.iter()) {
-        assert_eq!(row.len(), 1, "one button per row (the vertical Menu shape)");
-        let btn = &row[0];
-        assert_eq!(
-            btn.callback_data,
-            encode_callback(&act.turn, act.arg),
-            "the button carries the affordance {{turn, arg}}"
-        );
+    assert!(
+        kb.inline_keyboard.len() <= TELEGRAM_KEYBOARD_MAX_ROWS,
+        "the keyboard is bounded: {} rows",
+        kb.inline_keyboard.len()
+    );
+    // Asserted as a SET, not a sequence: the renderer sorts live affordances ahead of locked ones,
+    // so the keyboard's order is the offering's order WITHIN each band, not across them.
+    for act in &acts {
+        let wire = encode_callback(&act.turn, act.arg);
+        let btn = buttons
+            .iter()
+            .find(|b| b.callback_data == wire)
+            .unwrap_or_else(|| panic!("{} is on the keyboard", act.label));
         // decode round-trips back to the same (turn, arg).
         assert_eq!(
             decode_callback(&btn.callback_data),

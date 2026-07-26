@@ -22,8 +22,8 @@
 use deos_view::text::render_text;
 use deos_view::{CoordCell, ViewNode};
 use dreggnet_offerings::native_descent::{
-    CARRY_CAP, DUNGEON_DAYS, DUNGEON_FLOORS, DUNGEON_RELICS, LIGHT_BREATH, NativeDescentOffering,
-    NativeDescentSession,
+    CARRY_CAP, DUNGEON_DAYS, DUNGEON_FLOORS, DUNGEON_RELICS, LIGHT_ASCEND, LIGHT_BREATH,
+    LIGHT_FLEE, NativeDescentOffering, NativeDescentSession,
 };
 use dreggnet_offerings::{Action, DreggIdentity, Offering, Outcome, SessionConfig};
 use dungeon_on_dregg::descent::{ASCEND, DELVE, LOOT, RELICS as DESCENT_RELICS, SMITE};
@@ -458,7 +458,14 @@ fn the_map_and_the_meters_survive_the_shared_prose_projection() {
     // The board, as the shared text grid: six rows, each `MAP_COLS` cells of three characters, and
     // nothing in them but the map's own alphabet (so a prose line of the same length is not
     // mistaken for a board row).
-    const MAP_ALPHABET: &str = " []·>/#GxCk*@$1234";
+    //
+    // ⚑ The alphabet includes EVERY bracket `deos_view::coordgrid_text` can put around a cell, not
+    // just `[ ]`: the shared projection now paints the cell's ROLE from its `tag` as well as its
+    // `highlight`, so a way-key relic (tagged `warn`) that is carried or lootable reads `(k)`. With
+    // only `[]` here the row carrying it silently stopped matching and `rows.len()` fell short of
+    // `MAP_ROWS` — i.e. this filter would have reported the shaft as MISSING from the prose. Kept
+    // as a literal set rather than "any punctuation" so a genuinely stray glyph still fails.
+    const MAP_ALPHABET: &str = " []{}()-*·>/#GxCk@$1234";
     let rows: Vec<&str> = text
         .lines()
         .filter(|line| {
@@ -478,6 +485,99 @@ fn the_map_and_the_meters_survive_the_shared_prose_projection() {
     assert!(
         text.contains("open way") && text.contains("crown"),
         "the legend rides along:\n{text}"
+    );
+}
+
+/// **THE WAY HOME IS PRICED, AND THE DOOMED RUN IS TOLD.**
+///
+/// `flee` demands the surface and the climb buys one floor at a time, so the light a run may
+/// actually SPEND is what is left minus `depth` climbs plus the exit. The surface used to say
+/// "climbing out costs 1" from any depth — the exit's price ALONE — which reads as three spare
+/// breaths to a player standing on floor 3 holding four, and that is precisely the position that
+/// strands a run for good. Worse, the status word read DELVING right through the window Lean proves
+/// can never bank from any continuation whatsoever (`Dungeon.doomed_never_banks`).
+#[test]
+fn the_surface_prices_the_climb_home_and_names_a_stranded_run() {
+    let offering = NativeDescentOffering::new();
+    let mut session = offering.open(SessionConfig::with_seed(7)).expect("open");
+    land(&offering, &mut session, DELVE, 0);
+
+    // Floor 1 is one climb PLUS the exit — derived from the posted prices, so a re-priced verb moves
+    // the expectation with the surface instead of leaving a stale literal behind.
+    let text = render_text(offering.render(&session).view());
+    let from_floor_one = LIGHT_ASCEND + LIGHT_FLEE;
+    assert!(
+        text.contains(&format!("the way home costs {from_floor_one} light")),
+        "standing below ground the surface must price the CLIMB, not the exit alone:\n{text}"
+    );
+
+    // Burn the clock without going anywhere: up, down, up, down. Each cycle costs two light and
+    // leaves the run on floor 1, so it walks into the window where the climb can no longer be paid.
+    // The loop is driven by the STATUS rather than a move count, so it cannot assert about a state
+    // the run never reached.
+    let mut moves = 0;
+    while pill_words(offering.render(&session).view()) == vec!["DELVING".to_string()] {
+        assert!(
+            moves < 40,
+            "the clock is not burning down after {moves} moves"
+        );
+        let up = session.game().sim().depth > 0;
+        land(&offering, &mut session, if up { ASCEND } else { DELVE }, 0);
+        moves += 1;
+    }
+
+    assert_eq!(
+        pill_words(offering.render(&session).view()),
+        vec!["STRANDED".to_string()],
+        "a run whose light cannot buy the climb is already over, and the badge said DELVING"
+    );
+    // ⚑ NON-VACUOUS: STRANDED is the ALIVE-but-doomed window. If nothing were legal here this would
+    // just be the light dying, and the new state would be telling nobody anything new.
+    assert!(
+        offering.actions(&session).iter().any(|a| a.enabled),
+        "STRANDED must name the window where the run can still MOVE and still cannot get home"
+    );
+    let text = render_text(offering.render(&session).view());
+    assert!(
+        text.contains("Nothing in the pack will ever be banked."),
+        "the doomed run is told in prose rather than left to be inferred from a number:\n{text}"
+    );
+}
+
+/// **A RELIC'S NAME IS A NOUN.** `relic_label` returned the LOOT button's imperative, and three
+/// readers used it as a name: the pack and vault lines read `carried: Take the key-relic for way 2`
+/// and the minted-note list read `Take treasure relic 4 (rare) 3f9c…`. A player cannot tell the
+/// story of a run whose relics are verbs.
+#[test]
+fn a_relic_is_named_as_a_thing_in_the_pack_and_as_a_verb_on_the_button() {
+    let offering = NativeDescentOffering::new();
+    let mut session = offering.open(SessionConfig::with_seed(7)).expect("open");
+    land(&offering, &mut session, DELVE, 0);
+    let hoard = fell_guardian_and_hoard(&offering, &mut session);
+    land(&offering, &mut session, LOOT, hoard[0]);
+
+    let text = render_text(offering.render(&session).view());
+    let carried = text
+        .lines()
+        .find(|line| line.starts_with("carried:"))
+        .expect("the record names what is in the pack");
+    assert_ne!(carried, "carried: none", "a relic was just taken");
+    assert!(
+        !carried.contains("Take "),
+        "the pack is a list of THINGS, not of the buttons that took them: {carried:?}"
+    );
+    assert!(
+        !carried.contains("relic "),
+        "a treasure in the pack has a name, not an index: {carried:?}"
+    );
+    // And the BUTTON is still a verb — the split is real, not a rename in one direction.
+    assert!(
+        offering
+            .actions(&session)
+            .iter()
+            .filter(|action| action.turn == LOOT)
+            .all(|action| action.label.contains("Take the ")),
+        "every loot row still reads as an instruction"
     );
 }
 
@@ -597,13 +697,16 @@ fn the_guardian_meter_and_the_strike_affordance_read_this_days_vitality() {
 
     // ── The affordance. One blow short of the toll the guardian STILL stands: the glyph must not
     //    read slain, and the floor's hoard must not light up. This is the half a player pays for.
+    //    The glyph is the blows it STILL OWES, so it counts down as you press — the board used to
+    //    paint a flat `G` on every floor, which said an enemy was there and never what it cost.
     for blow in 1..hp {
         land(&offering, &mut session, SMITE, 0);
         let (_, cells) = the_map(offering.render(&session).view());
         assert_eq!(
             cell(&cells, 0, 2).glyph,
-            "G",
-            "after {blow} of {hp} blows the guardian is still standing and the map must say so"
+            (hp - blow).to_string(),
+            "after {blow} of {hp} blows the guardian owes {} more and the map must say so",
+            hp - blow
         );
         let lit: Vec<usize> = (0..DUNGEON_RELICS)
             .filter(|r| relic_row(&cells, *r) == Some(0) && cell(&cells, 0, 3 + r).highlight)

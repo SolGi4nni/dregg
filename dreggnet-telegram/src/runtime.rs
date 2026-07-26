@@ -38,14 +38,19 @@ use dreggnet_catalog::{
     PlayerWorlds, PublicGameAttribution, PublicGameReceipt, PublicGameReceiptResult,
 };
 use dreggnet_offerings::player_turn_receipt::{PlayerReplaySurface, PlayerTurnReceipt};
+// ⚑ THE SHARED REFUSAL COPY. This surface is where the stale-control refusal was FIRST diagnosed and
+// fixed properly (see `describe_press_reopening`'s post-restart arm below) — and where its own sibling
+// three hundred lines away kept the dead end, alongside the web's two, Discord's two and tug's two.
+// The sentence lives in `dreggnet_offerings::refusal` now; this surface supplies its own next step.
+use dreggnet_offerings::refusal::stale_control;
 use dreggnet_offerings::resume::SessionResumeStore;
 use dreggnet_offerings::{FileResumeStore, OfferingHost, Outcome, VerifyReport};
 
 use crate::api::{decode_callback, encode_callback};
 use crate::audit::{self, Actor, AuditEvent, AuditOutcome, Input, Surface};
 use crate::host::{
-    HostPress, TURN_VERIFY, TelegramAppliedOperation, TelegramGameStatus, TelegramHost,
-    TelegramSharedGameStatus, telegram_default_host,
+    HostPress, TEXT_ARM_TTL, TURN_VERIFY, TelegramAppliedOperation, TelegramGameStatus,
+    TelegramHost, TelegramSharedGameStatus, telegram_default_host,
 };
 use crate::transport::{HttpPost, Transport, TransportError};
 use crate::{CallbackQuery, ChatId, ChatKind, TelegramFrontend, TelegramUserId};
@@ -56,6 +61,12 @@ pub const POLL_TIMEOUT_SECS: u64 = 50;
 
 /// The Bot API cap on an `answerCallbackQuery` toast text.
 const CALLBACK_ANSWER_MAX: usize = 200;
+
+/// **This surface's `next_step` clause** for [`stale_control`] — a chat cannot be reloaded, so the
+/// working controls are the two commands that mint a fresh surface. Used wherever a press resolves to
+/// nothing; the post-restart path passes a stronger clause (it has already reposted the live
+/// sessions).
+const TELEGRAM_NEXT_STEP: &str = "Send /offerings for a fresh menu, or /cancel to clear this chat.";
 
 /// **The `/help` (and `/start`) text — GENERATED** from [`crate::commands::COMMANDS`], the same
 /// registry [`route_text_decided`] resolves every command word through. A hand-maintained help
@@ -647,12 +658,18 @@ pub fn route_callback_decided<T: Transport>(
             // message this process cannot map — say so, and point at the live surfaces just
             // reposted, instead of the bare "stale keyboard?" dead end.
             if matches!(decision, PressDecision::NotOffered) {
+                // ⚑ THE MODEL THE WHOLE PRODUCT NOW COPIES, and the reason this arm is worth
+                // preserving in the shared shape rather than replacing: its `next_step` is the BEST
+                // one any surface has — it does not tell the presser to go look for a live control,
+                // it has already REPOSTED the live sessions and points at them. The stem is shared;
+                // only the clause differs, which is the whole design of
+                // `dreggnet_offerings::refusal::stale_control`.
                 return (
-                    format!(
-                        "That button is from before my last restart. I have reposted your live \
-                         session(s) below: {}. Press there, or /cancel to start clean.",
+                    stale_control(&format!(
+                        "I have reposted your live session(s) below: {}. Press there, or /cancel to \
+                         start clean.",
                         reopened.join(", ")
-                    ),
+                    )),
                     decision,
                 );
             }
@@ -764,6 +781,22 @@ pub enum TextDecision {
     TextInput {
         /// The routed press's machine decision.
         press: PressDecision,
+    },
+    /// **Plain text that arrived after its text prompt EXPIRED** — the chat had armed a
+    /// `wants_text` affordance, the [`TEXT_ARM_TTL`] window closed, and this message came after.
+    /// Nothing was submitted; the expiry is ANSWERED rather than met with the silence ordinary
+    /// chatter gets (the bot said it was waiting, so it owes the user the moment it stopped).
+    TextArmExpired {
+        /// The turn name of the affordance whose window closed.
+        turn: String,
+    },
+    /// **Plain text that found the chat unbound, so its durable sessions were restored** — a
+    /// post-restart repaint. It is recorded (and answered) because it PUTS MESSAGES IN THE CHAT: an
+    /// interactive surface plus its companion guide pages, in answer to a sentence that was not
+    /// addressed to the bot. The message itself was not read as a move.
+    Resumed {
+        /// The offering keys restored and reposted, in the order they were reopened.
+        keys: Vec<String>,
     },
     /// Ordinary chatter — no decision, no reply, no audit event.
     Ignored,
@@ -1136,13 +1169,36 @@ pub fn route_text_decided<T: Transport>(
             // Rebind + re-present the live surface first (idempotent — the resumed state is kept),
             // so the chat is live again and the presented text buttons reappear for the user to
             // arm; without this a text-only user after a restart is stranded with no session.
+            //
+            // ⚑ AND IT SAYS SO, because it is VISIBLE. This block re-`open`s every durably-owned
+            // key, and each open reposts (or edits) an interactive message AND its companion
+            // proof-guide pages — two or three messages appearing in the chat in answer to a
+            // sentence that was not addressed to the bot, with the routing decision then recorded
+            // as `Ignored`, i.e. no reply at all. A group was therefore either eerily silent or
+            // unexpectedly noisy with no signal for which. The rule now: repaint and SAY WHY, or
+            // stay silent and repaint nothing. `resumed` is non-empty exactly when messages went
+            // out, so the reply and the repaint are the same event.
+            //
+            // It can fire at most once per chat per restart: `resume_chat_all` records the chat's
+            // `active` offering, so the next message takes the `is_some` path and skips this
+            // entirely. And it can never route THIS message into a text slot — `open` re-presents,
+            // and a re-present drops any armed slot by construction — so the resume is honestly a
+            // repaint, never a capture.
+            let mut resumed: Vec<String> = Vec::new();
+            let mut unpainted: Option<String> = None;
             if host.active_offering(&sid).is_none() {
                 // Viewer-aware: an RPG session lives in the presser's OWN per-identity world,
                 // so without the identity it is invisible to the resume path entirely.
                 let viewer = host.identity(uid);
                 for key in host.resume_chat_all(&sid, Some(&viewer)) {
-                    let _ = host.open(&key, chat_id, topic, uid);
+                    if host.open(&key, chat_id, topic, uid).is_ok() {
+                        resumed.push(key);
+                    }
                 }
+                // `open` answers `Ok` even when the surface could not be PAINTED, so the claim
+                // "reposted it above" has to be checked, not assumed — that mismatch is the same
+                // class of silence this whole arm is fixing.
+                unpainted = host.take_paint_failure();
             }
             if host.pending_text_action(&sid).is_some() {
                 let press = host.press_text(chat_id, topic, uid, text);
@@ -1150,6 +1206,48 @@ pub fn route_text_decided<T: Transport>(
                 (
                     Some(describe_press(press)),
                     TextDecision::TextInput { press: decision },
+                )
+            } else if let Some(expired) = host.take_expired_text_arm(&sid) {
+                // ⚑ THE PROMPT THAT TIMED OUT, ANSWERED. The bot said "now send your text"; the
+                // window closed; this message arrived after it. Saying so — once, naming the
+                // affordance and the way back — is the whole fix. Silence here read as the bot
+                // having eaten the text.
+                let minutes = TEXT_ARM_TTL.as_secs() / 60;
+                (
+                    Some(format!(
+                        "The {minutes}-minute window for “{}” had already closed, so I did NOT \
+                         take that message as its text — nothing was submitted and nothing was \
+                         lost. Press that button again and send the text right after, and I will \
+                         fill it in.",
+                        expired.label
+                    )),
+                    TextDecision::TextArmExpired {
+                        turn: expired.turn.clone(),
+                    },
+                )
+            } else if !resumed.is_empty() {
+                let count = if resumed.len() == 1 {
+                    "a session".to_string()
+                } else {
+                    format!("{} sessions", resumed.len())
+                };
+                let keys = resumed.join(", ");
+                (
+                    Some(match &unpainted {
+                        None => format!(
+                            "I had nothing live in this chat (I restarted), so I restored {count} \
+                             and reposted {} above: {keys}. Your message was NOT read as a move — \
+                             press a button on that surface, or /status for the record.",
+                            if resumed.len() == 1 { "it" } else { "them" }
+                        ),
+                        Some(why) => format!(
+                            "I had nothing live in this chat (I restarted) and restored {count} \
+                             ({keys}), but at least one surface could not be painted: {why}. Your \
+                             message was NOT read as a move. /status shows the record; /cancel \
+                             clears this chat's presentation and /open <key> tries again."
+                        ),
+                    }),
+                    TextDecision::Resumed { keys: resumed },
                 )
             } else {
                 (None, TextDecision::Ignored)
@@ -1262,6 +1360,24 @@ impl TextDecision {
                 let (kind, reason, outcome, offering) = press.audit_parts();
                 Some((kind, reason, outcome, offering, "text".to_string()))
             }
+            // An expired prompt is a REFUSAL with a name, not an absence: the audit should be able
+            // to count how often players lose a window, which total silence made unmeasurable.
+            TextDecision::TextArmExpired { turn } => Some((
+                "refused",
+                format!("text_arm_expired: {turn}"),
+                AuditOutcome::None,
+                None,
+                "text".to_string(),
+            )),
+            // A repaint is an interaction — it posted messages — so it is audited, with the keys it
+            // restored, rather than filed under ordinary chatter.
+            TextDecision::Resumed { keys } => Some((
+                "routed",
+                format!("resumed_after_restart: {}", keys.join(",")),
+                AuditOutcome::None,
+                keys.first().cloned(),
+                "text".to_string(),
+            )),
             TextDecision::Ignored => None,
         }
     }
@@ -1356,11 +1472,12 @@ pub fn describe_press(press: HostPress) -> String {
         // The privacy redirect IS the ack (and, being long, the loop also lands it in the chat).
         HostPress::OpenRefused { why, .. } => why,
         HostPress::NotOffered => {
-            // Name the way out. A refusal that only says "stale keyboard?" leaves the presser
-            // with no next move, which is how a chat reads as broken rather than as refused.
-            "That button is not on the current surface (a stale keyboard?). Send /offerings for \
-             a fresh menu, or /cancel to clear this chat."
-                .to_string()
+            // Name the way out — and say the sentence every other surface says. This arm already
+            // knew to name a next move; what it did NOT do was say that nothing had been played, and
+            // it said its own version of the cause ("a stale keyboard?") in its own words. Both come
+            // from the shared helper now, so a reword lands here and on the web and in Discord at the
+            // same time.
+            stale_control(TELEGRAM_NEXT_STEP)
         }
         HostPress::NoSession => "No session in this chat yet — send /offerings.".to_string(),
     }

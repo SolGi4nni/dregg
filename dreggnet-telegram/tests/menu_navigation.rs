@@ -482,10 +482,17 @@ fn close_forgets_the_move_log_and_a_fresh_open_still_works() {
     );
 }
 
-/// **An armed free-text slot EXPIRES.** Without a TTL a chat that armed a slot and walked away
-/// has every later message swallowed into that offering, forever, with no input able to clear it.
+/// **An armed free-text slot EXPIRES — and SAYS SO, once.**
+///
+/// Without a TTL a chat that armed a slot and walked away has every later message swallowed into
+/// that offering, forever, with no input able to clear it. But the expiry used to be met with TOTAL
+/// SILENCE: the bot replied *"Selected … — now send your text and I will fill it in"*, the window
+/// closed, and a player who then typed got no answer at all — the same nothing ordinary chatter
+/// gets, with their text apparently eaten. This pins BOTH halves: the arm stops swallowing, AND the
+/// first message after the expiry is answered rather than dropped. The message after THAT is
+/// ordinary chatter again, because a notice repeated forever is its own bug.
 #[test]
-fn an_armed_text_slot_expires_and_stops_swallowing_messages() {
+fn an_armed_text_slot_expires_and_says_so_once() {
     let mut host = fresh_host();
     route_text_decided(&mut host, CHAT, None, ALICE, "/open doc");
     let doc_message = surface_message(&host, "doc");
@@ -521,9 +528,37 @@ fn an_armed_text_slot_expires_and_stops_swallowing_messages() {
         host.pending_text_action(&chat_session()).is_none(),
         "an arm older than TEXT_ARM_TTL is not honoured"
     );
-    let (_, decision) = route_text_decided(&mut host, CHAT, None, ALICE, "just chatting");
+
+    // ⚑ THE EXPIRY IS ANSWERED. This message is NOT swallowed into the offering (that is the TTL's
+    // job, asserted above) and it is NOT met with silence (that was the defect): the bot told this
+    // chat "now send your text", so it owes it the moment it stopped waiting — naming the affordance
+    // and the way back.
+    let (reply, decision) = route_text_decided(&mut host, CHAT, None, ALICE, "just chatting");
+    match &decision {
+        TextDecision::TextArmExpired { turn } => assert_eq!(
+            *turn, action.turn,
+            "the expiry names the affordance whose window closed"
+        ),
+        other => panic!("an expired prompt must be answered, not ignored: {other:?}"),
+    }
+    let reply = reply.expect("an expired prompt draws a reply, not the silence chatter draws");
+    assert!(
+        reply.contains(&action.label),
+        "the reply names what had been selected, so the player knows which button to press again: \
+         {reply}"
+    );
+    // Nothing was submitted: the offering's own record is untouched by the expired message.
+    assert!(
+        host.pending_text_action(&chat_session()).is_none(),
+        "the expired arm is not resurrected by answering it"
+    );
+
+    // ONE-SHOT. A notice repeated on every later message is its own bug, so the arm is TAKEN as it
+    // is reported and the next plain message is ordinary chatter again.
+    let (again, decision) = route_text_decided(&mut host, CHAT, None, ALICE, "and more chatting");
     assert!(
         matches!(decision, TextDecision::Ignored),
-        "after expiry a plain message is ordinary chatter, not offering input: {decision:?}"
+        "the expiry is answered once; after that a plain message is ordinary chatter: {decision:?}"
     );
+    assert!(again.is_none(), "ordinary chatter still draws no reply");
 }

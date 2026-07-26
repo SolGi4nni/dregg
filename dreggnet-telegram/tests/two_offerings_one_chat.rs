@@ -22,7 +22,7 @@
 //! single-offering UX is exactly as it was.
 
 use dreggnet_offerings::SessionId;
-use dreggnet_telegram::api::encode_callback;
+use dreggnet_telegram::api::{LOCK_GLYPH, encode_callback};
 use dreggnet_telegram::host::{HostPress, OPERATION_GUIDE_SLOT, TelegramHost};
 use dreggnet_telegram::transport::{MessageId, MockTransport};
 use dreggnet_telegram::{CallbackQuery, TelegramFrontend};
@@ -47,6 +47,12 @@ fn message_of(h: &TelegramHost<MockTransport>, chat: i64, key: &str) -> MessageI
 }
 
 /// The opaque wire callback currently paired with one raw typed affordance.
+///
+/// ⚑ Paired by LABEL, not by position. The callback is a bound-reference DIGEST, so a test cannot
+/// recompute it and has to read it off the rendered keyboard — but the keyboard is no longer
+/// action-index-shaped: the renderer sorts live affordances ahead of locked ones and packs several
+/// short-labelled buttons into a row, so `inline_keyboard[presented_index][0]` names an unrelated
+/// button (or none). The label is the stable link between the two lists.
 fn callback_for(
     h: &TelegramHost<MockTransport>,
     chat: i64,
@@ -59,17 +65,23 @@ fn callback_for(
         .frontend()
         .session(&surface)
         .unwrap_or_else(|| panic!("{key} has a live surface"));
-    let index = slot
+    let action = slot
         .presented
         .iter()
-        .position(|action| action.turn == turn && action.arg == arg)
+        .find(|action| action.turn == turn && action.arg == arg)
         .unwrap_or_else(|| panic!("{key} currently offers {turn}/{arg}"));
+    let locked = format!("{LOCK_GLYPH}{}", action.label);
     h.frontend()
         .transport()
         .visible(slot.message_id.expect("surface has a message"))
         .and_then(|request| request.reply_markup.as_ref())
-        .and_then(|markup| markup.inline_keyboard.get(index))
-        .and_then(|row| row.first())
+        .and_then(|markup| {
+            markup
+                .inline_keyboard
+                .iter()
+                .flatten()
+                .find(|button| button.text == action.label || button.text == locked)
+        })
         .map(|button| button.callback_data.clone())
         .filter(|callback| callback.starts_with("g."))
         .unwrap_or_else(|| panic!("{key}'s game action uses an opaque bound callback"))

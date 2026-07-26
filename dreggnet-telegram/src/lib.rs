@@ -502,6 +502,11 @@ impl<T: Transport> TelegramFrontend<T> {
             callback_data,
         )
         .map_err(TransportError)?;
+        // ⚑ Measured on the WIRE text, which is now entity-escaped and `<pre>`-fenced. Telegram
+        // counts characters AFTER entity parsing, so `&amp;` costs it 1 and costs us 5: this guard
+        // is CONSERVATIVE by exactly the markup, never permissive. That is the safe direction (it
+        // refuses a hair early rather than letting the Bot API reject ambiguously), and the markup
+        // is small in practice — a board is `·─│×@RAab` and digits, none of which escape at all.
         if req.text.chars().count() > TELEGRAM_TEXT_LIMIT {
             return Err(TransportError(format!(
                 "interactive Telegram surface is {} characters; maximum is {TELEGRAM_TEXT_LIMIT}",
@@ -593,6 +598,9 @@ impl<T: Transport> TelegramFrontend<T> {
                 text: page.clone(),
                 reply_markup: None,
                 message_thread_id: topic,
+                // A companion page is PLAIN text: no board to fence, so no parse mode — and
+                // therefore no guide prose that could fail to send on an unescaped character.
+                parse_mode: None,
             };
             if let Some(message_id) = ids.get(index).copied() {
                 self.transport.edit_message(message_id, &request)?;
@@ -611,6 +619,7 @@ impl<T: Transport> TelegramFrontend<T> {
                 .to_string(),
             reply_markup: None,
             message_thread_id: topic,
+            parse_mode: None,
         };
         for message_id in ids.iter().copied().skip(pages.len()) {
             self.transport.edit_message(message_id, &inert)?;

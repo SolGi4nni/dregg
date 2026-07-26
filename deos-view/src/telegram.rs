@@ -20,9 +20,26 @@ use crate::tree::ViewNode;
 /// lines. Trailing whitespace is trimmed.
 pub use crate::text::render_text;
 
+/// **Render a surface for a `parse_mode: HTML` Telegram message** — the SAME
+/// [`crate::text`] walk as [`render_text`], with the board fenced in `<pre>` (Telegram's monospace
+/// guarantee, without which the fixed-width grid is laid out in a PROPORTIONAL font and its rows do
+/// not line up into columns) and every content run HTML-escaped.
+///
+/// ⚑ A message rendered with this MUST be sent with `parse_mode` set, and a message sent with
+/// `parse_mode` set MUST be rendered with this: the two halves are one decision. The plain
+/// [`render_text`] output contains raw `<`/`&` from any surface that happens to use them, which a
+/// live parse mode would either mis-render or reject outright.
+pub fn render_html(tree: &ViewNode) -> String {
+    crate::text::render_text_styled(tree, &crate::text::ChatTextStyle::telegram_html())
+}
+
 /// **The Telegram [`SurfaceBackend`]** — the [`ViewNode`] IR → message text ([`render_text`]).
 /// Binds are unused (Telegram text has no in-place live re-read); [`decode`](SurfaceBackend::decode)
 /// uses the Telegram affordance codec (`<turn>:<arg>` `callback_data`).
+///
+/// PLAIN text on purpose: this is the backend every cross-surface parity harness reads, and the
+/// prose it compares is the surface's WORDS. The wire form the live bot sends is
+/// [`render_html`] — the same walk, escaped and fenced (see [`crate::text::ChatTextStyle`]).
 pub struct TelegramBackend;
 
 impl SurfaceBackend for TelegramBackend {

@@ -28,6 +28,8 @@ pub fn build_chutes_consent_request(
             )]],
         }),
         message_thread_id,
+        // A plain control message: no fence to buy, so no parse mode and nothing to escape.
+        parse_mode: None,
     }
 }
 
@@ -43,5 +45,6 @@ pub fn build_chutes_receipt_request(
         text: disclosure.compact_text(ChutesReplaySurface::Telegram),
         reply_markup: None,
         message_thread_id,
+        parse_mode: None,
     }
 }

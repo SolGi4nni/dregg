@@ -311,6 +311,7 @@ mod tests {
                     turn: "vote".into(),
                     arg: 99,
                     enabled: true,
+                    wants_text: false,
                 }],
             })),
         ])
@@ -329,12 +330,14 @@ mod tests {
                             turn: "vote".into(),
                             arg: 1,
                             enabled: true, // the AUTHOR's optimistic bool — the gate overrides it
+                            wants_text: false,
                         },
                         MenuItem {
                             label: "Look".into(),
                             turn: "look".into(),
                             arg: 0,
                             enabled: true, // ungoverned → keeps the authored bit
+                            wants_text: false,
                         },
                     ],
                 }],

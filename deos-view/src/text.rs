@@ -14,43 +14,128 @@
 
 use crate::tree::ViewNode;
 
+/// **How a chat transport DECORATES the one prose walk** — the two things that differ between a
+/// plain-text channel and a channel with a parse mode, and nothing else.
+///
+/// ⚑ This exists so a transport that needs a MONOSPACE GUARANTEE for its board (see
+/// [`ChatTextStyle::telegram_html`]) does not fork the walker to get it. A parse mode is
+/// all-or-nothing per message on Telegram, so the moment ONE span is markup, EVERY other span
+/// becomes user-influenced text the parser will read — which is why the escape hook is part of the
+/// same style as the fence rather than a post-pass a caller can forget. There is no way to
+/// post-process a finished plain string into this: the fence has to be interleaved with the walk,
+/// and the escape must NOT touch the fence.
+pub struct ChatTextStyle {
+    /// Escape one run of CONTENT so the transport's parse mode cannot read markup in it. Identity
+    /// for a plain-text channel.
+    pub escape: fn(&str) -> String,
+    /// Emitted, UNESCAPED, on its own line before a [`ViewNode::CoordGrid`]'s rows — the opening
+    /// half of the monospace guarantee. Empty = no fence (a plain-text channel).
+    pub grid_open: &'static str,
+    /// The closing half of [`grid_open`](Self::grid_open).
+    pub grid_close: &'static str,
+}
+
+impl ChatTextStyle {
+    /// **Plain text, no parse mode** — the projection every caller had before styles existed, and
+    /// what WeChat OA still sends. Escape is the identity and there is no fence, so
+    /// [`render_text_styled`] with this style is byte-for-byte [`render_text`].
+    pub const fn plain() -> ChatTextStyle {
+        ChatTextStyle {
+            escape: no_escape,
+            grid_open: "",
+            grid_close: "",
+        }
+    }
+
+    /// **Telegram, `parse_mode: HTML`** — the board fenced in `<pre>` (Telegram renders a `pre`
+    /// block in a MONOSPACE font; a `sendMessage` with no parse mode at all renders in a
+    /// PROPORTIONAL one, where a grid of equal-character-count cells does not line up into
+    /// columns), and every content run HTML-escaped because the parse mode is per-message.
+    pub const fn telegram_html() -> ChatTextStyle {
+        ChatTextStyle {
+            escape: escape_telegram_html,
+            grid_open: "<pre>",
+            grid_close: "</pre>",
+        }
+    }
+}
+
+impl Default for ChatTextStyle {
+    fn default() -> Self {
+        Self::plain()
+    }
+}
+
+fn no_escape(s: &str) -> String {
+    s.to_string()
+}
+
+/// **Escape a run of text for Telegram's `HTML` parse mode** — the three characters its parser
+/// reads (`&`, `<`, `>`), and no others. `&` FIRST, or the ampersands of the other two escapes get
+/// escaped again.
+///
+/// Telegram's HTML mode is deliberately the narrowest parse mode it offers: MarkdownV2 would put
+/// eighteen characters (`_*[]()~`>#+-=|{}.!`) into every label, prose line and identity on the
+/// surface, and one unescaped `.` or `-` in a sentence fails the whole `sendMessage` with
+/// `can't parse entities`. Three characters is a surface small enough to audit.
+pub fn escape_telegram_html(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 /// **Render a [`ViewNode`] surface into chat message text** (the *non-affordance* half).
 /// [`ViewNode::Menu`]/[`ViewNode::Button`] are OMITTED (they ride the channel's affordance carrier —
 /// Telegram's inline keyboard, WeChat's numbered reply list — not the prose); section titles head
 /// their blocks; text nodes are lines; a LITERAL [`ViewNode::Pill`] paints as a `[badge]`, and a
 /// row of them as one line of badges. Trailing whitespace is trimmed.
 pub fn render_text(tree: &ViewNode) -> String {
+    render_text_styled(tree, &ChatTextStyle::plain())
+}
+
+/// [`render_text`] with a transport's [`ChatTextStyle`] — the SAME walk, escaped and fenced for a
+/// channel that has a parse mode. `ChatTextStyle::plain()` is exactly [`render_text`].
+pub fn render_text_styled(tree: &ViewNode, style: &ChatTextStyle) -> String {
     let mut out = String::new();
-    walk(tree, 0, &mut out);
+    walk(tree, 0, style, &mut out);
     out.trim_end().to_string()
 }
 
-fn walk(node: &ViewNode, depth: usize, out: &mut String) {
+fn walk(node: &ViewNode, depth: usize, style: &ChatTextStyle, out: &mut String) {
     match node {
         ViewNode::Text(t) => {
             if !t.trim().is_empty() {
-                push_line(out, t.trim());
+                push_content(out, style, t.trim());
             }
         }
         ViewNode::Section {
             title, children, ..
         } => {
             if !title.trim().is_empty() {
-                // A bold-ish heading (kept plain-text; a live bot could set MarkdownV2).
+                // A heading, kept as WORDS rather than markup: with a parse mode live, wrapping
+                // this in `<b>` would put the transport's syntax into a string the game author
+                // controls, for a visual the prose does not need.
                 let heading = if depth == 0 {
                     title.trim().to_string()
                 } else {
                     format!("— {}", title.trim())
                 };
-                push_line(out, &heading);
+                push_content(out, style, &heading);
             }
             for c in children {
-                walk(c, depth + 1, out);
+                walk(c, depth + 1, style, out);
             }
         }
         ViewNode::VStack(children) | ViewNode::List(children) => {
             for c in children {
-                walk(c, depth, out);
+                walk(c, depth, style, out);
             }
         }
         // A ROW is where badges live — a phase ladder, a seat's standing, an item's rarity. Its
@@ -63,12 +148,12 @@ fn walk(node: &ViewNode, depth: usize, out: &mut String) {
                 match literal_pill(c) {
                     Some(text) => badges.push(text),
                     None => {
-                        flush_badges(&mut badges, out);
-                        walk(c, depth, out);
+                        flush_badges(&mut badges, style, out);
+                        walk(c, depth, style, out);
                     }
                 }
             }
-            flush_badges(&mut badges, out);
+            flush_badges(&mut badges, style, out);
         }
         // ⚑ **A PILL CARRIES ITS OWN WORDS, so it reaches the prose.** This arm used to be in the
         // silent set below, and it was a real hole rather than a style choice: WHOSE TURN / WHAT
@@ -83,7 +168,7 @@ fn walk(node: &ViewNode, depth: usize, out: &mut String) {
         // stays silent, like `gauge`.
         ViewNode::Pill { .. } => {
             if let Some(text) = literal_pill(node) {
-                push_line(out, &badge(text));
+                push_content(out, style, &badge(text));
             }
         }
         // The affordance half — rendered as the channel's affordance carrier, not as text.
@@ -92,24 +177,37 @@ fn walk(node: &ViewNode, depth: usize, out: &mut String) {
         // Table/Grid/Tabs/Host/Adept still contributes its text) rather than dropping silently.
         ViewNode::Table(children) | ViewNode::Grid { children, .. } => {
             for c in children {
-                walk(c, depth, out);
+                walk(c, depth, style, out);
             }
         }
         ViewNode::Tabs { panels, .. } => {
             for p in panels {
-                walk(p, depth, out);
+                walk(p, depth, style, out);
             }
         }
-        ViewNode::Host { view: Some(v), .. } => walk(v, depth, out),
+        ViewNode::Host { view: Some(v), .. } => walk(v, depth, style, out),
         // An unresolved mount has no subtree to contribute prose from.
         ViewNode::Host { view: None, .. } => {}
-        ViewNode::Adept(inner) => walk(inner, depth, out),
-        // A coordinate board contributes its text grid to the prose (a highlighted cell bracketed);
-        // the clickable cells ride the channel's affordance carrier (keyboard / numbered block).
+        ViewNode::Adept(inner) => walk(inner, depth, style, out),
+        // A coordinate board contributes its text grid to the prose (roles bracketed per
+        // [`crate::tree::coordgrid_legend`]); the clickable cells ride the channel's affordance
+        // carrier (keyboard / numbered block).
+        //
+        // ⚑ FENCED, where the channel offers a fence. The grid's only claim to being a grid is that
+        // every cell occupies the same number of CHARACTERS — which lines up into columns in a
+        // monospace font and into nothing at all in a proportional one. The fence is the channel's
+        // monospace guarantee ([`ChatTextStyle::grid_open`]); a channel with no parse mode emits
+        // none and reads exactly as it did before.
         ViewNode::CoordGrid { cols, cells } => {
             let grid = crate::tree::coordgrid_text(*cols, cells);
+            if !style.grid_open.is_empty() {
+                push_raw(out, style.grid_open);
+            }
             for line in grid.lines() {
-                push_line(out, line);
+                push_content(out, style, line);
+            }
+            if !style.grid_close.is_empty() {
+                push_raw(out, style.grid_close);
             }
         }
         // A LITERAL-valued meter (a light clock, a carry capacity, a guardian's vitality) DOES have
@@ -120,7 +218,7 @@ fn walk(node: &ViewNode, depth: usize, out: &mut String) {
         // on Telegram/WeChat. One shared projection ([`crate::tree::progress_text`]), so the bar is
         // the same bar on every channel.
         ViewNode::Progress { value, max, label } => {
-            push_line(out, &crate::tree::progress_text(label, *value, *max));
+            push_content(out, style, &crate::tree::progress_text(label, *value, *max));
         }
         // ── The remaining leaves contribute NO chat prose (this match is EXHAUSTIVE on purpose:
         //    a new `ViewNode` variant must fail to compile here until its prose projection is
@@ -162,7 +260,7 @@ fn badge(text: &str) -> String {
 }
 
 /// Emit a run of badges as one line, and clear the run.
-fn flush_badges(badges: &mut Vec<&str>, out: &mut String) {
+fn flush_badges(badges: &mut Vec<&str>, style: &ChatTextStyle, out: &mut String) {
     if badges.is_empty() {
         return;
     }
@@ -171,11 +269,18 @@ fn flush_badges(badges: &mut Vec<&str>, out: &mut String) {
         .map(|b| badge(b))
         .collect::<Vec<_>>()
         .join(" ");
-    push_line(out, &line);
+    push_content(out, style, &line);
     badges.clear();
 }
 
-fn push_line(out: &mut String, line: &str) {
+/// Emit one line of CONTENT — escaped for the transport's parse mode. ⚑ Every line of the surface's
+/// own words goes through here; the only thing that may reach [`push_raw`] is a fence this module
+/// itself authored.
+fn push_content(out: &mut String, style: &ChatTextStyle, line: &str) {
+    push_raw(out, &(style.escape)(line));
+}
+
+fn push_raw(out: &mut String, line: &str) {
     if !out.is_empty() {
         out.push('\n');
     }
@@ -213,6 +318,7 @@ mod tests {
                         turn: "delve".into(),
                         arg: 0,
                         enabled: true,
+                        wants_text: false,
                     }],
                 },
             ],
@@ -288,5 +394,68 @@ mod tests {
             label: "light".into(),
         };
         assert_eq!(render_text(&tree), "");
+    }
+
+    /// ⚑ **THE BOARD IS FENCED AND THE PROSE IS ESCAPED, in one walk.** The regression this closes:
+    /// a Telegram `sendMessage` with NO `parse_mode` is laid out in a proportional font, where a grid
+    /// whose only claim to being a grid is equal character counts per cell does not line up into
+    /// columns at all — every board on that surface was misaligned. The fence buys the monospace
+    /// font, and the moment a parse mode is live EVERY other line is text the parser reads, which is
+    /// why the escape travels with the fence in one [`ChatTextStyle`] rather than as a later pass.
+    #[test]
+    fn the_html_style_fences_the_board_and_escapes_the_prose() {
+        let tree = ViewNode::Section {
+            title: "a < b & c".into(),
+            tag: String::new(),
+            children: vec![
+                ViewNode::Text("the automaton is <@> and it sees you".into()),
+                ViewNode::CoordGrid {
+                    cols: 2,
+                    cells: vec![
+                        cell("<", 0, false),
+                        cell("A", 1, true),
+                        cell("&", 2, false),
+                        cell("R", 3, false),
+                    ],
+                },
+            ],
+        };
+        // Written with explicit `\n` per literal so no source line carries meaningful trailing
+        // whitespace: the grid's trailing pad IS part of the alignment being asserted.
+        let expected = concat!(
+            "a &lt; b &amp; c\n",
+            "the automaton is &lt;@&gt; and it sees you\n",
+            "<pre>\n",
+            "   0  1 \n",
+            "0  &lt; [A]\n",
+            "1  &amp;  R \n",
+            "</pre>",
+        );
+        assert_eq!(
+            render_text_styled(&tree, &ChatTextStyle::telegram_html()),
+            expected,
+            "the fence is raw, every content line is escaped, and the axes are labelled"
+        );
+        // The PLAIN style is the projection every other channel still gets, byte for byte.
+        assert_eq!(
+            render_text_styled(&tree, &ChatTextStyle::plain()),
+            render_text(&tree),
+            "the default style is exactly the plain walk"
+        );
+        assert!(
+            !render_text(&tree).contains("<pre>"),
+            "a channel with no parse mode emits no fence: {}",
+            render_text(&tree)
+        );
+    }
+
+    fn cell(glyph: &str, arg: i64, highlight: bool) -> crate::tree::CoordCell {
+        crate::tree::CoordCell {
+            glyph: glyph.into(),
+            tag: String::new(),
+            turn: String::new(),
+            arg,
+            highlight,
+        }
     }
 }
