@@ -84,16 +84,25 @@ route	intent/src/verified_settle.rs	settle_leg_authoritative	twin#10 per-leg set
 # ── twin#11 finalization quorum ──────────────────────────────────────────────────────
 route	node/src/finalization_votes.rs	verified_finalization_quorum	twin#11 the live record() quorum decision routes through the verified export
 
-# ── twin#12 ToolGateway delegAdmit mirror (audit F3 — HAND-PINNED, not FFI) ────────────
-# NOT a route-through to an @[export]: `deleg_admit` is a byte-faithful Rust MIRROR of the Lean
-# `Dregg2.Apps.ToolAccessDelegation.delegAdmit`, pinned by a hand-written differential (no generated
-# corpus). The Lean side self-guards (a `delegAdmit` edit trips its §8 `#guard` at `lake build`); the
-# RUST side has only the pin. These rows are the structural canary that the pin — and the mirrored
-# predicate it pins — stay intact, so a silent Rust edit or a deleted alarm can't drift the mirror.
-route	sdk/src/tool_gateway.rs	tool == g\.tool_id && now <= g\.deadline && new == old \+ 1 && 0 <= old && new <= g\.rate_limit	twin#12 the SDK deleg_admit predicate mirrors the Lean delegAdmit conjunct-for-conjunct (scope/deadline/increment/prior/rate); any edit drifts from delegAdmit
-route	sdk/src/tool_gateway.rs	fn tool_gateway_admit_mirrors_lean_delegadmit	twin#12 the hand-pinned §8 differential (the only Rust-drift alarm) must not be deleted
-route	starbridge-apps/tool-access-delegation/src/lib.rs	tool == g\.tool_id && now <= g\.deadline && new == old \+ 1 && 0 <= old && new <= g\.rate_limit	twin#12 the starbridge-apps mirror deleg_admit is conjunct-for-conjunct faithful to the Lean delegAdmit
+# ── twin#12 delegated tool-access admission (delegAdmit) — NOW A ROUTE-THROUGH ─────────
+# These rows used to pin a byte-faithful Rust MIRROR of the Lean predicate at each site, because
+# there was no FFI entry to route to. a2ee6277e deleted all three copies: `deleg_admit` /
+# `play_admit` now marshal across `dregg_deleg_admit` to `Dregg2.Apps.DelegAdmit.delegAdmit` and
+# return `Result<bool, String>`, so an archive that cannot answer yields `Err` (a named refusal —
+# GatewayRefusal::OracleUnavailable / PlayRefusal::OracleUnavailable) rather than a Rust verdict.
+# The rows below guard the shape that replaced the mirror: the FFI call is still what decides, the
+# five-conjunct Rust predicate cannot come back at any of the three sites, and the tests that prove
+# the call actually reaches Lean are not deleted. The `forbid` rows are the ones with teeth — they
+# are what stops a wasm32 "just add a feature-gated fallback" from re-growing the twin.
+route	sdk/src/tool_gateway.rs	dregg_lean_ffi::deleg_admit\(	twin#12 the SDK gateway's admission verdict is marshalled to the Lean delegAdmit, not decided in Rust
+forbid	sdk/src/tool_gateway.rs	tool == g\.tool_id && now <= g\.deadline && new == old \+ 1 && 0 <= old && new <= g\.rate_limit	twin#12 the deleted five-conjunct Rust mirror must not reappear in the SDK gateway
+route	sdk/src/tool_gateway.rs	fn tool_gateway_admission_is_answered_by_lean	twin#12 the SDK route test (verdicts come back across the real dregg_deleg_admit boundary) must not be deleted
+route	starbridge-apps/tool-access-delegation/src/lib.rs	dregg_lean_ffi::deleg_admit\(	twin#12 the starbridge-apps admission verdict is marshalled to the Lean delegAdmit, not decided in Rust
+forbid	starbridge-apps/tool-access-delegation/src/lib.rs	tool == g\.tool_id && now <= g\.deadline && new == old \+ 1 && 0 <= old && new <= g\.rate_limit	twin#12 the deleted five-conjunct Rust mirror must not reappear in starbridge-apps
 route	starbridge-apps/tool-access-delegation/tests/lean_differential.rs	fn corpus_matches_lean_pinned_literal	twin#12 the starbridge-apps corpus differential (the pinned-literal alarm) must not be deleted
+route	dreggnet-offerings/src/session.rs	dregg_lean_ffi::deleg_admit\(	twin#12 the third copy: play_admit is decided by the same Lean delegAdmit under an exact scope encoding (PlayScope::Any sends target as tool_id), and was never guarded
+forbid	dreggnet-offerings/src/session.rs	^[[:space:]]*&& (now <= g\.deadline|new == old \+ 1|new <= g\.turn_budget)	twin#12 the deleted play_admit mirror must not reappear (its conjuncts were named for the PLAY grant — scope.admits/turn_budget — so the SDK's literal does not fire here; this matches any `&&` conjunct of the folded predicate written in Rust, 3 hits on the pre-deletion file, 0 now)
+route	dreggnet-offerings/src/session.rs	PlayRefusal::OracleUnavailable	twin#12 the wasm32 seam stays a NAMED REFUSAL; losing the variant is how a feature-gated Rust fallback re-grows the twin
 
 # ── twin#13 the PQ ACCEPT/REJECT GATE (ML-DSA-65 verify) + the shared PQ bypass predicate ──────
 # A DIFFERENT FLAVOUR from twins #1/#3b/#8b: the fallback is not a hand-written Rust twin but a real
