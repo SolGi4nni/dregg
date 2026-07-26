@@ -97,6 +97,15 @@ pub mod operation;
 pub mod overworld;
 /// The one viewer-blind, copyable receipt card shared by every hosted game surface.
 pub mod player_turn_receipt;
+/// THE SHELF GATE — the SECOND, orthogonal filter in front of a browse list: not "do we advertise
+/// this?" (curation, `dreggnet_catalog::SHIPPED_KEYS`) but "can THIS SURFACE host it at all?"
+/// (capability). A shared surface — a group chat's ONE message every member reads — must not paint
+/// a live control for an offering that declares [`Offering::hidden_information`], because pressing
+/// it will be refused; [`shelf::advertised_shelf`] takes that verdict at PAINT time (the
+/// declaration is answerable without a session, which is the whole reason it is declared) so the
+/// menu can dim the row and say why instead of teaching the player by refusal. It is the advance
+/// warning, NOT the gate — the refusal at the open stays exactly where it is. See [`shelf`].
+pub mod shelf;
 /// THE SESSION-RESUME SEAM — the [`OfferingHost`]'s durable-store closure. A live session is held
 /// in memory (some `!Send`) and lost on restart; this module persists ONLY the reproducible public
 /// input (the seed + the ordered landed advances — a [`resume::SessionMoveLog`]) and reopens a
@@ -112,15 +121,6 @@ pub mod resume;
 /// gasless from the player's view. See [`session`] (the macaroon attenuation model reused for
 /// play; the SDK tool-mandate's `deleg_admit`/`refines` shape, applied to advancing a session).
 pub mod session;
-/// THE SHELF GATE — the SECOND, orthogonal filter in front of a browse list: not "do we advertise
-/// this?" (curation, `dreggnet_catalog::SHIPPED_KEYS`) but "can THIS SURFACE host it at all?"
-/// (capability). A shared surface — a group chat's ONE message every member reads — must not paint
-/// a live control for an offering that declares [`Offering::hidden_information`], because pressing
-/// it will be refused; [`shelf::advertised_shelf`] takes that verdict at PAINT time (the
-/// declaration is answerable without a session, which is the whole reason it is declared) so the
-/// menu can dim the row and say why instead of teaching the player by refusal. It is the advance
-/// warning, NOT the gate — the refusal at the open stays exactly where it is. See [`shelf`].
-pub mod shelf;
 /// THE SIGNED-ATTRIBUTION SEAM — a turn's actor as a VERIFIED Ed25519 public key instead of an
 /// asserted string, with the trust level of every attribution made visible
 /// ([`signed::Attribution`]: `Signed` vs `Asserted`). A [`signed::SignedAction`] carries the

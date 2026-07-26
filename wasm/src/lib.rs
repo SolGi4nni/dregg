@@ -3181,10 +3181,7 @@ mod audit_tests {
         let sub = derive_keypair_from_mnemonic(&test_mnemonic(), "", Some("dregg/1".into()))
             .expect("a sub-agent path derives");
         let sub: KeypairOut = serde_wasm_bindgen::from_value(sub).expect("struct shape");
-        assert_ne!(
-            sub.public_key, kp.public_key,
-            "the path argument is ignored"
-        );
+        assert_ne!(sub.public_key, kp.public_key, "the path argument is ignored");
 
         // One wrong word inside a real phrase: the checksum catches it.
         let mut words: Vec<String> = test_mnemonic().split(' ').map(str::to_string).collect();
