@@ -31,10 +31,13 @@
 //! ## The ceremony, and WHERE THE SIGNATURE HAPPENS
 //!
 //! ```text
-//!   Discord: /identity link-web        →  a pasteable CODE, ephemeral, 15 minutes
+//!   Discord: /cipherclerk link-web     →  a pasteable CODE, ephemeral, 15 minutes
 //!            (mints challenge::issue under account_challenge_key(platform, uid))
+//!            ⚑ NOT `/identity link-web`: `24e47322b` demoted `/identity` to a lab-only
+//!            command, which is why the ceremony's issuer was folded onto `/cipherclerk`.
 //!
 //!   Web:     POST /identity/link       →  code + your 24 words, in ONE request
+//!            gate:   OUR OWN PAGE — seed_identity::request_origin, fail-closed  ← gate 0
 //!            gate:   challenge::verify under the SAME derived key   ← the platform's half
 //!            derive: 24 words → the root Ed25519 key                ← your half
 //!            sign:   webauth_core::link_claim::sign_link_claim
@@ -134,6 +137,11 @@
 //!   code's window. Same posture as `/da/link`'s `link_replay`.
 //! * A link is a display/grouping join. It does NOT make a browser turn signed, and it does NOT make
 //!   your Discord key self-held. Both are said on the page, in those words.
+//! * The consent box is a gate against a code a stranger HANDED you. It is not a gate against a
+//!   request you never made: a hostile page can submit its own code with `mine=yes` already ticked,
+//!   and the victim's browser makes the request. That is what
+//!   [`LinkRefusal::NotFromOurPage`] refuses, and it is why the origin gate is gate 0 rather than a
+//!   belt-and-braces afterthought — the consent box cannot defend a submission the player never saw.
 //! * The consent box and the phrase ride in the SAME `POST`, so a player who was going to be fooled
 //!   has already transmitted their words by the time they see the account id — which is why the id is
 //!   printed on the GET, before the box is filled. A two-step flow (code → "this is account N, is
@@ -202,6 +210,10 @@ pub enum LinkPlatform {
 }
 
 impl LinkPlatform {
+    /// **Every platform this module knows**, so a sweep over the surface (the dead-command tooth
+    /// below) cannot silently miss a variant somebody adds later.
+    pub const ALL: [LinkPlatform; 2] = [LinkPlatform::Discord, LinkPlatform::Telegram];
+
     /// The `platform` field written into the [`LinkRecord`] — the SAME strings `/da/link` and
     /// `/tg/link` already write, so a link made here and a link made there are one record shape.
     pub fn wire(self) -> &'static str {
@@ -220,11 +232,21 @@ impl LinkPlatform {
     }
 
     /// Where the player gets a code, in one sentence.
+    ///
+    /// ⚑ **This string names a command a PLAYER can type, which is not the same thing as a command
+    /// that exists.** It said `/identity link-web` until 2026-07-26, and `24e47322b` had demoted
+    /// `/identity` to `Door::Lab` — registered only inside `DREGG_LAB_GUILD_ID`, so an ordinary
+    /// player typing it in a normal server got no autocomplete and no command. `link-web` was
+    /// deliberately folded into `/cipherclerk` for exactly that reason, and the bot's own copy
+    /// already said so (`discord-bot/src/commands/menus.rs:1312`, `start.rs:239`), with
+    /// `the_rehomed_paths_land_on_advertised_commands` asserting `home_of("link-web") ==
+    /// Some("cipherclerk")`. This page was the one surface left pointing at the dead spelling.
+    /// `no_player_facing_copy_names_a_lab_only_bot_command` is the tooth on this file.
     pub fn how_to_get_a_code(self) -> &'static str {
         match self {
             LinkPlatform::Discord => {
-                "In any server the bot is in (or a DM with it), run <code>/identity link-web</code>. \
-                 The reply is only visible to you."
+                "In any server the bot is in (or a DM with it), run \
+                 <code>/cipherclerk link-web</code>. The reply is only visible to you."
             }
             LinkPlatform::Telegram => {
                 "DM the bot and send <code>/link-web</code>. The reply is only visible to you."
@@ -411,6 +433,18 @@ pub fn mint_link_code(
 /// of them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LinkRefusal {
+    /// ⚑ **The request did not come from a page on this site.** The FIRST gate, ahead of everything
+    /// else, because the ceremony writes a durable record and a cross-origin submission is how an
+    /// attacker gets one written without the player watching.
+    ///
+    /// The attack this is against: a hostile page auto-submits an ordinary form carrying a code for
+    /// **the attacker's own account** plus a ticked consent box, and the victim's browser makes the
+    /// request. Every gate below then passes honestly — the code is genuine, the box is "ticked" — and
+    /// the attacker's account lands on the victim's `/you` and merges into their board row, with no
+    /// un-link door to undo it. Nothing is derived and no nonce is spent for a request that cannot
+    /// show where it came from; see [`crate::seed_identity::request_origin`] for the mechanism and
+    /// why it fails closed on a request that says nothing at all.
+    NotFromOurPage,
     /// ⚑ This deployment holds NO platform identity secret, so no code could be authenticated even
     /// in principle. Distinct from [`CodeNotOurs`](LinkRefusal::CodeNotOurs) because telling a player
     /// their code "expired" when the server was never able to check one is a lie about whose fault it
@@ -460,7 +494,9 @@ impl LinkRefusal {
             LinkRefusal::MalformedCode | LinkRefusal::MalformedUid | LinkRefusal::BadPhrase(_) => {
                 StatusCode::BAD_REQUEST
             }
-            LinkRefusal::CodeNotOurs | LinkRefusal::CodeAlreadyUsed => StatusCode::FORBIDDEN,
+            LinkRefusal::NotFromOurPage
+            | LinkRefusal::CodeNotOurs
+            | LinkRefusal::CodeAlreadyUsed => StatusCode::FORBIDDEN,
             LinkRefusal::AccountNotConfirmed { .. } => StatusCode::BAD_REQUEST,
             // Not the player's request being wrong — the deployment is incomplete.
             LinkRefusal::NoPlatformConfigured => StatusCode::SERVICE_UNAVAILABLE,
@@ -474,6 +510,12 @@ impl LinkRefusal {
     /// [`notice_html`] paints it as a refusal rather than as a success.
     fn message(&self) -> String {
         match self {
+            LinkRefusal::NotFromOurPage => "Refused: this did not come from our page, so nothing \
+                 was linked and nothing was recorded — your code was not spent and your words were \
+                 not used. Open the link page here (/identity/link), paste your code, and try again. \
+                 If something on another website submitted this for you, it was trying to attach an \
+                 account to your identity without showing you which one."
+                .to_string(),
             LinkRefusal::NoPlatformConfigured => "Refused: this server holds no chat-platform \
                  identity secret, so it cannot authenticate a link code from any bot — nothing was \
                  linked, and nothing you could paste would change that. This is an operator setting, \
@@ -910,6 +952,15 @@ async fn get_link(
 
 /// `POST /identity/link` — run the ceremony. On success re-renders the page with the new link
 /// listed; on refusal re-renders with the named gate and nothing recorded.
+///
+/// ⚑ **The origin gate runs HERE, in the handler, and not inside [`prove_and_record`]** — which is
+/// the one gate that is not in that function's numbered order. That is deliberate rather than
+/// convenient: `prove_and_record` is pure over its clock and its store precisely so the whole gate
+/// order is drivable from a test, and headers are not among its inputs. Threading a
+/// `from_our_page: bool` through it would put the answer to a question about the TRANSPORT inside a
+/// function that only knows about codes and phrases, and would let a caller pass `true`. The refusal
+/// still lives in the shared [`LinkRefusal`] taxonomy, so it renders, statuses and reads like every
+/// other gate — [`LinkRefusal::NotFromOurPage`] says what it is against.
 async fn post_link(
     State(state): State<Arc<IdentityLinkState>>,
     headers: HeaderMap,
@@ -917,6 +968,32 @@ async fn post_link(
 ) -> Response {
     let claimed =
         read_cookie(&headers, CLAIM_COOKIE).and_then(|l| seed_identity::parse_claim_label(&l));
+    // GATE 0: did this come from our own page? Before the code is parsed, before the phrase is
+    // touched, and before any nonce could be spent.
+    let origin = seed_identity::request_origin(&headers);
+    if origin != seed_identity::RequestOrigin::SameOrigin {
+        tracing::warn!(
+            ?origin,
+            "REFUSED a POST /identity/link that could not show it came from a page on this site — \
+             nothing was derived, no code was spent and NO RECORD WAS WRITTEN. A cross-origin submit \
+             would otherwise bind an attacker-chosen account to this browser's identity, and there \
+             is no un-link door"
+        );
+        let message = LinkRefusal::NotFromOurPage.message();
+        return (
+            LinkRefusal::NotFromOurPage.http_status(),
+            no_store(link_page(
+                &state.kinds(),
+                &state.store_path,
+                claimed.as_deref(),
+                None,
+                Some(&message),
+                // A foreign request's code is not handed back: it was never the player's to retype.
+                None,
+            )),
+        )
+            .into_response();
+    }
     match prove_and_record(
         &state,
         &form.code,
@@ -1162,6 +1239,12 @@ fn link_page(
     // form entirely, rather than presenting a box whose every submission is a refusal. The page is
     // still reachable (every other page links here), and it still explains what linking is — that is
     // the whole reason it is mounted unconditionally.
+    //
+    // ⚑ It also renders `{notice}`. This branch COMPUTED the notice and threw it away, which meant
+    // that on an unconfigured deployment every per-request refusal was swallowed and the player got
+    // the standing "cannot prove a link" page instead of the one thing that had just happened to
+    // their request — a cross-origin submission included. A refusal that renders nowhere is a refusal
+    // nobody can act on.
     if platforms.is_empty() {
         return document_with_head(
             "Link your accounts — DreggNet",
@@ -1173,7 +1256,7 @@ fn link_page(
                  <h1>One player, both places</h1>\
                  <p class=\"deck\">This is where you would prove that your chat account and the \
                  identity your 24 words derive are the same human, so the boards rank you once \
-                 instead of twice.</p></header>\
+                 instead of twice.</p></header>{notice}\
                  <div class=\"notice refused\" role=\"status\">Refused: this server cannot prove a \
                  link right now.</div>\
                  <h2>Why, exactly</h2>\
@@ -1192,6 +1275,7 @@ fn link_page(
                  environment — and point <code>DREGG_LINK_DIR</code> at the same directory every \
                  dregg unit uses, so a link recorded on one surface resolves on the others.</p>\
                  {asym}</main>",
+                notice = notice,
                 discord = crate::discord_activity::BOT_SECRET_ENV,
                 telegram = crate::telegram_miniapp::TELEGRAM_BOT_TOKEN_ENV,
                 asym = asymmetry_block(),
@@ -1769,6 +1853,25 @@ mod tests {
         // The asymmetry is stated even here — a reader is still learning what linking would mean.
         assert!(page.contains("still CUSTODIAL"), "{page}");
 
+        // ⚑ AND A PER-REQUEST REFUSAL STILL RENDERS HERE. This branch computed the notice and threw
+        // it away, so on an unconfigured deployment every refusal — a cross-origin submission
+        // included — was swallowed into the standing "cannot prove a link" page and the player never
+        // learned what had just happened to their request.
+        let refused = link_page(
+            &[],
+            &path,
+            None,
+            None,
+            Some(&LinkRefusal::NotFromOurPage.message()),
+            None,
+        );
+        assert!(
+            refused.contains("did not come from our page"),
+            "an unconfigured deployment must still render the refusal it just answered: {refused}"
+        );
+        // …and with nothing to say it says nothing extra (the page above is the unchanged one).
+        assert!(!page.contains("did not come from our page"), "{page}");
+
         // And the ceremony refuses with the OPERATOR-shaped variant, not "your code expired".
         let state = IdentityLinkState::new(Vec::new(), path.clone());
         let refusal = prove_and_record(&state, "1:abc.def", &generate_mnemonic(), true, NOW)
@@ -1813,6 +1916,9 @@ mod tests {
             LinkRefusal::MalformedCode,
             LinkRefusal::MalformedUid,
             LinkRefusal::NoPlatformConfigured,
+            // A cross-origin submission's code was never the player's to retype, and reflecting it
+            // back into our own page would be doing the attacker's rendering for them.
+            LinkRefusal::NotFromOurPage,
         ] {
             assert!(!handed_back(&dead), "a dead code was re-offered: {dead:?}");
         }
@@ -1902,6 +2008,7 @@ mod tests {
             "an unknown word must be named"
         );
         for refusal in [
+            LinkRefusal::NotFromOurPage,
             LinkRefusal::NoPlatformConfigured,
             LinkRefusal::MalformedCode,
             LinkRefusal::MalformedUid,
@@ -1929,6 +2036,118 @@ mod tests {
                 refusal.http_status().is_client_error() || refusal.http_status().is_server_error()
             );
         }
+    }
+
+    /// **Top-level bot commands an ordinary player CANNOT type.** `24e47322b` moved these off
+    /// Discord's global surface: they are registered only inside `DREGG_LAB_GUILD_ID`, so a player in
+    /// a normal server gets no autocomplete and no command.
+    ///
+    /// ⚑ **This is a MIRROR, and it is one on purpose.** The authority is
+    /// `discord-bot/src/commands/menus.rs::SLASH_SURFACE` — its `Door::Lab` rows, plus its
+    /// `Door::Offering(key)` rows whose key is off `dreggnet_catalog::SHIPPED_KEYS`. `dreggnet-web`
+    /// CANNOT depend on `dregg-discord-bot` (an EXCLUDED workspace; see `Cargo.toml`), so a
+    /// compile-time join is not available and the alternative was no tooth at all. The three
+    /// offering-derived rows are therefore DERIVED here from the same ship list the bot derives them
+    /// from ([`lab_only_bot_commands`]), and only the four pure-lab names are copied. If the copy goes
+    /// stale this tooth mis-reports in BOTH directions — it would miss a newly demoted command, and it
+    /// would wrongly flag copy naming a re-advertised one. It is a smoke alarm, not a proof.
+    const PURE_LAB_BOT_COMMANDS: [&str; 4] = ["identity", "gallery", "federation", "leaderboard"];
+
+    /// The lab-only set, with the offering-derived rows derived rather than copied: re-list `dungeon`,
+    /// `council` or `hermes` on `dreggnet_catalog::SHIPPED_KEYS` and `/adventure`, `/govern` and
+    /// `/hermes` come back off this list on their own, exactly as they come back onto the bot's menu.
+    fn lab_only_bot_commands() -> Vec<&'static str> {
+        let mut names: Vec<&'static str> = PURE_LAB_BOT_COMMANDS.to_vec();
+        for (command, offering) in [
+            ("adventure", "dungeon"),
+            ("govern", "council"),
+            ("hermes", "hermes"),
+        ] {
+            if !dreggnet_catalog::is_shipped(offering) {
+                names.push(command);
+            }
+        }
+        names
+    }
+
+    /// ⚑ **THE DEAD-COMMAND TOOTH.** No string this page shows a player may tell them to run a
+    /// command that is not in their `/` menu.
+    ///
+    /// This is the defect it exists for: the Discord instruction said `run /identity link-web` for
+    /// hours after `/identity` had been demoted to lab-only, so the one sentence whose entire job is
+    /// "here is how you get a code" named a command a player could not type — a dead end on the
+    /// load-bearing step of the ceremony. The bot's own copy was already correct
+    /// (`/cipherclerk link-web`) and its own test already asserted the re-homing; nothing looked at
+    /// the web copy, on either side of the seam.
+    ///
+    /// A `<code>/word` in this page's copy IS an instruction to type that command; an `href="/word"`
+    /// is one of our own URLs, and is not what this checks.
+    #[test]
+    fn no_player_facing_copy_names_a_lab_only_bot_command() {
+        let lab = lab_only_bot_commands();
+        let names_a_lab_command = |copy: &str| -> Option<String> {
+            lab.iter()
+                .find(|name| copy.contains(&format!("<code>/{name}")))
+                .map(|name| format!("/{name}"))
+        };
+
+        // NON-VACUOUS: the exact string that shipped is what this check is for.
+        assert_eq!(
+            names_a_lab_command(
+                "In any server the bot is in, run <code>/identity link-web</code>."
+            )
+            .as_deref(),
+            Some("/identity"),
+            "the checker must flag the very sentence that shipped, or it proves nothing"
+        );
+
+        // Every player-facing string on this surface, in the states a player meets them.
+        let path = tmp_store("dead-command");
+        let mut copy: Vec<String> = LinkPlatform::ALL
+            .iter()
+            .map(|platform| platform.how_to_get_a_code().to_string())
+            .collect();
+        copy.push(asymmetry_block());
+        copy.push(link_page(&LinkPlatform::ALL, &path, None, None, None, None));
+        copy.push(link_page(&[], &path, None, None, None, None));
+        copy.push(link_page(
+            &LinkPlatform::ALL,
+            &path,
+            None,
+            None,
+            Some(&LinkRefusal::NotFromOurPage.message()),
+            None,
+        ));
+        for refusal in [
+            LinkRefusal::NotFromOurPage,
+            LinkRefusal::NoPlatformConfigured,
+            LinkRefusal::CodeNotOurs,
+            LinkRefusal::CodeAlreadyUsed,
+            LinkRefusal::AccountNotConfirmed {
+                platform: LinkPlatform::Discord,
+                uid: "1".into(),
+            },
+        ] {
+            copy.push(refusal.message());
+        }
+        for text in &copy {
+            assert_eq!(
+                names_a_lab_command(text),
+                None,
+                "player-facing copy names a command a player cannot type: {text}"
+            );
+        }
+
+        // …and the POSITIVE half: the Discord instruction names the command `link-web` actually
+        // lives on. Asserted as well as the absence, so deleting the sentence would not go green.
+        assert!(
+            LinkPlatform::Discord
+                .how_to_get_a_code()
+                .contains("<code>/cipherclerk link-web</code>"),
+            "the Discord instruction must name the ADVERTISED home of `link-web`: {}",
+            LinkPlatform::Discord.how_to_get_a_code()
+        );
+        let _ = std::fs::remove_dir_all(path.parent().expect("a parent dir"));
     }
 
     /// The platform wire names are the SAME strings `/da/link` and `/tg/link` already record — a

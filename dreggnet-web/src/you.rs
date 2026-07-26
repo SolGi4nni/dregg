@@ -639,14 +639,22 @@ fn identity_panel(label: &str, me: &DreggIdentity) -> String {
     // The durability paragraph BRANCHES, because the honest answer now differs. A claimed identity
     // is recoverable and this page must not keep saying it is not; an unclaimed one is exactly as
     // fragile as it always was, and the fix is one link away rather than unavailable.
+    //
+    // ⚑ The claimed branch carries `/identity`'s OWN restart caveat rather than only the good news.
+    // A reader who never visits `/identity` reads this page as their whole answer, and "costs you
+    // nothing you cannot type back" on its own is the rosier half of a two-part truth — the typing
+    // back is not hypothetical, an unpinned deployment makes it a routine event.
     let durability = if crate::seed_identity::parse_claim_label(label).is_some() {
         "<p class=\"prose\"><strong>How durable is this?</strong> Recoverable. This identity is a \
          public key derived from 24 words you wrote down, so clearing your cookies or moving to \
          another device costs you nothing you cannot type back — everything below is filed under \
-         the key, not under this browser. What it still is <em>not</em>: a signature. Your moves \
-         are attributed to your key, not signed by it, because neither this page nor the server \
-         holds the secret. A tool that holds your phrase can sign as you; see \
-         <a href=\"/identity\">your identity</a>.</p>"
+         the key, not under this browser. Keep those words where you can find them, because typing \
+         them back is not only for a new device: unless this deployment pins its identity key, \
+         restarting the server re-rolls it, this browser's claim stops verifying, and you arrive as \
+         a fresh anonymous visitor until you enter your 24 words again — never as somebody else. \
+         What it still is <em>not</em>: a signature. Your moves are attributed to your key, not \
+         signed by it, because neither this page nor the server holds the secret. A tool that holds \
+         your phrase can sign as you; see <a href=\"/identity\">your identity</a>.</p>"
     } else {
         "<p class=\"prose\"><strong>How durable is this?</strong> It is a cookie. Clear your \
          cookies, switch browsers, or open a private window and you are a new person here, with \
@@ -1527,6 +1535,17 @@ mod tests {
         assert!(panel.contains("Recoverable"), "{panel}");
         assert!(!panel.contains("no recovery"), "{panel}");
         assert!(panel.contains("CLAIMED identity"), "{panel}");
+        // ⚑ …and it carries `/identity`'s own restart caveat, so a reader who only ever visits
+        // `/you` does not get the rosier half of the truth. "Nothing you cannot type back" is true;
+        // "and here is when you will have to" is the part that was missing.
+        assert!(
+            panel.contains("restarting the server re-rolls it"),
+            "the claimed branch must carry the restart caveat: {panel}"
+        );
+        assert!(
+            panel.contains("never as somebody else"),
+            "the caveat must also say what a restart is NOT: {panel}"
+        );
         // Still honest about the one thing a claim does NOT buy on this surface.
         assert!(panel.contains("not signed by it"), "{panel}");
         assert!(

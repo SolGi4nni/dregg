@@ -108,10 +108,6 @@ impl DiscordOffering for DescentCampaignOffering {
         seat_of_store!(DescentCampaignOffering)
     }
 
-    fn open_hint() -> String {
-        format!("/play offering:{}", Self::KEY)
-    }
-
     fn status_line(&self, session: &Self::Session) -> String {
         format!(
             "{} verified turns · {} locations crowned · campaign revision {}",
@@ -138,11 +134,6 @@ impl DiscordOffering for SeatedTug {
     fn store() -> &'static Store<Self> {
         seat_of_store!(SeatedTug)
     }
-    // The REAL invocation that opens this offering (backlog #29): the stale-session hint
-    // must be typeable — this offering is mounted by `/play`, not a bespoke `/<key> open`.
-    fn open_hint() -> String {
-        format!("/play offering:{}", Self::KEY)
-    }
     fn status_line(&self, session: &Self::Session) -> String {
         verified_turns(self, session)
     }
@@ -164,11 +155,6 @@ impl DiscordOffering for AutomataflOffering {
     fn store() -> &'static Store<Self> {
         seat_of_store!(AutomataflOffering)
     }
-    // The REAL invocation that opens this offering (backlog #29): the stale-session hint
-    // must be typeable — this offering is mounted by `/play`, not a bespoke `/<key> open`.
-    fn open_hint() -> String {
-        format!("/play offering:{}", Self::KEY)
-    }
     fn status_line(&self, session: &Self::Session) -> String {
         verified_turns(self, session)
     }
@@ -184,10 +170,6 @@ impl DiscordOffering for PrivateBazaarRaidOffering {
 
     fn store() -> &'static Store<Self> {
         seat_of_store!(PrivateBazaarRaidOffering)
-    }
-
-    fn open_hint() -> String {
-        format!("/play offering:{}", Self::KEY)
     }
 
     fn status_line(&self, session: &Self::Session) -> String {
@@ -211,10 +193,6 @@ impl DiscordOffering for HostedProofAssignedRaidOffering {
 
     fn store() -> &'static Store<Self> {
         seat_of_store!(HostedProofAssignedRaidOffering)
-    }
-
-    fn open_hint() -> String {
-        format!("/play offering:{}", Self::KEY)
     }
 
     fn text_prompt(turn: &str) -> Option<TextPrompt> {
@@ -257,11 +235,6 @@ impl DiscordOffering for NamesOffering {
     fn store() -> &'static Store<Self> {
         seat_of_store!(NamesOffering)
     }
-    // The REAL invocation that opens this offering (backlog #29): the stale-session hint
-    // must be typeable — this offering is mounted by `/play`, not a bespoke `/<key> open`.
-    fn open_hint() -> String {
-        format!("/play offering:{}", Self::KEY)
-    }
     fn status_line(&self, session: &Self::Session) -> String {
         verified_turns(self, session)
     }
@@ -282,11 +255,6 @@ impl DiscordOffering for ComputeOffering {
     fn store() -> &'static Store<Self> {
         seat_of_store!(ComputeOffering)
     }
-    // The REAL invocation that opens this offering (backlog #29): the stale-session hint
-    // must be typeable — this offering is mounted by `/play`, not a bespoke `/<key> open`.
-    fn open_hint() -> String {
-        format!("/play offering:{}", Self::KEY)
-    }
     fn status_line(&self, session: &Self::Session) -> String {
         verified_turns(self, session)
     }
@@ -299,11 +267,6 @@ impl DiscordOffering for TradeOffering {
     const TAGLINE: &'static str = "a player market · list · settle an atomic asset swap";
     fn store() -> &'static Store<Self> {
         seat_of_store!(TradeOffering)
-    }
-    // The REAL invocation that opens this offering (backlog #29): the stale-session hint
-    // must be typeable — this offering is mounted by `/play`, not a bespoke `/<key> open`.
-    fn open_hint() -> String {
-        format!("/play offering:{}", Self::KEY)
     }
     fn status_line(&self, session: &Self::Session) -> String {
         verified_turns(self, session)
@@ -318,11 +281,6 @@ impl DiscordOffering for InventoryOffering {
     fn store() -> &'static Store<Self> {
         seat_of_store!(InventoryOffering)
     }
-    // The REAL invocation that opens this offering (backlog #29): the stale-session hint
-    // must be typeable — this offering is mounted by `/play`, not a bespoke `/<key> open`.
-    fn open_hint() -> String {
-        format!("/play offering:{}", Self::KEY)
-    }
     fn status_line(&self, session: &Self::Session) -> String {
         verified_turns(self, session)
     }
@@ -336,11 +294,6 @@ impl DiscordOffering for CheevoShowcase {
     fn store() -> &'static Store<Self> {
         seat_of_store!(CheevoShowcase)
     }
-    // The REAL invocation that opens this offering (backlog #29): the stale-session hint
-    // must be typeable — this offering is mounted by `/play`, not a bespoke `/<key> open`.
-    fn open_hint() -> String {
-        format!("/play offering:{}", Self::KEY)
-    }
     fn status_line(&self, session: &Self::Session) -> String {
         verified_turns(self, session)
     }
@@ -353,11 +306,6 @@ impl DiscordOffering for GuildPage {
     const TAGLINE: &'static str = "the roster + the aggregate verified-clears leaderboard";
     fn store() -> &'static Store<Self> {
         seat_of_store!(GuildPage)
-    }
-    // The REAL invocation that opens this offering (backlog #29): the stale-session hint
-    // must be typeable — this offering is mounted by `/play`, not a bespoke `/<key> open`.
-    fn open_hint() -> String {
-        format!("/play offering:{}", Self::KEY)
     }
     fn status_line(&self, session: &Self::Session) -> String {
         verified_turns(self, session)
@@ -373,11 +321,6 @@ impl DiscordOffering for CraftOffering {
     fn store() -> &'static Store<Self> {
         seat_of_store!(CraftOffering)
     }
-    // The REAL invocation that opens this offering (backlog #29): the stale-session hint
-    // must be typeable — this offering is mounted by `/play`, not a bespoke `/<key> open`.
-    fn open_hint() -> String {
-        format!("/play offering:{}", Self::KEY)
-    }
     fn status_line(&self, session: &Self::Session) -> String {
         verified_turns(self, session)
     }
@@ -390,11 +333,6 @@ impl DiscordOffering for CompanionOffering {
     const TAGLINE: &'static str = "hatch a fair-drawn companion · raise it through XP-gated turns";
     fn store() -> &'static Store<Self> {
         seat_of_store!(CompanionOffering)
-    }
-    // The REAL invocation that opens this offering (backlog #29): the stale-session hint
-    // must be typeable — this offering is mounted by `/play`, not a bespoke `/<key> open`.
-    fn open_hint() -> String {
-        format!("/play offering:{}", Self::KEY)
     }
     fn status_line(&self, session: &Self::Session) -> String {
         verified_turns(self, session)
@@ -410,9 +348,6 @@ impl DiscordOffering for AshenmoorErrandOffering {
     fn store() -> &'static Store<Self> {
         seat_of_store!(AshenmoorErrandOffering)
     }
-    fn open_hint() -> String {
-        format!("/play offering:{}", Self::KEY)
-    }
     fn status_line(&self, session: &Self::Session) -> String {
         verified_turns(self, session)
     }
@@ -425,11 +360,6 @@ impl DiscordOffering for TavernOffering {
     const TAGLINE: &'static str = "the shared hub · presence · the LFG board · the party roster";
     fn store() -> &'static Store<Self> {
         seat_of_store!(TavernOffering)
-    }
-    // The REAL invocation that opens this offering (backlog #29): the stale-session hint
-    // must be typeable — this offering is mounted by `/play`, not a bespoke `/<key> open`.
-    fn open_hint() -> String {
-        format!("/play offering:{}", Self::KEY)
     }
     fn status_line(&self, session: &Self::Session) -> String {
         verified_turns(self, session)
@@ -450,11 +380,6 @@ impl DiscordOffering for PartyOffering {
 
     fn store() -> &'static Store<Self> {
         seat_of_store!(PartyOffering)
-    }
-    // The REAL invocation that opens this offering (backlog #29): the stale-session hint
-    // must be typeable — this offering is mounted by `/play`, not a bespoke `/<key> open`.
-    fn open_hint() -> String {
-        format!("/play offering:{}", Self::KEY)
     }
     fn status_line(&self, session: &Self::Session) -> String {
         verified_turns(self, session)
@@ -563,20 +488,24 @@ pub fn all_play_keys() -> Vec<&'static str> {
         .collect()
 }
 
-/// Register `/play <offering>` — open any SHIPPED offering (`play_keys`) in this channel.
-pub fn register() -> CreateCommand {
-    let mut option = CreateCommandOption::new(
-        CommandOptionType::String,
-        "offering",
-        "Which portfolio offering to open in this channel",
-    )
-    .required(true);
+/// The `offering` picker — the ONE construction of `/play`'s choice enum, so `open` and `status`
+/// offer a player exactly the same vocabulary rather than two lists that can drift apart.
+fn offering_option(description: &str) -> CreateCommandOption {
+    let mut option =
+        CreateCommandOption::new(CommandOptionType::String, "offering", description).required(true);
     for key in play_keys() {
         option = option.add_string_choice(key, key);
     }
+    option
+}
+
+/// Register `/play <offering>` — open any SHIPPED offering (`play_keys`) in this channel.
+pub fn register() -> CreateCommand {
     CreateCommand::new("play")
         .description("Open one receipted game, market, or engine offering in this channel")
-        .add_option(option)
+        .add_option(offering_option(
+            "Which portfolio offering to open in this channel",
+        ))
         // `/play <offering> action:verify` — re-verify the channel's live session chain (the
         // SAME `offering::handle_verify` `/council verify` runs; backlog Tier-2 #10 — the
         // flagship games were the least verifiable surfaces). Default (absent) = open.
@@ -598,6 +527,33 @@ pub fn register() -> CreateCommand {
             )
             .required(false),
         )
+}
+
+/// **Register `/play status offering:<key>` — the READ-ONLY re-post of your own private view.**
+///
+/// ⚑ WHY IT EXISTS. `commands::offering::private_act_plaque` — the one piece of copy that explains
+/// the public-board/private-hand split — told a player *"This private copy does not update itself
+/// — ask for status again to refresh it"*, and there was no status action: `register`'s `action`
+/// option offered exactly `verify` and `submit raid proof`. Both shipped hidden-information games
+/// (automatafl, tug) carry that plaque, so a player who dismissed or lost the ephemeral holding
+/// their hand had one thing left to try — `/play open offering:<key>` — which finds the live
+/// session and renders `commands::open_guard::refuse_with_confirm`: *"Opening a new one would
+/// **wipe it**… Press **Replace it**… or **Keep it**."* Neither button shows them their hand, and
+/// the live one destroys a two-player match. The bot's own self-help routed into a match-wiping
+/// dialog.
+///
+/// It is a subcommand rather than another `action:` choice because the plaque has to name
+/// something that reads like what it does — and because an `action` on `open` would put the
+/// read-only path behind the word "open", which is precisely the confusion that produced the
+/// hazard. Same picker as `open` ([`offering_option`]); none of `open`'s acting options.
+pub fn register_status() -> CreateCommand {
+    CreateCommand::new("status")
+        .description(
+            "Re-post your own private view of a live game here — reads only, changes nothing",
+        )
+        .add_option(offering_option(
+            "Which live offering's own private view to re-post",
+        ))
 }
 
 /// Route `/play <offering>` — open the chosen offering + post its surface (projected for the opener).
@@ -790,11 +746,16 @@ pub async fn open_offering_by_key(
         }
     };
 
+    // ⚑ **THE FLAGSHIP'S REFUSAL, TRANSLATED.** This is where `/play open offering:descent` lands
+    // when the substrate will not deploy, and it used to read "The executor refused to open the
+    // session: {e}" — two defects in one line. "The executor" is machinery a player has never been
+    // introduced to (`commands::start::help_embed` defines "receipt", "committed" and "turn", never
+    // that), and `{e}` was a bare passthrough of whatever `dungeon_on_dregg` raised: "fail-closed",
+    // "Lean-subset", "install_constraint_oracle". `offering::deploy_refusal_embed` renders the
+    // player half; the engineer half is already in the operator log, emitted by `offering::open_in`
+    // at the instant of refusal.
     if let Err(e) = opened {
-        let embed = CreateEmbed::new()
-            .title("The offering was not opened")
-            .description(format!("The executor refused to open the session: {e}"))
-            .color(0xE63946);
+        let embed = offering::deploy_refusal_embed("The offering was not opened", &e);
         ack::edit_slash(ctx, command, embed, vec![]).await;
     }
 }
@@ -810,13 +771,19 @@ pub async fn open_offering_by_key(
 pub enum CheatCode {
     /// A key [`open_offering_by_key`] dispatches. Opened through that exact path.
     Open(&'static str),
-    /// A key that EXISTS but is served by its own top-level command. The Cheat Code names the
-    /// command instead of building a second route to it — that would be a second mechanism, and
-    /// the command was never the thing Discord made untypeable.
-    OwnCommand {
-        key: &'static str,
-        invocation: &'static str,
-    },
+    /// A key that EXISTS but is served by its own command. The Cheat Code names that command
+    /// instead of building a second route to it — that would be a second mechanism, and the
+    /// command was never the thing Discord made untypeable.
+    ///
+    /// ⚑ **THE INVOCATION IS NOT CARRIED HERE.** It used to be, out of a hand-written
+    /// `OWN_COMMANDS` table, and that table could not express the thing that actually mattered:
+    /// five of its six commands are un-advertised, so `handle_cheat`'s *"It was never hidden from
+    /// you; it just answers to a different command"* was FALSE for `dungeon`, `council`, `doc`,
+    /// `grain` and `hermes` — a player guessing "dungeon" (plausible: it was the flagship command
+    /// before the pare-down) was confidently told to type something Discord will not offer them.
+    /// The path AND whether it is reachable now come from `commands::menus::offering_door`, the
+    /// same derivation `open_hint` reads, at render time.
+    OwnCommand { key: &'static str },
     /// The one easter egg.
     Konami,
     /// Nothing recognised. Says something and does nothing.
@@ -834,21 +801,15 @@ const CHEAT_ALIASES: [(&str, &str); 6] = [
     ("raid", dreggnet_surfaces::private_raid::KEY),
 ];
 
-/// The invocation that opens each key with a command of its own.
-///
-/// ⚑ These are the CURRENT invocations, i.e. the folded ones — `/doc open` and `/grain open`
-/// stopped existing when `doc` and `grain` folded under `/hermes`, and were stale here until
-/// this note. Only `market` is on the advertised surface; the other five ride commands that
-/// `commands::menus::SLASH_SURFACE` marks un-advertised, so they answer only inside
-/// `DREGG_LAB_GUILD_ID`. `the_own_commands_name_registered_paths` is the gate.
-const OWN_COMMANDS: [(&str, &str); 6] = [
-    ("dungeon", "/adventure dungeon start"),
-    ("council", "/govern council open"),
-    ("market", "/play market"),
-    ("doc", "/hermes doc open"),
-    ("grain", "/hermes grain open"),
-    ("hermes", "/hermes open"),
-];
+/// The shelf, as a sentence — derived from `dreggnet_catalog::SHIPPED_KEYS` so the Cheat Code's
+/// answers cannot go on naming three games after the ship list changes.
+fn shelf_sentence() -> String {
+    let keys: Vec<String> = dreggnet_catalog::SHIPPED_KEYS
+        .iter()
+        .map(|k| format!("`{k}`"))
+        .collect();
+    keys.join(" · ")
+}
 
 /// The Konami code, in the spellings a person actually types.
 const KONAMI: [&str; 5] = [
@@ -899,8 +860,11 @@ pub fn read_cheat_code(raw: &str) -> CheatCode {
     if let Some(key) = all_play_keys().into_iter().find(|k| *k == resolved) {
         return CheatCode::Open(key);
     }
-    if let Some(&(key, invocation)) = OWN_COMMANDS.iter().find(|(k, _)| *k == resolved) {
-        return CheatCode::OwnCommand { key, invocation };
+    // A key served by its own command, read off [`BESPOKE_COMMAND_KEYS`] — the array that already
+    // DEFINES that set (it is what `all_play_keys` subtracts), rather than a second hand-written
+    // list of the same six keys with their invocations re-typed beside them.
+    if let Some(key) = BESPOKE_COMMAND_KEYS.into_iter().find(|k| *k == resolved) {
+        return CheatCode::OwnCommand { key };
     }
     CheatCode::Unknown
 }
@@ -939,16 +903,37 @@ pub async fn handle_cheat(ctx: &Context, command: &CommandInteraction, state: &B
     match read_cheat_code(&typed) {
         // The ordinary door, opened by the ordinary path. Public, exactly like `/play open`.
         CheatCode::Open(key) => open_offering_by_key(ctx, command, state, key).await,
-        CheatCode::OwnCommand { key, invocation } => {
-            cheat_reply(
-                ctx,
-                command,
-                embeds::dregg_embed(&format!("`{key}` has its own door")).description(format!(
-                    "That one is not opened through `/play` — run `{invocation}`. It was never \
-                     hidden from you; it just answers to a different command."
-                )),
-            )
-            .await;
+        // ⚑ THE TRUTH PER KEY, not one sentence for six keys. `market` really is reachable —
+        // `/play market open` rides the advertised arcade — and for that one the old copy was
+        // right. The other five ride `/adventure`, `/govern` and `/hermes`, which came off the
+        // advertised surface with their offerings, so they are registered ONLY inside
+        // `DREGG_LAB_GUILD_ID`: *"it was never hidden from you; it just answers to a different
+        // command"* was the opposite of the truth for `dungeon`, `council`, `doc`, `grain` and
+        // `hermes`. The distinction is `OfferingDoor::reachable`, derived from the same
+        // `SLASH_SURFACE`/ship-list rule that decides what Discord is given — and the invocation
+        // comes from the same place, so there is no second list to go stale.
+        CheatCode::OwnCommand { key } => {
+            let embed = match crate::commands::menus::offering_door(key) {
+                Some(door) if door.reachable => {
+                    embeds::dregg_embed(&format!("`{key}` has its own door")).description(format!(
+                        "That one is not opened through `/play open` — run `{}`. It was never \
+                         hidden from you; it just answers to a different command.",
+                        door.open
+                    ))
+                }
+                // Registered nowhere a player can see it, so NAME NO COMMAND: an invocation they
+                // cannot type is worse than admitting the offering is closed.
+                _ => embeds::dregg_embed(&format!("`{key}` is not open here right now"))
+                    .description(format!(
+                        "You guessed a real one — `{key}` exists, it is built, and it still \
+                         plays. It is just not on this server's command list at the moment, so \
+                         there is nothing for you to type and nothing was opened: it came off the \
+                         shelf, and un-listing things is how the shelf stays short.\n\nWhat IS \
+                         open: {}. `/play menu` shows them properly.",
+                        shelf_sentence()
+                    )),
+            };
+            cheat_reply(ctx, command, embed).await;
         }
         // ⚑ THE EASTER EGG, and it is exactly the right joke for this product: the most famous
         // cheat code in the world, granting thirty lives that the executor declines to record.
@@ -971,10 +956,10 @@ pub async fn handle_cheat(ctx: &Context, command: &CommandInteraction, state: &B
                 command,
                 embeds::dregg_embed("Nothing answers to that").description(format!(
                     "`{}` opens no door here. No harm done — this box only ever opens something \
-                     that already exists, so a wrong guess costs you nothing.\n\nThe three on the \
-                     shelf are `descent`, `automatafl` and `tug`, and `/play menu` shows them \
-                     properly.",
-                    typed.chars().take(60).collect::<String>()
+                     that already exists, so a wrong guess costs you nothing.\n\nOn the shelf: \
+                     {}. `/play menu` shows them properly.",
+                    typed.chars().take(60).collect::<String>(),
+                    shelf_sentence()
                 )),
             )
             .await;
@@ -996,6 +981,94 @@ async fn cheat_reply(ctx: &Context, command: &CommandInteraction, embed: CreateE
             ),
         )
         .await;
+}
+
+/// **`/play status offering:<key>` — re-post the invoker's OWN private view. READ-ONLY.**
+///
+/// The destination `commands::offering::private_act_plaque` names. It is the SAME
+/// [`offering::handle_status`] every bespoke offering command has always exposed as `/… status`
+/// (`/hermes status`, `/govern council status`), reused rather than re-built — the brief's
+/// instruction and the right one: that function already threads the requester's derived identity
+/// through `surface_for`, already drops the controls and re-attaches the plaque for a
+/// hidden-information offering, and already answers EPHEMERALLY so a hand never lands in the
+/// channel.
+///
+/// ⚑ **WHY IT CANNOT TOUCH THE LIVE SESSION.** It never reaches [`open_offering_by_key`], so it
+/// never reaches `open_and_post`, so it never reaches `commands::open_guard` — there is no path
+/// from here to a Replace-it button. What it does reach is:
+///
+/// * `offering::ensure_live` — which returns immediately if a session is live, and whose
+///   `resume_in` explicitly refuses to overwrite one that won the race; it can only bring a
+///   channel's persisted log BACK, never replace what is there;
+/// * `offering::with_live` — a render closure. `surface_for` calls
+///   `Offering::render_for`/`actions_for`, both `&self`/`&Session` reads. No `advance`, no
+///   `open_in`, no `close_in`, no `drive`, so no turn is attempted and no receipt is minted.
+///
+/// The eight identity-owned RPG keys route to the invoker's persistent world
+/// (`commands::rpg_world::handle_status`), which is read-only by the same argument: it renders out
+/// of the replayed host WITHOUT `ensure_open`, so asking for status cannot mint a world either.
+pub async fn handle_status(ctx: &Context, command: &CommandInteraction, state: &BotState) {
+    let key = command
+        .data
+        .options
+        .iter()
+        .find(|o| o.name == "offering")
+        .and_then(|o| match &o.value {
+            CommandDataOptionValue::String(s) => Some(s.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
+
+    if crate::commands::rpg_world::is_rpg_key(&key) {
+        crate::commands::rpg_world::handle_status(ctx, command, state, &key).await;
+        return;
+    }
+    match key.as_str() {
+        DescentCampaignOffering::KEY => {
+            offering::handle_status::<DescentCampaignOffering>(ctx, command, state).await
+        }
+        "descent" => offering::handle_status::<NativeDescentOffering>(ctx, command, state).await,
+        "bazaar" => offering::handle_status::<DarkBazaarOffering>(ctx, command, state).await,
+        "tug" => offering::handle_status::<SeatedTug>(ctx, command, state).await,
+        "automatafl" => offering::handle_status::<AutomataflOffering>(ctx, command, state).await,
+        #[cfg(feature = "private-bazaar-live")]
+        PrivateBazaarRaidOffering::KEY => {
+            offering::handle_status::<PrivateBazaarRaidOffering>(ctx, command, state).await
+        }
+        dreggnet_surfaces::private_raid::KEY => {
+            offering::handle_status::<HostedProofAssignedRaidOffering>(ctx, command, state).await
+        }
+        "names" => offering::handle_status::<NamesOffering>(ctx, command, state).await,
+        "compute" => offering::handle_status::<ComputeOffering>(ctx, command, state).await,
+        "party" => offering::handle_status::<PartyOffering>(ctx, command, state).await,
+        "gear" => {
+            offering::handle_status::<dreggnet_gear::LoadoutOffering>(ctx, command, state).await
+        }
+        "talents" => {
+            offering::handle_status::<dreggnet_gear::TalentTreeOffering>(ctx, command, state).await
+        }
+        "overworld" => {
+            offering::handle_status::<crate::commands::overworld::OverworldPlay>(
+                ctx, command, state,
+            )
+            .await
+        }
+        other => {
+            let _ = command
+                .create_response(
+                    &ctx.http,
+                    CreateInteractionResponse::Message(
+                        CreateInteractionResponseMessage::new()
+                            .content(format!(
+                                "`{other}` is not an offering this bot serves, so there is no \
+                                 private view of it to re-post. Nothing was changed."
+                            ))
+                            .ephemeral(true),
+                    ),
+                )
+                .await;
+        }
+    }
 }
 
 /// `/play <offering> action:verify` — dispatch the chain re-verifier for the chosen offering
@@ -1087,9 +1160,10 @@ async fn handle_raid_proof_upload(
     let Some((seats, is_seat_zero, assigned)) = preflight else {
         let embed = CreateEmbed::new()
             .title("No Ash Gate raid is open in this channel")
+            // Derived, not spelled: this line carried the pre-fold `/play offering:<key>` too.
             .description(format!(
-                "Open one first with `/play offering:{}`.",
-                dreggnet_surfaces::private_raid::KEY
+                "Open one first with `{}`.",
+                crate::commands::menus::open_invocation(dreggnet_surfaces::private_raid::KEY)
             ))
             .color(0xE39B32);
         ack::edit_slash(ctx, command, embed, vec![]).await;
@@ -1387,21 +1461,48 @@ mod cheat_code_tests {
     /// **A key with its own command is POINTED AT, never re-routed.** The Cheat Code builds no
     /// second door onto `/adventure dungeon` — those commands were always typeable, so there is
     /// nothing here to restore and a second mechanism would be pure risk.
+    ///
+    /// ⚑ And the pointing is HONEST PER KEY. The old shape carried the invocation in the enum out
+    /// of a hand-written table and could not express reachability, so one sentence ("it was never
+    /// hidden from you") covered six keys and was false for five. The door now comes from
+    /// `menus::offering_door`, which answers both questions at once.
     #[test]
     fn a_bespoke_key_gets_its_command_named_and_no_new_route() {
+        let mut reachable = 0usize;
+        let mut lab_only = 0usize;
         for key in BESPOKE_COMMAND_KEYS {
             match read_cheat_code(key) {
-                CheatCode::OwnCommand { key: k, invocation } => {
-                    assert_eq!(k, key);
-                    assert!(invocation.starts_with('/'), "{invocation}");
-                }
+                CheatCode::OwnCommand { key: k } => assert_eq!(k, key),
                 other => panic!("`{key}` should name its own command, got {other:?}"),
             }
             assert!(
                 !all_play_keys().contains(&key),
                 "`{key}` must not ALSO be dispatchable through the /play open path"
             );
+            let door = crate::commands::menus::offering_door(key)
+                .unwrap_or_else(|| panic!("`{key}` has its own command but no derived door"));
+            assert!(door.open.starts_with('/'), "{}", door.open);
+            assert!(
+                crate::commands::menus::path_is_registered(&door.open),
+                "the `{key}` Cheat Code answer would name `{}`, which this build does not register",
+                door.open
+            );
+            if door.reachable {
+                reachable += 1;
+            } else {
+                lab_only += 1;
+            }
         }
+        // NOT VACUOUS IN EITHER DIRECTION. If every bespoke key were reachable the per-key
+        // distinction would be untested and the honest branch dead; if none were, the "run this
+        // command" branch would be. Today it is `market` against the other five — and if that
+        // ever becomes one-sided, this fails and the reply's two branches get re-examined
+        // deliberately instead of one of them rotting unread.
+        assert!(
+            reachable > 0 && lab_only > 0,
+            "the Cheat Code's reachable/not-open split is one-sided ({reachable} reachable, \
+             {lab_only} lab-only), so one branch of its reply is untested"
+        );
     }
 
     /// The easter egg is one lookup with a handful of spellings — not an interpreter.
@@ -1647,7 +1748,20 @@ mod tests {
             offering::generic_offering_keys().contains(&"bazaar"),
             "…and still mounted in the generic component/modal router"
         );
-        assert_eq!(DarkBazaarOffering::open_hint(), "/play offering:bazaar");
+        // ⚑ **THE HINT IS ASSERTED AGAINST THE REGISTERED TREE, NOT A LITERAL.** This line used
+        // to read `assert_eq!(…, "/play offering:bazaar")` — pinning the pre-fold spelling — so
+        // the one test touching `open_hint` GUARANTEED the broken string instead of catching it.
+        // What must hold is not a spelling but that the hint is typeable.
+        assert!(
+            crate::commands::menus::path_is_registered(&DarkBazaarOffering::open_hint()),
+            "the Bazaar's open hint is not a path this build registers: {}",
+            DarkBazaarOffering::open_hint()
+        );
+        assert_eq!(
+            DarkBazaarOffering::open_hint(),
+            crate::commands::menus::open_invocation("bazaar"),
+            "the hint must come from the ONE derivation, not a second spelling"
+        );
         for k in dreggnet_catalog::CATALOG_KEYS {
             assert!(
                 BESPOKE_COMMAND_KEYS.contains(&k) || offering::generic_offering_keys().contains(&k),
@@ -1707,42 +1821,94 @@ mod tests {
         );
     }
 
-    /// ⚑ **THE CHEAT CODE CANNOT NAME A COMMAND THAT DOES NOT EXIST.** `read_cheat_code`
-    /// answers a bespoke key by NAMING its command instead of building a second route to it —
-    /// which is only honest while that command is actually built. Two stale entries (`/doc
-    /// open`, `/grain open`) survived the fold under `/hermes` unnoticed; this is the tooth
-    /// that would have caught them.
+    /// ⚑ **EVERY OFFERING THIS BUILD SERVES HAS A TYPED DOOR, AND IT IS ONE DISCORD ROUTES.**
+    ///
+    /// The `open_hint` sweep, driven off `commands::offering::for_each_generic_offering` (THE one
+    /// mounting table) plus [`BESPOKE_COMMAND_KEYS`] — so an offering added to the bot is checked
+    /// the day it is mounted, and nothing here re-types a key.
+    ///
+    /// This is the tooth `24e47322b` needed. That commit folded `/play` behind subcommands and
+    /// eighteen `open_hint` impls kept returning `/play offering:<key>`, a path Discord refuses to
+    /// route; the ONE test that touched `open_hint` asserted the broken literal. Every hint (and
+    /// the status path the hidden-hand plaque names, and the verify path) now walks the registered
+    /// JSON.
     #[test]
-    fn the_own_commands_name_registered_paths() {
-        for (key, invocation) in OWN_COMMANDS {
-            let mut words = invocation.trim_start_matches('/').split_whitespace();
-            let top = words.next().expect("an invocation names a command");
-            assert!(
-                crate::commands::menus::all_surface_names().contains(&top),
-                "the `{key}` Cheat Code answer names `/{top}`, which is not on SLASH_SURFACE"
-            );
-            if let Some(sub) = words.next() {
+    fn every_offering_door_is_a_path_this_build_registers() {
+        use crate::commands::menus::{offering_door, path_is_registered};
+
+        let keys: Vec<&str> = offering::generic_offering_keys()
+            .into_iter()
+            .chain(BESPOKE_COMMAND_KEYS)
+            .collect();
+        assert!(
+            keys.len() > 20,
+            "the census collapsed to {} keys — this tooth is checking almost nothing",
+            keys.len()
+        );
+        for key in keys {
+            let door = offering_door(key).unwrap_or_else(|| {
+                panic!(
+                    "`{key}` is mounted on Discord but `menus::offering_door` gives it no typed \
+                     door, so its `open_hint` falls back to a spelling nothing verified"
+                )
+            });
+            for (what, path) in [
+                ("open", &door.open),
+                ("status", &door.status),
+                ("verify", &door.verify),
+            ] {
                 assert!(
-                    crate::commands::menus::subcommand_names(top)
-                        .iter()
-                        .any(|s| s == sub),
-                    "the `{key}` Cheat Code answer names `{invocation}`, but `/{top}` has no \
-                     `{sub}` — found {:?}",
-                    crate::commands::menus::subcommand_names(top)
+                    path_is_registered(path),
+                    "the `{key}` {what} path is `{path}`, which this build does not register — a \
+                     player told to type it gets nothing from Discord at all"
                 );
             }
         }
+
+        // ⚑ THE NEGATIVE CONTROL — the exact string that shipped. Without this the assertions
+        // above could be passing because `path_is_registered` says yes to everything.
+        assert!(
+            !path_is_registered("/play offering:tug"),
+            "`/play offering:tug` is the PRE-FIX spelling and is not registered; if this passes, \
+             the instrument is blind and the sweep above proves nothing"
+        );
+        assert!(
+            path_is_registered("/play open offering:tug"),
+            "…and the post-fold spelling is registered, so the instrument is not simply saying no"
+        );
     }
 
-    /// `/play` registers the `action:verify` choice (backlog Tier-2 #10) — the
-    /// portfolio offerings, the flagship games included, expose the chain re-verifier as a
-    /// pressable command, not test-only capability.
+    /// `/play` registers `action:verify` (backlog Tier-2 #10) and the `status` subcommand — the
+    /// portfolio offerings, the flagship games included, expose the chain re-verifier AND the
+    /// read-only private-view re-post as pressable commands, not test-only capability.
     #[test]
-    fn play_registers_the_verify_action() {
+    fn play_registers_the_verify_action_and_the_status_door() {
         let cmd = serde_json::to_value(register()).expect("the command serializes");
         let text = cmd.to_string();
         assert!(text.contains("\"action\""), "{text}");
         assert!(text.contains("\"verify\""), "{text}");
+
+        // ⚑ The plaque's destination has to be REGISTERED, not merely written. The whole headline
+        // defect was one sentence of copy naming a `status` refresh that did not exist.
+        let subs = crate::commands::menus::subcommand_names("play");
+        assert!(
+            subs.iter().any(|s| s == "status"),
+            "`/play status` (the read-only private-view re-post the hidden-hand plaque names) is \
+             not registered — found {subs:?}"
+        );
+        let status = serde_json::to_value(register_status()).expect("it serializes");
+        assert!(
+            status.to_string().contains("\"offering\""),
+            "`/play status` must carry the offering picker: {status}"
+        );
+        // And it carries NONE of the acting options: a read-only door that can be handed a
+        // `proof` attachment is not read-only in the player's mental model.
+        for acting in ["\"action\"", "\"proof\""] {
+            assert!(
+                !status.to_string().contains(acting),
+                "`/play status` must not offer {acting}: {status}"
+            );
+        }
     }
 
     /// The catalog campaign is a real generic Discord offering, not just a slash-command choice:

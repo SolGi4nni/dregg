@@ -82,6 +82,38 @@
 //!    [`Custody::UserHeld`](dreggnet_offerings::Custody::UserHeld) on `/act-signed`. The page says
 //!    this in those words; **a claimed identity is a durable NAME, not yet a browser credential.**
 //!
+//! ## ⚑ WHO IS ALLOWED TO CHANGE THIS BROWSER'S IDENTITY
+//!
+//! The cookie story above reasons about a stolen credential. There is a second, cheaper attack in
+//! the opposite direction and it was open until now: **implantation**. A hostile page auto-submits
+//! an ordinary `application/x-www-form-urlencoded` form to `POST /identity/restore` carrying **the
+//! attacker's own 24 words**. No JS privilege is needed and no preflight happens; the `303`'s
+//! `Set-Cookie` is honoured, because `SameSite=Lax` governs when a cookie is later *sent*, not
+//! whether the origin server may set one on its own response to a top-level navigation. The victim
+//! is silently switched onto an identity **the attacker holds the phrase to**, and every run,
+//! receipt and relic afterwards files under it. `POST /identity/confirm` was the same attack with an
+//! attacker-minted token.
+//!
+//! Two gates close it, both fail-CLOSED:
+//!
+//! 1. **[`request_origin`] runs first on every state-changing identity route** (`/identity/claim`,
+//!    `/confirm`, `/restore`, `/release`, and [`crate::identity_link`]'s `POST /identity/link`).
+//!    `Sec-Fetch-Site: same-origin` admits; anything else refuses; and with no fetch metadata at all
+//!    an `Origin`/`Referer` must match the host the request was addressed to. A request that says
+//!    NOTHING about where it came from is refused — an absent check refuses here, as everywhere.
+//! 2. **A shown phrase can only be taken up by the browser it was shown to.** `POST /identity/claim`
+//!    sets a [`PENDING_COOKIE`] nonce and the confirm token is mac'd OVER that nonce, so a token
+//!    lifted off somebody else's screen — or a label read out of a `?user=` URL — cannot be POSTed
+//!    to `/identity/confirm` by a different browser. The one other legitimate confirm ("act as my
+//!    identity again") is authorised by the claim cookie the browser already holds.
+//!
+//! ⚑ **Residual, named rather than implied: only the identity routes are gated.** The rest of this
+//! crate's state-changing POSTs (`/offerings/…/act`, `/automatafl/table`, `/tug/table`,
+//! `/descent/submit`) still accept a cross-origin form. Their stakes are lower — they act as
+//! whoever the cookie already is rather than *replacing* who that is — but the class is the same and
+//! the gate is one call ([`same_origin_post`]) away. It is not applied here because this pass was
+//! scoped to identity; do not read the identity routes' gate as a crate-wide one.
+//!
 //! ## Named residuals (work not done, stated as such)
 //!
 //! * The mac key is process-local unless `DREGGNET_WEB_IDENTITY_KEY` /
@@ -94,10 +126,18 @@
 //!   slot when you leave the table.
 //! * `POST /descent/submit`'s procgen `player` string is still free-form. The native lane — the one
 //!   `/descent/play` actually posts to — is bound, because its actor is injected into the page.
-//! * `wasm/src/lib.rs::derive_keypair_from_mnemonic` claims to match `dregg-sdk` and **does not**:
-//!   it feeds `blake3::hash(mnemonic_bytes)` to the KDF instead of the BIP39-validated entropy and
-//!   skips the checksum entirely, so the same words give a DIFFERENT key there. Nothing in this
-//!   module touches it; it is reported as a pre-existing cross-surface identity split.
+//! * ~~`wasm/src/lib.rs::derive_keypair_from_mnemonic` claims to match `dregg-sdk` and does
+//!   not.~~ **CLOSED 2026-07-26.** It fed `blake3::hash(mnemonic_bytes)` to the KDF instead of
+//!   the BIP39-validated entropy and skipped the checksum, so the same words gave a DIFFERENT
+//!   key in the browser extension — and the extension is the only surface that reaches
+//!   `Attribution::Signed`, so a person's signed play was filed under a different identity than
+//!   their asserted play. Both wasm entry points (`derive_keypair_from_mnemonic` and
+//!   `privacy.rs::derive_stealth_keys`, which carried a second copy) now route through
+//!   `dregg_sdk::mnemonic` via the one `wasm/src/lib.rs::derive_identity_keypair`. Pinned by
+//!   `wasm/tests/mnemonic_derivation_matches_the_sdk.rs` (source) and
+//!   `extension/tests/passkey-sign/run.mjs` (the shipped bundle). ⚑ The COMPILED
+//!   `extension/dregg_wasm{.js,_bg.wasm}` are committed build artifacts and still carry the old
+//!   derivation until `./extension/build.sh wasm` regenerates them.
 
 use std::sync::OnceLock;
 
@@ -142,6 +182,25 @@ const CLAIM_LABEL_PREFIX: &str = "dregg-id-";
 
 /// The domain the label mac is bound under (never confusable with a seat label or a form token).
 const MAC_DOMAIN: &[u8] = b"dregg-web-claimed-identity-v1:";
+
+/// **The cookie that binds a shown phrase to the browser it was shown to.** Holds 128 bits of
+/// nonce, nothing else — it names no identity and grants nothing on its own. See
+/// [`pending_token`].
+pub const PENDING_COOKIE: &str = "dregg_claim_pending";
+
+/// The prefix a confirm token wears. Deliberately NOT [`CLAIM_LABEL_PREFIX`]: a confirm token must
+/// not double as a usable cookie label, and a cookie label must not be replayable as a confirm
+/// token. [`parse_claim_label`] and [`parse_pending_token`] therefore cannot admit each other's
+/// strings even before the macs are compared.
+const PENDING_TOKEN_PREFIX: &str = "dregg-pending-";
+
+/// The domain the confirm token's mac is bound under — a third, separate domain, so no mac from one
+/// of these three purposes verifies as another.
+const PENDING_DOMAIN: &[u8] = b"dregg-web-claim-confirm-v1:";
+
+/// How long a shown phrase stays confirmable. Generous (a person writing 24 words on paper is not
+/// in a hurry) but bounded, so a phrase page left open on a shared machine stops being live.
+const PENDING_MAX_AGE_SECS: u64 = 30 * 60;
 
 /// A claim cookie lasts a year, like the visitor token it replaces. The phrase is what makes this
 /// number unimportant: an expired cookie costs a re-entry, not the identity.
@@ -199,11 +258,7 @@ pub fn claim_label(pubkey_hex: &str) -> String {
 pub fn parse_claim_label(label: &str) -> Option<String> {
     let rest = label.strip_prefix(CLAIM_LABEL_PREFIX)?;
     let (pubkey_hex, mac_hex) = rest.split_once('.')?;
-    if pubkey_hex.len() != 64
-        || !pubkey_hex
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    {
+    if !is_pubkey_hex(pubkey_hex) {
         return None;
     }
     let expected = claim_label(pubkey_hex);
@@ -214,6 +269,64 @@ pub fn parse_claim_label(label: &str) -> Option<String> {
         return None;
     }
     Some(pubkey_hex.to_string())
+}
+
+/// A 32-byte public key in lowercase hex — the ONLY shape either token parser accepts for the key
+/// half, so neither can be pointed at a longer or upper-cased string that macs differently.
+fn is_pubkey_hex(candidate: &str) -> bool {
+    candidate.len() == 64
+        && candidate
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// **The confirm token for a phrase we just showed, BOUND TO ONE BROWSER** — `dregg-pending-<pubkey
+/// hex>.<mac over (nonce, pubkey)>`.
+///
+/// ⚑ The nonce is why this exists. The token used to BE the cookie label ([`claim_label`]), which
+/// made it unforgeable but not *bound*: any browser that came to hold a mac-valid label — off a
+/// shoulder-surfed phrase page, out of a `?user=dregg-id-…` URL, out of a shared screenshot — could
+/// POST it to `/identity/confirm` and be handed that identity as a cookie. Macing over a nonce that
+/// only ever left the server in one [`PENDING_COOKIE`] means the token answers "this is the browser
+/// the phrase was shown to", which is the claim a confirm is allowed to make.
+fn pending_token(pubkey_hex: &str, nonce: &str) -> String {
+    let mut mac = blake3::Hasher::new_keyed(identity_key());
+    mac.update(PENDING_DOMAIN);
+    // Length-prefixed, the crate's own framing convention (see `game_form_token`): without it a
+    // (nonce, key) pair could be re-cut into a different pair with the same concatenation.
+    for field in [nonce.as_bytes(), pubkey_hex.as_bytes()] {
+        mac.update(&(field.len() as u64).to_be_bytes());
+        mac.update(field);
+    }
+    format!(
+        "{PENDING_TOKEN_PREFIX}{pubkey_hex}.{}",
+        hex_bytes(&mac.finalize().as_bytes()[..16])
+    )
+}
+
+/// **Verify a confirm token against the nonce THIS browser presents**, recovering the public key it
+/// names. `None` for a foreign prefix, a wrong-shaped key, a forged mac, or — the case that matters
+/// — a genuine token presented with somebody else's (or no) nonce.
+fn parse_pending_token(token: &str, nonce: &str) -> Option<String> {
+    let rest = token.strip_prefix(PENDING_TOKEN_PREFIX)?;
+    let (pubkey_hex, _mac_hex) = rest.split_once('.')?;
+    if !is_pubkey_hex(pubkey_hex) {
+        return None;
+    }
+    let expected = pending_token(pubkey_hex, nonce);
+    // Constant-time over the whole token, for the same reason `parse_claim_label` is: a mac oracle
+    // would let a caller grind a token for a key they were never shown a phrase for.
+    if !constant_time_eq(expected.as_bytes(), token.as_bytes()) {
+        return None;
+    }
+    Some(pubkey_hex.to_string())
+}
+
+/// A fresh 128-bit pending nonce, hex.
+fn mint_pending_nonce() -> String {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).expect("operating-system RNG must mint a claim-confirm nonce");
+    hex_bytes(&bytes)
 }
 
 fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
@@ -273,6 +386,46 @@ pub fn derive_pubkey_hex(phrase: &str) -> Result<String, MnemonicError> {
     seed.zeroize();
     secret.zeroize();
     Ok(hex_bytes(&public))
+}
+
+/// **Derive the SIGNING key a phrase names** — the same [`DERIVATION_PATH`] derivation as
+/// [`derive_pubkey_hex`], but keeping the 32-byte Ed25519 seed so the caller can produce ONE
+/// signature with it.
+///
+/// ⚑ The only caller is [`crate::identity_link`], which needs a signature over a link claim while
+/// the phrase is transiently in hand. It lives HERE, beside [`DERIVATION_PATH`], so there is exactly
+/// one place in the crate that turns words into a key — a second derivation site is how the same
+/// phrase silently becomes two identities (`wasm/src/lib.rs` WAS the standing example of that; it
+/// now delegates to `dregg_sdk::mnemonic` from a single `derive_identity_keypair`, see this
+/// module's residuals).
+///
+/// The returned secret is [`Zeroizing`], so it is wiped when the caller's binding drops even on an
+/// early return; the 64-byte KDF seed is wiped here.
+pub(crate) fn derive_root_keypair(
+    phrase: &str,
+) -> Result<(String, zeroize::Zeroizing<[u8; 32]>), MnemonicError> {
+    let mut seed = mnemonic_to_seed(phrase, "")?;
+    let (public, secret) = derive_keypair(&seed, DERIVATION_PATH);
+    seed.zeroize();
+    Ok((hex_bytes(&public), zeroize::Zeroizing::new(secret)))
+}
+
+/// Fold however a human typed their 24 words into the canonical phrase — see
+/// [`normalize_phrase`]. Shared with [`crate::identity_link`] so the restore box and the link box
+/// cannot disagree about what counts as the same phrase.
+pub(crate) fn normalize_typed_phrase(raw: &str) -> String {
+    normalize_phrase(raw)
+}
+
+/// Read one cookie by name — shared with [`crate::identity_link`]. See [`cookie`].
+pub(crate) fn read_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
+    cookie(headers, name)
+}
+
+/// The full honest-limits block, so the link page's own honesty section can sit BESIDE the identity
+/// page's rather than paraphrasing it. See [`honest_block`].
+pub(crate) fn honest_limits_html() -> String {
+    honest_block()
 }
 
 /// Normalize what a human typed into the restore box: lowercase, collapse all whitespace
@@ -357,6 +510,186 @@ fn no_store(body: String) -> Response {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ⚑ ORIGIN — did this POST come from OUR OWN PAGE?
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// What a request's own headers say about where it was initiated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RequestOrigin {
+    /// A page on this very origin initiated it — the ONLY verdict that may change an identity.
+    SameOrigin,
+    /// A header positively said somewhere else. The string is for the operator's log line only; it
+    /// is attacker-chosen text and never reaches a page.
+    Foreign(String),
+    /// **Nothing said where this came from**: no `Sec-Fetch-Site`, no `Origin`, no usable `Referer`,
+    /// or no host to compare one against. Refused exactly like a foreign one — an absent check
+    /// refuses. In a real deployment this means a reverse proxy is dropping headers, and
+    /// [`refuse_foreign_origin`] logs that as its own case so an operator can tell the two apart.
+    Unstated,
+}
+
+/// **Where a request came from, decided from its own headers.** The gate every state-changing
+/// identity route runs before it derives, sets, or clears anything.
+///
+/// ⚑ **Why this shape.** Two mechanisms were on the table. A per-session CSRF token is stronger, but
+/// it needs somewhere to live, and the whole point of this module is that the server keeps NO
+/// per-player state — so it would have meant inventing a session store to protect a stateless
+/// feature. Origin verification needs no state and no dependency: `Sec-Fetch-Site` is sent by every
+/// browser we care about (Chrome 76+, Firefox 90+, Safari 16.4+), and `Origin` is sent on every
+/// cross-origin *and* same-origin `POST` by every browser since ~2016. So the cheap mechanism is
+/// also sufficient here, and the expensive one would have cost the property the module is built on.
+/// (The confirm route additionally carries a real per-browser token — see [`pending_token`] — because
+/// there it is free: the phrase page already had to hand something back.)
+///
+/// The three decisions inside, each of them fail-closed:
+///
+/// * `Sec-Fetch-Site: same-origin` admits. **`same-site` does not** — that would admit any sibling
+///   subdomain, and a subdomain takeover or an XSS on one would then be able to implant an identity
+///   here. Our own forms are same-origin; nothing legitimate needs the looser rule.
+/// * `none` does not admit either. It means no initiating context (a typed URL, a bookmark), and a
+///   typed URL cannot submit our form.
+/// * With no fetch metadata at all, the stated initiator must MATCH the host this request was
+///   addressed to (`X-Forwarded-Host`, else `Host`). `Origin` is preferred; `Referer` is the
+///   fallback for the handful of clients that omit `Origin`. Userinfo in the value
+///   (`https://ourhost@evil.example/`) is refused rather than parsed, because the real host there is
+///   the attacker's.
+pub fn request_origin(headers: &HeaderMap) -> RequestOrigin {
+    if let Some(site) = header_str(headers, "sec-fetch-site") {
+        return if site.eq_ignore_ascii_case("same-origin") {
+            RequestOrigin::SameOrigin
+        } else {
+            RequestOrigin::Foreign(format!("Sec-Fetch-Site: {}", clip(site)))
+        };
+    }
+    let Some(host) = effective_host(headers) else {
+        return RequestOrigin::Unstated;
+    };
+    for name in ["origin", "referer"] {
+        let Some(value) = header_str(headers, name) else {
+            continue;
+        };
+        return match authority_of(value) {
+            Some(authority) if authority == host => RequestOrigin::SameOrigin,
+            _ => RequestOrigin::Foreign(format!("{name}: {}", clip(value))),
+        };
+    }
+    RequestOrigin::Unstated
+}
+
+/// **Whether a state-changing POST may be honoured at all** — `true` only for
+/// [`RequestOrigin::SameOrigin`]. The form [`crate::identity_link`] and any future adopter call.
+pub fn same_origin_post(headers: &HeaderMap) -> bool {
+    matches!(request_origin(headers), RequestOrigin::SameOrigin)
+}
+
+/// One header's trimmed, non-empty value.
+fn header_str<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+/// Keep a log line's copy of an attacker-chosen header bounded.
+fn clip(value: &str) -> String {
+    value.chars().take(80).collect()
+}
+
+/// The `host[:port]` this request was ADDRESSED to: `X-Forwarded-Host`'s first entry when a proxy
+/// set one (the same proxy trust `is_https` already extends to `X-Forwarded-Proto`), else `Host`.
+/// `None` when neither is present — which is what makes a request carrying no host `Unstated`
+/// rather than accidentally same-origin.
+fn effective_host(headers: &HeaderMap) -> Option<String> {
+    let raw = match header_str(headers, "x-forwarded-host") {
+        Some(forwarded) => forwarded.split(',').next().unwrap_or_default(),
+        None => header_str(headers, "host")?,
+    };
+    normalize_authority(raw)
+}
+
+/// Lowercase, drop a trailing root dot, and drop a default port, so `Example.COM:443` and
+/// `example.com` compare equal. Applied to BOTH sides of the comparison, so the normalization
+/// cannot make two different hosts match.
+fn normalize_authority(raw: &str) -> Option<String> {
+    let host = raw.trim().trim_end_matches('.').to_ascii_lowercase();
+    if host.is_empty() {
+        return None;
+    }
+    let bare = host
+        .strip_suffix(":443")
+        .or_else(|| host.strip_suffix(":80"))
+        .unwrap_or(host.as_str());
+    Some(bare.to_string())
+}
+
+/// The `host[:port]` an `Origin` or `Referer` value names. `None` for `null` (a sandboxed frame),
+/// for a value with no scheme, and for anything carrying userinfo.
+fn authority_of(value: &str) -> Option<String> {
+    let (_scheme, rest) = value.split_once("://")?;
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    if authority.contains('@') {
+        return None;
+    }
+    normalize_authority(authority)
+}
+
+/// The one sentence a player reads when a state-changing identity request did not come from a page
+/// on this site. It names the ACTION they can take; "your `Sec-Fetch-Site` was cross-site" is true
+/// and useless to a person.
+const FOREIGN_ORIGIN_NOTICE: &str = "Refused: this did not come from our page, so nothing was changed — no identity was claimed, \
+     restored or released. Open /identity here and try again. If you got here by pressing something \
+     on another website, that button was trying to switch this browser onto somebody else's \
+     identity.";
+
+/// **Refuse a state-changing identity request that did not come from our own page.** `None` when it
+/// did, so every handler reads `if let Some(refusal) = refuse_foreign_origin(…) { return refusal; }`
+/// as its first line.
+///
+/// The two refusing verdicts are logged as DIFFERENT lines on purpose. `Foreign` is somebody
+/// attacking a player; `Unstated` is almost always an operator's reverse proxy eating headers, and
+/// telling an operator "you are under attack" when their proxy is misconfigured would send them
+/// looking in the wrong place for a week.
+fn refuse_foreign_origin(headers: &HeaderMap, route: &str) -> Option<Response> {
+    match request_origin(headers) {
+        RequestOrigin::SameOrigin => None,
+        RequestOrigin::Foreign(said) => {
+            tracing::warn!(
+                route,
+                said = %said,
+                "REFUSED a cross-origin identity request (login-CSRF / identity fixation: a hostile \
+                 page auto-submitting its OWN phrase would otherwise re-home this browser onto an \
+                 identity the attacker holds the words to). Nothing was derived and no cookie was set."
+            );
+            Some(foreign_origin_response(headers))
+        }
+        RequestOrigin::Unstated => {
+            tracing::warn!(
+                route,
+                "REFUSED an identity request that stated no origin at all — no Sec-Fetch-Site, no \
+                 Origin, no Referer, or no Host to compare against, so this server cannot tell \
+                 whether it came from its own page and fails CLOSED. If players are seeing this, the \
+                 reverse proxy in front of this process is dropping Origin/Sec-Fetch-Site or not \
+                 passing Host through."
+            );
+            Some(foreign_origin_response(headers))
+        }
+    }
+}
+
+fn foreign_origin_response(headers: &HeaderMap) -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        no_store(identity_page(
+            claimed_pubkey(headers).as_deref(),
+            cookie(headers, ACTING_COOKIE).as_deref(),
+            Some(FOREIGN_ORIGIN_NOTICE),
+        )),
+    )
+        .into_response()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // THE ROUTES
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -382,10 +715,17 @@ async fn get_identity(headers: HeaderMap) -> Response {
 
 /// `POST /identity/claim` — generate a phrase and SHOW IT ONCE.
 ///
-/// This deliberately sets **no cookie**. The identity is not yours until you say you have written
-/// the words down ([`post_confirm`]), so a player who closes this tab is exactly who they were a
-/// moment ago rather than silently re-homed onto an identity whose phrase is gone forever.
+/// This deliberately sets **no identity cookie**. The identity is not yours until you say you have
+/// written the words down ([`post_confirm`]), so a player who closes this tab is exactly who they
+/// were a moment ago rather than silently re-homed onto an identity whose phrase is gone forever.
+///
+/// It DOES set one non-identity cookie: the [`PENDING_COOKIE`] nonce that the confirm token is
+/// mac'd over, which is what makes the shown phrase confirmable by *this* browser and no other.
+/// That cookie names nobody and grants nothing on its own.
 async fn post_claim(headers: HeaderMap) -> Response {
+    if let Some(refusal) = refuse_foreign_origin(&headers, "/identity/claim") {
+        return refusal;
+    }
     let phrase = generate_mnemonic();
     let pubkey_hex = match derive_pubkey_hex(&phrase) {
         Ok(hex) => hex,
@@ -405,17 +745,64 @@ async fn post_claim(headers: HeaderMap) -> Response {
                 .into_response();
         }
     };
-    // The confirm token IS the label: mac'd, so `/identity/confirm` cannot be pointed at a public
-    // key this server did not just generate (see `claim_label`). Without it, an unauthenticated
-    // `pubkey_hex` field would let anyone mint a valid cookie for anyone else's published key.
-    let token = claim_label(&pubkey_hex);
-    no_store(phrase_page(&phrase, &pubkey_hex, &token))
+    // The confirm token is mac'd, so `/identity/confirm` cannot be pointed at a public key this
+    // server did not just generate — and it is mac'd OVER A FRESH NONCE that leaves only in this
+    // response's cookie, so it cannot be replayed by a browser that was not shown this phrase.
+    // Without the first property an unauthenticated `pubkey_hex` field would let anyone mint a valid
+    // cookie for anyone else's published key; without the second, a token seen on somebody else's
+    // screen would still install.
+    let nonce = mint_pending_nonce();
+    let token = pending_token(&pubkey_hex, &nonce);
+    let mut response = no_store(phrase_page(&phrase, &pubkey_hex, &token));
+    let pending = set_cookie(
+        PENDING_COOKIE,
+        &nonce,
+        PENDING_MAX_AGE_SECS,
+        is_https(&headers),
+    );
+    if let Ok(value) = header::HeaderValue::from_str(&pending) {
+        response.headers_mut().append(header::SET_COOKIE, value);
+    }
+    response
+}
+
+/// Which of the TWO legitimate confirms this is — and the proof that this browser may make it.
+///
+/// ⚑ Before this existed, `/identity/confirm` accepted ANY mac-valid label from ANY browser. Only
+/// this server can mint one, so it was unforgeable; but it was not *bound*, and a label does escape
+/// (the module doc says plainly that a URL carrying `?user=dregg-id-…` hands over the same access a
+/// copied cookie would). Presenting such a label to `/identity/confirm` turned that transient leak
+/// into an installed, year-long cookie. Both arms below are bound to the browser asking.
+enum ConfirmAuthority {
+    /// A phrase THIS browser was just shown — proven by the [`PENDING_COOKIE`] nonce the token is
+    /// mac'd over.
+    JustShown,
+    /// An identity this browser ALREADY holds a mac-valid claim cookie for. This is `/identity`'s
+    /// "act as my identity again" button, which puts the claim back in the acting slot after a
+    /// locked table seat took it over. Nothing new is granted: the browser is asking for the
+    /// identity it already provably holds.
+    AlreadyHeld,
+}
+
+/// Authorise a confirm, recovering the public key it is for. `None` refuses.
+fn authorize_confirm(headers: &HeaderMap, token: &str) -> Option<(String, ConfirmAuthority)> {
+    if let Some(nonce) = cookie(headers, PENDING_COOKIE) {
+        if let Some(pubkey_hex) = parse_pending_token(token, &nonce) {
+            return Some((pubkey_hex, ConfirmAuthority::JustShown));
+        }
+    }
+    let held = claimed_pubkey(headers)?;
+    let presented = parse_claim_label(token)?;
+    (presented == held).then_some((held, ConfirmAuthority::AlreadyHeld))
 }
 
 /// The confirm form — the mac'd token, plus the checkbox the player must actually tick.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConfirmForm {
-    /// The [`claim_label`] token minted by [`post_claim`].
+    /// Either the [`pending_token`] [`post_claim`] minted for THIS browser, or — on `/identity`'s
+    /// "act as my identity again" button — the [`claim_label`] of the identity this browser already
+    /// holds a claim cookie for. [`authorize_confirm`] is what decides which, and both are bound to
+    /// the browser asking; a bare mac-valid label from a stranger is neither.
     pub token: String,
     /// Present only when the "I have written these down" box is checked.
     #[serde(default)]
@@ -424,16 +811,21 @@ pub struct ConfirmForm {
 
 /// `POST /identity/confirm` — take up the identity whose phrase was just shown.
 async fn post_confirm(headers: HeaderMap, Form(form): Form<ConfirmForm>) -> Response {
-    let Some(pubkey_hex) = parse_claim_label(&form.token) else {
+    if let Some(refusal) = refuse_foreign_origin(&headers, "/identity/confirm") {
+        return refusal;
+    }
+    let Some((pubkey_hex, authority)) = authorize_confirm(&headers, &form.token) else {
         return (
             StatusCode::FORBIDDEN,
             no_store(identity_page(
                 claimed_pubkey(&headers).as_deref(),
                 cookie(&headers, ACTING_COOKIE).as_deref(),
                 Some(
-                    "Refused: that confirmation did not come from a phrase this server just \
-                     generated (nothing was claimed). If the server restarted, generate a new \
-                     phrase — do not reuse the one on the old page.",
+                    "Refused: this browser cannot make that confirmation, so nothing was claimed. \
+                     A phrase can only be taken up by the browser it was shown to, and this one is \
+                     not carrying that page's cookie — if the server restarted, or the phrase page \
+                     was opened somewhere else, generate a new phrase rather than reusing the one on \
+                     the old page.",
                 ),
             )),
         )
@@ -457,10 +849,16 @@ async fn post_confirm(headers: HeaderMap, Form(form): Form<ConfirmForm>) -> Resp
     }
     let label = claim_label(&pubkey_hex);
     let secure = is_https(&headers);
-    redirect_with_cookies(vec![
+    let mut cookies = vec![
         set_cookie(CLAIM_COOKIE, &label, CLAIM_MAX_AGE_SECS, secure),
         set_cookie(ACTING_COOKIE, &label, CLAIM_MAX_AGE_SECS, secure),
-    ])
+    ];
+    if matches!(authority, ConfirmAuthority::JustShown) {
+        // One shown phrase, one confirm: spend the nonce, so a back-button re-POST of the same
+        // token cannot re-install it later on a machine somebody else has since sat down at.
+        cookies.push(set_cookie(PENDING_COOKIE, "", 0, secure));
+    }
+    redirect_with_cookies(cookies)
 }
 
 /// The restore form.
@@ -476,6 +874,13 @@ pub struct RestoreForm {
 /// never seen this server, and it restores prior play because every game already files work under
 /// the derived [`DreggIdentity`].
 async fn post_restore(headers: HeaderMap, Form(form): Form<RestoreForm>) -> Response {
+    // ⚑ FIRST, before the phrase is even normalized: a cross-origin POST here is the identity
+    // fixation attack in its purest form — the attacker's own 24 words, submitted by the victim's
+    // browser, with the `303`'s `Set-Cookie` honoured. Nothing below runs for a request that cannot
+    // show it came from our page.
+    if let Some(refusal) = refuse_foreign_origin(&headers, "/identity/restore") {
+        return refusal;
+    }
     let mut phrase = normalize_phrase(&form.phrase);
     let words = phrase.split_whitespace().count();
     let derived = derive_pubkey_hex(&phrase);
@@ -532,6 +937,12 @@ pub struct ReleaseForm {
 /// Clears BOTH cookies. The identity itself is untouched and un-deletable: the phrase still names
 /// it, so this is "log out on this device", never "delete my account".
 async fn post_release(headers: HeaderMap, Form(form): Form<ReleaseForm>) -> Response {
+    // A cross-origin logout is a smaller wound than a cross-origin login, not a different class: a
+    // hostile page that can sign a player out mid-run costs them the acting slot they were playing
+    // under. Same gate, same refusal.
+    if let Some(refusal) = refuse_foreign_origin(&headers, "/identity/release") {
+        return refusal;
+    }
     if form.understood.is_none() {
         return (
             StatusCode::BAD_REQUEST,
@@ -565,7 +976,11 @@ const IDENTITY_STYLE: &str = r##"<style>
  background:rgba(255,255,255,.02)}
 .id-word{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:1rem;letter-spacing:.01em;
  display:flex;gap:.5rem;align-items:baseline}
-.id-word i{font-style:normal;opacity:.45;font-size:.8rem;min-width:1.4rem;text-align:right}
+/* ⚑ THE POSITION INDEX IS NOT DECORATION. It is the ORDER of a 24-word phrase on the page where
+   getting the order wrong loses the identity for good, and at `opacity:.45` it measured 4.06:1 —
+   the DIMMEST thing on the highest-stakes surface in the product. `.7` measures 8.24:1 on the page
+   floor (6.71:1 under the top wash) and still reads as subordinate to the word beside it. */
+.id-word i{font-style:normal;opacity:.7;font-size:.8rem;min-width:1.4rem;text-align:right}
 .id-plain{margin:.6rem 0 1.2rem;padding:.7rem .8rem;border:1px dashed var(--line,#2a2a2a);border-radius:4px;
  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9rem;line-height:1.7;
  overflow-wrap:anywhere;opacity:.85}
@@ -599,23 +1014,41 @@ const IDENTITY_STYLE: &str = r##"<style>
 
 /// The honest-limits block, rendered on both pages. One source, so the page a player reads while
 /// deciding and the page they read after claiming cannot say different things.
+///
+/// ⚑ **This block used to reason ONLY about theft** — somebody taking your cookie. That is the wrong
+/// half of the threat model to reason carefully about on its own, because the other half is cheaper
+/// for the attacker: they need steal nothing, they can **give** you an identity of their choosing (a
+/// hostile page auto-submitting its own 24 words to `/identity/restore`, whose `Set-Cookie` the
+/// browser honours). A page that is careful about the wrong threat is worse than one that says
+/// nothing, so implantation is now named here beside theft, together with the two gates that refuse
+/// it — see this module's "WHO IS ALLOWED TO CHANGE THIS BROWSER'S IDENTITY".
 fn honest_block() -> String {
     "<div class=\"id-honest\"><h3>What this does and does not protect</h3><dl>\
      <dt>Where the key lives: nowhere.</dt>\
      <dd>Your 24 words are turned into a keypair inside the one request that needs it, and every \
      byte of secret material is wiped before the response goes out. Nothing is stored — not on the \
      server, and not in this browser.</dd>\
-     <dt>The words pass through the server once.</dt>\
-     <dd>They are generated here and typed back here to restore. We never write them to disk or to \
-     a log, but that is a promise about this code, not a guarantee the shape of the system gives \
-     you. Generating them entirely inside your browser is the next step and is not what this page \
-     does today.</dd>\
+     <dt>The words pass through the server once, each time you use them.</dt>\
+     <dd>They are generated here, and typed back here whenever a request needs the key they derive — \
+     restoring this identity on a device, or signing a cross-platform link. We never write them to \
+     disk or to a log, but that is a promise about this code, not a guarantee the shape of the \
+     system gives you. Generating them entirely inside your browser is the next step and is not what \
+     these pages do today.</dd>\
      <dt>Your browser holds a cookie, not a key.</dt>\
      <dd>It is <code>HttpOnly</code>, so page scripts — including an injected one — cannot read it. \
      That is why the identity lives in a cookie rather than in <code>localStorage</code>, which any \
      script on the page can read. It is still a bearer token: whoever has it can play as you until \
      it expires, so treat a link containing <code>?user=dregg-id-…</code> the way you would treat a \
      password.</dd>\
+     <dt>And nobody else can put an identity INTO this browser.</dt>\
+     <dd>Theft is not the only direction. A hostile page can also try to <em>give</em> you an \
+     identity — quietly submitting <em>its own</em> 24 words to this site so that everything you play \
+     afterwards is filed under a name somebody else holds the words to, with nothing on screen \
+     looking wrong. Claiming, confirming, restoring, releasing and linking therefore only work from a \
+     page on this site: a request that cannot show it came from here is refused before anything is \
+     derived or set, including when it says nothing at all about where it came from. And a phrase we \
+     have just shown can only be taken up by the browser it was shown to, so a token glimpsed on \
+     somebody else's screen is not a way in.</dd>\
      <dt>Pressing a button here is not a signature.</dt>\
      <dd>Turns you play in the browser are attributed to your public key, not signed by it — the \
      server has no key to sign with and neither does this page. A tool that holds your phrase (the \
@@ -630,6 +1063,11 @@ fn honest_block() -> String {
 }
 
 /// The three-rung progression, with the current rung marked. Same list on both pages.
+///
+/// ⚑ Rung 3 used to say linking "is not wired to this page yet". It IS now
+/// ([`crate::identity_link`], `/identity/link`) — but only the PLAIN version: the link is a
+/// plaintext record the operator can read. The rung therefore names both what exists and what the
+/// private version would add, rather than swapping one over-claim for another.
 fn rungs_block(claimed: bool) -> String {
     let anon = if claimed { "later" } else { "now" };
     let seed = if claimed { "now" } else { "later" };
@@ -640,9 +1078,12 @@ fn rungs_block(claimed: bool) -> String {
          ends that person permanently.</li>\
          <li class=\"{seed}\"><strong>A claimed identity.</strong> 24 words you keep. The same words \
          reproduce the same identity on any device, so your history follows you.</li>\
-         <li class=\"later\"><strong>Linked accounts.</strong> Proving that your Discord, Telegram \
-         and web selves are one human <em>without</em> revealing which accounts. The machinery for \
-         this exists in the tree and is not wired to this page yet.</li>\
+         <li class=\"later\"><strong>Linked accounts.</strong> Proving that your Discord or Telegram \
+         self and this one are the same human, so the boards rank you once. \
+         <a href=\"/identity/link\">This works today</a> — in the plain version: the link is stored \
+         as \"this key and that account are one person\", which the operator can read. Proving it \
+         <em>without</em> revealing which accounts is the machinery that exists in the tree and is \
+         not what that page does.</li>\
          </ol>"
     )
 }
@@ -751,8 +1192,12 @@ fn claimed_body(pubkey_hex: &str, acting: Option<&str>) -> String {
          table sees when you are not sitting in a locked seat).</p>\
          <p class=\"prose\">Discord and Telegram already give a player a real platform identity, \
          and those surfaces derive their own key from the bot secret — a <em>custodial</em> key, \
-         held by the server rather than by you. This phrase is a different, self-held identity; \
-         proving that both are the same human is the third rung above, and it is not wired yet.</p>\
+         held by the operator rather than by you. This phrase is a different, self-held identity, \
+         and until you say otherwise the two are <strong>different players with different \
+         histories on the same board</strong>. \
+         <a href=\"/identity/link\">Prove they are one human</a> and the boards rank you once and \
+         <a href=\"/you\">/you</a> counts both sides. It does <em>not</em> merge the keys: your \
+         platform key stays custodial, and that page says so rather than selling you otherwise.</p>\
          <h2>Signing as this identity</h2>\
          <p class=\"prose\">A tool that holds your phrase derives the same key and can sign turns \
          that verify as <em>you</em> rather than merely being attributed to you. That is the \
@@ -999,5 +1444,213 @@ mod tests {
         let b = derive_pubkey_hex(&generate_mnemonic()).expect("valid");
         assert_ne!(a, b);
         assert_ne!(claim_label(&a), claim_label(&b));
+    }
+
+    fn headers_of(pairs: &[(&str, &str)]) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        for (name, value) in pairs {
+            headers.insert(
+                header::HeaderName::from_bytes(name.as_bytes()).expect("a static header name"),
+                header::HeaderValue::from_str(value).expect("a static header value"),
+            );
+        }
+        headers
+    }
+
+    /// ⚑ **THE ORIGIN TOOTH, BOTH POLARITIES.** Our own form POST is admitted; every shape a hostile
+    /// page can produce is refused — INCLUDING the shape that says nothing at all, which is the one a
+    /// fail-open guard would wave through.
+    #[test]
+    fn only_our_own_page_may_change_an_identity() {
+        // Admitted: the fetch metadata every browser we care about sends for our own form.
+        for admitted in [
+            vec![("sec-fetch-site", "same-origin")],
+            vec![("sec-fetch-site", "Same-Origin")],
+            // No fetch metadata (an older client), but a matching Origin.
+            vec![("host", "play.example"), ("origin", "https://play.example")],
+            // …with a port, and with the case and a default port normalized on both sides.
+            vec![
+                ("host", "Play.Example:443"),
+                ("origin", "https://play.example"),
+            ],
+            vec![
+                ("host", "127.0.0.1:8080"),
+                ("origin", "http://127.0.0.1:8080"),
+            ],
+            // A proxy that rewrites Host but forwards the real one.
+            vec![
+                ("host", "internal-8080"),
+                ("x-forwarded-host", "play.example"),
+                ("origin", "https://play.example"),
+            ],
+            // Referer only, matching — the fallback for clients that omit Origin.
+            vec![
+                ("host", "play.example"),
+                ("referer", "https://play.example/identity"),
+            ],
+        ] {
+            assert_eq!(
+                request_origin(&headers_of(&admitted)),
+                RequestOrigin::SameOrigin,
+                "a legitimate same-origin POST was refused: {admitted:?}"
+            );
+            assert!(same_origin_post(&headers_of(&admitted)));
+        }
+
+        // Refused. Every one of these is a shape a hostile page (or a stripped proxy) produces.
+        for refused in [
+            // The attack: a cross-site form auto-submit.
+            vec![("sec-fetch-site", "cross-site")],
+            // ⚑ A SIBLING SUBDOMAIN IS NOT US. `same-site` would admit a subdomain takeover.
+            vec![("sec-fetch-site", "same-site")],
+            // No initiating context at all cannot have submitted our form.
+            vec![("sec-fetch-site", "none")],
+            // A foreign Origin against our host.
+            vec![("host", "play.example"), ("origin", "https://evil.example")],
+            // ⚑ USERINFO: the real host here is `evil.example`, not `play.example`.
+            vec![
+                ("host", "play.example"),
+                ("origin", "https://play.example@evil.example"),
+            ],
+            // A sandboxed frame's opaque origin.
+            vec![("host", "play.example"), ("origin", "null")],
+            // A subdomain, spelled out — same refusal as the header form.
+            vec![
+                ("host", "play.example"),
+                ("origin", "https://cdn.play.example"),
+            ],
+            // A suffix that merely ENDS with our host.
+            vec![
+                ("host", "play.example"),
+                ("origin", "https://notplay.example"),
+            ],
+            // A foreign Referer.
+            vec![
+                ("host", "play.example"),
+                ("referer", "https://evil.example/go"),
+            ],
+            // ⚑ NOTHING SAID AT ALL — the fail-open case. This is what `tower::oneshot` sends by
+            // default, and what a header-stripping proxy sends, and it must refuse.
+            vec![],
+            vec![("host", "play.example")],
+            // A host with no origin to compare, and an origin with no host to compare against.
+            vec![("origin", "https://play.example")],
+        ] {
+            let headers = headers_of(&refused);
+            assert_ne!(
+                request_origin(&headers),
+                RequestOrigin::SameOrigin,
+                "a request that could not show it came from our page was ADMITTED: {refused:?}"
+            );
+            assert!(!same_origin_post(&headers));
+        }
+
+        // The two refusing verdicts stay distinguishable, because the operator story differs: one is
+        // an attack on a player, the other is a proxy eating headers.
+        assert!(matches!(
+            request_origin(&headers_of(&[("sec-fetch-site", "cross-site")])),
+            RequestOrigin::Foreign(_)
+        ));
+        assert_eq!(
+            request_origin(&headers_of(&[])),
+            RequestOrigin::Unstated,
+            "a request stating nothing must be reported as stating nothing, not as an attack"
+        );
+        // The player-facing sentence says what happened and what to do, and never names a header.
+        assert!(FOREIGN_ORIGIN_NOTICE.starts_with("Refused:"));
+        assert!(FOREIGN_ORIGIN_NOTICE.contains("/identity"));
+        for machinery in ["Sec-Fetch", "Origin", "Referer", "CSRF", "header"] {
+            assert!(
+                !FOREIGN_ORIGIN_NOTICE.contains(machinery),
+                "the refusal names machinery at a player: {machinery}"
+            );
+        }
+    }
+
+    /// ⚑ **A CONFIRM TOKEN IS BOUND TO ONE BROWSER.** The genuine token verifies under the nonce it
+    /// was minted with and under NOTHING else — which is what stops a token seen on somebody else's
+    /// screen, or a claim label lifted out of a `?user=` URL, from being POSTed to
+    /// `/identity/confirm` and installing as a year-long cookie.
+    #[test]
+    fn a_confirm_token_only_verifies_for_the_browser_it_was_shown_to() {
+        let key = derive_pubkey_hex(&generate_mnemonic()).expect("valid");
+        let mine = mint_pending_nonce();
+        let theirs = mint_pending_nonce();
+        assert_ne!(mine, theirs, "the nonce is random per claim");
+        let token = pending_token(&key, &mine);
+
+        assert_eq!(
+            parse_pending_token(&token, &mine).as_deref(),
+            Some(&key[..])
+        );
+        for wrong_nonce in [theirs.as_str(), "", "00000000000000000000000000000000"] {
+            assert_eq!(
+                parse_pending_token(&token, wrong_nonce),
+                None,
+                "a genuine token verified under a nonce it was not minted with: {wrong_nonce}"
+            );
+        }
+
+        // ⚑ THE TWO TOKEN SPACES DO NOT MEET. A cookie label is not a confirm token, and a confirm
+        // token is not a cookie label — so neither can be replayed as the other even with the right
+        // nonce in hand.
+        let label = claim_label(&key);
+        assert_eq!(parse_pending_token(&label, &mine), None);
+        assert_eq!(parse_claim_label(&token), None);
+
+        // And every hand-written shape refuses.
+        for forged in [
+            format!("{PENDING_TOKEN_PREFIX}{key}"),
+            format!("{PENDING_TOKEN_PREFIX}{key}."),
+            format!("{PENDING_TOKEN_PREFIX}{key}.00000000000000000000000000000000"),
+            format!("{token}x"),
+            key.clone(),
+        ] {
+            assert_eq!(
+                parse_pending_token(&forged, &mine),
+                None,
+                "a hand-written confirm token verified: {forged}"
+            );
+        }
+    }
+
+    /// The confirm authority has exactly TWO arms, and each is bound to the browser asking: the
+    /// pending nonce, or a claim cookie the browser already provably holds. A browser holding
+    /// neither cannot confirm anything, whatever token it presents.
+    #[test]
+    fn a_confirm_needs_the_pending_nonce_or_an_identity_already_held() {
+        let key = derive_pubkey_hex(&generate_mnemonic()).expect("valid");
+        let nonce = mint_pending_nonce();
+        let token = pending_token(&key, &nonce);
+        let label = claim_label(&key);
+
+        // Arm 1: the browser that was shown the phrase.
+        let shown = headers_of(&[("cookie", &format!("{PENDING_COOKIE}={nonce}"))]);
+        assert!(matches!(
+            authorize_confirm(&shown, &token),
+            Some((ref got, ConfirmAuthority::JustShown)) if *got == key
+        ));
+
+        // Arm 2: "act as my identity again" — authorised by the claim cookie, not by a token.
+        let holder = headers_of(&[("cookie", &format!("{CLAIM_COOKIE}={label}"))]);
+        assert!(matches!(
+            authorize_confirm(&holder, &label),
+            Some((ref got, ConfirmAuthority::AlreadyHeld)) if *got == key
+        ));
+
+        // ⚑ NEITHER: a stranger holding the genuine token, or the genuine label, gets nothing.
+        let stranger = HeaderMap::new();
+        assert!(authorize_confirm(&stranger, &token).is_none());
+        assert!(
+            authorize_confirm(&stranger, &label).is_none(),
+            "a label lifted out of a URL must not be installable by a browser that does not hold it"
+        );
+        // …and a browser holding a claim for a DIFFERENT identity cannot confirm this one.
+        let other_key = derive_pubkey_hex(&generate_mnemonic()).expect("valid");
+        let other = headers_of(&[(
+            "cookie",
+            &format!("{CLAIM_COOKIE}={}", claim_label(&other_key)),
+        )]);
+        assert!(authorize_confirm(&other, &label).is_none());
     }
 }

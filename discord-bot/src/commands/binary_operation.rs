@@ -711,13 +711,24 @@ mod tests {
         close_in::<DungeonOffering>(channel);
     }
 
+    /// ⚑ The command is registered on the LAB surface, not the global one. `24e47322b` took
+    /// `dungeon` off `dreggnet_catalog::SHIPPED_KEYS`, and `/adventure` is a
+    /// `Door::Offering("dungeon")` row — so it is registered only inside `DREGG_LAB_GUILD_ID` and
+    /// `global_commands()` no longer carries it. This test read the GLOBAL set and
+    /// `expect`ed it there, which made it a hard panic the moment the ship list changed; searching
+    /// both surfaces is what it always meant (the question here is whether the operation option is
+    /// BUILT, not where it is advertised — `menus::the_offering_doors_follow_the_ship_list` owns
+    /// that question and derives the answer rather than pinning it).
     #[test]
     fn deployed_adventure_command_registers_the_operation_name_and_attachment() {
-        let commands = crate::commands::menus::global_commands();
+        let commands: Vec<serde_json::Value> = crate::commands::menus::global_commands()
+            .into_iter()
+            .chain(crate::commands::menus::lab_commands())
+            .collect();
         let adventure = commands
             .iter()
             .find(|command| command["name"] == "adventure")
-            .expect("/adventure is globally registered");
+            .expect("/adventure is registered on one of the two surfaces");
         let dungeon = adventure["options"]
             .as_array()
             .and_then(|options| options.iter().find(|option| option["name"] == "dungeon"))

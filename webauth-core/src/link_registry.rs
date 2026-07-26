@@ -124,22 +124,45 @@ pub trait LinkStore {
             .and_then(|root| account_id_of_root(&root)))
     }
 
-    /// Every platform link currently attributed to a root key (latest per (platform, uid)).
+    /// **Every platform link currently attributed to a root key** — the exact inverse of
+    /// [`resolve_root`](LinkStore::resolve_root): a record with custodial key C is returned for root
+    /// R **iff** `resolve_root(C) == Some(R)`.
+    ///
+    /// ⚑ **That inverse property is the repair, and its absence was a real cross-account read, not a
+    /// doc nicety.** This used to filter to `root == R` FIRST and only then take the latest per
+    /// `(platform, uid)` — i.e. "latest wins" held only *within the records that already shared this
+    /// root*. A binding recorded under R was therefore **never superseded** by a later binding of the
+    /// same account under a different root, so the two directions disagreed: `resolve_root(C)` said C
+    /// belonged to the newer human while `platforms_for_root(R)` still handed C to R. Consumers use
+    /// the second direction to widen a view — `dreggnet-web`'s `/you` unions the custodial keys it
+    /// returns into "your" history, and the link page prints them as yours — so a stale row meant one
+    /// player's page counting ANOTHER human's tables and runs. That is how it bites: not as a wrong
+    /// number, as somebody else's record on your page.
+    ///
+    /// The case that produces one is real and has no undo (see `identity_link`'s NO UN-LINK DOOR
+    /// residual): a player who ran the ceremony on a code somebody handed them binds that stranger's
+    /// account under their own root, with their own signature, and nothing removes the row. The
+    /// stranger re-linking their account correctly now supersedes it in every direction at once.
+    ///
+    /// Keyed on the CUSTODIAL pubkey, and tie-broken with a strict `>` (later file-order wins on a
+    /// same-second rebind), for one reason: those are the two things `resolve_root` does, and the
+    /// inverse property is only true if both directions agree about what "latest" means.
     fn platforms_for_root(&self, root_pubkey_hex: &str) -> std::io::Result<Vec<LinkRecord>> {
-        let mut out: std::collections::HashMap<(String, String), LinkRecord> =
+        let mut latest: std::collections::HashMap<String, LinkRecord> =
             std::collections::HashMap::new();
         for r in self.all()? {
-            if r.root_pubkey_hex.eq_ignore_ascii_case(root_pubkey_hex) {
-                let k = (r.platform.clone(), r.platform_uid.clone());
-                match out.get(&k) {
-                    Some(prev) if prev.verified_at >= r.verified_at => {}
-                    _ => {
-                        out.insert(k, r);
-                    }
+            let key = r.custodial_pubkey_hex.to_ascii_lowercase();
+            match latest.get(&key) {
+                Some(prev) if prev.verified_at > r.verified_at => {}
+                _ => {
+                    latest.insert(key, r);
                 }
             }
         }
-        Ok(out.into_values().collect())
+        Ok(latest
+            .into_values()
+            .filter(|r| r.root_pubkey_hex.eq_ignore_ascii_case(root_pubkey_hex))
+            .collect())
     }
 }
 
@@ -268,6 +291,70 @@ mod tests {
         assert_eq!(s.resolve_root("custD").unwrap(), Some("K".into()));
         assert_eq!(s.resolve_root("custT").unwrap(), Some("K".into()));
         assert_eq!(s.platforms_for_root("K").unwrap().len(), 2);
+    }
+
+    /// ⚑ **THE TWO DIRECTIONS AGREE, so nobody's page counts another human's play.**
+    ///
+    /// `platforms_for_root` is the inverse of `resolve_root`, and it used to not be: it took "latest
+    /// wins" only among records that already shared the root it was asked about, so a binding under
+    /// an old root was never superseded by a later binding of the same account under a new one. A
+    /// consumer that widens a view by it (`/you` unions these custodial keys into "your" history)
+    /// would then count a key `resolve_root` says belongs to somebody else.
+    ///
+    /// Driven on the case that actually produces such a row: a player ran the ceremony on a code a
+    /// stranger handed them (the phishing case the consent box guards against and the missing un-link
+    /// door cannot tidy up), and the stranger later linked that account correctly.
+    #[test]
+    fn a_rebound_account_leaves_the_old_roots_view_in_both_directions() {
+        let mut s = InMemoryLinkStore::default();
+        // The bad row: the victim's root, the stranger's account, the victim's own signature.
+        s.record(&rec("victimK", "discord", "111", "custD", 100))
+            .unwrap();
+        // NON-VACUOUS: while it is the only row it IS the victim's, in both directions.
+        assert_eq!(s.resolve_root("custD").unwrap(), Some("victimK".into()));
+        assert_eq!(s.platforms_for_root("victimK").unwrap().len(), 1);
+
+        // The real owner links the same account to their own phrase, later.
+        s.record(&rec("ownerK", "discord", "111", "custD", 200))
+            .unwrap();
+        assert_eq!(s.resolve_root("custD").unwrap(), Some("ownerK".into()));
+        assert!(
+            s.platforms_for_root("victimK").unwrap().is_empty(),
+            "⚑ a superseded binding must leave the old root's view, or /you counts another human's \
+             history as yours"
+        );
+        let owned = s.platforms_for_root("ownerK").unwrap();
+        assert_eq!(owned.len(), 1);
+        assert_eq!(owned[0].custodial_pubkey_hex, "custD");
+
+        // The tie-break matches `resolve_root`'s strict `>`: on the SAME second, later file order
+        // wins — so a same-second rebind moves in both directions or in neither.
+        let mut tied = InMemoryLinkStore::default();
+        tied.record(&rec("firstK", "discord", "7", "custX", 100))
+            .unwrap();
+        tied.record(&rec("secondK", "discord", "7", "custX", 100))
+            .unwrap();
+        assert_eq!(tied.resolve_root("custX").unwrap(), Some("secondK".into()));
+        assert!(tied.platforms_for_root("firstK").unwrap().is_empty());
+        assert_eq!(tied.platforms_for_root("secondK").unwrap().len(), 1);
+
+        // A root's OTHER bindings are untouched by a rebind of one of them.
+        let mut many = InMemoryLinkStore::default();
+        many.record(&rec("K", "discord", "1", "custD", 100))
+            .unwrap();
+        many.record(&rec("K", "telegram", "2", "custT", 100))
+            .unwrap();
+        many.record(&rec("K", "web", "K", "K", 100)).unwrap();
+        many.record(&rec("other", "discord", "1", "custD", 300))
+            .unwrap();
+        let mut left: Vec<String> = many
+            .platforms_for_root("K")
+            .unwrap()
+            .into_iter()
+            .map(|r| r.platform)
+            .collect();
+        left.sort();
+        assert_eq!(left, vec!["telegram", "web"]);
     }
 
     /// An unlinked custodial key is its own identity — resolution is additive, never breaks the
