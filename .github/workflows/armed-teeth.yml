@@ -10,6 +10,37 @@
 #
 # "Expensive" must mean "runs nightly", never "runs never". That is all this workflow is.
 #
+# ── THE SECOND AXIS: EXPENSIVE-SO-FEATURE-GATED (added 2026-07-26) ─────────────────────
+# The paragraph above closed ONE axis — expensive, therefore `#[ignore]`d. There is another,
+# and it is strictly worse, because an `#[ignore]`d test at least COMPILES on every push (so
+# API drift reds ci.yml the day it lands) while a feature-gated one does not exist at all.
+#
+# MEASURED 2026-07-26: `grep -rn -- '--features\|--all-features' .github/workflows/` — no
+# workflow in this repository enables `--features prove`, `--features prover`, or
+# `--all-features`. Three crates put their real-fold adversarial test behind an off-by-default
+# `prove` feature and wrote the invocation in a Cargo.toml comment:
+#
+#   dregg-entity-compose  "cargo test -p dregg-entity-compose --features prove --test leaf_prove -- --ignored"
+#   dregg-braid-hook      "cargo test -p dregg-braid-hook --features prove --test weld_canary -- --ignored --nocapture"
+#   dreggnet-companion    "cargo test -p dreggnet-companion --features prove --test wing_weld -- --ignored --nocapture"
+#
+# "Documented as run by hand" is how a test comes to run never. And the feature axis hides
+# itself better than `#[ignore]` does: with the feature off, a `#![cfg(feature = "prove")]`
+# file compiles to an EMPTY test crate that reports `0 passed; 0 failed` and EXITS 0. There is
+# no skip line, no `ignored` count, nothing in any log. That is why the job below floors what
+# actually EXECUTED rather than trusting an exit code — the same argument as `binding-teeth`,
+# only here the silent-zero is the default state rather than a filter accident.
+#
+# The features stay OFF by default and that is correct: they pull the plonky3 recursion prover,
+# and keeping it out of the bare dev loop is the whole reason the gate exists. The fix is not
+# to make them default; it is to arm them in the lane that already means "expensive, so nightly".
+#
+# THESE ARE NOT SPECULATIVE TEETH. `braid_outcome_weld_bites` was run by hand for the first time
+# on 2026-07-25 and bit on both poles in 473.95s: the honest composition folded, and the forged
+# one — the committed outcome octet perturbed by EXACTLY 1 (1262052436 vs 1262052435) — had no
+# satisfying assignment and was refused with a `WitnessConflict`. A genuine forgery canary that
+# ran nowhere.
+#
 # WHY A SEPARATE WORKFLOW rather than a step in ci.yml: these are minute-scale folds. Putting them
 # on the per-push gate would make every push wait on them, and the first slow week would end with
 # someone deleting the step. A schedule is the honest home for a lane whose cost is real.
@@ -32,6 +63,25 @@
 #     `lean-hard-mode` below now runs HOSTED, on the nightly schedule, fetching the seed. It arms
 #     itself off the pin: while `TAG=` is empty it says so loudly instead of failing nightly for
 #     infrastructure that does not exist yet; the first publish flips it on with no edit here.
+#
+#   * THE `prover` FEATURE, EXCEPT ONE TARGET — and the reason is that it is NOT a hole. Ten
+#     crates declare a `prover` feature; the census (2026-07-26, `default =` line of every
+#     Cargo.toml declaring one) says NINE of them put it in `default`: dregg-demo, grain-turn,
+#     dregg-lightclient, dregg-node, dregg-perf, dregg-sdk, dregg-teasting, dregg-tests,
+#     dregg-verifier. Default-on means `cargo test --workspace` already COMPILES and RUNS them,
+#     so the ~96 `prover`-gated tests in `sdk/tests/*` (14 files, 88 tests) and
+#     `verifier/tests/integration_rotated_replay_chain.rs` (8) are not gated off CI at all —
+#     checked file by file, not one of them carries `#[ignore]`. Arming them here would be a
+#     second, slower copy of a lane that already exists.
+#     The two exceptions, both named:
+#       - `dregg-cell`'s `prover` is a DOCUMENTED NO-OP (`prover = []`, retained only so
+#         downstream `dregg-cell/prover` forwards keep resolving). It gates zero code. There is
+#         nothing to arm and its absence is not a gap.
+#       - `grain-turn`'s `r3_grain_adapter` IS default-compiled but is `#[ignore]`d, so it ran
+#         nowhere — the first axis, missed because it lives outside `circuit-prove/tests/` and
+#         so no `*tooth*` glob could ever reach it. It is armed below in `lean-hard-mode`, not
+#         in the prove job, because its decision is the extracted Lean `dregg_grain_r3_verify`
+#         and it needs the seeded archive. See that job for the fail-open it carries.
 name: Armed teeth
 
 #
@@ -224,6 +274,225 @@ jobs:
           fi
           exit "$status"
 
+  # ─────────────────────────────────────────────────────────────────────────────
+  # THE SECOND AXIS (see the header). `binding-teeth` above arms tests that CI compiles
+  # but never RUNS. This job arms tests that CI does not COMPILE — the three real-fold
+  # adversarial canaries behind the off-by-default `prove` feature. Before this job,
+  # nothing in this repository ever passed `--features prove` to anything; the invocations
+  # existed only as prose in three Cargo.toml comments.
+  #
+  # WHY IT IS A SEPARATE JOB rather than three more steps in `binding-teeth`: a different
+  # feature set is a different build fingerprint, so these compile the plonky3 recursion
+  # prover a second time under `prove`. Sharing the job would serialise that behind the
+  # existing 300-minute fold lane and put both at risk of one timeout.
+  #
+  # AND THE LOCAL MIRROR DOES NOT COVER THIS EITHER, which is worth knowing before someone
+  # concludes they already ran these. `scripts/test-gauntlet.sh armed` is the hand-run twin of
+  # `binding-teeth`, and `[profile.armed]` in `.config/nextest.toml` is scoped
+  # `default-filter = 'package(dregg-circuit-prove) and not (…gpu…)'` — deliberately, so a
+  # workspace-wide `--run-ignored ignored-only` does not sweep in dregg-node's QUIC soak. The
+  # side effect is that the gauntlet's "run the ignored set" lane is structurally unable to
+  # reach a `prove`-gated test in braid-hook, dreggnet-companion or entity-compose, and it
+  # passes no `--features` either. Neither surface covered this axis. This job is the only one.
+  #
+  # WHAT THIS JOB CANNOT ASSUME. A hosted ubuntu runner has never executed these — the
+  # honest measurement is 2026-07-25 on an M-series laptop, where `weld_canary` bit both
+  # poles in 473.95s. A hosted runner is slower and much smaller, so the first scheduled
+  # run is also the first measurement of whether these fit in a hosted lane at all. If it
+  # times out or OOMs, that is a real finding about the folds' cost and belongs in this
+  # header — not a reason to quietly drop a target.
+  #
+  # ⚠ THIS LANE IS PARTLY RED AT LANDING, AND — as with `binding-teeth` — ARMING IS WHAT
+  #   REVEALED IT. MEASURED 2026-07-26, all three binaries, --release, each tooth run:
+  #
+  #     entity-compose/leaf_prove     2 passed / 0 failed    72.96s   GREEN, both teeth bit
+  #     braid-hook/weld_canary        1 passed / 0 failed   432.12s   GREEN, both poles bit
+  #     dreggnet-companion/wing_weld  0 passed / 1 FAILED    10.44s   RED, dies in SETUP
+  #
+  #   `wing_weld` never reaches a fold. It dies at `wing_weld.rs:50`, on the FIRST XP-gated
+  #   progression turn:
+  #
+  #     the warden raises: Refused("embedded executor rejected submission: turn error:
+  #     program violation on cell 8b43f1da8ef71b10: no constraint oracle installed: this
+  #     native node cannot decide a Lean-subset constraint without the verified
+  #     dregg_constraint_admits oracle — fail-closed (install it via install_constraint_oracle)")
+  #
+  #   ROOT CAUSE, and it is NOT bitrot and NOT this test's own logic. `cell/src/program/eval.rs`
+  #   fails closed when no constraint oracle is installed, but that gate is
+  #   `#[cfg(all(not(debug_assertions), any(unix, windows)))]` — RELEASE-ONLY, by its own comment,
+  #   "so debug/test builds across the workspace keep the guest evaluator and stay green". A real
+  #   native node arms the oracle at startup (`node/src/lib.rs:638`,
+  #   `dregg_exec_lean::register_constraint_oracle()`); a test binary driving the embedded executor
+  #   does not. These teeth MUST run `--release` because a debug FRI fold does not finish — which
+  #   is exactly the configuration where the fail-closed is armed. So the one test that had to run
+  #   in release is the one that found it.
+  #
+  #   IT IS A CLASS, NOT A ONE-OFF: `grain-turn`'s `r3_grain_adapter` (armed in `lean-hard-mode`
+  #   below) dies the same way, at `mint_turn`, in 0.53s, with a byte-identical message. Every
+  #   `#[ignore]`d release-run tooth that drives a real executor turn is exposed to it, and no
+  #   such tooth had ever run.
+  #
+  #   THE COROLLARY IS THE BIGGER FINDING, AND IT IS MEASURED BY DIFFERENTIAL, NOT INFERRED.
+  #   `dreggnet-companion/tests/wing.rs` is the sibling of `wing_weld.rs`: same `raise_to` calls,
+  #   NO feature gate, NO `#[ignore]`, green in ci.yml on every push. Run it in RELEASE
+  #   (`cargo test -p dreggnet-companion --release --test wing`, 2026-07-26):
+  #
+  #     test result: FAILED. 1 passed; 6 failed; 0 ignored  —  finished in 4.46s
+  #
+  #   All six fail with the identical `no constraint oracle installed` message. So the cause is
+  #   NOT the `prove` feature and NOT the teeth: it is DEBUG-vs-RELEASE. ci.yml runs `cargo test`,
+  #   which is a debug build, where the fail-closed is `#[cfg]`'d out and the admission decision
+  #   falls through to `eval.rs`'s hand-authored Rust `match` — the UNVERIFIED TWIN. The verified
+  #   `dregg_constraint_admits` is present in the archive (confirmed with `nm`) and is simply never
+  #   consulted by any of it.
+  #
+  #   Read plainly: a body of green executor tests is green because the verified gate is compiled
+  #   out of the configuration they run in, and refuses them in the configuration that ships. That
+  #   is not something these teeth broke; it is something arming them was the first thing to SEE.
+  #
+  #   THE REPAIR is to install the oracle in the tests that model a native node (the node's own
+  #   startup call, from a dev-dependency on `dregg-exec-lean`), after which these two teeth need
+  #   the seeded archive and move to `lean-hard-mode`. That is a real change to two crates'
+  #   dev-dependencies and it is NOT smuggled into this arming pass. Until it lands: do NOT
+  #   `#[ignore]` `wing_weld`, do NOT weaken its assertions, and do NOT drop it from the list
+  #   above — a declared red is the whole product of arming a test nobody ran.
+  feature-gated-prove-teeth:
+    name: Feature-gated prove teeth (--features prove, --ignored)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true   # include_str!'d staged registries live in LFS (.gitattributes)
+
+      # Same disk reclaim as `binding-teeth` and ci.yml's Linux test job.
+      - name: Reclaim runner disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /usr/local/lib/android /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/powershell /usr/share/swift
+          sudo docker image prune --all --force || true
+          df -h /
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@v2
+
+      # EXPLICIT TARGETS, PLUS A DISCOVERY FLOOR. `binding-teeth` learned both halves the
+      # hard way and this job inherits them:
+      #
+      #   * EXPLICIT is why armed-teeth survived a five-day blackout that zeroed
+      #     `cargo test --workspace`. A named `-p X --test Y` states a claim that can be
+      #     read off the file: THESE ran.
+      #   * A TRANSCRIBED LIST GOES STALE. So after running, the job re-derives the set from
+      #     the tree (`^#![cfg(feature = "prove")]` in any `*/tests/*.rs`) and errors if it
+      #     finds a gated test the list does not arm, or if an armed file has vanished. A new
+      #     `prove`-gated canary therefore cannot land silently unarmed, and a rename reds the
+      #     lane instead of shrinking it. That is the "the glob was narrower than the noun"
+      #     lesson, run in the direction that cannot lose a target.
+      #
+      # `--release` for the same reason as `binding-teeth`: these are FRI folds and debug
+      # would not finish. `--no-fail-fast` inside each invocation; `set +e` plus an
+      # accumulated status ACROSS invocations, so one red crate cannot hide the other two.
+      #
+      # ⚠ THE FLOOR IS NOT OPTIONAL HERE, IT IS THE WHOLE POINT — and the premise is MEASURED,
+      # not argued. Running the exact same command with the feature dropped, 2026-07-26:
+      #
+      #   $ cargo test -p dregg-braid-hook --release --no-fail-fast --test weld_canary -- --ignored
+      #        Running tests/weld_canary.rs (target/release/deps/weld_canary-dd0b760e771bba83)
+      #   test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+      #   MARKER_EXIT=0
+      #
+      # `ok`. Exit 0. Zero tests, 0.00s, and NO skip line anywhere — the `#![cfg]` made the file
+      # an empty crate, so there is nothing left to report being absent. A typo in the feature
+      # name, a renamed feature, a `--features` flag lost in an edit: every one of those is
+      # indistinguishable from success by exit code. Feeding that log to the `ran=` arithmetic
+      # below yields 0, i.e. the floor FIRES on the real failure and passes on the real success.
+      # That is the only reason to trust it.
+      - name: Arm the feature-gated prove teeth
+        run: |
+          # `set +e` is load-bearing for the same reason as in `binding-teeth`: GitHub runs
+          # `run:` under `bash -eo pipefail`, so without this the first red cargo aborts the
+          # step and makes the floor check below unreachable code.
+          set +e
+          set -uo pipefail
+
+          # Measured 2026-07-26: exactly three `#![cfg(feature = "prove")]` test files exist,
+          # carrying 4 `#[ignore]`d tests between them. Floors are a RATCHET — raise them when
+          # the set grows; never lower one to make a red lane green.
+          FLOOR_PROVE_TESTS=4
+          ARMED_FILES="entity-compose/tests/leaf_prove.rs braid-hook/tests/weld_canary.rs dreggnet-companion/tests/wing_weld.rs"
+
+          status=0
+          arm() {   # arm <package> <test-target> <logname>
+            echo "::group::$1 --features prove --test $2"
+            cargo test -p "$1" --features prove --release --no-fail-fast \
+              --test "$2" -- --ignored --nocapture 2>&1 | tee "prove-$3.log"
+            local rc=${PIPESTATUS[0]}
+            echo "armed-teeth(prove): $1/$2 exited $rc"
+            [ "$rc" -ne 0 ] && status=1
+            echo "::endgroup::"
+          }
+
+          # THE COMPOSITION LEAF, entity-bound (2 teeth). The honest composition of a deployed
+          # entity mints a foldable leaf whose IN-CIRCUIT commitment byte-matches the host
+          # WideHash the `Effect::Custom` row carries; an outcome the ruleset does not license
+          # has no satisfying witness and cannot mint a leaf. The relation is the LEAN-authored
+          # descriptor (`paramComposeDesc pcRealistic`, byte-pinned in ParamComposeGolden.lean),
+          # reached through `include_str!` — no archive needed, which is why this runs hosted.
+          arm dregg-entity-compose leaf_prove entity-compose
+
+          # THE OUTCOME→CELL-FIELD WELD (1 tooth). Honest pole first, then the bite: a composed
+          # entity whose committed outcome octet disagrees with its published outcome by ONE
+          # lane must have no satisfying fold through the deployed app-root node. Measured by
+          # hand 2026-07-25: both poles bit, 473.95s, refusal was a `WitnessConflict` on a
+          # difference of exactly 1.
+          arm dregg-braid-hook weld_canary braid-hook
+
+          # THE WING WELD (1 tooth). The same weld reached from a real in-tree GAME entity —
+          # two companions raised on the roost's XP-gated cells — so the property is shown to
+          # survive the trip from the substrate to a shipped surface.
+          arm dreggnet-companion wing_weld companion
+
+          # ── FLOOR 1: WHAT ACTUALLY EXECUTED ──────────────────────────────────────────
+          ran=$(cat prove-*.log \
+                 | sed -nE 's/^test result:.* ([0-9]+) passed; ([0-9]+) failed.*/\1 \2/p' \
+                 | awk '{s+=$1+$2} END {print s+0}')
+          echo "armed-teeth(prove): $ran prove-gated assertion(s) actually executed (floor $FLOOR_PROVE_TESTS)."
+          if [ "$ran" -lt "$FLOOR_PROVE_TESTS" ]; then
+            echo "::error::only $ran prove-gated tooth(s) executed, below the measured floor of $FLOOR_PROVE_TESTS."
+            echo "::error::With the feature OFF these files compile to EMPTY test crates that report"
+            echo "::error::0 passed / 0 failed and exit 0 — a green job over tests that do not exist."
+            echo "::error::Check that --features prove is still spelled correctly and still enables"
+            echo "::error::dep:dregg-circuit-prove. Do not lower the floor to clear this."
+            status=1
+          fi
+
+          # ── FLOOR 2: DID A NEW GATED TEST LAND UNARMED, OR AN ARMED ONE VANISH? ──────
+          for f in $ARMED_FILES; do
+            if [ ! -f "$f" ]; then
+              echo "::error::armed target $f no longer exists. A rename must RED this lane, never"
+              echo "::error::shrink it silently — re-point the arm() call above in the same commit."
+              status=1
+            fi
+          done
+          for f in $(git grep -lE '^#!\[cfg\(feature = "prove"\)\]' -- '*/tests/*.rs' | sort); do
+            case " $ARMED_FILES " in
+              *" $f "*) ;;
+              *)
+                echo "::error::$f is behind '#![cfg(feature = \"prove\")]' and this job does NOT arm it."
+                echo "::error::An unarmed prove-gated test does not merely skip — it does not compile,"
+                echo "::error::reports 0 passed, and exits 0. Add an arm() line for it above and raise"
+                echo "::error::FLOOR_PROVE_TESTS by its tooth count in the same commit."
+                status=1
+                ;;
+            esac
+          done
+
+          exit "$status"
+
   # THE HARD-MODE LANE. Every load-bearing verified-gate test in `dregg-node` opens with
   # `if !<export>_available() { eprintln!("SKIP"); return; }` — reporting `ok` having asserted
   # NOTHING on an archive-less build. `DREGG_TEST_REQUIRE_LEAN=1` (dregg_lean_ffi::demand_lean)
@@ -308,6 +577,74 @@ jobs:
           DREGG_REQUIRE_LEAN: "1"
         run: cargo test -p dregg-node --release --test consensus_under_failure -- --ignored --nocapture
 
+      # R3 ON A REAL DRIVEN GRAIN SESSION. `grain-turn`'s `prover` feature is DEFAULT-ON, so
+      # unlike the prove job's targets this one already compiles on every push — but its single
+      # test is `#[ignore]`d and lives outside `circuit-prove/tests/`, so no `*tooth*` glob could
+      # reach it and `cargo test --workspace` skips it. It ran nowhere. It is the whole R3 leg:
+      # a genuine `ToolGateway::invoke` session, finalized into rotated wide-anchored EffectVM
+      # legs, decided by the extracted Lean `dregg_grain_r3_verify` — with a wound-#22 width tooth
+      # (an anchor byte-identical in LANE 0 and differing only at lane 1, which the pre-repair
+      # ~31-bit seam ACCEPTED) and a post-state tamper case.
+      #
+      # ⚠ IT CARRIES A FAIL-OPEN, AND THAT IS WHY IT IS IN *THIS* JOB. The test opens with
+      #   `if !dregg_lean_ffi::grain_r3_verify_core_available() { eprintln!("… not linked"); return; }`
+      # and `grain_r3_verify_core_available()` does NOT route through `dregg_lean_ffi::demand_lean`,
+      # so DREGG_TEST_REQUIRE_LEAN=1 does NOT convert that skip into a panic the way it does for
+      # the node's ~43 verified gates. On an archive-less runner it would report `ok` having
+      # asserted nothing. Two consequences, both handled rather than hoped about:
+      #   1. it belongs in the SEEDED lane, not the hosted prove job — hence its home here;
+      #   2. the seed alone is not enough, because a seed missing THIS export (a stale archive
+      #      can lack it while `lean_available()` is true) reproduces the same silent pass. So
+      #      the step greps the run's own output for the skip line and fails on it. The gate is
+      #      the log, not the exit code.
+      # The real repair is routing that accessor through `demand_lean`; until that lands this
+      # check is what stops the vacuous green.
+      #
+      # ⚠ RED AT LANDING, MEASURED 2026-07-26 (archive present, `nm` confirms the archive exports
+      # BOTH `_dregg_grain_r3_verify` and `_dregg_constraint_admits`, so the self-skip above did
+      # NOT fire and this is a real verdict):
+      #
+      #     test result: FAILED. 0 passed; 1 failed  —  finished in 0.53s
+      #     panicked at grain-turn/tests/r3_grain_adapter.rs:62:10:
+      #     the grain turn commits (admitted, in-rate): "tool call execution error: turn error:
+      #     program violation on cell 77db5dcf30ace956: no constraint oracle installed: …"
+      #
+      # It never reaches the finalize or the fold. Same root cause as `wing_weld` in the prove job
+      # above — the release-only constraint-oracle fail-closed in `cell/src/program/eval.rs`, and a
+      # test process that drives the embedded executor without the node's startup
+      # `dregg_exec_lean::register_constraint_oracle()`. Read that job's header for the full
+      # diagnosis and the named repair; this is the second member of the same class, and the two
+      # were found by the same act of arming teeth that had never run.
+      - name: R3 adapter on a real driven grain session (grain-turn --features prover)
+        if: steps.pin.outputs.armed == '1'
+        env:
+          DREGG_TEST_REQUIRE_LEAN: "1"
+          DREGG_REQUIRE_LEAN: "1"
+        run: |
+          set +e
+          set -uo pipefail
+          cargo test -p grain-turn --features prover --release --no-fail-fast \
+            --test r3_grain_adapter -- --ignored --nocapture 2>&1 | tee r3-grain.log
+          status=${PIPESTATUS[0]}
+          if grep -q 'is not linked' r3-grain.log; then
+            echo "::error::r3_grain_adapter SELF-SKIPPED: the linked archive lacks the extracted"
+            echo "::error::Lean core 'dregg_grain_r3_verify', so the test returned early and reported"
+            echo "::error::'ok' having decided NOTHING. That accessor bypasses demand_lean, so"
+            echo "::error::DREGG_TEST_REQUIRE_LEAN=1 could not catch it. Cut a seed whose Dregg2 slice"
+            echo "::error::includes Dregg2.Grain.R3Verify; do not delete this check to clear it."
+            exit 1
+          fi
+          ran=$(sed -nE 's/^test result:.* ([0-9]+) passed; ([0-9]+) failed.*/\1 \2/p' r3-grain.log \
+                 | awk '{s+=$1+$2} END {print s+0}')
+          echo "armed-teeth(r3): $ran R3 assertion(s) actually executed (floor 1)."
+          if [ "$ran" -lt 1 ]; then
+            echo "::error::the R3 adapter tooth did not execute. grain-turn's 'prover' feature is"
+            echo "::error::default-on today; if that changed, this file becomes an EMPTY test crate"
+            echo "::error::reporting 0 passed and exiting 0. Re-check the feature, do not drop the step."
+            exit 1
+          fi
+          exit "$status"
+
   # ─────────────────────────────────────────────────────────────────────────────
   # The missing half of this lane. Everything above ALREADY runs, faithfully, every
   # night — and tells nobody. This workflow is `schedule` + `workflow_dispatch` only,
@@ -323,13 +660,17 @@ jobs:
   # one issue per outage, a comment per subsequent red run.
   page-on-red:
     name: Page a human when a tooth is red
-    needs: [binding-teeth, lean-hard-mode]
+    needs: [binding-teeth, feature-gated-prove-teeth, lean-hard-mode]
     # `always()` so this still runs after the teeth job fails; fire only on a real
     # failure (never on cancelled/skipped — lean-hard-mode is dispatch-gated and is
     # `skipped` on every scheduled run).
+    #
+    # `feature-gated-prove-teeth` is listed here for the reason it exists at all: a job
+    # nobody is paged for is the same shape of nothing as a test nobody runs.
     if: >-
       ${{ always() && github.event_name != 'pull_request'
           && (needs.binding-teeth.result == 'failure'
+              || needs.feature-gated-prove-teeth.result == 'failure'
               || needs.lean-hard-mode.result == 'failure') }}
     runs-on: ubuntu-latest
     permissions:
@@ -344,6 +685,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TEETH: ${{ needs.binding-teeth.result }}
+          PROVE: ${{ needs.feature-gated-prove-teeth.result }}
           LEAN: ${{ needs.lean-hard-mode.result }}
         run: |
           set -euo pipefail
@@ -351,6 +693,7 @@ jobs:
           {
             printf '%s\n\n' "The nightly **Armed teeth** lane failed: ${RUN_URL}"
             printf '%s\n' "- \`binding-teeth\`: **${TEETH}**"
+            printf '%s\n' "- \`feature-gated-prove-teeth\`: **${PROVE}** (the \`--features prove\` weld canaries)"
             printf '%s\n\n' "- \`lean-hard-mode\`: **${LEAN}** (dispatch-gated; \`skipped\` on scheduled runs)"
             printf '%s\n' 'These are the DEPLOYED light-client binding teeth. This lane is `schedule` +'
             printf '%s\n' '`workflow_dispatch` only, so it is **not** a PR check — a red tooth here blocks'
