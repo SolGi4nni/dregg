@@ -187,8 +187,10 @@ cargo nextest run -p dreggnet-web -E 'test(/game_epoch|private_bazaar|act_signed
 ```
 
 Proof-heavy, exact-v3, and WGPU tests run explicitly in release on
-persvati/hbox. Lean stays local. See `AGENTS.md` and
-`.config/nextest.toml`.
+persvati/hbox. Lean goes wherever the Dregg2 oleans already are — the laptop or
+hbox's `eth-lc-air` lane, **not** unconditionally local; see
+`docs/BUILD-BUDGET.md` for current routing, how to read a `pbuild` `VERDICT`, and
+what `ENVFAULT` means. Also `.config/nextest.toml`.
 
 ## 9. Plain-language answer
 

@@ -167,12 +167,14 @@ not require a new frontend-specific mini-engine.
 
 ## 6. Verification economy
 
-Follow `AGENTS.md`:
+Follow `docs/BUILD-BUDGET.md` (current routing, `VERDICT` reading, `ENVFAULT`):
 
-- Lean stays local; `lake env lean Dregg2/Claims.lean` and registered lint
-  gates are proof authority.
-- Rust uses narrow `cargo nextest` targets.
-- Proof-heavy work runs in release on persvati/hbox.
+- `lake env lean Dregg2/Claims.lean` and registered lint gates are proof
+  authority. Lean *builds* go where the Dregg2 oleans already are — the laptop or
+  hbox's `eth-lc-air` lane; "Lean stays local" was a rule about mathlib and the
+  real constraint is olean depth.
+- Rust uses narrow `cargo nextest` targets, always `-p`.
+- Proof-heavy work runs in release on persvati/hbox — both are spare capacity.
 - Required-GPU tests identify the real adapter and compare exactly to CPU.
 - Do not rerun the whole workspace to edit this roadmap.
 

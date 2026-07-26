@@ -22,6 +22,68 @@ truth-telling code audit), `docs/deos/THE-DARK-BAZAAR.md` §1 (re-grounded 07-25
   named regression (`intent/verified_settle.rs:351`, gate never registered); `/prove-shielded` unreachable
   (ring3/market4 allowlist + hardcoded epsilon — a Lean-emission fix).
 
+## ⚑⚑⚑ JULY 26 — BUILD ROUTING DOCTRINE REWRITTEN: `docs/BUILD-BUDGET.md` is now the single current answer
+
+The written routing doctrine had gone wrong in a way that *lanes were following*, which is the expensive kind.
+`docs/BUILD-BUDGET.md` is now the one place that answers "which box, how do I read the result, how do I clean
+up", and it carries a **Superseded statements** table naming the older lines it replaces. This entry does not
+rewrite them; the entries at lines 657, 663 and 664 below stand as the record of what we believed on 07-16/17.
+
+**What changed, and it inverts a framing that was circulating yesterday.** hbox is **not** "triple-booked, keep
+off it" — that was the state we *removed*. Both remote boxes are now spare capacity for interactive work:
+
+- `.github/workflows/lean-seed.yml:122` is the **only** self-hosted `runs-on` in the repo, and that workflow is
+  now **`workflow_dispatch` only** — `push` removed in `29aa30ea3`, the nightly `schedule` removed after it.
+  Verified 2026-07-26 by parsing every workflow: its trigger list is exactly `['workflow_dispatch']`, and the
+  other 7 distinct `runs-on` expressions all resolve to hosted labels (61 `ubuntu-latest`, 4 `ubuntu-22.04`, 1
+  `macos-14`, matrix variables expanding to ubuntu/macos only; `armed-teeth.yml:238`'s `inputs.runner` override
+  defaults to `ubuntu-latest`). **hbox now carries zero automatic CI load.** Its Actions listener is still
+  registered and running — a manual seed cut is the one thing that will occupy it.
+- "hbox is idle" and "hbox is busy" were the same sampling artifact: the seed workflow saturated it for 19-25
+  minutes at a time on `metatheory/**`, the most-edited path in the tree, and between runs it looked free.
+- **persvati (measured 2026-07-26):** 24 cores, 83 GB, 414 GB free, load 0.77. Lean **4.30.0** present. Hazard
+  worth stating: `earlyoom` there runs `--prefer` on cargo/rustc/cc/ld, so **a Rust build is the preferred
+  victim** under memory pressure. On hbox the prefer-list also includes `lean`/`leanc`/`poly`/`Holmake`.
+
+**The measured correction that mattered most — Lean routing is about OLEANS, not mathlib.** `scripts/pbuild:12`
+says keep Lean local because persvati's `.lake` is "cold/divergent". Not divergent: every warm lane on both
+boxes pins mathlib `inputRev 1c2b90b13009…`, byte-identical to `metatheory/lake-manifest.json`, and `elan`
+resolves 4.30.0 inside a lane on both. But **shallow**: of persvati's 13 mathlib-warm lanes only 3 hold any
+Dregg2 oleans, and those hold **205** against the laptop's **2018**; hbox's `eth-lc-air` holds **1948**. So the
+rule is "send Lean where the oleans already are", and the old rule was reaching for the right thing via the
+wrong mechanism. (Also corrected: hbox's *default* toolchain prints 4.17.0, which is not what a build gets —
+a default-toolchain reading is not a resolution.)
+
+**Also now written down** — VERDICT reading (`PASS`/`FAIL`/`REFUSED`/`ENVFAULT`, `scripts/pbuild:146`), that
+`REFUSED` and `ENVFAULT` carry **no** verdict either way, that an `ENVFAULT` retry of the identical command is
+wrong, that a bare SIGABRT with no Rust panic is **a missing Lean archive** (environment, never your code, and
+never a reason to set `DREGG_REQUIRE_LEAN=0`), and that lane cleanup is `scripts/sweep-build-lanes.sh` —
+`scripts/reclaim-space.sh` demands a quiet swarm (`reclaim-space.sh:22`) which with ~10 terminals is
+unsatisfiable, so the repo's only cleanup tool could never legitimately run.
+
+**A consequence recorded as a consequence, not a footnote:** with `lean-seed.yml` manual-only, no HEAD-matching
+seed is cut automatically. Worse, the key is content-keyed on `git rev-parse HEAD:metatheory/Dregg2`
+(`scripts/lean-seed-key.sh:58`, written `|| true`) and a remote lane dir has **no `.git`** — verified,
+`~/dregg-build/srot/.git` does not exist — so the tree component comes back empty and the key can never match a
+published asset. `scripts/fetch-lean-seed.sh` therefore cannot work from inside a lane at all. Both roads end at
+marshal-only, the FALSE-RED class. Mitigation is a manual cut before a session needing verified-core tests on a
+remote box: `gh workflow run lean-seed.yml -f platforms=linux-x86_64` (~23 s idempotent, ~20 min when the Lean
+tree moved).
+
+**IN FLIGHT at the time of writing, outcomes deliberately not predicted:** lane `archive` on `scripts/pbuild`
+handling a missing archive; lane `lease` on the `.pbuild-lease` writer/reader and a new `scripts/lane-lease.sh`
+(the `.gitignore:106` entry that protects a live lease from `rsync --delete` has already landed); lane `hygiene`
+on a `box-health.sh` probe; lane `profile` on the workspace-root debug-info profile (ember measured 83-92% of a
+debug binary is DWARF nothing here reads — not re-derived by this lane).
+
+**Residual, NOT DONE, handed off:** `AGENTS.md:68-77` states the stale doctrine in the file agents actually read
+first — "Heavy CARGO builds go to persvati; LEAN stays local … a fresh persvati lane would re-download mathlib".
+That section is **still stale at the time of this entry**; it is outside this lane's `docs/**` remit and was left
+untouched deliberately in a five-lane shared tree. Whoever owns `AGENTS.md` should replace its reason (oleans,
+not mathlib) and its box set (two, both spare), and point it at `docs/BUILD-BUDGET.md`. Related and also worth
+fixing: until 07-26 **nothing in the repo referenced `docs/BUILD-BUDGET.md` at all** — an orphan doc is a large
+part of why the stale version kept winning, and this HORIZONLOG entry is currently its only inbound link.
+
 ## ⚑⚑⚑⚑ JULY 22 CURRENT AUTHORITY ALERT — repaired quarantines, live game rail, shielded apex open
 
 Current authority is `docs/deos/HANDOFF-FHEGG-FEASIBILITY-CODEX.md` and the
@@ -11723,3 +11785,86 @@ descriptor had ever been re-emitted. Landed `9648759c79`:
   for 4 unstamped `automatafl-*-marks-*` by-name files (+2 untracked), and another lane's
   `turn/src/faithful_note_spend_verifier.rs` carries a deliberate compile-error probe in the
   working tree (neutralized only in the remote build copy, never in the shared tree).
+
+## 2026-07-26 — THE ROUTING DOCTRINE WAS WRONG AND LANES WERE FOLLOWING IT (box routing re-measured)
+
+The written doctrine at `HORIZONLOG.md:657-664` (2026-07-16/17) had gone stale in nine days while
+lanes kept obeying it. Corrected in **`docs/BUILD-BUDGET.md`**, which is now the ONE routing +
+verification doctrine ("Build routing and budget — the current doctrine"): which box takes which
+work, how to read a `VERDICT`, what `ENVFAULT` and a bare `SIGABRT` mean, how cleanup happens, and
+an explicit superseded-statements table. Append-only here; those lines stay as history.
+
+- **SUPERSEDED — `:657`** "heavy Rust → persvati; Lean → local lake; G1/RAM-bound → hbox;
+  reclaim-space.sh between waves." The three-way split assumed hbox was reserved for RAM-bound
+  outliers. Pick by what is WARM and what is IDLE, not by workload class.
+- **SUPERSEDED — `:663`** "`scripts/reclaim-space.sh` is the sprawl sweep." Its own header
+  (`scripts/reclaim-space.sh:20-21`) requires the swarms be quiet; with ~10 terminals that
+  precondition is UNSATISFIABLE, so the repo's only cleanup tool could never legitimately run.
+  Superseded by `scripts/sweep-build-lanes.sh` (per-lane liveness + superseded-generation deletion).
+  It remains correct for the narrow job of surveying `~/dev` sprawl on a genuinely quiet machine.
+- **SUPERSEDED — `:664`** "persvati is MARSHAL-ONLY (no Lean sysroot) … provisioning
+  `DREGG_LEAN_SYSROOT` would remove the split (follow-up)." **The follow-up is moot as written.**
+  Measured 2026-07-26: persvati has elan with **Lean 4.30.0** and resolves the repo's
+  `lean-toolchain` inside a lane; 13 of 18 lanes carry warm mathlib at the pinned rev. The residual
+  constraint is not a missing sysroot — it is **olean depth** and a per-lane `libdregg_lean.a`.
+  ("Marshal-only" stays correct and current as a BUILD-MODE term everywhere else in `docs/`.)
+
+**Measured 2026-07-26 00:01-00:12 ET** (mine unless attributed): **persvati** 24c / 83 GB / 414 GB
+free / load 0.77 — **the spare box**, cargo-warm in exactly 3 of 18 lanes (`crewbraid`, `darkpool`,
+`native-anchor`), and it runs `earlyoom --prefer cargo|rustc|cc|ld --avoid claude|node`, so **a Rust
+build there is the PREFERRED victim** under pressure. **hbox** 24c / 123 GB / 107 GB free / load
+0.13 — its 21.72 spike (ember, 07-25 23:48) was entirely the lean-seed workflow, whose `push`
+trigger was removed in `29aa30ea3` and whose nightly went after it; `lean-seed.yml:122` is the only
+self-hosted `runs-on` in the repo, so hbox now carries **zero automatic CI load**. "hbox is idle"
+and "hbox is triple-booked" were the same sampling artifact read in opposite directions.
+
+- **⚑ THE LEAN ROUTING RULE WAS RIGHT FOR THE WRONG REASON — and the wrong half is load-bearing.**
+  `scripts/pbuild:12-15,23-30` says keep Lean local because "persvati's Lean `.lake` is
+  cold/divergent" and offloading re-downloads mathlib. Measured: **not divergent** — every warm lane
+  on both boxes pins mathlib `inputRev 1c2b90b13009…`, byte-identical to
+  `metatheory/lake-manifest.json`; and **mathlib is not the cost** — `lake exe cache get` is 40
+  seconds against ~13 hours to compile (`scripts/pbuild:431-432`). The real scarcity is the **Dregg2
+  closure**: laptop **2018** oleans, hbox `eth-lc-air` **1948**, persvati **≤205** and 10 of its 13
+  mathlib-warm lanes hold **zero**. So route Lean where the OLEANS are (laptop or hbox
+  `eth-lc-air`) — persvati will be correct, just slow the first time. HANDOFF: the stale rationale
+  lives in `scripts/pbuild`'s header, owned by another lane.
+- **⚑ TWO LEAN FAN-OUT KNOBS, NOT ONE — the documented remedy did not apply to the documented
+  command.** `DREGG_LEANC_JOBS` is read ONLY by `dregg-lean-ffi/build.rs` (`:295`, `:715-718`), so it
+  does **nothing** for a bare `lake build` — which is exactly what the routing guidance tells lanes
+  to run. The knob that binds a direct Lean build is **`LEAN_NUM_THREADS`**, "the cap that actually
+  applies today" (`build.rs:212-213`). Corrected with a per-invocation table.
+- **DWARF bloat re-derived, not just cited.** ember: 83-92% of every debug binary is DWARF nothing
+  reads. Reproduced on persvati `darkpool`, six largest debug binaries, all **83%** — e.g.
+  `dreggnet_web_server` total 1497 MB, `.text` 107 MB, `.debug_*` 1249 MB. ⚠ Linux-only: on Darwin
+  the same check reads ~0 (debug info sits in the `.o` files + debug map), so a laptop reading is
+  not a refutation. The profile change itself is **IN FLIGHT (lane `profile`)** — no state claimed.
+- **The 24G OOM recipe is already clean.** 60 of 67 measured kills traced to one copy-pasteable
+  `SWARM_MEM_MAX=24G`; grepping every `.md` today, the only survivors are
+  `metatheory/Dregg2/Crypto/AXIOM-PICTURE.md:15,20`, both now **64G**. A live 24G cap is inherited
+  from scrollback, not from the tree.
+- **Two greps came back EMPTY and that is recorded rather than dressed as a fix:** no file under
+  `docs/` says "check the exit code" as build guidance, and none claims hbox is idle. Those stale
+  pointers were in `HORIZONLOG.md` and in the scripts' own headers.
+- **IN FLIGHT, named, no outcomes predicted:** `scripts/pbuild` archive/seed-in-lane (lane
+  `archive`; open at HEAD, `PBUILD_SHIP_GIT=1` is default-off and PROVEN not to work — rsync's
+  multi-minute walk of a live `.git` produced a lane whose `git ls-tree HEAD` was empty while HEAD
+  read correct, i.e. a ref into nothing; the bar for finishing it is `scripts/pbuild:402-404`) ·
+  the `.pbuild-lease` writer/reader + `scripts/lane-lease.sh` (lane `lease`; the **gitignore half
+  has landed** and is load-bearing, not hygiene — `pbuild` syncs `rsync --delete --filter=':-
+  .gitignore'` and an exclude is a receiver-side PROTECT rule, so `.gitignore:106` is the only thing
+  stopping agent B's build from stripping agent A's claim) · `scripts/box-health.sh` (lane
+  `hygiene`; does not exist yet, named without a path deliberately).
+- **PROCESS NOTE — two doctrine writers converged on the same task in the shared tree.** A second
+  writer was mid-rewrite of `docs/BUILD-BUDGET.md` into the same routing doctrine, from the same
+  measurements, while this lane drafted a separate `docs/BUILD-ROUTING-DOCTRINE.md`. **The draft was
+  DELETED rather than shipped** — two competing routing doctrines in `docs/` is precisely the
+  disease being cured, since a lane then finds the wrong one. Surviving file is
+  `docs/BUILD-BUDGET.md`; this lane contributed only what was additive (the two-knob correction, the
+  DWARF re-derivation, the 24G-recipe status) as surgical edits.
+- **UNMET / not verified here:** no build was run for this work, so **no `VERDICT` line of this
+  lane's own exists** — everything about `pbuild` semantics is read from the cited lines, not from a
+  run. ember's 3111-scope OOM census, the 332.5 GB single-pass reclaim, and the 12.4 GB tmpfs
+  reclaim are attributed, not re-derived (I did independently read `swarm.slice`
+  `MemoryMax=103079215104` = 96 GiB and `memory.events: oom 149 / oom_kill 86`, and measured
+  persvati `~/dregg-build` at 449-450 GB against the 611 GB in the sweep header). Olean counts are
+  file counts: they say how many modules a tree has elaborated, not that they are current for HEAD.
