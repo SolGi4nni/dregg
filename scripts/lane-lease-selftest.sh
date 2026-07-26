@@ -84,8 +84,13 @@ if [ ! -e "$CF" ] && [ ! -e "$SF" ]; then echo "PASS   both copies gone"; else e
 o=$(ll release --lane crewbraid --owner agent:lease 2>&1); e=$?
 ck "release is idempotent" 0 $e 'nothing to release' "$o"
 
-echo "── 8. an EXPIRED lease reads expired (TTL 0)"
-ll acquire --lane crewbraid --owner agent:dead --ttl 0 >/dev/null 2>&1
+echo "── 8. an EXPIRED lease reads expired (TTL 0, and ANCHORLESS)"
+# `--pid 0` is load-bearing since the lease became LIVENESS-based (de21b8e7f). A record with a live
+# anchor holds past its clock BY DESIGN — that is the whole fix — so `--ttl 0` alone no longer means
+# expired, and the default anchor is now $PPID (a live process) rather than $$ (a corpse by the next
+# tool call). `--pid 0` is the explicit anchorless sentinel, which puts TTL back in charge and makes
+# this case test what its name claims.
+ll acquire --lane crewbraid --owner agent:dead --ttl 0 --pid 0 >/dev/null 2>&1
 o=$(ll show --lane crewbraid 2>&1); e=$?
 ck "expired → exit 4" 4 $e 'state=expired' "$o"
 
