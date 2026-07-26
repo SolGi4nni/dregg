@@ -41,8 +41,17 @@ use dregg_turn::rotation_witness as rw;
 
 /// The written slot under test.
 const SLOT: usize = 3;
-/// The first completion-lane pre-limb offset for `SLOT` (lanes 1..7 → `112 + 7·slot .. +6`).
-const COMPLETION_BASE: usize = 112 + 7 * SLOT;
+/// The first completion-lane pre-limb offset for `SLOT` (lanes 1..7 → `113 + 7·slot .. +6`).
+///
+/// ⚠ WAS `112 + 7·slot`, one limb LOW. The REVOKED-ROOT flag-day shifted the
+/// `fields[0..7]` completion octet `112..=167 → 113..=168` (`cell/src/commitment.rs:1144`
+/// is the authority; `setfield_value8_epoch_flip.rs:43` already used the correct base).
+/// At `SLOT = 3` the stale constant aimed the forge at `fields[2]` lane 7 plus `fields[3]`
+/// lanes 1..6 — every one of which the deployed freeze-ALL member also pins, so the UNSAT
+/// verdict was right by accident. This test is the pin on the thing that RESCUES the
+/// deployed SetField from the census R1 silent-forge; a rescue-pin aimed one lane off its
+/// stated target is not a pin.
+const COMPLETION_BASE: usize = 113 + 7 * SLOT;
 
 fn rotated_descriptor_json(name: &str) -> &'static str {
     V3_STAGED_REGISTRY_TSV
