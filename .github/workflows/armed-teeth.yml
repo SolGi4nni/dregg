@@ -259,6 +259,10 @@ jobs:
         if: steps.pin.outputs.armed == '1' && !inputs.runner
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # `gh` resolves the target repo from the local git remote; these jobs deliberately do
+          # not check out (they only need to file an issue), so without GH_REPO every one of them
+          # died on `fatal: not a git repository` and NO human was ever paged for a red main.
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           sudo apt-get update && sudo apt-get install -y zstd
@@ -334,6 +338,10 @@ jobs:
       - name: Open or refresh the standing red-teeth issue
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # `gh` resolves the target repo from the local git remote; these jobs deliberately do
+          # not check out (they only need to file an issue), so without GH_REPO every one of them
+          # died on `fatal: not a git repository` and NO human was ever paged for a red main.
+          GH_REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TEETH: ${{ needs.binding-teeth.result }}
           LEAN: ${{ needs.lean-hard-mode.result }}
@@ -379,6 +387,10 @@ jobs:
       - name: Read the last completed scheduled run of this workflow
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # `gh` resolves the target repo from the local git remote; these jobs deliberately do
+          # not check out (they only need to file an issue), so without GH_REPO every one of them
+          # died on `fatal: not a git repository` and NO human was ever paged for a red main.
+          GH_REPO: ${{ github.repository }}
           REPO: ${{ github.repository }}
         run: |
           set -uo pipefail

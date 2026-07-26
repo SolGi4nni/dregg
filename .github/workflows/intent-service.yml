@@ -179,6 +179,10 @@ jobs:
       - name: Open or refresh the standing intent-service-red issue
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # `gh` resolves the target repo from the local git remote; these jobs deliberately do
+          # not check out (they only need to file an issue), so without GH_REPO every one of them
+          # died on `fatal: not a git repository` and NO human was ever paged for a red main.
+          GH_REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
