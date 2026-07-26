@@ -1001,7 +1001,19 @@ strong{font-weight:700;color:var(--fg)}
 .deck{font-size:var(--t-lead);color:var(--fg-2);margin:0;max-width:62ch;line-height:1.62}
 .eyebrow{display:inline-flex;align-items:center;gap:.45rem;font-size:var(--t-micro);text-transform:uppercase;letter-spacing:.14em;font-weight:800;color:var(--good);margin:0 0 .85rem}
 .eyebrow::before{content:"";width:.4rem;height:.4rem;border-radius:50%;background:currentColor;box-shadow:0 0 10px currentColor}
-.prose{margin:.45rem 0;color:var(--fg-2)}
+/* ⚑ PROSE CARRIES IDENTIFIERS, AND AN IDENTIFIER HAS NO SPACES IN IT. Same defect class as the
+   `p.needs` sentence above, arrived at from the other side: there an unbreakable RULE met ordinary
+   copy, here ordinary copy carries an unbreakable VALUE. `native_descent.rs` renders the run's owner
+   as `player: <64 hex>` in a `.prose` line, and a 64-character token has no break opportunity, so
+   the box cannot be narrower than the token no matter what the container offers.
+     Measured headless on `/offerings/descent/session/descent-web` at 390px: this `<p>` reported
+   `scrollWidth` 576 inside a `clientWidth` 283 box and carried the whole document to 631 against 390.
+   NO element's rect crossed the viewport, which is what makes this shape hard to find by eye: the
+   overflow is a min-content floor propagating up, not a box hanging off the edge.
+     `anywhere` rather than `break-word` deliberately, for the reason already written at `.notice`
+   below: only `anywhere` lets the box shrink BELOW its longest word, and shrinking is the whole
+   point. Normal prose is unaffected, since a word that fits is never broken. */
+.prose{margin:.45rem 0;color:var(--fg-2);overflow-wrap:anywhere}
 .prose:first-child{margin-top:0}
 .prose:last-child{margin-bottom:0}
 /* A surface's TOP-LEVEL prose is its headline state — the automatafl phase line ("turn 0 · phase: */

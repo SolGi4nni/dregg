@@ -2343,10 +2343,17 @@ function openSession(path) {
 function showVerification(path) {
   daRequest(nativePath(path), { headers: { "Accept": "application/json" } })
     .then(readJson)
-    .then(function (report) {
-      const message = (report.verified ? "Replay verified" : "Replay refused") + " · " +
-        report.turns + " turns · " + report.detail;
-      report(message, report.verified ? "ok" : "refused");
+    // ⚑ The parameter is NOT named `report`. It was, and naming it that shadowed the `report`
+    // helper above, so the call below invoked the response object and threw. Identical fault to
+    // the one that had the Telegram Mini App executing no JavaScript for four days (`409fddd84`);
+    // it survived here because this one is a TypeError rather than a SyntaxError, so it kills only
+    // the verify action instead of the whole file, and nothing else in the shell notices.
+    // `report` and not `notice`: `notice` REPLACES the root, so announcing a verdict would wipe
+    // the session the player is looking at. `report` prepends, which is what it exists for.
+    .then(function (verdict) {
+      const message = (verdict.verified ? "Replay verified" : "Replay refused") + " · " +
+        verdict.turns + " turns · " + verdict.detail;
+      report(message, verdict.verified ? "ok" : "refused");
     })
     .catch(failure);
 }
