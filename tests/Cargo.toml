@@ -71,7 +71,16 @@ proptest = { workspace = true }
 # The three modules that call `with_stubs()` (`state_constraint_variants`,
 # `state_constraint_executor`, `witnessed_predicate_kinds`) are all `#[cfg(test)]`
 # in `src/main.rs`, so they still see the feature under `cargo test`.
-dregg-cell = { path = "../cell", features = ["test-stubs"] }
+#
+# `test-stubs-release-test-target` gates no code — it attests to `cell`'s
+# `compile_error!` that this is a TEST target, which is what makes
+# `cargo test --release -p dregg-tests` compile at all (this firewall test
+# itself was reachable only in `debug` until 2026-07-26). `[dev-dependencies]`
+# ONLY; see the note on the feature in `cell/Cargo.toml`.
+dregg-cell = { path = "../cell", features = [
+    "test-stubs",
+    "test-stubs-release-test-target",
+] }
 # GUARD A (`tests/verify_routing_guard.rs`): parse `cargo metadata` JSON to enforce that every workspace
 # binary reaching the ML-DSA verify stack either routes the Lean-verified core or is on the reviewed
 # DELEGATES_VERIFY allowlist. serde_json is already in the workspace lock (no new fetch); a dev-dep so the

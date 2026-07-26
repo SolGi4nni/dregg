@@ -35,20 +35,53 @@ prover = []
 # That distinction is the whole guarantee and it is not a style preference:
 # under resolver 3 a dev-dependency's features are not unified into a non-test
 # build, while a normal dependency's features unify across the workspace. This
-# crate's dependents that need the stubs (turn, intent, exec-lean, tests) all
-# use `[dev-dependencies]`.
+# crate's dependents that need the stubs (turn, turn-prover, intent, exec-lean,
+# tests) all use `[dev-dependencies]`.
 #
 # HOW THIS IS ENFORCED (a comment is not an enforcement mechanism, and this one
 # was previously FALSE — `tests/Cargo.toml` had the entry under `[dependencies]`
 # and `dregg-tests` is in `default-members`, so a root `cargo build --release`
 # armed the stub accept path inside the `dregg-node` production binary):
 #   1. `predicate.rs` carries a `compile_error!` that fires if `test-stubs` is
-#      on in a build with `debug_assertions` off. A release build with the
-#      feature armed does not compile.
-#   2. `tests/tests/test_stubs_firewall.rs` asserts
+#      on in a build with `debug_assertions` off that has NOT attested it is a
+#      test target (see `test-stubs-release-test-target` below). A production
+#      release build with the feature armed does not compile.
+#   2. `tests/tests/test_stubs_firewall.rs` asserts that NEITHER feature reaches
+#      the production graph, by three independent probes: the
 #      `cargo tree -p dregg-node -p dregg-tests -e features,no-dev -i dregg-cell`
-#      does not mention the feature — the exact probe that caught the leak.
+#      resolve that caught the original leak; the same resolve widened to the
+#      whole workspace; and a direct scan of every workspace manifest for a
+#      non-dev-dependency entry naming either feature. That last probe covers
+#      the one case the `compile_error!` cannot see — see the note below.
 test-stubs = []
+# ATTESTATION, NOT A CAPABILITY. This feature gates ZERO code. Its only effect is
+# to silence the `compile_error!` in `predicate.rs`, and the only thing it claims
+# is "this compilation of `dregg-cell` feeds a TEST target that happens to be
+# built with `debug_assertions` off" — i.e. `cargo test --release` /
+# `cargo check --release --tests`.
+#
+# WHY IT EXISTS. The `compile_error!` used to key off `debug_assertions` alone,
+# which reads "release ⟹ production". That implication is FALSE: `dregg-cell` is
+# a *dependency* of its test consumers, so `cfg(test)` is never set for it either
+# way, and a release TEST build is indistinguishable from a release PRODUCTION
+# build. The gate fired on both, so `dregg-turn`, `dregg-intent`,
+# `dregg-exec-lean`, `dregg-turn-prover` and `dregg-tests` could only build their
+# test targets in the `dev` profile — forcing every verification lane onto the
+# single contended `target/debug` lock and leaving the independently-locked
+# `target/release` lane unusable for exactly the crates that needed it most.
+# See `scripts/pbuild`.
+#
+# WHAT IT DOES NOT WEAKEN. The historical accident — `dregg-cell = { features =
+# ["test-stubs"] }` written under `[dependencies]` — still hits the
+# `compile_error!` verbatim, because that spelling carries no attestation. So
+# does `cargo build --release --features dregg-cell/test-stubs`. The ONE case the
+# compiler can no longer see is a `[dependencies]` entry that also copies this
+# attestation across; no Cargo-level opt-in can be made un-copy-pasteable, so
+# that case is carried by the manifest scan in `test_stubs_firewall.rs`.
+#
+# It is a pure marker (`[]` — it does NOT imply `test-stubs`), so enabling it
+# alone in a production graph arms nothing at all.
+test-stubs-release-test-target = []
 
 [dependencies]
 blake3 = "1"
@@ -78,7 +111,10 @@ proptest = { workspace = true }
 # dependency (so `cfg(test)` is NOT set for the library), so they arm the
 # fail-closed `StubVerifier` accept path via the `test-stubs` feature. This is
 # scoped to dev/test builds and is never enabled in production.
-dregg-cell = { path = ".", features = ["test-stubs"] }
+dregg-cell = { path = ".", features = [
+    "test-stubs",
+    "test-stubs-release-test-target",
+] }
 
 [lints]
 workspace = true

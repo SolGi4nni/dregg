@@ -1341,22 +1341,56 @@ impl WitnessProducer for StubProducer {
 // that probe as a test so the graph cannot regress silently.
 //
 // This `compile_error!` is the floor under both: a feature that arms a
-// permissive path must be STRUCTURALLY unable to reach a build with
-// `debug_assertions` off, enforced by the compiler rather than by a
+// permissive path must be STRUCTURALLY unable to reach a PRODUCTION build
+// with `debug_assertions` off, enforced by the compiler rather than by a
 // Cargo.toml comment and a hope. If you are reading this because your
 // build broke, something turned `test-stubs` on in a release profile —
 // find it with the `cargo tree` line above and move it to
 // `[dev-dependencies]`. Do not delete this gate: it is the only thing
 // standing between a feature-unification accident and an
 // accept-anything verifier in a production node.
-#[cfg(all(feature = "test-stubs", not(debug_assertions)))]
+//
+// ── WHY THE THIRD CONJUNCT (2026-07-26) ────────────────────────────────
+// The condition was `test-stubs && !debug_assertions`, which encodes
+// "release ⟹ production". That implication is FALSE, and the cost was
+// paid daily. `dregg-cell` is a *dependency* of the crates that enable
+// the feature, so `cfg(test)` is NOT set for it in a test build any more
+// than in a production one — a release TEST binary and a release
+// PRODUCTION binary are, from inside this file, the same compilation.
+// The gate fired on both. Consequence: `dregg-turn`, `dregg-intent`,
+// `dregg-exec-lean`, `dregg-turn-prover` and `dregg-tests` could compile
+// their test targets ONLY in the `dev` profile, so every verification
+// lane touching them queued on the one `target/debug` lock, with the
+// independently-locked `target/release` lane closed to them entirely.
+//
+// `test-stubs-release-test-target` supplies the missing bit. It gates no
+// code; it is an attestation, set ONLY by the `[dev-dependencies]`
+// entries of the five crates above, that this compilation feeds a test
+// target. What it does NOT do is soften the case this gate was written
+// for: `dregg-cell = { features = ["test-stubs"] }` under
+// `[dependencies]` — the exact accident that armed `dregg-node` — still
+// trips the `compile_error!` verbatim, because that spelling carries no
+// attestation, as does `--features dregg-cell/test-stubs` on the command
+// line. The single case the compiler can no longer see is a
+// `[dependencies]` entry that copies the attestation across too. No
+// Cargo-level opt-in can be made un-copy-pasteable, so that case is
+// carried by `tests/tests/test_stubs_firewall.rs`, which scans every
+// workspace manifest for a non-dev-dependency entry naming either
+// feature and runs per-push under `cargo test --workspace`.
+#[cfg(all(
+    feature = "test-stubs",
+    not(debug_assertions),
+    not(feature = "test-stubs-release-test-target")
+))]
 compile_error!(
     "dregg-cell's `test-stubs` feature is ON in a build with debug_assertions disabled \
      (a release build). `test-stubs` arms StubVerifier's accept-anything path, which is \
      fail-closed otherwise — it must never reach a production binary. Some crate enables \
      `dregg-cell/test-stubs` as a normal [dependencies] entry and the feature has unified \
      into this build. Find it with `cargo tree -e features,no-dev -i dregg-cell` and move \
-     it to [dev-dependencies] (see turn/intent/exec-lean for the correct shape)."
+     it to [dev-dependencies] (see turn/intent/exec-lean for the correct shape). \
+     If this IS a release build of a TEST target, the [dev-dependencies] entry is missing \
+     the `test-stubs-release-test-target` attestation alongside `test-stubs`."
 );
 
 /// A stub verifier for development / unit tests. Accepts non-empty

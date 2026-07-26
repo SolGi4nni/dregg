@@ -40,7 +40,14 @@ serde_json = { workspace = true }
 # The moved aggregation tests build Turns through `dregg_turn::builder` and
 # arm the permissive `StubVerifier` accept path for plumbing only (the same
 # scoping `dregg-turn`'s own dev-dependencies use).
-dregg-cell = { path = "../cell", features = ["test-stubs"] }
+# `test-stubs-release-test-target` gates no code — it attests to `cell`'s
+# `compile_error!` that this is a TEST target, which is what makes
+# `cargo test --release -p dregg-turn-prover` compile at all.
+# `[dev-dependencies]` ONLY; see the note on the feature in `cell/Cargo.toml`.
+dregg-cell = { path = "../cell", features = [
+    "test-stubs",
+    "test-stubs-release-test-target",
+] }
 
 [lints]
 workspace = true

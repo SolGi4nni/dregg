@@ -40,6 +40,34 @@
 #       scratch path is the LAST resort: a cold target dir re-runs every build
 #       script, and dregg-lean-ffi's cold path is the mathlib-sized one.
 #
+#   PROFILE = LOCK, so "one lock per target dir" is really TWO LANES. The lock
+#       lives at `target/<profile>/.cargo-lock`, and `debug` and `release` are
+#       separate files. A debug build and a release build run CONCURRENTLY; only
+#       same-profile builds queue behind each other. So "a cargo is already
+#       running" does not by itself mean wait — check WHICH profile:
+#           lsof target/debug/.cargo-lock target/release/.cargo-lock
+#       and take the free lane. Prefer `--release` for VERIFICATION runs: it is
+#       the lane agents forget, so it is usually the shorter queue (a sibling
+#       measured 3m54s release against 50m32s contended debug for the same
+#       `dregg-circuit` check). Neither lane is reserved, though — on 2026-07-26
+#       this tree had EIGHT concurrent cargos and both locks were held at once.
+#       `lsof` first; do not assume release is idle.
+#
+#   FIVE CRATES HAD NO RELEASE LANE AT ALL until 2026-07-26, which is what made
+#       the rule above unusable for the crates that needed it most.
+#       `dregg-turn`, `dregg-intent`, `dregg-exec-lean`, `dregg-turn-prover` and
+#       `dregg-tests` could build their TEST targets ONLY in `debug`, so every
+#       lane verifying them was forced onto the one contended debug lock.
+#       Cause: `cell/src/predicate.rs` gated a `compile_error!` on
+#       `test-stubs && !debug_assertions`, i.e. "release implies production".
+#       False — `dregg-cell` is a *dependency* of those five, so `cfg(test)` is
+#       not set for it in a test build either, and a release TEST build is the
+#       same compilation as a release PRODUCTION build. The gate fired on both.
+#       It now also requires the absence of `test-stubs-release-test-target`,
+#       a pure attestation those crates' `[dev-dependencies]` set; a production
+#       release with `test-stubs` still fails to compile, verbatim as before.
+#       See `cell/Cargo.toml` and `tests/tests/test_stubs_firewall.rs`.
+#
 # Being slow costs one lane some minutes; being greedy costs everyone the box.
 #
 # COLD-LANE GUARD: a lane dir with no warm build cache (no populated cargo

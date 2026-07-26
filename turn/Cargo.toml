@@ -95,13 +95,25 @@ threshold-sig = ["dep:hints", "dep:ark-serialize", "dep:ark-ff"]
 [dev-dependencies]
 proptest = { workspace = true }
 sha2 = "0.10"
+# TEST-ONLY: installs the Lean-verified ML-DSA cores so this crate's test binaries can run a PQ
+# operation at all — `dregg-pq` refuses an uninstalled one with `process::abort()`, and this crate
+# cannot link the archive from `[dependencies]`. See `dregg-pq-testkit`'s crate docs. Only the
+# binaries that CALL it pay the archive link; the other 53 test targets here are unaffected.
+dregg-pq-testkit = { path = "../dregg-pq-testkit" }
 # Deterministic test RNG for the threshold-sig verifier's `hints` committee
 # fixtures (`build_committee`). Test-scoped; the verifier itself needs no RNG.
 ark-std = "0.5.0"
 # Arm the `StubVerifier` accept path for plumbing tests only. The feature is
 # fail-closed in production builds; enabling it here scopes the permissive stub
 # behavior to `cargo test`/dev builds of this crate.
-dregg-cell = { path = "../cell", features = ["test-stubs"] }
+# `test-stubs-release-test-target` gates no code — it attests to `cell`'s
+# `compile_error!` that this is a TEST target, which is what makes
+# `cargo test --release -p dregg-turn` compile at all. It belongs ONLY in a
+# `[dev-dependencies]` entry; see the note on the feature in `cell/Cargo.toml`.
+dregg-cell = { path = "../cell", features = [
+    "test-stubs",
+    "test-stubs-release-test-target",
+] }
 postcard = { version = "1", features = ["alloc"] }
 serde_json = { workspace = true }
 hex = "0.4"
