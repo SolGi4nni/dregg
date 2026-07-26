@@ -2169,9 +2169,9 @@ fn method_case<'a>(story: &'a CompiledStory, method: &str) -> Option<&'a [StateC
     };
     cases
         .iter()
-        .find(
-            |case| matches!(&case.guard, TransitionGuard::MethodIs { method } if *method == wanted),
-        )
+        .find(|case| {
+            matches!(&case.guard, TransitionGuard::MethodIs { method } if *method == wanted)
+        })
         .map(|case| case.constraints.as_slice())
 }
 
@@ -2184,9 +2184,7 @@ fn slot_case(story: &CompiledStory, index: u8) -> Option<&[StateConstraint]> {
     };
     cases
         .iter()
-        .find(
-            |case| matches!(&case.guard, TransitionGuard::SlotChanged { index: i } if *i == index),
-        )
+        .find(|case| matches!(&case.guard, TransitionGuard::SlotChanged { index: i } if *i == index))
         .map(|case| case.constraints.as_slice())
 }
 
@@ -2252,7 +2250,9 @@ fn deployed_hp_ceiling(story: &CompiledStory) -> Option<u64> {
     let CellProgram::Cases(cases) = &story.program else {
         return None;
     };
-    cases.iter().find_map(|case| lte_on(&case.constraints, hp))
+    cases
+        .iter()
+        .find_map(|case| lte_on(&case.constraints, hp))
 }
 
 /// The whole hoard, as the deployed write-bound `gold` tooth pins it: gained ONCE, by exactly this
@@ -2631,10 +2631,8 @@ fn keep_teeth_plaque(session: &DungeonSession) -> ViewNode {
             &spween_dregg::choice_method(dungeon_on_dregg::ROOM_SANCTUM, KP_CAST_WARD),
         )
         .is_some_and(|case| {
-            case.iter().any(|c| {
-                matches!(c, StateConstraint::FieldLteField { left_index, right_index }
-                if *left_index == spent && *right_index == budget)
-            })
+            case.iter().any(|c| matches!(c, StateConstraint::FieldLteField { left_index, right_index }
+                if *left_index == spent && *right_index == budget))
         });
         if cross {
             found += 1;

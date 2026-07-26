@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# swap-guard — BUILDS DO NOT GET TO USE SWAP.
+#
+# Why this exists (measured on ember's laptop, 2026-07-25, twice in one day):
+#
+#   96 GB RAM · 12 cores · 50 concurrent rustc/leanc at ~0.98 GB each = 49 GB of
+#   compile demand, load average 161-400, swap 62 GB of swapfiles on disk and
+#   98.5% used. Nothing finished. One lane measured its own rustc at ~7% CPU
+#   efficiency; another burned 34 minutes on a run that never started.
+#
+# The damage is two-sided and both sides are bad:
+#
+#   1. THE SSD. macOS grows swapfiles on demand and they are real writes. This box
+#      wrote 62 GB of swapfile in a day. That is wear, not a metric.
+#   2. THROUGHPUT GOES TO ZERO, SILENTLY. A thrashing build is indistinguishable
+#      from a slow one from inside a lane — the log keeps its last line, the
+#      process stays alive, and nothing reports "you are now paging". Agents wait
+#      hours on it. (See minted-gating-defaults-to-silence: an absent answer
+#      wearing a right answer's clothes.)
+#
+# macOS HAS NO CGROUPS, so a per-process RSS cap is not available the way
+# `swarm-build`'s MemoryMax gives it on hbox. What IS available: watch the swap
+# gauge and kill the biggest build process before the box commits to paging. That
+# is what this does. It is a blunt instrument on purpose — a killed compile costs
+# minutes and is crash-safe (cargo and lake both resume), while a thrashing box
+# costs hours and takes every co-tenant lane down with it.
+#
+#   scripts/swap-guard                 # foreground, prints what it does
+#   scripts/swap-guard --daemon        # background, logs to ~/.cache/swap-guard.log
+#   SWAP_GUARD_MAX_MB=2048 scripts/swap-guard
+#
+# TUNING. Default trip point is 2 GB of swap USED. That is deliberately low: the
+# goal is "builds never page", not "rescue the box after it already has". macOS
+# keeps some swap in use for idle apps, so the guard only ever kills BUILD
+# processes — never your editor, never a browser, never a shell.
+set -euo pipefail
+
+MAX_MB="${SWAP_GUARD_MAX_MB:-2048}"      # trip point, MB of swap used
+INTERVAL="${SWAP_GUARD_INTERVAL:-5}"     # seconds between polls
+LOG="${SWAP_GUARD_LOG:-$HOME/.cache/swap-guard.log}"
+
+# Only these are ever eligible. A guard that can kill an editor is a guard nobody
+# will leave running, and a guard nobody leaves running is not a guard.
+is_build_proc() {
+  case "$1" in
+    */rustc|*/cargo|*/leanc|*/lean|*/lake|*/cc1plus|*/clang|*deps/dregg_*|*/wasm-opt) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+swap_used_mb() { sysctl -n vm.swapusage | sed -E 's/.*used = ([0-9.]+)M.*/\1/' | cut -d. -f1; }
+
+# ORPHANS FIRST, ALWAYS. A build binary with PPID 1 has lost its wrapper: nothing
+# is watching it, nothing will read its result, and it will not stop on its own.
+# One such (`dregg_circuit_prove … shielded`) held 35 GB for 25 minutes today and
+# was reporting to nobody. Killing an orphan costs literally nothing.
+reap_orphans() {
+  local killed=0 pid comm
+  while read -r pid comm; do
+    [ -z "${pid:-}" ] && continue
+    if is_build_proc "$comm"; then
+      note "orphan (ppid 1, nothing is watching it): $comm — killing $pid"
+      kill -9 "$pid" 2>/dev/null && killed=$((killed + 1))
+    fi
+  done < <(ps -Ao pid=,ppid=,comm= | awk '$2 == 1 {print $1, $3}')
+  return $killed
+}
+
+# The single biggest build process by REAL footprint. `ps` RSS is not it: once a
+# process is paged out RSS undercounts massively — today it read 2.4 GB for
+# something `footprint` correctly showed at 35 GB. `footprint` is slow, so this
+# shortlists by RSS and only measures the top few.
+biggest_build_pid() {
+  local pid comm best_pid="" best_kb=0 kb
+  while read -r pid comm; do
+    is_build_proc "$comm" || continue
+    kb=$(footprint -p "$pid" 2>/dev/null | awk '/phys_footprint:/ {print $2 * ($3=="GB" ? 1048576 : ($3=="MB" ? 1024 : 1)); exit}')
+    [ -z "${kb:-}" ] && continue
+    if [ "${kb%.*}" -gt "$best_kb" ]; then best_kb=${kb%.*}; best_pid=$pid; fi
+  done < <(ps -Ao pid=,comm= -r | head -20)
+  [ -n "$best_pid" ] && echo "$best_pid $best_kb"
+}
+
+note() { printf '%s swap-guard: %s\n' "$(date '+%H:%M:%S')" "$*" | tee -a "$LOG" >&2; }
+
+mkdir -p "$(dirname "$LOG")"
+note "watching: trip at ${MAX_MB} MB of swap, polling ${INTERVAL}s (RAM $(( $(sysctl -n hw.memsize) / 1073741824 )) GB, $(sysctl -n hw.ncpu) cores)"
+
+while :; do
+  used=$(swap_used_mb)
+  if [ "$used" -gt "$MAX_MB" ]; then
+    note "swap ${used} MB > ${MAX_MB} MB — builds are paging"
+    reap_orphans || note "reaped $? orphaned build process(es)"
+    used=$(swap_used_mb)
+    if [ "$used" -gt "$MAX_MB" ]; then
+      if read -r pid kb < <(biggest_build_pid); then
+        note "killing largest build process: pid=$pid $(( kb / 1048576 )) GB — $(ps -o comm= -p "$pid" 2>/dev/null)"
+        kill -9 "$pid" 2>/dev/null || true
+      else
+        # Nothing eligible. The swap is NOT builds — say so and do not flail.
+        note "over the line but no build process is responsible; not touching anything"
+      fi
+    fi
+  fi
+  sleep "$INTERVAL"
+done
