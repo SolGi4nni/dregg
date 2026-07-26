@@ -102,6 +102,27 @@ pub fn hidden_value<'a>(html: &'a str, name: &str) -> Option<&'a str> {
     Some(html.split_once(&marker)?.1.split_once('"')?.0)
 }
 
+/// The first act the page actually OFFERS, as `(turn, arg)` read out of its own form.
+///
+/// ⚑ Use this instead of hardcoding a `(method, index)` pair. `arg` is an INDEX into the
+/// offering's LIVE decision list, so a fixed index goes stale the moment the engine offers a
+/// different decision space. `demo_playthrough`'s tug test sent `("comp", 3)` until the engine
+/// grew a real decision space and it started refusing with
+///   method `comp` does not name decision 3 (Secret { card: 9 }, which dispatches under `secret`)
+/// — a red that says nothing about the thing the test is for. Reading the pair off the rendered
+/// form keeps such a test about "a browser user's offered play lands" rather than about the
+/// engine's ordering.
+///
+/// `turn` and `arg` are emitted adjacently within one affordance form, so the first `arg` at or
+/// after the first `turn` belongs to that same affordance.
+pub fn first_offered_act(html: &str) -> Option<(String, i64)> {
+    let (_, after_turn) = html.split_once("name=\"turn\" value=\"")?;
+    let (turn, rest) = after_turn.split_once('"')?;
+    let (_, after_arg) = rest.split_once("name=\"arg\" value=\"")?;
+    let (arg, _) = after_arg.split_once('"')?;
+    Some((turn.to_string(), arg.parse().ok()?))
+}
+
 /// The play-surface URI an act route hangs off — `…/session/{id}/act?q` → `…/session/{id}?q`.
 pub fn surface_uri_of(act_uri: &str) -> String {
     let (path, query) = match act_uri.split_once('?') {

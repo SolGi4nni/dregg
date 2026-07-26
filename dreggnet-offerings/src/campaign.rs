@@ -30,7 +30,7 @@
 use deos_view::{MenuItem, ViewNode};
 use dregg_app_framework::TurnReceipt;
 use dungeon_on_dregg::descent::{ASCEND, DELVE, FLEE, LOOT, LUNGE, SMITE, UNLOCK};
-use dungeon_on_dregg::overworld::{RegionCell, RegionMap, deepening_ways};
+use dungeon_on_dregg::overworld::{RegionCell, RegionMap, TravelGate, deepening_ways};
 use procgen_dregg::CommittedSeed;
 use procgen_dregg::beacon::DailyBeacon;
 
@@ -269,16 +269,14 @@ impl DescentCampaignOffering {
     fn actions_for_session(&self, session: &DescentCampaignSession) -> Vec<Action> {
         let here = session.current_location();
         if !session.region.is_cleared(&here) {
-            return self
-                .native
-                .actions(&session.active)
-                .into_iter()
-                .map(|mut action| {
-                    action.label =
-                        format!("{} · {}", location_name(&self.map, &here), action.label);
-                    action
-                })
-                .collect();
+            // ⚑ The native label is passed through UNPREFIXED. It used to be
+            // `"{location} · {label}"`, which pushed the actual verb past a chat frontend's button
+            // truncation (Discord cuts at 78 characters, and `"The Warden's Keep · ⚡ Lunge — one
+            // light, one carry slot forfeit (0/2 grip broken) · 1 light"` is well past it), so the
+            // one thing a player needed to read was the one thing that got cut. The surface names
+            // the location in its own title, its phase pill and its standing plaque; the buttons
+            // are for the move.
+            return self.native.actions(&session.active);
         }
         self.map
             .locations
@@ -626,6 +624,259 @@ impl DescentCampaignOffering {
             Err(reason) => VerifyReport::broken(turns, reason),
         }
     }
+
+    /// **WHERE THE CAMPAIGN STANDS** — the phase, the one sentence saying what to do right now, and
+    /// the region progress as a meter rather than a fraction buried in a sentence.
+    ///
+    /// The directive is the FIRST paragraph on purpose: a `tag: "accent"` plaque paints its first
+    /// paragraph as the serif lead, so the sentence a traveller must act on is typographically
+    /// first on every renderer that carries the Night Record skin.
+    fn campaign_standing(&self, session: &DescentCampaignSession) -> ViewNode {
+        let here = session.current_location();
+        let name = location_name(&self.map, &here);
+        let cleared_here = session.region.is_cleared(&here);
+        let settled = session.active.completion().is_some();
+        let total = self.map.locations.len();
+        let crowned = session.cleared_count();
+        let all_crowned = crowned == total;
+
+        // The phase, and the sentence that goes with it. These are the four states a campaign can
+        // actually be in, read off the region cell and the expedition — never a private counter.
+        let (phase, phase_tag, directive) = if all_crowned {
+            (
+                "REGION CLEARED",
+                "good",
+                format!(
+                    "Every location on {} is crowned — there is no road left to open.",
+                    self.map.name
+                ),
+            )
+        } else if cleared_here {
+            (
+                "ROADS OPEN",
+                "good",
+                format!(
+                    "Choose a road out of {name}: this location is crowned, so the region cell's \
+                     own travel guard is satisfied for every road it gates on {here}."
+                ),
+            )
+        } else if settled {
+            (
+                "EXPEDITION SPENT",
+                "bad",
+                format!(
+                    "This expedition settled WITHOUT the Crown of the Deep, so {name} stays shut \
+                     and this campaign has no legal move left — the roads onward open only for a \
+                     crowned exit."
+                ),
+            )
+        } else {
+            (
+                "EXPEDITION LIVE",
+                "warn",
+                format!(
+                    "Carry the Crown of the Deep out of {name} and bank it: banking the crowned \
+                     relic on a proved exit is the ONLY thing that clears this location."
+                ),
+            )
+        };
+
+        ViewNode::Section {
+            title: format!("Where the campaign stands — {name}"),
+            tag: "accent".to_string(),
+            children: vec![
+                ViewNode::Text(directive),
+                // ⚑ THE PROSE MIRROR of the pill row. A `Pill` is a badge layer with NO plain-text
+                // form (`deos_view::text` drops it by design), so a chat channel would otherwise
+                // learn the campaign's phase from nothing at all — the same hole
+                // `native_descent::descent_standing` exists to close for the expedition's own
+                // status word.
+                ViewNode::Text(format!(
+                    "{phase} — standing in {name}, {crowned} of {total} location{} crowned.",
+                    if total == 1 { "" } else { "s" }
+                )),
+                ViewNode::Row(vec![
+                    ViewNode::Pill {
+                        text: phase.to_string(),
+                        tag: phase_tag.to_string(),
+                        slot: None,
+                        cases: Vec::new(),
+                    },
+                    ViewNode::Pill {
+                        text: format!("standing in {name}"),
+                        tag: "accent".to_string(),
+                        slot: None,
+                        cases: Vec::new(),
+                    },
+                    ViewNode::Pill {
+                        text: match self.day() {
+                            Some(day) => {
+                                format!("day {}", short_digest(*day.as_bytes()))
+                            }
+                            None => "seed-derived day".to_string(),
+                        },
+                        tag: "muted".to_string(),
+                        slot: None,
+                        cases: Vec::new(),
+                    },
+                ]),
+                // The region's own progress, as a gauge. It was a `2 / 4 locations crowned`
+                // fragment inside a counter line; a `Progress` paints as a brass meter for free.
+                ViewNode::Progress {
+                    value: u64::try_from(crowned).unwrap_or(u64::MAX),
+                    max: u64::try_from(total).unwrap_or(u64::MAX),
+                    label: "crowned ".to_string(),
+                },
+            ],
+        }
+    }
+
+    /// **"How a road opens"** — the campaign's domain plaque: the rule a traveller cannot read off
+    /// the shaft board and must understand anyway.
+    ///
+    /// Two facts. **What clears a location:** not a win, not an exit — a settlement that banks the
+    /// Crown of the Deep, by this campaign's own traveller, that then passes exact fresh native
+    /// replay. **What bars a road:** the region cell's installed travel case, and the guard is READ
+    /// OUT OF THE DEPLOYED PROGRAM ([`RegionCell::deployed_travel_gate`]) rather than retyped from
+    /// the topology — so the sentence a traveller is shown is the predicate the executor will
+    /// actually admit the turn under, and a threshold or a prerequisite edited in the region wiring
+    /// moves this plaque with no edit here.
+    fn region_plaque(&self, session: &DescentCampaignSession) -> ViewNode {
+        let here = session.current_location();
+        let mut children = vec![
+            ViewNode::Text(
+                "A location is cleared by ONE thing: an expedition that banks the Crown of the \
+                 Deep for this campaign's traveller and then re-passes exact native replay. Only \
+                 that fires the region cell's write-once `clear` turn; a settlement without the \
+                 Crown, or one that fails its own replay, leaves the location shut. This is a \
+                 player-driven Lean-native expedition and no scripted completion is available."
+                    .to_string(),
+            ),
+            ViewNode::Text(
+                "Roads out of here · what the region cell's own travel guard demands · standing."
+                    .to_string(),
+            ),
+        ];
+
+        let mut roads = Vec::new();
+        for edge in self.map.edges_from(&here) {
+            let destination = location_name(&self.map, &edge.to);
+            // ⚑ THE AUTHORITY, not a restatement: the guard is lifted out of the `CellProgram` the
+            // region cell was deployed with.
+            let (rule, satisfied) = match session.region.deployed_travel_gate(&edge.to) {
+                TravelGate::Open => (
+                    "the deployed travel case carries no guard — an open road".to_string(),
+                    true,
+                ),
+                TravelGate::ClearedAtLeast {
+                    prerequisite: Some(prerequisite),
+                    threshold,
+                    ..
+                } => {
+                    let done = session.region.is_cleared(&prerequisite);
+                    (
+                        format!(
+                            "admitted only while cleared[{prerequisite}] ≥ {threshold} — {} is {}",
+                            location_name(&self.map, &prerequisite),
+                            if done { "crowned" } else { "NOT crowned" }
+                        ),
+                        done,
+                    )
+                }
+                TravelGate::ClearedAtLeast {
+                    prerequisite: None,
+                    slot,
+                    threshold,
+                } => (
+                    format!(
+                        "⚠ the deployed guard reads slot {slot} (≥ {threshold}), which is not a \
+                         cleared flag of this map — reported as found rather than guessed"
+                    ),
+                    false,
+                ),
+                TravelGate::NoCase => (
+                    "⚠ the deployed program installs NO travel case for this destination, so the \
+                     default-deny executor refuses the turn outright"
+                        .to_string(),
+                    false,
+                ),
+            };
+            roads.push(ViewNode::Row(vec![
+                ViewNode::Pill {
+                    text: format!("→ {destination}"),
+                    tag: if satisfied { "accent" } else { "muted" }.to_string(),
+                    slot: None,
+                    cases: Vec::new(),
+                },
+                ViewNode::Pill {
+                    text: if satisfied { "gate met" } else { "barred" }.to_string(),
+                    tag: if satisfied { "good" } else { "bad" }.to_string(),
+                    slot: None,
+                    cases: Vec::new(),
+                },
+                // The row's text is SELF-CONTAINED — it repeats the destination and the verdict the
+                // two pills carry, because a prose channel is handed no pills at all.
+                ViewNode::Text(format!(
+                    "→ {destination} — {}: {rule}",
+                    if satisfied { "gate met" } else { "BARRED" }
+                )),
+            ]));
+        }
+        if roads.is_empty() {
+            children.push(ViewNode::Text(
+                "No road leads out of this location on this map.".to_string(),
+            ));
+        } else {
+            children.push(ViewNode::List(roads));
+        }
+
+        // The rest of the region, so a traveller can see where the campaign is going — and that a
+        // road's gate can be met from somewhere they are not standing.
+        children.push(ViewNode::List(
+            self.map
+                .locations
+                .iter()
+                .map(|location| {
+                    let cleared = session.region.is_cleared(&location.id);
+                    let standing = location.id == here;
+                    ViewNode::Row(vec![
+                        ViewNode::Pill {
+                            text: location.name.clone(),
+                            tag: if standing { "accent" } else { "muted" }.to_string(),
+                            slot: None,
+                            cases: Vec::new(),
+                        },
+                        ViewNode::Pill {
+                            text: if cleared { "crowned" } else { "shut" }.to_string(),
+                            tag: if cleared { "good" } else { "warn" }.to_string(),
+                            slot: None,
+                            cases: Vec::new(),
+                        },
+                        // Self-contained for the prose channels, which are handed no pills.
+                        ViewNode::Text(format!(
+                            "{} — {} · {}",
+                            location.name,
+                            if cleared { "crowned" } else { "shut" },
+                            match (standing, self.map.gate_of(&location.id)) {
+                                (true, _) => "you are standing here".to_string(),
+                                (false, Some(gate)) => format!(
+                                    "entered only once {} is crowned",
+                                    location_name(&self.map, &gate)
+                                ),
+                                (false, None) => "reachable by an open road".to_string(),
+                            }
+                        )),
+                    ])
+                })
+                .collect(),
+        ));
+
+        ViewNode::Section {
+            title: "How a road opens".to_string(),
+            tag: "accent".to_string(),
+            children,
+        }
+    }
 }
 
 impl Default for DescentCampaignOffering {
@@ -668,84 +919,106 @@ impl Offering for DescentCampaignOffering {
         self.verify_exact_record(session, &session.export_record())
     }
 
+    /// **The campaign surface — the expedition's OWN reading, plus the region it is inside.**
+    ///
+    /// The composition is the plaque convention (`dregg-automatafl`'s `standing` /
+    /// `automaton_plaque`, applied again in the tug, the council and the market): where the campaign
+    /// stands *with the one sentence saying what to do right now*, then the DOMAIN plaque for the
+    /// thing a traveller cannot read off the board — how a location is actually opened, and the
+    /// travel guard the region cell will actually admit.
+    ///
+    /// ⚑ The expedition's vitals and shaft are the NATIVE Descent's own painters
+    /// ([`crate::native_descent::descent_vitals_section`] /
+    /// [`crate::native_descent::descent_shaft_section`]), not a second description of the same
+    /// `Sim`. This surface used to render `depth 2 · light spent 9 · wounds 1 · native turn 14` — a
+    /// counter dump — while the four meters, the shaft board and the ⚠ pressure lines for that exact
+    /// state already existed one module away. A campaign IS a native expedition inside a region, and
+    /// it now looks like one.
     fn render(&self, session: &Self::Session) -> Surface {
-        let here = session.current_location();
         let sim = session.active.game().sim();
-        let actor = session
-            .actor
-            .as_ref()
-            .map(DreggIdentity::as_str)
-            .unwrap_or("unclaimed — the first landed Descent move binds the traveller");
         let mut children = vec![
-            ViewNode::Text(format!("traveller: {actor}")),
-            ViewNode::Text(format!(
-                "{} · {} / {} locations crowned",
-                location_name(&self.map, &here),
-                session.cleared_count(),
-                self.map.locations.len()
-            )),
-            ViewNode::Text(format!(
-                "depth {} · light spent {} · wounds {} · native turn {}",
-                sim.depth,
-                sim.spent,
-                sim.wounds,
-                session.active.revision()
-            )),
-            ViewNode::Text(format!(
-                "campaign revision {} · root {}",
-                session.revision(),
-                short_digest(session.root)
-            )),
+            self.campaign_standing(session),
+            crate::native_descent::descent_vitals_section(sim),
+            crate::native_descent::descent_shaft_section(sim),
+            self.region_plaque(session),
         ];
-        if session.region.is_cleared(&here) {
-            children.push(ViewNode::Text(
-                "The replay-verified Crown has opened this location's region roads.".to_string(),
-            ));
-        } else if session.active.completion().is_some() {
-            children.push(ViewNode::Text(
-                "This expedition settled without the Crown; it did not clear the location."
-                    .to_string(),
-            ));
-        } else {
-            children.push(ViewNode::Text(
-                "Player-driven Lean-native expedition; no scripted completion is available."
-                    .to_string(),
-            ));
+        let actions = self.actions_for_session(session);
+        if !actions.is_empty() {
+            children.push(ViewNode::Menu {
+                items: actions
+                    .into_iter()
+                    .map(|action| MenuItem {
+                        label: action.label,
+                        turn: action.turn,
+                        arg: action.arg,
+                        enabled: action.enabled,
+                    })
+                    .collect(),
+            });
         }
         #[cfg(feature = "private-preference-operation")]
         if let Some(preference) = session.active.private_preference() {
-            children.push(ViewNode::Text(format!(
-                "Shielded party choice: {} · receipt {}",
-                crate::dungeon::PRIVATE_PREFERENCE_OPTIONS[preference.decision().winner()],
-                short_digest(preference.receipt_id()),
-            )));
+            children.push(ViewNode::Section {
+                title: "Shielded party counsel".to_string(),
+                tag: "genuine".to_string(),
+                children: vec![
+                    ViewNode::Text(format!(
+                        "The party privately chose: {}.",
+                        crate::dungeon::PRIVATE_PREFERENCE_OPTIONS[preference.decision().winner()],
+                    )),
+                    ViewNode::Text(format!(
+                        "Ballots and totals stay hidden behind receipt {}.",
+                        short_digest(preference.receipt_id()),
+                    )),
+                ],
+            });
         }
         #[cfg(feature = "private-raid-operation")]
         if let Some(raid) = session.active.private_raid() {
-            children.push(ViewNode::Text(format!(
-                "Shielded raid assignment accepted · receipt {}",
-                short_digest(raid.receipt_id()),
-            )));
+            children.push(ViewNode::Section {
+                title: "Shielded raid assignment".to_string(),
+                tag: "genuine".to_string(),
+                children: vec![ViewNode::Text(format!(
+                    "The four raid seats are assigned; the suitability scores behind them stay \
+                     hidden behind receipt {}.",
+                    short_digest(raid.receipt_id()),
+                ))],
+            });
         }
         #[cfg(feature = "private-fair-shuffle-operation")]
         if let Some(deal) = session.active.private_deal() {
-            children.push(ViewNode::Text(format!(
-                "Shielded initiative: card {} · receipt {}",
-                deal.initiative_card(),
-                short_digest(deal.receipt_id()),
-            )));
+            children.push(ViewNode::Section {
+                title: "Shielded initiative deal".to_string(),
+                tag: "genuine".to_string(),
+                children: vec![ViewNode::Text(format!(
+                    "Seat 0 drew initiative card {}; the rest of the deal stays hidden behind \
+                     receipt {}.",
+                    deal.initiative_card(),
+                    short_digest(deal.receipt_id()),
+                ))],
+            });
         }
-        children.push(ViewNode::Menu {
-            items: self
-                .actions_for_session(session)
-                .into_iter()
-                .map(|action| MenuItem {
-                    label: action.label,
-                    turn: action.turn,
-                    arg: action.arg,
-                    enabled: action.enabled,
-                })
-                .collect(),
+        // The bookkeeping nobody needs to read to PLAY, below the moves — the same placement the
+        // native Descent uses for its own record block.
+        children.push(ViewNode::Section {
+            title: "The record".to_string(),
+            tag: "muted".to_string(),
+            children: vec![
+                ViewNode::Text(format!(
+                    "traveller: {}",
+                    session
+                        .actor
+                        .as_ref()
+                        .map(DreggIdentity::as_str)
+                        .unwrap_or("unclaimed — the first landed Descent move binds the traveller")
+                )),
+                ViewNode::Text(format!(
+                    "campaign revision {} · root {} · expedition turn {}",
+                    session.revision(),
+                    short_digest(session.root),
+                    session.active.revision()
+                )),
+            ],
         });
         Surface(ViewNode::Section {
             title: format!("{} — native Descent campaign", self.map.name),

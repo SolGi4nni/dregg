@@ -440,6 +440,39 @@ fn forge_method(loc: &str) -> String {
     format!("overworld/forge/{loc}")
 }
 
+/// The trailing big-endian `u64` lane of a [`FieldElement`] — the inverse of
+/// [`field_from_u64`], for reading a deployed constraint's operand back out.
+fn u64_of_field(value: &FieldElement) -> u64 {
+    let mut lane = [0u8; 8];
+    lane.copy_from_slice(&value[24..32]);
+    u64::from_be_bytes(lane)
+}
+
+/// **The travel rule for one destination, as the DEPLOYED region program spells it** —
+/// [`RegionCell::deployed_travel_gate`]'s answer. Not a restatement of [`RegionMap`]: it is lifted
+/// out of the [`CellProgram::Cases`] the executor admits travel turns under, so a surface that
+/// explains the road cannot disagree with the tooth that bars it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TravelGate {
+    /// The program has NO case for this destination's travel method, so the default-deny `Cases`
+    /// program refuses it outright — no road at all, not an open one.
+    NoCase,
+    /// The destination's travel case carries no state constraint: an always-open road.
+    Open,
+    /// The case is admitted only while `cleared[slot] >= threshold` — the exact
+    /// [`StateConstraint::FieldGte`] guard. `prerequisite` is the location that slot belongs to
+    /// (`None` if the guard reads a slot outside the map's cleared-flag range, which a caller
+    /// should report rather than paper over).
+    ClearedAtLeast {
+        /// The location whose cleared flag the guard reads.
+        prerequisite: Option<String>,
+        /// The cell slot the guard reads.
+        slot: u8,
+        /// The value the guard demands that slot reach.
+        threshold: u64,
+    },
+}
+
 /// A cell whose permissions gate nothing (the gate + WriteOnce teeth are the load-bearing ones, as
 /// in [`crate::multicell`]).
 fn open_permissions() -> Permissions {
@@ -647,6 +680,52 @@ impl RegionCell {
         )
     }
 
+    /// **The travel rule the DEPLOYED program actually enforces for `dest`** — read back out of
+    /// the installed [`CellProgram::Cases`], never restated.
+    ///
+    /// A surface that wants to tell a traveller why a road is barred has two choices: retype the
+    /// rule ("you need the keep cleared"), which silently disagrees the day the topology or the
+    /// threshold changes, or read the guard the executor will actually admit the turn under. This
+    /// is the second. [`Self::deploy`] compiles each destination's gate into one
+    /// [`StateConstraint::FieldGte`] on the prerequisite's cleared flag, so lifting that constraint
+    /// back out yields the exact prerequisite, the exact slot, and the exact threshold — and a
+    /// destination the program has no case for reports [`TravelGate::NoCase`], which is the honest
+    /// name for default-deny rather than a guess.
+    pub fn deployed_travel_gate(&self, dest: &str) -> TravelGate {
+        let method = symbol(&travel_method(dest));
+        let program = self
+            .exec
+            .with_ledger_mut(|ledger| ledger.get(&self.cell).map(|cell| cell.program.clone()));
+        let Some(CellProgram::Cases(cases)) = program else {
+            return TravelGate::NoCase;
+        };
+        let Some(case) = cases.iter().find(
+            |case| matches!(&case.guard, TransitionGuard::MethodIs { method: m } if *m == method),
+        ) else {
+            return TravelGate::NoCase;
+        };
+        for constraint in &case.constraints {
+            if let StateConstraint::FieldGte { index, value } = constraint {
+                // The guard names a SLOT; the traveller needs the place. `cleared_slot` is the only
+                // thing that puts a location in `1..=N`, so invert it rather than re-deriving the
+                // prerequisite from the map (which is the drift this method exists to avoid).
+                let prerequisite = self
+                    .map
+                    .locations
+                    .iter()
+                    .enumerate()
+                    .find(|(i, _)| cleared_slot(*i) == *index)
+                    .map(|(_, loc)| loc.id.clone());
+                return TravelGate::ClearedAtLeast {
+                    prerequisite,
+                    slot: *index,
+                    threshold: u64_of_field(value),
+                };
+            }
+        }
+        TravelGate::Open
+    }
+
     /// **A FORGED clear — writing a cleared flag under a NON-sanctioned method.** The `Cases`
     /// program is default-deny: no case matches this method, so the executor REFUSES it
     /// (`NoTransitionCaseMatched`) — a cleared flag cannot be minted outside the sanctioned `clear`
@@ -682,6 +761,41 @@ mod tests {
         assert_eq!(map.locations.len(), 4, "four universes wired");
         assert_eq!(map.gate_of("vault").as_deref(), Some("keep"));
         assert_eq!(map.gate_of("crypt").as_deref(), Some("vault"));
+    }
+
+    /// **The travel gate is READ off the deployed program, and the read bites both ways.** A
+    /// gated destination reports the exact `FieldGte(cleared[prereq], 1)` the executor will admit
+    /// travel under; an ungated one reports `Open`; a destination with no installed case at all
+    /// reports `NoCase` rather than a cheerful `Open`. Without this, a surface explaining the road
+    /// is retyping the rule, and the retype is what goes stale.
+    #[test]
+    fn the_deployed_travel_gate_is_read_not_restated() {
+        let map = deepening_ways();
+        let region = RegionCell::deploy(&map, 7);
+
+        // `vault` is reachable only through `RegionEdge::gated("keep","vault","keep")`.
+        assert_eq!(
+            region.deployed_travel_gate("vault"),
+            TravelGate::ClearedAtLeast {
+                prerequisite: Some("keep".to_string()),
+                slot: cleared_slot(map.index_of("keep").expect("keep is on the map")),
+                threshold: 1,
+            },
+            "the vault road's guard is the keep's cleared flag, read off the program"
+        );
+        assert_eq!(
+            region.deployed_travel_gate("crypt"),
+            TravelGate::ClearedAtLeast {
+                prerequisite: Some("vault".to_string()),
+                slot: cleared_slot(map.index_of("vault").expect("vault is on the map")),
+                threshold: 1,
+            },
+            "the deep end's guard is the vault's cleared flag"
+        );
+        // The hub has only OPEN inbound roads, so its travel case carries no constraint.
+        assert_eq!(region.deployed_travel_gate("keep"), TravelGate::Open);
+        // Default-deny is reported as such, never as an open road.
+        assert_eq!(region.deployed_travel_gate("nowhere"), TravelGate::NoCase);
     }
 
     #[test]

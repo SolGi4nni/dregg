@@ -244,14 +244,34 @@ async fn tug_guild_table_renders_and_a_play_lands() {
     );
     sample("tug-surface.html", &body);
 
-    // Two browser users claim the seats and their scheduled `comp` plays land.
-    let (_, body) = post_act(&app, &format!("{base}/act"), "comp", 3, "alice").await;
+    // Two browser users claim the seats and their offered plays land.
+    //
+    // ⚑ READ THE MOVE OFF THE PAGE — do NOT hardcode a (method, index) pair. `arg` is an
+    // INDEX into `legal_decisions()`, and tug offers a real decision space now, so a fixed
+    // index drifts: this test used to send `("comp", 3)` and went red with
+    //   Refused: method `comp` does not name decision 3 (Secret { card: 9 }, which
+    //   dispatches under `secret`) (nothing committed — anti-ghost).
+    // because index 3 became a `Secret` for this session. `tug_web.rs`'s own doc warns about
+    // exactly this. Acting on whatever the surface actually offers keeps the test about
+    // "a browser user's play lands" instead of about the engine's ordering.
+    let (turn, arg) = common::first_offered_act(&body).expect("the tug surface offers an act");
+    let (_, body) = post_act(&app, &format!("{base}/act"), &turn, arg, "alice").await;
     assert!(
         body.contains("Turn committed"),
         "seat A's play lands: {body}"
     );
-    let (_, body) = post_act(&app, &format!("{base}/act"), "comp", 3, "bob").await;
-    assert!(body.contains("Turn committed"), "seat B's play lands");
+    // ⚑ Seat B's affordances live on SEAT B'S OWN PAGE. Re-reading the response to A's act hands
+    // back an act that is not B's to make — the page is rendered for the actor, and in a
+    // simultaneous-move game that actor has already sealed. Reading A's response for B's move is
+    // what made this fail with "seat B's play lands" after the first-offered-act fix.
+    let (_, b_page) = get_as(&app, base, "bob").await;
+    let (turn, arg) =
+        common::first_offered_act(&b_page).expect("the tug surface offers seat B an act");
+    let (_, body) = post_act(&app, &format!("{base}/act"), &turn, arg, "bob").await;
+    assert!(
+        body.contains("Turn committed"),
+        "seat B's play lands: {body}"
+    );
     // The board rendered the OWN-hand once a seat is claimed (a real hidden-hand reveal).
     sample("tug-after-play.html", &body);
 

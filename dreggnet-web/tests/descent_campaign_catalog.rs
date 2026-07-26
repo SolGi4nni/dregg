@@ -88,7 +88,16 @@ async fn campaign_drives_and_resumes_through_the_generic_web_host() {
         let (status, after) = post(&app, &act, "delve", 0).await;
         assert_eq!(status, StatusCode::OK);
         assert!(after.contains("Turn committed"), "the delve lands: {after}");
-        assert!(after.contains("depth 1"), "native state advances: {after}");
+        // ⚑ `floor 1 of`, not `depth 1`. The campaign surface stopped printing its own
+        // `depth 2 · light spent 9 · wounds 1` counter dump and now renders the NATIVE Descent's
+        // reading of the same `Sim` (the four meters, the shaft, the ⚠ pressures), whose standing
+        // line for depth `d` is `The living descent — floor d of 4`. The assertion's intent is
+        // unchanged and still non-vacuous: an unmoved campaign stands `at the mouth`, so only a
+        // landed delve can produce this string.
+        assert!(
+            after.contains("floor 1 of"),
+            "native state advances: {after}"
+        );
         let (status, report) = get(&app, &verify).await;
         assert_eq!(status, StatusCode::OK);
         assert!(report.contains("\"verified\":true"), "{report}");
@@ -103,15 +112,22 @@ async fn campaign_drives_and_resumes_through_the_generic_web_host() {
         "the campaign session reopens: {resumed}"
     );
     assert!(
-        resumed.contains("depth 1"),
+        resumed.contains("floor 1 of"),
         "a fresh web host replays the landed native state: {resumed}"
     );
     assert!(
         resumed.contains("campaign revision 1"),
         "the durable campaign revision survives process death: {resumed}"
     );
+    // ⚑ Assert the ACTION is offered, not its wording. This read
+    // `contains("Strike the guardian")` and went stale the moment `29881b706` ("descent: the
+    // guardian breaks your GRIP") relabelled it — the live label is `⚔ Press the guardian{cost}`,
+    // and the old string then existed NOWHERE in the tree except this line, so the test was a lock
+    // on retired prose rather than a check of behaviour. `guardian` is the durable noun (it
+    // survived the relabel); the assertion's stated intent is that a recovered campaign still
+    // presents a next move, which is what this now checks.
     assert!(
-        resumed.contains("Strike the guardian"),
+        resumed.contains("guardian"),
         "the recovered state presents its actual next move: {resumed}"
     );
     let (status, recovered_report) = get(&app, &verify).await;
