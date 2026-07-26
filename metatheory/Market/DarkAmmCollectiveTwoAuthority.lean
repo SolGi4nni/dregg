@@ -402,6 +402,10 @@ theorem commit_accepts_or_holds
 
 /- Staging and abandonment cannot accidentally acquire either authorization or
 commit semantics. -/
+-- POSITIVE CONTROL for the rejectors below: reached only through the commit proof's term.
+#assert_depends_on Market.DarkAmmCollectiveTwoAuthority.successful_commit_installs_after_and_consumes_both_exact_replays
+  [Market.DarkAmmCollectiveTwoAuthority.committedState]
+
 #assert_not_depends_on Market.DarkAmmCollectiveTwoAuthority.stage [
   Market.DarkAmmCollectiveTwoAuthority.FreshSameOpeningCapability,
   Market.DarkAmmPublicHost.TrueFreshReceiptCapability,

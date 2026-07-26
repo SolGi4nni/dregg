@@ -352,6 +352,10 @@ theorem decode_encode_restart_preserves_committed_and_pending
 
 /- Staging and abandonment remain independent of receipt verification and
 commit semantics. -/
+-- POSITIVE CONTROL for the rejectors below: reached only through the commit proof's term.
+#assert_depends_on Market.DarkAmmPublicHostLifecycle.successful_commit_installs_exact_after
+  [Market.DarkAmmPublicHostLifecycle.committedLifecycleState]
+
 #assert_not_depends_on Market.DarkAmmPublicHostLifecycle.stage [
   Market.DarkAmmPublicHostLifecycle.CommitAuthorization,
   Market.DarkAmmPublicHostLifecycle.CommitAccepts,

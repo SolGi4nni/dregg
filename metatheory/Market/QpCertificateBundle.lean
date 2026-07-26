@@ -83,6 +83,11 @@ theorem exact_bundle_global_optimal {n mc : Nat}
 
 /- The matrix pin is structural equality only.  It must not acquire PSD, SDD,
 or KKT semantics: those remain independent certificate obligations. -/
+-- POSITIVE CONTROL for the rejectors below: the optimality proof transports PSD across the matrix
+-- pin, and that lemma appears only in its proof term.
+#assert_depends_on Market.QpCertificateBundle.exact_bundle_global_optimal
+  [Market.QpCertificateBundle.matrix_pin_transports_psd]
+
 #assert_not_depends_on Market.QpCertificateBundle.MatrixPinned [
   Market.PsdSymm,
   Market.SddPsd.SymmetricDiagonallyDominant,

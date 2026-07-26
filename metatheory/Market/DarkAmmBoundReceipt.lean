@@ -341,6 +341,11 @@ theorem step_accepts_or_holds
 /- The public equality layer must remain purely structural. In particular,
 adding a cryptographic or semantic verifier to `Binds` is a build error rather
 than a silent strengthening of what “all fields match” means. -/
+-- POSITIVE CONTROL for the rejector below: these are reached only through the acceptance proof's
+-- term, never its statement, so a closure walk gone blind reds here instead of passing silently.
+#assert_depends_on Market.DarkAmmBoundReceipt.accepted_consumes_exact_replay_slot
+  [Market.DarkAmmBoundReceipt.acceptedState, Market.DarkAmmBoundReceipt.witnessAmounts]
+
 #assert_not_depends_on Market.DarkAmmBoundReceipt.Binds [
   Market.DarkAmmPrivateReceipt.Accepts,
   Market.DarkAmmPrivateReceipt.check,

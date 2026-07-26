@@ -307,6 +307,11 @@ theorem all_workers_collude_reconstruct_private_witness
 
 /-! The public observation is structurally independent of the private custody
 and all-collude reconstruction layer. -/
+-- POSITIVE CONTROL for the rejector below: the backend's signature-soundness field is consumed by
+-- the binding proof, not named in its statement.
+#assert_depends_on Market.DistributedPrivateProverBoundary.canonical_contribution_binds_complete_context_and_slot
+  [Market.DistributedPrivateProverBoundary.ContributionBackend.signatureSound]
+
 #assert_not_depends_on Market.DistributedPrivateProverBoundary.coordinatorView [
   Market.DistributedPrivateProverBoundary.AdditiveCustody,
   Market.DistributedPrivateProverBoundary.reconstructAllWorkers]

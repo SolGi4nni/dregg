@@ -195,6 +195,10 @@ certificate for the substituted problem merely because `P` is unchanged. -/
 
 /- Program identity remains a purely structural gate: it must not acquire
 certificate, residual, SDD, or optimality semantics. -/
+-- POSITIVE CONTROL for the rejector below: reached only through the transport proof's term.
+#assert_depends_on Market.QpExternalProgramBinding.complete_binding_transports_exact_kkt
+  [Market.QpExternalProgramBinding.complete_problem_identity_eq]
+
 #assert_not_depends_on Market.QpExternalProgramBinding.CompleteProblemIdentity [
   Market.rustCertQpCheck,
   Market.rustPrimalResidual,

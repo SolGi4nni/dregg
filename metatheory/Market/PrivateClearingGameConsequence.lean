@@ -346,6 +346,11 @@ theorem reobserving_committed_receipt_is_idempotent_and_cannot_dispatch_twice
 
 /-! Structural binding must not silently acquire durability or dispatch
 semantics merely because it is used by the host lifecycle. -/
+-- POSITIVE CONTROL for the rejector below: the one-shot proof consumes `recordConsumes`; its
+-- statement does not mention it.
+#assert_depends_on Market.PrivateClearingGameConsequence.successful_dispatch_is_one_shot
+  [Market.PrivateClearingGameConsequence.DurableReplay.recordConsumes]
+
 #assert_not_depends_on Market.PrivateClearingGameConsequence.GameReceipt.Binds [
   Market.PrivateClearingGameConsequence.DurableReplay,
   Market.PrivateClearingGameConsequence.Dispatches,

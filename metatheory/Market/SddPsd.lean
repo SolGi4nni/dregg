@@ -218,6 +218,11 @@ theorem psdOutsideSdd2_is_psd : Market.PsdSymm (liftInt psdOutsideSdd2) := by
 /- The executable admission predicate is only exact integer symmetry and row
 dominance. Convex-QP soundness may consume its theorem, but cannot silently
 become part of the parser/checker itself. -/
+-- POSITIVE CONTROL for the rejector below: `sddCheck_implies_psd` routes through both of these in
+-- its proof term and neither in its statement, so a blind walk reds here.
+#assert_depends_on Market.SddPsd.sddCheck_implies_psd
+  [Market.SddPsd.sdd_implies_psd, Market.SddPsd.sddCheck_iff]
+
 #assert_not_depends_on Market.SddPsd.sddCheck [
   Market.PsdSymm,
   Market.quadForm,

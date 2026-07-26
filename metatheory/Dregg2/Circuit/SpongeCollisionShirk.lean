@@ -205,6 +205,11 @@ theorem bareDisjunction_is_not_a_regrounding :
   perInstance_strictly_sharper_than_bareDisjunction, bareDisjunction_is_not_a_regrounding]
 
 -- The refutation must not secretly route through the floors the campaign is draining.
+-- POSITIVE CONTROL, same root and therefore the same walk as the rejector below: the refutation
+-- reaches these two ONLY through its proof term, so a value-blind walk reds here.
+#assert_depends_on perInstance_strictly_sharper_than_bareDisjunction
+  [orBreak_spongeCollision_False, noSpongeColl_satisfiable]
+
 #assert_not_depends_on perInstance_strictly_sharper_than_bareDisjunction
   [Dregg2.Circuit.StateCommit.logHashInjective, Dregg2.Circuit.StateCommit.cellLeafInjective]
 

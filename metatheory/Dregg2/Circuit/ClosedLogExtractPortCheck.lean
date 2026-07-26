@@ -92,6 +92,13 @@ theorem closedLogExtract_shape :
 
 /-! ## §2 — PROOF-CLOSURE freedom: the refuted floor is unreachable, not merely unmentioned. -/
 
+-- POSITIVE CONTROL for the three rejectors below (they share one closure walk). The module note
+-- at §2 already MEASURED that `closureReadouts_uninstantiable_concrete` REACHES
+-- `Poseidon2SpongeCR` through its proof term; pinning that here means a walk that stops seeing
+-- proof terms fails LOUDLY on this line instead of green-lighting the rejectors vacuously.
+#assert_depends_on Dregg2.Circuit.ClosureReadoutsRealizable.closureReadouts_uninstantiable_concrete
+  [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR]
+
 #assert_not_depends_on Dregg2.Circuit.ClosureAll.ClosedLogExtract
   [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR]
 

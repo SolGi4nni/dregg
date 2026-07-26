@@ -413,6 +413,11 @@ theorem approximateFixture_bound :
 #assert_axioms rustCertQpCheck_quantitative
 #assert_axioms approximateFixture_bound
 
+-- POSITIVE CONTROL for the rejector below: the distance bound is proved through
+-- `residual_dot_lower_bound`, which its statement never mentions.
+#assert_depends_on Market.QpApproximateBound.approximate_kkt_distance_bound
+  [Market.QpApproximateBound.residual_dot_lower_bound]
+
 #assert_not_depends_on Market.QpApproximateBound.StationarityResidualAtMost [
   Market.PsdSymm,
   Market.RustQpFeasible,

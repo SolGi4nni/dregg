@@ -384,6 +384,10 @@ theorem decode_encode_restart_preserves
 
 /- Candidate/state binding must remain independent of external receipt
 verification and acceptance semantics. -/
+-- POSITIVE CONTROL for the rejectors below: reached only through the acceptance proof's term.
+#assert_depends_on Market.DarkAmmPublicHost.acceptance_installs_after_and_consumes_exact_replay
+  [Market.DarkAmmPublicHost.acceptedState, Market.DarkAmmPublicHost.candidateAfterMaterial]
+
 #assert_not_depends_on Market.DarkAmmPublicHost.CandidateBinds [
   Market.DarkAmmPublicHost.TrueFreshReceiptCapability,
   Market.DarkAmmPublicHost.HostAccepts,

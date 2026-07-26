@@ -246,6 +246,10 @@ theorem substituted_selected_actor_refused
 
 /-! The public binding layer stays structural: it may not acquire optimizer
 soundness merely by being placed next to the backend. -/
+-- POSITIVE CONTROL for the rejector below: both are reached only through the acceptance proof.
+#assert_depends_on Market.FhIRRaidAllocationBinding.acceptance_exposes_policy_binding
+  [Market.FhIRRaidAllocationBinding.Backend.verify, Market.FhIRRaidAllocationBinding.Receipt.proof]
+
 #assert_not_depends_on Market.FhIRRaidAllocationBinding.RaidStatement.MatchesPolicy [
   Market.QpCertificateBundle.ExactKktAccepted,
   Market.QpCertificateBundle.exact_bundle_global_optimal,

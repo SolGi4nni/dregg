@@ -552,6 +552,12 @@ theorem land_step_records_exact_receipt
 
 /-! ## 6. Axiom hygiene -/
 
+-- POSITIVE CONTROL for the rejector below: the roster-membership result reaches both of these
+-- lemmas only through its proof term.
+#assert_depends_on Market.DarkBazaarConsequenceOutbox.prepared_target_is_roster_member
+  [Market.DarkBazaarConsequenceOutbox.selectTargetFromRoster_sound,
+   Market.DarkBazaarConsequenceOutbox.prepared_target_is_roster_selected]
+
 #assert_not_depends_on Market.DarkBazaarConsequenceOutbox.consequenceKey [
   Market.DarkBazaarConsequenceOutbox.PlayerRequest]
 
