@@ -49,12 +49,17 @@ on:
   # is the FALSE-RED class (a bare SIGABRT that a lane reads as its own bug). Mitigation is the
   # nightly below plus a manual cut before any session that needs verified-core tests on a box.
   #
-  # The nightly is KEPT on purpose and is cheap: the key-idempotency check below makes a run with an
-  # already-published key a no-op (measured: 23 seconds), so it only pays the 20 minutes when the
-  # Lean tree actually moved, once, at 03:00 ET when nothing else is running. If even that is
-  # unwanted, delete these two lines — nothing else depends on them.
-  schedule:
-    - cron: '0 7 * * *'
+  # THE NIGHTLY IS GONE TOO (ember, explicitly: "disable that damn cron"). This workflow is now
+  # MANUAL ONLY. hbox is meant to be a SPARE BOX for interactive work, and the whole point of
+  # unhooking this workflow was to give it back — a nightly that pays 20 minutes whenever the Lean
+  # tree moved is still this workflow deciding when hbox is busy, which is the thing being removed.
+  #
+  # CUT A SEED BY HAND when you need one:
+  #   gh workflow run lean-seed.yml -f platforms=linux-x86_64
+  # It is idempotent on the content key, so an unnecessary run costs ~23 seconds. Cut one BEFORE a
+  # session that needs verified-core tests on a remote box, because the key is
+  # platform + toolchain + mathlib rev + `git rev-parse HEAD:metatheory/Dregg2`, so any committed
+  # change under metatheory/Dregg2/ invalidates every published asset for the new HEAD.
   workflow_dispatch:
     inputs:
       tag:
