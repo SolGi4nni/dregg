@@ -50,14 +50,30 @@ Quot.sound}, byte-pinned goldens, all built on hbox.
   the FRI-wrap verbatim (no new STARK verifier), exposes `[chainId,height,rootHi,rootLo]` byte-identical to the
   registry's `splitRoot`.
 
-## Residuals (honest, current resolution)
+## The MODE distinction (the framing that matters — see the memory)
+The four are **validator-complete**: a validator does the fast native BLS/Ed25519 check itself and the STARK
+carries the *proven consensus logic*. The witnessing-boolean caveat below only bites in **full-light-via-proof
+mode** (an untrusted prover fills the carrier, the proof stands alone). Validators need none of the fold work.
+(And "discharging the FRI floor" is *not* a residual — everyone else silently assumes FRI soundness; naming it is
+us being more honest than the field.)
 
-1. **In-AIR crypto** — BLS/Ed25519/SHA are asserted carriers, not re-derived in-circuit. The biggest hardening
-   campaign (BLS-pairing-in-a-BabyBear-STARK is huge; SHA-256 folds are the tractable start). Soundness also rests
-   on the undischarged FRI/STARK floor (~51 calculator bits — see `project-fri-soundness-reality`).
-2. **Full-root felt-width** — CLOSED on ETH (`807eca1839`, 9 radix-2^31 limbs bind all 256 bits); tm/sol/mid
-   widening in flight (same template, no wrap-interface change).
-3. **Real prove path e2e** — the peer-wrap tests use a fixture VK; the full setup+prove needs a real exported LC
+## Residuals (honest, current resolution — the 07-26 crypto-fold daysprint moved this a lot)
+
+1. **In-AIR crypto (the proof-mode fold)** — a shared Lean-GENERATED gadget library now exists: SHA-256
+   (`Sha256Gadget`), SHA-512 (`Sha512Gadget`), BLAKE2b (`Blake2bGadget`), BLS12-381 full tower+curve FORCED
+   (`Bls12381Tower`/`TowerExt`/`Forcing`), Ed25519 field+curve FORCED (`Ed25519Gadget`). **All 4 chains' HASH
+   carriers are FOLDED** (carrier bit → in-circuit derivation, no-forgery routed through the fold): ETH `FIN_OK`
+   (`f94704873c`)+`EXEC_OK` (`7b30b993c6`), tm/sol (`65920071b`), mid `AUTHSET_OK` (`49913c45d`). The composition
+   wall is **broken** (`Sha256FoldForcing` `47889e49a` — gate-count-independent induction) and **Midnight's `hfold`
+   is fully discharged** (`Blake2bFoldForcing` `b912a1b64`); the SHA end-to-end discharge (schedule recurrence +
+   outer fold) is the convergent finish in flight. REMAINING = the **EC signature aggregates only**: `BLS_OK`
+   (Miller loop + final exp over the forced tower) + `ED_OK` (scalar-mult + SHA-512 + mod-L + Edwards verify over
+   the forced curve) — millions of gates, foundations forced, "keep composing the generators."
+2. **Deployment wall** — the folds are PROVEN, NOT DEPLOYED: removing the carrier *columns* from the deployed
+   descriptors needs the IR-v2 `proofBind` recursion seam (the ~5·10^5 flat gates exceed the byte-golden `#guard`).
+   No descriptor touched, no VK regen. Shared ℤ↔`p_felt` field-width residual inherited.
+3. **Full-root felt-width** — CLOSED on all 4 chains (ETH `807eca1839`, tm/sol/mid `70243691a4`).
+4. **Real prove path e2e** — the peer-wrap tests use a fixture VK; the full setup+prove needs a real exported LC
    shrink fixture from the Rust prove path.
 
 ## DEPLOY CHECKLIST (ember-gated — the irreversible / public steps held for you)
