@@ -261,6 +261,7 @@ pub use satisfaction_weld::{
 
 // ---- Re-export verify ----
 pub use verify::{
-    verify_balance_limb_pis, verify_balance_limb_ranges, verify_rotated_caveat_coverage,
-    verify_slot_caveat_coverage, verify_slot_caveat_manifest, verify_state_integrity,
+    BALANCE_LIMB_PI_MIN_LEN, verify_balance_limb_pis, verify_balance_limb_ranges,
+    verify_rotated_caveat_coverage, verify_slot_caveat_coverage, verify_slot_caveat_manifest,
+    verify_state_integrity,
 };

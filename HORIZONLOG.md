@@ -1,5 +1,90 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑⚑ JULY 26 (evening) — the wave's cheap half lands, and the check that was supposed to police Group 6 had never been called
+
+The recovery pass after session `d527daf6` hit the weekly limit mid-wave. Six items were out;
+three landed with teeth, three are handed off at `docs/HANDOFF-wave-remainder-2026-07-26.md`
+because they are **larger than they were estimated**, not because time ran out.
+
+**THE LIMB-PI CHECK WAS INERT, AND ITS OWN PRECONDITION IS WHY.**
+`dregg_circuit::effect_vm::verify_balance_limb_pis` is the executor-side range precondition
+under Constraint Group 6 — the group binds `NET_DELTA = FINAL − INIT` over BabyBear, an algebra
+that out-of-width limbs satisfy just as happily by modular wrap. It was defined, re-exported
+TWICE, documented "verifiers MUST call this", and called by no production path and no test. But
+the sharper half is that **nothing could have called it on the leg that ships**: its length guard
+demanded `pi::BASE_COUNT` (201 felts) while its body reads six offsets, all ≤ 25, and the deployed
+`"effect-vm-rotated"` leg publishes 42. Every live PI vector would have been turned away as "too
+short" before a single limb was examined. The guard is now derived from the reads
+(`BALANCE_LIMB_PI_MIN_LEN`), the call is wired on every effect-vm leg in
+`sdk/src/full_turn_proof.rs` and `turn/src/conditional.rs`, and it has a test file for the first
+time (`circuit/tests/balance_limb_pi_gate.rs`). ⚠ Scope, stated: every limb it checks comes from
+`split_u64`, whose outputs are in range BY CONSTRUCTION — so this is a **forgery filter over the
+wire**, not a validator of honest values, and it cannot see the encoding divergence below.
+
+**A SIGNED BALANCE CROSSES A PROOF BOUNDARY IN THREE ENCODINGS.** `LedgerBalance.lean` §7 names
+two (biased bytes vs raw-cast felts). There are three: `balance_biased` (commitments, and the burn
+binding PI), the raw two's-complement cast (`turn/src/rotation_witness.rs:109` `balance_lo_felt`),
+and the circuit's `CellState.balance: u64`, which has no sign to encode at all. **And the bias is
+not a one-line fix**: `split_u64`'s 30/34 split calls `BabyBear::new` on a value up to 2³⁴, which
+reduces mod p above 2⁶¹ — and BOTH signed encodings (raw ≈2⁶⁴, biased ≈2⁶³) are past that wall.
+So "route the felt path through `balance_biased`" would fix the encoding and leave the range
+broken. It rides the re-genesis flag day already in flight, or waits.
+**Wire format ⇒ ember's call; nothing on the wire moved.**
+`docs/FINDING-balance-encoding-divergence-2026-07-26.md`.
+
+**THE THEATRE CLASS NOW AUTO-DETECTS** — `scripts/check-production-callers.py`, in
+`local-gates.sh` with its own can-it-go-red run. 16 020 `pub fn`s scanned; ~4 800 have no
+production caller, which is NOT a defect count (a library's surface is supposed to have callers it
+cannot see) so the ratchet runs over the 235 where "nobody calls it" is a claim about SAFETY —
+`verify_*`, `check_*`, `*_admits`. Uncalled among them, re-checked BY HAND:
+`check_head_match` (`circuit/src/derivation_air.rs:339`), `check_stealth_ownership`
+(`wasm/src/privacy.rs:161`), `check_timeout` (`coord/src/atomic.rs:805`).
+⚑ **Its first scanner was blind in the direction that hides things** — a `/*` inside a line
+comment opened a block comment that ran to the next `*/` anywhere later in the file, and it
+reported `verify_balance_limb_pis` UNCALLED minutes after that symbol had been wired. It erred
+the other way too, calling `check_note_conservation` (the shielded-pool value check) uncalled
+when `turn/src/executor/execute.rs:1231` calls it — a broken scanner is not biased, it is just
+wrong, which is why the list above is hand-checked rather than quoted from the tool. Replaced
+with a real scanner; the count moved 12 785 → 16 020 `pub fn`s. The self-test asserts the scanner
+still sees a call through that exact trap.
+
+**CLOSING A DISCORD SESSION DESTROYED THE ONLY THING A REPLAY COULD READ.** `forget` was two
+`DELETE`s — the open row and the entire landed-move log — so "Discord replay" was not unbuilt, its
+input was spent at the moment a run ended. Retirement is now a stamp (`archived_at`); boot replay
+filters on it, the tape survives, and erasure is a separate call you have to name
+(`rpg_session_purge`).
+
+**AUTOMATAFL'S CAP WAS A RENDERER CONSTANT DECIDING TWO-THIRDS OF MATCHES.** `MAX_TURNS` is not
+circuit-derived — the witnesses are per-turn, so nothing in the proving path bounds match length —
+and past the cap the winner comes from `adjudicate_capped`'s positional tie-break rather than from
+a seat reaching a goal. 64 → 256, justified from the board (automaton starts dead centre of an
+11×11, moves ≤1 square per resolution, so the theoretical fastest win is 5 resolutions).
+⚠ **The adjudication RATE at 256 is NOT re-measured** — the two-thirds reading was taken at 64 and
+is not carried forward; measuring it needs a self-play driver this crate does not have. What is
+asserted is the weaker checkable thing: the clock outlasts the geometry it clocks.
+
+**BUILD REALITY — and persvati is FULL, which is not a sweep problem.**
+A Linux `cargo nextest run --workspace` cannot complete: `grain-verify-wasm` and
+`starbridge-web` declare `crate-type = ["cdylib","rlib"]` and reach the Lean archive, and a
+`-shared` ELF link of libleanrt's local-exec-TLS mimalloc is rejected outright
+(`R_X86_64_TPOFF32`). The correct form is TWO invocations and it is written above `members`
+in `Cargo.toml`; the second (`--lib`) is not optional or nine tests go dark.
+
+Then the correct form died on **ENOSPC — twice**, once with a second lane alongside it and
+once alone. `box-health`'s standing `lane-total 720.9 GiB ≥ 550` ALARM was already true at
+session start. `sweep-build-lanes.sh --apply` reclaimed 65.2 GB, then 16.2 GB after
+`reap-orphaned` freed six corpse-held leases — and the box went straight back to 100%.
+⚑ **The sweep cannot fix this, by construction.** It deletes SUPERSEDED generations only;
+what fills persvati now is ~600 GB of *live* KEEP across 8 lanes, and no orphan sweep can
+touch that. The remedy is fewer lanes, and it is a fleet decision, not a cleanup.
+⚠ **pbuild reports a full disk as `FAIL`, not `ENVFAULT`** — its classifier detects a memory
+kill and not a disk-full one, so ENOSPC currently reads as your code being wrong. The
+AGENTS.md verdict table promises that distinction and does not yet deliver it for disk.
+
+Verification therefore ran TARGETED and LOCAL for the four touched crates (`dregg-circuit`,
+`dregg-sdk`, `dregg-turn`, `dregg-automatafl`), which is what the doctrine says to do anyway
+— `-p <crate>`, not a whole-workspace run to check one change.
+
 ## ⚑⚑⚑⚑⚑ JULY 26 CURRENT AUTHORITY — release prep: the node's COLD START was dead and is fixed; GitHub is not the bar
 
 The 07-26 convergence pass. ember: *"i don't care if github is actually green, i just want to be able for

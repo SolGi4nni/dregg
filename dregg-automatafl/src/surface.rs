@@ -79,9 +79,35 @@ use crate::rules;
 /// The default match seed when a [`SessionConfig`] pins none.
 const DEFAULT_SEED: u64 = 0xA07F;
 
-/// A match runs at most this many resolved turns before it is called a draw (the surface's own
-/// clock — the executor is happy to keep going).
-const MAX_TURNS: u64 = 64;
+/// A match runs at most this many RESOLVED turns before the ruleset adjudicates it where it
+/// stands ([`rules::adjudicate_capped`]).
+///
+/// **This is the surface's own clock and nothing else.** It is not circuit-derived: the automatafl
+/// witnesses are PER-TURN — each replicates a single row (`base_trace(num_rows)` with a `>= 2`
+/// floor) — so a turn is proven independently and the trace length does not grow with match
+/// length. Nothing in the proving path bounds how many turns a match may have. The executor is
+/// happy to keep going.
+///
+/// It was 64, and 64 was picked, not derived. That mattered because the cap does not merely END
+/// matches, it DECIDES them: past it the winner comes from `adjudicate_capped` — a positional
+/// tie-break on goal distance — rather than from a seat actually reaching a goal. At 64 that
+/// adjudication was resolving the clear majority of matches, so the number in this constant was
+/// deciding automatafl more often than automatafl was.
+///
+/// 256 is chosen as follows, and each step is a fact about the board rather than a taste:
+/// the automaton starts dead centre of an 11×11 and moves at most one square per resolution, so
+/// the theoretical fastest win is 5 resolutions; a contested match is tens of rounds (the crude
+/// driver in `surface::tests::the_automaton_can_be_pulled_to_a_goal_and_win` takes 12). 256 is
+/// ~50× the fastest win and comfortably past "tens", which is the property wanted — a clock that
+/// bites only when the position is genuinely not progressing.
+///
+/// ⚠ **The adjudication RATE at this cap has not been re-measured.** The two-thirds reading was
+/// taken at 64, and it is exactly the kind of number that moves when the truncation moves; it is
+/// not carried forward to 256 here, and no claim about the new rate is made. Measuring it needs a
+/// self-play driver this crate does not have. What IS asserted below
+/// ([`tests::the_surface_clock_outlasts_the_board_geometry`]) is the weaker, checkable thing: the
+/// clock is not shorter than the geometry it is clocking.
+const MAX_TURNS: u64 = 256;
 
 /// A seat at the table (automatafl is n=2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

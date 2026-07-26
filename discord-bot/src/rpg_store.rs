@@ -156,8 +156,13 @@ impl SessionResumeStore for SqliteRpgResumeStore {
         .is_ok()
     }
 
+    /// Retire the session rather than erase it. `forget` is the trait's word for "stop resuming
+    /// this"; it used to be implemented as a two-table DELETE, which also spent the landed-move
+    /// log — the only durable evidence a Discord turn ever happened, and the exact input any
+    /// replay would read. The boot-resume requirement is met by the stamp; erasure is a separate,
+    /// deliberate call (`Database::rpg_session_purge`).
     fn forget(&self, key: &str, id: &SessionId) {
-        let _ = self.block(self.db.rpg_session_forget(&self.player, key, &id.0));
+        let _ = self.block(self.db.rpg_session_archive(&self.player, key, &id.0));
     }
 
     fn load(&self, key: &str, id: &SessionId) -> Option<SessionMoveLog> {

@@ -976,6 +976,18 @@ impl Database {
         .execute(&pool)
         .await?;
 
+        // The RETIREMENT stamp. Closing a session used to DELETE its rows — the open row AND
+        // every landed advance — so a finished Discord run left nothing behind to replay. The
+        // move log is the only record that a turn happened at all here, and dropping it is what
+        // made "a Discord replay" a thing that could not exist rather than a thing not yet built.
+        // Retirement is now a stamp, not a deletion: `archived_at` is NULL for a live session and
+        // holds unix seconds once retired. Boot replay filters on it (`rpg_sessions_of`), so the
+        // resume behaviour is unchanged while the tape survives. Nullable and additive, so an
+        // existing bot.db upgrades in place with every prior session reading as live.
+        let _ = sqlx::query("ALTER TABLE rpg_sessions ADD COLUMN archived_at INTEGER")
+            .execute(&pool)
+            .await;
+
         // ─── The DURABLE ATTESTATION ARCHIVE (commands::fiction) ──────────────
         //
         // `/dungeon chutes-turn` runs its inference inside a DCAP-verified Intel TDX enclave and
@@ -1010,10 +1022,29 @@ impl Database {
                 nonce_hex        TEXT NOT NULL,
                 e2e_pubkey_b64   TEXT NOT NULL,
                 quote            BLOB NOT NULL,
-                created_at       INTEGER NOT NULL
+                created_at       INTEGER NOT NULL,
+                receipt_commit_hex TEXT NOT NULL DEFAULT ''
             )",
         )
         .execute(&pool)
+        .await?;
+
+        // `receipt_commit_hex` is the TEE-provenance commitment READ OFF THE LANDED RECEIPT, and
+        // it is a separate column for one reason: without it, four of this row's fields are
+        // uncontradictable. `measurement_hex` is tied to the quote bytes (fold the registers) and
+        // `quote_sha256_hex` is tied to them by hashing, but `instance_id` and `tcb_status` are
+        // free text — a checker that RE-DERIVES the commitment from the row's own fields derives
+        // the edited one and reports a clean pass. Storing what the receipt bound, independently,
+        // is what makes an edit to any of the four break `attest_check`'s check 4.
+        //
+        // `DEFAULT ''` for a pre-existing row: an empty commitment is a MISSING one, and the
+        // checker reports it as a failed check, never as an absent question.
+        ensure_column(
+            &pool,
+            "narration_attestations",
+            "receipt_commit_hex",
+            "TEXT NOT NULL DEFAULT ''",
+        )
         .await?;
 
         sqlx::query(
@@ -1531,8 +1562,9 @@ impl Database {
         sqlx::query(
             "INSERT OR IGNORE INTO narration_attestations
                 (receipt_hex, channel_id, provider, model, instance_id, measurement_hex,
-                 tcb_status, quote_sha256_hex, nonce_hex, e2e_pubkey_b64, quote, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 tcb_status, quote_sha256_hex, nonce_hex, e2e_pubkey_b64, quote, created_at,
+                 receipt_commit_hex)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&row.receipt_hex)
         .bind(&row.channel_id)
@@ -1546,6 +1578,7 @@ impl Database {
         .bind(&row.e2e_pubkey_b64)
         .bind(row.quote.as_slice())
         .bind(row.created_at)
+        .bind(&row.receipt_commit_hex)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -1559,7 +1592,8 @@ impl Database {
     ) -> Result<Vec<NarrationAttestationRow>, sqlx::Error> {
         let rows = sqlx::query(
             "SELECT receipt_hex, channel_id, provider, model, instance_id, measurement_hex,
-                    tcb_status, quote_sha256_hex, nonce_hex, e2e_pubkey_b64, quote, created_at
+                    tcb_status, quote_sha256_hex, nonce_hex, e2e_pubkey_b64, quote, created_at,
+                    receipt_commit_hex
              FROM narration_attestations
              WHERE channel_id = ?
              ORDER BY created_at DESC, rowid DESC
@@ -1579,7 +1613,8 @@ impl Database {
     ) -> Result<Option<NarrationAttestationRow>, sqlx::Error> {
         let row = sqlx::query(
             "SELECT receipt_hex, channel_id, provider, model, instance_id, measurement_hex,
-                    tcb_status, quote_sha256_hex, nonce_hex, e2e_pubkey_b64, quote, created_at
+                    tcb_status, quote_sha256_hex, nonce_hex, e2e_pubkey_b64, quote, created_at,
+                    receipt_commit_hex
              FROM narration_attestations WHERE receipt_hex = ?",
         )
         .bind(receipt_hex)
@@ -1649,8 +1684,43 @@ impl Database {
         Ok(())
     }
 
-    /// Drop a player's RPG session log (open + moves) — it will not be resumed on the next boot.
-    pub async fn rpg_session_forget(
+    /// RETIRE a player's RPG session: it will not be resumed on the next boot, and its landed
+    /// advances SURVIVE. This is what `forget` means now.
+    ///
+    /// The previous `rpg_session_forget` issued two `DELETE`s — the open row and the whole move
+    /// log. Both are gone in one call, which is the reason no Discord run has ever been
+    /// replayable: the tape a replay needs is exactly what closing the session destroyed. The
+    /// requirement that produced the old behaviour is "do not resume this on boot", and a stamp
+    /// satisfies it without spending the record.
+    ///
+    /// Idempotent: re-retiring keeps the FIRST stamp, so the retirement time stays the time the
+    /// player actually closed it.
+    pub async fn rpg_session_archive(
+        &self,
+        player: &str,
+        key: &str,
+        session_id: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            // `strftime('%s','now')` rather than `unixepoch()`: the latter needs SQLite
+            // 3.38+, and pinning a retirement stamp to a bundled-library version is a
+            // failure that would only appear on whichever box has the older one.
+            "UPDATE rpg_sessions SET archived_at = CAST(strftime('%s','now') AS INTEGER)
+             WHERE player = ? AND key = ? AND session_id = ? AND archived_at IS NULL",
+        )
+        .bind(player)
+        .bind(key)
+        .bind(session_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// PURGE a player's RPG session log (open + moves) — the erasure path, kept SEPARATE from
+    /// retirement so that "I finished this run" and "delete my data" cannot be spelled the same
+    /// way by accident. Nothing on the ordinary session-close path calls this; it exists for a
+    /// deliberate player-data erasure request.
+    pub async fn rpg_session_purge(
         &self,
         player: &str,
         key: &str,
@@ -1673,12 +1743,17 @@ impl Database {
         Ok(())
     }
 
-    /// A player's recorded RPG session opens (key + session id + seed), for boot replay.
+    /// A player's LIVE recorded RPG session opens (key + session id + seed), for boot replay.
+    /// Retired sessions are excluded here and only here — their moves stay readable through
+    /// [`Database::rpg_session_moves`], which is what makes a finished run replayable.
     pub async fn rpg_sessions_of(&self, player: &str) -> Result<Vec<RpgSessionRow>, sqlx::Error> {
-        let rows = sqlx::query("SELECT key, session_id, seed FROM rpg_sessions WHERE player = ?")
-            .bind(player)
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = sqlx::query(
+            "SELECT key, session_id, seed FROM rpg_sessions
+             WHERE player = ? AND archived_at IS NULL",
+        )
+        .bind(player)
+        .fetch_all(&self.pool)
+        .await?;
         Ok(rows
             .iter()
             .map(|row| RpgSessionRow {
@@ -3640,6 +3715,10 @@ pub struct NarrationAttestationRow {
     pub quote: Vec<u8>,
     /// Unix seconds the record was archived.
     pub created_at: i64,
+    /// The TEE-provenance commitment READ OFF THE LANDED RECEIPT, hex. Stored independently of
+    /// the four fields it commits to, so a later edit to any of them stops deriving it. Empty
+    /// only for a row written before the column existed, which reads as a FAILED check.
+    pub receipt_commit_hex: String,
 }
 
 fn narration_attestation_row(row: &sqlx::sqlite::SqliteRow) -> NarrationAttestationRow {
@@ -3656,6 +3735,7 @@ fn narration_attestation_row(row: &sqlx::sqlite::SqliteRow) -> NarrationAttestat
         e2e_pubkey_b64: row.get("e2e_pubkey_b64"),
         quote: row.get("quote"),
         created_at: row.get("created_at"),
+        receipt_commit_hex: row.get("receipt_commit_hex"),
     }
 }
 
@@ -3791,6 +3871,84 @@ mod tests {
             "an explicitly read-only URL must NOT create the file"
         );
         assert!(!path.exists());
+    }
+
+    /// **THE REPLAY PREREQUISITE.** Closing an RPG session used to `DELETE` its open row and its
+    /// entire move log, so a finished Discord run left nothing to replay — not "replay is
+    /// unbuilt", but "the input a replay reads is destroyed at the moment a run ends".
+    ///
+    /// Retirement now stamps `archived_at`. This asserts BOTH halves, because either alone is a
+    /// different bug: the tape must SURVIVE, and boot replay must still not resume it.
+    #[tokio::test]
+    async fn retiring_a_session_keeps_its_tape_and_stops_resuming_it() {
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        let row = |label: &str| super::RpgMoveRow {
+            label: label.to_string(),
+            turn: "t".to_string(),
+            arg: 0,
+            enabled: 1,
+            has_text: 0,
+            text: String::new(),
+            actor: "actor".to_string(),
+            trust: "s".to_string(),
+        };
+
+        db.rpg_session_open("p", "k", "s1", "seed").await.unwrap();
+        db.rpg_session_record_move("p", "k", "s1", &row("north"))
+            .await
+            .unwrap();
+        db.rpg_session_record_move("p", "k", "s1", &row("take"))
+            .await
+            .unwrap();
+        assert_eq!(db.rpg_sessions_of("p").await.unwrap().len(), 1);
+
+        db.rpg_session_archive("p", "k", "s1").await.unwrap();
+
+        // Half one: boot replay no longer resumes it — the behaviour `forget` was there for.
+        assert!(
+            db.rpg_sessions_of("p").await.unwrap().is_empty(),
+            "a retired session must not be resumed on the next boot"
+        );
+        // Half two: the tape is still there. This is the assertion the old DELETE could not pass.
+        let moves = db.rpg_session_moves("p", "k", "s1").await.unwrap();
+        assert_eq!(
+            moves.iter().map(|m| m.label.as_str()).collect::<Vec<_>>(),
+            ["north", "take"],
+            "a retired session's landed advances must survive, in order"
+        );
+
+        // Erasure is still reachable, but only by asking for it by name.
+        db.rpg_session_purge("p", "k", "s1").await.unwrap();
+        assert!(
+            db.rpg_session_moves("p", "k", "s1")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    /// Re-retiring keeps the FIRST stamp, so a repeated close does not rewrite when the player
+    /// actually finished.
+    #[tokio::test]
+    async fn retirement_is_idempotent() {
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        db.rpg_session_open("p", "k", "s1", "seed").await.unwrap();
+        db.rpg_session_archive("p", "k", "s1").await.unwrap();
+        let first: Option<i64> = sqlx::query_scalar(
+            "SELECT archived_at FROM rpg_sessions WHERE player='p' AND key='k' AND session_id='s1'",
+        )
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+        assert!(first.is_some(), "retirement stamps a time");
+        db.rpg_session_archive("p", "k", "s1").await.unwrap();
+        let second: Option<i64> = sqlx::query_scalar(
+            "SELECT archived_at FROM rpg_sessions WHERE player='p' AND key='k' AND session_id='s1'",
+        )
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+        assert_eq!(first, second, "a second retirement must not move the stamp");
     }
 
     #[tokio::test]

@@ -735,6 +735,14 @@ fn verify_effect_vm_turn_proof(
         .map(|&v| BabyBear::new_canonical(v))
         .collect();
 
+    // Range-check the balance limbs BEFORE trusting the Group 6 net-delta algebra they feed.
+    // `NET_DELTA = FINAL - INIT` holds over BabyBear for out-of-width limbs too, by modular
+    // wrap — so the delta constraint is only as sound as this precondition, which the AIR does
+    // not enforce and which (until this call landed) nothing checked on any deployed path.
+    // The `V1_PI_COUNT` floor above already guarantees the length this needs.
+    dregg_circuit::effect_vm::verify_balance_limb_pis(&pi_felts)
+        .map_err(|reason| format!("EffectVmProof balance limbs out of range: {reason}"))?;
+
     // Self-detect the committed WIDE cohort descriptor: verify SELECTOR-BOUND against every member,
     // requiring EXACTLY ONE accept. The proof never chooses its own descriptor — the semantics come
     // from the trusted registry, and a sound proof binds exactly one member. (Mirrors the standalone

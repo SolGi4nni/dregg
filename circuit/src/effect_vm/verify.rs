@@ -79,6 +79,12 @@ pub fn verify_state_integrity(state: &CellState) -> Result<(), String> {
     Ok(())
 }
 
+/// The shortest PI vector [`verify_balance_limb_pis`] can decide, derived from
+/// the highest offset it reads rather than written down. Every offset it touches
+/// lives in the v1 PI prefix, so this is well under
+/// `trace_rotated::V1_PI_COUNT` — the deployed rotated leg always satisfies it.
+pub const BALANCE_LIMB_PI_MIN_LEN: usize = pi::NET_DELTA_SIGN + 1;
+
 /// P2-2 / P0-1 helper: range-check the INIT_BAL_* and FINAL_BAL_* PIs that
 /// were added in the P0-1 fix.
 ///
@@ -91,12 +97,28 @@ pub fn verify_state_integrity(state: &CellState) -> Result<(), String> {
 /// an untrusted-prover scenario should call this on every received proof.
 ///
 /// Returns Ok if the PIs are well-formed, or an Err describing the violation.
+///
+/// # The precondition reads what the body reads
+///
+/// This guard used to demand `pi::BASE_COUNT` (201). The body reads exactly six
+/// offsets — `INIT_BAL_LO(20) .. NET_DELTA_SIGN(25)` — all inside the v1 PI
+/// PREFIX, which the deployed rotated leg publishes in full
+/// (`trace_rotated::V1_PI_COUNT` = 42, and the Lean emit pins the same offsets:
+/// `Dregg2/Circuit/Emit/EffectVmEmit.lean` `INIT_BAL_LO := 20`). So the 201-felt
+/// demand did not make the check strict — it made it **unreachable on the only
+/// leg that ships**: every live `"effect-vm-rotated"` PI vector failed the
+/// length test before a single limb was examined, and the function would have
+/// reported `too short` on a proof it was supposed to range-check.
+///
+/// The precondition is now [`BALANCE_LIMB_PI_MIN_LEN`], derived from the highest
+/// offset the body reads, so the guard cannot drift away from the reads again.
 pub fn verify_balance_limb_pis(public_inputs: &[BabyBear]) -> Result<(), String> {
-    if public_inputs.len() < pi::BASE_COUNT {
+    if public_inputs.len() < BALANCE_LIMB_PI_MIN_LEN {
         return Err(format!(
-            "PI vector too short: {} < {}",
+            "PI vector too short for the balance-limb range check: {} < {} \
+             (needs the v1 prefix through NET_DELTA_SIGN)",
             public_inputs.len(),
-            pi::BASE_COUNT
+            BALANCE_LIMB_PI_MIN_LEN
         ));
     }
     for (label, idx) in &[

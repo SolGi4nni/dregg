@@ -36,11 +36,17 @@ the system is built around.
 
 **Path (3) also breaks reconstruction, independently of sign.** `split_u64` computes
 `hi = val >> 30` (up to 2³⁴) and then calls `BabyBear::new(hi)`, which reduces mod
-`p ≈ 2³¹`. For any `val >= 2⁶¹` the high limb wraps and `join_u64` no longer returns `val`.
-A raw-cast negative balance is `≈ 2⁶⁴`, so it is *always* past that wall. A biased balance
-is `≈ 2⁶³`, so it is **also** always past it: **the bias alone does not fix path (3)**, and
-"route the felt path through `balance_biased`" is therefore not a one-line change. The
-30/34 split is sized for a value under 2⁶¹, and both signed encodings exceed it.
+`p = 2³¹ − 2²⁷ + 1 = 2 013 265 921`. So the high limb wraps — and `join_u64` stops
+returning `val` — for every `val ≥ p·2³⁰ ≈ 2⁶⁰·⁹⁰`. A raw-cast negative balance is `≈ 2⁶⁴`,
+so it is *always* past that wall. A biased balance is `≈ 2⁶³`, so it is **also** always past
+it: **the bias alone does not fix path (3)**, and "route the felt path through
+`balance_biased`" is therefore not a one-line change. The 30/34 split is sized for values
+below `p·2³⁰`, and both signed encodings exceed it by three orders of magnitude.
+
+(Corollary worth stating because it bounds what the newly-wired check is worth: since
+`BabyBear::new` has already reduced, `hi.0 < p < 2³¹` *always* — so the `INIT_BAL_HI`/
+`FINAL_BAL_HI` arms of `verify_balance_limb_pis` can never fire on a value that came from
+`split_u64`. They fire only on a non-canonical felt arriving over the wire.)
 
 ## What that means for the repair
 

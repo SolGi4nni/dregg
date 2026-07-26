@@ -5144,6 +5144,30 @@ pub fn verify_full_turn_bound(
                 "effect VM PI too short".into(),
             ));
         }
+
+        // THE BALANCE-LIMB RANGE CHECK, on the leg that actually ships.
+        //
+        // Group 6 binds `NET_DELTA = FINAL - INIT` over BabyBear. That algebra is
+        // satisfied just as happily by limbs OUTSIDE their declared widths, where the
+        // modular subtraction wraps — so the in-AIR delta constraint's soundness rests
+        // on a range precondition the AIR does not itself enforce. `verify_balance_limb_pis`
+        // is that precondition, and until now NOTHING called it: it was defined, exported
+        // from two modules, and invoked by no production path and no test. An untrusted
+        // prover's limbs were unrange-checked on every deployed verify.
+        //
+        // Every leg reaching this line has already passed the `min_pi` floor above, and
+        // `min_pi` (V1_PI_COUNT = 42, or the full v1 count) exceeds
+        // `BALANCE_LIMB_PI_MIN_LEN` (26) on both leg shapes — so this can only fail on a
+        // genuine range violation, never on length.
+        debug_assert!(min_pi >= dregg_circuit::effect_vm::BALANCE_LIMB_PI_MIN_LEN);
+        dregg_circuit::effect_vm::verify_balance_limb_pis(&leg.sub_public_inputs).map_err(
+            |reason| {
+                FullTurnVerifyError::MalformedPublicInputs(format!(
+                    "effect-vm leg `{}` balance limbs out of range: {reason}",
+                    leg.label
+                ))
+            },
+        )?;
     }
 
     // THE WIDE FLAG-DAY COMMIT ANCHOR (the ~31-bit light-client floor close). A WIDE rotated leg

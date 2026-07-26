@@ -1084,7 +1084,7 @@ fn a_forced_clash_re_enters_the_round_instead_of_dropping_the_moves() {
     assert!(text.contains("The clash"), "the clash plaque is rendered");
     assert!(text.contains("RE-SUBMITTING: seat A and seat B"), "{text}");
     assert!(
-        text.contains("MARKS the contested coordinate — (3,1)"),
+        text.contains("MARKS the contested coordinate ((3,1)"),
         "{text}"
     );
 }
@@ -1951,11 +1951,11 @@ fn a_seatless_viewer_is_told_which_seat_would_be_theirs() {
 
     let fresh = rendered_text(&off.render(&session));
     assert!(
-        !fresh.contains("Seat A — them") && !fresh.contains("Seat B — them"),
+        !fresh.contains("Seat A · them") && !fresh.contains("Seat B · them"),
         "a viewer with no seat must not be told both seats belong to someone else:\n{fresh}"
     );
     assert!(
-        fresh.contains("Seat A — OPEN — the seat your first move would claim"),
+        fresh.contains("Seat A · OPEN (the seat your first move would claim)"),
         "the claimable seat must be named as the one they would take:\n{fresh}"
     );
     assert!(
@@ -1967,7 +1967,7 @@ fn a_seatless_viewer_is_told_which_seat_would_be_theirs() {
     seal(&off, &mut session, &seat_a(), (3, 1), (3, 3));
     let a_view = rendered_text(&off.render_for(&session, &seat_a()));
     assert!(
-        a_view.contains("Seat A — YOURS") && a_view.contains("Seat B — them"),
+        a_view.contains("Seat A · YOURS") && a_view.contains("Seat B · them"),
         "a seated viewer is told which panel is theirs:\n{a_view}"
     );
 }
@@ -2114,5 +2114,41 @@ fn a_spectators_phase_controls_are_dimmed_and_a_claimants_are_not() {
     assert!(
         fresh.claimable_seat().is_some(),
         "a fresh table has a claimable seat"
+    );
+}
+
+/// **THE SURFACE CLOCK IS NOT SHORTER THAN THE BOARD IT CLOCKS.**
+///
+/// [`MAX_TURNS`] is a renderer constant with no circuit backing (the witnesses are per-turn), so
+/// nothing outside this file constrains it — and a too-short clock does not merely truncate
+/// matches, it DECIDES them positionally via `adjudicate_capped` instead of letting a seat win.
+/// The number was 64 for no recorded reason.
+///
+/// This cannot check that the cap is *well chosen* — that needs a self-play measurement of the
+/// adjudication rate, which this crate has no driver for and which is NOT claimed anywhere. It
+/// checks the property that IS checkable from the board's geometry: the automaton starts dead
+/// centre of an 11×11 and moves at most one square per resolution, so no win is reachable in
+/// fewer than `N / 2` resolutions, and a real contested match runs many multiples of that. A cap
+/// anywhere near the floor is adjudicating games rather than clocking them.
+#[test]
+fn the_surface_clock_outlasts_the_board_geometry() {
+    // The theoretical fastest win: the automaton walks from centre to the nearest goal rank, one
+    // square per resolution.
+    let fastest_possible_win = (N as u64) / 2;
+    assert!(
+        MAX_TURNS >= fastest_possible_win * 20,
+        "the surface clock ({MAX_TURNS}) must leave real room past the {fastest_possible_win}-\
+         resolution theoretical fastest win; below that the cap decides matches positionally \
+         rather than clocking them"
+    );
+
+    // And the clock is still FINITE and still shown — raising it must not turn the cap into a
+    // thing a player cannot see coming.
+    let off = AutomataflOffering;
+    let session = off.open(SessionConfig::with_seed(11)).expect("open");
+    let text = rendered_text(&off.render_for(&session, &seat_a()));
+    assert!(
+        text.contains("ON THE CLOCK"),
+        "the clock must remain visible at the raised cap, not become invisible by being far away"
     );
 }
