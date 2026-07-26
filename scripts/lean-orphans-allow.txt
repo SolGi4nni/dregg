@@ -122,7 +122,6 @@ Dregg2.Bridge.HoldingWeightedTally  # GREEN self-checked (#assert clean), REGIST
 
 # --- game AIRs authored in Lean, actively churning (Dungeon/MultiwayTug/Automatafl); carry sorry — not for the metatheory-no-sorry build ---
 Dregg2.Games.AutomataflAir  # GREEN self-checked (#assert clean), REGISTERABLE — game-AIR cluster
-Dregg2.Games.MultiwayTug  # GREEN self-checked (#assert clean), REGISTERABLE — game-AIR cluster
 Dregg2.Games.MultiwayTugAir  # GREEN self-checked (#assert clean), REGISTERABLE — game-AIR cluster
 Dregg2.Games.MultiwayTugProgram  # GREEN self-checked (#assert clean), REGISTERABLE — game-AIR cluster
 
@@ -161,7 +160,5 @@ Dregg2.Circuit.Emit.AutomataflNGenGolden  # A 2.98 MB byte-pinned WIRE GOLDEN (1
 # `scripts/check-ratchet-darkness.sh` reports ZERO refuted-floor mentions in all four, so nothing
 # vacuous is hiding behind these lines. If any of them ever names a floor, RULE 1 of that gate reds
 # and the entry stops being enough. The landing lane should DELETE its entry here when it roots.
-Dregg2.Bridge.LightClientMidnight  # co-tenant lane (landed 5b540c20df, "formalize + STARK-ify the MIDNIGHT lightclient"); green at 12s; zero floor mentions
-Dregg2.Bridge.LightClientSolana  # co-tenant lane, same sweep window; green at 14s; zero floor mentions
 Dregg2.Circuit.Emit.LightClientMidnightAir  # co-tenant lane; the AIR half of LightClientMidnight; zero floor mentions
 Dregg2.Circuit.Emit.LightClientSolanaAir  # co-tenant lane; the AIR half of LightClientSolana; zero floor mentions
