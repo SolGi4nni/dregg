@@ -51,6 +51,11 @@ GATES=(
   "mirror-gates|900|bash scripts/check-mirror-gates.sh"
   "mirror-gates-canary|900|bash scripts/mirror-gates/canary.sh"
   "gates-executed|600|python3 scripts/check-gates-executed.py"
+  # feature-tiers is the STATIC half only (seconds, no cargo): every (crate, feature) pair in the
+  # tree has a tier, and no tier row is stale. The T3 COMPILE sweep it plans is nightly and lives
+  # in .github/workflows/feature-surface.yml — `scripts/feature-t3-sweep.sh` runs it by hand.
+  "feature-tiers|180|python3 scripts/check-feature-tiers.py"
+  "feature-t3-ratchet|60|bash scripts/feature-t3-sweep.sh --self-test"
   "ci-invariants-structural|900|bash scripts/ci-invariants.sh structural"
   "descriptor-drift|900|bash scripts/check-descriptor-drift.sh"
   "wasm-freshness|120|bash scripts/check-wasm-freshness.sh"

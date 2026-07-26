@@ -1,0 +1,297 @@
+# feature-tiers.tsv — THE FEATURE SURFACE LEDGER that scripts/check-feature-tiers.py enforces.
+#
+# Every `(crate, feature)` pair in this repository gets a TIER here, or the gate goes RED. That
+# TOTALITY is the point: a `#[cfg(feature = ...)]` is a SUBTRACTION THAT EMITS NO LINE, so a
+# feature nothing compiles produces no signal at all — the build is green BECAUSE the code is
+# absent, which is strictly worse than `#[ignore]` (that at least keeps the file compiling).
+#
+# MEASURED 2026-07-26: 243 pairs / 145 distinct feature names, declared by 73 of 270 first-party
+# packages across 8 cargo workspaces. A push-triggered job compiled 152 of them. NOTHING anywhere
+# passes `--all-features`, so the other 91 — 37% of the surface — were fed to rustc by no CI job
+# at all and said nothing about it. Two things that LOOK like coverage are not: `pages.yml`
+# (`gpui-web`, `web`) is workflow_dispatch ONLY, and `publish-sdk-py.yml` names `kernel` in a
+# comment while no step passes it.
+#
+# THE TIERS
+#   T1  green every push. Either activated by the default resolve of a workspace a push-triggered
+#       job builds (`default@<workspace>`), or explicitly enabled by a `--features` flag listed
+#       WITH ITS PROVENANCE in PUSH_TRIGGERED_EXPLICIT in the checker — never inferred from YAML,
+#       because a derivation from the file the accident edits always agrees nothing was expected.
+#   T2  heavy but load-bearing — nightly, its own job. These stay OFF by default on purpose
+#       (`prove` pulls the plonky3 recursion prover; forcing it into the dev loop would be
+#       strictly worse). Armed in .github/workflows/armed-teeth.yml.
+#   T3  must at least COMPILE — one `cargo check -p <crate> --features <feature> --all-targets`
+#       per pair, run by scripts/feature-t3-sweep.sh from .github/workflows/feature-surface.yml.
+#       This catches `#![cfg]` ROT, the majority class: a feature-gated FILE that no longer
+#       compiles is invisible until someone turns the feature on, and nobody ever does.
+#       `--all-targets` is load-bearing — the gated files here overwhelmingly live in `tests/`.
+#       A `why` opening `nodefault:` makes the sweep pass `--no-default-features` (starbridge-v2's
+#       `sel4-thin` is mutually exclusive with the default set at the linker level).
+#   T4  explicitly EXEMPT, WITH A REASON opening with one of
+#       credentials / network / gpu / target / toolchain. COST IS DELIBERATELY NOT A CLASS — an
+#       expensive feature is T2, not exempt. armed-teeth.yml's "WHAT IS NOT HERE" section is the
+#       discipline being imitated: named, not hidden.
+#
+# T3 IS COMPILE-ONLY AND SAYS SO. Green means rustc accepted the code. It does not mean the
+# feature works, and it NEVER means its tests ran.
+#
+# COLUMNS (tab-separated; blank lines and '#' comments ignored)
+#   crate    cargo package name
+#   feature  the feature name as `--features` takes it
+#   tier     T1 | T2 | T3 | T4
+#   why      T1: `default@<workspace>` or the CI flag. T2: the job that arms it.
+#            T3: what turning it on compiles. T4: `<class>: <reason>` — never empty.
+#
+# REGENERATE:  python3 scripts/check-feature-tiers.py --regen
+#   Existing tiers and reasons are PRESERVED; new pairs land as T3 `REVIEW-ME` and stale rows are
+#   dropped. The `#!` counts below are rewritten to match, so a regen always shows in a diff.
+#
+# crate	feature	tier	why
+#!EXPECT_PAIRS=243
+#!EXPECT_T1=152
+#!EXPECT_T2=3
+#!EXPECT_T3=79
+#!EXPECT_T4=9
+agent-platform	live-brain	T3	drive_live wires dregg-agent's real OpenAI-compatible HTTP transport as a rented grain's brain (BYO key from env). Compile-only here; the live call needs credentials
+attested-dm	tlsn-live	T3	attests the narration over a GENUINE local MPC-TLS 2PC roundtrip (zkoracle-prove's vendored TLSNotary) instead of the modeled ed25519 carrier
+commons-arbiter	tlsn-live	T3	attests the ruling over a genuine local MPC-TLS 2PC roundtrip instead of the modeled ed25519 carrier
+confined-swarm	tlsn-live	T3	attests each worker's turn over a genuine local MPC-TLS 2PC roundtrip instead of the modeled ed25519 carrier
+deos-hermes	cockpit-surface	T1	default@.
+deos-hermes	default	T1	default@.
+deos-hermes	js-agent	T3	THE HANDS — the confined agent's run_js tool; pulls deos-js (real SpiderMonkey)
+deos-hermes	live-brain	T3	brain::live_brain_from_env() and the transport it resolves from the BYO-key env chain
+deos-hermes	node-brain	T3	THE DISTRIBUTED HANDS — a confined brain drives a remote node's World over NodeWorldSink
+deos-hermes	screenshot	T3	offscreen RGBA capture of the dock surface in a headless gpui app (offscreen wgpu + no-system-fonts text). Compile-only: painting a frame needs an adapter, checking it does not
+deos-hermes	zk-live	T3	zkoracle-prove's tlsn-live: the heavy mpz/tokio/rustls 2PC backend behind the crown
+deos-matrix	cockpit-surface	T1	default@.
+deos-matrix	default	T1	default@.
+deos-matrix	gui	T1	default@.
+deos-matrix	live-matrix	T3	matrix-sdk's on-disk sqlite store (client.rs's sqlite_store path)
+deos-terminal	cockpit-surface	T1	default@.
+deos-terminal	default	T1	default@.
+deos-terminal	native-ui	T1	default@.
+deos-terminal	pty-ws-server	T1	default@.
+deos-view	cap	T1	default@.
+deos-view	default	T1	default@.
+deos-view	discord	T3	the FOURTH ViewNode backend — serenity CreateEmbed + button components over the one IR
+deos-view	integration	T1	default@.
+deos-view	native	T1	default@.
+deos-view	telegram	T1	default@.
+deos-view	web	T1	default@.
+deos-view	wechat	T1	default@.
+deos-zed	cockpit-surface	T1	default@.
+deos-zed	default	T1	default@.
+deos-zed	firmament	T1	default@.
+deos-zed	gui	T1	default@.
+deos-zed	gui-demo	T1	default@.
+deos-zed	highlight-all	T3	the full 33-language tree-sitter grammar set
+deos-zed	highlight-common	T1	default@.
+deos-zed	screenshot	T1	default@.
+deos-zed-full	default	T3	the FirmamentZedFs adapter alone (the `fs` seam); the empty default keeps a bare build light
+deos-zed-full	full-zed	T3	the REAL Zed editor stack — editor/workspace/project plus the full workspace chrome, over a cell-ledger Fs. The single most expensive pair in the sweep; see feature-t3-known-red.tsv if it is currently over the per-pair budget
+dregg-agent	default	T1	default@.
+dregg-agent	live-brain	T1	ci.yml:602 cargo test -p dregg-agent --features live-brain
+dregg-app-framework	default	T1	default@.
+dregg-app-framework	dev	T3	the app-framework's development-only helpers
+dregg-app-framework	no-lean-link	T3	the polarity-inverted PLATFORM gate: drops the verified Lean producer for targets that cannot link libdregg_lean.a. FEATURE-HYGIENE.md §Lean
+dregg-app-framework	server	T1	default@.
+dregg-braid-hook	prove	T2	armed-teeth.yml `feature-gated-prove-teeth`: cargo test -p dregg-braid-hook --features prove --test weld_canary -- --ignored. Drives the deployed app-root fold node; first run 2026-07-25 bit on both poles in 473.95s
+dregg-bridge	test-utils	T1	default@.
+dregg-cell	default	T1	default@.
+dregg-cell	prover	T3	a DOCUMENTED NO-OP (`prover = []`), retained only so downstream `dregg-cell/prover` forwards keep resolving; it gates zero code (armed-teeth.yml says so too). Compile-only is exactly the right coverage for a feature with no body — and it stays in the sweep so the day it grows one, something compiles it
+dregg-cell	test-stubs	T1	default@.
+dregg-cell	test-stubs-release-test-target	T1	default@.
+dregg-cell	zkvm	T3	the proof-carrying helpers (dregg-commit / dregg-circuit) on the cell
+dregg-chain	default	T1	default@.
+dregg-chain	mock	T1	ci.yml:71 cargo test -p dregg-chain --features mock
+dregg-chain	on-chain	T1	ci.yml:72 cargo check -p dregg-chain --features on-chain
+dregg-chutes-e2ee	collateral-fetch	T3	the DCAP collateral HTTP client (Intel PCS / Phala PCCS). Compile-only; the LIVE acceptance test it serves needs the network
+dregg-circuit	default	T1	default@.
+dregg-circuit	plonky3	T1	default@.
+dregg-deco-prove	tlsn-live	T3	the vendored TLSNotary MPC-TLS backend behind the DECO prover
+dregg-demo	default	T1	default@.
+dregg-demo	prover	T1	default@.
+dregg-dfa	default	T1	default@.
+dregg-discord-bot	default	T1	default@discord-bot
+dregg-discord-bot	private-bazaar-live	T3	the opt-in private/proven Bazaar raid. THIS IS THE KNOWN WOUND: a verified settling gate shipped inside this feature and was registered nowhere, so every settling test in it could not go green on any host. Compiling it is the floor, not the fix
+dregg-doc	cell-heap	T1	default@.
+dregg-doc	rope	T1	default@.
+dregg-doc	substrate	T1	default@.
+dregg-dsl-runtime	default	T1	default@.
+dregg-dsl-runtime	plonky3	T1	default@.
+dregg-entity-compose	prove	T2	armed-teeth.yml `feature-gated-prove-teeth`: cargo test -p dregg-entity-compose --features prove --test leaf_prove -- --ignored. The SLOW real-STARK leaf prove; OFF by default so the fast substrate tests never pull the plonky3 recursion prover
+dregg-firmament	process-pd	T1	default@.
+dregg-firmament	process-pd-sandbox	T1	default@.
+dregg-hints	asm	T1	default@.
+dregg-hints	default	T1	default@.
+dregg-hints	parallel	T1	default@.
+dregg-intent	default	T1	default@.
+dregg-lean-ffi	default	T1	default@.
+dregg-lean-ffi	lean-lib	T1	ci.yml:984 cargo test -p dregg-lean-ffi --features lean-lib
+dregg-lean-ffi	no-lean-link	T1	default@.
+dregg-lightclient	default	T1	default@.
+dregg-lightclient	prover	T1	default@.
+dregg-macaroon	crypto	T1	default@.
+dregg-macaroon	default	T1	default@.
+dregg-macaroon	zkvm	T3	the proof-carrying macaroon helpers
+dregg-net-client-pd	default	T4	target: the sel4/dregg-pd workspace builds for targets/aarch64-sel4-microkit.json — a bare-metal tier-3 JSON target spec needing build-std, rust-src on nightly-2026-04-04, and $SEL4_INCLUDE_DIRS pointing at a Microkit SDK board's libsel4 headers. A hosted runner has neither the SDK nor the board
+dregg-net-client-pd	executor-ingress	T4	target: the sel4/dregg-pd workspace builds for targets/aarch64-sel4-microkit.json — a bare-metal tier-3 JSON target spec needing build-std, rust-src on nightly-2026-04-04, and $SEL4_INCLUDE_DIRS pointing at a Microkit SDK board's libsel4 headers. A hosted runner has neither the SDK nor the board
+dregg-node	default	T1	default@.
+dregg-node	deos-host	T1	default@.
+dregg-node	pg-mirror-live	T3	shipping verified-turn MirrorBatches to a live pg18. Compile-only; the ship needs DREGG_PG_MIRROR_URL and a database
+dregg-node	prover	T1	default@.
+dregg-node-target	default	T1	default@.
+dregg-node-target	http	T1	default@.
+dregg-oracle	default	T1	default@.
+dregg-oracle	live	T1	default@.
+dregg-perf	default	T1	default@.
+dregg-perf	prover	T1	default@.
+dregg-preflight	default	T1	default@.
+dregg-sdk	default	T1	default@.
+dregg-sdk	dev	T3	the SDK's development-only helpers
+dregg-sdk	embed-core	T1	default@.
+dregg-sdk	exec-lean	T1	default@.
+dregg-sdk	fhegg	T1	default@.
+dregg-sdk	no-lean-link	T1	default@.
+dregg-sdk	prover	T1	default@.
+dregg-sdk	unsafe-test-utils	T3	the authority-check-free constructor. Gated so production builds CANNOT construct it — which means nothing ever compiled the gated code either
+dregg-sdk-net	test-support	T1	default@.
+dregg-sdk-net	world-sink	T3	the client-side NodeWorldSink (a deos_js::WorldSink over a remote node's HTTP API)
+dregg-sdk-py	default	T3	the light wheel's default set. publish-sdk-py.yml builds it, but only on an sdk-py-v* TAG — no push-triggered job compiles this crate
+dregg-sdk-py	kernel	T3	the kernel wheel (`dregg[kernel]`). publish-sdk-py.yml NAMES it in a comment and no step passes it: `--no-default-features --features kernel` is built by nothing
+dregg-sdk-py	light	T3	the light (kernel-free) python extension surface; tag-triggered only, see above
+dregg-secrets	default	T1	default@.
+dregg-secrets	keychain	T1	default@.
+dregg-secrets	keyring	T1	default@.
+dregg-solana-lock	no-entrypoint	T3	drops the on-chain entrypoint so a depending crate or test harness can supply its own
+dregg-solana-settlement	no-entrypoint	T3	drops the on-chain entrypoint so a depending crate or test harness can supply its own
+dregg-storage	ark-bn254	T1	default@.
+dregg-storage	ark-ec	T1	default@.
+dregg-storage	ark-ff	T1	default@.
+dregg-storage	ark-poly	T1	default@.
+dregg-storage	ark-serialize	T1	default@.
+dregg-storage	ark-std	T1	default@.
+dregg-storage	default	T1	default@.
+dregg-storage	kzg	T1	default@.
+dregg-storage	poly-commitment	T1	default@.
+dregg-teasting	default	T1	default@.
+dregg-teasting	prover	T1	default@.
+dregg-tee-produce	default	T1	default@.
+dregg-tee-produce	fixture-backend	T3	the captured-fixture backend — a transport/wiring test aid over the one real captured Nitro doc
+dregg-tee-produce	nitro	T3	the REAL AWS Nitro NSM backend (/dev/nsm ioctl). Its own manifest says an ARM laptop compiles this with no enclave anywhere, so compiling it is the honest hosted gate
+dregg-tee-verify	collateral-fetch	T3	the optional DCAP collateral HTTP client for the real-quote TDX integration test
+dregg-tee-verify	zktls-producer	T1	default@.
+dregg-tests	__legacy_tests	T3	the retained legacy integration tests
+dregg-tests	__wip_tests	T3	the work-in-progress integration tests
+dregg-tests	default	T1	default@.
+dregg-tests	prover	T1	default@.
+dregg-token	biscuit	T1	default@.
+dregg-token	default	T1	default@.
+dregg-token	macaroon	T1	default@.
+dregg-token	rand-deps	T1	default@.
+dregg-token	zkvm	T3	the proof-carrying token helpers
+dregg-turn	default	T1	default@.
+dregg-turn	threshold-sig	T1	default@.
+dregg-verifier	default	T1	default@.
+dregg-verifier	no-lean-link	T3	pulls the verifier crate's own `verifier` feature so the prover-free rotated VERIFY surface (rotated_replay) is present on the floor — the standalone-verifier-PD invariant
+dregg-verifier	prover	T1	default@.
+dregg-verifier	verifier	T1	default@.
+dregg-zkoracle-prove	tlsn-live	T1	default@.
+dreggnet-catalog	default	T1	default@.
+dreggnet-catalog	private-bazaar-live	T3	the hosted journey for the private/proven Dark Bazaar to exact game consequence
+dreggnet-catalog	private-fhegg-game-consequence	T1	default@.
+dreggnet-companion	prove	T2	armed-teeth.yml `feature-gated-prove-teeth`: cargo test -p dreggnet-companion --features prove --test wing_weld -- --ignored. Forwards to the hook's prove gate for Wing::seal
+dreggnet-market	authenticated-clearing	T3	co-endorsement of the certified settlement + ciphertext digests in fhegg-fhe's canonical claim
+dreggnet-market	certified-clearing	T3	certified_clearing and its real fhEgg Cert-F batch-STARK prover
+dreggnet-market	contract-fixtures	T3	the `settled` builders otherwise cfg(test)/private-clearing-only, for surface adapters
+dreggnet-market	dark-amm-game	T3	the executable encrypted-amount constant-product table and its BFV producer/verifier boundary
+dreggnet-market	dark-pool-offering	T3	THE PLAYABLE DARK POOL over fhegg-fhe's default surface (threshold BFV + the wrap-guarded multiply engine + the dark-AMM invariant)
+dreggnet-market	default	T1	default@.
+dreggnet-market	fhegg-settlement	T1	default@.
+dreggnet-market	oracle-pit	T3	quorum-opened prices settled by exact re-execution through dreggnet_offerings::native_descent
+dreggnet-market	private-attested-clearing	T1	default@.
+dreggnet-market	private-clearing	T1	default@.
+dreggnet-offerings	default	T1	default@.
+dreggnet-offerings	private-fair-shuffle-operation	T1	default@.
+dreggnet-offerings	private-preference-operation	T1	default@.
+dreggnet-offerings	private-quest-operation	T1	default@.
+dreggnet-offerings	private-raid-operation	T1	default@.
+dreggnet-party	default	T1	default@.
+dreggnet-party	private-role-assignment	T3	the proof PRODUCER (dregg-circuit-prove + plonky3) for the party-to-raid role bijection
+dreggnet-surfaces	default	T1	default@.
+dreggnet-surfaces	private-raid	T1	default@.
+dreggnet-telegram	default	T1	default@.
+dreggnet-telegram	private-bazaar-live	T3	the Telegram surface's private/proven Bazaar raid
+dreggnet-telegram	shielded-crown-controller	T3	the public-only Telegram controller for the Bazaar to Dungeon crown; pulls the full fhEgg verifier and persistence tower
+dreggnet-web	dark-amm-game	T3	the standalone Dark Bazaar encrypted constant-product table over the shared operation adapter
+dreggnet-web	default	T1	default@.
+dreggnet-web	fhegg-settlement	T3	owning authenticated fhEgg settlement uploads (pulls the full TFHE stack)
+dreggnet-web	hosted-binary-operations	T3	the shared authenticated binary-operation transport seam
+dreggnet-web	private-bazaar-live	T3	the viewer-blind private Bazaar raid on the web server
+dreggnet-web	private-fair-shuffle-operation	T3	the fair-shuffle operation over the hosted binary-operation seam
+dreggnet-web	private-preference-operation	T3	the preference operation over the hosted binary-operation seam
+dreggnet-web	private-quest-operation	T3	the quest operation over the hosted binary-operation seam
+dreggnet-web	private-raid-operation	T3	the real HidingFri-backed dungeon raid assignment
+dreggnet-web	public-shielded-games	T3	THE PRODUCTION GAMES BINARY — the feature that exists so a public deploy cannot silently omit a completed shielded mechanic because its owning verifier stack is opt-in. Nothing compiled it
+dungeon-on-dregg	private-fair-shuffle	T1	default@.
+dungeon-on-dregg	private-preference	T1	default@.
+dungeon-on-dregg	private-quest	T1	default@.
+dungeon-on-dregg	private-raid-assignment	T1	default@.
+dungeon-on-dregg	tlsn-live	T3	narrate_turn_bedrock_attested's real presentation.verify() under the hosted pinned notary
+durable-workflow	default	T1	default@durable-workflow
+durable-workflow	deploy	T1	ci.yml:305 excluded-workspace matrix, testflags: --features deploy
+durable-workflow	pg	T3	the Postgres transactional-outbox meter. ci.yml's excluded-workspace matrix deliberately leaves tests/pg_weld.rs out (it needs a live Postgres) — but COMPILING the outbox needs no database
+durable-workflow	sqlite	T1	default@durable-workflow
+fhegg-fhe	amm-input-binding	T1	default@.
+fhegg-fhe	default	T1	default@.
+fhegg-fhe	tfhe-integer	T3	exact-integer TFHE clearing and its portable-wgpu TFHE kernels; the default library does not compile or link tfhe-rs at all
+fhegg-fhe	verified-pq-runtime-tests	T3	the archive-linked hostile tests for the certified-preprocessing authority. `cargo check` does not LINK, so this compiles without libdregg_lean.a; running them still needs the seed
+grain-jail	real-jail	T3	the real firmament OS-jail body-spawn — process-PD confinement via macOS Seatbelt or Linux seccomp+Landlock
+grain-turn	default	T1	default@.
+grain-turn	prover	T1	default@.
+hosted-durable	pg	T3	the Postgres transactional-outbox meter (exactly-once durable metering across restart); pulls sqlx for pg_outbox / settle::settle_meter_outbox
+pg-dregg	default	T3	the postgres-free core. Deliberately EMPTY (a pgNN feature cannot be a cargo default), and no push-triggered job builds the pg-dregg workspace at all — this sweep is its only compile
+pg-dregg	pg13	T4	toolchain: pgrx picks one PostgreSQL ABI at COMPILE time and its build script needs cargo-pgrx plus a matching PostgreSQL 13 installation with pg_config on PATH (`cargo pgrx init`). ci.yml already leaves pg-dregg out of the excluded-workspace matrix for the same reason. The postgres-free core is covered by pg-dregg:default, which is T3
+pg-dregg	pg14	T4	toolchain: pgrx picks one PostgreSQL ABI at COMPILE time and its build script needs cargo-pgrx plus a matching PostgreSQL 14 installation with pg_config on PATH (`cargo pgrx init`). ci.yml already leaves pg-dregg out of the excluded-workspace matrix for the same reason. The postgres-free core is covered by pg-dregg:default, which is T3
+pg-dregg	pg15	T4	toolchain: pgrx picks one PostgreSQL ABI at COMPILE time and its build script needs cargo-pgrx plus a matching PostgreSQL 15 installation with pg_config on PATH (`cargo pgrx init`). ci.yml already leaves pg-dregg out of the excluded-workspace matrix for the same reason. The postgres-free core is covered by pg-dregg:default, which is T3
+pg-dregg	pg16	T4	toolchain: pgrx picks one PostgreSQL ABI at COMPILE time and its build script needs cargo-pgrx plus a matching PostgreSQL 16 installation with pg_config on PATH (`cargo pgrx init`). ci.yml already leaves pg-dregg out of the excluded-workspace matrix for the same reason. The postgres-free core is covered by pg-dregg:default, which is T3
+pg-dregg	pg17	T4	toolchain: pgrx picks one PostgreSQL ABI at COMPILE time and its build script needs cargo-pgrx plus a matching PostgreSQL 17 installation with pg_config on PATH (`cargo pgrx init`). ci.yml already leaves pg-dregg out of the excluded-workspace matrix for the same reason. The postgres-free core is covered by pg-dregg:default, which is T3
+pg-dregg	pg18	T4	toolchain: pgrx picks one PostgreSQL ABI at COMPILE time and its build script needs cargo-pgrx plus a matching PostgreSQL 18 installation with pg_config on PATH (`cargo pgrx init`). ci.yml already leaves pg-dregg out of the excluded-workspace matrix for the same reason. The postgres-free core is covered by pg-dregg:default, which is T3
+pg-dregg	pg_test	T3	enables the #[pg_test]s. An empty feature on its own (cargo-pgrx sets it alongside an ABI), so it compiles without a PostgreSQL install
+pg-dregg	pgrx	T4	toolchain: pgrx picks one PostgreSQL ABI at COMPILE time and its build script needs cargo-pgrx plus a matching PostgreSQL 13-18 installation with pg_config on PATH (`cargo pgrx init`). ci.yml already leaves pg-dregg out of the excluded-workspace matrix for the same reason. The postgres-free core is covered by pg-dregg:default, which is T3
+pg-dregg	tier-c	T3	THE VERIFIED STORE's heavyweight proof half — the Lean-FREE circuit verifier (dregg-circuit-prove) behind attest::verify_serialized_proof. No pgrx, so it compiles
+pg-dregg	tier-d	T3	tier-c plus dregg-lean-ffi: the verified Lean executor tier
+pg-dregg	tier-d-lean	T3	a readable alias for tier-d, the verified Lean executor tier
+pg-dregg	tier-d-rust	T3	the Rust executor producer (dregg-turn + dregg-cell); when both tiers are on, tier-d wins
+servo-render	default	T1	default@.
+servo-render	libservo	T1	default@.
+servo-render	swgl-standalone	T1	default@.
+starbridge-domains	live-dns	T3	the live DNS resolver path behind the domains app
+starbridge-polis	default	T1	default@.
+starbridge-polis	deos	T1	ci.yml:82 cargo test -p starbridge-polis --features deos
+starbridge-v2	agent-js	T1	default@.
+starbridge-v2	android-systemui	T1	default@.
+starbridge-v2	app-registry	T1	default@.
+starbridge-v2	card-pane	T1	default@.
+starbridge-v2	default	T1	default@.
+starbridge-v2	desktop	T1	default@.
+starbridge-v2	dev-surfaces	T1	default@.
+starbridge-v2	embedded-executor	T1	default@.
+starbridge-v2	firmament	T1	default@.
+starbridge-v2	gpui-ui	T1	default@.
+starbridge-v2	gpui-web	T3	the full cockpit rendered by gpui to a canvas. pages.yml builds it via wasm-pack for wasm32-unknown-unknown, and that workflow is workflow_dispatch ONLY
+starbridge-v2	headless	T3	embedded-executor + app-registry + gpui-ui + render-capture with no dev-surfaces and no card-pane/agent-js/web-shell (their multi-GB mozjs + servo)
+starbridge-v2	headless-render	T3	a back-compat alias mapping to the full `desktop` build
+starbridge-v2	live-brain	T3	LiveJsHands + AcpClient::with_run_js_hook, sharing the same ../deos-js mozjs agent-js pulls
+starbridge-v2	live-node	T1	default@.
+starbridge-v2	native-full	T3	a back-compat alias: native-full IS `desktop` after the rename
+starbridge-v2	process-pd	T3	the out-of-process compositor PD (fork/socketpair/seatbelt-or-LSM). Unix-only, which a Linux runner is; dock/migrate.rs's PresentTransport is gated on it
+starbridge-v2	render-capture	T1	default@.
+starbridge-v2	sel4-thin	T3	nodefault: the Lean-free thin-client / verifier path for the seL4 component end-state. Its own manifest says it is mutually exclusive with native-full AT THE LINKER LEVEL and is selected with --no-default-features, so the sweep passes that flag rather than recording a pair it cannot express as permanently broken
+starbridge-v2	servo	T1	default@.
+starbridge-v2	web-shell	T1	default@.
+starbridge-web	default	T1	default@.
+starbridge-web	gpui-web	T3	starbridge-v2's gpui-web plus the gpui crates directly, so cockpit_web can build an element tree. pages.yml:123 is its only builder and fires only by hand
+starbridge-web	pty-ws-server	T3	the native PTY-over-WS terminal backend (server bin + deps), cfg(not(wasm32))-gated
+starbridge-web-surface	default	T1	default@.
+starbridge-web-surface	stream	T1	default@.

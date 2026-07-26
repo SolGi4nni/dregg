@@ -1,0 +1,190 @@
+# feature-surface.yml — THE CARGO FEATURE SURFACE: tiered, and actually compiled.
+#
+# ── THE HOLE THIS CLOSES ───────────────────────────────────────────────────────
+# A `#[cfg(feature = "x")]` is A SUBTRACTION THAT EMITS NO LINE. A failing test prints a line; a
+# red build prints a line; code that is not compiled prints NOTHING AT ALL. The build is green
+# BECAUSE the code is absent. That is strictly worse than `#[ignore]`, which at least keeps the
+# file compiling so API drift reds the day it lands, and it is the same shape as every dark-gate
+# incident this repository has had — only at the largest scale available.
+#
+# MEASURED 2026-07-26 (`python3 scripts/check-feature-tiers.py`): 243 `(crate, feature)` pairs
+# across 145 distinct feature names, declared by 73 of 270 first-party packages spread over 8
+# cargo workspaces.
+# `cargo check --workspace` plus every `--features` flag in every PUSH-TRIGGERED workflow
+# activates 152 of them. Nothing anywhere passes `--all-features`. The other 91 — 37% of the
+# surface — were fed to rustc by no CI job at all, and said nothing about it.
+#
+# Named, because a coverage claim that does not name what it leaves out reads like coverage it
+# does not have: `prover` in 1 crate (a documented no-op), `prove` in 3 (the adversarial fold
+# canaries, armed in armed-teeth.yml), `tlsn-live` in 6, `private-bazaar-live` in 4,
+# `no-lean-link` in 2, all 13 of pg-dregg's pgrx ABIs, and both seL4 protection-domain features.
+#
+# ── THE TIERS (scripts/feature-tiers.tsv, enforced by scripts/check-feature-tiers.py) ──
+#   T1  green every push — default-activated in a workspace a push job builds, or an explicit
+#       `--features` flag whose provenance is recorded IN THE CHECKER, not inferred from YAML.
+#   T2  heavy but load-bearing — nightly, its own job. `prove` stays OFF by default on purpose:
+#       it pulls the plonky3 recursion prover and forcing it into the dev loop would be strictly
+#       worse. armed-teeth.yml arms these; this workflow only records the tier.
+#   T3  must at least COMPILE — the `t3-compile-sweep` job below. Compile-only, and it says so.
+#   T4  explicitly EXEMPT, with a CLASS and a REASON (credentials/network/gpu/target/toolchain).
+#       COST is deliberately not an exemption class — an expensive feature is T2, not exempt.
+#
+# ── WHAT IS NOT HERE (named, not hidden) ───────────────────────────────────────
+#
+#   * THE T3 SWEEP DOES NOT RUN ON PULL REQUESTS. MEASURED 2026-07-26, all 79 T3 pairs on one
+#     warm 24-core lane (hbox/hcargo, 4605 warm deps, single tenant): 1594s — 26.6 min, mean 20s
+#     per pair, median 12s, max 151s (starbridge-v2:gpui-web). That is the WARM marginal cost.
+#     A hosted runner has 4 cores and a cache that only partly survives, and the sweep spans
+#     EIGHT cargo workspaces of which six are cold on any runner, so expect the first nightly to
+#     be dominated by cold dependency graphs rather than by these 26 minutes. Six shards keeps
+#     any one of them well inside the 90-minute cap; the shards are CONTIGUOUS blocks of the
+#     sorted plan, so a crate's features — and shard 5's six excluded workspaces — stay together
+#     and each shard's cache is worth having.
+#
+#     One measurement worth carrying: the same sweep on a lane holding a Lean seed archive took
+#     ~3 extra MINUTES per distinct feature resolve, because `dregg-lean-ffi`'s build script
+#     `nm`-scans the 478 MB `libdregg_lean.a`. A hosted runner has no archive and that build
+#     script early-returns, so the number above (taken with the archive removed) is the faithful
+#     one and a Lean-seeded box is the pessimistic one.
+#
+#     On every PR this is a job someone deletes the first slow week. The PR-facing half is
+#     `ledger`, which costs seconds and catches the actual incident class — a feature ARRIVING
+#     with no tier. What a PR does NOT get is "this feature-gated file still compiles"; that is
+#     a real gap and it is here in writing rather than implied away.
+#
+#   * NOTHING RUNS THE T3 FEATURES' TESTS. T3 is `cargo check`. A green sweep means rustc
+#     accepted the code and nothing more — not that the feature works, and never that its tests
+#     ran. Turning any T3 pair into an executed gate is a per-feature decision, and the ledger's
+#     `why` column is where the argument for one belongs.
+#
+#   * THE 20 PAIRS THAT DO NOT COMPILE TODAY (of 79 — the first sweep found 25% of the T3 tier
+#     broken) are recorded in scripts/feature-t3-known-red.tsv with the symptom. They are FIVE
+#     root causes, not twenty problems: a deos-hermes example missing a `required-features`
+#     stanza (x4), two EXCLUDED workspaces that do not inherit the root `[patch] p3-fri` and so
+#     cannot build dregg-circuit-prove at all (pg-dregg x6, sdk-py x3 — and sdk-py is the wheel
+#     `publish-sdk-py.yml` cuts on a tag), plain API drift behind `dregg-tests`'s __legacy/__wip
+#     features (x2), a grown struct field and a grown function arity (x2), and
+#     starbridge-v2:sel4-thin failing under its own documented invocation. Every one is a
+#     FINDING for another lane; this workflow's job is that they stop being invisible.
+#     The sweep is red in BOTH directions against that file — a new break reds, and so does a
+#     recorded-broken pair that starts passing — so the list can only shrink without an explicit,
+#     reviewable edit. It is a ratchet, not a place to hide.
+
+name: Feature surface
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # 04:30 UTC, an hour before armed-teeth.yml so the two heavy nightly lanes do not overlap.
+    - cron: '30 4 * * *'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  # Per-pair budget for the sweep. A pair that blows it is recorded as a FAIL with the symptom
+  # `TIMEOUT after Ns` — never as a skip, because "it was taking a while so we moved on" is how a
+  # surface goes dark in the first place. Raised above the 900s default for `deos-zed-full`, whose
+  # `full-zed` feature pulls the real Zed editor stack; see feature-t3-known-red.tsv.
+  T3_PAIR_TIMEOUT: '1800'
+
+permissions:
+  contents: read
+
+jobs:
+  # ── THE PER-PUSH HALF. Seconds. This is the one that catches the incident. ──────────────
+  ledger:
+    name: Feature ledger (every pair has a tier)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-06-21
+      # The STATIC phase needs no cargo at all — it parses Cargo.toml with tomllib and compares
+      # the tree to the ledger, so it still runs when nothing in the tree compiles. That is
+      # deliberate: the 2026-07-20 blackout worked precisely by making a whole crate's tests
+      # un-compilable, and a gate that needs a working build to say anything inherits that.
+      - name: Static gate — every (crate, feature) pair is tiered, no row is stale
+        run: python3 scripts/check-feature-tiers.py
+      # The cargo cross-checks ADD failures and never subtract them: C1 holds the static
+      # enumerator to `cargo metadata`'s answer (the tomllib reimplementation of cargo's
+      # implicit-optional-dep rule is exactly the kind of thing that drifts), and C2 refuses a
+      # T1 claim the default resolve does not actually back.
+      - name: Cargo cross-checks — enumeration vs `cargo metadata`, and every T1 claim
+        run: python3 scripts/check-feature-tiers.py --verify-enumeration --verify-t1
+      # The sweep's ratchet has its own poles and they cost nothing, so they run on EVERY push
+      # even though the sweep itself does not. A judgement nobody can show going red is not a
+      # judgement, and the cheap half of proving it should not wait for the nightly.
+      - name: The T3 ratchet can go red in both directions (synthetic logs, no cargo)
+        run: scripts/feature-t3-sweep.sh --self-test
+
+  # ── THE COMPILE SWEEP. Nightly + main + manual; sharded so no shard runs long. ──────────
+  t3-compile-sweep:
+    name: T3 compile sweep (shard ${{ matrix.shard }}/6)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      # ci.yml's list, PLUS glib/gtk/atk/soup. `deos-zed-full` (shard 4) pulls the real Zed stack,
+      # whose `glib-sys` build script needs `pkg-config glib-2.0`; measured 2026-07-26, its two
+      # pairs fail at that build script on a host without it. ci.yml never needed these because
+      # no push job builds that workspace at all — which is precisely the gap this sweep closes.
+      - run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libgl1-mesa-dev libegl-dev libgles-dev libharfbuzz-dev libfreetype-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev libxext-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gperf libunwind-dev liburing-dev libglib2.0-dev libgtk-3-dev libatk1.0-dev libsoup-3.0-dev
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-06-21
+      # The T3 plan spans EIGHT cargo workspaces, and each has its own target dir. rust-cache
+      # caches only `.` unless told otherwise, so without this list the six excluded workspaces
+      # rebuild from scratch on every nightly — the shard would look expensive for a reason that
+      # is entirely cache configuration. `scripts/check-feature-tiers.py --emit-t3-plan | cut -f1
+      # | sort -u` is the list; sel4/dregg-pd is absent because its two pairs are T4.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: t3-shard-${{ matrix.shard }}
+          workspaces: |
+            .
+            deos-zed-full
+            discord-bot
+            durable-workflow
+            pg-dregg
+            sdk-py
+            solana-lock
+            solana-settlement
+      # `deos-zed-full` (shard 4's T3 pairs) path-points `../../plonky3-recursion/*`, the same
+      # sibling-checkout requirement `forge-ci-runner` and `wasm/` carry — and the same REV as
+      # ci.yml's legs, which they must stay in lockstep with or the verifying key forks. Every
+      # shard clones it because the shard boundaries move when the ledger does; a step that is
+      # cheap and unconditional cannot become wrong when a pair changes shard. If the host is
+      # down the shard fails at FETCH, not at build, and the error says which.
+      - name: Fetch the plonky3-recursion fork as a sibling (deos-zed-full patch target)
+        run: |
+          set -euo pipefail
+          REV=0a4a554e144f4e60107555ea7a11cd9969d6208b
+          if [ ! -d ../plonky3-recursion/.git ]; then
+            git clone --no-checkout https://github.com/emberian/plonky3-recursion ../plonky3-recursion
+            git -C ../plonky3-recursion fetch --depth 1 origin "$REV"
+            git -C ../plonky3-recursion checkout "$REV"
+          fi
+      # The plan comes from the LEDGER, not from a second list in this file. A sweep whose
+      # contents can drift from the tier it claims to enforce is two ledgers, and one of them
+      # is always the stale one.
+      - name: Compile every T3 pair in this shard
+        run: scripts/feature-t3-sweep.sh --shard ${{ matrix.shard }}/6 --log t3-shard-${{ matrix.shard }}.tsv
+      - name: Upload the per-pair record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: t3-sweep-shard-${{ matrix.shard }}
+          path: t3-shard-${{ matrix.shard }}.tsv
+          if-no-files-found: error
