@@ -91,10 +91,11 @@ a one-validator chain and the committee's key, `dregg-node run` starts it
 second consecutive run. `producer_root_agreeing_effects` (and its deprecated
 alias `producer_covered_effects`) reads **18**.
 
-Note for a box already running a node: pass `--gossip-port`. It defaults to 9420
-and a second node that cannot bind it keeps serving HTTP with
-`consensus_live:false` and applies nothing — a fail-open in
-`blocklace_sync.rs`'s `failed to create PeerNode for blocklace gossip` path.
+Note for a box already running a node: pass `--gossip-port`. It defaults to 9420,
+so a second node cannot bind it. That node used to keep serving HTTP with
+`consensus_live:false` and apply nothing; as of 2026-07-26
+`blocklace_sync::refuse_to_start_without_consensus` makes it refuse to start
+instead, naming the port and the bind error.
 
 ## Proof / verification mode (GitHub issue #2 — honest answer)
 

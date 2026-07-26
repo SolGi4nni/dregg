@@ -95,10 +95,11 @@ For a real committee, `dregg-node genesis --validators N` is still the command;
 `demo/multi-node-devnet/start_devnet.sh` shows that shape for six nodes.
 
 **Already running a node? Pass `--gossip-port` as well.** It defaults to 9420 for
-every node, and a second node that cannot bind it does not fail — blocklace logs
-`failed to create PeerNode for blocklace gossip: Address already in use` and
-returns, and the node then serves HTTP forever with `consensus_live:false`,
-`block_count:0`, and every faucet grant accepted and never applied.
+every node, so a second node on the same box cannot bind it. Such a node now
+refuses to start — `REFUSING TO START: consensus did not come up` with the bind
+error as the reason — rather than serving HTTP forever with
+`consensus_live:false`, `block_count:0`, and every faucet grant accepted and
+never applied, which is what it did before 2026-07-26.
 
 ### Unlock it — nothing finalizes until you do
 

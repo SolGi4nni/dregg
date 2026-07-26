@@ -2956,6 +2956,47 @@ async fn project_committed_participants(state: &NodeState, admitted: &[[u8; 32]]
         .collect()
 }
 
+/// Abort the process because consensus startup failed.
+///
+/// Every early exit in [`run_blocklace_sync_with_policy`] leaves the same object
+/// behind: a node with NO consensus. Its only deployed caller
+/// (`lib.rs::run`, `if let Some(handle) = …` with no `else`) then continues to
+/// bind HTTP and serve, so the node accepts every turn, applies none, reports
+/// `consensus_live:false` / `block_count:0`, and answers `{"success":true}` to
+/// grants that never land. That is the fail-open shape: the check that would
+/// have refused instead logged and proceeded, and to every external liveness
+/// probe the process looks alive.
+///
+/// Measured on 2026-07-26 with the gossip port held by another process:
+///
+/// ```text
+/// ERROR …blocklace_sync: failed to create PeerNode for blocklace gossip
+///       error=bind error: Address already in use (os error 48)
+///  INFO dregg_node: HTTP API listening addr=127.0.0.1:8521
+/// $ curl -s localhost:8521/api/faucet -d '{"recipient":"7a…7a","amount":10000}'
+/// {"success":true,"turn_hash":"447e63…"}
+/// $ curl -s localhost:8521/api/cell/7a…7a
+/// {"found":false,"balance":0,…}
+/// ```
+///
+/// There is no mode in this binary where that node is useful. `--federation-mode
+/// solo` still runs the real committee-of-one blocklace through this same
+/// function (the block production loop lives past every one of these exits);
+/// there is no `--no-gossip` flag; and every in-process caller passes
+/// `gossip_port = 0` (OS-assigned, cannot collide) and already `.expect()`s a
+/// handle. So the refusal is unconditional: log the operator-facing reason, then
+/// die before the HTTP surface exists.
+fn refuse_to_start_without_consensus(reason: &str) -> ! {
+    error!(
+        reason,
+        "REFUSING TO START: consensus did not come up, and a dregg-node without consensus \
+         accepts turns and applies none — it would serve HTTP with consensus_live:false and \
+         block_count:0 while answering success to grants that never land. Fix the reason above \
+         and restart."
+    );
+    panic!("refusing to start without consensus: {reason}");
+}
+
 pub async fn run_blocklace_sync(
     state: NodeState,
     gossip_port: u16,
@@ -2975,11 +3016,9 @@ pub async fn run_blocklace_sync(
     let consensus_time_policy = match consensus_time_policy_v1_from_env() {
         Ok(policy) => policy,
         Err(error) => {
-            error!(
-                error,
-                "consensus-time-v1 deployment coordinate unavailable; refusing to start consensus"
-            );
-            return None;
+            refuse_to_start_without_consensus(&format!(
+                "consensus-time-v1 deployment coordinate unavailable: {error}"
+            ));
         }
     };
     run_blocklace_sync_with_policy(
@@ -3182,21 +3221,20 @@ pub(crate) async fn run_blocklace_sync_with_policy(
                 )
             }
             Err(e) => {
-                error!(
-                    error = %e,
-                    "failed to restore blocklace from storage; refusing to replace durable history with a fresh lace"
-                );
-                return None;
+                refuse_to_start_without_consensus(&format!(
+                    "could not restore the blocklace from storage, and replacing durable history \
+                     with a fresh lace is not an option: {e}"
+                ));
             }
         }
     };
     if let Err(error) = blocklace.restore_consensus_time_v1(consensus_time_policy) {
-        error!(
-            %error,
-            genesis_unix_seconds = consensus_time_policy.genesis_unix_seconds(),
-            "consensus-time-v1 flag-day migration refused durable history; an old timestamp-less turn database requires explicit migration or re-genesis"
-        );
-        return None;
+        refuse_to_start_without_consensus(&format!(
+            "the consensus-time-v1 flag-day migration refused durable history (genesis_unix_seconds \
+             {}): an old timestamp-less turn database requires explicit migration or re-genesis: \
+             {error}",
+            consensus_time_policy.genesis_unix_seconds()
+        ));
     }
     info!(
         genesis_unix_seconds = consensus_time_policy.genesis_unix_seconds(),
@@ -3213,8 +3251,11 @@ pub(crate) async fn run_blocklace_sync_with_policy(
     {
         Ok(node) => node,
         Err(e) => {
-            error!(error = %e, "failed to create PeerNode for blocklace gossip");
-            return None;
+            refuse_to_start_without_consensus(&format!(
+                "could not bind the gossip endpoint on {bind_addr_str}: {e}. Another process \
+                 already holds that UDP port (a second dregg-node on the same box defaults to \
+                 9420 too) — pass a free `--gossip-port` and restart."
+            ));
         }
     };
 
@@ -3287,8 +3328,7 @@ pub(crate) async fn run_blocklace_sync_with_policy(
     let topic = match gossip.join_topic(TOPIC_BLOCKLACE, &peer_addrs).await {
         Ok(t) => t,
         Err(e) => {
-            error!(error = %e, "failed to join blocklace topic");
-            return None;
+            refuse_to_start_without_consensus(&format!("could not join the blocklace topic: {e}"));
         }
     };
 
@@ -3296,8 +3336,9 @@ pub(crate) async fn run_blocklace_sync_with_policy(
     let mut blocklace_stream = match gossip.subscribe(&topic).await {
         Ok(s) => s,
         Err(e) => {
-            error!(error = %e, "failed to subscribe to blocklace topic");
-            return None;
+            refuse_to_start_without_consensus(&format!(
+                "could not subscribe to the blocklace topic: {e}"
+            ));
         }
     };
 
@@ -13431,6 +13472,103 @@ mod tests {
         assert!(
             s.atomic_proposals.is_empty(),
             "a vote for an unknown proposal changes nothing"
+        );
+    }
+
+    // ── THE GOSSIP BIND IS FAIL-CLOSED ────────────────────────────────────────
+    //
+    // Until 2026-07-26 a node whose gossip port was taken logged
+    //
+    //   ERROR failed to create PeerNode for blocklace gossip
+    //         error=bind error: Address already in use (os error 48)
+    //
+    // and kept going: `lib.rs::run` matches `if let Some(handle) = …` with no
+    // `else`, so it bound HTTP anyway and served forever with
+    // `consensus_live:false`, `block_count:0` — accepting every turn, applying
+    // none, and answering `{"success":true}` to faucet grants that never landed.
+    // Two nodes from the same binary, one of which had grabbed 9420 first, behaved
+    // oppositely with nothing surfaced to the operator.
+    //
+    // These two tests are the pair: the first proves the refusal FIRES on a taken
+    // port, the second proves it does not fire when the port is free (a gate that
+    // always refuses is as useless as one that never does).
+
+    /// A `NodeState` on a throwaway data dir, unlocked, with nothing else running.
+    async fn bare_node_state() -> (crate::state::NodeState, tempfile::TempDir) {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let state = crate::state::NodeState::new(tmp.path(), vec![]).expect("build NodeState");
+        state.write().await.unlocked = true;
+        (state, tmp)
+    }
+
+    /// Bind a UDP socket to an OS-chosen port and keep it. The returned port is
+    /// therefore guaranteed occupied for as long as the socket lives — no
+    /// hardcoded port number, no flake if something else owns 9420.
+    fn hold_a_udp_port() -> (std::net::UdpSocket, u16) {
+        let sock = std::net::UdpSocket::bind("0.0.0.0:0").expect("bind an ephemeral UDP port");
+        let port = sock.local_addr().expect("local_addr").port();
+        (sock, port)
+    }
+
+    // The expected message names the BIND specifically, not just "refusing to
+    // start": every other early exit in this function now panics too, so a bare
+    // "refusing to start" match would pass on a fixture that never reached the bind
+    // at all. The companion test below is the other half of that guard — it proves
+    // this fixture DOES reach the bind and get past it when the port is free.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[should_panic(expected = "could not bind the gossip endpoint")]
+    async fn a_node_that_cannot_bind_its_gossip_port_refuses_to_start() {
+        let (_held, taken_port) = hold_a_udp_port();
+        let (state, _tmp) = bare_node_state().await;
+
+        // The bind MUST fail (the socket above still holds `taken_port`), and the
+        // failure must be terminal. If this ever returns instead of panicking, the
+        // fail-open is back: the caller would go on to serve HTTP with no consensus.
+        let _ = run_blocklace_sync_with_policy(
+            state,
+            taken_port,
+            true,
+            100,
+            10_000,
+            50,
+            2_000,
+            0,
+            None,
+            dregg_blocklace::finality::ConsensusTimePolicyV1::new(1_700_000_000),
+        )
+        .await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_node_whose_gossip_port_is_free_still_starts() {
+        // Take a port and immediately release it, so we hand the node a port that is
+        // free but was chosen the same way as the test above — the ONLY difference
+        // between the two tests is whether the holder is still alive.
+        let taken_port = {
+            let (sock, port) = hold_a_udp_port();
+            drop(sock);
+            port
+        };
+        let (state, _tmp) = bare_node_state().await;
+
+        let handle = run_blocklace_sync_with_policy(
+            state,
+            taken_port,
+            true,
+            100,
+            10_000,
+            50,
+            2_000,
+            0,
+            None,
+            dregg_blocklace::finality::ConsensusTimePolicyV1::new(1_700_000_000),
+        )
+        .await;
+        assert!(
+            handle.is_some(),
+            "a free gossip port must still bring consensus up — otherwise the refusal \
+             above is unconditional and proves nothing"
         );
     }
 }

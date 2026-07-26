@@ -23,11 +23,9 @@ cd "$ROOT"
 PORT="${DREGG_NODE_PORT:-8421}"
 # The gossip/QUIC port, and it MUST NOT be left at the node's 9420 default. The
 # HTTP port here is already moved off 8420 so this script can run beside a node
-# you started yourself — but gossip was not, and blocklace's bind failure is
-# FAIL-OPEN: it logs `failed to create PeerNode for blocklace gossip: Address
-# already in use`, returns, and the node serves HTTP forever with
-# `consensus_live:false`, `block_count:0`, and every faucet grant accepted and
-# never applied. Derive it from the HTTP port so the two move together.
+# you started yourself; derive gossip from it so the two move together. A clash
+# now REFUSES the node's start rather than serving a hollow HTTP surface, so
+# getting this wrong costs a clear error instead of a silent no-consensus node.
 GOSSIP_PORT="${DREGG_GOSSIP_PORT:-$((PORT + 1000))}"
 DATA="${DREGG_DATA_DIR:-/tmp/dregg-10min}"
 MODE="${DREGG_SEED_MODE:-auto}"     # auto | verified | marshal
@@ -152,23 +150,26 @@ for _ in $(seq 1 60); do
   if curl -fs "http://localhost:$PORT/status" >/dev/null 2>&1; then ok=1; break; fi
   sleep 0.5
 done
-[ "$ok" -eq 1 ] || { tail -20 "$DATA/node.log"; die "node did not answer /status (pid $NODE_PID). Log above."; }
-
-# ANSWERING /status IS NOT BEING ALIVE. If blocklace cannot bind its gossip port
-# it logs an error, returns, and the node serves HTTP forever without ever
-# reaching consensus — no blocks, and every faucet grant accepted and never
-# applied. That is the single most likely reason this script fails on a box that
-# is already running a node, and it used to be invisible: the HTTP readiness probe
-# above passed, the faucet answered success, and the script printed its green
-# banner over the top of a node that had finalized nothing.
-if grep -q "failed to create PeerNode for blocklace gossip" "$DATA/node.log"; then
-  grep "failed to create PeerNode for blocklace gossip" "$DATA/node.log" | tail -1
+# ANSWERING /status IS NOT BEING ALIVE. A node that cannot bring consensus up —
+# most often because something else already holds the gossip port — used to log an
+# error and serve HTTP forever with no blocks, every faucet grant accepted and
+# never applied. The HTTP readiness probe above passed, the faucet answered
+# success, and this script printed its green banner over a node that had finalized
+# nothing.
+#
+# The node now REFUSES to start in that case
+# (`blocklace_sync::refuse_to_start_without_consensus`), so the readiness loop just
+# times out. Name the actual reason before reporting a bare "did not answer".
+if grep -q "REFUSING TO START: consensus did not come up" "$DATA/node.log"; then
+  grep "reason=" "$DATA/node.log" | tail -1
   kill "$NODE_PID" 2>/dev/null || true   # it can never work; do not leave it holding the store
-  die "blocklace could not bind gossip port $GOSSIP_PORT — this node will never reach
-  consensus and no turn will ever land. Something else holds that port (another
-  dregg-node, most likely). Re-run with a free one:
+  die "the node refused to start: consensus did not come up. If the reason above is
+  the gossip bind, something else holds port $GOSSIP_PORT (another dregg-node, most
+  likely). Re-run with a free one:
       DREGG_GOSSIP_PORT=<free-port> DREGG_NODE_PORT=$PORT $0"
 fi
+
+[ "$ok" -eq 1 ] || { tail -20 "$DATA/node.log"; die "node did not answer /status (pid $NODE_PID). Log above."; }
 
 # ── 5. unlock ─────────────────────────────────────────────────────────────────
 # Block production SIGNS. Until the first unlock the node answers reads, accepts
