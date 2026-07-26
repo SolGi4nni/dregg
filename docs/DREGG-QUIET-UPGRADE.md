@@ -129,7 +129,7 @@ Reflected attribute + visible badge, always:
 - `trust="extension"` → "✓ verified by your cipherclerk"
 - `trust="sdk"` → "✓ verified in this page" (page-bundled wasm; page code, still content-verified)
 - `trust="server"` → "✓ verified by dregg.net (trust the origin)" — the mirror-form fallback
-- absent/`[error]` → "⚠ unverified — original link shown"
+- absent/`[error]` → "⚠ unverified · original link shown"
 
 A person must always be able to tell *who checked this*. The semantic web's failure was that an
 asserted claim looked identical to a true one.

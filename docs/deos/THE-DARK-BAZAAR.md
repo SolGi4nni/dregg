@@ -61,6 +61,27 @@ plaintext bid revelation. Both truths below.*
 | **The Oracle Pit** | confidential prediction / quadratic pricing | **Full viewer-blind Offering + house-blind pricing RUN — but SIMULATED + unregistered + no market lifecycle.** `OraclePitOffering` (`oracle_pit.rs:684`) + the quadratic-cost / public-odds pricing run under the collective key (oracle-validated bit-exact). Missing everything that makes it a *market*. | Build order intake, **outcome resolution** (the oracle), settlement/payout, a positions ledger; register; distribute the ceremony. (Lead vertical — most new build.) |
 | **The Netting Vault** | hidden guild obligations → reveal only the net | **Crypto RUNS house-blind (test-only); NO Offering yet.** Multilateral netting (conservation + compression) runs under the collective key at guild scale (8 parties, n−1 refused), signed nets, in `fhegg-fhe/tests/` + `metatheory/Market/NettingVault.lean`. **No `Offering` exists** — a proposed panel. | Build `NettingVaultOffering`; wire to the consequence plane; distribute the ceremony. Simplest (additive, no relin). |
 
+> **CORRECTION 2026-07-26 (appended; the Sealed Exchange row above is now stale in the bazaar's
+> FAVOUR).** The row says *"the worker never calls `settle_private_verified`"* and *"the live
+> clearing settles by plaintext bid revelation."* Both were true when written and were fixed the
+> next day by `4aeba707d` (*"market: the proven private-book relation was reachable only from tests
+> — the production worker now calls it"*), then `2bab1cfe5`, `e2a517cdf`, `ad88024c8`. The proof is
+> genuinely in the supervisor's tick path today:
+> `private_bazaar_service.rs:586-588` → `settle_and_capture` (`:124`) →
+> `deployment.settle_private_clearing_verified(...)` → `private_clearing.rs:1020
+> settle_private_verified`. `docs/deos/DREX-TIER-STATUS-2026-07-24.md:188-198` carries the same
+> stale claim and is corrected by the same commits.
+>
+> **The gap moved; it did not close.** The missing piece is now the *ingress producer*, not the
+> proof: `PrivateBazaarSealedIngressQueue::submit`
+> (`dreggnet-catalog/src/private_bazaar_ingress.rs:272`) has **zero non-test callers**, so the
+> supervisor drains a queue nothing can fill, and a full-filesystem search finds zero instances of
+> `sealed-ingress-v1.queue`, `finalized-private-bazaar-v3.spool`, or any `by-blind/*.binding` — the
+> hall has never written a byte of durable state. The module names the missing component itself
+> (`private_bazaar_live.rs:230-234`: *"This is what a production bid collector holds"*); that
+> collector does not exist in this repo. Full inventory:
+> `docs/reference/ECONOMY-SCHOLAR-2026-07-26.md` §3.5.
+
 **The crypto keystone — the same-opening apex — is PROVED + EMITTED but a pure UNWIRED SEAM.** A 10-file
 kernel-clean Lean family (`FHEGG-SAME-OPENING-APEX.md`) proves the relation that turns *proof-blind* (a trace
 builder sees the bids) into *house-blind* (no single party ever does), and it is emitted as a descriptor — but

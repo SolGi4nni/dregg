@@ -204,6 +204,22 @@ proof-of-fairness path is real, proven, unit-tested, and sitting one call away f
 into the production worker, but is not yet called from it.** This matches, and now has fresh
 code-level confirmation of, `THE-DARK-BAZAAR.md`'s own "GATED SUBSTRATE" grade for this piece.
 
+> **RESOLVED 2026-07-25 (appended; the §3.1 audit above is left as the record).** "One call away
+> from being wired" became wired the next day. `4aeba707d` — *"market: the proven private-book
+> relation was reachable only from tests — the production worker now calls it"* — followed by
+> `2bab1cfe5`, `e2a517cdf`, `ad88024c8`. The proof runs in the supervisor's tick path today:
+> `private_bazaar_service.rs:586-588` → `settle_and_capture` (`:124`) →
+> `settle_private_clearing_verified` → `private_clearing.rs:1020 settle_private_verified`. This
+> section and `THE-DARK-BAZAAR.md:59` both now **understate** the hall.
+>
+> **What replaced it:** the sealed-ingress producer.
+> `PrivateBazaarSealedIngressQueue::submit` (`dreggnet-catalog/src/private_bazaar_ingress.rs:272`)
+> has zero non-test callers, no route, no command, no offering action — so a complete, mounted,
+> proof-running supervisor drains a queue nothing can fill, and the hall has never written a byte of
+> durable state (no `sealed-ingress-v1.queue`, no `finalized-private-bazaar-v3.spool`, no
+> `by-blind/*.binding` anywhere on disk). Full inventory:
+> `docs/reference/ECONOMY-SCHOLAR-2026-07-26.md` §3.5.
+
 ---
 
 ## 4. DARK — Tier 0, no-single-viewer FHE
