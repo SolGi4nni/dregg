@@ -282,6 +282,27 @@ from today**. Every pin that *exists* matches, so this is coverage, not drift: t
 descriptors without re-running `scripts/emit_descriptors.py`. By that test's own doctrine a
 tracked-but-unstamped descriptor is a real provenance hole, and a `commit -a` could promote it to HEAD.
 
+
+## ⚑ THE WELD CANARY BITES — but nothing keeps it green
+
+`braid-hook/tests/weld_canary.rs::braid_outcome_weld_bites` was **inert** until we byte-pinned its shape
+(`pcLeaf`): it died at its first `.expect(...)` on `NoLeanDescriptor`. Run for the first time on hbox,
+473.95s, **both poles pass** — and the refusal is the *right shape*, not an incidental error:
+
+```
+WitnessConflict: existing [1262052436, 0, 0, 0]  vs  new [1262052435, 0, 0, 0]
+```
+
+A difference of **exactly 1** — precisely the `forged_after(&landed, 0)` perturbation. The app-root
+connect found the committed octet lane and the published outcome disagreeing by one and had **no
+satisfying assignment**. The honest pole folded first, so the refusal is attributable to the weld.
+
+⚠ **Residual, and it is the familiar one:** *nothing gates this.* The file is
+`#![cfg(feature = "prove")]`, and no workflow in `.github/` uses `--features prove` or `--all-features`
+— so it is not merely `#[ignore]`d, it is **compiled out of every CI build**. Treat "the weld holds" as
+*of today, by hand, on hbox*. It is an observation, not a standing check. Arming it means adding a
+prove-feature job, in the shape `armed-teeth.yml` already uses (own job, named `--test` targets).
+
 ## Done log
 - **`∀ S` — the fold chain is de-honested** (`7f655b5c55`). Every survival theorem instantiated
   `Strategy := honestStrategy`; now generalized under a path-local fold-consistency gate, with
