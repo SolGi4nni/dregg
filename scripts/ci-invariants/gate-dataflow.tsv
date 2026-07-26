@@ -142,3 +142,63 @@ node/src/coord_gate.rs	coord_decision_disposition	verified_verdict\b	coord_gate_
 # `return false` while inlining the helper and stops); as one expression the same mutant goes RED
 # ("the declaration is decoration"). Do not reintroduce the early return.
 dregg-pq/src/mldsa.rs	mldsa_verify_disposition	verified_verdict\b	mldsa_verify_bypass_allowed	twin#13 no verified ML-DSA verify core => MlDsaVerifyRefusal (VerifiedCoreFaulted => REJECT; NoVerifiedCoreAndBypassNotDeclared => uncatchable abort); the unaudited fips204 crate decides accept/reject ONLY under the declared, DREGG_REQUIRE_LEAN-revocable bypass
+
+# ── twin#7b the NODE-LEVEL STRAND-ADMISSION site — THE FOURTH CONFIRMED MEMBER, OPERATOR-ESCAPE FLAVOUR ──
+# Twin#7's row above covers `federation/src/admission.rs::admitted`, whose gate-absent path is the
+# DECLARED NARROWING `narrow:is_seed`. That was never the hole. The hole was one level up, at the
+# node wrapper `node/src/strand_admission_gate.rs::admitted_participants`, which OPENED with
+#   if !strand_admission_gate_enabled() { return candidates.to_vec(); }
+# — the raw candidate list, un-vouched Sybils included, with NO admission rule having decided it.
+# UNREGISTERED (invisible here), UNLOGGED (not one line on the bypass path), UNMETERED, and
+# `DREGG_REQUIRE_LEAN=1` HAD NO EFFECT ON IT AT ALL, exactly the PQ defect `bcab8925b9` closed. The
+# disposition is now the named `strand_admission_disposition`, which REFUSES the raw list and runs
+# the F-4 rule regardless of the opt-out.
+#
+# ONE DECLARED BYPASS, named here so it prints in every CI log instead of hiding behind an env read:
+# the operator's `DREGG_STRAND_ADMISSION_GATE=0`. `DREGG_REQUIRE_LEAN=1` REVOKES it.
+#
+# ⚑ DELIBERATELY NOT A BYPASS, AND THIS IS WHY THIS ROW IS STRONGER THAN ITS SIBLINGS': a missing
+# Lean export. Every other member of this class treats an archive-less build as a bypass because
+# there is nothing to route to. Here there IS — `AdmissionRegistry::admitted` still answers,
+# seeds-only, through twin#7's registered narrowing — so a stale archive buys no escape at all.
+#
+# ⚑ AT ITS CURRENT RESOLUTION THE REFUSAL IS REAL BUT DORMANT ON THE LIVE CALLER, and saying so is
+# part of the row. `blocklace_sync.rs:1450` is the ONLY live caller and passes
+# `admitted_participants(&raw_participants, &raw_participants)` — candidates == participants, so
+# every candidate is a seed and the F-4 filter provably cannot drop anything (the "identity gate"
+# finding in docs/deos/CRATE-EXCELLENCE-PLAN.md §P1(e)). On THAT call the bypass and the rule return
+# the same set, so DREGG_STRAND_ADMISSION_GATE=0 does not admit a Sybil TODAY; the F-4 reopening is a
+# property of the FUNCTION and arms the moment a caller widens `candidates`. What changed today:
+# DREGG_REQUIRE_LEAN=1 now has an effect on this path, the bypass announces itself, it carries a
+# metric, and the site is registered so the warn-and-admit cannot regrow unseen.
+#
+# ⚑ AND THE VACUITY SHORT-CIRCUIT IS THE NARROW ONE ON PURPOSE (`candidate_count == 0`, not
+# `unvouched == 0`). MEASURED reasoning, not taste: short-circuiting on "no candidate lacks
+# constitutional standing" is the more correct-looking filter and it would make this guard
+# STRUCTURALLY DEAD against its only production caller. A floor that cannot be reached is not a floor.
+node/src/strand_admission_gate.rs	strand_admission_disposition	admission_verdict\b	strand_admission_bypass_allowed	twin#7b no F-4 rule decided the candidate set => StrandAdmissionRefusal::StrandAdmissionGateUnavailable, the site runs `gated_admitted` anyway; the raw un-gated candidate list never reaches tau
+
+# ── twin#12 the BEARER-AUTHORITY LEG — THE FIFTH MEMBER, and a DIFFERENT KIND OF DECISION ────────
+# The first four members gate an ACCEPT/REJECT. This one gates what a node ATTESTS. A bearer-delegated
+# turn (a `BearerSignedDelegation` consumed-cap witness) whose delegator pre-state cap root could not
+# be resolved used to `warn!` "proving WITHOUT the AUTHORITY leg (v1 fallback)" and publish the v1
+# proof anyway — an attestation the prover KNOWS omits the authority binding it names.
+#
+# ⚑ THE QUESTION THAT DECIDED THE SHAPE, ANSWERED BEFORE THE FIX: does a verifier accept a v1 proof
+# for a bearer-delegated turn? YES. `verify_full_turn_bound`'s authority demand lives entirely inside
+# `if let Some(expected) = expected_cap_membership`, and the verification MODE is a CALLER-SUPPLIED
+# ARGUMENT: `verify_full_turn` (the only entry point anyone outside the prover calls) hardcodes
+# `None`, the signature takes no turn and no receipt, and a tree-wide grep finds exactly ONE non-test
+# `CapMembershipExpectation` construction — inside the prover itself.
+#
+# ⚑ AND THE SCOPE QUALIFIER, because calling this a forgery surface would be WRONG: the executor
+# enforces the delegation independently on every node (signature, delegator-holds-the-cap, expiry,
+# committed revocation, non-amplification, facet attenuation) and every node re-executes the finalized
+# turn before proving. So this is an ATTESTATION / COMPLETENESS gap, not an authority hole. The durable
+# residual is on the VERIFY side and is NOT closed by this row: nothing derives "this turn needed an
+# authority leg" from a receipt, so a stripped leg is unnoticeable to every consumer. Closing that is a
+# protocol change (verifiers need the receipt), not a disposition.
+#
+# ONE DECLARED BYPASS: `DREGG_ALLOW_UNBOUND_BEARER_PROOF=1`, for a node that prefers the partial
+# attestation (and its IVC retention) to none. `DREGG_REQUIRE_LEAN=1` REVOKES it.
+node/src/blocklace_sync.rs	bearer_authority_disposition	delegator_cap_root\b	bearer_authority_bypass_allowed	twin#12 a bearer-delegated turn whose delegator cap root is unresolvable => BearerAuthorityRefusal::DelegatorCapRootUnresolvable, NO full-turn proof is published; a v1 proof silently missing the AUTHORITY leg is never minted

@@ -350,6 +350,74 @@ Twin#13's vacuity short-circuit is also a **DoS boundary**, not only an over-ref
 undeclared-bypass refusal is an uncatchable abort, so a gate placed ahead of `ml_dsa_verify`'s
 length check would let any peer kill the process with one truncated signature.
 
+**Twin#7b — the OPERATOR-ESCAPE flavour, and the first row whose own honest finding is that it is
+DORMANT.** `node/src/strand_admission_gate.rs::admitted_participants` opened with
+`if !strand_admission_gate_enabled() { return candidates.to_vec(); }` — the raw candidate list, with
+no F-4 admission rule having decided it. Unregistered, unlogged (not one line of output on the bypass
+path), unmetered, and **`DREGG_REQUIRE_LEAN=1` had no effect on it at all**, the same defect twin#13
+found in the PQ path. Note the *gate-absent* path here was never the hole: `AdmissionRegistry::admitted`
+degrades to twin#7's declared `narrow:is_seed`. It is the gate-**disabled** path that admitted
+everything. So this row's declared bypass list is ONE entry, not two — **a missing Lean export is
+deliberately NOT a bypass at this site**, because there is always an admission decision to route to.
+
+Two things worth carrying forward from it:
+
+1. **State the dormancy, do not let the fix read bigger than it is.** The only live caller
+   (`blocklace_sync.rs:1450`) passes `admitted_participants(&raw, &raw)` — candidates == participants,
+   so every candidate is a seed and the filter provably cannot drop anything (the "identity gate"
+   finding already recorded in `docs/deos/CRATE-EXCELLENCE-PLAN.md` §P1(e)). On that call the bypass
+   and the rule return the *same set*, so `DREGG_STRAND_ADMISSION_GATE=0` does **not** admit a Sybil
+   today. The F-4 reopening is a property of the *function* and arms the moment a caller widens
+   `candidates`. What changed now: `DREGG_REQUIRE_LEAN=1` has an effect on this path, the bypass
+   announces itself, it has a metric, and the site is registered.
+2. **A vacuity short-circuit can kill the guard it protects.** The tempting filter here was
+   "short-circuit when no candidate lacks constitutional standing" — more correct-looking, and it would
+   have made the refusal **unreachable from the only production caller**. A floor that cannot be
+   reached is not a floor. The short-circuit is the narrow `candidate_count == 0` instead, and the
+   would-be filter is kept as a logged diagnostic (`unvouched=`) so the dormancy is visible in the
+   field rather than hidden in a comment. **Check that your vacuity short-circuit does not swallow
+   your only reachable pole.**
+
+**Twin#12 — the ATTESTATION flavour: the gated decision is not accept/reject but WHAT THE NODE
+CLAIMS.** A bearer-delegated turn whose delegator pre-state cap root could not be resolved made
+`blocklace_sync.rs` `warn!` *"proving WITHOUT the AUTHORITY leg (v1 fallback)"* and publish the v1
+proof anyway.
+
+⚑ **The question that had to be answered before the shape could be chosen — and it was, not guessed:
+DOES A VERIFIER ACCEPT A v1 PROOF FOR A BEARER-DELEGATED TURN? Yes.** The refusal exists
+(`sdk/src/full_turn_proof.rs::verify_full_turn_bound`, *"capability-gated turn carries no AUTHORITY
+leg"*) and it works — but it fires only inside `if let Some(expected) = expected_cap_membership`, and
+**the verification MODE is a caller-supplied argument, not a property derived from the turn**. The
+signature takes no turn and no receipt (it does not even bind `turn_hash`); `verify_full_turn`, the
+only entry point anyone outside the prover calls, hardcodes `None`; and a tree-wide grep for
+`CapMembershipExpectation` finds exactly **one** non-test construction site — inside the prover, one
+line after minting the proof. Zero in `lightclient/`, `eth-lightclient/`, `dreggnet-game-board/`,
+`verifier/`, `net/`, `blocklace/`, the node API, or the discord bot (which re-verifies stored proofs
+but reconstructs the component set from the proof's *own* labels and calls the `None` entry). Proof
+bytes are never gossiped; each node re-executes and mints its own.
+
+⚑ **And the scope qualifier, because calling it a forgery surface would be wrong.** It is **not** an
+authorization bypass. `turn/src/executor/authorize.rs::verify_bearer_cap` independently checks the
+delegator's Ed25519 signature, resolves the delegator cell, requires it to *actually hold* the
+capability, and enforces expiry, the committed revocation registry, non-amplification and facet
+attenuation — and every node re-executes the finalized turn before proving. An unauthorized bearer
+turn never becomes a committed turn at all. The gap is in what is **attested**, not in what is
+authorized: the proof under-claims. The site now refuses to publish rather than publish incomplete.
+
+**The residual this row does NOT close, named rather than laundered:** nothing in the tree derives
+"this turn needed an authority leg" from a receipt, so a *stripped* leg remains unnoticeable to every
+consumer. Closing that means handing verifiers the receipt — a protocol change, not a disposition.
+
+Twin#12 also surfaced a **routing-predicate misclassification** that the fail-closed disposition made
+load-bearing. `bearer_consumed_cap` selected on `holder != agent` alone, ignoring the recorded
+`ConsumedCapAuthPath`. The executor records a `Breadstuff` witness with `holder = *actor_cell_id`, and
+that is the **parent action's target** for every non-root call-tree node — so a turn whose only
+consumed capability sits at a nested breadstuff action satisfied `holder != agent` while carrying no
+`Authorization::Bearer` anywhere. It was named "bearer-delegated", missed the delegator map by
+construction, and warned about a delegation that did not exist. Under a refusing disposition that
+would have withheld its proof. **When a fail-closed disposition is added behind a routing predicate,
+re-derive the predicate from the recorded discriminant, not from a proxy for it.**
+
 ---
 
 ## Wiring
@@ -425,3 +493,20 @@ extracted into a standalone `rustc --test` harness carrying the falsifier's own 
 run against both mutants. Mutant A (refusal arm ⇒ `Ok(())`): invariant 6 RED, falsifier RED. Mutant B
 (`coord_gate_bypass_allowed` ⇒ bare `true`): invariant 6 **GREEN**, falsifier RED with its FAIL-OPEN
 message. Invariant 2 is therefore load-bearing at that site and not a duplicate of invariant 6.
+
+Twin#7b (the node-level strand-admission escape) and twin#12 (the bearer AUTHORITY leg) were
+demonstrated together on 2026-07-26, same scratch-tree method (`CI_INVARIANTS_ROOT` +
+`CI_INVARIANTS_DATAFLOW_TSV`; working tree never stashed or checked out), and **both mutants were run
+against the REAL falsifiers this time, not a transcribed harness**:
+
+- **Mutant A** — both refusal arms (`return Err(StrandAdmissionGateUnavailable)`,
+  `return Err(DelegatorCapRootUnresolvable)`) reverted to `return Ok(())`, in a scratch copy of the
+  two files: invariant 6 **RED at both sites**, *"the row DECLARES the carve-out … but the gate-absent
+  path has NO refusal on the non-exempt arm — the declaration is decoration."*
+- **Mutant B** — both bypass predicates replaced by a bare `true`: invariant 6 **GREEN at both sites**
+  (it does not evaluate the discriminator), while `cargo test -p dregg-node --lib` went **RED on all
+  three disposition falsifiers**, each with its FAIL-OPEN message. Mutant B was applied to the real
+  tree for the duration of that one run and reverted immediately.
+
+15 of 15 sites pass post-fix. Both new bypass predicates are single boolean expressions, for the
+reason `1736835f69` measured and twin#13 reproduced.

@@ -194,6 +194,17 @@ pub enum FullTurnProvingError {
     /// capability path REFUSES rather than attach a leg the bound verifier
     /// would (correctly) reject.
     ConsumedCapWitnessInvalid { reason: String },
+    /// The turn is BEARER-DELEGATED (its receipt carries a `BearerSignedDelegation`
+    /// consumed-cap witness) and the node could not resolve the DELEGATOR's
+    /// canonical pre-state `capability_root`, so no AUTHORITY leg can be bound to
+    /// a real root. Deliberately distinct from [`Self::Prove`]/[`Self::Verify`]:
+    /// nothing was rejected and no proof failed to verify — the binding was
+    /// UNBUILDABLE, so the site publishes NO proof rather than a v1 proof that
+    /// silently omits the authority leg. The turn itself still commits; the
+    /// executor enforced the delegation independently
+    /// (`turn/src/executor/authorize.rs::verify_bearer_cap`). See
+    /// `crate::blocklace_sync::bearer_authority_disposition`.
+    BearerAuthorityLegUnbindable,
 }
 
 impl std::fmt::Display for FullTurnProvingError {
@@ -215,6 +226,12 @@ impl std::fmt::Display for FullTurnProvingError {
                 f,
                 "consumed-capability witness does not open to the canonical pre-state \
                  capability_root: {reason} — no sound cap-membership leg exists"
+            ),
+            Self::BearerAuthorityLegUnbindable => write!(
+                f,
+                "bearer-delegated turn: the delegator's canonical pre-state capability_root is \
+                 unresolvable, so the AUTHORITY leg cannot be bound — no proof is published \
+                 (publishing a v1 proof here would attest LESS than the turn's authorization)"
             ),
         }
     }
@@ -1032,11 +1049,33 @@ pub fn actor_consumed_cap<'a>(
 /// exercising several distinct delegators is a multi-bearer extension (the first
 /// is proven through the authority leg, the rest ride the v1 fallback until the
 /// circuit batches multiple cap-membership legs).
+///
+/// ⚑ THE PREDICATE IS `auth_path`, NOT `holder != agent`. This used to route on
+/// `holder != *agent` ALONE, and that is a MISCLASSIFICATION, not a conservative
+/// over-approximation. [`dregg_turn::ConsumedCapAuthPath`] exists precisely to
+/// answer "which authorization surface consumed this capability", and the
+/// executor records a `Breadstuff` witness with `holder = *actor_cell_id`
+/// (`turn/src/executor/authorize.rs::verify_breadstuff`) — where `actor_cell_id`
+/// is the PARENT ACTION'S TARGET for any non-root call-tree node
+/// (`execute_tree.rs`: "current action's target becomes the parent for
+/// children"), and only the turn agent at the root. So a turn whose sole consumed
+/// capability sits at a NESTED breadstuff-authorized action has
+/// `holder != agent` while carrying no `Authorization::Bearer` anywhere in its
+/// forest. The old predicate picked that witness up as "bearer", found nothing
+/// for it in [`delegator_pre_state_cap_roots`] (which only walks
+/// `Authorization::Bearer` + `SignedDelegation`), and logged
+/// "bearer-delegated turn: delegator pre-state cap root unavailable" about a turn
+/// that was never bearer-delegated — dropping to the v1 fallback and losing an
+/// authority leg it could otherwise have carried. Keying on the recorded
+/// `auth_path` makes the routing predicate and the root-snapshot walk name the
+/// SAME set of turns.
 pub fn bearer_consumed_cap<'a>(
     consumed: &'a [dregg_turn::ConsumedCapWitness],
     agent: &CellId,
 ) -> Option<&'a dregg_turn::ConsumedCapWitness> {
-    consumed.iter().find(|w| w.holder != *agent)
+    consumed.iter().find(|w| {
+        w.auth_path == dregg_turn::ConsumedCapAuthPath::BearerSignedDelegation && w.holder != *agent
+    })
 }
 
 /// Snapshot the canonical pre-state `capability_root` of every cell that a
@@ -1876,6 +1915,117 @@ mod tests {
         seq: u64,
     ) -> (dregg_cell::note::Nullifier, u64, u64) {
         (dregg_cell::note::Nullifier(raw), value, seq)
+    }
+
+    /// A consumed-cap witness carrying only the two fields the ROUTING predicates read
+    /// (`holder`, `auth_path`). Every leaf/path field is a placeholder: `actor_consumed_cap` and
+    /// `bearer_consumed_cap` never open the Merkle path, and a witness that IS routed is
+    /// independently re-validated against the canonical pre-state root before any leg is built
+    /// (`FullTurnProvingError::ConsumedCapWitnessInvalid`).
+    fn routing_witness(
+        holder: CellId,
+        auth_path: dregg_turn::ConsumedCapAuthPath,
+    ) -> dregg_turn::ConsumedCapWitness {
+        dregg_turn::ConsumedCapWitness {
+            holder,
+            slot: 0,
+            action_path: vec![0],
+            auth_path,
+            leaf_slot_hash: 0,
+            leaf_target: 0,
+            leaf_auth_tag: 0,
+            leaf_mask_lo: 0,
+            leaf_mask_hi: 0,
+            leaf_expiry: 0,
+            leaf_breadstuff: 0,
+            siblings: Vec::new(),
+            directions: Vec::new(),
+            cap_root: [0; 8],
+        }
+    }
+
+    /// ⚑ twin#12's ROUTING PREDICATE: `bearer_consumed_cap` keys on the recorded `auth_path`, NOT on
+    /// `holder != agent`.
+    ///
+    /// The old predicate was `consumed.iter().find(|w| w.holder != *agent)`, and that is a
+    /// MISCLASSIFICATION rather than a conservative over-approximation. The executor records a
+    /// `Breadstuff` witness with `holder = *actor_cell_id`
+    /// (`turn/src/executor/authorize.rs::verify_breadstuff`), and `actor_cell_id` is the PARENT
+    /// ACTION'S TARGET for every non-root call-tree node (`execute_tree.rs`: "current action's target
+    /// becomes the parent for children") — only at the root is it the turn agent. So a turn whose
+    /// sole consumed capability sits at a NESTED breadstuff-authorized action satisfies
+    /// `holder != agent` while carrying no `Authorization::Bearer` anywhere in its forest. The old
+    /// predicate picked it up as a bearer delegation, found nothing for it in
+    /// `delegator_pre_state_cap_roots` (which only walks `Authorization::Bearer` +
+    /// `SignedDelegation`), and logged "bearer-delegated turn: delegator pre-state cap root
+    /// unavailable" about a turn that was never bearer-delegated.
+    ///
+    /// That is now load-bearing beyond the false log line: under twin#12's fail-closed disposition a
+    /// misclassified turn would have its proof WITHHELD. This test is what keeps the routing
+    /// predicate and the delegator-root walk naming the same set of turns.
+    #[test]
+    fn bearer_consumed_cap_routes_on_auth_path_not_on_holder_inequality() {
+        let agent = CellId::from_bytes([0xA1; 32]);
+        let nested_target = CellId::from_bytes([0xB2; 32]);
+        let delegator = CellId::from_bytes([0xC3; 32]);
+
+        // ── THE MISCLASSIFICATION, CLOSED: a NESTED breadstuff witness. `holder != agent` holds,
+        //    but the surface that consumed the capability was the actor's own breadstuff token —
+        //    there is no delegator and nothing for the authority leg to bind against.
+        let nested_breadstuff = vec![routing_witness(
+            nested_target,
+            dregg_turn::ConsumedCapAuthPath::Breadstuff,
+        )];
+        assert_ne!(
+            nested_breadstuff[0].holder, agent,
+            "the fixture must actually satisfy the OLD predicate, or this test asserts nothing"
+        );
+        assert!(
+            bearer_consumed_cap(&nested_breadstuff, &agent).is_none(),
+            "a NESTED Breadstuff witness (holder = the parent action's target) must NOT be routed as \
+             a bearer delegation. The old `holder != agent` predicate did exactly that: it named a \
+             turn with no Authorization::Bearer in its forest 'bearer-delegated', missed the \
+             delegator map by construction, and dropped an authority leg it could have carried. \
+             Under the fail-closed disposition it would now WITHHOLD that turn's proof entirely."
+        );
+
+        // ── AND IT STILL CATCHES THE REAL THING: a genuine bearer delegation.
+        let genuine_bearer = vec![routing_witness(
+            delegator,
+            dregg_turn::ConsumedCapAuthPath::BearerSignedDelegation,
+        )];
+        assert_eq!(
+            bearer_consumed_cap(&genuine_bearer, &agent).map(|w| w.holder),
+            Some(delegator),
+            "a BearerSignedDelegation witness whose holder is the delegator MUST route through the \
+             authority leg — narrowing the predicate must not brick the case it exists for"
+        );
+
+        // ── MIXED FOREST: both witnesses present. The bearer one is picked, the nested breadstuff
+        //    one is passed over — this is the pair the old predicate could not tell apart, since
+        //    `find` would have returned whichever came first.
+        let mixed = vec![
+            routing_witness(nested_target, dregg_turn::ConsumedCapAuthPath::Breadstuff),
+            routing_witness(
+                delegator,
+                dregg_turn::ConsumedCapAuthPath::BearerSignedDelegation,
+            ),
+        ];
+        assert_eq!(
+            bearer_consumed_cap(&mixed, &agent).map(|w| w.holder),
+            Some(delegator),
+            "with a nested breadstuff witness FIRST in the list, the old `find(holder != agent)` \
+             returned the breadstuff one and the genuine delegation behind it was never seen"
+        );
+
+        // ── The ACTOR predicate is untouched and still takes precedence at the call site: a
+        //    root-level witness held by the agent itself is the actor path, never the bearer path.
+        let actor_held = vec![routing_witness(
+            agent,
+            dregg_turn::ConsumedCapAuthPath::Breadstuff,
+        )];
+        assert!(actor_consumed_cap(&actor_held, &agent).is_some());
+        assert!(bearer_consumed_cap(&actor_held, &agent).is_none());
     }
 
     /// LIVE PREPARATION — neither raw256 endpoint is reserved, and durable storage iteration

@@ -213,6 +213,30 @@ pub fn inc_coord_decision_gate_unavailable_refusals() {
     counter!("dregg_coord_decision_gate_unavailable_refusals_total").increment(1);
 }
 
+/// Increment the STRAND-ADMISSION-GATE-UNAVAILABLE REFUSAL counter: a participant projection refused
+/// to hand `tau` the raw candidate list because no F-4 admission rule decided it — the operator set
+/// `DREGG_STRAND_ADMISSION_GATE=0` and `DREGG_REQUIRE_LEAN=1` REVOKED that bypass. This is the
+/// fail-CLOSED disposition that replaced this site's unregistered, unlogged `return candidates.to_vec()`,
+/// and it is deliberately a SEPARATE series from every "the F-4 rule dropped this strand" outcome: no
+/// strand was rejected here — no rule had decided the set. A non-zero rate means a node is running
+/// with two contradictory environment variables and the gate is winning, which is a CONFIGURATION
+/// alarm, not a safety one. See `crate::strand_admission_gate::strand_admission_disposition`.
+pub fn inc_strand_admission_gate_unavailable_refusals() {
+    counter!("dregg_strand_admission_gate_unavailable_refusals_total").increment(1);
+}
+
+/// Increment the BEARER-AUTHORITY-LEG REFUSAL counter: a finalized bearer-delegated turn published NO
+/// full-turn proof because its delegator's pre-state capability root could not be resolved, so the
+/// AUTHORITY leg could not be bound and the site refused to attach a v1 proof that silently omits it.
+/// Deliberately a SEPARATE series from `Prove`/`Verify` failures: nothing was rejected and no proof
+/// failed to verify — the authority binding was unbuildable, so the attestation is withheld rather
+/// than under-claimed. The turn itself still COMMITS (the executor enforced the delegation
+/// independently); a non-zero rate is an ATTESTATION-COVERAGE alarm, not a safety one. See
+/// `crate::blocklace_sync::bearer_authority_disposition`.
+pub fn inc_bearer_authority_leg_refusals() {
+    counter!("dregg_bearer_authority_leg_refusals_total").increment(1);
+}
+
 // ─── Histograms ──────────────────────────────────────────────────────────────
 
 /// Record turn execution duration.

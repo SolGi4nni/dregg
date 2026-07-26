@@ -211,6 +211,21 @@ async fn run_job(worker_id: usize, job: ProveJob, state: &NodeState) {
     // `WitnessedReceipt` is a scope-1 attestation (proof + composed PI): the
     // executor already committed the state, and the inline-trace replay bundle is
     // a v1-only Silver-Vision artifact the rotated leg does not carry.
+    //
+    // ⚑ NAMED RESIDUAL, wider than twin#12 and NOT closed by it (2026-07-26). This
+    // path calls the plain v1 entry point UNCONDITIONALLY. It has no routing match
+    // at all — no `actor_consumed_cap`, no `bearer_consumed_cap`, no
+    // `spent_nullifiers` arm — so on the async HTTP commit path the AUTHORITY leg
+    // is NEVER attached, for a cap-gated turn or a bearer-delegated one alike, and
+    // the freshness leg is likewise absent. `blocklace_sync.rs`'s finalized commit
+    // path (which DOES route, and now REFUSES to publish a bearer turn's proof when
+    // the delegator root is unresolvable — `bearer_authority_disposition`) is the
+    // only path where the routing exists. Closing this needs the pre-state ledger
+    // context the job does not carry (`full_turn_pre_cell`, the delegator cap-root
+    // snapshot, the canonical spent set), so it is a real piece of work, not an
+    // oversight to patch here. Stated at its actual resolution rather than left for
+    // the next reader to rediscover: an attestation minted on this path claims the
+    // STATE TRANSITION and nothing about authority.
     let prove_result = tokio::task::spawn_blocking(move || {
         let proven = crate::turn_proving::prove_and_verify_finalized_turn(
             &agent,
