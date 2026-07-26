@@ -14,8 +14,8 @@ use dregg_app_framework::{CellProgram, StateConstraint, TransitionGuard, symbol}
 use dregg_cell::program::TransitionMeta;
 use dregg_cell::state::CellState;
 use dungeon_on_dregg::descent::{
-    BANKED, CARRIED, DELVE, Deployment, Descent, FLEE, GENESIS, HARMCAP, LOOT, LUNGE, PROGRAM_JSON,
-    SCENE_ID, SMITE, Sim, UNLOCK,
+    ASCEND, BANKED, BREATH, CARRIED, DELVE, Deployment, Descent, FLEE, FLOORS, GENESIS, HARMCAP,
+    LOOT, LUNGE, PROGRAM_JSON, RELICS, SCENE_ID, SMITE, Sim, UNLOCK, crowned_line,
 };
 use spween_dregg::WorldError;
 
@@ -117,48 +117,43 @@ fn loaded_program_is_the_lean_object() {
     );
 }
 
-/// THE CROWNED RUN — the same 17-verb script the Lean model proves legal and the Lean
-/// `#guard` battery proves admitted — commits end-to-end on the real executor: 18 real
-/// receipts (genesis + 17), non-zero and chain-linked, ending banked with the prize
-/// and the three keys banked (bank = 4, the `crowned_bank_le_four` bound met with
-/// equality) and 2 breath to spare.
+/// THE CROWNED RUN — the script the Lean model proves legal and the Lean `#guard` battery proves
+/// admitted — commits end-to-end on the real executor: one real receipt per verb, non-zero and
+/// chain-linked, ending banked at the mouth with the prize and the three keys banked (bank = 4,
+/// the `crowned_bank_le_four` bound met with equality) inside the light.
+///
+/// ⚑ The tape is `descent::crowned_line(d.day())`, not a literal. It used to be a hand-written
+/// 17-verb script commented "Floor 1: slay (hp 1)" — true of the one hard-coded dungeon that
+/// predated the day-seeded draw, and false here: seed 7 draws a floor-1 guardian with TWO hp, so
+/// the third verb `loot(1)` was refused ("the guardian still stands"). The script also predated
+/// the climb (`flee` now demands `depth == 0`), so it banked from floor 4.
 #[test]
 fn crowned_run_commits_with_real_receipts() {
     let mut d = Descent::deploy(7).expect("deploy + genesis");
-    let mut receipts = Vec::new();
-    receipts.push(None); // genesis receipt is inside deploy; re-verify via state below.
+    let line = crowned_line(d.day());
+    let mut committed = Vec::new();
 
-    let push = |r: Result<dregg_app_framework::TurnReceipt, WorldError>| {
-        let r = r.expect("legal verb commits");
+    for (verb, arg) in &line {
+        let r = match *verb {
+            DELVE => d.delve(),
+            ASCEND => d.ascend(),
+            SMITE => d.smite(),
+            LOOT => d.loot(*arg as usize),
+            UNLOCK => d.unlock(*arg as u64),
+            FLEE => d.flee(),
+            other => panic!("crowned_line emitted unknown verb {other}"),
+        }
+        .expect("legal verb commits");
         assert_ne!(r.turn_hash, [0u8; 32]);
-        Some(r)
-    };
-
-    // Floor 1: slay (hp 1), win the key to way 2, exercise it.
-    receipts.push(push(d.delve()));
-    receipts.push(push(d.smite()));
-    receipts.push(push(d.loot(1)));
-    receipts.push(push(d.unlock(2)));
-    // Floor 2.
-    receipts.push(push(d.delve()));
-    receipts.push(push(d.smite()));
-    receipts.push(push(d.loot(2)));
-    receipts.push(push(d.unlock(3)));
-    // Floor 3 (guardian hp 2).
-    receipts.push(push(d.delve()));
-    receipts.push(push(d.smite()));
-    receipts.push(push(d.smite()));
-    receipts.push(push(d.loot(3)));
-    receipts.push(push(d.unlock(4)));
-    // Floor 4 — the bottom: THE PRIZE.
-    receipts.push(push(d.delve()));
-    receipts.push(push(d.smite()));
-    receipts.push(push(d.smite()));
-    receipts.push(push(d.loot(0)));
-    receipts.push(push(d.flee()));
+        committed.push(r);
+    }
+    assert_eq!(
+        committed.len(),
+        line.len(),
+        "one committed receipt per crowned verb"
+    );
 
     // The receipt chain links (each pre-state is the predecessor's post-state).
-    let committed: Vec<_> = receipts.into_iter().flatten().collect();
     for w in committed.windows(2) {
         assert_eq!(
             w[0].post_state_hash, w[1].pre_state_hash,
@@ -168,12 +163,33 @@ fn crowned_run_commits_with_real_receipts() {
 
     // The committed world agrees with the model's crowned end-state.
     assert_eq!(d.read_reg("fate"), 1);
-    assert_eq!(d.read_reg("bank"), 4, "prize + three keys banked");
+    assert_eq!(
+        d.read_reg("bank"),
+        u64::from(FLOORS),
+        "prize + three keys banked"
+    );
     assert_eq!(d.read_reg("pack"), 0);
-    assert_eq!(d.read_reg("spent"), 24, "the perfect run costs 24 breath");
-    assert_eq!(d.read_reg("depth"), 4);
+    assert_eq!(
+        d.read_reg("depth"),
+        0,
+        "the crowned run banks AT THE MOUTH — it climbs out, it does not teleport"
+    );
+    assert!(
+        d.read_reg("spent") <= BREATH,
+        "the crowned run fits inside the light: {} of {BREATH}",
+        d.read_reg("spent")
+    );
     assert_eq!(d.read_relic(0), BANKED, "THE PRIZE is banked");
-    assert_eq!(d.read_relic(4), 1, "an unlooted treasure stays in the deep");
+    // The line takes only the prize and the way-keys, so every TREASURE (relic >= FLOORS) is left
+    // lying on the floor the day minted it on.
+    let world = d.day_world();
+    for treasure in (FLOORS as usize)..RELICS {
+        assert_eq!(
+            d.read_relic(treasure),
+            world.homes[treasure],
+            "an unlooted treasure stays in the deep"
+        );
+    }
 }
 
 /// A keyless descent is a REAL executor refusal that commits nothing (anti-ghost).
@@ -375,6 +391,8 @@ fn stapled_loot_plus_descend_is_refused() {
 fn banked_tomb_is_frozen() {
     let mut d = Descent::deploy(3).expect("deploy");
     d.delve().expect("delve");
+    // `flee` is illegal below the surface, so the run climbs back out before it can bank.
+    d.ascend().expect("climb out");
     d.flee().expect("bank the empty pack");
     assert_eq!(d.read_reg("fate"), 1);
     assert!(refused(d.delve()));

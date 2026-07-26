@@ -19,21 +19,39 @@ use dungeon_on_dregg::loot::{
 };
 use procgen_dregg::CommittedSeed;
 
-/// Drive a real Descent that banks the three floor-1 relics (custody slots 1, 4, 5 — the way-2
-/// key and two treasures, whose Lean `homeFloors` are all floor 1). Returns the banked run.
+/// Drive a real Descent that banks every relic THIS seed's map mints on floor 1. Returns the
+/// banked run and the slots it banked.
 ///
 /// The verb line is all real cap-bounded turns on the Lean-sourced executor: delve to floor 1,
-/// slay the lone guardian, loot each floor-1 relic into the pack, then flee — the terminal bank
-/// that ratchets each carried relic's custody to `BANKED` (a real committed cell write).
-fn run_that_banks_floor_one(seed: u8) -> Descent {
+/// fell the guardian, loot each floor-1 relic into the pack, climb back to the mouth, then flee —
+/// the terminal bank that ratchets each carried relic's custody to `BANKED` (a real committed
+/// cell write).
+///
+/// ⚑ Every quantity here is read off the day's own `DayWorld`. The line used to be a literal
+/// `smite(); loot(1); loot(4); loot(5); flee()`, which was true of the single hard-coded dungeon
+/// that predated the day-seeded draw: it assumed a floor-1 guardian of exactly 1 hp and relics
+/// 1/4/5 minted on floor 1. It also predated the climb — `flee` now demands `depth == 0`
+/// (`Dungeon.toll`), so banking from below is refused outright, which is what all three tests in
+/// this file were dying on.
+fn run_that_banks_floor_one(seed: u8) -> (Descent, Vec<usize>) {
     let mut d = Descent::deploy(seed).expect("deploy + genesis");
+    let world = d.day_world();
+    let floor_one: Vec<usize> = (0..RELICS).filter(|&r| world.homes[r] == 1).collect();
+    assert!(
+        !floor_one.is_empty(),
+        "every day mints the way-2 key on floor 1"
+    );
     d.delve().expect("way 1 is always open");
-    d.smite().expect("floor-1 guardian has 1 hp");
-    d.loot(1).expect("carry the way-2 key");
-    d.loot(4).expect("carry a floor-1 treasure");
-    d.loot(5).expect("carry a floor-1 treasure");
+    for _ in 0..world.guard_hp(1) {
+        d.smite().expect("fell the floor-1 guardian");
+    }
+    for &relic in &floor_one {
+        d.loot(relic).expect("carry a floor-1 relic");
+    }
+    d.ascend()
+        .expect("climb back to the mouth — flee is illegal below");
     d.flee().expect("bank the pack — the run ends");
-    d
+    (d, floor_one)
 }
 
 /// The slots this run banks (custody == BANKED), read off the COMMITTED cell — the ground truth
@@ -47,11 +65,11 @@ fn banked_slots_on_cell(d: &Descent) -> Vec<usize> {
 /// mints nothing.
 #[test]
 fn mint_is_driven_from_committed_banked_custody() {
-    let d = run_that_banks_floor_one(0x11);
+    let (d, floor_one) = run_that_banks_floor_one(0x11);
     assert_eq!(
         banked_slots_on_cell(&d),
-        vec![1, 4, 5],
-        "the committed cell banked exactly relics 1, 4, 5"
+        floor_one,
+        "the committed cell banked exactly the relics the line looted"
     );
 
     let mut vault = LootVault::new();
@@ -64,7 +82,11 @@ fn mint_is_driven_from_committed_banked_custody() {
         banked_slots_on_cell(&d),
         "the mint covers exactly the committed banked relics, in slot order"
     );
-    assert_eq!(vault.item_count(), 3, "one note per banked relic, no more");
+    assert_eq!(
+        vault.item_count(),
+        floor_one.len(),
+        "one note per banked relic, no more"
+    );
 
     // A run that banked NOTHING (bank the empty pack) mints nothing — the mint reads custody.
     let mut empty = Descent::deploy(0x22).expect("deploy");
@@ -91,9 +113,15 @@ fn mint_is_driven_from_committed_banked_custody() {
 ///   banked run.
 #[test]
 fn the_banked_relic_is_the_traded_note() {
-    let d = run_that_banks_floor_one(0x33);
+    let (d, floor_one) = run_that_banks_floor_one(0x33);
     let day_seed = *d.day_seed();
-    let banked_slot = 1usize; // the way-2 key we banked; the note we take to market
+    // The way-2 key we banked; the note we take to market. The draw guarantees `homes(keyFor 2)`
+    // is floor 1, so relic 1 is banked on every day — asserted, not assumed.
+    let banked_slot = 1usize;
+    assert!(
+        floor_one.contains(&banked_slot),
+        "the way-2 key lies on floor 1"
+    );
 
     // ── AFTER: mint the banked relics; the traded note is the banked relic's ──
     let mut vault = LootVault::new();
@@ -151,7 +179,7 @@ fn the_banked_relic_is_the_traded_note() {
 
     // Even stronger: re-run the WHOLE descent (same seed + verbs) and re-mint — the banked custody
     // and thus the minted note are identical. The tradeable note is a function of the banked run.
-    let d2 = run_that_banks_floor_one(0x33);
+    let (d2, _) = run_that_banks_floor_one(0x33);
     let mut vault2 = LootVault::new();
     let remint = d2
         .mint_banked_relics(&mut vault2, "alice")
@@ -206,9 +234,14 @@ fn the_banked_relic_is_the_traded_note() {
 /// run's committed day-seed + the banked custody slot, lineage re-verifying post-trade.
 #[test]
 fn the_traded_banked_note_lands_on_the_buyer_and_provenance_still_replays() {
-    let d = run_that_banks_floor_one(0x44);
+    let (d, floor_one) = run_that_banks_floor_one(0x44);
     let day_seed = *d.day_seed();
-    let banked_slot = 4usize; // a banked floor-1 treasure
+    // A banked floor-1 relic OTHER than the way-2 key — which slot that is depends on the day's
+    // map, so take it from the run rather than naming a number that is only right on day 0.
+    let banked_slot = *floor_one
+        .iter()
+        .find(|&&r| r != 1)
+        .expect("floor 1 mints more than the way-2 key on this day");
 
     let mut vault = LootVault::new();
     let alice_pk = vault.pubkey_of("alice");
