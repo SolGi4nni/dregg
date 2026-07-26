@@ -355,6 +355,45 @@ pub struct FamilyShape {
     pub descriptor_trace_width: usize,
 }
 
+/// Read `(N, K)` off an emitted family name of the form `…-n{N}k{K}[::…]`.
+///
+/// The emitted artifact names its own shape. This is the only place the numbers in that name are
+/// turned back into numbers, so it is the only place the constants this surface advertises can be
+/// held to the artifact's identity.
+fn family_counts_from_name(name: &str) -> Option<(usize, usize)> {
+    let base = name.split("::").next()?;
+    let tail = base.rsplit('-').next()?;
+    let (n, k) = tail.strip_prefix('n')?.split_once('k')?;
+    Some((n.parse().ok()?, k.parse().ok()?))
+}
+
+/// Require the `(N, K)` this surface advertises to be the `(N, K)` the emitted family NAMES.
+///
+/// Refutable, and refuted in the unit tests: hand it `dark-bazaar-private-n5k4::…` and it refuses
+/// `verified_core`. This is what stops [`FAMILY_ORDERS`]/[`FAMILY_BUCKETS`] — which come from
+/// `dregg-circuit-prove`'s constants, not from the artifact — drifting away from the emission
+/// underneath a surface that keeps calling itself the proven family.
+fn family_counts_agree(name: &str) -> Result<(), ClearingRefusal> {
+    let Some((orders, buckets)) = family_counts_from_name(name) else {
+        return Err(ClearingRefusal::verified_core(format!(
+            "the emitted family name '{name}' does not carry an n{{N}}k{{K}} shape, so the \
+             advertised order/bucket counts cannot be held to it"
+        )));
+    };
+    if orders != FAMILY_ORDERS || buckets != FAMILY_BUCKETS {
+        return Err(ClearingRefusal::verified_core(format!(
+            "the emitted family names N={orders}, K={buckets}; this surface advertises \
+             N={FAMILY_ORDERS}, K={FAMILY_BUCKETS} — the constants drifted from the emission"
+        )));
+    }
+    if orders == 0 || buckets == 0 {
+        return Err(ClearingRefusal::verified_core(format!(
+            "the emitted family '{name}' is degenerate (zero orders or zero buckets)"
+        )));
+    }
+    Ok(())
+}
+
 /// **The verified-core gate.** Parse the Lean-emitted family descriptor `json` and require it to
 /// agree with the family constants this surface advertises.
 ///
@@ -394,11 +433,15 @@ pub fn verified_family_from_descriptor(json: &str) -> Result<FamilyShape, Cleari
             "the supplied descriptor disagrees with the pinned emitted artifact".to_string(),
         ));
     }
-    if FAMILY_ORDERS == 0 || FAMILY_BUCKETS == 0 {
-        return Err(ClearingRefusal::verified_core(
-            "the emitted family is degenerate (zero orders or zero buckets)".to_string(),
-        ));
-    }
+    // The emitted family's own NAME carries its shape (`…-n{N}k{K}::…`). Requiring the constants
+    // this surface advertises to equal the numbers in that name is the link that ties the Rust
+    // side to the artifact's identity: bump `ORDER_COUNT`/`PRICE_COUNT` without a new emission and
+    // the node refuses at its door.
+    //
+    // (This replaces a dead branch. What stood here tested `FAMILY_ORDERS == 0 || FAMILY_BUCKETS
+    // == 0` — both are compile-time constants equal to 4, so it read `4 == 0` and could never
+    // fire. A check that cannot fire is not a check.)
+    family_counts_agree(descriptor.name.as_str())?;
     Ok(FamilyShape {
         order_slots: FAMILY_ORDERS,
         price_buckets: FAMILY_BUCKETS,
@@ -1013,14 +1056,23 @@ impl NodeDarkClearing {
     }
 
     /// Read a cleared result. Returns `(p*, V*)` and digests, and nothing else.
+    ///
+    /// **Gated like its four siblings, and it was not.** This accessor is the read half of the
+    /// reveal — it is where `(p*, V*)` actually leaves the node — and until this line existed it
+    /// was the ONLY state accessor that never ran [`Self::gate`]. A node under a drifted, renamed
+    /// or unparseable emitted family refused `open_session`, `session_wire`, `submit_order` and
+    /// `clear` with 503 and then served this one with `200 OK` and the whole reveal. The `shape`
+    /// is used, not discarded: the `not_cleared` refusal reports the EMITTED family's order count,
+    /// so what a client is told it needs comes from the artifact rather than a constant typed here.
     pub fn cleared(&self, session: &[u8; 32]) -> Result<ClearedResultWire, ClearingRefusal> {
+        let shape = self.gate()?;
         let s = self
             .sessions
             .get(session)
             .ok_or(ClearingRefusal::NoSuchSession)?;
         s.cleared.clone().ok_or(ClearingRefusal::NotCleared {
             accepted: s.accepted,
-            required: FAMILY_ORDERS,
+            required: shape.order_slots,
         })
     }
 
@@ -1891,88 +1943,285 @@ mod tests {
         assert_eq!(body["refused"], "book_incomplete");
     }
 
-    /// **THE VERIFIED-CORE DEPENDENCY, RED, THROUGH THE HTTP SURFACE.** Point the family gate at
-    /// a drifted emission and every entry point refuses `verified_core` — open, submit, clear and
-    /// read alike. This is the same gate the live surface runs; only its input differs.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn every_entry_point_refuses_fail_closed_on_a_drifted_emitted_family() {
-        let (state, _tmp) = fresh_state().await;
-        let keys = trader_keys();
-        // GREEN FIRST, so the red below is a change of behaviour and not a broken harness.
-        let (session, _wire) = open_session(&state, &keys).await;
+    /// Read the Lean-archive disclosure off a session wire, FAIL CLOSED. Absent, renamed or
+    /// non-boolean is an error — never a default, never a `false` that reads like an honest
+    /// report. This exists so the disclosure test checks a wire it did not itself write.
+    fn archive_disclosure(session_wire: &serde_json::Value) -> Result<bool, String> {
+        match session_wire.get("lean_archive_linked") {
+            Some(serde_json::Value::Bool(b)) => Ok(*b),
+            Some(other) => Err(format!(
+                "`lean_archive_linked` must be a boolean disclosure, found {other}"
+            )),
+            None => Err("the session wire carries no `lean_archive_linked` disclosure".to_string()),
+        }
+    }
 
-        // A renamed emission: same bytes, different family identity.
+    /// The DRIFTED emission every fail-closed test points the gate at: same bytes, different
+    /// family identity. `'static` because [`NodeDarkClearing::force_family_descriptor`] holds a
+    /// `&'static str` exactly as the real constant does.
+    fn renamed_emitted_family() -> &'static str {
         static RENAMED: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-        let renamed: &'static str = RENAMED.get_or_init(|| {
+        RENAMED.get_or_init(|| {
             EMITTED_FAMILY_DESCRIPTOR.replacen(
                 "dark-bazaar-private-n4k4::wide-poseidon2-v2",
                 "dark-bazaar-private-n4k4::impostor",
                 1,
             )
-        });
+        })
+    }
+
+    /// Open a session, submit the whole family book and clear it — the FULL green path, so a
+    /// cleared result actually EXISTS to be read. Returns the session id.
+    async fn open_submit_and_clear(state: &NodeState, keys: &[TraderKey]) -> String {
+        let (session, wire) = open_session(state, keys).await;
+        for (trader, (order, key)) in family_orders().iter().zip(keys.iter()).enumerate() {
+            let envelope = seal_order(&wire, trader, order, key);
+            let (status, body) = post_bytes(
+                state,
+                &format!("/market/dark-clearing/session/{session}/order"),
+                envelope,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "order {trader}: {body}");
+        }
+        let (status, body) = post_json(
+            state,
+            &format!("/market/dark-clearing/session/{session}/clear"),
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "clear: {body}");
+        session
+    }
+
+    /// **THE VERIFIED-CORE DEPENDENCY, RED, THROUGH EVERY ENTRY POINT.** Point the family gate at
+    /// a drifted emission and every entry point refuses `verified_core`. This is the same gate the
+    /// live surface runs; only its input differs.
+    ///
+    /// The NAME is the claim, so here is exactly what "every entry point" is:
+    ///
+    /// * **all TEN HTTP routes** — the five route families (open a session, read a session,
+    ///   submit an order, clear, read the result) under BOTH the `/market/…` and `/api/market/…`
+    ///   prefixes [`routes`] registers. The list below is asserted to be that whole set.
+    /// * **all five public state accessors** of [`NodeDarkClearing`] — `open_session`,
+    ///   `session_wire`, `submit_order`, `clear`, `cleared`. That is what covers the MCP tool
+    ///   surface (`crate::mcp::handlers_market`) as well: those tools add no mechanism, they call
+    ///   these five and return what they return, so an accessor that refuses refuses there too.
+    ///
+    /// `/result` is in this test because it was NOT gated. `cleared()` was the one accessor that
+    /// never ran the gate, so a node whose emitted family had drifted, been renamed or become
+    /// unparseable answered `GET …/result` with `200 OK` and a full
+    /// `{"p_star":…,"v_star":…,"certificate_verified":true}` while its four siblings correctly
+    /// returned 503. The book is CLEARED first here on purpose: with no cleared result the
+    /// ungated accessor answers `not_cleared` and the hole hides.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn every_entry_point_refuses_fail_closed_on_a_drifted_emitted_family() {
+        let (state, _tmp) = fresh_state().await;
+        let keys = trader_keys();
+        // GREEN FIRST, so the red below is a change of behaviour and not a broken harness — and
+        // a real cleared result exists for the result route to serve.
+        let session = open_submit_and_clear(&state, &keys).await;
+        let (status, green) = get_json(
+            &state,
+            &format!("/market/dark-clearing/session/{session}/result"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "result before the drift: {green}");
+        assert!(green["p_star"].is_number(), "the green read reveals p*");
+
         {
             let clearing = state.dark_clearing();
             let mut guard = clearing.write().await;
-            guard.force_family_descriptor(renamed);
+            guard.force_family_descriptor(renamed_emitted_family());
         }
 
         let traders: Vec<String> = keys
             .iter()
             .map(|k| hex32(&k.verifying_key().to_bytes()))
             .collect();
-        let (status, body) = post_json(
-            &state,
-            "/market/dark-clearing/session",
-            serde_json::json!({ "traders": traders }),
-        )
-        .await;
-        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "open: {body}");
-        assert_eq!(body["refused"], "verified_core");
-        assert_eq!(body["dependency"], true);
 
-        for (method, uri) in [
-            ("GET", format!("/market/dark-clearing/session/{session}")),
-            (
-                "POST",
-                format!("/market/dark-clearing/session/{session}/clear"),
-            ),
-        ] {
-            let (status, body) = if method == "GET" {
-                get_json(&state, &uri).await
-            } else {
-                post_json(&state, &uri, serde_json::json!({})).await
-            };
-            assert_eq!(
-                status,
-                StatusCode::SERVICE_UNAVAILABLE,
-                "{method} {uri}: {body}"
-            );
-            assert_eq!(body["refused"], "verified_core");
+        // Every HTTP route family, under every prefix the router registers.
+        let mut covered: Vec<String> = Vec::new();
+        for prefix in ["/market/dark-clearing", "/api/market/dark-clearing"] {
+            let cases: [(&str, String); 5] = [
+                ("OPEN", format!("{prefix}/session")),
+                ("GET", format!("{prefix}/session/{session}")),
+                ("ORDER", format!("{prefix}/session/{session}/order")),
+                ("POST", format!("{prefix}/session/{session}/clear")),
+                ("GET", format!("{prefix}/session/{session}/result")),
+            ];
+            for (method, uri) in cases {
+                let (status, body) = match method {
+                    "GET" => get_json(&state, &uri).await,
+                    "ORDER" => post_bytes(&state, &uri, vec![0u8; 16]).await,
+                    "OPEN" => {
+                        post_json(&state, &uri, serde_json::json!({ "traders": traders })).await
+                    }
+                    _ => post_json(&state, &uri, serde_json::json!({})).await,
+                };
+                assert_eq!(
+                    status,
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "{method} {uri} must fail closed: {body}"
+                );
+                assert_eq!(body["refused"], "verified_core", "{method} {uri}");
+                assert_eq!(body["dependency"], true, "{method} {uri}");
+                // A refusal must not carry the reveal it refused to serve.
+                assert!(
+                    body.get("p_star").is_none() && body.get("v_star").is_none(),
+                    "{method} {uri} leaked the cleared reveal in its refusal: {body}"
+                );
+                covered.push(uri);
+            }
         }
+        assert_eq!(
+            covered.len(),
+            10,
+            "the router registers ten dark-clearing routes; this test must exercise all ten"
+        );
 
-        let (status, body) = post_bytes(
-            &state,
-            &format!("/market/dark-clearing/session/{session}/order"),
-            vec![0u8; 16],
-        )
-        .await;
-        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
-        assert_eq!(body["refused"], "verified_core");
+        // The ACCESSOR layer, which is what the MCP tools call. Every one of the five refuses.
+        let clearing = state.dark_clearing();
+        let mut guard = clearing.write().await;
+        let nonce = parse_hex32("session", &session).unwrap();
+        let roster: Vec<[u8; 32]> = keys.iter().map(|k| k.verifying_key().to_bytes()).collect();
+        let mut accessors: Vec<(&str, ClearingRefusal)> = Vec::new();
+        accessors.push((
+            "session_wire",
+            guard.session_wire(&nonce).expect_err("session_wire gates"),
+        ));
+        accessors.push(("cleared", guard.cleared(&nonce).expect_err("cleared gates")));
+        accessors.push((
+            "submit_order",
+            guard
+                .submit_order(&nonce, &[0u8; 16])
+                .expect_err("submit_order gates"),
+        ));
+        accessors.push(("clear", guard.clear(&nonce).expect_err("clear gates")));
+        accessors.push((
+            "open_session",
+            guard.open_session(roster).expect_err("open_session gates"),
+        ));
+        for (name, refusal) in &accessors {
+            assert_eq!(
+                refusal.dependency(),
+                Some(ClearingDependency::VerifiedCore),
+                "{name} must refuse verified_core under a drifted emitted family"
+            );
+        }
+        assert_eq!(
+            accessors.len(),
+            5,
+            "NodeDarkClearing has five public state accessors and all five must gate"
+        );
     }
 
-    /// The archive is REPORTED, never required — and this test says out loud which state the
-    /// build it runs in is in, so a reader is never left guessing.
+    /// **THE ARCHIVE IS A DISCLOSURE, NOT A GATE — and this checks the disclosure against the
+    /// SOURCE, not against itself.**
+    ///
+    /// The version of this test that shipped asserted `wire.lean_archive_linked ==
+    /// dregg_lean_ffi::lean_available()` while [`ClearingSession::wire`] SET that field to
+    /// `dregg_lean_ffi::lean_available()`. That is `f() == f()`: it passed on a box where the
+    /// value was `false` and on a box where it was `true`, and it would have passed just the same
+    /// if the surface had stopped disclosing anything meaningful. It could not go red, so its
+    /// name bought trust it had not earned.
+    ///
+    /// What is actually claimed, and is actually checked here:
+    ///
+    /// 1. the field is PRESENT and BOOLEAN on the session wire (a dropped or renamed disclosure
+    ///    goes red);
+    /// 2. it agrees with the process's archive state, taken through the FFI probe;
+    /// 3. **it is not a gate** — the whole accept path (open → four encrypted orders → clear →
+    ///    read `(p*, V*)`) succeeds under whichever archive state THIS box has. If anyone makes
+    ///    the archive load-bearing on this path, this goes red on every box whose archive state
+    ///    is the refusing one;
+    /// 4. and the disclosure does not move: it is the same value before and after a clear, so it
+    ///    cannot be a per-request decision dressed as a fact about the node.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn the_lean_archive_is_disclosed_and_is_not_a_gate() {
         let linked = dregg_lean_ffi::lean_available();
         eprintln!("dark-clearing: this build's Lean archive linked = {linked}");
+
+        // The reader below is a REAL reader — here it is going red on a dropped, a renamed and a
+        // non-boolean disclosure, before it is pointed at the live wire.
+        for (bad, why) in [
+            (serde_json::json!({}), "a dropped disclosure"),
+            (
+                serde_json::json!({ "lean_archive_lnked": true }),
+                "a renamed disclosure",
+            ),
+            (
+                serde_json::json!({ "lean_archive_linked": "yes" }),
+                "a non-boolean disclosure",
+            ),
+            (
+                serde_json::json!({ "lean_archive_linked": null }),
+                "a null disclosure",
+            ),
+        ] {
+            assert!(
+                archive_disclosure(&bad).is_err(),
+                "{why} must be an error, not a default"
+            );
+        }
+
         let (state, _tmp) = fresh_state().await;
         let keys = trader_keys();
-        let (_session, wire) = open_session(&state, &keys).await;
+        let (session, wire) = open_session(&state, &keys).await;
+
+        // (1) present and boolean — not absent, not a string, not a number.
+        let disclosed = archive_disclosure(&wire["session"])
+            .expect("the session wire must carry `lean_archive_linked` as a boolean");
+        // (2) honest about this process.
         assert_eq!(
-            wire["session"]["lean_archive_linked"],
-            serde_json::Value::Bool(linked),
+            disclosed, linked,
             "the surface must report this node's archive state honestly"
+        );
+
+        // (3) NOT A GATE: the full accept path runs to a cleared reveal under this archive state.
+        let orders = family_orders();
+        let expected = reference_clear(&orders, FAMILY_BUCKETS);
+        for (trader, (order, key)) in orders.iter().zip(keys.iter()).enumerate() {
+            let envelope = seal_order(&wire, trader, order, key);
+            let (status, body) = post_bytes(
+                &state,
+                &format!("/market/dark-clearing/session/{session}/order"),
+                envelope,
+            )
+            .await;
+            assert_eq!(
+                status,
+                StatusCode::OK,
+                "order {trader} was refused with the archive linked = {linked}; the archive is \
+                 documented as a disclosure and must not gate the accept path: {body}"
+            );
+        }
+        let (status, body) = post_json(
+            &state,
+            &format!("/market/dark-clearing/session/{session}/clear"),
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the clear was refused with the archive linked = {linked}: {body}"
+        );
+        assert_eq!(
+            body["result"]["p_star"].as_u64().map(|p| p as usize),
+            expected.p_star,
+            "the reveal must be the shared rule's, archive state notwithstanding"
+        );
+
+        // (4) the disclosure is a fact about the node, not a per-request decision: unchanged
+        // across the whole lifecycle.
+        let (status, after) =
+            get_json(&state, &format!("/market/dark-clearing/session/{session}")).await;
+        assert_eq!(status, StatusCode::OK, "{after}");
+        assert_eq!(
+            archive_disclosure(&after).expect("the read wire carries the disclosure too"),
+            disclosed,
+            "the archive disclosure must not change between requests"
         );
     }
 
@@ -2004,6 +2253,39 @@ mod tests {
         let refusal = verified_family_from_descriptor("{not json")
             .expect_err("an unparseable descriptor must not pass");
         assert_eq!(refusal.dependency(), Some(ClearingDependency::VerifiedCore));
+    }
+
+    /// **THE SHAPE LINK IS LIVE.** The emitted family names its own `(N, K)`; the constants this
+    /// surface advertises must equal them. What stood in this position in the gate was
+    /// `FAMILY_ORDERS == 0 || FAMILY_BUCKETS == 0` over two compile-time constants both equal to
+    /// 4 — `4 == 0`, a branch no input could reach. This one is reached and refused.
+    #[test]
+    fn family_counts_must_agree_with_the_emitted_family_name() {
+        assert_eq!(
+            family_counts_from_name("dark-bazaar-private-n4k4::wide-poseidon2-v2"),
+            Some((4, 4)),
+            "the emitted family names its own shape"
+        );
+        family_counts_agree("dark-bazaar-private-n4k4::wide-poseidon2-v2")
+            .expect("the emitted family's own counts must agree with the advertised ones");
+
+        // The drift this guards: the Rust constants moving off the emission.
+        for drifted in [
+            "dark-bazaar-private-n5k4::wide-poseidon2-v2",
+            "dark-bazaar-private-n4k8::wide-poseidon2-v2",
+            "dark-bazaar-private-n0k0::wide-poseidon2-v2",
+        ] {
+            let refusal = family_counts_agree(drifted)
+                .expect_err("a family naming a different shape must not pass");
+            assert_eq!(refusal.dependency(), Some(ClearingDependency::VerifiedCore));
+        }
+
+        // A name that carries no shape at all is refused, not silently accepted.
+        for shapeless in ["dark-bazaar-private", "dark-bazaar-private-nXkY", ""] {
+            let refusal = family_counts_agree(shapeless)
+                .expect_err("a name with no n{N}k{K} shape must not pass");
+            assert_eq!(refusal.dependency(), Some(ClearingDependency::VerifiedCore));
+        }
     }
 
     /// The family this surface advertises is the family Lean emitted, not a number typed here.

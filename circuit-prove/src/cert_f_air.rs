@@ -874,30 +874,221 @@ mod tests {
     };
     use dregg_circuit::lean_descriptor_air::VmConstraint;
 
-    /// **THE LEAN-AUTHORED DESCRIPTOR (byte-twin discipline).** `metatheory/Market/CertFDescriptor.lean`
-    /// AUTHORS the Cert-F `EffectVmDescriptor2` (`certFDescriptorOf`) and PROVES the emit-soundness
-    /// bridge `Satisfied2 ↔ certificate-valid` (`certFDescriptor_emit_sound`) — the theorem this
-    /// hand-built Rust could only *test*. The Lean descriptor's canonical wire string is emitted by
-    /// `emitVmJson2` and committed at `circuit/descriptors/dregg-cert-f-ir2.json`. This constant is
-    /// that byte string; Lean is the source of truth, the Rust builder is the checked twin.
-    const CERT_F_LEAN_JSON: &str = include_str!("../../circuit/descriptors/dregg-cert-f-ir2.json");
+    /// **THE LEAN SOURCE ITSELF**, not a second copy of the artifact.
+    ///
+    /// `metatheory/Market/CertFGolden.lean` holds `CERT_F_RING3_GOLDEN` and
+    /// `CERT_F_MARKET4_GOLDEN` — the exact `emitVmJson2` wire strings, as Lean string literals.
+    /// `metatheory/Market/CertFDescriptor.lean` proves each of them IS the emission:
+    ///
+    /// ```text
+    /// #guard emitVmJson2 certFDescriptor        == Market.CertFGolden.CERT_F_RING3_GOLDEN
+    /// #guard emitVmJson2 certFMarket4Descriptor == Market.CertFGolden.CERT_F_MARKET4_GOLDEN
+    /// ```
+    ///
+    /// So decoding these literals and comparing them to the committed `.json` files closes the
+    /// chain the Rust side actually depends on: the bytes this crate parses are the bytes Lean
+    /// emitted. Nothing here authors a constraint; Lean authors the descriptor and this reads it.
+    const CERT_F_GOLDEN_LEAN_SOURCE: &str =
+        include_str!("../../metatheory/Market/CertFGolden.lean");
 
-    /// **THE BYTE-TWIN GATE.** The hand-built Rust descriptor for the worked 3-cycle is BYTE-IDENTICAL
-    /// to the Lean-authored one (decoded from the committed `emitVmJson2` wire string). This retires the
-    /// hand-write as the source of truth: `cert_f_descriptor` is now validated against the Lean descriptor
-    /// that carries the proven `Satisfied2 ↔ valid` emit-soundness, exactly as the effect_vm family pins
-    /// its Rust twin to the Lean `#guard` golden. (The @[export] archive build that would let Rust
-    /// consume the Lean object directly is the deploy step; this twin is the same staged discipline the
-    /// rotation lanes use — the JSON is regenerated from Lean via `emitVmJson2`.)
+    /// Decode one `def NAME : String := "" ++ "…" ++ "…"` Lean golden into its bytes.
+    ///
+    /// FAIL CLOSED at every step: an absent definition, a line that is not a string literal, or an
+    /// escape this decoder does not understand is an `Err`, never a silently shortened string. A
+    /// decoder that quietly returned a prefix would turn this pin into a weaker pin without
+    /// anybody noticing.
+    fn decode_lean_string_def(source: &str, name: &str) -> Result<String, String> {
+        let header = format!("def {name} : String :=");
+        let start = source
+            .find(&header)
+            .ok_or_else(|| format!("`{name}` is not defined in the Lean golden source"))?;
+        let mut out = String::new();
+        let mut chunks = 0usize;
+        for line in source[start + header.len()..].lines().skip(1) {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with("def ") || line.starts_with("end ") {
+                break;
+            }
+            let literal = line.strip_prefix("++").unwrap_or(line).trim();
+            let body = literal
+                .strip_prefix('"')
+                .and_then(|s| s.strip_suffix('"'))
+                .ok_or_else(|| format!("`{name}`: not a Lean string literal: {literal:.40}"))?;
+            let mut chars = body.chars();
+            while let Some(c) = chars.next() {
+                if c != '\\' {
+                    out.push(c);
+                    continue;
+                }
+                match chars.next() {
+                    Some('"') => out.push('"'),
+                    Some('\\') => out.push('\\'),
+                    Some('n') => out.push('\n'),
+                    Some('t') => out.push('\t'),
+                    Some('r') => out.push('\r'),
+                    Some('\'') => out.push('\''),
+                    other => {
+                        return Err(format!(
+                            "`{name}`: unhandled Lean string escape `\\{}` — this decoder refuses \
+                             rather than guess",
+                            other.map(String::from).unwrap_or_else(|| "<eol>".into())
+                        ));
+                    }
+                }
+            }
+            chunks += 1;
+        }
+        if chunks == 0 {
+            return Err(format!("`{name}` decoded to no chunks at all"));
+        }
+        Ok(out)
+    }
+
+    /// **THE PIN ITSELF**, as one function, so the test below can run it on the real Lean source
+    /// (expecting `Ok`) and on a deliberately drifted one (expecting `Err`). A pin you have only
+    /// ever seen say yes is not a pin.
+    fn committed_artifact_is_the_lean_emission(
+        lean_source: &str,
+        golden: &str,
+        committed: &str,
+    ) -> Result<(), String> {
+        let lean = decode_lean_string_def(lean_source, golden)?;
+        if lean.len() != committed.len() {
+            return Err(format!(
+                "the committed artifact is {} bytes and the Lean golden {golden} is {} — the \
+                 committed descriptor is not what Lean emits",
+                committed.len(),
+                lean.len()
+            ));
+        }
+        if lean != committed {
+            let at = lean
+                .bytes()
+                .zip(committed.bytes())
+                .position(|(a, b)| a != b)
+                .unwrap_or(0);
+            return Err(format!(
+                "the committed artifact differs from the Lean golden {golden} at byte {at}; \
+                 re-emit it from `emitVmJson2` instead of editing the JSON"
+            ));
+        }
+        // The bytes both sides agree on are the bytes this crate actually parses.
+        parse_vm_descriptor2(&lean)
+            .map(|_| ())
+            .map_err(|e| format!("the Lean-emitted descriptor must parse: {e}"))
+    }
+
+    /// Both registered Cert-F programs, as `(golden name, committed artifact, what it is)`.
+    const CERT_F_PINS: [(&str, &str, &str); 2] = [
+        (
+            "CERT_F_RING3_GOLDEN",
+            CERT_F_RING3_DESCRIPTOR_JSON,
+            "certFDescriptor (ring-3)",
+        ),
+        (
+            "CERT_F_MARKET4_GOLDEN",
+            CERT_F_MARKET4_DESCRIPTOR_JSON,
+            "certFMarket4Descriptor (3-asset/4-order market batch)",
+        ),
+    ];
+
+    /// **THE PIN THAT CAN GO RED.** Every committed Cert-F descriptor this crate parses is
+    /// BYTE-IDENTICAL to the Lean golden that `CertFDescriptor.lean` `#guard`s equals
+    /// `emitVmJson2` of the Lean-authored descriptor. Edit either side alone and this is red.
+    ///
+    /// It replaces a test of the same name that could not go red. That one read
+    /// `assert_eq!(cert_f_descriptor(&ring3_cert()), parse_vm_descriptor2(CERT_F_LEAN_JSON))`,
+    /// where `cert_f_descriptor` resolves to `parse_vm_descriptor2(CERT_F_RING3_DESCRIPTOR_JSON)`
+    /// and both constants are `include_str!("../../circuit/descriptors/dregg-cert-f-ir2.json")` —
+    /// literally `parse(X) == parse(X)`. Its doc comment described a "hand-built Rust descriptor"
+    /// that no longer exists: the Rust builder was retired and the test was left comparing the
+    /// artifact to itself, still carrying the whole "Rust matches Lean" claim in its name.
     #[test]
     fn cert_f_descriptor_matches_lean() {
-        let rust = cert_f_descriptor(&ring3_cert());
-        let lean = parse_vm_descriptor2(CERT_F_LEAN_JSON)
-            .expect("the Lean-authored Cert-F descriptor JSON must parse");
+        for (golden, committed, which) in CERT_F_PINS {
+            committed_artifact_is_the_lean_emission(CERT_F_GOLDEN_LEAN_SOURCE, golden, committed)
+                .unwrap_or_else(|e| panic!("{which}: {e}"));
+        }
+
+        // The registry resolves the ring-3 program to exactly those bytes.
+        let resolved = cert_f_descriptor(&ring3_cert());
+        let from_lean = parse_vm_descriptor2(
+            &decode_lean_string_def(CERT_F_GOLDEN_LEAN_SOURCE, "CERT_F_RING3_GOLDEN").unwrap(),
+        )
+        .expect("the Lean golden parses");
         assert_eq!(
-            rust, lean,
-            "the runtime descriptor must be exactly the Lean-emitted `certFDescriptorOf ring3Prog`"
+            resolved, from_lean,
+            "the descriptor the prover resolves must be the Lean-emitted `certFDescriptorOf \
+             ring3Prog`"
         );
+    }
+
+    /// **THE SAME PIN, RUN ON DRIFTED INPUT, GOES RED.** Every way the artifact and the emission
+    /// can come apart is exercised here against the REAL Lean source with one deliberate mutation,
+    /// so `cert_f_descriptor_matches_lean` above is a check and not a decoder that always says yes.
+    #[test]
+    fn the_lean_golden_pin_is_refutable() {
+        // A DRIFTED golden: one emitted trace width changed in the Lean source. Same length, so
+        // this is caught by the byte comparison and not merely by a size check.
+        let drifted = CERT_F_GOLDEN_LEAN_SOURCE.replacen(
+            "\\\"trace_width\\\":465",
+            "\\\"trace_width\\\":466",
+            1,
+        );
+        assert_ne!(
+            drifted, CERT_F_GOLDEN_LEAN_SOURCE,
+            "the mutation must actually land, or this test proves nothing"
+        );
+        let err = committed_artifact_is_the_lean_emission(
+            &drifted,
+            "CERT_F_RING3_GOLDEN",
+            CERT_F_RING3_DESCRIPTOR_JSON,
+        )
+        .expect_err("a drifted Lean golden must NOT pass the pin");
+        assert!(err.contains("differs from the Lean golden"), "{err}");
+
+        // A TRUNCATED golden: refused on length, not accepted as a happy prefix.
+        let truncated = CERT_F_GOLDEN_LEAN_SOURCE.replacen(",\\\"ir\\\":2", "", 1);
+        let err = committed_artifact_is_the_lean_emission(
+            &truncated,
+            "CERT_F_RING3_GOLDEN",
+            CERT_F_RING3_DESCRIPTOR_JSON,
+        )
+        .expect_err("a truncated Lean golden must NOT pass the pin");
+        assert!(err.contains("is not what Lean emits"), "{err}");
+
+        // THE WRONG GOLDEN: market4's emission is not ring-3's artifact.
+        let err = committed_artifact_is_the_lean_emission(
+            CERT_F_GOLDEN_LEAN_SOURCE,
+            "CERT_F_MARKET4_GOLDEN",
+            CERT_F_RING3_DESCRIPTOR_JSON,
+        )
+        .expect_err("the market4 emission must not pass as the ring-3 artifact");
+        assert!(err.contains("is not what Lean emits"), "{err}");
+
+        // AN ABSENT definition is refused, not treated as the empty string.
+        let err = committed_artifact_is_the_lean_emission(
+            CERT_F_GOLDEN_LEAN_SOURCE,
+            "CERT_F_NO_SUCH_GOLDEN",
+            CERT_F_RING3_DESCRIPTOR_JSON,
+        )
+        .expect_err("an absent golden must be refused");
+        assert!(err.contains("is not defined"), "{err}");
+
+        // AN UNKNOWN ESCAPE is refused, not guessed at.
+        let err = decode_lean_string_def("def T : String :=\n  \"a\\qb\"\n\n", "T")
+            .expect_err("an escape this decoder does not understand must be refused");
+        assert!(err.contains("unhandled Lean string escape"), "{err}");
+
+        // A line that is not a string literal is refused.
+        let err = decode_lean_string_def("def T : String :=\n  ++ notAString\n\n", "T")
+            .expect_err("a non-literal continuation must be refused");
+        assert!(err.contains("not a Lean string literal"), "{err}");
+
+        // And the decoder does read the real thing, so the failures above are not vacuous.
+        let good = decode_lean_string_def(CERT_F_GOLDEN_LEAN_SOURCE, "CERT_F_RING3_GOLDEN")
+            .expect("the real golden decodes");
+        assert!(good.starts_with("{\"name\":\"cert-f\",\"ir\":2,"));
     }
 
     /// The integer-admission revision is a deliberate descriptor compatibility break.  These
