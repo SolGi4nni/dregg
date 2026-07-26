@@ -108,6 +108,18 @@ def roster : List Tooth :=
   , { mod := `Dregg2.Tools.ConePortLogHashRun
     , guards := "the pinned logHashInjective port measurement (48 ported / 48 eligible, 2 \
         explained refusals); drift in EITHER direction is a build error" }
+  , { mod := `Dregg2.Circuit.TurnDecodeChainLogBundleCutoverCheck
+    , guards := "the TurnDecodeChainLog FIELD-BUNDLE cutover (the intra-turn receipt-log seam): \
+        statement identity by kernel defeq for the three cured theorems, the per-adjacency side \
+        condition's LOAD-BEARINGness (dropping it is refuted, not merely unproved), \
+        logHashInjective unreachable from the bundle and all three proofs with a positive control, \
+        and the re-inhabitation at a deployed accumulator whose injectivity it REFUTES" }
+  , { mod := `Dregg2.Circuit.RestFrameCardinalityFloor
+    , guards := "the proof that `RestHashIffFrame` — CommitSurface's FIFTH field, and a hypothesis \
+        in 234 binder positions across 85 modules — is FALSE for EVERY rest-hash at EVERY width by \
+        CARDINALITY (the components it must separate include function spaces). Neither the Python \
+        ruler nor `#floor_ratchet`'s derived floor set can see it, so if this module leaves the \
+        build the tree loses its only record that CommitSurface has no inhabitant at all" }
   , { mod := `Dregg2.Verify.FloorCensus
     , guards := "`#floor_census` — the elaborated-term refuted-floor census, the campaign's \
         instrument of record" }

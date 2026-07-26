@@ -47,6 +47,7 @@ No `sorry`, no `axiom`, no `native_decide`.
 -/
 import Dregg2.Circuit.CircuitSoundness
 import Dregg2.Circuit.StateCommitFloorRegrounded
+import Dregg2.Circuit.RestFrameCardinalityFloor
 import Dregg2.Tactics
 
 namespace Dregg2.Circuit.TurnDecodeChainLogBundleCutoverCheck
@@ -282,23 +283,29 @@ proves it and a silent residual is how a "drained" bundle stays vacuous through 
    impossible claim, the three seam theorems are out of `logHashInjective`'s proof closure, and the
    bundle's own data is realizable by an honest prover at any accumulator.
 
-2. **Draining `CommitSurface`'s four gated floors would NOT by itself re-inhabit it**, and this is the
-   trap worth writing down: its FIFTH field `restFrame : RestHashIffFrame RH` is invisible to BOTH
-   instruments. `RestHashIffFrame RH` unfolds to `∀ k k', RH k = RH k' ↔ (k'.accounts = k.accounts ∧
-   … ∧ k'.bal = k.bal ∧ k'.caps = k.caps ∧ …)`, i.e. `RH : RecordKernelState → ℤ` must be INJECTIVE on
-   the non-`cell` components. Two of those components are FUNCTION SPACES —
-   `bal : CellId → AssetId → ℤ` and `Caps = Label → List Cap`, with `CellId = AssetId = Label = ℕ` —
-   so the domain has cardinality at least `2 ^ ℵ₀` while `ℤ` is countable. `RestHashIffFrame` is
-   therefore unsatisfiable BY CARDINALITY: not merely false at BabyBear width, false for every `RH`
-   whatsoever, at any width. This is the class `Verify/InjSpelledFloors` names ("if `f`'s domain is a
-   FUNCTION SPACE … it is a CARDINALITY impossibility"), sitting in a structure field where the
-   binder-keyed ruler cannot see it and where the gate's floor derivation does not reach it
-   (`RestHashIffFrame`'s body is an ∀-iff, not injectivity-shaped, and no theorem in the tree refutes
-   it, so it is never promoted to a floor). Anyone porting `CommitSurface` must shed `restFrame` in
-   the SAME pass or the structure stays uninhabitable at a subtler width — the exact "shed one floor
-   of a multi-floor declaration and the metric moves by zero" failure. The structural repair is the
-   one that class always wants: digest the FINITE support actually touched (the `accounts : Finset
-   CellId` rows), never the whole function.
--/
+2. **Draining `CommitSurface`'s four gated floors would NOT by itself re-inhabit it — and that is now
+   a THEOREM, not a caution.** Its FIFTH field `restFrame : RestHashIffFrame RH` is invisible to BOTH
+   instruments, and `RestFrameCardinalityFloor.restHashIffFrame_false_by_cardinality` proves it FALSE
+   for EVERY `RH : RecordKernelState → ℤ` at EVERY width — by Cantor, because two of the components
+   the rest-hash must separate are FUNCTION SPACES (`bal : CellId → AssetId → ℤ`,
+   `Caps = Label → List Cap`, all three indices `ℕ`), so the domain has size at least `2 ^ ℵ₀` while
+   `ℤ` is countable. That is STRICTLY stronger than every gated floor in the campaign, which are false
+   only at deployed BabyBear width; widening the digest — the repair for the CR floors — does nothing
+   here, and there is no instance to be per-instance at. The `example` below discharges the
+   consequence: `CommitSurface` has NO inhabitant, so this cutover's `∀ S`-quantified inhabitants are
+   still vacuous through `S`, exactly as §1 says. Anyone porting `CommitSurface` must shed `restFrame`
+   in the SAME pass as the four; the structural repair is the one that class always wants and
+   `Verify/InjSpelledFloors` already names — digest the FINITE support actually touched (the
+   `accounts : Finset CellId` rows), never the whole function. -/
+
+/-- ⚑ **`CommitSurface` HAS NO INHABITANT AT ALL** — one application of the cardinality refutation to
+the surface's own `restFrame` field. So the residual named above is not a suspicion: every theorem in
+this tree quantified over a `CommitSurface` is vacuous today, and the `∀ S`-shaped inhabitants of §1
+and §5 are honest about exactly that. Unnamed for the same reason as those: a NAMED declaration whose
+type mentions `CommitSurface` is a `bundle-user` carrier and `#floor_ratchet` gates it. -/
+example (S : CommitSurface) : False :=
+  Dregg2.Circuit.RestFrameCardinalityFloor.restHashIffFrame_false_by_cardinality S.RH S.restFrame
+
+/-! (end §7) -/
 
 end Dregg2.Circuit.TurnDecodeChainLogBundleCutoverCheck
