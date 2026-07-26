@@ -67,7 +67,21 @@ byte-reproducible) · `metatheory/Dregg2/Tools/ConeCutover.lean` (TRANSACTIONAL 
   Proof: cellleaf shed `cellLeafInjective` from 13 sites; all 13 reappeared carrying other floors.
 - **Work order by measured ratio:** ① **BUNDLES** (floor-FIELD deletions; 3 bought −6). Remaining:
   `CircuitSoundness.lean:117`, `:1050`, `ClosureLog.lean:86`, `DeployedCapTree.lean:139`. ② **SOLE-FLOOR**
-  declarations (verify sole-floor status FIRST). ③ multi-floor only in whole floor-COMBO batches (~16 combos).
+  declarations (verify sole-floor status FIRST). ③ multi-floor only in whole floor-COMBO batches.
+- **⚑ ② AND ③ NOW HAVE THEIR NUMBERS** — `#floor_census` v2 RAN for the first time (2026-07-26, clean export of
+  `e0160d116`; artifact + provenance `docs/artifacts/floor-census-v2-2026-07-26/`, reproduce with
+  `cd metatheory && lake env lean scripts/run_floor_census.lean`). It replaced two estimates this section was
+  planned on:
+  - ③ is **547 multi-floor sites over 27 combos**, not 353 over ~16 — and it is far MORE concentrated than the
+    guess: `cellLeaf+compress+compressN` 306 · `cellLeaf+compressN+logHash` 94 · `compressN+logHash` 42 ·
+    `cellLeaf+compressN` 31 = **473 of 547 (86%) in four combos**; the other 23 hold 74 sites, 14 of them
+    singletons. The AppRule table has FOUR rows.
+  - ② should be pointed at **`Poseidon2SpongeCR`: 732 carriers of which 707 (97%) are SOLE-FLOOR**, so a port
+    there ENDS the carrier. Contrast the wave that was actually run: `cellLeafInjective` has 470 carriers and
+    **13** sole-floor (3%) — which is not a surprise in hindsight, it is the 0.5 unlock ratio, measured. Also
+    fully sole-floor: `HermineHintMLWE.HashCR` 57/57, `DeployedCapTree.Compress8CR` 31/31.
+  - Also measured, and the honest brake on ①: `dead-thm-clean` is **8** declarations, not a deletion wave. Of
+    100 `dead` carriers, 65 are struct/ctor boilerplate that dies only when its BUNDLE is ported.
 - **BUNDLE RULE** (`Shielded/RealCrypto.lean` §2.0): DELETE the floor field; **never** swap in a `noColl` field —
   a field has no argument position, so it must quantify over a pre-chosen set (empty carries nothing; non-trivial
   is uninhabitable again). That is laundering. Re-inhabit with a **constructed deployed inhabitant whose own

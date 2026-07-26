@@ -1,0 +1,101 @@
+floor-census-v2 — THE FIRST v2 RUN. 2026-07-26.
+
+WHAT THIS IS
+  The output of `#floor_census` (`metatheory/Dregg2/Verify/FloorCensus.lean`) over the whole
+  elaborated Dregg2 tree. Every v2 figure quoted before this file existed was an ESTIMATE: the
+  census needs `import Dregg2` and a fully elaborated environment, the root did not elaborate for
+  most of the campaign, and so no v2 TSV had ever been written to disk anywhere. This is the
+  measurement those numbers were standing in for.
+
+  Reproduce:  cd metatheory && lake env lean scripts/run_floor_census.lean
+  (edit the output path in that driver; it takes ~2 min on a warm tree)
+
+PROVENANCE
+  commit        e0160d116f68de95a48204f78e818a31eb8ee793  (clean `git archive` export, NOT a
+                working tree — the working tree carries co-tenant uncommitted providers and
+                yields a green no other checkout reproduces)
+  host          hbox, 24 cores, lean4 v4.30.0, `swarm-build`
+  root build    Build completed successfully (10362 jobs), EXIT=0
+  gate line     floor-ratchet OK — 2058 grandfathered carriers over 27 refuted floors
+                (40 prop-body defs, 24 floor bundles); binder 1662 + prop-body 40 +
+                propdef-user 121 + bundle 24 + bundle-user 211; baseline 2105, slack 47;
+                628 `Function.Injective`-spelled sites ungated; 929285 constants.
+  ruler md5     FloorCensus.lean  67bb5125396a226884fbd432b045fd70
+                (verified byte-identical between the export and the local checkout of HEAD
+                before the run — the instrument must be the same object in both trees)
+  tsv md5       18f10d2008be50c0250e2754944a3d87   (668524 bytes, 4571 records)
+
+RECORD FORMAT (tab-separated, first field is the record type)
+  FLOOR    name refuted witness closed? named?
+  CARRIER  name module file startLine endLine kind class conc level floors flags
+             (`floors` is COMMA-separated when a site carries more than one)
+  BUNDLE   struct
+  PROJ     proj struct floor
+  SHAPE    name module file line injective-head
+  RELEVEL  name v1-level v2-level
+  COMBO    floors carriers threaders      (`floors` here is PLUS-separated)
+  MODULE   name
+  SUMMARY  key value [value2]
+
+HEADLINE NUMBERS (all from this file; `awk -F'\t' '$1=="SUMMARY"' floor-census-v2.tsv`)
+  929285 constants, 120222 ours · 35 candidate floors, 27 REFUTED, 8 unrefuted
+  1925 carriers = endpoint 127 + threader 1266 + dead 100 + no-value 14 + tooth 95
+                  + prop-body 16 + propdef-user 37 + embedded 270
+  surface-port 1898 (carriers minus the 27 embedded refutation WITNESSES, which are
+                     anti-floor content, not port surface)
+  dead split: dead-thm-clean 8 · dead-thm-flagged 27 · dead-def-boiler 65 · dead-def-other 0
+  bundles: 7 structures, 18 floor-typed projections
+  multi-floor: 547 carriers over 27 COMBINATIONS (412 of them threaders)
+  shape-only inline-injectivity sites: 527
+
+⚑ THE NUMBER THE PLANNING DOCS GOT WRONG
+  `docs/ROADMAP-assurance-perimeter.md` sized the multi-floor batch work at "~16 combos" over a
+  textual pre-scan's 353 multi-floor sites. Measured: 547 sites over 27 combos. The correction
+  matters in the direction that helps — the distribution is far more concentrated than the guess:
+
+     306 carriers (203 threaders)  cellLeaf + compress + compressN
+      94 carriers  (94 threaders)  cellLeaf + compressN + logHash
+      42 carriers  (42 threaders)  compressN + logHash
+      31 carriers  (28 threaders)  cellLeaf + compressN
+      -----
+     473 of 547 (86%) in FOUR combos; the remaining 23 combos hold 74 sites, 14 of them
+     singletons. A batch AppRule table has four rows, not sixteen and not twenty-seven.
+
+⚑ AND THE ONE THE WORK-ORDER GOT WRONG
+  The roadmap's rule ② is "SOLE-FLOOR declarations (verify sole-floor status FIRST)". Measured
+  sole-floor counts say WHICH floor to point that at, and it is not the one with the most
+  carriers:
+
+     floor                    carriers   SOLE-floor carriers
+     Poseidon2SpongeCR             732       707   ← 97%: a port here retires the whole site
+     compressNInjective            753       233
+     logHashInjective              291       137
+     cellLeafInjective             470        13   ← 3%: the measured 0.5 unlock, explained
+     compressInjective             366        12
+     HermineHintMLWE.HashCR         57        57
+     DeployedCapTree.Compress8CR    31        31
+
+  The cellleaf wave freed nothing because 457 of its 470 sites carry another floor too. The same
+  effort against `Poseidon2SpongeCR` is 707 sites where shedding one floor ends the carrier.
+
+STILL VALID AFTER THE INLINE-TOOTH COMMIT
+  The `inj-spelled` gate class landed a few hours after this run, in the same session. The census
+  was re-run on the patched tree and DIFFS IN THREE LINES ONLY: `SUMMARY constants` 929285 →
+  929346, `SUMMARY our-constants` 120222 → 120269 (the tooth's own metaprogram code and its five
+  specimen `Prop` defs), and one added `MODULE Dregg2.Verify.InjSpelling` (the gate now pulls it
+  into the root's import closure). Every FLOOR, CARRIER, BUNDLE, PROJ, SHAPE, RELEVEL, COMBO and
+  every other SUMMARY record is byte-identical. The carrier surface this file measures is
+  unchanged by the tooth, which is the expected result: the tooth changed what the GATE counts,
+  not what the tree assumes.
+
+WHAT THIS FILE IS NOT
+  A census MEASURES. A clean report would mean "the stated assumptions are not provably false
+  in-tree", never "verified". The 1925 carriers here are theorems that are TRUE and say nothing
+  about the deployed system; the 27 refuted floors are the reason.
+
+  It also does not agree, and should not, with `#floor_ratchet`'s carrier count on the same tree
+  (2058, and 2368 once the inline-spelling class landed later the same day). The two instruments
+  answer different questions: the census classifies against the PROOF TERM (endpoint / threader /
+  dead) over floors bound in hypothesis position; the gate asks only "is this declaration in the
+  baseline", and counts classes the census reports separately (`bundle-user`, `inj-spelled`) or
+  not at all. Neither number is the other's correction.
