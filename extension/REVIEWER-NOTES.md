@@ -31,8 +31,14 @@ needed to evaluate the wallet. To test:
    b. write down the displayed recovery phrase and re-type it to confirm the
       backup. A key is generated only after this step.
 3. The wallet is now unlocked and shows your address/profile. By default it
-   points at the dregg devnet over TLS (https/wss devnet.dregg.fg-goose.online)
-   — no configuration needed to see the UI work.
+   points at `https://node.dregg.net` (and `wss://node.dregg.net/ws`), matching
+   the `host_permissions` in `manifest.json`.
+
+   > ⚠ **That host does not resolve today (checked 2026-07-26 — no A record),**
+   > so the wallet will show no chain data out of the box. The extension does
+   > not need it: every step below works against a local node, and the endpoint
+   > is user-configurable in Settings (step 4). Do not submit to a store while
+   > this is true without pointing the default at a node that answers.
 4. Optional, to exercise signing end-to-end: open the Settings page (toolbar
    popup -> Settings) to view/adjust the node endpoint. Any signing or
    authorization request surfaces a confirmation popup that decodes the

@@ -147,10 +147,12 @@ crate changes.
   network connection is to your configured dregg node, no telemetry, no PII.
 - **Icons:** `icons/icon-{16,32,48,128}.png` (rendered from `icons/icon.svg`),
   wired into both manifests' `icons` and `action.default_icon`.
-- **Default endpoint:** the dregg devnet over TLS
-  (`https://devnet.dregg.fg-goose.online`). Plaintext localhost is **not** a
-  default host permission — it is an `optional_host_permissions` developer
-  toggle requested only when you point the wallet at a local node.
+- **Default endpoint:** `https://node.dregg.net` over TLS — the product node
+  name, matching `manifest.json` and `src/endpoints.ts`. **It has no A record as
+  of 2026-07-26**, so out of the box the wallet reaches nothing; point it at
+  your own node in Settings. Plaintext localhost is **not** a default host
+  permission — it is an `optional_host_permissions` developer toggle requested
+  only when you point the wallet at a local node.
 
 ## Load unpacked
 

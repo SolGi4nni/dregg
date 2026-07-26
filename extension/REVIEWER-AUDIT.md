@@ -35,8 +35,8 @@ requested.
 ### `host_permissions` — specific, not `<all_urls>`
 
 ```
-https://devnet.dregg.fg-goose.online/*
-wss://devnet.dregg.fg-goose.online/*
+https://node.dregg.net/*
+wss://node.dregg.net/*
 ```
 
 Only the configured dregg node (TLS HTTP + secure WebSocket). The WebSocket is
