@@ -222,7 +222,12 @@ async fn the_no_cheat_leaderboard_renders_the_verified_winner() {
         !body.contains("a-forger"),
         "the forged run is excluded from the no-cheat board: {body}"
     );
-    assert!(body.contains("no-cheat"), "the board states its property");
+    // The board must STATE its property, not merely have it. The pin follows the copy: the deck
+    // now says the mechanism outright instead of naming it with a coined compound.
+    assert!(
+        body.contains("played again") && body.contains("exclusion comes from re-verification"),
+        "the board states its property: {body}"
+    );
 }
 
 /// The run-cards prove by re-execution: the honest run PASSes, the seeded forgery FAILs.
@@ -265,7 +270,7 @@ async fn the_short_descent_url_renders_the_board() {
         "GET /descent is not a 404: {status}"
     );
     assert!(
-        body.contains("no-cheat"),
+        body.contains("played again") && body.contains("exclusion comes from re-verification"),
         "the board renders its property: {body}"
     );
     assert!(

@@ -23,10 +23,18 @@
 //!
 //! So this page is under a NO-PRIVATE-VOCABULARY rule, and
 //! [`tests::the_guide_uses_no_word_a_newcomer_would_have_to_learn_here`] enforces it as a test
-//! rather than an intention: the banned list is in the code, and adding `receipt` or `executor` to
-//! this file turns it red. Where a term is genuinely load-bearing (`crowned` on the leaderboard,
-//! `guild`/`lane` on the tug board) the page DEFINES it in place, in ordinary words, and the test
-//! requires the definition rather than the word's absence.
+//! rather than an intention: the banned list is `scripts/player-vocabulary.tsv`, and adding
+//! `receipt` or `executor` to this file turns it red. Where a term is genuinely load-bearing
+//! (`crowned` on the leaderboard, `guild`/`lane` on the tug board) the page DEFINES it in place, in
+//! ordinary words, and the test requires the definition rather than the word's absence.
+//!
+//! ⚑ **AND THIS TEST IS NO LONGER THE WHOLE GATE.** It ran on `guide_body()` and nothing else, so
+//! `/guide` scored 0 violations while an audit found the same list broken on 6 of 13 live surfaces
+//! (`/you`, the session pages, `/descent`, `/descent/run/*`, `/identity`, the engine variants). The
+//! rule was not wrong; its SCOPE was one function wide, which is how a convention decays while its
+//! gate stays green. `scripts/check-player-vocabulary.py` now sweeps every player-facing web
+//! surface against the SAME file. This test keeps the half a source sweep cannot do: it reads the
+//! RENDERED body, so jargon composed in from another module is caught here.
 //!
 //! ## What it deliberately does not promise
 //!
@@ -317,38 +325,78 @@ fn guide_page() -> String {
 mod tests {
     use super::*;
 
-    /// ⚑ THE SWEEP'S JARGON LIST, as data. These are the terms with NO player-facing job at all —
-    /// a newcomer would have to learn them here, which is exactly the finding. `crowned`,
-    /// `guild`/`lane` and the straight-line rule are deliberately absent from this list: they are
-    /// load-bearing, so they are permitted WITH a definition, which
-    /// [`the_load_bearing_terms_are_defined_in_place`] checks separately.
-    const PRIVATE_VOCABULARY: [&str; 15] = [
-        "executor",
-        "substrate",
-        "refereed",
-        "no-cheat",
-        "receipt",
-        "commitment",
-        "poseidon",
-        "merkle",
-        "journal-root",
-        "asserted actor",
-        "in-process re-execution",
-        "testnet",
-        "rook line",
-        "fog",
-        "◈",
-    ];
+    /// ⚑ THE SWEEP'S JARGON LIST, as data — and it LIVES IN ONE PLACE, `scripts/player-vocabulary.tsv`.
+    ///
+    /// These are the terms with NO player-facing job at all: a newcomer would have to learn them
+    /// here, which is exactly the finding. `crowned`, `guild`/`lane` and the straight-line rule are
+    /// deliberately absent from it — they are load-bearing, so they are permitted WITH a definition,
+    /// which [`the_load_bearing_terms_are_defined_in_place`] checks separately.
+    ///
+    /// ⚑ WHY IT MOVED OUT OF THIS FILE. The const version gated exactly one function, and `/guide`
+    /// scored 0 while the same list was violated on 6 of 13 live surfaces. Widening it needed a
+    /// second reader (`scripts/check-player-vocabulary.py`, which sweeps every page from source),
+    /// and a second reader must not mean a second list. This test keeps the RENDERED half — it
+    /// reads `guide_body()`, so jargon composed in from another module is caught here and nowhere
+    /// else — while the script keeps the breadth. Both parse the same file.
+    const VOCABULARY_TSV: &str = include_str!("../../scripts/player-vocabulary.tsv");
 
-    /// Every [`PRIVATE_VOCABULARY`] term `text` uses. The check is a function rather than a loop
-    /// inside one test so the gate itself can be shown to bite — see
-    /// [`the_vocabulary_gate_can_go_red`].
+    /// The first column of every non-comment row.
+    fn private_vocabulary() -> Vec<&'static str> {
+        VOCABULARY_TSV
+            .lines()
+            .map(str::trim_end)
+            .filter(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#'))
+            .map(|line| {
+                line.split('\t')
+                    .next()
+                    .expect("split always yields a first field")
+                    .trim()
+            })
+            .collect()
+    }
+
+    /// Every banned term `text` uses. The check is a function rather than a loop inside one test so
+    /// the gate itself can be shown to bite — see [`the_vocabulary_gate_can_go_red`].
     fn private_vocabulary_in(text: &str) -> Vec<&'static str> {
         let lower = text.to_lowercase();
-        PRIVATE_VOCABULARY
+        private_vocabulary()
             .into_iter()
             .filter(|term| lower.contains(term))
             .collect()
+    }
+
+    /// ⚑ THE SHARED LIST IS ITSELF A THING THAT CAN GO EMPTY. `private_vocabulary_in` filters a
+    /// list; an empty list makes every negative assertion below pass vacuously, and a TSV read by
+    /// two languages is exactly the kind of file a bad edit silently empties. So the parse is
+    /// asserted at the size the sweep produced, four of its terms are named outright, and every
+    /// row is required to carry the answer to "then what do I write instead".
+    #[test]
+    fn the_shared_vocabulary_file_parses_to_the_sweeps_list() {
+        let terms = private_vocabulary();
+        assert!(
+            terms.len() >= 15,
+            "scripts/player-vocabulary.tsv parsed to {} terms; the sweep's list is 15 and this \
+             gate is a filter over it, so a short parse silently disarms every check below: {terms:?}",
+            terms.len()
+        );
+        for required in ["executor", "receipt", "merkle", "◈"] {
+            assert!(
+                terms.contains(&required),
+                "`{required}` is missing from scripts/player-vocabulary.tsv: {terms:?}"
+            );
+        }
+        // Every row carries its reason and its replacement strategy. A term with no answer to
+        // "then what do I write instead" is a rule a lane cannot follow, so it is not a rule.
+        for line in VOCABULARY_TSV
+            .lines()
+            .filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
+        {
+            let fields: Vec<&str> = line.split('\t').collect();
+            assert!(
+                fields.len() == 3 && fields.iter().all(|f| !f.trim().is_empty()),
+                "a vocabulary row needs `term<TAB>why<TAB>what to say instead`, got {fields:?}"
+            );
+        }
     }
 
     /// ⚑ THE ACCEPTANCE TEST FROM THE SWEEP, as a build gate: adding `executor` or `receipt` to the

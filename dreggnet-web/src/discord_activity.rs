@@ -2409,11 +2409,11 @@ async function bootActivity(sdk) {
       const status = form.querySelector("[role=status]");
       const file = input && input.files && input.files[0];
       if (!file) {
-        if (status) { status.textContent = "Choose the canonical proof or receipt first."; }
+        if (status) { status.textContent = "Choose the proof file first."; }
         return;
       }
       form.classList.add("pending");
-      if (status) { status.textContent = "Verifying opaque receipt…"; }
+      if (status) { status.textContent = "Checking the proof…"; }
       try {
         const operationResponse = await daRequest(path, {
           method: "POST",

@@ -1234,7 +1234,7 @@ fn claimed_body(pubkey_hex: &str, acting: Option<&str>) -> String {
 /// the player the wrong thing about the one real risk (that we cannot help them).
 fn stakes_block() -> String {
     "<div class=\"id-stakes\"><h3>What losing the words actually costs you</h3>\
-     <ul><li>Your game history · the runs, turns and receipts filed under this identity.</li>\
+     <ul><li>Your game history · every run and every landed turn filed under this identity.</li>\
      <li>Your name on the Descent board, and the actor recorded on your past run cards.</li>\
      <li>Anything a future feature files under who you are.</li></ul>\
      <p>That is the whole list. <strong>No money is attached to this phrase.</strong> There is no \

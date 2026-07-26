@@ -557,7 +557,7 @@ impl Resolution {
         }
         format!(
             "this table is over: {}. That is the lobby noting somebody stopped playing: no move \
-             was made and there is no receipt for it, so it is not a proven win.",
+             was made, so nothing in the game itself records this and it is not a proven win.",
             self.headline()
         )
     }

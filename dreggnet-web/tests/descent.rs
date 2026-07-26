@@ -169,8 +169,8 @@ async fn the_board_ranks_the_verified_winner_and_excludes_forgeries_and_losses()
         "a lost run does NOT rank (it did not reach the hoard): {body}"
     );
     assert!(
-        body.contains("no-cheat"),
-        "the board states its no-cheat property"
+        body.contains("played again") && body.contains("exclusion comes from re-verification"),
+        "the board states the property in words a newcomer can read: {body}"
     );
 }
 

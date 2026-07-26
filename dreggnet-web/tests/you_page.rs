@@ -574,8 +574,8 @@ async fn a_landed_turn_shows_up_as_a_game_in_progress_and_as_a_receipt() {
 
     let before = get(&app, "/you", Some(&format!("dregg_user={user}"))).await;
     assert!(
-        before.body.contains("No receipt carries your name yet"),
-        "the empty receipt state must be prose: {}",
+        before.body.contains("No move here carries your name yet"),
+        "the empty landed-move state must be prose: {}",
         before.body
     );
 
@@ -596,13 +596,13 @@ async fn a_landed_turn_shows_up_as_a_game_in_progress_and_as_a_receipt() {
         after.body
     );
     assert!(
-        after.body.contains("landed turn") && after.body.contains("minted a receipt"),
-        "the receipts panel must count the landed turns: {}",
+        after.body.contains("turn") && after.body.contains("of yours landed and"),
+        "the landed-moves panel must count the landed turns: {}",
         after.body
     );
     assert!(
-        !after.body.contains("No receipt carries your name yet"),
-        "the empty state must be GONE once a receipt exists: {}",
+        !after.body.contains("No move here carries your name yet"),
+        "the empty state must be GONE once a move has landed: {}",
         after.body
     );
     // Honesty: a browser turn is asserted, never presented as a signature.
@@ -734,7 +734,7 @@ async fn a_brand_new_visitor_is_told_what_is_empty_and_where_to_start() {
     for said in [
         "Nothing is waiting for you",
         "The board has no run under this label",
-        "No receipt carries your name yet",
+        "No move here carries your name yet",
     ] {
         assert!(
             reply.body.contains(said),

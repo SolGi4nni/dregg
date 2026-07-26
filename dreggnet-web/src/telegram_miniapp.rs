@@ -848,7 +848,7 @@ async fn get_tg_offerings(
          <h3 style=\"margin:0 0 .35rem\">The Descent</h3>\
          <p class=\"prose\" style=\"margin:0 0 .5rem\">{flagship}</p>\
          <a class=\"btn btn-primary\" href=\"{play}\">Play today's descent</a>\
-         <a class=\"btn btn-ghost\" href=\"/descent\">See today's no-cheat board</a>\
+         <a class=\"btn btn-ghost\" href=\"/descent\">See today's re-verified board</a>\
          </div>\
          <p class=\"prose\" style=\"margin:.8rem 0 .4rem\">{lab}</p>",
         // The button SAYS "Play today's descent" — so it must LAND on the game. It pointed at
@@ -1670,11 +1670,11 @@ const TG_SHELL_SCRIPT: &str = r##"(function () {
       var status = form.querySelector('[role=status]');
       var file = input && input.files && input.files[0];
       if (!file) {
-        if (status) { status.textContent = 'Choose the canonical proof or receipt first.'; }
+        if (status) { status.textContent = 'Choose the proof file first.'; }
         return;
       }
       form.classList.add('pending');
-      if (status) { status.textContent = 'Verifying opaque receipt…'; }
+      if (status) { status.textContent = 'Checking the proof…'; }
       try {
         var operationResponse = await tgRequest(path, {
           method: 'POST',

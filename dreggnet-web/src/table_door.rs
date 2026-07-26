@@ -582,9 +582,9 @@ pub fn resolution_notice(resolution: &Resolution) -> String {
         // threshold-gated on `charm ≥ 11 ∨ guilds ≥ 4`. "not a proven win" is pinned by
         // `dreggnet-web/tests/tug_table.rs` and stays verbatim.
         "<div class=\"notice refused\" role=\"status\"><strong>Table over</strong> · {headline}. \
-         <br>This is the lobby noting that somebody stopped playing. No move was made and there is \
-         no receipt for it: neither game's rules have any way to hand the win to whoever is still \
-         sitting there, so it is not a proven win.</div>",
+         <br>This is the lobby noting that somebody stopped playing. No move was made, so nothing \
+         in the game itself records this: neither game's rules have any way to hand the win to \
+         whoever is still sitting there, so it is not a proven win.</div>",
         headline = esc(&resolution.headline()),
     )
 }

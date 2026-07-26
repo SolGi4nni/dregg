@@ -1840,13 +1840,13 @@ const ENHANCE_SCRIPT: &str = r##"<script>
       var input=form.querySelector("input[type=file]");
       var status=form.querySelector("[role=status]");
       if(!input||!input.files||!input.files[0]){
-        if(status)status.textContent="Choose the canonical proof or receipt first.";
+        if(status)status.textContent="Choose the proof file first.";
         return;
       }
       var btn=form.querySelector("button[type=submit]");
       form.classList.add("in-flight","pending");
       if(btn)btn.disabled=true;
-      if(status)status.textContent="Verifying opaque receipt…";
+      if(status)status.textContent="Checking the proof…";
       fetch(form.getAttribute("action"),{
         method:"POST",
         headers:{"Content-Type":form.getAttribute("data-media")||"application/octet-stream","Accept":"application/json"},
@@ -2239,7 +2239,7 @@ fn receipt_html(verify: &VerifyReport, label: &str, verify_href: &str) -> String
 /// text, so a screen reader, a `curl`, and a page-text search all still find every word.
 const RECEIPT_REGISTER_GLOSS: &str = "Two different words, two different subjects. \
      <strong>verified</strong> is about the MOVES: every turn in this session was re-run against the \
-     rules just now and came out the same. <strong>asserted</strong>, on a move's own receipt, is \
+     rules just now and came out the same. <strong>asserted</strong>, on a move's own record, is \
      about the NAME on it: this page takes the name you gave at face value and checks no signature, \
      so it can say the move was legal and cannot say who made it. A move signed with a key reads \
      <strong>Signed by</strong> instead.";

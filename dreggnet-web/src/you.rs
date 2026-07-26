@@ -581,7 +581,7 @@ fn you_page(
          <div class=\"page-head\"><p class=\"eyebrow\">Your own record</p><h1>You</h1>\
          <p class=\"deck\">Everything this server can honestly say is yours: the tables it is \
          holding open for you, the matches you have already finished, the runs the board has under \
-         your name, and the receipts your own moves minted. Every link here goes to the page that \
+         your name, and every move of yours that landed. Every link here goes to the page that \
          re-runs the thing rather than to a copy of its result.</p></div>\
          {identity}{accounts}{tables}{finished}{runs}{receipts}{legend}\
          <p class=\"prose\"><a class=\"backlink\" href=\"/offerings\">← All games</a></p>\
@@ -683,8 +683,9 @@ fn identity_panel(label: &str, me: &DreggIdentity) -> String {
          <a href=\"/identity\">claim a recoverable identity</a> and you get 24 words that reproduce \
          this player anywhere. You do not have to, and nothing stops working if you never do.</p>\
          <p class=\"prose\">Your moves are attributed by that label, not signed by a key you hold, \
-         which is why every receipt below says <em>asserted</em>. The proof on this surface is that \
-         the move was re-run against the rules, not that a particular human made it.</p>"
+         which is why every move listed below is marked <em>asserted</em>. The proof on this \
+         surface is that the move was re-run against the rules, not that a particular human made \
+         it.</p>"
     };
     format!(
         "<section class=\"deos-section tag-accent\"><h2>Who you are here</h2>\
@@ -914,8 +915,9 @@ fn tables_panel(tables: &[MyTable]) -> String {
                     .resolved
                     .as_deref()
                     .map(|headline| format!(
-                        "<p class=\"said\">This table is over: {}. No executor turn backs that: \
-                         it is the lobby's record of an abandoned table, not a proven win.</p>",
+                        "<p class=\"said\">This table is over: {}. No move in the game produced \
+                         that ending: it is the lobby's record of an abandoned table, not a proven \
+                         win.</p>",
                         esc(headline)
                     ))
                     .unwrap_or_default(),
@@ -984,8 +986,8 @@ fn finished_panel(finished: &[FinishedMatch]) -> String {
                     esc(headline)
                 ),
                 Some(headline) => format!(
-                    "<p class=\"said\">This match ended: {}. No executor turn backs that: it is \
-                     the lobby's record of somebody stopping, not a proven win.</p>",
+                    "<p class=\"said\">This match ended: {}. No move in the game produced that \
+                     ending: it is the lobby's record of somebody stopping, not a proven win.</p>",
                     esc(headline)
                 ),
                 // Honest about the one thing the archive alone cannot say.
@@ -1377,11 +1379,12 @@ board carries: it lives in this tab, not on the server, so clearing site data lo
 fn receipts_panel(tables: &[MyTable]) -> String {
     let mine: usize = tables.iter().map(|table| table.mine).sum();
     if mine == 0 {
-        return "<section class=\"deos-section tag-muted\"><h2>Your receipts</h2>\
-                <p class=\"you-empty\"><strong>No receipt carries your name yet.</strong> A receipt \
-                is minted by a move that <em>landed</em>: the executor re-ran it against the rules \
-                and accepted it. You have not made one on this identity, so there is nothing here \
-                to replay. Make a single move in any game above and this panel fills in.</p>\
+        return "<section class=\"deos-section tag-muted\"><h2>Your landed moves</h2>\
+                <p class=\"you-empty\"><strong>No move here carries your name yet.</strong> A move \
+                <em>lands</em> when the game re-runs it against the rules and accepts it, and the \
+                move is then kept so that anyone can re-run it. You have not made one on this \
+                identity, so there is nothing here to replay. Make a single move in any game above \
+                and this panel fills in.</p>\
                 <p class=\"you-empty\">This is the product's own claim, and it is worth knowing \
                 what it does and does not cover: the chain of a session re-executes here, in this \
                 server, from its recorded moves. That is a real re-run, not a stored verdict. And \
@@ -1402,7 +1405,7 @@ fn receipts_panel(tables: &[MyTable]) -> String {
             format!(
                 "<div class=\"you-row{over}\"><p class=\"what\">{title}</p>\
                  <a class=\"go\" href=\"{verify}\" rel=\"nofollow\">Replay-verify →</a>\
-                 <p class=\"meta\">{mine} receipt{s} yours · {verdict} · session {id}</p></div>",
+                 <p class=\"meta\">{mine} landed move{s} yours · {verdict} · session {id}</p></div>",
                 over = if verified { "" } else { " is-over" },
                 title = esc(&table.title),
                 verify = esc(&table.verify_href()),
@@ -1418,16 +1421,17 @@ fn receipts_panel(tables: &[MyTable]) -> String {
         })
         .collect();
     format!(
-        "<section class=\"deos-section tag-accent\"><h2>Your receipts</h2>\
-         <p class=\"prose\">{mine} landed turn{s} of yours minted a receipt. Each link below \
+        "<section class=\"deos-section tag-accent\"><h2>Your landed moves</h2>\
+         <p class=\"prose\">{mine} turn{s} of yours landed and {were} kept. Each link below \
          re-executes that session's whole committed chain from its recorded moves, right now: the \
          same replay the leaderboard and the run cards run, not a stored verdict.</p>\
          <div class=\"you-rows\">{rows}</div>\
          <p class=\"you-empty\">What this does not claim: nothing here proves <em>who</em> moved. \
-         A browser turn is attributed by an asserted label, so a receipt says \"this move was legal \
-         and it landed in this order\", never \"this human made it\".</p></section>",
+         A browser turn is attributed by an asserted label, so the record says \"this move was \
+         legal and it landed in this order\", never \"this human made it\".</p></section>",
         mine = mine,
         s = if mine == 1 { "" } else { "s" },
+        were = if mine == 1 { "was" } else { "were" },
         rows = rows,
     )
 }
@@ -1528,7 +1532,7 @@ mod tests {
         );
         let receipts = receipts_panel(&[]);
         assert!(
-            receipts.contains("No receipt carries your name yet"),
+            receipts.contains("No move here carries your name yet"),
             "{receipts}"
         );
         // The finished-match panel gets the same treatment, and its empty state has one extra job:
@@ -1563,7 +1567,7 @@ mod tests {
         for panel in [
             "Games in progress",
             "Finished Descent runs",
-            "Your receipts",
+            "Your landed moves",
             // A refusal must not assemble the match HISTORY either — it names which tables this
             // person sat at, which is exactly as personal as the live list.
             "Matches you have finished",

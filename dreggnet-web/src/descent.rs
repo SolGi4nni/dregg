@@ -1733,8 +1733,14 @@ fn stable_move_indices(moves: &[u64]) -> Result<Vec<usize>, String> {
         .copied()
         .enumerate()
         .map(|(turn, choice)| {
+            // ⚑ `usize::try_from` — this is a POINTER-WIDTH refusal, and the sentence used to say
+            // "exceeds this executor target", which named the wrong thing on both halves: the
+            // limit is the machine's index width, not the executor, and a client author reading
+            // it had no way to know that.
             usize::try_from(choice).map_err(|_| {
-                format!("move {turn} choice index {choice} exceeds this executor target")
+                format!(
+                    "move {turn} choice index {choice} does not fit in an index on this machine"
+                )
             })
         })
         .collect()
@@ -2204,8 +2210,10 @@ fn leaderboard_page(day: &Day, rows: &[Row], native_rows: &[NativeRow]) -> Strin
         "<section class=\"deos-section\"><p class=\"eyebrow\">Lean-native browser ruleset</p>\
          <h2>Crowned native runs</h2><p class=\"prose\">These records are not converted into the \
          procgen choice tape above. Each row replays its native <span class=\"mono\">delve / \
-         smite / loot / unlock / flee</span> events and exact receipt, state, and journal-root \
-         envelope. Only a crowned settlement ranks. This lane groups <strong>one row per human</strong> \
+         smite / loot / unlock / flee</span> events and has to reproduce everything that run wrote \
+         down, exactly: each move, the state it left behind, and the single value that stands for \
+         the whole record. Only a crowned settlement ranks. This lane groups \
+         <strong>one row per human</strong> \
          on the same rule as the table above: the actor is taken off the replay, and a proven \
          cross-platform <a href=\"/identity/link\">link</a> is what makes two accounts one row.</p>\
          <p class=\"prose\"><strong>What <span class=\"mono\">score</span> is, and what it is \
@@ -2263,10 +2271,11 @@ fn leaderboard_page(day: &Day, rows: &[Row], native_rows: &[NativeRow]) -> Strin
          <div class=\"page-head\" style=\"padding-top:var(--s4)\">\
          <p class=\"eyebrow\">Re-verified on this request</p>\
          <h1>The Descent · {title}</h1>\
-         <p class=\"deck\">The no-cheat leaderboard. Procgen rows are re-executed from passage \
-         choices and required to reach the hoard. Browser-native rows are replayed under their \
-         distinct Lean-native verb/receipt rules and required to crown. A forged or unfinished run \
-         appears in neither lane: exclusion comes from re-verification, not a stored flag.</p></div>\
+         <p class=\"deck\">A run gets on this board by being played again, here, on this request. \
+         Procgen rows are re-executed from passage choices and required to reach the hoard. \
+         Browser-native rows are replayed under their own distinct Lean-native rules and required \
+         to crown. A forged or unfinished run appears in neither lane: exclusion comes from \
+         re-verification, not a stored flag.</p></div>\
          <div class=\"kv\">\
          <div><p class=\"k\">Day</p><p class=\"v mono\">{key}</p></div>\
          <div><p class=\"k\">Seed</p><p class=\"v mono\">{seed}</p></div>\
@@ -2377,8 +2386,9 @@ fn native_run_card_page(
                 notes,
                 crowned,
                 "The server deployed a fresh Lean-native world, replayed every verb through the native \
-                 Offering, and reproduced the complete receipt, post-state, checkpoint, completion, \
-                 and journal-root envelope byte-for-byte."
+                 Offering, and reproduced every part of what that run wrote down, byte for byte: \
+                 each move, the state it left behind, its checkpoints, its ending, and the single \
+                 value that stands for the whole record."
                     .to_string(),
             )
         }
@@ -2529,9 +2539,10 @@ fn run_card_page(
         "<section class=\"verdict pass\">\
          <h2><span class=\"stamp\">PASS</span>Independent verification · PASS</h2>\
          <p>This run was <strong>re-executed on this request</strong>: a fresh, \
-         identically-seeded world was deployed and driven through the recorded moves, and the \
-         committed receipt chain re-verified (chain-linkage + replay). You are not trusting a stored \
-         result; you are seeing the run <strong>proven</strong>.</p>\
+         identically-seeded world was deployed and driven through the recorded moves, and every \
+         move in the committed chain checked out, each one linking to the one before it and each \
+         one replaying. You are not trusting a stored result; you are seeing the run \
+         <strong>proven</strong>.</p>\
          <p class=\"receipt ok\" style=\"margin-top:.8rem\"><span class=\"dot\"></span>\
          <span class=\"label\">verified by re-execution</span>\
          <span class=\"verdict\">yes</span></p></section>"
@@ -2576,7 +2587,7 @@ fn run_card_page(
     // mono voice. The old page stacked them as five `Outcome: …` / `Status: …` paragraphs, which
     // is exactly the debug-dump register this pass is here to kill.
     let body = format!(
-        "<div class=\"crumb\"><a href=\"/descent/leaderboard?day={key}\">← the no-cheat \
+        "<div class=\"crumb\"><a href=\"/descent/leaderboard?day={key}\">← the re-verified \
          leaderboard</a><span class=\"sep\">·</span><strong>{player}</strong>\
          <span class=\"sep\">·</span><span class=\"sid\">a shared run</span></div>\
          <main class=\"session\">\
@@ -2595,7 +2606,7 @@ fn run_card_page(
          {panel}\
          {signature_block}\
          {att_style}\
-         <a class=\"backlink\" href=\"/descent/leaderboard?day={key}\">← today's no-cheat \
+         <a class=\"backlink\" href=\"/descent/leaderboard?day={key}\">← today's re-verified \
          leaderboard</a>\
          </main>",
         signature_block = signature_block,
@@ -2645,7 +2656,7 @@ fn run_missing(id: &str) -> String {
     let body = format!(
         "<main class=\"session\"><div class=\"notice refused\" role=\"status\">No such run \
          <code>{id}</code>.</div>\
-         <p class=\"prose\"><a class=\"backlink\" href=\"/descent\">← The no-cheat leaderboard</a>\
+         <p class=\"prose\"><a class=\"backlink\" href=\"/descent\">← The re-verified leaderboard</a>\
          </p></main>",
         id = esc(id),
     );

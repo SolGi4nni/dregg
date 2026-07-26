@@ -1,0 +1,51 @@
+# player-vocabulary.tsv — THE banned-jargon list, in ONE place, read by TWO checkers.
+#
+# ⚑ WHY IT IS A FILE AND NOT A RUST CONST. It began as `PRIVATE_VOCABULARY` inside
+#   `dreggnet-web/src/guide.rs`'s test module, where it gated exactly ONE function
+#   (`guide_body()`). `/guide` scored 0 violations while an audit found the same list broken on
+#   6 of 13 live surfaces — the gate was not wrong, its SCOPE was one function wide. Widening it
+#   meant a second reader (`scripts/check-player-vocabulary.py`, which sweeps every page), and a
+#   second reader must never mean a second list: two lists drift, and the day they drift the
+#   weaker one is the one that decides. So the list moved HERE and both readers parse it:
+#
+#     * `scripts/check-player-vocabulary.py`   — every player-facing web surface, from source.
+#     * `dreggnet-web/src/guide.rs`'s tests    — `include_str!` on this file, over the RENDERED
+#                                                `/guide` body (which catches jargon composed in
+#                                                from another module, as source-reading cannot).
+#
+# ⚑ WHERE THE LIST CAME FROM. `docs/reference/UX-QA-SWEEP-2026-07-26.md`: four first-time readers
+#   were handed the rendered pages. One could not produce a one-sentence answer to "what is this
+#   site" because *"the sentence describing what the site IS is itself written in the site's
+#   private vocabulary"*. Their verdict on the sixteen flagged terms: *"not a nitpick list; it's
+#   the majority of the page's distinctive vocabulary."*
+#
+# ⚑ THIS IS NOT A SPELLING RULE. A banned term needs a replacement that is TRUE, not vaguer.
+#   Swapping a precise word for a fuzzy one is the same error as the overclaim it replaced, only
+#   quieter. The third column is the replacement STRATEGY, not a substitution table: `receipt`
+#   does not become one word, it becomes whatever that page's record actually does for a reader.
+#   Where a term is genuinely load-bearing and has no plain equivalent, it stays and takes a row
+#   in `scripts/player-vocabulary-allow.tsv` with the reason.
+#
+# Three TAB-separated fields:
+#
+#     term <TAB> why a newcomer cannot read it <TAB> what to say instead
+#
+# Matching is SUBSTRING, case-insensitive, so `receipt` also catches `receipts` and `Receipt`.
+# Deliberately NOT here: `crowned`, `guild`/`lane`, and the straight-line move rule. Those are
+# load-bearing, so they are permitted WITH a definition in place, which
+# `guide.rs::the_load_bearing_terms_are_defined_in_place` checks separately.
+executor	the name of an internal component. A player pressed a button; they did not address a component.	say what it DOES: the game re-runs the move against the rules, and refuses it if it is not allowed.
+substrate	names the layer under the game. Nothing a player can see, press or be affected by.	name the thing that actually happened, or drop the clause.
+refereed	borrowed from the project's own writing about itself; a reader guesses at a human referee.	"checked against the rules", or say who checked and when.
+no-cheat	a compound coined here. It reads as a promise without saying what stops a cheat.	state the mechanism: a run gets on this board by being played again.
+receipt	the record a landed move leaves. A newcomer reads a shop receipt and expects a total.	say what the record DOES for them: it is the move, kept, so anyone can re-run it.
+commitment	cryptographic sense, not the ordinary one. The ordinary reading is nearly opposite.	"a sealed value", or name what it hides and from whom.
+poseidon	a hash function's name. Zero player meaning, and it reads as a proper noun.	drop it. A player never chooses a hash.
+merkle	a data structure's name, used as an adjective a reader cannot unpack.	say what it PROVES to them, or drop the clause if it proves them nothing.
+journal-root	an internal name for one field of the record.	"everything that run recorded", or name the fact being reproduced.
+asserted actor	two private words at once. `asserted` is the honest grade; `actor` is the plumbing.	"the name you are playing under, taken at face value".
+in-process re-execution	describes where the check runs, in words about the server's own architecture.	"re-run here, on this request".
+testnet	implies a mainnet, which does not exist. Nothing here is on a chain.	drop it, or name the actual deployment.
+rook line	a chess analogy standing IN PLACE OF the rule. A non-chess-player is simply lost.	spell the rule out ("straight lines only, along a row or a column"), then offer the analogy.
+fog	the internal name for per-viewer hiding. A player sees a card face-down, not weather.	"hidden from your opponent", and name who it is NOT hidden from.
+◈	an unglossed glyph used as a currency. It has no name a reader can say out loud.	name the currency, or use its word.

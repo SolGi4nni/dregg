@@ -79,13 +79,13 @@ fn boundary(kind: GameKind) -> &'static str {
             "Private ballots, cards, quest witnesses, and raid scores stay outside the rendered session; only verified outcomes land."
         }
         GameKind::TacticalRaid => {
-            "Suitability scores and the assignment witness stay private; public seats, assigned roles, spent capabilities, and receipts are visible."
+            "Suitability scores and the assignment witness stay private; public seats, assigned roles, spent capabilities, and the record of every landed move are visible."
         }
         GameKind::DarkBazaarCrawl => {
-            "This catalog table is the public crawl. When an opaque clearing operation is offered, uploaded bytes stay out of rendered state and only its accepted effect and receipt are published."
+            "This catalog table is the public crawl. When an opaque clearing operation is offered, uploaded bytes stay out of rendered state and only its accepted effect, and the record of it, are published."
         }
         GameKind::DarkPool => {
-            "Encrypted swap inputs stay opaque to the browser surface; accepted public roots, commitments, and receipts are the rendered result."
+            "Encrypted swap inputs stay opaque to the browser surface. What this page renders is the accepted public result: the roots it landed on, the sealed values those were checked against, and the record of the move."
         }
         GameKind::Council | GameKind::Market | GameKind::MultiwayTug | GameKind::Automatafl => {
             // ⚑ TRUE OF ALL FOUR, CHECKED ONE BY ONE. Council hides nothing (`p.votes` records
