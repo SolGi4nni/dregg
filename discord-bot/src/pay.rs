@@ -21,8 +21,9 @@
 //! ([`PayConfig::from_env`]); with no operator env the bot falls back to a DEVNET/MOCK
 //! config with a throwaway seed and a [`MockWatcher`]. **The watcher is selected by
 //! config** ([`select_watcher`]): an operator-supplied config gets the REAL
-//! [`SolanaWatcher`] over the configured RPC — watch-only (it reads token-account state,
-//! holds no key, and never touches the seed) — while the mock is reachable ONLY
+//! [`SignatureWatcher`] over the configured RPC — watch-only (it reads the deposit
+//! address's token account and its finalized transaction history, holds no key, and
+//! never touches the seed) — while the mock is reachable ONLY
 //! explicitly (the no-env devnet fallback, or `DREGG_PAY_MOCK=1` on a non-mainnet
 //! network). A mainnet config can never ride the mock, and a mainnet config without a
 //! real RPC fails loudly at construction — never a silent mock on a real network. The
@@ -39,14 +40,15 @@ use dregg_narrator::{
     OpenAiCompatClient, PriceSource, Pricing, ToolDef, metered_converse,
 };
 use dregg_pay::{
-    AccountFetcher, ChainId, CreditLedger, CreditOutcome, CreditStore, DepositAddress,
-    DepositAddressBook, DepositAddressProvider, FetchedAccount, HdDeposit, MockChain, MockWatcher,
-    MultichainHoldings, Network, PayConfig, PayRole, PaymentRef, ProvenForeignHolding,
-    SolanaWatcher, Treasury, TreasuryError, TreasurySlot, TreasuryStore, TreasuryView, UserId,
-    WatchError, Watcher,
+    AccountFetcher, Asset, ChainId, ContributionOutcome, CreditLedger, CreditOutcome, CreditStore,
+    DepositAddress, DepositAddressBook, DepositAddressProvider, FetchedAccount, HdDeposit,
+    MockChain, MockWatcher, MultichainHoldings, Network, ObservedTransfer, PayConfig, PayRole,
+    PaymentReceived, PaymentRef, PoolEntry, PoolError, PoolLedger, PoolSnapshot, PoolStore,
+    ProvenForeignHolding, SignatureWatcher, SwapPool, TransferFetcher, Treasury, TreasuryError,
+    TreasurySlot, TreasuryStore, TreasuryView, UserId, WatchError, Watcher,
 };
 
-use crate::db::Database;
+use crate::db::{Database, PoolRecordOutcome, PoolRetireOutcome};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The sqlite-backed CreditStore — dregg-pay's `CreditStore` trait over the bot's
@@ -144,6 +146,163 @@ impl TreasuryStore for SqliteTreasuryStore {
     }
     fn set_dregg_balance(&self, v: u64) {
         let _ = self.block(self.db.pay_treasury_set_dregg(v));
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The sqlite-backed PoolStore — dregg-pay's `PoolStore` trait over the bot's async
+// sqlx `Database`. WHO paid into the `$DREGG` pile, the pool EPOCH, and the pool's
+// own processed-reference set all live in sqlite, so the attribution a liquidity
+// vote weighs — and the retire-exactly-once tooth that stops a swapped pool being
+// swapped again — survive a restart.
+//
+// This is why `dregg_pay::SwapPool` was persisted rather than deleted in favour of
+// the raw `pay_pool_contributions` table. A flat cumulative table has no epoch and
+// no `close`, so an already-swapped contributor would keep voting weight forever;
+// and a vote that read rows and assembled its own snapshot would lose the tooth that
+// only `SwapPool::snapshot` can mint one. The table is now this pool's STORE, not a
+// parallel copy of it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A [`PoolStore`] persisted in the bot's sqlite database. Same sync↔async bridge as
+/// [`SqliteCreditStore`] / [`SqliteTreasuryStore`]: the trait is SYNC (interior mutability)
+/// but the `Database` is async sqlx, so each method drives the query to completion on the
+/// current Tokio runtime via [`tokio::task::block_in_place`].
+///
+/// **Fail-closed reads.** A storage failure on a READ reports the pool as empty (`0` /
+/// epoch `0` / no entries), which makes a proposal over it `EmptyPool` — a vote that cannot
+/// open. It never reports a stake it could not confirm. A failure on either MUTATING call
+/// is reported as the refusing outcome ([`ContributionOutcome::Overflow`] for a
+/// contribution the store did not take, [`PoolError::StaleSnapshot`] for a retirement it
+/// did not perform), so the caller treats an unwritten change as unwritten.
+pub struct SqlitePoolStore {
+    db: Database,
+    handle: tokio::runtime::Handle,
+}
+
+impl SqlitePoolStore {
+    /// Wrap a `Database`. `handle` is the fallback runtime when a store method is called
+    /// from OUTSIDE any runtime; inside a runtime worker the current handle is used.
+    pub fn new(db: Database, handle: tokio::runtime::Handle) -> Self {
+        SqlitePoolStore { db, handle }
+    }
+
+    /// Drive an async DB future to completion synchronously — the same bridge
+    /// [`SqliteCreditStore::block`] uses.
+    fn block<F: std::future::Future>(&self, fut: F) -> F::Output {
+        match tokio::runtime::Handle::try_current() {
+            Ok(current) => tokio::task::block_in_place(move || current.block_on(fut)),
+            Err(_) => self.handle.block_on(fut),
+        }
+    }
+}
+
+impl PoolStore for SqlitePoolStore {
+    fn epoch(&self) -> u64 {
+        self.block(self.db.pool_epoch()).unwrap_or(0)
+    }
+
+    fn total(&self) -> u64 {
+        self.block(self.db.pool_total()).unwrap_or(0)
+    }
+
+    fn contributed(&self, who: &DepositAddress) -> u64 {
+        self.block(self.db.pool_contributed(&who.to_base58()))
+            .unwrap_or(0)
+    }
+
+    fn ledger(&self) -> PoolLedger {
+        let Ok((epoch, rows)) = self.block(self.db.pool_ledger()) else {
+            // Fail closed: an unreadable pool is an EMPTY one, so a proposal over it
+            // refuses to open rather than pinning a partial electorate.
+            return PoolLedger {
+                epoch: 0,
+                total: 0,
+                entries: Vec::new(),
+            };
+        };
+        let mut entries = Vec::with_capacity(rows.len());
+        let mut total: u64 = 0;
+        for (address, user, contributed) in rows {
+            // A row whose address does not decode is not a voter identity — skip it
+            // rather than invent one. (It cannot occur: the writer binds
+            // `DepositAddress::to_base58`.)
+            let Ok(who) = DepositAddress::from_base58(&address) else {
+                continue;
+            };
+            total = total.saturating_add(contributed);
+            entries.push(PoolEntry {
+                who,
+                user: UserId::from(user),
+                contributed,
+            });
+        }
+        PoolLedger {
+            epoch,
+            total,
+            entries,
+        }
+    }
+
+    fn record_once(&self, payment: &PaymentReceived) -> ContributionOutcome {
+        let outcome = self.block(self.db.pool_record_once(
+            &payment.deposit_address.to_base58(),
+            &payment.user.0,
+            &payment.reference.0,
+            matches!(payment.asset, Asset::Dregg),
+            payment.amount,
+            now_secs(),
+        ));
+        match outcome {
+            Ok(PoolRecordOutcome::Contributed {
+                contributed_total,
+                pool_total,
+            }) => ContributionOutcome::Contributed {
+                contributed_total,
+                pool_total,
+                weight: dregg_pay::quadratic_weight(contributed_total),
+            },
+            Ok(PoolRecordOutcome::FuelNoted) => ContributionOutcome::FuelNotPool,
+            Ok(PoolRecordOutcome::AlreadyRecorded) => ContributionOutcome::AlreadyRecorded,
+            Ok(PoolRecordOutcome::Overflow) => ContributionOutcome::Overflow,
+            Err(e) => {
+                // The store did NOT take the contribution, so the caller must not bank it
+                // either — `Overflow` is the outcome that leaves both the pile and the
+                // reference untouched, which is exactly the truth here. Loud: a gap in
+                // this table is a blind spot in the only sybil detector there is.
+                tracing::error!(
+                    error = %e,
+                    reference = %payment.reference,
+                    "pool store write FAILED — the contribution was NOT banked or attributed"
+                );
+                ContributionOutcome::Overflow
+            }
+        }
+    }
+
+    fn retire(&self, snapshot: &PoolSnapshot) -> Result<u64, PoolError> {
+        let entries: Vec<(String, u64)> = snapshot
+            .contributors()
+            .into_iter()
+            .map(|(who, contributed, _weight)| (who.to_base58(), contributed))
+            .collect();
+        match self.block(self.db.pool_retire(snapshot.epoch(), &entries)) {
+            Ok(PoolRetireOutcome::Retired { new_epoch }) => Ok(new_epoch),
+            Ok(PoolRetireOutcome::StaleSnapshot { pool_epoch }) => Err(PoolError::StaleSnapshot {
+                snapshot_epoch: snapshot.epoch(),
+                pool_epoch,
+            }),
+            Err(e) => {
+                tracing::error!(error = %e, "pool retirement FAILED — the pool was NOT retired");
+                // Report the retirement as refused, because it was. Re-reporting the
+                // snapshot epoch as the pool epoch says "nothing moved" without claiming
+                // an epoch the database may not hold.
+                Err(PoolError::StaleSnapshot {
+                    snapshot_epoch: snapshot.epoch(),
+                    pool_epoch: snapshot.epoch(),
+                })
+            }
+        }
     }
 }
 
@@ -655,9 +814,16 @@ pub struct PayState {
     /// The per-user run-credit ledger over the sqlite [`SqliteCreditStore`].
     pub ledger: CreditLedger<SqliteCreditStore>,
     /// The payment watcher, SELECTED BY CONFIG ([`select_watcher`]): the real
-    /// [`SolanaWatcher`] over the configured RPC for an operator-supplied config
+    /// [`SignatureWatcher`] over the configured RPC for an operator-supplied config
     /// (watch-only — no key, no seed), a [`MockWatcher`] only on the explicit
     /// devnet/mock paths. A mainnet config never rides the mock.
+    ///
+    /// RESTART: **REBUILD (answer 2)**, and there is nothing here to rebuild — which is
+    /// the point. The real watcher holds no in-RAM idempotency cursor at all; every
+    /// payment carries the chain's own key (`soltx:{signature}`) and the durable
+    /// `pay_processed` table recognises the repeat. A fresh process therefore re-polls
+    /// the same history and credits nothing twice. See
+    /// `docs/reference/RESTART-SEMANTICS.md`.
     pub watcher: Arc<dyn Watcher + Send + Sync>,
     /// The honest label of the watcher actually selected at construction
     /// ([`SelectedWatcher::kind`]). Recorded so an operator can SEE whether this process
@@ -668,12 +834,13 @@ pub struct PayState {
     /// affordance can move this process onto a mock (the selection rule in
     /// [`select_watcher`] remains the only thing that decides it).
     pub watcher_kind: &'static str,
-    /// The bot database (for the user→deposit-index map and the pool attribution).
+    /// The bot database (for the user→deposit-index map).
     pub db: Database,
-    /// The runtime to fall back to when a SYNC method here (the `Watcher`-driven
-    /// [`PayState::poll_and_credit`]) must drive an async DB write to completion from
-    /// outside a runtime worker — the same sync↔async bridge [`SqliteCreditStore`] uses.
-    handle: tokio::runtime::Handle,
+    // NOTE: `PayState` no longer carries its own `tokio::runtime::Handle`. It held one
+    // solely so `poll_and_credit` could drive the pool-attribution write itself; that
+    // write now goes through `SqlitePoolStore`, which owns the sync↔async bridge exactly
+    // like `SqliteCreditStore` and `SqliteTreasuryStore` do. One bridge per store, none
+    // stranded on the caller.
     /// The real-AI paid narrator, if a hosted backend is configured (else paid runs fall back
     /// free). **Swappable at runtime** ([`PayState::set_paid`]) so an admin can change the
     /// narrator without a redeploy; read through [`PayState::paid`], which hands back a clone
@@ -683,6 +850,14 @@ pub struct PayState {
     /// In-flight per-player credit reservations. A reservation is logical (the persisted debit
     /// happens only after a verified game receipt), so every provider/parser/executor failure can
     /// release it without a compensating database write.
+    ///
+    /// ⚑ **RESTART: PROCEED, deliberately** (`docs/reference/RESTART-SEMANTICS.md`) — and this one
+    /// MUST NOT be persisted. A hold is released by [`Drop`], and a `Drop` cannot run for a process
+    /// that is gone: a durable hold would strand the player behind a permanent `AlreadyInFlight`
+    /// with nothing able to clear it. What an adversary gains by forcing the restart is the release
+    /// of their own in-flight reservation, which buys nothing — the run they were holding it for
+    /// died with the process, and the DEBIT is durable and happens only in
+    /// [`PayState::commit_paid_credit`]. Forgetting is the safe direction here.
     credit_holds: Arc<Mutex<HashSet<String>>>,
     /// The two-balance TREASURY the detected game revenue lands in: a USDC payment fuels
     /// the tank ([`Treasury::spend_inference_usd`] draws it down per real-AI run,
@@ -691,6 +866,16 @@ pub struct PayState {
     /// routes every newly-detected payment through [`Treasury::record_payment`] — this is
     /// the revenue-landing join, live in the game loop (not just in dregg-pay's tests).
     pub treasury: Treasury<SqliteTreasuryStore>,
+    /// **WHO paid into the pile** — the per-contributor attribution behind the treasury's
+    /// single aggregate `dregg_balance`, persisted over [`SqlitePoolStore`].
+    ///
+    /// This is the front door for every observed payment: [`SwapPool::record_payment`]
+    /// dedups the treasury credit AND the attribution on the SAME [`PaymentRef`], so the
+    /// pile and the electorate that votes on it can never be gated differently. It also
+    /// carries the pool `epoch` — the tooth that retires a swapped pool exactly once — and
+    /// it is the only thing that can mint the
+    /// [`PoolSnapshot`](dregg_pay::PoolSnapshot) a liquidity vote pins.
+    pub pool: SwapPool<SqlitePoolStore>,
     /// The NON-CUSTODIAL multichain treasury VIEW: the treasury's declared per-chain
     /// positions (its own addresses + assets), against which cross-chain proof-of-holdings
     /// facts are bound and summed. [`PayState::treasury_holdings`] reports the proven
@@ -703,6 +888,11 @@ pub struct PayState {
 /// only [`PayState::commit_paid_credit`] performs the persisted debit.
 pub struct PaidCreditHold {
     discord_id: String,
+    /// ⚑ **RESTART: PROCEED, deliberately** (`docs/reference/RESTART-SEMANTICS.md`) — a share of
+    /// [`PayState::credit_holds`], and it MUST NOT be persisted for the same reason: a reservation
+    /// is released by [`Drop`], and a `Drop` cannot run for a process that is gone. A durable hold
+    /// would strand the player behind a permanent `AlreadyInFlight`. The debit itself is durable
+    /// and happens only in [`PayState::commit_paid_credit`], so a forgotten hold costs nothing.
     holds: Arc<Mutex<HashSet<String>>>,
     finished: bool,
 }
@@ -743,16 +933,6 @@ pub enum PaidRunResult {
 }
 
 impl PayState {
-    /// Drive an async DB future to completion from a SYNC method — the same bridge
-    /// [`SqliteCreditStore::block`] uses (inside a multi-thread runtime worker,
-    /// `block_in_place`; outside any runtime, the stored handle).
-    fn block<F: std::future::Future>(&self, fut: F) -> F::Output {
-        match tokio::runtime::Handle::try_current() {
-            Ok(current) => tokio::task::block_in_place(move || current.block_on(fut)),
-            Err(_) => self.handle.block_on(fut),
-        }
-    }
-
     /// The ACTIVE paid narrator, cloned out of the swap slot. `None` = no hosted backend, so
     /// every run uses the free tier. Cloning (rather than lending a guard) keeps the lock off
     /// the blocking provider call entirely.
@@ -935,48 +1115,52 @@ impl PayState {
         let mut outcomes = Vec::with_capacity(payments.len());
         for p in &payments {
             let outcome = self.ledger.credit(p);
-            // Route only NEWLY-received revenue into the treasury. `Credited` /
-            // `BelowOneRun` both mean the ledger processed this reference for the first
-            // time (real money arrived, sub-run dust included); `AlreadyCredited` /
-            // `BalanceOverflow` must NOT touch the treasury (no double-count / not banked).
-            if matches!(
-                outcome,
-                CreditOutcome::Credited { .. } | CreditOutcome::BelowOneRun { .. }
-            ) {
-                self.treasury.record_payment(p.asset, p.amount);
-                // AND attribute it. The treasury knows the pile as one number; a swap vote
-                // weighs WHO paid it in. `dregg_pay::SwapPool` holds that attribution in
-                // memory only, so it does not survive a restart — and the quadratic weight
-                // that vote uses is sybil-FAVOURABLE (`√a + √b > √(a+b)`), with a defence
-                // that is explicitly social: someone notices a split stake and acts. That
-                // requires a record which outlives the process, so the attribution is
-                // persisted here, under the SAME newly-credited guard as the treasury
-                // credit — an attribution written on a looser gate would be an inflated
-                // stake, which is an inflated vote.
-                if matches!(p.asset, dregg_pay::Asset::Dregg) {
-                    let address = p.deposit_address.to_base58();
-                    let user = p.user.0.clone();
-                    let amount = p.amount;
-                    let db = self.db.clone();
-                    let now = now_secs();
-                    if let Err(e) = self.block(async move {
-                        db.pool_record_contribution(&address, &user, amount, now)
-                            .await
-                    }) {
-                        // The credit and the treasury already landed; losing the attribution
-                        // row must not fail the payment. Loud, because a gap here is a blind
-                        // spot in the only sybil detector there is.
-                        tracing::error!(
-                            error = %e,
-                            "pool attribution write FAILED for a credited $DREGG payment — the \
-                             contributor view will understate this stake"
-                        );
-                    }
-                }
+            // Bank + attribute through the POOL, which is the one front door: it dedups
+            // the treasury credit and the per-contributor attribution on the SAME payment
+            // reference, so the pile and the electorate that votes on it can never be
+            // gated differently. (This deliberately does NOT ride the credit ledger's
+            // outcome. They are two ledgers over one payment — run credits are spendable
+            // budget, pool stake is a record of contribution — and each must dedup on its
+            // own key. A treasury credit gated by the credit ledger's key was a second
+            // idempotency rule for the same money.)
+            let banked = self.pool.record_payment(p, &self.treasury);
+            if matches!(banked, ContributionOutcome::Overflow) {
+                // Refused, and nothing moved: the pile did not grow and the reference is
+                // left unprocessed so the next sweep retries. Loud, because a gap here is
+                // a blind spot in the only sybil detector there is — and because a
+                // contribution the pool never took is a stake that cannot vote.
+                tracing::error!(
+                    reference = %p.reference,
+                    amount = p.amount,
+                    asset = %p.asset,
+                    "pool REFUSED an observed payment (overflow or store failure) — not \
+                     banked, not attributed; it will be retried on the next sweep"
+                );
             }
             outcomes.push(outcome);
         }
         Ok(outcomes)
+    }
+
+    /// The pool's cumulative atomic `$DREGG` — the aggregate that should equal the
+    /// treasury's pile, read from the per-contributor attribution rather than from the
+    /// single treasury number.
+    pub fn pool_total(&self) -> u64 {
+        self.pool.total()
+    }
+
+    /// The current pool epoch. Bumped by each retirement
+    /// ([`SwapPool::close`](dregg_pay::SwapPool::close)) and persisted, so a restart does
+    /// not make an already-swapped pool retire-able again.
+    pub fn pool_epoch(&self) -> u64 {
+        self.pool.epoch()
+    }
+
+    /// **Pin the pool** — the [`PoolSnapshot`] a liquidity proposal votes over. It fixes
+    /// the electorate, each contributor's quadratic weight, and the all-or-nothing amount
+    /// at pin time, so buying `$DREGG` after a proposal opens buys no influence over it.
+    pub fn pool_snapshot(&self) -> PoolSnapshot {
+        self.pool.snapshot()
     }
 
     /// **One background payment-poll sweep** over every KNOWN deposit address (every
@@ -1110,6 +1294,9 @@ impl PayState {
             SqliteTreasuryStore::new(db.clone(), handle.clone()),
             config.usdc_decimals,
         );
+        // The per-contributor attribution behind that aggregate pile, over the SAME
+        // database — one truth, carrying the pool epoch and the snapshot provenance.
+        let pool = SwapPool::over(SqlitePoolStore::new(db.clone(), handle.clone()));
         let treasury_view = build_treasury_view(&config);
         PayState {
             config,
@@ -1118,10 +1305,10 @@ impl PayState {
             watcher,
             watcher_kind,
             db,
-            handle,
             paid: std::sync::RwLock::new(None),
             credit_holds: Arc::new(Mutex::new(HashSet::new())),
             treasury,
+            pool,
             treasury_view,
         }
     }
@@ -1134,7 +1321,7 @@ impl PayState {
     ///   is set but the config is incomplete, this PANICS naming the missing piece — a requested
     ///   real network never silently rides the devnet/mock fallback.
     /// * **The watcher is selected by config** ([`select_watcher`]): an operator-supplied config
-    ///   gets the REAL [`SolanaWatcher`] over `DREGG_PAY_RPC` (watch-only — it observes deposit
+    ///   gets the REAL [`SignatureWatcher`] over `DREGG_PAY_RPC` (watch-only — it observes deposit
     ///   addresses over JSON-RPC and never touches the custody seed; the seed-holding SWEEPER is
     ///   a separate operator service). The [`MockWatcher`] is reachable ONLY explicitly: the
     ///   no-env devnet fallback, or `DREGG_PAY_MOCK=1` on a non-mainnet network. A mainnet
@@ -1214,6 +1401,9 @@ impl PayState {
             SqliteTreasuryStore::new(db.clone(), handle.clone()),
             config.usdc_decimals,
         );
+        // The per-contributor attribution behind that aggregate pile, over the SAME
+        // database — one truth, carrying the pool epoch and the snapshot provenance.
+        let pool = SwapPool::over(SqlitePoolStore::new(db.clone(), handle.clone()));
         let treasury_view = build_treasury_view(&config);
         PayState {
             config,
@@ -1222,10 +1412,10 @@ impl PayState {
             watcher,
             watcher_kind,
             db,
-            handle,
             paid: std::sync::RwLock::new(paid),
             credit_holds: Arc::new(Mutex::new(HashSet::new())),
             treasury,
+            pool,
             treasury_view,
         }
     }
@@ -1234,7 +1424,7 @@ impl PayState {
     /// the intended production discord-bot path, splitting the seed OUT of the bot.
     ///
     /// It reads the PUBLIC config ([`PayConfig::watch_only_from_env`], which never
-    /// reads `DREGG_PAY_SEED`), constructs the REAL [`SolanaWatcher`] over the
+    /// reads `DREGG_PAY_SEED`), constructs the REAL [`SignatureWatcher`] over the
     /// configured RPC ([`select_watcher`]), and serves deposit addresses from the
     /// public [`DepositAddressBook`] the sweeper published at the file named by
     /// `DREGG_PAY_ADDRESS_BOOK`. This process holds NO custody key: a host compromise
@@ -1296,6 +1486,9 @@ impl PayState {
             SqliteTreasuryStore::new(db.clone(), handle.clone()),
             config.usdc_decimals,
         );
+        // The per-contributor attribution behind that aggregate pile, over the SAME
+        // database — one truth, carrying the pool epoch and the snapshot provenance.
+        let pool = SwapPool::over(SqlitePoolStore::new(db.clone(), handle.clone()));
         let treasury_view = build_treasury_view(&config);
         Ok(PayState {
             config,
@@ -1304,17 +1497,17 @@ impl PayState {
             watcher,
             watcher_kind,
             db,
-            handle,
             paid: std::sync::RwLock::new(paid),
             credit_holds: Arc::new(Mutex::new(HashSet::new())),
             treasury,
+            pool,
             treasury_view,
         })
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Watcher selection — the REAL SolanaWatcher by config; the mock only EXPLICITLY.
+// Watcher selection — the REAL SignatureWatcher by config; the mock only EXPLICITLY.
 //
 // The healed sin: both PayState constructors used to build a MockWatcher
 // UNCONDITIONALLY, so a Mainnet config handed out real deposit addresses that
@@ -1375,7 +1568,11 @@ impl std::error::Error for WatcherSelectError {}
 
 /// The honest label of the REAL Solana-RPC watcher. Named so [`PayState::watcher_kind`] and
 /// [`SelectedWatcher::kind`] cannot drift into two different words for the same fact.
-pub const REAL_WATCHER_KIND: &str = "solana-rpc (real, watch-only)";
+///
+/// It names the **key**, not just the transport, because that is the fact an operator needs at
+/// boot: credits are deduplicated by transaction signature, so this process is safe to restart.
+/// The previous label described a watcher whose idempotency lived in RAM.
+pub const REAL_WATCHER_KIND: &str = "solana-rpc tx-signature (real, watch-only)";
 /// The honest label of the mock watcher — the one an operator must be able to SEE, because a
 /// mock on a live-looking deposit address means nothing is watching the money.
 pub const MOCK_WATCHER_KIND: &str = "mock (explicit devnet/mock)";
@@ -1383,10 +1580,12 @@ pub const MOCK_WATCHER_KIND: &str = "mock (explicit devnet/mock)";
 /// The watcher [`select_watcher`] chose — kept concrete so callers (and tests) can
 /// see WHICH path was selected before erasing to `Arc<dyn Watcher>`.
 pub enum SelectedWatcher {
-    /// The REAL path: [`SolanaWatcher`] over JSON-RPC. Watch-only — it reads SPL
-    /// token-account state for the deposit addresses; it holds no key and never
-    /// touches `DREGG_PAY_SEED`.
-    RealSolana(SolanaWatcher<RpcAccountFetcher>),
+    /// The REAL path: [`SignatureWatcher`] over JSON-RPC. Watch-only — it reads the
+    /// deposit address's token account and its finalized transaction history; it holds
+    /// no key and never touches `DREGG_PAY_SEED`. It also holds no in-RAM cursor, so a
+    /// restart re-observes the same transfers and mints the same references
+    /// (`docs/reference/RESTART-SEMANTICS.md`).
+    RealSolana(SignatureWatcher<RpcTransferFetcher>),
     /// The explicit devnet/mock path: [`MockWatcher`] over a fresh [`MockChain`].
     Mock(MockWatcher),
 }
@@ -1416,7 +1615,7 @@ impl SelectedWatcher {
 
 // The inner watchers aren't `Debug`; print just the selected variant (its honest
 // `kind()` label) so `select_watcher(...).unwrap_err()` and test assertions work
-// without a derive cascade onto `SolanaWatcher` / `MockWatcher`.
+// without a derive cascade onto `SignatureWatcher` / `MockWatcher`.
 impl std::fmt::Debug for SelectedWatcher {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("SelectedWatcher")
@@ -1428,7 +1627,7 @@ impl std::fmt::Debug for SelectedWatcher {
 /// **Select the payment watcher from the config** — pure in its inputs, so the rule
 /// is directly testable (no env mutation):
 ///
-/// * **Mainnet** ⇒ the REAL [`SolanaWatcher`] over the configured RPC, always.
+/// * **Mainnet** ⇒ the REAL [`SignatureWatcher`] over the configured RPC, always.
 ///   `explicit_mock` on mainnet is refused ([`WatcherSelectError::MockOnMainnet`]);
 ///   an empty RPC or the untouched devnet default is refused
 ///   ([`WatcherSelectError::RpcMissing`]). Never a silent mock, never a mainnet
@@ -1460,9 +1659,9 @@ pub fn select_watcher(
                 endpoint: config.rpc_endpoint.clone(),
             });
         }
-        return Ok(SelectedWatcher::RealSolana(SolanaWatcher::new(
+        return Ok(SelectedWatcher::RealSolana(SignatureWatcher::new(
             config,
-            RpcAccountFetcher::new(rpc, handle),
+            RpcTransferFetcher::new(rpc, handle),
         )));
     }
     // Non-mainnet: the mock is allowed, but only EXPLICITLY — the bot's own no-env
@@ -1476,23 +1675,30 @@ pub fn select_watcher(
             endpoint: config.rpc_endpoint.clone(),
         });
     }
-    Ok(SelectedWatcher::RealSolana(SolanaWatcher::new(
+    Ok(SelectedWatcher::RealSolana(SignatureWatcher::new(
         config,
-        RpcAccountFetcher::new(rpc, handle),
+        RpcTransferFetcher::new(rpc, handle),
     )))
 }
 
 /// The production [`AccountFetcher`]: Solana JSON-RPC `getTokenAccountsByOwner`
-/// (`finalized` commitment, base64 encoding) over the configured endpoint. This is
-/// the injected-transport seam [`SolanaWatcher`] polls through.
+/// (`finalized` commitment, base64 encoding) over the configured endpoint.
+///
+/// **This is the BALANCE transport, not the credit transport.** It backs
+/// [`dregg_pay::SolanaWatcher::read_balance`] (an honest "what does this account hold
+/// right now") and the seed-bearing [`dregg_pay::SolanaSweeper`], which needs exactly
+/// that number to know how much to move. It is deliberately NOT what credits users: a
+/// balance total repeats after a sweep and so is not an idempotency key. Credits come
+/// from [`RpcTransferFetcher`] + [`SignatureWatcher`], keyed on transaction signature.
 ///
 /// **Watch-only.** It READS the deposit wallet's SPL token account (balance + owner
 /// program + slot); it holds no keypair, signs nothing, and never sees
 /// `DREGG_PAY_SEED`. Everything trust-bearing (SPL-program ownership, mint match,
-/// token-owner attribution) is re-checked fail-closed by [`SolanaWatcher::poll`] on
-/// the DECODED bytes — the RPC's word is transport, not proof.
+/// token-owner attribution) is re-checked fail-closed by
+/// [`dregg_pay::SolanaWatcher::read_balance`] on the DECODED bytes — the RPC's word is
+/// transport, not proof.
 ///
-/// The [`Watcher`] trait is sync but the bot's HTTP client is async, so each fetch
+/// The [`AccountFetcher`] trait is sync but the bot's HTTP client is async, so each fetch
 /// drives the request to completion via the same `block_in_place` bridge
 /// [`SqliteCreditStore::block`] uses (the bot runs the multi-thread runtime).
 pub struct RpcAccountFetcher {
@@ -1608,6 +1814,421 @@ impl AccountFetcher for RpcAccountFetcher {
             owner_program,
             slot,
         }))
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The PRODUCTION signature-history transport — the real credit path's RPC.
+//
+// Everything that touches JSON is a PURE function over `serde_json::Value`
+// below; the impure part is nothing but `post().json().send()`. That split is
+// load-bearing: there is no live cluster to test against, so the decode is
+// tested against the documented response shapes and the network call is kept
+// too thin to hide a bug.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Decode `getTokenAccountsByOwner` → the **pubkey** of the owner's token account for the
+/// queried mint.
+///
+/// `Ok(None)` = the wallet has no token account for that mint yet, which means it has received
+/// nothing. That is not an error and must not be one: a brand-new user is in exactly this state.
+///
+/// (The sibling [`RpcAccountFetcher::fetch_token_account`] reads the `account` of the same entry;
+/// this reads the `pubkey`, which is the address whose signature history carries the transfers.)
+fn token_account_pubkey(resp: &serde_json::Value) -> Result<Option<[u8; 32]>, WatchError> {
+    let result = rpc_result(resp)?;
+    let value = result
+        .get("value")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| WatchError::Rpc("rpc response missing `value` array".to_string()))?;
+    let Some(entry) = value.first() else {
+        return Ok(None);
+    };
+    let pubkey = entry
+        .get("pubkey")
+        .and_then(|p| p.as_str())
+        .ok_or_else(|| WatchError::Rpc("rpc entry missing `pubkey`".to_string()))?;
+    Ok(Some(parse_pubkey(pubkey, "token account `pubkey`")?))
+}
+
+/// Decode `getSignaturesForAddress` → `(signature, slot)`, newest first.
+///
+/// **A failed transaction is skipped**, not credited: a non-null `err` means the transfer did not
+/// happen. An entry whose `err` field is *absent* is treated as successful, which is the documented
+/// shape (`err: null` on success); an entry with no `signature` at all is a malformed response and
+/// fails the poll rather than silently shortening the window.
+fn signatures_of(resp: &serde_json::Value) -> Result<Vec<(String, u64)>, WatchError> {
+    let value = rpc_result(resp)?
+        .as_array()
+        .ok_or_else(|| WatchError::Rpc("getSignaturesForAddress `result` not an array".into()))?;
+    let mut out = Vec::with_capacity(value.len());
+    for entry in value {
+        if !matches!(entry.get("err"), None | Some(serde_json::Value::Null)) {
+            continue; // the transaction failed — nothing moved.
+        }
+        let signature = entry
+            .get("signature")
+            .and_then(|s| s.as_str())
+            .ok_or_else(|| WatchError::Rpc("signature entry missing `signature`".to_string()))?;
+        let slot = entry.get("slot").and_then(|s| s.as_u64()).unwrap_or(0);
+        out.push((signature.to_string(), slot));
+    }
+    Ok(out)
+}
+
+/// Decode `getTransaction` (`jsonParsed`) → how many atomic units this transaction ADDED to
+/// `token_account`, as `post − pre` over `meta.postTokenBalances` / `meta.preTokenBalances`.
+///
+/// # What is checked, and why each one
+///
+/// The entry is accepted only when ALL of these hold, mirroring the fail-closed decode
+/// [`dregg_pay::SolanaWatcher::read_balance`] applies to a fetched account:
+///
+/// * its `accountIndex` resolves to **exactly `token_account`** — the account whose history we
+///   queried, and the account the sweeper later sweeps. A wallet can own several token accounts
+///   for one mint; crediting a deposit into one the sweeper does not sweep would credit a user
+///   for money the treasury never receives;
+/// * its `mint` is the watched `mint` — an unwatched token is never credited as this asset;
+/// * its `owner` is the deposit `wallet` — RPC selection is not proof of attribution;
+/// * its `programId` is `token_program` — the SPL Token program, not an attacker's own program.
+///
+/// `Ok(None)` = this transaction touched the account but added nothing to it (a sweep, a fee, an
+/// unrelated instruction). That is normal and is not an error. An `accountIndex` that does not
+/// resolve at all IS an error: an unreadable response must not read as "no payment".
+///
+/// The returned amount is the delta of the account's own balance, so a transaction that both
+/// debits and credits nets out correctly.
+fn credited_amount(
+    resp: &serde_json::Value,
+    mint: &[u8; 32],
+    wallet: &[u8; 32],
+    token_account: &[u8; 32],
+    token_program: &[u8; 32],
+) -> Result<Option<u64>, WatchError> {
+    let result = rpc_result(resp)?;
+    // A pruned / not-yet-available transaction is `result: null`. Nothing to credit.
+    if result.is_null() {
+        return Ok(None);
+    }
+    let meta = result
+        .get("meta")
+        .ok_or_else(|| WatchError::Rpc("getTransaction result missing `meta`".to_string()))?;
+    // A failed transaction moved nothing, whatever its balances say.
+    if !matches!(meta.get("err"), None | Some(serde_json::Value::Null)) {
+        return Ok(None);
+    }
+    let keys = account_keys(result)?;
+    let index_of_watched = keys.iter().position(|k| k == token_account);
+
+    let pre = token_balance_at(meta.get("preTokenBalances"), &keys, index_of_watched)?;
+    let post = token_balance_at(meta.get("postTokenBalances"), &keys, index_of_watched)?;
+
+    // The account must appear in POST for this to be a credit at all (an account that
+    // vanished did not receive anything).
+    let Some(post) = post else {
+        return Ok(None);
+    };
+    // Attribution is checked on the POST entry — the one whose amount we are about to
+    // believe. Fail closed on each.
+    if &post.mint != mint || &post.owner != wallet || &post.program_id != token_program {
+        return Ok(None);
+    }
+    let pre_amount = match pre {
+        // A matching PRE entry for a DIFFERENT mint/owner/program would mean the RPC
+        // contradicted itself about the same account; refuse rather than net against it.
+        Some(p) if p.mint != post.mint || p.owner != post.owner => {
+            return Err(WatchError::Rpc(format!(
+                "token balance entries disagree about account {}",
+                bs58::encode(token_account).into_string()
+            )));
+        }
+        Some(p) => p.amount,
+        // Absent from PRE = the token account was created by this transaction.
+        None => 0,
+    };
+    Ok(post.amount.checked_sub(pre_amount).filter(|d| *d > 0))
+}
+
+/// One `pre`/`postTokenBalances` entry, already attributed.
+struct TokenBalanceEntry {
+    mint: [u8; 32],
+    owner: [u8; 32],
+    program_id: [u8; 32],
+    amount: u64,
+}
+
+/// Find the `pre`/`postTokenBalances` entry for the watched account.
+///
+/// `index_of_watched` is `None` when the watched account is not in this transaction's key list at
+/// all — then no entry can be ours, and any entry claiming otherwise is ignored (`Ok(None)`). An
+/// entry whose `accountIndex` is out of range for the resolved key list is a malformed response
+/// and errors: refusing beats guessing on the money path.
+fn token_balance_at(
+    balances: Option<&serde_json::Value>,
+    keys: &[[u8; 32]],
+    index_of_watched: Option<usize>,
+) -> Result<Option<TokenBalanceEntry>, WatchError> {
+    let Some(balances) = balances else {
+        return Ok(None);
+    };
+    if balances.is_null() {
+        return Ok(None);
+    }
+    let entries = balances
+        .as_array()
+        .ok_or_else(|| WatchError::Rpc("token balances not an array".to_string()))?;
+    for entry in entries {
+        let index = entry
+            .get("accountIndex")
+            .and_then(|i| i.as_u64())
+            .ok_or_else(|| WatchError::Rpc("token balance missing `accountIndex`".to_string()))?
+            as usize;
+        if index >= keys.len() {
+            return Err(WatchError::Rpc(format!(
+                "token balance accountIndex {index} out of range for {} account keys",
+                keys.len()
+            )));
+        }
+        if Some(index) != index_of_watched {
+            continue;
+        }
+        let mint = parse_pubkey(
+            entry
+                .get("mint")
+                .and_then(|m| m.as_str())
+                .ok_or_else(|| WatchError::Rpc("token balance missing `mint`".to_string()))?,
+            "token balance `mint`",
+        )?;
+        // `owner` and `programId` are REQUIRED. An RPC too old to report them cannot
+        // attribute a transfer, and an unattributable transfer is not credited — a loud
+        // stall an operator can see and fix, never a silent credit.
+        let owner = parse_pubkey(
+            entry.get("owner").and_then(|o| o.as_str()).ok_or_else(|| {
+                WatchError::Rpc(
+                    "token balance missing `owner` — this RPC cannot attribute a transfer; \
+                     upgrade the cluster endpoint"
+                        .to_string(),
+                )
+            })?,
+            "token balance `owner`",
+        )?;
+        let program_id = parse_pubkey(
+            entry
+                .get("programId")
+                .and_then(|p| p.as_str())
+                .ok_or_else(|| {
+                    WatchError::Rpc(
+                        "token balance missing `programId` — this RPC cannot prove the account \
+                         is SPL-Token owned; upgrade the cluster endpoint"
+                            .to_string(),
+                    )
+                })?,
+            "token balance `programId`",
+        )?;
+        let amount = entry
+            .pointer("/uiTokenAmount/amount")
+            .and_then(|a| a.as_str())
+            .ok_or_else(|| {
+                WatchError::Rpc("token balance missing `uiTokenAmount.amount`".to_string())
+            })?
+            .parse::<u64>()
+            .map_err(|e| WatchError::Rpc(format!("token balance amount not a u64: {e}")))?;
+        return Ok(Some(TokenBalanceEntry {
+            mint,
+            owner,
+            program_id,
+            amount,
+        }));
+    }
+    Ok(None)
+}
+
+/// The transaction's full account-key list, in the index space `accountIndex` refers to:
+/// `message.accountKeys` first, then the address-lookup-table-loaded writable keys, then the
+/// loaded readonly keys. Getting this order wrong on a v0 transaction would attribute a balance to
+/// the wrong account, so the loaded addresses are appended rather than ignored.
+fn account_keys(result: &serde_json::Value) -> Result<Vec<[u8; 32]>, WatchError> {
+    let mut keys = Vec::new();
+    let listed = result
+        .pointer("/transaction/message/accountKeys")
+        .and_then(|k| k.as_array())
+        .ok_or_else(|| {
+            WatchError::Rpc("getTransaction missing `transaction.message.accountKeys`".to_string())
+        })?;
+    for key in listed {
+        // `jsonParsed` yields objects (`{pubkey, signer, writable, source}`); the
+        // unparsed encodings yield bare strings. Accept either.
+        let raw = key
+            .as_str()
+            .or_else(|| key.get("pubkey").and_then(|p| p.as_str()))
+            .ok_or_else(|| WatchError::Rpc("account key entry has no pubkey".to_string()))?;
+        keys.push(parse_pubkey(raw, "account key")?);
+    }
+    for field in ["writable", "readonly"] {
+        let Some(loaded) = result
+            .pointer(&format!("/meta/loadedAddresses/{field}"))
+            .and_then(|k| k.as_array())
+        else {
+            continue;
+        };
+        for key in loaded {
+            let raw = key.as_str().ok_or_else(|| {
+                WatchError::Rpc(format!("loadedAddresses.{field} entry not a string"))
+            })?;
+            keys.push(parse_pubkey(raw, "loaded address")?);
+        }
+    }
+    Ok(keys)
+}
+
+/// The `result` of a JSON-RPC envelope, with an `error` surfaced as [`WatchError::Rpc`].
+fn rpc_result(resp: &serde_json::Value) -> Result<&serde_json::Value, WatchError> {
+    if let Some(err) = resp.get("error") {
+        return Err(WatchError::Rpc(format!("rpc error: {err}")));
+    }
+    resp.get("result")
+        .ok_or_else(|| WatchError::Rpc("rpc response missing `result`".to_string()))
+}
+
+/// A base58 32-byte pubkey, or a named [`WatchError::Rpc`]. Never a silent zero key.
+fn parse_pubkey(raw: &str, what: &str) -> Result<[u8; 32], WatchError> {
+    bs58::decode(raw)
+        .into_vec()
+        .ok()
+        .and_then(|v| <[u8; 32]>::try_from(v).ok())
+        .ok_or_else(|| WatchError::Rpc(format!("{what} is not a 32-byte base58 key: {raw}")))
+}
+
+/// The production [`TransferFetcher`]: the deposit address's finalized inbound token transfers,
+/// read over three Solana JSON-RPC calls at `finalized` commitment.
+///
+/// 1. `getTokenAccountsByOwner(owner, {mint}, {encoding: base64, commitment: finalized})` → the
+///    token account's **pubkey**. No token account ⇒ no transfers ⇒ `Ok(vec![])`, not an error.
+/// 2. `getSignaturesForAddress(<that pubkey>, {commitment: finalized, limit})` → signatures,
+///    newest first, failed transactions skipped.
+/// 3. `getTransaction(sig, {encoding: jsonParsed, commitment: finalized,
+///    maxSupportedTransactionVersion: 0})` → `post − pre` on that token account's balance.
+///
+/// **Watch-only.** It READS; it holds no keypair, signs nothing, and never sees `DREGG_PAY_SEED`.
+///
+/// **Stateless.** It caches nothing between polls, which is what makes the watcher above it
+/// restart-safe. The cost of that is real and should be budgeted: one poll of a deposit address
+/// with `n` transactions in the window costs `2 + n` RPC calls, every tick. An address that has
+/// never been paid costs 1 (`getTokenAccountsByOwner` returns an empty value array), which is the
+/// overwhelmingly common case in a sweep.
+///
+/// Every trust-bearing claim it returns (mint, token owner, token program) is re-checked
+/// fail-closed by [`SignatureWatcher::poll`] against operator config — the RPC's word is
+/// transport, not proof.
+pub struct RpcTransferFetcher {
+    client: reqwest::Client,
+    endpoint: String,
+    handle: tokio::runtime::Handle,
+}
+
+impl RpcTransferFetcher {
+    /// A fetcher against `endpoint`. Builds the client only — no network call here.
+    pub fn new(endpoint: impl Into<String>, handle: tokio::runtime::Handle) -> Self {
+        RpcTransferFetcher {
+            client: reqwest::Client::new(),
+            endpoint: endpoint.into(),
+            handle,
+        }
+    }
+
+    /// The endpoint this fetcher polls.
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
+    }
+
+    /// POST one JSON-RPC body and return the parsed envelope. **This is the entire impure
+    /// surface of this transport** — no decoding happens here, so nothing that can be wrong
+    /// about a response shape can hide behind the network.
+    fn call(&self, body: serde_json::Value) -> Result<serde_json::Value, WatchError> {
+        let fut = async {
+            self.client
+                .post(&self.endpoint)
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| WatchError::Rpc(format!("rpc send to {}: {e}", self.endpoint)))?
+                .error_for_status()
+                .map_err(|e| WatchError::Rpc(format!("rpc http status: {e}")))?
+                .json::<serde_json::Value>()
+                .await
+                .map_err(|e| WatchError::Rpc(format!("rpc response not json: {e}")))
+        };
+        match tokio::runtime::Handle::try_current() {
+            Ok(current) => tokio::task::block_in_place(move || current.block_on(fut)),
+            Err(_) => self.handle.block_on(fut),
+        }
+    }
+}
+
+impl TransferFetcher for RpcTransferFetcher {
+    fn fetch_transfers(
+        &self,
+        owner: &DepositAddress,
+        mint: &[u8; 32],
+        limit: usize,
+    ) -> Result<Vec<ObservedTransfer>, WatchError> {
+        let accounts = self.call(serde_json::json!({
+            "jsonrpc": "2.0", "id": 1,
+            "method": "getTokenAccountsByOwner",
+            "params": [
+                owner.to_base58(),
+                { "mint": bs58::encode(mint).into_string() },
+                { "encoding": "base64", "commitment": "finalized" },
+            ],
+        }))?;
+        // No token account for this (owner, mint) yet — nothing has ever landed.
+        let Some(token_account) = token_account_pubkey(&accounts)? else {
+            return Ok(Vec::new());
+        };
+
+        let history = self.call(serde_json::json!({
+            "jsonrpc": "2.0", "id": 1,
+            "method": "getSignaturesForAddress",
+            "params": [
+                bs58::encode(token_account).into_string(),
+                { "commitment": "finalized", "limit": limit },
+            ],
+        }))?;
+
+        let mut transfers = Vec::new();
+        for (signature, slot) in signatures_of(&history)? {
+            let tx = self.call(serde_json::json!({
+                "jsonrpc": "2.0", "id": 1,
+                "method": "getTransaction",
+                "params": [
+                    signature,
+                    {
+                        "encoding": "jsonParsed",
+                        "commitment": "finalized",
+                        "maxSupportedTransactionVersion": 0,
+                    },
+                ],
+            }))?;
+            let Some(amount) = credited_amount(
+                &tx,
+                mint,
+                &owner.to_bytes(),
+                &token_account,
+                &dregg_pay::SPL_TOKEN_PROGRAM_ID,
+            )?
+            else {
+                continue; // this transaction added nothing to the account.
+            };
+            transfers.push(ObservedTransfer {
+                signature,
+                slot,
+                amount,
+                mint: *mint,
+                token_owner: owner.to_bytes(),
+                token_program: dregg_pay::SPL_TOKEN_PROGRAM_ID,
+            });
+        }
+        Ok(transfers)
     }
 }
 
@@ -2993,6 +3614,205 @@ mod tests {
         );
     }
 
+    /// **The price sheet is no longer necessarily an operator's guess.**
+    ///
+    /// Chutes' catalog (`GET /v1/models`) publishes a machine-readable per-model rate, so the
+    /// attested constructor can hand one back and the ledger meters the PROVIDER'S OWN number —
+    /// labelled `verified`, not laundered as an upper bound it is not.
+    ///
+    /// Three properties, and each can go RED on its own:
+    /// 1. a discovered rate prices a model the registry knows nothing about (delete the adoption
+    ///    and this build is REFUSED as unpriced — the old behaviour);
+    /// 2. an operator's explicit pin still WINS, and keeps its honest `operator-override` label
+    ///    (let discovery overwrite it and the tag flips);
+    /// 3. no catalog rate and no pin is still refused AT THE SWITCH, not at a player's turn.
+    #[test]
+    fn a_provider_published_rate_prices_the_model_and_an_operator_pin_still_wins() {
+        const TEE: &str = "Qwen/Qwen3-32B-TEE";
+        // $0.104 / $0.416 per MILLION tokens, as the live catalog publishes them.
+        let catalog = Pricing {
+            input_per_1k: 0.000_104,
+            output_per_1k: 0.000_416,
+            source: PriceSource::Verified {
+                api: "Chutes GET /v1/models".to_string(),
+                date: "2026-07-26".to_string(),
+            },
+        };
+        let never = || -> Option<PaidBackend> { panic!("unattested constructor consulted") };
+        let with_catalog = || -> Result<PaidBackend, String> {
+            let mut parts = mock_paid_backend("attested prose", TEE);
+            parts.pricing = Some(catalog.clone());
+            Ok(parts)
+        };
+        let builders = BackendBuilders {
+            tee: &with_catalog,
+            openai: &never,
+            bedrock: &never,
+        };
+        let setting = NarratorSetting {
+            backend: Some("chutes-tee".to_string()),
+            ..NarratorSetting::default()
+        };
+
+        // (1) The catalog rate prices a model nothing else knows.
+        let narrator = try_build_narrator(Some(&setting), &builders)
+            .expect("a catalog-priced model is accepted")
+            .expect("a narrator is produced");
+        assert_eq!(narrator.model(), TEE);
+        let priced = narrator.pricing().expect("the model is priced");
+        assert_eq!(priced.input_per_1k, 0.000_104);
+        assert_eq!(priced.output_per_1k, 0.000_416);
+        assert_eq!(
+            priced.source.tag(),
+            "verified",
+            "a rate read from the provider's own catalog is labelled verified, not laundered"
+        );
+
+        // (2) An operator's explicit pin is NOT replaced, and stays labelled as theirs.
+        let pinned = NarratorSetting {
+            price_input_per_1k: Some(0.002),
+            price_output_per_1k: Some(0.008),
+            ..setting.clone()
+        };
+        let narrator = try_build_narrator(Some(&pinned), &builders)
+            .expect("an operator-pinned model is accepted")
+            .expect("a narrator is produced");
+        let priced = narrator.pricing().expect("the model is priced");
+        assert_eq!(priced.input_per_1k, 0.002, "the operator's rate survives");
+        assert_eq!(priced.output_per_1k, 0.008);
+        assert_eq!(
+            priced.source.tag(),
+            "operator-override",
+            "an operator-set rate must never be relabelled as verified"
+        );
+
+        // (3) No catalog rate and no pin is refused at the switch, exactly as before.
+        let no_catalog = || -> Result<PaidBackend, String> { Ok(mock_paid_backend("prose", TEE)) };
+        let bare = BackendBuilders {
+            tee: &no_catalog,
+            openai: &never,
+            bedrock: &never,
+        };
+        let err = try_build_narrator(Some(&setting), &bare)
+            .expect_err("an unpriced model must still be refused");
+        assert!(err.contains("NO pinned price"), "{err}");
+    }
+
+    /// A discovered rate belongs to the model the CONSTRUCTOR resolved. An admin who renames the
+    /// model in the setting is naming a different chute, whose rate this is not — so the catalog
+    /// rate must NOT follow the rename, and that model is refused as unpriced.
+    #[test]
+    fn a_discovered_rate_does_not_follow_a_renamed_model() {
+        let catalog = Pricing {
+            input_per_1k: 0.000_104,
+            output_per_1k: 0.000_416,
+            source: PriceSource::Verified {
+                api: "Chutes GET /v1/models".to_string(),
+                date: "2026-07-26".to_string(),
+            },
+        };
+        let with_catalog = || -> Result<PaidBackend, String> {
+            let mut parts = mock_paid_backend("prose", "Qwen/Qwen3-32B-TEE");
+            parts.pricing = Some(catalog.clone());
+            Ok(parts)
+        };
+        let never = || -> Option<PaidBackend> { panic!("unattested constructor consulted") };
+        let builders = BackendBuilders {
+            tee: &with_catalog,
+            openai: &never,
+            bedrock: &never,
+        };
+        let renamed = NarratorSetting {
+            backend: Some("chutes-tee".to_string()),
+            model: Some("zai-org/GLM-5.2-TEE".to_string()),
+            ..NarratorSetting::default()
+        };
+        let err = try_build_narrator(Some(&renamed), &builders)
+            .expect_err("another model's rate must not be adopted for this one");
+        assert!(err.contains("zai-org/GLM-5.2-TEE"), "{err}");
+        assert!(err.contains("NO pinned price"), "{err}");
+    }
+
+    /// The date stamped onto a catalog-read rate is a real `YYYY-MM-DD`, so a rate's age is
+    /// legible provenance rather than a placeholder.
+    #[test]
+    fn the_catalog_read_date_is_a_well_formed_iso_day() {
+        let today = today_utc();
+        assert_eq!(today.len(), 10, "{today}");
+        let parts: Vec<&str> = today.split('-').collect();
+        assert_eq!(parts.len(), 3, "{today}");
+        let year: i64 = parts[0].parse().expect("year");
+        let month: u32 = parts[1].parse().expect("month");
+        let day: u32 = parts[2].parse().expect("day");
+        assert!((2025..2100).contains(&year), "{today}");
+        assert!((1..=12).contains(&month), "{today}");
+        assert!((1..=31).contains(&day), "{today}");
+    }
+
+    /// **The archive seam is real and it cannot invent evidence.** A narrator wired to a backend
+    /// that retains its quotes hands the full bytes back for a digest it attested; one wired to a
+    /// non-attesting backend hands back `None` for every digest, including the very digest the
+    /// attesting twin answers.
+    #[test]
+    fn the_attestation_archive_seam_returns_evidence_only_where_it_exists() {
+        struct FakeEvidence {
+            digest: [u8; 32],
+        }
+        impl AttestationEvidence for FakeEvidence {
+            fn attestation_for(&self, quote_sha256: &[u8; 32]) -> Option<AttestationQuote> {
+                (*quote_sha256 == self.digest).then(|| AttestationQuote {
+                    instance_id: "inst-7f".to_string(),
+                    measurement: [0xA5; 32],
+                    tcb_status: "UpToDate".to_string(),
+                    nonce_hex: "ab".repeat(32),
+                    e2e_pubkey_b64: "QVRURVNURUQ=".to_string(),
+                    quote_bytes: vec![7u8; 96],
+                })
+            }
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let backend: Arc<dyn ConverseBackend + Send + Sync> = Arc::new(MockBackend {
+            reply: "The stair gives under salt water.".to_string(),
+            input_tokens: 10,
+            output_tokens: 8,
+        });
+        let digest = [0x3C; 32];
+        let attesting = PaidNarrator::new(
+            backend.clone(),
+            ModelRegistry::builtin(),
+            CLAUDE_HAIKU_4_5,
+            0.05,
+            64,
+            tmp.path().to_path_buf(),
+        )
+        .with_provider(PaidNarratorProvider::ChutesTee)
+        .with_evidence(Some(Arc::new(FakeEvidence { digest })));
+
+        let evidence = attesting
+            .attestation_quote(&digest)
+            .expect("the evidence for an attested digest is reachable");
+        assert_eq!(evidence.quote_bytes.len(), 96);
+        assert_eq!(evidence.nonce_hex.len(), 64);
+        assert!(
+            attesting.attestation_quote(&[0xFF; 32]).is_none(),
+            "a digest that was never attested must yield nothing"
+        );
+
+        // The complement: no evidence handle ⇒ nothing, ever. This is why an unattested provider
+        // can never acquire an archive record.
+        let plain = PaidNarrator::new(
+            backend,
+            ModelRegistry::builtin(),
+            CLAUDE_HAIKU_4_5,
+            0.05,
+            64,
+            tmp.path().to_path_buf(),
+        )
+        .with_provider(PaidNarratorProvider::Chutes);
+        assert!(plain.attestation_quote(&digest).is_none());
+    }
+
     /// The stored setting round-trips through the single kv row, and an unparseable row is
     /// reported rather than silently read as "no setting".
     #[test]
@@ -3091,6 +3911,9 @@ mod tests {
             SqliteTreasuryStore::new(db.clone(), handle.clone()),
             config.usdc_decimals,
         );
+        // The per-contributor attribution behind that aggregate pile, over the SAME
+        // database — one truth, carrying the pool epoch and the snapshot provenance.
+        let pool = SwapPool::over(SqlitePoolStore::new(db.clone(), handle.clone()));
         let treasury_view = build_treasury_view(&config);
         PayState {
             config,
@@ -3099,10 +3922,10 @@ mod tests {
             watcher,
             watcher_kind,
             db,
-            handle,
             paid: std::sync::RwLock::new(Some(paid)),
             credit_holds: Arc::new(Mutex::new(HashSet::new())),
             treasury,
+            pool,
             treasury_view,
         }
     }
@@ -3524,6 +4347,212 @@ mod tests {
         );
     }
 
+    /// **THE TREASURY PATH, DEPLOYED**: the durable pool attribution and the whole
+    /// contribute → pin → weighted vote → signed swap → retire chain, driven through the
+    /// LIVE `PayState` over a real sqlite database.
+    ///
+    /// This is the deployment-shaped form of `dregg-pay`'s own e2e: everything the vote
+    /// weighs — WHO paid, how much, and the pool EPOCH — is read back out of sqlite by a
+    /// SECOND `PayState` (the process after a restart) before it is voted, and the
+    /// retire-exactly-once tooth is re-tested from that second handle. Nothing mainnet:
+    /// mock mints, a simulated chain, a throwaway operator signer.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn pool_attribution_persists_and_a_vote_swaps_the_persisted_pile_to_fuel() {
+        use dregg_pay::{
+            GovernanceAuthority, GovernanceError, JupiterSwap, LiquidityGovernance, MARKET_MIN_OUT,
+            MockSigner, MockSwapVenue, PoolError, SwapError, quadratic_weight,
+        };
+
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("pool.db");
+        let db_url = format!("sqlite://{}?mode=rwc", db_path.display());
+        let db = Database::connect(&db_url).await.unwrap();
+        let backend: Arc<dyn ConverseBackend + Send + Sync> = Arc::new(MockBackend {
+            reply: "x".into(),
+            input_tokens: 1,
+            output_tokens: 1,
+        });
+        let price: u64 = 1_000_000;
+        let chain = MockChain::new();
+        let pay = build_pay_state_for_asset(
+            db.clone(),
+            chain.clone(),
+            backend.clone(),
+            tmp.path().join("runs-pool"),
+            price,
+            Asset::Dregg,
+        );
+
+        // ── 1. CONTRIBUTE through the live poll loop. ──
+        let alice = "111111111111111111";
+        let bob = "222222222222222222";
+        let alice_addr = pay.deposit_address(alice);
+        let bob_addr = pay.deposit_address(bob);
+        chain.credit_onchain(&alice_addr, 1_000_000);
+        chain.credit_onchain(&bob_addr, 4_000_000);
+        pay.poll_and_credit(alice).unwrap();
+        pay.poll_and_credit(bob).unwrap();
+
+        assert_eq!(pay.treasury_pile(), 5_000_000, "the aggregate pile");
+        assert_eq!(
+            pay.pool_total(),
+            5_000_000,
+            "…and the attribution behind it sums to the same number"
+        );
+        assert_eq!(pay.pool.contributed(&alice_addr), 1_000_000);
+        assert_eq!(pay.pool.weight(&bob_addr), 2_000, "isqrt(4M), quadratic");
+        assert_eq!(
+            pay.pool.weight(&bob_addr),
+            2 * pay.pool.weight(&alice_addr),
+            "4x the stake is 2x the vote"
+        );
+        assert_eq!(pay.pool_epoch(), 0);
+
+        // A re-poll adds no stake — the pool's OWN dedup gate, not the credit ledger's.
+        pay.poll_and_credit(alice).unwrap();
+        assert_eq!(pay.pool_total(), 5_000_000, "no double attribution");
+        assert_eq!(pay.treasury_pile(), 5_000_000, "and no double credit");
+
+        // ── 2. RESTART. A second PayState over the same sqlite file. ──
+        drop(pay);
+        let pay2 = build_pay_state_for_asset(
+            db.clone(),
+            chain.clone(),
+            backend,
+            tmp.path().join("runs-pool-2"),
+            price,
+            Asset::Dregg,
+        );
+        assert_eq!(
+            pay2.pool_total(),
+            5_000_000,
+            "the attribution survived the restart — it lives in sqlite, not in RAM"
+        );
+        assert_eq!(pay2.pool.contributed(&alice_addr), 1_000_000);
+        assert_eq!(pay2.pool_epoch(), 0);
+
+        // ── 3. PIN + PROPOSE + VOTE, over the state read back out of the database. ──
+        let pinned = pay2.pool_snapshot();
+        assert_eq!(pinned.total(), 5_000_000);
+        assert_eq!(pinned.contributor_count(), 2);
+        assert_eq!(pinned.weight(&alice_addr), quadratic_weight(1_000_000));
+        assert_eq!(
+            pinned.user(&alice_addr).map(|u| u.0.as_str()),
+            Some(alice),
+            "the pin carries who each stake belongs to"
+        );
+
+        let authority = GovernanceAuthority::from_seed([7u8; 32]);
+        let mut gov = LiquidityGovernance::new(
+            [9u8; 32],
+            authority,
+            pay2.config.mint,
+            pay2.config.usdc_mint,
+        );
+        let authority_pk = gov.authority_public_key();
+        let proposal = gov
+            .propose_market_swap("swap the pile to fuel?", pinned, 3_000)
+            .unwrap();
+        assert_eq!(proposal.amount(), 5_000_000, "all or nothing");
+
+        // Someone who never paid gets no ballot at all.
+        let stranger = DepositAddress([0x77u8; 32]);
+        assert!(matches!(
+            gov.issue_pool_ballot(&proposal, stranger),
+            Err(GovernanceError::NoContribution { .. })
+        ));
+
+        let a = gov.issue_pool_ballot(&proposal, alice_addr).unwrap();
+        let b = gov.issue_pool_ballot(&proposal, bob_addr).unwrap();
+        assert_eq!(gov.vote_market(&proposal, &a, true).unwrap(), 1_000);
+        assert!(
+            gov.finalize_market_swap(&proposal).unwrap().is_none(),
+            "1000 weight is below the 3000 quorum: NO authorization"
+        );
+        assert_eq!(gov.vote_market(&proposal, &b, true).unwrap(), 2_000);
+
+        // ── 4. AUTHORIZE + SIGN + SWAP the PERSISTED treasury. ──
+        let auth = gov
+            .finalize_market_swap(&proposal)
+            .unwrap()
+            .expect("3000 >= 3000 authorizes");
+        assert_eq!(auth.amount, 5_000_000);
+        assert_eq!(auth.min_out, MARKET_MIN_OUT, "market price, no floor");
+
+        let swap = JupiterSwap::new(
+            MockSwapVenue::new(5, 1_000),
+            pay2.config.mint,
+            pay2.config.usdc_mint,
+            authority_pk,
+        );
+        // The operator's key — never held by the bot or by dregg-pay.
+        let signer = MockSigner::from_seed([8u8; 32]);
+        let fuel_before = pay2.treasury_fuel();
+        let out = swap.execute(&auth, &signer, &pay2.treasury).unwrap();
+        assert_eq!(out.dregg_in, 5_000_000);
+        assert_eq!(out.usdc_out, 25_000);
+        assert_eq!(pay2.treasury_pile(), 0, "the pile went, in sqlite");
+        assert_eq!(pay2.treasury_fuel(), fuel_before + 25_000, "fuel filled");
+
+        // ── 5. RETIRE — once — and refuse both replays. ──
+        assert_eq!(pay2.pool.close(&proposal.pool).unwrap(), 1);
+        assert_eq!(pay2.pool_total(), 0, "the swapped pool is retired");
+        assert_eq!(db.pool_epoch().await.unwrap(), 1, "the epoch is in sqlite");
+        assert!(matches!(
+            pay2.pool.close(&proposal.pool),
+            Err(PoolError::StaleSnapshot {
+                snapshot_epoch: 0,
+                pool_epoch: 1
+            })
+        ));
+        pay2.treasury.deposit_dregg(5_000_000); // pretend the pile refilled
+        assert_eq!(
+            swap.execute(&auth, &signer, &pay2.treasury),
+            Err(SwapError::AuthorizationSpent {
+                poll_id: auth.poll_id
+            }),
+            "one passed vote, one swap"
+        );
+        assert_eq!(pay2.treasury_pile(), 5_000_000, "the replay moved nothing");
+
+        // ── 6. RESTART AGAIN. The retirement is durable, not a per-process latch. ──
+        let pay3 = build_pay_state_for_asset(
+            db.clone(),
+            chain,
+            Arc::new(MockBackend {
+                reply: "x".into(),
+                input_tokens: 1,
+                output_tokens: 1,
+            }),
+            tmp.path().join("runs-pool-3"),
+            price,
+            Asset::Dregg,
+        );
+        assert_eq!(pay3.pool_epoch(), 1, "the epoch survived the restart");
+        assert_eq!(pay3.pool_total(), 0);
+        assert_eq!(pay3.pool.contributed(&alice_addr), 0);
+        assert!(
+            matches!(
+                pay3.pool.close(&proposal.pool),
+                Err(PoolError::StaleSnapshot { .. })
+            ),
+            "a snapshot retired before the restart cannot be retired after it — this is \
+             exactly what an in-memory epoch would have gotten wrong",
+        );
+        // And a proposal over the retired pool has nothing to swap and no electorate.
+        let mut gov2 = LiquidityGovernance::new(
+            [9u8; 32],
+            GovernanceAuthority::from_seed([7u8; 32]),
+            pay3.config.mint,
+            pay3.config.usdc_mint,
+        );
+        assert!(matches!(
+            gov2.propose_market_swap("again?", pay3.pool_snapshot(), 1),
+            Err(GovernanceError::EmptyPool)
+        ));
+        println!("[treasury-path] contribute → restart → vote → swap → retire, all in sqlite");
+    }
+
     /// THE MULTICHAIN VIEW, EXPOSED + DRIVEN through the PayState accessor: the running
     /// service reports the treasury's proven cross-chain holdings over its declared
     /// per-chain addresses. An honest fact pointed at the treasury's own address is
@@ -3672,7 +4701,14 @@ mod tests {
         let selected = select_watcher(&cfg, true, false, tokio::runtime::Handle::current())
             .expect("a mainnet config with an RPC constructs the real watcher");
         assert!(selected.is_real(), "mainnet must get the REAL watcher");
-        assert_eq!(selected.kind(), "solana-rpc (real, watch-only)");
+        // The label names the KEY, not just the transport: an operator reading the boot
+        // line must be able to tell a restart-safe watcher from one whose idempotency
+        // lived in RAM.
+        assert_eq!(
+            selected.kind(),
+            "solana-rpc tx-signature (real, watch-only)"
+        );
+        assert_eq!(selected.kind(), REAL_WATCHER_KIND, "one word for one fact");
     }
 
     /// The mock flag on a MAINNET config is REFUSED — real funds never ride the
@@ -3791,94 +4827,240 @@ mod tests {
 
     /// The deposit address the mock RPC simulates an outage for.
     const RPC_OUTAGE_OWNER: [u8; 32] = [0xEE; 32];
+    /// The deposit wallet the canned cluster has a token account for.
+    const RPC_WALLET: [u8; 32] = [1u8; 32];
+    /// That wallet's token account (the address whose signature history carries the
+    /// transfers).
+    const RPC_TOKEN_ACCOUNT: [u8; 32] = [7u8; 32];
+    /// The one successful, crediting transaction on the canned cluster.
+    const SIG_PAID: &str = "SigPaidOne";
+    /// A FAILED transaction on the same account — nothing moved, so it must never be
+    /// credited (it is skipped before `getTransaction` is even issued).
+    const SIG_FAILED: &str = "SigFailedTwo";
+    /// A SUCCESSFUL transaction that touches the account without adding to it (a sweep,
+    /// a fee) — a zero delta is not a payment.
+    const SIG_NOOP: &str = "SigNoopThree";
 
-    /// A canned Solana JSON-RPC `getTokenAccountsByOwner`: echoes the queried
-    /// (owner, mint) back as a real 165-byte SPL token-account layout holding a
-    /// finalized balance of 750, owned by the SPL Token program — exactly the
-    /// shape a real RPC returns. The outage owner returns a JSON-RPC error.
-    async fn mock_solana_rpc(
-        axum::Json(req): axum::Json<serde_json::Value>,
-    ) -> axum::Json<serde_json::Value> {
-        assert_eq!(
-            req["method"], "getTokenAccountsByOwner",
-            "the fetcher issues getTokenAccountsByOwner"
-        );
-        let owner: [u8; 32] = bs58::decode(req["params"][0].as_str().unwrap())
-            .into_vec()
-            .unwrap()
-            .try_into()
-            .unwrap();
-        if owner == RPC_OUTAGE_OWNER {
-            return axum::Json(serde_json::json!({
-                "jsonrpc": "2.0", "id": 1,
-                "error": { "code": -32000, "message": "simulated rpc outage" },
-            }));
-        }
-        let mint: [u8; 32] = bs58::decode(req["params"][1]["mint"].as_str().unwrap())
-            .into_vec()
-            .unwrap()
-            .try_into()
-            .unwrap();
+    fn b58(key: [u8; 32]) -> String {
+        bs58::encode(key).into_string()
+    }
+
+    /// The canned SPL token-account entry `getTokenAccountsByOwner` returns.
+    fn canned_token_accounts(owner: [u8; 32], mint: [u8; 32]) -> serde_json::Value {
         let mut data = vec![0u8; 165];
         data[0..32].copy_from_slice(&mint);
         data[32..64].copy_from_slice(&owner);
         data[64..72].copy_from_slice(&750u64.to_le_bytes());
         use base64::Engine as _;
-        let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
-        axum::Json(serde_json::json!({
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
+        serde_json::json!({
             "jsonrpc": "2.0", "id": 1,
             "result": {
                 "context": { "apiVersion": "2.3.0", "slot": 424_242 },
                 "value": [{
-                    "pubkey": bs58::encode([7u8; 32]).into_string(),
+                    "pubkey": b58(RPC_TOKEN_ACCOUNT),
                     "account": {
-                        "data": [b64, "base64"],
+                        "data": [encoded, "base64"],
                         "executable": false,
                         "lamports": 2_039_280u64,
-                        "owner": bs58::encode(dregg_pay::config::SPL_TOKEN_PROGRAM_ID)
-                            .into_string(),
+                        "owner": b58(dregg_pay::config::SPL_TOKEN_PROGRAM_ID),
                         "rentEpoch": 0,
                     },
                 }],
             },
-        }))
+        })
+    }
+
+    /// One `getTransaction` (`jsonParsed`) response for the token account: `pre` → `post`
+    /// on account index 1. `None` for `pre` means the account did not exist yet.
+    fn canned_transaction(
+        mint: [u8; 32],
+        slot: u64,
+        pre: Option<u64>,
+        post: u64,
+    ) -> serde_json::Value {
+        let balance = |amount: u64| {
+            serde_json::json!({
+                "accountIndex": 1,
+                "mint": b58(mint),
+                "owner": b58(RPC_WALLET),
+                "programId": b58(dregg_pay::config::SPL_TOKEN_PROGRAM_ID),
+                "uiTokenAmount": {
+                    "amount": amount.to_string(),
+                    "decimals": 6,
+                    "uiAmount": amount as f64 / 1e6,
+                    "uiAmountString": format!("{}", amount as f64 / 1e6),
+                },
+            })
+        };
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": 1,
+            "result": {
+                "slot": slot,
+                "blockTime": 1_700_000_000u64,
+                "meta": {
+                    "err": serde_json::Value::Null,
+                    "fee": 5000,
+                    "preTokenBalances": pre.map(|p| vec![balance(p)]).unwrap_or_default(),
+                    "postTokenBalances": [balance(post)],
+                },
+                "transaction": {
+                    "message": {
+                        "accountKeys": [
+                            { "pubkey": b58([0x33u8; 32]), "signer": true,
+                              "writable": true, "source": "transaction" },
+                            { "pubkey": b58(RPC_TOKEN_ACCOUNT), "signer": false,
+                              "writable": true, "source": "transaction" },
+                        ],
+                    },
+                },
+            },
+        })
+    }
+
+    /// A canned Solana JSON-RPC cluster covering the three calls the production
+    /// signature transport makes, in the shapes a real RPC returns. Never a real
+    /// cluster; only the socket's answers are fixed.
+    async fn mock_solana_rpc(
+        axum::Json(req): axum::Json<serde_json::Value>,
+    ) -> axum::Json<serde_json::Value> {
+        let method = req["method"].as_str().unwrap().to_string();
+        match method.as_str() {
+            "getTokenAccountsByOwner" => {
+                let owner: [u8; 32] = bs58::decode(req["params"][0].as_str().unwrap())
+                    .into_vec()
+                    .unwrap()
+                    .try_into()
+                    .unwrap();
+                if owner == RPC_OUTAGE_OWNER {
+                    return axum::Json(serde_json::json!({
+                        "jsonrpc": "2.0", "id": 1,
+                        "error": { "code": -32000, "message": "simulated rpc outage" },
+                    }));
+                }
+                if owner != RPC_WALLET {
+                    // A wallet with no token account for this mint — nothing landed.
+                    return axum::Json(serde_json::json!({
+                        "jsonrpc": "2.0", "id": 1,
+                        "result": {
+                            "context": { "apiVersion": "2.3.0", "slot": 424_242 },
+                            "value": [],
+                        },
+                    }));
+                }
+                let mint: [u8; 32] = bs58::decode(req["params"][1]["mint"].as_str().unwrap())
+                    .into_vec()
+                    .unwrap()
+                    .try_into()
+                    .unwrap();
+                axum::Json(canned_token_accounts(owner, mint))
+            }
+            "getSignaturesForAddress" => {
+                assert_eq!(
+                    req["params"][0].as_str().unwrap(),
+                    b58(RPC_TOKEN_ACCOUNT),
+                    "history is read for the TOKEN ACCOUNT, not the wallet"
+                );
+                assert_eq!(req["params"][1]["commitment"], "finalized");
+                axum::Json(serde_json::json!({
+                    "jsonrpc": "2.0", "id": 1,
+                    "result": [
+                        { "signature": SIG_NOOP, "slot": 424_243, "err": serde_json::Value::Null,
+                          "confirmationStatus": "finalized" },
+                        { "signature": SIG_FAILED, "slot": 424_242,
+                          "err": { "InstructionError": [0, { "Custom": 1 }] },
+                          "confirmationStatus": "finalized" },
+                        { "signature": SIG_PAID, "slot": 424_241, "err": serde_json::Value::Null,
+                          "confirmationStatus": "finalized" },
+                    ],
+                }))
+            }
+            "getTransaction" => {
+                let sig = req["params"][0].as_str().unwrap();
+                assert_eq!(req["params"][1]["encoding"], "jsonParsed");
+                assert_eq!(req["params"][1]["maxSupportedTransactionVersion"], 0);
+                assert_ne!(
+                    sig, SIG_FAILED,
+                    "a failed signature must be skipped before getTransaction is issued"
+                );
+                let mint = [9u8; 32]; // `selection_cfg`'s mint
+                if sig == SIG_NOOP {
+                    // Touched the account, added nothing.
+                    return axum::Json(canned_transaction(mint, 424_243, Some(750), 750));
+                }
+                // The account did not exist before this transaction created + funded it.
+                axum::Json(canned_transaction(mint, 424_241, None, 750))
+            }
+            other => panic!("unexpected rpc method {other}"),
+        }
     }
 
     /// The mainnet-selected REAL watcher, polled through the production
-    /// `RpcAccountFetcher` transport: observes the finalized balance as one
-    /// attributed payment, dedups on re-poll, and surfaces a transport failure
-    /// as a WatchError (fail closed) — never a silent empty poll.
+    /// `RpcTransferFetcher` transport: it reads the token account's pubkey, its finalized
+    /// signature history, and each transaction's own balance delta — crediting the one
+    /// successful transfer, skipping the FAILED transaction and the zero-delta one, and
+    /// surfacing a transport failure as a `WatchError` (fail closed) rather than a silent
+    /// empty poll.
+    ///
+    /// **And it is restart-stable end to end**: the watcher is dropped and re-selected
+    /// from the same config (a restart), and the reference it mints over the same cluster
+    /// state is byte-identical — which is what lets the durable ledger refuse the repeat.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn real_watcher_polls_through_the_rpc_transport_and_dedups() {
+    async fn real_watcher_polls_the_signature_transport_and_is_restart_stable() {
         let app = axum::Router::new().route("/", axum::routing::post(mock_solana_rpc));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}/", listener.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
         let cfg = selection_cfg(Network::Mainnet, &endpoint);
-        let selected = select_watcher(&cfg, true, false, tokio::runtime::Handle::current())
-            .expect("mainnet + rpc constructs the real watcher");
-        let SelectedWatcher::RealSolana(watcher) = selected else {
-            panic!("mainnet must select the real watcher");
+        let boot = || {
+            let selected = select_watcher(&cfg, true, false, tokio::runtime::Handle::current())
+                .expect("mainnet + rpc constructs the real watcher");
+            match selected {
+                SelectedWatcher::RealSolana(w) => w,
+                _ => panic!("mainnet must select the real watcher"),
+            }
         };
 
         let user = UserId::from("alice");
-        let deposit = DepositAddress([1u8; 32]);
-        let got = watcher.poll(&user, &deposit).unwrap();
-        assert_eq!(got.len(), 1, "one finalized payment observed");
-        assert_eq!(got[0].amount, 750);
-        assert_eq!(got[0].asset, Asset::Dregg);
-        assert_eq!(got[0].user, user);
-        assert!(
-            got[0].reference.0.contains("424242"),
-            "the payment ref binds the finalized slot: {}",
-            got[0].reference
+        let deposit = DepositAddress(RPC_WALLET);
+
+        let first = {
+            let watcher = boot();
+            let got = watcher.poll(&user, &deposit).unwrap();
+            assert_eq!(
+                got.len(),
+                1,
+                "one crediting transfer; the failed and zero-delta ones are not payments"
+            );
+            assert_eq!(got[0].amount, 750);
+            assert_eq!(got[0].asset, Asset::Dregg);
+            assert_eq!(got[0].user, user);
+            assert_eq!(got[0].reference, PaymentRef(format!("soltx:{SIG_PAID}")));
+            assert!(
+                !got[0].reference.0.contains("424241")
+                    && !got[0].reference.0.contains("424242")
+                    && !got[0].reference.0.contains("424243"),
+                "no slot may enter the idempotency key: {}",
+                got[0].reference
+            );
+            got[0].reference.clone()
+        }; // ← the watcher is dropped. THIS IS THE RESTART.
+
+        let watcher = boot();
+        let after = watcher.poll(&user, &deposit).unwrap();
+        assert_eq!(
+            after[0].reference, first,
+            "a restarted process must mint the SAME reference for the same transfer"
         );
 
-        // Same finalized balance on re-poll ⇒ nothing new (watcher-level dedup).
+        // A wallet with no token account yet is EMPTY, not an error.
         assert!(
-            watcher.poll(&user, &deposit).unwrap().is_empty(),
-            "re-poll at the same balance credits nothing"
+            watcher
+                .poll(&user, &DepositAddress([0x5Au8; 32]))
+                .unwrap()
+                .is_empty(),
+            "a never-funded deposit address has no transfers and is not an error"
         );
 
         // A transport failure is an ERROR the caller sees, not a silent empty.
@@ -3888,8 +5070,333 @@ mod tests {
             "an RPC failure fails closed"
         );
         println!(
-            "[real-transport] getTokenAccountsByOwner → SPL decode → 750 credited once, \
-             deduped, outage fails closed"
+            "[real-transport] getTokenAccountsByOwner → getSignaturesForAddress → \
+             getTransaction → one 750-unit payment keyed soltx:{SIG_PAID}; failed + \
+             zero-delta skipped; restart-stable; outage fails closed"
+        );
+    }
+
+    /// The BALANCE transport still works and is still fail-closed — it backs
+    /// `SolanaWatcher::read_balance` and the sweeper, which needs to know how much to
+    /// move. It is simply no longer what credits anybody.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn rpc_account_fetcher_still_reads_the_finalized_balance() {
+        use dregg_pay::SolanaWatcher;
+        let app = axum::Router::new().route("/", axum::routing::post(mock_solana_rpc));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let cfg = selection_cfg(Network::Mainnet, &endpoint);
+        let reader = SolanaWatcher::new(
+            &cfg,
+            RpcAccountFetcher::new(&endpoint, tokio::runtime::Handle::current()),
+        );
+        assert_eq!(
+            reader.read_balance(&DepositAddress(RPC_WALLET)).unwrap(),
+            Some(750)
+        );
+        assert!(
+            matches!(
+                reader.read_balance(&DepositAddress(RPC_OUTAGE_OWNER)),
+                Err(WatchError::Rpc(_))
+            ),
+            "an RPC failure fails closed on the balance read too"
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // The PURE JSON decode — tested against the documented response shapes, with
+    // no network. This is where the production transport's correctness lives, so
+    // it is where the hostile cases are driven.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    const DECODE_MINT: [u8; 32] = [9u8; 32];
+    const DECODE_WALLET: [u8; 32] = [1u8; 32];
+    const DECODE_TOKEN_ACCOUNT: [u8; 32] = [7u8; 32];
+
+    /// A `getTransaction` result with one `postTokenBalances` entry for account index 1,
+    /// whose attribution fields are supplied so a hostile variant can be built.
+    fn tx_json(
+        mint: [u8; 32],
+        owner: [u8; 32],
+        program: [u8; 32],
+        account_key: [u8; 32],
+        pre: Option<u64>,
+        post: u64,
+    ) -> serde_json::Value {
+        let balance = |amount: u64| {
+            serde_json::json!({
+                "accountIndex": 1,
+                "mint": b58(mint),
+                "owner": b58(owner),
+                "programId": b58(program),
+                "uiTokenAmount": { "amount": amount.to_string(), "decimals": 6 },
+            })
+        };
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": 1,
+            "result": {
+                "slot": 1,
+                "meta": {
+                    "err": serde_json::Value::Null,
+                    "preTokenBalances": pre.map(|p| vec![balance(p)]).unwrap_or_default(),
+                    "postTokenBalances": [balance(post)],
+                },
+                "transaction": { "message": { "accountKeys": [
+                    { "pubkey": b58([0x33u8; 32]) },
+                    { "pubkey": b58(account_key) },
+                ] } },
+            },
+        })
+    }
+
+    fn credited(resp: &serde_json::Value) -> Result<Option<u64>, WatchError> {
+        credited_amount(
+            resp,
+            &DECODE_MINT,
+            &DECODE_WALLET,
+            &DECODE_TOKEN_ACCOUNT,
+            &dregg_pay::config::SPL_TOKEN_PROGRAM_ID,
+        )
+    }
+
+    /// `getTokenAccountsByOwner` → the token account's PUBKEY (which the previous decode
+    /// never read); an empty `value` is `None`, not an error.
+    #[test]
+    fn token_account_pubkey_reads_the_entry_pubkey_and_tolerates_no_account() {
+        let resp = canned_token_accounts(DECODE_WALLET, DECODE_MINT);
+        assert_eq!(
+            token_account_pubkey(&resp).unwrap(),
+            Some(RPC_TOKEN_ACCOUNT)
+        );
+
+        let empty = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1,
+            "result": { "context": { "slot": 1 }, "value": [] },
+        });
+        assert_eq!(
+            token_account_pubkey(&empty).unwrap(),
+            None,
+            "a wallet with no token account has received nothing — not an error"
+        );
+
+        let err = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1,
+            "error": { "code": -32000, "message": "boom" },
+        });
+        assert!(matches!(
+            token_account_pubkey(&err),
+            Err(WatchError::Rpc(_))
+        ));
+    }
+
+    /// `getSignaturesForAddress` → newest-first signatures, with FAILED transactions
+    /// dropped. A failed transaction moved no tokens; crediting one would mint runs from
+    /// nothing.
+    #[test]
+    fn signatures_of_skips_failed_transactions() {
+        let resp = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1,
+            "result": [
+                { "signature": "newest", "slot": 3, "err": serde_json::Value::Null },
+                { "signature": "failed", "slot": 2,
+                  "err": { "InstructionError": [0, { "Custom": 1 }] } },
+                { "signature": "oldest", "slot": 1 },
+            ],
+        });
+        assert_eq!(
+            signatures_of(&resp).unwrap(),
+            vec![("newest".to_string(), 3), ("oldest".to_string(), 1)],
+            "a failed transaction is not a payment"
+        );
+
+        let malformed = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1,
+            "result": [{ "slot": 1, "err": serde_json::Value::Null }],
+        });
+        assert!(
+            matches!(signatures_of(&malformed), Err(WatchError::Rpc(_))),
+            "an entry with no signature is a malformed response, not a shorter window"
+        );
+    }
+
+    /// The credited amount is the watched account's OWN `post − pre`, with an absent
+    /// `pre` meaning the account was created by this transaction.
+    #[test]
+    fn credited_amount_is_the_accounts_own_delta() {
+        assert_eq!(
+            credited(&tx_json(
+                DECODE_MINT,
+                DECODE_WALLET,
+                dregg_pay::config::SPL_TOKEN_PROGRAM_ID,
+                DECODE_TOKEN_ACCOUNT,
+                None,
+                750
+            ))
+            .unwrap(),
+            Some(750),
+            "no pre entry ⇒ the account was created and funded by this transaction"
+        );
+        assert_eq!(
+            credited(&tx_json(
+                DECODE_MINT,
+                DECODE_WALLET,
+                dregg_pay::config::SPL_TOKEN_PROGRAM_ID,
+                DECODE_TOKEN_ACCOUNT,
+                Some(250),
+                750
+            ))
+            .unwrap(),
+            Some(500),
+            "an existing account is credited only by the delta"
+        );
+        assert_eq!(
+            credited(&tx_json(
+                DECODE_MINT,
+                DECODE_WALLET,
+                dregg_pay::config::SPL_TOKEN_PROGRAM_ID,
+                DECODE_TOKEN_ACCOUNT,
+                Some(750),
+                750
+            ))
+            .unwrap(),
+            None,
+            "a zero delta is not a payment"
+        );
+        assert_eq!(
+            credited(&tx_json(
+                DECODE_MINT,
+                DECODE_WALLET,
+                dregg_pay::config::SPL_TOKEN_PROGRAM_ID,
+                DECODE_TOKEN_ACCOUNT,
+                Some(750),
+                0
+            ))
+            .unwrap(),
+            None,
+            "a SWEEP is a negative delta and must never credit"
+        );
+    }
+
+    /// **AUTHORITY, on the pure decode.** Each forged attribution field is refused:
+    /// a foreign mint, a foreign token owner, a non-SPL-Token owning program, and a
+    /// balance entry belonging to a DIFFERENT token account. None of them credit.
+    #[test]
+    fn credited_amount_refuses_every_forged_attribution() {
+        let spl = dregg_pay::config::SPL_TOKEN_PROGRAM_ID;
+        assert_eq!(
+            credited(&tx_json(
+                [0xEEu8; 32],
+                DECODE_WALLET,
+                spl,
+                DECODE_TOKEN_ACCOUNT,
+                None,
+                u64::MAX
+            ))
+            .unwrap(),
+            None,
+            "a foreign MINT is never credited as this asset"
+        );
+        assert_eq!(
+            credited(&tx_json(
+                DECODE_MINT,
+                [0x22u8; 32],
+                spl,
+                DECODE_TOKEN_ACCOUNT,
+                None,
+                u64::MAX
+            ))
+            .unwrap(),
+            None,
+            "a token account owned by ANOTHER wallet is never credited to this user"
+        );
+        assert_eq!(
+            credited(&tx_json(
+                DECODE_MINT,
+                DECODE_WALLET,
+                [0xAAu8; 32],
+                DECODE_TOKEN_ACCOUNT,
+                None,
+                u64::MAX
+            ))
+            .unwrap(),
+            None,
+            "an account owned by an attacker's own program is not an authoritative balance"
+        );
+        assert_eq!(
+            credited(&tx_json(
+                DECODE_MINT,
+                DECODE_WALLET,
+                spl,
+                [0x44u8; 32],
+                None,
+                u64::MAX
+            ))
+            .unwrap(),
+            None,
+            "a balance entry for a DIFFERENT token account is not this account's money"
+        );
+    }
+
+    /// An RPC too old (or too lossy) to report `owner` / `programId` cannot attribute a
+    /// transfer, and an unattributable transfer must NOT be credited. Failing loudly is
+    /// a stall an operator can see; the alternative is a silent credit on an unproven
+    /// account.
+    #[test]
+    fn credited_amount_fails_closed_on_an_unattributable_balance_entry() {
+        for missing in ["owner", "programId"] {
+            let mut resp = tx_json(
+                DECODE_MINT,
+                DECODE_WALLET,
+                dregg_pay::config::SPL_TOKEN_PROGRAM_ID,
+                DECODE_TOKEN_ACCOUNT,
+                None,
+                750,
+            );
+            resp["result"]["meta"]["postTokenBalances"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove(missing);
+            let err = credited(&resp).unwrap_err();
+            assert!(
+                matches!(&err, WatchError::Rpc(m) if m.contains(missing)),
+                "the refusal names the missing field ({missing}): {err:?}"
+            );
+        }
+    }
+
+    /// A v0 transaction's address-lookup-table addresses extend the `accountIndex` space.
+    /// Ignoring them would attribute a balance to the wrong account, so they are appended
+    /// in the documented order (writable, then readonly), and an out-of-range index is a
+    /// refusal rather than a guess.
+    #[test]
+    fn account_keys_include_lookup_table_addresses_and_refuse_a_bad_index() {
+        let mut resp = tx_json(
+            DECODE_MINT,
+            DECODE_WALLET,
+            dregg_pay::config::SPL_TOKEN_PROGRAM_ID,
+            [0x44u8; 32], // index 1 is SOME OTHER account…
+            None,
+            750,
+        );
+        // …and the watched token account arrives via the lookup table, at index 2.
+        resp["result"]["meta"]["loadedAddresses"] = serde_json::json!({
+            "writable": [b58(DECODE_TOKEN_ACCOUNT)],
+            "readonly": [],
+        });
+        resp["result"]["meta"]["postTokenBalances"][0]["accountIndex"] = serde_json::json!(2);
+        assert_eq!(
+            credited(&resp).unwrap(),
+            Some(750),
+            "a lookup-table-loaded token account is still this account"
+        );
+
+        resp["result"]["meta"]["postTokenBalances"][0]["accountIndex"] = serde_json::json!(99);
+        let err = credited(&resp).unwrap_err();
+        assert!(
+            matches!(&err, WatchError::Rpc(m) if m.contains("out of range")),
+            "an unresolvable accountIndex must not read as `no payment`: {err:?}"
         );
     }
 

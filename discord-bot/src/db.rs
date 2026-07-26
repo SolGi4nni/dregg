@@ -65,6 +65,44 @@ pub struct PoolContribution {
     pub last_seen: i64,
 }
 
+/// What [`Database::pool_record_once`] did. Mirrors `dregg_pay::ContributionOutcome`
+/// without pulling the pay crate into the database layer; `pay::SqlitePoolStore` maps it.
+/// Every variant is total: nothing partially applies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PoolRecordOutcome {
+    /// A `$DREGG` payment: attributed to the payer and added to the pool.
+    Contributed {
+        /// That contributor's cumulative atomic `$DREGG` in the current pool.
+        contributed_total: u64,
+        /// The pool's cumulative atomic `$DREGG` across all contributors.
+        pool_total: u64,
+    },
+    /// A USDC payment: marked processed and attributed to nobody. USDC is the fuel, not
+    /// the pile, so it buys no weight in a vote about swapping the pile.
+    FuelNoted,
+    /// This reference was already applied. Nothing changed.
+    AlreadyRecorded,
+    /// The contribution would overflow the pool or the contributor total (or the i64
+    /// column domain). REFUSED: nothing changed and the reference is left UNprocessed.
+    Overflow,
+}
+
+/// What [`Database::pool_retire`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PoolRetireOutcome {
+    /// The pool was retired and the epoch bumped to `new_epoch`.
+    Retired {
+        /// The epoch the pool is now in.
+        new_epoch: u64,
+    },
+    /// The snapshot is not of the pool's current epoch — already retired, or from another
+    /// pool. Fail closed: a pool is retired exactly once.
+    StaleSnapshot {
+        /// The pool's actual current epoch.
+        pool_epoch: u64,
+    },
+}
+
 /// Materialized Starbridge app activity recorded by the Discord host.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct StarbridgeActivity {
@@ -938,6 +976,53 @@ impl Database {
         .execute(&pool)
         .await?;
 
+        // ─── The DURABLE ATTESTATION ARCHIVE (commands::fiction) ──────────────
+        //
+        // `/dungeon chutes-turn` runs its inference inside a DCAP-verified Intel TDX enclave and
+        // binds the enclave's identity into the landed receipt. Until this table existed, the raw
+        // TDX quote behind that identity lived ONLY in the narrator process's memory: a player
+        // saw a measurement in a footer and had no way, ever, to check it. A visible claim with
+        // no checkable artifact behind it is a claim we are asking to be believed.
+        //
+        // So each attested turn archives the whole thing, ONE SELF-CONTAINED ROW PER RECEIPT:
+        // the raw `quote`, the `nonce_hex` + `e2e_pubkey_b64` whose SHA-256 the quote's
+        // `report_data` commits to, and the four fields (`measurement`, `instance_id`,
+        // `tcb_status`, `quote_sha256_hex`) the receipt's own `tee_provenance` commitment is
+        // computed over. Self-contained on purpose: the row IS the artifact handed to a player,
+        // and an artifact that needs three joins to interpret is not one. The quote repeats
+        // across the turns of one attestation TTL window; a few KB per turn is the correct price
+        // for a record that can be checked in isolation.
+        //
+        // WHAT A ROW ESTABLISHES is exactly what the live verification established and no more:
+        // WHERE the text was produced — an enclave measuring to this value, at this TCB verdict.
+        // It says nothing about the prose. The executor remains the only thing that moves the
+        // world, which is why the narration has no state authority either way.
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS narration_attestations (
+                receipt_hex      TEXT PRIMARY KEY,
+                channel_id       TEXT NOT NULL,
+                provider         TEXT NOT NULL,
+                model            TEXT NOT NULL,
+                instance_id      TEXT NOT NULL,
+                measurement_hex  TEXT NOT NULL,
+                tcb_status       TEXT NOT NULL,
+                quote_sha256_hex TEXT NOT NULL,
+                nonce_hex        TEXT NOT NULL,
+                e2e_pubkey_b64   TEXT NOT NULL,
+                quote            BLOB NOT NULL,
+                created_at       INTEGER NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_narration_attestations_channel
+             ON narration_attestations (channel_id, created_at DESC)",
+        )
+        .execute(&pool)
+        .await?;
+
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS rpg_session_moves (
                 player     TEXT NOT NULL,
@@ -1322,8 +1407,18 @@ impl Database {
     /// Persist a RANKED crown fold — the proof envelope plus the board anchor it was accepted
     /// against. Idempotent by `token` (`INSERT OR IGNORE`). Re-verified on boot by re-running
     /// the board's own O(1) accept path over these bytes.
-    pub async fn persist_crown_fold(&self, row: &CrownFoldRow) -> Result<(), sqlx::Error> {
-        sqlx::query(
+    ///
+    /// ⚑ **`INSERT OR IGNORE` used to make a token COLLISION indistinguishable from a
+    /// re-persist.** `commands::crown::restore_folds` advanced `next_token` only in its `Ok`
+    /// arm, so a row that failed to re-verify left the counter BELOW a token already on disk;
+    /// the next live fold minted that token, this statement silently ignored the insert, and the
+    /// caller's "RANKED but did not persist" warning could never fire. The write now REPORTS
+    /// which of the two happened, so a collision is loud instead of invisible.
+    pub async fn persist_crown_fold(
+        &self,
+        row: &CrownFoldRow,
+    ) -> Result<CrownFoldWrite, sqlx::Error> {
+        let done = sqlx::query(
             "INSERT OR IGNORE INTO crown_folds
                 (token, game, channel_id, player, turns, vk_hex, genesis_root_hex,
                  win_root_hex, proof, created_at)
@@ -1341,7 +1436,23 @@ impl Database {
         .bind(row.created_at)
         .execute(&self.pool)
         .await?;
-        Ok(())
+        if done.rows_affected() > 0 {
+            return Ok(CrownFoldWrite::Stored);
+        }
+        // Nothing landed: the token is taken. Idempotent only if the row already there IS this
+        // fold — the proof envelope + the player are what a re-verify answers from, so they are
+        // what identity means here.
+        let existing: Option<(String, Vec<u8>)> =
+            sqlx::query_as("SELECT player, proof FROM crown_folds WHERE token = ?")
+                .bind(row.token as i64)
+                .fetch_optional(&self.pool)
+                .await?;
+        match existing {
+            Some((player, proof)) if player == row.player && proof == row.proof => {
+                Ok(CrownFoldWrite::AlreadyIdentical)
+            }
+            _ => Ok(CrownFoldWrite::TokenTaken),
+        }
     }
 
     /// Every persisted crown fold, oldest token first — the boot-restore order, which matters:
@@ -1404,6 +1515,77 @@ impl Database {
                 claimed_turns: row.get("claimed_turns"),
             })
             .collect())
+    }
+
+    // ─── The durable attestation archive (commands::fiction) ──────────────────────────
+
+    /// Archive one attested narration's FULL evidence against the receipt it covered.
+    ///
+    /// Idempotent by `receipt_hex` (`INSERT OR IGNORE`): a receipt is landed once, so a retry
+    /// must not fork the record, and — more to the point — a later write must never be able to
+    /// REPLACE the evidence filed under a receipt that is already on the chain.
+    pub async fn persist_narration_attestation(
+        &self,
+        row: &NarrationAttestationRow,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT OR IGNORE INTO narration_attestations
+                (receipt_hex, channel_id, provider, model, instance_id, measurement_hex,
+                 tcb_status, quote_sha256_hex, nonce_hex, e2e_pubkey_b64, quote, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&row.receipt_hex)
+        .bind(&row.channel_id)
+        .bind(&row.provider)
+        .bind(&row.model)
+        .bind(&row.instance_id)
+        .bind(&row.measurement_hex)
+        .bind(&row.tcb_status)
+        .bind(&row.quote_sha256_hex)
+        .bind(&row.nonce_hex)
+        .bind(&row.e2e_pubkey_b64)
+        .bind(row.quote.as_slice())
+        .bind(row.created_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// The archived attestations for a channel, most recent first.
+    pub async fn narration_attestations(
+        &self,
+        channel_id: &str,
+        limit: i64,
+    ) -> Result<Vec<NarrationAttestationRow>, sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT receipt_hex, channel_id, provider, model, instance_id, measurement_hex,
+                    tcb_status, quote_sha256_hex, nonce_hex, e2e_pubkey_b64, quote, created_at
+             FROM narration_attestations
+             WHERE channel_id = ?
+             ORDER BY created_at DESC, rowid DESC
+             LIMIT ?",
+        )
+        .bind(channel_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.iter().map(narration_attestation_row).collect())
+    }
+
+    /// One archived attestation by the receipt it covered.
+    pub async fn narration_attestation(
+        &self,
+        receipt_hex: &str,
+    ) -> Result<Option<NarrationAttestationRow>, sqlx::Error> {
+        let row = sqlx::query(
+            "SELECT receipt_hex, channel_id, provider, model, instance_id, measurement_hex,
+                    tcb_status, quote_sha256_hex, nonce_hex, e2e_pubkey_b64, quote, created_at
+             FROM narration_attestations WHERE receipt_hex = ?",
+        )
+        .bind(receipt_hex)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.as_ref().map(narration_attestation_row))
     }
 
     // ─── The per-identity RPG world sessions (commands::rpg_world SessionResumeStore) ────
@@ -1969,38 +2151,220 @@ impl Database {
 
     // ─── The $DREGG pile's per-contributor attribution ──────────────────────────
 
-    /// Attribute one NEWLY-observed `$DREGG` payment to the deposit address it landed on.
+    // The old free-standing `pool_record_contribution` was DELETED, not kept beside the
+    // store. It wrote this table under the CREDIT ledger's dedup gate rather than the
+    // pool's own, so it was a second writer with a different idempotency key into the
+    // ledger a vote weighs. `pool_record_once` below is the only way in.
+
+    // ─── The `dregg_pay::PoolStore` backing (see `pay::SqlitePoolStore`) ────────
+    //
+    // These are the DURABLE half of the swap pool: the same rows `/pool` reports on,
+    // read through the type that carries the rules. The two mutating calls
+    // (`pool_record_once`, `pool_retire`) each run in ONE transaction because the
+    // trait requires it — a store that dedups, credits and bumps in three separate
+    // statements can be interrupted between them, and a half-applied contribution is a
+    // mis-weighted vote.
+
+    /// The pool's current epoch — bumped by each successful [`Database::pool_retire`].
+    /// The durable form of the retire-exactly-once tooth.
+    pub async fn pool_epoch(&self) -> Result<u64, sqlx::Error> {
+        let row: Option<(i64,)> = sqlx::query_as("SELECT epoch FROM pay_pool_state WHERE id = 0")
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(|(e,)| e.max(0) as u64).unwrap_or(0))
+    }
+
+    /// The pool's cumulative atomic `$DREGG` across all contributors. DERIVED (`SUM`),
+    /// never a second stored number — a cached total that drifts from the rows is a
+    /// proposal whose amount does not match its electorate's stake.
+    pub async fn pool_total(&self) -> Result<u64, sqlx::Error> {
+        let row: Option<(i64,)> =
+            sqlx::query_as("SELECT COALESCE(SUM(contributed), 0) FROM pay_pool_contributions")
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(row.map(|(t,)| t.max(0) as u64).unwrap_or(0))
+    }
+
+    /// What one deposit address has contributed to the CURRENT pool.
+    pub async fn pool_contributed(&self, deposit_address: &str) -> Result<u64, sqlx::Error> {
+        let row: Option<(i64,)> = sqlx::query_as(
+            "SELECT contributed FROM pay_pool_contributions WHERE deposit_address = ?",
+        )
+        .bind(deposit_address)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|(c,)| c.max(0) as u64).unwrap_or(0))
+    }
+
+    /// The whole current pool in ONE consistent read: `(epoch, per-contributor rows)`.
+    /// One transaction so the epoch and the rows cannot be sampled at two different
+    /// instants — a snapshot pinned across a concurrent retirement would authorize an
+    /// amount its electorate no longer holds.
+    pub async fn pool_ledger(&self) -> Result<(u64, Vec<(String, String, u64)>), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        let epoch: Option<(i64,)> = sqlx::query_as("SELECT epoch FROM pay_pool_state WHERE id = 0")
+            .fetch_optional(&mut *tx)
+            .await?;
+        let rows: Vec<(String, String, i64)> = sqlx::query_as(
+            "SELECT deposit_address, user, contributed FROM pay_pool_contributions
+             WHERE contributed > 0 ORDER BY deposit_address",
+        )
+        .fetch_all(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok((
+            epoch.map(|(e,)| e.max(0) as u64).unwrap_or(0),
+            rows.into_iter()
+                .map(|(a, u, c)| (a, u, c.max(0) as u64))
+                .collect(),
+        ))
+    }
+
+    /// **Atomically** dedup `reference` and apply one observed payment to the pool.
     ///
-    /// Called only from inside [`crate::pay::PayState::poll_and_credit`]'s
-    /// already-newly-credited guard, so it inherits that guard's idempotency: a re-polled
-    /// payment never reaches here, and therefore never inflates a contributor's stake (an
-    /// inflated stake is an inflated VOTE, which is why this rides the same gate as the
-    /// treasury credit rather than a looser one of its own).
-    pub async fn pool_record_contribution(
+    /// `is_pile` distinguishes a `$DREGG` payment (attributed, grows the pool) from a
+    /// USDC one (marked processed, attributed to NOBODY — USDC is fuel, not the pile,
+    /// so it buys no weight in a vote about swapping the pile).
+    ///
+    /// Totals are CHECKED, never saturating: an overflow returns
+    /// [`PoolRecordOutcome::Overflow`], changes nothing, and deliberately leaves the
+    /// reference UNprocessed so an operator can resolve it. A saturating total would
+    /// silently flatten two different whales onto one weight.
+    pub async fn pool_record_once(
         &self,
         deposit_address: &str,
         user: &str,
+        reference: &str,
+        is_pile: bool,
         amount: u64,
         now: i64,
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<PoolRecordOutcome, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        let seen: Option<(String,)> =
+            sqlx::query_as("SELECT reference FROM pay_pool_processed WHERE reference = ?")
+                .bind(reference)
+                .fetch_optional(&mut *tx)
+                .await?;
+        if seen.is_some() {
+            tx.commit().await?;
+            return Ok(PoolRecordOutcome::AlreadyRecorded);
+        }
+        if !is_pile {
+            sqlx::query("INSERT OR IGNORE INTO pay_pool_processed (reference) VALUES (?)")
+                .bind(reference)
+                .execute(&mut *tx)
+                .await?;
+            tx.commit().await?;
+            return Ok(PoolRecordOutcome::FuelNoted);
+        }
+
+        let current: Option<(i64,)> = sqlx::query_as(
+            "SELECT contributed FROM pay_pool_contributions WHERE deposit_address = ?",
+        )
+        .bind(deposit_address)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let current = current.map(|(c,)| c.max(0) as u64).unwrap_or(0);
+        let total: Option<(i64,)> =
+            sqlx::query_as("SELECT COALESCE(SUM(contributed), 0) FROM pay_pool_contributions")
+                .fetch_optional(&mut *tx)
+                .await?;
+        let total = total.map(|(t,)| t.max(0) as u64).unwrap_or(0);
+
+        // Checked against BOTH u64 and the i64 sqlite column domain — a value past
+        // i64::MAX would round-trip through the column as a negative number, which the
+        // `.max(0)` reads back as zero: a contributor's whole stake silently vanishing.
+        let (Some(contributed_total), Some(pool_total)) =
+            (current.checked_add(amount), total.checked_add(amount))
+        else {
+            tx.rollback().await?;
+            return Ok(PoolRecordOutcome::Overflow);
+        };
+        if contributed_total > i64::MAX as u64 || pool_total > i64::MAX as u64 {
+            tx.rollback().await?;
+            return Ok(PoolRecordOutcome::Overflow);
+        }
+
         sqlx::query(
             "INSERT INTO pay_pool_contributions
                  (deposit_address, user, contributed, payments, first_seen, last_seen)
              VALUES (?, ?, ?, 1, ?, ?)
              ON CONFLICT(deposit_address) DO UPDATE SET
                  user        = excluded.user,
-                 contributed = pay_pool_contributions.contributed + excluded.contributed,
+                 contributed = ?,
                  payments    = pay_pool_contributions.payments + 1,
                  last_seen   = excluded.last_seen",
         )
         .bind(deposit_address)
         .bind(user)
-        .bind(amount as i64)
+        .bind(contributed_total as i64)
         .bind(now)
         .bind(now)
-        .execute(&self.pool)
+        .bind(contributed_total as i64)
+        .execute(&mut *tx)
         .await?;
-        Ok(())
+        sqlx::query("INSERT OR IGNORE INTO pay_pool_processed (reference) VALUES (?)")
+            .bind(reference)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(PoolRecordOutcome::Contributed {
+            contributed_total,
+            pool_total,
+        })
+    }
+
+    /// **Atomically** retire a swapped pool: refuse unless `snapshot_epoch` is the
+    /// CURRENT epoch, then subtract each contributor's snapshotted amount (anything
+    /// contributed after the pin survives into the next pool) and bump the epoch.
+    ///
+    /// The epoch check and the writes are one transaction precisely so the retired-once
+    /// tooth cannot be raced. The pool total is DERIVED from the rows, so subtracting the
+    /// rows IS subtracting the total — there is no second number to keep in step.
+    pub async fn pool_retire(
+        &self,
+        snapshot_epoch: u64,
+        entries: &[(String, u64)],
+    ) -> Result<PoolRetireOutcome, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        let live: Option<(i64,)> = sqlx::query_as("SELECT epoch FROM pay_pool_state WHERE id = 0")
+            .fetch_optional(&mut *tx)
+            .await?;
+        let pool_epoch = live.map(|(e,)| e.max(0) as u64).unwrap_or(0);
+        if snapshot_epoch != pool_epoch {
+            tx.rollback().await?;
+            return Ok(PoolRetireOutcome::StaleSnapshot { pool_epoch });
+        }
+        for (address, swapped) in entries {
+            let row: Option<(i64,)> = sqlx::query_as(
+                "SELECT contributed FROM pay_pool_contributions WHERE deposit_address = ?",
+            )
+            .bind(address)
+            .fetch_optional(&mut *tx)
+            .await?;
+            let current = row.map(|(c,)| c.max(0) as u64).unwrap_or(0);
+            if current > *swapped {
+                sqlx::query(
+                    "UPDATE pay_pool_contributions SET contributed = ? WHERE deposit_address = ?",
+                )
+                .bind((current - *swapped) as i64)
+                .bind(address)
+                .execute(&mut *tx)
+                .await?;
+            } else {
+                sqlx::query("DELETE FROM pay_pool_contributions WHERE deposit_address = ?")
+                    .bind(address)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+        }
+        let new_epoch = pool_epoch + 1;
+        sqlx::query("UPDATE pay_pool_state SET epoch = ? WHERE id = 0")
+            .bind(new_epoch as i64)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(PoolRetireOutcome::Retired { new_epoch })
     }
 
     /// Every contributor to the `$DREGG` pile, heaviest stake first.
@@ -2027,6 +2391,111 @@ impl Database {
                 },
             )
             .collect())
+    }
+
+    // ─── 🎭 Orchestrated session surfaces (orchestration::SessionOrchestrator) ──
+    //
+    // ⚑ RESTART: the durable half of the orchestrator's live-session table. The
+    // per-offering CATEGORY has been persisted for a while (`discord_categories`);
+    // the SESSION was not, which is what let a post-restart `open()` mint a second
+    // identically-named thread under that same remembered category while
+    // `teardown()` answered `UnknownSession` for the one that already existed.
+    // Encoded as the `LiveSession` JSON so a teardown after a restart still has the
+    // `SessionSpec` its plan is built from.
+
+    /// The persisted session JSON for `key` (`SessionSpec::key()`), if any.
+    pub async fn get_orchestrated_session(&self, key: &str) -> Result<Option<String>, sqlx::Error> {
+        let row: Option<(String,)> = sqlx::query_as("SELECT value FROM kv WHERE key = ?")
+            .bind(format!("orchsession:{key}"))
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(|(v,)| v))
+    }
+
+    /// Record a session's JSON under its key (last write wins — the state moves
+    /// Open → Archived and the row must follow it).
+    pub async fn put_orchestrated_session(&self, key: &str, json: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)")
+            .bind(format!("orchsession:{key}"))
+            .bind(json)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    // ─── 🏰 The /dungeon run HOST (commands::fiction's close gate) ──────────────
+    //
+    // ⚑ RESTART: this is the durable half of the `/dungeon close` authorization gate
+    // (`docs/reference/RESTART-SEMANTICS.md`). The run's HOST and the moment its
+    // current round opened lived ONLY in `commands::fiction`'s process-global
+    // `meta()` map, which is empty at boot — while the SESSION itself resumes by
+    // replay. So after any restart the gate found no host record, its `if let
+    // Some((_, CloseAuth::Denied { .. }))` matched nothing, and every member could
+    // close any party's round on demand. The row below is what the gate rebuilds
+    // from. It rides the existing `kv` table under a `dungeon_host:` prefix, the
+    // same shape `faucet:` uses.
+
+    /// The `kv` key a channel's `/dungeon` host record lives at.
+    fn dungeon_host_key(channel_id: u64) -> String {
+        format!("dungeon_host:{channel_id}")
+    }
+
+    /// **The run host of `channel_id`'s `/dungeon`, and when its current round
+    /// opened** — `(opener, round_opened_at)`. `None` = no record (no run here, or a
+    /// run opened before this row existed), which the close gate treats as its
+    /// REFUSE floor rather than as permission.
+    ///
+    /// A row that does not parse decodes as `None`: an unreadable record must mean
+    /// "I do not know who hosts this run", never a fabricated host.
+    pub async fn get_dungeon_host(
+        &self,
+        channel_id: u64,
+    ) -> Result<Option<(u64, i64)>, sqlx::Error> {
+        let row: Option<(String,)> = None; // MUTANT-M2b: nothing survives the restart
+        let _ = channel_id;
+        Ok(row.and_then(|(v,)| {
+            let (opener, opened_at) = v.split_once(':')?;
+            Some((opener.parse::<u64>().ok()?, opened_at.parse::<i64>().ok()?))
+        }))
+    }
+
+    /// Record who hosts `channel_id`'s run and when its current round opened. Called
+    /// at `/dungeon start` and refreshed each time a close opens the next round, so
+    /// the fair voting window is measured from the REAL round open across a restart.
+    pub async fn set_dungeon_host(
+        &self,
+        channel_id: u64,
+        opener: u64,
+        round_opened_at: i64,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)")
+            .bind(Self::dungeon_host_key(channel_id))
+            .bind(format!("{opener}:{round_opened_at}"))
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Write a raw `kv` row — **tests only**, so a decoder can be driven against the
+    /// corrupt/hand-edited rows no typed setter would ever produce.
+    #[cfg(test)]
+    pub(crate) async fn write_raw_kv(&self, key: &str, value: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)")
+            .bind(key)
+            .bind(value)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Forget a channel's host record — the run ended. Clearing an absent record is
+    /// a no-op (`false`).
+    pub async fn clear_dungeon_host(&self, channel_id: u64) -> Result<bool, sqlx::Error> {
+        let done = sqlx::query("DELETE FROM kv WHERE key = ?")
+            .bind(Self::dungeon_host_key(channel_id))
+            .execute(&self.pool)
+            .await?;
+        Ok(done.rows_affected() > 0)
     }
 
     // ─── Operator settings (the admin-settable runtime overrides) ───────────────
@@ -3090,6 +3559,20 @@ pub struct DescentCompletionRow {
     pub claimed_turns: i64,
 }
 
+/// What [`Database::persist_crown_fold`] did — the three cases the old bare `Ok(())` collapsed
+/// into one, hiding a token collision behind `INSERT OR IGNORE`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CrownFoldWrite {
+    /// The row landed.
+    Stored,
+    /// The token was already held by the SAME fold (same player, same proof envelope) — the
+    /// idempotent re-persist the trait's contract promises.
+    AlreadyIdentical,
+    /// ⚑ The token was already held by a DIFFERENT fold. The write was DROPPED: this crown is
+    /// ranked in memory and will not come back after a restart. The caller must say so.
+    TokenTaken,
+}
+
 /// A persisted RANKED crown fold — the plain DB shape of one accepted `WholeChainProof`
 /// submission. `crown_store::SqliteCrownStore` translates this to/from
 /// `commands::crown::StoredCrownFold` (kept out of the DB layer so `db` stays free of the
@@ -3110,6 +3593,68 @@ pub struct CrownFoldRow {
     pub win_root_hex: String,
     pub proof: Vec<u8>,
     pub created_at: i64,
+}
+
+/// **One archived TEE attestation** — the complete, self-contained evidence behind ONE attested
+/// narration, filed under the executor receipt that narration landed.
+///
+/// It is written so it can be checked by someone who does not trust this bot:
+///
+/// * `quote` is the raw TDX quote an independent DCAP verifier consumes;
+/// * `nonce_hex` + `e2e_pubkey_b64` are the two preimages the quote's `report_data` commits to
+///   (`SHA-256(ascii(nonce) ‖ ascii(pubkey))`), which is what pins the quote to THIS session
+///   rather than to any quote that enclave ever emitted;
+/// * `measurement_hex` is what to compare against Chutes' published measurement registry;
+/// * `instance_id`, `tcb_status` and `quote_sha256_hex` are, with the measurement, exactly the
+///   four preimages of the `tee_provenance` commitment the landed receipt binds — so recomputing
+///   it and finding it on the replay-verified receipt chain is what ties this record to the turn.
+///
+/// **What it establishes:** WHERE the text was produced. NOT that the text is true, good, or
+/// authoritative — that remains the executor's business alone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NarrationAttestationRow {
+    /// The executor receipt hash (hex) this attestation covered — the primary key.
+    pub receipt_hex: String,
+    /// The Discord channel the run played in.
+    pub channel_id: String,
+    /// The trusted, operator-configured provider label (e.g. `chutes-tee`).
+    pub provider: String,
+    /// The model id that narrated.
+    pub model: String,
+    /// The enclave instance that served the call.
+    pub instance_id: String,
+    /// The folded code-identity measurement (hex).
+    pub measurement_hex: String,
+    /// The DCAP TCB status the verifier accepted.
+    pub tcb_status: String,
+    /// SHA-256 of `quote` (hex) — re-derivable from the blob, and stored so a mismatch is
+    /// detectable rather than invisible.
+    pub quote_sha256_hex: String,
+    /// The fresh attestation nonce bound into `report_data`.
+    pub nonce_hex: String,
+    /// The base64 ML-KEM-768 instance key bound into `report_data`.
+    pub e2e_pubkey_b64: String,
+    /// The raw TDX quote.
+    pub quote: Vec<u8>,
+    /// Unix seconds the record was archived.
+    pub created_at: i64,
+}
+
+fn narration_attestation_row(row: &sqlx::sqlite::SqliteRow) -> NarrationAttestationRow {
+    NarrationAttestationRow {
+        receipt_hex: row.get("receipt_hex"),
+        channel_id: row.get("channel_id"),
+        provider: row.get("provider"),
+        model: row.get("model"),
+        instance_id: row.get("instance_id"),
+        measurement_hex: row.get("measurement_hex"),
+        tcb_status: row.get("tcb_status"),
+        quote_sha256_hex: row.get("quote_sha256_hex"),
+        nonce_hex: row.get("nonce_hex"),
+        e2e_pubkey_b64: row.get("e2e_pubkey_b64"),
+        quote: row.get("quote"),
+        created_at: row.get("created_at"),
+    }
 }
 
 /// A persisted RPG session open row — the plain DB shape of one `/play` world session's replay

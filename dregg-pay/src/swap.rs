@@ -20,6 +20,14 @@
 //!   exact bytes the operator signs — for the real venue these are the **Solana message
 //!   of a Jupiter v6 swap transaction** — so a real deployment hands the operator an
 //!   unsigned transaction and takes the signature back; the key stays with the operator.
+//! * **The authorization is CONSUMED.** Verifying a signature says the vote passed; it
+//!   says nothing about whether that vote has already been cashed. A `SwapAuthorization` is
+//!   a plain value and governance re-mints a byte-identical one from an already-certified
+//!   poll, so without a spent set one passed vote executes over and over while the pile
+//!   lasts — the exact opposite of the all-or-nothing amount it authorized.
+//!   [`JupiterSwap`] keeps a spent-`poll_id` set and settles each authorization AT MOST
+//!   ONCE ([`SwapError::AuthorizationSpent`]); a refusal releases the claim, so only a swap
+//!   that actually moved value spends the vote.
 //!
 //! # The real route+tx construction ([`JupiterVenue`])
 //!
@@ -53,6 +61,9 @@
 //! reading the *realized* out-amount from the confirmed transaction (the mock path uses
 //! the quoted amount as realized). Mainnet is a config flip on ember's go; custody
 //! remains the signer.
+
+use std::collections::HashSet;
+use std::sync::Mutex;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use ed25519_dalek::{Signature, Signer as _, SigningKey, Verifier as _, VerifyingKey};
@@ -687,6 +698,14 @@ pub enum SwapError {
     /// The authorization is for a different mint pair than this swap executor is
     /// configured for (a bound-authorization mismatch).
     MintMismatch,
+    /// **The authorization was already spent** — its poll's swap has already settled, so
+    /// this is a replay. One passed vote authorizes exactly ONE swap; a second submission
+    /// (the same authorization value, or a re-mint of it from the same certified poll) is
+    /// refused with no treasury move. See [`JupiterSwap`]'s spent-authorization set.
+    AuthorizationSpent {
+        /// The liquidity-event poll whose authorization was already settled.
+        poll_id: [u8; 32],
+    },
     /// The pile cannot cover the authorized `amount` — fail closed (need vs have).
     PileShort {
         /// Atomic `$DREGG` the swap needs.
@@ -723,6 +742,12 @@ impl std::fmt::Display for SwapError {
                     "swap refused: authorization bound to a different mint pair"
                 )
             }
+            SwapError::AuthorizationSpent { poll_id } => write!(
+                f,
+                "swap refused: the authorization from poll {} was already spent — one \
+                 passed vote authorizes exactly one swap",
+                bs58::encode(poll_id).into_string()
+            ),
             SwapError::PileShort { needed, available } => write!(
                 f,
                 "swap refused: pile short — need {needed} atomic $DREGG, have {available}"
@@ -822,11 +847,68 @@ pub struct UnsignedSwapTx {
 /// The pile→fuel swap executor over an injected [`SwapVenue`]. Configured with the mint
 /// pair (so it can reject a mis-bound authorization) and the governance authority public
 /// key (so it can verify the vote gate). Holds NO key.
+///
+/// # One passed vote, one swap
+///
+/// A [`SwapAuthorization`] is a *value*: nothing about holding it says whether it has
+/// already been used, and [`LiquidityGovernance::finalize_market_swap`](crate::governance::LiquidityGovernance::finalize_market_swap)
+/// re-mints a byte-identical one on every call once the poll has certified. Verifying the
+/// signature therefore does NOT bound how many swaps a single vote buys — without a spent
+/// set, one passed vote drains the pile in as many `execute` calls as it has `amount` to
+/// cover, which is exactly the opposite of the all-or-nothing rule the vote authorized.
+///
+/// So the executor keeps a **spent-`poll_id` set** and settles each authorization at most
+/// once ([`SwapError::AuthorizationSpent`] on a replay). The key is the `poll_id`, not the
+/// whole authorization: re-minting from the same certified poll produces the same
+/// `poll_id`, so the re-mint is caught too. This mirrors
+/// [`SwapPool::close`](crate::pool::SwapPool::close)'s epoch, which retires the
+/// contribution ledger exactly once on the other side of the same settlement.
+///
+/// A claim is taken *before* the venue submit and **released on any refusal**, so a
+/// transient venue/signer failure does not permanently burn a passed vote — only a swap
+/// that actually moved the treasury spends the authorization.
+///
+/// **Residual, named:** the set is process-local. A restart forgets it, which re-opens the
+/// window for one replay per authorization. The DURABLE tooth on that path is
+/// [`SwapPool::close`] — a persisted pool epoch refuses to retire twice, and a settled
+/// pool's snapshot cannot mint a second proposal. [`JupiterSwap::with_spent_authorizations`]
+/// exists so an operator that records settled polls can rehydrate the set at boot and close
+/// the window completely.
 pub struct JupiterSwap<V: SwapVenue> {
     venue: V,
     dregg_mint: [u8; 32],
     usdc_mint: [u8; 32],
     authority_pk: [u8; 32],
+    /// Poll ids whose authorization has settled a swap (or is settling one right now).
+    /// Interior mutability so the executor is shared exactly like [`Treasury`].
+    spent: Mutex<HashSet<[u8; 32]>>,
+}
+
+/// An in-flight claim on one authorization's `poll_id`. Held across the venue submit and
+/// the treasury move; [`Drop`] RELEASES it unless [`SpentClaim::commit`] ran, so every
+/// refusal path un-spends the authorization without each one having to remember to.
+struct SpentClaim<'a> {
+    spent: &'a Mutex<HashSet<[u8; 32]>>,
+    poll_id: [u8; 32],
+    committed: bool,
+}
+
+impl SpentClaim<'_> {
+    /// The swap settled — keep the poll id spent forever.
+    fn commit(mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for SpentClaim<'_> {
+    fn drop(&mut self) {
+        if !self.committed {
+            self.spent
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&self.poll_id);
+        }
+    }
 }
 
 impl<V: SwapVenue> JupiterSwap<V> {
@@ -839,12 +921,67 @@ impl<V: SwapVenue> JupiterSwap<V> {
         usdc_mint: [u8; 32],
         authority_pk: [u8; 32],
     ) -> Self {
+        Self::with_spent_authorizations(venue, dregg_mint, usdc_mint, authority_pk, [])
+    }
+
+    /// Build a swap executor whose spent-authorization set starts populated — the
+    /// rehydration seam. An operator that records settled `poll_id`s durably (the bot's
+    /// pool epoch, an operations log) passes them here at boot so a restart cannot replay
+    /// an already-settled authorization. `new` is this with an empty set.
+    pub fn with_spent_authorizations(
+        venue: V,
+        dregg_mint: [u8; 32],
+        usdc_mint: [u8; 32],
+        authority_pk: [u8; 32],
+        spent: impl IntoIterator<Item = [u8; 32]>,
+    ) -> Self {
         JupiterSwap {
             venue,
             dregg_mint,
             usdc_mint,
             authority_pk,
+            spent: Mutex::new(spent.into_iter().collect()),
         }
+    }
+
+    /// Every `poll_id` whose authorization has settled a swap through this executor — what
+    /// an operator persists to feed [`JupiterSwap::with_spent_authorizations`] on the next
+    /// boot.
+    pub fn spent_authorizations(&self) -> Vec<[u8; 32]> {
+        let mut v: Vec<[u8; 32]> = self
+            .spent
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .copied()
+            .collect();
+        v.sort_unstable();
+        v
+    }
+
+    /// Whether this authorization's poll has already settled a swap here.
+    pub fn is_spent(&self, auth: &SwapAuthorization) -> bool {
+        self.spent
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(&auth.poll_id)
+    }
+
+    /// Claim `auth`'s poll id for one settlement. Refuses ([`SwapError::AuthorizationSpent`])
+    /// if it is already claimed — by a settled swap, or by another thread settling it right
+    /// now. The returned guard releases the claim on drop unless committed.
+    fn claim(&self, auth: &SwapAuthorization) -> Result<SpentClaim<'_>, SwapError> {
+        let mut spent = self.spent.lock().unwrap_or_else(|e| e.into_inner());
+        if !spent.insert(auth.poll_id) {
+            return Err(SwapError::AuthorizationSpent {
+                poll_id: auth.poll_id,
+            });
+        }
+        Ok(SpentClaim {
+            spent: &self.spent,
+            poll_id: auth.poll_id,
+            committed: false,
+        })
     }
 
     /// Verify an authorization (the vote gate) and build the UNSIGNED swap transaction —
@@ -885,9 +1022,14 @@ impl<V: SwapVenue> JupiterSwap<V> {
 
     /// Submit an operator-signed [`UnsignedSwapTx`] (the external, key-stays-with-operator
     /// flow): re-verify the authorization, verify the operator signature over the exact
-    /// bytes handed out, check the pile covers it, submit through the venue, enforce the
-    /// slippage floor, and — on success — move the treasury (pile DOWN by `amount`, fuel
-    /// UP by the realized USDC). Fails closed with NO treasury move on any refusal.
+    /// bytes handed out, **claim the authorization** (one passed vote settles at most one
+    /// swap), check the pile covers it, submit through the venue, enforce the slippage
+    /// floor, and — on success — move the treasury (pile DOWN by `amount`, fuel UP by the
+    /// realized USDC). Fails closed with NO treasury move on any refusal, and RELEASES the
+    /// claim on every refusal so a transient failure does not burn the passed vote.
+    ///
+    /// This is the ONLY method that moves treasury value, which is why the spend gate lives
+    /// here rather than in [`JupiterSwap::execute`] (which delegates to it).
     pub fn submit_signed<S: TreasuryStore>(
         &self,
         auth: &SwapAuthorization,
@@ -902,6 +1044,11 @@ impl<V: SwapVenue> JupiterSwap<V> {
         // This is real ed25519 (the same check the chain performs); a stub/tampered
         // signature is refused before anything moves.
         verify_operator_signature(&unsigned.operator_pubkey, &unsigned.message, signature)?;
+
+        // Gate 3 — ONE PASSED VOTE, ONE SWAP. Claimed BEFORE the venue submit, so two
+        // concurrent settlements of the same authorization cannot both reach the venue.
+        // The guard releases on every `?` below; only the commit at the end keeps it.
+        let claim = self.claim(auth)?;
 
         // Fail closed if the pile cannot cover the authorized amount.
         let pile = treasury.dregg_balance();
@@ -937,6 +1084,10 @@ impl<V: SwapVenue> JupiterSwap<V> {
                 })?;
         let fuel_after = treasury.deposit_usdc(usdc_out);
 
+        // The treasury moved: the authorization is SPENT for good. Anything above this
+        // line dropped the claim instead, leaving the passed vote executable.
+        claim.commit();
+
         Ok(SwapOutcome {
             dregg_in: auth.amount,
             usdc_out,
@@ -955,8 +1106,9 @@ impl<V: SwapVenue> JupiterSwap<V> {
     /// it, submit it, enforce the floor, and move the treasury.
     ///
     /// REFUSES without a valid authorization ([`SwapError::Unauthorized`]) — there is no
-    /// unauthorized path — and fails closed on a short pile, a blown slippage floor, or a
-    /// signer/venue error, with NO treasury move on any refusal.
+    /// unauthorized path — refuses an ALREADY-SETTLED authorization
+    /// ([`SwapError::AuthorizationSpent`]), and fails closed on a short pile, a blown
+    /// slippage floor, or a signer/venue error, with NO treasury move on any refusal.
     pub fn execute<S: TreasuryStore>(
         &self,
         auth: &SwapAuthorization,
@@ -965,6 +1117,15 @@ impl<V: SwapVenue> JupiterSwap<V> {
     ) -> Result<SwapOutcome, SwapError> {
         // Gate 1 — THE VOTE.
         self.check_auth(auth)?;
+
+        // A cheap early read of the spent set so a replay never reaches the venue (no
+        // quote, no swap-tx build, no signature over a dead authorization). This is an
+        // optimization, NOT the gate: `submit_signed` takes the authoritative claim.
+        if self.is_spent(auth) {
+            return Err(SwapError::AuthorizationSpent {
+                poll_id: auth.poll_id,
+            });
+        }
 
         // Fail closed on a short pile BEFORE any network/build work.
         let pile = treasury.dregg_balance();
@@ -1163,6 +1324,229 @@ mod tests {
         assert_eq!(out.fuel_after, 500_000, "fuel filled by the swap");
         assert_eq!(t.dregg_balance(), 0);
         assert_eq!(t.usdc_balance(), 500_000);
+    }
+
+    #[test]
+    fn a_second_execute_on_a_spent_authorization_is_refused() {
+        // THE REPLAY POLE. The authorization is a VALUE: holding it says the vote passed,
+        // not that the vote is unspent. Before the spent set, this test's second execute
+        // succeeded and drained the pile a second time — one passed vote, two swaps.
+        let authority = GovernanceAuthority::from_seed([7u8; 32]);
+        let signer = MockSigner::from_seed([8u8; 32]);
+        let swap = JupiterSwap::new(
+            MockSwapVenue::new(5, 1000),
+            DREGG_MINT,
+            USDC_MINT,
+            authority.public_key(),
+        );
+        // A pile with room for FOUR of these swaps — so nothing but the spend gate stops
+        // the replay (a `PileShort` refusal would be a different, accidental defence).
+        let t = treasury(400_000_000, 0);
+        let auth = authority.authorize(100_000_000, 0, DREGG_MINT, USDC_MINT, [1u8; 32]);
+
+        let first = swap.execute(&auth, &signer, &t).unwrap();
+        assert_eq!(first.dregg_in, 100_000_000);
+        assert_eq!(t.dregg_balance(), 300_000_000);
+        assert_eq!(t.usdc_balance(), 500_000);
+
+        assert_eq!(
+            swap.execute(&auth, &signer, &t),
+            Err(SwapError::AuthorizationSpent { poll_id: [1u8; 32] }),
+            "one passed vote authorizes ONE swap",
+        );
+        assert_eq!(t.dregg_balance(), 300_000_000, "the replay moved nothing");
+        assert_eq!(t.usdc_balance(), 500_000);
+
+        // Governance re-minting the authorization from the SAME certified poll produces a
+        // byte-identical value — so keying the spent set on `poll_id` catches the re-mint
+        // too, not just this exact struct.
+        let reminted = authority.authorize(100_000_000, 0, DREGG_MINT, USDC_MINT, [1u8; 32]);
+        assert!(reminted.verify(&authority.public_key()), "it verifies fine");
+        assert_eq!(
+            swap.execute(&reminted, &signer, &t),
+            Err(SwapError::AuthorizationSpent { poll_id: [1u8; 32] }),
+        );
+        assert_eq!(t.dregg_balance(), 300_000_000);
+
+        // A DIFFERENT poll's authorization is untouched by the gate — the refusal is
+        // per-vote, not a global latch that bricks the swap path.
+        let other = authority.authorize(100_000_000, 0, DREGG_MINT, USDC_MINT, [2u8; 32]);
+        assert!(swap.execute(&other, &signer, &t).is_ok());
+        assert_eq!(t.dregg_balance(), 200_000_000);
+        assert_eq!(swap.spent_authorizations(), vec![[1u8; 32], [2u8; 32]]);
+    }
+
+    #[test]
+    fn a_refused_swap_does_not_burn_the_passed_vote() {
+        // The other half of the gate: a claim that does not settle must be RELEASED, or a
+        // transient failure would permanently kill a legitimately passed vote — trading a
+        // double-spend for a dead treasury.
+        //
+        // This drives `build_unsigned` + `submit_signed` (the operator flow) deliberately,
+        // NOT `execute`. `execute` pre-checks the pile BEFORE taking a claim, so a
+        // short-pile `execute` never reaches the claim at all and could not witness the
+        // release — an earlier version of this test did exactly that and stayed green
+        // under a mutation that removed the release entirely.
+        let authority = GovernanceAuthority::from_seed([7u8; 32]);
+        let signer = MockSigner::from_seed([8u8; 32]);
+        let swap = JupiterSwap::new(
+            MockSwapVenue::new(5, 1000),
+            DREGG_MINT,
+            USDC_MINT,
+            authority.public_key(),
+        );
+        let auth = authority.authorize(100_000_000, 0, DREGG_MINT, USDC_MINT, [3u8; 32]);
+
+        // The pile is short when the operator submits — a refusal PAST the claim.
+        let t = treasury(10, 0);
+        let unsigned = swap.build_unsigned(&auth, signer.public_key()).unwrap();
+        let signature = signer.sign(&unsigned.message).unwrap();
+        assert_eq!(
+            swap.submit_signed(&auth, &unsigned, &signature, &t),
+            Err(SwapError::PileShort {
+                needed: 100_000_000,
+                available: 10
+            })
+        );
+        assert!(
+            !swap.is_spent(&auth),
+            "a refusal releases the claim — the vote is still executable"
+        );
+        assert!(swap.spent_authorizations().is_empty());
+        assert_eq!(t.dregg_balance(), 10, "and nothing moved");
+
+        // The pile is topped up and the SAME authorization now settles, once.
+        t.deposit_dregg(100_000_000);
+        assert!(
+            swap.submit_signed(&auth, &unsigned, &signature, &t).is_ok(),
+            "the released vote is still good"
+        );
+        assert!(swap.is_spent(&auth));
+        assert_eq!(
+            swap.submit_signed(&auth, &unsigned, &signature, &t),
+            Err(SwapError::AuthorizationSpent { poll_id: [3u8; 32] }),
+            "and now it is spent — the same operator-signed tx cannot be resubmitted",
+        );
+        // The `execute` convenience refuses it too (its early read of the spent set).
+        assert_eq!(
+            swap.execute(&auth, &signer, &t),
+            Err(SwapError::AuthorizationSpent { poll_id: [3u8; 32] }),
+        );
+    }
+
+    #[test]
+    fn execute_does_not_claim_before_it_can_settle() {
+        // The complement, stated as its own rule rather than smuggled into the release
+        // test: `execute`'s cheap pre-checks (authorization, spent set, pile) run BEFORE
+        // any claim is taken, so a swap that never reaches the venue leaves no claim
+        // behind at all — not even one that Drop has to clean up.
+        let authority = GovernanceAuthority::from_seed([7u8; 32]);
+        let signer = MockSigner::from_seed([8u8; 32]);
+        let swap = JupiterSwap::new(
+            MockSwapVenue::new(5, 1000),
+            DREGG_MINT,
+            USDC_MINT,
+            authority.public_key(),
+        );
+        let t = treasury(10, 0);
+        let auth = authority.authorize(100_000_000, 0, DREGG_MINT, USDC_MINT, [9u8; 32]);
+        assert!(matches!(
+            swap.execute(&auth, &signer, &t),
+            Err(SwapError::PileShort { .. })
+        ));
+        assert!(swap.spent_authorizations().is_empty());
+        // A forged authorization likewise never enters the set (it is refused at gate 1,
+        // so an attacker cannot latch a poll id by submitting garbage for it).
+        let attacker = GovernanceAuthority::from_seed([0x99u8; 32]);
+        let forged = attacker.authorize(1, 0, DREGG_MINT, USDC_MINT, [9u8; 32]);
+        assert_eq!(
+            swap.execute(&forged, &signer, &t),
+            Err(SwapError::Unauthorized)
+        );
+        assert!(swap.spent_authorizations().is_empty());
+        // …and the genuine authorization for that poll is therefore still executable.
+        t.deposit_dregg(100_000_000);
+        assert!(swap.execute(&auth, &signer, &t).is_ok());
+    }
+
+    #[test]
+    fn a_spent_authorization_never_reaches_the_venue_or_the_signer() {
+        // A replay must not leak a swap intent to the venue (no quote, no /swap build) nor
+        // ask the operator to sign a dead authorization.
+        let authority = GovernanceAuthority::from_seed([7u8; 32]);
+        let signer = MockSigner::from_seed([8u8; 32]);
+        let venue = JupiterVenue::new(
+            MockJupiter::new(500_000, 50, 100_000_000, 123_456),
+            MockJupiter::new(500_000, 50, 100_000_000, 123_456),
+            50,
+        );
+        let swap = JupiterSwap::new(venue, DREGG_MINT, USDC_MINT, authority.public_key());
+        let t = treasury(400_000_000, 0);
+        let auth = authority.authorize(100_000_000, 0, DREGG_MINT, USDC_MINT, [4u8; 32]);
+
+        swap.execute(&auth, &signer, &t).unwrap();
+        // Reset the recorded transport calls, then replay.
+        *swap.venue.get.last_get_url.lock().unwrap() = None;
+        *swap.venue.post.last_post.lock().unwrap() = None;
+        assert_eq!(
+            swap.execute(&auth, &signer, &t),
+            Err(SwapError::AuthorizationSpent { poll_id: [4u8; 32] }),
+        );
+        assert!(
+            swap.venue.get.last_get_url.lock().unwrap().is_none(),
+            "the quote endpoint was never hit for a spent authorization"
+        );
+        assert!(swap.venue.post.last_post.lock().unwrap().is_none());
+        assert_eq!(t.dregg_balance(), 300_000_000, "and nothing moved");
+    }
+
+    #[test]
+    fn a_rehydrated_spent_set_refuses_a_replay_across_a_restart() {
+        // The named residual, and its closure: the spent set is process-local, so a
+        // restart would re-open one replay per authorization. An operator that records
+        // settled poll ids feeds them back at boot and the replay stays refused.
+        let authority = GovernanceAuthority::from_seed([7u8; 32]);
+        let signer = MockSigner::from_seed([8u8; 32]);
+        let auth = authority.authorize(100_000_000, 0, DREGG_MINT, USDC_MINT, [5u8; 32]);
+        let t = treasury(400_000_000, 0);
+
+        // "Before the restart": settle it, and record what was spent.
+        let before = JupiterSwap::new(
+            MockSwapVenue::new(5, 1000),
+            DREGG_MINT,
+            USDC_MINT,
+            authority.public_key(),
+        );
+        before.execute(&auth, &signer, &t).unwrap();
+        let settled = before.spent_authorizations();
+        assert_eq!(settled, vec![[5u8; 32]]);
+        drop(before);
+
+        // A NAIVE fresh executor would happily replay it — that is the residual, shown.
+        let naive = JupiterSwap::new(
+            MockSwapVenue::new(5, 1000),
+            DREGG_MINT,
+            USDC_MINT,
+            authority.public_key(),
+        );
+        assert!(
+            !naive.is_spent(&auth),
+            "a fresh process has forgotten the settlement — this is why the seam exists"
+        );
+
+        // Rehydrated from the operator's record, the replay is refused.
+        let after = JupiterSwap::with_spent_authorizations(
+            MockSwapVenue::new(5, 1000),
+            DREGG_MINT,
+            USDC_MINT,
+            authority.public_key(),
+            settled,
+        );
+        assert_eq!(
+            after.execute(&auth, &signer, &t),
+            Err(SwapError::AuthorizationSpent { poll_id: [5u8; 32] }),
+        );
+        assert_eq!(t.dregg_balance(), 300_000_000, "one swap, not two");
     }
 
     #[test]

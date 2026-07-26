@@ -53,6 +53,32 @@
 //! non-custodial upgrade is the
 //! [`OwnerBinding`](dregg_governance::holding_weight::OwnerBinding) shape — a signature
 //! by the holder's own wallet key over the voter identity — and is NOT built here.
+//!
+//! # It is PERSISTABLE, over one store — not a second copy of the truth
+//!
+//! [`SwapPool`] is generic over a [`PoolStore`], exactly the shape
+//! [`TreasuryStore`](crate::treasury::TreasuryStore) and
+//! [`CreditStore`](crate::ledger::CreditStore) already have in this crate:
+//! [`InMemoryPoolStore`] for tests / single-process, a sqlite impl for the bot. The
+//! attribution, the pool `epoch`, and the processed-[`PaymentRef`] set all live in the
+//! store, so a restart does not reset the ledger *or* the retire-exactly-once tooth.
+//!
+//! This is why the type survived rather than being deleted in favour of the bot's raw
+//! `pay_pool_contributions` table. Three things live here and nowhere in a flat row set:
+//!
+//! 1. **Retirement.** A cumulative contributions table has no `epoch` and no `close`, so a
+//!    contributor who was already swapped out keeps voting weight forever. Deleting
+//!    [`SwapPool`] deletes the only mechanism that retires a swapped pool exactly once.
+//! 2. **One gate over both sides.** [`SwapPool::record_payment`] is the single front door
+//!    that dedups the treasury credit and the attribution on the SAME [`PaymentRef`]. Two
+//!    independent writers with two dedup rules is how the pile and the electorate drift
+//!    apart; an over-credited stake is an over-weighted VOTE.
+//! 3. **Snapshot provenance.** [`PoolSnapshot`]'s entries are private and only
+//!    [`SwapPool::snapshot`] mints one. A vote that read rows and assembled its own
+//!    snapshot would lose that: any caller could vote a pool that never existed.
+//!
+//! So the bot's sqlite table becomes this pool's STORE, not its rival — one truth, read
+//! through the type that carries the rules.
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Mutex;
@@ -209,11 +235,95 @@ impl PoolSnapshot {
     }
 }
 
-/// The per-contributor pile ledger. All methods take `&self` (interior mutability) so it
-/// can be shared exactly like [`Treasury`].
+/// One contributor row of a pool ledger read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PoolEntry {
+    /// The deposit address the payments landed on — the contributor / voter identity.
+    pub who: DepositAddress,
+    /// The display name behind that address, carried for receipts.
+    pub user: UserId,
+    /// Cumulative atomic `$DREGG` in the CURRENT pool.
+    pub contributed: u64,
+}
+
+/// The whole current pool, read as ONE consistent view — what [`SwapPool::snapshot`] pins.
+///
+/// It is a single method (rather than three reads) so a persistent store can take it in one
+/// transaction: an epoch, a total and a set of entries sampled at three different instants
+/// could disagree, and a snapshot whose `total` does not equal `Σ entries` is a proposal
+/// that authorizes a different amount than its electorate paid in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PoolLedger {
+    /// The pool epoch this view was taken in.
+    pub epoch: u64,
+    /// Cumulative atomic `$DREGG` across all contributors.
+    pub total: u64,
+    /// Per-contributor rows, in address order.
+    pub entries: Vec<PoolEntry>,
+}
+
+/// The pluggable per-contributor pile store — the shape
+/// [`TreasuryStore`](crate::treasury::TreasuryStore) and
+/// [`CreditStore`](crate::ledger::CreditStore) already have in this crate. All methods take
+/// `&self` (interior mutability) so a [`SwapPool`] can be shared.
+///
+/// [`InMemoryPoolStore`] is the tests / single-process impl; the discord bot supplies a
+/// sqlite impl over its `pay_pool_contributions` table so the attribution, the epoch, and
+/// the dedup set all survive a restart.
+///
+/// **Both mutating methods must be ATOMIC** ([`PoolStore::record_once`],
+/// [`PoolStore::retire`]): a database-backed impl performs each in one transaction. They
+/// are combined operations for exactly that reason — a store that dedups, credits and
+/// bumps a total in three separate statements can be interrupted between them, and a
+/// half-applied contribution is a mis-weighted vote.
+pub trait PoolStore {
+    /// The current pool epoch (bumped by each successful [`PoolStore::retire`]).
+    fn epoch(&self) -> u64;
+
+    /// The pool's cumulative atomic `$DREGG` across all contributors.
+    fn total(&self) -> u64;
+
+    /// What `who` has contributed to the current pool (`0` if nothing).
+    fn contributed(&self, who: &DepositAddress) -> u64;
+
+    /// The whole current pool in one consistent read.
+    fn ledger(&self) -> PoolLedger;
+
+    /// **Atomically** dedup `payment.reference` and apply the payment:
+    ///
+    /// * a `$DREGG` payment is attributed to `payment.deposit_address` and added to the
+    ///   pool total ([`ContributionOutcome::Contributed`]), with the totals computed by
+    ///   CHECKED addition — an overflow is [`ContributionOutcome::Overflow`], nothing
+    ///   changes, and the reference is deliberately left UNprocessed so an operator can
+    ///   resolve it;
+    /// * a USDC payment is marked processed and attributed to nobody
+    ///   ([`ContributionOutcome::FuelNotPool`]) — USDC is not the pile;
+    /// * an already-processed reference changes nothing
+    ///   ([`ContributionOutcome::AlreadyRecorded`]).
+    fn record_once(&self, payment: &PaymentReceived) -> ContributionOutcome;
+
+    /// **Atomically** retire `snapshot`: refuse unless `snapshot.epoch()` is the store's
+    /// CURRENT epoch ([`PoolError::StaleSnapshot`]), then subtract each contributor's
+    /// snapshotted amount (anything contributed after the pin survives), subtract the
+    /// snapshot total, and bump the epoch. Returns the new epoch.
+    ///
+    /// The epoch check and the writes are one transaction precisely so the "retired exactly
+    /// once" tooth cannot be raced.
+    fn retire(&self, snapshot: &PoolSnapshot) -> Result<u64, PoolError>;
+}
+
+/// A thread-safe in-memory [`PoolStore`] for tests and single-process deployments — the
+/// pool's [`InMemoryTreasuryStore`](crate::treasury::InMemoryTreasuryStore).
 #[derive(Default)]
-pub struct SwapPool {
+pub struct InMemoryPoolStore {
     state: Mutex<PoolState>,
+}
+
+impl InMemoryPoolStore {
+    /// A fresh, empty store at epoch 0.
+    pub fn new() -> Self {
+        Self::default()
+    }
 }
 
 #[derive(Default)]
@@ -227,24 +337,16 @@ struct PoolState {
     processed: HashSet<PaymentRef>,
 }
 
-impl SwapPool {
-    /// A fresh, empty pool at epoch 0.
-    pub fn new() -> Self {
-        SwapPool::default()
-    }
-
-    /// The current pool epoch (bumped by each [`SwapPool::close`]).
-    pub fn epoch(&self) -> u64 {
+impl PoolStore for InMemoryPoolStore {
+    fn epoch(&self) -> u64 {
         self.state.lock().unwrap().epoch
     }
 
-    /// The pool's cumulative atomic `$DREGG` across all contributors.
-    pub fn total(&self) -> u64 {
+    fn total(&self) -> u64 {
         self.state.lock().unwrap().total
     }
 
-    /// What `who` has contributed to the current pool.
-    pub fn contributed(&self, who: &DepositAddress) -> u64 {
+    fn contributed(&self, who: &DepositAddress) -> u64 {
         self.state
             .lock()
             .unwrap()
@@ -254,36 +356,35 @@ impl SwapPool {
             .unwrap_or(0)
     }
 
-    /// `who`'s live quadratic weight — `isqrt` of their current contribution. A vote uses
-    /// the PINNED [`PoolSnapshot::weight`] instead; this is the live read for display.
-    pub fn weight(&self, who: &DepositAddress) -> u64 {
-        quadratic_weight(self.contributed(who))
+    fn ledger(&self) -> PoolLedger {
+        let state = self.state.lock().unwrap();
+        PoolLedger {
+            epoch: state.epoch,
+            total: state.total,
+            entries: state
+                .entries
+                .iter()
+                .map(|(&who, &contributed)| PoolEntry {
+                    who,
+                    user: state
+                        .users
+                        .get(&who)
+                        .cloned()
+                        .unwrap_or_else(|| UserId(String::new())),
+                    contributed,
+                })
+                .collect(),
+        }
     }
 
-    /// **Record an observed payment: treasury AND attribution, in one call.**
-    ///
-    /// This is the front door precisely so the two cannot drift apart. A `$DREGG` payment
-    /// grows the treasury pile *and* the payer's pool share; a USDC payment fuels the
-    /// tank and is attributed to nobody (USDC is not the pile). Idempotent by
-    /// [`PaymentReceived::reference`] over BOTH effects: re-observing a payment moves
-    /// neither the treasury nor the pool.
-    ///
-    /// Fails closed on overflow: nothing moves and the reference is left unprocessed.
-    pub fn record_payment<S: TreasuryStore>(
-        &self,
-        payment: &PaymentReceived,
-        treasury: &Treasury<S>,
-    ) -> ContributionOutcome {
+    fn record_once(&self, payment: &PaymentReceived) -> ContributionOutcome {
         let mut state = self.state.lock().unwrap();
         if state.processed.contains(&payment.reference) {
             return ContributionOutcome::AlreadyRecorded;
         }
-
         match payment.asset {
             Asset::Usdc => {
                 state.processed.insert(payment.reference.clone());
-                drop(state);
-                treasury.record_payment(Asset::Usdc, payment.amount);
                 ContributionOutcome::FuelNotPool
             }
             Asset::Dregg => {
@@ -300,8 +401,6 @@ impl SwapPool {
                 state.users.insert(who, payment.user.clone());
                 state.total = pool_total;
                 state.processed.insert(payment.reference.clone());
-                drop(state);
-                treasury.record_payment(Asset::Dregg, payment.amount);
                 ContributionOutcome::Contributed {
                     contributed_total,
                     pool_total,
@@ -311,27 +410,7 @@ impl SwapPool {
         }
     }
 
-    /// **Pin the pool** — freeze the current epoch's per-contributor ledger into the
-    /// [`PoolSnapshot`] a swap proposal votes over. Later contributions do not enter this
-    /// snapshot.
-    pub fn snapshot(&self) -> PoolSnapshot {
-        let state = self.state.lock().unwrap();
-        PoolSnapshot {
-            epoch: state.epoch,
-            total: state.total,
-            entries: state.entries.clone(),
-            users: state.users.clone(),
-        }
-    }
-
-    /// **Retire a swapped pool.** Subtracts exactly `snapshot`'s per-contributor amounts
-    /// (anything contributed AFTER the snapshot survives into the next pool) and bumps
-    /// the epoch. Returns the new epoch.
-    ///
-    /// Refuses a snapshot from any epoch but the current one
-    /// ([`PoolError::StaleSnapshot`]) — a pool is retired exactly once, so one passed vote
-    /// cannot draw the contribution ledger down twice.
-    pub fn close(&self, snapshot: &PoolSnapshot) -> Result<u64, PoolError> {
+    fn retire(&self, snapshot: &PoolSnapshot) -> Result<u64, PoolError> {
         let mut state = self.state.lock().unwrap();
         if snapshot.epoch != state.epoch {
             return Err(PoolError::StaleSnapshot {
@@ -353,6 +432,153 @@ impl SwapPool {
         state.total = state.total.saturating_sub(snapshot.total);
         state.epoch += 1;
         Ok(state.epoch)
+    }
+}
+
+/// A shared store IS a store — so two [`SwapPool`] handles (a poller and a vote surface,
+/// or a "before" and "after" a simulated restart) can be opened over the SAME durable
+/// state without either owning it.
+impl<S: PoolStore> PoolStore for std::sync::Arc<S> {
+    fn epoch(&self) -> u64 {
+        (**self).epoch()
+    }
+    fn total(&self) -> u64 {
+        (**self).total()
+    }
+    fn contributed(&self, who: &DepositAddress) -> u64 {
+        (**self).contributed(who)
+    }
+    fn ledger(&self) -> PoolLedger {
+        (**self).ledger()
+    }
+    fn record_once(&self, payment: &PaymentReceived) -> ContributionOutcome {
+        (**self).record_once(payment)
+    }
+    fn retire(&self, snapshot: &PoolSnapshot) -> Result<u64, PoolError> {
+        (**self).retire(snapshot)
+    }
+}
+
+/// The per-contributor pile ledger over a pluggable [`PoolStore`]. All methods take
+/// `&self` (interior mutability) so it can be shared exactly like [`Treasury`].
+///
+/// The default store is [`InMemoryPoolStore`], so `SwapPool` names the in-memory pool and
+/// `SwapPool<SqlitePoolStore>` the persisted one.
+pub struct SwapPool<S: PoolStore = InMemoryPoolStore> {
+    store: S,
+}
+
+impl SwapPool<InMemoryPoolStore> {
+    /// A fresh, empty in-memory pool at epoch 0.
+    pub fn new() -> Self {
+        SwapPool::over(InMemoryPoolStore::new())
+    }
+}
+
+impl Default for SwapPool<InMemoryPoolStore> {
+    fn default() -> Self {
+        SwapPool::new()
+    }
+}
+
+impl<S: PoolStore> SwapPool<S> {
+    /// A pool over a supplied [`PoolStore`] — the persisted constructor (the bot passes its
+    /// sqlite store here).
+    pub fn over(store: S) -> Self {
+        SwapPool { store }
+    }
+
+    /// Borrow the underlying store.
+    pub fn store(&self) -> &S {
+        &self.store
+    }
+
+    /// The current pool epoch (bumped by each [`SwapPool::close`]).
+    pub fn epoch(&self) -> u64 {
+        self.store.epoch()
+    }
+
+    /// The pool's cumulative atomic `$DREGG` across all contributors.
+    pub fn total(&self) -> u64 {
+        self.store.total()
+    }
+
+    /// What `who` has contributed to the current pool.
+    pub fn contributed(&self, who: &DepositAddress) -> u64 {
+        self.store.contributed(who)
+    }
+
+    /// `who`'s live quadratic weight — `isqrt` of their current contribution. A vote uses
+    /// the PINNED [`PoolSnapshot::weight`] instead; this is the live read for display.
+    pub fn weight(&self, who: &DepositAddress) -> u64 {
+        quadratic_weight(self.contributed(who))
+    }
+
+    /// **Record an observed payment: treasury AND attribution, in one call.**
+    ///
+    /// This is the front door precisely so the two cannot drift apart. A `$DREGG` payment
+    /// grows the treasury pile *and* the payer's pool share; a USDC payment fuels the
+    /// tank and is attributed to nobody (USDC is not the pile). Idempotent by
+    /// [`PaymentReceived::reference`] over BOTH effects: re-observing a payment moves
+    /// neither the treasury nor the pool.
+    ///
+    /// Fails closed on overflow: nothing moves and the reference is left unprocessed.
+    ///
+    /// **The one seam that is not atomic**, named rather than hidden: the store commits the
+    /// dedup + attribution first, then the treasury is credited. The two are separate
+    /// stores behind separate traits, so a crash between them leaves an attributed
+    /// contribution whose `$DREGG` never reached the pile. That direction fails CLOSED at
+    /// settlement ([`SwapError::PileShort`](crate::swap::SwapError) — a pool larger than
+    /// the pile refuses the whole swap) rather than minting fuel from nothing.
+    pub fn record_payment<T: TreasuryStore>(
+        &self,
+        payment: &PaymentReceived,
+        treasury: &Treasury<T>,
+    ) -> ContributionOutcome {
+        let outcome = self.store.record_once(payment);
+        match outcome {
+            ContributionOutcome::Contributed { .. } => {
+                treasury.record_payment(Asset::Dregg, payment.amount);
+            }
+            ContributionOutcome::FuelNotPool => {
+                treasury.record_payment(Asset::Usdc, payment.amount);
+            }
+            // Already counted, or refused outright: the treasury must not move.
+            ContributionOutcome::AlreadyRecorded | ContributionOutcome::Overflow => {}
+        }
+        outcome
+    }
+
+    /// **Pin the pool** — freeze the current epoch's per-contributor ledger into the
+    /// [`PoolSnapshot`] a swap proposal votes over. Later contributions do not enter this
+    /// snapshot.
+    pub fn snapshot(&self) -> PoolSnapshot {
+        let ledger = self.store.ledger();
+        let mut entries = BTreeMap::new();
+        let mut users = BTreeMap::new();
+        for e in ledger.entries {
+            entries.insert(e.who, e.contributed);
+            users.insert(e.who, e.user);
+        }
+        PoolSnapshot {
+            epoch: ledger.epoch,
+            total: ledger.total,
+            entries,
+            users,
+        }
+    }
+
+    /// **Retire a swapped pool.** Subtracts exactly `snapshot`'s per-contributor amounts
+    /// (anything contributed AFTER the snapshot survives into the next pool) and bumps
+    /// the epoch. Returns the new epoch.
+    ///
+    /// Refuses a snapshot from any epoch but the current one
+    /// ([`PoolError::StaleSnapshot`]) — a pool is retired exactly once, so one passed vote
+    /// cannot draw the contribution ledger down twice. With a persistent store this is the
+    /// DURABLE half of the anti-replay pair whose in-process half is
+    /// [`JupiterSwap`](crate::swap::JupiterSwap)'s spent-authorization set.
+    pub fn close(&self, snapshot: &PoolSnapshot) -> Result<u64, PoolError> {
+        self.store.retire(snapshot)
     }
 }
 
@@ -620,5 +846,91 @@ mod tests {
         );
         assert_eq!(pool.total(), 4_000_000, "the refused close moved nothing");
         assert_eq!(pool.contributed(&BOB_ADDR), 4_000_000);
+    }
+
+    #[test]
+    fn the_ledger_lives_in_the_store_and_survives_the_pool_handle() {
+        // THE PERSISTENCE POLE. `SwapPool` is a rule-carrier over a store, not the state
+        // itself: a second handle opened over the same store sees the same attribution,
+        // the same total, AND the same epoch. With the sqlite store that second handle is
+        // the process after a restart — which is what makes `close`'s retire-exactly-once
+        // tooth durable rather than a per-process latch.
+        use std::sync::Arc;
+        let store = Arc::new(InMemoryPoolStore::new());
+        let t = treasury();
+
+        let first = SwapPool::over(Arc::clone(&store));
+        first.record_payment(&pay("alice", ALICE_ADDR, Asset::Dregg, 1_000_000, "a1"), &t);
+        first.record_payment(&pay("bob", BOB_ADDR, Asset::Dregg, 4_000_000, "b1"), &t);
+        let snap = first.snapshot();
+        assert_eq!(first.close(&snap).unwrap(), 1);
+        first.record_payment(&pay("carol", CAROL_ADDR, Asset::Dregg, 9_000_000, "c1"), &t);
+        drop(first);
+
+        // "After the restart": a fresh handle over the same store.
+        let second = SwapPool::over(Arc::clone(&store));
+        assert_eq!(second.epoch(), 1, "the epoch is NOT reset by a new handle");
+        assert_eq!(second.total(), 9_000_000);
+        assert_eq!(second.contributed(&CAROL_ADDR), 9_000_000);
+        assert_eq!(second.contributed(&ALICE_ADDR), 0, "retired stays retired");
+        assert_eq!(second.weight(&CAROL_ADDR), 3_000);
+        let carried = second.snapshot();
+        assert_eq!(carried.user(&CAROL_ADDR), Some(&UserId::from("carol")));
+
+        // The retire-exactly-once tooth still bites across the handle boundary — the
+        // whole point of persisting the epoch.
+        assert_eq!(
+            second.close(&snap),
+            Err(PoolError::StaleSnapshot {
+                snapshot_epoch: 0,
+                pool_epoch: 1
+            }),
+            "a snapshot retired by the previous handle cannot be retired again",
+        );
+
+        // And the dedup set is the store's too: the payments the first handle processed
+        // are not re-creditable by the second.
+        assert_eq!(
+            second.record_payment(&pay("carol", CAROL_ADDR, Asset::Dregg, 9_000_000, "c1"), &t),
+            ContributionOutcome::AlreadyRecorded,
+        );
+        assert_eq!(second.total(), 9_000_000);
+    }
+
+    #[test]
+    fn a_refused_contribution_leaves_the_treasury_untouched() {
+        // The store gates BOTH sides. A re-observed reference and an overflowing one must
+        // each leave the pile exactly where it was — an over-credited pile behind an
+        // unchanged electorate is a swap authorized for value nobody voted.
+        let pool = SwapPool::new();
+        let t = treasury();
+        let p = pay("alice", ALICE_ADDR, Asset::Dregg, 5_000_000, "dup");
+        pool.record_payment(&p, &t);
+        assert_eq!(t.dregg_balance(), 5_000_000);
+        assert_eq!(
+            pool.record_payment(&p, &t),
+            ContributionOutcome::AlreadyRecorded
+        );
+        assert_eq!(t.dregg_balance(), 5_000_000, "no second treasury credit");
+
+        // A pool at the u64 ceiling refuses the next unit — and banks none of it. (Its own
+        // pool, so alice's 5M above does not itself trip the ceiling.)
+        let big = SwapPool::new();
+        let t2 = treasury();
+        assert!(matches!(
+            big.record_payment(&pay("bob", BOB_ADDR, Asset::Dregg, u64::MAX, "huge"), &t2),
+            ContributionOutcome::Contributed { .. }
+        ));
+        assert_eq!(t2.dregg_balance(), u64::MAX);
+        assert_eq!(
+            big.record_payment(&pay("carol", CAROL_ADDR, Asset::Dregg, 1, "one-more"), &t2),
+            ContributionOutcome::Overflow
+        );
+        assert_eq!(
+            t2.dregg_balance(),
+            u64::MAX,
+            "a refused contribution banks nothing"
+        );
+        assert_eq!(big.contributed(&CAROL_ADDR), 0);
     }
 }

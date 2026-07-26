@@ -10,8 +10,12 @@
 //!    per-user Solana address. A future "C" impl (a per-user PDA under an on-chain
 //!    program) implements the same trait and swaps in.
 //! 2. [`Watcher`] — detect an inbound payment to a deposit address, attributed to
-//!    the user automatically. [`MockWatcher`] (driven) and [`SolanaWatcher`] (the
-//!    real path, reusing the bridge proof-of-holdings SPL decode + consensus verify).
+//!    the user automatically. [`SignatureWatcher`] is the REAL path: one payment per
+//!    finalized transaction, keyed on the **transaction signature**, holding no in-RAM
+//!    cursor at all (`docs/reference/RESTART-SEMANTICS.md` answer 2 — the durable
+//!    [`CreditLedger`] IS the cursor). [`MockWatcher`] is the driven devnet path.
+//!    [`SolanaWatcher`] is no longer a `Watcher`: it keeps the bridge
+//!    proof-of-holdings SPL balance decode + the anchored consensus verify.
 //! 3. [`CreditLedger`] — per-user RUN credits, minted from payments at a configured
 //!    price, spent one-per-run, **idempotent per payment reference**, over a
 //!    pluggable [`CreditStore`] (the bot persists via sqlite).
@@ -124,7 +128,10 @@ pub use otc::{
     OtcError, OtcQuote, OtcSettleError, OtcSettlement, otc_dregg_out, otc_quote, otc_settle,
     otc_settle_message,
 };
-pub use pool::{ContributionOutcome, PoolError, PoolSnapshot, SwapPool, quadratic_weight};
+pub use pool::{
+    ContributionOutcome, InMemoryPoolStore, PoolEntry, PoolError, PoolLedger, PoolSnapshot,
+    PoolStore, SwapPool, quadratic_weight,
+};
 pub use pricing::{
     HttpGet, JupiterPriceOracle, MockOracle, PriceError, PriceOracle, discount_factor,
     parse_jupiter_price, runs_for_payment,
@@ -151,6 +158,7 @@ pub use sweeper::{
 };
 pub use treasury::{InMemoryTreasuryStore, Treasury, TreasuryError, TreasuryStore};
 pub use watcher::{
-    AccountFetcher, FetchedAccount, MockChain, MockWatcher, PaymentReceived, PaymentRef,
-    SolanaWatcher, WatchError, Watcher,
+    AccountFetcher, DEFAULT_TRANSFER_HISTORY_LIMIT, FetchedAccount, MockChain, MockWatcher,
+    ObservedTransfer, PaymentReceived, PaymentRef, SignatureWatcher, SolanaWatcher,
+    TransferFetcher, WatchError, Watcher,
 };
