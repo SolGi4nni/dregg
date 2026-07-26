@@ -156,7 +156,16 @@
 //! Run (release; debug times would be lies, and `debug_assertions` also switches on
 //! plonky3's in-prover `check_constraints`, which is itself most of a debug prove):
 //! ```text
-//! cargo test -p dregg-circuit --release --test tiny_automata_prove_time_attack -- --nocapture
+//! cargo test -p dregg-circuit --release --test tiny_automata_prove_time_attack -- --nocapture \
+//!   --test-threads=1
+//!
+//! ⚠ `--test-threads=1` IS MANDATORY, NOT A PREFERENCE. `SpanProfiler` is a process-global
+//! singleton with a global `on` flag and one shared accumulator, and libtest runs these tests
+//! CONCURRENTLY by default. Without it the profile is silently cross-contaminated: an independent
+//! re-verification running exactly the old command line got `prove_batch` count 2 for ONE profiled
+//! prove, 13,176 `coset_dft_oop` calls against 504 isolated, self-percentages summing past 250%,
+//! and a NEGATIVE marginal per-instance cost. The old command line (without the flag) is what
+//! produced this file's retracted 97.9% headline.
 //! ```
 
 use std::cell::RefCell;
