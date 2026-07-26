@@ -13,7 +13,9 @@
 //! binary Merkle tree the kernel commits a cell's heap with:
 //! [`dregg_circuit::heap_root`] (`CanonicalHeapTree` / `compute_heap_root`, the exact
 //! primitive `dregg_cell::compute_heap_root` wraps). Each `/var` entry `(key, value)`
-//! becomes a [`dregg_circuit::heap_root::HeapLeaf`] `{ addr, value }`:
+//! becomes a [`dregg_circuit::heap_root::HeapLeaf`] `{ addr, value, next_addr }` (the
+//! arity-3 indexed-Merkle-tree leaf; `next_addr` is the sorted-successor POINTER the
+//! tree builder links, and it is part of the committed digest):
 //!
 //! * `addr = var_addr(key)` — a Poseidon2 felt over the domain-tagged key bytes (the
 //!   real heap keys `(collection_id, key)` u32 pairs via `heap_addr`; a grain's `/var`
@@ -105,6 +107,17 @@ fn root_string(root: &[u8; 32]) -> String {
 /// with [`verify_inclusion`] against `{key, value, root}` alone; no heap needed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InclusionProof {
+    /// The committed IMT POINTER of the opened leaf: the `var_addr` of the
+    /// next-larger present `/var` key, or `heap_root::SENTINEL_MAX` for the largest one.
+    ///
+    /// The heap leaf is the arity-3 `hash[addr, value, next_addr]` — the heap tree
+    /// retired its stored MAX sentinel LEAF in favour of this pointer (2026-07-12,
+    /// `919b2b0b8d`), so the pointer is INSIDE the committed digest and a verifier
+    /// that assumes the unlinked `SENTINEL_MAX` can only ever check the
+    /// largest-addressed key. Not a disclosure the path did not already make: the
+    /// sibling digests are served anyway, and the pointer is one Poseidon2 image of
+    /// another key's name, never its value.
+    pub next_addr: BabyBear,
     /// Sibling digests along the path from the leaf to the root (bottom-up), in the
     /// real `dregg_circuit::heap_root` scheme.
     pub siblings: Vec<BabyBear>,
@@ -117,15 +130,27 @@ pub struct InclusionProof {
 /// **Verify a single-leaf inclusion proof — host-state-free.** Given only the served
 /// `{key, value}`, the `proof`, and a `root` the caller trusts (obtained independently —
 /// e.g. the cell's heap-root from the ledger, NOT from the serving host), recompute the
-/// leaf digest `hash[addr, value]` and fold the sibling path through the heap-tree node
-/// hash ([`hash_fact`], the `heap_node` the real tree folds with), then check it matches.
-/// `true` iff `value` is exactly the value at `key` under `root`. A light client runs
-/// this against just the card bytes.
+/// committed IMT leaf digest `hash[addr, value, next_addr]` (`HeapLeaf::preimage`, the
+/// ONE place that schema is written) and fold the sibling path through the heap-tree
+/// node hash ([`hash_fact`], the `heap_node` the real tree folds with), then check it
+/// matches. `true` iff `value` is exactly the value at `key` under `root`. A light
+/// client runs this against just the card bytes.
+///
+/// Fails closed on a mismatched path length and on a pointer no committed leaf could
+/// carry (`addr >= next_addr` — the `ImtSorted` well-linked invariant the tree builder
+/// itself refuses to violate).
 pub fn verify_inclusion(root: &DataRoot, key: &str, value: &[u8], proof: &InclusionProof) -> bool {
     if proof.siblings.len() != proof.directions.len() {
         return false;
     }
-    let mut acc = var_leaf(key, value).digest();
+    // The COMMITTED leaf: `var_leaf` returns the UNLINKED entry (pointer seeded to
+    // SENTINEL_MAX), so the pointer is taken from the proof — never assumed.
+    let mut leaf = var_leaf(key, value);
+    leaf.next_addr = proof.next_addr;
+    if leaf.addr.as_u32() >= leaf.next_addr.as_u32() {
+        return false;
+    }
+    let mut acc = leaf.digest();
     for (sib, &dir) in proof.siblings.iter().zip(proof.directions.iter()) {
         // `heap_node(l, r) = hash_fact(l, &[r])`; dir 0 ⇒ acc is LEFT, dir 1 ⇒ RIGHT —
         // the exact fold `CanonicalHeapTree::update_witness` recomposes with.
@@ -254,6 +279,9 @@ impl Umem {
         let pos = tree.position_of(var_addr(key))?;
         let (siblings, directions) = tree.prove_membership(pos)?;
         Some(InclusionProof {
+            // The COMMITTED pointer the tree builder linked, not the unlinked
+            // `HeapLeaf::entry` seed — the leaf digest absorbs it.
+            next_addr: tree.sorted_leaves()[pos].next_addr,
             siblings,
             directions,
         })
@@ -374,6 +402,26 @@ mod tests {
         assert!(!verify_inclusion(&stale, "b", b"two", &proof));
         // An absent key has no proof.
         assert!(u.prove("zzz").is_none());
+
+        // ── THE IMT POINTER BINDS (the 2026-07-12 leaf-schema retirement's tooth) ──
+        // The leaf digest is arity-3 `hash[addr, value, next_addr]`. Find a key whose
+        // committed pointer is a REAL successor (not the terminal SENTINEL_MAX) and
+        // check that swapping the pointer for the unlinked `HeapLeaf::entry` seed —
+        // exactly what a pre-IMT verifier assumed — is REFUSED.
+        let max = dregg_circuit::heap_root::SENTINEL_MAX;
+        let interior = ["a", "b", "c"]
+            .into_iter()
+            .find(|k| u.prove(k).is_some_and(|p| p.next_addr != max))
+            .expect("with 3 entries at least one key is interior");
+        let val = u.get(interior).unwrap().to_vec();
+        let mut forged = u.prove(interior).unwrap();
+        assert!(verify_inclusion(&root, interior, &val, &forged));
+        forged.next_addr = max;
+        assert!(
+            !verify_inclusion(&root, interior, &val, &forged),
+            "an UNLINKED (SENTINEL_MAX) leaf must not open at an interior key — the \
+             committed pointer is part of the digest"
+        );
     }
 
     /// A single-entry heap: the sorted tree still opens the leaf against the whole-heap

@@ -55,8 +55,15 @@
 //! [`cap_node`] — the SAME single in-circuit cap hash the cap-membership DSL
 //! commits to (`cap_chip_absorb([CAP_FACT_MARK, l, r])`), so the path folds are
 //! chip-realizable via the `Hash3Cap` form on the audited `prove_dsl_p3` path.
-//! Each leaf is the arity-2 image `hash[key, value]` (a sort-key + payload pair,
-//! the same 2-field shape [`crate::heap_root::HeapLeaf`] uses).
+//! Each leaf is the arity-2 image `hash[key, value]` (a sort-key + payload pair).
+//!
+//! ⚠ NO LONGER the same shape as [`crate::heap_root::HeapLeaf`]: the heap tree became an
+//! indexed Merkle tree on 2026-07-12 (`919b2b0b8d`) — its leaf is the arity-3
+//! `hash[addr, value, next_addr]` ([`crate::heap_root::HEAP_LEAF_ARITY`]) and it stores ONE
+//! sentinel leaf, not two ([`crate::heap_root::HEAP_SENTINEL_LEAVES`]). This tree kept the
+//! arity-2 leaf and BOTH sentinels. The three sorted openable trees (heap / cap / fields)
+//! still share the sentinel CONSTANTS and the node hash; they no longer share the leaf
+//! schema or the occupancy. Do not carry a fact across the family by analogy.
 //!
 //! ## Position-stable (reserved-slot) discipline — the single-shared-path key
 //!
@@ -585,8 +592,9 @@ pub fn fold_value32(bytes: &[u8; 32]) -> BabyBear {
 }
 
 /// One legacy-v1 openable-fields entry: the sorted-tree leaf `(key_hash, value)`. The
-/// leaf digest is the arity-2 image `hash[key_hash, value]` — the same 2-field
-/// shape [`crate::heap_root::HeapLeaf`] uses.
+/// leaf digest is the arity-2 image `hash[key_hash, value]` — NOT the shape
+/// [`crate::heap_root::HeapLeaf`] uses, which became the arity-3 IMT leaf
+/// `hash[addr, value, next_addr]` on 2026-07-12 (see the module header).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FieldsLeaf {
     /// The sort key: [`field_key_hash`] of the entry's overflow key.

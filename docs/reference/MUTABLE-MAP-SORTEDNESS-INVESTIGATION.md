@@ -47,7 +47,7 @@ What op=3 forces in the deployed AIR (`descriptor_ir2.rs:2883-3052`, read direct
 * `not_insert = 1 − inv6·op·(op−1)` is **0 at op=3** (`:2907`). Hence `rw_sel = not_insert + s = 0`
   (`:2928`, s=0 off-AAFI) → the **old-leaf absorb is suppressed** (`:2989`), and `not_insert3 =
   not_insert + 2s = 0` (`:2929`) → the **old-chain fold to the pre-root is OFF** (`:3035`).
-* Only the new-leaf chain fires (gated `is_real·not_aafi`, `:3049`): it folds `hash[key,value]` up the
+* Only the new-leaf chain fires (gated `is_real·not_aafi`, `:3049`): it folds the arity-3 IMT leaf `hash[key, value, next_addr]` (`map_leaf_input_cols`) up the
   witnessed sibling path to `MAP_NEW_ROOT` (`:3038-3051`).
 
 So the **entire op=3 constraint is: "the AFTER root contains `(key,value)` at the witnessed path."**

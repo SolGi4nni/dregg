@@ -3,12 +3,14 @@
 //! This module carries the public claim — *every committed state transition is proven* —
 //! for the running node, with **one named exception stated here at the headline rather
 //! than 70 lines downstream**: a `NoteSpend` whose canonical spent-nullifier set exceeds
-//! the openable heap tree's capacity (`2^HEAP_TREE_DEPTH − 2 = 65534` entries) is
+//! the openable heap tree's capacity (`2^HEAP_TREE_DEPTH − HEAP_SENTINEL_LEAVES = 65535`
+//! entries) is
 //! **committed with NO freshness-bound proof**. The prover refuses to truncate the set
 //! (that would be unsound) and [`canonical_spent_nullifier_set`] returns
 //! `Err(RevocationCapacityExceeded)`; the turn still commits, logged loudly.
 //! (Felt-width #11 fold-in: the retired depth-4 1-felt rail capped this at 14 —
-//! the in-circuit limb-26 accumulator lifts it to 65534.)
+//! the in-circuit limb-26 accumulator lifts it to 65535 — 65534 until the heap tree
+//! retired its stored MAX sentinel leaf on 2026-07-12, `919b2b0b8d`.)
 //!
 //! When the devnet enables full-turn proving,
 //! [`crate::blocklace_sync::execute_finalized_turn`] calls
@@ -83,7 +85,8 @@
 //!
 //! The openable heap tree is hardwired to
 //! [`dregg_circuit::heap_root::HEAP_TREE_DEPTH`] (`= 16`, so at most
-//! `2^16 − 2 = 65534` entries after the two sentinels). When the canonical set
+//! `2^16 − 1 = 65535` entries after the ONE stored MIN sentinel — `SENTINEL_MAX`
+//! is the terminal `next_addr` pointer, not a leaf). When the canonical set
 //! exceeds that, a single fixed-depth opening cannot cover it. Rather than
 //! silently truncate (UNSOUND — it could omit the very nullifier being re-spent),
 //! [`canonical_spent_nullifier_set`] returns `Err(RevocationCapacityExceeded)` and
@@ -120,14 +123,21 @@ use dregg_types::CellId;
 
 /// Maximum number of spent-nullifier entries the in-circuit limb-26 accumulator
 /// can authenticate in one opening: the openable heap tree is hardwired to
-/// [`dregg_circuit::heap_root::HEAP_TREE_DEPTH`] (`= 16`) and reserves two leaves
-/// for the `SENTINEL_MIN`/`SENTINEL_MAX` ordering sentinels, leaving
-/// `2^16 − 2 = 65534`.
+/// [`dregg_circuit::heap_root::HEAP_TREE_DEPTH`] (`= 16`) and reserves
+/// [`dregg_circuit::heap_root::HEAP_SENTINEL_LEAVES`] leaves for the ordering
+/// sentinels, leaving `2^16 − 1 = 65535`.
+///
+/// ⚠ DERIVED, not transcribed. The heap tree stores ONE sentinel leaf (`SENTINEL_MIN`);
+/// `SENTINEL_MAX` became the terminal `next_addr` POINTER when the tree moved to an
+/// indexed Merkle tree (2026-07-12, `919b2b0b8d`), so the old `- 2` here understated
+/// the capacity by one. The cap/fields trees still reserve two — do not share the
+/// figure between families.
 ///
 /// This is a CIRCUIT capacity, not a node policy. (Felt-width #11 fold-in: the
 /// retired depth-4 1-felt rail capped this at 14.)
-pub const MAX_REVOCATION_TREE_ENTRIES: usize =
-    (1usize << dregg_circuit::heap_root::HEAP_TREE_DEPTH) - 2;
+pub const MAX_REVOCATION_TREE_ENTRIES: usize = (1usize
+    << dregg_circuit::heap_root::HEAP_TREE_DEPTH)
+    - dregg_circuit::heap_root::HEAP_SENTINEL_LEAVES;
 
 /// Widen a single-felt commitment into the 8-felt anchor the wide verifier compares against for a
 /// NARROW (v1 / cap-open) effect-vm leg: the verifier broadcasts such a leg's 1-felt commit into
@@ -167,7 +177,7 @@ pub enum FullTurnProvingError {
     /// does not verify is not accepted as proven.
     Verify(FullTurnVerifyError),
     /// The canonical spent-nullifier set is larger than the openable heap
-    /// tree's fixed capacity ([`MAX_REVOCATION_TREE_ENTRIES`] = 65534). A single
+    /// tree's fixed capacity ([`MAX_REVOCATION_TREE_ENTRIES`] = 65535). A single
     /// fixed-depth in-circuit opening cannot soundly cover it (omitting any
     /// entry could hide a double-spend), so the freshness-bound proof is NOT
     /// produced for this turn.

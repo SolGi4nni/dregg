@@ -204,7 +204,7 @@ array shift obstruction is gone because positions are STABLE (append-at-free-ind
   they already carry feed `insert_witness_aafi`.
 - **`MapOpsColumnLayout.lean`** — the width/law mirror: add the `aafiInsert` gate law modelling the
   two-path opening + range bracket, and prove it discharges to the proven `imtInsert` (import
-  `IndexedMerkleTree.imtInsert_preserves`). Update the `toyInsertOp`/`toy_insert_gates` teeth
+  `IndexedMerkleTree.imtInsert_preserves`). Update the `toyInsertOp`/`toy_insert_op_value_update_gates` teeth
   (`:836,889`) with an `aafiInsert` twin, and the width mirror to 897.
 
 ---
@@ -220,11 +220,16 @@ array shift obstruction is gone because positions are STABLE (append-at-free-ind
    `rotation-wide-umem-welded-registry-staged.tsv`, `umem-cohort-v1-staged-registry.tsv`,
    `umem-cohort-multidomain-v1-staged-registry.tsv`, `rotation-layout-v3-staged.json`,
    `rotation-caveat-layout-v3-staged.json`, `PROVENANCE.json`.
-3. **GENTIAN executor↔cell differential** — `circuit/tests/heap_root_cell_circuit_differential.rs`
-   (currently arity-2 `HeapLeaf { addr, value }` + arity-2 `hash_many[addr,value]` + an
-   order-independence assertion). Migrate to arity-3 leaf + AAFI append-order reference; **DELETE the
-   order-independence assertion** (`family_separation_and_order_independence`, :190-204) for the
-   append-only sets. Also `heap_root_gentian_weld.rs`, `fields_root_gentian_weld.rs`.
+3. **GENTIAN executor↔cell differential** — `circuit/tests/heap_root_cell_circuit_differential.rs`.
+   ✅ **ARITY-3 HALF DONE 2026-07-25** — `reference_root` was still arity-2
+   `hash_many[addr,value]` + a separate stored MAX sentinel leaf (i.e. RED since `919b2b0b8d`,
+   13 days). It is re-derived from the Lean `IndexedMerkleTree` spec (one MIN leaf, well-linked
+   pointers, arity-3 `imtLeafHash`) using only `hash_many`/`hash_fact` — still an INDEPENDENT
+   reference, no call into the production builder — plus a new `heap_leaf_schema_pin`.
+   STILL OWED for the AAFI flip: the append-order reference, and **DELETE the
+   order-independence assertion** (`family_separation_and_order_independence`) for the
+   append-only sets (it is still CORRECT for the sorted mutable cell heap, which per §6 is not
+   flipping). Also `heap_root_gentian_weld.rs`, `fields_root_gentian_weld.rs`.
 4. **`root_is_input_order_independent`** — `heap_root.rs:1242`, `cap_root.rs:1129`: RETIRES for the
    append-only sets (the AAFI fold IS insertion-order-dependent, by design — this is the whole point;
    sync is REPLAY, order is canonical, per LIGHTCLIENT-AAFI-IMPACT §1). Keep/scope it to the
@@ -237,11 +242,34 @@ array shift obstruction is gone because positions are STABLE (append-at-free-ind
 6. **Cell slot persistence** — **N/A this flip** (the mutable cell heap is NOT flipping;
    `cell/src/state.rs` untouched by the append-only cutover). Owed only when the cell heap flips.
 7. **Downstream `HeapLeaf` migration** — ~201 occurrences across 9 crates (circuit, cell, sdk, node,
-   perf, sandstorm-bridge, wasm, turn, circuit-prove). The struct already has `next_addr`; the
-   mechanical migration replaces remaining arity-2 `HeapLeaf { addr, value }` literals with
-   `HeapLeaf::entry(addr, value)` (which seeds `next_addr = SENTINEL_MAX`, relinked on tree build).
-   Heaviest: `sdk/src/full_turn_proof.rs`, `effect_vm/trace_rotated.rs`, test files
-   (`effect_vm_rotation_flip.rs`, the `vk_epoch_*_light_client_binding.rs` set), `cell/src/*_set.rs`.
+   perf, sandstorm-bridge, wasm, turn, circuit-prove).
+
+   ⚑ **CORRECTED 2026-07-25 — THIS ITEM'S RULE WAS UNSOUND AND IT COST TWO LIVE VERIFIERS.**
+   It previously read: *"the mechanical migration replaces remaining arity-2
+   `HeapLeaf { addr, value }` literals with `HeapLeaf::entry(addr, value)` (which seeds
+   `next_addr = SENTINEL_MAX`, relinked on tree build)."* That is right for a **PRODUCER** and
+   wrong for a **VERIFIER**, and the item did not distinguish them:
+
+   * **PRODUCER sites** hand leaves to a tree builder (`CanonicalHeapTree{,8}::new`,
+     `compute_canonical_heap_root_8`, `map_heaps`), which RELINKS every `next_addr`.
+     `HeapLeaf::entry` is correct here and the migration really is mechanical. This is the
+     large majority — `sdk/src/full_turn_proof.rs`, `effect_vm/trace_rotated.rs`,
+     `cell/src/*_set.rs`, `perf`, the `vk_epoch_*_light_client_binding.rs` set.
+   * **VERIFIER sites** RECONSTRUCT a committed leaf digest from a served
+     `{key, value, path, root}` with **no builder to relink**. `HeapLeaf::entry`'s
+     `SENTINEL_MAX` seed is then a silently WRONG pointer: the site compiles green and can
+     only ever check the LARGEST-addressed leaf in the tree. Fixing these is a **WIRE
+     change** — the opening must carry the committed pointer — not a call-site edit. Both
+     such sites named in this list were left broken by the "mechanical" rule and repaired on
+     2026-07-25: `wasm/src/bindings_lightclient.rs::verify_slot_opening` (+ `deos-view`'s
+     `HeapSlotOpening` / the `#deos-openings` island / the tab bootstrap) and
+     `sandstorm-bridge/src/cell.rs::verify_inclusion` (+ `InclusionProof`).
+
+   The schema is now single-sourced at `heap_root::HeapLeaf::preimage` with
+   `HEAP_LEAF_ARITY` / `HEAP_SENTINEL_LEAVES` and pinned by
+   `heap_root_cell_circuit_differential::heap_leaf_schema_pin`, whose failure message carries
+   the transcriber sweep list. Classify each remaining site as producer or verifier BEFORE
+   editing it.
 8. **Descriptor TSV registries** — the 6 `.tsv` + `PROVENANCE.json` (also in §2 above).
 9. **`MapOpsColumnLayout.lean` width mirror** — 422 → 897 + the new gate law (also §2.4).
 

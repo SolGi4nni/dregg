@@ -33,10 +33,20 @@
 //! enforces it — so the key is injective: exactly one leaf per slot). The
 //! keys are sorted, deduplicated, and bracketed by the
 //! [`SENTINEL_MIN`](crate::heap_root::SENTINEL_MIN) /
-//! [`SENTINEL_MAX`](crate::heap_root::SENTINEL_MAX) sentinels (so a
-//! Phase-B non-membership proof can bracket any absent key). The tree is
-//! padded to `2^DEPTH` positions; internal nodes are
+//! [`SENTINEL_MAX`](crate::heap_root::SENTINEL_MAX) sentinels, BOTH STORED AS LEAVES
+//! (so a Phase-B non-membership proof can bracket any absent key by physical
+//! adjacency). The tree is padded to `2^DEPTH` positions; internal nodes are
 //! `hash_fact(left, [right])` — the SAME node hash [`crate::heap_root`] uses.
+//!
+//! ⚠ THE FAMILY DIVERGED — do not carry a fact from the heap tree by analogy. On
+//! 2026-07-12 (`919b2b0b8d`) the HEAP tree became an indexed Merkle tree: its leaf is the
+//! arity-3 `hash[addr, value, next_addr]` and it stores ONE sentinel leaf
+//! ([`crate::heap_root::HEAP_SENTINEL_LEAVES`]), MAX surviving only as the terminal
+//! pointer. THIS tree still stores both, which is exactly why its trailing-pad exposure
+//! is the weaker [`crate::heap_root::assert_pad_free_tail`] condition rather than the
+//! heap's structural `addr < next_addr` guard. Shared today: the sentinel CONSTANTS, the
+//! node hash, the depth, the sparse-prefix fold. NOT shared: the leaf schema, the
+//! occupancy, the real capacity (`2^DEPTH - 2` here, `2^DEPTH - 1` for the heap).
 //!
 //! Each leaf is `Poseidon2(slot_hash, target, auth_tag, mask_lo, mask_hi,
 //! expiry, breadstuff)` — the 7 [`CapLeaf`] fields:
@@ -952,7 +962,8 @@ pub struct CapMembershipWitness {
 /// `dir == 0` ⇒ the current node is the LEFT child (`hash_fact(cur, sib)`), else
 /// the RIGHT child (`hash_fact(sib, cur)`). This is EXACTLY the per-level `mix`
 /// the `descriptor_ir2.rs` Merkle-chain AIR computes (lines ~2109-2135), applied to
-/// the 7-field cap leaf rather than the 2-field heap leaf.
+/// the 7-field cap leaf rather than the heap tree's arity-3 IMT leaf
+/// (`heap_root::HEAP_LEAF_ARITY`).
 pub fn recompose_membership(
     leaf_digest: [BabyBear; CAP_DIGEST_W],
     siblings: &[[BabyBear; CAP_DIGEST_W]],

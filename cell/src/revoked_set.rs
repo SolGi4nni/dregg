@@ -4,9 +4,11 @@
 //!
 //! When a credential is revoked, its credential nullifier is recorded here
 //! TOGETHER with the height at which the revocation took effect — the SAME
-//! `(addr, value)` [`dregg_circuit::heap_root::HeapLeaf`] shape the sibling
-//! grow-gates use (`HeapLeaf { addr: fold(cred_nul), value: split_u64(height).0
-//! }`). The accumulator is therefore an auditable `(credential, revocation
+//! [`dregg_circuit::heap_root::HeapLeaf`] shape the sibling grow-gates use
+//! (`HeapLeaf::entry(fold(cred_nul), split_u64(height).0)`; the third field, the IMT
+//! `next_addr` pointer, is producer machinery the tree builder relinks — see
+//! `dregg_circuit::heap_root::HEAP_LEAF_ARITY`). The accumulator is therefore an
+//! auditable `(credential, revocation
 //! height)` record: keeping the height is what makes the committed
 //! [`Self::root8`] cross-turn-continuous (turn N's after-root == turn N+1's
 //! before-root over the same leaves) AND turns the root into an audit witness —

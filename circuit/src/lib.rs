@@ -308,10 +308,13 @@ pub mod exact_cap_root;
 pub mod garbled;
 /// THE HEAP's canonical, openable commitment (REFINEMENT-DESIGN Decision 1):
 /// the sorted Poseidon2 binary Merkle map over `(collection_id, key) → value`,
-/// generalizing `cap_root` with the generic `hash[addr, value]` leaf. The
-/// SINGLE source of truth for the `heap_root` register value; the descriptor
-/// gadget (`EffectVmEmitHeapRoot.lean`) recomputes its address/leaf images
-/// in-row. Pure Poseidon2 — no plonky3 dependency, so it builds on any consumer.
+/// generalizing `cap_root` with the arity-3 indexed-Merkle-tree leaf
+/// `hash[addr, value, next_addr]` (`heap_root::HeapLeaf::preimage`, the ONE place
+/// the leaf schema is written). The SINGLE source of truth for the `heap_root`
+/// register value; the descriptor gadget (`EffectVmEmitHeapRoot.lean`) recomputes
+/// its ADDRESS image in-row (its `siteHeapLeaf` is still the retired arity-2 shape —
+/// see the module header). Pure Poseidon2 — no plonky3 dependency, so it builds on
+/// any consumer.
 pub mod heap_root;
 pub mod native_signature;
 #[allow(deprecated)]

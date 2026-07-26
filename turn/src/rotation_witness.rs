@@ -240,7 +240,7 @@ pub fn committed_height_felt(height: u64) -> BabyBear {
 }
 
 /// The faithful 8-felt root of the EMPTY nullifier accumulator — the native `CanonicalHeapTree8`
-/// empty root (only the MIN/MAX sentinels). THE value a producer passes for `nullifier_root` when
+/// empty root (only the ONE stored MIN sentinel leaf). THE value a producer passes for `nullifier_root` when
 /// no live accumulator root is threaded (a turn with no note-spend). Byte-identical to a fresh
 /// `dregg_cell::nullifier_set::NullifierSet::root8` (both fold the same empty `CanonicalHeapTree8`),
 /// so the empty default and a live-advanced root ride the SAME lanes.
@@ -250,7 +250,7 @@ pub fn empty_nullifier_root_8() -> dregg_circuit::Faithful8 {
 }
 
 /// The faithful 8-felt root of the EMPTY commitments accumulator — the native `CanonicalHeapTree8`
-/// empty root (only the MIN/MAX sentinels). THE value a producer passes for `commitments_root` when
+/// empty root (only the ONE stored MIN sentinel leaf). THE value a producer passes for `commitments_root` when
 /// no live accumulator root is threaded (a turn with no note-create). Byte-identical to a fresh
 /// `dregg_cell::commitment_set::CommitmentSet::root8` (both fold the same empty `CanonicalHeapTree8`),
 /// so the empty default and a live-advanced root ride the SAME lanes.
@@ -260,7 +260,7 @@ pub fn empty_commitments_root_8() -> dregg_circuit::Faithful8 {
 }
 
 /// The faithful 8-felt root of the EMPTY credential-revocation accumulator — the native
-/// `CanonicalHeapTree8` empty root (only the MIN/MAX sentinels). THE value a producer passes for
+/// `CanonicalHeapTree8` empty root (only the ONE stored MIN sentinel leaf). THE value a producer passes for
 /// `revoked_root` when no live accumulator root is threaded (a turn that revokes nothing — the
 /// common case; the registry is grow-only and starts empty). Byte-identical to a fresh
 /// `dregg_cell::revoked_set::RevokedSet::root8` (both fold the same empty `CanonicalHeapTree8`), so

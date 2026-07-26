@@ -254,7 +254,7 @@ effect, §1.4). Beyond emptiness, the two objects are not comparable at all:
 | | membership root the spend proves | `note_shielded.root8()` |
 |---|---|---|
 | width | **1 felt** (`pi::MERKLE_ROOT`, `spend_circuit.rs:159`) | **8 felts** (`Faithful8`, `shielded_note_set.rs:297`) |
-| structure | arity-4 plain Poseidon2 Merkle | depth-16 **arity-2 sorted IMT** with `next_addr` links (`circuit/src/heap_root.rs:62,108-109,143-149`) |
+| structure | arity-4 plain Poseidon2 Merkle | depth-16 **BINARY-node sorted IMT** (arity-3 LEAF) with `next_addr` links (`circuit/src/heap_root.rs:62,108-109,143-149`) |
 | leaf preimage | `hash_fact(value,[asset,owner,rand])` | `hash[fold(pedersen_bytes), 0, next_addr]` |
 
 There is no wire assignment satisfying the pin. **L4-alone is `Effect::ShieldedTransfer => Err(..)`

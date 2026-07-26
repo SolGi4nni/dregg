@@ -1518,6 +1518,17 @@ pub struct HeapSlotOpening {
     pub key: u32,
     /// The committed value at the slot (decimal felt) — equals the painted bind value.
     pub value: u32,
+    /// The committed IMT POINTER of the slot's leaf: the address of the next-larger
+    /// present slot, or `SENTINEL_MAX` for the largest one
+    /// (`CanonicalHeapTree::sorted_leaves()[pos].next_addr`).
+    ///
+    /// The heap leaf is the arity-3 `hash[addr, value, next_addr]` — the heap tree
+    /// retired its stored MAX sentinel LEAF in favour of this pointer (2026-07-12,
+    /// `919b2b0b8d`), so the pointer is INSIDE the committed digest and an opening
+    /// that omits it can only ever check the largest slot in the heap. Not secret:
+    /// the same `MAP_NEXT` felt the deployed AIR absorbs, and the sibling path is
+    /// already served.
+    pub next: u32,
     /// The sparse-Merkle siblings along the path, bottom-up (decimal felts), length 16.
     pub siblings: Vec<u32>,
     /// The path direction bits, bottom-up (`0` = left child, `1` = right), length 16.
@@ -1525,8 +1536,9 @@ pub struct HeapSlotOpening {
 }
 
 /// Serialize the per-bind openings to a compact JSON array for the `#deos-openings`
-/// island: `null` for a bind with no opening, else `{i, root, coll, key, value, sibs, dirs}`
-/// (the `data-bind-index` `i` ties it to its span). Numbers only — no string escaping
+/// island: `null` for a bind with no opening, else
+/// `{i, root, coll, key, value, next, sibs, dirs}` (the `data-bind-index` `i` ties it to
+/// its span; `next` is the committed IMT pointer). Numbers only — no string escaping
 /// needed — so this is a plain hand-built emit (kept gpui/serde_json-free in spirit, and
 /// the `<` neutralisation is handled by [`embed_json`] at the island).
 fn openings_json(openings: &[Option<HeapSlotOpening>]) -> String {
@@ -1551,8 +1563,8 @@ fn openings_json(openings: &[Option<HeapSlotOpening>]) -> String {
                     .collect::<Vec<_>>()
                     .join(",");
                 out.push_str(&format!(
-                    "{{\"i\":{i},\"root\":{},\"coll\":{},\"key\":{},\"value\":{},\"sibs\":\"{sibs}\",\"dirs\":\"{dirs}\"}}",
-                    o.root, o.coll, o.key, o.value
+                    "{{\"i\":{i},\"root\":{},\"coll\":{},\"key\":{},\"value\":{},\"next\":{},\"sibs\":\"{sibs}\",\"dirs\":\"{dirs}\"}}",
+                    o.root, o.coll, o.key, o.value, o.next
                 ));
             }
         }
@@ -1686,7 +1698,7 @@ function deosVerifyFields() {{\n\
     if (!span) return;\n\
     total++;\n\
     let good = false;\n\
-    try {{ good = verify_slot_opening(o.root, o.coll, o.key, o.value, o.sibs, o.dirs); }} catch (e) {{ good = false; }}\n\
+    try {{ good = verify_slot_opening(o.root, o.coll, o.key, o.value, o.next, o.sibs, o.dirs); }} catch (e) {{ good = false; }}\n\
     span.classList.remove('deos-field-unverified');\n\
     span.classList.add(good ? 'deos-field-verified' : 'deos-field-refused');\n\
     span.title = good ? 'field value verified: a per-slot opening checks against the committed heap root' : 'field value REFUSED: opening did not check';\n\
@@ -2187,6 +2199,7 @@ mod trustless_tests {
             coll: 0,
             key: 0,
             value: 0,
+            next: 2013265920, // SENTINEL_MAX, the terminal IMT pointer
             siblings: vec![0; 16],
             directions: vec![0; 16],
         };
@@ -2205,6 +2218,10 @@ mod trustless_tests {
         // The openings ride as an inert JSON island, keyed by bind index.
         assert!(doc.contains("id=\"deos-openings\""));
         assert!(doc.contains("\"i\":0") && doc.contains("\"root\":12345"));
+        // The committed IMT pointer rides with the opening and is handed to the verify —
+        // an opening without it can only check the largest slot in the heap.
+        assert!(doc.contains("\"next\":2013265920"));
+        assert!(doc.contains("o.value, o.next, o.sibs"));
         // The field flips from unverified to verified/refused on its opening.
         assert!(doc.contains("deos-field-unverified") && doc.contains("deos-field-verified"));
         assert!(doc.contains("deosVerifyFields"));

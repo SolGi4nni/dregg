@@ -64,7 +64,7 @@ self.note_revoked.lock().unwrap().root8(),          // executor/mod.rs:1942
 ```
 
 `CommitmentSet` (`cell/src/commitment_set.rs:60`) is a grow-only `(commitment → value)` map. Its `root8`
-is a **`CanonicalHeapTree8` — a depth-16, arity-2 sorted indexed-Merkle tree** (`circuit/src/heap_root.rs:62`
+is a **`CanonicalHeapTree8` — a depth-16, BINARY (arity-2 NODE) sorted indexed-Merkle tree** (`circuit/src/heap_root.rs:62`
 `HEAP_TREE_DEPTH = 16`; leaf digest `hash[addr, value, next_addr]`, `heap_root.rs:107-109`). The leaf is:
 
 ```rust

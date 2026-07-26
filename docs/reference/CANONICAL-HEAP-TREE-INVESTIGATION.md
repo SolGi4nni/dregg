@@ -1,5 +1,24 @@
 # CANONICAL-HEAP-TREE-INVESTIGATION — is the deployed heap FORCED sorted, or ASSUMED?
 
+> ⚑ **DATED PRE-IMT — DO NOT QUOTE THE SHAPE CLAIMS (banner added 2026-07-25).** This file was
+> grounded at HEAD *earlier on* 2026-07-12; **later that same day `919b2b0b8d` retired the shape it
+> describes.** Every leaf/sentinel/`.absent` claim below is about the pre-IMT tree:
+>
+> * the leaf is now the **arity-3** IMT digest `hash[addr, value, next_addr]`
+>   (`heap_root::HEAP_LEAF_ARITY`), not `hash[key, value]` — so §"new leaf `hash[key,value]`"
+>   and the "old leaf / new leaf at the same `steps`" passage describe a retired absorb;
+> * the tree stores **ONE** sentinel leaf (`heap_root::HEAP_SENTINEL_LEAVES`), MAX surviving only
+>   as the terminal `next_addr` pointer — so `empty_heap_root_8() = fold of {MIN, MAX}` and the
+>   `[MIN, …, MAX, pad…]` leaf-vector exhibit are both wrong;
+> * the deployed `.absent` arm is **ONE** low-leaf opening + the pointer bracket
+>   `lo_addr < key < MAP_NEXT` — the TWO-adjacent-path / `idx_upper == idx_lower + 1` /
+>   `membership_adjacency_air.rs` machinery described here was DELETED.
+>
+> The VERDICT (sortedness is a maintained-invariant floor carried as a knowledge-extraction
+> assumption) survives the reshaping and is restated at the pointer-chain resolution in
+> `Dregg2/Circuit/MapAbsentImtGate.lean` ⑤. For the current shape read `circuit/src/heap_root.rs`
+> and `docs/DESIGN-mapop-denotation-move.md`.
+
 **Read-only soundness investigation, grounded at HEAD (2026-07-12); every claim cites file:line.**
 Target: the ONE genuine residual of config-evolution kernel soundness named in
 `CONFIG-EVOLUTION-SOUNDNESS-SCOPE.md` §Layer-1.3 — `MapReconcileFamily`'s leading premise

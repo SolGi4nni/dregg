@@ -5,10 +5,17 @@
 //!
 //! THE HEAP is the generalization of the proven capability root
 //! ([`crate::cap_root`]) with a **generic leaf**: where the cap tree stores the
-//! 7-field capability leaf keyed by `slot_hash`, the heap tree stores
-//! `hash[addr, value]` keyed by `addr = hash[collection_id, key]`. Same sorted
-//! discipline, same sentinels, same `hash_fact` nodes, same depth — reuse of
-//! verified machinery, not invention.
+//! 7-field capability leaf keyed by `slot_hash`, the heap tree stores the arity-3
+//! indexed-Merkle-tree (IMT) leaf `hash[addr, value, next_addr]` keyed by
+//! `addr = hash[collection_id, key]`. Same sorted discipline, same `hash_fact`
+//! nodes, same depth — reuse of verified machinery, not invention.
+//!
+//! ⚠ The heap tree and the cap tree **differ in their sentinel occupancy**, and the
+//! difference is load-bearing: the cap tree stores BOTH the MIN and MAX sentinel
+//! leaves, while the heap tree stores only the MIN sentinel — MAX survives as the
+//! terminal [`HeapLeaf::next_addr`] pointer, never as a stored leaf. See
+//! [`HEAP_SENTINEL_LEAVES`], and [`assert_pad_free_tail`] for why the cap tree's
+//! stored MAX leaf makes its trailing-pad exposure a weaker problem than the heap's.
 //!
 //! This module is the **single** heap-root scheme, computed byte-identically
 //! wherever it runs:
@@ -18,18 +25,30 @@
 //!     pinned into the `heap_root` register;
 //!   * the cell recomputes the same root over its heap entries and refuses a
 //!     mismatch (the cap Phase-A discipline);
-//!   * the circuit's heap-write descriptor gadget recomputes `addr` and the
-//!     leaf **in-row** (`Dregg2/Circuit/Emit/EffectVmEmitHeapRoot.lean`:
-//!     `siteHeapAddr` / `siteHeapLeaf` are arity-2 hash sites over exactly
-//!     `[coll, key]` and `[addr, value]` — the same images [`heap_addr`] and
-//!     [`HeapLeaf::digest`] compute here).
+//!   * the circuit's heap-write descriptor gadget recomputes `addr` in-row
+//!     (`Dregg2/Circuit/Emit/EffectVmEmitHeapRoot.lean`: `siteHeapAddr` is an
+//!     arity-2 hash site over exactly `[coll, key]` — the same image [`heap_addr`]
+//!     computes here), and the deployed MapOps AIR absorbs the leaf at the
+//!     arity-3 IMT shape (`descriptor_ir2::map_leaf_input_cols` =
+//!     `[MAP_KEY, value, MAP_NEXT]`, the same ordered preimage
+//!     [`HeapLeaf::preimage`] returns here).
 //!
-//! The hash shapes are pinned by the Lean model (`Dregg2/Substrate/Heap.lean`
-//! `addrOf` / `leafOf`): **arity-2, no domain tag** — the circuit hash sites
-//! recompute these exact images, so adding a tag here would fork cell from
-//! circuit. The differential test
-//! `circuit/tests/heap_root_cell_circuit_differential.rs` pins the scheme
-//! against an independently hand-built tree (the A2-gate shape).
+//! ⚠ **`EffectVmEmitHeapRoot.siteHeapLeaf` is still the RETIRED arity-2 shape
+//! `hash[addr, value]`** (and `Substrate/Heap.lean`'s `leafOf` with it). That Lean
+//! gadget therefore does NOT describe the leaf this module commits; the divergence
+//! is measured and machine-checked on the Lean side
+//! (`Dregg2.Circuit.MapReconcileImtRepoint.imtRoot_ne_mapRoot`: under the CR floor
+//! an arity-3 IMT root is NEVER an arity-2 `mapRoot`) and the denotation cutover is
+//! `docs/DESIGN-mapop-denotation-move.md`. Do not read the emit gadget as a pin on
+//! this file's leaf until that lands.
+//!
+//! The ADDRESS shape is pinned by the Lean model (`Dregg2/Substrate/Heap.lean`
+//! `addrOf`): **arity-2, no domain tag** — the circuit hash site recomputes this
+//! exact image, so adding a tag here would fork cell from circuit. The LEAF shape
+//! is written in exactly one place, [`HeapLeaf::preimage`] ([`HEAP_LEAF_ARITY`]
+//! felts). The differential test
+//! `circuit/tests/heap_root_cell_circuit_differential.rs` pins the scheme against
+//! an independently re-derived IMT tree and pins the schema itself.
 //!
 //! ## Phase A scope
 //!
@@ -57,9 +76,39 @@ pub const SENTINEL_MAX: BabyBear = BabyBear(2013265920);
 
 /// Tree depth for the canonical heap tree. Matches
 /// [`crate::cap_root::CAP_TREE_DEPTH`]: a binary tree of depth 16 holds
-/// `2^16 - 2 = 65534` entries (two positions reserved for the MIN/MAX
-/// sentinels). Per-cell heaps never re-rotate the tree in practice.
+/// `2^16 - 1 = 65535` real entries — ONE position is reserved for the MIN
+/// sentinel leaf ([`HEAP_SENTINEL_LEAVES`]; the cap tree reserves TWO, and its
+/// real capacity is correspondingly `2^16 - 2`). Per-cell heaps never re-rotate
+/// the tree in practice. Boundary-pinned by
+/// `circuit/tests/tree_capacity_guard.rs`.
 pub const HEAP_TREE_DEPTH: usize = 16;
+
+/// **THE HEAP LEAF ARITY** — the number of felts in the committed heap-leaf digest
+/// preimage ([`HeapLeaf::preimage`]): `[addr, value, next_addr]`.
+///
+/// This is a SCHEMA PIN, not a convenience constant. The arity moved 2 → 3 when the
+/// heap tree became an indexed Merkle tree (`919b2b0b8d`, 2026-07-12) and the MAX
+/// sentinel LEAF was retired in favour of the terminal `next_addr` pointer. Every
+/// consumer that had TRANSCRIBED the old shape rather than deriving it silently
+/// stopped describing the deployed tree. Anything that reconstructs a heap-leaf
+/// digest outside this module MUST fold [`HeapLeaf::preimage`] (or declare its
+/// columns at this arity, as `descriptor_ir2::map_leaf_input_cols` does) so a future
+/// schema move is a compile/pin failure rather than a silent divergence.
+pub const HEAP_LEAF_ARITY: usize = 3;
+
+/// **THE HEAP SENTINEL OCCUPANCY** — how many SENTINEL leaves the heap-tree builders
+/// actually store: ONE, the MIN sentinel `{MIN, 0, MAX}` (`min_sentinel_leaf`).
+///
+/// The second schema pin of the same 2026-07-12 IMT retirement. The MAX sentinel is
+/// NOT a stored leaf; it survives only as the terminal `next_addr` pointer of the
+/// largest stored leaf. Two consequences that consumers got wrong by transcription:
+///
+///   * real capacity is `2^depth - 1`, not `2^depth - 2` (the cap/fields trees, which
+///     DO store both sentinels, keep the `- 2` figure);
+///   * the stored digest prefix no longer ends in a fixed non-pad sentinel digest, so
+///     a trailing pad run is reachable in principle — closed structurally by the
+///     `addr < next_addr` guard in `relink_next_addrs`, not by occupancy.
+pub const HEAP_SENTINEL_LEAVES: usize = 1;
 
 /// The heap tree's internal node hash: `hash_fact(l, [r])` — the SAME node hash
 /// [`CanonicalHeapTree::new`] folds with and the witness paths recompose with.
@@ -216,13 +265,36 @@ impl HeapLeaf {
         }
     }
 
-    /// The arity-3 Poseidon2 IMT leaf digest `hash[addr, value, next_addr]`.
-    /// This is the value the sorted Merkle tree stores at the leaf position; the
-    /// leaf is *placed* by its `addr` ordering, and the `next_addr` pointer binds
-    /// the linked chain into the commitment (the Lean `imtLeafHash`, CR-injective
-    /// on all three fields — `imtLeafHash_injective`).
+    /// **THE ONE PLACE THE HEAP LEAF SCHEMA IS WRITTEN**: the ordered digest
+    /// preimage `[addr, value, next_addr]`, [`HEAP_LEAF_ARITY`] felts (the Lean
+    /// `IndexedMerkleTree.imtLeafInput`).
+    ///
+    /// Both committed digests fold EXACTLY this — the lossy 1-felt
+    /// [`HeapLeaf::digest`] and the faithful 8-felt [`HeapLeaf::digest8`] — and the
+    /// deployed AIR declares the SAME order and arity as trace columns
+    /// (`descriptor_ir2::map_leaf_input_cols` = `[MAP_KEY, value_col, MAP_NEXT]`).
+    /// A verifier reconstructing a leaf outside this module folds this, so it cannot
+    /// transcribe a stale shape: `hash_many(&leaf.preimage())` is the 1-felt digest
+    /// by construction, whatever the schema becomes.
+    pub fn preimage(&self) -> [BabyBear; HEAP_LEAF_ARITY] {
+        [self.addr, self.value, self.next_addr]
+    }
+
+    /// The arity-3 Poseidon2 IMT leaf digest `hash[addr, value, next_addr]` — the
+    /// [`HeapLeaf::preimage`] absorbed by `hash_many`. This is the value the sorted
+    /// Merkle tree stores at the leaf position; the leaf is *placed* by its `addr`
+    /// ordering, and the `next_addr` pointer binds the linked chain into the
+    /// commitment (the Lean `imtLeafHash`, CR-injective on all three fields —
+    /// `imtLeafHash_injective`).
+    ///
+    /// ⚠ `next_addr` is the SUCCESSOR's address, installed by `relink_next_addrs`
+    /// when the tree is built — NOT the [`SENTINEL_MAX`] that [`HeapLeaf::entry`]
+    /// seeds. Recomputing this digest from an UNLINKED `HeapLeaf::entry` reproduces
+    /// the committed digest only for the largest-addressed leaf; a membership
+    /// verifier must be handed the committed pointer (see
+    /// `CanonicalHeapTree::sorted_leaves`).
     pub fn digest(&self) -> BabyBear {
-        hash_many(&[self.addr, self.value, self.next_addr])
+        hash_many(&self.preimage())
     }
 }
 
@@ -292,7 +364,9 @@ fn relink_next_addrs(leaves: &mut [HeapLeaf]) {
 
 /// The canonical heap tree: a sorted binary Poseidon2 Merkle tree over the
 /// heap entries, keyed by `addr` and sentinel-bracketed. Mirrors
-/// [`crate::cap_root::CanonicalCapTree`] with the generic 2-field leaf.
+/// [`crate::cap_root::CanonicalCapTree`] with the generic arity-3 IMT leaf
+/// ([`HEAP_LEAF_ARITY`]) and ONE stored sentinel ([`HEAP_SENTINEL_LEAVES`], vs the cap
+/// tree's two).
 #[derive(Clone, Debug)]
 pub struct CanonicalHeapTree {
     /// All levels, bottom-up, stored **sparsely** as the non-empty PREFIX of
@@ -316,10 +390,10 @@ pub struct CanonicalHeapTree {
 impl CanonicalHeapTree {
     /// Build the canonical heap tree from a cell's heap entries.
     ///
-    /// Sorts the leaves by `addr`, brackets with the MIN/MAX sentinels,
-    /// deduplicates by key (the executor's `Heap.set` is insert-or-update, so
-    /// duplicate addresses never occur; belt-and-suspenders), then builds the
-    /// padded binary tree.
+    /// Prepends the single MIN sentinel ([`HEAP_SENTINEL_LEAVES`]), sorts the
+    /// leaves by `addr`, deduplicates by key (the executor's `Heap.set` is
+    /// insert-or-update, so duplicate addresses never occur; belt-and-suspenders),
+    /// links the IMT chain, then builds the padded binary tree.
     pub fn new(mut leaves: Vec<HeapLeaf>, depth: usize) -> Self {
         // IMT genesis: the SINGLE MIN sentinel `{MIN, 0, MAX}` (points MIN → MAX).
         // The MAX sentinel is no longer a separate sorted leaf — it is the terminal
@@ -332,8 +406,9 @@ impl CanonicalHeapTree {
         relink_next_addrs(&mut leaves);
 
         let capacity = 1usize << depth;
-        // The heap must fit (minus the two sentinels). Fail loudly rather
-        // than silently truncate.
+        // The heap must fit (minus the ONE MIN sentinel — HEAP_SENTINEL_LEAVES; the
+        // MAX sentinel is a pointer, not a position). Fail loudly rather than
+        // silently truncate.
         assert!(
             leaves.len() <= capacity,
             "heap ({} entries incl. sentinels) exceeds tree capacity 2^{depth}",
@@ -397,8 +472,8 @@ impl CanonicalHeapTree {
     }
 
     /// The Merkle root. `levels[depth]` always holds exactly the single root
-    /// node (the two sentinels guarantee `2 <= n <= 2^depth`, so the top-level
-    /// prefix length is `ceil(n / 2^depth) == 1`).
+    /// node (the MIN sentinel guarantees `1 <= n <= 2^depth`, and halving a
+    /// non-empty prefix `depth` times with `div_ceil` lands on length 1).
     pub fn root(&self) -> BabyBear {
         self.node(self.depth, 0)
     }
@@ -700,15 +775,16 @@ pub fn heap_node8(
 }
 
 impl HeapLeaf {
-    /// The native 8-felt leaf digest: the SINGLE arity-2 chip absorb of
-    /// `[addr, value]`, squeezing ALL 8 output lanes (Phase H-HEAP-8), byte-
-    /// identical to the IR-v2 Poseidon2 chip's `BUS_P2` leaf absorb
-    /// (`descriptor_ir2` `chip_absorb_tuple([addr, value], out0, lanes 1..7)`).
-    /// Lane 0 equals the lossy [`HeapLeaf::digest`] (`hash_many[addr, value]` is
-    /// the same permutation's out0); lanes 1..7 are the faithful completion the
-    /// 1-felt chain dropped. Twin of [`crate::cap_root::CapLeaf::digest`].
+    /// The native 8-felt leaf digest: the SINGLE arity-[`HEAP_LEAF_ARITY`] chip
+    /// absorb of [`HeapLeaf::preimage`] (`[addr, value, next_addr]`), squeezing ALL
+    /// 8 output lanes (Phase H-HEAP-8), byte-identical to the IR-v2 Poseidon2 chip's
+    /// `BUS_P2` leaf absorb (`descriptor_ir2` `chip_absorb_tuple` over
+    /// `map_leaf_input_cols`, out0 + lanes 1..7). Lane 0 equals the lossy
+    /// [`HeapLeaf::digest`] (`hash_many` of the same preimage is the same
+    /// permutation's out0); lanes 1..7 are the faithful completion the 1-felt chain
+    /// dropped. Twin of [`crate::cap_root::CapLeaf::digest`].
     pub fn digest8(&self) -> [BabyBear; HEAP_DIGEST_W] {
-        crate::descriptor_ir2::chip_absorb_all_lanes(3, &[self.addr, self.value, self.next_addr])
+        crate::descriptor_ir2::chip_absorb_all_lanes(HEAP_LEAF_ARITY, &self.preimage())
     }
 }
 
@@ -804,7 +880,7 @@ pub fn compute_canonical_heap_root_8_entries(
     )
 }
 
-/// The faithful 8-felt root of the EMPTY heap (only the two sentinels). The
+/// The faithful 8-felt root of the EMPTY heap (only the MIN sentinel). The
 /// 8-felt twin of [`empty_heap_root`]; the value the rotated commit absorbs for
 /// a cell with no heap entries.
 pub fn empty_heap_root_8() -> Faithful8 {
@@ -834,7 +910,7 @@ pub fn recompose_membership_8(
     cur
 }
 
-/// The canonical heap root of the EMPTY heap (only the two sentinels). This
+/// The canonical heap root of the EMPTY heap (only the MIN sentinel). This
 /// is the value a fresh cell's `heap_root` register seeds with. Deterministic
 /// and cell-independent.
 pub fn empty_heap_root() -> BabyBear {

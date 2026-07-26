@@ -43,8 +43,10 @@
 //!   the canonical `state_commitment` absorbs) and inclusion proofs fold to it in that
 //!   scheme — not a bespoke sha256 tree.
 //! * **STAND-IN:** the `/var` LEAF MAPPING — a grain's `/var` is string-keyed, so each
-//!   entry is a heap leaf `{ addr = Poseidon2(key), value = Poseidon2(bytes) }` rather
-//!   than the kernel's `(collection_id, key) → FieldElement` leaf; the tree scheme is
+//!   entry is a heap leaf `{ addr = Poseidon2(key), value = Poseidon2(bytes), next_addr }`
+//!   rather than the kernel's `(collection_id, key) → FieldElement` leaf (`next_addr` is
+//!   the sorted-successor IMT pointer the tree builder links, part of the committed
+//!   arity-3 leaf digest in both families); the tree scheme is
 //!   identical, only the entry shape differs (the real committed mind lives in
 //!   `grain-fork`'s `Grain`, whose heap IS a `dregg_cell::Cell`). The PUBLISH of the
 //!   heap-root as a distinct fetchable ledger value (its membership in the whole-cell

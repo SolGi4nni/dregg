@@ -1013,14 +1013,28 @@ rest hash), the wire face `FullActionA.heapWriteA` routes through the SAME cavea
 `write`-verb step every register write uses (`Substrate.HeapKernel.heapStepGuardedW`:
 authority + membership + lifecycle gates, fail-closed, balance-neutral exactly), and the
 ONE deployed heap-root scheme is `circuit::heap_root` (the cap-root generalization with the
-generic `hash[addr, value]` leaf; `heap_root_cell_circuit_differential.rs` pins it against
-an independent rebuild, and the Lean gadget `Emit.EffectVmEmitHeapRoot` recomputes the SAME
-arity-2 address/leaf images in-row with `heapRoot_binds_write` as the anti-ghost).
+arity-3 indexed-Merkle-tree leaf `hash[addr, value, next_addr]`;
+`heap_root_cell_circuit_differential.rs` pins it against an independent rebuild AND pins the
+leaf schema itself, and the Lean gadget `Emit.EffectVmEmitHeapRoot` recomputes the SAME
+arity-2 ADDRESS image in-row with `heapRoot_binds_write` as the anti-ghost).
+
+⚑ STATED AT CURRENT RESOLUTION — the LEAF half of that sentence is NOT bound. On 2026-07-12
+(`919b2b0b8d`) `heap_root.rs` moved to an indexed Merkle tree: the leaf went arity 2 → 3 with
+the successor POINTER inside the digest, and the stored MAX sentinel LEAF was retired ("it
+survives only as the terminal `next_addr` pointer"). `EffectVmEmitHeapRoot.siteHeapLeaf` and
+`Substrate.Heap.leafOf` were NOT moved with it, and under the CR floor an arity-3 IMT root is
+NEVER an arity-2 `mapRoot` (`Circuit.MapReconcileImtRepoint.imtRoot_ne_mapRoot`) — so the Lean
+gadget does not describe the leaf the deployed tree commits, `ReconcileGatesAt` is empty at
+every deployed pre-root, and `MapOp.holdsAt` is refuted there. What IS bound today: the
+address image, and the leaf image against the DEPLOYED AIR's declared columns
+(`descriptor_ir2::map_leaf_input_cols`), by the Rust differential. The denotation cutover is
+`docs/DESIGN-mapop-denotation-move.md`; do not read this paragraph as covering the leaf until
+it lands.
 
 What the wire carries vs what the circuit forces, stated exactly (the cap Phase-A staging):
 the turn carries `(addr, value, newRoot)` with `addr`/`newRoot` EXECUTOR-COMPUTED digests.
 `heapStepGuardedW_honest` proves the honest instance IS the model step (`heapStepGuarded`);
-the gadget forces `addr = hash[coll,key]`, `leaf = hash[addr,value]`, and the prepend
+the gadget forces `addr = hash[coll,key]`, its (retired-shape) `leaf = hash[addr,value]`, and the prepend
 advance in-row — but the DEPLOYED EffectVM row does not yet carry a `heap_root` register
 column of its own, the PI vector does not yet bind it, and the genuine sorted-TREE-update
 gates (membership-open / leaf-update / bracketed insert, the revocation-circuit shape) are

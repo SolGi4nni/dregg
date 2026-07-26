@@ -799,22 +799,33 @@ pub fn produce_external_history_envelope(k: usize, step: u64) -> Result<String, 
 /// cell's committed `root`, re-witnessing nothing.
 ///
 /// Reproduces the canonical heap path fold (`dregg_circuit::heap_root`): the leaf is
-/// the arity-2 Poseidon2 digest `hash[heap_addr(coll, key), value]`; it folds up a
-/// depth-`HEAP_TREE_DEPTH` tree against `siblings_csv` per `directions_csv` (bit `0`
-/// = the running node is the left child → `hash_fact(cur, sib)`; `1` = right →
-/// `hash_fact(sib, cur)`), and the recomputed root must equal `root`.
+/// the arity-3 indexed-Merkle-tree Poseidon2 digest
+/// `hash[heap_addr(coll, key), value, next_addr]` (`HeapLeaf::preimage` — the ONE
+/// place that schema is written); it folds up a depth-`HEAP_TREE_DEPTH` tree against
+/// `siblings_csv` per `directions_csv` (bit `0` = the running node is the left child
+/// → `hash_fact(cur, sib)`; `1` = right → `hash_fact(sib, cur)`), and the recomputed
+/// root must equal `root`.
 ///
-/// All field elements are decimal `BabyBear` felts (`< 2^31`): `root`/`value`/each
-/// sibling. `siblings_csv` and `directions_csv` are comma-separated, each of length
-/// exactly `HEAP_TREE_DEPTH` (16) — a wrong length is REFUSED (fail-closed). A
-/// tampered value, a wrong `(coll, key)`, or a forged path recomputes a different
-/// root and returns `false`.
+/// `next_addr` is the IMT POINTER committed inside the leaf: the address of the
+/// next-larger present slot, or the terminal `SENTINEL_MAX` for the largest one. It
+/// is part of the committed leaf, so an opening MUST carry it — the heap tree
+/// retired its stored MAX sentinel leaf in favour of this pointer (2026-07-12,
+/// `919b2b0b8d`), and a verifier that assumes `SENTINEL_MAX` can only ever check the
+/// largest slot in the heap. The pointer is not secret: it is the same `MAP_NEXT`
+/// felt the deployed AIR absorbs, and the server already reveals the sibling path.
+///
+/// All field elements are decimal `BabyBear` felts (`< 2^31`): `root`/`value`/
+/// `next_addr`/each sibling. `siblings_csv` and `directions_csv` are comma-separated,
+/// each of length exactly `HEAP_TREE_DEPTH` (16) — a wrong length is REFUSED
+/// (fail-closed). A tampered value, a wrong `(coll, key)`, a wrong pointer, or a
+/// forged path recomputes a different root and returns `false`.
 #[wasm_bindgen]
 pub fn verify_slot_opening(
     root: u32,
     coll: u32,
     key: u32,
     value: u32,
+    next_addr: u32,
     siblings_csv: &str,
     directions_csv: &str,
 ) -> bool {
@@ -823,18 +834,21 @@ pub fn verify_slot_opening(
         .into_iter()
         .map(|d| (d & 1) as u8)
         .collect();
-    verify_slot_opening_core(root, coll, key, value, &siblings, &directions)
+    verify_slot_opening_core(root, coll, key, value, next_addr, &siblings, &directions)
 }
 
 /// The pure path-fold verify the `#[wasm_bindgen]` wrapper drives (host-testable: no
-/// `JsValue`). Folds the (coll, key, value) leaf up the depth-`HEAP_TREE_DEPTH` tree
-/// against the opening and compares the recomputed root to `root`. Fails closed on a
-/// wrong-length path.
+/// `JsValue`). Folds the `(coll, key, value, next_addr)` IMT leaf up the
+/// depth-`HEAP_TREE_DEPTH` tree against the opening and compares the recomputed root
+/// to `root`. Fails closed on a wrong-length path and on a pointer that no committed
+/// leaf could carry (`addr >= next_addr` — the `ImtSorted` well-linked invariant the
+/// tree builder itself refuses to violate).
 fn verify_slot_opening_core(
     root: u32,
     coll: u32,
     key: u32,
     value: u32,
+    next_addr: u32,
     siblings: &[u32],
     directions: &[u8],
 ) -> bool {
@@ -845,10 +859,19 @@ fn verify_slot_opening_core(
     if siblings.len() != HEAP_TREE_DEPTH || directions.len() != HEAP_TREE_DEPTH {
         return false;
     }
-    let leaf = HeapLeaf::entry(
-        heap_addr(BabyBear::new(coll), BabyBear::new(key)),
-        BabyBear::new(value),
-    );
+    let addr = heap_addr(BabyBear::new(coll), BabyBear::new(key));
+    let next = BabyBear::new(next_addr);
+    if addr.as_u32() >= next.as_u32() {
+        return false;
+    }
+    // The COMMITTED leaf: the pointer rides inside the digest. `HeapLeaf::entry`
+    // seeds an UNLINKED pointer (`SENTINEL_MAX`), so the pointer is set explicitly
+    // from the opening — never assumed.
+    let leaf = HeapLeaf {
+        addr,
+        value: BabyBear::new(value),
+        next_addr: next,
+    };
     let mut cur = leaf.digest();
     for level in 0..HEAP_TREE_DEPTH {
         let sib = BabyBear::new(siblings[level]);
@@ -1137,8 +1160,9 @@ mod tests {
         use dregg_circuit::field::BabyBear;
         use dregg_circuit::heap_root::{CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf, heap_addr};
 
-        // A small umem heap: three (coll, key) → value entries.
-        let entries: [((u32, u32), u32); 3] = [((1, 1), 10), ((1, 2), 77), ((2, 1), 30)];
+        // A small umem heap: four (coll, key) → value entries.
+        let entries: [((u32, u32), u32); 4] =
+            [((1, 1), 10), ((1, 2), 77), ((2, 1), 30), ((7, 99), 4242)];
         let leaves: Vec<HeapLeaf> = entries
             .iter()
             .map(|((c, k), v)| {
@@ -1151,30 +1175,62 @@ mod tests {
         let tree = CanonicalHeapTree::new(leaves, HEAP_TREE_DEPTH);
         let root = tree.root().as_u32();
 
-        // Open slot (1, 2) → 77: a real membership proof off the committed tree.
-        let addr = heap_addr(BabyBear::new(1), BabyBear::new(2));
+        // NON-VACUITY: open an INTERIOR slot — the entry with the SMALLEST address,
+        // which with >= 2 real entries is never the terminal one. The leaf digest is
+        // the arity-3 IMT `hash[addr, value, next_addr]`, so its pointer is a real
+        // successor address, not the terminal `SENTINEL_MAX`; opening the terminal
+        // slot would make the pointer leg vacuous and this test could not tell the
+        // deployed IMT leaf from the retired arity-2 leaf. (Addresses are Poseidon2
+        // images, so which fixture entry is smallest is not readable off the source
+        // — it is selected here rather than hard-coded, and asserted interior.)
+        let ((oc, ok), ov) = *entries
+            .iter()
+            .min_by_key(|((c, k), _)| heap_addr(BabyBear::new(*c), BabyBear::new(*k)).as_u32())
+            .expect("non-empty fixture");
+        let addr = heap_addr(BabyBear::new(oc), BabyBear::new(ok));
         let pos = tree
             .position_of(addr)
             .expect("the slot is present in the heap");
+        let next = tree.sorted_leaves()[pos].next_addr.as_u32();
         let (sibs, dirs) = tree.prove_membership(pos).expect("membership proof");
         let sibs_u32: Vec<u32> = sibs.iter().map(|s| s.as_u32()).collect();
+        assert_ne!(
+            next,
+            dregg_circuit::heap_root::SENTINEL_MAX.as_u32(),
+            "fixture must open an INTERIOR slot (a terminal pointer makes the pointer leg vacuous)"
+        );
 
         // A real opening checks; a tampered value fails; a wrong slot fails.
         assert!(
-            verify_slot_opening_core(root, 1, 2, 77, &sibs_u32, &dirs),
+            verify_slot_opening_core(root, oc, ok, ov, next, &sibs_u32, &dirs),
             "a genuine opening of the committed value verifies"
         );
         assert!(
-            !verify_slot_opening_core(root, 1, 2, 78, &sibs_u32, &dirs),
+            !verify_slot_opening_core(root, oc, ok, ov + 1, next, &sibs_u32, &dirs),
             "a tampered value recomputes a different root and is refused"
         );
         assert!(
-            !verify_slot_opening_core(root, 9, 9, 77, &sibs_u32, &dirs),
+            !verify_slot_opening_core(root, 9, 9, ov, next, &sibs_u32, &dirs),
             "the opening is bound to its (coll, key) — a wrong slot is refused"
+        );
+        // THE POINTER IS COMMITTED: the terminal SENTINEL_MAX (what an unlinked
+        // `HeapLeaf::entry` seeds, and what the pre-IMT verifier assumed) is REFUSED
+        // at an interior slot. This is the tooth for the 2026-07-12 IMT retirement.
+        assert!(
+            !verify_slot_opening_core(
+                root,
+                oc,
+                ok,
+                ov,
+                dregg_circuit::heap_root::SENTINEL_MAX.as_u32(),
+                &sibs_u32,
+                &dirs
+            ),
+            "the IMT pointer binds: an unlinked (SENTINEL_MAX) leaf is refused at an interior slot"
         );
         // A wrong-length path fails closed (no silent pad).
         assert!(
-            !verify_slot_opening_core(root, 1, 2, 77, &sibs_u32[..3], &dirs),
+            !verify_slot_opening_core(root, oc, ok, ov, next, &sibs_u32[..3], &dirs),
             "a short path is refused, never padded"
         );
 
@@ -1190,11 +1246,11 @@ mod tests {
             .collect::<Vec<_>>()
             .join(",");
         assert!(
-            verify_slot_opening(root, 1, 2, 77, &sibs_csv, &dirs_csv),
+            verify_slot_opening(root, oc, ok, ov, next, &sibs_csv, &dirs_csv),
             "the CSV wrapper verifies a real opening"
         );
         assert!(
-            !verify_slot_opening(root, 1, 2, 78, &sibs_csv, &dirs_csv),
+            !verify_slot_opening(root, oc, ok, ov + 1, next, &sibs_csv, &dirs_csv),
             "the CSV wrapper refuses a tampered value"
         );
     }

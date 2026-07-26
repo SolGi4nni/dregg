@@ -12,12 +12,17 @@
 //!     addr     = hash[ COLL(70), KEY(71) ]               → HEAP_ADDR(102)   (the kept address site)
 //!     newRoot  = writesTo( HEAP_ROOT_BEFORE(65), addr=HEAP_ADDR(102), value=VALUE(72) )
 //!                                                        → HEAP_ROOT_AFTER(87)
-//!   So `HEAP_ROOT_AFTER` is the genuine binary-Merkle sorted insert-or-update of `(addr, value)`
-//!   into the heap behind the committed old root — `mapRoot (Heap.set h addr v)` — opened against the
+//!   So `HEAP_ROOT_AFTER` is the genuine binary-Merkle sorted insert-or-update of the arity-3 IMT
+//!   leaf `(addr, value, next_addr)` into the heap behind the committed old root, opened against the
 //!   committed root via a membership path (`heap_root.rs` `CanonicalHeapTree::update_witness`). A root
 //!   that is content-mismatched (the wrong sorted-tree update) has NO satisfying `update_witness`. This
 //!   is the deployed twin of the Lean `RotatedKernelRefinementExercise.heapWrite_splice_forced` /
 //!   `heapWrite_sat_rejects_wrong_splice_root` (the census worry, CLOSED for the genuine splice).
+//!   ⚠ NOT `mapRoot (Heap.set h addr v)`, which this header used to claim: the deployed tree became
+//!   an IMT on 2026-07-12 (`919b2b0b8d`) and under the CR floor an arity-3 IMT root is NEVER an
+//!   arity-2 `mapRoot` (`Dregg2.Circuit.MapReconcileImtRepoint.imtRoot_ne_mapRoot`). What this file
+//!   pins is the DEPLOYED splice; the Lean denotation cutover is
+//!   `docs/DESIGN-mapop-denotation-move.md`.
 //!
 //! The accumulator-advance site (`siteHeapRootAdvance`, `new_root = hash[leaf, old_root]`) is
 //! REPLACED by the splice (col 87 cannot be doubly pinned): the published root is now bound to the
