@@ -163,8 +163,8 @@ PUSH_TRIGGERED_EXPLICIT: dict[tuple[str, str], str] = {
 # Enabled by a workflow that is NOT push-triggered. Recorded so that their ABSENCE from T1 is a
 # decision someone made and can be argued with, rather than a thing nobody noticed.
 MANUAL_ONLY_EXPLICIT: dict[tuple[str, str], str] = {
-    ("starbridge-web", "gpui-web"): "pages.yml:123 — workflow_dispatch ONLY, never fires on a push",
-    ("deos-view", "web"): "pages.yml:157 — workflow_dispatch ONLY (also default-activated, so T1 anyway)",
+    ("starbridge-web", "gpui-web"): "pages-wasm.yml — weekly schedule + push:tags[v*] + manual (NOT push-triggered, so not T1); was pages.yml workflow_dispatch-only until the 2026-07-26 fast/heavy split",
+    ("deos-view", "web"): "pages-wasm.yml — weekly schedule + push:tags[v*] + manual (NOT push-triggered, so not T1); was pages.yml workflow_dispatch-only until the 2026-07-26 fast/heavy split",
     ("dregg-sdk-py", "kernel"): "publish-sdk-py.yml:8 — named in a COMMENT; no step passes it",
 }
 
