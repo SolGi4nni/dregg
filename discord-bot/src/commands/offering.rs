@@ -1667,7 +1667,12 @@ fn private_act_plaque<O: DiscordOffering>(embed: CreateEmbed) -> CreateEmbed {
              for every player.\n\n\
              This private copy does not update itself. To get a fresh one — now, or after you \
              dismiss this — run `{status}`. That only reads; it never opens, replaces or ends the \
-             game in this channel.",
+             game in this channel.\n\n\
+             ⚑ **How to tell this copy has gone stale.** It was rendered at the turn number printed \
+             in the board above THIS message; the shared board in the channel is edited on every \
+             move and always shows the current one. If the two differ, the opponent has moved since \
+             — your hidden state has changed and what you are reading here is history. Run \
+             `{status}` before you decide anything on it.",
             title = O::TITLE,
             status = O::status_hint(),
         ),

@@ -159,6 +159,6 @@ pub use sweeper::{
 pub use treasury::{InMemoryTreasuryStore, Treasury, TreasuryError, TreasuryStore};
 pub use watcher::{
     AccountFetcher, DEFAULT_TRANSFER_HISTORY_LIMIT, FetchedAccount, MockChain, MockWatcher,
-    ObservedTransfer, PaymentReceived, PaymentRef, SignatureWatcher, SolanaWatcher,
-    TransferFetcher, WatchError, Watcher,
+    ObservedTransfer, PaymentReceived, PaymentRef, SignatureWatcher, SolanaWatcher, TransferFetcher,
+    WatchError, Watcher,
 };

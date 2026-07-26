@@ -636,6 +636,18 @@ impl Engine {
         &self.inventory[p.idx()]
     }
 
+    /// **The favor `p` has sealed face down**, if they have spent their Secret — and `None` once
+    /// [`Engine::score`] has turned it up onto their side (the reveal `take`s it).
+    ///
+    /// ⚑ THIS IS OWNER-ONLY MATERIAL and a caller must gate it on the viewer holding `p`. It exists
+    /// because a seat that sealed a favor could no longer see WHICH favor it was: the card leaves
+    /// `hand`, so the rendered hand drops it, and the surface reported only that a Secret had been
+    /// spent. A player therefore lost track of one of their own ten favors — the one that decides a
+    /// close lane at the reveal — for the rest of the round.
+    pub fn secret_card(&self, p: Player) -> Option<u8> {
+        self.secret[p.idx()]
+    }
+
     fn board_count(&self, p: Player) -> u64 {
         (0..N_GUILDS).map(|g| self.score[g][p.idx()]).sum()
     }

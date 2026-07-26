@@ -870,10 +870,7 @@ mod tests {
                 continue;
             }
             let id = SessionId::new(format!("verbs-{key}"));
-            if host
-                .open_session(key, id.clone(), SessionConfig::with_seed(5))
-                .is_err()
-            {
+            if host.open_session(key, id.clone(), SessionConfig::with_seed(5)).is_err() {
                 // An offering may refuse its own deploy for its own reasons (the live Descent day
                 // binding, for one). It then advertises nothing to check against, and saying so is
                 // better than passing quietly.
@@ -956,9 +953,8 @@ mod tests {
         // …and the VERDICT bites, replayed on the exact history this gate was built for: `grain`'s
         // shipped title against `GrainOffering`'s real one-verb vocabulary. Without this the whole
         // test could pass on a `unbacked` that had quietly started returning nothing.
-        let grain_as_shipped = advertised_verbs(
-            "DreggNet Grain — metered work under a spend budget (request · grant)",
-        );
+        let grain_as_shipped =
+            advertised_verbs("DreggNet Grain — metered work under a spend budget (request · grant)");
         assert_eq!(grain_as_shipped, vec!["request", "grant"]);
         let grain_reality: std::collections::BTreeSet<String> =
             ["act".to_string()].into_iter().collect();

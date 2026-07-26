@@ -50,6 +50,7 @@ use crate::reference::{
     ActionKind, Decision, Engine, INFLUENCE, N_GUILDS, PendingOffer, Player, Projection,
     ROUND_TURNS, decision_method,
 };
+use crate::rules::Verdict;
 
 /// The default round seed when a [`SessionConfig`] pins none.
 const DEFAULT_SEED: u64 = 0xD2E9;
@@ -117,6 +118,33 @@ pub struct TugSession {
     /// deliberately action-level rather than a trusted projection snapshot:
     /// [`Offering::verify`] replays it through a fresh engine and executor.
     history: Vec<LandedInput>,
+    /// ⚑⚑ **THE RUNNING STANDING — the arc this game did not have.**
+    ///
+    /// `Projection::charm` and `Projection::guilds_controlled` are written by ONE thing,
+    /// [`Engine::score`], and they are therefore `0 / 0` for every one of the twelve turns of a live
+    /// round. The surface printed those two fields as the scoreboard, so a player pressed twelve
+    /// times and read `Influence A:0 / B:0 · lanes led A:0 / B:0` every single time, while the lane
+    /// table plainly showed one seat leading four lanes. **The win condition was phrased in a number
+    /// that stayed dead until the final press.**
+    ///
+    /// This is that standing, LIVE: [`crate::rules::adjudicate`] over the per-`(seat, lane)`
+    /// placement tallies as they stand right now. It is a READ, not a new rule — the Lean theorem
+    /// `terminal_rule_reads_only_the_tallies` says the terminal rule is a function of exactly those
+    /// tallies and nothing else, which is the hypothesis `adjudicate`'s wire already discharges. So
+    /// the running influence/lanes a player tracks and the number that finally decides the round are
+    /// the SAME function of the SAME object, evaluated at two times.
+    ///
+    /// What it deliberately does NOT include, and what the plaque says out loud: each seat's
+    /// face-down Secret (one favor, which joins its own side at the reveal — `secret_is_scored`) and
+    /// any favor sitting in escrow. Folding a Secret in is impossible without naming its lane, which
+    /// is precisely the hidden thing; so the running standing is the standing ON PLACED FAVORS, and
+    /// it is labelled as that everywhere it is shown.
+    ///
+    /// Refreshed on every LANDED turn (never during a render): a render must not depend on the Lean
+    /// archive being linked, and `advance` is already a path that calls the oracle. `None` = the
+    /// ruleset could not be asked, which every reader of it reports rather than substituting a
+    /// Rust-computed guess.
+    standing: Option<Verdict>,
 }
 
 /// The terminal owner-only material handed to the post-match fold. It is unavailable while a
@@ -195,17 +223,98 @@ impl TugSession {
         self.runtime.read_projection()
     }
 
+    /// **The standing to SHOW** — `(influence, lanes led)` per seat.
+    ///
+    /// Once the round has scored these are the committed terminal registers, which are the same
+    /// oracle's answer over the tallies WITH the Secrets turned up. While the round runs they are
+    /// [`Self::standing`], the same oracle over the tallies as placed. `None` only when the ruleset
+    /// could not be asked at all — reported as that, never as zeros, because zeros are exactly the
+    /// lie this field was added to stop telling.
+    fn shown_standing(&self, proj: &Projection) -> Option<([u64; 2], [u64; 2])> {
+        if proj.scored == 1 {
+            return Some((proj.charm, proj.guilds_controlled));
+        }
+        self.standing.map(|v| (v.charm, v.guilds))
+    }
+
     /// The guild-lane table: one row per guild — its influence WEIGHT as a [`ViewNode::Pill`],
-    /// the two placement counters (A / B), and a control [`ViewNode::Icon`] (who leads the lane).
+    /// the two placement counters (A / B), a control [`ViewNode::Icon`] (who leads the lane), and
+    /// ⚑ **THE READ** — how many of that lane's favors are still unaccounted for.
     /// ⚑ One `ViewNode::Table` and no more: `surface/tests.rs::guild_lanes_and_action_menu_render`
     /// counts EVERY table in the tree and expects exactly [`N_GUILDS`] rows, so any other tabular
     /// block on this surface is a [`ViewNode::List`] of [`ViewNode::Row`]s instead.
-    fn guild_lanes(&self, proj: &Projection) -> ViewNode {
+    ///
+    /// ## The read cell, and why it lives HERE
+    ///
+    /// A player already holds everything needed to reason about the other hand: the deck's
+    /// composition is PUBLIC (`INFLUENCE[g]` copies of lane `g`, 21 favors and no others), every
+    /// placement is public, a cut on the table is face up, and their own hand and own sealed favor
+    /// are theirs to see. **The surface offered zero support for using any of it**, so the deduction
+    /// was pen-and-paper work nobody does in a chat client and the game played as guesswork.
+    ///
+    /// It is a cell on THIS table rather than a second table because a second table would have said
+    /// `placed A 1 · B 0` and `pays 3` all over again — and a page that prints the same numbers twice
+    /// in two places is a page a reader stops trusting. It also has to fit: the rendered surface is
+    /// within a few hundred characters of Telegram's 4096-character ceiling, over which an
+    /// interactive send is REFUSED outright (`dreggnet_telegram::api::TELEGRAM_TEXT_LIMIT`), and of
+    /// the Discord embed-description clamp that silently drops the tail
+    /// (`discord-bot`'s `clamp_description`). Duplicating the lane table would have cost ~450
+    /// characters of that budget to say nothing new.
+    ///
+    /// ## Why it leaks nothing
+    ///
+    /// Everything subtracted is PUBLIC (the lane's copy count, both placement counters, a face-up
+    /// cut) or the VIEWER'S OWN (their current hand, their own Secret — `viewer: None` subtracts
+    /// neither). The remainder is an ANONYMOUS POOL: a favor of that lane in the deck, or the one
+    /// favor removed face down at the deal, or in the other seat's hand, or their Secret, or burnt by
+    /// their Discard — and the cell does not distinguish those, because distinguishing them is
+    /// exactly what the fog forbids. **No card id appears in the cell**, so it cannot name a favor
+    /// the viewer does not hold; `surface::tests::the_read_names_no_favor` asserts that structurally.
+    fn guild_lanes(&self, proj: &Projection, viewer: Option<Player>) -> ViewNode {
+        let escrowed: Vec<u8> = self
+            .engine
+            .pending_offer()
+            .map(|o| o.presented())
+            .unwrap_or_default();
+        let own_hand: Vec<u64> = viewer
+            .map(|s| self.hands[s.idx()].card_ids())
+            .unwrap_or_default();
+        let own_secret = viewer.and_then(|s| self.engine.secret_card(s));
         let mut rows = Vec::with_capacity(N_GUILDS);
         for g in 0..N_GUILDS {
             let a = proj.score[g][0];
             let b = proj.score[g][1];
             let w = INFLUENCE[g] as u64;
+            let in_cut = escrowed
+                .iter()
+                .filter(|c| deck_guild(u64::from(**c)) as usize == g)
+                .count() as u64;
+            let mine = own_hand
+                .iter()
+                .filter(|id| deck_guild(**id) as usize == g)
+                .count() as u64;
+            let sealed =
+                u64::from(own_secret.is_some_and(|c| deck_guild(u64::from(c)) as usize == g));
+            let unseen = w
+                .saturating_sub(a)
+                .saturating_sub(b)
+                .saturating_sub(in_cut)
+                .saturating_sub(mine)
+                .saturating_sub(sealed);
+            // Only the NON-ZERO terms are printed. `you hold 0` on four of seven rows is four rows
+            // of noise, and the page is close enough to both transports' hard ceilings that noise
+            // costs a line somewhere else (see the budget note in [`Self::surface_as`]).
+            let mut read = format!("{w} exist");
+            if in_cut > 0 {
+                read.push_str(&format!(" · {in_cut} in the cut"));
+            }
+            if mine > 0 {
+                read.push_str(&format!(" · you hold {mine}"));
+            }
+            if sealed > 0 {
+                read.push_str(" · 1 you sealed");
+            }
+            read.push_str(&format!(" · {unseen} unseen"));
             // Control: whoever placed more favors leads the lane (a tie is contested). The lane's
             // STANDING is a word, not a letter — `A` in a column of numbers told a reader nothing
             // about whether the lane was won, and a lane's whole job is to say who holds it.
@@ -239,6 +348,10 @@ impl TugSession {
                     slot: None,
                     cases: Vec::<PillCase>::new(),
                 },
+                // THE READ CELL. A lane whose whole supply is accounted for cannot change hands again
+                // except through a cut already on the table — that is the lane to abandon or to
+                // close out NOW, and it was not readable anywhere before.
+                ViewNode::Text(read),
             ]));
         }
         ViewNode::Table(rows)
@@ -261,11 +374,17 @@ impl TugSession {
     /// (a Discard's two favors leave the round and nobody ever scores them). Said out loud, plus the
     /// live 21-favor accounting from [`Self::favor_accounting`], the still scoreboard becomes a
     /// reading of the game instead of a suspected bug.
+    ///
+    /// ⚑ SHORTENED, not softened. Every clause a reader needed is still here and every substring
+    /// `surface::tests::a_sealed_play_leaves_the_lanes_still_and_the_page_says_why` reads is verbatim;
+    /// what went is the restatement. The page is on a hard character budget (see the note in
+    /// [`Self::surface_as`] where the lanes section is built), and prose that says a thing twice is
+    /// the first thing to spend from it.
     fn lane_movement_rule(&self) -> String {
         let pending = match self.engine.pending_offer() {
             Some(offer) => format!(
-                " Right now seat {:?}'s {:?} is sitting in escrow: those favors have left their hand \
-                 and reached NO lane — seat {:?}'s answer is what places them.",
+                "Seat {:?}'s {:?} is in escrow right now — those favors have left their hand and \
+                 reached NO lane; seat {:?}'s answer places them.",
                 offer.proposer,
                 offer.kind(),
                 offer.responder(),
@@ -273,12 +392,9 @@ impl TugSession {
             None => String::new(),
         };
         format!(
-            "⚑ SPENDING AN ACTION DOES NOT MOVE THESE ROWS. Two things do, and only two: the other \
-             seat ANSWERING your Gift or Competition (which is what actually places the favors on \
-             the two sides), and the final REVEAL & SCORE (where every face-down Secret turns up \
-             onto its owner's side). A Secret changes these numbers by nothing until scoring, and a \
-             Discard's two favors leave the round for good — so a still scoreboard right after your \
-             move is the rules working, not a stuck page. The tally below is what moved.{pending}"
+            "⚑ SPENDING AN ACTION DOES NOT MOVE THESE ROWS. Only two things do: the other seat \
+             ANSWERING your cut, and the final REVEAL & SCORE. A Secret changes these numbers by \
+             nothing until scoring; a Discard's two favors leave the round for good.{pending}"
         )
     }
 
@@ -296,9 +412,9 @@ impl TugSession {
         let placed = proj.board[0] + proj.board[1];
         format!(
             "All {total} favors, right now: {held} held or in escrow ({a_hand} · {b_hand}) · \
-             {secrets} face down as Secrets ({a_secret} · {b_secret}), which score at the reveal · \
-             {burnt} burnt by Discards, which nobody will ever score · {placed} placed on the lanes \
-             above ({a_board} · {b_board}) · {deck} still in the deck.",
+             {secrets} face down as Secrets ({a_secret} · {b_secret}), scored at the reveal · \
+             {burnt} burnt by Discards, never scored · {placed} placed on the lanes below \
+             ({a_board} · {b_board}) · {deck} still in the deck.",
             total = crate::reference::DECK_SIZE,
             held = held,
             a_hand = proj.hand[0],
@@ -310,6 +426,104 @@ impl TugSession {
             placed = placed,
             a_board = proj.board[0],
             b_board = proj.board[1],
+            deck = proj.deck,
+        )
+    }
+
+    /// **The row legend, which is also the definition of `unseen`** — one line, because the page has
+    /// no room for two (see the budget note in [`Self::surface_as`]) and a definition beside the
+    /// numbers it defines beats a paragraph three screens away.
+    ///
+    /// `unseen` is a POOL and the wording is careful about it: it is never a claim that the other seat
+    /// HOLDS anything. That distinction is the whole difference between a read and a fog leak.
+    fn lane_row_legend(&self) -> String {
+        format!(
+            "The deck is PUBLIC — {weights} copies for lanes 0..{last}, {total} favors, no others \
+             — so each row ends with what is UNSEEN once the placements, a face-up cut and (yours \
+             only) your own favors come off it. Unseen is a POOL, never a claim: it is in the \
+             deck, was removed at the deal, or is theirs.",
+            weights = (0..N_GUILDS)
+                .map(|g| INFLUENCE[g].to_string())
+                .collect::<Vec<_>>()
+                .join(" "),
+            last = N_GUILDS - 1,
+            total = crate::reference::DECK_SIZE,
+        )
+    }
+
+    /// **What the other seat has SPENT, as an account of favors** — the second half of the read.
+    ///
+    /// Which of the four actions they have burned is already a pill on their seat row; what that
+    /// pill does not say is what it COST them, and the cost is the deduction: a spent Discard means
+    /// two specific favors are gone from the round for good, a spent Secret means exactly one favor
+    /// of theirs is face down and WILL score, and a spent Gift/Competition means favors of theirs
+    /// already landed on the lanes above. Every number here is public.
+    fn opponent_ledger(&self, proj: &Projection, viewer: Player) -> String {
+        let them = viewer.other();
+        let i = them.idx();
+        let spent: Vec<&str> = [
+            (ActionKind::Secret, "Secret"),
+            (ActionKind::Discard, "Discard"),
+            (ActionKind::Gift, "Gift"),
+            (ActionKind::Competition, "Competition"),
+        ]
+        .into_iter()
+        .filter(|(kind, _)| self.engine.used_flag(them, *kind))
+        .map(|(_, name)| name)
+        .collect();
+        let spent_txt = if spent.is_empty() {
+            "nothing yet".to_string()
+        } else {
+            spent.join(", ")
+        };
+        let unspent: Vec<&str> = [
+            (ActionKind::Secret, "Secret (1 favor)"),
+            (ActionKind::Discard, "Discard (2)"),
+            (ActionKind::Gift, "Gift (3)"),
+            (ActionKind::Competition, "Competition (4)"),
+        ]
+        .into_iter()
+        .filter(|(kind, _)| !self.engine.used_flag(them, *kind))
+        .map(|(_, name)| name)
+        .collect();
+        let owed: u64 = [
+            (ActionKind::Secret, 1u64),
+            (ActionKind::Discard, 2),
+            (ActionKind::Gift, 3),
+            (ActionKind::Competition, 4),
+        ]
+        .into_iter()
+        .filter(|(kind, _)| !self.engine.used_flag(them, *kind))
+        .map(|(_, n)| n)
+        .sum();
+        // The BURN, split by whose Discard did it. `proj.oop` is one joint counter (the deal's one
+        // removed favor plus every discard), and handing a player a joint number is what makes them
+        // do the subtraction wrong: two of those favors may be their own. The used-flag is public, so
+        // the split is a read.
+        let burnt_them = if self.engine.used_flag(them, ActionKind::Discard) {
+            2
+        } else {
+            0
+        };
+        let burnt_you = if self.engine.used_flag(viewer, ActionKind::Discard) {
+            2
+        } else {
+            0
+        };
+        format!(
+            "Seat {them:?} has spent {spent_txt}; still owed: {unspent_txt} — {owed} favors they \
+             MUST commit by turn {ROUND_TURNS}, drawing one before each of their own actions. They \
+             hold {held} (a cut awaiting an answer counts here), {secret} sealed, {placed} placed. \
+             Burnt: 1 at the deal, {burnt_them} by THEIR Discard, {burnt_you} by yours. {deck} in \
+             the deck.",
+            unspent_txt = if unspent.is_empty() {
+                "nothing, all four are spent".to_string()
+            } else {
+                unspent.join(", ")
+            },
+            held = proj.hand[i],
+            secret = proj.secret_count[i],
+            placed = proj.board[i],
             deck = proj.deck,
         )
     }
@@ -329,8 +543,8 @@ impl TugSession {
                 1 => "The round is over — seat A took it. Nothing further can be committed.",
                 2 => "The round is over — seat B took it. Nothing further can be committed.",
                 _ => {
-                    "The round is over — an exact dead heat on influence AND on lanes held, \
-                      which is the only draw the rules admit."
+                    "The round is over — an exact dead heat on influence AND on lanes held, which \
+                     is the only draw the rules admit."
                 }
             }
             .to_string();
@@ -388,9 +602,9 @@ impl TugSession {
             // were inert while serving working controls was the exact falsehood the QA sweep
             // proved from a before/after pair (finding 2).
             format!(
-                "Seat {mover:?} is to move. You hold no seat YET — the controls below are LIVE, and \
-                 the first move you land CLAIMS seat {claim:?}. Both hands stay fog to you until \
-                 then."
+                "Seat {mover:?} is to move. You hold no seat YET — the controls below are LIVE, \
+                 and the first move you land CLAIMS seat {claim:?}. Both hands stay fog to you \
+                 until then."
             )
         } else {
             format!(
@@ -411,6 +625,7 @@ impl TugSession {
         } else {
             Player::B
         };
+        let standing = self.shown_standing(&proj);
         let seat_row = |s: Player| {
             let i = s.idx();
             let whose = match viewer {
@@ -449,16 +664,24 @@ impl TugSession {
                     cases: Vec::<PillCase>::new(),
                 });
             }
-            cells.push(ViewNode::Text(format!(
-                "{} influence · {} lane{}",
-                proj.charm[i],
-                proj.guilds_controlled[i],
-                if proj.guilds_controlled[i] == 1 {
-                    ""
-                } else {
-                    "s"
+            // ⚑ THE NUMBER THAT USED TO BE DEAD. This read `proj.charm[i]` / `proj.guilds_controlled[i]`
+            // — two registers written ONLY by `Engine::score` — so it printed `0 influence · 0 lanes`
+            // for all twelve turns of every live round, beside a lane table that showed one seat
+            // leading four of them. It is now `shown_standing`: the ruleset's own answer over the
+            // tallies as they stand (see `TugSession::standing`).
+            cells.push(ViewNode::Text(match standing {
+                Some((charm, lanes)) => format!(
+                    "{} influence · {} lane{}",
+                    charm[i],
+                    lanes[i],
+                    if lanes[i] == 1 { "" } else { "s" }
+                ),
+                None => {
+                    "influence · lanes led — UNAVAILABLE, this build could not ask the ruleset for \
+                     the standing"
+                        .to_string()
                 }
-            )));
+            }));
             ViewNode::Row(cells)
         };
         // ⚑ THE SEATLESS LINE SPLITS IN TWO, because the two seatless states are not the same
@@ -468,8 +691,8 @@ impl TugSession {
         // claimant, whose press changed their seat, their hand and the turn counter.
         let who = match (viewer, claimant) {
             (Some(s), _) => format!(
-                "You hold seat {s:?}. Your six favors are rendered to you and to nobody else; the \
-                 other house sees only how many you hold and the committed root of the set."
+                "You hold seat {s:?}: your favors are rendered to you and nobody else — the other \
+                 house sees a count and a committed root."
             ),
             (None, Some(claim)) => format!(
                 "You hold no seat at this table: BOTH hands are the fog form — a count and a \
@@ -495,6 +718,20 @@ impl TugSession {
             children: vec![
                 ViewNode::Text(self.next_step_line(viewer, claimant)),
                 ViewNode::List(vec![seat_row(Player::A), seat_row(Player::B)]),
+                // ⚑ WHAT THE TWO STANDINGS ARE, so a reader knows what they can and cannot conclude
+                // from them. They are LIVE (a press that places favors moves them), they are the same
+                // rule that finally decides the round, and they are short by exactly two known things
+                // — which is what makes a losing-looking board still readable rather than hopeless.
+                ViewNode::Text(if proj.scored == 1 {
+                    "Those standings are FINAL — both Secrets are up and this is the tally the \
+                     proven rule decided on."
+                        .to_string()
+                } else {
+                    "Those standings are LIVE — the SAME rule that names the winner, read over the \
+                     favors placed so far. Not in them yet: each seat's ONE face-down Secret (it \
+                     joins its own side at the reveal) and anything in escrow."
+                        .to_string()
+                }),
                 ViewNode::Text(format!(
                     "Turn {}/{ROUND_TURNS} of the round.",
                     proj.round_actions
@@ -512,26 +749,51 @@ impl TugSession {
     /// here, so a threshold edited in the Lean source moves this page. **The precedence** is what
     /// makes a losing-looking board still winnable: short of a bar the round is decided on total
     /// influence, then on lanes held, and only an exact dead heat on both is a draw.
+    ///
+    /// ⚑ **THE SENTENCE THIS PLAQUE USED TO OPEN WITH WAS FALSE.** It read *"It ends the moment a
+    /// seat reaches 11 influence OR leads 4 lanes"* — and no seat has ever reached a bar and had the
+    /// round stop. Nothing in the model or the deployed program tests a threshold mid-round: the
+    /// round always runs its [`ROUND_TURNS`] committed turns and the bars are the FIRST FOUR CLAUSES
+    /// of `roundWinner`'s nine-clause precedence, i.e. they choose WHICH RULE names the winner, not
+    /// WHEN the round stops. A player who believed the old sentence was watching for an ending that
+    /// cannot happen, and reading the distance-to-the-bar pills as a countdown to it.
     fn decision_plaque(&self) -> ViewNode {
         let proj = self.projection();
+        let standing = self.shown_standing(&proj);
         let total: u64 = INFLUENCE.iter().map(|w| u64::from(*w)).sum();
         let mut kids = vec![ViewNode::Text(format!(
-            "Nobody wins a lane by holding it — a lane you lead pays you its whole WEIGHT when \
-             control is counted, and the seven lanes are worth {total} influence in all. Placing a \
-             favor is the only way to pull one."
+            "A lane you lead pays its whole WEIGHT when control is counted; the seven are worth \
+             {total} influence, and placing a favor is the only way to pull one."
         ))];
         match (deployed_bar("a_charm"), deployed_bar("a_guilds")) {
             (Some(charm_bar), Some(guild_bar)) => {
                 kids.push(ViewNode::Text(format!(
-                    "It ends the moment a seat reaches {charm_bar} influence OR leads \
-                     {guild_bar} lanes. Short of that the round is still DECIDED at turn \
-                     {ROUND_TURNS}: on total influence first, then on lanes held, and only an exact \
-                     dead heat on BOTH is a draw."
+                    "NOTHING ENDS THIS ROUND EARLY. All {ROUND_TURNS} committed turns are always \
+                     played, and the winner is named once, at the reveal. The bars pick WHICH RULE \
+                     names them: {charm_bar} influence takes it outright, else leading {guild_bar} \
+                     lanes, else the higher total influence, else the more lanes held; only an \
+                     exact dead heat on BOTH is a draw."
                 )));
                 let gap = |s: Player| {
                     let i = s.idx();
-                    let dc = charm_bar.saturating_sub(proj.charm[i]);
-                    let dg = guild_bar.saturating_sub(proj.guilds_controlled[i]);
+                    // ⚑ Re-based on the LIVE standing. These pills read `11 influence or 4 lanes
+                    // short` for BOTH seats for an entire measured 12-turn round, because they were
+                    // subtracting from `proj.charm` — a register that is zero until the final press.
+                    // The distance is only worth printing beside the standing it is a distance FROM,
+                    // so the pill now carries both.
+                    let Some((charm, lanes)) = standing else {
+                        return ViewNode::Pill {
+                            text: format!(
+                                "seat {s:?} · distance to {charm_bar} influence or {guild_bar} \
+                                 lanes: UNAVAILABLE, this build could not ask the ruleset"
+                            ),
+                            tag: "warn".to_string(),
+                            slot: None,
+                            cases: Vec::<PillCase>::new(),
+                        };
+                    };
+                    let dc = charm_bar.saturating_sub(charm[i]);
+                    let dg = guild_bar.saturating_sub(lanes[i]);
                     let tag = if dc == 0 || dg == 0 {
                         "bad"
                     } else if dc <= 3 || dg <= 1 {
@@ -539,11 +801,20 @@ impl TugSession {
                     } else {
                         ""
                     };
+                    let held = format!(
+                        "{} influence, {} lane{}",
+                        charm[i],
+                        lanes[i],
+                        if lanes[i] == 1 { "" } else { "s" }
+                    );
                     ViewNode::Pill {
                         text: if dc == 0 || dg == 0 {
-                            format!("seat {s:?} · AT THE BAR")
+                            // "AT THE BAR" is kept verbatim — it is what a reader looks for — but it
+                            // no longer implies the round is over, because the sentence above no
+                            // longer says a bar ends anything.
+                            format!("seat {s:?} · {held} · AT THE BAR as it stands")
                         } else {
-                            format!("seat {s:?} · {dc} influence or {dg} lanes short")
+                            format!("seat {s:?} · {held} · {dc} influence or {dg} lanes short")
                         },
                         tag: tag.to_string(),
                         slot: None,
@@ -578,8 +849,8 @@ impl TugSession {
                 children: {
                     let mut c = vec![ViewNode::Text(format!(
                         "Seat {:?} cut it and cannot answer their own cut. Every side reassembles \
-                         the whole offer, so nothing is destroyed — the only question is which half \
-                         of the influence lands on whose side.",
+                         the whole offer, so nothing is destroyed — the only question is which \
+                         half of the influence lands on whose side.",
                         offer.proposer
                     ))];
                     c.extend(lines);
@@ -744,10 +1015,9 @@ impl TugSession {
         // ⚑ THE TWO WORD-PAIRS, EQUATED, where a player first meets both. `favor`/`card` and
         // `guild`/`lane` were each used for one object and never once defined against each other.
         let mut lines = vec![ViewNode::Text(format!(
-            "{} favors — a favor IS a card, these are the cards you hold, and the other house sees \
-             none of them (only the count and the committed root below). Each favor belongs to one \
-             GUILD, and a guild IS a LANE: that is the lane the favor pulls, and its pay is what \
-             that lane hands whoever ends up leading it.",
+            "{} favors — a favor IS a card, and these are yours; the other house sees only the \
+             count and the committed root below. Each belongs to one GUILD, and a guild IS a LANE: \
+             the lane it pulls.",
             ids.len()
         ))];
         let mut cells = Vec::with_capacity(ids.len());
@@ -780,6 +1050,28 @@ impl TugSession {
                 arg: *id as i64,
                 highlight: true, // the viewer's own cards — the active set
             });
+        }
+        // ⚑ **THE FAVOR YOU SEALED, GIVEN BACK TO YOU.** A Secret takes a card OUT of the hand, so
+        // the moment a seat spent theirs it vanished from this list and the surface said only that
+        // the action was "spent". A player therefore lost sight of one of their own ten favors — the
+        // one that turns up on their side at the reveal and settles close lanes — for the remaining
+        // turns of the round, and could not plan around it.
+        //
+        // Owner-only: `reference::Engine::secret_card` is documented as such and this is the single
+        // caller, inside the branch `surface_as` reaches only for the seat that holds it. It is
+        // `None` again after scoring, when the reveal has put the favor on the board for everyone.
+        if let Some(card) = self.engine.secret_card(seat) {
+            let g = deck_guild(u64::from(card));
+            let w = if (g as usize) < N_GUILDS {
+                INFLUENCE[g as usize]
+            } else {
+                0
+            };
+            lines.push(ViewNode::Text(format!(
+                "Sealed face down by you: card #{card} · guild {g} (lane {g}) · pays {w} — out of \
+                 your hand, out of everyone else's sight, and it joins YOUR side of lane {g} at \
+                 the reveal."
+            )));
         }
         lines.push(ViewNode::Text(
             "Each chip below reads `#card lane/pays`.".to_string(),
@@ -820,10 +1112,9 @@ impl TugSession {
                 // So: this root commits the set, and the executor checks membership in the same
                 // turn — but do not claim the witness is against THIS root.
                 ViewNode::Text(
-                    "That root is a Poseidon2 commitment to the exact set they hold right now. It \
-                     hides which favors those are and it binds them: every favor this seat spends \
-                     is checked for membership by the executor in the SAME turn as the rules move, \
-                     so a card that was never entrusted to them cannot be played out of that hand."
+                    "That root is a Poseidon2 commitment to the exact set they hold: it hides \
+                     which favors those are and BINDS them — a favor never entrusted to that seat \
+                     cannot be played out of it."
                         .to_string(),
                 ),
             ],
@@ -856,6 +1147,15 @@ impl TugSession {
             (_, _) if self.engine.round_complete() => {
                 "All favors placed · awaiting reveal and score".to_string()
             }
+            // ⚑ "to move: B" does not distinguish the two states a seat can be to-move IN, and one
+            // of them is urgent and blocking: while a cut stands, NOTHING else is legal for either
+            // seat until it is answered. The one-line status is what a Discord reader sees in the
+            // embed's lead and what a chat client puts in a notification preview, so it is where the
+            // difference has to be visible.
+            (_, _) if proj.pending_kind != 0 => format!(
+                "turn {}/{ROUND_TURNS} · seat {to_move} must ANSWER the cut on the table",
+                proj.round_actions
+            ),
             _ => format!(
                 "turn {}/{ROUND_TURNS} · to move: {to_move}",
                 proj.round_actions
@@ -865,10 +1165,27 @@ impl TugSession {
             ViewNode::Text(format!("Multiway-Tug — {status}")),
             // `guilds A:2` became `lanes led A:2` — same number, and it now uses the same noun the
             // seat rows, the decision plaque and the lane table all use.
-            ViewNode::Text(format!(
-                "Influence A:{} / B:{} · lanes led A:{} / B:{}",
-                proj.charm[0], proj.charm[1], proj.guilds_controlled[0], proj.guilds_controlled[1]
-            )),
+            //
+            // ⚑ AND THE NUMBERS ARE LIVE NOW. This line read the two score-time-only registers, so
+            // it was `Influence A:0 / B:0 · lanes led A:0 / B:0` on every turn of a live round — the
+            // single most-read line on the page, reporting nothing, for the whole game.
+            ViewNode::Text(match self.shown_standing(&proj) {
+                Some((charm, lanes)) => format!(
+                    "Influence A:{} / B:{} · lanes led A:{} / B:{}{}",
+                    charm[0],
+                    charm[1],
+                    lanes[0],
+                    lanes[1],
+                    if proj.scored == 1 {
+                        " (final)"
+                    } else {
+                        " (as placed — the two Secrets are still face down)"
+                    }
+                ),
+                None => "Influence A:? / B:? · lanes led A:? / B:? — this build could not ask the \
+                         ruleset for the standing, so it is not guessed here"
+                    .to_string(),
+            }),
             // THE TWO PLAQUES, the automatafl convention: where the turn stands (with the ONE
             // SENTENCE saying what to do now), then the thing the board cannot show — here, how the
             // round actually gets decided and what each side of a live cut is worth.
@@ -886,23 +1203,44 @@ impl TugSession {
                 offer.responder(),
             )));
         }
+        // ⚑ THE LANES SECTION IS ON A CHARACTER BUDGET, and it is not a soft one: the whole rendered
+        // surface has to stay under Telegram's 4096-character ceiling (over it an interactive send is
+        // REFUSED outright and the chat gets NOTHING) and under Discord's embed-description clamp
+        // (over it the TAIL is dropped, which is where the player's own hand is). So the read is a
+        // COLUMN on the existing lane table plus one legend line — not a second table repeating
+        // `placed A · B` and `pays` under different headings.
+        let mut lane_kids = vec![
+            // THE EQUATION, in words, before the table that uses both nouns.
+            ViewNode::Text(
+                "The seven contested GUILDS are the seven LANES — guild 3 is lane 3. Each row: the \
+                 lane · what leading it pays · favors placed (A · B) · who holds it · what is \
+                 unseen."
+                    .to_string(),
+            ),
+            // ⚑ WHY THE ROWS MAY NOT HAVE MOVED, said BEFORE the reader concludes the button
+            // did nothing.
+            ViewNode::Text(self.lane_movement_rule()),
+            ViewNode::Text(self.lane_row_legend()),
+            self.guild_lanes(&proj, viewer),
+        ];
+        match viewer {
+            // A SEAT gets the per-lane read (the rows above) plus the spend ledger, and that pair is
+            // strictly finer than the global five-place account: the ledger already states the deck
+            // count, what the other seat holds, what they have sealed and placed, and the burn SPLIT
+            // BY WHOSE Discard did it — which the joint `oop` counter cannot say. So the global line
+            // is dropped HERE and only here, to buy the read its characters back rather than print
+            // the same 21 favors twice on the page with the least room.
+            Some(seat) => lane_kids.push(ViewNode::Text(self.opponent_ledger(&proj, seat))),
+            // A SHARED BOARD has no viewer, so there is no "them" to keep a ledger about and no own
+            // hand to subtract — the global account is the only account available, and it stays. It is
+            // also the line a spectator watches move when the lanes cannot
+            // (`surface::tests::a_sealed_play_leaves_the_lanes_still_and_the_page_says_why`).
+            None => lane_kids.push(ViewNode::Text(self.favor_accounting(&proj))),
+        }
         kids.push(ViewNode::Section {
             title: "The seven lanes".to_string(),
             tag: String::new(),
-            children: vec![
-                // THE EQUATION, in words, before the table that uses both nouns.
-                ViewNode::Text(
-                    "The seven contested GUILDS are the seven LANES — guild 3 is lane 3, and the \
-                     two words name one thing on this page. Each row: the lane · what leading it \
-                     pays · favors placed (A · B) · who holds it now."
-                        .to_string(),
-                ),
-                // ⚑ WHY THE ROWS MAY NOT HAVE MOVED, said BEFORE the reader concludes the button
-                // did nothing, and the live tally that did move.
-                ViewNode::Text(self.lane_movement_rule()),
-                ViewNode::Text(self.favor_accounting(&proj)),
-                self.guild_lanes(&proj),
-            ],
+            children: lane_kids,
         });
 
         match viewer {
@@ -1111,6 +1449,21 @@ fn openings_for(seed: u64, cards: impl IntoIterator<Item = u8>) -> Vec<(u64, u64
         .collect()
 }
 
+/// **Ask the ruleset where the round stands right now** — [`TugSession::standing`]'s one writer.
+///
+/// The wire carries the live per-`(seat, lane)` placement tallies and nothing else, which is what
+/// `terminal_rule_reads_only_the_tallies` licenses: the influence total, the lanes-held count, the
+/// winner and the deciding clause are functions of those tallies alone. So this is the SAME call
+/// [`Engine::score`] makes at the end of the round, made earlier, over fewer placed favors.
+///
+/// `None` when the archive lacks the oracle or Lean refused the wire. There is deliberately no Rust
+/// fallback: summing `INFLUENCE` over the lanes a seat leads would be re-expressing `charmScore`
+/// here, and the last Rust re-expression of a `MultiwayTug` definition on this path
+/// (`reference::winner_of`) had silently drifted from the model it copied.
+fn read_standing(engine: &Engine) -> Option<Verdict> {
+    crate::rules::adjudicate(&engine.projection().score).ok()
+}
+
 /// Commit the engine's ACTUAL current hands. Draws enter this root and every card consumed by
 /// an action leaves it; the UI and the mover therefore have one deal, not peer copies.
 fn commit_engine_hands(engine: &Engine, seed: u64) -> [HandTree; 2] {
@@ -1152,6 +1505,7 @@ impl Offering for TugOffering {
                 proof_hands[Player::B.idx()].root(),
             )
             .map_err(|e| OfferingError::Deploy(e.to_string()))?;
+        let standing = read_standing(&engine);
         Ok(TugSession {
             seed,
             runtime,
@@ -1162,6 +1516,7 @@ impl Offering for TugOffering {
             proof_hands,
             plays: [Vec::new(), Vec::new()],
             history: Vec::new(),
+            standing,
         })
     }
 
@@ -1233,6 +1588,7 @@ impl Offering for TugOffering {
                 Ok(receipt) => {
                     session.engine = scored;
                     session.ended = true;
+                    session.standing = read_standing(&session.engine);
                     session.history.push(LandedInput::Score { seat });
                     Outcome::Landed {
                         receipt,
@@ -1281,6 +1637,10 @@ impl Offering for TugOffering {
                 Ok(receipt) => {
                     session.engine = next_engine;
                     session.hands = commit_engine_hands(&session.engine, session.seed);
+                    // ⚑ A RESPONSE is the ONE move that places favors on the lanes, so it is the one
+                    // move that can move the running standing. Refreshing here is what makes the
+                    // scoreboard answer a press.
+                    session.standing = read_standing(&session.engine);
                     session.history.push(LandedInput::Play { seat, decision });
                     Outcome::Landed {
                         receipt,
@@ -1337,6 +1697,11 @@ impl Offering for TugOffering {
                 session.proof_hands[seat.idx()] = next_proof_hand;
                 session.engine = next_engine;
                 session.hands = commit_engine_hands(&session.engine, session.seed);
+                // An ACTION places nothing (a Secret hides, a Discard burns, a cut escrows), so this
+                // refresh is expected to be a no-op on the numbers. It runs anyway: the standing has
+                // exactly one writer and it is "after a landed turn", not "after the turns I believe
+                // can change it" — the second rule is the one that rots when a rule is added.
+                session.standing = read_standing(&session.engine);
                 session.history.push(LandedInput::Play { seat, decision });
 
                 // SCORE is deliberately a separate affordance/advance. The
@@ -1422,15 +1787,23 @@ impl Offering for TugOffering {
             || replay.plays != session.plays
             || replay.ended != session.ended
             || replay.history != session.history
+        // ⚑ `standing` is deliberately NOT compared. It is a pure function of `proj.score`, which
+        // this same condition already compares through `replay.projection() != proj`, so it would
+        // add no discrimination — and it CAN fail for a reason that is not a divergence: it is
+        // `None` whenever the Lean oracle was unavailable, so comparing it would turn a missing
+        // archive into a "replay differs" verdict about the PLAY. A display cache must never be
+        // able to fail a verification.
         {
             return VerifyReport::broken(
                 turns,
-                "fresh-seed replay differs from the live projection, hidden-hand roots, or match record",
+                "fresh-seed replay differs from the live projection, hidden-hand roots, or match \
+                 record",
             );
         }
         let mut report = VerifyReport::ok(turns);
         report.detail = format!(
-            "replayed {} accepted player input(s) through a fresh executor; {} atomic rules+witness turn(s) including genesis{}",
+            "replayed {} accepted player input(s) through a fresh executor; {} atomic \
+             rules+witness turn(s) including genesis{}",
             session.history.len(),
             turns,
             if proj.scored == 1 { " and scoring" } else { "" }

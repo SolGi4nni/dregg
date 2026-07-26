@@ -9,6 +9,13 @@ use dreggnet_offerings::{Offering, Outcome, SessionConfig};
 /// can (and cannot) read off the card. (deos-view's text renderers are feature-gated off in this
 /// crate's dep, so we walk the tree directly.)
 fn rendered_text(surface: &Surface) -> String {
+    node_text(surface.view())
+}
+
+/// [`rendered_text`] for any SUBTREE — so a fog assertion can be made about one named section
+/// instead of the whole flattened page, where a token from a legitimate discloser (the seat's own
+/// hand, a face-up cut) drowns it.
+fn node_text(node: &ViewNode) -> String {
     fn walk(n: &ViewNode, out: &mut String) {
         let mut push = |s: &str| {
             out.push_str(s);
@@ -46,8 +53,32 @@ fn rendered_text(surface: &Surface) -> String {
         }
     }
     let mut out = String::new();
-    walk(surface.view(), &mut out);
+    walk(node, &mut out);
     out
+}
+
+/// The rendered text of the one section whose title starts with `prefix` (`""` when there is none —
+/// which every caller asserts against, so a renamed section fails loudly instead of vacuously).
+fn section_text(surface: &Surface, prefix: &str) -> String {
+    fn find<'a>(n: &'a ViewNode, prefix: &str) -> Option<&'a ViewNode> {
+        match n {
+            ViewNode::Section {
+                title, children, ..
+            } => {
+                if title.starts_with(prefix) {
+                    return Some(n);
+                }
+                children.iter().find_map(|c| find(c, prefix))
+            }
+            ViewNode::VStack(cs) | ViewNode::Row(cs) | ViewNode::List(cs) | ViewNode::Table(cs) => {
+                cs.iter().find_map(|c| find(c, prefix))
+            }
+            _ => None,
+        }
+    }
+    find(surface.view(), prefix)
+        .map(node_text)
+        .unwrap_or_default()
 }
 
 /// The ACTUAL reference-engine card ids a seat holds. Fog tests deliberately use this source,
@@ -1267,4 +1298,247 @@ fn the_two_vocabularies_are_equated_on_the_page() {
     // One noun for the lane tally, everywhere.
     assert!(seated.contains("lanes led A:"), "{seated}");
     assert!(!seated.contains("guilds A:"), "{seated}");
+}
+
+/// The `Influence A:… / B:… · lanes led A:… / B:…` line, which is the most-read line on the page.
+fn standing_line(text: &str) -> String {
+    text.lines()
+        .find(|l| l.starts_with("Influence A:"))
+        .unwrap_or("<no standing line at all>")
+        .to_string()
+}
+
+/// ⚑⚑ **THE ROUND HAS AN ARC — the scoreboard MOVES before the final press.**
+///
+/// A lane played a full twelve-turn round through every viewer and read `Influence A:0 / B:0 · lanes
+/// A:0 / B:0` for **all twelve turns**, with the distance pills stuck at *"11 influence or 4 lanes
+/// short"* for **both seats the whole game**, while the lane rows plainly showed one seat leading
+/// four lanes. The cause was not copy: `Projection::charm` and `Projection::guilds_controlled` have
+/// exactly one writer, [`crate::reference::Engine::score`], so the surface was faithfully printing
+/// two registers that are zero until the round is over. **The win condition was phrased in a number
+/// that was dead for the entire game.**
+///
+/// This is the tooth. It drives the ONE move that places favors (a cut, then the other seat's
+/// answer), asserts the round is still LIVE, and requires the standing line to have CHANGED. Against
+/// the old code it fails on the last assertion, because nothing but `score` could move that line.
+///
+/// Non-vacuity is asserted first: if the Lean oracle is unavailable the standing renders as `?` and
+/// the test says so rather than passing on a page that shows nothing.
+#[test]
+fn the_running_standing_moves_before_the_round_is_scored() {
+    let off = TugOffering;
+    let mut session = off.open(SessionConfig::with_seed(41)).expect("open");
+
+    let before = standing_line(&rendered_text(&off.render(&session)));
+    assert!(
+        !before.contains('?'),
+        "the running standing is UNAVAILABLE, so this test cannot see the wound it exists for \
+         (is the Lean archive linked?): {before}"
+    );
+    assert!(
+        before.contains("Influence A:0 / B:0"),
+        "a fresh deal has placed nothing, so both standings must be zero: {before}"
+    );
+
+    // A Gift, then the OTHER seat's answer. A response is the only move that puts favors on the
+    // lanes, so it is the only move that can move the standing (`lane_movement_rule` says so on the
+    // page, and this pins the page's claim to the engine's behaviour).
+    let cutter = session.to_move();
+    let gift = fire(&session, ActionKind::Gift);
+    assert!(
+        off.advance(&mut session, gift, TugOffering::seat_identity(cutter))
+            .landed(),
+        "the Gift lands"
+    );
+    let answerer = session.to_move();
+    assert_ne!(answerer, cutter, "the cutter never answers their own cut");
+    let take = fire_respond(&session, 0);
+    assert!(
+        off.advance(&mut session, take, TugOffering::seat_identity(answerer))
+            .landed(),
+        "the answer lands"
+    );
+
+    let proj = session.projection();
+    assert_eq!(
+        proj.scored, 0,
+        "the round must still be LIVE, or this proves only that scoring works"
+    );
+    assert_eq!(
+        proj.board[0] + proj.board[1],
+        3,
+        "a gift's three favors all reached a lane"
+    );
+    let after = standing_line(&rendered_text(&off.render(&session)));
+    assert_ne!(
+        before, after,
+        "THE WOUND: three favors reached the lanes mid-round and the standing line did not move"
+    );
+    assert!(
+        !after.contains("Influence A:0 / B:0"),
+        "three placed favors always give SOME seat a led lane: {after}"
+    );
+    // The distance pills read the same source, so they move too. Only ONE of them is guaranteed to:
+    // three favors across up to three lanes can leave one seat leading nothing (a tie eats a lane),
+    // and that seat is legitimately still the full gap away. Both frozen is the wound.
+    let page = rendered_text(&off.render(&session));
+    assert!(
+        page.matches("11 influence or 4 lanes short").count() < 2,
+        "both distance pills are still frozen at the opening gap:\n{page}"
+    );
+}
+
+/// ⚑ **THE SURFACE NO LONGER CLAIMS AN EARLY END.** It said *"It ends the moment a seat reaches 11
+/// influence OR leads 4 lanes"* — and no round has ever stopped at a bar. Nothing in the model or in
+/// the deployed program tests a threshold mid-round: the bars are the first four clauses of
+/// `roundWinner`'s precedence, so they choose WHICH RULE names the winner at turn 12, not when the
+/// round stops. Checked on every surface a player can reach, because the false sentence was on all
+/// of them.
+#[test]
+fn no_surface_claims_the_round_can_end_early() {
+    let off = TugOffering;
+    let session = off.open(SessionConfig::with_seed(13)).expect("open");
+    for (who, view) in [
+        ("public", rendered_text(&off.render(&session))),
+        (
+            "seated",
+            rendered_text(&off.render_for(&session, &TugOffering::seat_identity(Player::A))),
+        ),
+        ("claimant", rendered_text(&session.surface_claim(Player::A))),
+    ] {
+        assert!(
+            !view.contains("It ends the moment"),
+            "{who}: the surface promises an early end the rules do not have:\n{view}"
+        );
+        assert!(
+            view.contains("NOTHING ENDS THIS ROUND EARLY"),
+            "{who}: the correction is not stated:\n{view}"
+        );
+        assert!(
+            view.contains(&format!(
+                "All {ROUND_TURNS} committed turns are always played"
+            )),
+            "{who}: the page does not say the round always runs to the end:\n{view}"
+        );
+    }
+}
+
+/// ⚑⚑ **THE READ — and it names no favor.**
+///
+/// A player already gets everything needed to reason about the other hand (public deck composition,
+/// public placements, a face-up cut, their card count, which actions they have spent) plus their own
+/// hand and own sealed favor. The surface offered no support for using any of it, so the deduction
+/// never happened and the game played as guesswork. This pins both halves: the read is THERE, on the
+/// lane rows, and it subtracts the viewer's own holdings — and, the part that matters, **the whole
+/// lanes section prints no card id at all.**
+///
+/// The no-id claim is asserted STRUCTURALLY, on that one section rather than on the flattened page,
+/// because the page legitimately contains ids from two other places (the seat's own hand reveal and a
+/// face-up cut) and a whole-page assertion would either drown in them or have to be per-id — which is
+/// how a leak hides. `!contains('#')` over the section needs no needle and admits no ambiguity.
+#[test]
+fn the_read_names_no_favor() {
+    const LANES: &str = "The seven lanes";
+    let off = TugOffering;
+    let mut session = off.open(SessionConfig::with_seed(53)).expect("open");
+    // A Secret and a Discard, so a sealed favor and a burn are both in the record and the ledger has
+    // something to account for. Deliberately NOT a cut: a pending offer is FACE UP by the rules, so a
+    // cut on the table would put public ids on the page and make the assertion below ambiguous.
+    drive_kinds(
+        &off,
+        &mut session,
+        &[ActionKind::Secret, ActionKind::Discard],
+    );
+    assert!(
+        session.pending_offer().is_none(),
+        "no offer may be on the table for this test's fog assertion to be unambiguous"
+    );
+
+    let a = off.render_for(&session, &TugOffering::seat_identity(Player::A));
+    let b = off.render_for(&session, &TugOffering::seat_identity(Player::B));
+    let public = off.render(&session);
+
+    for (who, surface) in [("A", &a), ("B", &b)] {
+        let panel = section_text(surface, LANES);
+        assert!(!panel.is_empty(), "{who}: no lanes section (renamed?)");
+        for needed in ["unseen", "you hold", "still owed:", "Unseen is a POOL"] {
+            assert!(
+                panel.contains(needed),
+                "{who}: the read does not state {needed:?}:\n{panel}"
+            );
+        }
+        // ⚑ THE FOG, at the new door: a counts-only read has no business printing an id, so ANY `#`
+        // in this section is a leak.
+        assert!(
+            !panel.contains('#'),
+            "{who}: the read printed a card id:\n{panel}"
+        );
+    }
+
+    // A WATCHER gets the read too, computed from public facts alone — so it subtracts nothing
+    // private and has no "them" to keep a ledger about.
+    let public_panel = section_text(&public, LANES);
+    assert!(
+        public_panel.contains("unseen") && public_panel.contains("Unseen is a POOL"),
+        "the public board carries the read:\n{public_panel}"
+    );
+    for forbidden in ["you hold", "you sealed", "still owed:"] {
+        assert!(
+            !public_panel.contains(forbidden),
+            "the public board's read leaks private material ({forbidden:?}):\n{public_panel}"
+        );
+    }
+    assert!(
+        !public_panel.contains('#'),
+        "the public read printed a card id:\n{public_panel}"
+    );
+    // And the two are genuinely DIFFERENT reads — the seat's own hand really is subtracted, so this
+    // is not one shared public panel wearing two labels.
+    assert_ne!(
+        section_text(&a, LANES),
+        public_panel,
+        "a seat's read must differ from the public one, or nothing private was subtracted"
+    );
+}
+
+/// ⚑ **THE FAVOR YOU SEALED, GIVEN BACK TO YOU — and to nobody else.** A Secret takes the card out
+/// of the hand, so the seat that sealed it could no longer see WHICH of its own ten favors was face
+/// down for the rest of the round.
+#[test]
+fn a_sealed_favor_is_shown_to_its_owner_and_to_no_one_else() {
+    let off = TugOffering;
+    let mut session = off.open(SessionConfig::with_seed(67)).expect("open");
+    let sealer = session.to_move();
+    drive_kinds(&off, &mut session, &[ActionKind::Secret]);
+    let card = session
+        .engine
+        .secret_card(sealer)
+        .expect("the Secret sealed a favor");
+    let needle = format!("card #{card} ·");
+
+    let own = rendered_text(&off.render_for(&session, &TugOffering::seat_identity(sealer)));
+    assert!(
+        own.contains("Sealed face down by you") && own.contains(&needle),
+        "the sealer cannot see their own sealed favor:\n{own}"
+    );
+    for (who, view) in [
+        (
+            "the opponent",
+            rendered_text(&off.render_for(&session, &TugOffering::seat_identity(sealer.other()))),
+        ),
+        ("the public board", rendered_text(&off.render(&session))),
+        (
+            "a claimant",
+            rendered_text(&session.surface_claim(sealer.other())),
+        ),
+    ] {
+        assert!(
+            !view.contains(&needle),
+            "{who} was shown seat {sealer:?}'s sealed favor:\n{view}"
+        );
+        assert!(
+            !view.contains("Sealed face down by you"),
+            "{who} was handed the owner-only sealed line:\n{view}"
+        );
+    }
 }
