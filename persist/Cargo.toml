@@ -24,6 +24,12 @@ dregg-federation = { path = "../federation" }
 
 [dev-dependencies]
 tempfile = "3"
+# TEST-ONLY: installs the Lean-verified ML-DSA cores so this crate's test binaries can run a PQ
+# operation at all. `verify_hybrid` / `verify_finalization_quorum` check an enrolled ML-DSA half
+# and the commit-log fixtures derive one, both through `dregg-pq`, which refuses an uninstalled
+# core with `process::abort()` — the lib-test binary died on it as a bare SIGABRT. This crate
+# cannot link the archive from `[dependencies]`. See `dregg-pq-testkit`'s crate docs.
+dregg-pq-testkit = { path = "../dregg-pq-testkit" }
 
 [lib]
 name = "dregg_persist"

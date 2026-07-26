@@ -29,6 +29,13 @@ serde_json = { workspace = true }
 postcard = { version = "1", features = ["use-std"] }
 clap = { version = "4", features = ["derive"] }
 
+[dev-dependencies]
+# TEST-ONLY: installs the Lean-verified ML-DSA cores so this crate's lib-test binary can run a PQ
+# operation at all. `src/tests.rs` mints real blocklace blocks, and `Block::new` derives the
+# author's ML-DSA half through `dregg-pq`, which refuses an uninstalled core with
+# `process::abort()`. See `dregg-pq-testkit`'s crate docs.
+dregg-pq-testkit = { path = "../dregg-pq-testkit" }
+
 [lib]
 name = "dregg_analyzer"
 path = "src/lib.rs"

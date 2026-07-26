@@ -106,6 +106,11 @@ struct HybridCommittee {
 }
 
 fn hybrid_committee(n: usize) -> HybridCommittee {
+    // An INTEGRATION test compiles `dregg-federation` without `cfg(test)`, so the install inside
+    // `frost::MlDsaSigningKey::from_seed` is inert here and this binary died as a bare SIGABRT the
+    // moment it derived its first ML-DSA key. `hybrid_committee` is the one gateway this file
+    // uses into the PQ path, so the install belongs here.
+    dregg_pq_testkit::install_or_panic();
     let keypairs: Vec<_> = (0..n).map(|_| generate_keypair()).collect();
     let members: Vec<_> = keypairs.iter().map(|(_, pk)| *pk).collect();
     let ed_keys: Vec<_> = keypairs.into_iter().map(|(sk, _)| sk).collect();

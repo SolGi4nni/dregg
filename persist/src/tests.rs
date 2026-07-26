@@ -469,6 +469,10 @@ fn committee_node_restarts_cleanly_with_finalization_quorum() {
     use dregg_federation::frost::MlDsaSigningKey;
     use dregg_types::{SigningKey, sign};
 
+    // The ML-DSA-65 derivations below go through `dregg-pq`, which aborts the process with no
+    // verified core installed — see `FaithfulNoteRootEnvelopeV1::verify_hybrid`.
+    dregg_pq_testkit::install_or_panic();
+
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("committee_restart.redb");
 

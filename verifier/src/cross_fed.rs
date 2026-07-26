@@ -756,6 +756,13 @@ mod tests {
         use dregg_federation::frost::MlDsaSigningKey;
         use dregg_types::HybridQuorumSig;
 
+        // `dregg-verifier` cannot link the Lean archive from `[dependencies]`, so nothing in its
+        // test binary installs a verified PQ core and `dregg-pq` refuses the ML-DSA derivation
+        // below with an uncatchable `process::abort()` — this whole lib-test binary died on it.
+        // The dev-only `dregg-pq-testkit` installs the cores; `hybrid_committee_and_root` is the
+        // one gateway every hybrid test in this module goes through.
+        dregg_pq_testkit::install_or_panic();
+
         let kps: Vec<(dregg_types::SigningKey, PublicKey)> = (0..3)
             .map(|i| {
                 let mut s = [0u8; 32];

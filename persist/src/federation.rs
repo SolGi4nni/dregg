@@ -219,6 +219,10 @@ impl StoredAttestedRoot {
         committee: &[PublicKey],
         ml_dsa_committee: &[MlDsaPublicKey],
     ) -> bool {
+        // One of this crate's entries into `dregg-pq` (the enrolled ML-DSA half is checked below).
+        // See `FaithfulNoteRootEnvelopeV1::verify_hybrid` for why the install is here.
+        #[cfg(test)]
+        dregg_pq_testkit::install_or_panic();
         let Some(block_id) = self.blocklace_block_id else {
             return false;
         };
@@ -296,6 +300,9 @@ impl StoredAttestedRoot {
         committee: &[PublicKey],
         ml_dsa_committee: &[MlDsaPublicKey],
     ) -> bool {
+        // The other entry into `dregg-pq` on this type — see `verify_finalization_quorum`.
+        #[cfg(test)]
+        dregg_pq_testkit::install_or_panic();
         let full_msg = self.signing_message();
         for (pk, sig) in &self.quorum_signatures {
             if committee.contains(pk) && pk.verify(&full_msg, sig) {

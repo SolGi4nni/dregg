@@ -3111,6 +3111,9 @@ mod tests {
 
     impl FaithfulSigner {
         fn new(seed: u8) -> Self {
+            // The ML-DSA-65 derivation below goes through `dregg-pq`, which aborts the process
+            // with no verified core installed — see `FaithfulNoteRootEnvelopeV1::verify_hybrid`.
+            dregg_pq_testkit::install_or_panic();
             let bytes = [seed; 32];
             let ed = dregg_types::SigningKey::from_bytes(&bytes);
             let ed_pk = ed.public_key();

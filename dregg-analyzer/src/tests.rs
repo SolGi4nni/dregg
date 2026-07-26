@@ -22,6 +22,13 @@ use crate::wal::WalCapture;
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 fn key(b: u8) -> SigningKey {
+    // Every `Block::new` below is handed a `&key(..)`, and `Block::new` derives the block
+    // author's ML-DSA-65 half from that ed25519 seed (`dregg_blocklace::pq`). `dregg-analyzer`
+    // cannot link the Lean archive from `[dependencies]`, so with no verified core installed
+    // `dregg-pq` refuses that derivation with an uncatchable `process::abort()` — this whole
+    // lib-test binary died on it, reporting none of its 21 tests. `key` is the one gateway the
+    // file uses, so the dev-only `dregg-pq-testkit` install belongs here.
+    dregg_pq_testkit::install_or_panic();
     SigningKey::from_bytes(&[b; 32])
 }
 

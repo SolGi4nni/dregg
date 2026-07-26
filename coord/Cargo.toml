@@ -27,5 +27,13 @@ postcard = { version = "1", features = ["alloc"] }
 # `cfg(test)` as the `coord_diff.rs` differential siblings; they are absent from any release/consumer
 # build. `tests/twin_fail_closed.rs` pins the fail-closed refusal on the non-cfg-test path.
 
+[dev-dependencies]
+# TEST-ONLY: installs the Lean-verified ML-DSA cores so this crate's test binaries can run a PQ
+# operation at all. `dregg-coord` never calls `dregg-pq` itself; it reaches it through
+# `dregg_blocklace::finality::Block::new`, which derives the block author's ML-DSA half. With no
+# core installed `dregg-pq` refuses with `process::abort()` — the lib-test binary and
+# `tests/twin_fail_closed.rs` both died on it as bare SIGABRTs. See `dregg-pq-testkit`'s crate docs.
+dregg-pq-testkit = { path = "../dregg-pq-testkit" }
+
 [lints]
 workspace = true

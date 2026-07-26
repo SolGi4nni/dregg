@@ -1265,6 +1265,12 @@ mod hybrid_tests {
     /// A member's (ed25519, ML-DSA-65) keypair from one seed byte — the production
     /// derivation (`genesis.rs` publishes the public halves from the same node key).
     fn member(seed: u8) -> (SigningKey, MlDsaSigningKey, PublicKey, MlDsaPublicKey) {
+        // `procgen-dregg` cannot link the Lean archive from `[dependencies]`, so nothing in its
+        // test binary installs a verified PQ core and `dregg-pq` refuses the ML-DSA derivation
+        // below with an uncatchable `process::abort()` — this whole lib-test binary died on it.
+        // The dev-only `dregg-pq-testkit` installs the cores; `member` is the one gateway every
+        // hybrid-quorum test in this module goes through.
+        dregg_pq_testkit::install_or_panic();
         let sk = SigningKey::from_bytes(&[seed; 32]);
         let (pq_pk, pq_sk) = MlDsaSigningKey::from_seed(&[seed; 32]);
         let ed_pk = PublicKey(sk.verifying_key().to_bytes());

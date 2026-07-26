@@ -536,6 +536,13 @@ mod shared_budget_diff {
             .collect()
     }
 
+    /// See `crate::shared_budget::tests::install_pq_cores` — the two resolution differentials
+    /// below mint real blocklace blocks, and `Block::new` derives the author's ML-DSA-65 half
+    /// through `dregg-pq`, which aborts the process when no verified core is installed.
+    fn install_pq_cores() {
+        dregg_pq_testkit::install_or_panic();
+    }
+
     /// **DIFFERENTIAL — the Stingray ceiling formula agrees with `SharedBudgetDynamics.lean::ceiling`
     /// (and `ceiling_le_balance`).** The REAL `SharedResourceBudget::compute_allowance_ceiling`
     /// equals the Lean `ceiling balance f = balance*(f+1)/(2f+1)`, and the Lean-proved
@@ -574,6 +581,7 @@ mod shared_budget_diff {
     /// tree — why optimistic overspend is safe).
     #[test]
     fn diff_resolve_with_ordering_conserves() {
+        install_pq_cores();
         let ags = agents(3);
         let mut budget =
             SharedResourceBudget::new(CellId::from_bytes([0xBB; 32]), 1000, ags.clone(), 1)
@@ -655,6 +663,7 @@ mod shared_budget_diff {
     /// rejecting everything.
     #[test]
     fn diff_resolve_all_fit_accepts_all() {
+        install_pq_cores();
         let ags = agents(3);
         let mut budget =
             SharedResourceBudget::new(CellId::from_bytes([0xBB; 32]), 1000, ags.clone(), 1)

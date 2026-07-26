@@ -126,6 +126,11 @@ fn causal_happened_before_fails_closed_without_gate() {
 // ── #5 — shared-budget resolve: fitting debits are ALL REJECTED without the gate ──
 #[test]
 fn shared_budget_resolve_fails_closed_without_gate() {
+    // This test mints real blocklace blocks, and `Block::new` derives the author's ML-DSA-65 half
+    // through `dregg-pq`, which refuses with `process::abort()` when no verified core is installed.
+    // `dregg-coord` cannot link the archive from `[dependencies]` (it is FFI-free by construction),
+    // so the dev-only `dregg-pq-testkit` installs the cores here.
+    dregg_pq_testkit::install_or_panic();
     let resource_id = [0xBB; 32];
     let agents: Vec<CellId> = (0..3u8)
         .map(|i| {

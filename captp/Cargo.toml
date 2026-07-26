@@ -34,6 +34,14 @@ zeroize = { workspace = true }
 
 [dev-dependencies]
 serde_json = "1"
+# TEST-ONLY: installs the Lean-verified ML-DSA cores so this crate's test binaries can run a PQ
+# operation at all. `handoff::hybrid_pq` derives and verifies ML-DSA-65 keys through `dregg-pq`,
+# which refuses an uninstalled core with `process::abort()` — this crate's lib-test binary died on
+# it as a bare SIGABRT. `dregg-captp` cannot link the archive from `[dependencies]` (it is
+# FFI-free by construction, see the note above), so the install comes from here. Only the binaries
+# that CALL it pay the archive link; the 13 integration-test targets that never reach PQ are
+# unaffected. See `dregg-pq-testkit`'s crate docs.
+dregg-pq-testkit = { path = "../dregg-pq-testkit" }
 
 [lints]
 workspace = true

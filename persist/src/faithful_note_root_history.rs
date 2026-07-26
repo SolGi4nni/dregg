@@ -399,6 +399,14 @@ impl FaithfulNoteRootEnvelopeV1 {
         ml_dsa_committee: &[MlDsaPublicKey],
         threshold: usize,
     ) -> bool {
+        // `dregg-persist` is a light leaf: it cannot link the Lean archive from `[dependencies]`,
+        // so nothing in its test binary installs a verified PQ core and `dregg-pq` refuses the
+        // ML-DSA verify below with an uncatchable `process::abort()` — which is what this crate's
+        // lib-test binary did. The dev-only `dregg-pq-testkit` links the archive and installs the
+        // cores. `#[cfg(test)]` because the shipped crate stays archive-free; a node installs the
+        // same cores at startup.
+        #[cfg(test)]
+        dregg_pq_testkit::install_or_panic();
         dregg_federation::receipt::verify_hybrid_quorum_sigs(
             &self.hybrid_quorum,
             &self.record.signing_message(),

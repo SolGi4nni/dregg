@@ -463,6 +463,9 @@ impl MlDsaPublicKey {
     ///
     /// `false` on wrong-length signature bytes or an undecodable key.
     pub fn verify(&self, message: &[u8], sig_bytes: &[u8]) -> bool {
+        // The other entry from this crate into `dregg-pq` — see `MlDsaSigningKey::from_seed`.
+        #[cfg(test)]
+        dregg_pq_testkit::install_or_panic();
         dregg_pq::ml_dsa_verify(&self.0, HYBRID_PQ_CTX, message, sig_bytes)
     }
 }
@@ -484,6 +487,17 @@ impl MlDsaSigningKey {
     /// Deterministic keypair from a 32-byte seed `ξ` (`keygen_from_seed`) —
     /// for reproducible fixtures, exactly like [`HybridTestDealer::deal`].
     pub fn from_seed(xi: &[u8; 32]) -> (MlDsaPublicKey, Self) {
+        // `dregg-federation` is a light leaf: it cannot link the Lean archive from
+        // `[dependencies]`, so with no verified core installed `dregg-pq` refuses this derivation
+        // with an uncatchable `process::abort()` — which is what this crate's lib-test binary did.
+        // The dev-only `dregg-pq-testkit` links the archive and installs the cores; this and
+        // `MlDsaPublicKey::verify` above are the two entries from this crate into `dregg-pq`, so
+        // the lib-test binary is covered by these two lines.
+        //
+        // `#[cfg(test)]` because the shipped crate stays archive-free — a node installs the same
+        // cores at startup.
+        #[cfg(test)]
+        dregg_pq_testkit::install_or_panic();
         let key = dregg_pq::MlDsaKey::from_ed25519_seed(xi);
         let pk = MlDsaPublicKey(
             key.public_bytes()

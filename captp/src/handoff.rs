@@ -476,6 +476,16 @@ mod hybrid_pq {
         /// Derive the ML-DSA-65 keypair deterministically from a 32-byte ed25519
         /// seed (`ML-DSA.KeyGen(ξ = seed)`).
         pub fn from_ed25519_seed(seed: &[u8; 32]) -> Self {
+            // `dregg-captp` is FFI-free by construction, so nothing in this crate's test binary
+            // installs a verified PQ core and `dregg-pq` refuses the derivation with an
+            // uncatchable `process::abort()`. The dev-only `dregg-pq-testkit` links the archive
+            // and installs the cores; this and `ml_dsa_verify` below are the two entries from this
+            // crate into `dregg-pq`, so the lib-test binary is covered by these two lines.
+            //
+            // `#[cfg(test)]` because the shipped crate stays archive-free — a node installs the
+            // same cores at startup.
+            #[cfg(test)]
+            dregg_pq_testkit::install_or_panic();
             Self(dregg_pq::MlDsaKey::from_ed25519_seed(seed))
         }
 
@@ -495,6 +505,9 @@ mod hybrid_pq {
     /// signature, or a failed check. This is the fail-CLOSED primitive: a
     /// missing or present-but-invalid PQ half must reject the whole hybrid handoff.
     pub fn ml_dsa_verify(public_bytes: &[u8], message: &[u8], sig_bytes: &[u8]) -> bool {
+        // The other entry from this crate into `dregg-pq` — see `MlDsaHandoffKey::from_ed25519_seed`.
+        #[cfg(test)]
+        dregg_pq_testkit::install_or_panic();
         dregg_pq::ml_dsa_verify(public_bytes, HANDOFF_PQ_CTX, message, sig_bytes)
     }
 }

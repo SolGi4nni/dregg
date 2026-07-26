@@ -773,6 +773,10 @@ mod tests {
 
     #[test]
     fn arbitrary_self_signed_restart_rows_do_not_replace_activation_authority() {
+        // The attacker's ML-DSA-65 derivation below goes through `dregg-pq`, which aborts the
+        // process with no verified core installed — see
+        // `FaithfulNoteRootEnvelopeV1::verify_hybrid`.
+        dregg_pq_testkit::install_or_panic();
         let federation = [0x33; 32];
         let block = [0x61; 32];
         let root = crate::CanonicalFaithfulRoot::from_bytes([0; 32]).unwrap();

@@ -78,6 +78,11 @@ dregg-cell = { path = "../cell" }
 tempfile = { workspace = true }
 serde_json = { workspace = true }
 hex = "0.4"
+# TEST-ONLY: installs the Lean-verified ML-DSA cores so this crate's lib-test binary can run a PQ
+# operation at all. `cross_fed`'s hybrid-quorum tests derive real ML-DSA-65 keys through
+# `dregg-pq`, which refuses an uninstalled core with `process::abort()` — the binary died on it as
+# a bare SIGABRT. See `dregg-pq-testkit`'s crate docs.
+dregg-pq-testkit = { path = "../dregg-pq-testkit" }
 
 [lints]
 workspace = true

@@ -1051,6 +1051,19 @@ impl std::error::Error for SharedBudgetError {}
 mod tests {
     use super::*;
 
+    /// Install the Lean-verified ML-DSA cores for this test binary.
+    ///
+    /// `dregg-coord` never calls `dregg-pq` itself — it reaches it through
+    /// `dregg_blocklace::finality::Block::new` / `Blocklace::new_simple`, which derive the block
+    /// author's ML-DSA-65 half from its ed25519 seed. `dregg-blocklace` installs a core only under
+    /// its OWN `cfg(test)`, which is not set when it is compiled as a dependency, so with nothing
+    /// installed `dregg-pq` refused the derivation with an uncatchable `process::abort()` and this
+    /// whole lib-test binary died as a bare SIGABRT. The dev-only `dregg-pq-testkit` links the
+    /// archive and installs the cores; it is idempotent, so every test that mints a block calls it.
+    pub(crate) fn install_pq_cores() {
+        dregg_pq_testkit::install_or_panic();
+    }
+
     fn pool_resource() -> ResourceId {
         CellId::from_bytes([0xBB; 32])
     }
@@ -1519,6 +1532,7 @@ mod tests {
 
     #[test]
     fn test_encode_decode_debit_payload() {
+        install_pq_cores();
         let resource_id = [0xCC; 32];
         let amount = 4200u64;
 
@@ -1540,6 +1554,7 @@ mod tests {
 
     #[test]
     fn test_extract_resource_debit_generic() {
+        install_pq_cores();
         let resource_id = [0xEE; 32];
         let amount = 7777u64;
 
@@ -1576,6 +1591,7 @@ mod tests {
 
     #[test]
     fn test_resolve_with_ordering_accepts_rejects() {
+        install_pq_cores();
         // 3 agents, pool of 1000. After overspend, resolve via tau ordering.
         let agents = test_agents(3);
         let agent_a = agents[0];
@@ -1644,6 +1660,10 @@ mod tests {
     /// This ensures the ParticipantId matches the block creator field (which is
     /// the verifying/public key, not the signing key bytes).
     fn signing_key_and_participant(seed: u8) -> (ed25519_dalek::SigningKey, ParticipantId) {
+        // Every key minted here ends up authoring a `dregg_blocklace::finality::Block`, and
+        // `Block::new` derives the author's ML-DSA-65 half from the ed25519 seed. See
+        // `install_pq_cores` above for why this crate has to install them itself.
+        install_pq_cores();
         let mut key_bytes = [0u8; 32];
         key_bytes[0] = seed;
         key_bytes[31] = 0xDD;
@@ -1839,6 +1859,7 @@ mod tests {
 
     #[test]
     fn test_full_escalation_round_trip() {
+        install_pq_cores();
         // End-to-end: 3 agents, pool 1000, concurrent debits → overspend →
         // escalate → resolve with tau ordering → resume with reduced balance.
         let agents = test_agents(3);

@@ -54,6 +54,12 @@ ark-std = "0.5.0"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+# TEST-ONLY: installs the Lean-verified ML-DSA cores so this crate's test binaries can run a PQ
+# operation at all — `frost::MlDsaSigningKey::from_seed` / `MlDsaPublicKey::verify` go through
+# `dregg-pq`, which refuses an uninstalled core with `process::abort()`. The lib-test binary and
+# `tests/hybrid_pq_consensus.rs` both died on it as bare SIGABRTs. This crate cannot link the
+# archive from `[dependencies]`. See `dregg-pq-testkit`'s crate docs.
+dregg-pq-testkit = { path = "../dregg-pq-testkit" }
 
 [[bench]]
 name = "consensus_bench"
