@@ -20,6 +20,7 @@ constants or public inputs.  Rust only fills this Lean-authored layout and prove
 the emitted descriptor.
 -/
 import Market.FhEggClearing
+import Market.PackedBookFamily
 import Dregg2.Circuit.DescriptorIR2
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Tactics
@@ -27,6 +28,9 @@ import Dregg2.Tactics
 namespace Market.DarkBazaarPrivateDescriptor
 
 open Dregg2.Circuit (Assignment)
+open Dregg2.Circuit.CaveatBignum (bignumVal Ranged)
+open Dregg2.Bignum.DigitInjective (bignumVal_injective)
+open Market.PackedBookFamily (bignumVal_ofFn)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow)
 open Dregg2.Circuit.DescriptorIR2
@@ -121,43 +125,49 @@ theorem orderCode_injective : Function.Injective orderCode := by
 def packedBook (w : PrivateWitness) : Int :=
   (List.ofFn (fun i : Fin 4 => (128 : Int) ^ i.val * orderCode (w.orders i))).sum
 
-/-- The committed 28-bit pack loses no fixed-slot order information. -/
+/-- The book's digit list — one base-128 limb per committed slot. -/
+def bookLimbs (w : PrivateWitness) : List Int :=
+  List.ofFn (fun i : Fin 4 => orderCode (w.orders i))
+
+/-- **The pack IS a bignum.**  The positional sum the AIR emits (`Σ 128ⁱ · ORDER_PACKᵢ`) and the
+base-128 limb denotation `bignumVal` are the same object — by `bignumVal_ofFn`, which is proved
+by induction on the limb count, so this bridge does not know `4` either. -/
+theorem packedBook_eq_bignumVal (w : PrivateWitness) :
+    packedBook w = bignumVal 128 (bookLimbs w) := by
+  rw [bookLimbs, bignumVal_ofFn]
+  rfl
+
+/-- Every committed slot is a legal base-128 digit — the per-limb range side condition the
+injectivity keystone consumes.  Stated over an arbitrary slot index, not four of them. -/
+theorem bookLimbs_ranged (w : PrivateWitness) : Ranged 128 (bookLimbs w) := by
+  intro z hz
+  simp only [bookLimbs, List.mem_ofFn] at hz
+  obtain ⟨i, hi⟩ := hz
+  subst hi
+  simp only [orderCode]
+  have hk := (w.orders i).kind.isLt
+  have hq := (w.orders i).qty.isLt
+  omega
+
+/-- The committed 28-bit pack loses no fixed-slot order information.
+
+This is a MULTI-LIMB argument, not an enumeration: `bignumVal_injective` inducts over the limb
+list once, at every width, and the per-slot inversion is `orderCode_injective`.  The previous
+proof wrote the four-digit sum out literally and handed eight bound hypotheses to `omega`, which
+is why the family could not be resized — that proof cost grows with the square of the slot count
+and says nothing about any other `N`.  See `Market.PackedBookFamily` for the parametric form and
+for the multi-FELT pack a game-sized family needs. -/
 theorem packedBook_injective_on_orders {left right : PrivateWitness}
     (hpack : packedBook left = packedBook right) : left.orders = right.orders := by
-  have codeBounds (w : PrivateWitness) (i : Fin 4) :
-      0 ≤ orderCode (w.orders i) ∧ orderCode (w.orders i) < 128 := by
-    simp only [orderCode]
-    have hk := (w.orders i).kind.isLt
-    have hq := (w.orders i).qty.isLt
-    omega
-  have hp :
-      orderCode (left.orders 0) + 128 * orderCode (left.orders 1) +
-          16384 * orderCode (left.orders 2) + 2097152 * orderCode (left.orders 3) =
-        orderCode (right.orders 0) + 128 * orderCode (right.orders 1) +
-          16384 * orderCode (right.orders 2) + 2097152 * orderCode (right.orders 3) := by
-    simpa [packedBook, List.ofFn_succ, add_assoc] using hpack
-  have h0 : orderCode (left.orders 0) = orderCode (right.orders 0) := by
-    have l0 := codeBounds left 0; have l1 := codeBounds left 1
-    have l2 := codeBounds left 2; have l3 := codeBounds left 3
-    have r0 := codeBounds right 0; have r1 := codeBounds right 1
-    have r2 := codeBounds right 2; have r3 := codeBounds right 3
-    omega
-  have h1 : orderCode (left.orders 1) = orderCode (right.orders 1) := by
-    have l1 := codeBounds left 1; have l2 := codeBounds left 2; have l3 := codeBounds left 3
-    have r1 := codeBounds right 1; have r2 := codeBounds right 2; have r3 := codeBounds right 3
-    omega
-  have h2 : orderCode (left.orders 2) = orderCode (right.orders 2) := by
-    have l2 := codeBounds left 2; have l3 := codeBounds left 3
-    have r2 := codeBounds right 2; have r3 := codeBounds right 3
-    omega
-  have h3 : orderCode (left.orders 3) = orderCode (right.orders 3) := by
-    omega
+  rw [packedBook_eq_bignumVal, packedBook_eq_bignumVal] at hpack
+  have hlists : bookLimbs left = bookLimbs right :=
+    bignumVal_injective (by norm_num) (bookLimbs left) (bookLimbs right)
+      (by simp [bookLimbs]) (bookLimbs_ranged left) (bookLimbs_ranged right) hpack
+  have hfun : (fun i : Fin 4 => orderCode (left.orders i)) =
+      fun i : Fin 4 => orderCode (right.orders i) :=
+    List.ofFn_inj.mp hlists
   funext i
-  fin_cases i
-  · exact orderCode_injective h0
-  · exact orderCode_injective h1
-  · exact orderCode_injective h2
-  · exact orderCode_injective h3
+  exact orderCode_injective (congrFun hfun i)
 
 /-- Canonical source commitment input.  Twelve meaningful inputs plus four
 explicit zero framing lanes use the chip's full arity-16 seed mode, so every
@@ -449,6 +459,17 @@ def darkBazaarPrivateN4K4Descriptor : EffectVmDescriptor2 :=
 #guard hashLookups.length == 1
 #guard darkBazaarPrivateN4K4Descriptor.constraints.length == 1 + 2 * semanticBodies.length + 12
 #guard !(emitVmJson2 darkBazaarPrivateN4K4Descriptor).contains "1430520837"
+
+/- The deployed gate and constraint counts as LITERALS, and the tie from this artifact to the
+size-generic cost model in `Market.PackedBookFamily`.  Those three `#guard`s are what make the
+model's game-sized numbers a computation over a VALIDATED formula rather than an estimate: change
+the layout here and they go red, so the model cannot drift away from the emitted descriptor. -/
+#guard semanticBodies.length == 181
+#guard darkBazaarPrivateN4K4Descriptor.constraints.length == 375
+#guard TRACE_WIDTH == Market.PackedBookFamily.traceWidthOf 4 4 8 4 6 1
+#guard semanticBodies.length == Market.PackedBookFamily.semanticBodyCount 4 4 8 4 6 1
+#guard darkBazaarPrivateN4K4Descriptor.constraints.length ==
+  Market.PackedBookFamily.constraintCount 4 4 8 4 6 1 1
 
 /-! ## 3. Honest emitted-AIR extraction boundary.
 
@@ -1920,6 +1941,8 @@ theorem darkBazaarPrivateN4K4_descriptor_to_accepts
 
 #assert_all_clean [
   Market.DarkBazaarPrivateDescriptor.orderCode_injective,
+  Market.DarkBazaarPrivateDescriptor.packedBook_eq_bignumVal,
+  Market.DarkBazaarPrivateDescriptor.bookLimbs_ranged,
   Market.DarkBazaarPrivateDescriptor.packedBook_injective_on_orders,
   Market.DarkBazaarPrivateDescriptor.argmaxUpto_strict_before,
   Market.DarkBazaarPrivateDescriptor.crossing_strict_before,
