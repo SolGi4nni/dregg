@@ -122,42 +122,85 @@ async fn get_gametable_art() -> Response {
         .into_response()
 }
 
-/// The rules block — what a stranger needs to know before their first click, and no more.
+/// The rules block — **staged**, not shortened by subtraction.
+///
+/// ⚑ **WHAT A FIRST TURN NEEDS IS VISIBLE; THE REST COSTS ONE CLICK AND IS STILL SERVED.** This was
+/// one `<h2>The rules, in one screen</h2>` over five long `<li>`s and a paragraph. Measured headless
+/// at 390px, the whole door carried 581 words of prose against exactly THREE controls, and this
+/// block was 378 of them — the single largest thing on the page that is not the board. "One screen"
+/// had stopped being true: the block's own top sat 1,652px down and it ran 1,455px further.
+///
+/// The staging is the same device the tug's door uses ([`crate::tug_web`]) and for the same reason,
+/// so a reader who meets both doors meets ONE pattern. Above the fold is the shape of one turn: what
+/// you are trying to do, that nobody waits for anybody, how a piece is allowed to travel, what a
+/// clash does, and who is doing the hiding. Behind a `<details>` is what a player wants once they
+/// are playing: the piece inventory and the glyphs, the three phase names, the rest of the clash
+/// rule, what the automaton actually computes, and what a finished match can be re-run against.
+///
+/// ⚠ Be exact about what that cost. The précis RESTATES in shorter form what the deferred block
+/// states in full, so the SERVED word count goes UP, not down; the number that moved the right way
+/// is what a reader is confronted with. NOTHING was traded for brevity — every claim that was in
+/// those five bullets is still on this page, in this function, and a collapsed `<details>` still
+/// prints whole, reads whole to a screen reader, and is in the served HTML for any reader who
+/// searches the page.
+///
+/// ⚑ **TWO BULLETS MAY NEVER GO BEHIND THE CLICK**, and they are the two the deferral would most
+/// like to take:
+/// * the **clash** — a round that does not happen, a board that freezes and a turn counter that does
+///   not move is the one rule whose absence reads as a BUG. `/guide`'s tug section records exactly
+///   that failure from a first-time player on the other game; automatafl's version is worse, because
+///   the freeze follows a move the player just made.
+/// * the **seal** — that the move sits here in plain text and the hiding is this server declining to
+///   tell your opponent. A disclosure a reader has to open a drawer to find is not a disclosure. The
+///   crate header says the same thing and
+///   [`tests::the_rules_do_not_claim_a_cryptographic_commitment_between_clients`] pins the claim.
 fn rules_html() -> String {
     let n = dregg_automatafl::game::N;
     format!(
-        "<section class=\"panel\"><h2>The rules, in one screen</h2>\
+        "<section class=\"panel\"><h2>How one turn goes</h2>\
+         <ul class=\"rules\">\
+         <li><strong>Drive the automaton onto one of your own two corners and you win.</strong> It \
+         is the violet ring, the only piece that glows, and the only one neither seat may \
+         move.</li>\
+         <li><strong>You do not take turns.</strong> Both seats seal a move at the same moment; \
+         both open; then ONE turn applies both.</li>\
+         <li><strong>Pieces move in straight lines only</strong> · along a row or a column, any \
+         distance, never diagonally, never onto the automaton. (If you play chess: exactly like a \
+         rook.) Either seat may push ANY piece: the pieces are shared, and that is what makes the \
+         collision interesting.</li>\
+         <li>⚑ <strong>If you both grab the same square, that round does not happen.</strong> This \
+         is the part that looks broken and is not. The contested square is MARKED (it paints as a \
+         dead <code>×</code>), the board FREEZES exactly as it was, the turn counter does not move, \
+         and the seats the clash named owe a FRESH move which may not use a marked square at either \
+         end.</li>\
+         <li><strong>The seal is this server declining to tell them.</strong> Your move sits on \
+         this server in plain text until you open it, so what keeps it secret is not a code the two \
+         of you exchanged that nobody else can read. Trust the host or do not play here.</li>\
+         </ul>\
+         <details class=\"rules-more\"><summary>All of it: the pieces, the phases, the rest of the \
+         clash, and the replay</summary>\
          <ul class=\"rules\">\
          <li><strong>The board</strong> is {n}×{n}. It holds repulsors (<code>R</code> · the \
          angular pale blades, spikes pointing OUT), attractors (<code>A</code> · the round brass \
          discs, spikes pointing IN), and ONE automaton (<code>@</code> · the violet ring, the only \
-         thing on the board that glows). Pieces move like a rook: any distance along a row or a \
-         column, never diagonally, never onto the automaton. Either seat may push ANY piece: the \
-         pieces are shared, and that is what makes the collision interesting.</li>\
-         <li><strong>You do not take turns.</strong> Both seats seal a move at the same time. The \
-         round runs <em>commit → reveal → resolve</em>: you seal, your opponent seals, both open, \
-         then ONE turn applies both.</li>\
-         <li><strong>The seal is the game.</strong> While your move is sealed your opponent is not \
-         shown it, but be clear about who is doing the hiding. Your move sits on this server in \
-         plain text until you open it, so what keeps it secret is this server declining to tell \
-         them, not a code the two of you exchanged that nobody else can read. Trust the host or do \
-         not play here.</li>\
-         <li><strong>A CLASH marks the square and re-opens the round.</strong> If the two moves \
-         fight over the same square, that round does not happen at all: the contested coordinate is \
-         MARKED (it paints as a dead <code>×</code> square), the board FREEZES exactly as it was, \
-         and the seats the clash named owe a FRESH move, which may not use a marked square at \
-         either end. The turn counter does not move until a round comes back clean, and the markers \
-         die when it does. Every re-entry has to burn a NEW square, so a turn cannot re-open \
-         forever.</li>\
-         <li><strong>The automaton then steps</strong>, once the round finally resolves, pulled \
-         toward attractors and pushed from repulsors along each axis. Drive it onto one of YOUR two \
-         goal corners and you win.</li>\
+         thing on the board that glows).</li>\
+         <li><strong>The round runs <em>commit → reveal → resolve</em></strong> · you seal, your \
+         opponent seals, both open, then ONE turn applies both. Those three words are what the \
+         phase line at the top of a live table is naming.</li>\
+         <li><strong>A clash cannot re-open forever.</strong> The turn counter does not move until \
+         a round comes back clean, and the markers die when it does. Every re-entry has to burn a \
+         NEW square, so a turn runs out of squares before it runs out of patience.</li>\
+         <li><strong>Then the automaton steps</strong>, once the round finally resolves, pulled \
+         toward attractors and pushed from repulsors along each axis. It answers whatever you leave \
+         standing around it, which is why a move that helps you and a move that helps you <em>given \
+         what they are probably doing to the same board</em> are not the same move.</li>\
          </ul>\
          <p class=\"prose\">Every press is re-run against the rules before anything is written \
          down: an illegal move is refused and nothing happens. And when the match is over, anyone \
          can replay it from the first move to the last and watch it come out the same way. That \
          replay happens on this server, not on a blockchain, and no public network is \
          involved.</p>\
+         </details>\
          </section>",
         n = n,
     )
@@ -177,15 +220,26 @@ fn board_preview() -> String {
 }
 
 /// `GET /automatafl` — the landing page.
+///
+/// ⚑ **THE DECK IS THE SHELF'S OWN SENTENCE, WORD FOR WORD.** It used to be three clauses of this
+/// page's own invention ("A board game where the piece that decides it is the one neither player
+/// controls. You both move at once, in the dark, and the automaton answers whatever you leave
+/// standing around it."), which is a second description of the same game maintained in a second
+/// place. The catalog's tagline is shorter, is what a stranger already read on the shelf they
+/// clicked through from, and is a complete mental model in one sentence — so the door repeats it
+/// rather than paraphrasing it, and
+/// [`tests::the_hero_deck_is_the_shelf_s_own_sentence`] fails if the two ever drift apart. The
+/// clause that did NOT survive the swap ("the automaton answers whatever you leave standing around
+/// it") is not gone: it is the last bullet of [`rules_html`]'s deferred block, where it can say what
+/// it actually means for choosing a move.
 fn landing_page(notice: Option<&str>) -> String {
     let body = format!(
         "<main class=\"session af-table\">\
          <section class=\"af-hero\">\
          <p class=\"eyebrow\">Simultaneous moves · sealed until you both open</p>\
          <h1>Automatafl</h1>\
-         <p class=\"deck\">A board game where the piece that decides it is the one neither player \
-         controls. You both move at once, in the dark, and the automaton answers whatever you \
-         leave standing around it.</p>\
+         <p class=\"deck\">Two players move at the same time, in secret, and the piece that \
+         decides it is the one neither of you controls.</p>\
          <p class=\"credit\">Art · spwashi, <em>gametable</em></p>\
          </section>\
          {notice}\
@@ -244,6 +298,110 @@ mod tests {
             "a visitor with nobody to invite must be handed both exits — hold both seats, or the \
              game meant for one: {page}"
         );
+    }
+
+    /// ⚑ **ONE SENTENCE, ONE PLACE.** The hero deck is `dreggnet_catalog::register_games`'s
+    /// automatafl tagline verbatim — the sentence a stranger already read on the shelf. Read out of
+    /// the registry rather than copied into this test, so editing the shelf copy and forgetting this
+    /// door is a build failure instead of a page that describes the game a second, diverging way.
+    #[test]
+    fn the_hero_deck_is_the_shelf_s_own_sentence() {
+        let mut host = dreggnet_offerings::OfferingHost::new();
+        dreggnet_catalog::register_games(&mut host, &dreggnet_catalog::CatalogConfig::default());
+        let title = host
+            .list_offerings()
+            .into_iter()
+            .find(|info| info.key == KEY)
+            .expect("automatafl is registered in the shared catalog")
+            .title;
+        let (name, tagline) = title
+            .split_once(" · ")
+            .expect("every registered title is `<name> · <tagline>`");
+        assert_eq!(name, "Automatafl");
+        // TWO differences are expected and are not drift, so the comparison normalises them away
+        // rather than pinning a second copy of the sentence:
+        //   * CASE on the first letter. The registry clause trails `"Automatafl · "`, so it opens
+        //     lowercase; the deck is a standalone sentence and opens with a capital.
+        //   * WHITESPACE. The page's literal is wrapped across source lines, so a run of spaces
+        //     appears where the registry has one.
+        let page = landing_page(None);
+        let flat = page
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase();
+        let want = tagline.to_lowercase();
+        assert!(
+            flat.contains(&want),
+            "the door's deck is not the shelf's sentence.\nshelf: {want}\ndeck: {:?}",
+            page.split("class=\"deck\">")
+                .nth(1)
+                .and_then(|rest| rest.split("</p>").next())
+        );
+    }
+
+    /// ⚑ **THE TWO CLAIMS A DEFERRAL WOULD MOST LIKE TO TAKE STAY IN THE OPEN.** [`rules_html`]
+    /// stages the rest of the rules behind a `<details>`; this pins the two bullets that may not go
+    /// there. The clash bullet is the one whose absence reads as a BUG (a board that freezes and a
+    /// turn counter that does not move, right after a move the player made). The seal bullet is a
+    /// TRUST DISCLOSURE, and a disclosure a reader has to open a drawer to find is not a disclosure.
+    ///
+    /// Checked positionally, not by presence: both must appear BEFORE the `<summary>`, which is what
+    /// "in the open" means in this markup. A presence assertion would pass just as happily with both
+    /// of them moved inside the drawer.
+    #[test]
+    fn the_clash_and_the_seal_are_never_behind_the_disclosure() {
+        let rules = rules_html();
+        let summary = rules
+            .find("<summary>")
+            .expect("the deferred block is a <details> with a <summary>");
+        for (what, needle) in [
+            ("the clash", "that round does not happen"),
+            ("the seal", "sits on this server in plain text"),
+        ] {
+            let at = rules
+                .find(needle)
+                .unwrap_or_else(|| panic!("{what} is not on the page at all: {rules}"));
+            assert!(
+                at < summary,
+                "{what} moved behind the disclosure (at {at}, summary at {summary}): {rules}"
+            );
+        }
+    }
+
+    /// The staging is a MOVE, not a cut: every claim the flat block made is still served. Pinned on
+    /// the load-bearing clauses of the five bullets that were replaced, because "the word count went
+    /// down" and "a claim went missing" look identical from the outside.
+    #[test]
+    fn nothing_the_flat_rules_block_claimed_left_the_page() {
+        let rules = rules_html();
+        for claim in [
+            // the piece inventory, with the glyphs the board actually paints
+            "the angular pale blades, spikes pointing OUT",
+            "the round brass discs, spikes pointing IN",
+            "the only thing on the board that glows",
+            // movement, and that the pieces are shared
+            "never diagonally, never onto the automaton",
+            "the pieces are shared",
+            // simultaneity and the three phases
+            "You do not take turns.",
+            "commit → reveal → resolve",
+            // the clash, whole
+            "may not use a marked square at either end",
+            "the markers die when it does",
+            "burn a NEW square",
+            // the automaton, and the win condition
+            "pulled toward attractors and pushed from repulsors along each axis",
+            "onto one of your own two corners",
+            // and the replay paragraph
+            "an illegal move is refused and nothing happens",
+            "not on a blockchain",
+        ] {
+            assert!(
+                rules.contains(claim),
+                "staging the rules dropped `{claim}`: {rules}"
+            );
+        }
     }
 
     #[test]

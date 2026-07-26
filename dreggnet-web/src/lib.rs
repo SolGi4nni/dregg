@@ -1061,7 +1061,26 @@ strong{font-weight:700;color:var(--fg)}
 .needs{display:inline-flex;align-items:center;gap:.3rem;font-size:var(--t-micro);font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--warn);white-space:nowrap}
 .needs.solo{color:var(--good)}
 .btn .needs{font-size:.625rem;letter-spacing:.06em;opacity:.9}
-.offering-card>.needs{margin:.15rem 0 0;white-space:normal}
+/* ⚑ THE CHIP HAS TWO FORMS AND THEY WANT OPPOSITE THINGS, which is why the two game DOORS burst on a
+   phone. Same defect class as `.af-board`'s `1fr` track below: a floor the container cannot honour
+   does not make the thing fit, it makes the page overflow.
+     `<span class="needs">` is an inline QUALIFIER sitting beside a button's label. There `nowrap` is
+   LOAD-BEARING: it is what keeps the chip's min-content contribution equal to its text, so the flex
+   line reserves room for it instead of squeezing it. Measured, the two span chips fit with 23px to
+   spare, and taking `nowrap` off them made them wrap for no reason. They keep it.
+     `<p class="needs">` is a STANDALONE line whose width is its container's. There `nowrap` is a
+   promise the container cannot keep. It was free while the copy stayed chip-sized, and stopped being
+   free when `open_a_table_section` put a SENTENCE in one ("Two players · no matchmaking here · you
+   invite them yourself"): uppercase at `letter-spacing:.08em` is 464px of unbreakable text. Measured
+   headless, `/tug` AND `/automatafl` at 390px both reported `scrollWidth` 501 against `clientWidth`
+   390, the sole crosser this `<p>` at `right:499.6` — and identically 501 at 480px, because a
+   `nowrap` box has ONE width and does not care how much room it was given.
+   ⚠ This was ALREADY half-found and patched as `.offering-card>.needs{white-space:normal}` — the
+   right treatment keyed to the wrong thing (a card, rather than the block form), which is exactly
+   why `/offerings` measured clean while both doors burst. Keyed to the form, it generalises: the
+   card rule keeps only its margin, and a `<p>` chip anywhere is now safe. */
+p.needs{max-width:100%;flex-wrap:wrap;white-space:normal}
+.offering-card>.needs{margin:.15rem 0 0}
 .hero-art{display:flex;flex-direction:column;align-items:center;gap:.7rem}
 .hero-art .af-board{margin:0}
 .hero-cap{margin:0;font-size:var(--t-micro);text-transform:uppercase;letter-spacing:.11em;color:var(--fg-3);text-align:center}
@@ -1295,6 +1314,19 @@ main.af-table::before{content:"";position:fixed;inset:0;z-index:-1;pointer-event
 .af-table .rules li{position:relative;padding-left:1.05rem}
 .af-table .rules li::before{content:"";position:absolute;left:0;top:.62em;width:.32rem;height:.32rem;background:var(--br);transform:rotate(45deg)}
 .af-table .rules strong{color:var(--br-pale);font-weight:650}
+/* THE REST OF THE RULES, deferred. Same device as `.receipt-gloss` and `.af-moves`: the summary is
+   the question, so the answer costs a click and does not stand between a stranger and the button.
+   Styled as a real affordance (brass, a rotating chevron, a 2.75rem tap target) because a summary a
+   phone reader cannot see is just a claim that has been hidden. It stays a plain `<details>`: no
+   script, and it prints and reads whole, so nothing behind it has left the document. */
+.af-table .rules-more{margin:.35rem 0 .2rem;border-top:1px solid var(--br-faint);padding-top:.5rem}
+.af-table .rules-more>summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:.4rem;min-height:2.75rem;font-family:var(--mono);font-size:var(--t-micro);letter-spacing:.06em;text-transform:uppercase;font-weight:700;color:var(--br-lit)}
+.af-table .rules-more>summary::-webkit-details-marker{display:none}
+.af-table .rules-more>summary::before{content:"›";font-family:var(--font);font-size:1.1em;color:var(--br);transition:transform .16s var(--ease)}
+.af-table .rules-more[open]>summary::before{transform:rotate(90deg)}
+.af-table .rules-more>summary:hover{color:var(--br-pale)}
+.af-table .rules-more>summary:focus-visible{outline:2px solid var(--vio);outline-offset:3px;border-radius:3px}
+.af-table .credit-line{font-size:var(--t-sm);color:var(--fg-3)}
 .af-table .invite code{border:1px dashed var(--br-line);background:rgba(7,6,11,.6);color:var(--br-pale)}
 .af-table .seat-link{color:var(--vio-lit)}
 .af-table .backlink{color:var(--n-soft)}
@@ -1319,7 +1351,21 @@ main.af-table::before{content:"";position:fixed;inset:0;z-index:-1;pointer-event
    `min-width:0` below lets the squares follow it down. */
 .af-board{--af-gut:1.2rem;position:relative;display:grid;grid-template-columns:var(--af-gut) minmax(0,1fr);grid-template-rows:1fr var(--af-gut) auto;gap:.15rem;width:100%;max-width:33rem;margin:1rem auto .3rem;padding:.8rem .9rem .7rem;border:1px solid rgba(176,141,87,.3);border-radius:0 14px 14px 14px;background:radial-gradient(125% 105% at 50% -12%,#17131f,#08070c 72%);box-shadow:inset 0 1px 0 rgba(237,220,180,.05),0 26px 64px -34px #000}
 .af-board .af-defs{position:absolute;width:0;height:0;overflow:hidden}
-.af-ruler{display:grid;font-family:var(--mono);font-size:.55rem;font-weight:700;line-height:1;color:rgba(164,159,180,.5)}
+/* ⚑ THE COORDINATE RULER WAS 7.2px AT 2.70:1 ON A PHONE — the smallest and faintest thing this
+   product paints, and it is the ONLY way to say which square you mean out loud. It was `.55rem`
+   here and `.45rem` again in the phone query, i.e. it got smaller exactly where the reader is
+   closest to giving up on it. Both are now `--t-micro`, the floor of the house type scale, and the
+   phone override is gone rather than re-tuned: a board that is 320px wide does not need a
+   coordinate label that is 62% of the size of the desktop one.
+     The alpha moves .5 → .8 for the same reason and by measurement, not taste: over this frame's
+   painted field (`radial-gradient(#17131f, #08070c)`) .5 reads 2.70:1, .72 reads 4.35 and .8 reads
+   5.2, so .8 is the first step that clears 4.5:1 with room for the darker corners.
+     ⚠ THE GUTTER HAD TO GROW WITH IT, and that is the whole reason this was cheap to leave broken.
+   `--af-gut` is a FIXED track, `.9rem` = 14.4px on a phone, less `.32rem` of padding = 9.28px of
+   usable width, and the widest label ("10") measured 8.7px at 7.2px — it fit with 0.6px to spare.
+   At `--t-micro` that label is ~13.3px, so the phone gutter goes to the desktop's `1.2rem`
+   (19.2px → 14.08px usable). The 11 squares each give up ~0.4px for it. */
+.af-ruler{display:grid;font-family:var(--mono);font-size:var(--t-micro);font-weight:700;line-height:1;color:rgba(164,159,180,.8)}
 .af-ranks{grid-column:1;grid-row:1;grid-template-rows:repeat(var(--af-rows),1fr);align-items:center;justify-items:end;padding-right:.32rem}
 .af-files{grid-column:2;grid-row:2;grid-template-columns:repeat(var(--af-n),1fr);align-items:start;justify-items:center;padding-top:.28rem}
 /* THE GRID — a 1px gap over a brass field IS the grid line, so the board rules itself. */
@@ -1343,7 +1389,23 @@ main.af-table::before{content:"";position:fixed;inset:0;z-index:-1;pointer-event
 .af-board .p-auto{color:var(--vio-lit);filter:drop-shadow(0 0 5px rgba(168,159,216,.9))}
 .af-board .af-dot{width:3px;height:3px;border-radius:50%;background:rgba(164,159,180,.2);transition:all .13s}
 .af-board .af-mark{position:absolute;inset:11%;width:78%;height:78%;color:var(--br);opacity:.62;pointer-events:none}
-.af-board .af-seat{position:absolute;top:1px;left:2px;font-family:var(--mono);font-size:.5rem;font-weight:800;line-height:1;color:var(--br-lit);opacity:.7;pointer-events:none}
+/* The seat tag on a goal corner (`a` / `b`). 8px at .7 opacity — the third sub-9px reader on this
+   board and the one that says WHICH corners win it for you. `.625rem` is 10px, which is as far as it
+   goes: it sits inside a 24.6px square on a phone and a letter half the height of its own cell stops
+   being a tag and starts being a piece. Named as the one thing on this board still under
+   `--t-micro`.
+   ⚑ AND IT CARRIES ITS OWN CHIP, because a goal corner is exactly the square most likely to have a
+   PIECE on it. All four of this still's goal squares hold a repulsor, whose pale blade is what the
+   tag was actually sitting on: measured at 1440px, growing the tag from 8px to 10px dropped one of
+   the four from 8.0:1 to 1.24:1 against its painted backdrop — bigger and LESS readable, which is
+   the fix defeating itself. `opacity` had to go with it: an opacity on the element fades the chip
+   and the letter together, so the alpha moves into the two colours.
+   ⚑ AND `z-index:1`, which is the ROOT of that 1.24. The square's stack is emitted goal-inlay →
+   seat tag → piece (`af_square`), and the piece is `position:relative` with an auto z-index, so it
+   paints AFTER the absolutely-positioned tag: the tag was UNDER the piece the whole time and only
+   the small type kept it out of the blade. With the tag lifted the reading is 9.11:1 at every one
+   of 360/390/768/1440 instead of 1.26..9.11. */
+.af-board .af-seat{position:absolute;z-index:1;top:1px;left:2px;padding:0 2px;border-radius:3px;background:rgba(7,6,11,.82);font-family:var(--mono);font-size:.625rem;font-weight:800;line-height:1.15;color:rgba(216,180,126,.95);pointer-events:none}
 /* THE ROLES — order matters: each later rule is the stronger claim on the square. */
 .af-board .coordgrid .cell.highlighted{border:0;color:var(--n-ink);box-shadow:inset 0 0 0 1px rgba(168,159,216,.4)}
 .af-board .coordgrid .cell.goal{border:0;background:linear-gradient(180deg,#2b2317,#1a1610);box-shadow:inset 0 0 0 1px rgba(176,141,87,.42)}
@@ -1377,7 +1439,11 @@ main.af-table::before{content:"";position:fixed;inset:0;z-index:-1;pointer-event
 /* THE KEY — the three shapes, named, under the board. A stranger never has to be told twice. */
 /* `.7` measured 4.11–4.25:1 at .585rem — a MARGINAL AA FAIL on the one element a colour-blind or
    low-vision player reads to decode every other colour on the board. `.86` measures 5.55:1. */
-.af-key{grid-column:1/-1;grid-row:3;display:flex;flex-wrap:wrap;gap:.28rem .8rem;margin-top:.5rem;padding-top:.5rem;border-top:1px solid var(--br-faint);font-family:var(--mono);font-size:.585rem;letter-spacing:.05em;text-transform:uppercase;color:rgba(164,159,180,.86)}
+/* THE KEY — the legend that names every shape and every square state. 9.36px here and 8.48px on a
+   phone; it is the one block on the board a first-time reader HAS to read, so it goes on the type
+   scale with the ruler. It wraps rather than overflows (`flex-wrap`), so the cost of the larger type
+   is board height, not a burst frame — measured below. */
+.af-key{grid-column:1/-1;grid-row:3;display:flex;flex-wrap:wrap;gap:.28rem .8rem;margin-top:.5rem;padding-top:.5rem;border-top:1px solid var(--br-faint);font-family:var(--mono);font-size:var(--t-micro);letter-spacing:.05em;text-transform:uppercase;color:rgba(164,159,180,.86)}
 .af-key span{display:inline-flex;align-items:center;gap:.3rem;white-space:nowrap}
 .af-board .af-key .af-p{width:1.05rem;height:1.05rem;flex:0 0 auto}
 .af-key i{width:.55rem;height:.55rem;flex:0 0 auto;font-style:normal}
@@ -1510,7 +1576,20 @@ main.af-table::before{content:"";position:fixed;inset:0;z-index:-1;pointer-event
 .af-hero h1{font-family:var(--n-serif);font-size:var(--t-display);font-weight:600;letter-spacing:-.01em;margin:0 0 .6rem;color:var(--br-pale)}
 .af-hero .deck{color:var(--n-ink)}
 .af-hero .eyebrow{color:var(--br-lit)}
-.af-hero .credit{position:absolute;right:.7rem;bottom:.5rem;max-width:none;margin:0;font-family:var(--mono);font-size:.55rem;letter-spacing:.1em;text-transform:uppercase;color:rgba(237,220,180,.42)}
+/* ⚑ THE ARTIST'S CREDIT WAS 8.8px AT 3.23:1, which is to say it was decoration shaped like an
+   attribution. Measured headless at 390px against the PAINTED backdrop (the pixels of the
+   photograph, not the first opaque ancestor — the scrim over the gametable is only .34 opaque where
+   this sits, so an ancestor-walk reports a contrast the reader never gets).
+     Two things are wrong and they need different fixes. The SIZE is off the type scale entirely:
+   `--t-micro` is the floor of the house scale and this was three quarters of it, so it goes back on
+   the scale. The CONTRAST cannot be fixed by colour alone — the backdrop is a photograph, and every
+   alpha bright enough to clear 4.5:1 over its dark half is a different number over its light half.
+   So the credit carries its OWN scrim: a small pill of the hero's night, which makes the backdrop a
+   value we chose instead of one the image chose. `position:absolute`, so the padding it gains
+   reflows nothing — checked at all seven widths.
+   ⚠ SHARED WITH `/tug`'s hero (`.af-hero.hero-tug`), deliberately: it is the same credit line in the
+   same corner over a different painting, and it was the same 8.8px there. */
+.af-hero .credit{position:absolute;right:.7rem;bottom:.5rem;max-width:none;margin:0;padding:.2rem .5rem;border-radius:var(--r-pill);background:rgba(7,6,11,.72);font-family:var(--mono);font-size:var(--t-micro);letter-spacing:.1em;text-transform:uppercase;color:rgba(237,220,180,.86)}
 /* ═══ TABLES / ROWS / LISTS / PILLS ══════════════════════════════════════ */
 .table-wrap{overflow-x:auto;margin:var(--s4) 0;border:1px solid var(--line-soft);border-radius:var(--r-lg);background:rgba(5,8,15,.4)}
 table.board{width:100%;border-collapse:collapse;font-size:var(--t-sm);font-variant-numeric:tabular-nums}
@@ -1600,12 +1679,16 @@ hr{border:0;border-top:1px solid var(--line-soft);margin:var(--s4) 0}
 .nr-well{padding:.5rem .55rem;max-width:100%}
 .af-table .nr-well>.coordgrid{gap:1px;padding:0}
 .af-table .nr-well .cell{min-width:0}
-.af-board{--af-gut:.9rem;padding:.55rem .6rem .5rem;max-width:100%}
+/* `--af-gut` stays at the desktop `1.2rem` — see the ⚑ on `.af-ruler`: the gutter is the track the
+   coordinate label lives in, and shrinking it here is what made a `--t-micro` label impossible. */
+.af-board{padding:.55rem .6rem .5rem;max-width:100%}
 .af-board>.coordgrid{gap:1px;padding:0}
 /* (`.af-board .coordgrid .cell{min-width:0}` used to live here and ONLY here — it is now on the base
-   rule, because the frame can be narrower than 11 tap targets on a desktop too.) */
-.af-ruler{font-size:.45rem}
-.af-key{font-size:.53rem;gap:.22rem .6rem}
+   rule, because the frame can be narrower than 11 tap targets on a desktop too.)
+   (`.af-ruler{font-size:.45rem}` and `.af-key{font-size:.53rem}` used to live here — 7.2px and
+   8.48px, the two smallest readers on the product, shrunk on the one device held at arm's length.
+   Both are `--t-micro` at every width now; only the key's GAP still tightens on a phone.) */
+.af-key{gap:.24rem .62rem}
 .coordgrid .cell{min-width:1.35rem;border-radius:8px}
 .affordance{flex-direction:column}
 .affordance input.arg{flex:1 1 auto;width:100%;text-align:left}
@@ -2143,11 +2226,7 @@ impl Notice {
     /// announced line, so it reads as a finished clause rather than a dangling separator.
     pub(crate) fn with_record(head: impl Into<String>, tail: &str) -> Self {
         let head = head.into();
-        let said = head
-            .trim_end()
-            .trim_end_matches('·')
-            .trim_end()
-            .to_string();
+        let said = head.trim_end().trim_end_matches('·').trim_end().to_string();
         Self {
             shown: format!("{head}{tail}"),
             said,
@@ -3791,10 +3870,7 @@ async fn post_offering_act(
             outcome: Outcome::Landed { receipt, ended },
             did,
         } => Notice::with_record(
-            format!(
-                "Turn committed · {}",
-                named_act(did.as_deref(), &form.turn)
-            ),
+            format!("Turn committed · {}", named_act(did.as_deref(), &form.turn)),
             &PlayerTurnReceipt::from_landed(&receipt, ended).compact_text(PlayerReplaySurface::Web),
         ),
         CatalogAct::Advanced {
@@ -3819,10 +3895,7 @@ async fn post_offering_act(
             publication: Some(publication),
             did,
         } => Notice::with_record(
-            format!(
-                "Turn committed · {}",
-                named_act(did.as_deref(), &form.turn)
-            ),
+            format!("Turn committed · {}", named_act(did.as_deref(), &form.turn)),
             &game_session::public_receipt_text(&publication, PlayerReplaySurface::Web),
         ),
         CatalogAct::AdvancedGame {
