@@ -390,6 +390,92 @@ codegen-units = 1
 [profile.dev]
 incremental = false
 
+# DEBUG INFO: line tables only. Nothing in this repo reads full DWARF, and full
+# DWARF was 83-92% of every debug binary.
+#
+# MEASURED — a controlled A/B on ONE artifact, one lane (persvati:darkpool), one
+# revision (03759c3a2), identical features, this key the only variable. Both
+# binaries were kept side by side; reproduce with `size -A <binary>`:
+#
+#                        debug=2 (was)   line-tables-only (is)    delta
+#     file on disk        1570.6 MB          665.0 MB           2.36x smaller
+#     DWARF total         1249.7 MiB         388.9 MiB          3.21x smaller
+#     .debug_str           490.4 MiB         164.1 MiB           -66.5%
+#     .debug_info          375.3 MiB          90.5 MiB           -75.9%
+#     .debug_loc           225.6 MiB          17.8 MiB           -92.1%
+#     .debug_ranges         78.7 MiB          45.7 MiB           -41.9%
+#     .debug_line           70.5 MiB          64.3 MiB            -8.9%
+#     .text                107.4 MiB         104.5 MiB            -2.8%
+#     DWARF as % of file      83.4%             61.3%
+#
+# The 84% is not one unlucky binary: the 20 largest ELF artifacts in the lane
+# measured 83.4-84.5% DWARF each, and all 528 linked binaries under target/debug
+# totalled 168.6 GiB of which 152.8 GiB (90.6%) was DWARF.
+#
+# THE .text WOBBLE IS NOT DEAD-CODE RETENTION — it was worth checking, because if
+# `-g` had been keeping otherwise-collectable code alive, dropping it would have
+# been changing what we SHIP. It is not: over the 212,534 function names present in
+# both binaries, 69.8% are byte-identical in size, 29.2% are smaller under
+# line-tables-only, 0.9% larger, netting -2.76% — which is the entire section
+# delta. The smaller binary has slightly MORE `.text` symbols (303,546 vs
+# 303,045), so nothing was dropped; per-function codegen simply differs under
+# `-g`, concentrated in heavily-inlined functions. Which LLVM pass is responsible
+# is NOT isolated.
+#
+# STILL DWARF AFTER THIS: 61.3% of the remainder, dominated by `.debug_str`
+# (164.1 MiB of mangled names for the subprogram/inlined-frame skeleton) and
+# `.debug_line` (64.3 MiB). Those two ARE the backtrace-attribution machinery, so
+# this key is the end of the free win, not the end of the weight. `debug = 0`
+# would take the file to roughly 245 MiB by section arithmetic (UNBUILT — not a
+# measurement), at the cost of file:line on backtrace frames. That is a real
+# trade, so it is ember's call, not a default.
+#
+# `.debug_loc` is 226 MB because of the opt-level = 3 below, NOT because of this
+# key: an optimized variable needs a location LIST per live range instead of one
+# stack slot. So the two settings compound, and neither is the other's fault.
+#
+# WHAT THIS DOES NOT COST US. Verified by experiment, not assumed:
+#   - PANIC LOCATIONS SURVIVE. `panicked at foo.rs:6:27` and the full `assert_eq!`
+#     left/right dump are `#[track_caller]` + static `core::panic::Location` data
+#     baked into .rodata. They are not DWARF; they are byte-identical even at
+#     `debuginfo=0`. Every panic-based tooth in the tree keeps its teeth.
+#   - BACKTRACE FUNCTION NAMES SURVIVE: they come from `.symtab`, also not DWARF.
+#     (Which is why `strip` is NOT set here and must not be — that WOULD take
+#     them. Nothing above deletes symbols.)
+#   - `debug = "line-tables-only"` keeps `.debug_line`, so a backtrace FRAME can
+#     still resolve to file:line. Full `debuginfo` buys variable inspection in a
+#     debugger, and the tree has no debugger consumer: zero rust-gdb/rust-lldb
+#     invocations, zero `Backtrace::capture`, zero debugger config files.
+# If a debugging session ever needs locals, get them per-invocation without
+# editing this file: `CARGO_PROFILE_DEV_DEBUG=2 cargo test …`.
+#
+# Package overrides inherit every key they do not name, so the `opt-level = 3`
+# blocks below pick this up too — deps included. `profile.test` inherits `dev`.
+# `release`/`bench` are untouched (they already default to no debug info).
+#
+# THIS DOES NOT REACH THE EXCLUDED WORKSPACES. All 11 of them carry their own
+# `[workspace]` and none sets `debug`, so each still defaults to full DWARF:
+# solana-lock, solana-settlement, wasm, sdk-py, pg-dregg, deos-zed-full,
+# discord-bot, dregg-tui, deos-homeserver, durable-workflow, forge-ci-runner.
+# A profile key cannot cross a workspace root; each needs its own line.
+#
+# NOT set: `split-debuginfo` — deliberately, and NOT because it is worthless.
+# It is platform-divergent (macOS already defaults to `unpacked`, which is exactly
+# why a Mac binary never carried this weight while a Linux one did; on Linux the
+# default is `off`, so the linker copies every dep's DWARF into every binary).
+# Measured on this lane: the 20 largest ELF artifacts are 28.8 GiB holding 24.2 GiB
+# of DWARF (84.0%), and they are 20 near-identical copies of the SAME dependency
+# DWARF — which is the shape split-DWARF deduplicates, since `.dwo` sidecars are
+# emitted once per crate rather than copied once per linked binary. So it is a
+# plausibly large second win, not a wash.
+# It stays unset because it is UNVERIFIED at workspace scale: `off`/`packed`/
+# `unpacked` were each confirmed to link and to keep panic locations on Linux
+# x86_64 AND macOS arm64, but only on a standalone test crate, and the toy cannot
+# size the effect (its DWARF comes from precompiled std, which split-DWARF does
+# not touch). Note `.debug_line` CANNOT move to a `.dwo`, so this compounds with
+# the key above rather than replacing it. Land it behind a real measurement.
+debug = "line-tables-only"
+
 # Fast dev/test builds with FAST crypto: keep our own crates cheap to compile
 # (opt-level 0, quick iteration) but build all DEPENDENCIES optimized so the
 # crypto primitives (plonky3 p3-*, poseidon2, BLS12-381, FRI) don't run
