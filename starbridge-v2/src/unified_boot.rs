@@ -491,20 +491,19 @@ pub fn client_signed_save(
 
     let before = client.receipts_count()?;
 
-    // The node's executor requires the turn's `previous_receipt_hash` to equal
-    // the node's CURRENT receipt-chain head (the node seeds the executor with
-    // `s.cclerk.receipt_chain().last()`). A client cannot know that locally — its
-    // own clerk chain is empty — so read the head off `/api/receipts` (newest
-    // first) and stamp it. `None` head (a fresh node) leaves it unstamped.
+    // The node's executor requires the turn's `previous_receipt_hash` to equal THIS
+    // AGENT's own receipt-chain head, not the node's. A client cannot know that
+    // locally — its own clerk chain is empty — so read it off `/api/cell/{id}`, which
+    // serves exactly `agent_receipt_head_hash` as `last_receipt_hash`. Reading
+    // `/api/receipts` newest-first (what this did) answers a different question: that
+    // array interleaves every agent, so the moment the faucet materialize above
+    // committed — one line earlier, every single boot — the head belonged to the
+    // FAUCET and the user's turn was refused as a receipt-chain mismatch. `None`
+    // (a cell at genesis) leaves it unstamped.
     let prev_head = client
-        .receipts_raw()
+        .cell_receipt_head(&user_cell_hex)
         .ok()
-        .and_then(|rs| rs.into_iter().next())
-        .and_then(|raw| {
-            raw.get("receipt_hash")
-                .and_then(|v| v.as_str())
-                .map(String::from)
-        })
+        .flatten()
         .and_then(|h| decode_hex32(&h));
 
     // (2) Build + sign the SetField turn AS THE USER, over the node's federation id.

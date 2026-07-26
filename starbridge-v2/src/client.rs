@@ -144,6 +144,29 @@ impl NodeClient {
         }
     }
 
+    /// ONE CELL's own receipt-chain head, hex, from `GET /api/cell/{id}`.
+    ///
+    /// This is the value a client must stamp as its next turn's
+    /// `previous_receipt_hash`. It is NOT the head of `/api/receipts`: that array is
+    /// the node-WIDE observation log across every agent the node ever committed for,
+    /// while the node checks continuity per agent
+    /// (`AgentCipherclerk::agent_receipt_head_hash`). The node serves this field as
+    /// `last_receipt_hash` precisely so a client does not have to guess — `null`
+    /// (mapped to `None` here) means the cell is at genesis.
+    pub fn cell_receipt_head(&self, cell_hex: &str) -> anyhow::Result<Option<String>> {
+        match self {
+            NodeClient::Mock => Ok(None),
+            NodeClient::Http { base_url, .. } => {
+                let detail: serde_json::Value =
+                    http_get(base_url, &format!("/api/cell/{cell_hex}"))?;
+                Ok(detail
+                    .get("last_receipt_hash")
+                    .and_then(|v| v.as_str())
+                    .map(String::from))
+            }
+        }
+    }
+
     pub fn federations(&self) -> anyhow::Result<Vec<FederationInfo>> {
         match self {
             NodeClient::Mock => Ok(mock::federations()),
