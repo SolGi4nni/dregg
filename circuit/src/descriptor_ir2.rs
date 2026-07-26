@@ -540,6 +540,13 @@ pub enum MapKind {
     /// Sorted INSERT at a fresh key (root advances; the new leaf's membership path
     /// is against the NEW tree). Freshness must be established separately, e.g. by a
     /// paired `MapKind::Absent` opening against the same pre-root.
+    ///
+    /// ⚠ THIS IS THE OP NOTHING EMITS. Histogram of `"op":"…"` over all SEVEN committed
+    /// registries under `circuit/descriptors/`: `aafi_insert` 24 rows, `absent` 24, `write` 4,
+    /// **`insert` 0** — and `read` 0 as well. The two doc comments that used to say "nothing
+    /// emits this op yet" were attached to `AafiInsert` (below) and to op=4 in `Ir2Air::MapOps`;
+    /// they had it exactly backwards. `MapKind::Insert` and `MapKind::Read` are the unemitted
+    /// kinds; `AafiInsert` and `Absent` are what the deployed descriptors carry.
     Insert,
     /// AAFI (append-at-free-index) INSERT — the gap-#5 two-path insert (root advances).
     /// Where `Insert` splices the fresh leaf in its SORTED position (shifting every later
@@ -3261,8 +3268,14 @@ where
                 builder.assert_zero(is_real.clone() * (is_real.clone() - AB::Expr::ONE));
                 // op ∈ {0 (read), 1 (write), 3 (insert), 4 (aafi-insert)}. Absent (2) is received
                 // by the map-absent table; the map-log multiset partitions by op code. op=4 is the
-                // gap-#5 AAFI two-path insert — ADDITIVE, gated below by `is_aafi` (no descriptor
-                // emits it yet; op≤3 rows are byte-identical).
+                // gap-#5 AAFI two-path insert, gated below by `is_aafi`.
+                //
+                // ⚠ "no descriptor emits it yet; op≤3 rows are byte-identical" used to sit on op=4
+                // and is FALSE at HEAD, in both halves. Histogram of `"op":"…"` over all SEVEN
+                // committed registries under `circuit/descriptors/`: `aafi_insert` 24 rows,
+                // `absent` 24, `write` 4, `insert` 0, `read` 0. op=4 is the insert op the deployed
+                // descriptors actually carry; op=3 and op=0 are the ones nothing emits. Treating
+                // the `is_aafi` leg as dead code is how the deployed accumulator write gets missed.
                 builder.assert_zero(
                     op.clone()
                         * (op.clone() - AB::Expr::ONE)
@@ -5265,8 +5278,13 @@ fn build_traces(
             }
 
             // -- `aafi_insert` (op=4): the gap-#5 two-path IMT insert, its own row shape. Consumes
-            //    `AafiInsertWitness8`; each gate below ↔ an `imtInsert` step. Nothing routes here in
-            //    production (ADDITIVE) — the fill exists for the atomic-flip cutover + the tests. --
+            //    `AafiInsertWitness8`; each gate below ↔ an `imtInsert` step.
+            //    ⚠ "Nothing routes here in production (ADDITIVE) — the fill exists for the
+            //    atomic-flip cutover + the tests" used to sit here and is FALSE at HEAD: this is
+            //    the HOT path. Histogram of `"op":"…"` over all SEVEN committed registries under
+            //    `circuit/descriptors/`: `aafi_insert` 24 rows, `absent` 24, `write` 4, `insert` 0,
+            //    `read` 0. The unrouted fills are op=3 (`MapKind::Insert`) and op=0
+            //    (`MapKind::Read`), not this one. --
             if kind == MapKind::AafiInsert {
                 let w = tree
                     .insert_witness_aafi(HeapLeaf::entry(key, value))
