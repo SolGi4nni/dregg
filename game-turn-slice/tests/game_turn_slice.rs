@@ -246,7 +246,10 @@ fn teeth_lowering_table() {
                     right_cols: [16, 17, 18, 19, 20, 21, 22, 23],
                 }],
             ),
-            expect_lowers: false,
+            // ⚑ FLIPPED: this probe recorded `MerkleHash8` as having no faithful IR-v2 target.
+            // It has one now — `cellprogram_to_descriptor2` lowers the native 8-felt `cap_node8`
+            // node — and the probe's own staleness guard is what reported it.
+            expect_lowers: true,
         },
         Row {
             rule: "replay: unseeded running-hash chain",
@@ -303,12 +306,12 @@ fn teeth_lowering_table() {
     );
     eprintln!("  {lowered} teeth lower, {refused} teeth refused (need new lowering).\n");
     assert_eq!(
-        lowered, 5,
-        "the arithmetic/equality/boolean/transition/bit-decomp teeth lower"
+        lowered, 6,
+        "the arithmetic/equality/boolean/transition/bit-decomp teeth lower, and so does merkle8"
     );
     assert_eq!(
-        refused, 5,
-        "the two range-Lookup / fact-sponge / merkle8 / unseeded-chain teeth are refused"
+        refused, 4,
+        "the two range-Lookup / fact-sponge / unseeded-chain teeth are refused"
     );
 }
 
@@ -451,20 +454,18 @@ fn honest_bundle() -> CustomWitnessBundle {
     }
 }
 
-/// Mint a REAL `customVmDescriptor2R24` wide leg whose claimed `custom_proof_commitment`
-/// (IR2 PI 46..53, the 8-felt flag-day shape) is `commit`; Custom bumps nonce by 1, balance unchanged. Optionally
-/// attach the prover-side `bundle` the deployed chain prover re-proves + binds.
-fn mint_custom_leg(
+/// Mint a REAL wide leg for `effects` over the producer-cell transition
+/// `(balance, nonce) -> (balance, nonce + 1)`, proven under the leaf-wrap config, with the optional
+/// prover-side carrier `bundle` attached. Shared by the `Custom` combat leg and the plain
+/// nonce-bump tail so both ride the SAME dispatch + block witnesses (and so their 8-felt anchors
+/// LINK).
+fn mint_wide_leg(
+    effects: &[Effect],
     balance: i64,
     nonce: u64,
-    commit: [BabyBear; 8],
     bundle: Option<CustomWitnessBundle>,
 ) -> RotatedParticipantLeg {
     let st = CellState::new(balance as u64, nonce as u32);
-    let effects = vec![Effect::Custom {
-        program_vk_hash: [BabyBear::new(9); 8],
-        proof_commitment: commit,
-    }];
     let before_cell = producer_cell(balance, nonce);
     let after_cell = producer_cell(balance, nonce + 1);
 
@@ -494,7 +495,7 @@ fn mint_custom_leg(
 
     let (desc, trace, dpis, map_heaps, mb) = generate_rotated_effect_vm_descriptor_and_trace_wide(
         &st,
-        &effects,
+        effects,
         &before_w,
         &after_w,
         &empty_caveat_manifest(),
@@ -503,16 +504,7 @@ fn mint_custom_leg(
         None,
         None,
     )
-    .expect("custom wide dispatch");
-    assert!(
-        dpis.len() >= 54,
-        "custom leg PI vector must carry the 8-felt commitment slice at 46..53"
-    );
-    assert_eq!(
-        &dpis[46..54],
-        &commit[..],
-        "custom leg must publish the claimed 8-felt commitment at PI 46..53"
-    );
+    .expect("wide dispatch");
 
     let config = ir2_leaf_wrap_config();
     let proof = prove_vm_descriptor2_for_config(
@@ -524,7 +516,7 @@ fn mint_custom_leg(
         &UMemBoundaryWitness::default(),
         &config,
     )
-    .expect("custom wide leg proves under the leaf-wrap config");
+    .expect("wide leg proves under the leaf-wrap config");
 
     let leg = RotatedParticipantLeg {
         proof,
@@ -538,19 +530,51 @@ fn mint_custom_leg(
     }
 }
 
-/// A trailing plain custom turn (no bundle) so the chain has >= 2 turns and links.
-fn plain_custom_turn(balance: i64, nonce: u64) -> FinalizedTurn {
-    let commit = [
-        BabyBear::new(1),
-        BabyBear::new(2),
-        BabyBear::new(3),
-        BabyBear::new(4),
-        BabyBear::new(5),
-        BabyBear::new(6),
-        BabyBear::new(7),
-        BabyBear::new(8),
-    ];
-    let leg = mint_custom_leg(balance, nonce, commit, None);
+/// Mint a REAL `customVmDescriptor2R24` wide leg whose claimed `custom_proof_commitment`
+/// (IR2 PI 46..53, the 8-felt flag-day shape) is `commit`; Custom bumps nonce by 1, balance
+/// unchanged. Optionally attach the prover-side `bundle` the deployed chain prover re-proves + binds.
+fn mint_custom_leg(
+    balance: i64,
+    nonce: u64,
+    commit: [BabyBear; 8],
+    bundle: Option<CustomWitnessBundle>,
+) -> RotatedParticipantLeg {
+    let effects = [Effect::Custom {
+        program_vk_hash: [BabyBear::new(9); 8],
+        proof_commitment: commit,
+    }];
+    let leg = mint_wide_leg(&effects, balance, nonce, bundle);
+    assert!(
+        leg.public_inputs.len() >= 54,
+        "custom leg PI vector must carry the 8-felt commitment slice at 46..53"
+    );
+    assert_eq!(
+        &leg.public_inputs[46..54],
+        &commit[..],
+        "custom leg must publish the claimed 8-felt commitment at PI 46..53"
+    );
+    leg
+}
+
+/// A trailing PLAIN NONCE-BUMP turn (the deployed `incrementNonceVmDescriptor2R24` member, no
+/// bundle) so the chain has >= 2 turns and links.
+///
+/// It used to be a `Custom` leg publishing the literal `[1,2,3,4,5,6,7,8]` as its
+/// `custom_proof_commitment` with NO carrier witness — a claim about a sub-proof that did not
+/// exist, riding the fold's plain-segment arm where the deployed AIR constrains nothing (the
+/// evaluator has no `ProofBind` arm; the sixteen `pi_binding` pins only PUBLISH the columns). The
+/// fold refuses that arm selection now (`require_no_unbacked_proof_bind`), and the fixture is
+/// repaired the honest way: a tail turn that makes NO sub-proof claim, rather than one handed a
+/// manufactured sub-proof to make the fabricated claim check out.
+fn plain_nonce_turn(balance: i64, nonce: u64) -> FinalizedTurn {
+    let leg = mint_wide_leg(&[Effect::IncrementNonce], balance, nonce, None);
+    assert_eq!(
+        dregg_circuit::effect_vm_descriptors::proof_bind_declarations(&leg.descriptor),
+        0,
+        "the tail filler '{}' must declare NO recursive proof-binding — it rides the fold's \
+         plain-segment arm with no carrier witness",
+        leg.descriptor.name
+    );
     FinalizedTurn::new(DescriptorParticipant::rotated(leg))
 }
 
@@ -560,7 +584,7 @@ fn build_chain(commit: [BabyBear; 8]) -> Vec<FinalizedTurn> {
     let balance = 1000i64;
     let t0_leg = mint_custom_leg(balance, 0, commit, Some(honest_bundle()));
     let t0 = FinalizedTurn::new(DescriptorParticipant::rotated(t0_leg));
-    let t1 = plain_custom_turn(balance, 1);
+    let t1 = plain_nonce_turn(balance, 1);
     assert_eq!(
         t0.new_root(),
         t1.old_root(),
