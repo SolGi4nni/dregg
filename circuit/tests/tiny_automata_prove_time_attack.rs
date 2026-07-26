@@ -134,7 +134,10 @@
 //! ```text
 //!   deployed  A @ (blowup 6, 19 q)   20.00 ms   272,901 B
 //!   shape fix B @ (blowup 6, 19 q)    6.33 ms    52,440 B    3.2x faster, 5.2x smaller
-//!   + config  B @ (blowup 2, 57 q)    0.67 ms    99,450 B   30.0x faster, 2.7x smaller
+//!   + config  B @ (blowup 2, 57 q)    0.67 ms    99,450 B   ~20-30x faster, 2.7x smaller
+//!     ⚠ the speedup figure is AT THE QUANTIZATION FLOOR — 0.67 ms rests on a single 0.02 s reading
+//!     at R=30, i.e. one tick. An independent re-run read 1.000 ms → 20.7x. Do not carry three
+//!     significant figures here; the wire size (99,450 B) reproduced EXACTLY and is solid.
 //! ```
 //!
 //! The config change ALONE is a bad trade for shape A (`A @ (2,57)` = 6.00 ms but
