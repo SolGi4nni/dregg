@@ -171,9 +171,20 @@ fn offline_sealed_send_drains_executes_and_custody_receipt_checks() {
     let inbox_cell = birth_inbox(&mut b_runtime, b_pk);
     let (b_x_secret, b_x_public) = generate_x25519_keypair();
 
-    // A destination cell on B's runtime for the deferred transfer.
+    // A destination cell on B's runtime for the deferred transfer. It must be
+    // minted in B'S CURRENCY: `AgentRuntime` denominates its agent cell in
+    // `blake3(domain)`, so a destination in the all-zero asset makes the
+    // deferred transfer a cross-asset teleport the executor refuses
+    // (`turn/src/executor/apply.rs`).
     let dest = {
-        let cell = Cell::with_balance([0xC1; 32], [0u8; 32], 0);
+        let b_asset = b_runtime
+            .ledger()
+            .lock()
+            .unwrap()
+            .get(&b_runtime.cell_id())
+            .expect("the runtime mints its own agent cell")
+            .asset();
+        let cell = Cell::with_balance([0xC1; 32], [0u8; 32], 0).in_asset(b_asset);
         let id = cell.id();
         b_runtime
             .ledger()

@@ -428,12 +428,24 @@ mod tests {
         });
 
         // Transfer destinations must be LIVE cells on the executing ledger
-        // (the executor fails closed with TransferDestNotFound otherwise).
+        // (the executor fails closed with TransferDestNotFound otherwise) AND
+        // they must hold the SAME CURRENCY the payout moves — a bare
+        // `remote_stub_with_id` lands in the all-zero asset, so the payout out
+        // of a `blake3("default")` relay is a cross-asset teleport the executor
+        // correctly refuses (`turn/src/executor/apply.rs`). A stub's id is
+        // pinned, so its name salt is free to carry the asset.
         let wronged = CellId::from_bytes([0x03u8; 32]); // demo receipt inbox_owner
-        exec.ensure_cell(Cell::remote_stub_with_id(wronged))
-            .expect("wronged party cell");
-        exec.ensure_cell(Cell::remote_stub_with_id(default_slash_treasury()))
-            .expect("treasury cell");
+        exec.ensure_cell(Cell::remote_stub_with_id_pk_token_balance(
+            wronged, [0u8; 32], token_id, 0,
+        ))
+        .expect("wronged party cell");
+        exec.ensure_cell(Cell::remote_stub_with_id_pk_token_balance(
+            default_slash_treasury(),
+            [0u8; 32],
+            token_id,
+            0,
+        ))
+        .expect("treasury cell");
 
         (operator, exec, relay_id)
     }
