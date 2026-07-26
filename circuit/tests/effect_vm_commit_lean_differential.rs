@@ -266,7 +266,7 @@ fn differential_real_cell_authority_residue_flows() {
 /// reconstructs a CONCRETE such collision (found by a birthday search over a free folded field,
 /// `fields[8]`; the two salts are pinned so the tooth is deterministic):
 ///
-///   * locked-down salt 57684 vs wide-open salt 1393 → SAME old 1-felt digest (re-mined at the 178-limb geometry).
+///   * locked-down salt 281909 vs wide-open salt 3882 → SAME old 1-felt digest.
 ///
 /// At the NEW faithful 8-felt `compute_authority_digest_8` (`bytes32_to_8_limbs(blake3(residue))`,
 /// ~124 bits) the two are DISTINCT. So the value that the rotated commit absorbs (all 8 limbs, WELDED
@@ -349,8 +349,8 @@ fn gentian_weld_31bit_authority_collision_separated_at_8_felt() {
 /// DIFFERENT state that collides at limb-0 (~30-bit), and the single-limb anchor could not tell.
 ///
 /// This reconstructs a CONCRETE such pair (found by birthday search over the free folded field
-/// `fields[8]`, salts pinned for determinism): a LOCKED-DOWN cell (salt 173207) and a WIDE-OPEN cell
-/// (salt 1272) whose `compute_authority_digest_8[0]` are EQUAL but whose 7 HEADROOM limbs DIFFER.
+/// `fields[8]`, salts pinned for determinism): a LOCKED-DOWN cell (salt 124676) and a WIDE-OPEN cell
+/// (salt 3216) whose `compute_authority_digest_8[0]` are EQUAL but whose 7 HEADROOM limbs DIFFER.
 ///
 ///   * single limb-0 pin (old): `digest8[0]` equal ⟹ the anchor cannot distinguish ⟹ forge survives.
 ///   * 8-felt record-pin8 (new): the verifier anchors all 8; the 7 headroom anchors disagree ⟹ a
@@ -378,8 +378,10 @@ fn gentian_mover_weld_headroom_anchors_bite_where_limb0_is_blind() {
         c
     }
 
-    let locked = make(false, 173207);
-    let open = make(true, 1272);
+    // Re-mined 2026-07-26 by `zz_mine_gentian_collision_salts` below (the old 173207/1272 pair
+    // stopped colliding at limb-0; the premise assert went red, not the claim).
+    let locked = make(false, 124676);
+    let open = make(true, 3216);
 
     // Genuinely-different authority states (locked-down vs wide-open).
     assert_ne!(
@@ -411,10 +413,19 @@ fn gentian_mover_weld_headroom_anchors_bite_where_limb0_is_blind() {
 
 /// **THE SALT MINER (run manually after any authority-digest geometry change).** The two GENTIAN
 /// collision teeth above pin CONCRETE birthday-mined salts; any change to
-/// `authority_residue_bytes` / the digest geometry (e.g. the 172→178-limb fields-octet grow)
-/// invalidates them. Re-mine with
-/// `cargo test -p dregg-circuit --test effect_vm_commit_lean_differential zz_mine --release -- --ignored --nocapture`
-/// and re-pin the printed salts in the two tests above.
+/// `authority_residue_bytes` / the digest geometry (e.g. the 172→178-limb fields-octet grow, or the
+/// arity-3 `HeapLeaf` migration 1809c9897) invalidates them. Re-mine with
+/// `cargo test -p dregg-circuit --test effect_vm_commit_lean_differential zz_mine -- --ignored --nocapture`
+/// and re-pin BOTH printed salt pairs in the two tests above (it prints tooth 1 first, then tooth 2 —
+/// do not stop it after the first line).
+///
+/// `--release` is the fast lane but is NOT always available: on 2026-07-26 a release build of any
+/// `dregg-lean-ffi` consumer was refused outright by `dregg-lean-ffi/build.rs`'s
+/// DREGG_REQUIRE_LEAN gate ("a module failed to elaborate"), because the release profile demands a
+/// coherent CURRENT-SOURCE Lean tree and metatheory was mid-edit. Debug works and is the config CI
+/// runs: measured 667.8s wall for this miner on persvati under load (the 2^19 locked-side table is
+/// the whole cost; the two single-table miners in `fields_root_gentian_weld` /
+/// `heap_root_gentian_weld` finish in 10.1s and 6.4s debug).
 #[test]
 #[ignore = "salt miner — run manually to refresh the pinned collision salts"]
 fn zz_mine_gentian_collision_salts() {

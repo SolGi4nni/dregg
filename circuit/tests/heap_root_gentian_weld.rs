@@ -41,10 +41,13 @@ fn one_entry(key_salt: u32) -> HeapLeaf {
 // Two genuinely-different heap keys whose 8-felt heap roots share LANE 0 (the ~31-bit projection) but
 // differ in the completion lanes. Regenerate with:
 //   cargo test -p dregg-circuit --test heap_root_gentian_weld -- --ignored --nocapture
-// Two distinct heap keys whose 8-felt heap roots share LANE 0 == 424579150 (the ~31-bit projection)
+// Two distinct heap keys whose 8-felt heap roots share LANE 0 == 16187905 (the ~31-bit projection)
 // but differ in the completion lanes — found by `search_heap_lane0_collision`.
-const COLLIDE_SALT_A: u32 = 99374;
-const COLLIDE_SALT_B: u32 = 144075;
+//
+// Re-mined 2026-07-26 (the arity-3 `HeapLeaf` migration, 1809c9897, moved the leaf digest and the
+// old 99374/144075 pair stopped colliding — the tooth went red on its PREMISE, not its claim).
+const COLLIDE_SALT_A: u32 = 51097;
+const COLLIDE_SALT_B: u32 = 55934;
 
 #[test]
 fn heap_root_gentian_31bit_collision_separated_at_8_felt() {

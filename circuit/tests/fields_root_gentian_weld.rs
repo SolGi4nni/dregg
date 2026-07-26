@@ -47,9 +47,11 @@ fn fields_root_8(key: u64) -> [BabyBear; 8] {
 // Two genuinely-different overflow keys whose 8-felt fields roots share LANE 0 (the ~31-bit
 // projection) but differ in the completion lanes. Regenerate with:
 //   cargo test -p dregg-circuit --test fields_root_gentian_weld -- --ignored --nocapture
-const COLLIDE_KEY_A: u64 = 25545;
-const COLLIDE_KEY_B: u64 = 66188;
-const COLLIDE_LANE0: u32 = 641231100;
+// Re-mined 2026-07-26 (the arity-3 `HeapLeaf` migration, 1809c9897, moved the leaf digest and the
+// old 25545/66188 pair stopped colliding — the tooth went red on its PREMISE, not its claim).
+const COLLIDE_KEY_A: u64 = 54736;
+const COLLIDE_KEY_B: u64 = 100863;
+const COLLIDE_LANE0: u32 = 456894541;
 
 #[test]
 fn fields_root_gentian_31bit_collision_separated_at_8_felt() {
