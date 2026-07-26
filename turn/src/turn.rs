@@ -391,10 +391,22 @@ impl Turn {
     // tag covers every semantically load-bearing field on `Turn`, including
     // the execution-proof bundle (`execution_proof`,
     // `execution_proof_cell`, `execution_proof_new_commitment`),
-    // `sovereign_witnesses`, `conservation_proof`, and
+    // `sovereign_witnesses`, and
     // `custom_program_proofs`. The v2 form excluded those, so an attacker
     // with write-access to an in-flight `SignedTurn` could swap any of
     // them without invalidating the signature (the "proof-swap attack").
+    //
+    // ⚑ ONE FIELD IS DELIBERATELY NOT COVERED, and earlier revisions of this
+    // note wrongly listed it as covered: `conservation_proof`. It CANNOT be
+    // hashed here, because the Schnorr excess proof is itself computed OVER
+    // this hash — `check_committed_conservation` verifies it against
+    // `turn.hash()` (`executor/finalize.rs:~272`), so binding the proof into
+    // the hash would be circular. The binding therefore runs proof → hash, not
+    // hash → proof, and that direction is the sound one: a swapped or stripped
+    // `conservation_proof` cannot verify against this turn's hash and its
+    // committed legs, so it fails closed. The residual is malleability, not
+    // forgery — an in-flight tamper keeps the signature valid and turns the
+    // turn into a rejection (a griefing/DoS vector), it does not admit one.
     //
     // Note for callers: this hash is a content-addressed identifier for
     // the entire `Turn` object. The cclerk still signs over its own

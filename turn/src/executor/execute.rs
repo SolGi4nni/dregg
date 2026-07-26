@@ -97,8 +97,22 @@ fn collect_referenced_cells(
             Effect::CellSeal { target, .. }
             | Effect::CellUnseal { target }
             | Effect::CellDestroy { target, .. }
-            | Effect::Burn { target, .. } => {
+            | Effect::Burn { target, .. }
+            // `Mint`'s recipient is an arbitrary PRE-EXISTING cell, exactly like `Burn`'s
+            // holder — and `lean_shadow::effect_cells` assigns it a wire Nat
+            // (`Effect::Mint { target } => vec![*target]`). Omitting it here made this
+            // walker's stated mirror of `collect_tree_ids` FALSE and produced the unsafe
+            // freeze under-report `ShadowHostCtx`'s host-obligation section names: a Mint
+            // into a migration-FROZEN recipient reached the verified gate with that cell
+            // absent from `frozen`, so the gate's frozen leg ADMITTED a turn the
+            // true-facts gate REJECTS. Adding it can only ENLARGE the freeze set.
+            | Effect::Mint { target, .. } => {
                 out.insert(*target);
+            }
+            // Same mirror gap: `AttenuateCapability` narrows a slot the actor holds on
+            // `cell`, and `effect_cells` registers it (`vec![*cell]`).
+            Effect::AttenuateCapability { cell, .. } => {
+                out.insert(*cell);
             }
             Effect::Introduce {
                 introducer,
@@ -112,6 +126,15 @@ fn collect_referenced_cells(
             }
             // Effects whose write set is intrinsic (notes/queues/escrows/etc.) or self-targeted
             // reference no additional pre-existing cell beyond the action target collected above.
+            //
+            // ⚑ That justification is NOT true of every remaining arm, and saying so plainly is
+            // the point: `SetProgram { cell }`, `RotatePqIdentity { cell }`, `Notify { from, to }`,
+            // `Promise { cell }` and `ExerciseViaCapability`'s INNER effects all name pre-existing
+            // cells this walker drops. They are safe TODAY only because `lean_shadow::effect_cells`
+            // does not project them either, so such a turn is not comparable (`lean_verdict = None`)
+            // and the gate never decides it — a GAP, not a check. Widening the marshaller to cover
+            // any of them REQUIRES adding it here in the same change, or the freeze leg
+            // under-reports and admits what the true-facts gate refuses.
             _ => {}
         }
     }

@@ -144,8 +144,18 @@ pub fn consensus_ctx(
 /// 1-felt encoding which leaves 28 bytes zero).
 ///
 /// `pre_state_hash` and `post_state_hash` MUST both come from this function, or
-/// `verify::verify_receipt_chain`'s continuity check
-/// (`curr.pre_state_hash == prev.post_state_hash`) compares incomparable values.
+/// every consumer that compares them across receipts compares incomparable
+/// values.
+///
+/// ⚑ To be exact about WHICH consumer, because the note that stood here named
+/// the wrong one: `verify::verify_receipt_chain` does **NOT** check
+/// `curr.pre_state_hash == prev.post_state_hash`, and says so deliberately
+/// (`verify.rs:147-153`) — the chain is agent-scoped while these snapshots
+/// absorb executor-GLOBAL roots, so another agent's intervening turn legitimately
+/// moves them. The comparison is made only by head-binding callers
+/// (`federation/src/types.rs:522`, the exit path, which raises
+/// `VerifyError::StateChainBreak`). Nothing on the ordinary receipt-chain path
+/// checks the pre-state a turn claims to have begun from.
 ///
 /// # The absent agent
 ///
@@ -159,6 +169,19 @@ pub fn consensus_ctx(
 /// set of present cells moves — so a removal is not a fixed point. Since wound
 /// #23 that "still MOVES" holds at ~124 bits: before the completion group was
 /// filled, the entire absent anchor was a chip chain over ONE ~31-bit felt.
+///
+/// ⚑ "STILL MOVES" IS FALSE FOR A COLLIDING PAIR, and the width fix does not
+/// reach it. `cells_root` keys each cell by `heap_addr(CELLS_COLLECTION,
+/// hash_bytes(id))` — ONE ~31-bit felt (`rotation_witness.rs:311`, and see the
+/// ⚑ on that fn) — and `compute_canonical_heap_root_8` DEDUPES leaves by that
+/// address (`circuit/src/heap_root.rs:832`, `leaves.dedup_by_key(|l|
+/// l.addr.as_u32())`), silently, with no error. So two cells whose key folds
+/// collide occupy ONE leaf: removing either one leaves the root UNCHANGED, and
+/// the removal IS a fixed point of the anchor. `CellId::derive_raw` is BLAKE3
+/// over attacker-chosen `(public_key, token_id)`, so a targeted second preimage
+/// against a chosen victim cell is a ~2^31 offline grind. The ~124-bit claim
+/// prices the root's WIDTH; it does not price the KEY, and the key is what
+/// decides whether a cell is in the set at all.
 pub fn consensus_state_commitment(
     ledger: &Ledger,
     agent: &CellId,

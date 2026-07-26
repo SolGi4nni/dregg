@@ -93,7 +93,10 @@ pub fn constraint_oracle_installed() -> bool {
 /// `AgentRuntime` arming gates on the WEAKER `all(feature = "exec-lean", not(debug_assertions))` —
 /// which omits `any(unix, windows)`, so those two predicates already do not agree about what a
 /// deployed build is. A copied predicate is a claim that the gate it describes may have moved; call
-/// this instead, from any crate, and the answer IS the gate.
+/// this instead, from any crate, and the answer IS the gate. (Both copies named above
+/// have since been retired: `dreggnet-web/src/verified_settlement.rs:132` and
+/// `sdk/src/runtime.rs:426` now CALL this `const fn`. The paragraph is kept as the
+/// standing rationale for why no crate may restate the `cfg`, not as a live inventory.)
 ///
 /// * `true` — native (unix/windows) **release**: an absent oracle REFUSES every Lean-subset
 ///   constraint, so a deployed binary that does not install one can only ever refuse. Any such

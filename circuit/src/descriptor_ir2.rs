@@ -542,11 +542,12 @@ pub enum MapKind {
     /// paired `MapKind::Absent` opening against the same pre-root.
     ///
     /// ⚠ THIS IS THE OP NOTHING EMITS. Histogram of `"op":"…"` over all SEVEN committed
-    /// registries under `circuit/descriptors/`: `aafi_insert` 24 rows, `absent` 24, `write` 4,
-    /// **`insert` 0** — and `read` 0 as well. The two doc comments that used to say "nothing
-    /// emits this op yet" were attached to `AafiInsert` (below) and to op=4 in `Ir2Air::MapOps`;
-    /// they had it exactly backwards. `MapKind::Insert` and `MapKind::Read` are the unemitted
-    /// kinds; `AafiInsert` and `Absent` are what the deployed descriptors carry.
+    /// registries under `circuit/descriptors/`: `aafi_insert` 24 rows, `absent` 24, `write` 6,
+    /// `read` 2, **`insert` 0** (recounted 2026-07-26; the `write 4` / `read 0` figures that
+    /// stood here were stale, though the load-bearing `insert 0` was and is correct — `Insert`
+    /// is the ONLY unemitted kind). The two doc comments that used to say "nothing emits this
+    /// op yet" were attached to `AafiInsert` (below) and to op=4 in `Ir2Air::MapOps`; they had
+    /// it exactly backwards. `AafiInsert` and `Absent` are what the deployed descriptors carry.
     Insert,
     /// AAFI (append-at-free-index) INSERT — the gap-#5 two-path insert (root advances).
     /// Where `Insert` splices the fresh leaf in its SORTED position (shifting every later

@@ -966,9 +966,13 @@ impl LinearityClass {
     /// break with the conservation invariant that the operator must
     /// disclose on-chain?
     ///
-    /// This is the predicate the executor's adversarial path uses to
-    /// decide whether to require a `was_burn`/`was_mint` disclosure
-    /// flag in the receipt.
+    /// ⚑ **NO CALLER.** The claim that stood here — "this is the predicate the
+    /// executor's adversarial path uses to decide whether to require a
+    /// `was_burn`/`was_mint` disclosure flag" — was false twice over: nothing
+    /// calls this outside tests, and there is no `was_mint` field on
+    /// [`crate::TurnReceipt`] at all. `was_burn` is set from a hand-written
+    /// `matches!(Effect::Burn)` forest walk (`executor/mod.rs:75-91`,
+    /// `executor/finalize.rs:895`) that never consults this.
     pub fn is_disclosed_non_conservation(self) -> bool {
         matches!(
             self,
@@ -1894,11 +1898,28 @@ impl Effect {
     /// `HOUYHNHNM-COMPARISON.md` §4.3, §8.2. The compiler is the
     /// enforcer of "the designer had to think about this."
     ///
-    /// The conservation checker in the executor uses this to know
-    /// whether to require a paired sibling effect
-    /// ([`LinearityClass::Conservative`]) or to accept a disclosed
-    /// non-conservation ([`LinearityClass::Generative`] /
-    /// [`LinearityClass::Annihilative`]).
+    /// ⚑ **NOTHING READS THIS.** The claim that stood here — "the conservation
+    /// checker in the executor uses this to know whether to require a paired
+    /// sibling effect" — was false: a whole-tree search for `.linearity()`,
+    /// `LinearityClass`, `requires_paired_sibling` and
+    /// `is_disclosed_non_conservation` finds no non-test caller anywhere
+    /// (`sel4/persist-hosttest/src/hosting.rs:56` is a doc comment). The
+    /// executor's actual conservation teeth are keyed on
+    /// `Action::balance_change` (`executor/execute.rs:1238`, `:1273`) and on
+    /// bespoke per-effect walks (`executor/finalize.rs:512`, `:314`,
+    /// `executor/atomic.rs:1440`); the `was_burn` disclosure is a hand-written
+    /// `matches!(Effect::Burn)` walk (`executor/mod.rs:75`), not this predicate.
+    ///
+    /// ⚑ The classification is also one design generation STALE: `Mint` and
+    /// `Burn` are declared `Generative`/`Annihilative` (ex-nihilo supply), but
+    /// the deployed `apply_mint`/`apply_burn` are WELL-PAIRED and conserve
+    /// exactly (`executor/apply.rs:3774-3780`), and `executor/atomic.rs:1459`/
+    /// `:1477` count them as paired deltas. Do not cite these classes as the
+    /// supply model until they are re-derived from the well-paired one.
+    ///
+    /// **This match is still worth keeping** for the exhaustiveness property
+    /// below — it is the one place a new `Effect` must answer the conservation
+    /// question — but it is a DESIGN CHECKLIST enforced by rustc, not a tooth.
     pub fn linearity(&self) -> LinearityClass {
         match self {
             // -- Conservative: paired-delta resource moves. --
