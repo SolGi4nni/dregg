@@ -161,11 +161,15 @@ theorem deployedCapHashScheme_chip_not_Compress1CR :
 
 /-- ⚑ AND THE GENERAL FALSIFIER STILL BITES: a bundle that RE-ADDED a BabyBear-range-bounded
 `Compress1CR` field would be uninhabitable again — stated over the field's TYPE at the deployed chip,
-so this is the check the next bundle in this shape has to pass. -/
-theorem deployedCapHashScheme_field_would_be_uninhabitable
-    (hfield : Compress1CR deployedCapHashScheme.chipAbsorb) : False :=
+so this is the check the next bundle in this shape has to pass.
+
+Spelled `¬ Compress1CR …` rather than `Compress1CR … → False`: definitionally the same statement and
+the same proof term, but the negation is what `Verify.FloorRatchet.antiFloor` recognises as
+anti-floor content now that it no longer keys on binder POSITION (the B4 hole). -/
+theorem deployedCapHashScheme_field_would_be_uninhabitable :
+    ¬ Compress1CR deployedCapHashScheme.chipAbsorb :=
   Dregg2.Crypto.FactoryBindingFloorRegrounded.compress1CR_field_uninhabitable_babyBear _
-    Dregg2.Circuit.DeployedCapTree.deployedShapedChip1_bounded hfield
+    Dregg2.Circuit.DeployedCapTree.deployedShapedChip1_bounded
 
 /-- ⚑ THE TOOTH FIRES AT THE INHABITANT — the spine anti-ghost, INSTANTIATED at a real deployed value,
 which is the operation the `∀ S : CapHashScheme State` form could never actually be performed for. -/

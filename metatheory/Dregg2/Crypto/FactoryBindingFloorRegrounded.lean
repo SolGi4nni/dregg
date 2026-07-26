@@ -161,10 +161,16 @@ theorem deployedCompress2_compress1_not_Compress1CR :
 /-- **The general form, kept as the falsifier for any not-yet-cut-over bundle in this shape**: a
 `Compress2`-like structure that still carries a BabyBear-range-bounded `Compress1CR` FIELD is
 uninhabitable. Stated over the field's TYPE rather than a projection, so it stays provable after the
-`Compress2` cutover and still bites the next bundle that tries the same trick. -/
+`Compress2` cutover and still bites the next bundle that tries the same trick.
+
+⚑ SPELLED AS A REFUTATION (`¬ Compress1CR c1`), not as `… → Compress1CR c1 → False`. The two are
+definitionally equal and every application site is unchanged, but only the first is READABLE as
+anti-floor content, and `Verify.FloorRatchet.antiFloor` now requires it: keying the exemption on
+where the floor binder sat let `HermineMSIS.no_forgery_under_msis` — a signature-unforgeability
+claim on a refuted floor — out of the census entirely (the B4 hole). -/
 theorem compress1CR_field_uninhabitable_babyBear (c1 : List ℤ → ℤ)
-    (hb : ∀ xs, 0 ≤ c1 xs ∧ c1 xs < (2013265921 : ℤ)) (hfield : Compress1CR c1) : False :=
-  compress1CR_false_babyBear c1 hb hfield
+    (hb : ∀ xs, 0 ≤ c1 xs ∧ c1 xs < (2013265921 : ℤ)) : ¬ Compress1CR c1 :=
+  compress1CR_false_babyBear c1 hb
 
 /-! ### §1b — the factory content-hash `HashInjective` is FALSE at BLAKE3's output width. -/
 

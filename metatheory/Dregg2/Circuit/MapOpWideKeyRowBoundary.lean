@@ -1015,9 +1015,17 @@ theorem residueBlind_collapses_alias (hash : List ℤ → ℤ) (hres : ResidueBl
 construction is powered by exactly the part of the floor that `Poseidon2Binding` already records as
 FALSE at deployed BabyBear parameters: separating `p+5` from `5` is not a capability the deployed
 sponge has, and the model's own crypto hypothesis is what pretends otherwise. That is the sharpest
-statement of "over-general model", and it applies verbatim to the wide `aliasHeap` too. -/
-theorem residueBlind_refutes_spongeCR (hash : List ℤ → ℤ) (hres : ResidueBlindLeaf hash)
-    (hCR : Poseidon2SpongeCR hash) : False := by
+statement of "over-general model", and it applies verbatim to the wide `aliasHeap` too.
+
+⚑ Spelled `¬ Poseidon2SpongeCR hash`, not `… → Poseidon2SpongeCR hash → False`. Definitionally the
+same and every use site is unchanged, but `Verify.FloorRatchet.antiFloor` stopped consulting binder
+POSITION when the B4 hole closed — under the old, order-keyed rule an uncurried refutation and a
+reordered soundness claim were the same `Expr`, and two signature-unforgeability theorems
+(`HermineMSIS.no_forgery_under_msis` and its SelfTargetMSIS twin) were riding out of the census on
+that. The negation is the spelling that says which one this is. -/
+theorem residueBlind_refutes_spongeCR (hash : List ℤ → ℤ) (hres : ResidueBlindLeaf hash) :
+    ¬ Poseidon2SpongeCR hash := by
+  intro hCR
   have hleaf : hash [(2013265926 : ℤ), 1] = hash [(5 : ℤ), 1] := hres _ _ _ alias_modEq
   have hl : [(2013265926 : ℤ), 1] = [(5 : ℤ), 1] := hCR _ _ hleaf
   injection hl with h1 _

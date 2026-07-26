@@ -99,6 +99,8 @@ cd "$META"
 #      floor_ratchet_canary.lean           plain floor BINDER (the original 46-accrual shape)
 #      floor_ratchet_canary_bundle.lean    B3 — the floor arrives through a grandfathered STRUCTURE
 #      floor_ratchet_canary_antifloor.lean B1/B2 — the anti-floor exemption used as a laundry
+#      floor_ratchet_canary_order.lean     B4 — binder ORDER, plus the `control_` over-tightening
+#                                          check (a genuine refutation that must stay EXEMPT)
 CANARIES="$(cd "$META" && ls scripts/floor_ratchet_canary*.lean 2>/dev/null || true)"
 [ -n "$CANARIES" ] || fail "no scripts/floor_ratchet_canary*.lean exists. The gate can no longer
   be shown to fail, so a green '#floor_ratchet' means only that the check ran, not that it works.
@@ -128,7 +130,29 @@ for CANARY in $CANARIES; do
   # non-zero with the banner and reads as a pass.
   # ⚑ NOT `… | while read`: `fail` runs `exit 1`, and in a pipeline the loop is a SUBSHELL, so
   # the exit would leave the outer script running. Command substitution keeps `fail` in-process.
+  #
+  # ⚑ EXCEPT `control_*`, which asserts the OPPOSITE. A canary can only ever catch a gate going
+  # BLIND; an exemption predicate that degenerates the other way — gating everything, so that
+  # writing a refutation becomes a build error — produces a perfectly healthy-looking red and
+  # every positive check above still passes. That failure is not harmless: a noisy gate gets
+  # switched off, which lands in the same place as a blind one. So a `control_`-prefixed theorem
+  # is a GENUINE refutation that must stay EXEMPT, and its appearance in the violation list is a
+  # hard failure. (`FloorRatchet.specimenVerdicts` asserts the same thing from inside the root
+  # build; this is the same claim stated where a human reads it.)
   for THM in $(sed -n 's/^theorem \([A-Za-z0-9_]*\).*/\1/p' "$META/$CANARY"); do
+    case "$THM" in
+      control_*)
+        printf '%s' "$CANARY_OUT" | grep -q "$THM" && {
+          printf '%s\n' "$CANARY_OUT" >&2
+          fail "$CANARY: the gate named '$THM', which is a GENUINE REFUTATION and must stay
+  EXEMPT (it concludes '¬ Floor …' and assumes no floor). The anti-floor exemption has
+  OVER-TIGHTENED: writing a refutation is now a build error, so the campaign's own anti-floor work
+  trips the gate it is supposed to feed. That is not a safe direction to fail in — a gate nobody
+  can satisfy gets disabled. Fix 'FloorRatchet.antiFloor'."
+        }
+        continue
+        ;;
+    esac
     printf '%s' "$CANARY_OUT" | grep -q "$THM" || {
       printf '%s\n' "$CANARY_OUT" >&2
       fail "$CANARY: the gate errored, but did NOT name '$THM'. That violation was NOT seen —

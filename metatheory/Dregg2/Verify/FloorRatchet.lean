@@ -65,6 +65,15 @@ EXEMPT, because it is ANTI-floor content and the campaign wants MORE of it, not 
 declaration that REFUTES floor content and ASSUMES none — see `antiFloor`. Writing a new
 refutation never trips the gate; assuming a refuted floor on the way to a negation does.
 
+  * **B4 — the BINDER-ORDER hole, closed 2026-07-25.** The exemption used to accept a `False`
+    conclusion whenever the floor was the INNERMOST binder, since `Γ → F → False` IS `Γ → ¬ F`.
+    True, and still a hole: ORDER IS A SPELLING THE AUTHOR CONTROLS, so the same soundness claim
+    was gated or exempt depending on where its floor hypothesis sat, and the gate's own error text
+    coached the swap. It now consults NO position — a floor in ANY hypothesis disqualifies. What
+    was sitting on the hole was `HermineMSIS.no_forgery_under_msis` and
+    `HermineSelfTargetMSIS.no_forgery_under_msis_selftarget`: "the deployed threshold signature
+    cannot be forged", resting on `Lattice.MSISHard`, which `CryptoFloorTeeth` REFUTES.
+
 ## The floor list is DERIVED, never hand-maintained
 A hand list is how the Python ruler went blind to 7 of 10 refuted floors and how the campaign
 was measured at 1273 when the true surface was ~1650. `refutedFloors` is computed from the
@@ -83,10 +92,10 @@ hard-errors — never passes quietly — unless (a) the environment holds ≥ 50
 (whole-tree scale), (b) every sentinel floor resolves, (c) every sentinel the tree refutes is
 REDISCOVERED as refuted by the derivation above, (d) the `prop-body` keystone gates are
 rediscovered, (e) every sentinel BUNDLE is rediscovered as a floor-carrying structure, and
-(f) all five `FloorRatchetSpecimens` classify exactly as documented. It shares (b)-(d) with
+(f) all eight `FloorRatchetSpecimens` classify exactly as documented. It shares (b)-(d) with
 `#floor_census` so the two instruments cannot drift apart.
 
-(e) and (f) are the B3/B1/B2 teeth's own self-check. A fixpoint that stops propagating through
+(e) and (f) are the B1/B2/B3/B4 teeth's own self-check. A fixpoint that stops propagating through
 fields, or an exemption predicate that degenerates in either direction, is INVISIBLE from a green
 build — the surface just reads lower, which is indistinguishable from progress. Both now fail the
 root build instead.
@@ -175,10 +184,13 @@ Each name is a `Prop`-valued def in `Dregg2.Verify.FloorRatchetSpecimens` whose 
 declaration TYPE; `surface` classifies the value and hard-errors if the verdict moved. -/
 def specimenVerdicts : List (Name × Bool) :=
   [ (`Dregg2.Verify.FloorRatchetSpecimens.specRefutation, true)
-  , (`Dregg2.Verify.FloorRatchetSpecimens.specRefutationUncurried, true)
+  , (`Dregg2.Verify.FloorRatchetSpecimens.specRefutationManyHyp, true)
   , (`Dregg2.Verify.FloorRatchetSpecimens.specB1NegationLaundry, false)
   , (`Dregg2.Verify.FloorRatchetSpecimens.specB2FalseLaundry, false)
-  , (`Dregg2.Verify.FloorRatchetSpecimens.specB3BundleLaundry, false) ]
+  , (`Dregg2.Verify.FloorRatchetSpecimens.specB3BundleLaundry, false)
+  , (`Dregg2.Verify.FloorRatchetSpecimens.specB4UncurriedShape, false)
+  , (`Dregg2.Verify.FloorRatchetSpecimens.specB4BinderOrderLaundry, false)
+  , (`Dregg2.Verify.FloorRatchetSpecimens.specB4NegOtherFloorReordered, false) ]
 
 /-- The specimens are the instrument's own fixtures, not tree content: excluded from the carrier
 surface so they never occupy lines in a baseline whose only healthy direction is shorter. -/
@@ -188,39 +200,57 @@ def specimens : NameSet :=
 /-- ANTI-floor content, exempt from the gate: a declaration that REFUTES floor content and
 ASSUMES none. Precisely, reading the type as `∀ x₁:A₁ … xₙ:Aₙ, C`:
 
-  * `C = ¬ F …` with `F` floor content, and NO `Aᵢ` is floor content; or
-  * `C = False`, `Aₙ` (the INNERMOST binder) is floor content, and no other `Aᵢ` is — which is
-    the first case uncurried, since `Γ → F → False` IS `Γ → ¬ F` by definition.
+  **NO `Aᵢ` carries floor content, AND `C` is `¬ F …` for floor content `F` (or `C = False`).**
 
-The campaign wants refutations written, so the gate must never make writing one a build error;
-`Γ ⊢ ¬ F` and `Γ, F ⊢ False` are the two spellings of writing one, and both stay free.
+Two conditions, and the FIRST is the one that does the work. "Concludes a negation" is a
+conclusion SHAPE, not a refutation test; what makes a declaration a refutation is that it reaches
+that conclusion WITHOUT ASSUMING the thing it refutes. A declaration that assumes `Floor` and
+concludes `False` is not a refutation — "if this false thing were true, anything follows" is the
+DEFINITION of vacuity — and it says exactly as little as one that assumes `Floor` and concludes an
+equation.
 
-⚑ WHAT THIS TIGHTENS, and why. The shipped rule exempted ANY declaration whose conclusion was
-`¬ Floor …` or `False`, which is not a refutation test — it is a conclusion-shape test, and both
-adversarial probes walked straight through it carrying `Poseidon2SpongeCR`:
+⚑ **BINDER ORDER IS NOW IRRELEVANT, WHICH IS THE WHOLE POINT.** The rule this replaced exempted
+`C = False` when the floor was the INNERMOST binder, on the reasoning that `Γ → F → False` IS
+`Γ → ¬ F` by definition. That is true, and it was still a hole, because ORDER IS A SPELLING THE
+AUTHOR CONTROLS. The same theorem, hypotheses swapped, changed verdict:
 
-  * **B1** `(hCR : Poseidon2SpongeCR f) : ¬ Poseidon2SpongeCR g` — a refuted floor in HYPOTHESIS
-    position on a declaration that merely happens to CONCLUDE a negation. Now gated: measured
-    cost on the tree at the time, **ZERO** existing declarations (no `¬`-concluding declaration
-    in the tree binds floor content), so this one is free.
-  * **B2** the `False` branch. `False` is the most permissive conclusion in the language;
-    exempting on it exempts on nothing. 113 existing declarations used it, and they are not
-    refutations — they are contrapositive SOUNDNESS claims: `consensus_safe_under_floor`,
-    `lightclient_no_fork`, `downgrade_resistant_under_floor`, `closure_rejects_overdebit_avail`,
-    every `*_rejects_*`/`*_unsat` in the emit tree. Each assumes a floor this tree PROVES FALSE
-    and concludes "the deployed system cannot be broken". They were laundered out of the census
-    by a spelling accident and are now counted.
+    theorem consensus_safe_under_floor (hCR : Poseidon2SpongeCR s) (hFork : …) : False   -- GATED
+    theorem consensus_safe_under_floor (hFork : …) (hCR : Poseidon2SpongeCR s) : False   -- exempt
 
-⚑ AND WHAT IT COSTS, stated plainly. Of those 113, a minority ARE genuine teeth that happen to
-put the floor binder somewhere other than last — `deployed_collision_refutes_domainSepCR`,
-`leafRealization_uninhabitable_babyBear`. They are now grandfathered, which is a MISLABEL, and
-the fix is a one-line restatement (move the floor binder last, or conclude `¬ F …`) that costs no
-proof work at all because the two are definitionally equal. There is NO sound syntactic separator
-here: `contentRoot_injective_of_binds_or_collides` (vacuous — "the derived root has no collision,
-GIVEN the base hash is CR") and `deployed_collision_refutes_domainSepCR` (a real refutation) have
-the SAME binder shape, a collision plus a floor, and differ only in which function the collision
-is of. Binder ORDER is a spelling the author controls; that is why the rule keys on it, and it is
-the honest reason this is a discipline rather than a decision procedure.
+The gate's own error text used to coach the swap ("move the floor binder LAST … it costs no proof
+work"). An adversarial probe took it and the gate said OK. **B4** is that hole, and what was
+sitting on it when it closed was not hypothetical — it was two theorems that read as the deployed
+system's post-quantum security:
+
+  * `Dregg2.Crypto.HermineMSIS.no_forgery_under_msis` — nine hypotheses describing two forked
+    Hermine forgeries, then `(hard : MSISHard A …) : False`. It reads "the deployed threshold
+    signature cannot be forged". `Lattice.MSISHard` is a floor THIS TREE REFUTES
+    (`CryptoFloorTeeth.not_msisHard_of_short_ball`: at a compressing `A` the short ball outnumbers
+    the codomain, so a short nonzero kernel vector EXISTS by pigeonhole).
+  * `Dregg2.Crypto.HermineSelfTargetMSIS.no_forgery_under_msis_selftarget` — the same claim on the
+    SelfTargetMSIS route, the one `AdvCalculus.pq_euf_cma_grounded_in_msis` and
+    `HermineHybrid.hermine_hybrid_survives_classical_break` build the hybrid keystone on.
+
+Both are grandfathered by NAME in the baseline now, which is the point: a reader of the baseline
+can see them. Under the old rule they were invisible — not grandfathered, EXEMPT, indistinguishable
+from `poseidon2SpongeCR_false_babyBear`.
+
+⚑ WHAT IT COSTS, stated plainly. Exactly ONE spelling of a genuine refutation is no longer free:
+the UNCURRIED `Γ → F → False`. Three declarations in the tree used it and all three were restated
+as `¬ F …` in the same commit, definitionally equal and zero proof work
+(`compress1CR_field_uninhabitable_babyBear`, `deployedCapHashScheme_field_would_be_uninhabitable`,
+`residueBlind_refutes_spongeCR`). The 128 refutations already spelled `¬ F …` were untouched.
+
+That residual is the FAIL-CLOSED direction, and it is why this is a decision procedure and not a
+discipline. The old rule's spelling-dependence let a VACUOUS claim out; this one's can only make a
+GENUINE refutation trip the gate, where the author sees the error, restates in one line, and moves
+on. A gate may cost its user a restatement; it may not launder a security claim.
+
+The `C = False` branch is kept for completeness and is now SUBSUMED: the type is
+`∀ x₁:A₁ … xₙ:Aₙ, False`, so every subterm is a binder domain, and if none carries floor content
+the declaration is not a carrier by any route. Nothing reaches it that the carrier scan would
+otherwise have flagged. It stays because it makes the rule statable in one sentence and because
+removing it would be a silent behaviour change the day a conclusion grows a non-binder position.
 
 Read off the TYPE syntactically — no naming convention, no proof term, no telescope
 instantiation. Keeping it type-only matters: a gate that read proof terms would classify the same
@@ -228,7 +258,7 @@ statement differently depending on how it was proved. -/
 def antiFloor (content : Name → Bool) (ty : Expr) : Bool := Id.run do
   -- The conclusion first, and CHEAPLY. This runs on every one of our ~300k declarations on every
   -- root build; the spine walk below folds the constants of each binder domain, so it must be
-  -- reached only by the ~240 whose conclusion could possibly qualify.
+  -- reached only by the ~250 whose conclusion could possibly qualify.
   let concl := ty.getForallBody
   let neg? : Option Name := match notArg? concl with
     | some arg => headConst? arg
@@ -236,24 +266,16 @@ def antiFloor (content : Name → Bool) (ty : Expr) : Bool := Id.run do
   let isNeg := match neg? with | some h => content h | none => false
   let isFalse := neg?.isNone && concl.isAppOf ``False
   unless isNeg || isFalse do return false
-  -- Walk the ∀-spine, remembering only whether some NON-innermost binder is floor content and
-  -- what the innermost binder's domain was. Bodies carry loose bvars; `foldConsts` does not care.
-  let touch (e : Expr) : Bool := e.foldConsts false (fun c a => a || content c)
+  -- Walk the ∀-spine and reject on the FIRST binder domain that carries floor content — position
+  -- in the telescope is not consulted, so reordering hypotheses cannot change the verdict. Bodies
+  -- carry loose bvars; `foldConsts` does not care. `let`/`abbrev`/notation indirection is covered
+  -- too: an alias for a floor is itself a floor-carrying `Prop` def, so the joint fixpoint has
+  -- already put it in `content` and `foldConsts` sees the alias's own constant.
   let mut t := ty
-  let mut outerFloor := false
-  let mut lastDom : Option Expr := none
   while t.isForall do
-    if let some d := lastDom then
-      if touch d then outerFloor := true
-    lastDom := some t.bindingDomain!
+    if t.bindingDomain!.foldConsts false (fun c a => a || content c) then return false
     t := t.bindingBody!
-  let lastFloor := (lastDom.map touch).getD false
-  if isNeg then
-    -- `Γ ⊢ ¬ F …`: exempt only when NO binder is floor content (B1).
-    return !outerFloor && !lastFloor
-  else
-    -- `Γ, F ⊢ False`: the SAME statement uncurried (B2).
-    return lastFloor && !outerFloor
+  return true
 
 /-- A declaration that violates (or is grandfathered under) the ratchet. -/
 structure Carrier where
@@ -370,7 +392,7 @@ def surface : MetaM Surface := do
     let .defnInfo di := ci | continue
     if floors.contains nm then continue
     -- The `antiFloor` specimens are Prop-valued defs whose BODIES are floor-carrying by design.
-    -- They are the instrument's fixtures; letting them into the fixpoint would put five entries
+    -- They are the instrument's fixtures; letting them into the fixpoint would put eight entries
     -- in the gate's own report of what the TREE carries.
     if specimens.contains nm then continue
     unless isPropValued di.type do continue
@@ -430,7 +452,7 @@ def surface : MetaM Surface := do
         commit as the port, and re-emit the baseline to bank the carriers that fell with it.\n\
         Check which by reading the structure's fields. Refusing to run until then."
   let content : Name → Bool := fun c => floors.contains c || pb.contains c || bn.contains c
-  -- (f) the exemption predicate must still classify its five specimens as documented. A rule
+  -- (f) the exemption predicate must still classify its eight specimens as documented. A rule
   -- that degenerates to "everything is a refutation" exempts the tree and passes forever; one
   -- that degenerates the other way makes writing a refutation a build error. Neither is visible
   -- from a green build, so both are asserted here on every run.
@@ -531,13 +553,31 @@ def check (baseline : Array String) : MetaM Unit := do
          implies the new one, so the ported theorem is strictly STRONGER.\n\
       \n\
       2. STATE IT AS ANTI-FLOOR CONTENT — but SPELL IT AS A REFUTATION. Exempt means \"refutes \
-         floor content and assumes none\": conclusion `¬ Floor …` with no floor-carrying \
-         hypothesis, or, uncurried, conclusion `False` with the floor as the INNERMOST binder. A \
-         `False` conclusion alone is NOT enough (that was the B2 laundry: `False` is the most \
-         permissive conclusion in the language, and 113 contrapositive soundness claims — \
-         `consensus_safe_under_floor`, every `*_rejects_*` — rode it out of the census). If your \
-         declaration IS a refutation, move the floor binder LAST or conclude `¬ Floor …`; the \
-         two are definitionally equal, so it costs no proof work.\n\
+         floor content and ASSUMES NONE\": conclusion `¬ Floor …`, and NO hypothesis carrying \
+         floor content, in ANY position. ⚑ REORDERING WILL NOT HELP AND IS NOT WHAT TO DO. \
+         Binder ORDER is not consulted — it is a spelling you control, and keying on it is \
+         exactly the B4 hole this rule closed (`no_forgery_under_msis`, which reads as \"the \
+         deployed signature cannot be forged\", was EXEMPT purely because its refuted `MSISHard` \
+         binder happened to come last). A `False` conclusion is not enough either (B2), and \
+         neither is a `¬ …` conclusion reached while assuming a floor (B1).\n\
+         \n\
+         If your declaration genuinely IS a refutation and you wrote it uncurried as \
+         `… → Floor … → False`, restate it as `… : ¬ Floor …` and DELETE that last binder. The \
+         two are definitionally equal, so the proof term is unchanged and it costs no proof \
+         work — `residueBlind_refutes_spongeCR` and \
+         `compress1CR_field_uninhabitable_babyBear` are the worked examples. If instead the \
+         floor is a genuine PREMISE your conclusion needs, you are at case 1 or case 3, not \
+         here.\n\
+      \n\
+      ⚑ IF THE FLOOR WAS SPELLED INLINE (class `inj-spelled`), the binder reads \
+         `Function.Injective f` rather than a floor NAME, and it is the same hypothesis: the floor \
+         named above is DEFINITIONALLY `Function.Injective` at your `f`'s type, or the tree holds \
+         a theorem that NO function of that type is injective. Re-spelling it (either direction) \
+         changes nothing and is not a fix. If `f`'s domain is a FUNCTION SPACE \
+         (`CellId → AssetId → ℤ`, `Caps`, `BornEmptySideTables`, …) the assumption is not merely \
+         false at BabyBear — it is a CARDINALITY impossibility (`Verify/InjSpelledFloors`), and \
+         the repair is STRUCTURAL: digest the FINITE support actually touched (the \
+         `accounts : Finset CellId` rows), never the whole function.\n\
       \n\
       ⚑ IF THE FLOOR ARRIVED THROUGH A STRUCTURE (class `bundle-user`), there is no binder to \
          move: a field is fixed for the life of the value with no argument position. Do NOT swap \

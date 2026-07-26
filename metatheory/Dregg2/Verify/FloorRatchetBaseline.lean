@@ -1632,6 +1632,31 @@ to be built on a hypothesis this tree PROVES FALSE at deployed BabyBear paramete
 that it is knowingly VACUOUS. Say why in the commit message. The next shrink-emit folds
 surviving entries into the chunks above and drops the ones that got ported. -/
 def manual : Array String := #[
+-- ⚑⚑ RAISE OF 2026-07-25 (second), +2 — THE TWO SECURITY CLAIMS THE B4 HOLE WAS HIDING.
+--
+-- These are not new theorems and nothing about them changed. What changed is the RULER: the
+-- anti-floor exemption used to accept a `False` conclusion whenever the refuted floor was the
+-- INNERMOST binder, on the (correct) reasoning that `Γ → F → False` IS `Γ → ¬ F`. Binder ORDER
+-- is a spelling the author controls, so the identical claim was GATED with its floor hypothesis
+-- written first and EXEMPT with it written last, and the gate's own error text coached the swap.
+-- `FloorRatchet.antiFloor` no longer consults position. These two stopped being invisible.
+--
+-- Both read as the deployed system's post-quantum unforgeability, and both rest ENTIRELY on
+-- `Lattice.MSISHard`, which this tree REFUTES (`CryptoFloorTeeth.not_msisHard_of_short_ball`: at
+-- a compressing `A` the ball of short vectors outnumbers the codomain, so a short nonzero kernel
+-- vector EXISTS by pigeonhole; `deployed_boolean_floor_refuted` fires it at deployed shape). So
+-- each says NOTHING about whether the deployed threshold signature can be forged, while reading
+-- exactly as if it did — which is worse than having no theorem there, because it reads as
+-- assurance. `HermineHybrid.hermine_hybrid_survives_classical_break` and
+-- `AdvCalculus.pq_euf_cma_grounded_in_msis` are built on top of them.
+--
+-- Why GRANDFATHERED and not ported: the port is the `FloorGames` treatment — restate at
+-- `MSISHardQuant A Eff` with an EXPLICIT adversary class and exhibit the reduction as a map of
+-- adversaries — which is the lattice half of a campaign that has so far only been run on the
+-- hash floors. That is real crypto work, not a restatement, and doing it under cover of a ruler
+-- fix would bury it. Named here instead, where a reader of the baseline can see them.
+  "Dregg2.Crypto.HermineMSIS.no_forgery_under_msis",
+  "Dregg2.Crypto.HermineSelfTargetMSIS.no_forgery_under_msis_selftarget",
 -- ⚑ RAISE OF 2026-07-25, +56, and it is on the record WHY.
 --
 -- These did not appear because anyone wrote a new theorem. They appeared because previously

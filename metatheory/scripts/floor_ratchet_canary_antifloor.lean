@@ -17,9 +17,15 @@ FALSE at deployed BabyBear parameters. Measured on a HEAD-pinned green tree befo
     `*_rejects_*`/`*_unsat` in the emit tree), each saying "the deployed system cannot be broken"
     under an assumption the tree refutes.
 
-The rule now is: **refutes floor content and assumes none.** Conclusion `¬ F …` with no
-floor-carrying hypothesis, or — uncurried, since `Γ → F → False` IS `Γ → ¬ F` — conclusion `False`
-with the floor as the INNERMOST binder.
+The rule now is: **refutes floor content and assumes none.** Conclusion `¬ F …`, and NO hypothesis
+carrying floor content in ANY position.
+
+⚑ The rule that closed B1/B2 also exempted `False` with the floor as the INNERMOST binder, since
+`Γ → F → False` IS `Γ → ¬ F`. That was B4, closed the same day and canaried in
+`floor_ratchet_canary_order.lean`: binder ORDER is a spelling the author controls, so the identical
+soundness claim changed verdict when its floor hypothesis moved. Position is no longer consulted at
+all, which is why `b2_via_false_exemption` below would be gated with its two hypotheses in either
+order.
 
     cd metatheory && lake env lean scripts/floor_ratchet_canary_antifloor.lean
 
@@ -27,9 +33,10 @@ with the floor as the INNERMOST binder.
 A ZERO exit means the exemption has gone back to being a conclusion-shape test.
 
 ⚑ The OTHER direction — an exemption that degenerates to gating everything, which would make the
-campaign's own anti-floor work a build error — cannot be caught by a canary at all, because it
-looks like a healthy red. `FloorRatchet.specimenVerdicts` catches it: five declaration TYPES with
-fixed expected verdicts, two of them EXEMPT, asserted on every root build.
+campaign's own anti-floor work a build error — is caught two ways. `FloorRatchet.specimenVerdicts`
+holds eight declaration TYPES with fixed expected verdicts, two of them EXEMPT, asserted on every
+root build; and `floor_ratchet_canary_order.lean` carries a `control_`-prefixed genuine refutation
+that the check script requires to be ABSENT from the violation list.
 
 ⚑ Nothing here touches a tracked file, so this is swarm-safe to run at any time, concurrently.
 -/
