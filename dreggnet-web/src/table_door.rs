@@ -54,20 +54,19 @@ const PULSE: Duration = Duration::from_millis(400);
 /// The SSE keep-alive comment interval (holds the connection open through idle proxies).
 const KEEPALIVE: Duration = Duration::from_secs(15);
 
-/// **One game's front door.** The lock supplies every route path and the seat derivation; the two
-/// function pointers and two prose lines are the whole per-game surface area.
+/// **One game's front door.** The lock supplies every route path, the seat derivation AND the two
+/// prose lines ([`TableLock::seat_note`] / [`TableLock::spectator_note`], moved there so the pages
+/// outside this module can print the same promise); the landing function is the whole remaining
+/// per-game surface area.
 #[derive(Clone)]
 pub struct TableDoor {
-    /// The seat lock (and therefore the catalog key, the id/label prefixes, and the route base).
+    /// The seat lock (and therefore the catalog key, the id/label prefixes, the route base, and the
+    /// seat/spectator prose).
     pub lock: TableLock,
     /// The catalog host.
     pub catalog: Arc<CatalogState>,
     /// The game's own landing page (rules + the mint CTA), given an optional notice to surface.
     pub landing: fn(Option<&str>) -> String,
-    /// What the two seat links mean at this table, in one sentence for the lobby.
-    pub seat_note: &'static str,
-    /// What a spectator can and cannot see here, in one sentence.
-    pub spectator_note: &'static str,
 }
 
 /// **Assemble a game's front door.** Additive — every path is under the game's own `route`, so it
@@ -240,6 +239,67 @@ async fn post_resign(
 // ─────────────────────────────────────────────────────────────────────────────────────────
 // SPECTATE
 // ─────────────────────────────────────────────────────────────────────────────────────────
+
+/// **Where the spectator link is offered, and why it had to leave the lobby page.**
+///
+/// The watch route worked from the day it landed; the LINK to it did not exist anywhere a person
+/// mid-match could find. It was printed on `lobby_page` — the one-shot response to `POST
+/// {route}/table` — and on the two refusal pages. So a player who had sat down (and thereby
+/// navigated away from the lobby, whose only copy of the link was in scrollback) had no way to hand
+/// anybody a way to watch, and reported the truthful-sounding "you cannot spectate an ongoing game
+/// from the web". Nothing was broken; the affordance was unreachable, which is indistinguishable.
+///
+/// The link carries NO secret — it is `{route}/watch/{id}`, and the `id` is already in the seated
+/// player's own address bar — so it is safe on any page that already shows the table. It is now on
+/// the seated table (`crate::offering_page`) and on `/you`'s in-progress rows (`crate::you`).
+///
+/// ⚑ **`None` for every ad-hoc id and every non-lockable key, and that is a truth condition rather
+/// than a scoping choice.** The watch ROUTE is id-agnostic and would render an ad-hoc session
+/// perfectly well — but the sentence this section prints ("they can touch nothing") is only true
+/// where [`crate::table_seats::enforce`] makes it true, i.e. on a minted table. On an ad-hoc session
+/// the catalog's identity is an asserted label and a watcher can simply claim a free seat by
+/// POSTing, so offering them a "watch" link would be advertising a guarantee this server does not
+/// have there. Same guard the session route uses.
+///
+/// ⚑ **THIS IS THE WEB↔WEB PATH ONLY. A GAME PLAYED IN DISCORD CANNOT BE WATCHED HERE, AND NO
+/// SPELLING OF A URL CHANGES THAT.** The `discord-bot` is a separate binary in a separate cargo
+/// workspace (the root manifest's `exclude` list) and holds a channel's game in its OWN per-offering
+/// session store (`discord-bot/src/commands/offering.rs`'s `Store<O>` threads, keyed by channel) —
+/// no [`dreggnet_offerings::OfferingHost`] is involved on that path at all, so there is no host for
+/// this server to share. Three things would each have to change:
+///
+/// 1. **Deployment.** The bot runs as a container on the AWS edge; this server runs on hbox behind a
+///    Tailscale funnel, on a *different tailnet with no route to the edge* (`deploy/README.md`). The
+///    bot's `DREGG_SESSION_DIR` and this server's `DREGGNET_WEB_SESSION_DIR` are different
+///    directories on different filesystems.
+/// 2. **A live-log reader, which does not exist.** Sharing the directory would not be enough:
+///    `crate::assemble_demo_host` reads the store ONCE, at boot (`resume_all`), so a match started
+///    afterwards is invisible until a restart; and a resumed foreign id has no record in the
+///    `game-epochs` ledger, so `run_current_bound_game` refuses it with
+///    `MissingActiveGeneration` and the watch route answers "no such table". Two processes appending
+///    to one `FileResumeStore` (the bot `forget`s a channel's older logs on every open; this server
+///    archives on retirement) is a mutual-clobber hazard on top.
+/// 3. **A transport.** The one existing cross-process game seam is the Descent's: the bot POSTs a
+///    finished run's reproducible input to `{DESCENT_WEB_BASE}/descent/submit` and this server
+///    RE-EXECUTES it. The honest tug/automatafl analogue is the same shape — the bot ships the
+///    channel's [`dreggnet_offerings::resume::SessionMoveLog`] and this server replays it into a
+///    session of its own — which yields an *audit/replay* view of a match as of the last shipped
+///    turn, NOT a live spectator. Anything short of that would paint a reconstructed board with a
+///    live badge on it, which is the one thing this surface must not do.
+pub fn spectator_invite(key: &str, id: &str) -> Option<String> {
+    let lock = table_seats::lock_for_key(key).filter(|lock| lock.is_locked_table(id))?;
+    Some(format!(
+        "<section class=\"panel spectator-invite\"><h2>Let someone watch</h2>\
+         <p class=\"prose\">{spectator_note}</p>\
+         <p class=\"invite\"><code>{watch}</code></p>\
+         <p><a class=\"seat-link\" href=\"{watch}\">Open the spectator view →</a></p>\
+         <p class=\"prose\">This link holds no seat and no secret: it is the table's id, which is \
+         already in your own address bar. Anyone you send it to can look and can touch nothing.</p>\
+         </section>",
+        spectator_note = lock.spectator_note,
+        watch = esc(&lock.watch_link(id)),
+    ))
+}
 
 /// A fresh, unguessable SPECTATOR identity. Never equal to a seat label and never equal to a
 /// canonical seat identity, so the offering's own `seat_of` answers `None` and every private
@@ -444,8 +504,8 @@ fn lobby_page(door: &TableDoor, id: &str) -> String {
          </main>",
         game = esc(door.lock.game),
         id = esc(id),
-        seat_note = door.seat_note,
-        spectator_note = door.spectator_note,
+        seat_note = door.lock.seat_note,
+        spectator_note = door.lock.spectator_note,
         a = esc(&a),
         b = esc(&b),
         watch = esc(&door.lock.watch_link(id)),
@@ -589,7 +649,7 @@ fn spectate_page(
         route = door.lock.route,
         game = esc(door.lock.game),
         id = esc(id),
-        spectator_note = door.spectator_note,
+        spectator_note = door.lock.spectator_note,
         banner = resolution.map(resolution_notice).unwrap_or_default(),
         watch = esc(&door.lock.watch_link(id)),
         fragment = fragment,

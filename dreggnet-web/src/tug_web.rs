@@ -100,15 +100,12 @@ async fn get_exchange_art() -> Response {
 }
 
 fn tug_door(state: Arc<CatalogState>) -> Router {
+    // The seat/spectator prose lives on `LOCK` (`table_seats::TUG`), not here: the seated table page
+    // prints the spectator sentence too, and it cannot reach a door.
     table_router(TableDoor {
         lock: LOCK,
         catalog: state,
         landing: landing_page,
-        seat_note: "(Which side you get — seat A or seat B — is settled by the game when you make \
-                    your first move; the link decides only that the table is <em>yours</em>.)",
-        spectator_note: "Watchers see the lanes and the score, and both hands only as a card \
-                         count and a fingerprint of the hand — never a card. They cannot touch \
-                         anything on the table.",
     })
 }
 
@@ -130,10 +127,12 @@ fn rules_html() -> String {
          what the lane pays is what it pays whoever ends up leading it.</li>\
          <li><strong>Four actions, once each per round</strong> — Secret (1 card), Discard (2), \
          Gift (3), Competition (4). Whoever leads a lane takes its whole weight. \
-         <strong>Win at 11 influence or 4 lanes</strong>; short of that the round is still \
-         decided — on total influence, then on lanes held — and only an exact dead heat on both \
-         is a draw. Every one of those clauses is a tooth: the executor refuses a claimed win the \
-         rules do not make.</li>\
+         <strong>Nothing ends the round early</strong>: all twelve committed turns are always \
+         played, and the winner is named once, at the reveal. The bars pick <em>which rule</em> \
+         names them: 11 influence takes it outright, else leading 4 lanes, else the higher total \
+         influence, else the more lanes held — and only an exact dead heat on both is a draw. Every \
+         one of those clauses is a tooth: the executor refuses a claimed win the rules do not \
+         make.</li>\
          <li>⚑ <strong>Spending an action does not move the lanes.</strong> This is the part that \
          looks broken and is not. A <strong>Secret</strong> goes face down and reaches no lane \
          until the reveal. A <strong>Discard</strong> burns two favors out of the round and they \

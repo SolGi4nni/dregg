@@ -2820,11 +2820,22 @@ pub fn catalog_default_host() -> OfferingHost {
 /// **Register the five NON-GAME portfolio offerings** into a host — the full offering set beside the
 /// games + the do-once feature surfaces. Each `impl`s the SAME [`Offering`] trait, so the web catalog
 /// drives them through the one generic `open/advance/render/verify` path (unmodified, consumed):
-/// - `doc` — a verifiable document store ([`dreggnet_doc::DocOffering`]);
-/// - `names` — an identity / naming service ([`dreggnet_names::NamesOffering`]);
-/// - `compute` — a confined compute-job market ([`dreggnet_compute::ComputeOffering`]);
-/// - `grain` — a metered / rate-limited work offering ([`dreggnet_grain::GrainOffering`], budget 1000);
-/// - `hermes` — the message relay ([`dreggnet_hermes::HermesOffering`]).
+/// - `doc` — a live multi-editor document (`insert` · `delete` · `set_title` · `resolve_title` ·
+///   `order_conflict`), NOT a store. ⚠ Only an edit-cap holder may edit and a fresh document has an
+///   empty roster with no join seam, so a first visitor gets three dimmed controls
+///   ([`dreggnet_doc::DocOffering`]);
+/// - `names` — an identity / naming service (`register` · `transfer` · `resolve`). ⚠ Every verb
+///   refuses with "actor not enrolled" until `enroll` is called, and nothing on the offering path
+///   calls it ([`dreggnet_names::NamesOffering`]);
+/// - `compute` — a job-escrow market: post a budget, one worker claims at a price, settle pays them
+///   and refunds the rest, conservation-checked. It does NOT run the job or check the result
+///   ([`dreggnet_compute::ComputeOffering`], and see that crate's `[HONEST SCOPE]` note);
+/// - `grain` — a hard turn allowance: one verb, `act`, capped by the executor's own
+///   `calls_made ≤ rate_limit` ([`dreggnet_grain::GrainOffering`], 1000 turns). The action's `cost`
+///   is witness state and does NOT bind the cap;
+/// - `hermes` — a confined agent, NOT a relay: one party, one process, one verb (`prompt`). A brain
+///   sorts your message into a tool class and the executor admits or refuses that class against its
+///   rate + value allowance; the tool itself is never run ([`dreggnet_hermes::HermesOffering`]).
 ///
 /// Compatibility wrapper retained for callers that extend a custom host. The default and demo hosts
 /// already receive these services through [`dreggnet_catalog::full_catalog_host`].
@@ -5710,9 +5721,19 @@ fn offering_page(key: &str, title: &str, id: &SessionId, surface: &str) -> Strin
          {session_rail}{live_say}\
          <div id=\"live-surface\" class=\"live-surface\" tabindex=\"-1\" \
          data-result-kind=\"surface-and-receipt\" data-events=\"{events}\">{surface}</div>\
+         {spectator_invite}\
          </main>",
         live_say = LIVE_SAY,
         crumb = crumb(name, id),
+        // ⚑ **THE SPECTATOR LINK, ON THE TABLE YOU ARE ACTUALLY SITTING AT.** `{route}/watch/{id}`
+        // has always worked and was reachable from exactly one page — the one-shot lobby response to
+        // the mint — so a player already mid-match had no way to find it or hand it to anybody, and
+        // the honest report was "you cannot spectate an ongoing game from the web". The link carries
+        // no secret (the id is in this reader's own address bar), and `spectator_invite` is `None`
+        // for every ad-hoc id and non-lockable key, so this adds nothing to the other twenty-one
+        // offerings' pages. It sits BELOW the live region on purpose: it is not part of the surface
+        // the enhancement script swaps, so a turn never re-renders or loses it.
+        spectator_invite = table_door::spectator_invite(key, &id.0).unwrap_or_default(),
         // THE NIGHT SKIN, at PAGE level, for EVERY offering — the shared lift. It arrived scoped to
         // `key == automatafl_web::KEY` because the board painter landed with it, but the skin knows
         // nothing about automatafl: it is the plaque, the pill, the control and the night ground —
@@ -6381,7 +6402,10 @@ fn demo_host_with_resolved_fhegg() -> OfferingHost {
                 Ok(bazaar) => {
                     host.register(
                         dreggnet_market::DarkBazaarOffering::KEY,
-                        "The Dark Bazaar — playable CRAWL (sealed bids · verified settlement)",
+                        // Byte-identical to the shared `dreggnet_catalog::register_games` line —
+                        // this is the fhEgg-quorum re-registration of the SAME offering, so the
+                        // two titles must not drift.
+                        "The Dark Bazaar — the sealed-bid auction, with the privacy spelled out. Your number is hidden from the other bidders until the auction clears; it is not hidden from whoever runs the server, and it never was.",
                         bazaar,
                     );
                     tracing::info!(

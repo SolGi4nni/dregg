@@ -302,6 +302,17 @@ async fn a_minted_table_appears_on_its_seat_holders_page_before_any_move() {
         "…and the existing replay-verify route, not a re-implementation: {}",
         page.body
     );
+    // ⚑ **AND THE LINK TO LET SOMEBODY WATCH.** The watch route worked from the day it landed and was
+    // reachable from exactly ONE page — the one-shot lobby response to the mint — so a player who had
+    // closed that tab (the situation THIS test is about) had nothing to hand a friend, which reads as
+    // "you cannot spectate an ongoing game". It holds no seat: the secret-echo assertions below check
+    // that for the whole page, this one checks the link is here at all.
+    assert!(
+        page.body
+            .contains(&format!("href=\"/automatafl/watch/{table_id}\"")),
+        "…and the spectator link, so a seat holder can hand out a way to watch: {}",
+        page.body
+    );
     assert!(
         page.body.contains("seat A"),
         "the page must say which seat is held: {}",

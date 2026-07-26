@@ -94,15 +94,12 @@ pub fn is_locked_table(id: &str) -> bool {
 pub fn automatafl_router(state: Arc<CatalogState>) -> Router {
     Router::new()
         .route("/automatafl/art/gametable.jpg", get(get_gametable_art))
+        // The seat/spectator prose lives on `LOCK` (`table_seats::AUTOMATAFL`), not here: the
+        // seated table page prints the spectator sentence too, and it cannot reach a door.
         .merge(table_router(TableDoor {
             lock: LOCK,
             catalog: state,
             landing: landing_page,
-            seat_note: "(Which side of the board you get — seat A or seat B — is settled by the \
-                        game when you make your first move; the link decides only that the table \
-                        is <em>yours</em>.)",
-            spectator_note: "Watchers see the live board with both sealed moves hidden, and \
-                             cannot touch anything on it.",
         }))
 }
 

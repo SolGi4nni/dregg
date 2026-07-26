@@ -53,7 +53,16 @@
 //!
 //! [`TableRegistry`] is the minted tables' own record: who sat, when either seat last acted, and
 //! how the table ENDED. It is what turns an abandoned match from a permanent zombie into a
-//! resolved one — see [`reap`].
+//! resolved one — see [`reap_table`].
+//!
+//! **Across a restart the registry is REBUILT, not lost.** Each minted table's whole record — its
+//! lock, when it was minted, the last landed act, and its ending once it has one — is written to
+//! `<DREGGNET_WEB_SESSION_DIR>/tables/` at the mint and at every landed act, stamped in WALL time,
+//! and adopted back the first time this process is asked about that table (or by the sweeper's
+//! once-per-process walk of the durable dir). So the turn clock keeps running across a deploy, and
+//! a resignation still lands on a table some previous process minted. The declaration and the
+//! argument for it are on [`TableRegistry`]'s own fields; the rule they answer to is
+//! `docs/reference/RESTART-SEMANTICS.md`.
 //!
 //! **Read this before writing copy about a forfeit.** A forfeit is a HOST attestation and nothing
 //! more. Neither game's deployed teeth admit a "the clock ran out" turn: automatafl's `winner`
@@ -64,8 +73,9 @@
 //! recording how the table ended, and every surface that shows it says so in those words.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use dreggnet_offerings::{DreggIdentity, SessionId};
 
@@ -242,6 +252,17 @@ pub struct TableLock {
     pub route: &'static str,
     /// The game's display name, for the refusal copy.
     pub game: &'static str,
+    /// What the two seat links mean at this table, in one sentence for the lobby.
+    pub seat_note: &'static str,
+    /// **What a spectator can and cannot see here**, in one sentence.
+    ///
+    /// ⚑ It lives on the LOCK rather than on [`crate::table_door::TableDoor`] because it is now
+    /// printed in three places, and a watcher must be promised the same thing in all of them: the
+    /// lobby that hands the link over, the spectator page itself, and — since the link became
+    /// reachable from a live match — the seated table
+    /// ([`crate::table_door::spectator_invite`]). Two copies of this sentence is where the
+    /// over-promise would live.
+    pub spectator_note: &'static str,
 }
 
 /// The automatafl lock — the original, unchanged in shape or derivation.
@@ -251,6 +272,10 @@ pub const AUTOMATAFL: TableLock = TableLock {
     seat_prefix: "afs1-",
     route: "/automatafl",
     game: "Automatafl",
+    seat_note: "(Which side of the board you get — seat A or seat B — is settled by the game when \
+                you make your first move; the link decides only that the table is <em>yours</em>.)",
+    spectator_note: "Watchers see the live board with both sealed moves hidden, and cannot touch \
+                     anything on it.",
 };
 
 /// The multiway-tug lock — the same discipline, new prefixes.
@@ -260,6 +285,11 @@ pub const TUG: TableLock = TableLock {
     seat_prefix: "tugs1-",
     route: "/tug",
     game: "Multiway-Tug",
+    seat_note: "(Which side you get — seat A or seat B — is settled by the game when you make your \
+                first move; the link decides only that the table is <em>yours</em>.)",
+    spectator_note: "Watchers see the lanes and the score, and both hands only as a card count and \
+                     a fingerprint of the hand — never a card. They cannot touch anything on the \
+                     table.",
 };
 
 /// Every seat-locked game. The act-path gate and the reaper iterate THIS, so a new game gets the
@@ -369,10 +399,22 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 ///
 /// Returns the refusal text to render when the act is not allowed.
 pub fn enforce(key: &str, id: &str, actor_label: &str) -> Result<(), String> {
+    enforce_in(registry(), key, id, actor_label)
+}
+
+/// [`enforce`] against an explicit registry. The process gate is `enforce_in(registry(), …)`; the
+/// parameter exists so the restart tests can drive the REAL gate against a registry that has never
+/// met the table, which is what a restart is, without touching process-global env.
+fn enforce_in(
+    tables: &TableRegistry,
+    key: &str,
+    id: &str,
+    actor_label: &str,
+) -> Result<(), String> {
     let Some(lock) = lock_for_key(key).filter(|lock| lock.is_locked_table(id)) else {
         return Ok(());
     };
-    if let Some(resolution) = registry().resolution(id) {
+    if let Some(resolution) = tables.resolution(id) {
         return Err(resolution.refusal());
     }
     if lock.seat_of_label(id, actor_label).is_none() {
@@ -532,9 +574,36 @@ pub struct TableRecord {
     pub last_act: Option<(SeatSlot, Instant)>,
     /// How it ended, once it has.
     pub resolution: Option<Resolution>,
+    /// The WALL-clock twin of [`opened`](TableRecord::opened) — seconds since the UNIX epoch. The
+    /// live clock is always the `Instant`; this exists only so the record can be written down and
+    /// wound back after a restart, which is the one thing an `Instant` cannot survive.
+    opened_wall: u64,
+    /// The wall-clock twin of [`last_act`](TableRecord::last_act)'s `Instant`.
+    ///
+    /// Private, and written only by [`TableRecord::note_act`], so the stamp the reaper compares and
+    /// the stamp a restart reads cannot come to disagree about when the last move landed.
+    last_act_wall: Option<u64>,
 }
 
 impl TableRecord {
+    /// A freshly minted table, stamped on BOTH clocks at once.
+    fn minted(lock: TableLock, now: Instant, now_wall: u64) -> TableRecord {
+        TableRecord {
+            lock,
+            opened: now,
+            last_act: None,
+            resolution: None,
+            opened_wall: now_wall,
+            last_act_wall: None,
+        }
+    }
+
+    /// Note an act on both clocks at once — the ONLY writer of `last_act`.
+    fn note_act(&mut self, seat: SeatSlot, now: Instant, now_wall: u64) {
+        self.last_act = Some((seat, now));
+        self.last_act_wall = Some(now_wall);
+    }
+
     /// Whether anybody has actually made a move here.
     pub fn started(&self) -> bool {
         self.last_act.is_some()
@@ -547,19 +616,31 @@ impl TableRecord {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────
-// THE DURABLE HALF OF THE RECORD — how a table ENDED, kept across a restart
+// THE DURABLE RECORD — the whole table, kept across a restart, on a clock that survives one
 // ─────────────────────────────────────────────────────────────────────────────────────────
 
-/// ⚑ **Where a table's ENDING is persisted.** `<DREGGNET_WEB_SESSION_DIR>/tables/`, the same root
+/// ⚑ **Where a table's record is persisted.** `<DREGGNET_WEB_SESSION_DIR>/tables/`, the same root
 /// the durable session move-logs live under, so a deployment that already keeps games keeps their
-/// endings too. `None` (env unset) → the registry is process-local exactly as it always was.
+/// tables too. `None` (env unset) → the registry is process-local exactly as it always was.
 ///
-/// Only the RESOLUTION is durable, and deliberately so. The rest of a [`TableRecord`] is a live
-/// clock (`Instant`s), which is meaningless across a restart and must not be faked into existence: a
-/// resurrected `opened: Instant::now()` on an UNRESOLVED table would hand the reaper a table it
-/// thinks nobody has ever moved at, and it would forfeit a live match on a lie. So the durable file
-/// exists for exactly one question — *is this table over, and how* — and is written exactly once,
-/// where the write-once resolution is.
+/// **This used to hold only the ENDING**, on an argument that deserves restating because it is half
+/// right: the rest of a [`TableRecord`] is a live clock (`Instant`s), which is meaningless across a
+/// restart and must not be faked into existence — a resurrected `opened: Instant::now()` on an
+/// UNRESOLVED table would hand the reaper a table it thinks nobody has ever moved at, and it would
+/// forfeit a live match on a lie.
+///
+/// That is right about `Instant` and wrong about the conclusion, because `Instant` is not the only
+/// clock there is. The record now also carries WALL time — seconds since the UNIX epoch — for the
+/// mint and for the last landed act, and adoption rebuilds each `Instant` by winding
+/// `Instant::now()` BACK by the wall time that actually elapsed ([`rewind`]). Nothing is fabricated:
+/// the reaper judges an adopted table by the time that really passed, and every way the wall clock
+/// can misbehave lands on "just adopted", which delays a forfeit rather than causing one.
+///
+/// What the ending-only store cost instead was the opposite failure, and it was live: a pre-restart
+/// table had no record at all, so [`TableRegistry::record`] answered `None`, so [`reap_table`] could
+/// never clock-forfeit it and [`resign`] — the ONE resolution a player can cause — was silently
+/// dropped while the match kept taking acts. The gate fell open in the *this match can never END*
+/// direction. See `docs/reference/RESTART-SEMANTICS.md`.
 fn table_record_dir() -> Option<std::path::PathBuf> {
     std::env::var("DREGGNET_WEB_SESSION_DIR")
         .ok()
@@ -567,77 +648,239 @@ fn table_record_dir() -> Option<std::path::PathBuf> {
         .map(|dir| std::path::Path::new(&dir).join("tables"))
 }
 
-/// The stable file for a table id — a content hash, so ANY id (including an ad-hoc one that never
-/// came out of [`TableLock::mint_table_id`]) maps to a safe, collision-resistant name.
-fn table_record_path(dir: &std::path::Path, id: &str) -> std::path::PathBuf {
-    dir.join(format!("{}.table", blake3::hash(id.as_bytes()).to_hex()))
+/// The stable file NAME for a table id — a content hash, so ANY id (including an ad-hoc one that
+/// never came out of [`TableLock::mint_table_id`]) maps to a safe, collision-resistant name. It is
+/// also what lets the durable-dir sweep check that a record is filed under the id it claims.
+fn table_record_file_name(id: &str) -> String {
+    format!("{}.table", blake3::hash(id.as_bytes()).to_hex())
 }
 
-/// The one-line wire: `v1 <TAB> lock key <TAB> started(0|1) <TAB> cause <TAB> forfeited letters`.
-/// Tab-separated with no escaping needed — every field is a fixed vocabulary or an ASCII letter set
-/// this module itself produces.
-fn encode_table_record(lock: &TableLock, resolution: &Resolution) -> String {
-    let cause = match resolution.cause {
-        Cause::Clock => "c",
-        Cause::Resigned => "r",
-        Cause::Concluded => "x",
+/// The stable file for a table id.
+fn table_record_path(dir: &std::path::Path, id: &str) -> std::path::PathBuf {
+    dir.join(table_record_file_name(id))
+}
+
+/// **Wall-clock seconds since the UNIX epoch** — the only clock that means anything across a
+/// restart. A clock set before 1970 reads as `0`, which [`rewind`] then treats as an elapsed time
+/// no process has been alive for, and therefore as "just adopted".
+fn wall_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|since| since.as_secs())
+        .unwrap_or(0)
+}
+
+/// **Rebuild a monotonic `Instant` from a wall-clock stamp**, by winding `now` back the wall time
+/// that elapsed since `stamp_wall`.
+///
+/// Every failure mode lands on `now` — "just adopted" — which DELAYS a forfeit rather than causing
+/// one, and that direction is the whole point: this clock's failure mode is ending somebody's live
+/// match. A stamp from the FUTURE (the wall clock was stepped back, or was never set) saturates to
+/// zero elapsed; an elapsed longer than this process's own monotonic origin fails `checked_sub` and
+/// falls back the same way.
+fn rewind(now: Instant, now_wall: u64, stamp_wall: u64) -> Instant {
+    let elapsed = Duration::from_secs(now_wall.saturating_sub(stamp_wall));
+    now.checked_sub(elapsed).unwrap_or(now)
+}
+
+/// One table's record as it sits on disk — the decoded form of the one-line wire.
+///
+/// `id` and `opened_wall` are `Option` because a `v1` file (an existing deployment's, written when
+/// only the ENDING was persisted) carries neither. A `v1` record therefore always carries a
+/// resolution, and a resolved table never faces the clock, so nothing is lost.
+#[derive(Clone, Debug)]
+struct DurableTable {
+    lock: TableLock,
+    id: Option<String>,
+    opened_wall: Option<u64>,
+    last_act_wall: Option<(SeatSlot, u64)>,
+    resolution: Option<Resolution>,
+}
+
+impl DurableTable {
+    /// **Materialise a live record from a durable one**, rebuilding both `Instant`s from their wall
+    /// stamps against a single `(now, now_wall)` reading.
+    ///
+    /// `None` for an UNRESOLVED record with no mint stamp: that is a table with no honest clock, and
+    /// it is refused rather than handed to the reaper with a fabricated one. (Neither wire version
+    /// can produce that shape; the arm is the fail-closed floor, not a live path.)
+    fn adopt(self, now: Instant, now_wall: u64) -> Option<TableRecord> {
+        let opened_wall = match (self.opened_wall, self.resolution.is_some()) {
+            (Some(wall), _) => wall,
+            (None, true) => now_wall,
+            (None, false) => return None,
+        };
+        Some(TableRecord {
+            lock: self.lock,
+            opened: rewind(now, now_wall, opened_wall),
+            last_act: self
+                .last_act_wall
+                .map(|(seat, wall)| (seat, rewind(now, now_wall, wall))),
+            resolution: self.resolution,
+            opened_wall,
+            last_act_wall: self.last_act_wall.map(|(_, wall)| wall),
+        })
+    }
+}
+
+/// The one-line wire:
+///
+/// ```text
+/// v2 <TAB> lock key <TAB> table id <TAB> opened(wall secs)
+///    <TAB> act seat(a|b|empty) <TAB> act(wall secs|empty)
+///    <TAB> started(0|1|empty) <TAB> cause(c|r|x|empty) <TAB> forfeited letters
+/// ```
+///
+/// Tab-separated with no escaping needed — every field is a fixed vocabulary, a decimal, or an id
+/// this module minted out of a prefix and hex. The last three fields are ALL empty exactly when the
+/// table is still unresolved, which is the shape `v1` could not write down at all.
+///
+/// `v1` (`v1 <TAB> key <TAB> started <TAB> cause <TAB> forfeited`) is still DECODED — an existing
+/// deployment has those files on disk — but is no longer emitted.
+fn encode_table_record(id: &str, record: &TableRecord) -> String {
+    debug_assert_eq!(
+        record.last_act.is_some(),
+        record.last_act_wall.is_some(),
+        "an act stamp and its wall twin are written together or not at all"
+    );
+    let (act_seat, act_wall) = match (record.last_act, record.last_act_wall) {
+        (Some((seat, _)), Some(wall)) => (seat.letter().to_string(), wall.to_string()),
+        _ => (String::new(), String::new()),
     };
-    let forfeited: String = resolution
-        .forfeited
-        .iter()
-        .map(|seat| seat.letter())
-        .collect();
+    let (started, cause, forfeited) = match &record.resolution {
+        None => (String::new(), String::new(), String::new()),
+        Some(resolution) => (
+            u8::from(resolution.started).to_string(),
+            match resolution.cause {
+                Cause::Clock => "c",
+                Cause::Resigned => "r",
+                Cause::Concluded => "x",
+            }
+            .to_string(),
+            resolution
+                .forfeited
+                .iter()
+                .map(|seat| seat.letter())
+                .collect(),
+        ),
+    };
     format!(
-        "v1\t{key}\t{started}\t{cause}\t{forfeited}\n",
-        key = lock.key,
-        started = u8::from(resolution.started),
+        "v2\t{key}\t{id}\t{opened}\t{act_seat}\t{act_wall}\t{started}\t{cause}\t{forfeited}\n",
+        key = record.lock.key,
+        opened = record.opened_wall,
     )
 }
 
 /// Reverse [`encode_table_record`]. A malformed / truncated / unknown-version line decodes as `None`
-/// — fail-CLOSED in the safe direction: an unreadable record means "this process does not know that
-/// this table is over", which is exactly the pre-durability behaviour, never a fabricated ending.
-fn decode_table_record(line: &str) -> Option<(TableLock, Resolution)> {
+/// — fail-CLOSED in the safe direction: an unreadable record means "this process knows nothing about
+/// that table", which is exactly the pre-durability behaviour, never a fabricated ending and never a
+/// fabricated clock.
+fn decode_table_record(line: &str) -> Option<DurableTable> {
     let fields: Vec<&str> = line.trim_end_matches(['\n', '\r']).split('\t').collect();
-    if fields.len() != 5 || fields[0] != "v1" {
-        return None;
+    match (fields.first().copied(), fields.len()) {
+        (Some("v1"), 5) => Some(DurableTable {
+            lock: lock_for_key(fields[1])?,
+            id: None,
+            opened_wall: None,
+            last_act_wall: None,
+            resolution: Some(decode_resolution(fields[2], fields[3], fields[4])?),
+        }),
+        (Some("v2"), 9) => {
+            let lock = lock_for_key(fields[1])?;
+            if fields[2].is_empty() {
+                return None;
+            }
+            let opened_wall = fields[3].parse::<u64>().ok()?;
+            // A half-written act pair decodes as nothing at all: a seat with no stamp has no clock
+            // and a stamp with no seat has no author, and either would be a guess.
+            let last_act_wall = match (fields[4], fields[5]) {
+                ("", "") => None,
+                (seat, at) => Some((SeatSlot::parse(seat)?, at.parse::<u64>().ok()?)),
+            };
+            let resolution = match (fields[6], fields[7], fields[8]) {
+                ("", "", "") => None,
+                (started, cause, forfeited) => Some(decode_resolution(started, cause, forfeited)?),
+            };
+            Some(DurableTable {
+                lock,
+                id: Some(fields[2].to_string()),
+                opened_wall: Some(opened_wall),
+                last_act_wall,
+                resolution,
+            })
+        }
+        _ => None,
     }
-    let lock = lock_for_key(fields[1])?;
-    let started = match fields[2] {
+}
+
+/// The ending's three fields, shared by both wire versions.
+fn decode_resolution(started: &str, cause: &str, forfeited: &str) -> Option<Resolution> {
+    let started = match started {
         "0" => false,
         "1" => true,
         _ => return None,
     };
-    let cause = match fields[3] {
+    let cause = match cause {
         "c" => Cause::Clock,
         "r" => Cause::Resigned,
         "x" => Cause::Concluded,
         _ => return None,
     };
-    let mut forfeited = Vec::new();
-    for letter in fields[4].chars() {
-        forfeited.push(SeatSlot::parse(&letter.to_string())?);
+    let mut seats = Vec::new();
+    for letter in forfeited.chars() {
+        seats.push(SeatSlot::parse(&letter.to_string())?);
     }
-    Some((
-        lock,
-        Resolution {
-            forfeited,
-            cause,
-            started,
-        },
-    ))
+    Some(Resolution {
+        forfeited: seats,
+        cause,
+        started,
+    })
 }
 
 /// The minted tables of this process.
 #[derive(Default)]
 pub struct TableRegistry {
+    /// Who sat at each minted table, when either seat last acted, and how it ended.
+    ///
+    /// RESTART: **REBUILD.** Empty at boot, and its absence used to fall open in the *this match can
+    /// never END* direction — not in the "anyone may act" direction, which is why REFUSE is the
+    /// wrong answer here. [`TableRegistry::record`] answered `None` for every table minted by a
+    /// previous process, so [`reap_table`] could never clock-forfeit one and a player's own
+    /// [`resign`] was silently dropped while the match went on taking acts. Every record is now
+    /// written to `<durable root>/<blake3(id)>.table` at the mint and at every landed act, in wall
+    /// time, and read back by [`TableRegistry::adopt_durable`] on first touch or by
+    /// [`TableRegistry::adopt_backlog`] on the sweeper's once-per-process walk of that directory.
+    ///
+    /// NOT refuse, deliberately: the act path already demands an unguessable 128-bit seat label
+    /// ([`TableLock::seat_of_label`]), so an empty registry never meant "anyone may act". Refusing
+    /// every unknown minted table would brick every live game across a deploy, and one failed write
+    /// on the persist path would brick a legitimate one — which is the same degrade-and-say-so
+    /// posture the seat key itself takes, in the other direction.
+    ///
+    /// NOT durable when there is no durable root: with `DREGGNET_WEB_SESSION_DIR` unset nothing is
+    /// written and nothing is adopted, exactly as before. That deployment already accepts that its
+    /// seat links do not survive a restart either, and it fails CLOSED (an old link stops
+    /// verifying).
     tables: Mutex<HashMap<String, TableRecord>>,
     /// Table ids this process has already looked for on disk and NOT found. Without it, every act on
-    /// a pre-restart table would pay a filesystem probe; with it, exactly one probe per id per
-    /// process. It is a NEGATIVE cache and nothing more — a miss must never be written into
-    /// [`tables`](TableRegistry::tables) as an unresolved record, because that would give the reaper
-    /// a table with a fake `opened` stamp to forfeit (see `table_record_dir`).
+    /// a table with no durable record would pay a filesystem probe; with it, exactly one probe per
+    /// id per process.
+    ///
+    /// RESTART: **PROCEED**, deliberately. It is a NEGATIVE cache and nothing more: empty at boot
+    /// costs one extra `stat` per unknown id and changes no decision, because the answer it
+    /// remembers ("there is no durable record for this id") is exactly what the probe it saves would
+    /// return. An adversary who forces a restart gains a `stat`. It is bounded (`ABSENT_CAP`)
+    /// because a table id is attacker-choosable from any URL.
     absent: Mutex<std::collections::HashSet<String>>,
+    /// The directory the durable records live in, when it must not come from the process
+    /// environment — i.e. what [`table_record_dir`] would return, not the session dir above it.
+    /// `None` on the process registry. Test-only: `std::env::set_var` is process-global and every
+    /// other test in this binary is running concurrently, so a test carries its root HERE.
+    dir: Option<std::path::PathBuf>,
+    /// Whether [`TableRegistry::adopt_backlog`] has already walked the durable directory. The walk
+    /// is once per process: after it, every unresolved durable table is in `tables` and the ordinary
+    /// in-RAM sweep covers them.
+    swept: AtomicBool,
 }
 
 /// The process's table registry.
@@ -647,28 +890,52 @@ pub fn registry() -> &'static TableRegistry {
 }
 
 impl TableRegistry {
-    /// Record a freshly minted table.
-    pub fn opened(&self, lock: TableLock, id: &str, now: Instant) {
-        let mut tables = self.lock();
-        tables.insert(
-            id.to_string(),
-            TableRecord {
-                lock,
-                opened: now,
-                last_act: None,
-                resolution: None,
-            },
-        );
+    /// A registry whose durable records live in `dir` rather than under the process environment.
+    #[cfg(test)]
+    fn in_dir(dir: impl Into<std::path::PathBuf>) -> TableRegistry {
+        TableRegistry {
+            dir: Some(dir.into()),
+            ..TableRegistry::default()
+        }
     }
 
-    /// Note that `seat` acted. Ignored on a table this process did not mint (a link left over from
-    /// before a restart) and on one already resolved.
+    /// Where this registry's durable records live — its own root if it was given one, else the
+    /// deployment's.
+    fn records_dir(&self) -> Option<std::path::PathBuf> {
+        self.dir.clone().or_else(table_record_dir)
+    }
+
+    /// Record a freshly minted table.
+    ///
+    /// The durable write happens HERE, at the mint, and not only at the ending: a table that was
+    /// never written down cannot be adopted after a restart, and an un-adoptable table is one whose
+    /// clock does not exist and whose seats cannot resign.
+    pub fn opened(&self, lock: TableLock, id: &str, now: Instant) {
+        let record = TableRecord::minted(lock, now, wall_now());
+        self.lock().insert(id.to_string(), record.clone());
+        self.persist(id, &record);
+    }
+
+    /// Note that `seat` acted. Ignored on a table nothing has ever minted and on one already
+    /// resolved — but NOT on one minted before a restart: that table is adopted from its durable
+    /// record first, so a landed act refreshes the clock of the table it landed on.
     pub fn record_act(&self, id: &str, seat: SeatSlot, now: Instant) {
-        let mut tables = self.lock();
-        if let Some(record) = tables.get_mut(id) {
-            if record.resolution.is_none() {
-                record.last_act = Some((seat, now));
+        self.ensure_adopted(id);
+        let wall = wall_now();
+        let updated = {
+            let mut tables = self.lock();
+            match tables.get_mut(id) {
+                Some(record) if record.resolution.is_none() => {
+                    record.note_act(seat, now, wall);
+                    Some(record.clone())
+                }
+                _ => None,
             }
+        };
+        if let Some(record) = updated {
+            // This write is what makes the TURN clock survive a restart. Without it an adopted table
+            // reads as never-played, and the reaper would judge it on the (much longer) open clock.
+            self.persist(id, &record);
         }
     }
 
@@ -680,40 +947,57 @@ impl TableRegistry {
     /// match the lobby had already ended. Consulting the durable record makes the ending survive the
     /// restart that the seat links already survive.
     ///
-    /// It costs at most ONE filesystem probe per unknown id per process (see
-    /// the `absent` negative cache below), and zero for a table this process minted.
+    /// It costs at most ONE filesystem probe per unknown id per process (see the `absent` negative
+    /// cache), and zero for a table this process already knows.
     pub fn resolution(&self, id: &str) -> Option<Resolution> {
-        // The guard is scoped EXPLICITLY: `durable_resolution` takes the same lock, so letting a
+        self.record(id)?.resolution
+    }
+
+    /// The whole record — from this process's memory, else adopted from the durable one.
+    pub fn record(&self, id: &str) -> Option<TableRecord> {
+        // The guard is scoped EXPLICITLY: `adopt_durable` takes the same lock, so letting a
         // scrutinee temporary live across the fallthrough would deadlock the whole registry.
         let known = {
             let tables = self.lock();
-            tables.get(id).map(|record| record.resolution.clone())
+            tables.get(id).cloned()
         };
         match known {
-            Some(resolution) => resolution,
-            None => self.durable_resolution(id),
+            Some(record) => Some(record),
+            None => self.adopt_durable(id),
         }
     }
 
-    /// The durable ending for a table this process did not mint. Memoises a HIT into the live map (so
-    /// later reads are free and the reaper skips it — a resolved record is filtered out of
-    /// `stalled`) and a MISS into the negative cache only.
-    fn durable_resolution(&self, id: &str) -> Option<Resolution> {
+    /// Materialise `id` from its durable record if this process has not met it yet.
+    ///
+    /// Takes and releases the map lock, so it must never be called while holding it.
+    fn ensure_adopted(&self, id: &str) {
+        if self.lock().contains_key(id) {
+            return;
+        }
+        self.adopt_durable(id);
+    }
+
+    /// **Adopt a table this process did not mint.** Memoises a HIT into the live map (so later reads
+    /// are free) and a MISS into the negative cache only.
+    ///
+    /// Both an ENDED and a LIVE table are materialised. The live one's clock is not invented: its
+    /// `Instant`s are wound back from the wall stamps the durable record carries (see
+    /// [`rewind`] and `table_record_dir`).
+    fn adopt_durable(&self, id: &str) -> Option<TableRecord> {
         // NO DURABLE DIR, NO DISK: there is nothing to read and therefore nothing to remember, so
         // this path allocates nothing at all for the in-RAM deployment (and for the whole test
         // suite). It also keeps the negative cache from filling up with ids on a server that could
         // never have answered them anyway.
-        let Some(dir) = table_record_dir() else {
-            return None;
-        };
+        let dir = self.records_dir()?;
         if self.absent().contains(id) {
             return None;
         }
-        let decoded = std::fs::read_to_string(table_record_path(&dir, id))
+        let adopted = std::fs::read_to_string(table_record_path(&dir, id))
             .ok()
             .as_deref()
-            .and_then(decode_table_record);
-        let Some((lock, resolution)) = decoded else {
+            .and_then(decode_table_record)
+            .and_then(|durable| durable.adopt(Instant::now(), wall_now()));
+        let Some(record) = adopted else {
             // ⚑ BOUNDED. A table id is attacker-choosable (`af1-` + any 24 hex chars is prefix-legal),
             // so an unbounded negative cache is a memory-growth vector reachable from any URL. Past
             // the cap the cache is dropped and refills; the worst case is that a probe costs one
@@ -726,77 +1010,109 @@ impl TableRegistry {
             absent.insert(id.to_string());
             return None;
         };
-        // A resolved record is safe to materialise: it carries an ENDING, so the clock never judges
-        // it. Only the ending is restored — `opened`/`last_act` are honestly unknown after a restart.
-        self.lock().insert(
-            id.to_string(),
-            TableRecord {
-                lock,
-                opened: Instant::now(),
-                last_act: None,
-                resolution: Some(resolution.clone()),
-            },
-        );
-        Some(resolution)
+        self.lock().insert(id.to_string(), record.clone());
+        Some(record)
     }
 
-    /// The whole record.
-    pub fn record(&self, id: &str) -> Option<TableRecord> {
-        // Same explicit scoping as `resolution` — `durable_resolution` re-takes this lock.
-        let known = {
-            let tables = self.lock();
-            tables.get(id).cloned()
-        };
-        if known.is_some() {
-            return known;
+    /// **Adopt every UNRESOLVED table in the durable directory, once per process.** Returns how many
+    /// it took in.
+    ///
+    /// [`reap_all`] sweeps the live map, and after a restart the live map holds only what somebody
+    /// has visited — so a table minted before the restart that nobody ever looks at again would be
+    /// invisible to the no-traffic half of the clock, which is exactly the half that exists for
+    /// abandoned tables. This walk closes that: after it, every live durable table is in the map and
+    /// the ordinary in-RAM sweep covers it.
+    ///
+    /// Once per process, because it is O(records ever written) and the directory is never GC'd. An
+    /// ALREADY-ENDED record is skipped rather than adopted: the clock never judges it, so paging it
+    /// in would buy nothing, and the on-demand path still answers for it. A record whose id does not
+    /// hash to its own file name is skipped too — a file is only allowed to speak for the table it
+    /// is filed under.
+    fn adopt_backlog(&self) -> usize {
+        if self.swept.swap(true, Ordering::SeqCst) {
+            return 0;
         }
-        // Materialise a durable ENDING if there is one, then answer from the live map.
-        self.durable_resolution(id)?;
-        let tables = self.lock();
-        tables.get(id).cloned()
+        let Some(dir) = self.records_dir() else {
+            return 0;
+        };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return 0;
+        };
+        let mut adopted = 0;
+        for entry in entries.flatten() {
+            let Some(durable) = std::fs::read_to_string(entry.path())
+                .ok()
+                .as_deref()
+                .and_then(decode_table_record)
+            else {
+                continue;
+            };
+            if durable.resolution.is_some() {
+                continue;
+            }
+            // A `v1` record carries no id — and always carries an ending, so it never reaches here.
+            let Some(id) = durable.id.clone() else {
+                continue;
+            };
+            if entry.file_name() != std::ffi::OsString::from(table_record_file_name(&id)) {
+                continue;
+            }
+            if self.lock().contains_key(&id) {
+                continue;
+            }
+            let Some(record) = durable.adopt(Instant::now(), wall_now()) else {
+                continue;
+            };
+            self.lock().insert(id, record);
+            adopted += 1;
+        }
+        adopted
     }
 
     /// Write a resolution, once — **in memory and on disk**. Returns the resolution now in force (an
     /// already-resolved table keeps its FIRST resolution: a clock cannot overwrite a resignation).
     ///
+    /// The table is adopted first, so a resignation on a table minted before a restart LANDS instead
+    /// of being dropped on the floor. `None` only when nothing anywhere has ever minted this id.
+    ///
     /// The durable write happens only on the FIRST resolution, which is the same write-once point,
     /// so the file cannot disagree with memory about how a table ended.
     pub fn resolve(&self, id: &str, resolution: Resolution) -> Option<Resolution> {
-        let (in_force, newly_written, lock) = {
+        self.ensure_adopted(id);
+        let (in_force, newly_written, record) = {
             let mut tables = self.lock();
             let record = tables.get_mut(id)?;
             let fresh = record.resolution.is_none();
             if fresh {
                 record.resolution = Some(resolution);
             }
-            (record.resolution.clone(), fresh, record.lock)
+            (record.resolution.clone(), fresh, record.clone())
         };
         if newly_written {
-            if let Some(in_force) = &in_force {
-                self.persist_resolution(id, &lock, in_force);
-            }
+            self.persist(id, &record);
             // It is resolved now, so a stale negative-cache entry must not answer for it.
             self.absent().remove(id);
         }
         in_force
     }
 
-    /// Persist one ending. A write failure is NOT fatal and NOT silent: the process keeps the correct
-    /// in-memory resolution and logs that this ending will not survive a restart — the same
-    /// degrade-and-say-so posture the seat key itself takes.
-    fn persist_resolution(&self, id: &str, lock: &TableLock, resolution: &Resolution) {
-        let Some(dir) = table_record_dir() else {
+    /// Persist one table's whole record. A write failure is NOT fatal and NOT silent: the process
+    /// keeps the correct in-memory record and logs that it will not survive a restart — the same
+    /// degrade-and-say-so posture the seat key itself takes, and the reason REFUSE is the wrong
+    /// answer for the registry (one bad write would otherwise brick a legitimate live table).
+    fn persist(&self, id: &str, record: &TableRecord) {
+        let Some(dir) = self.records_dir() else {
             return;
         };
         let path = table_record_path(&dir, id);
         let write = std::fs::create_dir_all(&dir)
-            .and_then(|()| std::fs::write(&path, encode_table_record(lock, resolution)));
+            .and_then(|()| std::fs::write(&path, encode_table_record(id, record)));
         if let Err(error) = write {
             tracing::warn!(
                 path = %path.display(),
                 table = %id,
                 error = %error,
-                "could not persist how a table ended — this ending will not survive a restart"
+                "could not persist a table's record — this table will not survive a restart"
             );
         }
     }
@@ -889,7 +1205,17 @@ fn env_secs(name: &str, default: u64) -> Duration {
 /// Every newly-written ending also RETIRES the host session ([`archive_finished`]): the durable
 /// move-log is archived rather than deleted, so the finished match stays replayable.
 pub fn reap_table(state: &CatalogState, id: &str, now: Instant) -> Option<Resolution> {
-    let record = registry().record(id)?;
+    reap_table_in(registry(), state, id, now)
+}
+
+/// [`reap_table`] against an explicit registry — see [`enforce_in`] for why the parameter exists.
+fn reap_table_in(
+    tables: &TableRegistry,
+    state: &CatalogState,
+    id: &str,
+    now: Instant,
+) -> Option<Resolution> {
+    let record = tables.record(id)?;
     if let Some(resolution) = record.resolution {
         return Some(resolution);
     }
@@ -906,7 +1232,8 @@ pub fn reap_table(state: &CatalogState, id: &str, now: Instant) -> Option<Resolu
         // Retired like any other ending, and the archive layer does the right thing with it: an
         // UNPLAYED session's genesis is DELETED rather than filed as a finished match (see
         // `SessionResumeStore::archive`), so a table nobody sat at never appears in anyone's history.
-        return resolve_and_retire(
+        return resolve_and_retire_in(
+            tables,
             state,
             id,
             &lock,
@@ -927,7 +1254,8 @@ pub fn reap_table(state: &CatalogState, id: &str, now: Instant) -> Option<Resolu
     } else {
         Cause::Clock
     };
-    resolve_and_retire(
+    resolve_and_retire_in(
+        tables,
         state,
         id,
         &lock,
@@ -941,14 +1269,15 @@ pub fn reap_table(state: &CatalogState, id: &str, now: Instant) -> Option<Resolu
 
 /// Write `resolution` (write-once) and, if it is the one that took effect, retire the host session so
 /// the match becomes a finished, replayable artifact.
-fn resolve_and_retire(
+fn resolve_and_retire_in(
+    tables: &TableRegistry,
     state: &CatalogState,
     id: &str,
     lock: &TableLock,
     resolution: Resolution,
 ) -> Option<Resolution> {
-    let before = registry().resolution(id).is_some();
-    let in_force = registry().resolve(id, resolution)?;
+    let before = tables.resolution(id).is_some();
+    let in_force = tables.resolve(id, resolution)?;
     if !before {
         archive_finished(state, lock, id);
     }
@@ -992,7 +1321,7 @@ pub fn archive_finished(state: &CatalogState, lock: &TableLock, id: &str) -> boo
 /// nobody-ever-showed-up case records `started: false`.
 ///
 /// It takes the catalog because a resignation ENDS a match, and every ending goes through the one
-/// retirement path (`resolve_and_retire` → [`archive_finished`]): the world stops being live and
+/// retirement path (`resolve_and_retire_in` → [`archive_finished`]): the world stops being live and
 /// its move-log is archived rather than deleted. Threading the state through is deliberate — the
 /// alternative (a pure `resign` plus a "remember to retire" call at the route) is exactly the shape
 /// that leaves one of two endings un-archived and nobody noticing.
@@ -1002,7 +1331,19 @@ pub fn resign(
     id: &str,
     seat: SeatSlot,
 ) -> Option<Resolution> {
-    resolve_and_retire(
+    resign_in(registry(), state, lock, id, seat)
+}
+
+/// [`resign`] against an explicit registry — see [`enforce_in`] for why the parameter exists.
+fn resign_in(
+    tables: &TableRegistry,
+    state: &CatalogState,
+    lock: &TableLock,
+    id: &str,
+    seat: SeatSlot,
+) -> Option<Resolution> {
+    resolve_and_retire_in(
+        tables,
         state,
         id,
         lock,
@@ -1031,15 +1372,24 @@ fn owes_a_move(state: &CatalogState, lock: &TableLock, id: &SessionId, seat: Sea
 /// half of the clock: the per-request path below reaps the table a visitor is looking at, and the
 /// server binary's periodic sweeper calls THIS so a table nobody is watching still resolves.
 /// Returns the ids it resolved.
+///
+/// The first call of a process also pages in the durable backlog, so "a table nobody is watching"
+/// covers the ones minted before a restart as well as the ones minted after it.
 pub fn reap_all(state: &CatalogState) -> Vec<String> {
+    reap_all_in(registry(), state)
+}
+
+/// [`reap_all`] against an explicit registry — see [`enforce_in`] for why the parameter exists.
+fn reap_all_in(tables: &TableRegistry, state: &CatalogState) -> Vec<String> {
+    tables.adopt_backlog();
     let now = Instant::now();
     // Take the widest window first so one pass covers never-started and stalled tables alike; each
     // candidate re-checks its OWN limit inside `reap_table`.
     let limit = turn_limit().min(open_limit());
-    registry()
+    tables
         .stalled(limit, now)
         .into_iter()
-        .filter(|(id, _)| reap_table(state, id, now).is_some())
+        .filter(|(id, _)| reap_table_in(tables, state, id, now).is_some())
         .map(|(id, _)| id)
         .collect()
 }
@@ -1280,11 +1630,17 @@ mod tests {
                 },
             ),
         ] {
-            let line = encode_table_record(&lock, &resolution);
-            let (back_lock, back) =
-                decode_table_record(&line).unwrap_or_else(|| panic!("decodes: {line:?}"));
-            assert_eq!(back_lock.key, lock.key);
-            assert_eq!(back, resolution, "round-trip lost information: {line:?}");
+            let line = encode_table_record(
+                "tug1-0123456789abcdef01234567",
+                &ended(lock, resolution.clone()),
+            );
+            let back = decode_table_record(&line).unwrap_or_else(|| panic!("decodes: {line:?}"));
+            assert_eq!(back.lock.key, lock.key);
+            assert_eq!(
+                back.resolution,
+                Some(resolution),
+                "round-trip lost information: {line:?}"
+            );
         }
         for bad in [
             "",
@@ -1295,10 +1651,30 @@ mod tests {
             "v1\ttug\t1\tz\ta",
             "v1\ttug\t1\tc\tq",
             "v1\ttug\t1\tc\ta\textra",
+            // …and the same fail-closed floor for `v2`, whose extra fields are extra ways to lie.
+            "v3\ttug\ttug1-x\t100\t\t\t1\tc\ta",
+            "v2\ttug\ttug1-x\t100\t\t\t1\tc",
+            "v2\ttug\ttug1-x\t100\t\t\t1\tc\ta\textra",
+            "v2\tnot-a-game\ttug1-x\t100\t\t\t1\tc\ta",
+            "v2\ttug\t\t100\t\t\t1\tc\ta",
+            "v2\ttug\ttug1-x\t\t\t\t1\tc\ta",
+            "v2\ttug\ttug1-x\tnope\t\t\t1\tc\ta",
+            "v2\ttug\ttug1-x\t-1\t\t\t1\tc\ta",
+            // A half-written act pair: a seat with no stamp, or a stamp with no seat.
+            "v2\ttug\ttug1-x\t100\ta\t\t1\tc\ta",
+            "v2\ttug\ttug1-x\t100\t\t150\t1\tc\ta",
+            "v2\ttug\ttug1-x\t100\tq\t150\t1\tc\ta",
+            "v2\ttug\ttug1-x\t100\ta\tnope\t1\tc\ta",
+            // A half-written ending: unresolved is all three fields empty, never some of them.
+            "v2\ttug\ttug1-x\t100\t\t\t\tc\ta",
+            "v2\ttug\ttug1-x\t100\t\t\t1\t\ta",
+            "v2\ttug\ttug1-x\t100\t\t\t2\tc\ta",
+            "v2\ttug\ttug1-x\t100\t\t\t1\tz\ta",
+            "v2\ttug\ttug1-x\t100\t\t\t1\tc\tq",
         ] {
             assert!(
                 decode_table_record(bad).is_none(),
-                "a malformed ending must not decode: {bad:?}"
+                "a malformed record must not decode: {bad:?}"
             );
         }
     }
@@ -1311,6 +1687,339 @@ mod tests {
         assert_eq!(
             decode_key_hex(&format!(" {} ", "ff".repeat(32))),
             Some([0xff_u8; 32])
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────────────
+    // RESTART SEMANTICS — `docs/reference/RESTART-SEMANTICS.md`, answer 2 (REBUILD).
+    //
+    // A restart is modelled as what it actually is: a SECOND `TableRegistry` over the same
+    // durable root, which has never been told any of the ids the first one minted. Every
+    // assertion below is on the DECISION that registry makes, never on the bytes.
+    //
+    // The root is carried on the registry rather than in `DREGGNET_WEB_SESSION_DIR`, because
+    // `std::env::set_var` is process-global and every other test in this binary is running
+    // concurrently — a test that sets it would be deciding other tests' durability for them.
+    // ─────────────────────────────────────────────────────────────────────────────────────
+
+    /// A resolved record, for the wire round-trip.
+    fn ended(lock: TableLock, resolution: Resolution) -> TableRecord {
+        TableRecord {
+            resolution: Some(resolution),
+            ..TableRecord::minted(lock, Instant::now(), 1_700_000_000)
+        }
+    }
+
+    /// ⚑ **The durable record now carries a LIVE table, not only an ending** — and still reads the
+    /// `v1` files a deployment that only ever persisted the ending has on disk.
+    #[test]
+    fn a_durable_record_round_trips_a_live_table_and_still_decodes_v1() {
+        let id = "tug1-0123456789abcdef01234567";
+        for last_act in [None, Some((SeatSlot::B, 1_700_000_600_u64))] {
+            for resolution in [
+                None,
+                Some(Resolution {
+                    forfeited: vec![SeatSlot::A],
+                    cause: Cause::Resigned,
+                    started: true,
+                }),
+            ] {
+                let record = TableRecord {
+                    lock: TUG,
+                    opened: Instant::now(),
+                    last_act: last_act.map(|(seat, _)| (seat, Instant::now())),
+                    resolution: resolution.clone(),
+                    opened_wall: 1_700_000_000,
+                    last_act_wall: last_act.map(|(_, wall)| wall),
+                };
+                let line = encode_table_record(id, &record);
+                let back =
+                    decode_table_record(&line).unwrap_or_else(|| panic!("decodes: {line:?}"));
+                assert_eq!(back.lock.key, "tug");
+                assert_eq!(
+                    back.id.as_deref(),
+                    Some(id),
+                    "the id is what the durable-dir sweep addresses the table by: {line:?}"
+                );
+                assert_eq!(back.opened_wall, Some(1_700_000_000), "{line:?}");
+                assert_eq!(back.last_act_wall, last_act, "{line:?}");
+                assert_eq!(back.resolution, resolution, "{line:?}");
+            }
+        }
+
+        // A `v1` file still decodes, losslessly, and still adopts — a resolved table never faces
+        // the clock, so the stamps it does not carry decide nothing.
+        let v1 = decode_table_record("v1\ttug\t1\tr\tb\n").expect("a v1 ending still decodes");
+        assert_eq!(v1.lock.key, "tug");
+        assert_eq!(v1.id, None);
+        assert_eq!(v1.opened_wall, None);
+        assert_eq!(
+            v1.resolution,
+            Some(Resolution {
+                forfeited: vec![SeatSlot::B],
+                cause: Cause::Resigned,
+                started: true,
+            })
+        );
+        let adopted = v1
+            .adopt(Instant::now(), wall_now())
+            .expect("a v1 ending adopts");
+        assert!(adopted.resolution.is_some());
+        assert!(
+            !adopted.started(),
+            "a v1 file records no act, so none is invented"
+        );
+
+        // An UNRESOLVED record with no mint stamp has no honest clock, so it is REFUSED rather
+        // than handed to the reaper with a fabricated one. Neither wire version can write that
+        // shape; this pins the fail-closed floor of `adopt` itself.
+        let clockless = DurableTable {
+            lock: TUG,
+            id: Some(id.to_string()),
+            opened_wall: None,
+            last_act_wall: None,
+            resolution: None,
+        };
+        assert!(clockless.adopt(Instant::now(), wall_now()).is_none());
+    }
+
+    /// **The rebuilt clock is conservative in every direction a wall clock can go wrong** — each
+    /// failure reads as "just adopted", which delays a forfeit rather than causing one.
+    #[test]
+    fn a_rebuilt_stamp_never_ages_a_table_it_cannot_account_for() {
+        // Far enough from this process's monotonic origin that an ordinary rewind is representable
+        // however recently the machine booted.
+        let now = Instant::now() + Duration::from_secs(86_400);
+        assert_eq!(
+            now.saturating_duration_since(rewind(now, 1_000_600, 1_000_000)),
+            Duration::from_secs(600),
+            "ten minutes of wall time is ten minutes of clock"
+        );
+        assert_eq!(
+            rewind(now, 1_000_000, 2_000_000),
+            now,
+            "a stamp from the future (the wall clock was stepped back) reads as just-adopted"
+        );
+        assert_eq!(
+            rewind(now, u64::MAX, 0),
+            now,
+            "an elapsed longer than this process has existed reads the same way"
+        );
+    }
+
+    /// ⚑ **THE RESTART TEST.** A table minted and played before the restart is still a table this
+    /// process can decide about after it — with the clock it actually had, not a fresh one.
+    ///
+    /// Before the durable record carried the whole table, `record()` answered `None` here, so
+    /// [`reap_table`] returned `None` on its first line and a pre-restart table could never be
+    /// clock-forfeited at all.
+    #[test]
+    fn a_pre_restart_table_keeps_its_clock_and_can_still_be_reaped() {
+        assert!(
+            turn_limit() < open_limit(),
+            "this test distinguishes the two deadlines, so they must differ"
+        );
+        let root = tempfile::tempdir().expect("a durable root");
+        let state = CatalogState::new();
+
+        // ── before the restart: one table played, one nobody ever sat at ──
+        let before = TableRegistry::in_dir(root.path());
+        let played = TUG.mint_table_id();
+        let untouched = AUTOMATAFL.mint_table_id();
+        before.opened(TUG, &played, Instant::now());
+        before.opened(AUTOMATAFL, &untouched, Instant::now());
+        before.record_act(&played, SeatSlot::A, Instant::now());
+
+        // ── the restart: a registry that has never been told either id ──
+        let after = TableRegistry::in_dir(root.path());
+        assert!(after.is_empty(), "the restarted registry starts empty");
+
+        let record = after
+            .record(&played)
+            .expect("a pre-restart table is adopted from its durable record");
+        assert_eq!(record.lock.key, "tug");
+        assert!(
+            record.started(),
+            "the act stamp survived, so the TURN clock is the one that applies"
+        );
+        assert!(
+            record.resolution.is_none(),
+            "adopting a LIVE table must never fabricate an ending"
+        );
+
+        // Inside its window nothing happens — the adopted stamps are the real ones, not a rewind
+        // to the beginning of time. This is the non-vacuity check: an adoption that aged the table
+        // would forfeit a live match here.
+        let now = Instant::now();
+        assert!(reap_table_in(&after, &state, &played, now).is_none());
+        assert!(reap_table_in(&after, &state, &untouched, now).is_none());
+
+        // Past the TURN deadline the played table resolves. (The recorded CAUSE is the offering's
+        // answer to "is either seat owed a move", and this fixture hosts no live tug session for
+        // the table; what is under test is that the clock can see the table AT ALL.)
+        let past_turn = now + turn_limit() + Duration::from_secs(1);
+        assert!(
+            reap_table_in(&after, &state, &played, past_turn).is_some(),
+            "a pre-restart table past its turn deadline must be reapable"
+        );
+
+        // The never-played one is on the longer OPEN clock, so the same instant leaves it live —
+        // which is the `opened` stamp being real too, and not the act stamp in disguise.
+        assert!(
+            reap_table_in(&after, &state, &untouched, past_turn).is_none(),
+            "a table nobody sat at is judged on the open clock, not the turn clock"
+        );
+        let expired = reap_table_in(
+            &after,
+            &state,
+            &untouched,
+            now + open_limit() + Duration::from_secs(1),
+        )
+        .expect("a pre-restart table nobody sat at still expires");
+        assert_eq!(expired.cause, Cause::Clock);
+        assert!(!expired.started, "nobody played, so nobody forfeits");
+        assert!(expired.forfeited.is_empty());
+    }
+
+    /// ⚑ **A player's resignation on a pre-restart table used to be SILENTLY DROPPED.** `resolve`
+    /// started `tables.get_mut(id)?`, which was `None` for a table this process had not minted, so
+    /// nothing was written to memory or disk and the match went on taking acts — the one resolution
+    /// a user can cause, failing quietly.
+    #[test]
+    fn a_pre_restart_resignation_is_recorded_rather_than_silently_dropped() {
+        let root = tempfile::tempdir().expect("a durable root");
+        let state = CatalogState::new();
+
+        let before = TableRegistry::in_dir(root.path());
+        let id = TUG.mint_table_id();
+        before.opened(TUG, &id, Instant::now());
+        before.record_act(&id, SeatSlot::B, Instant::now());
+
+        // ── the restart ──
+        let after = TableRegistry::in_dir(root.path());
+        let resolution = resign_in(&after, &state, &TUG, &id, SeatSlot::A)
+            .expect("a seated player may always end their own table, restart or no restart");
+        assert_eq!(resolution.forfeited, vec![SeatSlot::A]);
+        assert_eq!(resolution.cause, Cause::Resigned);
+        assert_eq!(
+            resolution.winner(),
+            Some(SeatSlot::B),
+            "a resignation can only ever cost the seat that fires it"
+        );
+
+        // And it is durable in ITS turn: the ending survives the NEXT restart too, so this is a
+        // rebuilt guard rather than a one-shot repair.
+        let later = TableRegistry::in_dir(root.path());
+        assert_eq!(
+            later.resolution(&id),
+            Some(resolution),
+            "the resignation reached the disk"
+        );
+    }
+
+    /// ⚑ **THE AUTHORITY TEST.** A rebuilt gate must be told apart from a deleted one, so both
+    /// halves are asserted after the restart: the two seats still get in, and everybody else is
+    /// still refused — including, on a table that ENDED before the restart, its own seated player.
+    #[test]
+    fn the_gate_still_holds_across_a_restart_on_a_live_table_and_on_a_finished_one() {
+        let root = tempfile::tempdir().expect("a durable root");
+        let state = CatalogState::new();
+
+        let before = TableRegistry::in_dir(root.path());
+        let id = TUG.mint_table_id();
+        before.opened(TUG, &id, Instant::now());
+        before.record_act(&id, SeatSlot::A, Instant::now());
+        let seat_a = TUG.seat_label(&id, SeatSlot::A);
+        let seat_b = TUG.seat_label(&id, SeatSlot::B);
+
+        // ── the restart. The adopted table is LIVE, so it still takes its own two seats' acts …
+        let after = TableRegistry::in_dir(root.path());
+        assert!(enforce_in(&after, "tug", &id, &seat_a).is_ok());
+        assert!(enforce_in(&after, "tug", &id, &seat_b).is_ok());
+        // … and refuses everyone else, BEFORE the substrate and with nothing recorded.
+        let another_table = TUG.seat_label(&TUG.mint_table_id(), SeatSlot::A);
+        for stranger in ["mallory", "", another_table.as_str()] {
+            let refused = enforce_in(&after, "tug", &id, stranger)
+                .expect_err("a stranger holds no seat at an adopted table either");
+            assert!(refused.contains("seat-locked table"), "{refused}");
+        }
+
+        // ── the table ends, and a SECOND restart. The ending is what the gate must rebuild: the
+        // seat labels re-derive from the durable key, so without it seat B would keep playing a
+        // match the lobby had already ended.
+        resign_in(&after, &state, &TUG, &id, SeatSlot::A).expect("seat A resigns");
+        let after2 = TableRegistry::in_dir(root.path());
+        let refused = enforce_in(&after2, "tug", &id, &seat_b)
+            .expect_err("a table that ended before the restart takes no further act");
+        assert!(refused.contains("forfeit"), "{refused}");
+        assert!(
+            refused.contains("not a proven win"),
+            "a forfeit must never be described as a proven win: {refused}"
+        );
+        assert!(
+            enforce_in(&after2, "tug", &id, "mallory").is_err(),
+            "and the seat lock is still the seat lock"
+        );
+    }
+
+    /// **The no-traffic half of the clock, across a restart.** [`reap_all`] sweeps the LIVE map, and
+    /// after a restart that map holds only what somebody has visited — so a table minted before the
+    /// restart that nobody ever looks at again would be invisible to exactly the sweep that exists
+    /// for abandoned tables. The durable directory is walked ONCE per process to close that.
+    #[test]
+    fn the_sweeper_adopts_the_durable_backlog_once_and_skips_the_tables_that_already_ended() {
+        let root = tempfile::tempdir().expect("a durable root");
+        let before = TableRegistry::in_dir(root.path());
+        let live_played = TUG.mint_table_id();
+        let live_unplayed = AUTOMATAFL.mint_table_id();
+        let over = TUG.mint_table_id();
+        before.opened(TUG, &live_played, Instant::now());
+        before.opened(AUTOMATAFL, &live_unplayed, Instant::now());
+        before.opened(TUG, &over, Instant::now());
+        before.record_act(&live_played, SeatSlot::A, Instant::now());
+        before
+            .resolve(
+                &over,
+                Resolution {
+                    forfeited: vec![SeatSlot::A],
+                    cause: Cause::Resigned,
+                    started: true,
+                },
+            )
+            .expect("registered");
+
+        // ── the restart: a registry told nothing at all ──
+        let after = TableRegistry::in_dir(root.path());
+        assert_eq!(
+            after.adopt_backlog(),
+            2,
+            "both LIVE tables are paged in; the finished one is not, because the clock never \
+             judges it"
+        );
+        assert_eq!(
+            after.adopt_backlog(),
+            0,
+            "the durable directory is walked once per process"
+        );
+
+        let stalled: Vec<String> = after
+            .stalled(Duration::ZERO, Instant::now())
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(stalled.len(), 2, "{stalled:?}");
+        assert!(stalled.contains(&live_played), "{stalled:?}");
+        assert!(stalled.contains(&live_unplayed), "{stalled:?}");
+        assert!(
+            !stalled.contains(&over),
+            "a table that already ended is never handed to the reaper: {stalled:?}"
+        );
+
+        // The finished one is not LOST by being skipped — it is still answered on demand, which is
+        // the path `enforce` takes.
+        assert_eq!(
+            after.resolution(&over).map(|r| r.cause),
+            Some(Cause::Resigned)
         );
     }
 }

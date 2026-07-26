@@ -422,6 +422,85 @@ async fn watching_a_table_that_does_not_exist_does_not_mint_one() {
     ));
 }
 
+/// ⚑ **THE SPECTATOR LINK IS REACHABLE FROM THE TABLE YOU ARE SITTING AT.**
+///
+/// The watch route worked from the day it landed and the LINK to it lived on exactly one page: the
+/// one-shot response to `POST /tug/table`. A player who had sat down had navigated away from the
+/// only copy, so mid-match there was nothing to send anybody — which reads, correctly, as "you
+/// cannot spectate an ongoing game from the web". This drives the whole chain a player takes: sit,
+/// move, read the link off your OWN table page, and open it as somebody holding no seat.
+///
+/// Non-vacuity is checked in two directions: an ad-hoc (unminted) session carries NO such link, so
+/// the assertion is about the seat lock rather than about a string every page happens to contain.
+#[tokio::test]
+async fn the_seated_table_offers_the_spectator_link_and_it_opens_fogged() {
+    let (app, _state) = app();
+    let id = mint(&app).await;
+    let seat_a = table_seats::TUG.seat_label(&id, SeatSlot::A);
+
+    // Sit down and land a real turn, so this is the SEATED page of a live match rather than an
+    // untouched one — the state a player is actually in when they want to hand out a watch link.
+    let (turn, arg) = opening_turn();
+    let (status, landed) = post_act(&app, &id, &turn, arg, &seat_a).await;
+    assert_eq!(status, StatusCode::OK, "{landed}");
+    assert!(
+        landed.contains("Turn committed"),
+        "seat A's opening press did not land, so this is not a live match: {}",
+        &landed[..landed.len().min(600)]
+    );
+
+    let (status, table) =
+        get_as(&app, &format!("/offerings/tug/session/{id}"), Some(&seat_a)).await;
+    assert_eq!(status, StatusCode::OK);
+    let watch = format!("/tug/watch/{id}");
+    assert!(
+        table.contains(&format!("href=\"{watch}\"")),
+        "the seat's own table page must offer the spectator link:\n{}",
+        &table[..table.len().min(3000)]
+    );
+    // And it says what a watcher will and will not see — the ONE sentence the lock carries, so the
+    // promise cannot drift between the lobby, this page and the spectator view itself.
+    assert!(
+        table.contains(table_seats::TUG.spectator_note),
+        "the invite must carry the lock's own spectator promise"
+    );
+    // The link holds no seat: it is `{route}/watch/{id}` with no query at all, so it cannot carry
+    // the `?seat=&key=` a seat link does.
+    assert!(
+        !table.contains(&format!("href=\"{watch}?")),
+        "the spectator link must carry no query — a seat secret rides one"
+    );
+
+    // Now WALK it, as a viewer holding no seat at all: it renders, it is fogged, it is inert.
+    let (status, spectate) = get_as(&app, &watch, None).await;
+    assert_eq!(status, StatusCode::OK, "{spectate}");
+    assert!(spectate.contains("Spectating"));
+    assert!(
+        spectate.contains("(hidden)") && !spectate.contains("Your hand"),
+        "a watcher arriving from the table page still sees only the fog"
+    );
+    assert!(
+        spectate.contains("<fieldset class=\"spectate-lock\" disabled>"),
+        "and every control is natively inert"
+    );
+
+    // NON-VACUOUS: an ad-hoc session is not a seat-locked table, so it offers no such link. The
+    // page really is that session's own rendered table (its rail carries the resume route), so this
+    // is the absence of an affordance rather than the absence of a page.
+    let (status, adhoc) = get_as(&app, "/offerings/tug/session/tug-adhoc-1", Some("nobody")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        adhoc.contains("/offerings/tug/session/tug-adhoc-1"),
+        "the ad-hoc table did not render, so the exclusion below would pass vacuously:\n{}",
+        &adhoc[..adhoc.len().min(2000)]
+    );
+    assert!(
+        !adhoc.contains("/tug/watch/tug-adhoc-1"),
+        "an ad-hoc table has no seat lock and must advertise no spectator link:\n{}",
+        &adhoc[..adhoc.len().min(2000)]
+    );
+}
+
 /// **The global `tug-web` table is gone.** It was the whole joining experience and it was a race:
 /// the first two identities to press took the seats, and the id was printed on a public page, so
 /// asserting the opponent's label rendered their hand. Nothing served may point at it any more.

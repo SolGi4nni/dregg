@@ -160,6 +160,19 @@ impl MyTable {
     fn verify_href(&self) -> String {
         format!("/offerings/{}/session/{}/verify", self.key, self.id)
     }
+
+    /// **The spectator link for this table**, when it is a seat-locked one — the thing a player
+    /// actually wants from this page and could not get anywhere else: the lobby that minted the table
+    /// printed the watch link once, on a page nobody returns to. `None` for an ad-hoc session and
+    /// for every non-lockable key (the same guard the session route uses). It carries no secret —
+    /// only the table id, which this row already shows.
+    fn watch_href(&self) -> Option<String> {
+        Some(
+            crate::table_seats::lock_for_key(&self.key)
+                .filter(|lock| lock.is_locked_table(&self.id))?
+                .watch_link(&self.id),
+        )
+    }
 }
 
 /// A session id plus the counts read on the host's own thread. Kept flat so the closure handed to
@@ -823,6 +836,7 @@ fn tables_panel(tables: &[MyTable]) -> String {
                  <a class=\"go\" href=\"{resume}\">{verb} →</a>\
                  <p class=\"meta\">{meta}</p>\
                  {said}\
+                 {watch}\
                  <p class=\"meta\"><a href=\"{verify}\" rel=\"nofollow\">Replay-verify this \
                  chain</a></p>\
                  </div>",
@@ -831,6 +845,25 @@ fn tables_panel(tables: &[MyTable]) -> String {
                 } else {
                     ""
                 },
+                // ⚑ THE LINK A PLAYER CAME HERE FOR. The watch route has always worked; it was
+                // reachable only from the mint's one-shot lobby page, so somebody mid-match had
+                // nothing to send a friend and reported that web spectating did not exist. No
+                // secret rides it (the id is already printed above), it is `None` on an ad-hoc
+                // session, and it stays useful after the ending — a resolved table's final position
+                // is exactly what the spectator view shows.
+                watch = table
+                    .watch_href()
+                    .map(|href| format!(
+                        "<p class=\"meta\"><a href=\"{href}\">{verb} — a link that holds no \
+                         seat</a></p>",
+                        href = esc(&href),
+                        verb = if table.resolved.is_some() {
+                            "Share the final position"
+                        } else {
+                            "Let someone watch this table"
+                        },
+                    ))
+                    .unwrap_or_default(),
                 title = esc(&table.title),
                 resume = esc(&table.resume_href()),
                 verb = if table.resolved.is_some() {
