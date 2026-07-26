@@ -691,7 +691,9 @@ impl ToolGateway {
                 .map_err(|e| SdkError::Rejected(format!("install mandate program: {e}")))?;
             ledger
                 .get(&worker_cell)
-                .map(|c| *c.token_id())
+                // The CURRENCY, not the name salt (`dregg_cell::Cell::asset`):
+                // this is what the charge `Transfer` has to be denominated in.
+                .map(|c| *c.asset().as_bytes())
                 .unwrap_or([0u8; 32])
         };
 
@@ -743,7 +745,9 @@ impl ToolGateway {
                 .map_err(|e| SdkError::Rejected(format!("install enveloped mandate: {e}")))?;
             ledger
                 .get(&worker_cell)
-                .map(|c| *c.token_id())
+                // The CURRENCY, not the name salt (`dregg_cell::Cell::asset`):
+                // this is what the charge `Transfer` has to be denominated in.
+                .map(|c| *c.asset().as_bytes())
                 .unwrap_or([0u8; 32])
         };
 
@@ -1292,7 +1296,6 @@ impl ToolGateway {
                 key_ref: dregg_turn::TokenKeyRef::BiscuitIssuer {
                     issuer_pubkey: [0u8; 32],
                 },
-                discharges: Vec::new(),
             },
             preconditions: Default::default(),
             effects,

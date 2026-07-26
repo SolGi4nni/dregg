@@ -43,6 +43,17 @@
 //!    `CreateCellFromFactory`, an ordinary agent turn). The cell is born
 //!    all-zero with the deal's program installed for life, owned by
 //!    `owner_pubkey`.
+//!
+//!    THE `token_id` EVERY BUILDER HERE TAKES IS A NAME, NOT A CURRENCY. It is
+//!    the [`dregg_cell::Cell`] NAME SALT — the second `derive_raw` input, which
+//!    is what gives one owner key one settlement cell per deal. The born cell
+//!    is denominated in the CREATOR's asset (the executor inherits it; see
+//!    `turn/src/executor/apply.rs` `birth_asset`), which is precisely what
+//!    makes step 4 legal. Before `Cell.token_id` was split into a salt and an
+//!    [`dregg_cell::Cell::asset`], naming a deal here minted a private currency
+//!    and the fund `Transfer` below was refused `cross-asset Transfer
+//!    rejected` — no choice of `token_id` could avoid it, because pinning the
+//!    salt to the funder's asset collides `cell_id` with the funder's own cell.
 //! 4. **Fund** — the funder executes `plan.fund_effects`: one `Transfer` of
 //!    `value + ADOPT_TURN_FEE` into the cell ([`ADOPT_TURN_FEE`] is the fee
 //!    the adopt turn burns; exactly `value` remains for settlement).

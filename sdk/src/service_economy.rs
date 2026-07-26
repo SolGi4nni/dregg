@@ -122,13 +122,13 @@ impl AgentRuntime {
         self.pay(to, amount, self.native_asset())
     }
 
-    /// This agent cell's native asset id (its `token_id`) — the asset its balance
+    /// This agent cell's native asset id (its `asset`) — the asset its balance
     /// is denominated in, and the asset an intra-domain [`Self::pay`] moves.
     pub fn native_asset(&self) -> AssetId {
         let ledger = self.ledger().lock().unwrap();
         ledger
             .get(&self.cell_id())
-            .map(|c| *c.token_id())
+            .map(|c| *c.asset().as_bytes())
             .unwrap_or([0u8; 32])
     }
 
@@ -346,7 +346,8 @@ impl ExecutionLease {
                 .map_err(|e| SdkError::Rejected(format!("install lease program: {e}")))?;
             ledger
                 .get(&lease_cell)
-                .map(|c| *c.token_id())
+                // The CURRENCY the lease is settled in, not the name salt.
+                .map(|c| *c.asset().as_bytes())
                 .unwrap_or([0u8; 32])
         };
 

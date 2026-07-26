@@ -747,7 +747,7 @@ mod tests {
             .get(&faucet_id)
             .expect("the faucet cell genesis mints must be the one `POST /api/faucet` spends from");
         assert_eq!(
-            *faucet.token_id(),
+            *faucet.asset().as_bytes(),
             crate::executor_setup::default_token_id(),
             "the faucet must hold the canonical default asset"
         );
@@ -776,8 +776,8 @@ mod tests {
             .get(&devnet_issuer_well_id())
             .expect("issuer well materializes");
         assert_eq!(
-            well.token_id(),
-            faucet.token_id(),
+            well.asset(),
+            faucet.asset(),
             "well and holders must share one asset column (guarantee B's genesis hypothesis)"
         );
     }

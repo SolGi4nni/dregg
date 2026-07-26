@@ -236,7 +236,7 @@ pub fn open_billing(
     start: i64,
 ) -> Result<AllowanceTerms, CapError> {
     let account = cell.id();
-    let asset = CellId::from_bytes(*cell.token_id());
+    let asset = cell.asset();
     let terms = AllowanceTerms::new(
         account,
         asset,

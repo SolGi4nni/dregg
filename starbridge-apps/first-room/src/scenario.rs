@@ -327,7 +327,7 @@ fn credit_supply(exec: &EmbeddedExecutor) -> i128 {
     exec.with_ledger_mut(|ledger| {
         ledger
             .iter()
-            .filter(|(_, c)| c.token_id() == &CREDIT_ASSET)
+            .filter(|(_, c)| c.asset().as_bytes() == &CREDIT_ASSET)
             .map(|(_, c)| c.state.balance() as i128)
             .sum()
     })

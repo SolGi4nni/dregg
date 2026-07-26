@@ -215,7 +215,7 @@ impl SealedEscrowMarket {
     /// cannot cover the leg is refused up front. Conservation holds: value is in
     /// transit, never created.
     pub fn deposit(&mut self, side: Side, leg: &Leg, from: &mut Cell) -> Result<(), MarketError> {
-        if from.token_id() != self.custody(side).token_id() {
+        if from.asset() != self.custody(side).asset() {
             return Err(MarketError::AssetMismatch);
         }
         if from.state.balance() < leg.amount {

@@ -371,7 +371,7 @@ pub fn claimed_actor_cell(
             // key; re-denominating a balance while doing so would be exactly the
             // cross-asset teleport the executor now refuses, so a stub minted in
             // some other asset is left for a human to look at.
-            if *stub.token_id() != default_token_id {
+            if *stub.asset().as_bytes() != default_token_id {
                 return None;
             }
             stub.state.balance()

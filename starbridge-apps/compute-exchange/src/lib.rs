@@ -221,7 +221,7 @@ impl ComputeFundVault {
     /// (conservation: in transit, never created) and the minted shares are credited
     /// to the sponsor. Returns the minted share count.
     pub fn deposit(&mut self, sponsor: &mut Cell, amount: i64) -> Result<i64, FundError> {
-        if sponsor.token_id() != self.custody.token_id() {
+        if sponsor.asset() != self.custody.asset() {
             return Err(FundError::AssetMismatch);
         }
         if sponsor.state.balance() < amount {
@@ -251,7 +251,7 @@ impl ComputeFundVault {
     /// fund. On success the redeemed value LEAVES custody back to the sponsor and
     /// its share slice is debited. Returns the redeemed asset count.
     pub fn withdraw(&mut self, sponsor: &mut Cell, shares: i64) -> Result<i64, FundError> {
-        if sponsor.token_id() != self.custody.token_id() {
+        if sponsor.asset() != self.custody.asset() {
             return Err(FundError::AssetMismatch);
         }
         let sponsor_id = sponsor.id();
