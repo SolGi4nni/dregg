@@ -592,9 +592,13 @@ fn parse_field_element(s: &str) -> Result<[u8; 32], String> {
         t.parse::<u64>()
             .map_err(|_| format!("invalid scalar: {s}"))?
     };
-    let mut out = [0u8; 32];
-    out[..8].copy_from_slice(&scalar.to_le_bytes());
-    Ok(out)
+    // The canonical u64 lane (big-endian bytes 24..32) — NOT little-endian into 0..8. A `0..8`
+    // write lands in the high lanes the deployed `setFieldVmDescriptor2-{slot}R24` FREEZES, so
+    // `{"kind":"set_field","value":"42"}` could not prove at all, and no kernel-side reader
+    // (`field_to_u64` / `field_to_i128`) could see it. The 64-char-hex branch above passes 32
+    // bytes through verbatim and was already on this lane, so one endpoint served two encodings.
+    // Gate: `circuit/tests/setfield_encoder_window_gate.rs`.
+    Ok(dregg_cell::field_from_u64(scalar))
 }
 
 fn parse_cell_id(s: &str) -> Result<CellId, String> {
@@ -3428,8 +3432,48 @@ enum HttpWitnessOutcome {
     /// The turn carries an Effect-VM-bearing transition the async pool attests
     /// off the lock (rotated when the cell is a rotatable cohort member).
     Rotatable(RotatableTurn),
-    /// No Effect-VM-bearing effects in this turn (nothing to attest).
+    /// No effect in this turn touches the ACTOR cell, so the producer projection is
+    /// the lone-`NoOp` sentinel: there is no actor transition to attest.
     NotRequired,
+    /// The CHECKED producer projection REFUSES this turn BY NAME: the turn
+    /// carries a verb whose authority plane has no AIR row (the PQ identity
+    /// verbs) or a `SetField` key wider than the AIR's u32 index lane. An
+    /// attestation is REQUIRED here and CANNOT be produced, which is a different
+    /// fact from [`Self::NotRequired`] and must not be reported as it.
+    ///
+    /// Reporting it as `NotRequired` is what the old hand-rolled twin did, and it
+    /// was worse than cosmetic: the twin projected a wide `SetField` key through
+    /// an `as u32` TRUNCATION, judged the turn attestable, and handed it to the
+    /// pool — where `AgentCipherclerk::convert_effects_to_vm`'s `.expect()`
+    /// panicked the blocking worker AFTER the turn had committed. Refusing here
+    /// keeps that turn off the pool entirely.
+    Unprovable(String),
+}
+
+impl HttpWitnessOutcome {
+    /// The honest committed-turn `proof_status` for this outcome, paired with the
+    /// job (if any) to hand the async prove pool.
+    ///
+    /// ONE place, called by all four commit sites (`/turns/submit`,
+    /// `/turns/submit-signed`, `/turns/submit-encrypted`, the faucet). Each used to
+    /// carry its own pair of `match`es over this enum, which is the same
+    /// duplicated-decision shape as the projector twin this gate just lost.
+    fn split(self, turn_hash: &str) -> (ActivityProofStatus, Option<RotatableTurn>) {
+        match self {
+            Self::Rotatable(rotatable) => (ActivityProofStatus::ProofPending, Some(rotatable)),
+            Self::NotRequired => (ActivityProofStatus::NotRequired, None),
+            Self::Unprovable(why) => {
+                tracing::warn!(
+                    turn_hash = %turn_hash,
+                    refusal = %why,
+                    "committed turn is OUTSIDE the EffectVM AIR domain; NO attestation can be \
+                     produced for it — reported as proof_generation_failed, never as \
+                     not_required (the commit itself stands: the executor is the authority)"
+                );
+                (ActivityProofStatus::ProofGenerationFailed, None)
+            }
+        }
+    }
 }
 
 /// The material the async prove pool needs to attest a committed turn off the
@@ -3446,50 +3490,75 @@ struct RotatableTurn {
     rotation: Option<dregg_sdk::RotationTurnWitness>,
 }
 
-/// Coverage predicate for the async-attestation gate: does this turn carry any
-/// Effect-VM-bearing effect at all?
+/// The attestation-coverage decision for one committed turn.
 ///
-/// ⚠ ONLY `.is_empty()` is read by the single caller ([`prepare_rotatable_turn`]);
-/// the felts themselves are DISCARDED. The real projection the proof binds is
-/// rebuilt from the turn-domain effects by the canonical door
-/// (`dregg_turn::executor::try_convert_turn_effects_to_vm`) inside the prove pool.
-/// The values are nonetheless kept lane-identical to that door so this cannot become
-/// a skewed producer if it is ever wired to something that binds.
+/// See [`http_attestation_coverage`] for why this is DERIVED rather than listed.
+#[derive(Debug)]
+enum AttestationCoverage {
+    /// The producer projection carries at least one REAL (non-`NoOp`) row: there
+    /// is an actor transition for the pool to attest.
+    Attestable,
+    /// The projection is the lone-`NoOp` sentinel the producer injects when NO
+    /// effect in the turn touches the actor cell. There is no actor transition to
+    /// attest — the pool would prove `old_commit == new_commit` and say nothing
+    /// about the turn's effects.
+    NoActorTransition,
+    /// The CHECKED producer projection refuses this turn BY NAME.
+    Refused(String),
+}
+
+/// Coverage predicate for the async-attestation gate: will the async prove pool
+/// have an actor transition to attest for this committed turn?
 ///
-/// NAMED, not fixed here: this hand-rolled twin covers only Transfer / SetField /
-/// IncrementNonce, while the canonical door also projects GrantCapability, EmitEvent,
-/// AttenuateCapability, Custom, … — so a turn made only of those is judged
-/// `NotRequired` and goes UNATTESTED. Converging this gate on the canonical door
-/// changes which committed turns get enqueued for proving (an availability/coverage
-/// change on the live submit path), so it is scoped work, not a drive-by.
-fn http_project_effects(effects: &[&dregg_turn::Effect]) -> Vec<dregg_circuit::effect_vm::Effect> {
-    let mut vm_effects = Vec::new();
-    for effect in effects {
-        match effect {
-            dregg_turn::Effect::Transfer { amount, .. } => {
-                vm_effects.push(dregg_circuit::effect_vm::Effect::Transfer {
-                    amount: *amount,
-                    direction: 1,
-                });
+/// DERIVED FROM ONE PLACE, NOT RE-LISTED. The only projector consulted is
+/// [`dregg_sdk::AgentCipherclerk::try_convert_effects_to_vm`] — which is the SAME
+/// function the pool runs downstream (`turn_proving::prove_and_verify_finalized_turn`
+/// calls `AgentCipherclerk::convert_effects_to_vm`, its unchecked wrapper, over the
+/// SAME flat `total_effects()` slice this gate is handed). So the gate cannot drift
+/// from the producer: it ASKS the producer.
+///
+/// ⚠ WHAT THIS REPLACED, and why it mattered. The gate used to be a hand-rolled
+/// `match` over exactly three variants (`Transfer` / `SetField` / `IncrementNonce`),
+/// against a producer that projects 29. Two lists, and they had drifted in BOTH
+/// directions:
+///
+/// * UNDER-coverage (the unattested hole): a turn made only of `EmitEvent`,
+///   `GrantCapability`, `AttenuateCapability`, `Custom`, `CellSeal`, … was judged
+///   `NotRequired` and committed with NO proof obligation recorded, so a light
+///   client or auditor had nothing to check for it. Both `EmitEvent` and
+///   `GrantCapability` are directly submittable through `/api/turns/submit`'s
+///   `TurnEffectSpec`; the other 24 arrive through `/turns/submit-signed` and
+///   `/turns/submit-encrypted`, which share this gate and accept a full postcard
+///   `SignedTurn`.
+/// * OVER-coverage (a fictional obligation): the twin had NO actor guard at all, so
+///   a `Transfer`/`SetField`/`IncrementNonce` aimed at some OTHER cell was judged
+///   attestable. The pool then projected it through the real producer, got the lone
+///   `NoOp` sentinel, and minted a proof of `old == new` that says nothing about the
+///   effect. Those turns now report `NotRequired`, which is what they are.
+/// * TRUNCATION: the twin lowered the canonical u64 `SetField` key with `as u32`,
+///   where the checked producer REFUSES a key above `u32::MAX`. See
+///   [`HttpWitnessOutcome::Unprovable`] for the panic that reached.
+fn http_attestation_coverage(
+    agent: &CellId,
+    effects: &[dregg_turn::Effect],
+) -> AttestationCoverage {
+    match dregg_sdk::AgentCipherclerk::try_convert_effects_to_vm(agent, effects) {
+        Err(refusal) => AttestationCoverage::Refused(refusal.to_string()),
+        Ok(vm_effects) => {
+            // The producer injects a single `NoOp` when it emitted no row at all
+            // (`cipherclerk.rs`: `if vm_effects.is_empty() { push(NoOp) }`), and NO
+            // arm ever emits a `NoOp` for a real effect — so "carries a non-NoOp
+            // row" is exactly "the producer projected something".
+            if vm_effects
+                .iter()
+                .any(|e| !matches!(e, dregg_circuit::effect_vm::Effect::NoOp))
+            {
+                AttestationCoverage::Attestable
+            } else {
+                AttestationCoverage::NoActorTransition
             }
-            dregg_turn::Effect::SetField { index, value, .. } => {
-                vm_effects.push(dregg_circuit::effect_vm::Effect::SetField {
-                    field_idx: *index as u32,
-                    // Lane parity with the DEPLOYED executor bridge
-                    // (`turn::executor::effect_vm_bridge`'s `field_element_to_bb`):
-                    // `field_limbs8(value)[0]` is the lo32 of the kernel u64 field lane.
-                    // The former `u32::from_le_bytes(value[0..4])` is a different lane and
-                    // is identically ZERO for every `field_from_u64`-encoded value.
-                    value: dregg_circuit::effect_vm::field_limbs8(value)[0],
-                });
-            }
-            dregg_turn::Effect::IncrementNonce { .. } => {
-                vm_effects.push(dregg_circuit::effect_vm::Effect::NoOp);
-            }
-            _ => {}
         }
     }
-    vm_effects
 }
 
 /// Prepare a committed HTTP-path turn for asynchronous attestation (PATH-PRESERVE
@@ -3504,19 +3573,28 @@ fn http_project_effects(effects: &[&dregg_turn::Effect]) -> Vec<dregg_circuit::e
 /// witness is built (the effect-vm leg then proves through the LEAN-emitted rotated
 /// descriptor); otherwise it is `None` and the byte-identical v1 leg runs INSIDE
 /// the prover — never the node's own v1 effect-vm hand-AIR. Returns
-/// [`HttpWitnessOutcome::NotRequired`] when the turn projects to no Effect-VM
-/// transition (nothing to attest), or `Err` only when the actor's local pre-state
-/// is missing / unrepresentable.
+/// [`HttpWitnessOutcome::NotRequired`] when no effect touches the actor cell,
+/// [`HttpWitnessOutcome::Unprovable`] when the checked producer projection refuses
+/// the turn by name, or `Err` only when the actor's local pre-state is missing /
+/// unrepresentable.
 fn prepare_rotatable_turn(
     turn: &Turn,
     pre_ledger: &dregg_cell::Ledger,
     post_ledger: &dregg_cell::Ledger,
     receipt_hash: [u8; 32],
 ) -> Result<HttpWitnessOutcome, String> {
-    let effects_refs = turn.call_forest.total_effects();
-    let vm_effects = http_project_effects(&effects_refs);
-    if vm_effects.is_empty() {
-        return Ok(HttpWitnessOutcome::NotRequired);
+    // The SAME flat slice the prove pool will project (`ProveJob::effects`), so the
+    // gate's question and the pool's answer are over one object.
+    let effects: Vec<dregg_turn::Effect> = turn
+        .call_forest
+        .total_effects()
+        .into_iter()
+        .cloned()
+        .collect();
+    match http_attestation_coverage(&turn.agent, &effects) {
+        AttestationCoverage::Attestable => {}
+        AttestationCoverage::NoActorTransition => return Ok(HttpWitnessOutcome::NotRequired),
+        AttestationCoverage::Refused(why) => return Ok(HttpWitnessOutcome::Unprovable(why)),
     }
 
     let Some(before_cell) = pre_ledger.get(&turn.agent) else {
@@ -3530,8 +3608,6 @@ fn prepare_rotatable_turn(
     let pre_balance = u64::try_from(before_cell.state.balance())
         .map_err(|_| "agent cell balance is negative; cannot build VM pre-state".to_string())?;
     let pre_nonce = before_cell.state.nonce();
-
-    let effects: Vec<dregg_turn::Effect> = effects_refs.iter().map(|e| (*e).clone()).collect();
 
     // Build the per-turn ROTATION producer witness from the REAL before/after
     // actor cells (the SAME builder `blocklace_sync::execute_finalized_turn` calls
@@ -3890,18 +3966,12 @@ async fn post_submit_turn(
                 }
             };
             // The receipt is committed; its attestation is pending if there is a
-            // transition to prove (ProofPending), else NotRequired.
-            let proof_status = match &witness_outcome {
-                HttpWitnessOutcome::Rotatable(_) => ActivityProofStatus::ProofPending,
-                HttpWitnessOutcome::NotRequired => ActivityProofStatus::NotRequired,
-            };
+            // transition to prove (ProofPending), NotRequired if no effect touches
+            // the actor, ProofGenerationFailed if the turn is outside the AIR domain.
             // The async prove pool attaches the WitnessedReceipt (and gossips its
             // artifact) off the lock when proving completes; the raw turn block
             // is gossiped immediately below so consensus ordering is not delayed.
-            let pending_proof = match witness_outcome {
-                HttpWitnessOutcome::Rotatable(rotatable) => Some(rotatable),
-                HttpWitnessOutcome::NotRequired => None,
-            };
+            let (proof_status, pending_proof) = witness_outcome.split(&turn_hash);
             let bundle_witnessed: Vec<Vec<u8>> = Vec::new();
             let receipt_artifact = postcard::to_stdvec(&receipt).ok();
             let witness_count = s.witnessed_receipt_count(&receipt_hash);
@@ -4199,15 +4269,8 @@ async fn post_submit_signed_turn(
                     HttpWitnessOutcome::NotRequired
                 }
             };
-            let proof_status = match &witness_outcome {
-                HttpWitnessOutcome::Rotatable(_) => ActivityProofStatus::ProofPending,
-                HttpWitnessOutcome::NotRequired => ActivityProofStatus::NotRequired,
-            };
             // The async prove pool attaches the WitnessedReceipt off the lock.
-            let pending_proof = match witness_outcome {
-                HttpWitnessOutcome::Rotatable(rotatable) => Some(rotatable),
-                HttpWitnessOutcome::NotRequired => None,
-            };
+            let (proof_status, pending_proof) = witness_outcome.split(&turn_hash);
             let bundle_witnessed: Vec<Vec<u8>> = Vec::new();
             let receipt_artifact = postcard::to_stdvec(&receipt).ok();
             let witness_count = s.witnessed_receipt_count(&receipt_hash);
@@ -4673,14 +4736,7 @@ async fn post_submit_encrypted_turn(
                     HttpWitnessOutcome::NotRequired
                 }
             };
-            let proof_status = match &witness_outcome {
-                HttpWitnessOutcome::Rotatable(_) => ActivityProofStatus::ProofPending,
-                HttpWitnessOutcome::NotRequired => ActivityProofStatus::NotRequired,
-            };
-            let pending_proof = match witness_outcome {
-                HttpWitnessOutcome::Rotatable(rotatable) => Some(rotatable),
-                HttpWitnessOutcome::NotRequired => None,
-            };
+            let (proof_status, pending_proof) = witness_outcome.split(&turn_hash);
             let witness_count = s.witnessed_receipt_count(&receipt_hash);
 
             push_committed_event(
@@ -8045,10 +8101,9 @@ async fn post_faucet(
             // whose per-row welds carry the transfer delta from the v1 sub-trace
             // (the turn-invariant limbs are identical), exactly as the finalized
             // cap-less note-spend leg does.
-            let pending_proof =
+            let witness_outcome =
                 match prepare_rotatable_turn(&faucet_turn, &pre_ledger, &s.ledger, receipt_hash) {
-                    Ok(HttpWitnessOutcome::Rotatable(rotatable)) => Some(rotatable),
-                    Ok(HttpWitnessOutcome::NotRequired) => None,
+                    Ok(outcome) => outcome,
                     Err(err) => {
                         tracing::warn!(
                             turn_hash = %turn_hash_hex,
@@ -8056,14 +8111,10 @@ async fn post_faucet(
                             "faucet turn attestation prep failed; receipt stays \
                              committed-but-unattested (has_proof will not flip)"
                         );
-                        None
+                        HttpWitnessOutcome::NotRequired
                     }
                 };
-            let proof_status = if pending_proof.is_some() {
-                ActivityProofStatus::ProofPending
-            } else {
-                ActivityProofStatus::NotRequired
-            };
+            let (proof_status, pending_proof) = witness_outcome.split(&turn_hash_hex);
 
             push_committed_event(
                 &mut s,
@@ -9135,7 +9186,7 @@ pub(crate) fn summarize_turn_effects(
             let bal = c.state.balance();
             out.push(ES::Balance {
                 cell: hex_encode(id),
-                asset: hex_encode(c.token_id()),
+                asset: hex_encode(c.asset().as_bytes()),
                 amount: bal.max(0) as u64,
             });
         }
@@ -9342,47 +9393,589 @@ mod tests {
         *blake3::hash(format!("dregg-node-atomic-test:{name}").as_bytes()).as_bytes()
     }
 
-    /// **THE TOOTH — HTTP-path SetField lane parity.** `http_project_effects` must
-    /// land in the same felt lane as the deployed producer
-    /// (`sdk::cipherclerk::convert_effects_to_vm` / `effect_vm_bridge`, both
-    /// `field_limbs8(v)[0]`). Today only `.is_empty()` is read from it, so a skew is
-    /// silent — which is exactly why it needs a test rather than a comment. FAILS on
-    /// the pre-fix `u32::from_le_bytes(value[0..4])`, which is identically zero for
-    /// every `field_from_u64` value.
-    #[test]
-    fn http_project_effects_uses_the_deployed_setfield_lane() {
-        let cell = dregg_cell::CellId([9u8; 32]);
-        let mk = |v: u64| Effect::SetField {
-            cell,
-            index: 2,
-            value: dregg_cell::field_from_u64(v),
+    // ═══════════════════════════════════════════════════════════════════════════
+    // THE TOOTH — the async-attestation gate's variant coverage, WILDCARD-FREE.
+    //
+    // The gate ([`super::http_attestation_coverage`]) used to be a hand-rolled
+    // `match` over three `Effect` variants against a producer that projects 29.
+    // That is two lists, and they drifted: a turn made only of `EmitEvent` or
+    // `GrantCapability` (both submittable through `/api/turns/submit`) was judged
+    // `NotRequired` and committed with NO proof obligation recorded, so an auditor
+    // had nothing to check for it. The gate now DERIVES from the producer, and this
+    // is the tooth that keeps it derived and keeps the derivation honest.
+    //
+    // Two properties, and neither is vacuous:
+    //
+    //   1. **A new `Effect` variant forces a decision.** `attestation_gate_ledger!`
+    //      expands to a `match` over `dregg_turn::Effect` with NO `_ =>` arm — a
+    //      catch-all is precisely what let the original drift happen silently — so
+    //      adding a kernel verb REDS THIS BUILD until the verb is classified here
+    //      AND given a fixture.
+    //   2. **The classification is GROUNDED, per variant, against the live gate.**
+    //      Every row is run through the real `http_attestation_coverage`. Narrowing
+    //      any arm of the producer — or re-introducing a hand-rolled twin in the
+    //      gate — flips that variant's observed class and reds this test by name.
+    //
+    // Cross-check worth stating: the 29 / 5 / 2 split below is EXACTLY the
+    // Descriptor / NamedResidual / RefusedResidual split of
+    // `circuit/tests/effect_enum_descriptor_residual_gate.rs`, arrived at from the
+    // other end (that gate reads descriptor rungs; this one runs the projector). A
+    // verb the light-client wire cannot witness is a verb the gate must not enqueue.
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// What the gate must decide for a turn made of exactly one effect of this
+    /// variant, aimed at the ACTOR cell.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum GateClass {
+        /// The producer projects a REAL (non-`NoOp`) row: there is an actor
+        /// transition, and the committed turn MUST be enqueued for attestation.
+        Attestable,
+        /// The producer has no arm for this verb, so the projection collapses to the
+        /// lone-`NoOp` sentinel. `NotRequired` is then the honest status: the
+        /// executor applies the verb while every proof stays silent about it (the
+        /// `NamedResidual` posture).
+        NoActorTransition,
+        /// The CHECKED producer projection REFUSES this verb BY NAME — its authority
+        /// plane has no AIR row. An attestation is required and cannot be produced,
+        /// which is NOT `NotRequired` (the `RefusedResidual` posture).
+        Refused,
+    }
+
+    /// ONE source: expands to BOTH the wildcard-free compile-time match (the
+    /// build-breaking tooth for a new kernel variant) AND the fixture ledger the
+    /// grounding test drives through the live gate.
+    macro_rules! attestation_gate_ledger {
+        ( $( $variant:ident => $class:expr, $fixture:expr ),+ $(,)? ) => {
+            /// COMPILE-TIME TOOTH: no wildcard arm. Adding a kernel `Effect` variant
+            /// reds this build until it is classified + fixtured in the ledger below.
+            /// Returns the NAME too, so a row holding a fixture for the WRONG variant
+            /// (the live hazard with 36 hand-written rows) is caught rather than
+            /// silently classified by its neighbour.
+            fn declared_gate_class(e: &Effect) -> (&'static str, GateClass) {
+                match e {
+                    $( Effect::$variant { .. } => (stringify!($variant), $class), )+
+                }
+            }
+
+            /// The same classification as data, with a single-effect fixture per row.
+            fn attestation_gate_rows() -> Vec<(&'static str, GateClass, Effect)> {
+                vec![ $( (stringify!($variant), $class, $fixture), )+ ]
+            }
         };
-        let (a, b) = (mk(1), mk(9_999));
-        let refs: Vec<&Effect> = vec![&a, &b];
-        let projected = super::http_project_effects(&refs);
-        let lanes: Vec<dregg_circuit::BabyBear> = projected
-            .iter()
-            .map(|e| match e {
-                dregg_circuit::effect_vm::Effect::SetField { value, .. } => *value,
-                other => panic!("expected SetField, got {other:?}"),
-            })
-            .collect();
+    }
+
+    /// The actor cell every fixture below aims at (the gate's `turn.agent`).
+    fn gate_actor() -> CellId {
+        CellId([0x6a; 32])
+    }
+
+    /// A second cell, for the cross-cell end of a two-party effect.
+    fn gate_other() -> CellId {
+        CellId([0x6b; 32])
+    }
+
+    /// A minimal turn carrying `effects` in one root action on the actor — the shape
+    /// the executor-side verify door ([`dregg_turn::executor::try_convert_turn_effects_to_vm`])
+    /// takes, and the `wake` payload the reactive verbs carry.
+    fn gate_turn_with(effects: Vec<Effect>) -> Turn {
+        let agent = gate_actor();
+        let action = Action {
+            target: agent,
+            method: *blake3::hash(b"attestation-gate-tooth").as_bytes(),
+            args: vec![],
+            authorization: Authorization::Unchecked,
+            preconditions: dregg_cell::Preconditions::default(),
+            effects,
+            may_delegate: DelegationMode::None,
+            commitment_mode: CommitmentMode::Full,
+            balance_change: None,
+            witness_blobs: vec![],
+        };
+        let mut call_forest = CallForest::new();
+        call_forest.add_root(action);
+        Turn {
+            agent,
+            nonce: 0,
+            fee: 0,
+            memo: None,
+            valid_until: None,
+            call_forest,
+            depends_on: vec![],
+            previous_receipt_hash: None,
+            conservation_proof: None,
+            sovereign_witnesses: HashMap::new(),
+            execution_proof: None,
+            execution_proof_cell: None,
+            execution_proof_new_commitment: None,
+            custom_program_proofs: None,
+            effect_binding_proofs: Vec::new(),
+            cross_effect_dependencies: Vec::new(),
+            effect_witness_index_map: Vec::new(),
+        }
+    }
+
+    fn gate_cap() -> dregg_cell::CapabilityRef {
+        dregg_cell::CapabilityRef {
+            target: gate_other(),
+            slot: 0,
+            permissions: dregg_cell::AuthRequired::None,
+            breadstuff: None,
+            expires_at: None,
+            allowed_effects: None,
+            stored_epoch: None,
+            provenance: [0u8; 32],
+        }
+    }
+
+    attestation_gate_ledger! {
+        // ── The 29 verbs the producer projects a real row for ──────────────────
+        SetField => GateClass::Attestable, Effect::SetField {
+            cell: gate_actor(),
+            index: 0,
+            value: dregg_cell::field_from_u64(9_999),
+        },
+        Transfer => GateClass::Attestable, Effect::Transfer {
+            from: gate_actor(),
+            to: gate_other(),
+            amount: 1,
+        },
+        // RECIPIENT-side: the only side BOTH doors project. The granter-side
+        // asymmetry is its own pinned tooth —
+        // `granter_side_grant_diverges_between_the_projection_doors`.
+        GrantCapability => GateClass::Attestable, Effect::GrantCapability {
+            from: gate_other(),
+            to: gate_actor(),
+            cap: gate_cap(),
+        },
+        RevokeCapability => GateClass::Attestable, Effect::RevokeCapability {
+            cell: gate_actor(),
+            slot: 0,
+        },
+        // ⚠ THE HOLE THIS TOOTH EXISTS FOR (1/2): reachable through
+        // `/api/turns/submit`'s `TurnEffectSpec::EmitEvent`, and judged
+        // `NotRequired` — committed with no proof obligation — by the old twin.
+        EmitEvent => GateClass::Attestable, Effect::EmitEvent {
+            cell: gate_actor(),
+            event: dregg_turn::Event::new(dregg_turn::action::symbol("gate_tooth"), vec![]),
+        },
+        IncrementNonce => GateClass::Attestable, Effect::IncrementNonce { cell: gate_actor() },
+        CreateCell => GateClass::Attestable, Effect::CreateCell {
+            public_key: [1u8; 32],
+            token_id: [2u8; 32],
+            balance: 0,
+        },
+        SetPermissions => GateClass::Attestable, Effect::SetPermissions {
+            cell: gate_actor(),
+            new_permissions: dregg_cell::Permissions::default(),
+        },
+        SetVerificationKey => GateClass::Attestable, Effect::SetVerificationKey {
+            cell: gate_actor(),
+            new_vk: None,
+        },
+        Custom => GateClass::Attestable, Effect::Custom {
+            cell: gate_actor(),
+            program_vk_hash: [0x11; 32],
+            proof_commitment: [0x22; 32],
+        },
+        NoteSpend => GateClass::Attestable, Effect::NoteSpend {
+            nullifier: dregg_cell::Nullifier([0x31; 32]),
+            note_tree_root: [0u8; 32],
+            value: 1,
+            asset_type: 0,
+            spending_proof: vec![],
+            value_commitment: None,
+        },
+        NoteCreate => GateClass::Attestable, Effect::NoteCreate {
+            commitment: dregg_cell::NoteCommitment([0x32; 32]),
+            value: 1,
+            asset_type: 0,
+            encrypted_note: vec![],
+            value_commitment: None,
+            range_proof: None,
+        },
+        SpawnWithDelegation => GateClass::Attestable, Effect::SpawnWithDelegation {
+            child_public_key: [4u8; 32],
+            child_token_id: [5u8; 32],
+            max_staleness: 0,
+        },
+        RefreshDelegation => GateClass::Attestable, Effect::RefreshDelegation {
+            child: gate_other(),
+            snapshot: [0x19; 32],
+        },
+        RevokeDelegation => GateClass::Attestable, Effect::RevokeDelegation { child: gate_other() },
+        BridgeMint => GateClass::Attestable, Effect::BridgeMint {
+            portable_proof: dregg_cell_crypto::note_bridge::PortableNoteProof {
+                nullifier: [0u8; 32],
+                destination_federation: [0u8; 32],
+                source_root: dregg_types::AttestedRoot {
+                    merkle_root: [0u8; 32],
+                    note_tree_root: None,
+                    nullifier_set_root: None,
+                    height: 0,
+                    timestamp: 0,
+                    blocklace_block_id: None,
+                    finality_round: None,
+                    quorum_signatures: vec![],
+                    threshold_qc: None,
+                    threshold: 0,
+                    federation_id: dregg_types::FederationId::PLACEHOLDER,
+                    receipt_stream_root: None,
+                    hybrid_quorum: Vec::new(),
+                },
+                spending_proof: vec![],
+                destination_commitment: dregg_cell::NoteCommitment([0u8; 32]),
+                value: 1,
+                asset_type: 0,
+            },
+        },
+        Introduce => GateClass::Attestable, Effect::Introduce {
+            introducer: gate_actor(),
+            recipient: gate_other(),
+            target: gate_other(),
+            permissions: dregg_cell::AuthRequired::Signature,
+        },
+        PipelinedSend => GateClass::Attestable, Effect::PipelinedSend {
+            target: dregg_turn::eventual::EventualRef::new([0u8; 32], 0),
+            action: Box::new(Action {
+                target: gate_other(),
+                method: dregg_turn::action::symbol("noop"),
+                args: vec![],
+                authorization: Authorization::Unchecked,
+                preconditions: dregg_cell::Preconditions::default(),
+                effects: vec![],
+                may_delegate: DelegationMode::None,
+                commitment_mode: CommitmentMode::Full,
+                balance_change: None,
+                witness_blobs: vec![],
+            }),
+        },
+        ExerciseViaCapability => GateClass::Attestable, Effect::ExerciseViaCapability {
+            cap_slot: 0,
+            inner_effects: vec![],
+        },
+        MakeSovereign => GateClass::Attestable, Effect::MakeSovereign { cell: gate_actor() },
+        CreateCellFromFactory => GateClass::Attestable, Effect::CreateCellFromFactory {
+            factory_vk: [0u8; 32],
+            owner_pubkey: [1u8; 32],
+            token_id: [2u8; 32],
+            params: dregg_cell::factory::FactoryCreationParams {
+                mode: dregg_cell::CellMode::Hosted,
+                program_vk: None,
+                initial_fields: vec![],
+                initial_caps: vec![],
+                owner_pubkey: [1u8; 32],
+            },
+        },
+        Refusal => GateClass::Attestable, Effect::Refusal {
+            cell: gate_actor(),
+            offered_action_commitment: [0xAB; 32],
+            refusal_reason: dregg_turn::action::RefusalReason::Declined,
+            proof_witness_index: 0,
+        },
+        CellSeal => GateClass::Attestable, Effect::CellSeal {
+            target: gate_actor(),
+            reason: [0x11; 32],
+        },
+        CellUnseal => GateClass::Attestable, Effect::CellUnseal { target: gate_actor() },
+        CellDestroy => GateClass::Attestable, Effect::CellDestroy {
+            target: gate_actor(),
+            certificate: dregg_cell::lifecycle::DeathCertificate {
+                cell_id: gate_actor(),
+                last_receipt_hash: [0x22; 32],
+                final_state_commitment: [0x33; 32],
+                destroyed_at_height: 1,
+                reason: dregg_cell::lifecycle::DeathReason::Voluntary,
+            },
+        },
+        Burn => GateClass::Attestable, Effect::Burn {
+            target: gate_actor(),
+            slot: 0,
+            amount: 1,
+        },
+        Mint => GateClass::Attestable, Effect::Mint {
+            target: gate_actor(),
+            slot: 0,
+            amount: 1,
+        },
+        AttenuateCapability => GateClass::Attestable, Effect::AttenuateCapability {
+            cell: gate_actor(),
+            slot: 0,
+            narrower_permissions: dregg_cell::AuthRequired::None,
+            narrower_effects: None,
+            narrower_expiry: Some(1),
+        },
+        ReceiptArchive => GateClass::Attestable, Effect::ReceiptArchive {
+            prefix_end_height: 1,
+            checkpoint: dregg_cell::lifecycle::ArchivalAttestation {
+                cell_id: gate_actor(),
+                archive_start_height: 0,
+                archive_end_height: 1,
+                archive_blob_hash: [0x44; 32],
+                archive_terminal_commitment: [0x55; 32],
+                archive_terminal_receipt_hash: [0x66; 32],
+            },
+        },
+
+        // ── The 5 NamedResiduals: no producer arm, so `NotRequired` is HONEST ───
+        // Each is a verb the executor applies while every proof stays silent about
+        // it. They are NOT holes in THIS gate — they are the circuit-witness debt
+        // catalogued in `effect_enum_descriptor_residual_gate.rs`. A descriptor rung
+        // landing for any of them flips its class here and reds this test, which is
+        // the intended coupling: the gate must start enqueueing it that same commit.
+        SetProgram => GateClass::NoActorTransition, Effect::SetProgram {
+            cell: gate_actor(),
+            program: dregg_cell::CellProgram::default(),
+        },
+        Promise => GateClass::NoActorTransition, Effect::Promise {
+            cell: gate_actor(),
+            resolution_condition: dregg_turn::pending::ResolutionCondition::AwaitHeight(1),
+            wake: Box::new(gate_turn_with(vec![])),
+            timeout_height: 2,
+        },
+        Notify => GateClass::NoActorTransition, Effect::Notify {
+            from: gate_actor(),
+            to: gate_other(),
+            wake: Box::new(gate_turn_with(vec![])),
+            resolution_condition: dregg_turn::pending::ResolutionCondition::AwaitHeight(1),
+            timeout_height: 2,
+        },
+        React => GateClass::NoActorTransition, Effect::React {
+            pending_id: dregg_cell::Nullifier([0x51; 32]),
+            condition: dregg_turn::conditional::ProofCondition::HashPreimage { hash: [0x52; 32] },
+            resolution_proof: dregg_turn::conditional::ConditionProof::Preimage([0x53; 32]),
+            wake: Box::new(gate_turn_with(vec![])),
+        },
+        ShieldedTransfer => GateClass::NoActorTransition, Effect::ShieldedTransfer {
+            payload: dregg_turn::action::ShieldedTransferPayload {
+                merkle_root: 0,
+                inputs: vec![],
+                input_legs: vec![],
+                output_legs: vec![],
+                output_range_proofs: vec![],
+                conservation: dregg_cell_crypto::value_commitment::ConservationProof {
+                    excess_commitment: [0u8; 32],
+                    nonce_commitment: [0u8; 32],
+                    response: [0u8; 32],
+                },
+            },
+        },
+
+        // ── The 2 RefusedResiduals: the PQ identity authority plane has no AIR row.
+        // The payloads are ARBITRARY BYTES, not a real ML-DSA keypair, and that is
+        // safe here because the refusal is decided on the VARIANT before any
+        // primitive is touched — minting a real key would drag `dregg-pq`'s
+        // verified-core audit gate into this test binary.
+        CreateHybridCell => GateClass::Refused, Effect::CreateHybridCell {
+            public_key: [7u8; 32],
+            token_id: [8u8; 32],
+            balance: 0,
+            ml_dsa_public_key: vec![0x61; 32],
+            pq_possession_signature: vec![0x62; 32],
+        },
+        RotatePqIdentity => GateClass::Refused, Effect::RotatePqIdentity {
+            cell: gate_actor(),
+            expected_epoch: 0,
+            new_ml_dsa_public_key: vec![0x63; 32],
+            new_key_possession_signature: vec![0x64; 32],
+        },
+    }
+
+    fn observed_gate_class(actor: &CellId, effect: &Effect) -> GateClass {
+        match super::http_attestation_coverage(actor, std::slice::from_ref(effect)) {
+            super::AttestationCoverage::Attestable => GateClass::Attestable,
+            super::AttestationCoverage::NoActorTransition => GateClass::NoActorTransition,
+            super::AttestationCoverage::Refused(_) => GateClass::Refused,
+        }
+    }
+
+    /// **THE TOOTH (grounding).** Every kernel `Effect` variant's gate decision is
+    /// checked against the LIVE `http_attestation_coverage`. This is the test the
+    /// pre-convergence gate FAILED: with the hand-rolled three-variant twin,
+    /// `EmitEvent`, `GrantCapability`, `Custom`, `CellSeal`, `Burn`, … all came back
+    /// `NoActorTransition` while declared `Attestable` — i.e. committed turns going
+    /// unattested, named row by row.
+    #[test]
+    fn attestation_gate_decides_every_effect_variant_as_declared() {
+        let actor = gate_actor();
+        let mut mismatched = Vec::<String>::new();
+        let mut counts = (0usize, 0usize, 0usize);
+
+        for (name, declared, fixture) in attestation_gate_rows() {
+            // A row must hold a fixture for its OWN variant.
+            assert_eq!(
+                declared_gate_class(&fixture),
+                (name, declared),
+                "ledger row {name} holds a fixture for a different variant"
+            );
+            let observed = observed_gate_class(&actor, &fixture);
+            if observed != declared {
+                mismatched.push(format!(
+                    "{name}: declared {declared:?}, gate said {observed:?}"
+                ));
+            }
+            match declared {
+                GateClass::Attestable => counts.0 += 1,
+                GateClass::NoActorTransition => counts.1 += 1,
+                GateClass::Refused => counts.2 += 1,
+            }
+        }
+
+        assert!(
+            mismatched.is_empty(),
+            "the attestation gate's coverage diverged from the producer it must derive from \
+             ({} variant(s)). An `Attestable` row the gate calls `NoActorTransition` is a \
+             COMMITTED TURN GOING UNATTESTED:\n  {}",
+            mismatched.len(),
+            mismatched.join("\n  ")
+        );
+        // The 29/5/2 split mirrors the Descriptor/NamedResidual/RefusedResidual split
+        // of `circuit/tests/effect_enum_descriptor_residual_gate.rs`. Pinning it here
+        // makes a verb SILENTLY changing posture (a residual quietly gaining or losing
+        // a producer arm) red rather than invisible.
         assert_eq!(
-            lanes,
-            vec![
-                dregg_circuit::effect_vm::field_limbs8(&dregg_cell::field_from_u64(1))[0],
-                dregg_circuit::effect_vm::field_limbs8(&dregg_cell::field_from_u64(9_999))[0],
-            ],
-            "http_project_effects must agree with the deployed field_limbs8 lane"
+            counts,
+            (29, 5, 2),
+            "attestable / no-actor-transition / refused split moved; reconcile against \
+             effect_enum_descriptor_residual_gate.rs before editing the pin"
         );
-        assert_ne!(
-            lanes[0], lanes[1],
-            "two writes sharing bytes 0..4 must not collapse to one felt"
+    }
+
+    /// **THE TOOTH (derivation).** The gate must ASK the producer, not re-list it.
+    /// Checked by driving the gate and the producer over the SAME multi-effect turn
+    /// and requiring the same verdict — including for the variants the old twin
+    /// could not see.
+    #[test]
+    fn attestation_gate_verdict_is_the_producers_verdict() {
+        let actor = gate_actor();
+        let effects: Vec<Effect> = attestation_gate_rows()
+            .into_iter()
+            .filter(|(_, class, _)| *class != GateClass::Refused)
+            .map(|(_, _, fixture)| fixture)
+            .collect();
+
+        let producer = dregg_sdk::AgentCipherclerk::try_convert_effects_to_vm(&actor, &effects)
+            .expect("no refused verb in this batch");
+        let rows = producer
+            .iter()
+            .filter(|e| !matches!(e, dregg_circuit::effect_vm::Effect::NoOp))
+            .count();
+        assert_eq!(
+            rows, 29,
+            "the producer must project one row per Attestable verb; a narrowed arm \
+             silently shrinks what the gate enqueues"
         );
-        assert_ne!(
-            lanes[0],
-            dregg_circuit::BabyBear::ZERO,
-            "a nonzero canonical value must not project to zero"
+        assert!(matches!(
+            super::http_attestation_coverage(&actor, &effects),
+            super::AttestationCoverage::Attestable
+        ));
+
+        // And a single REFUSED verb anywhere in a turn poisons the whole projection —
+        // the gate must report `Unprovable`, never `NotRequired`, so the turn never
+        // reaches the pool's panicking unchecked wrapper.
+        let mut poisoned = effects;
+        poisoned.push(Effect::RotatePqIdentity {
+            cell: actor,
+            expected_epoch: 0,
+            new_ml_dsa_public_key: vec![0x63; 32],
+            new_key_possession_signature: vec![0x64; 32],
+        });
+        match super::http_attestation_coverage(&actor, &poisoned) {
+            super::AttestationCoverage::Refused(why) => assert!(
+                why.contains("RotatePqIdentity"),
+                "a refusal must NAME the verb it cannot prove: {why}"
+            ),
+            other => panic!("a turn carrying RotatePqIdentity must be refused, got {other:?}"),
+        }
+    }
+
+    /// **A wide `SetField` key is REFUSED, not truncated.** The old twin lowered the
+    /// canonical u64 key with `as u32` and judged the turn attestable; the pool then
+    /// drove `AgentCipherclerk::convert_effects_to_vm`'s `.expect()` into a panic in
+    /// the blocking worker, AFTER the turn had committed. `index` comes straight off
+    /// the wire (`TurnEffectSpec::SetField { index: u64 }`), so this was reachable
+    /// from `/api/turns/submit` with one JSON field.
+    #[test]
+    fn a_wide_setfield_key_is_refused_by_the_gate_not_truncated() {
+        let actor = gate_actor();
+        let wide = Effect::SetField {
+            cell: actor,
+            index: (u32::MAX as u64) + 1,
+            value: dregg_cell::field_from_u64(7),
+        };
+        match super::http_attestation_coverage(&actor, std::slice::from_ref(&wide)) {
+            super::AttestationCoverage::Refused(why) => assert!(
+                why.contains("SetField"),
+                "the refusal must name the wide-key lane: {why}"
+            ),
+            other => panic!("a wide SetField key must be refused, got {other:?}"),
+        }
+    }
+
+    /// ⚠ **PINNED DIVERGENCE — the two projection doors disagree on a GRANTER-side
+    /// `GrantCapability`.** This is the SAME two-lists shape one layer down, and it
+    /// is NOT closed here (which door is right is a verifier-semantics decision, and
+    /// the arms are byte-compatible only where they overlap):
+    ///
+    ///   * producer (`AgentCipherclerk::convert_effects_to_vm`, `cipherclerk.rs`):
+    ///     `if to == cell_id || from == cell_id` — projects a row for BOTH ends.
+    ///   * verifier (`effect_vm_bridge::convert_turn_effects_to_vm`, the executor):
+    ///     `if to == cell_id` — projects a row for the RECIPIENT only.
+    ///
+    /// So a grant the ACTOR issues gets a producer row with no verifier counterpart.
+    /// `/api/turns/submit`'s `TurnEffectSpec::GrantCapability` defaults `from` to the
+    /// action target (the operator's own cell), which makes the granter side the
+    /// COMMON shape, not a corner. This test asserts the divergence AS IT STANDS so
+    /// it cannot widen silently, and so closing it reds this test and forces the
+    /// decision to be recorded. `docs/audit/RE-AUTHORED-MIRROR-MAP.md` M11 is where
+    /// the missing producer↔verifier agreement invariant is catalogued.
+    #[test]
+    fn granter_side_grant_diverges_between_the_projection_doors() {
+        let actor = gate_actor();
+        let granter_side = Effect::GrantCapability {
+            from: actor,
+            to: gate_other(),
+            cap: gate_cap(),
+        };
+
+        // Producer: projects a row (so the gate judges the turn attestable).
+        assert_eq!(
+            observed_gate_class(&actor, &granter_side),
+            GateClass::Attestable,
+            "the producer projects the granter side; if this changed, the gate's \
+             enqueue decision for operator-issued grants moved"
+        );
+
+        // Verifier-side door: projects NOTHING for the granter, so the whole turn
+        // collapses to the lone-NoOp sentinel.
+        let turn = gate_turn_with(vec![granter_side]);
+        let verifier = dregg_turn::executor::try_convert_turn_effects_to_vm(&actor, &turn)
+            .expect("a grant is inside the AIR domain");
+        assert!(
+            verifier
+                .iter()
+                .all(|e| matches!(e, dregg_circuit::effect_vm::Effect::NoOp)),
+            "PINNED: the executor's verify-side door has no granter arm. If it grew \
+             one, this divergence is CLOSED — delete this test and say so."
+        );
+
+        // The recipient side, by contrast, agrees across both doors.
+        let recipient_side = Effect::GrantCapability {
+            from: gate_other(),
+            to: actor,
+            cap: gate_cap(),
+        };
+        assert_eq!(
+            observed_gate_class(&actor, &recipient_side),
+            GateClass::Attestable
+        );
+        let turn = gate_turn_with(vec![recipient_side]);
+        let verifier = dregg_turn::executor::try_convert_turn_effects_to_vm(&actor, &turn)
+            .expect("a grant is inside the AIR domain");
+        assert!(
+            verifier
+                .iter()
+                .any(|e| matches!(e, dregg_circuit::effect_vm::Effect::GrantCapability { .. })),
+            "the recipient-side grant must project on BOTH doors"
         );
     }
 
@@ -11030,6 +11623,11 @@ mod tests {
 
     #[test]
     fn test_proposal_creation_and_vote_commit() {
+        // This test drives a bare `Coordinator` (no `NodeState`), so nothing has armed the
+        // verified-Lean 2PC gate for this process. Without it `evaluate_votes` FAILS CLOSED and
+        // the first Yes vote decides `Abort` — the deployed disposition of a gate-less node, not
+        // the tally semantics under test. Arm it exactly as a node does.
+        crate::install_verified_distributed_gates();
         let node_a = test_key("node_a");
         let node_b = test_key("node_b");
 

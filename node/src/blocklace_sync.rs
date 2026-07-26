@@ -11963,10 +11963,6 @@ mod tests {
             s.federation_id = [0u8; 32];
         }
 
-        // Bare-executor convention (the Rust producer path the ingress simulation and
-        // the finalized-turn sig-check both use here).
-        let federation_id = [0u8; 32];
-
         let sender_seed = *blake3::hash(b"solo-idem:sender").as_bytes();
         let sender_cclerk =
             dregg_sdk::AgentCipherclerk::from_key_bytes(zeroize::Zeroizing::new(sender_seed));
@@ -12001,6 +11997,17 @@ mod tests {
                 vec![dregg_federation::frost::MlDsaPublicKey(pq)],
             );
         }
+
+        // The federation id the EXECUTOR verifies action signatures against, read after the
+        // committee is installed. `set_federation_keys_hybrid` RE-DERIVES `federation_id` from the
+        // hybrid committee, so the `[0u8; 32]` this fixture used to sign its actions with stopped
+        // being the executor's id the moment the keys were loaded — and the action's Ed25519 half
+        // (whose message binds the federation id) then failed to verify, which is precisely the
+        // `hybrid: Ed25519 (classical) signature half failed` this test was reporting.
+        let federation_id = {
+            let s = state.read().await;
+            crate::executor_setup::federation_id_for_executor(&s)
+        };
 
         let signed = signed_transfer_turn(&sender_cclerk, sender, dest, 4_200, 0, &federation_id);
         let fee = signed.turn.fee as i64;
@@ -12151,8 +12158,14 @@ mod tests {
                 ],
             );
         }
+        // The committee just changed (two members now), so the executor's federation id changed
+        // with it — re-read it rather than reusing the one-member id above.
+        let federation_id2 = {
+            let s = state.read().await;
+            crate::executor_setup::federation_id_for_executor(&s)
+        };
         let signed2 =
-            signed_transfer_turn(&sender2_cclerk, sender2, dest, 1_000, 0, &federation_id);
+            signed_transfer_turn(&sender2_cclerk, sender2, dest, 1_000, 0, &federation_id2);
         let turn_data2 = postcard::to_stdvec(&signed2).expect("encode signed turn 2");
         {
             let mut s = state.write().await;
@@ -14473,7 +14486,7 @@ pub(crate) fn provision_transfer_destinations(
             && ledger.get(to).is_none()
         {
             // THE STUB'S ASSET IS THE MOVED ASSET. A Transfer is a single-asset
-            // move: the executor refuses `from.token_id() != to.token_id()` as a
+            // move: the executor refuses `from.asset() != to.asset()` as a
             // cross-asset teleport. A landing site minted in the all-zero asset
             // therefore REFUSED every transfer out of a cell in any other asset —
             // which, once genesis and the faucet moved to the canonical
@@ -14484,7 +14497,9 @@ pub(crate) fn provision_transfer_destinations(
             // No source cell → no provisioning: the transfer is going to fail with
             // `cell not found` anyway, and inventing a landing site in a guessed
             // asset would only change which error it fails with.
-            let Some(token_id) = ledger.get(from).map(|cell| *cell.token_id()) else {
+            // The stub's id is pinned to `*to`, so its name salt is free — set it
+            // to the source's ASSET so `stub.asset()` is the moved currency.
+            let Some(token_id) = ledger.get(from).map(|cell| *cell.asset().as_bytes()) else {
                 continue;
             };
             let stub =

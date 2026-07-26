@@ -612,6 +612,31 @@ pub enum Command {
     },
 }
 
+/// Arm the verified-Lean distributed coordination gates (coord / captp / federation / intent).
+///
+/// Those four crates are FFI-free and route their verified decisions through their own
+/// `verified_gate` seams; this installs the Lean-backed impls from `dregg-exec-lean` (the single
+/// FFI boundary). `OnceLock`-backed and idempotent — the first registration wins, a second call is
+/// a no-op — so every entry into a node may call it unconditionally.
+///
+/// ⚑ WHY THIS IS NOT INLINE IN [`run`] ANY MORE (2026-07-26). `run` is the CLI entry, and it was
+/// the ONLY caller of `register_distributed_gates()` in this crate. Every OTHER way to obtain a
+/// node — [`crate::state::NodeState::new`], the in-process axum router, an embedder linking
+/// `dregg-node` as a library, and this crate's own test suite — therefore ran with all four seams
+/// UNREGISTERED, which is not a loud failure but a silent change of disposition:
+///
+/// * `dregg-coord`'s 2PC `evaluate_votes` FAILS CLOSED with no gate, so EVERY multi-party
+///   proposal decided `Abort` on the first vote — a coordinator that can never commit; and
+/// * `dregg-intent`'s `verified_settle::settle_leg` refuses with
+///   `verified-executor FFI unavailable: no verified gate registered`, so an intent that should
+///   commit through the verified ledger returned 422 at the HTTP seam.
+///
+/// Both were visible only as test failures in this crate, and both are the deployed behaviour of
+/// any embedder that does not go through the CLI. Constructing a node now arms the gates.
+pub fn install_verified_distributed_gates() {
+    dregg_exec_lean::register_distributed_gates();
+}
+
 /// Run the node from a parsed [`Cli`]. This is the library entry point the thin
 /// `main.rs` binary calls after `Cli::parse()`. It installs process-wide runtime
 /// facilities (the rustls crypto provider, the verified-Lean distributed gates,
@@ -622,12 +647,7 @@ pub async fn run(cli: Cli) {
         .install_default()
         .expect("failed to install rustls CryptoProvider");
 
-    // Arm the verified-Lean distributed coordination gates (coord / captp / federation / intent).
-    // These crates are FFI-free and route their verified decisions through their `verified_gate`
-    // seams; this installs the Lean-backed impls from `dregg-exec-lean` (the single FFI boundary)
-    // once at startup. On an FFI-free target this crate isn't depended on at all and the native-Rust
-    // differential siblings decide.
-    dregg_exec_lean::register_distributed_gates();
+    install_verified_distributed_gates();
 
     // Arm the verified-Lean CONSTRAINT ORACLE (game-proof LARP-audit collapse): route the deployed
     // executor's pure-subset `StateConstraint`/`HeapAtom` admission through the PROVEN Lean
@@ -1399,7 +1419,10 @@ async fn run_node(
                                     let token_id = s
                                         .ledger
                                         .get(&well_id)
-                                        .map(|cell| *cell.token_id())
+                                        // The well is REGISTERED UNDER ITS ASSET
+                                        // (`TurnExecutor::issuer_well_for` keys on
+                                        // `Cell::asset`), never under its name salt.
+                                        .map(|cell| *cell.asset().as_bytes())
                                         .unwrap_or_else(crate::executor_setup::default_token_id);
                                     s.issuer_wells.push((token_id, well_id));
                                 }

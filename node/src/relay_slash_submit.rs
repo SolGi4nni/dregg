@@ -283,12 +283,18 @@ mod tests {
             let s = state.read().await;
             crate::executor_setup::federation_id_for_executor(&s)
         };
-        let cclerk = AppCipherclerk::new(AgentCipherclerk::new(), node_federation_id);
+        let intake_clerk = AgentCipherclerk::new();
+        // The ML-DSA half of the intake identity. `AgentCipherclerk::sign_turn` always carries it,
+        // and the ingress admission predicate anchors the carried key in the ACTING CELL's own PQ
+        // identity commitment — so the cell seeded below must COMMIT it (`with_hybrid_balance`) or
+        // the envelope is refused `pq-identity-not-enrolled` before the pipeline under test runs.
+        let intake_ml_dsa_public_key = intake_clerk.ml_dsa_public_bytes();
+        let cclerk = AppCipherclerk::new(intake_clerk, node_federation_id);
         let intake_agent = cclerk.cell_id();
 
         // Deployment seeding on the node's AUTHORITATIVE ledger: the funded
-        // intake agent cell (canonical pk-bound account, so the ingress
-        // provisioning leaves it untouched) and a REAL relay-operator cell —
+        // intake agent cell (canonical pk-bound, PQ-committed account, so the
+        // ingress provisioning leaves it untouched) and a REAL relay-operator cell —
         // template CellProgram installed, the slot layout seeded (bond 10_000
         // / floor 1_000 / dispute_count 0), a 100_000 balance. The relay cell
         // is open-permissioned to isolate the PROGRAM's enforcement, exactly
@@ -296,7 +302,13 @@ mod tests {
         let default_token_id = *blake3::hash(b"default").as_bytes();
         let relay_id = {
             let mut s = state.write().await;
-            let agent_cell = Cell::with_balance(cclerk.public_key().0, default_token_id, 1_000_000);
+            let agent_cell = Cell::with_hybrid_balance(
+                cclerk.public_key().0,
+                &intake_ml_dsa_public_key,
+                default_token_id,
+                1_000_000,
+            )
+            .expect("canonical ML-DSA-65 intake identity");
             assert_eq!(
                 agent_cell.id(),
                 intake_agent,

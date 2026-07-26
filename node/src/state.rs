@@ -1076,6 +1076,9 @@ impl NodeState {
         peers: Vec<String>,
         key_file: &str,
     ) -> Result<Self, String> {
+        // A node exists ⇒ its verified coordination gates are armed. See
+        // [`crate::install_verified_distributed_gates`] for why this cannot live only in `run()`.
+        crate::install_verified_distributed_gates();
         let db_path = data_dir.join("dregg.redb");
         let store = Arc::new(
             PersistentStore::open(&db_path).map_err(|e| format!("failed to open store: {e}"))?,

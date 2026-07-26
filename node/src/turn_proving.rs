@@ -3261,26 +3261,29 @@ mod tests {
     /// rotated path. Two halves on the SAME single-spend shape that rotates:
     ///
     ///  (1) HONEST: an honest single-spend freshness turn proves ROTATED, the rotated effect-vm
-    ///      leg carries the 39-element PI vector (`ROT_NULLIFIER_PI_COUNT`), and its PI[38]
-    ///      (`ROT_NULLIFIER_PI`) EQUALS the folded spent nullifier — i.e. the rotated leg actually
-    ///      PINS this turn's nullifier (`EffectVmEmitRotationV3.noteSpendV3`), a real cryptographic
-    ///      binding, not a free wire. (`honest_spend_freshness_verifies` proves the turn verifies;
-    ///      this asserts the binding LIVES on the rotated leg specifically.)
+    ///      leg carries the wide note-spend PI vector, and its `PI[ROT_NULLIFIER_PI]` EQUALS the
+    ///      folded spent nullifier — i.e. the rotated leg actually PINS this turn's nullifier
+    ///      (`EffectVmEmitRotationV3.noteSpendV3`), a real cryptographic binding, not a free wire.
+    ///      (`honest_spend_freshness_verifies` proves the turn verifies; this asserts the binding
+    ///      LIVES on the rotated leg specifically.)
     ///
     ///  (2) STRUCTURAL: the in-circuit `.absent` key IS the spend row's own folded nullifier
-    ///      (`param0`, cross-bound to the published PI[38]) — a caller-declared substitute item
-    ///      never reaches the circuit, so the published nullifier stays `fold(N)` regardless.
-    ///      (The double-spend refusal itself is `spend_freshness_item_cannot_be_substituted`.)
+    ///      (`param0`, cross-bound to the published `PI[ROT_NULLIFIER_PI]`) — a caller-declared
+    ///      substitute item never reaches the circuit, so the published nullifier stays `fold(N)`
+    ///      regardless. (The double-spend refusal itself is
+    ///      `spend_freshness_item_cannot_be_substituted`.)
     #[test]
     fn flow_b_note_spend_rotated_nullifier_pin_is_antighost() {
-        use dregg_circuit::effect_vm::trace_rotated::{ROT_NULLIFIER_PI, ROT_NULLIFIER_PI_COUNT};
+        use dregg_circuit::effect_vm::trace_rotated::{
+            DFA_RC_LEN, ROT_NULLIFIER_PI, ROT_NULLIFIER_PI_COUNT,
+        };
 
         let alice = CellId::from_bytes([0xA1; 32]);
         let n = [0x9Au8; 32];
         let previously: Vec<[u8; 32]> = (10..=15u8).map(|i| [i; 32]).collect();
         assert!(!previously.contains(&n));
 
-        // ── (1) HONEST: the rotated leg PINS this turn's nullifier at PI[38]. ──
+        // ── (1) HONEST: the rotated leg PINS this turn's nullifier at PI[ROT_NULLIFIER_PI]. ──
         let effects = vec![note_spend_effect(n, 750)];
         let proven = prove_and_verify_finalized_turn_freshness(
             &alice,
@@ -3301,14 +3304,22 @@ mod tests {
             .iter()
             .find(|sp| sp.label == "effect-vm-rotated")
             .expect("the single-spend freshness turn must carry the rotated effect-vm leg (C4)");
-        // The rotated note-spend leg carries the FIFTH appended pin (nullifier@ROT_NULLIFIER_PI) PLUS
-        // the 16 WIDE commit PIs (the light-client flag-day): the wide note-spend vector is
-        // ROT_NULLIFIER_PI_COUNT + 16. The nullifier still rides the prefix slot.
+        // The rotated note-spend leg publishes, in order: the 46 rotated prefix PIs + the FIFTH
+        // appended nullifier pin (= `ROT_NULLIFIER_PI_COUNT`, 47), then the `DFA_RC_LEN` dsl
+        // rc-emit tail (the `withDfaRcPins` route-commitment carrier every deployed cohort member
+        // is wrapped through — it lands the zero sentinel on a Dfa-less turn and is still
+        // published), then the 16 WIDE 8-felt commit PIs (the light-client flag-day). 47 + 4 + 16.
+        //
+        // The committed narrow `noteSpendVmDescriptor2R24` is `public_input_count = 51`
+        // (= 47 + DFA_RC_LEN), pinned in `circuit/tests/vk_epoch_notes_light_client_binding.rs`;
+        // this expectation used to omit the rc tail and read 63, i.e. it predated `withDfaRcPins`.
+        // Spelling it as the sum rather than a literal is what keeps it from silently drifting
+        // again.
         assert_eq!(
             rotated_leg.sub_public_inputs.len(),
-            ROT_NULLIFIER_PI_COUNT + 16,
+            ROT_NULLIFIER_PI_COUNT + DFA_RC_LEN + 16,
             "a single-spend WIDE rotated leg publishes the note-spend prefix (nullifier@ROT_NULLIFIER_PI) \
-             + the 16 wide 8-felt commit PIs"
+             + the dsl rc tail + the 16 wide 8-felt commit PIs"
         );
         // And PI[ROT_NULLIFIER_PI] IS this turn's folded nullifier — the binding is real, not a free wire.
         assert_eq!(
@@ -3318,7 +3329,7 @@ mod tests {
         );
 
         // ── (2) STRUCTURAL: the in-circuit `.absent` key IS the spend row's own
-        // folded nullifier (`param0`, cross-bound to the published PI[38]) — a
+        // folded nullifier (`param0`, cross-bound to the published PI[ROT_NULLIFIER_PI]) — a
         // caller declaring a DIFFERENT item M cannot repoint the opened key. The
         // turn still proves, and the rotated leg still pins fold(N) (not fold(M))
         // at ROT_NULLIFIER_PI. (The double-spend refusal for a present N is
