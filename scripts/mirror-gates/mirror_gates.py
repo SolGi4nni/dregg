@@ -1168,6 +1168,19 @@ NPM_RUN = re.compile(r"npm run (\S+)")
 _JS_SUFFIXES = (".mjs", ".cjs", ".js", ".ts", ".mts", ".cts")
 
 
+def _shell_path(tok: str) -> str:
+    """A path lifted out of a shell one-liner, with the quoting stripped off it.
+
+    A real `build:oracle` is rarely a bare command: `sdk-ts` wraps its wasm-pack invocation in
+    `sh -c '... exec wasm-pack build ../wasm --target web --out-dir pkg'`, so a `\\S+` capture of the
+    out-dir picks up `pkg'` — the closing quote of the `sh -c` — which resolves to `wasm/pkg'`, a
+    directory that exists nowhere, and the chain reads as NOT rebuilding the oracle. That reported
+    the M30 FIX as M30, which is the worst possible failure for this gate: it accuses the one package
+    that actually did the work. Quote and separator characters cannot be part of a path token, so
+    dropping them off the edges is unambiguous and does not loosen the match."""
+    return tok.strip("'\"`").rstrip(";&|").strip("'\"`")
+
+
 def _test_chain_text(scripts: dict) -> str:
     """The commands `npm test` actually runs: the `pretest` hook, `test` itself, and every
     `npm run X` they transitively invoke. This is what decides whether the oracle gets rebuilt."""
@@ -1201,7 +1214,7 @@ def _rebuilds_oracle(pkgdir: Path, chain: str, oracle: Path) -> bool:
     except OSError:
         return False
     for m in WASM_PACK_BUILD.finditer(chain):
-        buildpath, outdir = m.group(1), m.group(3)
+        buildpath, outdir = _shell_path(m.group(1)), _shell_path(m.group(3))
         try:
             if (pkgdir / buildpath / outdir).resolve() == target:
                 return True
@@ -1209,7 +1222,7 @@ def _rebuilds_oracle(pkgdir: Path, chain: str, oracle: Path) -> bool:
             pass
     for m in OUT_DIR.finditer(chain):
         try:
-            if (pkgdir / m.group(1)).resolve() == target:
+            if (pkgdir / _shell_path(m.group(1))).resolve() == target:
                 return True
         except OSError:
             pass

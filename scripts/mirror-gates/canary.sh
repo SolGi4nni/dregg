@@ -70,9 +70,18 @@ fi
 gate_of() { case "$1" in A1|A2) echo "A" ;; *) echo "$1" ;; esac; }
 
 # ── 1. THE CLEAN TREE MUST BE GREEN (the false-positive half) ────────────────────────────────
-echo "clean fixture (welded exemplar + labeled double + one constructor + welded local golden + rebuilt oracle):"
+#
+# Run it from a COPY OUTSIDE THE REPO, exactly as the mirror half does. Read in place, the fixture
+# root is inside this git repo, so `git ls-files canary/clean/oracle-clean/pkg` lists the tracked
+# fixture files and G2 concludes "tracked oracle — not a frozen mirror" and returns before it ever
+# looks at the rebuild chain. The clean half then reported GREEN without exercising the code path it
+# exists to guard: a false positive in `_rebuilds_oracle` was undetectable here. Under $TMP there is
+# no git, the `.gitignore`-is-`*` fallback fires, and the oracle reaches the chain check the way a
+# real one does.
+CLEAN_RUN="$TMP/__clean__"; rm -rf "$CLEAN_RUN"; cp -R "$CLEAN" "$CLEAN_RUN"
+echo "clean fixture (welded exemplar + labeled double + one constructor + welded local golden + rebuilt oracle, bare and sh -c wrapped):"
 for g in A D1 D2 D3 G1 G2; do
-  out="$(run_gate "$CLEAN" "$g")"; rc=$?
+  out="$(run_gate "$CLEAN_RUN" "$g")"; rc=$?
   if [ "$rc" -eq 0 ]; then
     ok "$g GREEN on the clean tree — no false positive"
   else

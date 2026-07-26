@@ -1,0 +1,12 @@
+{
+  "name": "oracle-clean-quoted",
+  "version": "0.0.0",
+  "private": true,
+  "_why": "The same compliant shape as oracle-clean, with the rebuild wrapped in `sh -c '...'` the way a real one is (sdk-ts has to probe for a wasm32 clang before it can call wasm-pack). The out-dir token then ends in the closing quote, and a gate that does not strip it resolves the oracle to `pkg'` and accuses this package of never rebuilding. That is the false positive this fixture exists to keep out.",
+  "devDependencies": { "canary-wasm-quoted": "file:./pkg" },
+  "scripts": {
+    "build:oracle": "sh -c 'if [ -z \"$CC_wasm32_unknown_unknown\" ]; then CC_wasm32_unknown_unknown=clang; export CC_wasm32_unknown_unknown; fi; exec wasm-pack build . --target nodejs --out-dir pkg'",
+    "pretest": "npm run build:oracle",
+    "test": "node --test test/*.test.mjs"
+  }
+}
