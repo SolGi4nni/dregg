@@ -130,6 +130,24 @@ esac
 #
 #   grep 'pbuild: VERDICT' <log>     # the only line worth trusting
 #
+# ⚠⚠ TWO WAYS TO DEFEAT THIS LINE, both hit THREE TIMES on 2026-07-26 by the person who wrote it:
+#
+#   1. DO NOT PIPE INSIDE THE REMOTE COMMAND.
+#        scripts/pbuild <lane> bash -c 'lake build Foo 2>&1 | tail -6'    # <- WRONG
+#      A pipeline exits with the status of its LAST stage, so `tail` returns 0 and pbuild
+#      faithfully reports `outcome=PASS status=0` about `tail`. The VERDICT is only ever
+#      trustworthy about the command you actually hand pbuild; a pipe moves the status
+#      boundary INSIDE pbuild's blind spot. Redirect to a file and read it after, instead:
+#        scripts/pbuild <lane> bash -c 'lake build Foo > /tmp/x.log 2>&1'
+#
+#   2. `timeout N scripts/pbuild ...` DOES NOT STOP THE REMOTE WORK.
+#      timeout kills the LOCAL ssh; the remote build detaches and keeps running, and the
+#      harness truthfully reports that the WRAPPER exited. A warming `lake build Dregg2`
+#      survived two such kills and was still going, 8 `lean` procs deep, long after two
+#      "completed (exit code 0)" notifications. If you must bound the wall clock, bound it
+#      ON THE REMOTE (`timeout N lake build ...` inside the command) so the thing that dies
+#      is the build, not your view of it — and re-check the box, never the notification.
+#
 # REFUSED is called out separately from FAIL on purpose: a refusal means the build
 # NEVER RAN, so neither a red nor a green may be read off that log at all.
 #
