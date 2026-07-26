@@ -3186,6 +3186,12 @@ impl AgentCipherclerk {
     /// from any seed but its own. Both lock failures (poisoned `read`, poisoned `write`)
     /// degrade to a plain fresh derivation.
     fn ml_dsa_key(&self) -> std::sync::Arc<dregg_turn::pq::MlDsaTurnKey> {
+        // The verified ML-DSA keygen + sign cores, installed HERE — before the first derivation
+        // this clerk performs — rather than as a side effect of some other object having been
+        // constructed first. Signing through a cipherclerk that never built an `AgentRuntime`
+        // used to reach dregg-pq's unaudited fallback and abort the process; see
+        // `runtime::ensure_verified_mldsa_identity_cores_installed` for what that ordering cost.
+        crate::runtime::ensure_verified_mldsa_identity_cores_installed();
         let seed = Zeroizing::new(self.signing_key.to_bytes());
         let binding = blake3::derive_key(ML_DSA_CACHE_BINDING_CTX, seed.as_slice());
 

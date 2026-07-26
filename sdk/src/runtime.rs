@@ -326,6 +326,38 @@ fn ensure_verified_mldsa_keygen_core_installed() {
     });
 }
 
+/// Install the two verified ML-DSA cores the HYBRID IDENTITY path needs — KEYGEN (the ξ → keypair
+/// derivation behind `AgentCipherclerk::ml_dsa_key`) and SIGN — at the POINT OF USE, once per
+/// process.
+///
+/// ⚑ WHY AT THE POINT OF USE AND NOT ONLY AT RUNTIME STARTUP. Before this, the only thing in the
+/// tree that installed these was an [`AgentRuntime`] constructor. So whether a process signed with
+/// the verified core or reached `dregg-pq`'s unaudited fallback depended on whether something had
+/// already built a runtime — an ORDERING, not a property of the signing code. Anything that signs
+/// without one (`AppCipherclerk::make_action` in a test module, a tool that mints one action and
+/// exits) arrived at `MlDsaKey::from_ed25519_seed` with nothing installed, and `dregg-pq` refused
+/// it the only way it can: `process::abort()`.
+///
+/// In a libtest binary the THREAD COUNT decided the outcome. libtest runs tests in alphabetical
+/// order; at `--test-threads=1` an earlier test that happens to construct an `EmbeddedExecutor`
+/// installs the cores and carries every later signer, so the suite is green. At 8 threads the
+/// signing tests start before that install lands and the process aborts — mid-suite, with no panic
+/// message, on whichever test won the race. `starbridge-tool-access-delegation` was green at 1–4
+/// threads and aborted 5/5 at 8; four of its tests abort when run alone. GitHub's hosted runners
+/// are 4-core, so CI never saw it and every developer box with 8+ cores did.
+///
+/// This does NOT weaken the refusal. Both installs are export-gated: an archive that does not
+/// export the real cores still installs nothing, and the first sign still aborts exactly as it did.
+/// What goes away is the dependence on call order, not the gate.
+pub(crate) fn ensure_verified_mldsa_identity_cores_installed() {
+    use std::sync::Once;
+    static ENSURED: Once = Once::new();
+    ENSURED.call_once(|| {
+        ensure_verified_mldsa_keygen_core_installed();
+        ensure_verified_mldsa_sign_core_installed();
+    });
+}
+
 /// Perform the once-per-process ML-KEM DECAPS-core install at SDK agent-runtime startup, logging once.
 fn ensure_verified_mlkem_decaps_core_installed() {
     use dregg_pq::MlKemDecapsCoreInstall as D;
