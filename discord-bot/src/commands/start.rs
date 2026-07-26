@@ -99,7 +99,7 @@ pub fn action_for(custom_id: &str) -> StartAction {
 /// Register `/start` — the onboarding entry point.
 pub fn register() -> CreateCommand {
     CreateCommand::new("start").description(format!(
-        "Welcome to {} — set up and get going (just click)",
+        "Welcome to {} · set up and get going (just click)",
         dreggnet_catalog::SURFACE_NAME
     ))
 }
@@ -107,7 +107,7 @@ pub fn register() -> CreateCommand {
 /// Register `/help` — the map of the new model.
 pub fn register_help() -> CreateCommand {
     CreateCommand::new("help").description(format!(
-        "How to use the {} bot — buttons + just typing",
+        "How to use the {} bot · buttons + just typing",
         dreggnet_catalog::SURFACE_NAME
     ))
 }
@@ -154,15 +154,15 @@ pub(crate) async fn home_view(
             dreggnet_catalog::SURFACE_NAME
         ))
         .description(
-            "Pick an action below, or **claim your channel and just type** — your messages \
+            "Pick an action below, or **claim your channel and just type**: your messages \
                  become cap-gated, metered, receipted dregg turns under your own cell.",
         )
         .field("Cipherclerk", "ready", true)
         .field("LLM key", if has_key { "set" } else { "not set" }, true)
     } else {
         embeds::dregg_embed(&format!("Welcome to {}", dreggnet_catalog::SURFACE_NAME)).description(
-            "You're new here. The fastest way to *get* what this is: take the **2-minute tour** \
-                 — it walks you to your first real, paid, verifiable thing on the network (get an \
+            "You're new here. The fastest way to *get* what this is: take the **2-minute tour**. \
+                 It walks you to your first real, paid, verifiable thing on the network (get an \
                  identity \u{2192} get test DEC \u{2192} do one real turn \u{2192} here's your receipt). \
                  You barely need to learn any commands: click the buttons, or just type.",
         )
@@ -218,12 +218,12 @@ pub(crate) fn help_embed() -> CreateEmbed {
     embeds::dregg_embed(&format!("Using the {} bot", dreggnet_catalog::SURFACE_NAME))
         .description(
             "Five commands. Each one summons a game, shows you your own side of it, or \
-             re-checks it — and every action behind them is a real, receipted dregg turn.",
+             re-checks it, and every action behind them is a real, receipted dregg turn.",
         )
         .field(
             "\u{1f3b2} The games",
-            "`/descent` — **the featured game**: a dungeon crawl, one a day for everyone, \
-             one life, no retries · `/play` — the other two: **Automatafl** (a two-player \
+            "`/descent` is **the featured game**: a dungeon crawl, one a day for everyone, \
+             one life, no retries · `/play` is the other two: **Automatafl** (a two-player \
              board where both moves reveal at once) and **Multiway-Tug** (hidden influence \
              over seven guilds).",
             false,
@@ -231,20 +231,20 @@ pub(crate) fn help_embed() -> CreateEmbed {
         .field(
             "\u{1f511} Cheat Code",
             "`/play cheat code:<anything>` takes free text. If you know the key of something \
-             that is not on the shelf, type it and it opens — same rules, same receipts. \
+             that is not on the shelf, type it and it opens: same rules, same receipts. \
              Wrong guesses are free.",
             false,
         )
         .field(
             "\u{1f510} You",
-            "`/cipherclerk` — you + your funds (balance, send, history, faucet, credits, \
+            "`/cipherclerk` · you + your funds (balance, send, history, faucet, credits, \
              treasury, tokens), and `link-web` to prove this Discord account to your web \
              identity so a leaderboard sees one of you.",
             false,
         )
         .field(
             "\u{2713} Check it yourself",
-            "`/verify` — fetch AND verify a committed turn's STARK against its VK, browse \
+            "`/verify` · fetch AND verify a committed turn's STARK against its VK, browse \
              committed state, and fold a finished match into ONE O(1)-verifiable crown. \
              `/help` is this map.",
             false,
@@ -259,9 +259,9 @@ pub(crate) fn help_embed() -> CreateEmbed {
         )
         .field(
             "The three monies",
-            "**DEC** — the on-network devnet currency your cipherclerk holds (faucet, send, \
-             fees). **$DREGG** — the token; buys run-credits for real-AI dungeon runs. \
-             **computrons** — the metered unit of compute a turn consumes.",
+            "**DEC** · the on-network devnet currency your cipherclerk holds (faucet, send, \
+             fees). **$DREGG** · the token; buys run-credits for real-AI dungeon runs. \
+             **computrons** · the metered unit of compute a turn consumes.",
             false,
         )
 }
@@ -283,7 +283,7 @@ fn tour_intro_embed() -> CreateEmbed {
         .field("2. Get test DEC", "Free, subsidized test tokens so you can actually do something.", false)
         .field(
             "3. Do one real thing",
-            "A real, **paid**, **conserving** turn on the network — and a receipt you can verify.",
+            "A real, **paid**, **conserving** turn on the network, and a receipt you can verify.",
             false,
         )
         .field(
@@ -450,7 +450,7 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
                 }
                 None => embeds::warning_embed(
                     "Run In A Server",
-                    "Claiming a channel needs a server the bot is installed in — open `/help` there, not in a DM.",
+                    "Claiming a channel needs a server the bot is installed in. Open `/help` there, not in a DM.",
                 ),
             };
             edit_followup(ctx, component, embed).await;
@@ -645,7 +645,7 @@ async fn submit_key(state: &BotState, modal: &ModalInteraction) -> CreateEmbed {
             embeds::success_embed("Key Stored")
                 .description(format!(
                     "Your **{}** key is sealed (encrypted at rest, never logged). Just chat in your \
-                     channel — conversational messages route through it, metered + receipted.",
+                     channel: conversational messages route through it, metered + receipted.",
                     provider.display_name()
                 ))
                 .field("Provider", format!("`{}`", provider.as_str()), true)

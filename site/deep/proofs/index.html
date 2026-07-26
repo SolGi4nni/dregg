@@ -4,11 +4,11 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#090c0b">
-    <meta name="description" content="Two working things that replace 'trust me' with a receipt anyone can verify — a real web fact you didn't fetch, and a computation you didn't run. Built on dregg. Real command output, boundaries named.">
+    <meta name="description" content="Two working things that replace 'trust me' with a receipt anyone can verify: a real web fact you didn't fetch, and a computation you didn't run. Built on dregg. Real command output, boundaries named.">
     <link rel="canonical" href="https://www.dregg.net/proofs/">
     <meta property="og:type" content="website">
     <meta property="og:title" content="Check it yourself | dregg">
-    <meta property="og:description" content="A trustless web-fact oracle and a confidential-execution attestation — proven live against api.coinbase.com and real AWS Nitro hardware. Real output, honest boundaries.">
+    <meta property="og:description" content="A trustless web-fact oracle and a confidential-execution attestation, proven live against api.coinbase.com and real AWS Nitro hardware. Real output, honest boundaries.">
     <meta property="og:url" content="https://www.dregg.net/proofs/">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="Check it yourself | dregg">
@@ -39,7 +39,7 @@
         <div class="hero-content page-shell">
           <p class="eyebrow"><span>Build report · verifiable facts</span><time datetime="2026-07-11">July 2026</time></p>
           <h1 id="hero-title">Check it yourself.</h1>
-          <p class="hero-deck">Two small, working things that replace <em>“trust me”</em> with a receipt anyone can re-check: a real web response you didn’t fetch, and a computation you didn’t run. Each becomes a portable fact a stranger verifies — trusting no one but the hardware and the wire.</p>
+          <p class="hero-deck">Two small, working things that replace <em>“trust me”</em> with a receipt anyone can re-check: a real web response you didn’t fetch, and a computation you didn’t run. Each becomes a portable fact a stranger verifies, trusting no one but the hardware and the wire.</p>
           <div class="hero-actions">
             <a class="button button-primary" href="#web-facts">See the web-fact demo <span aria-hidden="true">↓</span></a>
             <a class="text-link" href="#confidential">Confidential execution <span aria-hidden="true">↗</span></a>
@@ -71,14 +71,14 @@
           </div>
           <div class="lead-copy">
             <p><code>dregg-oracle</code> runs a genuine <strong>MPC-TLS</strong> session against a real HTTPS endpoint. A notary co-witnesses the TLS handshake without ever seeing the plaintext, so the transcript can’t be forged after the fact. The disclosed value is bound into a <strong>STARK</strong> that also certifies the response is well-formed JSON and free of injection at the oracle boundary.</p>
-            <p>The result is a <strong>portable proof file</strong>. You hand it to anyone; they run <code>verify</code> and independently confirm what the server said — trusting only the server’s genuine TLS certificate chain and the pinned notary key. Not you.</p>
-            <p>It’s <strong>general</strong>: the same tool proves a Coinbase spot price or a GitHub commit — any public HTTPS <code>GET</code> that still speaks TLS 1.2.</p>
+            <p>The result is a <strong>portable proof file</strong>. You hand it to anyone; they run <code>verify</code> and independently confirm what the server said, trusting only the server’s genuine TLS certificate chain and the pinned notary key. Not you.</p>
+            <p>It’s <strong>general</strong>: the same tool proves a Coinbase spot price or a GitHub commit, any public HTTPS <code>GET</code> that still speaks TLS 1.2.</p>
           </div>
         </div>
 
         <div class="page-shell">
           <div class="terminal" role="img" aria-label="Terminal: proving and verifying a live coinbase price">
-            <div class="terminal-bar"><i></i><i></i><i></i><b>dregg-oracle — live api.coinbase.com</b></div>
+            <div class="terminal-bar"><i></i><i></i><i></i><b>dregg-oracle · live api.coinbase.com</b></div>
 <pre><span class="c"># 1. prove a live BTC price — a real MPC-TLS 2PC session</span>
 $ <span class="k">dregg-oracle prove --endpoint coinbase --asset BTC-USD --out proof.json</span>
   proving coinbase spot BTC-USD against api.coinbase.com …
@@ -97,7 +97,7 @@ $ <span class="k">dregg-oracle verify proof.json</span>
           <p class="term-cap">Real output. The proof re-verifies on any machine, offline, against the pinned anchors.</p>
 
           <div class="terminal" role="img" aria-label="Terminal: the same tool proving a github commit" style="margin-top:20px">
-            <div class="terminal-bar"><i></i><i></i><i></i><b>same tool — a different fact — api.github.com</b></div>
+            <div class="terminal-bar"><i></i><i></i><i></i><b>same tool · a different fact · api.github.com</b></div>
 <pre>$ <span class="k">dregg-oracle prove --endpoint github --repo octocat/Hello-World --sha 762941… --out c.json</span>
 $ <span class="k">dregg-oracle verify c.json</span>
 <span class="ok">PASS  octocat/Hello-World@<span class="v">762941318ee1</span> — New line at end of file. --Signed off by Spaceghost</span>
@@ -108,13 +108,13 @@ $ <span class="k">dregg-oracle verify c.json</span>
 
           <ol class="demo-steps">
             <li><span class="n">01</span><span>You (or an agent) <strong>prove</strong> a real HTTPS response happened.</span></li>
-            <li><span class="n">02</span><span>The proof travels as a <strong>file</strong> — no live session to trust, no re-fetch.</span></li>
+            <li><span class="n">02</span><span>The proof travels as a <strong>file</strong>: no live session to trust, no re-fetch.</span></li>
             <li><span class="n">03</span><span>Anyone <strong>verifies</strong> it fail-closed and reads the attested fact.</span></li>
           </ol>
 
           <p style="margin-top:26px"><span class="rung rung-proof">proven live</span> &nbsp;<span style="color:var(--muted);font-size:14px">breadstuffs · <code>dregg-oracle</code> a369528 · real-host prover ce275ec</span></p>
 
-          <div class="boundary"><strong>Honest boundary.</strong> It needs a notary — self-hosted here, so the trust model is “trust my notary,” though MPC-TLS means the notary never sees plaintext (a far weaker assumption than trusting the fetcher). MPC-TLS is TLS-1.2 only. And the proof attests <em>“this server returned this at this time”</em> — not that the server is telling the truth.</div>
+          <div class="boundary"><strong>Honest boundary.</strong> It needs a notary: self-hosted here, so the trust model is “trust my notary,” though MPC-TLS means the notary never sees plaintext (a far weaker assumption than trusting the fetcher). MPC-TLS is TLS-1.2 only. And the proof attests <em>“this server returned this at this time”</em>, not that the server is telling the truth.</div>
         </div>
       </section>
 
@@ -122,12 +122,12 @@ $ <span class="k">dregg-oracle verify c.json</span>
         <div class="page-shell">
           <div class="section-heading">
             <p class="kicker">Confidential execution</p>
-            <h2 id="conf-title">A computation whose code you can check — on hardware you don’t own.</h2>
-            <p>A hardware enclave (here, AWS Nitro) produces a signed attestation that a <em>specific measured binary</em> ran inside a genuine TEE, carrying a value the enclave bound in. dregg turns that quote into a first-class fact: a light client re-checks it against the same rail the web-fact proofs use. It fills the one gap a consensus quorum structurally can’t — integrity on a <em>non-deterministic</em> workload, from a single machine.</p>
+            <h2 id="conf-title">A computation whose code you can check, on hardware you don’t own.</h2>
+            <p>A hardware enclave (here, AWS Nitro) produces a signed attestation that a <em>specific measured binary</em> ran inside a genuine TEE, carrying a value the enclave bound in. dregg turns that quote into a first-class fact: a light client re-checks it against the same rail the web-fact proofs use. It fills the one gap a consensus quorum structurally can’t: integrity on a <em>non-deterministic</em> workload, from a single machine.</p>
           </div>
 
           <div class="terminal" role="img" aria-label="Terminal: verifying a real AWS Nitro attestation">
-            <div class="terminal-bar"><i></i><i></i><i></i><b>dregg-tee-verify — real AWS Nitro doc</b></div>
+            <div class="terminal-bar"><i></i><i></i><i></i><b>dregg-tee-verify · real AWS Nitro doc</b></div>
 <pre><span class="c"># captured from a LIVE Nitro enclave (us-east-1), bound to a test commitment</span>
 $ <span class="k">cargo test -p dregg-tee-verify</span>
   nitro_real :: verifies_real_live_nitro_doc_and_extracts_bound_report_data <span class="ok">ok</span>
@@ -140,17 +140,17 @@ $ <span class="k">cargo test -p dregg-tee-verify</span>
 <span class="c"># the real doc verifies: COSE sig + full X.509 chain to the pinned AWS root,</span>
 <span class="c"># measurement + report_data extracted, tampering rejected fail-closed.</span></pre>
           </div>
-          <p class="term-cap">Verified against a genuine attestation document from real hardware — not a model or a fixture-signed stub.</p>
+          <p class="term-cap">Verified against a genuine attestation document from real hardware, not a model or a fixture-signed stub.</p>
 
           <ol class="demo-steps">
             <li><span class="n">01</span><span>The enclave binds a commitment and emits a vendor-signed <strong>attestation</strong>.</span></li>
             <li><span class="n">02</span><span>The verifier checks the <strong>COSE signature + cert chain</strong> to the pinned AWS root.</span></li>
-            <li><span class="n">03</span><span>It becomes a <strong>32-byte dregg fact</strong> a light client re-checks — same rail as the web facts.</span></li>
+            <li><span class="n">03</span><span>It becomes a <strong>32-byte dregg fact</strong> a light client re-checks: same rail as the web facts.</span></li>
           </ol>
 
           <p style="margin-top:26px"><span class="rung rung-live">proven vs real hardware</span> &nbsp;<span style="color:var(--muted);font-size:14px">breadstuffs · primitive a42188f · verifier 8805628</span></p>
 
-          <div class="boundary"><strong>Honest boundary.</strong> This is <em>single-hardware-root</em>, not trustless — you trust the CPU vendor’s attestation root and accept side-channel / freshness / TCB-recovery caveats. It certifies <em>what code ran</em>, not that a model’s output is correct. And the captured fixture is a <em>debug-mode</em> enclave (PCRs zeroed), so the crypto and binding are real but the <em>measurement</em> is a debug fold; a production run pins a real code identity.</div>
+          <div class="boundary"><strong>Honest boundary.</strong> This is <em>single-hardware-root</em>, not trustless: you trust the CPU vendor’s attestation root and accept side-channel / freshness / TCB-recovery caveats. It certifies <em>what code ran</em>, not that a model’s output is correct. And the captured fixture is a <em>debug-mode</em> enclave (PCRs zeroed), so the crypto and binding are real but the <em>measurement</em> is a debug fold; a production run pins a real code identity.</div>
         </div>
       </section>
 
@@ -174,7 +174,7 @@ $ <span class="k">cargo test -p dregg-tee-verify</span>
             <article data-axes="proved">
               <code>tee-verify · Nitro / SNP</code>
               <h3>Confidential execution</h3>
-              <p>Real verifiers for hardware attestation documents — Nitro’s COSE / X.509 chain to the pinned AWS root, SNP’s P-384 report signature chained to the embedded AMD roots — extracting the code measurement and the bound commitment.</p>
+              <p>Real verifiers for hardware attestation documents (Nitro’s COSE / X.509 chain to the pinned AWS root, SNP’s P-384 report signature chained to the embedded AMD roots), extracting the code measurement and the bound commitment.</p>
               <span class="axis-dot dot-green">real hardware</span>
             </article>
             <article data-axes="operated">
@@ -205,11 +205,11 @@ $ <span class="k">cargo test -p dregg-tee-verify</span>
               <p>The bar wasn’t “it compiles” or “the tests pass.” It was: could a skeptical stranger reuse this for something real. Most of what we had didn’t clear that bar yet. These two do.</p>
             </blockquote>
             <h3>Prove the hard thing first.</h3>
-            <p>For the oracle, we ran the real MPC-TLS session against live coinbase <em>in-process</em> — proved and verified in one run — before touching serialization or a CLI. The crux either works against the real network or it doesn’t; everything else is packaging.</p>
+            <p>For the oracle, we ran the real MPC-TLS session against live coinbase <em>in-process</em>, proved and verified in one run, before touching serialization or a CLI. The crux either works against the real network or it doesn’t; everything else is packaging.</p>
             <h3>The organs were real; the wiring was the work.</h3>
-            <p>The MPC-TLS carrier, the STARK legs, the attestation rail — all already existed and were tested. The gap was pointing the prover at a real host, and turning an un-serializable proof into a portable file by carrying the authenticated evidence and re-deriving the rest at verify time.</p>
+            <p>The MPC-TLS carrier, the STARK legs, the attestation rail: all already existed and were tested. The gap was pointing the prover at a real host, and turning an un-serializable proof into a portable file by carrying the authenticated evidence and re-deriving the rest at verify time.</p>
             <h3>Name the boundary; don’t hide it.</h3>
-            <p>Each tool states its own limits — in its output, its README, and above. A self-hosted notary. TLS-1.2 only. Single-hardware-root, not trustless. “Returned this,” not “is truthful.” The honesty is the product; an unnamed gap reads as a claim.</p>
+            <p>Each tool states its own limits: in its output, its README, and above. A self-hosted notary. TLS-1.2 only. Single-hardware-root, not trustless. “Returned this,” not “is truthful.” The honesty is the product; an unnamed gap reads as a claim.</p>
           </div>
         </div>
       </section>
@@ -218,14 +218,14 @@ $ <span class="k">cargo test -p dregg-tee-verify</span>
         <div class="page-shell">
           <div class="section-heading section-heading-wide">
             <div><p class="kicker">Honest present tense</p><h2 id="now-title">Small, but real. Not the whole thing.</h2></div>
-            <p>Two working, reusable slices — not the operated agent cloud they’re part of. That’s further out, and we won’t pretend otherwise.</p>
+            <p>Two working, reusable slices, not the operated agent cloud they’re part of. That’s further out, and we won’t pretend otherwise.</p>
           </div>
           <div class="now-columns">
             <section>
               <h3 class="now-state state-green">Working</h3>
               <ul>
                 <li>Live coinbase price proof, verified from a portable file</li>
-                <li>Live github-commit proof — same tool, same interface</li>
+                <li>Live github-commit proof · same tool, same interface</li>
                 <li>Real AWS Nitro attestation, verified end to end</li>
                 <li>An AMD SEV-SNP verifier: P-384 report signature, cert chain to the embedded AMD roots</li>
                 <li>The shared dregg attestation-as-a-fact rail</li>

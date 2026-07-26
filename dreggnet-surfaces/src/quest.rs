@@ -44,7 +44,7 @@ use crate::{action_menu, menu, pill, row, section, text};
 pub const KEY: &str = "quest";
 /// Shared catalog copy for the generic web/Discord/Telegram/WeChat host.
 pub const DESCRIPTION: &str =
-    "Ashenmoor Errand — earn committed faction standing, unlock, and complete an ordered quest";
+    "Ashenmoor Errand · earn committed faction standing, unlock, and complete an ordered quest";
 
 pub const TURN_PLEDGE_EMBERS: &str = "pledge-embers";
 pub const TURN_UNDERTAKE_TRIAL: &str = "undertake-ember-trial";
@@ -783,7 +783,7 @@ impl Offering for AshenmoorErrandOffering {
             .owner
             .as_ref()
             .map(|owner| owner.0.as_str())
-            .unwrap_or("unclaimed — first landed move keeps it");
+            .unwrap_or("unclaimed · first landed move keeps it");
         let state = if session.quest_completed() {
             "writ accepted · completion replay-verifiable"
         } else if standing.betrayed && !standing.unlocked {
@@ -812,23 +812,23 @@ impl Offering for AshenmoorErrandOffering {
         // first") in a `muted` plaque, which the skin does not promote and which says what the
         // RULE is rather than what to press. This says the move.
         let directive = if session.quest_completed() {
-            "The writ is accepted and this errand is final — nothing further can be committed. Its \
+            "The writ is accepted and this errand is final. Nothing further can be committed. Its \
              completion replays from the record, so the reward below is checkable, not asserted."
                 .to_string()
         } else if standing.betrayed && !standing.unlocked {
-            "You pledged and then betrayed the Embers, so the Ember route is permanently closed — \
-             no standing you earn now reopens it. This errand cannot be undertaken on this \
+            "You pledged and then betrayed the Embers, so the Ember route is permanently closed. \
+             No standing you earn now reopens it. This errand cannot be undertaken on this \
              identity."
                 .to_string()
         } else if session.quest_opened() {
             format!(
-                "The trial is cleared and the errand is LIVE — work the wards in order ({}/3 \
+                "The trial is cleared and the errand is LIVE. Work the wards in order ({}/3 \
                  done). Each ward is a committed turn in the quest world, and an out-of-order \
                  press is refused by the executor rather than skipped.",
                 session.quest_steps_done()
             )
         } else {
-            "Pledge to the Embers and earn standing FIRST — the errand does not open until the \
+            "Pledge to the Embers and earn standing FIRST: the errand does not open until the \
              faction world commits an unlocked standing, so the quest turns below stay shut until \
              it does."
                 .to_string()

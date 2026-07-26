@@ -160,7 +160,7 @@ impl OverlayState {
         let Some(expected) = self.ingest_token.as_ref() else {
             return Err((
                 StatusCode::FORBIDDEN,
-                "overlay ingest is disabled — set OVERLAY_INGEST_TOKEN and send it as \
+                "overlay ingest is disabled: set OVERLAY_INGEST_TOKEN and send it as \
                  `Authorization: Bearer <token>` (the raw POST path is forgeable, so it is \
                  fail-closed without an operator token)",
             )
@@ -320,13 +320,13 @@ pub fn overlay_router(state: Arc<OverlayState>) -> Router {
 /// and push but NEVER land a certified world turn. A real deployment must build its own
 /// [`OverlayState`] over the game's live `World::open` cell AND drive a close→resolve→advance timer
 /// (see [`OverlayState::close_tick`]) to close the loop.
-pub const DEMO_OVERLAY_LABEL: &str = "Tally board — no world resolve (demo). A live deployment mounts a World cell + a close-tick \
+pub const DEMO_OVERLAY_LABEL: &str = "Tally board · no world resolve (demo). A live deployment mounts a World cell + a close-tick \
      timer to land certified turns.";
 
 /// The demo round (keep: trade blows / press on) the demo overlay tallies over.
 fn demo_round() -> CrowdRound {
     CrowdRound::open(
-        "The gate-warden bars the way — what does the party do?",
+        "The gate-warden bars the way. What does the party do?",
         vec![
             Proposal::new("Trade blows with the gate-warden", Command::trade_blows()),
             Proposal::new("Press past into the plundered hall", Command::press_on()),
@@ -398,7 +398,7 @@ const KEEP_LIVE_SEED: u8 = 30;
 /// The honesty label the LIVE-WORLD overlay wears on the `GET /overlay` page — it says plainly that
 /// (a) the mounted world is a **demo**, and (b) "certified" means quorum-certified + executor-admitted,
 /// NOT FRI-sound-on-chain (the deployed ledger's undischarged FRI/STARK floor is inherited).
-pub const LIVE_OVERLAY_LABEL: &str = "Live demo world — the crowd steers a demo Warden's Keep: each round window the quorum-certified \
+pub const LIVE_OVERLAY_LABEL: &str = "Live demo world · the crowd steers a demo Warden's Keep: each round window the quorum-certified \
      winner lands ONE real world turn. \"Certified\" = quorum-certified + executor-admitted, NOT \
      FRI-sound-on-chain; the world is a demo.";
 

@@ -125,7 +125,7 @@ async fn node_get_json<T: for<'de> Deserialize<'de>>(
 /// Register the /explorer command with all subcommands.
 pub fn register() -> CreateCommand {
     CreateCommand::new("explorer")
-        .description("Browse devnet state — cells, turns, blocks, stats, activity")
+        .description("Browse devnet state · cells, turns, blocks, stats, activity")
         .add_option(
             CreateCommandOption::new(
                 CommandOptionType::SubCommand,
@@ -598,7 +598,7 @@ async fn handle_blocklace(ctx: &Context, command: &CommandInteraction, state: &B
             if blocks.is_empty() {
                 let embed = embeds::warning_embed(
                     "No DAG Blocks",
-                    "The node reports an empty blocklace — consensus may not be running on this node.",
+                    "The node reports an empty blocklace. Consensus may not be running on this node.",
                 );
                 let _ = command
                     .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
@@ -615,7 +615,7 @@ async fn handle_blocklace(ctx: &Context, command: &CommandInteraction, state: &B
                     None => "\u{231b} pending".to_string(),
                 };
                 desc.push_str(&format!(
-                    "{} **#{}** `{}` — {} · {} pred · {}/{} votes · {}\n",
+                    "{} **#{}** `{}` · {} · {} pred · {}/{} votes · {}\n",
                     kind_icon(&block.kind),
                     block.height,
                     truncate(&block.block_hash, 12),
@@ -934,7 +934,7 @@ async fn handle_proof(ctx: &Context, command: &CommandInteraction, state: &BotSt
         let embed = embeds::warning_embed(
             "No Proof Attached",
             &format!(
-                "Turn `{}...` has no proof artifact (unknown hash, or it committed on the executor-signed-receipt path — see `/status`).",
+                "Turn `{}...` has no proof artifact (unknown hash, or it committed on the executor-signed-receipt path; see `/status`).",
                 truncate(&hash, 16)
             ),
         );
@@ -966,10 +966,10 @@ async fn handle_proof(ctx: &Context, command: &CommandInteraction, state: &BotSt
             .await;
             let verified_ok = matches!(&check, Ok(c) if c.verified);
             let base = if verified_ok {
-                embeds::dregg_embed("Turn Proof Artifact — verifies")
+                embeds::dregg_embed("Turn Proof Artifact · verifies")
             } else {
                 embeds::error_embed(
-                    "Turn Proof Artifact — DOES NOT VERIFY",
+                    "Turn Proof Artifact · DOES NOT VERIFY",
                     "The fetched bytes failed the bot's own re-check.",
                 )
             };
@@ -1203,7 +1203,7 @@ async fn handle_recent(ctx: &Context, command: &CommandInteraction, state: &BotS
             for event in &events {
                 let icon = event_icon(&event.event_type);
                 description.push_str(&format!(
-                    "{icon} **{}** — {}\n",
+                    "{icon} **{}** · {}\n",
                     event.event_type, event.summary
                 ));
                 if let Some(tx) = &event.tx_hash {

@@ -224,12 +224,12 @@ pub fn gallery_page() -> String {
          <h1>Every sprite is a function of its address.</h1>\
          <p class=\"deck\">Every asset is a blake3 content address, and its sprite is a pure, \
          byte-identical function of that address (<code>dreggnet-sprite</code>). Same asset ⇒ same \
-         art — reload and re-derive the identical SVG. The catalog paints an item's \
+         art: reload and re-derive the identical SVG. The catalog paints an item's \
          <code>Tile</code> node with this same renderer.</p></div>\
          <div class=\"sprite-grid\">{cells}</div></main>",
     );
     document(
-        &format!("{} — sprite gallery", crate::PRODUCT_NAME),
+        &format!("{} · sprite gallery", crate::PRODUCT_NAME),
         "gallery",
         &body,
     )

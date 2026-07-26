@@ -647,7 +647,7 @@ impl DescentCampaignOffering {
                 "REGION CLEARED",
                 "good",
                 format!(
-                    "Every location on {} is crowned — there is no road left to open.",
+                    "Every location on {} is crowned. There is no road left to open.",
                     self.map.name
                 ),
             )
@@ -666,7 +666,7 @@ impl DescentCampaignOffering {
                 "bad",
                 format!(
                     "This expedition settled WITHOUT the Crown of the Deep, so {name} stays shut \
-                     and this campaign has no legal move left — the roads onward open only for a \
+                     and this campaign has no legal move left: the roads onward open only for a \
                      crowned exit."
                 ),
             )
@@ -682,7 +682,7 @@ impl DescentCampaignOffering {
         };
 
         ViewNode::Section {
-            title: format!("Where the campaign stands — {name}"),
+            title: format!("Where the campaign stands · {name}"),
             tag: "accent".to_string(),
             children: vec![
                 ViewNode::Text(directive),
@@ -701,7 +701,7 @@ impl DescentCampaignOffering {
                 // deliberate copy pass rather than trimmed blind. FOLLOW-UP: decide which of the
                 // two says it, here and in `dungeon.rs`.
                 ViewNode::Text(format!(
-                    "{phase} — standing in {name}, {crowned} of {total} location{} crowned.",
+                    "{phase} · standing in {name}, {crowned} of {total} location{} crowned.",
                     if total == 1 { "" } else { "s" }
                 )),
                 ViewNode::Row(vec![
@@ -774,7 +774,7 @@ impl DescentCampaignOffering {
             // region cell was deployed with.
             let (rule, satisfied) = match session.region.deployed_travel_gate(&edge.to) {
                 TravelGate::Open => (
-                    "the deployed travel case carries no guard — an open road".to_string(),
+                    "the deployed travel case carries no guard · an open road".to_string(),
                     true,
                 ),
                 TravelGate::ClearedAtLeast {
@@ -785,7 +785,7 @@ impl DescentCampaignOffering {
                     let done = session.region.is_cleared(&prerequisite);
                     (
                         format!(
-                            "admitted only while cleared[{prerequisite}] ≥ {threshold} — {} is {}",
+                            "admitted only while cleared[{prerequisite}] ≥ {threshold} · {} is {}",
                             location_name(&self.map, &prerequisite),
                             if done { "crowned" } else { "NOT crowned" }
                         ),
@@ -799,7 +799,7 @@ impl DescentCampaignOffering {
                 } => (
                     format!(
                         "⚠ the deployed guard reads slot {slot} (≥ {threshold}), which is not a \
-                         cleared flag of this map — reported as found rather than guessed"
+                         cleared flag of this map (reported as found rather than guessed)"
                     ),
                     false,
                 ),
@@ -826,7 +826,7 @@ impl DescentCampaignOffering {
                 // The row's text is SELF-CONTAINED — it repeats the destination and the verdict the
                 // two pills carry, because a prose channel is handed no pills at all.
                 ViewNode::Text(format!(
-                    "→ {destination} — {}: {rule}",
+                    "→ {destination} · {}: {rule}",
                     if satisfied { "gate met" } else { "BARRED" }
                 )),
             ]));
@@ -863,7 +863,7 @@ impl DescentCampaignOffering {
                         },
                         // Self-contained for the prose channels, which are handed no pills.
                         ViewNode::Text(format!(
-                            "{} — {} · {}",
+                            "{} · {} · {}",
                             location.name,
                             if cleared { "crowned" } else { "shut" },
                             match (standing, self.map.gate_of(&location.id)) {
@@ -1020,7 +1020,7 @@ impl Offering for DescentCampaignOffering {
                         .actor
                         .as_ref()
                         .map(DreggIdentity::as_str)
-                        .unwrap_or("unclaimed — the first landed Descent move binds the traveller")
+                        .unwrap_or("unclaimed · the first landed Descent move binds the traveller")
                 )),
                 ViewNode::Text(format!(
                     "campaign revision {} · root {} · expedition turn {}",
@@ -1031,7 +1031,7 @@ impl Offering for DescentCampaignOffering {
             ],
         });
         Surface(ViewNode::Section {
-            title: format!("{} — native Descent campaign", self.map.name),
+            title: format!("{} · native Descent campaign", self.map.name),
             tag: "accent".to_string(),
             children,
         })

@@ -233,7 +233,7 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
             // Public, paste-friendly artifact + the introducer pubkey so the
             // recipient can `/handoff-redeem`.
             let public = serenity::all::CreateMessage::new().content(format!(
-                "<@{target_id}> — capability handoff from <@{invoker_id}>. Redeem with `/handoff-redeem`:\n```\n{}\n```\nintroducer-pk: `{}`",
+                "<@{target_id}> · capability handoff from <@{invoker_id}>. Redeem with `/handoff-redeem`:\n```\n{}\n```\nintroducer-pk: `{}`",
                 minted.compact,
                 introducer.public_key_hex(),
             ));
@@ -382,11 +382,11 @@ fn string_opt(command: &CommandInteraction, name: &str) -> Option<String> {
 /// user copy, not a `{:?}` of the permissions struct.
 fn permissions_label(p: &AuthRequired) -> &'static str {
     match p {
-        AuthRequired::None => "nothing — open, no authorization required",
+        AuthRequired::None => "nothing · open, no authorization required",
         AuthRequired::Signature => "your signature (your key signs each turn)",
         AuthRequired::Proof => "a ZK proof (each turn carries one)",
         AuthRequired::Either => "your signature or a ZK proof",
-        AuthRequired::Impossible => "impossible — permanently locked, no turn can exercise this",
+        AuthRequired::Impossible => "impossible · permanently locked, no turn can exercise this",
         AuthRequired::Custom { .. } => "an app-defined proof (custom verifier)",
     }
 }

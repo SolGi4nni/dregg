@@ -366,6 +366,12 @@ pub struct RegisteredDiscordCap {
 #[derive(Debug)]
 pub struct DiscordCapRegistry {
     /// Map from cell_id to registered capability.
+    ///
+    /// ⚑ **RESTART: REFUSE** (`docs/reference/RESTART-SEMANTICS.md`). Empty at boot, and an
+    /// unknown cell is answered `DiscordCapError::NotFound` — a capability this process cannot
+    /// find is a capability it will not exercise. That is the correct direction for a guild-write
+    /// authority: the cost of forgetting is that a stale cell id stops working (its holder
+    /// re-registers), while the cost of guessing would be a channel delete nobody authorised.
     caps: RwLock<HashMap<String, RegisteredDiscordCap>>,
 }
 
@@ -630,6 +636,12 @@ pub struct ChannelQueueLink {
 #[derive(Debug)]
 pub struct EventBridge {
     /// Active channel-to-queue links.
+    ///
+    /// ⚑ **RESTART: PROCEED, deliberately** (`docs/reference/RESTART-SEMANTICS.md`). This is not
+    /// a gate — it is a ROUTE. Empty at boot means messages in a previously bridged channel stop
+    /// becoming turns until something re-links it (`SessionOrchestrator::open` does, and now
+    /// finds its session again across a restart). An adversary who forces a restart gains
+    /// silence, not a turn: absence here can only stop a submission, never authorise one.
     channel_links: RwLock<HashMap<u64, ChannelQueueLink>>,
     /// Node URL for submitting turns.
     node_url: String,

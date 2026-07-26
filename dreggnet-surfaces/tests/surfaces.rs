@@ -123,7 +123,7 @@ fn trade_renders_valid_viewnode_and_fires_a_listing_to_a_settle() {
     assert!(
         find_section(
             root,
-            "DreggNet Trade — a player market (atomic asset swaps)"
+            "DreggNet Trade · a player market (atomic asset swaps)"
         )
         .is_some(),
         "the market title section is present"

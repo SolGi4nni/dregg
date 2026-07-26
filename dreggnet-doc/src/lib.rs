@@ -786,6 +786,7 @@ impl DocOffering {
                 turn: a.turn.clone(),
                 arg: a.arg,
                 enabled: a.enabled,
+                wants_text: a.wants_text,
             })
             .collect();
         children.push(ViewNode::Section {

@@ -422,10 +422,13 @@ impl DrivenSurface for WebDriver {
         Frame::driver_note(
             "send",
             format!(
-                "the web surface has no free-text channel: `{text}` has nowhere to go. Every \
-                 input is a form POST — use `act <turn> <arg>` or `press <n>`. (This is itself \
-                 a cross-surface asymmetry worth noting: a chat surface routes prose, this one \
-                 cannot, so any offering whose affordance sets `wants_text` has no web path here.)"
+                "this DRIVER has no free-text channel: `{text}` has nowhere to go. Every input \
+                 is a form POST — use `act <turn> <arg>` or `press <n>`. (⚑ The asymmetry has \
+                 MOVED and is now the driver's, not the surface's: a `wants_text` affordance DOES \
+                 have a web path — its form carries an `<input name=\"text\">` and the act route \
+                 reads it onto `Action::text` — but `press`/`act` here only ever post \
+                 `turn=&arg=`, so a text affordance driven from this console is still refused for \
+                 a missing string. TODO: carry the typed value on `fire`.)"
             ),
         )
     }

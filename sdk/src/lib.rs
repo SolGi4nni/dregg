@@ -222,6 +222,13 @@ pub use turns::{AuthorizedTurn, TurnBuilder};
 
 // The identity, its runtime, and the effect vocabulary the verbs speak.
 pub use cipherclerk::{AgentCipherclerk, SignedTurn};
+/// **Does THIS build refuse a Lean-subset `StateConstraint` when no oracle is installed?** — the ONE
+/// source for the deployed executor's fail-closed gate, re-exported for the same reason as the
+/// `dregg-pq` outcomes above: a host (`dreggnet-web`, a bot, a funnel) must be able to ask the
+/// question that decides whether it can serve a turn without taking a direct `dregg-cell`
+/// dependency, and above all without hand-copying the gate's `cfg` into its own startup logic. Every
+/// copy of that predicate in the tree has drifted from the gate at least once.
+pub use dregg_cell::program::constraint_subset_fails_closed_without_oracle;
 pub use dregg_cell::{CellId, Ledger};
 /// The verify-core install outcome (from `dregg-pq`), re-exported so SDK-hosted processes can match on
 /// [`install_verified_mldsa_verify_core`]'s result without a direct `dregg-pq` dependency.
@@ -232,13 +239,6 @@ pub use dregg_pq::{MlDsaKeygenCoreRealInstall, MlDsaSignCoreRealInstall};
 /// Outcomes of the ML-KEM-768 encaps/decaps core installs (`install_verified_mlkem_{encaps,decaps}_core`) —
 /// re-exported so an SDK-hosted process can match on them without a direct `dregg-pq` dependency.
 pub use dregg_pq::{MlKemDecapsCoreInstall, MlKemEncapsCoreInstall, MlKemKeygenCoreInstall};
-/// **Does THIS build refuse a Lean-subset `StateConstraint` when no oracle is installed?** — the ONE
-/// source for the deployed executor's fail-closed gate, re-exported for the same reason as the
-/// `dregg-pq` outcomes above: a host (`dreggnet-web`, a bot, a funnel) must be able to ask the
-/// question that decides whether it can serve a turn without taking a direct `dregg-cell`
-/// dependency, and above all without hand-copying the gate's `cfg` into its own startup logic. Every
-/// copy of that predicate in the tree has drifted from the gate at least once.
-pub use dregg_cell::program::constraint_subset_fails_closed_without_oracle;
 pub use dregg_turn::Effect;
 pub use dregg_types::{PublicKey, Signature};
 pub use error::SdkError;

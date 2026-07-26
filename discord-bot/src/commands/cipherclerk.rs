@@ -255,7 +255,7 @@ pub(crate) async fn execute_balance(state: &BotState, user_id: u64) -> serenity:
             .description(
                 "**DEC** is the on-network devnet currency your cipherclerk holds (top up with \
                  `/faucet`, spend with `/send`). Real-AI dungeon run-credits bought with \
-                 **$DREGG** are a different balance — see `/credits`.",
+                 **$DREGG** are a different balance. See `/credits`.",
             )
             .field("Balance", format!("{balance} DEC"), true)
             .field("Cell ID", format!("`{}...`", &cell_id[..16]), true),
@@ -333,7 +333,7 @@ async fn handle_address(ctx: &Context, command: &CommandInteraction, state: &Bot
             let account = webauth_core::link_registry::account_id_of_root(&root);
             let account_line = match &account {
                 Some(a) => format!(
-                    "\nAccount `{}…` — the id boards rank you under.",
+                    "\nAccount `{}…` · the id boards rank you under.",
                     &a[..16.min(a.len())]
                 ),
                 None => String::new(),
@@ -341,7 +341,7 @@ async fn handle_address(ctx: &Context, command: &CommandInteraction, state: &Bot
             embed = embed.field(
                 "🔗 One you, across platforms",
                 format!(
-                    "Root key `{}…` — the SAME human on:\n{list}{account_line}",
+                    "Root key `{}…` · the SAME human on:\n{list}{account_line}",
                     &root[..16.min(root.len())]
                 ),
                 false,
@@ -351,7 +351,7 @@ async fn handle_address(ctx: &Context, command: &CommandInteraction, state: &Bot
             embed = embed.field(
                 "🔗 Cross-platform link",
                 "Not linked to a root key yet. `/link-cipherclerk` + `/link-prove` binds this \
-                 identity to a key you hold — then link the same key from Telegram and you become \
+                 identity to a key you hold. Then link the same key from Telegram and you become \
                  ONE human across platforms.",
                 false,
             );
@@ -554,7 +554,7 @@ async fn handle_tokens(ctx: &Context, command: &CommandInteraction, state: &BotS
     let mut description = String::new();
     for token in tokens {
         description.push_str(&format!(
-            "`{}` — service **{}** — {}\n",
+            "`{}` · service **{}** · {}\n",
             token.id(),
             token.service(),
             token_flags(token),
@@ -608,7 +608,7 @@ async fn handle_attenuate(ctx: &Context, command: &CommandInteraction, state: &B
         Ok(child) => {
             let mut embed = embeds::success_embed("Macaroon Token Attenuated")
                 .description(
-                    "Real `AgentCipherclerk::attenuate` — strictly narrows authority; the attenuated token drops the root forging key.",
+                    "Real `AgentCipherclerk::attenuate` · strictly narrows authority; the attenuated token drops the root forging key.",
                 )
                 .field("Parent", format!("`{}`", parent.id()), true)
                 .field("New Token", format!("`{}`", child.id()), true)

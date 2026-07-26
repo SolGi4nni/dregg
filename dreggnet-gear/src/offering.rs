@@ -71,6 +71,7 @@ fn action_menu(actions: Vec<Action>) -> Vec<MenuItem> {
             turn: a.turn,
             arg: a.arg,
             enabled: a.enabled,
+            wants_text: a.wants_text,
         })
         .collect()
 }

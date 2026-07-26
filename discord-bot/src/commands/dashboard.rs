@@ -49,7 +49,7 @@ pub fn register() -> CreateCommand {
 #[allow(dead_code)]
 pub fn register_dashboard() -> CreateCommand {
     CreateCommand::new("dashboard")
-        .description("Live devnet health dashboard — producer, consensus, federation, checkpoint")
+        .description("Live devnet health dashboard · producer, consensus, federation, checkpoint")
 }
 
 // ─── Live node-health dashboard (real /status + /api/federations + checkpoint) ─
@@ -489,7 +489,7 @@ pub(crate) async fn home_embed(user_id: u64, state: &BotState) -> CreateEmbed {
 
     embeds::dregg_embed("The dregg Hub")
         .description(
-            "Pick a Starbridge app for focused forms, or summon any surface — every button \
+            "Pick a Starbridge app for focused forms, or summon any surface. Every button \
              below opens a menu whose actions are real, receipted dregg turns.",
         )
         .field("Cell", cell, true)
@@ -562,7 +562,7 @@ fn governance_embed(guild_id: Option<u64>) -> CreateEmbed {
     embeds::dregg_embed("Governed Namespace")
         .description(
             "Propose route-table changes and vote on them. **New Proposal** posts a PUBLIC card \
-             with vote buttons — anyone with a hosted cipherclerk can vote without ever typing a \
+             with vote buttons. Anyone with a hosted cipherclerk can vote without ever typing a \
              root. **Proposals** lists the recent ones (with their roots, for the manual Vote \
              modal).",
         )
@@ -787,7 +787,7 @@ fn credential_verify_modal() -> CreateModal {
             short_input(
                 "subject",
                 "Subject cell (defaults to you)",
-                "leave blank — the bot proves for your own held credential",
+                "leave blank: the bot proves for your own held credential",
             )
             .max_length(128)
             .required(false),
@@ -825,7 +825,7 @@ fn gov_vote_modal() -> CreateModal {
             short_input(
                 "prior_proposal_root",
                 "Prior proposal root",
-                "64 hex — copy it from a proposal card / the Proposals list",
+                "64 hex: copy it from a proposal card / the Proposals list",
             )
             .max_length(64),
         ),
@@ -1160,39 +1160,45 @@ async fn submit_credential_verify(modal: &ModalInteraction, state: &BotState) ->
         }
     };
     match proof {
-        Ok(verified) if verified.verified => embeds::success_embed("Selective-Disclosure Proof Verified")
-            .field("Predicate", format!("`{}`", truncate(&predicate, 120)), true)
-            .field("Credential", short_cell(&held.credential_id), true)
-            .field("Schema", format!("`{}`", held.schema), true)
-            .field(
-                "Blinded commitment",
-                format!("`{}`", verified.generated.blinded_commitment_hex()),
-                false,
-            )
-            .field(
-                "What this proves",
-                "Your held credential's attribute satisfies the predicate — WITHOUT revealing the \
+        Ok(verified) if verified.verified => embeds::success_embed(
+            "Selective-Disclosure Proof Verified",
+        )
+        .field(
+            "Predicate",
+            format!("`{}`", truncate(&predicate, 120)),
+            true,
+        )
+        .field("Credential", short_cell(&held.credential_id), true)
+        .field("Schema", format!("`{}`", held.schema), true)
+        .field(
+            "Blinded commitment",
+            format!("`{}`", verified.generated.blinded_commitment_hex()),
+            false,
+        )
+        .field(
+            "What this proves",
+            "Your held credential's attribute satisfies the predicate: WITHOUT revealing the \
                  value, which credential produced it, or any link to your other proofs. Fresh \
                  blinding per request means two proofs of the same fact do not correlate.",
-                false,
-            )
-            .field(
-                "Boundary",
-                "A real unlinkable predicate STARK (BabyBear), verified here. It inherits the \
-                 deployed STARK/FRI soundness floor — this is NOT an on-chain-settled fact — and it \
+            false,
+        )
+        .field(
+            "Boundary",
+            "A real unlinkable predicate STARK (BabyBear), verified here. It inherits the \
+                 deployed STARK/FRI soundness floor (this is NOT an on-chain-settled fact), and it \
                  attests the committed value satisfies the predicate as the custodial holder; it \
                  does not independently attest third-party issuer provenance.",
-                false,
-            ),
+            false,
+        ),
         Ok(_) => embeds::error_embed(
             "Proof Did Not Verify",
             "A proof was generated but failed verification, so success is NOT reported. This should \
-             not happen for an honest credential — retry, or re-issue the credential.",
+             not happen for an honest credential. Retry, or re-issue the credential.",
         ),
         Err(crate::identity_proof::ProofError::Sdk(_)) => embeds::warning_embed(
             "Predicate Not Satisfied",
             &format!(
-                "`{}` is FALSE for your credential's value, so it is unprovable — a sound circuit \
+                "`{}` is FALSE for your credential's value, so it is unprovable: a sound circuit \
                  cannot prove a false statement. (This is the soundness guarantee, not a bug.)",
                 truncate(&predicate, 120)
             ),
@@ -1313,9 +1319,9 @@ async fn submit_gov_propose(
                     "Voting",
                     match activity_id {
                         Some(_) => "A PUBLIC proposal card with vote buttons was posted to the \
-                                    channel — anyone with a hosted cipherclerk can vote."
+                                    channel. Anyone with a hosted cipherclerk can vote."
                             .to_string(),
-                        None => "The public card could not be recorded — voters can still use \
+                        None => "The public card could not be recorded. Voters can still use \
                                  the Vote modal with the root above."
                             .to_string(),
                     },
@@ -1645,7 +1651,7 @@ async fn submit_subscription_subscribe(modal: &ModalInteraction, state: &BotStat
             .description(format!(
                 "This bot will DM you each message published to **{name}** through it (allow \
                  DMs from server members, or deliveries fail). The node queue commits each \
-                 message's hash; the body rides the bot's DM — publishes made while the bot is \
+                 message's hash; the body rides the bot's DM. Publishes made while the bot is \
                  offline are not replayed."
             ))
             .field("Queue", name, true)

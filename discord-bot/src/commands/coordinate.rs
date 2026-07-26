@@ -68,7 +68,7 @@ pub fn register() -> CreateCommand {
             CreateCommandOption::new(
                 CommandOptionType::Boolean,
                 "fail",
-                "Simulate a broken promise — the round rolls back, nothing settles",
+                "Simulate a broken promise: the round rolls back, nothing settles",
             )
             .required(false),
         )
@@ -166,13 +166,13 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
         let p_after = state.devnet.get_balance(&producer_cell).await.ok();
         let unchanged = c_before == c_after && p_before == p_after;
         let body = format!(
-            "**<@{invoker_id}> (consumer)** asked **<@{partner_id}> (producer)** to do `{task}` — \
+            "**<@{invoker_id}> (consumer)** asked **<@{partner_id}> (producer)** to do `{task}`, \
              but the producer's work **FAILED**.\n\n\
              1. The producer's promise **broke** ({err}).\n\
              2. The breakage propagated to the consumer's pipelined leg{downstream_note}.\n\
-             3. The round **refused before any settle** — so **no turn was submitted to the node**.\n\n\
+             3. The round **refused before any settle**, so **no turn was submitted to the node**.\n\n\
              **Live atomicity:** consumer `{cb}` → `{ca}` · producer `{pb}` → `{pa}` DEC \
-             — {verdict}.\n\n\
+             · {verdict}.\n\n\
              _A broken promise rolls the whole round back; the live ledger is untouched. \
              Run `/coordinate` without `fail` to watch the same pair settle atomically on-chain._",
             downstream_note = if downstream.is_empty() {
@@ -191,7 +191,7 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
             },
         );
         let embed = embeds::warning_embed(
-            "🔁 Promise Broke — Round Rolled Back (nothing settled)",
+            "🔁 Promise Broke · Round Rolled Back (nothing settled)",
             &body,
         );
         let _ = command
@@ -206,7 +206,7 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
         Ok(out) => out,
         Err(e) => {
             let embed = embeds::error_embed(
-                "Round Refused (off-chain — nothing settled)",
+                "Round Refused (off-chain · nothing settled)",
                 &format!("The coordination round refused, so no value moved: {e}"),
             );
             let _ = command
@@ -262,8 +262,8 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
                  **On-chain receipt:** `{turn_short}…`\n\
                  **Round hash:** `{round}`\n\n\
                  {receipt_link}\n\n\
-                 _The coordination mechanism — promise handoff, atomic settle, conservation, \
-                 rollback — is real and landed on the live node. Try `/coordinate fail:true` to \
+                 _The coordination mechanism (promise handoff, atomic settle, conservation, \
+                 rollback) is real and landed on the live node. Try `/coordinate fail:true` to \
                  watch a broken promise roll the whole round back._",
                 slot = producer_promise.promise.output_slot,
                 fill = &out.round_hash_hex()[..8],
@@ -271,7 +271,7 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
                 round = out.round_hash_hex(),
             );
             let embed =
-                embeds::success_embed("🤝 Agents Coordinated — Atomic Settle on the Live Node")
+                embeds::success_embed("🤝 Agents Coordinated · Atomic Settle on the Live Node")
                     .description(body);
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
@@ -288,7 +288,7 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
         }
         Err(e) => {
             let embed = embeds::error_embed(
-                "Settle Refused (atomic — nothing committed)",
+                "Settle Refused (atomic · nothing committed)",
                 &format!(
                     "The off-chain round succeeded, but the live settle did not land, so no value moved: {e}"
                 ),

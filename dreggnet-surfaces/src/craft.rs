@@ -182,7 +182,7 @@ impl CraftOffering {
             // The surface's recipes are all SAFE (their odds sit wholly on success), so a botch
             // is unreachable here; handle it honestly if a risky recipe is ever benched.
             Ok(CraftResolution::Botched(receipt)) => Outcome::Refused(format!(
-                "craft `{label}` botched — the {} materials were consumed, no item forged",
+                "craft `{label}` botched: the {} materials were consumed, no item forged",
                 receipt.consumed.len()
             )),
             Err(e) => Outcome::Refused(format!("craft `{label}` refused: {e}")),
@@ -303,14 +303,14 @@ impl Offering for CraftOffering {
             vec![
                 text(if ready > 0 {
                     format!(
-                        "{ready} of the {benches} bench(es) below have every input live — press \
+                        "{ready} of the {benches} bench(es) below have every input live. Press \
                          Forge on one. The craft consumes those exact materials in the same \
                          committed turn as it mints the output, so a forge you cannot pay for is \
                          refused rather than half-applied."
                     )
                 } else {
                     format!(
-                        "No bench can fire yet — each of the {benches} recipes below is missing at \
+                        "No bench can fire yet: each of the {benches} recipes below is missing at \
                          least one live input, and a Forge pressed short is refused by the \
                          executor. Gather or craft the missing material first; the counts on each \
                          row say how far off it is."
@@ -445,7 +445,7 @@ impl Offering for CraftOffering {
         ));
 
         Surface(section(
-            "DreggNet Forge — a provably-fair craft loop",
+            "DreggNet Forge · a provably-fair craft loop",
             "accent",
             children,
         ))

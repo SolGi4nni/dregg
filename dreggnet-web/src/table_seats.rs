@@ -272,7 +272,7 @@ pub const AUTOMATAFL: TableLock = TableLock {
     seat_prefix: "afs1-",
     route: "/automatafl",
     game: "Automatafl",
-    seat_note: "(Which side of the board you get — seat A or seat B — is settled by the game when \
+    seat_note: "(Which side of the board you get, seat A or seat B, is settled by the game when \
                 you make your first move; the link decides only that the table is <em>yours</em>.)",
     spectator_note: "Watchers see the live board with both sealed moves hidden, and cannot touch \
                      anything on it.",
@@ -285,10 +285,10 @@ pub const TUG: TableLock = TableLock {
     seat_prefix: "tugs1-",
     route: "/tug",
     game: "Multiway-Tug",
-    seat_note: "(Which side you get — seat A or seat B — is settled by the game when you make your \
+    seat_note: "(Which side you get, seat A or seat B, is settled by the game when you make your \
                 first move; the link decides only that the table is <em>yours</em>.)",
     spectator_note: "Watchers see the lanes and the score, and both hands only as a card count and \
-                     a fingerprint of the hand — never a card. They cannot touch anything on the \
+                     a fingerprint of the hand, never a card. They cannot touch anything on the \
                      table.",
 };
 
@@ -421,7 +421,7 @@ fn enforce_in(
         return Err(
             // "seat-locked table" is pinned by `tests/tug_table.rs` and `tests/automatafl_table.rs`
             // and stays verbatim; "nothing committed" was the only word here a player did not own.
-            "this is a seat-locked table — open your seat link to sit down (nothing was recorded)"
+            "this is a seat-locked table: open your seat link to sit down (nothing was recorded)"
                 .to_string(),
         );
     }
@@ -520,7 +520,7 @@ impl Resolution {
     /// One line, for a page or a refusal.
     pub fn headline(&self) -> String {
         if self.cause == Cause::Concluded {
-            return "this table played itself out — neither seat is owed a move, and the final \
+            return "this table played itself out; neither seat is owed a move, and the final \
                     board is the result"
                 .to_string();
         }
@@ -531,16 +531,16 @@ impl Resolution {
             Cause::Concluded => "played it out",
         };
         if !self.started {
-            return "this table expired before either seat made a move — nothing was played"
+            return "this table expired before either seat made a move; nothing was played"
                 .to_string();
         }
         match (self.winner(), self.forfeited.as_slice()) {
             (Some(winner), [loser]) => format!(
-                "seat {loser} {verb} — seat {winner} takes the table by forfeit",
+                "seat {loser} {verb}; seat {winner} takes the table by forfeit",
                 loser = loser.label(),
                 winner = winner.label(),
             ),
-            _ => format!("both seats {verb} — the table is abandoned, with no winner"),
+            _ => format!("both seats {verb}; the table is abandoned, with no winner"),
         }
     }
 
@@ -550,13 +550,13 @@ impl Resolution {
             // A concluded match is not somebody walking away, so it must not be described as one.
             // What it IS: the offering refusing every further move, which is where the result lives.
             return format!(
-                "this table is over — {}. The offering itself offers neither seat a move, so \
+                "this table is over: {}. The offering itself offers neither seat a move, so \
                  nothing further can land here. Replay the finished match to see how it went.",
                 self.headline()
             );
         }
         format!(
-            "this table is over — {}. That is the lobby noting somebody stopped playing: no move \
+            "this table is over: {}. That is the lobby noting somebody stopped playing: no move \
              was made and there is no receipt for it, so it is not a proven win.",
             self.headline()
         )

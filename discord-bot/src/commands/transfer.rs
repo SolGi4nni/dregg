@@ -319,11 +319,11 @@ pub(crate) async fn execute_first_payment(
             embeds::success_embed("\u{1f389} You just did a real, paid, verifiable thing")
                 .description(format!(
                     "You paid **{FIRST_TURN_AMOUNT} DEC** to the DreggNet community cell as a real, \
-                     **conserving** (Σδ=0), cap-gated dregg turn — signed by your own custodial key \
+                     **conserving** (Σδ=0), cap-gated dregg turn, signed by your own custodial key \
                      and verified by the node end-to-end. The same path `/send` uses.\n\n\
                      The **receipt** below is the proof it committed. Open it on the explorer, or open \
                      your cell there and let the in-browser light client re-verify your \
-                     history — trusting no server.",
+                     history, trusting no server.",
                 ))
                 .field(
                     "Receipt (turn hash)",
@@ -335,7 +335,7 @@ pub(crate) async fn execute_first_payment(
                 .field("Verify it yourself", portal, false)
                 .field(
                     "What next",
-                    "Claim your channel and just **type** to drive a metered, receipted Hermes — or \
+                    "Claim your channel and just **type** to drive a metered, receipted Hermes, or \
                      read `docs/GETTING-STARTED.md`.",
                     false,
                 )
@@ -343,9 +343,9 @@ pub(crate) async fn execute_first_payment(
         Err(e) => embeds::warning_embed(
             "This Step Needs the Edge Node",
             &format!(
-                "{}\n\nEverything up to here is real and ready — your identity and test DEC are \
+                "{}\n\nEverything up to here is real and ready: your identity and test DEC are \
                  yours. The edge node is being brought back; tap **Try again** once **Node status** \
-                 is green. (Meanwhile, claim your channel and type `read README.md` — the metered \
+                 is green. (Meanwhile, claim your channel and type `read README.md`; the metered \
                  Hermes loop runs locally and doesn't need the node.)",
                 e.user_message("submit your first turn")
             ),

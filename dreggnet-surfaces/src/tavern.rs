@@ -124,7 +124,7 @@ impl Offering for TavernOffering {
             Patron {
                 name: "Aria".into(),
                 present: true,
-                last_post: Some("LFG the Salt Shore — need a healer".into()),
+                last_post: Some("LFG the Salt Shore · need a healer".into()),
             },
             Patron {
                 name: "Bram".into(),
@@ -145,7 +145,7 @@ impl Offering for TavernOffering {
         let board = vec![
             Post {
                 by: "Aria".into(),
-                text: "LFG the Salt Shore — need a healer".into(),
+                text: "LFG the Salt Shore · need a healer".into(),
             },
             Post {
                 by: "Bram".into(),
@@ -170,7 +170,7 @@ impl Offering for TavernOffering {
     /// named-next async path), not a synchronous surface move.
     fn advance(&self, _s: &mut TavernSession, _input: Action, _actor: DreggIdentity) -> Outcome {
         Outcome::Refused(
-            "the tavern board is a read mirror — use the `join` link-out to open the live tavern \
+            "the tavern board is a read mirror; use the `join` link-out to open the live tavern \
              node, where post/enter/party-up fire real attributed turns"
                 .into(),
         )
@@ -206,7 +206,7 @@ impl Offering for TavernOffering {
             children.push(section(
                 "Presence",
                 "muted",
-                vec![text("The hall is empty — no patrons have entered yet.")],
+                vec![text("The hall is empty. No patrons have entered yet.")],
             ));
         } else {
             // Presence — a Table of patrons with a live present/away pill + their last post.
@@ -267,7 +267,7 @@ impl Offering for TavernOffering {
             "accent",
             vec![
                 text(format!(
-                    "This board is a READ MIRROR — posting, seating and partying up are real \
+                    "This board is a READ MIRROR: posting, seating and partying up are real \
                      attributed turns on the live {} node, not moves on this page, so nothing here \
                      is pressable. Open the live hall to act.",
                     s.hall
@@ -282,7 +282,7 @@ impl Offering for TavernOffering {
             ],
         ));
 
-        Surface(section(format!("Tavern — {}", s.hall), "accent", children))
+        Surface(section(format!("Tavern · {}", s.hall), "accent", children))
     }
 
     fn price(&self, _input: &Action) -> RunCost {

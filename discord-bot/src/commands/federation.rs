@@ -52,7 +52,7 @@ async fn fetch_federations(state: &BotState) -> Result<Vec<FederationInfo>, Stri
     );
     let resp = state.devnet.client().get(&url).send().await.map_err(|e| {
         if e.is_connect() || e.is_timeout() {
-            "Couldn't reach the node. The devnet may be offline — check `/status`.".to_string()
+            "Couldn't reach the node. The devnet may be offline; check `/status`.".to_string()
         } else {
             format!("Network error reading the federation surface: {e}")
         }
@@ -271,7 +271,7 @@ pub async fn handle_link(ctx: &Context, command: &CommandInteraction, state: &Bo
             let embed = embeds::success_embed("External Link Pending")
                 .description(
                     "Your Discord account recorded this external identity. It activates when \
-                     you prove ownership with `/link-prove` — until then the bot will not sign \
+                     you prove ownership with `/link-prove`; until then the bot will not sign \
                      for it (and commands needing a signable identity treat it as pending; \
                      `/unlink-cipherclerk` backs out any time).",
                 )
@@ -402,7 +402,7 @@ pub(crate) async fn execute_status(state: &BotState) -> CreateEmbed {
             .take(8)
             .map(|f| {
                 format!(
-                    "{} — epoch {}, {}-of-{}{}",
+                    "{} · epoch {}, {}-of-{}{}",
                     short_hex(fed_id(f)),
                     f.committee_epoch,
                     f.threshold,

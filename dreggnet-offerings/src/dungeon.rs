@@ -1350,7 +1350,7 @@ impl Offering for DungeonOffering {
                 title: "The Keep is cleared".to_string(),
                 tag: "genuine".to_string(),
                 children: vec![ViewNode::Text(
-                    "The objective is met — one real turn at a time.".to_string(),
+                    "The objective is met, one real turn at a time.".to_string(),
                 )],
             });
         } else {
@@ -1377,18 +1377,18 @@ impl Offering for DungeonOffering {
             tag: "muted".to_string(),
             children: vec![
                 ViewNode::Text(format!(
-                    "{} verified turn{} — genesis plus {} committed choice{}.",
+                    "{} verified turn{} · genesis plus {} committed choice{}.",
                     session.receipts_len(),
                     if session.receipts_len() == 1 { "" } else { "s" },
                     session.steps.len(),
                     if session.steps.len() == 1 { "" } else { "s" }
                 )),
-                ViewNode::Text(format!("committed state — {}", session.state_line())),
+                ViewNode::Text(format!("committed state · {}", session.state_line())),
             ],
         });
 
         Surface(ViewNode::Section {
-            title: format!("{KEEP_NAME} — {room_name}"),
+            title: format!("{KEEP_NAME} · {room_name}"),
             tag: "accent".to_string(),
             children,
         })
@@ -2317,7 +2317,7 @@ fn keep_standing(session: &DungeonSession, room_name: &str, actions: &[Action]) 
         )
     } else if live == 0 {
         format!(
-            "Every choice in {room_name} is barred right now — the executor would refuse each one, \
+            "Every choice in {room_name} is barred right now: the executor would refuse each one, \
              so this run has no legal move left."
         )
     } else {
@@ -2327,7 +2327,7 @@ fn keep_standing(session: &DungeonSession, room_name: &str, actions: &[Action]) 
             "Claim the crown, then descend the collapsing stair".to_string()
         } else if depth == 0 {
             format!(
-                "Descend the collapsing stair — the crown is already {}'s",
+                "Descend the collapsing stair (the crown is already {}'s)",
                 crown_holder(owner)
             )
         } else {
@@ -2354,7 +2354,7 @@ fn keep_standing(session: &DungeonSession, room_name: &str, actions: &[Action]) 
         // shared prose walk no longer drops `Pill`, so a chat reader now gets this sentence AND
         // the badges. Redundant, not contradictory; left for a deliberate copy pass.
         ViewNode::Text(format!(
-            "{phase} — turn {}, depth {depth}, the crown held by {}.",
+            "{phase} · turn {}, depth {depth}, the crown held by {}.",
             session.steps.len(),
             crown_holder(owner)
         )),
@@ -2427,14 +2427,14 @@ fn keep_standing(session: &DungeonSession, room_name: &str, actions: &[Action]) 
             let next = hp as i64 + cost;
             if next < floor as i64 {
                 children.push(ViewNode::Text(format!(
-                    "⚠ the gate-warden trade is spent — at {hp} HP the next blow lands on {next}, \
+                    "⚠ the gate-warden trade is spent: at {hp} HP the next blow lands on {next}, \
                      under the floor of {floor} the executor holds the case to, so it commits \
                      nothing"
                 )));
             } else if cost < 0 {
                 let left = blows_left(hp, cost, floor);
                 children.push(ViewNode::Text(format!(
-                    "⚠ {left} blow{} left in the party at {hp} HP — each costs exactly {} and the \
+                    "⚠ {left} blow{} left in the party at {hp} HP: each costs exactly {} and the \
                      one that would break the floor of {floor} is refused",
                     if left == 1 { "" } else { "s" },
                     -cost
@@ -2443,20 +2443,20 @@ fn keep_standing(session: &DungeonSession, room_name: &str, actions: &[Action]) 
         }
         if spent >= budget {
             children.push(ViewNode::Text(format!(
-                "⚠ the will reserve is spent — {spent} of {budget}, and a ward whose post-state \
+                "⚠ the will reserve is spent: {spent} of {budget}, and a ward whose post-state \
                  would pass the budget is refused"
             )));
         }
         if depth >= 1 {
             children.push(ViewNode::Text(
-                "⚠ the stair collapsed behind you — `depth` may only rise, so climbing back is \
+                "⚠ the stair collapsed behind you: `depth` may only rise, so climbing back is \
                  refused"
                     .to_string(),
             ));
         }
         if owner != 0 {
             children.push(ViewNode::Text(format!(
-                "⚠ the crown is {}'s and cannot change hands — the rival claim is refused for good",
+                "⚠ the crown is {}'s and cannot change hands: the rival claim is refused for good",
                 crown_holder(owner)
             )));
         }
@@ -2465,7 +2465,7 @@ fn keep_standing(session: &DungeonSession, room_name: &str, actions: &[Action]) 
     children.push(ViewNode::Text(format!("The objective: {KEEP_OBJECTIVE}.")));
 
     ViewNode::Section {
-        title: format!("Where the party stands — {room_name}"),
+        title: format!("Where the party stands · {room_name}"),
         tag: "accent".to_string(),
         children,
     }
@@ -2483,7 +2483,7 @@ fn last_turn_plaque(session: &DungeonSession) -> ViewNode {
             title: "What the last turn did".to_string(),
             tag: "muted".to_string(),
             children: vec![ViewNode::Text(
-                "Nothing yet — this is the Keep exactly as its genesis turn committed it. The next \
+                "Nothing yet. This is the Keep exactly as its genesis turn committed it. The next \
                  press will be turn 1, and this plaque will say what it moved."
                     .to_string(),
             )],
@@ -2516,7 +2516,7 @@ fn last_turn_plaque(session: &DungeonSession) -> ViewNode {
         )
     };
     let mut children = vec![ViewNode::Text(format!(
-        "Turn {} pressed “{}” in {}, {went} — {driver}. {moved}",
+        "Turn {} pressed “{}” in {}, {went}, {driver}. {moved}",
         outcome.turn, outcome.choice, outcome.room
     ))];
     if !outcome.changes.is_empty() {
@@ -2579,7 +2579,7 @@ fn keep_teeth_plaque(session: &DungeonSession) -> ViewNode {
     let story = session.world.story();
     let hp = session.read_var("hp");
     let mut children = vec![ViewNode::Text(
-        "The prose does not say which of these presses can land — the installed cell program does, \
+        "The prose does not say which of these presses can land; the installed cell program does, \
          and every rule below is read back out of it rather than restated here."
             .to_string(),
     )];
@@ -2590,7 +2590,7 @@ fn keep_teeth_plaque(session: &DungeonSession) -> ViewNode {
             found += 1;
             let left = blows_left(hp, cost, floor);
             children.push(ViewNode::Text(format!(
-                "THE WARDEN'S TOLL — the trade moves HP by exactly {cost}, and the case is \
+                "THE WARDEN'S TOLL: the trade moves HP by exactly {cost}, and the case is \
                  admitted only while the post-state keeps HP ≥ {floor}. At {hp} HP that is {left} \
                  more blow{}; the next one after that is a real refusal that commits nothing, not \
                  a death.",
@@ -2608,7 +2608,7 @@ fn keep_teeth_plaque(session: &DungeonSession) -> ViewNode {
         if slot_case(story, owner).is_some_and(|case| write_once_on(case, owner)) {
             found += 1;
             children.push(ViewNode::Text(
-                "THE CROWN IS WRITE-ONCE, AND BOUND TO THE WRITE — the first hand to close on it \
+                "THE CROWN IS WRITE-ONCE, AND BOUND TO THE WRITE: the first hand to close on it \
                  holds it, and a rival claim is refused on ANY method, including one stapled onto \
                  someone else's turn."
                     .to_string(),
@@ -2626,7 +2626,7 @@ fn keep_teeth_plaque(session: &DungeonSession) -> ViewNode {
         if ratchet {
             found += 1;
             children.push(ViewNode::Text(
-                "THE STAIR IS ONE-WAY — `depth` is monotonic, so the descent commits and the \
+                "THE STAIR IS ONE-WAY. `depth` is monotonic, so the descent commits and the \
                  climb back is refused: the stair really has collapsed behind you."
                     .to_string(),
             ));
@@ -2650,7 +2650,7 @@ fn keep_teeth_plaque(session: &DungeonSession) -> ViewNode {
         if cross {
             found += 1;
             children.push(ViewNode::Text(format!(
-                "THE WILL IS FINITE — a ward is admitted only while the post-state keeps \
+                "THE WILL IS FINITE: a ward is admitted only while the post-state keeps \
                  `mana_spent ≤ mana_budget`, a live comparison of two committed slots ({} of {}). \
                  The overspending ward commits nothing.",
                 session.read_var("mana_spent"),
@@ -2663,7 +2663,7 @@ fn keep_teeth_plaque(session: &DungeonSession) -> ViewNode {
         if slot_case(story, gold).is_some_and(|case| write_once_on(case, gold)) {
             found += 1;
             children.push(ViewNode::Text(format!(
-                "THE HOARD IS ONE PAYOUT — gold is write-once and pinned to exactly {hoard} on \
+                "THE HOARD IS ONE PAYOUT: gold is write-once and pinned to exactly {hoard} on \
                  ANY method, so the total that can ever leave this Keep is provably that, gained \
                  once."
             )));

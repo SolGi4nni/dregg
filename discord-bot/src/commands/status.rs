@@ -185,7 +185,7 @@ pub(crate) async fn execute_status(state: &BotState) -> serenity::all::CreateEmb
             return embeds::error_embed(
                 "Node Offline",
                 &format!(
-                    "Could not reach the node `{}`: {e}\n\nDevnet may be offline — try again shortly.",
+                    "Could not reach the node `{}`: {e}\n\nDevnet may be offline. Try again shortly.",
                     state.config.devnet_url
                 ),
             );
@@ -378,9 +378,9 @@ pub async fn handle_proof(ctx: &Context, command: &CommandInteraction, state: &B
             .await;
             let verified_ok = matches!(&check, Ok(c) if c.verified);
             let title = if verified_ok {
-                "Proof Artifact — verifies"
+                "Proof Artifact · verifies"
             } else {
-                "Proof Artifact — DOES NOT VERIFY"
+                "Proof Artifact · DOES NOT VERIFY"
             };
             let base = if verified_ok {
                 embeds::success_embed(title)

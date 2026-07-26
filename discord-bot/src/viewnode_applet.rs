@@ -416,8 +416,15 @@ fn open_permissions() -> Permissions {
 /// point is that a stranger can check it *later*; that one is persisted.) If a card ever grows a
 /// claim someone else relies on, it earns a durable store the same way the sessions did — the
 /// per-store decision lives here, not in a global default.
+///
+/// ⚑ **RESTART: PROCEED, deliberately** — the paragraph above IS the argument
+/// (`docs/reference/RESTART-SEMANTICS.md`, answer 3).
 #[derive(Default)]
 pub struct CardApplets {
+    /// ⚑ **RESTART: PROCEED, deliberately** — the type's own doc above is the argument
+    /// (`docs/reference/RESTART-SEMANTICS.md`, answer 3). A tally card holds one counter, makes
+    /// no claim to anyone but its own presser, and no public artifact links to it: an adversary
+    /// who forces a restart gains a number in an embed resetting.
     map: Mutex<HashMap<(u64, String), CardApplet>>,
 }
 

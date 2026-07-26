@@ -112,6 +112,11 @@ fn native_seed_word(day_seed: &CommittedSeed) -> u64 {
 }
 
 /// Channel → the day key its live Descent was opened on (set by [`open_config_on_todays_day`]).
+///
+/// ⚑ **RESTART: PROCEED, deliberately** (`docs/reference/RESTART-SEMANTICS.md`). Empty at boot;
+/// a resumed board whose day binding is forgotten is re-bound on the next open against TODAY's
+/// committed seed, which is read from the durable day store rather than from here. Nothing is
+/// authorised by an entry — the seed commitment is what binds a run, and it is durable.
 fn bound_days() -> &'static Mutex<HashMap<u64, String>> {
     static BOUND: OnceLock<Mutex<HashMap<u64, String>>> = OnceLock::new();
     BOUND.get_or_init(|| Mutex::new(HashMap::new()))
@@ -119,6 +124,12 @@ fn bound_days() -> &'static Mutex<HashMap<u64, String>> {
 
 /// Channel → the journal root of the run already published from it, so a finished run is ingested
 /// and announced EXACTLY once however many times its dead board is pressed afterwards.
+///
+/// ⚑ **RESTART: PROCEED, and the durable guard is downstream** (`docs/reference/RESTART-SEMANTICS.md`).
+/// This is a cheap in-process short-circuit, NOT the idempotency guard: the board store's own
+/// completion key (`descent_completions.key_hex`, `INSERT OR IGNORE`) is what makes an ingest
+/// exactly-once, and it survives restart. Forgetting an entry costs one redundant ingest attempt
+/// that the durable key then rejects — plus, at worst, a repeated announcement.
 fn published_roots() -> &'static Mutex<HashMap<u64, String>> {
     static PUBLISHED: OnceLock<Mutex<HashMap<u64, String>>> = OnceLock::new();
     PUBLISHED.get_or_init(|| Mutex::new(HashMap::new()))

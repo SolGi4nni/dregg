@@ -16,6 +16,41 @@
 //! The record binds the RAW pubkeys (hex), never a cell id: `link_claim` uses the framework
 //! `"default"`-domain cell derivation while `account_id` uses `"dregg:account-identity:v1"` — same
 //! key, two cell flavors, so the join key is the pubkey and each consumer derives its own cell id.
+//!
+//! ## ⚑ REVOCATION — the un-link door, as a TOMBSTONE rather than a schema change
+//!
+//! A link used to be forever. A binding made by mistake — or one made on a code a stranger handed
+//! the player, which the consent box only *advises* against — sat in this file with nothing able to
+//! remove it, and [`LinkStore::platforms_for_root`]'s own doc names that as the case it exists to
+//! contain. The containment was partial: a *rebind by the rightful owner* superseded the bad row,
+//! but a player who simply wanted their own mistake gone had no move at all.
+//!
+//! A revocation is therefore an ordinary appended [`LinkRecord`] whose `root_pubkey_hex` is
+//! [`revoked_root_token`]`(custodial)` instead of a real root. That shape was chosen over the two
+//! obvious alternatives for one reason — **VERSION SKEW MUST FAIL CLOSED**:
+//!
+//! * *A sixth TSV field carrying a `link`/`unlink` verb* — rejected. [`LinkRecord::from_line`]
+//!   requires exactly five fields, so a six-field line is SKIPPED by any binary built before this
+//!   change. Three processes share this file (web, Discord bot, Telegram bot) and they are not
+//!   redeployed in the same second, so during any rollout the older reader would keep honouring a
+//!   link the player had already removed. A revocation the other half of the fleet cannot see is
+//!   worse than no revocation.
+//! * *Deleting or rewriting the line* — rejected. The log is append-only and `O_APPEND`-atomic
+//!   precisely so three processes can write it without a lock; rewriting reintroduces the race, and
+//!   it destroys the history the deep version ([`crate::link_kel`]) lifts onto K's identity cell.
+//!
+//! The tombstone needs NO parser change, so an old binary reads it as an ordinary record and
+//! **de-links anyway**: latest-wins per custodial hands it the tombstone, whose root does not match
+//! the player's, so `platforms_for_root(K)` drops the row in old and new readers alike. The token is
+//! derived per-custodial rather than being one shared sentinel so that two revoked keys can never
+//! compare equal to each other and be mistaken for one human by an old reader that only compares
+//! `resolve_root` outputs. A current reader does better still: it recognises the token and answers
+//! [`None`] — "this key is nobody's", the same answer an unlinked key gets.
+//!
+//! ⚑ This module RECORDS; it does not gate. The authority to revoke is checked by the caller, and on
+//! the web surface that is a signature by the root key over
+//! [`crate::link_kel::unlink_claim_message`] — the UNLINK attestation that already existed here for
+//! the deep version and had no shallow consumer until now.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -39,7 +74,55 @@ pub struct LinkRecord {
     pub verified_at: u64,
 }
 
+/// The prefix a REVOKED binding's root field wears. Chosen so it can never collide with a real
+/// root: a root is 64 lowercase hex characters, and `:` is not a hex digit.
+pub const REVOKED_ROOT_PREFIX: &str = "revoked:";
+
+/// **The tombstone root for one custodial key** — `revoked:<custodial hex>`.
+///
+/// Per-custodial rather than one shared sentinel, so that a reader too old to recognise the prefix
+/// (which sees only "some root that is not mine") still cannot conclude that two separately revoked
+/// keys belong to the same human. See the module doc for why revocation is a tombstone at all.
+pub fn revoked_root_token(custodial_pubkey_hex: &str) -> String {
+    format!(
+        "{REVOKED_ROOT_PREFIX}{}",
+        custodial_pubkey_hex.to_ascii_lowercase()
+    )
+}
+
+/// Whether a stored root field is a revocation tombstone rather than a real root key.
+pub fn is_revoked_root(root_pubkey_hex: &str) -> bool {
+    root_pubkey_hex.starts_with(REVOKED_ROOT_PREFIX)
+}
+
 impl LinkRecord {
+    /// **The revocation record for a binding** — the appended line that un-links `custodial` at
+    /// `at`. `platform`/`platform_uid` are carried verbatim so the log still reads as a history of
+    /// what happened to which account, and so [`crate::link_kel`] can lift these rows onto the
+    /// identity cell later without having to guess them back.
+    ///
+    /// ⚑ This constructor asserts NOTHING about authority. The caller must already have verified
+    /// that the human asking holds the root key the binding currently resolves to.
+    pub fn revocation(
+        platform: &str,
+        platform_uid: &str,
+        custodial_pubkey_hex: &str,
+        at: u64,
+    ) -> LinkRecord {
+        LinkRecord {
+            root_pubkey_hex: revoked_root_token(custodial_pubkey_hex),
+            platform: platform.to_string(),
+            platform_uid: platform_uid.to_string(),
+            custodial_pubkey_hex: custodial_pubkey_hex.to_string(),
+            verified_at: at,
+        }
+    }
+
+    /// Whether this record REVOKES its custodial key rather than binding it.
+    pub fn is_revocation(&self) -> bool {
+        is_revoked_root(&self.root_pubkey_hex)
+    }
+
     /// A field is storable iff it carries no TAB or NEWLINE (the TSV delimiters).
     fn field_ok(s: &str) -> bool {
         !s.as_bytes().iter().any(|&b| b == b'\t' || b == b'\n')
@@ -93,9 +176,12 @@ pub trait LinkStore {
     /// All records, oldest-first (the resolution helpers scan these).
     fn all(&self) -> std::io::Result<Vec<LinkRecord>>;
 
-    /// Resolve a custodial pubkey to its ROOT pubkey — the LATEST link for that custodial wins
-    /// (a rebind supersedes). `None` if the custodial key was never linked (it is then its own
-    /// identity, unchanged — resolution is additive, never breaks the unlinked case).
+    /// Resolve a custodial pubkey to its ROOT pubkey — the LATEST record for that custodial wins
+    /// (a rebind supersedes, and so does a revocation). `None` if the custodial key was never
+    /// linked (it is then its own identity, unchanged — resolution is additive, never breaks the
+    /// unlinked case) **or if its latest record is a revocation tombstone**: a revoked key is
+    /// nobody's, which is exactly the answer an unlinked key gets, so every consumer already
+    /// handles it correctly with no change.
     fn resolve_root(&self, custodial_pubkey_hex: &str) -> std::io::Result<Option<String>> {
         let mut latest: Option<(u64, String)> = None;
         for r in self.all()? {
@@ -104,13 +190,16 @@ pub trait LinkStore {
             {
                 match &latest {
                     // strict `>`: on a same-second tie the LATER file-order record wins, so a
-                    // same-second rebind to a new K supersedes (the review's tie-break fix).
+                    // same-second rebind to a new K supersedes (the review's tie-break fix), and so
+                    // does a same-second revocation.
                     Some((t, _)) if *t > r.verified_at => {}
                     _ => latest = Some((r.verified_at, r.root_pubkey_hex)),
                 }
             }
         }
-        Ok(latest.map(|(_, root)| root))
+        Ok(latest
+            .map(|(_, root)| root)
+            .filter(|root| !is_revoked_root(root)))
     }
 
     /// Resolve a custodial pubkey to the ROTATION-READY stable account id of its root
@@ -161,8 +250,33 @@ pub trait LinkStore {
         }
         Ok(latest
             .into_values()
+            // ⚑ A revoked latest record drops out of BOTH directions. It is already excluded by
+            // the root comparison below (a tombstone root matches no real key), and it is excluded
+            // explicitly as well so that asking `platforms_for_root(revoked_root_token(C))` — which
+            // a caller could reach by round-tripping a stale `resolve_root` answer through an older
+            // binary — cannot resurrect the row it names.
+            .filter(|r| !r.is_revocation())
             .filter(|r| r.root_pubkey_hex.eq_ignore_ascii_case(root_pubkey_hex))
             .collect())
+    }
+
+    /// **Revoke one binding** — append the tombstone that un-links `custodial` from whoever it
+    /// currently resolves to. Idempotent in effect (a second revocation of an already-revoked key
+    /// changes nothing that any reader can observe) and, like [`record`](LinkStore::record), a
+    /// RECORD rather than a gate: the caller must have already proven the asker holds the root.
+    fn revoke(
+        &mut self,
+        platform: &str,
+        platform_uid: &str,
+        custodial_pubkey_hex: &str,
+        at: u64,
+    ) -> std::io::Result<()> {
+        self.record(&LinkRecord::revocation(
+            platform,
+            platform_uid,
+            custodial_pubkey_hex,
+            at,
+        ))
     }
 }
 
@@ -416,6 +530,85 @@ mod tests {
         assert_eq!(s2.resolve_root("custT").unwrap(), Some("K".into()));
         assert_eq!(s2.all().unwrap().len(), 2);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ⚑ THE UN-LINK DOOR, at the store layer: a revoked binding leaves BOTH directions, and it
+    /// leaves them the same way an unlinked key was always absent — so no consumer needs to learn a
+    /// new state to be correct.
+    #[test]
+    fn a_revoked_binding_leaves_both_directions() {
+        let mut s = InMemoryLinkStore::default();
+        s.record(&rec("K", "discord", "111", "custD", 100)).unwrap();
+        s.record(&rec("K", "telegram", "222", "custT", 101))
+            .unwrap();
+        // NON-VACUOUS: it really is linked first, in both directions.
+        assert_eq!(s.resolve_root("custD").unwrap(), Some("K".into()));
+        assert_eq!(s.platforms_for_root("K").unwrap().len(), 2);
+
+        s.revoke("discord", "111", "custD", 200).unwrap();
+
+        // Gone from the forward direction — and gone as NONE, the unlinked answer, not as some new
+        // third state every caller would have to be taught.
+        assert_eq!(s.resolve_root("custD").unwrap(), None);
+        assert_eq!(s.resolve_root_account("custD").unwrap(), None);
+        // …and from the inverse direction, so `/you` stops counting that account's play.
+        let left: Vec<String> = s
+            .platforms_for_root("K")
+            .unwrap()
+            .into_iter()
+            .map(|r| r.platform)
+            .collect();
+        assert_eq!(left, vec!["telegram".to_string()]);
+        // The OTHER binding is untouched: revoking one link is not signing out.
+        assert_eq!(s.resolve_root("custT").unwrap(), Some("K".into()));
+
+        // A revoked account can be linked again afterwards — revocation supersedes, it does not
+        // poison the key.
+        s.record(&rec("K", "discord", "111", "custD", 300)).unwrap();
+        assert_eq!(s.resolve_root("custD").unwrap(), Some("K".into()));
+        assert_eq!(s.platforms_for_root("K").unwrap().len(), 2);
+    }
+
+    /// ⚑ THE VERSION-SKEW TOOTH — the property the tombstone shape was chosen FOR. A reader that
+    /// knows nothing about revocation (modelled here by resolving with the raw latest-wins rule and
+    /// no tombstone recognition, which is byte-for-byte what an older binary does with these same
+    /// five fields) must still DE-LINK. It may not keep honouring a link the player removed.
+    #[test]
+    fn a_reader_that_never_heard_of_revocation_still_de_links() {
+        let mut s = InMemoryLinkStore::default();
+        s.record(&rec("K", "discord", "111", "custD", 100)).unwrap();
+        s.revoke("discord", "111", "custD", 200).unwrap();
+
+        // What an old binary computes: latest-wins per custodial, then compare to the root it holds.
+        let old_reader_root = s
+            .all()
+            .unwrap()
+            .into_iter()
+            .filter(|r| r.custodial_pubkey_hex == "custD")
+            .max_by_key(|r| r.verified_at)
+            .map(|r| r.root_pubkey_hex)
+            .expect("the tombstone parses as an ordinary five-field record");
+        assert_ne!(
+            old_reader_root, "K",
+            "an old reader must not still resolve a revoked key to its former human"
+        );
+        assert!(is_revoked_root(&old_reader_root));
+
+        // …and two SEPARATELY revoked keys must not collide into one apparent human for that same
+        // old reader, which is why the token is derived per-custodial rather than shared.
+        s.record(&rec("K2", "telegram", "222", "custT", 100))
+            .unwrap();
+        s.revoke("telegram", "222", "custT", 210).unwrap();
+        assert_ne!(revoked_root_token("custD"), revoked_root_token("custT"));
+
+        // The tombstone survives the TSV encoding it has to ride in.
+        let line = LinkRecord::revocation("discord", "111", "custD", 200)
+            .to_line()
+            .expect("a tombstone encodes");
+        let back = LinkRecord::from_line(&line).expect("and parses back as five fields");
+        assert!(back.is_revocation());
+        assert_eq!(back.platform, "discord");
+        assert_eq!(back.custodial_pubkey_hex, "custD");
     }
 
     #[test]

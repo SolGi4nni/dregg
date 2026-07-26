@@ -219,7 +219,7 @@ pub fn register_surfaces_in_world(host: &mut OfferingHost, world: SharedWorld) {
     register_player_surfaces_in_world(host, world);
     host.register(
         "party",
-        "Party — a seated roster + a quorum-certified fork ballot",
+        "Party · a seated roster + a quorum-certified fork ballot",
         PartyOffering::new(),
     );
 }
@@ -234,7 +234,7 @@ pub fn register_player_surfaces_in_world(host: &mut OfferingHost, world: SharedW
         // `TURN_BUY` · `TURN_CANCEL`; the atomic asset swap lives on the MARKET side
         // (`MarketSession::settle_winning_asset`) and was never reachable from this offering.
         // Caught by `dreggnet_catalog`'s `no_registered_title_names_a_verb_the_offering_does_not_have`.
-        "DreggNet Trade — a player market for the gear you own (list · buy · cancel)",
+        "DreggNet Trade · a player market for the gear you own (list · buy · cancel)",
         TradeOffering::in_world(world.clone()),
     );
     host.register(
@@ -242,17 +242,17 @@ pub fn register_player_surfaces_in_world(host: &mut OfferingHost, world: SharedW
         // ⚑ THAT WAS A NOUN LIST WEARING A VERB LIST'S PUNCTUATION. `(gear · cards · trophies)`
         // sits exactly where every sibling title puts the things you can DO, so it read as three
         // affordances; the offering has ONE, `gift`. Same shape, same fix as `trade` above.
-        "Inventory — your owned gear, cards and trophies, provenance-checked (gift)",
+        "Inventory · your owned gear, cards and trophies, provenance-checked (gift)",
         InventoryOffering::in_world(world.clone()),
     );
     host.register(
         "cheevos",
-        "Achievements — earned soulbound proofs over verified runs",
+        "Achievements · earned soulbound proofs over verified runs",
         CheevoShowcase::demo(),
     );
     host.register(
         "guild",
-        "Guild — the roster + the aggregate verified-clears leaderboard",
+        "Guild · the roster + the aggregate verified-clears leaderboard",
         GuildPage::demo("The Iron Wardens"),
     );
     host.register(
@@ -260,12 +260,12 @@ pub fn register_player_surfaces_in_world(host: &mut OfferingHost, world: SharedW
         // ⚑ Neither `consume` nor `mint` is a verb here — `CraftOffering` has exactly one,
         // `TURN_CRAFT`. The parenthetical was describing what ONE move does, in the slot every
         // other title uses for the list of moves.
-        "Forge — a provably-fair craft loop: one move spends a recipe's materials and makes its output (craft)",
+        "Forge · a provably-fair craft loop: one move spends a recipe's materials and makes its output (craft)",
         CraftOffering::in_world(world),
     );
     host.register(
         "companion",
-        "Companions — hatch a fair-drawn companion · raise it through XP-gated turns",
+        "Companions: hatch a fair-drawn companion · raise it through XP-gated turns",
         CompanionOffering::demo(),
     );
     host.register(
@@ -275,7 +275,7 @@ pub fn register_player_surfaces_in_world(host: &mut OfferingHost, world: SharedW
     );
     host.register(
         "tavern",
-        "Tavern — the shared hub: presence · the LFG board · the party roster",
+        "Tavern · the shared hub: presence · the LFG board · the party roster",
         TavernOffering::demo("The Salted Tankard"),
     );
 }

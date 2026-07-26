@@ -101,7 +101,7 @@ impl ViewerBlindChutesConsent {
     /// One compact disclosure shared byte-for-byte in meaning across surfaces.
     pub fn compact_text(&self) -> String {
         bounded(format!(
-            "Chutes/Bittensor model `{}` gets only the current public room and closed legal commands. No private input, player identity, balance, or account data is sent. It may propose one; the verified executor—not model prose—decides every effect. Player cost: exactly 1 run credit, consumed only after a provenance-bound executor receipt lands. Provider, stale, parser, or executor refusal costs 0 player credits. Operator inference ceiling: ${}. Public result: full receipt + replay instruction. Shared cards omit prompts/tool payloads/token counts.",
+            "Chutes/Bittensor model `{}` gets only the current public room and closed legal commands. No private input, player identity, balance, or account data is sent. It may propose one; the verified executor, not model prose, decides every effect. Player cost: exactly 1 run credit, consumed only after a provenance-bound executor receipt lands. Provider, stale, parser, or executor refusal costs 0 player credits. Operator inference ceiling: ${}. Public result: full receipt + replay instruction. Shared cards omit prompts/tool payloads/token counts.",
             self.model,
             dollars(self.operator_cap_micro_usd),
         ))

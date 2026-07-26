@@ -117,7 +117,7 @@ async fn handle_rotate(ctx: &Context, command: &CommandInteraction, state: &BotS
                 ctx,
                 command,
                 "No Key Set",
-                "Use `/key set` first — there is nothing to rotate.",
+                "Use `/key set` first; there is nothing to rotate.",
             )
             .await
         }
@@ -132,7 +132,7 @@ async fn handle_revoke(ctx: &Context, command: &CommandInteraction, state: &BotS
         Ok(true) => {
             reset_session(state, owner);
             let embed = embeds::dregg_embed("Key Revoked").description(
-                "Your stored key was deleted — the sealed ciphertext is gone and nothing is recoverable. Chat falls back to the built-in classifier until you `/key set` again.",
+                "Your stored key was deleted: the sealed ciphertext is gone and nothing is recoverable. Chat falls back to the built-in classifier until you `/key set` again.",
             );
             edit(ctx, command, embed).await;
         }
@@ -156,7 +156,7 @@ async fn handle_status(ctx: &Context, command: &CommandInteraction, state: &BotS
                             .ok()
                     })
                     .map(|k| k.fingerprint())
-                    .unwrap_or_else(|| "(stored — could not verify; re-set?)".to_string());
+                    .unwrap_or_else(|| "(stored · could not verify; re-set?)".to_string());
             let embed = embeds::dregg_embed("Your Key")
                 .field("Provider", format!("`{}`", rec.provider), true)
                 .field("Model", format!("`{}`", rec.model), true)
@@ -167,7 +167,7 @@ async fn handle_status(ctx: &Context, command: &CommandInteraction, state: &BotS
         }
         Ok(None) => {
             let embed = embeds::dregg_embed("No Key Set").description(
-                "You haven't ported in a key. Use `/key set` to bring your own provider key — it's encrypted at rest and metered by dregg.",
+                "You haven't ported in a key. Use `/key set` to bring your own provider key; it's encrypted at rest and metered by dregg.",
             );
             edit(ctx, command, embed).await;
         }

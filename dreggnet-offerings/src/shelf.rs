@@ -87,7 +87,7 @@ impl ShelfBlock {
         match self {
             ShelfBlock::PrivateSurfaceOnly => format!(
                 "{name} has to keep part of the game hidden from the other player, and the board \
-                 here is ONE thing everybody in the room reads — so it only runs somewhere with a \
+                 here is ONE thing everybody in the room reads, so it only runs somewhere with a \
                  single reader."
             ),
         }
@@ -133,12 +133,18 @@ impl ShelfEntry {
 }
 
 /// **The short display name inside a catalog title.** Every registered title in this workspace is
-/// `"<name> — <tagline>"` (`"Automatafl — two players move at the same time, in secret, …"`), so a
-/// sentence that needs to *name* the game takes the part before the em dash; a title without one
+/// `"<name> · <tagline>"` (`"Automatafl · two players move at the same time, in secret, …"`), so a
+/// sentence that needs to *name* the game takes the part before the separator; a title without one
 /// is already short and is returned whole.
+///
+/// ⚑ BOTH separators are accepted. The registry was written with an em dash and moved to the
+/// interpunct in the 2026-07-26 punctuation pass; a title that still carries the old glyph — one
+/// typed at a call site, or registered by a crate that has not been swept — must keep parsing, or
+/// its short name silently becomes the whole tagline on every shelf.
 pub fn headline(title: &str) -> &str {
     title
-        .split_once(" — ")
+        .split_once(" · ")
+        .or_else(|| title.split_once(" — "))
         .map_or(title, |(name, _)| name)
         .trim()
 }
@@ -332,6 +338,15 @@ mod tests {
     /// The copy helpers: a name is the headline, and a list of names reads as English.
     #[test]
     fn the_copy_helpers_produce_prose() {
+        // ⚑ THE LIVE SHAPE. Every registered title carries the interpunct since the 2026-07-26
+        // punctuation pass, so this case — not the em-dash one below it — is the one the shipped
+        // registry exercises.
+        assert_eq!(
+            headline("Automatafl · two players move at once"),
+            "Automatafl"
+        );
+        // The old glyph still parses: a title typed at a call site, or registered by an unswept
+        // crate, must not silently return its whole tagline as the game's short name.
         assert_eq!(
             headline("Automatafl — two players move at once"),
             "Automatafl"

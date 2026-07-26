@@ -122,7 +122,7 @@ const THEMES: [Theme; 4] = [
         gate_prose: "The Tide-Warden bars the flooded stair with a barnacled gaff. There is no way \
                      down but through it, and every exchange draws cold brine from both of you.",
         defeat_prose: "The gaff's hook finds you and the black water closes over your head. The \
-                       descent is over — no key, no hoard. Your run ends here and cannot be retried.",
+                       descent is over: no key, no hoard. Your run ends here and cannot be retried.",
         descs: &[
             "Cold fen-water laps at the stones; a warden's lantern still hangs from an iron hook.",
             "A drowned stair spirals down into water too still to trust.",
@@ -138,7 +138,7 @@ const THEMES: [Theme; 4] = [
         gate_prose: "The Brass Sentinel stands athwart the gearworks stair, one fist a striking \
                      hammer. It does not tire, and it will not stand aside.",
         defeat_prose: "The Sentinel's fist comes around like a falling hammer and the gears close \
-                       over you. The descent is over — no key, no hoard, and no second wind.",
+                       over you. The descent is over: no key, no hoard, and no second wind.",
         descs: &[
             "A floor of interlocking cogs, most of them stopped, one still faintly turning.",
             "Brass leaves litter a mechanical grove that has not budded in an age.",
@@ -154,7 +154,7 @@ const THEMES: [Theme; 4] = [
         gate_prose: "The Kiln-Priest guards the ashen stair, fire answering to one raised hand. \
                      The heat alone would cow a lesser trespasser; the descent lies past it.",
         defeat_prose: "The Priest's fire outshines yours and the ash pours into your lungs. The \
-                       descent is over — the light goes out, and this run will not be retried.",
+                       descent is over: the light goes out, and this run will not be retried.",
         descs: &[
             "Warm ash sifts from a cracked dome; the floor is warm underfoot.",
             "Heat shimmers over a floor of fused glass and grey cinder.",
@@ -170,7 +170,7 @@ const THEMES: [Theme; 4] = [
         gate_prose: "The Frozen Bishop kneels frozen mid-blessing across the iced nave, yet its \
                      robe of solid rime turns aside a careless blow. Only through it lies the stair.",
         defeat_prose: "The cold hymn slows your blood until it will not move, and the ice takes you \
-                       for its own. The descent is over — no relic, no return.",
+                       for its own. The descent is over: no relic, no return.",
         descs: &[
             "Frost has fused the pews to the floor; your breath hangs and does not fall.",
             "Icicles the length of spears depend from a vaulted ceiling of blue ice.",
@@ -342,7 +342,7 @@ pub fn daily_scene(seed: &CommittedSeed) -> DailyDescent {
          you can carry it out.\n\n",
     );
     out.push_str(&format!(
-        "* [Seize the {h} — the descent is survived]\n  ~ gold += {HOARD_GOLD}\n  -> END\n\n",
+        "* [Seize the {h} · the descent is survived]\n  ~ gold += {HOARD_GOLD}\n  -> END\n\n",
         h = theme.hoard_item
     ));
 
@@ -754,7 +754,7 @@ impl std::fmt::Display for SettleError {
         match self {
             SettleError::NotWon => write!(
                 f,
-                "the run is not a finished win — only a real won run settles"
+                "the run is not a finished win: only a real won run settles"
             ),
             SettleError::Unverified(d) => {
                 write!(f, "the run did not re-verify before settling: {d}")

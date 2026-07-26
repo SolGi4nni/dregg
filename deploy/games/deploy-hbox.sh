@@ -314,11 +314,19 @@ preflight() {
 # ── build ────────────────────────────────────────────────────────────────────
 build() {
   log "build native browser runtime + cargo --release: ${BINARIES[*]}"
-  # `/descent/play` is an actual game, not an optional decoration. Rebuild its
-  # wasm in the same release transaction so the server can never expose a new
-  # native shell over yesterday's procgen-only glue. `descent_play.rs` serves
-  # this exact workspace pkg as its normal deployment fallback.
-  run bash -c "cd '$GAMES_REPO_DIR' && RUSTFLAGS='-C link-arg=-zstack-size=33554432' wasm-pack build wasm --target web --out-dir pkg --release"
+  # `/descent/play`'s browser engine is a BUILD OUTPUT — `wasm/pkg` is gitignored, so a
+  # fresh checkout has no bundle and a deploy that skips this step ships a play page whose
+  # browser option is unavailable (which the page states, rather than throwing). Rebuild it
+  # in the same release transaction so the server can never expose a new native shell over
+  # yesterday's glue. `descent_play.rs` serves this exact workspace pkg by default.
+  #
+  # ⚑ VIA THE SHARED SCRIPT, not an inline `wasm-pack`. The line that stood here passed
+  # `RUSTFLAGS='-C link-arg=-zstack-size=33554432'` ALONE, and env RUSTFLAGS does not merge
+  # with `.cargo/config.toml` — it replaces it — so this deploy was silently dropping the
+  # `--cfg getrandom_backend="wasm_js"` that getrandom 0.3/0.4 require on wasm32. The
+  # script carries both flags, strips the debug name section, stamps provenance, and runs
+  # the freshness gate, so what lands here is a bundle that can be PROVED current.
+  run bash -c "cd '$GAMES_REPO_DIR' && bash scripts/build-descent-wasm.sh"
   # DREGG_REQUIRE_LEAN=0: the games web + bot are the RE-EXECUTION-verified surface
   # (a run ranks + verifies by replay, not by the Lean-linked verified producer —
   # that is the node's job, built Lean-linked via deploy/node/). Without this, the

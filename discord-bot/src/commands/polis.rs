@@ -297,7 +297,7 @@ pub async fn handle_council_approve(ctx: &Context, command: &CommandInteraction,
             let embed = embeds::error_embed(
                 "Approval Rejected",
                 result.error.as_deref().unwrap_or(
-                    "the executor rejected the approval — your cipherclerk is likely not the bound key for this member slot, or the proposal is not open",
+                    "the executor rejected the approval: your cipherclerk is likely not the bound key for this member slot, or the proposal is not open",
                 ),
             );
             let _ = command

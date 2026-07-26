@@ -183,11 +183,11 @@ fn commit_hex(felts: &[BabyBear; 8]) -> String {
 pub fn verdict_text(check: &Result<ProofCheck, String>) -> String {
     match check {
         Ok(c) if c.verified => format!(
-            "✓ **Verifies under VK `{vk}…` — checked just now, not trusted.** This bot ran the \
+            "✓ **Verifies under VK `{vk}…` · checked just now, not trusted.** This bot ran the \
              same audited Plonky3 verifier a remote peer would (`dregg_sdk::verify_full_turn`) \
              over the fetched bytes.\nLegs verified: {legs}.\nState binding (the proof's own \
              8-felt anchors): `{old}…` → `{new}…`. Binding those to the chain's canonical \
-             committed state is the checkpoint's job — that part you can also check yourself \
+             committed state is the checkpoint's job; that part you can also check yourself \
              (below).",
             vk = &c.vk_hex[..16.min(c.vk_hex.len())],
             legs = if c.legs.is_empty() {
@@ -199,7 +199,7 @@ pub fn verdict_text(check: &Result<ProofCheck, String>) -> String {
             new = &c.new_commit[..16.min(c.new_commit.len())],
         ),
         Ok(c) => format!(
-            "✗ **The fetched bytes DO NOT verify** under VK `{vk}…` — do not trust this \
+            "✗ **The fetched bytes DO NOT verify** under VK `{vk}…`. Do not trust this \
              artifact.\n`{detail}`",
             vk = &c.vk_hex[..16.min(c.vk_hex.len())],
             detail = c.detail,
@@ -212,7 +212,7 @@ pub fn verdict_text(check: &Result<ProofCheck, String>) -> String {
 pub fn offline_recheck_text(node_url: &str, turn_hash_hex: &str) -> String {
     format!(
         "```\ncurl {base}/api/turn/{turn_hash_hex}/proof | jq -r .proof_hex\n```\nDecode the hex \
-         and hand the bytes to `dregg_sdk::verify_full_turn` (`sdk/src/full_turn_proof.rs`) — \
+         and hand the bytes to `dregg_sdk::verify_full_turn` (`sdk/src/full_turn_proof.rs`), \
          the same call this bot just made. Spend freshness is in-circuit; binding it to the \
          canonical spent set means pinning the canonical `expected_old_commit`.",
         base = node_url.trim_end_matches('/'),

@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>dregg.works — a host that cannot tamper with what it serves</title>
+  <title>dregg.works · a host that cannot tamper with what it serves</title>
   <meta name="description" content="The web of cells. Publish a minisite by committing its blake3 hash to your cell on-chain; <name>.dregg.works serves the bytes; every visitor verifies in their own browser that the served bytes match the commitment. The host cannot tamper.">
-  <meta property="og:title" content="dregg.works — a host that cannot tamper">
-  <meta property="og:description" content="Publish a minisite by committing its hash on-chain. The host serves the bytes but cannot change them — every page is verifiable in your browser.">
+  <meta property="og:title" content="dregg.works · a host that cannot tamper">
+  <meta property="og:description" content="Publish a minisite by committing its hash on-chain. The host serves the bytes but cannot change them: every page is verifiable in your browser.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
   <link rel="stylesheet" href="../assets/style.css">
   <style>
@@ -75,7 +75,7 @@
   <p class="hero__eyebrow">the web of cells</p>
   <h1>A host that cannot tamper with <em>what it serves.</em></h1>
   <p class="dw-lede">
-    Publish a minisite and you commit its <code>blake3</code> hash to your cell — on-chain, in one cap-gated
+    Publish a minisite and you commit its <code>blake3</code> hash to your cell: on-chain, in one cap-gated
     receipted turn. <code>&lt;name&gt;.dregg.works</code> serves the bytes, but it holds no power to change
     them. Every published page proves itself in the visitor's browser: the served bytes are re-hashed and
     matched against the commitment. <strong>You never have to trust the host.</strong>
@@ -96,14 +96,14 @@
       On the open web a link is a <em>place</em>: you trust DNS to find a host, TLS to authenticate it, and
       then you trust whatever bytes that host hands back. A <code>dregg://</code> page is a
       <em>capability into a specific cell</em>, and its bytes are content-addressed: the page is the page the
-      origin committed — checkable by anyone, from any source. <code>dregg.works</code> is that model wearing
+      origin committed, checkable by anyone, from any source. <code>dregg.works</code> is that model wearing
       ordinary HTTP, so any browser can reach it.
     </p>
     <div class="dw-flow">
       <div class="dw-step"><span class="dw-step__n">1 · commit (the trust)</span><span class="dw-step__t">Publish to your cell</span>
-        <span class="dw-step__d">A cap-gated turn writes <code>blake3(page)</code> into slot&nbsp;0 of your cell. The commitment is on-chain, signed, receipted — and yours. This is the only trust-bearing step.</span></div>
+        <span class="dw-step__d">A cap-gated turn writes <code>blake3(page)</code> into slot&nbsp;0 of your cell. The commitment is on-chain, signed, receipted, and yours. This is the only trust-bearing step.</span></div>
       <div class="dw-step"><span class="dw-step__n">2 · serve (just bytes)</span><span class="dw-step__t">&lt;name&gt;.dregg.works</span>
-        <span class="dw-step__d">The host ships the raw committed bytes over HTTP. It is untrusted infrastructure — convenience, never authority. It cannot forge a blake3 preimage.</span></div>
+        <span class="dw-step__d">The host ships the raw committed bytes over HTTP. It is untrusted infrastructure: convenience, never authority. It cannot forge a blake3 preimage.</span></div>
       <div class="dw-step"><span class="dw-step__n">3 · verify (you)</span><span class="dw-step__t">Re-hash in your tab</span>
         <span class="dw-step__d">The verify badge re-hashes the bytes your browser received and compares them to the cell's committed hash, fetched from a node you can point anywhere. ✓ or ✗.</span></div>
     </div>
@@ -112,11 +112,11 @@
   <!-- ============ THE LIVE TAMPER DEMO ============ -->
   <section class="section" id="verify">
     <span class="section__label">Prove it to yourself</span>
-    <h2 class="section__title">Tamper with the bytes — watch it get caught</h2>
+    <h2 class="section__title">Tamper with the bytes · watch it get caught</h2>
     <p class="section__intro">
       This is the exact check every <code>dregg.works</code> page runs, here in your tab. The
       <strong>committed hash</strong> is fixed (as if it were on-chain in a cell). Edit the page bytes below:
-      the <strong>served hash</strong> recomputes live. Change a single character and it diverges — the host
+      the <strong>served hash</strong> recomputes live. Change a single character and it diverges: the host
       cannot slip anything past you.
     </p>
     <div class="demo">
@@ -128,7 +128,7 @@
 &lt;p&gt;These bytes are committed on-chain. The host cannot change them.&lt;/p&gt;</textarea>
       </div>
       <div class="demo__controls">
-        <span class="demo__hint">the commitment is fixed — like a hash sealed in your cell's slot&nbsp;0</span>
+        <span class="demo__hint">the commitment is fixed, like a hash sealed in your cell's slot&nbsp;0</span>
         <span>
           <button class="btn btn--secondary" id="tamper" style="padding:6px 14px;font-size:0.8rem">Tamper one byte</button>
           <button class="btn btn--secondary" id="reset" style="padding:6px 14px;font-size:0.8rem">Reset</button>
@@ -137,11 +137,11 @@
       <div class="demo__verdict" id="verdict">…</div>
       <div class="demo__hashes">
         <div class="demo__h" id="committedBox"><b>committed on-chain (cell slot 0)</b><span id="committed">—</span></div>
-        <div class="demo__h" id="servedBox"><b>served bytes — blake3, computed in your tab</b><span id="served">—</span></div>
+        <div class="demo__h" id="servedBox"><b>served bytes · blake3, computed in your tab</b><span id="served">—</span></div>
       </div>
     </div>
     <p class="section__intro" style="margin-top:var(--s5);font-size:0.92rem">
-      On a real <code>dregg.works</code> page the committed hash is not baked in — it is fetched live from a
+      On a real <code>dregg.works</code> page the committed hash is not baked in: it is fetched live from a
       node via <code>GET /api/cell/&lt;id&gt;</code> (slot&nbsp;0), so the host serving the page never supplies
       its own answer key. Same blake3, same comparison, against a commitment you can independently look up.
     </p>
@@ -153,7 +153,7 @@
     <h2 class="section__title">Every served page carries the proof</h2>
     <p class="section__intro">
       One self-contained script, dropped into a published page, gives every visitor the verdict in the corner
-      of the screen — no extension, no install. It re-fetches the page's own bytes, hashes them with a
+      of the screen: no extension, no install. It re-fetches the page's own bytes, hashes them with a
       vendored BLAKE3, and checks them against the on-chain commitment. A click opens the full reading.
     </p>
     <p style="text-align:center;margin:var(--s5) 0"><span class="badge-demo">✓ verified on-chain</span></p>
@@ -166,9 +166,9 @@
         data-node="https://&lt;node-you-trust&gt;"&gt;&lt;/script&gt;</code></pre>
     </div>
     <p class="section__intro" style="margin-top:var(--s4);font-size:0.92rem">
-      Then commit <code>blake3</code> of the whole file — badge tag and all — to your cell. The page becomes
+      Then commit <code>blake3</code> of the whole file, badge tag and all, to your cell. The page becomes
       self-certifying: the bytes that include the badge are exactly the bytes the badge re-hashes and the
-      bytes the commitment pins. The check closes on itself. The badge carries no baked-in node — the host
+      bytes the commitment pins. The check closes on itself. The badge carries no baked-in node: the host
       serving the page never supplies its own answer key. <code>data-node</code> names the node you trust
       (the script's header documents the meta-tag and <code>window.__DREGG__</code> alternatives); with no
       node configured, the badge reports the page as unanchored rather than inventing one.
@@ -182,7 +182,7 @@
     <p class="section__intro">
       A published cell is sovereign: it committed its own bytes. The <code>dregg://</code> ref is the
       content-addressed cell id; the <code>.dregg.works</code> name is just a convenient front for it.
-      No public devnet is anchored right now, so no minisite is publicly served — publishing works against
+      No public devnet is anchored right now, so no minisite is publicly served; publishing works against
       any node you run.
     </p>
     <div class="dw-grid">
@@ -227,7 +227,7 @@ const dreggUri = `dregg://${runtime.cellIdHex()}`;</code></pre>
       The convention is realized in <code>portal/src/drive-actions.mjs</code> (<code>publishMinisite</code>) and
       <code>starbridge-web-surface/src/web_of_cells.rs</code> (<code>WebOfCells::publish</code> / the
       <code>ServedResourceCell</code> shape). The serving host that maps a name to a cell and ships the bytes
-      is untrusted infrastructure — by design, it never needs to be believed.
+      is untrusted infrastructure: by design, it never needs to be believed.
     </p>
   </section>
 
@@ -235,7 +235,7 @@ const dreggUri = `dregg://${runtime.cellIdHex()}`;</code></pre>
 
 <footer class="site-foot">
   <div class="site-foot__inner">
-    <span class="site-foot__left"><code>dregg.works</code> &mdash; the web of cells. A host that cannot tamper. AGPL-3.0-or-later.</span>
+    <span class="site-foot__left"><code>dregg.works</code> · the web of cells. A host that cannot tamper. AGPL-3.0-or-later.</span>
     <div class="site-foot__links">
       <a href="../">dregg / deos</a>
       <a href="../light-client/">Light client</a>
@@ -286,7 +286,7 @@ const dreggUri = `dregg://${runtime.cellIdHex()}`;</code></pre>
     const ok = served === committed;
     const v = $('#verdict');
     v.className = 'demo__verdict ' + (ok ? 'ok' : 'bad');
-    v.textContent = ok ? '✓ these exact bytes are committed on-chain' : '✕ tampered — the served bytes do not match the commitment';
+    v.textContent = ok ? '✓ these exact bytes are committed on-chain' : '✕ tampered: the served bytes do not match the commitment';
     $('#servedBox').classList.toggle('ok', ok);
     $('#committedBox').classList.toggle('ok', ok);
   }

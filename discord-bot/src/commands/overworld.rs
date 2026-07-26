@@ -140,17 +140,17 @@ impl Offering for OverworldPlay {
                 "· uncleared"
             };
             let you = if loc.id == here { "  ← you" } else { "" };
-            lines.push(ViewNode::Text(format!("**{}** — {mark}{you}", loc.id)));
+            lines.push(ViewNode::Text(format!("**{}**: {mark}{you}", loc.id)));
         }
         lines.push(ViewNode::Text(if open.is_empty() {
-            "No roads are open from here — clear this location to unlock its gated roads."
+            "No roads are open from here. Clear this location to unlock its gated roads."
                 .to_string()
         } else {
             format!("Open roads: {}", open.join(", "))
         }));
         Surface(ViewNode::Section {
             title: format!(
-                "Overworld — {} ({} / {} cleared)",
+                "Overworld · {} ({} / {} cleared)",
                 s.map().id,
                 s.cleared_count(),
                 s.map().locations.len()

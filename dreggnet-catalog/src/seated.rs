@@ -109,7 +109,7 @@ impl Offering for SeatedTug {
     fn advance(&self, session: &mut Self::Session, input: Action, actor: DreggIdentity) -> Outcome {
         let existing = session.seat_of(&actor);
         let Some(seat) = existing.or_else(|| session.claimable_seat()) else {
-            return Outcome::Refused("both seats are taken — you are a spectator".to_string());
+            return Outcome::Refused("both seats are taken; you are a spectator".to_string());
         };
         let outcome =
             self.inner

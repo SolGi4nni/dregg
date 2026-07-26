@@ -43,7 +43,7 @@ pub async fn fan_out(ctx: &Context, state: &BotState, fanout: PublishFanout) -> 
         .await
     {
         Ok(subs) => subs,
-        Err(e) => return format!("subscriber lookup failed ({e}) — nobody was DMed"),
+        Err(e) => return format!("subscriber lookup failed ({e}): nobody was DMed"),
     };
 
     let mut delivered = 0usize;
@@ -83,7 +83,7 @@ pub async fn fan_out(ctx: &Context, state: &BotState, fanout: PublishFanout) -> 
     }
 
     match (subscribers.len(), delivered, failed) {
-        (0, _, _) => "no subscribers yet — nobody to DM".to_string(),
+        (0, _, _) => "no subscribers yet · nobody to DM".to_string(),
         (_, d, 0) => format!(
             "DMed {d} subscriber(s){}",
             if skipped_self > 0 {
@@ -93,7 +93,7 @@ pub async fn fan_out(ctx: &Context, state: &BotState, fanout: PublishFanout) -> 
             }
         ),
         (_, d, f) => format!(
-            "DMed {d} subscriber(s); {f} undeliverable (DMs closed or unknown user) — \
+            "DMed {d} subscriber(s); {f} undeliverable (DMs closed or unknown user) · \
              the queue entry itself committed either way"
         ),
     }
@@ -106,7 +106,7 @@ fn body_preview(message: &str) -> String {
         message.to_string()
     } else {
         let mut out: String = message.chars().take(MAX).collect();
-        out.push_str("\n… (truncated — the committed hash covers the FULL body)");
+        out.push_str("\n… (truncated: the committed hash covers the FULL body)");
         out
     }
 }

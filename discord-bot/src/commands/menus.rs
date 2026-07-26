@@ -110,7 +110,7 @@ const GAME_DOORS: [GameDoor; 3] = [
         key: "descent",
         title: "The Descent",
         rhythm: "a dungeon crawl · one dungeon a day, the same for everyone · one life, no retries",
-        privacy: "Your run belongs to you — nobody else can move it — but the board it plays on in this channel is public.",
+        privacy: "Your run belongs to you (nobody else can move it), but the board it plays on in this channel is public.",
         special: "go deeper for better loot; you only keep what you carry back out",
     },
     GameDoor {
@@ -222,7 +222,7 @@ fn cheat_sub() -> Value {
     m.insert("name".into(), Value::String("cheat".into()));
     m.insert(
         "description".into(),
-        Value::String("Cheat Code — type a key to open something that is not on the shelf".into()),
+        Value::String("Cheat Code · type a key to open something that is not on the shelf".into()),
     );
     let mut opt = Map::new();
     opt.insert("type".into(), Value::from(3u64)); // STRING
@@ -338,14 +338,14 @@ pub const SLASH_SURFACE: &[Slash] = &[
         name: "cipherclerk",
         door: Door::Player(
             "you: your cell and keys, DEC balance/send/history/faucet, $DREGG \
-             run-credits, and `link-web` — the one ceremony that stops a player being \
+             run-credits, and `link-web`, the one ceremony that stops a player being \
              two people on one leaderboard",
         ),
     },
     Slash {
         name: "verify",
         door: Door::Player(
-            "the proof surface — the thing that makes a receipted game worth playing: \
+            "the proof surface, the thing that makes a receipted game worth playing: \
              fetch AND verify a turn's STARK, browse committed state, fold a win into \
              one O(1) crown",
         ),
@@ -358,8 +358,8 @@ pub const SLASH_SURFACE: &[Slash] = &[
     Slash {
         name: "gallery",
         door: Door::Lab(
-            "publishing and remixing procgen universes (`list`/`show`/`play`/`publish`) \
-             — the whole UGC registry, which no shipped game needs",
+            "publishing and remixing procgen universes (`list`/`show`/`play`/`publish`), \
+             the whole UGC registry, which no shipped game needs",
         ),
     },
     // `council` is off the ship list, so the DAO surface goes with it.
@@ -387,7 +387,7 @@ pub const SLASH_SURFACE: &[Slash] = &[
         door: Door::Lab(
             "federation status/peers/setup, presence attestation, the atomic \
              two-agent `coordinate` settle, `channel` (claim your semi-private DreggNet \
-             Cloud channel — the Hermes typing surface) and the `deos` cap-gated \
+             Cloud channel, the Hermes typing surface) and the `deos` cap-gated \
              affordance cards. ⚑ `channel` is the biggest single loss here; the \
              `start:channel` BUTTON on `/help` still claims one",
         ),
@@ -465,7 +465,7 @@ fn command_for(name: &str) -> Value {
         "play" => top(
             "play",
             &format!(
-                "{} — open a receipted game in this channel",
+                "{} · open a receipted game in this channel",
                 dreggnet_catalog::SURFACE_NAME
             ),
             vec![
@@ -487,7 +487,7 @@ fn command_for(name: &str) -> Value {
         // The narrative worlds; /dungeon (the party crawl) folds in.
         "adventure" => top(
             "adventure",
-            "Narrative worlds — the shared AI-narrated party dungeon and its kin",
+            "Narrative worlds · the shared AI-narrated party dungeon and its kin",
             vec![
                 menu_sub(),
                 fold(commands::fiction::register(), Some("dungeon")),
@@ -501,7 +501,7 @@ fn command_for(name: &str) -> Value {
         // The DAO surface: council, approvals, bounties, intents.
         "govern" => top(
             "govern",
-            "The DAO surface — councils, approvals, bounties, and signed intents",
+            "The DAO surface · councils, approvals, bounties, and signed intents",
             vec![
                 menu_sub(),
                 fold(commands::council::register(), None),
@@ -514,7 +514,7 @@ fn command_for(name: &str) -> Value {
         // The proof surface: fetch + verify artifacts, browse state.
         "verify" => top(
             "verify",
-            "The proof surface — fetch, verify, and browse committed state",
+            "The proof surface · fetch, verify, and browse committed state",
             vec![
                 menu_sub(),
                 fold(commands::status::register_proof(), None),
@@ -527,7 +527,7 @@ fn command_for(name: &str) -> Value {
         // Granting authority: caps, handoffs, link ceremonies, keys, roles.
         "identity" => top(
             "identity",
-            "Grant authority — capabilities, handoffs, link ceremonies, and your LLM key",
+            "Grant authority · capabilities, handoffs, link ceremonies, and your LLM key",
             vec![
                 menu_sub(),
                 fold(commands::captp::register_share(), None),
@@ -557,7 +557,7 @@ fn command_for(name: &str) -> Value {
         // The network: status, peers, presence, coordination.
         "federation" => top(
             "federation",
-            "The network — federation status, peers, presence, and coordination",
+            "The network · federation status, peers, presence, and coordination",
             vec![
                 menu_sub(),
                 fold(commands::federation::register_status(), Some("status")),
@@ -575,7 +575,7 @@ fn command_for(name: &str) -> Value {
         // Onboarding + the tour (the old /start) + the map.
         "help" => top(
             "help",
-            "How the bot works — onboarding, the 2-minute tour, and the command map",
+            "How the bot works · onboarding, the 2-minute tour, and the command map",
             vec![],
         ),
         other => panic!(
@@ -650,7 +650,7 @@ fn dregg_command() -> Value {
     // This is the `menu` subcommand's job, under the name the hub already answers to.
     options.push(sub(
         "hub",
-        "The hub dashboard — the panels and controls behind every surface",
+        "The hub dashboard · the panels and controls behind every surface",
     ));
     options.push(fold(commands::admin::register(), None));
     // De-duplicate the `dreggnet-*` offering categories a restart accreted. It lives on
@@ -687,7 +687,7 @@ fn cipherclerk_command() -> Value {
     options.push(fold(commands::link_proof::register_link_web(), None));
     top(
         "cipherclerk",
-        "You + your funds — identity, balance, tokens, and the DEC/$DREGG economy",
+        "You + your funds · identity, balance, tokens, and the DEC/$DREGG economy",
         options,
     )
 }
@@ -701,7 +701,7 @@ fn hermes_command() -> Value {
     options.push(fold(commands::doc::register(), None));
     top(
         "hermes",
-        "The confined offerings — your Hermes agent, a confined grain, a shared doc",
+        "The confined offerings · your Hermes agent, a confined grain, a shared doc",
         options,
     )
 }
@@ -1384,7 +1384,7 @@ async fn handle_cleanup(ctx: &Context, command: &CommandInteraction, state: &Bot
                  \u{2022} Duplicates deleted: {}\n\
                  \u{2022} Session channels re-filed: {}\n\n\
                  Custodial `dregg-<id>` and feed channels were never touched. \
-                 (Abandoned dungeon *threads* are not swept — see the handler note.)",
+                 (Abandoned dungeon *threads* are not swept; see the handler note.)",
             r.canonical_id
                 .map(|c| format!("<#{c}>"))
                 .unwrap_or_else(|| "none".into()),
@@ -1443,8 +1443,8 @@ fn play_view() -> (CreateEmbed, Vec<CreateActionRow>) {
         ))
         .field(
             "Three games",
-            "**The Descent** — a solo dungeon crawl, one a day · **Automatafl** — a \
-             two-player board where both moves reveal at once · **Multiway-Tug** — a \
+            "**The Descent**: a solo dungeon crawl, one a day · **Automatafl**: a \
+             two-player board where both moves reveal at once · **Multiway-Tug**: a \
              two-player game of hidden influence",
             false,
         )
@@ -1463,7 +1463,7 @@ fn play_view() -> (CreateEmbed, Vec<CreateActionRow>) {
             "Lost your private view?",
             format!(
                 "`{}` re-posts your own hand / sealed move as a fresh private message. It reads \
-                 the live session and changes nothing — no turn, no receipt, and the match in \
+                 the live session and changes nothing: no turn, no receipt, and the match in \
                  the channel is untouched.",
                 status_invocation("<key>")
             ),
@@ -1471,7 +1471,7 @@ fn play_view() -> (CreateEmbed, Vec<CreateActionRow>) {
         )
         .field(
             "Crown a win",
-            "`/verify crown` folds a finished match into ONE proof — prove you won \
+            "`/verify crown` folds a finished match into ONE proof: prove you won \
              without revealing how.",
             false,
         )
@@ -1482,7 +1482,7 @@ fn play_view() -> (CreateEmbed, Vec<CreateActionRow>) {
         .field(
             "Cheat Code",
             "`/play cheat code:<anything>` takes free text. If you know the key of something \
-             that is not on the shelf, type it and it opens — same rules, same receipts, no \
+             that is not on the shelf, type it and it opens: same rules, same receipts, no \
              shortcuts. Wrong guesses are free.",
             false,
         );
@@ -1528,11 +1528,11 @@ fn adventure_view() -> (CreateEmbed, Vec<CreateActionRow>) {
         )
         .field(
             "The Warden's Keep",
-            "`/adventure dungeon start` — open it in this channel · \
-             `/adventure dungeon close` — apply the party's choice · \
-             `/adventure dungeon verify` — re-verify the playthrough by replay · \
-             `/adventure dungeon operation` — attach a private producer receipt · \
-             `/adventure dungeon list` — the world + its executor-enforced rules",
+            "`/adventure dungeon start`: open it in this channel · \
+             `/adventure dungeon close`: apply the party's choice · \
+             `/adventure dungeon verify`: re-verify the playthrough by replay · \
+             `/adventure dungeon operation`: attach a private producer receipt · \
+             `/adventure dungeon list`: the world + its executor-enforced rules",
             false,
         )
         .field(
@@ -1545,7 +1545,7 @@ fn adventure_view() -> (CreateEmbed, Vec<CreateActionRow>) {
         .field(
             "Private operations",
             "Preference aggregation, fair shuffle, and quest reduction arrive as canonical \
-             opaque receipts through `operation` — never as narrator prose. The card discloses \
+             opaque receipts through `operation`, never as narrator prose. The card discloses \
              the exact live operation name and what becomes public.",
             false,
         )
@@ -1581,19 +1581,19 @@ fn cipherclerk_view() -> (CreateEmbed, Vec<CreateActionRow>) {
         )
         .field(
             "Tokens",
-            "`/cipherclerk mint` · `attenuate` · `tokens` · `authorize` — real macaroon \
-             attenuation",
+            "`/cipherclerk mint` · `attenuate` · `tokens` · `authorize` (real macaroon \
+             attenuation)",
             false,
         )
         .field(
             "The three monies",
-            "**DEC** — the on-network currency (faucet, send, fees). **$DREGG** — buys \
-             run-credits for real-AI runs. **computrons** — what a turn meters.",
+            "**DEC** · the on-network currency (faucet, send, fees). **$DREGG** · buys \
+             run-credits for real-AI runs. **computrons** · what a turn meters.",
             false,
         )
         .field(
             "One player, one board",
-            "`/cipherclerk link-web` — get a single-use code that proves this Discord \
+            "`/cipherclerk link-web` · get a single-use code that proves this Discord \
              account to your web identity, so a leaderboard sees one of you instead of two.",
             false,
         );
@@ -1619,7 +1619,7 @@ fn govern_view() -> (CreateEmbed, Vec<CreateActionRow>) {
     let embed = embeds::dregg_embed("Govern")
         .description(
             "Real governance on real turns: propose, vote (optionally standing-weighted on \
-             the verified engine), enact — and every decision chain re-verifiable.",
+             the verified engine), enact, and every decision chain re-verifiable.",
         )
         .field(
             "Council (this channel)",
@@ -1672,30 +1672,30 @@ fn govern_view() -> (CreateEmbed, Vec<CreateActionRow>) {
 fn verify_view() -> (CreateEmbed, Vec<CreateActionRow>) {
     let embed = embeds::dregg_embed("Verify It Yourself")
         .description(
-            "Everything the bot narrates is re-checkable against the live node — these are \
+            "Everything the bot narrates is re-checkable against the live node: these are \
              the surfaces that do the checking in front of you.",
         )
         .field(
             "Proofs",
-            "`/verify proof turn hash:<64-hex>` — fetch AND verify the committed turn's \
+            "`/verify proof turn hash:<64-hex>` · fetch AND verify the committed turn's \
              STARK against its VK",
             false,
         )
         .field(
             "Explorer",
             "`/verify explorer cell|turn|block|blocklace|checkpoint|witnesses|note|proof|\
-             factory|search|stats|recent|watch|…` — browse devnet state",
+             factory|search|stats|recent|watch|…` · browse devnet state",
             false,
         )
         .field(
             "The Crown",
-            "`/verify crown` — fold a finished match into ONE O(1)-verifiable proof",
+            "`/verify crown` · fold a finished match into ONE O(1)-verifiable proof",
             false,
         )
         .field(
             "Export + cards",
-            "`/verify export` — mint a VERIFIED Descent win as a 1-of-1 NFT · \
-             `/verify card` — an interactive ViewNode card whose buttons fire real turns",
+            "`/verify export`: mint a VERIFIED Descent win as a 1-of-1 NFT · \
+             `/verify card`: an interactive ViewNode card whose buttons fire real turns",
             false,
         );
     let rows = vec![
@@ -1712,7 +1712,7 @@ fn verify_view() -> (CreateEmbed, Vec<CreateActionRow>) {
 fn identity_view() -> (CreateEmbed, Vec<CreateActionRow>) {
     let embed = embeds::dregg_embed("Granting Authority")
         .description(
-            "Share, attenuate, and hand off your authority — capabilities, signed handoff \
+            "Share, attenuate, and hand off your authority: capabilities, signed handoff \
              certificates, and the ceremonies that link an external cell to you.",
         )
         .field(
@@ -1734,12 +1734,12 @@ fn identity_view() -> (CreateEmbed, Vec<CreateActionRow>) {
         )
         .field(
             "Your LLM key",
-            "`/identity key set|rotate|revoke|status` — sealed at rest, never echoed",
+            "`/identity key set|rotate|revoke|status` · sealed at rest, never echoed",
             false,
         )
         .field(
             "Roles as capabilities",
-            "`/identity roles show|unlock|grant` — a server role can GATE a surface, but it \
+            "`/identity roles show|unlock|grant` · a server role can GATE a surface, but it \
              is an attestation by this server, never the cryptographic authority",
             false,
         );
@@ -1765,12 +1765,12 @@ fn identity_view() -> (CreateEmbed, Vec<CreateActionRow>) {
 fn hermes_view() -> (CreateEmbed, Vec<CreateActionRow>) {
     let embed = embeds::dregg_embed("The Confined Offerings")
         .description(
-            "Cap-bounded, metered, receipted compute you can converse with — every action one \
+            "Cap-bounded, metered, receipted compute you can converse with: every action one \
              real dregg turn under your own cell.",
         )
         .field(
             "Hermes (a confined agent)",
-            "`/hermes open` · `status` · `verify` — or claim your channel and just type",
+            "`/hermes open` · `status` · `verify`, or claim your channel and just type",
             false,
         )
         .field(
@@ -1780,7 +1780,7 @@ fn hermes_view() -> (CreateEmbed, Vec<CreateActionRow>) {
         )
         .field(
             "Doc (a shared document)",
-            "`/hermes doc open|status|verify` — each edit one finalized executor turn",
+            "`/hermes doc open|status|verify` · each edit one finalized executor turn",
             false,
         );
     let rows = vec![
@@ -1798,7 +1798,7 @@ fn federation_view() -> (CreateEmbed, Vec<CreateActionRow>) {
         .description("Federation health, committee membership, presence, and coordination.")
         .field(
             "Reads",
-            "`/federation status` · `peers` · `activity` — or press the buttons",
+            "`/federation status` · `peers` · `activity`, or press the buttons",
             false,
         )
         .field(
@@ -1808,14 +1808,14 @@ fn federation_view() -> (CreateEmbed, Vec<CreateActionRow>) {
         )
         .field(
             "Coordination",
-            "`/federation coordinate` — two agents settle atomically over the \
-             promise-pipeline · `/federation channel` — claim your semi-private channel",
+            "`/federation coordinate`: two agents settle atomically over the \
+             promise-pipeline · `/federation channel`: claim your semi-private channel",
             false,
         )
         .field(
             "Setup + deos",
-            "`/federation setup` · `/federation deos council` — cap-gated affordance \
-             buttons + live transclusion",
+            "`/federation setup` · `/federation deos council` (cap-gated affordance \
+             buttons + live transclusion)",
             false,
         );
     let rows = vec![
@@ -1844,14 +1844,14 @@ fn gallery_view() -> (CreateEmbed, Vec<CreateActionRow>) {
             "`/gallery list` · `/gallery show universe:<id>` · `/gallery play`",
             false,
         )
-        .field("Publish", "`/gallery publish` — optionally a remix", false);
+        .field("Publish", "`/gallery publish` · optionally a remix", false);
     (embed, vec![back_row()])
 }
 
 fn descent_view() -> (CreateEmbed, Vec<CreateActionRow>) {
     let embed = embeds::dregg_embed("The Descent")
         .description(
-            "Today's beacon-seeded permadeath roguelite — a real permadeath run on the dregg \
+            "Today's beacon-seeded permadeath roguelite: a real permadeath run on the dregg \
              executor; a hardcore character carries level/class/scars across days.",
         )
         .field(
@@ -1864,12 +1864,12 @@ fn descent_view() -> (CreateEmbed, Vec<CreateActionRow>) {
 
 fn leaderboard_view() -> (CreateEmbed, Vec<CreateActionRow>) {
     let embed = embeds::dregg_embed("Glory")
-        .description("Boards + tournaments — every ranked entry re-checkable against the chain.")
-        .field("Boards", "`/leaderboard` — top DEC holders", false)
+        .description("Boards + tournaments: every ranked entry re-checkable against the chain.")
+        .field("Boards", "`/leaderboard` · top DEC holders", false)
         .field(
             "Game boards",
-            "`/descent board` — the no-cheat daily board · `/descent tournament` — the \
-             weekly verify-gated bracket · `/verify crown` — the proof-carrying game board",
+            "`/descent board`: the no-cheat daily board · `/descent tournament`: the \
+             weekly verify-gated bracket · `/verify crown`: the proof-carrying game board",
             false,
         );
     (embed, vec![back_row()])
@@ -1970,7 +1970,7 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
                         CreateInteractionResponse::Message(
                             CreateInteractionResponseMessage::new()
                                 .content(format!(
-                                    "**{key}** — open it in a channel with `{open}` \u{2022} \
+                                    "**{key}** · open it in a channel with `{open}` \u{2022} \
                                      re-post your own private view with `{status}` \u{2022} \
                                      re-check its live session anytime with `{verify}`.",
                                     open = open_invocation(key),

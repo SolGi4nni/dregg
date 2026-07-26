@@ -298,7 +298,7 @@ pub fn build_player_host(store: Box<dyn SessionResumeStore>, cheevos: Vec<Cheevo
     // replaces the demo showcase `register_surfaces` mounted.
     host.register(
         "cheevos",
-        "Achievements — earned soulbound proofs over verified runs",
+        "Achievements · earned soulbound proofs over verified runs",
         CheevoShowcase::from_cheevos(cheevos),
     );
     for log in logs {
@@ -593,7 +593,7 @@ fn surface_from_host(
         .embed
         .color(color)
         .footer(CreateEmbedFooter::new(truncate(
-            &format!("{turns} verified turns · {tagline} · your own world — it persists"),
+            &format!("{turns} verified turns · {tagline} · your own world · it persists"),
             2040,
         )));
     // A key with an identity but no row router would render a full, playable-looking card with
@@ -623,7 +623,7 @@ fn open_core(
         if let Err(e) = host.ensure_open(&key, &id) {
             return RpgSurface {
                 note: format!(
-                    "**The offering was not opened.** {e}\n> Nothing was reset — the persisted \
+                    "**The offering was not opened.** {e}\n> Nothing was reset: the persisted \
                      record is kept; this surface fails closed rather than reopening a world \
                      that does not re-verify."
                 ),
@@ -636,7 +636,7 @@ fn open_core(
         }
     })
     .unwrap_or_else(|_| RpgSurface {
-        note: "**The world service is temporarily unavailable.** Nothing was opened or reset — \
+        note: "**The world service is temporarily unavailable.** Nothing was opened or reset: \
                your persisted record is untouched; try again in a moment."
             .to_string(),
         surface: None,
@@ -662,7 +662,7 @@ fn press_host_at(
     }
     if persistent_stamp(host, &key, viewer) != Some(stamp) {
         return RpgSurface {
-            note: "That control belongs to an earlier state of your persistent world — nothing was fired."
+            note: "That control belongs to an earlier state of your persistent world. Nothing was fired."
                 .to_string(),
             surface: surface_from_host(host, &key, viewer),
         };
@@ -673,7 +673,7 @@ fn press_host_at(
     let action = Action::new(turn.clone(), turn, arg, true);
     let note = match host.advance(&key, &id, action, viewer.clone()) {
         Some(outcome) => outcome_note(&outcome),
-        None => "No live session — the world did not reopen.".to_string(),
+        None => "No live session: the world did not reopen.".to_string(),
     };
     RpgSurface {
         note,
@@ -694,7 +694,7 @@ fn press_core(
         press_host_at(host, viewer, key, stamp, turn, arg)
     })
     .unwrap_or_else(|_| RpgSurface {
-        note: "**The world service is temporarily unavailable.** Nothing was fired — try again \
+        note: "**The world service is temporarily unavailable.** Nothing was fired. Try again \
                in a moment."
             .to_string(),
         surface: None,
@@ -786,12 +786,12 @@ pub async fn handle_verify(
                 }),
             );
             CreateEmbed::new()
-                .title(format!("{title} — verify"))
+                .title(format!("{title} · verify"))
                 .description(offering::verify_note(report))
                 .color(if report.verified { color } else { 0xE63946 })
         }
         None => CreateEmbed::new()
-            .title(format!("{title} — verify"))
+            .title(format!("{title} · verify"))
             // Derived, not spelled: this line carried the pre-fold `/play offering:<key>` too.
             .description(format!(
                 "You have not opened this surface yet, so there is no chain of yours to \
@@ -834,7 +834,7 @@ pub async fn handle_status(
         Some((embed, rows)) => ack::edit_slash(ctx, command, embed, rows).await,
         None => {
             let embed = CreateEmbed::new()
-                .title(format!("{title} — nothing of yours open"))
+                .title(format!("{title} · nothing of yours open"))
                 .description(format!(
                     "You have not opened this surface yet, so there is no view of yours to \
                      re-post. Nothing was changed. `{}` opens your persistent world.",

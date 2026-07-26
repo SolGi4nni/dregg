@@ -386,17 +386,17 @@ pub fn register_games(host: &mut OfferingHost, cfg: &CatalogConfig) {
         // private terms and the engine's own verb list. Every clause below is the game's, read out
         // of `dungeon_on_dregg::descent`: BREATH is spent by every verb and never refills, the day
         // picks one of DAYS maps, and `flee` banks only what is CARRIED (floor relics stay).
-        "The Descent — a solo dungeon crawl on one torch of light. Everyone gets the same dungeon today, and you keep only what you carry back out.",
+        "The Descent · a solo dungeon crawl on one torch of light. Everyone gets the same dungeon today, and you keep only what you carry back out.",
         cfg.native_descent(),
     );
     host.register(
         DescentCampaignOffering::KEY,
-        "The Deepening Ways — player-driven native Descent expeditions; only a replay-verified Crown opens each real region road",
+        "The Deepening Ways · player-driven native Descent expeditions; only a replay-verified Crown opens each real region road",
         DescentCampaignOffering::with_native(cfg.native_descent()),
     );
     host.register(
         "dungeon",
-        "The Warden's Keep — a verifiable dungeon (offering #0)",
+        "The Warden's Keep · a verifiable dungeon (offering #0)",
         DungeonOffering::new(),
     );
     host.register(
@@ -405,7 +405,7 @@ pub fn register_games(host: &mut OfferingHost, cfg: &CatalogConfig) {
         // member casts exactly one of them per proposal (write-once). Found by the same sweep that
         // caught `grain` and `hermes`; two of the three named verbs were right, which is why it
         // had never been noticed.
-        "DreggNet Council — propose something, and every member approves or rejects it once. Once enough have approved, anyone can enact it; until then enacting is refused. Only members can act at all.",
+        "DreggNet Council · propose something, and every member approves or rejects it once. Once enough have approved, anyone can enact it; until then enacting is refused. Only members can act at all.",
         CouncilOffering::new(
             cfg.council_members.clone(),
             cfg.council_proposals.clone(),
@@ -414,7 +414,7 @@ pub fn register_games(host: &mut OfferingHost, cfg: &CatalogConfig) {
     );
     host.register(
         "market",
-        "DreggNet Market — a sealed-bid auction (list · bid · settle)",
+        "DreggNet Market · a sealed-bid auction (list · bid · settle)",
         MarketOffering::new(),
     );
     host.register(
@@ -427,7 +427,7 @@ pub fn register_games(host: &mut OfferingHost, cfg: &CatalogConfig) {
         // "playable dungeon crawl", and `DarkBazaarOffering` has no movement, no map and no
         // encounter state: it wraps `MarketOffering` whole and renames three buttons. What it
         // genuinely adds over `market` is the disclosure, so the disclosure is what the line says.
-        "The Dark Bazaar — the sealed-bid auction, with the privacy spelled out. Your number is hidden from the other bidders until the auction clears; it is not hidden from whoever runs the server, and it never was.",
+        "The Dark Bazaar · the sealed-bid auction, with the privacy spelled out. Your number is hidden from the other bidders until the auction clears; it is not hidden from whoever runs the server, and it never was.",
         DarkBazaarOffering::new(),
     );
     // `tug` needs the seat-claiming adapter: `TugOffering` names its two seats by fixed
@@ -440,7 +440,7 @@ pub fn register_games(host: &mut OfferingHost, cfg: &CatalogConfig) {
         // TWO-seat game (`N_GUILDS = 7`, `Player` has two variants). "You cut, they choose" is
         // exact — a Gift or Competition only presents cards, and the responder takes one share
         // while the proposer keeps the other — but it needed a subject.
-        "Multiway-Tug — two hidden hands of cards pulling at seven contested lanes. You cut the offer; your opponent chooses which side they take.",
+        "Multiway-Tug · two hidden hands of cards pulling at seven contested lanes. You cut the offer; your opponent chooses which side they take.",
         seated::SeatedTug::new(),
     );
     host.register(
@@ -449,12 +449,12 @@ pub fn register_games(host: &mut OfferingHost, cfg: &CatalogConfig) {
         // are the ruleset's: no move executes until both seats have sealed and opened, and the
         // automaton is the one piece neither seat may move (`moveLegalB` bans it as a source) and
         // the only one that wins the game.
-        "Automatafl — two players move at the same time, in secret, and the piece that decides it is the one neither of you controls.",
+        "Automatafl · two players move at the same time, in secret, and the piece that decides it is the one neither of you controls.",
         AutomataflOffering,
     );
     host.register(
         dreggnet_surfaces::private_raid::KEY,
-        "The Ash Gate Raid — muster four identities · verify a shielded optimal role assignment · fight through real party capabilities",
+        "The Ash Gate Raid · muster four identities · verify a shielded optimal role assignment · fight through real party capabilities",
         HostedProofAssignedRaidOffering::new(),
     );
 }
@@ -490,7 +490,7 @@ pub fn register_services(host: &mut OfferingHost, cfg: &CatalogConfig) {
         // in. That is a NAMED open gap (`dreggnet-web/tests/catalog_flow_harness.rs`'s `doc`
         // allowance, a cap-model decision, not a patch). A line that omitted it would be selling a
         // document nobody can write in.
-        "DreggNet Doc — a document several people write at once. Two edits made at the same moment are held side by side until somebody picks the order, instead of one of them quietly winning. ⚠ You cannot type in it yet: only an invited editor may edit, and a freshly opened document has no editors and no way to become one, so every control starts greyed out.",
+        "DreggNet Doc · a document several people write at once. Two edits made at the same moment are held side by side until somebody picks the order, instead of one of them quietly winning. ⚠ You cannot type in it yet: only an invited editor may edit, and a freshly opened document has no editors and no way to become one, so every control starts greyed out.",
         dreggnet_doc::DocOffering::new(),
     );
     host.register(
@@ -506,7 +506,7 @@ pub fn register_services(host: &mut OfferingHost, cfg: &CatalogConfig) {
         // exist — are unreachable until a name lands, and no name can land. Advertising three
         // verbs a player can reach none of is the same shape as advertising three that do not
         // exist.
-        "DreggNet Names — claim a short name, look one up, or hand one to someone else. ⚠ Nothing lands from here yet: each of those refuses because you are not enrolled, and this surface has no way to enrol you.",
+        "DreggNet Names · claim a short name, look one up, or hand one to someone else. ⚠ Nothing lands from here yet: each of those refuses because you are not enrolled, and this surface has no way to enrol you.",
         dreggnet_names::NamesOffering::new(),
     );
     host.register(
@@ -517,7 +517,7 @@ pub fn register_services(host: &mut OfferingHost, cfg: &CatalogConfig) {
         // "the result" and nothing binds it to the sealed job spec. So the line names the two
         // things that ARE real and enforced (one claimant; a settlement the executor checks adds
         // up) and states the two absences instead of implying them away.
-        "DreggNet Compute — put a budget on a job, let one worker claim it at their price, then release it when they hand back a result. The release always adds up exactly: the worker's price plus the refund equals the budget. It never runs the job and never checks the result, and the budget is bookkeeping on the job rather than money leaving anyone's pocket.",
+        "DreggNet Compute · put a budget on a job, let one worker claim it at their price, then release it when they hand back a result. The release always adds up exactly: the worker's price plus the refund equals the budget. It never runs the job and never checks the result, and the budget is bookkeeping on the job rather than money leaving anyone's pocket.",
         dreggnet_compute::ComputeOffering::new(),
     );
     host.register(
@@ -527,7 +527,7 @@ pub fn register_services(host: &mut OfferingHost, cfg: &CatalogConfig) {
         // enforces is `calls_made ≤ rate_limit` — a COUNT OF TURNS — while the action's `cost`
         // accumulates into `consumed` purely as witness state and binds nothing (`grain-turn`:
         // "there is no per-call charge on the grain grant, so no charge `Transfer` rides").
-        "DreggNet Grain — a hard allowance you can spend down and cannot talk your way past. Every press uses one of this grain's turns; when they run out, the next press is refused underneath rather than greyed out here. The allowance counts turns, not money, and a turn does no work of its own yet — the limit is the thing on show.",
+        "DreggNet Grain · a hard allowance you can spend down and cannot talk your way past. Every press uses one of this grain's turns; when they run out, the next press is refused underneath rather than greyed out here. The allowance counts turns, not money, and a turn does no work of its own yet: the limit is the thing on show.",
         dreggnet_grain::GrainOffering::new(cfg.grain_budget),
     );
     host.register(
@@ -539,7 +539,7 @@ pub fn register_services(host: &mut OfferingHost, cfg: &CatalogConfig) {
         // admits or refuses that class against its own rate + value allowance. The tool itself is
         // never run — `drive` invokes with an EMPTY work witness, which the crate calls the named
         // seam — so the line says that rather than letting "relay" imply a message arrived.
-        "DreggNet Hermes — an AI agent kept on a short leash. Type it a message and it picks what kind of work it wants — read, search, fetch, run, edit or just talk — and each kind has its own allowance. Ask past one and the request is turned down, naming the limit that stopped it. The work is never actually carried out: what you are watching is the permission, granted or refused.",
+        "DreggNet Hermes · an AI agent kept on a short leash. Type it a message and it picks what kind of work it wants (read, search, fetch, run, edit or just talk) and each kind has its own allowance. Ask past one and the request is turned down, naming the limit that stopped it. The work is never actually carried out: what you are watching is the permission, granted or refused.",
         dreggnet_hermes::HermesOffering::new(),
     );
 }
@@ -678,7 +678,7 @@ pub fn arcade_lineage() -> &'static str {
 /// experimental engine surfaces… on the shelf for the curious", which was accurate about 23
 /// experiments and is the wrong thing to say about a curated shelf ([`SHIPPED_KEYS`]).
 pub fn shelf_intro() -> &'static str {
-    "🎲 Games you can play right now, in a browser tab — no install, no wallet, no sign-up. \
+    "🎲 Games you can play right now, in a browser tab: no install, no wallet, no sign-up. \
      Every move you make is re-run against the rules before it is recorded, so an illegal move \
      is refused rather than accepted, and a finished game can be replayed by anyone who wants \
      to check it really went that way."
@@ -692,7 +692,7 @@ pub fn shelf_intro() -> &'static str {
 /// "the Lean-authored custody dungeon… exercise attenuating keys… bank only on a proved exit",
 /// four private terms in one sentence.
 pub fn flagship_pointer() -> &'static str {
-    "⚔️ The Descent — a dungeon crawl. Everyone gets the same dungeon each day, built from a \
+    "⚔️ The Descent · a dungeon crawl. Everyone gets the same dungeon each day, built from a \
      public random number nobody can pick in advance. One life, no retries: go deeper for better \
      loot, and you only keep what you carry back out."
 }
@@ -870,7 +870,10 @@ mod tests {
                 continue;
             }
             let id = SessionId::new(format!("verbs-{key}"));
-            if host.open_session(key, id.clone(), SessionConfig::with_seed(5)).is_err() {
+            if host
+                .open_session(key, id.clone(), SessionConfig::with_seed(5))
+                .is_err()
+            {
                 // An offering may refuse its own deploy for its own reasons (the live Descent day
                 // binding, for one). It then advertises nothing to check against, and saying so is
                 // better than passing quietly.
@@ -953,8 +956,9 @@ mod tests {
         // …and the VERDICT bites, replayed on the exact history this gate was built for: `grain`'s
         // shipped title against `GrainOffering`'s real one-verb vocabulary. Without this the whole
         // test could pass on a `unbacked` that had quietly started returning nothing.
-        let grain_as_shipped =
-            advertised_verbs("DreggNet Grain — metered work under a spend budget (request · grant)");
+        let grain_as_shipped = advertised_verbs(
+            "DreggNet Grain — metered work under a spend budget (request · grant)",
+        );
         assert_eq!(grain_as_shipped, vec!["request", "grant"]);
         let grain_reality: std::collections::BTreeSet<String> =
             ["act".to_string()].into_iter().collect();
@@ -991,7 +995,7 @@ mod tests {
             assert_eq!(
                 host.title(DescentCampaignOffering::KEY),
                 Some(
-                    "The Deepening Ways — player-driven native Descent expeditions; only a replay-verified Crown opens each real region road"
+                    "The Deepening Ways · player-driven native Descent expeditions; only a replay-verified Crown opens each real region road"
                 )
             );
             host.open_session(

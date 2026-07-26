@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <base href="./">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Caps as rows — dregg explorer</title>
-  <meta name="description" content="Your capabilities, expressed as the rows you may read. Present a dregg capability token and watch the cell rows narrow — the RLS gate, respected and made legible. The browser twin of the pg-dregg cap-gated query cookbook.">
+  <title>Caps as rows &middot; dregg explorer</title>
+  <meta name="description" content="Your capabilities, expressed as the rows you may read. Present a dregg capability token and watch the cell rows narrow: the RLS gate, respected and made legible. The browser twin of the pg-dregg cap-gated query cookbook.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
   <link rel="stylesheet" href="style.css">
   <style>
@@ -140,17 +140,17 @@
     <h1 class="car-title">Your capabilities, expressed as the <span class="accent">rows you may read</span>.</h1>
     <p class="car-lede">
       A dregg capability <strong>is</strong> a database view. Present a token below and watch the
-      cell rows narrow — the same Row-Level-Security gate the node enforces, made
+      cell rows narrow: the same Row-Level-Security gate the node enforces, made
       legible. A token confined to a resource prefix sees a <em>strict subset</em>; the
       no-amplification property, observed, not asserted. This is the browser twin of the
-      <code>pg-dregg</code> cap-gated query cookbook (<code>sql/cookbook.sql</code>) — one
+      <code>pg-dregg</code> cap-gated query cookbook (<code>sql/cookbook.sql</code>): one
       glass in SQL, one here.
     </p>
 
     <div class="car-banner">
       <span class="car-banner__icon">&#9888;</span>
       <span>
-        <strong>STATIC SNAPSHOT</strong> — these rows are a labeled, deterministic copy of the
+        <strong>STATIC SNAPSHOT</strong>: these rows are a labeled, deterministic copy of the
         live <code>pg_dregg_mirror</code> schema (the six seeded cells + the delegation graph from
         <code>sql/cookbook-seed.sql</code>). The gating logic below faithfully mirrors
         <code>dregg_cap_admits</code> (the resource-prefix, action, and time caveats). Nothing here
@@ -231,7 +231,7 @@
         The same <code>WITH RECURSIVE</code> walk as cookbook recipe 1, over <code>dregg.cap_edges</code>.
         Each edge is a delegation; the chain shows how an authority reaches a cell. The
         <span style="color:var(--danger)">red</span> edge is a deliberate <strong>amplification</strong>
-        (bob grants <code>admin</code>, which bob never held) — recipe 2's audit catches it.
+        (bob grants <code>admin</code>, which bob never held); recipe 2's audit catches it.
       </p>
       <table class="car-rows">
         <thead><tr><th>depth</th><th>grantor</th><th>delegate</th><th>granted effects</th><th>chain</th></tr></thead>
@@ -249,8 +249,8 @@
       </p>
       <p>
         The gate is never bypassed: a filtered row is redacted, exactly as RLS makes it vanish from a
-        <code>SELECT</code>. The capability discipline — provable attenuation, instant revocation,
-        explainable denial — is the dregg decision, carried to the row.
+        <code>SELECT</code>. The capability discipline (provable attenuation, instant revocation,
+        explainable denial) is the dregg decision, carried to the row.
       </p>
     </div>
   </div>

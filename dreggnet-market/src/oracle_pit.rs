@@ -1684,6 +1684,7 @@ impl Offering for OraclePitOffering {
                         turn: TURN_CLAIM.to_string(),
                         arg: opening.slot as i64,
                         enabled: session.book.settlement().is_some(),
+                        wants_text: false,
                     }],
                 });
             }

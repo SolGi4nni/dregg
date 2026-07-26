@@ -74,13 +74,13 @@ fn what_this_is() -> String {
      account, no wallet.</p>\
      <p class=\"prose\">One thing is different about them, and it is the reason they exist. \
      <strong>When you take a turn, the game re-runs your move against the rules before it writes \
-     anything down.</strong> If the move is not allowed it is refused and nothing happens — you \
+     anything down.</strong> If the move is not allowed it is refused and nothing happens. You \
      cannot talk the page into letting you through. And <strong>when a game is over, anyone can \
      replay it</strong> from the first move to the last and watch it come out the same way. That \
      is why the daily score board cannot be faked: a submitted run that does not replay correctly \
      is shown as <strong>FAIL</strong> and never ranks.</p>\
      <p class=\"prose\">That is the whole pitch. It happens in this server and in your own browser \
-     tab — not on a blockchain, and no public network is involved.</p>\
+     tab, not on a blockchain, and no public network is involved.</p>\
      </section>"
         .to_string()
 }
@@ -92,14 +92,14 @@ fn before_you_start() -> String {
     "<section class=\"panel\" id=\"guide-warnings\"><h2>Two honest warnings first</h2>\
      <ul class=\"rules\">\
      <li><strong>By default you are identified by a browser cookie.</strong> No password, no email \
-     and <strong>no recovery</strong>. Clear your browser data — or open the site in a private \
-     window — and you are a brand-new person with a blank history. Nothing you did before comes \
+     and <strong>no recovery</strong>. Clear your browser data, or open the site in a private \
+     window, and you are a brand-new person with a blank history. Nothing you did before comes \
      back. If a recovery phrase is offered in the navigation, claiming one is what makes an identity \
      survive that; until you claim one, nothing here is durable.</li>\
      <li><strong>It is early.</strong> No chat, no friends list, no matchmaking. To play a \
      two-player game you open a table and send someone the link yourself. <strong>Here on your \
      own?</strong> The Descent is a game for one, and on a two-player table you can hold both seats \
-     yourself — take one seat, then open the invite in a private window and take the other. And \
+     yourself: take one seat, then open the invite in a private window and take the other. And \
      nothing you collect here is money or is for sale.</li>\
      </ul></section>"
         .to_string()
@@ -120,37 +120,37 @@ fn descent_section() -> String {
          <p class=\"prose\"><strong>What you are trying to do:</strong> get down to the bottom \
          floor, pick up the prize that lies there, and climb all the way back out to the surface \
          before your light runs out. The score board calls a run that carries the prize out \
-         <em>crowned</em> — that is the whole word, there is nothing else to it.</p>\
+         <em>crowned</em>: that is the whole word, there is nothing else to it.</p>\
          <p class=\"prose\"><strong>How a turn works.</strong> You press one button, and every \
          button spends light. You have {breath} breaths of light for the entire run and there is no \
          way to get more.</p>\
          <ul class=\"rules\">\
-         <li><strong>Descend</strong> — one floor down, one breath.</li>\
-         <li><strong>Climb</strong> — one floor up, one breath. This is the only way out, which is \
+         <li><strong>Descend</strong> · one floor down, one breath.</li>\
+         <li><strong>Climb</strong> · one floor up, one breath. This is the only way out, which is \
          why the light you have left is never the real number: you also have to afford the climb \
          home. {floors} floors down means {floors} breaths just to reach the surface.</li>\
-         <li><strong>Take the relic</strong> — pick up what is on this floor, one breath.</li>\
-         <li><strong>Use a key</strong> — three of the eight relics are keys, and a locked way \
+         <li><strong>Take the relic</strong> · pick up what is on this floor, one breath.</li>\
+         <li><strong>Use a key</strong> · three of the eight relics are keys, and a locked way \
          needs the matching key in hand. A key is never hidden behind the door it opens, so every \
          way is openable if you go and get the key first.</li>\
-         <li><strong>Press the guardian</strong> — two breaths, and it costs you nothing else.</li>\
-         <li><strong>Lunge at the guardian</strong> — the same result for one breath, but it \
+         <li><strong>Press the guardian</strong> · two breaths, and it costs you nothing else.</li>\
+         <li><strong>Lunge at the guardian</strong> · the same result for one breath, but it \
          permanently costs you one carrying slot for the rest of the run. Cheaper now, worse at the \
          bottom.</li>\
-         <li><strong>Bank and end the run</strong> — only possible standing on the surface. \
+         <li><strong>Bank and end the run</strong> · only possible standing on the surface. \
          Everything you carried out is yours; everything still down there is gone, and the run is \
          over. There is no second attempt today.</li>\
          </ul>\
          <p class=\"prose\"><strong>The squeeze.</strong> You can hold {cap} things, minus how deep \
          you are, minus any lunge damage. So on floor 1 you have {shallow} slots and on floor \
-         {floors} you have {deep} — and at the bottom you need three keys plus the prize, which is \
+         {floors} you have {deep}, and at the bottom you need three keys plus the prize, which is \
          exactly {deep}. <strong>So you can never carry a treasure out AND the prize.</strong> Every \
          run is the same choice: go for the prize, or come back shallow and full. The dungeon gets \
-         stingier the further in you go, on purpose — and that is also what makes a lunge a real \
+         stingier the further in you go, on purpose. And that is also what makes a lunge a real \
          decision rather than a free discount, because the slot it costs you is one you needed.</p>\
          <p class=\"prose\"><strong>What makes it interesting:</strong> everyone in the world gets \
          the <em>same</em> dungeon each day, and the dungeon is drawn from a public random number \
-         that nobody — including us — can pick in advance. Today's dungeon was not chosen; it was \
+         that nobody, including us, can pick in advance. Today's dungeon was not chosen; it was \
          revealed. There are {days} possible maps, every one of them checked to be beatable, and \
          the best line on any given day spends between 24 and {breath} of your {breath} breaths. \
          There is almost no slack. Most runs should not make it.</p>\
@@ -178,8 +178,8 @@ fn automatafl_section() -> String {
         "<section class=\"panel\" id=\"guide-automatafl\"><h2>Automatafl</h2>\
          <p class=\"prose\"><strong>What it is:</strong> a two-player board game where the piece \
          that decides it is the one neither of you controls.</p>\
-         <p class=\"prose\"><strong>What you are trying to do:</strong> drive the automaton — the \
-         single glowing piece — onto one of your own two corners. Each side owns two of the four \
+         <p class=\"prose\"><strong>What you are trying to do:</strong> drive the automaton (the \
+         single glowing piece) onto one of your own two corners. Each side owns two of the four \
          corners.</p>\
          <p class=\"prose\"><strong>How a turn works.</strong> You do not take turns. <strong>Both \
          players choose a move at the same time</strong>, in secret. When you have both chosen, \
@@ -188,13 +188,13 @@ fn automatafl_section() -> String {
          <li>The board is {n}×{n}. It holds <strong>repulsors</strong> (marked <code>R</code>, the \
          pale spiky ones) which push the automaton away, <strong>attractors</strong> (marked \
          <code>A</code>, the round brass discs) which pull it toward them, and one \
-         <strong>automaton</strong> (marked <code>@</code>, the violet ring — the only thing on the \
+         <strong>automaton</strong> (marked <code>@</code>, the violet ring, the only thing on the \
          board that glows).</li>\
          <li>Pieces move in <strong>straight lines only</strong>: along a row or along a column, \
          any distance, never diagonally, never onto the automaton. (If you play chess: exactly like \
          a rook.)</li>\
-         <li><strong>Either player may push any piece.</strong> The pieces are not yours or theirs \
-         — they are shared. That is the entire source of the tension.</li>\
+         <li><strong>Either player may push any piece.</strong> The pieces are not yours or theirs: \
+         they are shared. That is the entire source of the tension.</li>\
          <li>Once the round resolves, the automaton takes one step: pulled toward attractors and \
          pushed from repulsors along each axis. Get it to your corner and you have won.</li>\
          <li><strong>If you both grab the same square, that round does not happen.</strong> The \
@@ -204,7 +204,7 @@ fn automatafl_section() -> String {
          square, so this cannot go on forever.</li>\
          </ul>\
          <p class=\"prose\"><strong>What makes it interesting:</strong> because you are both moving \
-         shared pieces at the same moment, a good move is not the move that helps you — it is the \
+         shared pieces at the same moment, a good move is not the move that helps you; it is the \
          move that still helps you given what they are probably doing to the same board. You are \
          guessing at your opponent rather than waiting on them.</p>\
          <p class=\"prose\"><strong>Be clear about the secrecy.</strong> While your move is sealed \
@@ -229,15 +229,15 @@ fn tug_section() -> String {
     format!(
         "<section class=\"panel\" id=\"guide-tug\"><h2>Multiway-Tug</h2>\
          <p class=\"prose\"><strong>What it is:</strong> a two-player game of hidden influence over \
-         {guilds} guilds. (<em>Guild</em> and <em>lane</em> mean the same thing — guild 3 \
-         <em>is</em> lane 3 — and the table uses both words.)</p>\
+         {guilds} guilds. (<em>Guild</em> and <em>lane</em> mean the same thing; guild 3 \
+         <em>is</em> lane 3, and the table uses both words.)</p>\
          <p class=\"prose\"><strong>What you are trying to do:</strong> end the round leading more \
          of the {guilds} guilds than your opponent, by weight. They are worth \
-         <code>2 2 2 3 3 4 5</code>, and whoever leads a guild takes its whole weight — there is no \
+         <code>2 2 2 3 3 4 5</code>, and whoever leads a guild takes its whole weight: there is no \
          splitting. The round always plays out in full; <em>then</em> it is decided. You win if you \
-         hold 11 weight or 4 guilds; failing that it still comes out one way — on total weight \
-         first, guilds held second — and only an exact tie on both is a draw.</p>\
-         <p class=\"prose\"><strong>How a turn works.</strong> You hold six cards, hidden — your \
+         hold 11 weight or 4 guilds; failing that it still comes out one way (on total weight \
+         first, guilds held second), and only an exact tie on both is a draw.</p>\
+         <p class=\"prose\"><strong>How a turn works.</strong> You hold six cards, hidden. Your \
          opponent sees only <em>how many</em> you hold, never which. Each card belongs to one \
          guild, and that is the guild it pulls for whoever ends up holding it. There are {deck} \
          cards in the deck and none is ever created or destroyed during a round. You get \
@@ -260,7 +260,7 @@ fn tug_section() -> String {
          until the reveal; burnt cards reach nobody ever; a three-card or two-pair offer sits in \
          the middle and only lands when your opponent answers it. So it is completely normal to \
          press a button and see all {guilds} rows come back identical. What <em>does</em> move is \
-         the running account of where all {deck} cards are — held, face down, burnt, placed — and \
+         the running account of where all {deck} cards are (held, face down, burnt, placed), and \
          the table prints it. If you want to see that your move landed, watch that line rather than \
          the guild rows.</p>\
          <p class=\"prose\"><strong>What makes it interesting:</strong> on both of the lay-out \
@@ -307,7 +307,7 @@ fn guide_body() -> String {
 /// `GET /guide` — the whole page.
 fn guide_page() -> String {
     document(
-        &format!("{PRODUCT_NAME} — how to play"),
+        &format!("{PRODUCT_NAME} · how to play"),
         "guide",
         &guide_body(),
     )
@@ -388,7 +388,7 @@ mod tests {
     fn the_load_bearing_terms_are_defined_in_place() {
         let page = guide_body();
         assert!(
-            page.contains("<em>crowned</em> — that is the whole word"),
+            page.contains("<em>crowned</em>: that is the whole word"),
             "`crowned` must be defined where it is introduced"
         );
         assert!(

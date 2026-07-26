@@ -70,7 +70,7 @@ pub fn proposal_embed(card: &ProposalCard) -> CreateEmbed {
     embeds::dregg_embed(&format!("Governance Proposal #{}", card.activity_id))
         .description(format!(
             "<@{}> proposed a route-table update. **Anyone with a hosted cipherclerk can vote \
-             with the buttons below** — each press casts a real signed governance action; the \
+             with the buttons below**: each press casts a real signed governance action; the \
              node is the referee.",
             card.proposer
         ))
@@ -170,7 +170,7 @@ async fn handle_list(ctx: &Context, component: &ComponentInteraction, state: &Bo
     if proposals.is_empty() {
         let embed = embeds::dregg_embed("Proposals").description(
             "No proposals are on record for this guild yet. Open one with the **New Proposal** \
-             button — it posts a public card anyone can vote on.",
+             button; it posts a public card anyone can vote on.",
         );
         let msg = CreateInteractionResponseMessage::new()
             .embed(embed)
@@ -248,7 +248,7 @@ async fn handle_vote(
             return note(
                 ctx,
                 component,
-                "Voting signs a real governance action, which needs a hosted identity — \
+                "Voting signs a real governance action, which needs a hosted identity: \
                  `/cipherclerk create` first.",
             )
             .await;
@@ -260,7 +260,7 @@ async fn handle_vote(
         return note(
             ctx,
             component,
-            "That proposal is no longer on record — list current ones with the Proposals button.",
+            "That proposal is no longer on record. List current ones with the Proposals button.",
         )
         .await;
     };

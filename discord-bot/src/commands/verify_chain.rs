@@ -117,7 +117,7 @@ async fn respond<O: DiscordOffering>(ctx: &Context, component: &ComponentInterac
     match report {
         Some(report) => {
             let embed = CreateEmbed::new()
-                .title(format!("{} — chain re-verified in front of you", O::TITLE))
+                .title(format!("{} · chain re-verified in front of you", O::TITLE))
                 .description(recheck_note(&offering::verify_note(&report), elapsed_ms))
                 .color(if report.verified { O::COLOR } else { 0xE63946 });
             // PUBLIC, as before — the point is a re-verification anyone can watch.
@@ -128,7 +128,7 @@ async fn respond<O: DiscordOffering>(ctx: &Context, component: &ComponentInterac
                 ctx,
                 component,
                 &format!(
-                    "No live {} session in this channel to re-verify — the chain lives with the \
+                    "No live {} session in this channel to re-verify: the chain lives with the \
                      session. Open one and every landed move extends a hash-linked receipt chain \
                      this button re-derives.",
                     O::KEY
@@ -146,7 +146,7 @@ pub fn recheck_note(verify_note: &str, elapsed_ms: u128) -> String {
     format!(
         "{verify_note}\n\nRecomputed just now ({elapsed_ms} ms): the bot re-derived the \
          session's hash-linked receipt chain from its committed move history. The `turn_hash` \
-         each landed move printed is a link in this chain — mutate ANY past move and every \
+         each landed move printed is a link in this chain: mutate ANY past move and every \
          later hash (and this check) changes. Nothing above is taken on trust."
     )
 }

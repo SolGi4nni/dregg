@@ -1215,7 +1215,7 @@ fn verified_user(
             audit::log().emit(refused_event(&e));
             return Err((
                 e.http_status(),
-                format!("activity ticket refused: {e} — open this surface inside Discord"),
+                format!("activity ticket refused: {e}; open this surface inside Discord"),
             )
                 .into_response());
         }
@@ -1284,7 +1284,7 @@ async fn post_da_token(
         );
         return (
             StatusCode::UNAUTHORIZED,
-            "token exchange refused: this code was already rejected — re-authorize for a fresh one",
+            "token exchange refused: this code was already rejected; re-authorize for a fresh one",
         )
             .into_response();
     }
@@ -1307,7 +1307,7 @@ async fn post_da_token(
         );
         return (
             StatusCode::TOO_MANY_REQUESTS,
-            "token exchange rate limit — retry shortly",
+            "token exchange rate limit: retry shortly",
         )
             .into_response();
     }
@@ -1330,7 +1330,7 @@ async fn post_da_token(
             );
             return (
                 StatusCode::TOO_MANY_REQUESTS,
-                "too many concurrent token exchanges — retry shortly",
+                "too many concurrent token exchanges: retry shortly",
             )
                 .into_response();
         }
@@ -1478,7 +1478,7 @@ fn da_native_fragment(html: String, key: &str, id: &str, fragment: bool) -> Stri
                  <p class=\"game-session-boundary\"><span aria-hidden=\"true\">◐</span>\
                  Discord proves who you are and this server checks that proof. Your moves are \
                  then signed with a key this server holds for you, not one on your device. What \
-                 other players are not shown stays unshown — but the whole session lives on this \
+                 other players are not shown stays unshown, but the whole session lives on this \
                  server, which can read all of it.</p></section>{native}",
                 kind.as_str(),
                 crate::esc(id),
@@ -1536,7 +1536,7 @@ async fn get_da_offerings(
          <h3 style=\"margin:0 0 .35rem\">The Descent</h3>\
          <p class=\"prose\" style=\"margin:0 0 .5rem\">{flagship}</p>\
          <p class=\"prose\" style=\"margin:0;font-size:.85em;opacity:.75\">Played on the open \
-         leaderboard under a SEPARATE identity from your Discord-verified play here — \
+         leaderboard under a SEPARATE identity from your Discord-verified play here; \
          <b>Link across platforms</b> below binds them into one.</p>\
          </div>\
          <p class=\"prose\" style=\"margin:.8rem 0 .4rem\">{lab}</p>",
@@ -1549,9 +1549,9 @@ async fn get_da_offerings(
     let link = "<p class=\"prose\" style=\"margin:1rem 0 .2rem\">\
          <a class=\"btn\" href=\"/da/link\">🔗 Link this Discord account across platforms</a></p>\
          <p class=\"prose\" style=\"margin:0;font-size:.85em;opacity:.8\">Bind Discord-you and \
-         Telegram-you to one root key — one human on boards + leaderboards.</p>";
+         Telegram-you to one root key: one human on boards + leaderboards.</p>";
     let body = format!(
-        "<div class=\"notice ok\" role=\"status\">Verified via Discord — playing as \
+        "<div class=\"notice ok\" role=\"status\">Verified via Discord · playing as \
          <code>{ident16}…</code> (the same identity as in-chat)</div>{featured}{cards}{link}",
     );
     Html(body).into_response()
@@ -2075,7 +2075,7 @@ async fn post_da_act(
             publication,
             ..
         } => format!(
-            "Turn committed — {}",
+            "Turn committed · {}",
             publication.as_ref().map_or_else(
                 || PlayerTurnReceipt::from_landed_signed(
                     &receipt,
@@ -2095,7 +2095,7 @@ async fn post_da_act(
             ..
         } => {
             metrics::inc_turn_refused();
-            format!("Refused: {why} (nothing committed — anti-ghost).")
+            format!("Refused: {why} (nothing committed · anti-ghost).")
         }
         act_signed::SignedAdvance::CommittedButPublicationFailed { error, .. } => format!(
             "Turn committed, but its public receipt could not be rendered ({error}). Do not retry; refresh to inspect the committed state."
@@ -2211,10 +2211,10 @@ fn shell_page(client_id: &str) -> String {
     format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\">\
-         <title>{name} — Discord Activity</title>\
+         <title>{name} · Discord Activity</title>\
          {style}</head><body>\
          <main class=\"session\">\
-         <p class=\"prose\" id=\"da-greet\">{name} — games that check their own moves.</p>\
+         <p class=\"prose\" id=\"da-greet\">{name} · games that check their own moves.</p>\
          <div id=\"da-root\" data-client-id=\"{client_id}\"><p class=\"prose\">Loading the catalog…</p></div>\
          </main>\
          <script src=\"/da/static/discord-sdk.js\"></script>\
@@ -2269,7 +2269,7 @@ function report(message, cls) {
 // The SDK must be vendored (window.DiscordSDK). The placeholder degrades to an honest message.
 const SDKCtor = window.DiscordSDK;
 if (window.__DISCORD_SDK_PLACEHOLDER || typeof SDKCtor !== "function") {
-  notice("The Discord Embedded App SDK is not vendored on this build yet — the Activity cannot " +
+  notice("The Discord Embedded App SDK is not vendored on this build yet: the Activity cannot " +
     "identify you. Serve the real same-origin SDK bundle to enable it.", "refused");
 } else {
   bootActivity(new SDKCtor(clientId)).catch(function (e) {
@@ -2378,7 +2378,7 @@ async function bootActivity(sdk) {
   }
   const greet = document.getElementById("da-greet");
   if (greet && data.custodial_pubkey_hex) {
-    greet.textContent = "Verified via Discord — playing as " + data.custodial_pubkey_hex.slice(0, 16) + "…";
+    greet.textContent = "Verified via Discord · playing as " + data.custodial_pubkey_hex.slice(0, 16) + "…";
   }
 
   root.addEventListener("submit", async function (ev) {
@@ -2664,7 +2664,7 @@ fn link_page(client_id: &str) -> String {
 </head><body data-client-id="{client_id}">
 <h1>🔗 Link this Discord account to your dregg identity</h1>
 <p class="sub">Sign a one-time claim with your <b>root key</b>. Then Discord-you and Telegram-you are
-the same human on boards + leaderboards — no browser extension needed.</p>
+the same human on boards + leaderboards. No browser extension needed.</p>
 
 <div id="who" class="card">Identifying you via Discord…</div>
 
@@ -2676,7 +2676,7 @@ the same human on boards + leaderboards — no browser extension needed.</p>
 <div id="panel-passkey" class="card">
   <div id="key-none">
     <b>No dregg key on this device yet</b>
-    <p><small>Choose one — a new key is created ON this device and locked behind a passkey (or a
+    <p><small>Choose one: a new key is created ON this device and locked behind a passkey (or a
     passphrase). It never leaves the device unencrypted. <b>Back it up</b> after creating, or it
     lives only here.</small></p>
     <button id="do-create">✨ Create a new dregg key here</button>
@@ -2692,7 +2692,7 @@ the same human on boards + leaderboards — no browser extension needed.</p>
     <button id="do-backup" class="ghost">🔑 Back up my key</button>
   </div>
   <div id="pass-fallback" class="hidden">
-    <p><small>No passkey PRF on this device — using a passphrase. Pick something long + unguessable
+    <p><small>No passkey PRF on this device: using a passphrase. Pick something long + unguessable
     (≥ 12 chars); a short passphrase can be brute-forced from a stolen device.</small></p>
     <input id="passphrase" type="password" placeholder="passphrase to lock your key" autocomplete="off">
     <button id="do-passphrase">🔑 Continue with passphrase</button>
@@ -2890,7 +2890,7 @@ async function signAndLink(seed){
     const sig = await ed.signAsync(msg, seed);
     await submit(rootHex, toHex(sig));
   } finally { zero(seed); }
-  setStatus("✅ Linked! Discord-you is now bound to your root key — one human across platforms.", "ok");
+  setStatus("✅ Linked! Discord-you is now bound to your root key: one human across platforms.", "ok");
 }
 
 // Explicit CREATE — never auto-minted. Wrap under passkey-PRF (or passphrase), then link.
@@ -2899,8 +2899,8 @@ async function createOrUnlock(create){
   try { prf = await prfSecret(create); }
   catch(e){
     if (e instanceof NoPrf){ $("pass-fallback").classList.remove("hidden");
-      setStatus("no passkey PRF here — set a passphrase below.", "warn"); return; }
-    if (e instanceof PkFailed){ setStatus("✗ passkey " + e.message + " — tap again to retry (not falling back).", "err"); return; }
+      setStatus("no passkey PRF here: set a passphrase below.", "warn"); return; }
+    if (e instanceof PkFailed){ setStatus("✗ passkey " + e.message + ": tap again to retry (not falling back).", "err"); return; }
     throw e;
   }
   const aes = await aesFromRaw(prf.slice(0,32)); zero(prf);
@@ -2908,7 +2908,7 @@ async function createOrUnlock(create){
   let seed;
   if (rec){
     const r = JSON.parse(rec);
-    if (r.mode !== "prf"){ setStatus("this device's key is passphrase-locked — use the passphrase.", "err"); return; }
+    if (r.mode !== "prf"){ setStatus("this device's key is passphrase-locked: use the passphrase.", "err"); return; }
     seed = await unwrapSeed(aes, r);
   } else {
     seed = ed.utils.randomPrivateKey();
@@ -2996,7 +2996,7 @@ $("do-relay").onclick = async () => {
     const sigHex = $("sig-hex").value.trim().toLowerCase();
     if (rootHex.length !== 64 || sigHex.length !== 128){ setStatus("root pubkey must be 64 hex, signature 128 hex.", "err"); return; }
     setStatus("submitting…"); await submit(rootHex, sigHex);
-    setStatus("✅ Linked! Discord-you is now bound to your root key — one human across platforms.", "ok");
+    setStatus("✅ Linked! Discord-you is now bound to your root key: one human across platforms.", "ok");
   } catch(e){ setStatus("✗ " + e.message, "err"); }
 };
 
@@ -3008,7 +3008,7 @@ $("do-relay").onclick = async () => {
     const error = document.createElement("span");
     error.className = "err";
     error.textContent = "Could not identify you via Discord: " + (e.message||e) +
-      " — the link ceremony needs the Activity SDK to prove which Discord account you are.";
+      ". The link ceremony needs the Activity SDK to prove which Discord account you are.";
     $("who").replaceChildren(error);
     return;
   }

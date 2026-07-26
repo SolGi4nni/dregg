@@ -24,7 +24,7 @@
 //! refused restore, never a forged crown.
 
 use crate::commands::crown::{CrownStore, StoredCrownFold};
-use crate::db::{CrownFoldRow, Database};
+use crate::db::{CrownFoldRow, CrownFoldWrite, Database};
 
 /// A [`CrownStore`] persisted in the bot's sqlite database (`crown_folds`). Accepted crown folds
 /// survive restart and are re-verified through the board's own O(1) accept path on boot.
@@ -91,8 +91,21 @@ impl CrownStore for SqliteCrownStore {
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or_default(),
         };
-        self.block(self.db.persist_crown_fold(&row))
-            .map_err(|e| e.to_string())
+        match self
+            .block(self.db.persist_crown_fold(&row))
+            .map_err(|e| e.to_string())?
+        {
+            CrownFoldWrite::Stored | CrownFoldWrite::AlreadyIdentical => Ok(()),
+            // ⚑ The row was DROPPED because a different fold already holds this token. Reporting
+            // `Ok` here is what made `commands::crown`'s "RANKED but did not persist" warning
+            // unreachable: the crown is on the board in memory and will vanish at the next
+            // restart, and nothing said so.
+            CrownFoldWrite::TokenTaken => Err(format!(
+                "token {} is already held by a DIFFERENT crown fold — this fold was not persisted \
+                 (its token counter fell behind a row that did not re-verify at boot)",
+                fold.token
+            )),
+        }
     }
 
     fn list_folds(&self) -> Result<Vec<StoredCrownFold>, String> {
@@ -166,6 +179,53 @@ mod tests {
 
         let back = store.list_folds().unwrap();
         assert_eq!(back, vec![fold], "the fold round-trips exactly");
+    }
+
+    /// ⚑ **A TOKEN COLLISION IS REPORTED, not swallowed.**
+    ///
+    /// `INSERT OR IGNORE` made "the row landed" and "the row was DROPPED because a different
+    /// fold already owns this token" the same `Ok(())`. So `commands::crown::persist_fold`'s
+    /// "RANKED but did not persist — its public Re-verify button will not survive a restart"
+    /// warning could never fire, and the crown vanished at the next boot with nobody told.
+    ///
+    /// Both halves are asserted: the genuine re-persist is still idempotent (`Ok`), and the
+    /// collision is an `Err` whose text names the token.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_token_collision_is_reported_while_a_genuine_repersist_stays_idempotent() {
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        let store = SqliteCrownStore::new(db, tokio::runtime::Handle::current());
+        let fold = StoredCrownFold {
+            token: 9,
+            game: "tug".into(),
+            channel: 1,
+            player: "aa".repeat(32),
+            turns: 2,
+            vk: [0x01; 32],
+            genesis_root: [1, 2, 3, 4, 5, 6, 7, 8],
+            win_root: [9, 10, 11, 12, 13, 14, 15, 16],
+            proof: vec![0x01, 0x02],
+        };
+        store.persist_fold(&fold).expect("the first write lands");
+        store
+            .persist_fold(&fold)
+            .expect("re-persisting the SAME fold is idempotent, not an error");
+
+        // A DIFFERENT fold minted the same token — what a `next_token` that fell behind does.
+        let collided = StoredCrownFold {
+            player: "bb".repeat(32),
+            proof: vec![0xFF, 0xFE],
+            ..fold.clone()
+        };
+        let refused = store
+            .persist_fold(&collided)
+            .expect_err("a token collision must be REPORTED, not silently dropped");
+        assert!(
+            refused.contains("token 9") && refused.contains("not persisted"),
+            "the refusal must name the token and say the fold did not persist: {refused}"
+        );
+
+        // And the store still holds exactly the FIRST fold — the collision changed nothing.
+        assert_eq!(store.list_folds().unwrap(), vec![fold]);
     }
 
     /// A row whose anchor cannot be decoded is DROPPED, not restored under a guessed trust

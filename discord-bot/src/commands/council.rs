@@ -125,7 +125,7 @@ impl DiscordOffering for CouncilOffering {
 /// Register `/council` (open / status / verify).
 pub fn register() -> CreateCommand {
     CreateCommand::new("council")
-        .description("Run a real DreggNet council in this channel — propose, vote, enact")
+        .description("Run a real DreggNet council in this channel · propose, vote, enact")
         .add_option(
             CreateCommandOption::new(
                 CommandOptionType::SubCommand,
@@ -180,7 +180,7 @@ pub fn register() -> CreateCommand {
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,
             "close",
-            "Close the collective round — resolve the plurality winner as one verified turn",
+            "Close the collective round · resolve the plurality winner as one verified turn",
         ))
 }
 
@@ -359,7 +359,7 @@ async fn handle_open(
         )
         // `OfferingError`'s `Display` is the whole player sentence now (the substrate's own words
         // went to the operator log at the refusal), so it is not prefixed.
-        .map_err(|e| format!("The council did not come alive — {e}."))?;
+        .map_err(|e| format!("The council did not come alive: {e}."))?;
         // NEVER A SILENT DROP. The session ALREADY OPENED; if the render then finds nothing (a
         // concurrent close, or the store thread refusing the read) this used to `return` without
         // ever answering the interaction — so the opener saw "This interaction failed" on a

@@ -1,0 +1,79 @@
+# feature-t3-known-red.tsv — the T3 pairs that DO NOT COMPILE today, with the symptom.
+#
+# THIS FILE IS A RATCHET, NOT A PLACE TO HIDE. scripts/feature-t3-sweep.sh judges every sweep
+# against it IN BOTH DIRECTIONS:
+#
+#   * a T3 pair that FAILS and is not listed here  -> RED. A new break.
+#   * a pair listed here that now COMPILES         -> RED. Remove the row; the list must shrink.
+#
+# and the number of rows is CEILINGED in the sweep script, in reviewed code (MAX_KNOWN_RED), so a
+# regression cannot be absorbed by appending. The second direction is the one that matters: a
+# hand-kept list of known problems only ever grows on its own, and a list that only grows stops
+# describing the tree — which is how a "debt ledger" comes to pass while describing an object that
+# no longer exists.
+#
+# WHY THERE IS ANYTHING HERE AT ALL. Until 2026-07-26 nothing in CI compiled these pairs. The
+# first sweep over a surface nobody had fed to rustc in months found real, pre-existing breakage.
+# Recording it is how the sweep becomes a gate today instead of a wish; every row is a FINDING
+# handed to the next lane, not an excuse. Reporting them and exiting 0 would have been a
+# fail-open gate, which this repository has a whole memory note about.
+#
+# COLUMNS (tab-separated; blank lines and '#' comments ignored)
+#   crate    cargo package name
+#   feature  the feature name
+#   symptom  the FIRST `error...` line rustc emitted, or `TIMEOUT after Ns`
+#
+# ── THE FIRST MEASUREMENT (2026-07-26, hbox, 24 cores, warm lane, no Lean archive so the
+#    dregg-lean-ffi build script early-returns exactly as it does on a hosted runner) ──
+# 79 T3 pairs: 59 PASS, 20 FAIL, 1594s total (26.6 min), mean 20s, median 12s, max 151s
+# (starbridge-v2:gpui-web). FIVE distinct root causes, not twenty problems:
+#
+#   1. deos-hermes x4 — `examples/agent_turn_carries_a_web_fact.rs` imports
+#      `dregg_zkoracle_prove::endpoints::github::{prove_github_live, verify_github_live}`, which
+#      exist only under that crate's `tlsn-live`. deos-hermes never enables it; the example
+#      compiles in ci.yml ONLY because another workspace member pulls `tlsn-live` into the
+#      unified resolve. Its sibling example `zk_live_carrier` declares
+#      `required-features = ["zk-live"]` for exactly this reason. One missing `[[example]]`
+#      stanza fixes all four.
+#   2. pg-dregg x6 + dregg-sdk-py x3 — `unresolved imports p3_fri::{CpuTwoAdicFriFold,
+#      TwoAdicFriFoldBackend}`. Both are EXCLUDED workspaces, so neither inherits the root's
+#      `[patch] p3-fri = { path = "vendor/plonky3-fri-82cfad73" }`; they resolve a different
+#      p3-fri and dregg-circuit-prove does not build there. ⚠ `publish-sdk-py.yml` runs
+#      `cargo test --manifest-path sdk-py/Cargo.toml` on an `sdk-py-v*` TAG — so the next wheel
+#      cut fails, and nothing said so.
+#   3. dregg-tests x2 — the `__legacy_tests` / `__wip_tests` features are pure API drift:
+#      `dregg_circuit::{BodyMembershipProof, MultiStepWitness}` are gone, and
+#      `dregg_cell::Cell::id` is now private. Textbook `#![cfg]` rot.
+#   4. dreggnet-market:authenticated-clearing + dreggnet-telegram:private-bazaar-live — a struct
+#      grew a field (`BfvPublicIdentity::opening_threshold`) and a function grew an argument,
+#      and the feature-gated call sites were never recompiled.
+#   5. starbridge-v2:sel4-thin — `unresolved import starbridge_v2::session` under its OWN
+#      documented invocation (`--no-default-features --features sel4-thin`).
+#
+# ⚠ TWO ROWS ARE HOST-DEPENDENT AND MUST BE RE-MEASURED FROM THE FIRST CI ARTIFACT.
+# `deos-zed-full`'s two pairs failed at `glib-sys`'s build script because the measuring host had
+# no `pkg-config glib-2.0`. feature-surface.yml's apt line now installs libglib2.0-dev/libgtk-3-dev/
+# libatk1.0-dev/libsoup-3.0-dev, so the hosted shard may well get further — in which case the
+# sweep goes RED on the "now COMPILES but is still recorded broken" direction, which is the
+# ratchet working. Fix by replacing these two rows with whatever CI actually reports.
+#
+deos-hermes	js-agent	error[E0432]: unresolved imports `dregg_zkoracle_prove::endpoints::github::prove_github_live`, `dregg_zkoracle_prove::endpoints::github::verify_github_live`
+deos-hermes	live-brain	error[E0432]: unresolved imports `dregg_zkoracle_prove::endpoints::github::prove_github_live`, `dregg_zkoracle_prove::endpoints::github::verify_github_live`
+deos-hermes	node-brain	error[E0432]: unresolved imports `dregg_zkoracle_prove::endpoints::github::prove_github_live`, `dregg_zkoracle_prove::endpoints::github::verify_github_live`
+deos-hermes	screenshot	error[E0432]: unresolved imports `dregg_zkoracle_prove::endpoints::github::prove_github_live`, `dregg_zkoracle_prove::endpoints::github::verify_github_live`
+deos-zed-full	default	error: failed to run custom build command for `glib-sys v0.21.5`
+deos-zed-full	full-zed	error: failed to run custom build command for `glib-sys v0.21.5`
+dregg-sdk-py	default	error[E0432]: unresolved imports `p3_fri::CpuTwoAdicFriFold`, `p3_fri::TwoAdicFriFoldBackend`
+dregg-sdk-py	kernel	error[E0432]: unresolved imports `p3_fri::CpuTwoAdicFriFold`, `p3_fri::TwoAdicFriFoldBackend`
+dregg-sdk-py	light	error[E0432]: unresolved imports `p3_fri::CpuTwoAdicFriFold`, `p3_fri::TwoAdicFriFoldBackend`
+dregg-tests	__legacy_tests	error[E0432]: unresolved imports `dregg_circuit::BodyMembershipProof`, `dregg_circuit::MultiStepWitness`, `dregg_circuit::NoteSpendingAir`, `dregg_circuit::NoteSpendingWitness`, `dregg_circuit::prove_
+dregg-tests	__wip_tests	error[E0616]: field `id` of struct `dregg_cell::Cell` is private
+dreggnet-market	authenticated-clearing	error[E0063]: missing field `opening_threshold` in initializer of `BfvPublicIdentity`
+dreggnet-telegram	private-bazaar-live	error[E0061]: this function takes 2 arguments but 1 argument was supplied
+pg-dregg	default	error[E0432]: unresolved imports `p3_fri::CpuTwoAdicFriFold`, `p3_fri::TwoAdicFriFoldBackend`
+pg-dregg	pg_test	error[E0432]: unresolved imports `p3_fri::CpuTwoAdicFriFold`, `p3_fri::TwoAdicFriFoldBackend`
+pg-dregg	tier-c	error[E0432]: unresolved imports `p3_fri::CpuTwoAdicFriFold`, `p3_fri::TwoAdicFriFoldBackend`
+pg-dregg	tier-d	error[E0432]: unresolved imports `p3_fri::CpuTwoAdicFriFold`, `p3_fri::TwoAdicFriFoldBackend`
+pg-dregg	tier-d-lean	error[E0432]: unresolved imports `p3_fri::CpuTwoAdicFriFold`, `p3_fri::TwoAdicFriFoldBackend`
+pg-dregg	tier-d-rust	error[E0432]: unresolved imports `p3_fri::CpuTwoAdicFriFold`, `p3_fri::TwoAdicFriFoldBackend`
+starbridge-v2	sel4-thin	error[E0432]: unresolved import `starbridge_v2::session`

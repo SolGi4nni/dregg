@@ -113,8 +113,11 @@ impl ProseDriver {
             .collect();
         if actions.iter().any(|a| a.wants_text) {
             frame.note(
-                "at least one affordance SOLICITS free text (`wants_text`). A chat channel can \
-                 route the next message into it; the web surface has no such channel.",
+                "at least one affordance SOLICITS free text (`wants_text`). Telegram arms its \
+                 text slot and routes the next message into it; the web surface now renders a \
+                 real text field beside the button and POSTs what was typed (`name=\"text\"`). \
+                 WeChat's numbered reply and Discord's buttons still carry a FIXED press only, so \
+                 on those two the affordance can be pressed and can only be refused.",
             );
         }
 

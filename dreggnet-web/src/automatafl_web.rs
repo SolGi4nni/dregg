@@ -128,35 +128,35 @@ fn rules_html() -> String {
     format!(
         "<section class=\"panel\"><h2>The rules, in one screen</h2>\
          <ul class=\"rules\">\
-         <li><strong>The board</strong> is {n}×{n}. It holds repulsors (<code>R</code> — the \
-         angular pale blades, spikes pointing OUT), attractors (<code>A</code> — the round brass \
-         discs, spikes pointing IN), and ONE automaton (<code>@</code> — the violet ring, the only \
+         <li><strong>The board</strong> is {n}×{n}. It holds repulsors (<code>R</code> · the \
+         angular pale blades, spikes pointing OUT), attractors (<code>A</code> · the round brass \
+         discs, spikes pointing IN), and ONE automaton (<code>@</code> · the violet ring, the only \
          thing on the board that glows). Pieces move like a rook: any distance along a row or a \
-         column, never diagonally, never onto the automaton. Either seat may push ANY piece — the \
+         column, never diagonally, never onto the automaton. Either seat may push ANY piece: the \
          pieces are shared, and that is what makes the collision interesting.</li>\
          <li><strong>You do not take turns.</strong> Both seats seal a move at the same time. The \
          round runs <em>commit → reveal → resolve</em>: you seal, your opponent seals, both open, \
          then ONE turn applies both.</li>\
          <li><strong>The seal is the game.</strong> While your move is sealed your opponent is not \
-         shown it — but be clear about who is doing the hiding. Your move sits on this server in \
+         shown it, but be clear about who is doing the hiding. Your move sits on this server in \
          plain text until you open it, so what keeps it secret is this server declining to tell \
          them, not a code the two of you exchanged that nobody else can read. Trust the host or do \
          not play here.</li>\
          <li><strong>A CLASH marks the square and re-opens the round.</strong> If the two moves \
          fight over the same square, that round does not happen at all: the contested coordinate is \
          MARKED (it paints as a dead <code>×</code> square), the board FREEZES exactly as it was, \
-         and the seats the clash named owe a FRESH move — which may not use a marked square at \
+         and the seats the clash named owe a FRESH move, which may not use a marked square at \
          either end. The turn counter does not move until a round comes back clean, and the markers \
          die when it does. Every re-entry has to burn a NEW square, so a turn cannot re-open \
          forever.</li>\
-         <li><strong>The automaton then steps</strong> — once the round finally resolves — pulled \
+         <li><strong>The automaton then steps</strong>, once the round finally resolves, pulled \
          toward attractors and pushed from repulsors along each axis. Drive it onto one of YOUR two \
          goal corners and you win.</li>\
          </ul>\
          <p class=\"prose\">Every press is re-run against the rules before anything is written \
          down: an illegal move is refused and nothing happens. And when the match is over, anyone \
          can replay it from the first move to the last and watch it come out the same way. That \
-         replay happens on this server — not on a blockchain, and no public network is \
+         replay happens on this server, not on a blockchain, and no public network is \
          involved.</p>\
          </section>",
         n = n,
@@ -205,7 +205,7 @@ fn landing_page(notice: Option<&str>) -> String {
         rules = rules_html(),
     );
     document(
-        &format!("{} — Automatafl", crate::PRODUCT_NAME),
+        &format!("{} · Automatafl", crate::PRODUCT_NAME),
         "offerings",
         &body,
     )

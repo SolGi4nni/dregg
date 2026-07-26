@@ -251,7 +251,7 @@ impl Offering for InventoryOffering {
     fn advance(&self, s: &mut InventorySession, input: Action, _actor: DreggIdentity) -> Outcome {
         if input.turn != TURN_GIFT {
             return Outcome::Refused(format!(
-                "the inventory surface only gifts (verb `{TURN_GIFT}`) — trade for a price via the market"
+                "the inventory surface only gifts (verb `{TURN_GIFT}`); trade for a price via the market"
             ));
         }
         let idx = input.arg.max(0) as usize;
@@ -301,13 +301,13 @@ impl Offering for InventoryOffering {
             "accent",
             vec![
                 text(if s.is_empty() {
-                    "This shelf is empty — nothing to move. Items arrive by clearing a run or by \
+                    "This shelf is empty: nothing to move. Items arrive by clearing a run or by \
                      buying one on the market; each carries the provenance chain that says where \
                      it came from."
                         .to_string()
                 } else if s.held_count() == 0 {
                     "Every note below has already been gifted away, so none of them is yours to \
-                     move — a Gift of one you no longer hold is refused by the owner-signature \
+                     move. A Gift of one you no longer hold is refused by the owner-signature \
                      gate, not by this page."
                         .to_string()
                 } else {
@@ -342,9 +342,7 @@ impl Offering for InventoryOffering {
             children.push(section(
                 "Items",
                 "muted",
-                vec![text(
-                    "No items owned yet — clear a run or trade for a drop.",
-                )],
+                vec![text("No items owned yet. Clear a run or trade for a drop.")],
             ));
         } else {
             // Snapshot the shelf out from under ONE short borrow, then build the tree.
@@ -430,7 +428,7 @@ impl Offering for InventoryOffering {
         }
 
         Surface(section(
-            format!("Inventory — {}", s.owner),
+            format!("Inventory · {}", s.owner),
             "accent",
             children,
         ))

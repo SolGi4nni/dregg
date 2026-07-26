@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Light client — verify a whole history in one proof · dregg</title>
-  <meta name="description" content="A producer folds a finalized multi-turn history into one succinct recursive proof; your browser tab verifies that proof — re-executing nothing. Check it against a config anchor you control; a tampered anchor is refused.">
+  <title>Light client: verify a whole history in one proof · dregg</title>
+  <meta name="description" content="A producer folds a finalized multi-turn history into one succinct recursive proof; your browser tab verifies that proof, re-executing nothing. Check it against a config anchor you control; a tampered anchor is refused.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
   <link rel="stylesheet" href="../assets/style.css">
   <style>
@@ -83,7 +83,7 @@
     A finalized history is a chain of turns: each turn's after-state is the next turn's before-state.
     Instead of re-executing every turn to trust the result, a <strong>producer</strong> (a node or relayer
     that ran the history) folds the whole chain into <strong>one succinct recursive proof</strong>. A
-    <strong>light client</strong> — your browser tab, here — then verifies that single proof, re-witnessing
+    <strong>light client</strong> (your browser tab, here) then verifies that single proof, re-witnessing
     nothing: no re-execution, no re-hashing, no walk of the chain. If it verifies, every folded turn
     executed correctly, in order, from genesis to the final root.
   </p>
@@ -98,7 +98,7 @@
     <div class="stage__fold">▼ folded once, natively, off the verifier ▼</div>
     <div class="stage__proof">
       <div class="glyph">π ✓</div>
-      <div class="cap">one recursive STARK — what your tab verifies below, re-witnessing nothing</div>
+      <div class="cap">one recursive STARK · what your tab verifies below, re-witnessing nothing</div>
     </div>
     <p class="stage__floor">
       the verification carries the recursion engine's FRI soundness. The verification <em>is</em> the trust.
@@ -107,11 +107,11 @@
 
   <div class="steps">
     <div class="step"><div class="step__n">produce · off the verifier</div><div class="step__t">Fold once</div>
-      <div class="step__d">The real <code>k</code>-turn aggregate below was folded natively by the producer — the expensive step, done once. Each leaf is a real EffectVM proof verified in-circuit; the recursion binds the chain.</div></div>
+      <div class="step__d">The real <code>k</code>-turn aggregate below was folded natively by the producer: the expensive step, done once. Each leaf is a real EffectVM proof verified in-circuit; the recursion binds the chain.</div></div>
     <div class="step"><div class="step__n">verify · in your tab</div><div class="step__t">Check cheaply</div>
-      <div class="step__d">Your tab runs the real recursion verify over the wire proof — independent of how many turns the history holds. Verification is the light step, and it runs client-side in WebAssembly.</div></div>
+      <div class="step__d">Your tab runs the real recursion verify over the wire proof, independent of how many turns the history holds. Verification is the light step, and it runs client-side in WebAssembly.</div></div>
     <div class="step"><div class="step__n">anchor · your config</div><div class="step__t">Trust nothing but your anchor</div>
-      <div class="step__d">The trust anchor is configuration you hold separately — never read off the proof under verification. A proof built for a different circuit cannot pass your anchor.</div></div>
+      <div class="step__d">The trust anchor is configuration you hold separately, never read off the proof under verification. A proof built for a different circuit cannot pass your anchor.</div></div>
   </div>
 
   <!-- Panel 1: verify the real baked aggregate in-tab -->
@@ -119,7 +119,7 @@
     <h2>1 · Verify a real history in your tab</h2>
     <p class="hint">
       The aggregate below is a real, pre-folded whole-history proof (shipped as a wire envelope). Click
-      <em>Verify</em> and your tab runs the genuine recursion verify against the config anchor — re-witnessing
+      <em>Verify</em> and your tab runs the genuine recursion verify against the config anchor, re-witnessing
       nothing. The carried public commitments (genesis/final root, the ordered-history digest, the turn count)
       are re-attested against the binding proof.
     </p>
@@ -134,7 +134,7 @@
   <section class="panel">
     <h2>2 · Check it against your own anchor</h2>
     <p class="hint">
-      The anchor is <em>your</em> config — a separate input, never taken from the artifact. Verify against the
+      The anchor is <em>your</em> config: a separate input, never taken from the artifact. Verify against the
       correct anchor and it attests; tamper one hex digit and it is refused outright. "You did not trust the
       producer, you checked it against your own anchor."
     </p>
@@ -152,7 +152,7 @@
 
   <p class="lc-lede" style="font-size:0.84rem;color:var(--fg-muted)">
     Named floor: the verification carries the recursion engine's FRI soundness. The verification <em>is</em> the
-    trust — if the aggregate verifies under a sound engine, the whole history is attested. This is the executable
+    trust: if the aggregate verifies under a sound engine, the whole history is attested. This is the executable
     counterpart of the Lean theorem <code>light_client_verifies_whole_history</code>.
   </p>
 
@@ -190,9 +190,9 @@
         `<span class="k">chain digest</span> <span class="v">[${e.chain_digest.join(', ')}]</span>\n` +
         `<span class="k">config anchor</span> <span class="v">${esc(correctAnchor)}</span>\n` +
         `<span class="k">proof bytes</span> <span class="v">${e.proof_bytes_b64.length} base64 chars (the wire envelope)</span>`;
-      $('#out1').innerHTML = 'ready — click Verify to run the real recursion verify in your tab.';
+      $('#out1').innerHTML = 'ready: click Verify to run the real recursion verify in your tab.';
       $('#anchor2').value = correctAnchor;
-      $('#out2').innerHTML = 'ready — verify against the correct anchor, or tamper a digit.';
+      $('#out2').innerHTML = 'ready: verify against the correct anchor, or tamper a digit.';
       for (const id of ['#run1', '#run2', '#tamper2', '#reset2']) $(id).disabled = false;
     } catch (err) {
       $('#meta').innerHTML = '<span class="verdict no">failed to load the verifier / baked aggregate:</span>\n' + esc(String(err));
@@ -218,7 +218,7 @@
     const flip = { '0': '1', '1': '0' };
     a[0] = flip[a[0]] || (a[0] === 'a' ? 'b' : 'a');
     $('#anchor2').value = a.join('');
-    $('#out2').innerHTML = 'anchor tampered (one digit flipped) — now click Verify; it must be refused.';
+    $('#out2').innerHTML = 'anchor tampered (one digit flipped). Now click Verify; it must be refused.';
   });
   $('#reset2').addEventListener('click', () => {
     $('#anchor2').value = correctAnchor;

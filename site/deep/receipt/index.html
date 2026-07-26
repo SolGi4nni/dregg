@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Anatomy of a receipt</title>
-  <meta name="description" content="You said every action leaves a receipt. Here is one — a real object from the running system, field by field — and the theorems a machine has checked about it.">
+  <meta name="description" content="You said every action leaves a receipt. Here is one (a real object from the running system, field by field) and the theorems a machine has checked about it.">
   <meta property="og:title" content="Anatomy of a receipt">
   <meta property="og:description" content="A computing system where every action leaves a receipt, money always adds up, and permissions never silently widen.">
   <meta property="og:type" content="website">
@@ -49,7 +49,7 @@
       <h1>Anatomy of a receipt.</h1>
     </div>
     <div class="page-deck">
-      <p>Every action in dregg leaves a receipt—a small record that pins exactly what happened. Here is what one is made of, and what a machine has proven about it.</p>
+      <p>Every action in dregg leaves a receipt, a small record that pins exactly what happened. Here is what one is made of, and what a machine has proven about it.</p>
       <p class="deck-note">Nothing below is a mock-up. The receipt is real output from the running system; the field names are the real ones; the theorems are the real statements, checked by machine.</p>
     </div>
   </div>
@@ -77,7 +77,7 @@ computrons_used        622
 action_count           1
 finality               Final</code></pre>
       </div>
-      <p class="small-note">A receipt carries more than this—links for capabilities it created, events it emitted, an optional executor signature. These are the load-bearing few.</p>
+      <p class="small-note">A receipt carries more than this: links for capabilities it created, events it emitted, an optional executor signature. These are the load-bearing few.</p>
     </div>
   </div>
 </section>
@@ -92,10 +92,10 @@ finality               Final</code></pre>
     <div class="chapter-body evidence-table" role="list">
       <article class="evidence-row" role="listitem"><div><h3>turn_hash</h3></div><p>A fingerprint of the exact action this receipt answers for. Change what was requested, and this no longer matches.</p></article>
       <article class="evidence-row" role="listitem"><div><h3>pre_state_hash / post_state_hash</h3></div><p>The world's fingerprint before and after. A receipt is a claim: "I moved the world from here, to there." One 32-byte value fixes every balance, every stored field, every permission, every spent coin.</p></article>
-      <article class="evidence-row" role="listitem"><div><h3>effects_hash</h3></div><p>A fingerprint of every concrete change the turn made—each balance moved, each value written. Nudge one delta and this value moves.</p></article>
-      <article class="evidence-row" role="listitem"><div><h3>agent</h3></div><p>The cell that authorized the turn. Authority here means holding a key that produces an accepted witness—not merely being named in a table.</p></article>
+      <article class="evidence-row" role="listitem"><div><h3>effects_hash</h3></div><p>A fingerprint of every concrete change the turn made: each balance moved, each value written. Nudge one delta and this value moves.</p></article>
+      <article class="evidence-row" role="listitem"><div><h3>agent</h3></div><p>The cell that authorized the turn. Authority here means holding a key that produces an accepted witness, not merely being named in a table.</p></article>
       <article class="evidence-row" role="listitem"><div><h3>previous_receipt_hash</h3></div><p>The link to the receipt before it. Receipts form an unbroken chain; here it is <code>null</code> because this is the very first one.</p></article>
-      <article class="evidence-row" role="listitem"><div><h3>computrons_used</h3></div><p>The metered work the turn cost—622 here. Work is counted, not estimated.</p></article>
+      <article class="evidence-row" role="listitem"><div><h3>computrons_used</h3></div><p>The metered work the turn cost: 622 here. Work is counted, not estimated.</p></article>
       <article class="evidence-row" role="listitem"><div><h3>finality</h3></div><p><code>Final</code> means a quorum has committed it; <code>Tentative</code> means it is provable but not yet quorum-final.</p></article>
     </div>
   </div>
@@ -109,8 +109,8 @@ finality               Final</code></pre>
       <h2>You cannot forge a field.</h2>
     </header>
     <div class="chapter-body">
-      <p class="prose-large">Here is what makes a receipt more than a log line. The post-state fingerprint is not written down and trusted—it is <em>bound, inside the proof,</em> to the actual output of the run. Change one field the action did not legitimately write—nudge a balance, mint a coin, widen a permission—and the fingerprint no longer matches what the machine computed.</p>
-      <p class="prose-large">So the proof does not merely fail to be found. It <span class="hl-y">cannot exist</span>. The turn becomes unprovable. Not "a server catches you"—there is no server, and nothing to catch. A ghost leaves no receipt.</p>
+      <p class="prose-large">Here is what makes a receipt more than a log line. The post-state fingerprint is not written down and trusted; it is <em>bound, inside the proof,</em> to the actual output of the run. Change one field the action did not legitimately write (nudge a balance, mint a coin, widen a permission), and the fingerprint no longer matches what the machine computed.</p>
+      <p class="prose-large">So the proof does not merely fail to be found. It <span class="hl-y">cannot exist</span>. The turn becomes unprovable. Not "a server catches you"; there is no server, and nothing to catch. A ghost leaves no receipt.</p>
       <p class="inverse-note">In the engine, the claimed post-state is tied to the trace's committed output by the circuit's binding; the state fingerprint folds every balance, field, permission, and spent-coin ledger together, so moving any one of them moves the whole root. A tampered claim makes the proof's constraints unsatisfiable.</p>
     </div>
   </div>
@@ -122,7 +122,7 @@ finality               Final</code></pre>
       <p class="chapter-number">04</p>
       <p class="eyebrow">What is proven about it</p>
       <h2>The rules are theorems.</h2>
-      <p class="section-note">A receipt is only as good as the rules it must obey. In dregg those rules are theorems—written as mathematics and checked, every build, by the Lean proof checker. Four of them, in the system's own words, each with a plain reading.</p>
+      <p class="section-note">A receipt is only as good as the rules it must obey. In dregg those rules are theorems, written as mathematics and checked, every build, by the Lean proof checker. Four of them, in the system's own words, each with a plain reading.</p>
     </header>
     <div class="chapter-body">
       <div class="theorem-list">
@@ -142,19 +142,19 @@ finality               Final</code></pre>
       <article class="theorem">
         <div class="theorem-head"><span class="status status-proven">proven</span><h3>No double-spend</h3></div>
         <pre class="theorem-statement"><code>interp (noteSpendStmt nf) k = some k' → nf ∉ k.nullifiers</code></pre>
-        <p class="theorem-gloss">If a coin is spent, it was provably unspent before—and spending it a second time simply fails.</p>
+        <p class="theorem-gloss">If a coin is spent, it was provably unspent before, and spending it a second time simply fails.</p>
         <p class="theorem-src">metatheory · Argus/Effects/NoteSpend.lean · noteSpendStmt_no_double_spend</p>
       </article>
       <article class="theorem">
         <div class="theorem-head"><span class="status status-proven">proven</span><h3>The circuit is the machine</h3></div>
         <pre class="theorem-statement"><code>satisfiesConstraints applyEff old new s rest →
   isVmExecution applyEff old new s rest</code></pre>
-        <p class="theorem-gloss">Any trace that passes the circuit's checks really is a faithful run of the machine—it starts where it claims and ends exactly at the computed result.</p>
+        <p class="theorem-gloss">Any trace that passes the circuit's checks really is a faithful run of the machine: it starts where it claims and ends exactly at the computed result.</p>
         <p class="theorem-src">metatheory · Circuit/AirSoundness.lean · air_sound</p>
       </article>
       </div>
       <div class="record-caveat" style="margin-top:26px">
-        <strong>One theorem holds them together.</strong> A single statement, <code>deployed_system_secure</code>, composes all of these over one turn—no amplification, conservation, whole-post-state binding, no double-spend, and light-client provability, at once. Assuming standard cryptography—the same collision-resistance every modern system rests on—it holds.
+        <strong>One theorem holds them together.</strong> A single statement, <code>deployed_system_secure</code>, composes all of these over one turn: no amplification, conservation, whole-post-state binding, no double-spend, and light-client provability, at once. Assuming standard cryptography (the same collision-resistance every modern system rests on), it holds.
       </div>
     </div>
   </div>

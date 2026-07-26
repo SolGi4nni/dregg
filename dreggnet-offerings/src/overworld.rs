@@ -918,7 +918,7 @@ impl Offering for OverworldOffering {
             .actor
             .as_ref()
             .map(|actor| actor.as_str())
-            .unwrap_or("unclaimed — the first landed region turn binds the traveller");
+            .unwrap_or("unclaimed · the first landed region turn binds the traveller");
         let mut children = vec![
             ViewNode::Text(format!("traveller: {actor}")),
             ViewNode::Text(format!("you stand at {here}")),
@@ -956,7 +956,7 @@ impl Offering for OverworldOffering {
                 .collect(),
         });
         Surface(ViewNode::Section {
-            title: format!("{} — per-player overworld", self.map.name),
+            title: format!("{} · per-player overworld", self.map.name),
             tag: "accent".to_string(),
             children,
         })

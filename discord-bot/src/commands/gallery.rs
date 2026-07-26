@@ -631,14 +631,14 @@ impl std::fmt::Display for PlayError {
             PlayError::UnknownUniverse => {
                 write!(
                     f,
-                    "no published universe matches that id — try `/gallery list`"
+                    "no published universe matches that id; try `/gallery list`"
                 )
             }
             PlayError::BadMoves(e) => write!(f, "could not read your moves: {e}"),
             PlayError::RecordRefused(e) => write!(
                 f,
                 "the executor REFUSED one of your moves while replaying it: {e}\n\n\
-                 That is the gate doing its job — an illegal move is not a move."
+                 That is the gate doing its job: an illegal move is not a move."
             ),
             PlayError::Rejected(r) => write!(
                 f,
@@ -803,7 +803,7 @@ impl std::fmt::Display for PublishFail {
             PublishFail::Build(e) => write!(f, "{e}"),
             PublishFail::UnknownParent(needle) => write!(
                 f,
-                "no published universe matches the parent `{needle}` — try `/gallery list`"
+                "no published universe matches the parent `{needle}`; try `/gallery list`"
             ),
             PublishFail::Lineage(e) => write!(f, "{e}"),
         }
@@ -927,7 +927,7 @@ pub fn register() -> CreateCommand {
                 CreateCommandOption::new(
                     CommandOptionType::String,
                     "seed",
-                    "Seed text — the same seed always regenerates the same world",
+                    "Seed text · the same seed always regenerates the same world",
                 )
                 .required(true),
             )
@@ -946,7 +946,7 @@ pub fn register() -> CreateCommand {
             CreateCommandOption::new(
                 CommandOptionType::SubCommand,
                 "play",
-                "Submit a run — only a verified win is ranked",
+                "Submit a run: only a verified win is ranked",
             )
             .add_sub_option(
                 CreateCommandOption::new(
@@ -1064,12 +1064,12 @@ async fn handle_show(ctx: &Context, command: &CommandInteraction) {
     let mut board = String::new();
     if view.board.is_empty() {
         board.push_str(
-            "No verified completions yet — be the first.\n`/gallery play universe:<id> moves:0,0,0`",
+            "No verified completions yet. Be the first.\n`/gallery play universe:<id> moves:0,0,0`",
         );
     } else {
         for e in view.board.iter().take(10) {
             board.push_str(&format!(
-                "**{}.** {} — **{} turn(s)**\n  completion `{}`\n",
+                "**{}.** {} · **{} turn(s)**\n  completion `{}`\n",
                 e.rank,
                 e.player,
                 e.turns,
@@ -1084,10 +1084,10 @@ async fn handle_show(ctx: &Context, command: &CommandInteraction) {
 
     let provenance = match view.regenerates {
         Some(true) => format!(
-            "{} — regenerates byte-for-byte from its seed",
+            "{} · regenerates byte-for-byte from its seed",
             view.provenance
         ),
-        Some(false) => format!("{} — ⚠ does NOT regenerate from its seed", view.provenance),
+        Some(false) => format!("{} · ⚠ does NOT regenerate from its seed", view.provenance),
         None => view.provenance.to_string(),
     };
 
@@ -1097,7 +1097,7 @@ async fn handle_show(ctx: &Context, command: &CommandInteraction) {
             view.author,
             &key[..16.min(key.len())]
         ),
-        None => format!("by **{}** (anonymous — no verified key)", view.author),
+        None => format!("by **{}** (anonymous · no verified key)", view.author),
     };
     let mut embed = embeds::dregg_embed(&view.name)
         .description(format!("{author_line}\n\nID: `{}`", view.id_hex))
@@ -1186,7 +1186,7 @@ async fn handle_publish(ctx: &Context, command: &CommandInteraction, state: &Bot
                 embed = embed.field(
                     "Verified author",
                     format!(
-                        "ed25519 `{}…` — signed by your cipherclerk key and bound into the content \
+                        "ed25519 `{}…` · signed by your cipherclerk key and bound into the content \
                          address, so this authorship is unforgeable.",
                         &key[..16.min(key.len())]
                     ),
@@ -1197,7 +1197,7 @@ async fn handle_publish(ctx: &Context, command: &CommandInteraction, state: &Bot
                 embed = embed.field(
                     "Remix of",
                     format!(
-                        "`{}…` — a fork recorded in the derivation graph.",
+                        "`{}…` · a fork recorded in the derivation graph.",
                         &parent[..16]
                     ),
                     false,
@@ -1316,10 +1316,10 @@ async fn handle_play(ctx: &Context, command: &CommandInteraction, state: &BotSta
             if let Some(hex) = &resolved_hex {
                 store_completion(&StoredCompletion::new(hex, &player, &moves, accepted.turns));
             }
-            let embed = embeds::success_embed("Run Verified — You're On The Board")
+            let embed = embeds::success_embed("Run Verified · You're On The Board")
                 .description(
                     "Your moves were **re-executed on a fresh, identically-seeded world** and they \
-                     reached the win. That is why you are ranked — not because you said so.",
+                     reached the win. That is why you are ranked, not because you said so.",
                 )
                 .field("Rank", format!("#{}", accepted.rank), true)
                 .field("Turns", accepted.turns.to_string(), true)

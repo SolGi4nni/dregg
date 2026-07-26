@@ -221,10 +221,6 @@ pub struct BotState {
     /// through every per-user `UserCipherclerk::derive(...)` call so the
     /// AppCipherclerk's action signatures are bound to the correct group.
     pub federation_id_bytes: [u8; 32],
-    /// §4.7 soft-federation for the friend clique: small NullifierSet used to
-    /// order note-spends among trusted peers. Single Ed25519 root; defers to
-    /// real federation when present. (Populated from captp_client state.)
-    pub nullifier_set: Mutex<Vec<[u8; 32]>>, // minimal in-memory set for demo
     /// §4.7 canonical capability-handoff broker — the bot as the tiny
     /// federation that mints and validates *real* signed
     /// `dregg_captp::handoff::HandoffCertificate` artifacts (target swiss
@@ -1121,7 +1117,6 @@ async fn main() {
         event_bridge,
         orchestrator,
         federation_id_bytes,
-        nullifier_set: Mutex::new(Vec::new()), // §4.7 friend-clique soft-federation
         handoff_broker: Mutex::new(handoff_flow::HandoffBroker::new(dregg_captp::FederationId(
             federation_id_bytes,
         ))),

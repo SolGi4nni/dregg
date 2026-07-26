@@ -239,18 +239,18 @@ impl std::fmt::Display for ResumeError {
             }
             ResumeError::Refused { index, reason } => write!(
                 f,
-                "resume refused: logged move #{index} did not land on re-drive ({reason}) — \
+                "resume refused: logged move #{index} did not land on re-drive ({reason}); \
                  the log is tampered"
             ),
             ResumeError::OperationRefused { index, reason } => write!(
                 f,
-                "resume refused: journaled operation #{index} did not restore ({reason}) — \
+                "resume refused: journaled operation #{index} did not restore ({reason}); \
                  the operation journal is tampered or its verifier policy changed"
             ),
             ResumeError::ForgedSignature { index, reason } => write!(
                 f,
                 "resume refused: logged move #{index} claimed a verified signature that did not \
-                 re-verify ({reason}) — the signed provenance in the store is forged or corrupt"
+                 re-verify ({reason}); the signed provenance in the store is forged or corrupt"
             ),
         }
     }

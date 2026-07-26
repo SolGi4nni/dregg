@@ -114,7 +114,7 @@ async fn post_new_table(State(door): State<TableDoor>) -> Response {
         return (
             StatusCode::CONFLICT,
             Html((door.landing)(Some(&format!(
-                "Refused: the table could not be opened — {error}"
+                "Refused: the table could not be opened · {error}"
             )))),
         )
             .into_response();
@@ -430,8 +430,8 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 pub fn open_a_table_section(lock: &TableLock) -> String {
     format!(
         "<section class=\"panel\"><h2>Open a table</h2>\
-         <p class=\"needs\">Two players · no matchmaking here — you invite them yourself</p>\
-         <p class=\"prose\">A table is minted with two seat links. Keep one, send the other — \
+         <p class=\"needs\">Two players · no matchmaking here · you invite them yourself</p>\
+         <p class=\"prose\">A table is minted with two seat links. Keep one, send the other; \
          whoever opens a link takes that seat, and nobody else can. There is no shared lobby to \
          race for and no public table to wander into.</p>\
          <p class=\"prose\">Each seat has <strong>{minutes} minutes</strong> to make its move. A \
@@ -440,7 +440,7 @@ pub fn open_a_table_section(lock: &TableLock) -> String {
          <form method=\"post\" action=\"{route}/table\" class=\"affordance\">\
          <button type=\"submit\">Open a table</button></form>\
          <p class=\"prose\"><strong>Here on your own?</strong> Open a table anyway and play both \
-         sides — the next page shows you how, and it is the real game under the real rules, not a \
+         sides: the next page shows you how, and it is the real game under the real rules, not a \
          demo. Or play <a href=\"{play}\">The Descent</a>, which is a game for one.</p>\
          </section>",
         minutes = table_seats::turn_limit().as_secs() / 60,
@@ -471,7 +471,7 @@ fn lobby_page(door: &TableDoor, id: &str) -> String {
         "<main class=\"session af-table\">\
          <div class=\"page-head\" style=\"padding-top:var(--s4)\">\
          <h1>Table opened</h1>\
-         <p class=\"deck\">{game} · session <span class=\"sid\">{id}</span> — seat-locked. Only \
+         <p class=\"deck\">{game} · session <span class=\"sid\">{id}</span> · seat-locked. Only \
          these two links can sit down.</p></div>\
          <section class=\"panel\"><h2>Your link</h2>\
          <p class=\"prose\">Open this one yourself. {seat_note}</p>\
@@ -479,14 +479,14 @@ fn lobby_page(door: &TableDoor, id: &str) -> String {
          <p class=\"invite\"><code>{a}</code></p>\
          </section>\
          <section class=\"panel\"><h2>The invite</h2>\
-         <p class=\"prose\">Send this to your opponent. It <em>is</em> the seat — anyone holding it \
+         <p class=\"prose\">Send this to your opponent. It <em>is</em> the seat: anyone holding it \
          can sit down and nobody else can, so send it the way you would send a key.</p>\
          <p class=\"invite\"><code>{b}</code></p>\
          </section>\
          <section class=\"panel\"><h2>Play both sides (practice)</h2>\
          <p class=\"needs solo\">No second person needed</p>\
          <p class=\"prose\">You can hold both seats yourself. It is the real game under the real \
-         rules — every move is checked the same way and the match replays the same way afterwards; \
+         rules: every move is checked the same way and the match replays the same way afterwards; \
          the only thing missing is somebody to surprise you.</p>\
          <p class=\"prose\"><strong>It has to be a second window, not a second tab.</strong> Your \
          seat is kept in one cookie for the whole browser, so opening the invite in the same browser \
@@ -512,7 +512,7 @@ fn lobby_page(door: &TableDoor, id: &str) -> String {
         route = door.lock.route,
     );
     document(
-        &format!("{} — table opened", crate::PRODUCT_NAME),
+        &format!("{} · table opened", crate::PRODUCT_NAME),
         "offerings",
         &body,
     )
@@ -533,7 +533,7 @@ fn seat_refused_page(door: &TableDoor, id: &str) -> String {
         route = door.lock.route,
     );
     document(
-        &format!("{} — seat refused", crate::PRODUCT_NAME),
+        &format!("{} · seat refused", crate::PRODUCT_NAME),
         "offerings",
         &body,
     )
@@ -542,13 +542,13 @@ fn seat_refused_page(door: &TableDoor, id: &str) -> String {
 /// The 303 body (a browser follows the `Location`; this is what a non-following client reads).
 fn seat_taken_page(door: &TableDoor, id: &str) -> String {
     let body = format!(
-        "<main class=\"session af-table\"><div class=\"notice ok\" role=\"status\">Seat taken — \
+        "<main class=\"session af-table\"><div class=\"notice ok\" role=\"status\">Seat taken: \
          opening the table.</div>\
          <p class=\"prose\"><a class=\"backlink\" href=\"{table}\">Go to the table →</a></p></main>",
         table = esc(&door.lock.table_link(id)),
     );
     document(
-        &format!("{} — seat taken", crate::PRODUCT_NAME),
+        &format!("{} · seat taken", crate::PRODUCT_NAME),
         "offerings",
         &body,
     )
@@ -557,7 +557,7 @@ fn seat_taken_page(door: &TableDoor, id: &str) -> String {
 fn watch_missing_page(door: &TableDoor, id: &str) -> String {
     let body = format!(
         "<main class=\"session af-table\"><div class=\"notice refused\" role=\"status\">No {key} \
-         table at <code>{id}</code>. Watching does not open one — a table exists once somebody \
+         table at <code>{id}</code>. Watching does not open one: a table exists once somebody \
          mints it.</div>\
          <p class=\"prose\"><a class=\"backlink\" href=\"{route}\">← open a table</a></p>\
          </main>",
@@ -566,7 +566,7 @@ fn watch_missing_page(door: &TableDoor, id: &str) -> String {
         route = door.lock.route,
     );
     document(
-        &format!("{} — no such table", crate::PRODUCT_NAME),
+        &format!("{} · no such table", crate::PRODUCT_NAME),
         "offerings",
         &body,
     )
@@ -581,7 +581,7 @@ pub fn resolution_notice(resolution: &Resolution) -> String {
         // automatafl's `winner` register is write-once under `resolve`, and the tug's is
         // threshold-gated on `charm ≥ 11 ∨ guilds ≥ 4`. "not a proven win" is pinned by
         // `dreggnet-web/tests/tug_table.rs` and stays verbatim.
-        "<div class=\"notice refused\" role=\"status\"><strong>Table over</strong> — {headline}. \
+        "<div class=\"notice refused\" role=\"status\"><strong>Table over</strong> · {headline}. \
          <br>This is the lobby noting that somebody stopped playing. No move was made and there is \
          no receipt for it: neither game's rules have any way to hand the win to whoever is still \
          sitting there, so it is not a proven win.</div>",
@@ -607,7 +607,7 @@ fn resolved_page(door: &TableDoor, id: &str, resolution: &Resolution) -> String 
         route = door.lock.route,
     );
     document(
-        &format!("{} — table over", crate::PRODUCT_NAME),
+        &format!("{} · table over", crate::PRODUCT_NAME),
         "offerings",
         &body,
     )
@@ -655,7 +655,7 @@ fn spectate_page(
         fragment = fragment,
     );
     document(
-        &format!("{} — spectating {id}", crate::PRODUCT_NAME),
+        &format!("{} · spectating {id}", crate::PRODUCT_NAME),
         "offerings",
         &body,
     )

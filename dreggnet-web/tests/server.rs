@@ -233,18 +233,18 @@ async fn a_run_card_proves_honest_and_fails_the_forgery() {
     let (status, won) = get(&app, "/descent/run/demo-ember").await;
     assert_eq!(status, StatusCode::OK);
     assert!(
-        won.contains("Independent verification — PASS"),
+        won.contains("Independent verification · PASS"),
         "the honest run re-executes to PASS: {won}"
     );
 
     let (status, forged) = get(&app, "/descent/run/demo-forgery").await;
     assert_eq!(status, StatusCode::OK);
     assert!(
-        forged.contains("Independent verification — FAIL"),
+        forged.contains("Independent verification · FAIL"),
         "the forged run shows FAIL: {forged}"
     );
     assert!(
-        !forged.contains("Independent verification — PASS"),
+        !forged.contains("Independent verification · PASS"),
         "the forged run is NOT a fake pass: {forged}"
     );
 }
@@ -439,7 +439,7 @@ async fn a_live_run_submits_and_reaches_the_leaderboard() {
     let (status, card) = get(&app, &format!("/descent/run/{run_id}")).await;
     assert_eq!(status, StatusCode::OK);
     assert!(
-        card.contains("Independent verification — PASS"),
+        card.contains("Independent verification · PASS"),
         "the submitted run re-executes to PASS: {card}"
     );
 

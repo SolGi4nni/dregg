@@ -104,3 +104,8 @@ rhlp-web
 # i.e. agent B's build would silently strip agent A's claim and the next sweep would then
 # see an unleased lane and delete its artifacts. Do not remove this line.
 .pbuild-lease
+
+# scripts/feature-t3-sweep.sh's per-pair record. A measurement artifact, never source: the
+# COMMITTED half of that sweep is scripts/feature-t3-known-red.tsv (the ratchet).
+/feature-t3-sweep.tsv
+/t3-shard*.tsv

@@ -277,13 +277,13 @@ impl Offering for CompanionOffering {
             vec![
                 text(if s.is_empty() {
                     format!(
-                        "Hatch your first companion — pick one of the {} species below and press \
+                        "Hatch your first companion: pick one of the {} species below and press \
                          Hatch. The roll is committed as a real turn, so the rarity you get is one \
                          nobody could choose after seeing it.",
                         s.species.len()
                     )
                 } else if alive == 0 {
-                    "Every companion in this roost has died — a dead one can no longer be raised. \
+                    "Every companion in this roost has died. A dead one can no longer be raised. \
                      Hatch a new egg to start again."
                         .to_string()
                 } else {
@@ -322,7 +322,7 @@ impl Offering for CompanionOffering {
             children.push(section(
                 "Companions",
                 "muted",
-                vec![text("No companions yet — hatch one from an egg.")],
+                vec![text("No companions yet. Hatch one from an egg.")],
             ));
         } else {
             let mut rows: Vec<ViewNode> = vec![row(vec![
@@ -376,7 +376,7 @@ impl Offering for CompanionOffering {
         ));
 
         Surface(section(
-            "DreggNet Companions — hatch + raise",
+            "DreggNet Companions · hatch + raise",
             "accent",
             children,
         ))

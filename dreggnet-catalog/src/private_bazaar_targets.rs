@@ -313,7 +313,7 @@ impl PrivateBazaarCharacterStore {
     pub fn register_dungeon(&self, host: &mut OfferingHost) {
         host.register(
             "dungeon",
-            "The Warden's Keep — a verifiable dungeon with one durable character authority",
+            "The Warden's Keep · a verifiable dungeon with one durable character authority",
             PrivateBazaarCharacterDungeonOffering {
                 dungeon: DungeonOffering::new(),
                 characters: self.clone(),

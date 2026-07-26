@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>dregg / deos — a capability-secure, witnessed substrate</title>
-  <meta name="description" content="dregg is a capability-secure, proof-carrying substrate. A turn is the exercise of an attenuable proof-carrying token over owned state, leaving a verifiable receipt. deos is the desktop you can run on it — live in your browser, no backend.">
+  <title>dregg / deos · a capability-secure, witnessed substrate</title>
+  <meta name="description" content="dregg is a capability-secure, proof-carrying substrate. A turn is the exercise of an attenuable proof-carrying token over owned state, leaving a verifiable receipt. deos is the desktop you can run on it: live in your browser, no backend.">
   <meta property="og:type" content="website">
-  <meta property="og:title" content="dregg / deos — a capability-secure, witnessed substrate">
-  <meta property="og:description" content="A turn is the exercise of an attenuable proof-carrying token over owned state, leaving a verifiable receipt. Play with it in your browser — every click is a real verified turn.">
+  <meta property="og:title" content="dregg / deos · a capability-secure, witnessed substrate">
+  <meta property="og:description" content="A turn is the exercise of an attenuable proof-carrying token over owned state, leaving a verifiable receipt. Play with it in your browser. Every click is a real verified turn.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/style.css">
   <style>
@@ -70,7 +70,7 @@
     <h1>A turn is the exercise of an attenuable proof-carrying token over owned state, <em>leaving a verifiable receipt.</em></h1>
     <p class="hero__sub">
       <code>dregg</code> is the substrate: cells own state and hold capabilities, a turn changes state
-      only as those capabilities permit, and every turn proves itself — leaving a receipt anyone can check.
+      only as those capabilities permit, and every turn proves itself, leaving a receipt anyone can check.
       <strong>deos</strong> is a desktop built on it. Everything below runs client-side, in your browser tab,
       in WebAssembly: the verified executor runs <em>here</em>, with no backend server. Every click you make is a real, cap-gated, verified turn.
     </p>
@@ -79,7 +79,7 @@
       <a class="btn btn--secondary" href="./deos/">Open deos in your browser</a>
       <a class="btn btn--secondary" href="https://github.com/emberian/dregg">Read the source</a>
     </div>
-    <span class="hero__pulse"><span class="pulse-dot"></span> the verified executor runs <b>in this tab</b> — no backend, every click a real cap-gated turn</span>
+    <span class="hero__pulse"><span class="pulse-dot"></span> the verified executor runs <b>in this tab</b>: no backend, every click a real cap-gated turn</span>
   </div>
 </header>
 
@@ -97,7 +97,7 @@
   <div class="defn">
     <div class="defn__term">
       <div class="defn__k">cell</div>
-      <div class="defn__v">An owned object: some state, a balance, and a capability list — the set of things it is allowed to reference. A cell can only act on what its c-list names.</div>
+      <div class="defn__v">An owned object: some state, a balance, and a capability list (the set of things it is allowed to reference). A cell can only act on what its c-list names.</div>
     </div>
     <div class="defn__term">
       <div class="defn__k">capability</div>
@@ -109,11 +109,11 @@
     </div>
     <div class="defn__term">
       <div class="defn__k">effect</div>
-      <div class="defn__v">The fixed verb vocabulary a turn may use — transfer, set a field, mint, hand off a capability, and so on. The vocabulary is closed: an unauthorized act is not expressible.</div>
+      <div class="defn__v">The fixed verb vocabulary a turn may use: transfer, set a field, mint, hand off a capability, and so on. The vocabulary is closed: an unauthorized act is not expressible.</div>
     </div>
     <div class="defn__term">
       <div class="defn__k">proof</div>
-      <div class="defn__v">A turn carries a witness that it obeyed the rules — produced once, verified cheaply. The check does not re-run the work; it checks the proof.</div>
+      <div class="defn__v">A turn carries a witness that it obeyed the rules: produced once, verified cheaply. The check does not re-run the work; it checks the proof.</div>
     </div>
     <div class="defn__term">
       <div class="defn__k">receipt</div>
@@ -125,11 +125,11 @@
 <!-- ==================== THE KILLER FEATURE: LIGHT CLIENT ==================== -->
 <section class="section" id="verify">
   <span class="section__label">The killer feature</span>
-  <h2 class="section__title">Verify a whole history — re-executing nothing</h2>
+  <h2 class="section__title">Verify a whole history · re-executing nothing</h2>
   <p class="section__intro">
     A finalized history is a chain of turns: each turn's after-state is the next one's before-state. A
     producer folds the whole chain into <em>one</em> succinct recursive STARK. Your browser tab verifies that
-    single proof — no re-execution, no re-hashing, no walk of the chain. If it verifies, every folded turn
+    single proof: no re-execution, no re-hashing, no walk of the chain. If it verifies, every folded turn
     executed correctly, in order, from genesis to the final root. <strong>This is the in-browser recursive-STARK
     verification, and it runs right here.</strong>
   </p>
@@ -143,15 +143,15 @@
     <div class="stage__fold">▼ folded once, off the verifier ▼</div>
     <div class="stage__proof">
       <div class="glyph">π ✓</div>
-      <div class="cap">one recursive proof — verified in your tab, independent of how many turns the history holds</div>
+      <div class="cap">one recursive proof · verified in your tab, independent of how many turns the history holds</div>
     </div>
     <p class="stage__floor">
       named floor: the verification carries the recursion engine's FRI soundness. The verification <em>is</em>
-      the trust — not "re-run it and hope they match."
+      the trust, not "re-run it and hope they match."
     </p>
   </div>
   <p class="section__intro" style="margin-top:var(--s5)">
-    The trust anchor is <em>your</em> configuration, held separately — never read off the artifact under
+    The trust anchor is <em>your</em> configuration, held separately, never read off the artifact under
     verification. Tamper one hex digit of the anchor and the proof is refused, not laundered. This is the
     executable counterpart of the Lean theorem <code>light_client_verifies_whole_history</code>.
   </p>
@@ -164,7 +164,7 @@
 <!-- ==================== PLAY WITH IT ==================== -->
 <section class="section" id="play">
   <span class="section__label">Play with it</span>
-  <h2 class="section__title">Everything here is live &mdash; most of it in your tab</h2>
+  <h2 class="section__title">Everything here is live, most of it in your tab</h2>
   <p class="section__intro">
     The surfaces in the first group below load a verified executor compiled to WebAssembly and run it in
     your browser. Click an affordance and you fire a real cap-gated turn against an in-tab ledger; the bound fields
@@ -181,19 +181,19 @@
     <a class="tile" href="./cards/">
       <span class="tile__eyebrow">live cards</span>
       <span class="tile__name">Card gallery</span>
-      <span class="tile__desc">A counter, a reflective inspector, a tally board, a key-value store cell, and document collaboration with conflicts as first-class objects — each a real verified turn over an in-tab executor.</span>
+      <span class="tile__desc">A counter, a reflective inspector, a tally board, a key-value store cell, and document collaboration with conflicts as first-class objects: each a real verified turn over an in-tab executor.</span>
       <span class="tile__go">open the gallery &rsaquo;</span>
     </a>
     <a class="tile" href="./explorer/">
       <span class="tile__eyebrow">capabilities</span>
       <span class="tile__name">Caps as rows</span>
-      <span class="tile__desc">Your capabilities expressed as the rows you may read. Present a token, change its caveats, and watch the cell rows narrow exactly as the row-level-security gate narrows them — fail-closed, no amplification.</span>
+      <span class="tile__desc">Your capabilities expressed as the rows you may read. Present a token, change its caveats, and watch the cell rows narrow exactly as the row-level-security gate narrows them: fail-closed, no amplification.</span>
       <span class="tile__go">open the explorer &rsaquo;</span>
     </a>
     <a class="tile" href="./light-client/">
       <span class="tile__eyebrow">light client</span>
       <span class="tile__name">Verify a whole history</span>
-      <span class="tile__desc">Fold a multi-turn history into one succinct recursive proof, in your tab, then verify it — re-executing nothing. Check it against a config anchor; a tampered anchor is refused, not laundered.</span>
+      <span class="tile__desc">Fold a multi-turn history into one succinct recursive proof, in your tab, then verify it, re-executing nothing. Check it against a config anchor; a tampered anchor is refused, not laundered.</span>
       <span class="tile__go">run the verifier &rsaquo;</span>
     </a>
     <a class="tile" href="./transclusion/">
@@ -205,22 +205,22 @@
     <a class="tile" href="./atlas/">
       <span class="tile__eyebrow">reference</span>
       <span class="tile__name">The atlas</span>
-      <span class="tile__desc">An interactive map of the whole protocol and its UI surfaces — the nouns, the effects, the screens — browsable end to end.</span>
+      <span class="tile__desc">An interactive map of the whole protocol and its UI surfaces (the nouns, the effects, the screens), browsable end to end.</span>
       <span class="tile__go">open the atlas &rsaquo;</span>
     </a>
     <a class="tile" href="./cockpit-gpui/">
       <span class="tile__eyebrow">full renderer · needs WebGPU</span>
       <span class="tile__name">gpui cockpit</span>
-      <span class="tile__desc">The full native gpui renderer — the same one the desktop draws with — on a WebGPU canvas, driving the same in-tab executor. Heavier; shown when the build is available in this deploy.</span>
+      <span class="tile__desc">The full native gpui renderer (the same one the desktop draws with) on a WebGPU canvas, driving the same in-tab executor. Heavier; shown when the build is available in this deploy.</span>
       <span class="tile__go">open the full cockpit &rsaquo;</span>
     </a>
   </div>
 
-  <span class="section__label" style="margin-top:var(--s7)">Also live &mdash; hosted, not in your tab</span>
+  <span class="section__label" style="margin-top:var(--s7)">Also live &middot; hosted, not in your tab</span>
   <p class="section__intro">
     Three surfaces run <em>server-side</em>, on a devnet box, served over the public web: you play against a
-    real executor there rather than one in your tab. The rule enforcement is the same &mdash; an illegal move is
-    refused and commits nothing &mdash; and two limits are named on the surfaces themselves: a run is checked by
+    real executor there rather than one in your tab. The rule enforcement is the same (an illegal move is
+    refused and commits nothing), and two limits are named on the surfaces themselves: a run is checked by
     deterministic <em>replay</em> re-execution (a stranger re-runs it), not by checking a STARK, and a web player
     is a self-asserted cookie, not a signature.
   </p>
@@ -241,7 +241,7 @@
     <a class="tile" href="https://hbox-dregg.skunk-emperor.ts.net/descent">
       <span class="tile__eyebrow">no-cheat board</span>
       <span class="tile__name">Re-run a stranger&rsquo;s descent</span>
-      <span class="tile__desc">The leaderboard re-executes a run from its recorded moves before it ranks, and re-checks every row on boot &mdash; a tampered row cannot resurrect a cheat. Open any run card and re-run someone else&rsquo;s descent yourself.</span>
+      <span class="tile__desc">The leaderboard re-executes a run from its recorded moves before it ranks, and re-checks every row on boot: a tampered row cannot resurrect a cheat. Open any run card and re-run someone else&rsquo;s descent yourself.</span>
       <span class="tile__go">open the board &rsaquo;</span>
     </a>
   </div>
@@ -253,13 +253,13 @@
   <h2 class="section__title">Call it from your own code</h2>
   <p class="section__intro">
     The shape is the same in every language: an identity makes a turn, signs it, and submits it; you get
-    back a receipt. An unauthorized act is not expressible on the public surface — every action carries a
+    back a receipt. An unauthorized act is not expressible on the public surface. Every action carries a
     real signature over the canonical, federation-bound message.
   </p>
   <div class="qs-tabs">
-    <button class="qs-tab active" data-qs="ts">TypeScript &mdash; @dregg/sdk</button>
-    <button class="qs-tab" data-qs="py">Python &mdash; dregg</button>
-    <button class="qs-tab" data-qs="pg">Postgres &mdash; pg-dregg</button>
+    <button class="qs-tab active" data-qs="ts">TypeScript &middot; @dregg/sdk</button>
+    <button class="qs-tab" data-qs="py">Python &middot; dregg</button>
+    <button class="qs-tab" data-qs="pg">Postgres &middot; pg-dregg</button>
   </div>
 
   <div class="qs-panel active" data-qs="ts">
@@ -303,7 +303,7 @@ print(receipt.committed, receipt.post_state)</code></pre>
   </div>
 
   <div class="qs-panel" data-qs="pg">
-    <p>pg-dregg adds three things to a database — cap-secure row-level security, a verified store that refuses a tampered batch, and proof-attested ranges. See them end to end without installing Postgres:</p>
+    <p>pg-dregg adds three things to a database: cap-secure row-level security, a verified store that refuses a tampered batch, and proof-attested ranges. See them end to end without installing Postgres:</p>
     <pre><code>git clone https://github.com/emberian/dregg
 cd dregg/pg-dregg
 cargo run --example three_pillars</code></pre>
@@ -326,11 +326,11 @@ cargo run --example three_pillars</code></pre>
     </div>
     <div class="problem">
       <p class="problem__label problem__label--solve">verified store</p>
-      <p class="problem__text"><strong>A tampered or reordered batch is refused</strong> by the chain tooth the database engine itself runs — without re-running any prover. The store checks the proof, not the work.</p>
+      <p class="problem__text"><strong>A tampered or reordered batch is refused</strong> by the chain tooth the database engine itself runs, without re-running any prover. The store checks the proof, not the work.</p>
     </div>
     <div class="problem">
       <p class="problem__label problem__label--solve">light-client</p>
-      <p class="problem__text"><strong>A whole history folds into one proof.</strong> A client can verify that every finalized turn executed correctly, in order, from genesis to the final root — re-witnessing nothing. The trust anchor is configuration, never read off the artifact under verification.</p>
+      <p class="problem__text"><strong>A whole history folds into one proof.</strong> A client can verify that every finalized turn executed correctly, in order, from genesis to the final root, re-witnessing nothing. The trust anchor is configuration, never read off the artifact under verification.</p>
     </div>
   </div>
 </section>
@@ -343,32 +343,32 @@ cargo run --example three_pillars</code></pre>
     <div class="usecase">
       <div class="usecase__icon">sovereign apps</div>
       <div class="usecase__title">Apps that own their state</div>
-      <div class="usecase__desc">An application is a set of cells and the capabilities between them. It runs the same way on your phone, on a server, or fully in a browser tab — the executor is the same verified code.</div>
+      <div class="usecase__desc">An application is a set of cells and the capabilities between them. It runs the same way on your phone, on a server, or fully in a browser tab: the executor is the same verified code.</div>
     </div>
     <div class="usecase">
       <div class="usecase__icon">agent memory</div>
       <div class="usecase__title">Witnessed memory for agents</div>
-      <div class="usecase__desc">Per-cell heaps, working memory, and passable intermediate states — a portable, witnessed primitive. An agent's memory becomes something you can attenuate, hand off, and verify.</div>
+      <div class="usecase__desc">Per-cell heaps, working memory, and passable intermediate states: a portable, witnessed primitive. An agent's memory becomes something you can attenuate, hand off, and verify.</div>
     </div>
     <div class="usecase">
       <div class="usecase__icon">collaboration</div>
       <div class="usecase__title">Documents with conflicts as objects</div>
-      <div class="usecase__desc">Fork a document, diverge, then stitch. A merge surfaces conflicts as first-class objects — both alternatives held side by side — and resolving one is itself a verified turn.</div>
+      <div class="usecase__desc">Fork a document, diverge, then stitch. A merge surfaces conflicts as first-class objects (both alternatives held side by side), and resolving one is itself a verified turn.</div>
     </div>
     <div class="usecase">
       <div class="usecase__icon">disclosure</div>
       <div class="usecase__title">Cross-org selective disclosure</div>
-      <div class="usecase__desc">Reveal exactly the facts you choose, with a proof — or reveal one allow/deny bit and nothing else. The verifier learns the verdict without learning the data behind it.</div>
+      <div class="usecase__desc">Reveal exactly the facts you choose, with a proof. Or reveal one allow/deny bit and nothing else. The verifier learns the verdict without learning the data behind it.</div>
     </div>
     <div class="usecase">
       <div class="usecase__icon">settlement</div>
       <div class="usecase__title">Settlement across chains</div>
-      <div class="usecase__desc">A finalized history can be wrapped for an external chain to settle against — the recursive aggregate is the bridge. The same receipts, checked elsewhere.</div>
+      <div class="usecase__desc">A finalized history can be wrapped for an external chain to settle against: the recursive aggregate is the bridge. The same receipts, checked elsewhere.</div>
     </div>
     <div class="usecase">
       <div class="usecase__icon">databases</div>
       <div class="usecase__title">A database that checks itself</div>
-      <div class="usecase__desc">pg-dregg makes row-level security a capability predicate, refuses a tampered commit log, and attests ranges with a proof — inside the engine, with no separate trusted service.</div>
+      <div class="usecase__desc">pg-dregg makes row-level security a capability predicate, refuses a tampered commit log, and attests ranges with a proof (inside the engine, with no separate trusted service).</div>
     </div>
   </div>
 </section>
@@ -379,16 +379,16 @@ cargo run --example three_pillars</code></pre>
   <h2 class="section__title">A host that cannot tamper with what it serves</h2>
   <p class="section__intro">
     Publish a minisite and you commit its <code>blake3</code> hash to your cell, on-chain, in one cap-gated
-    receipted turn. <code>&lt;name&gt;.dregg.works</code> then serves the bytes — but the host has no way to
+    receipted turn. <code>&lt;name&gt;.dregg.works</code> then serves the bytes, but the host has no way to
     change them. Every served page carries a verify badge: your browser re-hashes the bytes it received and
-    checks them against the commitment fetched from the node. <strong>✓ match, or ✗ tampered — and you don't
+    checks them against the commitment fetched from the node. <strong>✓ match, or ✗ tampered, and you don't
     have to take the host's word for either.</strong>
   </p>
   <div class="dw-flow">
     <div class="dw-step"><span class="dw-step__n">1 · commit</span><span class="dw-step__t">Publish</span>
-      <span class="dw-step__d">A cap-gated turn writes <code>blake3(page)</code> into slot 0 of your cell. The commitment is the trust-bearing half — yours, on-chain, receipted.</span></div>
+      <span class="dw-step__d">A cap-gated turn writes <code>blake3(page)</code> into slot 0 of your cell. The commitment is the trust-bearing half: yours, on-chain, receipted.</span></div>
     <div class="dw-step"><span class="dw-step__n">2 · serve</span><span class="dw-step__t">Host the bytes</span>
-      <span class="dw-step__d"><code>&lt;name&gt;.dregg.works</code> ships the raw bytes. Convenience, not trust — the host is untrusted infrastructure.</span></div>
+      <span class="dw-step__d"><code>&lt;name&gt;.dregg.works</code> ships the raw bytes. Convenience, not trust: the host is untrusted infrastructure.</span></div>
     <div class="dw-step"><span class="dw-step__n">3 · verify</span><span class="dw-step__t">Check it yourself</span>
       <span class="dw-step__d">The badge re-hashes the served body in your tab and compares it to the cell's committed hash. A tampered byte is caught before you trust a word.</span></div>
   </div>
@@ -408,7 +408,7 @@ cargo run --example three_pillars</code></pre>
 
 <footer class="site-foot">
   <div class="site-foot__inner">
-    <span class="site-foot__left"><code>dregg</code> / deos &mdash; a capability-secure, witnessed substrate. AGPL-3.0-or-later.</span>
+    <span class="site-foot__left"><code>dregg</code> / deos &middot; a capability-secure, witnessed substrate. AGPL-3.0-or-later.</span>
     <div class="site-foot__links">
       <a href="./light-client/">Light client</a>
       <a href="./dregg-works/">dregg.works</a>

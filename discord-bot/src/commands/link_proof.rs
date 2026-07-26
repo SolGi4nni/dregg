@@ -53,7 +53,7 @@ pub fn register_link_web() -> CreateCommand {
 /// Register `/link-prove <public-key> <signature>`.
 pub fn register() -> CreateCommand {
     CreateCommand::new("link-prove")
-        .description("Prove you own your linked external cell — sign the challenge, submit here")
+        .description("Prove you own your linked external cell: sign the challenge, submit here")
         .add_option(
             CreateCommandOption::new(
                 CommandOptionType::String,
@@ -189,7 +189,7 @@ pub async fn handle_link_web(ctx: &Context, command: &CommandInteraction, state:
             embeds::error_embed(
                 "Could Not Mint A Code",
                 "This account id could not be encoded into a link code. That should be impossible \
-                 for a Discord snowflake — please report it.",
+                 for a Discord snowflake. Please report it.",
             ),
         )
         .await;
@@ -242,7 +242,7 @@ pub async fn handle_link_web(ctx: &Context, command: &CommandInteraction, state:
     // the path most readers want, with the raw code kept below for desktop and for copy-paste.
     if let Some(link) = &tap_link {
         embed = embed.field(
-            "📱 On your phone — one tap",
+            "📱 On your phone · one tap",
             format!(
                 "[Open the link page with this code filled in]({link})\n\
                  _Only you can see this message. Do not forward the link: inside its \
@@ -257,7 +257,7 @@ pub async fn handle_link_web(ctx: &Context, command: &CommandInteraction, state:
         .field(
             "Why your 24 words are asked for there",
             "The link is a signature by the key your words derive, and nothing but those words can \
-             produce it — the web server holds no copy and neither does your browser. So the signing \
+             produce it: the web server holds no copy and neither does your browser. So the signing \
              happens inside that one request and every byte of secret material is wiped before the \
              page answers. If you have no 24 words yet, claim them on that surface's `/identity` \
              page first: there is nothing to link to without them.",
@@ -272,7 +272,7 @@ pub async fn handle_link_web(ctx: &Context, command: &CommandInteraction, state:
         .field(
             "⚑ What linking does NOT change",
             "This Discord identity stays **custodial**. Its key is derived from the bot operator's \
-             secret, so they can act as you here — that was true before you link and it is true \
+             secret, so they can act as you here. That was true before you link and it is true \
              after. Only your 24 words are self-held. A link joins the RECORDS, never the custody, \
              and the web page says the same thing in the same words.",
             false,
@@ -282,7 +282,7 @@ pub async fn handle_link_web(ctx: &Context, command: &CommandInteraction, state:
             "Already linked",
             format!(
                 "This account is already bound to the root key `{}…`. Using a new code with a \
-                 DIFFERENT phrase rebinds it to that one instead — the old link is superseded, not \
+                 DIFFERENT phrase rebinds it to that one instead: the old link is superseded, not \
                  edited, and nothing is deleted.",
                 &root[..16.min(root.len())]
             ),
@@ -336,7 +336,7 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
                 ctx,
                 command,
                 embeds::success_embed("Already Proven").description(
-                    "This external link already passed its ownership proof — nothing to redo.",
+                    "This external link already passed its ownership proof: nothing to redo.",
                 ),
             )
             .await;
@@ -407,7 +407,7 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
             command,
             embeds::warning_embed(
                 "Challenge Expired",
-                "This link challenge is expired or invalid — challenges are time-limited and \
+                "This link challenge is expired or invalid: challenges are time-limited and \
                  single-use now. Run `/link-cipherclerk` again for a fresh one, then `/link-prove`.",
             ),
         )
@@ -489,7 +489,7 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
                     )
                     .field(
                         "Still hosted-only",
-                        "The bot cannot SIGN for an external cell — you hold its key. \
+                        "The bot cannot SIGN for an external cell: you hold its key. \
                          `/cap-share`, `/cap-delegate`-as-granter, and custodial turns need a \
                          hosted `/cipherclerk create` identity.",
                         false,
@@ -498,11 +498,11 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
                         "One you, everywhere",
                         if cross_platform_recorded {
                             "This key is now your **root identity** across platforms. Link the \
-                             same key from Telegram (the Mini App) and you become ONE human — your \
+                             same key from Telegram (the Mini App) and you become ONE human: your \
                              Discord and Telegram play resolve together on boards + leaderboards."
                         } else {
                             "_(the cross-platform link registry was unavailable; the local proof \
-                             still holds — retry to record the cross-platform binding.)_"
+                             still holds. Retry to record the cross-platform binding.)_"
                         },
                         false,
                     ),

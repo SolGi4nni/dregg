@@ -129,8 +129,8 @@ pub fn plan(is_admin: bool, sub: Option<&str>) -> AdminPlan {
 pub fn refusal_embed() -> CreateEmbed {
     embeds::warning_embed(
         "Admin only",
-        "`/dregg admin` drives this bot's own operator settings — the AI narrator it pays for, \
-         its treasury, and its run-credit ledger — which are shared across every server it \
+        "`/dregg admin` drives this bot's own operator settings (the AI narrator it pays for, \
+         its treasury, and its run-credit ledger), which are shared across every server it \
          serves. Only the operator can change them.",
     )
 }
@@ -155,7 +155,7 @@ pub fn register() -> CreateCommand {
     );
     for (key, description) in NARRATOR_BACKENDS {
         // Discord caps a choice name at 100 chars; the keys + descriptions here are well under.
-        backend = backend.add_string_choice(format!("{key} — {description}"), *key);
+        backend = backend.add_string_choice(format!("{key} · {description}"), *key);
     }
 
     CreateCommand::new("admin")
@@ -368,11 +368,11 @@ fn menu_embed(state: &BotState) -> CreateEmbed {
     embeds::dregg_embed("Operator controls")
         .description(format!(
             "Narrator right now: **{}**{}.\n\n\
-             • `/dregg admin narrator` — show / change / reset the AI narrator (persisted)\n\
-             • `/dregg admin status` — node, payment watcher, custody, narrator, federation\n\
-             • `/dregg admin treasury` — fuel + pile, and the refuel signal\n\
-             • `/dregg admin credits user:<@u> [grant:<n>]` — inspect or mint run-credits\n\
-             • `/dregg admin pool` — who paid into the $DREGG pile + their vote weights",
+             • `/dregg admin narrator` · show / change / reset the AI narrator (persisted)\n\
+             • `/dregg admin status` · node, payment watcher, custody, narrator, federation\n\
+             • `/dregg admin treasury` · fuel + pile, and the refuel signal\n\
+             • `/dregg admin credits user:<@u> [grant:<n>]` · inspect or mint run-credits\n\
+             • `/dregg admin pool` · who paid into the $DREGG pile + their vote weights",
             status.backend_key,
             if status.attested {
                 " (attested enclave)"
@@ -383,7 +383,7 @@ fn menu_embed(state: &BotState) -> CreateEmbed {
         .field(
             "The pay path is not reachable from here",
             "No admin action can change which payment watcher runs. `select_watcher` decides \
-             that once, at construction, from the operator environment — and it refuses a mock \
+             that once, at construction, from the operator environment, and it refuses a mock \
              on mainnet outright.",
             false,
         )
@@ -455,7 +455,7 @@ async fn run_narrator(command: &CommandInteraction, state: &BotState, actor: u64
                     None,
                     Some(Err(format!(
                         "The stored setting was cleared, but the environment default could not be \
-                     built: {reason}\n\nPaid runs use the FREE TIER until this is fixed — nothing \
+                     built: {reason}\n\nPaid runs use the FREE TIER until this is fixed. Nothing \
                      was substituted."
                     ))),
                 )
@@ -488,7 +488,7 @@ async fn run_narrator(command: &CommandInteraction, state: &BotState, actor: u64
                 stored.as_ref(),
                 Some(Err(
                     "Give BOTH `price_in_per_1k` and `price_out_per_1k`, or neither. \
-                          Half a price pins nothing — the model would stay unpriced and every \
+                          Half a price pins nothing: the model would stay unpriced and every \
                           call would be refused."
                         .to_string(),
                 )),
@@ -520,11 +520,11 @@ async fn run_narrator(command: &CommandInteraction, state: &BotState, actor: u64
                 );
                 let note = match persisted {
                     Ok(()) => {
-                        format!("Narrator is now **{now}**. Persisted — it survives restart.")
+                        format!("Narrator is now **{now}**. Persisted: it survives restart.")
                     }
                     Err(e) => format!(
                         "Narrator is now **{now}**, but the setting could NOT be persisted \
-                         ({e}) — it will revert to the environment default on restart."
+                         ({e}); it will revert to the environment default on restart."
                     ),
                 };
                 narrator_report(state, Some(&next), Some(Ok(note)))
@@ -536,7 +536,7 @@ async fn run_narrator(command: &CommandInteraction, state: &BotState, actor: u64
                     state,
                     stored.as_ref(),
                     Some(Err(format!(
-                        "Refused — **nothing changed**. {reason}\n\nThe narrator that was running \
+                        "Refused · **nothing changed**. {reason}\n\nThe narrator that was running \
                          before this command is still running."
                     ))),
                 )
@@ -572,7 +572,7 @@ fn narrator_report(
                 " · unattested"
             },
         ),
-        _ => "**none** — every run uses the free tier (local ollama, else scripted prose)"
+        _ => "**none** · every run uses the free tier (local ollama, else scripted prose)"
             .to_string(),
     };
 
@@ -582,19 +582,19 @@ fn narrator_report(
             if source == "operator-override" {
                 "\n⚠ An operator-set rate is trusted at your discretion and is NOT guaranteed to \
                  be an upper bound. Set below the provider's true cost and the per-run ceiling \
-                 LEAKS — the ledger meters the real token counts against a rate that understates \
+                 LEAKS: the ledger meters the real token counts against a rate that understates \
                  them."
             } else {
                 ""
             }
         ),
-        None => "**UNPRICED** — the metered layer refuses every call, so this narrator produces \
+        None => "**UNPRICED** · the metered layer refuses every call, so this narrator produces \
                  nothing. Pin both rates."
             .to_string(),
     };
 
     let stored_line = match stored {
-        None => "_none — following the environment (`DREGG_NARRATOR`)_".to_string(),
+        None => "_none · following the environment (`DREGG_NARRATOR`)_".to_string(),
         Some(s) => format!(
             "backend `{}` · model `{}`{}{}",
             s.backend.as_deref().unwrap_or("(env)"),
@@ -614,7 +614,7 @@ fn narrator_report(
         .iter()
         .map(|(key, description)| {
             format!(
-                "{} `{key}` — {description}",
+                "{} `{key}` · {description}",
                 if narrator_backend_is_attested(key) {
                     "🔒"
                 } else {
@@ -642,7 +642,7 @@ fn narrator_report(
              DCAP-verified Intel TDX enclave. The request is ML-KEM-768-encapsulated to a key \
              bound into a quote this bot verified against a pinned measurement registry. What \
              that establishes is WHERE the text was produced and the code identity of the serving \
-             enclave — never a claim about the weights or the sampled tokens.",
+             enclave, never a claim about the weights or the sampled tokens.",
         );
     }
 
@@ -654,7 +654,7 @@ fn narrator_report(
         .field(
             "Changing it",
             "`/dregg admin narrator backend:<key> model:<id> price_in_per_1k:<n> \
-             price_out_per_1k:<n>` — the change is built and priced BEFORE it is committed, so a \
+             price_out_per_1k:<n>` · the change is built and priced BEFORE it is committed, so a \
              switch that cannot work is refused and nothing changes. \
              `reset:true` drops the stored setting and returns to the environment.",
             false,
@@ -699,12 +699,12 @@ async fn run_status(state: &BotState) -> CreateEmbed {
     };
     let node_line = match &node {
         Some(s) => format!(
-            "`{url}` — {} · consensus {} · height {}",
+            "`{url}` · {} · consensus {} · height {}",
             if s.healthy { "healthy" } else { "degraded" },
             if s.consensus_live { "live" } else { "idle" },
             s.latest_height,
         ),
-        None => format!("`{url}` — **UNREACHABLE** (every node-backed command will fail)"),
+        None => format!("`{url}` · **UNREACHABLE** (every node-backed command will fail)"),
     };
     let producer = match &node {
         Some(s) if !s.state_producer.is_empty() => format!(
@@ -731,14 +731,14 @@ async fn run_status(state: &BotState) -> CreateEmbed {
             "Deposit addresses issued by `/buy-credits` ARE being polled."
         } else {
             "⚠ **NOTHING IS WATCHING.** `/buy-credits` still issues deposit addresses, but a mock \
-             watcher observes no chain — a real payment to one of those addresses would never be \
+             watcher observes no chain: a real payment to one of those addresses would never be \
              credited. This is the correct state for local dev and a real hazard anywhere else."
         }
     );
     let custody = if pay.deposits.is_watch_only() {
-        "watch-only — this process holds NO signing seed"
+        "watch-only · this process holds NO signing seed"
     } else {
-        "custodial/devnet — this process holds a seed (correct only for the throwaway devnet \
+        "custodial/devnet · this process holds a seed (correct only for the throwaway devnet \
          fallback or a deliberately-custodial operator)"
     };
 
@@ -755,14 +755,14 @@ async fn run_status(state: &BotState) -> CreateEmbed {
             },
             n.price
                 .map(|(_, _, s)| s)
-                .unwrap_or("UNPRICED — refuses every call"),
+                .unwrap_or("UNPRICED · refuses every call"),
         ),
-        None => "**none** — every run falls to the free tier".to_string(),
+        None => "**none** · every run falls to the free tier".to_string(),
     };
 
     embeds::dregg_embed("Operator posture")
         .description(
-            "What this process is ACTUALLY doing — the facts that otherwise live only in the boot \
+            "What this process is ACTUALLY doing: the facts that otherwise live only in the boot \
              log.",
         )
         .field("Node", node_line, false)
@@ -816,7 +816,7 @@ fn run_treasury(state: &BotState) -> CreateEmbed {
                      `InsufficientFuel`, so real-AI runs will start refusing."
                 )
             } else if runs < 20 {
-                format!("🟡 ${fuel_usd:.4} of fuel ≈ **{runs}** run(s) at ${usd:.4}/run — low.")
+                format!("🟡 ${fuel_usd:.4} of fuel ≈ **{runs}** run(s) at ${usd:.4}/run · low.")
             } else {
                 format!("🟢 ${fuel_usd:.4} of fuel ≈ **{runs}** run(s) at ${usd:.4}/run.")
             }
@@ -879,7 +879,7 @@ async fn run_credits(command: &CommandInteraction, state: &BotState, actor: u64)
             return embeds::error_embed(
                 "Ledger unreadable",
                 "The credit ledger could not be read, so a grant would be computed from an \
-                 unknown balance. Refusing — retry when storage recovers.",
+                 unknown balance. Refusing. Retry when storage recovers.",
             );
         }
         let next = base.saturating_add(grant);
@@ -912,7 +912,7 @@ async fn run_credits(command: &CommandInteraction, state: &BotState, actor: u64)
                 );
                 note = format!(
                     "\n\n**Minted {grant} run-credit(s)** to <@{target}> (was {base}, now {next}). \
-                     These were NOT paid for — the operator funds the inference they buy. \
+                     These were NOT paid for: the operator funds the inference they buy. \
                      Recorded in the audit log against <@{actor}>."
                 );
             }
@@ -924,13 +924,13 @@ async fn run_credits(command: &CommandInteraction, state: &BotState, actor: u64)
             }
         }
     } else if grant < 0 {
-        note = "\n\n_A negative `grant` is ignored — this surface only mints._".to_string();
+        note = "\n\n_A negative `grant` is ignored: this surface only mints._".to_string();
     }
 
     let balance = state.pay.balance_checked(&discord_id).await;
     let shown = match &balance {
         Ok(b) => format!("**{b}** run-credit(s)"),
-        Err(_) => "**unavailable** (a storage failure — this is NOT a zero)".to_string(),
+        Err(_) => "**unavailable** (a storage failure; this is NOT a zero)".to_string(),
     };
 
     let deposit = state
@@ -983,10 +983,10 @@ async fn run_pool(state: &BotState) -> CreateEmbed {
     };
 
     if rows.is_empty() {
-        return embeds::dregg_embed("$DREGG pool — contributors").description(
+        return embeds::dregg_embed("$DREGG pool · contributors").description(
             "No `$DREGG` contributions attributed yet.\n\nAttribution is written when a \
                  `$DREGG` payment is newly credited by the payment poll, so an empty view means \
-                 either nobody has paid in, or nothing is being watched — check \
+                 either nobody has paid in, or nothing is being watched. Check \
                  `/dregg admin status` for which payment watcher is live.",
         );
     }
@@ -1028,12 +1028,12 @@ async fn run_pool(state: &BotState) -> CreateEmbed {
     let clusters = split_stake_clusters(&weighted);
     let cluster_note = if clusters.is_empty() {
         "No near-equal, near-simultaneous stake clusters stand out. That is not a proof of \
-         absence — it is one crude heuristic over one table."
+         absence; it is one crude heuristic over one table."
             .to_string()
     } else {
         format!(
             "⚠ **{} cluster(s) worth a look.** Each is a set of stakes within {:.0}% of each \
-             other in size that first appeared within {} hours of one another — the shape a \
+             other in size that first appeared within {} hours of one another: the shape a \
              split stake makes. This is a prompt for a human, not a verdict, and nothing here \
              acts on it.\n{}",
             clusters.len(),
@@ -1051,10 +1051,10 @@ async fn run_pool(state: &BotState) -> CreateEmbed {
         )
     };
 
-    embeds::dregg_embed("$DREGG pool — contributors")
+    embeds::dregg_embed("$DREGG pool · contributors")
         .description(format!(
             "Who paid into the pile, and what each stake is worth as a vote. Weight is \
-             `isqrt(atomic $DREGG)` — the exact same `dregg_pay::quadratic_weight` a swap ballot \
+             `isqrt(atomic $DREGG)`: the exact same `dregg_pay::quadratic_weight` a swap ballot \
              uses.\n\n{cluster_note}"
         ))
         .field("Contributors (heaviest first)", lines.join("\n"), false)
@@ -1063,7 +1063,7 @@ async fn run_pool(state: &BotState) -> CreateEmbed {
             "Total weight (the quorum denominator)",
             match total_weight {
                 Some(t) => format!("**{t}** over {} contributor(s)", weighted.len()),
-                None => "**overflowed** — refused rather than wrapped".to_string(),
+                None => "**overflowed** · refused rather than wrapped".to_string(),
             },
             true,
         )
@@ -1072,7 +1072,7 @@ async fn run_pool(state: &BotState) -> CreateEmbed {
             "Quadratic weight is sybil-FAVOURABLE: `√a + √b > √(a+b)`, so splitting a stake \
              across two deposit addresses gains voting weight. That is a known, deliberate \
              choice; the defence is social, and this view is what makes noticing possible. \
-             \n\nIt is the attribution THIS bot observed and credited — a payment credited by \
+             \n\nIt is the attribution THIS bot observed and credited; a payment credited by \
              another process is not here. It is read-only: no exclusion, no ban.",
             false,
         )

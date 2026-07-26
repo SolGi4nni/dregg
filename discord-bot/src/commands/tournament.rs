@@ -71,14 +71,14 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
         }) => {
             let surface = standings.surface();
             let card = deos_view::discord::render_card(
-                "The Descent — Weekly Tournament",
+                "The Descent · Weekly Tournament",
                 surface.view(),
                 &[],
             );
             let champion = standings
                 .champion
                 .clone()
-                .unwrap_or_else(|| "no champion — nobody posted a verified win".to_string());
+                .unwrap_or_else(|| "no champion · nobody posted a verified win".to_string());
             let embed = card
                 .embed
                 .color(0xB3452E)
@@ -118,7 +118,7 @@ fn run_bracket() -> Result<BracketRun, String> {
     let qualifiers = descent::verified_players_by_merit();
     if qualifiers.is_empty() {
         return Err(
-            "Nobody holds a verified win on the no-cheat board yet — win `/descent play` \
+            "Nobody holds a verified win on the no-cheat board yet. Win `/descent play` \
              to qualify for the weekly bracket."
                 .to_string(),
         );

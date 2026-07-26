@@ -39,7 +39,7 @@ const HERMES_COLOR: u32 = 0x9D4EDD;
 
 impl DiscordOffering for HermesOffering {
     const KEY: &'static str = "hermes";
-    const TITLE: &'static str = "Hosted Hermes — a confined agent";
+    const TITLE: &'static str = "Hosted Hermes · a confined agent";
     const COLOR: u32 = HERMES_COLOR;
     const TAGLINE: &'static str =
         "one cap-bounded, metered, receipted turn at a time · it cannot exceed its cell's mandate";
@@ -89,7 +89,7 @@ impl DiscordOffering for HermesOffering {
 pub fn register() -> CreateCommand {
     CreateCommand::new("hermes")
         .description(
-            "Drive a hosted, confined Hermes agent in this channel — one metered turn at a time",
+            "Drive a hosted, confined Hermes agent in this channel · one metered turn at a time",
         )
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,

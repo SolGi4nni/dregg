@@ -132,7 +132,7 @@ fn poll_note(status: &PollStatus) -> Option<String> {
         )),
         PollStatus::NothingNew => None,
         PollStatus::CheckFailed(e) => Some(format!(
-            "\n\n⚠️ **Couldn't check for new payments right now** — the payment watcher \
+            "\n\n⚠️ **Couldn't check for new payments right now**: the payment watcher \
              errored (`{}`). **Your funds are safe:** a payment you already sent is still \
              on-chain, crediting is idempotent (never doubled, never lost), and the next \
              successful check picks it up. Retry `/credits` in a moment.",
@@ -146,7 +146,7 @@ fn poll_note(status: &PollStatus) -> Option<String> {
 fn balance_field(balance: &Result<u64, sqlx::Error>) -> String {
     match balance {
         Ok(b) => format!("{b} run(s)"),
-        Err(_) => "unavailable right now (not a zero — retry)".to_string(),
+        Err(_) => "unavailable right now (not a zero · retry)".to_string(),
     }
 }
 
@@ -198,7 +198,7 @@ pub(crate) async fn execute_buy(state: &BotState, user_id: u64) -> CreateEmbed {
     let balance = pay.balance_checked(&discord_id).await;
 
     let mut desc = format!(
-        "Send **$DREGG** to your personal deposit address below. Each **{price}** atomic $DREGG buys **one** real-AI dungeon run. Your address is deterministic — it is always the same for you.\n\n**Your deposit address**\n```\n{address}\n```\nNetwork: **{}**\n\nAfter you pay, run `/credits` (or `/buy-credits` again) to credit it. A paid `/dungeon` room is narrated by real Bedrock; with no credits you get the free (ollama/scripted) narrator.",
+        "Send **$DREGG** to your personal deposit address below. Each **{price}** atomic $DREGG buys **one** real-AI dungeon run. Your address is deterministic: it is always the same for you.\n\n**Your deposit address**\n```\n{address}\n```\nNetwork: **{}**\n\nAfter you pay, run `/credits` (or `/buy-credits` again) to credit it. A paid `/dungeon` room is narrated by real Bedrock; with no credits you get the free (ollama/scripted) narrator.",
         network_label(pay.network()),
     );
     if let Some(note) = poll_note(&poll) {
@@ -245,10 +245,10 @@ pub(crate) async fn execute_balance(state: &BotState, user_id: u64) -> CreateEmb
 
     let mut desc = match &balance {
         Ok(b) => format!(
-            "You have **{b}** run-credit(s). Each paid `/dungeon` room narration by real Bedrock spends one; with none you get the free (ollama/scripted) narrator.\n\nBuy more with `/buy-credits` — send **{price}** atomic $DREGG per run to your deposit address."
+            "You have **{b}** run-credit(s). Each paid `/dungeon` room narration by real Bedrock spends one; with none you get the free (ollama/scripted) narrator.\n\nBuy more with `/buy-credits`: send **{price}** atomic $DREGG per run to your deposit address."
         ),
         Err(_) => format!(
-            "⚠️ **Your balance can't be read right now** (a storage hiccup on our side — this is NOT a zero). Your credits are persisted in the ledger and are safe; retry `/credits` in a moment.\n\nBuying still works the same: `/buy-credits` — **{price}** atomic $DREGG per run to your deposit address."
+            "⚠️ **Your balance can't be read right now** (a storage hiccup on our side; this is NOT a zero). Your credits are persisted in the ledger and are safe; retry `/credits` in a moment.\n\nBuying still works the same: `/buy-credits` · **{price}** atomic $DREGG per run to your deposit address."
         ),
     };
     if let Some(note) = poll_note(&poll) {
@@ -261,9 +261,9 @@ pub(crate) async fn execute_balance(state: &BotState, user_id: u64) -> CreateEmb
         .color(PAY_COLOR)
         .field(
             "The three monies",
-            "**DEC** — the on-network devnet currency your cipherclerk holds \
-             (`/cipherclerk balance`). **$DREGG** — the token; buys these run-credits. \
-             **computrons** — the metered unit of compute a turn consumes.",
+            "**DEC** · the on-network devnet currency your cipherclerk holds \
+             (`/cipherclerk balance`). **$DREGG** · the token; buys these run-credits. \
+             **computrons** · the metered unit of compute a turn consumes.",
             false,
         )
         .footer(CreateEmbedFooter::new(
@@ -295,7 +295,7 @@ pub(crate) async fn execute_treasury(state: &BotState) -> CreateEmbed {
     let pile = pay.treasury_pile();
 
     let mut desc = format!(
-        "**The two-balance treasury** — where detected game revenue lands.\n\n• **Fuel (USDC):** `{fuel}` atomic — burned per real-AI run; fails closed (must-refuel) on empty.\n• **Pile ($DREGG):** `{pile}` atomic — the accumulating illiquid holding.\n\nA USDC payment fuels the tank; a $DREGG payment grows the pile. Every run burns USD fuel regardless of how it was paid.\n\n**Declared cross-chain positions** (non-custodial — proven, not held):"
+        "**The two-balance treasury** · where detected game revenue lands.\n\n• **Fuel (USDC):** `{fuel}` atomic · burned per real-AI run; fails closed (must-refuel) on empty.\n• **Pile ($DREGG):** `{pile}` atomic · the accumulating illiquid holding.\n\nA USDC payment fuels the tank; a $DREGG payment grows the pile. Every run burns USD fuel regardless of how it was paid.\n\n**Declared cross-chain positions** (non-custodial · proven, not held):"
     );
 
     let slots = pay.treasury_slots();
@@ -303,7 +303,7 @@ pub(crate) async fn execute_treasury(state: &BotState) -> CreateEmbed {
         desc.push_str("\n_(none declared)_");
     } else {
         for s in slots {
-            desc.push_str(&format!("\n• `{}` — {}", chain_label(s.chain), s.label));
+            desc.push_str(&format!("\n• `{}` · {}", chain_label(s.chain), s.label));
         }
     }
 

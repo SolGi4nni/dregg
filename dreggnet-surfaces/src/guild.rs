@@ -269,14 +269,14 @@ impl Offering for GuildPage {
             "accent",
             vec![
                 text(if s.applicants.is_empty() {
-                    "No application is pending — there is nothing to admit right now. The roster \
+                    "No application is pending; there is nothing to admit right now. The roster \
                      below is the live cap ledger, not a list: a name reads `member` only because \
                      a real grant turn committed for it, and a stranger's identical write is \
                      refused by the executor rather than by this page."
                         .to_string()
                 } else {
                     format!(
-                        "{} applicant(s) are waiting — press Admit to grant the guild cap and land \
+                        "{} applicant(s) are waiting. Press Admit to grant the guild cap and land \
                          that member's first cap-bounded write as ONE real turn. Until you do, \
                          their write is refused for want of the cap.",
                         s.applicants.len()
@@ -304,7 +304,7 @@ impl Offering for GuildPage {
             children.push(section(
                 "Roster",
                 "muted",
-                vec![text("No members yet — admit a founder.")],
+                vec![text("No members yet. Admit a founder.")],
             ));
         } else {
             let mut rows: Vec<ViewNode> = vec![row(vec![text("Member"), text("Standing")])];
@@ -351,7 +351,7 @@ impl Offering for GuildPage {
             vec![board],
         ));
 
-        Surface(section(format!("Guild — {}", s.name()), "accent", children))
+        Surface(section(format!("Guild · {}", s.name()), "accent", children))
     }
 
     fn price(&self, _input: &Action) -> RunCost {

@@ -79,7 +79,7 @@ const DEEP_MOVES: [usize; 4] = [0, 0, 0, 0];
 fn why(w: &Witness) -> String {
     match w {
         Witness::Depth { peak, min } => format!("reached depth {peak} (≥ {min})"),
-        Witness::NoDeath { flag } => format!("flawless — `{flag}` never tripped"),
+        Witness::NoDeath { flag } => format!("flawless · `{flag}` never tripped"),
         Witness::Speed { turns, max_turns } => format!("won in {turns} turns (≤ {max_turns})"),
         Witness::Champion { top_n, rank, turns } => {
             format!("season champion #{rank} of top-{top_n} ({turns} turns)")
@@ -87,7 +87,7 @@ fn why(w: &Witness) -> String {
         Witness::Threshold { var, observed } => format!("`{var}` reached {observed}"),
         Witness::Composite { parts } => {
             let inner: Vec<String> = parts.iter().map(why).collect();
-            format!("all held — {}", inner.join("; "))
+            format!("all held · {}", inner.join("; "))
         }
     }
 }
@@ -201,7 +201,7 @@ impl Offering for CheevoShowcase {
 
     /// Read-only: an achievement is earned by playing, not on this surface.
     fn advance(&self, _s: &mut CheevoSession, _input: Action, _actor: DreggIdentity) -> Outcome {
-        Outcome::Refused("the showcase is a read-only surface — earn a cheevo by playing".into())
+        Outcome::Refused("the showcase is a read-only surface; earn a cheevo by playing".into())
     }
 
     /// The cheap integrity check available without the run: every shown cheevo's seal re-derives
@@ -232,11 +232,11 @@ impl Offering for CheevoShowcase {
             "accent",
             vec![
                 text(if s.is_empty() {
-                    "Nothing to press here — a cheevo is EARNED by playing, never claimed on this \
+                    "Nothing to press here. A cheevo is EARNED by playing, never claimed on this \
                      page. Clear a verified run in the Descent and it lands below, carrying the \
                      run that witnesses it."
                 } else {
-                    "Nothing to press here — this is your proof shelf. Every row names what you \
+                    "Nothing to press here. This is your proof shelf. Every row names what you \
                      did, the run that witnesses it, and a seal that re-derives from the record, \
                      so a tampered boast stops matching. Play on to earn the next one."
                 }),
@@ -257,7 +257,7 @@ impl Offering for CheevoShowcase {
             children.push(section(
                 "Achievements",
                 "muted",
-                vec![text("No achievements earned yet — clear a verified run.")],
+                vec![text("No achievements earned yet. Clear a verified run.")],
             ));
         } else {
             let mut rows: Vec<ViewNode> = vec![row(vec![
@@ -286,7 +286,7 @@ impl Offering for CheevoShowcase {
             ));
         }
 
-        Surface(section("Achievements — earned proofs", "accent", children))
+        Surface(section("Achievements · earned proofs", "accent", children))
     }
 
     fn price(&self, _input: &Action) -> RunCost {

@@ -43,6 +43,12 @@ pub struct RateLimiter {
     capacity: f64,
     /// Steady-state refill rate, tokens per second.
     refill_per_sec: f64,
+    /// ⚑ **RESTART: PROCEED, deliberately** (`docs/reference/RESTART-SEMANTICS.md`). Empty at
+    /// boot, and that is the SAFE direction: a bucket only ever carries a PENALTY forward, so
+    /// forgetting one can only forgive. What an adversary gains by forcing a restart is one
+    /// burst's worth of allowance on a limiter that is explicitly not a security boundary — the
+    /// executor is the referee, and every action past this point is still cap-gated and
+    /// receipted. Persisting these would strictly punish honest users after a redeploy.
     buckets: Mutex<HashMap<u64, Bucket>>,
 }
 

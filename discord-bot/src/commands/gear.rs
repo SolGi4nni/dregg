@@ -41,7 +41,7 @@ impl DiscordOffering for LoadoutOffering {
     const TITLE: &'static str = "Gear";
     const COLOR: u32 = 0x8C5A2B;
     const TAGLINE: &'static str =
-        "forge · equip · use — the ability unlocks via a KERNEL cross-cell ownership predicate";
+        "forge · equip · use: the ability unlocks via a KERNEL cross-cell ownership predicate";
     /// Rebuilt from a deterministic, argument-free constructor — identical to the
     /// factory production opens it with — so a persisted session of this offering
     /// resumes by replay into the SAME world its turns landed in.

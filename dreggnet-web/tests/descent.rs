@@ -184,7 +184,7 @@ async fn a_run_card_proves_an_honest_run_and_fails_a_forgery() {
     let (status, won) = get(&app, "/descent/run/today-alice").await;
     assert_eq!(status, StatusCode::OK);
     assert!(
-        won.contains("Independent verification — PASS"),
+        won.contains("Independent verification · PASS"),
         "an honest run re-executes to PASS: {won}"
     );
     assert!(won.contains("SURVIVED"), "the won outcome shows: {won}");
@@ -193,7 +193,7 @@ async fn a_run_card_proves_an_honest_run_and_fails_a_forgery() {
     // The honest LOST run: still PASS (an honest record re-verifies), outcome FELL / dead.
     let (_s, lost) = get(&app, "/descent/run/today-bob").await;
     assert!(
-        lost.contains("Independent verification — PASS"),
+        lost.contains("Independent verification · PASS"),
         "an honest lost run also re-verifies to PASS: {lost}"
     );
     assert!(lost.contains("FELL"), "the lost outcome shows: {lost}");
@@ -202,11 +202,11 @@ async fn a_run_card_proves_an_honest_run_and_fails_a_forgery() {
     // The FORGED run: FAIL — not a fake pass.
     let (_s, forged) = get(&app, "/descent/run/today-mallory").await;
     assert!(
-        forged.contains("Independent verification — FAIL"),
+        forged.contains("Independent verification · FAIL"),
         "a tampered run shows FAIL: {forged}"
     );
     assert!(
-        !forged.contains("Independent verification — PASS"),
+        !forged.contains("Independent verification · PASS"),
         "a tampered run is NOT a fake pass: {forged}"
     );
     assert!(

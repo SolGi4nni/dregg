@@ -50,7 +50,7 @@ use crate::private_bazaar_worker::{
 use crate::{CatalogConfig, build_full_catalog};
 
 pub const PRIVATE_BAZAAR_RAID_TITLE: &str =
-    "The Dark Bazaar raid — a viewer-blind private allocation with one exact receipted game effect";
+    "The Dark Bazaar raid · a viewer-blind private allocation with one exact receipted game effect";
 
 pub const PRIVATE_BAZAAR_DEPLOYMENT_ID_ENV: &str = "DREGG_PRIVATE_BAZAAR_DEPLOYMENT_ID";
 pub const PRIVATE_BAZAAR_ROSTER_ENV: &str = "DREGG_PRIVATE_BAZAAR_ROSTER";

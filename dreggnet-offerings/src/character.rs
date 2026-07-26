@@ -352,7 +352,7 @@ impl Character {
             )
         };
         let character_panel = ViewNode::Section {
-            title: format!("{} — {}", short_name(&self.who), c.class_name()),
+            title: format!("{} · {}", short_name(&self.who), c.class_name()),
             tag: "genuine".to_string(),
             children: vec![ViewNode::Text(xp_line)],
         };

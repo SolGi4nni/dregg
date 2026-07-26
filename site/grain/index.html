@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Drive a grain — the dreggnet cloud</title>
-  <meta name="description" content="Rent a confined agent grain, drive it, watch its transcript stream, and verify it — trust no host — from your browser, over the agent-platform HTTP API.">
+  <title>Drive a grain · the dreggnet cloud</title>
+  <meta name="description" content="Rent a confined agent grain, drive it, watch its transcript stream, and verify it (trust no host) from your browser, over the agent-platform HTTP API.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
   <!-- The shared site stylesheet, when this page is served from the site tree. When
        served same-origin by the agent-platform bin (GET /dev, also /console and
@@ -122,7 +122,7 @@
 <body>
 <div class="wrap">
   <h1>Drive a grain</h1>
-  <p class="lede">Rent a confined agent grain, drive it, watch its transcript stream, and verify it — <em>trust no host</em>. This page talks to the <span class="mono">agent-platform</span> HTTP API over the browser-friendly routing shim (a browser cannot set the <code>Host</code> header, so the grain-host rides an <code>X-Dregg-Grain-Host</code> header, or query params for the header-less <code>EventSource</code> transcript). <strong>Rent / verify / watch work with no model; live drive needs the server built <code>--features live-brain</code> with an LLM key.</strong></p>
+  <p class="lede">Rent a confined agent grain, drive it, watch its transcript stream, and verify it: <em>trust no host</em>. This page talks to the <span class="mono">agent-platform</span> HTTP API over the browser-friendly routing shim (a browser cannot set the <code>Host</code> header, so the grain-host rides an <code>X-Dregg-Grain-Host</code> header, or query params for the header-less <code>EventSource</code> transcript). <strong>Rent / verify / watch work with no model; live drive needs the server built <code>--features live-brain</code> with an LLM key.</strong></p>
 
   <!-- ── config ─────────────────────────────────────────────────────────── -->
   <section class="card">
@@ -153,7 +153,7 @@
   <!-- ── drive + watch ──────────────────────────────────────────────────── -->
   <section class="card">
     <h2><span class="num">2 · drive</span>Give it a goal &amp; watch it work</h2>
-    <p class="card__hint"><b>Drive</b> POSTs <code>/drive</code> — this uses the <b>HOST's model + key</b> (simpler, but the host sees the key; the renter mails their key to the host). Needs the driver role and a live brain; without a model the server honestly answers <code>503 no live brain</code>. <b>For true bring-your-own-key, use §2b below</b> — the model runs in your browser and the host never sees the key. <b>Watch transcript</b> opens the <code>/transcript</code> SSE (query-param form, since <code>EventSource</code> sets no headers) and replays the committed meta/step/done frames of every drive so far — this works with no model.</p>
+    <p class="card__hint"><b>Drive</b> POSTs <code>/drive</code>: this uses the <b>HOST's model + key</b> (simpler, but the host sees the key; the renter mails their key to the host). Needs the driver role and a live brain; without a model the server honestly answers <code>503 no live brain</code>. <b>For true bring-your-own-key, use §2b below</b>: the model runs in your browser and the host never sees the key. <b>Watch transcript</b> opens the <code>/transcript</code> SSE (query-param form, since <code>EventSource</code> sets no headers) and replays the committed meta/step/done frames of every drive so far. This works with no model.</p>
     <div class="field"><label>goal</label><textarea id="d-goal">clone the repo and summarize the readme</textarea></div>
     <div class="field"><label>tools (comma-separated, optional)</label><input id="d-tools" value="fs_write"></div>
     <div class="btns">
@@ -168,12 +168,12 @@
 
   <!-- ── 2b · bring your own key (BYOK) ──────────────────────────────────── -->
   <section class="card">
-    <h2><span class="num">2b · byok</span>Bring your own key — the model runs in <em>your</em> browser</h2>
-    <p class="card__hint">The real prize: the model runs <b>here, in this tab, under your own API key (any provider)</b>. Each action the model proposes is POSTed one at a time to the grain's <code>/act</code> route, which cap-gates, meters, mints, and receipts it — <b>the host never sees your key</b>. Needs the driver role. No host model required.</p>
+    <h2><span class="num">2b · byok</span>Bring your own key · the model runs in <em>your</em> browser</h2>
+    <p class="card__hint">The real prize: the model runs <b>here, in this tab, under your own API key (any provider)</b>. Each action the model proposes is POSTed one at a time to the grain's <code>/act</code> route, which cap-gates, meters, mints, and receipts it: <b>the host never sees your key</b>. Needs the driver role. No host model required.</p>
 
     <div class="safety">
       <span>🔑</span>
-      <span><b>Your key stays in this browser.</b> It is sent only to the provider you choose below — <b>never to the grain host</b>. The host receives only the single proposed action (<code>tool</code> + <code>args</code>) and returns a receipt.</span>
+      <span><b>Your key stays in this browser.</b> It is sent only to the provider you choose below: <b>never to the grain host</b>. The host receives only the single proposed action (<code>tool</code> + <code>args</code>) and returns a receipt.</span>
     </div>
 
     <div class="grid">
@@ -196,7 +196,7 @@
       <input type="checkbox" id="byok-persist" onchange="byokPersistToggle()">
       <label for="byok-persist" style="text-transform:none;letter-spacing:0;color:inherit;margin:0">persist my key in this browser's localStorage</label>
     </div>
-    <p class="warn-line">Off by default — the key lives in memory only and is gone when you close the tab. Persisting stores it in <code>localStorage</code> on this device in cleartext; only do so on a machine you trust.</p>
+    <p class="warn-line">Off by default: the key lives in memory only and is gone when you close the tab. Persisting stores it in <code>localStorage</code> on this device in cleartext; only do so on a machine you trust.</p>
 
     <div class="btns">
       <button onclick="byokRun()">Run in my browser (BYOK)</button>
@@ -209,7 +209,7 @@
   <!-- ── verify ─────────────────────────────────────────────────────────── -->
   <section class="card">
     <h2><span class="num">3 · verify</span>Trust no host</h2>
-    <p class="card__hint">The renter's check. <code>/verify</code> is <b>R0</b> tamper-evidence (the receipt chain re-witnesses); <code>/verify?r2</code> is <b>R2</b> (every receipt is a view over a kernel turn the platform's minter committed — an unminted grain honestly fails this); <code>/attest</code> hands you the signed attestation to keep. All read-only — <b>no model required.</b></p>
+    <p class="card__hint">The renter's check. <code>/verify</code> is <b>R0</b> tamper-evidence (the receipt chain re-witnesses); <code>/verify?r2</code> is <b>R2</b> (every receipt is a view over a kernel turn the platform's minter committed; an unminted grain honestly fails this); <code>/attest</code> hands you the signed attestation to keep. All read-only: <b>no model required.</b></p>
     <div class="btns"><button onclick="verify()">Verify (R0 · R2 · attest)</button></div>
     <div class="out" id="verify-out"></div>
   </section>
@@ -283,7 +283,7 @@
         out.innerHTML = `${pill(r.status)} ${esc(r.data.error || JSON.stringify(r.data))}`;
       }
     } catch (e) {
-      out.innerHTML = `<span class="pill bad">net</span> ${esc(e.message)} — is the server up at ${esc(cfg().base)}?`;
+      out.innerHTML = `<span class="pill bad">net</span> ${esc(e.message)} · is the server up at ${esc(cfg().base)}?`;
     }
   }
 
@@ -297,10 +297,10 @@
     try {
       const r = await apiJson('/drive', { method: 'POST', grainHost: host, body: { goal: el('d-goal').value, tools } });
       if (r.status === 503) {
-        out.innerHTML = `${pill(r.status)} <b>no live brain</b> — the driver role cleared the gate, but this server has no model. Rebuild <code>--features live-brain</code> + set an LLM key. (You can still Watch a completed transcript + Verify below.)`;
+        out.innerHTML = `${pill(r.status)} <b>no live brain</b>: the driver role cleared the gate, but this server has no model. Rebuild <code>--features live-brain</code> + set an LLM key. (You can still Watch a completed transcript + Verify below.)`;
       } else if (r.status === 200) {
         const d = r.data;
-        out.innerHTML = `${pill(r.status)} admitted <b>${d.admitted}</b> · cap-refused <b>${d.cap_refused}</b> · budget-refused <b>${d.budget_refused}</b> · consumed <b>${d.consumed}</b> — now Watch the transcript.`;
+        out.innerHTML = `${pill(r.status)} admitted <b>${d.admitted}</b> · cap-refused <b>${d.cap_refused}</b> · budget-refused <b>${d.budget_refused}</b> · consumed <b>${d.consumed}</b>. Now Watch the transcript.`;
         watch();
       } else {
         out.innerHTML = `${pill(r.status)} ${esc(r.data.error || JSON.stringify(r.data))}`;
@@ -333,7 +333,7 @@
       const div = document.createElement('div');
       div.className = 'frame frame--meta';
       div.innerHTML = `<div class="frame__tag">meta</div>
-        <div class="frame__line"><code>${esc(m.host)}</code> — goal: ${esc(m.goal || '(none yet)')}</div>
+        <div class="frame__line"><code>${esc(m.host)}</code> · goal: ${esc(m.goal || '(none yet)')}</div>
         <div class="frame__sub">
           <span class="kv">budget <b>${m.budget}</b></span>
           <span class="kv">asset <b>${esc(m.asset)}</b></span>
@@ -349,7 +349,7 @@
       const div = document.createElement('div');
       div.className = 'frame frame--step' + (refused ? ' refused' : '');
       div.innerHTML = `<div class="frame__tag">step ${s.n}</div>
-        <div class="frame__line">${esc(s.action)} — <span class="mono">${esc(s.outcome)}</span></div>
+        <div class="frame__line">${esc(s.action)} · <span class="mono">${esc(s.outcome)}</span></div>
         <div class="frame__sub">
           <span class="kv">cost <b>${s.cost}</b></span>
           ${s.tool_summary ? `<span class="kv">${esc(s.tool_summary)}</span>` : ''}
@@ -381,7 +381,7 @@
       // A closed connection with frames already rendered is the normal end-of-stream;
       // a 404 (non-member / no grain) or a down server surfaces here with none.
       if (!stream.children.length) {
-        el('stream-status').textContent = 'no transcript — non-member (404), no such grain, or server down.';
+        el('stream-status').textContent = 'no transcript: non-member (404), no such grain, or server down.';
       }
       stopWatch();
     };
@@ -406,7 +406,7 @@
         ? `${pill(200)} <b>R2</b> minted-view PASS · actions <b>${r2.data.actions}</b> · linked <b>${r2.data.linked}</b>`
         : `${pill(r2.status)} <b>R2</b> ${esc(r2.data.error || 'not a minted-view chain')}`;
       const attline = att.status === 200
-        ? `${pill(200)} <b>attestation</b> ${att.bytes} bytes — the signed record to keep`
+        ? `${pill(200)} <b>attestation</b> ${att.bytes} bytes · the signed record to keep`
         : `${pill(att.status)} <b>attest</b> ${esc(att.data.error || '')}`;
       out.innerHTML = `<div>${r0line}</div><div style="margin-top:8px">${r2line}</div><div style="margin-top:8px">${attline}</div>`
         + (att.status === 200 ? `<pre>${esc(JSON.stringify(att.data, null, 2).slice(0, 1200))}${att.bytes > 1200 ? '\n…' : ''}</pre>` : '');
@@ -437,7 +437,7 @@
     ollama: { base:'http://localhost:11434/v1', model:'llama3.1',
       cors:'Local ollama needs CORS enabled: start it with OLLAMA_ORIGINS=* ollama serve. No key needed.' },
     custom: { base:'', model:'',
-      cors:'Note: OpenAI’s api.openai.com BLOCKS browser calls (no CORS) — point this at a local base or a CORS-enabling proxy. Anthropic likewise needs a proxy for browser use.' },
+      cors:'Note: OpenAI’s api.openai.com BLOCKS browser calls (no CORS). Point this at a local base or a CORS-enabling proxy. Anthropic likewise needs a proxy for browser use.' },
   };
   function byokProviderChange() {
     const p = el('byok-provider').value;
@@ -498,7 +498,7 @@
     } else if (r.status === 200) {
       const why = d.cap_refused ? 'cap-refused' : (d.budget_refused ? 'budget-refused' : 'refused');
       byokFrame(stream, 'frame--act refused', `act · ${why}`, label,
-        `<span class="kv">the model proposed, the capabilities disposed — <b>${why}</b> (admitted 0)</span>`);
+        `<span class="kv">the model proposed, the capabilities disposed: <b>${why}</b> (admitted 0)</span>`);
     } else {
       byokFrame(stream, 'frame--act refused', `act · error ${r.status}`, label,
         `<span class="kv">${esc(d.error || JSON.stringify(d))}</span>`);
@@ -539,7 +539,7 @@
         completion = await providerChat(base, key, model, messages);
       } catch (e) {
         byokFrame(stream, 'frame--model', 'provider error', esc(e.message),
-          'The key is sent ONLY to your provider — check the base url, model, key, and CORS (see the note above).');
+          'The key is sent ONLY to your provider. Check the base url, model, key, and CORS (see the note above).');
         out.innerHTML = `<span class="pill bad">provider</span> ${esc(e.message)}`;
         return;
       }
@@ -549,7 +549,7 @@
       const calls = msg.tool_calls || [];
       if (!calls.length) {
         if (msg.content) byokFrame(stream, 'frame--model', 'model', esc(msg.content), 'the model stopped calling tools');
-        out.innerHTML = `<span class="pill ok">done</span> the model finished after ${step} tool call(s) — verify below (trust no host).`;
+        out.innerHTML = `<span class="pill ok">done</span> the model finished after ${step} tool call(s); verify below (trust no host).`;
         return;
       }
       // ONE proposed action per turn → a one-shot POST /act on the host.
@@ -561,7 +561,7 @@
         r = await apiJson('/act', { method: 'POST', grainHost: host, body: { tool: call.function.name, args, goal } });
       } catch (e) {
         byokFrame(stream, 'frame--act refused', 'act · net error', esc(e.message));
-        out.innerHTML = `<span class="pill bad">net</span> ${esc(e.message)} — is the grain server up?`;
+        out.innerHTML = `<span class="pill bad">net</span> ${esc(e.message)} · is the grain server up?`;
         return;
       }
       renderAct(stream, call.function.name, args, r);

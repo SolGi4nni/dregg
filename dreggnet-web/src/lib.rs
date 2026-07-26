@@ -66,6 +66,13 @@ pub mod chutes_consent;
 /// weighted ballots → the real quorum-certified `dungeon_on_dregg::collective::CollectiveRound` →
 /// ONE certified world turn per window. See [`crowd_round::CrowdRound`].
 pub mod crowd_round;
+/// ⚑ **A RESULT EARNED ON ONE SURFACE, VERIFIED AGAIN ON THIS ONE** — the cross-surface crown
+/// board. A finished match folds to ONE succinct proof; `POST /crown/ingest` (operator-bearer
+/// gated, fail-closed) admits one from another surface ONLY after this server re-runs the O(1)
+/// whole-history light client against the board's own pinned anchor, and `GET /crown` /
+/// `GET /crown/results.json` serve the merged board, re-verified on every read. Nothing is ever
+/// admitted on the sender's say-so. See [`crown_ingest`].
+pub mod crown_ingest;
 /// THE SPECTATOR / PROVENANCE surface for *The Descent* (the flagship's growth artifact): a
 /// stranger opens a URL and INDEPENDENTLY re-verifies a run — a re-verified no-cheat leaderboard
 /// (`GET /descent/leaderboard`) + a run-card that re-executes the recorded run to PASS/FAIL
@@ -730,7 +737,7 @@ async fn post_act(
                 // The session was LRU-evicted between `ensure_open` and now (only reachable under a
                 // concurrent flood of other ids). An honest refusal — never a panic (that would
                 // reintroduce a DoS while closing one).
-                None => "Refused: the session is no longer live (evicted under load) — reload the \
+                None => "Refused: the session is no longer live (evicted under load). Reload the \
                          page to resume from its committed state."
                     .to_string(),
                 Some(Outcome::Landed { receipt, ended }) => {
@@ -738,17 +745,17 @@ async fn post_act(
                         .compact_text(PlayerReplaySurface::Web);
                     if ended {
                         format!(
-                            "The Keep is cleared — the objective is met, one real turn at a time. {card}"
+                            "The Keep is cleared: the objective is met, one real turn at a time. {card}"
                         )
                     } else {
-                        format!("Turn committed — {card}")
+                        format!("Turn committed · {card}")
                     }
                 }
                 // The executor is the sole referee: a crafted POST of a dimmed / ineligible
                 // affordance lands as a REAL refusal — nothing committed, the world unmoved.
                 Some(Outcome::Refused(why)) => {
                     metrics::inc_turn_refused();
-                    format!("Refused: {why} (nothing committed — anti-ghost).")
+                    format!("Refused: {why} (nothing committed · anti-ghost).")
                 }
             }
         }
@@ -800,19 +807,19 @@ fn page(id: &SessionId, notice: Option<&str>, fragment: &str, verify: &VerifyRep
             &format!("/session/{}/verify", esc(&id.0)),
         ),
     );
-    document(&format!("{PRODUCT_NAME} — session {}", id.0), "", &body)
+    document(&format!("{PRODUCT_NAME} · session {}", id.0), "", &body)
 }
 
 /// The page shown for a `POST` / verify against a session id that is not open.
 fn page_missing(id: &SessionId) -> String {
     let body = format!(
-        "<main class=\"session\"><div class=\"notice refused\" role=\"status\">No such session — \
+        "<main class=\"session\"><div class=\"notice refused\" role=\"status\">No such session. \
          GET /session/{id} to open it.</div>\
          <p class=\"prose\"><a class=\"backlink\" href=\"/offerings\">← Browse all games</a></p>\
          </main>",
         id = esc(&id.0),
     );
-    document(&format!("{PRODUCT_NAME} — session {}", id.0), "", &body)
+    document(&format!("{PRODUCT_NAME} · session {}", id.0), "", &body)
 }
 
 /// **Derive a web user's frontend-agnostic [`DreggIdentity`] label** — `blake3(user)` hex.
@@ -1830,7 +1837,7 @@ const ENHANCE_SCRIPT: &str = r##"<script>
 pub(crate) fn footer() -> String {
     format!(
         "<footer class=\"foot\">\
-         <p>Every move is re-run against the rules before it counts — here, in this server, \
+         <p>Every move is re-run against the rules before it counts: here, in this server, \
          not on a blockchain.</p>\
          <p class=\"lineage\">{lineage}</p>\
          <nav aria-label=\"Footer\"><a href=\"/descent\">The Descent</a>\
@@ -3476,7 +3483,7 @@ async fn post_offering_act(
             did,
         } => {
             format!(
-                "Turn committed — {}{}",
+                "Turn committed · {}{}",
                 named_act(did.as_deref(), &form.turn),
                 PlayerTurnReceipt::from_landed(&receipt, ended)
                     .compact_text(PlayerReplaySurface::Web)
@@ -3490,7 +3497,7 @@ async fn post_offering_act(
             // A REFUSAL names the action too. "Refused: not your turn" left a reader guessing which
             // of four buttons they had just pressed.
             format!(
-                "Refused: {}{why} (nothing committed — anti-ghost).",
+                "Refused: {}{why} (nothing committed · anti-ghost).",
                 named_act(did.as_deref(), &form.turn)
             )
         }
@@ -3499,7 +3506,7 @@ async fn post_offering_act(
             publication: Some(publication),
             did,
         } => format!(
-            "Turn committed — {}{}",
+            "Turn committed · {}{}",
             named_act(did.as_deref(), &form.turn),
             game_session::public_receipt_text(&publication, PlayerReplaySurface::Web)
         ),
@@ -3515,7 +3522,7 @@ async fn post_offering_act(
         } => {
             metrics::inc_turn_refused();
             format!(
-                "Refused: {}{why} (nothing committed — anti-ghost).",
+                "Refused: {}{why} (nothing committed · anti-ghost).",
                 named_act(did.as_deref(), &form.turn)
             )
         }
@@ -3588,7 +3595,7 @@ fn refused_open_response(id: &SessionId, err: &HostError) -> Response {
         err = esc(&err.to_string()),
     );
     let page = document(
-        &format!("{PRODUCT_NAME} — session {} refused", id.0),
+        &format!("{PRODUCT_NAME} · session {} refused", id.0),
         "",
         &body,
     );
@@ -3661,7 +3668,7 @@ fn stale_game_route_response(id: &SessionId, detail: &str, kind: &'static str) -
          stale-page notice and nothing was committed"
     );
     let page = document(
-        &format!("{PRODUCT_NAME} — session {} is out of date", id.0),
+        &format!("{PRODUCT_NAME} · session {} is out of date", id.0),
         "",
         STALE_GAME_ROUTE_BODY,
     );
@@ -3700,8 +3707,8 @@ pub const REFUSAL_STALE_GAME_ROUTE: &str = "stale-game-route";
 
 /// The one body [`refused_game_route_response`] serves. A `const` so the copy is asserted against
 /// verbatim by the refusal-copy gate rather than re-typed in a test.
-pub(crate) const STALE_GAME_ROUTE_BODY: &str = "<main class=\"session\"><div class=\"notice refused\" role=\"status\">This page is out of date \
-     — the board moved on since you loaded it. Nothing was played. Reload to see the current state \
+pub(crate) const STALE_GAME_ROUTE_BODY: &str = "<main class=\"session\"><div class=\"notice refused\" role=\"status\">This page is out of date: \
+     the board moved on since you loaded it. Nothing was played. Reload to see the current state \
      and pick up from there.</div>\
      <p class=\"prose\"><a class=\"backlink\" href=\"/offerings\">← Browse all games</a></p>\
      </main>";
@@ -4033,7 +4040,7 @@ fn keep_this_run_offer(my_landed_moves: usize) -> String {
         return String::new();
     }
     "<p class=\"keep-run\">That is your first move on the board. The only thing holding the name it \
-     landed under is this browser — clear it and the run is gone, with no way back. \
+     landed under is this browser: clear it and the run is gone, with no way back. \
      <a href=\"/identity\">Keep it with a 24-word phrase →</a></p>"
         .to_string()
 }
@@ -4261,7 +4268,7 @@ fn cell_role_phrase(tag: &str, is_goal: bool) -> &'static str {
         // ⚑ Spoken FIRST and spoken in full: a screen-reader user tabbing the board must be told
         // this square is out of play, and told why, or the only signal they get is a button that
         // vanished.
-        "mark" => ", MARKED by a clash — dead for the rest of this turn, at either end of a move",
+        "mark" => ", MARKED by a clash: dead for the rest of this turn, at either end of a move",
         "warn" => ", picked up",
         "sealed" => ", where you sealed your move",
         "good" => ", a legal move",
@@ -4269,7 +4276,7 @@ fn cell_role_phrase(tag: &str, is_goal: bool) -> &'static str {
         // dashed outline is the only carrier and the square reads identically to a legal move —
         // which is the exact wound the outline exists to close, moved one sense over.
         "blocked" => {
-            ", blocked — a piece is in the way, so this move only runs if that piece is moved first"
+            ", blocked: a piece is in the way, so this move only runs if that piece is moved first"
         }
         _ if is_goal => ", a goal corner",
         // The automaton's square needs no role: the piece name already carries it.
@@ -4495,8 +4502,8 @@ fn af_move_list(cells: &[CoordCell], cols_n: usize, key: &str, id: &str) -> Stri
 
     let mut out = format!(
         "<details class=\"af-moves\"><summary>Moves you can take now \
-         ({n})<span class=\"af-moves-why\">Every square you can press, as a list — for a thumb, or a \
-         keyboard, when the squares are too small to hit</span></summary><ul>",
+         ({n})<span class=\"af-moves-why\">Every square you can press, as a list (for a thumb, or a \
+         keyboard, when the squares are too small to hit)</span></summary><ul>",
         n = live.len(),
     );
     for (i, cell) in live {
@@ -5657,7 +5664,7 @@ fn catalog_page(offerings: &[OfferingInfo]) -> String {
         features = group(
             "Your character",
             "features",
-            "Things you carry between games — what you own, what you made, who you play with.",
+            "Things you carry between games: what you own, what you made, who you play with.",
             FEATURES,
             "Open",
         ),
@@ -5670,14 +5677,18 @@ fn catalog_page(offerings: &[OfferingInfo]) -> String {
         ),
         more = more_section,
     );
-    document(&format!("{PRODUCT_NAME} — all games"), "offerings", &body)
+    document(&format!("{PRODUCT_NAME} · all games"), "offerings", &body)
 }
 
-/// Split a registered offering title `Name — the tagline` into its two halves (the tagline is `""`
-/// when the title carries no em-dash). Presentation only: both halves are rendered, so the full
+/// Split a registered offering title `Name · the tagline` into its two halves (the tagline is `""`
+/// when the title carries no separator). Presentation only: both halves are rendered, so the full
 /// registry string still reads on the page.
+///
+/// BOTH separators are accepted: the registry titles live in `dreggnet-catalog`, so a title that has
+/// not been re-punctuated from the older ` — ` form yet still renders its tagline rather than
+/// silently collapsing into the name.
 fn split_title(title: &str) -> (&str, &str) {
-    match title.split_once(" — ") {
+    match title.split_once(" · ").or_else(|| title.split_once(" — ")) {
         Some((name, tagline)) => (name, tagline),
         None => (title, ""),
     }
@@ -5756,7 +5767,7 @@ fn offering_page(key: &str, title: &str, id: &SessionId, surface: &str) -> Strin
         events = format!("/offerings/{}/session/{}/events", esc(key), esc(&id.0)),
         surface = surface,
     );
-    document(&format!("{PRODUCT_NAME} — {title}"), "offerings", &body)
+    document(&format!("{PRODUCT_NAME} · {title}"), "offerings", &body)
 }
 
 /// The page shown for a `GET`/`POST` against an unregistered offering key.
@@ -5776,7 +5787,7 @@ fn retired_session_page(key: &str, id: &str, said: &str) -> String {
          <section class=\"deos-section tag-accent\"><h2>It was not thrown away</h2>\
          <p class=\"prose\">The moves are kept. That is what makes a finished game worth sharing \
          here: <a href=\"{verify}\" rel=\"nofollow\">replay this match</a> and the server re-executes \
-         its whole recorded chain through the same rules that admitted each move — a real re-run \
+         its whole recorded chain through the same rules that admitted each move: a real re-run \
          taken when you open it, not a verdict somebody stored.</p>\
          <p class=\"prose\">What a replay does <em>not</em> settle is who won. It shows that these \
          moves were legal and landed in this order.</p></section>\
@@ -5786,7 +5797,7 @@ fn retired_session_page(key: &str, id: &str, said: &str) -> String {
         verify = esc(&format!("/offerings/{key}/session/{id}/verify")),
     );
     document(
-        &format!("{PRODUCT_NAME} — a finished match"),
+        &format!("{PRODUCT_NAME} · a finished match"),
         "offerings",
         &body,
     )
@@ -5808,7 +5819,7 @@ fn catalog_missing_offering(key: &str) -> String {
         key = esc(key),
     );
     document(
-        &format!("{PRODUCT_NAME} — unknown offering"),
+        &format!("{PRODUCT_NAME} · unknown offering"),
         "offerings",
         &body,
     )
@@ -6058,7 +6069,7 @@ pub fn register_dark_amm_from(
     };
     host.register(
         dreggnet_market::dark_amm_game::DARK_AMM_OFFERING_KEY,
-        "The Dark Bazaar — encrypted constant-product table",
+        "The Dark Bazaar · encrypted constant-product table",
         offering,
     );
     Ok(true)
@@ -6192,7 +6203,7 @@ pub fn register_collective_dark_amm_from(
         .map_err(|error| format!("invalid collective Dark Pool deployment: {error}"))?;
     host.register(
         dreggnet_market::dark_amm_game::DARK_AMM_OFFERING_KEY,
-        "The Dark Bazaar — collective encrypted constant-product table",
+        "The Dark Bazaar · collective encrypted constant-product table",
         offering,
     );
     Ok(true)
@@ -6405,7 +6416,7 @@ fn demo_host_with_resolved_fhegg() -> OfferingHost {
                         // Byte-identical to the shared `dreggnet_catalog::register_games` line —
                         // this is the fhEgg-quorum re-registration of the SAME offering, so the
                         // two titles must not drift.
-                        "The Dark Bazaar — the sealed-bid auction, with the privacy spelled out. Your number is hidden from the other bidders until the auction clears; it is not hidden from whoever runs the server, and it never was.",
+                        "The Dark Bazaar · the sealed-bid auction, with the privacy spelled out. Your number is hidden from the other bidders until the auction clears; it is not hidden from whoever runs the server, and it never was.",
                         bazaar,
                     );
                     tracing::info!(
@@ -7151,6 +7162,15 @@ fn make_app_parts_with_catalog(
         // reading the page that explains identity must not silently mint one. State-free — the
         // whole mechanism is a derivation, so there is nothing to hold.
         .merge(seed_identity::identity_router())
+        // ⚑ THE CROSS-SURFACE CROWN BOARD — `GET /crown`, `GET /crown/results.json`, and the
+        // bearer-gated `POST /crown/ingest`. A crown won in a Discord channel and a crown won here
+        // rank on the SAME board, not because the surfaces trust each other but because this server
+        // re-runs the O(1) whole-history light client on the submitted envelope against its own
+        // pinned anchor before anything can rank. The READ half is always mounted (a board nobody
+        // can read is not a board); the INGEST half is fail-closed until `CROWN_INGEST_TOKEN` is
+        // set, because an open ingest lets anyone mint a row under anyone's label. Additive — the
+        // `/crown` prefix overlaps nothing above.
+        .merge(crown_ingest::crown_ingest_from_env())
         .merge(overlay_router);
     #[cfg(feature = "hosted-binary-operations")]
     let app = app.merge(fhegg_operation::router(Arc::clone(&catalog)));
@@ -7458,7 +7478,7 @@ async fn index() -> Html<String> {
          <h1>Games that check their own moves.</h1>\
          <p class=\"deck\">Three games you can play right now: a dungeon crawl, a board game, and \
          a game of hidden influence. When you take a turn, the game re-runs it against the rules \
-         before it records anything — so an illegal move is refused instead of accepted, and when \
+         before it records anything, so an illegal move is refused instead of accepted, and when \
          a game is over anyone can replay it move by move and see it really went that way.</p>\
          <div class=\"cta-row\">\
          {hero_play}\
@@ -7484,7 +7504,7 @@ async fn index() -> Html<String> {
          no client-side JavaScript required.</p></div>\
          <div class=\"step\"><span class=\"n\">2</span><h3>The game checks it</h3>\
          <p>Your move is re-run against the rules before anything is written down. A move that \
-         is not allowed is refused and leaves no trace — the page cannot talk the game into it.</p>\
+         is not allowed is refused and leaves no trace. The page cannot talk the game into it.</p>\
          </div>\
          <div class=\"step\"><span class=\"n\">3</span><h3>Anyone can re-check</h3>\
          <p>A finished game replays from its first move to its last. On the daily board, a run \
@@ -7497,14 +7517,14 @@ async fn index() -> Html<String> {
          <div class=\"offering-card shelf-games\"><h3>The Descent</h3>\
          <p class=\"needs solo\">Play alone · a new dungeon every day</p>\
          <p class=\"tagline\">A dungeon crawl. Everyone gets the same dungeon each day, drawn from \
-         a public random number nobody can pick in advance. One life, no retries — go deeper for \
+         a public random number nobody can pick in advance. One life, no retries: go deeper for \
          better loot, and you only keep what you carry back out.</p>\
          {card_play}<a class=\"play\" href=\"/descent\">See today's finished runs \
          <span class=\"arr\" aria-hidden=\"true\">→</span></a></div>\
          <div class=\"offering-card shelf-games\"><h3>Automatafl</h3>\
          <p class=\"needs\">Needs a 2nd player · or hold both seats yourself</p>\
          <p class=\"tagline\">A two-player board game. You both choose in secret, then both moves \
-         are revealed at once and a neutral piece reacts to them — so you are guessing at your \
+         are revealed at once and a neutral piece reacts to them, so you are guessing at your \
          opponent, not waiting on them.</p>\
          <a class=\"play\" href=\"/automatafl\">Open a table \
          <span class=\"arr\" aria-hidden=\"true\">→</span></a></div>\
@@ -7518,7 +7538,7 @@ async fn index() -> Html<String> {
         board = hero_board(),
     );
     Html(document(
-        &format!("{PRODUCT_NAME} — play + verify"),
+        &format!("{PRODUCT_NAME} · play + verify"),
         "",
         &body,
     ))

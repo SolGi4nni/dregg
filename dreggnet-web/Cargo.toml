@@ -316,7 +316,29 @@ dungeon-on-dregg = { path = "../dungeon-on-dregg" }
 # in dreggnet-web (no prior server-push liveness existed).
 tokio-stream = { version = "0.1", features = ["sync"] }
 
+# ⚑ THE CROSS-SURFACE CROWN BOARD (`src/crown_ingest.rs`) — the receiving half of "a result earned
+# on one surface shows up on the others". CONSUMED, never modified:
+#  - dreggnet-game-board: `GameBoard` / `Game` / `ProofAnchor` — the SAME proof-carrying board and
+#    the SAME `submit_bytes` accept path the Discord bot's `/crown` ranks through, so a fold that
+#    ranks there is verified here by the identical O(1) tooth (light client + genesis binding + WIN
+#    binding + claimed-turns binding), never admitted on the sender's word;
+#  - dregg-circuit / dregg-circuit-prove: `BabyBear` (the anchor's canonical limbs) and
+#    `RecursionVk` / `SEG_ANCHOR_WIDTH` (the anchor's VK fingerprint + its width). `ugc-dregg` takes
+#    these in its public `ProofAnchor` but does not re-export them, so a caller that PINS an anchor
+#    names them directly — exactly as `discord-bot`'s `commands::crown` does.
+# Both circuit crates are already in this crate's transitive closure (via `ugc-dregg` and
+# `dregg-multiway-tug`), so naming them here adds no new compilation — only the ability to write the
+# anchor types down. `dregg-circuit-prove` also stays a dev-dependency below; the two tables are
+# independent and Cargo unifies them onto one build.
+dreggnet-game-board = { path = "../dreggnet-game-board" }
+dregg-circuit = { path = "../circuit" }
+dregg-circuit-prove = { path = "../circuit-prove" }
+
 [dev-dependencies]
+# The crown-ingest tests drive the SHARED in-tree whole-history proof fixture
+# (`ugc-dregg/tests/fixtures/whole_history_proof.bin`) so the happy path is a REAL accepted proof
+# rather than a stub; reading its attested genesis/WIN roots needs the light client directly.
+dregg-lightclient = { path = "../lightclient" }
 ed25519-dalek = { version = "2.1", features = ["std"] }
 rand = "0.8"
 rand_09 = { package = "rand", version = "0.9" }

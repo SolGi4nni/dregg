@@ -32,7 +32,7 @@ use crate::BotState;
 
 /// The honest weight-source line the `/council open weighted:true` surface carries.
 pub const WEIGHT_SOURCE_NOTE: &str = "⚖ Weighted ballots: weight = 1 + run-credits at open \
-     (the bot's paid-credit ledger — bot-recorded standing, NOT a consensus-proven on-chain \
+     (the bot's paid-credit ledger: bot-recorded standing, NOT a consensus-proven on-chain \
      holding). Each vote lands on the verified weighted engine: one nullifier carries the \
      member's whole weight, and quorum is a WEIGHT threshold.";
 

@@ -186,12 +186,14 @@ fn rich_surface() -> ViewNode {
                     turn: "vote".into(),
                     arg: 1,
                     enabled: true,
+                    wants_text: false,
                 },
                 MenuItem {
                     label: "Pass".into(),
                     turn: "pass".into(),
                     arg: 0,
                     enabled: false,
+                    wants_text: false,
                 }, // dimmed, still reachable
             ],
         },

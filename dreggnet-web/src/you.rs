@@ -594,7 +594,7 @@ fn you_page(
         receipts = receipts_panel(tables),
     );
     document_with_head(
-        &format!("{PRODUCT_NAME} — you"),
+        &format!("{PRODUCT_NAME} · you"),
         "you",
         &format!("{YOU_STYLE}{LOCAL_RUN_SCRIPT}"),
         &body,
@@ -629,7 +629,7 @@ fn label_shape(label: &str) -> String {
 /// What KIND of identity this is, in a sentence — the honest description of its durability.
 fn identity_kind(label: &str) -> &'static str {
     if crate::seed_identity::parse_claim_label(label).is_some() {
-        "a CLAIMED identity — a public key you hold the 24 words for. It is the one identity on \
+        "a CLAIMED identity, a public key you hold the 24 words for. It is the one identity on \
          this surface that survives a cleared cookie: the words reproduce it on any device, so the \
          record below is yours rather than this browser's."
     } else if table_seats::ALL
@@ -637,7 +637,7 @@ fn identity_kind(label: &str) -> &'static str {
         .any(|lock| label.starts_with(lock.seat_prefix))
     {
         "a TABLE SEAT. Taking a seat link replaced this browser's ordinary visitor label with the \
-         seat's own secret, so while you hold this seat it is who you are on every page — including \
+         seat's own secret, so while you hold this seat it is who you are on every page, including \
          this one."
     } else if label.starts_with("visitor-") {
         "a visitor label this server minted for this browser the first time it arrived. It is a \
@@ -660,22 +660,22 @@ fn identity_panel(label: &str, me: &DreggIdentity) -> String {
     let durability = if crate::seed_identity::parse_claim_label(label).is_some() {
         "<p class=\"prose\"><strong>How durable is this?</strong> Recoverable. This identity is a \
          public key derived from 24 words you wrote down, so clearing your cookies or moving to \
-         another device costs you nothing you cannot type back — everything below is filed under \
+         another device costs you nothing you cannot type back: everything below is filed under \
          the key, not under this browser. Keep those words where you can find them, because typing \
          them back is not only for a new device: unless this deployment pins its identity key, \
          restarting the server re-rolls it, this browser's claim stops verifying, and you arrive as \
-         a fresh anonymous visitor until you enter your 24 words again — never as somebody else. \
+         a fresh anonymous visitor until you enter your 24 words again, never as somebody else. \
          What it still is <em>not</em>: a signature. Your moves are attributed to your key, not \
          signed by it, because neither this page nor the server holds the secret. A tool that holds \
          your phrase can sign as you; see <a href=\"/identity\">your identity</a>.</p>"
     } else {
         "<p class=\"prose\"><strong>How durable is this?</strong> It is a cookie. Clear your \
          cookies, switch browsers, or open a private window and you are a new person here, with \
-         <em>no recovery</em> — the games above would not be reachable from the new identity and \
+         <em>no recovery</em>: the games above would not be reachable from the new identity and \
          nothing on this page could hand them back. That is fixable and opt-in: \
          <a href=\"/identity\">claim a recoverable identity</a> and you get 24 words that reproduce \
          this player anywhere. You do not have to, and nothing stops working if you never do.</p>\
-         <p class=\"prose\">Your moves are attributed by that label, not signed by a key you hold — \
+         <p class=\"prose\">Your moves are attributed by that label, not signed by a key you hold, \
          which is why every receipt below says <em>asserted</em>. The proof on this surface is that \
          the move was re-run against the rules, not that a particular human made it.</p>"
     };
@@ -683,7 +683,7 @@ fn identity_panel(label: &str, me: &DreggIdentity) -> String {
         "<section class=\"deos-section tag-accent\"><h2>Who you are here</h2>\
          <p class=\"prose\">You are {kind}</p>\
          <dl class=\"you-id\">\
-         <dt>your label</dt><dd>{shape} <span class=\"you-empty\">(not printed in full — on this \
+         <dt>your label</dt><dd>{shape} <span class=\"you-empty\">(not printed in full: on this \
          surface the label itself acts as the credential)</span></dd>\
          <dt>actor</dt><dd>{actor}…</dd>\
          </dl>{durability}</section>",
@@ -713,7 +713,7 @@ fn accounts_panel(label: &str, links: &[LinkedPlatform]) -> String {
         // already been bitten by twice (see the branched paragraphs above).
         let why = if claimed {
             "<p class=\"you-empty\">Your Discord and Telegram selves are, right now, <strong>a \
-             different player from this one</strong> — a different key, a different history, and a \
+             different player from this one</strong>: a different key, a different history, and a \
              separate row on the same board. That is not a bug in the boards; nothing has ever \
              connected them. <a href=\"/identity/link\">Prove they are the same human</a> and this \
              page starts counting both, and the Descent board ranks you once instead of twice.</p>"
@@ -734,13 +734,13 @@ fn accounts_panel(label: &str, links: &[LinkedPlatform]) -> String {
         .map(|link| {
             let is_web = link.platform == WEB_PLATFORM;
             let what = if is_web {
-                "This surface — the identity your 24 words derive.".to_string()
+                "This surface, the identity your 24 words derive.".to_string()
             } else {
                 format!("account {}", esc(&link.platform_uid))
             };
             let custody = if link.operator_derivable {
                 "<strong>Custodial.</strong> The bot's operator can derive this key from their own \
-                 secret and act as you there — that was true before you linked and it is true now. \
+                 secret and act as you there; that was true before you linked and it is true now. \
                  Linking joined the records, not the custody."
             } else {
                 "<strong>Self-held.</strong> Only your 24 words reproduce this key; nobody else can, \
@@ -766,7 +766,7 @@ fn accounts_panel(label: &str, links: &[LinkedPlatform]) -> String {
          <div class=\"you-rows\">{rows}</div>\
          <p class=\"you-empty\"><strong>What the link did not do.</strong> It did not merge the \
          keys, and it did not make your platform key yours. Each account still signs with its own \
-         key under its own custody — the difference is real, it is printed on each row above, and \
+         key under its own custody. The difference is real, it is printed on each row above, and \
          joining the records is not allowed to hide it. What changed is the <em>view</em>: this page \
          and the board now know the accounts are one person. \
          <a href=\"/identity/link\">Link another account</a>.</p></section>",
@@ -819,7 +819,7 @@ fn tables_panel(tables: &[MyTable]) -> String {
         return format!(
             "<section class=\"deos-section tag-muted\"><h2>Games in progress</h2>\
              <p class=\"you-empty\"><strong>Nothing is waiting for you.</strong> You have not \
-             opened a table yet — or the one you opened has since ENDED, in which case it is in \
+             opened a table yet, or the one you opened has since ENDED, in which case it is in \
              <em>Matches you have finished</em> below rather than gone. Nothing has been lost that \
              this page is hiding.</p>\
              <p class=\"you-empty\">Start one, and it will appear here the moment it exists:</p>\
@@ -854,7 +854,7 @@ fn tables_panel(tables: &[MyTable]) -> String {
                 watch = table
                     .watch_href()
                     .map(|href| format!(
-                        "<p class=\"meta\"><a href=\"{href}\">{verb} — a link that holds no \
+                        "<p class=\"meta\"><a href=\"{href}\">{verb} · a link that holds no \
                          seat</a></p>",
                         href = esc(&href),
                         verb = if table.resolved.is_some() {
@@ -876,7 +876,7 @@ fn tables_panel(tables: &[MyTable]) -> String {
                     .resolved
                     .as_deref()
                     .map(|headline| format!(
-                        "<p class=\"said\">This table is over — {}. No executor turn backs that: \
+                        "<p class=\"said\">This table is over: {}. No executor turn backs that: \
                          it is the lobby's record of an abandoned table, not a proven win.</p>",
                         esc(headline)
                     ))
@@ -887,7 +887,7 @@ fn tables_panel(tables: &[MyTable]) -> String {
         .collect();
     format!(
         "<section class=\"deos-section tag-accent\"><h2>Games in progress</h2>\
-         <p class=\"prose\">{count} table{s} here {is} yours — because you hold a minted seat at \
+         <p class=\"prose\">{count} table{s} here {is} yours, because you hold a minted seat at \
          it, or because a move of yours landed in it. Closing the tab never ended any of them, and \
          when one does end it moves to <em>Matches you have finished</em> rather than disappearing.\
          </p>\
@@ -908,8 +908,8 @@ fn finished_panel(finished: &[FinishedMatch]) -> String {
     if finished.is_empty() {
         return "<section class=\"deos-section tag-muted\"><h2>Matches you have finished</h2>\
                 <p class=\"you-empty\"><strong>You have not finished a match here yet.</strong> A \
-                table lands in this panel when it ends — played out, resigned, or forfeited on the \
-                clock — and it stays: the moves are kept, so the finished game can be re-executed \
+                table lands in this panel when it ends (played out, resigned, or forfeited on the \
+                clock), and it stays: the moves are kept, so the finished game can be re-executed \
                 from them by anyone you send the link to.</p>\
                 <p class=\"you-empty\">A game still in play is in the panel above, not here. \
                 Nothing has been thrown away that this panel is hiding.</p></section>"
@@ -944,19 +944,19 @@ fn finished_panel(finished: &[FinishedMatch]) -> String {
             // played itself out says so; a forfeit says it is not a proven win.
             let said = match game.ended.as_deref() {
                 Some(headline) if game.concluded => format!(
-                    "<p class=\"said\">This match is over — {}. Neither seat is owed a move, so the \
+                    "<p class=\"said\">This match is over: {}. Neither seat is owed a move, so the \
                      final board is the result; this lobby does not name a winner, the game's own \
                      rules do.</p>",
                     esc(headline)
                 ),
                 Some(headline) => format!(
-                    "<p class=\"said\">This match ended — {}. No executor turn backs that: it is \
+                    "<p class=\"said\">This match ended: {}. No executor turn backs that: it is \
                      the lobby's record of somebody stopping, not a proven win.</p>",
                     esc(headline)
                 ),
                 // Honest about the one thing the archive alone cannot say.
                 None => "<p class=\"said\">This match is over and its moves are kept, but this \
-                         server no longer holds a record of <em>how</em> it ended — the ending was \
+                         server no longer holds a record of <em>how</em> it ended: the ending was \
                          not persisted (or predates the record). The moves still re-execute.</p>"
                     .to_string(),
             };
@@ -978,13 +978,13 @@ fn finished_panel(finished: &[FinishedMatch]) -> String {
         "<section class=\"deos-section tag-accent\"><h2>Matches you have finished</h2>\
          <p class=\"prose\">{count} finished match{es} {is} yours. Closing a table no longer throws \
          the game away: its recorded moves are kept, and <strong>Replay this match</strong> \
-         re-executes them through the same rules that admitted them in the first place — a real \
+         re-executes them through the same rules that admitted them in the first place: a real \
          re-run taken when you open it, not a verdict somebody wrote down. Send that link to anyone; \
          it proves itself to them the same way.</p>\
          <div class=\"you-rows\">{rows}</div>\
          <p class=\"you-empty\">What a replay does <em>not</em> settle: who won. It shows that these \
          moves were legal and landed in this order. A win is whatever the game's own rules made of \
-         the final board — that is on the board, not in this list.</p></section>",
+         the final board; that is on the board, not in this list.</p></section>",
         count = finished.len(),
         es = if finished.len() == 1 { "" } else { "es" },
         is = if finished.len() == 1 { "is" } else { "are" },
@@ -1015,13 +1015,13 @@ fn why_the_board_may_not_know_you(label: &str) -> &'static str {
          identity is claimed, the play surface signs a run with your public key rather than with a \
          throwaway browser name, and that key is exactly what the board is searched for above. A \
          run you finished <em>before</em> claiming still carries the old browser-local name, and \
-         nothing links the two — the panel below reads that name out of this tab so you can still \
+         nothing links the two; the panel below reads that name out of this tab so you can still \
          recognise that row.</p>"
     } else {
         "<p class=\"you-empty\">There is a second reason, and it is ours, not yours: an unclaimed \
          browser signs its runs with a pseudonym <em>that tab keeps in its own local storage</em>, \
          never with the cookie above. So even a run of yours sitting on today's board cannot be \
-         claimed for you from the server side — the two names have nothing linking them. \
+         claimed for you from the server side: the two names have nothing linking them. \
          <a href=\"/identity\">Claiming an identity</a> fixes it going forward, because the play \
          surface then signs with your key; the panel below reads the browser-local name out of this \
          tab either way, so you can recognise your own row on the board.</p>"
@@ -1166,7 +1166,7 @@ fn days_block(lines: &[DayLine]) -> String {
         .collect();
     format!(
         "<h3 class=\"you-sub\">Your days</h3>\
-         <p class=\"prose\">Your own record, day by day — newest first. <span \
+         <p class=\"prose\">Your own record, day by day (newest first). <span \
          class=\"mono\">score</span> is the relic depth you carried out: every banked relic counts \
          the floor it was minted on, read off that day's own drawn map. It is a <em>read</em> over \
          what your run already committed, not a ranking rule and not a rating; the only thing \
@@ -1181,7 +1181,7 @@ fn runs_panel(label: &str, runs: &[BoardRun], today: Option<&str>) -> String {
         return format!(
             "<section class=\"deos-section tag-muted\"><h2>Finished Descent runs</h2>\
              <p class=\"you-empty\"><strong>The board has no run under this label.</strong> If you \
-             have never finished a descent, that is simply why — the board only holds runs that were \
+             have never finished a descent, that is simply why: the board only holds runs that were \
              submitted and re-verified, and yours would appear here the moment one is.</p>\
              {why}\
              {local}\
@@ -1231,7 +1231,7 @@ fn runs_panel(label: &str, runs: &[BoardRun], today: Option<&str>) -> String {
     format!(
         "<section class=\"deos-section tag-accent\"><h2>Finished Descent runs</h2>\
          <p class=\"prose\">{count} run{s} on the board carr{y} your label. Each verdict here was \
-         taken by re-executing the run just now — none of it is a stored flag.</p>\
+         taken by re-executing the run just now; none of it is a stored flag.</p>\
          {days}\
          <h3 class=\"you-sub\">Every run</h3>\
          <div class=\"you-rows\">{rows}</div>{local}</section>",
@@ -1302,7 +1302,7 @@ yet, so there is no local name and no unfinished run to resume.";
     var lines=[];
     if(actor){
       lines.push("This browser plays The Descent as "+actor+". That is the name your row on the \
-board carries — it lives in this tab, not on the server, so clearing site data loses it.");
+board carries: it lives in this tab, not on the server, so clearing site data loses it.");
     }
     slot.innerHTML="";
     lines.forEach(function(text){
@@ -1345,12 +1345,12 @@ fn receipts_panel(tables: &[MyTable]) -> String {
     if mine == 0 {
         return "<section class=\"deos-section tag-muted\"><h2>Your receipts</h2>\
                 <p class=\"you-empty\"><strong>No receipt carries your name yet.</strong> A receipt \
-                is minted by a move that <em>landed</em> — the executor re-ran it against the rules \
+                is minted by a move that <em>landed</em>: the executor re-ran it against the rules \
                 and accepted it. You have not made one on this identity, so there is nothing here \
                 to replay. Make a single move in any game above and this panel fills in.</p>\
                 <p class=\"you-empty\">This is the product's own claim, and it is worth knowing \
                 what it does and does not cover: the chain of a session re-executes here, in this \
-                server, from its recorded moves. That is a real re-run, not a stored verdict — and \
+                server, from its recorded moves. That is a real re-run, not a stored verdict. And \
                 it is not a blockchain, not a proof carried off this box, and not evidence about \
                 <em>who</em> moved, because a browser move is attributed by an asserted label \
                 rather than signed by a key you hold.</p></section>"
@@ -1386,7 +1386,7 @@ fn receipts_panel(tables: &[MyTable]) -> String {
     format!(
         "<section class=\"deos-section tag-accent\"><h2>Your receipts</h2>\
          <p class=\"prose\">{mine} landed turn{s} of yours minted a receipt. Each link below \
-         re-executes that session's whole committed chain from its recorded moves, right now — the \
+         re-executes that session's whole committed chain from its recorded moves, right now: the \
          same replay the leaderboard and the run cards run, not a stored verdict.</p>\
          <div class=\"you-rows\">{rows}</div>\
          <p class=\"you-empty\">What this does not claim: nothing here proves <em>who</em> moved. \
@@ -1419,7 +1419,7 @@ fn refused_page(asserted: bool) -> String {
          </main>",
         why = if asserted {
             "You asked for a named identity's page. Nothing in this request proves you are that \
-             identity — a <code>?user=</code> label is a claim, not a credential — so this page \
+             identity (a <code>?user=</code> label is a claim, not a credential), so this page \
              was not built for it at all."
         } else {
             "This request carries no identity this server established, so there is no \"you\" to \
@@ -1429,7 +1429,7 @@ fn refused_page(asserted: bool) -> String {
         path = YOU_PATH,
     );
     document_with_head(
-        &format!("{PRODUCT_NAME} — not your page"),
+        &format!("{PRODUCT_NAME} · not your page"),
         "you",
         YOU_STYLE,
         &body,

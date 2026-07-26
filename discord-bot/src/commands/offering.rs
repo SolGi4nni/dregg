@@ -1293,13 +1293,13 @@ fn cast_note(cast: Cast) -> String {
         }
         Cast::AlreadyVoted => "You already voted this round. One ballot per identity.".to_string(),
         Cast::NotEligible => {
-            "You are not in this round's electorate — your ballot is refused.".to_string()
+            "You are not in this round's electorate. Your ballot is refused.".to_string()
         }
         Cast::BadOption => "That option is no longer on the ballot.".to_string(),
         Cast::NoRound => "No collective round is open here.".to_string(),
         Cast::NoSession => "No session is open in this channel.".to_string(),
         Cast::StaleSurface => {
-            "That ballot belongs to a replaced session or closed round — nothing was recorded."
+            "That ballot belongs to a replaced session or closed round. Nothing was recorded."
                 .to_string()
         }
     }
@@ -1627,7 +1627,7 @@ pub fn surface_for<O: DiscordOffering>(
 
 /// The field name on a private view's **where-to-act plaque** ([`private_act_plaque`]). A stable
 /// marker so a test can pin "the private view explains itself" without matching on prose.
-pub const PRIVATE_ACT_FIELD: &str = "🔒 Yours alone — act on the board above";
+pub const PRIVATE_ACT_FIELD: &str = "🔒 Yours alone · act on the board above";
 
 /// **The private view's where-to-act plaque** — the honest half of the no-private-controls
 /// decision.
@@ -1660,18 +1660,18 @@ fn private_act_plaque<O: DiscordOffering>(embed: CreateEmbed) -> CreateEmbed {
         PRIVATE_ACT_FIELD,
         format!(
             "Only you can see this message, and it is the one place your own hidden state is \
-             shown in full — everyone else sees this same {title} board with that part fogged, \
+             shown in full. Everyone else sees this same {title} board with that part fogged, \
              which is the whole game.\n\n\
              **There are no buttons here, on purpose.** Moves are made on the shared **{title}** \
              board posted in this channel: scroll up and press there, so one board stays the truth \
              for every player.\n\n\
-             This private copy does not update itself. To get a fresh one — now, or after you \
-             dismiss this — run `{status}`. That only reads; it never opens, replaces or ends the \
+             This private copy does not update itself. To get a fresh one (now, or after you \
+             dismiss this), run `{status}`. That only reads; it never opens, replaces or ends the \
              game in this channel.\n\n\
              ⚑ **How to tell this copy has gone stale.** It was rendered at the turn number printed \
              in the board above THIS message; the shared board in the channel is edited on every \
-             move and always shows the current one. If the two differ, the opponent has moved since \
-             — your hidden state has changed and what you are reading here is history. Run \
+             move and always shows the current one. If the two differ, the opponent has moved since: \
+             your hidden state has changed and what you are reading here is history. Run \
              `{status}` before you decide anything on it.",
             title = O::TITLE,
             status = O::status_hint(),
@@ -1783,7 +1783,7 @@ pub fn outcome_note(outcome: &Outcome) -> String {
         // verbatim: it is the anti-ghost promise the whole product rests on. What is replaced is
         // the machine's name with the thing it did, in words a player already owns.
         Outcome::Refused(why) => format!(
-            "**Refused — nothing committed, no receipt.**\n> The game re-ran your move against \
+            "**Refused · nothing committed, no receipt.**\n> The game re-ran your move against \
              the rules and did not allow it: {why}"
         ),
     }
@@ -2179,14 +2179,14 @@ pub async fn handle_verify<O: DiscordOffering>(ctx: &Context, command: &CommandI
                 }),
             );
             let embed = CreateEmbed::new()
-                .title(format!("{} — verify", O::TITLE))
+                .title(format!("{} · verify", O::TITLE))
                 .description(verify_note(&report))
                 .color(if report.verified { O::COLOR } else { 0xE63946 });
             ack::edit_slash(ctx, command, embed, Vec::new()).await;
         }
         None => {
             let embed = CreateEmbed::new()
-                .title(format!("{} — verify", O::TITLE))
+                .title(format!("{} · verify", O::TITLE))
                 .description(no_session_text::<O>())
                 .color(0xE63946);
             ack::edit_slash(ctx, command, embed, Vec::new()).await;
@@ -2263,7 +2263,7 @@ pub async fn handle_component<O: DiscordOffering>(
                 component_ephemeral(
                     ctx,
                     component,
-                    "This surface runs in collective mode — that press is not one of the \
+                    "This surface runs in collective mode: that press is not one of the \
                      round's ballot options.",
                 )
                 .await;
@@ -2432,7 +2432,7 @@ pub async fn handle_component<O: DiscordOffering>(
             component_ephemeral(
                 ctx,
                 component,
-                "That button belongs to a stale or different surface — nothing was fired.",
+                "That button belongs to a stale or different surface. Nothing was fired.",
             )
             .await;
         }
@@ -2455,14 +2455,14 @@ pub async fn handle_component<O: DiscordOffering>(
                 ack::followup_ephemeral(
                     ctx,
                     component,
-                    "That control belongs to a replaced session or earlier state — nothing was fired.",
+                    "That control belongs to a replaced session or earlier state. Nothing was fired.",
                 )
                 .await;
             } else {
                 component_ephemeral(
                     ctx,
                     component,
-                    "That control belongs to a replaced session or earlier state — nothing was fired.",
+                    "That control belongs to a replaced session or earlier state. Nothing was fired.",
                 )
                 .await;
             }
@@ -2571,7 +2571,7 @@ async fn finish_modal<O: DiscordOffering>(
             ctx,
             modal,
             "The offering service did not run your move, so this is NOT a refusal and NOT a \
-             receipt — nothing here says whether it landed. Re-open the board (its controls carry \
+             receipt: nothing here says whether it landed. Re-open the board (its controls carry \
              the state that minted them) before playing on.",
         )
         .await;
@@ -2625,7 +2625,7 @@ async fn finish_modal<O: DiscordOffering>(
                                 &ctx.http,
                                 serenity::all::CreateInteractionResponseFollowup::new()
                                     .content(
-                                        "**Your private view** — only you can read this hand / \
+                                        "**Your private view** · only you can read this hand / \
                                          sealed move. Use the shared board's controls to act.",
                                     )
                                     .embed(private_embed)
@@ -2699,7 +2699,7 @@ async fn finish_modal<O: DiscordOffering>(
             ack::note_modal(
                 ctx,
                 modal,
-                "That form belongs to a replaced session or earlier state — nothing was fired.",
+                "That form belongs to a replaced session or earlier state. Nothing was fired.",
             )
             .await;
         }
@@ -2710,7 +2710,7 @@ async fn finish_modal<O: DiscordOffering>(
             ack::note_modal(
                 ctx,
                 modal,
-                "That form did not resolve to a typed move — nothing was fired.",
+                "That form did not resolve to a typed move. Nothing was fired.",
             )
             .await;
         }
@@ -2734,7 +2734,7 @@ pub fn close_note(resolved: &CollectiveResolved) -> String {
         if resolved.durable {
             ""
         } else {
-            "\n\n⚠ **This round did not reach durable storage** — the turn landed, but this \
+            "\n\n⚠ **This round did not reach durable storage**: the turn landed, but this \
              session can no longer be resumed after a restart."
         },
     )
@@ -2751,7 +2751,7 @@ pub async fn handle_close<O: DiscordOffering>(ctx: &Context, command: &CommandIn
             ctx,
             command,
             &format!(
-                "`/{key}` runs in DIRECT mode — every press already resolves as its own \
+                "`/{key}` runs in DIRECT mode: every press already resolves as its own \
                  verified turn, so there is no collective round to close.",
                 key = O::KEY
             ),
@@ -2861,7 +2861,7 @@ async fn update_surface<O: DiscordOffering>(
             ack::followup_ephemeral_surface(
                 ctx,
                 component,
-                "**Your private view** — only you can read this hand / sealed move. Use the shared board's controls to act.",
+                "**Your private view** · only you can read this hand / sealed move. Use the shared board's controls to act.",
                 private_embed,
                 vec![],
             )
@@ -2884,7 +2884,7 @@ async fn update_surface<O: DiscordOffering>(
         ack::followup_ephemeral_surface(
             ctx,
             component,
-            "**Your private view** — only you can read this hand / sealed move. Use the shared board's controls to act.",
+            "**Your private view** · only you can read this hand / sealed move. Use the shared board's controls to act.",
             private_embed,
             vec![],
         )
@@ -2915,7 +2915,7 @@ fn no_session_text<O: DiscordOffering>() -> String {
     // abandon a match that was one press from coming back.
     format!(
         "No {} session is open in this channel. (A session that was live before a restart is \
-         replayed back automatically the first time anyone touches the channel — so either none \
+         replayed back automatically the first time anyone touches the channel, so either none \
          was open here, or its log could not be replayed.) Start a fresh one with `{}`.",
         O::KEY,
         O::open_hint()

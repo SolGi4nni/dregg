@@ -904,6 +904,7 @@ impl Offering for HermesOffering {
                 turn: a.turn,
                 arg: a.arg,
                 enabled: a.enabled,
+                wants_text: a.wants_text,
             })
             .collect();
 

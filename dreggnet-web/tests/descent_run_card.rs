@@ -195,7 +195,7 @@ async fn a_crowned_run_card_paints_the_shaft_and_the_haul() {
     );
 
     // The verdict panel is still the proof, and still says PASS.
-    assert!(card.contains("Independent verification — PASS"), "{card}");
+    assert!(card.contains("Independent verification · PASS"), "{card}");
     // And the growth loop closes: a stranger who read the story is offered the game.
     assert!(
         card.contains("href=\"/descent/play\""),
@@ -320,8 +320,8 @@ async fn the_share_link_carries_the_runs_story_into_a_social_preview() {
         assert!(head.contains(tag), "the head carries {tag}: {head}");
     }
     assert!(
-        head.contains("CROWNED — web:crowned&#x27;s descent")
-            || head.contains("CROWNED — web:crowned's descent"),
+        head.contains("CROWNED · web:crowned&#x27;s descent")
+            || head.contains("CROWNED · web:crowned's descent"),
         "the preview TITLE leads with what happened: {head}"
     );
     assert!(
@@ -375,7 +375,7 @@ async fn the_card_can_be_pasted_into_a_chat_as_the_same_board() {
         "the text board says how far down it got: {pre}"
     );
     assert!(
-        pre.contains("banked —"),
+        pre.contains("banked ·"),
         "the vault row is captioned: {pre}"
     );
     assert!(

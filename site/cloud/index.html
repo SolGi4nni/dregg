@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>The dreggnet cloud — the userspace of Dragon's Egg</title>
-  <meta name="description" content="Dragon's Egg is the kernel; the starbridge apps are its userspace; the grain economy is the cloud that hosts them. Your apps run on rented, confined, metered grains you can verify — a cloud that can't lie to you.">
+  <title>The dreggnet cloud &middot; the userspace of Dragon's Egg</title>
+  <meta name="description" content="Dragon's Egg is the kernel; the starbridge apps are its userspace; the grain economy is the cloud that hosts them. Your apps run on rented, confined, metered grains you can verify, a cloud that can't lie to you.">
   <meta property="og:type" content="website">
-  <meta property="og:title" content="The dreggnet cloud — the userspace of Dragon's Egg">
-  <meta property="og:description" content="Your apps run on rented, confined, metered grains you can verify — a cloud that can't lie to you. ~30 starbridge apps, two flagship grains, trustless serving.">
+  <meta property="og:title" content="The dreggnet cloud &middot; the userspace of Dragon's Egg">
+  <meta property="og:description" content="Your apps run on rented, confined, metered grains you can verify, a cloud that can't lie to you. ~30 starbridge apps, two flagship grains, trustless serving.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
   <link rel="stylesheet" href="../assets/style.css">
   <style>
@@ -98,21 +98,21 @@
 <header class="hero">
   <div class="hero__inner">
     <p class="hero__eyebrow">the userspace of the kernel</p>
-    <h1>The dreggnet cloud &mdash; where your apps run <em>and can't be lied to.</em></h1>
+    <h1>The dreggnet cloud &middot; where your apps run <em>and can't be lied to.</em></h1>
     <p class="hero__sub">
       Dragon's Egg is the kernel: cells own state, capabilities say what may touch it, and every turn
-      proves itself. The <strong>starbridge apps</strong> are its userspace &mdash; around thirty small,
+      proves itself. The <strong>starbridge apps</strong> are its userspace: around thirty small,
       verified programs, each a real cell whose rules the executor re-checks on every turn. The
       <strong>grain economy</strong> is the cloud that hosts them: your app runs on a grain you
       <em>rent</em>, that runs <em>confined</em>, is <em>metered</em> to the step, and leaves a
-      receipt you can re-check yourself &mdash; a cloud whose provider cannot forge what it did.
+      receipt you can re-check yourself, a cloud whose provider cannot forge what it did.
     </p>
     <div class="hero__cta">
       <a class="btn btn--primary" href="#userspace">Browse the userspace</a>
       <a class="btn btn--secondary" href="#cloud">How the cloud works</a>
       <a class="btn btn--secondary" href="../">See the substrate underneath</a>
     </div>
-    <span class="hero__pulse"><span class="pulse-dot"></span> every grain is <b>witnessed</b> &mdash; you can re-check what it did, wifi off</span>
+    <span class="hero__pulse"><span class="pulse-dot"></span> every grain is <b>witnessed</b>: you can re-check what it did, wifi off</span>
   </div>
 </header>
 
@@ -126,20 +126,20 @@
     A <strong>grain</strong> is a hosted program whose object is the source of truth: its mind is a
     committed cell, its economics are a lease, its confinement is an OS jail, and its history is a
     signed receipt chain welded to real kernel turns. So it can be rented, metered, driven, verified,
-    forked, and reaped as a first-class value &mdash; not as an opaque vendor instance you have to trust.
+    forked, and reaped as a first-class value, not as an opaque vendor instance you have to trust.
   </p>
   <div class="defn">
     <div class="defn__term">
       <div class="defn__k">rent</div>
-      <div class="defn__v">You pick a grain from the app store &mdash; a signed package whose ID <em>is</em> its author's key &mdash; and open a funded, cap-bounded lease. No value moves until it does, and the lease is bounded by the listing's terms, not the host's whim.</div>
+      <div class="defn__v">You pick a grain from the app store (a signed package whose ID <em>is</em> its author's key) and open a funded, cap-bounded lease. No value moves until it does, and the lease is bounded by the listing's terms, not the host's whim.</div>
     </div>
     <div class="defn__term">
       <div class="defn__k">confine</div>
-      <div class="defn__v">The grain's body runs in an OS jail with exactly one granted egress door and its tools rooted in its own workdir. It physically cannot reach the network, the filesystem, or anything else it wasn't handed &mdash; deny-by-default, not policy-by-promise.</div>
+      <div class="defn__v">The grain's body runs in an OS jail with exactly one granted egress door and its tools rooted in its own workdir. It physically cannot reach the network, the filesystem, or anything else it wasn't handed: deny-by-default, not policy-by-promise.</div>
     </div>
     <div class="defn__term">
       <div class="defn__k">meter</div>
-      <div class="defn__v">Rent is drawn on a fused prepaid meter: the one atomic write that advances the meter is the same write that draws the reserve. Paying and metering can't drift apart &mdash; it's a type error, not app discipline. Fall behind and the grain lapses on next use.</div>
+      <div class="defn__v">Rent is drawn on a fused prepaid meter: the one atomic write that advances the meter is the same write that draws the reserve. Paying and metering can't drift apart: it's a type error, not app discipline. Fall behind and the grain lapses on next use.</div>
     </div>
     <div class="defn__term">
       <div class="defn__k">receipt per step</div>
@@ -147,29 +147,29 @@
     </div>
     <div class="defn__term">
       <div class="defn__k">fork &amp; rewind</div>
-      <div class="defn__v">Because the mind is a real cell, everything proven about cells is true of it. Fork a grain and the state copies but value and authority do not duplicate; rewind to an earlier root and a boundary mismatch is refused fail-closed &mdash; the live mind is never touched.</div>
+      <div class="defn__v">Because the mind is a real cell, everything proven about cells is true of it. Fork a grain and the state copies but value and authority do not duplicate; rewind to an earlier root and a boundary mismatch is refused fail-closed: the live mind is never touched.</div>
     </div>
     <div class="defn__term">
       <div class="defn__k">reap</div>
-      <div class="defn__v">A grain's lifecycle &mdash; created, running, sleeping, lapsed, reaped &mdash; is a state machine sealed on the lease cell and advanced only through legality-checked transitions. A delinquent lease lapses and is reaped; sleep and wake are checkpoint-and-restore.</div>
+      <div class="defn__v">A grain's lifecycle (created, running, sleeping, lapsed, reaped) is a state machine sealed on the lease cell and advanced only through legality-checked transitions. A delinquent lease lapses and is reaped; sleep and wake are checkpoint-and-restore.</div>
     </div>
   </div>
 
   <div class="killer">
     <p>Every grain is <em>witnessed.</em> You hold the handed-back artifact, re-run nothing, and re-check
-    what it did &mdash; that the chain is genuine, the budget was never exceeded, and every receipt is a
+    what it did: that the chain is genuine, the budget was never exceeded, and every receipt is a
     view over a committed turn. <em>The cloud proves itself to you; you don't take its word.</em></p>
   </div>
 
-  <h3 style="margin-top:var(--s7);color:var(--chalk);">How far the check reaches &mdash; stated honestly</h3>
+  <h3 style="margin-top:var(--s7);color:var(--chalk);">How far the check reaches &middot; stated honestly</h3>
   <p class="section__intro" style="margin-top:var(--s3)">
     Verifiability is a ladder, and each rung's checker runs every rung below it. We name where the trust
-    still rests &mdash; and where the last rung's remaining residuals are, by name.
+    still rests, and where the last rung's remaining residuals are, by name.
   </p>
   <div class="ladder">
     <div class="rung">
       <div class="rung__k">R0 &middot; tamper-evident</div>
-      <div class="rung__v">The receipt chain is genuine, ordered, single-signer, and within budget at the tip. A third party can't re-derive the signing key and forge. The host still runs the signer &mdash; this is tamper-evidence, not host-independence.</div>
+      <div class="rung__v">The receipt chain is genuine, ordered, single-signer, and within budget at the tip. A third party can't re-derive the signing key and forge. The host still runs the signer: this is tamper-evidence, not host-independence.</div>
     </div>
     <div class="rung">
       <div class="rung__k">R1 &middot; renter-anchored</div>
@@ -177,7 +177,7 @@
     </div>
     <div class="rung">
       <div class="rung__k">R2 &middot; actions are kernel turns</div>
-      <div class="rung__v">Every action is welded to a committed executor turn and every receipt is a view over one. The meter becomes a kernel caveat. It still trusts the executor host that committed the turns &mdash; it binds them, it doesn't re-execute them.</div>
+      <div class="rung__v">Every action is welded to a committed executor turn and every receipt is a view over one. The meter becomes a kernel caveat. It still trusts the executor host that committed the turns: it binds them, it doesn't re-execute them.</div>
     </div>
     <div class="rung rung--seam">
       <div class="rung__k">R3 &middot; whole-history STARK</div>
@@ -191,34 +191,34 @@
   <span class="section__label">The userspace</span>
   <h2 class="section__title">Around thirty apps, each a verified cell</h2>
   <p class="section__intro">
-    Every app below is a real program in the tree &mdash; a factory-born cell whose rules live in its
+    Every app below is a real program in the tree, a factory-born cell whose rules live in its
     installed cell-program and are re-checked by the verified executor on every turn. The guarantee in
     each pitch isn't asserted in a README; it's an executor refusal. Same shape throughout: a sovereign
     cell, cap-gated turns, a receipt anyone can verify.
   </p>
-  <p class="stack-note"><span class="stack-dot"></span> composed from proven primitives &mdash; no new kernel effect per app, no placeholder signatures</p>
+  <p class="stack-note"><span class="stack-dot"></span> composed from proven primitives &middot; no new kernel effect per app, no placeholder signatures</p>
 
   <!-- Markets & value -->
   <div class="cat">
     <div class="cat__head">
       <span class="cat__name">Markets &amp; value</span>
-      <span class="cat__blurb">exchange, bounties, auctions, escrow, billing &mdash; conserving by construction</span>
+      <span class="cat__blurb">exchange, bounties, auctions, escrow, billing &middot; conserving by construction</span>
     </div>
     <div class="tiles">
       <div class="tile">
         <span class="tile__eyebrow">compute-exchange</span>
         <span class="tile__name">A compute marketplace</span>
-        <span class="tile__desc">A requester escrows a budget, a provider bids no higher, and the deal settles conservingly &mdash; no escrow agent, no off-chain coordinator. The job is a cell whose rules the executor re-checks; a settle that would mint or burn value is refused.</span>
+        <span class="tile__desc">A requester escrows a budget, a provider bids no higher, and the deal settles conservingly: no escrow agent, no off-chain coordinator. The job is a cell whose rules the executor re-checks; a settle that would mint or burn value is refused.</span>
       </div>
       <div class="tile">
         <span class="tile__eyebrow">bounty-board</span>
         <span class="tile__name">Escrow-backed bounties</span>
-        <span class="tile__desc">Open a bounty with an escrowed reward; a worker claims it (first-claimer-wins), submits, and gets paid. A one-way state machine the executor enforces &mdash; a bounty cannot be stolen, replayed, re-priced, or paid twice.</span>
+        <span class="tile__desc">Open a bounty with an escrowed reward; a worker claims it (first-claimer-wins), submits, and gets paid. A one-way state machine the executor enforces: a bounty cannot be stolen, replayed, re-priced, or paid twice.</span>
       </div>
       <div class="tile">
         <span class="tile__eyebrow">sealed-auction</span>
         <span class="tile__name">Sealed, front-running-proof bids</span>
-        <span class="tile__desc">Agents compete by committing hashed bids, then revealing &mdash; no one can peek, copy, or front-run before the reveal. The winning bid settles atomically through the verified executor: all-or-nothing and value-neutral.</span>
+        <span class="tile__desc">Agents compete by committing hashed bids, then revealing: no one can peek, copy, or front-run before the reveal. The winning bid settles atomically through the verified executor: all-or-nothing and value-neutral.</span>
       </div>
       <div class="tile">
         <span class="tile__eyebrow">escrow-market</span>
@@ -228,12 +228,12 @@
       <div class="tile">
         <span class="tile__eyebrow">billing</span>
         <span class="tile__name">Invoices, caps &amp; recurring charges</span>
-        <span class="tile__desc">A customer-facing billing plane with no new primitive: an invoice is a view over settled receipts that re-witnesses against them, and a spend cap is a real executor "402" &mdash; an over-cap charge is refused, nothing drawn.</span>
+        <span class="tile__desc">A customer-facing billing plane with no new primitive: an invoice is a view over settled receipts that re-witnesses against them, and a spend cap is a real executor "402"; an over-cap charge is refused, nothing drawn.</span>
       </div>
       <div class="tile">
         <span class="tile__eyebrow">subscription</span>
         <span class="tile__name">A publish/consume queue</span>
-        <span class="tile__desc">A message queue whose rules live in the cell, not an operator process. Only authorized senders may publish, the head advances by exactly +1, and every publish and consume leaves a real receipt &mdash; one enforcement loop, not two.</span>
+        <span class="tile__desc">A message queue whose rules live in the cell, not an operator process. Only authorized senders may publish, the head advances by exactly +1, and every publish and consume leaves a real receipt: one enforcement loop, not two.</span>
       </div>
     </div>
   </div>
@@ -242,7 +242,7 @@
   <div class="cat">
     <div class="cat__head">
       <span class="cat__name">Governance &amp; choice</span>
-      <span class="cat__blurb">committees, ballots, constitutions, roles &mdash; authority that only narrows</span>
+      <span class="cat__blurb">committees, ballots, constitutions, roles &middot; authority that only narrows</span>
     </div>
     <div class="tiles">
       <div class="tile">
@@ -258,12 +258,12 @@
       <div class="tile">
         <span class="tile__eyebrow">polis</span>
         <span class="tile__name">The governance layer</span>
-        <span class="tile__desc">M-of-N councils, constitution-as-program, forward-certified amendments, budgeted mandates, and pre-rotation identities &mdash; all factory-born cells the executor re-evaluates every turn. A light client can verify a council's correct evolution.</span>
+        <span class="tile__desc">M-of-N councils, constitution-as-program, forward-certified amendments, budgeted mandates, and pre-rotation identities: all factory-born cells the executor re-evaluates every turn. A light client can verify a council's correct evolution.</span>
       </div>
       <div class="tile">
         <span class="tile__eyebrow">org</span>
         <span class="tile__name">Teams &amp; roles (IAM)</span>
-        <span class="tile__desc">Organizations, members, and roles with no new authorization primitive: a role <em>is</em> an attenuation of the owner's authority. "Viewer is read-only" and "admin can't delete the org" are the same no-amplify lattice &mdash; a cap can never be forged wider.</span>
+        <span class="tile__desc">Organizations, members, and roles with no new authorization primitive: a role <em>is</em> an attenuation of the owner's authority. "Viewer is read-only" and "admin can't delete the org" are the same no-amplify lattice: a cap can never be forged wider.</span>
       </div>
     </div>
   </div>
@@ -272,13 +272,13 @@
   <div class="cat">
     <div class="cat__head">
       <span class="cat__name">Coordination &amp; work</span>
-      <span class="cat__blurb">orchestration, workflows, delegated tools &mdash; mandates a worker can't exceed</span>
+      <span class="cat__blurb">orchestration, workflows, delegated tools &middot; mandates a worker can't exceed</span>
     </div>
     <div class="tiles">
       <div class="tile">
         <span class="tile__eyebrow">agent-orchestration</span>
         <span class="tile__name">Durable, auditable multi-agent runs</span>
-        <span class="tile__desc">A coordinator hands each worker an attenuated mandate &mdash; narrower tools, a sub-budget, a sub-task, strictly weaker than it holds. The run is crash-recoverable, and an auditor re-derives it from the receipt chain and is never fooled.</span>
+        <span class="tile__desc">A coordinator hands each worker an attenuated mandate: narrower tools, a sub-budget, a sub-task, strictly weaker than it holds. The run is crash-recoverable, and an auditor re-derives it from the receipt chain and is never fooled.</span>
       </div>
       <div class="tile">
         <span class="tile__eyebrow">swarm-orchestration</span>
@@ -293,12 +293,12 @@
       <div class="tile">
         <span class="tile__eyebrow">tool-access-delegation</span>
         <span class="tile__name">Delegated tool / MCP access</span>
-        <span class="tile__desc">Hand another agent a narrowly-attenuated, rate-limited, time-bounded, revocable capability to call a tool on your behalf &mdash; without ever handing over your keys. Over-rate, past-deadline, and out-of-scope calls are refused; the grant revokes.</span>
+        <span class="tile__desc">Hand another agent a narrowly-attenuated, rate-limited, time-bounded, revocable capability to call a tool on your behalf, without ever handing over your keys. Over-rate, past-deadline, and out-of-scope calls are refused; the grant revokes.</span>
       </div>
       <div class="tile">
         <span class="tile__eyebrow">edge-mandate</span>
         <span class="tile__name">Attach over SSH, cap-bounded</span>
-        <span class="tile__desc">The hosted-attach model: instead of installing a runtime, a user attaches over SSH to a budget-bounded, cap-bounded session. Who attaches with what authority is a mandate cell, not a mutable file &mdash; over-budget refuses, and revoked stays revoked.</span>
+        <span class="tile__desc">The hosted-attach model: instead of installing a runtime, a user attaches over SSH to a budget-bounded, cap-bounded session. Who attaches with what authority is a mandate cell, not a mutable file: over-budget refuses, and revoked stays revoked.</span>
       </div>
     </div>
   </div>
@@ -313,7 +313,7 @@
       <div class="tile">
         <span class="tile__eyebrow">identity</span>
         <span class="tile__name">Verifiable credentials</span>
-        <span class="tile__desc">Issue, hold, and present credentials with real signatures &mdash; a thin userspace shell over the credential core. The zero-knowledge heavy lifting (blinded merkle, predicate disclosure, ring proofs, non-revocation) lives in the primitive underneath.</span>
+        <span class="tile__desc">Issue, hold, and present credentials with real signatures, a thin userspace shell over the credential core. The zero-knowledge heavy lifting (blinded merkle, predicate disclosure, ring proofs, non-revocation) lives in the primitive underneath.</span>
       </div>
       <div class="tile">
         <span class="tile__eyebrow">nameservice</span>
@@ -323,7 +323,7 @@
       <div class="tile">
         <span class="tile__eyebrow">domains</span>
         <span class="tile__name">Bring your own domain</span>
-        <span class="tile__desc">Point your own DNS domain at a published site &mdash; a domain binding is a cell. An ACME-style proof of DNS control is required before any traffic or certificate routes; an owner takeover or an un-verify is an executor refusal.</span>
+        <span class="tile__desc">Point your own DNS domain at a published site: a domain binding is a cell. An ACME-style proof of DNS control is required before any traffic or certificate routes; an owner takeover or an un-verify is an executor refusal.</span>
       </div>
       <div class="tile">
         <span class="tile__eyebrow">agent-provenance</span>
@@ -342,13 +342,13 @@
   <div class="cat">
     <div class="cat__head">
       <span class="cat__name">Hosting &amp; durability</span>
-      <span class="cat__blurb">leases, object stores, vats, quotas &mdash; the cloud's own primitives</span>
+      <span class="cat__blurb">leases, object stores, vats, quotas &middot; the cloud's own primitives</span>
     </div>
     <div class="tiles">
       <div class="tile">
         <span class="tile__eyebrow">execution-lease</span>
         <span class="tile__name">Durable execution you can rent</span>
-        <span class="tile__desc">The first primary resource of the agent economy &mdash; a fly.io-lite / cloudflare-lite provider leasing metered durable execution, with no new kernel effect. The durable image lives in the cell's heap; a rewind or forge of the checkpoint cursor is a real refusal.</span>
+        <span class="tile__desc">The first primary resource of the agent economy: a fly.io-lite / cloudflare-lite provider leasing metered durable execution, with no new kernel effect. The durable image lives in the cell's heap; a rewind or forge of the checkpoint cursor is a real refusal.</span>
       </div>
       <div class="tile">
         <span class="tile__eyebrow">storage-gateway-mandate</span>
@@ -358,7 +358,7 @@
       <div class="tile">
         <span class="tile__eyebrow">vat</span>
         <span class="tile__name">Have a dregg computer</span>
-        <span class="tile__desc">A persistent, durable, forkable World you rent and reach from any starbridge &mdash; and cannot be lied to. It lives in the cloud but belongs to you: its history is receipted, so the provider running it can't forge what it did. Launch, sleep, wake, reap.</span>
+        <span class="tile__desc">A persistent, durable, forkable World you rent and reach from any starbridge, and cannot be lied to. It lives in the cloud but belongs to you: its history is receipted, so the provider running it can't forge what it did. Launch, sleep, wake, reap.</span>
       </div>
       <div class="tile">
         <span class="tile__eyebrow">guard</span>
@@ -368,7 +368,7 @@
       <div class="tile">
         <span class="tile__eyebrow">kvstore</span>
         <span class="tile__name">A rollback-proof key-value store</span>
-        <span class="tile__desc">A verified register store with a live header: every put and delete is a receipted turn a light client can replay. The store version never rolls back and the entry count never overflows &mdash; a reordered or replayed mutation is an executor refusal.</span>
+        <span class="tile__desc">A verified register store with a live header: every put and delete is a receipted turn a light client can replay. The store version never rolls back and the entry count never overflows: a reordered or replayed mutation is an executor refusal.</span>
       </div>
     </div>
   </div>
@@ -377,18 +377,18 @@
   <div class="cat">
     <div class="cat__head">
       <span class="cat__name">Play &amp; worlds</span>
-      <span class="cat__blurb">games, rooms, galleries, multiplayer &mdash; the same guarantees, at play</span>
+      <span class="cat__blurb">games, rooms, galleries, multiplayer &middot; the same guarantees, at play</span>
     </div>
     <div class="tiles">
       <div class="tile">
         <span class="tile__eyebrow">tussle</span>
         <span class="tile__name">Verified joint-combat</span>
-        <span class="tile__desc">A Toribash-style match: two figures fight by posing their joints, each a typed enum slot. A move runs commit &rarr; reveal &rarr; resolve with real fog-of-war, and the contact score folds through the verified executor as a conserving ring &mdash; no toy combat engine.</span>
+        <span class="tile__desc">A Toribash-style match: two figures fight by posing their joints, each a typed enum slot. A move runs commit &rarr; reveal &rarr; resolve with real fog-of-war, and the contact score folds through the verified executor as a conserving ring: no toy combat engine.</span>
       </div>
       <div class="tile">
         <span class="tile__eyebrow">first-room</span>
         <span class="tile__name">The first room of the living world</span>
-        <span class="tile__desc">A composition exemplar that welds other apps' organs into one runnable scenario: a colonist does its mandated job step by step, is paid from a conserving escrow, then a try-to-cheat battery &mdash; each cheat refused in-band with the receipt-why.</span>
+        <span class="tile__desc">A composition exemplar that welds other apps' organs into one runnable scenario: a colonist does its mandated job step by step, is paid from a conserving escrow, then a try-to-cheat battery: each cheat refused in-band with the receipt-why.</span>
       </div>
       <div class="tile">
         <span class="tile__eyebrow">gallery</span>
@@ -409,7 +409,7 @@
   <span class="section__label">The flagships</span>
   <h2 class="section__title">Two grains that host a whole community</h2>
   <p class="section__intro">
-    Most apps are one cell. Two are whole services hosted as grains &mdash; the workshop and the town
+    Most apps are one cell. Two are whole services hosted as grains, the workshop and the town
     square, built the same way: confined, cap-metered, federated, receipted. Caps all the way down.
   </p>
   <div class="flagships">
@@ -417,17 +417,17 @@
       <div class="flag__eyebrow">the workshop</div>
       <div class="flag__name">The code forge</div>
       <p class="flag__lead">
-        A forge with no server that can lie. It isn't "GitHub on dregg" &mdash; there is no git
+        A forge with no server that can lie. It isn't "GitHub on dregg"; there is no git
         underneath. Dregg's own patch theory <em>is</em> the version control: a repo is a cell, a
         commit is a receipted turn, and a pull request is a fork you review and stitch.
       </p>
       <ul class="flag__list">
-        <li><strong>Merge is a theorem.</strong> The merge is a pushout &mdash; provably the least state containing both edits &mdash; and a conflict is a first-class object you resolve, never a silent stomp. You cannot rewrite someone's blame; a forged history is inexpressible.</li>
-        <li><strong>CI is the proof.</strong> A check runs in a confined grain whose only meaningful output is committing the receipt that gates the merge. No trusted runner: the runner physically can't reach the network or touch anything but its scratch dir &mdash; the proof <em>is</em> the pass.</li>
-        <li><strong>A PR can be a bounty.</strong> One signed terminal "checks passed" receipt can light three gates at once &mdash; the merge, a bounty payout, and a compute-market settlement. Merge the PR and the worker gets paid, off the same witness.</li>
-        <li><strong>Access is capabilities.</strong> "Can merge to main" is a cap you hold and can attenuate, delegate, or revoke &mdash; the same lattice as everything else, not ACL rows.</li>
+        <li><strong>Merge is a theorem.</strong> The merge is a pushout (provably the least state containing both edits), and a conflict is a first-class object you resolve, never a silent stomp. You cannot rewrite someone's blame; a forged history is inexpressible.</li>
+        <li><strong>CI is the proof.</strong> A check runs in a confined grain whose only meaningful output is committing the receipt that gates the merge. No trusted runner: the runner physically can't reach the network or touch anything but its scratch dir; the proof <em>is</em> the pass.</li>
+        <li><strong>A PR can be a bounty.</strong> One signed terminal "checks passed" receipt can light three gates at once: the merge, a bounty payout, and a compute-market settlement. Merge the PR and the worker gets paid, off the same witness.</li>
+        <li><strong>Access is capabilities.</strong> "Can merge to main" is a cap you hold and can attenuate, delegate, or revoke: the same lattice as everything else, not ACL rows.</li>
       </ul>
-      <p class="flag__note">Honest scope: the forge core &mdash; patch theory, sound merge, conflicts, the receipt-gated check &mdash; is built and hardened. Hosting it as a <em>federated</em> grain and carrying a PR across the membrane is the named frontier.</p>
+      <p class="flag__note">Honest scope: the forge core (patch theory, sound merge, conflicts, the receipt-gated check) is built and hardened. Hosting it as a <em>federated</em> grain and carrying a PR across the membrane is the named frontier.</p>
     </div>
 
     <div class="flag">
@@ -435,19 +435,19 @@
       <div class="flag__name">The confined homeserver</div>
       <p class="flag__lead">
         A real Matrix server in a lockbox. The community your world lives in shouldn't need one
-        trusted machine off to the side. So the homeserver runs as a grain &mdash; the last
+        trusted machine off to the side. So the homeserver runs as a grain, the last
         non-dregg-hosted piece of the inhabited world, brought inside.
       </p>
       <ul class="flag__list">
-        <li><strong>A real homeserver, embedded.</strong> A production Matrix server (the continuwuity lineage) is compiled into the grain body as a library &mdash; not an opaque process wrapped in a box. Any Matrix client can still join a room; full ecosystem interop is kept.</li>
-        <li><strong>Confined to one door.</strong> The body runs deny-by-default with a single storage door to its own database directory &mdash; sibling paths denied, revocable. No exec door, no ambient network. The tightest jail a real server can run in.</li>
-        <li><strong>Metered and auditable.</strong> Its lease is cap-metered and reaped like any grain, and the interesting part &mdash; a room is a cell, a message an event &mdash; means the server's accept of a message can be surfaced as a verifiable turn. The relay is auditable, not a trusted black box.</li>
+        <li><strong>A real homeserver, embedded.</strong> A production Matrix server (the continuwuity lineage) is compiled into the grain body as a library, not an opaque process wrapped in a box. Any Matrix client can still join a room; full ecosystem interop is kept.</li>
+        <li><strong>Confined to one door.</strong> The body runs deny-by-default with a single storage door to its own database directory: sibling paths denied, revocable. No exec door, no ambient network. The tightest jail a real server can run in.</li>
+        <li><strong>Metered and auditable.</strong> Its lease is cap-metered and reaped like any grain, and the interesting part (a room is a cell, a message an event) means the server's accept of a message can be surfaced as a verifiable turn. The relay is auditable, not a trusted black box.</li>
       </ul>
-      <p class="flag__note">Honest scope: the confinement design is proven and de-risked &mdash; the embedded server serves confined in a demonstrator. The one new kernel door (an inbound listen door for the confined tier) is a deliberate, ember-aware lane, not a shipped guarantee.</p>
+      <p class="flag__note">Honest scope: the confinement design is proven and de-risked; the embedded server serves confined in a demonstrator. The one new kernel door (an inbound listen door for the confined tier) is a deliberate, ember-aware lane, not a shipped guarantee.</p>
     </div>
 
   </div>
-  <p class="stack-note" style="margin-top:var(--s6)"><span class="stack-dot"></span> On the workbench: <strong>Hermes on a leash</strong> &mdash; a real self-improving agent whose every tool-call is intercepted and turned into a cap-gated, metered, receipted turn (or an in-band refusal). The interception seam works today; the fully confined agent body and forking a live session are being built &mdash; it earns a flagship slot when it's actually done.</p>
+  <p class="stack-note" style="margin-top:var(--s6)"><span class="stack-dot"></span> On the workbench: <strong>Hermes on a leash</strong>, a real self-improving agent whose every tool-call is intercepted and turned into a cap-gated, metered, receipted turn (or an in-band refusal). The interception seam works today; the fully confined agent body and forking a live session are being built; it earns a flagship slot when it's actually done.</p>
 </section>
 
 <!-- ==================== TRUSTLESS SERVING ==================== -->
@@ -457,20 +457,20 @@
   <p class="section__intro">
     A grain runs your app; <code>dregg.works</code> serves its pages. Publish a minisite and you commit
     its <code>blake3</code> hash to your cell in one cap-gated, receipted turn. The host then serves the
-    bytes &mdash; but it has no way to change them. Every served page re-hashes itself in your browser
+    bytes, but it has no way to change them. Every served page re-hashes itself in your browser
     and checks it against the commitment fetched from the ledger. <strong>&#10003; match, or &#10007;
-    tampered &mdash; and you don't take the host's word for either.</strong>
+    tampered, and you don't take the host's word for either.</strong>
   </p>
   <div class="dw-flow">
     <div class="dw-step">
       <span class="dw-step__n">1 &middot; commit</span>
       <span class="dw-step__t">Publish</span>
-      <span class="dw-step__d">A cap-gated turn writes <code>blake3(page)</code> into your cell. The commitment is the trust-bearing half &mdash; yours, on-ledger, receipted.</span>
+      <span class="dw-step__d">A cap-gated turn writes <code>blake3(page)</code> into your cell. The commitment is the trust-bearing half: yours, on-ledger, receipted.</span>
     </div>
     <div class="dw-step">
       <span class="dw-step__n">2 &middot; serve</span>
       <span class="dw-step__t">Host the bytes</span>
-      <span class="dw-step__d"><code>&lt;name&gt;.dregg.works</code> ships the raw bytes. Convenience, not trust &mdash; the host is untrusted infrastructure.</span>
+      <span class="dw-step__d"><code>&lt;name&gt;.dregg.works</code> ships the raw bytes. Convenience, not trust: the host is untrusted infrastructure.</span>
     </div>
     <div class="dw-step">
       <span class="dw-step__n">3 &middot; verify</span>
@@ -487,7 +487,7 @@
 <!-- ==================== CLOSING ==================== -->
 <section class="section">
   <div class="killer" style="text-align:center;display:flex;justify-content:center;padding:var(--s8) var(--s6);">
-    <p style="max-width:52ch;">The kernel proves. The userspace runs. The cloud hosts &mdash; and every layer
+    <p style="max-width:52ch;">The kernel proves. The userspace runs. The cloud hosts, and every layer
     of it hands you a receipt <em>you</em> can check, instead of asking you to trust the machine underneath.</p>
   </div>
 </section>
@@ -496,7 +496,7 @@
 
 <footer class="site-foot">
   <div class="site-foot__inner">
-    <span class="site-foot__left">the <code>dreggnet</code> cloud &mdash; the userspace of Dragon's Egg. AGPL-3.0-or-later.</span>
+    <span class="site-foot__left">the <code>dreggnet</code> cloud &middot; the userspace of Dragon's Egg. AGPL-3.0-or-later.</span>
     <div class="site-foot__links">
       <a href="../">The substrate</a>
       <a href="../technical.html">Technical index</a>

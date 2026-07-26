@@ -660,7 +660,7 @@ fn verified_user(
             audit::log().emit(refused_event(&e));
             return Err((
                 e.http_status(),
-                format!("initData refused: {e} — open this surface inside Telegram"),
+                format!("initData refused: {e}; open this surface inside Telegram"),
             )
                 .into_response());
         }
@@ -798,7 +798,7 @@ fn tg_native_fragment(html: String, key: &str, id: &str, fragment: bool) -> Stri
                  <p class=\"game-session-boundary\"><span aria-hidden=\"true\">◐</span>\
                  Telegram proves who you are and this server checks that proof. Your moves are \
                  then signed with a key this server holds for you, not one on your device. What \
-                 other players are not shown stays unshown — but the whole session lives on this \
+                 other players are not shown stays unshown, but the whole session lives on this \
                  server, which can read all of it.</p></section>{native}",
                 kind.as_str(),
                 crate::esc(id),
@@ -859,7 +859,7 @@ async fn get_tg_offerings(
         lab = crate::esc(dreggnet_catalog::shelf_intro()),
     );
     let body = format!(
-        "<div class=\"notice ok\" role=\"status\">Verified via Telegram — playing as \
+        "<div class=\"notice ok\" role=\"status\">Verified via Telegram · playing as \
          <code>{ident16}…</code> (the same identity as in-chat)</div>{featured}{cards}",
     );
     Html(body).into_response()
@@ -1410,7 +1410,7 @@ async fn post_tg_act(
             publication,
             ..
         } => format!(
-            "Turn committed — {}",
+            "Turn committed · {}",
             publication.as_ref().map_or_else(
                 || PlayerTurnReceipt::from_landed_signed(
                     &receipt,
@@ -1431,7 +1431,7 @@ async fn post_tg_act(
             ..
         } => {
             metrics::inc_turn_refused();
-            format!("Refused: {why} (nothing committed — anti-ghost).")
+            format!("Refused: {why} (nothing committed · anti-ghost).")
         }
         act_signed::SignedAdvance::CommittedButPublicationFailed { error, .. } => format!(
             "Turn committed, but its public receipt could not be rendered ({error}). Do not retry; refresh to inspect the committed state."
@@ -1521,7 +1521,7 @@ const TG_SHELL_SCRIPT: &str = r##"(function () {
     root.prepend(box);
   }
   if (!tg || !tg.initData) {
-    notice('Open this page inside Telegram — the Mini App needs its signed initData to identify you.');
+    notice('Open this page inside Telegram: the Mini App needs its signed initData to identify you.');
     return;
   }
   // The raw signed string — sent ONLY as a header, never in a URL (URLs leak into logs/Referer).
@@ -1715,11 +1715,11 @@ fn shell_page(boot: Option<&str>) -> String {
     format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
-         <title>{name} — Telegram Mini App</title>\
+         <title>{name} · Telegram Mini App</title>\
          <script src=\"https://telegram.org/js/telegram-web-app.js\"></script>\
          {style}</head><body>\
          <main class=\"session\">\
-         <p class=\"prose\" id=\"tg-greet\">{name} — games that check their own moves.</p>\
+         <p class=\"prose\" id=\"tg-greet\">{name} · games that check their own moves.</p>\
          <div id=\"tg-root\"{boot_attr}><p class=\"prose\">Loading the catalog…</p></div>\
          </main><script src=\"/tg/static/app.js\"></script></body></html>",
         // ⚑ THE ARCADE'S NAME, not the LIBRARY LAYER's. This tab said `DreggNet`, which names

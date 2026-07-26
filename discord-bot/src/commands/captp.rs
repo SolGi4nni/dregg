@@ -282,7 +282,7 @@ pub async fn handle_delegate(ctx: &Context, command: &CommandInteraction, state:
 
             let embed = embeds::success_embed("Capability Delegated (bot-local token)")
                 .description(format!(
-                    "A **bot-local delegation token** (BLAKE3-MAC, held in this bot's table — \
+                    "A **bot-local delegation token** (BLAKE3-MAC, held in this bot's table, \
                      not a signed certificate) was minted for <@{target_id}>.\n**Next step:** \
                      they run `/cap-accept uri:<the token below>`.\nFor a portable, \
                      Ed25519-SIGNED CapTP `HandoffCertificate` use `/handoff` instead \
@@ -461,7 +461,7 @@ pub async fn handle_peer(ctx: &Context, command: &CommandInteraction, state: &Bo
         .description(
             "This bot is a first-class dregg capability peer. It exports sturdy refs, enlivens \
              shared `dregg://` URIs, mints/redeems canonical handoff certificates, and routes \
-             through the live node — alongside node and sdk peers.",
+             through the live node, alongside node and sdk peers.",
         )
         .field(
             "Federation Root",
@@ -586,15 +586,15 @@ async fn ensure_user_can_manage_cell(
             if identity.cell_id == cell_id && identity.mode == IdentityMode::ExternalPending =>
         {
             Err(embeds::warning_embed(
-                "External Link Pending — Prove It",
+                "External Link Pending · Prove It",
                 "This link is waiting on its ownership proof. Sign the challenge shown by \
                  `/link-cipherclerk` with your cell's Ed25519 key and submit it with \
-                 `/link-prove` — or `/unlink-cipherclerk` and `/cipherclerk create` a hosted \
+                 `/link-prove`, or `/unlink-cipherclerk` and `/cipherclerk create` a hosted \
                  cell the bot CAN manage capabilities for.",
             ))
         }
         Ok(Some(identity)) if identity.cell_id == cell_id => Err(embeds::warning_embed(
-            "External Identity — The Bot Cannot Sign For It",
+            "External Identity · The Bot Cannot Sign For It",
             "Ownership is proven, but this is an EXTERNAL cell: you hold its key, the bot does \
              not, so it cannot export, delegate, or revoke on your behalf. Drive it from your \
              own peer, or `/cipherclerk create` a hosted cell for bot-managed capabilities.",

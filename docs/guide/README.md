@@ -1,5 +1,11 @@
 # Build-with-dregg — the developer guides
 
+> ⚑ **Looking for how to PLAY?** This directory is entirely developer-facing, and every
+> file in it assumes you want to build something. If you want to know what the games are
+> and how a turn works, that is **[the player guide](../PLAYER-GUIDE.md)** (or `/guide` on
+> the live surface). Copy for announcing it is in
+> **[docs/announce/](../announce/ARCADE-PLAYER-POSTS.md)**.
+
 This is the developer onramp: the deeper guides a newcomer follows after the
 landing page and the [15-minute hands-on quickstart](../../QUICKSTART.md). The
 quickstart gets a node running and a real turn signed on `localhost`; these

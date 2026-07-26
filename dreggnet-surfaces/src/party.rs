@@ -675,20 +675,20 @@ impl PartyOffering {
             "Your next move",
             "accent",
             vec![text(if session.launched() {
-                "The party is LAUNCHED — the roles are locked and the fight is live. Each seat \
+                "The party is LAUNCHED: the roles are locked and the fight is live. Each seat \
                      contributes ONE committed action; the roster below says who has and who has \
                      not."
                     .to_string()
             } else if seats == 0 {
                 format!(
-                    "Nobody has taken a seat yet — claim one of the four roles below. The \
+                    "Nobody has taken a seat yet. Claim one of the four roles below. The \
                          table launches at a quorum of {quorum} ready seats, and every claim is a \
                          committed turn, so a seat cannot be taken twice."
                 )
             } else {
                 format!(
                     "{seats} of 4 roles are held and this table launches at {quorum} READY \
-                         seats — claim an open role, or mark your own seat ready. A launch below \
+                         seats. Claim an open role, or mark your own seat ready. A launch below \
                          quorum is refused by the lobby, not hidden by this page."
                 )
             })],
@@ -803,7 +803,7 @@ impl PartyOffering {
                 .enumerate()
                 .map(|(i, count)| {
                     text(format!(
-                        "{} — {} vote(s)",
+                        "{} · {} vote(s)",
                         labels.get(i).map(|x| x.0.as_str()).unwrap_or("unknown"),
                         count
                     ))
@@ -825,7 +825,7 @@ impl PartyOffering {
         }
 
         Surface(section(
-            "DreggNet Party — muster, choose, fight",
+            "DreggNet Party · muster, choose, fight",
             "accent",
             children,
         ))
@@ -1077,8 +1077,8 @@ fn arena_seed(seed: u64) -> u8 {
 fn arena_resolution(outcome: ArenaOutcome) -> (&'static str, &'static str) {
     match outcome {
         ArenaOutcome::Ongoing => ("THE FIGHT IS LIVE", "warn"),
-        ArenaOutcome::Victory => ("VICTORY — EVERY ENEMY IS DOWN", "good"),
-        ArenaOutcome::Defeat => ("DEFEAT — EVERY HERO IS DOWN", "bad"),
+        ArenaOutcome::Victory => ("VICTORY · EVERY ENEMY IS DOWN", "good"),
+        ArenaOutcome::Defeat => ("DEFEAT · EVERY HERO IS DOWN", "bad"),
     }
 }
 

@@ -215,7 +215,7 @@ impl TradeOffering {
             return Outcome::Refused(format!("`{name}` has already sold"));
         }
         if !listed {
-            return Outcome::Refused(format!("`{name}` is not listed — the seller must list it"));
+            return Outcome::Refused(format!("`{name}` is not listed; the seller must list it"));
         }
 
         // THE PAYMENT LEG. The buyer crosses `price` trade-coins to the seller. If the buyer is
@@ -234,7 +234,7 @@ impl TradeOffering {
                         "a re-pay with an already-spent coin must be refused by the executor",
                     );
                 return Outcome::Refused(format!(
-                    "the buyer cannot pay for `{name}` — no unspent trade-coin (a re-pay is refused: {err})"
+                    "the buyer cannot pay for `{name}`: no unspent trade-coin (a re-pay is refused: {err})"
                 ));
             }
             return Outcome::Refused(format!(
@@ -496,14 +496,14 @@ impl Offering for TradeOffering {
             vec![
                 text(if affordable > 0 {
                     format!(
-                        "{affordable} listed good(s) are within your {coins}◈ purse — press Buy and \
+                        "{affordable} listed good(s) are within your {coins}◈ purse. Press Buy and \
                          the coin and the good change hands in ONE atomic turn, so there is no \
                          state where you have paid and not received."
                     )
                 } else if listable > 0 {
                     format!(
-                        "Nothing on the board is both listed and inside your {coins}◈ purse yet — \
-                         press List on one of your {listable} unlisted good(s) to put it up. \
+                        "Nothing on the board is both listed and inside your {coins}◈ purse yet. \
+                         Press List on one of your {listable} unlisted good(s) to put it up. \
                          Listing moves it into custody as a real owner-signed turn."
                     )
                 } else {
@@ -594,7 +594,7 @@ impl Offering for TradeOffering {
         ));
 
         Surface(section(
-            "DreggNet Trade — a player market (atomic asset swaps)",
+            "DreggNet Trade · a player market (atomic asset swaps)",
             "accent",
             children,
         ))

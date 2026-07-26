@@ -41,7 +41,7 @@ const MARKET_COLOR: u32 = 0xF4A261;
 
 impl DiscordOffering for MarketOffering {
     const KEY: &'static str = "market";
-    const TITLE: &'static str = "DreggNet Market — a sealed-bid auction";
+    const TITLE: &'static str = "DreggNet Market · a sealed-bid auction";
     const COLOR: u32 = MARKET_COLOR;
     const TAGLINE: &'static str =
         "sealed bids · the executor clears · conservation checked (Σδ=0) · the chain remembers";
@@ -100,7 +100,7 @@ impl DiscordOffering for MarketOffering {
 /// grade visible — sealed during commit, operator-visible at settlement, check-level replay.
 impl DiscordOffering for DarkBazaarOffering {
     const KEY: &'static str = "bazaar";
-    const TITLE: &'static str = "The Dark Bazaar — playable CRAWL";
+    const TITLE: &'static str = "The Dark Bazaar · playable CRAWL";
     const COLOR: u32 = 0x5B3A8E;
     const TAGLINE: &'static str =
         "CRAWL · sealed during commit · operator-visible at settle · replay + conservation checked";
@@ -161,7 +161,7 @@ impl DiscordOffering for DarkBazaarOffering {
 /// Register `/market` (open / status / verify).
 pub fn register() -> CreateCommand {
     CreateCommand::new("market")
-        .description("Run a real sealed-bid auction in this channel — list, bid, settle")
+        .description("Run a real sealed-bid auction in this channel · list, bid, settle")
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,
             "open",
@@ -180,7 +180,7 @@ pub fn register() -> CreateCommand {
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,
             "close",
-            "Close the collective round — resolve the plurality winner as one verified turn",
+            "Close the collective round · resolve the plurality winner as one verified turn",
         ))
 }
 

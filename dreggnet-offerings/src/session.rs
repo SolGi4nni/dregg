@@ -371,16 +371,16 @@ impl std::fmt::Display for PlayRefusal {
             PlayRefusal::OutOfScope { .. } => write!(
                 f,
                 "This play pass is for a different game than the one you just moved in. Nothing was \
-                 changed — open the game this pass was made for, or start a fresh session here"
+                 changed. Open the game this pass was made for, or start a fresh session here"
             ),
             PlayRefusal::PastDeadline { .. } => write!(
                 f,
-                "Your play session has expired, so this move was not taken. Nothing was changed — \
-                 start a new session to keep playing"
+                "Your play session has expired, so this move was not taken. Nothing was changed. \
+                 Start a new session to keep playing"
             ),
             PlayRefusal::OverTurnBudget { turns_taken, .. } => write!(
                 f,
-                "Your play session is out of moves — it covered {turns_taken} and they are used up. \
+                "Your play session is out of moves: it covered {turns_taken} and they are used up. \
                  Nothing was changed, and nothing was charged for this one. Start a new session to \
                  keep playing"
             ),
@@ -403,7 +403,7 @@ impl std::fmt::Display for PlayRefusal {
                 "This server cannot check a delegated move right now: the verified rule-checker it \
                  needs is not installed, so it refuses every such move rather than guess at one. \
                  Nothing was changed and nothing was charged. That is a fault in how this server was \
-                 built, not in what you did — the server log names the missing piece"
+                 built, not in what you did. The server log names the missing piece"
             ),
         }
     }
@@ -443,7 +443,7 @@ impl PlayRefusal {
                  `dregg_deleg_admit` (the C-ABI entry over `Dregg2.Apps.DelegAdmit.delegAdmit`) \
                  reached NO VERDICT: {reason}. Either the linked `libdregg_lean.a` does not export \
                  it (a build without a HEAD-matching Lean archive) or this is a target that cannot \
-                 link the archive at all — wasm32, where `deleg_admit_available()` is FALSE by \
+                 link the archive at all: wasm32, where `deleg_admit_available()` is FALSE by \
                  construction and this refusal is the CORRECT answer, never a Rust fallback"
             ),
         }

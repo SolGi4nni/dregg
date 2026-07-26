@@ -72,7 +72,7 @@ use crate::discord_caps::{
 // =============================================================================
 
 /// Where a session's surface lives.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SurfaceKind {
     /// A dedicated channel for this session, optionally filed under the
     /// offering's category. Heavier (it shows in the sidebar), but it can carry
@@ -86,7 +86,7 @@ pub enum SurfaceKind {
 
 /// Who is allowed to spin a session surface. Creating channels and assigning roles
 /// are guild-write privileges; this is the gate on them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum OpenAuthority {
     /// Only the pinned admin (`config.admin_discord_id`) may open a session. This
     /// is the default, and it matches the offerings doc: *the bot (admin) spins the
@@ -101,7 +101,7 @@ pub enum OpenAuthority {
 
 /// What an offering asks the orchestrator for. Offering-agnostic: `offering` is
 /// just a name.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SessionSpec {
     /// The offering this session belongs to (`"dungeon"`, `"hosted-hermes"`, …).
     /// Sessions of one offering share a category and a queue namespace.
@@ -503,14 +503,14 @@ pub struct BootstrapReport {
 // The live session
 // =============================================================================
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SessionState {
     Open,
     Archived,
 }
 
 /// A session whose surface exists.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LiveSession {
     pub spec: SessionSpec,
     /// The channel or thread hosting the session.
@@ -586,6 +586,30 @@ pub trait CategoryStore: Send + Sync {
     /// channels and custodial per-user `dregg-<id>` channels — regardless of name.
     /// A belt-and-braces companion to the reaper's strict name allow-list.
     async fn protected_channel_ids(&self, guild_id: u64) -> HashSet<u64>;
+
+    // ── the SESSION half of the record (see `SessionOrchestrator::sessions`) ──
+    //
+    // The category half above has been durable for a while; the session half was
+    // not, and the two are a matched pair: a persisted category with a forgotten
+    // session is exactly what let a post-restart re-open mint a SECOND
+    // identically-named thread under the SAME remembered category.
+    //
+    // These three carry defaults so an existing implementor (and the unit tests'
+    // in-memory store) keeps compiling and keeps its current, honest behaviour:
+    // no persistence, which the orchestrator then reports as "no record".
+
+    /// The persisted JSON of a live/archived session, by [`SessionSpec::key`].
+    /// Default: `None` — this store does not persist sessions.
+    async fn get_session(&self, key: &str) -> Option<String> {
+        let _ = key;
+        None
+    }
+
+    /// Record (idempotently) a session's JSON under its key.
+    /// Default: a no-op.
+    async fn put_session(&self, key: &str, json: &str) {
+        let _ = (key, json);
+    }
 }
 
 #[async_trait]
@@ -611,6 +635,22 @@ impl CategoryStore for crate::db::Database {
             .await
         {
             warn!(guild_id, offering, error = %e, "Failed to persist offering category id");
+        }
+    }
+
+    async fn get_session(&self, key: &str) -> Option<String> {
+        match self.get_orchestrated_session(key).await {
+            Ok(row) => row,
+            Err(e) => {
+                warn!(session = %key, error = %e, "Failed to read a persisted session");
+                None
+            }
+        }
+    }
+
+    async fn put_session(&self, key: &str, json: &str) {
+        if let Err(e) = self.put_orchestrated_session(key, json).await {
+            warn!(session = %key, error = %e, "Failed to persist a session");
         }
     }
 
@@ -829,10 +869,23 @@ pub struct ReconcileReport {
 #[derive(Default)]
 pub struct SessionOrchestrator {
     /// `spec.key()` -> the live session.
+    ///
+    /// ⚑ **RESTART: REBUILD** (`docs/reference/RESTART-SEMANTICS.md`). This map is empty at boot
+    /// while [`categories`](SessionOrchestrator::categories) below is durable — a matched pair
+    /// half-persisted. The consequence was not lost data but a broken IDEMPOTENCY guard: [`open`]
+    /// returns early only when `get(&key)` finds an Open session, so after a restart it minted a
+    /// SECOND identically-named thread under the same remembered category, and [`teardown`]
+    /// answered [`OrchestrationError::UnknownSession`] for the surface that already existed —
+    /// forever, since nothing could ever put it back. [`get`](SessionOrchestrator::get) now
+    /// rehydrates from [`CategoryStore::get_session`] before answering "no such session".
     sessions: RwLock<HashMap<String, LiveSession>>,
     /// `(guild_id, offering)` -> the category every session of that offering is
     /// filed under. Cached so the second run of an offering REUSES the first run's
     /// category instead of minting a duplicate.
+    ///
+    /// ⚑ **RESTART: REBUILD** (`docs/reference/RESTART-SEMANTICS.md`) — from
+    /// [`CategoryStore::get_category`] (`discord_categories`), which is the precedent the
+    /// session half above was finally brought up to.
     categories: RwLock<HashMap<(u64, String), u64>>,
     /// Durable backing for the category cache + the reaper's protected set. `None`
     /// = in-memory only (the pre-existing behavior; used by unit tests).
@@ -860,9 +913,64 @@ impl SessionOrchestrator {
         self
     }
 
-    /// Look up a live session.
+    /// Look up a live session — **rehydrating a persisted one this process has not seen**.
+    ///
+    /// The disk read is what closes the fail-open: without it, every session opened before a
+    /// restart read as "no such session", so [`open`](SessionOrchestrator::open)'s idempotency
+    /// guard fell through and minted a duplicate surface, and
+    /// [`teardown`](SessionOrchestrator::teardown) could never find the one that existed.
+    ///
+    /// A row that does not decode is treated as ABSENT and said so out loud — an unreadable
+    /// record must never become a fabricated session (whose `cap_cells` a teardown would then
+    /// revoke).
     pub async fn get(&self, key: &str) -> Option<LiveSession> {
-        self.sessions.read().await.get(key).cloned()
+        if let Some(live) = self.sessions.read().await.get(key).cloned() {
+            return Some(live);
+        }
+        let store = self.persistence.as_ref()?;
+        let raw = store.get_session(key).await?;
+        let session: LiveSession = match serde_json::from_str(&raw) {
+            Ok(session) => session,
+            Err(error) => {
+                warn!(session = %key, %error, "a persisted session record did not decode — \
+                      treating it as absent rather than rebuilding a session from a corrupt row");
+                return None;
+            }
+        };
+        // Memoise, so the next lookup (and the teardown that usually follows) is free.
+        self.sessions
+            .write()
+            .await
+            .insert(key.to_string(), session.clone());
+        Some(session)
+    }
+
+    /// **The idempotency guard [`open`](SessionOrchestrator::open) applies**: the OPEN session
+    /// already serving this key, if there is one, in which case `open` returns it instead of
+    /// minting a second surface. An ARCHIVED session is deliberately not reusable — that run is
+    /// over and the next one gets its own surface.
+    ///
+    /// Exposed (rather than inlined in `open`) so the restart behaviour is testable without a
+    /// guild: this is the exact decision that fell open when the session table was RAM-only.
+    pub async fn reusable_surface(&self, key: &str) -> Option<LiveSession> {
+        self.get(key)
+            .await
+            .filter(|existing| existing.state == SessionState::Open)
+    }
+
+    /// Write a session through to the durable store, if one is attached. Best-effort and loud:
+    /// losing the row costs a duplicate surface after the next restart, not a wrong one.
+    async fn persist_session(&self, key: &str, session: &LiveSession) {
+        let Some(store) = self.persistence.as_ref() else {
+            return;
+        };
+        match serde_json::to_string(session) {
+            Ok(json) => store.put_session(key, &json).await,
+            Err(error) => warn!(
+                session = %key, %error,
+                "could not encode a session for persistence — a restart will not remember it"
+            ),
+        }
     }
 
     /// Every session of an offering (open and archived).
@@ -899,10 +1007,8 @@ impl SessionOrchestrator {
         authorize_open(&spec)?;
 
         let key = spec.key();
-        if let Some(existing) = self.get(&key).await {
-            if existing.state == SessionState::Open {
-                return Ok(existing);
-            }
+        if let Some(existing) = self.reusable_surface(&key).await {
+            return Ok(existing);
         }
 
         let mut cap_cells = Vec::new();
@@ -948,6 +1054,8 @@ impl SessionOrchestrator {
             .write()
             .await
             .insert(key.clone(), session.clone());
+        // …and DURABLY, or the next restart re-opens this key into a SECOND surface.
+        self.persist_session(&key, &session).await;
 
         info!(
             session = %key,
@@ -1007,6 +1115,9 @@ impl SessionOrchestrator {
             .write()
             .await
             .insert(key.to_string(), session.clone());
+        // The ARCHIVED state is persisted too, exactly as the in-RAM map keeps it: a second
+        // teardown must answer `AlreadyArchived`, and after a restart it still does.
+        self.persist_session(key, &session).await;
 
         info!(session = %key, channel_id = session.channel_id, "Archived session surface");
         Ok(session)
@@ -1930,6 +2041,7 @@ mod tests {
     struct MockStore {
         cats: std::sync::Mutex<HashMap<(u64, String), u64>>,
         protected: HashSet<u64>,
+        sessions: std::sync::Mutex<HashMap<String, String>>,
     }
     impl MockStore {
         fn with_category(guild_id: u64, offering: &str, id: u64) -> Self {
@@ -1956,9 +2068,98 @@ mod tests {
                 .unwrap()
                 .insert((guild_id, offering.to_string()), category_id);
         }
+        async fn get_session(&self, key: &str) -> Option<String> {
+            self.sessions.lock().unwrap().get(key).cloned()
+        }
+        async fn put_session(&self, key: &str, json: &str) {
+            self.sessions
+                .lock()
+                .unwrap()
+                .insert(key.to_string(), json.to_string());
+        }
         async fn protected_channel_ids(&self, _guild_id: u64) -> HashSet<u64> {
             self.protected.clone()
         }
+    }
+
+    // ── RESTART SEMANTICS for the orchestrator's session table ──────────────
+    //    (docs/reference/RESTART-SEMANTICS.md — answer 2, REBUILD)
+
+    /// ⚑ **THE RESTART.** A session opened before the restart must still be FOUND afterwards,
+    /// or `open()` mints a duplicate identically-named thread (under the category it DID
+    /// remember) and `teardown()` answers `UnknownSession` for the surface that exists —
+    /// forever, because nothing could ever put it back.
+    #[tokio::test]
+    async fn a_session_survives_a_restart_so_a_reopen_reuses_its_surface() {
+        let store = Arc::new(MockStore::default());
+        let spec = SessionSpec::new("dungeon", "a1b2c3", GUILD, ADMIN, PLAYER).admin(Some(ADMIN));
+        let key = spec.key();
+        let session = LiveSession {
+            spec: spec.clone(),
+            channel_id: 9_001,
+            category_id: Some(CATEGORY),
+            state: SessionState::Open,
+            cap_cells: vec!["discord/session/dungeon/a1b2c3".to_string()],
+            opened_at: 5,
+        };
+
+        // The pre-restart process records it.
+        let before =
+            SessionOrchestrator::new().with_persistence(store.clone() as Arc<dyn CategoryStore>);
+        before.persist_session(&key, &session).await;
+
+        // THE RESTART: a brand-new orchestrator with an EMPTY session table, same store.
+        let after =
+            SessionOrchestrator::new().with_persistence(store.clone() as Arc<dyn CategoryStore>);
+        let reused = after
+            .reusable_surface(&key)
+            .await
+            .expect("a re-open after a restart must REUSE the surface, not mint a duplicate");
+        assert_eq!(reused.channel_id, 9_001);
+        assert_eq!(
+            reused.spec, spec,
+            "the SessionSpec survives — teardown builds its whole plan from it"
+        );
+        assert_eq!(
+            reused.cap_cells, session.cap_cells,
+            "the capability cells a teardown must REVOKE survive too"
+        );
+
+        // NON-VACUOUS: with no store attached, the same restart forgets it — the pre-fix
+        // behaviour, and the reason this is answer 2 and not answer 3.
+        assert!(
+            SessionOrchestrator::new()
+                .reusable_surface(&key)
+                .await
+                .is_none(),
+            "an unbacked orchestrator has nothing to rebuild from"
+        );
+
+        // An ARCHIVED session is FOUND but not reusable: the next run gets its own surface,
+        // while a second teardown still answers `AlreadyArchived` rather than `UnknownSession`.
+        let mut archived = session.clone();
+        archived.state = SessionState::Archived;
+        after.persist_session(&key, &archived).await;
+        let next =
+            SessionOrchestrator::new().with_persistence(store.clone() as Arc<dyn CategoryStore>);
+        assert!(
+            next.reusable_surface(&key).await.is_none(),
+            "an archived run must not be reused as a live surface"
+        );
+        assert!(
+            next.get(&key).await.is_some(),
+            "…but it must still be FOUND, or teardown reports the wrong error forever"
+        );
+
+        // A corrupt row reads as ABSENT — never as a fabricated session whose invented
+        // `cap_cells` a teardown would go on to revoke.
+        store.put_session(&key, "{not json").await;
+        let corrupt =
+            SessionOrchestrator::new().with_persistence(store.clone() as Arc<dyn CategoryStore>);
+        assert!(
+            corrupt.get(&key).await.is_none(),
+            "an undecodable session record must not become a session"
+        );
     }
 
     fn cat(id: u64) -> ReapChannel {

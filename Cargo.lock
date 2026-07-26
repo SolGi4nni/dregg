@@ -6534,6 +6534,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "dregg-drive"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "deos-view",
+ "dreggnet-catalog",
+ "dreggnet-offerings",
+ "dreggnet-telegram",
+ "dreggnet-web",
+ "tokio",
+ "tower",
+]
+
+[[package]]
 name = "dregg-dsl"
 version = "0.1.0"
 dependencies = [
@@ -8074,6 +8088,7 @@ dependencies = [
  "serde_json",
  "spween",
  "spween-dregg",
+ "tracing",
  "ugc-dregg",
 ]
 
@@ -8258,6 +8273,7 @@ dependencies = [
  "dregg-intent",
  "dregg-multiway-tug",
  "dregg-node-target",
+ "dregg-sdk",
  "dregg-stream-ingest",
  "dreggnet-asset",
  "dreggnet-audit",

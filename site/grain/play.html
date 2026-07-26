@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Boss an AI around a box it can't escape — the dregg sandbox</title>
-  <meta name="description" content="Give an AI agent a job. Watch it work inside a sandbox it can't escape — the box allows what you permitted and blocks the rest. Then check its work: even the computer that ran it can't fake the record.">
+  <title>Boss an AI around a box it can't escape · the dregg sandbox</title>
+  <meta name="description" content="Give an AI agent a job. Watch it work inside a sandbox it can't escape: the box allows what you permitted and blocks the rest. Then check its work: even the computer that ran it can't fake the record.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='23' font-size='18' text-anchor='middle'%3E%F0%9F%A4%96%3C/text%3E%3C/svg%3E">
   <link rel="stylesheet" href="../assets/style.css">
   <style>
@@ -161,7 +161,7 @@
   <header class="hero">
     <div class="bot">🤖🔒</div>
     <h1>Boss an AI around a box it <span class="hl">can't escape</span></h1>
-    <p class="sub">Give an AI agent a job. Watch it work in a sealed sandbox — then check its
+    <p class="sub">Give an AI agent a job. Watch it work in a sealed sandbox. Then check its
       work, and <b>no one can lie to you</b> about what it did.</p>
     <p class="fine">The agent runs inside a rented sandbox with a fixed budget and a short list of
       things it's allowed to touch. It can <em>propose</em> anything. The box only lets through what
@@ -172,12 +172,12 @@
   <section class="card">
     <h2><span class="step">Step 1</span>Tell your agent what to do</h2>
     <p class="hint">Type a job, or tap an example. The sandbox is allowed to work with files in its
-      own scratch folder — nothing else.</p>
+      own scratch folder. Nothing else.</p>
     <div class="safety">
       <span>✨</span>
       <span><b>No key needed.</b> This guided demo turns each example into concrete tool
         calls and sends them one at a time to the sandbox's <span class="mono">/act</span>
-        gate — <b>the cap-gating, metering and receipts are the real thing</b>; only the
+        gate: <b>the cap-gating, metering and receipts are the real thing</b>; only the
         plan is scripted. To drive the same sandbox with a <b>live model under your own
         key</b>, use the <a href="/dev">developer console</a>.</span>
     </div>
@@ -201,7 +201,7 @@
   <!-- ── THE PAYOFF ────────────────────────────────────────────────────── -->
   <section class="card" id="verify-card">
     <h2><span class="step">Step 2</span>Check the agent's work</h2>
-    <p class="hint">You don't have to take the sandbox's word for it. Re-derive the record yourself —
+    <p class="hint">You don't have to take the sandbox's word for it. Re-derive the record yourself:
       the sandbox can't have faked a single step.</p>
     <button class="btn" id="verify" onclick="verify()">✓  Check the agent's work</button>
     <div id="verify-out"></div>
@@ -311,8 +311,8 @@
       const out = s.output != null ? String(s.output) : '';
       const isRead = tool === 'fs_read';
       const tail = isRead
-        ? ' — here is what it read back:'
-        : (out ? ` — ${esc(out)}` : '.');
+        ? ' · here is what it read back:'
+        : (out ? ` · ${esc(out)}` : '.');
       const line = addLine('allow',
         `🤖 wanted to <strong>${esc(v.verb)}</strong>${target} → ✅ <strong>Allowed</strong>${tail}`);
       if (isRead && out) {
@@ -322,7 +322,7 @@
       }
     } else {
       addLine('block',
-        `🤖 wanted to <strong>${esc(v.verb)}</strong>${target} → ⛔ <strong>Blocked</strong> — the sandbox never gave it that permission.`,
+        `🤖 wanted to <strong>${esc(v.verb)}</strong>${target} → ⛔ <strong>Blocked</strong> · the sandbox never gave it that permission.`,
         `<em>The agent proposes; the sandbox disposes.</em>`);
     }
   }
@@ -421,7 +421,7 @@
 
     el('run').disabled = false;
     el('run-status').textContent = didWork
-      ? "The agent finished. Now check its work below — you don't have to trust anyone."
+      ? "The agent finished. Now check its work below: you don't have to trust anyone."
       : 'The agent stopped without changing anything.';
     if (didWork) {
       el('verify-card').style.display = 'block';
@@ -455,7 +455,7 @@
       html = `<div class="verdict">
         <div class="mark">✅</div>
         <div class="headline">Confirmed.</div>
-        <div class="body">The agent took <b>${esc(n)}</b> action${n === 1 ? '' : 's'} — exactly the ones you
+        <div class="body">The agent took <b>${esc(n)}</b> action${n === 1 ? '' : 's'}: exactly the ones you
           saw above, nothing hidden, nothing faked. You just verified this yourself, and
           <b>the computer running the agent couldn't have lied to you</b> even if it wanted to.</div>
       </div>`;
@@ -463,7 +463,7 @@
       html = `<div class="verdict fail">
         <div class="mark">🟡</div>
         <div class="headline">Record is intact.</div>
-        <div class="body">The list of <b>${esc(n)}</b> action${n === 1 ? '' : 's'} is tamper-evident — it can't
+        <div class="body">The list of <b>${esc(n)}</b> action${n === 1 ? '' : 's'} is tamper-evident: it can't
           be quietly edited. (The stronger cryptographic seal wasn't produced for this run.)</div>
       </div>`;
     } else {
@@ -474,13 +474,13 @@
       </div>`;
     }
 
-    html += `<details class="nerd"><summary>For the curious — the raw verdict</summary><pre>${esc(
+    html += `<details class="nerd"><summary>For the curious · the raw verdict</summary><pre>${esc(
       'GET /verify      → ' + r0.status + '  ' + JSON.stringify(r0.data) + '\n' +
       'GET /verify?r2   → ' + r2.status + '  ' + JSON.stringify(r2.data) + '\n' +
-      'GET /attest      → ' + att.status + '  (' + att.bytes + ' bytes — the signed record you can keep)'
+      'GET /attest      → ' + att.status + '  (' + att.bytes + ' bytes · the signed record you can keep)'
     )}</pre>
       <p style="color:var(--fg-muted);margin-top:8px">Plain <code>/verify</code> proves the record can't
-      be tampered with; <code>/verify?r2</code> proves each receipt is a real, committed step — not a
+      be tampered with; <code>/verify?r2</code> proves each receipt is a real, committed step, not a
       story the host made up.</p></details>`;
 
     el('verify-out').innerHTML = html;

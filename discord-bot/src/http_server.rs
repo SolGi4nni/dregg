@@ -61,9 +61,6 @@ pub struct BotCellView {
     pub has_program: bool,
     pub program_vk: Option<String>,
     pub created_by_factory: Option<String>,
-    /// Soft-federation note: whether this cell's notes have been seen spent
-    /// via the clique's NullifierSet (best-effort, local view).
-    pub nullifier_known: bool,
 }
 
 /// Recent receipt summary (lightweight for the read surface).
@@ -590,10 +587,6 @@ async fn observability_stream(
     // Simple production-grade SSE: 5s pings + an initial "hello" with bot cell.
     // Real impl would fold over a tokio::sync::broadcast receiver from activity_feed.
     let bot_cell = state.captp.bot_cell_id.clone();
-    let nullifier_count = {
-        let set = state.nullifier_set.lock().await;
-        set.len()
-    };
 
     let stream = stream::unfold(0u64, move |mut seq| {
         let bot_cell = bot_cell.clone();
@@ -602,13 +595,12 @@ async fn observability_stream(
             let event = if seq == 1 {
                 Event::default()
                     .event("hello")
-                    .data(format!(r#"{{"bot_cell":"{}","nullifiers":{},"apps":{},"msg":"dregg-discord-bot observability stream live (soft-federation peer)"}}"#, bot_cell, nullifier_count, STARBRIDGE_APPS.len()))
+                    .data(format!(r#"{{"bot_cell":"{}","apps":{},"msg":"dregg-discord-bot observability stream live (soft-federation peer)"}}"#, bot_cell, STARBRIDGE_APPS.len()))
             } else {
                 Event::default().event("ping").data(format!(
-                    r#"{{"seq":{},"ts":"{}","nullifiers":{}}}"#,
+                    r#"{{"seq":{},"ts":"{}"}}"#,
                     seq,
                     chrono_like_now(),
-                    nullifier_count
                 ))
             };
             Some((Ok(event), seq))
@@ -740,12 +732,6 @@ fn queue_uri(queue_id: &str) -> String {
 }
 
 async fn cell_view_from_devnet(state: &BotState, id: &str) -> BotCellView {
-    let nullifier_known = {
-        let set = state.nullifier_set.lock().await;
-        set.iter()
-            .any(|n| hex::encode(n).starts_with(&id[..std::cmp::min(8, id.len())]))
-    };
-
     match state.devnet.get_cell_details(id).await {
         Ok(details) => BotCellView {
             id: details.cell_id,
@@ -756,7 +742,6 @@ async fn cell_view_from_devnet(state: &BotState, id: &str) -> BotCellView {
             has_program: details.program_vk.is_some(),
             program_vk: details.program_vk,
             created_by_factory: details.created_by_factory,
-            nullifier_known,
         },
         Err(e) => {
             warn!(cell_id = %id, error = %e, "failed to hydrate cell details from devnet");
@@ -769,7 +754,6 @@ async fn cell_view_from_devnet(state: &BotState, id: &str) -> BotCellView {
                 has_program: false,
                 program_vk: None,
                 created_by_factory: None,
-                nullifier_known,
             }
         }
     }
@@ -1132,7 +1116,6 @@ mod tests {
             event_bridge: EventBridge::new("http://localhost:0".into()),
             orchestrator: crate::orchestration::SessionOrchestrator::new(),
             federation_id_bytes: [0u8; 32],
-            nullifier_set: Mutex::new(Vec::new()),
             handoff_broker: Mutex::new(crate::handoff_flow::HandoffBroker::new(fed)),
             card_applets: crate::viewnode_applet::CardApplets::new(),
             channel_hermes: std::sync::Mutex::new(std::collections::HashMap::new()),

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Transclusion — Xanadu made honest · dregg</title>
+  <title>Transclusion: Xanadu made honest · dregg</title>
   <meta name="description" content="Quote the web without copying it: a transcluded span IS a verified dregg:// finalized read. Amend the source and the live quote follows; forge the bytes and the quote refuses to open; every quote leaves a receipt-pinned backlink.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
   <link rel="stylesheet" href="../assets/style.css">
@@ -120,34 +120,34 @@
     its identity and provenance and the link back to its source can never break. It was never honest,
     because nothing forced the quote to equal the source. Here it is honest: a transcluded span
     <strong>is</strong> a verified <code>dregg://</code> finalized read, running client-side in WebAssembly
-    in this tab. The displayed bytes are the source's committed bytes — content-addressed, receipt-pinned,
+    in this tab. The displayed bytes are the source's committed bytes: content-addressed, receipt-pinned,
     quorum-attested. Amend the source and a live quote follows; tamper the bytes and the quote
     <em>refuses to open</em>; and every quote registers a receipt-pinned backlink, so "who quotes me"
     is a verifiable fact, not a rotting index.
   </p>
 
   <div class="fallback" id="fallback">
-    <b>&#10005; the verifier is unavailable — nothing on this page is verified.</b><br>
+    <b>&#10005; the verifier is unavailable: nothing on this page is verified.</b><br>
     The WebAssembly transclusion engine failed to load, so no finalized read ran and no provenance was
-    checked. Every quote below stays a <em>darkened placeholder</em> — exactly what an honest client
+    checked. Every quote below stays a <em>darkened placeholder</em>: exactly what an honest client
     shows when it cannot verify. A failed check is never a pass; a forgery is never painted.
     <span id="fallback-why" style="display:block;margin-top:6px;font-family:var(--font-mono);font-size:0.75rem"></span>
   </div>
   <noscript>
     <div class="fallback" style="display:block">
-      <b>&#10005; scripts are disabled — nothing on this page is verified.</b>
+      <b>&#10005; scripts are disabled: nothing on this page is verified.</b>
       The quotes below stay darkened placeholders: the honest fallback, never a forgery.
     </div>
   </noscript>
 
   <!-- ── 1 · the parallel-source view ─────────────────────────────────────── -->
   <section class="panel">
-    <h2>1 &middot; The document and its sources — side by side</h2>
+    <h2>1 &middot; The document and its sources, side by side</h2>
     <p class="hint">
       The left column is a document that <em>transcludes</em> two published sources. Each quote is a real
       verified finalized read: the wasm engine publishes the sources into a genuine 3-of-3 quorum web of
       cells, then includes them. The right column shows each source's <em>full</em> committed text with the
-      quoted range marked — Nelson's "see the quote in its home." Jump links connect the two.
+      quoted range marked: Nelson's "see the quote in its home." Jump links connect the two.
     </p>
 
     <div class="controls">
@@ -160,30 +160,30 @@
 
     <div class="eel">
       <div>
-        <h3>the quoting document — <code>essay</code></h3>
+        <h3>the quoting document &middot; <code>essay</code></h3>
         <div class="doc" id="essay">
-          <p class="own">What the charter promises —</p>
+          <p class="own">What the charter promises:</p>
           <div class="quote dark" id="q-constitution">
-            <span class="qtext">&#9711; awaiting the verifier — nothing shown here is a quote yet</span>
+            <span class="qtext">&#9711; awaiting the verifier: nothing shown here is a quote yet</span>
             <span class="cite">unverified placeholder</span>
           </div>
-          <p class="own">— and what the field notes add:</p>
+          <p class="own">And what the field notes add:</p>
           <div class="quote dark" id="q-field-notes">
-            <span class="qtext">&#9711; awaiting the verifier — nothing shown here is a quote yet</span>
+            <span class="qtext">&#9711; awaiting the verifier: nothing shown here is a quote yet</span>
             <span class="cite">unverified placeholder</span>
           </div>
         </div>
       </div>
       <div>
-        <h3>the sources — full committed text, quoted range marked</h3>
+        <h3>the sources &middot; full committed text, quoted range marked</h3>
         <div class="src-card" id="src-constitution">
           <span class="badge">source &middot; constitution</span>
-          <div class="stext"><em style="color:var(--fg-muted)">unpublished — the verifier has not spoken</em></div>
+          <div class="stext"><em style="color:var(--fg-muted)">unpublished: the verifier has not spoken</em></div>
           <span class="prov">—</span>
         </div>
         <div class="src-card" id="src-field-notes">
           <span class="badge">source &middot; field-notes</span>
-          <div class="stext"><em style="color:var(--fg-muted)">unpublished — the verifier has not spoken</em></div>
+          <div class="stext"><em style="color:var(--fg-muted)">unpublished: the verifier has not spoken</em></div>
           <span class="prov">—</span>
         </div>
       </div>
@@ -199,8 +199,8 @@
     </div>
     <div class="readout" id="amend-out">
       the dial above chooses what the essay's quote shows: <span class="k">live</span> re-resolves the same
-      <span class="v">dregg://</span> ref on every render (the unbreakable link — it follows every amend);
-      <span class="k">snapshot</span> keeps the pin taken when the page loaded (I-confluence — the pinned
+      <span class="v">dregg://</span> ref on every render (the unbreakable link: it follows every amend);
+      <span class="k">snapshot</span> keeps the pin taken when the page loaded (I-confluence: the pinned
       receipt stays a valid leaf forever).
     </div>
   </section>
@@ -230,7 +230,7 @@
     <h2>3 &middot; A quote is a read, not a key</h2>
     <p class="hint">
       Projecting a transclusion for a viewer goes through the real membrane: the viewer's held authority is
-      met with the source's lineage, and the result can only ever <em>attenuate</em> — a quote confers no
+      met with the source's lineage, and the result can only ever <em>attenuate</em>: a quote confers no
       authority over the source beyond observing the cited value. A viewer whose authority cannot meet the
       lineage sees the span <strong>darkened</strong>: the citation survives, the bytes are withheld.
     </p>
@@ -238,7 +238,7 @@
       <div class="field">
         <label for="viewer-rights">viewer holds</label>
         <select id="viewer-rights">
-          <option value="signature" selected>signature (weaker — read-only)</option>
+          <option value="signature" selected>signature (weaker &middot; read-only)</option>
           <option value="either">either (writable)</option>
           <option value="none">none (wide open)</option>
           <option value="proof">proof</option>
@@ -274,10 +274,10 @@
 
   <!-- ── 4 · backlinks ────────────────────────────────────────────────────── -->
   <section class="panel">
-    <h2>4 &middot; Backlinks — who quotes the constitution?</h2>
+    <h2>4 &middot; Backlinks: who quotes the constitution?</h2>
     <p class="hint">
       The other half of Nelson's two-way link. Every <em>include</em> registers the observing document in a
-      reverse index, pinned to the receipt and content commitment it quoted — so a backlink is a verifiable
+      reverse index, pinned to the receipt and content commitment it quoted, so a backlink is a verifiable
       claim ("<code>essay</code> quoted value <code>V</code> at receipt <code>R</code>"), never a
       hand-maintained pointer that dangles. Amend the source above, then re-quote: the new observation pins
       the <em>new</em> value, and the old one visibly remains a citation of the old value. Quotes are dated,
@@ -297,7 +297,7 @@
       beside <a href="../dregg-works/">the dregg.works verify badge</a>) fetches the source document's bytes
       from any untrusted host, hashes them <em>in the visitor's browser</em>, and matches the hash against
       the on-chain commitment fetched from a node the visitor can point anywhere. Only a match paints the
-      span verified. A mismatch paints a refusal; an unreachable — or unconfigured — node leaves the
+      span verified. A mismatch paints a refusal; an unreachable (or unconfigured) node leaves the
       darkened placeholder. A failed check is never a pass.
     </p>
 <pre class="snippet">&lt;script src="https://&lt;your-host&gt;/transclude.js"&gt;&lt;/script&gt;
@@ -305,16 +305,16 @@
 &lt;blockquote <span class="a">data-dregg</span>="dregg://&lt;64-hex cell id&gt;<span class="a">#b=120-240</span>"
             <span class="a">cite</span>="https://any-host.example/charter.html"
             <span class="a">data-node</span>="https://&lt;a-node-api-base&gt;"&gt;
-  Your fallback text — shown darkened until the bytes verify,
+  Your fallback text, shown darkened until the bytes verify,
   and NEVER replaced by bytes that failed the check.
 &lt;/blockquote&gt;</pre>
     <p class="hint" style="margin-top:var(--s4);margin-bottom:0">
       <code>data-dregg</code> names the source cell (the fragment <code>#b=start-end</code> selects a byte
       range of the committed document); <code>cite</code> is where the untrusted bytes come from;
-      <code>data-node</code> picks which node answers for the on-chain commitment — the visitor's choice,
-      cross-checkable, and deliberately without a built-in default: no public devnet is currently
-      anchored, so a quote with no configured node stays a darkened placeholder saying exactly that —
-      verification against a live chain is unavailable until <code>data-node</code> (or the page-wide
+      <code>data-node</code> picks which node answers for the on-chain commitment (the visitor's choice,
+      cross-checkable, and deliberately without a built-in default): no public devnet is currently
+      anchored, so a quote with no configured node stays a darkened placeholder saying exactly that.
+      Verification against a live chain is unavailable until <code>data-node</code> (or the page-wide
       <code>meta name="dregg:node"</code> / <code>window.__DREGG__.node</code>) names a reachable node.
       The host merely ships bytes; it is never asked to be believed.
     </p>
@@ -416,7 +416,7 @@
     for (const [name, text] of Object.entries(DOCS)) {
       transclusion_publish(handle, name, text, 'dregg://' + name);
     }
-    transclusion_publish(handle, 'essay', 'What the charter promises — [quotes] — and what the field notes add.', 'dregg://essay');
+    transclusion_publish(handle, 'essay', 'What the charter promises: [quotes] and what the field notes add.', 'dregg://essay');
     transclusion_publish(handle, 'review', 'A review that also cites the charter.', 'dregg://review');
     // The real verified reads + the two-way-link writes: essay quotes both
     // sources, review quotes the constitution (so its in-degree is 2).
@@ -446,9 +446,9 @@
       const live = view('constitution', 'live');
       const snap = snapshots['constitution'];
       $('#amend-out').innerHTML =
-        `<span class="verdict ok">source amended — same dregg:// ref, new finalized value at height ${h}</span>\n` +
+        `<span class="verdict ok">source amended: same dregg:// ref, new finalized value at height ${h}</span>\n` +
         `<span class="k">live</span> <span class="v">now cites receipt ${short(live.receipt_hash)} (followed the amend${live.verifies ? ', still verifies' : ''})</span>\n` +
-        `<span class="k">snapshot</span> <span class="v">still cites receipt ${short(snap.receipt_hash)} (the pin did not move — flip the dial to see it)</span>`;
+        `<span class="k">snapshot</span> <span class="v">still cites receipt ${short(snap.receipt_hash)} (the pin did not move; flip the dial to see it)</span>`;
     } catch (e) {
       $('#amend-out').innerHTML = '<span class="verdict no">error:</span> ' + esc(String(e));
     }
@@ -460,13 +460,13 @@
       const v = transclusion_forge_attempt(handle, 'constitution', $('#forge-text').value || '(empty forge)');
       if (v.refused) {
         $('#forge-out').innerHTML =
-          `<span class="verdict no">✕ REFUSED — ${esc(v.reason)}</span>\n` +
+          `<span class="verdict no">✕ REFUSED · ${esc(v.reason)}</span>\n` +
           `<span class="k">the citation pins</span> <span class="v">blake3 ${esc(v.committed_content_hash)}</span>\n` +
           `<span class="k">the lying node served</span> <span class="v" style="text-decoration:line-through;color:var(--fg-muted)">${esc(v.forged_text)}</span>\n` +
-          `the forged bytes were never rendered as content — a quote that does not verify cannot be opened.`;
+          `the forged bytes were never rendered as content: a quote that does not verify cannot be opened.`;
       } else {
         $('#forge-out').innerHTML =
-          `<span class="verdict no">BUG: the forge was NOT refused — ${esc(v.reason)}</span>\n` +
+          `<span class="verdict no">BUG: the forge was NOT refused · ${esc(v.reason)}</span>\n` +
           `this must never happen; the demo asserts the refusal polarity. Please report it.`;
       }
     } catch (e) {
@@ -491,7 +491,7 @@
         // THE DARKENED SPAN: the citation survives; the bytes are withheld.
         el.classList.add('dark');
         el.classList.remove('refused');
-        el.querySelector('.qtext').textContent = '▨ bytes withheld — this viewer’s authority cannot meet the source lineage';
+        el.querySelector('.qtext').textContent = '▨ bytes withheld: this viewer’s authority cannot meet the source lineage';
         el.querySelector('.cite').innerHTML =
           `citation preserved: ${short(q.source_uri.replace('dregg://', ''))} · receipt ${short(q.receipt_hash)} · ` +
           `refused: ${esc(v.reason)}`;

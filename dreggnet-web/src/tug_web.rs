@@ -116,21 +116,21 @@ fn rules_html() -> String {
     format!(
         "<section class=\"panel\"><h2>The rules, in one screen</h2>\
          <ul class=\"rules\">\
-         <li><strong>{guilds} guilds are the {guilds} lanes</strong> — one thing, two names, and \
+         <li><strong>{guilds} guilds are the {guilds} lanes</strong> · one thing, two names, and \
          this page uses both: guild 3 <em>is</em> lane 3. They are weighted \
-         <code>2 2 2 3 3 4 5</code>, and there are {deck} <strong>favor cards</strong> in all — a \
+         <code>2 2 2 3 3 4 5</code>, and there are {deck} <strong>favor cards</strong> in all: a \
          favor <em>is</em> a card. That {deck} is a conservation tooth the executor enforces: no \
          favor is conjured or destroyed for the length of a round.</li>\
          <li><strong>Each seat holds six favors</strong>, hidden. Your opponent sees only how many \
          cards you hold and the committed root of your hand; the cards themselves are rendered to \
-         you and to nobody else. Every favor belongs to one lane — that is the lane it pulls, and \
+         you and to nobody else. Every favor belongs to one lane: that is the lane it pulls, and \
          what the lane pays is what it pays whoever ends up leading it.</li>\
-         <li><strong>Four actions, once each per round</strong> — Secret (1 card), Discard (2), \
+         <li><strong>Four actions, once each per round</strong> · Secret (1 card), Discard (2), \
          Gift (3), Competition (4). Whoever leads a lane takes its whole weight. \
          <strong>Nothing ends the round early</strong>: all twelve committed turns are always \
          played, and the winner is named once, at the reveal. The bars pick <em>which rule</em> \
          names them: 11 influence takes it outright, else leading 4 lanes, else the higher total \
-         influence, else the more lanes held — and only an exact dead heat on both is a draw. Every \
+         influence, else the more lanes held; and only an exact dead heat on both is a draw. Every \
          one of those clauses is a tooth: the executor refuses a claimed win the rules do not \
          make.</li>\
          <li>⚑ <strong>Spending an action does not move the lanes.</strong> This is the part that \
@@ -139,8 +139,8 @@ fn rules_html() -> String {
          reach no lane ever. A <strong>Gift</strong> or <strong>Competition</strong> puts its \
          favors in escrow, and they land on the two sides only when your opponent ANSWERS. So the \
          seven lane rows will often sit perfectly still right after your own move: that is the \
-         rules working. The running account of where all {deck} favors are — held, face down, \
-         burnt, placed — is what moves, and the table prints it.</li>\
+         rules working. The running account of where all {deck} favors are (held, face down, \
+         burnt, placed) is what moves, and the table prints it.</li>\
          <li><strong>A Gift or a Competition only PRESENTS favors.</strong> You cut; your opponent \
          chooses which side they take, and you cannot answer your own cut. Which of your four \
          actions to spend, in which order, and which cards to put in the cut, are all yours.</li>\
@@ -151,7 +151,7 @@ fn rules_html() -> String {
          down. The move and the proof that the card came from your own dealt hand land together \
          or not at all, a press out of turn is refused with nothing recorded, and the whole round \
          can be replayed afterwards from its accepted moves and come out the same way.</p>\
-         <p class=\"prose\"><strong>Honest about the play:</strong> a round is one round — there \
+         <p class=\"prose\"><strong>Honest about the play:</strong> a round is one round. There \
          is no match, no alternating opener, and the seat that answers the last cut has a real \
          measured edge. And the winner is not this page's opinion: the rules decide it, and if \
          they cannot, the round refuses to end rather than name somebody.</p>\
@@ -188,7 +188,7 @@ fn landing_page(notice: Option<&str>) -> String {
         rules = rules_html(),
     );
     document(
-        &format!("{} — Multiway-Tug", crate::PRODUCT_NAME),
+        &format!("{} · Multiway-Tug", crate::PRODUCT_NAME),
         "offerings",
         &body,
     )

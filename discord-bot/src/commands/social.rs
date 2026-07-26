@@ -134,7 +134,7 @@ pub async fn handle_leaderboard(ctx: &Context, command: &CommandInteraction, sta
                     format!("<@{user_id}>")
                 };
                 description.push_str(&format!(
-                    "{medal} **#{}** {user_display} — {total} DEC\n",
+                    "{medal} **#{}** {user_display} · {total} DEC\n",
                     i + 1
                 ));
             }
@@ -157,7 +157,7 @@ pub async fn handle_leaderboard(ctx: &Context, command: &CommandInteraction, sta
                 .take(5)
             {
                 receipt_lines.push_str(&format!(
-                    "{} DEC — {}\n",
+                    "{} DEC · {}\n",
                     tx.amount,
                     crate::commands::tx_recheck::receipt_ref(&tx.tx_hash),
                 ));
@@ -168,7 +168,7 @@ pub async fn handle_leaderboard(ctx: &Context, command: &CommandInteraction, sta
                 .field(
                     "What this is",
                     "Totals summed from the bot's local ledger. Every transfer behind them \
-                     committed as a real turn and recorded its chain receipt — the recent ones \
+                     committed as a real turn and recorded its chain receipt; the recent ones \
                      are below, each with a **⛓ re-check** press that asks the live node, not \
                      this bot's database.",
                     false,
@@ -274,7 +274,7 @@ pub(crate) async fn execute_history(
             if !rows.is_empty() {
                 embed = embed.field(
                     "Verify it yourself",
-                    "These rows render from the bot's local ledger — press **⛓ re-check** and \
+                    "These rows render from the bot's local ledger. Press **⛓ re-check** and \
                      the bot asks the live node whether that receipt is a committed turn on \
                      the chain, in front of you.",
                     false,
@@ -310,7 +310,7 @@ pub async fn handle_activity(ctx: &Context, command: &CommandInteraction, state:
 pub(crate) async fn execute_activity(state: &BotState) -> serenity::all::CreateEmbed {
     match state.devnet.get_recent_events(12, None).await {
         Ok(events) if events.is_empty() => embeds::dregg_embed("Devnet Activity").description(
-            "No committed turns observed yet. Be the first — try `/cipherclerk faucet` or \
+            "No committed turns observed yet. Be the first: try `/cipherclerk faucet` or \
              `/cipherclerk send`.",
         ),
         Ok(events) => {
@@ -327,7 +327,7 @@ pub(crate) async fn execute_activity(state: &BotState) -> serenity::all::CreateE
                     .map(|h| format!(" `{}...`", &h[..10.min(h.len())]))
                     .unwrap_or_default();
                 description.push_str(&format!(
-                    "**{}** — {} — {who}{turn}\n",
+                    "**{}** · {} · {who}{turn}\n",
                     event.event_type, event.summary,
                 ));
             }

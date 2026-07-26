@@ -764,7 +764,7 @@ fn rules_html(live_beacon: bool) -> String {
     let provenance = if live_beacon {
         format!(
             "<p><strong>Everyone gets the same dungeon today.</strong> It was drawn from a public \
-             random number published today by a public randomness service — so nobody, us included, \
+             random number published today by a public randomness service, so nobody, us included, \
              could pick it in advance. There are {DUNGEON_DAYS} possible dungeons, every one of them \
              checked beforehand to be beatable, and on any given day the best possible line spends \
              between 24 and {LIGHT_BREATH} of your {LIGHT_BREATH} breaths. There is almost no \
@@ -772,7 +772,7 @@ fn rules_html(live_beacon: bool) -> String {
         )
     } else {
         format!(
-            "<p><strong>Everyone gets the same dungeon today</strong> — but today's was derived \
+            "<p><strong>Everyone gets the same dungeon today</strong>, but today's was derived \
              from the date, because the public randomness service could not be reached. It is the \
              same dungeon for everybody and it is beatable, and it was also predictable in advance; \
              the label at the top of the run says which kind of day you are on. There are \
@@ -791,16 +791,16 @@ fn rules_html(live_beacon: bool) -> String {
          breaths of light for the whole run, every button spends at least one, and there is no way \
          to get more.</li>\
          <li><strong>The climb costs a breath a floor, and it is the only way out.</strong> So the \
-         light you have left is never the real number — subtract how deep you are. Standing on the \
+         light you have left is never the real number: subtract how deep you are. Standing on the \
          bottom floor, {DUNGEON_FLOORS} of your remaining breaths are already spoken for.</li>\
          <li><strong>Three of the {DUNGEON_RELICS} relics are keys.</strong> A locked way opens only \
-         if you are carrying its key, and a key is never hidden behind the door it opens — so every \
+         if you are carrying its key, and a key is never hidden behind the door it opens, so every \
          way down is openable if you go and fetch the key first.</li>\
          <li><strong>A guardian can be pressed or lunged at.</strong> Pressing costs two breaths and \
          nothing else. Lunging does the same for one breath and permanently costs you one carrying \
-         slot for the rest of the run — cheap now, expensive at the bottom.</li>\
+         slot for the rest of the run: cheap now, expensive at the bottom.</li>\
          <li><strong>You can carry {CARRY_CAP}, minus how deep you are, minus any lunge damage.</strong> \
-         That is {shallow} slots on floor 1 and {deep} at the bottom — and the bottom needs three \
+         That is {shallow} slots on floor 1 and {deep} at the bottom, and the bottom needs three \
          keys plus the prize, which is exactly {deep}. The dungeon gets stingier the further in you \
          go, on purpose.</li>\
          <li><strong>Banking ends the run, and you only get one.</strong> You can bank only on the \
@@ -810,7 +810,7 @@ fn rules_html(live_beacon: bool) -> String {
          {provenance}\
          <p><strong>Where your run lives.</strong> A run in progress is stored in this browser. By \
          default you are identified by a browser cookie with no password and <strong>no \
-         recovery</strong>, so clearing your browser data loses it with no way back — if a recovery \
+         recovery</strong>, so clearing your browser data loses it with no way back. If a recovery \
          phrase is offered in the navigation, claiming one is what makes an identity survive that, \
          and until you claim one it does not. A run you play to its end is submitted once to \
          <a href=\"/descent\">the day's board</a>, which re-plays every move before it will rank \
@@ -907,7 +907,7 @@ fn engine_door(engine: Engine, bundle: bool) -> String {
     if engine == Engine::Server {
         return if bundle {
             "<p class=\"nd-alt nd-alt-block\">Or <a href=\"/descent/play?engine=browser\">run the \
-             whole game inside this tab instead</a> — nothing about the run leaves your browser, and \
+             whole game inside this tab instead</a>: nothing about the run leaves your browser, and \
              the tab checks today's public random number itself rather than taking this server's word \
              for it. It costs a large one-time download and is slower to start.</p>"
                 .to_string()
@@ -915,7 +915,7 @@ fn engine_door(engine: Engine, bundle: bool) -> String {
             // Absent bundle, said BEFORE the click. `wasm/pkg` is gitignored, so this is the honest
             // state of any deployment that did not run `scripts/build-descent-wasm.sh`.
             "<p class=\"nd-alt nd-alt-block nd-door-off\">Running the game inside your own tab is \
-             not available on this deployment — the WebAssembly bundle was not built here. The \
+             not available on this deployment: the WebAssembly bundle was not built here. The \
              hosted game above is the whole game.</p>"
                 .to_string()
         };
@@ -925,7 +925,7 @@ fn engine_door(engine: Engine, bundle: bool) -> String {
          <a href=\"/descent/play\">Switch back to the server</a> if it is slow.</p>"
             .to_string()
     } else {
-        "<p class=\"nd-door-state nd-door-off\">Not available on this deployment — the \
+        "<p class=\"nd-door-state nd-door-off\">Not available on this deployment: the \
          WebAssembly bundle was not built here. The server engine above is the whole game.</p>"
             .to_string()
     };
@@ -1015,12 +1015,12 @@ fn shell_page(claimed_actor: Option<&str>, engine: Engine) -> String {
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
          <meta name=\"color-scheme\" content=\"dark\">\
-         <title>Play The Descent — {product}</title>{style}{play_style}</head><body>{topbar}\
+         <title>Play The Descent · {product}</title>{style}{play_style}</head><body>{topbar}\
          <main class=\"session nd-page\">\
          <header class=\"nd-intro\"><p class=\"nd-kicker\">Lean-authored · every move re-checked</p>\
          <h1>The Descent</h1>\
          <p>You go down carrying a torch that does not refill. Every verb spends one breath of it, \
-         the climb out included — and a relic is only yours once a proved exit banks it.</p>\
+         the climb out included, and a relic is only yours once a proved exit banks it.</p>\
          </header>\
          {start}{door}\
          <div id=\"descent-play-root\" data-engine=\"{engine}\" data-day-key=\"{day_key}\" \
@@ -1028,7 +1028,7 @@ fn shell_page(claimed_actor: Option<&str>, engine: Engine) -> String {
          data-guard-hp=\"{guard_hp}\"{claimed_attr}>{root_body}\
          </div>\
          <noscript><p class=\"nd-offline\" role=\"status\">The browser engine needs JavaScript \
-         on. The server engine does not — it is plain HTML and one form per move, and it is the \
+         on. The server engine does not; it is plain HTML and one form per move, and it is the \
          same game: <a href=\"{server}\">play it here</a>.</p></noscript>\
          {rules}\
          </main>{footer}\
@@ -1058,7 +1058,7 @@ fn shell_page(claimed_actor: Option<&str>, engine: Engine) -> String {
             (Engine::Browser, false) =>
                 "<p class=\"nd-fatal\" role=\"status\">This deployment \
                  has no WebAssembly bundle, so the browser engine cannot start. Nothing was \
-                 downloaded. Use the server engine above — it is the same game.</p>",
+                 downloaded. Use the server engine above: it is the same game.</p>",
             (Engine::Server, _) => "",
         },
         day_key = crate::esc(&day.key),
@@ -1247,7 +1247,7 @@ async function submitVerifiedRun(auto) {
     const outcome = lastShareRanked
       ? "Exact server replay passed. This crowned run now ranks in the native lane."
       : "Exact server replay passed. This settlement is shareable but did not crown, so it does not rank.";
-    say("good", (auto ? "Run settled — auto-anchored to the board. " : "") + outcome + durability + anchored);
+    say("good", (auto ? "Run settled: auto-anchored to the board. " : "") + outcome + durability + anchored);
   } catch (e) {
     lastShare = null;
     say("bad", (auto
@@ -1423,7 +1423,7 @@ function mapCell(glyph, tag, action, title, moved) {
   }
   const cell = node("button", cls, glyph);
   cell.type = "button";
-  cell.title = title ? title + " — " + action.label : action.label;
+  cell.title = title ? title + " · " + action.label : action.label;
   cell.setAttribute("aria-label", action.label);
   cell.dataset.turn = action.turn;
   cell.dataset.arg = String(action.arg);
@@ -1515,8 +1515,8 @@ function buildMap(sim, actions) {
     }
     band.append(row);
   };
-  custodyRow(GLYPH_PACK, CARRIED, "relic", "In your pack — still losable");
-  custodyRow(GLYPH_VAULT, BANKED, "vault", "Banked — a proved exit made it yours");
+  custodyRow(GLYPH_PACK, CARRIED, "relic", "In your pack · still losable");
+  custodyRow(GLYPH_VAULT, BANKED, "vault", "Banked · a proved exit made it yours");
   grid.append(band);
   return grid;
 }
@@ -1606,7 +1606,7 @@ function standingLine(sim, ended, banked, hoardHere) {
       (pack === 1 ? "" : "s") + " in the pack will never be banked, and no move from here " +
       "changes that.";
   }
-  return "Floor " + sim.depth + " of " + FLOORS + " — " + (hoardHere === 0
+  return "Floor " + sim.depth + " of " + FLOORS + ": " + (hoardHere === 0
     ? "nothing is left lying in the dark here."
     : hoardHere + " relic" + (hoardHere === 1 ? "" : "s") + " still lie" +
       (hoardHere === 1 ? "s" : "") + " in the dark here.");
@@ -1625,7 +1625,7 @@ function torchState(light, ended) {
 
 function torchSay(light, ended) {
   if (ended) return "the torch is out; the record is closed.";
-  if (light <= 0) return "the dark has closed — no verb can be paid for, and nothing more can be banked.";
+  if (light <= 0) return "the dark has closed: no verb can be paid for, and nothing more can be banked.";
   // ⚑ The climb is a verb PER FLOOR, not one verb. This line used to say "it costs one of these",
   // which is the price of the exit alone and the reason a player misreads the last four breaths.
   if (light <= 4) return "guttering. the climb out is a breath PER FLOOR, and then the exit.";
@@ -1646,41 +1646,41 @@ function pressures(sim, ended) {
     const home = climbHome(sim);
     if (home.ok) {
       lines.push({ tone: light - home.cost <= 2 ? "peril" : "warn",
-        text: "the way home costs " + home.cost + " light — " + sim.depth + " floor" +
+        text: "the way home costs " + home.cost + " light: " + sim.depth + " floor" +
           (sim.depth === 1 ? "" : "s") + " of climb and the exit itself. " +
           (light - home.cost) + " light left to spend down here." });
     } else {
-      lines.push({ tone: "peril", text: "STRANDED — " + light +
+      lines.push({ tone: "peril", text: "STRANDED · " + light +
         " light cannot buy the way out of floor " + sim.depth + ": it pays for " + home.floors +
         " floor" + (home.floors === 1 ? "" : "s") + " of climb and then dies. Nothing in the pack " +
         "will ever be banked." });
     }
   } else if (light <= 4) {
     // At the mouth the way home IS the exit, so the old wording is true here and only here.
-    lines.push({ tone: "peril", text: "the light is guttering — " + light +
+    lines.push({ tone: "peril", text: "the light is guttering: " + light +
       " left, and the exit itself costs " + LIGHT_FLEE });
   }
   if (sim.depth >= 1 && sim.wounds < GUARD_HP[sim.depth]) {
     const left = GUARD_HP[sim.depth] - sim.wounds;
-    lines.push({ tone: "peril", text: "the guardian stands — the hoard here stays shut until it falls (" +
+    lines.push({ tone: "peril", text: "the guardian stands: the hoard here stays shut until it falls (" +
       left + " more strike" + (left === 1 ? "" : "s") + ", " + left * 2 + " light)" });
   }
   const pack = countCustody(sim, CARRIED);
   if (pack + 1 + sim.depth > CAP) {
     lines.push({ tone: "warn", text:
-      "carrying rights are spent at this depth — the next relic would not fit" });
+      "carrying rights are spent at this depth: the next relic would not fit" });
   }
   if (pack > 0) {
     lines.push({ tone: "proof", text: pack + " relic" + (pack === 1 ? "" : "s") +
       " ride" + (pack === 1 ? "s" : "") +
-      " in the pack — nothing is yours until a proved exit banks it" });
+      " in the pack: nothing is yours until a proved exit banks it" });
   }
   // ⚑ NEVER LET AN ABSENCE SPEAK FOR ITSELF. With nothing pressing, the whole panel used to vanish —
   // and a missing panel is indistinguishable from a broken one. That is exactly the page a first-time
   // player opens on: turn 0, at the mouth. It is the only state that reaches here (below ground the
   // climb always has a price, and a pack is always losable), so it can name itself precisely.
   if (lines.length === 0) {
-    lines.push({ tone: "", text: "nothing presses on you yet — you stand at the mouth, the light " +
+    lines.push({ tone: "", text: "nothing presses on you yet: you stand at the mouth, the light " +
       "is long and the pack is empty. Every floor you take costs a breath to leave again." });
   }
   return lines;
@@ -1809,7 +1809,7 @@ function render() {
   shaft.append(buildLegend());
   shaft.append(node("p", "nd-legend-note",
     "One column per relic, kept for the whole run: you watch a relic travel out of the dark, " +
-    "into the pack, into the vault. A cell your torch picks out is one you may act on now — " +
+    "into the pack, into the vault. A cell your torch picks out is one you may act on now: " +
     "press it, or take the same move from the verbs below."));
   arena.append(shaft);
 
@@ -1938,7 +1938,7 @@ async function boot() {
     await wasm.default();
   } catch (e) {
     notice("The browser engine could not start: this deployment is not serving a WebAssembly "
-      + "bundle. Nothing is lost — the same game runs on the server, from the link above. ("
+      + "bundle. Nothing is lost. The same game runs on the server, from the link above. ("
       + errorText(e) + ")");
     return;
   }
@@ -2017,7 +2017,7 @@ const WASM_GLUE_PLACEHOLDER_JS: &str = r##"// PLACEHOLDER — the wasm `--target
 // Build it in the workspace package directory:
 //   wasm-pack build wasm --target web --out-dir pkg --release
 export default async function () {
-  throw new Error("dregg_wasm.js placeholder — the wasm bundle is not vendored (see descent_play.rs).");
+  throw new Error("dregg_wasm.js placeholder: the wasm bundle is not vendored (see descent_play.rs).");
 }
 export const __DESCENT_WASM_PLACEHOLDER = true;
 "##;

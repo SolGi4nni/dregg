@@ -70,7 +70,7 @@ impl DiscordOffering for GrainOffering {
 pub fn register() -> CreateCommand {
     CreateCommand::new("grain")
         .description(
-            "Drive a confined grain in this channel — each action one real cap-bounded grain turn",
+            "Drive a confined grain in this channel · each action one real cap-bounded grain turn",
         )
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,

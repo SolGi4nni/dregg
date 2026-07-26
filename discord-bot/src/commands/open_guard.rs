@@ -49,6 +49,12 @@ struct Pending {
     open: PendingOpenFn,
 }
 
+/// ⚑ **RESTART: PROCEED, deliberately** (`docs/reference/RESTART-SEMANTICS.md`). A parked
+/// replacement-open holds a `PendingOpenFn` — a live closure over this process's offering store
+/// — so it is not merely un-persisted, it is UNPERSISTABLE. Empty at boot means a Confirm button
+/// left over from before the restart finds nothing and is refused; the requester re-runs the
+/// command. Absence here refuses, and the thing it refuses is the destructive half (replacing a
+/// live session), so a forced restart can only cost a click.
 fn pending() -> &'static Mutex<HashMap<u64, Pending>> {
     static PENDING: std::sync::OnceLock<Mutex<HashMap<u64, Pending>>> = std::sync::OnceLock::new();
     PENDING.get_or_init(|| Mutex::new(HashMap::new()))
@@ -84,7 +90,7 @@ pub async fn refuse_with_confirm(
     let mut embed = embeds::warning_embed(
         &format!("A live {key} session is already open here"),
         &format!(
-            "Opening a new one would **wipe it** — its moves and receipts are process-local and \
+            "Opening a new one would **wipe it**: its moves and receipts are process-local and \
              unrecoverable. Press **Replace it** to confirm (only <@{requested_by}> can), or \
              **Keep it** to leave the live session untouched."
         ),
@@ -196,7 +202,7 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction) {
                         ctx,
                         component,
                         &format!(
-                            "The replacement {key} session refused to open ({why}) — the previous \
+                            "The replacement {key} session refused to open ({why}); the previous \
                              session, if still live, was not touched."
                         ),
                     )
@@ -214,8 +220,8 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction) {
                     edit_plain(
                         ctx,
                         component,
-                        "Nothing pending here (a restart clears pending replacements) — \
-                         re-run the open command.",
+                        "Nothing pending here (a restart clears pending replacements). \
+                         Re-run the open command.",
                     )
                     .await;
                 }
@@ -227,7 +233,7 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction) {
                         ctx,
                         component,
                         "The replacement could not be run (the offering service dropped the \
-                         job). Nothing here is trustworthy to report as replaced — re-run the \
+                         job). Nothing here is trustworthy to report as replaced. Re-run the \
                          open command and check `status` before playing on.",
                     )
                     .await;
@@ -237,7 +243,7 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction) {
         ID_CANCEL => {
             let text = match claim(channel, presser) {
                 Claim::Taken(p) => format!(
-                    "Kept the live {} session — the replacement was discarded.",
+                    "Kept the live {} session; the replacement was discarded.",
                     p.key
                 ),
                 Claim::NotYours => {

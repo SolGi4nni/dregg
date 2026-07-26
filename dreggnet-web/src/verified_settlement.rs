@@ -134,7 +134,7 @@ fn install_and_probe() -> Result<(), String> {
             "the verified deployed-constraint oracle did not register (the linked archive does \
              not export `dregg_constraint_admits`). On a native RELEASE build `dregg-cell` fails \
              CLOSED for the whole Lean-evaluated constraint subset, so every programmed-cell turn \
-             — the Descent, the dungeon, the campaign — would refuse"
+             (the Descent, the dungeon, the campaign) would refuse"
                 .to_string(),
         );
     }
@@ -205,7 +205,7 @@ fn install_and_probe() -> Result<(), String> {
     };
     if settle_ring_verified(&ledger, std::slice::from_ref(&overdraft)).is_ok() {
         return Err(
-            "the verified executor COMMITTED an under-funded leg — the gate is not deciding, \
+            "the verified executor COMMITTED an under-funded leg: the gate is not deciding, \
              it is rubber-stamping; refusing to treat settlement as verified"
                 .to_string(),
         );
@@ -219,8 +219,8 @@ fn install_and_probe() -> Result<(), String> {
 pub fn install_failure_advice(reason: &str) -> String {
     format!(
         "the verified executor is NOT fully armed in this process: {reason}. Depending on which \
-         half failed, either the sealed-bid market and the Dark Bazaar cannot settle — a player \
-         lands a listing and bids and is then refused — or every programmed-cell turn refuses \
+         half failed, either the sealed-bid market and the Dark Bazaar cannot settle (a player \
+         lands a listing and bids and is then refused) or every programmed-cell turn refuses \
          outright. This almost always means the linked Lean archive (`dregg-lean-ffi`'s \
          libdregg_lean.a) is absent or stale for this build."
     )

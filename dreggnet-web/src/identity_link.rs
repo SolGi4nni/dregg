@@ -511,18 +511,18 @@ impl LinkRefusal {
     fn message(&self) -> String {
         match self {
             LinkRefusal::NotFromOurPage => "Refused: this did not come from our page, so nothing \
-                 was linked and nothing was recorded — your code was not spent and your words were \
+                 was linked and nothing was recorded; your code was not spent and your words were \
                  not used. Open the link page here (/identity/link), paste your code, and try again. \
                  If something on another website submitted this for you, it was trying to attach an \
                  account to your identity without showing you which one."
                 .to_string(),
             LinkRefusal::NoPlatformConfigured => "Refused: this server holds no chat-platform \
-                 identity secret, so it cannot authenticate a link code from any bot — nothing was \
+                 identity secret, so it cannot authenticate a link code from any bot; nothing was \
                  linked, and nothing you could paste would change that. This is an operator setting, \
                  not something wrong with your code or your words."
                 .to_string(),
             LinkRefusal::MalformedCode => "Refused: that does not look like a link code. A code is \
-                 your account id, a colon, then a long token — copy the whole line the bot gave \
+                 your account id, a colon, then a long token. Copy the whole line the bot gave \
                  you, including the number at the front. Nothing was linked."
                 .to_string(),
             LinkRefusal::MalformedUid => "Refused: the part of the code before the colon is not an \
@@ -535,20 +535,20 @@ impl LinkRefusal {
                 code_window_minutes()
             ),
             LinkRefusal::CodeAlreadyUsed => "Refused: that code has already been used, so nothing \
-                 was linked by this attempt. Codes are single-use on purpose — otherwise somebody \
+                 was linked by this attempt. Codes are single-use on purpose; otherwise somebody \
                  who saw yours over your shoulder could attach their own words to your account \
                  afterwards. Ask the bot for a fresh one."
                 .to_string(),
             LinkRefusal::AccountNotConfirmed { platform, uid } => format!(
                 "Refused: nothing was linked, because the confirmation box was not ticked. This code \
-                 is for {} account {uid}. If that is not YOUR account — if somebody sent you this \
-                 code or this link — stop here: linking it would put their play on your record, and \
+                 is for {} account {uid}. If that is not YOUR account (if somebody sent you this \
+                 code or this link), stop here: linking it would put their play on your record, and \
                  there is no way to undo a link yet. Your 24 words were not stored and your code was \
                  not spent either way.",
                 platform.display()
             ),
             LinkRefusal::BadPhrase(detail) => format!(
-                "Refused: {detail} Nothing was linked, and your code was NOT spent — you can fix \
+                "Refused: {detail} Nothing was linked, and your code was NOT spent; you can fix \
                  the phrase and submit the same code again."
             ),
             LinkRefusal::SelfCheckFailed(detail) => format!(
@@ -558,7 +558,7 @@ impl LinkRefusal {
             ),
             LinkRefusal::NotRecorded(detail) => format!(
                 "Refused: the link was proven but could not be written to the shared record \
-                 ({detail}), so nothing is linked. This is an operator problem — the link store may \
+                 ({detail}), so nothing is linked. This is an operator problem: the link store may \
                  be read-only or misconfigured."
             ),
         }
@@ -572,11 +572,11 @@ fn phrase_detail(error: &dregg_sdk::mnemonic::MnemonicError) -> String {
     use dregg_sdk::mnemonic::MnemonicError;
     match error {
         MnemonicError::InvalidWordCount(n) => format!(
-            "that is {n} word{} — a dregg phrase is exactly 24.",
+            "that is {n} word{}; a dregg phrase is exactly 24.",
             if *n == 1 { "" } else { "s" }
         ),
         MnemonicError::UnknownWord(word) => format!(
-            "{:?} is not one of the 2048 words in the list — check that word's spelling.",
+            "{:?} is not one of the 2048 words in the list; check that word's spelling.",
             esc(word)
         ),
         MnemonicError::InvalidChecksum => "all 24 words are real words, but the phrase's own \
@@ -1094,7 +1094,7 @@ const LINK_STYLE: &str = r##"<style>
 /// to derive the platform one. `seed_identity` refuses to launder the same class of thing (it says
 /// plainly that browser turns are `Asserted`, not `Signed`); this matches that register.
 pub(crate) fn asymmetry_block() -> String {
-    "<div class=\"lk-asym\"><h3>What a link gives you — and what it does not change</h3><dl>\
+    "<div class=\"lk-asym\"><h3>What a link gives you, and what it does not change</h3><dl>\
      <dt>Your two keys stay two keys.</dt>\
      <dd>Nothing is imported and nothing is re-keyed. Your web identity is still the key your 24 \
      words derive; your Discord identity is still the key the bot derives. A link is a signed \
@@ -1102,11 +1102,11 @@ pub(crate) fn asymmetry_block() -> String {
      <dt>Your Discord identity is still CUSTODIAL, and linking does not change that.</dt>\
      <dd>The bot's key for you is <code>BLAKE3(bot_secret, your account id)</code>. Whoever operates \
      the bot holds <code>bot_secret</code>, so they can derive your Discord key and sign as you \
-     there — before this link, and after it. That is what running a chat bot means, and no link \
+     there (before this link, and after it). That is what running a chat bot means, and no link \
      ceremony can take it away. Only your 24 words are self-held; only they are yours in the sense \
      that nobody else can reproduce them.</dd>\
      <dt>So the two halves of \"you\" are not equally yours.</dt>\
-     <dd>If you want the version of you that <em>only</em> you can act as, that is the phrase — and \
+     <dd>If you want the version of you that <em>only</em> you can act as, that is the phrase, and \
      turns signed with it through a tool that holds it (the <code>dregg</code> CLI, on \
      <code>/act-signed</code>) are the only turns on this surface that carry a real signature. \
      Everything you press in this browser, on either side of the link, is still \
@@ -1116,8 +1116,8 @@ pub(crate) fn asymmetry_block() -> String {
      that counts both sides' tables and runs. It is a view, and it is honest about being one.</dd>\
      <dt>Who can read the record.</dt>\
      <dd>The operator. The link is stored in plaintext as \"this key and that account are one \
-     human\". The private version — proving you are one human across several platforms <em>without \
-     revealing which accounts</em> — exists in the tree and is not what this page does.</dd>\
+     human\". The private version, proving you are one human across several platforms <em>without \
+     revealing which accounts</em>, exists in the tree and is not what this page does.</dd>\
      </dl></div>"
         .to_string()
 }
@@ -1155,9 +1155,9 @@ fn platforms_block(store_path: &std::path::Path, root_pubkey_hex: &str) -> Strin
                  <code>{key}</code><span>{custody}</span></li>",
                 platform = esc(link.platform.as_str()),
                 uid = if link.platform == WEB_PLATFORM {
-                    " — this browser's identity".to_string()
+                    " · this browser's identity".to_string()
                 } else {
-                    format!(" — account {}", esc(&link.platform_uid))
+                    format!(" · account {}", esc(&link.platform_uid))
                 },
                 key = esc(&link.custodial_pubkey_hex),
                 custody = custody,
@@ -1173,11 +1173,11 @@ fn prefilled_note(prefilled: bool) -> &'static str {
     if !prefilled {
         return "";
     }
-    "<div class=\"notice ok\" role=\"status\">Your code is filled in below — add your 24 words and \
+    "<div class=\"notice ok\" role=\"status\">Your code is filled in below. Add your 24 words and \
      you are done.</div>\
      <p class=\"prose\" style=\"opacity:.75;font-size:.88rem\">That code travelled in this page's \
      address (it has been cleared from the address bar already). Inside its 15 minutes a code is a \
-     bearer token — somebody else holding it could attach <em>their</em> words to your account — so \
+     bearer token (somebody else holding it could attach <em>their</em> words to your account), so \
      on a shared or public machine prefer pasting it into the box by hand, and do not forward this \
      link. It cannot be used to act as you or to reach your words either way: a code grants a \
      grouping, never a key.</p>"
@@ -1196,8 +1196,8 @@ fn whose_account_note(prefill_code: Option<&str>) -> String {
     match prefill_code.and_then(code_names_account) {
         Some(uid) => format!(
             "<p class=\"prose\" style=\"margin:.9rem 0 0\">This code says it is for \
-             <strong>account {uid}</strong>. <strong>Is that your account?</strong> If it is not — if \
-             this link came from somebody else — close this page. Linking somebody else's account to \
+             <strong>account {uid}</strong>. <strong>Is that your account?</strong> If it is not (if \
+             this link came from somebody else), close this page. Linking somebody else's account to \
              your words would file their play under your name, and there is no un-link door yet. \
              (The number is what the code claims; it is checked for real when you submit.)</p>",
             uid = esc(uid),
@@ -1247,7 +1247,7 @@ fn link_page(
     // nobody can act on.
     if platforms.is_empty() {
         return document_with_head(
-            "Link your accounts — DreggNet",
+            "Link your accounts · DreggNet",
             "",
             LINK_STYLE,
             &format!(
@@ -1262,7 +1262,7 @@ fn link_page(
                  <h2>Why, exactly</h2>\
                  <p class=\"prose\">Linking works by a chat bot handing you a code that only a \
                  holder of that bot's identity secret could have minted. <strong>This server holds \
-                 no such secret</strong>, so it has nothing to check a code against — not \
+                 no such secret</strong>, so it has nothing to check a code against: not \
                  &ldquo;your code is wrong&rdquo;, but &ldquo;there is no bot this deployment shares \
                  an identity with&rdquo;. Nothing you could paste would change that, so there is no \
                  form here to mislead you with.</p>\
@@ -1272,7 +1272,7 @@ fn link_page(
                  <h2>For whoever runs this</h2>\
                  <p class=\"prose\">Set <code>{discord}</code> to the SAME 64-hex identity secret \
                  the Discord bot reads, and/or <code>{telegram}</code>, in this process's \
-                 environment — and point <code>DREGG_LINK_DIR</code> at the same directory every \
+                 environment, and point <code>DREGG_LINK_DIR</code> at the same directory every \
                  dregg unit uses, so a link recorded on one surface resolves on the others.</p>\
                  {asym}</main>",
                 notice = notice,
@@ -1292,14 +1292,14 @@ fn link_page(
             list = platforms_block(store_path, root),
         ),
         None => "<h2>No identity on this browser yet</h2>\
-             <p class=\"prose\">You can still link from here — the ceremony reads your 24 words, \
+             <p class=\"prose\">You can still link from here: the ceremony reads your 24 words, \
              not this browser's cookie, so it works on a device that has never seen us. If you have \
              not claimed an identity at all, <a href=\"/identity\">start there</a>: linking needs a \
              phrase to link TO.</p>"
             .to_string(),
     };
     document_with_head(
-        "Link your accounts — DreggNet",
+        "Link your accounts · DreggNet",
         "",
         LINK_STYLE,
         &format!(
@@ -1312,7 +1312,7 @@ fn link_page(
              <hr class=\"lk-sep\">\
              <h2>Link an account</h2>\
              <ol class=\"lk-steps\">{how}\
-             <li><strong>On a phone, just tap the link in the bot's reply</strong> — it opens this \
+             <li><strong>On a phone, just tap the link in the bot's reply</strong>: it opens this \
              page with the code already filled in, so the only thing left is your 24 words. \
              Otherwise copy the whole code (it looks like <code>1234567:AbCd…</code>) and paste it \
              below. A code is good for {minutes} minutes and works once.</li>\
@@ -1324,7 +1324,7 @@ fn link_page(
              {whose}\
              <label class=\"lk-check\"><input type=\"checkbox\" name=\"mine\" value=\"yes\">\
              <span>The account this code belongs to is <strong>mine</strong>. \
-             (If somebody else sent you this code or this link, it is <em>theirs</em> — linking it \
+             (If somebody else sent you this code or this link, it is <em>theirs</em>; linking it \
              would put their play on your record, and links cannot be undone yet.)</span></label>\
              <label for=\"phrase\">Your 24 words</label>\
              <textarea id=\"phrase\" name=\"phrase\" rows=\"3\" autocomplete=\"off\" \
@@ -1332,7 +1332,7 @@ fn link_page(
              ></textarea>\
              <p class=\"prose\" style=\"opacity:.75;font-size:.88rem;margin:.9rem 0 0\">\
              <strong>Why your words, here.</strong> The link is a signature by the key your words \
-             derive, and that key exists only while the words are in hand — nothing on the server or \
+             derive, and that key exists only while the words are in hand; nothing on the server or \
              in this browser holds it. So the signing happens inside this one request: the words are \
              turned into a key, one link claim is signed, and every byte of secret material is wiped \
              before the response goes out. This is the same path <a href=\"/identity\">restoring an \

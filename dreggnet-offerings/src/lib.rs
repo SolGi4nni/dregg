@@ -441,7 +441,7 @@ impl std::fmt::Display for OfferingError {
                 "this offering could not be opened on this server: something it needs did not come \
                  up, so it refuses to start rather than hand you a game that cannot judge your \
                  moves. Nothing was opened and nothing was recorded. That is a fault in how this \
-                 server was built and not in anything you did — tell an operator; the server log \
+                 server was built and not in anything you did. Tell an operator; the server log \
                  names the missing piece"
             ),
         }

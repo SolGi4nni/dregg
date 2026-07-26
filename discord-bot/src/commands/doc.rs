@@ -99,7 +99,7 @@ impl DiscordOffering for DocOffering {
 /// Register `/doc` (open / status / verify).
 pub fn register() -> CreateCommand {
     CreateCommand::new("doc")
-        .description("Open a shared collaborative document in this channel — each edit one real executor turn")
+        .description("Open a shared collaborative document in this channel · each edit one real executor turn")
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,
             "open",
@@ -169,7 +169,7 @@ async fn handle_open(ctx: &Context, command: &CommandInteraction, state: &BotSta
                     CreateInteractionResponseMessage::new()
                         // `Display` is the player sentence now (the raw text went to the operator
                         // log at the refusal), so it stands on its own after the title clause.
-                        .content(format!("The document did not open — {e}."))
+                        .content(format!("The document did not open: {e}."))
                         .ephemeral(true),
                 ),
             )

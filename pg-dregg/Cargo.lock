@@ -1050,7 +1050,10 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "bytemuck",
+ "chacha20poly1305",
+ "dregg-cell",
  "dregg-circuit",
+ "dregg-commit",
  "futures-channel",
  "getrandom 0.3.4",
  "getrandom 0.4.2",
@@ -1084,6 +1087,7 @@ dependencies = [
  "serde_json",
  "tracing",
  "wgpu",
+ "zeroize",
 ]
 
 [[package]]
@@ -1217,7 +1221,6 @@ dependencies = [
  "dregg-cell",
  "dregg-cell-crypto",
  "dregg-circuit",
- "dregg-circuit-prove",
  "dregg-commit",
  "dregg-dsl-runtime",
  "dregg-pq",
@@ -1232,6 +1235,22 @@ dependencies = [
  "tracing",
  "web-time",
  "x25519-dalek",
+]
+
+[[package]]
+name = "dregg-turn-prover"
+version = "0.1.0"
+dependencies = [
+ "dregg-cell",
+ "dregg-cell-crypto",
+ "dregg-circuit",
+ "dregg-circuit-prove",
+ "dregg-commit",
+ "dregg-turn",
+ "dregg-types",
+ "postcard",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -3038,6 +3057,7 @@ dependencies = [
  "dregg-circuit-prove",
  "dregg-lean-ffi",
  "dregg-turn",
+ "dregg-turn-prover",
  "libc",
  "pgrx",
  "pgrx-tests",

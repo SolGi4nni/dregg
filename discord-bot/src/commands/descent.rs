@@ -164,7 +164,7 @@ impl BeaconStatus {
         match self {
             BeaconStatus::Live { round } => format!("beacon: live round {round}"),
             BeaconStatus::PinnedFallback => "beacon: offline date-seeded fallback (not \
-                 beacon-verified fresh) — the world rotates by UTC day, but is not today's live \
+                 beacon-verified fresh) · the world rotates by UTC day, but is not today's live \
                  drand reveal"
                 .to_string(),
         }
@@ -693,7 +693,7 @@ fn advance_core<S: CharacterStore>(
                     }
                 } else {
                     board_note =
-                        "The descent ended without the hoard — it does not rank.".to_string();
+                        "The descent ended without the hoard; it does not rank.".to_string();
                 }
             }
             MoveResult::Landed {
@@ -1307,7 +1307,7 @@ pub fn verified_win_of(player: &str) -> Option<VerifiedWin> {
 pub fn register() -> CreateCommand {
     CreateCommand::new("descent")
         .description(
-            "THE DESCENT — today's beacon-seeded permadeath roguelite (your character carries)",
+            "THE DESCENT · today's beacon-seeded permadeath roguelite (your character carries)",
         )
         .add_option(
             CreateCommandOption::new(
@@ -1319,7 +1319,7 @@ pub fn register() -> CreateCommand {
                 CreateCommandOption::new(
                     CommandOptionType::String,
                     "class",
-                    "Pick your class if unclassed (warrior / mage / rogue) — frozen once chosen",
+                    "Pick your class if unclassed (warrior / mage / rogue) · frozen once chosen",
                 )
                 .add_string_choice("warrior", "warrior")
                 .add_string_choice("mage", "mage")
@@ -1345,7 +1345,7 @@ pub fn register() -> CreateCommand {
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,
             "today",
-            "Describe today's dungeon — its beacon-verified reveal + how it plays",
+            "Describe today's dungeon · its beacon-verified reveal + how it plays",
         ))
         // The weekly verify-gated bracket over the board's VERIFIED winners (backlog #16);
         // the handler lives in its own module (`crate::commands::tournament`).
@@ -1393,7 +1393,7 @@ async fn handle_play(ctx: &Context, command: &CommandInteraction, state: &BotSta
         respond_ephemeral_slash(
             ctx,
             command,
-            "You're opening Descent runs too fast — give it a moment. (A shared world executor \
+            "You're opening Descent runs too fast. Give it a moment. (A shared world executor \
              drives every run; this only bounds rapid-fire spam, never normal play.)",
         )
         .await;
@@ -1429,7 +1429,7 @@ async fn handle_play(ctx: &Context, command: &CommandInteraction, state: &BotSta
         let (narration, kind) = current_narration(user_id, &view);
         let embed = room_embed(&view, &narration, kind).field(
             "Your descent continues",
-            "You already have a live run today — here is your current room, with fresh move \
+            "You already have a live run today. Here is your current room, with fresh move \
              buttons (a re-open never abandons a live permadeath run). `/descent room` re-shows \
              it any time.",
             false,
@@ -1645,7 +1645,7 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
         respond_ephemeral(
             ctx,
             component,
-            "This button predates the turn-gate and no longer authorizes a move — nothing was \
+            "This button predates the turn-gate and no longer authorizes a move. Nothing was \
              committed. Run `/descent room` for your current room and its live buttons.",
         )
         .await;
@@ -1703,7 +1703,7 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
         respond_ephemeral(
             ctx,
             component,
-            "This is not your descent — run `/descent play` to begin your own.",
+            "This is not your descent. Run `/descent play` to begin your own.",
         )
         .await;
         return;
@@ -1716,7 +1716,7 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
         respond_ephemeral(
             ctx,
             component,
-            "You're taking Descent turns too fast — wait a moment. (Every move drives the shared \
+            "You're taking Descent turns too fast. Wait a moment. (Every move drives the shared \
              world executor; this only bounds rapid spam, never normal play.)",
         )
         .await;
@@ -1776,7 +1776,7 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
             let embed = room_embed(view, &narration, kind).field(
                 "⏳ Your turn is being taken",
                 "The world is resolving your move and the room ahead is being narrated (this can \
-                 take a moment). These buttons are spent — the room will re-render itself here.",
+                 take a moment). These buttons are spent; the room will re-render itself here.",
                 false,
             );
             update_message(
@@ -1838,7 +1838,7 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
             // player may retry this room.
             let (narration, kind) = current_narration(owner, &view);
             let embed = room_embed(&view, &narration, kind).field(
-                "Refused — the world disposed",
+                "Refused · the world disposed",
                 format!("```{}```", truncate(&why, 500)),
                 false,
             );
@@ -1972,7 +1972,7 @@ async fn refuse_expired_run(
     ack::followup_ephemeral(
         ctx,
         component,
-        "Your descent has expired — run `/descent play` to begin anew.",
+        "Your descent has expired. Run `/descent play` to begin anew.",
     )
     .await;
 }
@@ -2016,7 +2016,7 @@ async fn refuse_stale_press(
         ctx,
         component,
         &format!(
-            "That room has moved on — this button was minted at turn {pressed_turn} and your run \
+            "That room has moved on: this button was minted at turn {pressed_turn} and your run \
              is on turn {current_turn}. **Nothing was committed.** The message has been re-rendered \
              to your current room (`/descent room` re-shows it any time)."
         ),
@@ -2038,7 +2038,7 @@ async fn refuse_stale_press(
         "That button had expired",
         format!(
             "It was minted at turn {pressed_turn}; your run is on turn {current_turn}. No move \
-             was committed — here is the room you are actually in."
+             was committed. Here is the room you are actually in."
         ),
         false,
     );
@@ -2188,7 +2188,7 @@ async fn handle_board(ctx: &Context, command: &CommandInteraction, state: &BotSt
         Err(_) => {
             let embed = error_embed(
                 "Today's board is unavailable",
-                "the descent store is temporarily unavailable — try again in a moment",
+                "the descent store is temporarily unavailable; try again in a moment",
             );
             ack::edit_slash(ctx, command, embed, vec![]).await;
             return;
@@ -2229,29 +2229,29 @@ async fn handle_today(ctx: &Context, command: &CommandInteraction) {
              round gives a different dungeon."
         ),
         BeaconStatus::PinnedFallback => {
-            "today's dungeon is seeded OFFLINE from the calendar day — no live drand reveal has \
+            "today's dungeon is seeded OFFLINE from the calendar day: no live drand reveal has \
              reached this host yet. The world still rotates each UTC day and everyone plays the \
              byte-identical world, but it is NOT a fresh beacon-verified reveal."
                 .to_string()
         }
     };
     let desc = format!(
-        "**{title}** — {reveal_line}\n\n\
+        "**{title}** · {reveal_line}\n\n\
          Every move is one cap-bounded turn the verified executor admits:\n\
-         • **the warden** — a blow you could not survive is refused: the executor will not \
+         • **the warden** · a blow you could not survive is refused: the executor will not \
          let your HP fall below 1\n\
-         • **the field-dressing** — a one-shot heal; a second use is refused\n\
-         • **the sealed hoard-door** — opens only if you actually hold the key\n\
-         • **defeat is real** — a reckless line falls into a committed DEFEAT, and (hardcore) \
+         • **the field-dressing** · a one-shot heal; a second use is refused\n\
+         • **the sealed hoard-door** · opens only if you actually hold the key\n\
+         • **defeat is real** · a reckless line falls into a committed DEFEAT, and (hardcore) \
          your persistent character PERISHES, un-undoably\n\n\
          Your character (level / class / earned XP / a hardcore death) carries across days. A WON \
-         run posts to the no-cheat board — ranked only if it re-executes to the win.\n\n\
+         run posts to the no-cheat board, ranked only if it re-executes to the win.\n\n\
          Descend with `/descent play`.\n\n\
          **{status}**\n\n\
          _Named seams: the midnight auto-reveal; a web spectator page._",
         status = status.label(),
     );
-    let embed = base_embed(&format!("{title} — the day's reveal")).description(desc);
+    let embed = base_embed(&format!("{title} · the day's reveal")).description(desc);
     ack::edit_slash(ctx, command, embed, vec![]).await;
 }
 
@@ -2288,7 +2288,7 @@ fn status_block(view: &RunView) -> String {
     let state = if view.dead {
         "PERISHED (hardcore)"
     } else if view.won {
-        "SURVIVED — hoard seized"
+        "SURVIVED · hoard seized"
     } else if view.ended {
         "descent ended"
     } else {
@@ -2321,7 +2321,7 @@ fn room_embed(view: &RunView, narration: &str, kind: NarratorKind) -> CreateEmbe
         desc.push_str(&format!("_{}_", truncate(&view.prose, 800)));
     }
     let room = view.room.clone().unwrap_or_else(|| "the dark".to_string());
-    base_embed(&format!("{} — {}", view.day_title, room))
+    base_embed(&format!("{} · {}", view.day_title, room))
         .description(truncate(&desc, 4000))
         .field("Vitals", format!("```{}```", status_block(view)), false)
         .footer(footer(kind))
@@ -2339,14 +2339,14 @@ fn result_embed(
 ) -> CreateEmbed {
     let (title, verdict) = if view.won {
         (
-            "🏆 The hoard is seized — the descent is SURVIVED",
+            "🏆 The hoard is seized · the descent is SURVIVED",
             "You reached the hoard and carried it out. A verified win.".to_string(),
         )
     } else if view.dead {
         (
-            "💀 PERISHED — the descent is lost",
+            "💀 PERISHED · the descent is lost",
             "A blow you could not answer felled you. Your hardcore character has PERISHED, \
-             un-undoably — the death carries to every future day."
+             un-undoably; the death carries to every future day."
                 .to_string(),
         )
     } else {
@@ -2365,14 +2365,14 @@ fn result_embed(
         None => String::new(),
     };
     let body = format!(
-        "{verdict}{rank_line}\n\n{note}\n\n**{turns} receipted turns**, hash-linked — run \
+        "{verdict}{rank_line}\n\n{note}\n\n**{turns} receipted turns**, hash-linked. Run \
          `/descent verify` to re-check them by replay.",
         verdict = verdict,
         rank_line = rank_line,
         note = board_note,
         turns = view.turns,
     );
-    base_embed(&format!("{} — {}", view.day_title, title))
+    base_embed(&format!("{} · {}", view.day_title, title))
         .description(truncate(&body, 4000))
         .field(
             "Final vitals",
@@ -2504,7 +2504,7 @@ fn board_embed(
     me: Option<(&str, &str)>,
 ) -> CreateEmbed {
     let body = if view.entries.is_empty() {
-        "No verified survivors yet today. Be the first — `/descent play`.".to_string()
+        "No verified survivors yet today. Be the first: `/descent play`.".to_string()
     } else {
         let mut lines = String::new();
         for (rank, player, turns) in view.entries.iter().take(20) {
@@ -2520,10 +2520,10 @@ fn board_embed(
         }
         format!("```{}```", truncate(&lines, 1800))
     };
-    let mut embed = base_embed(&format!("{} — today's no-cheat board", view.day_title))
+    let mut embed = base_embed(&format!("{} · today's no-cheat board", view.day_title))
         .description(format!(
             "Ranked by turns-to-win (lower is better). A run ranks ONLY if its recorded receipt \
-             chain re-executes to the WIN on an independent re-run — a forged or incomplete run is \
+             chain re-executes to the WIN on an independent re-run; a forged or incomplete run is \
              refused.\n\n{body}"
         ))
         // The public inputs a STRANGER needs to verify a run outside the bot (backlog #9):
@@ -2543,7 +2543,7 @@ fn board_embed(
         embed = embed.field(
             "Verify it yourself",
             "Press **Re-verify #N** and the bot re-executes that entry's recorded moves on a \
-             FRESH world regenerated from the committed seed — live, in front of you. Or do it \
+             FRESH world regenerated from the committed seed (live, in front of you). Or do it \
              outside the bot: `procgen_dregg::daily_scene(seed)` → \
              `ugc_dregg::record_playthrough` → `Registry::submit` (the same gate).",
             false,
@@ -2599,7 +2599,7 @@ async fn handle_reverify(ctx: &Context, component: &ComponentInteraction, cid_he
         respond_ephemeral(
             ctx,
             component,
-            "You're re-verifying too fast — wait a moment. (Each re-verify re-executes a full run \
+            "You're re-verifying too fast. Wait a moment. (Each re-verify re-executes a full run \
              on the shared world executor; this only bounds rapid spam.)",
         )
         .await;
@@ -2673,7 +2673,7 @@ async fn handle_reverify(ctx: &Context, component: &ComponentInteraction, cid_he
         Rv::Gone => warn_embed(
             "This entry is no longer on the live board",
             "The board re-verifies from its durable store on every boot and each day plays a \
-             new world — an entry from an earlier day (or a row that failed boot replay) has \
+             new world: an entry from an earlier day (or a row that failed boot replay) has \
              no live handle to re-execute. Today's board: `/descent board`.",
         ),
         Rv::Checked {
@@ -2689,12 +2689,12 @@ async fn handle_reverify(ctx: &Context, component: &ComponentInteraction, cid_he
                 .and_then(|s| s.list_universes().ok())
                 .and_then(|us| us.into_iter().find(|u| u.id_hex == universe_hex))
                 .map(|u| u.seed_hex)
-                .unwrap_or_else(|| "(no durable store row — in-process board only)".to_string());
+                .unwrap_or_else(|| "(no durable store row · in-process board only)".to_string());
             match result {
-                Ok(turns) => base_embed("✓ Re-verified — the run re-executes to the WIN")
+                Ok(turns) => base_embed("✓ Re-verified · the run re-executes to the WIN")
                     .description(format!(
                         "**Re-executed {turns} moves on a fresh world** regenerated from the \
-                         committed seed, reached the WIN — checked just now, in front of you \
+                         committed seed, reached the WIN. Checked just now, in front of you \
                          ({elapsed_ms} ms). Board entry **#{rank} · {player}** is not taken on \
                          trust; it was re-run through the same no-cheat gate that admitted it.",
                     ))
@@ -2713,11 +2713,11 @@ async fn handle_reverify(ctx: &Context, component: &ComponentInteraction, cid_he
                     )
                     .footer(footer(NarratorKind::Scripted)),
                 Err(why) => error_embed(
-                    "✗ Re-verification FAILED — this entry does not re-execute",
+                    "✗ Re-verification FAILED · this entry does not re-execute",
                     &format!(
                         "Board entry **#{rank} · {player}** did NOT survive an independent \
                          re-run just now ({elapsed_ms} ms): `{why}`. A board row that fails \
-                         its own replay deserves zero trust — this is the check working, \
+                         its own replay deserves zero trust: this is the check working, \
                          not a cosmetic error.",
                     ),
                 ),

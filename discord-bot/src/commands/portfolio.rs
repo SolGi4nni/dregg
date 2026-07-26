@@ -554,10 +554,10 @@ pub fn register_status() -> CreateCommand {
         // Covers both audiences honestly: a hidden-information offering answers with the invoker's
         // OWN private view as a fresh ephemeral; a public one re-posts its board to the channel.
         .description(
-            "Show a live game in this channel — your own private view if it has one. Reads only",
+            "Show a live game in this channel: your own private view if it has one. Reads only",
         )
         .add_option(offering_option(
-            "Which live offering to show — your own view of it if it is a hidden game",
+            "Which live offering to show · your own view of it if it is a hidden game",
         ))
 }
 
@@ -743,7 +743,7 @@ pub async fn open_offering_by_key(
             let embed = CreateEmbed::new()
                 .title("Unknown offering")
                 .description(format!(
-                    "`{other}` is not in the portfolio — pick one of the `/play` choices."
+                    "`{other}` is not in the portfolio. Pick one of the `/play` choices."
                 ))
                 .color(0xE63946);
             ack::edit_slash(ctx, command, embed, vec![]).await;
@@ -921,7 +921,7 @@ pub async fn handle_cheat(ctx: &Context, command: &CommandInteraction, state: &B
             let embed = match crate::commands::menus::offering_door(key) {
                 Some(door) if door.reachable => {
                     embeds::dregg_embed(&format!("`{key}` has its own door")).description(format!(
-                        "That one is not opened through `/play open` — run `{}`. It was never \
+                        "That one is not opened through `/play open`. Run `{}`. It was never \
                          hidden from you; it just answers to a different command.",
                         door.open
                     ))
@@ -930,7 +930,7 @@ pub async fn handle_cheat(ctx: &Context, command: &CommandInteraction, state: &B
                 // cannot type is worse than admitting the offering is closed.
                 _ => embeds::dregg_embed(&format!("`{key}` is not open here right now"))
                     .description(format!(
-                        "You guessed a real one — `{key}` exists, it is built, and it still \
+                        "You guessed a real one: `{key}` exists, it is built, and it still \
                          plays. It is just not on this server's command list at the moment, so \
                          there is nothing for you to type and nothing was opened: it came off the \
                          shelf, and un-listing things is how the shelf stays short.\n\nWhat IS \
@@ -948,7 +948,7 @@ pub async fn handle_cheat(ctx: &Context, command: &CommandInteraction, state: &B
                 ctx,
                 command,
                 embeds::dregg_embed("⬆ ⬆ ⬇ ⬇ ⬅ ➡ ⬅ ➡ 🅑 🅐").description(
-                    "**30 lives granted.**\n\nRefused: no such turn (nothing committed — \
+                    "**30 lives granted.**\n\nRefused: no such turn (nothing committed · \
                      anti-ghost).\n\nThe referee re-ran it against the rules and declined. That \
                      is the whole product, and you just made it say so out loud.",
                 ),
@@ -960,7 +960,7 @@ pub async fn handle_cheat(ctx: &Context, command: &CommandInteraction, state: &B
                 ctx,
                 command,
                 embeds::dregg_embed("Nothing answers to that").description(format!(
-                    "`{}` opens no door here. No harm done — this box only ever opens something \
+                    "`{}` opens no door here. No harm done: this box only ever opens something \
                      that already exists, so a wrong guess costs you nothing.\n\nOn the shelf: \
                      {}. `/play menu` shows them properly.",
                     typed.chars().take(60).collect::<String>(),
@@ -1366,7 +1366,7 @@ async fn open_and_post<O: DiscordOffering>(
                 ack::followup_slash_ephemeral_surface(
                     ctx,
                     command,
-                    "**Your private view** — only you can read this hand / sealed move. Use the shared board's controls to act.",
+                    "**Your private view** · only you can read this hand / sealed move. Use the shared board's controls to act.",
                     private_embed,
                     vec![],
                 )

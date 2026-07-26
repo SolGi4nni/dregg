@@ -55,22 +55,22 @@ pub fn publish_note(universe: &Universe, pin: bool) -> String {
     let pin_line = if pin {
         match pin_universe(universe) {
             Ok(p) => format!(
-                "📌 pinned to `{}` ({} bytes) — durable across gateways.",
+                "📌 pinned to `{}` ({} bytes) · durable across gateways.",
                 ipfs_api_base(),
                 p.payload_len
             ),
             Err(e) => format!(
-                "⚠ pin to `{}` refused: {e}\nThe CID above is still the real address — \
+                "⚠ pin to `{}` refused: {e}\nThe CID above is still the real address; \
                  any node that pins the payload serves it.",
                 ipfs_api_base()
             ),
         }
     } else {
-        "not pinned — pass `pin:true` to pin it to the configured IPFS node.".to_string()
+        "not pinned · pass `pin:true` to pin it to the configured IPFS node.".to_string()
     };
     format!(
         "CID `{cid}`\n{pin_line}\nFetching by CID re-verifies content AND authorship \
-         (`fetch_universe` re-derives the universe id — a lying gateway is refused)."
+         (`fetch_universe` re-derives the universe id; a lying gateway is refused)."
     )
 }
 
@@ -78,7 +78,7 @@ pub fn publish_note(universe: &Universe, pin: bool) -> String {
 pub fn show_note(universe: &Universe) -> String {
     match cid_of(universe) {
         Ok(cid) => format!(
-            "payload CID `{cid}` — fetchable + re-verifiable off any gateway \
+            "payload CID `{cid}` · fetchable + re-verifiable off any gateway \
              (`pin:true` at publish makes it durable)."
         ),
         Err(e) => format!("CID derivation refused: {e}"),

@@ -161,7 +161,7 @@ the same human on boards + leaderboards.</p>
 <div id="panel-passkey" class="card">
   <div id="key-none">
     <b>No dregg key on this device yet</b>
-    <p><small>Choose one — a new key is created ON this device and locked behind a passkey (or a
+    <p><small>Choose one: a new key is created ON this device and locked behind a passkey (or a
     passphrase). It never leaves the device unencrypted. <b>Back it up</b> after creating, or it
     lives only here.</small></p>
     <button id="do-create">✨ Create a new dregg key here</button>
@@ -177,7 +177,7 @@ the same human on boards + leaderboards.</p>
     <button id="do-backup" class="ghost">🔑 Back up my key</button>
   </div>
   <div id="pass-fallback" class="hidden">
-    <p><small>No passkey PRF on this device — using a passphrase. Pick something long + unguessable
+    <p><small>No passkey PRF on this device: using a passphrase. Pick something long + unguessable
     (≥ 12 chars); a short passphrase can be brute-forced from a stolen device.</small></p>
     <input id="passphrase" type="password" placeholder="passphrase to lock your key" autocomplete="off">
     <button id="do-passphrase">🔑 Continue with passphrase</button>
@@ -326,8 +326,8 @@ async function createOrUnlock(create){
   try { prf = await prfSecret(create); }
   catch(e){
     if (e instanceof NoPrf){ $("pass-fallback").classList.remove("hidden");
-      setStatus("no passkey PRF here — set a passphrase below.", "warn"); return; }
-    if (e instanceof PkFailed){ setStatus("✗ passkey " + e.message + " — tap again to retry (not falling back).", "err"); return; }
+      setStatus("no passkey PRF here: set a passphrase below.", "warn"); return; }
+    if (e instanceof PkFailed){ setStatus("✗ passkey " + e.message + ": tap again to retry (not falling back).", "err"); return; }
     throw e;
   }
   const aes = await aesFromRaw(prf.slice(0,32)); zero(prf);
@@ -335,7 +335,7 @@ async function createOrUnlock(create){
   let seed;
   if (rec){
     const r = JSON.parse(rec);
-    if (r.mode !== "prf"){ setStatus("this device's key is passphrase-locked — use the passphrase.", "err"); return; }
+    if (r.mode !== "prf"){ setStatus("this device's key is passphrase-locked: use the passphrase.", "err"); return; }
     seed = await unwrapSeed(aes, r);
   } else {
     seed = ed.utils.randomPrivateKey();

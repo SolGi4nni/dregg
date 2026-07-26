@@ -141,7 +141,7 @@ impl std::fmt::Display for WorldError {
 /// duplicated by necessity (no shared crate sits below both) and pinned identical by the
 /// refusal-copy gate, which asserts the two are equal.
 const COMMIT_FAILED_NOTHING_CHANGED: &str =
-    "Something went wrong committing that move — nothing was changed. Try again in a moment.";
+    "Something went wrong committing that move; nothing was changed. Try again in a moment.";
 
 impl WorldError {
     /// ⚑ **THE PLAYER HALF of this refusal.** [`Display`](std::fmt::Display) above is the OPERATOR's

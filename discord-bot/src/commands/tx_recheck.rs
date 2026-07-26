@@ -112,9 +112,9 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
 
 /// The found-on-chain embed: what the node's receipt chain says about this hash, just now.
 fn found_embed(hash: &str, details: &TurnDetails, node_url: &str) -> serenity::all::CreateEmbed {
-    embeds::success_embed("✓ Found on the chain's receipt chain — checked just now")
+    embeds::success_embed("✓ Found on the chain's receipt chain · checked just now")
         .description(format!(
-            "The node at `{node}` serves a committed turn for this hash — the bot's ledger row \
+            "The node at `{node}` serves a committed turn for this hash; the bot's ledger row \
              has a live chain counterpart. Below is what the CHAIN (not the bot's database) \
              reports; fetch it yourself: `GET {node}/api/receipts`.",
             node = node_url.trim_end_matches('/'),
@@ -139,7 +139,7 @@ fn not_found_text(hash: &str, err: &str) -> String {
         "`{short}…` has no committed turn in the receipt window the node currently serves \
          ({err}). The node's window is finite: an old receipt may have scrolled past it, or \
          the devnet ledger was reset since this row was recorded. The bot's local row still \
-         says what it said — it just cannot be independently confirmed against the live chain \
+         says what it said; it just cannot be independently confirmed against the live chain \
          right now.",
         short = &hash[..12.min(hash.len())],
     )

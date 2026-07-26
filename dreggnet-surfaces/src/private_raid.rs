@@ -1288,7 +1288,7 @@ impl ProofAssignedRaidOffering {
         if session.party.seat_count() == 0 && actor.as_str() != session.roster[0] {
             return Err(
                 "The player who opened this raid has to take their seat before anyone else can \
-                 claim one. Nothing was changed — wait for them to claim, then claim yours."
+                 claim one. Nothing was changed. Wait for them to claim, then claim yours."
                     .to_string(),
             );
         }
@@ -1297,7 +1297,7 @@ impl ProofAssignedRaidOffering {
             // they need is the role the proof gave them and the press that claims it.
             return Err(format!(
                 "The proof assigned you the {} role, and that is the only one you can claim. \
-                 Nothing was changed — claim {} instead.",
+                 Nothing was changed. Claim {} instead.",
                 expected.name(),
                 expected.name()
             ));
@@ -1488,7 +1488,7 @@ impl ProofAssignedRaidOffering {
                 // comment: this table is not a fogged hand, it is the STATEMENT, and it
                 // is the same table for a seat, a teammate, a spectator and a stranger.
                 text(
-                    "WHAT IS SECRET AND WHAT IS NOT: this table is the proof's PUBLIC STATEMENT, so every viewer — seated, teammate, spectator, or anonymous — reads the same four roles, and must, because anyone can recompute them from the receipt against the pinned verifier key. The private half never reaches this host at all: the 4x4 suitability scores, the admissibility matrix, the blinding, and the aggregate score stay with the Tier-1 producer, and the input root above is a commitment to them, not a window into them. This offering therefore declares no hidden information, and a shared chat may paint it in full.",
+                    "WHAT IS SECRET AND WHAT IS NOT: this table is the proof's PUBLIC STATEMENT, so every viewer (seated, teammate, spectator, or anonymous) reads the same four roles, and must, because anyone can recompute them from the receipt against the pinned verifier key. The private half never reaches this host at all: the 4x4 suitability scores, the admissibility matrix, the blinding, and the aggregate score stay with the Tier-1 producer, and the input root above is a commitment to them, not a window into them. This offering therefore declares no hidden information, and a shared chat may paint it in full.",
                 ),
             ],
         )
@@ -1568,7 +1568,7 @@ impl ProofAssignedRaidOffering {
             children.push(crate::menu(action_menu(actions)));
         }
         Surface(section(
-            "The Ash Gate Raid — prove, muster, choose, fight",
+            "The Ash Gate Raid · prove, muster, choose, fight",
             "accent",
             children,
         ))
@@ -2221,7 +2221,7 @@ impl HostedProofAssignedRaidOffering {
             children.push(crate::menu(action_menu(vec![Self::join_action()])));
         }
         Surface(section(
-            "The Ash Gate Raid — muster the proof roster",
+            "The Ash Gate Raid · muster the proof roster",
             "accent",
             children,
         ))

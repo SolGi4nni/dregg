@@ -353,7 +353,7 @@ async fn handle_status(ctx: &Context, command: &CommandInteraction, state: &BotS
             ),
         Err(DevnetError::Status { code: 404, .. }) => embeds::warning_embed(
             "No Such Bounty",
-            "No cell with that ID exists on-chain yet. Bounty cells are factory-born — create one via the Starbridge seed or the `/dregg` dashboard first.",
+            "No cell with that ID exists on-chain yet. Bounty cells are factory-born. Create one via the Starbridge seed or the `/dregg` dashboard first.",
         ),
         Err(e) => embeds::error_embed("Status Unavailable", &e.user_message("read the bounty cell")),
     };

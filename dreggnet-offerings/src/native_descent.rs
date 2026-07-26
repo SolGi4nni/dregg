@@ -836,7 +836,7 @@ impl NativeDescentOffering {
                 .ok_or_else(|| {
                     OfferingError::Deploy(
                         "this Descent is bound to the live daily beacon and no verified day is \
-                         resolved right now — refusing to open on a pre-computable provenance \
+                         resolved right now: refusing to open on a pre-computable provenance \
                          root (fetch today's drand round, then retry)"
                             .to_string(),
                     )
@@ -898,7 +898,7 @@ impl NativeDescentOffering {
             // the bottom, where capacity is `CAP - FLOORS` and the prize needs all of it.
             Action::new(
                 format!(
-                    "⚡ Lunge — one light, one carry slot forfeit ({}/{} grip broken){}",
+                    "⚡ Lunge · one light, one carry slot forfeit ({}/{} grip broken){}",
                     sim.harm,
                     HARMCAP,
                     light_cost(LIGHT_LUNGE)
@@ -1159,7 +1159,7 @@ impl Offering for NativeDescentOffering {
             .actor
             .as_ref()
             .map(|actor| actor.as_str())
-            .unwrap_or("unclaimed — the first landed move binds the player");
+            .unwrap_or("unclaimed · the first landed move binds the player");
         let mut children = vec![descent_vitals_section(sim), descent_shaft_section(sim)];
         let actions = self.actions(session);
         if !actions.is_empty() {
@@ -1207,7 +1207,7 @@ impl Offering for NativeDescentOffering {
                         completion.banked_relics.len()
                     )),
                     ViewNode::Text(if completion.banked_notes.is_empty() {
-                        "no relics banked — nothing was minted".to_string()
+                        "no relics banked · nothing was minted".to_string()
                     } else {
                         format!(
                             "minted as owned notes on run day-seed {}: {}",
@@ -1299,7 +1299,7 @@ impl Offering for NativeDescentOffering {
             });
         }
         Surface(ViewNode::Section {
-            title: "The Descent — Lean-authored".to_string(),
+            title: "The Descent · Lean-authored".to_string(),
             tag: "accent".to_string(),
             children,
         })
@@ -2869,8 +2869,8 @@ pub(crate) fn descent_vitals_section(sim: &Sim) -> ViewNode {
 /// Where the run STANDS, as a section title — the mouth, a numbered floor, or the frozen tomb.
 pub(crate) fn descent_floor_title(sim: &Sim) -> String {
     match (sim.fate, sim.depth) {
-        (0, 0) => "The living descent — at the mouth".to_string(),
-        (0, depth) => format!("The living descent — floor {depth} of {FLOORS}"),
+        (0, 0) => "The living descent · at the mouth".to_string(),
+        (0, depth) => format!("The living descent · floor {depth} of {FLOORS}"),
         _ => "The banked tomb".to_string(),
     }
 }
@@ -2968,27 +2968,27 @@ fn descent_standing(sim: &Sim) -> String {
     let (word, _) = descent_status(sim);
     match word {
         "BANKED" => format!(
-            "{word} — the tomb is frozen. {} relic{} came out with you.",
+            "{word}: the tomb is frozen. {} relic{} came out with you.",
             sim.bank(),
             if sim.bank() == 1 { "" } else { "s" }
         ),
         "THE LIGHT IS DEAD" => format!(
-            "{word} — {} relic{} still in the pack never became yours.",
+            "{word}: {} relic{} still in the pack never became yours.",
             sim.pack(),
             if sim.pack() == 1 { "" } else { "s" }
         ),
         "STRANDED" => format!(
-            "{word} — floor {} is as high as the light reaches. {} relic{} in the pack will never \
+            "{word}: floor {} is as high as the light reaches. {} relic{} in the pack will never \
              be banked, and no move from here changes that.",
             sim.depth,
             sim.pack(),
             if sim.pack() == 1 { "" } else { "s" }
         ),
         _ if sim.depth == 0 => {
-            format!("{word} — you stand at the mouth; {FLOORS} floors lie below.")
+            format!("{word}: you stand at the mouth; {FLOORS} floors lie below.")
         }
         _ => format!(
-            "{word} — {} relic{} lying on this floor.",
+            "{word}: {} relic{} lying on this floor.",
             sim.hoard_at(sim.depth),
             if sim.hoard_at(sim.depth) == 1 {
                 ""
@@ -3014,14 +3014,14 @@ fn descent_pressures(sim: &Sim) -> Vec<ViewNode> {
     if sim.depth >= 1 {
         match climb_home(sim) {
             Ok(cost) => out.push(ViewNode::Text(format!(
-                "⚠ the way home costs {cost} light — {} floor{} of climb and the exit itself. {} \
+                "⚠ the way home costs {cost} light: {} floor{} of climb and the exit itself. {} \
                  light left to spend down here.",
                 sim.depth,
                 if sim.depth == 1 { "" } else { "s" },
                 light.saturating_sub(cost)
             ))),
             Err(floors) => out.push(ViewNode::Text(format!(
-                "⚠ STRANDED — {light} light cannot buy the way out of floor {}: it pays for {floors} \
+                "⚠ STRANDED. {light} light cannot buy the way out of floor {}: it pays for {floors} \
                  floor{} of climb and then dies. Nothing in the pack will ever be banked.",
                 sim.depth,
                 if floors == 1 { "" } else { "s" }
@@ -3030,7 +3030,7 @@ fn descent_pressures(sim: &Sim) -> Vec<ViewNode> {
     } else if light <= 4 {
         // At the mouth the way home IS the exit, so the old wording is true here and only here.
         out.push(ViewNode::Text(format!(
-            "⚠ the light is guttering — {light} left, and the exit itself costs {LIGHT_FLEE}"
+            "⚠ the light is guttering: {light} left, and the exit itself costs {LIGHT_FLEE}"
         )));
     }
     // The toll is THIS DAY's: the drawn map decides how much vitality this floor's guardian has,
@@ -3039,7 +3039,7 @@ fn descent_pressures(sim: &Sim) -> Vec<ViewNode> {
     let owed = sim.guard_hp(sim.depth).saturating_sub(sim.wounds);
     if sim.depth >= 1 && owed > 0 {
         out.push(ViewNode::Text(format!(
-            "⚠ the guardian stands — the floor's hoard stays shut until it falls ({owed} more strike{}, {} light)",
+            "⚠ the guardian stands: the floor's hoard stays shut until it falls ({owed} more strike{}, {} light)",
             if owed == 1 { "" } else { "s" },
             owed * LIGHT_SMITE
         )));
@@ -3048,17 +3048,13 @@ fn descent_pressures(sim: &Sim) -> Vec<ViewNode> {
     // omitted here too, so a run that had lunged was told nothing at all in the one state where the
     // warning matters most — it had LESS room than the meter beside it already overstated.
     if sim.pack() + 1 + sim.depth + sim.harm > CAP {
-        let broken = if sim.harm == 0 {
-            String::new()
-        } else {
-            format!(
-                " and {} carry slot{} forfeit to the lunges",
-                sim.harm,
-                if sim.harm == 1 { "" } else { "s" }
-            )
+        let broken = match sim.harm {
+            0 => String::new(),
+            1 => " and one carry slot broken by a lunge".to_string(),
+            n => format!(" and {n} carry slots broken by lunges"),
         };
         out.push(ViewNode::Text(format!(
-            "⚠ carrying rights are spent — the next relic would not fit ({} carried, standing on \
+            "⚠ carrying rights are spent: the next relic would not fit ({} carried, standing on \
              floor {}{}, against the cap of {CAP})",
             sim.pack(),
             sim.depth,
@@ -3067,7 +3063,7 @@ fn descent_pressures(sim: &Sim) -> Vec<ViewNode> {
     }
     if sim.pack() > 0 {
         out.push(ViewNode::Text(format!(
-            "⚠ {} relic{} ride{} in the pack — nothing is yours until a proved exit banks it",
+            "⚠ {} relic{} ride{} in the pack: nothing is yours until a proved exit banks it",
             sim.pack(),
             if sim.pack() == 1 { "" } else { "s" },
             if sim.pack() == 1 { "s" } else { "" }
@@ -3080,7 +3076,7 @@ fn descent_pressures(sim: &Sim) -> Vec<ViewNode> {
     // the climb always has a price, and a pack is always losable), so it can name itself precisely.
     if out.is_empty() {
         out.push(ViewNode::Text(
-            "nothing presses on you yet — you stand at the mouth, the light is long and the pack is \
+            "nothing presses on you yet: you stand at the mouth, the light is long and the pack is \
              empty. Every floor you take costs a breath to leave again."
                 .to_string(),
         ));

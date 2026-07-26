@@ -261,7 +261,7 @@ async fn native_browser_record_replays_shares_and_ranks_only_in_its_own_lane() {
     let share = accepted["share"].as_str().expect("native share path");
     let (card_status, card) = get(&app, share).await;
     assert_eq!(card_status, StatusCode::OK);
-    assert!(card.contains("Independent verification — PASS"), "{card}");
+    assert!(card.contains("Independent verification · PASS"), "{card}");
     assert!(card.contains("CROWNED"), "{card}");
     assert!(card.contains("Minted notes"), "{card}");
     assert!(
@@ -567,7 +567,7 @@ async fn exact_non_crowned_native_settlement_is_shareable_but_never_ranked() {
     );
     let share = accepted["share"].as_str().expect("verified run card");
     let (_, card) = get(&app, share).await;
-    assert!(card.contains("Independent verification — PASS"), "{card}");
+    assert!(card.contains("Independent verification · PASS"), "{card}");
     assert!(card.contains("not crowned and not ranked"), "{card}");
 
     let (_, board) = get(&app, "/descent/leaderboard?day=turn-back-day").await;
@@ -602,7 +602,7 @@ async fn persisted_native_artifact_survives_restart_only_after_boot_replay() {
     let restarted_app = descent_router(restarted);
     let (card_status, card) = get(&restarted_app, &share).await;
     assert_eq!(card_status, StatusCode::OK);
-    assert!(card.contains("Independent verification — PASS"), "{card}");
+    assert!(card.contains("Independent verification · PASS"), "{card}");
     let (_, board) = get(
         &restarted_app,
         "/descent/leaderboard?day=durable-native-day",
@@ -661,7 +661,7 @@ async fn sqlite_restart_drops_a_tampered_native_record_instead_of_resurrecting_i
         "tampered artifact restored: {card}"
     );
     assert!(
-        !card.contains("Independent verification — PASS"),
+        !card.contains("Independent verification · PASS"),
         "tampered artifact received a stale PASS: {card}"
     );
     let (_, board) = get(&app, "/descent/leaderboard?day=hostile-restart-day").await;
@@ -741,7 +741,7 @@ async fn native_crowned_completion_auto_anchors_on_the_node_and_ranks() {
     let share = accepted["share"].as_str().expect("native share path");
     let (card_status, card) = get(&app, share).await;
     assert_eq!(card_status, StatusCode::OK);
-    assert!(card.contains("Independent verification — PASS"), "{card}");
+    assert!(card.contains("Independent verification · PASS"), "{card}");
     assert!(card.contains("CROWNED"), "{card}");
 }
 

@@ -115,15 +115,15 @@ fn empty_inventory_is_byte_stable_across_backends() {
     //   * `[0 of 0 held]` — a literal `Pill` now REACHES the prose. It used to be dropped by
     //     `deos_view::text`, so a badge carrying the page's status was invisible to every Telegram
     //     and WeChat reader (`dreggnet-web/tests/catalog_flow_harness.rs`, `prose-parity`).
-    const GOLDEN: &str = "Inventory — Newcomer\n\
+    const GOLDEN: &str = "Inventory · Newcomer\n\
         — Your next move\n\
-        This shelf is empty — nothing to move. Items arrive by clearing a run or by buying one on \
+        This shelf is empty: nothing to move. Items arrive by clearing a run or by buying one on \
         the market; each carries the provenance chain that says where it came from.\n\
         [0 of 0 held]\n\
         — Owner\n\
         Newcomer · 0 note(s) · 0 held · 0 gifted\n\
         — Items\n\
-        No items owned yet — clear a run or trade for a drop.";
+        No items owned yet. Clear a run or trade for a drop.";
 
     assert_eq!(r.text, GOLDEN, "the empty-inventory prose is byte-stable");
     assert_eq!(r.telegram, GOLDEN, "…identically on telegram");
@@ -148,9 +148,9 @@ fn empty_guild_prose_is_stable() {
     // note on the empty-inventory golden above for both reasons.
     assert_eq!(
         r.text,
-        "Guild — Nascent Order\n\
+        "Guild · Nascent Order\n\
          — Your next move\n\
-         No application is pending — there is nothing to admit right now. The roster below is the \
+         No application is pending; there is nothing to admit right now. The roster below is the \
          live cap ledger, not a list: a name reads `member` only because a real grant turn \
          committed for it, and a stranger's identical write is refused by the executor rather than \
          by this page.\n\
@@ -158,7 +158,7 @@ fn empty_guild_prose_is_stable() {
          — Guild\n\
          Nascent Order · 0 member(s)\n\
          — Roster\n\
-         No members yet — admit a founder.\n\
+         No members yet. Admit a founder.\n\
          — Leaderboard (aggregate proven)\n\
          Verified clears\n0\n\
          Total verified turns\n0\n\
@@ -204,7 +204,7 @@ fn tavern_golden_read_mirror_with_link_out() {
 
     assert!(r.text.contains("The Salted Tankard"), "the hall renders");
     assert!(
-        r.text.contains("LFG the Salt Shore — need a healer"),
+        r.text.contains("LFG the Salt Shore · need a healer"),
         "an LFG post renders: {}",
         r.text
     );

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>The desktop in a link · deos viewer · dregg</title>
-  <meta name="description" content="A shared deos desktop is not a screenshot — it is a tape: a pinned instant plus a message sequence, small enough to live in a URL fragment. Your viewer re-executes it through the verified executor and re-derives the sharer's desktop, root-checked.">
+  <meta name="description" content="A shared deos desktop is not a screenshot; it is a tape: a pinned instant plus a message sequence, small enough to live in a URL fragment. Your viewer re-executes it through the verified executor and re-derives the sharer's desktop, root-checked.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%23%3C/text%3E%3C/svg%3E">
   <link rel="stylesheet" href="../assets/style.css">
   <style>
@@ -74,14 +74,14 @@
     A shared deos desktop is not a picture and not a state blob. It is a <b>tape</b>: a pinned genesis
     instant plus the sequence of messages a session sent, small enough to live in a URL fragment.
     Your viewer boots a <b>fresh world</b> at that instant and re-executes the tape through the same
-    verified executor the sharer used — then compares its re-derived canonical ledger root against
+    verified executor the sharer used, then compares its re-derived canonical ledger root against
     the root the link claims. The headline of a shared desktop is an <b>equality</b>, not an image.
   </p>
 
   <div class="panel" id="tape-panel">
     <h2>This link's tape</h2>
     <p class="hint">
-      Paste a share fragment below (or arrive here with one after <code>#</code> in the URL — it is
+      Paste a share fragment below (or arrive here with one after <code>#</code> in the URL; it is
       read automatically). What you see here is a <b>display-only preview</b> decoded in this page's
       JS for legibility; the <b>authority</b> is the replay your viewer server performs. This page
       never replays anything itself and holds no world.
@@ -93,7 +93,7 @@
                placeholder="deos1!ts=1751500800!act=1111:peek!root=&hellip;">
       </div>
     </div>
-    <div class="readout" id="preview">no tape yet — paste a fragment, or open a share link ending in <span class="v">#deos1!&hellip;</span></div>
+    <div class="readout" id="preview">no tape yet: paste a fragment, or open a share link ending in <span class="v">#deos1!&hellip;</span></div>
     <div class="controls">
       <div class="field">
         <label for="server">your viewer server (a locally running <code>starbridge-v2 --serve-ie6</code>)</label>
@@ -108,14 +108,14 @@
     <h2>The grammar (one line, forever)</h2>
     <div class="grammar">deos1!ts=&lt;unix&gt;<span class="opt">[!tab=&lt;surface&gt;][!root=&lt;64 hex&gt;]</span>[!act=&lt;cell hex prefix&gt;:&lt;verb&gt;]&hellip;</div>
     <ul class="steps">
-      <li><code>ts</code> — the pinned instant. Receipt hashes bind the wall-clock, so byte-identical
+      <li><code>ts</code> &middot; the pinned instant. Receipt hashes bind the wall-clock, so byte-identical
           replay <em>requires</em> sharing it: the clock rides the link as a recorded, replayable input.</li>
-      <li><code>act</code> — one message of the tape, in order: a cell (by hex-id prefix) and the
+      <li><code>act</code> &middot; one message of the tape, in order: a cell (by hex-id prefix) and the
           affordance verb sent to it. The same <code>(cell, message)</code> vocabulary the
           <code>--replay</code> bake flag and the dregg-mcp act log already speak.</li>
-      <li><code>root</code> — the sharer's claimed canonical ledger root after the tape. The viewer
+      <li><code>root</code> &middot; the sharer's claimed canonical ledger root after the tape. The viewer
           re-derives its own and shows <b>ROOT MATCH</b> or, honestly, <b>ROOT MISMATCH</b>.</li>
-      <li><code>tab</code> — the cockpit surface the sharer was looking at, so the frame reconstructs
+      <li><code>tab</code> &middot; the cockpit surface the sharer was looking at, so the frame reconstructs
           the view as well as the world.</li>
     </ul>
   </div>
@@ -123,25 +123,25 @@
   <div class="panel">
     <h2>What the viewer server does with it</h2>
     <ul class="steps">
-      <li>Boots a <b>fresh</b> demo world pinned to <code>ts</code> — never the live one. Two boots at
+      <li>Boots a <b>fresh</b> demo world pinned to <code>ts</code>, never the live one. Two boots at
           one instant are receipt-identical by construction.</li>
       <li>Re-executes each act through the real verified executor (the same cap-gate + turn path every
-          cockpit surface fires). A refused or unresolvable act is <b>skipped in-band and listed</b> —
+          cockpit surface fires). A refused or unresolvable act is <b>skipped in-band and listed</b>:
           the page tells you the reconstruction is not the sharer's desktop.</li>
-      <li>Derives the canonical ledger root and judges it against the link's claim. Then — and only
-          then — renders the frame, as an illustration of a world you already verified.</li>
+      <li>Derives the canonical ledger root and judges it against the link's claim. Then, and only
+          then, renders the frame, as an illustration of a world you already verified.</li>
     </ul>
     <p class="hint" style="margin-top: var(--s4); margin-bottom: 0;">
       The whole route is stateless and <b>read-only</b>: a stranger's link buys a bounded replay
       (32 acts max) against a throwaway world. It cannot drive the live cockpit, and there are no
-      live turns from strangers — sharing a desktop hands over a <em>derivation</em>, not a capability.
+      live turns from strangers: sharing a desktop hands over a <em>derivation</em>, not a capability.
     </p>
   </div>
 
   <div class="honest">
     <b>Honest scope.</b> Today the replaying server is the local <code>--serve-ie6</code> cockpit
     server (bound to 127.0.0.1), so &ldquo;shareable&rdquo; means: anyone who runs deos can paste your
-    link into <em>their own</em> viewer and re-derive your desktop — the link format is
+    link into <em>their own</em> viewer and re-derive your desktop; the link format is
     server-independent and carries no secrets. A hosted read-only viewer and the wasm cockpit adopting
     the same fragment are the natural next welds; the codec (<code>starbridge_v2::share_link</code>)
     is pure and round-trip-tested precisely so both glasses can speak it unchanged.
@@ -205,7 +205,7 @@ function decodePreview(frag) {
       tape.acts.push({ cell, msg });
     } else return { err: 'unknown field `' + k + '`' };
   }
-  if (tape.ts === null) return { err: 'no ts — a tape without its pinned instant cannot replay byte-identically' };
+  if (tape.ts === null) return { err: 'no ts: a tape without its pinned instant cannot replay byte-identically' };
   return { tape };
 }
 
@@ -221,7 +221,7 @@ function render() {
   const raw = $frag.value;
   const r = decodePreview(raw);
   if (r.empty) {
-    $preview.innerHTML = 'no tape yet — paste a fragment, or open a share link ending in <span class="v">#deos1!&hellip;</span>';
+    $preview.innerHTML = 'no tape yet: paste a fragment, or open a share link ending in <span class="v">#deos1!&hellip;</span>';
     $target.textContent = '';
     return;
   }
@@ -237,8 +237,8 @@ function render() {
          ' (' + esc(new Date(Number(t.ts) * 1000).toISOString()) + ')\n';
   if (t.tab) out += '<span class="k">surface</span>         <span class="v">' + esc(t.tab) + '</span>\n';
   out += '<span class="k">root claim</span>      ' +
-    (t.root ? '<span class="v">' + esc(t.root) + '</span> — the server re-derives and compares'
-            : 'none — the server will show the derived root to bake in') + '\n';
+    (t.root ? '<span class="v">' + esc(t.root) + '</span> · the server re-derives and compares'
+            : 'none · the server will show the derived root to bake in') + '\n';
   out += '<span class="k">tape</span>            ' + t.acts.length + ' act(s)';
   t.acts.forEach((a, i) => {
     out += '\n  <span class="k">#' + i + '</span> cell <span class="v">' + esc(a.cell) +

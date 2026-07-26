@@ -13,7 +13,7 @@ use crate::presence::{PresenceAttestation, PresenceClaim};
 /// Register the /presence command.
 pub fn register() -> CreateCommand {
     CreateCommand::new("presence")
-        .description("Presence attestation system — prove you are online")
+        .description("Presence attestation system · prove you are online")
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,
             "status",

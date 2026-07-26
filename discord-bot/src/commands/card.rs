@@ -23,7 +23,7 @@ use crate::viewnode_applet::render_with_footer;
 /// Register the `/card` command.
 pub fn register() -> CreateCommand {
     CreateCommand::new("card").description(
-        "Open your interactive tally card — Discord buttons fire real verified dregg turns",
+        "Open your interactive tally card · Discord buttons fire real verified dregg turns",
     )
 }
 

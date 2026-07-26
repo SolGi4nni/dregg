@@ -2109,6 +2109,7 @@ dependencies = [
  "serde_json",
  "spween",
  "spween-dregg",
+ "tracing",
  "ugc-dregg",
 ]
 

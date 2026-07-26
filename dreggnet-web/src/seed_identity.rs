@@ -637,7 +637,7 @@ fn authority_of(value: &str) -> Option<String> {
 /// The one sentence a player reads when a state-changing identity request did not come from a page
 /// on this site. It names the ACTION they can take; "your `Sec-Fetch-Site` was cross-site" is true
 /// and useless to a person.
-const FOREIGN_ORIGIN_NOTICE: &str = "Refused: this did not come from our page, so nothing was changed — no identity was claimed, \
+const FOREIGN_ORIGIN_NOTICE: &str = "Refused: this did not come from our page, so nothing was changed; no identity was claimed, \
      restored or released. Open /identity here and try again. If you got here by pressing something \
      on another website, that button was trying to switch this browser onto somebody else's \
      identity.";
@@ -738,7 +738,7 @@ async fn post_claim(headers: HeaderMap) -> Response {
                     claimed_pubkey(&headers).as_deref(),
                     cookie(&headers, ACTING_COOKIE).as_deref(),
                     Some(&format!(
-                        "Refused: the generated phrase did not validate ({error}) — nothing was claimed."
+                        "Refused: the generated phrase did not validate ({error}); nothing was claimed."
                     )),
                 )),
             )
@@ -823,7 +823,7 @@ async fn post_confirm(headers: HeaderMap, Form(form): Form<ConfirmForm>) -> Resp
                 Some(
                     "Refused: this browser cannot make that confirmation, so nothing was claimed. \
                      A phrase can only be taken up by the browser it was shown to, and this one is \
-                     not carrying that page's cookie — if the server restarted, or the phrase page \
+                     not carrying that page's cookie. If the server restarted, or the phrase page \
                      was opened somewhere else, generate a new phrase rather than reusing the one on \
                      the old page.",
                 ),
@@ -841,7 +841,7 @@ async fn post_confirm(headers: HeaderMap, Form(form): Form<ConfirmForm>) -> Resp
                 cookie(&headers, ACTING_COOKIE).as_deref(),
                 Some(
                     "Refused: the \"I have written these down\" box was not ticked, so nothing was \
-                     claimed. That phrase is gone — the server does not keep it. Generate a new one.",
+                     claimed. That phrase is gone: the server does not keep it. Generate a new one.",
                 ),
             )),
         )
@@ -899,11 +899,11 @@ async fn post_restore(headers: HeaderMap, Form(form): Form<RestoreForm>) -> Resp
             // paper. A checksum failure in particular almost always means one mistyped word.
             let detail = match &error {
                 MnemonicError::InvalidWordCount(_) => format!(
-                    "that is {words} word{} — a dregg phrase is exactly {PHRASE_WORDS}.",
+                    "that is {words} word{}; a dregg phrase is exactly {PHRASE_WORDS}.",
                     if words == 1 { "" } else { "s" }
                 ),
                 MnemonicError::UnknownWord(word) => format!(
-                    "{:?} is not one of the 2048 words in the list — check that word's spelling.",
+                    "{:?} is not one of the 2048 words in the list; check that word's spelling.",
                     esc(word)
                 ),
                 MnemonicError::InvalidChecksum => "all 24 words are real words, but the phrase's \
@@ -950,7 +950,7 @@ async fn post_release(headers: HeaderMap, Form(form): Form<ReleaseForm>) -> Resp
                 claimed_pubkey(&headers).as_deref(),
                 cookie(&headers, ACTING_COOKIE).as_deref(),
                 Some(
-                    "Refused: releasing this browser needs the confirmation box ticked — without \
+                    "Refused: releasing this browser needs the confirmation box ticked; without \
                      your 24 words you would not be able to get back in.",
                 ),
             )),
@@ -1026,23 +1026,23 @@ fn honest_block() -> String {
     "<div class=\"id-honest\"><h3>What this does and does not protect</h3><dl>\
      <dt>Where the key lives: nowhere.</dt>\
      <dd>Your 24 words are turned into a keypair inside the one request that needs it, and every \
-     byte of secret material is wiped before the response goes out. Nothing is stored — not on the \
+     byte of secret material is wiped before the response goes out. Nothing is stored: not on the \
      server, and not in this browser.</dd>\
      <dt>The words pass through the server once, each time you use them.</dt>\
-     <dd>They are generated here, and typed back here whenever a request needs the key they derive — \
+     <dd>They are generated here, and typed back here whenever a request needs the key they derive: \
      restoring this identity on a device, or signing a cross-platform link. We never write them to \
      disk or to a log, but that is a promise about this code, not a guarantee the shape of the \
      system gives you. Generating them entirely inside your browser is the next step and is not what \
      these pages do today.</dd>\
      <dt>Your browser holds a cookie, not a key.</dt>\
-     <dd>It is <code>HttpOnly</code>, so page scripts — including an injected one — cannot read it. \
+     <dd>It is <code>HttpOnly</code>, so page scripts, including an injected one, cannot read it. \
      That is why the identity lives in a cookie rather than in <code>localStorage</code>, which any \
      script on the page can read. It is still a bearer token: whoever has it can play as you until \
      it expires, so treat a link containing <code>?user=dregg-id-…</code> the way you would treat a \
      password.</dd>\
      <dt>And nobody else can put an identity INTO this browser.</dt>\
      <dd>Theft is not the only direction. A hostile page can also try to <em>give</em> you an \
-     identity — quietly submitting <em>its own</em> 24 words to this site so that everything you play \
+     identity, quietly submitting <em>its own</em> 24 words to this site so that everything you play \
      afterwards is filed under a name somebody else holds the words to, with nothing on screen \
      looking wrong. Claiming, confirming, restoring, releasing and linking therefore only work from a \
      page on this site: a request that cannot show it came from here is refused before anything is \
@@ -1050,13 +1050,13 @@ fn honest_block() -> String {
      have just shown can only be taken up by the browser it was shown to, so a token glimpsed on \
      somebody else's screen is not a way in.</dd>\
      <dt>Pressing a button here is not a signature.</dt>\
-     <dd>Turns you play in the browser are attributed to your public key, not signed by it — the \
+     <dd>Turns you play in the browser are attributed to your public key, not signed by it; the \
      server has no key to sign with and neither does this page. A tool that holds your phrase (the \
      <code>dregg</code> CLI, the browser extension) can sign turns as this identity through \
      <code>/act-signed</code>, and only those turns carry a real signature.</dd>\
      <dt>A server restart may sign you out.</dt>\
      <dd>Unless the deployment pins its identity key, restarting re-rolls it and your cookie stops \
-     verifying. You come back as a fresh anonymous visitor and re-enter your words — never as \
+     verifying. You come back as a fresh anonymous visitor and re-enter your words, never as \
      somebody else.</dd>\
      </dl></div>"
         .to_string()
@@ -1074,13 +1074,13 @@ fn rungs_block(claimed: bool) -> String {
     format!(
         "<ol class=\"id-rungs\">\
          <li class=\"{anon}\"><strong>Anonymous visitor.</strong> A cookie, minted the first time \
-         you load a page. Nothing to remember, nothing to lose — except that clearing your cookies \
-         ends that person permanently.</li>\
+         you load a page. Nothing to remember, nothing to lose (except that clearing your cookies \
+         ends that person permanently).</li>\
          <li class=\"{seed}\"><strong>A claimed identity.</strong> 24 words you keep. The same words \
          reproduce the same identity on any device, so your history follows you.</li>\
          <li class=\"later\"><strong>Linked accounts.</strong> Proving that your Discord or Telegram \
          self and this one are the same human, so the boards rank you once. \
-         <a href=\"/identity/link\">This works today</a> — in the plain version: the link is stored \
+         <a href=\"/identity/link\">This works today</a>, in the plain version: the link is stored \
          as \"this key and that account are one person\", which the operator can read. Proving it \
          <em>without</em> revealing which accounts is the machinery that exists in the tree and is \
          not what that page does.</li>\
@@ -1096,7 +1096,7 @@ fn identity_page(claimed: Option<&str>, acting: Option<&str>, notice: Option<&st
         None => unclaimed_body(acting),
     };
     document_with_head(
-        "Your identity — DreggNet",
+        "Your identity · DreggNet",
         "",
         IDENTITY_STYLE,
         &format!(
@@ -1122,12 +1122,12 @@ fn unclaimed_body(acting: Option<&str>) -> String {
         ),
         Some(label) => format!(
             "<p class=\"prose\">Right now this browser is acting as \
-             <span class=\"id-key\">{}</span> — a label, not a key. It lasts as long as the cookie \
+             <span class=\"id-key\">{}</span> (a label, not a key). It lasts as long as the cookie \
              does, and there is no way to recover it once the cookie is gone.</p>",
             esc(label)
         ),
         None => "<p class=\"prose\">This browser has no identity yet. One gets minted the moment \
-             you open a game — a cookie that lasts as long as the cookie lasts, with no way to \
+             you open a game: a cookie that lasts as long as the cookie lasts, with no way to \
              recover it once it is gone.</p>"
             .to_string(),
     };
@@ -1135,17 +1135,17 @@ fn unclaimed_body(acting: Option<&str>) -> String {
         "{now}{rungs}\
          <h2>Keep this identity</h2>\
          <p class=\"prose\">We will show you 24 words, once. Written down, they reproduce your \
-         identity on any device, forever — that is the whole mechanism. You stay signed in here \
+         identity on any device, forever; that is the whole mechanism. You stay signed in here \
          either way; the words are the copy you keep.</p>\
          {stakes}\
          <form class=\"id-actions\" method=\"post\" action=\"/identity/claim\">\
          <button class=\"btn btn-primary\" type=\"submit\">Show me my 24 words</button>\
-         <a class=\"btn btn-ghost\" href=\"/offerings\">No thanks — just let me play</a>\
+         <a class=\"btn btn-ghost\" href=\"/offerings\">No thanks · just let me play</a>\
          </form>\
          <hr class=\"id-sep\">\
          <h2>Already have a phrase?</h2>\
          <p class=\"prose\">Type or paste your 24 words to become that identity on this device. \
-         Nothing needs to have happened on this browser first — the words are the identity, so this \
+         Nothing needs to have happened on this browser first: the words are the identity, so this \
          works on a machine that has never seen us before.</p>\
          {restore}{honest}",
         now = now,
@@ -1168,7 +1168,7 @@ fn claimed_body(pubkey_hex: &str, acting: Option<&str>) -> String {
     } else {
         format!(
             "<div class=\"notice\" role=\"status\">This browser is currently <em>acting as</em> \
-             something else — <span class=\"id-key\">{}</span>. That is normal while you hold a \
+             something else: <span class=\"id-key\">{}</span>. That is normal while you hold a \
              seat at a locked two-player table: the seat is the identity there. Your claimed \
              identity is untouched.</div>\
              <form class=\"id-actions\" method=\"post\" action=\"/identity/confirm\">\
@@ -1180,7 +1180,7 @@ fn claimed_body(pubkey_hex: &str, acting: Option<&str>) -> String {
         )
     };
     format!(
-        "<p class=\"prose\">You are <strong>{tag}</strong> — a real, recoverable identity. Your \
+        "<p class=\"prose\">You are <strong>{tag}</strong>: a real, recoverable identity. Your \
          full public name is</p><p class=\"id-key\">{full}</p>\
          <p class=\"prose\">Your 24 words reproduce this on any device. We cannot show them again: \
          they were never stored.</p>{acting_note}{rungs}\
@@ -1191,7 +1191,7 @@ fn claimed_body(pubkey_hex: &str, acting: Option<&str>) -> String {
          Tug</a> (it is the actor on every turn you land through the shared host, and it is who a \
          table sees when you are not sitting in a locked seat).</p>\
          <p class=\"prose\">Discord and Telegram already give a player a real platform identity, \
-         and those surfaces derive their own key from the bot secret — a <em>custodial</em> key, \
+         and those surfaces derive their own key from the bot secret: a <em>custodial</em> key, \
          held by the operator rather than by you. This phrase is a different, self-held identity, \
          and until you say otherwise the two are <strong>different players with different \
          histories on the same board</strong>. \
@@ -1202,13 +1202,13 @@ fn claimed_body(pubkey_hex: &str, acting: Option<&str>) -> String {
          <p class=\"prose\">A tool that holds your phrase derives the same key and can sign turns \
          that verify as <em>you</em> rather than merely being attributed to you. That is the \
          <code>/act-signed</code> path, and it is the only way a turn here carries a real \
-         signature. The derivation is the ordinary one — 24 words, BIP39 checksum, BLAKE3 at path \
-         <code>dregg/0</code> — the same path the <code>dregg</code> CLI uses, so a phrase claimed \
+         signature. The derivation is the ordinary one (24 words, BIP39 checksum, BLAKE3 at path \
+         <code>dregg/0</code>), the same path the <code>dregg</code> CLI uses, so a phrase claimed \
          here imports there unchanged.</p>\
          <hr class=\"id-sep\">\
          <h2>Restore a different identity</h2>\
          <p class=\"prose\">Entering another phrase makes this browser that identity instead. \
-         Nothing about the current one is deleted — the words still name it.</p>\
+         Nothing about the current one is deleted; the words still name it.</p>\
          {restore}\
          <hr class=\"id-sep\">\
          <h2>Release this browser</h2>\
@@ -1234,14 +1234,14 @@ fn claimed_body(pubkey_hex: &str, acting: Option<&str>) -> String {
 /// the player the wrong thing about the one real risk (that we cannot help them).
 fn stakes_block() -> String {
     "<div class=\"id-stakes\"><h3>What losing the words actually costs you</h3>\
-     <ul><li>Your game history — the runs, turns and receipts filed under this identity.</li>\
+     <ul><li>Your game history · the runs, turns and receipts filed under this identity.</li>\
      <li>Your name on the Descent board, and the actor recorded on your past run cards.</li>\
      <li>Anything a future feature files under who you are.</li></ul>\
      <p>That is the whole list. <strong>No money is attached to this phrase.</strong> There is no \
-     balance, no token and no wallet behind it — it is the name your play is filed under. It is \
+     balance, no token and no wallet behind it; it is the name your play is filed under. It is \
      worth writing on paper; it is not worth a safe deposit box.</p>\
      <p>The part that matters: <strong>we cannot recover it for you.</strong> Not because of a \
-     policy, but because we never have it — the identity is derived from the words, so nobody \
+     policy, but because we never have it: the identity is derived from the words, so nobody \
      without them can reproduce it, us included.</p></div>"
         .to_string()
 }
@@ -1273,7 +1273,7 @@ fn phrase_page(phrase: &str, pubkey_hex: &str, token: &str) -> String {
         })
         .collect::<String>();
     document_with_head(
-        "Write these down — DreggNet",
+        "Write these down · DreggNet",
         "",
         IDENTITY_STYLE,
         &format!(
@@ -1296,11 +1296,11 @@ fn phrase_page(phrase: &str, pubkey_hex: &str, token: &str) -> String {
              month.</span></label>\
              <div class=\"id-actions\">\
              <button class=\"btn btn-primary\" type=\"submit\">This is me now</button>\
-             <a class=\"btn btn-ghost\" href=\"/identity\">Cancel — stay anonymous</a></div>\
+             <a class=\"btn btn-ghost\" href=\"/identity\">Cancel · stay anonymous</a></div>\
              </form>\
              <p class=\"prose\" style=\"opacity:.75;font-size:.9rem\">Until you press that button \
              nothing has changed: you are still whoever you were, and this phrase is inert. \
-             Cancelling throws it away — the server does not keep a copy to offer you later.</p>\
+             Cancelling throws it away: the server does not keep a copy to offer you later.</p>\
              {honest}</main>",
             grid = grid,
             plain = esc(phrase),

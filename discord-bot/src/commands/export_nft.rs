@@ -91,7 +91,7 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
     let Some(win) = win else {
         let embed = embeds::warning_embed(
             "Nothing Verified To Export",
-            "You hold no VERIFIED win on the `/descent` no-cheat board — the NFT only ever \
+            "You hold no VERIFIED win on the `/descent` no-cheat board. The NFT only ever \
              carries a re-executed win, never a claim. Win `/descent play` first.",
         );
         ack::edit_slash(ctx, command, embed, Vec::new()).await;
@@ -153,7 +153,7 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
 
     let mut embed = embeds::success_embed("Verified Win → 1-of-1 SPL NFT")
         .description(format!(
-            "**{}** — your verified {}‑turn win, exported as a single-unit SPL mint whose \
+            "**{}** · your verified {}‑turn win, exported as a single-unit SPL mint whose \
              mint authority is revoked in the same transaction (provably 1-of-1).",
             win.universe_name, win.turns
         ))
@@ -171,7 +171,7 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
         .field(
             "Verify it yourself",
             format!(
-                "The custody authority `{}` signed the exact transaction message — \
+                "The custody authority `{}` signed the exact transaction message, \
                  re-checked here: **{}**. The memo's commitment is your board completion \
                  id; anyone can `/descent board` and re-verify the run it names.",
                 bs58::encode(built.authority).into_string(),

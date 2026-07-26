@@ -236,13 +236,13 @@ impl RunScore {
         if self.banked_depth == 0 && self.frozen_depth > 0 {
             return format!(
                 "Score 0 of {shaft}. The {frozen} floors of relic depth in the pack never became \
-                 theirs — nothing is yours until a proved exit banks it.",
+                 theirs: nothing is yours until a proved exit banks it.",
                 shaft = self.shaft_depth,
                 frozen = self.frozen_depth,
             );
         }
         format!(
-            "Score {score} of {shaft} — every banked relic counts the floor it was minted on, so \
+            "Score {score} of {shaft}: every banked relic counts the floor it was minted on, so \
              the deep ones are worth what they cost to carry up. {count} relic{s} banked{crown}.",
             score = self.banked_depth,
             shaft = self.shaft_depth,
@@ -597,13 +597,13 @@ impl RunStory {
         let mut labels: Vec<String> = (1..=DUNGEON_FLOORS)
             .map(|floor| {
                 if floor > deepest {
-                    format!("floor {floor} — never reached")
+                    format!("floor {floor} · never reached")
                 } else if floor == deepest && froze_here && floor == resting {
-                    format!("floor {floor} — deepest reached, and where it stopped")
+                    format!("floor {floor} · deepest reached, and where it stopped")
                 } else if floor == deepest {
-                    format!("floor {floor} — deepest reached")
+                    format!("floor {floor} · deepest reached")
                 } else if froze_here && floor == resting {
-                    format!("floor {floor} — where the run stopped")
+                    format!("floor {floor} · where the run stopped")
                 } else {
                     format!("floor {floor}")
                 }
@@ -612,23 +612,23 @@ impl RunStory {
 
         let pack = self.in_pack();
         labels.push(match (self.ending, pack.len()) {
-            (Ending::LightDied, 0) => "pack — empty when the light died".to_string(),
+            (Ending::LightDied, 0) => "pack · empty when the light died".to_string(),
             (Ending::LightDied, n) => format!(
-                "LOST — the light died with {n} relic{} still on them",
+                "LOST · the light died with {n} relic{} still on them",
                 plural(n)
             ),
             (_, 0) if self.ending.settled() => {
-                "pack — emptied into the vault by the exit".to_string()
+                "pack · emptied into the vault by the exit".to_string()
             }
-            (_, 0) => "pack — empty".to_string(),
-            (_, n) => format!("pack — {n} relic{} carried, still losable", plural(n)),
+            (_, 0) => "pack · empty".to_string(),
+            (_, n) => format!("pack · {n} relic{} carried, still losable", plural(n)),
         });
 
         let banked = self.banked();
         labels.push(match banked.len() {
-            0 if self.ending.settled() => "banked — the exit carried nothing out".to_string(),
-            0 => "banked — nothing; no proved exit was ever made".to_string(),
-            n => format!("banked — {n} relic{} came out", plural(n)),
+            0 if self.ending.settled() => "banked · the exit carried nothing out".to_string(),
+            0 => "banked · nothing; no proved exit was ever made".to_string(),
+            n => format!("banked · {n} relic{} came out", plural(n)),
         });
         labels
     }
@@ -650,7 +650,7 @@ impl RunStory {
 
         let mut out = String::new();
         out.push_str(&format!(
-            "{} — {} · {}\n",
+            "{} · {} · {}\n",
             self.ending.word(),
             actor,
             day_key
@@ -696,7 +696,7 @@ impl RunStory {
         };
         match self.ending {
             Ending::Crowned => format!(
-                "Carried the Crown of the Deep up from floor {} — {} relic{} banked, {} light left of {LIGHT_BREATH}.{and_left}",
+                "Carried the Crown of the Deep up from floor {}: {} relic{} banked, {} light left of {LIGHT_BREATH}.{and_left}",
                 self.depth(),
                 banked.len(),
                 plural(banked.len()),
@@ -719,12 +719,12 @@ impl RunStory {
                 self.depth(),
             ),
             Ending::LightDied => format!(
-                "The light burned out on floor {} carrying {} — never banked, never theirs.{and_left}",
+                "The light burned out on floor {} carrying {}: never banked, never theirs.{and_left}",
                 self.depth(),
                 name_list(&lost),
             ),
             Ending::Delving => format!(
-                "Down to floor {} of {DUNGEON_FLOORS}, {} light left of {LIGHT_BREATH}, {} relic{} riding unbanked in the pack — this run has not ended.",
+                "Down to floor {} of {DUNGEON_FLOORS}, {} light left of {LIGHT_BREATH}, {} relic{} riding unbanked in the pack. This run has not ended.",
                 self.depth(),
                 self.light_left(),
                 self.in_pack().len(),
@@ -767,7 +767,7 @@ impl RunStory {
             format!(
                 "<p class=\"rc-loss\"><strong>{n} relic{s} died in the dark.</strong> {names} \
                  {was} in the pack when the light went out. Nothing is yours until a proved exit \
-                 banks it — and there was no light left to buy one.</p>",
+                 banks it, and there was no light left to buy one.</p>",
                 n = lost.len(),
                 s = plural(lost.len()),
                 names = esc(&sentence_case(&name_list(&lost))),
@@ -776,7 +776,7 @@ impl RunStory {
         } else if self.ending == Ending::Delving && !pack.is_empty() {
             format!(
                 "<p class=\"rc-risk\"><strong>{n} relic{s} still riding in the pack.</strong> \
-                 {names} {is} carried, not banked — this run has not made a proved exit, and until \
+                 {names} {is} carried, not banked: this run has not made a proved exit, and until \
                  it does none of it is theirs.</p>",
                 n = pack.len(),
                 s = plural(pack.len()),
@@ -794,7 +794,7 @@ impl RunStory {
         } else {
             format!(
                 "<p class=\"rc-left\"><strong>Left in the dark:</strong> {names}. Carrying rights \
-                 attenuate with depth — standing on floor {depth} you may hold {ceiling}, so every \
+                 attenuate with depth: standing on floor {depth} you may hold {ceiling}, so every \
                  step down is paid for in treasure walked past.</p>",
                 names = esc(&name_list(&left)),
                 depth = self.depth().max(1),
@@ -1339,7 +1339,7 @@ mod tests {
             "the actionable bracket does not appear on a finished run: {text}"
         );
         // The caption is what carries the meaning instead — and it says LOST, out loud.
-        assert!(text.contains("LOST — the light died"), "{text}");
+        assert!(text.contains("LOST · the light died"), "{text}");
         assert!(text.contains("never reached"), "{text}");
     }
 
@@ -1381,7 +1381,7 @@ mod tests {
         assert_eq!(walked_away.in_pack(), vec![1, 2, 3, 6]);
         assert!(
             walked_away.banked().is_empty() && walked_away.lost().is_empty(),
-            "not banked, and not lost either — it is UNRESOLVED"
+            "not banked, and not lost either: it is UNRESOLVED"
         );
         let html = walked_away.html("web:alice", "d1-off", "aabbccdd");
         assert!(
@@ -1502,16 +1502,16 @@ mod tests {
         let rendered = light_died().text_card("web:alice", "d20260-off");
         let expected = format!(
             concat!(
-                "THE LIGHT IS DEAD — web:alice · d20260-off\n",
+                "THE LIGHT IS DEAD · web:alice · d20260-off\n",
                 "The light burned out on floor 3 carrying the way-2 key, the way-3 key, the way-4 key ",
-                "and treasure 3 — never banked, never theirs. 4 relics left in the dark.\n",
+                "and treasure 3: never banked, never theirs. 4 relics left in the dark.\n",
                 "\n",
                 " 1  /  G  ·  ·  ·  ·  *  *  ·  ·    floor 1\n",
                 " 2  /  G  ·  ·  ·  ·  ·  ·  ·  ·    floor 2\n",
-                " >  /  x  ·  ·  ·  ·  ·  ·  ·  *    floor 3 — deepest reached, and where it stopped\n",
-                " 4  #  G  C  ·  ·  ·  ·  ·  ·  ·    floor 4 — never reached\n",
-                " @  ·  ·  ·  k  k  k  ·  ·  *  ·    LOST — the light died with 4 relics still on them\n",
-                " $  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·    banked — nothing; no proved exit was ever made\n",
+                " >  /  x  ·  ·  ·  ·  ·  ·  ·  *    floor 3 · deepest reached, and where it stopped\n",
+                " 4  #  G  C  ·  ·  ·  ·  ·  ·  ·    floor 4 · never reached\n",
+                " @  ·  ·  ·  k  k  k  ·  ·  *  ·    LOST · the light died with 4 relics still on them\n",
+                " $  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·    banked · nothing; no proved exit was ever made\n",
                 "\n",
                 "light  ░░░░░░░░░░░░  0 left of 30 (30 spent)\n",
                 "depth  3 of 4\n",
@@ -1545,16 +1545,16 @@ mod tests {
         let rendered = crowned().text_card("web:alice", "d20260-off");
         let expected = format!(
             concat!(
-                "CROWNED — web:alice · d20260-off\n",
-                "Carried the Crown of the Deep up from floor 4 — 5 relics banked, 6 light left of 30. ",
+                "CROWNED · web:alice · d20260-off\n",
+                "Carried the Crown of the Deep up from floor 4: 5 relics banked, 6 light left of 30. ",
                 "3 relics left in the dark.\n",
                 "\n",
                 " 1  /  G  ·  ·  ·  ·  *  *  ·  ·    floor 1\n",
                 " 2  /  G  ·  ·  ·  ·  ·  ·  ·  ·    floor 2\n",
                 " 3  /  G  ·  ·  ·  ·  ·  ·  ·  *    floor 3\n",
-                " >  /  G  ·  ·  ·  ·  ·  ·  ·  ·    floor 4 — deepest reached\n",
-                " @  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·    pack — emptied into the vault by the exit\n",
-                " $  ·  ·  C  k  k  k  ·  ·  *  ·    banked — 5 relics came out\n",
+                " >  /  G  ·  ·  ·  ·  ·  ·  ·  ·    floor 4 · deepest reached\n",
+                " @  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·    pack · emptied into the vault by the exit\n",
+                " $  ·  ·  C  k  k  k  ·  ·  *  ·    banked · 5 relics came out\n",
                 "\n",
                 "light  ██░░░░░░░░░░  6 left of 30 (24 spent)\n",
                 "depth  4 of 4\n",

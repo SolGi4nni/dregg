@@ -22,9 +22,8 @@
 //!   federation id is the user's cell-derived `FederationId` so
 //!   `verify_signature` checks against the same key that signed.
 //! - **Target federation**: the bot's own soft-federation root (the friend
-//!   clique), whose `SwissTable` holds the pre-registered swiss entry. This is
-//!   the [`crate::BotState::nullifier_set`] sibling — the bot is the tiny
-//!   federation that orders redemptions.
+//!   clique), whose `SwissTable` holds the pre-registered swiss entry — the bot
+//!   is the tiny federation that orders redemptions.
 //! - **Recipient**: another hosted user, identified by their Ed25519 public
 //!   key (== first 32 bytes of their cell-key material). Only the named
 //!   recipient can present the certificate (recipient-signature check).

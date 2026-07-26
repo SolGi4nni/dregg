@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>dregg explorer — cells, turns, receipt chains</title>
+  <title>dregg explorer &middot; cells, turns, receipt chains</title>
   <meta name="description" content="What has been happening on this dregg node: the cells that hold state, the receipt chains that record turns over them, the blocklace DAG, and an in-browser check of a cell-inclusion proof.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
   <link rel="stylesheet" href="/explorer/explorer.css">
@@ -19,7 +19,7 @@
   </div>
 
   <p class="lede">
-    This is not a block explorer. dregg's history is not a line of blocks holding transactions —
+    This is not a block explorer. dregg's history is not a line of blocks holding transactions;
     it is <em>cells</em> that own state, <em>turns</em> that exercise an attenuable proof-carrying
     token over that state, and the <em>receipt</em> each turn leaves on its agent's chain. Blocks
     exist, but as a leaderless DAG (a <em>blocklace</em>) whose job is ordering, not accounting.
@@ -51,8 +51,8 @@
     <h2>What has happened <span class="tag">GET /api/events</span></h2>
     <p class="hint">
       The committed-event log: one entry per turn the node committed, with the effects it applied
-      and a <em>typed</em> proof status. This is the broadest "what happened" feed the node offers
-      — broader than the receipt chain below, which only records turns that went through the
+      and a <em>typed</em> proof status. This is the broadest "what happened" feed the node offers,
+      broader than the receipt chain below, which only records turns that went through the
       cipherclerk. Where the two disagree, both are shown rather than the flattering one.
     </p>
     <div id="events"><span class="loading">reading…</span></div>
@@ -64,7 +64,7 @@
     <p class="hint">
       A <strong>cell</strong> is the unit of owned state: a balance, a nonce, a capability table,
       optionally a program that constrains what may be done to it, optionally a delegate. There are
-      no accounts and no contracts — a cell is both.
+      no accounts and no contracts: a cell is both.
     </p>
     <div id="cells"><span class="loading">reading…</span></div>
     <div id="cell-detail"></div>
@@ -74,7 +74,7 @@
   <div class="panel" id="panel-receipts">
     <h2>Receipt chains <span class="tag">GET /api/receipts</span></h2>
     <p class="hint">
-      A turn leaves a receipt, and each receipt names the agent's <em>previous</em> receipt — so
+      A turn leaves a receipt, and each receipt names the agent's <em>previous</em> receipt, so
       history is one chain <strong>per agent</strong>, not one global list. Receipts are grouped by
       agent below and the link is checked in your browser: a receipt whose
       <code>previous_receipt_hash</code> does not equal the preceding receipt's
@@ -88,7 +88,7 @@
     <h2>What the node commits to <span class="tag">GET /api/receipts/index/head</span></h2>
     <p class="hint">
       One root over the <em>whole</em> receipt log, signed by this node. The root binds the log:
-      alter a receipt, drop one, append one, or swap two, and the root moves — so a head the node
+      alter a receipt, drop one, append one, or swap two, and the root moves. So a head the node
       has served is a claim it cannot quietly walk back. What it is <strong>not</strong> is a
       committee's word. It is one node's signature over its own log, and whether that log is
       anchored to anything a quorum pinned is reported separately below, because those two are
@@ -101,7 +101,7 @@
   <div class="panel" id="panel-lace">
     <h2>The blocklace <span class="tag">GET /api/blocklace/blocks</span></h2>
     <p class="hint">
-      Not a chain — a DAG. Each block names a <em>set</em> of predecessors, and most blocks on an
+      Not a chain: a DAG. Each block names a <em>set</em> of predecessors, and most blocks on an
       idle node are heartbeats carrying no turn at all. That is why the node reports two different
       heights, and why calling either one "the block height" would be wrong.
     </p>
@@ -112,7 +112,7 @@
   <div class="panel" id="panel-roots">
     <h2>Attested roots <span class="tag">GET /api/federation/roots</span></h2>
     <p class="hint">
-      A quorum-attested <em>ledger root</em> is a commitment to the whole ledger at some height —
+      A quorum-attested <em>ledger root</em> is a commitment to the whole ledger at some height,
       not a block, and not a list of what changed. Each row is one such commitment with the
       signature count the node holds for it. This is the anchor the cell check at the bottom of the
       page compares against, which is why an empty table here is worth reading: it means a proof
@@ -126,13 +126,13 @@
     <h2>Check a cell for yourself <span class="tag">GET /api/cell/{id}/proof</span></h2>
     <p class="hint">
       The whole product is that claims are checkable, so this pane does the checking
-      <strong>in your browser</strong> — it folds the ledger root from the returned leaves with its
+      <strong>in your browser</strong>: it folds the ledger root from the returned leaves with its
       own BLAKE3 (<code>/explorer/blake3.js</code>), and reports what each check does and does not
       establish. Nothing here takes the node's word for a match.
     </p>
     <form class="verify-form" id="verify-form">
       <input id="verify-id" type="text" spellcheck="false" autocomplete="off"
-             placeholder="cell id (64 hex characters) — or click a cell above">
+             placeholder="cell id (64 hex characters), or click a cell above">
       <button class="btn" type="submit">fetch &amp; check</button>
     </form>
     <div id="verify-out"></div>

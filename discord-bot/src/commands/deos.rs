@@ -42,7 +42,7 @@ const STATUS_SLOT: usize = 0;
 /// Register the `/deos` command.
 pub fn register() -> CreateCommand {
     CreateCommand::new("deos")
-        .description("The deos surface inside Discord — cap-gated affordance buttons, live transclusion, dregg:// links")
+        .description("The deos surface inside Discord · cap-gated affordance buttons, live transclusion, dregg:// links")
         .add_option(
             CreateCommandOption::new(
                 CommandOptionType::SubCommand,
@@ -139,7 +139,7 @@ async fn handle_council(ctx: &Context, command: &CommandInteraction, state: &Bot
     let mut embed = embeds::dregg_embed("deos · Council Surface")
         .description(format!(
             "Cap-gated affordances for cell `{}`, projected for a **{}** viewer. \
-             You see exactly the buttons your held capabilities authorize — \
+             You see exactly the buttons your held capabilities authorize: \
              progressive attenuation, decided by the REAL `is_attenuation`.",
             short_cell(&user_cell),
             tier.label(),
@@ -147,7 +147,7 @@ async fn handle_council(ctx: &Context, command: &CommandInteraction, state: &Bot
         .field(
             "Visible affordances",
             if visible.is_empty() {
-                "_(none — this tier holds no authority over the surface)_".to_string()
+                "_(none · this tier holds no authority over the surface)_".to_string()
             } else {
                 visible
                     .iter()

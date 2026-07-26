@@ -335,8 +335,8 @@ impl DescentStandings {
             title: "Champion".to_string(),
             tag: "genuine".to_string(),
             children: vec![ViewNode::Text(match &self.champion {
-                Some(name) => format!("{name} — the last verified survivor"),
-                None => "no champion — nobody posted a verified win".to_string(),
+                Some(name) => format!("{name} · the last verified survivor"),
+                None => "no champion · nobody posted a verified win".to_string(),
             })],
         });
 
@@ -350,7 +350,7 @@ impl DescentStandings {
                     .map(|t| format!("{t} turns"))
                     .unwrap_or_else(|| "no verified win".to_string());
                 let flag = if row.was_refused {
-                    " — a run refused"
+                    " · a run refused"
                 } else {
                     ""
                 };
@@ -380,7 +380,7 @@ impl DescentStandings {
         });
 
         Surface(ViewNode::Section {
-            title: format!("The Descent — Weekly Tournament ({} rounds)", self.rounds),
+            title: format!("The Descent · Weekly Tournament ({} rounds)", self.rounds),
             tag: "accent".to_string(),
             children,
         })

@@ -244,7 +244,7 @@ impl std::fmt::Display for CrowdCloseError {
         match self {
             CrowdCloseError::DistinctFloor { voters, required } => write!(
                 f,
-                "below the distinct-voter floor — {voters} distinct voter(s), need {required} \
+                "below the distinct-voter floor · {voters} distinct voter(s), need {required} \
                  (paid weight alone cannot carry a window); the world does not move"
             ),
             CrowdCloseError::Collective(e) => write!(f, "{e}"),

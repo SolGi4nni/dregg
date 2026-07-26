@@ -612,7 +612,7 @@ impl DescentState {
             })?;
             if !completion.crowned {
                 return Err(NodeError::Rejected(format!(
-                    "native run {run_id} did not crown — only a crowned exit ranks and anchors"
+                    "native run {run_id} did not crown: only a crowned exit ranks and anchors"
                 )));
             }
             // The commitment = the terminal journal head (the tip of the actor-bound hash chain
@@ -1068,7 +1068,7 @@ async fn post_native_submit(
                         resp["settle_error"] = serde_json::json!(e.to_string());
                         resp["detail"] = serde_json::json!(
                             "exact native replay accepted; crowned + ranked in-process, but the \
-                             devnet-node anchor FAILED (settled:false) — the run is NOT on the node ledger"
+                             devnet-node anchor FAILED (settled:false): the run is NOT on the node ledger"
                         );
                     }
                 }
@@ -1112,7 +1112,7 @@ async fn post_submit(
                 Json(serde_json::json!({
                     "ranked": false,
                     "error": why,
-                    "detail": "the submitted day could not be re-derived to a world — nothing ingested",
+                    "detail": "the submitted day could not be re-derived to a world: nothing ingested",
                 })),
             );
         }
@@ -1125,7 +1125,7 @@ async fn post_submit(
                 Json(serde_json::json!({
                     "ranked": false,
                     "error": why,
-                    "detail": "the stable move tape could not address this executor — nothing ingested",
+                    "detail": "the stable move tape could not address this executor: nothing ingested",
                 })),
             );
         }
@@ -1174,7 +1174,7 @@ async fn post_submit(
                         resp["settle_error"] = serde_json::json!(e.to_string());
                         resp["detail"] = serde_json::json!(
                             "re-executed + no-cheat-verified; ranked in-process, but the devnet-node \
-                             anchor FAILED (settled:false) — the run is NOT on the node ledger"
+                             anchor FAILED (settled:false): the run is NOT on the node ledger"
                         );
                     }
                 }
@@ -1187,7 +1187,7 @@ async fn post_submit(
             Json(serde_json::json!({
                 "ranked": false,
                 "error": why,
-                "detail": "rejected by re-execution — nothing ingested (no-cheat)",
+                "detail": "rejected by re-execution: nothing ingested (no-cheat)",
             })),
         ),
     }
@@ -1628,13 +1628,13 @@ fn leaderboard_page(day: &Day, rows: &[Row], native_rows: &[NativeRow]) -> Strin
          procgen choice tape above. Each row replays its native <span class=\"mono\">delve / \
          smite / loot / unlock / flee</span> events and exact receipt, state, and journal-root \
          envelope. Only a crowned settlement ranks. This lane groups <strong>one row per human</strong> \
-         on the same rule as the table above — the actor is taken off the replay, and a proven \
+         on the same rule as the table above: the actor is taken off the replay, and a proven \
          cross-platform <a href=\"/identity/link\">link</a> is what makes two accounts one row.</p>\
          <p class=\"prose\"><strong>What <span class=\"mono\">score</span> is, and what it is \
          not.</strong> It is the <em>relic depth</em> a run carried out: every banked relic counts \
          the floor it was minted on, read off this day's own drawn map, so the deep ones are worth \
          what the rules make them cost to carry up. It is a <em>read</em> over facts the replay \
-         already committed — no bonus, no weighting, no tiebreak. ⚑ <strong>The ranking is still \
+         already committed: no bonus, no weighting, no tiebreak. ⚑ <strong>The ranking is still \
          <span class=\"mono\">turns</span>,</strong> not the score: deciding an order is a rule a \
          player could argue with, and a rule belongs with the game's other rules rather than in the \
          page that draws them. So read the score as the size of the haul and the rank as the speed \
@@ -1679,11 +1679,11 @@ fn leaderboard_page(day: &Day, rows: &[Row], native_rows: &[NativeRow]) -> Strin
         "<main class=\"session\">\
          <div class=\"page-head\" style=\"padding-top:var(--s4)\">\
          <p class=\"eyebrow\">Re-verified on this request</p>\
-         <h1>The Descent — {title}</h1>\
+         <h1>The Descent · {title}</h1>\
          <p class=\"deck\">The no-cheat leaderboard. Procgen rows are re-executed from passage \
          choices and required to reach the hoard. Browser-native rows are replayed under their \
          distinct Lean-native verb/receipt rules and required to crown. A forged or unfinished run \
-         appears in neither lane — exclusion comes from re-verification, not a stored flag.</p></div>\
+         appears in neither lane: exclusion comes from re-verification, not a stored flag.</p></div>\
          <div class=\"kv\">\
          <div><p class=\"k\">Day</p><p class=\"v mono\">{key}</p></div>\
          <div><p class=\"k\">Seed</p><p class=\"v mono\">{seed}</p></div>\
@@ -1716,7 +1716,7 @@ fn leaderboard_page(day: &Day, rows: &[Row], native_rows: &[NativeRow]) -> Strin
         native_table = native_table,
     );
     document(
-        &format!("The Descent — {} · leaderboard", day.day.title),
+        &format!("The Descent · {} · leaderboard", day.day.title),
         "descent-board",
         &body,
     )
@@ -1798,11 +1798,11 @@ fn native_run_card_page(
     let outcome = if !verified {
         "unverifiable"
     } else if crowned {
-        "CROWNED — Crown of the Deep banked in the terminal exit"
+        "CROWNED · Crown of the Deep banked in the terminal exit"
     } else if record.completion.is_some() {
-        "SETTLED — exact exit, not crowned and not ranked"
+        "SETTLED · exact exit, not crowned and not ranked"
     } else {
-        "IN PROGRESS — exact prefix, not ranked"
+        "IN PROGRESS · exact prefix, not ranked"
     };
 
     // ── THE STORY, FIRST. A stranger meets the run before they meet the ruleset. ──
@@ -1815,7 +1815,7 @@ fn native_run_card_page(
         None if verified => (
             String::new(),
             String::new(),
-            "An exact record with no landed turns — this run never moved.".to_string(),
+            "An exact record with no landed turns: this run never moved.".to_string(),
         ),
         None => (
             String::new(),
@@ -1837,9 +1837,9 @@ fn native_run_card_page(
 
     // ── THE SOCIAL PREVIEW. Meta tags are head-only, and this page exists to be posted. ──
     let og_title = match (&story, verified) {
-        (Some(story), true) => format!("{} — {actor}'s descent", story.ending().word()),
+        (Some(story), true) => format!("{} · {actor}'s descent", story.ending().word()),
         (_, true) => format!("{actor}'s descent"),
-        (_, false) => format!("FAIL — {actor}'s record does not re-execute"),
+        (_, false) => format!("FAIL · {actor}'s record does not re-execute"),
     };
     let head = format!(
         "{card_style}<meta name=\"description\" content=\"{desc}\">\
@@ -1866,7 +1866,7 @@ fn native_run_card_page(
          <p class=\"deck\">{headline}</p></div>\
          {card}\
          <section class=\"verdict {class}\"><h2><span class=\"stamp\">{verdict}</span>\
-         Independent verification — {verdict}</h2><p>{detail}</p></section>\
+         Independent verification · {verdict}</h2><p>{detail}</p></section>\
          <div class=\"kv\"><div><p class=\"k\">Outcome</p><p class=\"v\">{outcome}</p></div>\
          <div><p class=\"k\">Landed turns</p><p class=\"v mono\">{turns}</p></div>\
          <div><p class=\"k\">Banked relics</p><p class=\"v mono\">{banked}</p></div>\
@@ -1894,7 +1894,7 @@ fn native_run_card_page(
         share_block = share_block,
     );
     document_with_head(
-        &format!("The Descent — {actor} · native proof"),
+        &format!("The Descent · {actor} · native proof"),
         "descent-run",
         &head,
         &body,
@@ -1919,21 +1919,21 @@ fn run_card_page(
     // states are real classes now.)
     let panel = if verified {
         "<section class=\"verdict pass\">\
-         <h2><span class=\"stamp\">PASS</span>Independent verification — PASS</h2>\
+         <h2><span class=\"stamp\">PASS</span>Independent verification · PASS</h2>\
          <p>This run was <strong>re-executed on this request</strong>: a fresh, \
          identically-seeded world was deployed and driven through the recorded moves, and the \
          committed receipt chain re-verified (chain-linkage + replay). You are not trusting a stored \
-         result — you are seeing the run <strong>proven</strong>.</p>\
+         result; you are seeing the run <strong>proven</strong>.</p>\
          <p class=\"receipt ok\" style=\"margin-top:.8rem\"><span class=\"dot\"></span>\
          <span class=\"label\">verified by re-execution</span>\
          <span class=\"verdict\">yes</span></p></section>"
             .to_string()
     } else {
         "<section class=\"verdict fail\">\
-         <h2><span class=\"stamp\">FAIL</span>Independent verification — FAIL</h2>\
+         <h2><span class=\"stamp\">FAIL</span>Independent verification · FAIL</h2>\
          <p>Re-execution against a fresh identically-seeded world <strong>rejected</strong> \
          this record: the recorded moves do not honestly reproduce the committed chain. This run is \
-         <strong>forged or tampered</strong> — its claimed outcome below is NOT proven.</p>\
+         <strong>forged or tampered</strong>; its claimed outcome below is NOT proven.</p>\
          <p class=\"receipt refused\" style=\"margin-top:.8rem\"><span class=\"dot\"></span>\
          <span class=\"label\">verified by re-execution</span>\
          <span class=\"verdict\">NO</span></p></section>"
@@ -1944,16 +1944,16 @@ fn run_card_page(
     let outcome = if !verified {
         "unverifiable (forged / tampered record)".to_string()
     } else if won {
-        format!("SURVIVED — seized the hoard ({gold} gold) at depth {depth}")
+        format!("SURVIVED · seized the hoard ({gold} gold) at depth {depth}")
     } else if fell {
-        format!("FELL — downed by the warden at depth {depth}; the run is lost")
+        format!("FELL · downed by the warden at depth {depth}; the run is lost")
     } else if ended {
-        format!("turned back — the descent ended without the hoard (depth {depth})")
+        format!("turned back · the descent ended without the hoard (depth {depth})")
     } else {
-        format!("in progress — depth {depth}")
+        format!("in progress · depth {depth}")
     };
     let alive = if fell {
-        "dead (hardcore permadeath — final)"
+        "dead (hardcore permadeath · final)"
     } else {
         "alive"
     };
@@ -1973,7 +1973,7 @@ fn run_card_page(
          <span class=\"sep\">·</span><span class=\"sid\">a shared run</span></div>\
          <main class=\"session\">\
          <div class=\"page-head\" style=\"padding-top:var(--s4)\">\
-         <p class=\"eyebrow\">The Descent — {title}</p>\
+         <p class=\"eyebrow\">The Descent · {title}</p>\
          <h1>{player}'s run</h1>\
          <p class=\"deck\">{outcome}</p></div>\
          <div class=\"kv\">\
@@ -2008,7 +2008,7 @@ fn run_card_page(
         panel = panel,
     );
     document(
-        &format!("The Descent — {}'s run", run.player),
+        &format!("The Descent · {}'s run", run.player),
         "descent-board",
         &body,
     )
@@ -2025,7 +2025,7 @@ fn leaderboard_missing(key: Option<&str>) -> String {
          <p class=\"prose\"><a class=\"backlink\" href=\"/\">← Back to dregg</a></p>\
          </main>",
     );
-    document("The Descent — leaderboard", "descent-board", &body)
+    document("The Descent · leaderboard", "descent-board", &body)
 }
 
 /// The page shown for an unknown run id.
@@ -2037,10 +2037,11 @@ fn run_missing(id: &str) -> String {
          </p></main>",
         id = esc(id),
     );
-    document("The Descent — unknown run", "descent-board", &body)
+    document("The Descent · unknown run", "descent-board", &body)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// "WHICH OF THESE RUNS ARE MINE?" — the per-label read behind `GET /you`.// ═══════════════════════════════════════════════════════════════════════════════
 // "WHICH OF THESE RUNS ARE MINE?" — the per-label read behind `GET /you`.
 // ═══════════════════════════════════════════════════════════════════════════════
 

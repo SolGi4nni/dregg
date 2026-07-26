@@ -721,7 +721,7 @@ pub async fn post_offering_act_signed(
             publication,
             ..
         } => format!(
-            "Turn committed — {did}{}",
+            "Turn committed · {did}{}",
             publication.as_ref().map_or_else(
                 || PlayerTurnReceipt::from_landed_signed(
                     &receipt,
@@ -742,7 +742,7 @@ pub async fn post_offering_act_signed(
             outcome: Outcome::Refused(why),
             ..
         } => {
-            format!("Refused: {did}{why} (nothing committed — anti-ghost).")
+            format!("Refused: {did}{why} (nothing committed · anti-ghost).")
         }
         SignedAdvance::CommittedButPublicationFailed { error, .. } => format!(
             "Turn committed, but its public receipt card could not be rendered: {error}. Do not retry this command."
