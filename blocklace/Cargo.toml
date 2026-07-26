@@ -29,6 +29,12 @@ tracing = { workspace = true }
 [dev-dependencies]
 proptest = { workspace = true }
 rand = "0.8"
+# TEST-ONLY: installs the Lean-verified ML-DSA cores so this crate's test binaries can run a
+# PQ operation at all. `dregg-pq` refuses an uninstalled one with `process::abort()`, and this
+# crate is a light leaf that cannot link the archive from `[dependencies]` — see
+# `dregg-pq-testkit`'s crate docs. Costs nothing in a test binary that never calls it (the
+# linker pulls archive members by reference).
+dregg-pq-testkit = { path = "../dregg-pq-testkit" }
 
 [lints]
 workspace = true

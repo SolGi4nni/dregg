@@ -366,6 +366,13 @@ pub const HYBRID_PQ_CTX: &[u8] = b"dregg-hybrid-qc-v1";
 /// or forged PQ half never counts. Mirrors `dregg_federation::frost::MlDsaPublicKey::verify` on the
 /// light-client side, on the shared `dregg-pq` leaf alone.
 fn verify_ml_dsa_half(pubkey: &[u8], message: &[u8], sig: &[u8]) -> bool {
+    // `dregg-lightclient` is a light leaf: it cannot link the Lean archive, so with no verified
+    // core installed `dregg-pq` refuses this verify with an uncatchable `process::abort()` and this
+    // crate's whole lib-test binary died on it. The dev-only `dregg-pq-testkit` links the archive
+    // and installs the cores. `#[cfg(test)]` because the shipped crate stays archive-free; a
+    // deployed process installs the same cores at startup.
+    #[cfg(test)]
+    dregg_pq_testkit::install_or_panic();
     dregg_pq::ml_dsa_verify(pubkey, HYBRID_PQ_CTX, message, sig)
 }
 
@@ -784,6 +791,8 @@ mod tests {
     /// A deterministic ML-DSA-65 keypair for validator `i` (test fixtures only) — the post-quantum
     /// half of validator `i`'s hybrid vote, keyed off the same index as [`validator_key`].
     fn validator_ml_dsa_key(i: u8) -> (Vec<u8>, dregg_pq::MlDsaKey) {
+        // The derivation side of the same gate — see `verify_ml_dsa_half`.
+        dregg_pq_testkit::install_or_panic();
         let mut xi = [0u8; 32];
         xi[0] = i;
         xi[31] = 0xD5; // a distinct domain byte from the ed25519 seed

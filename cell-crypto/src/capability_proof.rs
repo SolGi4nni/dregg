@@ -557,6 +557,13 @@ impl MlDsaCapKey {
     /// holder's PQ public key can be re-derived at enrollment with no separate
     /// ceremony.
     pub fn from_ed25519_seed(seed: &[u8; 32]) -> Self {
+        // `dregg-cell-crypto` is a light leaf: it cannot link the Lean archive, so with no
+        // verified core installed `dregg-pq` refuses this derivation with an uncatchable
+        // `process::abort()` and this crate's whole lib-test binary died on it. The dev-only
+        // `dregg-pq-testkit` links the archive and installs the cores. `#[cfg(test)]` because the
+        // shipped crate stays archive-free; a deployed process installs the same cores at startup.
+        #[cfg(test)]
+        dregg_pq_testkit::install_or_panic();
         Self(dregg_pq::MlDsaKey::from_ed25519_seed(seed))
     }
 
@@ -577,6 +584,9 @@ impl MlDsaCapKey {
 /// identity uses `ed25519_seed`. Convenience over
 /// [`MlDsaCapKey::from_ed25519_seed`] for enrollment flows.
 pub fn enrolled_ml_dsa_pubkey(ed25519_seed: &[u8; 32]) -> Vec<u8> {
+    // See `MlDsaCapKey::from_ed25519_seed` for why the install is here.
+    #[cfg(test)]
+    dregg_pq_testkit::install_or_panic();
     dregg_pq::ml_dsa_public_from_seed(ed25519_seed)
 }
 
@@ -586,6 +596,9 @@ pub fn enrolled_ml_dsa_pubkey(ed25519_seed: &[u8; 32]) -> Vec<u8> {
 /// wrong-length signature, an undecodable key, or a failed cryptographic check.
 /// This is the fail-CLOSED primitive for the PQ half of the hybrid proof.
 pub fn ml_dsa_cap_verify(public_bytes: &[u8], message: &[u8], sig_bytes: &[u8]) -> bool {
+    // See `MlDsaCapKey::from_ed25519_seed` for why the install is here.
+    #[cfg(test)]
+    dregg_pq_testkit::install_or_panic();
     dregg_pq::ml_dsa_verify(public_bytes, CAP_PROOF_PQ_CTX, message, sig_bytes)
 }
 

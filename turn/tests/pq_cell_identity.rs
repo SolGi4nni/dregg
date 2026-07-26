@@ -16,6 +16,12 @@ use ed25519_dalek::{Signer, SigningKey};
 const FEDERATION: [u8; 32] = [0x5a; 32];
 
 fn hybrid_cell(seed: [u8; 32], token: [u8; 32], balance: i64) -> (Cell, SigningKey, MlDsaTurnKey) {
+    // This test runs with `set_require_pq(true)`, so every action it executes is verified through
+    // `dregg_pq::ml_dsa_verify` and every key it makes goes through the real derivation.
+    // `dregg-turn` cannot link the Lean archive from `[dependencies]`, so with no verified core
+    // installed `dregg-pq` aborts the process — which is what this binary did. The dev-only
+    // `dregg-pq-testkit` installs the cores; `hybrid_cell` is the one gateway this file uses.
+    dregg_pq_testkit::install_or_panic();
     let ed = SigningKey::from_bytes(&seed);
     let pq = MlDsaTurnKey::from_ed25519_seed(&seed);
     let cell = Cell::with_hybrid_balance(

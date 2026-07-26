@@ -34,6 +34,12 @@ dregg-dfa = { path = "../dfa" }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+# TEST-ONLY: installs the Lean-verified ML-DSA cores. The three hybrid peer-auth / revocation tests
+# in `src/server.rs` run `dregg_turn::pq::ml_dsa_verify`, which `dregg-pq` refuses with
+# `process::abort()` when no core is installed. Unlike the other light leaves, `dregg-wire` already
+# links the archive transitively (dregg-wire -> dregg-bridge -> dregg-lean-ffi), so this dev-dep
+# adds the INSTALL and no new archive linking at all.
+dregg-pq-testkit = { path = "../dregg-pq-testkit" }
 
 [[bench]]
 name = "wire_bench"

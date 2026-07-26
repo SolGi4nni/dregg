@@ -5,6 +5,18 @@
 
 use dregg_auth::credential::{Caveat, Context, Discharge, GatewayKey, Pred, Refusal, RootKey};
 
+/// `RootKey::from_seed`, with the Lean-verified ML-DSA cores installed first.
+///
+/// `dregg-auth` is a light leaf and cannot link the Lean archive from `[dependencies]`, so this
+/// test binary has no verified PQ core until it installs one — and `RootKey::mint` derives a fresh
+/// ML-DSA tail identity, which `dregg-pq` refuses (uncatchable `process::abort()`) when none is
+/// installed. That is what killed this binary. The dev-only `dregg-pq-testkit` links the archive;
+/// the install is `Once`-guarded, so routing every root through here is the whole wiring.
+fn installed_root(seed: [u8; 32]) -> RootKey {
+    dregg_pq_testkit::install_or_panic();
+    RootKey::from_seed(seed)
+}
+
 fn payments_caveat(gateway: &GatewayKey) -> Caveat {
     Caveat::ThirdParty {
         gateway: gateway.public().0,
@@ -16,7 +28,7 @@ fn payments_caveat(gateway: &GatewayKey) -> Caveat {
 #[test]
 fn honest_bound_discharge_admits() {
     // MacaroonDischarge.bound_discharge_verifies.
-    let root = RootKey::from_seed([21u8; 32]);
+    let root = installed_root([21u8; 32]);
     let gateway = GatewayKey::from_seed([22u8; 32]);
     let cred = root.mint([
         Caveat::FirstParty(Pred::NotAfter { at: 1_000 }),
@@ -29,7 +41,7 @@ fn honest_bound_discharge_admits() {
 
 #[test]
 fn missing_discharge_is_refused() {
-    let root = RootKey::from_seed([21u8; 32]);
+    let root = installed_root([21u8; 32]);
     let gateway = GatewayKey::from_seed([22u8; 32]);
     let cred = root.mint([payments_caveat(&gateway)]);
     let refusal = cred
@@ -47,7 +59,7 @@ fn unbound_discharge_is_refused_even_when_otherwise_perfect() {
     // unconditionally — even with zero conditions. The honest API cannot even
     // construct an unbound discharge (binding is a required argument), so we
     // assemble the hostile wire form by hand.
-    let root = RootKey::from_seed([23u8; 32]);
+    let root = installed_root([23u8; 32]);
     let gateway = GatewayKey::from_seed([24u8; 32]);
     let cred = root.mint([payments_caveat(&gateway)]);
     let unbound = Discharge::from_parts(
@@ -68,7 +80,7 @@ fn discharge_bound_to_another_credential_is_refused() {
     // MacaroonDischarge.binding_not_replayable_to_other_root: a discharge
     // issued for a heavily-attenuated credential cannot be replayed against a
     // less-attenuated one (or any other).
-    let root = RootKey::from_seed([25u8; 32]);
+    let root = installed_root([25u8; 32]);
     let gateway = GatewayKey::from_seed([26u8; 32]);
 
     let narrow = root
@@ -89,7 +101,7 @@ fn discharge_bound_to_another_credential_is_refused() {
 
 #[test]
 fn discharge_signed_by_the_wrong_gateway_is_refused() {
-    let root = RootKey::from_seed([27u8; 32]);
+    let root = installed_root([27u8; 32]);
     let gateway = GatewayKey::from_seed([28u8; 32]);
     let impostor = GatewayKey::from_seed([29u8; 32]);
     let cred = root.mint([payments_caveat(&gateway)]);
@@ -106,7 +118,7 @@ fn discharge_signed_by_the_wrong_gateway_is_refused() {
 fn expired_discharge_condition_is_refused() {
     // The gateway's own first-party conditions (the Lean `fp` list) gate the
     // discharge: an approval that expires is an approval that expires.
-    let root = RootKey::from_seed([30u8; 32]);
+    let root = installed_root([30u8; 32]);
     let gateway = GatewayKey::from_seed([31u8; 32]);
     let cred = root.mint([payments_caveat(&gateway)]);
     let d = gateway.discharge(
@@ -139,7 +151,7 @@ fn rebinding_after_attenuation_requires_a_fresh_discharge() {
     // discharge was issued changes the tail, so the old discharge no longer
     // binds — the holder must request a fresh one for the credential as
     // actually presented (MacaroonDischarge.rebinding_changes_replay).
-    let root = RootKey::from_seed([32u8; 32]);
+    let root = installed_root([32u8; 32]);
     let gateway = GatewayKey::from_seed([33u8; 32]);
     let cred = root.mint([payments_caveat(&gateway)]);
     let d = gateway.discharge(b"payments-approval-42".to_vec(), cred.tail(), []);
@@ -159,7 +171,7 @@ fn rebinding_after_attenuation_requires_a_fresh_discharge() {
 
 #[test]
 fn discharge_wire_roundtrip() {
-    let root = RootKey::from_seed([34u8; 32]);
+    let root = installed_root([34u8; 32]);
     let gateway = GatewayKey::from_seed([35u8; 32]);
     let cred = root.mint([payments_caveat(&gateway)]);
     let d = gateway.discharge(

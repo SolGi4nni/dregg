@@ -32,6 +32,10 @@ proptest = { workspace = true }
 # The value-link tests build a real shielded-spend witness
 # (`dregg_circuit_prove::shielded::spend_circuit`), which lives in the prove crate.
 dregg-circuit-prove = { path = "../circuit-prove" }
+# TEST-ONLY: installs the Lean-verified ML-DSA cores so the capability-proof tests can run a PQ
+# operation at all — `dregg-pq` refuses an uninstalled one with `process::abort()`, and this crate
+# cannot link the archive from `[dependencies]`. See `dregg-pq-testkit`'s crate docs.
+dregg-pq-testkit = { path = "../dregg-pq-testkit" }
 
 [lints]
 workspace = true

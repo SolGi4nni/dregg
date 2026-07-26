@@ -37,6 +37,14 @@ postcard = { version = "1", features = ["use-std"] }
 base64 = { workspace = true }
 getrandom = "0.2"
 
+[dev-dependencies]
+# TEST-ONLY, and it does NOT widen the shipped dependency set above: `dregg-auth` stays the light
+# leaf its description claims. It installs the Lean-verified ML-DSA cores so this crate's test
+# binaries can run a PQ operation at all — `RootKey::mint` and `Credential::attenuate` each derive a
+# fresh ML-DSA tail identity, and `dregg-pq` refuses an uninstalled derivation with
+# `process::abort()`. See `dregg-pq-testkit`'s crate docs.
+dregg-pq-testkit = { path = "../dregg-pq-testkit" }
+
 [lib]
 name = "dregg_auth"
 

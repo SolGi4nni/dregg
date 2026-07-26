@@ -3716,6 +3716,11 @@ mod tests {
     #[tokio::test]
     async fn hybrid_revocation_pins_ml_dsa_to_enrolled_authority() {
         use dregg_turn::pq::MlDsaTurnKey;
+        // `dregg-pq` refuses an ML-DSA op with no verified core installed, and refuses it with an
+        // uncatchable `process::abort()`. `dregg-wire` ALREADY links the Lean archive (through
+        // `dregg-bridge`), so all this needs is the install itself — the dev-dep on
+        // `dregg-pq-testkit` adds no archive to this binary's link that was not already in it.
+        dregg_pq_testkit::install_or_panic();
 
         // A revocation authority whose Ed25519 identity has an ENROLLED (pinned)
         // ML-DSA key, both derived from the same 32-byte seed.
@@ -4207,6 +4212,8 @@ mod tests {
     #[tokio::test]
     async fn authenticated_member_can_proceed() {
         use dregg_turn::pq::MlDsaTurnKey;
+        // See `hybrid_revocation_pins_ml_dsa_to_enrolled_authority` for why this install is here.
+        dregg_pq_testkit::install_or_panic();
 
         // Server with require_auth=true: a properly authenticated HYBRID peer
         // proceeds. Its id COMMITS to both keys (no ml_dsa roster).
@@ -4337,6 +4344,8 @@ mod tests {
     #[tokio::test]
     async fn hybrid_peer_auth_binds_ml_dsa_by_id_commitment() {
         use dregg_turn::pq::MlDsaTurnKey;
+        // See `hybrid_revocation_pins_ml_dsa_to_enrolled_authority` for why this install is here.
+        dregg_pq_testkit::install_or_panic();
 
         // A participant whose HYBRID id COMMITS to both its ed25519 and ML-DSA
         // keys (both derived from the same 32-byte seed). There is NO out-of-band

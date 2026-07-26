@@ -57,6 +57,21 @@ impl MlDsaPublicKey {
     /// Returns `false` on a wrong-length signature, an undecodable key, or a
     /// signature that does not verify. Fails CLOSED on every malformed input.
     pub fn verify(&self, message: &[u8], sig_bytes: &[u8]) -> bool {
+        // THE TWO CHOKE POINTS. `dregg-blocklace` is a light leaf: it cannot link the Lean
+        // archive, so nothing in this crate's own test binary installs a verified PQ core,
+        // and `dregg-pq` refuses an uninstalled ML-DSA op the only way it can — an
+        // uncatchable `process::abort()`. Every one of this crate's ~200 signing lib tests
+        // died that way, which is one of the reasons `cargo test --workspace` could not
+        // complete. `dregg-pq-testkit` is a DEV-dependency that links the archive; this call
+        // and the one in `from_seed` are the only two entries from this crate into
+        // `dregg-pq`, so installing here covers the whole lib-test binary.
+        //
+        // It is `#[cfg(test)]` because the shipped crate must stay archive-free. That does
+        // NOT make the test binary's DISPOSITION differ from production's: it changes which
+        // implementation answers, in the direction production takes — a deployed node calls
+        // `node::install_verified_pq_cores` at startup and gets exactly these cores.
+        #[cfg(test)]
+        dregg_pq_testkit::install_or_panic();
         dregg_pq::ml_dsa_verify(&self.0, BLOCK_PQ_CTX, message, sig_bytes)
     }
 }
@@ -84,6 +99,9 @@ impl MlDsaSigningKey {
     /// PQ identity is bound to the same seed as the classical identity — exactly
     /// how the node derives its PQ key in `node/src/blocklace_sync.rs`.
     pub fn from_seed(xi: &[u8; 32]) -> (MlDsaPublicKey, Self) {
+        // The other choke point — see `MlDsaPublicKey::verify` for why this is here.
+        #[cfg(test)]
+        dregg_pq_testkit::install_or_panic();
         let key = dregg_pq::MlDsaKey::from_ed25519_seed(xi);
         let pk = MlDsaPublicKey(
             key.public_bytes()

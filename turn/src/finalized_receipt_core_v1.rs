@@ -489,6 +489,9 @@ impl HybridFinalizedReceiptValidatorSignerV1 {
     /// Derive both halves of this validator identity from one 32-byte ed25519 seed. This is where
     /// the ML-DSA keygen is paid — once.
     pub fn from_seed(seed: &[u8; 32]) -> Result<Self, FinalizedReceiptCoreV1Error> {
+        // See `crate::pq::MlDsaTurnKey::from_ed25519_seed` for why the install is here.
+        #[cfg(test)]
+        dregg_pq_testkit::install_or_panic();
         let classical = SigningKey::from_bytes(seed);
         let pq = std::sync::Arc::new(dregg_pq::MlDsaKey::from_ed25519_seed(seed));
         let identity = HybridFinalizedReceiptValidatorIdentityV1 {
@@ -578,6 +581,8 @@ impl HybridLocalFinalizedReceiptEnvelopeV1 {
             &ed25519_dalek::Signature::from_bytes(&self.ed25519_signature),
         )
         .map_err(|_| FinalizedReceiptCoreV1Error::InvalidEnvelopeClassicalSignature)?;
+        #[cfg(test)]
+        dregg_pq_testkit::install_or_panic();
         if !dregg_pq::ml_dsa_verify(
             &expected.ml_dsa_65,
             LOCAL_ENVELOPE_PQ_CONTEXT,

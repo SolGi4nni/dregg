@@ -1,0 +1,30 @@
+[package]
+name = "dregg-pq-testkit"
+version.workspace = true
+edition.workspace = true
+
+# The ONE place a TEST process installs the Lean-verified post-quantum cores.
+#
+# `dregg-pq` is a light leaf that never links the Lean archive; it answers a PQ operation
+# only through a function pointer some host installed, and with none installed it refuses
+# with `process::abort()`. Six crates in this workspace — blocklace, token, turn,
+# cell-crypto, lightclient, dregg-auth — are deliberately light for the same reason and so
+# CANNOT install a core themselves. Their test binaries reach `MlDsaKey::from_ed25519_seed`
+# and die as a bare SIGABRT, which is what makes `cargo test --workspace` unreachable.
+#
+# This crate is a DEV-ONLY dependency of those crates. It links the archive (that is the
+# whole point) and hands back one `install()`. Nothing ships it: no crate here names it in
+# `[dependencies]`, and it exports nothing a production path could call.
+#
+# It is NOT a bypass. `DREGG_ALLOW_UNAUDITED_PQ` does not appear in it — that variable
+# routes PQ onto the unaudited `fips204`/`ml-kem` crates, which is the substitution the gate
+# exists to prevent. This does the opposite: it makes the verified cores the authority in
+# the test process, so those tests run the SAME objects a deployed node runs.
+
+[dependencies]
+dregg-pq = { path = "../dregg-pq" }
+# The archive. This edge is why the crate exists, and why it is dev-only downstream.
+dregg-lean-ffi = { path = "../dregg-lean-ffi" }
+
+[lints]
+workspace = true

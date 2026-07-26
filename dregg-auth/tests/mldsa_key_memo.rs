@@ -16,14 +16,34 @@
 //!
 //! ## Scope, stated plainly
 //!
-//! `dregg-auth` does NOT depend on `dregg-lean-ffi`, so no process running these
-//! tests can install the Lean-verified ML-DSA cores — `dregg-pq` either takes its
-//! `fips204` fallback (under `DREGG_ALLOW_UNAUDITED_PQ=1`) or fails closed and
-//! aborts. What is checked here is therefore the KEY-ROUTING property (which key
-//! each identity presents and signs under), which is what the memo can break. It
-//! says nothing about the deployed keygen object.
+//! ⚑ THIS SCOPE NOTE WAS NARROWER THAN IT IS NOW, AND WHY IT WIDENED. It used to
+//! read: "`dregg-auth` does NOT depend on `dregg-lean-ffi`, so no process running
+//! these tests can install the Lean-verified ML-DSA cores — `dregg-pq` either takes
+//! its `fips204` fallback (under `DREGG_ALLOW_UNAUDITED_PQ=1`) or fails closed and
+//! aborts. What is checked here is therefore the KEY-ROUTING property … It says
+//! nothing about the deployed keygen object." The second horn was what actually
+//! happened: this binary aborted, so it asserted nothing at all.
+//!
+//! `dregg-auth` still does not depend on `dregg-lean-ffi` in `[dependencies]` — it
+//! stays the light leaf its description claims — but the dev-only
+//! `dregg-pq-testkit` links the archive for the TEST binary and installs the
+//! verified cores (`root()` below). So these keys ARE the deployed keygen
+//! object's, and the routing property is now checked over it rather than over the
+//! `fips204` crate.
 
 use dregg_auth::credential::{Caveat, Context, Credential, HybridRootPublic, Pred, RootKey};
+
+/// `RootKey::from_seed`, with the Lean-verified ML-DSA cores installed first.
+///
+/// `dregg-auth` is a light leaf and cannot link the Lean archive from `[dependencies]`, so this
+/// test binary has no verified PQ core until it installs one — and `RootKey::mint` derives a fresh
+/// ML-DSA tail identity, which `dregg-pq` refuses (uncatchable `process::abort()`) when none is
+/// installed. That is what killed this binary. The dev-only `dregg-pq-testkit` links the archive;
+/// the install is `Once`-guarded, so routing every root through here is the whole wiring.
+fn installed_root(seed: [u8; 32]) -> RootKey {
+    dregg_pq_testkit::install_or_panic();
+    RootKey::from_seed(seed)
+}
 
 fn read_caveat() -> Caveat {
     Caveat::FirstParty(Pred::AttrEq {
@@ -42,7 +62,7 @@ fn ok_ctx() -> Context {
 fn two_identities_never_share_a_derived_pq_key() {
     let roots: Vec<RootKey> = [0x11u8, 0x22, 0x33, 0xf0]
         .iter()
-        .map(|b| RootKey::from_seed([*b; 32]))
+        .map(|b| installed_root([*b; 32]))
         .collect();
     let enrolled: Vec<HybridRootPublic> = roots.iter().map(RootKey::public_hybrid).collect();
 
@@ -131,8 +151,8 @@ fn a_credential_stays_send_and_sync() {
 /// chain.
 #[test]
 fn a_neighbours_pq_anchor_does_not_admit() {
-    let mine = RootKey::from_seed([0x71; 32]);
-    let theirs = RootKey::from_seed([0x72; 32]);
+    let mine = installed_root([0x71; 32]);
+    let theirs = installed_root([0x72; 32]);
     let cred = mine.mint([read_caveat()]).attenuate([read_caveat()]);
 
     assert_eq!(cred.verify_hybrid(&mine.public_hybrid(), &ok_ctx()), Ok(()));
@@ -153,7 +173,7 @@ fn a_neighbours_pq_anchor_does_not_admit() {
 /// separately, so neither inherited the other's key.
 #[test]
 fn attenuation_does_not_inherit_the_parents_pq_key() {
-    let root = RootKey::from_seed([0x73; 32]);
+    let root = installed_root([0x73; 32]);
     let parent = root.mint([read_caveat()]);
     let parent_wire = parent.encode();
     let child = parent.attenuate([read_caveat()]);

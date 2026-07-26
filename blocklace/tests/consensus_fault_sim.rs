@@ -51,6 +51,12 @@ use ed25519_dalek::SigningKey;
 //     two sims don't share a mutable module in the shared tree) ─────────────────
 
 fn key(seed: u8) -> SigningKey {
+    // Every block this sim signs carries an ML-DSA-65 half, and `dregg-pq` aborts the process
+    // on an ML-DSA op with no verified core installed. `dregg-blocklace` is a light leaf that
+    // cannot link the Lean archive, so this test binary installs the cores through the
+    // dev-only `dregg-pq-testkit`. `key` is the one gateway every test here goes through, and
+    // the install is `Once`-guarded, so this is the whole wiring.
+    dregg_pq_testkit::install_or_panic();
     SigningKey::from_bytes(&[seed; 32])
 }
 fn pubkey(sk: &SigningKey) -> [u8; 32] {

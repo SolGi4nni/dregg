@@ -435,6 +435,13 @@ impl RevocationAuthority {
     /// Derive both halves of the authority identity from its 32-byte ed25519 seed. This is where
     /// the ML-DSA keygen is paid — once.
     pub fn from_ed25519_seed(seed: &[u8; 32]) -> Self {
+        // `dregg-token` is a light leaf: it cannot link the Lean archive, so with no verified core
+        // installed `dregg-pq` refuses this derivation with an uncatchable `process::abort()` and
+        // this crate's whole lib-test binary died on it. The dev-only `dregg-pq-testkit` links the
+        // archive and installs the cores. `#[cfg(test)]` because the shipped crate stays
+        // archive-free; a deployed process installs the same cores at startup.
+        #[cfg(test)]
+        dregg_pq_testkit::install_or_panic();
         let classical = ed25519_dalek::SigningKey::from_bytes(seed);
         let pq = std::sync::Arc::new(dregg_pq::MlDsaKey::from_ed25519_seed(seed));
         let enrolled = HybridAuthorityKey {
@@ -485,6 +492,9 @@ mod pq {
 
     /// Derive the authority's ML-DSA-65 public key from its 32-byte ed25519 seed.
     pub fn ml_dsa_public_from_seed(seed: &[u8; 32]) -> Vec<u8> {
+        // See `RevocationAuthority::from_ed25519_seed` for why the install is here.
+        #[cfg(test)]
+        dregg_pq_testkit::install_or_panic();
         dregg_pq::ml_dsa_public_from_seed(seed)
     }
 
@@ -496,6 +506,7 @@ mod pq {
     /// independent reference the held-key path is checked against.
     #[cfg(test)]
     pub fn ml_dsa_sign_from_seed(seed: &[u8; 32], message: &[u8]) -> Option<Vec<u8>> {
+        dregg_pq_testkit::install_or_panic();
         dregg_pq::ml_dsa_sign_from_seed(seed, REVOCATION_ROOT_PQ_CTX, message)
     }
 
@@ -509,6 +520,9 @@ mod pq {
     /// key. Returns `false` — never panics — on any malformed input or failed
     /// check (the fail-CLOSED primitive).
     pub fn ml_dsa_verify(public_bytes: &[u8], message: &[u8], sig_bytes: &[u8]) -> bool {
+        // See `RevocationAuthority::from_ed25519_seed` for why the install is here.
+        #[cfg(test)]
+        dregg_pq_testkit::install_or_panic();
         dregg_pq::ml_dsa_verify(public_bytes, REVOCATION_ROOT_PQ_CTX, message, sig_bytes)
     }
 }

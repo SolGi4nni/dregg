@@ -579,6 +579,9 @@ impl HybridExactFnspV4ValidatorSigner {
     /// Derive both halves of this validator identity from one 32-byte ed25519 seed. This is where
     /// the ML-DSA keygen is paid — once.
     pub fn from_seed(seed: &[u8; 32]) -> Result<Self, ExactFnspV4ConsensusError> {
+        // See `crate::pq::MlDsaTurnKey::from_ed25519_seed` for why the install is here.
+        #[cfg(test)]
+        dregg_pq_testkit::install_or_panic();
         let classical = SigningKey::from_bytes(seed);
         let pq = std::sync::Arc::new(dregg_pq::MlDsaKey::from_ed25519_seed(seed));
         let identity = HybridExactFnspV4ValidatorIdentity {
@@ -676,6 +679,8 @@ impl HybridLocalExactFnspV4Envelope {
         let signature = ed25519_dalek::Signature::from_bytes(&self.ed25519_signature);
         key.verify_strict(&message, &signature)
             .map_err(|_| ExactFnspV4ConsensusError::InvalidEnvelopeClassicalSignature)?;
+        #[cfg(test)]
+        dregg_pq_testkit::install_or_panic();
         if !dregg_pq::ml_dsa_verify(
             &expected.ml_dsa_65,
             LOCAL_ENVELOPE_PQ_CONTEXT,

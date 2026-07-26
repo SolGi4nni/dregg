@@ -53,6 +53,7 @@ const CRED_PQ_CTX: &[u8] = b"dregg-auth v1 credential mldsa";
 /// as the independent reference the memo is checked AGAINST.
 #[cfg(test)]
 pub(crate) fn ml_dsa_public_from_seed(seed: &[u8; 32]) -> [u8; ML_DSA_PK_LEN] {
+    dregg_pq_testkit::install_or_panic();
     dregg_pq::ml_dsa_public_from_seed(seed)
         .try_into()
         .expect("ml-dsa-65 public key is ML_DSA_PK_LEN bytes")
@@ -74,6 +75,7 @@ pub(crate) fn pk_bytes(key: &dregg_pq::MlDsaKey) -> [u8; ML_DSA_PK_LEN] {
 /// signing goes through [`MlDsaSeedMemo::sign`].
 #[cfg(test)]
 pub(crate) fn ml_dsa_sign(seed: &[u8; 32], message: &[u8]) -> Option<[u8; ML_DSA_SIG_LEN]> {
+    dregg_pq_testkit::install_or_panic();
     let sig = dregg_pq::ml_dsa_sign_from_seed(seed, CRED_PQ_CTX, message)?;
     sig.try_into().ok()
 }
@@ -85,6 +87,15 @@ pub(crate) fn ml_dsa_sign(seed: &[u8; 32], message: &[u8]) -> Option<[u8; ML_DSA
 /// This is the fail-CLOSED primitive: a present-but-invalid (or absent) PQ half
 /// must make the whole hybrid verification reject.
 pub(crate) fn ml_dsa_verify(public_bytes: &[u8], message: &[u8], sig_bytes: &[u8]) -> bool {
+    // `dregg-auth` is deliberately a light leaf ("no node, no wallet, no blockchain"), so it
+    // cannot link the Lean archive and nothing in its own test binary installs a verified PQ core.
+    // `dregg-pq` then refuses this verify with an uncatchable `process::abort()`, which is what
+    // killed this crate's lib-test binary and four of its five integration binaries. The dev-only
+    // `dregg-pq-testkit` links the archive and installs the cores; this and `MlDsaSeedMemo::key_for`
+    // are the two entries from this crate into `dregg-pq`. `#[cfg(test)]` because the shipped crate
+    // stays a light leaf; a deployed process installs the same cores at startup.
+    #[cfg(test)]
+    dregg_pq_testkit::install_or_panic();
     dregg_pq::ml_dsa_verify(public_bytes, CRED_PQ_CTX, message, sig_bytes)
 }
 
@@ -200,6 +211,9 @@ impl MlDsaSeedMemo {
         {
             return Arc::clone(&entry.key);
         }
+        // The derivation side of the same gate — see `ml_dsa_verify`.
+        #[cfg(test)]
+        dregg_pq_testkit::install_or_panic();
         let key = Arc::new(dregg_pq::MlDsaKey::from_ed25519_seed(seed));
         self.install(seed, Arc::clone(&key));
         key

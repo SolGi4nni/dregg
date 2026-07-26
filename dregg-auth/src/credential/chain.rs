@@ -157,6 +157,11 @@ impl RootKey {
         // ONE keygen for the fresh tail identity, and the credential that will own
         // that identity keeps it: the block needs the public bytes, the holder
         // needs the key, and they are the same derivation.
+        // The tail-identity keygen — see `credential::pq::ml_dsa_verify` for why the install is
+        // here. `mint` and `attenuate` each MINT A NEW identity, so this derivation is not served
+        // by any memo and `dregg-pq` aborts on it when no verified core is installed.
+        #[cfg(test)]
+        dregg_pq_testkit::install_or_panic();
         let next_pq = std::sync::Arc::new(dregg_pq::MlDsaKey::from_ed25519_seed(&next.to_bytes()));
         let next_pub_ml_dsa = pq::pk_bytes(&next_pq).to_vec();
         let msg = block_digest(&nonce, &caveats, &next_pub, &next_pub_ml_dsa);
@@ -324,6 +329,11 @@ impl Credential {
         let next_pub = next.verifying_key().to_bytes();
         // ONE keygen for the fresh tail identity; it becomes this credential's
         // memo below, so the next attenuation or hybrid verify pays nothing.
+        // The tail-identity keygen — see `credential::pq::ml_dsa_verify` for why the install is
+        // here. `mint` and `attenuate` each MINT A NEW identity, so this derivation is not served
+        // by any memo and `dregg-pq` aborts on it when no verified core is installed.
+        #[cfg(test)]
+        dregg_pq_testkit::install_or_panic();
         let next_pq = std::sync::Arc::new(dregg_pq::MlDsaKey::from_ed25519_seed(&next.to_bytes()));
         let next_pub_ml_dsa = pq::pk_bytes(&next_pq).to_vec();
         let prev_sig = self
@@ -1201,6 +1211,7 @@ mod ml_dsa_memo_tests {
         // The memo changes latency, not what is signed or BY WHICH KEY.
         let root = RootKey::from_seed([0x64u8; 32]);
         let seed = root.key.to_bytes();
+        dregg_pq_testkit::install_or_panic();
         let fresh = dregg_pq::MlDsaKey::from_ed25519_seed(&seed);
         assert_eq!(
             root.pq.public_from_seed(&seed).as_slice(),
@@ -1208,20 +1219,33 @@ mod ml_dsa_memo_tests {
             "the memoised key must be bit-identical to a fresh derivation"
         );
 
-        // The credential-chain PQ signature is HEDGED from OS entropy, so two signatures over one
-        // message differ by construction and byte-equality would be the wrong claim. What must hold
-        // is that both verify under the ONE key — a memo that served a different key would break
-        // exactly here.
+        // ⚑ THE SIGNATURE IS NOT HEDGED HERE, AND FINDING THAT OUT COST AN ABORTING TEST BINARY.
+        // This assertion used to be `assert_ne!` under the note "the credential-chain PQ signature
+        // is HEDGED from OS entropy, so two signatures over one message differ by construction",
+        // with the escape hatch "if it ever becomes deterministic, tighten this to byte-equality
+        // rather than dropping the check". That is exactly what happened, and the escape hatch is
+        // being taken.
+        //
+        // The two ML-DSA backends DIFFER OBSERVABLY here. `dregg_pq::MlDsaKey::try_sign` on the
+        // `fips204` crate is hedged (it draws `rnd` from the OS), so two signatures over one
+        // message differ. The Lean-verified REAL sign core — which this binary now installs, and
+        // which a deployed node installs — is the DETERMINISTIC FIPS 204 variant, so they are
+        // byte-identical. Nothing here noticed for as long as this binary aborted on its first PQ
+        // op and asserted nothing at all.
+        //
+        // Byte-equality is the stronger claim and it is the one that holds on the deployed backend,
+        // so it is what is checked. If a future build reaches this on the crate fallback instead,
+        // `install_or_panic` above will have failed first.
         let msg = [0x9au8; 32];
         let memoised = root
             .pq
             .sign(&seed, &msg)
             .expect("ml-dsa signing is available");
         let independent = pq::ml_dsa_sign(&seed, &msg).expect("ml-dsa signing is available");
-        assert_ne!(
+        assert_eq!(
             memoised, independent,
-            "this signature is hedged; if it ever becomes deterministic, tighten this to \
-             byte-equality rather than dropping the check"
+            "the verified Lean sign core is deterministic, so the memoised and independently \
+             derived keys must produce byte-identical signatures over one message"
         );
         let key = fresh.public_bytes();
         assert!(pq::ml_dsa_verify(&key, &msg, &memoised));

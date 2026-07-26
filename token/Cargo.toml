@@ -45,6 +45,10 @@ zeroize = { workspace = true }
 [dev-dependencies]
 criterion = { workspace = true }
 getrandom = { workspace = true }
+# TEST-ONLY: installs the Lean-verified ML-DSA cores so the revocation-authority tests can run a
+# PQ operation at all — `dregg-pq` refuses an uninstalled one with `process::abort()`, and this
+# crate cannot link the archive from `[dependencies]`. See `dregg-pq-testkit`'s crate docs.
+dregg-pq-testkit = { path = "../dregg-pq-testkit" }
 
 [lib]
 name = "dregg_token"

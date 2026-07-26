@@ -7,6 +7,18 @@ use dregg_auth::credential::{
     WireError,
 };
 
+/// `RootKey::from_seed`, with the Lean-verified ML-DSA cores installed first.
+///
+/// `dregg-auth` is a light leaf and cannot link the Lean archive from `[dependencies]`, so this
+/// test binary has no verified PQ core until it installs one — and `RootKey::mint` derives a fresh
+/// ML-DSA tail identity, which `dregg-pq` refuses (uncatchable `process::abort()`) when none is
+/// installed. That is what killed this binary. The dev-only `dregg-pq-testkit` links the archive;
+/// the install is `Once`-guarded, so routing every root through here is the whole wiring.
+fn installed_root(seed: [u8; 32]) -> RootKey {
+    dregg_pq_testkit::install_or_panic();
+    RootKey::from_seed(seed)
+}
+
 fn fp(p: Pred) -> Caveat {
     Caveat::FirstParty(p)
 }
@@ -20,7 +32,7 @@ fn tool_eq(t: &str) -> Pred {
 
 #[test]
 fn mint_verify_allow() {
-    let root = RootKey::from_seed([7u8; 32]);
+    let root = installed_root([7u8; 32]);
     let cred = root.mint([fp(tool_eq("read")), fp(Pred::NotAfter { at: 2_000 })]);
     let ctx = Context::new().at(1_000).attr("tool", "read");
     assert_eq!(cred.verify(&root.public(), &ctx), Ok(()));
@@ -28,7 +40,7 @@ fn mint_verify_allow() {
 
 #[test]
 fn wrong_attribute_refused_with_terms() {
-    let root = RootKey::from_seed([7u8; 32]);
+    let root = installed_root([7u8; 32]);
     let cred = root.mint([fp(tool_eq("read"))]);
     let ctx = Context::new().at(1_000).attr("tool", "delete-repo");
     let refusal = cred.verify(&root.public(), &ctx).unwrap_err();
@@ -45,7 +57,7 @@ fn wrong_attribute_refused_with_terms() {
 
 #[test]
 fn temporal_refusal_after_expiry_and_before_vesting() {
-    let root = RootKey::from_seed([1u8; 32]);
+    let root = installed_root([1u8; 32]);
     let cred = root.mint([fp(Pred::Within {
         not_before: 100,
         not_after: 200,
@@ -68,7 +80,7 @@ fn temporal_refusal_after_expiry_and_before_vesting() {
 fn missing_clock_is_a_refusal_even_under_not() {
     // Fail-closed: a context with no clock cannot satisfy ANY temporal
     // predicate — and `Not` must not convert that absence into authority.
-    let root = RootKey::from_seed([2u8; 32]);
+    let root = installed_root([2u8; 32]);
     let cred = root.mint([fp(Pred::Not(Box::new(Pred::NotAfter { at: 100 })))]);
     let refusal = cred.verify(&root.public(), &Context::new()).unwrap_err();
     assert!(matches!(
@@ -82,7 +94,7 @@ fn missing_clock_is_a_refusal_even_under_not() {
 
 #[test]
 fn missing_attribute_is_a_refusal_not_false() {
-    let root = RootKey::from_seed([2u8; 32]);
+    let root = installed_root([2u8; 32]);
     // Not(tool = read): with `tool` unbound this must refuse, not admit.
     let cred = root.mint([fp(Pred::Not(Box::new(tool_eq("read"))))]);
     let refusal = cred
@@ -102,7 +114,7 @@ fn attenuation_narrows_and_parent_still_admits() {
     // attenuate_narrows, executable: anything the child admits, the parent
     // admitted; and there are requests the parent admits that the child
     // refuses.
-    let root = RootKey::from_seed([3u8; 32]);
+    let root = installed_root([3u8; 32]);
     let parent = root.mint([fp(Pred::AnyOf(vec![tool_eq("read"), tool_eq("pr-create")]))]);
     let pk = root.public();
 
@@ -123,7 +135,7 @@ fn attenuation_narrows_and_parent_still_admits() {
 #[test]
 fn empty_anyof_refuses_fail_closed() {
     // Pred.evalAny [] = false — the fail-closed disjunction.
-    let root = RootKey::from_seed([4u8; 32]);
+    let root = installed_root([4u8; 32]);
     let cred = root.mint([fp(Pred::AnyOf(vec![]))]);
     assert!(matches!(
         cred.verify(&root.public(), &Context::new().at(1)),
@@ -137,7 +149,7 @@ fn empty_anyof_refuses_fail_closed() {
 #[test]
 fn trivial_attenuation_is_identity_on_authority() {
     // attenuate_trivial: appending `True` changes the chain, not the verdict.
-    let root = RootKey::from_seed([5u8; 32]);
+    let root = installed_root([5u8; 32]);
     let cred = root.mint([fp(tool_eq("read"))]);
     let pk = root.public();
     let ctx = Context::new().at(1).attr("tool", "read");
@@ -157,7 +169,7 @@ fn stripping_the_attenuation_block_is_refused() {
     // with the last block dropped. The carried proof key matches the dropped
     // block's key, not the prefix's, so decode refuses — and the recipient
     // never held the prefix's key (that is the possession discipline).
-    let root = RootKey::from_seed([6u8; 32]);
+    let root = installed_root([6u8; 32]);
     let parent = root.mint([fp(Pred::AnyOf(vec![tool_eq("read"), tool_eq("pr-create")]))]);
     // The parent's chain bytes are visible inside the child's encoding (the
     // blocks are public); capture them before handing the child off.
@@ -193,7 +205,7 @@ fn stripping_the_attenuation_block_is_refused() {
 
 #[test]
 fn tampered_signature_is_refused() {
-    let root = RootKey::from_seed([8u8; 32]);
+    let root = installed_root([8u8; 32]);
     let cred = root
         .mint([fp(tool_eq("read"))])
         .attenuate([fp(Pred::NotAfter { at: 99 })]);
@@ -224,8 +236,8 @@ fn tampered_signature_is_refused() {
 
 #[test]
 fn wrong_root_key_is_refused() {
-    let root = RootKey::from_seed([9u8; 32]);
-    let other = RootKey::from_seed([10u8; 32]);
+    let root = installed_root([9u8; 32]);
+    let other = installed_root([10u8; 32]);
     let cred = root.mint([fp(tool_eq("read"))]);
     let ctx = Context::new().at(1).attr("tool", "read");
     assert!(matches!(
@@ -240,7 +252,7 @@ fn wrong_root_key_is_refused() {
 
 #[test]
 fn wire_roundtrip_preserves_the_decision() {
-    let root = RootKey::from_seed([11u8; 32]);
+    let root = installed_root([11u8; 32]);
     let cred = root
         .mint([fp(tool_eq("read")), fp(Pred::NotAfter { at: 500 })])
         .attenuate([fp(Pred::AttrPrefix {
@@ -288,7 +300,7 @@ fn unknown_prefix_is_an_error_not_a_fallback() {
 
 #[test]
 fn public_key_hex_roundtrip() {
-    let root = RootKey::from_seed([12u8; 32]);
+    let root = installed_root([12u8; 32]);
     let pk = root.public();
     assert_eq!(PublicKey::from_hex(&pk.to_hex()), Ok(pk));
 }
@@ -299,7 +311,7 @@ fn public_key_hex_roundtrip() {
 
 #[test]
 fn explain_names_every_term_and_the_tail() {
-    let root = RootKey::from_seed([13u8; 32]);
+    let root = installed_root([13u8; 32]);
     let cred = root
         .mint([
             fp(tool_eq("read")),

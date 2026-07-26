@@ -8,11 +8,23 @@
 
 use dregg_auth::policy::{Call, Grant, Policy, PolicyError, Verifier};
 
+/// `Policy::generate`, with the Lean-verified ML-DSA cores installed first.
+///
+/// `Policy::generate` holds a `RootKey`, and `Policy::issue` calls `RootKey::mint`, which derives a
+/// fresh ML-DSA tail identity. `dregg-auth` is a light leaf and cannot link the Lean archive from
+/// `[dependencies]`, so with no verified core installed `dregg-pq` refuses that derivation with an
+/// uncatchable `process::abort()` — which is what killed this binary. The dev-only
+/// `dregg-pq-testkit` links the archive; the install is `Once`-guarded.
+fn installed_policy() -> Policy {
+    dregg_pq_testkit::install_or_panic();
+    Policy::generate()
+}
+
 const T0: u64 = 1_800_000_000; // a fixed "now" for deterministic time checks
 const FRIDAY: u64 = 1_800_604_800; // T0 + 7 days
 
 fn polis_and_token() -> (Policy, String) {
-    let polis = Policy::generate();
+    let polis = installed_policy();
     let token = polis
         .issue(
             Grant::to("ci-bot")
@@ -144,7 +156,7 @@ fn missing_clock_refuses_an_expiring_grant_fail_closed() {
 #[test]
 fn offline_verification_needs_only_the_public_key() {
     // Issue with the private authority; verify with ONLY the hex public key.
-    let polis = Policy::generate();
+    let polis = installed_policy();
     let pubkey_hex = polis.public_key_hex();
     let token = polis
         .issue(Grant::to("agent").tool("read").until(FRIDAY))
@@ -165,8 +177,8 @@ fn offline_verification_needs_only_the_public_key() {
 
 #[test]
 fn wrong_public_key_is_rejected() {
-    let issuer = Policy::generate();
-    let impostor = Policy::generate();
+    let issuer = installed_policy();
+    let impostor = installed_policy();
     let token = issuer
         .issue(Grant::to("a").tool("read").until(FRIDAY))
         .unwrap()
@@ -194,7 +206,7 @@ fn wrong_subject_is_refused() {
     use base64::Engine;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
-    let polis = Policy::generate();
+    let polis = installed_policy();
     let token = polis
         .issue(Grant::to("ci-bot").tool("read").until(FRIDAY))
         .unwrap()
@@ -249,7 +261,7 @@ fn wrong_subject_is_refused() {
 #[test]
 fn unscoped_grant_is_refused_at_issue() {
     // The whole point: you cannot mint an unscoped agent token by accident.
-    let polis = Policy::generate();
+    let polis = installed_policy();
     let err = polis.issue(Grant::to("agent")); // no tools
     assert!(
         matches!(err, Err(PolicyError::Unscoped)),
@@ -260,7 +272,7 @@ fn unscoped_grant_is_refused_at_issue() {
 #[test]
 fn empty_narrowing_is_refused() {
     // Attenuation must narrow at least one dimension.
-    let polis = Policy::generate();
+    let polis = installed_policy();
     let issued = polis
         .issue(Grant::to("agent").tool("read").until(FRIDAY))
         .unwrap();
@@ -272,7 +284,7 @@ fn empty_narrowing_is_refused() {
 fn attenuating_tightens_expiry() {
     // Narrow the expiry from FRIDAY to T0+1h; after the tighter deadline it
     // refuses even though the ORIGINAL grant would still be valid.
-    let polis = Policy::generate();
+    let polis = installed_policy();
     let issued = polis
         .issue(Grant::to("agent").tool("read").until(FRIDAY))
         .unwrap();
@@ -293,7 +305,7 @@ fn attenuating_tightens_expiry() {
 
 #[test]
 fn middleware_emits_auditable_receipts() {
-    let polis = Policy::generate();
+    let polis = installed_policy();
     let token = polis
         .issue(
             Grant::to("ci-bot")
@@ -328,7 +340,7 @@ fn middleware_emits_auditable_receipts() {
 
 #[test]
 fn malformed_token_denies_with_a_reason_not_a_panic() {
-    let polis = Policy::generate();
+    let polis = installed_policy();
     let gate = Verifier::new(polis.public_key_hex());
     for bad in ["", "garbage", "dga9_AAAA", "eb2_AAAA"] {
         let v = gate.admit(bad, &Call::tool("read").at(T0));
@@ -341,7 +353,7 @@ fn malformed_token_denies_with_a_reason_not_a_panic() {
 fn secret_hex_roundtrips_the_authority() {
     // Persist the authority by its secret hex and reconstruct it — the same
     // public key, the same tokens verify (the golden-vector discipline).
-    let polis = Policy::generate();
+    let polis = installed_policy();
     let secret = polis.secret_hex();
     let token = polis
         .issue(Grant::to("agent").tool("read").until(FRIDAY))
@@ -356,7 +368,7 @@ fn secret_hex_roundtrips_the_authority() {
 
 #[test]
 fn explain_names_the_subject_and_terms() {
-    let polis = Policy::generate();
+    let polis = installed_policy();
     let token = polis
         .issue(
             Grant::to("ci-bot")

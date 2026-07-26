@@ -166,6 +166,17 @@ impl MlDsaTurnKey {
     /// PQ public key matches across cipherclerk / node / genesis without a
     /// separate ceremony.
     pub fn from_ed25519_seed(seed: &[u8; 32]) -> Self {
+        // `dregg-turn` is a light leaf: it cannot link the Lean archive, so nothing in its own
+        // test binary installs a verified PQ core and `dregg-pq` refuses the derivation with an
+        // uncatchable `process::abort()`. The dev-only `dregg-pq-testkit` links the archive and
+        // installs the cores; this and `ml_dsa_verify` below are the two entries from this crate
+        // into `dregg-pq`, so the lib-test binary is covered by these two lines.
+        //
+        // `#[cfg(test)]` because the shipped crate must stay archive-free. It does not make the
+        // test binary's DISPOSITION differ from production's — it moves the test binary ONTO the
+        // production implementation, which a node installs at startup.
+        #[cfg(test)]
+        dregg_pq_testkit::install_or_panic();
         Self(dregg_pq::MlDsaKey::from_ed25519_seed(seed))
     }
 
@@ -201,6 +212,9 @@ impl MlDsaTurnKey {
 /// This is the fail-CLOSED primitive: a present-but-invalid PQ half must make
 /// the whole hybrid authorization reject, regardless of `require_pq`.
 pub fn ml_dsa_verify(public_bytes: &[u8], message: &[u8], sig_bytes: &[u8]) -> bool {
+    // The other entry from this crate into `dregg-pq` — see `MlDsaTurnKey::from_ed25519_seed`.
+    #[cfg(test)]
+    dregg_pq_testkit::install_or_panic();
     dregg_pq::ml_dsa_verify(public_bytes, HYBRID_TURN_PQ_CTX, message, sig_bytes)
 }
 

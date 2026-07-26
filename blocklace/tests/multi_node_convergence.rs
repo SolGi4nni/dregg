@@ -55,6 +55,12 @@ use ed25519_dalek::SigningKey;
 // ─── Test scaffolding ────────────────────────────────────────────────────────
 
 fn key(seed: u8) -> SigningKey {
+    // Every block here carries an ML-DSA-65 half, and `dregg-pq` aborts on an ML-DSA op with
+    // no verified core installed. `dregg-blocklace` cannot link the Lean archive from
+    // `[dependencies]`, so this test binary installs the cores via the dev-only
+    // `dregg-pq-testkit`. `key` is the gateway every test here goes through; the install is
+    // `Once`-guarded.
+    dregg_pq_testkit::install_or_panic();
     SigningKey::from_bytes(&[seed; 32])
 }
 
