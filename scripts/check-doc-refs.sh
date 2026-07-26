@@ -73,6 +73,29 @@ else
     while IFS= read -r f; do FILES+=("$f"); done \
       < <(find "$d" -type f -name '*.md' 2>/dev/null)
   done
+  # THE ROOT MARKDOWN WAS NOT SCANNED AT ALL until 2026-07-26 — so the four files a
+  # fresh agent is TOLD to read first were the only ones outside this gate. `AGENTS.md`
+  # opened by routing every reader to `REORIENT.md`, deleted some time earlier, three
+  # times; `README.md` carried a live `[REORIENT.md](REORIENT.md)` link; and this script
+  # reported 0 DEAD across 648 files throughout. An orientation step that resolves to
+  # nothing is spent as if it happened, and the gate that should have said so was
+  # looking at `docs/` and `site/` only.
+  #
+  # The APPEND-ONLY LOGS are excluded, and the distinction is principled rather than a
+  # suppression: `HORIZONLOG.md`, `TESTQALOG.md` and the `GOAL-*.md` files are DATED
+  # records. An entry reading "as of 07-08, `foo.rs` does X" stays a true record of
+  # 07-08 after `foo.rs` is deleted — rewriting it to keep this gate green would falsify
+  # the log. An orientation file makes a claim about NOW, and that is what is checked
+  # here. (Measured when root markdown was first brought into scope: 265 dead, ALL of
+  # them in the dated logs. Gating on those would have gotten this gate suppressed
+  # within a day, which is how a gate stops being one.)
+  for f in *.md; do
+    [ -f "$f" ] || continue
+    case "$f" in
+      HORIZONLOG.md|TESTQALOG.md|GOAL*.md) continue ;;
+    esac
+    FILES+=("$f")
+  done
 fi
 
 if [ "${#FILES[@]}" -eq 0 ]; then

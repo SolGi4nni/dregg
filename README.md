@@ -449,7 +449,7 @@ the same verified kernel.
   an inescapable authorization step: `.turn().sign().submit()`.
 - **The CLI** ([`cli/`](cli/), bin `dregg`). Manages your keys (`dregg id`),
   drives turns, decodes the app machines (`dregg name`, `dregg polis`, …).
-- **The MCP server** ([`node/src/mcp.rs`](node/src/mcp.rs)). AI-agent access,
+- **The MCP server** ([`node/src/mcp/mod.rs`](node/src/mcp/mod.rs)). AI-agent access,
   cap-gated: every tool a sub-agent calls carries a biscuit-style capability the
   node admits or refuses, routed through the Lean producer gate.
 - **The Discord bot** ([`discord-bot/`](discord-bot/)). Councils, real signed
@@ -488,7 +488,7 @@ cargo build -p dregg-node -p dregg-cli         # the node + the `dregg` CLI
 ```
 
 [QUICKSTART.md](QUICKSTART.md) is the full local walkthrough (every command run
-against a fresh local node). [REORIENT.md](REORIENT.md) holds the architectural
+against a fresh local node). [HORIZONLOG.md](HORIZONLOG.md) holds the architectural
 laws and the build notes. The embedded-executor crates are slow in debug — use
 `--release` for `starbridge-v2`, the proof suites, and gauntlet runs.
 

@@ -5,7 +5,7 @@ not a human document: no story, no hero image, no marketing. It is a dense,
 declarative, navigable description of the dregg system so that a model reading it
 can understand the architecture and operate on the codebase correctly. Facts are
 stated flatly. Paths are exact. Commands are runnable. When a fact is point-in-time,
-verify it against the code at `HEAD` (the durable record is `REORIENT.md` →
+verify it against the code at `HEAD` (the durable record is `HORIZONLOG.md` →
 `HORIZONLOG.md`).
 
 Names: **robigalia** is the project, **dregg** is the kernel, **deos** is the
@@ -69,7 +69,7 @@ from Lean** — Rust authors zero constraint semantics.
 7. **Conservation ≠ correctness.** Specs must be sufficient, not merely true. Prove
    every load-bearing spec non-vacuous (can be both true AND false). No quick fixes.
 
-These are restated in `REORIENT.md` (read it first after any context loss).
+These are restated in `HORIZONLOG.md` (read it first after any context loss).
 
 ## 4. The execution + proof architecture
 
@@ -130,7 +130,7 @@ These are restated in `REORIENT.md` (read it first after any context loss).
 | `site/` | The web Studio/Playground/Explorer + the wasm executor. |
 | `wasm/` | The in-browser executor (standalone workspace; `no-lean-link`). |
 | `dregg-deploy/` | DreggDL: declarative deployment specs; over-grant = in-forest cap amplification, caught pre-deploy. |
-| `docs/` | Design documents. `REORIENT.md` + `HORIZONLOG.md` (repo root) are the live record. |
+| `docs/` | Design documents. `HORIZONLOG.md` (repo root) is the live record. |
 
 ## 6. Build, test, verify
 
@@ -272,7 +272,7 @@ deos is a desktop OS, not just a UI library. The layer stack
 
 - **SDKs:** `sdk/` (Rust, `AgentRuntime` embeds the executor), `@dregg/sdk` (TS,
   browser-parsable), `sdk-py/` (embeds the real Lean kernel). Inescapable auth step.
-- **MCP server:** `node/src/mcp.rs` — every AI tool-call carries a biscuit-style
+- **MCP server:** `node/src/mcp/mod.rs` — every AI tool-call carries a biscuit-style
   capability the node admits/refuses through the Lean producer gate.
 - **CLI:** `dregg` (`cli/`). **Discord bot:** `discord-bot/` (a first-class devnet
   citizen). **Site:** `site/` (Studio/Playground/Explorer + wasm executor).
@@ -305,7 +305,7 @@ deos is a desktop OS, not just a UI library. The layer stack
 - **The buggy oracle:** the legacy Rust `turn/` executor is the SUBJECT-UNDER-TEST
   that dregg2 replaces, never an oracle. Lean is the source of truth.
 - **Read CODE for STATE, the record for SHAPE.** `.md` files can be stale and are
-  dated/point-in-time; verify against `HEAD`. Orient: `REORIENT.md` → `HORIZONLOG.md`
+  dated/point-in-time; verify against `HEAD`. Orient: `HORIZONLOG.md`
   (the named-follow-up burn-down) → topic docs.
 - **A fail-closed site is often just an unimplemented one.** When a verifier returns
   reject "because not yet wired," that is a maturation item, not a design choice;

@@ -2,7 +2,7 @@
 
 *(For any agent — Claude, Codex, grok-build, whoever. The single most common way
 to waste an hour here is running the whole test gauntlet in debug mode. Don't.
-Read this first. Deeper state lives in `REORIENT.md`; this is just "how do I run
+Read this first. Deeper state lives in `HORIZONLOG.md`; this is just "how do I run
 things.")*
 
 ## Orient before you answer — the durable record, not the summary
@@ -14,10 +14,17 @@ record. It flattens this (deeply layered, mature) project into a wrong one-liner
 which then gets written back as if it were authoritative.
 
 **Read order — at window-start, and before any vision-level claim:**
-1. `REORIENT.md` — the git-tracked continuity anchor (laws / lanes / gates / board).
-2. `HORIZONLOG.md` — the live named-follow-up burn-down.
-3. the memory index whole, then its flagged (⚑) topic files.
+1. `HORIZONLOG.md` — the live named-follow-up burn-down, newest entry first. This is
+   the continuity anchor.
+2. the memory index whole, then its flagged (⚑) topic files.
+3. `docs/OVERVIEW.md` for shape.
 4. the relevant `docs/` + the **captured artifacts** for the question.
+
+⚠ **There is no `REORIENT.md`.** Three lines of this file pointed at it until
+2026-07-26 — it was deleted and the pointers were not, so the very first instruction a
+fresh agent read named a file that does not exist. An orientation step that silently
+resolves to nothing is worse than no orientation step: it is spent as if it happened.
+If you are looking for it, you want `HORIZONLOG.md` plus the memory index.
 
 **Probes lie.** `which microkit` ("not found") + `rustup target list` ("no sel4
 target") once "proved" the seL4 toolchain absent — while the Robigalia v0 demo
@@ -188,6 +195,6 @@ trusting an import cleanup.
 - Concurrent persvati build collisions are normal — sleep 60s and retry, don't roll
   anything back.
 
-*(Pair with `~/.claude/CLAUDE.md` (global prefs) + `REORIENT.md` (current state).
+*(Pair with `~/.claude/CLAUDE.md` (global prefs) + `HORIZONLOG.md` (current state).
 The verification economy: trust a lane's own narrow green; full gauntlets are
 deliberate, on-demand `heavy`-profile / persvati acts, not per-turn taxes.)*

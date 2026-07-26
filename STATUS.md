@@ -61,7 +61,7 @@ before committing — against accepting and rejecting transitions. Includes the
 Source: [`cell/examples/predicate_language.rs`](cell/examples/predicate_language.rs).
 
 Canonical code locations: `StateConstraint`, `CellProgram`, and `CellProgram::evaluate`
-all live in `cell/src/program.rs`; `CellState` (8 state slots) in `cell/src/state.rs`.
+all live in `cell/src/program/mod.rs`; `CellState` (8 state slots) in `cell/src/state.rs`.
 
 ### Other real binaries
 
@@ -71,7 +71,7 @@ all live in `cell/src/program.rs`; `CellState` (8 state slots) in `cell/src/stat
 and `dregg-verifier`. The node MCP server (`dregg-node mcp`) registers **54 tools**
 (e.g. `dregg_create_agent`, `dregg_submit_turn`, `dregg_get_receipt_chain`) — see
 `node/src/mcp/` (a directory since the module was split; this file said
-`node/src/mcp.rs`). `tools/list` pages at 20, so count it from the server's own
+`node/src/mcp/mod.rs`). `tools/list` pages at 20, so count it from the server's own
 `_meta.dregg.visible_tool_count` rather than the length of the first page:
 
 ```sh
