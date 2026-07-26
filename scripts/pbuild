@@ -378,9 +378,29 @@ fi
 # run `git rev-parse HEAD:metatheory/Dregg2`, so `scripts/lean-seed-key.sh` computes the SAME key
 # the publisher used instead of falling into the file-hash fallback — which is the only reason
 # `scripts/fetch-lean-seed.sh` cannot currently work in a lane.
-# ⚠ NOT YET DEMONSTRATED END-TO-END: mid-sync the lane had HEAD but not all objects, so
-# `rev-parse HEAD:<path>` still failed and the key still fell back. Whoever finishes this must show
-# the in-lane key EQUAL to the local one before claiming it works.
+# ⚠⚠ TESTED AND IT DOES NOT WORK — rsync CANNOT ship a live `.git` COHERENTLY. PROVEN, not feared:
+# a completed sync into lane `packed-merkle` produced a repo where `git rev-parse --short HEAD` reads
+# `8ef2fe29d` (correct, current) but `git ls-tree HEAD --name-only` returns NOTHING and
+# `git rev-parse HEAD:metatheory/Dregg2` says "exists on disk, but not in 'HEAD'". Both packs landed
+# (35 MB + 538 MB, 807 MB total, 211 loose dirs) — the object store is healthy. What is missing is the
+# ROOT TREE of the commit the ref names.
+#
+# MECHANISM: rsync walks the tree once, in directory order, and this walk took 25 MINUTES. Two commits
+# landed DURING it. rsync had already passed `objects/` when their objects were written, and reached
+# `refs/` afterwards — so it copied a ref NEWER THAN THE OBJECTS it copied. The result is a repo that
+# is not stale, it is INCOHERENT: a ref pointing into nothing.
+#
+# I had argued the opposite in this very file — that git writes temp-then-rename and a ref only
+# advances after its objects are durable, so a concurrent copy is "stale but not incoherent". That
+# holds for a LIVE REPOSITORY. It does NOT hold for a non-atomic multi-minute COPY of one that is
+# being committed to. With ~10 terminals committing, this state is not a risk, it is the expected
+# outcome. The measurement corrected the argument.
+#
+# SO: do not "fix" this with more rsync passes or a better exclude list. The transport must take a
+# CONSISTENT SNAPSHOT. `git bundle create` (one file, atomic by construction) or
+# `git clone --shared --no-checkout` from a single synced bare mirror are the correct shapes.
+# THE BAR for whoever finishes it: show the in-lane key EQUAL to the local one, AND
+# `git ls-tree HEAD` non-empty in the lane. Anything less is a ref into a void.
 GIT_FILTER=()
 if [ "${PBUILD_SHIP_GIT:-0}" = 1 ] && [ -d "${SRC%/}/.git" ]; then
   # ⚠ ORDER IS LOAD-BEARING: rsync takes the FIRST matching rule, so every exclusion must be
