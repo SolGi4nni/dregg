@@ -255,10 +255,7 @@ pub fn attested_fact_membership_witness(
 mod tests {
     use super::*;
     use crate::descriptor_by_name::descriptor_by_name;
-    use crate::descriptor_ir2::parse_vm_descriptor2;
     use crate::predicate_arith_witness::{Blinding, FactBinding};
-
-    const GOLDEN_JSON: &str = include_str!("../descriptors/by-name/attested-fact-membership.json");
 
     fn sibs() -> Vec<[BabyBear; 3]> {
         vec![
@@ -267,16 +264,16 @@ mod tests {
         ]
     }
 
-    /// The Lean bytes decode, dispatch, and carry the shape this builder writes.
+    /// The dispatched artifact decodes and carries the shape this builder writes.
+    ///
+    /// The byte pin is Lean's: `AttestedFactMembershipEmit.lean` `#guard`s `emitVmJson2
+    /// attestedFactMembershipDesc` against the exact wire string, so the artifact has one author
+    /// and a drift breaks `lake build`. What is checkable HERE is the other join — that the width
+    /// and PI count this Rust builder lays its trace out for are the ones the artifact declares.
     #[test]
     fn lean_bytes_parse_dispatch_and_shape() {
-        let parsed = parse_vm_descriptor2(GOLDEN_JSON).expect("Lean bytes parse as IR-v2");
-        let dispatched = descriptor_by_name(ATTESTED_FACT_MEMBERSHIP_NAME)
+        let parsed = descriptor_by_name(ATTESTED_FACT_MEMBERSHIP_NAME)
             .expect("the attested-fact-membership descriptor dispatches by name");
-        assert_eq!(
-            parsed, dispatched,
-            "dispatch must serve the byte-pinned Lean artifact"
-        );
         assert_eq!(parsed.name, ATTESTED_FACT_MEMBERSHIP_NAME);
         assert_eq!(parsed.trace_width, ATTESTED_WIDTH);
         assert_eq!(parsed.public_input_count, ATTESTED_PI_COUNT);

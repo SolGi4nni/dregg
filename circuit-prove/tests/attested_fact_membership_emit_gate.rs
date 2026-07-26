@@ -1,10 +1,12 @@
-//! Byte-pin and real-prover gate for the Lean-emitted **attested-fact-membership** descriptor —
-//! the third-party rung of the predicate stack.
+//! Real-prover gate for the Lean-emitted **attested-fact-membership** descriptor — the
+//! third-party rung of the predicate stack.
 //!
 //! Constraint authorship lives only in
-//! `metatheory/Dregg2/Circuit/Emit/AttestedFactMembershipEmit.lean`. This test pins Lean's exact
-//! bytes, parses and dispatches that artifact, proves the production chip-lane witness through the
-//! REAL p3 prover, verifies it, and drives forged fixtures to rejection — one per tooth.
+//! `metatheory/Dregg2/Circuit/Emit/AttestedFactMembershipEmit.lean`, and so does the BYTE PIN:
+//! that file `#guard`s `emitVmJson2 attestedFactMembershipDesc` against the exact wire string, so
+//! the artifact has one author and a drift breaks `lake build`. This test takes the artifact as the
+//! production registry serves it, proves the production chip-lane witness through the REAL p3
+//! prover, verifies it, and drives forged fixtures to rejection — one per tooth.
 //!
 //! ## What the teeth are for
 //!
@@ -21,14 +23,11 @@ use dregg_circuit::attested_fact_membership_witness::{
 };
 use dregg_circuit::descriptor_by_name::descriptor_by_name;
 use dregg_circuit::descriptor_ir2::{
-    EffectVmDescriptor2, MemBoundaryWitness, VmConstraint2, parse_vm_descriptor2,
-    prove_vm_descriptor2, verify_vm_descriptor2,
+    EffectVmDescriptor2, MemBoundaryWitness, VmConstraint2, prove_vm_descriptor2,
+    verify_vm_descriptor2,
 };
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::refusal::{Outcome, classify};
-
-const GOLDEN_JSON: &str =
-    include_str!("../../circuit/descriptors/by-name/attested-fact-membership.json");
 
 fn fact_hash() -> BabyBear {
     BabyBear::new(1234)
@@ -76,12 +75,7 @@ fn rejects(d: &EffectVmDescriptor2, trace: &[Vec<BabyBear>], pis: &[BabyBear]) -
 
 #[test]
 fn lean_bytes_parse_dispatch_and_shape() {
-    let parsed = parse_vm_descriptor2(GOLDEN_JSON).expect("Lean bytes parse as IR-v2");
-    assert_eq!(
-        parsed,
-        desc(),
-        "dispatch must serve the byte-pinned Lean artifact"
-    );
+    let parsed = desc();
     assert_eq!(parsed.name, ATTESTED_FACT_MEMBERSHIP_NAME);
     assert_eq!(parsed.trace_width, ATTESTED_WIDTH);
     assert_eq!(parsed.public_input_count, ATTESTED_PI_COUNT);
