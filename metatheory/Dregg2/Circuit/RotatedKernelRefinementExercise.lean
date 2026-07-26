@@ -64,9 +64,11 @@
     `circuit/tests/heap_write_deployed_root_forced.rs`) and the ARITY-3 leaf against the committed root at
     native 8-felt width in the heap-open appendix (`Emit.HeapOpenEmit.heapLeafDigest_sound8`,
     `#guard`-pinned at arity 3). The emit-side vestige — `EffectVmEmitHeapRoot.siteHeapLeaf`, an arity-2
-    leaf recompute still in BOTH committed registries and read by NOTHING
-    (`heapSpliceSites_never_read_HEAP_LEAF`) — is measured in `EffectVmEmitHeapRoot` §8, with its
-    VK-epoch flag-day named there and in `docs/DESIGN-mapop-denotation-move.md` §13.
+    leaf recompute that WAS in all three committed registries and read by NOTHING — is **DELETED as of
+    2026-07-26** (the ember-authorized VK epoch): `heapSpliceSites` is now the address site alone, and
+    `EffectVmEmitHeapRoot` §8 carries the flag-day record plus the falsifiable tooth
+    (`heapSpliceSites_have_no_HEAP_LEAF_site` / `readding_siteHeapLeaf_breaks_the_tooth`). So the ONLY
+    heap-leaf commitment in this descriptor is the arity-3 8-felt one.
 
     **THE PHASE-E RESIDUAL — CLOSED (the splice wired).** The deployed `heapWriteV3` now carries the
     `.write` `MapOp` (`heapSpliceWriteOp`) on the heap root, realized by the `Ir2Air::MapOps` AIR
@@ -229,8 +231,9 @@ deployed `Ir2Air::MapOps` AIR (`circuit/src/descriptor_ir2.rs`, `MapOp.holdsAt .
 the addressed OLD leaf against the committed root and recomputes the new root over the same sibling path —
 the genuine content-binding a prepend digest could not give.
 
-The base descriptor (`heapWriteSpliceVmDescriptor`) carries ONLY the address + leaf sites (NO prepend
-advance) so the new-root register is pinned by the splice `MapOp` alone (a doubly-pinned column would be
+The base descriptor (`heapWriteSpliceVmDescriptor`) carries ONLY the address site (NO prepend
+advance, and no arity-2 leaf site since the 2026-07-26 flag-day) so the new-root register is pinned by
+the splice `MapOp` alone (a doubly-pinned column would be
 jointly UNSAT). `siteHeapAddr` binds the MapOp's KEY (`HEAP_ADDR = hash[coll,key]`) to the genuine sorted
 address; the new root is FORCED by the splice. A `newRoot` that is not the genuine sorted-tree update is
 REJECTED (`writesTo_functional` → `mapRoot_injective`). The end-to-end `SAT ⟹ new_root = mapRoot (Heap.set
@@ -270,8 +273,9 @@ theorem heapSpliceWriteOp_newRoot0 (env : VmRowEnv) :
     (heapSpliceWriteOp.newRoot 0).eval env.loc = env.loc HEAP_ROOT_AFTER_ROT := rfl
 
 /-- **`heapWriteV3`** — the LIVE rotated+graduated heapWrite descriptor WITH the genuine sorted-Merkle
-SPLICE `MapOp`. Its underlying SPLICE base (`heapWriteSpliceVmDescriptor`) carries the address+leaf
-sites (the advance is REPLACED by the splice); `rotateV3` appends the commit appendix, `graduateV1`
+SPLICE `MapOp`. Its underlying SPLICE base (`heapWriteSpliceVmDescriptor`) carries the address site
+alone (the advance is REPLACED by the splice; the arity-2 leaf site was deleted on 2026-07-26);
+`rotateV3` appends the commit appendix, `graduateV1`
 re-anchors onto IR v2, and the splice `.write` `MapOp` is appended (the noteSpendV3 grow-gate pattern).
 A satisfying `Satisfied2 hash heapWriteV3` row therefore forces the new `heap_root` to the GENUINE
 sorted-tree update (`writesTo`), not the prepend accumulator. -/
@@ -279,7 +283,7 @@ def heapWriteV3 : EffectVmDescriptor2 :=
   let base := graduateV1 (rotateV3 heapWriteSpliceVmDescriptor)
   { base with constraints := base.constraints ++ [.mapOp heapSpliceWriteOp] }
 
-/-- `heapWriteV3`'s underlying SPLICE base rotated descriptor is graduable (the address+leaf sites are
+/-- `heapWriteV3`'s underlying SPLICE base rotated descriptor is graduable (the address site is
 reference-WF, chip-fit, no ranges; `rotateV3` preserves graduability). -/
 theorem heapWrite_graduable : graduable (rotateV3 heapWriteSpliceVmDescriptor) = true :=
   graduable_rotateV3 (by decide)
