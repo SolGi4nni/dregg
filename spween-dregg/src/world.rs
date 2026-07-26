@@ -856,7 +856,7 @@ impl WorldCell {
             .cclerk
             .make_browser_local_action(self.cell, method, effects);
         #[cfg(not(target_arch = "wasm32"))]
-        let action = self.cclerk.make_action(self.cell, method, effects);
+        let action = self.make_choice_action(method, effects);
         let receipt = match self.exec.submit_action(&self.cclerk, action) {
             Ok(receipt) => receipt,
             Err(error) => {
@@ -883,6 +883,66 @@ impl WorldCell {
                 .map_err(WorldError::Durability)?;
         }
         Ok(receipt)
+    }
+
+    /// Build the signed choice-action for a native world, choosing the authorization SHAPE from
+    /// where the turn is going.
+    ///
+    /// **`Federation` ⇒ HYBRID** (`sign_action`, ed25519 + ML-DSA-65). A turn that leaves this
+    /// process is judged by a node whose target cell can carry a committed PQ identity and whose
+    /// `require_pq` can be armed. That is the perimeter the hybrid flip exists for, and it is
+    /// untouched: nothing that can be submitted anywhere loses its post-quantum half.
+    ///
+    /// **`Local` ⇒ CLASSICAL** (`sign_action_classical`, ed25519 only). Read what the PQ half
+    /// actually decides on this path, in the executor rather than in its name
+    /// (`TurnExecutor::verify_hybrid_signature`): the world-cell is a plain `Cell::new`, so
+    /// `pq_identity()` is `None`; the embedded executor enrolls no legacy PQ identity; and
+    /// `require_pq` is off. Every one of those is a fact about the code, checked at
+    /// `spween-dregg/src/world.rs`'s own construction path and at `dregg-cell`'s `Cell::new`. So
+    /// the verifier falls to its last arm and takes the verification key from `ml_dsa_pk` —
+    /// **carried in the very action it is checking**. The PQ half is verified against a key the
+    /// action supplies about itself. An adversary who rewrites the action rewrites both, and the
+    /// check cannot notice; it is a self-consistency test, not an authentication.
+    ///
+    /// Nor does the no-cheat property lean on it. `crate::verify` is three teeth — chain linkage,
+    /// the receipt-hash chain, and REPLAY on a fresh identically-seeded world — and not one of
+    /// them reads an authorization. A forged choice is refused by the real executor when the
+    /// replay re-drives it; an altered record diverges in state. That is what makes a board run
+    /// un-retconnable, and it is untouched here.
+    ///
+    /// What this costs to keep, measured at the FFI boundary (a C driver against the deployed
+    /// `libdregg_lean.a`): **472 ms of CPU to produce the half and 222 ms to check it**, per turn,
+    /// because the ML-DSA core is the Lean-verified object rather than a crate primitive. A
+    /// replayed run is nine to fifteen turns. The board paid minutes of verified-core CPU for a
+    /// signature that verifies a key against itself.
+    ///
+    /// This is deliberately NOT a knob. The shape is a function of the destination, so the weaker
+    /// profile is unreachable from any world that can submit — the same discipline the
+    /// browser-local path states one branch above, now stated for the one native case that has the
+    /// same standing.
+    ///
+    /// RESIDUAL, and it is bigger than this call: on the local path the CLASSICAL half authenticates
+    /// nothing either. A world's owner key is `blake3::derive_key("spween-dregg-world-owner-v1",
+    /// scene_id ‖ seed)` over material anyone reading the page already has, so both halves are
+    /// derivable by anyone. The executor's signature check here is a plumbing check that the action
+    /// came from the world's own clerk — worth having, worth not mistaking for authorization. Giving
+    /// a world an identity that is actually secret is a separate piece of work.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn make_choice_action(&self, method: &str, effects: Vec<Effect>) -> dregg_turn::action::Action {
+        if self.node_target.is_federation() {
+            return self.cclerk.make_action(self.cell, method, effects);
+        }
+        let shared = self.cclerk.shared_cipherclerk();
+        let clerk = match shared.read() {
+            Ok(clerk) => clerk,
+            // A poisoned clerk lock cannot be read to sign classically; fall back to the framework
+            // path, which takes the same lock and will surface the poisoning itself rather than
+            // letting this branch invent a quieter failure.
+            Err(_) => return self.cclerk.make_action(self.cell, method, effects),
+        };
+        let nonce = clerk.next_turn_nonce();
+        let unsigned = dregg_sdk::raw::unsigned_action_named(self.cell, method, effects);
+        clerk.sign_action_classical(unsigned, self.cclerk.federation_id(), nonce)
     }
 }
 
@@ -1215,5 +1275,81 @@ impl<'s> Driver<'s> {
     /// Consume the driver, returning the world-cell and the committed steps.
     pub fn finish(self) -> (WorldCell, Vec<StepReceipt>) {
         (self.world, self.steps)
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod choice_authorization_tests {
+    //! THE SIGNING SHAPE IS A FUNCTION OF THE DESTINATION.
+    //!
+    //! `make_choice_action` picks HYBRID (ed25519 + ML-DSA-65) for a world that routes to a
+    //! federation and CLASSICAL (ed25519) for a world that stays in this process. These pin both
+    //! directions, because either one silently flipping is the bug: a Local world paying ~694 ms of
+    //! verified-core CPU per turn to check a key against itself, or — far worse — a Federation
+    //! world shipping a turn to a node with its post-quantum half missing.
+
+    use super::*;
+    use dregg_turn::action::Authorization;
+
+    const SCENE: &str = r#"---
+id: shape
+title: Shape
+weight: 1
+---
+
+=== start
+
+A room.
+
+* [Go]
+  -> END
+"#;
+
+    fn world(seed: u8) -> WorldCell {
+        let scene = crate::parse(SCENE, "shape.scene").expect("scene parses");
+        WorldCell::deploy(&scene, seed).expect("deploy")
+    }
+
+    /// The method name is irrelevant to the shape; any choice method exercises the same branch.
+    fn shape_of(world: &WorldCell) -> Authorization {
+        world.make_choice_action("probe", vec![]).authorization
+    }
+
+    #[test]
+    fn a_local_world_signs_classically() {
+        let w = world(3);
+        assert!(w.node_target.is_local(), "the default world routes nowhere");
+        match shape_of(&w) {
+            Authorization::Signature(r, s) => {
+                assert!(
+                    r != [0u8; 32] || s != [0u8; 32],
+                    "the classical half must be a real signature, not a placeholder"
+                );
+            }
+            other => panic!(
+                "a Local world must not pay for the PQ half — it is verified against a key the \
+                 action carries about itself; got {other:?}"
+            ),
+        }
+    }
+
+    #[test]
+    fn a_federated_world_still_signs_hybrid() {
+        let w =
+            world(4).with_node_target(NodeTarget::federation(dregg_node_target::StubNode::new()));
+        assert!(w.node_target.is_federation());
+        match shape_of(&w) {
+            Authorization::HybridSignature {
+                ed25519, ml_dsa, ..
+            } => {
+                assert!(ed25519 != [0u8; 64], "the classical half must be real");
+                assert!(
+                    !ml_dsa.is_empty(),
+                    "a turn that LEAVES this process keeps its post-quantum half — that is the \
+                     perimeter the hybrid flip exists for"
+                );
+            }
+            other => panic!("a Federation world must sign hybrid; got {other:?}"),
+        }
     }
 }
