@@ -1334,10 +1334,14 @@ theorem custody_lowers_only_by_take {s s' : DState} {m : Move} (hInv : Inv s)
     · exact absurd h (by simp)
   | flee =>
     -- `8 → 9`, or nothing at all.
+    -- ⚑ `step`'s flee arm writes the LAMBDA, not the constant `fleeMap`, so the hypothesis
+    -- must be re-typed into `fleeMap` form before any rewrite can fire on it. (The goal-side
+    -- proofs elsewhere in this file get that for free from `show`; a hypothesis does not.)
     simp only [step] at h; split at h
     · cases h
-      simp only [List.getElem?_map, hga, Option.map_some] at hgb
-      cases hgb
+      have hgb' : (s.custody.map fleeMap)[i]? = some b := hgb
+      simp only [List.getElem?_map, hga, Option.map_some] at hgb'
+      cases hgb'
       by_cases hA : a = CARRIED
       · have hfa : fleeMap a = BANKED := by simp [fleeMap, hA]
         rw [hfa, hA] at hlt
@@ -1399,13 +1403,15 @@ theorem hoard_is_never_restocked {s s' : DState} {m : Move} {i c : Nat}
       cases h
       simp only at hgb
       by_cases hik : i = keyFor w
-      · exfalso
-        subst hik
-        have hilt : i < s.custody.length := by
+      · -- ⚑ NO `subst` HERE. `hik : i = keyFor w` can only be substituted by ELIMINATING
+        -- `i` (the other side is not a variable), and everything below is stated about `i`.
+        -- Rewriting `hgb` keeps the context intact.
+        exfalso
+        have hilt : keyFor w < s.custody.length := by
           by_contra hge
           rw [List.getElem?_eq_none (by omega)] at h6
           cases h6
-        rw [List.getElem?_set_self (by simpa using hilt)] at hgb
+        rw [hik, List.getElem?_set_self (by simpa using hilt)] at hgb
         have hEq := Option.some.inj hgb
         omega
       · rw [List.getElem?_set_ne (by omega)] at hgb; exact hgb
@@ -1417,13 +1423,13 @@ theorem hoard_is_never_restocked {s s' : DState} {m : Move} {i c : Nat}
       cases h
       simp only at hgb
       by_cases hir : i = r
-      · exfalso
-        subst hir
-        have hilt : i < s.custody.length := by
+      · -- Same shape, same reason: rewrite `hgb`, never `subst` the index away.
+        exfalso
+        have hilt : r < s.custody.length := by
           by_contra hge
           rw [List.getElem?_eq_none (by omega)] at h3
           cases h3
-        rw [List.getElem?_set_self (by simpa using hilt)] at hgb
+        rw [hir, List.getElem?_set_self (by simpa using hilt)] at hgb
         have hEq := Option.some.inj hgb
         omega
       · rw [List.getElem?_set_ne (by omega)] at hgb; exact hgb
@@ -1435,13 +1441,13 @@ theorem hoard_is_never_restocked {s s' : DState} {m : Move} {i c : Nat}
       cases h
       simp only at hgb
       by_cases hir : i = r
-      · exfalso
-        subst hir
-        have hilt : i < s.custody.length := by
+      · -- Same shape, same reason: rewrite `hgb`, never `subst` the index away.
+        exfalso
+        have hilt : r < s.custody.length := by
           by_contra hge
           rw [List.getElem?_eq_none (by omega)] at h3
           cases h3
-        rw [List.getElem?_set_self (by simpa using hilt)] at hgb
+        rw [hir, List.getElem?_set_self (by simpa using hilt)] at hgb
         have hEq := Option.some.inj hgb
         omega
       · rw [List.getElem?_set_ne (by omega)] at hgb; exact hgb
@@ -1449,9 +1455,11 @@ theorem hoard_is_never_restocked {s s' : DState} {m : Move} {i c : Nat}
   | flee =>
     simp only [step] at h; split at h
     · cases h
-      simp only at hgb
-      rw [List.getElem?_map] at hgb
-      exact fleeMap_preimage_small hgb hlo hhi
+      -- Re-typed into `fleeMap` form first (see `custody_lowers_only_by_take`'s flee case):
+      -- `step` writes the lambda, and a hypothesis does not get `show`'s defeq for free.
+      have hgb' : (s.custody.map fleeMap)[i]? = some c := hgb
+      rw [List.getElem?_map] at hgb'
+      exact fleeMap_preimage_small hgb' hlo hhi
     · exact absurd h (by simp)
 
 /-- ⚑ **BANKING IS A SINK, PER RELIC.** Once a relic's custody is `BANKED`, no step of any
@@ -1506,7 +1514,9 @@ theorem bank_is_absorbing {s s' : DState} {m : Move} {i : Nat} (hInv : Inv s)
       have hne : r ≠ i := by
         intro hEq
         rw [hEq, hb] at h3
-        have hcode : (BANKED : Nat) = CARRIED := Option.some.inj h3
+        -- `loot` demands the relic LIES HERE, so the slot it writes reads as a FLOOR — and
+        -- `BANKED` is not one (`hd4` bounds the depth).
+        have hcode : (BANKED : Nat) = s.depth := Option.some.inj h3
         omega
       rw [List.getElem?_set_ne hne]; exact hb
     · exact absurd h (by simp)
@@ -1519,7 +1529,9 @@ theorem bank_is_absorbing {s s' : DState} {m : Move} {i : Nat} (hInv : Inv s)
       have hne : r ≠ i := by
         intro hEq
         rw [hEq, hb] at h3
-        have hcode : (BANKED : Nat) = CARRIED := Option.some.inj h3
+        -- `take` demands the relic HANGS HERE, so the slot it writes reads as `HUNG + depth`
+        -- — and `BANKED` is below the whole family.
+        have hcode : (BANKED : Nat) = HUNG + s.depth := Option.some.inj h3
         omega
       rw [List.getElem?_set_ne hne]; exact hb
     · exact absurd h (by simp)
