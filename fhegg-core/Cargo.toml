@@ -11,5 +11,15 @@ description = "fhEgg core: wasm-clean BFV/threshold primitives shared by fhegg-f
 # fhe: the wasm-clean BFV lib (pure-Rust num-bigint, confirmed wasm32-compatible). pick_params + the
 # threshold party ops need it. NO wgpu/tfhe.
 fhe = "0.1.1"
+fhe-traits = "0.1.1"
+rand_09 = { package = "rand", version = "0.9" }
+sha2 = "0.10"
 
 [dev-dependencies]
+
+# wasm32 ONLY: the browser extension's ceremony party. getrandom 0.2 (js) + 0.3 (wasm_js) — mirror of
+# fhegg-fhe's fix, scoped to wasm so native is byte-identical. This is what lets the threshold party ops
+# (KeygenSession/ThresholdParty/partial_decrypt) cross-compile to wasm for the distributed no-viewer ceremony.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+getrandom_v3 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }

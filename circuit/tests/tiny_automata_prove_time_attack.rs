@@ -1,3 +1,42 @@
+//! ⚠⚠⚠ HEADLINE CORRECTION — READ BEFORE QUOTING ANY PERCENTAGE FROM THIS FILE.
+//!
+//! An independent re-verification (this harness's own verify agent died before running, so the
+//! numbers below went into a commit message unchecked) reproduced §2/§3/§4 EXACTLY — several
+//! figures to the byte — and REFUTED the §1 headline and both of its framings:
+//!
+//! 1. "97.9% Merkle" DOES NOT REPRODUCE and is self-contradictory: 97.9% + the file's own
+//!    4.6–8.5% PoW + 1.3% LDE exceeds 100%. Three runs of the same point gave Merkle sums of
+//!    78.8% / 89.5% / 97.9%. Load-robust user-CPU answer: **Merkle ≈ 90% ± 4**. Cause: the
+//!    instrument claim retracted in §1 below.
+//!
+//! 2. ⚑ "THE PER-AIR-INSTANCE HYPOTHESIS WAS REFUTED" IS BACKWARDS — IT WAS CONFIRMED.
+//!    `instance_airs` (circuit/src/descriptor_ir2.rs:5916-5925) DOES push one
+//!    `Ir2Air::ExactPublicRow` per declared row; verified at runtime, `inst=129` for A k=4 n=32
+//!    (= 1 + 4·32) and `inst=65` for n=16. The headline was measured on **shape B**, which uses a
+//!    `sem:"range"` table and therefore has **2 instances BY CONSTRUCTION for every (k,n)** — so
+//!    "per-instance overhead ~0 because there are 2 instances" is CIRCULAR: shape B has no
+//!    per-row instances to cost. Marginal cost where it EXISTS is a measured 0.11 ms/instance.
+//!
+//! 3. ⚑ AND SHAPE B IS NOT THE DEPLOYED CARRIER. Shape A is: it ships by name as
+//!    `dregg-dfa-routing-table::exact-public-v1` (descriptor_by_name.rs:84). The deployed shape is
+//!    **DFT-BOUND, NOT HASH-BOUND** — at A k=4 n=32, `coset_dft_oop` 48.9%, LDE 11.5%, with Merkle
+//!    at **8.4%**. It also CANNOT REACH the headline point at all: `MAX_EXACT_PUBLIC_ROWS = 128`
+//!    (descriptor_ir2.rs:378) versus k·n = 4096. Extrapolating the measured 0.11 ms/instance, the
+//!    deployed shape at k=4 n=1024 would pay ~450 ms of per-instance overhead — 3× the ENTIRE
+//!    shape-B prove.
+//!
+//! 4. The blowup cross-check REPRODUCES (my grid: 6.40/10.80/19.20/36.80/71.60/138.40 ms at
+//!    B=2..64) but does NOT isolate commitment: `coset_lde_batch_with_transform` does B separate
+//!    size-n coset DFTs, so LDE is EXACTLY linear in B, as are the FRI commit-phase folds and
+//!    their per-layer Merkle trees. Blowup-proportionality is real; "and nothing but commitment"
+//!    is not licensed by it. (The ~1% LDE figure survives on a DIFFERENT argument — an n-sweep at
+//!    fixed B, where T/n is flat-to-decreasing across 16×.) Also "98.2% of the DEPLOYED prove" is
+//!    wrong: that fit is at pow=0, and the deployed config is pow=16 → 90.1–94.1%.
+//!
+//! ⇒ THE SURVIVING CONCLUSION, correctly scoped: the SHARED-TABLE (shape B) prove at n=1024 is
+//!   Poseidon2-Merkle-bound at ~90%. The DEPLOYED per-row shape is DFT- and instance-bound. Any
+//!   "make it megafast" work must say WHICH SHAPE it is optimising — they have opposite profiles.
+//!
 //! # PROVE-TIME ATTACK — where do the 175 ms at `n = 1024` ACTUALLY go?
 //!
 //! `tiny_automata_prover_shape_measure.rs` established the WALL numbers for a 4-automaton
@@ -14,10 +53,32 @@
 //!    `info_span!` / `debug_span!` sites (`p3-batch-stark::prove_batch`, `p3-fri`'s
 //!    `commit`/`FRI prover`/`commit phase`/`query phase`, `p3-merkle-tree`'s `build merkle
 //!    tree`, the per-instance `infer log of constraint degree` and `compute quotient`).
-//!    No new dependency: `tracing` is already a `dregg-circuit` dependency. The FRI
-//!    proof-of-work grind sits between `commit phase` and `query phase` inside `prove_fri`
-//!    WITHOUT a span of its own, so it lands in `FRI prover` SELF time — which is exactly
-//!    how it is read off below, and is cross-checked against a `query_pow_bits = 0` leg.
+//!    No new dependency: `tracing` is already a `dregg-circuit` dependency.
+//!
+//!    ⚠⚠ RETRACTED — THIS PARAGRAPH USED TO CLAIM: "the FRI proof-of-work grind sits between
+//!    `commit phase` and `query phase` inside `prove_fri` WITHOUT a span of its own, so it lands
+//!    in `FRI prover` SELF time." THAT IS FALSE, and it is the root cause of a wrong headline.
+//!    `GrindingChallenger::grind` carries `#[instrument(name = "grind for proof-of-work witness",
+//!    skip_all)]` (plonky3 `challenger/src/grinding_challenger.rs:106` and `:293`) — it prints as
+//!    its OWN line in every profile, and `FRI prover` self-time is ~0 (below the 0.05 ms print
+//!    threshold in an isolated run).
+//!
+//!    ⚠ WORSE, THE SPAN MEASURES BLOCKING WALL, NOT CPU: `grind` is
+//!    `…into_par_iter().find_any(…)`, so the thread entering the span BLOCKS on a rayon worker.
+//!    Under co-tenant load its wall inflated 66× (444 ms wall for 6.7 ms of CPU) with large
+//!    run-to-run variance — which is exactly the knob that moved the "Merkle sum" across
+//!    78.8% / 89.5% / 97.9% on three runs of the same point. A 3-significant-figure split is NOT
+//!    a supportable reading of this instrument.
+//!
+//!    ⚠ AND THE DOCUMENTED RUN COMMAND BELOW CORRUPTS ITS OWN PROFILE: `SpanProfiler` is a
+//!    process-global singleton with a global `on` flag and a shared accumulator, while libtest
+//!    runs the tests CONCURRENTLY. Run as documented it reports `prove_batch` count 2 for ONE
+//!    profiled prove, 13,176 `coset_dft_oop` calls against 504 isolated, self-percentages summing
+//!    past 250%, and a NEGATIVE marginal per-instance cost. Use `--test-threads=1`.
+//!
+//!    LOAD-ROBUST NUMBERS (user CPU, independent re-measurement) at `B k=4 n=1024`, production:
+//!    total ~145 ms; PoW grind 4.2–6.7 ms (3–5%); blowup-proportional 136.5 ms (94.1%);
+//!    LDE/DFT ~1 ms central (≤ ~7% at 1σ); **Merkle ≈ 90% ± 4, NOT 97.9%**.
 //!
 //! 2. **The FRI knob grid at security parity.** `ir2_config`'s own doc-comment says the
 //!    `(6, 19)` point was chosen because "the tables are 2³–2⁸ rows, so the prover-side LDE
