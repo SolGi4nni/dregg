@@ -1,5 +1,60 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑⚑⚑ JULY 26 CURRENT AUTHORITY — release prep: the node's COLD START was dead and is fixed; GitHub is not the bar
+
+The 07-26 convergence pass. ember: *"i don't care if github is actually green, i just want to be able for
+its runs to succeed if they were **run locally**, as a way of preparing for this upcoming release."*
+
+**THE NODE'S DOCUMENTED COLD START WAS DEAD, and is now fixed.** `dregg-node genesis` aborted (SIGABRT,
+no message): the six verified-PQ core installs were 179 inline lines inside `run_node`, and `genesis`,
+`mcp` and `relay` each never called them, so ML-DSA keygen hit `dregg_pq::audit`'s fail-closed
+`process::abort()`. README door A, `dregg-node genesis` and `scripts/run-node-10min.sh` were ALL shut.
+Fixed by `install_verified_pq_cores()` (`node/src/lib.rs:912`, called from all four entry points) plus
+the structural half — `AgentCipherclerk::ml_dsa_key` now installs at the DERIVATION point, fixing every
+consumer at once (`da4b20d80`, `87a695f68`). Verified with `DREGG_ALLOW_UNAUDITED_PQ` unset: genesis
+exits 0, and the quickstart reaches a live node with `state_producer:"lean"`, `lean_producer:true`.
+See [[minted-uncalled-initializer-class]].
+
+**GITHUB CANNOT ANSWER — USE `scripts/local-gates.sh`** (`5336b8a00`). Of the last 60 `ci.yml` runs:
+**37 cancelled, 21 failed, 0 green.** Commits land on `main` every **92 s** median; a run needs **~87 min**
+to reach a verdict. So ~56 of every 57 pushes cancel their predecessor unmeasured, and a CI log is
+routinely ~100 commits stale — two reds chased on 07-26 were already fixed in the tree. **Check HEAD
+before debugging a CI log.** Local is also the STRICTER test: APFS case-folding resurrects ~60 dead doc
+refs on Linux that die here, and the `dregg-pq` abort was CPU-count dependent (4-vCPU hosted runners
+stayed under the threshold; every 8+-core dev box aborted).
+
+**⚑ A RE-GENESIS FLAG-DAY IS IN FLIGHT (ember-authorized).** `a0687f268` deletes the arity-2 leaf vestige
+from the deployed `heapWriteVmDescriptor2R24` — the Lean half is in, the regenerated registry TSVs are
+still UNCOMMITTED, Rust follows. Widths move 1633→1626 / 1963→1955 / 1970→1962 and the shared `[0..46)`
+PI-prefix binding map moves with them, so `check-drift-taxonomy` correctly REFUSES pending
+`--allow-regenesis`. The leaf was measured a DEAD PIN: referenced by exactly one of the member's 161/253
+constraints (its own lookup), read by no gate, boundary, PI binding or map-op. **Consequence for deploy
+sequencing: new committee keys → new `federation_id` → fresh chain. Do not stand up a public devnet
+before this lands, or everyone re-keys immediately after.**
+
+**DEPLOY REALITY, probed 07-26.** There is **no live public dregg node anywhere**. `node.dregg.net`,
+`auth.`, `gateway.`, `dregg.works` are NXDOMAIN; `dregg.net` is a Squarespace marketing site; the new
+Hetzner edge (`5.161.18.74`) serves the **mirror resolver only** — 8420 CLOSED on both anchor and
+workhorse, nothing listening. `dregg.commonquant.com` (the `GATEWAY_PEER` all three federation lanes
+dial on a 5-hourly cron) is a **Vercel** deployment with 9420 closed.
+⚠ **`arcade.dregg.net` IS a real public play-AND-verify surface** on the OLD AWS box — `/`,
+`/descent/play`, `/tg`, `/offerings`, `/health` all 200, a turn driven from outside, replay verify
+`{"verified":true}`. It appears in NO unit, Caddyfile or compose file in any of the three repos.
+**Taking down AWS without moving it drops the one thing strangers actually play.** Takedown ordering is
+now in `~/dev/dregg-infra/edge/RUNBOOK.md` (headscale first — that box is the tailnet control plane).
+`arcade` runs the 2026-07-19 build, so `/automatafl` and `/tug` are 404 live but 200 locally: finished
+games, undeployed, blocked on `deploy/hbox/RUNBOOK.md`'s redeploy hold pending a HEAD-matching Lean seed.
+
+**THE DISEASE, in one line:** almost nothing was broken code — things had quietly stopped being
+*connected*. All 8 `page-on-red` alarms died on `fatal: not a git repository` so no red on main ever
+paged anyone; the mirror-gates G2 canary fixture was ignored by its own `.gitignore` (`*` ignores
+itself) so CI never had it; the canary's clean half was green without executing the path it guards;
+three measurement drivers reported PASSED while doing nothing (`let Ok(x) = env::var(..) else { return }`);
+two "goldens" were the same string parsed twice; the explorer's tests asserted routes someone typed into
+the test rather than routes the page requests; and `dregg-pq`'s FATAL banner was swallowed by libtest's
+output capture because `process::abort()` never flushes. `check-doc-refs` went 330 DEAD → 0 and then
+caught 60 fresh ones within hours — a ratchet that could not previously warn about anything.
+
 ## ⚑⚑⚑⚑⚑ JULY 25 CURRENT AUTHORITY — the halls RUN house-blind (simulated); the game-engine build is underway
 
 Current authority is the 2026-07-24/25 cut. Read, in order: `docs/deos/DREX-TIER-STATUS-2026-07-24.md` (the
