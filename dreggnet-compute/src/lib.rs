@@ -584,7 +584,13 @@ impl Offering for ComputeOffering {
         } else {
             let state = match session.onledger_state() {
                 Some(STATE_POSTED) => "POSTED (open for claims)",
-                Some(STATE_BID) => "CLAIMED (worker running)",
+                // ⚑ NOT "worker running". Nothing runs: the `[HONEST SCOPE]` note at the bottom of
+                // this file says outright that the confined EXECUTION is stubbed — a claim binds
+                // `PROVIDER_HASH` and a price, and the "result" is whatever text is typed into the
+                // settle affordance, checked only for being non-empty. A page that says a worker
+                // is running is describing a program that does not exist, and it is the exact
+                // sentence a player is left staring at while they wait for it to finish.
+                Some(STATE_BID) => "CLAIMED (waiting for the worker to hand back a result)",
                 Some(STATE_SETTLED) => "SETTLED",
                 _ => "—",
             };
@@ -626,6 +632,7 @@ impl Offering for ComputeOffering {
                 turn: a.turn,
                 arg: a.arg,
                 enabled: a.enabled,
+                wants_text: a.wants_text,
             })
             .collect();
         if !items.is_empty() {

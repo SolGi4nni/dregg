@@ -70,7 +70,25 @@ async fn dark_bazaar_lists_opens_renders_and_discloses_its_crawl_grade() {
     assert_eq!(status, StatusCode::OK);
     assert!(!body.contains("No such session"));
     assert!(!body.contains("No offering registered"));
-    assert!(body.contains("The Dark Bazaar — playable CRAWL"));
+    // ⚑ WORDING, and it moved on purpose. This pinned "The Dark Bazaar — playable CRAWL", where
+    // CRAWL is this workspace's GRADE word (the first, weakest rung of the privacy ladder) sitting
+    // in a page HEADING beside a dungeon called The Descent — where a stranger reads it as
+    // "playable dungeon crawl". `DarkBazaarOffering` holds a `MarketSession` and nothing else: no
+    // movement, no map, no encounter state. The heading now says what the offering is; the grade
+    // itself is unchanged and is asserted below, where it is addressed to someone who wants it.
+    assert!(body.contains("The Dark Bazaar"));
+    assert!(
+        body.contains("a sealed-bid auction with its privacy spelled out"),
+        "the heading must say what the offering IS — and this is the offering's OWN rendered \
+         surface title, not the catalog registration line, so it also pins that the page paints \
+         what `DarkBazaarOffering::render_bazaar` returns"
+    );
+    assert!(
+        !body.contains("playable CRAWL"),
+        "the grade word must not come back to the heading; it belongs in the disclosure, which is \
+         asserted in full below"
+    );
+    // BEHAVIOUR, untouched: the crawl grade is still disclosed in full, in its own words.
     assert!(body.contains("operator-visible-at-settle / check-level"));
     assert!(body.contains("NOT Tier0 house-blind"));
     assert!(body.contains("NOT a STARK/ZK proof"));

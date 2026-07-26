@@ -949,10 +949,19 @@ impl MarketOffering {
                                    with nothing committed. It opens when the seller settles."
                     .to_string()
             }
-            Some(Phase::Commit) => "Place a sealed bid. Only its BLAKE3 seal lands now, so nobody \
-                                    — including the seller — can read your number until the \
-                                    auction is settled; but you get exactly one, so bid the number \
-                                    you mean."
+            // ⚑ THIS SENTENCE USED TO CONTRADICT THE PLAQUE 60 LINES BELOW. It said "nobody —
+            // including the seller — can read your number until the auction is settled", which is
+            // true of every rendered surface (`own_bid_section` is the only branch that prints a
+            // value, and only to the identity that placed it) and FALSE of the host: `do_bid`
+            // pushes the OPENED `Bid { bidder, value, nonce }` into `session.bids` the instant the
+            // bid is placed, and it stays there in the clear for the whole commit phase.
+            // `seal_plaque` already says so ("the operator of this host"); a page cannot make one
+            // promise in the directive and the opposite promise in the explainer.
+            Some(Phase::Commit) => "Place a sealed bid. Only its seal goes on the board, so no \
+                                    other bidder can read your number off this page — but whoever \
+                                    runs this auction holds the number itself from the moment you \
+                                    place it, and at settlement every number becomes public. You \
+                                    get exactly one bid, so bid the number you mean."
                 .to_string(),
             _ => "Bidding is closed on this listing; the seller has yet to clear it.".to_string(),
         }
@@ -975,9 +984,9 @@ impl MarketOffering {
                     mine.bid.value
                 )),
                 ViewNode::Text(format!(
-                    "Its seal is {seal_hex}… , frozen into commit slot {} of the auction cell. That \
-                     digest is what the executor holds: it BINDS you to this number (the opening \
-                     has to match at settle) and hides it until then.",
+                    "Its seal is {seal_hex}… , frozen into commit slot {} of the auction cell. The \
+                     seal is all the board ever gets: it BINDS you to this number (the opening has \
+                     to match at settle) and keeps the number off the board until then.",
                     mine.slot
                 )),
             ],
@@ -1013,9 +1022,11 @@ impl MarketOffering {
             ),
             ViewNode::Text(
                 "At SETTLE every seal opens at once and the highest bid wins at its own price. \
-                 That is the honest boundary of the hiding: the seller — and the operator of this \
-                 host — sees every number the moment the auction clears. This is a sealed auction, \
-                 not a private one.".into(),
+                 That is the honest boundary of the hiding, and it has two halves: the SELLER and \
+                 the other bidders read every number the moment the auction clears, and whoever \
+                 RUNS this host has held them in the clear since they were placed — the board is \
+                 the only place a number was ever hidden. This is a sealed auction, not a private \
+                 one.".into(),
             ),
         ];
         if session.is_listed() && !session.is_settled() {
@@ -1110,6 +1121,7 @@ impl MarketOffering {
                 turn: a.turn,
                 arg: a.arg,
                 enabled: a.enabled,
+                wants_text: a.wants_text,
             })
             .collect();
         if !items.is_empty() {
@@ -1504,7 +1516,14 @@ impl DarkBazaarOffering {
         }
         children.push(market_surface);
         Surface(ViewNode::Section {
-            title: "The Dark Bazaar — playable CRAWL".into(),
+            // ⚑ "playable CRAWL" was a GRADE word standing where a player expects a genre. In this
+            // workspace CRAWL is the first, weakest rung of the privacy ladder — see
+            // [`DARK_BAZAAR_CRAWL_DISCLOSURE`] right below this title, which spells the rung out —
+            // and it stays in that constant, where it is addressed to an operator and is exact.
+            // In the page's own HEADING, beside a dungeon called The Descent, it read as "playable
+            // dungeon crawl", which this offering is not: it holds a `MarketSession` and nothing
+            // else, with no movement, no map and no encounter state.
+            title: "The Dark Bazaar — a sealed-bid auction with its privacy spelled out".into(),
             tag: "accent".into(),
             children,
         })

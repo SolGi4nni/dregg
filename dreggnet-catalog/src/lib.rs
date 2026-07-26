@@ -401,7 +401,11 @@ pub fn register_games(host: &mut OfferingHost, cfg: &CatalogConfig) {
     );
     host.register(
         "council",
-        "DreggNet Council — propose · vote · enact",
+        // ⚑ `vote` IS NOT A VERB HERE — the ballot is two, `TURN_APPROVE` and `TURN_REJECT`, and a
+        // member casts exactly one of them per proposal (write-once). Found by the same sweep that
+        // caught `grain` and `hermes`; two of the three named verbs were right, which is why it
+        // had never been noticed.
+        "DreggNet Council — propose something, and every member approves or rejects it once. Once enough have approved, anyone can enact it; until then enacting is refused. Only members can act at all.",
         CouncilOffering::new(
             cfg.council_members.clone(),
             cfg.council_proposals.clone(),
@@ -415,7 +419,15 @@ pub fn register_games(host: &mut OfferingHost, cfg: &CatalogConfig) {
     );
     host.register(
         DarkBazaarOffering::KEY,
-        "The Dark Bazaar — playable CRAWL (sealed bids · verified settlement)",
+        // ⚑ "CRAWL" IS A GRADE, NOT A GENRE, and a stranger reads it as the latter. In this
+        // workspace the word is a rung on a privacy ladder
+        // (`DARK_BAZAAR_CRAWL_DISCLOSURE`: "CRAWL grade: operator-visible-at-settle /
+        // check-level. NOT Tier0 house-blind…", `docs/deos/THE-DARK-BAZAAR.md`) — it means the
+        // FIRST, weakest tier. On a shelf beside a dungeon called The Descent it reads as
+        // "playable dungeon crawl", and `DarkBazaarOffering` has no movement, no map and no
+        // encounter state: it wraps `MarketOffering` whole and renames three buttons. What it
+        // genuinely adds over `market` is the disclosure, so the disclosure is what the line says.
+        "The Dark Bazaar — the sealed-bid auction, with the privacy spelled out. Your number is hidden from the other bidders until the auction clears; it is not hidden from whoever runs the server, and it never was.",
         DarkBazaarOffering::new(),
     );
     // `tug` needs the seat-claiming adapter: `TugOffering` names its two seats by fixed
@@ -467,27 +479,67 @@ pub fn register_feature_surfaces(host: &mut OfferingHost) {
 pub fn register_services(host: &mut OfferingHost, cfg: &CatalogConfig) {
     host.register(
         "doc",
-        "DreggNet Doc — a verifiable document store (author · amend · verify)",
+        // ⚑ NONE OF THE THREE VERBS EXISTED. `DocOffering`'s vocabulary is `insert` · `delete` ·
+        // `set_title` · `resolve_title` · `order_conflict`; there is no `author`, no `amend` and no
+        // `verify` affordance. "Store" was wrong too — it is a live multi-editor document whose
+        // whole point is what happens when two people edit at once.
+        //
+        // ⚠ And the last clause is not padding: `actions_for` enables an edit only for an identity
+        // holding the region's edit cap, a freshly-opened document has an empty roster, and there
+        // is no join seam — so a first visitor really is served three dimmed controls and no way
+        // in. That is a NAMED open gap (`dreggnet-web/tests/catalog_flow_harness.rs`'s `doc`
+        // allowance, a cap-model decision, not a patch). A line that omitted it would be selling a
+        // document nobody can write in.
+        "DreggNet Doc — a document several people write at once. Two edits made at the same moment are held side by side until somebody picks the order, instead of one of them quietly winning. ⚠ You cannot type in it yet: only an invited editor may edit, and a freshly opened document has no editors and no way to become one, so every control starts greyed out.",
         dreggnet_doc::DocOffering::new(),
     );
     host.register(
         "names",
-        "DreggNet Names — an identity / naming service (register · transfer · resolve)",
+        // The three verbs are REAL (`TURN_REGISTER`/`TURN_TRANSFER`/`TURN_RESOLVE`). The warning
+        // is: `NamesSession::enroll` — which mints the actor's signer and stands up its executor —
+        // is reachable only from this crate's own tests and from `replay`, so `open` starts with an
+        // EMPTY actor map and every verb refuses at `do_register`'s first line. A NAMED open gap
+        // (`dreggnet-web/tests/catalog_flow_harness.rs`'s `names` allowance). Leaving it unsaid
+        // while the sibling lines got honest is the exact laundering this pass exists to undo.
+        // The verbs are listed as PROSE, not in the `(a · b · c)` slot, and that is deliberate: at
+        // genesis the surface presents only `register`, so `transfer` and `resolve` — which do
+        // exist — are unreachable until a name lands, and no name can land. Advertising three
+        // verbs a player can reach none of is the same shape as advertising three that do not
+        // exist.
+        "DreggNet Names — claim a short name, look one up, or hand one to someone else. ⚠ Nothing lands from here yet: each of those refuses because you are not enrolled, and this surface has no way to enrol you.",
         dreggnet_names::NamesOffering::new(),
     );
     host.register(
         "compute",
-        "DreggNet Compute — a confined compute-job market (post · claim · settle)",
+        // ⚑ The three verbs were RIGHT (`TURN_POST`/`TURN_CLAIM`/`TURN_SETTLE` all exist and all
+        // land); "confined compute-job" was the lie. `dreggnet_compute`'s own `[HONEST SCOPE]`
+        // note says the confined EXECUTION is stubbed: `do_settle` accepts any non-empty string as
+        // "the result" and nothing binds it to the sealed job spec. So the line names the two
+        // things that ARE real and enforced (one claimant; a settlement the executor checks adds
+        // up) and states the two absences instead of implying them away.
+        "DreggNet Compute — put a budget on a job, let one worker claim it at their price, then release it when they hand back a result. The release always adds up exactly: the worker's price plus the refund equals the budget. It never runs the job and never checks the result, and the budget is bookkeeping on the job rather than money leaving anyone's pocket.",
         dreggnet_compute::ComputeOffering::new(),
     );
     host.register(
         "grain",
-        "DreggNet Grain — metered work under a spend budget (request · grant)",
+        // ⚑ NEITHER VERB EXISTED. `GrainOffering` has exactly one, `TURN_ACT` ("act"); there is no
+        // `request` and no `grant`. And "spend budget" named the wrong meter: the cap the executor
+        // enforces is `calls_made ≤ rate_limit` — a COUNT OF TURNS — while the action's `cost`
+        // accumulates into `consumed` purely as witness state and binds nothing (`grain-turn`:
+        // "there is no per-call charge on the grain grant, so no charge `Transfer` rides").
+        "DreggNet Grain — a hard allowance you can spend down and cannot talk your way past. Every press uses one of this grain's turns; when they run out, the next press is refused underneath rather than greyed out here. The allowance counts turns, not money, and a turn does no work of its own yet — the limit is the thing on show.",
         dreggnet_grain::GrainOffering::new(cfg.grain_budget),
     );
     host.register(
         "hermes",
-        "DreggNet Hermes — the message relay (send · deliver · ack)",
+        // ⚑ THERE IS NO RELAY. No recipient, no mailbox, no delivery and no ack exist anywhere in
+        // `dreggnet-hermes`: a `HermesSession` is ONE agent runtime for ONE party in ONE process,
+        // and its only verb is `TURN_PROMPT`. What it really is: you type a message, an on-box
+        // keyless brain (or a BYO-key provider) sorts it into a class of tool, and the executor
+        // admits or refuses that class against its own rate + value allowance. The tool itself is
+        // never run — `drive` invokes with an EMPTY work witness, which the crate calls the named
+        // seam — so the line says that rather than letting "relay" imply a message arrived.
+        "DreggNet Hermes — an AI agent kept on a short leash. Type it a message and it picks what kind of work it wants — read, search, fetch, run, edit or just talk — and each kind has its own allowance. Ask past one and the request is turned down, naming the limit that stopped it. The work is never actually carried out: what you are watching is the permission, granted or refused.",
         dreggnet_hermes::HermesOffering::new(),
     );
 }
@@ -729,6 +781,200 @@ mod tests {
                 Err(_) => {}
             }
         }
+    }
+
+    /// ⚑ **A TITLE MAY NOT NAME A VERB THE OFFERING DOES NOT HAVE.**
+    ///
+    /// The wound this closes, measured 2026-07-26 over the registrations above: `grain` advertised
+    /// "(request · grant)" and `GrainOffering` has exactly one verb, `act`; `hermes` advertised
+    /// "the message relay (send · deliver · ack)" and there is no recipient, mailbox, delivery or
+    /// ack anywhere in the crate; `doc` advertised "(author · amend · verify)" against a vocabulary
+    /// of `insert`/`delete`/`set_title`/`resolve_title`/`order_conflict`; `council` advertised
+    /// "vote" where the ballot is `approve` and `reject`. Four of the five verb lists on this shelf
+    /// named a program that did not exist, and every one of them compiled, rendered and shipped —
+    /// because a title is a string and nothing had ever compared it to an affordance.
+    ///
+    /// The check: any `(a · b · c)` list in a registered title must consist of verbs the offering
+    /// really presents. The vocabulary is collected from the offering ITSELF — its genesis
+    /// affordances, plus the affordances it presents after each genesis move is driven once, which
+    /// is what reaches a lifecycle verb like the market's `bid`/`settle` that genesis cannot offer.
+    ///
+    /// It is deliberately a check on the WORDS THAT LOOK LIKE VERBS, not on prose: a title with no
+    /// parenthesised `·` list (every one this pass rewrote) is simply not constrained here, because
+    /// prose is a claim about behaviour and no test can hold that. This holds the one part that is
+    /// mechanically checkable, and holds it completely.
+    #[test]
+    fn no_registered_title_names_a_verb_the_offering_does_not_have() {
+        use dreggnet_offerings::{SessionConfig, SessionId};
+
+        /// Every verb a title ADVERTISES: scan each parenthesised group, and for any group
+        /// carrying a `·` take the FIRST WORD of each element.
+        ///
+        /// First-word, not whole-element, because the house shape is a verb with its object
+        /// attached — `(list · settle an atomic asset swap)`, `(consume materials · mint a bound
+        /// output)`. Reading only the single-word elements would have let exactly those two
+        /// through, and both were wrong: `trade`'s verbs are `list`/`buy`/`cancel` (no `settle`
+        /// anywhere) and `craft`'s single verb is `craft` (no `consume`, no `mint`).
+        ///
+        /// The corollary is that a parenthesised `·` list is RESERVED for verbs. A NOUN list in
+        /// that shape (`inventory` shipped "(gear · cards · trophies)") reads to a player as
+        /// "these are the things you can do" and to this gate as three missing verbs — so the
+        /// convention is enforced rather than special-cased.
+        fn advertised_verbs(title: &str) -> Vec<String> {
+            let mut out = Vec::new();
+            let mut rest = title;
+            while let Some(open) = rest.find('(') {
+                let after = &rest[open + 1..];
+                let Some(close) = after.find(')') else { break };
+                let inner = &after[..close];
+                let single_verb = !inner.trim().contains(char::is_whitespace)
+                    && inner
+                        .trim()
+                        .chars()
+                        .all(|c| c.is_ascii_lowercase() || c == '_' || c == '-')
+                    && !inner.trim().is_empty();
+                if inner.contains('·') || single_verb {
+                    out.extend(
+                        inner
+                            .split('·')
+                            .filter_map(|element| element.split_whitespace().next())
+                            .map(str::to_string),
+                    );
+                }
+                rest = &after[close + 1..];
+            }
+            out
+        }
+
+        /// The advertised verbs NOTHING in the offering's vocabulary backs — the whole verdict, as
+        /// a function, so the same comparison the shelf is judged by can itself be shown to bite.
+        fn unbacked<'a>(
+            advertised: &'a [String],
+            vocabulary: &std::collections::BTreeSet<String>,
+        ) -> Vec<&'a String> {
+            advertised
+                .iter()
+                .filter(|verb| !vocabulary.contains(*verb))
+                .collect()
+        }
+
+        let cfg = CatalogConfig::default();
+        let mut host = full_catalog_host(&cfg);
+        let actor = dreggnet_offerings::DreggIdentity("verb-census".to_string());
+
+        let mut checked = 0usize;
+        for key in CATALOG_KEYS {
+            let title = host.title(key).unwrap_or_default().to_string();
+            let advertised = advertised_verbs(&title);
+            if advertised.is_empty() {
+                continue;
+            }
+            let id = SessionId::new(format!("verbs-{key}"));
+            if host
+                .open_session(key, id.clone(), SessionConfig::with_seed(5))
+                .is_err()
+            {
+                // An offering may refuse its own deploy for its own reasons (the live Descent day
+                // binding, for one). It then advertises nothing to check against, and saying so is
+                // better than passing quietly.
+                panic!(
+                    "`{key}` advertises the verbs {advertised:?} in its title but will not open, \
+                     so the claim cannot be checked at all"
+                );
+            }
+
+            let genesis = host.actions_for(key, &id, &actor).unwrap_or_default();
+            let mut vocabulary: std::collections::BTreeSet<String> =
+                genesis.iter().map(|a| a.turn.clone()).collect();
+            // …plus one step past genesis, which is where a lifecycle verb lives (`market` cannot
+            // offer `bid` or `settle` until something is listed, and `trade` cannot offer `buy` or
+            // `cancel` until something is). Each probe is its own host so one drive cannot poison
+            // the next, and the walk stops the moment the claim is covered — a fresh catalog host
+            // is not cheap and there is nothing left to learn once every advertised verb is real.
+            for step in genesis {
+                if advertised.iter().all(|v| vocabulary.contains(v)) {
+                    break;
+                }
+                let mut probe = full_catalog_host(&cfg);
+                let pid = SessionId::new(format!("verbs-{key}-probe"));
+                if probe
+                    .open_session(key, pid.clone(), SessionConfig::with_seed(5))
+                    .is_err()
+                {
+                    continue;
+                }
+                if probe.advance(key, &pid, step, actor.clone()).is_none() {
+                    continue;
+                }
+                for action in probe.actions_for(key, &pid, &actor).unwrap_or_default() {
+                    vocabulary.insert(action.turn);
+                }
+            }
+
+            let missing = unbacked(&advertised, &vocabulary);
+            assert!(
+                missing.is_empty(),
+                "`{key}`'s title advertises {missing:?}, which the offering never presents. Its \
+                 real vocabulary is {vocabulary:?}.\n  title: {title}"
+            );
+            checked += 1;
+        }
+
+        // ⚑ A GATE THAT CANNOT GO RED IS NOT A GATE. The parser must find lists to check (a
+        // regression that broke it would otherwise pass this whole test vacuously), and it must
+        // reject a list naming a verb nothing has.
+        assert!(
+            checked >= 2,
+            "the verb-list parser found only {checked} title(s) to check — it has gone blind, and \
+             every assertion above passed for free"
+        );
+        assert_eq!(
+            advertised_verbs("X — a thing (list · bid · settle)"),
+            vec!["list", "bid", "settle"],
+            "the parser reads a verb list"
+        );
+        assert_eq!(
+            advertised_verbs("X (list · settle an atomic asset swap)"),
+            vec!["list", "settle"],
+            "a verb with its object attached is still an advertised VERB — this exact shape is \
+             what hid `trade`'s non-existent `settle`"
+        );
+        assert_eq!(
+            advertised_verbs("Inventory — your gear (gift)"),
+            vec!["gift"],
+            "a lone lowercase word in the verb slot is a verb list of one"
+        );
+        assert!(
+            advertised_verbs("The Descent — a solo dungeon crawl (one torch of light)").is_empty(),
+            "a parenthesised PHRASE with no `·` is not a verb list and must not be checked as one"
+        );
+        assert!(
+            advertised_verbs("The Warden's Keep — a verifiable dungeon (offering #0)").is_empty(),
+            "and neither is a parenthesised aside"
+        );
+
+        // …and the VERDICT bites, replayed on the exact history this gate was built for: `grain`'s
+        // shipped title against `GrainOffering`'s real one-verb vocabulary. Without this the whole
+        // test could pass on a `unbacked` that had quietly started returning nothing.
+        let grain_as_shipped = advertised_verbs(
+            "DreggNet Grain — metered work under a spend budget (request · grant)",
+        );
+        assert_eq!(grain_as_shipped, vec!["request", "grant"]);
+        let grain_reality: std::collections::BTreeSet<String> =
+            ["act".to_string()].into_iter().collect();
+        assert_eq!(
+            unbacked(&grain_as_shipped, &grain_reality).len(),
+            2,
+            "the verdict must flag BOTH verbs `grain` advertised and never had"
+        );
+        assert!(
+            unbacked(
+                &["act".to_string()],
+                &["act".to_string()].into_iter().collect()
+            )
+            .is_empty(),
+            "…and must not flag a verb that is really there"
+        );
     }
 
     /// The campaign is not merely named in the catalog: a generic host can drive it and recover

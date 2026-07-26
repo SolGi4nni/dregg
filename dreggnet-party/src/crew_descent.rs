@@ -560,16 +560,20 @@ impl CrewDescent {
     }
 
     /// How many MORE relics the Bearer could take at this depth before the carry ceiling
-    /// (`pack + depth ≤ CAP`) closes. The number the crew should be arguing about.
+    /// closes. The number the crew should be arguing about.
+    ///
+    /// The law is the mover's: `pack + depth + harm ≤ CAP` (`Sim::loot`). `harm` is stated here
+    /// even though no [`SeatMove`] can raise it today — the crew has `Strike` and no lunge — so
+    /// that adding one cannot silently hand the council a number the dungeon will refuse.
     pub fn carry_room(&self) -> u64 {
-        CAP.saturating_sub(self.pack() + self.depth())
+        CAP.saturating_sub(self.pack() + self.depth() + self.run.sim().harm)
     }
 
     /// Whether the crew is still light enough to go one floor deeper. When this is `false`
     /// the certified push will come back as a real refusal from the capacity law — the
-    /// Bearer's greed, priced by the dungeon.
+    /// Bearer's greed, priced by the dungeon. Same law, same `harm` term (`Sim::delve`).
     pub fn can_still_descend(&self) -> bool {
-        self.pack() + self.depth() + 1 <= CAP
+        self.pack() + self.depth() + 1 + self.run.sim().harm <= CAP
     }
 
     /// Whether the run has ended (the pack banked, the tomb frozen).
