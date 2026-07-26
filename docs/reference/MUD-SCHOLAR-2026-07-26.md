@@ -124,7 +124,7 @@ one: light's dark-room refusal at `:1776-1782`, oil burn + status tick + poison 
 at `:2395-2434`, spells at `:1962`, refuel at `:2042`, consumables at `:2076` (which emits
 `WorldEffect::Batch([effect, ConsumeItem])`), HP combat at `:2113`, one-shot hostiles at
 `:1905-1931`, `lose:` at `:2506-2511`. Four `.dungeon` files in `attested-dm/dungeons/` exercise
-them, and `tests/dungeon_dsl.rs:47/88/419/462` play them to a win. **The forward port took the
+them, and `attested-dm/tests/dungeon_dsl.rs:47/88/419/462` play them to a win. **The forward port took the
 static data and the parser and left the resolver behind.** `dsl/ir.rs` is a strict subset of
 attested-dm's `GameWorld` - zero dynamic state, zero resolver, zero effect vocabulary - plus
 exactly one addition, `OathRule` (`ir.rs:457-471`), which is the best construct in either grammar.

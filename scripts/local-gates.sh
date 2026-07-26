@@ -65,6 +65,17 @@ GATES=(
   # just as happily when the reader is broken. ~1s, no cargo.
   "player-copy-punctuation|180|python3 scripts/check-player-copy-punctuation.py"
   "player-copy-punct-red|60|python3 scripts/check-player-copy-punctuation.py --self-test"
+  # A word from the project's PRIVATE VOCABULARY (`executor`, `receipt`, `merkle`, `no-cheat`, `fog`
+  # …) in copy a player reads. Same shape and the same pairing as the two rows above, and for the
+  # same reason: `dreggnet-web/src/guide.rs` had this gate and it WORKED, on ONE function — so
+  # `/guide` scored 0 violations while the same list was broken on 6 of 13 live surfaces. The list
+  # is now `scripts/player-vocabulary.tsv`, read by this sweep AND by `guide.rs` via `include_str!`,
+  # because a second reader must not mean a second list. The `-red` row is not optional: the
+  # headline is a NEGATIVE assertion, so it passes just as happily when the reader is broken, and
+  # the self-test also drives the sweep's own MIN_SURFACES / MIN_UNITS floor red to show it bites.
+  # ~1s, no cargo, and no wrapper needed — token 2 of the command is the script itself.
+  "player-vocabulary|180|python3 scripts/check-player-vocabulary.py"
+  "player-vocabulary-red|60|python3 scripts/check-player-vocabulary.py --self-test"
   # The JavaScript inside a Rust `r##"…"##` is a `&str` to rustc and to every reader
   # downstream of it. `dreggnet-web/src/telegram_miniapp.rs` shipped a SyntaxError in
   # `TG_SHELL_SCRIPT` for FOUR DAYS: a dead Mini App serving 200, `cargo test` green,
@@ -75,6 +86,19 @@ GATES=(
   # ⚠ It needs `node`, and it FAILS rather than skips without one. That is the point.
   "embedded-js|180|python3 scripts/check-embedded-js.py"
   "embedded-js-red|120|python3 scripts/check-embedded-js.py --self-test"
+  # A function that DECIDES something — `verify_*`, `check_*`, `*_admits` — with no
+  # production caller. `dregg_circuit::effect_vm::verify_balance_limb_pis` was the
+  # Group 6 range precondition, was re-exported twice, said "verifiers MUST call this",
+  # and was invoked by no production path and no test: nothing in the tree could report
+  # that, because it compiles (it is `pub`, so not dead code) and has no failing test
+  # (it has no test). A ratchet over the 235 known rows, not a threshold over the ~4 800
+  # uncalled `pub fn`s — a library's surface is SUPPOSED to have callers it cannot see,
+  # and a gate over that number is a wall nobody reads. Paired with its own red run: its
+  # first scanner LOST both freshly-added call sites to a `/*` inside a line comment and
+  # reported the symbol UNCALLED minutes after it was wired, which is exactly the
+  # direction a negative assertion fails in. ~40s, no cargo.
+  "production-callers|300|python3 scripts/check-production-callers.py"
+  "production-callers-red|60|python3 scripts/check-production-callers.py --self-test"
 )
 # Expensive — only under --all, each with the reason it is not in the cheap set.
 GATES_ALL=(
@@ -135,6 +159,27 @@ NOT run here, deliberately — each is a real gate, none of them is covered by t
   * cargo test --workspace           the broadest signal there is. Run it separately, and note
                                      `--no-fail-fast` or the first failure abandons the remaining
                                      test targets and you measure less than you think.
+                                     ON LINUX IT IS TWO INVOCATIONS, and the second is not
+                                     optional — it is what keeps the first from costing 9 tests:
+                                       CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 \
+                                       cargo test --workspace --exclude deos-zed \
+                                         --exclude grain-verify-wasm --exclude starbridge-web \
+                                         --no-fail-fast -- --test-threads=4
+                                       cargo test -p grain-verify-wasm -p starbridge-web --lib
+                                     THE debuginfo-OFF PAIR IS NOT COSMETIC. Measured on
+                                     persvati 2026-07-26 with the repo default
+                                     (`[profile.dev] debug = "line-tables-only"`): this run
+                                     grew one lane's target/ to 311 GB and died at
+                                     `rustc-LLVM ERROR: IO failure on output stream: No space
+                                     left on device` with ~250 GB free when it started. ci.yml
+                                     sets both vars for exactly this reason; a local run that
+                                     omits them measures an ENOSPC, not the tree.
+                                     Those two crates declare `crate-type = ["cdylib","rlib"]`
+                                     and reach the Lean archive, and a `-shared` ELF link of
+                                     libleanrt's local-exec-TLS mimalloc is rejected outright
+                                     (R_X86_64_TPOFF32). `--lib` builds the lib with `--test`,
+                                     i.e. an executable, so their tests still run. See the block
+                                     above `members` in Cargo.toml.
   * ci-invariants falsifiers         38 rows x ~7 min, each a separate `cargo test -p <crate>`
                                      link. It holds the ONE cargo target lock for ~4 h and blinds
                                      every other lane on the box. Offload it:

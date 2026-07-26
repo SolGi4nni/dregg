@@ -594,7 +594,7 @@ Three sizable pieces are compiled and never called:
   explicitly refuses to depend on it (*"that path pulls the deos-host (mozjs) + node + axum weight,
   so it stays OUT"*) and reimplements the surface.
 - **`dreggnet-adventure`** — 1,749 lines, zero dependents, no bin, no example; its only consumer is
-  its own `tests/verified_progression.rs`.
+  its own `dreggnet-adventure/tests/verified_progression.rs`.
 
 **Correction to the mandate's framing:** `combat.rs` (2,027 lines) is *not* unreached — it has two
 production importers, `dreggnet-party/src/encounter.rs:45` and `dreggnet-surfaces/src/party.rs:35`
