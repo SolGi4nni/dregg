@@ -20,15 +20,12 @@ A1:accumulator_nonrev_emit_gate.rs:GOLDEN_JSON:dregg-accumulator-nonrev-emit-v2 
 A1:adjacency_membership_emit_gate.rs:GOLDEN_JSON:dregg-membership-adjacency::poseidon2-v1  # A/A1-second-author
 A1:bilateral_aggregation_emit_gate.rs:GOLDEN_JSON:dregg-bilateral-aggregation-v3  # A/A1-second-author  [re-keyed v2->v3 by the b15b30972 descriptor cutover; same file, same const, same unwelded literal]
 A1:bridge_action_emit_gate.rs:GOLDEN_JSON:bridge-action-leaf::bridge_action_air_v1  # A/A1-second-author
-A1:derivation_emit_audit_extra.rs:GOLDEN_JSON:dregg-derivation-v1  # A/A1-second-author
-A1:derivation_emit_gate.rs:GOLDEN_JSON:dregg-derivation-v1  # A/A1-second-author
 A1:dfa_routing_audit_extra.rs:GOLDEN_JSON:dfa-routing-toggle-2state::poseidon2-v1  # A/A1-second-author
 A1:dfa_routing_emit_gate.rs:GOLDEN_JSON:dfa-routing-toggle-2state::poseidon2-v1  # A/A1-second-author
 A1:lean_descriptor_air.rs:TRANSFER_VM_DESCRIPTOR_JSON:dregg-effectvm-transfer-v1  # A/A1-second-author
 A1:merkle_membership_emit_gate.rs:GOLDEN_JSON:merkle-membership-depth2-4ary::poseidon2-v1  # A/A1-second-author
 A1:note_spending_emit_gate.rs:GOLDEN_JSON:note-spend-leaf::dregg-note-spending-dsl-v3  # A/A1-second-author
 A1:poseidon2_hash_emit_audit_extra.rs:GOLDEN_JSON:poseidon2-hash-arity2::poseidon2-v1  # A/A1-second-author
-A1:predicates_arithmetic_boundary_audit.rs:GOLDEN_JSON:dregg-predicate-arith-ge::threshold-v1  # A/A1-second-author
 A1:presentation_emit_gate.rs:GOLDEN_JSON:dregg-presentation-freshness::summary-v1  # A/A1-second-author
 A1:quantified_absence_emit_gate.rs:GOLDEN_JSON:quantified-absence-quotient-accumulator::babybear4-v1  # A/A1-second-author
 A1:temporal_predicate_audit_extra.rs:GOLDEN_JSON:dregg-temporal-predicate-gte::dsl-v1  # A/A1-second-author
@@ -36,6 +33,9 @@ A1:temporal_predicate_emit_gate.rs:GOLDEN_JSON:dregg-temporal-predicate-gte::dsl
 A2:bilateral_aggregation_adversarial_audit.rs:GOLDEN_JSON:circuit/descriptors/dregg-bilateral-aggregation-v3.json  # A/A2-golden-is-the-artifact  [re-keyed v2->v3 by the b15b30972 descriptor cutover; same file, same const, same self-include]
 A2:blinded_membership_witness.rs:GOLDEN_JSON:circuit/descriptors/by-name/blinded-membership.json  # A/A2-golden-is-the-artifact
 A2:bound_presentation_witness.rs:GOLDEN_JSON:circuit/descriptors/by-name/bound-presentation.json  # A/A2-golden-is-the-artifact
+A2:derivation_emit_audit_extra.rs:GOLDEN_JSON:circuit/descriptors/by-name/derivation.json  # A/A2-golden-is-the-artifact  [RE-KEYED A1->A2 by f48ed5a21, same file + same const: the `r#"..."#` second author is GONE (map §M13 step 4, "delete the literal -> include_str! the deployed file" — the same move predicates_arithmetic_emit_gate.rs made, which is why its row is A2 and has no A1 twin). Gate A's concern is unchanged and still filed under M13/L1: this const is not an author the artifact lacks. NOTE for the next reader — A2's finding TEXT does not literally hold here: `GOLDEN_JSON` is never compared to anything, it is the descriptor UNDER TEST for two adversarial canaries.]
+A2:derivation_emit_gate.rs:GOLDEN_JSON:circuit/descriptors/by-name/derivation.json  # A/A2-golden-is-the-artifact  [RE-KEYED A1->A2 by f48ed5a21, same file + same const: the `r#"..."#` second author is GONE (map §M13 step 4). NOTE — A2's "compares the file to itself" does not hold here either: the equality at :534 is against `hand_built_desc()`, a constraint-for-constraint Rust transcription, so the join has real content.]
+A2:predicates_arithmetic_boundary_audit.rs:GOLDEN_JSON:circuit/descriptors/by-name/predicate-arith.json  # A/A2-golden-is-the-artifact  [RE-KEYED A1->A2 by f48ed5a21, same file + same const: the `r#"..."#` second author (5-wide, pre-weld) is GONE and the layout is now IMPORTED from the production witness builder (map §M13 steps 2+4). NOTE — `GOLDEN_JSON` is never compared to anything here; it is the descriptor UNDER TEST for the 2^29 boundary poles.]
 A2:predicates_arithmetic_emit_gate.rs:GOLDEN_JSON:circuit/descriptors/by-name/predicate-arith.json  # A/A2-golden-is-the-artifact
 A2:presentation_descriptor_witness.rs:GOLDEN_JSON:circuit/descriptors/by-name/presentation-freshness.json  # A/A2-golden-is-the-artifact
 D1:deos-hermes:deos-hermes/tests/hermes_composes_multi_cell.rs:seed_agent  # D1/D1-self-declared-mirror

@@ -1544,6 +1544,18 @@ def _wf_scan_line(line: str, q: str | None) -> tuple[str, str | None, list[str]]
             m = _HEREDOC.match(line, i)
             if m:
                 heredocs.append(m.group("word"))
+                # DROP THE OPENER TOKEN, not just the body. `<<WORD` is a REDIRECTION operator;
+                # the program it feeds is the heredoc BODY, which the caller already discards. Left
+                # in the stream it lexes as a bare word and lands in COMMAND-OPERAND position, so
+                # `python3 - <<'PY'` read as "run the file `<<'PY'`" and raised a WORKFLOW-GHOST
+                # for a token that is not a path and can never be committed — a red no fix could
+                # clear. Dropping it costs no coverage: an operand IN FRONT of the redirect
+                # (`python3 scripts/x.py <<'PY'`) is still the first operand and still checked,
+                # and `python3 -`/`bash` with the script on stdin correctly resolves to no operand
+                # at all. The match spans balanced quotes (`<<'PY'`), so skipping it cannot leave
+                # the quote state open.
+                i = m.end()
+                continue
         out.append(c); i += 1
     return "".join(out), q, heredocs
 
