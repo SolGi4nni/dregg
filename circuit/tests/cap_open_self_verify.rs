@@ -30,7 +30,8 @@ use dregg_circuit::effect_vm::columns::sel;
 use dregg_circuit::effect_vm::trace_rotated::{
     CAP_OPEN_AFTER_SPINE_SPAN, CAP_OPEN_BASE, CAP_OPEN_WIDTH, CapOpenWitness, DFA_RC_LEN,
     FACET_MASK_HI, RotatedBlockWitness, SIGNATURE_AUTH_TAG, WRITE_MASK_LO, empty_caveat_manifest,
-    generate_rotated_effect_vm_trace, patch_attenuate_base_for_cap_open, widen_to_cap_open,
+    generate_rotated_cap_attenuate_after_spine, generate_rotated_effect_vm_trace,
+    patch_attenuate_base_for_cap_open, widen_to_cap_open,
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::field::BabyBear;
@@ -175,6 +176,29 @@ fn cap_open_witness() -> CapOpenWitness {
     CapOpenWitness::build(&[other, chosen], 1).expect("cap-open witness builds")
 }
 
+/// The narrowed KEEP_MASK the attenuate effect carries (`narrower_commitment[1]` — the mask the
+/// held cap is narrowed TO). `build_attenuate_base` emits `narrower_commitment = [0x52; 8]`.
+const KEEP_MASK: u32 = 0x52;
+/// The held cap's mask at the cap KEY (the submask non-amplification tooth compares the narrowed
+/// KEEP_MASK against this: `0x52 ⊑ 0xFF`). Mirrors the SDK leg's c-list `held_mask`.
+const HELD_MASK: u32 = 0xFF;
+
+/// Lay the cap-WRITE AFTER-spine on a `CAP_OPEN_WIDTH`-wide cap-open trace, taking it to the
+/// descriptor's `CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN`. The after-spine narrows the OPENED
+/// leaf in place (`mask_lo := KEEP_MASK`) and folds it over the SHARED sibling path to the AFTER
+/// `cap_root8`, which is what forces the faithful 8-felt cap-write (`effCapOpenWriteV3_forces_write8`)
+/// — no arity-2 map-op, hence no map heap.
+fn lay_attenuate_after_spine(trace: &mut [Vec<BabyBear>], w: &CapOpenWitness) {
+    generate_rotated_cap_attenuate_after_spine(
+        trace,
+        w,
+        w.leaf[0], // the cap KEY = the opened leaf's slot_hash
+        BabyBear::new(HELD_MASK),
+        BabyBear::new(KEEP_MASK),
+    )
+    .expect("attenuate cap-write after-spine lays");
+}
+
 /// The cap-open descriptor parses; the witness builds + recomposes its cap_root over the genuine
 /// `cap_chip_absorb` (the single in-circuit chip hash) depth-16 fold; the proven 311-wide attenuate
 /// base trace builds + carries the phase-B wirings; and the cap-open appendix columns fill to the
@@ -254,28 +278,34 @@ fn cap_open_witness_and_appendix_are_genuine() {
 /// self-verifies end-to-end against the IR-v2 interpreter. This is decision #1 made good: the Lean
 /// `DeployedCapOpen.SchemeRealizedByChip` bridge is DISCHARGED (the chip genuinely realizes the cap
 /// hash), so the membership leg is sound outright, not relative to a carried hypothesis.
-// IGNORED — RUST CAP-WRITE ROUTE HANDOFF. The SILENT-FORGE close rebased the attenuate cap-open
-// descriptor onto the ROTATED cap-root limb, FIRING the map_op on `sel.ATTENUATE_CAPABILITY = 48` and
-// BINDING the AFTER cap-root (var 264) to the genuine sorted write (Lean `attenuateV3_non_amp`; the
-// SDK forge-detector `cap_write_attenuate_no_silent_forge` is GREEN). The map_op no longer stays vacuous,
-// so an empty `map_heaps` is no longer correct — this prove-through must build the rotated cap-root advance
-// (`generate_rotated_cap_write_base` over a real c-list) via an UPDATE-AT-KEY `CapTreeWriteOp` in
-// `circuit/src/effect_vm/trace_rotated.rs` (the parallel cap-write-Inserts agent's owned region). Re-enable
-// once that Update bridge lands. The descriptor (on-wire) + the forge floor are CLOSED.
-#[ignore = "REDUNDANT circuit-level twin: this hand-built-trace test passes an EMPTY map_heaps, but \
-            the attenuate UPDATE-AT-KEY map_op now FIRES (the `CapTreeWriteOp::Update` bridge landed in \
-            trace_rotated.rs) → 'no witness heap' UNSAT. To re-enable, plumb the BEFORE cap-tree leaf \
-            set as map_heaps (mirror sdk `cap_open_attenuate_leg_proves_and_verifies_end_to_end`). The \
-            capability itself is GREEN at the SDK level via that test; this twin is lower-level coverage."]
+// The old reason here blamed the arity-2 map-op and an empty `map_heaps`. That diagnosis was WRONG
+// and is replaced below. Measured 2026-07-26: the map-op is DROPPED from this descriptor (the
+// after-spine forces the write — `fill_cap_after_spine`, and the SDK's own leg passes NO map heaps),
+// and what actually stopped this test was WIDTH: the narrow member
+// `attenuateCapOpenEffVmDescriptor2R24` is 2119 = CAP_OPEN_WIDTH(1976) + AFTER_SPINE_SPAN(143), while
+// `widen_to_cap_open` stops at 1976. There was no Rust producer for the narrow width at all — the
+// only after-spine caller was the SDK's WIDE leg. `generate_rotated_cap_attenuate_after_spine` (new,
+// in trace_rotated.rs) is that missing producer, and the body below now calls it.
+#[ignore = "MEASURED UNSAT 2026-07-26, one step further than before: the trace now MATCHES the \
+            descriptor (2119 wide, after-spine laid), the prover accepts the witness far enough to \
+            evaluate the AIR, and it reports `constraints not satisfied on row 0: failed constraints = \
+            [#4, #10]` (p3 batch-stark check_constraints). So this is no longer a shape/plumbing gap — \
+            it is two specific row-0 constraints the hand-built base trace does not satisfy. Next step: \
+            resolve #4 and #10 against the parsed descriptor's constraint list and fill the columns they \
+            read. The two prime suspects are the submask param columns this test guesses at (HELD_MASK \
+            0xFF / KEEP_MASK 0x52, cols 72/73) where the SDK leg reads HELD_MASK from a real c-list leaf, \
+            and the row-0 boundary the pad rows do not carry."]
 #[test]
 fn cap_open_attenuate_self_verifies() {
     let desc = parse_vm_descriptor2(reg_json(CAP_OPEN_KEY)).expect("cap-open descriptor parses");
     let (mut trace, pis) = build_attenuate_base();
     let w = cap_open_witness();
     widen_to_cap_open(&mut trace, &w).expect("widen to cap-open");
+    lay_attenuate_after_spine(&mut trace, &w);
 
-    // Attenuate's map ops are guard-gated OFF on this generator's output (the map-op guard column
-    // is 0 on every row), so the map_log is empty and an empty `map_heaps` is correct.
+    // The arity-2 cap-write map-op is DROPPED from this descriptor: the faithful 8-felt write is
+    // forced by the AFTER-spine (`effCapOpenWriteV3_forces_write8`) laid just above. So the map_log
+    // is empty and an empty `map_heaps` is correct.
     let mem_boundary = MemBoundaryWitness::default();
     let map_heaps: Vec<Vec<HeapLeaf>> = vec![];
     prove_vm_descriptor2(&desc, &trace, &pis, &mem_boundary, &map_heaps)
@@ -354,21 +384,16 @@ fn cap_open_attenuate_self_verifies() {
 /// (`sel[NOOP] = 0`, `sel[48] = 0`, `sel[TRANSFER] = 1`) makes the body `1·1 = 1 ≠ 0` → UNSAT, at
 /// `prove_vm_descriptor2` ALONE (no ledger). This closes the gate-asymmetry residual that the
 /// value-cohort fix (`b9b8b6973`) left open on the cap-open family — defense-in-depth made symmetric.
-// IGNORED — RUST CAP-WRITE ROUTE HANDOFF (same as `cap_open_attenuate_self_verifies`): the honest
-// baseline prove at the top now requires the rotated cap-root advance witness (the attenuate map_op fires
-// on sel 48 after the silent-forge close). Re-enable with the UPDATE-AT-KEY `CapTreeWriteOp` route in
-// trace_rotated.rs (cap-write-Inserts agent's region). The descriptor + forge floor are CLOSED.
-#[ignore = "REDUNDANT circuit-level twin: this hand-built-trace test passes an EMPTY map_heaps, but \
-            the attenuate UPDATE-AT-KEY map_op now FIRES (the `CapTreeWriteOp::Update` bridge landed in \
-            trace_rotated.rs) → 'no witness heap' UNSAT. To re-enable, plumb the BEFORE cap-tree leaf \
-            set as map_heaps (mirror sdk `cap_open_attenuate_leg_proves_and_verifies_end_to_end`). The \
-            capability itself is GREEN at the SDK level via that test; this twin is lower-level coverage."]
+#[ignore = "MEASURED UNSAT 2026-07-26 — same two row-0 constraints (#4, #10) as \
+            cap_open_attenuate_self_verifies above, hit on this body's honest baseline prove. \
+            Un-ignore together with that test."]
 #[test]
 fn cap_open_attenuate_foreign_selector_row_is_unsat() {
     let desc = parse_vm_descriptor2(reg_json(CAP_OPEN_KEY)).expect("cap-open descriptor parses");
     let (mut trace, pis) = build_attenuate_base();
     let w = cap_open_witness();
     widen_to_cap_open(&mut trace, &w).expect("widen to cap-open");
+    lay_attenuate_after_spine(&mut trace, &w);
 
     let mem_boundary = MemBoundaryWitness::default();
     let map_heaps: Vec<Vec<HeapLeaf>> = vec![];
@@ -417,15 +442,19 @@ fn cap_open_attenuate_foreign_selector_row_is_unsat() {
 ///
 /// ADDITIVE: the live 1-felt cap-open path / TSV / VK are UNTOUCHED — the wide member is the parallel
 /// 8-felt lane from `CapOpenEmit.v3RegistryCapOpenWide` (`WIDE_REGISTRY_STAGED_TSV`).
-// IGNORED — RUST CAP-WRITE ROUTE HANDOFF (the WIDE twin of `cap_open_attenuate_self_verifies`): the wide
-// attenuate cap-open also fires the rotated-limb map_op (sel 48) after the silent-forge close, so the
-// prove-through needs the rotated cap-root advance witness via the UPDATE-AT-KEY `CapTreeWriteOp` route in
-// trace_rotated.rs (cap-write-Inserts agent's region). The descriptor + forge floor are CLOSED.
-#[ignore = "REDUNDANT circuit-level twin: this hand-built-trace test passes an EMPTY map_heaps, but \
-            the attenuate UPDATE-AT-KEY map_op now FIRES (the `CapTreeWriteOp::Update` bridge landed in \
-            trace_rotated.rs) → 'no witness heap' UNSAT. To re-enable, plumb the BEFORE cap-tree leaf \
-            set as map_heaps (mirror sdk `cap_open_attenuate_leg_proves_and_verifies_end_to_end`). The \
-            capability itself is GREEN at the SDK level via that test; this twin is lower-level coverage."]
+// STALE GEOMETRY, measured 2026-07-26 — the reason below replaces an older one that blamed the
+// arity-2 map-op and an empty `map_heaps`. That diagnosis was wrong: the map-op was dropped (the
+// after-spine forces the write), and the two NARROW tests in this file were revived by laying the
+// after-spine, no map heaps involved. What actually blocks THIS test is that the wide member's
+// geometry moved twice underneath it and the wide producer now has a compaction step.
+#[ignore = "STALE WIDE GEOMETRY: the body pins host 818 / wide 1026 / carrier base 914, but \
+            CAP_OPEN_WIDTH is 1976 today and the wide member in rotation-wide-registry-staged.tsv is \
+            2021 wide — which is NOT 1976 + 143 + 208 = 2327, because the deployed wide producer runs \
+            compact_s2_columns after appending carriers (sdk/src/full_turn_proof.rs). Reviving this \
+            means rebuilding that whole wide leg (after-spine wide lift + S2 compaction) inside the \
+            circuit crate, where the SDK's cap_open_attenuate_leg_proves_and_verifies_end_to_end \
+            already covers it end-to-end. The two NARROW teeth in this file are live again and cover \
+            the cap-open appendix + selector gate at this level."]
 #[test]
 fn cap_open_wide_proves_verifies_and_executor_anchors() {
     use dregg_circuit::descriptor_ir2::verify_vm_descriptor2;

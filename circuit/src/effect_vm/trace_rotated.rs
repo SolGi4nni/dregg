@@ -3828,6 +3828,29 @@ pub fn generate_rotated_cap_attenuate_after_spine_wide(
     held_value: BabyBear,
     keep_mask: BabyBear,
 ) -> Result<Vec<BabyBear>, String> {
+    generate_rotated_cap_attenuate_after_spine(trace, cap_open, cap_key, held_value, keep_mask)?;
+    Ok(append_wide_carriers(
+        trace,
+        base_pis,
+        CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN,
+    ))
+}
+
+/// **The NARROW half of [`generate_rotated_cap_attenuate_after_spine_wide`]** — everything that lift
+/// does to the trace COLUMNS, stopping before the wide carriers. This is the producer for the NARROW
+/// cap-write member (`attenuateCapOpenEffVmDescriptor2R24` at
+/// `CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN`), which had no Rust producer at all: the only caller
+/// of the after-spine lift was the SDK's wide leg, so nothing could build a trace matching the narrow
+/// descriptor's width, and the circuit-level prove-through tests were left ignored.
+///
+/// The wide lift is now literally this plus [`append_wide_carriers`], so the two cannot drift.
+pub fn generate_rotated_cap_attenuate_after_spine(
+    trace: &mut [Vec<BabyBear>],
+    cap_open: &CapOpenWitness,
+    cap_key: BabyBear,
+    held_value: BabyBear,
+    keep_mask: BabyBear,
+) -> Result<(), String> {
     use super::columns::PARAM_BASE;
     if trace.is_empty() {
         return Err("attenuate after-spine: empty trace".into());
@@ -3875,7 +3898,7 @@ pub fn generate_rotated_cap_attenuate_after_spine_wide(
         recompute_block_commit(row, BEFORE_BASE);
         recompute_block_commit(row, AFTER_BASE);
     }
-    Ok(append_wide_carriers(trace, base_pis, host_width))
+    Ok(())
 }
 
 /// **The CAP-TREE INSERT/REMOVE after-spine OVERRIDE** — the shared column work of the INSERT-shaped
@@ -4904,13 +4927,12 @@ pub fn generate_rotated_heap_write_wide_raw(
     absorb_in[0] = coll;
     absorb_in[1] = key;
     let addr = chip_absorb_all_lanes(2, &absorb_in)[0];
-    // The leaf-digest chip lookup `col 103 = chip-absorb(addr, value)` (out0). `fill_chip_lanes` lands
-    // only the exposed lanes 1..7; the producer must lay out0 itself (so the request matches the
-    // chip-table provide, which derives outputs from the genuine permutation).
-    let mut leaf_in = [BabyBear::ZERO; 11];
-    leaf_in[0] = addr;
-    leaf_in[1] = value;
-    let leaf_digest = chip_absorb_all_lanes(2, &leaf_in)[0];
+    // NB: there is NO second (leaf-digest) chip lookup to fill any more. The arity-2
+    // `col 103 = chip-absorb(addr, value)` site was DELETED from the Lean emit on 2026-07-26
+    // (`EffectVmEmitHeapRoot` §8: it committed a retired arity-2 leaf shape that no deployed tree folds,
+    // and nothing read its column). Rust CALLS the emission, so the fill goes with it. The leaf that
+    // authenticates against the committed root is the arity-3 IMT leaf laid at native 8-felt width by
+    // `fill_heap_open_read` / `fill_heap_after_spine` below.
 
     // The BEFORE heap (the deployed openable sorted tree) at NATIVE 8-FELT width. The addressed key MUST
     // be present — the splice `.write` is an UPDATE of a present key (8-felt `update_witness`); a missing
@@ -4975,7 +4997,10 @@ pub fn generate_rotated_heap_write_wide_raw(
     // we set it explicitly to the recomputed `addr`. `fill_chip_lanes` then re-lands the SAME value
     // (the addr lookup is chip-faithful over the same coll/key), so the lookup gate holds.
     let heap_addr_col = AUX_BASE + 12; // 102 (HEAP_ADDR — out0 of the addr chip lookup)
-    let leaf_digest_col = AUX_BASE + 13; // 103 (out0 of the leaf-digest chip lookup)
+    // `AUX_BASE + 13` (col 103) is the RETIRED leaf-digest carrier and is deliberately left at zero: the
+    // arity-2 lookup that drove it is gone from the emitted bytes (2026-07-26 flag-day), so laying a
+    // value there would be a producer writing into a column no constraint mentions. The absence is
+    // pinned by `circuit/tests/heap_write_deployed_root_forced.rs`.
     // OPTION I: the deployed host is the after-spine membership descriptor — the heap-open READ appendix
     // sits at `HEAP_WRITE_READ_BASE` (815, the splice base's width) and the AFTER-spine appendix at
     // `815 + CAP_OPEN_SPAN(329) = 1144`. Fill both on EVERY row (the membership gates are per-row).
@@ -4995,7 +5020,6 @@ pub fn generate_rotated_heap_write_wide_raw(
         row[key_col] = key;
         row[value_col] = value;
         row[heap_addr_col] = addr;
-        row[leaf_digest_col] = leaf_digest;
         recompute_block_commit(row, BEFORE_BASE);
         recompute_block_commit(row, AFTER_BASE);
         // Grow the row to the deployed host width and lay the membership appendix (the READ open of the
