@@ -657,7 +657,53 @@ theorem xorConstWord_forces (a : Assignment) (hbool : AllBool a) (inBase outBase
     exact Nat.testBit_lt_two_pow
       (Nat.lt_of_lt_of_le this (Nat.pow_le_pow_right (by decide) (by omega)))
 
-/-! ## §8 — Axiom hygiene (CI hard-gate). The composition rungs are pinned kernel-clean. -/
+/-! ## §8 — The whole-block `blake2bF` forcing (init ⊕ compress ⊕ finalize), tied to `Ref.compress`. -/
+
+/-- `Ref.compress`'s initial work vector (the `h ++ IV` load with the counter/flag XOR-folded into
+`v[12..15]`) — named so `Ref.compress` reformulates by `rfl`. -/
+def refInitV (hVals : List Nat) (t0 t1 f0 f1 : Nat) : List Nat :=
+  let v := hVals ++ Ref.IV
+  let v := v.set 12 (Ref.xorw (v.getD 12 0) t0)
+  let v := v.set 13 (Ref.xorw (v.getD 13 0) t1)
+  let v := v.set 14 (Ref.xorw (v.getD 14 0) f0)
+  v.set 15 (Ref.xorw (v.getD 15 0) f1)
+
+/-- `Ref.compress`'s digest fold `out_i = h_i ⊕ vf_i ⊕ vf_{i+8}`. -/
+def refDigest (hVals vf : List Nat) : List Nat :=
+  (List.range 8).map (fun i =>
+    Ref.w64 (Ref.xorw (Ref.xorw (hVals.getD i 0) (vf.getD i 0)) (vf.getD (i + 8) 0)))
+
+/-- **`Ref.compress` IS digest ∘ (12-round fold) ∘ init** — by `rfl` (the named pieces are its body). -/
+theorem refCompress_eq (hVals mVals : List Nat) (t0 t1 f0 f1 : Nat) :
+    Ref.compress hVals mVals t0 t1 f0 f1
+      = refDigest hVals ((List.range 12).foldl (cRStep mVals) (refInitV hVals t0 t1 f0 f1)) :=
+  rfl
+
+/-- `((List.range n).map f).getD i 0 = f i` for `i < n`. -/
+theorem getD_map_range (f : Nat → Nat) (n i : Nat) (hi : i < n) :
+    ((List.range n).map f).getD i 0 = f i := by
+  rw [List.getD_eq_getElem?_getD, List.getElem?_map, List.getElem?_range hi]
+  rfl
+
+/-- **`blake2bFinalize_forces`** — the digest fold forces each of the 8 output words to
+`h_i ⊕ vf_i ⊕ vf_{i+8}` (`= (refDigest hVals vf)_i`), by `xor3Word_forces` per word (carry base
+`fresh + 64·i`, matching `blake2bFinalize`'s fresh threading). -/
+theorem blake2bFinalize_forces (a : Assignment) (hbool : AllBool a)
+    (hBases vFinal outBases hVals vfVals : List Nat) (fresh : Nat)
+    (hh : ∀ i, i < 8 → Holds a (hBases.getD i 0) (hVals.getD i 0))
+    (hv : ∀ i, i < 16 → Holds a (vFinal.getD i 0) (vfVals.getD i 0))
+    (hg : ∀ i, i < 8 → ∀ j, j < 64 →
+        evalH (xorHead [hBases.getD i 0 + j, vFinal.getD i 0 + j, vFinal.getD (i + 8) 0 + j]
+               (outBases.getD i 0 + j) (fresh + 64 * i + j)) a = 0) :
+    ∀ i, i < 8 → Holds a (outBases.getD i 0) ((refDigest hVals vfVals).getD i 0) := by
+  intro i hi
+  have hforce := xor3Word_forces a hbool (hBases.getD i 0) (vFinal.getD i 0) (vFinal.getD (i + 8) 0)
+    (outBases.getD i 0) (fresh + 64 * i) (hVals.getD i 0) (vfVals.getD i 0) (vfVals.getD (i + 8) 0)
+    (hh i hi) (hv i (by omega)) (hv (i + 8) (by omega)) (hg i hi)
+  rw [refDigest, getD_map_range _ 8 i hi]
+  exact hforce
+
+/-! ## §9 — Axiom hygiene (CI hard-gate). The composition rungs are pinned kernel-clean. -/
 
 #assert_axioms testBit_bitsToNat
 #assert_axioms testBit_rotr64
@@ -671,6 +717,8 @@ theorem xorConstWord_forces (a : Assignment) (hbool : AllBool a) (inBase outBase
 #assert_axioms blake2bCompress_forces
 #assert_axioms constWord_forces
 #assert_axioms xorConstWord_forces
+#assert_axioms refCompress_eq
+#assert_axioms blake2bFinalize_forces
 
 #print axioms blakeG_forces
 #print axioms blake2bCompress_forces
