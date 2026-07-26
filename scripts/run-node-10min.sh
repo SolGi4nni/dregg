@@ -101,7 +101,13 @@ BIN="target/$PROFILE_DIR/dregg-node"
 # has no valid author signature". So: genesis, then take its key.
 say "Generating a one-validator chain (genesis.json + the committee key)"
 rm -rf "$DATA" "$DATA-genesis"
-"$BIN" genesis --validators 1 --output "$DATA-genesis" >/dev/null 2>&1 \
+# NOT redirected to /dev/null. It was, and that is how a HARD BREAK hid: `genesis`
+# never installed the verified PQ cores, so minting the committee ML-DSA key hit
+# dregg-pq's fail-closed gate and died with `Abort trap: 6` — and the operator saw
+# only "dregg-node genesis failed", never the gate's message naming the cause and
+# the fix. The install is in place now; the output stays visible so the NEXT thing
+# that refuses here says so out loud.
+"$BIN" genesis --validators 1 --output "$DATA-genesis" \
   || die "dregg-node genesis failed"
 mkdir -p "$DATA"
 cp "$DATA-genesis/genesis.json" "$DATA/genesis.json" || die "no genesis.json was generated"
