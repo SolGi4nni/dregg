@@ -214,6 +214,31 @@ impl std::fmt::Debug for PrivateBazaarSealedIngressQueue {
 }
 
 impl PrivateBazaarSealedIngressQueue {
+    /// Open over an explicit root/scope/roster, with no live deployment. Used to
+    /// exercise the durable teeth on a host without a linked Lean archive, where
+    /// standing up a real executor-backed deployment is impossible.
+    #[cfg(test)]
+    fn open_detached(
+        root: &std::path::Path,
+        scope: PrivateBazaarSpoolScope,
+        roster: Vec<DreggIdentity>,
+    ) -> Result<Self, PrivateBazaarWorkerError> {
+        fs::create_dir_all(root)
+            .map_err(|error| PrivateBazaarWorkerError::io("create sealed ingress queue", error))?;
+        ensure_private_directory(root)?;
+        let root = fs::canonicalize(root)
+            .map_err(|error| PrivateBazaarWorkerError::io("pin sealed ingress directory", error))?;
+        let queue = Self {
+            path: root.join(INGRESS_FILE_NAME),
+            cursor_path: root.join(INGRESS_CURSOR_FILE_NAME),
+            root,
+            scope,
+            roster,
+        };
+        queue.validate_chain()?;
+        Ok(queue)
+    }
+
     pub(crate) fn open(
         deployment: &PrivateBazaarLiveDeployment,
     ) -> Result<Self, PrivateBazaarWorkerError> {
@@ -459,6 +484,16 @@ impl PrivateBazaarSealedIngressQueue {
                 found: record.pending.sequence,
             });
         }
+        // The ROSTER gate gets the same treatment as the family gate: re-applied
+        // on the way out of the durable record, not only at submission. A
+        // hostile queue file that recomputes the record checksum must not be
+        // able to seat a bidder the deployment's policy does not name — the
+        // winner drives a pinned Dungeon target, and a stranger who won would
+        // have already taken the asset by the time the dispatch found no target.
+        self.validate_bidders(record.pending.book.sealed_bids())
+            .map_err(|_| {
+                PrivateBazaarWorkerError::Corrupt("sealed ingress bidder outside deployment roster")
+            })?;
         Ok(record)
     }
 
@@ -803,5 +838,115 @@ mod tests {
     fn reseal(bytes: &mut [u8]) {
         let sum = checksum(INGRESS_DOMAIN, &bytes[..INGRESS_RECORD_LEN - 32]);
         bytes[INGRESS_RECORD_LEN - 32..].copy_from_slice(&sum);
+    }
+
+    fn roster() -> Vec<DreggIdentity> {
+        vec![actor("alice"), actor("bob")]
+    }
+
+    /// THE ROSTER GATE HOLDS ON THE WAY OUT OF THE DURABLE RECORD TOO.
+    ///
+    /// Submission refuses a bidder the deployment's policy does not name. That
+    /// is not enough on its own: the drain reads BYTES, and a hostile queue file
+    /// with a recomputed checksum would otherwise seat a stranger who then wins
+    /// the auction and takes the asset before the pinned dispatch discovers it
+    /// has no target for them.
+    #[test]
+    fn a_tampered_record_cannot_seat_a_bidder_outside_the_roster() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("ingress");
+        let mut queue =
+            PrivateBazaarSealedIngressQueue::open_detached(&root, scope(), roster()).unwrap();
+        assert!(
+            queue
+                .submit(9, vec![(actor("stranger"), 3)], None)
+                .unwrap_err()
+                .to_string()
+                .contains("outside the deployment's immutable policy roster")
+        );
+        assert_eq!(queue.submit(9, ingress_pair(), None).unwrap().sequence, 1);
+        assert_eq!(queue.pending().unwrap(), 1);
+        assert_eq!(
+            queue
+                .next_pending()
+                .unwrap()
+                .expect("the honest record drains")
+                .book
+                .sealed_bids()
+                .to_vec(),
+            ingress_pair()
+        );
+
+        // Rewrite the first bidder's handle to a stranger and reseal the record.
+        let mut bytes = fs::read(&queue.path).unwrap();
+        let slot = 8 + 8 + 32 + 32 + 32 + 32 + 8 + 1 + 32 + 1;
+        bytes[slot..slot + 2].copy_from_slice(&8u16.to_be_bytes());
+        bytes[slot + 2..slot + 2 + MAX_INGRESS_ACTOR_BYTES].fill(0);
+        bytes[slot + 2..slot + 10].copy_from_slice(b"stranger");
+        reseal(&mut bytes);
+        fs::write(&queue.path, &bytes).unwrap();
+
+        assert!(
+            matches!(
+                queue.next_pending(),
+                Err(PrivateBazaarWorkerError::Corrupt(
+                    "sealed ingress bidder outside deployment roster"
+                ))
+            ),
+            "a resealed record naming a stranger must be refused at the drain"
+        );
+        assert!(matches!(
+            PrivateBazaarSealedIngressQueue::open_detached(&root, scope(), roster()),
+            Err(PrivateBazaarWorkerError::Corrupt(
+                "sealed ingress bidder outside deployment roster"
+            ))
+        ));
+    }
+
+    /// The append is chained and contiguous, and the drain advances exactly once
+    /// per acknowledgement.
+    #[test]
+    fn the_queue_chains_appends_and_drains_in_order() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("ingress");
+        let mut queue =
+            PrivateBazaarSealedIngressQueue::open_detached(&root, scope(), roster()).unwrap();
+        assert_eq!(queue.pending().unwrap(), 0);
+        assert!(queue.next_pending().unwrap().is_none());
+
+        for expected in 1..=3u64 {
+            assert_eq!(
+                queue
+                    .submit(0xD0 + expected, ingress_pair(), None)
+                    .unwrap()
+                    .sequence,
+                expected
+            );
+        }
+        assert_eq!(queue.pending().unwrap(), 3);
+
+        for expected in 1..=3u64 {
+            let pending = queue.next_pending().unwrap().expect("queued");
+            assert_eq!(pending.sequence, expected);
+            assert_eq!(pending.session_seed, 0xD0 + expected);
+            // Acknowledging out of order is refused, so a lost ack cannot skip.
+            assert!(matches!(
+                queue.acknowledge(expected + 1),
+                Err(PrivateBazaarWorkerError::NonContiguousCursor { .. })
+            ));
+            queue.acknowledge(expected).unwrap();
+            assert_eq!(queue.pending().unwrap(), 3 - expected);
+        }
+        assert!(queue.next_pending().unwrap().is_none());
+
+        // A reopened queue resumes at the same place across restart.
+        let reopened =
+            PrivateBazaarSealedIngressQueue::open_detached(&root, scope(), roster()).unwrap();
+        assert_eq!(reopened.pending().unwrap(), 0);
+        assert!(reopened.next_pending().unwrap().is_none());
+    }
+
+    fn ingress_pair() -> Vec<(DreggIdentity, i64)> {
+        vec![(actor("alice"), 2), (actor("bob"), 3)]
     }
 }
