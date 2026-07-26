@@ -113,6 +113,16 @@ pub mod game_session;
 /// turn was had a leaderboard, a card grid and a board, and nothing that answered. Under a
 /// no-private-vocabulary rule enforced by its own tests. See [`guide`].
 pub mod guide;
+/// **ONE PLAYER ACROSS SURFACES** — `GET`/`POST /identity/link`. A player's web identity
+/// ([`seed_identity`], 24 self-held words) and their Discord/Telegram identity (a key the operator's
+/// `bot_secret` derives) were **different people with different histories on the same board**. This
+/// closes that with a PROVEN link, never an asserted one: the bot mints a single-use code whose
+/// freshness key is derived per `(platform, account)`, and the web page verifies it while the phrase
+/// is transiently in hand and signs the canonical
+/// [`webauth_core::link_claim`] with the phrase's key. The two keys stay DISTINCT with their
+/// custody difference intact — only the VIEW unions. Mounted iff a platform identity secret
+/// resolves. See [`identity_link`].
+pub mod identity_link;
 /// Prometheus metrics for the web surface (the `node/src/metrics.rs` pattern): the idempotent
 /// process-global recorder + the `GET /metrics` handler + the named emit helpers this surface's
 /// call sites bump (session opens/evictions, policy refusals, executor refusals, anchor + resume
@@ -1154,15 +1164,29 @@ main.af-table::before{content:"";position:fixed;inset:0;z-index:-1;pointer-event
 .af-table .deos-section h2::before{border-radius:0;width:.34rem;height:.34rem;transform:rotate(45deg)}
 .af-table .deos-section.tag-accent{border-color:var(--br-faint);border-left-color:var(--vio)}
 .af-table .deos-section.tag-accent h2{color:var(--vio-lit)}
-/* THE BOARD FRAME — a night well in a brass surround, with a coordinate ruler on two edges. */
-.af-board{--af-gut:1.2rem;position:relative;display:grid;grid-template-columns:var(--af-gut) 1fr;grid-template-rows:1fr var(--af-gut) auto;gap:.15rem;width:100%;max-width:33rem;margin:1rem auto .3rem;padding:.8rem .9rem .7rem;border:1px solid rgba(176,141,87,.3);border-radius:0 14px 14px 14px;background:radial-gradient(125% 105% at 50% -12%,#17131f,#08070c 72%);box-shadow:inset 0 1px 0 rgba(237,220,180,.05),0 26px 64px -34px #000}
+/* THE BOARD FRAME — a night well in a brass surround, with a coordinate ruler on two edges.
+   ⚑ `minmax(0,1fr)`, NOT `1fr`, and it is the whole of why the small board used to burst. A `1fr`
+   track carries an automatic MIN-CONTENT floor, and this track's content is an 11-wide grid whose
+   cells had a `min-width` — so the moment the frame was narrower than 11 minimums the track REFUSED
+   to shrink, pushed straight through the padding and the border, and the board sat flush against
+   (and 4px past) the edge of its container. Measured on the front page at 1440px: frame 304px, its
+   content box 261px wide, the grid demanding 276px. `minmax(0,1fr)` lets the track shrink and the
+   `min-width:0` below lets the squares follow it down. */
+.af-board{--af-gut:1.2rem;position:relative;display:grid;grid-template-columns:var(--af-gut) minmax(0,1fr);grid-template-rows:1fr var(--af-gut) auto;gap:.15rem;width:100%;max-width:33rem;margin:1rem auto .3rem;padding:.8rem .9rem .7rem;border:1px solid rgba(176,141,87,.3);border-radius:0 14px 14px 14px;background:radial-gradient(125% 105% at 50% -12%,#17131f,#08070c 72%);box-shadow:inset 0 1px 0 rgba(237,220,180,.05),0 26px 64px -34px #000}
 .af-board .af-defs{position:absolute;width:0;height:0;overflow:hidden}
 .af-ruler{display:grid;font-family:var(--mono);font-size:.55rem;font-weight:700;line-height:1;color:rgba(164,159,180,.5)}
 .af-ranks{grid-column:1;grid-row:1;grid-template-rows:repeat(var(--af-rows),1fr);align-items:center;justify-items:end;padding-right:.32rem}
 .af-files{grid-column:2;grid-row:2;grid-template-columns:repeat(var(--af-n),1fr);align-items:start;justify-items:center;padding-top:.28rem}
 /* THE GRID — a 1px gap over a brass field IS the grid line, so the board rules itself. */
 .af-board>.coordgrid{grid-column:2;grid-row:1;margin:0;padding:0;max-width:none;gap:1px;border:1px solid var(--br-line);border-radius:0;background:rgba(176,141,87,.32);box-shadow:inset 0 0 60px -18px #000}
-.af-board .coordgrid .cell{border:0;border-radius:0;background:#141220;color:var(--n-soft);box-shadow:none;font-family:var(--mono);transition:background .13s,box-shadow .13s}
+/* ⚑ `min-width:0`, ALWAYS — not only on a phone. The generic `.coordgrid .cell` floor (1.5rem) is a
+   tap-target minimum for a grid of unknown width; this board is a FIXED 11 squares across inside a
+   frame that is often much narrower than 11 × 1.5rem, and a floor a container cannot honour does not
+   make the squares bigger, it makes the board overflow the container. The squares keep
+   `aspect-ratio:1/1`, so shrinking keeps a square board instead of bursting a rectangular frame.
+   This lived in the `max-width:44rem` media query only, which is why the PHONE board was fine and the
+   front page's 19rem hero board was not. */
+.af-board .coordgrid .cell{min-width:0;border:0;border-radius:0;background:#141220;color:var(--n-soft);box-shadow:none;font-family:var(--mono);transition:background .13s,box-shadow .13s}
 .af-board :where(.coordgrid.checkered) .cell:nth-child(2n){background-image:none;background:#191628}
 .af-board .coordgrid form.cell{cursor:pointer}
 .af-board .coordgrid form.cell button{position:relative;padding:0}
@@ -1181,6 +1205,16 @@ main.af-table::before{content:"";position:fixed;inset:0;z-index:-1;pointer-event
 .af-board .coordgrid .cell.tag-good{background:#262240;box-shadow:inset 0 0 0 1px rgba(168,159,216,.45)}
 .af-board .coordgrid .cell.tag-good .af-p{filter:drop-shadow(0 0 5px rgba(168,159,216,.75))}
 .af-board .coordgrid .cell.tag-good.af-empty .af-dot{width:23%;height:23%;background:var(--vio);box-shadow:0 0 8px 1px rgba(168,159,216,.55)}
+/* ⚑ PROPOSABLE BUT BLOCKED — a square on the picked-up piece's rook line that a piece in the way
+   stops it reaching. It is NOT a legal-move square and must not read as one (the violet fill and the
+   lit pip belong to `tag-good` alone), and it is NOT dead either: the rules let you seal a move
+   there, and it runs if the other seat lifts the blocker. So it gets its own third state — no fill,
+   a dashed violet outline at low opacity, and a hollow ring instead of the solid pip. Painted BEFORE
+   `tag-warn` in this block so every stronger role still wins the square. */
+.af-board .coordgrid .cell.tag-blocked{background:#141220;box-shadow:inset 0 0 0 1px rgba(168,159,216,.16)}
+.af-board .coordgrid .cell.tag-blocked::after{content:"";position:absolute;inset:8%;border:1px dashed rgba(168,159,216,.34);pointer-events:none}
+.af-board .coordgrid .cell.tag-blocked .af-p{opacity:.72}
+.af-board .coordgrid .cell.tag-blocked.af-empty .af-dot{width:20%;height:20%;background:transparent;box-shadow:inset 0 0 0 1px rgba(168,159,216,.42)}
 .af-board .coordgrid .cell.tag-warn{background:#33291c;box-shadow:inset 0 0 0 2px var(--br-lit);z-index:2}
 .af-board .coordgrid .cell.tag-sealed{background:#3d3020;box-shadow:inset 0 0 0 1px var(--br-lit),0 0 18px -4px rgba(216,180,126,.85);z-index:3}
 .af-board .coordgrid .cell.tag-sealed::after{content:"";position:absolute;inset:20%;border:2px solid var(--br-pale);border-radius:50%;opacity:.9;pointer-events:none}
@@ -1202,6 +1236,7 @@ main.af-table::before{content:"";position:fixed;inset:0;z-index:-1;pointer-event
 .af-key i{width:.55rem;height:.55rem;flex:0 0 auto;font-style:normal}
 .af-key .k-goal{border:1px solid var(--br-lit);background:rgba(176,141,87,.28)}
 .af-key .k-tgt{border-radius:50%;background:var(--vio);box-shadow:0 0 7px var(--vio)}
+.af-key .k-blocked{border-radius:50%;background:transparent;box-shadow:inset 0 0 0 1px rgba(168,159,216,.45)}
 .af-key .k-sel{box-shadow:inset 0 0 0 2px var(--br-lit)}
 .af-key .k-seal{border-radius:50%;border:2px solid var(--br-pale);background:rgba(216,180,126,.2)}
 .af-key .k-mark{background:repeating-linear-gradient(135deg,#191721 0 2px,#0d0c12 2px 4px);box-shadow:inset 0 0 0 1px rgba(120,116,132,.55);position:relative}
@@ -1283,6 +1318,9 @@ main.af-table::before{content:"";position:fixed;inset:0;z-index:-1;pointer-event
 .hero-art .legend .k-auto{background:var(--vio);box-shadow:0 0 7px var(--vio)}
 .hero-art .legend .k-sel{background:transparent;border-radius:0;box-shadow:inset 0 0 0 2px var(--br-lit)}
 .hero-art .legend .k-tgt{background:var(--vio);border-radius:50%;box-shadow:0 0 7px var(--vio)}
+/* The still's third square state, so the front page's legend names everything the board draws:
+   a hollow ring for a square on the rook line that a piece in the way stops you reaching. */
+.hero-art .legend .k-blocked{background:transparent;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(168,159,216,.5)}
 .hero-art .legend .k-goal{border:1px solid var(--br-lit);border-radius:0;background:rgba(176,141,87,.28)}
 /* THE GAMETABLE — spwashi's overhead table (the games hero), scrimmed so the plaques stay legible. */
 .af-hero{position:relative;overflow:hidden;border:1px solid var(--br-faint);border-left:3px solid var(--br);border-radius:0 16px 16px 16px;margin:var(--s5) 0 var(--s4);padding:clamp(1.6rem,5vw,3rem) clamp(1.1rem,4vw,2.2rem);background:linear-gradient(105deg,rgba(7,6,11,.94) 0%,rgba(7,6,11,.86) 42%,rgba(7,6,11,.34) 78%,rgba(7,6,11,.5) 100%),url("/automatafl/art/gametable.jpg") center/cover no-repeat;background-color:var(--n1)}
@@ -1387,7 +1425,8 @@ hr{border:0;border-top:1px solid var(--line-soft);margin:var(--s4) 0}
 .af-table .nr-well .cell{min-width:0}
 .af-board{--af-gut:.9rem;padding:.55rem .6rem .5rem;max-width:100%}
 .af-board>.coordgrid{gap:1px;padding:0}
-.af-board .coordgrid .cell{min-width:0}
+/* (`.af-board .coordgrid .cell{min-width:0}` used to live here and ONLY here — it is now on the base
+   rule, because the frame can be narrower than 11 tap targets on a desktop too.) */
 .af-ruler{font-size:.45rem}
 .af-key{font-size:.53rem;gap:.22rem .6rem}
 .coordgrid .cell{min-width:1.35rem;border-radius:8px}
@@ -3773,6 +3812,12 @@ fn af_square(cell: &CoordCell, x: usize, y: usize, key: &str, id: &str) -> Strin
         "warn" => ", picked up",
         "sealed" => ", where you sealed your move",
         "good" => ", a legal move",
+        // ⚑ A screen-reader user gets the SAME third state a sighted one does. Without this the
+        // dashed outline is the only carrier and the square reads identically to a legal move —
+        // which is the exact wound the outline exists to close, moved one sense over.
+        "blocked" => {
+            ", blocked — a piece is in the way, so this move only runs if that piece is moved first"
+        }
         _ if is_goal => ", a goal corner",
         // The automaton's square needs no role: `what` already names it.
         _ => "",
@@ -3865,7 +3910,8 @@ const AF_KEY: &str = "<div class=\"af-key\" aria-hidden=\"true\">\
      the automaton</span>\
      <span><i class=\"k-goal\"></i>goal corner</span>\
      <span><i class=\"k-sel\"></i>your piece</span>\
-     <span><i class=\"k-tgt\"></i>legal move</span>\
+     <span><i class=\"k-tgt\"></i>can reach</span>\
+     <span><i class=\"k-blocked\"></i>blocked · needs the way cleared</span>\
      <span><i class=\"k-seal\"></i>your sealed move</span>\
      <span><i class=\"k-mark\"></i>marked by a clash · dead this turn</span>\
      </div>";
@@ -6182,6 +6228,18 @@ fn make_app_parts_with_catalog(
         Some(da) => app.merge(da),
         None => app,
     };
+    // ⚑ THE CROSS-PLATFORM LINK DOOR — `GET`/`POST /identity/link`. A player's web identity (24
+    // self-held words) and their Discord/Telegram identity (a key the operator's `bot_secret`
+    // derives) were DIFFERENT PEOPLE with different histories on the same board; this is the proven
+    // ceremony that joins the records without merging the keys.
+    //
+    // ALWAYS mounted, unlike `/tg` and `/da`: `/identity`, `/you` and the Descent board all link
+    // here, so an env gate would turn those into 404s. With no platform secret configured the page's
+    // job becomes SAYING that (the `/explorer` posture) and it serves no form — one warn line at
+    // boot names the env to set. Additive either way: `/identity/link` overlaps nothing, and an
+    // unlinked player — web, Discord, or a casual cookie visitor — is byte-identical to before,
+    // because link resolution treats an unlinked key as its own human.
+    let app = app.merge(identity_link::identity_link_from_env());
 
     // THE TRANSPORT LAYERS, applied to the WHOLE merged surface (see `PLAY_STATIC_CACHE_CONTROL`).
     // Order matters and reads inside-out: `revalidate_play_static` is the inner layer, so it hashes
@@ -6350,10 +6408,22 @@ pub(crate) fn automatafl_still(extra_class: &str) -> String {
             );
         }
     };
-    // Mid-turn: seat A has the attractor at (3,1) selected, so its rook line is the lit legal-move
-    // set — exactly what the live board highlights on a click.
+    // Mid-turn: seat A has the attractor at (3,1) picked up, so the squares it can reach are lit —
+    // exactly what the live board highlights on a click.
     let sel = (3i32, 1i32);
     let sel_idx = index_of(sel).expect("in bounds");
+
+    // ⚑ **THE LIT SET IS THE ORACLE'S, NOT A ROOK CROSS DRAWN HERE.** This used to be
+    // `(c.0 == sel.0 || c.1 == sel.1) && …` — a rook line computed in this function, which is
+    // occupancy-blind, so the still advertised twenty reachable squares including `(3,10)` behind
+    // the attractor on `(3,9)` and all of row 1 behind three repulsors. That is a lookalike, which
+    // is the one thing this still exists not to be. Both sets now come out of
+    // `dregg_automatafl::rules` (the Lean `targetsOf` / `liveTargetsOf`), so the preview shows the
+    // same eleven-lit / nine-blocked board the live table does and the two cannot drift.
+    let proposable =
+        dregg_automatafl::rules::legal_targets(&board, &[], 0, sel).unwrap_or_default();
+    let reachable =
+        dregg_automatafl::rules::executable_targets(&board, &[], &[], 0, sel).unwrap_or_default();
 
     // The still is the offering's OWN cell vocabulary — the same `CoordCell`s the live
     // `board_grid` emits — handed to the same painter. Nothing about the look lives here.
@@ -6361,8 +6431,10 @@ pub(crate) fn automatafl_still(extra_class: &str) -> String {
         .map(|i| {
             let c = coord_of(i);
             let p = board.cells[i];
-            // The selected piece's rook cross, minus the automaton's square (never a legal target).
-            let lit = (c.0 == sel.0 || c.1 == sel.1) && c != board.auto && i != sel_idx;
+            // Reachable now; proposable-but-blocked; neither. The same three-way split `board_grid`
+            // paints, from the same two calls.
+            let lit = reachable.contains(&c);
+            let blocked = !lit && proposable.contains(&c);
             let goal = stock_goals.iter().find(|(g, _)| *g == c);
             let glyph = match p {
                 REP => "R".to_string(),
@@ -6380,6 +6452,8 @@ pub(crate) fn automatafl_still(extra_class: &str) -> String {
                 ("warn", true)
             } else if lit {
                 ("good", true)
+            } else if blocked {
+                ("blocked", false)
             } else if goal.is_some() {
                 ("goal", false)
             } else if p == VAC {
@@ -6449,7 +6523,8 @@ async fn index() -> Html<String> {
          <div class=\"legend\">\
          <span><i class=\"k-auto\"></i>automaton</span>\
          <span><i class=\"k-sel\"></i>your piece</span>\
-         <span><i class=\"k-tgt\"></i>legal move</span>\
+         <span><i class=\"k-tgt\"></i>can reach</span>\
+         <span><i class=\"k-blocked\"></i>blocked</span>\
          <span><i class=\"k-goal\"></i>goal</span></div>\
          <p class=\"hero-cap\">Automatafl · mid-turn</p></div>\
          </section>\
