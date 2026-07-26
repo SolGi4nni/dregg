@@ -1623,8 +1623,8 @@ const TG_SHELL_SCRIPT: &str = r##"(function () {
       .then(readJson)
       .then(function (report) {
         var message = (report.verified ? 'Replay verified' : 'Replay refused') + ' · ' +
-          report.turns + ' turns · ' + report.detail, report.verified ? 'ok' : 'refused');
-        report(message, report.verified ? 'ok' : 'refused');
+          report.turns + ' turns · ' + report.detail;
+        notice(message, report.verified ? 'ok' : 'refused');
       })
       .catch(failure);
   }
