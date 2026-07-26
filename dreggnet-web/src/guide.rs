@@ -97,8 +97,10 @@ fn before_you_start() -> String {
      back. If a recovery phrase is offered in the navigation, claiming one is what makes an identity \
      survive that; until you claim one, nothing here is durable.</li>\
      <li><strong>It is early.</strong> No chat, no friends list, no matchmaking. To play a \
-     two-player game you open a table and send someone the link yourself. And nothing you collect \
-     here is money or is for sale.</li>\
+     two-player game you open a table and send someone the link yourself. <strong>Here on your \
+     own?</strong> The Descent is a game for one, and on a two-player table you can hold both seats \
+     yourself — take one seat, then open the invite in a private window and take the other. And \
+     nothing you collect here is money or is for sale.</li>\
      </ul></section>"
         .to_string()
 }

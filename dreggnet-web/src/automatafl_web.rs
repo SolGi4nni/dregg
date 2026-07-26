@@ -229,6 +229,26 @@ mod tests {
         );
     }
 
+    /// ⚑ **A LONE VISITOR IS TOLD WHAT THIS COSTS AND WHAT ELSE THEY CAN DO — BEFORE THE BUTTON.**
+    /// There is no matchmaking, no queue and no bot anywhere on this product: a table mints two seat
+    /// links and you send one yourself. That was disclosed as the third sentence of a paragraph, so
+    /// the predicted (and observed) path was: click a two-player game, read "send this link to your
+    /// opponent", have nobody, close the tab. Two things are pinned: the requirement rides a
+    /// SCANNABLE chip, and the page names an exit rather than leaving the reader at a dead end.
+    #[test]
+    fn the_landing_states_the_two_player_requirement_and_offers_a_way_out_of_it() {
+        let page = landing_page(None);
+        assert!(
+            page.contains("<p class=\"needs\">Two players"),
+            "the player-count requirement must be a chip a scanner reads, not buried prose: {page}"
+        );
+        assert!(
+            page.contains("play both") && page.contains(crate::DESCENT_PLAY_PATH),
+            "a visitor with nobody to invite must be handed both exits — hold both seats, or the \
+             game meant for one: {page}"
+        );
+    }
+
     #[test]
     fn the_rules_do_not_claim_a_cryptographic_commitment_between_clients() {
         // `dregg-automatafl/src/surface.rs` stores the move PLAINTEXT server-side at commit time

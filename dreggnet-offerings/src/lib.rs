@@ -97,15 +97,16 @@ pub mod operation;
 pub mod overworld;
 /// The one viewer-blind, copyable receipt card shared by every hosted game surface.
 pub mod player_turn_receipt;
-/// THE SHELF GATE — the SECOND, orthogonal filter in front of a browse list: not "do we advertise
-/// this?" (curation, `dreggnet_catalog::SHIPPED_KEYS`) but "can THIS SURFACE host it at all?"
-/// (capability). A shared surface — a group chat's ONE message every member reads — must not paint
-/// a live control for an offering that declares [`Offering::hidden_information`], because pressing
-/// it will be refused; [`shelf::advertised_shelf`] takes that verdict at PAINT time (the
-/// declaration is answerable without a session, which is the whole reason it is declared) so the
-/// menu can dim the row and say why instead of teaching the player by refusal. It is the advance
-/// warning, NOT the gate — the refusal at the open stays exactly where it is. See [`shelf`].
-pub mod shelf;
+/// ⚑ **THE PLAYER-FACING REFUSAL VOCABULARY** — the shared copy every surface says "no" with, and
+/// the scanner that keeps it honest. An audit of every player-visible refusal in the product found
+/// one root cause behind nine failure modes (a `Display`/`{:?}` written for a log line leaking into
+/// a player string) and one reason it kept happening: **the same condition got fixed in one surface
+/// and never propagated**, so one condition wore five wordings. The wordings live in
+/// [`refusal`] as functions — [`refusal::stale_control`], [`refusal::belongs_to_another_player`],
+/// [`refusal::COMMIT_FAILED_NOTHING_CHANGED`] — and [`refusal::audit_player_text`] is the gate that
+/// reds on the shapes the audit found (a raw hex run, a `Debug` dump, a symbol offered as the fix, a
+/// component name, a missing next action, a missing statement of what was lost).
+pub mod refusal;
 /// THE SESSION-RESUME SEAM — the [`OfferingHost`]'s durable-store closure. A live session is held
 /// in memory (some `!Send`) and lost on restart; this module persists ONLY the reproducible public
 /// input (the seed + the ordered landed advances — a [`resume::SessionMoveLog`]) and reopens a
@@ -121,6 +122,15 @@ pub mod resume;
 /// gasless from the player's view. See [`session`] (the macaroon attenuation model reused for
 /// play; the SDK tool-mandate's `deleg_admit`/`refines` shape, applied to advancing a session).
 pub mod session;
+/// THE SHELF GATE — the SECOND, orthogonal filter in front of a browse list: not "do we advertise
+/// this?" (curation, `dreggnet_catalog::SHIPPED_KEYS`) but "can THIS SURFACE host it at all?"
+/// (capability). A shared surface — a group chat's ONE message every member reads — must not paint
+/// a live control for an offering that declares [`Offering::hidden_information`], because pressing
+/// it will be refused; [`shelf::advertised_shelf`] takes that verdict at PAINT time (the
+/// declaration is answerable without a session, which is the whole reason it is declared) so the
+/// menu can dim the row and say why instead of teaching the player by refusal. It is the advance
+/// warning, NOT the gate — the refusal at the open stays exactly where it is. See [`shelf`].
+pub mod shelf;
 /// THE SIGNED-ATTRIBUTION SEAM — a turn's actor as a VERIFIED Ed25519 public key instead of an
 /// asserted string, with the trust level of every attribution made visible
 /// ([`signed::Attribution`]: `Signed` vs `Asserted`). A [`signed::SignedAction`] carries the
@@ -413,7 +423,47 @@ pub enum OfferingError {
 impl std::fmt::Display for OfferingError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            OfferingError::Deploy(why) => write!(f, "offering deploy failed: {why}"),
+            // ⚑ PLAYER-FACING, AND STRUCTURALLY SO. This used to be a bare passthrough of
+            // whatever the substrate raised, and every frontend reaches for `{e}` — so a Discord
+            // player pressing the flagship game was one missing oracle away from reading
+            // "fail-closed", "Lean-subset" and "install_constraint_oracle". The raw text is not
+            // lost: it is [`OfferingError::operator_diagnostic`], which the frontend logs at the
+            // same instant it shows this sentence. Mirrors `dregg_cell::ProgramError`, which made
+            // exactly this split for exactly this reason.
+            //
+            // Nothing a player could have typed avoids a deploy refusal — they asked for a game
+            // and the server could not build one — so there is no variant here that wants the
+            // detail on screen.
+            // Written to pass [`crate::refusal::audit_player_text`] under the whole-message rules:
+            // it names the failing cause in plain words, says what was lost, and gives one next
+            // action a reader can actually carry out.
+            OfferingError::Deploy(_) => write!(
+                f,
+                "this offering could not be opened on this server: something it needs did not come \
+                 up, so it refuses to start rather than hand you a game that cannot judge your \
+                 moves. Nothing was opened and nothing was recorded. That is a fault in how this \
+                 server was built and not in anything you did — tell an operator; the server log \
+                 names the missing piece"
+            ),
+        }
+    }
+}
+
+impl OfferingError {
+    /// **The OPERATOR half of a deploy refusal** — the substrate's own words, for a log line.
+    ///
+    /// Two audiences were sharing one string. [`Display`](std::fmt::Display) is what a refusal
+    /// shows a PLAYER (it reaches a Discord embed, a Telegram message, a web toast), so it has to
+    /// be a sentence a human can act on; the missing archive, the export name and the function to
+    /// call belong in a log the operator reads. Every frontend that renders an `OfferingError` to
+    /// a person is expected to emit this beside it at `tracing::error!` — losing the detail
+    /// entirely would trade one bad failure mode for another.
+    ///
+    /// `Option` rather than `String` so that a future variant which genuinely *is* about the
+    /// caller's input can answer `None` and keep its `Display` as the whole story.
+    pub fn operator_diagnostic(&self) -> Option<String> {
+        match self {
+            OfferingError::Deploy(why) => Some(format!("offering deploy failed: {why}")),
         }
     }
 }

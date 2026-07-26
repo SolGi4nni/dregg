@@ -64,14 +64,14 @@
 //! which is this file's complement: a test can assert "the bytes differ after an act"; only a
 //! reader can say "they differ and I still cannot tell what I did."
 //!
-//! * **`arg` is a user-editable number box on every affordance** (QA §1), beside a button whose
-//!   label already names the target — so the label is NOT BINDING: change the box, press the
-//!   button, act on something else. It bites hardest where two rows differ only by index (trade
-//!   ships two `Ember Cloak`s). Not asserted here because the FIX and the assertion need the same
-//!   missing thing: `deos_view::MenuItem` does not carry `Action::wants_text`, so the renderer
-//!   cannot tell "this affordance solicits a value" from "this affordance's arg is its identity".
-//!   That is the SAME cross-crate change already parked under the `hermes`/`names`/`doc`
-//!   allowances below — one fix closes both.
+//! * ~~**`arg` is a user-editable number box on every affordance**~~ (QA §1) — **CLOSED, and the
+//!   two halves closed together exactly as predicted.** The box is hidden on every fixed affordance
+//!   (`c36e6123e`), and `deos_view::MenuItem` now CARRIES `Action::wants_text`, so the renderer can
+//!   finally tell "this affordance solicits a value" from "this affordance's `arg` IS its identity":
+//!   the declared want gets its own text field, the number box stays the sole property of
+//!   `ViewNode::Input`, and this sweep TYPES into the box the page offers ([`TYPED`],
+//!   `common::post_act_typing`) instead of pressing text affordances bare. What that uncovered is
+//!   recorded honestly in the two allowances that remain — both cap-model, neither a renderer bug.
 //! * **"No surface states the same fact twice in one projection."** Mechanically checkable and it
 //!   would have caught a collision two lanes created inside a day: `0f8e46d09` gave every pill it
 //!   added a hand-written prose mirror *because* `deos_view::text` dropped pills, and the shared
@@ -160,39 +160,39 @@ struct Exemption {
 
 /// The live allowance list. Keep it SHORT and keep every entry's reason true.
 const EXEMPTIONS: &[Exemption] = &[
-    // ── THE TEXT-AFFORDANCE CARRIER GAP. One cause, three offerings. ───────────────────────────
-    Exemption {
-        key: "hermes",
-        invariant: INV_ACT_LANDS,
-        reason: "A TEXT-TAKING AFFORDANCE HAS NO CARRIER ON THE WEB. `hermes`'s `prompt` is an \
-                 `Action` with `wants_text`, and the executor correctly refuses it with \
-                 \"no prompt supplied … the button label is not a prompt\". Nothing about the \
-                 offering is wrong; the WEB PATH drops the payload at three points — \
-                 `deos_view::MenuItem` carries no `wants_text` flag, `render_catalog_forms` \
-                 renders no text input, and `dreggnet_web::OfferingActForm` has no `text` field. \
-                 TODO: thread it. `MenuItem` is a shared struct with many literal constructions \
-                 across deos-view/dreggnet-*/discord-bot, so widening it is a cross-crate change \
-                 that must land as one piece — NOT a per-offering patch, and never a bodge that \
-                 rides the payload on the label (dreggnet-doc already did that once).",
-    },
+    // ── THE TEXT CARRIER IS BUILT. What is left behind it is a DIFFERENT gap per offering. ──────
+    //
+    // The carrier that used to be missing at three points — `deos_view::MenuItem` dropped
+    // `Action::wants_text`, `render_catalog_forms` rendered no text input, and
+    // `dreggnet_web::OfferingActForm` had no `text` field — now exists end to end: a declared text
+    // want paints a real `<input name="text">`, the POST carries it, and `pressed_action` rides it on
+    // `Action::text` to the executor. `hermes` had NOTHING else wrong with it, so its allowance is
+    // GONE. The two below are what the missing carrier was hiding: each needs the SAME cap-model
+    // decision, and neither is a rendering problem.
     Exemption {
         key: "names",
         invariant: INV_ACT_LANDS,
-        reason: "The same missing carrier as `hermes`: `register` is `wants_text` and is refused \
-                 \"no name supplied — the `register` affordance needs a name typed into its text \
-                 payload\". Same TODO, same one cross-crate fix.",
+        reason: "A VISITOR IS NEVER ENROLLED. The text half is fixed (`register` now renders a real \
+                 text field and the typed name reaches `Action::text`), which uncovered the actual \
+                 blocker underneath: `NamesSession::enroll` — which mints the actor's signer, funds \
+                 its agent cell and stands up its executor — is called only from this crate's own \
+                 tests and from `replay`. `NamesOffering::open` starts with an EMPTY actor map and \
+                 nothing enrolls on touch, so every naming verb refuses at \
+                 `do_register`/`do_transfer`'s first line with \"actor not enrolled: <hex>\" no \
+                 matter what is typed. TODO: this is the SAME CAP-MODEL decision as `doc` below \
+                 (enroll-on-first-touch versus an explicit join seam) on a verified offering — \
+                 design work, not a patch, and NOT something to bodge by enrolling inside a render.",
     },
     Exemption {
         key: "doc",
         invariant: INV_ACT_LANDS,
-        reason: "TWO causes, both real. (1) The same missing text carrier — `insert` / \
-                 `set the title` are `wants_text`. (2) A FRESH DOCUMENT HAS NO EDITOR: \
-                 `DocOffering::actions_for` enables an edit only for an identity holding the \
-                 region's edit cap, and a newly-opened document has an empty roster, so the first \
-                 visitor is offered three dimmed controls and no way to become a collaborator. \
-                 TODO: that second half is a CAP-MODEL decision (claim-on-first-write, the way \
-                 `SeatedTug` claims a seat, versus an explicit invite seam) on a verified \
-                 offering — design work, not a patch.",
+        reason: "A FRESH DOCUMENT HAS NO EDITOR. The text half is fixed (`insert` / `set the title` \
+                 now carry the typed prose), leaving the cap half: `DocOffering::actions_for` \
+                 enables an edit only for an identity holding the region's edit cap, and a \
+                 newly-opened document has an empty roster — so the first visitor is offered three \
+                 DIMMED controls and no way to become a collaborator. TODO: a CAP-MODEL decision \
+                 (claim-on-first-write, the way `SeatedTug` claims a seat, versus an explicit invite \
+                 seam) on a verified offering.",
     },
     // ── ON THE SHELF, AND OWNED BY ANOTHER LANE RIGHT NOW. ─────────────────────────────────────
     Exemption {
@@ -663,6 +663,13 @@ fn tokens(text: &str) -> BTreeSet<String> {
 /// dims for a non-member instead of offering live controls that only refuse.)
 const DRIVER: &str = "alice";
 
+/// **What the sweep TYPES into a free-text affordance.** One string for the whole catalog, because
+/// the point is that a text-taking affordance works AT ALL from a browser, not that some
+/// offering-specific magic word does. It is deliberately plain prose — a legal name for `names` to
+/// register, a legible prompt for `hermes` to classify, a sentence for `doc` to insert — so a
+/// refusal after this is the OFFERING's decision about content, never this harness's choice of it.
+const TYPED: &str = "harness";
+
 fn surface_uri(key: &str, id: &str) -> String {
     format!("/offerings/{key}/session/{id}")
 }
@@ -776,7 +783,10 @@ fn pill_survives(pill: &str, prose: &str) -> bool {
 fn prose_parity(host: &mut OfferingHost, key: &str, viewer: &DreggIdentity) -> (bool, String) {
     let id = SessionId::new(format!("prose-{key}"));
     if let Err(e) = host.ensure_open(key, &id) {
-        return (false, format!("the offering would not open for a chat viewer: {e}"));
+        return (
+            false,
+            format!("the offering would not open for a chat viewer: {e}"),
+        );
     }
     let mut worst: Option<String> = None;
     for step in ["on open", "after one turn"] {
@@ -815,7 +825,10 @@ fn prose_parity(host: &mut OfferingHost, key: &str, viewer: &DreggIdentity) -> (
     }
     match worst {
         Some(detail) => (false, detail),
-        None => (true, "every pill's words reach the prose projection".to_string()),
+        None => (
+            true,
+            "every pill's words reach the prose projection".to_string(),
+        ),
     }
 }
 
@@ -944,9 +957,21 @@ async fn every_offering_survives_being_driven_through_its_own_flow() {
                 );
             }
             Some(act) => {
-                let (status, response) =
-                    common::post_act(&app, &act_uri(key, &id), &act.turn, act.arg, DRIVER)
-                        .await;
+                // ⚑ TYPE INTO THE BOX WHEN THE PAGE OFFERS ONE. A `wants_text` affordance takes the
+                // user's prose (hermes's `prompt`, names's `register`, doc's `insert`); pressing its
+                // button with no string is a real refusal, so a driver that never types cannot tell
+                // "the carrier is missing" from "the string is missing" — which is precisely how
+                // three offerings sat behind one allowance. The value is READ OFF THE PAGE's own
+                // declaration, never a per-offering table.
+                let (status, response) = common::post_act_typing(
+                    &app,
+                    &act_uri(key, &id),
+                    &act.turn,
+                    act.arg,
+                    act.wants_text.then_some(TYPED),
+                    DRIVER,
+                )
+                .await;
                 let refused = response.contains("class=\"notice refused\"");
                 let landed = response.contains("Turn committed") && !refused;
                 row.record(
@@ -1109,7 +1134,11 @@ async fn every_offering_survives_being_driven_through_its_own_flow() {
         if stale.is_empty() {
             String::new()
         } else {
-            format!("{} STALE ALLOWANCE(S):\n{}\n", stale.len(), stale.join("\n"))
+            format!(
+                "{} STALE ALLOWANCE(S):\n{}\n",
+                stale.len(),
+                stale.join("\n")
+            )
         },
         "\nEach line names the offering, the invariant, and the offending text. Fix it, or record \
          a named allowance in `EXEMPTIONS` with the design work it actually needs."
@@ -1174,7 +1203,8 @@ fn the_directive_detector_wants_a_direct_child_sentence() {
                        <div class=\"deos-list\"><p class=\"prose\">aria: looking for a healer</p>\
                        </div></section>";
     assert_eq!(
-        directive_of(nested_only), None,
+        directive_of(nested_only),
+        None,
         "a row of DATA nested inside the plaque is not a directive, however early it appears"
     );
 
@@ -1207,8 +1237,14 @@ fn the_page_readers_read_what_a_person_reads() {
 
     let acts = common::offered_acts(html);
     assert_eq!(acts.len(), 2);
-    assert_eq!((acts[0].turn.as_str(), acts[0].arg, acts[0].enabled), ("gift", 2, true));
-    assert_eq!((acts[1].turn.as_str(), acts[1].arg, acts[1].enabled), ("sell", 1, false));
+    assert_eq!(
+        (acts[0].turn.as_str(), acts[0].arg, acts[0].enabled),
+        ("gift", 2, true)
+    );
+    assert_eq!(
+        (acts[1].turn.as_str(), acts[1].arg, acts[1].enabled),
+        ("sell", 1, false)
+    );
     assert_eq!(
         first_enabled(html).map(|a| a.turn),
         Some("gift".to_string()),
@@ -1224,13 +1260,53 @@ fn the_page_readers_read_what_a_person_reads() {
         !prose.contains("Gift Ember Cloak") && !prose.contains("Sell"),
         "a control label is not prose: {prose}"
     );
+
+    // ⚑ AND THE READER SEES A DECLARED TEXT WANT. This is the bit that decides whether the sweep
+    // TYPES or presses bare, so if it stops reading the field, three offerings quietly go back to
+    // being pressed empty and refused. Neither number-box row above declares one; a `wants_text` row
+    // does — and nothing a person types is ever readable as page prose.
+    assert!(
+        acts.iter().all(|a| !a.wants_text),
+        "an `arg` number box is not a text want: {acts:?}"
+    );
+    let asks = "<form class=\"affordance text\">\
+                <input type=\"hidden\" name=\"turn\" value=\"prompt\">\
+                <input type=\"hidden\" name=\"arg\" value=\"1\">\
+                <input class=\"text\" type=\"text\" name=\"text\" value=\"\" \
+                placeholder=\"type the text for `prompt`\" aria-label=\"prompt text\">\
+                <button type=\"submit\">read — 200 calls left</button></form>";
+    let asked = common::offered_acts(asks);
+    assert_eq!(asked.len(), 1);
+    assert!(
+        asked[0].wants_text && asked[0].enabled,
+        "a rendered text field IS the page declaring that this affordance takes prose: {asked:?}"
+    );
+    assert_eq!(
+        (asked[0].turn.as_str(), asked[0].arg),
+        ("prompt", 1),
+        "and it is still the same fixed press underneath: {asked:?}"
+    );
+    assert!(
+        !visible_text(asks).contains("prompt"),
+        "the field and its placeholder are chrome, not page prose — `state-visible` must not be \
+         able to pass on a box appearing: {}",
+        visible_text(asks)
+    );
 }
 
 /// The notice banner a POST response carries (the landed receipt or the refusal), for a message.
 fn first_notice(html: &str) -> String {
+    // ⚑ Match the OPENING TAG, not the whole attribute list. This read
+    // `<div class="{cls}" role="status">` and went silently blind the moment a sibling lane added a
+    // `data-say` attribute to `notice_html` — every failure message in this file degraded to
+    // "(no notice rendered)" while the assertions themselves kept working, so the harness could
+    // still go red and no longer say WHY. A diagnostic that cannot be wrong is not the risk; a
+    // diagnostic that cannot SPEAK is. `esc` escapes `>`, so no attribute value can close the tag
+    // early and the first `>` after the class is always the end of the opening tag.
     for cls in ["notice refused", "notice ok"] {
-        let marker = format!("<div class=\"{cls}\" role=\"status\">");
+        let marker = format!("<div class=\"{cls}\"");
         if let Some((_, rest)) = html.split_once(&marker) {
+            let rest = rest.split_once('>').map(|(_, after)| after).unwrap_or(rest);
             if let Some((inner, _)) = rest.split_once("</div>") {
                 return visible_text(inner);
             }
@@ -1287,7 +1363,10 @@ async fn fog_check(app: &Router, peer: &mut OfferingHost, key: &str) -> (bool, S
     let id = format!("fog-{key}");
     let sid = SessionId::new(id.clone());
     if let Err(e) = peer.ensure_open(key, &sid) {
-        return (false, format!("the peer host would not open the table: {e}"));
+        return (
+            false,
+            format!("the peer host would not open the table: {e}"),
+        );
     }
     let seats = ["flowseata", "flowseatb"];
     let watcher = "flowwatch";
@@ -1357,7 +1436,11 @@ async fn fog_check(app: &Router, peer: &mut OfferingHost, key: &str) -> (bool, S
                 continue;
             }
             played[i].insert(act.turn.clone());
-            landed.push(format!("{}`{}`", if i == 0 { "A:" } else { "B:" }, act.turn));
+            landed.push(format!(
+                "{}`{}`",
+                if i == 0 { "A:" } else { "B:" },
+                act.turn
+            ));
             // The peer host is only useful while it is in LOCKSTEP with the router — its whole job
             // is to supply the viewer-blind public projection OF THIS STATE. A desync is reported
             // as a broken check, never as a pass.

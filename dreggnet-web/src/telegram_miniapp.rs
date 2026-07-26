@@ -2291,16 +2291,32 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert!(body.contains("Turn committed"), "{body}");
+        // ⚑ EXTRACTED BY THE BANNER'S CLASS, NOT BY ONE OF ITS ATTRIBUTES — see the identical repair
+        // in `discord_activity`. Splitting on `role="status">` assumed `role` was the last attribute
+        // on the tag, so `notice_html` gaining `data-say` silently stopped this matching and made the
+        // `expect` panic. `crate::esc` escapes `>`, so "the first `>` after the class" is the tag
+        // close no matter how many attributes are added.
         let notice = body
-            .split_once("role=\"status\">")
+            .split_once("<div class=\"notice")
+            .and_then(|(_, tail)| tail.split_once('>'))
             .and_then(|(_, tail)| tail.split_once("</div>"))
             .map(|(notice, _)| notice)
             .expect("landed response has a status notice");
-        // The notice is built from the VIEWER-BLIND publication, not the raw receipt: the family
-        // name plus the two 32-byte handles are that projection's own grammar (`public_receipt_text`).
+        // The notice is built from the VIEWER-BLIND publication, not the raw receipt: the ruleset
+        // family plus the prose lifecycle/provenance clauses are that projection's own grammar
+        // (`public_receipt_text`).
         assert!(
-            notice.contains("dungeon · move ") && notice.contains(" · card "),
+            notice.contains("dungeon · ") && notice.contains("checked against a signature"),
             "the notice consumes the common public game receipt: {notice}"
+        );
+        // ⚑ AND NO 64-CHARACTER HANDLE IS GLUED INTO THE SENTENCE — see the identical guard in
+        // `discord_activity`. The handles belong to the record strip, not to the first sentence a
+        // player reads after their first move.
+        assert!(
+            !notice
+                .split(|c: char| !c.is_ascii_hexdigit())
+                .any(|run| run.len() >= 64),
+            "a raw 32-byte handle is back in the confirmation prose: {notice}"
         );
         assert!(
             !notice.contains(&expected_ident.0),

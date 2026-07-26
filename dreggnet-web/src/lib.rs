@@ -5247,11 +5247,23 @@ fn catalog_form_value(key: &str, id: &str, it: &MenuItem) -> String {
 /// Discord or vanished, while the board link stood in for a game. The served page is now the primary
 /// CTA — it always exists, so a "Play" CTA never points nowhere — and Discord is the secondary path
 /// for people who want the game in chat.
-fn descent_play_cta(class: &str) -> String {
+///
+/// ⚑ `chip` is the `.needs` qualifier ridden by the PRIMARY anchor only — `"solo · new dungeon
+/// daily"` on the hero, `""` where the surrounding card already carries its own chip line and a
+/// second copy would be noise. It goes on the primary and never on the Discord anchor: the point of
+/// the chip is the CONTRAST with "needs a 2nd player" on the automatafl button beside it, and that
+/// contrast is a property of the row, not of every Descent link on the product.
+fn descent_play_cta(class: &str, chip: &str) -> String {
+    let chip_html = if chip.is_empty() {
+        String::new()
+    } else {
+        format!("<span class=\"needs solo\">{}</span>", esc(chip))
+    };
     let mut out = format!(
-        "<a class=\"{class}\" href=\"{href}\">Play The Descent \
+        "<a class=\"{class}\" href=\"{href}\">Play The Descent {chip_html}\
          <span class=\"arr\" aria-hidden=\"true\">→</span></a>",
         href = DESCENT_PLAY_PATH,
+        chip_html = chip_html,
     );
     if let Ok(link) = std::env::var("DESCENT_DISCORD_INVITE") {
         if !link.trim().is_empty() {
@@ -5443,7 +5455,7 @@ fn catalog_page(offerings: &[OfferingInfo]) -> String {
     // THE FUNNEL: the PLAY CTA leads (the served in-tab run at `/descent/play`) and the no-cheat
     // board is the secondary link. Previously this page offered the BOARD as its only always-present
     // affordance, so the flagship's front door on the catalog was a leaderboard.
-    let descent_play = descent_play_cta("play");
+    let descent_play = descent_play_cta("play", "");
     let body = format!(
         "<main class=\"catalog\"><div class=\"page-head\">\
          <p class=\"eyebrow\">{PRODUCT_NAME}</p>\
@@ -7249,9 +7261,9 @@ async fn index() -> Html<String> {
     // when configured) and the no-cheat BOARD is the secondary action. Before this the landing's
     // only always-present Descent affordance was the board — the flagship's front door on the front
     // page was a leaderboard, and the built play surface was reachable from nowhere.
-    let hero_play = descent_play_cta("btn btn-primary");
+    let hero_play = descent_play_cta("btn btn-primary", "solo · new dungeon daily");
     let hero_board_class = "btn btn-ghost";
-    let card_play = descent_play_cta("play");
+    let card_play = descent_play_cta("play", "");
     let body = format!(
         "<section class=\"hero\">\
          <div class=\"hero-copy\">\

@@ -3676,16 +3676,34 @@ mod tests {
         .await;
         assert_eq!(st, StatusCode::OK, "{body}");
         assert!(body.contains("Turn committed"), "{body}");
+        // ⚑ EXTRACTED BY THE BANNER'S CLASS, NOT BY ONE OF ITS ATTRIBUTES. This used to split on
+        // `role="status">` — i.e. it assumed `role` was the LAST attribute on the tag — and the
+        // moment `notice_html` grew `data-say` the marker stopped matching and this `expect`
+        // panicked, on a test whose subject is the notice's TEXT. The `class` prefix plus "the first
+        // `>` after it" cannot be broken by adding another attribute: `crate::esc` escapes `>` to
+        // `&gt;`, so no attribute value can contain the tag-closing bracket.
         let notice = body
-            .split_once("role=\"status\">")
+            .split_once("<div class=\"notice")
+            .and_then(|(_, tail)| tail.split_once('>'))
             .and_then(|(_, tail)| tail.split_once("</div>"))
             .map(|(notice, _)| notice)
             .expect("landed response has a status notice");
-        // The notice is built from the VIEWER-BLIND publication, not the raw receipt: the family
-        // name plus the two 32-byte handles are that projection's own grammar (`public_receipt_text`).
+        // The notice is built from the VIEWER-BLIND publication, not the raw receipt: the ruleset
+        // family plus the prose lifecycle/provenance clauses are that projection's own grammar
+        // (`public_receipt_text`).
         assert!(
-            notice.contains("dungeon · move ") && notice.contains(" · card "),
+            notice.contains("dungeon · ") && notice.contains("checked against a signature"),
             "the notice consumes the common public game receipt: {notice}"
+        );
+        // ⚑ AND NO 64-CHARACTER HANDLE IS GLUED INTO THE SENTENCE. The two 32-byte handles used to
+        // ride mid-prose as if they were words, on the very first screen a player ever reads; they
+        // belong to the record strip, which carries them in full. Checked as a PROPERTY (no 64-run
+        // of hex anywhere in the notice) so re-adding either one turns this red.
+        assert!(
+            !notice
+                .split(|c: char| !c.is_ascii_hexdigit())
+                .any(|run| run.len() >= 64),
+            "a raw 32-byte handle is back in the confirmation prose: {notice}"
         );
         assert!(
             !notice.contains(&expected_ident.0),
