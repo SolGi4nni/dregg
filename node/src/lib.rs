@@ -81,13 +81,13 @@ mod init;
 // node-WIDE receipt-log head as the agent's predecessor, so the faucet grant one
 // step earlier made the next operator turn unsubmittable.
 #[cfg(test)]
-mod operator_turn_receipt_head_e2e;
-#[cfg(test)]
 mod mailbox_crank_e2e;
 pub mod mcp;
 pub mod metrics;
 #[cfg(test)]
 mod node_integrator_e2e;
+#[cfg(test)]
+mod operator_turn_receipt_head_e2e;
 // The operator onboarding dance (gen-validator-key / join / add-validator) — the
 // slick, reusable path for folding a node + validator into a federation.
 #[cfg(test)]
@@ -1089,6 +1089,40 @@ pub fn install_verified_pq_cores() {
             "the linked Lean archive does NOT export `dregg_mlkem_keygen_real`, so hybrid responder              keypairs are minted with no Lean-verified expander. ⚑ THIS ONE WARNS AND PROCEEDS EVEN              UNDER DREGG_REQUIRE_LEAN=1 (a DECLARED exception, see dregg_pq::audit::             guard_no_verified_core): the key is EPHEMERAL per-session material and refusing bricks              every CaPTP/session handshake on an archive-less process.",
         ),
     }
+}
+
+/// Call [`install_verified_pq_cores`] at process start in the LIB-TEST binary.
+///
+/// The four callers of `install_verified_pq_cores` — `run_node`, `run_genesis`, `run_mcp`,
+/// `run_relay` — are all BINARY entry points. `cargo test -p dregg-node --lib` runs none of
+/// them, so the lib-test process had no verified core installed and `dregg_pq::audit` did the
+/// only correct thing on the first ML-DSA keygen: `process::abort()`. An abort kills the
+/// process, so that took down all 506 tests in the binary, not just the one that minted a key.
+/// The only way anyone had got results out of it was `DREGG_ALLOW_UNAUDITED_PQ=1`, which routes
+/// keygen onto the `fips204` crate — the substitution the audit gate exists to prevent, and a
+/// reason to distrust every verdict obtained that way.
+///
+/// There is no `main` in a libtest binary to hang the call on, and no single derivation point
+/// inside this crate to install at: node's tests mint ML-DSA keys from ~30 files through four
+/// different crates (`dregg_blocklace::finality::Block`,
+/// `dregg_federation::frost::MlDsaSigningKey`, `dregg_turn::pq::MlDsaTurnKey`,
+/// `dregg_sdk::cipherclerk`). A process-start initializer is the one place that covers all of
+/// them, and it puts the test process in the same disposition as the deployed binary: verified
+/// cores installed before the first PQ operation, fail-closed if the archive lacks them.
+///
+/// `#[cfg(test)]`, so the shipped library carries no initializer. The install is export-gated
+/// and once-per-process, so the handful of tests that already call the per-core installs
+/// themselves (`blocklace_sync.rs`) just see `AlreadyInstalled`.
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+mod pq_test_bootstrap {
+    extern "C" fn install() {
+        super::install_verified_pq_cores();
+    }
+
+    #[used]
+    #[cfg_attr(target_os = "linux", unsafe(link_section = ".init_array"))]
+    #[cfg_attr(target_os = "macos", unsafe(link_section = "__DATA,__mod_init_func"))]
+    static INSTALL_VERIFIED_PQ_CORES: extern "C" fn() = install;
 }
 
 /// Run the node: start HTTP API server and federation sync.
