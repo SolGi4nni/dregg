@@ -11613,6 +11613,77 @@ Detailed claim ledger: `docs/deos/HANDOFF-FHEGG-FEASIBILITY-CODEX.md §0.7`
   threshold range-proof path (~1086s), now assigned to the owned host-parallel
   Bulletproof prover + bounded parallel quorum cut before any further GPU claim.
 
+## 2026-07-25 — THE SILENCE SWEEP: ~20 things that looked finished and were not
+
+A day of repair, not construction. **Almost nothing found was incorrect code.** Everything was a
+thing that was never connected, or quietly disconnected, while the tree compiled and the tests
+passed. The unifying diagnosis, from the lane that stated it best:
+
+> **Every gating mechanism in this repo is expressed in a language whose default is SILENCE.**
+> `required-features`, `#![cfg]`, `--test <name>`, `#[ignore]`, `if !available() { return }` —
+> each is a SUBTRACTION cargo or libtest performs without emitting a line. The repo has
+> excellent POSITIVE gates and almost no NEGATIVE ACCOUNTING of what did not run.
+
+### Shipped
+`dregg.gg` + `dregg.tech` live over Let's Encrypt TLS from reproducible OpenTofu · **you can
+die in the Descent** (0/16 deathless maps, three independent enumerators; `crowned_bank_le_four`
+retired for `hoard_never_leaves_whole`) · the daily map is a function of the day-seed, 16 maps
+each provably completable · the away mission (crews vote only on what cannot be undone) · the
+campaign spine · the death ratchet (echoes can never buy a relic) · a shaft map on web, Discord
+and the share card, one alphabet · **tug became a game** (168 legal decisions where there was 1;
+draws 78.5% → 8.5%) · the wire went **61 MB → 3.4 MB** · an explorer that names the four things
+it cannot check.
+
+### Found — the honest list
+- **The flagship page was BROKEN, not slow.** The served wasm was `PORTABLE_VERSION = 1` against
+  a server demanding 3, and `NativeDescentWorld.fromBeacon` was absent — a `TypeError` before the
+  game opened, for five days. CI *does* build the bundle, behind a `cargo test` that hard-aborts:
+  **the job was red on every push for four days.** A gate behind a red gate is not a gate.
+- **The node's Lean constraint oracle was not installed in production for 4d17h**, while its six
+  tests hit `if !ensure_oracle() { return; }` and reported success.
+- **The twin-deletion census's "11 of 11" was 11 of 35+.** It enumerated 13 Rust FFI wrappers
+  against 51 decision exports — only the quarter Rust already called. Six twins had already
+  diverged, incl. a live route refusing what the proof admits and `winner_of` drifting 73pp.
+- **An always-accept ETH bypass reached HEAD** in a sweep, under a subject announcing the security
+  fix. Three commits this week announced a hardening while an unmentioned hunk disarmed a guard.
+- **The bot said "verified" one line above its own card reading "Recorded (asserted)"**, under a
+  doc-comment reading `"Verified" would be a lie here`.
+- **The devnet has never worked past the faucet** — every genesis cell was minted under a key the
+  admission predicate can never match. Onboarding still dies one step past it.
+- 63 test targets nobody had watched run · `DESCENT_WEB_BASE` unset everywhere so no run was ever
+  shareable · `site/explorer/` served by nothing · `sdk::fhegg` dark five days · the market cannot
+  settle on the web · a faucet answering `success: true` over a refused turn.
+
+### Method that worked, and the method that did not
+**Driving found everything; reading found little; profiling gave a wrong answer.** A `sample`
+profile indicted a hex codec at 4.95% of samples against 0.66% of wall clock (symbol attribution
+to the nearest preceding name) — a C driver at the FFI boundary settled it. The real cost was a
+**193 ms uncached keygen re-derived on every signature**.
+
+**Three claims were retracted after measurement** — "automatafl is a dead draw" (deterministic
+one-ply agents on a mirror-symmetric board draw by construction), "the siblings need a batched
+verb" (31 µs/call), and "persvati cannot run this" (its archive was two symbols and 134 seconds
+away). *A refusal message tells you what happened, not what is possible.*
+
+### Detectors built, because the class needs machines not vigilance
+`.github/dark-targets.txt` + a **two-sided** ratchet (a new dark row fails; a stale row also
+fails) · `scripts/check-dark-modules.py` (an unreferenced `.rs` fails CI) · a cfg-gate ledger
+asserting `USED ⊆ EMITTED`, which the `unexpected_cfgs` lint structurally cannot · a `guard()`
+tower layer making a silent 409 impossible · `check-wasm-freshness.sh` · a `nightly-verdict` job
+that goes red **when the nightly does not run** · `Acked` as a type, so work-before-ack does not
+typecheck · `pbuild` emitting a real VERDICT line.
+
+### ⚠ Trust ladder, learned the hard way — every layer lied at least once
+1. a notification's exit code (reported 0 over a failed build, 0 over `test result: FAILED`, 1 over a `timeout` kill)
+2. a wrapper's VERDICT line (a run killed on the lock flushed a buffered PASS with no test lines)
+3. **`test result: N passed` from libtest itself, N non-zero, filter confirmed to have matched** — trust only this
+And a lane was served a green **from another agent's crate** by a generic log filename in the
+shared scratchpad. Use `mktemp -d`.
+
+Memories: `minted-gating-defaults-to-silence`, `minted-census-from-the-lean-side`,
+`minted-hardening-commit-disarms-a-guard`, `reference-build-reality-breadstuffs`.
+Claim corrections: `docs/CLAIM-CORRECTIONS-2026-07-25.md`.
+
 ## 2026-07-24 — E7 cutover STARTED: the by-name narrowing is DEPLOYED bytes (2 members, −21 columns)
 Circuit-minimality item E7 crossed from PROVEN to DEPLOYED. The bridge (`ChipNarrowLookup.lean`,
 `9959af6cc`) had proved the narrow bus is served by the 18-prefix of the SAME chip rows, but no
