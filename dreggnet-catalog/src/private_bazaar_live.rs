@@ -246,21 +246,39 @@ impl PrivateBazaarLiveDeployment {
         self.authority_dir.join("private-ingress")
     }
 
-    /// Has this deterministic hosted seed already produced a proof-verified
-    /// private clearing? Used to close the crash window between a landed
-    /// settlement and its durable ingress acknowledgement: without it a restart
-    /// would replay a submission whose market is already terminal, be refused
-    /// `AlreadySettled`, and wedge the queue on work that in fact succeeded.
-    pub(crate) fn private_clearing_is_finalized(
+    /// Has THIS EXACT sealed book already cleared on this hosted seed?
+    ///
+    /// This closes the crash window between a landed executor settlement and its
+    /// durable ingress acknowledgement: without it a restart would replay a
+    /// submission whose market is already terminal, be refused `AlreadySettled`,
+    /// and wedge the queue on work that in fact succeeded.
+    ///
+    /// It is deliberately NOT "is this seed settled". That weaker question would
+    /// launder a genuine refusal: a SECOND, different book queued against a seed
+    /// whose auction is already over has not been done and never can be, and
+    /// acknowledging it would silently discard it. The discriminator is the
+    /// durable commitment binding, which names the exact canonical book that
+    /// cleared — so a book that did not clear stays on the queue as a refusal an
+    /// operator must look at.
+    pub(crate) fn private_clearing_already_cleared_this_book(
         &self,
         seed: u64,
+        book: &PrivateSealedIngressBook,
     ) -> Result<bool, PrivateBazaarWorkerError> {
-        self.registry
-            .with_entered_typed(seed, |market, _| {
-                Ok::<_, ()>(market.verified_private_clearing().is_some())
+        let commitment_store = self.commitment_store.clone();
+        let answer = self
+            .registry
+            .with_entered_typed(seed, |market, journey| {
+                if market.verified_private_clearing().is_none() {
+                    return Ok::<_, ()>(false);
+                }
+                let market_instance_id = journey.market_identity().digest();
+                Ok(commitment_store
+                    .bind_or_load(market, market_instance_id, None)
+                    .is_ok_and(|binding| binding.matches_ingress_book(book)))
             })
-            .map_err(PrivateBazaarWorkerError::from)?
-            .map_err(|()| PrivateBazaarWorkerError::StaleLiveMarket)
+            .map_err(PrivateBazaarWorkerError::from)?;
+        Ok(answer.unwrap_or(false))
     }
 
     pub(crate) fn private_target_root(&self) -> PathBuf {

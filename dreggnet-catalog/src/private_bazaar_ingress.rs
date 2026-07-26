@@ -234,9 +234,7 @@ impl PrivateBazaarSealedIngressQueue {
                 .map(|(actor, _)| actor)
                 .collect(),
         };
-        // Validate the whole historical chain at open, so a tampered or forked
-        // queue is refused before it can feed the relation.
-        let _ = queue.decode_all()?;
+        queue.validate_chain()?;
         Ok(queue)
     }
 
@@ -256,52 +254,90 @@ impl PrivateBazaarSealedIngressQueue {
             .map_err(PrivateBazaarIngressError::OutsideProvenFamily)?;
         self.validate_bidders(book.sealed_bids())?;
 
-        let mut records = self.decode_all()?;
-        let sequence = u64::try_from(records.len())
-            .map_err(|_| PrivateBazaarWorkerError::CursorOverflow)?
-            .checked_add(1)
-            .ok_or(PrivateBazaarWorkerError::CursorOverflow)?;
-        let previous = records.pop().map_or([0; 32], |record| record.checksum);
-        let bytes = encode_ingress_record(
-            self.scope,
-            previous,
-            sequence,
-            session_seed,
-            &book,
-            commitment_blinding,
-        )?;
-
         let mut options = private_options();
         options.read(true).append(true).create(true);
         let mut file = options
             .open(&self.path)
             .map_err(|error| PrivateBazaarWorkerError::io("open sealed ingress queue", error))?;
         secure_private_file_handle(&file, &self.root).map_err(PrivateBazaarIngressError::Queue)?;
-        file.write_all(&bytes)
-            .map_err(|error| PrivateBazaarWorkerError::io("write sealed ingress record", error))?;
-        file.sync_all()
-            .map_err(|error| PrivateBazaarWorkerError::io("sync sealed ingress record", error))?;
-        sync_directory(&self.root)?;
+        // Two submitters must not interleave into one chained record stream: the
+        // loser would append at a sequence the winner already used and wedge the
+        // queue on a fork that nothing can repair.
+        file.lock()
+            .map_err(|error| PrivateBazaarWorkerError::io("lock sealed ingress queue", error))?;
+        let appended = (|| {
+            let count = self.record_count(&file)?;
+            let sequence = count
+                .checked_add(1)
+                .ok_or(PrivateBazaarWorkerError::CursorOverflow)?;
+            let previous = self.tail_checksum(&mut file, count)?;
+            let bytes = encode_ingress_record(
+                self.scope,
+                previous,
+                sequence,
+                session_seed,
+                &book,
+                commitment_blinding,
+            )?;
+            file.write_all(&bytes).map_err(|error| {
+                PrivateBazaarWorkerError::io("write sealed ingress record", error)
+            })?;
+            file.sync_all().map_err(|error| {
+                PrivateBazaarWorkerError::io("sync sealed ingress record", error)
+            })?;
+            sync_directory(&self.root)?;
+            Ok(sequence)
+        })();
+        let unlock = file
+            .unlock()
+            .map_err(|error| PrivateBazaarWorkerError::io("unlock sealed ingress queue", error));
+        let sequence = match (appended, unlock) {
+            (Ok(sequence), Ok(())) => sequence,
+            (Err(error), _) | (Ok(_), Err(error)) => return Err(error.into()),
+        };
         Ok(PrivateBazaarIngressSubmission { sequence })
     }
 
     /// Submissions accepted but not yet settled.
     pub fn pending(&self) -> Result<u64, PrivateBazaarWorkerError> {
-        let records = self.decode_all()?;
-        let acknowledged = self.read_cursor()?;
-        Ok(u64::try_from(records.len())
-            .map_err(|_| PrivateBazaarWorkerError::CursorOverflow)?
-            .saturating_sub(acknowledged))
+        let Some(file) = self.open_queue()? else {
+            return Ok(0);
+        };
+        Ok(self
+            .record_count(&file)?
+            .saturating_sub(self.read_cursor()?))
     }
 
+    /// The next unsettled submission, read at its exact offset.
+    ///
+    /// Deliberately NOT a whole-file decode: this runs on every supervisor tick,
+    /// and re-decoding (and re-gating) the entire history four times a second
+    /// would make the queue quadratic in a deployment's lifetime traffic. The
+    /// full historical chain is validated once, at [`Self::open`]. Each record
+    /// read here still validates its own schema, checksum, scope, sequence, the
+    /// link to its physical predecessor, and the proved-family type gate.
     pub(crate) fn next_pending(
         &self,
     ) -> Result<Option<PendingSealedIngress>, PrivateBazaarWorkerError> {
-        let records = self.decode_all()?;
-        let acknowledged = self.read_cursor()?;
-        let index =
-            usize::try_from(acknowledged).map_err(|_| PrivateBazaarWorkerError::CursorOverflow)?;
-        Ok(records.into_iter().nth(index).map(|record| record.pending))
+        let Some(mut file) = self.open_queue()? else {
+            return Ok(None);
+        };
+        let count = self.record_count(&file)?;
+        let index = self.read_cursor()?;
+        if index >= count {
+            return Ok(None);
+        }
+        let previous = self.tail_checksum(&mut file, index)?;
+        let record = self.read_record(&mut file, index)?;
+        if record.previous_checksum != previous {
+            return Err(PrivateBazaarWorkerError::SpoolFork {
+                expected: index
+                    .checked_add(1)
+                    .ok_or(PrivateBazaarWorkerError::CursorOverflow)?,
+                found: record.pending.sequence,
+            });
+        }
+        Ok(Some(record.pending))
     }
 
     pub(crate) fn acknowledge(&self, sequence: u64) -> Result<(), PrivateBazaarWorkerError> {
@@ -351,10 +387,10 @@ impl PrivateBazaarSealedIngressQueue {
         ))
     }
 
-    fn decode_all(&self) -> Result<Vec<DecodedIngressRecord>, PrivateBazaarWorkerError> {
-        let mut file = match File::open(&self.path) {
+    fn open_queue(&self) -> Result<Option<File>, PrivateBazaarWorkerError> {
+        let file = match File::open(&self.path) {
             Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => {
                 return Err(PrivateBazaarWorkerError::io(
                     "open sealed ingress queue",
@@ -363,6 +399,10 @@ impl PrivateBazaarSealedIngressQueue {
             }
         };
         validate_private_file_handle(&file, &self.root)?;
+        Ok(Some(file))
+    }
+
+    fn record_count(&self, file: &File) -> Result<u64, PrivateBazaarWorkerError> {
         let length = file
             .metadata()
             .map_err(|error| PrivateBazaarWorkerError::io("stat sealed ingress queue", error))?
@@ -373,41 +413,74 @@ impl PrivateBazaarSealedIngressQueue {
                 found: length % record_len,
             });
         }
-        let count = length / record_len;
-        let mut decoded = Vec::new();
+        Ok(length / record_len)
+    }
+
+    /// The trailing chain anchor of record `count - 1`, or all zero when `count`
+    /// is zero. Read directly rather than by decoding the predecessor.
+    fn tail_checksum(
+        &self,
+        file: &mut File,
+        count: u64,
+    ) -> Result<[u8; 32], PrivateBazaarWorkerError> {
+        if count == 0 {
+            return Ok([0; 32]);
+        }
+        let at = count * (INGRESS_RECORD_LEN as u64) - 32;
+        file.seek(SeekFrom::Start(at))
+            .map_err(|error| PrivateBazaarWorkerError::io("seek sealed ingress queue", error))?;
+        let mut anchor = [0; 32];
+        file.read_exact(&mut anchor).map_err(|error| {
+            PrivateBazaarWorkerError::io("read sealed ingress chain anchor", error)
+        })?;
+        Ok(anchor)
+    }
+
+    fn read_record(
+        &self,
+        file: &mut File,
+        index: u64,
+    ) -> Result<DecodedIngressRecord, PrivateBazaarWorkerError> {
+        file.seek(SeekFrom::Start(index * (INGRESS_RECORD_LEN as u64)))
+            .map_err(|error| PrivateBazaarWorkerError::io("seek sealed ingress queue", error))?;
+        let mut bytes = vec![0; INGRESS_RECORD_LEN];
+        file.read_exact(&mut bytes)
+            .map_err(|error| PrivateBazaarWorkerError::io("read sealed ingress record", error))?;
+        let record = decode_ingress_record(&bytes)?;
+        if record.scope != self.scope {
+            return Err(PrivateBazaarWorkerError::SpoolScopeMismatch);
+        }
+        let expected = index
+            .checked_add(1)
+            .ok_or(PrivateBazaarWorkerError::CursorOverflow)?;
+        if record.pending.sequence != expected {
+            return Err(PrivateBazaarWorkerError::NonContiguousCursor {
+                expected,
+                found: record.pending.sequence,
+            });
+        }
+        Ok(record)
+    }
+
+    /// Validate the complete historical chain. Run once, at open, so a tampered
+    /// or forked queue is refused before it can feed the relation.
+    fn validate_chain(&self) -> Result<(), PrivateBazaarWorkerError> {
+        let Some(mut file) = self.open_queue()? else {
+            return Ok(());
+        };
+        let count = self.record_count(&file)?;
         let mut previous = [0; 32];
         for index in 0..count {
-            file.seek(SeekFrom::Start(index * record_len))
-                .map_err(|error| {
-                    PrivateBazaarWorkerError::io("seek sealed ingress queue", error)
-                })?;
-            let mut bytes = vec![0; INGRESS_RECORD_LEN];
-            file.read_exact(&mut bytes).map_err(|error| {
-                PrivateBazaarWorkerError::io("read sealed ingress record", error)
-            })?;
-            let record = decode_ingress_record(&bytes)?;
-            if record.scope != self.scope {
-                return Err(PrivateBazaarWorkerError::SpoolScopeMismatch);
-            }
-            let expected = index
-                .checked_add(1)
-                .ok_or(PrivateBazaarWorkerError::CursorOverflow)?;
-            if record.pending.sequence != expected {
-                return Err(PrivateBazaarWorkerError::NonContiguousCursor {
-                    expected,
-                    found: record.pending.sequence,
-                });
-            }
+            let record = self.read_record(&mut file, index)?;
             if record.previous_checksum != previous {
                 return Err(PrivateBazaarWorkerError::SpoolFork {
-                    expected,
+                    expected: index + 1,
                     found: record.pending.sequence,
                 });
             }
             previous = record.checksum;
-            decoded.push(record);
         }
-        Ok(decoded)
+        Ok(())
     }
 
     fn validate_bidders(

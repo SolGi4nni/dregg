@@ -140,11 +140,11 @@ impl PrivateBazaarAuthenticatedReceiptSource {
     ///   submission stays on the queue for an operator; the supervisor classifies
     ///   the refusal as Integrity and stops rather than grinding a retry loop
     ///   toward acceptance;
-    /// * a submission whose market is ALREADY terminal is acknowledged rather
-    ///   than refused. That is the crash window between a landed executor
-    ///   settlement and its durable acknowledgement, not an attack: only this
-    ///   queue can settle, and the worker-private commitment binding already
-    ///   refuses any book other than the bound one.
+    /// * a submission whose EXACT book already cleared is acknowledged rather
+    ///   than refused — the crash window between a landed executor settlement
+    ///   and its durable acknowledgement. A DIFFERENT book queued against an
+    ///   already-terminal seed is not that case and stays refused, because
+    ///   acknowledging it would silently discard a submission that never ran.
     pub(crate) fn settle_pending_ingress(
         &mut self,
         max: usize,
@@ -166,7 +166,10 @@ impl PrivateBazaarAuthenticatedReceiptSource {
                 Err(error) => {
                     if self
                         .deployment
-                        .private_clearing_is_finalized(pending.session_seed)
+                        .private_clearing_already_cleared_this_book(
+                            pending.session_seed,
+                            &pending.book,
+                        )
                         .unwrap_or(false)
                     {
                         self.ingress.acknowledge(pending.sequence)?;
