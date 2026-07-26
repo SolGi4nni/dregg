@@ -65,16 +65,48 @@ cargo nextest list -p <crate>                 # list tests without running (vali
 - A few tests are `#[ignore]`'d outright (e.g. `t3_ivc_root_k2/k3`, "recursion fold
   is slow (minutes)") — run those with `--run-ignored`/`--ignored` only when needed.
 
-## Heavy CARGO builds go to persvati; LEAN stays local
+## Where to build — TWO SPARE BOXES, and read the VERDICT not the exit code
 
-- **Rust (cargo) — offload to persvati** (24-core build node), per-lane isolated:
-  `scripts/pbuild <lane-name> cargo nextest run -p <crate> …`. It rsyncs your WIP
-  (gitignored target/.lake excluded) and builds there. Use this for the CPU-heavy
-  crypto/circuit/lightclient builds. Do NOT run a full `--workspace` debug build
-  locally to "check one thing" — it's minutes.
-- **Lean (`lake build`) — keep LOCAL** (cwd `metatheory/`): the local `.lake/mathlib`
-  cache is warm; a fresh persvati lane would re-download mathlib (catastrophic).
-  `lake build Dregg2` is the axiom-clean gate.
+Full doctrine, with the measurements: **`docs/BUILD-BUDGET.md`**. The short version:
+
+- **Both persvati and hbox are spare capacity for our work.** hbox was deliberately
+  freed on 2026-07-25: `lean-seed.yml` was the only workflow with a self-hosted
+  `runs-on`, it fired on every `metatheory/**` commit at 19-25 min of full
+  saturation, and it is now `workflow_dispatch` ONLY. hbox load fell 21.72 → 0.08.
+  Nothing else in `.github/workflows` can land there. Do not treat hbox as busy.
+- **Rust (cargo)** — `scripts/pbuild <lane> cargo nextest run -p <crate> …`. Per-lane
+  isolated, rsyncs your WIP. Never a full local `--workspace` build to "check one
+  thing": there is ONE target lock, observed held 45+ min with cargos queued behind
+  it, and a queued cargo is indistinguishable from a slow one from inside a lane.
+- **Lean (`lake build`)** — go where the OLEANS are, which is the real question.
+  The old rule here said "keep Lean local, a persvati lane would re-download
+  mathlib." That reached for the right thing through the wrong mechanism: mathlib is
+  NOT divergent (every warm lane on both boxes pins `inputRev 1c2b90b13009`,
+  byte-identical to local, and `lake exe cache get` fetches it in ~40s anyway). The
+  gap is the **Dregg2 olean depth**: measured 2026-07-26, the laptop holds ~2018,
+  hbox `eth-lc-air` ~1948, persvati's best lane ~205. So local or hbox for Lean;
+  persvati only with `--force-cold` and patience.
+- **`lake` has no `-j`.** The knob is **`LEAN_NUM_THREADS`**. `DREGG_LEANC_JOBS` is
+  read ONLY by `dregg-lean-ffi/build.rs` — setting it for a bare `lake build` caps
+  nothing while looking like it does. 55 unbounded `lean` jobs took this laptop to
+  load average 154 and 54 GB of swap.
+
+**READ THE VERDICT LINE, NEVER THE EXIT CODE** — `grep 'pbuild: VERDICT' <log>`:
+
+| outcome | means |
+|---|---|
+| `PASS` / `FAIL` | it ran; `FAIL` is yours |
+| `REFUSED` | it **NEVER RAN** (a guard refused). Neither a red nor a green may be read. |
+| `ENVFAULT` | the **box killed it for memory**. ENVIRONMENT, not your code. Do not retry the same command — raise the cap (`SWARM_MEM_MAX=64G`). |
+
+A bare **SIGABRT with no Rust panic** means the Lean archive is absent — also
+ENVIRONMENT. Do NOT "fix" it with `DREGG_REQUIRE_LEAN=0`; that swaps the verified
+Lean deciders for their unverified Rust twins in the very tests meant to gate them.
+
+**Claim a lane before you use it**, so cleanup does not delete under you:
+`scripts/lane-lease.sh acquire --lane <lane> --owner agent:<you>` (release when done).
+Reclaim disk with **`scripts/sweep-build-lanes.sh`** — `reclaim-space.sh` is
+SUPERSEDED (its own precondition, "run when the swarms are quiet", is unsatisfiable).
 
 ## Searching: `sg` (ast-grep) for STRUCTURE, grep for text
 
