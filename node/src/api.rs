@@ -3725,6 +3725,16 @@ async fn post_submit_turn(
     // (#171): same authoritative (Lean-producer-aware) path as the signed
     // envelope ingress and blocklace-finalized turns.
     let executor = crate::executor_setup::new_submit_executor(&s);
+    // THE FIRST-TURN CLAIM for the OPERATOR's own cell. On a fresh data dir that
+    // cell does not exist until the faucet funds it, and the faucet leaves a
+    // zero-pk landing stub — against which this turn's own actions do not
+    // authorize, and which finalization refuses as `live-agent-signer-mismatch`.
+    // `dregg demo` (QUICKSTART §4) is exactly this path.
+    crate::signed_turn_validation::claim_signer_actor_cell(
+        &mut s.ledger,
+        &signed,
+        executor.require_pq(),
+    );
     let lean_producer_enabled = s.lean_producer_enabled;
     let exec_result = crate::executor_setup::execute_via_producer(
         &executor,
@@ -3876,9 +3886,11 @@ async fn post_submit_turn(
             }))
         }
         dregg_turn::TurnResult::Rejected { reason, .. } => {
-            // The executor already rolled its own mutations back on rejection;
-            // just drop the (unused) journal.
-            s.ledger.commit_restore_point();
+            // The executor already rolled its own mutations back on rejection —
+            // but the FIRST-TURN CLAIM above is not the executor's, so ROLL BACK
+            // rather than merely dropping the journal. A refused turn must leave
+            // the ledger exactly as it found it, claim included.
+            s.ledger.rollback_restore_point();
             crate::metrics::inc_turns_executed("rejected");
             crate::metrics::note_turn_rejected(&reason);
             crate::metrics::record_turn_execution_duration(start.elapsed().as_secs_f64());
@@ -3893,7 +3905,7 @@ async fn post_submit_turn(
             }))
         }
         _ => {
-            s.ledger.commit_restore_point();
+            s.ledger.rollback_restore_point();
             crate::metrics::inc_turns_executed("rejected");
             drop(s);
             Ok(Json(SubmitTurnResponse {
@@ -3946,17 +3958,35 @@ async fn post_submit_signed_turn(
         return Err(StatusCode::FORBIDDEN);
     }
 
+    // O(touched) atomic rollback: arm an undo journal instead of cloning the
+    // whole O(cells) ledger up front. Armed BEFORE the first-turn claim, so a
+    // refused turn leaves the authoritative ledger exactly as it found it.
+    s.ledger.begin_restore_point();
+
     // ONE outer SignedTurn predicate for every transport.  Run it under the
     // same state guard that protects the impending ledger mutation, so an
     // identity rotation cannot race validation.  The executor registry is
     // populated only from independently anchored host state; never enroll from
     // `signed.pq_signer` here.
     let executor = crate::executor_setup::new_submit_executor(&s);
+    // THE FIRST-TURN CLAIM, before the predicate reads the cell. A fresh client
+    // has no agent cell, and a faucet-funded one has a zero-pk landing stub, so
+    // required-PQ admission refused every first turn (`pq-identity-not-enrolled`
+    // / `live-agent-signer-mismatch`) while the provisioning that would have
+    // fixed it ran strictly later. The predicate is unchanged; the claim writes
+    // only the account this envelope's own two possession proofs describe, and
+    // only where nobody else holds the id (`claim_signer_actor_cell`).
+    crate::signed_turn_validation::claim_signer_actor_cell(
+        &mut s.ledger,
+        &signed,
+        executor.require_pq(),
+    );
     if let Err(error) = crate::signed_turn_validation::validate_signed_turn(
         &signed,
         &executor,
         s.ledger.get(&signed.turn.agent),
     ) {
+        s.ledger.rollback_restore_point();
         return Ok(Json(SubmitSignedTurnResponse {
             accepted: false,
             turn_hash: Some(turn_hash),
@@ -3975,6 +4005,7 @@ async fn post_submit_signed_turn(
     // agent to genesis.
     let expected_prev = s.cclerk.agent_receipt_head_hash(&signed.turn.agent);
     if signed.turn.previous_receipt_hash != expected_prev {
+        s.ledger.rollback_restore_point();
         return Ok(Json(SubmitSignedTurnResponse {
             accepted: false,
             turn_hash: Some(turn_hash),
@@ -3987,9 +4018,6 @@ async fn post_submit_signed_turn(
         }));
     }
 
-    // O(touched) atomic rollback: arm an undo journal instead of cloning the
-    // whole O(cells) ledger up front.
-    s.ledger.begin_restore_point();
     // ONE executor gate (#171): the remote signed envelope executes through the
     // same producer-aware path as local thin-HTTP turns and finalized turns —
     // a remote agent's turn is covered by the verified Lean producer exactly
@@ -3998,7 +4026,7 @@ async fn post_submit_signed_turn(
     let lean_producer_enabled = s.lean_producer_enabled;
     // MULTI-PARTY: consensus FINALIZATION is the SOLE authoritative application of a
     // client turn — `execute_finalized_turn` runs identically on every node and
-    // provisions the actor (`provision_signer_actor_cell`) + destinations
+    // claims the actor (`claim_signer_actor_cell`) + provisions destinations
     // deterministically from the finalized turn's own data. Committing the local
     // authoritative ledger HERE would advance the actor nonce / create cells
     // LOCAL-ONLY, so peers reject the finalized re-execution as nonce-replay /
@@ -4011,7 +4039,9 @@ async fn post_submit_signed_turn(
     //    stand-in for the old full SCRATCH CLONE, byte-identical outcome.
     //  * SOLO (n=1) has no finalization pass, so it keeps the in-place commit
     //    authoritatively (rolled back only if the receipt-chain append fails).
-    crate::blocklace_sync::provision_signer_actor_cell(&mut s.ledger, &signed.signer.0);
+    // The actor cell is already the signer's canonical account here: the claim
+    // above ran inside this same restore point and validation could not have
+    // passed otherwise. Only the Transfer destinations remain.
     crate::blocklace_sync::provision_transfer_destinations(&mut s.ledger, &signed.turn.call_forest);
     let exec_result = crate::executor_setup::execute_via_producer(
         &executor,
@@ -7407,7 +7437,7 @@ async fn get_blocklace_checkpoint(
 /// `blake3("default")`, the SAME domain `crate::signed_turn_validation` binds a
 /// turn's agent to (`agent == derive_raw(signer, blake3("default"))`), the SDK's
 /// `AgentCipherclerk::cell_id("default")` derives, and
-/// `blocklace_sync::provision_signer_actor_cell` materialises.
+/// `signed_turn_validation::claim_signer_actor_cell` materialises.
 ///
 /// It was `[0u8; 32]` (matching the old `genesis.rs` "default token domain")
 /// until 2026-07-25, and that single mismatch is why the faucet reported
@@ -7612,8 +7642,10 @@ async fn post_faucet(
     // advances NO authoritative state for a funded grant: creating the recipient
     // here would be LOCAL-ONLY (peers never see it) and, worse, NON-UNIFORM (the
     // submitter would mint a canonical `with_balance(pk, …)` cell while peers
-    // materialize a zero-pk stub at the same id — divergent ledger content the
-    // attested root does not catch, because it commits only `cell.state`). The
+    // materialize a zero-pk stub at the same id — and that IS an attested-root
+    // split: `dregg_persist::canonical_ledger_root` hashes `postcard(cell)`, the
+    // whole cell including its public key and `pq_identity`, not just its state
+    // (an older comment here claimed the opposite; it was wrong)). The
     // provisioning + execution below runs against an undo journal purely to build
     // the receipt/proof for the HTTP response, and is rolled back.
     //

@@ -390,10 +390,17 @@ pub async fn arm_private_dependent_turn(
             return Err(PrivateDependentTurnError::NodeLocked);
         }
         let executor = crate::executor_setup::new_submit_executor(&state);
+        // Read-lock pre-check: reach the SAME verdict the write-lock ingresses
+        // do by validating against the cell the first-turn claim would write.
+        // A pre-check stricter than finalization is how an armed first turn gets
+        // refused here and accepted there.
+        let live = state.ledger.get(&signed.turn.agent);
+        let claimed =
+            crate::signed_turn_validation::claimed_actor_cell(live, &signed, executor.require_pq());
         crate::signed_turn_validation::validate_signed_turn(
             &signed,
             &executor,
-            state.ledger.get(&signed.turn.agent),
+            claimed.as_ref().or(live),
         )
         .map_err(|error| PrivateDependentTurnError::Validation(error.to_string()))?;
         if signed.turn.previous_receipt_hash
@@ -611,10 +618,16 @@ async fn submit_claimed_turn(
     {
         let state = state.read().await;
         let executor = crate::executor_setup::new_submit_executor(&state);
+        // Same read-lock pre-check as `arm_private_dependent_turn`: validate
+        // against the cell the first-turn claim would write, so this agrees with
+        // the ingress that will actually apply the turn.
+        let live = state.ledger.get(&signed.turn.agent);
+        let claimed =
+            crate::signed_turn_validation::claimed_actor_cell(live, &signed, executor.require_pq());
         crate::signed_turn_validation::validate_signed_turn(
             &signed,
             &executor,
-            state.ledger.get(&signed.turn.agent),
+            claimed.as_ref().or(live),
         )
         .map_err(|error| PrivateDependentTurnError::Validation(error.to_string()))?;
         if signed.turn.previous_receipt_hash

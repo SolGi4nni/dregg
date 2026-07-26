@@ -412,6 +412,36 @@ pub fn configure_turn_executor(
 /// the faucet transfers (`api.rs`). Before 2026-07-25 those two used `[0u8; 32]`
 /// while the predicate used `blake3("default")` — a split asset namespace whose
 /// visible symptom was a faucet that answered `success: true` and moved nothing.
+///
+/// # A CELL THAT PAYS A FEE MUST LIVE HERE
+///
+/// `blake3("default")` is not "an asset". It is the asset in which AGENCY is
+/// denominated, and two independent rules now say so:
+///
+/// * the admission predicate above (`agent == derive_raw(signer, default)`); and
+/// * fees. THE EPOCH §5 makes a fee a MOVE to the fee well, and since
+///   `94f4d7f123` a `Transfer` is a single-asset move (`apply.rs`, welded to the
+///   kernel's `recTransferBal`). A cell in a private asset therefore cannot be
+///   funded by the operator, and cannot pay a fee into a default-asset fee well.
+///
+/// THE TRAP THIS LEAVES. `dregg_cell::Cell`'s `token_id` does TWO jobs at once:
+/// it is the cell's ASSET, and it is the namespace salt in
+/// `CellId::derive_raw(owner_pubkey, token_id)`. Every app that needs one cell
+/// per (owner, tag) reaches for the only free axis and gets a private currency it
+/// never asked for — `channels_service::channel_token_id`,
+/// `dkg_service::dkg_ceremony_token_id`, `trustline_service`'s per-line hash,
+/// `equivocation_court_service`'s `BOND_CELL_DOMAIN` / `SLASH_SINK_DOMAIN`. Those
+/// helpers are NAMES, not currencies, and the cells they mint hold computrons, so
+/// the create-then-fund pattern they all share is refused `cross-asset Transfer
+/// rejected` at the executor. That refusal is CORRECT; the pattern is not legal.
+///
+/// The migration is "stop minting acting cells in a private asset", and it is not
+/// free: the owner side of the derivation cannot absorb the tag either (the adopt
+/// turn authorizes against the cell's `public_key`, so it has to be a real key).
+/// The honest options are (a) split `Cell.token_id` into `asset` + `name_salt` —
+/// correct, and a Cell wire change plus a store migration; or (b) remove the need
+/// for those cells to hold computrons at all (sponsored fees, so the operator's
+/// cell pays for a turn whose agent is the app cell). Neither is a test edit.
 pub fn default_token_id() -> [u8; 32] {
     *blake3::hash(b"default").as_bytes()
 }

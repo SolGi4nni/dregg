@@ -51,13 +51,21 @@ const FAUCET_SUPPLY: i64 = 1_000_000;
 
 /// Stand up a real solo node: NodeState + the genesis faucet cell + the live
 /// blocklace/finality machinery, plus the HTTP router with the faucet enabled.
-async fn faucet_node() -> (
+pub(crate) async fn faucet_node() -> (
     NodeState,
     axum::Router,
     dregg_cell::CellId,
     tempfile::TempDir,
 ) {
     let _ = rustls::crypto::ring::default_provider().install_default();
+    // The deployed node installs the Lean-verified ML-DSA cores in `run()`; a lib
+    // test never reaches that, so install them here. Without this the fixture
+    // silently derives its identity keys with the `fips204` crate — a valid
+    // FIPS-204 keygen, but not the one the node ships — or fails closed and the
+    // whole hybrid perimeter under test degrades to "no PQ half present".
+    let _ = crate::install_mldsa_verified_keygen_core_real();
+    let _ = crate::install_mldsa_verified_sign_core_real();
+    let _ = crate::install_mldsa_verified_verify_core();
     let tmp = tempfile::tempdir().expect("tempdir");
     let state = NodeState::new(tmp.path(), vec![]).expect("build NodeState");
 
@@ -106,7 +114,11 @@ async fn faucet_node() -> (
 }
 
 /// `POST /api/faucet` through the real router; returns the parsed JSON body.
-async fn post_faucet(app: &axum::Router, recipient_hex: &str, amount: u64) -> serde_json::Value {
+pub(crate) async fn post_faucet(
+    app: &axum::Router,
+    recipient_hex: &str,
+    amount: u64,
+) -> serde_json::Value {
     let addr: std::net::SocketAddr = "127.0.0.1:4444".parse().unwrap();
     let body = serde_json::json!({ "recipient": recipient_hex, "amount": amount });
     let response = app
@@ -134,7 +146,7 @@ async fn post_faucet(app: &axum::Router, recipient_hex: &str, amount: u64) -> se
 
 /// Poll the AUTHORITATIVE ledger until `cell` holds `want`, or time out.
 /// Returns the last observed balance (`None` when the cell never appeared).
-async fn await_balance(
+pub(crate) async fn await_balance(
     state: &NodeState,
     cell: &dregg_cell::CellId,
     want: i64,

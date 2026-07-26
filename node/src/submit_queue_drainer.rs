@@ -320,11 +320,26 @@ async fn execute_submission(state: &NodeState, signed_turn: &[u8]) -> DrainOutco
     // consensus finalization.  In required/native mode a self-carried key is
     // never an authority: it must equal the independently enrolled key.
     let executor = crate::executor_setup::new_submit_executor(&s);
+    // The queue drainer mutates authoritative state in-place, so weld its
+    // receipt-log append to that mutation with the ledger restore journal —
+    // armed BEFORE the first-turn claim, so a refused turn leaves the ledger
+    // exactly as it found it.
+    s.ledger.begin_restore_point();
+    // THE FIRST-TURN CLAIM, before the predicate reads the actor cell — the same
+    // ordering every other ingress uses. A queued first turn from a fresh client
+    // otherwise refuses `pq-identity-not-enrolled` / `live-agent-signer-mismatch`
+    // here while finalization would have accepted it.
+    crate::signed_turn_validation::claim_signer_actor_cell(
+        &mut s.ledger,
+        &signed,
+        executor.require_pq(),
+    );
     if let Err(error) = crate::signed_turn_validation::validate_signed_turn(
         &signed,
         &executor,
         s.ledger.get(&signed.turn.agent),
     ) {
+        s.ledger.rollback_restore_point();
         return DrainOutcome::Refused {
             error: error.to_string(),
         };
@@ -334,6 +349,7 @@ async fn execute_submission(state: &NodeState, signed_turn: &[u8]) -> DrainOutco
     // only for this agent's genesis turn, never as an omitted-link reset.
     let expected_prev = s.cclerk.agent_receipt_head_hash(&signed.turn.agent);
     if signed.turn.previous_receipt_hash != expected_prev {
+        s.ledger.rollback_restore_point();
         return DrainOutcome::Refused {
             error: "receipt chain mismatch".to_string(),
         };
@@ -342,9 +358,6 @@ async fn execute_submission(state: &NodeState, signed_turn: &[u8]) -> DrainOutco
     // THE ONE executor gate (#171): execute through the producer-aware path —
     // the verified Lean producer is authoritative for the covered set, exactly
     // as for a locally- or HTTP-submitted turn. No new execution path.
-    // The queue drainer mutates authoritative state in-place, so weld its
-    // receipt-log append to that mutation with the ledger restore journal.
-    s.ledger.begin_restore_point();
     let lean_producer_enabled = s.lean_producer_enabled;
     let exec_result = crate::executor_setup::execute_via_producer(
         &executor,
@@ -369,20 +382,23 @@ async fn execute_submission(state: &NodeState, signed_turn: &[u8]) -> DrainOutco
             );
             DrainOutcome::Executed { receipt_hash }
         }
+        // Every refusal ROLLS BACK rather than dropping the journal: the executor
+        // restores its own mutations, but the first-turn claim above is not the
+        // executor's, and a refused turn leaves nothing behind.
         dregg_turn::TurnResult::Rejected { reason, .. } => {
-            s.ledger.commit_restore_point();
+            s.ledger.rollback_restore_point();
             DrainOutcome::Refused {
                 error: format!("turn rejected: {reason}"),
             }
         }
         dregg_turn::TurnResult::Expired => {
-            s.ledger.commit_restore_point();
+            s.ledger.rollback_restore_point();
             DrainOutcome::Refused {
                 error: "turn expired".to_string(),
             }
         }
         dregg_turn::TurnResult::Pending => {
-            s.ledger.commit_restore_point();
+            s.ledger.rollback_restore_point();
             DrainOutcome::Refused {
                 error: "turn pending (conditional turns are not queue-drainable)".to_string(),
             }

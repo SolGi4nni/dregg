@@ -47,8 +47,6 @@ curl https://elan.lean-lang.org/elan-init.sh -sSf | sh    # then re-open your sh
 ./scripts/fetch-lean-seed.sh
 # 3. build the node, FAILING LOUD if it would silently degrade to marshal-only:
 DREGG_REQUIRE_LEAN=1 cargo build -p dregg-node
-./target/debug/dregg-node init --data-dir /tmp/my-dregg
-./target/debug/dregg-node run  --data-dir /tmp/my-dregg --enable-faucet --port 8421 &
 ```
 
 If no seed release has been cut yet, step 2 fails loud and tells you your two
@@ -57,14 +55,57 @@ The `DREGG_REQUIRE_LEAN=1` in step 3 guarantees you can never *think* you built 
 verified node when you didn't — the build panics with the exact missing piece
 instead of quietly shipping the Rust executor.
 
+### Lay down a chain, then run against it
+
+A node does **not** bootstrap its own chain. `dregg-node genesis` mints one —
+the validator keys, the faucet supply, the fee/issuer wells, and the consensus
+clock policy — and `run` reads it out of the data dir. `dregg-node init` only
+makes an empty store and an **unrelated** node key; on its own it is not enough,
+and `run` says so and exits (`blocklace requires
+consensus_genesis_unix_seconds + consensus_time_mode in the shared genesis.json`).
+
+```sh
+# a one-validator chain of your own:
+./target/debug/dregg-node genesis --validators 1 --output /tmp/my-dregg-genesis
+
+# the data dir: the chain, plus THE KEY genesis published as the committee member
+mkdir -p /tmp/my-dregg
+cp /tmp/my-dregg-genesis/genesis.json /tmp/my-dregg/genesis.json
+cp /tmp/my-dregg-genesis/.devnet      /tmp/my-dregg/.devnet
+cp /tmp/my-dregg-genesis/node-0.key   /tmp/my-dregg/node.key
+
+./target/debug/dregg-node run --data-dir /tmp/my-dregg --enable-faucet --port 8421 &
+```
+
+`node-0.key` is not optional and not interchangeable. The node signs every
+attested state root with its `node.key`, and the durable commit refuses a root
+whose author is not in the genesis committee — so a `node.key` from anywhere else
+(the one `init` mints, for instance) lets the node boot and produce blocks while
+**every turn fails to commit**, forever, with
+`integrity error: faithful note-root attestation has no valid author signature`
+repeating in the log. This is the same shape `demo/multi-node-devnet/start_devnet.sh`
+uses for each of its six nodes.
+
+### Unlock it — nothing finalizes until you do
+
+```sh
+curl -s -X POST http://localhost:8421/cipherclerk/unlock \
+  -H 'content-type: application/json' -d '{"passphrase":"pick-a-passphrase"}'
+```
+
+A locked node answers reads and accepts submissions, but it cannot **sign**, and
+signing is what finalization needs: until the first unlock it produces no blocks
+(`dag_height:0`, `healthy:false`) and no turn — not even a faucet grant — ever
+lands. The first unlock SETS the passphrase on a fresh node and returns the
+bearer token §3 uses.
+
 ### The marshal-only path (un-verified, fine for UI/dev)
 
 If you just want to click around and don't need the verified executor, skip the
-seed entirely:
+seed entirely — the genesis/key/unlock steps above are unchanged:
 
 ```sh
 cargo build -p dregg-node
-./target/debug/dregg-node init --data-dir /tmp/my-dregg
 DREGG_ALLOW_UNVERIFIED_CONSENSUS=1 \
 ./target/debug/dregg-node run  --data-dir /tmp/my-dregg --enable-faucet --port 8421 &
 ```
@@ -95,8 +136,10 @@ it on, which is what an audit-grade node runs.)
 
 `healthy` is exactly three things: the store is readable, the consensus task is
 attached (`consensus_live`), and the local DAG holds at least one block. A solo
-node satisfies all three — it anchors its lace on the first cadence tick, so
-`healthy:true` within a second of boot. What stays `0` on a quiet solo node is
+node satisfies all three — but the third only **after the unlock above**: block
+production signs, so a still-locked node reads `healthy:false` / `dag_height:0`
+with `consensus_live:true`, and that is the fingerprint of "you have not unlocked
+it yet", not of a broken node. What stays `0` on a quiet unlocked node is
 `latest_height` (the ATTESTED-ROOT height), which advances on turn-bearing
 finality, not on heartbeats; `dag_height` is the honest "how tall is the chain".
 
@@ -107,10 +150,13 @@ property. `producer_covered_effects` is a deprecated alias of the swap-safe
 count, kept while a shipped client still reads it.
 
 Faucet a cell. NOTE: a cell id is a commitment to a public key
-(`id == derive_raw(pubkey, token)`), so a bare *random* id is **unspendable** —
-the faucet credits it (a real verified turn you can watch land), but no one holds
-its key to sign a spend. To fund a cell you OWN, use `dregg demo` (§4), which
-generates your keypair, derives your agent cell, and funds that.
+(`id == derive_raw(pubkey, blake3("default"))`), so a bare *random* id is
+**unspendable** — the faucet credits it (a real verified turn you can watch
+land), but no one holds its key to sign a spend. To fund a cell you can ACT as,
+faucet `derive_raw(<your pubkey>, blake3("default"))` — `dregg id create` (§2)
+makes the key and `dregg cell inspect` shows the id; §3 does it for the node
+operator's own cell, and `dregg demo` (§4) drives that same operator cell end to
+end. (`dregg demo` funds the NODE's identity, not a client key of yours.)
 
 ```sh
 CID=$(python3 -c "import secrets;print(secrets.token_hex(32))")
@@ -141,6 +187,15 @@ curl -s http://localhost:8421/api/cell/$CID
 not hold, and `found:false` is the only thing distinguishing that from a real
 empty cell.
 
+A grant to a cell no node has seen lands in a **zero-pk landing stub**: the
+recipient's public key is not carried over consensus, so every node materializes
+the identical keyless cell at that id from the turn's data alone. The **first
+signed turn from the key that derives the id CLAIMS it** — binding that Ed25519
+key and the ML-DSA-65 key the same envelope proves possession of, and carrying
+the granted balance over verbatim. That is why the faucet's `public_key` field is
+optional and why a funded cell reads back with a zero `public_key` until its
+owner acts.
+
 ## 2. Get the CLI
 
 ```sh
@@ -152,11 +207,19 @@ dregg node status
 
 ```text
 === Node Status ===
-  Health: UNHEALTHY          # expected on a solo node — see §1; turns still commit
+  Health: HEALTHY
+  URL: http://localhost:8421
   Federation mode: solo
-  State producer: LEAN (verified, 21 effects)
-  DAG height: 0
+  State producer: LEAN (verified, 18 effects)
+  Full-turn proving: off
+  Attested height: 0
+  DAG height: 1
+  Peers: 0
 ```
+
+(`State producer` prints `producer_root_agreeing_effects` — the SWAP-SAFE count
+from §1, not the wider mappable set. `Attested height` stays `0` until a
+turn-bearing block finalizes.)
 
 `dregg doctor` health-checks the whole client surface; `dregg --help` lists the
 verbs (id, cell, turn, name, polis, voting, bounty, cap, proof, …).
@@ -201,11 +264,10 @@ NODE_PK=$(curl -s http://localhost:8421/api/node/identity \
   | python3 -c 'import json,sys;print(json.load(sys.stdin)["public_key"])')
 
 # fund the operator cell so it can pay the turn's fee (skip if already funded).
-# IMPORTANT: include public_key on the FIRST faucet call that touches this cell.
-# A faucet call without it materializes the cell with a ZERO public key, the
-# faucet never rewrites an existing cell's key, and every signed turn on this
-# data dir then fails with "Ed25519 signature verification failed" — including
-# the turn below and every step of `dregg demo` (§4).
+# The grant lands in a zero-pk landing stub (§1); the operator's FIRST signed
+# turn — the one just below, and step 4 of `dregg demo` — claims it. `public_key`
+# is accepted but only affects the `amount:0` materialization path, so passing it
+# on a FUNDED grant changes nothing.
 curl -s -X POST http://localhost:8421/api/faucet -H 'content-type: application/json' \
   -d "{\"recipient\":\"$AGENT\",\"amount\":5000,\"public_key\":\"$NODE_PK\"}" >/dev/null
 

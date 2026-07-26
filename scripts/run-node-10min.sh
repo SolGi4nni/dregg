@@ -92,10 +92,34 @@ fi
 BIN="target/$PROFILE_DIR/dregg-node"
 [ -x "$BIN" ] || die "node binary not found at $BIN"
 
-# ── 3. run ────────────────────────────────────────────────────────────────────
+# ── 3. lay down a chain ───────────────────────────────────────────────────────
+# A node does NOT bootstrap its own chain. `genesis` mints one (validator keys,
+# faucet supply, wells, and the consensus clock policy `run` refuses to start
+# without). `init` only makes an empty store and an UNRELATED node key — and a
+# node.key that is not the one genesis published as the committee member boots
+# fine and then fails EVERY durable commit with "faithful note-root attestation
+# has no valid author signature". So: genesis, then take its key.
+say "Generating a one-validator chain (genesis.json + the committee key)"
+rm -rf "$DATA" "$DATA-genesis"
+"$BIN" genesis --validators 1 --output "$DATA-genesis" >/dev/null 2>&1 \
+  || die "dregg-node genesis failed"
+mkdir -p "$DATA"
+cp "$DATA-genesis/genesis.json" "$DATA/genesis.json" || die "no genesis.json was generated"
+cp "$DATA-genesis/.devnet"      "$DATA/.devnet"      2>/dev/null || true
+cp "$DATA-genesis/node-0.key"   "$DATA/node.key"     || die "no node-0.key was generated"
+
+# ── 4. run ────────────────────────────────────────────────────────────────────
 say "Starting the node (data dir $DATA, port $PORT, faucet on)"
-rm -rf "$DATA"; "$BIN" init --data-dir "$DATA" >/dev/null
-"$BIN" run --data-dir "$DATA" --enable-faucet --port "$PORT" >"$DATA/node.log" 2>&1 &
+# A seedless (marshal-only) build REFUSES to start unless the operator explicitly
+# opts in — fail-closed by design. This script already told you which mode it
+# built, so make the opt-in here rather than dying at a refusal the caller cannot
+# read from a backgrounded process.
+if [ "$want_verified" -eq 1 ]; then
+  "$BIN" run --data-dir "$DATA" --enable-faucet --port "$PORT" >"$DATA/node.log" 2>&1 &
+else
+  DREGG_ALLOW_UNVERIFIED_CONSENSUS=1 \
+    "$BIN" run --data-dir "$DATA" --enable-faucet --port "$PORT" >"$DATA/node.log" 2>&1 &
+fi
 NODE_PID=$!
 # wait for /status to answer (up to ~30s).
 ok=0
@@ -105,7 +129,21 @@ for _ in $(seq 1 60); do
 done
 [ "$ok" -eq 1 ] || { cat "$DATA/node.log" | tail -20; die "node did not answer /status (pid $NODE_PID). Log above."; }
 
-# ── 4. verify ─────────────────────────────────────────────────────────────────
+# ── 5. unlock ─────────────────────────────────────────────────────────────────
+# Block production SIGNS. Until the first unlock the node answers reads, accepts
+# submissions, and finalizes NOTHING (dag_height stays 0, healthy stays false) —
+# including the faucet grant below. The first unlock sets the passphrase.
+say "Unlocking the cipherclerk (nothing finalizes until this happens)"
+curl -fs -X POST "http://localhost:$PORT/cipherclerk/unlock" \
+  -H 'content-type: application/json' -d '{"passphrase":"dregg-10min"}' >/dev/null \
+  || die "cipherclerk unlock failed — the node cannot sign, so no turn will ever land"
+# give the cadence a tick to anchor the first block
+for _ in $(seq 1 30); do
+  curl -fs "http://localhost:$PORT/status" | grep -q '"consensus_live":true' && break
+  sleep 0.5
+done
+
+# ── 6. verify ─────────────────────────────────────────────────────────────────
 say "Node is up — /status:"
 STATUS="$(curl -fs "http://localhost:$PORT/status")"
 echo "    $STATUS"
@@ -118,6 +156,23 @@ CID="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
 FR="$(curl -fs -X POST "http://localhost:$PORT/api/faucet" -H 'content-type: application/json' \
       -d "{\"recipient\":\"$CID\",\"amount\":1000}" || true)"
 echo "    $FR"
+# `success:true` is the SUBMISSION answering, not the money moving: the grant is
+# applied by FINALIZATION a moment later. Read the LEDGER back, because a grant
+# that commits into a block and never credits anyone is exactly what shipped
+# between 2026-07-21 and 2026-07-25 while this line said success.
+granted=0
+for _ in $(seq 1 60); do
+  CELL="$(curl -fs "http://localhost:$PORT/api/cell/$CID" || true)"
+  case "$CELL" in *'"balance":1000'*) granted=1; break;; esac
+  sleep 0.5
+done
+if [ "$granted" -eq 1 ]; then
+  printf '    \033[32mgrant CREDITED on the ledger (balance 1000) — finalization ran.\033[0m\n'
+else
+  printf '    \033[31mgrant NOT credited after 30s: %s\033[0m\n' "${CELL:-<no response>}"
+  printf '    The response above said success; the ledger disagrees. Check %s for\n' "$DATA/node.log"
+  printf '    "failed application authorization" or "faithful note-root attestation".\n'
+fi
 
 echo
 if [ "$producer" = "lean" ] && [ "$leanp" = "true" ]; then

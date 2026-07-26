@@ -87,7 +87,7 @@ pub struct PreparedSlashSubmit {
 ///   `turn.agent == CellId::derive_raw(signer, blake3("default"))`; the same
 ///   check runs here (it also catches a non-default-domain cipherclerk).
 /// * **Nonce.** Read off the acting cell's LIVE state on the node ledger
-///   (0 for a never-seen client — ingress `provision_signer_actor_cell`
+///   (0 for a never-seen client — ingress `claim_signer_actor_cell`
 ///   materializes exactly that cell).
 /// * **Expiry.** `valid_until` is stamped when absent.
 /// * **Receipt-chain binding.** A solo node gates the receipt-chain append
@@ -137,7 +137,7 @@ pub fn prepare_slash_submit(
 
     // The real nonce (the intake seam left it 0): the acting cell's LIVE
     // nonce on the node ledger; 0 for a never-provisioned client, matching
-    // the cell `provision_signer_actor_cell` materializes at ingress.
+    // the cell `claim_signer_actor_cell` materializes at ingress.
     turn.nonce = s
         .ledger
         .get(&turn.agent)

@@ -6,10 +6,10 @@
 //! `DREGG_FINALITY_GATE` unset — so consensus is finalized by the verified
 //! `BlocklaceFinality.tauOrder`), and the turn STREAM-FINALIZES CROSS-NODE:
 //!
-//!   * the client's default cell — which existed on NO node — is PROVISIONED
-//!     DETERMINISTICALLY from the in-block signer at finalization (submit-path fix
-//!     2b, `provision_signer_actor_cell`) and appears with the client's public key on
-//!     ALL FOUR nodes;
+//!   * the client's default cell — which existed on NO node — is CLAIMED
+//!     DETERMINISTICALLY from the in-block signer BEFORE the admission predicate
+//!     reads it (`signed_turn_validation::claim_signer_actor_cell`) and appears with
+//!     the client's public key on ALL FOUR nodes;
 //!   * the attested-turn `memo` (an opaque attestation-shaped payload) rides consensus
 //!     bound into the turn hash, so the SAME turn is finalized uniformly on every node;
 //!   * the attested `latest_height` advances on all four nodes.
@@ -381,9 +381,10 @@ fn fresh_client_attested_turn_finalizes_cross_node_on_verified_n4() {
 
     // ── STEP 2 (THE PAYOFF): the fresh client signs its OWN Transfer turn — moving a
     //    distinct amount to a brand-new destination cell D — and submits it via
-    //    /turns/submit. fix-2b UPGRADES the client's funded zero-pk stub to its
-    //    canonical pk-bound account at finalization (the client's key authorizes the
-    //    Send), and D materialises with the transferred balance on every node. ──
+    //    /turns/submit. The first-turn CLAIM upgrades the client's funded zero-pk
+    //    stub to its canonical, ML-DSA-anchored account before admission reads it
+    //    (the client's key authorizes the Send), and D materialises with the
+    //    transferred balance on every node. ──
     let dest_cell = {
         // A fresh destination id no node has: derive from a throwaway pubkey.
         let mut pk = [0u8; 32];

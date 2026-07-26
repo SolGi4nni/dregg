@@ -6566,6 +6566,24 @@ async fn execute_finalized_turn(
     // authoritative cross-node commit path, matching the HTTP submit ingress.
     crate::executor_setup::require_pq_admission(&executor);
 
+    // THE FIRST-TURN CLAIM, before the predicate reads the actor cell. Every
+    // input is in-block and signature-verified (`SignedTurn.signer`,
+    // `SignedTurn.pq_signer`, `turn.hash()`), so every node writes the identical
+    // bytes at the identical id — the same cross-node uniformity argument
+    // `provision_transfer_destinations` makes, but stronger: the actor's
+    // pre-image IS carried, so the claim materializes the canonical account
+    // rather than a stub. Running it HERE rather than inside the execution clone
+    // below is the whole fix: with no cell the predicate answered
+    // `pq-identity-not-enrolled`, and with the faucet's zero-pk stub it answered
+    // `live-agent-signer-mismatch` — both BEFORE the upgrade that fixed either,
+    // so a funded client's first turn could never finalize. `Declined` writes
+    // nothing and the predicate then refuses the turn on its own terms.
+    crate::signed_turn_validation::claim_signer_actor_cell(
+        &mut s.ledger,
+        &signed_turn,
+        executor.require_pq(),
+    );
+
     // Consensus authenticated the block producer, not the enclosed user turn.
     // Re-run the exact HTTP/PG application predicate while holding the state
     // guard and before any ledger/prologue mutation.  Required PQ is pinned to
@@ -7138,7 +7156,9 @@ async fn execute_finalized_turn(
     // destination. This is what makes the finalized application provably uniform —
     // not "the submitter created it out of band and peers approximate it" (which
     // would leave divergent cell content the attested root cannot see, since
-    // `canonical_ledger_root` commits only `cell.state`). The submitter no longer
+    // `dregg_persist::canonical_ledger_root` hashes `postcard(cell)` — the WHOLE
+    // cell, public key and `pq_identity` included — so a divergent provisioning
+    // is an attested-root split, not merely invisible content). The submitter no longer
     // provisions authoritatively at faucet-submission time in multi-party mode
     // (see `api.rs`), so it reaches this same path and provisions identically.
     // THE SWAP — producer mode (authority inversion), now the DEFAULT — through the ONE
@@ -7194,16 +7214,13 @@ async fn execute_finalized_turn(
     drop(s);
 
     let turn_for_exec = signed_turn.turn.clone();
-    let signer_for_exec = signed_turn.signer.0;
     let exec_join = tokio::task::spawn_blocking(move || {
-        // Provision the ACTOR cell (the signer's own default cell) on the CLONE the
-        // FFI executes against, if absent — byte-deterministic from the in-block,
-        // sig-verified signer, so every node materializes the IDENTICAL canonical
-        // account. This lets a fresh external client's FIRST `/turns/submit` turn
-        // finalize uniformly cross-node instead of `cell not found`. The pre→post
-        // diff below classifies the provisioned cell as created, so the overlay
-        // installs it on the authoritative ledger on every node.
-        provision_signer_actor_cell(&mut exec_ledger, &signer_for_exec);
+        // The ACTOR cell is already the signer's canonical, identity-bound account:
+        // `claim_signer_actor_cell` ran on `s.ledger` before the admission
+        // predicate (which could not have passed otherwise), and `exec_ledger` is a
+        // clone of that ledger. Provisioning it a SECOND time here — after
+        // validation rather than before it — is what left the claim invisible to
+        // the predicate in the first place; there is now one claim, at one place.
         // Provision Transfer destinations on the CLONE the FFI executes against
         // (byte-deterministic — the identical zero-stub every node inserts). The
         // pre→post diff below classifies each provisioned+credited destination as
@@ -14063,62 +14080,6 @@ fn install_finalized_ledger_overlay(
 /// Idempotent: a destination already present (genesis cell, a prior turn, or a
 /// peer that legitimately holds the canonical cell) is left untouched.
 ///
-/// Provision the finalized turn's ACTOR cell as the deterministic signer-bound
-/// default cell BEFORE the turn executes, so a fresh external client's FIRST turn
-/// finalizes uniformly cross-node instead of being rejected `cell not found`.
-///
-/// SOUNDNESS / UNIFORMITY. The actor cell id is `derive_raw(signer, "default")`.
-/// Unlike a Transfer *destination* (whose pre-image is NOT carried over consensus,
-/// forcing a zero-pk `remote_stub` above), the actor's pre-image IS in the block:
-/// `SignedTurn.signer`, whose signature over the turn hash is verified at
-/// `execute_finalized_turn` (`blocklace_sync.rs` sig-check, above this call) AND
-/// independently at ingress (`api.rs` `post_submit_signed_turn`). Because `signer`
-/// is in-block and sig-verified, every node provisions the IDENTICAL canonical cell
-/// `Cell::with_balance(signer, "default", 0)` — a real pk-bound account, byte-
-/// deterministic from the in-block signer. This is the same cross-node uniformity
-/// argument `provision_transfer_destinations` relies on, but STRONGER: the actor's
-/// key is known, so the provisioned cell is the canonical account, not a stub.
-///
-/// This provisions ONLY the signer's own default cell — never authority over any
-/// other cell. A turn whose `agent` is some *other* absent cell still rejects
-/// (correctly; we fabricate no foreign authority). At ingress the signed-turn path
-/// requires `turn.agent == derive_raw(signer, "default")`, so for the external
-/// client path this materializes exactly the acting cell.
-///
-/// Idempotent: an actor cell already present (a genesis/operator cell, a prior
-/// turn, or a legitimately peer-held cell) is left untouched — only a
-/// never-before-seen fresh client's default cell is materialized.
-pub(crate) fn provision_signer_actor_cell(ledger: &mut dregg_cell::Ledger, signer: &[u8; 32]) {
-    let default_token_id = *blake3::hash(b"default").as_bytes();
-    let actor_id = dregg_cell::CellId::derive_raw(signer, &default_token_id);
-    match ledger.get(&actor_id) {
-        None => {
-            // Absent → materialize the canonical pk-bound account, zero balance.
-            let cell = dregg_cell::Cell::with_balance(*signer, default_token_id, 0);
-            let _ = ledger.insert_cell(cell);
-        }
-        Some(existing) if *existing.public_key() == [0u8; 32] => {
-            // A zero-pk REMOTE STUB was materialized at this id by an earlier
-            // Transfer-destination provisioning (e.g. a faucet grant to a client cell
-            // no node had seen — `provision_transfer_destinations`). Now that the
-            // client's OWN signed turn proves the pre-image (actor_id ==
-            // derive_raw(signer, "default")), UPGRADE the stub to the canonical
-            // pk-bound account so the client's signature authorizes its turn —
-            // PRESERVING the balance the stub accrued (the faucet grant). The id
-            // cryptographically commits to (signer, "default"), so this upgrade is
-            // byte-deterministic and uniform on every node (same in-block signer), and
-            // it MINTS NOTHING — the balance is exactly the stub's.
-            let balance = existing.state.balance();
-            let cell = dregg_cell::Cell::with_balance(*signer, default_token_id, balance);
-            let _ = ledger.remove(&actor_id);
-            let _ = ledger.insert_cell(cell);
-        }
-        Some(_) => {
-            // Already the canonical pk-bound account (pk == signer). Leave untouched.
-        }
-    }
-}
-
 pub(crate) fn provision_transfer_destinations(
     ledger: &mut dregg_cell::Ledger,
     call_forest: &dregg_turn::CallForest,

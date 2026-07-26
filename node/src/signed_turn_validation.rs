@@ -234,6 +234,193 @@ pub fn validate_signed_turn(
     Ok(ValidatedSignedTurn { turn_hash })
 }
 
+/// What [`claim_signer_actor_cell`] did with the signer's own default cell.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActorCellClaim {
+    /// The cell did not exist and was materialized from the envelope's own
+    /// proven identity material.
+    Materialized,
+    /// A zero-pk landing stub (a faucet grant to a cell nobody had seen) was
+    /// upgraded in place to the canonical, identity-bound account. The stub's
+    /// balance is carried over verbatim; nothing is minted.
+    StubClaimed,
+    /// The cell is already the signer's canonical account. Nothing to do — the
+    /// hot path for every turn after the first.
+    AlreadyOwned,
+    /// Nothing was written. Either the envelope does not prove what a claim
+    /// needs, or the id is held by someone else. [`validate_signed_turn`] then
+    /// refuses the turn with its own specific reason, exactly as before.
+    Declined,
+}
+
+/// THE FIRST-TURN CLAIM — materialize the signer's own default cell from the
+/// identity material the envelope ITSELF proves, before the admission predicate
+/// reads that cell.
+///
+/// # The bug this exists to close
+///
+/// [`validate_signed_turn`] resolves a turn's authority against the LIVE agent
+/// cell. A fresh client has no such cell, and a faucet-funded one has a zero-pk
+/// landing stub (`blocklace_sync::provision_transfer_destinations` mints the
+/// destination from turn data alone, because the recipient's key is not carried
+/// over consensus). So under the deployed required-PQ posture a first turn was
+/// refused `pq-identity-not-enrolled` (no cell) or `live-agent-signer-mismatch`
+/// (the stub) — on EVERY ingress, and at finalization — while the code that
+/// would have fixed either ran strictly LATER, inside the execution clone. A new
+/// person could receive coins and then do nothing, forever.
+///
+/// # Why this is not a weakening of the predicate
+///
+/// The predicate is untouched: it still refuses everything it refused before, on
+/// the state it is handed. What changes is the STATE — and only for a cell id
+/// whose owner this very envelope proves, with the same two possession proofs
+/// `Effect::CreateHybridCell` demands of anyone else creating an identity-bound
+/// cell:
+///
+/// * `signed.turn.agent == derive_raw(signer, blake3("default"))` — the agent id
+///   is a COMMITMENT to the Ed25519 key; and
+/// * `signer.verify(turn_hash, signature)` — possession of that Ed25519 key; and
+/// * `ml_dsa_verify(pq_signer, turn_hash, pq_signature)` — possession of the
+///   ML-DSA-65 key carried in the same envelope, over the same message.
+///
+/// So the claim writes exactly the account those proofs describe, and it writes
+/// it ONLY where no one else has claimed the id:
+///
+/// * absent → materialize `with_hybrid_balance(signer, pq_signer, default, 0)`;
+/// * zero-pk stub in the default asset → upgrade in place, carrying the stub's
+///   balance verbatim (nothing minted, the id already commits to `signer`);
+/// * anything else — a cell already bound to a DIFFERENT public key, or a stub
+///   denominated in another asset — is left alone and the turn is refused.
+///
+/// # Cross-node uniformity
+///
+/// Every input is in-block and signature-verified (`SignedTurn.signer`,
+/// `SignedTurn.pq_signer`, `turn.hash()`), so every node makes the identical
+/// decision and writes the identical bytes. This matters more than the old
+/// comments claimed: `dregg_persist::canonical_ledger_root` hashes
+/// `postcard(cell)` — the WHOLE cell, public key and `pq_identity` included —
+/// not just `cell.state`, so a divergent claim would show up in the attested
+/// root rather than hiding under it.
+///
+/// # The residual, stated plainly
+///
+/// A cell id commits to the Ed25519 key alone, so the ML-DSA identity of a cell
+/// that has never acted is established by its FIRST turn. Between a faucet grant
+/// and that first turn, the grant is protected by Ed25519 only. Closing that
+/// window needs the funding turn to carry the recipient's ML-DSA key (that is
+/// what `Effect::CreateHybridCell` is for) — it is not closable by refusing the
+/// first turn, which protects nothing and only freezes the coins.
+pub fn claim_signer_actor_cell(
+    ledger: &mut dregg_cell::Ledger,
+    signed: &SignedTurn,
+    require_pq: bool,
+) -> ActorCellClaim {
+    let existing = ledger.get(&signed.turn.agent);
+    let existed = existing.is_some();
+    let already_owned = existing.is_some_and(|cell| *cell.public_key() == signed.signer.0);
+    let Some(claimed) = claimed_actor_cell(existing, signed, require_pq) else {
+        return if already_owned {
+            ActorCellClaim::AlreadyOwned
+        } else {
+            ActorCellClaim::Declined
+        };
+    };
+    if existed {
+        let _ = ledger.remove(&signed.turn.agent);
+    }
+    let _ = ledger.insert_cell(claimed);
+    if existed {
+        ActorCellClaim::StubClaimed
+    } else {
+        ActorCellClaim::Materialized
+    }
+}
+
+/// The cell [`claim_signer_actor_cell`] would write, computed WITHOUT touching
+/// the ledger — `None` when nothing changes (already the signer's account, or
+/// the envelope does not prove a claim).
+///
+/// This exists so the admission pre-checks that hold only a READ lock
+/// (`private_dependent_turns`) reach the same verdict as the write-lock
+/// ingresses. An ingress that is stricter than finalization is how a first turn
+/// ends up rejected in one place and accepted in another; there is ONE
+/// implementation of the claim, and both shapes call it.
+pub fn claimed_actor_cell(
+    existing: Option<&dregg_cell::Cell>,
+    signed: &SignedTurn,
+    require_pq: bool,
+) -> Option<dregg_cell::Cell> {
+    let default_token_id = *blake3::hash(b"default").as_bytes();
+    let actor_id = dregg_cell::CellId::derive_raw(&signed.signer.0, &default_token_id);
+    // Never claim on behalf of a turn that is not acting as its signer's own
+    // cell: `validate_signed_turn` refuses that as `agent-signer-mismatch`, and
+    // fabricating foreign authority is precisely what must not happen here.
+    if signed.turn.agent != actor_id {
+        return None;
+    }
+
+    // Read the id's current occupant FIRST, so the overwhelmingly common case
+    // (every turn after the first) costs one lookup and no cryptography.
+    let carried_balance = match existing {
+        // Already the signer's canonical account. Nothing to do.
+        Some(cell) if *cell.public_key() == signed.signer.0 => return None,
+        // Held by a different key. Not ours to claim.
+        Some(cell) if *cell.public_key() != [0u8; 32] => return None,
+        Some(stub) => {
+            // A zero-pk landing stub. Claiming re-mints it under the signer's
+            // key; re-denominating a balance while doing so would be exactly the
+            // cross-asset teleport the executor now refuses, so a stub minted in
+            // some other asset is left for a human to look at.
+            if *stub.token_id() != default_token_id {
+                return None;
+            }
+            stub.state.balance()
+        }
+        None => 0,
+    };
+
+    // Possession of the Ed25519 key whose commitment IS this cell id.
+    let turn_hash = signed.turn.hash();
+    if !signed.signer.verify(&turn_hash, &signed.signature) {
+        return None;
+    }
+
+    let has_pq_signature = !signed.pq_signature.is_empty();
+    let has_pq_public_key = !signed.pq_signer.is_empty();
+    if has_pq_signature != has_pq_public_key {
+        return None;
+    }
+
+    if has_pq_signature {
+        // Possession of the ML-DSA-65 key, over the same message. Only a key the
+        // envelope proves possession of may be committed as this cell's anchor.
+        if !dregg_turn::pq::ml_dsa_verify(&signed.pq_signer, &turn_hash, &signed.pq_signature) {
+            return None;
+        }
+        // `Err` is a non-canonical ML-DSA key length, which
+        // `validate_signed_turn` refuses as `substituted-pq-public-key`.
+        dregg_cell::Cell::with_hybrid_balance(
+            signed.signer.0,
+            &signed.pq_signer,
+            default_token_id,
+            carried_balance,
+        )
+        .ok()
+    } else if require_pq {
+        // No PQ half at all under the deployed posture: the turn is refused
+        // `pq-signature-required`, so materializing anything for it would be
+        // state written for a rejected turn.
+        None
+    } else {
+        // The explicitly unaudited classical test/development posture.
+        Some(dregg_cell::Cell::with_balance(
+            signed.signer.0,
+            default_token_id,
+            carried_balance,
+        ))
+    }
+}
+
 /// Versioned durable record for a consensus-finalized payload that the
 /// application predicate refused.  It deliberately contains only deterministic
 /// inputs/codes: no wall clock, local error formatting, or validator-local data.
@@ -443,6 +630,207 @@ mod tests {
         assert_eq!(
             FinalizedPayloadRejectionRecord::storage_key(&block),
             format!("finalized_payload_rejection:v1:{}", "ab".repeat(32))
+        );
+    }
+
+    /// A fresh client: an Ed25519 seed no node has ever seen, its own signed
+    /// turn, and the default cell id that turn acts as.
+    fn fresh_client(seed: [u8; 32]) -> (SignedTurn, dregg_cell::CellId) {
+        let clerk = AgentCipherclerk::from_key_bytes(zeroize::Zeroizing::new(seed));
+        let token = *blake3::hash(b"default").as_bytes();
+        let actor = dregg_cell::CellId::derive_raw(&clerk.public_key().0, &token);
+        (clerk.sign_turn(&empty_turn(actor)), actor)
+    }
+
+    /// The zero-pk landing stub `provision_transfer_destinations` mints for a
+    /// faucet grant to a cell no node has seen — in the SOURCE's asset, which
+    /// for the faucet is `blake3("default")`.
+    fn faucet_landing_stub(actor: dregg_cell::CellId, balance: i64) -> dregg_cell::Cell {
+        dregg_cell::Cell::remote_stub_with_id_pk_token_balance(
+            actor,
+            [0u8; 32],
+            *blake3::hash(b"default").as_bytes(),
+            balance,
+        )
+    }
+
+    /// THE REGRESSION, at predicate resolution: with no cell and with the faucet
+    /// stub, required-PQ admission refused a fresh client's FIRST turn — the two
+    /// halves of "onboarding is dead one step past the faucet".
+    #[test]
+    fn a_first_turn_is_refused_without_the_claim() {
+        let (signed, actor) = fresh_client([0xC1; 32]);
+        let executor = required_executor();
+
+        assert_eq!(
+            validate_signed_turn(&signed, &executor, None),
+            Err(SignedTurnValidationError::PqIdentityNotEnrolled),
+            "a client that never touched the faucet has nowhere to enrol"
+        );
+
+        let stub = faucet_landing_stub(actor, 10_000);
+        assert_eq!(
+            validate_signed_turn(&signed, &executor, Some(&stub)),
+            Err(SignedTurnValidationError::LiveAgentSignerMismatch),
+            "and the cell the faucet leaves behind is not the cell the predicate wants"
+        );
+    }
+
+    /// THE LAW the ingress ordering relies on: if the claim fires, validation
+    /// passes. Nothing else may be needed between them, or an ingress that
+    /// claims-then-validates could mutate state for a turn it then rejects.
+    #[test]
+    fn claiming_makes_the_first_turn_admissible_from_nothing_and_from_the_faucet_stub() {
+        let executor = required_executor();
+
+        // (a) never-seen client, no cell at all.
+        let (signed, actor) = fresh_client([0xC2; 32]);
+        let mut ledger = dregg_cell::Ledger::new();
+        assert_eq!(
+            claim_signer_actor_cell(&mut ledger, &signed, true),
+            ActorCellClaim::Materialized
+        );
+        let claimed = ledger.get(&actor).expect("the actor cell now exists");
+        assert_eq!(*claimed.public_key(), signed.signer.0);
+        assert_eq!(claimed.state.balance(), 0);
+        assert!(validate_signed_turn(&signed, &executor, Some(claimed)).is_ok());
+
+        // (b) faucet-funded client: the stub is upgraded and the GRANT SURVIVES.
+        let (signed, actor) = fresh_client([0xC3; 32]);
+        let mut ledger = dregg_cell::Ledger::new();
+        ledger
+            .insert_cell(faucet_landing_stub(actor, 10_000))
+            .expect("insert the landing stub");
+        assert_eq!(
+            claim_signer_actor_cell(&mut ledger, &signed, true),
+            ActorCellClaim::StubClaimed
+        );
+        let claimed = ledger.get(&actor).expect("the stub was claimed in place");
+        assert_eq!(*claimed.public_key(), signed.signer.0);
+        assert_eq!(
+            claimed.state.balance(),
+            10_000,
+            "the claim carries the grant over verbatim — it must mint nothing and burn nothing"
+        );
+        assert!(validate_signed_turn(&signed, &executor, Some(claimed)).is_ok());
+
+        // (c) the second turn is the hot path: nothing to do, no cryptography.
+        assert_eq!(
+            claim_signer_actor_cell(&mut ledger, &signed, true),
+            ActorCellClaim::AlreadyOwned
+        );
+    }
+
+    /// The claim is not a way in. Every one of these writes NOTHING, and the
+    /// predicate still refuses the turn on its own terms.
+    #[test]
+    fn the_claim_refuses_every_envelope_that_does_not_prove_the_account() {
+        let default_token = *blake3::hash(b"default").as_bytes();
+
+        // A forged Ed25519 signature over an otherwise well-formed envelope.
+        let (mut signed, actor) = fresh_client([0xC4; 32]);
+        signed.signature.0[0] ^= 0x80;
+        let mut ledger = dregg_cell::Ledger::new();
+        assert_eq!(
+            claim_signer_actor_cell(&mut ledger, &signed, true),
+            ActorCellClaim::Declined
+        );
+        assert!(ledger.get(&actor).is_none(), "no cell for a bad signature");
+
+        // A forged ML-DSA half: the Ed25519 half is genuine, so this is exactly
+        // the classical-only adversary the deployed posture exists to refuse.
+        let (mut signed, actor) = fresh_client([0xC5; 32]);
+        signed.pq_signature[0] ^= 0x80;
+        let mut ledger = dregg_cell::Ledger::new();
+        assert_eq!(
+            claim_signer_actor_cell(&mut ledger, &signed, true),
+            ActorCellClaim::Declined
+        );
+        assert!(
+            ledger.get(&actor).is_none(),
+            "no cell without PQ possession"
+        );
+
+        // A substituted ML-DSA key the envelope does not hold: the carried
+        // signature does not verify under it, so it can never be committed.
+        let (mut signed, actor) = fresh_client([0xC6; 32]);
+        signed.pq_signer =
+            dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(&[0x9E; 32]).public_bytes();
+        let mut ledger = dregg_cell::Ledger::new();
+        assert_eq!(
+            claim_signer_actor_cell(&mut ledger, &signed, true),
+            ActorCellClaim::Declined
+        );
+        assert!(ledger.get(&actor).is_none());
+
+        // Someone else's funded account at the same id: NEVER re-keyed.
+        let (signed, actor) = fresh_client([0xC7; 32]);
+        let mut ledger = dregg_cell::Ledger::new();
+        let victim = dregg_cell::Cell::remote_stub_with_id_pk_token_balance(
+            actor,
+            [0x5A; 32],
+            default_token,
+            99_000,
+        );
+        ledger.insert_cell(victim).expect("insert the victim cell");
+        assert_eq!(
+            claim_signer_actor_cell(&mut ledger, &signed, true),
+            ActorCellClaim::Declined
+        );
+        let held = ledger.get(&actor).expect("victim still there");
+        assert_eq!(*held.public_key(), [0x5A; 32]);
+        assert_eq!(held.state.balance(), 99_000);
+
+        // A stub in some OTHER asset: claiming it would re-denominate a balance,
+        // which is the cross-asset teleport the executor refuses.
+        let (signed, actor) = fresh_client([0xC8; 32]);
+        let mut ledger = dregg_cell::Ledger::new();
+        ledger
+            .insert_cell(dregg_cell::Cell::remote_stub_with_id_pk_token_balance(
+                actor, [0u8; 32], [0x77; 32], 500,
+            ))
+            .expect("insert a foreign-asset stub");
+        assert_eq!(
+            claim_signer_actor_cell(&mut ledger, &signed, true),
+            ActorCellClaim::Declined
+        );
+        assert_eq!(*ledger.get(&actor).unwrap().token_id(), [0x77; 32]);
+
+        // A classical-only envelope under the deployed posture: refused, and no
+        // cell is left behind for the rejected turn.
+        let (mut signed, actor) = fresh_client([0xC9; 32]);
+        signed.pq_signature.clear();
+        signed.pq_signer.clear();
+        let mut ledger = dregg_cell::Ledger::new();
+        assert_eq!(
+            claim_signer_actor_cell(&mut ledger, &signed, true),
+            ActorCellClaim::Declined
+        );
+        assert!(ledger.get(&actor).is_none());
+        // …and is materialized only in the explicitly unaudited classical mode.
+        assert_eq!(
+            claim_signer_actor_cell(&mut ledger, &signed, false),
+            ActorCellClaim::Materialized
+        );
+    }
+
+    /// The agent-substitution tooth survives the claim: an adversary naming a
+    /// victim cell as its agent gets no cell and no authority.
+    #[test]
+    fn the_claim_never_fabricates_authority_over_a_foreign_agent() {
+        let clerk = AgentCipherclerk::from_key_bytes(zeroize::Zeroizing::new([0xCA; 32]));
+        let victim = dregg_cell::CellId([0x42; 32]);
+        let signed = clerk.sign_turn(&empty_turn(victim));
+        let mut ledger = dregg_cell::Ledger::new();
+        assert_eq!(
+            claim_signer_actor_cell(&mut ledger, &signed, true),
+            ActorCellClaim::Declined
+        );
+        assert!(ledger.get(&victim).is_none());
+        assert_eq!(
+            ledger.len(),
+            0,
+            "not the victim's cell, and not the attacker's own either"
         );
     }
 

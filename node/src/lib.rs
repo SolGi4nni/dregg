@@ -67,6 +67,10 @@ pub mod finalization_votes;
 // ledger after finalization, not on the HTTP response (which is staging only).
 #[cfg(test)]
 mod faucet_grant_e2e;
+// CAN THE RECIPIENT SPEND IT? The other half of onboarding: faucet → the fresh
+// client's OWN first turn → finalized, asserted on the authoritative ledger.
+#[cfg(test)]
+mod first_turn_e2e;
 pub mod genesis;
 pub mod gossip;
 pub mod identity_export;
