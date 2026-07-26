@@ -493,12 +493,13 @@ pub enum TokenKeyRef {
 /// Derive the deterministic, cell-scoped macaroon root secret for a
 /// [`TokenKeyRef::CellScopedMacaroon`] credential.
 ///
-/// This is the SINGLE source of truth for the secret: the executor derives it
-/// at verify time (see `TurnExecutor::verify_token_authorization`), and a
-/// credential minter (e.g. the SDK's `AgentRuntime` spawning a sub-agent) must
-/// mint the macaroon under the SAME secret so the executor's
-/// `Authorization::Token` path is the real, in-runtime gate — not an out-of-band
-/// `cap.verify()`.
+/// This WAS the single source of truth for the secret: the executor derived it
+/// at verify time and a credential minter (e.g. the SDK's `AgentRuntime`
+/// spawning a sub-agent) minted the macaroon under the SAME secret, so the
+/// `Authorization::Token` path was the real in-runtime gate rather than an
+/// out-of-band `cap.verify()`. The verify-time half no longer exists — see the
+/// warning below for why — so this is now a minting-side derivation with no
+/// verifier, kept for the falsifier.
 ///
 /// ⚠ **THIS IS NOT A SECRET.** Both inputs are public — the federation id is
 /// served by the node's own public endpoints, and the cell id is the thing a

@@ -2104,29 +2104,13 @@ impl TurnExecutor {
         }
     }
 
-    /// Derive the deterministic, cell-scoped macaroon root secret.
-    ///
-    /// HMAC macaroons require the verifier to hold the root secret, so this
-    /// path is only sound where the federation legitimately owns the cell's
-    /// secret. The secret is a domain-separated BLAKE3 KDF over the local
-    /// federation id + the cell id, so it is:
-    /// - deterministic (no wall-clock / randomness — consensus-safe),
-    /// - cell-scoped (a different cell yields a different secret, so a
-    ///   macaroon minted for cell A cannot verify against cell B),
-    /// - federation-scoped (cross-federation replay produces a different
-    ///   secret).
-    ///
-    /// NOTE: this binds the macaroon secret to the federation that runs the
-    /// turn. A macaroon minted against this derivation is a *cell-local*
-    /// credential, exactly as TOKEN-CAPABILITY-UNIFICATION.md requires (no
-    /// shared HMAC secret ever crosses domains; cross-domain auth must use a
-    /// biscuit).
-    fn derive_cell_macaroon_secret(&self, cell: &CellId) -> [u8; 32] {
-        // Single source of truth: `crate::action::derive_cell_macaroon_secret`,
-        // which a credential minter (e.g. the SDK sub-agent path) calls to mint
-        // a macaroon under the SAME secret the executor verifies against.
-        crate::action::derive_cell_macaroon_secret(&self.local_federation_id, cell)
-    }
+    // `derive_cell_macaroon_secret` USED to live here, as the verify-time half of
+    // the cell-scoped macaroon path. It is gone: the executor refuses that path
+    // outright, so nothing derives at verify time, and the wrapper's doc claimed
+    // the derivation was "cell-scoped"/"federation-scoped" soundness when both
+    // inputs are public. `crate::action::derive_cell_macaroon_secret` remains —
+    // correctly labelled NOT A SECRET — so the refusal has something to test
+    // against; see `token_macaroon_same_cell_public_derivation_refuses`.
 
     /// Compute the delegation message signed by a delegator for a bearer capability.
     pub fn compute_bearer_delegation_message(
