@@ -106,7 +106,9 @@
 //!   never more permissive, so shipping it in a production build arms nothing.
 
 use std::any::Any;
+use std::cell::Cell;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::Once;
 
 use crate::descriptor_ir2::EffectVmDescriptor2;
 use crate::field::BabyBear;
@@ -327,13 +329,44 @@ fn panic_message(payload: &(dyn Any + Send)) -> String {
     }
 }
 
-/// Run `f`, silencing the default panic hook for its duration so an *expected* unsat panic does
-/// not spray a backtrace across passing test output. The hook is restored before returning.
+/// Set while this thread is inside [`catch_quietly`]. The hook installed below reads it, so
+/// silencing is scoped to the thread that asked for it.
+thread_local! {
+    static QUIET: Cell<bool> = const { Cell::new(false) };
+}
+
+static QUIET_HOOK: Once = Once::new();
+
+/// Run `f`, silencing the default panic hook **on this thread** for its duration, so an *expected*
+/// unsat panic does not spray a backtrace across passing test output.
+///
+/// ⚠ THE HOOK IS PROCESS-GLOBAL AND THIS USED TO IGNORE THAT. The previous implementation did
+/// `take_hook()` / `set_hook(|_| {})` / `set_hook(prev)` around `f`. `std::panic`'s hook is one
+/// slot for the whole process, so for the duration of any `must_refuse` anywhere, EVERY thread's
+/// panic printed nothing — and a test binary runs its tests in parallel. The cost is not
+/// theoretical: measured 2026-07-26 on persvati at `--test-threads=4`, all six failures of
+/// `tests/effect_vm_umem_real_turn.rs` reported a bare `FAILED` with an EMPTY stdout block. The
+/// panics happened while a sibling test held the silent hook, so the assertion messages were
+/// swallowed and the reds named nothing anyone could act on. Two full census runs read them as
+/// mysteries.
+///
+/// So the silence is now a THREAD-LOCAL flag consulted by a hook installed once. A concurrent
+/// thread's genuine failure prints normally; the expected unsat panic on this thread still does
+/// not. The flag is saved and restored rather than cleared, so nesting cannot un-silence an outer
+/// `catch_quietly`.
 fn catch_quietly<T>(f: impl FnOnce() -> T) -> Result<T, Box<dyn Any + Send>> {
-    let prev = std::panic::take_hook();
-    std::panic::set_hook(Box::new(|_| {}));
+    QUIET_HOOK.call_once(|| {
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if QUIET.with(Cell::get) {
+                return;
+            }
+            prev(info);
+        }));
+    });
+    let outer = QUIET.with(|q| q.replace(true));
     let r = catch_unwind(AssertUnwindSafe(f));
-    std::panic::set_hook(prev);
+    QUIET.with(|q| q.set(outer));
     r
 }
 
