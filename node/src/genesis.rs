@@ -152,6 +152,13 @@ struct GenesisConfig {
 
 /// Run the genesis configuration generation.
 pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u64, output: &Path) {
+    // Genesis MINTS the committee's ML-DSA-65 keys, so it reaches a post-quantum primitive before
+    // anything else in this process does. Without this call `dregg_pq`'s fail-closed gate refused
+    // the keygen and the command died with `Abort trap: 6` — the documented cold start
+    // (`scripts/run-node-10min.sh` step one) could not run at HEAD. The installs lived inline in
+    // `run_node` and nowhere else, so serving was covered and cold start was not.
+    crate::install_verified_pq_cores();
+
     if validators == 0 {
         eprintln!("error: must have at least 1 validator");
         std::process::exit(1);

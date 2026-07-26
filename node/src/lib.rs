@@ -74,12 +74,20 @@ mod first_turn_e2e;
 pub mod genesis;
 pub mod gossip;
 pub mod identity_export;
+// `dregg-node init` — mints the one-validator chain `run` refuses to start
+// without, through the same `genesis::run_genesis` the documented command uses.
+mod init;
+// CAN THE OPERATOR ACT AFTER SOMEBODY ELSE ACTED? The thin ingress stamped the
+// node-WIDE receipt-log head as the agent's predecessor, so the faucet grant one
+// step earlier made the next operator turn unsubmittable.
 #[cfg(test)]
 mod mailbox_crank_e2e;
 pub mod mcp;
 pub mod metrics;
 #[cfg(test)]
 mod node_integrator_e2e;
+#[cfg(test)]
+mod operator_turn_receipt_head_e2e;
 // The operator onboarding dance (gen-validator-key / join / add-validator) — the
 // slick, reusable path for folding a node + validator into a federation.
 #[cfg(test)]
@@ -720,7 +728,7 @@ pub async fn run(cli: Cli) {
             )
             .await
         }
-        Command::Init { data_dir } => init_node(&data_dir),
+        Command::Init { data_dir } => init::init_node(&data_dir),
         Command::Status { port } => check_status(port).await,
         Command::MudClient { player_seed } => {
             #[cfg(feature = "deos-host")]
@@ -886,114 +894,22 @@ pub async fn run(cli: Cli) {
     }
 }
 
-/// Run the node: start HTTP API server and federation sync.
-#[allow(clippy::too_many_arguments)]
-async fn run_node(
-    port: u16,
-    bind: &str,
-    peers: Vec<String>,
-    data_dir: &str,
-    key_file: &str,
-    gossip_port: u16,
-    _node_index: usize,
-    _federation_size: usize,
-    enable_pruning: bool,
-    prove_turns: bool,
-    checkpoint_interval: u64,
-    blocklace_checkpoint_interval: u64,
-    blocklace_wave_timeout_ms: u64,
-    block_cadence_ms: u64,
-    idle_heartbeat_ms: u64,
-    min_block_interval_ms: u64,
-    enable_faucet: bool,
-    federation_mode_str: &str,
-    consensus_engine: &str,
-    groups: Vec<String>,
-    auto_approve_joins_flag: bool,
-    cors_origins_flag: Vec<String>,
-    deos_program: Option<String>,
-    dev_unlock: bool,
-) {
-    let data_path = expand_path(data_dir);
-
-    if !data_path.exists() {
-        error!(
-            "data directory does not exist: {}. Run `dregg-node init` first.",
-            data_path.display()
-        );
-        std::process::exit(1);
-    }
-
-    // devnet *mode* is LIVE: `Genesis` config-gen, `--enable-faucet`, and the `.devnet`
-    // marker below are first-class local-devnet plumbing (NOT the decommissioned hosted
-    // devnet, which is gone). Do not strip this mode thinking it's dead.
-    // Check for `.devnet` marker and warn prominently.
-    if data_path.join(".devnet").exists() {
-        tracing::warn!("Running in DEVNET mode \u{2014} keys are not production-grade");
-    }
-
-    // ── MARSHAL-ONLY STARTUP TRIPWIRE (fail-CLOSED refusal) ───────────────────
-    // A binary linked WITHOUT the verified Lean executor archive (libdregg_lean.a)
-    // runs the UN-verified Rust executor: `dregg_lean_ffi::lean_available()` is false.
-    // Such a build must NEVER deploy silently as if it were the verified node — a
-    // stale or gitignored Lean seed degrades the whole executor to marshal-only with
-    // no other visible signal. Historically this tripwire was LOG-ONLY (an `error!`),
-    // so a *solo* node whose logs were ignored could still serve its API presenting as
-    // verified. It is now fail-CLOSED: any node (solo OR full) REFUSES to start
-    // (`exit(1)`) when the verified executor is not linked, UNLESS the operator
-    // explicitly accepts the un-verified executor with `DREGG_ALLOW_UNVERIFIED_CONSENSUS=1`
-    // (the same escape hatch the verified-consensus hard-check below uses). This makes an
-    // unverified node a DELIBERATE opt-in, never a silent default. (See
-    // docs/BUILD-LEAN-LINKED-NODE.md.)
-    //
-    // The refusal must also be SIDE-EFFECT-FREE, so it runs HERE — before
-    // `NodeState` construction touches the data dir. When it ran after state
-    // construction + devnet seeding, a refused first launch left a partially
-    // initialized data dir: the relaunch (with the opt-in set) took the
-    // recovery path instead of the fresh-boot path and never provisioned the
-    // operator's agent cell. The first `/api/faucet` call without `public_key`
-    // then materialized that cell as a zero-key stub, and every signed turn on
-    // that data dir failed "Ed25519 signature verification failed" forever
-    // (the faucet never rewrites an existing cell's key). Reproduced
-    // end-to-end: clean boot → agent cell present with the operator key;
-    // refused-launch-then-relaunch → agent cell absent.
-    let lean_available = dregg_lean_ffi::lean_available();
-    let allow_unverified = env_allow_unverified(
-        std::env::var("DREGG_ALLOW_UNVERIFIED_CONSENSUS")
-            .ok()
-            .as_deref(),
-    );
-    if !lean_available {
-        if !marshal_only_must_refuse(lean_available, allow_unverified) {
-            tracing::warn!(
-                "MARSHAL-ONLY BUILD OVERRIDDEN: `dregg_lean_ffi::lean_available()` is false — this \
-                 binary was linked WITHOUT the verified Lean executor archive (libdregg_lean.a) and \
-                 is running the UN-VERIFIED Rust executor. DREGG_ALLOW_UNVERIFIED_CONSENSUS is set, \
-                 so the node will proceed on the un-verified executor. Its state transitions are NOT \
-                 shadowed by the proved Lean kernel — do not present this node as verified."
-            );
-        } else {
-            error!(
-                "REFUSING TO START: `dregg_lean_ffi::lean_available()` is false — this binary was \
-                 linked WITHOUT the verified Lean executor archive (libdregg_lean.a) and would run \
-                 the UN-VERIFIED Rust executor. A node (solo OR full) MUST NOT serve as if verified \
-                 while running the un-verified executor. Rebuild against a closure-complete, \
-                 HEAD-matching Lean archive: `./scripts/bootstrap.sh` (and set DREGG_REQUIRE_LEAN=1 \
-                 in CI/distribution builds so a marshal-only degrade fails the build instead of \
-                 shipping silently — a --release build now defaults that gate ON). To deliberately \
-                 run an un-verified node, set DREGG_ALLOW_UNVERIFIED_CONSENSUS=1. A stale or \
-                 gitignored seed silently degrades to marshal-only — see \
-                 docs/BUILD-LEAN-LINKED-NODE.md."
-            );
-            std::process::exit(1);
-        }
-    } else {
-        info!(
-            "verified-executor archive linked: `dregg_lean_ffi::lean_available()` is true — this \
-             node runs the PROVED Lean executor over the C ABI"
-        );
-    }
-
+/// Install ALL SIX Lean-verified post-quantum cores as this process's PQ authority — the one
+/// named place that does it, so an entry point gets them by CALLING THIS, not by remembering to
+/// copy the block.
+///
+/// ⚑ WHY THIS IS A FUNCTION NOW. These installs used to sit INLINE in `run_node` and nowhere else,
+/// so "the deployed node runs verified PQ" was a property of one code path rather than of the
+/// binary. `dregg-node genesis` — the documented cold-start step, `scripts/run-node-10min.sh`'s
+/// first action — never ran them, so minting the committee ML-DSA key hit `dregg_pq::audit`'s
+/// fail-closed refusal and the command died with `Abort trap: 6`. That is cause #3 in the gate's
+/// own message, "a host binary that simply never calls the install functions", and it broke cold
+/// start at HEAD. `run_mcp` and `run_relay` are the same shape and are now covered too.
+///
+/// Idempotent and once-per-process; every install is export-gated, so an archive missing a core
+/// still installs nothing and the refusal at the point of use still stands. Safe to call from
+/// every entry point, and it should be called from every entry point.
+pub fn install_verified_pq_cores() {
     // ── ML-DSA VERIFY: install the Lean-verified core as the accept/reject AUTHORITY ──
     // `dregg_pq::ml_dsa_verify` is the security-critical ML-DSA-65 verify behind ~10 surfaces
     // (token/revocation, lightclient, cell-crypto, wire, turn/authorize, captp, blocklace/pq). It is a
@@ -1173,6 +1089,119 @@ async fn run_node(
             "the linked Lean archive does NOT export `dregg_mlkem_keygen_real`, so hybrid responder              keypairs are minted with no Lean-verified expander. ⚑ THIS ONE WARNS AND PROCEEDS EVEN              UNDER DREGG_REQUIRE_LEAN=1 (a DECLARED exception, see dregg_pq::audit::             guard_no_verified_core): the key is EPHEMERAL per-session material and refusing bricks              every CaPTP/session handshake on an archive-less process.",
         ),
     }
+}
+
+/// Run the node: start HTTP API server and federation sync.
+#[allow(clippy::too_many_arguments)]
+async fn run_node(
+    port: u16,
+    bind: &str,
+    peers: Vec<String>,
+    data_dir: &str,
+    key_file: &str,
+    gossip_port: u16,
+    _node_index: usize,
+    _federation_size: usize,
+    enable_pruning: bool,
+    prove_turns: bool,
+    checkpoint_interval: u64,
+    blocklace_checkpoint_interval: u64,
+    blocklace_wave_timeout_ms: u64,
+    block_cadence_ms: u64,
+    idle_heartbeat_ms: u64,
+    min_block_interval_ms: u64,
+    enable_faucet: bool,
+    federation_mode_str: &str,
+    consensus_engine: &str,
+    groups: Vec<String>,
+    auto_approve_joins_flag: bool,
+    cors_origins_flag: Vec<String>,
+    deos_program: Option<String>,
+    dev_unlock: bool,
+) {
+    let data_path = expand_path(data_dir);
+
+    if !data_path.exists() {
+        error!(
+            "data directory does not exist: {}. Run `dregg-node init` first.",
+            data_path.display()
+        );
+        std::process::exit(1);
+    }
+
+    // devnet *mode* is LIVE: `Genesis` config-gen, `--enable-faucet`, and the `.devnet`
+    // marker below are first-class local-devnet plumbing (NOT the decommissioned hosted
+    // devnet, which is gone). Do not strip this mode thinking it's dead.
+    // Check for `.devnet` marker and warn prominently.
+    if data_path.join(".devnet").exists() {
+        tracing::warn!("Running in DEVNET mode \u{2014} keys are not production-grade");
+    }
+
+    // ── MARSHAL-ONLY STARTUP TRIPWIRE (fail-CLOSED refusal) ───────────────────
+    // A binary linked WITHOUT the verified Lean executor archive (libdregg_lean.a)
+    // runs the UN-verified Rust executor: `dregg_lean_ffi::lean_available()` is false.
+    // Such a build must NEVER deploy silently as if it were the verified node — a
+    // stale or gitignored Lean seed degrades the whole executor to marshal-only with
+    // no other visible signal. Historically this tripwire was LOG-ONLY (an `error!`),
+    // so a *solo* node whose logs were ignored could still serve its API presenting as
+    // verified. It is now fail-CLOSED: any node (solo OR full) REFUSES to start
+    // (`exit(1)`) when the verified executor is not linked, UNLESS the operator
+    // explicitly accepts the un-verified executor with `DREGG_ALLOW_UNVERIFIED_CONSENSUS=1`
+    // (the same escape hatch the verified-consensus hard-check below uses). This makes an
+    // unverified node a DELIBERATE opt-in, never a silent default. (See
+    // docs/BUILD-LEAN-LINKED-NODE.md.)
+    //
+    // The refusal must also be SIDE-EFFECT-FREE, so it runs HERE — before
+    // `NodeState` construction touches the data dir. When it ran after state
+    // construction + devnet seeding, a refused first launch left a partially
+    // initialized data dir: the relaunch (with the opt-in set) took the
+    // recovery path instead of the fresh-boot path and never provisioned the
+    // operator's agent cell. The first `/api/faucet` call without `public_key`
+    // then materialized that cell as a zero-key stub, and every signed turn on
+    // that data dir failed "Ed25519 signature verification failed" forever
+    // (the faucet never rewrites an existing cell's key). Reproduced
+    // end-to-end: clean boot → agent cell present with the operator key;
+    // refused-launch-then-relaunch → agent cell absent.
+    let lean_available = dregg_lean_ffi::lean_available();
+    let allow_unverified = env_allow_unverified(
+        std::env::var("DREGG_ALLOW_UNVERIFIED_CONSENSUS")
+            .ok()
+            .as_deref(),
+    );
+    if !lean_available {
+        if !marshal_only_must_refuse(lean_available, allow_unverified) {
+            tracing::warn!(
+                "MARSHAL-ONLY BUILD OVERRIDDEN: `dregg_lean_ffi::lean_available()` is false — this \
+                 binary was linked WITHOUT the verified Lean executor archive (libdregg_lean.a) and \
+                 is running the UN-VERIFIED Rust executor. DREGG_ALLOW_UNVERIFIED_CONSENSUS is set, \
+                 so the node will proceed on the un-verified executor. Its state transitions are NOT \
+                 shadowed by the proved Lean kernel — do not present this node as verified."
+            );
+        } else {
+            error!(
+                "REFUSING TO START: `dregg_lean_ffi::lean_available()` is false — this binary was \
+                 linked WITHOUT the verified Lean executor archive (libdregg_lean.a) and would run \
+                 the UN-VERIFIED Rust executor. A node (solo OR full) MUST NOT serve as if verified \
+                 while running the un-verified executor. Rebuild against a closure-complete, \
+                 HEAD-matching Lean archive: `./scripts/bootstrap.sh` (and set DREGG_REQUIRE_LEAN=1 \
+                 in CI/distribution builds so a marshal-only degrade fails the build instead of \
+                 shipping silently — a --release build now defaults that gate ON). To deliberately \
+                 run an un-verified node, set DREGG_ALLOW_UNVERIFIED_CONSENSUS=1. A stale or \
+                 gitignored seed silently degrades to marshal-only — see \
+                 docs/BUILD-LEAN-LINKED-NODE.md."
+            );
+            std::process::exit(1);
+        }
+    } else {
+        info!(
+            "verified-executor archive linked: `dregg_lean_ffi::lean_available()` is true — this \
+             node runs the PROVED Lean executor over the C ABI"
+        );
+    }
+
+    // Every PQ core this process will answer with, installed before anything mints, signs, or
+    // serves. See `install_verified_pq_cores` for why this is one call and not 180 inline lines.
+    install_verified_pq_cores();
 
     // Initialize node state with configurable key file.
     let has_peers = !peers.is_empty();
@@ -2010,53 +2039,6 @@ async fn run_node(
     info!("HTTP server shut down gracefully");
 }
 
-/// Initialize the data directory: create it and generate a keypair.
-fn init_node(data_dir: &str) {
-    let data_path = expand_path(data_dir);
-
-    if data_path.exists() {
-        println!("Data directory already exists: {}", data_path.display());
-        println!("Skipping initialization.");
-        return;
-    }
-
-    std::fs::create_dir_all(&data_path).expect("failed to create data directory");
-
-    // Generate a node keypair and store the public key for display.
-    let mut key_bytes = [0u8; 32];
-    getrandom::fill(&mut key_bytes).expect("getrandom failed");
-
-    // Write the secret key to the data dir (in production, use a keyring).
-    let key_path = data_path.join("node.key");
-    std::fs::write(&key_path, key_bytes).expect("failed to write node key");
-
-    // Restrict file permissions to owner read/write only (0600).
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600))
-            .expect("failed to set node.key permissions");
-    }
-
-    // Derive public key for display.
-    let signing_key = ed25519_dalek::SigningKey::from_bytes(&key_bytes);
-    let public_key = signing_key.verifying_key();
-    let pk_hex: String = public_key
-        .to_bytes()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect();
-
-    println!(
-        "Initialized dregg-node data directory: {}",
-        data_path.display()
-    );
-    println!("Node public key: {pk_hex}");
-    println!();
-    println!("Start the node with:");
-    println!("  dregg-node run --data-dir {}", data_dir);
-}
-
 /// Check if the node is reachable on its HTTP port.
 ///
 /// Uses a raw TCP connect (no extra HTTP client dep in the node binary).
@@ -2100,6 +2082,9 @@ fn dirs_home() -> Option<PathBuf> {
 
 /// Run the MCP server: initialize node state and serve over stdio.
 async fn run_mcp(data_dir: &str, peers: Vec<String>) {
+    // The MCP tools commit turns, which SIGN. Same install `run_node` does, for the same reason.
+    install_verified_pq_cores();
+
     let data_path = expand_path(data_dir);
 
     if !data_path.exists() {
@@ -2152,6 +2137,9 @@ async fn run_relay(
     min_message_deposit: u64,
     subscription_fee: u64,
 ) {
+    // The relay signs delivery proofs and dispute submissions under its operator identity.
+    install_verified_pq_cores();
+
     let data_path = expand_path(data_dir);
 
     // Read operator key from the data directory.
