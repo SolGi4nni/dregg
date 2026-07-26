@@ -32,20 +32,27 @@
 name: Publish Lean seed
 
 on:
-  # AUTOMATIC: any change to the Lean source changes the Dregg2 tree hash, which changes the KEY,
-  # which means every existing published asset is stale for the new HEAD. That is exactly when a
-  # fresh seed must be cut — otherwise the marshal gate downstream has nothing to fetch.
-  push:
-    branches: [main]
-    paths:
-      - 'metatheory/**'
-      - 'dregg-lean-ffi/build.rs'
-      - 'dregg-lean-ffi/scripts/**'
-      - 'scripts/bootstrap.sh'
-      - 'scripts/lean-seed-key.sh'
-      - '.github/workflows/lean-seed.yml'
-  # A safety net: catches a seed that was missed because its runner was offline when main moved.
-  # The key-idempotency check below makes a no-op run cheap (no rebuild when the asset exists).
+  # ⚠ THE `push` TRIGGER IS GONE, DELIBERATELY (2026-07-25, ember). It fired on `metatheory/**`,
+  # which is the single most-edited path in this repo — 194 commits to `metatheory/Dregg2.lean`
+  # alone in the 7 days to 2026-07-25, out of 362 commits that day. Each run is a 19-25 minute
+  # FULL SATURATION of hbox, and hbox is triple-booked: it is the self-hosted Actions runner, the
+  # designated Lean build box, AND (since `hcargo`) a cargo host. Measured 2026-07-25 23:48: hbox
+  # load average 21.7, entirely this workflow's `lean` and `rustc` processes under
+  # `~/actions-runner/_work/`. So "hbox is idle" was never true for more than the gap between
+  # pushes, and every lane that offloaded to it was queueing behind a seed build.
+  #
+  # THE COST OF REMOVING IT, stated plainly: the seed key is
+  # `platform + toolchain + mathlib rev + git rev-parse HEAD:metatheory/Dregg2`, so ANY committed
+  # change under `metatheory/Dregg2/` invalidates every published asset for the new HEAD. Cutting
+  # on push is what kept a HEAD-matching seed available. Without it, `scripts/fetch-lean-seed.sh`
+  # will more often find no asset for the current tree, and lanes fall back to marshal-only — which
+  # is the FALSE-RED class (a bare SIGABRT that a lane reads as its own bug). Mitigation is the
+  # nightly below plus a manual cut before any session that needs verified-core tests on a box.
+  #
+  # The nightly is KEPT on purpose and is cheap: the key-idempotency check below makes a run with an
+  # already-published key a no-op (measured: 23 seconds), so it only pays the 20 minutes when the
+  # Lean tree actually moved, once, at 03:00 ET when nothing else is running. If even that is
+  # unwanted, delete these two lines — nothing else depends on them.
   schedule:
     - cron: '0 7 * * *'
   workflow_dispatch:
