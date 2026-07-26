@@ -53,7 +53,23 @@ The node binary is real and substantial (`node/src/lib.rs` is 2782 lines; `node/
 - **DURABLE (redb-backed, survives restart):** cell/ledger state, the blocklace DAG, attested roots,
   checkpoints, nullifiers, the equivocation-court ledger, channel rosters, the witnessed-receipt
   anti-omission set (`persist/src/{federation,blocklace_store,checkpoint}.rs`).
-- **EPHEMERAL (lost on restart), a sharp and important boundary:** the cipherclerk's **per-turn receipt
+- ⚑ **SUPERSEDED 2026-07-26 — the paragraph below is NO LONGER TRUE. Receipts survive a restart.**
+  It landed on 07-21 (`7d64c71bb`) and 07-22 (`91247fe3f`), two days after this audit was written.
+  Re-measured live on 07-26, not re-read: four serial faucet turns, kill, restart on the same data dir —
+  `before: len=4 root=4b847b85…a44605` / `after: len=4 root=4b847b85…a44605`, byte-identical. A light
+  client catches up too: SSE `Last-Event-ID: 0` after restart replays `chain_index` 1, 2, 3, and
+  `/api/receipts/index/range` still serves the certified opening. `node/src/ws.rs` genuinely has no
+  history replay, but that is by design — it is a notification stream; `events.rs` is the resumable one,
+  and it resumes correctly now that chain indices are durable.
+  ⚠ **A DIFFERENT and worse durability wound was found in the same reproduction, and is also fixed**
+  (`e5c92ac80`): before its first checkpoint — 1000 blocks, or a graceful shutdown — a `kill -9` left the
+  data dir **unbootable** (`recover_to_last_consistent: NO commit-log prefix reconstructs to its recorded
+  root`). The store was fine; the CHECK was wrong (it reconstructs from an empty base and compares
+  against roots committing the full ledger). So only a clean SIGTERM was survivable: power loss, OOM-kill
+  and `docker kill` all bricked a young node. Six tests in that module already asserted the correct
+  design and had been red, unread.
+  *Kept verbatim below because the CITATIONS are still the right map of the seam.*
+- **~~EPHEMERAL (lost on restart)~~, a sharp and important boundary:** the cipherclerk's **per-turn receipt
   chain** and the **receipt-index MMR head** served at `/api/receipts*`. The receipt chain is an in-memory
   `Vec<TurnReceipt>` initialized empty every boot (`sdk/src/cipherclerk.rs:1189,1263`); the MMR is rebuilt
   empty (`node/src/state.rs:1010,1203`); boot recovery restores the **ledger only** and moves a fresh
