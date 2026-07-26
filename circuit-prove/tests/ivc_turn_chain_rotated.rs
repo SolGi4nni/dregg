@@ -527,6 +527,83 @@ fn mismatched_carrier_witness_is_refused_fail_closed() {
     }
 }
 
+/// **THE ARM-SELECTION FAIL-CLOSED TOOTH — the twin of the one above, on the `None` arm.**
+///
+/// The mismatched-carrier tooth pins "a witness on the wrong leg is refused". This one pins the
+/// question nothing asked before it: **is the no-carrier arm allowed to take a leg whose
+/// descriptor DECLARES a recursive proof-binding?** It must not be. The custom member publishes a
+/// claimed `custom_proof_commitment` at IR2 PI 46..53 that the deployed AIR does not constrain at
+/// all (`Ir2Air::Main` has no `ProofBind` arm; the sixteen `pi_binding` pins only PUBLISH the
+/// columns), so the Custom arm's in-circuit connect to a re-proven sub-proof leaf is the claim's
+/// ONLY enforcement. `carrier_witness` is a plain `pub` field: before this guard, dropping it
+/// silently routed the leg to `prove_descriptor_leaf_rotated_with_segment` — a verifying root
+/// carrying a prover-chosen commitment nothing backs, and a light client folding that root cannot
+/// observe which arm was taken.
+///
+/// The leg here is a real chain turn whose `descriptor` is REPOINTED to the deployed wide custom
+/// member (`customVmDescriptor2R24`) with `carrier_witness: None`. The guard keys on descriptor
+/// identity, so it fires on the per-leaf match at turn 0 BEFORE any leaf-wrap proving — which is
+/// exactly why this tooth is CHEAP enough for CI while every real custom fold is `#[ignore]`d.
+///
+/// **It drives the UNGATED entry on purpose** (`prove_turn_chain_recursive_without_host_gate`, the
+/// same malicious-prover model as `ungated_prover_with_forged_post_commit_cannot_produce_a_root`).
+/// The host gate is the prover's OWN code and an attacker simply does not run it; measured here,
+/// `verify_descriptor_participant` does reject this particular repointed leg first (the swapped
+/// descriptor's table set does not match the proof's instances), so going through
+/// `prove_turn_chain_recursive` would measure the host gate rather than the fold. The claim under
+/// test is the stronger one: the arm-selection refusal holds with the host gate SKIPPED.
+///
+/// THE OTHER POLE lives where it is equally cheap: `dregg_circuit::effect_vm_descriptors`'s
+/// `registry_proof_bind_declarations_are_exactly_the_custom_member` sweeps all three deployed
+/// staged registries (174 members) and asserts the guard refuses EXACTLY the proof-bind declarers
+/// and passes every other member — so this tooth cannot be satisfied by a guard that simply
+/// refuses everything.
+#[test]
+fn custom_member_leg_without_a_carrier_witness_is_refused_fail_closed() {
+    use dregg_circuit::descriptor_ir2::parse_vm_descriptor2;
+    use dregg_circuit::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV;
+
+    let (mut turns, _g, _f) = make_chain(1000, 0, 7, 2);
+
+    let custom_json = WIDE_REGISTRY_STAGED_TSV
+        .lines()
+        .find_map(|line| {
+            let mut it = line.splitn(3, '\t');
+            (it.next() == Some("customVmDescriptor2R24")).then(|| {
+                let _name = it.next();
+                it.next()
+            })?
+        })
+        .expect("the custom member is in the deployed wide staged registry");
+    let custom = parse_vm_descriptor2(custom_json).expect("the custom member parses");
+    let custom_name = custom.name.clone();
+
+    turns[0].participant.rotated.descriptor = custom;
+    assert!(
+        turns[0].participant.rotated.carrier_witness.is_none(),
+        "the fixture leg carries no witness — that is the arm under test"
+    );
+
+    match prove_turn_chain_recursive_without_host_gate(&turns, &[sel::CUSTOM, sel::TRANSFER]) {
+        Err(TurnChainError::TurnProofInvalid { index, reason }) => {
+            assert_eq!(index, 0, "the refusal names the unbacked turn");
+            assert!(
+                reason.contains("unbacked proof-bind arm selection"),
+                "the refusal must name the ARM, not some downstream leaf failure; got: {reason}"
+            );
+            assert!(
+                reason.contains(&custom_name) && reason.contains("NO carrier witness"),
+                "the refusal must name the descriptor and the missing witness; got: {reason}"
+            );
+        }
+        Ok(_) => panic!(
+            "a proof-bind-declaring leg on the no-carrier arm must NEVER fold to a verifying \
+             root — its published commitment would be bound by nothing (fail-closed law)"
+        ),
+        Err(other) => panic!("expected the arm-selection TurnProofInvalid, got {other:?}"),
+    }
+}
+
 /// **THE LEAF TOOTH (host-gate-skipping prover, forged post-commit).** The claim is
 /// that per-turn execution soundness does NOT rest on the prover having run the
 /// host-side descriptor admission. So: run the UNGATED prover on a chain whose second

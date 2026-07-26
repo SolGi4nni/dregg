@@ -662,6 +662,26 @@ impl Accumulator {
         //     in-circuit to the descriptor's real rotated roots (the same leaf the K-fold path
         //     folds). This is what lets the running fold combine genuine 4-lane segments.
         let leg = &turn.participant.rotated;
+        // THE SAME ARM-SELECTION FAIL-CLOSED THE K-FOLD PATH TAKES — and here it is UNCONDITIONAL,
+        // because this driver has NO carrier arm at all. The K-fold
+        // (`ivc_turn_chain::mint_rotated_turn_leaf`) dispatches on `carrier_witness` and binds a
+        // custom leg's claimed `custom_proof_commitment` to a re-proven sub-proof leaf; this online
+        // driver mints the plain segment leaf for EVERY turn. So a proof-bind-declaring leg folded
+        // here would carry a prover-chosen claim bound by nothing — no in-AIR constraint
+        // (`Ir2Air::Main` has no `ProofBind` arm) and no connect — and `finalize`'s artifact is
+        // accepted by the same `verify_turn_chain_recursive` discipline, so a light client could
+        // not tell it apart from a K-folded chain. Refuse it outright rather than let the online
+        // path be the weaker of two roads to the same root. (Attaching a witness does NOT help
+        // here: there is no arm to consume it. Routing such a turn through `ivc_turn_chain` is the
+        // supported path; wiring a carrier arm into this driver is named, undone work.)
+        dregg_circuit::effect_vm_descriptors::require_no_unbacked_proof_bind(&leg.descriptor)
+            .map_err(|e| AccError::TurnProofInvalid {
+                index: idx,
+                reason: format!(
+                    "unbacked proof-bind arm selection (online accumulator has no carrier arm — \
+                     fold this turn through ivc_turn_chain): {e}"
+                ),
+            })?;
         let new_leaf = prove_descriptor_leaf_rotated_with_segment(
             &leg.descriptor,
             &leg.proof,

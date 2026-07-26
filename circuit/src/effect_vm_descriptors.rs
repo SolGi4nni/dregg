@@ -1617,6 +1617,78 @@ pub fn require_custom_carrier_vk8(
     custom_commit_version(d).map(|_| ())
 }
 
+/// The typed refusal [`require_no_unbacked_proof_bind`] raises: a descriptor that DECLARES a
+/// recursive proof-binding was about to be folded as a plain segment leaf, with nothing to back
+/// the claim it publishes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnbackedProofBindError {
+    /// The presented descriptor's name.
+    pub name: String,
+    /// How many `ProofBind` ops it declares (the custom member declares exactly one).
+    pub declarations: usize,
+}
+
+impl core::fmt::Display for UnbackedProofBindError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let Self { name, declarations } = self;
+        write!(
+            f,
+            "'{name}': declares {declarations} recursive proof-binding op(s) \
+             (`DescriptorIR2.ProofBind`) but the leg carries NO carrier witness — a proof-bind \
+             member has no re-exec rung. The declaration is NOT an in-AIR check (the deployed \
+             evaluator has no `ProofBind` arm and the sixteen `pi_binding` pins only PUBLISH the \
+             binding columns); the ONLY thing that makes the published claim mean anything is \
+             the per-turn fold connecting it to a re-proven sub-proof leaf. Folding this leg as \
+             a plain segment leaf would carry a prover-chosen commitment no sub-proof backs, and \
+             a light client could not tell which arm was taken — refused fail-closed. Attach the \
+             leg's `CarrierWitness` (`Custom` / `CustomIr2`) so the fold binds the claim."
+        )
+    }
+}
+
+impl std::error::Error for UnbackedProofBindError {}
+
+/// Require that a descriptor about to be folded WITHOUT a carrier witness — as the PLAIN SEGMENT
+/// LEAF, the fold's no-carrier arm — declares no `DescriptorIR2.ProofBind` op.
+///
+/// The exact twin of [`require_custom_carrier_vk8`] on the other polarity. That one guards the
+/// carrier arm (a leg that HAS a custom witness must publish the live commitment8+VK8 exposure);
+/// this one guards the ARM SELECTION itself (a leg whose descriptor declares a proof-binding must
+/// not reach the plain arm at all). Both are keyed structurally on the leg's own committed
+/// descriptor, never on a caller-passed flag — the whole failure mode is a prover picking the
+/// unbound arm for a descriptor whose identity demands the bound one.
+///
+/// **Why `ProofBind` IS the custom-member identity here** (measured, not assumed): across all
+/// three deployed staged registries — `V3_STAGED_REGISTRY_TSV` (60 members),
+/// [`WIDE_REGISTRY_STAGED_TSV`] (57) and [`WIDE_UMEM_WELD_REGISTRY_TSV`] (57) — EXACTLY
+/// one member carries a `proof_bind` op, and in every one of them it is
+/// `customVmDescriptor2R24`. Keying on the op rather than on the name means a member-name
+/// suffix flag-day (`…-gentian-deployed-bare-refuse`, `…-umem-wide-welded-staged`) cannot slip a
+/// custom leg past the guard, and a FUTURE proof-bind-declaring member is covered the day it is
+/// emitted rather than the day someone remembers to extend a name list.
+/// (`registry_proof_bind_declarations_are_exactly_the_custom_member` pins the measurement.)
+pub fn require_no_unbacked_proof_bind(
+    d: &crate::descriptor_ir2::EffectVmDescriptor2,
+) -> Result<(), UnbackedProofBindError> {
+    let declarations = proof_bind_declarations(d);
+    if declarations == 0 {
+        return Ok(());
+    }
+    Err(UnbackedProofBindError {
+        name: d.name.clone(),
+        declarations,
+    })
+}
+
+/// How many `DescriptorIR2.ProofBind` ops a descriptor declares — the structural custom-member
+/// detector [`require_no_unbacked_proof_bind`] keys on.
+pub fn proof_bind_declarations(d: &crate::descriptor_ir2::EffectVmDescriptor2) -> usize {
+    d.constraints
+        .iter()
+        .filter(|c| matches!(c, crate::descriptor_ir2::VmConstraint2::ProofBind(_)))
+        .count()
+}
+
 /// The rotated probe layout at register count `r` (the Rust twin of the Lean parametric
 /// layout `EffectVmEmitRotationR`: columns are FUNCTIONS of R; the chunking is 4-wide head,
 /// 3-wide chip groups while ≥ 3 remain, singletons after — arity ∈ {2,4}, NEVER 3 — and the
@@ -3880,5 +3952,85 @@ mod tests {
             .expect("custom member IS in the wide staged registry");
         let wide = parse_vm_descriptor2(wide_json).expect("wide custom parses");
         assert_eq!(custom_commit_version(&wide), Ok(CUSTOM_COMMIT_VERSION));
+    }
+
+    /// **THE MEASUREMENT [`require_no_unbacked_proof_bind`] IS KEYED ON.** Sweep every member of
+    /// all three deployed staged registries and count its `DescriptorIR2.ProofBind` declarations.
+    /// EXACTLY ONE member per registry declares one, and it is `customVmDescriptor2R24` — so
+    /// "declares a proof-binding" IS the custom-member identity, structurally, with no name list
+    /// to drift. Every other member passes the guard (they have no claim for a fold to back), and
+    /// the custom member is REFUSED with a typed error naming the missing carrier witness.
+    ///
+    /// This is the tooth that would go red if a future member started declaring a proof-binding
+    /// without its fold arm — the guard would then be over-firing on it, and that must be a
+    /// decision, not a silent widening.
+    #[test]
+    fn registry_proof_bind_declarations_are_exactly_the_custom_member() {
+        use crate::descriptor_ir2::parse_vm_descriptor2;
+
+        for (label, tsv) in [
+            ("v3-staged", V3_STAGED_REGISTRY_TSV),
+            ("wide-staged", WIDE_REGISTRY_STAGED_TSV),
+            ("wide-umem-welded", WIDE_UMEM_WELD_REGISTRY_TSV),
+        ] {
+            let mut declaring: Vec<(String, String, usize)> = Vec::new();
+            let mut members = 0usize;
+            for line in tsv.lines().filter(|l| !l.trim().is_empty()) {
+                let mut it = line.splitn(3, '\t');
+                let key = it.next().expect("registry line has a key").to_string();
+                let _name = it.next();
+                let json = it.next().expect("registry line has a descriptor json");
+                let d = parse_vm_descriptor2(json)
+                    .unwrap_or_else(|e| panic!("{label}/{key} must parse: {e}"));
+                members += 1;
+                let n = proof_bind_declarations(&d);
+                if n > 0 {
+                    declaring.push((key, d.name.clone(), n));
+                }
+                // The guard's two poles, member by member: a proof-bind member is REFUSED
+                // without a witness; every other member passes.
+                assert_eq!(
+                    require_no_unbacked_proof_bind(&d).is_err(),
+                    n > 0,
+                    "{label}/{}: the no-witness guard must fire on EXACTLY the proof-bind \
+                     declarers",
+                    d.name
+                );
+            }
+            assert!(
+                members >= 57,
+                "{label}: registry looks truncated ({members})"
+            );
+            assert_eq!(
+                declaring.len(),
+                1,
+                "{label}: exactly one member may declare a proof-binding, found {declaring:?}"
+            );
+            let (key, name, n) = &declaring[0];
+            assert_eq!(key, "customVmDescriptor2R24", "{label}: {name}");
+            assert_eq!(*n, 1, "{label}: the custom member declares exactly one");
+
+            // The typed refusal names the arm and the remedy — it is actionable, not a bare bool.
+            let json = tsv
+                .lines()
+                .find_map(|line| {
+                    let mut it = line.splitn(3, '\t');
+                    (it.next() == Some("customVmDescriptor2R24")).then(|| {
+                        let _name = it.next();
+                        it.next()
+                    })?
+                })
+                .expect("the custom member is in every staged registry");
+            let custom = parse_vm_descriptor2(json).expect("custom parses");
+            let msg = require_no_unbacked_proof_bind(&custom)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                msg.contains("NO carrier witness")
+                    && msg.contains("CarrierWitness")
+                    && msg.contains("fail-closed"),
+                "{label}: the refusal must name the missing witness and the remedy: {msg}"
+            );
+        }
     }
 }

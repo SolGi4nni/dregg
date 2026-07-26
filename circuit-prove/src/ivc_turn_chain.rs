@@ -3533,7 +3533,11 @@ fn mint_rotated_turn_leaf(
     // descriptor does not carry the STEP-3 claim pins — the big-bang regen tie) and binds the
     // re-proven carrier leaf under its segment-preserving binding node. A turn that WANTS the
     // re-exec rung carries `carrier_witness: None` (the sanctioned path, identical to today's
-    // non-carrier turns). There is deliberately NO wildcard arm, so a new variant is a compile
+    // non-carrier turns) — EXCEPT for the custom member, which has no re-exec rung and is now
+    // REFUSED on that arm (`require_no_unbacked_proof_bind`, the `None` arm below): its claim is
+    // the one thing the deployed AIR does not constrain, so detaching the witness deletes the
+    // claim's only enforcement rather than deferring it to a re-executing validator.
+    // There is deliberately NO wildcard arm, so a new variant is a compile
     // error here (the wave must decide its fold branch).
     let leg = &t.participant.rotated;
     Ok(match &leg.carrier_witness {
@@ -4257,13 +4261,47 @@ fn mint_rotated_turn_leaf(
                 reason: format!("segmented membership-binding node failed: {e:?}"),
             })?
         }
-        None => prove_descriptor_leaf_rotated_with_segment(
-            &leg.descriptor,
-            &leg.proof,
-            &leg.public_inputs,
-            config,
-        )
-        .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?,
+        None => {
+            // THE ARM-SELECTION FAIL-CLOSED (the exact twin of the Custom arm's
+            // `require_custom_carrier_vk8` version boundary, on the other polarity). That guard
+            // asks "does a leg WITH a custom witness publish the live exposure?"; this one asks
+            // the question nothing asked before: "is this leg ALLOWED on the unbound arm at all?"
+            //
+            // WHY IT HAS TO BE HERE. `carrier_witness` is a plain `pub` field the prover fills
+            // in, and the arm is chosen by matching it. For every member except one that is
+            // sound — `None` IS the sanctioned re-exec rung, and the leg's own AIR constrains
+            // everything it publishes. The custom member is the exception, because what it
+            // publishes at IR2 PI 46..53 is a CLAIM about an external sub-proof and the deployed
+            // AIR does not constrain it: the evaluator (`Ir2Air::Main`) has no `ProofBind` arm at
+            // all, and the sixteen `pi_binding` pins only PUBLISH the binding columns. The single
+            // thing that makes the claim mean anything is the Custom arm's connect
+            // (`joint_turn_recursive`, the leg's re-exposed PI 46..53 tied lane-by-lane to the
+            // re-proven sub-proof leaf's genuine in-circuit commitment). Dropping the witness
+            // therefore did not weaken the claim — it DELETED its only enforcement, and a light
+            // client folding the root cannot observe which arm was taken.
+            //
+            // KEYED ON DESCRIPTOR IDENTITY, never on a caller-passed flag: the leg's own
+            // committed descriptor declaring a `DescriptorIR2.ProofBind` op IS the custom member
+            // (measured across all three staged registries — exactly one declarer each, always
+            // `customVmDescriptor2R24`). A prover cannot dodge the guard by lying about intent;
+            // it would have to present a different descriptor, which is a different leg.
+            //
+            // NO CARVE-OUT. There is deliberately no "zero-commitment sentinel" escape here (the
+            // Dsl arm's zero-rc sentinel routes the OTHER way — it refuses to FOLD a vacuous
+            // claim). A proof-bind member has no re-exec rung to fall back to.
+            dregg_circuit::effect_vm_descriptors::require_no_unbacked_proof_bind(&leg.descriptor)
+                .map_err(|e| TurnChainError::TurnProofInvalid {
+                index: i,
+                reason: format!("unbacked proof-bind arm selection: {e}"),
+            })?;
+            prove_descriptor_leaf_rotated_with_segment(
+                &leg.descriptor,
+                &leg.proof,
+                &leg.public_inputs,
+                config,
+            )
+            .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?
+        }
     })
 }
 

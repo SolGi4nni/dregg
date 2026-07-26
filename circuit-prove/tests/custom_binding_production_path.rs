@@ -239,43 +239,28 @@ fn mint_production_custom_leg(
     .expect("the production custom-wide minter mints the leg with the bundle attached")
 }
 
-/// A plain trailing custom turn (no bundle — the ordinary segment-leaf path) so the chain has >= 2
-/// turns and links off the bundled turn's post-state.
-fn plain_custom_turn(balance: i64, nonce: u64, bound: &BoundCustomProof) -> FinalizedTurn {
-    let st = CellState::new(balance as u64, nonce as u32);
-    let effects = vec![Effect::Custom {
-        program_vk_hash: [BabyBear::new(9); 8],
-        proof_commitment: [
-            BabyBear::new(1),
-            BabyBear::new(2),
-            BabyBear::new(3),
-            BabyBear::new(4),
-            BabyBear::new(5),
-            BabyBear::new(6),
-            BabyBear::new(7),
-            BabyBear::new(8),
-        ],
-    }];
-    // Re-use the production NARROW recipe for a non-bundled custom turn? The narrow recipe rejects
-    // Custom; build a bundled wide leg but DROP the binding by not threading a witness is not an
-    // option through the public minter. Use the wide minter and then clear the witness so the chain
-    // prover takes the ordinary segment-leaf branch for this trailing turn.
-    let bundle = CustomWitnessBundle::from_bound_custom_proof(bound).expect("retained witness");
-    let before_cell = producer_cell(balance, nonce);
-    let after_cell = producer_cell(balance, nonce + 1);
-    let mut leg = mint_custom_wide_rotated_participant_leg(
-        &st,
-        &effects,
-        &before_cell,
-        &after_cell,
-        &dregg_circuit::heap_root::empty_heap_root_8(),
-        &dregg_circuit::heap_root::empty_heap_root_8(),
-        &[[3u8; 32]],
-        None,
-        bundle,
-    )
-    .expect("trailing custom-wide leg mints");
-    leg.carrier_witness = None;
+/// An HONESTLY BOUND trailing custom turn so the chain has >= 2 turns and links off the bundled
+/// turn's post-state — turn 0's PRODUCTION recipe, one nonce later, over ITS OWN rotated roots.
+///
+/// ⚠ **THIS TURN USED TO BE THE HOLE.** The comment that stood here recorded the tell and drew the
+/// wrong conclusion from it: *"build a bundled wide leg but DROP the binding by not threading a
+/// witness is not an option through the public minter"* — correct, the production minter
+/// [`mint_custom_wide_rotated_participant_leg`] REQUIRES the bundle — *"use the wide minter and
+/// then clear the witness"*. Clearing it (`leg.carrier_witness = None`, reaching past the minter
+/// into a `pub` field) put a custom-member leg with a fabricated `[1..8]` commitment on the fold's
+/// no-carrier arm, where nothing binds it: the deployed AIR has no `ProofBind` arm, so the claim
+/// was unconstrained, and the honest pole below folded and light-client-VERIFIED it. The prover
+/// now refuses that arm (`require_no_unbacked_proof_bind`); the trailing turn is bound like any
+/// other. Not a dummy witness — the same `bound_over` sub-proof the honest pole uses, over the
+/// roots of THIS leg.
+fn bound_trailing_custom_turn(balance: i64, nonce: u64) -> FinalizedTurn {
+    assert_eq!(
+        balance, CHAIN_BALANCE,
+        "the root probe is fixed at CHAIN_BALANCE"
+    );
+    let (old8, new8) = leg_real_roots(nonce);
+    let bound = bound_over(custom_pis(&old8, &new8));
+    let leg = mint_production_custom_leg(balance, nonce, bound.proof_commitment(), &bound);
     FinalizedTurn::new(DescriptorParticipant::rotated(leg))
 }
 
@@ -300,7 +285,7 @@ fn build_chain_with(commit: [BabyBear; 8], bound: &BoundCustomProof) -> Vec<Fina
         "the production leg's wide rotated roots must not depend on the claimed commitment / bundle"
     );
     let t0 = FinalizedTurn::new(DescriptorParticipant::rotated(t0_leg));
-    let t1 = plain_custom_turn(balance, 1, bound);
+    let t1 = bound_trailing_custom_turn(balance, 1);
     assert_eq!(
         t0.new_root(),
         t1.old_root(),

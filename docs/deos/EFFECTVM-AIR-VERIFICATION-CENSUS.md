@@ -8,11 +8,13 @@ verifier (a TRUSTED SURFACE the bare STARK does not witness)?**
 
 Provenance: triggered by the `Effect::Custom` `proofBind` finding — the in-AIR op
 is `| .proofBind _ => True` (`metatheory/Dregg2/Circuit/DescriptorIR2.lean:601`);
-the genuine sub-proof check lives outside the EffectVM STARK (on the deployed fold
-path the sub-proof leaf is re-proven and folded in-circuit at the aggregation layer;
-the re-executor path runs the Rust
-`dregg_circuit_prove::custom_proof_bind::verify_proof_bind`,
-`circuit-prove/src/custom_proof_bind.rs`). This census asks what ELSE is in that
+the genuine sub-proof check lives outside the EffectVM STARK: the deployed fold
+re-proves the sub-proof leaf and folds it in-circuit at the aggregation layer, and
+that is now the ONLY enforcement — there is no off-AIR re-executor check. (The Rust
+`verify_proof_bind` this line used to name died with stark-kill `dd038c08e`; nothing
+verifies a proof-bind off-AIR any more, and since the fold's no-carrier arm is
+fail-closed for the custom member (`require_no_unbacked_proof_bind`) a custom leg
+cannot reach a root without that in-circuit connect.) This census asks what ELSE is in that
 class.
 
 Verified against Lean (`DescriptorIR2.lean`, `CircuitOpenFronts.lean`) and the
@@ -81,7 +83,7 @@ for class (3).
 
 | surface | PI slots | real check (outside the EffectVM STARK) | status | honest? |
 |---------|----------|----------------------|--------|---------|
-| **Custom proof_bind** | `CUSTOM_PROOFS_*` + descriptor cols 68/72 (+ the member-local commit-teeth columns) | deployed fold: the sub-proof leaf is re-proven in-circuit, its commitment recomputed and lane-connected (`prove_custom_binding_node_segmented`); re-executor path: off-AIR `verify_proof_bind` (`circuit-prove/src/custom_proof_bind.rs`) | LIVE; commitment is the full 8-felt `WideHash` (~124-bit, `PROOF_BIND_COMMIT_WIDTH`, `custom_proof_bind.rs:87-104`); old 4-felt custom artifacts are REFUSED at the versioned admission boundary (`require_custom_commit_teeth_v2`) | honest |
+| **Custom proof_bind** | `CUSTOM_PROOFS_*` + descriptor cols 68/72 (+ the member-local commit-teeth columns) | deployed fold ONLY: the sub-proof leaf is re-proven in-circuit, its commitment recomputed and lane-connected (`prove_custom_binding_node_segmented`); there is NO off-AIR re-executor path (`verify_proof_bind` died with stark-kill `dd038c08e`) | LIVE; commitment is the full 8-felt `WideHash` (~124-bit, `PROOF_BIND_COMMIT_WIDTH`, `custom_proof_bind.rs:87-104`); old 4-felt custom artifacts are REFUSED at the versioned admission boundary (`require_custom_carrier_vk8`), and a custom leg presented WITHOUT a carrier witness is refused at the fold's arm selection (`require_no_unbacked_proof_bind`) so the connect cannot be dodged | honest |
 | **Sovereign transition proof (Phase 2)** | `SOVEREIGN_TRANSITION_PROOF_{VK_HASH,COMMITMENT}`, `HAS_TRANSITION_PROOF` (`pi.rs:257-267`) | none — **RETIRED**: `execute.rs:938-948` fails closed on any v1 `transition_proof`; `populate_sovereign_witness_pi` has no caller | **RETIRED / REPURPOSED** — the commitment column carries the sovereign AUTHORITY DIGEST, bound in-circuit by the re-proved sovereign-authority leaf + `prove_sovereign_binding_node_segmented` (`pi.rs:209-231`); no inner recursive verifier exists or is trusted | honest |
 | **Sovereign witness signature + sequence** | `SOVEREIGN_WITNESS_{KEY_COMMIT,SEQUENCE}`, `IS_SOVEREIGN_CELL` (`pi.rs:240-252`) | Ed25519 signature verify off-AIR, inline in the executor: `VerifyingKey::verify_strict` over `SovereignCellWitness::signing_message_for_federation` (`execute.rs:878-895`) + monotonic-sequence chain-walk just below (`execute.rs:896-908`) | LIVE; PI carries only a 4-felt key DIGEST + sequence, "backed off-AIR by the actual signature verification" (`pi.rs:234-238`) | honest |
 

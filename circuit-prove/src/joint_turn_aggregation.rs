@@ -84,7 +84,11 @@ pub struct RotatedParticipantLeg {
     /// carrying one until that carrier's wave lands its arm — it never silently proves).
     ///
     /// `None` for a turn with no carrier witness — the re-exec rung (a re-executing validator
-    /// checks the carrier claim off-AIR; the light-client fold does not witness it). This is
+    /// checks the carrier claim off-AIR; the light-client fold does not witness it). **The custom
+    /// member is the ONE exception and `None` is REFUSED for it** (`require_no_unbacked_proof_bind`
+    /// in the fold's no-carrier arm): the deployed AIR does not constrain the proof-bind columns
+    /// at all, so there is no off-AIR claim left for a re-executor to check — detaching the
+    /// witness deletes the enforcement instead of deferring it. This is
     /// prover-side witness data ONLY — it is NEVER serialized onto the on-wire artifact a light
     /// client verifies (the wire `dregg_turn::CustomProgramProof` keeps only finished bytes + PIs);
     /// the `Clone`/postcard round-trip below clones it directly (the proof is the heavy part).
@@ -99,7 +103,10 @@ pub struct RotatedParticipantLeg {
 ///
 /// FAIL-CLOSED DISCIPLINE (the fail-open law's socket half):
 /// * `None` = the RE-EXEC RUNG: the turn folds as a plain segment leaf; the carrier claim is
-///   checked by a re-executing validator, never fabricated for the light client.
+///   checked by a re-executing validator, never fabricated for the light client. NOT available to
+///   a leg whose descriptor declares a `DescriptorIR2.ProofBind` (the custom member): that arm is
+///   fail-closed too (`require_no_unbacked_proof_bind`), because a proof-bind claim has no in-AIR
+///   residue for a re-executor to check — the fold's connect is its whole enforcement.
 /// * [`CarrierWitness::Custom`] = the ONE deployed arm (buff-in-production): the leg's claimed
 ///   `custom_proof_commitment` is bound to the re-proven sub-proof inside the fold.
 /// * The six other variants are STAGED: the socket exists so each carrier wave lands its fold

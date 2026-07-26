@@ -217,11 +217,27 @@ fn mint_custom_leg(
     }
 }
 
-/// A trailing custom turn (no witness bundle — the sanctioned re-exec rung) starting
-/// at `(b, nonce)`, so the chain has >= 2 turns and continuity is exercised.
-fn plain_custom_turn(balance: i64, nonce: u64) -> FinalizedTurn {
-    let commit: ProofBindCommitment = core::array::from_fn(|k| BabyBear::new(1 + k as u32));
-    let leg = mint_custom_leg(balance, nonce, commit, None);
+/// A trailing custom turn starting at `(b, nonce)`, so the chain has >= 2 turns and continuity is
+/// exercised. GENUINELY BOUND — turn 0's recipe one nonce later, over ITS OWN rotated roots.
+///
+/// ⚠ The doc that stood here called this "the sanctioned re-exec rung". It was NOT one: the
+/// custom member has no re-exec rung, because the deployed AIR does not constrain the proof-bind
+/// columns at all (`Ir2Air::Main` has no `ProofBind` arm), so there is nothing left off-AIR for a
+/// re-executing validator to check. This turn was a custom-member leg on the fold's no-carrier arm
+/// claiming a fabricated `[1..8]` commitment — the exact forgery the file's own chain tooth
+/// forges, riding inside the HONEST pole. The prover now refuses that arm
+/// (`require_no_unbacked_proof_bind`). The witness below is not a dummy: it is the same
+/// `holding_witness()` sub-proof turn 0 uses, declaring THIS leg's real roots.
+fn bound_trailing_custom_turn(balance: i64, nonce: u64) -> FinalizedTurn {
+    assert_eq!(
+        balance, CHAIN_BALANCE,
+        "the root probe is fixed at CHAIN_BALANCE"
+    );
+    let (old8, new8) = leg_real_roots(nonce);
+    let commit: ProofBindCommitment =
+        custom_proof_pi_commitment(&holding_witness().public_inputs(&old8, &new8));
+    let bundle = holding_witness().bundle(&old8, &new8);
+    let leg = mint_custom_leg(balance, nonce, commit, Some(bundle));
     FinalizedTurn::new(DescriptorParticipant::rotated(leg))
 }
 
@@ -274,7 +290,7 @@ fn build_chain_with(
         "the leg's wide rotated roots must not depend on the claimed commitment / bundle"
     );
     let t0 = FinalizedTurn::new(DescriptorParticipant::rotated(t0_leg));
-    let t1 = plain_custom_turn(balance, 1);
+    let t1 = bound_trailing_custom_turn(balance, 1);
     assert_eq!(
         t0.new_root(),
         t1.old_root(),

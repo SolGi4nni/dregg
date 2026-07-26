@@ -200,7 +200,8 @@ effect-vm VK**.
 - Witnessing the **backing-existence** (point 1) needs the foreign note-spend STARK **recursively
   verified in-AIR** — the same machinery as G2's `proofBind` flip (`True` → `boundAt`) + the 4→8-felt
   commitment lift. `BRIDGE-ARCHITECTURE-SOUNDNESS` §2 and the Custom-VK apex (`CustomApex.lean`) establish
-  the architecture is *sufficient* for this (arbitrary `CellProgram` + generic `verify_proof_bind`), but
+  the architecture is *sufficient* for this (arbitrary `CellProgram` + the generic custom-leaf fold
+  adapter `custom_leaf_adapter::prove_custom_leaf` — NOT the deleted off-AIR `verify_proof_bind`), but
   it is gated behind that undeployed recursive-verify epoch. Folding a foreign proof into the recursive
   whole-chain IVC is a further real extension (§2, item 3) and is NOT required here.
 - Witnessing the **in-proof consume-once** (point 2) additionally needs the committed `note_nullifiers`
@@ -228,7 +229,7 @@ light-client-witnessed). The apex `lightclient_unfoolable` is unchanged and stay
 ## Summary
 
 1. **Invasiveness:** Not core-invasive. The bridge is a leaf library; the only core coupling is that it calls the pre-existing `Effect::Mint` and must hold the issuer well's mint-cap (`holds_mint_authority`). No new verb, no circuit change.
-2. **Custom-VK:** Irrelevant to the bridge as built (the consensus check is off-circuit Rust). For a future in-circuit trustless bridge, the Custom-VK machinery is architecturally sufficient (arbitrary programs via `ProgramRegistry` + generic `verify_proof_bind`) but gated behind one undeployed step — flip the staged `proofBind` constraint from vacuous to `boundAt` and lift the commitment 4→8 felts, in a single gated VK epoch. Folding a foreign proof into the recursive whole-chain IVC *would* need a real extension, but a Solana bridge does not require that.
+2. **Custom-VK:** Irrelevant to the bridge as built (the consensus check is off-circuit Rust). For a future in-circuit trustless bridge, the Custom-VK machinery is architecturally sufficient (arbitrary programs via `ProgramRegistry` + the generic custom-leaf fold adapter; the off-AIR `verify_proof_bind` this line used to name is DELETED) but gated behind one undeployed step — flip the staged `proofBind` constraint from vacuous to `boundAt` in a gated VK epoch. (The commitment 4→8-felt lift this line listed as pending has LANDED — `PROOF_BIND_COMMIT_WIDTH = 8`.) Folding a foreign proof into the recursive whole-chain IVC *would* need a real extension, but a Solana bridge does not require that.
 3. **Concurrency (the risk — now CLOSED):** Concurrent/duplicated bridge instances *could* double-mint
    while the locked-supply ledger and `lock_id` dedup were bridge-local, per-process, in-memory. **Fixed**:
    a **single committed mirror-ledger cell** plus a **consume-once `lock_id` nullifier**, both gated inside

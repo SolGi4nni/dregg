@@ -449,9 +449,14 @@ Two surfaces:
   conformance, and `custom_proof_bind.rs` is the **generic verified-leaf adapter**: it takes a
   `BoundCustomProof{program, proof_bytes, public_inputs, witness_values}`
   (`custom_proof_bind.rs:107-125`) and a claimed binding `ClaimedProofBind{vk_hash[8],
-  commitment[8]}` (`:145-151`), and `verify_proof_bind` requires (a) the VK resolves to a
-  registered program, (b) it matches the bound column, (c) `custom_proof_pi_commitment(pis)`
-  (`:93`, an 8-felt `WideHash`) equals the bound commitment, (d) the STARK verifies. An MPT
+  commitment[8]}` (`:145-151`). ⚠ The off-AIR `verify_proof_bind` this bullet used to describe as
+  the checker is GONE (stark-kill `dd038c08e`); what survives in the module is the canonical
+  derivation `custom_proof_pi_commitment` (an 8-felt `WideHash`), and the four conditions are now
+  discharged IN-CIRCUIT by the fold — the sub-proof leaf is re-proven (so "the STARK verifies" is
+  the leaf's own satisfiability), its commitment is recomputed in-circuit and `connect`ed to the
+  leg's claimed lanes, and the program VK8 rides the same connect. A custom leg offered WITHOUT a
+  carrier witness is refused at arm selection (`require_no_unbacked_proof_bind`), so there is no
+  path that skips it. An MPT
   holding-commitment leaf (`mpt_holding_leaf.rs`) is folded via the `CarrierWitness::Custom` arm
   (`ivc_turn_chain.rs:3112-3154`), its 8-felt identity commitment connected to the leg's
   `custom_proof_commitment` (PI 46..53). Crucially the MPT walk + keccak stay **OFF-AIR**,

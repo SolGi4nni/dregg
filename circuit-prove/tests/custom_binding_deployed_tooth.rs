@@ -293,22 +293,39 @@ fn mint_custom_leg(
     }
 }
 
-/// A trailing custom turn (no witness bundle — a plain custom leg) starting at `(b, nonce)`, so the
-/// chain has >= 2 turns and the first custom turn's `new_root` links to this one's `old_root`.
-fn plain_custom_turn(balance: i64, nonce: u64) -> FinalizedTurn {
-    // A plain (non-bundled) custom leg still publishes a commitment; it does NOT exercise the
-    // binding wire (no witness), so the chain prover takes the ordinary segment-leaf path for it.
-    let commit = [
-        BabyBear::new(1),
-        BabyBear::new(2),
-        BabyBear::new(3),
-        BabyBear::new(4),
-        BabyBear::new(5),
-        BabyBear::new(6),
-        BabyBear::new(7),
-        BabyBear::new(8),
-    ];
-    let leg = mint_custom_leg(balance, nonce, commit, None);
+/// A trailing custom turn starting at `(b, nonce)`, so the chain has >= 2 turns and the first
+/// custom turn's `new_root` links to this one's `old_root`. GENUINELY BOUND — the same recipe as
+/// turn 0, one nonce later.
+///
+/// ⚠ **THIS TURN USED TO BE UNBOUND, AND THAT WAS THE HOLE, NOT A HARMLESS FILLER.** It was
+/// `mint_custom_leg(.., None)` claiming a fabricated `[1..8]` commitment: a custom-member leg
+/// riding the fold's NO-CARRIER arm, publishing a prover-chosen `custom_proof_commitment` at PI
+/// 46..53 that neither the deployed AIR (`Ir2Air::Main` has no `ProofBind` arm) nor any connect
+/// constrained. The honest pole below therefore used to fold and light-client-VERIFY a chain that
+/// contained exactly the forgery its sibling tooth forges — the difference being only which turn
+/// carried it. The deployed prover now refuses that arm outright
+/// (`require_no_unbacked_proof_bind`), so the honest pole must be honest all the way down.
+///
+/// The witness here is NOT a dummy handed over to make a red test green: it is a REAL sub-proof
+/// over THIS turn's own rotated roots, whose GENUINE commitment the leg claims — turn 0's
+/// construction at `nonce`, verbatim.
+fn bound_trailing_custom_turn(balance: i64, nonce: u64) -> FinalizedTurn {
+    // `leg_real_roots` probes at `CHAIN_BALANCE`; a different balance would give this turn a
+    // sub-proof declaring some OTHER leg's roots and the state node would be UNSAT for the wrong
+    // reason. Pin it rather than let the fixture drift into a false negative.
+    assert_eq!(
+        balance, CHAIN_BALANCE,
+        "the root probe is fixed at CHAIN_BALANCE"
+    );
+    let (old8, new8) = leg_real_roots(nonce);
+    let pis = state_pis(&old8, &new8);
+    let commit = custom_proof_pi_commitment(&pis);
+    let leg = mint_custom_leg(
+        balance,
+        nonce,
+        commit,
+        Some(bundle_of(state_binding_program(), pis)),
+    );
     FinalizedTurn::new(DescriptorParticipant::rotated(leg))
 }
 
@@ -365,12 +382,14 @@ fn leg_real_roots(nonce: u64) -> ([BabyBear; 8], [BabyBear; 8]) {
 }
 
 /// Build the 2-turn chain from an EXPLICIT `(commit, bundle)`, so each tooth can forge exactly one
-/// thing. Turn 1 is a plain custom turn (no bundle — the ordinary segment-leaf path) linking off
-/// turn 0's post-state.
+/// thing. Turn 1 is an HONESTLY BOUND trailing custom turn (see
+/// [`bound_trailing_custom_turn`] — it used to be an unbacked one, which quietly put a forgery
+/// inside the honest pole) linking off turn 0's post-state, so the ONLY thing a tooth forges is
+/// what it passes in here.
 fn build_chain_with(commit: [BabyBear; 8], bundle: CustomWitnessBundle) -> Vec<FinalizedTurn> {
     let t0_leg = mint_custom_leg(CHAIN_BALANCE, 0, commit, Some(bundle));
     let t0 = FinalizedTurn::new(DescriptorParticipant::rotated(t0_leg));
-    let t1 = plain_custom_turn(CHAIN_BALANCE, 1);
+    let t1 = bound_trailing_custom_turn(CHAIN_BALANCE, 1);
     // Continuity sanity (host check also enforces this; assert early for a clear failure).
     assert_eq!(
         t0.new_root(),
