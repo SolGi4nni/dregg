@@ -413,7 +413,11 @@ fn lobby_page(door: &TableDoor, id: &str) -> String {
         watch = esc(&door.lock.watch_link(id)),
         route = door.lock.route,
     );
-    document("dregg — table opened", "offerings", &body)
+    document(
+        &format!("{} — table opened", crate::PRODUCT_NAME),
+        "offerings",
+        &body,
+    )
 }
 
 /// The page a bad/absent seat key gets — honest, and it points at the thing they CAN do.
@@ -430,7 +434,11 @@ fn seat_refused_page(door: &TableDoor, id: &str) -> String {
         watch = esc(&door.lock.watch_link(id)),
         route = door.lock.route,
     );
-    document("dregg — seat refused", "offerings", &body)
+    document(
+        &format!("{} — seat refused", crate::PRODUCT_NAME),
+        "offerings",
+        &body,
+    )
 }
 
 /// The 303 body (a browser follows the `Location`; this is what a non-following client reads).
@@ -441,7 +449,11 @@ fn seat_taken_page(door: &TableDoor, id: &str) -> String {
          <p class=\"prose\"><a class=\"backlink\" href=\"{table}\">Go to the table →</a></p></main>",
         table = esc(&door.lock.table_link(id)),
     );
-    document("dregg — seat taken", "offerings", &body)
+    document(
+        &format!("{} — seat taken", crate::PRODUCT_NAME),
+        "offerings",
+        &body,
+    )
 }
 
 fn watch_missing_page(door: &TableDoor, id: &str) -> String {
@@ -455,17 +467,26 @@ fn watch_missing_page(door: &TableDoor, id: &str) -> String {
         id = esc(id),
         route = door.lock.route,
     );
-    document("dregg — no such table", "offerings", &body)
+    document(
+        &format!("{} — no such table", crate::PRODUCT_NAME),
+        "offerings",
+        &body,
+    )
 }
 
 /// The banner a resolved table wears, wherever it is shown. It says what the record IS — a lobby
 /// note that a seat stopped playing — and refuses to dress it as a proven result.
 pub fn resolution_notice(resolution: &Resolution) -> String {
     format!(
+        // ⚑ Every clause is checked. A forfeit lands NO receipt and NO executor turn (this lobby
+        // is the only thing that records it), and neither game's rules have a method for it:
+        // automatafl's `winner` register is write-once under `resolve`, and the tug's is
+        // threshold-gated on `charm ≥ 11 ∨ guilds ≥ 4`. "not a proven win" is pinned by
+        // `dreggnet-web/tests/tug_table.rs` and stays verbatim.
         "<div class=\"notice refused\" role=\"status\"><strong>Table over</strong> — {headline}. \
-         <br>This is the lobby's own record of an abandoned table: no executor turn backs a \
-         forfeit, and the deployed teeth of neither game admit one, so it is not a proven win and \
-         the match fold will not attest it.</div>",
+         <br>This is the lobby noting that somebody stopped playing. No move was made and there is \
+         no receipt for it: neither game's rules have any way to hand the win to whoever is still \
+         sitting there, so it is not a proven win.</div>",
         headline = esc(&resolution.headline()),
     )
 }
@@ -487,7 +508,11 @@ fn resolved_page(door: &TableDoor, id: &str, resolution: &Resolution) -> String 
         watch = esc(&door.lock.watch_link(id)),
         route = door.lock.route,
     );
-    document("dregg — table over", "offerings", &body)
+    document(
+        &format!("{} — table over", crate::PRODUCT_NAME),
+        "offerings",
+        &body,
+    )
 }
 
 /// The spectator page. The live region carries `data-readonly`, and the served surface is wrapped
@@ -524,5 +549,9 @@ fn spectate_page(
         watch = esc(&door.lock.watch_link(id)),
         fragment = fragment,
     );
-    document(&format!("dregg — spectating {id}"), "offerings", &body)
+    document(
+        &format!("{} — spectating {id}", crate::PRODUCT_NAME),
+        "offerings",
+        &body,
+    )
 }

@@ -204,9 +204,11 @@ async fn two_identities_start_a_game_and_a_third_is_refused_a_seat() {
             "stranger `{stranger}` was not refused the seat: {}",
             &body[..body.len().min(600)]
         );
+        // The anti-ghost disclosure: a refused press writes NOTHING. Same claim as the old
+        // "nothing committed" — the refusal now says it in a word a player owns.
         assert!(
-            body.contains("nothing committed"),
-            "the refusal must say nothing committed"
+            body.contains("nothing was recorded"),
+            "the refusal must say that nothing was written down"
         );
     }
 

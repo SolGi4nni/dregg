@@ -83,7 +83,24 @@ pub fn seat_key() -> &'static [u8; 32] {
 }
 
 fn resolve_seat_key() -> [u8; 32] {
-    if let Some(pinned) = std::env::var("DREGGNET_WEB_SEAT_KEY")
+    resolve_process_key(
+        "DREGGNET_WEB_SEAT_KEY",
+        "table-seat-key.bin",
+        "outstanding seat links",
+    )
+}
+
+/// **Resolve a server-only 32-byte key**, in this order: a hex pin in `env_var`; a file named
+/// `file_name` under `DREGGNET_WEB_SESSION_DIR` (read if present, minted + persisted `0600` if
+/// not); otherwise fresh per process. `what` names — for the one warning line — the credentials
+/// that will not survive a restart if persisting fails.
+///
+/// Extracted from [`resolve_seat_key`] so [`crate::seed_identity`]'s claimed-identity mac key gets
+/// the same ops story rather than a second, subtly different resolution: the same env/file/ephemeral
+/// ladder, the same non-fatal write failure, and the same fail-CLOSED consequence (a key that
+/// changed makes old credentials stop verifying — it never makes a forged one verify).
+pub(crate) fn resolve_process_key(env_var: &str, file_name: &str, what: &str) -> [u8; 32] {
+    if let Some(pinned) = std::env::var(env_var)
         .ok()
         .as_deref()
         .and_then(decode_key_hex)
@@ -94,7 +111,7 @@ fn resolve_seat_key() -> [u8; 32] {
         .ok()
         .filter(|d| !d.is_empty())
     {
-        let path = std::path::Path::new(&dir).join("table-seat-key.bin");
+        let path = std::path::Path::new(&dir).join(file_name);
         if let Some(stored) = read_key_file(&path) {
             return stored;
         }
@@ -104,7 +121,8 @@ fn resolve_seat_key() -> [u8; 32] {
         if write_key_file(&path, &fresh).is_err() {
             tracing::warn!(
                 path = %path.display(),
-                "could not persist the table seat key — outstanding seat links will not survive a restart"
+                what = %what,
+                "could not persist a server key — these will not survive a restart"
             );
         }
         return fresh;
@@ -359,7 +377,9 @@ pub fn enforce(key: &str, id: &str, actor_label: &str) -> Result<(), String> {
     }
     if lock.seat_of_label(id, actor_label).is_none() {
         return Err(
-            "this is a seat-locked table — open your seat link to sit down (nothing committed)"
+            // "seat-locked table" is pinned by `tests/tug_table.rs` and `tests/automatafl_table.rs`
+            // and stays verbatim; "nothing committed" was the only word here a player did not own.
+            "this is a seat-locked table — open your seat link to sit down (nothing was recorded)"
                 .to_string(),
         );
     }
@@ -454,8 +474,8 @@ impl Resolution {
     /// The refusal an act on a resolved table gets.
     pub fn refusal(&self) -> String {
         format!(
-            "this table is over — {}. No executor turn backs that: it is the lobby's record of an \
-             abandoned table, not a proven win.",
+            "this table is over — {}. That is the lobby noting somebody stopped playing: no move \
+             was made and there is no receipt for it, so it is not a proven win.",
             self.headline()
         )
     }
