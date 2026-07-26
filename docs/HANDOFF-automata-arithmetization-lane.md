@@ -73,10 +73,21 @@ things:
    must say which shape it optimises. See the retraction at the top of
    `circuit/tests/tiny_automata_prove_time_attack.rs`.
 
-3. **`costOf.forcedTraceRows` is WRONG for multi-lookup descriptors.** It assumes `lookupCount = 1`.
-   A packed descriptor has `lookupCount = s`, so the honest trace length is `declaredRows / s`.
-   `TinyAutomataPacked` reads lengths off the *witnesses* instead. **Every published cost number for
-   a descriptor with more than one lookup should be re-checked.** ← smallest real chore in the lane.
+3. **`costOf.forcedTraceRows` WAS wrong for multi-lookup descriptors — FIXED 2026-07-26.** It
+   assumed `lookupCount = 1` and reported the declared row count; a packed descriptor has
+   `lookupCount = s`, so the honest trace length is `declaredRows / s`. The model (not the call
+   sites) was repaired in `TinyAutomataCompose` §1a: the field is now a three-valued
+   `ForcedRows := unpinned | pinned n | contradictory` computed as `declaredRows / lookupCount` per
+   table and `meet`-ed across tables, and `DescCost.area : Option Nat`. `costOf_forced_sound` proves
+   that for any descriptor with a `Satisfied2Public` witness the published number is `pinned` at
+   that trace's *actual* row count — the field can no longer silently lie.
+   **The re-check of every consumer is DONE** (28 `#guard` statements referencing `costOf` across 8 Lean files — an earlier count of "12 sites across 7 files" undercounted and was corrected by an adversarial verify;
+   `costOf`/`forcedTraceRows`/`area` have no Rust or doc consumers). Exactly ONE published number
+   was wrong: `TinyAutomataPacked`'s `costOf (packK4 s)` reported `forcedTraceRows = 8` at every
+   `s ∈ {1,2,4,8}`; it now reads `pinned 8/4/2/1` and its area `some 24/20/18/17`, agreeing with the
+   four witnesses' own trace lengths. Every other consumer is single-lookup-per-table
+   (`tableRoutingDesc`, `lanesDesc`) or declares no `exactPublicRows` table at all
+   (`attestedInstance`, `weldInstance`, `dfaRoutingDesc` → `unpinned`, previously the sentinel `0`).
 
 4. **The standing gate that made this lane trustworthy:** never quote a cost for a descriptor
    without a `Satisfied2Public` witness. An entire cost-law headline was retracted for measuring
@@ -87,7 +98,8 @@ things:
 
 ## Next steps, in the order I would take them
 
-1. **Re-audit `costOf` consumers** (small, bounded, real correctness). See fact 3.
+1. ~~Re-audit `costOf` consumers~~ — **DONE 2026-07-26**, see fact 3. One wrong number found
+   and restated; the model itself now carries `costOf_forced_sound`.
 2. **Wait for the `MapOp` denotation move** — another terminal is building
    `Dregg2/Circuit/MapKindImtGates.lean` (`holdsAtS`/`writesToMerkleS`). When it lands, the
    automaton-binding in `AttestedAutomatonWeld8.lean` becomes a *deployed* security property for

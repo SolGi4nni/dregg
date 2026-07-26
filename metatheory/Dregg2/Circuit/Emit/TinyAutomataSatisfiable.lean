@@ -944,32 +944,33 @@ theorem lanesRunI2_satisfies :
 -- ONE table of `|w| = 8` rows, 8 forced trace rows, 0 nonlinear multiplications — at k = 1, 2, 3, 4.
 #guard (List.map (fun k => costOf (prodRunDesc k probeW)) [1, 2, 3, 4]) ==
   [ { traceWidth := 3, piCount := 2, constraints := 4, tables := 1
-    , declaredRows := 8, forcedTraceRows := 8, nonlinearMults := 0 }
+    , declaredRows := 8, forcedTraceRows := .pinned 8, nonlinearMults := 0 }
   , { traceWidth := 3, piCount := 2, constraints := 4, tables := 1
-    , declaredRows := 8, forcedTraceRows := 8, nonlinearMults := 0 }
+    , declaredRows := 8, forcedTraceRows := .pinned 8, nonlinearMults := 0 }
   , { traceWidth := 3, piCount := 2, constraints := 4, tables := 1
-    , declaredRows := 8, forcedTraceRows := 8, nonlinearMults := 0 }
+    , declaredRows := 8, forcedTraceRows := .pinned 8, nonlinearMults := 0 }
   , { traceWidth := 3, piCount := 2, constraints := 4, tables := 1
-    , declaredRows := 8, forcedTraceRows := 8, nonlinearMults := 0 } ]
+    , declaredRows := 8, forcedTraceRows := .pinned 8, nonlinearMults := 0 } ]
 
 -- ⚑ PARALLEL LANES over run tables: `1 + 2k` columns, `4k` constraints, `2k` PIs, `k` tables of 8
 -- rows each — and the SAME 8 forced trace rows (every lane's table has |w| rows, so the
 -- equal-row-count side condition of `lanesDesc` is met by construction under the run discipline).
 #guard (List.map (fun k => costOf (lanesRunI k probeW)) [1, 2, 3, 4]) ==
   [ { traceWidth := 3,  piCount := 2, constraints := 4,  tables := 1
-    , declaredRows := 8,  forcedTraceRows := 8, nonlinearMults := 0 }
+    , declaredRows := 8,  forcedTraceRows := .pinned 8, nonlinearMults := 0 }
   , { traceWidth := 5,  piCount := 4, constraints := 8,  tables := 2
-    , declaredRows := 16, forcedTraceRows := 8, nonlinearMults := 0 }
+    , declaredRows := 16, forcedTraceRows := .pinned 8, nonlinearMults := 0 }
   , { traceWidth := 7,  piCount := 6, constraints := 12, tables := 3
-    , declaredRows := 24, forcedTraceRows := 8, nonlinearMults := 0 }
+    , declaredRows := 24, forcedTraceRows := .pinned 8, nonlinearMults := 0 }
   , { traceWidth := 9,  piCount := 8, constraints := 16, tables := 4
-    , declaredRows := 32, forcedTraceRows := 8, nonlinearMults := 0 } ]
+    , declaredRows := 32, forcedTraceRows := .pinned 8, nonlinearMults := 0 } ]
 
 -- ⚑ THE LAW, IN AREA (columns × the trace length the exact-public receive PINS): product-first is
 -- FLAT at 3·|w| = 24 for every k; lanes are (1 + 2k)·|w| = 24, 40, 56, 72. They TIE at k = 1 (the
 -- same object) and PRODUCT-FIRST WINS STRICTLY FROM k = 2 ON. Both k = 1 and k = 2 carry witnesses.
 #guard (List.map (fun k => ((costOf (prodRunDesc k probeW)).area,
-    (costOf (lanesRunI k probeW)).area)) [1, 2, 3, 4]) == [(24, 24), (24, 40), (24, 56), (24, 72)]
+    (costOf (lanesRunI k probeW)).area)) [1, 2, 3, 4])
+  == [(some 24, some 24), (some 24, some 40), (some 24, some 56), (some 24, some 72)]
 
 -- The same in EMITTED DESCRIPTOR BYTES (the verifier-held object): the product's run descriptor
 -- barely moves with k (654 → 670); the lanes' grows ~496 bytes per lane (657 → 2145).
@@ -982,7 +983,7 @@ theorem lanesRunI2_satisfies :
 -- declaration (the Eulerian obstruction of `TinyAutomataCompose` is unresolved for them), so these
 -- are quoted as the COST of an object whose satisfiability is OPEN — never as a crossover.
 #guard (List.map (fun k => (costOf (tableRoutingDesc "wg" (reachTable (prodI k) 24))).area)
-    [1, 2, 3, 4]) == [12, 36, 72, 150]
+    [1, 2, 3, 4]) == [some 12, some 36, some 72, some 150]
 
 /-! ### The law, stated
 

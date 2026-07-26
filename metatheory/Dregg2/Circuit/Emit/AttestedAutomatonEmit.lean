@@ -1000,7 +1000,7 @@ def wordN (n : Nat) : List Nat := List.replicate n 1
 -- EVERY word length — the automaton rides in pi[2], the length is free.
 #guard costOf attestedInstance ==
   { traceWidth := 4, piCount := 3, constraints := 6, tables := 1
-  , declaredRows := 0, forcedTraceRows := 0, nonlinearMults := 0 }
+  , declaredRows := 0, forcedTraceRows := .unpinned, nonlinearMults := 0 }
 
 -- Its wire size, pinned: 1190 bytes, of which the two 8-lane digest groups (`root`, `new_root` —
 -- the deployed `MapOpSpec.root : Vec<LeanExpr>` shape) are the bulk.
@@ -1034,7 +1034,7 @@ def wordN (n : Nat) : List Nat := List.replicate n 1
 -- any of them — the Eulerian obstruction is unresolved): area 12, 36, 72, 150 at k = 1…4, GROWING
 -- with the automaton. The attested route's bill does not depend on k at all.
 #guard (List.map (fun k => (costOf (tableRoutingDesc "wg" (reachTable (prodI k) 24))).area)
-    [1, 2, 3, 4]) == [12, 36, 72, 150]
+    [1, 2, 3, 4]) == [some 12, some 36, some 72, some 150]
 
 -- The committed map's key domain: 2^15 states × 2 symbols = the deployed 2^16 leaves, exactly.
 #guard ASTATES * ASYM == NKEYS

@@ -777,13 +777,13 @@ object by `AttestedAutomatonEmit.attWit_satisfies`. Nothing without a witness is
 -- ZERO declared rows, ZERO nonlinear multiplications.
 #guard costOf weldInstance ==
   { traceWidth := 11, piCount := 10, constraints := 20, tables := 1
-  , declaredRows := 0, forcedTraceRows := 0, nonlinearMults := 0 }
+  , declaredRows := 0, forcedTraceRows := .unpinned, nonlinearMults := 0 }
 
 -- … against the UNWELDED attested object (4 / 3 / 6). The weld costs +7 columns, +7 PIs, +14
 -- constraints; it adds NO table, NO declared row and NO nonlinear multiplication.
 #guard costOf attestedInstance ==
   { traceWidth := 4, piCount := 3, constraints := 6, tables := 1
-  , declaredRows := 0, forcedTraceRows := 0, nonlinearMults := 0 }
+  , declaredRows := 0, forcedTraceRows := .unpinned, nonlinearMults := 0 }
 
 -- ⚑ WIRE BYTES, pinned: 2596 welded vs 1190 unwelded — 2.18× (+1406 bytes), CONSTANT in `|w|` and
 -- in `|Q|·|Σ|` exactly as before (ONE object for every automaton and every word length).

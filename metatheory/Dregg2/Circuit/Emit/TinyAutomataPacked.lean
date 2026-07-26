@@ -69,7 +69,8 @@ open Dregg2.Circuit.Emit.DfaRoutingTableEmit
    tableRoutingDesc transitionTableDef envAt_loc envAt_nxt hash0
    tableRouting_refines_classify)
 open Dregg2.Circuit.Emit.TinyAutomataCompose
-  (runTable costOf DescCost.area jsonBytes prodListDfa encodeDigits)
+  (runTable costOf DescCost.area ForcedRows jsonBytes prodListDfa encodeDigits
+   costOf_forced_sound)
 open Dregg2.Circuit.Emit.TinyAutomataSatisfiable
   (IRADIX famI prodI probeW prodRunWit_k4_components)
 
@@ -631,6 +632,23 @@ theorem packK4_satisfies_s8 :
     Satisfied2Public hash0 (packK4 8) (fun _ => 0) (fun _ => (0, 0)) [] (packK4Wit 8 1) :=
   packWit_satisfies (prodI 4) 8 1 0 probeW (by decide) _
 
+/-- ⚑ **THE CORRECTED COST NUMBER, AS A `Prop` — NON-VACUITY of the repaired cost model.**
+`TinyAutomataCompose.costOf_forced_sound` FIRES on this file's own `s = 4` witness: the cost
+record's `forcedTraceRows` is `pinned` at the row count the witness ACTUALLY carries. This is the
+descriptor that broke the old model (which reported the declared count, 8, at every `s`), and the
+agreement is now a theorem rather than two `#guard`s that happen to match. -/
+theorem packK4_forced_rows_s4 :
+    (costOf (packK4 4)).forcedTraceRows
+      = .pinned (packK4Wit 4 2).rows.length := by
+  have hval : (costOf (packK4 4)).forcedTraceRows = .pinned 2 := by rfl
+  refine (costOf_forced_sound packK4_satisfies_s4).resolve_right ?_
+  rw [hval]
+  exact fun h => ForcedRows.noConfusion h
+
+/-- …and that row count is `2` — `n / s` = 8 / 4, the packing genuinely happening. -/
+theorem packK4_forced_rows_s4_value : (packK4Wit 4 2).rows.length = 2 :=
+  (packWit_final_state (prodI 4) 4 2 0 probeW).2
+
 /-- ⚑ **AND THE VERDICT IS UNCHANGED AT EVERY PACK FACTOR.** All four witnesses expose the SAME
 public `final_state`, and it is `classifyFrom (prodI 4) 0 probeW` — the composed 4-automaton
 classification of the SAME 8-symbol word. Trace lengths `8, 4, 2, 1`. -/
@@ -664,29 +682,38 @@ content is `packK4_satisfies_s{1,2,4,8}` (the witnesses), `packK4_same_verdict` 
 preserved) and `TinyAutomataCompose.forced_trace_length` (why the declared table pins the length). -/
 
 -- ⚑ THE PACK LAW in the descriptor's own cost record: trace width `2s + 1`; `s + 3` constraints;
--- ONE table of 8 declared rows AT EVERY `s` (packing does NOT shrink the declared table).
--- ⚠ `costOf.forcedTraceRows` is the DECLARED row count and is therefore WRONG for `s > 1`: it
--- assumes `lookupCount = 1`. The packed descriptor has `lookupCount = s`, so the honest forced
--- trace length is `declaredRows / s` — the next `#guard` reads it off the WITNESSES instead.
+-- ONE table of 8 declared rows AT EVERY `s` (packing does NOT shrink the declared table) — and
+-- `forcedTraceRows = .pinned (8 / s)` = 8, 4, 2, 1, because the packed descriptor targets that one
+-- table with `lookupCount = s` lookups and `forced_trace_length` reads `rows × lookupCount =
+-- declaredRows`.
+-- (HISTORY: this record used to report `forcedTraceRows := 8` at EVERY `s` — a `Nat` field that
+-- carried the DECLARED row count and was therefore correct only at `lookupCount = 1`. The model was
+-- repaired in `TinyAutomataCompose` §1a; `costOf_forced_sound` now proves the published number is
+-- the row count of any trace that satisfies the descriptor, so it agrees with the witnesses below
+-- by THEOREM rather than by the two `#guard`s happening to match.)
 #guard (List.map (fun s => costOf (packK4 s)) [1, 2, 4, 8]) ==
   [ { traceWidth := 3,  piCount := 2, constraints := 4,  tables := 1
-    , declaredRows := 8, forcedTraceRows := 8, nonlinearMults := 0 }
+    , declaredRows := 8, forcedTraceRows := .pinned 8, nonlinearMults := 0 }
   , { traceWidth := 5,  piCount := 2, constraints := 5,  tables := 1
-    , declaredRows := 8, forcedTraceRows := 8, nonlinearMults := 0 }
+    , declaredRows := 8, forcedTraceRows := .pinned 4, nonlinearMults := 0 }
   , { traceWidth := 9,  piCount := 2, constraints := 7,  tables := 1
-    , declaredRows := 8, forcedTraceRows := 8, nonlinearMults := 0 }
+    , declaredRows := 8, forcedTraceRows := .pinned 2, nonlinearMults := 0 }
   , { traceWidth := 17, piCount := 2, constraints := 11, tables := 1
-    , declaredRows := 8, forcedTraceRows := 8, nonlinearMults := 0 } ]
+    , declaredRows := 8, forcedTraceRows := .pinned 1, nonlinearMults := 0 } ]
 
--- ⚑ THE ACTUAL TRACE LENGTHS the four WITNESSES carry: 8, 4, 2, 1 — `n / s`.
+-- ⚑ THE ACTUAL TRACE LENGTHS the four WITNESSES carry: 8, 4, 2, 1 — `n / s`. The cost record above
+-- now reads the SAME four numbers off the descriptor alone.
 #guard (List.map (fun p => ((packK4Wit p.1 p.2).rows.length))
   [(1, 8), (2, 4), (4, 2), (8, 1)]) == [8, 4, 2, 1]
 
--- ⚑ AREA (columns × the witness's OWN trace length): `(2s + 1) · (n / s)` = 24, 20, 18, 17. The
--- area FALLS with `s` but only towards the `2n + s` floor — the width grows as the height shrinks.
--- This is why the profile's width-sensitive first-digest layer predicts a SUBLINEAR time win.
-#guard (List.map (fun p => (packWidth p.1) * ((packK4Wit p.1 p.2).rows.length))
-  [(1, 8), (2, 4), (4, 2), (8, 1)]) == [24, 20, 18, 17]
+-- ⚑ AREA: `(2s + 1) · (n / s)` = 24, 20, 18, 17, computed BOTH ways — off the cost record (left)
+-- and off the witness's own trace length (right) — and they agree. The area FALLS with `s` but only
+-- towards the `2n + s` floor: the width grows as the height shrinks. This is why the profile's
+-- width-sensitive first-digest layer predicts a SUBLINEAR time win.
+#guard (List.map (fun p => ((costOf (packK4 p.1)).area,
+    some ((packWidth p.1) * ((packK4Wit p.1 p.2).rows.length))))
+  [(1, 8), (2, 4), (4, 2), (8, 1)])
+  == [(some 24, some 24), (some 20, some 20), (some 18, some 18), (some 17, some 17)]
 
 -- The emitted WIRE BYTES of the packed descriptors (the verifier-held object).
 #guard (List.map (fun s => jsonBytes (packK4 s)) [1, 2, 4, 8]) == [673, 763, 943, 1316]
@@ -763,6 +790,8 @@ theorem packMeas_rows_and_verdict (n s : Nat) :
 #assert_axioms packK4_satisfies_s2
 #assert_axioms packK4_satisfies_s4
 #assert_axioms packK4_satisfies_s8
+#assert_axioms packK4_forced_rows_s4
+#assert_axioms packK4_forced_rows_s4_value
 #assert_axioms packK4_same_verdict
 #assert_axioms packK4_exposes_components
 #assert_axioms probeN_length

@@ -714,7 +714,7 @@ theorem lanesK_forced_length_fires_lane0 :
     "tiny-automata-indep-lanes-run-k4::exact-public-v1") 0 (by omega)
 
 /-- The trace length of every witnessed lanes point IS the probe word length — 8 rows, at every
-`k`, which is the `forcedTraceRows := 8` the cost law reads off the descriptor. -/
+`k`, which is the `forcedTraceRows := .pinned 8` the cost law reads off the descriptor. -/
 theorem lanesKWit_probe_length (k : Nat) :
     (lanesKWit indepAt zeroStates k probeW).rows.length = 8 := by
   rw [lanesKWit_length]
@@ -783,18 +783,18 @@ every `k` measured, no longer cost-of-an-emitted-object at `k = 3, 4`. -/
 -- The lanes cost record, k = 1…4 — every point now witnessed.
 #guard (List.map (fun k => costOf (lanesRunIK k probeW)) [1, 2, 3, 4]) ==
   [ { traceWidth := 3,  piCount := 2, constraints := 4,  tables := 1
-    , declaredRows := 8,  forcedTraceRows := 8, nonlinearMults := 0 }
+    , declaredRows := 8,  forcedTraceRows := .pinned 8, nonlinearMults := 0 }
   , { traceWidth := 5,  piCount := 4, constraints := 8,  tables := 2
-    , declaredRows := 16, forcedTraceRows := 8, nonlinearMults := 0 }
+    , declaredRows := 16, forcedTraceRows := .pinned 8, nonlinearMults := 0 }
   , { traceWidth := 7,  piCount := 6, constraints := 12, tables := 3
-    , declaredRows := 24, forcedTraceRows := 8, nonlinearMults := 0 }
+    , declaredRows := 24, forcedTraceRows := .pinned 8, nonlinearMults := 0 }
   , { traceWidth := 9,  piCount := 8, constraints := 16, tables := 4
-    , declaredRows := 32, forcedTraceRows := 8, nonlinearMults := 0 } ]
+    , declaredRows := 32, forcedTraceRows := .pinned 8, nonlinearMults := 0 } ]
 
 -- ⚑ THE LAW IN AREA, both routes witnessed at every measured k: product-first FLAT at 24;
 -- lanes 24, 40, 56, 72. Tie at k = 1, product-first strictly cheaper from k = 2 on.
 #guard (List.map (fun k => ((costOf (prodRunDesc k probeW)).area, (costOf (lanesRunIK k probeW)).area))
-  [1, 2, 3, 4]) == [(24, 24), (24, 40), (24, 56), (24, 72)]
+  [1, 2, 3, 4]) == [(some 24, some 24), (some 24, some 40), (some 24, some 56), (some 24, some 72)]
 
 -- The same in emitted descriptor bytes (the verifier-held object).
 #guard (List.map (fun k => (jsonBytes (prodRunDesc k probeW), jsonBytes (lanesRunIK k probeW)))

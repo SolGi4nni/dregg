@@ -1,5 +1,26 @@
 /-
 
+⚠ TWO NAMED RESIDUALS IN THE 2026-07-26 COST-MODEL FIX (found by the fix's own adversarial verify,
+recorded here rather than patched at the end of a sprint — both are bounded and safe to pick up):
+
+(R1) `area` CAN STILL PRODUCE THE "FREE" READING THE `Option` WAS ADDED TO PREVENT. §1a justifies
+`DescCost.area : Option Nat` on the grounds that "a sentinel 0 area reads as free" — but a table with
+`sem := .exactPublicRows []` (ZERO declared rows) together with one LIVE lookup still yields
+`declaredRows = 0`, `lookupCount = 1`, hence `pinned (0 / 1) = pinned 0` and `area = some 0`. That is
+the same misleading "free" reading, now wearing a `some`. The likely correct semantics: a live lookup
+against a table declaring no rows forces a ZERO-row trace, and traces are nonempty, so this shape is
+`contradictory`, not `pinned 0`. NOT changed here because it is a semantics decision that wants the
+§5 length law re-read alongside it, not a one-line guess. `costOf_forced_sound` is unaffected — it
+quantifies over descriptors that HAVE a `Satisfied2Public` witness, and this shape has none.
+
+(R2) `DfaRoutingSubsetTableCost.lean` WAS NOT COVERED BY THE CENSUS. It sits in this directory, is
+registered as "the subset-table cost companion", and publishes cost claims about the DEPLOYED
+`dregg-dfa-routing-table::exact-public-v1` carrier ("+1.76 KiB of wire and +0.15 ms of single-thread
+prover CPU per declared row"). The census enumerated `costOf`/`forcedTraceRows`/`area` consumers and
+did not reach it. Its numbers may be fine — the deployed carrier is single-lookup-per-table, which is
+exactly the regime where the OLD model was already correct — but that has not been CHECKED, so treat
+its published figures as un-re-verified until someone does.
+
 ⚠⚠⚠ READ FIRST — AN ADVERSARIAL VERIFY DISMANTLED THIS FILE'S HEADLINE. The cost numbers below are
 REAL (independently re-derived from the emitted JSON by a separate parser), but for most of the grid
 they measure DESCRIPTORS NO PROVER CAN EVER SATISFY. Do not cite §4's crossover.
@@ -190,17 +211,76 @@ def tdRows (td : TableDef) : Nat :=
   | .exactPublicRows rows => rows.length
   | _ => 0
 
+/-! ### §1a — the LOOKUP MULTIPLICITY, which is what the length law divides by.
+
+`forced_trace_length` (§5) reads `(trace rows) × (lookups targeting the table) = (declared rows)`.
+The divisor is therefore part of the cost model, not an afterthought: these two selectors are
+defined HERE, ahead of `costOf`, precisely so the record cannot be computed without it. -/
+
+/-- The lookup selector: does this constraint target `table`, and with which lookup? -/
+def lkOf (table : TableId) : VmConstraint2 → Option Lookup
+  | .lookup l => if l.table = table then some l else none
+  | _         => none
+
+/-- How many lookup constraints of `d` target `table`. -/
+def lookupCount (d : EffectVmDescriptor2) (table : TableId) : Nat :=
+  (d.constraints.filterMap (lkOf table)).length
+
+/-- **What the declared tables pin the main trace length to.** THREE-VALUED ON PURPOSE.
+
+A bare `Nat` field cannot tell "nothing is pinned" from "pinned to zero" from "the declarations
+CONTRADICT one another", and the shape this replaces did worse than conflate them: it reported the
+declared ROW COUNT, which is the forced trace length only when `lookupCount = 1`. A descriptor with
+`s` lookups on one table (e.g. `TinyAutomataPacked.packedDesc`) was mis-measured by a factor of `s`
+while still type-checking, because every inhabitant of `Nat` is a plausible-looking answer. The
+three constructors are the three things §5's law can actually say. -/
+inductive ForcedRows where
+  /-- No `exactPublicRows` table constrains the length: `forced_trace_length` says nothing. -/
+  | unpinned
+  /-- Every declaring table forces EXACTLY this many main trace rows. -/
+  | pinned (n : Nat)
+  /-- The declarations cannot be met at once (a non-dividing count, or two tables disagreeing):
+  NO trace satisfies this descriptor, so it has no cost — it has no runs. -/
+  | contradictory
+  deriving Repr, DecidableEq
+
+/-- Combine two tables' verdicts. `unpinned` is the unit; two `pinned` values must AGREE, since a
+trace has one length; `contradictory` absorbs. -/
+def ForcedRows.meet : ForcedRows → ForcedRows → ForcedRows
+  | .contradictory, _ => .contradictory
+  | _, .contradictory => .contradictory
+  | .unpinned, y      => y
+  | x, .unpinned      => x
+  | .pinned a, .pinned b => if a = b then .pinned a else .contradictory
+
+/-- **The length ONE declared table pins**, straight from `forced_trace_length`'s equation
+`rows × lookupCount = declaredRows`, solved for `rows`:
+
+  * no lookup targets it — the equation reads `0 = declaredRows`, so an EMPTY manifest is no
+    constraint and a non-empty one is unsatisfiable;
+  * `lookupCount = c > 0` — the length is `declaredRows / c`, and if `c ∤ declaredRows` there is
+    no natural solution at all.
+
+`tdForced_sound` (§5) proves this function never lies about a descriptor that has a witness. -/
+def tdForced (d : EffectVmDescriptor2) (td : TableDef) : ForcedRows :=
+  match td.sem with
+  | .exactPublicRows rows =>
+      let c := lookupCount d td.id
+      if c = 0 then (if rows.isEmpty then .unpinned else .contradictory)
+      else if rows.length % c = 0 then .pinned (rows.length / c)
+      else .contradictory
+  | _ => .unpinned
+
 /-- The measured cost record of an emitted descriptor. `forcedTraceRows` is the trace length the
-unit-capacity exact-public receive PINS (proved in §5: `rows × lookupCount = declaredRows`, and
-every family here has `lookupCount = 1` per table, so it is the per-table row count — the MAX over
-tables, since all tables must agree). -/
+unit-capacity exact-public receives PIN — the `meet` of every declared table's own verdict, each
+computed as `declaredRows / lookupCount` (§5's `forced_trace_length`, `tdForced_sound`). -/
 structure DescCost where
   traceWidth      : Nat
   piCount         : Nat
   constraints     : Nat
   tables          : Nat
   declaredRows    : Nat
-  forcedTraceRows : Nat
+  forcedTraceRows : ForcedRows
   nonlinearMults  : Nat
   deriving Repr, DecidableEq
 
@@ -211,11 +291,17 @@ def costOf (d : EffectVmDescriptor2) : DescCost :=
   , constraints     := d.constraints.length
   , tables          := d.tables.length
   , declaredRows    := (d.tables.map tdRows).sum
-  , forcedTraceRows := (d.tables.map tdRows).foldl Nat.max 0
+  , forcedTraceRows := (d.tables.map (tdForced d)).foldl ForcedRows.meet .unpinned
   , nonlinearMults  := (d.constraints.map c2Mults).sum }
 
-/-- CIRCUIT AREA — the honest cost: columns × the trace length the declaration pins. -/
-def DescCost.area (c : DescCost) : Nat := c.traceWidth * c.forcedTraceRows
+/-- CIRCUIT AREA — the honest cost: columns × the trace length the declaration pins. `none` when
+there is no such number: either nothing pins a length (multiply by what?) or the declarations
+contradict each other (the object has no runs to price). An `Option` here rather than a `0`, for
+the same reason `ForcedRows` is not a `Nat` — a sentinel `0` area reads as "free". -/
+def DescCost.area (c : DescCost) : Option Nat :=
+  match c.forcedTraceRows with
+  | .pinned n => some (c.traceWidth * n)
+  | _         => none
 
 /-- Emitted wire size in bytes (the descriptor the verifier must hold). -/
 def jsonBytes (d : EffectVmDescriptor2) : Nat := (emitVmJson2 d).length
@@ -334,15 +420,15 @@ gate-baked baseline must still measure 8 / 14. COMPILED EVALUATION (`#guard` pro
 -- nonlinear-mult count, which the table route drives to zero.
 #guard costOf DfaRoutingEmit.dfaRoutingDesc ==
   { traceWidth := 8, piCount := 4, constraints := 14, tables := 0
-  , declaredRows := 0, forcedTraceRows := 0, nonlinearMults := 4 }
+  , declaredRows := 0, forcedTraceRows := .unpinned, nonlinearMults := 4 }
 
 #guard costOf (productDesc 1) ==
   { traceWidth := 3, piCount := 2, constraints := 4, tables := 1
-  , declaredRows := 4, forcedTraceRows := 4, nonlinearMults := 0 }
+  , declaredRows := 4, forcedTraceRows := .pinned 4, nonlinearMults := 0 }
 
 #guard costOf (lanesK 1) ==
   { traceWidth := 3, piCount := 2, constraints := 4, tables := 1
-  , declaredRows := 4, forcedTraceRows := 4, nonlinearMults := 0 }
+  , declaredRows := 4, forcedTraceRows := .pinned 4, nonlinearMults := 0 }
 
 /-! ## §4 — ⚑ THE MEASUREMENT: `k = 1, 2, 4, 8` by both routes.
 
@@ -354,31 +440,33 @@ compiled evaluation (`#guard` — NO `Prop` is proved by these lines; §5 carrie
 -- automaton: 2^(k+1) rows.
 #guard (List.map (fun k => costOf (productDesc k)) [1, 2, 4, 8]) ==
   [ { traceWidth := 3, piCount := 2, constraints := 4, tables := 1
-    , declaredRows := 4,   forcedTraceRows := 4,   nonlinearMults := 0 }
+    , declaredRows := 4,   forcedTraceRows := .pinned 4,   nonlinearMults := 0 }
   , { traceWidth := 3, piCount := 2, constraints := 4, tables := 1
-    , declaredRows := 8,   forcedTraceRows := 8,   nonlinearMults := 0 }
+    , declaredRows := 8,   forcedTraceRows := .pinned 8,   nonlinearMults := 0 }
   , { traceWidth := 3, piCount := 2, constraints := 4, tables := 1
-    , declaredRows := 32,  forcedTraceRows := 32,  nonlinearMults := 0 }
+    , declaredRows := 32,  forcedTraceRows := .pinned 32,  nonlinearMults := 0 }
   , { traceWidth := 3, piCount := 2, constraints := 4, tables := 1
-    , declaredRows := 512, forcedTraceRows := 512, nonlinearMults := 0 } ]
+    , declaredRows := 512, forcedTraceRows := .pinned 512, nonlinearMults := 0 } ]
 
 -- PARALLEL-LANES costs at `k = 1, 2, 4, 8`: columns `1 + 2k`, constraints `4k`, PIs `2k`, but each
 -- lane's table stays 4 rows — so the PINNED trace length is 4 at EVERY k.
 #guard (List.map (fun k => costOf (lanesK k)) [1, 2, 4, 8]) ==
   [ { traceWidth := 3,  piCount := 2,  constraints := 4,  tables := 1
-    , declaredRows := 4,  forcedTraceRows := 4, nonlinearMults := 0 }
+    , declaredRows := 4,  forcedTraceRows := .pinned 4, nonlinearMults := 0 }
   , { traceWidth := 5,  piCount := 4,  constraints := 8,  tables := 2
-    , declaredRows := 8,  forcedTraceRows := 4, nonlinearMults := 0 }
+    , declaredRows := 8,  forcedTraceRows := .pinned 4, nonlinearMults := 0 }
   , { traceWidth := 9,  piCount := 8,  constraints := 16, tables := 4
-    , declaredRows := 16, forcedTraceRows := 4, nonlinearMults := 0 }
+    , declaredRows := 16, forcedTraceRows := .pinned 4, nonlinearMults := 0 }
   , { traceWidth := 17, piCount := 16, constraints := 32, tables := 8
-    , declaredRows := 32, forcedTraceRows := 4, nonlinearMults := 0 } ]
+    , declaredRows := 32, forcedTraceRows := .pinned 4, nonlinearMults := 0 } ]
 
 -- ⚑ THE CROSSOVER, in AREA (columns × the trace length the exact-public receive PINS):
 -- product `3·2^(k+1)` vs lanes `(1+2k)·4`. They TIE at `k = 1` (12 = 12) and lanes win at every
 -- `k ≥ 2` — the crossover is k = 2, and the product route is exponentially worse from there.
 #guard (List.map (fun k => ((costOf (productDesc k)).area, (costOf (lanesK k)).area))
-    [1, 2, 3, 4, 8]) == [(12, 12), (24, 20), (48, 28), (96, 36), (1536, 68)]
+    [1, 2, 3, 4, 8])
+  == [(some 12, some 12), (some 24, some 20), (some 48, some 28), (some 96, some 36),
+      (some 1536, some 68)]
 
 -- The SECOND crossover, in EMITTED DESCRIPTOR BYTES (the verifier-held object): the product
 -- route's table IS its descriptor, so bytes grow with `∏|Qᵢ|`; the lanes' bytes grow linearly.
@@ -459,7 +547,8 @@ def lanesRunK (k : Nat) : EffectVmDescriptor2 :=
 -- AREA 24 — while the lanes pay `(1+2k) × 8`. Product wins from `k = 2` on (the tie is `k = 1`).
 #guard (List.map (fun k => ((costOf (productRunDesc k)).declaredRows,
     (costOf (productRunDesc k)).area, (costOf (lanesRunK k)).area)) [1, 2, 4, 8])
-  == [(8, 24, 24), (8, 24, 40), (8, 24, 72), (8, 24, 136)]
+  == [(8, some 24, some 24), (8, some 24, some 40), (8, some 24, some 72),
+      (8, some 24, some 136)]
 
 -- Same flip in wire bytes: the product's run descriptor barely moves with `k`; the lanes' grows.
 #guard (List.map (fun k => (jsonBytes (productRunDesc k), jsonBytes (lanesRunK k))) [1, 2, 4, 8])
@@ -473,20 +562,13 @@ log be a PERMUTATION of the declared rows. Lengths therefore agree, and the log'
 length, which is why `∏|Qᵢ|` lands in the AREA. (This restricts witness EXISTENCE, exactly as
 `DfaRoutingTableEmit`'s residual note says — it is not a soundness claim.) -/
 
-/-- The lookup selector: does this constraint target `table`, and with which lookup? -/
-def lkOf (table : TableId) : VmConstraint2 → Option Lookup
-  | .lookup l => if l.table = table then some l else none
-  | _         => none
+-- (`lkOf` and `lookupCount` are defined in §1a — the cost model needs the divisor.)
 
 /-- The same selector, carrying the EVALUATED tuple (this is exactly `lookupLog`'s inner
 `filterMap`, named so it can be rewritten). -/
 def tupOf (table : TableId) (row : Assignment) : VmConstraint2 → Option (List ℤ)
   | .lookup l => if l.table = table then some (l.tuple.map (·.eval row)) else none
   | _         => none
-
-/-- How many lookup constraints of `d` target `table`. -/
-def lookupCount (d : EffectVmDescriptor2) (table : TableId) : Nat :=
-  (d.constraints.filterMap (lkOf table)).length
 
 /-- Two `filterMap`s that KEEP the same elements produce the same length. -/
 theorem length_filterMap_congr {α β γ : Type} (f : α → Option β) (g : α → Option γ)
@@ -550,6 +632,60 @@ theorem forced_trace_length {hash : List ℤ → ℤ} {d : EffectVmDescriptor2}
   have hlen := hperm.length_eq
   rw [lookupLog_length] at hlen
   simpa [exactPublicTable] using hlen
+
+/-- **`tdForced_sound` — THE COST MODEL CANNOT LIE ABOUT A WITNESSED DESCRIPTOR.** For any
+descriptor with a satisfying trace, every declared table's `tdForced` verdict is either `unpinned`
+(it says nothing) or `pinned` at the trace's ACTUAL row count. In particular it is never
+`contradictory` and never `pinned` at a wrong number — which is exactly the failure the old `Nat`
+field committed at `lookupCount ≠ 1`. -/
+theorem tdForced_sound {hash : List ℤ → ℤ} {d : EffectVmDescriptor2}
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (hsat : Satisfied2Public hash d minit mfin maddrs t)
+    {td : TableDef} (htd : td ∈ d.tables) :
+    tdForced d td = .pinned t.rows.length ∨ tdForced d td = .unpinned := by
+  unfold tdForced
+  cases hsem : td.sem with
+  | exactPublicRows rows =>
+    have hlaw : t.rows.length * lookupCount d td.id = rows.length :=
+      forced_trace_length hsat htd hsem
+    by_cases hc : lookupCount d td.id = 0
+    · rw [hc, Nat.mul_zero] at hlaw
+      have : rows = [] := List.eq_nil_of_length_eq_zero hlaw.symm
+      subst this
+      simp [hc]
+    · have hcpos : 0 < lookupCount d td.id := Nat.pos_of_ne_zero hc
+      have hmod : rows.length % lookupCount d td.id = 0 := by
+        rw [← hlaw]; exact Nat.mul_mod_left _ _
+      have hdiv : rows.length / lookupCount d td.id = t.rows.length := by
+        rw [← hlaw, Nat.mul_div_cancel _ hcpos]
+      simp [hc, hmod, hdiv]
+  | _ => simp
+
+/-- `meet` keeps the `{pinned n, unpinned}` invariant — so the fold over all tables does too. -/
+theorem foldl_meet_sound (n : Nat) :
+    ∀ (l : List ForcedRows), (∀ x ∈ l, x = .pinned n ∨ x = .unpinned) →
+      ∀ acc, (acc = .pinned n ∨ acc = .unpinned) →
+        l.foldl ForcedRows.meet acc = .pinned n ∨ l.foldl ForcedRows.meet acc = .unpinned
+  | [], _, acc, hacc => hacc
+  | x :: xs, hx, acc, hacc => by
+    refine foldl_meet_sound n xs (fun y hy => hx y (List.mem_cons_of_mem _ hy))
+      (ForcedRows.meet acc x) ?_
+    rcases hacc with rfl | rfl <;> rcases hx x List.mem_cons_self with rfl | rfl <;>
+      simp [ForcedRows.meet]
+
+/-- **`costOf_forced_sound` — the PUBLISHED number is the trace's real length.** Whenever the
+measured descriptor has a satisfying trace, `(costOf d).forcedTraceRows` is `pinned` at exactly
+that trace's row count (or `unpinned`, saying nothing). Every `area` this file publishes for a
+witnessed object is therefore `traceWidth ×` a length some prover actually pays. -/
+theorem costOf_forced_sound {hash : List ℤ → ℤ} {d : EffectVmDescriptor2}
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (hsat : Satisfied2Public hash d minit mfin maddrs t) :
+    (costOf d).forcedTraceRows = .pinned t.rows.length
+      ∨ (costOf d).forcedTraceRows = .unpinned := by
+  refine foldl_meet_sound t.rows.length _ ?_ _ (Or.inr rfl)
+  intro x hx
+  obtain ⟨td, htd, rfl⟩ := List.mem_map.mp hx
+  exact tdForced_sound hsat htd
 
 /-- The table-routing family targets its table with EXACTLY one lookup. -/
 theorem tableRouting_lookupCount (name : String) (tbl : List (List Nat)) :
@@ -850,6 +986,9 @@ theorem lastDfa_step_lt : ∀ s y, lastDfa.step s y < 2 := by
 
 #assert_axioms lookupLog_length
 #assert_axioms forced_trace_length
+#assert_axioms tdForced_sound
+#assert_axioms foldl_meet_sound
+#assert_axioms costOf_forced_sound
 #assert_axioms tableRouting_forced_length
 #assert_axioms tableRouting_lookupLog
 #assert_axioms tableRouting_traverses_each_declared_row_once
