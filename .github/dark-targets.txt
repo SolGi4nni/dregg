@@ -200,9 +200,6 @@ file docs/deos/artifacts/direct-logic-dregg-workloads-2026-07-22-stability-v2/ve
 # is that no nightly arms them YET — `armed-teeth.yml` covers `dregg-circuit-prove`'s
 # `#[ignore]`d teeth only, and these are gated by FEATURE rather than by `#[ignore]`, so
 # `--run-ignored` cannot reach them. Owner: the crate named in each row.
-never-run dregg-braid-hook test weld_canary   # `prove` mints a wide Custom leg and drives the DEPLOYED app-root fold (plonky3). Real prover.
-never-run dregg-entity-compose test leaf_prove   # `prove` = the SLOW real-STARK leaf prove; its own doc gives the `--ignored` command.
-never-run dreggnet-companion test wing_weld   # `prove` forwards to the hook's real fold for `wing::Wing::seal`.
 never-run dreggnet-party test away_team   # `private-role-assignment` links the heavy proof PRODUCER (dregg-circuit-prove + plonky3).
 never-run dreggnet-market test dark_amm_collective_session   # `dark-amm-game`: BFV producer/verifier boundary + HidingFri tower.
 never-run dreggnet-market test dark_amm_collective_worker   # `dark-amm-game`, ditto — the multi-process worker half.
