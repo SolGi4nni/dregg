@@ -163,12 +163,23 @@ if 'sentinelBundles' not in rsrc:
 FLOOR_RE = re.compile(r'\b(' + '|'.join(re.escape(s) for s in (shorts + bundle_shorts)) + r')\b')
 
 # ── the baseline: every grandfathered name, by LAST COMPONENT ────────────────────────────────
-baseline_path = os.path.join(mt_dir, "Dregg2/Verify/FloorRatchetBaseline.lean")
-try:
-    bsrc = open(baseline_path, encoding='utf-8', errors='replace').read()
-except OSError:
-    sys.stderr.write("check-floor-baseline-preflight: FAIL — cannot read %s\n" % baseline_path)
-    sys.exit(1)
+# The grandfather list lives in TWO generated files: the main one, and the INLINE-SPELLED half
+# (`FloorRatchetBaselineInline.lean`), which is separate because every name in it became visible on
+# one day from one cause — the gate learned to read a floor spelled `Function.Injective f` instead
+# of by name — and because the main baseline is edited concurrently by other lanes in this same
+# working tree. `#floor_ratchet` compares against their UNION; so does this preflight, or it would
+# report a recorded carrier as unrecorded.
+baseline_paths = [os.path.join(mt_dir, "Dregg2/Verify/FloorRatchetBaseline.lean"),
+                  os.path.join(mt_dir, "Dregg2/Verify/FloorRatchetBaselineInline.lean")]
+baseline_path = baseline_paths[0]
+bsrc = ""
+for bp in baseline_paths:
+    try:
+        bsrc += open(bp, encoding='utf-8', errors='replace').read()
+    except OSError:
+        if bp is baseline_paths[0]:
+            sys.stderr.write("check-floor-baseline-preflight: FAIL — cannot read %s\n" % bp)
+            sys.exit(1)
 baseline = {q.rsplit('.', 1)[-1] for q in re.findall(r'"([A-Za-z0-9_.À-￿]+)"', bsrc)}
 if len(baseline) < 100:
     sys.stderr.write(
@@ -216,8 +227,10 @@ BUNDLE_LIKE = {'structure', 'class', 'inductive'}
 INSTRUMENT = {
     "Dregg2/Verify/FloorRatchet.lean",
     "Dregg2/Verify/FloorRatchetBaseline.lean",
+    "Dregg2/Verify/FloorRatchetBaselineInline.lean",
     "Dregg2/Verify/FloorRatchetSpecimens.lean",
     "Dregg2/Verify/FloorCensus.lean",
+    "Dregg2/Verify/InjSpelling.lean",
 }
 
 # ── ANTI-FLOOR is EXEMPT, mirroring `FloorRatchet.antiFloor` ─────────────────────────────────
