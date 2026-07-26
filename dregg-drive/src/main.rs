@@ -149,21 +149,23 @@ fn main() {
     println!("│ store     {}", dir.display());
     match &day {
         Ok(()) => println!("│ descent   pinned day published (offline, verified)"),
-        Err(e) => {
-            println!("│ descent   ⚠ pinned day NOT published: {e:?} — `descent` may refuse to open")
-        }
+        Err(e) => println!("│ descent   ⚠ pinned day NOT published: {e:?} — `descent` may refuse to open"),
     }
 
     let mut driver: Box<dyn DrivenSurface> = match cfg.surface.as_str() {
-        "telegram" | "tg" => {
-            match tg::TgDriver::new(dir.clone(), cfg.chat, cfg.topic, &cfg.offering, &cfg.viewer) {
-                Ok(d) => Box::new(d),
-                Err(why) => {
-                    eprintln!("cannot build the telegram driver: {why}");
-                    std::process::exit(1);
-                }
+        "telegram" | "tg" => match tg::TgDriver::new(
+            dir.clone(),
+            cfg.chat,
+            cfg.topic,
+            &cfg.offering,
+            &cfg.viewer,
+        ) {
+            Ok(d) => Box::new(d),
+            Err(why) => {
+                eprintln!("cannot build the telegram driver: {why}");
+                std::process::exit(1);
             }
-        }
+        },
         "web" => match web::WebDriver::new(dir.clone(), &cfg.offering, &session, &cfg.viewer) {
             Ok(d) => Box::new(d),
             Err(why) => {
@@ -191,10 +193,7 @@ fn main() {
         }
     };
 
-    println!(
-        "│ surface   {}",
-        wrap(&driver.provenance(), 64, "│           ")
-    );
+    println!("│ surface   {}", wrap(&driver.provenance(), 64, "│           "));
     println!("└───────────────────────────────────────────────────────────────");
 
     let mut transcript: Vec<String> = vec![
@@ -343,10 +342,8 @@ fn step(
         }
         other => Frame::driver_note(
             other,
-            format!(
-                "unknown command `{other}` — `help` lists them. (An illegible refusal is a \
-                     defect; this one names the fix.)"
-            ),
+            format!("unknown command `{other}` — `help` lists them. (An illegible refusal is a \
+                     defect; this one names the fix.)"),
         ),
     };
 

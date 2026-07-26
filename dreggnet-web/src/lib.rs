@@ -108,11 +108,6 @@ pub mod explorer;
 pub mod fhegg_operation;
 /// The one browser interaction grammar shared by every game offering.
 pub mod game_session;
-/// **`GET /guide` — how to play**, for a reader who has never heard of any of this. The product's
-/// only guide material was developer-facing (`docs/guide/`), so a stranger who wanted to know what a
-/// turn was had a leaderboard, a card grid and a board, and nothing that answered. Under a
-/// no-private-vocabulary rule enforced by its own tests. See [`guide`].
-pub mod guide;
 /// **ONE PLAYER ACROSS SURFACES** — `GET`/`POST /identity/link`. A player's web identity
 /// ([`seed_identity`], 24 self-held words) and their Discord/Telegram identity (a key the operator's
 /// `bot_secret` derives) were **different people with different histories on the same board**. This
@@ -123,6 +118,11 @@ pub mod guide;
 /// custody difference intact — only the VIEW unions. Mounted iff a platform identity secret
 /// resolves. See [`identity_link`].
 pub mod identity_link;
+/// **`GET /guide` — how to play**, for a reader who has never heard of any of this. The product's
+/// only guide material was developer-facing (`docs/guide/`), so a stranger who wanted to know what a
+/// turn was had a leaderboard, a card grid and a board, and nothing that answered. Under a
+/// no-private-vocabulary rule enforced by its own tests. See [`guide`].
+pub mod guide;
 /// Prometheus metrics for the web surface (the `node/src/metrics.rs` pattern): the idempotent
 /// process-global recorder + the `GET /metrics` handler + the named emit helpers this surface's
 /// call sites bump (session opens/evictions, policy refusals, executor refusals, anchor + resume
@@ -6420,8 +6420,7 @@ pub(crate) fn automatafl_still(extra_class: &str) -> String {
     // is the one thing this still exists not to be. Both sets now come out of
     // `dregg_automatafl::rules` (the Lean `targetsOf` / `liveTargetsOf`), so the preview shows the
     // same eleven-lit / nine-blocked board the live table does and the two cannot drift.
-    let proposable =
-        dregg_automatafl::rules::legal_targets(&board, &[], 0, sel).unwrap_or_default();
+    let proposable = dregg_automatafl::rules::legal_targets(&board, &[], 0, sel).unwrap_or_default();
     let reachable =
         dregg_automatafl::rules::executable_targets(&board, &[], &[], 0, sel).unwrap_or_default();
 

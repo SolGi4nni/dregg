@@ -879,8 +879,7 @@ impl AutomataflSession {
     ///
     /// Empty when the oracle cannot answer; the board then offers no dots rather than guessing.
     pub fn executable_targets(&self, src: Coord) -> Vec<Coord> {
-        rules::executable_targets(&self.board, &self.marks, &self.locked, 0, src)
-            .unwrap_or_default()
+        rules::executable_targets(&self.board, &self.marks, &self.locked, 0, src).unwrap_or_default()
     }
 
     /// Whether `src` is a square a seat may move: a real (non-vacuum) particle that is not the
