@@ -6,15 +6,27 @@ not from design narrative. The many `*.md` design/audit documents now under
 validity*; do not treat them as authoritative. When this file and a design doc
 disagree, the code wins, then this file, then nothing else.
 
-_Last verified against the tree on 2026-05-28._
+_Last verified against the tree on 2026-05-28. The test population, the MCP tool
+count, and the local on-ramp (`init` → `run` → `dregg demo`) were re-measured
+against a running node on 2026-07-26; everything else below still carries the May
+date and has not been re-checked._
 
 ## What builds, right now
 
 - `cargo check -p dregg-types -p dregg-cell -p dregg-turn -p dregg-circuit -p dregg-verifier --tests`
   → **compiles clean** (warnings only; no errors).
-- Test population (counts of `#[test]`/`#[tokio::test]`, not pass-rate): roughly
-  **2,500 tests across the core crates** — circuit ~1040, cell ~485, turn ~450,
-  storage ~214, sdk ~143, node ~85, verifier ~38, types ~33.
+- Test population (counts of `#[test]`/`#[tokio::test]` attributes, not
+  pass-rate): **4,418 across the core crates** — circuit 1187, turn 903, cell 832,
+  node 572, sdk 518, storage 307, verifier 57, types 42. Reproduce with:
+
+  ```sh
+  for c in circuit cell turn storage sdk node verifier types; do
+    grep -rEc "^[[:space:]]*#\[(tokio::)?test" $c/src $c/tests 2>/dev/null | awk -F: '{s+=$2} END {print s+0}'
+  done
+  ```
+
+  (Was "roughly 2,500" here since 2026-05-28, with a per-crate breakdown that was
+  low by 2–7× in every entry.)
 
 ## Run something in ~30 seconds
 
@@ -54,9 +66,35 @@ all live in `cell/src/program.rs`; `CellState` (8 state slots) in `cell/src/stat
 ### Other real binaries
 
 `dregg-node` (`cargo run -p dregg-node -- run`, plus `init`/`status`/`mcp`/`genesis`/
-`register-federation`/`relay`), the `dregg` CLI, `dregg-demo-agent`, and `dregg-verifier`.
-The node MCP server (`dregg-node mcp`) registers **46 tools** (e.g. `dregg_create_agent`,
-`dregg_submit_turn`, `dregg_get_receipt_chain`) — see `node/src/mcp.rs`.
+`register-federation`/`relay`/`join`/`add-validator`/`gen-validator-key`/
+`propose-epoch-transition`/`approve-membership`), the `dregg` CLI, `dregg-demo-agent`,
+and `dregg-verifier`. The node MCP server (`dregg-node mcp`) registers **54 tools**
+(e.g. `dregg_create_agent`, `dregg_submit_turn`, `dregg_get_receipt_chain`) — see
+`node/src/mcp/` (a directory since the module was split; this file said
+`node/src/mcp.rs`). `tools/list` pages at 20, so count it from the server's own
+`_meta.dregg.visible_tool_count` rather than the length of the first page:
+
+```sh
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"probe","version":"0"}}}' \
+  '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
+  | ./target/debug/dregg-node mcp --data-dir /tmp/mcp-probe 2>/dev/null
+```
+
+### The local on-ramp (`init` → `run` → `dregg demo`)
+
+Verified end to end on 2026-07-26 from empty directories: `dregg-node init` mints
+a one-validator chain and the committee's key, `dregg-node run` starts it
+(`healthy:true`, `consensus_live:true`, `state_producer:"lean"`), and `dregg demo
+--passphrase <p>` drives the nameservice lifecycle on both a fresh node and a
+second consecutive run. `producer_root_agreeing_effects` (and its deprecated
+alias `producer_covered_effects`) reads **18**.
+
+Note for a box already running a node: pass `--gossip-port`. It defaults to 9420
+and a second node that cannot bind it keeps serving HTTP with
+`consensus_live:false` and applies nothing — a fail-open in
+`blocklace_sync.rs`'s `failed to create PeerNode for blocklace gossip` path.
 
 ## Proof / verification mode (GitHub issue #2 — honest answer)
 

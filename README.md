@@ -72,6 +72,10 @@ git -C ../plonky3-recursion checkout 993efecd724261fff3fd894c06cc2525b5532e28
 The node's state producer is the Lean executor itself. Start one, faucet a cell,
 read it back — a real turn through the verified kernel, on `localhost`.
 
+`init` mints the chain — a one-validator `genesis.json`, the devnet faucet
+supply, and a `node.key` that IS that committee's member key. `run` then starts
+it. Nothing to copy between them.
+
 ```sh
 cargo build -p dregg-node                                  # builds dregg-node
 ./target/debug/dregg-node init --data-dir /tmp/my-dregg
@@ -79,8 +83,10 @@ cargo build -p dregg-node                                  # builds dregg-node
 
 # the node — verified-Lean state producer:
 curl -s http://localhost:8421/status
-# {"healthy":...,"federation_mode":"solo","state_producer":"lean",
-#  "lean_producer":true,"producer_covered_effects":21,...}
+# {"healthy":true,"federation_mode":"solo","state_producer":"lean",
+#  "lean_producer":true,"producer_covered_effects":18,...}
+# Wait for "healthy":true before the faucet call — until the first block is
+# anchored the node accepts turns and applies none of them.
 
 # faucet a cell (a real verified turn lands). NOTE: a cell id is a commitment to a
 # public key, so this *random* id is a BARE ADDRESS — credited + queryable, but you
@@ -90,10 +96,16 @@ curl -s -X POST http://localhost:8421/api/faucet \
   -H 'content-type: application/json' -d "{\"recipient\":\"$CID\",\"amount\":1000}"
 # {"success":true,"tx_hash":"...","amount":1000,"turn_hash":"..."}
 
-# read it back — credited, queryable:
+# read it back. `success` above was the SUBMISSION answering; the grant is applied
+# when the block carrying it finalizes, a second or two later. Poll until found:
 curl -s http://localhost:8421/api/cell/$CID
 # {"id":"...","found":true,"balance":1000,"nonce":0,...}
 ```
+
+Already running a dregg-node? Pass `--gossip-port` too. The gossip port defaults
+to 9420 for every node, and a second node that cannot bind it keeps serving HTTP
+while reaching consensus never — `consensus_live:false`, `block_count:0`, and
+every faucet grant accepted and never applied.
 
 ### B. Sign real turns with the CLI
 
@@ -106,6 +118,13 @@ cargo build -p dregg-cli                                   # builds the `dregg` 
 # faucet → register a name → resolve → transfer → revoke, each a verified turn.
 # The first unlock SETS the passphrase on a fresh node and acquires its bearer token.
 ```
+
+Takes about 20 seconds against a fresh node. Each mutating step waits for its
+turn to be APPLIED before narrating the next — the cell nonce it prints is the
+proof that something moved, not that a request was accepted. Re-running it is
+supported: the demo recycles its own tombstone and tops up from the faucet when
+the cell is short (the faucet allows one grant per cell per minute, so a run that
+needs a top-up may pause for up to that long).
 
 [QUICKSTART.md](QUICKSTART.md) is the full local walkthrough — identities, a
 governance ceremony, the receipt stream.

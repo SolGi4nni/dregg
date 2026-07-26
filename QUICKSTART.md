@@ -57,34 +57,48 @@ instead of quietly shipping the Rust executor.
 
 ### Lay down a chain, then run against it
 
-A node does **not** bootstrap its own chain. `dregg-node genesis` mints one —
-the validator keys, the faucet supply, the fee/issuer wells, and the consensus
-clock policy — and `run` reads it out of the data dir. `dregg-node init` only
-makes an empty store and an **unrelated** node key; on its own it is not enough,
-and `run` says so and exits (`blocklace requires
-consensus_genesis_unix_seconds + consensus_time_mode in the shared genesis.json`).
+A node does **not** bootstrap its own chain, so `init` mints one: a one-validator
+`genesis.json` (validator key, faucet supply, fee/issuer wells, and the consensus
+clock policy `run` refuses to start without), plus a `node.key` that IS that
+committee's member key.
 
 ```sh
-# a one-validator chain of your own:
-./target/debug/dregg-node genesis --validators 1 --output /tmp/my-dregg-genesis
-
-# the data dir: the chain, plus THE KEY genesis published as the committee member
-mkdir -p /tmp/my-dregg
-cp /tmp/my-dregg-genesis/genesis.json /tmp/my-dregg/genesis.json
-cp /tmp/my-dregg-genesis/.devnet      /tmp/my-dregg/.devnet
-cp /tmp/my-dregg-genesis/node-0.key   /tmp/my-dregg/node.key
-
-./target/debug/dregg-node run --data-dir /tmp/my-dregg --enable-faucet --port 8421 &
+./target/debug/dregg-node init --data-dir /tmp/my-dregg
+./target/debug/dregg-node run  --data-dir /tmp/my-dregg --enable-faucet --port 8421 &
 ```
 
-`node-0.key` is not optional and not interchangeable. The node signs every
-attested state root with its `node.key`, and the durable commit refuses a root
-whose author is not in the genesis committee — so a `node.key` from anywhere else
-(the one `init` mints, for instance) lets the node boot and produce blocks while
-**every turn fails to commit**, forever, with
-`integrity error: faithful note-root attestation has no valid author signature`
-repeating in the log. This is the same shape `demo/multi-node-devnet/start_devnet.sh`
-uses for each of its six nodes.
+`init` will not overwrite: a data dir that already holds a `genesis.json` is left
+alone, and one holding a `node.key` with no `genesis.json` is refused rather than
+handed a solo chain — that is the shape of a validator waiting for its
+federation's committee descriptor, and quietly starting it on a private chain of
+its own would look like success while it talked to nobody.
+
+Two failures this replaces, both of which shipped:
+
+- Until 2026-07-26 `init` wrote only an empty store and a random `node.key`, and
+  `run` then exited with `blocklace requires consensus_genesis_unix_seconds +
+  consensus_time_mode in the shared genesis.json` — after ~13 seconds of
+  starbridge seeding, so it read as a hang. The documented workaround was
+  `dregg-node genesis --validators 1 --output <dir>` followed by copying
+  `genesis.json` and `node-0.key` across; that still works and is what you want
+  for a multi-node committee, but it is no longer needed for a solo node. (It
+  also missed `agent-alice.key`, which made the node skip all ten starbridge
+  factory cells at boot.)
+- The key is not interchangeable. The node signs every attested state root with
+  its `node.key`, and the durable commit refuses a root whose author is not in
+  the genesis committee — so a `node.key` from anywhere else lets the node boot
+  and produce blocks while **every turn fails to commit**, forever, with
+  `integrity error: faithful note-root attestation has no valid author signature`
+  repeating in the log.
+
+For a real committee, `dregg-node genesis --validators N` is still the command;
+`demo/multi-node-devnet/start_devnet.sh` shows that shape for six nodes.
+
+**Already running a node? Pass `--gossip-port` as well.** It defaults to 9420 for
+every node, and a second node that cannot bind it does not fail — blocklace logs
+`failed to create PeerNode for blocklace gossip: Address already in use` and
+returns, and the node then serves HTTP forever with `consensus_live:false`,
+`block_count:0`, and every faucet grant accepted and never applied.
 
 ### Unlock it — nothing finalizes until you do
 
@@ -331,19 +345,43 @@ dregg --node-url http://localhost:8421 demo --passphrase pick-a-passphrase
 === Step 2: Unlocking the cipherclerk ===
 OK: Cipherclerk unlocked (bearer token acquired).
 === Step 3: Funding the operator cell ===
-OK: Funded 5000 computrons.
+OK: Faucet accepted a 10000-computron grant; waiting for it to finalize.
+OK: Operator cell holds 10000 computrons on the ledger (4600 needed for this run).
 === Step 4: Registering 'alice.dregg' ===
-OK: Registration committed     Turn: 16a4cbe4…
+OK: Registration committed     Turn: f555b665…
+  Applied on the ledger (cell nonce 1).
+=== Step 5: Resolving 'alice.dregg' ===
+OK: 'alice.dregg' is bound and active
 === Step 6: Transferring 'alice.dregg' to bob ===
 OK: Transfer committed
+  Applied on the ledger (cell nonce 2).
 === Step 7: Revoking 'alice.dregg' (one-way) ===
 OK: Revocation committed
+  Applied on the ledger (cell nonce 3).
+ERROR: REVOKED — this name has been tombstoned (one-way).
 === Demo complete ===
 OK: A full nameservice lifecycle ran end-to-end on the verified commit path.
 ```
 
+(The `REVOKED` line at the end is the demo's final resolve showing the tombstone
+it just wrote — the point of step 7, not a failure.)
+
 The first unlock SETS the passphrase on a fresh node; the demo acquires the
 bearer token itself.
+
+**What every "Applied on the ledger" line is doing.** `accepted:true` from
+`/api/turns/submit` means the turn was admitted and ordered, not that it ran —
+application happens at finalization, and a turn can be refused *there*, after the
+HTTP surface has already answered. Steps 6 and 7 used to print `committed` while
+the node's log recorded `finalized SignedTurn failed agent-scoped receipt
+continuity before mutation (deterministic rejection recorded)` for both, and
+nothing moved: same nonce, same balance, same slots, green demo. Each step now
+waits for the agent cell's nonce to advance before the next one is narrated. The
+nonce it prints is the evidence.
+
+The demo is re-runnable: it recycles its own tombstone and tops the cell up from
+the faucet when it is short. The faucet allows one grant per cell per minute, so
+a run that needs a top-up can pause for up to that long before step 4.
 
 ## 5. Drive a governance ceremony (polis)
 
