@@ -96,7 +96,8 @@ pub(crate) async fn execute_claim(
     let builder = CreateChannel::new(name)
         .kind(ChannelType::Text)
         .topic(format!(
-            "dregg — {}'s semi-private channel. Messages drive their confined Hermes (cap-gated, receipted). Admin-monitored.",
+            "{} — {}'s semi-private channel. Messages drive their confined Hermes (cap-gated, receipted). Admin-monitored.",
+            dreggnet_catalog::SURFACE_NAME,
             user.name
         ))
         .permissions(overwrites);

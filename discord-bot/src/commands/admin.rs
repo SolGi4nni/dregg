@@ -140,8 +140,13 @@ pub fn refusal_embed() -> CreateEmbed {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Register the `admin` surface. Folded into `/dregg` as a subcommand GROUP by
-/// `commands::menus::dregg_command` — NOT a 14th top-level command; the global slash surface
-/// stays exactly 13 (`crate::REGISTERED_COMMAND_NAMES`).
+/// `commands::menus::dregg_command` rather than taking a top-level slot of its own.
+///
+/// `/dregg` is the `Door::Operator` row of `commands::menus::SLASH_SURFACE`, so it is
+/// registered globally but stamped with `default_member_permissions: "0"` — Discord hides it
+/// from any member who cannot use it, which keeps the operator surface off a player's `/` menu
+/// without ember losing it. That is presentation only; [`plan`] is still the gate, and it
+/// refuses a non-admin before the subcommand is even read.
 pub fn register() -> CreateCommand {
     let mut backend = CreateCommandOption::new(
         CommandOptionType::String,

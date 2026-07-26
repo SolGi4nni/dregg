@@ -533,12 +533,16 @@ pub fn attestation_boundary() -> &'static str {
 //                               achievement's role to a member, for the achievements
 //                               whose automatic seam is not wired yet.
 //
-// NOT a top-level command: the global slash surface is EXACTLY 13 (`/dregg` + 12), so
-// [`register`] is folded into `/identity` — the granting-authority command — as a
-// subcommand GROUP by `menus::global_commands`, dispatched by `menus::handle_identity`
-// through the same `as_command` re-nesting every other fold uses. The map is read from
-// the environment on demand (`RoleCapMap::from_env`); a production wiring would cache
-// it on `BotState`.
+// NOT a top-level command: [`register`] is folded into `/identity` — the granting-authority
+// command — as a subcommand GROUP by `menus::command_for`, dispatched by
+// `menus::handle_identity` through the same `as_command` re-nesting every other fold uses.
+// The map is read from the environment on demand (`RoleCapMap::from_env`); a production
+// wiring would cache it on `BotState`.
+//
+// ⚑ `/identity` is a `Door::Lab` row on `menus::SLASH_SURFACE`, so this whole surface is
+// un-advertised: it is registered only inside `DREGG_LAB_GUILD_ID`. Nothing about it is
+// deleted — the handlers, the role→cap map and the proof→role grant seam are untouched — but
+// `/identity roles …` is not typeable on the global surface.
 //
 // The automatic (non-admin) grant seam is live for [`Achievement::IdentityVerified`],
 // fired from the canonical `validate_handoff` acceptance in `commands::handoff`.

@@ -57,6 +57,7 @@ use dreggnet_surfaces::{
 use crate::BotState;
 use crate::commands::ack;
 use crate::commands::offering::{self, DiscordOffering, Store, TextPrompt, identity_of};
+use crate::embeds;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SeatedTug — THE shared seat-claiming adapter (`dreggnet_catalog::seated`).
@@ -494,10 +495,16 @@ pub fn played_tug_match(channel: u64) -> Option<dreggnet_prove_service::PlayedMa
 // The `/play` command — open any portfolio offering by key.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The catalog keys served by their own **bespoke slash commands** (`/dungeon`, `/council`,
-/// `/market`, `/doc`, `/grain`, `/hermes`) rather than `/play` — the complement of `/play`'s
-/// reach within the shared catalog. Each name is asserted registered in
-/// `REGISTERED_COMMAND_NAMES` by the parity test below.
+/// The catalog keys served by their own **bespoke slash command** rather than `/play` — the
+/// complement of `/play`'s reach within the shared catalog. Each one is asserted to still have
+/// a registered home somewhere on `commands::menus::SLASH_SURFACE` by the parity test below.
+///
+/// ⚑ **THESE ARE THE KEYS THE CHEAT CODE CANNOT OPEN**, because [`all_play_keys`] subtracts
+/// them: `open_offering_by_key` has no arm for a bespoke frontend, so `/play cheat code:dungeon`
+/// NAMES the command instead ([`OWN_COMMANDS`]) rather than routing to it. Five of the six are
+/// now off the ship list, and their commands are off the advertised surface with it — so the
+/// invocation the Cheat Code names is a `DREGG_LAB_GUILD_ID` route, which is exactly what
+/// [`OWN_COMMANDS`] has to say.
 pub const BESPOKE_COMMAND_KEYS: [&str; 6] =
     ["dungeon", "council", "market", "doc", "grain", "hermes"];
 
@@ -525,20 +532,34 @@ pub const DISCORD_OPT_IN_PLAY_KEYS: [&str; 0] = [];
 /// the bots do not. To re-list something on Discord, add it to `SHIPPED_KEYS`; nothing here needs
 /// touching.
 ///
-/// ⚠ **This narrows the `/play` picker only, and Discord enforces its own choice list**, so an
-/// unshipped key cannot be typed into `/play` even though it is still mounted. Its per-type
-/// component/modal routes (`commands::offering::route_component`, which covers every mounted
-/// type) and its bespoke subcommand, where it has one, are untouched — this is the one host where
-/// "unlisted is still reachable" is narrower than elsewhere, and it is Discord's constraint, not
-/// the ship list's.
+/// ⚠ **This narrows the `/play` PICKER only.** Discord enforces its own choice list, so an
+/// unshipped key cannot be typed into `/play open` even though it is still mounted. The typeable
+/// door for those is the **Cheat Code** ([`read_cheat_code`], `/play cheat code:<key>`), which
+/// dispatches through the exact same [`open_offering_by_key`] this picker does; the per-type
+/// component/modal routes (`commands::offering::route_component`, which covers every mounted type)
+/// and each bespoke subcommand are untouched.
 pub fn play_keys() -> Vec<&'static str> {
+    all_play_keys()
+        .into_iter()
+        .filter(|k| dreggnet_catalog::is_shipped(k))
+        .collect()
+}
+
+/// **Every key [`open_offering_by_key`] can actually dispatch** — the shared catalog
+/// ([`dreggnet_catalog::CATALOG_KEYS`]) minus the [`BESPOKE_COMMAND_KEYS`], plus the
+/// [`DISCORD_EXTRA_PLAY_KEYS`] and the [`DISCORD_OPT_IN_PLAY_KEYS`]. NOT narrowed by the ship list.
+///
+/// This is the REACH of `/play`, as distinct from its advertised [`play_keys`] shelf, and it is what
+/// the Cheat Code resolves against. Keeping the two derived from one expression is the point: a key
+/// the picker hides is still, provably, a key the opener knows
+/// (`the_cheat_code_reaches_every_key_the_picker_hides`).
+pub fn all_play_keys() -> Vec<&'static str> {
     dreggnet_catalog::CATALOG_KEYS
         .iter()
         .copied()
         .filter(|k| !BESPOKE_COMMAND_KEYS.contains(k))
         .chain(DISCORD_EXTRA_PLAY_KEYS)
         .chain(DISCORD_OPT_IN_PLAY_KEYS)
-        .filter(|k| dreggnet_catalog::is_shipped(k))
         .collect()
 }
 
@@ -607,6 +628,28 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
         return;
     }
 
+    open_offering_by_key(ctx, command, state, &key).await;
+}
+
+/// **THE ONE OPEN PATH** — open `key` in this channel and post its surface, projected for the
+/// invoker. `/play open offering:<key>` (the advertised picker) and `/play cheat code:<key>` (the
+/// Cheat Code) both land here, so the second door is a second *spelling* and not a second
+/// mechanism: same ACK, same `identity_of` viewer derivation, same channel-seeded
+/// [`SessionConfig`], same per-identity routing for the RPG keys, same
+/// `commands::open_guard::refuse_with_confirm` protection of a live session, and the same
+/// `commands::offering::channel_surfaces` split that keeps a hidden-information offering's private
+/// projection in an EPHEMERAL followup instead of the shared channel message.
+///
+/// ⚑ It therefore grants NOTHING. Every gate that applied to the picker applies here because it is
+/// literally the same function body; the only thing the Cheat Code changes is which strings Discord
+/// will let you type into the box.
+pub async fn open_offering_by_key(
+    ctx: &Context,
+    command: &CommandInteraction,
+    state: &BotState,
+    key: &str,
+) {
+    let key = key.to_owned();
     let channel = command.channel_id.get();
     let viewer = identity_of(state, command.user.id.get());
     let cfg = SessionConfig::with_seed(channel);
@@ -754,6 +797,205 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
             .color(0xE63946);
         ack::edit_slash(ctx, command, embed, vec![]).await;
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE CHEAT CODE — a free-text door onto the unlisted offerings
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// What a typed Cheat Code turned out to name. A pure function of the string, so the whole
+/// resolution is testable without a Discord token — and so the reach of the affordance is a thing
+/// you can READ rather than infer from an async handler.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CheatCode {
+    /// A key [`open_offering_by_key`] dispatches. Opened through that exact path.
+    Open(&'static str),
+    /// A key that EXISTS but is served by its own top-level command. The Cheat Code names the
+    /// command instead of building a second route to it — that would be a second mechanism, and
+    /// the command was never the thing Discord made untypeable.
+    OwnCommand {
+        key: &'static str,
+        invocation: &'static str,
+    },
+    /// The one easter egg.
+    Konami,
+    /// Nothing recognised. Says something and does nothing.
+    Unknown,
+}
+
+/// Alias spellings a person plausibly types for a real key. Deliberately tiny: the Cheat Code is a
+/// door, not a parser.
+const CHEAT_ALIASES: [(&str, &str); 6] = [
+    ("multiway-tug", "tug"),
+    ("dark-bazaar", "bazaar"),
+    ("achievements", "cheevos"),
+    ("cheevo", "cheevos"),
+    ("campaign", DescentCampaignOffering::KEY),
+    ("raid", dreggnet_surfaces::private_raid::KEY),
+];
+
+/// The invocation that opens each key with a command of its own.
+///
+/// ⚑ These are the CURRENT invocations, i.e. the folded ones — `/doc open` and `/grain open`
+/// stopped existing when `doc` and `grain` folded under `/hermes`, and were stale here until
+/// this note. Only `market` is on the advertised surface; the other five ride commands that
+/// `commands::menus::SLASH_SURFACE` marks un-advertised, so they answer only inside
+/// `DREGG_LAB_GUILD_ID`. `the_own_commands_name_registered_paths` is the gate.
+const OWN_COMMANDS: [(&str, &str); 6] = [
+    ("dungeon", "/adventure dungeon start"),
+    ("council", "/govern council open"),
+    ("market", "/play market"),
+    ("doc", "/hermes doc open"),
+    ("grain", "/hermes grain open"),
+    ("hermes", "/hermes open"),
+];
+
+/// The Konami code, in the spellings a person actually types.
+const KONAMI: [&str; 5] = [
+    "uuddlrlrba",
+    "up-up-down-down-left-right-left-right-b-a",
+    "↑↑↓↓←→←→ba",
+    "⬆⬆⬇⬇⬅➡⬅➡ba",
+    "konami",
+];
+
+/// **Read a Cheat Code.** Trims, lowercases, drops a leading `/` or `offering:`, and folds spaces
+/// and underscores to `-` — the four things that separate "what someone types" from "a catalog
+/// key". Then: a real `/play` key, a key with its own command, the easter egg, or nothing.
+///
+/// ⚑ THE REACH IS EXACTLY [`all_play_keys`]. This function cannot name a key nothing registers, and
+/// it cannot construct a route — [`CheatCode::Open`] carries a `&'static str` out of that array, so
+/// the value it hands the opener is one the opener already accepted from the picker.
+pub fn read_cheat_code(raw: &str) -> CheatCode {
+    let mut norm: String = raw
+        .trim()
+        .to_lowercase()
+        .chars()
+        .map(|c| {
+            if c == '_' || c == ' ' || c == '.' {
+                '-'
+            } else {
+                c
+            }
+        })
+        .collect();
+    for prefix in ["/", "play-", "open-", "offering:", "offering-", "key-"] {
+        if let Some(rest) = norm.strip_prefix(prefix) {
+            norm = rest.to_string();
+        }
+    }
+    let norm = norm.trim_matches('-').to_string();
+    if norm.is_empty() {
+        return CheatCode::Unknown;
+    }
+    if KONAMI.contains(&norm.as_str()) {
+        return CheatCode::Konami;
+    }
+    let resolved = CHEAT_ALIASES
+        .iter()
+        .find(|(alias, _)| *alias == norm)
+        .map(|(_, key)| *key)
+        .unwrap_or(norm.as_str());
+    if let Some(key) = all_play_keys().into_iter().find(|k| *k == resolved) {
+        return CheatCode::Open(key);
+    }
+    if let Some(&(key, invocation)) = OWN_COMMANDS.iter().find(|(k, _)| *k == resolved) {
+        return CheatCode::OwnCommand { key, invocation };
+    }
+    CheatCode::Unknown
+}
+
+/// `/play cheat code:<anything>` — **the Cheat Code menu.**
+///
+/// ⚑ WHY IT EXISTS. Paring the public shelf to three games
+/// ([`dreggnet_catalog::SHIPPED_KEYS`]) left Discord as the one host where an unlisted key was
+/// *untypeable*, because a slash-command choice enum takes no free strings — every other host still
+/// opens an unlisted offering by key (web: `/offerings/{key}/session/{id}`; Telegram: `/open
+/// <key>`; WeChat: by key). This restores that, and only that.
+///
+/// ⚑ WHAT IT CAN REACH: exactly [`all_play_keys`], via [`open_offering_by_key`] — the same function
+/// the `/play open` picker calls, with the same ACK, viewer derivation, live-session confirm guard,
+/// per-identity RPG routing and hidden-information ephemeral split.
+///
+/// ⚑ WHAT IT CANNOT REACH: anything else. It grants no capability, skips no check, and reads no
+/// state — an unlisted offering was ALREADY openable on every other frontend, so "typeable on
+/// Discord too" is parity, not escalation. A key with its own command gets the command NAMED, never
+/// a second route built to it. And it is a Discord affordance only: Telegram's
+/// hidden-information-in-a-group refusal lives in `dreggnet-telegram` and is untouched by anything
+/// here, so nothing typed into this box can cause a private projection to be painted into a shared
+/// Telegram chat.
+pub async fn handle_cheat(ctx: &Context, command: &CommandInteraction, state: &BotState) {
+    let typed = command
+        .data
+        .options
+        .iter()
+        .find(|o| o.name == "code")
+        .and_then(|o| match &o.value {
+            CommandDataOptionValue::String(s) => Some(s.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
+
+    match read_cheat_code(&typed) {
+        // The ordinary door, opened by the ordinary path. Public, exactly like `/play open`.
+        CheatCode::Open(key) => open_offering_by_key(ctx, command, state, key).await,
+        CheatCode::OwnCommand { key, invocation } => {
+            cheat_reply(
+                ctx,
+                command,
+                embeds::dregg_embed(&format!("`{key}` has its own door")).description(format!(
+                    "That one is not opened through `/play` — run `{invocation}`. It was never \
+                     hidden from you; it just answers to a different command."
+                )),
+            )
+            .await;
+        }
+        // ⚑ THE EASTER EGG, and it is exactly the right joke for this product: the most famous
+        // cheat code in the world, granting thirty lives that the executor declines to record.
+        // Nothing is committed — which is the promise the whole arcade rests on, said as a gag.
+        CheatCode::Konami => {
+            cheat_reply(
+                ctx,
+                command,
+                embeds::dregg_embed("⬆ ⬆ ⬇ ⬇ ⬅ ➡ ⬅ ➡ 🅑 🅐").description(
+                    "**30 lives granted.**\n\nRefused: no such turn (nothing committed — \
+                     anti-ghost).\n\nThe referee re-ran it against the rules and declined. That \
+                     is the whole product, and you just made it say so out loud.",
+                ),
+            )
+            .await;
+        }
+        CheatCode::Unknown => {
+            cheat_reply(
+                ctx,
+                command,
+                embeds::dregg_embed("Nothing answers to that").description(format!(
+                    "`{}` opens no door here. No harm done — this box only ever opens something \
+                     that already exists, so a wrong guess costs you nothing.\n\nThe three on the \
+                     shelf are `descent`, `automatafl` and `tug`, and `/play menu` shows them \
+                     properly.",
+                    typed.chars().take(60).collect::<String>()
+                )),
+            )
+            .await;
+        }
+    }
+}
+
+/// The Cheat Code's non-opening answers — EPHEMERAL, because a miss, a pointer or a joke is between
+/// the person who typed it and the bot. An actual open is public: it posts a shared board, which is
+/// what every other `/play` open does and what makes the session joinable.
+async fn cheat_reply(ctx: &Context, command: &CommandInteraction, embed: CreateEmbed) {
+    let _ = command
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new()
+                    .embed(embed)
+                    .ephemeral(true),
+            ),
+        )
+        .await;
 }
 
 /// `/play <offering> action:verify` — dispatch the chain re-verifier for the chosen offering
@@ -1061,6 +1303,125 @@ async fn open_and_post<O: DiscordOffering>(
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
+mod cheat_code_tests {
+    use super::*;
+
+    /// ⚑ **THE CHEAT CODE'S WHOLE JOB, as a property.** Every key the ship list took OUT of the
+    /// `/play` picker must be reachable by typing it — otherwise the affordance does not do the one
+    /// thing it exists for. Driven off the two derived arrays, so re-listing or un-listing an
+    /// offering can never make this stale.
+    #[test]
+    fn the_cheat_code_reaches_every_key_the_picker_hides() {
+        let picker = play_keys();
+        let hidden: Vec<&str> = all_play_keys()
+            .into_iter()
+            .filter(|k| !picker.contains(k))
+            .collect();
+        assert!(
+            !hidden.is_empty(),
+            "the ship list hides nothing, so this test is checking nothing — if that is \
+             intentional, delete it rather than leaving a green vacuum"
+        );
+        for key in hidden {
+            assert_eq!(
+                read_cheat_code(key),
+                CheatCode::Open(key),
+                "`{key}` is untypeable in the picker AND unreachable by cheat code — the pare-down \
+                 would have deleted it in practice"
+            );
+        }
+        // And the three on the shelf still resolve, so the box is not a second, stranger vocabulary.
+        for key in dreggnet_catalog::SHIPPED_KEYS {
+            assert_eq!(read_cheat_code(key), CheatCode::Open(key));
+        }
+    }
+
+    /// **It resolves keys, not routes.** The normalizer is allowed to be forgiving about typing;
+    /// it is not allowed to invent a target. Anything that is not a registered key comes back
+    /// `Unknown` — including the shapes an attacker reaches for.
+    #[test]
+    fn the_cheat_code_invents_no_target() {
+        for junk in [
+            "",
+            "   ",
+            "-",
+            "bazaar/../../dungeon",
+            "bazaar\0",
+            "descent;drop",
+            "../secrets",
+            "http://example.com/bazaar",
+            "select * from offerings",
+            "bazaar bazaar",
+            "🐉",
+        ] {
+            assert_eq!(
+                read_cheat_code(junk),
+                CheatCode::Unknown,
+                "`{junk}` must resolve to nothing"
+            );
+        }
+    }
+
+    /// **Forgiving about typing, exactly and only in the four documented ways.**
+    #[test]
+    fn the_cheat_code_forgives_the_typing_and_not_the_target() {
+        for spelling in [
+            "bazaar",
+            "  Bazaar  ",
+            "BAZAAR",
+            "/bazaar",
+            "offering:bazaar",
+            "dark_bazaar",
+            "Dark Bazaar",
+        ] {
+            assert_eq!(
+                read_cheat_code(spelling),
+                CheatCode::Open("bazaar"),
+                "`{spelling}`"
+            );
+        }
+        assert_eq!(read_cheat_code("multiway-tug"), CheatCode::Open("tug"));
+        assert_eq!(read_cheat_code("achievements"), CheatCode::Open("cheevos"));
+    }
+
+    /// **A key with its own command is POINTED AT, never re-routed.** The Cheat Code builds no
+    /// second door onto `/adventure dungeon` — those commands were always typeable, so there is
+    /// nothing here to restore and a second mechanism would be pure risk.
+    #[test]
+    fn a_bespoke_key_gets_its_command_named_and_no_new_route() {
+        for key in BESPOKE_COMMAND_KEYS {
+            match read_cheat_code(key) {
+                CheatCode::OwnCommand { key: k, invocation } => {
+                    assert_eq!(k, key);
+                    assert!(invocation.starts_with('/'), "{invocation}");
+                }
+                other => panic!("`{key}` should name its own command, got {other:?}"),
+            }
+            assert!(
+                !all_play_keys().contains(&key),
+                "`{key}` must not ALSO be dispatchable through the /play open path"
+            );
+        }
+    }
+
+    /// The easter egg is one lookup with a handful of spellings — not an interpreter.
+    #[test]
+    fn the_easter_egg_is_a_lookup() {
+        for spelling in KONAMI {
+            assert_eq!(read_cheat_code(spelling), CheatCode::Konami, "{spelling}");
+        }
+        assert_eq!(read_cheat_code("UUDDLRLRBA"), CheatCode::Konami);
+        assert_eq!(
+            read_cheat_code("up up down down left right left right b a"),
+            CheatCode::Konami
+        );
+        // Near-misses are not eggs, and eggs are not keys.
+        assert_eq!(read_cheat_code("uuddlrlrab"), CheatCode::Unknown);
+        assert!(!all_play_keys().contains(&"konami"));
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::commands::offering::{
@@ -1295,10 +1656,16 @@ mod tests {
         }
     }
 
-    /// **The bespoke-command catalog keys are reachable on the 13-command surface** — the
-    /// offering SET is the shared catalog's, and the registered surface stays consistent with
-    /// it: every catalog key `/play open` does NOT serve rides as its own top-level command or
-    /// as a fold under one (`commands::menus`), and `/play` itself is registered with `open`.
+    /// **The bespoke-command catalog keys still have a built home** — the offering SET is the
+    /// shared catalog's, and the command surface stays consistent with it: every catalog key
+    /// `/play open` does NOT serve rides as its own top-level command or as a fold under one
+    /// (`commands::menus::SLASH_SURFACE`, advertised rows OR lab rows), and `/play` itself is
+    /// registered with `open`.
+    ///
+    /// ⚑ This asserts the path EXISTS, not that it is advertised. Five of these six keys came
+    /// off `dreggnet_catalog::SHIPPED_KEYS`, so their commands are un-advertised and answer
+    /// only inside `DREGG_LAB_GUILD_ID` — which is the whole point of keeping this test
+    /// separate from `menus::tests::the_lab_surface_is_not_registered_globally`.
     #[test]
     fn the_bespoke_catalog_commands_are_registered() {
         // key → (its top-level home, the subcommand/group name there; None = it IS top-level).
@@ -1314,11 +1681,11 @@ mod tests {
             let (_, home) = homes
                 .iter()
                 .find(|(k, _)| *k == key)
-                .unwrap_or_else(|| panic!("bespoke key `{key}` has no declared 13-command home"));
+                .unwrap_or_else(|| panic!("bespoke key `{key}` has no declared home"));
             match home {
                 None => assert!(
-                    crate::REGISTERED_COMMAND_NAMES.contains(&key),
-                    "catalog offering `{key}` is claimed top-level but `/{key}` is not registered"
+                    crate::commands::menus::all_surface_names().contains(&key),
+                    "catalog offering `{key}` is claimed top-level but `/{key}` is not built"
                 ),
                 Some((top, sub)) => assert!(
                     crate::commands::menus::subcommand_names(top)
@@ -1329,8 +1696,8 @@ mod tests {
             }
         }
         assert!(
-            crate::REGISTERED_COMMAND_NAMES.contains(&"play"),
-            "`/play` (the derived-catalog reach) must be registered"
+            crate::commands::menus::advertised_names().contains(&"play"),
+            "`/play` (the derived-catalog reach) must be ADVERTISED — it is the arcade door"
         );
         assert!(
             crate::commands::menus::subcommand_names("play")
@@ -1338,6 +1705,33 @@ mod tests {
                 .any(|s| s == "open"),
             "`/play open` (the portfolio opener) must be registered"
         );
+    }
+
+    /// ⚑ **THE CHEAT CODE CANNOT NAME A COMMAND THAT DOES NOT EXIST.** `read_cheat_code`
+    /// answers a bespoke key by NAMING its command instead of building a second route to it —
+    /// which is only honest while that command is actually built. Two stale entries (`/doc
+    /// open`, `/grain open`) survived the fold under `/hermes` unnoticed; this is the tooth
+    /// that would have caught them.
+    #[test]
+    fn the_own_commands_name_registered_paths() {
+        for (key, invocation) in OWN_COMMANDS {
+            let mut words = invocation.trim_start_matches('/').split_whitespace();
+            let top = words.next().expect("an invocation names a command");
+            assert!(
+                crate::commands::menus::all_surface_names().contains(&top),
+                "the `{key}` Cheat Code answer names `/{top}`, which is not on SLASH_SURFACE"
+            );
+            if let Some(sub) = words.next() {
+                assert!(
+                    crate::commands::menus::subcommand_names(top)
+                        .iter()
+                        .any(|s| s == sub),
+                    "the `{key}` Cheat Code answer names `{invocation}`, but `/{top}` has no \
+                     `{sub}` — found {:?}",
+                    crate::commands::menus::subcommand_names(top)
+                );
+            }
+        }
     }
 
     /// `/play` registers the `action:verify` choice (backlog Tier-2 #10) — the

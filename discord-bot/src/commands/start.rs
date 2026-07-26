@@ -98,13 +98,18 @@ pub fn action_for(custom_id: &str) -> StartAction {
 
 /// Register `/start` — the onboarding entry point.
 pub fn register() -> CreateCommand {
-    CreateCommand::new("start")
-        .description("Welcome to DreggNet — set up and get going (just click)")
+    CreateCommand::new("start").description(format!(
+        "Welcome to {} — set up and get going (just click)",
+        dreggnet_catalog::SURFACE_NAME
+    ))
 }
 
 /// Register `/help` — the map of the new model.
 pub fn register_help() -> CreateCommand {
-    CreateCommand::new("help").description("How to use the DreggNet bot — buttons + just typing")
+    CreateCommand::new("help").description(format!(
+        "How to use the {} bot — buttons + just typing",
+        dreggnet_catalog::SURFACE_NAME
+    ))
 }
 
 // ─── /start ──────────────────────────────────────────────────────────────────
@@ -144,16 +149,19 @@ pub(crate) async fn home_view(
     let has_key = matches!(state.db.get_llm_key(&discord_id).await, Ok(Some(_)));
 
     let embed = if has_wallet {
-        embeds::dregg_embed("Welcome back to DreggNet")
-            .description(
-                "Pick an action below, or **claim your channel and just type** — your messages \
+        embeds::dregg_embed(&format!(
+            "Welcome back to {}",
+            dreggnet_catalog::SURFACE_NAME
+        ))
+        .description(
+            "Pick an action below, or **claim your channel and just type** — your messages \
                  become cap-gated, metered, receipted dregg turns under your own cell.",
-            )
-            .field("Cipherclerk", "ready", true)
-            .field("LLM key", if has_key { "set" } else { "not set" }, true)
+        )
+        .field("Cipherclerk", "ready", true)
+        .field("LLM key", if has_key { "set" } else { "not set" }, true)
     } else {
-        embeds::dregg_embed("Welcome to DreggNet").description(
-            "You're new here. The fastest way to *get* what DreggNet is: take the **2-minute tour** \
+        embeds::dregg_embed(&format!("Welcome to {}", dreggnet_catalog::SURFACE_NAME)).description(
+            "You're new here. The fastest way to *get* what this is: take the **2-minute tour** \
                  — it walks you to your first real, paid, verifiable thing on the network (get an \
                  identity \u{2192} get test DEC \u{2192} do one real turn \u{2192} here's your receipt). \
                  You barely need to learn any commands: click the buttons, or just type.",
@@ -200,38 +208,45 @@ pub fn home_components(has_wallet: bool, has_key: bool) -> Vec<CreateActionRow> 
     ]
 }
 
+/// ⚑ **THE MAP IS A SHELF.** A line here advertises a command as loudly as the `/` menu
+/// does, and a pointer at a command this build does not register is worse than no pointer at
+/// all — Discord simply refuses to route it. So this names ONLY what
+/// `commands::menus::SLASH_SURFACE` advertises to a player;
+/// `menus::tests::no_advertised_surface_names_a_lab_command` is the gate, driven over
+/// `lab_names()` so re-listing a surface fixes the test with it.
 pub(crate) fn help_embed() -> CreateEmbed {
-    embeds::dregg_embed("Using the DreggNet bot")
+    embeds::dregg_embed(&format!("Using the {} bot", dreggnet_catalog::SURFACE_NAME))
         .description(
-            "Thirteen commands, and each one summons a menu or a world — every action behind \
-             them is a real, receipted dregg turn. Start with `/dregg`: its buttons open \
-             everything else.",
+            "Five commands. Each one summons a game, shows you your own side of it, or \
+             re-checks it — and every action behind them is a real, receipted dregg turn.",
         )
         .field(
-            "\u{1f3b2} Worlds",
-            "`/descent` — **the featured game**: a dungeon crawl, one a day, one life, no retries · \
-             `/play` — the other two games: **Automatafl** (a two-player board) and \
-             **Multiway-Tug** (hidden influence) · `/adventure` — the AI-narrated party \
-             dungeon · `/gallery` — publish + remix procgen worlds · `/leaderboard` — glory.",
+            "\u{1f3b2} The games",
+            "`/descent` — **the featured game**: a dungeon crawl, one a day for everyone, \
+             one life, no retries · `/play` — the other two: **Automatafl** (a two-player \
+             board where both moves reveal at once) and **Multiway-Tug** (hidden influence \
+             over seven guilds).",
+            false,
+        )
+        .field(
+            "\u{1f511} Cheat Code",
+            "`/play cheat code:<anything>` takes free text. If you know the key of something \
+             that is not on the shelf, type it and it opens — same rules, same receipts. \
+             Wrong guesses are free.",
             false,
         )
         .field(
             "\u{1f510} You",
             "`/cipherclerk` — you + your funds (balance, send, history, faucet, credits, \
-             treasury, tokens) · `/identity` — granting authority (caps, handoffs, link \
-             ceremonies, your LLM key).",
+             treasury, tokens), and `link-web` to prove this Discord account to your web \
+             identity so a leaderboard sees one of you.",
             false,
         )
         .field(
-            "\u{1f3db}\u{fe0f} The network",
-            "`/govern` — councils, bounties, intents · `/verify` — proofs, the explorer, the \
-             crown · `/federation` — status, peers, presence, coordination · `/hermes` — the \
-             confined agent, grain, and shared doc.",
-            false,
-        )
-        .field(
-            "\u{2302} Hubs",
-            "`/dregg` — the hub · `/help` — this map + the menu below.",
+            "\u{2713} Check it yourself",
+            "`/verify` — fetch AND verify a committed turn's STARK against its VK, browse \
+             committed state, and fold a finished match into ONE O(1)-verifiable crown. \
+             `/help` is this map.",
             false,
         )
         .field(
@@ -435,7 +450,7 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
                 }
                 None => embeds::warning_embed(
                     "Run In A Server",
-                    "Claiming a channel needs a DreggNet server — open `/start` there, not in a DM.",
+                    "Claiming a channel needs a server the bot is installed in — open `/help` there, not in a DM.",
                 ),
             };
             edit_followup(ctx, component, embed).await;

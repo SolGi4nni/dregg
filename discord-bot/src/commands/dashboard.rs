@@ -601,8 +601,58 @@ fn subscription_embed(guild_id: Option<u64>) -> CreateEmbed {
         .field("Starbridge App", "`starbridge-apps/subscription`", true)
 }
 
+/// The label a hub button carries for each surface it can summon. ⚑ This is presentation
+/// ONLY — which of these actually get a button is [`surface_buttons`], derived from
+/// `commands::menus::advertised_names()`. A label here for an un-advertised surface is
+/// harmless; a BUTTON to one is not, because it would walk a player into a menu whose prose
+/// names commands Discord will refuse to route.
+const SURFACE_LABELS: &[(&str, &str)] = &[
+    ("play", "\u{1f3ae} Play"),
+    ("descent", "\u{1f573}\u{fe0f} Descent"),
+    ("adventure", "\u{1f409} Adventure"),
+    ("gallery", "\u{1f5bc}\u{fe0f} Gallery"),
+    ("leaderboard", "\u{1f3c6} Glory"),
+    ("cipherclerk", "\u{1f510} Cipherclerk"),
+    ("govern", "\u{1f3db}\u{fe0f} Govern"),
+    ("verify", "\u{2705} Verify"),
+    ("identity", "\u{1fAAA} Identity"),
+    ("federation", "\u{1f310} Federation"),
+    ("hermes", "\u{1f4e1} Hermes"),
+    ("help", "Help"),
+];
+
+/// ⚑ **THE HUB SUMMONS ONLY WHAT WE ADVERTISE.** The hub is the second shelf — a grid of
+/// `menu:go:*` buttons is exactly as loud as the `/` menu, and every player reaches it from
+/// the "⌂ Hub" button on every other menu. So the row is DERIVED from
+/// `commands::menus::advertised_names()` rather than hand-listed: paring a surface takes its
+/// hub button with it, in the same edit.
+///
+/// `dregg` itself is skipped — you are already looking at it. Rows are chunked to Discord's
+/// 5-buttons-per-row limit.
+fn surface_buttons() -> Vec<CreateActionRow> {
+    let advertised = crate::commands::menus::advertised_names();
+    let labels: Vec<(&str, &str)> = SURFACE_LABELS
+        .iter()
+        .copied()
+        .filter(|(surface, _)| *surface != "dregg" && advertised.contains(surface))
+        .collect();
+    labels
+        .chunks(5)
+        .map(|chunk| {
+            CreateActionRow::Buttons(
+                chunk
+                    .iter()
+                    .map(|(surface, label)| {
+                        button(&format!("menu:go:{surface}"), label, ButtonStyle::Secondary)
+                    })
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
 pub(crate) fn home_components() -> Vec<CreateActionRow> {
-    vec![
+    let mut rows = vec![
         app_select(),
         CreateActionRow::Buttons(vec![
             button(ID_APP_IDENTITY, "Identity", ButtonStyle::Primary),
@@ -610,62 +660,16 @@ pub(crate) fn home_components() -> Vec<CreateActionRow> {
             button(ID_APP_GOV, "Governance", ButtonStyle::Primary),
             button(ID_APP_SUBS, "Subscription", ButtonStyle::Primary),
         ]),
-        // The hub summons every other surface (`commands::menus` routes the
-        // `menu:go:*` presses to that surface's menu, in place).
-        CreateActionRow::Buttons(vec![
-            button("menu:go:play", "\u{1f3ae} Play", ButtonStyle::Secondary),
-            button(
-                "menu:go:descent",
-                "\u{1f573}\u{fe0f} Descent",
-                ButtonStyle::Secondary,
-            ),
-            button(
-                "menu:go:adventure",
-                "\u{1f409} Adventure",
-                ButtonStyle::Secondary,
-            ),
-            button(
-                "menu:go:gallery",
-                "\u{1f5bc}\u{fe0f} Gallery",
-                ButtonStyle::Secondary,
-            ),
-            button(
-                "menu:go:leaderboard",
-                "\u{1f3c6} Glory",
-                ButtonStyle::Secondary,
-            ),
-        ]),
-        CreateActionRow::Buttons(vec![
-            button(
-                "menu:go:cipherclerk",
-                "\u{1f510} Cipherclerk",
-                ButtonStyle::Secondary,
-            ),
-            button(
-                "menu:go:govern",
-                "\u{1f3db}\u{fe0f} Govern",
-                ButtonStyle::Secondary,
-            ),
-            button("menu:go:verify", "\u{2705} Verify", ButtonStyle::Secondary),
-            button(
-                "menu:go:identity",
-                "\u{1fAAA} Identity",
-                ButtonStyle::Secondary,
-            ),
-            button(
-                "menu:go:federation",
-                "\u{1f310} Federation",
-                ButtonStyle::Secondary,
-            ),
-        ]),
-        // The two reads that folded in from the retired /status + /dashboard.
-        CreateActionRow::Buttons(vec![
-            button("start:status", "Node status", ButtonStyle::Primary),
-            button("menu:run:ops", "Ops dashboard", ButtonStyle::Primary),
-            button("menu:go:hermes", "\u{1f4e1} Hermes", ButtonStyle::Secondary),
-            button("menu:go:help", "Help", ButtonStyle::Secondary),
-        ]),
-    ]
+    ];
+    // The hub summons every ADVERTISED surface (`commands::menus` routes the `menu:go:*`
+    // presses to that surface's menu, in place).
+    rows.extend(surface_buttons());
+    // The two reads that folded in from the retired /status + /dashboard.
+    rows.push(CreateActionRow::Buttons(vec![
+        button("start:status", "Node status", ButtonStyle::Primary),
+        button("menu:run:ops", "Ops dashboard", ButtonStyle::Primary),
+    ]));
+    rows
 }
 
 fn identity_components() -> Vec<CreateActionRow> {

@@ -393,7 +393,7 @@ pub const SLASH_SURFACE: &[Slash] = &[
 /// Whether a [`Door`] reaches an ordinary player's `/` menu. The offering arm is the
 /// derivation from `dreggnet_catalog::SHIPPED_KEYS`; the others are the declared intent.
 pub fn advertises(door: &Door) -> bool {
-    match door {
+    match *door {
         Door::Offering(key) => dreggnet_catalog::is_shipped(key),
         Door::Player(_) | Door::Operator(_) => true,
         Door::Lab(_) => false,
@@ -623,6 +623,15 @@ fn dregg_command() -> Value {
         .unwrap_or("Open your Starbridge app dashboard")
         .to_string();
     let mut options = options_of(&base);
+    // ⚑ `hub` exists because Discord will NOT let you invoke a command that has
+    // subcommands without picking one — the moment the `admin` group folded in, bare
+    // `/dregg` stopped being typeable and the hub dashboard `handle_dregg`'s fallback arm
+    // renders became unreachable by slash (it survived only behind `menu:go:hub` buttons).
+    // This is the `menu` subcommand's job, under the name the hub already answers to.
+    options.push(sub(
+        "hub",
+        "The hub dashboard — the panels and controls behind every surface",
+    ));
     options.push(fold(commands::admin::register(), None));
     // De-duplicate the `dreggnet-*` offering categories a restart accreted. It lives on
     // the operator command rather than under `/federation` (where it used to ride)
@@ -817,6 +826,8 @@ pub async fn handle_dregg(ctx: &Context, command: &CommandInteraction, state: &B
             commands::admin::handle(ctx, &as_command(command, "admin", inner), state).await
         }
         Some(("cleanup", _)) => handle_cleanup(ctx, command, state).await,
+        // `hub` and anything unrecognised: the hub dashboard, exactly as before.
+        // `dashboard::handle` reads no options, so the `hub` wrapper is transparent to it.
         _ => commands::dashboard::handle(ctx, command, state).await,
     }
 }
@@ -1972,6 +1983,37 @@ mod tests {
         })
     }
 
+    /// ⚑ **THE HUB GRID IS A SHELF TOO, AND IT WAS THE ONE I NEARLY MISSED.** Every player
+    /// reaches the hub from the "⌂ Hub" button on every other menu, and a
+    /// `menu:go:<lab surface>` button there walks them into a view whose prose names commands
+    /// Discord will refuse to route. `commands::dashboard::home_components` derives its grid
+    /// from [`advertised_names`]; this checks BOTH directions, so a pared surface loses its
+    /// hub button and a re-listed one gains it back without either being hand-edited.
+    #[test]
+    fn the_hub_grid_summons_only_advertised_surfaces() {
+        let wire = serde_json::to_value(commands::dashboard::home_components())
+            .expect("the hub components serialize")
+            .to_string();
+        for name in lab_names() {
+            assert!(
+                !wire.contains(&format!("{ID_GO_PREFIX}{name}")),
+                "the hub grid has a `{ID_GO_PREFIX}{name}` button, but `/{name}` is not on \
+                 the advertised surface — pressing it lands a player in a menu full of \
+                 commands they cannot type"
+            );
+        }
+        for name in advertised_names() {
+            // The hub does not link to itself.
+            if name == "dregg" {
+                continue;
+            }
+            assert!(
+                wire.contains(&format!("{ID_GO_PREFIX}{name}")),
+                "`/{name}` is advertised but the hub grid has no button to it"
+            );
+        }
+    }
+
     /// ⚑ **THE OPERATOR ROW IS HIDDEN AND THE PLAYER ROWS ARE NOT.** The mechanism, not
     /// the intention: `default_member_permissions: "0"` is what actually keeps `/dregg`
     /// out of a member's autocomplete, and stamping it on a player command would hide the
@@ -2011,6 +2053,47 @@ mod tests {
                 .iter()
                 .any(|s| matches!(s.door, Door::Operator(_)) && advertises(&s.door)),
             "at least one operator row must stay registered, or ember loses ops access"
+        );
+    }
+
+    /// ⚑ **THE TWO PATHS THAT HAD TO BE CARRIED OUT OF THE LAB.** Paring `/identity` and
+    /// `/federation` would otherwise have taken a load-bearing player ceremony and a
+    /// per-guild operator action with them, so both were re-homed rather than dropped, and
+    /// both must land on a surface that is actually registered globally.
+    ///
+    /// * `link-web` — the ISSUER half of the phrase-link ceremony. Without it a player
+    ///   whose web identity is 24 words is permanently two people on one leaderboard, and
+    ///   nothing else on Discord issues that code.
+    /// * `cleanup` — the `dreggnet-*` category reaper. It must run IN the guild that grew
+    ///   the duplicates, so leaving it on the lab-only `/federation` would have made it
+    ///   unrunnable exactly where it is needed.
+    #[test]
+    fn the_rehomed_paths_land_on_advertised_commands() {
+        let advertised = advertised_names();
+        let home_of = |sub: &str| -> Option<&'static str> {
+            advertised
+                .iter()
+                .copied()
+                .find(|top| subcommand_names(top).iter().any(|s| s == sub))
+        };
+        assert_eq!(
+            home_of("link-web"),
+            Some("cipherclerk"),
+            "`link-web` must be reachable on an ADVERTISED command (it is the one piece of \
+             `/identity` a player of a shipped game needs)"
+        );
+        assert_eq!(
+            home_of("cleanup"),
+            Some("dregg"),
+            "the category reaper must sit on the globally-registered operator command, or \
+             ember cannot run it in the guild that needs it"
+        );
+        // And it is the same handler in both places — `/identity link-web` still exists on
+        // the lab surface, which is what makes the `/cipherclerk` copy a second spelling
+        // rather than a second mechanism.
+        assert!(
+            subcommand_names("identity").iter().any(|s| s == "link-web"),
+            "the `/identity` fold of `link-web` should still be built for the lab surface"
         );
     }
 
@@ -2206,10 +2289,9 @@ mod tests {
         }
     }
 
-    /// The four different games share one *interaction* contract without
-    /// being flattened into one mechanics layer. Every card names an exact
-    /// open route and an exact replay route that the real 13-command registry
-    /// serves; selector values are a closed vocabulary.
+    /// The different games share one *interaction* contract without being flattened into
+    /// one mechanics layer. Every card names an exact open route and an exact replay route
+    /// that the real registry serves; selector values are a closed vocabulary.
     #[test]
     fn game_doors_are_exact_replayable_routes() {
         // ⚑ THE FEATURED DOORS ARE THE SHIP LIST, both directions — nothing unshipped is

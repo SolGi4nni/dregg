@@ -6,13 +6,17 @@
 //! SDK surface — derived deterministically from the bot's secret and
 //! Discord user id.
 //!
-//! The global slash surface is EXACTLY 13 menu-driven commands (`/dregg` +
-//! 12 — see `REGISTERED_COMMAND_NAMES` and `commands::menus`); every former
-//! flat command (cclerk management, transfers, gallery, credentials,
-//! block-explorer browsing, presence attestation, CapTP, governance, name
-//! service, federation linking, the games…) folds behind one of them as a
-//! subcommand with its old options intact or as a menu button, on its
-//! unchanged handler.
+//! The global slash surface is the CURATED one — `commands::menus::SLASH_SURFACE` is the
+//! single list, and `global_commands()` is its advertised rows. Every former flat command
+//! (cclerk management, transfers, gallery, credentials, block-explorer browsing, presence
+//! attestation, CapTP, governance, name service, federation linking, the games…) folds
+//! behind one of them as a subcommand with its old options intact or as a menu button, on
+//! its unchanged handler.
+//!
+//! ⚑ The un-advertised rows (`commands::menus::lab_commands()`) keep their modules, their
+//! handlers and their router arms below; they are simply not in the global PUT. Set
+//! `DREGG_LAB_GUILD_ID` to register them inside one guild — `ready()` names every one of
+//! them at boot either way, so this is never a silent subtraction.
 
 mod activity_feed;
 // DreggNet Cloud — semi-private per-user channels (the visibility plan + name).
@@ -165,49 +169,35 @@ use devnet::DevnetClient;
 use discord_caps::{DiscordCapRegistry, EventBridge};
 use presence::{PresenceStatus, PresenceTracker};
 
-// The slash-command surface after the 13-command consolidation: EXACTLY
-// thirteen global commands (`/dregg` + 12), each of which opens a menu or
-// summons a world. Every retired flat command (~53 of them) is folded behind
-// its new home as a subcommand with its old options intact, or as a menu
-// button — the handlers are unchanged; only the front door moved. The fold
-// (registration by serialization + dispatch by re-nesting) lives in
-// `commands::menus`, whose tests assert this list, the registered JSON, and
-// the router agree, and that every old command kept a path.
-const REGISTERED_COMMAND_NAMES: &[&str] = &[
-    // 1. the HUB — panels + buttons that summon every other surface
-    //    (folds: dashboard → the Ops button, status → the Node-status button)
+// ⚑ THERE IS NO SECOND LIST HERE. What the bot registers, what it advertises to a player,
+// what is operator-only and what is an un-advertised lab route all come from ONE table —
+// `commands::menus::SLASH_SURFACE`, one row per top-level command carrying the reason it
+// has a slot. Offering-shaped rows derive from `dreggnet_catalog::SHIPPED_KEYS`, so paring
+// the ship list pares this menu with it. Every retired flat command (~53 of them) folds
+// behind one of those as a subcommand with its old options intact, or as a menu button; the
+// handlers are unchanged, only the front door moved. The fold (registration by
+// serialization + dispatch by re-nesting) lives in `commands::menus`, whose teeth assert
+// the table, the registered JSON and the router agree, and that no old command lost a path.
+//
+// The router arms in `interaction_create` below cover BOTH surfaces — a lab command still
+// arrives when `DREGG_LAB_GUILD_ID` is set — which is what this hand-mirror of the `match`
+// exists to check against the table.
+#[cfg(test)]
+const ROUTED_COMMAND_NAMES: &[&str] = &[
     "dregg",
-    // 2. today's beacon-seeded permadeath roguelite WORLD (unchanged)
     "descent",
-    // 3. the games ARCADE (folds: play → `open`, market; tug/automatafl are
-    //    `open` choices)
     "play",
-    // 4. narrative WORLDS (folds: dungeon — the shared AI-narrated crawl)
     "adventure",
-    // 5. you + your funds (folds: the cipherclerk's own subcommands, plus
-    //    send, history, faucet, credits, buy-credits, treasury)
     "cipherclerk",
-    // 6. the UGC universe registry (unchanged)
     "gallery",
-    // 7. the DAO (folds: council, council-status, council-approve, bounty, intent)
     "govern",
-    // 8. the proof surface (folds: proof, explorer, crown, export, card)
     "verify",
-    // 9. granting authority (folds: cap-*, handoff*, link-*, key)
     "identity",
-    // 10. the confined offerings (folds: hermes's own subcommands, grain, doc)
     "hermes",
-    // 11. the network (folds: federation-status/peers, setup-federation,
-    //     activity, coordinate, channel, presence, deos)
     "federation",
-    // 12. glory (unchanged)
     "leaderboard",
-    // 13. onboarding + the tour + the map (folds: start, help)
     "help",
 ];
-
-#[cfg(test)]
-const ROUTED_COMMAND_NAMES: &[&str] = REGISTERED_COMMAND_NAMES;
 
 /// Shared bot state accessible from all command handlers.
 pub struct BotState {
@@ -279,28 +269,67 @@ impl EventHandler for Handler {
     async fn ready(&self, ctx: Context, ready: Ready) {
         info!("Bot connected as {}", ready.user.name);
 
-        // Register the EXACTLY-13 global slash commands (`commands::menus`):
-        // each opens a menu or summons a world, and every retired flat
-        // command rides inside one of them as a subcommand/group with its old
-        // options intact (registration by serialization — the old builders
-        // are folded, never re-typed). Names retired from this set (the ~40
-        // old flat commands) disappear from Discord on re-registration.
-        let commands = commands::menus::global_commands();
+        // Register the ADVERTISED slash commands — the advertised rows of
+        // `commands::menus::SLASH_SURFACE`. Each opens a menu or summons a world, and every
+        // retired flat command rides inside one of them as a subcommand/group with its old
+        // options intact (registration by serialization — the old builders are folded,
+        // never re-typed). This is a bulk PUT, so a name that leaves the advertised set
+        // disappears from Discord's `/` menu here and now.
+        let advertised = commands::menus::global_commands();
         debug_assert_eq!(
-            commands
+            advertised
                 .iter()
                 .map(|c| c["name"].as_str().unwrap_or_default().to_owned())
                 .collect::<Vec<_>>(),
-            REGISTERED_COMMAND_NAMES
+            commands::menus::advertised_names()
                 .iter()
                 .map(|s| s.to_string())
                 .collect::<Vec<_>>(),
-            "registered commands and REGISTERED_COMMAND_NAMES must agree"
+            "the registered JSON and the advertised rows of SLASH_SURFACE must agree"
         );
 
-        match ctx.http.create_global_commands(&commands).await {
-            Ok(cmds) => info!("Registered {} global slash commands", cmds.len()),
+        match ctx.http.create_global_commands(&advertised).await {
+            Ok(cmds) => info!(
+                "Registered {} global slash commands: {}",
+                cmds.len(),
+                commands::menus::advertised_names().join(" ")
+            ),
             Err(e) => error!("Failed to register commands: {e}"),
+        }
+
+        // ⚑ THE UN-ADVERTISED SURFACE, SAID OUT LOUD. These commands still exist in full —
+        // module, handler, component/modal routes, router arm — they are simply not on the
+        // global `/` menu. `DREGG_LAB_GUILD_ID` registers them inside one guild; unset,
+        // they are typeable NOWHERE, and this is the line that says which ones so it is
+        // never a subtraction nobody noticed.
+        let lab = commands::menus::lab_commands();
+        if !lab.is_empty() {
+            let lab_names = commands::menus::lab_names().join(" ");
+            match commands::menus::lab_guild_id() {
+                Some(guild) => {
+                    match ctx
+                        .http
+                        .create_guild_commands(serenity::all::GuildId::new(guild), &lab)
+                        .await
+                    {
+                        Ok(cmds) => info!(
+                            "Registered {} un-advertised (lab) slash commands in guild {guild}: {lab_names}",
+                            cmds.len()
+                        ),
+                        Err(e) => error!(
+                            "Failed to register the lab slash commands in guild {guild} \
+                             ({lab_names}): {e} — they are typeable nowhere until this succeeds"
+                        ),
+                    }
+                }
+                None => warn!(
+                    "DREGG_LAB_GUILD_ID is unset, so these commands are registered NOWHERE and \
+                     cannot be typed on any surface: {lab_names}. Their code, handlers and \
+                     component routes are intact; set DREGG_LAB_GUILD_ID=<guild id> to get them \
+                     back inside one guild, or move a row from Door::Lab on \
+                     commands::menus::SLASH_SURFACE to advertise it globally again."
+                ),
+            }
         }
 
         // Start the activity feed background task.
@@ -412,7 +441,10 @@ impl EventHandler for Handler {
             // secret-redacted by name; the advance seams refine the outcome with the
             // landed `turn_hash` / the executor's refusal in their own lines).
             {
-                let known = REGISTERED_COMMAND_NAMES.contains(&name);
+                // "Known" spans BOTH surfaces: a lab command arriving from
+                // `DREGG_LAB_GUILD_ID` routes fine, so auditing it as `unknown_command`
+                // would be a false refusal in the one log that records refusals.
+                let known = commands::menus::all_surface_names().contains(&name);
                 audit::log().emit(
                     audit::AuditEvent::new(
                         "discord",
@@ -432,9 +464,12 @@ impl EventHandler for Handler {
             }
 
             match name {
-                // The 13-command surface: each arm opens a menu or summons a
-                // world; the folded old commands re-nest through
-                // `commands::menus` onto their UNCHANGED handlers.
+                // ⚑ ONE ARM PER `commands::menus::SLASH_SURFACE` ROW — advertised or lab.
+                // Each opens a menu or summons a world; the folded old commands re-nest
+                // through `commands::menus` onto their UNCHANGED handlers. The arms for
+                // un-advertised rows (`adventure`, `gallery`, `govern`, `identity`,
+                // `hermes`, `federation`, `leaderboard`) stay because un-advertised is not
+                // deleted: they route the moment `DREGG_LAB_GUILD_ID` registers them.
                 "dregg" => commands::menus::handle_dregg(&ctx, &command, &self.state).await,
                 "descent" => commands::descent::handle(&ctx, &command, &self.state).await,
                 "play" => commands::menus::handle_play(&ctx, &command, &self.state).await,
@@ -484,9 +519,11 @@ impl EventHandler for Handler {
                 .with_session(component.channel_id.get().to_string()),
             );
             if custom_id.starts_with("menu:") {
-                // A 13-command menu press: `menu:go:*` swaps the menu message in
-                // place; `menu:run:*` fires the module's real `execute_*` read;
-                // `menu:pick:*` answers the arcade select (`commands::menus`).
+                // A menu press: `menu:go:*` swaps the menu message in place;
+                // `menu:run:*` fires the module's real `execute_*` read; `menu:pick:*`
+                // answers the arcade select (`commands::menus`). These routes are NOT
+                // narrowed by the slash pare-down — a held button on an old message still
+                // lands, which is half of why un-advertising is not deleting.
                 commands::menus::handle_component(&ctx, &component, &self.state).await;
             } else if custom_id.starts_with("start:") {
                 commands::start::handle_component(&ctx, &component, &self.state).await;
@@ -677,6 +714,31 @@ async fn main() {
         .init();
 
     info!("Starting dregg Discord bot...");
+
+    // ⚑ CAN THIS BINARY SERVE A GAME AT ALL? Arm the deployed-executor oracles and SAY SO, at
+    // second zero, before anything else can look healthy.
+    //
+    // The oracles are armed at the derivation point (`dregg_sdk::AgentRuntime::new`, which every
+    // world-cell deploy passes through), so this call is idempotent and is NOT the install — it is
+    // the ANNOUNCEMENT. The bot had spent a week booting, connecting, registering 52 slash commands
+    // and reporting `active` while every world-cell turn was refused: `/adventure dungeon start`
+    // showed a player the name of an internal Rust function, and `reveal_cron` logged "Daily reveal
+    // did not fire" on every tick, forever. Nothing in the boot log distinguished that from health.
+    //
+    // The bot does NOT refuse to boot on this (unlike `dreggnet-web-server`, which exists to serve
+    // turns and declines to bind a listener). Identity, wallet, gallery, explorer, payments and the
+    // whole non-turn surface work fine with no oracle, and crash-looping would take those away too.
+    // What it must not do is stay quiet.
+    match dregg_sdk::deployed_executor_arming_deficiency() {
+        Some(deficiency) => error!(
+            "GAMES ARE DEAD IN THIS BUILD — {deficiency} Every other command still works; \
+             `/adventure`, `/descent`, `/dungeon`, the campaign and the daily reveal do not."
+        ),
+        None => info!(
+            "deployed-executor oracles armed: this build can decide a programmed-cell turn (or is \
+             a build whose evaluator legitimately needs no oracle)"
+        ),
+    }
 
     // Load configuration. Graceful error (no panic) for operator UX.
     let config = match Config::from_env() {
@@ -1114,7 +1176,7 @@ async fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{REGISTERED_COMMAND_NAMES, ROUTED_COMMAND_NAMES, check_solo_federation_id};
+    use super::{ROUTED_COMMAND_NAMES, check_solo_federation_id, commands};
     use std::collections::BTreeSet;
 
     /// A FEDERATION_ID matching the solo node's signing domain (blake3 of its pubkey) boots.
@@ -1142,22 +1204,28 @@ mod tests {
     }
 
     #[test]
-    fn registered_commands_have_no_duplicates() {
-        let unique: BTreeSet<_> = REGISTERED_COMMAND_NAMES.iter().copied().collect();
+    fn surface_command_names_have_no_duplicates() {
+        let all = commands::menus::all_surface_names();
+        let unique: BTreeSet<_> = all.iter().copied().collect();
         assert_eq!(
             unique.len(),
-            REGISTERED_COMMAND_NAMES.len(),
-            "registered slash command names must be unique"
+            all.len(),
+            "slash command names must be unique across SLASH_SURFACE"
         );
     }
 
+    /// ⚑ **THE ROUTER COVERS THE WHOLE TABLE, ADVERTISED OR NOT.** A `Door::Lab` row is
+    /// un-advertised, not deleted: it still arrives when `DREGG_LAB_GUILD_ID` is set, so a
+    /// missing router arm would turn "hidden" into "broken". Both directions, so an arm for
+    /// a command no longer on the table is caught too.
     #[test]
-    fn registered_commands_match_router_surface() {
-        let registered: BTreeSet<_> = REGISTERED_COMMAND_NAMES.iter().copied().collect();
+    fn the_router_arms_are_exactly_the_surface_table() {
+        let surface: BTreeSet<_> = commands::menus::all_surface_names().into_iter().collect();
         let routed: BTreeSet<_> = ROUTED_COMMAND_NAMES.iter().copied().collect();
         assert_eq!(
-            registered, routed,
-            "every registered command must have a router arm and every router arm must be registered"
+            surface, routed,
+            "every command on SLASH_SURFACE must have a router arm and every router arm must \
+             be on SLASH_SURFACE"
         );
     }
 }

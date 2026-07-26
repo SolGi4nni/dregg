@@ -35,6 +35,21 @@ use crate::embeds;
 
 // ─── Registration ───────────────────────────────────────────────────────────
 
+/// How long a `/link-web` code is good for. ⚑ Read from
+/// [`webauth_core::link_claim::PHRASE_LINK_CODE_TTL_SECS`] rather than restated here: the web page
+/// tells the player this window in prose, and a second constant on this side is exactly how a page
+/// ends up promising a window its issuer does not honour.
+pub const LINK_WEB_CODE_TTL_SECS: u64 = webauth_core::link_claim::PHRASE_LINK_CODE_TTL_SECS;
+
+/// The web page a `/link-web` code is pasted into, relative to `DESCENT_WEB_BASE`.
+const LINK_WEB_PATH: &str = "/identity/link";
+
+/// Register `/link-web` — mint a single-use code that proves this Discord account to the web surface.
+pub fn register_link_web() -> CreateCommand {
+    CreateCommand::new("link-web")
+        .description("Get a code that proves this Discord account to the web identity page")
+}
+
 /// Register `/link-prove <public-key> <signature>`.
 pub fn register() -> CreateCommand {
     CreateCommand::new("link-prove")
@@ -120,6 +135,161 @@ pub fn how_to_prove() -> &'static str {
     "Sign the EXACT challenge string (UTF-8 bytes, no newline) with your cell's Ed25519 \
      key, hex-encode the 64-byte signature, then run \
      `/link-prove public-key:<your 64-hex pubkey> signature:<128 hex>`."
+}
+
+// ─── `/link-web` — the phrase-link ceremony's issuer half ───────────────────
+
+/// Handle `/identity link-web` — **hand this user a single-use code that proves this Discord account
+/// to the web identity page.**
+///
+/// The gap this closes: the web surface's own identity is **24 BIP39 words** the player holds
+/// (`dreggnet-web`'s `seed_identity`), and the two existing link ceremonies (`/tg/link`, `/da/link`)
+/// both require a root key sitting in a browser's `localStorage`. A phrase-derived key is not there —
+/// it exists only while the phrase is in hand. So a web player and their Discord self stayed two
+/// different people with two histories on one board, and no command here could change that.
+///
+/// What the code is, and why the uid in it cannot be edited: the code is
+/// `<discord uid>:<challenge>`, and the challenge is minted under
+/// [`webauth_core::link_claim::account_challenge_key`]`(base, "discord", uid)` — a key derived PER
+/// ACCOUNT from `bot_secret`. The web verifier recomputes that key from the uid it was handed, so a
+/// code re-presented under a different uid authenticates under nothing. The uid is therefore proven,
+/// not asserted, and only a holder of `bot_secret` can mint one at all.
+///
+/// ⚑ HONEST SCOPE, said in the reply: linking does not stop this identity being CUSTODIAL. The
+/// operator holds `bot_secret` and can derive this user's key before the link and after it. What a
+/// link buys is that the boards rank the human once instead of twice.
+pub async fn handle_link_web(ctx: &Context, command: &CommandInteraction, state: &BotState) {
+    let _ = command
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::Defer(
+                CreateInteractionResponseMessage::new().ephemeral(true),
+            ),
+        )
+        .await;
+
+    let uid = command.user.id.get();
+    let uid_str = uid.to_string();
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    // ONE mint, in `webauth-core`, shared with the web verifier — never re-derived beside it.
+    let Some(code) = webauth_core::link_claim::mint_phrase_link_code(
+        &state.config.bot_secret,
+        "discord",
+        &uid_str,
+        now_secs,
+        LINK_WEB_CODE_TTL_SECS,
+    ) else {
+        return edit(
+            ctx,
+            command,
+            embeds::error_embed(
+                "Could Not Mint A Code",
+                "This account id could not be encoded into a link code. That should be impossible \
+                 for a Discord snowflake — please report it.",
+            ),
+        )
+        .await;
+    };
+
+    // ⚑ THE PHONE PATH. With a web base configured, hand the player a TAPPABLE link that carries the
+    // code, so a phone reader taps once and lands on the page with the box already filled — copying a
+    // 117-character token between two apps on a phone was the real friction here. Without a web base
+    // the code is still correct and still usable: say the path rather than inventing a host.
+    //
+    // A code in a URL is a real (bounded) widening — see `dreggnet-web`'s `identity_link::LinkQuery`
+    // for the three bounds and the residual. It is why this reply is EPHEMERAL: only the caller sees
+    // it, it is not in channel history, and the page strips the code from the address bar on arrival.
+    let base = super::descent::descent_web_base();
+    let where_to = match &base {
+        Some(base) => format!("{}{LINK_WEB_PATH}", base.trim_end_matches('/')),
+        None => format!(
+            "the identity page of the dregg web surface you play on, at `{LINK_WEB_PATH}` \
+             (this bot has no web base configured, so it cannot print the full link)"
+        ),
+    };
+    // The code is `<uid>:<base64url>.<hex>`; `:` and `.` are sub-delims/unreserved in a query value
+    // and every other character is already URL-safe, so the code needs no percent-encoding — pinned
+    // by `webauth_core::link_claim`'s own code-shape test rather than assumed here.
+    let tap_link = base
+        .as_ref()
+        .map(|base| format!("{}{LINK_WEB_PATH}?code={code}", base.trim_end_matches('/')));
+
+    // Is this account ALREADY resolved to a root? Say so, so a re-link reads as a rebind rather than
+    // as a mystery. Read-only; a missing/unreadable store just omits the line.
+    let custodial = crate::cipherclerk::UserCipherclerk::derive(
+        &state.config.bot_secret,
+        uid,
+        state.federation_id_bytes,
+    );
+    let already = webauth_core::link_registry::FileLinkStore::new(
+        webauth_core::link_registry::default_store_path(),
+    )
+    .resolve_root(custodial.public_key_hex())
+    .ok()
+    .flatten();
+
+    let mut embed =
+        embeds::dregg_embed("Link This Account To Your Web Identity").description(format!(
+            "Paste the whole line below into **{where_to}**, together with your 24 words. \
+             The code is good for **{minutes} minutes** and works **once**.",
+            minutes = LINK_WEB_CODE_TTL_SECS / 60,
+        ));
+    // On a phone this is the whole flow: one tap, then type your words. Listed FIRST because it is
+    // the path most readers want, with the raw code kept below for desktop and for copy-paste.
+    if let Some(link) = &tap_link {
+        embed = embed.field(
+            "📱 On your phone — one tap",
+            format!(
+                "[Open the link page with this code filled in]({link})\n\
+                 _Only you can see this message. Do not forward the link: inside its \
+                 {minutes} minutes the code is a bearer token._",
+                minutes = LINK_WEB_CODE_TTL_SECS / 60,
+            ),
+            false,
+        );
+    }
+    embed = embed
+        .field("Your code", format!("```\n{code}\n```"), false)
+        .field(
+            "Why your 24 words are asked for there",
+            "The link is a signature by the key your words derive, and nothing but those words can \
+             produce it — the web server holds no copy and neither does your browser. So the signing \
+             happens inside that one request and every byte of secret material is wiped before the \
+             page answers. If you have no 24 words yet, claim them on that surface's `/identity` \
+             page first: there is nothing to link to without them.",
+            false,
+        )
+        .field(
+            "What linking gives you",
+            "One row on the Descent board instead of two strangers, and a `/you` page that counts \
+             the tables and runs from BOTH sides.",
+            false,
+        )
+        .field(
+            "⚑ What linking does NOT change",
+            "This Discord identity stays **custodial**. Its key is derived from the bot operator's \
+             secret, so they can act as you here — that was true before you link and it is true \
+             after. Only your 24 words are self-held. A link joins the RECORDS, never the custody, \
+             and the web page says the same thing in the same words.",
+            false,
+        );
+    if let Some(root) = already {
+        embed = embed.field(
+            "Already linked",
+            format!(
+                "This account is already bound to the root key `{}…`. Using a new code with a \
+                 DIFFERENT phrase rebinds it to that one instead — the old link is superseded, not \
+                 edited, and nothing is deleted.",
+                &root[..16.min(root.len())]
+            ),
+            false,
+        );
+    }
+    edit(ctx, command, embed).await;
 }
 
 // ─── Handler ────────────────────────────────────────────────────────────────
@@ -490,6 +660,97 @@ mod tests {
         assert_eq!(
             check_link_proof(&cell_hex, "dregg-discord-link-v1:deadbeef", &pk, &sig),
             LinkProofCheck::BadSignature
+        );
+    }
+
+    // ─── `/link-web` — the cross-process weld ────────────────────────────────
+
+    /// ⚑ THE CROSS-PROCESS WELD. A code this command mints is one the WEB verifier accepts, and the
+    /// two sides never share code beyond `webauth-core` — so this test drives exactly the pair of
+    /// functions the two processes call. A drift in either derivation lands here.
+    #[test]
+    fn a_link_web_code_verifies_under_the_shared_verifier() {
+        let bot_secret = [0x3cu8; 32];
+        let uid = 6_913_902_526_u64;
+        let now = 1_790_000_000u64;
+        let code = webauth_core::link_claim::mint_phrase_link_code(
+            &bot_secret,
+            "discord",
+            &uid.to_string(),
+            now,
+            LINK_WEB_CODE_TTL_SECS,
+        )
+        .expect("a snowflake mints");
+
+        let (uid_out, chal) =
+            webauth_core::link_claim::parse_link_code(&code).expect("the code round-trips");
+        assert_eq!(uid_out, uid.to_string(), "the uid survives the encoding");
+
+        // The verifier's side: recompute the per-account key, derive the custodial pubkey the way
+        // THIS bot does, and check a root-signed claim over it.
+        let account_key = webauth_core::link_claim::account_challenge_key(
+            &webauth_core::link_claim::phrase_link_challenge_key(&bot_secret),
+            "discord",
+            uid_out,
+        );
+        let custodial = crate::cipherclerk::UserCipherclerk::derive(&bot_secret, uid, [0u8; 32])
+            .public_key_hex()
+            .to_string();
+        let root_seed = [0x77u8; 32];
+        let (root_pk, sig) = webauth_core::link_claim::sign_link_claim(
+            &root_seed, "discord", uid_out, &custodial, chal,
+        )
+        .expect("the root signs");
+        assert_eq!(
+            webauth_core::link_claim::verify_link_claim(
+                &account_key,
+                "discord",
+                uid_out,
+                &custodial,
+                &root_pk,
+                chal,
+                &sig,
+                now + 30,
+            ),
+            Ok(())
+        );
+
+        // ⚑ THE UID TOOTH, from this side: swapping the uid in the pasted code makes it authenticate
+        // under nothing, so a player cannot claim somebody else's Discord account.
+        let other_key = webauth_core::link_claim::account_challenge_key(
+            &webauth_core::link_claim::phrase_link_challenge_key(&bot_secret),
+            "discord",
+            "222",
+        );
+        assert!(webauth_core::challenge::verify(&other_key, chal, now + 30).is_err());
+
+        // And a code past its window is dead, so a screenshot in a channel goes stale.
+        assert!(
+            webauth_core::challenge::verify(&account_key, chal, now + LINK_WEB_CODE_TTL_SECS + 1)
+                .is_err(),
+            "a code must expire at its stated window"
+        );
+    }
+
+    /// The `/link-web` window is the SHARED constant, not a second number beside the web page's copy.
+    #[test]
+    fn the_link_web_window_is_the_shared_constant() {
+        assert_eq!(
+            LINK_WEB_CODE_TTL_SECS,
+            webauth_core::link_claim::PHRASE_LINK_CODE_TTL_SECS
+        );
+        assert_eq!(LINK_WEB_CODE_TTL_SECS / 60, 15, "the page says 15 minutes");
+    }
+
+    /// The `/link-web` code's challenge key is DISTINCT from this file's own `/link-prove` challenge
+    /// key: the two ceremonies prove different things (holding a phrase vs. holding an external
+    /// cell's key), so a code from one must never be spendable in the other.
+    #[test]
+    fn the_link_web_key_is_not_the_link_prove_key() {
+        let secret = [5u8; 32];
+        assert_ne!(
+            webauth_core::link_claim::phrase_link_challenge_key(&secret),
+            link_challenge_key(&secret)
         );
     }
 
