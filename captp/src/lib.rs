@@ -101,8 +101,8 @@ pub use fraud_proof::{Acquittal, Conviction, FraudProof, OwnerAnchoredFact, Verd
 pub use gc::{DropMessage, DropResult, ExportGcManager, ImportGcManager, SessionId};
 pub use handoff::{
     HandoffAcceptance, HandoffCertificate, HandoffError, HandoffPresentation,
-    HybridHandoffCertificate, HybridHandoffPresentation, MlDsaHandoffKey, validate_handoff,
-    validate_handoff_hybrid,
+    HybridHandoffCertificate, HybridHandoffIdentity, HybridHandoffPresentation, MlDsaHandoffKey,
+    validate_handoff, validate_handoff_hybrid,
 };
 pub use netlayer::{
     InProcessFabric, InProcessNetlayer, NetConnection, NetSession, Netlayer, NetlayerError, PeerId,

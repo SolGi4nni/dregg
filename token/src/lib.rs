@@ -53,7 +53,8 @@ pub use format::TokenFormat;
 pub use revocation::RevocationFilter;
 #[cfg(feature = "rand-deps")]
 pub use revocation::{
-    AttestedRevocationRoot, NonMembershipProof, RevocationError, RevocationRegistry,
+    AttestedRevocationRoot, NonMembershipProof, RevocationAuthority, RevocationError,
+    RevocationRegistry,
 };
 pub use traits::{
     Attenuation, AuthRequest, AuthToken, BudgetSpec, Capability, FeatureGlobSpec, TokenClearance,

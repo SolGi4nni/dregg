@@ -542,13 +542,72 @@ pub struct HybridLocalExactFnspV4Envelope {
     ml_dsa_signature: [u8; dregg_pq::ML_DSA_SIG_LEN],
 }
 
-impl HybridLocalExactFnspV4Envelope {
-    /// Derive both validator keys from the same seed and sign both halves.
-    pub fn sign_from_seed(
+/// A validator's HYBRID signing identity for exact-FNSP-v4 local envelopes: the ed25519 key and the
+/// ML-DSA-65 key its seed derives, held TOGETHER and derived ONCE.
+///
+/// This type exists because the derivation is expensive and the signing site was not.
+/// `MlDsaKey::from_ed25519_seed` is deterministic FIPS 204 `ML-DSA.KeyGen(ξ)` and, on the deployed
+/// build, runs the Lean-verified keygen core across the FFI boundary at **174–227 ms of CPU**. The
+/// only way to sign a local envelope used to be [`HybridLocalExactFnspV4Envelope::sign_from_seed`],
+/// which takes a BARE SEED — so there was nothing for a derived key to belong to, and a validator
+/// observing one frame per consensus round would have run a full keygen per round for one
+/// unchanging key. Hold one of these per validator and the derivation happens once, at construction.
+///
+/// **The key lives INSIDE the identity, not in a lookup table**, for the reason spelled out on
+/// [`crate::finalized_receipt_core_v1::HybridFinalizedReceiptValidatorSignerV1`]: a process-global
+/// map keyed by seed pools every validator's ML-DSA secret in one structure outliving the identities
+/// that own them, and makes readership a property of a lookup key rather than of ownership.
+///
+/// Both fields are private, set together at construction, with no mutator — so this identity cannot
+/// be re-keyed in place and its two halves cannot drift apart.
+pub struct HybridExactFnspV4ValidatorSigner {
+    classical: SigningKey,
+    /// Behind an `Arc` so the in-module tests can prove by OBJECT IDENTITY, rather than by a
+    /// stopwatch, that signing reads this key instead of deriving another.
+    pq: std::sync::Arc<dregg_pq::MlDsaKey>,
+    identity: HybridExactFnspV4ValidatorIdentity,
+}
+
+impl fmt::Debug for HybridExactFnspV4ValidatorSigner {
+    /// Never renders key material.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("HybridExactFnspV4ValidatorSigner(..)")
+    }
+}
+
+impl HybridExactFnspV4ValidatorSigner {
+    /// Derive both halves of this validator identity from one 32-byte ed25519 seed. This is where
+    /// the ML-DSA keygen is paid — once.
+    pub fn from_seed(seed: &[u8; 32]) -> Result<Self, ExactFnspV4ConsensusError> {
+        let classical = SigningKey::from_bytes(seed);
+        let pq = std::sync::Arc::new(dregg_pq::MlDsaKey::from_ed25519_seed(seed));
+        let identity = HybridExactFnspV4ValidatorIdentity {
+            ed25519: classical.verifying_key().to_bytes(),
+            ml_dsa_65: pq
+                .public_bytes()
+                .try_into()
+                .map_err(|_| ExactFnspV4ConsensusError::PqPrimitiveLengthMismatch)?,
+        };
+        Ok(Self {
+            classical,
+            pq,
+            identity,
+        })
+    }
+
+    /// The public halves federation policy enrolls for this validator — exactly the keys
+    /// [`Self::sign`] signs under.
+    pub fn identity(&self) -> &HybridExactFnspV4ValidatorIdentity {
+        &self.identity
+    }
+
+    /// Sign one already-fixed frame coordinate under BOTH halves. No key derivation happens here,
+    /// however many frames this validator observes.
+    pub fn sign(
+        &self,
         activation: &ExactFnspV4ActivationCore,
         frame: &ExactFnspV4FrameCore,
-        seed: &[u8; 32],
-    ) -> Result<Self, ExactFnspV4ConsensusError> {
+    ) -> Result<HybridLocalExactFnspV4Envelope, ExactFnspV4ConsensusError> {
         frame.validate_scope(activation)?;
         let frame_id = frame.id();
         let message = local_envelope_signature_message(
@@ -557,27 +616,38 @@ impl HybridLocalExactFnspV4Envelope {
             frame.0.receipt.commit_ordinal(),
             frame_id,
         );
-        let classical = SigningKey::from_bytes(seed);
-        let pq = dregg_pq::MlDsaKey::from_ed25519_seed(seed);
-        let validator_ml_dsa_public_key = pq
-            .public_bytes()
-            .try_into()
-            .map_err(|_| ExactFnspV4ConsensusError::PqPrimitiveLengthMismatch)?;
-        let ml_dsa_signature = pq
+        let ml_dsa_signature = self
+            .pq
             .try_sign_deterministic(LOCAL_ENVELOPE_PQ_CONTEXT, &message)
             .ok_or(ExactFnspV4ConsensusError::PqSigningFailed)?
             .try_into()
             .map_err(|_| ExactFnspV4ConsensusError::PqPrimitiveLengthMismatch)?;
-        Ok(Self {
+        Ok(HybridLocalExactFnspV4Envelope {
             federation_id: activation.federation_id,
             committee_epoch: activation.committee_epoch,
             commit_ordinal: frame.0.receipt.commit_ordinal(),
             frame_id,
-            validator_ed25519_public_key: classical.verifying_key().to_bytes(),
-            validator_ml_dsa_public_key,
-            ed25519_signature: classical.sign(&message).to_bytes(),
+            validator_ed25519_public_key: self.identity.ed25519,
+            validator_ml_dsa_public_key: self.identity.ml_dsa_65,
+            ed25519_signature: self.classical.sign(&message).to_bytes(),
             ml_dsa_signature,
         })
+    }
+}
+
+impl HybridLocalExactFnspV4Envelope {
+    /// Derive both validator keys from the same seed and sign both halves.
+    ///
+    /// A ONE-SHOT: it constructs a [`HybridExactFnspV4ValidatorSigner`], uses it once and drops it,
+    /// so it pays a full ML-DSA keygen per call. Correct for a one-off and WRONG in a loop — a
+    /// validator on the consensus path must hold the signer, not the seed. The bytes are identical
+    /// either way.
+    pub fn sign_from_seed(
+        activation: &ExactFnspV4ActivationCore,
+        frame: &ExactFnspV4FrameCore,
+        seed: &[u8; 32],
+    ) -> Result<Self, ExactFnspV4ConsensusError> {
+        HybridExactFnspV4ValidatorSigner::from_seed(seed)?.sign(activation, frame)
     }
 
     /// Verify BOTH signature halves against independently expected keys.
@@ -1285,5 +1355,117 @@ mod tests {
             envelope.verify_against(&other, &frame, &identity),
             Err(ExactFnspV4ConsensusError::ActivationIdentityMismatch)
         );
+    }
+
+    /// THE MANDATORY ONE. Four validator identities, signing INTERLEAVED: no validator may ever
+    /// present, or sign under, another validator's derived ML-DSA key.
+    ///
+    /// A held signer is a memo, and a memo that ever served one identity's key to another would be
+    /// a FORGERY ENGINE rather than a slow path. The falsifier is on the wire: every envelope must
+    /// verify under its own signer's enrolled identity and under NO other's.
+    #[test]
+    fn two_validators_never_share_a_derived_pq_key() {
+        let activation = activation();
+        let frame = frame(&activation);
+        let seeds: [[u8; 32]; 4] = [[0x11; 32], [0x22; 32], [0x33; 32], [0xf0; 32]];
+        let signers: Vec<HybridExactFnspV4ValidatorSigner> = seeds
+            .iter()
+            .map(|s| HybridExactFnspV4ValidatorSigner::from_seed(s).expect("signer"))
+            .collect();
+
+        let expected: Vec<[u8; dregg_pq::ML_DSA_PK_LEN]> = seeds
+            .iter()
+            .map(|s| {
+                dregg_pq::MlDsaKey::from_ed25519_seed(s)
+                    .public_bytes()
+                    .try_into()
+                    .expect("pk width")
+            })
+            .collect();
+        for (i, a) in expected.iter().enumerate() {
+            for (j, b) in expected.iter().enumerate() {
+                if i != j {
+                    assert_ne!(
+                        a, b,
+                        "distinct seeds must derive distinct keys ({i} vs {j})"
+                    );
+                }
+            }
+        }
+
+        // INTERLEAVED across rounds, so a single-slot or last-writer cache mis-serves somebody.
+        let mut signed: Vec<Vec<HybridLocalExactFnspV4Envelope>> =
+            (0..signers.len()).map(|_| Vec::new()).collect();
+        for round in 0..3u8 {
+            for (i, signer) in signers.iter().enumerate() {
+                let envelope = signer.sign(&activation, &frame).expect("sign");
+                assert_eq!(
+                    envelope.validator_ml_dsa_public_key, expected[i],
+                    "validator {i} presented a PQ key that is not the one its own seed derives \
+                     (round {round})"
+                );
+                assert_eq!(signer.identity().ml_dsa_65, expected[i]);
+                signed[i].push(envelope);
+            }
+        }
+
+        // THE FALSIFIER, on the wire.
+        for (i, per_signer) in signed.iter().enumerate() {
+            for envelope in per_signer {
+                assert_eq!(
+                    envelope.verify_against(&activation, &frame, signers[i].identity()),
+                    Ok(()),
+                    "validator {i}'s own envelope must verify under its own identity"
+                );
+                for (j, other) in signers.iter().enumerate() {
+                    if i != j {
+                        assert!(
+                            envelope
+                                .verify_against(&activation, &frame, other.identity())
+                                .is_err(),
+                            "validator {i}'s envelope verified under validator {j}'s identity — \
+                             two identities are sharing a derived key"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// The signer derives its ML-DSA key ONCE, proven by OBJECT IDENTITY rather than by a
+    /// stopwatch. Observing many frames must read the same `Arc`, never mint a second key.
+    #[test]
+    fn a_signer_derives_its_pq_key_once_however_many_frames_it_observes() {
+        let activation = activation();
+        let frame = frame(&activation);
+        let signer = HybridExactFnspV4ValidatorSigner::from_seed(&[0x7a; 32]).expect("signer");
+        let held = std::sync::Arc::clone(&signer.pq);
+        for _ in 0..4 {
+            let envelope = signer.sign(&activation, &frame).expect("sign");
+            assert!(
+                std::sync::Arc::ptr_eq(&held, &signer.pq),
+                "signing replaced the validator's derived key — the identity must hold ONE key"
+            );
+            assert_eq!(
+                envelope.validator_ml_dsa_public_key,
+                signer.identity().ml_dsa_65
+            );
+        }
+    }
+
+    /// The one-shot `sign_from_seed` must remain byte-identical to the held-signer path: this
+    /// refactor changed WHEN the key is derived, never WHAT is signed or by which key.
+    #[test]
+    fn the_one_shot_and_the_held_signer_produce_identical_bytes() {
+        let activation = activation();
+        let frame = frame(&activation);
+        let seed = [0x7b; 32];
+        let one_shot = HybridLocalExactFnspV4Envelope::sign_from_seed(&activation, &frame, &seed)
+            .expect("one-shot");
+        let held = HybridExactFnspV4ValidatorSigner::from_seed(&seed)
+            .expect("signer")
+            .sign(&activation, &frame)
+            .expect("sign");
+        assert_eq!(one_shot.to_canonical_bytes(), held.to_canonical_bytes());
     }
 }

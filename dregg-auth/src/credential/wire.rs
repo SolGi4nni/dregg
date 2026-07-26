@@ -173,6 +173,10 @@ impl Credential {
             nonce: wire.nonce,
             blocks,
             proof,
+            // A credential rehydrated from the wire starts with an EMPTY PQ memo:
+            // the derivation is a property of the seed, and nothing about a decode
+            // establishes one. The first hybrid use derives; the rest read it.
+            pq: Default::default(),
         })
     }
 }

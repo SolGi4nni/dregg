@@ -396,6 +396,77 @@ impl HybridAuthorityKey {
     }
 }
 
+/// The revocation authority's HYBRID SIGNING identity: the ed25519 key, the ML-DSA-65 key its seed
+/// derives, and the [`HybridAuthorityKey`] verifiers enroll — all from ONE keygen.
+///
+/// This type exists because the derivation is expensive and the signing site was not.
+/// `MlDsaKey::from_ed25519_seed` is deterministic FIPS 204 `ML-DSA.KeyGen(ξ)` and, on the deployed
+/// build, runs the Lean-verified keygen core across the FFI boundary at **174–227 ms of CPU**.
+/// [`RevocationRegistry::publish_root`] takes a BARE SEED, so there was nothing for a derived key to
+/// belong to: an authority that republishes its root after every batch of revocations paid a full
+/// keygen per publication, plus another to enroll, for one unchanging key. Hold one of these and the
+/// derivation happens once, at construction, and serves BOTH the enrollment and the signing.
+///
+/// **The key lives INSIDE the identity, not in a lookup table.** A process-global map keyed by seed
+/// would pool every authority's ML-DSA secret in one process-lifetime structure outliving the
+/// identities that own them, and make "who may read this entry" a property of a lookup key rather
+/// than of ownership. Here the derived key is a private field of the object that owns the ed25519
+/// seed, so two authorities are two objects and cross-identity sharing has no path to express itself.
+///
+/// All fields are private, set together at construction, with no mutator — so an authority cannot be
+/// re-keyed in place and its halves cannot drift apart. `enrolled()` reports the public halves of
+/// exactly the keys `sign_classical`/`sign_pq` use.
+pub struct RevocationAuthority {
+    classical: ed25519_dalek::SigningKey,
+    /// Behind an `Arc` so the in-crate tests can prove by OBJECT IDENTITY, rather than by a
+    /// stopwatch, that publishing reads this key instead of deriving another.
+    pq: std::sync::Arc<dregg_pq::MlDsaKey>,
+    enrolled: HybridAuthorityKey,
+}
+
+impl std::fmt::Debug for RevocationAuthority {
+    /// Never renders key material.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RevocationAuthority(..)")
+    }
+}
+
+impl RevocationAuthority {
+    /// Derive both halves of the authority identity from its 32-byte ed25519 seed. This is where
+    /// the ML-DSA keygen is paid — once.
+    pub fn from_ed25519_seed(seed: &[u8; 32]) -> Self {
+        let classical = ed25519_dalek::SigningKey::from_bytes(seed);
+        let pq = std::sync::Arc::new(dregg_pq::MlDsaKey::from_ed25519_seed(seed));
+        let enrolled = HybridAuthorityKey {
+            ed25519: classical.verifying_key().to_bytes(),
+            ml_dsa: pq.public_bytes(),
+        };
+        Self {
+            classical,
+            pq,
+            enrolled,
+        }
+    }
+
+    /// The pinned pair verifiers hold — exactly the keys this authority signs under. Publish it
+    /// wherever the authority's ed25519 identity is already trusted.
+    pub fn enrolled(&self) -> &HybridAuthorityKey {
+        &self.enrolled
+    }
+
+    /// The classical half of an attestation signature.
+    pub fn sign_classical(&self, message: &[u8]) -> [u8; 64] {
+        use ed25519_dalek::Signer;
+        self.classical.sign(message).to_bytes()
+    }
+
+    /// The post-quantum half of an attestation signature, under the revocation-root context. `None`
+    /// only on the vanishingly rare RNG failure, which then fails CLOSED at verification.
+    pub fn sign_pq(&self, message: &[u8]) -> Option<Vec<u8>> {
+        pq::ml_dsa_sign_with(&self.pq, message)
+    }
+}
+
 /// ML-DSA-65 (FIPS 204) half of the HYBRID revocation-root attestation.
 ///
 /// The authority's ML-DSA keypair is derived deterministically from the SAME
@@ -419,8 +490,19 @@ mod pq {
 
     /// Sign `message` with the ML-DSA-65 key derived from `seed`, under the
     /// revocation-root context. `None` only on the vanishingly rare RNG failure.
+    ///
+    /// Derives the key on every call, so no deployed path uses it any more:
+    /// [`RevocationAuthority`](super::RevocationAuthority) holds one key instead. TEST-ONLY, as the
+    /// independent reference the held-key path is checked against.
+    #[cfg(test)]
     pub fn ml_dsa_sign_from_seed(seed: &[u8; 32], message: &[u8]) -> Option<Vec<u8>> {
         dregg_pq::ml_dsa_sign_from_seed(seed, REVOCATION_ROOT_PQ_CTX, message)
+    }
+
+    /// Sign `message` under the revocation-root context with an ALREADY-DERIVED key — the same
+    /// bytes [`ml_dsa_sign_from_seed`] produces for that key's seed, without re-running keygen.
+    pub fn ml_dsa_sign_with(key: &dregg_pq::MlDsaKey, message: &[u8]) -> Option<Vec<u8>> {
+        key.try_sign(REVOCATION_ROOT_PQ_CTX, message)
     }
 
     /// Verify an ML-DSA-65 signature over `message` under the enrolled public
@@ -750,7 +832,28 @@ impl RevocationRegistry {
     ///
     /// The `signing_key` should be the provider's Ed25519 signing key. The
     /// `signer_public_key` is the corresponding 32-byte public key bytes.
+    /// A ONE-SHOT: it builds a [`RevocationAuthority`], uses it once and drops it, so it pays a
+    /// full ML-DSA keygen (174–227 ms on the deployed build) per publication. An authority that
+    /// republishes after every batch of revocations should hold a [`RevocationAuthority`] and call
+    /// [`Self::publish_root_as`]. The attestation bytes are identical, and `signer_public_key` is
+    /// still stored exactly as given (it is a caller-declared field, pinned at verification against
+    /// the enrolled authority — not something this method may quietly rewrite).
     pub fn publish_root(&mut self, signing_key: &[u8; 32], signer_public_key: &[u8; 32]) {
+        let authority = RevocationAuthority::from_ed25519_seed(signing_key);
+        self.publish_root_signed(&authority, *signer_public_key);
+    }
+
+    /// Sign and publish the current tree root under a HELD authority identity.
+    ///
+    /// Prefer this to [`Self::publish_root`] anywhere roots are published more than once: it runs
+    /// no ML-DSA keygen at all, because [`RevocationAuthority`] already holds the derived key. The
+    /// attestation bytes are identical.
+    pub fn publish_root_as(&mut self, authority: &RevocationAuthority) {
+        let signer = authority.enrolled().ed25519;
+        self.publish_root_signed(authority, signer);
+    }
+
+    fn publish_root_signed(&mut self, authority: &RevocationAuthority, signer: [u8; 32]) {
         let merkle_root = self.tree.root();
         let count = self.revoked.len() as u64;
         let timestamp = std::time::SystemTime::now()
@@ -759,24 +862,15 @@ impl RevocationRegistry {
             .unwrap_or(0);
 
         let msg = AttestedRevocationRoot::signing_message(&merkle_root, count, timestamp);
-
-        // Classical half: ed25519-dalek. `signing_key` is the 32-byte ed25519
-        // seed, so the SAME bytes deterministically derive the ML-DSA key.
-        let sk = ed25519_dalek::SigningKey::from_bytes(signing_key);
-        use ed25519_dalek::Signer;
-        let sig = sk.sign(&msg);
-
-        // PQ half: ML-DSA-65 over the SAME message, derived from the same seed.
-        // The verifier pins the corresponding public key via HybridAuthorityKey.
-        let pq_signature = pq::ml_dsa_sign_from_seed(signing_key, &msg);
-
         self.attested_root = Some(AttestedRevocationRoot {
             merkle_root,
             count,
             timestamp,
-            signer: *signer_public_key,
-            signature: sig.to_bytes(),
-            pq_signature,
+            signer,
+            signature: authority.sign_classical(&msg),
+            // PQ half: ML-DSA-65 over the SAME message, under the key the verifier pins via
+            // `HybridAuthorityKey`.
+            pq_signature: authority.sign_pq(&msg),
         });
     }
 
@@ -1269,5 +1363,154 @@ mod tests {
 
         let h3 = RevocationRegistry::token_id_to_leaf("tok-xyz");
         assert_ne!(h1, h3);
+    }
+
+    // =========================================================================
+    // The HELD ML-DSA key: `RevocationAuthority`
+    // =========================================================================
+
+    /// THE MANDATORY ONE. Four authorities, publishing INTERLEAVED into their own registries: no
+    /// authority may ever attest under, or enroll, another authority's derived ML-DSA key.
+    ///
+    /// A held authority is a memo, and a memo that ever served one identity's key to another would
+    /// be a FORGERY ENGINE rather than a slow path. The falsifier is the decision a verifier makes:
+    /// every attestation must verify under its own enrolled `HybridAuthorityKey` and under NO
+    /// other's.
+    #[test]
+    fn two_authorities_never_share_a_derived_pq_key() {
+        let seeds: [[u8; 32]; 4] = [[0x11; 32], [0x22; 32], [0x33; 32], [0xf0; 32]];
+        let authorities: Vec<RevocationAuthority> = seeds
+            .iter()
+            .map(RevocationAuthority::from_ed25519_seed)
+            .collect();
+
+        // Each enrolled pair must be the one its own seed derives, computed independently.
+        for (i, seed) in seeds.iter().enumerate() {
+            assert_eq!(
+                authorities[i].enrolled(),
+                &HybridAuthorityKey::from_ed25519_seed(seed),
+                "authority {i}'s enrolled pair must be exactly its seed's derivation"
+            );
+        }
+        for (i, a) in authorities.iter().enumerate() {
+            for (j, b) in authorities.iter().enumerate() {
+                if i != j {
+                    assert_ne!(
+                        a.enrolled().ml_dsa,
+                        b.enrolled().ml_dsa,
+                        "distinct seeds must derive distinct keys ({i} vs {j})"
+                    );
+                }
+            }
+        }
+
+        // INTERLEAVED across rounds, so a single-slot or last-writer cache mis-serves somebody.
+        let mut registries: Vec<RevocationRegistry> = (0..authorities.len())
+            .map(|_| RevocationRegistry::new())
+            .collect();
+        for round in 0..3 {
+            for (i, reg) in registries.iter_mut().enumerate() {
+                reg.revoke(&format!("tok-{i}-{round}"));
+                reg.publish_root_as(&authorities[i]);
+            }
+            // THE FALSIFIER: own anchor admits, every other anchor refuses.
+            for (i, reg) in registries.iter().enumerate() {
+                let attested = reg.attested_root().expect("a root was published");
+                assert!(
+                    attested.verify_hybrid(authorities[i].enrolled()),
+                    "authority {i}'s attestation must verify under its own enrolled anchor \
+                     (round {round})"
+                );
+                for (j, other) in authorities.iter().enumerate() {
+                    if i != j {
+                        assert!(
+                            !attested.verify_hybrid(other.enrolled()),
+                            "authority {i}'s attestation verified under authority {j}'s anchor — \
+                             two identities are sharing a derived key"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// A mixed anchor — the right ed25519 half, a NEIGHBOUR's ML-DSA half — must refuse. This
+    /// isolates the PQ leg, so a key leak cannot hide behind a passing classical signature.
+    #[test]
+    fn a_neighbours_pq_anchor_does_not_admit() {
+        let mine = RevocationAuthority::from_ed25519_seed(&[0x71; 32]);
+        let theirs = RevocationAuthority::from_ed25519_seed(&[0x72; 32]);
+        let mut reg = RevocationRegistry::new();
+        reg.revoke("tok-1");
+        reg.publish_root_as(&mine);
+
+        let attested = reg.attested_root().expect("published");
+        assert!(attested.verify_hybrid(mine.enrolled()));
+        let mixed = HybridAuthorityKey {
+            ed25519: mine.enrolled().ed25519,
+            ml_dsa: theirs.enrolled().ml_dsa.clone(),
+        };
+        assert!(
+            !attested.verify_hybrid(&mixed),
+            "the PQ half must be checked against the enrolled anchor"
+        );
+    }
+
+    /// The authority derives its ML-DSA key ONCE, proven by OBJECT IDENTITY rather than by a
+    /// stopwatch. Republishing after every batch of revocations must read the same `Arc`.
+    #[test]
+    fn an_authority_derives_its_pq_key_once_however_often_it_republishes() {
+        let authority = RevocationAuthority::from_ed25519_seed(&[0x7a; 32]);
+        let held = std::sync::Arc::clone(&authority.pq);
+        let mut reg = RevocationRegistry::new();
+        for i in 0..4 {
+            reg.revoke(&format!("tok-{i}"));
+            reg.publish_root_as(&authority);
+            assert!(
+                std::sync::Arc::ptr_eq(&held, &authority.pq),
+                "publishing replaced the authority's derived key — it must hold ONE key"
+            );
+            assert!(
+                reg.attested_root()
+                    .expect("published")
+                    .verify_hybrid(authority.enrolled())
+            );
+        }
+    }
+
+    /// The one-shot `publish_root` must remain equivalent to the held-authority path: this refactor
+    /// changed WHEN the key is derived, never WHAT is signed or by which key. (The ML-DSA half is
+    /// hedged, so the bytes differ per call by construction; the enrolled key and the verdict do
+    /// not.)
+    #[test]
+    fn the_one_shot_and_the_held_authority_agree() {
+        let seed = [0x7b; 32];
+        let authority = RevocationAuthority::from_ed25519_seed(&seed);
+        let pk = authority.enrolled().ed25519;
+
+        let mut one_shot = RevocationRegistry::new();
+        one_shot.revoke("tok-1");
+        one_shot.publish_root(&seed, &pk);
+
+        let mut held = RevocationRegistry::new();
+        held.revoke("tok-1");
+        held.publish_root_as(&authority);
+
+        assert!(
+            one_shot
+                .attested_root()
+                .expect("published")
+                .verify_hybrid(authority.enrolled())
+        );
+        assert!(
+            held.attested_root()
+                .expect("published")
+                .verify_hybrid(authority.enrolled())
+        );
+        assert_eq!(
+            one_shot.attested_root().expect("published").signer,
+            held.attested_root().expect("published").signer
+        );
+        assert_eq!(one_shot.current_root(), held.current_root());
     }
 }

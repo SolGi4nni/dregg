@@ -600,20 +600,82 @@ pub fn ml_dsa_cap_verify(public_bytes: &[u8], message: &[u8], sig_bytes: &[u8]) 
 /// with the classical Ed25519 key AND with the ML-DSA-65 key derived
 /// DETERMINISTICALLY from the same ed25519 seed ([`MlDsaCapKey::from_ed25519_seed`]).
 /// Both halves cover the identical message, so the pair is bound together.
+///
+/// A ONE-SHOT: it builds a [`CapabilityProofSigner`], uses it once and drops it, so it pays a full
+/// ML-DSA keygen (174–227 ms on the deployed build) per call. Correct for a single proof and WRONG
+/// in a loop — a holder that signs more than one capability proof should hold a
+/// [`CapabilityProofSigner`] instead. The bytes are identical either way.
 pub fn sign_capability_proof(proof: &mut CapabilityProof, signing_key: &ed25519_dalek::SigningKey) {
-    use ed25519_dalek::Signer;
-    let msg = proof.signing_message();
-    // Classical half.
-    let sig = signing_key.sign(&msg);
-    proof.signature = sig.to_bytes();
-    // Post-quantum half: derive the ML-DSA-65 key from the SAME ed25519 seed and
-    // sign the SAME message. `None` (RNG failure) leaves the half absent, which
-    // fails CLOSED at verification. The public key is self-carried in the proof;
-    // it is safe to carry because the verifier only trusts it after the holder's
-    // CellId is shown to commit to it (`verify_committed_ml_dsa`).
-    let pq = MlDsaCapKey::from_ed25519_seed(&signing_key.to_bytes());
-    proof.holder_ml_dsa_pubkey = Some(pq.public_bytes());
-    proof.pq_signature = pq.sign(&msg);
+    CapabilityProofSigner::new(signing_key.clone()).sign(proof);
+}
+
+/// A holder's HYBRID capability-signing identity: the ed25519 key and the ML-DSA-65 key its seed
+/// derives, held TOGETHER and derived ONCE.
+///
+/// This type exists because the derivation is expensive and the signing site was not.
+/// `MlDsaCapKey::from_ed25519_seed` is deterministic FIPS 204 `ML-DSA.KeyGen(ξ)` and, on the
+/// deployed build, runs the Lean-verified keygen core across the FFI boundary at **174–227 ms of
+/// CPU**. [`sign_capability_proof`] takes a BARE `SigningKey`, so there was nothing for a derived
+/// key to belong to and every capability proof a holder signed paid a fresh keygen for one
+/// unchanging key. A holder that signs more than one proof should hold one of these.
+///
+/// **The key lives INSIDE the identity, not in a lookup table.** A process-global map keyed by seed
+/// would pool every holder's ML-DSA secret in one process-lifetime structure outliving the holders
+/// that own them, and make "who may read this entry" a property of a lookup key rather than of
+/// ownership. Here the derived key is a private field of the object that owns the ed25519 key, so
+/// two holders are two objects and cross-identity sharing has no path to express itself.
+///
+/// Both fields are private, set together at construction, with no mutator — so an identity cannot be
+/// re-keyed in place and its two halves cannot drift apart.
+pub struct CapabilityProofSigner {
+    classical: ed25519_dalek::SigningKey,
+    /// Behind an `Arc` so the in-module tests can prove by OBJECT IDENTITY, rather than by a
+    /// stopwatch, that signing reads this key instead of deriving another.
+    pq: std::sync::Arc<MlDsaCapKey>,
+}
+
+impl std::fmt::Debug for CapabilityProofSigner {
+    /// Never renders key material.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CapabilityProofSigner(..)")
+    }
+}
+
+impl CapabilityProofSigner {
+    /// Take ownership of a holder's ed25519 identity and derive its ML-DSA half. This is where the
+    /// keygen is paid — once.
+    pub fn new(classical: ed25519_dalek::SigningKey) -> Self {
+        let pq = std::sync::Arc::new(MlDsaCapKey::from_ed25519_seed(&classical.to_bytes()));
+        Self { classical, pq }
+    }
+
+    /// The ML-DSA-65 public key a verifier ENROLLS (or matches against the holder's committed
+    /// `CellId`) for this identity — exactly the key [`Self::sign`] signs under.
+    pub fn ml_dsa_public_bytes(&self) -> Vec<u8> {
+        self.pq.public_bytes()
+    }
+
+    /// The holder's ed25519 public key.
+    pub fn ed25519_public_bytes(&self) -> [u8; 32] {
+        self.classical.verifying_key().to_bytes()
+    }
+
+    /// Sign a capability proof with BOTH halves of this identity — the same bytes
+    /// [`sign_capability_proof`] produces, with no key derivation however many proofs are signed.
+    ///
+    /// Constructs the canonical signing message from the proof fields, then signs it with the
+    /// classical Ed25519 key AND with the ML-DSA-65 key derived from the same seed. Both halves
+    /// cover the identical message, so the pair is bound together. `None` from the PQ half (RNG
+    /// failure) leaves it absent, which fails CLOSED at verification. The public key is self-carried
+    /// in the proof; it is safe to carry because the verifier only trusts it after the holder's
+    /// `CellId` is shown to commit to it (`verify_committed_ml_dsa`).
+    pub fn sign(&self, proof: &mut CapabilityProof) {
+        use ed25519_dalek::Signer;
+        let msg = proof.signing_message();
+        proof.signature = self.classical.sign(&msg).to_bytes();
+        proof.holder_ml_dsa_pubkey = Some(self.pq.public_bytes());
+        proof.pq_signature = self.pq.sign(&msg);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1101,6 +1163,158 @@ mod tests {
         assert!(!can_satisfy(
             &AuthRequired::Impossible,
             &AuthRequired::Impossible
+        ));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // The HELD ML-DSA key: `CapabilityProofSigner`
+    // ─────────────────────────────────────────────────────────────────────────
+
+    fn unsigned_proof(holder: &SigningKey, target: CellId, slot: u32) -> CapabilityProof {
+        CapabilityProof {
+            holder_cell: hybrid_cell_for(holder),
+            holder_commitment: [42u8; 32],
+            target_cell: target,
+            permissions: AuthRequired::Signature,
+            proof_data: CapabilityProofData::SignedAttestation {
+                capability_slot: slot,
+                expires_at: None,
+            },
+            timestamp: 1000,
+            signature: [0u8; 64],
+            pq_signature: None,
+            holder_ml_dsa_pubkey: None,
+        }
+    }
+
+    /// THE MANDATORY ONE. Four holders, signing INTERLEAVED: no holder may ever present, or sign
+    /// under, another holder's derived ML-DSA key.
+    ///
+    /// A held signer is a memo, and a memo that ever served one identity's key to another would be
+    /// a FORGERY ENGINE rather than a slow path. The falsifier is on the wire: every proof's PQ
+    /// half must verify under its own carried key and under NO other holder's.
+    #[test]
+    fn two_identities_never_share_a_derived_pq_key() {
+        let seeds: [[u8; 32]; 4] = [[0x11; 32], [0x22; 32], [0x33; 32], [0xf0; 32]];
+        let signers: Vec<CapabilityProofSigner> = seeds
+            .iter()
+            .map(|s| CapabilityProofSigner::new(SigningKey::from_bytes(s)))
+            .collect();
+
+        // The truth each holder must keep telling, computed independently of the signer.
+        let expected: Vec<Vec<u8>> = seeds.iter().map(enrolled_ml_dsa_pubkey).collect();
+        for (i, a) in expected.iter().enumerate() {
+            for (j, b) in expected.iter().enumerate() {
+                if i != j {
+                    assert_ne!(
+                        a, b,
+                        "distinct seeds must derive distinct keys ({i} vs {j})"
+                    );
+                }
+            }
+        }
+
+        // INTERLEAVED across rounds, so a single-slot or last-writer cache mis-serves somebody.
+        let target = test_cell_id(9);
+        let mut signed: Vec<Vec<CapabilityProof>> =
+            (0..signers.len()).map(|_| Vec::new()).collect();
+        for round in 0..3u32 {
+            for (i, signer) in signers.iter().enumerate() {
+                let holder = SigningKey::from_bytes(&seeds[i]);
+                let mut proof = unsigned_proof(&holder, target, round * 16 + i as u32);
+                signer.sign(&mut proof);
+                assert_eq!(
+                    proof.holder_ml_dsa_pubkey.as_deref(),
+                    Some(expected[i].as_slice()),
+                    "holder {i} presented a PQ key that is not the one its own seed derives \
+                     (round {round})"
+                );
+                assert_eq!(signer.ml_dsa_public_bytes(), expected[i]);
+                signed[i].push(proof);
+            }
+        }
+
+        // THE FALSIFIER, on the wire: every holder's PQ half verifies under its OWN carried key and
+        // under no other holder's.
+        for (i, per_holder) in signed.iter().enumerate() {
+            for proof in per_holder {
+                let msg = proof.signing_message();
+                let sig = proof
+                    .pq_signature
+                    .as_deref()
+                    .expect("a PQ half was produced");
+                assert!(
+                    ml_dsa_cap_verify(&expected[i], &msg, sig),
+                    "holder {i}'s own PQ half must verify under its own key"
+                );
+                for (j, other) in expected.iter().enumerate() {
+                    if i != j {
+                        assert!(
+                            !ml_dsa_cap_verify(other, &msg, sig),
+                            "holder {i}'s PQ signature verified under holder {j}'s key — two \
+                             identities are sharing a derived key"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// The signer derives its ML-DSA key ONCE, proven by OBJECT IDENTITY rather than by a
+    /// stopwatch: a timing assertion flakes on a loaded box and says nothing about which key was
+    /// served. Signing many proofs must read the same `Arc`, never mint a second key.
+    #[test]
+    fn a_signer_derives_its_pq_key_once_however_many_proofs_it_signs() {
+        let holder = SigningKey::from_bytes(&[0x7a; 32]);
+        let signer = CapabilityProofSigner::new(holder.clone());
+        let held = std::sync::Arc::clone(&signer.pq);
+        for slot in 0..4u32 {
+            let mut proof = unsigned_proof(&holder, test_cell_id(3), slot);
+            signer.sign(&mut proof);
+            assert!(
+                std::sync::Arc::ptr_eq(&held, &signer.pq),
+                "signing replaced the holder's derived key — the identity must hold ONE key"
+            );
+            assert_eq!(
+                proof.holder_ml_dsa_pubkey.as_deref(),
+                Some(signer.ml_dsa_public_bytes().as_slice())
+            );
+        }
+    }
+
+    /// The one-shot `sign_capability_proof` must remain byte-identical to the held-signer path:
+    /// this refactor changed WHEN the key is derived, never WHAT is signed or by which key.
+    ///
+    /// The ML-DSA half is HEDGED (randomized), so the signature bytes differ between any two calls
+    /// by construction; what must match is the public key presented, the classical half, and that
+    /// both PQ halves verify under that one key.
+    #[test]
+    fn the_one_shot_and_the_held_signer_agree_on_the_key() {
+        let holder = SigningKey::from_bytes(&[0x7b; 32]);
+        let target = test_cell_id(4);
+
+        let mut one_shot = unsigned_proof(&holder, target, 1);
+        sign_capability_proof(&mut one_shot, &holder);
+        let mut held = unsigned_proof(&holder, target, 1);
+        CapabilityProofSigner::new(holder.clone()).sign(&mut held);
+
+        assert_eq!(one_shot.holder_ml_dsa_pubkey, held.holder_ml_dsa_pubkey);
+        assert_eq!(one_shot.signature, held.signature);
+        let key = one_shot
+            .holder_ml_dsa_pubkey
+            .as_deref()
+            .expect("a PQ key was presented");
+        let msg = one_shot.signing_message();
+        assert_eq!(msg, held.signing_message());
+        assert!(ml_dsa_cap_verify(
+            key,
+            &msg,
+            one_shot.pq_signature.as_deref().expect("PQ half")
+        ));
+        assert!(ml_dsa_cap_verify(
+            key,
+            &msg,
+            held.pq_signature.as_deref().expect("PQ half")
         ));
     }
 }

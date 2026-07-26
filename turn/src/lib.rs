@@ -170,7 +170,7 @@ pub use exact_fnsp_v4_consensus_envelope::{
     ExactFnspV4FrameCore, ExactFnspV4FrameCoreFields, ExactFnspV4FrameId,
     ExactFnspV4FramePredecessor, ExactFnspV4ReceiptPredecessor, ExactReceiptCoreV4,
     ExactReceiptIdV4, HYBRID_LOCAL_EXACT_FNSP_V4_ENVELOPE_LEN, HybridExactFnspV4ValidatorIdentity,
-    HybridLocalExactFnspV4Envelope,
+    HybridExactFnspV4ValidatorSigner, HybridLocalExactFnspV4Envelope,
 };
 pub use execution_path::{ExecutionPath, compute_execution_path};
 pub use executor::{
@@ -206,7 +206,8 @@ pub use finalized_receipt_core_v1::{
     FINALIZED_EXECUTION_CONTEXT_V1_LEN, FINALIZED_RECEIPT_CORE_V1_LEN, FinalizedExecutionContextV1,
     FinalizedReceiptCoreV1, FinalizedReceiptCoreV1Error, FinalizedReceiptIdV1,
     FinalizedReceiptPredecessorV1, HYBRID_LOCAL_FINALIZED_RECEIPT_ENVELOPE_V1_LEN,
-    HybridFinalizedReceiptValidatorIdentityV1, HybridLocalFinalizedReceiptEnvelopeV1,
+    HybridFinalizedReceiptValidatorIdentityV1, HybridFinalizedReceiptValidatorSignerV1,
+    HybridLocalFinalizedReceiptEnvelopeV1,
 };
 pub use forest::{CallForest, CallTree};
 pub use pending::{

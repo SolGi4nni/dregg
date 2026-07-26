@@ -95,6 +95,12 @@ fn fresh_signing_key() -> SigningKey {
 /// tokens verify off-island; HMAC macaroons do not).
 pub struct RootKey {
     key: SigningKey,
+    /// This root's own memoised ML-DSA-65 key — see [`pq::MlDsaSeedMemo`]. The
+    /// root signs the PQ half of every block it mints and publishes the same key
+    /// as its enrolled anchor ([`RootKey::public_hybrid`]); without this, a root
+    /// that minted `k` credentials ran the ~200 ms Lean keygen `k + 1` times for
+    /// one unchanging key.
+    pq: pq::MlDsaSeedMemo,
 }
 
 impl RootKey {
@@ -102,6 +108,7 @@ impl RootKey {
     pub fn generate() -> Self {
         Self {
             key: fresh_signing_key(),
+            pq: pq::MlDsaSeedMemo::empty(),
         }
     }
 
@@ -110,6 +117,7 @@ impl RootKey {
     pub fn from_seed(seed: [u8; 32]) -> Self {
         Self {
             key: SigningKey::from_bytes(&seed),
+            pq: pq::MlDsaSeedMemo::empty(),
         }
     }
 
@@ -131,7 +139,7 @@ impl RootKey {
     pub fn public_hybrid(&self) -> HybridRootPublic {
         HybridRootPublic {
             ed25519: self.public(),
-            ml_dsa: pq::ml_dsa_public_from_seed(&self.key.to_bytes()).to_vec(),
+            ml_dsa: self.pq.public_from_seed(&self.key.to_bytes()).to_vec(),
         }
     }
 
@@ -146,13 +154,21 @@ impl RootKey {
         let caveats: Vec<Caveat> = caveats.into_iter().collect();
         let next = fresh_signing_key();
         let next_pub = next.verifying_key().to_bytes();
-        let next_pub_ml_dsa = pq::ml_dsa_public_from_seed(&next.to_bytes()).to_vec();
+        // ONE keygen for the fresh tail identity, and the credential that will own
+        // that identity keeps it: the block needs the public bytes, the holder
+        // needs the key, and they are the same derivation.
+        let next_pq = std::sync::Arc::new(dregg_pq::MlDsaKey::from_ed25519_seed(&next.to_bytes()));
+        let next_pub_ml_dsa = pq::pk_bytes(&next_pq).to_vec();
         let msg = block_digest(&nonce, &caveats, &next_pub, &next_pub_ml_dsa);
         let sig = self.key.sign(&msg).to_bytes();
-        let sig_ml_dsa = pq::ml_dsa_sign(&self.key.to_bytes(), &msg)
+        // The root's own PQ half comes from the root's memo, so minting a second
+        // credential from this root does not re-run the keygen.
+        let sig_ml_dsa = self
+            .pq
+            .sign(&self.key.to_bytes(), &msg)
             .expect("ml-dsa signing is available")
             .to_vec();
-        Credential {
+        let cred = Credential {
             nonce,
             blocks: vec![Block {
                 caveats,
@@ -162,7 +178,10 @@ impl RootKey {
                 sig_ml_dsa,
             }],
             proof: next,
-        }
+            pq: pq::MlDsaSeedMemo::empty(),
+        };
+        cred.pq.install(&cred.proof.to_bytes(), next_pq);
+        cred
     }
 }
 
@@ -259,6 +278,20 @@ pub struct Credential {
     /// The tail private key (matching the last block's `next_pub`): proof of
     /// possession at presentation, signing key for the next attenuation.
     pub(crate) proof: SigningKey,
+    /// The memoised ML-DSA-65 half of [`Self::proof`] — see [`pq::MlDsaSeedMemo`].
+    ///
+    /// The tail seed is this credential's PQ identity, and it is read on three
+    /// paths: the PQ half of an attenuation signature, the PQ possession gate of
+    /// [`Credential::verify_hybrid`], and (transitively) anything that presents
+    /// the credential twice. Each read used to be a fresh ~200 ms Lean keygen of
+    /// one unchanging key.
+    ///
+    /// [`Credential::attenuate`] RE-KEYS this credential in place, so the memo's
+    /// seed binding is load-bearing here rather than defensive: after an
+    /// attenuation the stored binding no longer matches the live `proof`, the
+    /// entry is refused, and the new key is derived. A narrowed credential can
+    /// never sign or present under its parent's PQ key.
+    pub(crate) pq: pq::MlDsaSeedMemo,
 }
 
 impl std::fmt::Debug for Credential {
@@ -289,7 +322,10 @@ impl Credential {
         let caveats: Vec<Caveat> = caveats.into_iter().collect();
         let next = fresh_signing_key();
         let next_pub = next.verifying_key().to_bytes();
-        let next_pub_ml_dsa = pq::ml_dsa_public_from_seed(&next.to_bytes()).to_vec();
+        // ONE keygen for the fresh tail identity; it becomes this credential's
+        // memo below, so the next attenuation or hybrid verify pays nothing.
+        let next_pq = std::sync::Arc::new(dregg_pq::MlDsaKey::from_ed25519_seed(&next.to_bytes()));
+        let next_pub_ml_dsa = pq::pk_bytes(&next_pq).to_vec();
         let prev_sig = self
             .blocks
             .last()
@@ -297,7 +333,12 @@ impl Credential {
             .sig;
         let msg = block_digest(&prev_sig, &caveats, &next_pub, &next_pub_ml_dsa);
         let sig = self.proof.sign(&msg).to_bytes();
-        let sig_ml_dsa = pq::ml_dsa_sign(&self.proof.to_bytes(), &msg)
+        // The OUTGOING tail signs this block; served from the memo when this
+        // credential has already used its PQ half (a mint, a verify, an earlier
+        // attenuation).
+        let sig_ml_dsa = self
+            .pq
+            .sign(&self.proof.to_bytes(), &msg)
             .expect("ml-dsa signing is available")
             .to_vec();
         self.blocks.push(Block {
@@ -307,7 +348,10 @@ impl Credential {
             sig,
             sig_ml_dsa,
         });
+        // Re-key, both halves together. Installing under the NEW seed's binding is
+        // what makes the parent's entry unreachable rather than merely unused.
         self.proof = next;
+        self.pq.install(&self.proof.to_bytes(), next_pq);
         self
     }
 
@@ -398,19 +442,32 @@ impl Credential {
     /// enrolled root, so a self-inserted ML-DSA key — or a PQ half signed under
     /// a key the parent never authorized — fails closed. A missing or malformed
     /// PQ half is a [`Refusal::BadPqSignature`], never a silent downgrade.
+    ///
+    /// **The gate ORDER is a cost decision, and it is load-bearing.** The PQ
+    /// possession gate derives an ML-DSA key from the carried tail seed —
+    /// 174–227 ms of Lean-verified keygen at the FFI boundary — and it used to run
+    /// FIRST, on bytes nobody had authenticated yet. That made it reachable by any
+    /// stranger: a caller mints their own chain and chooses BOTH the tail seed and
+    /// the last block's `next_pub`, so the cheap gate above it is trivially
+    /// satisfiable with no relationship to the enrolled root. It now runs AFTER
+    /// the chain, so unauthenticated garbage dies on an ed25519 `verify_strict` in
+    /// tens of microseconds and the derivation is reachable only behind a chain
+    /// that verifies from the verifier's ENROLLED root.
+    ///
+    /// Both gates are conjunctive and both must still pass to admit, so the
+    /// admitted set is unchanged — what moves is only which refusal is reported
+    /// for a credential that fails BOTH. That case is exactly what tells the two
+    /// orders apart, and `a_doubly_broken_credential_refuses_on_the_chain_not_the_keygen`
+    /// pins it, with no stopwatch anywhere;
+    /// `refusing_a_strangers_chain_costs_no_ml_dsa_keygen` states the resulting
+    /// bound on what an unauthenticated caller can buy.
     pub fn verify_hybrid(&self, root: &HybridRootPublic, ctx: &Context) -> Result<(), Refusal> {
-        // 1. Proof of possession, BOTH halves: the carried tail key (ed25519
-        //    and ML-DSA, both derived from the same held seed) must match the
-        //    last block's next keys. Without the PQ half, a quantum forger who
-        //    broke ed25519 could still not present a stripped prefix.
+        // 1. Proof of possession, CLASSICAL half: the carried tail key must match
+        //    the last block's `next_pub`. One scalar-basepoint multiply, so it
+        //    stays in front of everything.
         let last = self.blocks.last().expect("a credential has a root block");
         if self.proof.verifying_key().to_bytes() != last.next_pub {
             return Err(Refusal::ProofMismatch);
-        }
-        if pq::ml_dsa_public_from_seed(&self.proof.to_bytes()).as_slice()
-            != last.next_pub_ml_dsa.as_slice()
-        {
-            return Err(Refusal::PqProofMismatch);
         }
 
         // 2. The hybrid signature chain, anchored at the ENROLLED hybrid root
@@ -445,7 +502,20 @@ impl Credential {
             prev = Some(block.sig);
         }
 
-        // 3. The meet of all caveats (Token.admits) — fail-closed.
+        // 3. Proof of possession, POST-QUANTUM half: the held tail seed must
+        //    derive the ML-DSA key the last block pins. Without it, a quantum
+        //    forger who broke ed25519 could still not present a stripped prefix.
+        //    Reached only now, behind a chain that verified from the enrolled
+        //    root — see the gate-order note above. Memoised in `self.pq`, so a
+        //    credential this process minted or attenuated already holds the key
+        //    and pays nothing here.
+        if self.pq.public_from_seed(&self.proof.to_bytes()).as_slice()
+            != last.next_pub_ml_dsa.as_slice()
+        {
+            return Err(Refusal::PqProofMismatch);
+        }
+
+        // 4. The meet of all caveats (Token.admits) — fail-closed.
         self.check_caveats(ctx)
     }
 
@@ -935,13 +1005,92 @@ mod hybrid_pq_tests {
     #[test]
     fn pq_possession_mismatch_rejected() {
         // The tail block's carried ML-DSA key must match the held proof seed —
-        // the quantum-safe possession gate. Swap it and the gate fails closed.
+        // the quantum-safe possession gate, ISOLATED: the block is re-signed
+        // under the root after the swap, so the whole chain still verifies and
+        // the possession gate is the only thing left that can refuse. (Swapping
+        // the key WITHOUT re-signing also breaks block 0's ed25519 signature —
+        // that is `swapping_the_carried_pq_key_breaks_the_signature`, a different
+        // tooth. Conflating them made this test pass for the wrong reason and
+        // made it sensitive to which gate runs first.)
         let root = RootKey::from_seed([27u8; 32]);
         let mut cred = root.mint([read_caveat()]);
         cred.blocks[0].next_pub_ml_dsa = pq::ml_dsa_public_from_seed(&[0xCCu8; 32]).to_vec();
+        let msg = block_digest(
+            &cred.nonce,
+            &cred.blocks[0].caveats,
+            &cred.blocks[0].next_pub,
+            &cred.blocks[0].next_pub_ml_dsa,
+        );
+        cred.blocks[0].sig = root.key.sign(&msg).to_bytes();
+        cred.blocks[0].sig_ml_dsa = pq::ml_dsa_sign(&root.key.to_bytes(), &msg)
+            .expect("ml-dsa signing is available")
+            .to_vec();
+
+        // The chain itself is sound now — the classical path admits it.
+        assert_eq!(cred.verify(&root.public(), &ok_ctx()), Ok(()));
+        // The hybrid path still refuses: the holder does not possess the ML-DSA
+        // key the tail block pins.
         assert_eq!(
             cred.verify_hybrid(&root.public_hybrid(), &ok_ctx()),
             Err(Refusal::PqProofMismatch)
+        );
+    }
+
+    #[test]
+    fn refusing_a_strangers_chain_costs_no_ml_dsa_keygen() {
+        // THE COST GATE. What an unauthenticated caller can make a verifier do.
+        //
+        // A stranger holds no credential from the enrolled root, so they mint
+        // their own. They choose the tail seed AND the tail block's `next_pub` /
+        // `next_pub_ml_dsa`, so every POSSESSION check passes for them —
+        // possession says nothing about authority, only about self-consistency.
+        // The gate that refuses is the chain, anchored at the ENROLLED root.
+        //
+        // `BadSignature { block: 0 }` is the assertion because it names WHERE the
+        // verifier stopped: block 0's ed25519 `verify_strict`, tens of
+        // microseconds in, having derived no ML-DSA key and verified no ML-DSA
+        // signature. That is the whole cost of refusing a stranger.
+        let enrolled = RootKey::from_seed([0x51u8; 32]);
+        let stranger = RootKey::from_seed([0x52u8; 32]);
+        let forged = stranger.mint([read_caveat()]).attenuate([read_caveat()]);
+
+        // Internally consistent — it verifies perfectly under the stranger's own
+        // root, so nothing about its SHAPE is refusable and no structural check
+        // can be the thing that stops it.
+        assert_eq!(
+            forged.verify_hybrid(&stranger.public_hybrid(), &ok_ctx()),
+            Ok(())
+        );
+        assert_eq!(
+            forged.verify_hybrid(&enrolled.public_hybrid(), &ok_ctx()),
+            Err(Refusal::BadSignature { block: 0 })
+        );
+    }
+
+    #[test]
+    fn a_doubly_broken_credential_refuses_on_the_chain_not_the_keygen() {
+        // THE ORDER, pinned by the only input that can tell the two orders apart:
+        // one that fails BOTH the chain gate and the PQ possession gate.
+        //
+        // Possession-first (what this module used to do) reports
+        // `PqProofMismatch` — and reaches it by RUNNING the ~200 ms keygen on
+        // unauthenticated bytes. Chain-first reports `BadSignature { block: 0 }`,
+        // because step 2 returns before step 3 exists to run. Move the possession
+        // check back in front and this test goes red on the refusal, with no
+        // stopwatch anywhere.
+        let enrolled = RootKey::from_seed([0x53u8; 32]);
+        let stranger = RootKey::from_seed([0x54u8; 32]);
+        let mut forged = stranger.mint([read_caveat()]);
+        // …and break possession too: the tail block now pins a PQ key the holder
+        // does not have.
+        forged.blocks[0].next_pub_ml_dsa = pq::ml_dsa_public_from_seed(&[0xDDu8; 32]).to_vec();
+
+        assert_eq!(
+            forged.verify_hybrid(&enrolled.public_hybrid(), &ok_ctx()),
+            Err(Refusal::BadSignature { block: 0 }),
+            "a credential that fails both gates must refuse on the CHAIN — the \
+             possession gate derives an ML-DSA key and must never run on bytes \
+             the enrolled root has not vouched for"
         );
     }
 
@@ -954,6 +1103,146 @@ mod hybrid_pq_tests {
             decoded.verify_hybrid(&root.public_hybrid(), &ok_ctx()),
             Ok(())
         );
+    }
+}
+
+#[cfg(test)]
+mod ml_dsa_memo_tests {
+    //! THE MEMOISED PQ HALF — each identity derives its ML-DSA-65 key ONCE, and
+    //! the memo is bound to the seed that produced it.
+    //!
+    //! Liveness is proven by OBJECT IDENTITY (`Arc::ptr_eq`), never by a
+    //! stopwatch: a timing assertion flakes on a loaded box and says nothing about
+    //! which key was served. These go red if the memo is removed and cannot go
+    //! green by accident.
+    //!
+    //! The falsifier — that two identities never share a derived key — is driven
+    //! on the wire in `tests/mldsa_key_memo.rs`, where only the public API is in
+    //! scope. Here we check the mechanism the falsifier depends on.
+    use super::*;
+    use std::sync::Arc;
+
+    fn read_caveat() -> Caveat {
+        Caveat::FirstParty(Pred::AttrEq {
+            key: "tool".into(),
+            value: "read".into(),
+        })
+    }
+
+    #[test]
+    fn a_root_derives_its_pq_key_once() {
+        let root = RootKey::from_seed([0x61u8; 32]);
+        let seed = root.key.to_bytes();
+        let first = root.pq.key_for(&seed);
+        let second = root.pq.key_for(&seed);
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "a root must serve ONE derived ML-DSA key, not two equal ones — \
+             delete the memo and this goes red"
+        );
+        // …and it is the key the root publishes as its enrolled anchor.
+        assert_eq!(root.public_hybrid().ml_dsa, first.public_bytes());
+    }
+
+    #[test]
+    fn a_minted_credential_already_holds_its_tail_key() {
+        // `mint` derives the fresh tail key once, for the block; the credential
+        // that OWNS that tail identity keeps it, so the first hybrid verify pays
+        // nothing.
+        let root = RootKey::from_seed([0x62u8; 32]);
+        let cred = root.mint([read_caveat()]);
+        let held = cred.pq.key_for(&cred.proof.to_bytes());
+        assert!(
+            Arc::ptr_eq(&held, &cred.pq.key_for(&cred.proof.to_bytes())),
+            "the minted credential must not re-derive its own tail key"
+        );
+        assert_eq!(
+            held.public_bytes(),
+            cred.blocks[0].next_pub_ml_dsa,
+            "the key the credential holds must be the one its block pins"
+        );
+    }
+
+    #[test]
+    fn attenuation_rekeys_the_memo_and_the_parent_entry_is_unreachable() {
+        // THE SEED-BINDING WALL, load-bearing rather than defensive: `attenuate`
+        // re-keys a credential IN PLACE. A memo that keyed on the object rather
+        // than on the seed would keep serving the parent's PQ key and the child
+        // would sign under an identity it no longer has.
+        let root = RootKey::from_seed([0x63u8; 32]);
+        let cred = root.mint([read_caveat()]);
+        let parent_seed = cred.proof.to_bytes();
+        let parent_key = cred.pq.key_for(&parent_seed);
+
+        let cred = cred.attenuate([read_caveat()]);
+        let child_seed = cred.proof.to_bytes();
+        assert_ne!(parent_seed, child_seed, "attenuation must re-key");
+
+        let child_key = cred.pq.key_for(&child_seed);
+        assert!(
+            !Arc::ptr_eq(&parent_key, &child_key),
+            "the child must not be served its parent's derived key"
+        );
+        assert_eq!(
+            child_key.public_bytes(),
+            cred.blocks[1].next_pub_ml_dsa,
+            "the child holds exactly the key its own block pins"
+        );
+
+        // Asking the CHILD's memo for the PARENT's seed must MISS and re-derive —
+        // the entry is gone, not merely shadowed. A fresh object, equal bytes.
+        let rederived = cred.pq.key_for(&parent_seed);
+        assert!(!Arc::ptr_eq(&rederived, &parent_key));
+        assert_eq!(rederived.public_bytes(), parent_key.public_bytes());
+    }
+
+    #[test]
+    fn the_memo_serves_a_bit_identical_key() {
+        // The memo changes latency, not what is signed or BY WHICH KEY.
+        let root = RootKey::from_seed([0x64u8; 32]);
+        let seed = root.key.to_bytes();
+        let fresh = dregg_pq::MlDsaKey::from_ed25519_seed(&seed);
+        assert_eq!(
+            root.pq.public_from_seed(&seed).as_slice(),
+            fresh.public_bytes(),
+            "the memoised key must be bit-identical to a fresh derivation"
+        );
+
+        // The credential-chain PQ signature is HEDGED from OS entropy, so two signatures over one
+        // message differ by construction and byte-equality would be the wrong claim. What must hold
+        // is that both verify under the ONE key — a memo that served a different key would break
+        // exactly here.
+        let msg = [0x9au8; 32];
+        let memoised = root
+            .pq
+            .sign(&seed, &msg)
+            .expect("ml-dsa signing is available");
+        let independent = pq::ml_dsa_sign(&seed, &msg).expect("ml-dsa signing is available");
+        assert_ne!(
+            memoised, independent,
+            "this signature is hedged; if it ever becomes deterministic, tighten this to \
+             byte-equality rather than dropping the check"
+        );
+        let key = fresh.public_bytes();
+        assert!(pq::ml_dsa_verify(&key, &msg, &memoised));
+        assert!(pq::ml_dsa_verify(&key, &msg, &independent));
+    }
+
+    #[test]
+    fn a_decoded_credential_starts_with_an_empty_memo_and_fills_it_once() {
+        // A credential off the wire has no derivation to inherit — the first
+        // hybrid use pays, and only the first.
+        let root = RootKey::from_seed([0x65u8; 32]);
+        let cred = root.mint([read_caveat()]);
+        let decoded = Credential::decode(&cred.encode()).expect("decode");
+
+        let first = decoded.pq.key_for(&decoded.proof.to_bytes());
+        let second = decoded.pq.key_for(&decoded.proof.to_bytes());
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "a decoded credential must derive its tail PQ key ONCE"
+        );
+        assert_eq!(first.public_bytes(), cred.blocks[0].next_pub_ml_dsa);
     }
 }
 
@@ -1006,6 +1295,7 @@ mod strict_smallorder_tests {
                 sig_ml_dsa: Vec::new(),
             }],
             proof,
+            pq: Default::default(),
         }
     }
 

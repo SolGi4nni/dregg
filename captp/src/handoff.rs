@@ -501,6 +501,130 @@ mod hybrid_pq {
 
 pub use hybrid_pq::{ML_DSA_PK_LEN, MlDsaHandoffKey};
 
+/// A party's HYBRID handoff identity: the ed25519 key and the ML-DSA-65 key its seed derives, held
+/// TOGETHER and derived ONCE. Used by an introducer to issue certificates and by a recipient to
+/// present them.
+///
+/// This type exists because the derivation is expensive and the signing sites were not.
+/// `MlDsaHandoffKey::from_ed25519_seed` is deterministic FIPS 204 `ML-DSA.KeyGen(ξ)` and, on the
+/// deployed build, runs the Lean-verified keygen core across the FFI boundary at **174–227 ms of
+/// CPU**. Both [`HybridHandoffCertificate::create`] and [`HybridHandoffPresentation::create`] take a
+/// BARE `SigningKey`, so there was nothing for a derived key to belong to and every certificate
+/// issued and every presentation made paid a fresh keygen for one unchanging key — an introducer
+/// that vouches for n recipients paid n of them.
+///
+/// **The key lives INSIDE the identity, not in a lookup table.** A process-global map keyed by seed
+/// would pool every party's ML-DSA secret in one process-lifetime structure outliving the identities
+/// that own them, and make "who may read this entry" a property of a lookup key rather than of
+/// ownership. Here the derived key is a private field of the object that owns the ed25519 key, so
+/// two parties are two objects and cross-identity sharing has no path to express itself.
+///
+/// Both fields are private, set together at construction, with no mutator — so an identity cannot be
+/// re-keyed in place and its two halves cannot drift apart.
+pub struct HybridHandoffIdentity {
+    classical: SigningKey,
+    /// Behind an `Arc` so the in-module tests can prove by OBJECT IDENTITY, rather than by a
+    /// stopwatch, that signing reads this key instead of deriving another.
+    pq: std::sync::Arc<MlDsaHandoffKey>,
+    ml_dsa_pk: Vec<u8>,
+}
+
+impl std::fmt::Debug for HybridHandoffIdentity {
+    /// Never renders key material.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("HybridHandoffIdentity(..)")
+    }
+}
+
+impl HybridHandoffIdentity {
+    /// Take ownership of an ed25519 identity and derive its ML-DSA half. This is where the keygen
+    /// is paid — once.
+    pub fn new(classical: SigningKey) -> Self {
+        let pq = std::sync::Arc::new(MlDsaHandoffKey::from_ed25519_seed(&classical.to_bytes()));
+        let ml_dsa_pk = pq.public_bytes();
+        Self {
+            classical,
+            pq,
+            ml_dsa_pk,
+        }
+    }
+
+    /// This party's ed25519 public key.
+    pub fn ed25519_public(&self) -> PublicKey {
+        self.classical.public_key()
+    }
+
+    /// This party's ML-DSA-65 public key — the value an introducer PINS for a recipient, and the
+    /// one a `FederationId` must commit to for an introducer.
+    pub fn ml_dsa_public_bytes(&self) -> &[u8] {
+        &self.ml_dsa_pk
+    }
+
+    /// Issue a hybrid handoff certificate as the INTRODUCER — the same bytes
+    /// [`HybridHandoffCertificate::create`] produces, with no key derivation however many
+    /// certificates this introducer issues.
+    #[allow(clippy::too_many_arguments)]
+    pub fn issue_certificate(
+        &self,
+        introducer_federation: FederationId,
+        target_federation: FederationId,
+        target_cell: CellId,
+        recipient_pk: [u8; 32],
+        permissions: AuthRequired,
+        allowed_effects: Option<EffectMask>,
+        expires_at: Option<u64>,
+        max_uses: Option<u32>,
+        swiss: [u8; 32],
+        recipient_ml_dsa_pk: Vec<u8>,
+    ) -> HybridHandoffCertificate {
+        let base = HandoffCertificate::create(
+            &self.classical,
+            introducer_federation,
+            target_federation,
+            target_cell,
+            recipient_pk,
+            permissions,
+            allowed_effects,
+            expires_at,
+            max_uses,
+            swiss,
+        );
+        let introducer_ml_dsa_pk = self.ml_dsa_pk.clone();
+        let message = HybridHandoffCertificate::hybrid_signing_message(
+            &base,
+            &introducer_ml_dsa_pk,
+            &recipient_ml_dsa_pk,
+        );
+        let introducer_ml_dsa_sig = self.pq.sign(&message);
+        HybridHandoffCertificate {
+            base,
+            introducer_ml_dsa_pk,
+            recipient_ml_dsa_pk,
+            introducer_ml_dsa_sig,
+        }
+    }
+
+    /// Present a hybrid handoff certificate as the RECIPIENT — the same bytes
+    /// [`HybridHandoffPresentation::create`] produces, with no key derivation however many
+    /// certificates this recipient presents.
+    pub fn present(&self, certificate: HybridHandoffCertificate) -> HybridHandoffPresentation {
+        let recipient_signature = sign(
+            &self.classical,
+            &HandoffPresentation::presentation_message(&certificate.base),
+        );
+        let message = HybridHandoffCertificate::hybrid_presentation_message(
+            &certificate.base,
+            &certificate.recipient_ml_dsa_pk,
+        );
+        let recipient_ml_dsa_sig = self.pq.sign(&message);
+        HybridHandoffPresentation {
+            certificate,
+            recipient_signature,
+            recipient_ml_dsa_sig,
+        }
+    }
+}
+
 /// A HYBRID handoff certificate: the classical [`HandoffCertificate`] plus the
 /// post-quantum (ML-DSA-65) half. Travels out-of-band exactly like the classical
 /// certificate (postcard / base58 / QR). See the module comment for the enroll +
@@ -536,6 +660,11 @@ impl HybridHandoffCertificate {
     /// (the introducer knows/vouches for the recipient and pins it into the
     /// cert). The introducer's own ML-DSA key is derived from `introducer_key`'s
     /// ed25519 seed, so no separate PQ key material is needed.
+    ///
+    /// A ONE-SHOT: it builds a [`HybridHandoffIdentity`], uses it once and drops it, so it pays a
+    /// full ML-DSA keygen (174–227 ms on the deployed build) per certificate. An introducer that
+    /// vouches for more than one recipient should hold a [`HybridHandoffIdentity`] and call
+    /// [`HybridHandoffIdentity::issue_certificate`]. The bytes are identical either way.
     #[allow(clippy::too_many_arguments)]
     pub fn create(
         introducer_key: &SigningKey,
@@ -550,8 +679,7 @@ impl HybridHandoffCertificate {
         swiss: [u8; 32],
         recipient_ml_dsa_pk: Vec<u8>,
     ) -> Self {
-        let base = HandoffCertificate::create(
-            introducer_key,
+        HybridHandoffIdentity::new(introducer_key.clone()).issue_certificate(
             introducer_federation,
             target_federation,
             target_cell,
@@ -561,18 +689,8 @@ impl HybridHandoffCertificate {
             expires_at,
             max_uses,
             swiss,
-        );
-        let intro_pq = MlDsaHandoffKey::from_ed25519_seed(&introducer_key.to_bytes());
-        let introducer_ml_dsa_pk = intro_pq.public_bytes();
-        let message =
-            Self::hybrid_signing_message(&base, &introducer_ml_dsa_pk, &recipient_ml_dsa_pk);
-        let introducer_ml_dsa_sig = intro_pq.sign(&message);
-        HybridHandoffCertificate {
-            base,
-            introducer_ml_dsa_pk,
             recipient_ml_dsa_pk,
-            introducer_ml_dsa_sig,
-        }
+        )
     }
 
     /// The canonical message the introducer signs with ML-DSA. Binds the entire
@@ -645,23 +763,13 @@ impl HybridHandoffPresentation {
     /// ML-DSA key is derived from `recipient_key`'s ed25519 seed — it must match
     /// the `recipient_ml_dsa_pk` the introducer pinned in the certificate, or the
     /// PQ half will be rejected by the target.
+    ///
+    /// A ONE-SHOT: it builds a [`HybridHandoffIdentity`], uses it once and drops it, so it pays a
+    /// full ML-DSA keygen (174–227 ms on the deployed build) per presentation. A recipient that
+    /// presents more than one certificate should hold a [`HybridHandoffIdentity`] and call
+    /// [`HybridHandoffIdentity::present`]. The bytes are identical either way.
     pub fn create(certificate: HybridHandoffCertificate, recipient_key: &SigningKey) -> Self {
-        let base = &certificate.base;
-        let recipient_signature = sign(
-            recipient_key,
-            &HandoffPresentation::presentation_message(base),
-        );
-        let recip_pq = MlDsaHandoffKey::from_ed25519_seed(&recipient_key.to_bytes());
-        let message = HybridHandoffCertificate::hybrid_presentation_message(
-            base,
-            &certificate.recipient_ml_dsa_pk,
-        );
-        let recipient_ml_dsa_sig = recip_pq.sign(&message);
-        HybridHandoffPresentation {
-            certificate,
-            recipient_signature,
-            recipient_ml_dsa_sig,
-        }
+        HybridHandoffIdentity::new(recipient_key.clone()).present(certificate)
     }
 
     /// Serialize for out-of-band transport.
@@ -2215,6 +2323,242 @@ mod tests {
                 h,
                 "custom tag codec must round-trip the full 32-byte identity"
             );
+        }
+    }
+
+    // ── The HELD ML-DSA key: `HybridHandoffIdentity` ─────────────────────────
+
+    /// THE MANDATORY ONE. Four parties, issuing and presenting INTERLEAVED: no party may ever
+    /// present, or sign under, another party's derived ML-DSA key.
+    ///
+    /// A held identity is a memo, and a memo that ever served one party's key to another would be a
+    /// FORGERY ENGINE rather than a slow path. The falsifier is on the wire: every introducer's PQ
+    /// half must verify under its own id-committed key and under NO other's, and the same for every
+    /// recipient's presentation half.
+    #[test]
+    fn two_identities_never_share_a_derived_pq_key() {
+        super::install_test_lattice_gate();
+        let seeds: [[u8; 32]; 4] = [[0x11; 32], [0x22; 32], [0x33; 32], [0xf0; 32]];
+        let parties: Vec<HybridHandoffIdentity> = seeds
+            .iter()
+            .map(|s| HybridHandoffIdentity::new(SigningKey::from_bytes(s)))
+            .collect();
+
+        // The truth each party must keep telling, computed independently of the identity.
+        let expected: Vec<Vec<u8>> = seeds
+            .iter()
+            .map(|s| MlDsaHandoffKey::from_ed25519_seed(s).public_bytes())
+            .collect();
+        for (i, a) in expected.iter().enumerate() {
+            for (j, b) in expected.iter().enumerate() {
+                if i != j {
+                    assert_ne!(
+                        a, b,
+                        "distinct seeds must derive distinct keys ({i} vs {j})"
+                    );
+                }
+            }
+        }
+
+        // INTERLEAVED: each round, every party issues a certificate to its right-hand neighbour and
+        // that neighbour presents it. A single-slot or last-writer cache mis-serves somebody.
+        let target_fed = FederationId([0xDD; 32]);
+        let target_cell = CellId([0xEE; 32]);
+        let mut issued: Vec<Vec<HybridHandoffPresentation>> =
+            (0..parties.len()).map(|_| Vec::new()).collect();
+        for round in 0..3u64 {
+            for i in 0..parties.len() {
+                let j = (i + 1) % parties.len();
+                let intro = &parties[i];
+                let recip = &parties[j];
+                assert_eq!(
+                    intro.ml_dsa_public_bytes(),
+                    expected[i],
+                    "party {i} presented a PQ key that is not the one its own seed derives \
+                     (round {round})"
+                );
+                let mut swiss_table = SwissTable::new();
+                let swiss =
+                    swiss_table.export(target_cell, AuthRequired::Signature, 100 + round, None);
+                let cert = intro.issue_certificate(
+                    FederationId::derive_hybrid(&intro.ed25519_public().0, expected[i].as_slice()),
+                    target_fed,
+                    target_cell,
+                    recip.ed25519_public().0,
+                    AuthRequired::Signature,
+                    None,
+                    None,
+                    None,
+                    swiss,
+                    expected[j].clone(),
+                );
+                assert_eq!(cert.introducer_ml_dsa_pk, expected[i]);
+                assert_eq!(cert.recipient_ml_dsa_pk, expected[j]);
+                issued[i].push(recip.present(cert));
+            }
+        }
+
+        // THE FALSIFIER, on the wire: each half verifies under its own key and under no other's.
+        for (i, per_party) in issued.iter().enumerate() {
+            let j = (i + 1) % parties.len();
+            for presentation in per_party {
+                let base = &presentation.certificate.base;
+                let intro_msg = HybridHandoffCertificate::hybrid_signing_message(
+                    base,
+                    &presentation.certificate.introducer_ml_dsa_pk,
+                    &presentation.certificate.recipient_ml_dsa_pk,
+                );
+                let recip_msg = HybridHandoffCertificate::hybrid_presentation_message(
+                    base,
+                    &presentation.certificate.recipient_ml_dsa_pk,
+                );
+                assert!(
+                    hybrid_pq::ml_dsa_verify(
+                        &expected[i],
+                        &intro_msg,
+                        &presentation.certificate.introducer_ml_dsa_sig
+                    ),
+                    "introducer {i}'s own PQ half must verify under its own key"
+                );
+                assert!(
+                    hybrid_pq::ml_dsa_verify(
+                        &expected[j],
+                        &recip_msg,
+                        &presentation.recipient_ml_dsa_sig
+                    ),
+                    "recipient {j}'s own PQ half must verify under its own key"
+                );
+                for (k, other) in expected.iter().enumerate() {
+                    if k != i {
+                        assert!(
+                            !hybrid_pq::ml_dsa_verify(
+                                other,
+                                &intro_msg,
+                                &presentation.certificate.introducer_ml_dsa_sig
+                            ),
+                            "introducer {i}'s PQ signature verified under party {k}'s key — two \
+                             identities are sharing a derived key"
+                        );
+                    }
+                    if k != j {
+                        assert!(
+                            !hybrid_pq::ml_dsa_verify(
+                                other,
+                                &recip_msg,
+                                &presentation.recipient_ml_dsa_sig
+                            ),
+                            "recipient {j}'s PQ signature verified under party {k}'s key — two \
+                             identities are sharing a derived key"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// The identity derives its ML-DSA key ONCE, proven by OBJECT IDENTITY rather than by a
+    /// stopwatch: a timing assertion flakes on a loaded box and says nothing about which key was
+    /// served. Issuing to many recipients must read the same `Arc`.
+    #[test]
+    fn an_identity_derives_its_pq_key_once_however_many_certificates_it_issues() {
+        super::install_test_lattice_gate();
+        let intro = HybridHandoffIdentity::new(SigningKey::from_bytes(&[0x7a; 32]));
+        let held = std::sync::Arc::clone(&intro.pq);
+        let intro_fed =
+            FederationId::derive_hybrid(&intro.ed25519_public().0, intro.ml_dsa_public_bytes());
+        for i in 0..4u64 {
+            let recip = HybridHandoffIdentity::new(SigningKey::from_bytes(&[0x80 + i as u8; 32]));
+            let mut swiss_table = SwissTable::new();
+            let swiss = swiss_table.export(CellId([0xEE; 32]), AuthRequired::Signature, 100, None);
+            let cert = intro.issue_certificate(
+                intro_fed,
+                FederationId([0xDD; 32]),
+                CellId([0xEE; 32]),
+                recip.ed25519_public().0,
+                AuthRequired::Signature,
+                None,
+                None,
+                None,
+                swiss,
+                recip.ml_dsa_public_bytes().to_vec(),
+            );
+            assert!(
+                std::sync::Arc::ptr_eq(&held, &intro.pq),
+                "issuing replaced the introducer's derived key — the identity must hold ONE key"
+            );
+            assert_eq!(cert.introducer_ml_dsa_pk, intro.ml_dsa_public_bytes());
+        }
+    }
+
+    /// The one-shot constructors must remain equivalent to the held-identity path: this refactor
+    /// changed WHEN the key is derived, never WHAT is signed or by which key.
+    ///
+    /// Byte-equality is NOT the claim and cannot be: `HandoffCertificate::create` draws a fresh
+    /// random `nonce` per certificate and the ML-DSA half is hedged, so two certificates differ in
+    /// both halves by construction. What must match is the IDENTITY — the presented ML-DSA public
+    /// key — and that each certificate's own PQ half verifies under it.
+    #[test]
+    fn the_one_shot_and_the_held_identity_agree_on_the_key() {
+        super::install_test_lattice_gate();
+        let intro_sk = SigningKey::from_bytes(&[0x7b; 32]);
+        let intro = HybridHandoffIdentity::new(SigningKey::from_bytes(&[0x7b; 32]));
+        let recip_ml = MlDsaHandoffKey::from_ed25519_seed(&[0x7c; 32]).public_bytes();
+        let intro_fed =
+            FederationId::derive_hybrid(&intro.ed25519_public().0, intro.ml_dsa_public_bytes());
+
+        let mut swiss_table = SwissTable::new();
+        let swiss = swiss_table.export(CellId([0xEE; 32]), AuthRequired::Signature, 100, None);
+
+        let one_shot = HybridHandoffCertificate::create(
+            &intro_sk,
+            intro_fed,
+            FederationId([0xDD; 32]),
+            CellId([0xEE; 32]),
+            [0x42; 32],
+            AuthRequired::Signature,
+            None,
+            None,
+            None,
+            swiss,
+            recip_ml.clone(),
+        );
+        let held = intro.issue_certificate(
+            intro_fed,
+            FederationId([0xDD; 32]),
+            CellId([0xEE; 32]),
+            [0x42; 32],
+            AuthRequired::Signature,
+            None,
+            None,
+            None,
+            swiss,
+            recip_ml,
+        );
+
+        assert_eq!(
+            one_shot.introducer_ml_dsa_pk, held.introducer_ml_dsa_pk,
+            "both paths must present the SAME derived ML-DSA identity"
+        );
+        assert_eq!(
+            one_shot.introducer_ml_dsa_pk,
+            intro.ml_dsa_public_bytes(),
+            "and it must be the key the held identity actually carries"
+        );
+        assert_eq!(one_shot.recipient_ml_dsa_pk, held.recipient_ml_dsa_pk);
+        // Each certificate's own PQ half must verify under that one key. The nonce differs between
+        // them, so each is checked against its OWN signing message.
+        for cert in [&one_shot, &held] {
+            let msg = HybridHandoffCertificate::hybrid_signing_message(
+                &cert.base,
+                &cert.introducer_ml_dsa_pk,
+                &cert.recipient_ml_dsa_pk,
+            );
+            assert!(hybrid_pq::ml_dsa_verify(
+                &cert.introducer_ml_dsa_pk,
+                &msg,
+                &cert.introducer_ml_dsa_sig
+            ));
+            assert!(cert.base.verify_signature(&intro.ed25519_public()));
         }
     }
 }
