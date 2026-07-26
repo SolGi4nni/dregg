@@ -33,7 +33,7 @@
 //! what `dreggnet-web`'s host wrapper does; the host itself stays a plain synchronous object.
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::lifecycle::{Clock, PolicyRefusal, SessionPolicy, SweepReport, quota_key};
 use crate::resume::{SessionMoveLog, SessionResumeStore, SignedProvenance};
@@ -57,6 +57,16 @@ pub struct OfferingInfo {
     pub title: String,
     /// How many sessions of this offering are currently open in the host.
     pub open_sessions: usize,
+    /// **Whether this offering goes on a browse list**
+    /// ([`OfferingHost::set_advertised`]). `true` for everything on an uncurated host; on a host
+    /// built through `dreggnet_catalog::build_full_catalog` it is `dreggnet_catalog::is_shipped`.
+    ///
+    /// A frontend whose menu buttons carry a POSITION should paint
+    /// [`OfferingHost::list_offerings`] and skip the entries with `advertised: false`: that keeps
+    /// every button's index stable across a change to the ship list, so a callback captured
+    /// before the change still opens what it always opened. A frontend whose buttons carry the
+    /// KEY can just paint [`OfferingHost::list_advertised_offerings`].
+    pub advertised: bool,
 }
 
 /// An error driving the host — the offering key or session was unknown, or the offering refused to
@@ -561,6 +571,18 @@ pub struct OfferingHost {
     minted_live: HashMap<String, usize>,
     /// Last fresh-mint time per opener quota key (the `min_open_interval_secs` gate).
     last_minted_at: HashMap<String, u64>,
+    /// **The UNADVERTISED keys** — registered offerings that a browse list must not paint.
+    ///
+    /// This is a *shelf* property, never an *access* one. Nothing here gates
+    /// [`open`](OfferingHost::open) / [`ensure_open`](OfferingHost::ensure_open) /
+    /// [`has`](OfferingHost::has) / [`advance`](OfferingHost::advance): an unadvertised offering
+    /// still deploys, still plays, and still verifies for anyone holding its key or URL. It is
+    /// simply absent from [`list_advertised_offerings`](OfferingHost::list_advertised_offerings),
+    /// which is what every user-facing shelf paints.
+    ///
+    /// Empty by default, so a host nobody has curated advertises everything it registered — the
+    /// pre-existing behaviour. `dreggnet-catalog`'s `apply_ship_list` is what populates it.
+    unadvertised: BTreeSet<String>,
 }
 
 fn validate_artifact_descriptor(
@@ -689,6 +711,7 @@ impl Default for OfferingHost {
             openers: HashMap::new(),
             minted_live: HashMap::new(),
             last_minted_at: HashMap::new(),
+            unadvertised: BTreeSet::new(),
         }
     }
 }
@@ -769,8 +792,12 @@ impl OfferingHost {
         self.slots.keys().cloned().collect()
     }
 
-    /// **The catalog** — every registered offering's key + title + live-session count, in stable
-    /// order. A frontend paints this as the browse list (each entry a "play" link).
+    /// **The FULL registry** — every registered offering's key + title + live-session count, in
+    /// stable order, ADVERTISED OR NOT.
+    ///
+    /// ⚑ This is the parity/inventory view: "what is mounted here". A **user-facing browse list**
+    /// wants [`list_advertised_offerings`](OfferingHost::list_advertised_offerings) instead —
+    /// painting this one puts every unadvertised offering back on the shelf.
     pub fn list_offerings(&self) -> Vec<OfferingInfo> {
         self.slots
             .iter()
@@ -778,8 +805,39 @@ impl OfferingHost {
                 key: key.clone(),
                 title: slot.title().to_string(),
                 open_sessions: slot.open_count(),
+                advertised: !self.unadvertised.contains(key),
             })
             .collect()
+    }
+
+    /// **THE SHELF** — the advertised offerings only, in stable order. This is what a catalog page,
+    /// a chat menu, or a Mini App card grid paints.
+    ///
+    /// On an uncurated host this is exactly [`list_offerings`](OfferingHost::list_offerings). On a
+    /// host built through `dreggnet_catalog::build_full_catalog` it is the ship list
+    /// (`dreggnet_catalog::SHIPPED_KEYS`).
+    pub fn list_advertised_offerings(&self) -> Vec<OfferingInfo> {
+        self.list_offerings()
+            .into_iter()
+            .filter(|o| o.advertised)
+            .collect()
+    }
+
+    /// **Set whether `key` appears on a browse list.** Advertising is a shelf property only — an
+    /// unadvertised offering stays fully openable, playable and verifiable by key/URL (see the
+    /// `unadvertised` field doc). A no-op for an unregistered key is harmless and deliberate: the
+    /// ship list can name a key a given host did not mount.
+    pub fn set_advertised(&mut self, key: &str, advertised: bool) {
+        if advertised {
+            self.unadvertised.remove(key);
+        } else {
+            self.unadvertised.insert(key.to_string());
+        }
+    }
+
+    /// Whether `key` appears on a browse list ([`set_advertised`](OfferingHost::set_advertised)).
+    pub fn is_advertised(&self, key: &str) -> bool {
+        !self.unadvertised.contains(key)
     }
 
     /// The title of the offering registered under `key` (`None` if unregistered).
@@ -1144,8 +1202,17 @@ impl OfferingHost {
             .unwrap_or_default()
     }
 
-    /// Close (drop) session `id` of offering `key`. `true` if a session was removed. Also drops the
-    /// session's move-log (in memory + the durable store) — a closed session is not resumed on boot.
+    /// Close (drop) session `id` of offering `key`. `true` if a session was removed. Also retires
+    /// the session's move-log: dropped from memory, and **ARCHIVED** — not deleted — in the durable
+    /// store. A closed session is therefore not resumed on boot (the archive is held out of
+    /// [`SessionResumeStore::all`]) *and* is still replayable on demand through
+    /// [`replay_archived`](OfferingHost::replay_archived).
+    ///
+    /// ⚑ **This used to `forget` (DELETE) the durable log,** which meant the exact moment a match
+    /// became a finished, shareable artifact was the moment its only reproducible record was
+    /// destroyed — on a surface whose claim is that anyone can replay a finished game. See
+    /// [`SessionResumeStore::archive`] for what "archived" retains, and for the two cases that still
+    /// end in a delete (a store that cannot archive, and a session nobody ever played).
     pub fn close(&mut self, key: &str, id: &SessionId) -> bool {
         let removed = self
             .slots
@@ -1155,11 +1222,83 @@ impl OfferingHost {
         if removed {
             self.logs.remove(&(key.to_string(), id.clone()));
             if let Some(store) = &self.resume_store {
-                store.forget(key, id);
+                store.archive(key, id);
             }
             self.drop_lifecycle_bookkeeping(key, id);
         }
         removed
+    }
+
+    /// **One ARCHIVED session's move-log** — the reproducible public input of a session that was
+    /// closed ([`close`](OfferingHost::close)) rather than one that is live. `None` when no store is
+    /// attached, when the store cannot archive, or when nothing was retained under `(key, id)`.
+    ///
+    /// This is a READ of the recorded inputs, not a verdict: it says which turns were logged and who
+    /// they were attributed to. The verdict is [`replay_archived`](OfferingHost::replay_archived),
+    /// which re-executes them.
+    pub fn archived_move_log(&self, key: &str, id: &SessionId) -> Option<SessionMoveLog> {
+        self.resume_store.as_ref()?.load_archived(key, id)
+    }
+
+    /// **Every archived session's move-log** — the finished games this host's store retained, across
+    /// every offering key. Empty with no store attached or with a store that cannot archive.
+    ///
+    /// The natural consumer is a "your finished matches" surface: the log carries the offering key,
+    /// the session id, the seed and every landed turn's actor, which is everything such a page needs
+    /// to say WHOSE match it was without asking any other store.
+    pub fn archived_logs(&self) -> Vec<SessionMoveLog> {
+        self.resume_store
+            .as_ref()
+            .map(|store| store.archived_logs())
+            .unwrap_or_default()
+    }
+
+    /// **Re-execute an ARCHIVED session and hand back the verdict** — what makes "a finished game can
+    /// be replayed by anyone" true for a match rather than only for a Descent run.
+    ///
+    /// It is a real re-run, in the same shape the Descent's `/descent/run/{id}` uses and for the same
+    /// reason (a stored flag proves nothing):
+    ///
+    /// 1. load the archived [`SessionMoveLog`] — `None` if there is none;
+    /// 2. [`resume`](OfferingHost::resume) it under its own id, which **re-drives every logged
+    ///    advance through the real executor** and re-verifies every persisted signature. A tampered
+    ///    archive is REFUSED here exactly as a tampered live log is refused on boot — the `Err` is
+    ///    the honest answer, not a `verified: false` flag somebody wrote down;
+    /// 3. ask the offering for its own [`verify`](OfferingHost::verify) report over the reopened
+    ///    chain;
+    /// 4. **close it again**, returning the host to the shape it had before the read (and re-archiving
+    ///    idempotently, so the artifact survives being replayed).
+    ///
+    /// It must resume under the session's OWN id, not a scratch one: a signed turn's signature is
+    /// bound to `(offering, session)`, so replaying it anywhere else would fail re-verification for a
+    /// reason that has nothing to do with the match. `None` when a LIVE session already occupies the
+    /// id — that session's own [`verify`](OfferingHost::verify) is the right answer there, and a
+    /// resume must never clobber a running game.
+    ///
+    /// Two named costs: the session is momentarily live (which can put the offering one over an armed
+    /// capacity cap for the duration of this call), and the replay costs a full re-drive, so a caller
+    /// should do this on a per-match page rather than for every row of a list.
+    pub fn replay_archived(
+        &mut self,
+        key: &str,
+        id: &SessionId,
+    ) -> Option<Result<VerifyReport, ResumeError>> {
+        if self.is_open(key, id) {
+            return None;
+        }
+        let log = self.archived_move_log(key, id)?;
+        if let Err(error) = self.resume(&log) {
+            // `resume` rolls its own partial session back, so nothing is left live to clean up.
+            return Some(Err(error));
+        }
+        let report = self.verify(key, id);
+        self.close(key, id);
+        Some(match report {
+            Some(report) => Ok(report),
+            // Unreachable in practice (the session was just resumed); reported rather than
+            // `expect`ed so a surface can never be taken down by a read.
+            None => Err(ResumeError::AlreadyOpen(id.clone())),
+        })
     }
 
     /// The current cap-gated affordances of session `(key, id)` — the buttons/forms a frontend
@@ -2626,6 +2765,154 @@ mod tests {
         );
     }
 
+    /// ⚑ **A FINISHED SESSION IS STILL REPLAYABLE.** `close` used to delete the durable log, so the
+    /// exact moment a match became an artifact was the moment its only reproducible record was
+    /// destroyed. This drives the whole new path end to end: play, close, and then ask the host to
+    /// re-execute the finished match.
+    ///
+    /// Every clause here is a separate wound the old shape had:
+    ///
+    /// * the log SURVIVES `close`;
+    /// * it does NOT boot-resume (`resume_all` on a fresh host over the same store finds nothing —
+    ///   a finished match must not come back as a game in progress);
+    /// * the verdict is a REAL re-execution through the executor, not a stored flag;
+    /// * the replay LEAVES NOTHING LIVE, and the artifact survives being replayed (twice).
+    #[test]
+    fn a_closed_session_is_archived_and_can_still_be_replayed() {
+        let store = crate::resume::InMemoryResumeStore::new();
+        let id = SessionId::new("af1-finished");
+        let mut host = OfferingHost::new().with_resume_store(Box::new(store.clone()));
+        host.register("counter", "Counter", CounterOffering);
+        host.open_session("counter", id.clone(), SessionConfig::with_seed(7))
+            .unwrap();
+        for _ in 0..3 {
+            assert!(
+                host.advance(
+                    "counter",
+                    &id,
+                    Action::new("tick", "tick", 1, true),
+                    DreggIdentity("afs1-a-secret".to_string()),
+                )
+                .expect("the session is live")
+                .landed()
+            );
+        }
+        let live = host
+            .verify("counter", &id)
+            .expect("a live session verifies")
+            .turns;
+        assert_eq!(live, 3);
+
+        // THE MATCH ENDS.
+        assert!(host.close("counter", &id));
+        assert!(!host.is_open("counter", &id));
+        assert!(
+            host.move_log("counter", &id).is_none(),
+            "the live log is gone from memory"
+        );
+        assert!(
+            host.verify("counter", &id).is_none(),
+            "the LIVE verify route has nothing to answer — which is why `replay_archived` exists"
+        );
+
+        // …and it is RETAINED, with the actor its turns were attributed to.
+        let archived = host
+            .archived_move_log("counter", &id)
+            .expect("a played, closed session is archived rather than deleted");
+        assert_eq!(archived.moves.len(), 3);
+        assert_eq!(archived.moves[0].actor.0, "afs1-a-secret");
+        assert_eq!(host.archived_logs().len(), 1);
+
+        // …but it is NOT in the live resume set: a fresh host over the same store reopens nothing.
+        {
+            let mut booted = OfferingHost::new().with_resume_store(Box::new(store.clone()));
+            booted.register("counter", "Counter", CounterOffering);
+            assert!(
+                booted.resume_all().is_empty(),
+                "a finished match must not boot-resume as a game in progress"
+            );
+            assert!(!booted.is_open("counter", &id));
+        }
+
+        // THE REPLAY — a real re-execution, twice, leaving nothing live either time.
+        for attempt in 0..2 {
+            let report = host
+                .replay_archived("counter", &id)
+                .unwrap_or_else(|| panic!("attempt {attempt}: the archived match replays"))
+                .unwrap_or_else(|error| {
+                    panic!("attempt {attempt}: the honest tape re-drives: {error}")
+                });
+            assert!(report.verified, "attempt {attempt}");
+            assert_eq!(
+                report.turns, live,
+                "attempt {attempt}: the replay reaches the SAME committed state the live session was in"
+            );
+            assert!(
+                !host.is_open("counter", &id),
+                "attempt {attempt}: the replay left a live session behind"
+            );
+            assert!(
+                host.archived_move_log("counter", &id).is_some(),
+                "attempt {attempt}: replaying the artifact destroyed it"
+            );
+        }
+
+        // An id with no archive is an honest `None`, never a fabricated verdict.
+        assert!(
+            host.replay_archived("counter", &SessionId::new("nope"))
+                .is_none()
+        );
+    }
+
+    /// A TAMPERED archive is REFUSED by re-execution, exactly as a tampered live log is refused on
+    /// boot. This is the whole reason the verdict is a replay rather than a stored bit: the archive
+    /// is a writable file, and the surface that shows it must not be forgeable.
+    #[test]
+    fn a_tampered_archive_refuses_to_replay_and_leaves_nothing_live() {
+        let store = crate::resume::InMemoryResumeStore::new();
+        let id = SessionId::new("af1-tampered");
+        let mut host = OfferingHost::new().with_resume_store(Box::new(store.clone()));
+        host.register("counter", "Counter", CounterOffering);
+        host.open_session("counter", id.clone(), SessionConfig::with_seed(1))
+            .unwrap();
+        assert!(
+            host.advance(
+                "counter",
+                &id,
+                Action::new("tick", "tick", 1, true),
+                DreggIdentity("afs1-a".to_string()),
+            )
+            .expect("live")
+            .landed()
+        );
+        assert!(host.close("counter", &id));
+
+        // Splice an ineligible move into the retained tape — the exact attack a writable store gives.
+        let mut forged = host.archived_move_log("counter", &id).expect("archived");
+        forged.moves.push(crate::resume::LoggedMove::new(
+            Action::new("teleport", "teleport", 1, true),
+            DreggIdentity("afs1-b".to_string()),
+        ));
+        store.forget("counter", &id);
+        store.record_open("counter", &id, &forged.cfg);
+        for logged in &forged.moves {
+            store.record_landed("counter", &id, &logged.action, &logged.actor);
+        }
+        assert!(store.archive("counter", &id));
+
+        let verdict = host
+            .replay_archived("counter", &id)
+            .expect("there is an archive to judge");
+        assert!(
+            matches!(verdict, Err(ResumeError::Refused { index: 1, .. })),
+            "the spliced move must be refused BY INDEX on re-drive: {verdict:?}"
+        );
+        assert!(
+            !host.is_open("counter", &id),
+            "a refused replay must leave no partially-resumed session live"
+        );
+    }
+
     // ── SIGNED-PROVENANCE SURVIVES RESTART AS A RE-VERIFIABLE FACT ──
     //
     // A resumed `Signed` turn used to be reconstructed from a 1-byte trust tag + the
@@ -2806,13 +3093,19 @@ mod tests {
     }
 
     /// **FIX #3 — a captured legacy-signed envelope from a PRIOR INCARNATION refuses on a reopened
-    /// same-`id` session.** The counter floor guards a reopen only while it survives: `close()`
-    /// drops the durable floor (`forget`), and a restart loses the in-memory one — so a
-    /// caller-chosen same-`id` session reopened FRESH after close+restart resets its expected
-    /// counter to 0, and a captured `counter = 0` envelope used to re-verify and re-land. Binding
-    /// the host incarnation into the signed message closes exactly that gap: the envelope was signed
-    /// under incarnation A's epoch and cannot verify under incarnation B's, EVEN THOUGH `counter = 0`
-    /// clears the fresh floor (so the epoch — not the counter — is what refuses it).
+    /// same-`id` session.** The counter floor guards a reopen only while it survives, and a restart
+    /// loses the in-memory one — so a caller-chosen same-`id` session reopened FRESH with no floor
+    /// resets its expected counter to 0, and a captured `counter = 0` envelope used to re-verify and
+    /// re-land. Binding the host incarnation into the signed message closes exactly that gap: the
+    /// envelope was signed under incarnation A's epoch and cannot verify under incarnation B's, EVEN
+    /// THOUGH `counter = 0` clears the fresh floor (so the epoch — not the counter — is what refuses
+    /// it).
+    ///
+    /// ⚑ This test used to reach the floorless state by calling `close()`, whose `forget` deleted the
+    /// durable floor along with the log. `close` now ARCHIVES, and the floor **survives** — which is
+    /// strictly safer and is asserted below as its own tooth. The floorless state the epoch tooth
+    /// needs is therefore reached EXPLICITLY (`forget`), so this test still isolates the epoch
+    /// instead of quietly becoming a test of the counter.
     #[test]
     fn a_legacy_signed_envelope_from_a_prior_incarnation_refuses_on_a_reopened_id() {
         let store = crate::resume::InMemoryResumeStore::new();
@@ -2822,7 +3115,7 @@ mod tests {
         let epoch_a = [0xAAu8; 32];
 
         // Incarnation A: open under a durable store, sign+land a counter=0 turn BOUND to A's epoch,
-        // then CLOSE the session — `forget` drops its durable counter floor AND its log.
+        // then CLOSE the session — which now ARCHIVES its log and KEEPS its counter floor.
         let captured = signer.sign_in_epoch("counter", &id, 0, &epoch_a, action.clone());
         {
             let mut host = OfferingHost::new()
@@ -2844,9 +3137,24 @@ mod tests {
             );
             host.close("counter", &id);
         }
+        // ⚑ THE NEW, STRONGER FACT: closing a played session no longer discards its replay floor.
         assert!(
-            store.load_signed_counters("counter", &id).is_empty(),
-            "close dropped the durable counter floor — a reopened id resets expected to 0"
+            !store.load_signed_counters("counter", &id).is_empty(),
+            "an archived match keeps the floor that guards its re-mintable id"
+        );
+        assert!(
+            store.load_archived("counter", &id).is_some(),
+            "…and the finished match's own log is retained, not deleted"
+        );
+        // …so to isolate the EPOCH tooth below, drop the floor explicitly — this is the state a
+        // store that cannot archive (or one that was `forget`-ten) genuinely leaves behind, and
+        // without it a pass here would only prove the counter refused the replay.
+        store.forget("counter", &id);
+        assert!(store.load_signed_counters("counter", &id).is_empty());
+        assert!(
+            store.load_archived("counter", &id).is_none(),
+            "`forget` is a total delete — the archive goes with the log, so the setup below is \
+             genuinely floorless AND genuinely resumeless"
         );
 
         // Incarnation B — a RESTART with a FRESH epoch, sharing the same store. The closed session

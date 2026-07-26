@@ -97,15 +97,19 @@ async fn get(app: &axum::Router, uri: &str, cookie: Option<&str>) -> Reply {
 }
 
 async fn post(app: &axum::Router, uri: &str) -> Reply {
+    post_as(app, uri, None).await
+}
+
+/// [`post`] carrying a cookie — the seat-bearing routes (`…/resign`) authorise off the browser's
+/// `dregg_user`, so a test that means to act AS a seat has to present it.
+async fn post_as(app: &axum::Router, uri: &str, cookie: Option<&str>) -> Reply {
+    let mut builder = Request::builder().method("POST").uri(uri);
+    if let Some(cookie) = cookie {
+        builder = builder.header(header::COOKIE, cookie);
+    }
     let response = app
         .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(uri)
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(builder.body(Body::empty()).unwrap())
         .await
         .expect("the request is served");
     let status = response.status();
@@ -124,8 +128,10 @@ async fn post(app: &axum::Router, uri: &str) -> Reply {
 /// literal**: a tug session's schedule is seeded from its session id, so the opening decision (and
 /// therefore its dispatch method) differs per table — a hardcoded `comp 3` is refused as "method
 /// `comp` does not name decision 3" on most ids, and every assertion downstream of it then checks
-/// nothing. A dimmed affordance wears `class="affordance dimmed"` and an argument box
-/// `class="affordance input"`, so matching the bare class picks a move that is actually offered.
+/// nothing. A dimmed affordance wears `class="affordance dimmed"`, an argument box
+/// `class="affordance input"`, and a free-text affordance `class="affordance text"` — so matching the
+/// BARE class picks a move that is both actually offered AND landable from a plain `turn=&arg=` POST,
+/// which is exactly what this helper's callers then send.
 fn first_enabled_move(html: &str) -> Option<(String, i64)> {
     let (_, after) = html.split_once("<form class=\"affordance\" ")?;
     let (_, turn_at) = after.split_once("name=\"turn\" value=\"")?;
@@ -324,6 +330,221 @@ async fn a_minted_table_appears_on_its_seat_holders_page_before_any_move() {
     assert!(
         !stranger.body.contains(&table_id),
         "a table leaked to a viewer holding neither seat: {}",
+        stranger.body
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 2b. ⚑ A FINISHED MATCH IS KEPT, LISTED, AND STILL REPLAYABLE.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// The surface with a **durable session store attached**, which is what the archive needs to exist
+/// at all.
+///
+/// ⚑ This is the detection half of the change, and it is why the test builds its own host instead of
+/// using [`CatalogState::new`]: with no resume store the host has nowhere to archive to, so
+/// `archived_logs()` is empty and a finished-match assertion would pass vacuously forever. The store
+/// is constructed INSIDE the host-thread closure because `InMemoryResumeStore` is `Rc`-backed and
+/// never crosses a thread.
+fn app_with_a_session_store() -> axum::Router {
+    let catalog = Arc::new(CatalogState::with_host(|| {
+        dreggnet_web::demo_host()
+            .with_resume_store(Box::new(dreggnet_offerings::InMemoryResumeStore::new()))
+    }));
+    let descent = Arc::new(DescentState::new());
+    common::guard(
+        catalog_router(Arc::clone(&catalog))
+            .merge(automatafl_web::automatafl_router(Arc::clone(&catalog)))
+            .merge(you_router(catalog, descent)),
+    )
+}
+
+/// Every `{turn, arg}` the server painted as a **pressable board cell**, in the order it painted
+/// them.
+///
+/// The automatafl board is a coordgrid: each actionable square is its own `<form class="cell …">`,
+/// not a `class="affordance"` row, so `first_enabled_move` above cannot see it. ⚑ This is derived
+/// from the live board on purpose — a coordinate literal encodes a world-fact (which square a seat
+/// may commit to on this board, at this generation, under these rules) and a literal that encodes a
+/// world-fact outlives the world. The caller presses these in order until one commits, so a change
+/// to the board's legality does not silently make the test check nothing.
+fn board_cells(html: &str) -> Vec<(String, i64)> {
+    let mut out = Vec::new();
+    let mut rest = html;
+    while let Some((_, after)) = rest.split_once("<form class=\"cell") {
+        let Some((form, tail)) = after.split_once("</form>") else {
+            break;
+        };
+        let field = |name: &str| -> Option<String> {
+            let marker = format!("name=\"{name}\" value=\"");
+            Some(form.split_once(&marker)?.1.split_once('"')?.0.to_string())
+        };
+        if let (Some(turn), Some(arg)) = (
+            field("turn"),
+            field("arg").and_then(|arg| arg.parse::<i64>().ok()),
+        ) {
+            out.push((turn, arg));
+        }
+        rest = tail;
+    }
+    out
+}
+
+/// **Land one real turn as a seated player**, by pressing the cells the SERVER itself painted until
+/// one commits. Panics naming the surface if none does — a silently-unlanded turn would make every
+/// assertion downstream of it vacuous.
+async fn land_a_seated_turn(app: &axum::Router, key: &str, id: &str, cookie: &str) {
+    let surface = get(app, &format!("/offerings/{key}/session/{id}"), Some(cookie)).await;
+    assert_eq!(surface.status, StatusCode::OK, "{}", surface.body);
+    let cells = board_cells(&surface.body);
+    assert!(
+        !cells.is_empty(),
+        "the server painted this seat no pressable cell at all: {}",
+        surface.body
+    );
+    for (turn, arg) in &cells {
+        let (status, body) = common::post_act_with_cookie(
+            app,
+            &format!("/offerings/{key}/session/{id}/act"),
+            turn,
+            *arg,
+            cookie,
+        )
+        .await;
+        if status == StatusCode::OK && body.contains("Turn committed") {
+            return;
+        }
+    }
+    panic!(
+        "none of the {} cells the server painted as pressable committed — every assertion below \
+         would have been vacuous",
+        cells.len()
+    );
+}
+
+/// Mint a real automatafl table through the real door and return `(id, seat-A label, seat-B label)`.
+async fn mint_automatafl_table(app: &axum::Router) -> (String, String, String) {
+    let lobby = post(app, "/automatafl/table").await;
+    assert_eq!(lobby.status, StatusCode::OK, "{}", lobby.body);
+    let id = lobby
+        .body
+        .split("/automatafl/table/")
+        .nth(1)
+        .and_then(|rest| rest.split('?').next())
+        .expect("the lobby page carries a seat link")
+        .to_string();
+    assert!(
+        id.starts_with("af1-"),
+        "a minted table is seat-locked: {id}"
+    );
+    (
+        id.clone(),
+        automatafl_web::seat_label(&id, SeatSlot::A),
+        automatafl_web::seat_label(&id, SeatSlot::B),
+    )
+}
+
+/// ⚑ **THE WHOLE GAP, END TO END.** A real seat-locked match is played, ended, and then found on its
+/// player's own page — and the thing the page links to RE-EXECUTES it.
+///
+/// Before this, `close` deleted the durable move-log and the table registry was an in-process map, so
+/// the moment the match became an artifact was the moment its only record was destroyed. Every clause
+/// below was unreachable then:
+///
+/// 1. a real turn lands (so the archive holds something a replay can check);
+/// 2. seat A resigns — the ending is recorded AND the session is retired;
+/// 3. the match leaves *Games in progress* and appears under *Matches you have finished*;
+/// 4. its verify url still answers `verified: true`, by re-execution rather than by a stored bit;
+/// 5. a stranger's page does not list it.
+#[tokio::test]
+async fn a_finished_match_is_listed_on_your_page_and_still_replays() {
+    let app = app_with_a_session_store();
+    let (id, seat_a, _seat_b) = mint_automatafl_table(&app).await;
+    let cookie_a = format!("dregg_user={seat_a}");
+
+    // 1. A REAL TURN — so the archive holds something a replay can actually check. The move is read
+    //    off the board the server painted for THIS seat, and carries the route authority that same
+    //    page stamped into its forms.
+    land_a_seated_turn(&app, "automatafl", &id, &cookie_a).await;
+
+    // 2. THE MATCH ENDS. Resignation is the ending a player can cause on demand, and it is the one
+    //    that also RETIRES the session (archiving its log) rather than leaving a zombie table.
+    let resigned = post_as(
+        &app,
+        &format!("/automatafl/table/{id}/resign"),
+        Some(&cookie_a),
+    )
+    .await;
+    assert_eq!(resigned.status, StatusCode::OK, "{}", resigned.body);
+
+    // 3. IT IS ON THE PAGE, in the FINISHED panel and not in the live one.
+    let page = get(&app, "/you", Some(&cookie_a)).await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+    assert!(
+        page.body.contains("Matches you have finished"),
+        "the finished panel must be assembled: {}",
+        page.body
+    );
+    assert!(
+        page.body.contains(&id),
+        "the finished match must be listed — this is exactly what used to be DELETED: {}",
+        page.body
+    );
+    assert!(
+        page.body.contains("Replay this match"),
+        "…with the link that re-executes it: {}",
+        page.body
+    );
+    assert!(
+        page.body
+            .contains(&format!("/offerings/automatafl/session/{id}/verify")),
+        "…at the EXISTING verify route, not a re-implementation: {}",
+        page.body
+    );
+    assert!(
+        page.body.contains("seat A") && page.body.contains("1 of 1 landed turn yours"),
+        "the seat and actor joins must survive into the finished list: {}",
+        page.body
+    );
+    // The seat secret is still never echoed, finished or not.
+    assert!(
+        !page.body.contains(&seat_a),
+        "the seat secret reached the page: {}",
+        page.body
+    );
+
+    // 4. AND IT STILL REPLAYS — by re-execution, on this request.
+    let verify = get(
+        &app,
+        &format!("/offerings/automatafl/session/{id}/verify"),
+        Some(&cookie_a),
+    )
+    .await;
+    assert_eq!(verify.status, StatusCode::OK, "{}", verify.body);
+    assert!(
+        verify.body.contains("\"verified\":true"),
+        "a finished match must still re-verify from its archived moves: {}",
+        verify.body
+    );
+    assert!(
+        !verify.body.contains("no such offering session"),
+        "the verify route must reach the archive, not report the match missing: {}",
+        verify.body
+    );
+    // Replaying it twice must not consume it — the archive is the artifact, not a one-shot.
+    let again = get(
+        &app,
+        &format!("/offerings/automatafl/session/{id}/verify"),
+        Some(&cookie_a),
+    )
+    .await;
+    assert!(again.body.contains("\"verified\":true"), "{}", again.body);
+
+    // 5. AND IT IS STILL PRIVATE: a stranger holding neither seat sees nothing of it.
+    let stranger = get(&app, "/you", Some("dregg_user=you-finished-stranger")).await;
+    assert!(
+        !stranger.body.contains(&id),
+        "a finished match leaked to a viewer who never sat at it: {}",
         stranger.body
     );
 }

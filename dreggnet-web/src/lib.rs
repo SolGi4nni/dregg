@@ -108,6 +108,11 @@ pub mod explorer;
 pub mod fhegg_operation;
 /// The one browser interaction grammar shared by every game offering.
 pub mod game_session;
+/// **`GET /guide` — how to play**, for a reader who has never heard of any of this. The product's
+/// only guide material was developer-facing (`docs/guide/`), so a stranger who wanted to know what a
+/// turn was had a leaderboard, a card grid and a board, and nothing that answered. Under a
+/// no-private-vocabulary rule enforced by its own tests. See [`guide`].
+pub mod guide;
 /// **ONE PLAYER ACROSS SURFACES** — `GET`/`POST /identity/link`. A player's web identity
 /// ([`seed_identity`], 24 self-held words) and their Discord/Telegram identity (a key the operator's
 /// `bot_secret` derives) were **different people with different histories on the same board**. This
@@ -118,11 +123,6 @@ pub mod game_session;
 /// custody difference intact — only the VIEW unions. Mounted iff a platform identity secret
 /// resolves. See [`identity_link`].
 pub mod identity_link;
-/// **`GET /guide` — how to play**, for a reader who has never heard of any of this. The product's
-/// only guide material was developer-facing (`docs/guide/`), so a stranger who wanted to know what a
-/// turn was had a leaderboard, a card grid and a board, and nothing that answered. Under a
-/// no-private-vocabulary rule enforced by its own tests. See [`guide`].
-pub mod guide;
 /// Prometheus metrics for the web surface (the `node/src/metrics.rs` pattern): the idempotent
 /// process-global recorder + the `GET /metrics` handler + the named emit helpers this surface's
 /// call sites bump (session opens/evictions, policy refusals, executor refusals, anchor + resume
@@ -183,7 +183,12 @@ mod web_identity_http;
 /// Descent pseudonym lives in that tab's local storage, not in the cookie). See [`you`].
 pub mod you;
 
-pub use descent::{DescentState, descent_router, run_share_path};
+pub use descent::{BoardRun, DescentState, descent_router, run_share_path};
+// The run's one comparable number. Re-exported (rather than made a module) because it rides on the
+// public [`descent::BoardRun`], so it has to be REACHABLE from outside even though the card module
+// that computes it stays private. See [`descent_card::RunScore`] for the standing statement that it
+// is a READ over committed facts and not a ranking rule.
+pub use descent_card::RunScore;
 pub use verified_settlement::{
     install_failure_advice, install_verified_settlement_gate, verified_settlement_available,
 };
@@ -1032,6 +1037,13 @@ strong{font-weight:700;color:var(--fg)}
 .affordance input.arg{flex:0 0 5.5rem;width:5.5rem;padding:.45rem .6rem;border-radius:10px;border:1px solid var(--line);background:var(--ink-950);color:var(--fg);font-family:var(--mono);font-size:var(--t-sm);text-align:center;transition:border-color .14s,box-shadow .18s}
 .affordance input.arg:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(92,201,255,.18)}
 .affordance input.arg:disabled{opacity:.45;cursor:not-allowed}
+/* A DECLARED TEXT WANT (`MenuItem::wants_text`) — the prose the affordance asks for. Wide and */
+/* left-aligned, unlike the 5.5rem numeric box: it holds a sentence, not an index. */
+.affordance input.text{flex:1 1 12rem;min-width:0;padding:.45rem .6rem;border-radius:10px;border:1px solid var(--line);background:var(--ink-950);color:var(--fg);font:inherit;font-size:var(--t-sm);transition:border-color .14s,box-shadow .18s}
+.affordance input.text::placeholder{color:var(--fg-3);opacity:.75}
+.affordance input.text:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(92,201,255,.18)}
+.affordance input.text:disabled{opacity:.45;cursor:not-allowed}
+.affordance.text button{flex:0 0 auto;text-align:center}
 .operation-uploader{margin:var(--s4) 0;padding:1rem 1.1rem;border:1px solid rgba(168,126,255,.26);border-radius:var(--r-lg);background:linear-gradient(180deg,rgba(37,27,61,.6),rgba(16,13,28,.58))}
 .operation-uploader>h2{margin:0 0 .35rem;color:#c9b5ff;font-size:var(--t-h3)}
 .operation-uploader>.prose{color:var(--fg-3)}
@@ -1432,6 +1444,8 @@ hr{border:0;border-top:1px solid var(--line-soft);margin:var(--s4) 0}
 .coordgrid .cell{min-width:1.35rem;border-radius:8px}
 .affordance{flex-direction:column}
 .affordance input.arg{flex:1 1 auto;width:100%;text-align:left}
+.affordance input.text{flex:1 1 auto;width:100%}
+.affordance.text button{flex:1 1 auto;text-align:left}
 .affordance button{min-height:2.85rem}
 .binary-operation{grid-template-columns:1fr}
 .binary-operation label,.binary-operation .operation-disclosure,.binary-operation [role=status]{grid-column:1}
@@ -2696,6 +2710,22 @@ async fn get_offering_session(
     // An UNestablished raw `?user=` never mints its own RPG world — it collapses to the shared
     // anonymous world (capped hard), so a `?user=1,2,…,N` flood cannot exhaust memory.
     let (user, viewer) = catalog_route_viewer(&key, &asserted_user, established);
+    // ⚑ A RESOLVED TABLE IS NEVER RE-MINTED. A finished match's world is RETIRED when the match ends
+    // (its move-log archived so it stays replayable), so falling through to `ensure_open` below would
+    // deploy a FRESH EMPTY BOARD under the finished match's own id: an empty table where the player's
+    // game was, and a ghost back in "Games in progress" that the reaper would never touch again
+    // (a resolution is write-once). Cheap: the prefix test rules out every ad-hoc id and every
+    // non-lockable key before the registry is consulted at all.
+    if let Some(resolution) = table_seats::lock_for_key(&key)
+        .filter(|lock| lock.is_locked_table(&sid.0))
+        .and_then(|_| table_seats::registry().resolution(&sid.0))
+    {
+        return (
+            StatusCode::GONE,
+            Html(finished_table_page(&key, &sid.0, &resolution)),
+        )
+            .into_response();
+    }
     // Ensure the session is open (deploy on first touch), then render — LIFECYCLE-AWARE: the
     // viewer identity is the opener attribution (an ADVISORY `Asserted` quota lane — a forgeable
     // cookie; capacity + TTL are the real backstops), a policy refusal answers an honest 4xx
@@ -2797,6 +2827,18 @@ pub struct OfferingActForm {
     /// The affordance argument (a choice/proposal index, or a value-taking turn's value).
     #[serde(default)]
     pub arg: i64,
+    /// **The free text the user typed**, for an affordance that DECLARED it wants one
+    /// (`MenuItem::wants_text` → a real `<input name="text">` in [`catalog_form`]). It becomes the
+    /// pressed [`Action`]'s [`Action::text`] payload and nothing else — the string a Hermes PROMPT
+    /// classifies, the prose a document INSERT commits, the name `register` claims.
+    ///
+    /// `None` (and an all-whitespace value) is the text-free press every fixed-index affordance
+    /// already is: the payload stays `None` and the executor sees exactly what it saw before, so
+    /// this field is additive and invisible to the other 20 offerings. It is deliberately NOT
+    /// defaulted to the label — a label is a DISPLAY string synthesized from the verb, and riding
+    /// content on it is the bodge that once let a bare press register the literal name "register".
+    #[serde(default)]
+    pub text: Option<String>,
     #[serde(default)]
     pub game_host_incarnation: Option<String>,
     #[serde(default)]
@@ -2899,6 +2941,27 @@ pub(crate) fn named_act(did: Option<&str>, turn: &str) -> String {
         None => return String::new(),
     };
     format!("{name} · ")
+}
+
+/// **The typed press, payload included** — `{turn, arg}` plus the free text the form carried, for an
+/// affordance that declared it wants one ([`OfferingActForm::text`]).
+///
+/// The label + `enabled` remain decoration (the executor resolves the typed action alone). The one
+/// thing that is NOT decoration is the string: a text-shaped move — a Hermes PROMPT, a document
+/// INSERT, a name to `register` — is refused outright without it, which is exactly why three
+/// offerings were unplayable on the web before this carrier existed.
+///
+/// An absent or all-whitespace field yields the plain text-free [`Action`] every fixed-index press
+/// already was, so nothing changes for the affordances that never asked for a string. Whitespace is
+/// treated as absent deliberately: the executors test `text` with `!t.trim().is_empty()`, so a
+/// blank box must reach them as `None` and earn the same legible refusal a bare press does, never a
+/// committed turn carrying a space.
+pub(crate) fn pressed_action(turn: &str, arg: i64, text: Option<&str>) -> Action {
+    let action = Action::new(turn.to_string(), turn.to_string(), arg, true);
+    match text.map(str::trim).filter(|t| !t.is_empty()) {
+        Some(typed) => action.with_text(typed),
+        None => action,
+    }
 }
 
 fn pressed_label<'a>(
@@ -3016,6 +3079,10 @@ async fn post_offering_act(
         let presented_session = reference.session.clone();
         let turn = form.turn.clone();
         let arg = form.arg;
+        // Carried on the spined path too, not only the plain one: no shipped game declares a text
+        // want today, but a carrier that exists on one of two act routes is the drop this whole
+        // change is closing. A `None` here builds exactly the action this arm built before.
+        let typed = form.text.clone();
         let inner_actor = actor.clone();
         let opener = Attribution::Asserted {
             label: actor.0.clone(),
@@ -3056,7 +3123,7 @@ async fn post_offering_act(
                     &turn,
                     arg,
                 );
-                let action = Action::new(turn.clone(), turn, arg, true);
+                let action = pressed_action(&turn, arg, typed.as_deref());
                 match execute_bound_asserted_game_turn(
                     host,
                     incarnation,
@@ -3099,6 +3166,9 @@ async fn post_offering_act(
         let sid = sid.clone();
         let turn = form.turn.clone();
         let arg = form.arg;
+        // The typed string an affordance that DECLARED a text want carried (see
+        // [`OfferingActForm::text`]) — `None` for every fixed-index press.
+        let typed = form.text.clone();
         let inner_actor = actor.clone();
         // RPG keys resolve in the acting user's own world; the shared tables on the ONE host.
         state.run_offering(&key, &actor, move |h| {
@@ -3115,8 +3185,9 @@ async fn post_offering_act(
             // resolves the TYPED `{turn, arg}` and nothing else); it exists so the confirmation can
             // say WHAT happened and not only that something did.
             let did = pressed_label(actions.iter(), &turn, arg);
-            // The label + enabled are decoration; the executor resolves the TYPED (turn, arg).
-            let action = Action::new(turn.clone(), turn, arg, true);
+            // The label + enabled are decoration; the executor resolves the TYPED (turn, arg) — and
+            // now the TEXT the affordance declared it wanted, which is not decoration at all.
+            let action = pressed_action(&turn, arg, typed.as_deref());
             match h.advance(&k, &sid, action, inner_actor) {
                 Some(o) => CatalogAct::Advanced { outcome: o, did },
                 None => CatalogAct::Missing,
@@ -3319,6 +3390,12 @@ fn refused_open_response(id: &SessionId, err: &HostError) -> Response {
 
 /// The unsigned `/act` twin's audit-envelope skeleton (asserted-cookie attribution; the
 /// caller stamps decision + outcome). The `{turn, arg}` IS the trail — user content, §8.
+///
+/// ⚑ **And the typed TEXT is part of that trail, by the same rule.** `docs/BOT-AUDIT-LOGGING-DESIGN.md`
+/// §8 names it explicitly in the FINE-to-log list ("`{turn, arg}`, user free text"), and the
+/// alternative is worse than verbose: a landed document `insert` or a metered Hermes `prompt` whose
+/// CONTENT the trail cannot show is a receipt for an act nobody can reconstruct. Omitted when absent,
+/// so every fixed-index press emits the byte-identical envelope it always did.
 fn act_audit_event(
     user: &str,
     actor: &DreggIdentity,
@@ -3326,14 +3403,20 @@ fn act_audit_event(
     sid: &SessionId,
     form: &OfferingActForm,
 ) -> audit::AuditEvent {
+    let mut input = serde_json::json!({ "turn": form.turn, "arg": form.arg });
+    if let Some(typed) = form
+        .text
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+    {
+        input["text"] = serde_json::Value::String(typed.to_string());
+    }
     audit::AuditEvent::new(
         "web",
         audit::Actor::asserted(user).with_identity(actor.0.clone()),
         audit::Surface::Http,
-        audit::Input::new(
-            "POST /offerings/{key}/session/{id}/act",
-            serde_json::json!({ "turn": form.turn, "arg": form.arg }),
-        ),
+        audit::Input::new("POST /offerings/{key}/session/{id}/act", input),
     )
     .in_session(Some(key.to_string()), Some(sid.0.clone()))
 }
@@ -3387,13 +3470,26 @@ async fn get_offering_verify(
         )
         .in_session(Some(key.clone()), Some(sid.0.clone()))
     };
-    let report = {
+    // ⚑ LIVE FIRST, THEN THE ARCHIVE. A finished match is not a live session any more, and this
+    // route used to answer "no such offering session" for one — which made the product's own claim
+    // ("a finished game can be replayed by anyone") false for automatafl and tug the moment the
+    // match ended. `replay_archived` re-drives the retained move-log through the real executor and
+    // hands back the offering's own report, so the SAME url keeps meaning the same thing after the
+    // last move: not a stored verdict, a re-execution.
+    let outcome = {
         let k = key.clone();
         let sid = sid.clone();
-        state.run_offering(&key, &viewer, move |h| h.verify(&k, &sid))
+        state.run_offering(&key, &viewer, move |h| match h.verify(&k, &sid) {
+            Some(report) => VerifyOutcome::Live(report),
+            None => match h.replay_archived(&k, &sid) {
+                Some(Ok(report)) => VerifyOutcome::Finished(report),
+                Some(Err(error)) => VerifyOutcome::ArchiveRefused(error.to_string()),
+                None => VerifyOutcome::Missing,
+            },
+        })
     };
-    match report {
-        Some(report) => {
+    match outcome {
+        VerifyOutcome::Live(report) | VerifyOutcome::Finished(report) => {
             // AUDIT EMIT: a re-verification ran — the report verdict is the outcome.
             audit::log().emit(verify_event().with_outcome(audit::AuditOutcome::Verified {
                 verified: report.verified,
@@ -3405,7 +3501,22 @@ async fn get_offering_verify(
                 "detail": report.detail,
             }))
         }
-        None => {
+        // A retained log that does NOT re-drive is a real answer, not a missing session: the archive
+        // is a writable file, and a tampered one must read as refused rather than as absent.
+        VerifyOutcome::ArchiveRefused(reason) => {
+            audit::log().emit(verify_event().with_outcome(audit::AuditOutcome::Verified {
+                verified: false,
+                turns: 0,
+            }));
+            Json(serde_json::json!({
+                "verified": false,
+                "turns": 0,
+                "detail": format!(
+                    "this finished match's recorded moves do NOT re-execute: {reason}"
+                ),
+            }))
+        }
+        VerifyOutcome::Missing => {
             audit::log().emit(verify_event().decided("refused", "missing_session"));
             Json(serde_json::json!({
                 "verified": false,
@@ -3414,6 +3525,16 @@ async fn get_offering_verify(
             }))
         }
     }
+}
+
+/// What a `/verify` read found: a live chain, a FINISHED match re-executed from its archived
+/// move-log, an archive that refused to re-drive, or nothing at all. Flat and `Send` so it crosses
+/// the host-thread boundary as a plain value.
+enum VerifyOutcome {
+    Live(VerifyReport),
+    Finished(VerifyReport),
+    ArchiveRefused(String),
+    Missing,
 }
 
 /// **The live-region HTML for an offering session** — the notice banner + the surface's POST forms
@@ -3596,7 +3717,15 @@ fn render_offering_page(
     viewer: &DreggIdentity,
 ) -> String {
     let Some(surface) = offering_surface_fragment(state, key, id, notice, viewer) else {
-        return page_missing(id);
+        // ⚑ A NOTICE MUST NOT BE SWALLOWED BY A MISSING SESSION. This branch is now reachable for a
+        // FINISHED match — a match's world is RETIRED when it ends (its move-log archived so it stays
+        // replayable), so there is no live surface to paint the refusal onto. `page_missing` would
+        // drop the refusal and tell the player their table never existed, which is both wrong and
+        // the opposite of the thing the archive exists to say.
+        return match notice {
+            Some(said) => retired_session_page(key, &id.0, said),
+            None => page_missing(id),
+        };
     };
     let title = offering_title(state, key);
     offering_page(key, &title, id, &surface)
@@ -3942,12 +4071,14 @@ mod binding_labels {
                     turn: "list".into(),
                     arg: 3,
                     enabled: true,
+                    wants_text: false,
                 },
                 MenuItem {
                     label: "List Ember Cloak (legendary★ · 2◈)".into(),
                     turn: "list".into(),
                     arg: 2,
                     enabled: true,
+                    wants_text: false,
                 },
             ],
         };
@@ -3975,6 +4106,121 @@ mod binding_labels {
             html.contains("class=\"arg\" type=\"number\" name=\"arg\"") && html.contains(">Bid<"),
             "an Input node ASKS for a value, so it keeps the editable box: {html}"
         );
+    }
+
+    /// ⚑ **A DECLARED TEXT WANT GETS A REAL FIELD, AND ONLY IT DOES.** `hermes`'s `prompt`,
+    /// `names`'s `register` and `doc`'s `insert` are `wants_text` affordances that the web served as
+    /// bare buttons: the press carried no string and the executor refused every one of them ("the
+    /// button label is not a prompt"). Three offerings, one dropped flag.
+    ///
+    /// Both polarities, in one test, because the two halves are the same wound from opposite sides:
+    /// a row that DECLARES a text want gets a text box, and a row that does not gets NO input at all
+    /// — not a text box, and (the `arg` fix this must not regress) not a number box either.
+    #[test]
+    fn a_wants_text_row_gets_a_text_field_and_a_fixed_row_gets_no_input() {
+        let menu = ViewNode::Menu {
+            items: vec![
+                MenuItem {
+                    label: "read — 200 calls / 200 budget left".into(),
+                    turn: "prompt".into(),
+                    arg: 1,
+                    enabled: true,
+                    wants_text: true,
+                },
+                MenuItem {
+                    label: "register a free name".into(),
+                    turn: "register".into(),
+                    arg: -1,
+                    enabled: false,
+                    wants_text: true,
+                },
+                MenuItem {
+                    label: "Sell the Ember Cloak".into(),
+                    turn: "sell".into(),
+                    arg: 2,
+                    enabled: true,
+                    wants_text: false,
+                },
+            ],
+        };
+        let html = render_catalog_forms(&menu, "hermes", "s1");
+
+        // (1) The text-taking rows each carry ONE real, EMPTY text input named `text` — the payload
+        //     `OfferingActForm::text` reads and `Action::with_text` rides.
+        assert_eq!(
+            html.matches("name=\"text\"").count(),
+            2,
+            "one text field per declared text want, and not one more: {html}"
+        );
+        assert!(
+            html.contains("<input class=\"text\" type=\"text\" name=\"text\" value=\"\""),
+            "the field is EMPTY — a template, never pre-filled with the label (the bodge \
+             dreggnet-doc paid for once): {html}"
+        );
+        // (2) The `{turn, arg}` shape is UNTOUCHED, so the affordance is still the same press.
+        assert!(
+            html.contains("<input type=\"hidden\" name=\"turn\" value=\"prompt\">")
+                && html.contains("<input type=\"hidden\" name=\"arg\" value=\"1\">"),
+            "a text want does not change what the press IS: {html}"
+        );
+        // (3) THE arg FIX IS NOT REGRESSED. A text want is a want for PROSE; the number box stays
+        //     the sole property of `ViewNode::Input`.
+        assert!(
+            !html.contains("type=\"number\""),
+            "a declared TEXT want is not a licence to re-expose the arg box: {html}"
+        );
+        // (4) The cap tooth reaches the box too: a dimmed row cannot be typed into, or a reader
+        //     composes a name into a control that can only refuse.
+        let dimmed = html
+            .split("<form ")
+            .find(|f| f.contains("value=\"register\""))
+            .expect("the register row rendered");
+        assert!(
+            dimmed.contains("aria-label=\"register text\" disabled>")
+                && dimmed.contains("<button type=\"submit\" disabled>"),
+            "a !enabled text row disables its field in lockstep with its button: {dimmed}"
+        );
+        // (5) And the fixed row is unchanged: no input of any kind beside its label.
+        let fixed = html
+            .split("<form ")
+            .find(|f| f.contains("value=\"sell\""))
+            .expect("the fixed row rendered");
+        assert!(
+            !fixed.contains("name=\"text\"") && !fixed.contains("type=\"number\""),
+            "a fixed-index affordance offers nothing to type: {fixed}"
+        );
+    }
+
+    /// The press the executor is handed: `{turn, arg}` always, and the typed string ONLY when one was
+    /// really typed. Whitespace counts as nothing, because every executor tests the payload with
+    /// `!t.trim().is_empty()` — a blank box must earn the same legible refusal a bare press does,
+    /// never a committed turn carrying a space.
+    #[test]
+    fn the_typed_text_rides_the_action_and_blank_is_absent() {
+        let bare = super::pressed_action("choose", 2, None);
+        assert_eq!((bare.turn.as_str(), bare.arg), ("choose", 2));
+        assert_eq!(bare.text, None);
+        assert!(
+            !bare.wants_text,
+            "a fixed press is byte-identical to what it always was"
+        );
+
+        let typed = super::pressed_action("prompt", 1, Some("read notes.txt"));
+        assert_eq!(typed.text.as_deref(), Some("read notes.txt"));
+        assert!(typed.wants_text, "carrying text IS being a text affordance");
+        assert_eq!(
+            (typed.turn.as_str(), typed.arg),
+            ("prompt", 1),
+            "the payload rides BESIDE the {{turn, arg}}, never instead of it"
+        );
+
+        for blank in ["", "   ", "\n\t "] {
+            let pressed = super::pressed_action("register", -1, Some(blank));
+            assert_eq!(
+                pressed.text, None,
+                "a blank box is an empty press, not a turn carrying whitespace: {blank:?}"
+            );
+        }
     }
 
     /// The pressed row is identified by the exact `(turn, arg)` pair, falling back to the turn alone
@@ -4144,6 +4390,7 @@ fn catalog_node(node: &ViewNode, key: &str, id: &str, out: &mut String) {
                 turn: turn.clone(),
                 arg: *arg,
                 enabled: true,
+                wants_text: false,
             };
             out.push_str(&catalog_form(key, id, &it));
         }
@@ -4337,6 +4584,7 @@ fn catalog_node(node: &ViewNode, key: &str, id: &str, out: &mut String) {
                         turn: select_turn.clone(),
                         arg: i as i64,
                         enabled: true,
+                        wants_text: false,
                     };
                     out.push_str(&catalog_form(key, id, &it));
                 }
@@ -4371,6 +4619,9 @@ fn catalog_node(node: &ViewNode, key: &str, id: &str, out: &mut String) {
                     turn: h.turn.clone(),
                     arg: h.arg,
                     enabled: h.enabled,
+                    // A halo handle is a FIXED press by construction (the IR gives `HaloHandle` no
+                    // text want) — a ring glyph has nowhere to put a field.
+                    wants_text: false,
                 };
                 out.push_str(&catalog_form(key, id, &it));
             }
@@ -4392,6 +4643,7 @@ fn catalog_node(node: &ViewNode, key: &str, id: &str, out: &mut String) {
                         turn: c.turn.clone(),
                         arg: c.arg,
                         enabled: true,
+                        wants_text: false,
                     };
                     out.push_str(&catalog_form(key, id, &it));
                 }
@@ -4422,6 +4674,7 @@ fn catalog_node(node: &ViewNode, key: &str, id: &str, out: &mut String) {
                     turn: fire_turn.clone(),
                     arg: 0,
                     enabled: true,
+                    wants_text: false,
                 };
                 // THE ONE EDITABLE-ARG CONTROL on this walker: an `Input` node ASKS for a value.
                 out.push_str(&catalog_form_value(key, id, &it));
@@ -4515,23 +4768,54 @@ fn catalog_node(node: &ViewNode, key: &str, id: &str, out: &mut String) {
 /// it (`fire_turn`) and renders through [`catalog_form_value`] instead. The sibling backend
 /// `deos_view::web` has always drawn exactly this distinction (`session_form` vs
 /// `session_form_arg`) — this is the catalog walker catching up to it.
+///
+/// ⚑ **AND A DECLARED TEXT WANT GETS A REAL FIELD.** `MenuItem::wants_text` is the affordance
+/// saying "this slot takes the user's prose" (a Hermes PROMPT, a document INSERT / set-title, a name
+/// to register). It rides its own `<input type="text" name="text">` — never the number box, which
+/// stays the sole property of [`ViewNode::Input`]. The two wants are DIFFERENT wants and they get
+/// different controls: a fixed row's `arg` is its identity and stays hidden; a text row's string is
+/// the user's and is typed. Without the field the button was a dead affordance — the press carried no
+/// string and the executor correctly refused it ("no prompt supplied … the button label is not a
+/// prompt"), which is what made `hermes`/`names`/`doc` unplayable on the web.
 fn catalog_form(key: &str, id: &str, it: &MenuItem) -> String {
     let (disabled, cls) = if it.enabled {
         ("", "affordance")
     } else {
         (" disabled", "affordance dimmed")
     };
+    // The field a declared text want gets — empty (a TEMPLATE; the prose is the user's, never
+    // pre-filled with the label, which is exactly the bodge dreggnet-doc paid for once), disabled in
+    // lockstep with the button so a dimmed row cannot be typed into either.
+    let text_field = if it.wants_text {
+        format!(
+            "<input class=\"text\" type=\"text\" name=\"text\" value=\"\" \
+             autocomplete=\"off\" placeholder=\"{placeholder}\" \
+             aria-label=\"{turn} text\"{disabled}>",
+            placeholder = esc(&format!("type the text for `{}`", it.turn)),
+            turn = esc(&it.turn),
+            disabled = disabled,
+        )
+    } else {
+        String::new()
+    };
+    let cls = if it.wants_text {
+        format!("{cls} text")
+    } else {
+        cls.to_string()
+    };
     format!(
         "<form class=\"{cls}\" method=\"post\" action=\"/offerings/{key}/session/{id}/act\" \
          data-session-action=\"turn\" data-turn=\"{turn}\">\
          <input type=\"hidden\" name=\"turn\" value=\"{turn}\">\
          <input type=\"hidden\" name=\"arg\" value=\"{arg}\">\
+         {text_field}\
          <button type=\"submit\"{disabled}>{label}</button></form>",
         cls = cls,
         key = esc(key),
         id = esc(id),
         turn = esc(&it.turn),
         arg = it.arg,
+        text_field = text_field,
         disabled = disabled,
         label = esc(&it.label),
     )
@@ -4861,6 +5145,45 @@ fn offering_page(key: &str, title: &str, id: &SessionId, surface: &str) -> Strin
 }
 
 /// The page shown for a `GET`/`POST` against an unregistered offering key.
+/// ⚑ **The page a RETIRED session serves** — `said` is the thing that has to survive, verbatim.
+///
+/// ONE page for the two ways a reader arrives at a finished match: the session url itself (which must
+/// not fall through to `ensure_open`, or it would DEPLOY A FRESH EMPTY BOARD under the finished
+/// match's own id — an empty table where the player's game was, plus a ghost back in "Games in
+/// progress" that a write-once resolution guarantees nothing would ever clean up), and a refused act
+/// on it (whose whole content is the refusal). Both need the same two things said: *what happened*,
+/// and *the moves are still here*.
+fn retired_session_page(key: &str, id: &str, said: &str) -> String {
+    let body = format!(
+        "<main class=\"session\">\
+         <div class=\"notice refused\" role=\"status\">{said}</div>\
+         <div class=\"page-head\"><h1>A finished match</h1></div>\
+         <section class=\"deos-section tag-accent\"><h2>It was not thrown away</h2>\
+         <p class=\"prose\">The moves are kept. That is what makes a finished game worth sharing \
+         here: <a href=\"{verify}\" rel=\"nofollow\">replay this match</a> and the server re-executes \
+         its whole recorded chain through the same rules that admitted each move — a real re-run \
+         taken when you open it, not a verdict somebody stored.</p>\
+         <p class=\"prose\">What a replay does <em>not</em> settle is who won. It shows that these \
+         moves were legal and landed in this order.</p></section>\
+         <p class=\"prose\"><a class=\"backlink\" href=\"/you\">← Your own record</a></p>\
+         </main>",
+        said = esc(said),
+        verify = esc(&format!("/offerings/{key}/session/{id}/verify")),
+    );
+    document(
+        &format!("{PRODUCT_NAME} — a finished match"),
+        "offerings",
+        &body,
+    )
+}
+
+/// [`retired_session_page`] for a session url whose table this lobby has RESOLVED. The resolution's
+/// own refusal is the `said`, so the finished page and a refused act carry byte-identical wording —
+/// there is exactly one sentence about how a match ended and both readers get it.
+fn finished_table_page(key: &str, id: &str, resolution: &table_seats::Resolution) -> String {
+    retired_session_page(key, id, &resolution.refusal())
+}
+
 fn catalog_missing_offering(key: &str) -> String {
     let body = format!(
         "<main class=\"session\"><div class=\"notice refused\" role=\"status\">No offering \
@@ -6420,7 +6743,8 @@ pub(crate) fn automatafl_still(extra_class: &str) -> String {
     // is the one thing this still exists not to be. Both sets now come out of
     // `dregg_automatafl::rules` (the Lean `targetsOf` / `liveTargetsOf`), so the preview shows the
     // same eleven-lit / nine-blocked board the live table does and the two cannot drift.
-    let proposable = dregg_automatafl::rules::legal_targets(&board, &[], 0, sel).unwrap_or_default();
+    let proposable =
+        dregg_automatafl::rules::legal_targets(&board, &[], 0, sel).unwrap_or_default();
     let reachable =
         dregg_automatafl::rules::executable_targets(&board, &[], &[], 0, sel).unwrap_or_default();
 

@@ -390,6 +390,49 @@ pub trait SessionResumeStore {
     /// nothing remains to resume, so nothing remains to guard).
     fn forget(&self, key: &str, id: &SessionId);
 
+    /// **RETIRE `(key, id)`'s log without destroying it** — the finished-game seam.
+    ///
+    /// [`forget`](SessionResumeStore::forget) is a DELETE, and on a product whose claim is "a
+    /// finished game can be replayed by anyone" a delete is the wrong direction: the moment a match
+    /// ends is the moment its log becomes the artifact. `archive` moves the log OUT of the live
+    /// resume set (so [`all`](SessionResumeStore::all) / boot-resume never reopen a finished match
+    /// as if it were still being played) and INTO a retained set readable by
+    /// [`load_archived`](SessionResumeStore::load_archived) /
+    /// [`archived_logs`](SessionResumeStore::archived_logs), from which
+    /// [`OfferingHost::replay_archived`](crate::OfferingHost::replay_archived) re-executes it
+    /// through the real executor.
+    ///
+    /// Returns whether the log is now RETAINED. An implementor is allowed to answer `false` — and
+    /// two honest cases do:
+    ///
+    /// * a store that cannot archive (the **default**, which delegates to `forget`): the log is
+    ///   gone, exactly as it was before this method existed, and the `false` says so instead of
+    ///   letting a caller believe an archive exists;
+    /// * a log with NOTHING IN IT (no landed move, no operation). A session that was opened and
+    ///   closed without being played is not a finished game; retaining its genesis would fill the
+    ///   archive with rows that describe nothing. Such a log is DELETED and `false` is returned.
+    ///
+    /// Default: `forget` + `false` — additive, so an existing external implementor keeps compiling
+    /// and keeps its current behaviour verbatim.
+    fn archive(&self, key: &str, id: &SessionId) -> bool {
+        self.forget(key, id);
+        false
+    }
+
+    /// Load `(key, id)`'s ARCHIVED log ([`archive`](SessionResumeStore::archive)), if this store
+    /// retained one. Default: `None` (a store that cannot archive has nothing archived).
+    fn load_archived(&self, key: &str, id: &SessionId) -> Option<SessionMoveLog> {
+        let _ = (key, id);
+        None
+    }
+
+    /// Every ARCHIVED log — the finished games this store retained. **Never** part of
+    /// [`all`](SessionResumeStore::all): a finished match must not boot-resume into the live set.
+    /// Default: empty.
+    fn archived_logs(&self) -> Vec<SessionMoveLog> {
+        Vec::new()
+    }
+
     /// Load `(key, id)`'s recorded log, if any (the reproducible public input to
     /// [`resume`](crate::OfferingHost::resume)).
     fn load(&self, key: &str, id: &SessionId) -> Option<SessionMoveLog>;
@@ -408,6 +451,10 @@ pub struct InMemoryResumeStore {
     /// The persisted signed-advance replay floors, `(key, id) → (pubkey hex → last consumed
     /// counter)` — the counter-survival seam lifecycle eviction/resume rides (merge-max).
     counters: Rc<RefCell<BTreeMap<(String, String), BTreeMap<String, u64>>>>,
+    /// **The retired logs** ([`SessionResumeStore::archive`]) — finished games, held OUT of `inner`
+    /// so [`all`](SessionResumeStore::all) and boot-resume never reopen one, and readable so
+    /// [`OfferingHost::replay_archived`](crate::OfferingHost::replay_archived) can re-execute it.
+    archived: Rc<RefCell<BTreeMap<(String, String), SessionMoveLog>>>,
 }
 
 impl InMemoryResumeStore {
@@ -524,6 +571,40 @@ impl SessionResumeStore for InMemoryResumeStore {
     fn forget(&self, key: &str, id: &SessionId) {
         self.inner.borrow_mut().remove(&Self::map_key(key, id));
         self.counters.borrow_mut().remove(&Self::map_key(key, id));
+        // `forget` is a TOTAL delete, archive included. Anything less would leave a "forgotten but
+        // still archived" ghost that a finished-matches page would keep showing.
+        self.archived.borrow_mut().remove(&Self::map_key(key, id));
+    }
+
+    fn archive(&self, key: &str, id: &SessionId) -> bool {
+        let map_key = Self::map_key(key, id);
+        let retired = self.inner.borrow_mut().remove(&map_key);
+        match retired {
+            // An UNPLAYED session is not a finished game — see the trait doc. It is dropped (it was
+            // already removed above), and NOTHING else is: a stray re-open of a finished match's url
+            // mints an empty session under that id, and destroying the archive or the replay floor
+            // here would let that stray request wipe the artifact.
+            Some(log) if log.is_empty() => self.archived.borrow().contains_key(&map_key),
+            // Retire it. The counter FLOORS stay where they are (not moved, not dropped): they guard
+            // this id against a captured signed envelope replaying onto a fresh mint, and that
+            // hazard outlives the match.
+            Some(log) => {
+                self.archived.borrow_mut().insert(map_key, log);
+                true
+            }
+            // Nothing live to retire — report the archive that already exists (idempotent, so
+            // `replay_archived`'s resume→verify→re-close round trip cannot destroy what it replayed)
+            // and touch NOTHING else.
+            None => self.archived.borrow().contains_key(&map_key),
+        }
+    }
+
+    fn load_archived(&self, key: &str, id: &SessionId) -> Option<SessionMoveLog> {
+        self.archived.borrow().get(&Self::map_key(key, id)).cloned()
+    }
+
+    fn archived_logs(&self) -> Vec<SessionMoveLog> {
+        self.archived.borrow().values().cloned().collect()
     }
 
     fn load(&self, key: &str, id: &SessionId) -> Option<SessionMoveLog> {
@@ -562,6 +643,14 @@ pub struct FileResumeStore {
     root: PathBuf,
 }
 
+/// The subdirectory a [`FileResumeStore`] retires finished sessions into
+/// ([`SessionResumeStore::archive`]). It holds files with the SAME content-addressed stems as the
+/// live root, which is what lets the archive be read back through the identical codec
+/// ([`FileResumeStore::archive_view`]) instead of a second, drifting decoder — and it is a
+/// DIRECTORY, so [`FileResumeStore::log_files`]'s `.log` extension filter skips it and a finished
+/// match can never boot-resume into the live set.
+const ARCHIVE_DIR: &str = "archive";
+
 impl FileResumeStore {
     /// Open (creating if needed) a file store rooted at `dir`. Each session's log is a `*.log` file
     /// directly under `dir`.
@@ -569,6 +658,19 @@ impl FileResumeStore {
         let root = dir.into();
         fs::create_dir_all(&root)?;
         Ok(FileResumeStore { root })
+    }
+
+    /// **The archive, viewed as a store of its own** — the same struct rooted at
+    /// [`ARCHIVE_DIR`]. Every path helper, the whole line codec, the operation sidecar resolution
+    /// and the filename↔content self-check are therefore SHARED with the live root rather than
+    /// re-implemented for archived logs (a second decoder is where the divergence would live).
+    ///
+    /// The returned view is read-only *by use*, not by type: nothing calls a `record_*` method on
+    /// it. It does not create the directory — an absent archive simply reads as empty.
+    fn archive_view(&self) -> FileResumeStore {
+        FileResumeStore {
+            root: self.root.join(ARCHIVE_DIR),
+        }
     }
 
     /// The directory this store persists under.
@@ -610,6 +712,29 @@ impl FileResumeStore {
             Self::name_for(key, id),
             hex32(replay_digest)
         ))
+    }
+
+    /// **Every operation sidecar belonging to `(key, id)`** under this root. Shared by
+    /// [`forget`](SessionResumeStore::forget) (which deletes them) and
+    /// [`archive`](SessionResumeStore::archive) (which moves them), so the two cannot disagree about
+    /// which files are part of a session — the divergence that would leave an archived log pointing
+    /// at evidence still sitting in the live root.
+    fn operation_sidecars(&self, key: &str, id: &SessionId) -> Vec<PathBuf> {
+        let prefix = format!("{}.op.", Self::name_for(key, id));
+        let mut out = Vec::new();
+        if let Ok(entries) = fs::read_dir(&self.root) {
+            for entry in entries.flatten() {
+                if entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.starts_with(&prefix))
+                {
+                    out.push(entry.path());
+                }
+            }
+        }
+        out.sort();
+        out
     }
 
     /// The collision-resistant file stem for `(key, id)`.
@@ -820,18 +945,83 @@ impl SessionResumeStore for FileResumeStore {
     fn forget(&self, key: &str, id: &SessionId) {
         let _ = fs::remove_file(self.path_for(key, id));
         let _ = fs::remove_file(self.counters_path_for(key, id));
-        let prefix = format!("{}.op.", Self::name_for(key, id));
-        if let Ok(entries) = fs::read_dir(&self.root) {
-            for entry in entries.flatten() {
-                if entry
-                    .file_name()
-                    .to_str()
-                    .is_some_and(|name| name.starts_with(&prefix))
-                {
-                    let _ = fs::remove_file(entry.path());
-                }
+        for path in self.operation_sidecars(key, id) {
+            let _ = fs::remove_file(path);
+        }
+        // `forget` is a TOTAL delete, archive included — anything less would leave a "forgotten but
+        // still archived" ghost that a finished-matches page would keep showing. The view shares the
+        // codec AND the path helpers, so this is the same removal one directory down.
+        let view = self.archive_view();
+        let _ = fs::remove_file(view.path_for(key, id));
+        for path in view.operation_sidecars(key, id) {
+            let _ = fs::remove_file(path);
+        }
+    }
+
+    /// **Retire the log into the archive subdirectory instead of deleting it.** The move is a
+    /// `rename` inside one directory tree, so it is atomic on every platform this runs on: the log is
+    /// either live or archived, never half of both.
+    ///
+    /// Four things are deliberate here:
+    ///
+    /// * **the counter sidecar STAYS in the live root.** It is the signed-advance replay floor, and
+    ///   what it guards — a captured envelope re-verifying against a fresh mint of the same id —
+    ///   outlives the match. `forget` used to delete it on the argument "the log is gone, so nothing
+    ///   remains to guard"; with the log RETAINED and the id still re-mintable, keeping the floor is
+    ///   strictly the safer of the two, and it is also what lets
+    ///   [`OfferingHost::replay_archived`](crate::OfferingHost::replay_archived) reload the floors
+    ///   when it re-drives the archived tape;
+    /// * **the operation sidecars MOVE with the log**, because the archived log's `replay_digest`
+    ///   entries are resolved relative to whichever root loaded them;
+    /// * **an already-archived id is idempotent.** Re-archiving reports the archive that exists
+    ///   rather than reporting a loss, so `replay_archived`'s resume→verify→re-close round trip does
+    ///   not destroy the thing it just replayed;
+    /// * ⚑ **an unplayed genesis is deleted WITHOUT touching the archive.** A finished match's url
+    ///   stays reachable, so a later visit (or a bound command that accidentally mints a fresh
+    ///   session under that id and immediately closes it) produces an EMPTY live log over an existing
+    ///   archive. Routing that through `forget` — a total delete — would let a stray request destroy
+    ///   the artifact it came to look at.
+    fn archive(&self, key: &str, id: &SessionId) -> bool {
+        let live = self.path_for(key, id);
+        let view = self.archive_view();
+        let archived = view.path_for(key, id);
+        if !live.exists() {
+            // Nothing live to retire. Either it was already archived (report that) or there was
+            // never a log at all.
+            return archived.exists();
+        }
+        // A session that was opened and closed without being PLAYED is not a finished game. Remove
+        // the genesis and its own sidecars; the archive (if any) and the replay floor are untouched.
+        if self.load_path(&live).is_none_or(|log| log.is_empty()) {
+            let _ = fs::remove_file(&live);
+            for sidecar in self.operation_sidecars(key, id) {
+                let _ = fs::remove_file(sidecar);
+            }
+            return archived.exists();
+        }
+        if fs::create_dir_all(&view.root).is_err() {
+            // Fail HONEST, not loud: report that nothing is retained and leave the live log exactly
+            // where it is. A caller that believed a false `true` would show a "finished match" row
+            // pointing at a log nobody kept.
+            return false;
+        }
+        for sidecar in self.operation_sidecars(key, id) {
+            if let Some(name) = sidecar.file_name() {
+                let _ = fs::rename(&sidecar, view.root.join(name));
             }
         }
+        if fs::rename(&live, &archived).is_err() {
+            return false;
+        }
+        true
+    }
+
+    fn load_archived(&self, key: &str, id: &SessionId) -> Option<SessionMoveLog> {
+        self.archive_view().load(key, id)
+    }
+
+    fn archived_logs(&self) -> Vec<SessionMoveLog> {
+        self.archive_view().all()
     }
 
     fn load(&self, key: &str, id: &SessionId) -> Option<SessionMoveLog> {
@@ -1281,6 +1471,223 @@ mod file_store_tests {
         assert_eq!(store.len(), 1, "b forgotten");
         assert!(store.load("dungeon", &b).is_none());
         assert!(store.load("dungeon", &a).is_some());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// ⚑ **ARCHIVE RETAINS, `forget` DELETES — and the two must not be confused.** The finished
+    /// match's log survives, is readable through the archive, and is held OUT of the live resume set
+    /// so it never boots back as a game in progress. Non-vacuous on every clause: the same store is
+    /// asked for the same session both ways.
+    #[test]
+    fn an_archived_session_is_retained_out_of_the_live_resume_set() {
+        let dir = scratch_dir("archive");
+        let store = FileResumeStore::open(&dir).expect("open store");
+        let key = "automatafl";
+        let played = SessionId::new("af1-played");
+        let deleted = SessionId::new("af1-deleted");
+        let cfg = SessionConfig::with_seed(0x5EED);
+
+        for id in [&played, &deleted] {
+            store.record_open(key, id, &cfg);
+            assert!(store.record_landed(
+                key,
+                id,
+                &Action::new("seal", "seal", 4, true),
+                &DreggIdentity("afs1-a-secret".into()),
+            ));
+        }
+        assert_eq!(
+            store.all().len(),
+            2,
+            "both are live before anything retires"
+        );
+
+        // THE DELETE, for contrast — this is what `close` used to do to a finished match.
+        store.forget(key, &deleted);
+        assert!(store.load(key, &deleted).is_none());
+        assert!(
+            store.load_archived(key, &deleted).is_none(),
+            "a forgotten log is GONE — `forget` is not a quiet archive"
+        );
+
+        // THE ARCHIVE.
+        assert!(store.archive(key, &played), "a played log is retained");
+        assert!(
+            store.load(key, &played).is_none(),
+            "an archived match must not be resumable as a live session"
+        );
+        assert!(
+            store.all().is_empty(),
+            "…and must not be boot-resumed: `all` is the live set only"
+        );
+        let archived = store
+            .load_archived(key, &played)
+            .expect("the finished match's log is retained");
+        assert_eq!(archived.key, key);
+        assert_eq!(archived.id, played);
+        assert_eq!(
+            archived.cfg.seed,
+            Some(0x5EED),
+            "the seed the replay re-derives the world from survives"
+        );
+        assert_eq!(archived.moves.len(), 1);
+        assert_eq!(archived.moves[0].actor.0, "afs1-a-secret");
+        assert_eq!(
+            store.archived_logs().len(),
+            1,
+            "the archive enumerates exactly the finished match"
+        );
+
+        // IDEMPOTENT: replaying an archived match re-closes it, which re-archives it. That must not
+        // be the thing that destroys the artifact.
+        assert!(
+            store.archive(key, &played),
+            "re-archiving reports the archive"
+        );
+        assert!(store.load_archived(key, &played).is_some());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A session that was OPENED and closed without being PLAYED is not a finished game, and filling
+    /// the archive with rows that describe nothing would make "your finished matches" meaningless.
+    /// Such a log is deleted and `archive` says so by answering `false`.
+    #[test]
+    fn an_unplayed_session_is_deleted_rather_than_archived() {
+        let dir = scratch_dir("archive-empty");
+        let store = FileResumeStore::open(&dir).expect("open store");
+        let id = SessionId::new("af1-never-played");
+        store.record_open("automatafl", &id, &SessionConfig::with_seed(3));
+
+        assert!(
+            !store.archive("automatafl", &id),
+            "an unplayed session reports NOTHING retained"
+        );
+        assert!(store.load("automatafl", &id).is_none());
+        assert!(store.load_archived("automatafl", &id).is_none());
+        assert!(store.archived_logs().is_empty());
+
+        // …and an id the store never saw at all is `false` too, not a phantom archive.
+        assert!(!store.archive("automatafl", &SessionId::new("af1-unknown")));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// ⚑ **A STRAY RE-OPEN MUST NOT WIPE A FINISHED MATCH.** A finished match's url stays reachable,
+    /// so a later visit (or a bound command that mints a fresh session under that id and immediately
+    /// closes it) leaves an EMPTY live log sitting over an existing archive. If the unplayed-genesis
+    /// path routed through `forget` — a total delete — that stray request would destroy the artifact
+    /// it came to look at. Driven on both stores, because they had to agree about this.
+    #[test]
+    fn an_empty_re_open_over_an_archived_match_does_not_destroy_it() {
+        let dir = scratch_dir("archive-reopen");
+        let file = FileResumeStore::open(&dir).expect("open store");
+        let memory = InMemoryResumeStore::new();
+        let key = "automatafl";
+        let id = SessionId::new("af1-revisited");
+        let cfg = SessionConfig::with_seed(23);
+
+        for store in [
+            &file as &dyn SessionResumeStore,
+            &memory as &dyn SessionResumeStore,
+        ] {
+            store.record_open(key, &id, &cfg);
+            assert!(store.record_landed(
+                key,
+                &id,
+                &Action::new("seal", "seal", 2, true),
+                &DreggIdentity("afs1-a".into()),
+            ));
+            assert!(store.archive(key, &id), "the played match is retained");
+
+            // THE STRAY: a fresh genesis under the same id, closed with nothing played.
+            store.record_open(key, &id, &cfg);
+            assert!(
+                store.archive(key, &id),
+                "the empty re-open must report the archive that still exists"
+            );
+            let kept = store
+                .load_archived(key, &id)
+                .expect("the finished match survived a stray re-open");
+            assert_eq!(kept.moves.len(), 1, "…with its moves intact");
+            assert!(
+                store.load(key, &id).is_none(),
+                "…and the stray genesis itself is gone from the live set"
+            );
+        }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The in-memory reference store carries the SAME archive contract as the durable one — the
+    /// committed in-RAM suites drive it, so a divergence here is a divergence nobody would see until
+    /// a deployment with a session dir behaved differently from every test.
+    #[test]
+    fn the_in_memory_store_archives_on_the_same_contract() {
+        let store = InMemoryResumeStore::new();
+        let key = "tug";
+        let played = SessionId::new("tug1-played");
+        let empty = SessionId::new("tug1-empty");
+        let cfg = SessionConfig::with_seed(19);
+
+        store.record_open(key, &played, &cfg);
+        store.record_landed(
+            key,
+            &played,
+            &Action::new("pull", "pull", 1, true),
+            &DreggIdentity("tugs1-b-secret".into()),
+        );
+        store.record_open(key, &empty, &cfg);
+
+        assert!(store.archive(key, &played));
+        assert!(
+            !store.archive(key, &empty),
+            "an unplayed session is deleted"
+        );
+        assert!(store.load(key, &played).is_none());
+        assert!(store.all().is_empty(), "the live set is empty");
+        assert_eq!(store.archived_logs().len(), 1);
+        assert_eq!(
+            store
+                .load_archived(key, &played)
+                .expect("retained")
+                .moves
+                .len(),
+            1
+        );
+        assert!(store.archive(key, &played), "idempotent");
+    }
+
+    /// ⚑ The signed-replay FLOOR survives an archive. `forget` drops it on the argument "the log is
+    /// gone, so nothing remains to guard" — but an archived id is still re-mintable, so the floor is
+    /// exactly what stops a captured envelope from replaying onto a fresh session of the same name.
+    #[test]
+    fn archiving_keeps_the_signed_replay_floor_that_forget_drops() {
+        let dir = scratch_dir("archive-counters");
+        let store = FileResumeStore::open(&dir).expect("open store");
+        let key = "automatafl";
+        let id = SessionId::new("af1-signed");
+        let pubkey_hex = "cd".repeat(32);
+        store.record_open(key, &id, &SessionConfig::with_seed(5));
+        store.record_landed(
+            key,
+            &id,
+            &Action::new("seal", "seal", 1, true),
+            &DreggIdentity("afs1-a".into()),
+        );
+        assert!(store.record_signed_counters(key, &id, &[(pubkey_hex.clone(), 9)]));
+
+        assert!(store.archive(key, &id));
+        assert_eq!(
+            store.load_signed_counters(key, &id),
+            vec![(pubkey_hex.clone(), 9)],
+            "the replay floor outlives the match it guarded"
+        );
+
+        // NON-VACUOUS: `forget` really does drop it, which is why the archive path had to differ.
+        store.forget(key, &id);
+        assert!(store.load_signed_counters(key, &id).is_empty());
 
         let _ = fs::remove_dir_all(&dir);
     }

@@ -165,6 +165,99 @@ impl Ending {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
+// THE SCORE — ⚑ A READ, NOT A RULE.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+/// **One run's score: the RELIC DEPTH it carried out.**
+///
+/// A daily game with no single number is a daily game you cannot compare — not to other people and,
+/// worse, not to yourself yesterday. This is that number. It is deliberately the SMALLEST honest one
+/// available, and where it lives was the whole design question:
+///
+/// ## ⚑ It is a READ over committed facts, not a rule the game decides
+///
+/// Every term is arithmetic over material that was already committed and already re-executed:
+///
+/// * **which relics a proved exit banked** — off the replayed final state's custody vector;
+/// * **which floor each of those relics was MINTED on** — off [`DayWorld::homes`], the Lean-emitted
+///   draw for the day the record commits to (`Dungeon.drawFamily`).
+///
+/// [`banked_depth`](RunScore::banked_depth) is their sum. Nothing here invents a coefficient, a
+/// bonus, a per-relic price list or a tiebreak, and that restraint is the point: the moment a score
+/// weighs one thing against another it becomes a thing a player can CONTEST, and a contestable
+/// ranking rule belongs in Lean beside the rules it ranks — not in a surface.
+///
+/// So this type is what a surface may honestly compute, and the ordering question is explicitly NOT
+/// answered here: [`crate::descent`]'s leaderboard still RANKS by verified turns, exactly as it did,
+/// and prints the score as a column beside the rank rather than as the rank. Making the score the
+/// rank is a rules decision and is left open on purpose.
+///
+/// ## Why mint depth, of all the numbers
+///
+/// Because the game already prices it that way and the day's own map already carries it. Carrying
+/// rights ATTENUATE with depth (`pack + depth + harm <= CAP`), relic 0 lies at the bottom of every
+/// drawn map (`Dungeon.drawFamily_wf`), and the climb home is paid per floor — so a relic minted deep
+/// is exactly the relic that is expensive to bring out. Summing mint floors therefore measures the
+/// thing the rules make hard, and it needed no new number to do it. A run that banks nothing scores
+/// zero however deep it went, which is not a harshness this type added: it is the game's own law
+/// that nothing is yours until a proved exit banks it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RunScore {
+    /// **THE SCORE.** Σ over banked relics of the floor each was minted on.
+    pub banked_depth: u64,
+    /// The same sum over EVERY relic on the day's map — the denominator, so the score says what it
+    /// is out of. It is not a reachability claim: capacity attenuation means no run banks all eight.
+    pub shaft_depth: u64,
+    /// The same sum over relics that were in the pack when the light died — depth that was carried
+    /// and never became anyone's. Zero on a settled run by construction (`flee` banks the pack).
+    pub frozen_depth: u64,
+    /// The deepest floor the run ever stood on, and…
+    pub deepest: u64,
+    /// …what that is out of (the day's floor count).
+    pub floors: u64,
+    /// Light unspent at the end, and…
+    pub light_left: u64,
+    /// …the day's whole budget.
+    pub light_breath: u64,
+    /// Whether the Crown of the Deep came out. Displayed beside the score, never folded into it.
+    pub crowned: bool,
+    /// How many relics were banked (the count, beside the depth-weighted sum).
+    pub banked_count: usize,
+}
+
+impl RunScore {
+    /// The one-line form for a table cell or a chat message: `11/19`.
+    pub fn cell(&self) -> String {
+        format!("{}/{}", self.banked_depth, self.shaft_depth)
+    }
+
+    /// The sentence a player reads — what the number counts, in the game's own terms.
+    pub fn sentence(&self) -> String {
+        if self.banked_depth == 0 && self.frozen_depth > 0 {
+            return format!(
+                "Score 0 of {shaft}. The {frozen} floors of relic depth in the pack never became \
+                 theirs — nothing is yours until a proved exit banks it.",
+                shaft = self.shaft_depth,
+                frozen = self.frozen_depth,
+            );
+        }
+        format!(
+            "Score {score} of {shaft} — every banked relic counts the floor it was minted on, so \
+             the deep ones are worth what they cost to carry up. {count} relic{s} banked{crown}.",
+            score = self.banked_depth,
+            shaft = self.shaft_depth,
+            count = self.banked_count,
+            s = plural(self.banked_count),
+            crown = if self.crowned {
+                ", the Crown among them"
+            } else {
+                ""
+            },
+        )
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
 // THE STORY — the whole run, read off the REPLAYED final state.
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 
@@ -324,6 +417,33 @@ impl RunStory {
 
     pub(crate) fn light_left(&self) -> u64 {
         LIGHT_BREATH.saturating_sub(self.state.spent)
+    }
+
+    /// **The run's SCORE** — see [`RunScore`] for what it is and, more importantly, for what it is
+    /// NOT. Everything in it is read off the replayed final state and the day's drawn map; this
+    /// method decides nothing.
+    pub(crate) fn score(&self) -> RunScore {
+        RunScore {
+            banked_depth: self.mint_depth_of(&self.banked()),
+            shaft_depth: self.mint_depth_of(&(0..DUNGEON_RELICS).collect::<Vec<_>>()),
+            frozen_depth: self.mint_depth_of(&self.lost()),
+            deepest: self.depth(),
+            floors: DUNGEON_FLOORS,
+            light_left: self.light_left(),
+            light_breath: LIGHT_BREATH,
+            crowned: self.ending == Ending::Crowned,
+            banked_count: self.banked().len(),
+        }
+    }
+
+    /// Sum the floors `relics` were MINTED on, out of the day's own drawn map. Not a table of values
+    /// this module invented — `world.homes` is the Lean-emitted draw for the day the run committed
+    /// to, so a beacon day's score is that day's dungeon and never day 0's.
+    fn mint_depth_of(&self, relics: &[usize]) -> u64 {
+        relics
+            .iter()
+            .filter_map(|&relic| self.world.homes.get(relic).copied())
+            .sum()
     }
 
     fn relics_in(&self, custody: u64) -> Vec<usize> {
@@ -539,12 +659,17 @@ impl RunStory {
         for (line, label) in board.lines().zip(labels.iter()) {
             out.push_str(&format!("{line:width$}   {label}\n"));
         }
+        let score = self.score();
         out.push_str(&format!(
-            "\nlight  {}  {} left of {LIGHT_BREATH} ({} spent)\ndepth  {} of {DUNGEON_FLOORS}\n",
+            "\nlight  {}  {} left of {LIGHT_BREATH} ({} spent)\ndepth  {} of {DUNGEON_FLOORS}\n\
+             score  {}  {} of {} relic depth banked\n",
             meter_bar(self.light_left(), LIGHT_BREATH, METER_TEXT_WIDTH),
             self.light_left(),
             self.light_spent(),
             self.depth(),
+            meter_bar(score.banked_depth, score.shaft_depth, METER_TEXT_WIDTH),
+            score.banked_depth,
+            score.shaft_depth,
         ));
         let left = self.left_in_the_dark();
         if !left.is_empty() {
@@ -710,6 +835,19 @@ impl RunStory {
         } else {
             (haul_count as f64 / DUNGEON_RELICS as f64) * 100.0
         };
+        // THE SCORE tile. Same three-word palette as everything else: PROOF (violet) when it counts
+        // depth a proved exit settled, PERIL when the run banked nothing at all.
+        let score = self.score();
+        let score_pct = if score.shaft_depth == 0 {
+            0.0
+        } else {
+            (score.banked_depth as f64 / score.shaft_depth as f64) * 100.0
+        };
+        let score_tone = if score.banked_depth == 0 {
+            " low"
+        } else {
+            " proof"
+        };
 
         format!(
             "<section class=\"rc rc-{tone}\">\
@@ -731,7 +869,11 @@ impl RunStory {
              <div class=\"rc-stat\"><dt>{haul_label}</dt>\
              <dd><span class=\"rc-bar{haul_tone}\"><i style=\"width:{haul_pct:.1}%\"></i></span>\
              <b>{haul_count}</b><span class=\"rc-of\">/{relics}</span></dd></div>\
+             <div class=\"rc-stat\"><dt>score</dt>\
+             <dd><span class=\"rc-bar{score_tone}\"><i style=\"width:{score_pct:.1}%\"></i></span>\
+             <b>{score}</b><span class=\"rc-of\">/{shaft}</span></dd></div>\
              </dl></div>\
+             <p class=\"rc-score\">{score_sentence}</p>\
              {spoils}{loss_note}{left_note}\
              <p class=\"rc-legend\">{legend}</p>\
              </section>",
@@ -762,6 +904,11 @@ impl RunStory {
             haul_pct = haul_pct,
             haul_count = haul_count,
             relics = DUNGEON_RELICS,
+            score_tone = score_tone,
+            score_pct = score_pct,
+            score = score.banked_depth,
+            shaft = score.shaft_depth,
+            score_sentence = esc(&score.sentence()),
             loss_note = loss_note,
             left_note = left_note,
             spoils = spoils,
@@ -911,6 +1058,9 @@ box-shadow:0 26px 60px -34px #000,inset 0 1px 0 rgba(255,255,255,.03)}
 .rc-loss,.rc-risk{margin:1rem 0 0;padding:.75rem .9rem;border-left:3px solid var(--rc-peril);border-radius:0 8px 8px 0;background:rgba(201,106,94,.09);color:#f3d3cf;line-height:1.55}
 .rc-risk{border-left-color:var(--rc-torch);background:rgba(216,180,126,.07);color:#eddcc0}
 .rc-loss strong,.rc-risk strong{color:#fff}
+/* THE SCORE SENTENCE — it says what the number counts, so the tile above it is never a bare
+   integer a reader has to guess the units of. Proof-toned, because that is what it measures. */
+.rc-score{margin:.9rem 0 0;padding:.7rem .9rem;border-left:3px solid var(--rc-proof);border-radius:0 8px 8px 0;background:rgba(168,159,216,.07);color:#ded9f2;line-height:1.55;font-size:.9375rem}
 .rc-spoils{margin:.7rem 0 0;color:var(--rc-soft);line-height:1.55}
 .rc-spoils strong{color:var(--rc-proof-lit)}
 .rc-left{margin:.7rem 0 0;color:var(--rc-faint);line-height:1.55;font-size:.8125rem}
@@ -1036,6 +1186,104 @@ mod tests {
         // And the STAT the card leads with flips from a haul to a body count.
         assert!(died_html.contains("relics LOST") && !died_html.contains("relics banked"));
         assert!(out_html.contains("relics banked") && !out_html.contains("relics LOST"));
+    }
+
+    /// ⚑ **THE SCORE IS A READ, AND EVERY TERM COMES OFF THE DAY'S OWN MAP.**
+    ///
+    /// Day 0's homes are `[4,1,2,3,1,1,2,3]`, so the whole shaft is worth `4+1+2+3+1+1+2+3 = 17`.
+    /// The crowned fixture banks relics `{0,1,2,3,6}` → `4+1+2+3+2 = 12`. Those numbers are computed
+    /// HERE from the same `DayWorld` the card reads, so this test cannot pass by agreeing with a
+    /// literal that has drifted from the world — the in-tree lesson being that a literal encoding a
+    /// world-fact outlives the world.
+    #[test]
+    fn the_score_sums_mint_depth_off_the_days_own_drawn_map() {
+        let w = world();
+        let shaft: u64 = w.homes.iter().sum();
+
+        let out = crowned();
+        let score = out.score();
+        assert_eq!(score.shaft_depth, shaft, "the denominator is the day's map");
+        assert_eq!(
+            score.banked_depth,
+            out.banked().iter().map(|&r| w.homes[r]).sum::<u64>(),
+            "the score is exactly the mint depth of what came out"
+        );
+        assert!(score.crowned);
+        assert_eq!(score.banked_count, out.banked().len());
+        assert_eq!(score.frozen_depth, 0, "a settled run freezes nothing");
+        assert_eq!(score.floors, DUNGEON_FLOORS);
+        assert_eq!(score.light_breath, LIGHT_BREATH);
+        assert_eq!(score.deepest, out.depth());
+
+        // A run whose light died scores ZERO — the game's own law, not a harshness the score added —
+        // while the depth it was CARRYING is reported separately as the loss.
+        let died = light_died();
+        let lost_score = died.score();
+        assert_eq!(
+            lost_score.banked_depth, 0,
+            "nothing is yours until a proved exit banks it"
+        );
+        assert_eq!(
+            lost_score.frozen_depth,
+            died.lost().iter().map(|&r| w.homes[r]).sum::<u64>(),
+            "the depth frozen in the pack is reported, not scored"
+        );
+        assert!(
+            lost_score.frozen_depth > 0,
+            "…and this fixture really lost some"
+        );
+        assert_eq!(lost_score.shaft_depth, shaft);
+
+        // NON-VACUOUS ORDERING: the crowned run outscores the dead one, and the score DISTINGUISHES
+        // hauls the relic COUNT alone would tie. Banking the crown (floor 4) is worth more than
+        // banking a floor-1 treasure, because the map says floor 4 is deeper.
+        assert!(lost_score.banked_depth < score.banked_depth);
+        let shallow = RunStory::new(
+            // One relic banked: #4, minted on floor 1.
+            sim(0, 10, 0, 1, [1, 0, 0], [4, 1, 2, 3, 9, 1, 2, 3]),
+            w,
+            false,
+            1,
+        );
+        assert_eq!(shallow.banked(), vec![4]);
+        assert_eq!(shallow.score().banked_depth, w.homes[4]);
+        assert!(
+            shallow.score().banked_depth < score.banked_depth,
+            "a shallow haul must not tie a deep one"
+        );
+    }
+
+    /// The score reaches the card in BOTH forms a player meets it in: the HTML tile with its
+    /// denominator, and the copyable text block a chat paste carries. A number with no units in
+    /// either place would be the same debug-dump register the card exists to kill.
+    #[test]
+    fn the_score_is_printed_on_the_card_and_in_the_copyable_text() {
+        let out = crowned();
+        let score = out.score();
+        let html = out.html("web:alice", "d1-off", "aabbccdd");
+        assert!(html.contains("<dt>score</dt>"), "{html}");
+        assert!(
+            html.contains(&format!("<b>{}</b>", score.banked_depth))
+                && html.contains(&format!("/{}</span>", score.shaft_depth)),
+            "the tile must say what the number is out of: {html}"
+        );
+        assert!(
+            html.contains("counts the floor it was minted on"),
+            "the card must say what the score MEANS: {html}"
+        );
+
+        let text = out.text_card("web:alice", "d1-off");
+        assert!(
+            text.contains(&format!(
+                "{} of {} relic depth banked",
+                score.banked_depth, score.shaft_depth
+            )),
+            "a pasted run must carry its score: {text}"
+        );
+
+        // The zero case reads as the loss it is, never as a blank.
+        let died_text = light_died().score().sentence();
+        assert!(died_text.contains("never became theirs"), "{died_text}");
     }
 
     /// **The board is the LIVE board.** Rows floors 1..4 then `@` then `$`, `3 + RELICS` wide, one
@@ -1234,34 +1482,58 @@ mod tests {
     /// so its exact shape is a product surface, not an implementation detail: the board columns
     /// must line up under a monospace font, every row must carry the caption that makes it mean
     /// something, and the loss must be readable with no colour and no CSS at all.
+    /// The score line of a golden, DERIVED. The score's numbers are world-facts (they are sums over
+    /// the day's drawn `homes`), and a golden that spelled them out would be a literal encoding a
+    /// world-fact — the exact thing that goes stale. So the goldens pin the line's SHAPE and POSITION
+    /// while its values come off the same map the card reads; the values themselves are pinned
+    /// non-vacuously, and independently, by `the_score_sums_mint_depth_off_the_days_own_drawn_map`.
+    fn golden_score_line(story: &RunStory) -> String {
+        let score = story.score();
+        format!(
+            "score  {}  {} of {} relic depth banked\n",
+            meter_bar(score.banked_depth, score.shaft_depth, METER_TEXT_WIDTH),
+            score.banked_depth,
+            score.shaft_depth,
+        )
+    }
+
     #[test]
     fn the_text_card_is_readable_with_no_colour_at_all() {
         let rendered = light_died().text_card("web:alice", "d20260-off");
-        let expected = concat!(
-            "THE LIGHT IS DEAD — web:alice · d20260-off\n",
-            "The light burned out on floor 3 carrying the way-2 key, the way-3 key, the way-4 key ",
-            "and treasure 3 — never banked, never theirs. 4 relics left in the dark.\n",
-            "\n",
-            " 1  /  G  ·  ·  ·  ·  *  *  ·  ·    floor 1\n",
-            " 2  /  G  ·  ·  ·  ·  ·  ·  ·  ·    floor 2\n",
-            " >  /  x  ·  ·  ·  ·  ·  ·  ·  *    floor 3 — deepest reached, and where it stopped\n",
-            " 4  #  G  C  ·  ·  ·  ·  ·  ·  ·    floor 4 — never reached\n",
-            " @  ·  ·  ·  k  k  k  ·  ·  *  ·    LOST — the light died with 4 relics still on them\n",
-            " $  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·    banked — nothing; no proved exit was ever made\n",
-            "\n",
-            "light  ░░░░░░░░░░░░  0 left of 30 (30 spent)\n",
-            "depth  3 of 4\n",
-            "\n",
-            "left in the dark: the Crown of the Deep, treasure 1, treasure 2 and treasure 4\n",
-            "\n",
-            "rows: floors 1–4 · @ the pack (never banked) · $ the vault (theirs). columns: floor · ",
-            "way · guardian · then one per relic (1 crown, 2–4 way-keys, 5–8 treasures). ",
-            "> the deepest floor reached · / open way · # shut way · G guardian · x slain · ",
-            "C crown · k way-key · * treasure\n",
+        let expected = format!(
+            concat!(
+                "THE LIGHT IS DEAD — web:alice · d20260-off\n",
+                "The light burned out on floor 3 carrying the way-2 key, the way-3 key, the way-4 key ",
+                "and treasure 3 — never banked, never theirs. 4 relics left in the dark.\n",
+                "\n",
+                " 1  /  G  ·  ·  ·  ·  *  *  ·  ·    floor 1\n",
+                " 2  /  G  ·  ·  ·  ·  ·  ·  ·  ·    floor 2\n",
+                " >  /  x  ·  ·  ·  ·  ·  ·  ·  *    floor 3 — deepest reached, and where it stopped\n",
+                " 4  #  G  C  ·  ·  ·  ·  ·  ·  ·    floor 4 — never reached\n",
+                " @  ·  ·  ·  k  k  k  ·  ·  *  ·    LOST — the light died with 4 relics still on them\n",
+                " $  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·    banked — nothing; no proved exit was ever made\n",
+                "\n",
+                "light  ░░░░░░░░░░░░  0 left of 30 (30 spent)\n",
+                "depth  3 of 4\n",
+                "{score_line}",
+                "\n",
+                "left in the dark: the Crown of the Deep, treasure 1, treasure 2 and treasure 4\n",
+                "\n",
+                "rows: floors 1–4 · @ the pack (never banked) · $ the vault (theirs). columns: floor · ",
+                "way · guardian · then one per relic (1 crown, 2–4 way-keys, 5–8 treasures). ",
+                "> the deepest floor reached · / open way · # shut way · G guardian · x slain · ",
+                "C crown · k way-key · * treasure\n",
+            ),
+            score_line = golden_score_line(&light_died()),
         );
         assert_eq!(
             rendered, expected,
             "\n--- ACTUAL ---\n{rendered}\n--- EXPECTED ---\n{expected}"
+        );
+        // …and the score really is the ZERO one here, not a value that happened to agree.
+        assert!(
+            rendered.contains("  0 of "),
+            "a run that banked nothing must show a zero score: {rendered}"
         );
     }
 
@@ -1271,31 +1543,41 @@ mod tests {
     #[test]
     fn the_crowned_text_card_reads_as_a_haul_and_still_names_the_cost() {
         let rendered = crowned().text_card("web:alice", "d20260-off");
-        let expected = concat!(
-            "CROWNED — web:alice · d20260-off\n",
-            "Carried the Crown of the Deep up from floor 4 — 5 relics banked, 6 light left of 30. ",
-            "3 relics left in the dark.\n",
-            "\n",
-            " 1  /  G  ·  ·  ·  ·  *  *  ·  ·    floor 1\n",
-            " 2  /  G  ·  ·  ·  ·  ·  ·  ·  ·    floor 2\n",
-            " 3  /  G  ·  ·  ·  ·  ·  ·  ·  *    floor 3\n",
-            " >  /  G  ·  ·  ·  ·  ·  ·  ·  ·    floor 4 — deepest reached\n",
-            " @  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·    pack — emptied into the vault by the exit\n",
-            " $  ·  ·  C  k  k  k  ·  ·  *  ·    banked — 5 relics came out\n",
-            "\n",
-            "light  ██░░░░░░░░░░  6 left of 30 (24 spent)\n",
-            "depth  4 of 4\n",
-            "\n",
-            "left in the dark: treasure 1, treasure 2 and treasure 4\n",
-            "\n",
-            "rows: floors 1–4 · @ the pack (never banked) · $ the vault (theirs). columns: floor · ",
-            "way · guardian · then one per relic (1 crown, 2–4 way-keys, 5–8 treasures). ",
-            "> the deepest floor reached · / open way · # shut way · G guardian · x slain · ",
-            "C crown · k way-key · * treasure\n",
+        let expected = format!(
+            concat!(
+                "CROWNED — web:alice · d20260-off\n",
+                "Carried the Crown of the Deep up from floor 4 — 5 relics banked, 6 light left of 30. ",
+                "3 relics left in the dark.\n",
+                "\n",
+                " 1  /  G  ·  ·  ·  ·  *  *  ·  ·    floor 1\n",
+                " 2  /  G  ·  ·  ·  ·  ·  ·  ·  ·    floor 2\n",
+                " 3  /  G  ·  ·  ·  ·  ·  ·  ·  *    floor 3\n",
+                " >  /  G  ·  ·  ·  ·  ·  ·  ·  ·    floor 4 — deepest reached\n",
+                " @  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·    pack — emptied into the vault by the exit\n",
+                " $  ·  ·  C  k  k  k  ·  ·  *  ·    banked — 5 relics came out\n",
+                "\n",
+                "light  ██░░░░░░░░░░  6 left of 30 (24 spent)\n",
+                "depth  4 of 4\n",
+                "{score_line}",
+                "\n",
+                "left in the dark: treasure 1, treasure 2 and treasure 4\n",
+                "\n",
+                "rows: floors 1–4 · @ the pack (never banked) · $ the vault (theirs). columns: floor · ",
+                "way · guardian · then one per relic (1 crown, 2–4 way-keys, 5–8 treasures). ",
+                "> the deepest floor reached · / open way · # shut way · G guardian · x slain · ",
+                "C crown · k way-key · * treasure\n",
+            ),
+            score_line = golden_score_line(&crowned()),
         );
         assert_eq!(
             rendered, expected,
             "\n--- ACTUAL ---\n{rendered}\n--- EXPECTED ---\n{expected}"
+        );
+        // …and this card's score is emphatically NOT the zero one — the two goldens must not both
+        // be passing on an all-zero score line.
+        assert!(
+            crowned().score().banked_depth > 0,
+            "the crowned golden must pin a real haul"
         );
     }
 

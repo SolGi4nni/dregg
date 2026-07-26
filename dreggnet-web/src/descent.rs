@@ -70,7 +70,7 @@ use spween_dregg::{
 use ugc_dregg::{Completion, Universe, record_playthrough, verify_completion};
 use webauth_core::identity_resolve::RootResolver;
 
-use crate::descent_card::{CARD_STYLE, Ending, RunStory};
+use crate::descent_card::{CARD_STYLE, Ending, RunScore, RunStory};
 use crate::descent_store::{DescentRunStore, StoredDay, StoredNativeRun, StoredRun};
 use crate::{document, document_with_head, esc};
 
@@ -1368,16 +1368,26 @@ async fn get_leaderboard(
         if let Ok(verified) = verify_native_record(native_seed, &run.record) {
             if verified.crowned() {
                 let relics = verified.banked_relics();
+                // THE SCORE — read off THIS replay's own final state and this day's drawn map, like
+                // every other number in the row. It does not decide the rank; see `NativeRow::score`.
+                let score = verified.story().map(|story| story.score());
                 native_rows.push(NativeRow {
                     run_id: run.id.clone(),
+                    // The actor comes off the REPLAY, never off the submitted claim — the resolution
+                    // below is a display/grouping concern layered on top of a verified actor.
+                    human: resolver.resolve(&verified.actor),
                     actor: verified.actor,
                     turns: verified.turns,
                     relics,
+                    score,
                 });
             }
         }
     }
     native_rows.sort_by(|a, b| a.turns.cmp(&b.turns).then_with(|| a.actor.cmp(&b.actor)));
+    // ONE ROW PER HUMAN in this lane too. Resolving without merging only RELABELS, which is exactly
+    // the defect the crown board review caught and the procgen lane above already fixed.
+    merge_native_per_human(&mut native_rows);
 
     Html(leaderboard_page(day, &rows, &native_rows))
 }
@@ -1389,6 +1399,20 @@ async fn get_leaderboard(
 /// two board rows, which is exactly the defect the review caught on the crown board. An unlinked
 /// player's `human` is their own label, so a board with no links is untouched.
 fn merge_per_human(rows: &mut Vec<Row>) {
+    let mut seen: Vec<String> = Vec::new();
+    rows.retain(|r| {
+        if seen.iter().any(|h| h == &r.human) {
+            return false;
+        }
+        seen.push(r.human.clone());
+        true
+    });
+}
+
+/// [`merge_per_human`] for the NATIVE lane — same rule, same pre-condition (`native_rows` is already
+/// ranked best-first), and the same additive behaviour: an unlinked actor is its own human, so a
+/// board with no links renders byte-identically.
+fn merge_native_per_human(rows: &mut Vec<NativeRow>) {
     let mut seen: Vec<String> = Vec::new();
     rows.retain(|r| {
         if seen.iter().any(|h| h == &r.human) {
@@ -1501,8 +1525,24 @@ struct Row {
 struct NativeRow {
     run_id: String,
     actor: String,
+    /// WHICH HUMAN this row belongs to — the same resolution [`Row::human`] carries, so the native
+    /// lane groups a person's platforms exactly as the procgen lane does. ⚑ This lane previously had
+    /// NO resolution at all, which meant a linked player who plays the native lane on the web and
+    /// through a bot's custodial identity still occupied two rows: the resolver was loaded for the
+    /// render and then simply not consulted here.
+    human: String,
     turns: usize,
     relics: usize,
+    /// **The run's score** ([`RunScore`]) — the relic depth this replay banked, out of the day's
+    /// whole shaft. `None` only for a record with no landed events (nothing to read).
+    ///
+    /// ⚑ It is a COLUMN, not the RANK. The rows are still ordered by verified turns, exactly as they
+    /// were: the score is an arithmetic read over committed facts, whereas *ranking* by it would be a
+    /// rule a player could contest — "I banked more depth, why am I below you?" — and a contestable
+    /// ranking rule belongs in Lean beside the rules it ranks, not in this renderer. The page says
+    /// so in prose so a reader is never left inferring the ordering from a column that does not drive
+    /// it. Whether the board SHOULD rank by score is an open decision, deliberately not taken here.
+    score: Option<RunScore>,
 }
 
 /// Hex-encode 32 bytes (a committed seed, for durable persistence — the full round-trip encoding).
@@ -1555,7 +1595,11 @@ fn leaderboard_page(day: &Day, rows: &[Row], native_rows: &[NativeRow]) -> Strin
             "<section class=\"deos-section\"><p class=\"eyebrow\">Procgen choice-tape ruleset</p>\
              <h2>Winning procgen runs</h2><p class=\"prose\">Each row re-executes its recorded \
              passage choices in a fresh world drawn from this day's seed and is required to reach \
-             the hoard. <span class=\"mono\">depth</span> is how deep that replay actually got.</p>",
+             the hoard. <span class=\"mono\">depth</span> is how deep that replay actually got. \
+             <strong>One row per human, not per account:</strong> a player who has \
+             <a href=\"/identity/link\">proven</a> that their web and chat identities are the same \
+             person ranks once, on their best run. An unlinked player is their own human, so nothing \
+             groups by accident.</p>",
         );
         table.push_str(
             "<div class=\"table-wrap\"><table class=\"board\">\
@@ -1583,7 +1627,19 @@ fn leaderboard_page(day: &Day, rows: &[Row], native_rows: &[NativeRow]) -> Strin
          <h2>Crowned native runs</h2><p class=\"prose\">These records are not converted into the \
          procgen choice tape above. Each row replays its native <span class=\"mono\">delve / \
          smite / loot / unlock / flee</span> events and exact receipt, state, and journal-root \
-         envelope. Only a crowned settlement ranks.</p>",
+         envelope. Only a crowned settlement ranks. This lane groups <strong>one row per human</strong> \
+         on the same rule as the table above — the actor is taken off the replay, and a proven \
+         cross-platform <a href=\"/identity/link\">link</a> is what makes two accounts one row.</p>\
+         <p class=\"prose\"><strong>What <span class=\"mono\">score</span> is, and what it is \
+         not.</strong> It is the <em>relic depth</em> a run carried out: every banked relic counts \
+         the floor it was minted on, read off this day's own drawn map, so the deep ones are worth \
+         what the rules make them cost to carry up. It is a <em>read</em> over facts the replay \
+         already committed — no bonus, no weighting, no tiebreak. ⚑ <strong>The ranking is still \
+         <span class=\"mono\">turns</span>,</strong> not the score: deciding an order is a rule a \
+         player could argue with, and a rule belongs with the game's other rules rather than in the \
+         page that draws them. So read the score as the size of the haul and the rank as the speed \
+         of it; they are two different questions and this table answers both without pretending \
+         either is the other.</p>",
     );
     if native_rows.is_empty() {
         native_table.push_str(
@@ -1592,18 +1648,27 @@ fn leaderboard_page(day: &Day, rows: &[Row], native_rows: &[NativeRow]) -> Strin
     } else {
         native_table.push_str(
             "<div class=\"table-wrap\"><table class=\"board\"><thead><tr><th>#</th>\
-             <th>browser actor</th><th>landed turns</th><th>relics</th><th>proof</th></tr></thead><tbody>",
+             <th>browser actor</th><th>landed turns</th><th>relics</th><th>score</th>\
+             <th>proof</th></tr></thead><tbody>",
         );
         for (index, row) in native_rows.iter().enumerate() {
             native_table.push_str(&format!(
                 "<tr><td class=\"rank\">{rank}</td><td class=\"player\">{actor}</td>\
                  <td class=\"num\">{turns}</td><td class=\"num\">{relics}</td>\
+                 <td class=\"num\">{score}</td>\
                  <td><a href=\"{href}\">verify native record \
                  <span class=\"arr\" aria-hidden=\"true\">→</span></a></td></tr>",
                 rank = index + 1,
                 actor = esc(&row.actor),
                 turns = row.turns,
                 relics = row.relics,
+                // A row whose replay landed no events has no state to read a score off; say so with
+                // an em dash rather than printing a `0` that would read as "banked nothing".
+                score = row
+                    .score
+                    .as_ref()
+                    .map(|score| esc(&score.cell()))
+                    .unwrap_or_else(|| "—".to_string()),
                 href = esc(&native_run_share_path(&row.run_id)),
             ));
         }
@@ -2011,6 +2076,28 @@ pub struct BoardRun {
     pub finished: bool,
     /// Relics banked (native lane only; `0` on the procgen board).
     pub relics: usize,
+    /// **The run's single comparable number** ([`RunScore`]) — the relic depth it banked out of the
+    /// day's whole shaft, read off THIS read's replay.
+    ///
+    /// `None` on the **procgen** lane, and that is a statement rather than a gap: that lane commits a
+    /// different ruleset's facts (a passage choice tape, `gold`, a warden), and manufacturing a
+    /// number that compared a procgen run with a native one would be inventing a cross-ruleset rule —
+    /// exactly the thing a surface must not do. Also `None` for a native record whose replay landed
+    /// no events, which has no state to read.
+    pub score: Option<RunScore>,
+}
+
+impl BoardRun {
+    /// The score's `banked/total` cell, or `None` when this lane has no score to show.
+    pub fn score_cell(&self) -> Option<String> {
+        self.score.as_ref().map(RunScore::cell)
+    }
+
+    /// The score as a bare number, for comparing two of the viewer's own runs. `None` keeps a
+    /// scoreless lane out of any comparison rather than letting it compare as a zero.
+    pub fn score_value(&self) -> Option<u64> {
+        self.score.as_ref().map(|score| score.banked_depth)
+    }
 }
 
 impl DescentState {
@@ -2068,6 +2155,8 @@ impl DescentState {
                 verified,
                 finished,
                 relics: 0,
+                // No score on this lane — see `BoardRun::score`.
+                score: None,
             });
         }
 
@@ -2105,6 +2194,7 @@ impl DescentState {
                 verified: true,
                 finished: verified.crowned(),
                 relics: verified.banked_relics(),
+                score: verified.story().map(|story| story.score()),
             });
         }
 
@@ -2154,6 +2244,44 @@ mod funnel_tests {
             rows[1].human, "acct-bo",
             "a different human keeps their row"
         );
+    }
+
+    fn native(run_id: &str, actor: &str, human: &str, turns: usize) -> NativeRow {
+        NativeRow {
+            run_id: run_id.into(),
+            actor: actor.into(),
+            human: human.into(),
+            turns,
+            relics: 0,
+            score: None,
+        }
+    }
+
+    /// ⚑ THE NATIVE LANE MERGES TOO. This lane had no resolution at all: a linked player who played
+    /// it from the web and from a bot's custodial identity occupied two rows on the SAME board while
+    /// the resolver sat loaded and unconsulted. NON-VACUOUS: a different human keeps their row.
+    #[test]
+    fn the_native_lane_shows_one_row_per_human() {
+        let mut rows = vec![
+            native("n1", "web-key", "acct-ada", 7),
+            native("n2", "discord-key", "acct-ada", 9), // the SAME human, a worse run
+            native("n3", "someone-else", "acct-bo", 8),
+        ];
+        merge_native_per_human(&mut rows);
+        assert_eq!(rows.len(), 2, "one row per human, not one per platform");
+        assert_eq!(rows[0].run_id, "n1", "the human's BEST run ranks");
+        assert_eq!(rows[1].human, "acct-bo");
+    }
+
+    /// The native lane is additive the same way: with no links every actor is its own human.
+    #[test]
+    fn an_unlinked_native_lane_is_unchanged_by_the_merge() {
+        let mut rows = vec![
+            native("n1", "web:a", "web:a", 5),
+            native("n2", "web:b", "web:b", 6),
+        ];
+        merge_native_per_human(&mut rows);
+        assert_eq!(rows.len(), 2);
     }
 
     /// An UNLINKED board is byte-identical to before resolution: every player is their own human, so

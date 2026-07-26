@@ -426,6 +426,19 @@ pub enum Cause {
     Clock,
     /// A seat resigned on purpose.
     Resigned,
+    /// ⚑ **The match PLAYED ITSELF OUT** — neither seat is offered an enabled affordance any more,
+    /// so by the offering's own account there is no move left to make.
+    ///
+    /// This is the case the reaper used to record as *nothing at all*: [`reap_table`] saw an empty
+    /// `owing` list, said "the match reached its own terminal state. Not a forfeit." and returned
+    /// `None` — so a genuinely COMPLETED automatafl or tug match was never written down anywhere,
+    /// which is precisely why `/you` had no finished-match history to show.
+    ///
+    /// It is a READ of the offering, not a verdict of this lobby's: the oracle is
+    /// [`dreggnet_offerings::Offering::actions_for`] asked as each seat, and this variant therefore
+    /// says only "there is nothing left to play". It names **no winner** — the board itself is the
+    /// result, and only the executor's own registers decide it (see the module docs).
+    Concluded,
 }
 
 /// **How a minted table ENDED**, as this lobby records it. Not a proven result and never described
@@ -444,18 +457,36 @@ impl Resolution {
     /// The seat this lobby records as winning: the other one, when exactly ONE side walked away.
     /// `None` for a double abandonment and for a table nobody ever sat at — both of which record
     /// an empty or two-element `forfeited`, so the arity is the whole rule.
+    ///
+    /// Also `None` for [`Cause::Concluded`], and that is load-bearing rather than incidental: a
+    /// match that played itself out has a result, but this lobby is not the thing that knows it.
     pub fn winner(&self) -> Option<SeatSlot> {
+        if self.cause == Cause::Concluded {
+            return None;
+        }
         match self.forfeited.as_slice() {
             [only] => Some(only.other()),
             _ => None,
         }
     }
 
+    /// Whether the match ended by being PLAYED to its end rather than by somebody walking away.
+    pub fn concluded(&self) -> bool {
+        self.cause == Cause::Concluded
+    }
+
     /// One line, for a page or a refusal.
     pub fn headline(&self) -> String {
+        if self.cause == Cause::Concluded {
+            return "this table played itself out — neither seat is owed a move, and the final \
+                    board is the result"
+                .to_string();
+        }
         let verb = match self.cause {
             Cause::Clock => "let the clock run out",
             Cause::Resigned => "resigned",
+            // Handled above; the branch exists so a new cause cannot silently borrow a verb.
+            Cause::Concluded => "played it out",
         };
         if !self.started {
             return "this table expired before either seat made a move — nothing was played"
@@ -473,6 +504,15 @@ impl Resolution {
 
     /// The refusal an act on a resolved table gets.
     pub fn refusal(&self) -> String {
+        if self.cause == Cause::Concluded {
+            // A concluded match is not somebody walking away, so it must not be described as one.
+            // What it IS: the offering refusing every further move, which is where the result lives.
+            return format!(
+                "this table is over — {}. The offering itself offers neither seat a move, so \
+                 nothing further can land here. Replay the finished match to see how it went.",
+                self.headline()
+            );
+        }
         format!(
             "this table is over — {}. That is the lobby noting somebody stopped playing: no move \
              was made and there is no receipt for it, so it is not a proven win.",
@@ -506,10 +546,98 @@ impl TableRecord {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// THE DURABLE HALF OF THE RECORD — how a table ENDED, kept across a restart
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+/// ⚑ **Where a table's ENDING is persisted.** `<DREGGNET_WEB_SESSION_DIR>/tables/`, the same root
+/// the durable session move-logs live under, so a deployment that already keeps games keeps their
+/// endings too. `None` (env unset) → the registry is process-local exactly as it always was.
+///
+/// Only the RESOLUTION is durable, and deliberately so. The rest of a [`TableRecord`] is a live
+/// clock (`Instant`s), which is meaningless across a restart and must not be faked into existence: a
+/// resurrected `opened: Instant::now()` on an UNRESOLVED table would hand the reaper a table it
+/// thinks nobody has ever moved at, and it would forfeit a live match on a lie. So the durable file
+/// exists for exactly one question — *is this table over, and how* — and is written exactly once,
+/// where the write-once resolution is.
+fn table_record_dir() -> Option<std::path::PathBuf> {
+    std::env::var("DREGGNET_WEB_SESSION_DIR")
+        .ok()
+        .filter(|dir| !dir.is_empty())
+        .map(|dir| std::path::Path::new(&dir).join("tables"))
+}
+
+/// The stable file for a table id — a content hash, so ANY id (including an ad-hoc one that never
+/// came out of [`TableLock::mint_table_id`]) maps to a safe, collision-resistant name.
+fn table_record_path(dir: &std::path::Path, id: &str) -> std::path::PathBuf {
+    dir.join(format!("{}.table", blake3::hash(id.as_bytes()).to_hex()))
+}
+
+/// The one-line wire: `v1 <TAB> lock key <TAB> started(0|1) <TAB> cause <TAB> forfeited letters`.
+/// Tab-separated with no escaping needed — every field is a fixed vocabulary or an ASCII letter set
+/// this module itself produces.
+fn encode_table_record(lock: &TableLock, resolution: &Resolution) -> String {
+    let cause = match resolution.cause {
+        Cause::Clock => "c",
+        Cause::Resigned => "r",
+        Cause::Concluded => "x",
+    };
+    let forfeited: String = resolution
+        .forfeited
+        .iter()
+        .map(|seat| seat.letter())
+        .collect();
+    format!(
+        "v1\t{key}\t{started}\t{cause}\t{forfeited}\n",
+        key = lock.key,
+        started = u8::from(resolution.started),
+    )
+}
+
+/// Reverse [`encode_table_record`]. A malformed / truncated / unknown-version line decodes as `None`
+/// — fail-CLOSED in the safe direction: an unreadable record means "this process does not know that
+/// this table is over", which is exactly the pre-durability behaviour, never a fabricated ending.
+fn decode_table_record(line: &str) -> Option<(TableLock, Resolution)> {
+    let fields: Vec<&str> = line.trim_end_matches(['\n', '\r']).split('\t').collect();
+    if fields.len() != 5 || fields[0] != "v1" {
+        return None;
+    }
+    let lock = lock_for_key(fields[1])?;
+    let started = match fields[2] {
+        "0" => false,
+        "1" => true,
+        _ => return None,
+    };
+    let cause = match fields[3] {
+        "c" => Cause::Clock,
+        "r" => Cause::Resigned,
+        "x" => Cause::Concluded,
+        _ => return None,
+    };
+    let mut forfeited = Vec::new();
+    for letter in fields[4].chars() {
+        forfeited.push(SeatSlot::parse(&letter.to_string())?);
+    }
+    Some((
+        lock,
+        Resolution {
+            forfeited,
+            cause,
+            started,
+        },
+    ))
+}
+
 /// The minted tables of this process.
 #[derive(Default)]
 pub struct TableRegistry {
     tables: Mutex<HashMap<String, TableRecord>>,
+    /// Table ids this process has already looked for on disk and NOT found. Without it, every act on
+    /// a pre-restart table would pay a filesystem probe; with it, exactly one probe per id per
+    /// process. It is a NEGATIVE cache and nothing more — a miss must never be written into
+    /// [`tables`](TableRegistry::tables) as an unresolved record, because that would give the reaper
+    /// a table with a fake `opened` stamp to forfeit (see `table_record_dir`).
+    absent: Mutex<std::collections::HashSet<String>>,
 }
 
 /// The process's table registry.
@@ -544,25 +672,137 @@ impl TableRegistry {
         }
     }
 
-    /// How the table ended, if it has.
+    /// **How the table ended, if it has** — from this process's memory, else from the durable record.
+    ///
+    /// ⚑ The disk read closes a real fail-OPEN. This registry only ever knew the tables THIS process
+    /// minted, so after a restart every already-resolved table read as unresolved: the seat labels
+    /// re-derive from the persisted seat key, so [`enforce`] let a seated player keep acting on a
+    /// match the lobby had already ended. Consulting the durable record makes the ending survive the
+    /// restart that the seat links already survive.
+    ///
+    /// It costs at most ONE filesystem probe per unknown id per process (see
+    /// the `absent` negative cache below), and zero for a table this process minted.
     pub fn resolution(&self, id: &str) -> Option<Resolution> {
-        self.lock().get(id).and_then(|r| r.resolution.clone())
+        // The guard is scoped EXPLICITLY: `durable_resolution` takes the same lock, so letting a
+        // scrutinee temporary live across the fallthrough would deadlock the whole registry.
+        let known = {
+            let tables = self.lock();
+            tables.get(id).map(|record| record.resolution.clone())
+        };
+        match known {
+            Some(resolution) => resolution,
+            None => self.durable_resolution(id),
+        }
+    }
+
+    /// The durable ending for a table this process did not mint. Memoises a HIT into the live map (so
+    /// later reads are free and the reaper skips it — a resolved record is filtered out of
+    /// `stalled`) and a MISS into the negative cache only.
+    fn durable_resolution(&self, id: &str) -> Option<Resolution> {
+        // NO DURABLE DIR, NO DISK: there is nothing to read and therefore nothing to remember, so
+        // this path allocates nothing at all for the in-RAM deployment (and for the whole test
+        // suite). It also keeps the negative cache from filling up with ids on a server that could
+        // never have answered them anyway.
+        let Some(dir) = table_record_dir() else {
+            return None;
+        };
+        if self.absent().contains(id) {
+            return None;
+        }
+        let decoded = std::fs::read_to_string(table_record_path(&dir, id))
+            .ok()
+            .as_deref()
+            .and_then(decode_table_record);
+        let Some((lock, resolution)) = decoded else {
+            // ⚑ BOUNDED. A table id is attacker-choosable (`af1-` + any 24 hex chars is prefix-legal),
+            // so an unbounded negative cache is a memory-growth vector reachable from any URL. Past
+            // the cap the cache is dropped and refills; the worst case is that a probe costs one
+            // `stat` again, which is exactly the pre-cache cost.
+            const ABSENT_CAP: usize = 4096;
+            let mut absent = self.absent();
+            if absent.len() >= ABSENT_CAP {
+                absent.clear();
+            }
+            absent.insert(id.to_string());
+            return None;
+        };
+        // A resolved record is safe to materialise: it carries an ENDING, so the clock never judges
+        // it. Only the ending is restored — `opened`/`last_act` are honestly unknown after a restart.
+        self.lock().insert(
+            id.to_string(),
+            TableRecord {
+                lock,
+                opened: Instant::now(),
+                last_act: None,
+                resolution: Some(resolution.clone()),
+            },
+        );
+        Some(resolution)
     }
 
     /// The whole record.
     pub fn record(&self, id: &str) -> Option<TableRecord> {
-        self.lock().get(id).cloned()
+        // Same explicit scoping as `resolution` — `durable_resolution` re-takes this lock.
+        let known = {
+            let tables = self.lock();
+            tables.get(id).cloned()
+        };
+        if known.is_some() {
+            return known;
+        }
+        // Materialise a durable ENDING if there is one, then answer from the live map.
+        self.durable_resolution(id)?;
+        let tables = self.lock();
+        tables.get(id).cloned()
     }
 
-    /// Write a resolution, once. Returns the resolution now in force (an already-resolved table
-    /// keeps its FIRST resolution — a clock cannot overwrite a resignation).
+    /// Write a resolution, once — **in memory and on disk**. Returns the resolution now in force (an
+    /// already-resolved table keeps its FIRST resolution: a clock cannot overwrite a resignation).
+    ///
+    /// The durable write happens only on the FIRST resolution, which is the same write-once point,
+    /// so the file cannot disagree with memory about how a table ended.
     pub fn resolve(&self, id: &str, resolution: Resolution) -> Option<Resolution> {
-        let mut tables = self.lock();
-        let record = tables.get_mut(id)?;
-        if record.resolution.is_none() {
-            record.resolution = Some(resolution);
+        let (in_force, newly_written, lock) = {
+            let mut tables = self.lock();
+            let record = tables.get_mut(id)?;
+            let fresh = record.resolution.is_none();
+            if fresh {
+                record.resolution = Some(resolution);
+            }
+            (record.resolution.clone(), fresh, record.lock)
+        };
+        if newly_written {
+            if let Some(in_force) = &in_force {
+                self.persist_resolution(id, &lock, in_force);
+            }
+            // It is resolved now, so a stale negative-cache entry must not answer for it.
+            self.absent().remove(id);
         }
-        record.resolution.clone()
+        in_force
+    }
+
+    /// Persist one ending. A write failure is NOT fatal and NOT silent: the process keeps the correct
+    /// in-memory resolution and logs that this ending will not survive a restart — the same
+    /// degrade-and-say-so posture the seat key itself takes.
+    fn persist_resolution(&self, id: &str, lock: &TableLock, resolution: &Resolution) {
+        let Some(dir) = table_record_dir() else {
+            return;
+        };
+        let path = table_record_path(&dir, id);
+        let write = std::fs::create_dir_all(&dir)
+            .and_then(|()| std::fs::write(&path, encode_table_record(lock, resolution)));
+        if let Err(error) = write {
+            tracing::warn!(
+                path = %path.display(),
+                table = %id,
+                error = %error,
+                "could not persist how a table ended — this ending will not survive a restart"
+            );
+        }
+    }
+
+    fn absent(&self) -> std::sync::MutexGuard<'_, std::collections::HashSet<String>> {
+        self.absent.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// The live (unresolved) tables whose owed move is older than `limit`, oldest first.
@@ -639,7 +879,15 @@ fn env_secs(name: &str, default: u64) -> Duration {
 ///   table stuck in `Reveal` because one seat walked away now ends with that seat forfeiting.
 ///
 /// If BOTH seats still owe a move, both walked away and the table is recorded as a double
-/// abandonment with no winner. If NEITHER does the match is already over and nothing is recorded.
+/// abandonment with no winner.
+///
+/// ⚑ If NEITHER does, the match **PLAYED ITSELF OUT** and is recorded as [`Cause::Concluded`]. That
+/// used to return `None` and write down nothing at all — so the one ending a player actually wants
+/// (they finished the game) was the one ending this server never kept, which is exactly why `/you`
+/// had no finished-match history. It is still not a claim about who won.
+///
+/// Every newly-written ending also RETIRES the host session ([`archive_finished`]): the durable
+/// move-log is archived rather than deleted, so the finished match stays replayable.
 pub fn reap_table(state: &CatalogState, id: &str, now: Instant) -> Option<Resolution> {
     let record = registry().record(id)?;
     if let Some(resolution) = record.resolution {
@@ -655,8 +903,13 @@ pub fn reap_table(state: &CatalogState, id: &str, now: Instant) -> Option<Resolu
         return None;
     }
     if !record.started() {
-        return registry().resolve(
+        // Retired like any other ending, and the archive layer does the right thing with it: an
+        // UNPLAYED session's genesis is DELETED rather than filed as a finished match (see
+        // `SessionResumeStore::archive`), so a table nobody sat at never appears in anyone's history.
+        return resolve_and_retire(
+            state,
             id,
+            &lock,
             Resolution {
                 forfeited: Vec::new(),
                 cause: Cause::Clock,
@@ -669,18 +922,65 @@ pub fn reap_table(state: &CatalogState, id: &str, now: Instant) -> Option<Resolu
         .into_iter()
         .filter(|seat| owes_a_move(state, &lock, &sid, *seat))
         .collect();
-    if owing.is_empty() {
-        // Nothing is owed — the match reached its own terminal state. Not a forfeit.
-        return None;
-    }
-    registry().resolve(
+    let cause = if owing.is_empty() {
+        Cause::Concluded
+    } else {
+        Cause::Clock
+    };
+    resolve_and_retire(
+        state,
         id,
+        &lock,
         Resolution {
             forfeited: owing,
-            cause: Cause::Clock,
+            cause,
             started: true,
         },
     )
+}
+
+/// Write `resolution` (write-once) and, if it is the one that took effect, retire the host session so
+/// the match becomes a finished, replayable artifact.
+fn resolve_and_retire(
+    state: &CatalogState,
+    id: &str,
+    lock: &TableLock,
+    resolution: Resolution,
+) -> Option<Resolution> {
+    let before = registry().resolution(id).is_some();
+    let in_force = registry().resolve(id, resolution)?;
+    if !before {
+        archive_finished(state, lock, id);
+    }
+    Some(in_force)
+}
+
+/// **Retire a finished table's host session.** The world stops being a live session and its durable
+/// move-log is ARCHIVED — the finished match keeps its reproducible input, so
+/// `/offerings/{key}/session/{id}/verify` can still re-execute it and `/you` can still list it.
+///
+/// Idempotent and quiet: a session that is already gone (evicted, never opened, closed by a previous
+/// pass) simply reports `false`. A failure to retire is not allowed to fail the reap — the ending is
+/// already recorded, and a session left live on a resolved table is harmless (every act on it is
+/// refused by [`enforce`]) whereas an aborted reap would leave the table unresolved.
+pub fn archive_finished(state: &CatalogState, lock: &TableLock, id: &str) -> bool {
+    let sid = SessionId::new(id.to_string());
+    // Seat A's derived identity is only the ROUTING viewer here (the shared catalog host ignores it
+    // for a non-RPG key); nothing about this read is per-seat.
+    let viewer = lock.seat_identity(id, SeatSlot::A);
+    match state.close_game_session(lock.key, &sid, &viewer) {
+        Ok(closed) => closed,
+        Err(error) => {
+            tracing::warn!(
+                table = %id,
+                key = %lock.key,
+                error = %error,
+                "a finished table's session could not be retired; its ending is recorded and every \
+                 further act is refused, but the match may not be listed as finished"
+            );
+            false
+        }
+    }
 }
 
 /// **Resign `seat` at `id`.** A player may always end their own table; this is the only resolution
@@ -690,9 +990,22 @@ pub fn reap_table(state: &CatalogState, id: &str, now: Instant) -> Option<Resolu
 /// decision", which is exactly what a resignation is — a seat that opens a table and gives it up
 /// before its first move has still given it up, and the other seat takes it. Only the CLOCK's
 /// nobody-ever-showed-up case records `started: false`.
-pub fn resign(id: &str, seat: SeatSlot) -> Option<Resolution> {
-    registry().resolve(
+///
+/// It takes the catalog because a resignation ENDS a match, and every ending goes through the one
+/// retirement path (`resolve_and_retire` → [`archive_finished`]): the world stops being live and
+/// its move-log is archived rather than deleted. Threading the state through is deliberate — the
+/// alternative (a pure `resign` plus a "remember to retire" call at the route) is exactly the shape
+/// that leaves one of two endings un-archived and nobody noticing.
+pub fn resign(
+    state: &CatalogState,
+    lock: &TableLock,
+    id: &str,
+    seat: SeatSlot,
+) -> Option<Resolution> {
+    resolve_and_retire(
+        state,
         id,
+        lock,
         Resolution {
             forfeited: vec![seat],
             cause: Cause::Resigned,
@@ -798,6 +1111,21 @@ mod tests {
         assert_eq!(TUG.table_link(&id), format!("/offerings/tug/session/{id}"));
     }
 
+    /// The resignation a PLAYER fires, as the registry sees it. `resign` itself needs a live catalog
+    /// (every ending retires its world), so these registry-level tests write the same resolution
+    /// directly; the route `POST {game}/table/{id}/resign` is driven end to end in
+    /// `tests/tug_table.rs`, which is where the retirement half is exercised.
+    fn resigned(id: &str, seat: SeatSlot) -> Option<Resolution> {
+        registry().resolve(
+            id,
+            Resolution {
+                forfeited: vec![seat],
+                cause: Cause::Resigned,
+                started: true,
+            },
+        )
+    }
+
     #[test]
     fn a_resolved_table_refuses_every_further_act_including_a_seated_one() {
         let id = TUG.mint_table_id();
@@ -807,7 +1135,7 @@ mod tests {
             enforce("tug", &id, &seat_b).is_ok(),
             "live table takes acts"
         );
-        let resolution = resign(&id, SeatSlot::A).expect("the table is registered");
+        let resolution = resigned(&id, SeatSlot::A).expect("the table is registered");
         assert_eq!(resolution.winner(), Some(SeatSlot::B));
         let refused = enforce("tug", &id, &seat_b).expect_err("a resolved table takes no acts");
         assert!(refused.contains("forfeit"), "{refused}");
@@ -822,7 +1150,7 @@ mod tests {
         let id = AUTOMATAFL.mint_table_id();
         registry().opened(AUTOMATAFL, &id, Instant::now());
         registry().record_act(&id, SeatSlot::A, Instant::now());
-        let first = resign(&id, SeatSlot::A).expect("registered");
+        let first = resigned(&id, SeatSlot::A).expect("registered");
         let second = registry()
             .resolve(
                 &id,
@@ -866,6 +1194,113 @@ mod tests {
         };
         assert_eq!(resolution.winner(), None);
         assert!(resolution.headline().contains("no winner"));
+    }
+
+    /// ⚑ **A match that PLAYED ITSELF OUT is an ending, not a forfeit** — and the copy must not
+    /// borrow the walked-away words, because a player who finished their game would read them as an
+    /// accusation. It also names no winner: this lobby is not what decides one.
+    #[test]
+    fn a_concluded_table_reads_as_played_out_and_never_as_abandoned() {
+        let resolution = Resolution {
+            forfeited: Vec::new(),
+            cause: Cause::Concluded,
+            started: true,
+        };
+        assert!(resolution.concluded());
+        assert_eq!(
+            resolution.winner(),
+            None,
+            "the lobby must not name a winner for a match the executor decided"
+        );
+        let headline = resolution.headline();
+        assert!(headline.contains("played itself out"), "{headline}");
+        for walked_away in ["clock", "abandoned", "forfeit", "resigned"] {
+            assert!(
+                !headline.contains(walked_away),
+                "a finished match must not be described as `{walked_away}`: {headline}"
+            );
+        }
+        let refusal = resolution.refusal();
+        assert!(
+            !refusal.contains("somebody stopped playing"),
+            "the walked-away refusal leaked onto a finished match: {refusal}"
+        );
+        assert!(
+            refusal.contains("Replay the finished match"),
+            "a finished match's refusal must point at the replay: {refusal}"
+        );
+
+        // NON-VACUOUS: a genuine forfeit still says every one of those words.
+        let forfeit = Resolution {
+            forfeited: vec![SeatSlot::A],
+            cause: Cause::Clock,
+            started: true,
+        };
+        assert!(forfeit.headline().contains("forfeit"));
+        assert!(forfeit.refusal().contains("not a proven win"));
+        assert!(!forfeit.concluded());
+    }
+
+    /// The durable ending round-trips through its one-line wire, and every malformed shape decodes as
+    /// `None` — a file this process cannot read must mean "I do not know that this table is over",
+    /// never a fabricated ending.
+    #[test]
+    fn a_table_ending_round_trips_and_refuses_every_malformed_line() {
+        for (lock, resolution) in [
+            (
+                TUG,
+                Resolution {
+                    forfeited: vec![SeatSlot::B],
+                    cause: Cause::Resigned,
+                    started: true,
+                },
+            ),
+            (
+                AUTOMATAFL,
+                Resolution {
+                    forfeited: vec![SeatSlot::A, SeatSlot::B],
+                    cause: Cause::Clock,
+                    started: true,
+                },
+            ),
+            (
+                AUTOMATAFL,
+                Resolution {
+                    forfeited: Vec::new(),
+                    cause: Cause::Concluded,
+                    started: true,
+                },
+            ),
+            (
+                TUG,
+                Resolution {
+                    forfeited: Vec::new(),
+                    cause: Cause::Clock,
+                    started: false,
+                },
+            ),
+        ] {
+            let line = encode_table_record(&lock, &resolution);
+            let (back_lock, back) =
+                decode_table_record(&line).unwrap_or_else(|| panic!("decodes: {line:?}"));
+            assert_eq!(back_lock.key, lock.key);
+            assert_eq!(back, resolution, "round-trip lost information: {line:?}");
+        }
+        for bad in [
+            "",
+            "v1",
+            "v2\ttug\t1\tc\ta",
+            "v1\tnot-a-game\t1\tc\ta",
+            "v1\ttug\t2\tc\ta",
+            "v1\ttug\t1\tz\ta",
+            "v1\ttug\t1\tc\tq",
+            "v1\ttug\t1\tc\ta\textra",
+        ] {
+            assert!(
+                decode_table_record(bad).is_none(),
+                "a malformed ending must not decode: {bad:?}"
+            );
+        }
     }
 
     #[test]

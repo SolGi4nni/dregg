@@ -229,7 +229,7 @@ async fn post_resign(
     let Some(seat) = door.lock.seat_of_label(&id, &label) else {
         return (StatusCode::FORBIDDEN, Html(seat_refused_page(&door, &id))).into_response();
     };
-    let Some(resolution) = table_seats::resign(&id, seat) else {
+    let Some(resolution) = table_seats::resign(&door.catalog, &door.lock, &id, seat) else {
         // The table is not in this process's registry — a link from before a restart. Fail-closed:
         // there is nothing here to resign.
         return (StatusCode::NOT_FOUND, Html(watch_missing_page(&door, &id))).into_response();
