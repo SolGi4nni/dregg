@@ -732,6 +732,57 @@ pub fn verify_committed_threshold(
     Ok(false)
 }
 
+/// **THE LIGHT-CLIENT FINALITY ENTRY** — verify a whole-history aggregate AND the committee
+/// certificate that finalizes it, arming this process's verified post-quantum cores first.
+///
+/// A drop-in for `dregg_lightclient::verify_finalized_history`, with the identical signature and
+/// the identical verdict; the SDK's root re-export now names THIS one.
+///
+/// # Why the SDK wraps it rather than re-exporting it
+///
+/// Each committee vote in a [`FinalityCert`](dregg_lightclient::FinalityCert) carries an ML-DSA-65
+/// half, and a missing or forged one must drop the signer — so
+/// `dregg_lightclient::verify_ml_dsa_half` calls `dregg_pq::ml_dsa_verify` on the honest path, for
+/// every vote. `dregg-lightclient` is a LIGHT leaf by design: it cannot link the Lean archive and
+/// therefore cannot install the verified core itself (its own lib tests reach for
+/// `dregg-pq-testkit` under `#[cfg(test)]` for exactly this reason). Until this wrapper, the only
+/// thing in an SDK-hosted process that armed the verify core was an
+/// [`AgentRuntime`](crate::AgentRuntime) constructor — and a light client is precisely the consumer
+/// that has no runtime, no cipherclerk, no ledger and no keys. It holds a trust anchor and a proof.
+/// That consumer reached `dregg-pq`'s audit gate with nothing installed, and the gate did the only
+/// correct thing available to it: `process::abort()`.
+///
+/// This is not a weakening of anything. The install is export-gated and once-per-process; an
+/// archive that exports no verify core still installs none and the refusal at the point of use
+/// still stands, exactly as before.
+///
+/// [`verify_history`](dregg_lightclient::verify_history) is re-exported directly and NOT wrapped:
+/// it is the succinct-aggregate leg alone (VK pin + Fiat–Shamir attestation + root) and reaches no
+/// PQ primitive. The asymmetry is the honest one — wrap what can reach the gate.
+pub fn verify_finalized_history(
+    agg: &dregg_circuit_prove::ivc_turn_chain::WholeChainProof,
+    expected_vk: &dregg_circuit_prove::ivc_turn_chain::RecursionVk,
+    finalized_root: [dregg_circuit::field::BabyBear;
+        dregg_circuit_prove::ivc_turn_chain::SEG_ANCHOR_WIDTH],
+    cert: &dregg_lightclient::FinalityCert,
+    committee: &[[u8; 32]],
+    ml_dsa_committee: &[Vec<u8>],
+    expected_genesis: Option<
+        [dregg_circuit::field::BabyBear; dregg_circuit_prove::ivc_turn_chain::SEG_ANCHOR_WIDTH],
+    >,
+) -> Result<dregg_lightclient::FinalizedAttestation, dregg_lightclient::FinalizedError> {
+    crate::runtime::install_verified_pq_cores();
+    dregg_lightclient::verify_finalized_history(
+        agg,
+        expected_vk,
+        finalized_root,
+        cert,
+        committee,
+        ml_dsa_committee,
+        expected_genesis,
+    )
+}
+
 /// Build a federation Merkle tree from member public keys and return the root.
 ///
 /// This is the verifier-side helper for constructing the federation tree that

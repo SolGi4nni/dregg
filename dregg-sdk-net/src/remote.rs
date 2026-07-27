@@ -159,13 +159,18 @@ impl RemoteRuntime {
     /// No I/O happens until the first signing/submission (federation binding
     /// is discovered lazily and cached).
     pub fn connect(base_url: impl Into<String>, cipherclerk: AgentCipherclerk) -> Self {
-        // RemoteRuntime is itself an SDK signing host. Install the same
-        // process-global verified ML-DSA producers/verifier as AgentRuntime;
-        // if this binary was built without the Lean exports, the PQ audit gate
-        // still refuses at first use rather than silently substituting a crate.
-        let _ = dregg_sdk::install_verified_mldsa_keygen_core_real();
-        let _ = dregg_sdk::install_verified_mldsa_sign_core_real();
-        let _ = dregg_sdk::install_verified_mldsa_verify_core();
+        // RemoteRuntime is itself an SDK host, and it is a construction path that never builds an
+        // `AgentRuntime` — so it must arm the process's PQ cores itself. ONE call, all six.
+        //
+        // ⚑ IT USED TO NAME THREE OF THEM (ML-DSA keygen/sign/verify) and omit the ML-KEM triple,
+        // which is the same hand-copied-subset defect that left `AgentRuntime` as the only thing
+        // arming ML-DSA verify. A `RemoteRuntime` is precisely the object that goes on to establish
+        // sessions, and `dregg_pq::ml_kem768_encaps` / `decaps` ABORT at the audit gate with no core
+        // installed. Nothing here decides which directions this host needs.
+        //
+        // Export-gated and once-per-process: a binary built without the Lean exports installs
+        // nothing and the audit gate still refuses at first use rather than substituting a crate.
+        dregg_sdk::install_verified_pq_cores();
         let cell = cipherclerk.cell_id("default");
         Self {
             cipherclerk,

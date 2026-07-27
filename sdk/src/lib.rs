@@ -212,9 +212,15 @@ pub use receipt::{Receipt, TurnProof};
 /// **Noun 2**: the light-client artifact — the verdict from verifying ONE
 /// succinct whole-history aggregate (re-witnessing nothing), plus its
 /// verifier entry points and trust-anchor type.
-pub use dregg_lightclient::{
-    AttestedHistory, FinalityCert, FinalizedAttestation, verify_finalized_history, verify_history,
-};
+///
+/// ⚑ `verify_finalized_history` is the SDK's own [`verify::verify_finalized_history`], NOT a
+/// re-export: a finalized verdict checks each committee vote's ML-DSA half, `dregg-lightclient` is
+/// a light leaf that cannot install the verified core, and the light-client consumer is by
+/// definition the one holding no `AgentRuntime` to install it as a side effect. Same signature,
+/// same verdict, cores armed first. `verify_history` reaches no PQ primitive and is re-exported
+/// unchanged.
+pub use dregg_lightclient::{AttestedHistory, FinalityCert, FinalizedAttestation, verify_history};
+pub use verify::verify_finalized_history;
 
 /// The authorized turn flow: `runtime.turn()` opens a [`turns::TurnBuilder`];
 /// `.sign()` yields a [`turns::AuthorizedTurn`]; `.submit()` a [`Receipt`].
@@ -242,12 +248,19 @@ pub use dregg_pq::{MlKemDecapsCoreInstall, MlKemEncapsCoreInstall, MlKemKeygenCo
 pub use dregg_turn::Effect;
 pub use dregg_types::{PublicKey, Signature};
 pub use error::SdkError;
+/// ⚑ [`install_verified_pq_cores`] IS THE ONE AN SDK HOST SHOULD CALL. It arms all six verified PQ
+/// directions once per process; the six single-direction `install_verified_*` functions beside it
+/// are the low-level adapters, kept public only so a running-binary gate can match on ONE
+/// direction's outcome. Every hand-copied subset of that list in this tree has drifted — the SDK's
+/// own point-of-use install armed keygen+sign and left VERIFY to an `AgentRuntime` constructor,
+/// which is how a `DreggEngine` host and the light-client entry came to abort in production.
 pub use runtime::{
     AgentRuntime, SubAgent, deployed_executor_arming_attempted,
     deployed_executor_arming_deficiency, executor_pubkey_from_seed,
     install_verified_mldsa_keygen_core_real, install_verified_mldsa_sign_core_real,
     install_verified_mldsa_verify_core, install_verified_mlkem_decaps_core,
     install_verified_mlkem_encaps_core, install_verified_mlkem_keygen_core,
+    install_verified_pq_cores,
 };
 
 // ORGAN 4 — THE GATEWAY surface: the delegated tool-access seam for a live

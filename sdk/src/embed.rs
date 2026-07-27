@@ -219,7 +219,20 @@ pub struct DreggEngine {
 
 impl DreggEngine {
     /// Create a new engine with the given configuration and an empty ledger.
+    ///
+    /// ⚑ ARMS THE VERIFIED PQ CORES, and this is the gateway where that was missing. A
+    /// `DreggEngine` owns a `TurnExecutor` and never constructs an [`AgentRuntime`](crate::AgentRuntime)
+    /// — which was the ONLY thing arming the ML-DSA *verify* core. Every turn an
+    /// `AgentCipherclerk` signs carries a `HybridSignature` by default, and the executor's
+    /// admission fail-closes a present PQ half through `dregg_turn::pq::ml_dsa_verify`; so a
+    /// service that embedded this engine (its documented purpose) hit `dregg-pq`'s audit gate with
+    /// no core installed and the PROCESS ABORTED on the first turn it executed. Same for the
+    /// `CreateHybridCell` / `RotatePqIdentity` possession proofs on the apply side.
+    ///
+    /// Once-per-process, export-gated, and it installs no bypass — see
+    /// [`crate::runtime::install_verified_pq_cores`].
     pub fn new(config: EngineConfig) -> Self {
+        crate::runtime::install_verified_pq_cores();
         let mut executor = TurnExecutor::new(config.costs);
         executor.set_block_height(config.block_height);
         executor.set_timestamp(config.timestamp);
@@ -233,7 +246,12 @@ impl DreggEngine {
     }
 
     /// Create an engine from an existing ledger (e.g. loaded from your own DB).
+    ///
+    /// Arms the verified PQ cores for the same reason [`DreggEngine::new`] does — this is an
+    /// independent construction path, and it is the one a DURABLE, restored-from-storage host
+    /// takes, so arming only in `new` would have left exactly the long-running services unarmed.
     pub fn with_ledger(config: EngineConfig, ledger: Ledger) -> Self {
+        crate::runtime::install_verified_pq_cores();
         let mut executor = TurnExecutor::new(config.costs);
         executor.set_block_height(config.block_height);
         executor.set_timestamp(config.timestamp);

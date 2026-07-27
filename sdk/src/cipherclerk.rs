@@ -3186,12 +3186,16 @@ impl AgentCipherclerk {
     /// from any seed but its own. Both lock failures (poisoned `read`, poisoned `write`)
     /// degrade to a plain fresh derivation.
     fn ml_dsa_key(&self) -> std::sync::Arc<dregg_turn::pq::MlDsaTurnKey> {
-        // The verified ML-DSA keygen + sign cores, installed HERE — before the first derivation
-        // this clerk performs — rather than as a side effect of some other object having been
-        // constructed first. Signing through a cipherclerk that never built an `AgentRuntime`
-        // used to reach dregg-pq's unaudited fallback and abort the process; see
-        // `runtime::ensure_verified_mldsa_identity_cores_installed` for what that ordering cost.
-        crate::runtime::ensure_verified_mldsa_identity_cores_installed();
+        // Every verified PQ core, installed HERE — before the first derivation this clerk performs
+        // — rather than as a side effect of some other object having been constructed first.
+        // Signing through a cipherclerk that never built an `AgentRuntime` used to reach dregg-pq's
+        // refusal and abort the process.
+        //
+        // ⚑ THIS CALL USED TO ARM KEYGEN AND SIGN ONLY, and that subset is what left the VERIFY
+        // core reachable-but-unarmed for every SDK consumer that never built an `AgentRuntime`
+        // (`DreggEngine`, the light-client entries). It arms all six now, and the ability to pick a
+        // subset is gone from the SDK — see `runtime::install_verified_pq_cores`.
+        crate::runtime::install_verified_pq_cores();
         let seed = Zeroizing::new(self.signing_key.to_bytes());
         let binding = blake3::derive_key(ML_DSA_CACHE_BINDING_CTX, seed.as_slice());
 

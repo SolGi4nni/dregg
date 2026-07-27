@@ -8,17 +8,23 @@ use dregg_sdk::{AgentCipherclerk, Signature, SignedTurn};
 use dregg_turn::action::{Action, Authorization, CommitmentMode, DelegationMode};
 use dregg_turn::executor::TurnExecutor;
 
-// This file's SIGNING half was already covered: `AgentCipherclerk::ml_dsa_key` installs the
-// verified KEYGEN and SIGN cores at the point of use. Its VERIFYING half was not — the verify
-// core is installed only by an `AgentRuntime` constructor, and this file never builds one. So
-// every `dregg_turn::pq::ml_dsa_verify` below hit `dregg-pq`'s audit gate with no core installed
-// and the process aborted (`operation: ML-DSA-65 verify`), taking all five tests with it.
+// ⚑ THE `dregg_pq_testkit::install_at_process_start!()` THAT USED TO BE HERE IS GONE, and its
+// absence is the point.
 //
-// Installed at process start, so the outcome does not depend on which test wins the race to
-// build a cipherclerk. ⚠ The underlying asymmetry is NOT fixed here and is not test-only: an
-// SDK-hosted process that verifies without first constructing an `AgentRuntime` aborts in
-// production for the same reason. See the report accompanying this change.
-dregg_pq_testkit::install_at_process_start!();
+// This file's SIGNING half was always covered: `AgentCipherclerk::ml_dsa_key` installs the verified
+// cores at the point of use. Its VERIFYING half was not — the verify core was armed only by an
+// `AgentRuntime` constructor, and this file never builds one — so every `dregg_turn::pq::ml_dsa_verify`
+// below hit `dregg-pq`'s audit gate with nothing installed and the process aborted
+// (`operation: ML-DSA-65 verify`), taking all five tests with it. The test-only initializer made
+// these five green while leaving the production defect exactly where it was: an SDK-hosted process
+// that verifies without first constructing an `AgentRuntime` aborted for the same reason, and a
+// test binary that installs its own cores can never say so.
+//
+// The point-of-use install now arms ALL SIX directions (`runtime::install_verified_pq_cores`), so
+// the `AgentCipherclerk::new()` at the top of each test below is what makes the verifies here
+// possible — in this binary and in a deployed one, by the same line of production code. These five
+// tests are now a live witness of that; `tests/pq_cores_without_runtime.rs` drives it deliberately,
+// including the arm that proves the gate still aborts when nothing arms it.
 
 fn empty_action(target: dregg_sdk::CellId, method: u8) -> Action {
     Action {

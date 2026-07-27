@@ -67,20 +67,16 @@ fn run_all_subsystems() -> Vec<SubsystemResult> {
 /// startup. Every install is export-gated inside `dregg-pq`, so an archive that does not export a
 /// core installs nothing for that direction and the refusal at the point of use still stands.
 ///
-/// No new dependency: `dregg-sdk` is already a `[dependencies]` entry here and re-exports the six
-/// shared installs (`sdk/src/runtime.rs`), which is why this is six calls and not a fourth copy of
-/// the `dregg-lean-ffi` symbol list.
+/// No new dependency: `dregg-sdk` is already a `[dependencies]` entry here.
+///
+/// ⚑ IT IS NO LONGER A COPY OF THE LIST. This used to enumerate the six `dregg_sdk` re-exports by
+/// hand, which made preflight's coverage a fact about six lines rather than about the SDK — and the
+/// same enumeration written elsewhere had already drifted (`RemoteRuntime::connect` named three,
+/// `starbridge-v2`'s `main` named two, and the SDK's own point-of-use install named two). It
+/// forwards to `dregg_sdk::install_verified_pq_cores`, so a seventh direction reaches this binary
+/// without an edit here.
 fn install_verified_pq_cores() {
-    use std::sync::Once;
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        let _ = dregg_sdk::install_verified_mldsa_verify_core();
-        let _ = dregg_sdk::install_verified_mldsa_sign_core_real();
-        let _ = dregg_sdk::install_verified_mldsa_keygen_core_real();
-        let _ = dregg_sdk::install_verified_mlkem_encaps_core();
-        let _ = dregg_sdk::install_verified_mlkem_decaps_core();
-        let _ = dregg_sdk::install_verified_mlkem_keygen_core();
-    });
+    dregg_sdk::install_verified_pq_cores();
 }
 
 /// Call [`install_verified_pq_cores`] at process start in the TEST binary.

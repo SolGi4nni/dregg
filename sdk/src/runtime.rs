@@ -66,9 +66,19 @@ pub fn lean_producer_env_enabled() -> bool {
 /// `dregg-lean-ffi` archive symbols; it is idempotent and once-per-process.
 ///
 /// Gated on `fips204_verify_real_core_available()`: install ONLY when the linked archive EXPORTS the real
-/// core. A build without it (or a `no-lean-link` wasm/zkvm target) keeps the `fips204`-crate fallback (a
-/// valid FIPS-204 verify) rather than bricking verify. Returns the outcome so callers / the running-binary
-/// gate can assert routing.
+/// core. Returns the outcome so callers / the running-binary gate can assert routing.
+///
+/// ⚑ `ExportAbsent` IS NOT A FALLBACK. This doc used to say a build without the export "keeps the
+/// `fips204`-crate fallback (a valid FIPS-204 verify) rather than bricking verify". That has been
+/// FALSE since `dregg-pq`'s audit gate went live: with no verified core installed,
+/// `dregg_pq::ml_dsa_verify` REFUSES — `refuse_unaudited` → `process::abort()` — unless the operator
+/// declared `DREGG_ALLOW_UNAUDITED_PQ=1`. The sentence was stale in the UNSAFE direction for a
+/// reader: it told an operator that a stale archive costs them the Lean authority, when it actually
+/// costs them the process. `mldsa_verify_disposition` (twin#13) is the authority on this.
+///
+/// ⚑ PREFER [`install_verified_pq_cores`]. This is the single-direction adapter; a call site that
+/// picks directions one at a time is how the verify core came to be armed on a strictly narrower
+/// path than a consumer could take. See that function's header.
 pub fn install_verified_mldsa_verify_core() -> dregg_pq::MlDsaVerifyCoreInstall {
     dregg_pq::install_verified_mldsa_verify_core(
         dregg_lean_ffi::fips204_verify_real_core_available,
@@ -153,9 +163,12 @@ fn ensure_verified_mldsa_verify_core_installed() {
         ),
         I::ExportAbsent => tracing::warn!(
             "ML-DSA verify: the linked Lean archive does NOT export the real verify core \
-             (`fips204_verify_real_core_available()` is false) — the SDK-hosted process's ML-DSA verify \
-             falls back to the `fips204` crate (a valid FIPS-204 verify, but NOT the Lean-verified \
-             authority). Rebuild against a HEAD-matching archive to route verify through Lean."
+             (`fips204_verify_real_core_available()` is false) — NO verified verify core is installed, \
+             so any ML-DSA verify this process reaches will be REFUSED by dregg-pq's audit gate \
+             (process abort) unless DREGG_ALLOW_UNAUDITED_PQ=1. This line used to say the verify \
+             'falls back to the `fips204` crate (a valid FIPS-204 verify)'; that stopped being true \
+             when the audit gate went live, and it is the sentence an operator would have acted on. \
+             Rebuild against a HEAD-matching archive to route verify through Lean."
         ),
     });
 }
@@ -326,35 +339,79 @@ fn ensure_verified_mldsa_keygen_core_installed() {
     });
 }
 
-/// Install the two verified ML-DSA cores the HYBRID IDENTITY path needs — KEYGEN (the ξ → keypair
-/// derivation behind `AgentCipherclerk::ml_dsa_key`) and SIGN — at the POINT OF USE, once per
-/// process.
+/// **THE ONE NAMED INSTALLER** — arm ALL SIX Lean-verified post-quantum cores for this SDK-hosted
+/// process, once, so that no call site anywhere has to decide WHICH directions it needs.
 ///
-/// ⚑ WHY AT THE POINT OF USE AND NOT ONLY AT RUNTIME STARTUP. Before this, the only thing in the
-/// tree that installed these was an [`AgentRuntime`] constructor. So whether a process signed with
-/// the verified core or reached `dregg-pq`'s unaudited fallback depended on whether something had
-/// already built a runtime — an ORDERING, not a property of the signing code. Anything that signs
-/// without one (`AppCipherclerk::make_action` in a test module, a tool that mints one action and
-/// exits) arrived at `MlDsaKey::from_ed25519_seed` with nothing installed, and `dregg-pq` refused
-/// it the only way it can: `process::abort()`.
+/// Idempotent, thread-safe, once-per-process. Every install inside it is export-gated by
+/// `dregg-pq`, so an archive that exports nothing installs nothing and the refusal at the point of
+/// use still stands. The mirror of `dregg_node::install_verified_pq_cores` for SDK hosts.
 ///
-/// In a libtest binary the THREAD COUNT decided the outcome. libtest runs tests in alphabetical
-/// order; at `--test-threads=1` an earlier test that happens to construct an `EmbeddedExecutor`
-/// installs the cores and carries every later signer, so the suite is green. At 8 threads the
-/// signing tests start before that install lands and the process aborts — mid-suite, with no panic
-/// message, on whichever test won the race. `starbridge-tool-access-delegation` was green at 1–4
-/// threads and aborted 5/5 at 8; four of its tests abort when run alone. GitHub's hosted runners
-/// are 4-core, so CI never saw it and every developer box with 8+ cores did.
+/// # ⚑ THE BUG THIS EXISTS TO MAKE UNREPRESENTABLE: A CALL SITE THAT PICKED A SUBSET
 ///
-/// This does NOT weaken the refusal. Both installs are export-gated: an archive that does not
-/// export the real cores still installs nothing, and the first sign still aborts exactly as it did.
-/// What goes away is the dependence on call order, not the gate.
-pub(crate) fn ensure_verified_mldsa_identity_cores_installed() {
+/// This function replaces `ensure_verified_mldsa_identity_cores_installed`, which armed exactly
+/// KEYGEN and SIGN — "the two cores the hybrid identity path needs". That was a reasonable
+/// sentence and it was wrong, because the identity path does not end at signing: the SAME process
+/// then VERIFIES, through `dregg_turn::pq::ml_dsa_verify` (the executor's `HybridSignature`
+/// admission, `CreateHybridCell` / `RotatePqIdentity` possession proofs) and through
+/// `dregg_lightclient`'s hybrid quorum halves. The verify core was armed ONLY by an
+/// [`AgentRuntime`] constructor, so:
+///
+///   * `dregg_sdk::embed::DreggEngine` — the documented no-I/O service-integration engine, which
+///     builds its own `TurnExecutor` and never touches `AgentRuntime` — aborted on the first
+///     hybrid turn it executed, and every turn an SDK cipherclerk signs is hybrid by default;
+///   * `dregg_sdk::verify_finalized_history` — the "Noun 2" light-client entry, whose whole point
+///     is that a verifier holds NOTHING but a trust anchor — aborted on the first committee vote's
+///     PQ half.
+///
+/// Neither is a test artifact and neither is exotic; they are the two shapes the public surface
+/// advertises. `sdk/tests/hybrid_pq_turn.rs` merely happened to be the file that opened the door,
+/// because it signs through a cipherclerk (armed) and then verifies (not armed), and its abort
+/// banner named `ML-DSA-65 verify` rather than keygen.
+///
+/// So the fix is not "add verify to the identity pair". It is that a SUBSET is no longer something
+/// an SDK call site can express: every gateway calls THIS, and the only judgement left is *whether*
+/// to arm, never *what*. The six single-direction `install_verified_*` functions remain public
+/// because a host that wants to match on ONE outcome (the running-binary routing gates in
+/// `tests/mldsa_wire_silo_verify.rs`, `tests/mlkem_sdk_kem_verified.rs`) needs them — but nothing
+/// in the SDK calls them to ARM any more.
+///
+/// # Why the point of use, and not only at startup
+///
+/// Kept verbatim from the function this replaces, because the reasoning is unchanged and was paid
+/// for once already. Before it, the only thing in the tree that installed the identity cores was an
+/// [`AgentRuntime`] constructor — so whether a process signed with the verified core or reached
+/// `dregg-pq`'s refusal depended on whether something had already built a runtime: an ORDERING, not
+/// a property of the signing code. In a libtest binary the THREAD COUNT decided it. libtest runs
+/// tests in alphabetical order; at `--test-threads=1` an earlier test that happens to construct an
+/// `EmbeddedExecutor` installs the cores and carries every later signer, so the suite is green. At
+/// 8 threads the signing tests start first and the process aborts mid-suite, with no panic message,
+/// on whichever test won the race. `starbridge-tool-access-delegation` was green at 1–4 threads and
+/// aborted 5/5 at 8. GitHub's hosted runners are 4-core, so CI never saw it and every developer box
+/// with 8+ cores did.
+///
+/// # What this deliberately does NOT do
+///
+/// It does not run before `main`. A `.init_array` / `__DATA,__mod_init_func` initializer (what
+/// `dregg-pq-testkit`'s `install_at_process_start!` gives a TEST binary) would remove the ordering
+/// question entirely — and it would also force the ~125 MB Lean archive into every binary that
+/// merely links `dregg-sdk`, whether or not it ever performs a PQ operation, and run Lean archive
+/// probes at process start for consumers that embed the SDK inside something larger. That price is
+/// not this bug's to charge. The residual is therefore real and named: a consumer that calls
+/// `dregg_turn::pq::ml_dsa_verify` or `dregg_lightclient::*` DIRECTLY, having constructed no SDK
+/// object at all, still aborts — correctly, since it never asked the SDK for anything.
+/// `sdk/tests/pq_cores_without_runtime.rs` pins that boundary from both sides.
+pub fn install_verified_pq_cores() {
     use std::sync::Once;
     static ENSURED: Once = Once::new();
     ENSURED.call_once(|| {
-        ensure_verified_mldsa_keygen_core_installed();
+        // The ACCEPT/REJECT gate. First, because it is the one whose absence is a security verdict
+        // taken by an unaudited crate rather than a value produced by one.
+        ensure_verified_mldsa_verify_core_installed();
         ensure_verified_mldsa_sign_core_installed();
+        ensure_verified_mldsa_keygen_core_installed();
+        ensure_verified_mlkem_encaps_core_installed();
+        ensure_verified_mlkem_decaps_core_installed();
+        ensure_verified_mlkem_keygen_core_installed();
     });
 }
 
@@ -811,22 +868,10 @@ impl AgentRuntime {
     /// * `cipherclerk` - Shared read-write reference to the agent's cipherclerk.
     /// * `domain` - The domain this agent operates in (e.g., "compute", "storage").
     pub fn new(cipherclerk: Arc<RwLock<AgentCipherclerk>>, domain: &str) -> Self {
-        // Route this SDK-hosted process's ML-DSA verify (wire silo + turn/captp) through the
-        // Lean-verified core (idempotent, once-per-process) — see
-        // [`ensure_verified_mldsa_verify_core_installed`].
-        ensure_verified_mldsa_verify_core_installed();
-        ensure_verified_mldsa_sign_core_installed();
-        // Route this SDK-hosted process's ML-KEM encaps/decaps (X-Wing / X25519MLKEM768 session KEM, the
-        // hybrid combiners) through the Lean-verified cores — closing the last unrouted PQ surface, which
-        // otherwise ABORTS at dregg-pq's audit gate on the first KEM op. Once-per-process, export-gated.
-        ensure_verified_mlkem_encaps_core_installed();
-        ensure_verified_mlkem_decaps_core_installed();
-        // Route this SDK-hosted process's ML-KEM keygen through the Lean-verified core (warn-and-continue on
-        // ExportAbsent -- keygen does not abort at the audit gate). Once-per-process, export-gated.
-        ensure_verified_mlkem_keygen_core_installed();
-        // Route this SDK-hosted process's ML-DSA IDENTITY keygen through the Lean-verified core
-        // (warn-and-continue on ExportAbsent -- identity keygen WARNS, it does not abort). Once-per-process.
-        ensure_verified_mldsa_keygen_core_installed();
+        // Arm every PQ direction this process can reach — verify (the executor's HybridSignature
+        // admission, the wire silo, turn/captp receipts), sign, both keygens, and the session KEM.
+        // ONE call, no subset: see [`install_verified_pq_cores`] for what choosing a subset cost.
+        install_verified_pq_cores();
         // Install the DEPLOYED-EXECUTOR oracles (constraint + conservation). Without the first,
         // `dregg_cell::program::eval` fails CLOSED for the whole Lean-evaluated constraint subset on
         // a native RELEASE build, so every programmed-cell turn is refused -- which is how the
@@ -885,16 +930,8 @@ impl AgentRuntime {
         domain: &str,
         ledger: Arc<Mutex<Ledger>>,
     ) -> Self {
-        // Same once-per-process verify-core install as `new` (this is an independent construction path).
-        ensure_verified_mldsa_verify_core_installed();
-        ensure_verified_mldsa_sign_core_installed();
-        // Same once-per-process ML-KEM encaps/decaps core installs as `new` (independent construction path).
-        ensure_verified_mlkem_encaps_core_installed();
-        ensure_verified_mlkem_decaps_core_installed();
-        ensure_verified_mlkem_keygen_core_installed();
-        // Route this SDK-hosted process's ML-DSA IDENTITY keygen through the Lean-verified core
-        // (warn-and-continue on ExportAbsent -- identity keygen WARNS, it does not abort). Once-per-process.
-        ensure_verified_mldsa_keygen_core_installed();
+        // Same once-per-process PQ arming as `new` (this is an independent construction path).
+        install_verified_pq_cores();
         // Same deployed-executor oracle install as `new` (independent construction path). This one is
         // NOT optional cosmetics here: `with_ledger` is the path a DURABLE, restored-from-storage
         // host takes, which is exactly the shape both bots use -- so an oracle installed only in

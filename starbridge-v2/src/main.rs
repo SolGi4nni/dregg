@@ -79,20 +79,39 @@ fn main() {
     // path (windowed cockpit, headless bake, `--serve-ie6`, `--node`) is covered. Gated on
     // `embedded-executor` — the only build with the SDK + the linked Lean archive; the `sel4-thin` thin
     // client verifies against a remote node and has no local verify TCB to close.
+    // ⚑ ONE CALL, ALL SIX — and it used to be TWO of them. This block installed ML-DSA verify, the
+    // one below installed ML-DSA sign, and nothing installed ML-DSA keygen or the ML-KEM triple. A
+    // subset is not a smaller version of the right thing here: `MlDsaKey::from_ed25519_seed` and
+    // `ml_kem768_{encaps,decaps}` ABORT at `dregg-pq`'s audit gate with no core installed, so the
+    // omitted directions were live aborts waiting on whichever path reached them first (identity
+    // keygen only stayed up because `AgentCipherclerk::ml_dsa_key` happens to arm it at the point of
+    // use — an ordering, not a property of this binary). `install_verified_pq_cores` is the SDK's
+    // one named installer; a seventh direction arrives here without an edit.
+    //
+    // Idempotent, once-per-process, and it runs BEFORE any subcommand branch so every path
+    // (windowed cockpit, headless bake, `--serve-ie6`, `--node`) is covered. Gated on
+    // `embedded-executor` — the only build with the SDK + the linked Lean archive; the `sel4-thin`
+    // thin client verifies against a remote node and has no local PQ TCB to close.
     #[cfg(feature = "embedded-executor")]
     {
         use dregg_sdk::MlDsaVerifyCoreInstall as I;
+        dregg_sdk::install_verified_pq_cores();
+        // Report the ACCEPT/REJECT direction specifically: it is the only one of the six whose
+        // answer is a security verdict rather than a produced value, so an operator watching this
+        // boot log needs to see it by name. Re-calling the single-direction install is how that
+        // outcome is read back — it is a `OnceLock`, so this reports, it does not re-install.
         match dregg_sdk::install_verified_mldsa_verify_core() {
-            I::Installed => eprintln!(
+            I::Installed | I::AlreadyInstalled => eprintln!(
                 "ML-DSA verify: verified Lean core installed — `dregg_pq::ml_dsa_verify` (turn/captp + \
                  wire silo) is now Lean-authoritative for this process; the `fips204` crate is out of \
                  starbridge-v2's verify TCB"
             ),
-            I::AlreadyInstalled => {}
             I::ExportAbsent => eprintln!(
-                "ML-DSA verify: the linked Lean archive does NOT export the real verify core — \
-                 starbridge-v2's ML-DSA verify falls back to the `fips204` crate (a valid FIPS-204 \
-                 verify, but NOT the Lean-verified authority). Rebuild against a HEAD-matching archive."
+                "ML-DSA verify: the linked Lean archive does NOT export the real verify core — NO \
+                 verified verify core is installed, so any ML-DSA verify this process reaches will be \
+                 REFUSED by dregg-pq's audit gate (process abort). This line used to claim the verify \
+                 'falls back to the `fips204` crate (a valid FIPS-204 verify)'; that stopped being \
+                 true when the audit gate went live. Rebuild against a HEAD-matching archive."
             ),
         }
     }
@@ -108,17 +127,18 @@ fn main() {
     //
     // WARNING: on the installed path signing is DETERMINISTIC (`rnd = 0`, the FIPS 204
     // deterministic variant — spec-valid); the crate fallback was hedged/randomized.
+    // Already armed by `install_verified_pq_cores` above; this reads the SIGN outcome back for the
+    // boot log the same way the verify arm does.
     #[cfg(feature = "embedded-executor")]
     {
         use dregg_sdk::MlDsaSignCoreRealInstall as S;
         match dregg_sdk::install_verified_mldsa_sign_core_real() {
-            S::Installed => eprintln!(
+            S::Installed | S::AlreadyInstalled => eprintln!(
                 "ML-DSA sign: verified Lean REAL sign core installed — the extracted full-byte \
                  `MlDsaSignReal.signCore` is now the PRODUCER behind `dregg_pq::MlDsaKey::sign` \
                  (captp handoff, cell-crypto, token, turn) for this process; the `fips204` crate \
                  is out of starbridge-v2's SIGN TCB. Signing is now DETERMINISTIC (rnd=0)."
             ),
-            S::AlreadyInstalled => {}
             S::ExportAbsent => eprintln!(
                 "ML-DSA sign: the linked Lean archive does NOT export the real sign core — NO \
                  verified sign core is installed, so any ML-DSA sign this process reaches will be \
