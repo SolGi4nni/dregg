@@ -99,6 +99,41 @@ GATES=(
   # direction a negative assertion fails in. ~40s, no cargo.
   "production-callers|300|python3 scripts/check-production-callers.py"
   "production-callers-red|60|python3 scripts/check-production-callers.py --self-test"
+  # An `#[ignore]` with no reason: a test switched off by someone no longer here to be
+  # asked. The tree is at ZERO of them (270 attributes, 270 reasons) and this keeps it
+  # there — at 270 across 224 crates, one un-annotated addition merges unnoticed.
+  # ⚠ It is NOT `grep -F '#[ignore]'`, which reports 177 violations on a tree that has
+  # none: this repo writes ABOUT its ignores constantly, in doc comments, in
+  # `producer_descriptor_coverage_gate.rs`'s 24-row table, and inside the reason
+  # strings themselves (`devnet_adversarial.rs` explains that "an #[ignore] reports
+  # `ignored` (honest), not `ok` (a lie)"). So it scans source with comments and string
+  # literals BLANKED, reusing check-production-callers.py::strip_noise rather than
+  # growing a second Rust reader. ~27s, no cargo. Paired with its own red run — the
+  # headline is a NEGATIVE assertion, and the -red row drives all four disease shapes
+  # plus the nine prose shapes that fooled the naive scan. It also asserts a MINIMUM
+  # population so a broken reader cannot read as clean.
+  "bare-ignore|180|python3 scripts/check-bare-ignore.py"
+  "bare-ignore-red|60|python3 scripts/check-bare-ignore.py --self-test"
+  # Every binary()/package()/test() name in `.config/nextest.toml` still resolves. That file
+  # selects tests BY NAME, and a name that outlives its referent does not mislead a reader —
+  # it changes what the suite RUNS. It has cost this repo twice. 2026-07-15, LOUD: a deleted
+  # test binary made nextest hard-error while validating EVERY profile, so
+  # `scripts/test-gauntlet.sh` exited nonzero in all four modes HAVING RUN ZERO TESTS, for an
+  # unknown number of commits. 2026-07-27, SILENT: measured against nextest 0.9.136/137/140,
+  # `binary()` and `package()` hard-error on an unresolvable name (exit 96) but `test(~…)`
+  # returns exit 0 and prints NOTHING — and 21 of the 41 `test(~…)` names in that file named
+  # tests deleted weeks earlier in `d260028f1`. Polarity decides the damage: in a `not (…)`
+  # exclusion a dead name is only a lie, but in `heavy`/`gpu`'s POSITIVE selectors it silently
+  # stops the profile running the test it exists to run, and drops GPU teeth into the
+  # GPU-less `armed` lane. ~35s, NO cargo build — resolution is `cargo metadata --no-deps`
+  # for binary/package (which beats nextest's own check, that can only fire after a full
+  # workspace compile) and an `rg` over `fn` declarations for test(). Paired with its own red
+  # run like the rows above, same reason: a NEGATIVE assertion passes just as happily when
+  # its own extractor is broken. That row is not decoration — it caught this gate injecting
+  # its fault into a COMMENT line and then pronouncing itself blind, and it drives the
+  # MIN_NAMES / MIN_PACKAGES / MIN_FNS floors red so a dead reader cannot read as clean.
+  "nextest-names|300|python3 scripts/check-nextest-names.py"
+  "nextest-names-red|120|python3 scripts/check-nextest-names.py --self-test"
 )
 # Expensive — only under --all, each with the reason it is not in the cheap set.
 GATES_ALL=(
