@@ -245,12 +245,34 @@ OT_ARTICLE=docs/opentheory-importer-poc/prodWitness.art \
    (Hilbert `select ↦ Classical.epsilon`).
 3. **Primitive rules with full Γ (hypothesis) bookkeeping:** `refl`, `assume`,
    `appThm` (`AP_THM`∘`AP_TERM`∘`TRANS`), `absThm` (`funext`), `betaConv`
-   (a *single* beta step), `eqMp` (`Eq.mp`), `deductAntisym` (`propext`, oriented
-   exactly as the reader's `IMP_ANTISYM_RULE (DISCH c2 th1)(DISCH c1 th2) ⟹ c2=c1`),
-   `subst` (`INST_TYPE` + `INST`, with fvar **re-interning** so a variable whose
-   type changes under type-substitution keeps the identity the article's later
-   commands use), `defineConst` (closed defs), and `thm` (closes free type/term
-   vars, `addDecl` — **the kernel checks here**).
+   (a *single* beta step), `eqMp` (`Eq.mp`), `sym` (`Eq.symm`), `trans`
+   (`Eq.trans`), `deductAntisym` (`propext`, oriented exactly as the reader's
+   `IMP_ANTISYM_RULE (DISCH c2 th1)(DISCH c1 th2) ⟹ c2=c1`), `proveHyp` (cut:
+   substitute the minor proof for the discharged hypothesis fvar), `subst`
+   (`INST_TYPE` **then** `INST`, run as **two sequential phases** — see the
+   nominal-variable note below), `defineConst` (closed/monomorphic defs, inlined),
+   `defineTypeOp` (**the type-definition primitive** — `Subtype φ` carving with a
+   total `abs`/`rep` and the two round-trip theorems proved generically), and
+   `thm` (closes free type/term vars **and each type var's `[Nonempty A]`
+   witness**, `addDecl` — **the kernel checks here**).
+
+   Two semantic subtleties were found and fixed the same way the earlier
+   `betaConv`/`deductAntisym`/`subst` bugs were (reading the reader + article
+   spec, then the kernel as the backstop):
+   - **HOL every-type-is-nonempty is load-bearing.** A `bool`-requiring article
+     asserts `!t.(!x:A.t)=t` and `? = \p. p(εp)`, and uses `select`; all three
+     are FALSE / ill-typed in Lean over an *empty* `A`. So every HOL type
+     variable is now introduced as `A : Type` **together with** an instance
+     `[Nonempty A]`; `select`↦`Classical.epsilon` draws its instance from a
+     structural `Nonempty` builder, and `subst`'s `INST_TYPE` **travels the
+     witness** (`A := τ` also rewrites `hA : Nonempty A` to a `Nonempty τ` proof)
+     or the kernel rejects a stray `Nonempty A` argument at `τ`.
+   - **HOL variables are NOMINAL; Lean fvars are not.** `INST` must match a
+     substitution redex `v` by **(name, type)**, not Lean `FVarId` — the
+     `INST_TYPE` re-intern can leave two distinct fvars for one HOL variable.
+     Running `INST_TYPE` and `INST` as one `replaceFVars` also let the type
+     re-intern **clobber** a term substitution of the same variable; the two are
+     now separate phases.
 4. The **axiom soundness gate (§2.4)**: `axiom` resolves *only* to a pre-proved
    Lean theorem whose statement is **defeq** to the asserted formula (a discharge
    table of the Andrews/HOL `bool` definitions), via metavar unification for
@@ -258,26 +280,40 @@ OT_ARTICLE=docs/opentheory-importer-poc/prodWitness.art \
    `axiom`. Every exported theorem is additionally checked axiom-clean with
    `collectAxioms ⊆ {propext, Classical.choice, Quot.sound}`.
 
-**Result (verbatim):** the real `prodWitness.art` (1712 lines, ~1170 commands,
-emitted by HOL4's logging kernel) imports end-to-end. Its five `axiom`
-assumptions — the real OpenTheory `bool`-theory definitions of `∃`, `⇒`, `∀`, `∧`
-and `⊦ T` — are each discharged through the gate, and the product-type existence
-witness is kernel-checked and axiom-clean:
-```
-imported (kernel-checked, axioms ⊆ classical set): OTImport.imported0_1 :
-  ∀ (A B : Type) (x : A) (y : B),
+**Results (verbatim).** Two real articles import end-to-end, kernel-checked and
+axiom-clean:
+- **`prodWitness.art`** (1712 lines, ~1170 commands): the product-type existence
+  witness. Discharges the `bool`-theory definitions of `∃`, `⇒`, `∀`, `∧`, `⊦ T`.
+  ```
+  OTImport.imported0_2 : ∀ (A B : Type) (x : A) (y : B),
     (fun p => ∃ x y, p = fun a b => a = x ∧ b = y) fun a b => a = x ∧ b = y
-```
-Two inline gate tests ship alongside: an **ACCEPT** article (`⊦ T`, real
-grammar, kernel-checked axiom-clean) and a **REJECT** article (a rogue
-`axiom ⊦ p`) that the gate refuses fail-closed.
+  ```
+- **`unit-def.art`** — the **OpenTheory standard-library `unit` type definition**
+  (package `unit-def-1.13`, HOL Light provenance; 2428 lines, ~1700 command
+  words). It exercises the whole new surface: `defineTypeOp`,
+  `defineConst`, `sym`, `trans`, `proveHyp`, `pop`, and **8** `axiom` assumptions
+  (the 5 above plus `? = \p.p(εp)`, `!t.(t<=>T)<=>t`, `!t.(!x:A.t)=t`, the last
+  two of which are the type-nonemptiness clauses). It carves the unit type as
+  `{b : Prop // b}` and proves its characteristic theorem:
+  ```
+  OTImport.imported0_1 : ∀ (x : {b // b}), x = Classical.epsilon (fun x => True)
+  ```
+Two inline gate tests ship alongside: an **ACCEPT** article (`⊦ T`) and two
+**REJECT** articles (a rogue `axiom ⊦ p`, one of them with the `Nonempty`-threaded
+type-var path active) that the gate refuses fail-closed. Every export additionally
+passes the `collectAxioms ⊆ {propext, Classical.choice, Quot.sound}` gate — which
+also **caught a real `sorryAx`** mid-development when a proof term was
+kernel-rejected, confirming the new rules cannot smuggle an axiom.
 
-**Remaining (labeled residuals, not blockers):** `defineTypeOp` (Subtype/Nonempty
-carving) is specced but not yet realized; `defineConst` supports closed (not
-polymorphic) definitions; `thm`/`axiom` support empty external Γ (which is what
-self-contained articles export). These are the next increments; the spine
-(parse → replay with Γ → `Expr` → kernel → axiom-clean, on a real article) is
-proven.
+**Remaining (labeled residuals, not blockers).** `defineConstList` and
+*polymorphic* `defineConst` (a constant with free type variables) are not yet
+supported — both hard-error. `defineTypeOp` handles arity-0 type operators (`unit`);
+a **parameterized** type definition (`pair`, `sum`, `option`) needs the type-arg
+abstraction + a metavar-unification instantiation path, and hard-errors today.
+`thm`/`axiom` support only an **empty external Γ** (what self-contained standard-
+library articles export). These are the next increments; the spine (parse → replay
+with Γ + type-nonemptiness + nominal `subst` → `Expr` → kernel → axiom-clean, on
+two real articles including a type definition) is proven.
 
 ### 3.4 The optional stronger guarantee (distinct from replay soundness)
 

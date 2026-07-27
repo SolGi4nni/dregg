@@ -88,9 +88,80 @@ theorem d_exists_def {A : Type} :
   · intro h
     exact h (∃ x, P x) (fun x px => ⟨x, px⟩)
 
+/-- HOL Light's `EXISTS_DEF`: `? = \P. P ((@) P)` — existence via Hilbert choice.
+    True in Lean over `Classical.epsilon`; needs the type nonempty (see below). -/
+theorem d_exists_select {A : Type} [Nonempty A] :
+    (@Exists A) = (fun (P : A → Prop) => P (Classical.epsilon P)) := by
+  funext P
+  apply propext
+  apply Iff.intro
+  · intro h; exact Classical.epsilon_spec h
+  · intro h; exact ⟨Classical.epsilon P, h⟩
+
+/-- A `bool`-theory clause: `!t. (t <=> T) <=> t`, i.e. `(t = True) = t` on `Prop`. -/
+theorem d_t_eq : ∀ (t : Prop), (t = True) = t := by
+  intro t; apply propext
+  exact Iff.intro (fun h => of_eq_true h) (fun h => eq_true h)
+
+/-- The `bool`-theory clause `!t. (!x:A. t) = t`. This is the assumption that
+    WITNESSES HOL's every-type-is-nonempty: it is FALSE in Lean for an empty `A`
+    (then `∀x:A,t` is `True` but `t` may be `False`). Discharged only with
+    `[Nonempty A]`, which the encoding now threads onto every HOL type variable. -/
+theorem d_forall_triv {A : Type} [Nonempty A] : ∀ (t : Prop), (∀ _ : A, t) = t := by
+  intro t; apply propext
+  apply Iff.intro
+  · intro h; exact h (Classical.choice inferInstance)
+  · intro h _; exact h
+
 /-- Names of the discharge theorems. `axiom` may resolve to exactly these. -/
 def dischargeNames : List Name :=
-  [``d_true, ``d_and_def, ``d_imp_def, ``d_forall_def, ``d_exists_def]
+  [``d_true, ``d_and_def, ``d_imp_def, ``d_forall_def, ``d_exists_def,
+   ``d_exists_select, ``d_t_eq, ``d_forall_triv]
+
+/- ======================================================================
+   Generic realization of HOL `defineTypeOp` (carve a non-empty subset).
+
+   A HOL type definition supplies `⊦ φ t` (a witness that the predicate `φ` on
+   an existing type `σ` is satisfiable) and introduces a new type isomorphic to
+   `{x // φ x}` with a total `abs : σ → newT` and `rep : newT → σ`. We realize
+   `newT := Subtype φ`, `rep := Subtype.val`, and `abs` sending off-predicate
+   junk to the witness (HOL's `abs` is total and underspecified off `φ`). The
+   two OpenTheory round-trip theorems are proved generically here, once. -/
+
+/-- `abs`: total; identity-with-proof on `φ`, junk (= the witness) off `φ`. -/
+noncomputable def holAbs {σ : Type} (φ : σ → Prop) (w : σ) (hw : φ w) (r : σ) : {x // φ x} := by
+  classical
+  exact if h : φ r then ⟨r, h⟩ else ⟨w, hw⟩
+
+/-- `rep`: the underlying value. -/
+def holRep {σ : Type} (φ : σ → Prop) (a : {x // φ x}) : σ := a.val
+
+theorem holAbs_val_pos {σ : Type} (φ : σ → Prop) (w : σ) (hw : φ w) (r : σ) (h : φ r) :
+    (holAbs φ w hw r).val = r := by
+  unfold holAbs
+  rw [dif_pos h]
+
+/-- OpenTheory `absRep`: `(λa. abs (rep a)) = λa. a`. -/
+theorem hol_abs_rep {σ : Type} (φ : σ → Prop) (w : σ) (hw : φ w) :
+    (fun a : {x // φ x} => holAbs φ w hw (holRep φ a)) = (fun a => a) := by
+  funext a
+  show holAbs φ w hw a.val = a
+  apply Subtype.ext
+  exact holAbs_val_pos φ w hw a.val a.property
+
+/-- OpenTheory `repAbs`: `(λr. rep (abs r) = r) = λr. φ r`. -/
+theorem hol_rep_abs {σ : Type} (φ : σ → Prop) (w : σ) (hw : φ w) :
+    (fun r => holRep φ (holAbs φ w hw r) = r) = (fun r => φ r) := by
+  funext r
+  apply propext
+  apply Iff.intro
+  · intro h
+    have hp := (holAbs φ w hw r).property
+    have hv : (holAbs φ w hw r).val = r := h
+    rwa [hv] at hp
+  · intro h
+    show (holAbs φ w hw r).val = r
+    exact holAbs_val_pos φ w hw r h
 
 /- ======================================================================
    Stack-machine objects and importer state.
@@ -118,10 +189,12 @@ inductive Obj where
 structure St where
   stk     : Array Obj := #[]
   dict    : Array (Int × Obj) := #[]
-  tyvars  : Array (String × Expr) := #[]          -- name -> fvar : Type
+  tyvars  : Array (String × Expr × Expr) := #[]   -- name × (A : Type) × (hA : Nonempty A) fvar
   tmvars  : Array (String × Expr × Expr) := #[]   -- name × encoded-type × fvar
   hyps    : Array (Expr × Expr) := #[]            -- statement × hyp fvar
-  defined : Array (String × Name) := #[]          -- OT const name -> Lean def name
+  defined : Array (String × Expr) := #[]          -- OT const name -> its meaning Expr
+  definedTyops : Array (String × Expr) := #[]     -- OT tyop name -> carrier Expr (arity 0)
+  tyNonempty : Array (Expr × Expr) := #[]         -- carrier type × Nonempty proof
   count   : Nat := 0
 
 /- ---- small helpers on St ---- -/
@@ -161,8 +234,37 @@ def Obj.asVar : Obj → MetaM (String × Expr × Expr)
    The encoding.
    ====================================================================== -/
 
+/-- Build a `Nonempty τ` proof for an encoded type `τ`, threading HOL's
+    every-type-is-nonempty invariant. Bare type variables carry their own
+    `Nonempty` witness in `st.tyvars`; defined types (subtypes) carry theirs in
+    `st.tyNonempty`; `Prop`/`Nat`/`→` are structural. -/
+partial def mkNonempty (st : St) (τ : Expr) : MetaM Expr := do
+  if τ.isFVar then
+    if let some (_, _, hA) := st.tyvars.find? (fun (_, a, _) => a == τ) then
+      return hA
+  for (carrier, wit) in st.tyNonempty do
+    if ← isDefEq τ carrier then return wit
+  if τ == mkSort Level.zero then
+    return ← mkAppM ``Nonempty.intro #[mkConst ``True]
+  if τ == mkConst ``Nat then
+    return ← mkAppM ``Nonempty.intro #[mkConst ``Nat.zero]
+  match τ with
+  | .forallE _ a b _ =>
+      if b.hasLooseBVars then throwError "mkNonempty: dependent function type {τ}"
+      let wB ← mkNonempty st b
+      let bElem ← mkAppM ``Classical.choice #[wB]
+      let f ← withLocalDeclD `x a fun x => mkLambdaFVars #[x] bElem
+      return ← mkAppM ``Nonempty.intro #[f]
+  | _ =>
+      match ← synthInstance? (← mkAppM ``Nonempty #[τ]) with
+      | some e => return e
+      | none => throwError "mkNonempty: cannot construct Nonempty for {τ}"
+
 /-- Interpret an applied HOL type operator as a native Lean type `Expr`. -/
-def interpTyop (op : String) (args : Array Expr) : MetaM Expr := do
+def interpTyop (st : St) (op : String) (args : Array Expr) : MetaM Expr := do
+  if let some (_, carrier) := st.definedTyops.find? (·.1 == op) then
+    if args.isEmpty then return carrier
+    else throwError "interpTyop: parameterized defined type operator {op} not supported"
   match op, args with
   | "bool", #[]    => pure (mkSort Level.zero)      -- Prop
   | "ind",  #[]    => pure (mkConst ``Nat)          -- fixed infinite carrier
@@ -171,9 +273,9 @@ def interpTyop (op : String) (args : Array Expr) : MetaM Expr := do
   | _, _ => throwError "interpTyop: unsupported type operator {op}/{args.size}"
 
 /-- Interpret a HOL constant at a given (already-encoded) monomorphic type. -/
-def interpConst (defined : Array (String × Name)) (nm : String) (ty : Expr) : MetaM Expr := do
-  if let some (_, leanNm) := defined.find? (·.1 == nm) then
-    return mkConst leanNm
+def interpConst (st : St) (nm : String) (ty : Expr) : MetaM Expr := do
+  if let some (_, e) := st.defined.find? (·.1 == nm) then
+    return e
   match nm with
   | "=" =>
       let α := ty.bindingDomain!
@@ -197,20 +299,45 @@ def interpConst (defined : Array (String × Name)) (nm : String) (ty : Expr) : M
       mkAppOptM ``Exists #[A]
   | "select" =>
       let A := ty.bindingDomain!.bindingDomain!    -- (A -> Prop) -> A
-      mkAppOptM ``Classical.epsilon #[A]
+      let inst ← mkNonempty st A
+      mkAppOptM ``Classical.epsilon #[A, inst]
   | _ => throwError "interpConst: unsupported constant {nm}"
 
 /- ======================================================================
    The axiom gate.
    ====================================================================== -/
 
+/-- Peel a theorem type's leading NON-default binders (type params, instances)
+    into fresh metavars, stopping at the first explicit binder. -/
+partial def peelImplicit (ty : Expr) (mvars : Array Expr) : MetaM (Expr × Array Expr) := do
+  match ty with
+  | .forallE _ d b bi =>
+      match bi with
+      | .default => return (ty, mvars)
+      | _ =>
+          let mv ← mkFreshExprMVar d
+          peelImplicit (b.instantiate1 mv) (mvars.push mv)
+  | _ => return (ty, mvars)
+
 /-- Try to discharge an `axiom` command's assertion `concl` (with empty Γ) to a
-    pre-proved Lean theorem. Returns the proof term, or `none` (⇒ hard error). -/
+    pre-proved Lean theorem. Returns the proof term, or `none` (⇒ hard error).
+
+    Only the discharge theorem's leading NON-default binders (its type
+    parameters and `[Nonempty _]` instances) are turned into metavars; the first
+    explicit binder stops the peel so a formula-level HOL `!` (encoded as a Lean
+    `∀`) is matched, not stripped. Instance metavars that proof-irrelevance
+    leaves unassigned after unification are then synthesized from the local
+    context (where each HOL type variable's `Nonempty` witness lives). -/
 def tryDischarge (concl : Expr) : MetaM (Option Expr) := do
   for dn in dischargeNames do
     let ci ← getConstInfo dn
-    let (mvars, _, dConcl) ← forallMetaTelescope ci.type
+    let (dConcl, mvars) ← peelImplicit ci.type #[]
     if ← isDefEq dConcl concl then
+      for mv in mvars do
+        let mvId := mv.mvarId!
+        unless ← mvId.isAssigned do
+          if let some inst ← synthInstance? (← inferType mv) then
+            mvId.assign inst
       let pf := mkAppN (mkConst dn (ci.levelParams.map (fun _ => Level.zero))) mvars
       return some (← instantiateMVars pf)
   return none
@@ -338,16 +465,22 @@ partial def go (st : St) : List String → TermElabM Unit
           let (n, st) ← pop1 st
           let nm ← n.asName
           match st.tyvars.find? (·.1 == nm) with
-          | some (_, fv) => cont { st with stk := st.stk.push (.type fv) }
+          | some (_, fv, _) => cont { st with stk := st.stk.push (.type fv) }
           | none =>
-            withLocalDeclD (Name.mkSimple nm) (mkSort (Level.succ Level.zero)) fun fv =>
-              go { st with stk := st.stk.push (.type fv), tyvars := st.tyvars.push (nm, fv) } rest
+            -- A HOL type variable maps to a Lean `Type` fvar TOGETHER with a
+            -- `[Nonempty A]` instance: HOL types are all inhabited, and the
+            -- `bool` theory's `!t.(!x:A.t)=t` / `?=\p.p(εp)` assumptions (and
+            -- `select`) are unsound over an empty carrier.
+            withLocalDeclD (Name.mkSimple nm) (mkSort (Level.succ Level.zero)) fun fv => do
+              let ne ← mkAppM ``Nonempty #[fv]
+              withLocalDecl (Name.mkSimple s!"ne_{nm}") .instImplicit ne fun hA =>
+                go { st with stk := st.stk.push (.type fv), tyvars := st.tyvars.push (nm, fv, hA) } rest
       | "opType" =>
           let (lst, st) ← pop1 st         -- arg list on top
           let (opO, st) ← pop1 st
           let argObjs ← lst.asList
           let args ← argObjs.mapM (fun o => do return (← o.asType))
-          let ty ← interpTyop (← opO.asTyop) args
+          let ty ← interpTyop st (← opO.asTyop) args
           cont { st with stk := st.stk.push (.type ty) }
       | "const" =>
           let (n, st) ← pop1 st
@@ -355,7 +488,7 @@ partial def go (st : St) : List String → TermElabM Unit
       | "constTerm" =>
           let (tyO, st) ← pop1 st          -- type on top
           let (cO, st) ← pop1 st
-          let e ← interpConst st.defined (← cO.asConst) (← tyO.asType)
+          let e ← interpConst st (← cO.asConst) (← tyO.asType)
           cont { st with stk := st.stk.push (.term e) }
       | "var" =>
           let (tyO, st) ← pop1 st          -- type on top
@@ -464,32 +597,63 @@ partial def go (st : St) : List String → TermElabM Unit
           let tmsO ← sub[1]!.asList
           let mut αfvars : Array Expr := #[]
           let mut Ttys   : Array Expr := #[]
+          -- Each HOL type variable `A` carries an instance witness `hA : Nonempty A`.
+          -- When `A := τ`, that witness must travel too (`hA ↦ Nonempty τ` proof),
+          -- else a `Classical.epsilon`/`select` in the proof keeps a `Nonempty A`
+          -- argument at the substituted `τ` and the kernel rejects it.
+          let mut neOld : Array Expr := #[]
+          let mut neNew : Array Expr := #[]
           for e in tysO do
             let pr ← e.asList          -- [Name a, Type t]
             let a ← pr[0]!.asName
             let t ← pr[1]!.asType
             match st.tyvars.find? (·.1 == a) with
-            | some (_, fv) => αfvars := αfvars.push fv; Ttys := Ttys.push t
+            | some (_, fv, hA) =>
+                -- Skip an identity type substitution `α := α`: it changes no type
+                -- but would spuriously trigger the INST_TYPE re-intern path, which
+                -- then clobbers a term substitution of the same variable.
+                unless (← isDefEq fv t) do
+                  αfvars := αfvars.push fv; Ttys := Ttys.push t
+                  neOld := neOld.push hA; neNew := neNew.push (← mkNonempty st t)
             | none => pure ()          -- type var not in scope ⇒ substitution is a no-op for it
-          let mut vfvars : Array Expr := #[]
-          let mut tterms : Array Expr := #[]
+          -- Term-substitution redexes, kept as NOMINAL (name, type, residue). HOL
+          -- variables are identified by name+type; INST_TYPE re-interning can leave
+          -- two Lean fvars with the same (name,type), so `instTerm` below matches by
+          -- (name,type), not FVarId — this IS HOL's `INST`.
+          let mut redexes : Array (Name × Expr × Expr) := #[]
           for e in tmsO do
             let pr ← e.asList          -- [Var v, Term t]
-            let (_, _, fv) ← pr[0]!.asVar
+            let (vnm, vty, _fv) ← pr[0]!.asVar
             let t ← pr[1]!.asTerm
-            vfvars := vfvars.push fv; tterms := tterms.push t
-          -- base substitution (types + the article-provided term substitutions)
-          let baseOld := αfvars ++ vfvars
-          let baseNew := Ttys ++ tterms
-          if αfvars.isEmpty && th.hyps.isEmpty then
-            -- pure term substitution, no hypotheses: a direct replaceFVars
-            push_thm st { hyps := #[], concl := th.concl.replaceFVars baseOld baseNew,
-                          proof := th.proof.replaceFVars baseOld baseNew } rest
+            redexes := redexes.push (Name.mkSimple vnm, vty, t)
+          -- Phase 2 (`INST tms`): nominal simultaneous term substitution.
+          let instTerm (e : Expr) : MetaM Expr := do
+            let mut oldA : Array Expr := #[]
+            let mut newA : Array Expr := #[]
+            for d in (← getLCtx) do
+              unless d.isImplementationDetail do
+                for (rn, rt, res) in redexes do
+                  if d.userName == rn then
+                    if ← isDefEq d.type rt then
+                      oldA := oldA.push (.fvar d.fvarId); newA := newA.push res
+                      break
+            return e.replaceFVars oldA newA
+          -- OpenTheory `subst` = `INST_TYPE tys th` (phase 1) THEN `INST tms th`
+          -- (phase 2), SEQUENTIALLY. Doing both in one `replaceFVars` lets the
+          -- type re-intern of a variable clobber its term substitution, so the
+          -- phases are kept separate.
+          if αfvars.isEmpty then
+            -- No type substitution: re-intern only hyps whose statement changes
+            -- under the term subst, then apply the term subst to concl/proof.
+            let finalHstmts ← th.hyps.mapM (fun h => do instTerm (← inferType h))
+            withEnsuredHyps st finalHstmts fun st newHs => do
+              let concl' ← instTerm (th.concl.replaceFVars th.hyps newHs)
+              let proof' ← instTerm (th.proof.replaceFVars th.hyps newHs)
+              push_thm st { hyps := newHs, concl := concl', proof := proof' } rest
           else
-            -- INST_TYPE changes the TYPES of the theorem's term variables and
-            -- hypotheses. Lean fvars have fixed types, so we RE-INTERN each affected
-            -- variable/hypothesis at its substituted type (matching the identity the
-            -- article's later commands will use) and rewrite the proof accordingly.
+            -- Phase 1 (INST_TYPE): re-intern each term variable / hypothesis whose
+            -- TYPE mentions a substituted type variable (Lean fvars have fixed
+            -- types), then rewrite. Phase 2 (the term subst) is applied afterwards.
             let appearing := st.tmvars.filter
               (fun (_, _, w) => th.proof.containsFVar w.fvarId! || th.concl.containsFVar w.fvarId!)
             let toRefresh := appearing.filter
@@ -498,32 +662,98 @@ partial def go (st : St) : List String → TermElabM Unit
             let specs := toRefresh.map (fun (nm, τ, _) => (nm, τ.replaceFVars αfvars Ttys))
             let oldHs := th.hyps
             withEnsuredTmvars st specs fun st newWs => do
-              -- hyp statements must be substituted with BOTH the base subst AND the
-              -- term-variable refresh (a hyp may mention a refreshed variable).
-              let hOld := baseOld ++ oldWs
-              let hNew := baseNew ++ newWs
-              let newHstmts ← oldHs.mapM (fun h => do return (← inferType h).replaceFVars hOld hNew)
-              withEnsuredHyps st newHstmts fun st newHs => do
-                let allOld := baseOld ++ oldWs ++ oldHs
-                let allNew := baseNew ++ newWs ++ newHs
-                let newThm : Thm := { hyps := newHs, concl := th.concl.replaceFVars allOld allNew,
-                                      proof := th.proof.replaceFVars allOld allNew }
-                push_thm st newThm rest
+              let tyOld := αfvars ++ neOld ++ oldWs
+              let tyNew := Ttys ++ neNew ++ newWs
+              -- final hyp statements: type subst THEN term subst
+              let finalHstmts ← oldHs.mapM (fun h => do instTerm ((← inferType h).replaceFVars tyOld tyNew))
+              withEnsuredHyps st finalHstmts fun st newHs => do
+                let concl1 := th.concl.replaceFVars (tyOld ++ oldHs) (tyNew ++ newHs)
+                let proof1 := th.proof.replaceFVars (tyOld ++ oldHs) (tyNew ++ newHs)
+                let concl2 ← instTerm concl1
+                let proof2 ← instTerm proof1
+                push_thm st { hyps := newHs, concl := concl2, proof := proof2 } rest
+      | "sym" =>
+          let (tO, st) ← pop1 st            -- ⊦ t = u  (top)
+          let t ← tO.asThm
+          let proof ← mkEqSymm t.proof
+          let concl ← inferType proof
+          push_thm st { hyps := t.hyps, concl, proof } rest
+      | "trans" =>
+          let (t2O, st) ← pop1 st           -- Δ ⊦ b = c  (top)
+          let (t1O, st) ← pop1 st           -- Γ ⊦ a = b
+          let t1 ← t1O.asThm; let t2 ← t2O.asThm
+          let proof ← mkEqTrans t1.proof t2.proof
+          let concl ← inferType proof
+          push_thm st { hyps := hUnion t1.hyps t2.hyps, concl, proof } rest
+      | "proveHyp" =>
+          let (t2O, st) ← pop1 st           -- Δ ⊦ ψ  (top)
+          let (t1O, st) ← pop1 st           -- Γ ⊦ φ
+          let t1 ← t1O.asThm; let t2 ← t2O.asThm
+          -- discharge φ (proved by t1) from Δ's hypotheses of t2, if present.
+          match ← findHyp t2.hyps t1.concl with
+          | some fv =>
+              let proof := t2.proof.replaceFVars #[fv] #[t1.proof]
+              let remaining := t2.hyps.filter (fun h => h.fvarId! != fv.fvarId!)
+              push_thm st { hyps := hUnion t1.hyps remaining, concl := t2.concl, proof } rest
+          | none =>
+              push_thm st { hyps := hUnion t1.hyps t2.hyps, concl := t2.concl, proof := t2.proof } rest
+      | "defineTypeOp" =>
+          let (axO, st) ← pop1 st           -- ⊦ φ t  (top: existence witness)
+          let (lsO, st) ← pop1 st           -- list of type-variable-arg names A
+          let (repO, st) ← pop1 st          -- rep name
+          let (absO, st) ← pop1 st          -- abs name
+          let (nO, st) ← pop1 st            -- tyop name
+          let ax ← axO.asThm
+          let ls ← lsO.asList
+          let repNm ← repO.asName
+          let absNm ← absO.asName
+          let opNm ← nO.asName
+          unless ls.isEmpty do
+            throwError "defineTypeOp: parameterized (arity>0) type definitions not supported yet (args {ls.size})"
+          unless ax.hyps.isEmpty do
+            throwError "defineTypeOp: the existence theorem must have empty hypotheses"
+          let (φ, wit) ← (match ax.concl with
+            | .app f a => pure (f, a)
+            | _ => throwError "defineTypeOp: existence theorem is not an application (φ t)")
+          -- carrier {x // φ x}; rep = .val; abs total (junk = witness off φ).
+          let σ ← inferType wit
+          let carrier ← mkAppM ``Subtype #[φ]
+          let absE ← mkAppM ``holAbs #[φ, wit, ax.proof]      -- : σ → carrier
+          let repE ← mkAppM ``holRep #[φ]                     -- : carrier → σ
+          -- ⟨wit, ax.proof⟩ : Subtype φ — give the predicate explicitly (HO infer
+          -- of `p` from `ax.proof : p wit` is ambiguous).
+          let witElem ← mkAppOptM ``Subtype.mk #[some σ, some φ, some wit, some ax.proof]
+          let neCarrier ← mkAppM ``Nonempty.intro #[witElem]
+          let absRepPf ← mkAppM ``hol_abs_rep #[φ, wit, ax.proof]
+          let absRepConcl ← inferType absRepPf
+          let repAbsPf ← mkAppM ``hol_rep_abs #[φ, wit, ax.proof]
+          let repAbsConcl ← inferType repAbsPf
+          let st := { st with
+              defined := (st.defined.push (absNm, absE)).push (repNm, repE),
+              definedTyops := st.definedTyops.push (opNm, carrier),
+              tyNonempty := st.tyNonempty.push (carrier, neCarrier) }
+          let stk := (((( st.stk.push (.tyop opNm)).push (.const absNm)).push (.const repNm)).push
+              (.thm { hyps := #[], concl := absRepConcl, proof := absRepPf })).push
+              (.thm { hyps := #[], concl := repAbsConcl, proof := repAbsPf })
+          go { st with stk } rest
       | "defineConst" =>
           let (tO, st) ← pop1 st           -- defining term on top
           let (nO, st) ← pop1 st
           let t ← tO.asTerm
           let nm ← nO.asName
-          let ty ← inferType t
-          -- only closed (monomorphic, variable-free) definitions in this build
-          let leanNm := Name.mkSimple s!"otdef_{st.count}"
-          addDecl (.defnDecl { name := leanNm, levelParams := [], type := ty, value := t, hints := .abbrev, safety := .safe })
-          let cst := mkConst leanNm
-          let concl ← mkEq cst t
-          let proof ← mkExpectedTypeHint (← mkEqRefl cst) concl
-          let st := { st with defined := st.defined.push (nm, leanNm), count := st.count + 1 }
-          -- push defining thm, then the const object
-          go { st with stk := (st.stk.push (.thm { hyps := #[], concl, proof })).push (.const nm) } rest
+          -- The spec forbids free TERM variables. Free TYPE variables (a
+          -- polymorphic constant) are a labeled residual — this build inlines
+          -- the meaning, which is faithful only for a monomorphic definition.
+          let tmFv := st.tmvars.any (fun (_, _, w) => t.containsFVar w.fvarId!)
+          if tmFv then throwError "defineConst: defining term has a free term variable (spec-forbidden)"
+          let tyFv := st.tyvars.any (fun (_, a, _) => t.containsFVar a.fvarId!)
+          if tyFv then throwError "defineConst: polymorphic constant (free type variable) not supported yet"
+          -- inline: the new constant IS `t`; the defining theorem `⊦ c = t` is `⊦ t = t`.
+          let concl ← mkEq t t
+          let proof ← mkExpectedTypeHint (← mkEqRefl t) concl
+          let st := { st with defined := st.defined.push (nm, t) }
+          -- push order per the reader/spec: Const c (below), then Thm (⊦ c = t) on top.
+          go { st with stk := (st.stk.push (.const nm)).push (.thm { hyps := #[], concl, proof }) } rest
       | "axiom" =>
           let (tO, st) ← pop1 st           -- concl term on top
           let (tsO, st) ← pop1 st          -- hyp list
@@ -556,9 +786,17 @@ partial def go (st : St) : List String → TermElabM Unit
           let tmClosed := st.tmvars.filter (fun (_, _, fv) => occursE fv (#[c, proof0] ++ hypTypes))
           let tmClose := tmClosed.map (fun (_, _, fv) => fv)
           let tmTypes := tmClosed.map (fun (_, ty, _) => ty)
-          -- type vars occurring in the statement/proof OR in a kept term-var/hyp type
-          let tyClose := (st.tyvars.map (·.2)).filter
-            (fun fv => occursE fv (#[c, proof0] ++ hypTypes ++ tmTypes))
+          -- type vars occurring anywhere (statement/proof/kept term-var+hyp types),
+          -- plus their `[Nonempty A]` witness when the proof actually uses it. `A`
+          -- precedes `hA`, and both precede the term vars/hyps that depend on them.
+          let occSet := #[c, proof0] ++ hypTypes ++ tmTypes
+          let mut tyClose : Array Expr := #[]
+          for (_, A, hA) in st.tyvars do
+            let aUsed := occursE A occSet
+            let hUsed := occursE hA occSet
+            if aUsed || hUsed then
+              tyClose := tyClose.push A
+              if hUsed then tyClose := tyClose.push hA
           let closeVars := tyClose ++ tmClose ++ hypFvars
           let stmt ← mkForallFVars closeVars c
           let val  ← mkLambdaFVars closeVars proof0
@@ -632,6 +870,28 @@ def rogueArticle : String := String.intercalate "\n"
 run_cmd OTImport.importArticle "axiom-gate ACCEPT (⊦ T)" acceptArticle
 
 run_cmd OTImport.importArticleExpectFail "axiom-gate REJECT (rogue ⊦ p)" rogueArticle
+
+/-- axiom-gate REJECT under the NEW machinery: open a type variable `A` (so the
+    `Nonempty`-threaded type-var path is active), then assert a rogue `axiom ⊦ p`.
+    It is still not defeq to any discharge theorem and MUST be refused. -/
+def rogueArticle2 : String := String.intercalate "\n"
+  ["6","version",
+   "\"A\"","varType","pop",
+   "nil",
+   "\"p\"","\"bool\"","typeOp","nil","opType","var","varTerm",
+   "axiom"]
+
+run_cmd OTImport.importArticleExpectFail "axiom-gate REJECT (rogue ⊦ p, type-var path)" rogueArticle2
+
+-- Bundled real standard-library article: `unit-def` (the OpenTheory `unit` type
+-- definition; exercises defineTypeOp/defineConst/sym/trans/proveHyp/pop). Runs
+-- when built from the repo root; a no-op elsewhere.
+run_cmd do
+  let p : System.FilePath := "docs/opentheory-importer-poc/unit-def.art"
+  if ← p.pathExists then
+    let s ← IO.FS.readFile p
+    OTImport.importArticle "unit-def (bundled OpenTheory stdlib)" s
+  else logInfo "unit-def.art not found relative to cwd; import via OT_ARTICLE instead"
 
 -- Import a real article from the path in `$OT_ARTICLE` (e.g. prodWitness.art).
 run_cmd do
