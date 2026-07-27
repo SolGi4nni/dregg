@@ -980,13 +980,21 @@ pub fn render_url_then_input_on_servo(
 // `with_gl` SWGL lock, so the single-thread + single-engine discipline holds.
 // ─────────────────────────────────────────────────────────────────────────────
 
-thread_local! {
-    /// At most ONE [`LiveWebView`] (hence one `Servo` engine) may exist per process —
-    /// `servo_config::opts` is a process-wide `OnceCell` set once by `ServoBuilder::build`.
-    /// This flag refuses a second concurrent engine so a buggy caller fails loudly
-    /// instead of tripping servo's `OnceCell` re-set panic. Cleared on [`LiveWebView`] drop.
-    static LIVE_WEBVIEW_ALIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
+/// At most ONE [`LiveWebView`] (hence one `Servo` engine) may exist per process —
+/// `servo_config::opts` is a process-wide `OnceCell` set once by `ServoBuilder::build`. This flag
+/// refuses a second concurrent engine so a buggy caller fails loudly instead of tripping servo's
+/// `OnceCell` re-set panic. Cleared on [`LiveWebView`] drop.
+///
+/// ⚠ IT WAS A `thread_local!`, WHICH IS THE ONE PLACE THIS GUARD COULD NEVER FIRE. The constraint
+/// it enforces is per-PROCESS (servo's `OnceCell`), so a per-THREAD flag is always `false` for the
+/// second claimant on a different thread — and the caller that matters most is `libtest`, which
+/// runs every `#[test]` on its own thread. MEASURED on persvati 2026-07-27 (`cargo test
+/// -p servo-render --features libservo --lib -- --test-threads=4`): three tests each built an
+/// engine, one won, and the other two died inside servo at
+/// `servo-config-0.1.0/opts.rs:246` — the exact panic this flag exists to pre-empt, with the guard
+/// compiled in and unable to see it. A `static AtomicBool` is what the doc above always described.
+static LIVE_WEBVIEW_ALIVE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// A persistent, live `servo::WebView` on its own `servo::Servo` engine, rendering
 /// into a held [`ServoSwglContext`] behind the cap gate — the embeddable web pane.
@@ -1032,7 +1040,7 @@ pub struct LiveWebView {
 
 impl Drop for LiveWebView {
     fn drop(&mut self) {
-        LIVE_WEBVIEW_ALIVE.with(|a| a.set(false));
+        LIVE_WEBVIEW_ALIVE.store(false, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -1046,7 +1054,7 @@ impl LiveWebView {
     ///
     /// MUST be called under [`crate::with_gl`].
     pub fn new(width: u32, height: u32) -> Result<Self, &'static str> {
-        if LIVE_WEBVIEW_ALIVE.with(|a| a.replace(true)) {
+        if LIVE_WEBVIEW_ALIVE.swap(true, std::sync::atomic::Ordering::SeqCst) {
             return Err("a LiveWebView (Servo engine) already exists on this process");
         }
         // Install the default rustls provider before the net stack spins up — the
@@ -1056,6 +1064,29 @@ impl LiveWebView {
         let servo = ServoBuilder::default()
             .event_loop_waker(Box::new(HeadlessWaker))
             .build();
+        Ok(Self::adopt(servo, width, height))
+    }
+
+    /// Build a pane around an ALREADY-BUILT engine — the constructor for a process that has one
+    /// `servo::Servo` and several things to do with it. `servo_config::opts` is a process-wide
+    /// `OnceCell`, so a second `ServoBuilder::build` is not a slow path, it is a FAILURE; a caller
+    /// that already owns an engine must hand it over rather than ask [`Self::new`] for another.
+    /// `Servo` is `!Send`, so the engine and this pane live on ONE thread.
+    ///
+    /// Same one-pane-per-process claim as [`Self::new`] (released on drop).
+    ///
+    /// MUST be called under [`crate::with_gl`].
+    pub fn from_servo(servo: servo::Servo, width: u32, height: u32) -> Result<Self, &'static str> {
+        if LIVE_WEBVIEW_ALIVE.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return Err("a LiveWebView (Servo engine) already exists on this process");
+        }
+        Ok(Self::adopt(servo, width, height))
+    }
+
+    /// The shared tail of [`Self::new`] / [`Self::from_servo`]: select the render backend for
+    /// `width`x`height` and assemble the pane. The one-pane claim is the CALLER's (both public
+    /// constructors take it first), so this never claims and never releases.
+    fn adopt(servo: servo::Servo, width: u32, height: u32) -> Self {
         // GPU-accelerated paint where a hardware GL device opens, SWGL otherwise — the
         // §4.3 runtime selection, built INLINE so `gpu_backed` reflects the ACTUAL
         // backend produced (not a separate `gpu_available()` probe that could disagree
@@ -1082,7 +1113,7 @@ impl LiveWebView {
             _ => (Rc::new(ServoSwglContext::new(width, height)), false),
         };
         let _ = ServoRenderingContext::make_current(&*rendering_context);
-        Ok(LiveWebView {
+        LiveWebView {
             servo,
             rendering_context,
             gpu_backed,
@@ -1091,7 +1122,7 @@ impl LiveWebView {
             frame: None,
             size: (width, height),
             url: None,
-        })
+        }
     }
 
     /// Build the pane AND load `url` through the cap gate, pumping until the page is
@@ -1434,8 +1465,42 @@ mod tests {
     /// lays the page out and paints it into the SWGL framebuffer, and the test asserts
     /// the frame carries genuine multi-color laid-out content (not a uniform clear) and
     /// writes it to a PNG.
+    /// **ONE PROCESS, ONE ENGINE — the three real-engine legs, driven in order on it.**
+    ///
+    /// `servo_config::opts` is a process-global `OnceCell` that `ServoBuilder::build` SETS, so a
+    /// process may construct exactly ONE `servo::Servo`. Each of the three legs below used to be
+    /// its own `#[test]` building its own engine — and libtest runs `#[test]`s on PARALLEL
+    /// THREADS, so under `cargo test --workspace` (which arms `libservo`: `starbridge-v2`'s
+    /// `default = ["desktop"]` → `web-shell` → `servo-render/libservo`) whichever leg got there
+    /// first won and the other two lost, non-deterministically: MEASURED on persvati 2026-07-27 at
+    /// `--test-threads=4`, two of the three died inside servo at `servo-config-0.1.0/opts.rs:246`,
+    /// and on the CI run this was reported from one of them instead PARKED — 23 minutes of wall
+    /// clock on 4 seconds of CPU, which is what made the workspace test unrunnable unattended.
+    ///
+    /// (It is not a display: this box is headless and `gpu_available()` reports `true` — surfman
+    /// opens a hardware adapter here without one.)
+    ///
+    /// The legs are ordinary `fn`s now, called in sequence on ONE engine, under ONE
+    /// [`crate::with_gl`] (that lock is a plain `Mutex` and is NOT reentrant, so the legs must not
+    /// re-take it). Every assertion of the three original tests is preserved verbatim; the only
+    /// thing deleted is the second and third `ServoBuilder::build`. The LiveWebView leg runs LAST
+    /// because it ADOPTS the engine ([`LiveWebView::from_servo`]) rather than borrowing it.
     #[test]
-    fn first_real_render_data_page_through_the_compositor_gate() {
+    fn the_real_engine_renders_presents_and_re_renders_on_one_process_servo() {
+        crate::swgl_context::with_gl(|| {
+            // Install the default rustls provider before the net stack spins up (see the fn doc).
+            super::ensure_crypto_provider();
+            let servo = servo::ServoBuilder::default()
+                .event_loop_waker(Box::new(super::HeadlessWaker))
+                .build();
+
+            first_real_render_data_page_through_the_compositor_gate(&servo);
+            a_scroll_input_re_renders_the_webview_to_a_different_tile(&servo);
+            live_webview_renders_and_re_renders_on_the_selected_backend(servo);
+        });
+    }
+
+    fn first_real_render_data_page_through_the_compositor_gate(servo: &servo::Servo) {
         // An in-memory HTML page — no network, no filesystem; the engine lays it out
         // and paints it into our SWGL framebuffer. Two distinct laid-out regions so the
         // captured frame PROVES real layout happened (a clear-to-color stand-in could
@@ -1455,22 +1520,18 @@ mod tests {
         let surface = SurfaceCapability::root(presenter, AuthRequired::Either);
 
         // THE STAGE-A STEP-3 PAYOFF, now executed: drive the real Servo engine to
-        // rasterize the page. Serialized on the process-wide SWGL current-context lock
-        // (SWGL's `ctx` is a global) for the whole engine-drive → readback sequence.
-        // We build ONE engine and render BOTH this box page and the text page on it
-        // (`render_glyph_page`), because Servo's `servo_config::opts` is a process-wide
-        // `OnceCell` set once per process — at most one `Servo` may exist per process.
-        let frame = crate::swgl_context::with_gl(|| {
-            let servo = servo::ServoBuilder::default()
-                .event_loop_waker(Box::new(super::HeadlessWaker))
-                .build();
-            let box_frame = super::render_url_on_servo(&servo, PAGE, surface, W, H, 4096)
+        // rasterize the page. The caller holds the process-wide SWGL current-context lock
+        // (SWGL's `ctx` is a global) for the whole engine-drive → readback sequence, and
+        // owns the one `Servo` this process is allowed — this leg renders BOTH the box page
+        // and the text page (`render_glyph_page`) on it.
+        let frame = {
+            let box_frame = super::render_url_on_servo(servo, PAGE, surface, W, H, 4096)
                 .0
                 .expect("the real Servo WebView produced a frame for the data: page");
             // SECOND page on the SAME engine: a text page, proving glyph layout.
-            render_glyph_page(&servo);
+            render_glyph_page(servo);
             box_frame
-        });
+        };
 
         // It is a REAL RGBA8 frame of the requested size.
         assert_eq!(frame.width, W);
@@ -1652,8 +1713,7 @@ mod tests {
     /// repaints frame B (scrolled), and returns both. A real, LIVE WebView makes B's
     /// pixels differ from A's; a static snapshot could not. We assert the two frames'
     /// content digests differ.
-    #[test]
-    fn a_scroll_input_re_renders_the_webview_to_a_different_tile() {
+    fn a_scroll_input_re_renders_the_webview_to_a_different_tile(servo: &servo::Servo) {
         // A page much taller than the 200px viewport: a 600px red block followed by a
         // 600px lime block. At offset 0 the viewport shows red; after scrolling down
         // ~400px the lime block enters the viewport, so the painted pixels change.
@@ -1668,28 +1728,23 @@ mod tests {
         let presenter = cell_seed(11);
         let surface = SurfaceCapability::root(presenter, AuthRequired::Either);
 
-        let (a, b) = crate::swgl_context::with_gl(|| {
-            let servo = servo::ServoBuilder::default()
-                .event_loop_waker(Box::new(super::HeadlessWaker))
-                .build();
-            super::render_url_then_input_on_servo(
-                &servo,
-                PAGE,
-                surface,
-                W,
-                H,
-                // Scroll down 450px at the viewport center — past the first block, so the
-                // lime block enters view.
-                super::WebInput::Scroll {
-                    x: 120.0,
-                    y: 100.0,
-                    dx: 0.0,
-                    dy: 450.0,
-                },
-                4096,
-            )
-            .expect("the live WebView produced both a pre- and post-scroll frame")
-        });
+        let (a, b) = super::render_url_then_input_on_servo(
+            servo,
+            PAGE,
+            surface,
+            W,
+            H,
+            // Scroll down 450px at the viewport center — past the first block, so the
+            // lime block enters view.
+            super::WebInput::Scroll {
+                x: 120.0,
+                y: 100.0,
+                dx: 0.0,
+                dy: 450.0,
+            },
+            4096,
+        )
+        .expect("the live WebView produced both a pre- and post-scroll frame");
 
         assert_eq!(a.width, W);
         assert_eq!(b.width, W);
@@ -1807,8 +1862,7 @@ mod tests {
     /// `false` and the SAME assertions hold over the SWGL fallback — the backend is
     /// transparent to the live loop. Either way we assert `gpu_backed()` AGREES with
     /// `gpu_available()` (the selection is honest) and that the page renders + re-renders.
-    #[test]
-    fn live_webview_renders_and_re_renders_on_the_selected_backend() {
+    fn live_webview_renders_and_re_renders_on_the_selected_backend(servo: servo::Servo) {
         use crate::gpu_context::gpu_available;
 
         // A page taller than the viewport: a 600px red band over a 600px lime band, so a
@@ -1824,11 +1878,14 @@ mod tests {
         let presenter = cell_seed(11);
         let surface = SurfaceCapability::root(presenter, AuthRequired::Either);
 
-        crate::swgl_context::with_gl(|| {
+        {
             let expect_gpu = gpu_available();
 
-            let mut live = super::LiveWebView::new(W, H)
-                .expect("a single LiveWebView builds (no other engine on this process)");
+            // ADOPT the caller's engine — `servo_config::opts` is a process `OnceCell`, so asking
+            // `LiveWebView::new` for a second `Servo` here is not slow, it is the failure this
+            // whole test was merged to delete.
+            let mut live = super::LiveWebView::from_servo(servo, W, H)
+                .expect("a single LiveWebView builds (no other pane on this process)");
 
             // THE SELECTION IS HONEST: the backend the holder reports matches the probe.
             assert_eq!(
@@ -1891,6 +1948,6 @@ mod tests {
                 digest_a,
                 digest_b,
             );
-        });
+        }
     }
 }

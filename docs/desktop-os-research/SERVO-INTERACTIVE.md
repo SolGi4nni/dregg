@@ -110,7 +110,7 @@ ready to read back, rather than us polling blindly.
   `input` → pump → paint **frame B** → return `(A, B)`. The headless analogue of
   the winit window loop.
 
-**Proof (test `a_scroll_input_re_renders_the_webview_to_a_different_tile`,
+**Proof (`a_scroll_input_re_renders_the_webview_to_a_different_tile`,
 `--features libservo`, GREEN):** a `data:` page taller than the 200px viewport — a
 600px red block stacked on a 600px lime block. Frame A is the top (red); a 450px
 downward scroll, then frame B is the second block (lime):
@@ -125,6 +125,15 @@ content digests differ — the live `WebView` genuinely re-rendered in response 
 scroll input. **This is the move from static snapshot to live embedded webview,
 proven by two differing tiles.** Click and pointer-move are wired through the same
 `apply_input`.
+
+⚠ **It is a LEG, not a `#[test]` name — `cargo test <that name>` selects nothing.**
+`servo_config::opts` is a process-global `OnceCell`, so a process may build exactly ONE
+`servo::Servo`; the three engine-driving legs (this scroll spike, the data-page →
+compositor-gate render, and the `LiveWebView` backend loop) are one `#[test]` on one
+engine, `webview::tests::the_real_engine_renders_presents_and_re_renders_on_one_process_servo`.
+As three separate `#[test]`s they raced libtest's per-test threads and two of them lost —
+measured 2026-07-27, they died at `servo-config-0.1.0/opts.rs:246`, and on the CI workspace
+run one PARKED for 23 minutes. Run the driver, and read the leg names in its body.
 
 ### Interspersing it into the cockpit (the wiring, not new engine work) — LANDED
 
