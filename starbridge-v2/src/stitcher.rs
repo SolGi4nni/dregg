@@ -542,12 +542,17 @@ mod tests {
         // Disjoint edits at different lines do not conflict; if they happen to,
         // the surface still must not invent a region for a clean document — assert
         // the contract on a truly clean stitch.
-        if !st.has_conflict() {
-            assert!(
-                st.conflicts().is_empty(),
-                "clean doc => no conflicts to surface"
-            );
-        }
+        // ⚠ This used to read `if !st.has_conflict() { assert!(…) }` — so the ONE outcome the
+        // test exists to catch (a fabricated conflict on two disjoint edits) skipped the
+        // assertion and reported `ok`. The FALSE-bite test could not bite.
+        assert!(
+            !st.has_conflict(),
+            "two DISJOINT single-line edits must fold clean; the stitcher fabricated a conflict"
+        );
+        assert!(
+            st.conflicts().is_empty(),
+            "clean doc => no conflicts to surface"
+        );
     }
 
     #[test]

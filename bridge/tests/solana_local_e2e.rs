@@ -242,15 +242,16 @@ fn build_vote_tx(
 }
 
 #[test]
+#[ignore = "live LOCAL solana-test-validator: run `scripts/solana-local-harness.sh` first \
+           (boots a free local validator + harvests artifacts), then `SOLANA_LOCAL=1 cargo \
+           test -p dregg-bridge --test solana_local_e2e -- --ignored`. Without it this \
+           asserts NOTHING — `ignored` is honest, `ok` was not."]
 fn local_solana_lock_verifies_and_mints() {
-    if !enabled() {
-        eprintln!(
-            "SKIP solana_local_e2e: set SOLANA_LOCAL=1 and run \
-             `scripts/solana-local-harness.sh` first (boots a free local \
-             solana-test-validator). Skipping cleanly."
-        );
-        return;
-    }
+    assert!(
+        enabled(),
+        "the #[ignore] above is the gate; under --ignored without SOLANA_LOCAL=1 + \
+         scripts/solana-local-harness.sh this must fail loudly, not print `ok`"
+    );
 
     let mp = manifest_path();
     let raw = std::fs::read_to_string(&mp).unwrap_or_else(|e| {
@@ -514,15 +515,16 @@ impl Drop for ValidatorGuard {
 ///
 /// [`prove_holding_consensus_anchored`]: dregg_bridge::solana_holdings::prove_holding_consensus_anchored
 #[test]
+#[ignore = "live LOCAL solana-test-validator: run `scripts/solana-local-harness.sh` first \
+           (boots a free local validator + harvests artifacts), then `SOLANA_LOCAL=1 cargo \
+           test -p dregg-bridge --test solana_local_e2e -- --ignored`. Without it this \
+           asserts NOTHING — `ignored` is honest, `ok` was not."]
 fn local_feed_proves_a_real_holding_end_to_end() {
-    if !enabled() {
-        eprintln!(
-            "SKIP local_feed_proves_a_real_holding_end_to_end: set SOLANA_LOCAL=1 \
-             (needs the free Agave toolchain: solana-test-validator + spl-token). \
-             Skipping cleanly."
-        );
-        return;
-    }
+    assert!(
+        enabled(),
+        "the #[ignore] above is the gate; under --ignored without SOLANA_LOCAL=1 + \
+         scripts/solana-local-harness.sh this must fail loudly, not print `ok`"
+    );
 
     let base = std::env::temp_dir().join("dregg-solana-feed-e2e");
     let ledger = base.join("ledger");

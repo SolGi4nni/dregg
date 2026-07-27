@@ -1,0 +1,11 @@
+# silent-skip.tsv — tests that can return before exercising their subject, on an
+# environment/availability guard, and therefore report `ok` without having run.
+# Written by scripts/check-silent-skip.py --bless. SILENT rows are the disease;
+# DEMANDED rows panic under DREGG_TEST_REQUIRE_LEAN=1 but still report `ok` unarmed.
+#
+# verdict	file	fn	guard_shape
+INVERSE	dregg-lean-ffi/src/bridge_lc_ffi.rs	fails_closed_when_export_absent	*_present() (via eth_lc_verify_available) [wrapped-if]
+INVERSE	eth-lightclient/src/verified_gate.rs	fails_closed_when_the_archive_is_absent	*_available() (via available)
+REENTRANT	fhegg-fhe/src/dealerless_preprocessing.rs	real_threshold_bfv_batch_dealerless_worker	env::var
+REENTRANT	fhegg-fhe/src/distributed_bfv_correlation.rs	distributed_bfv_correlation_worker	env::var
+REENTRANT	fhegg-fhe/tests/attested_clearing_native_pq_quorum.rs	native_pq_quorum_requires_paired_enrolled_signatures	env::var

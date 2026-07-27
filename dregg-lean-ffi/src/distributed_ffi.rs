@@ -591,8 +591,7 @@ mod tests {
     /// the export returns exactly nine ordered ids. Self-skips when the archive lacks the export.
     #[test]
     fn verified_tau_order_matches_trace3() {
-        if !tau_order_available() {
-            eprintln!("SKIP: Lean tau-order export not linked (tau_order_available()==false)");
+        if !crate::demand_lean(tau_order_available(), "dregg_tau_order export") {
             return;
         }
         // The Lean `trace3` lace, encoded with `encodeLaceWire 3 [1,2,3] trace3`:
@@ -641,11 +640,10 @@ mod tests {
     /// decides exactly these roots. Self-skips when the archive lacks the export.
     #[test]
     fn verified_finalization_quorum_matches_guards() {
-        if !finalization_quorum_available() {
-            eprintln!(
-                "SKIP: Lean finalization-quorum export not linked \
-                 (finalization_quorum_available()==false)"
-            );
+        if !crate::demand_lean(
+            finalization_quorum_available(),
+            "dregg_finalization_quorum export",
+        ) {
             return;
         }
         // three distinct signers (0,1,2) attest root 7 in a 4-committee ⇒ quorum ⇒ Some(7).
@@ -691,10 +689,7 @@ mod tests {
     /// admits exactly the right strands. Self-skips when the archive lacks the export.
     #[test]
     fn verified_gate_matches_feddemo() {
-        if !strand_admit_available() {
-            eprintln!(
-                "SKIP: Lean strand-admit export not linked (strand_admit_available()==false)"
-            );
+        if !crate::demand_lean(strand_admit_available(), "dregg_strand_admit export") {
             return;
         }
         // fedDemo, with 0-based participant indices: seeds {0,1}, vouch 0->2, 1->2, bonds 3:100, 4:50.
@@ -717,10 +712,10 @@ mod tests {
     /// Self-skips when the archive lacks the exports.
     #[test]
     fn verified_distributed_gates_match_guards() {
-        if !distributed_exports_available() {
-            eprintln!(
-                "SKIP: Lean distributed exports not linked (distributed_exports_available()==false)"
-            );
+        if !crate::demand_lean(
+            distributed_exports_available(),
+            "the verified DISTRIBUTED exports (strand-admit / tau-order / 2PC / shared-budget)",
+        ) {
             return;
         }
 

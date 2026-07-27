@@ -134,6 +134,31 @@ GATES=(
   # MIN_NAMES / MIN_PACKAGES / MIN_FNS floors red so a dead reader cannot read as clean.
   "nextest-names|300|python3 scripts/check-nextest-names.py"
   "nextest-names-red|120|python3 scripts/check-nextest-names.py --self-test"
+  # A test that `return`s on a missing fixture and reports `ok`. STRICTLY WORSE than the
+  # row above: an `#[ignore]` prints `ignored`, which is a true statement, and this prints
+  # the same word cargo prints for a test that ran every assertion. `libtest` has exactly
+  # two runtime outcomes and no runtime skip, so `return` is never the honest third option.
+  # Measured 2026-07-27 before the repair: 168 tests, 112 of them the Lean-archive class in
+  # `exec-lean`/`node`/`dregg-lean-ffi`/`sdk` — i.e. concentrated in the suites that guard
+  # the machine-checked cores, where a green is a claim nobody checked. The mechanism
+  # (`dregg_lean_ffi::demand_lean`) already existed and was correct; it was DISARMED
+  # everywhere a human looks — `ci.yml` armed it only on a successful seed fetch, and of
+  # the last 60 ci.yml runs 0 succeeded, and THIS FILE never set it at all. It is now armed
+  # by default (`DREGG_TEST_ALLOW_MISSING_LEAN=1` to opt out, visibly).
+  # ⚠ NOT a grep: this tree writes ABOUT its own skips in doc comments and panic strings,
+  # so it reads BLANKED source via check-production-callers.py::strip_noise, walks the brace
+  # stack to drop `return`s belonging to closures/nested fns/async blocks, and resolves the
+  # per-crate bool helpers (`skip_no_lean`, `ensure_oracle`, `skip_if_core_unlinked`) that
+  # hide the probe one call away — keying on direct probes alone found 15 of exec-lean's 41.
+  # SILENT is ZERO-TOLERANCE (the tree is at zero); INVERSE and REENTRANT are baselined
+  # residuals with different fixes. ~50s, no cargo. Paired with its own red run — the
+  # headline is a NEGATIVE assertion and its first cut reported ZERO findings tree-wide
+  # because one offset was off by one. The -red row drives 7 disease shapes and 9 shapes
+  # that must stay quiet (prose, closures, nested fns, an already-`#[ignore]`d test, a
+  # two-armed if/else), and the MIN_TESTS/MIN_GUARDED floors so a dead reader cannot read
+  # as clean.
+  "silent-skip|300|python3 scripts/check-silent-skip.py"
+  "silent-skip-red|120|python3 scripts/check-silent-skip.py --self-test"
 )
 # Expensive — only under --all, each with the reason it is not in the cheap set.
 GATES_ALL=(

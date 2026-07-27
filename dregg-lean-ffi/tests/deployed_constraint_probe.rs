@@ -155,7 +155,12 @@ fn error_variants_match_deployed() {
 /// proving path). Reported so the "one evaluator, the Lean one" cost is on the record, not asserted.
 #[test]
 fn perf_ffi_admission_cost() {
-    if !constraint_admits_available() {
+    // A MEASUREMENT, not an assertion — but a measurement that did not happen must not
+    // report `ok` either, or the number on the record is from a run that never took it.
+    if !dregg_lean_ffi::demand_lean(
+        constraint_admits_available(),
+        "dregg_constraint_admits export (the FFI admission cost cannot be measured without it)",
+    ) {
         return;
     }
     let mut new = zeros16();

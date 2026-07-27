@@ -391,17 +391,27 @@ mod tests {
     /// `runtime_available()` mirrors `dregg_lean_ffi::init_single_threaded()`. When
     /// the archive is NOT linked (plain `cargo test`), it is false — and a produce
     /// fails CLOSED with the Tier-D unavailability reason (never a silent commit).
+    ///
+    /// INVERSE POLARITY, and now said at COMPILE time. This test's subject IS the
+    /// archive's absence, so it is the one test here that must NOT run on a `tier-d`
+    /// build. It used to discover that at run time and `return`, printing `ok` — the
+    /// same word it prints when it actually exercised the fail-closed path. `#[ignore]`
+    /// is decided by `cfg` and prints `ignored`, which is the true statement.
     #[test]
+    #[cfg_attr(
+        feature = "tier-d",
+        ignore = "INVERSE: asserts the archive-ABSENT fail-closed posture, so it is only \
+                  meaningful WITHOUT the Lean archive. On a --features tier-d build the runtime \
+                  IS available and there is nothing to assert. Run it with plain `cargo test -p \
+                  pg-dregg` (no tier-d), where it is not ignored at all."
+    )]
     fn fails_closed_when_the_runtime_is_unavailable() {
-        // Only meaningful in the no-archive build; if the archive happens to be
-        // linked (a `tier-d` build), the runtime IS available and this is skipped.
-        if LeanProducer::runtime_available() {
-            eprintln!(
-                "fails_closed_when_the_runtime_is_unavailable: archive linked — \
-                 the runtime is available; skipping the no-archive assertion"
-            );
-            return;
-        }
+        assert!(
+            !LeanProducer::runtime_available(),
+            "this test asserts the NO-archive posture but the runtime is available — the \
+             `cfg_attr(feature = \"tier-d\", ignore)` above should have ignored it. An archive \
+             linked without the tier-d feature means the cfg no longer tracks reality."
+        );
         let (_g, issuer) = fresh_issuer();
         let tok = submit_token(&issuer);
         let mut p = LeanProducer::new(SOURCE, 1_000, 1);
@@ -442,14 +452,19 @@ mod tests {
     // ───────────────────────────────────────────────────────────────────────
 
     #[test]
+    #[cfg_attr(
+        not(feature = "tier-d"),
+        ignore = "needs the linked Lean archive: build with --features tier-d, which pulls \
+                  dregg-lean-ffi + libdregg_lean.a. This used to `return` on \
+                  !runtime_available() and print `ok`, which is the same word cargo prints \
+                  for a run that drove the real execFullForestG; `ignored` is the true one."
+    )]
     fn the_verified_executor_commits_a_conserving_transfer_in_backend() {
-        if !LeanProducer::runtime_available() {
-            eprintln!(
-                "the_verified_executor_commits_a_conserving_transfer_in_backend: \
-                 libdregg_lean.a not linked — skipping (needs a `tier-d` build)"
-            );
-            return;
-        }
+        assert!(
+            LeanProducer::runtime_available(),
+            "tier-d is on but libdregg_lean.a did not link — the verified executor cannot be \
+             driven, and a green here would be a claim about it that nobody checked"
+        );
         let (_g, issuer) = fresh_issuer();
         let tok = submit_token(&issuer);
         let mut p = LeanProducer::new(SOURCE, 1_000, 30);
@@ -489,14 +504,19 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        not(feature = "tier-d"),
+        ignore = "needs the linked Lean archive: build with --features tier-d, which pulls \
+                  dregg-lean-ffi + libdregg_lean.a. This used to `return` on \
+                  !runtime_available() and print `ok`, which is the same word cargo prints \
+                  for a run that drove the real execFullForestG; `ignored` is the true one."
+    )]
     fn the_verified_executor_refuses_an_overspend_in_backend() {
-        if !LeanProducer::runtime_available() {
-            eprintln!(
-                "the_verified_executor_refuses_an_overspend_in_backend: \
-                 libdregg_lean.a not linked — skipping (needs a `tier-d` build)"
-            );
-            return;
-        }
+        assert!(
+            LeanProducer::runtime_available(),
+            "tier-d is on but libdregg_lean.a did not link — the overspend refusal cannot be \
+             exercised, and a green here would be a claim about it that nobody checked"
+        );
         let (_g, issuer) = fresh_issuer();
         let tok = submit_token(&issuer);
         // A float SMALLER than the unit ⇒ the producer's own pre-check refuses

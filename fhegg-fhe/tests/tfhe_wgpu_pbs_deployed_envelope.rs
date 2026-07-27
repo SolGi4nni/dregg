@@ -25,11 +25,16 @@ fn median(mut samples: Vec<Duration>) -> Duration {
 }
 
 #[test]
+#[ignore = "GPU: needs a real wgpu adapter and DREGG_REQUIRE_WGPU=1 — run \
+           `DREGG_REQUIRE_WGPU=1 cargo test -p fhegg-fhe --test tfhe_wgpu_pbs_deployed_envelope -- --ignored`. \
+           It previously `return`ed on the unset var and reported `ok`, which is the same \
+           word cargo prints for a run that drove the deployed GPU path."]
 fn deployed_918_by_918_dense_pbs_matches_tfhe_and_reuses_device_keys() {
-    if std::env::var_os("DREGG_REQUIRE_WGPU").is_none() {
-        eprintln!("set DREGG_REQUIRE_WGPU=1 to run the deployed GPU envelope gate");
-        return;
-    }
+    assert!(
+        std::env::var_os("DREGG_REQUIRE_WGPU").is_some(),
+        "the #[ignore] above is the gate now; running this under --ignored WITHOUT \
+         DREGG_REQUIRE_WGPU=1 must fail loudly rather than `return` and print `ok`"
+    );
 
     let deployed = PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128;
     let external_params = TorusExternalProductParams {

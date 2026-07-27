@@ -828,20 +828,20 @@ async fn live_two_user_card_fork_carry_roundtrip() {
 /// so it can target a server whose `.well-known` is set up (a full homeserver URL
 /// still works via the main test). Absent → no-op.
 #[tokio::test]
+#[ignore = "LIVE homeserver: needs DEOS_MATRIX_TEST_SERVERNAME + _USER + _PASS pointing at a \
+           server whose .well-known is set up — run `DEOS_MATRIX_TEST_SERVERNAME=… \
+           DEOS_MATRIX_TEST_USER=… DEOS_MATRIX_TEST_PASS=… cargo test -p deos-matrix --test \
+           live_homeserver -- --ignored`. Absent, it used to `return` and report `ok`, which \
+           reads exactly like a discovery login that succeeded."]
 async fn live_servername_discovery_login() {
-    let Ok(server_name) = std::env::var("DEOS_MATRIX_TEST_SERVERNAME") else {
-        eprintln!(
-            "DEOS_MATRIX_TEST_SERVERNAME not set — skipping bare-server-name discovery login test"
-        );
-        return;
-    };
-    let (Ok(user), Ok(pass)) = (
-        std::env::var("DEOS_MATRIX_TEST_USER"),
-        std::env::var("DEOS_MATRIX_TEST_PASS"),
-    ) else {
-        eprintln!("DEOS_MATRIX_TEST_USER/_PASS not set — skipping discovery login test");
-        return;
-    };
+    let server_name = std::env::var("DEOS_MATRIX_TEST_SERVERNAME").expect(
+        "the #[ignore] above is the gate now; under --ignored without \
+         DEOS_MATRIX_TEST_SERVERNAME this must fail loudly, not print `ok`",
+    );
+    let (user, pass) = (
+        std::env::var("DEOS_MATRIX_TEST_USER").expect("DEOS_MATRIX_TEST_USER"),
+        std::env::var("DEOS_MATRIX_TEST_PASS").expect("DEOS_MATRIX_TEST_PASS"),
+    );
 
     let store = tmp_store();
     // Build from a BARE server name — exercises `.well-known`/versions discovery

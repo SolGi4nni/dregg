@@ -124,15 +124,16 @@ impl HarvestedAccount {
 }
 
 #[test]
+#[ignore = "live Solana DEVNET: run `scripts/solana-devnet-harness.sh` first (funds a devnet \
+           keypair, locks a stand-in $DREGG, harvests real devnet artifacts), then \
+           `SOLANA_DEVNET=1 cargo test -p dregg-bridge --test solana_devnet_e2e -- --ignored`. \
+           Without the harness this asserts NOTHING — `ignored` is honest, `ok` was not."]
 fn devnet_solana_lock_mirrors_and_pays_a_lease() {
-    if !enabled() {
-        eprintln!(
-            "SKIP solana_devnet_e2e: set SOLANA_DEVNET=1 and run \
-             `scripts/solana-devnet-harness.sh` first (funds a devnet keypair, \
-             locks a stand-in $DREGG, harvests real devnet artifacts). Skipping cleanly."
-        );
-        return;
-    }
+    assert!(
+        enabled(),
+        "the #[ignore] above is the gate; under --ignored without SOLANA_DEVNET=1 + \
+         scripts/solana-devnet-harness.sh this must fail loudly, not print `ok`"
+    );
 
     let mp = manifest_path();
     let raw = std::fs::read_to_string(&mp).unwrap_or_else(|e| {

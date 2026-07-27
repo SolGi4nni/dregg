@@ -86,18 +86,17 @@ fn u256(s: &str) -> Uint256 {
     Uint256::from_str_radix(s, 16).expect("u256 hex")
 }
 
-/// The same skip-guard dregg-governance's positive-path tests use: the weight
-/// VERDICT is the Lean-proven core; when the linked archive lacks it the grant
-/// path fail-closes by design, so the positive tests skip loudly.
+/// The same guard `dregg-governance`'s positive-path tests use: the weight VERDICT is the
+/// Lean-proven core, and when the linked archive lacks it the grant path fail-closes by design.
+///
+/// Routed through `demand_lean` (2026-07-27): "skip loudly" was to stderr, which cargo captures
+/// and throws away on a passing test, so the three tests below reported `ok` having asserted
+/// nothing about a three-chain weighted tally. An absent export is now a failure that names it.
 fn lean_verdict_core_or_skip() -> bool {
-    if dregg_lean_ffi::holding_grant_weight_core_available() {
-        return true;
-    }
-    eprintln!(
-        "cross-chain governance: the Lean-proven verdict core `dregg_holding_grant_weight` is \
-         not in the linked archive — rebuild dregg-lean-ffi; skipping the positive-path test"
-    );
-    false
+    dregg_lean_ffi::demand_lean(
+        dregg_lean_ffi::holding_grant_weight_core_available(),
+        "dregg_holding_grant_weight export (the Lean-proven cross-chain weight verdict core)",
+    )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

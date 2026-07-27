@@ -11,11 +11,16 @@ use tfhe::prelude::*;
 use tfhe::{set_server_key, ClientKey, CompressedServerKey, ConfigBuilder, FheUint32};
 
 #[test]
+#[ignore = "GPU: needs a real wgpu adapter and DREGG_REQUIRE_WGPU=1 — run \
+           `DREGG_REQUIRE_WGPU=1 cargo test -p fhegg-fhe --test tfhe_high_level_wgpu -- --ignored`. \
+           It previously `return`ed on the unset var and reported `ok`, which is the same \
+           word cargo prints for a run that drove the deployed GPU path."]
 fn deployed_fhe_uint32_block_lut_matches_tfhe_and_remains_high_level_usable() {
-    if std::env::var_os("DREGG_REQUIRE_WGPU").is_none() {
-        eprintln!("set DREGG_REQUIRE_WGPU=1 to run the deployed high-level GPU PBS gate");
-        return;
-    }
+    assert!(
+        std::env::var_os("DREGG_REQUIRE_WGPU").is_some(),
+        "the #[ignore] above is the gate now; running this under --ignored WITHOUT \
+         DREGG_REQUIRE_WGPU=1 must fail loudly rather than `return` and print `ok`"
+    );
 
     let client = ClientKey::generate(ConfigBuilder::default());
     let compressed = CompressedServerKey::new(&client);
@@ -69,11 +74,16 @@ fn deployed_fhe_uint32_block_lut_matches_tfhe_and_remains_high_level_usable() {
 }
 
 #[test]
+#[ignore = "GPU: needs a real wgpu adapter and DREGG_REQUIRE_WGPU=1 — run \
+           `DREGG_REQUIRE_WGPU=1 cargo test -p fhegg-fhe --test tfhe_high_level_wgpu -- --ignored`. \
+           It previously `return`ed on the unset var and reported `ok`, which is the same \
+           word cargo prints for a run that drove the deployed GPU path."]
 fn deployed_fhe_uint32_scalar_gt_is_all_block_wgpu_and_drives_control_flow() {
-    if std::env::var_os("DREGG_REQUIRE_WGPU").is_none() {
-        eprintln!("set DREGG_REQUIRE_WGPU=1 to run the deployed scalar comparison GPU gate");
-        return;
-    }
+    assert!(
+        std::env::var_os("DREGG_REQUIRE_WGPU").is_some(),
+        "the #[ignore] above is the gate now; running this under --ignored WITHOUT \
+         DREGG_REQUIRE_WGPU=1 must fail loudly rather than `return` and print `ok`"
+    );
 
     let client = ClientKey::generate(ConfigBuilder::default());
     let compressed = CompressedServerKey::new(&client);
@@ -184,11 +194,16 @@ fn deployed_fhe_uint32_scalar_gt_is_all_block_wgpu_and_drives_control_flow() {
 }
 
 #[test]
+#[ignore = "GPU: needs a real wgpu adapter and DREGG_REQUIRE_WGPU=1 — run \
+           `DREGG_REQUIRE_WGPU=1 cargo test -p fhegg-fhe --test tfhe_high_level_wgpu -- --ignored`. \
+           It previously `return`ed on the unset var and reported `ok`, which is the same \
+           word cargo prints for a run that drove the deployed GPU path."]
 fn deployed_fhe_uint32_scalar_gt_resident_matches_roundtrip_baseline() {
-    if std::env::var_os("DREGG_REQUIRE_WGPU").is_none() {
-        eprintln!("set DREGG_REQUIRE_WGPU=1 to run the resident scalar comparison GPU gate");
-        return;
-    }
+    assert!(
+        std::env::var_os("DREGG_REQUIRE_WGPU").is_some(),
+        "the #[ignore] above is the gate now; running this under --ignored WITHOUT \
+         DREGG_REQUIRE_WGPU=1 must fail loudly rather than `return` and print `ok`"
+    );
 
     let client = ClientKey::generate(ConfigBuilder::default());
     let compressed = CompressedServerKey::new(&client);
@@ -293,11 +308,16 @@ fn deployed_fhe_uint32_scalar_gt_resident_matches_roundtrip_baseline() {
 }
 
 #[test]
+#[ignore = "GPU: needs a real wgpu adapter and DREGG_REQUIRE_WGPU=1 — run \
+           `DREGG_REQUIRE_WGPU=1 cargo test -p fhegg-fhe --test tfhe_high_level_wgpu -- --ignored`. \
+           It previously `return`ed on the unset var and reported `ok`, which is the same \
+           word cargo prints for a run that drove the deployed GPU path."]
 fn deployed_fhe_uint32_ciphertext_gt_resident_matches_tfhe_and_selects_privately() {
-    if std::env::var_os("DREGG_REQUIRE_WGPU").is_none() {
-        eprintln!("set DREGG_REQUIRE_WGPU=1 to run the resident ciphertext comparison GPU gate");
-        return;
-    }
+    assert!(
+        std::env::var_os("DREGG_REQUIRE_WGPU").is_some(),
+        "the #[ignore] above is the gate now; running this under --ignored WITHOUT \
+         DREGG_REQUIRE_WGPU=1 must fail loudly rather than `return` and print `ok`"
+    );
 
     let client = ClientKey::generate(ConfigBuilder::default());
     let compressed = CompressedServerKey::new(&client);

@@ -266,10 +266,14 @@ mod tests {
         ]
         .into_iter()
         .find(|k| std::env::var_os(k).is_some());
-        let Some(key) = canary else {
-            eprintln!("skipping: no non-allowlisted parent env var present to probe");
-            return;
-        };
+        // Every entry here is set by cargo or the login shell, so an empty result means the
+        // PROBE is broken, not that the host is clean. Returning would have reported `ok` for
+        // an exfiltration test that never probed anything.
+        let key = canary.expect(
+            "no non-allowlisted parent env var present to probe — CARGO_MANIFEST_DIR alone is \
+             set by cargo for every test, so this means the probe list is stale, not that the \
+             sandbox is tight",
+        );
         assert!(
             !ENV_ALLOWLIST.contains(&key),
             "probe var must not be allowlisted"

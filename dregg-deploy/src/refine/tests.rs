@@ -530,8 +530,12 @@ fn ffi_decide_refines_agrees_with_lean_both_polarities() {
 
 #[test]
 fn ffi_fail_closed_on_malformed_wire() {
-    if !dregg_lean_ffi::decide_refines_gate_available() {
-        return; // nothing to drive across the boundary without the export
+    if !dregg_lean_ffi::demand_lean(
+        dregg_lean_ffi::decide_refines_gate_available(),
+        "dregg_decide_refines export (the verified flow-refinement gate — without it the \
+         fail-closed boundary below cannot be driven at all)",
+    ) {
+        return;
     }
     // A malformed wire is fail-closed to "ERR" (mirrors the FlowRefine `#guard`s).
     assert_eq!(

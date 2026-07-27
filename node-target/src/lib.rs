@@ -611,9 +611,13 @@ mod tests {
     fn from_env_defaults_to_local_when_unset() {
         // Not asserting on a set var (env is process-global + racy under parallel tests);
         // the unset default is the load-bearing invariant for the fleet's default build.
-        if std::env::var(NODE_URL_ENV).is_err() {
-            assert!(NodeTarget::from_env().unwrap().is_local());
-        }
+        assert!(
+            std::env::var(NODE_URL_ENV).is_err(),
+            "{NODE_URL_ENV} is set in this environment, so the UNSET default this test exists \
+             to pin cannot be observed. Unset it and re-run — silently returning here would \
+             report `ok` for the fleet's default build having checked nothing."
+        );
+        assert!(NodeTarget::from_env().unwrap().is_local());
     }
 
     #[cfg(feature = "http")]

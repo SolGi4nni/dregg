@@ -112,8 +112,59 @@ pub fn lean_available() -> bool {
 
 /// Whether verified-gate tests must refuse an absent Lean archive/export instead
 /// of reporting a hollow `ok` after self-skipping.
+///
+/// ── ⚠ ARMED BY DEFAULT (flipped 2026-07-27), and why ────────────────────────────
+/// `libtest` has exactly TWO runtime outcomes: pass and fail. There is no runtime
+/// "skip" — `#[ignore]` is decided at COMPILE time. So a test that discovers at run
+/// time that it cannot exercise its subject has only one honest option left, and it
+/// is not `return`. `ok` is the same word cargo prints for a test that ran every
+/// assertion, and no reader downstream can tell the two apart.
+///
+/// This gate existed and was correct, and it was OFF wherever a human actually
+/// looks. `.github/workflows/ci.yml` arms it only when the seed fetch succeeded;
+/// `armed-teeth.yml`'s `lean-hard-mode` lane is `github.event_name != 'pull_request'`
+/// and needs a published seed; and of the last 60 `ci.yml` runs, 37 cancelled, 21
+/// failed, 0 succeeded. `scripts/local-gates.sh` — the instrument this repo actually
+/// reads — never set it at all. A mechanism that is only armed on a lane that never
+/// reaches a verdict is a documented wound, not a detected one.
+///
+/// The premise it was written under has also expired. When these guards were added,
+/// building the archive meant a cold mathlib bootstrap. Today it is committed at
+/// `dregg-lean-ffi/libdregg_lean.a`, `scripts/fetch-lean-seed.sh` pulls a
+/// HEAD-keyed seed in minutes, and `scripts/pbuild` auto-provisions it. "The archive
+/// might be missing" is now the exceptional case, so it is the one that should have
+/// to say a word.
+///
+/// There are exactly TWO ways to disarm, and both are a WORD someone typed:
+///
+///   * `DREGG_TEST_ALLOW_MISSING_LEAN=1` — the developer-facing opt-out. Restores
+///     the old skip-and-report-`ok` behaviour for someone who genuinely has no
+///     archive, visibly, in their shell history rather than silently for everyone.
+///   * `DREGG_TEST_REQUIRE_LEAN=0` (or `false`/`off`) — an EXPLICIT FALSY value on
+///     the existing variable. ⚠ This one is load-bearing and is not decoration:
+///     `.github/workflows/ci.yml:521` sets `DREGG_TEST_REQUIRE_LEAN: ${{ steps.arm
+///     .outputs.armed }}`, and that step emits `armed=0` for the sanctioned
+///     `LEAN_GATE_INTENTIONALLY_UNARMED=1` bootstrap — a disarm that is already
+///     committed to `lean-seed.pin` and visible in review. Treating `"0"` as "arm
+///     anyway" would red that declared path for saying out loud what this change
+///     exists to make people say.
+///
+/// UNSET is ARMED. That asymmetry is the entire change: the condition under which
+/// every verified-gate test used to report `ok` was nobody having set anything.
 pub fn test_require_lean() -> bool {
-    armed_from_env_value(std::env::var("DREGG_TEST_REQUIRE_LEAN").ok().as_deref())
+    if armed_from_env_value(
+        std::env::var("DREGG_TEST_ALLOW_MISSING_LEAN")
+            .ok()
+            .as_deref(),
+    ) {
+        return false;
+    }
+    match std::env::var("DREGG_TEST_REQUIRE_LEAN").ok().as_deref() {
+        // An explicit falsy value is a declared disarm (see ci.yml's `armed=0`).
+        Some("0") | Some("false") | Some("FALSE") | Some("off") | Some("OFF") => false,
+        // Set-truthy re-asserts the default; UNSET is now the same thing.
+        _ => true,
+    }
 }
 
 /// Keep the test gate's grammar byte-for-byte aligned with build.rs's explicit
@@ -125,10 +176,13 @@ fn armed_from_env_value(value: Option<&str>) -> bool {
     )
 }
 
-/// Return `true` when a linked Lean capability is present.  When it is absent,
-/// return `false` for an honest developer-mode skip, but panic under
-/// `DREGG_TEST_REQUIRE_LEAN=1` so a verification lane cannot pass without
-/// exercising the verified runtime.
+/// Return `true` when a linked Lean capability is present.  When it is absent this
+/// PANICS by default, naming the missing capability — because the alternative,
+/// returning `false` so the caller can `return`, makes cargo print `ok` for a test
+/// that asserted nothing about the verified core it is named after.
+///
+/// `DREGG_TEST_ALLOW_MISSING_LEAN=1` restores the old skip. See
+/// [`test_require_lean`] for why that is the opt-IN and not the default.
 pub fn demand_lean(available: bool, what: &str) -> bool {
     demand_lean_armed(available, what, test_require_lean())
 }
@@ -139,11 +193,25 @@ fn demand_lean_armed(available: bool, what: &str, armed: bool) -> bool {
     }
     assert!(
         !armed,
-        "DREGG_TEST_REQUIRE_LEAN=1 but the linked archive lacks the {what} — this test would have \
-         SILENTLY SKIPPED its verified-gate assertion and reported `ok`. Seed a HEAD-matching \
-         dregg-lean-ffi/libdregg_lean.a and rebuild; do not weaken the hard mode."
+        "MISSING VERIFIED CAPABILITY: the linked archive lacks the {what}.\n\
+         \n\
+         This test asserts something about a machine-checked Lean core. Without that \
+         core it cannot assert it — and `libtest` has no runtime `skip`, so the only \
+         alternative to this failure is printing `ok`, which would be a claim about \
+         the verified kernel that nobody checked.\n\
+         \n\
+         Get the archive (minutes, not hours):\n\
+         \x20   bash scripts/fetch-lean-seed.sh        # HEAD-keyed prebuilt seed\n\
+         \x20   scripts/pbuild <lane> cargo test …     # auto-provisions it remotely\n\
+         \n\
+         If you genuinely mean to test without the verified cores, say so out loud:\n\
+         \x20   DREGG_TEST_ALLOW_MISSING_LEAN=1 cargo test …\n\
+         and know that the resulting green is evidence about the Rust half only."
     );
-    eprintln!("SKIP: {what} not linked (DREGG_TEST_REQUIRE_LEAN unset — honest skip)");
+    eprintln!(
+        "SKIP: {what} not linked (DREGG_TEST_ALLOW_MISSING_LEAN=1) — this test will report `ok` \
+         having asserted NOTHING about the verified core. That `ok` is not evidence."
+    );
     false
 }
 
@@ -165,13 +233,88 @@ mod test_require_lean_gate {
             .downcast_ref::<String>()
             .map(String::as_str)
             .expect("the gate panic must carry an actionable String");
-        assert!(message.contains("DREGG_TEST_REQUIRE_LEAN=1"));
         assert!(message.contains("missing export"));
+        // Actionable, not merely loud: it must name BOTH the way to get the archive
+        // and the way to opt out, or the first person to hit it just deletes the gate.
+        assert!(message.contains("fetch-lean-seed.sh"));
+        assert!(message.contains("DREGG_TEST_ALLOW_MISSING_LEAN=1"));
     }
 
     #[test]
     fn absent_export_skips_when_unarmed() {
         assert!(!demand_lean_armed(false, "missing export", false));
+    }
+
+    /// THE FLIPPED DEFAULT, asserted rather than assumed.
+    ///
+    /// This is the whole change: with NO environment variable set, an absent export
+    /// must be a FAILURE. Before 2026-07-27 it was a `return` and an `ok`, and the
+    /// only thing standing between the verified estate and a hollow green was a
+    /// variable that `scripts/local-gates.sh` never set and that `ci.yml` set only
+    /// when a seed fetch it could not guarantee had succeeded.
+    ///
+    /// ⚠ Serialized against the other env-mutating test in this module by running
+    /// both from one `#[test]`: `std::env::set_var` is process-global and this
+    /// binary runs `--test-threads=4`.
+    #[test]
+    fn the_default_is_armed_and_the_opt_out_is_a_named_word() {
+        // SAFETY: single test fn owns these two vars for its duration; both are
+        // removed before it returns, and no other test in this crate reads them.
+        unsafe {
+            std::env::remove_var("DREGG_TEST_ALLOW_MISSING_LEAN");
+            std::env::remove_var("DREGG_TEST_REQUIRE_LEAN");
+        }
+        assert!(
+            test_require_lean(),
+            "with NO env set the gate must be ARMED — an unset variable is exactly the \
+             condition under which every verified-gate test used to report `ok` having \
+             asserted nothing"
+        );
+
+        // The opt-out is a WORD, and it is the same grammar as the build gate.
+        for truthy in ["1", "true", "TRUE", "on", "ON"] {
+            unsafe { std::env::set_var("DREGG_TEST_ALLOW_MISSING_LEAN", truthy) };
+            assert!(
+                !test_require_lean(),
+                "DREGG_TEST_ALLOW_MISSING_LEAN={truthy} must disarm"
+            );
+        }
+        // A value OUTSIDE the grammar does NOT disarm — a typo'd opt-out must fail
+        // loud rather than silently restoring the hollow green it was meant to name.
+        for falsy in ["0", "false", "off", "yes", "2", ""] {
+            unsafe { std::env::set_var("DREGG_TEST_ALLOW_MISSING_LEAN", falsy) };
+            assert!(
+                test_require_lean(),
+                "DREGG_TEST_ALLOW_MISSING_LEAN={falsy:?} is not the opt-out grammar and must \
+                 leave the gate ARMED"
+            );
+        }
+        unsafe { std::env::remove_var("DREGG_TEST_ALLOW_MISSING_LEAN") };
+        assert!(test_require_lean(), "removing the opt-out must re-arm");
+
+        // THE ci.yml PATH. `steps.arm.outputs.armed` is `0` on the sanctioned
+        // `LEAN_GATE_INTENTIONALLY_UNARMED=1` bootstrap, and that lane must keep
+        // working — a declared, reviewable disarm is exactly what this change wants
+        // people to do, so redding it would punish the honest spelling.
+        for falsy in ["0", "false", "FALSE", "off", "OFF"] {
+            unsafe { std::env::set_var("DREGG_TEST_REQUIRE_LEAN", falsy) };
+            assert!(
+                !test_require_lean(),
+                "DREGG_TEST_REQUIRE_LEAN={falsy} is ci.yml's declared disarm and must be honoured"
+            );
+        }
+        for truthy in ["1", "true", "on"] {
+            unsafe { std::env::set_var("DREGG_TEST_REQUIRE_LEAN", truthy) };
+            assert!(
+                test_require_lean(),
+                "DREGG_TEST_REQUIRE_LEAN={truthy} re-asserts the default"
+            );
+        }
+        unsafe { std::env::remove_var("DREGG_TEST_REQUIRE_LEAN") };
+        assert!(
+            test_require_lean(),
+            "UNSET is ARMED — that asymmetry IS the change"
+        );
     }
 
     #[test]

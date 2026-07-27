@@ -13,11 +13,18 @@ use dregg_narrator::{
 };
 
 #[test]
+#[ignore = "LIVE + PAID: one real Bedrock Converse call (~$0.001 on Haiku). Needs \
+           DREGG_NARRATOR_LIVE=1 and AWS creds — run `DREGG_NARRATOR_LIVE=1 \
+           AWS_PROFILE=… cargo test -p dregg-narrator --test live_bedrock -- --ignored \
+           --nocapture`. It used to `return` on the unset var and report `ok`, which is \
+           the same word cargo prints for a run that actually billed a token."]
 fn live_bedrock_converse_meters_exact_usage() {
-    if std::env::var("DREGG_NARRATOR_LIVE").ok().as_deref() != Some("1") {
-        eprintln!("SKIP live_bedrock: set DREGG_NARRATOR_LIVE=1 (and AWS creds) to run the paid smoke test");
-        return;
-    }
+    assert_eq!(
+        std::env::var("DREGG_NARRATOR_LIVE").ok().as_deref(),
+        Some("1"),
+        "the #[ignore] above is the gate now; under --ignored without DREGG_NARRATOR_LIVE=1 \
+         this must fail loudly rather than print `ok` for a call it never made"
+    );
 
     let tmp = tempfile::tempdir().unwrap();
     let ledger = BudgetLedger::new(tmp.path().join("live-ledger.json"), 20.00);

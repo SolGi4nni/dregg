@@ -102,11 +102,16 @@ fn median_gpu(
 }
 
 #[test]
+#[ignore = "GPU: needs a real wgpu adapter and DREGG_REQUIRE_WGPU=1 — run \
+           `DREGG_REQUIRE_WGPU=1 cargo test -p fhegg-fhe --test tfhe_wgpu_ntt_crossover -- --ignored`. \
+           It previously `return`ed on the unset var and reported `ok`, which is the same \
+           word cargo prints for a run that drove the deployed GPU path."]
 fn exact_ntt_matches_full_width_oracle_and_reports_crossover() {
-    if std::env::var_os("DREGG_REQUIRE_WGPU").is_none() {
-        eprintln!("TFHE RNS-NTT crossover skipped: DREGG_REQUIRE_WGPU is not set");
-        return;
-    }
+    assert!(
+        std::env::var_os("DREGG_REQUIRE_WGPU").is_some(),
+        "the #[ignore] above is the gate now; running this under --ignored WITHOUT \
+         DREGG_REQUIRE_WGPU=1 must fail loudly rather than `return` and print `ok`"
+    );
 
     // Independent process-cold startup at the deployed degree. The two GPU
     // implementations own separate retained contexts, so this compares their
@@ -216,11 +221,16 @@ fn exact_ntt_matches_full_width_oracle_and_reports_crossover() {
 }
 
 #[test]
+#[ignore = "GPU: needs a real wgpu adapter and DREGG_REQUIRE_WGPU=1 — run \
+           `DREGG_REQUIRE_WGPU=1 cargo test -p fhegg-fhe --test tfhe_wgpu_ntt_crossover -- --ignored`. \
+           It previously `return`ed on the unset var and reported `ok`, which is the same \
+           word cargo prints for a run that drove the deployed GPU path."]
 fn exact_ntt_matches_cpu_for_two_level_full_width_external_product() {
-    if std::env::var_os("DREGG_REQUIRE_WGPU").is_none() {
-        eprintln!("TFHE multi-level RNS-NTT parity skipped: DREGG_REQUIRE_WGPU is not set");
-        return;
-    }
+    assert!(
+        std::env::var_os("DREGG_REQUIRE_WGPU").is_some(),
+        "the #[ignore] above is the gate now; running this under --ignored WITHOUT \
+         DREGG_REQUIRE_WGPU=1 must fail loudly rather than `return` and print `ok`"
+    );
 
     // This is deliberately a harsher shape than the deployed level-one gate:
     // every source coefficient uses all 64 bits, the gadget digit can use 31

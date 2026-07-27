@@ -344,23 +344,27 @@ mod interchain_adapter_tests {
         CellId([seed; 32])
     }
 
-    /// HONEST guarded-skip (the holdings-lane discipline): the trust verdict is rendered by the
-    /// verified Lean core (`dregg_interchain_reached_consensus`). When the archive is marshal-only /
-    /// stale the core is unlinked and EVERY `reached_consensus()` fails closed to `false` — so a test
-    /// asserting a `true` verdict cannot pass, and a test asserting `false` would pass VACUOUSLY (for
-    /// the wrong reason). Both polarities therefore skip-with-note rather than run when the core is
-    /// absent, so a marshal-only CI never green-washes the decision. Returns `true` when the caller
-    /// should skip.
+    /// The trust verdict is rendered by the verified Lean core
+    /// (`dregg_interchain_reached_consensus`). When the archive is marshal-only / stale the core is
+    /// unlinked and EVERY `reached_consensus()` fails closed to `false` — so a test asserting a
+    /// `true` verdict cannot pass, and a test asserting `false` would pass VACUOUSLY (for the wrong
+    /// reason). Both polarities are therefore unassertable without the core. Returns `true` when
+    /// the caller should skip.
+    ///
+    /// ── ROUTED THROUGH `demand_lean` (2026-07-27) ─────────────────────────────────────────────
+    /// The reasoning above was right and the mechanism was wrong. "Skipped rather than pass
+    /// vacuously" described the INTENT; what cargo printed was `ok`, which is the same word it
+    /// prints for a test that exercised the verified core — indistinguishable to every reader
+    /// downstream, and the `eprintln!` is captured and discarded on a passing test. Five
+    /// fail-closed rungs (proof-dial, committee-quorum, structure-only, binding-only SNARK, fraud
+    /// verdict) reported green on every marshal-only build. An absent core is now a FAILURE that
+    /// names the export, with `DREGG_TEST_ALLOW_MISSING_LEAN=1` as the visible opt-out.
     fn skip_if_core_unlinked() -> bool {
-        if dregg_lean_ffi::interchain_reached_consensus_core_available() {
-            return false;
-        }
-        eprintln!(
-            "SKIP interchain reached_consensus: the verified Lean core \
-             (dregg_interchain_reached_consensus) is not linked (marshal-only/stale archive) — the \
-             decision cannot be exercised, so this test is skipped rather than pass vacuously."
-        );
-        true
+        !dregg_lean_ffi::demand_lean(
+            dregg_lean_ffi::interchain_reached_consensus_core_available(),
+            "dregg_interchain_reached_consensus export (the verified interchain trust verdict — \
+             a marshal-only/stale archive cannot render it in EITHER polarity)",
+        )
     }
 
     /// A NON-empty binding (nonzero nullifier + amount). We do NOT call the real

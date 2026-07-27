@@ -1268,19 +1268,28 @@ mod tests {
     /// is NO Rust fallback for the decision (by design). When the extracted core is not in the linked
     /// archive, [`grant_weight`] fail-closes with [`GrantError::LeanCoreUnavailable`], so the positive
     /// grant-path tests can only run once the archive splices `Metatheory.Bridge.ProofOfHoldings`.
-    /// This guard skips them (with a note) rather than assert a Rust decision we deliberately do not
-    /// have — mirroring `grain-verify`'s R3 test. The PRE-CHECK tests (`NotConsensusProven` /
-    /// `UnboundOwner` / `ZeroAmount`) do NOT call it: those errors fire before the Lean verdict.
+    /// The PRE-CHECK tests (`NotConsensusProven` / `UnboundOwner` / `ZeroAmount`) do NOT call it:
+    /// those errors fire before the Lean verdict.
+    ///
+    /// ── ROUTED THROUGH `demand_lean` (2026-07-27) ───────────────────────────────────────────────
+    /// This used to `eprintln!` and return `false`, and the nineteen tests below opened with
+    /// `if !lean_verdict_core_or_skip() { return; }`. On any archive lacking
+    /// `dregg_holding_grant_weight` that made nineteen cross-chain governance tests — double-count
+    /// refusal, per-chain nullifier separation, snapshot-slot binding, the EVM and Cosmos secp256k1
+    /// bindings — print `ok` having asserted nothing about the verified weight decision. The note
+    /// went to stderr, which `cargo test` captures and discards on a passing test, so in practice
+    /// nobody ever saw it.
+    ///
+    /// `demand_lean` makes the same absence a FAILURE naming the missing export, with
+    /// `DREGG_TEST_ALLOW_MISSING_LEAN=1` as the visible opt-out. One choke point for the whole
+    /// verified estate rather than a bespoke skip per crate.
     fn lean_verdict_core_or_skip() -> bool {
-        if dregg_lean_ffi::holding_grant_weight_core_available() {
-            return true;
-        }
-        eprintln!(
-            "holding-weight: the Lean-proven verdict core `dregg_holding_grant_weight` is not in \
-             the linked archive — rebuild dregg-lean-ffi to splice Metatheory.Bridge.ProofOfHoldings, \
-             then re-run. (No Rust fallback for the weight decision by design.)"
-        );
-        false
+        dregg_lean_ffi::demand_lean(
+            dregg_lean_ffi::holding_grant_weight_core_available(),
+            "dregg_holding_grant_weight export (the Lean-proven weight verdict core — splice \
+             Metatheory.Bridge.ProofOfHoldings into the archive; there is NO Rust fallback for \
+             this decision by design)",
+        )
     }
 
     /// A deterministic owner keypair from a seed byte.
