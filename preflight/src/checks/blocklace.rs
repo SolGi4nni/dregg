@@ -126,6 +126,11 @@ fn check_equivocation_detection() -> Result<(), String> {
 
     let mut lace = Blocklace::new(key_honest.clone(), 2);
 
+    // The identity LABEL the lace attributes equivocation to: the HYBRID id
+    // `H(ed25519_pk ‖ ml_dsa_pk)` that `Block::new` stamps as `creator`, NOT the
+    // raw Ed25519 verify key (which is carried separately in `Block::ed25519`).
+    let evil_id = Block::hybrid_id(&key_evil);
+
     // Evil node creates TWO blocks at seq 1 with different payloads.
     let evil_block_1 = Block::new(&key_evil, 1, Payload::Data(b"version-A".to_vec()), vec![]);
     let evil_block_2 = Block::new(&key_evil, 1, Payload::Data(b"version-B".to_vec()), vec![]);
@@ -146,11 +151,19 @@ fn check_equivocation_detection() -> Result<(), String> {
     lace.receive_block(evil_block_1.clone())
         .map_err(|e| format!("first evil block should be accepted: {e}"))?;
 
+    // NON-VACUITY: the evil creator HOLDS a live tip under the label we are
+    // about to query. So the "tip withdrawn" check below observes a removal,
+    // rather than reporting absence for a key the lace never used — the exact
+    // false green a stale Ed25519 label produces.
+    if lace.tips().get(&evil_id) != Some(&evil_block_1.id()) {
+        return Err("evil node's first block should be its live tip".into());
+    }
+
     // Receive second conflicting block: should detect equivocation.
     let result = lace.receive_block(evil_block_2.clone());
     match result {
         Err(BlockError::Equivocation { creator, seq, .. }) => {
-            if creator != key_evil.verifying_key().to_bytes() {
+            if creator != evil_id {
                 return Err("equivocation proof should identify the evil creator".into());
             }
             if seq != 1 {
@@ -165,12 +178,14 @@ fn check_equivocation_detection() -> Result<(), String> {
         }
     }
 
-    // The equivocator should be recorded.
-    if !lace
-        .equivocators()
-        .contains(&key_evil.verifying_key().to_bytes())
-    {
+    // The equivocator should be recorded, and its tip WITHDRAWN — checking the
+    // tip too keeps the identity keying honest: a label the lace never used
+    // would report "no tip" for a creator that does hold one.
+    if !lace.equivocators().contains(&evil_id) {
         return Err("evil node should be in equivocators set".into());
+    }
+    if lace.tips().contains_key(&evil_id) {
+        return Err("equivocator's tip should be withdrawn".into());
     }
 
     Ok(())

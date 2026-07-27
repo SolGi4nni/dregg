@@ -54,7 +54,18 @@ pub enum DirectoryCommand {
         new_uri: String,
 
         /// Expected current version (for CAS). If omitted, fetches current.
-        #[arg(long)]
+        ///
+        /// The clap arg id is `expected_version`, NOT `version`: the root
+        /// command sets `propagate_version = true`, which gives EVERY
+        /// subcommand a `--version` argument. A second argument with the id
+        /// `version` is a duplicate, and clap's uniqueness assert fires whenever
+        /// the whole command tree is materialised at once — which is exactly
+        /// what `clap_complete::generate` does, so `dregg completions <shell>`
+        /// aborted with "Argument names must be unique, but 'version' is in use
+        /// by more than one argument" and emitted no completion script at all.
+        /// The name also now matches the wire field this value fills
+        /// (`expected_version` in the `/registry/update` body).
+        #[arg(id = "expected_version", long = "expected-version")]
         version: Option<u64>,
     },
 

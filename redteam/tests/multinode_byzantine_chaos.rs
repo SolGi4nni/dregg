@@ -36,10 +36,30 @@
 //! with a precise message); a break that FAILS is asserted as EVIDENCE the
 //! property holds on the running Rust. The Lean proofs are about the abstract
 //! model; these tests are the projection check onto the concrete code.
+//!
+//! ## IDENTITY MODEL (post PQ hybrid-identity sweep)
+//!
+//! `finality::Block::creator` is NO LONGER the Ed25519 verify key: it is the
+//! HYBRID id `H(ed25519_pk ‖ ml_dsa_pk)` (`Block::hybrid_id`). The classical
+//! verify key is carried separately in `Block::ed25519`, and it is `ed25519` —
+//! not `creator` — that `verify_signature` parses as the verifying key.
+//! `creator` is the identity LABEL keying `tips()`, `equivocators()` and the
+//! roster. So every "is this creator flagged / does it still hold a tip?"
+//! assertion below keys on `Block::hybrid_id(&key)`. Keying them on
+//! `key.verifying_key().to_bytes()` looks up a label no block ever carries: the
+//! query silently returns "absent", which reads as "no equivocation detected"
+//! and "no tip" — the exact shapes these tests exist to catch. See
+//! `blocklace_attacks.rs`, which was migrated first and is the worked example.
+//!
+//! ATTACK 9 is the exception, and deliberately so: it drives the `lib.rs`
+//! strand-integrity path (`dregg_blocklace::Blocklace`), whose `Block::creator`
+//! IS still the raw Ed25519 key (`lib::Block::new_signed`). That path pins the
+//! post-quantum half to an ENROLLED roster key, so its creator must be enrolled
+//! (`enroll_pq`) for the strand gate under test to be reachable at all.
 
 use std::collections::HashSet;
 
-use dregg_blocklace::finality::{Block, BlockId, Blocklace as Lace, Payload};
+use dregg_blocklace::finality::{Block, BlockError, BlockId, Blocklace as Lace, Payload};
 use ed25519_dalek::SigningKey;
 
 // See `blocklace_attacks.rs` — `Block::new` derives the creator's ML-DSA-65 half and
@@ -90,12 +110,14 @@ impl Node {
         self.lace.iter().map(|(id, _)| *id).collect()
     }
 
-    /// The honest per-creator tip map (the SSB feed heads). Equivocators have NO
-    /// tip (withdrawn on detection), so this is the honest finalized frontier.
+    /// The honest per-creator tip map (the SSB feed heads), keyed by the HYBRID
+    /// creator id. Equivocators have NO tip (withdrawn on detection), so this is
+    /// the honest finalized frontier.
     fn tips(&self) -> std::collections::HashMap<[u8; 32], BlockId> {
         self.lace.tips().clone()
     }
 
+    /// The detected equivocators, as HYBRID creator ids.
     fn equivocators(&self) -> HashSet<[u8; 32]> {
         self.lace.equivocators().iter().copied().collect()
     }
@@ -274,28 +296,42 @@ fn attack_byzantine_equivocation_detected_and_excluded() {
     ibp.deliver(&mut p, fork_y.clone());
     ibq.deliver(&mut q, fork_x.clone());
 
-    let byz_pk = byz.verifying_key().to_bytes();
+    // The label the lace keys equivocation bookkeeping by: the HYBRID id, not
+    // `byz.verifying_key()`.
+    let byz_id = Block::hybrid_id(&byz);
+    assert_eq!(
+        fork_x.creator, byz_id,
+        "the forks must be LABELLED with the id these assertions query"
+    );
 
     // (1) DETECTION on both honest nodes.
     assert!(
-        p.equivocators().contains(&byz_pk),
+        p.equivocators().contains(&byz_id),
         "FINDING(StrandIntegrity BROKEN): node P did NOT detect the equivocation — a same-(creator,seq) \
          fork slipped through `receive_block` undetected"
     );
     assert!(
-        q.equivocators().contains(&byz_pk),
+        q.equivocators().contains(&byz_id),
         "FINDING(StrandIntegrity BROKEN): node Q did NOT detect the equivocation"
     );
 
     // (2) TIP WITHDRAWAL — the equivocator has NO honest feed head. The OLD
     // overwriting `insert` would leave exactly one fork as the live tip.
+    // NON-VACUITY: the honest base creator DOES still hold a tip, so "no tip for
+    // `byz_id`" is a withdrawal we observed, not a map we are simply missing
+    // from (the shape a stale ed25519 key produced).
     assert!(
-        !p.tips().contains_key(&byz_pk),
+        p.tips().contains_key(&Block::hybrid_id(&honest_a)),
+        "the honest creator must still hold a live tip — otherwise the tip-absence \
+         assertions below are vacuous"
+    );
+    assert!(
+        !p.tips().contains_key(&byz_id),
         "FINDING(StrandIntegrity audit-A1 REGRESSED): equivocator still has a live tip on node P \
          — a fork was silently retained as the feed head instead of being withdrawn"
     );
     assert!(
-        !q.tips().contains_key(&byz_pk),
+        !q.tips().contains_key(&byz_id),
         "FINDING(StrandIntegrity audit-A1 REGRESSED): equivocator still has a live tip on node Q"
     );
 
@@ -340,17 +376,27 @@ fn attack_forged_signatures_rejected() {
         "FINDING: an UNSIGNED block was admitted to the lace (Ed25519 seam not enforced)"
     );
 
-    // (b) Creator-spoof: claim the victim's pubkey but carry the ATTACKER's
-    // signature. `verify_signature` checks the signature against `creator`, so
-    // the attacker's sig cannot validate under the victim's key.
+    // (b) Creator-spoof: claim the victim's IDENTITY LABEL (their hybrid id)
+    // while carrying the attacker's own ed25519 key and the attacker's
+    // signature. The signed content commits to `creator`, so substituting the
+    // victim's id after signing invalidates the retained signature — the
+    // ed25519-only reception path refuses it as `InvalidSignature`.
+    //
+    // PATH SCOPE: the harder variant — same substituted id but RE-SIGNED under
+    // the attacker's key, so the classical half genuinely verifies — is NOT
+    // refusable here and is not claimed to be; only the hybrid commitment gate
+    // (`Block::verify_hybrid`, reached via `receive_block_pinned`) refuses it.
+    // That is `blocklace_attacks.rs::attack_forge_under_victim_id_with_own_key_
+    // fails_commitment_gate`.
     let mut spoof = Block::new(&attacker, 0, Payload::Turn(vec![2]), vec![]);
-    spoof.creator = victim.verifying_key().to_bytes(); // claim to be the victim
+    spoof.creator = Block::hybrid_id(&victim); // claim to be the victim
     let spoof_id = spoof.id();
     let r_spoof = node.lace.receive_block(spoof);
     assert!(
-        r_spoof.is_err() && !node.lace.contains(&spoof_id),
-        "FINDING: a CREATOR-SPOOFED block (victim pubkey, attacker signature) was admitted — \
-         an attacker could forge feed entries for any identity"
+        matches!(r_spoof, Err(BlockError::InvalidSignature { .. }))
+            && !node.lace.contains(&spoof_id),
+        "FINDING: a CREATOR-SPOOFED block (victim identity label, attacker signature) was \
+         admitted — an attacker could forge feed entries for any identity. Got {r_spoof:?}"
     );
 
     // (c) Tamper-after-sign: sign a block, then mutate the payload. The id() and
@@ -558,8 +604,9 @@ fn attack_flood_does_not_desync() {
         "FINDING: a flood desynced two honest nodes (volume broke convergence)"
     );
     // The honest creator's tip must be its real seq-2 head, unperturbed by spam.
-    let honest_pk = honest.verifying_key().to_bytes();
-    let honest_tip = n1.tips().get(&honest_pk).copied();
+    // Keyed by the HYBRID id — the label the blocks actually carry.
+    let honest_id = Block::hybrid_id(&honest);
+    let honest_tip = n1.tips().get(&honest_id).copied();
     assert_eq!(
         honest_tip,
         Some(honest_blocks.last().unwrap().id()),
@@ -606,9 +653,11 @@ fn attack_double_spend_race_no_node_finalizes_one_fork() {
     let _ = n2.lace.receive_block(spend_to_bob.clone());
 
     // Each node, in isolation, currently believes its single spend is the tip.
-    let spender_pk = spender.verifying_key().to_bytes();
-    assert_eq!(n1.tips().get(&spender_pk), Some(&spend_to_alice.id()));
-    assert_eq!(n2.tips().get(&spender_pk), Some(&spend_to_bob.id()));
+    // NON-VACUITY: this pre-check is what proves the id below is the label the
+    // lace really keys by — the tip lookup HITS before the race is resolved.
+    let spender_id = Block::hybrid_id(&spender);
+    assert_eq!(n1.tips().get(&spender_id), Some(&spend_to_alice.id()));
+    assert_eq!(n2.tips().get(&spender_id), Some(&spend_to_bob.id()));
 
     // Now gossip cross-delivers the conflicting spend to each node.
     let _ = n1.lace.receive_block(spend_to_bob.clone());
@@ -619,12 +668,12 @@ fn attack_double_spend_race_no_node_finalizes_one_fork() {
     // (no canonical winner). A node that kept ONE spend live would have let the
     // double-spend succeed there.
     assert!(
-        !n1.tips().contains_key(&spender_pk) && !n2.tips().contains_key(&spender_pk),
+        !n1.tips().contains_key(&spender_id) && !n2.tips().contains_key(&spender_id),
         "FINDING(DOUBLE-SPEND WINS): a node kept one fork as the live tip — the double-spend \
          was finalized on at least one node"
     );
     assert!(
-        n1.equivocators().contains(&spender_pk) && n2.equivocators().contains(&spender_pk),
+        n1.equivocators().contains(&spender_id) && n2.equivocators().contains(&spender_id),
         "FINDING: the double-spender was not flagged on both nodes"
     );
     assert_eq!(
@@ -656,18 +705,20 @@ fn attack_eclipse_delay_not_permanent_fork() {
 
     let fork_a = Block::new(&byz, 0, Payload::Turn(vec![0x0A]), vec![]);
     let fork_b = Block::new(&byz, 0, Payload::Turn(vec![0x0B]), vec![]);
-    let byz_pk = byz.verifying_key().to_bytes();
+    let byz_id = Block::hybrid_id(&byz);
 
     // Phase 1 — ECLIPSED: the attacker feeds only fork_a. The victim makes
     // progress and (correctly) does NOT flag an equivocation it cannot see.
     let _ = victim.lace.receive_block(fork_a.clone());
     assert!(
-        !victim.equivocators().contains(&byz_pk),
+        !victim.equivocators().contains(&byz_id),
         "a node cannot detect a fork whose second branch it has never received \
          (this is expected — no false positive)"
     );
+    // NON-VACUITY: the tip lookup HITS here, so the phase-2 withdrawal below is
+    // an observed removal rather than a key that was never present.
     assert_eq!(
-        victim.tips().get(&byz_pk),
+        victim.tips().get(&byz_id),
         Some(&fork_a.id()),
         "single-fork tip during eclipse"
     );
@@ -676,12 +727,12 @@ fn attack_eclipse_delay_not_permanent_fork() {
     // Detection must fire immediately and the tip must be withdrawn.
     let _ = victim.lace.receive_block(fork_b.clone());
     assert!(
-        victim.equivocators().contains(&byz_pk),
+        victim.equivocators().contains(&byz_id),
         "FINDING: eclipse defeat FAILED — the conflicting fork arrived but no equivocation was \
          detected, so the attacker's withholding bought a PERMANENT undetected fork"
     );
     assert!(
-        !victim.tips().contains_key(&byz_pk),
+        !victim.tips().contains_key(&byz_id),
         "FINDING: equivocator tip not withdrawn after eclipse broken"
     );
 }
@@ -691,18 +742,43 @@ fn attack_eclipse_delay_not_permanent_fork() {
 // own past by re-submitting a LOWER sequence to roll back history.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// We use `dregg_blocklace::Blocklace` (the `lib.rs` strand-integrity write path,
-/// which enforces sequence monotonicity explicitly via `SeqRegression`). A
-/// Byzantine creator advances to seq 3, then tries to "rewrite history" by
-/// inserting a fresh, validly-signed block at seq 1. Monotonicity must reject it
-/// (it is neither a higher-seq extension nor a same-seq fork). A node that
-/// accepted it could be tricked into rolling back the creator's feed.
+/// We use `dregg_blocklace::Blocklace` (the `lib.rs` strand-integrity write path).
+/// A Byzantine creator advances to seq 3, then tries to "rewrite history" by
+/// inserting a fresh, validly-signed block at a LOWER sequence. The property
+/// under test is that the rollback block never becomes the creator's live tip.
+///
+/// WHICH GATE ACTUALLY FIRES. The chain occupies seq 0..=3 contiguously, so the
+/// seq-2 rollback COLLIDES with a stored block and is refused as an
+/// `Equivocation` (tip withdrawn, fork retained as evidence) — the monotonicity
+/// `SeqRegression` gate this attack is named for needs an UNOCCUPIED below-tip
+/// slot to be reachable and is exercised by `dregg-blocklace`'s own
+/// `tests::seq_regression_rejected` (seq 0, 5, then 3 and 2). Both refusals
+/// deliver the property; the match below names them so which one fired is
+/// visible rather than assumed.
+///
+/// ENROLLMENT. This write path PINS every block's ML-DSA half to the creator's
+/// key in the committee roster and rejects an unenrolled creator FAIL-CLOSED
+/// (`InsertError::UnenrolledCreator`). That gate is load-bearing and is NOT
+/// relaxed here: the creator is ENROLLED (`enroll_pq`, the same trusted
+/// out-of-band genesis enrollment the node performs), which is what makes the
+/// monotonicity/equivocation gate under test REACHABLE at all. Without it every
+/// insert below — honest chain included — dies at the roster check, and the
+/// `res.is_err()` assertion would pass for a reason that has nothing to do with
+/// sequence rollback. The assertions below therefore name the acceptable
+/// rejections explicitly and REFUSE `UnenrolledCreator`.
 #[test]
 fn attack_sequence_rollback_rejected() {
     use dregg_blocklace::{Block as LibBlock, Blocklace, InsertError};
 
     let creator = key(90);
     let mut bl = Blocklace::new();
+    // Trusted out-of-band committee enrollment (genesis roster), keyed — on THIS
+    // path — by the raw ed25519 pubkey, which is what `lib::Block::new_signed`
+    // stamps as `creator`.
+    bl.enroll_pq(
+        creator.verifying_key().to_bytes(),
+        LibBlock::pq_public_key(&creator),
+    );
 
     // Build a signed seq 0..=3 chain via the lib path.
     let mut preds: Vec<[u8; 32]> = Vec::new();
@@ -734,21 +810,33 @@ fn attack_sequence_rollback_rejected() {
     // Equivocation (if it collides with the stored seq-2). EITHER rejection is
     // correct; what must NOT happen is the tip moving backward or the block
     // becoming the new honest tip.
-    assert!(
-        res.is_err(),
-        "FINDING(StrandIntegrity monotonicity BROKEN): a lower-sequence rollback block was \
-         accepted as a valid strand extension — history can be rewritten"
-    );
-    if let Err(InsertError::SeqRegression {
-        attempted,
-        tip_sequence,
-        ..
-    }) = &res
-    {
-        assert!(
+    //
+    // ANTI-VACUITY: name the acceptable rejections. `UnenrolledCreator` is a
+    // rejection too, and it is the one that made this assertion meaningless
+    // before the roster enrollment above — it refuses EVERY block by this
+    // creator, honest extensions included, so it can never distinguish a
+    // rollback from an honest append.
+    match &res {
+        Err(InsertError::SeqRegression {
+            attempted,
+            tip_sequence,
+            ..
+        }) => assert!(
             *attempted <= *tip_sequence,
             "SeqRegression must report attempted <= tip"
-        );
+        ),
+        Err(InsertError::Equivocation(proof)) => {
+            assert_eq!(proof.sequence, 2, "the collision is at the stored seq 2");
+            assert_eq!(proof.conflicting, rollback_id);
+        }
+        Ok(_) => panic!(
+            "FINDING(StrandIntegrity monotonicity BROKEN): a lower-sequence rollback block was \
+             accepted as a valid strand extension — history can be rewritten"
+        ),
+        Err(other) => panic!(
+            "the rollback must be refused BY the strand gates (SeqRegression / Equivocation), \
+             not incidentally: got {other:?}"
+        ),
     }
     // The honest tip must be UNCHANGED (still seq 3) unless the rollback was a
     // fork that withdrew it; in the fork case the creator is an equivocator and

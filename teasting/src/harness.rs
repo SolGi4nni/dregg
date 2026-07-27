@@ -66,8 +66,6 @@ impl SimClock {
 struct SimNode {
     /// This node's Ed25519 signing key (used by the blocklace to author blocks).
     signing_key: DalekSigningKey,
-    /// This node's public key as 32 bytes.
-    pub_bytes: [u8; 32],
     /// Local finality blocklace view.
     blocklace: Blocklace,
     /// Revoked tokens applied to this node (updated after each consensus round).
@@ -86,11 +84,9 @@ struct SimNode {
 impl SimNode {
     fn new(seed: [u8; 32], quorum_threshold: usize) -> Self {
         let signing_key = DalekSigningKey::from_bytes(&seed);
-        let pub_bytes = signing_key.verifying_key().to_bytes();
         let blocklace = Blocklace::new(signing_key.clone(), quorum_threshold);
         Self {
             signing_key,
-            pub_bytes,
             blocklace,
             revoked: HashSet::new(),
             pending: Vec::new(),
@@ -121,6 +117,19 @@ pub struct SimFederation {
     /// Union of all token ids ever revoked across all consensus rounds.
     /// Used by `recover_node` to replay history into the rejoining node.
     all_revoked: HashSet<String>,
+    /// `ordering::tau`'s participant set: the per-node HYBRID creator ids, in
+    /// node order. Cached because deriving one is an ML-DSA-65 keygen.
+    ///
+    /// ⚠ DERIVED LAZILY, ON PURPOSE. `Block::hybrid_id` runs an ML-DSA
+    /// operation, and `dregg-pq` answers one with `process::abort()` when the
+    /// process installed no Lean-verified core. Most `dregg-teasting` test
+    /// binaries never install one and never author a block — they only build a
+    /// harness — so deriving this in `SimNode::new` turns "constructed a
+    /// harness" into a bare SIGABRT for them (measured: it killed all of
+    /// `captp_sessions` and `dfa_routing`). Every code path that reaches the
+    /// derivation below has already authored a block through `Block::new`, so
+    /// it demands nothing of the PQ stack that has not already succeeded.
+    participants: Option<Vec<[u8; 32]>>,
 }
 
 impl SimFederation {
@@ -172,6 +181,7 @@ impl SimFederation {
             name: name.to_string(),
             height: 0,
             all_revoked: HashSet::new(),
+            participants: None,
         }
     }
 
@@ -257,10 +267,56 @@ impl SimFederation {
         }
 
         // Build the ordering blocklace from node 0's view and run `tau`.
+        //
+        // `tau`'s participant set must be keyed by the SAME label the blocks
+        // carry in `creator` — the HYBRID id `H(ed25519_pk ‖ ml_dsa_pk)`, not
+        // the raw Ed25519 verify key (which lives in `Block::ed25519`). The
+        // projection in `build_ordering_blocklace` copies `block.creator`
+        // through verbatim, so a participant set built from Ed25519 keys
+        // intersects the lace's creators in NOTHING: every leader lookup and
+        // every ratification vote finds zero participant blocks, `tau` returns
+        // the empty order, and `run_consensus_round` reports `false` forever.
+        //
+        // `Blocklace::self_creator()` is that label, straight from the lace that
+        // stamps it — one source of truth, so this cannot drift again.
         let leader_idx = online_indices[0];
-        let participants: Vec<[u8; 32]> = self.nodes.iter().map(|node| node.pub_bytes).collect();
+        let participants: Vec<[u8; 32]> = match &self.participants {
+            Some(cached) => cached.clone(),
+            None => {
+                let derived: Vec<[u8; 32]> = self
+                    .nodes
+                    .iter()
+                    .map(|node| node.blocklace.self_creator())
+                    .collect();
+                self.participants = Some(derived.clone());
+                derived
+            }
+        };
 
         let ordering_lace = build_ordering_blocklace(&self.nodes[leader_idx].blocklace);
+        // GATE (not a comment): that mismatch is silent — an empty order is
+        // indistinguishable from "this round did not finalize". Assert the
+        // participant set actually LABELS the lace we are ordering, so a future
+        // identity flip fails loudly here instead of quietly never finalizing.
+        {
+            let participant_set: HashSet<[u8; 32]> = participants.iter().copied().collect();
+            let unknown: Vec<[u8; 32]> = ordering_lace
+                .block_ids()
+                .iter()
+                .filter_map(|id| ordering_lace.get(id))
+                .map(|b| b.creator)
+                .filter(|c| !participant_set.contains(c))
+                .collect();
+            assert!(
+                unknown.is_empty(),
+                "SimFederation '{}': {} block(s) in the ordering lace are authored by a creator \
+                 that is not in tau's participant set — the participant label and the block \
+                 `creator` label have diverged (hybrid id vs ed25519 key?), so tau can never \
+                 finalize",
+                self.name,
+                unknown.len(),
+            );
+        }
         let finalized_ids = dregg_blocklace::ordering::tau(&ordering_lace, &participants);
 
         if finalized_ids.is_empty() {
