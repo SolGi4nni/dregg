@@ -315,13 +315,22 @@ jobs:
           # first matched line SIGPIPEs `head`, so a genuine pointer could flip the pipeline
           # to non-zero and be read as "no pointer". Capture the header (existence is a hard
           # `test -f`, so absence fails LOUD) and match with `case` — no pipe, no SIGPIPE.
+          # ⚑ STAGING: the atlas images are LFS-backed and the repo is over its LFS budget, so
+          # they may be absent or left as pointer stubs. That must cost us the SCREENSHOTS, not
+          # the deploy — the whole point of making the LFS fetch best-effort above. This reports
+          # and continues. (When the budget is restored, or the images stop being LFS-tracked,
+          # turn these back into hard failures: that is the point at which "the atlas renders"
+          # becomes a claim rather than a hope.)
           atlas_img=site/dist/atlas/ui-states/HOME_.jpg
-          test -f "$atlas_img" || { echo "ERROR: atlas image $atlas_img is MISSING from the built dist" && exit 1; }
-          atlas_hdr="$(head -c 20 "$atlas_img")"
-          case "$atlas_hdr" in
-            'version https://gi'*)
-              echo "ERROR: atlas image is an unmaterialized LFS pointer — checkout needs lfs:true" && exit 1 ;;
-          esac
+          if [ ! -f "$atlas_img" ]; then
+            echo "NOTE (staging): atlas image $atlas_img absent — LFS not materialized; atlas ships without screenshots"
+          else
+            atlas_hdr="$(head -c 20 "$atlas_img")"
+            case "$atlas_hdr" in
+              'version https://gi'*)
+                echo "NOTE (staging): atlas image is an unmaterialized LFS pointer — atlas ships without screenshots" ;;
+            esac
+          fi
 
           # ── THE WASM SURFACES: presence is NOT required. What IS required is that the
           # site never lies about them. For each surface: the provenance record must agree
