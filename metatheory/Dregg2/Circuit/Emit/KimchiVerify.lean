@@ -20,14 +20,17 @@ new + built here vs. what remains a NAMED carrier / residual is stated PER CHECK
 
 ## The two fields (the Pasta 2-cycle, spec §0)
 
-The proof side is Vesta: `G::ScalarField = Fq` (all evaluations, challenges, scalar arithmetic),
-`G::BaseField = Fp` (point coordinates). The field-arithmetic checks (C4/C5/C6/C8) are authored
+The proof side is Vesta: `G::ScalarField = Fp` (all evaluations, challenges, scalar arithmetic),
+`G::BaseField = Fq` (point coordinates). The field-arithmetic checks (C4/C5/C6/C8) are authored
 FIELD-GENERIC (`variable {F} [Field F]`) — the exact transcription of the Rust formulas, valid
-over any field — and instantiated at `Fq = ZMod PastaField.qN` for the real statement (qN prime,
-inherited from mina-curves ⇒ `ZMod qN` a field); the in-kernel KATs use `F = ℚ` (exact,
-kernel-reducible), exactly as `PastaIPA` proves `sVec_eq_bPoly` over any `CommRing` and KATs over
-ℤ. The `ℤ ↔ p_felt` field-width gap (the emitted-column soundness, K1 §6) is the shared residual;
-here the arithmetic is over `F` directly, above the felt encoding.
+over any field — and the real statement lives at `Fp = ZMod PastaField.pN` (Vesta::ScalarField,
+modulus `pN`, mina-curves `fp.rs`); the in-kernel KATs use `F = ℚ` (exact, kernel-reducible),
+exactly as `PastaIPA` proves `sVec_eq_bPoly` over any `CommRing` and KATs over ℤ. There is no
+`Field (ZMod pN)` instance in the tree (no in-kernel primality proof of the 255-bit `pN`), so §9b
+composes the C5/C8 checks over `ZMod pN` AS A `CommRing` with a WITNESSED inverse
+(`kimchiVerifyDecisionField`; see `docs/MINA-REALITY-GATE.md`). The `ℤ ↔ p_felt` field-width gap
+(the emitted-column soundness, K1 §6) is the shared residual; the arithmetic here is over `F`
+directly, above the felt encoding.
 
 ## What is BUILT (real gadget/theorem) vs NAMED (carrier/residual), per check
 
@@ -381,6 +384,105 @@ theorem kimchiVerifyDecision_refines (prevLen publicLen wLen sLen coeffLen tComm
       = (shapeOk prevLen publicLen wLen sLen coeffLen tCommLen chunkSize
           && transcriptOk && ipaOk && deferralOk) := rfl
 
+/-! ## §9b — COMPOSING THE FIELD ARITHMETIC INTO THE DECISION (the reality-gate closure).
+
+`kimchiVerifyDecision` above is C1 + three opaque carriers — it consumes NO field element
+(`docs/MINA-REALITY-GATE.md` §3: the field formulas were validated BESIDE the accept, not inside
+it). This section threads the C8 (`combinedInnerProduct`) and C5 (`ftEval0`) field-value checks
+THROUGH the accept, so a real proof's arithmetic is CHECKED inside one decision.
+
+The obstruction: `combinedInnerProduct`/`ftEval0` are `[Field F]`-typed (the ζ-numerator carries
+one inverse) and the real proof lives in `ZMod pN`, which has NO `Field` instance in the tree (no
+in-kernel primality proof of the 255-bit `pN`; `native_decide` forbidden). We SIDESTEP the Field
+instance exactly as `PastaIPA` handles its identities — `CommRing`-typed MIRRORS whose bodies are
+byte-identical to the shipped defs, tied to them by `rfl` for every field (`cipR_eq`, `ftEval0R_eq`)
+— with the single field inverse SUPPLIED as a witness `denomInv` and its correctness
+`denom · denomInv = 1` CHECKED in the `CommRing` (a unit's inverse is unique in any monoid, so this
+pins `denomInv = denominator⁻¹` without any primality/Field structure). No genuinely-unwitnessed
+division remains in C5/C8, so no Pasta-prime `Field (ZMod pN)` instance is needed. (C4 `p(ζ)` enters
+the C5 fold as an INPUT — recomputing it needs the un-extracted batch-inverted Lagrange denominators,
+a named residual; C7 `ftComm`/`permScalar` are commitment/MSM-valued, the K2 carrier, not field-value
+checks.) -/
+
+/-- CommRing mirror of `combinedInnerProduct` (C8) — no division, body byte-identical. -/
+def cipR {R : Type} [CommRing R] (polyscale evalscale : R) (evZeta evZetaOmega : List R) : R :=
+  (List.range evZeta.length).foldl
+    (fun acc k => acc + polyscale ^ k * (evZeta.getD k 0 + evalscale * evZetaOmega.getD k 0)) 0
+
+/-- **`cipR_eq`** — the C8 mirror IS the shipped `combinedInnerProduct`, for every field. -/
+theorem cipR_eq {K : Type} [Field K] (a b : K) (x y : List K) :
+    cipR a b x y = combinedInnerProduct a b x y := rfl
+
+/-- CommRing mirror of `zkPoly` (used by `ftEval0R`). -/
+def zkPolyR {R : Type} [CommRing R] (n : Nat) (omega zeta : R) : R :=
+  (zeta - omega ^ (n - 3)) * (zeta - omega ^ (n - 2)) * (zeta - omega ^ (n - 1))
+
+/-- CommRing mirror of `ftEval0` (C5) with the single field inverse `denominator⁻¹` SUPPLIED as
+`denomInv`; body otherwise byte-identical to `ftEval0`. -/
+def ftEval0R {R : Type} [CommRing R] (n : Nat) (omega zeta beta gamma alpha0 alpha1 alpha2 : R)
+    (w s shift : List R) (zZeta zZetaOmega pZeta linConstTerm denomInv : R) : R :=
+  let zkp := zkPolyR n omega zeta
+  let zeta1m1 := zeta ^ n - 1
+  let init := (w.getD (PERMUTS - 1) 0 + gamma) * zZetaOmega * alpha0 * zkp
+  let numerFold := (List.range (PERMUTS - 1)).foldl
+    (fun x i => x * (beta * s.getD i 0 + w.getD i 0 + gamma)) init
+  let afterPub := numerFold - pZeta
+  let denomFold := (List.range PERMUTS).foldl
+    (fun x i => x * (gamma + beta * zeta * shift.getD i 0 + w.getD i 0))
+    (alpha0 * zkp * zZeta)
+  let afterDenom := afterPub - denomFold
+  let numerator := (zeta1m1 * alpha1 * (zeta - omega ^ (n - 3))
+    + zeta1m1 * alpha2 * (zeta - 1)) * (1 - zZeta)
+  let afterZk := afterDenom + numerator * denomInv
+  afterZk - linConstTerm
+
+/-- **`ftEval0R_eq`** — with `denomInv = denominator⁻¹` the C5 mirror IS the shipped `ftEval0`,
+for every field (`zkPolyR = zkPoly`, `numerator·denomInv = numerator·denominator⁻¹`). -/
+theorem ftEval0R_eq {K : Type} [Field K] (n : Nat) (omega zeta beta gamma alpha0 alpha1 alpha2 : K)
+    (w s shift : List K) (zZeta zZetaOmega pZeta linConstTerm : K) :
+    ftEval0R n omega zeta beta gamma alpha0 alpha1 alpha2 w s shift zZeta zZetaOmega pZeta
+        linConstTerm (((zeta - omega ^ (n - 3)) * (zeta - 1))⁻¹)
+      = ftEval0 n omega zeta beta gamma alpha0 alpha1 alpha2 w s shift zZeta zZetaOmega pZeta
+        linConstTerm := rfl
+
+/-- **`kimchiVerifyDecisionField`** — the composed decision that now CONSUMES the real field values.
+It is the shipped `kimchiVerifyDecision` (C1 + carriers) conjoined with (C8) the aggregation check
+`cipClaimed = combinedInnerProduct`, (C5-inv) the witnessed-inverse check that `denomInv` is the
+genuine inverse of the C5 denominator `(ζ−ω^{n−3})(ζ−1)`, and (C5) the check
+`ftEval0Claimed = ft(ζ)`. Over `[CommRing R] [DecidableEq R]`, so it runs at `ZMod pN`. -/
+def kimchiVerifyDecisionField {R : Type} [CommRing R] [DecidableEq R]
+    (prevLen publicLen wLen sLen coeffLen tCommLen chunkSize n : Nat)
+    (polyscale evalscale : R) (evZeta evZetaOmega : List R) (cipClaimed : R)
+    (omega zeta beta gamma alpha0 alpha1 alpha2 : R)
+    (w s shift : List R) (zZeta zZetaOmega pZeta linConstTerm denomInv ftEval0Claimed : R)
+    (transcriptOk ipaOk deferralOk : Bool) : Bool :=
+  kimchiVerifyDecision prevLen publicLen wLen sLen coeffLen tCommLen chunkSize
+      transcriptOk ipaOk deferralOk
+  && decide (cipR polyscale evalscale evZeta evZetaOmega = cipClaimed)                     -- C8
+  && decide (((zeta - omega ^ (n - 3)) * (zeta - 1)) * denomInv = 1)                        -- witnessed inverse
+  && decide (ftEval0R n omega zeta beta gamma alpha0 alpha1 alpha2 w s shift
+       zZeta zZetaOmega pZeta linConstTerm denomInv = ftEval0Claimed)                       -- C5
+
+/-- **`kimchiVerifyDecisionField_refines`** — the composed field decision IS the shape/carrier
+decision conjoined with the three field-arithmetic checks (`rfl`): the field checks are ADDED to
+`kimchiVerifyDecision`, they do not replace it. -/
+theorem kimchiVerifyDecisionField_refines {R : Type} [CommRing R] [DecidableEq R]
+    (prevLen publicLen wLen sLen coeffLen tCommLen chunkSize n : Nat)
+    (polyscale evalscale : R) (evZeta evZetaOmega : List R) (cipClaimed : R)
+    (omega zeta beta gamma alpha0 alpha1 alpha2 : R)
+    (w s shift : List R) (zZeta zZetaOmega pZeta linConstTerm denomInv ftEval0Claimed : R)
+    (transcriptOk ipaOk deferralOk : Bool) :
+    kimchiVerifyDecisionField prevLen publicLen wLen sLen coeffLen tCommLen chunkSize n
+        polyscale evalscale evZeta evZetaOmega cipClaimed omega zeta beta gamma alpha0 alpha1 alpha2
+        w s shift zZeta zZetaOmega pZeta linConstTerm denomInv ftEval0Claimed
+        transcriptOk ipaOk deferralOk
+      = (kimchiVerifyDecision prevLen publicLen wLen sLen coeffLen tCommLen chunkSize
+            transcriptOk ipaOk deferralOk
+          && decide (cipR polyscale evalscale evZeta evZetaOmega = cipClaimed)
+          && decide (((zeta - omega ^ (n - 3)) * (zeta - 1)) * denomInv = 1)
+          && decide (ftEval0R n omega zeta beta gamma alpha0 alpha1 alpha2 w s shift
+               zZeta zZetaOmega pZeta linConstTerm denomInv = ftEval0Claimed)) := rfl
+
 /-! ## §10 — NON-VACUITY: every check DISCRIMINATES (kernel-clean).
 
 The composed decision + the shape check reduce under `decide` (pure `Nat`/`Bool`); the field
@@ -466,6 +568,9 @@ theorem ftComm_kat : ftComm (G := ℚ) 4 (2:ℚ) 100 3 = 55 := by
 #assert_axioms deferral_records
 #assert_axioms kimchiVerifyDecision_refines
 #assert_axioms kimchi_decision_discriminates
+#assert_axioms cipR_eq
+#assert_axioms ftEval0R_eq
+#assert_axioms kimchiVerifyDecisionField_refines
 
 /-! ## §12 — The PRECISE named residuals (what does NOT compose end-to-end).
 
@@ -481,12 +586,17 @@ theorem ftComm_kat : ftComm (G := ℚ) 4 (2:ℚ) 100 3 = 55 := by
      Fq-sponge-over-Fp constants (mod `pN`); the Fr-sponge is the same permutation over `qN` — a
      mechanical mirror. The ORDER (`squeeze_order`) is proven; the phase-2 sponge VALUES are named.
   4. **The field-arithmetic checks are over `F`, above the felt encoding.** The `ℤ ↔ p_felt`
-     field-width gap (K1 §6) and the `z < p` canonical compare are the shared residuals; here the
-     checks are field-generic and instantiate at `ZMod qN` (qN prime, inherited from mina-curves).
-  5. **The full accept over a real proof is NOT `#guard`ed end-to-end** — it is the composition of
-     C1 (forced) + C3 order (proven) + C4/C5/C6/C7/C8 (transcribed + KAT'd) + C9 (deferral proven,
-     MSM carried). The batch assembly (`assembleBatch`: the ordered eval list feeding `cip`, the
-     `Evaluation` pairing `verifier.rs:967-1181`) is the plumbing the carriers consume.
+     field-width gap (K1 §6) and the `z < p` canonical compare are the shared residuals. The real
+     field is `Fp = ZMod pN` (Vesta::ScalarField); there is no `Field (ZMod pN)` instance in the
+     tree, so §9b runs the C5/C8 checks over `ZMod pN` AS A `CommRing` with a WITNESSED inverse
+     (`kimchiVerifyDecisionField`), evaluated on real values in `KimchiRealProofGate`.
+  5. **The field-value composition (C5/C8) IS now inside one accept** (`kimchiVerifyDecisionField`,
+     §9b, `refines`-tied to `kimchiVerifyDecision`), evaluated end-to-end on a REAL proof over
+     `ZMod pN` in `KimchiRealProofGate`. What remains carried in that accept: the C3/C9 crypto
+     carriers, C4 `p(ζ)` fed as an input (its Lagrange-denominator recomputation not extracted),
+     and C7 `ftComm`/`permScalar` (commitment/MSM-valued, the K2 carrier — not field-value checks).
+     The batch assembly (`assembleBatch`: the ordered eval list feeding `cip`, the `Evaluation`
+     pairing `verifier.rs:967-1181`) is the plumbing the carriers consume.
   6. **Out of v1 scope:** Pickles recursion (the `sg` split's terminal discharge), proof BATCHING
      (`prevLen = 0`, single proof), and lookups/Plookup (C10, `lookup_index = None`).
 

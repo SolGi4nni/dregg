@@ -13,6 +13,21 @@ field values** (it is C1 ∧ three opaque crypto carriers), the shipped field fo
 typed at the real field** (no `Field (ZMod pN)` instance), and three named carriers
 (custom-gate streams / Fr-sponge / IPA `msm==0`) remain. This is **not** one bug-fix away.
 
+**UPDATE (composition landed, 2026-07-27).** Two of those gaps are now closed. (1) The field
+LABEL is corrected at the source: `KimchiVerify`'s header/residuals now say `Fp = ZMod pN`
+(Vesta::ScalarField), not `Fq/qN`. (2) The C5/C8 field-value checks are now **composed INTO one
+decision that CONSUMES the real field values** — `kimchiVerifyDecisionField` (`KimchiVerify` §9b),
+run over `ZMod pN` **as a `CommRing` with a WITNESSED inverse** (the prover supplies `denomInv`,
+checked `denom·denomInv = 1` in the ring — no `Field`/primality instance needed). Evaluated in-kernel
+on the REAL proof (`KimchiRealProofGate` §6b): `real_field_decision_accepts` shows C1 (shape) ∧ C8
+(`cip = combinedInnerProduct`) ∧ witnessed-inverse ∧ C5 (`ft_eval0`) all ACCEPT over the real Pasta
+scalar field; `real_field_decision_discriminates` shows each single tamper (cip, an es-order eval,
+`ft_eval0`, a witness eval, the inverse witness, a shape count, a carrier) REJECTS. **No Pratt
+primality certificate was needed** — the CommRing + witnessed-inverse route sidesteps it entirely.
+Precise honest claim: *the decision now checks a real proof's arithmetic over the real field, modulo
+the three named crypto carriers* (C3 Fr-sponge values, C6 custom-gate token streams, C9 IPA `msm==0`),
+plus C4 `p(ζ)` fed as an input and C7's commitment-side MSM (K2 carrier). It does **not** verify Mina.
+
 All Lean below is axiom-clean (`#assert_axioms` ⊆ `{propext, Classical.choice, Quot.sound}`), built
 on hbox (`swarm-build lake build Dregg2.Circuit.Emit.KimchiRealProofGate`), no `native_decide`.
 
@@ -46,6 +61,8 @@ Shape of the real proof: `prev_challenges=0`, `public=5`, `w_comm=15`, `σ_evals
 `variable {F} [Field F]` (field-generic), so the *arithmetic* is unaffected, but the named/intended
 instantiation is wrong. Instantiating and feeding real Fp values at `ZMod qN` would reduce products
 mod the wrong prime and fail. **This gate uses the correct `ZMod pN`.** Fix: header label `qN → pN`.
+**APPLIED (2026-07-27):** `KimchiVerify`'s "two fields" header and §12 residual #4 now read
+`Fp = ZMod PastaField.pN`; the gate header's mislabel note is updated to "now corrected at source".
 
 ## 3. What the decision actually consumes (the structural finding)
 
@@ -55,11 +72,27 @@ kimchiVerifyDecision prevLen publicLen wLen sLen coeffLen tCommLen chunkSize
   = shapeOk … (C1)  &&  transcriptOk  &&  ipaOk  &&  deferralOk
 ```
 
-The top-level decision takes **seven `Nat` shape counts + three `Bool` carriers**. **No field
-element enters it.** The C4–C8 field formulas (`publicEval`, `ftEval0`, `permScalar`, `ftComm`,
-`combinedInnerProduct`) are **standalone `def`s** with `ℚ` KATs; they are *not wired into*
-`kimchiVerifyDecision`. So "running a real proof through the decision" exercises **C1 + three
-asserted carriers**; the field-formula fidelity is a *separate* demonstration (this gate).
+The top-level `kimchiVerifyDecision` takes **seven `Nat` shape counts + three `Bool` carriers** —
+**no field element enters it.** That was the structural finding.
+
+**CLOSED (2026-07-27).** `kimchiVerifyDecisionField` (`KimchiVerify` §9b) is a NEW composed
+decision that CONSUMES the field values:
+
+```
+kimchiVerifyDecisionField … n  polyscale evalscale evZeta evZetaOmega cipClaimed
+                            omega zeta … w s shift zZeta zZetaOmega pZeta linConstTerm denomInv
+                            ftEval0Claimed  transcriptOk ipaOk deferralOk
+  = kimchiVerifyDecision … (C1 + 3 carriers)              -- the old decision, unchanged
+  && decide (combinedInnerProduct … evZeta evZetaOmega = cipClaimed)     -- C8, over the field
+  && decide ((ζ − ω^{n−3})(ζ − 1) · denomInv = 1)                        -- witnessed inverse
+  && decide (ftEval0 … denomInv = ftEval0Claimed)                        -- C5, over the field
+```
+
+(`kimchiVerifyDecisionField_refines` proves this `= rfl`: the field checks are ADDED to the old
+decision, not a replacement.) `combinedInnerProduct`/`ftEval0` are still the shipped `[Field F]`
+formulas; §4/§5 explain the `CommRing`-mirror + witnessed-inverse route that lets them run at
+`ZMod pN`. So "running a real proof through the decision" now exercises **C1 + C8 + C5 over the real
+field + three carriers** — the field-formula fidelity is *inside* one accept, not beside it.
 
 ## 4. What RAN on real values — `metatheory/Dregg2/Circuit/Emit/KimchiRealProofGate.lean`
 
@@ -79,21 +112,27 @@ non-vacuous (each has a companion tamper theorem), decided in the kernel over th
 | C5 carriers grounded | `denom_form_ok` / `denom_inv_ok` | `DENOM = (ζ − ω^{n−3})(ζ − 1)` (cross-checks Rust `w() = ω^{n−3}`) and `DENOM · DINV = 1` in `ZMod pN` |
 | **C9** IPA deferral | `c9_real_deferral` / `c9_deferral_discriminates` | shipped `ipaDeferralOk` on the real **k=16** rounds records k challenges + `2^16` deferred terms; claiming `k=15` → `false` |
 | **C3** raw-vs-endo | `c3_raw_vs_endo_shape_real` | real β,γ are `< 2^128` (raw sponge squeezes), α,ζ,v,u are `> 2^128` (255-bit `to_field(endo_r)` images) — matches `KimchiVerify.squeeze_order`'s raw/endo flags on a real proof |
+| **COMPOSED** C1+C8+C5 | `real_field_decision_accepts` / `real_field_decision_discriminates` | **`kimchiVerifyDecisionField` on the real proof over `ZMod pN` = `true`** — shape (C1) ∧ `cip = combinedInnerProduct` (C8) ∧ `(ζ−ω^{n−3})(ζ−1)·DINV = 1` (witnessed inverse) ∧ `ft_eval0 = ftEval0` (C5), plus 3 carriers; every single tamper (cip, an es-order eval, ft_eval0, a witness eval, the inverse witness, a shape count, a carrier) → `false` |
 
 **These are the strong, honest results:** the C8 aggregation transcription and the C5 `ft(ζ)` assembly
-**faithfully reproduce a real proof's intermediate scalars over the real Pasta scalar field**, and they
-are demonstrably not vacuous.
+**faithfully reproduce a real proof's intermediate scalars over the real Pasta scalar field**, and — as
+of the composition — that arithmetic now **flows THROUGH one accept** (`kimchiVerifyDecisionField`),
+in-kernel over `ZMod pN`, demonstrably non-vacuous (a tampered value rejects).
 
 ## 5. What could NOT run — the precise remaining gap
 
 1. **No `Field (ZMod pN)`** — the shipped C4–C8 defs are `[Field F]`-typed and there is no
    prime-field instance for the 255-bit Pasta scalar field anywhere in the tree (no in-kernel
-   `Fact (Nat.Prime pN)`; `native_decide` forbidden). They had **only ever been evaluated over `ℚ`**.
-   The gate runs `CommRing` mirrors instead; running the *Field-typed* def itself on real values needs
-   either a Pratt-certificate primality proof of `pN`, or a refactor of the formulas to `CommRing`
-   (supplying/deriving inverses, as `ftEval0R` does for the single `denominator⁻¹`).
-2. **The decision does not compose the field checks** — `kimchiVerifyDecision` = C1 ∧ three carriers;
-   C4–C8 fidelity is shown here *beside* the decision, not *inside* one `accept`.
+   `Fact (Nat.Prime pN)`; `native_decide` forbidden). **RESOLVED WITHOUT A FIELD INSTANCE
+   (2026-07-27):** the C5/C8 checks run over `ZMod pN` as a `CommRing` via byte-identical mirrors
+   (`cipR`/`ftEval0R`, `rfl`-tied) with the one `ftEval0` inverse SUPPLIED as a witness `denomInv`
+   and checked `denom·denomInv = 1` in the ring (a unit's inverse is unique, so this pins it). **No
+   Pratt primality certificate was needed.** (The residual is only that the *Field-typed* def itself
+   is never instantiated at `ZMod pN` — the mirror computes the identical value, tied by `rfl`.)
+2. ~~The decision does not compose the field checks~~ **CLOSED (2026-07-27):**
+   `kimchiVerifyDecisionField` (§9b, `refines`-tied to `kimchiVerifyDecision`) composes C1 + the C8
+   `cip` check + the witnessed-inverse + the C5 `ft_eval0` check into one accept, evaluated in-kernel
+   on the real proof (`real_field_decision_accepts`, non-vacuous via `real_field_decision_discriminates`).
 3. **C6 `linConstTerm` (custom gates)** — the Poseidon / VarBaseMul / CompleteAdd / EndomulScalar
    constraint streams are a **carrier** (the real `PolishToken::evaluate` value was fed in). Only the
    generic gate is emitted from Lean (`genericGate_evaluates`).
@@ -106,20 +145,26 @@ are demonstrably not vacuous.
 
 ## 6. Distance to "verifies a real Kimchi proof" — ordered by effort
 
-1. **[trivial]** Fix the `KimchiVerify` header field label `qN → pN` (§2).
-2. **[small]** Compose what this gate runs *separately* into one end-to-end `accept` over a real-proof
-   structure (thread C4/C5/C8 outputs + C1 + carriers).
-3. **[medium]** Make the shipped formulas runnable at the real field: either a Pratt primality
-   certificate for `pN` → real `Field (ZMod pN)`, or a `CommRing` refactor + inverse supply.
+1. ~~**[trivial]** Fix the `KimchiVerify` header field label `qN → pN`~~ **DONE (2026-07-27, §2).**
+2. ~~**[small]** Compose what this gate runs separately into one end-to-end `accept`~~ **DONE
+   (2026-07-27):** `kimchiVerifyDecisionField` threads C1 + C8 (`cip`) + C5 (`ft_eval0`) + the
+   witnessed inverse; `real_field_decision_accepts` evaluates it on the real proof over `ZMod pN`.
+3. ~~**[medium]** Make the shipped formulas runnable at the real field~~ **DONE for C5/C8
+   (2026-07-27) via the `CommRing` + witnessed-inverse route — no Pratt certificate.** (C4
+   `publicEval` recomputation still needs the un-extracted Lagrange denominators — see §5.6.)
 4. **[medium]** Emit C6's custom-gate constraint streams from Lean (retire the `linConstTerm` carrier);
    instantiate the phase-2 sponge (retire the C3 value carrier).
 5. **[terminal]** The IPA/FRI opening-soundness floor (`ipaOk`) is inherited, not discharged — the same
    floor every STARK-backed light client carries. "Verifies a real proof" end-to-end still rests on it.
 
 **Bottom line:** the transcription is real and faithful where a real proof can test it (C8 full
-aggregation + C5 `ft(ζ)` reproduce the reference verifier exactly, non-vacuously), but the assembled
-object is **several subsystems** — field-instance, decision-composition, and three crypto carriers —
-short of accepting a real Kimchi proof end-to-end, plus one trivial header-label fix.
+aggregation + C5 `ft(ζ)` reproduce the reference verifier exactly, non-vacuously), and **that
+arithmetic now flows THROUGH one in-kernel accept over the real field** (`kimchiVerifyDecisionField`,
+composed + evaluated, no Field/Pratt instance). What remains between here and "verifies a real Kimchi
+proof": the three named crypto carriers (C6 custom-gate token streams, C3 phase-2 Fr-sponge values,
+C9 IPA `msm==0`), C4's `p(ζ)` fed as an input, and C7's commitment-side MSM (K2). Precisely: **the
+decision now checks a real proof's arithmetic over the real field, modulo those crypto carriers** —
+it does **not** verify Mina.
 
 ## 7. Reproduce
 

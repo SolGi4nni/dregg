@@ -13,25 +13,29 @@ The real field values are emitted by `proof-systems/kimchi/examples/reality_gate
 ## The load-bearing honesty (what this file establishes vs. does NOT)
 
   * The **field of the proof is Fp = Vesta::ScalarField = `ZMod pN`** (all evaluations,
-    challenges, ft_eval0, cip). The `KimchiVerify` header says the real instantiation is
-    `Fq = ZMod qN`; that is a **mislabel** — `Vesta::ScalarField = Fp`, modulus `pN`
-    (mina-curves `curves/src/pasta/fields/fp.rs`). The formulas are field-generic so the
-    arithmetic is unaffected; the NAMED field is wrong. This gate uses the correct `ZMod pN`.
+    challenges, ft_eval0, cip; modulus `pN`, mina-curves `curves/src/pasta/fields/fp.rs`). The
+    `KimchiVerify` header label `Fq = ZMod qN` (the Vesta BASE field) was a mislabel; it is now
+    CORRECTED to `Fp = ZMod pN` at the source. This gate uses the correct `ZMod pN`.
 
   * The shipped C4–C8 formulas (`combinedInnerProduct`, `ftEval0`, `publicEval`, …) are
     `[Field F]`-typed. **There is no `Field (ZMod pN)` instance in the tree** (no in-kernel
     primality proof of the 255-bit `pN`; `native_decide` is forbidden), so the shipped defs
-    **cannot be instantiated at the real Pasta field**. They have only ever been evaluated
-    over `ℚ` (toy KATs). To exercise the REAL values we use `CommRing`-typed MIRRORS
-    (`cipR`, `ftEval0R`) whose bodies are byte-identical to the shipped defs and are TIED to
-    them by `rfl` for every field (`cipR_eq`, `ftEval0R_eq`) — so evaluating the mirror at
-    `ZMod pN` runs the shipped def's exact computation, at a `CommRing` where the shipped
-    `[Field F]` signature cannot be typed. This is a **differential** (the shipped def's
-    arithmetic reproduces the real proof's value over the real field), not a proof that the
-    Field-typed def itself runs.
+    **cannot be instantiated at the real Pasta field**. To exercise the REAL values,
+    `KimchiVerify` §9b supplies `CommRing`-typed MIRRORS (`cipR`, `ftEval0R`) whose bodies are
+    byte-identical to the shipped defs and are TIED to them by `rfl` for every field (`cipR_eq`,
+    `ftEval0R_eq`) — so evaluating a mirror at `ZMod pN` runs the shipped def's exact computation,
+    at a `CommRing` where the shipped `[Field F]` signature cannot be typed. The single field
+    inverse `ftEval0` needs is SUPPLIED as a witness `denomInv` and CHECKED (`denom·denomInv = 1`)
+    in the ring, so NO `Field`/primality instance is required. This is a **differential** (the
+    shipped def's arithmetic reproduces the real proof's value), not a proof the Field-typed def runs.
 
-  * `kimchiVerifyDecision` (C1 + three carrier Bools) and `ipaDeferralOk` (C9) DO run the
-    SHIPPED defs on real proof data (the shape counts and `k = 16` IPA rounds).
+  * **The composed decision `kimchiVerifyDecisionField` (KimchiVerify §9b) now CONSUMES these field
+    values** — §6b evaluates it on the real proof: C1 (shape) ∧ C8 (`cip = combinedInnerProduct`) ∧
+    the witnessed-inverse ∧ C5 (`ft_eval0`), all over the real `ZMod pN`, plus the three carriers.
+    `real_field_decision_accepts` shows a real proof's arithmetic ACCEPTS through one decision;
+    `real_field_decision_discriminates` shows each tampered value REJECTS. The prior
+    `kimchiVerifyDecision` (C1 + three carrier Bools) and `ipaDeferralOk` (C9) also run the SHIPPED
+    defs on real proof data (the shape counts and `k = 16` IPA rounds).
 
   * C3 (transcript order) is a proven theorem in `KimchiVerify`; the sponge VALUES that
     produce the real β,γ,α,ζ,v,u are the K3 carrier + the un-instantiated Fr-sponge — this
@@ -46,7 +50,8 @@ import Dregg2.Circuit.Emit.KimchiVerify
 namespace Dregg2.Circuit.Emit.KimchiRealProofGate
 
 open Dregg2.Circuit.Emit.KimchiVerify
-  (kimchiVerifyDecision combinedInnerProduct ftEval0 zkPoly ipaDeferralOk PERMUTS)
+  (kimchiVerifyDecision kimchiVerifyDecisionField combinedInnerProduct ftEval0 zkPoly
+   cipR cipR_eq zkPolyR ftEval0R ftEval0R_eq ipaDeferralOk PERMUTS)
 open Dregg2.Circuit.Emit.PastaIPA (IpaDeferred absorbChallenges)
 open Dregg2.Circuit.Emit.PastaField (pN)
 
@@ -55,53 +60,15 @@ set_option autoImplicit false
 /-- The real Pasta SCALAR field the proof lives in: `Fp = Vesta::ScalarField = ZMod pN`. -/
 abbrev Fp := ZMod pN
 
-/-! ## §1 — CommRing mirrors of the shipped C8/C5 formulas, tied to them by `rfl`.
+/-! ## §1 — CommRing mirrors of the shipped C8/C5 formulas now live in `KimchiVerify` (§9b).
 
 `ZMod pN` is a `CommRing` but not a proven `Field` here, so the `[Field F]`-typed shipped defs
-cannot be instantiated at it. These mirrors have byte-identical bodies over `[CommRing F]`;
-`cipR_eq` / `ftEval0R_eq` prove they equal the shipped defs for EVERY field, so running a mirror
-at `ZMod pN` is running the shipped def's exact computation. -/
-
-/-- Mirror of `combinedInnerProduct` (C8). -/
-def cipR {F : Type} [CommRing F] (polyscale evalscale : F) (evZeta evZetaOmega : List F) : F :=
-  (List.range evZeta.length).foldl
-    (fun acc k => acc + polyscale ^ k * (evZeta.getD k 0 + evalscale * evZetaOmega.getD k 0)) 0
-
-/-- **`cipR_eq`** — the C8 mirror IS the shipped `combinedInnerProduct`, for every field. -/
-theorem cipR_eq {F : Type} [Field F] (a b : F) (x y : List F) :
-    cipR a b x y = combinedInnerProduct a b x y := rfl
-
-/-- Mirror of `zkPoly`. -/
-def zkPolyR {F : Type} [CommRing F] (n : Nat) (omega zeta : F) : F :=
-  (zeta - omega ^ (n - 3)) * (zeta - omega ^ (n - 2)) * (zeta - omega ^ (n - 1))
-
-/-- Mirror of `ftEval0` (C5) with the single field inverse `denominator⁻¹` SUPPLIED as
-`denomInv` (so the body is `CommRing`, runnable at `ZMod pN`). -/
-def ftEval0R {F : Type} [CommRing F] (n : Nat) (omega zeta beta gamma alpha0 alpha1 alpha2 : F)
-    (w s shift : List F) (zZeta zZetaOmega pZeta linConstTerm denomInv : F) : F :=
-  let zkp := zkPolyR n omega zeta
-  let zeta1m1 := zeta ^ n - 1
-  let init := (w.getD (PERMUTS - 1) 0 + gamma) * zZetaOmega * alpha0 * zkp
-  let numerFold := (List.range (PERMUTS - 1)).foldl
-    (fun x i => x * (beta * s.getD i 0 + w.getD i 0 + gamma)) init
-  let afterPub := numerFold - pZeta
-  let denomFold := (List.range PERMUTS).foldl
-    (fun x i => x * (gamma + beta * zeta * shift.getD i 0 + w.getD i 0))
-    (alpha0 * zkp * zZeta)
-  let afterDenom := afterPub - denomFold
-  let numerator := (zeta1m1 * alpha1 * (zeta - omega ^ (n - 3))
-    + zeta1m1 * alpha2 * (zeta - 1)) * (1 - zZeta)
-  let afterZk := afterDenom + numerator * denomInv
-  afterZk - linConstTerm
-
-/-- **`ftEval0R_eq`** — with `denomInv = denominator⁻¹` the C5 mirror IS the shipped `ftEval0`,
-for every field (`zkPolyR = zkPoly` and `numerator·denomInv = numerator·denominator⁻¹`). -/
-theorem ftEval0R_eq {F : Type} [Field F] (n : Nat) (omega zeta beta gamma alpha0 alpha1 alpha2 : F)
-    (w s shift : List F) (zZeta zZetaOmega pZeta linConstTerm : F) :
-    ftEval0R n omega zeta beta gamma alpha0 alpha1 alpha2 w s shift zZeta zZetaOmega pZeta
-        linConstTerm (((zeta - omega ^ (n - 3)) * (zeta - 1))⁻¹)
-      = ftEval0 n omega zeta beta gamma alpha0 alpha1 alpha2 w s shift zZeta zZetaOmega pZeta
-        linConstTerm := rfl
+(`combinedInnerProduct`, `ftEval0`) cannot be instantiated at it. `KimchiVerify.cipR` / `ftEval0R`
+have byte-identical bodies over `[CommRing R]`; `cipR_eq` / `ftEval0R_eq` prove they equal the
+shipped defs for EVERY field, so running a mirror at `ZMod pN` is running the shipped def's exact
+computation. `kimchiVerifyDecisionField` (KimchiVerify §9b) is the composed accept that CONSUMES
+these values — evaluated on the real proof in §5b below. (These were previously local to this gate,
+validated BESIDE the decision; they are now part of the verifier assembly and threaded THROUGH it.) -/
 
 /-! ## §2 — the REAL proof's field values (decimal, `< pN`), emitted by
 `proof-systems/kimchi/examples/reality_gate_export.rs`. Source:
@@ -218,6 +185,50 @@ theorem c9_deferral_discriminates :
         (absorbChallenges (⟨[], ((0 : Fp), (0 : Fp), (0 : Fp))⟩ : IpaDeferred Fp (Fp × Fp × Fp))
           IPACHALS) 15 = false := by decide
 
+/-! ## §6b — THE COMPOSED DECISION on the REAL proof (the reality-gate advance).
+
+`kimchiVerifyDecisionField` (KimchiVerify §9b) = the shipped shape/carrier decision
+(`kimchiVerifyDecision`) CONJOINED with the C8 aggregation check, the witnessed-inverse check, and
+the C5 `ft(ζ)` check — all over `ZMod pN` as a `CommRing`. Here it is EVALUATED on the real proof's
+actual field values: the real shape `(0,5,15,6,15,7,1)`, `N`, the real `v,u`, the 45-entry es-order
+eval lists, `CIP`; the real ζ,β,γ,α's, the 15 w / 6 σ / 7 shift, `z(ζ),z(ζω),p(ζ)`, the `LCT`+`DINV`
+carriers, `FT0`; and the three carriers asserted `true`. The decision ACCEPTS — so a real proof's
+ARITHMETIC (C1 + C8 + C5 over the real Pasta scalar field) flows THROUGH one accept, in-kernel. -/
+
+/-- **The composed decision ACCEPTS the real proof's arithmetic** — C1 (shape) ∧ C8 (`cip`) ∧
+witnessed-inverse ∧ C5 (`ft_eval0`), all over the real `ZMod pN`, plus the three asserted carriers. -/
+theorem real_field_decision_accepts :
+    kimchiVerifyDecisionField (R := Fp)
+        0 5 15 6 15 7 1 N
+        VV UU EVZ EVZW CIP
+        OMEGA ZETA BETA GAMMA A0 A1 A2
+        WZ SZ SHIFT
+        ZZ ZZW PZ LCT DINV FT0
+        true true true = true := by decide
+
+/-- **Non-vacuity of the composition** — every single tamper of a value that FLOWS THROUGH the
+decision rejects: the prover-supplied `cip` (C8), an es-order eval feeding `cip`, the `ft_eval0`
+(C5), a witness eval feeding the C5 shell, the inverse witness `DINV`, a C1 shape count, and a
+carrier. A tampered value REJECTS in-kernel — the arithmetic is load-bearing, not decorative. -/
+theorem real_field_decision_discriminates :
+    kimchiVerifyDecisionField (R := Fp) 0 5 15 6 15 7 1 N VV UU EVZ EVZW CIP
+        OMEGA ZETA BETA GAMMA A0 A1 A2 WZ SZ SHIFT ZZ ZZW PZ LCT DINV FT0 true true true = true
+    ∧ kimchiVerifyDecisionField (R := Fp) 0 5 15 6 15 7 1 N VV UU EVZ EVZW (CIP + 1)
+        OMEGA ZETA BETA GAMMA A0 A1 A2 WZ SZ SHIFT ZZ ZZW PZ LCT DINV FT0 true true true = false   -- tampered cip (C8)
+    ∧ kimchiVerifyDecisionField (R := Fp) 0 5 15 6 15 7 1 N VV UU (EVZ.set 0 (0 : Fp)) EVZW CIP
+        OMEGA ZETA BETA GAMMA A0 A1 A2 WZ SZ SHIFT ZZ ZZW PZ LCT DINV FT0 true true true = false   -- tampered es-order eval → cip
+    ∧ kimchiVerifyDecisionField (R := Fp) 0 5 15 6 15 7 1 N VV UU EVZ EVZW CIP
+        OMEGA ZETA BETA GAMMA A0 A1 A2 WZ SZ SHIFT ZZ ZZW PZ LCT DINV (FT0 + 1) true true true = false   -- tampered ft_eval0 (C5)
+    ∧ kimchiVerifyDecisionField (R := Fp) 0 5 15 6 15 7 1 N VV UU EVZ EVZW CIP
+        OMEGA ZETA BETA GAMMA A0 A1 A2 (WZ.set 0 (0 : Fp)) SZ SHIFT ZZ ZZW PZ LCT DINV FT0 true true true = false   -- tampered witness eval → C5 shell
+    ∧ kimchiVerifyDecisionField (R := Fp) 0 5 15 6 15 7 1 N VV UU EVZ EVZW CIP
+        OMEGA ZETA BETA GAMMA A0 A1 A2 WZ SZ SHIFT ZZ ZZW PZ LCT (DINV + 1) FT0 true true true = false   -- bogus inverse witness
+    ∧ kimchiVerifyDecisionField (R := Fp) 0 0 15 6 15 7 1 N VV UU EVZ EVZW CIP
+        OMEGA ZETA BETA GAMMA A0 A1 A2 WZ SZ SHIFT ZZ ZZW PZ LCT DINV FT0 true true true = false   -- tampered C1 shape (public 5→0)
+    ∧ kimchiVerifyDecisionField (R := Fp) 0 5 15 6 15 7 1 N VV UU EVZ EVZW CIP
+        OMEGA ZETA BETA GAMMA A0 A1 A2 WZ SZ SHIFT ZZ ZZW PZ LCT DINV FT0 false true true = false   -- tampered carrier
+    := by refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
+
 /-! ## §7 — C3: the real challenges (recorded; the ORDER is proven in `KimchiVerify`, the sponge
 VALUES are the K3 carrier + un-instantiated Fr-sponge — NO differential possible here). -/
 
@@ -241,6 +252,8 @@ theorem c3_raw_vs_endo_shape_real :
 #assert_axioms c5_ft_real_matches
 #assert_axioms c5_discriminates_on_carrier
 #assert_axioms c5_discriminates_on_witness
+#assert_axioms real_field_decision_accepts
+#assert_axioms real_field_decision_discriminates
 #assert_axioms c9_real_deferral
 #assert_axioms c9_deferral_discriminates
 #assert_axioms c3_raw_vs_endo_shape_real
