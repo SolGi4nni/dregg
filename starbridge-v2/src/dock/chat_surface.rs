@@ -19,6 +19,9 @@
 //! Then the cockpit can do:
 //!
 //! ```ignore
+//! // IGNORED: `window`, `cx` and `pane` are live gpui handles that exist ONLY inside a
+//! // running `gpui_platform::application().run(..)` callback; a doctest has no windowing
+//! // platform to hand one out. `next_surface_id()` is the host dock's counter.
 //! use crate::dock::chat_surface::ChatPane;
 //! use deos_matrix::source::MockSource;            // or the live MatrixHandle
 //! use std::sync::Arc;

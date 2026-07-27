@@ -156,6 +156,11 @@ use syn::{ItemFn, parse_macro_input};
 /// # Example
 ///
 /// ```ignore
+/// // IGNORED: `dregg-dsl` is a proc-macro crate whose dependencies are exactly
+/// // `syn`/`quote`/`proc-macro2`, while this macro EXPANDS to code naming
+/// // `dregg_dsl_runtime::{ConstraintError, AirConstraintSet, Constraint, …}`. The
+/// // expansion therefore cannot resolve inside this crate's own doctests. The compiled
+/// // exercise of exactly this shape lives in `dregg-dsl-tests/src/dregg_definitions.rs`.
 /// #[dregg_caveat]
 /// fn not_after(token_expiry: u64, current_time: u64) {
 ///     require!(current_time <= token_expiry);
@@ -196,6 +201,10 @@ pub fn dregg_caveat(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// Supports a `requires` attribute for permission gating:
 /// ```ignore
+/// // IGNORED: same structural reason as `dregg_caveat` above — the expansion names
+/// // `dregg_dsl_runtime::*`, which this proc-macro crate deliberately does not depend on
+/// // (and `Direction` is the caller's enum). Compiled counterpart:
+/// // `dregg-dsl-tests/src/dregg_definitions.rs`.
 /// #[dregg_effect(requires = "Send")]
 /// fn transfer(balance: &mut u64, amount: u64, direction: Direction) {
 ///     match direction {

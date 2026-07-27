@@ -29,6 +29,8 @@
 //! siblings) `connect`s the leg's CLAIMED lanes to the sub-proof's GENUINE in-circuit lanes:
 //!
 //! ```ignore
+//! // IGNORED: a QUOTED line lifted from `joint_turn_recursive`, shown in isolation —
+//! // `cb`, `ev`, `cs` and `claim_len` are that function's locals, not bindings here.
 //! for k in 0..claim_len { cb.connect(ev[SEG_WIDTH + k], cs[k]); }
 //! ```
 //!
@@ -40,6 +42,8 @@
 //! second writer disagrees with the first:
 //!
 //! ```ignore
+//! // IGNORED: source QUOTED from the `p3_circuit` dependency at the path in the comment
+//! // below — `slot`, `widx` and `self` belong to that crate's `Runner`, not to this test.
 //! // p3_circuit circuit/src/tables/runner.rs:502
 //! if let Some(existing_value) = slot.as_ref() {
 //!     if *existing_value == value { return Ok(()); }

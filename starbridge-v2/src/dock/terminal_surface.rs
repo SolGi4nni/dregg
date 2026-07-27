@@ -22,6 +22,9 @@
 //! Then the cockpit can do:
 //!
 //! ```ignore
+//! // IGNORED: `cx` and `pane` are live gpui handles that exist ONLY inside a running
+//! // `gpui_platform::application().run(..)` callback; a doctest has no windowing platform
+//! // to hand one out. `next_surface_id()` is the host dock's counter.
 //! use crate::dock::terminal_surface::TerminalPane;
 //!
 //! let surface = TerminalPane::spawn_shell(next_surface_id(), cx)?;

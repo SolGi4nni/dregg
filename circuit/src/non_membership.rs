@@ -1,32 +1,64 @@
 //! General-purpose non-membership proving system.
 //!
-//! Generalizes `AccumulatorNonRevocationAir` from revocation-specific to any property set.
-//! The core idea: prove "element X is NOT in set S" via polynomial-evaluation accumulator
-//! over BabyBear^4, regardless of what the set represents (revocation, suspension,
-//! blacklist, role exclusion, etc.).
+//! Generalizes revocation-specific non-membership to any property set. The core idea:
+//! state "element X is NOT in set S" via a polynomial-evaluation accumulator over
+//! BabyBear^4, regardless of what the set represents (revocation, suspension, blacklist,
+//! role exclusion, etc.).
+//!
+//! # Scope: this module states the accumulator, it does not prove it
+//!
+//! What lives here is the SET SIDE: the set-bound challenge `alpha`, the accumulator
+//! `Acc = prod(alpha - h_i)` over the set, and [`NonMembershipCheck`] — the composable
+//! description of "this attribute is not in that set". The AIR that actually PROVES a
+//! non-membership witness against `(Acc, alpha)` is [`crate::dsl::accumulator`]
+//! (`accumulator_dsl_circuit` / `generate_accumulator_trace`, 9 public inputs:
+//! `Acc[0..4]`, `alpha[4..8]`, `num_ancestors[8]`).
 //!
 //! # Usage
 //!
-//! ```rust,ignore
-//! use dregg_circuit::non_membership::{NonMembershipProver, NonMembershipCheck};
-//!
-//! // Create a prover for a given set
-//! let suspended_users = vec![hash_a, hash_b, hash_c];
-//! let prover = NonMembershipProver::new(&suspended_users);
-//!
-//! // Prove that my_hash is NOT in the suspended set
-//! let proof = prover.prove_non_membership(&[my_hash]).unwrap();
-//!
-//! // Verify (only needs the set's accumulator + alpha, not the set itself)
-//! let result = prover.verify_non_membership(&[my_hash], &proof);
-//! assert!(result.is_ok());
 //! ```
+//! use dregg_circuit::field::BabyBear;
+//! use dregg_circuit::non_membership::{
+//!     NonMembershipCheck, NonMembershipExtElem, NonMembershipProver, SetIdentifier,
+//!     compute_set_accumulator,
+//! };
 //!
-//! # Relationship to AccumulatorNonRevocationAir
+//! let suspended = vec![BabyBear::new(11), BabyBear::new(22), BabyBear::new(33)];
+//! let set_id = SetIdentifier::new("suspended");
+//! let prover = NonMembershipProver::with_set_id(&suspended, set_id.clone());
 //!
-//! `AccumulatorNonRevocationAir` is now a thin wrapper over this generalized system.
-//! The underlying AIR, trace layout, and constraints are identical -- the generalization
-//! is purely at the API level (configurable set identity, generic public inputs).
+//! // The accumulator IS the polynomial evaluation at the set-bound challenge.
+//! assert_eq!(
+//!     prover.accumulator(),
+//!     compute_set_accumulator(&suspended, prover.alpha()),
+//! );
+//!
+//! // A MEMBER is a root: `(alpha - h)` divides `Acc` exactly.
+//! let member = suspended[1];
+//! let rest: Vec<BabyBear> = suspended.iter().copied().filter(|h| *h != member).collect();
+//! let alpha_minus_member = prover.alpha().sub(NonMembershipExtElem::from_base(member));
+//! assert_eq!(
+//!     prover.accumulator(),
+//!     compute_set_accumulator(&rest, prover.alpha()).mul(alpha_minus_member),
+//! );
+//!
+//! // The set identifier is mixed into `alpha`, so the SAME elements under a different
+//! // set name yield a different challenge — this is what blocks cross-set replay.
+//! let other = NonMembershipProver::with_set_id(&suspended, SetIdentifier::new("blacklisted"));
+//! assert_ne!(prover.alpha(), other.alpha());
+//! assert_ne!(prover.accumulator(), other.accumulator());
+//!
+//! // What a consumer composes into a derivation: the attribute, the set, and the
+//! // `(Acc, alpha)` pair a verifier needs — never the set itself.
+//! let check = NonMembershipCheck {
+//!     attribute: "user_id".to_string(),
+//!     set_id,
+//!     accumulator: prover.accumulator(),
+//!     alpha: prover.alpha(),
+//!     num_elements: 1,
+//! };
+//! assert_eq!(check.attribute, "user_id");
+//! ```
 
 use crate::accumulator_types::{ExtElem, compute_accumulator};
 use crate::field::BabyBear;

@@ -15,13 +15,32 @@
 //!
 //! ## Quick start (standalone window)
 //!
-//! ```ignore
+//! ```no_run
+//! // NO_RUN: opens a real OS window on the native windowing platform and spawns `$SHELL`
+//! // on a PTY. Compiles and links here; `cargo run --bin deos-terminal-demo` is the way
+//! // to actually run it (`src/bin/demo.rs` is this example, verbatim).
 //! use deos_terminal::view::TerminalView;
+//! use gpui::{App, AppContext, Bounds, Focusable, WindowBounds, WindowOptions, px, size};
 //!
-//! // The windowing platform builds the `Application` (see `src/bin/demo.rs`).
-//! gpui_platform::application().run(|cx| {
-//!     // ... open a window whose root entity is
-//!     // `cx.new(|cx| TerminalView::spawn_shell(cx).unwrap())`
+//! // The windowing platform (metal/wgpu) builds the concrete `Application` — the same
+//! // entry starbridge-v2 uses.
+//! gpui_platform::application().run(|cx: &mut App| {
+//!     let bounds = Bounds::centered(None, size(px(900.), px(560.)), cx);
+//!     cx.open_window(
+//!         WindowOptions {
+//!             window_bounds: Some(WindowBounds::Windowed(bounds)),
+//!             ..Default::default()
+//!         },
+//!         |window, cx| {
+//!             let view = cx.new(|cx| TerminalView::spawn_shell(cx).expect("spawn $SHELL"));
+//!             // Focus the terminal so keystrokes flow to the PTY immediately.
+//!             let handle = view.read(cx).focus_handle(cx);
+//!             window.focus(&handle, cx);
+//!             view
+//!         },
+//!     )
+//!     .expect("failed to open window");
+//!     cx.activate(true);
 //! });
 //! ```
 

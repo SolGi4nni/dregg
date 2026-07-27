@@ -49,7 +49,7 @@
 //! grow `eval()` here to mirror every selector branch in
 //! `EffectVmAir::eval_constraints`. The translation is mechanical:
 //!
-//! ```ignore
+//! ```text
 //!     // local code (concrete):                        // p3-air (symbolic):
 //!     let s = local[sel::NOOP];                        let s: AB::Expr = local[sel::NOOP].into();
 //!     let c = s * (s - BabyBear::ONE);                 let c: AB::Expr = s.clone() * (s - AB::Expr::ONE);

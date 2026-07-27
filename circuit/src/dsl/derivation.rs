@@ -14,12 +14,61 @@
 //!
 //! ## Usage
 //!
-//! ```ignore
-//! use dregg_dsl_runtime::derivation::{prove_derivation_dsl, verify_derivation_dsl};
-//! use crate::derivation_air::DerivationWitness;
+//! ```no_run
+//! // NO_RUN: `prove_derivation_p3` runs a REAL Plonky3 STARK (FRI) over the 379-column
+//! // trace — far too slow for a doctest. Everything up to the prove call is cheap and
+//! // is what the example is teaching.
+//! use dregg_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
+//! use dregg_circuit::dsl::derivation::{
+//!     generate_derivation_trace_dsl, prove_derivation_p3, verify_derivation_p3,
+//! };
+//! use dregg_circuit::field::BabyBear;
+//! use dregg_circuit::poseidon2::hash_fact;
 //!
-//! let proof = prove_derivation_dsl(&witness).unwrap();
-//! verify_derivation_dsl(&proof, &public_inputs).unwrap();
+//! // One honest firing: derive `derived(t0, t1)` from the body atom `body(t0, t1, 0)`.
+//! let (body_pred, derived_pred) = (BabyBear::new(100), BabyBear::new(200));
+//! let (t0, t1) = (BabyBear::new(1000), BabyBear::new(2000));
+//! let witness = DerivationWitness {
+//!     rule: CircuitRule {
+//!         id: 7,
+//!         num_body_atoms: 1,
+//!         num_variables: 2,
+//!         head_predicate: derived_pred,
+//!         // (is_variable, value_or_substitution_index)
+//!         head_terms: [
+//!             (true, BabyBear::new(0)),
+//!             (true, BabyBear::new(1)),
+//!             (false, BabyBear::ZERO),
+//!             (false, BabyBear::ZERO),
+//!         ],
+//!         body_atoms: vec![BodyAtomPattern {
+//!             predicate: body_pred,
+//!             terms: [
+//!                 (true, BabyBear::new(0)),
+//!                 (true, BabyBear::new(1)),
+//!                 (false, BabyBear::ZERO),
+//!             ],
+//!         }],
+//!         equal_checks: vec![],
+//!         memberof_checks: vec![],
+//!         gte_check: None,
+//!         lt_check: None,
+//!     },
+//!     state_root: BabyBear::new(99999),
+//!     body_fact_hashes: vec![hash_fact(body_pred, &[t0, t1, BabyBear::ZERO])],
+//!     substitution: vec![t0, t1],
+//!     derived_predicate: derived_pred,
+//!     derived_terms: [t0, t1, BabyBear::ZERO, BabyBear::ZERO],
+//!     not_after_height: BabyBear::ZERO,
+//!     org_id_hash: BabyBear::ZERO,
+//!     budget_remaining: BabyBear::ZERO,
+//! };
+//!
+//! // The verifier reads the SAME public inputs the trace generator emits — that
+//! // agreement is the whole binding, so read them from the generator, never re-derive.
+//! let (_trace, public_inputs) = generate_derivation_trace_dsl(&witness);
+//! let proof = prove_derivation_p3(&witness).unwrap();
+//! verify_derivation_p3(&proof, &public_inputs).unwrap();
 //! ```
 
 use crate::derivation_air::{

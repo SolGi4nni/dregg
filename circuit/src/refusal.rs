@@ -5,6 +5,9 @@
 //! The dominant anti-pattern in this tree's adversarial suite was:
 //!
 //! ```ignore
+//! // IGNORED: a DELIBERATELY-BROKEN exhibit. This is the anti-pattern the module exists
+//! // to replace — it is shown BECAUSE it is wrong, and the `..` placeholder is not Rust.
+//! // Compiling it would defeat the point; `must_refuse` below is the shape to copy.
 //! match std::panic::catch_unwind(|| prove(&desc, &forged_rows, ..)) {
 //!     Err(_) => {}                              // a panic — "refused"
 //!     Ok(res) => assert!(res.is_err(), "tooth OPEN"),

@@ -115,6 +115,26 @@ GATES=(
   # population so a broken reader cannot read as clean.
   "bare-ignore|180|python3 scripts/check-bare-ignore.py"
   "bare-ignore-red|60|python3 scripts/check-bare-ignore.py --self-test"
+  # The SAME disease one altitude up: a documentation example switched off. A ```ignore
+  # doctest fence is an example the compiler was told not to read, and on 2026-07-27 the
+  # tree had 71 of them with ZERO reasons — structurally none COULD have one, because a
+  # fence info-string rejects unknown attributes. ~38 of the 71 turned out not to be
+  # structural at all: real in-scope API that had DRIFTED (a missing `use`, a renamed
+  # function) and was silenced rather than repaired. So the reason goes as the first
+  # line INSIDE the block, where the reader gets it too, and ```ignore is reserved for
+  # structural impossibility — a dependency cycle, a deliberately broken exhibit, source
+  # quoted from a non-dependency. It also catches the INERT-ATTRIBUTE shape
+  # (```ascii,no_run): rustdoc reads any unknown token as "not Rust", so the attribute
+  # beside it silently does nothing — `gating defaults to silence`, in a code fence.
+  # ⚠ NOT a grep, and NOT strip_noise either — strip_noise BLANKS comments and a fence
+  # lives inside one, so it is the same lexer run inside-out. The -red row drives seven
+  # disease shapes and twelve shapes a naive grep gets wrong on this tree (a ```ignore
+  # nested inside an open ```text block; the marker named in prose; a fence inside a raw
+  # string literal). Exemptions live in `scripts/doctest-ignore-baseline.tsv` and
+  # RATCHET: a stale row is a FAILURE, so a repaired fence retires its own exemption.
+  # Rides the default `bare-ignore` invocation too, so it cannot be the leg left unwired.
+  "doctest-fences|180|python3 scripts/check-bare-ignore.py --fences"
+  "doctest-fences-red|60|python3 scripts/check-bare-ignore.py --fences --self-test"
   # Every binary()/package()/test() name in `.config/nextest.toml` still resolves. That file
   # selects tests BY NAME, and a name that outlives its referent does not mislead a reader —
   # it changes what the suite RUNS. It has cost this repo twice. 2026-07-15, LOUD: a deleted

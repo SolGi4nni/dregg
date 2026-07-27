@@ -27,6 +27,9 @@
 /// ## Generated Code Structure
 ///
 /// ```ignore
+/// // IGNORED: this is the EMITTED SP1 GUEST program, not code for this crate. It is a
+/// // `#![no_main]` riscv32im-succinct-zkvm binary against `sp1_zkvm`, which `dregg-dsl`
+/// // does not (and must not) depend on — the guest is written out for a separate build.
 /// #![no_main]
 /// sp1_zkvm::entrypoint!(main);
 ///

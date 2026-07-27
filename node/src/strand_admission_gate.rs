@@ -48,6 +48,9 @@
 //! was the gate-DISABLED path. `admitted_participants` opened with
 //!
 //! ```ignore
+//! // IGNORED: the DELETED opening line of `admitted_participants`, quoted as the defect
+//! // exhibit this section is about. `candidates` is that removed function's parameter;
+//! // the line no longer exists and must not be resurrected by an over-eager repair.
 //! if !strand_admission_gate_enabled() { return candidates.to_vec(); }
 //! ```
 //!

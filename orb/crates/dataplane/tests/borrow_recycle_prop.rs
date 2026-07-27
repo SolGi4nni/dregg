@@ -211,6 +211,10 @@ fn lease_invariants_hold_exhaustively_small() {
 /// deploy kernel, and mirrors the ~5-line startup guard PROPOSED for `shard_loop`:
 ///
 /// ```ignore
+/// // IGNORED: a PROPOSED, not-yet-written guard for `shard_loop` in the dataplane crate
+/// // — `RING_ENTRIES` and the `?`-carrying `io::Result` context are that function's, not
+/// // this test's. (Doc comments in an integration-test target are never run as doctests
+/// // either, so this fence has no compiler behind it in any marking.)
 /// let ring = IoUring::new(RING_ENTRIES)?;
 /// // gap E: the Uring model's `nodrop` precondition (Counterexample.lean).
 /// if !ring.params().is_feature_nodrop() {

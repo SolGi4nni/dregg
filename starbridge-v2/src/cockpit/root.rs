@@ -26,6 +26,9 @@ use gpui_component::Root;
 /// `replace_root` / `open_window` builder (its `cx` is `Context<Root>`):
 ///
 /// ```ignore
+/// // IGNORED: `window` and `cx` are live gpui handles that exist ONLY inside a running
+/// // `gpui_platform::application().run(..)` callback — a doctest has no windowing
+/// // platform to hand one out. (`SessionShell { .. }` is the caller's own view, elided.)
 /// window.replace_root(cx, |window, cx| {
 ///     let inner = cx.new(|cx| SessionShell { .. });
 ///     crate::cockpit::root::wrap_root(inner, window, cx)

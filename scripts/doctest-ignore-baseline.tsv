@@ -1,0 +1,54 @@
+# doctest-ignore-baseline.tsv — the exemption ledger for `scripts/check-bare-ignore.py --fences`.
+#
+# Format:  kind <TAB> path <TAB> key <TAB> note
+#   kind    `no-reason`  a ```ignore fence with no `// IGNORED: …` first line
+#           `inert-attr` an info-string mixing a doctest attribute with a token rustdoc
+#                        does not know, which silently makes the block not-a-doctest
+#   key     the first 12 hex of sha1(path + "\n" + the fence body, blank lines dropped).
+#           It is keyed on the BODY, not the line, so a row survives the file moving
+#           around the fence and DIES when the example itself is rewritten. Two fences
+#           with an identical body in the same file share a key; one row covers both.
+#           `scripts/check-bare-ignore.py --report-fences` prints the key.
+#
+# ⚠ THIS FILE RATCHETS. A row that matches nothing is a FAILURE, not a shrug: a repaired
+# fence has to retire its own exemption in the same commit. Otherwise the file decays
+# into a list of things that used to be wrong and nobody can tell which are which.
+#
+# There is deliberately NO regenerate flag. Adding a row is supposed to cost a sentence.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────
+# Seeded 2026-07-27, from the pass that repaired 45 of the 71 ```ignore fences this tree
+# had (and re-marked the rest ```text / ```no_run / ```ignore-with-a-reason). Everything
+# below is remainder this pass could not honestly touch — NOT remainder it gave up on.
+# ─────────────────────────────────────────────────────────────────────────────────────
+
+# UPSTREAM, not ours to author. `deos-homeserver/vendor/askama_derive` is a vendored copy
+# of the askama proc-macro crate; these four fences are upstream's own doc examples of
+# template syntax inside `#[derive(Template)]`. Repairing them would mean diverging a
+# vendored crate from upstream to satisfy a house convention. If the vendor drop is ever
+# refreshed and these move, the keys change and these rows go stale — which is correct:
+# re-read them then, do not re-baseline them blind.
+no-reason	deos-homeserver/vendor/askama_derive/src/lib.rs	8ac5277102ec	upstream askama_derive; vendored, not authored here
+no-reason	deos-homeserver/vendor/askama_derive/src/lib.rs	c4b9e95a28bd	upstream askama_derive; vendored, not authored here
+no-reason	deos-homeserver/vendor/askama_derive/src/lib.rs	0aac3104d0b0	upstream askama_derive; vendored, not authored here
+no-reason	deos-homeserver/vendor/askama_derive/src/lib.rs	6bd49abc447b	upstream askama_derive; vendored, not authored here
+
+# ⚠ IN SCOPE, OWNED BY ANOTHER LANE. These three are the real thing this gate is about:
+# the gRPC-interceptor and CLI examples are ordinary drifted Rust (undefined `engine`,
+# `Caveat`; the CLI one writes a file, so `no_run`), and only the axum-handler one looks
+# structural. They were left alone because `sdk/` was being edited by a concurrent lane on
+# 2026-07-27 and a two-lane edit to one file is how work gets lost. DELETE THESE ROWS when
+# they are repaired — the gate will tell you, loudly, if you repair them and forget.
+no-reason	sdk/src/embed.rs	102ad8f46ee4	axum handler example; sdk/ owned by a concurrent lane 2026-07-27
+no-reason	sdk/src/embed.rs	a6f8dd99f9ab	gRPC interceptor example; sdk/ owned by a concurrent lane 2026-07-27
+no-reason	sdk/src/embed.rs	833e065f4293	CLI proof-to-file example; sdk/ owned by a concurrent lane 2026-07-27
+
+# UPSTREAM, and the reason F2 exists at all. `vendor/curve25519-dalek-dregg` is a fork of
+# curve25519-dalek whose AVX2 backend documents its lane layouts in ```ascii,no_run blocks.
+# `ascii` is not a rustdoc attribute, so rustdoc reads the block as not-Rust and the
+# `no_run` beside it does nothing — upstream's own long-standing quirk, harmless here
+# because the blocks ARE diagrams. Ours would be `text`. Four bodies, eight fences.
+inert-attr	vendor/curve25519-dalek-dregg/src/backend/vector/avx2/constants.rs	0e6293d80da8	upstream curve25519-dalek AVX2 lane diagram
+inert-attr	vendor/curve25519-dalek-dregg/src/backend/vector/avx2/constants.rs	4fa075fc7451	upstream curve25519-dalek AVX2 lane diagram
+inert-attr	vendor/curve25519-dalek-dregg/src/backend/vector/avx2/field.rs	55574edc5ab7	upstream curve25519-dalek AVX2 lane diagram
+inert-attr	vendor/curve25519-dalek-dregg/src/backend/vector/avx2/field.rs	d157c569a685	upstream curve25519-dalek AVX2 lane diagram
