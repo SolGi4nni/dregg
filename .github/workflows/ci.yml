@@ -491,13 +491,73 @@ jobs:
       # windowed gpui screenshot targets link the entire desktop/accessibility
       # static graph and want a display at runtime); its protocol-relevant gpui-free
       # core is covered by the firmament lane just below.
+      #
+      # ⚠ TWO MORE MEMBERS CANNOT LINK ON ELF AT ALL, AND THIS LINE NAMES THEM.
+      # `grain-verify-wasm` and `starbridge-web` declare `crate-type = ["cdylib", "rlib"]`
+      # for their wasm32 browser bundles, and BOTH reach `dregg-lean-ffi` unconditionally on
+      # native (grain-verify's Lean-proven R3 verify core; starbridge-v2's
+      # `embedded-executor` -> dregg-sdk, by three separate edges — checked with
+      # `cargo tree -i`, not assumed). Cargo builds a lib target with ALL its declared crate
+      # types whenever any bin / integration test / doctest of that package needs the plain
+      # lib, so `cargo test` links a HOST cdylib nothing ever loads — and on ELF that link
+      # cannot succeed. MEASURED on persvati 2026-07-26, `cargo build -p <either>` exits 101:
+      #     rust-lld: error: relocation R_X86_64_TPOFF32 against _mi_heap_default
+      #               cannot be used with -shared
+      #     >>> defined in libdregg_lean_ffi-*.rlib(static.c.o)
+      #     >>> referenced by static.c.o:(mi_zalloc_small) ...
+      # rustc BUNDLES `static=`-linked native libs into the rlib, so `libleanrt.a`'s mimalloc
+      # members — Lean 4.30.0's bundled mimalloc, compiled local-exec TLS, which is legal
+      # only in a main executable — ride INSIDE dregg-lean-ffi's rlib and are pulled in to
+      # satisfy the `+whole-archive` FFI shim. `-Wl,--gc-sections` is already on that link
+      # line and cannot help: the relocation is rejected during symbol resolution, before any
+      # section could be dropped. The same two crates LINK on macOS (Mach-O has no equivalent
+      # rule), which is exactly why the macOS `cargo test --workspace` above is whole and
+      # only this leg could never complete.
+      #
+      # There is NO per-crate opt-out inside one workspace resolve. dregg-lean-ffi's
+      # `no-lean-link` feature UNIFIES onto every native crate (the reason `wasm/` is not a
+      # workspace member at all), and `DREGG_LEAN_LINK=shared` — the knob written for exactly
+      # this ELF rule — is an env var, i.e. whole-build, and propagates no rpath downstream.
+      # Dropping `cdylib` from the two manifests WOULD fix it and cost no test, but wasm-pack
+      # refuses a crate without it, and wasm-pack is what builds all three shipped browser
+      # bundles (pages-wasm.yml, scripts/build-pages-dist.sh, grain-verify-wasm/build-web.sh).
+      # That trades a shipped-artifact pipeline for a test-runner fix, so it is not taken
+      # here. Nor is manifest surgery that merely stops cargo from SELECTING the plain lib
+      # (`doctest = false` + `required-features`): it would leave `cargo build --workspace`
+      # — repro-gate.yml's `repro-gate-full-workspace` — broken anyway, and it hides the
+      # constraint behind an invariant the next `tests/foo.rs` silently breaks.
+      #
+      # WHAT THE EXCLUSION COSTS, EXACTLY — and it is NOT the tests: the step right below
+      # runs them. `--lib` selects only the lib-as-test target, which rustc builds with
+      # `--test` into an EXECUTABLE, never a cdylib, so all 9 native tests still run on this
+      # runner (verified: `cargo test -p <either> --lib --no-run` exits 0 and emits
+      # `Executable unittests src/lib.rs` on the same box where the cdylib link exits 101).
+      # The residue is four targets, and each is already covered or already empty:
+      #   * the two libs' DOCTESTS — measured zero doc examples in either crate;
+      #   * `grain-verify-wasm`'s `gen-fixture` bin — zero #[test];
+      #   * `starbridge-web`'s `pty_ws_e2e` and `web_panes_wasm` — both already `never-run`
+      #     rows in .github/dark-targets.txt, and both `#![cfg(...)]`-empty under a plain
+      #     `cargo test` (they need `pty-ws-server` + a real PTY, and wasm32 respectively).
+      # All four are still COMPILED by the `cargo check --workspace --all-targets` job above
+      # (check does not link), and all four are still LINKED AND RUN by the whole macOS
+      # `cargo test --workspace` above.
       - if: runner.os == 'Linux'
-        name: Test workspace (debuginfo off; deos-zed split out)
+        name: Test workspace (debuginfo off; deos-zed + the two ELF-unlinkable cdylibs split out)
         env:
           CARGO_PROFILE_DEV_DEBUG: "0"
           CARGO_PROFILE_TEST_DEBUG: "0"
           DREGG_TEST_REQUIRE_LEAN: ${{ steps.arm.outputs.armed }}
-        run: cargo test --workspace --exclude deos-zed
+        run: cargo test --workspace --exclude deos-zed --exclude grain-verify-wasm --exclude starbridge-web
+      # THE RECOVERY STEP — this is what makes the exclusion above cost zero tests rather
+      # than nine. It must stay adjacent to it: an exclusion whose recovery drifts away is
+      # the silent narrowing this repo keeps paying for.
+      - if: runner.os == 'Linux'
+        name: Test the two cdylib crates' libs (recovers every test the exclusion above would cost)
+        env:
+          CARGO_PROFILE_DEV_DEBUG: "0"
+          CARGO_PROFILE_TEST_DEBUG: "0"
+          DREGG_TEST_REQUIRE_LEAN: ${{ steps.arm.outputs.armed }}
+        run: cargo test -p grain-verify-wasm -p starbridge-web --lib
       # ...still test deos-zed's gpui-FREE core on Linux: the FirmamentFs seam
       # (a file is a cell, a save is a receipted turn) links only the light executor
       # spine, so it links cleanly. This keeps the protocol-relevant half covered.
