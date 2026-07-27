@@ -63,7 +63,7 @@ use dregg_circuit::effect_vm::trace_rotated::{
     avail_pad_for_descriptor_name, empty_caveat_manifest, generate_rotated_effect_vm_trace_avail,
     rotated_descriptor_name_for_effect,
 };
-use dregg_circuit::effect_vm::{CellState, Effect, fold_bytes32_to_bb};
+use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::poseidon2::hash_many;
@@ -552,30 +552,52 @@ fn bridgemint_forced_on_wire_rejects_forged_balance_anchor_disabled() {
 /// `field[idx]` is UNSAT (the in-circuit `c_setfield_sum` gate binds the written field to the
 /// declared `new_value`, and the per-field non-target-unchanged gates bind the rest).
 ///
-/// STOPPED (v13 setField written-slot value8 seam — NAMED, not a fixture): under v13's fields-octet
-/// grow (NUM_PRE_LIMBS 112→169, the 56 fields[0..7] completion lanes 112..=167), the committed
-/// setFieldVmDescriptor2-3R24 gate now binds the written slot's 7 completion lanes, but the generic
-/// V1 setField producer (`generate_rotated_effect_vm_trace` via `build_honest`) does not yet fill
-/// them — so the HONEST field write no longer VERIFIES (line 569 positive tooth). This is the same
-/// v13 setField completion seam the epoch owner tracks ("a forged completion on the WRITTEN slot's
-/// own 7 lanes is not yet forced"); the fill is a producer (src, v13-owned) change, not a test
-/// fixture. Re-enable once the V1 setField producer lays the written-slot completion octet.
+/// ⚑ THE `#[ignore]` HERE WAS WRONG ON EVERY CLAUSE (removed 2026-07-27). It read: "the V1 setField
+/// producer does not yet fill the written slot's 7 completion lanes (112..=167), so the honest write
+/// fails the committed completion gate. Producer-side (v13-owned)."
+///
+///  * The lane range is off by one limb — the REVOKED-ROOT flag-day shifted the fields octet, so
+///    `fields[i]`'s completion lanes are `113 + 7·i ..= +6` (`cell/src/commitment.rs`), not 112-based.
+///    A sibling rescue-pin was corrected for exactly this ("a rescue-pin aimed one lane off its
+///    stated target is not a pin").
+///  * The producer DOES fill them: `cell/src/commitment.rs` and its twin
+///    `turn/src/rotation_witness.rs` both write `Faithful8::from_field_limbs8(..).write_lanes(..)`
+///    at `113 + 7·i`, and `build_honest` routes through `rw::produce`.
+///  * So it was never a producer gap. Measured, the failure was `constraints not satisfied on row 0:
+///    failed constraints = [#94, #95]` = the gates `col323 == col562` and `col324 == col563`, i.e.
+///    `BEFORE_BASE + {135, 136}` vs `AFTER_BASE + {135, 136}` — completion lanes 1 and 2 of
+///    `fields[3]` (base `113 + 7·3 = 134`). The deployed `setFieldVmDescriptor2-3R24` is the
+///    freeze-ALL member: it FREEZES those lanes, so a write whose value has nonzero HIGH bytes is
+///    refused BY DESIGN. That is a completeness limit of the deployed epoch, and it already has its
+///    own live, non-ignored coverage on both poles
+///    (`setfield_completion_lane_forge::honest_{small,large}_value_setfield_*`), plus the staged
+///    VALUE8 close (`setfield_value8_epoch_flip::honest_large_value_setfield_proves_under_value8`).
+///
+/// This test's subject is the FORGED-FIELD-ON-WIRE tooth, which needs no large value at all. It now
+/// writes a value that lives entirely in the lane-0 bytes (`b[28..32]`), so every completion lane
+/// stays zero and the deployed freeze admits the honest write — and the forgery tooth below finally
+/// RUNS instead of being skipped. The large-value regime is deliberately NOT re-litigated here.
+///
+/// ⚠ Second correction: `new_value` was `fold_bytes32_to_bb(&field_bytes)`, but the producer lays
+/// `field_limbs8(b)[0] = BE(b[28..32])`, and `helpers.rs` states outright that
+/// `fold_bytes32_to_bb(x) ≠ field_limbs8(x)[0]` in general. The declared value now comes from
+/// `field_limbs8`, the same projection the trace carries.
 #[test]
-#[ignore = "v13 setField written-slot value8 completion-lane seam: the V1 setField producer does not \
-            yet fill the written slot's 7 completion lanes (112..=167), so the honest write fails the \
-            committed completion gate. Producer-side (v13-owned); re-enable after the fill lands."]
 fn setfield_forced_on_wire_rejects_forged_field_anchor_disabled() {
     let before: i64 = 50_000;
     let field_idx: u32 = 3;
-    // The producer projects a cell field via `fold_bytes32_to_bb(bytes)`; the V1 SetField write
-    // sets the AFTER field limb to the effect's `value` directly. For the honest weld to hold, the
-    // effect's `value` MUST equal the fold of the producer cell's field bytes. So pick bytes, fold
-    // them, and write both.
+    // The producer projects a cell field via `field_limbs8(bytes)`; the V1 SetField write sets the
+    // AFTER field limb to the effect's `value` directly. For the honest weld to hold, the effect's
+    // `value` MUST equal `field_limbs8(bytes)[0] = BE(bytes[28..32])` — NOT `fold_bytes32_to_bb`,
+    // which `helpers.rs` says differs in general. Keeping the payload inside `b[28..32]` also keeps
+    // every fields[3] completion lane (`113 + 7·3 = 134 ..= 140`) at ZERO, which the deployed
+    // freeze-ALL member requires; the large-value regime has its own tests (see the doc above).
     let mut field_bytes = [0u8; 32];
-    field_bytes[0] = 0xAB;
-    field_bytes[1] = 0xCD;
-    field_bytes[5] = 0x42;
-    let new_value = fold_bytes32_to_bb(&field_bytes);
+    field_bytes[28] = 0x00;
+    field_bytes[29] = 0xAB;
+    field_bytes[30] = 0xCD;
+    field_bytes[31] = 0x42;
+    let new_value = dregg_circuit::effect_vm::field_limbs8(&field_bytes)[0];
 
     let mut after_cell = producer_cell(before, 0);
     // Mirror the V1 SetField write into the producer cell's field slot so the after witness is
