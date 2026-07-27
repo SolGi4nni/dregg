@@ -25,26 +25,60 @@
 //! THE TWO POLES: honest teeth == bundle `key_commit` folds + verifies; a forged bundle
 //! (`key_commit` no leg teeth back) ⇒ in-circuit `connect` conflict ⇒ UNSAT ⇒ REJECTED.
 //!
-//! Both poles are `#[ignore]` (real recursion, minutes). Run with:
-//!   cargo test -p dregg-circuit-prove --test sovereign_binding_deployed_tooth -- --ignored --nocapture
+//! Both poles run real recursion (minutes) but are NOT `#[ignore]`d — an ignored tooth cannot
+//! report, and this file spent two flag-days asserting a geometry no member had. Run with:
+//!   cargo test -p dregg-circuit-prove --test sovereign_binding_deployed_tooth -- --nocapture
+//!
+//! ## ⚑ THE TWO EPOCH-1 COMPACTIONS (why this file was RED behind the `#[ignore]`)
+//!
+//! This tooth used to hand-roll the sovereign producer: `generate_rotated_record_pin_wide` +
+//! a manual KEY_COMMIT teeth fill at the ABSOLUTE column `AUX_BASE + WITNESS_KEY_COMMIT_0`
+//! (113), + a manual digest-appendix fill, + a manual PI splice — a twin of
+//! `trace_rotated::append_sovereign_key_commit_rider`, which the DEPLOYED dispatcher already
+//! calls. Two flag-days then moved the committed geometry out from under the hand-roll:
+//!
+//!   * the **S2 flag-day** (`4dd3273bd2`) dropped the two dead rotated 1-felt Merkle-Damgard
+//!     chain bands + their 840 graduated chip lanes — `2·S2_CARRIER_SPAN + S2_LANE_SPAN` = 960
+//!     columns per member;
+//!   * the **E1 per-member dead-column compaction** (`86f1c12a1`) dropped each member's OWN
+//!     kill-set. makeSovereign's is `[(90,98), (101,113), (117,186), (187,188)]` = 90 columns
+//!     — note it SPARES exactly `113..117`, the four live KEY_COMMIT teeth, which is the emit's
+//!     availability scan seeing the teeth are bound by the PI pins + the chip gate.
+//!
+//! So the committed row is `WIDE_WIDTH + 32 − 960 − 90 + 48 = 1637`, not the pre-flag-day
+//! `WIDE_WIDTH + 32 + 48 = 2687` this file asserted; and the teeth land at **93..96**, not
+//! 113..116 — 113 minus the 20 killed columns below it (`[90,98)` = 8, `[101,113)` = 12).
+//! **113 and 93 are the SAME COLUMNS in two coordinate frames**: Lean's
+//! `CarrierComposed.SOVEREIGN_KEY_COMMIT_COL = 113` and `columns.rs`'s
+//! `AUX_BASE + WITNESS_KEY_COMMIT_0 = 113` are the PRE-compaction host frame the gate is
+//! AUTHORED in; the emitted descriptor's `piBinding .first 93..96` is the POST-E1 deployed
+//! frame `RotWideCompactE1.compactE1` lands it in. Neither is stale.
+//!
+//! The repair is to stop twinning the producer: route through
+//! `generate_rotated_effect_vm_descriptor_and_trace_wide`, which fills the teeth from the
+//! COMMITTED pubkey octet and then applies `compact_s2_columns ∘ compact_e1_columns` — the
+//! deployed order — so this tooth proves the bytes production proves. The geometry pin below is
+//! kept, re-derived through both kill-sets off their Lean-emitted single-source tables, so a
+//! future regen that legitimately moves the member still has to move this tooth deliberately.
 
 mod binding_tooth;
 use binding_tooth::assert_refused_by_binding_node;
 
 use dregg_cell::{CellMode, Ledger};
 use dregg_circuit::descriptor_ir2::{
-    EffectVmDescriptor2, MemBoundaryWitness, UMemBoundaryWitness, parse_vm_descriptor2,
+    EffectVmDescriptor2, UMemBoundaryWitness, VmConstraint2, parse_vm_descriptor2,
     prove_vm_descriptor2_for_config,
 };
 use dregg_circuit::effect_vm::columns::{AUX_BASE, aux_off};
 use dregg_circuit::effect_vm::trace_rotated::{
-    RotatedBlockWitness, empty_caveat_manifest, generate_rotated_record_pin_wide,
+    RotatedBlockWitness, empty_caveat_manifest,
+    generate_rotated_effect_vm_descriptor_and_trace_wide,
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV;
 use dregg_circuit::field::BabyBear;
+use dregg_circuit::lean_descriptor_air::{VmConstraint, VmRow};
 use dregg_circuit::refusal::{must_accept, must_refuse};
-use dregg_circuit_prove::carrier_pin_twin::splice_pi_values;
 use dregg_circuit_prove::ivc_turn_chain::{
     FinalizedTurn, SOVEREIGN_KEY_COMMIT_PI_LO, ir2_leaf_wrap_config, prove_turn_chain_recursive,
     verify_turn_chain_recursive,
@@ -118,40 +152,119 @@ fn deployed_wide_descriptor(wire: &str) -> EffectVmDescriptor2 {
     parse_vm_descriptor2(json).expect("deployed wide descriptor parses")
 }
 
+/// The live registry key of the deployed keyed sovereign member.
+const SOVEREIGN_KEY: &str = "makeSovereignVmDescriptor2R24";
+
+/// The KEY_COMMIT teeth columns as the DEPLOYED DESCRIPTOR ITSELF pins them — read off the
+/// committed `piBinding .first col (SOVEREIGN_KEY_COMMIT_PI_LO + q)` constraints, never derived
+/// from a Rust constant. This is the POST-E1 frame (93..96); `AUX_BASE +
+/// aux_off::WITNESS_KEY_COMMIT_0` (113) is the PRE-compaction authoring frame. Returns the base.
+fn committed_teeth_col(desc: &EffectVmDescriptor2) -> usize {
+    let cols: Vec<usize> = (0..KEY_COMMIT_LEN)
+        .map(|q| {
+            desc.constraints
+                .iter()
+                .find_map(|c| match c {
+                    VmConstraint2::Base(VmConstraint::PiBinding {
+                        row: VmRow::First,
+                        col,
+                        pi_index,
+                    }) if *pi_index == SOVEREIGN_KEY_COMMIT_PI_LO + q => Some(*col),
+                    _ => None,
+                })
+                .unwrap_or_else(|| {
+                    panic!(
+                        "the deployed sovereign row must row-0-pin KEY_COMMIT tooth {q} to PI {}",
+                        SOVEREIGN_KEY_COMMIT_PI_LO + q
+                    )
+                })
+        })
+        .collect();
+    let base = cols[0];
+    assert_eq!(
+        cols,
+        (0..KEY_COMMIT_LEN).map(|q| base + q).collect::<Vec<_>>(),
+        "the 4 KEY_COMMIT teeth must be CONTIGUOUS from the committed base"
+    );
+    base
+}
+
 /// **NATIVE since the big-bang regen**: the committed wide makeSovereign row IS the keyed member
-/// (`CarrierComposed.makeSovereignV3DeployedWide`) — the 4 KEY_COMMIT teeth columns (113..=116)
-/// row-0-pinned at the tail claim PIs (58..61, post-rc-wrap, ahead of the 16 wide anchors at
-/// 62..77) PLUS the in-AIR KEY_COMMIT chip-compress gate (the third edge: teeth ==
-/// `canonical_32_to_felts_4` of the committed `B_PUBKEY8` octet; 32-column digest appendix at the
-/// wide end, `dg_base = trace_width - 32`). The pin TWIN (`insert_tail_claim_pins`) staging is
-/// RETIRED for sovereign — this fetches the native row and asserts its geometry.
-fn keyed_sovereign_twin() -> (EffectVmDescriptor2, usize) {
-    let desc = deployed_wide_descriptor("makeSovereignVmDescriptor2R24");
-    let insert_at = SOVEREIGN_KEY_COMMIT_PI_LO;
+/// (`CarrierComposed.makeSovereignV3DeployedWide`) — the 4 KEY_COMMIT teeth columns row-0-pinned
+/// at the tail claim PIs (58..61, post-rc-wrap, ahead of the 16 wide anchors at 62..77) PLUS the
+/// in-AIR KEY_COMMIT chip-compress gate (the third edge: teeth == `canonical_32_to_felts_4` of the
+/// committed `B_PUBKEY8` octet; 32-column digest appendix past the wide carriers). The pin TWIN
+/// (`insert_tail_claim_pins`) staging is RETIRED for sovereign.
+///
+/// **THE GEOMETRY PIN, RE-DERIVED THROUGH BOTH EPOCH-1 KILL-SETS.** The committed width is
+/// `WIDE_WIDTH + SOVEREIGN_KEY_COMMIT_SPAN − |S2 kill| − |E1 kill| + refuse_weld_widen`, with
+/// both kill-set sizes read from their Lean-emitted single-source tables
+/// (`s2_compact_generated` / `e1_compact_generated::E1_COMPACT_TABLE`), so the relation still
+/// fires on ANY unintended drift while moving with a legitimate regen. It evaluates to 1637 —
+/// the same value `effect_vm_descriptors::WIDE_MEMBER_GEOMETRY` pins for this member.
+fn assert_deployed_sovereign_geometry(desc: &EffectVmDescriptor2) {
+    use dregg_circuit::effect_vm::bare_floor_refuse_weld::refuse_weld_widen;
+    use dregg_circuit::effect_vm::e1_compact_generated::E1_COMPACT_TABLE;
+    use dregg_circuit::effect_vm::s2_compact_generated::{S2_CARRIER_SPAN, S2_LANE_SPAN};
+    use dregg_circuit::effect_vm::trace_rotated::{SOVEREIGN_KEY_COMMIT_SPAN, WIDE_WIDTH};
+
     assert_eq!(
         desc.public_input_count,
-        insert_at + KEY_COMMIT_LEN + 16,
+        SOVEREIGN_KEY_COMMIT_PI_LO + KEY_COMMIT_LEN + 16,
         "the NATIVE sovereign row carries the 4 teeth claim PIs (58..61) ahead of the 16 anchors"
     );
-    // The KEY_COMMIT gate's digest appendix (4 quads × 8 lanes) rides at the sovereign wide base
-    // (GRAD_ROT_WIDTH + WIDE_CARRIER_APPENDIX = the wide host); the member adds the 32-column
-    // digest, THEN the gentian capacity-floor refuse (makeSovereign is a bare cohort member)
-    // widens it +48, with the refuse aux PAST the digest.
-    {
-        use dregg_circuit::effect_vm::trace_rotated::{GRAD_ROT_WIDTH, WIDE_CARRIER_APPENDIX};
-        assert_eq!(
-            desc.trace_width,
-            GRAD_ROT_WIDTH + WIDE_CARRIER_APPENDIX + 32 + 48,
-            "the native sovereign row carries the 32-column KEY_COMMIT digest appendix (at the \
-             wide host width) + the 48-column gentian capacity-floor refuse aux at the wide end"
-        );
-    }
-    (desc, insert_at)
+
+    let s2_killed = 2 * S2_CARRIER_SPAN + S2_LANE_SPAN;
+    let e1_killed: usize = E1_COMPACT_TABLE
+        .iter()
+        .find(|(k, _)| *k == SOVEREIGN_KEY)
+        .map(|(_, runs)| runs.iter().map(|(s, e)| e - s).sum())
+        .expect("makeSovereign is in the E1 kill-set table");
+    assert_eq!(
+        desc.trace_width + s2_killed + e1_killed,
+        WIDE_WIDTH + SOVEREIGN_KEY_COMMIT_SPAN + refuse_weld_widen(desc),
+        "the native sovereign row is the wide record-pin host + the 32-column KEY_COMMIT digest \
+         appendix + the gentian capacity-floor refuse aux, MINUS the S2 ({s2_killed}) and E1 \
+         ({e1_killed}) dead-column kill-sets"
+    );
+
+    // The E1 kill-set SPARES the four live teeth: the committed columns are the authoring
+    // columns (113..=116) shifted down by exactly the kills BELOW them.
+    let authored = AUX_BASE + aux_off::WITNESS_KEY_COMMIT_0;
+    let shift_below: usize = E1_COMPACT_TABLE
+        .iter()
+        .find(|(k, _)| *k == SOVEREIGN_KEY)
+        .map(|(_, runs)| {
+            runs.iter()
+                .filter(|(s, _)| *s < authored)
+                .map(|(s, e)| (*e).min(authored) - s)
+                .sum()
+        })
+        .expect("makeSovereign is in the E1 kill-set table");
+    assert_eq!(
+        committed_teeth_col(desc),
+        authored - shift_below,
+        "the deployed teeth column is the AUTHORED column ({authored}, Lean \
+         `SOVEREIGN_KEY_COMMIT_COL` / `AUX_BASE + WITNESS_KEY_COMMIT_0`) minus the \
+         {shift_below} E1-killed columns below it — the same tooth in the compacted frame"
+    );
+}
+
+/// The deployed row as fetched straight from the committed registry bytes (the geometry pin's
+/// subject; `mint_sovereign_leg` gets its copy from the deployed dispatcher instead).
+fn deployed_sovereign_descriptor() -> EffectVmDescriptor2 {
+    deployed_wide_descriptor(SOVEREIGN_KEY)
 }
 
 /// Mint the keyed-wide `MakeSovereign` leg: `before=(b,nonce,Hosted-or-Sovereign)` →
-/// `after=(b,nonce+1,Sovereign)`; the teeth columns filled with the executor KEY_COMMIT (the
-/// producer teeth-fill rider), published at the twin's tail claim PIs.
+/// `after=(b,nonce+1,Sovereign)`, THROUGH THE DEPLOYED DISPATCHER
+/// (`generate_rotated_effect_vm_descriptor_and_trace_wide`) — the same spine the live SDK wide
+/// prover and the IVC leg mints ride. Its `MakeSovereign` arm calls
+/// `append_sovereign_key_commit_rider`, which DERIVES the 4 KEY_COMMIT teeth from the committed
+/// `B_PUBKEY8` octet in the trace (never caller-supplied — a forged octet gets teeth the executor
+/// refuses), fills the 32-column chip digest appendix, and splices the 4 claim PIs ahead of the
+/// 16 wide anchors; the dispatcher then applies `compact_s2_columns ∘ compact_e1_columns` so the
+/// row lands in the committed compacted geometry.
 fn mint_sovereign_leg(
     balance: i64,
     nonce: u64,
@@ -185,53 +298,55 @@ fn mint_sovereign_leg(
         &Default::default(),
     );
 
-    let (mut trace, dpis) = generate_rotated_record_pin_wide(
+    let (desc, trace, dpis, map_heaps, mb) = generate_rotated_effect_vm_descriptor_and_trace_wide(
         &st,
         &effects,
         &bridge(&before_w),
         &bridge(&after_w),
         &empty_caveat_manifest(),
+        None,
+        None,
+        None,
+        None,
     )
-    .expect("deployed makeSovereign wide trace generates");
+    .expect("deployed makeSovereign wide dispatch");
 
-    // THE PRODUCER TEETH-FILL RIDER: the executor KEY_COMMIT teeth (dead-zero at HEAD —
-    // `EffectVmContext::default`) filled with the REAL owner-key compress, every row. NATIVE, the
-    // teeth are no longer free aux: the row's KEY_COMMIT chip gate welds each tooth to lane 0 of
-    // the in-AIR arity-4 compress of the committed `B_PUBKEY8` octet, so the fill must BE that
-    // compress (`owner_key_commit()` is exactly it — the executor verdict) or the leg is UNSAT.
+    // The dispatcher resolved the DEPLOYED row; pin its geometry here so a regen that moves the
+    // member cannot slip past this tooth, and confirm it IS the committed registry bytes.
+    assert_eq!(
+        desc,
+        deployed_sovereign_descriptor(),
+        "the dispatcher must resolve the COMMITTED wide makeSovereign row, byte-for-byte"
+    );
+    assert_deployed_sovereign_geometry(&desc);
+
+    // THE TEETH ARE HONEST AND THEY LANDED. The rider derives them from the committed pubkey
+    // octet; `owner_key_commit()` is the EXECUTOR's independent compress of the same key
+    // (`TurnExecutor::pubkey_to_witness_key_commit`). Equality here is the third edge holding on
+    // the producer side — asserted at BOTH the published claim PIs and the committed teeth
+    // columns, so a silent column remap cannot pass as a silent PI remap or vice versa.
     let kc = owner_key_commit();
-    let kc_col = AUX_BASE + aux_off::WITNESS_KEY_COMMIT_0;
-    let (twin, insert_at) = keyed_sovereign_twin();
-    // The gate's digest appendix: lane 0 of each quad's chip absorb is producer-filled (the
-    // prover's `fill_chip_lanes` fills lanes 1..7; out0 is the genuine producer column).
-    // The digest appendix rides at the FIXED sovereign wide base; the gentian refuse aux (48 cols) is
-    // appended PAST it, so the digest base is `trace_width − 48 − 32`, NOT `trace_width − 32`. Fill the
-    // refuse aux (floor=0, makeSovereign declares no capacity) so the welded member proves.
-    let refuse_w: usize = if twin.name.ends_with("-gentian-deployed-bare-refuse") {
-        48
-    } else {
-        0
-    };
-    let dg_base = twin.trace_width - refuse_w - 32;
-    for row in trace.iter_mut() {
-        row.resize(twin.trace_width, dregg_circuit::field::BabyBear::ZERO);
-        for (k, v) in kc.iter().enumerate() {
-            row[kc_col + k] = *v;
-            row[dg_base + 8 * k] = *v;
-        }
-        dregg_circuit::effect_vm::bare_floor_refuse_weld::fill_refuse_aux(&twin, row);
-    }
-
-    let twin_dpis = splice_pi_values(&dpis, insert_at, &kc);
-    assert_eq!(twin_dpis.len(), twin.public_input_count);
+    assert_eq!(
+        &dpis[SOVEREIGN_KEY_COMMIT_PI_LO..SOVEREIGN_KEY_COMMIT_PI_LO + KEY_COMMIT_LEN],
+        &kc[..],
+        "the leg must PUBLISH the executor KEY_COMMIT at the tail claim PIs 58..61"
+    );
+    let teeth_col = committed_teeth_col(&desc);
+    assert_eq!(
+        &trace[0][teeth_col..teeth_col + KEY_COMMIT_LEN],
+        &kc[..],
+        "the executor KEY_COMMIT must sit at the committed teeth columns {teeth_col}..{} of row 0",
+        teeth_col + KEY_COMMIT_LEN
+    );
+    assert_eq!(dpis.len(), desc.public_input_count);
 
     let config = ir2_leaf_wrap_config();
     let proof = prove_vm_descriptor2_for_config(
-        &twin,
+        &desc,
         &trace,
-        &twin_dpis,
-        &MemBoundaryWitness::default(),
-        &[],
+        &dpis,
+        &mb,
+        &map_heaps,
         &UMemBoundaryWitness::default(),
         &config,
     )
@@ -239,8 +354,8 @@ fn mint_sovereign_leg(
 
     RotatedParticipantLeg {
         proof,
-        descriptor: twin,
-        public_inputs: twin_dpis,
+        descriptor: desc,
+        public_inputs: dpis,
         carrier_witness: witness,
     }
 }
@@ -291,7 +406,6 @@ fn build_chain(key_commit: [BabyBear; KEY_COMMIT_LEN]) -> Vec<FinalizedTurn> {
 /// leg's published KEY_COMMIT teeth == the executor compress of the owner pubkey) folds through
 /// the DEPLOYED chain prover's Sovereign arm and the LIGHT CLIENT ACCEPTS.
 #[test]
-#[ignore = "SLOW: real deployed sovereign-binding recursion fold (~minutes); run with --ignored"]
 fn deployed_sovereign_turn_honest_accepts() {
     let turns = build_chain(owner_key_commit());
     let whole = prove_turn_chain_recursive(&turns)
@@ -309,7 +423,6 @@ fn deployed_sovereign_turn_honest_accepts() {
 /// do not carry (a forged sovereign owner). The binding `connect` conflicts ⇒ UNSAT ⇒ no root ⇒
 /// REJECTED.
 #[test]
-#[ignore = "SLOW: real deployed sovereign-binding recursion fold (~minutes); run with --ignored"]
 fn deployed_sovereign_turn_forged_key_commit_rejected() {
     // ── S1 HONEST POLE FIRST, in THIS test. The forged chain below differs from this one by a
     //    SINGLE FELT, so without an accept here the refusal proves nothing: an arm that refuses
