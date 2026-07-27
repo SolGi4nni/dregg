@@ -22544,6 +22544,7 @@ dependencies = [
  "blake3",
  "dregg-app-framework",
  "dregg-cell",
+ "dregg-exec-lean",
  "dregg-intent",
  "serde_json",
  "tokio",
