@@ -3,17 +3,13 @@ name = "dregg-demo"
 version.workspace = true
 edition.workspace = true
 
-[features]
-# `prover` is in the DEFAULT set (matching `dregg-circuit`/`dregg-turn`/`dregg-verifier`, all of
-# which default to it) and forwards to `dregg-circuit/prover`, so this crate's own
-# `#[cfg(feature = "prover")]` gates ALIGN with the circuit's prover state. The two
-# `silver-helper` subcommands that mint a v1 hand-AIR (`EffectVmAir`) NoOp STARK
-# (`make-captp-delivered-chain`, `make-recursive-witness`) are the wasm/v1 floor; under `prover`
-# the v1 hand-AIR is retired (the rotated `"effect-vm-rotated"` IR-v2 leg is live), so those two
-# subcommands compile out and report the retirement honestly. Every other silver-helper subcommand
-# (handoff, sovereign-witness, slot-caveats, bilateral-bundle, …) is unaffected.
-default = ["prover"]
-prover = []
+# NO `[features]`. This crate declared `default = ["prover"]` / `prover = []`, with a comment
+# claiming the flag "forwards to `dregg-circuit/prover`" and compiles out two `silver-helper`
+# subcommands. All three claims were false: `dregg-circuit` has no `prover` feature at all
+# (`circuit/Cargo.toml` declares only `default = ["plonky3"]` / `plonky3`), `prover = []`
+# forwarded nothing, and this crate contains ZERO `#[cfg(feature = "prover")]` sites — the two
+# subcommands are unconditional. Nothing in the tree depends on `dregg-demo`, so the feature had
+# no consumers either. A name is a claim; this one was writing checks the code did not cash.
 
 [dependencies]
 blake3 = "1"

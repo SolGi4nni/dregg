@@ -11,7 +11,10 @@ license = { workspace = true }
 [features]
 default = ["crypto"]
 crypto = ["dep:base64", "dep:chacha20poly1305", "dep:getrandom", "dep:hmac", "dep:sha2", "dep:subtle", "dep:zeroize"]
-zkvm = []
+# `zkvm` IS GONE. It was `zkvm = []` with no `#[cfg(feature = "zkvm")]` anywhere in this
+# crate, while the feature ledger described it as "the proof-carrying macaroon helpers" —
+# a name making a claim the code did not keep. `dregg-token/zkvm`, its only enabler, still
+# pulls this crate; it just no longer forwards a flag that did nothing.
 
 [dependencies]
 base64 = { workspace = true, optional = true }

@@ -17,11 +17,11 @@ default = []
 # feature-gated). `zkvm` additionally pulls in the proof-carrying helpers
 # (`dregg-commit` / `dregg-dsl-runtime`).
 zkvm = ["dep:dregg-commit", "dep:dregg-dsl-runtime"]
-# `prover` is RETAINED as a no-op (the faithful 8-felt commitment
-# `compute_canonical_state_commitment_v9_felt8` now unconditionally uses the
-# CHIP-faithful chain `wire_commit_8_chip`, which is verify-level in
-# `dregg-circuit`). Kept so downstream `dregg-cell/prover` forwards remain valid.
-prover = []
+# `prover` IS GONE. It was `prover = []` — zero forwards, zero `#[cfg]` sites — retained
+# "so downstream `dregg-cell/prover` forwards remain valid". There were none left: the two
+# that existed (`dregg-turn`'s and `dregg-sdk`'s) were both deleted, and their manifests say
+# so. A feature that gates nothing is worse than one that gates something, because the next
+# reader believes the name.
 # SOUNDNESS GATE — DO NOT ENABLE IN PRODUCTION.
 #
 # `test-stubs` arms the *accept* path of `StubVerifier` (predicate.rs), which

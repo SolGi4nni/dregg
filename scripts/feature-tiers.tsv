@@ -47,26 +47,26 @@
 #   dropped. The `#!` counts below are rewritten to match, so a regen always shows in a diff.
 #
 # crate	feature	tier	why
-#!EXPECT_PAIRS=240
-#!EXPECT_T1=149
+#!EXPECT_PAIRS=235
+#!EXPECT_T1=146
 #!EXPECT_T2=3
-#!EXPECT_T3=79
+#!EXPECT_T3=77
 #!EXPECT_T4=9
 agent-platform	live-brain	T3	drive_live wires dregg-agent's real OpenAI-compatible HTTP transport as a rented grain's brain (BYO key from env). Compile-only here; the live call needs credentials
 attested-dm	tlsn-live	T3	optional dep on dregg-zkoracle-live: attests the narration over a GENUINE local MPC-TLS 2PC roundtrip instead of the modeled ed25519 carrier
 commons-arbiter	tlsn-live	T3	optional dep on dregg-zkoracle-live: attests the ruling over a genuine local MPC-TLS 2PC roundtrip instead of the modeled ed25519 carrier
-deos-hermes	cockpit-surface	T1	default@.
+deos-hermes	cockpit-surface	T1	starbridge-v2-installers.yml:200,386 cargo build --release --features desktop -> dev-surfaces -> deos-hermes/cockpit-surface: the confined agent pane's gpui surface
 deos-hermes	default	T1	default@.
 deos-hermes	js-agent	T3	THE HANDS — the confined agent's run_js tool; pulls deos-js (real SpiderMonkey)
 deos-hermes	live-brain	T3	brain::live_brain_from_env() and the transport it resolves from the BYO-key env chain
 deos-hermes	node-brain	T3	THE DISTRIBUTED HANDS — a confined brain drives a remote node's World over NodeWorldSink
 deos-hermes	screenshot	T3	offscreen RGBA capture of the dock surface in a headless gpui app (offscreen wgpu + no-system-fonts text). Compile-only: painting a frame needs an adapter, checking it does not
 deos-hermes	zk-live	T3	optional dep on dregg-zkoracle-live — the heavy mpz/tokio/rustls 2PC backend behind the crown
-deos-matrix	cockpit-surface	T1	default@.
+deos-matrix	cockpit-surface	T1	starbridge-v2-installers.yml:200,386 cargo build --release --features desktop -> dev-surfaces -> deos-matrix/cockpit-surface: the chat pane's gpui surface
 deos-matrix	default	T1	default@.
-deos-matrix	gui	T1	default@.
+deos-matrix	gui	T1	starbridge-v2-installers.yml:200,386 cargo build --release --features desktop -> dev-surfaces -> deos-matrix/cockpit-surface -> gui
 deos-matrix	live-matrix	T3	matrix-sdk's on-disk sqlite store (client.rs's sqlite_store path)
-deos-terminal	cockpit-surface	T1	default@.
+deos-terminal	cockpit-surface	T1	starbridge-v2-installers.yml:200,386 cargo build --release --features desktop -> dev-surfaces -> deos-terminal/cockpit-surface: the terminal pane's gpui surface
 deos-terminal	default	T1	default@.
 deos-terminal	native-ui	T1	default@.
 deos-terminal	pty-ws-server	T1	default@.
@@ -80,7 +80,7 @@ deos-view	web	T1	default@.
 deos-view	wechat	T1	default@.
 deos-zed	cockpit-surface	T1	default@.
 deos-zed	default	T1	default@.
-deos-zed	firmament	T1	default@.
+deos-zed	firmament	T1	ci.yml:509 cargo test -p deos-zed --no-default-features --features firmament
 deos-zed	gui	T1	default@.
 deos-zed	gui-demo	T1	default@.
 deos-zed	highlight-all	T3	the full 33-language tree-sitter grammar set
@@ -97,7 +97,6 @@ dregg-app-framework	server	T1	default@.
 dregg-braid-hook	prove	T2	armed-teeth.yml `feature-gated-prove-teeth`: cargo test -p dregg-braid-hook --features prove --test weld_canary -- --ignored. Drives the deployed app-root fold node; first run 2026-07-25 bit on both poles in 473.95s
 dregg-bridge	test-utils	T1	default@.
 dregg-cell	default	T1	default@.
-dregg-cell	prover	T3	a DOCUMENTED NO-OP (`prover = []`), retained only so downstream `dregg-cell/prover` forwards keep resolving; it gates zero code (armed-teeth.yml says so too). Compile-only is exactly the right coverage for a feature with no body — and it stays in the sweep so the day it grows one, something compiles it
 dregg-cell	test-stubs	T1	default@.
 dregg-cell	test-stubs-release-test-target	T1	default@.
 dregg-cell	zkvm	T3	the proof-carrying helpers (dregg-commit / dregg-circuit) on the cell
@@ -109,8 +108,6 @@ dregg-chutes-e2ee	collateral-fetch	T3	the DCAP collateral HTTP client (Intel PCS
 dregg-circuit	default	T1	default@.
 dregg-circuit	plonky3	T1	default@.
 dregg-deco-prove	tlsn-live	T3	the vendored TLSNotary MPC-TLS backend behind the DECO prover
-dregg-demo	default	T1	default@.
-dregg-demo	prover	T1	default@.
 dregg-dfa	default	T1	default@.
 dregg-discord-bot	default	T1	default@discord-bot
 dregg-discord-bot	private-bazaar-live	T3	the opt-in private/proven Bazaar raid. THIS IS THE KNOWN WOUND: a verified settling gate shipped inside this feature and was registered nowhere, so every settling test in it could not go green on any host. Compiling it is the floor, not the fix
@@ -133,7 +130,6 @@ dregg-lightclient	default	T1	default@.
 dregg-lightclient	prover	T1	default@.
 dregg-macaroon	crypto	T1	default@.
 dregg-macaroon	default	T1	default@.
-dregg-macaroon	zkvm	T3	the proof-carrying macaroon helpers
 dregg-net-client-pd	default	T4	target: the sel4/dregg-pd workspace builds for targets/aarch64-sel4-microkit.json — a bare-metal tier-3 JSON target spec needing build-std, rust-src on nightly-2026-04-04, and $SEL4_INCLUDE_DIRS pointing at a Microkit SDK board's libsel4 headers. A hosted runner has neither the SDK nor the board
 dregg-net-client-pd	executor-ingress	T4	target: the sel4/dregg-pd workspace builds for targets/aarch64-sel4-microkit.json — a bare-metal tier-3 JSON target spec needing build-std, rust-src on nightly-2026-04-04, and $SEL4_INCLUDE_DIRS pointing at a Microkit SDK board's libsel4 headers. A hosted runner has neither the SDK nor the board
 dregg-node	default	T1	default@.
@@ -147,7 +143,6 @@ dregg-perf	prover	T1	default@.
 dregg-preflight	default	T1	default@.
 dregg-sdk	default	T1	default@.
 dregg-sdk	dev	T3	the SDK's development-only helpers
-dregg-sdk	embed-core	T1	default@.
 dregg-sdk	exec-lean	T1	default@.
 dregg-sdk	fhegg	T1	default@.
 dregg-sdk	no-lean-link	T1	default@.
@@ -261,32 +256,32 @@ pg-dregg	tier-d	T3	tier-c plus dregg-lean-ffi: the verified Lean executor tier
 pg-dregg	tier-d-lean	T3	a readable alias for tier-d, the verified Lean executor tier
 pg-dregg	tier-d-rust	T3	the Rust executor producer (dregg-turn + dregg-cell); when both tiers are on, tier-d wins
 servo-render	default	T1	default@.
-servo-render	libservo	T1	default@.
+servo-render	libservo	T1	starbridge-v2-installers.yml:200,386 cargo build --release --features desktop -> web-shell -> servo-render/libservo. Its ONLY enabler in the tree. Until 2026-07-27 this rode starbridge-v2's `desktop` DEFAULT, which is why `cargo test -p servo-render` and `cargo test --workspace` compiled two different servo-render
 servo-render	swgl-standalone	T1	default@.
 starbridge-domains	live-dns	T3	the live DNS resolver path behind the domains app
 starbridge-polis	default	T1	default@.
 starbridge-polis	deos	T1	ci.yml:82 cargo test -p starbridge-polis --features deos
-starbridge-v2	agent-js	T1	default@.
-starbridge-v2	android-systemui	T1	default@.
-starbridge-v2	app-registry	T1	default@.
-starbridge-v2	card-pane	T1	default@.
+starbridge-v2	agent-js	T1	starbridge-v2-installers.yml:200,386 cargo build --release --features desktop -> agent-js: deos-js (real SpiderMonkey) bound to the live World
+starbridge-v2	android-systemui	T1	starbridge-v2-installers.yml:200,386 cargo build --release --features desktop -> android-systemui: the graphideOS SystemUI cap-chrome over a real permgate PermWorld
+starbridge-v2	app-registry	T1	starbridge-v2-installers.yml:200,386 cargo build --release --features desktop -> app-registry: the 20 pre-built starbridge-apps wired into the cockpit World
+starbridge-v2	card-pane	T1	starbridge-v2-installers.yml:200,386 cargo build --release --features desktop -> card-pane: a hyperdreggmedia card as a live gpui pane (deos-view)
 starbridge-v2	default	T1	default@.
-starbridge-v2	desktop	T1	default@.
-starbridge-v2	dev-surfaces	T1	default@.
+starbridge-v2	desktop	T1	starbridge-v2-installers.yml:200,386 cargo build --release --features desktop. THE ONE DIAL for the full native cockpit. It was `default@.` until 2026-07-27; as a root member that made ci.yml's --workspace activate the whole cone and unify it onto every other package, so the default is now `embedded-executor` and the cone is built by the job whose subject it is
+starbridge-v2	dev-surfaces	T1	starbridge-v2-installers.yml:200,386 cargo build --release --features desktop -> dev-surfaces: deos-zed + deos-terminal + deos-hermes + deos-matrix as dock panes
 starbridge-v2	embedded-executor	T1	default@.
-starbridge-v2	firmament	T1	default@.
-starbridge-v2	gpui-ui	T1	default@.
+starbridge-v2	firmament	T1	starbridge-v2-installers.yml:200,386 cargo build --release --features desktop -> dev-surfaces -> firmament: the editor pane edits sovereign cells, a save is a receipted turn
+starbridge-v2	gpui-ui	T1	starbridge-v2-installers.yml:200,386 cargo build --release --features desktop -> gpui-ui: the gpui window + the cockpit element tree
 starbridge-v2	gpui-web	T3	the full cockpit rendered by gpui to a canvas. pages.yml builds it via wasm-pack for wasm32-unknown-unknown, and that workflow is workflow_dispatch ONLY
 starbridge-v2	headless	T3	embedded-executor + app-registry + gpui-ui + render-capture with no dev-surfaces and no card-pane/agent-js/web-shell (their multi-GB mozjs + servo)
 starbridge-v2	headless-render	T3	a back-compat alias mapping to the full `desktop` build
 starbridge-v2	live-brain	T3	LiveJsHands + AcpClient::with_run_js_hook, sharing the same ../deos-js mozjs agent-js pulls
-starbridge-v2	live-node	T1	default@.
+starbridge-v2	live-node	T1	starbridge-v2-installers.yml:200,386 cargo build --release --features desktop -> live-node: the HTTP+SSE link to a running node (reqwest)
 starbridge-v2	native-full	T3	a back-compat alias: native-full IS `desktop` after the rename
 starbridge-v2	process-pd	T3	the out-of-process compositor PD (fork/socketpair/seatbelt-or-LSM). Unix-only, which a Linux runner is; dock/migrate.rs's PresentTransport is gated on it
-starbridge-v2	render-capture	T1	default@.
+starbridge-v2	render-capture	T1	starbridge-v2-installers.yml:200,386 cargo build --release --features desktop -> render-capture: the offscreen output-buffer bake (gpui test-support + gpui_wgpu)
 starbridge-v2	sel4-thin	T3	nodefault: the Lean-free thin-client / verifier path for the seL4 component end-state. Its own manifest says it is mutually exclusive with native-full AT THE LINKER LEVEL and is selected with --no-default-features, so the sweep passes that flag rather than recording a pair it cannot express as permanently broken
-starbridge-v2	servo	T1	default@.
-starbridge-v2	web-shell	T1	default@.
+starbridge-v2	servo	T1	starbridge-v2-installers.yml:200,386 cargo build --release --features desktop -> web-shell -> servo: the SWGL content-tile render path (servo-render + image)
+starbridge-v2	web-shell	T1	starbridge-v2-installers.yml:200,386 cargo build --release --features desktop -> web-shell: the real libservo WebView as the web-content render path
 starbridge-web	default	T1	default@.
 starbridge-web	gpui-web	T3	starbridge-v2's gpui-web plus the gpui crates directly, so cockpit_web can build an element tree. pages.yml:123 is its only builder and fires only by hand
 starbridge-web	pty-ws-server	T3	the native PTY-over-WS terminal backend (server bin + deps), cfg(not(wasm32))-gated

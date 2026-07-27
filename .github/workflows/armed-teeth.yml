@@ -64,19 +64,17 @@
 #     itself off the pin: while `TAG=` is empty it says so loudly instead of failing nightly for
 #     infrastructure that does not exist yet; the first publish flips it on with no edit here.
 #
-#   * THE `prover` FEATURE, EXCEPT ONE TARGET — and the reason is that it is NOT a hole. Ten
-#     crates declare a `prover` feature; the census (2026-07-26, `default =` line of every
-#     Cargo.toml declaring one) says NINE of them put it in `default`: dregg-demo, grain-turn,
+#   * THE `prover` FEATURE, EXCEPT ONE TARGET — and the reason is that it is NOT a hole. EIGHT
+#     crates declare a `prover` feature (was ten; `dregg-cell`'s and `dregg-demo`'s were both
+#     `prover = []` gating zero code and are DELETED, 2026-07-27), and the census (`default =`
+#     line of every Cargo.toml declaring one) says ALL EIGHT put it in `default`: grain-turn,
 #     dregg-lightclient, dregg-node, dregg-perf, dregg-sdk, dregg-teasting, dregg-tests,
 #     dregg-verifier. Default-on means `cargo test --workspace` already COMPILES and RUNS them,
 #     so the ~96 `prover`-gated tests in `sdk/tests/*` (14 files, 88 tests) and
 #     `verifier/tests/integration_rotated_replay_chain.rs` (8) are not gated off CI at all —
 #     checked file by file, not one of them carries `#[ignore]`. Arming them here would be a
 #     second, slower copy of a lane that already exists.
-#     The two exceptions, both named:
-#       - `dregg-cell`'s `prover` is a DOCUMENTED NO-OP (`prover = []`, retained only so
-#         downstream `dregg-cell/prover` forwards keep resolving). It gates zero code. There is
-#         nothing to arm and its absence is not a gap.
+#     The one exception, named:
 #       - `grain-turn`'s `r3_grain_adapter` IS default-compiled but is `#[ignore]`d, so it ran
 #         nowhere — the first axis, missed because it lives outside `circuit-prove/tests/` and
 #         so no `*tooth*` glob could ever reach it. It is armed below in `lean-hard-mode`, not

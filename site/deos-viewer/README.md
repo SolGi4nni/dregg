@@ -32,7 +32,7 @@ desktop is an **equality** ("ROOT MATCH"), not an image.
 ## Try it
 
 ```
-cd starbridge-v2 && cargo run -- --serve-ie6 8600
+cargo run -p starbridge-v2 --features desktop -- --serve-ie6 8600
 open "http://127.0.0.1:8600/shared?d=deos1!ts=1751500800"
 ```
 

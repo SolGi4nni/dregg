@@ -158,6 +158,48 @@ PUSH_TRIGGERED_EXPLICIT: dict[tuple[str, str], str] = {
     ("dregg-agent", "live-brain"): "ci.yml:602 cargo test -p dregg-agent --features live-brain",
     ("dregg-lean-ffi", "lean-lib"): "ci.yml:984 cargo test -p dregg-lean-ffi --features lean-lib",
     ("durable-workflow", "deploy"): "ci.yml:305 excluded-workspace matrix, testflags: --features deploy",
+    # ── THE COCKPIT CONE. ────────────────────────────────────────────────────────────────────
+    # These eighteen used to be `default@.`, and that WAS true: `starbridge-v2` is a root
+    # member and its `default` was `["desktop"]`, so ci.yml's `cargo check --workspace`
+    # activated all of them. It also made them a hazard — a feature unifies across the resolve,
+    # so `desktop` was silently rewriting OTHER packages' compilations (measured: `servo-render`
+    # resolved `swgl-standalone` under `-p` and `libservo` under `--workspace`, i.e. a different
+    # program depending on which packages cargo had been asked about). `default` is now
+    # `["embedded-executor"]`, and the cone is built BY THE JOB WHOSE SUBJECT IT IS:
+    # starbridge-v2-installers.yml, `push: branches: [main]` with NO paths filter, which builds
+    # `--release --features desktop` on macos arm64 + x86_64 and on ubuntu.
+    #
+    # THE PROVENANCE IS TRANSITIVE AND SAYS SO. Only `desktop` is a flag anyone types; the rest
+    # are what `desktop` pulls, and each entry names the edge. That is a weaker claim than a
+    # typed flag and it is written down rather than rounded off.
+    **{
+        (c, f): (
+            f"starbridge-v2-installers.yml:200,386 cargo build --release --features desktop{chain}"
+        )
+        for c, f, chain in [
+            ("starbridge-v2", "desktop", ""),
+            ("starbridge-v2", "app-registry", " → app-registry"),
+            ("starbridge-v2", "gpui-ui", " → gpui-ui"),
+            ("starbridge-v2", "live-node", " → live-node"),
+            ("starbridge-v2", "render-capture", " → render-capture"),
+            ("starbridge-v2", "dev-surfaces", " → dev-surfaces"),
+            ("starbridge-v2", "web-shell", " → web-shell"),
+            ("starbridge-v2", "agent-js", " → agent-js"),
+            ("starbridge-v2", "card-pane", " → card-pane"),
+            ("starbridge-v2", "android-systemui", " → android-systemui"),
+            ("starbridge-v2", "servo", " → web-shell → servo"),
+            ("starbridge-v2", "firmament", " → dev-surfaces → firmament"),
+            ("servo-render", "libservo", " → web-shell → servo-render/libservo"),
+            # NOT deos-zed:firmament — it already has a STRONGER provenance above
+            # (ci.yml:509, a directly typed flag in the main per-push job). The cockpit
+            # reaches it too, but the better claim is the one that does not go through a
+            # transitive edge, so that entry stays and this block must not overwrite it.
+            ("deos-terminal", "cockpit-surface", " → dev-surfaces → deos-terminal/cockpit-surface"),
+            ("deos-hermes", "cockpit-surface", " → dev-surfaces → deos-hermes/cockpit-surface"),
+            ("deos-matrix", "cockpit-surface", " → dev-surfaces → deos-matrix/cockpit-surface"),
+            ("deos-matrix", "gui", " → dev-surfaces → deos-matrix/cockpit-surface → gui"),
+        ]
+    },
 }
 
 # Enabled by a workflow that is NOT push-triggered. Recorded so that their ABSENCE from T1 is a

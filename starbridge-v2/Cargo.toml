@@ -1,28 +1,26 @@
 # Starbridge v2 — the NATIVE dregg master interface.
 #
-# STANDALONE WORKSPACE (this file declares its own `[workspace]`). It is
-# deliberately EXCLUDED from the main `/Users/ember/dev/breadstuffs/Cargo.toml`
-# members for two reasons:
-#   1. gpui drags a very heavy native dep tree (windowing/font/GPU: metal,
-#      harfbuzz/cosmic-text, objc on macOS, a winit-class event loop).
-#   2. THE EMBEDDED EXECUTOR links the verified Lean archive (`libdregg_lean.a`,
-#      multi-MB) via `dregg-turn`/`dregg-cell`. That is exactly what we WANT for
-#      a native desktop master interface — but it is the link the `no-lean-link`
-#      crates (wasm/, verifier/) exist to AVOID, so unifying it onto the main
-#      workspace would be a feature-unification footgun.
+# A ROOT-WORKSPACE MEMBER. This file declares NO `[workspace]`; the package is named
+# in the root `Cargo.toml`'s `members` (it is kept out of `default-members`, which is
+# a build-cost choice and NOT an isolation mechanism — `--workspace` selects members
+# regardless of `default-members`). The toolchain is the root's dated
+# `nightly-2026-06-21`; there is no `starbridge-v2/rust-toolchain.toml`, and the
+# rolling-nightly note that used to live here described a layout that no longer exists.
 #
-# Build FROM INSIDE this directory (never at the repo root):
-#   cd starbridge-v2 && cargo build                                  # native-full (default)
-#   cd starbridge-v2 && cargo build --no-default-features --features sel4-thin
+# THAT MEMBERSHIP IS WHY THE DEFAULT FEATURE SET IS SMALL. Everything `default`
+# activates is unified onto every other package in every `--workspace` command; see
+# the `default` note below for the measurement. The heavy dials are opt-in by name:
+#   cargo build -p starbridge-v2                                     # embedded executor only
+#   cargo build -p starbridge-v2 --features desktop                  # the full native cockpit
+#   cargo build -p starbridge-v2 --no-default-features --features sel4-thin
 #
-# `cd` IN FIRST — do NOT use `--manifest-path` from the repo root. `rust-toolchain.toml`
-# resolution is DIRECTORY-scoped: this crate pins the ROLLING `nightly` (see
-# rust-toolchain.toml — gpui needs `std::hint::cold_path`, stabilized after the
-# repo root's `nightly-2026-01-01`). Running `cargo --manifest-path starbridge-v2/...`
-# from the repo root picks up the ROOT's `nightly-2026-01-01` toolchain, which is
-# too old and fails to compile gpui's `profiler.rs` with E0658 (`cold_path` unstable).
-# If the rolling `nightly` is itself stale, `rustup update nightly` refreshes it
-# (this affects ONLY this crate — the root + every other lane pin a dated nightly).
+# The two heavy things this package can pull, and which the default set does NOT:
+#   1. gpui — a very heavy native dep tree (windowing/font/GPU: metal,
+#      harfbuzz/cosmic-text, objc on macOS, a winit-class event loop), via `gpui-ui`.
+#   2. libservo/mozjs, via `web-shell` → `servo-render/libservo`.
+# THE EMBEDDED EXECUTOR (in the default set) links the verified Lean archive
+# (`libdregg_lean.a`, multi-MB) via `dregg-turn`/`dregg-cell` — that is what the
+# nine consumers of this crate all ask for, and what they get.
 #
 # =============================================================================
 # TWO BUILDS, ONE CODEBASE  (mirrors the verifier/ `no-lean-link` pattern)
@@ -97,15 +95,60 @@ required-features = ["embedded-executor"]
 # Everything below `desktop`/`headless`/`gpui-web`/`sel4-thin` is an INTERNAL
 # building block (the `#[cfg(feature = …)]` gate vocabulary). A USER never
 # combines them by hand — they pick ONE of:
-#   * `desktop`   (the DEFAULT)  — the full native cockpit, every surface ON.
+#   * `desktop`   — the full native cockpit, every surface ON. NOT the default; see
+#                   the `default` note below for why a member's default set is not a
+#                   free place to put a preference.
 #   * `headless`  — the gpui-free / window-free CI + seL4-frame bake path.
 #   * `gpui-web`  — the wasm32 in-browser cockpit (consumed by `starbridge-v2/web`).
 #   * `sel4-thin` — the Lean-free thin HTTP/SSE verifier client.
 # The internal knobs (`gpui-ui`/`dev-surfaces`/`card-pane`/`web-shell`/…) are
 # folded INTO `desktop` and are no longer separate user-facing dials.
 
-# DEFAULT = the whole desktop: the master interface, every surface ON.
-default = ["desktop"]
+# DEFAULT = the gpui-free EMBEDDED EXECUTOR, and nothing else.
+#
+# It used to be `["desktop"]`, and that was a workspace-wide correctness bug, not a
+# convenience. `starbridge-v2` is a root-workspace MEMBER (root Cargo.toml `members`),
+# so `cargo build/test/clippy --workspace` SELECTS it and activates its default set —
+# and a cargo feature UNIFIES ACROSS THE RESOLVE, so `desktop`'s ten switches were
+# forced onto every OTHER package in every whole-workspace command.
+#
+# MEASURED (cargo's own `--unit-graph`, so this is the resolver's answer, not a
+# re-derivation):
+#     cargo build -p servo-render --all-targets    servo-render = default,swgl-standalone
+#     cargo build --workspace     --all-targets    servo-render = default,libservo,swgl-standalone
+# `desktop` → `web-shell` → `servo-render/libservo`, i.e. `servo-render` was a
+# DIFFERENT PROGRAM depending on which other packages cargo had been asked about —
+# its `-p` suite never linked libservo, its `--workspace` suite did, and the tests that
+# construct a `servo::Servo` against a `OnceCell` permitting exactly ONE exist only in
+# the second one (`tests/http_render_to_png.rs`, `tests/https_render_to_png.rs` and the
+# `webview`/`gpu_context`/`netcap_http` unit tests are all `#![cfg(feature = "libservo")]`).
+#
+# It also silently overrode NINE authors. Every consumer of this crate —
+# `dreggnet-party`, `dreggnet-surfaces`, `dreggnet-guild`, `grain-fork`, `mud-dregg`,
+# `dregg-perf`, `dungeon-on-dregg`, `starbridge-branch-stitch-multiplayer` and
+# `starbridge-web` — writes `default-features = false, features = ["embedded-executor"]`.
+# Nine deliberate `default-features = false`, defeated by `--workspace` selecting the
+# package they were being careful about.
+#
+# `embedded-executor` is EXACTLY the set all nine ask for, so `-p starbridge-v2` and
+# `--workspace` now resolve this package IDENTICALLY, and neither one perturbs anybody
+# else. The cockpit is not gone, it is NAMED: `--features desktop` (or the `native-full`
+# alias). Most cockpit builds already passed one (the atlas README, demo/surfaces,
+# ship-readiness-smoke.sh); the ones that did NOT were the shipped installers, which built
+# with a bare `cargo build --release` and a comment asserting the default equalled
+# native-full. `starbridge-v2-installers.yml` now names the feature — without that edit it
+# would have packaged a cockpit-less binary that still passes its `--headless` self-check.
+#
+# WHAT THIS COSTS, said out loud and counted. `tests/` holds 16 files. THREE survive the new
+# default (`deos_doc_persists_to_cell_heap`, `login_key_ceremony`, `source_vessel_real`);
+# ONE was already dark under `desktop` too (`migrate_shell_dispatch`, `process-pd`, which
+# `desktop` never included); the other TWELVE open with a `#![cfg(all(feature = "gpui-ui", …))]`
+# / `card-pane` / `dev-surfaces` / `android-systemui` gate and so no longer compile under a
+# `--workspace` resolve. `starbridge-v2-installers.yml` gained a
+# `cargo test --release --features desktop --no-run` step so something still puts those twelve
+# in front of rustc. Nothing RUNS them per push — a smaller claim than the one the old default
+# was making by accident, and one that does not silently rewrite servo-render to make it.
+default = ["embedded-executor"]
 
 # `desktop` — THE ONE DIAL for the full native cockpit. Embedded verified
 # executor + the app registry + the gpui window + the live-node link + every
@@ -659,24 +702,20 @@ dregg-types = { path = "../types", optional = true }
 # The wallet-grade clerk itself (`dregg_sdk::AgentCipherclerk`) + the REAL
 # embedded engine (`dregg_sdk::embed::DreggEngine`, the executor+ledger+token
 # core our `World` wraps). `default-features = false` drops the SDK's
-# networking/captp stack (tokio/quinn/async); `embed-core` pulls the wire-free
-# engine core (the cipherclerk + macaroon-token + DreggEngine surface we use is
-# all in the SDK's always-compiled / embed-core core, NOT the network stack).
+# networking/captp stack (tokio/quinn/async) and its `exec-lean`/`fhegg` clusters.
+# The cipherclerk + macaroon-token + `DreggEngine` surface we use is in the SDK's
+# always-compiled offline core, so nothing has to be turned on to reach it —
+# `embed-core` used to be named here and was `embed-core = []`, a no-op; it is deleted.
 #
-# `prover` is LOAD-BEARING here (the C7 GREP-ZERO drive): `dregg-circuit`'s
-# default features include `prover` (circuit/Cargo.toml), and `dregg-turn`
-# (this crate's dep, default-features-on) forwards `prover = ["dregg-circuit/
-# prover"]` — so cargo feature-unifies `dregg-circuit` with `prover` ON
-# across this workspace. Under `prover`, `dregg-circuit::effect_vm_p3_full_air`
-# is `#[cfg(not(feature = "prover"))]`-DELETED (the v1 hand-AIR is retired);
-# `dregg-sdk`'s `use` of it (`sdk/src/full_turn_proof.rs`) is itself
-# `not(prover)`-fenced, so sdk MUST also see `prover` ON or its fence
-# misaligns with the prover-on circuit (E0432: cannot find
-# `effect_vm_p3_full_air`). We enable `prover` on the SDK to keep the fences
-# aligned — `embed-core` (wire-free engine) and `prover` (rotated IR-v2
-# verify) coexist; this pulls NO networking. Without it the embedded build fails
-# to compile against the post-C7 circuit.
-dregg-sdk = { path = "../sdk", optional = true, default-features = false, features = ["embed-core", "prover"] }
+# `prover` IS still named, and the justification that used to sit here was stale in
+# every particular: it said `dregg-circuit`'s default features include `prover` and
+# `dregg-turn` forwards it. `dregg-circuit` declares only `default = ["plonky3"]` and
+# `plonky3` — there is no `dregg-circuit/prover` — and `dregg-turn`'s `prover` was
+# deleted when proof production moved to `dregg-turn-prover`. What `dregg-sdk/prover`
+# actually is today is that crate's OWN gate over ~104 local `#[cfg(feature = "prover")]`
+# sites (see sdk/Cargo.toml), and it is in the SDK's default set. We name it explicitly
+# because we pass `default-features = false`. It forwards nothing and pulls no dep.
+dregg-sdk = { path = "../sdk", optional = true, default-features = false, features = ["prover"] }
 # THE VERIFIED SHARED-BUDGET PRIMITIVE — `dregg_coord::StingrayCounter` (the
 # bounded conserved counter, `coord/src/budget.rs`). The swarm's N9 shared budget
 # IS this counter (the conservation bound "the swarm spent at most B"); the over-
@@ -876,7 +915,7 @@ dregg-turn = { path = "../turn", optional = true, default-features = false }
 dregg-cell = { path = "../cell", optional = true, default-features = false }
 dregg-cell-crypto = { path = "../cell-crypto", optional = true }
 dregg-types = { path = "../types", optional = true }
-dregg-sdk = { path = "../sdk", optional = true, default-features = false, features = ["no-lean-link", "embed-core", "prover"] }
+dregg-sdk = { path = "../sdk", optional = true, default-features = false, features = ["no-lean-link", "prover"] }
 dregg-coord = { path = "../coord", optional = true, default-features = false }
 dregg-token = { path = "../token", optional = true, default-features = false, features = ["macaroon", "rand-deps"] }
 dregg-doc = { path = "../dregg-doc", optional = true, features = ["substrate"] }

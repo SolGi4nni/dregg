@@ -4,7 +4,8 @@ name: starbridge-v2 native installers
 # (the native gpui desktop shell that EMBEDS the verified executor). This is the
 # "you can actually run this" desktop proof: a macOS .app/.dmg and a Linux
 # AppImage/.tar.gz, each a `--release` `native-full` build. See
-# .docs-history-noclaude/STARBRIDGE-V2.md for the build (cd starbridge-v2 && cargo build) + the
+# .docs-history-noclaude/STARBRIDGE-V2.md for the build (`--features desktop`; the bare default
+# is the gpui-free embedded executor, see starbridge-v2/Cargo.toml's `default` note) + the
 # gpui `runtime_shaders` Metal note this relies on.
 #
 # ─────────────────────────────────────────────────────────────────────────────
@@ -197,7 +198,14 @@ jobs:
       # runner/target drift loudly.
       - name: Build native-full (--release)
         working-directory: starbridge-v2
-        run: cargo build --release   # default features == native-full (embedded + gpui)
+        # `--features desktop` is REQUIRED, not decorative. This step used to be a bare
+        # `cargo build --release` relying on `default = ["desktop"]`; that default was
+        # removed because starbridge-v2 is a root-workspace member and its default set
+        # unified `web-shell` → `servo-render/libservo` onto every `--workspace` command
+        # (see starbridge-v2/Cargo.toml's `default` note). The default is now the
+        # gpui-free embedded executor, so a bare build here would ship a cockpit-less
+        # binary and the `--headless` self-check below would be checking the wrong thing.
+        run: cargo build --release --features desktop
 
       - name: Assert the binary is the expected arch
         working-directory: starbridge-v2
@@ -383,7 +391,29 @@ jobs:
 
       - name: Build native-full (--release)
         working-directory: starbridge-v2
-        run: cargo build --release
+        # See the macOS job: `desktop` is no longer the default feature set (it unified
+        # onto every `--workspace` command), so the cockpit must be asked for by name.
+        run: cargo build --release --features desktop
+
+      # ── THE COCKPIT TEST TARGETS MUST AT LEAST COMPILE, and this is the only job that
+      #    can make them. starbridge-v2 has 16 `tests/*.rs`: THREE survive the new default,
+      #    ONE (`migrate_shell_dispatch`, `process-pd`) was never in `desktop` either, and the
+      #    other TWELVE open with a `#![cfg(all(feature = "gpui-ui", …))]` / `card-pane` /
+      #    `dev-surfaces` / `android-systemui` file gate. While `default = ["desktop"]` those
+      #    twelve were compiled by any `cargo test --workspace`; with the default now
+      #    `embedded-executor` (the fix for the feature-unification hazard — see
+      #    starbridge-v2/Cargo.toml) that resolve no longer reaches them, and a `#![cfg]`-gated
+      #    FILE that nothing compiles is the exact subtraction-that-emits-no-line this repo's
+      #    feature-surface work exists to refuse. So the job that already owns the elephant
+      #    compiles them.
+      #
+      #    `--no-run` IS THE CLAIM, and it is smaller than "these tests pass": rustc accepted
+      #    the code. Running them needs a display/GPU session this runner does not have. That is
+      #    the same bar `feature-surface.yml`'s T3 sweep sets, said out loud rather than implied.
+      #    It reuses the `--release` artifacts the step above just produced.
+      - name: Compile the cockpit test targets (--no-run; they are cfg-gated off every other job)
+        working-directory: starbridge-v2
+        run: cargo test --release --features desktop --no-run
 
       # Build the LOCAL NODE too, so one AppImage = cockpit + a node you can
       # `init` + `run` and `--node`-attach the cockpit to. `dregg-node` lives in

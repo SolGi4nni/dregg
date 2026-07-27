@@ -116,7 +116,12 @@ There is **one** workspace and **one** toolchain. The trick is the
   `deos-hermes`, `servo-render` — build explicitly with `-p`:
 
   ```sh
-  cargo build -p starbridge-v2     # the native cockpit (pulls gpui + libservo — heavy; use --release)
+  # `--features desktop` is REQUIRED for the cockpit. starbridge-v2's default set is the
+  # gpui-free embedded executor: it is a workspace MEMBER, so anything in its default is
+  # unified onto every other package by `--workspace` (a `desktop` default made
+  # `servo-render` resolve `libservo` for the whole tree). A bare
+  # `cargo build -p starbridge-v2` is a real, useful, much smaller build — just not the cockpit.
+  cargo build -p starbridge-v2 --features desktop  # the native cockpit (gpui + libservo — heavy; use --release)
   cargo build -p deos-js           # the reflective JS runtime (pulls mozjs)
   cargo build -p deos-view         # the view-tree → pixels renderer
   ```

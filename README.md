@@ -153,7 +153,7 @@ Then open the browser surfaces at <http://localhost:3000>:
 ### D. Boot the desktop
 
 ```sh
-cd starbridge-v2 && cargo build                            # the native deos cockpit
+cargo build -p starbridge-v2 --features desktop            # the native deos cockpit
 ```
 
 `starbridge-v2` is **deos**: the native cockpit that *embeds the real verified

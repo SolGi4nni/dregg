@@ -523,7 +523,10 @@ artifacts to verify, it does not return a checked verdict on its own.
 - `sdk/` — `AgentRuntime` (embedded executor), factories, polis builders;
   `sdk/tests/*_e2e.rs` are executable specifications.
 - `metatheory/` — the verified Lean implementation the node runs.
-- `starbridge-v2/` — deos, the native cockpit (`cd starbridge-v2 && cargo build`).
+- `starbridge-v2/` — deos, the native cockpit
+  (`cargo build -p starbridge-v2 --features desktop`; the bare default is the
+  gpui-free embedded executor, because this crate is a workspace member and its
+  default set unifies onto every `--workspace` command).
 
 ## Notes
 

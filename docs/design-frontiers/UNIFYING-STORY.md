@@ -249,7 +249,7 @@ and `Apps/EscrowDeskCouncil.lean` are the two integrator-wedge apps that refute
   Present an **attenuated** token, watch the rows narrow at the SQL boundary — the
   no-amplify property visible through `SELECT count(*)`. Ten-minute path:
   `pg-dregg/docs/QUICKSTART-pg-user.md`.
-- **desktop:** `cd starbridge-v2 && cargo run` opens the cockpit (the runtime-Metal
+- **desktop:** `cargo run -p starbridge-v2 --features desktop` opens the cockpit (the runtime-Metal
   path means the window opens on a host with no offline Metal toolchain). It boots
   into a live compositor: the console plus three anchor cells as cap-confined
   surfaces over the *real* embedded executor. Hit `⌘K`, run `⚠ over-share`, and

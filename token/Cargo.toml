@@ -22,7 +22,10 @@ default = ["biscuit", "macaroon", "rand-deps"]
 # Revocation registry + RNG. base64 moved OUT of here (it belongs to `biscuit`'s
 # wire codec) so the biscuit encode/decode path no longer requires `rand-deps`.
 rand-deps = ["dep:getrandom", "dep:rand", "dep:scalable_cuckoo_filter", "dep:ed25519-dalek", "dep:dregg-pq"]
-zkvm = ["dep:dregg-macaroon", "dregg-macaroon/zkvm"]
+# The SP1 guest leg (`circuit/sp1-guest`, its own workspace): the macaroon vocabulary
+# without `dregg-commit`. It used to also forward `dregg-macaroon/zkvm`, which was
+# `zkvm = []` and gated nothing; that feature is deleted, this edge is unchanged in effect.
+zkvm = ["dep:dregg-macaroon"]
 
 [dependencies]
 base64 = { workspace = true, optional = true }

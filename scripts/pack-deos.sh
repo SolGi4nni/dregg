@@ -19,8 +19,8 @@
 # absorption — it assumes starbridge-v2 is a STANDALONE workspace and reads the
 # cockpit from `starbridge-v2/target/release/`. On THIS checkout starbridge-v2
 # is a root-workspace MEMBER (root Cargo.toml ~L76: "starbridge-v2 … is now a
-# workspace MEMBER"), so `cargo build --release -p starbridge-v2` lands the
-# binary in the ROOT `target/release/`. The hand-run hit exactly this
+# workspace MEMBER"), so `cargo build --release -p starbridge-v2 --features desktop`
+# lands the binary in the ROOT `target/release/`. The hand-run hit exactly this
 # (DEOS-NIGHT-SHIFT.md L93-95: "cockpit binary lives in the ROOT workspace
 # target/ on this checkout … noted for the workflow fix"). This script resolves
 # ROOT-first, falls back to the legacy standalone path, and warns loudly if the
@@ -155,7 +155,12 @@ if [ -n "$COCKPIT" ]; then
     fi
   done
 fi
-COCKPIT_BUILD_HINT="(cd $ROOT && cargo build --release -p starbridge-v2)"
+# `--features desktop` is load-bearing: starbridge-v2's default set is the gpui-free
+# embedded executor (its `desktop` default was removed — as a root-workspace member it
+# unified `web-shell` → `servo-render/libservo` onto every `--workspace` command). A
+# bare build produces a cockpit-less binary that still packages and still passes
+# `--headless`, which is exactly the silent wrongness this script exists to shout about.
+COCKPIT_BUILD_HINT="(cd $ROOT && cargo build --release -p starbridge-v2 --features desktop)"
 
 # dregg-node has always been a root-workspace member; one candidate.
 NODE="${CARGO_TARGET_DIR:-$ROOT/target}/release/dregg-node"
