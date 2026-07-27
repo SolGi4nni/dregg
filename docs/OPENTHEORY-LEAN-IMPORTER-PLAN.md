@@ -222,48 +222,62 @@ Why, over the alternative of an OCaml/Rust frontend that *emits Lean source*:
   dominated by (a) article *volume* and replay performance, (b) the Verifereum
   compute blocker in §3.5 — not by kernel complexity.
 
-### 3.3 First slice — **DONE (working spike).**
+### 3.3 First slice — **DONE, and now a real-article importer.**
 
 `docs/opentheory-importer-poc/OTPoC.lean` — a self-contained Lean 4 metaprogram
-(`import Lean`, **no Mathlib**) that:
-
-1. tokenizes a hand-made OpenTheory-style article (stack-machine, one token/line);
-2. implements the objects `Num/Name/List/TypeOp/Type/Var/Term/Thm`;
-3. replays the commands `nil, cons, typeOp, opType, var, varTerm, refl, appThm,
-   thm`, building real Lean `Expr`s (`refl`→`Eq.refl` via `mkEqRefl`,
-   `appThm`→`congr` via `Meta.mkCongr`, function types via `mkArrow`);
-4. closes free HOL vars with `mkForallFVars`/`mkLambdaFVars` and commits the
-   result with `addDecl` — **the kernel checks it**.
-
-Run it:
+(`import Lean`, **no Mathlib**; namespace `OTImport`) — has grown from the day-one
+spike into an importer that replays a **real HOL4-emitted OpenTheory v6 article**
+end-to-end, kernel-checked and axiom-clean. Command semantics follow the reference
+reader (`HOL4 src/opentheory/reader/OpenTheoryReader.sml`), including exact pop
+orders. Run it (Lean 4.30.0):
 ```
-lean docs/opentheory-importer-poc/OTPoC.lean
+OT_ARTICLE=docs/opentheory-importer-poc/prodWitness.art \
+  lean docs/opentheory-importer-poc/OTPoC.lean
 ```
-Output (verbatim):
-```
-imported (kernel-checked): OTPoC.imported0 : ∀ (f : Nat → Nat) (x : Nat), f x = f x
-OTPoC.imported0 : ∀ (f : Nat → Nat) (x : Nat), f x = f x
-'OTPoC.imported0' does not depend on any axioms
-```
-The article proves `⊦ f x = f x` for `f : ind→ind`, `x : ind` (with `ind`
-interpreted as `Nat` in the spike) via `refl`+`appThm`, and the result is a
-kernel-checked, **axiom-clean** Lean theorem — the house-law-clean property, on
-day one. A companion negative test confirms the backstop: a deliberately
-mistranslated proof (`1=2` claimed, `1=1` supplied) is rejected by the kernel
-with `declaration type mismatch`, i.e. **a buggy importer fails loudly, never
-silently.**
 
-The spike deliberately omits: hypotheses (Γ), the `bool↦Prop` realizations
-(`deductAntisym`/`eqMp`), `subst`, `defineConst`/`defineTypeOp`, the dictionary
-(`def`/`ref`), and real-article pop-order/parsing conformance. Those are the
-STEP-3.2 body of work; the spike proves the *spine* (parse → replay → `Expr` →
-kernel → axiom-clean) end-to-end.
+**What now works:**
+1. A **real v6 tokenizer + stack machine + dictionary** (`def`/`ref`/`remove`),
+   objects `Num/Name/List/TypeOp/Type/Const/Var/Term/Thm`.
+2. The **encoding**: `bool↦Prop`, `→↦→`, `ind↦Nat` (fixed infinite carrier),
+   HOL type vars ↦ Lean `Type` fvars, HOL term vars ↦ interned fvars (HOL
+   name+type identity), `=↦@Eq`, and the `Data.Bool` constants
+   `T/F/∧/∨/¬/⇒/∀/∃` ↦ Lean `True/False/And/Or/Not/(imp)/(forall)/Exists`
+   (Hilbert `select ↦ Classical.epsilon`).
+3. **Primitive rules with full Γ (hypothesis) bookkeeping:** `refl`, `assume`,
+   `appThm` (`AP_THM`∘`AP_TERM`∘`TRANS`), `absThm` (`funext`), `betaConv`
+   (a *single* beta step), `eqMp` (`Eq.mp`), `deductAntisym` (`propext`, oriented
+   exactly as the reader's `IMP_ANTISYM_RULE (DISCH c2 th1)(DISCH c1 th2) ⟹ c2=c1`),
+   `subst` (`INST_TYPE` + `INST`, with fvar **re-interning** so a variable whose
+   type changes under type-substitution keeps the identity the article's later
+   commands use), `defineConst` (closed defs), and `thm` (closes free type/term
+   vars, `addDecl` — **the kernel checks here**).
+4. The **axiom soundness gate (§2.4)**: `axiom` resolves *only* to a pre-proved
+   Lean theorem whose statement is **defeq** to the asserted formula (a discharge
+   table of the Andrews/HOL `bool` definitions), via metavar unification for
+   polymorphism. Anything else **hard-errors** — no fall-through to a fresh Lean
+   `axiom`. Every exported theorem is additionally checked axiom-clean with
+   `collectAxioms ⊆ {propext, Classical.choice, Quot.sound}`.
 
-**Next PoC increments, in order:** (1) real OT parser conformant with the v6
-grammar incl. `def`/`ref` dictionary; (2) hypotheses + `assume`/`deductAntisym`/
-`eqMp` with `bool↦Prop`+`propext`; (3) `defineConst`; (4) replay the smallest
-real `opentheory` stdlib article (`bool` or `unit`) end-to-end; (5) `defineTypeOp`
-via `Subtype`; (6) the `axiom` whitelist + a `#print axioms` CI gate.
+**Result (verbatim):** the real `prodWitness.art` (1712 lines, ~1170 commands,
+emitted by HOL4's logging kernel) imports end-to-end. Its five `axiom`
+assumptions — the real OpenTheory `bool`-theory definitions of `∃`, `⇒`, `∀`, `∧`
+and `⊦ T` — are each discharged through the gate, and the product-type existence
+witness is kernel-checked and axiom-clean:
+```
+imported (kernel-checked, axioms ⊆ classical set): OTImport.imported0_1 :
+  ∀ (A B : Type) (x : A) (y : B),
+    (fun p => ∃ x y, p = fun a b => a = x ∧ b = y) fun a b => a = x ∧ b = y
+```
+Two inline gate tests ship alongside: an **ACCEPT** article (`⊦ T`, real
+grammar, kernel-checked axiom-clean) and a **REJECT** article (a rogue
+`axiom ⊦ p`) that the gate refuses fail-closed.
+
+**Remaining (labeled residuals, not blockers):** `defineTypeOp` (Subtype/Nonempty
+carving) is specced but not yet realized; `defineConst` supports closed (not
+polymorphic) definitions; `thm`/`axiom` support empty external Γ (which is what
+self-contained articles export). These are the next increments; the spine
+(parse → replay with Γ → `Expr` → kernel → axiom-clean, on a real article) is
+proven.
 
 ### 3.4 The optional stronger guarantee (distinct from replay soundness)
 
@@ -317,6 +331,20 @@ between "the kernel checked this import" and "the *importer* is proved correct."
   the compute-logging gap**, not on the importer. That gap is upstream-HOL4
   shaped and must be surfaced as the gating risk for the verified-zkEVM plan —
   not discovered after the importer is built.
+- **De-risked in depth: see `docs/CV-COMPUTE-FEASIBILITY.md`.** `cv_compute` is a
+  *trusted ML kernel primitive* (`Thm.compute`/`Count.Compute`) that stamps
+  `⊦ f x = v` without a certificate and without a trace; the OT logger
+  hard-`raise`s on it (`Logging.sml:715`). There is **no compact certificate** to
+  log — the only sound logging path re-derives by rewriting from the retained
+  inputs, which **EXPLODES** (article ∝ reduction length). So: logging **one small
+  lemma** (`⊦ fib 20 = 6765`) is a bounded ~week patch to `Logging.sml`; logging
+  Verifereum's compute-heavy EVM execution is a size quagmire. Recommendation:
+  import Verifereum's *statement-level* results via this importer and **re-prove
+  the executable/compute-bound lemmas natively in Lean** as *bounded* obligations,
+  where the kernel's GMP `Nat`/`BitVec` + `brecOn` reduction re-checks them
+  tractably (~tens of µs/step; comfortable to ~1e4 steps) **without
+  `native_decide`** — measured; see the doc's Part 2, which also flags that a long
+  unbounded execution trace is expensive on either side.
 
 ---
 
