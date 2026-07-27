@@ -450,16 +450,33 @@ fn the_field_octet_sits_where_the_deployed_derivation_says_fast() {
 /// root, the cards never revealed in the proof) — FOLDS via `prove_turn_chain_recursive` into
 /// ONE `WholeChainProof` the pure light client `verify_history` ACCEPTS. Then a relabeled
 /// `final_root` is REJECTED (a non-vacuous light-client bite), and the restored proof accepts.
-// NOTE (state-prefix residual): the two SLOW tests below fold 2-felt membership/win leaves
-// (`[leaf, root]` / `[charm, winner]`) that PREDATE the deployed custom state-binding node,
-// which now requires every custom sub-proof leaf to publish the 16-felt `[old8 ‖ new8]` prefix
-// (see `circuit/src/effect_vm/custom_state_binding.rs`). They therefore no longer mint through
-// `prove_custom_leaf_with_state_commitment` as-is. The WIN leaf's prefix closure is
-// `win_leaf_bound` + the real-cell fold (`tests/fold_real_cell.rs`); the MEMBERSHIP-leaf prefix
-// (prepend the leg's real roots to `[leaf, root]`, identically) is the named residual for the
-// hidden-hand plays.
+// ⚑ BLOCKED, NOT SUPERSEDED — and the reasons below used to say the wrong one of those.
+//
+// MEASURED 2026-07-27 (435s, `--ignored`), both tests refuse at mint with the same text:
+//
+//   custom state-binding sub-proof leaf mint failed: the sub-program publishes 2 public
+//   input(s), but the state-binding ABI requires at least 16 ([old_commit8 ‖ new_commit8] ‖
+//   ..app). A program that cannot express the binding is refused rather than zero-padded into
+//   a false one.
+//
+// That is the deployed custom state-binding node (`circuit/src/effect_vm/custom_state_binding.rs`)
+// doing its job: these two fold 2-felt leaves (`[leaf, root]` / `[charm, winner]`) that PREDATE it.
+//
+// "SUPERSEDED" was wrong because what they cover is not covered elsewhere: both real-cell folds
+// (`membership_play_folds_over_the_real_cell_and_lightclient_accepts` here, and
+// `tests/fold_real_cell.rs`) fold ONE turn, and these are the only TWO-PLAY private match and the
+// only win-output attestation over a hidden-hand play. Calling a hole a duplicate is how it stops
+// being counted.
+//
+// The prefix machinery is NOT missing any more — the per-play membership leaf carries
+// `[old8 ‖ new8]` over the real cell and is green (measured in the same run). THE RESIDUAL IS
+// EXACTLY: drive TWO plays on the real `WorldCell` and fold their real-prefixed leaves, i.e. extend
+// the green single-play real-cell body to a second turn. It is not a prover gap and not an ABI gap.
 #[test]
-#[ignore = "SUPERSEDED by tests/fold_real_cell.rs: 2-PI membership leaves predate the state-binding prefix; membership-leaf prefixing is the named residual"]
+#[ignore = "BLOCKED (measured 2026-07-27): the 2-PI membership leaf is REFUSED by the deployed \
+            state-binding ABI (needs >=16 PIs: [old8 || new8] || ..app). NOT superseded — this is \
+            the only TWO-PLAY private match; the real-cell folds are single-turn. Residual: drive \
+            two plays on the real WorldCell and fold their real-prefixed leaves."]
 fn private_match_folds_and_lightclient_accepts() {
     let hand = sample_hand();
     let t0 = HandTree::commit(hand.clone());
@@ -509,7 +526,10 @@ fn private_match_folds_and_lightclient_accepts() {
 /// leg publishes the honest `custom_proof_pi_commitment([charm, winner])` — the win is a bound
 /// public output. A relabeled final_root is rejected.
 #[test]
-#[ignore = "SUPERSEDED by tests/fold_real_cell.rs::win_folds_over_the_real_cell_and_lightclient_accepts: the real-cell win fold carries the [old8 ‖ new8] prefix; this 2-PI form predates it"]
+#[ignore = "BLOCKED (measured 2026-07-27): the 2-PI leaf is REFUSED by the deployed state-binding \
+            ABI (needs >=16 PIs). The real-cell win fold covers the WIN leaf; it does NOT cover a \
+            win FOLLOWING a hidden-hand membership play, which is this test. Residual: the same \
+            two-turn real-cell drive."]
 fn match_win_output_is_attested() {
     let hand = sample_hand();
     let tree = HandTree::commit(hand.clone());
