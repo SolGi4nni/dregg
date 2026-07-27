@@ -467,12 +467,67 @@ jobs:
           echo "::error::no dregg-lean-ffi/libdregg_lean.a after the seed fetch. Without it dregg-lean-ffi/build.rs emits NO cargo:rustc-cfg, every #[cfg(dregg_*_present)] test module compiles out, and this job goes green having asserted nothing about the verified executor, the PQ cores, the R3 anti-forgery teeth, conservation, admission, finality or bridge trust (docs/ASSESS-cold-build-silent-export.md). Fix the seed pipeline (the 'Publish Lean seed' workflow must cut an asset for THIS platform + this commit's key — scripts/lean-seed-key.sh), or — for a deliberate pre-seed bootstrap — commit LEAN_GATE_INTENTIONALLY_UNARMED=1 to dregg-lean-ffi/lean-seed.pin so the disarm is visible in review."
           exit 1
 
+      # ═════════════════════════════════════════════════════════════════════════
+      # THE RUNNER IS cargo-nextest, AND THE REASON IS ATTRIBUTABILITY.
+      #
+      # `cargo test` runs every test in a target IN ONE PROCESS. Measured on the
+      # first complete workspace run (2026-07-26, /tmp/ws-srot2.log on persvati):
+      # **31 test binaries died on a signal — 19 SIGABRT, 8 SIGSEGV, 4 SIGKILL —
+      # and emitted NO `test result:` line at all.** Not one failing test name
+      # between them. The 19 SIGABRTs are a single cause (the fail-closed abort on
+      # an uninstalled verified PQ core), and each one took its whole binary's
+      # test population down with it, unnamed and uncounted. So the headline
+      # "256 failed" was a LOWER BOUND with no way to say by how much: a crash in
+      # test #3 of 200 is indistinguishable, in that output, from a crate with
+      # three tests.
+      #
+      # nextest runs ONE PROCESS PER TEST. A signal death is then attributable to
+      # the test that caused it, and its siblings still run and still report. The
+      # failure count is EXPECTED TO RISE on this migration, and a rise is the win
+      # being bought — it is previously-hidden failures becoming visible, not new
+      # breakage.
+      #
+      # It also bounds the hangs. Three classes of test in this tree hang forever
+      # (a real deadlock in dregg-zkoracle-prove, servo-render waiting on a display
+      # a headless runner does not have, a starbridge-tussle spin loop). That first
+      # workspace run needed an external watchdog to complete at all. `.config/
+      # nextest.toml` now gives every profile a `terminate-after`, so a hang is a
+      # named TIMEOUT failure instead of a job that burns its 150 minutes and tells
+      # you nothing. ⚠ Those root causes are owned work and a timeout is NOT their
+      # fix — see THE TIMEOUT DOCTRINE in that file.
+      #
+      # ⚠ WHY `--profile full` AND NOT `--profile ci`. `[profile.ci]` segregates the
+      # minute-scale recursion/fold/proptest suites out of its `default-filter`, and
+      # the `cargo test --workspace` this replaces RAN THEM (they are config-
+      # segregated, not `#[ignore]`d). Pointing this job at `ci` would have silently
+      # dropped ~18 of the most expensive adversarial suites in the repo while every
+      # number on the summary line went UP. `full` is `default-filter = 'all()'`,
+      # which is what keeps this a faithful migration rather than a narrowing.
+      # `[profile.ci]` remains the fail-fast profile for a human wanting quick
+      # feedback (`scripts/test-gauntlet.sh ci`); it is deliberately not this gate.
+      #
+      # ⚠ nextest DOES NOT RUN DOCTESTS — it cannot, there is no libtest harness for
+      # them. That is 210 doctest targets here, carrying 54 passing and 4 REAL
+      # FAILING doc examples in the reference run. They are recovered by the
+      # `cargo test --doc` step below, which is NOT optional and must stay adjacent
+      # to this one.
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
       # macOS links the full workspace (incl. deos-zed's windowed gpui editor) via
       # ld64 — green, so keep it whole.
       - if: runner.os == 'macOS'
+        name: Test workspace (nextest, process-per-test)
         env:
           DREGG_TEST_REQUIRE_LEAN: ${{ steps.arm.outputs.armed }}
-        run: cargo test --workspace
+        run: cargo nextest run --profile full --workspace --no-fail-fast
+      # THE DOCTEST LEG — nextest runs no doctests, so without this the migration
+      # above would silently drop 210 targets. `--doc` implies the lib targets only,
+      # and it is the ONLY thing in this file that executes a doc example.
+      - if: runner.os == 'macOS'
+        name: Doctests (the 210 targets nextest structurally cannot run)
+        env:
+          DREGG_TEST_REQUIRE_LEAN: ${{ steps.arm.outputs.armed }}
+        run: cargo test --workspace --doc
       # Linux SIGBUS root cause: it is NOT one heavy crate. The full debug-build
       # `target/` of the WHOLE workspace overruns the hosted runner's small disk,
       # and whichever link steps are running when / hits zero ALL die at once as
@@ -542,15 +597,37 @@ jobs:
       # (check does not link), and all four are still LINKED AND RUN by the whole macOS
       # `cargo test --workspace` above.
       - if: runner.os == 'Linux'
-        name: Test workspace (debuginfo off; deos-zed + the two ELF-unlinkable cdylibs split out)
+        name: Test workspace (nextest; debuginfo off; deos-zed + the two ELF-unlinkable cdylibs split out)
         env:
           CARGO_PROFILE_DEV_DEBUG: "0"
           CARGO_PROFILE_TEST_DEBUG: "0"
           DREGG_TEST_REQUIRE_LEAN: ${{ steps.arm.outputs.armed }}
-        run: cargo test --workspace --exclude deos-zed --exclude grain-verify-wasm --exclude starbridge-web
+        run: cargo nextest run --profile full --workspace --exclude deos-zed --exclude grain-verify-wasm --exclude starbridge-web --no-fail-fast
+      # THE DOCTEST LEG — see the block above the macOS step. nextest structurally
+      # cannot run doctests; this is the only step on this runner that does. It
+      # carries the same excludes for the same ELF-link reason.
+      - if: runner.os == 'Linux'
+        name: Doctests (the 210 targets nextest structurally cannot run)
+        env:
+          CARGO_PROFILE_DEV_DEBUG: "0"
+          CARGO_PROFILE_TEST_DEBUG: "0"
+          DREGG_TEST_REQUIRE_LEAN: ${{ steps.arm.outputs.armed }}
+        run: cargo test --workspace --exclude deos-zed --exclude grain-verify-wasm --exclude starbridge-web --doc
       # THE RECOVERY STEP — this is what makes the exclusion above cost zero tests rather
       # than nine. It must stay adjacent to it: an exclusion whose recovery drifts away is
       # the silent narrowing this repo keeps paying for.
+      # ⚠ THIS STEP AND THE `deos-zed` ONE BELOW STAY ON `cargo test`, DELIBERATELY.
+      # They are the two NARROW legs, and nextest cannot express them. `.config/
+      # nextest.toml` names test binaries workspace-wide (`binary(proptest_invariants)`
+      # lives in dregg-turn, `binary(private_book_bfv_zk)` in fhegg-fhe, …) and nextest
+      # validates EVERY profile's filterset against the binaries IN SCOPE on every
+      # invocation. Narrowing scope with `-p` therefore makes the out-of-scope names
+      # unresolvable and nextest hard-errors (exit 96) and runs NOTHING — regardless of
+      # which profile you asked for. `scripts/test-gauntlet.sh`'s header records the same
+      # rule and the same reason. So: whole-workspace legs get nextest and its
+      # process-per-test attribution; per-package legs keep `cargo test`. Do not
+      # "finish the migration" by adding `-p` to a nextest line — that is how this
+      # step comes to run zero tests while reporting success at the job level.
       - if: runner.os == 'Linux'
         name: Test the two cdylib crates' libs (recovers every test the exclusion above would cost)
         env:

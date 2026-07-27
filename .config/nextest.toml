@@ -24,6 +24,44 @@
 # where it silently disabled the entire suite rather than merely misleading a
 # reader. If you delete or rename a test binary, grep THIS FILE for its name.
 #
+# ⚠⚠ AND THE ABOVE PARAGRAPH DESCRIBES THE LOUD HALF ONLY. MEASURED 2026-07-27,
+# against cargo-nextest 0.9.136/0.9.137/0.9.140, with a two-test scratch crate:
+#
+#   binary(no_such_name)   → HARD ERROR, exit 96, "operator didn't match any binary names",
+#                            raised while validating EVERY profile, on EVERY invocation.
+#   package(no_such_name)  → HARD ERROR, exit 96, "operator didn't match any packages".
+#   test(~no_such_name)    → **SILENT. exit 0. Not a warning. Nothing is printed at all.**
+#
+# So nextest self-defends exactly two of the three operators this file uses, and the
+# 2026-07-15 incident was the FORTUNATE case: it screamed. A `test(~…)` name that outlives
+# its referent produces no diagnostic ever, and what it does next depends on its POLARITY:
+#
+#   * in a `not (…)` EXCLUSION (default / ci): the clause excludes nothing. Harmless to
+#     correctness, but the file now states a quarantine that is not in force.
+#   * in a POSITIVE selector ([profile.heavy], [profile.gpu]): the test is silently NOT RUN
+#     by the profile whose whole purpose is to run it. A renamed heavy test simultaneously
+#     drops OUT of `heavy` and — because the default/ci exclusion keys on the same dead
+#     name — reappears INSIDE the fast default gauntlet it was segregated out of. A renamed
+#     GPU tooth drops out of `gpu` and into `armed`, i.e. onto GPU-less boxes, where it is
+#     the guaranteed red the GPU exclusion below exists to prevent.
+#
+# THIS IS NOT HYPOTHETICAL AND IT HAD ALREADY HAPPENED HERE. The same 2026-07-27 sweep
+# resolved all 41 `test(~…)` names in this file against the tree: **21 of them matched no
+# `fn` anywhere in the workspace.** The entire kimchi quarantine — 19 `test_kimchi_*` names
+# plus `test_p0_2_derivation_honest_still_verifies` and
+# `test_section5_assertion_rejects_mismatch` — named tests deleted in `d260028f1` ("the
+# great deletion: ~29K lines of legacy backends gone") and `136e51446`. There is no kimchi
+# backend in this tree; `rg kimchi` finds one path, a `sketches/` probe manifest. The
+# comment below them called them "currently failing / timeout kimchi-backend diagnostics",
+# present tense, about tests that had not existed for weeks. They are removed now, and
+# removing them is a no-op on execution BY CONSTRUCTION: an exclusion of a test that does
+# not exist excludes nothing.
+#
+# `scripts/check-nextest-names.py` is the check that would have caught both halves on the
+# day, and it is wired into `scripts/local-gates.sh`. It resolves `binary()`/`package()`
+# exactly (via `cargo metadata`, no compile) and `test()` against the tree's own `fn`
+# declarations. Run it before you delete or rename ANY test.
+#
 # The heavy set (name · crate · ~debug duration in the reference gauntlet):
 #   binary descriptor_leaf_recursion              circuit  ~28.5s  (1 test)
 #   binary rotation_batchstark_leaf_smoke         circuit  ~342.4s (2 tests, both >60s each)
@@ -59,9 +97,75 @@
 # Reusable heavy-filterset fragment is inlined into each profile's
 # `default-filter` below (nextest has no filterset aliases in 0.9.x config).
 
-# ── Standing kimchi/preflight quarantine (pre-existing) ──────────────────────
-# These were already excluded from default/ci: currently failing / timeout
-# kimchi-backend diagnostics + the preflight meta-suites. Kept verbatim.
+# ── Standing preflight quarantine (pre-existing) ─────────────────────────────
+# The preflight meta-suites, excluded from default/ci. All 7 names verified to
+# resolve 2026-07-27. (The kimchi half of this quarantine was 21 names for tests
+# that no longer exist — see the ⚠⚠ block at the top of this file. Removed.)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THE TIMEOUT DOCTRINE — read this before changing any `slow-timeout`
+# ─────────────────────────────────────────────────────────────────────────────
+# `slow-timeout = { period = P, terminate-after = N }` is TWO knobs and they are
+# not the same decision:
+#
+#   period P        — when to PRINT a `SLOW` line. Costs nothing, kills nothing.
+#                     Set it TIGHT. It is pure information.
+#   terminate-after N — kill the test at P×N. This is the gate, and it is the
+#                     only number that can destroy a real result.
+#
+# WHY EVERY PROFILE NOW HAS A KILL. Three classes of test in this workspace hang
+# FOREVER, and a hang is uniquely destructive to a test run: it does not fail, it
+# denies a verdict to everything queued behind it. The first complete
+# `cargo test --workspace` (2026-07-26) needed an external watchdog for exactly
+# this — /tmp/ws-watchdog.log records it killing
+# `dregg-zkoracle-prove`'s `tlsn_live_roundtrip` by hand. Under process-per-test
+# with a kill budget, that same hang is a NAMED FAILING TEST and the other ~16 000
+# still report. `[profile.heavy]`, `[profile.armed]` and `[profile.gpu]` had NO
+# `terminate-after` at all — a hang in any of them ran until a human noticed, which
+# for a nightly means "until someone wonders why there has been no report".
+#
+# ⚠ A TIMEOUT IS NOT A FIX, AND MUST NOT BE READ AS ONE. The three hang classes have
+# real, diagnosed root causes and a separate lane owns them:
+#   dregg-zkoracle-prove  a genuine DEADLOCK (98 threads parked in futex_do_wait)
+#   servo-render          waits on a display a headless box does not have
+#   starbridge-tussle     99.9% CPU spinning on a loop that discards a Result
+# The overrides below bound each one's blast radius. They do not repair any of them,
+# and when the owning lane lands the fixes these overrides should be DELETED, not
+# retuned. What they buy is that one bad loop can no longer take the whole signal
+# down with it — and, because nextest reports a killed test as `TIMEOUT` and counts
+# it toward the failure total (verified: exit 100, "1 timed out"), the bound is
+# LOUD. A timeout here can never read as a pass and never as a skip.
+#
+# ⚠ AND THE OPPOSITE ERROR IS WORSE. A kill budget that truncates a real 5-minute
+# recursion fold is a worse gate than no budget at all: it manufactures a red that
+# says nothing and trains readers to ignore the runner. So NO number below is a
+# guess — each is the duration this file already records for that suite, times a
+# margin, and the heavy set is granted its budget BY NAME rather than by loosening
+# the global. The recorded maximum in this workspace is >1080s (dreggnet-market's
+# `authenticated_encrypted_orders_gate_real_game_asset_settlement`, and that is its
+# RELEASE figure — `--profile full` runs debug, where it is far slower). The heavy
+# override is 3600s: three-plus times the slowest thing ever measured here, which
+# is "hung" by any reading, and still a bound.
+#
+# ⚠ `[[profile.default.overrides]]` IS INHERITED BY EVERY CUSTOM PROFILE (verified
+# 2026-07-27: a rule written here fired under `--profile child`). That is why the
+# heavy-set budgets live here once instead of being copied into `full` and `heavy`,
+# and it is why adding a rule here is a WORKSPACE-WIDE act, not a default-lane one.
+
+# The legitimately-slow set. Named individually, so that granting them a real budget
+# does not also grant one to a deadlock. Durations in the table at the top of this file.
+[[profile.default.overrides]]
+filter = 'binary(rotation_batchstark_leaf_smoke) or binary(proptest_invariants) or binary(descriptor_leaf_recursion) or binary(private_attested_clearing) or binary(private_book_bfv_zk) or binary(private_book_distributed_bfv_exact) or binary(private_bfv_attested_clearing) or binary(private_clearing_apex_e2e) or binary(private_clearing_crown_consequence) or binary(private_clearing_guild_allocation) or binary(private_bazaar_playable_journey) or test(~k_fold_turn_chain_proves_and_verifies) or test(~two_step_inductive_core_proves_and_verifies) or test(~shielded_whole_note_swap_substrate_hiding_proof_and_hostile_publics) or test(~foreign_circuit_root_is_refused_by_vk_pin) or test(~authenticated_encrypted_orders_gate_real_game_asset_settlement) or test(~production_bfv_book_a_and_valid_hidingfri_book_b_cannot_cross_pair) or test(~private_bazaar_winner_spends_the_proof_assigned_mender_through_signed_spine_once)'
+# 120s × 30 = 3600s. Warn at two minutes (all of these exceed it — the SLOW line is
+# how you notice one has regressed), kill at an hour (none has ever come close).
+slow-timeout = { period = "120s", terminate-after = 30 }
+
+# The three HANG classes. Tight, because there is nothing here to protect: none of
+# these has a legitimate slow path. 30s × 2 = 60s, well above their honest runtimes
+# and far below "forever". DELETE THESE ROWS when the root causes land; do not retune.
+[[profile.default.overrides]]
+filter = 'package(dregg-zkoracle-prove) or package(servo-render) or package(starbridge-tussle)'
+slow-timeout = { period = "30s", terminate-after = 2 }
 
 [profile.default]
 # Default runs should execute backend coverage that is passing on the 24-core
@@ -69,7 +173,7 @@
 # AND segregate the minute-scale recursion/IVC/fold/proptest suites (run them
 # with `--profile heavy`). The heavy clause is the trailing `or binary(...) /
 # or test(...)` group.
-default-filter = 'not (test(~test_kimchi_arithmetic_predicate_mul_passes) or test(~test_kimchi_arithmetic_predicate_neq_passes) or test(~test_kimchi_arithmetic_predicate_eq_passes) or test(~test_kimchi_arithmetic_predicate_gte_passes) or test(~test_kimchi_native_non_membership_max_ancestors) or test(~test_kimchi_native_non_membership_multi_ancestor) or test(~test_kimchi_native_non_membership_single_element) or test(~test_kimchi_native_non_membership_verifier_rejects_wrong_count) or test(~test_kimchi_native_non_membership_verifier_rejects_wrong_root) or test(~test_kimchi_native_non_membership_verifier_check) or test(~test_kimchi_native_non_membership_verifier_rejects_wrong_element) or test(~test_kimchi_native_derivation_prove_verify) or test(~test_kimchi_native_derivation_with_equal_check) or test(~test_kimchi_native_derivation_with_gte_check) or test(~test_kimchi_native_fold_multiple_removals_prove_verify) or test(~test_kimchi_native_fold_single_removal_prove_verify) or test(~test_p0_2_derivation_honest_still_verifies) or test(~test_kimchi_presentation_issuer_membership_valid) or test(~test_kimchi_presentation_revealed_facts_valid) or test(~test_kimchi_presentation_token_expiry_valid) or test(~test_section5_assertion_rejects_mismatch) or test(~preflight_apps) or test(~preflight_effect_vm) or test(~preflight_proofs) or test(~preflight_turns) or test(~preflight_cli) or test(~preflight_demo_agent) or test(~preflight_golden_master) or binary(descriptor_leaf_recursion) or binary(rotation_batchstark_leaf_smoke) or binary(proptest_invariants) or binary(private_attested_clearing) or binary(private_book_bfv_zk) or binary(private_book_distributed_bfv_exact) or binary(private_bfv_attested_clearing) or binary(private_clearing_apex_e2e) or binary(private_clearing_crown_consequence) or binary(private_clearing_guild_allocation) or binary(private_bazaar_playable_journey) or test(~k_fold_turn_chain_proves_and_verifies) or test(~two_step_inductive_core_proves_and_verifies) or test(~shielded_whole_note_swap_substrate_hiding_proof_and_hostile_publics) or test(~foreign_circuit_root_is_refused_by_vk_pin) or test(~authenticated_encrypted_orders_gate_real_game_asset_settlement) or test(~production_bfv_book_a_and_valid_hidingfri_book_b_cannot_cross_pair) or test(~private_bazaar_winner_spends_the_proof_assigned_mender_through_signed_spine_once))'
+default-filter = 'not (test(~preflight_apps) or test(~preflight_effect_vm) or test(~preflight_proofs) or test(~preflight_turns) or test(~preflight_cli) or test(~preflight_demo_agent) or test(~preflight_golden_master) or binary(descriptor_leaf_recursion) or binary(rotation_batchstark_leaf_smoke) or binary(proptest_invariants) or binary(private_attested_clearing) or binary(private_book_bfv_zk) or binary(private_book_distributed_bfv_exact) or binary(private_bfv_attested_clearing) or binary(private_clearing_apex_e2e) or binary(private_clearing_crown_consequence) or binary(private_clearing_guild_allocation) or binary(private_bazaar_playable_journey) or test(~k_fold_turn_chain_proves_and_verifies) or test(~two_step_inductive_core_proves_and_verifies) or test(~shielded_whole_note_swap_substrate_hiding_proof_and_hostile_publics) or test(~foreign_circuit_root_is_refused_by_vk_pin) or test(~authenticated_encrypted_orders_gate_real_game_asset_settlement) or test(~production_bfv_book_a_and_valid_hidingfri_book_b_cannot_cross_pair) or test(~private_bazaar_winner_spends_the_proof_assigned_mender_through_signed_spine_once))'
 # With the heavies gone, default tests are well under a minute. Flag stragglers
 # at 45s; keep a generous kill backstop (45s × 4 = 180s) so legitimately-chunky
 # integration tests are not falsely terminated.
@@ -86,7 +190,7 @@ slow-timeout = { period = "60s", terminate-after = 10 }
 [profile.ci]
 # CI keeps the same passing-backend coverage as default (heavies segregated),
 # but fail-fast. Mirror of profile.default's filter.
-default-filter = 'not (test(~test_kimchi_arithmetic_predicate_mul_passes) or test(~test_kimchi_arithmetic_predicate_neq_passes) or test(~test_kimchi_arithmetic_predicate_eq_passes) or test(~test_kimchi_arithmetic_predicate_gte_passes) or test(~test_kimchi_native_non_membership_max_ancestors) or test(~test_kimchi_native_non_membership_multi_ancestor) or test(~test_kimchi_native_non_membership_single_element) or test(~test_kimchi_native_non_membership_verifier_rejects_wrong_count) or test(~test_kimchi_native_non_membership_verifier_rejects_wrong_root) or test(~test_kimchi_native_non_membership_verifier_check) or test(~test_kimchi_native_non_membership_verifier_rejects_wrong_element) or test(~test_kimchi_native_derivation_prove_verify) or test(~test_kimchi_native_derivation_with_equal_check) or test(~test_kimchi_native_derivation_with_gte_check) or test(~test_kimchi_native_fold_multiple_removals_prove_verify) or test(~test_kimchi_native_fold_single_removal_prove_verify) or test(~test_p0_2_derivation_honest_still_verifies) or test(~test_kimchi_presentation_issuer_membership_valid) or test(~test_kimchi_presentation_revealed_facts_valid) or test(~test_kimchi_presentation_token_expiry_valid) or test(~test_section5_assertion_rejects_mismatch) or test(~preflight_apps) or test(~preflight_effect_vm) or test(~preflight_proofs) or test(~preflight_turns) or test(~preflight_cli) or test(~preflight_demo_agent) or test(~preflight_golden_master) or binary(descriptor_leaf_recursion) or binary(rotation_batchstark_leaf_smoke) or binary(proptest_invariants) or binary(private_attested_clearing) or binary(private_book_bfv_zk) or binary(private_book_distributed_bfv_exact) or binary(private_bfv_attested_clearing) or binary(private_clearing_apex_e2e) or binary(private_clearing_crown_consequence) or binary(private_clearing_guild_allocation) or binary(private_bazaar_playable_journey) or test(~k_fold_turn_chain_proves_and_verifies) or test(~two_step_inductive_core_proves_and_verifies) or test(~shielded_whole_note_swap_substrate_hiding_proof_and_hostile_publics) or test(~foreign_circuit_root_is_refused_by_vk_pin) or test(~authenticated_encrypted_orders_gate_real_game_asset_settlement) or test(~production_bfv_book_a_and_valid_hidingfri_book_b_cannot_cross_pair) or test(~private_bazaar_winner_spends_the_proof_assigned_mender_through_signed_spine_once))'
+default-filter = 'not (test(~preflight_apps) or test(~preflight_effect_vm) or test(~preflight_proofs) or test(~preflight_turns) or test(~preflight_cli) or test(~preflight_demo_agent) or test(~preflight_golden_master) or binary(descriptor_leaf_recursion) or binary(rotation_batchstark_leaf_smoke) or binary(proptest_invariants) or binary(private_attested_clearing) or binary(private_book_bfv_zk) or binary(private_book_distributed_bfv_exact) or binary(private_bfv_attested_clearing) or binary(private_clearing_apex_e2e) or binary(private_clearing_crown_consequence) or binary(private_clearing_guild_allocation) or binary(private_bazaar_playable_journey) or test(~k_fold_turn_chain_proves_and_verifies) or test(~two_step_inductive_core_proves_and_verifies) or test(~shielded_whole_note_swap_substrate_hiding_proof_and_hostile_publics) or test(~foreign_circuit_root_is_refused_by_vk_pin) or test(~authenticated_encrypted_orders_gate_real_game_asset_settlement) or test(~production_bfv_book_a_and_valid_hidingfri_book_b_cannot_cross_pair) or test(~private_bazaar_winner_spends_the_proof_assigned_mender_through_signed_spine_once))'
 slow-timeout = { period = "60s", terminate-after = 2 }
 fail-fast = true
 
@@ -103,8 +207,13 @@ fail-fast = true
 # `armed` runs exactly the ignored set:
 #   scripts/test-gauntlet.sh armed              (== nextest --profile armed --release
 #                                                   --run-ignored ignored-only)
-# and .github/workflows/armed-teeth.yml runs it on a schedule. "Expensive" now
-# means "runs nightly" instead of "runs never".
+# ⚠ AND THAT IS A COMMAND A HUMAN TYPES, NOT COVERAGE. This paragraph used to end
+# "and .github/workflows/armed-teeth.yml runs it on a schedule", which was FALSE —
+# `scripts/test-gauntlet.sh` header records the measurement: that workflow runs its own
+# hand-built `cargo test -p dregg-circuit-prove --release … -- --ignored` and has never
+# invoked this profile or that script. The teeth DO run nightly, by that other route;
+# `[profile.armed]` is not what runs them. Corrected 2026-07-27 — if you wire this
+# profile into a workflow, correct this paragraph in the same commit.
 #
 # THE GPU EXCLUSION IS LOAD-BEARING, not tidiness. The GPU teeth fail CLOSED on a
 # missing adapter (they assert `adapter_available()` — the crate's own correct
@@ -120,9 +229,15 @@ fail-fast = true
 # refuses to run at all.
 [profile.armed]
 default-filter = 'package(dregg-circuit-prove) and not (binary(gpu_babybear_merkle_e2e) or binary(gpu_backend_shrink_e2e) or binary(gpu_recursion_fold_e2e) or test(~gpu_dft_parity_vs_radix2) or test(~gpu_mmcs_root_parity_openings_and_reject) or test(~gpu_bn254_mmcs_wide_leaf_parity) or test(~gpu_lde_device_residency_hit_fallback_and_root_parity) or test(~gpu_babybear_lde_residency_hit_and_root_parity) or test(~on_device_async_bn254_root_matches_cpu))'
-# Real folds: warn late, never auto-terminate. A tooth killed at a timeout is a
-# tooth that did not bite.
-slow-timeout = { period = "300s" }
+# Real folds: warn late. A tooth killed at a timeout is a tooth that did not bite,
+# so the warn period stays at five minutes and the kill is deliberately enormous —
+# 300s × 12 = 3600s per tooth. This profile had NO `terminate-after` at all, which
+# reads as respect for the folds but is not: `armed` is the NIGHTLY, and a nightly
+# whose one deadlocked tooth never returns does not report a red, it reports NOTHING, and
+# "no report" is the state this whole lane exists to abolish. An hour is longer than
+# any fold ever measured here (the slowest recorded anywhere in this file is >1080s)
+# by a factor of three, so this can only ever fire on a genuine hang.
+slow-timeout = { period = "300s", terminate-after = 12 }
 # CPU-bound + memory-heavy, same reasoning as [profile.heavy]. Override with -j.
 test-threads = 4
 
@@ -132,7 +247,12 @@ test-threads = 4
 # that is the fail-closed posture working, not a bug to route around.
 [profile.gpu]
 default-filter = 'binary(gpu_babybear_merkle_e2e) or binary(gpu_backend_shrink_e2e) or binary(gpu_recursion_fold_e2e) or test(~gpu_dft_parity_vs_radix2) or test(~gpu_mmcs_root_parity_openings_and_reject) or test(~gpu_bn254_mmcs_wide_leaf_parity) or test(~gpu_lde_device_residency_hit_fallback_and_root_parity) or test(~gpu_babybear_lde_residency_hit_and_root_parity) or test(~on_device_async_bn254_root_matches_cpu)'
-slow-timeout = { period = "300s" }
+# 300s × 4 = 1200s. A wedged GPU is a REAL failure mode here and it does not
+# self-clear: a hung driver call blocks forever, and with `test-threads = 1` below
+# it blocks the ENTIRE lane behind it, not just itself. Twenty minutes is far
+# beyond any parity run and is the difference between "one GPU tooth reports
+# TIMEOUT" and "the GPU lane produced no output overnight".
+slow-timeout = { period = "300s", terminate-after = 4 }
 # The GPU is a single shared device; serialize so parity runs do not contend.
 test-threads = 1
 
@@ -145,9 +265,17 @@ test-threads = 1
 #                                                 dominant slowness here)
 # The kimchi/preflight quarantine still applies (don't resurrect known-failing
 # diagnostics); we just flip the heavy set from excluded to *included-only*.
-default-filter = '(binary(descriptor_leaf_recursion) or binary(rotation_batchstark_leaf_smoke) or binary(proptest_invariants) or binary(private_attested_clearing) or binary(private_book_bfv_zk) or binary(private_book_distributed_bfv_exact) or binary(private_bfv_attested_clearing) or binary(private_clearing_apex_e2e) or binary(private_clearing_crown_consequence) or binary(private_clearing_guild_allocation) or binary(private_bazaar_playable_journey) or test(~k_fold_turn_chain_proves_and_verifies) or test(~two_step_inductive_core_proves_and_verifies) or test(~shielded_whole_note_swap_substrate_hiding_proof_and_hostile_publics) or test(~foreign_circuit_root_is_refused_by_vk_pin) or test(~authenticated_encrypted_orders_gate_real_game_asset_settlement) or test(~production_bfv_book_a_and_valid_hidingfri_book_b_cannot_cross_pair) or test(~private_bazaar_winner_spends_the_proof_assigned_mender_through_signed_spine_once)) and not (test(~test_kimchi_arithmetic_predicate_mul_passes) or test(~test_kimchi_arithmetic_predicate_neq_passes) or test(~test_kimchi_arithmetic_predicate_eq_passes) or test(~test_kimchi_arithmetic_predicate_gte_passes) or test(~test_kimchi_native_non_membership_max_ancestors) or test(~test_kimchi_native_non_membership_multi_ancestor) or test(~test_kimchi_native_non_membership_single_element) or test(~test_kimchi_native_non_membership_verifier_rejects_wrong_count) or test(~test_kimchi_native_non_membership_verifier_rejects_wrong_root) or test(~test_kimchi_native_non_membership_verifier_check) or test(~test_kimchi_native_non_membership_verifier_rejects_wrong_element) or test(~test_kimchi_native_derivation_prove_verify) or test(~test_kimchi_native_derivation_with_equal_check) or test(~test_kimchi_native_derivation_with_gte_check) or test(~test_kimchi_native_fold_multiple_removals_prove_verify) or test(~test_kimchi_native_fold_single_removal_prove_verify) or test(~test_p0_2_derivation_honest_still_verifies) or test(~test_kimchi_presentation_issuer_membership_valid) or test(~test_kimchi_presentation_revealed_facts_valid) or test(~test_kimchi_presentation_token_expiry_valid) or test(~test_section5_assertion_rejects_mismatch))'
-# These run for minutes; warn late, never auto-terminate.
-slow-timeout = { period = "120s" }
+default-filter = '(binary(descriptor_leaf_recursion) or binary(rotation_batchstark_leaf_smoke) or binary(proptest_invariants) or binary(private_attested_clearing) or binary(private_book_bfv_zk) or binary(private_book_distributed_bfv_exact) or binary(private_bfv_attested_clearing) or binary(private_clearing_apex_e2e) or binary(private_clearing_crown_consequence) or binary(private_clearing_guild_allocation) or binary(private_bazaar_playable_journey) or test(~k_fold_turn_chain_proves_and_verifies) or test(~two_step_inductive_core_proves_and_verifies) or test(~shielded_whole_note_swap_substrate_hiding_proof_and_hostile_publics) or test(~foreign_circuit_root_is_refused_by_vk_pin) or test(~authenticated_encrypted_orders_gate_real_game_asset_settlement) or test(~production_bfv_book_a_and_valid_hidingfri_book_b_cannot_cross_pair) or test(~private_bazaar_winner_spends_the_proof_assigned_mender_through_signed_spine_once))'
+# These run for minutes; warn at two minutes. The kill is 120s × 30 = 3600s — the
+# same budget the named heavy-set override at the top of this file grants, restated
+# here so the profile is honest read on its own. (In practice the override governs:
+# this profile's `default-filter` selects exactly the set that override matches, and
+# an inherited `[[profile.default.overrides]]` rule beats a custom profile's own
+# profile-level `slow-timeout` — verified 2026-07-27.) What changed is that there IS
+# a ceiling: "never auto-terminate" meant a deadlock in the heavy suite ran until a
+# human intervened, which is precisely how `cargo test --workspace` came to need an
+# external watchdog on 2026-07-26.
+slow-timeout = { period = "120s", terminate-after = 30 }
 # The folds are CPU-bound and memory-heavy; bound parallelism so they don't
 # thrash. Override on the host with `-j` if you have the cores to spare.
 test-threads = 4

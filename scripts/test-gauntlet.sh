@@ -6,7 +6,17 @@
 # recursion / IVC / fold / proptest suites out of the `default`/`ci` nextest
 # profiles' `default-filter`. They are NOT deleted — they run on demand here.
 #
+# ⚠⚠ NEXTEST NEVER RUNS DOCTESTS, AND NEITHER DOES ANY MODE BELOW EXCEPT `doc`.
+# There is no libtest harness for a doc example, so `cargo nextest run` cannot execute
+# one — this is structural, not a flag we forgot. This workspace has **210 doctest
+# targets**, carrying 54 passing and 4 genuinely FAILING doc examples in the reference
+# run (2026-07-26). Every one of them is invisible to `default`, `ci`, `full`, `heavy`,
+# `armed` and `gpu`. `.github/workflows/ci.yml` pairs its nextest step with a
+# `cargo test --doc` step for exactly this reason and they must stay adjacent; the
+# `doc` mode here is that same leg for a human.
+#
 #   scripts/test-gauntlet.sh                # fast default (heavies excluded)
+#   scripts/test-gauntlet.sh doc            # THE DOCTESTS — nothing else here runs them
 #   scripts/test-gauntlet.sh heavy          # ONLY the heavy suite (debug; minutes)
 #   scripts/test-gauntlet.sh heavy-release  # ONLY the heavy suite, --release (recommended)
 #   scripts/test-gauntlet.sh full           # EVERYTHING (default + heavy), one shot
@@ -78,6 +88,16 @@ mode="${1:-default}"
 
 case "$mode" in
   default|"")    exec cargo nextest run --profile default "$@" ;;
+  # THE DOCTESTS. `cargo test --doc`, because no nextest profile can reach them (see
+  # the ⚠⚠ block at the top). On Linux the three ELF-unlinkable / gpui members are
+  # excluded for the same reason ci.yml excludes them; all three have zero doc examples,
+  # so the exclusion costs nothing — verified, not assumed.
+  doc)
+    if [ "$(uname -s)" = "Linux" ]; then
+      exec cargo test --workspace --exclude deos-zed --exclude grain-verify-wasm \
+        --exclude starbridge-web --doc "$@"
+    fi
+    exec cargo test --workspace --doc "$@" ;;
   ci)            exec cargo nextest run --profile ci      "$@" ;;
   full)          exec cargo nextest run --profile full --features fhegg-fhe/amm-input-binding,dreggnet-market/private-attested-clearing,dreggnet-market/fhegg-settlement "$@" ;;
   heavy)         exec cargo nextest run --profile heavy --features fhegg-fhe/amm-input-binding,dreggnet-market/private-attested-clearing,dreggnet-market/fhegg-settlement "$@" ;;
@@ -110,6 +130,6 @@ case "$mode" in
     # bare flags → default profile (e.g. `test-gauntlet.sh -p dregg-turn`)
     exec cargo nextest run --profile default "$mode" "$@" ;;
   *)
-    echo "usage: $0 [default|ci|full|heavy|heavy-release|armed|gpu|dark|list-heavy|list-armed|list-gpu] [nextest args...]" >&2
+    echo "usage: $0 [default|doc|ci|full|heavy|heavy-release|armed|gpu|dark|list-heavy|list-armed|list-gpu] [nextest args...]" >&2
     exit 2 ;;
 esac
