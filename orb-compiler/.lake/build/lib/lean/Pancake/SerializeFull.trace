@@ -1,0 +1,52 @@
+{"synthetic": false,
+ "schemaVersion": "2025-09-10",
+ "outputs":
+ {"o": ["9bb85542ead5e130.olean"],
+  "m": false,
+  "i": "df0001ff60fd8181.ilean",
+  "c": "8da5cd093b455549.c"},
+ "log":
+ [{"message":
+   ".> LEAN_PATH=/Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean /Users/ember/.elan/toolchains/leanprover--lean4---v4.30.0/bin/lean /Users/ember/dev/breadstuffs/orb-compiler/Pancake/SerializeFull.lean -o /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/SerializeFull.olean -i /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/SerializeFull.ilean -c /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/SerializeFull.c --setup /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/SerializeFull.setup.json --json",
+   "level": "trace"},
+  {"message":
+   "Pancake/SerializeFull.lean:616:0: 'Pancake.SerializeFull.copy_stepF' depends on axioms: [propext, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/SerializeFull.lean:617:0: 'Pancake.SerializeFull.copy_loop' depends on axioms: [propext, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/SerializeFull.lean:618:0: 'Pancake.SerializeFull.writeSeg_correct' depends on axioms: [propext, Classical.choice, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/SerializeFull.lean:619:0: 'Pancake.SerializeFull.writeSegs_correct' depends on axioms: [propext, Classical.choice, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/SerializeFull.lean:620:0: 'Pancake.SerializeFull.serialize_structured_correct' depends on axioms: [propext, Classical.choice, Quot.sound]",
+   "level": "info"}],
+ "inputs":
+ [["Pancake.SerializeFull:deps",
+   [["deps",
+     [["«orb-compiler»/Pancake:extraDep",
+       [["@«orb-compiler»:extraDep", "00000000000006bb"]]],
+      ["imports",
+       [["Pancake.SerializeCompile transitive imports (legacy)",
+         "7eb9e7ef4e824d0b"],
+        ["Pancake.SerializeCompile:importAllArts", "3dd42b35c239b1fd"],
+        ["Pancake.StructModel transitive imports (legacy)", "7eb9e7ef4e824d0b"],
+        ["Pancake.StructModel:importAllArts", "d7cd7b76b4aaed28"]]]]],
+    ["libs",
+     [["import dynlibs", "00000000000006bb"],
+      ["package external libraries", "00000000000006bb"],
+      ["module dynlibs", "00000000000006bb"],
+      ["module plugins", "00000000000006bb"]]]]],
+  ["Lean 4.30.0, commit d024af099ca4bf2c86f649261ebf59565dc8c622",
+   "2f4703bb19086252"],
+  ["/Users/ember/dev/breadstuffs/orb-compiler/Pancake/SerializeFull.lean",
+   "379b0762bb14628c"],
+  ["options", "00000000000006bb"],
+  ["isModule: false", "feefd2a0d3a1847e"],
+  ["Module.name: Pancake.SerializeFull", "8f90dd2f116b9b6b"],
+  ["Package.id?: (some orb-compiler)", "0a473b67509a16ae"],
+  ["Module.leanArgs: #[]", "00000000000006bb"]],
+ "depHash": "344ab003f2344f44"}

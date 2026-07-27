@@ -4840,8 +4840,11 @@ impl AgentCipherclerk {
         // call_forest, fee, memo, valid_until, depends_on,
         // previous_receipt_hash, execution_proof,
         // execution_proof_cell, execution_proof_new_commitment,
-        // conservation_proof, sovereign_witnesses, and
-        // custom_program_proofs. This closes the wire-malleability gap where
+        // sovereign_witnesses, and
+        // custom_program_proofs. (NOT `conservation_proof`: the Schnorr excess
+        // proof is computed over `Turn::hash()` itself, so covering it would be
+        // circular — see the ⚑ note on `Turn::hash` in `turn/src/turn.rs`.)
+        // This closes the wire-malleability gap where
         // an executor between cipherclerk and ledger could swap
         // `sovereign_witnesses` (and other side payloads) without
         // invalidating the signature.

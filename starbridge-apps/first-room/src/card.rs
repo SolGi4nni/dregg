@@ -207,7 +207,7 @@ fn inhabitant_section(i: &InhabitantView) -> Value {
         children.push(row(vec![
             icon("◈", "good"),
             text(&format!(
-                "holds {} CREDIT — a REAL conserving Transfer (Σδ=0)",
+                "holds {} CREDIT · a REAL conserving Transfer (Σδ=0)",
                 group_digits(i.paid)
             )),
         ]));
@@ -276,7 +276,7 @@ pub fn room_card_value(room: &RoomView) -> Value {
         vec![
             text("JOB (gather → make → hand-off) ↔ ECONOMY (escrow list → fund → ship → settle)"),
             text(
-                "on completion the JOB gates a REAL conserving Transfer of the reward (the shared Payable interface) — the colonist HOLDS it.",
+                "on completion the JOB gates a REAL conserving Transfer of the reward (the shared Payable interface); the colonist HOLDS it.",
             ),
             progress(stages_done, WELD_LIFECYCLE.len() as u64, "lifecycle "),
             row(vec![
@@ -288,7 +288,7 @@ pub fn room_card_value(room: &RoomView) -> Value {
 
     let mut children = vec![
         row(vec![
-            text(&format!("First Room — {}", room.name)),
+            text(&format!("First Room · {}", room.name)),
             pill(status, status_tag),
         ]),
         breadcrumb(&WELD_LIFECYCLE, active),
@@ -370,7 +370,7 @@ mod tests {
         let header = &children[0];
         assert_eq!(header["kind"], "row");
         let texts = of_kind(header, "text");
-        assert_eq!(texts[0]["props"]["text"], "First Room — the workshop");
+        assert_eq!(texts[0]["props"]["text"], "First Room · the workshop");
         let header_pills = of_kind(header, "pill");
         assert_eq!(
             header_pills[0]["props"]["text"], "PAID",

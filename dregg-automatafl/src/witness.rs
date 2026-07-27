@@ -138,7 +138,7 @@ fn seed_ge0(
     if term < 0 || term >= (1i64 << rbits) {
         return Err(format!(
             "automatafl step witness-gen: forced_ge0 range term {term} ∉ [0, 2^{rbits}) for d = {d} \
-             (ib col {ib_col}) — an out-of-range / invalid input (fail-closed)"
+             (ib col {ib_col}): an out-of-range / invalid input (fail-closed)"
         ));
     }
     set_if_none(vals, ib_col, bb(ib));
@@ -367,7 +367,7 @@ pub fn automatafl_step_trace(old: &Board, desc: &EffectVmDescriptor2) -> Result<
     // Fail-closed layout guard: the descriptor must be the step packed-felt layout for this `n`.
     if l.width() != desc.trace_width {
         return Err(format!(
-            "automatafl step witness-gen: layout width {} ≠ descriptor '{}' trace_width {} — a \
+            "automatafl step witness-gen: layout width {} ≠ descriptor '{}' trace_width {}: a \
              descriptor cutover the shape-independent mirror has not tracked",
             l.width(),
             desc.name,
@@ -399,7 +399,7 @@ pub fn automatafl_step_trace(old: &Board, desc: &EffectVmDescriptor2) -> Result<
     if !unresolved.is_empty() {
         return Err(format!(
             "automatafl step witness-gen: {} column(s) unresolved after the gate solver reached \
-             fixpoint (first: {:?}) — no descriptor gate determines them, and no seed covers them",
+             fixpoint (first: {:?}). No descriptor gate determines them, and no seed covers them",
             unresolved.len(),
             &unresolved[..unresolved.len().min(8)]
         ));
@@ -421,7 +421,7 @@ pub fn automatafl_step_trace(old: &Board, desc: &EffectVmDescriptor2) -> Result<
                 let v = door.get(pi).copied().ok_or_else(|| {
                     format!(
                         "automatafl witness-gen: PI {pi} is neither column-bound nor part of the \
-                         16-felt free door — the descriptor publishes a lane the ABI cannot fill"
+                         16-felt free door: the descriptor publishes a lane the ABI cannot fill"
                     )
                 })?;
                 public_inputs.push(v);
@@ -500,7 +500,7 @@ pub fn step_board_window(
     let f = packed_felts(n);
     let auto_out = step_auto_out_pi(n, desc).ok_or_else(|| {
         format!(
-            "automatafl step descriptor '{}' publishes {} PIs — it carries no STEPPED automaton \
+            "automatafl step descriptor '{}' publishes {} PIs: it carries no STEPPED automaton \
              coordinate (NAX/NAY at PI {}, {}). Leg A cannot declare an OUT window whose automaton \
              is the one it PRODUCED, so the inter-round carry is blocked, not faked.",
             desc.name,

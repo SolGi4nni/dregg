@@ -219,13 +219,13 @@ impl fmt::Display for MatchError {
             MatchError::MidDiverges(i) => write!(
                 f,
                 "automatafl round {i}: the Lean resolve descriptor's adjudicated mid board differs \
-                 from the mid the SPEC (`AutomataflRules.resolveMoves`) resolves to — a \
+                 from the mid the SPEC (`AutomataflRules.resolveMoves`) resolves to, which is a \
                  witness-generator fault. Folding would attest a board the ruleset does not \
-                 produce — BLOCKED, not faked"
+                 produce: BLOCKED, not faked"
             ),
             MatchError::NoDescriptor(n, which) => write!(
                 f,
-                "automatafl n={n}: no emitted Lean {which} descriptor — the two-leg round is \
+                "automatafl n={n}: no emitted Lean {which} descriptor, so the two-leg round is \
                  BLOCKED at this board size, not faked"
             ),
             MatchError::Empty => write!(f, "the match has no turns to fold"),

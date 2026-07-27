@@ -650,13 +650,13 @@ pub fn run_first_room() -> Transcript {
         committed_actions: vec![
             GenuineAction {
                 summary: format!(
-                    "escrow funded: {funded_reward} (≤ ceiling {CEILING}) — the reward pool"
+                    "escrow funded: {funded_reward} (≤ ceiling {CEILING}) · the reward pool"
                 ),
                 receipt_hash: [0u8; 32],
             },
             GenuineAction {
                 summary: format!(
-                    "reward paid: {paid} CREDIT → the colonist — a REAL conserving Transfer (Σδ=0)"
+                    "reward paid: {paid} CREDIT → the colonist · a REAL conserving Transfer (Σδ=0)"
                 ),
                 receipt_hash: [0u8; 32],
             },
@@ -690,7 +690,7 @@ fn classify(
         Ok(_) => CheatOutcome {
             class,
             refused: false,
-            reason: "COMMITTED — the cheat was NOT refused (the guarantee FAILED)".to_string(),
+            reason: "COMMITTED: the cheat was NOT refused (the guarantee FAILED)".to_string(),
             tooth_cited: false,
         },
         Err(e) => {
@@ -710,7 +710,7 @@ fn classify(
 fn refusal(o: &CheatOutcome) -> InRoomRefusal {
     InRoomRefusal {
         attempted: o.class.label().to_string(),
-        reason: format!("refused by {} — {}", o.class.tooth(), o.reason),
+        reason: format!("refused by {} · {}", o.class.tooth(), o.reason),
     }
 }
 
@@ -737,9 +737,9 @@ fn refusal(o: &CheatOutcome) -> InRoomRefusal {
 /// — `starbridge-apps/storage-gateway-mandate` — is the physics that scopes the entry; wiring its
 /// `init_mandate` factory birth in place of [`birth_job_cell`] is the one remaining wire.)
 pub fn davids_door() -> String {
-    "DAVID'S DOOR — a buildr agent walks in via the gateway: the gateway (storage-gateway-mandate) \
+    "DAVID'S DOOR · a buildr agent walks in via the gateway: the gateway (storage-gateway-mandate) \
      hands it a SCOPED workflow-mandate (a job cell owned by the agent's key), it ENTERS the room \
-     holding only that mandate, ACTS by advancing its job (the same three legs bite — no skip, no \
+     holding only that mandate, ACTS by advancing its job (the same three legs bite: no skip, no \
      overspend, no out-of-compartment reach, no ungranted verb), and is PAID on completion via the \
      conserving escrow. No ambient power; its reach is exactly the mandate the gateway granted."
         .to_string()

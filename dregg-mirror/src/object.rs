@@ -143,7 +143,7 @@ impl Gate {
     /// The gate's name as printed on the page's disclosure list.
     pub const fn label(self) -> &'static str {
         match self {
-            Gate::ContentAddress => "content address — blake3(bytes) == the address in the link",
+            Gate::ContentAddress => "content address: blake3(bytes) == the address in the link",
             Gate::ReceiptMembership => "serve-receipt is a leaf of the attested stream",
             Gate::ReceiptStreamRoot => "recomputed receipt-stream root == the signed root",
             Gate::Quorum => "federation quorum over that root",
@@ -232,7 +232,7 @@ pub fn verify(env: &Envelope, want_addr_hex: &str, committee: &Committee) -> Ver
         ] {
             gates.push((
                 g,
-                GateOutcome::Skipped("not reached — the content-address gate refused".into()),
+                GateOutcome::Skipped("not reached: the content-address gate refused".into()),
             ));
         }
         return VerifyReport { gates };
@@ -251,7 +251,7 @@ pub fn verify(env: &Envelope, want_addr_hex: &str, committee: &Committee) -> Ver
             gates.push((
                 g,
                 GateOutcome::Skipped(
-                    "this object carried no federation attestation — NOT CHECKED".into(),
+                    "this object carried no federation attestation · NOT CHECKED".into(),
                 ),
             ));
         }
@@ -272,7 +272,7 @@ pub fn verify(env: &Envelope, want_addr_hex: &str, committee: &Committee) -> Ver
         for g in [Gate::ReceiptStreamRoot, Gate::Quorum] {
             gates.push((
                 g,
-                GateOutcome::Skipped("not reached — the receipt-membership gate refused".into()),
+                GateOutcome::Skipped("not reached: the receipt-membership gate refused".into()),
             ));
         }
         return VerifyReport { gates };
@@ -294,7 +294,7 @@ pub fn verify(env: &Envelope, want_addr_hex: &str, committee: &Committee) -> Ver
         ));
         gates.push((
             Gate::Quorum,
-            GateOutcome::Skipped("not reached — the stream-root gate refused".into()),
+            GateOutcome::Skipped("not reached: the stream-root gate refused".into()),
         ));
         return VerifyReport { gates };
     }
@@ -362,8 +362,8 @@ fn check_quorum(att: &Attestation, committee: &Committee) -> GateOutcome {
         return GateOutcome::Failed("signature count below threshold".into());
     }
     GateOutcome::Passed(format!(
-        "structural (no trusted committee configured): {} signature(s) >= threshold {} \
-         — signatures were COUNTED, not cryptographically anchored",
+        "structural (no trusted committee configured): {} signature(s) >= threshold {}; \
+         signatures were COUNTED, not cryptographically anchored",
         att.quorum_signatures.len(),
         att.threshold
     ))

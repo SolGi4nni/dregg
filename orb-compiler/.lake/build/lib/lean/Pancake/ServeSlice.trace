@@ -1,0 +1,53 @@
+{"synthetic": false,
+ "schemaVersion": "2025-09-10",
+ "outputs":
+ {"o": ["34318bffe21644b7.olean"],
+  "m": false,
+  "i": "faf8d037378c1c15.ilean",
+  "c": "563f4e39e15684de.c"},
+ "log":
+ [{"message":
+   ".> LEAN_PATH=/Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean /Users/ember/.elan/toolchains/leanprover--lean4---v4.30.0/bin/lean /Users/ember/dev/breadstuffs/orb-compiler/Pancake/ServeSlice.lean -o /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/ServeSlice.olean -i /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/ServeSlice.ilean -c /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/ServeSlice.c --setup /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/ServeSlice.setup.json --json",
+   "level": "trace"},
+  {"message":
+   "Pancake/ServeSlice.lean:145:20: unused variable `base_out`\n\nNote: This linter can be disabled with `set_option linter.unusedVariables false`",
+   "level": "warning"},
+  {"message":
+   "Pancake/ServeSlice.lean:382:0: \"Pancake.PancakeProg.seq\\n  (Pancake.PancakeProg.seq\\n    (Pancake.PancakeProg.assign \\\"hsts\\\" (Pancake.PancakeExp.const 0x0000000000000001#64))\\n    (Pancake.PancakeProg.seq\\n      (Pancake.PancakeProg.assign \\\"xfo\\\" (Pancake.PancakeExp.const 0x0000000000000001#64))\\n      (Pancake.PancakeProg.assign \\\"nosniff\\\" (Pancake.PancakeExp.const 0x0000000000000001#64))))\\n  (Pancake.PancakeProg.seq\\n    (Pancake.PancakeProg.cond\\n      (Pancake.PancakeExp.cmp\\n        (Pancake.Cmp.less)\\n        (Pancake.PancakeExp.var \\\"method\\\")\\n        (Pancake.PancakeExp.const 0x0000000000000004#64))\\n      (Pancake.PancakeProg.seq\\n        (Pancake.PancakeProg.assign \\\"src\\\" (Pancake.PancakeExp.const 0x0000000000000040#64))\\n        (Pancake.PancakeProg.assign \\\"len\\\" (Pancake.PancakeExp.const 0x00000000000000a4#64)))\\n      (Pancake.PancakeProg.seq\\n        (Pancake.PancakeProg.assign \\\"src\\\" (Pancake.PancakeExp.const 0x0000000000001000#64))\\n        (Pancake.PancakeProg.assign \\\"len\\\" (Pancake.PancakeExp.const 0x00000000000000e3#64))))\\n    (Pancake.PancakeProg.while_\\n      (Pancake.PancakeExp.cmp (Pancake.Cmp.less) (Pancake.PancakeExp.var \\\"i\\\") (Pancake.PancakeExp.var \\\"len\\\"))\\n      (Pancake.PancakeProg.seq\\n        (Pancake.PancakeProg.store\\n          (Pancake.PancakeExp.op (Pancake.Binop.add) (Pancake.PancakeExp.var \\\"dst\\\") (Pancake.PancakeExp.var \\\"i\\\"))\\n          (Pancake.PancakeExp.loadWord\\n            (Pancake.PancakeExp.op (Pancake.Binop.add) (Pancake.PancakeExp.var \\\"src\\\") (Pancake.PancakeExp.var \\\"i\\\"))))\\n        (Pancake.PancakeProg.assign\\n          \\\"i\\\"\\n          (Pancake.PancakeExp.op\\n            (Pancake.Binop.add)\\n            (Pancake.PancakeExp.var \\\"i\\\")\\n            (Pancake.PancakeExp.const 0x0000000000000001#64))))))\"",
+   "level": "info"},
+  {"message":
+   "Pancake/ServeSlice.lean:386:0: 'Pancake.ServeSlice.serveSlice_correct' depends on axioms: [propext, Classical.choice, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/ServeSlice.lean:387:0: 'Pancake.ServeSlice.seq_clk_collapse' depends on axioms: [propext, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/ServeSlice.lean:388:0: 'Pancake.ServeSlice.branch_reduce' depends on axioms: [propext, Quot.sound]",
+   "level": "info"}],
+ "inputs":
+ [["Pancake.ServeSlice:deps",
+   [["deps",
+     [["«orb-compiler»/Pancake:extraDep",
+       [["@«orb-compiler»:extraDep", "00000000000006bb"]]],
+      ["imports",
+       [["Pancake.ServeFragment transitive imports (legacy)",
+         "4bf9c40b24c260e3"],
+        ["Pancake.ServeFragment:importAllArts", "e8596259b389e430"],
+        ["Pancake.SerializeCompile transitive imports (legacy)",
+         "7eb9e7ef4e824d0b"],
+        ["Pancake.SerializeCompile:importAllArts", "3dd42b35c239b1fd"]]]]],
+    ["libs",
+     [["import dynlibs", "00000000000006bb"],
+      ["package external libraries", "00000000000006bb"],
+      ["module dynlibs", "00000000000006bb"],
+      ["module plugins", "00000000000006bb"]]]]],
+  ["Lean 4.30.0, commit d024af099ca4bf2c86f649261ebf59565dc8c622",
+   "2f4703bb19086252"],
+  ["/Users/ember/dev/breadstuffs/orb-compiler/Pancake/ServeSlice.lean",
+   "7b990760bbf3b040"],
+  ["options", "00000000000006bb"],
+  ["isModule: false", "feefd2a0d3a1847e"],
+  ["Module.name: Pancake.ServeSlice", "72f188db98c9d3ee"],
+  ["Package.id?: (some orb-compiler)", "0a473b67509a16ae"],
+  ["Module.leanArgs: #[]", "00000000000006bb"]],
+ "depHash": "bbdb23f54c003786"}

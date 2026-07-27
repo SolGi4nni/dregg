@@ -53,7 +53,7 @@ fn body_to_children(body: &PresentationBody) -> Vec<ViewNode> {
 fn fields_children(insp: &Inspectable) -> Vec<ViewNode> {
     let mut out = Vec::with_capacity(insp.fields.len() + 1);
     out.push(ViewNode::Text(format!(
-        "{} — {}",
+        "{} · {}",
         insp.title, insp.subtitle
     )));
     for f in &insp.fields {

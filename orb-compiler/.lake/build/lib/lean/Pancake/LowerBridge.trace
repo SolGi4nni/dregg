@@ -1,0 +1,57 @@
+{"synthetic": false,
+ "schemaVersion": "2025-09-10",
+ "outputs":
+ {"o": ["1bea408041622b16.olean"],
+  "m": false,
+  "i": "6cfc58113fca8bd3.ilean",
+  "c": "76be721b386310f9.c"},
+ "log":
+ [{"message":
+   ".> LEAN_PATH=/Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean /Users/ember/.elan/toolchains/leanprover--lean4---v4.30.0/bin/lean /Users/ember/dev/breadstuffs/orb-compiler/Pancake/LowerBridge.lean -o /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/LowerBridge.olean -i /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/LowerBridge.ilean -c /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/LowerBridge.c --setup /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/LowerBridge.setup.json --json",
+   "level": "trace"},
+  {"message":
+   "Pancake/LowerBridge.lean:211:0: 'Pancake.LowerBridge.lowerExp_atOff' depends on axioms: [propext, Classical.choice, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/LowerBridge.lean:212:0: 'Pancake.LowerBridge.storesIntoL_lowers' depends on axioms: [propext, Classical.choice, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/LowerBridge.lean:213:0: 'Pancake.LowerBridge.storesInto_lowers' depends on axioms: [propext, Classical.choice, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/LowerBridge.lean:214:0: 'Pancake.LowerBridge.storeByteCount_storesModel' depends on axioms: [propext, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/LowerBridge.lean:215:0: 'Pancake.LowerBridge.storesInto_storeByteCount' depends on axioms: [propext, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/LowerBridge.lean:216:0: 'Pancake.LowerBridge.serve_resp_head_lowers' depends on axioms: [propext, Classical.choice, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/LowerBridge.lean:217:0: 'Pancake.LowerBridge.serve_resp_head_nonstub' depends on axioms: [propext, Quot.sound]",
+   "level": "info"}],
+ "inputs":
+ [["Pancake.LowerBridge:deps",
+   [["deps",
+     [["«orb-compiler»/Pancake:extraDep",
+       [["@«orb-compiler»:extraDep", "00000000000006bb"]]],
+      ["imports",
+       [["Pancake.ServeEmit transitive imports (legacy)", "0377a1f6c660d72b"],
+        ["Pancake.ServeEmit:importAllArts", "2c5f023041dd16cc"],
+        ["Pancake.Lower transitive imports (legacy)", "7fdb23f23045cddb"],
+        ["Pancake.Lower:importAllArts", "1b1dafbfab2ddc7b"]]]]],
+    ["libs",
+     [["import dynlibs", "00000000000006bb"],
+      ["package external libraries", "00000000000006bb"],
+      ["module dynlibs", "00000000000006bb"],
+      ["module plugins", "00000000000006bb"]]]]],
+  ["Lean 4.30.0, commit d024af099ca4bf2c86f649261ebf59565dc8c622",
+   "2f4703bb19086252"],
+  ["/Users/ember/dev/breadstuffs/orb-compiler/Pancake/LowerBridge.lean",
+   "13d799e98f981dad"],
+  ["options", "00000000000006bb"],
+  ["isModule: false", "feefd2a0d3a1847e"],
+  ["Module.name: Pancake.LowerBridge", "2dd1f86a231d58b8"],
+  ["Package.id?: (some orb-compiler)", "0a473b67509a16ae"],
+  ["Module.leanArgs: #[]", "00000000000006bb"]],
+ "depHash": "913fbffda736bf3c"}

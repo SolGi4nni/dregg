@@ -427,18 +427,26 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 /// (`.needs`, uppercase, scannable), and the block ends by naming the two things a person with nobody
 /// to play against can actually do: hold both seats (the lobby page tells them how), or go play the
 /// game that is meant to be played alone. A disclosure with no exit is still a dead end.
+///
+/// ⚑ **THE BUTTON SITS DIRECTLY UNDER THE CHIP, AND THE TERMS SIT UNDER THE BUTTON.** The chip stays
+/// first — that is the pinned decision above, and a scannable one-line cost is not what makes a page
+/// unreadable. What used to sit between the chip and the button was 70 words on seat-link custody and
+/// the per-turn clock: true, worth saying, and needed by nobody who has not yet decided to open a
+/// table. Measured on `/tug`, a reader met 135 words before the first control on the page. Both
+/// paragraphs are still here, in the same words, one scroll-stop lower — this is a MOVE, not a cut,
+/// and the served HTML carries every claim it carried before.
 pub fn open_a_table_section(lock: &TableLock) -> String {
     format!(
         "<section class=\"panel\"><h2>Open a table</h2>\
          <p class=\"needs\">Two players · no matchmaking here · you invite them yourself</p>\
+         <form method=\"post\" action=\"{route}/table\" class=\"affordance\">\
+         <button type=\"submit\">Open a table</button></form>\
          <p class=\"prose\">A table is minted with two seat links. Keep one, send the other; \
          whoever opens a link takes that seat, and nobody else can. There is no shared lobby to \
          race for and no public table to wander into.</p>\
          <p class=\"prose\">Each seat has <strong>{minutes} minutes</strong> to make its move. A \
          seat that lets that run out forfeits the table, so an abandoned match ends instead of \
          waiting forever.</p>\
-         <form method=\"post\" action=\"{route}/table\" class=\"affordance\">\
-         <button type=\"submit\">Open a table</button></form>\
          <p class=\"prose\"><strong>Here on your own?</strong> Open a table anyway and play both \
          sides: the next page shows you how, and it is the real game under the real rules, not a \
          demo. Or play <a href=\"{play}\">The Descent</a>, which is a game for one.</p>\

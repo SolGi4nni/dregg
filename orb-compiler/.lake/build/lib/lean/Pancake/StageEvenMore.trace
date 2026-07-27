@@ -1,0 +1,65 @@
+{"synthetic": false,
+ "schemaVersion": "2025-09-10",
+ "outputs":
+ {"o": ["1a13710e55ff6604.olean"],
+  "m": false,
+  "i": "199f1c0dc56f2642.ilean",
+  "c": "38ab3714e7e5dc63.c"},
+ "log":
+ [{"message":
+   ".> LEAN_PATH=/Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean /Users/ember/.elan/toolchains/leanprover--lean4---v4.30.0/bin/lean /Users/ember/dev/breadstuffs/orb-compiler/Pancake/StageEvenMore.lean -o /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/StageEvenMore.olean -i /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/StageEvenMore.ilean -c /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/StageEvenMore.c --setup /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/StageEvenMore.setup.json --json",
+   "level": "trace"},
+  {"message":
+   "Pancake/StageEvenMore.lean:316:0: 'Pancake.StageEvenMore.denote_contentLocation' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageEvenMore.lean:317:0: 'Pancake.StageEvenMore.denote_referrerPolicy' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageEvenMore.lean:318:0: 'Pancake.StageEvenMore.denote_cacheStatic_asset' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageEvenMore.lean:319:0: 'Pancake.StageEvenMore.denote_cacheStatic_dynamic' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageEvenMore.lean:320:0: 'Pancake.StageEvenMore.denote_precondition_match' depends on axioms: [propext, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageEvenMore.lean:321:0: 'Pancake.StageEvenMore.denote_precondition_nomatch' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageEvenMore.lean:322:0: 'Pancake.StageEvenMore.contentLocation_compile2_correct' depends on axioms: [propext, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageEvenMore.lean:323:0: 'Pancake.StageEvenMore.referrerPolicy_compile2_correct' depends on axioms: [propext, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageEvenMore.lean:324:0: 'Pancake.StageEvenMore.cacheStatic_compile2_correct' depends on axioms: [propext, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageEvenMore.lean:325:0: 'Pancake.StageEvenMore.precondition_compile2_correct' depends on axioms: [propext, Quot.sound]",
+   "level": "info"}],
+ "inputs":
+ [["Pancake.StageEvenMore:deps",
+   [["deps",
+     [["«orb-compiler»/Pancake:extraDep",
+       [["@«orb-compiler»:extraDep", "00000000000006bb"]]],
+      ["imports",
+       [["Pancake.StageCompile transitive imports (legacy)",
+         "1ff9c60c004f4e5b"],
+        ["Pancake.StageCompile:importAllArts", "60822d587f41dbc3"]]]]],
+    ["libs",
+     [["import dynlibs", "00000000000006bb"],
+      ["package external libraries", "00000000000006bb"],
+      ["module dynlibs", "00000000000006bb"],
+      ["module plugins", "00000000000006bb"]]]]],
+  ["Lean 4.30.0, commit d024af099ca4bf2c86f649261ebf59565dc8c622",
+   "2f4703bb19086252"],
+  ["/Users/ember/dev/breadstuffs/orb-compiler/Pancake/StageEvenMore.lean",
+   "b84c86907c1912a9"],
+  ["options", "00000000000006bb"],
+  ["isModule: false", "feefd2a0d3a1847e"],
+  ["Module.name: Pancake.StageEvenMore", "ab20dd44a5ca5da9"],
+  ["Package.id?: (some orb-compiler)", "0a473b67509a16ae"],
+  ["Module.leanArgs: #[]", "00000000000006bb"]],
+ "depHash": "d9da3e1f4a341571"}

@@ -35,7 +35,7 @@ pub fn tier_badge(origin: &str) -> String {
 }
 
 /// §5's badge for the absent / `[error]` tier — what a fail-closed page shows.
-pub const TIER_NONE_BADGE: &str = "⚠ unverified — original link shown";
+pub const TIER_NONE_BADGE: &str = "⚠ unverified · original link shown";
 
 /// The CSS class for this surface's badge. Distinct from `tier-extension` by construction:
 /// a test asserts the extension class never appears on the mirror's own badge.
@@ -50,11 +50,11 @@ pub const WHO_CHECKED_HEADING: &str = "Who checked this?";
 /// stale-but-valid object, or lie about the checks below).
 pub fn who_checked_body(origin: &str) -> String {
     format!(
-        "This page is tier <code>{TIER}</code> — the weakest rung. \
+        "This page is tier <code>{TIER}</code>, the weakest rung. \
          <strong>{origin} checked this object. You did not.</strong> \
          Everything here, including the report of the checks below, is this origin's word, \
          and you have no independent evidence for any of it.</p>\
-         <p>What the content address does buy you: the object's bytes — including its tally — \
+         <p>What the content address does buy you: the object's bytes, including its tally, \
          are inside the address, so this origin cannot show you different content or a \
          different number under this same link without breaking the digest. \
          What it does not buy you: this origin can still refuse to serve, stall, serve a \
@@ -69,7 +69,7 @@ pub const UPGRADE_HEADING: &str = "Check it yourself";
 /// The upgrade instruction. Names the tier the reader moves to and what changes there.
 pub const UPGRADE_BODY: &str = "Copy the canonical reference and open it with your own agent. \
      With the extension installed, the object resolves and verifies in <em>your</em> \
-     context — content address, serve-receipt, stream root and federation quorum are all \
+     context: content address, serve-receipt, stream root and federation quorum are all \
      re-checked by software you control, the render happens in a closed shadow root the \
      host page cannot read or rewrite, and the badge becomes \
      <span class=\"tier-badge tier-cipherclerk\">verified by your cipherclerk</span>. \
@@ -80,7 +80,7 @@ pub const UPGRADE_BODY: &str = "Copy the canonical reference and open it with yo
 /// costume.
 pub const INERT_NOTE: &str = "Read-only. Every control below is disabled on this surface. \
      Acting on a dregg object is a cap-gated turn that needs custody, and custody lives in \
-     your agent — never on this server. This page also loads no in-tab executor, so nothing \
+     your agent, never on this server. This page also loads no in-tab executor, so nothing \
      here is pretending it could fire.";
 
 /// One rung of §7's degradation ladder, for the table the page prints.
@@ -112,7 +112,7 @@ pub const LADDER: &[Rung] = &[
     },
     Rung {
         tier: "server",
-        person_has: "nothing installed — YOU ARE HERE",
+        person_has: "nothing installed · YOU ARE HERE",
         sees: "this server-rendered view",
         badge: "✓ verified by the origin (trust the origin)",
     },

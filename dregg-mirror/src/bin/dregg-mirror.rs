@@ -177,7 +177,7 @@ fn seeded_demo_store() -> MemoryStore {
     let a = s.insert(
         Kind::Descent,
         fixtures::descent(
-            "Descent — today",
+            "Descent · today",
             "9f2c1d",
             &[("ember", 14, 2810), ("stranger", 11, 1990)],
         ),
@@ -191,7 +191,7 @@ fn env_or(key: &str, default: &str) -> String {
 }
 
 const HELP: &str = "\
-dregg-mirror — the tier-`server` view of a dregg:// object, for readers with no extension.
+dregg-mirror: the tier-`server` view of a dregg:// object, for readers with no extension.
 
   --bind ADDR        listen address        (DREGG_MIRROR_BIND, default 127.0.0.1:8791)
   --root DIR         object directory      (DREGG_MIRROR_ROOT, default ./mirror-objects)

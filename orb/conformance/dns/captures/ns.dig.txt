@@ -1,0 +1,22 @@
+
+; <<>> DiG 9.20.24 <<>> @127.0.0.1 -p 15359 example.com NS +time=10 +tries=1 +notcp
+; (1 server found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 43512
+;; flags: qr rd ra ad; QUERY: 1, ANSWER: 2, AUTHORITY: 0, ADDITIONAL: 1
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 1232
+;; QUESTION SECTION:
+;example.com.			IN	NS
+
+;; ANSWER SECTION:
+example.com.		78650	IN	NS	hera.ns.cloudflare.com.
+example.com.		78650	IN	NS	elliott.ns.cloudflare.com.
+
+;; Query time: 38 msec
+;; SERVER: 127.0.0.1#15359(127.0.0.1) (UDP)
+;; WHEN: Sun Jul 05 22:37:09 EDT 2026
+;; MSG SIZE  rcvd: 95
+

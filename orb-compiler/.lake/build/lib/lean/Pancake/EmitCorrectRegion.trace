@@ -1,0 +1,42 @@
+{"synthetic": false,
+ "schemaVersion": "2025-09-10",
+ "outputs":
+ {"o": ["ac07173a282de374.olean"],
+  "m": false,
+  "i": "91e3b158007af8d1.ilean",
+  "c": "01be6dc28882158a.c"},
+ "log":
+ [{"message":
+   ".> LEAN_PATH=/Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean /Users/ember/.elan/toolchains/leanprover--lean4---v4.30.0/bin/lean /Users/ember/dev/breadstuffs/orb-compiler/Pancake/EmitCorrectRegion.lean -o /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/EmitCorrectRegion.olean -i /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/EmitCorrectRegion.ilean -c /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/EmitCorrectRegion.c --setup /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/EmitCorrectRegion.setup.json --json",
+   "level": "trace"},
+  {"message":
+   "Pancake/EmitCorrectRegion.lean:235:20: unused variable `hlen63`\n\nNote: This linter can be disabled with `set_option linter.unusedVariables false`",
+   "level": "warning"},
+  {"message":
+   "Pancake/EmitCorrectRegion.lean:384:52: This simp argument is unused:\n  hne1\n\nHint: Omit it from the simp argument list.\n  simp only [setLocal, decClock, hne1̵,̵ ̵h̵n̵e̵2, if_false, if_true]\n\nNote: This linter can be disabled with `set_option linter.unusedSimpArgs false`",
+   "level": "warning"}],
+ "inputs":
+ [["Pancake.EmitCorrectRegion:deps",
+   [["deps",
+     [["«orb-compiler»/Pancake:extraDep",
+       [["@«orb-compiler»:extraDep", "00000000000006bb"]]],
+      ["imports",
+       [["Pancake.Sem transitive imports (legacy)", "00000000000006bb"],
+        ["Pancake.Sem:importAllArts", "e43d97663b20cdaa"],
+        ["Pancake.Lower transitive imports (legacy)", "7fdb23f23045cddb"],
+        ["Pancake.Lower:importAllArts", "1b1dafbfab2ddc7b"]]]]],
+    ["libs",
+     [["import dynlibs", "00000000000006bb"],
+      ["package external libraries", "00000000000006bb"],
+      ["module dynlibs", "00000000000006bb"],
+      ["module plugins", "00000000000006bb"]]]]],
+  ["Lean 4.30.0, commit d024af099ca4bf2c86f649261ebf59565dc8c622",
+   "2f4703bb19086252"],
+  ["/Users/ember/dev/breadstuffs/orb-compiler/Pancake/EmitCorrectRegion.lean",
+   "53cf10e547131b59"],
+  ["options", "00000000000006bb"],
+  ["isModule: false", "feefd2a0d3a1847e"],
+  ["Module.name: Pancake.EmitCorrectRegion", "13156a010be724bf"],
+  ["Package.id?: (some orb-compiler)", "0a473b67509a16ae"],
+  ["Module.leanArgs: #[]", "00000000000006bb"]],
+ "depHash": "569b6beba159a626"}

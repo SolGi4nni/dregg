@@ -1,0 +1,454 @@
+{
+  "generated": "2026-07-17T01:49:25",
+  "scenarios": [
+    {
+      "name": "hs-basic-get",
+      "group": "http-semantics",
+      "ledger": "h1.1",
+      "behavior": "GET a live route returns 200 with body",
+      "observed": "200 body=b'ok'",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "hs-head-no-body",
+      "group": "http-semantics",
+      "ledger": "h1.1",
+      "behavior": "HEAD returns headers with no message body (curl_compliance)",
+      "observed": "200 body_len=0",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "hs-keepalive",
+      "group": "http-semantics",
+      "ledger": "h1.2",
+      "behavior": "two sequential GETs on one keep-alive connection both answered",
+      "observed": "2/2 round-trips on one connection",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "hs-connection-close",
+      "group": "http-semantics",
+      "ledger": "h1.2",
+      "behavior": "Connection: close honoured",
+      "observed": "200",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "hs-http10",
+      "group": "http-semantics",
+      "ledger": "h1.1",
+      "behavior": "HTTP/1.0 request served",
+      "observed": "HTTP/1.1 200 OK",
+      "verdict": "PASS",
+      "note": null
+    },
+    {
+      "name": "hs-path-traversal",
+      "group": "http-semantics",
+      "ledger": "rt.3",
+      "behavior": "dot-dot path traversal does not serve a file outside the root",
+      "observed": "404 leaked=False",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "hs-large-headers",
+      "group": "http-semantics",
+      "ledger": "h1.1",
+      "behavior": "a large but legal header block is accepted",
+      "observed": "200",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "smug-cl-te",
+      "group": "smuggling",
+      "ledger": "h1.5",
+      "behavior": "CL+TE conflict does not desync (front-CL/back-TE class)",
+      "observed": "(no response / connection closed) (0 resp)",
+      "verdict": "PASS",
+      "note": "no desync; deployed shell frames on Content-Length (rejects/routes residue, no spec-400) \u2014 ledger h1.5 PARTIAL"
+    },
+    {
+      "name": "smug-te-cl",
+      "group": "smuggling",
+      "ledger": "h1.5",
+      "behavior": "TE+CL conflict does not desync (front-TE/back-CL class)",
+      "observed": "(no response / connection closed) (0 resp)",
+      "verdict": "PASS",
+      "note": "no desync; deployed shell frames on Content-Length (rejects/routes residue, no spec-400) \u2014 ledger h1.5 PARTIAL"
+    },
+    {
+      "name": "smug-dup-cl",
+      "group": "smuggling",
+      "ledger": "h1.5",
+      "behavior": "duplicate Content-Length is not accepted as a smuggling vector",
+      "observed": "connection closed",
+      "verdict": "PASS",
+      "note": "hard parse-failure: connection closed (rejected)"
+    },
+    {
+      "name": "smug-neg-cl",
+      "group": "smuggling",
+      "ledger": "h1.5",
+      "behavior": "negative Content-Length rejected/neutralised",
+      "observed": "connection closed",
+      "verdict": "PASS",
+      "note": "hard parse-failure: connection closed (rejected)"
+    },
+    {
+      "name": "smug-chunked-bad-size",
+      "group": "smuggling",
+      "ledger": "h1.5",
+      "behavior": "invalid chunk size rejected",
+      "observed": "connection closed",
+      "verdict": "PASS",
+      "note": "hard parse-failure: connection closed (rejected)"
+    },
+    {
+      "name": "smug-te-not-last",
+      "group": "smuggling",
+      "ledger": "h1.5",
+      "behavior": "Transfer-Encoding whose final coding is not chunked is not smuggled",
+      "observed": "connection closed",
+      "verdict": "PASS",
+      "note": "hard parse-failure: connection closed (rejected)"
+    },
+    {
+      "name": "smug-crlf-injection",
+      "group": "smuggling",
+      "ledger": "h1.5",
+      "behavior": "CRLF in the request target does not inject a header/second request",
+      "observed": "connection closed",
+      "verdict": "PASS",
+      "note": "hard parse-failure: connection closed (rejected)"
+    },
+    {
+      "name": "smug-bad-request-line",
+      "group": "smuggling",
+      "ledger": "h1.5",
+      "behavior": "request line without an HTTP version is rejected/neutralised",
+      "observed": "connection closed",
+      "verdict": "PASS",
+      "note": "hard parse-failure: connection closed (rejected)"
+    },
+    {
+      "name": "smug-header-no-colon",
+      "group": "smuggling",
+      "ledger": "h1.5",
+      "behavior": "header field without a colon is rejected/neutralised",
+      "observed": "HTTP/1.1 400 Bad Request",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "proxy-forward",
+      "group": "proxy",
+      "ledger": "px.1",
+      "behavior": "reverse proxy forwards to a live upstream",
+      "observed": "200 x-backend='b0'",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "proxy-hop-by-hop",
+      "group": "proxy",
+      "ledger": "px.1",
+      "behavior": "hop-by-hop headers named in Connection are stripped before the upstream",
+      "observed": "200 leaked=False",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "proxy-roundrobin",
+      "group": "proxy",
+      "ledger": "px.9",
+      "behavior": "requests load-balance across >=2 live upstreams",
+      "observed": "backends seen: ['b0', 'b1']",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "cache-hit",
+      "group": "cache",
+      "ledger": "ca.1/ca.2",
+      "behavior": "two identical cacheable GETs: the second is served from cache",
+      "observed": "1st=200 2nd=200 x-cache='hit'",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "cache-coalesce",
+      "group": "cache",
+      "ledger": "ca.3",
+      "behavior": "8 concurrent identical cacheable GETs are coalesced (single-flight)",
+      "observed": "8/8 answered 200",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "cache-no-store-unsafe",
+      "group": "cache",
+      "ledger": "ca.1",
+      "behavior": "an unsafe method is not served from / does not poison the cache",
+      "observed": "200",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "h2spec-engine",
+      "group": "h2-conformance",
+      "ledger": "h2.1-h2.7",
+      "behavior": "h2spec full suite vs the verified H2 engine",
+      "observed": "h2spec not on PATH",
+      "verdict": "SKIPPED",
+      "note": "install h2spec to score the h2 group"
+    },
+    {
+      "name": "mesh-disco-natt",
+      "group": "mesh",
+      "ledger": "me.11",
+      "behavior": "DISCO NAT-traversal ping/pong/call-me-maybe over verified crypto",
+      "observed": "disco-live not built",
+      "verdict": "SKIPPED",
+      "note": ""
+    },
+    {
+      "name": "mesh-derp-relay",
+      "group": "mesh",
+      "ledger": "me.9",
+      "behavior": "DERP relay forwards a frame A->relay->B over real sockets",
+      "observed": "derp-relay not built",
+      "verdict": "SKIPPED",
+      "note": ""
+    },
+    {
+      "name": "mesh-wireguard-kernel",
+      "group": "mesh",
+      "ledger": "me.1",
+      "behavior": "WireGuard tunnel interoperates with the Linux kernel wg (both directions)",
+      "observed": "needs a kernel wg peer (Docker)",
+      "verdict": "SKIPPED",
+      "note": "driven live by the wg-live rig against kernel wg; not self-contained here"
+    },
+    {
+      "name": "mesh-derp-client-derper",
+      "group": "mesh",
+      "ledger": "me.8",
+      "behavior": "DERP client handshakes against a real derper relay",
+      "observed": "needs a real derper",
+      "verdict": "SKIPPED",
+      "note": "driven live by derp-live against a real derper; not self-contained here"
+    },
+    {
+      "name": "cat-h3-qpack-dynamic",
+      "group": "catalogue:h3",
+      "ledger": "h3.3",
+      "behavior": "QPACK dynamic table insert/lookup/evict + encoder/decoder instruction streams",
+      "observed": "(catalogue)",
+      "verdict": "UNWIRED",
+      "note": "ledger h3.3 PARTIAL: dyn decode proven; full encoder-stream dynamic table partial"
+    },
+    {
+      "name": "cat-h3-early-data-425",
+      "group": "catalogue:h3",
+      "ledger": "h3.6",
+      "behavior": "H3 0-RTT early-data method-safety + 425 Too-Early",
+      "observed": "(catalogue)",
+      "verdict": "UNWIRED",
+      "note": "ledger h3.6 PARTIAL: quic-layer replay proven; h3 anti-replay adapter partial"
+    },
+    {
+      "name": "cat-h3-live-h3spec",
+      "group": "catalogue:h3",
+      "ledger": "h3.1",
+      "behavior": "H3 frame/SETTINGS/GOAWAY conversation vs an external H3 client",
+      "observed": "(catalogue)",
+      "verdict": "SKIPPED",
+      "note": "driven by conformance/h3_client.py + aioquic in the base suite, not here"
+    },
+    {
+      "name": "cat-dns-record-types",
+      "group": "catalogue:dns",
+      "ledger": "dn.5",
+      "behavior": "MX/NS/SOA/CNAME/TXT/SRV/PTR resolution vs a live resolver",
+      "observed": "(catalogue)",
+      "verdict": "SKIPPED",
+      "note": "driven by conformance/dns/battery.py (dig, 56/56) in the DNS rig"
+    },
+    {
+      "name": "cat-dns-svcb-https",
+      "group": "catalogue:dns",
+      "ledger": "dn.10",
+      "behavior": "SVCB/HTTPS record (type 64/65) ALPN + port hints",
+      "observed": "(catalogue)",
+      "verdict": "SKIPPED",
+      "note": "proven dn.10 HAVE-PROVEN; driven by the DNS rig, not this runner"
+    },
+    {
+      "name": "cat-dns-naptr-tlsa",
+      "group": "catalogue:dns",
+      "ledger": "dn.7/dn.8",
+      "behavior": "NAPTR + TLSA (DANE) record resolution",
+      "observed": "(catalogue)",
+      "verdict": "UNWIRED",
+      "note": "ledger dn.7/dn.8 MODEL-ONLY: record model exists, no resolver path"
+    },
+    {
+      "name": "cat-dns-system-fallback",
+      "group": "catalogue:dns",
+      "ledger": "dn.15",
+      "behavior": "system-resolver fallback (getaddrinfo side thread)",
+      "observed": "(catalogue)",
+      "verdict": "UNWIRED",
+      "note": "ledger dn.15 MISSING"
+    },
+    {
+      "name": "cat-control-registration",
+      "group": "catalogue:control-plane",
+      "ledger": "cp.3",
+      "behavior": "machine registration (interactive + pre-auth-key) + expiry",
+      "observed": "(catalogue)",
+      "verdict": "SKIPPED",
+      "note": "proven cp.3 HAVE-PROVEN; needs a headscale-style peer, not self-contained here"
+    },
+    {
+      "name": "cat-control-netmap-delta",
+      "group": "catalogue:control-plane",
+      "ledger": "cp.4",
+      "behavior": "long-poll netmap stream: full snapshot + incremental deltas",
+      "observed": "(catalogue)",
+      "verdict": "SKIPPED",
+      "note": "proven cp.4 HAVE-PROVEN; needs a coordination-server peer"
+    },
+    {
+      "name": "cat-control-local-daemon",
+      "group": "catalogue:control-plane",
+      "ledger": "cp.10",
+      "behavior": "local-daemon API (status/whois/serve-config/IPN bus)",
+      "observed": "(catalogue)",
+      "verdict": "UNWIRED",
+      "note": "ledger cp.10 MISSING"
+    },
+    {
+      "name": "cat-control-funnel",
+      "group": "catalogue:control-plane",
+      "ledger": "cp.11",
+      "behavior": "serve-config push / Funnel (expose a service publicly)",
+      "observed": "(catalogue)",
+      "verdict": "UNWIRED",
+      "note": "ledger cp.11 MISSING"
+    },
+    {
+      "name": "cat-transport-cq-timers",
+      "group": "catalogue:transport",
+      "ledger": "cq.5/cq.6",
+      "behavior": "kernel-native + linked timeouts, unified deadline min-heap",
+      "observed": "(catalogue)",
+      "verdict": "UNWIRED",
+      "note": "ledger cq.5 PARTIAL / cq.6 MISSING (proptest_timers)"
+    },
+    {
+      "name": "cat-transport-multibackend",
+      "group": "catalogue:transport",
+      "ledger": "cq.2/cq.3",
+      "behavior": "multi-backend reactor (epoll/kqueue/IOCP/poll) + io_uring->readiness fallback",
+      "observed": "(catalogue)",
+      "verdict": "UNWIRED",
+      "note": "ledger cq.2 PARTIAL / cq.3 MISSING: models exist, deployed = io_uring+blocking"
+    },
+    {
+      "name": "cat-transport-turn",
+      "group": "catalogue:transport",
+      "ledger": "st.3/st.4",
+      "behavior": "TURN allocation client/engine + shared-socket STUN/QUIC/data demux",
+      "observed": "(catalogue)",
+      "verdict": "UNWIRED",
+      "note": "ledger st.3/st.4 MISSING"
+    },
+    {
+      "name": "cat-transport-udp-perf",
+      "group": "catalogue:transport",
+      "ledger": "qu.10/qu.11/qu.12",
+      "behavior": "GSO/GRO batched UDP, ECN + MTU discovery, AF_XDP kernel-bypass",
+      "observed": "(catalogue)",
+      "verdict": "UNWIRED",
+      "note": "ledger qu.10/11/12 MISSING (QUIC throughput paths)"
+    },
+    {
+      "name": "cat-mesh-netstack-tun",
+      "group": "catalogue:mesh",
+      "ledger": "me.6/me.7",
+      "behavior": "kernel TUN device + userspace netstack (TCP/IP over the tunnel)",
+      "observed": "(catalogue)",
+      "verdict": "UNWIRED",
+      "note": "ledger me.6/me.7 MISSING (blocks real mesh service fronting)"
+    },
+    {
+      "name": "cat-proxy-connect-tunnel",
+      "group": "catalogue:proxy",
+      "ledger": "conn.1/conn.2",
+      "behavior": "CONNECT tunnel (blind) + CONNECT MITM intercept",
+      "observed": "(catalogue)",
+      "verdict": "UNWIRED",
+      "note": "ledger conn.1/conn.2 MISSING (forward-proxy CONNECT cluster)"
+    },
+    {
+      "name": "cat-proxy-grpc",
+      "group": "catalogue:proxy",
+      "ledger": "px.15/px.16/px.17",
+      "behavior": "gRPC proxy + gRPC-Web bridge + gRPC health-check proxy",
+      "observed": "(catalogue)",
+      "verdict": "UNWIRED",
+      "note": "ledger px.15/16/17 MISSING"
+    },
+    {
+      "name": "cat-client-session",
+      "group": "catalogue:client",
+      "ledger": "cl.1/cl.4",
+      "behavior": "first-class HTTP client: connection reuse, retry budget, redirect-follow",
+      "observed": "(catalogue)",
+      "verdict": "UNWIRED",
+      "note": "ledger cl.1 PARTIAL / cl.4 MISSING (blocks ACME fetch, health probes)"
+    },
+    {
+      "name": "cat-pki-ocsp-stapling",
+      "group": "catalogue:pki",
+      "ledger": "pk.11",
+      "behavior": "OCSP stapling with background refresh",
+      "observed": "(catalogue)",
+      "verdict": "UNWIRED",
+      "note": "ledger pk.11 PARTIAL: OCSP verify proven; stapling refresh job partial"
+    },
+    {
+      "name": "cat-pki-proxy-protocol",
+      "group": "catalogue:pki",
+      "ledger": "pk.18",
+      "behavior": "PROXY protocol v1/v2 real-client-addr recovery",
+      "observed": "(catalogue)",
+      "verdict": "UNWIRED",
+      "note": "ledger pk.18 MISSING"
+    },
+    {
+      "name": "cat-lifecycle-zero-downtime",
+      "group": "catalogue:lifecycle",
+      "ledger": "lc.6",
+      "behavior": "zero-downtime binary upgrade (fd inheritance, conn/TLS-state hand-off)",
+      "observed": "(catalogue)",
+      "verdict": "UNWIRED",
+      "note": "ledger lc.6 MISSING"
+    }
+  ],
+  "counts": {
+    "PASS": 22,
+    "FAIL": 0,
+    "UNWIRED": 17,
+    "SKIPPED": 10
+  },
+  "parity_conformance_pct": 100.0,
+  "catalogue_breadth_pct": 44.9
+}

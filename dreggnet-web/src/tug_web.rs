@@ -13,7 +13,8 @@
 //! [`crate::table_seats`] — the SAME code automatafl's door runs, not a copy of it. This module is
 //! the tug-specific half: the rules copy and the landing page.
 //!
-//! * `GET  /tug`                  — the rules + the "open a table" CTA;
+//! * `GET  /tug`                  — the "open a table" CTA, then the rules (that order, deliberately;
+//!   see [`rules_html`]);
 //! * `POST /tug/table`            — MINT `tug1-<96 random bits>` plus two secret seat links;
 //! * `GET  /tug/table/{id}`       — a seat link (`?seat=&key=`, checked, then the label becomes an
 //!   `HttpOnly` cookie and the secret leaves the URL bar);
@@ -109,30 +110,51 @@ fn tug_door(state: Arc<CatalogState>) -> Router {
     })
 }
 
-/// The rules block — what a stranger needs to know before their first click, and no more.
+/// The rules block — **staged**, not shortened by subtraction.
+///
+/// ⚑ **WHAT A FIRST MOVE NEEDS IS VISIBLE; THE REST COSTS ONE CLICK AND IS STILL SERVED.** This was
+/// one `<h2>The rules, in one screen</h2>` over six long `<li>`s and three paragraphs: measured, 715
+/// words of prose against exactly ONE form control on the whole page, and 135 words a reader passed
+/// before reaching it. "One screen" had stopped being true, and a stranger's report was the plain
+/// one: an impenetrable wall of text.
+///
+/// Every claim that was here is still here and NOTHING was traded for brevity. What changed is
+/// staging. Above the fold is the shape of one turn, as a précis: the lanes and what they pay, the
+/// hand, the four actions, the cut, and the ⚑ that a move does not move the lanes. Behind a
+/// `<details>` is everything a player wants only once they are playing: the conservation tooth, how
+/// the fog is actually held, how the round is scored and adjudicated, what the executor re-checks,
+/// and what this build is honest about not being.
+///
+/// ⚠ Be exact about what that cost. The précis RESTATES in shorter form what the deferred block
+/// states in full, so the page's served word count went UP, 715 → 784, not down. The number that
+/// moved the right way is what a reader is CONFRONTED with: 715 visible words became 410, and the
+/// 135 words standing between a stranger and the first control became 48. Two bullets were tightened
+/// where the précis and the full statement said the same thing twice; no claim was dropped to do it.
+///
+/// `<details>` is the shape used for exactly this reason elsewhere in this crate (`.receipt-gloss`,
+/// `.af-moves`): it is native, it needs no script, and a collapsed one still **prints and reads
+/// whole** — so the served HTML, the printed page and a screen reader's document all carry every
+/// sentence a reader could have found before. A claim behind a summary is deferred, not deleted.
+/// ⚠ The `⚑` bullet stays OPEN on purpose: this module's own header records that a page which does
+/// not say it "reads as broken to a first-time player, who presses a button and watches all seven
+/// rows come back identical". That is the one rule whose absence looks like a bug, so it cannot be
+/// the one rule behind a click.
 fn rules_html() -> String {
     let guilds = dregg_multiway_tug::reference::N_GUILDS;
     let deck = dregg_multiway_tug::reference::DECK_SIZE;
     format!(
-        "<section class=\"panel\"><h2>The rules, in one screen</h2>\
+        "<section class=\"panel\"><h2>How one turn goes</h2>\
          <ul class=\"rules\">\
-         <li><strong>{guilds} guilds are the {guilds} lanes</strong> · one thing, two names, and \
-         this page uses both: guild 3 <em>is</em> lane 3. They are weighted \
-         <code>2 2 2 3 3 4 5</code>, and there are {deck} <strong>favor cards</strong> in all: a \
-         favor <em>is</em> a card. That {deck} is a conservation tooth the executor enforces: no \
-         favor is conjured or destroyed for the length of a round.</li>\
-         <li><strong>Each seat holds six favors</strong>, hidden. Your opponent sees only how many \
-         cards you hold and the committed root of your hand; the cards themselves are rendered to \
-         you and to nobody else. Every favor belongs to one lane: that is the lane it pulls, and \
-         what the lane pays is what it pays whoever ends up leading it.</li>\
-         <li><strong>Four actions, once each per round</strong> · Secret (1 card), Discard (2), \
-         Gift (3), Competition (4). Whoever leads a lane takes its whole weight. \
-         <strong>Nothing ends the round early</strong>: all twelve committed turns are always \
-         played, and the winner is named once, at the reveal. The bars pick <em>which rule</em> \
-         names them: 11 influence takes it outright, else leading 4 lanes, else the higher total \
-         influence, else the more lanes held; and only an exact dead heat on both is a draw. Every \
-         one of those clauses is a tooth: the executor refuses a claimed win the rules do not \
-         make.</li>\
+         <li><strong>{guilds} lanes, weighted <code>2 2 2 3 3 4 5</code>.</strong> Lead a lane when \
+         the round ends and you take its whole weight.</li>\
+         <li><strong>You hold six favor cards, hidden.</strong> Every favor belongs to one lane: \
+         that is the lane it pulls. Your opponent sees how many you hold, never which.</li>\
+         <li><strong>On your turn, spend ONE of four actions</strong> · Secret (1 card), Discard \
+         (2), Gift (3), Competition (4). Each is once per round, so the order is yours to \
+         choose.</li>\
+         <li><strong>A Gift or a Competition only PRESENTS favors.</strong> You cut; your opponent \
+         chooses which side they take, and you cannot answer your own cut. That is the whole \
+         game.</li>\
          <li>⚑ <strong>Spending an action does not move the lanes.</strong> This is the part that \
          looks broken and is not. A <strong>Secret</strong> goes face down and reaches no lane \
          until the reveal. A <strong>Discard</strong> burns two favors out of the round and they \
@@ -141,22 +163,41 @@ fn rules_html() -> String {
          seven lane rows will often sit perfectly still right after your own move: that is the \
          rules working. The running account of where all {deck} favors are (held, face down, \
          burnt, placed) is what moves, and the table prints it.</li>\
-         <li><strong>A Gift or a Competition only PRESENTS favors.</strong> You cut; your opponent \
-         chooses which side they take, and you cannot answer your own cut. Which of your four \
-         actions to spend, in which order, and which cards to put in the cut, are all yours.</li>\
+         </ul>\
+         <details class=\"rules-more\"><summary>All of it: the deck, the fog, scoring, and what \
+         this build does not do</summary>\
+         <ul class=\"rules\">\
+         <li><strong>{guilds} guilds are the {guilds} lanes</strong> · one thing, two names, and \
+         this page uses both: guild 3 <em>is</em> lane 3. There are {deck} <strong>favor \
+         cards</strong> in all: a favor <em>is</em> a card. That {deck} is a conservation tooth the \
+         executor enforces: no favor is conjured or destroyed for the length of a round.</li>\
+         <li><strong>How the hand is hidden.</strong> Beside the count, your opponent sees the \
+         committed root of your hand; the cards themselves are rendered to you and to nobody else. \
+         What a lane pays is what it pays whoever ends up leading it.</li>\
+         <li><strong>Nothing ends the round early.</strong> All twelve committed turns are always \
+         played, and the winner is named once, at the reveal. The bars pick <em>which rule</em> \
+         names them: 11 influence takes it outright, else leading 4 lanes. Short of either bar the \
+         round is still decided, on the higher total influence, else the more lanes held; and only \
+         an exact dead heat on both is a draw. Every one of those clauses is a tooth: the executor \
+         refuses a claimed win the rules do not make.</li>\
          <li><strong>Then reveal and score.</strong> Each seat's Secret is turned face up onto its \
          owner's side of its lane, and only then is control counted.</li>\
+         <li><strong>The shape of the round is yours.</strong> Which of your four actions to spend, \
+         in which order, and which cards to put in the cut, are all yours.</li>\
          </ul>\
-         <p class=\"prose\">Every press is re-run against the rules before anything is written \
-         down. The move and the proof that the card came from your own dealt hand land together \
-         or not at all, a press out of turn is refused with nothing recorded, and the whole round \
-         can be replayed afterwards from its accepted moves and come out the same way.</p>\
+         <p class=\"prose\">Every play is checked against the rules and against your own dealt \
+         hand, so a hidden hand is still not a hand you can invent cards from. Every press is \
+         re-run against the rules before anything is written down. The move and the proof that the \
+         card came from your own dealt hand land together or not at all, a press out of turn is \
+         refused with nothing recorded, and the whole round can be replayed afterwards from its \
+         accepted moves and come out the same way.</p>\
          <p class=\"prose\"><strong>Honest about the play:</strong> a round is one round. There \
          is no match, no alternating opener, and the seat that answers the last cut has a real \
          measured edge. And the winner is not this page's opinion: the rules decide it, and if \
          they cannot, the round refuses to end rather than name somebody.</p>\
-         <p class=\"prose\">Mechanics derived from Hanamikoji (Kota Nakayama); this is an original \
-         re-theming.</p>\
+         </details>\
+         <p class=\"prose credit-line\">Mechanics derived from Hanamikoji (Kota Nakayama); this is \
+         an original re-theming.</p>\
          </section>"
     )
 }
@@ -168,9 +209,8 @@ fn landing_page(notice: Option<&str>) -> String {
          <section class=\"af-hero hero-tug\">\
          <p class=\"eyebrow\">Hidden hands · seven guilds · one round</p>\
          <h1>Multiway-Tug</h1>\
-         <p class=\"deck\">Two houses pull at seven guilds with favors neither can see the other \
-         holding. Every play is checked against the rules and against your own dealt hand, so a \
-         hidden hand is still not a hand you can invent cards from.</p>\
+         <p class=\"deck\">Two hidden hands of cards pulling at seven contested lanes. You cut the \
+         offer; your opponent chooses which side they take.</p>\
          <p class=\"credit\">Art · spwashi, <em>exchange</em></p>\
          </section>\
          {notice}\

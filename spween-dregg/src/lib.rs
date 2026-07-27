@@ -73,8 +73,8 @@ pub use verify::{
 };
 pub use vote::{StubVoteEngine, VoteEngine, VoteError, VoteOption, labeled_tally};
 pub use world::{
-    CellHandler, ChoiceView, DECISION_EXT_KEY, Driver, Playthrough, StepReceipt, WorldCell,
-    WorldError, decision_commitment,
+    CellHandler, ChoiceAdmission, ChoiceView, DECISION_EXT_KEY, Driver, Playthrough, StepReceipt,
+    WorldCell, WorldError, decision_commitment,
 };
 
 // The field type the certified-decision binding is expressed in (a re-export so a

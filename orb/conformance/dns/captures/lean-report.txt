@@ -1,0 +1,321 @@
+CAPTURE a-multi
+QPARSE ok
+QCOOKIE 75fed4f722147ef9 -
+RPARSE ok
+RCODE 0
+XRCODE 0
+TC false
+RETRY false
+COUNTS 1 2 0 1
+Q example.com 1 1
+RR answer 1 example.com A 104.20.23.154
+RR answer 1 example.com A 172.66.147.243
+RR additional 41 . OPT 1232 0 0 false 0
+ANS A 104.20.23.154
+ANS A 172.66.147.243
+END
+CAPTURE aaaa
+QPARSE ok
+QCOOKIE cb215b82c9272065 -
+RPARSE ok
+RCODE 0
+XRCODE 0
+TC false
+RETRY false
+COUNTS 1 2 0 1
+Q example.com 28 1
+RR answer 28 example.com AAAA 260647000010000000000000ac4293f3
+RR answer 28 example.com AAAA 2606470000100000000000006814179a
+RR additional 41 . OPT 1232 0 0 false 0
+ANS AAAA 260647000010000000000000ac4293f3
+ANS AAAA 2606470000100000000000006814179a
+END
+CAPTURE cname
+QPARSE ok
+QCOOKIE 09bc630bb25030f7 -
+RPARSE ok
+RCODE 0
+XRCODE 0
+TC false
+RETRY false
+COUNTS 1 2 0 1
+Q www.github.com 1 1
+RR answer 5 www.github.com CNAME github.com
+RR answer 1 github.com A 140.82.112.4
+RR additional 41 . OPT 1232 0 0 false 0
+ANS A 140.82.112.4
+END
+CAPTURE mx
+QPARSE ok
+QCOOKIE 768e4df9fb31c520 -
+RPARSE ok
+RCODE 0
+XRCODE 0
+TC false
+RETRY false
+COUNTS 1 5 0 1
+Q gmail.com 15 1
+RR answer 15 gmail.com MX 10 alt1.gmail-smtp-in.l.google.com
+RR answer 15 gmail.com MX 20 alt2.gmail-smtp-in.l.google.com
+RR answer 15 gmail.com MX 5 gmail-smtp-in.l.google.com
+RR answer 15 gmail.com MX 40 alt4.gmail-smtp-in.l.google.com
+RR answer 15 gmail.com MX 30 alt3.gmail-smtp-in.l.google.com
+RR additional 41 . OPT 1232 0 0 false 0
+ANS MX 10 alt1.gmail-smtp-in.l.google.com
+ANS MX 20 alt2.gmail-smtp-in.l.google.com
+ANS MX 5 gmail-smtp-in.l.google.com
+ANS MX 40 alt4.gmail-smtp-in.l.google.com
+ANS MX 30 alt3.gmail-smtp-in.l.google.com
+END
+CAPTURE txt
+QPARSE ok
+QCOOKIE 123d9d4d450a5d8a -
+RPARSE ok
+RCODE 0
+XRCODE 0
+TC false
+RETRY false
+COUNTS 1 2 0 1
+Q example.com 16 1
+RR answer 16 example.com TXT 1 v=spf1 -all
+RR answer 16 example.com TXT 1 _k2n1y4vw3qtb4skdx9e7dxt97qrmmq9
+RR additional 41 . OPT 1232 0 0 false 0
+ANS TXT 1 v=spf1 -all
+ANS TXT 1 _k2n1y4vw3qtb4skdx9e7dxt97qrmmq9
+END
+CAPTURE ns
+QPARSE ok
+QCOOKIE df938ad021a1cf01 -
+RPARSE ok
+RCODE 0
+XRCODE 0
+TC false
+RETRY false
+COUNTS 1 2 0 1
+Q example.com 2 1
+RR answer 2 example.com NS hera.ns.cloudflare.com
+RR answer 2 example.com NS elliott.ns.cloudflare.com
+RR additional 41 . OPT 1232 0 0 false 0
+ANS NS hera.ns.cloudflare.com
+ANS NS elliott.ns.cloudflare.com
+END
+CAPTURE soa
+QPARSE ok
+QCOOKIE 38c5eaebd9b8edb0 -
+RPARSE ok
+RCODE 0
+XRCODE 0
+TC false
+RETRY false
+COUNTS 1 1 0 1
+Q example.com 6 1
+RR answer 6 example.com SOA elliott.ns.cloudflare.com dns.cloudflare.com 2407636105 10000 2400 604800 1800
+RR additional 41 . OPT 1232 0 0 false 0
+ANS SOA elliott.ns.cloudflare.com dns.cloudflare.com 2407636105 10000 2400 604800 1800
+END
+CAPTURE ptr
+QPARSE ok
+QCOOKIE 2a4c8169fa35792f -
+RPARSE ok
+RCODE 0
+XRCODE 0
+TC false
+RETRY false
+COUNTS 1 1 0 1
+Q 1.1.1.1.in-addr.arpa 12 1
+RR answer 12 1.1.1.1.in-addr.arpa PTR one.one.one.one
+RR additional 41 . OPT 1232 0 0 false 0
+ANS PTR one.one.one.one
+END
+CAPTURE dnskey
+QPARSE ok
+QCOOKIE c2454c7f108092e2 -
+RPARSE ok
+RCODE 0
+XRCODE 0
+TC false
+RETRY false
+COUNTS 1 5 0 1
+Q example.com 48 1
+RR answer 48 example.com DNSKEY 256 3 13 64 tag=36315
+RR answer 48 example.com DNSKEY 256 3 13 64 tag=9776
+RR answer 48 example.com DNSKEY 256 3 13 64 tag=34505
+RR answer 48 example.com DNSKEY 257 3 13 64 tag=2371
+RR answer 46 example.com RRSIG 48 13 2 3600 1787334400 1782064000 2371 example.com 64
+RR additional 41 . OPT 1232 0 0 true 0
+ANS DNSKEY 256 3 13 64 tag=36315
+ANS DNSKEY 256 3 13 64 tag=9776
+ANS DNSKEY 256 3 13 64 tag=34505
+ANS DNSKEY 257 3 13 64 tag=2371
+END
+CAPTURE a-dnssec
+QPARSE ok
+QCOOKIE 156c3b1a589a5068 -
+RPARSE ok
+RCODE 0
+XRCODE 0
+TC false
+RETRY false
+COUNTS 1 3 0 1
+Q example.com 1 1
+RR answer 1 example.com A 104.20.23.154
+RR answer 1 example.com A 172.66.147.243
+RR answer 46 example.com RRSIG 1 13 2 300 1783395294 1783215294 34505 example.com 64
+RR additional 41 . OPT 1232 0 0 true 0
+ANS A 104.20.23.154
+ANS A 172.66.147.243
+END
+CAPTURE ds
+QPARSE ok
+QCOOKIE 2f6d80a5c081c281 -
+RPARSE ok
+RCODE 0
+XRCODE 0
+TC false
+RETRY false
+COUNTS 1 2 0 1
+Q example.com 43 1
+RR answer 43 example.com DS 2371 13 2 32
+RR answer 46 example.com RRSIG 43 13 2 86400 1783820137 1783211137 27677 com 64
+RR additional 41 . OPT 1232 0 0 true 0
+ANS DS 2371 13 2 32
+END
+CAPTURE nxdomain
+QPARSE ok
+QCOOKIE 946bba3148e7508d -
+RPARSE ok
+RCODE 3
+XRCODE 3
+TC false
+RETRY false
+COUNTS 1 0 8 1
+Q no-such-name-4711.org 1 1
+RR authority 6 org SOA a0.org.afilias-nst.info hostmaster.donuts.email 1783305020 7200 900 1209600 3600
+RR authority 46 org RRSIG 6 8 1 3600 1785119720 1783301720 13950 org 128
+RR authority 50 i8as2kvcqh5k31qpt8b3j6cok2maflc5.org NSEC3 1 1 0 332539ee7f95c32a 9215f2eb12851dac1345c9725c297bad1f86a5c8 2,43,46
+RR authority 46 i8as2kvcqh5k31qpt8b3j6cok2maflc5.org RRSIG 50 8 2 3600 1784733840 1782915840 13950 org 128
+RR authority 50 gdtpongmpok61u9lvnipqor8lra9l4t0.org NSEC3 1 1 0 332539ee7f95c32a 837bb72914b4c5bbbb4eb92c2c4262351fcf5267 2,6,46,48,51
+RR authority 46 gdtpongmpok61u9lvnipqor8lra9l4t0.org RRSIG 50 8 2 3600 1785119720 1783301720 13950 org 128
+RR authority 50 c0lu6at60fudlfvfiq94np1d2uocqkjd.org NSEC3 1 1 0 332539ee7f95c32a 602c8850b845ada09d50f53f8fbe6e797f8977a2 2,43,46
+RR authority 46 c0lu6at60fudlfvfiq94np1d2uocqkjd.org RRSIG 50 8 2 3600 1784971485 1783153485 13950 org 128
+RR additional 41 . OPT 1232 0 0 true 0
+END
+CAPTURE https-svcb
+QPARSE ok
+QCOOKIE d65c3e0f25312507 -
+RPARSE ok
+RCODE 0
+XRCODE 0
+TC false
+RETRY false
+COUNTS 1 1 0 1
+Q cloudflare.com 65 1
+RR answer 65 cloudflare.com SVCB 1 . 3 alpn=h3,h2 ipv4hint=104.16.132.229,104.16.133.229
+RR additional 41 . OPT 1232 0 0 false 0
+ANS SVCB 1 . 3 alpn=h3,h2 ipv4hint=104.16.132.229,104.16.133.229
+END
+CAPTURE caa-other
+QPARSE ok
+QCOOKIE 7eb03af9a9e7536e -
+RPARSE ok
+RCODE 0
+XRCODE 0
+TC false
+RETRY false
+COUNTS 1 1 0 1
+Q google.com 257 1
+RR answer 257 google.com OTHER 15
+RR additional 41 . OPT 1232 0 0 false 0
+ANS OTHER 15
+END
+CAPTURE noedns
+QPARSE ok
+RPARSE ok
+RCODE 0
+XRCODE 0
+TC false
+RETRY false
+COUNTS 1 2 0 0
+Q example.com 1 1
+RR answer 1 example.com A 172.66.147.243
+RR answer 1 example.com A 104.20.23.154
+ANS A 172.66.147.243
+ANS A 104.20.23.154
+END
+CAPTURE nsec3param
+QPARSE ok
+QCOOKIE 09754f058fab06f9 -
+RPARSE ok
+RCODE 0
+XRCODE 0
+TC false
+RETRY false
+COUNTS 1 1 0 1
+Q org 51 1
+RR answer 51 org NSEC3PARAM 1 0 0 332539ee7f95c32a
+RR additional 41 . OPT 1232 0 0 false 0
+ANS NSEC3PARAM 1 0 0 332539ee7f95c32a
+END
+CAPTURE mixedcase
+QPARSE ok
+QCOOKIE 4482749b17754ef4 -
+RPARSE ok
+RCODE 0
+XRCODE 0
+TC false
+RETRY false
+COUNTS 1 2 0 1
+Q ExAmPlE.CoM 1 1
+RR answer 1 ExAmPlE.CoM A 172.66.147.243
+RR answer 1 ExAmPlE.CoM A 104.20.23.154
+RR additional 41 . OPT 1232 0 0 false 0
+ANS A 172.66.147.243
+ANS A 104.20.23.154
+END
+CAPTURE tcp
+FRAME ok
+QPARSE ok
+QCOOKIE 11a27703ad19c5d6 -
+RPARSE ok
+RCODE 0
+XRCODE 0
+TC false
+RETRY false
+COUNTS 1 2 0 1
+Q example.com 1 1
+RR answer 1 example.com A 104.20.23.154
+RR answer 1 example.com A 172.66.147.243
+RR additional 41 . OPT 1232 0 0 false 0
+ANS A 104.20.23.154
+ANS A 172.66.147.243
+END
+CAPTURE cookie
+QPARSE ok
+QCOOKIE be9bd72292eb9ccf -
+RPARSE ok
+RCODE 0
+XRCODE 0
+TC false
+RETRY false
+COUNTS 1 2 0 1
+Q example.com 1 1
+RR answer 1 example.com A 104.20.23.154
+RR answer 1 example.com A 172.66.147.243
+RR additional 41 . OPT 1232 0 0 false 0
+ANS A 104.20.23.154
+ANS A 172.66.147.243
+END
+CAPTURE https-typed
+QPARSE ok
+QCOOKIE ed2c0e3b8a58179b -
+RPARSE ok
+RCODE 0
+XRCODE 0
+TC false
+RETRY false
+COUNTS 1 1 0 1
+Q cloudflare.com 65 1
+RR answer 65 cloudflare.com SVCB 1 . 3 alpn=h3,h2 ipv4hint=104.16.132.229,104.16.133.229
+RR additional 41 . OPT 1232 0 0 false 0
+ANS SVCB 1 . 3 alpn=h3,h2 ipv4hint=104.16.132.229,104.16.133.229
+END

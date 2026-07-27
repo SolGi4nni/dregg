@@ -1,0 +1,13 @@
+[package]
+name = "conn-limit-twin"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+description = "Executable model of the blocking reactor's SHARED per-source connection-limit gate (SharedStanding::admit / on_close, standing.rs): the check-and-increment must be one critical section so concurrent accept/worker threads from one source can never both slip past the cap (no TOCTOU over-admit), and accept/close is conserved (active never underflows). Built for exhaustive schedule exploration under loom. A separate zero-dependency crate so loom's unwind-based panic capture is not polluted by the dataplane package's linked Lean runtime."
+publish = false
+
+[target.'cfg(loom)'.dev-dependencies]
+loom = "0.7"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(loom)"] }

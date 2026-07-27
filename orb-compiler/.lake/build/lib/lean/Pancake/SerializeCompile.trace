@@ -1,0 +1,47 @@
+{"synthetic": false,
+ "schemaVersion": "2025-09-10",
+ "outputs":
+ {"o": ["f95bdb47a4997e80.olean"],
+  "m": false,
+  "i": "d8d721a5a8ad80b7.ilean",
+  "c": "9a02122a26dbb440.c"},
+ "log":
+ [{"message":
+   ".> LEAN_PATH=/Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean /Users/ember/.elan/toolchains/leanprover--lean4---v4.30.0/bin/lean /Users/ember/dev/breadstuffs/orb-compiler/Pancake/SerializeCompile.lean -o /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/SerializeCompile.olean -i /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/SerializeCompile.ilean -c /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/SerializeCompile.c --setup /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/SerializeCompile.setup.json --json",
+   "level": "trace"},
+  {"message":
+   "Pancake/SerializeCompile.lean:502:0: 'Pancake.SerializeCompile.natToDec_readback' depends on axioms: [propext, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/SerializeCompile.lean:503:0: 'Pancake.SerializeCompile.copy_step' depends on axioms: [propext, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/SerializeCompile.lean:504:0: 'Pancake.SerializeCompile.refinesClk_copy' depends on axioms: [propext, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/SerializeCompile.lean:505:0: 'Pancake.SerializeCompile.serialize_write_correct' depends on axioms: [propext, Quot.sound]",
+   "level": "info"}],
+ "inputs":
+ [["Pancake.SerializeCompile:deps",
+   [["deps",
+     [["«orb-compiler»/Pancake:extraDep",
+       [["@«orb-compiler»:extraDep", "00000000000006bb"]]],
+      ["imports",
+       [["Pancake.EmitCorrectClock transitive imports (legacy)",
+         "149a59990fb57141"],
+        ["Pancake.EmitCorrectClock:importAllArts", "668102422b8d2b8e"]]]]],
+    ["libs",
+     [["import dynlibs", "00000000000006bb"],
+      ["package external libraries", "00000000000006bb"],
+      ["module dynlibs", "00000000000006bb"],
+      ["module plugins", "00000000000006bb"]]]]],
+  ["Lean 4.30.0, commit d024af099ca4bf2c86f649261ebf59565dc8c622",
+   "2f4703bb19086252"],
+  ["/Users/ember/dev/breadstuffs/orb-compiler/Pancake/SerializeCompile.lean",
+   "93d844b8285230a9"],
+  ["options", "00000000000006bb"],
+  ["isModule: false", "feefd2a0d3a1847e"],
+  ["Module.name: Pancake.SerializeCompile", "658e79c7503d56e6"],
+  ["Package.id?: (some orb-compiler)", "0a473b67509a16ae"],
+  ["Module.leanArgs: #[]", "00000000000006bb"]],
+ "depHash": "a885ec81b33ffca0"}

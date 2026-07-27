@@ -225,7 +225,7 @@ fn descent_overworld_bazaar_consequence_and_narrated_dungeon_are_one_hosted_jour
         11_000,
         CHUTES_CONSENT_WIRE,
         format!(
-            "COMMAND: press_on\nNARRATION: Bazaar seal {} glimmers; the executor opens only the gate.",
+            "COMMAND: press_on_into_the_plundered_hall\nNARRATION: Bazaar seal {} glimmers; the executor opens only the gate.",
             &hex(bazaar_receipt.receipt_id)[..12]
         ),
     )

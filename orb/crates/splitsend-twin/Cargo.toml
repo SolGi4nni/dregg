@@ -1,0 +1,13 @@
+[package]
+name = "splitsend-twin"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+description = "Executable model of the io_uring zero-copy SplitSend writev<->recycle handoff (DRORB_SPAN=15): the borrowed buf_ring body slot must stay leased until the in-flight writev CQE settles, then recycle exactly once across short-write re-arms. Built for exhaustive schedule exploration under loom. A separate zero-dependency crate so loom's unwind-based panic capture is not polluted by the dataplane package's linked Lean runtime."
+publish = false
+
+[target.'cfg(loom)'.dev-dependencies]
+loom = "0.7"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(loom)"] }

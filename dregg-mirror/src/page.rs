@@ -117,7 +117,7 @@ pub fn object_page(
         gates = gate_block(report),
         ladder = ladder_block(),
     );
-    document(&format!("{title} — dregg mirror"), trust::TIER, &body)
+    document(&format!("{title} · dregg mirror"), trust::TIER, &body)
 }
 
 /// Render a fail-closed page. NEVER renders the object; shows the tier-`none` badge, the
@@ -172,7 +172,7 @@ pub fn error_page(
         upgrade_min = minimal_upgrade_block(cfg),
         ladder = ladder_block(),
     );
-    document(&format!("{status_headline} — dregg mirror"), "none", &body)
+    document(&format!("{status_headline} · dregg mirror"), "none", &body)
 }
 
 /// The index page: what this service is, and the kinds it will render.
@@ -208,11 +208,11 @@ pub fn index_page(cfg: &PageConfig, counts: &[(Kind, usize)]) -> String {
          </section>\
          <section class=\"mirror-block\">\
            <h2>Link shape</h2>\
-           <p><code>https://{origin}/&lt;kind&gt;/&lt;address&gt;</code> — and a short \
+           <p><code>https://{origin}/&lt;kind&gt;/&lt;address&gt;</code>, and a short \
               address works, git-style. <code>https://{origin}/poll/7f2a9c4d</code> resolves \
               as long as that prefix is unambiguous, which is what lets the whole reference \
               survive being truncated in a post. An ambiguous prefix is refused, never \
-              guessed. <code>/d/&lt;kind&gt;/&lt;address&gt;</code> also works — that is the \
+              guessed. <code>/d/&lt;kind&gt;/&lt;address&gt;</code> also works: that is the \
               form the original spec published.</p>\
          </section>\
          <section class=\"mirror-block\">\
@@ -302,11 +302,11 @@ fn gate_block(report: &VerifyReport) -> String {
         })
         .collect();
     let caption = if report.attested() {
-        "The origin ran the full ladder — content address, serve-receipt, stream root, \
+        "The origin ran the full ladder: content address, serve-receipt, stream root, \
          quorum. You are reading its report of that, not the result of your own check."
     } else {
         "The origin ran the content-address gate. The federation attestation gates did NOT \
-         run — this object carried no attestation, and a gate that did not run is shown as \
+         run: this object carried no attestation, and a gate that did not run is shown as \
          not checked rather than quietly folded into a pass."
     };
     format!(

@@ -529,7 +529,7 @@
     const goal = el('byok-goal').value;
     if (!base) { out.innerHTML = `<span class="pill bad">config</span> set a base url for the custom provider.`; return; }
     const messages = [
-      { role: 'system', content: 'You are a confined agent driving a hosted grain. Use ONLY the provided tools to accomplish the goal. Each tool call is cap-gated, metered, and receipted by the host — some may be refused, and that is fine. Call one tool at a time. When the goal is done, reply with a short summary and stop calling tools.' },
+      { role: 'system', content: 'You are a confined agent driving a hosted grain. Use ONLY the provided tools to accomplish the goal. Each tool call is cap-gated, metered, and receipted by the host; some may be refused, and that is fine. Call one tool at a time. When the goal is done, reply with a short summary and stop calling tools.' },
       { role: 'user', content: goal },
     ];
     const MAX_STEPS = 8;

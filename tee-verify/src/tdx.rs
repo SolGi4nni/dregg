@@ -181,6 +181,138 @@ pub fn report_data_structural_unverified(quote: &[u8]) -> Result<[u8; 64], Strin
     Ok(td.report_data)
 }
 
+/// The five TDX measurement registers of a TD report, read structurally.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TdxRegisters {
+    pub mr_td: [u8; MR_LEN],
+    pub rt_mr0: [u8; MR_LEN],
+    pub rt_mr1: [u8; MR_LEN],
+    pub rt_mr2: [u8; MR_LEN],
+    /// Runtime/event-log-extended — carried for inspection, never gated on.
+    pub rt_mr3: [u8; MR_LEN],
+}
+
+impl TdxRegisters {
+    /// `SHA-256(MRTD ‖ RTMR0 ‖ RTMR1 ‖ RTMR2)` — the folded code identity, RTMR3 excluded.
+    pub fn folded_measurement(&self) -> [u8; 32] {
+        fold_tdx_measurement(&self.mr_td, &self.rt_mr0, &self.rt_mr1, &self.rt_mr2)
+    }
+}
+
+/// **A STRUCTURAL read of a TDX quote's measurement registers. IT VERIFIES NOTHING.**
+///
+/// The [`report_data_structural_unverified`] caveat applies unchanged and in full: this parses
+/// the envelope and hands back the register bytes it finds there. An attacker who fabricates a
+/// quote also picks these registers, so a register value that matches a published registry entry
+/// is evidence of NOTHING until the quote's Intel signature chain has been verified against
+/// collateral ([`TdxVerifier::verify_tdx_core`]).
+///
+/// It exists so an ARCHIVED record can be checked against the registry offline — "the bytes I
+/// was handed name a code identity Chutes publishes" is worth saying, as long as it is never
+/// confused with "this quote is genuine".
+pub fn registers_structural_unverified(quote: &[u8]) -> Result<TdxRegisters, String> {
+    let parsed = Quote::parse(quote).map_err(|e| format!("TDX quote parse: {e}"))?;
+    if parsed.header.tee_type != TEE_TYPE_TDX {
+        return Err(format!(
+            "not a TDX quote: tee_type=0x{:x} (want TEE_TYPE_TDX=0x{:x})",
+            parsed.header.tee_type, TEE_TYPE_TDX
+        ));
+    }
+    let td = parsed
+        .report
+        .as_td10()
+        .ok_or("quote does not carry a TDX TD report")?;
+    Ok(TdxRegisters {
+        mr_td: td.mr_td,
+        rt_mr0: td.rt_mr0,
+        rt_mr1: td.rt_mr1,
+        rt_mr2: td.rt_mr2,
+        rt_mr3: td.rt_mr3,
+    })
+}
+
+/// **The PCK certificate chain a quote carries**, PEM bytes, leaf → … → root. Structural: it is
+/// the chain the quote CLAIMS, unverified. Feed it to [`check_pck_chain_roots_at_pinned`].
+pub fn pck_chain_structural_unverified(quote: &[u8]) -> Result<Vec<u8>, String> {
+    let parsed = Quote::parse(quote).map_err(|e| format!("TDX quote parse: {e}"))?;
+    let chain = parsed
+        .raw_cert_chain()
+        .map_err(|e| format!("TDX quote PCK cert chain (need cert_type 5): {e}"))?;
+    Ok(chain.to_vec())
+}
+
+/// Lowercase-hex SHA-256 of a raw quote — **the ONE definition** of the handle that links an
+/// attestation summary to the bytes behind it, so an archive re-deriving it from stored bytes
+/// computes exactly what the summary carried rather than its own near-miss of it.
+pub fn quote_sha256_hex(quote_bytes: &[u8]) -> String {
+    hex::encode(Sha256::digest(quote_bytes))
+}
+
+/// **Re-check an ARCHIVED attestation record's internal consistency. THIS IS NOT AN
+/// ATTESTATION.**
+///
+/// Given a quote and the `nonce_hex` / `e2e_pubkey_b64` it was archived alongside, this
+/// recomputes `SHA-256(ascii(nonce_hex) ‖ ascii(e2e_pubkey_b64))` and requires it to equal the
+/// quote's `report_data[0..32]` — the same binding [`apply_chutes_bindings`] enforced when the
+/// quote was actually verified.
+///
+/// What it catches: an archive row whose nonce or instance key has been EDITED away from the
+/// pair the quote commits to. What it emphatically does NOT do: verify the DCAP signature chain,
+/// the PCK root, the TCB status or the measurements. A quote an attacker fabricated from nothing
+/// passes this happily, because the attacker also picks the `report_data`. The attestation
+/// happened once, live, against fresh collateral and a nonce generated moments earlier; it
+/// cannot be re-derived from stored bytes, and nothing here pretends otherwise.
+///
+/// Use it to say "this record is the one we archived", never "this record is attested".
+pub fn recheck_archived_binding(
+    quote_bytes: &[u8],
+    nonce_hex: &str,
+    e2e_pubkey_b64: &str,
+) -> Result<(), String> {
+    let report_data = report_data_structural_unverified(quote_bytes)?;
+    let want = chutes_report_data_binding(nonce_hex, e2e_pubkey_b64);
+    if report_data[..32] != want[..] {
+        // No em-dash: this string reaches a player through the `/dungeon attestation` panel and
+        // the checker's report, both of which the player-copy punctuation gate governs.
+        return Err(
+            "the archived nonce/instance-key pair is NOT what this quote's report_data commits \
+             to. The record has been altered since it was written."
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// Fail-closed well-formedness of the two Chutes binding preimages, checked BEFORE the digest
+/// comparison so a malformed record reports what is wrong with it rather than "does not match".
+///
+/// `nonce_hex` must be a [`CHUTES_NONCE_HEX_LEN`]-char hex string and `e2e_pubkey_b64` must
+/// base64-decode to exactly [`ML_KEM_768_PUBKEY_LEN`] bytes. (The binding hashes the STRINGS;
+/// this is a sanity gate on them, the same one [`apply_chutes_bindings`] applies.)
+pub fn check_chutes_preimages_well_formed(
+    nonce_hex: &str,
+    e2e_pubkey_b64: &str,
+) -> Result<(), String> {
+    use base64::Engine;
+    if nonce_hex.len() != CHUTES_NONCE_HEX_LEN || !nonce_hex.bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        return Err(format!(
+            "the recorded nonce is not a {CHUTES_NONCE_HEX_LEN}-character hex string (got {} characters)",
+            nonce_hex.len()
+        ));
+    }
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(e2e_pubkey_b64)
+        .map_err(|e| format!("the recorded instance key is not valid base64: {e}"))?;
+    if decoded.len() != ML_KEM_768_PUBKEY_LEN {
+        return Err(format!(
+            "the recorded instance key decodes to {} bytes, not the {ML_KEM_768_PUBKEY_LEN} of an ML-KEM-768 key",
+            decoded.len()
+        ));
+    }
+    Ok(())
+}
+
 /// The Chutes `report_data` binding: `SHA-256( ascii(nonce_hex) ‖ ascii(e2e_pubkey_b64) )`.
 ///
 /// **Both arguments are the ASCII STRINGS Chutes concatenates**, not raw bytes:

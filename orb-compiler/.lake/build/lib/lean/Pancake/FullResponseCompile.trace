@@ -1,0 +1,50 @@
+{"synthetic": false,
+ "schemaVersion": "2025-09-10",
+ "outputs":
+ {"o": ["df7fc7f0537b3a4a.olean"],
+  "m": false,
+  "i": "337bee3a53795e04.ilean",
+  "c": "2fdf8cc90f2fb569.c"},
+ "log":
+ [{"message":
+   ".> LEAN_PATH=/Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean /Users/ember/.elan/toolchains/leanprover--lean4---v4.30.0/bin/lean /Users/ember/dev/breadstuffs/orb-compiler/Pancake/FullResponseCompile.lean -o /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/FullResponseCompile.olean -i /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/FullResponseCompile.ilean -c /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/FullResponseCompile.c --setup /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/FullResponseCompile.setup.json --json",
+   "level": "trace"},
+  {"message":
+   "Pancake/FullResponseCompile.lean:271:0: 'Pancake.FullResponseCompile.membytesB_glue' depends on axioms: [propext, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/FullResponseCompile.lean:272:0: 'Pancake.FullResponseCompile.fullRespLit_correct' depends on axioms: [propext, Classical.choice, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/FullResponseCompile.lean:273:0: 'Pancake.FullResponseCompile.fullResp_fires_on_404' depends on axioms: [propext, Classical.choice, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/FullResponseCompile.lean:274:0: 'Pancake.FullResponseCompile.witness_pre_not_full' depends on axioms: [propext, Classical.choice, Quot.sound]",
+   "level": "info"}],
+ "inputs":
+ [["Pancake.FullResponseCompile:deps",
+   [["deps",
+     [["«orb-compiler»/Pancake:extraDep",
+       [["@«orb-compiler»:extraDep", "00000000000006bb"]]],
+      ["imports",
+       [["Pancake.ByteCopy transitive imports (legacy)", "b470a27d3bb43f3d"],
+        ["Pancake.ByteCopy:importAllArts", "cabd62655a9494cc"],
+        ["Pancake.ModelUnify transitive imports (legacy)", "cf17075f0184e2e3"],
+        ["Pancake.ModelUnify:importAllArts", "c286edbb9b4b42c9"],
+        ["Pancake.StructEmit transitive imports (legacy)", "4de3d8db9bc33c9b"],
+        ["Pancake.StructEmit:importAllArts", "cb44629a6f0b0404"]]]]],
+    ["libs",
+     [["import dynlibs", "00000000000006bb"],
+      ["package external libraries", "00000000000006bb"],
+      ["module dynlibs", "00000000000006bb"],
+      ["module plugins", "00000000000006bb"]]]]],
+  ["Lean 4.30.0, commit d024af099ca4bf2c86f649261ebf59565dc8c622",
+   "2f4703bb19086252"],
+  ["/Users/ember/dev/breadstuffs/orb-compiler/Pancake/FullResponseCompile.lean",
+   "649fd76b15f85dac"],
+  ["options", "00000000000006bb"],
+  ["isModule: false", "feefd2a0d3a1847e"],
+  ["Module.name: Pancake.FullResponseCompile", "2ad9152d0280afb1"],
+  ["Package.id?: (some orb-compiler)", "0a473b67509a16ae"],
+  ["Module.leanArgs: #[]", "00000000000006bb"]],
+ "depHash": "af5b3c7055972a45"}

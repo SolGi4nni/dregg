@@ -1,0 +1,7 @@
+{
+    "outdir": "./reports-crashprobe",
+    "servers": [ { "agent": "dataplane", "url": "ws://127.0.0.1:18971" } ],
+    "cases": ["9.4.*", "9.5.3"],
+    "exclude-cases": [],
+    "exclude-agent-cases": {}
+}

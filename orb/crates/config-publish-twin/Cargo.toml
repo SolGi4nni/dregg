@@ -1,0 +1,13 @@
+[package]
+name = "config-publish-twin"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+description = "Executable model of the reactor's hot-reload PUBLICATION of the metered rate-gate config PAIR (rate_limit, rate_window) — the reconfig watcher stores the two fields as separate atomics (config::set_raw) while every shard reads them as two separate loads on the accept rate gate (uring/kqueue rate_note). The invariant: a shard must observe a WHOLE generation, never a torn (new-limit, old-window) mix that meters a source against a policy no config authored. Built for exhaustive schedule exploration under loom. A separate zero-dependency crate so loom's unwind-based panic capture is not polluted by the dataplane package's linked Lean runtime."
+publish = false
+
+[target.'cfg(loom)'.dependencies]
+loom = "0.7"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(loom)"] }

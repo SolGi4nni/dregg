@@ -92,7 +92,7 @@ pub fn build_play_menu_request(
     SendMessageRequest {
         chat_id,
         text: format!(
-            "{name} — the rich web surface. Each button opens the Mini App for that offering; \
+            "{name} · the rich web surface. Each button opens the Mini App for that offering; \
              every move there is the same real, verifiable executor turn (signed attribution via \
              the app's validated Telegram identity). The inline buttons here in chat keep working \
              as the lightweight tier.",
@@ -112,7 +112,7 @@ pub fn build_play_menu_request(
 pub fn build_link_request(chat_id: ChatId, topic: Option<i64>, base: &str) -> SendMessageRequest {
     SendMessageRequest {
         chat_id,
-        text: "🔗 Link this Telegram account to your dregg root key — then Discord-you and \
+        text: "🔗 Link this Telegram account to your dregg root key, then Discord-you and \
                Telegram-you are ONE human on boards + leaderboards. Sign a one-time claim with a \
                passkey (or paste a signature you made elsewhere)."
             .to_string(),

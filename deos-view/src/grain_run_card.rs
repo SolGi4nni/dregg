@@ -217,17 +217,17 @@ impl CheckGate {
     fn label_tag(self) -> (String, &'static str) {
         match self {
             CheckGate::Green => (
-                "✓ checks green — the signed receipt clears the merge".to_string(),
+                "✓ checks green · the signed receipt clears the merge".to_string(),
                 "good",
             ),
-            CheckGate::Failed => ("✗ CI failed — merge refused".to_string(), "bad"),
+            CheckGate::Failed => ("✗ CI failed · merge refused".to_string(), "bad"),
             CheckGate::Running { done, total } => (
                 // `k` is the step now in flight (the next one after the cleared ones), clamped.
-                format!("◷ running — step {} of {}", (done + 1).min(total), total),
+                format!("◷ running · step {} of {}", (done + 1).min(total), total),
                 "warn",
             ),
             CheckGate::Empty => (
-                "(no pipeline steps yet — the charter has no steps to run)".to_string(),
+                "(no pipeline steps yet: the charter has no steps to run)".to_string(),
                 "muted",
             ),
         }
@@ -293,7 +293,7 @@ fn lease_panel(lease: &LeaseView) -> Value {
         return section(
             &title,
             "",
-            vec![text("(no grain rented yet — this run has no lease)")],
+            vec![text("(no grain rented yet: this run has no lease)")],
         );
     }
     let budget_label = format!("budget · {}/{} metered", lease.metered, lease.budget);
@@ -322,7 +322,7 @@ fn pipeline_panel(pipeline: &[StepView]) -> Value {
         return section(
             "pipeline",
             "",
-            vec![text("(no steps yet — the charter has no steps to run)")],
+            vec![text("(no steps yet: the charter has no steps to run)")],
         );
     }
     let step_rows: Vec<Value> = pipeline
@@ -351,9 +351,7 @@ fn bounty_panel(bounty: Option<&BountyView>) -> Value {
         return section(
             "bounty",
             "",
-            vec![text(
-                "(not offered as a bounty — this run is a direct rent)",
-            )],
+            vec![text("(not offered as a bounty: this run is a direct rent)")],
         );
     };
     let (label, tag) = b.state.label_tag();
@@ -503,7 +501,7 @@ mod tests {
         let _ = grain_run_view(&run);
     }
 
-    /// A `Failed` step shows the "CI failed — merge refused" gate (a failure dominates).
+    /// A `Failed` step shows the "CI failed · merge refused" gate (a failure dominates).
     #[test]
     fn grain_run_failed_step_shows_ci_failed_merge_refused() {
         let mut pipeline = all_done_pipeline();

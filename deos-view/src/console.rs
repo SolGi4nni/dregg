@@ -564,30 +564,30 @@ fn banner_node(banner: &Banner) -> Option<ViewNode> {
         Banner::NotConnected { hint } => (
             "not connected",
             "muted",
-            format!("no live source configured — set {hint} to connect this console"),
+            format!("no live source configured: set {hint} to connect this console"),
         ),
         Banner::Unreachable { endpoint } => (
             "can't reach",
             "bad",
             match endpoint {
                 Some(url) => {
-                    format!("{url} did not answer — a read failure, not an empty account")
+                    format!("{url} did not answer: a read failure, not an empty account")
                 }
                 None => {
-                    "the source did not answer — a read failure, not an empty account".to_string()
+                    "the source did not answer: a read failure, not an empty account".to_string()
                 }
             },
         ),
         Banner::Demo => (
             "demo data",
             "warn",
-            "baked demo fixtures — not a live read".to_string(),
+            "baked demo fixtures: not a live read".to_string(),
         ),
         Banner::Partial { failed } => (
             "partial read",
             "warn",
             format!(
-                "{} did not answer — those panels carry a load error",
+                "{} did not answer: those panels carry a load error",
                 failed.join(", ")
             ),
         ),
@@ -607,7 +607,7 @@ fn surface_note_body(health: &SourceHealth, surface: &str) -> Option<Vec<ViewNod
         SurfaceNote::LoadError => Some(vec![ViewNode::Row(vec![
             static_pill("load error", "bad"),
             ViewNode::Text(format!(
-                "{surface} did not answer — a read failure, not an empty list"
+                "{surface} did not answer: a read failure, not an empty list"
             )),
         ])]),
         SurfaceNote::NotServed => Some(vec![ViewNode::Text(format!(
@@ -710,7 +710,7 @@ fn vat_section(i: usize, vat: &VatView) -> ViewNode {
     children.push(match &vat.endpoint {
         Some(url) => ViewNode::Text(format!("endpoint {url}")),
         None => {
-            ViewNode::Text("endpoint — not yet routed (v0 seam: ServerRecord.endpoint)".to_string())
+            ViewNode::Text("endpoint · not yet routed (v0 seam: ServerRecord.endpoint)".to_string())
         }
     });
 
@@ -739,35 +739,35 @@ fn vat_section(i: usize, vat: &VatView) -> ViewNode {
     children.push(ViewNode::Menu {
         items: vec![
             MenuItem {
-                label: "wake — restore from the committed checkpoint".to_string(),
+                label: "wake · restore from the committed checkpoint".to_string(),
                 turn: TURN_VAT_WAKE.to_string(),
                 arg,
                 enabled: vat.state == VatState::Sleeping,
                 wants_text: false,
             },
             MenuItem {
-                label: "sleep — checkpoint to a committed root".to_string(),
+                label: "sleep · checkpoint to a committed root".to_string(),
                 turn: TURN_VAT_SLEEP.to_string(),
                 arg,
                 enabled: vat.state == VatState::Running,
                 wants_text: false,
             },
             MenuItem {
-                label: "fork — a divergent copy of this computer".to_string(),
+                label: "fork · a divergent copy of this computer".to_string(),
                 turn: TURN_VAT_FORK.to_string(),
                 arg,
                 enabled: !reaped,
                 wants_text: false,
             },
             MenuItem {
-                label: "explore — the World census (cells · balances · receipts)".to_string(),
+                label: "explore · the World census (cells · balances · receipts)".to_string(),
                 turn: TURN_VAT_EXPLORE.to_string(),
                 arg,
                 enabled: !reaped,
                 wants_text: false,
             },
             MenuItem {
-                label: "verify — re-witness the receipt chain against YOUR key".to_string(),
+                label: "verify · re-witness the receipt chain against YOUR key".to_string(),
                 turn: TURN_VAT_VERIFY.to_string(),
                 arg,
                 enabled: true,
@@ -821,7 +821,7 @@ fn hermes_section(i: usize, h: &HermesView) -> ViewNode {
     )))));
 
     // The last beat — what it last did, in one line.
-    children.push(ViewNode::Text(format!("last beat — {}", h.last_beat)));
+    children.push(ViewNode::Text(format!("last beat: {}", h.last_beat)));
 
     // Witness debt: deferred receipts are AMBER and named, never counted as verified
     // (the symbolic vacuous-pass footgun the design doc warns about).
@@ -829,7 +829,7 @@ fn hermes_section(i: usize, h: &HermesView) -> ViewNode {
         children.push(ViewNode::Row(vec![
             static_pill(format!("{} deferred", h.deferred), "warn"),
             ViewNode::Text(
-                "symbolic witnesses pending — collapse re-derives them fail-closed".to_string(),
+                "symbolic witnesses pending: collapse re-derives them fail-closed".to_string(),
             ),
         ]));
     } else {
@@ -852,7 +852,7 @@ fn hermes_section(i: usize, h: &HermesView) -> ViewNode {
     // The mandate — CAN and CANNOT edges both shown (the boundary is the product).
     children.push(ViewNode::Divider);
     children.push(ViewNode::Text(
-        "mandate — read off the live World, never self-reported".to_string(),
+        "mandate: read off the live World, never self-reported".to_string(),
     ));
     children.push(ViewNode::List(
         h.mandate
@@ -894,28 +894,28 @@ fn hermes_section(i: usize, h: &HermesView) -> ViewNode {
     children.push(ViewNode::Menu {
         items: vec![
             MenuItem {
-                label: "step — one receipted beat".to_string(),
+                label: "step · one receipted beat".to_string(),
                 turn: TURN_HERMES_STEP.to_string(),
                 arg,
                 enabled: h.status != HermesStatus::Sleeping,
                 wants_text: false,
             },
             MenuItem {
-                label: "fork — diverge it into a copied World".to_string(),
+                label: "fork · diverge it into a copied World".to_string(),
                 turn: TURN_HERMES_FORK.to_string(),
                 arg,
                 enabled: true,
                 wants_text: false,
             },
             MenuItem {
-                label: "resume — reify the checkpoint, fail-closed".to_string(),
+                label: "resume · reify the checkpoint, fail-closed".to_string(),
                 turn: TURN_HERMES_RESUME.to_string(),
                 arg,
                 enabled: h.status == HermesStatus::Sleeping,
                 wants_text: false,
             },
             MenuItem {
-                label: "re-verify — re-witness the receipt chain".to_string(),
+                label: "re-verify · re-witness the receipt chain".to_string(),
                 turn: TURN_HERMES_VERIFY.to_string(),
                 arg,
                 enabled: true,
@@ -1002,7 +1002,7 @@ pub fn console_card(model: &ConsoleModel) -> ViewNode {
             .unwrap_or_else(|| {
                 if model.computers.is_empty() {
                     vec![ViewNode::Text(
-                        "no computers yet — `dregg-cloud vat create --name mybox` mints one behind the funded lease".to_string(),
+                        "no computers yet: `dregg-cloud vat create --name mybox` mints one behind the funded lease".to_string(),
                     )]
                 } else {
                     vec![ViewNode::Grid {
@@ -1027,7 +1027,7 @@ pub fn console_card(model: &ConsoleModel) -> ViewNode {
             .unwrap_or_else(|| {
                 if model.hermeses.is_empty() {
                     vec![ViewNode::Text(
-                        "no hermeses yet — hire a resident and it lives HERE, in your computer"
+                        "no hermeses yet: hire a resident and it lives HERE, in your computer"
                             .to_string(),
                     )]
                 } else {
@@ -1040,7 +1040,7 @@ pub fn console_card(model: &ConsoleModel) -> ViewNode {
                 }
             });
         top.push(ViewNode::Section {
-            title: "hermeses — resident agents".to_string(),
+            title: "hermeses · resident agents".to_string(),
             tag: String::new(),
             children: hermeses,
         });
@@ -1082,7 +1082,7 @@ pub fn console_card(model: &ConsoleModel) -> ViewNode {
         tag: String::new(),
         children: vec![
             ViewNode::Text(
-                "paste a receipt or root — the console re-witnesses it against YOUR anchor, \
+                "paste a receipt or root; the console re-witnesses it against YOUR anchor, \
                  and a deferred (symbolic) receipt is refused, never passed vacuously"
                     .to_string(),
             ),
@@ -1097,7 +1097,7 @@ pub fn console_card(model: &ConsoleModel) -> ViewNode {
     // ── The footer — data age + the portability thesis, on the glass. ────────────
     top.push(ViewNode::Divider);
     top.push(ViewNode::Text(format!(
-        "assembled {} · one model, many faces — native gpui · web · phone",
+        "assembled {} · one model, many faces: native gpui · web · phone",
         model.generated_at
     )));
 
@@ -1246,7 +1246,7 @@ pub fn demo_console() -> ConsoleModel {
                 consumed_units: 12,
                 receipts: 5,
                 deferred: 0,
-                last_beat: "verify_deploy — 12/12 checks green, sealed".to_string(),
+                last_beat: "verify_deploy · 12/12 checks green, sealed".to_string(),
                 recent: vec![
                     ReceiptRow {
                         action: "cell-write /deploy".to_string(),
@@ -1261,7 +1261,7 @@ pub fn demo_console() -> ConsoleModel {
                     ReceiptRow {
                         action: "spawn sub-agent".to_string(),
                         ok: false,
-                        note: "outside the mandate — refused at the gate".to_string(),
+                        note: "outside the mandate · refused at the gate".to_string(),
                     },
                     ReceiptRow {
                         action: "verify_deploy".to_string(),
@@ -1777,7 +1777,7 @@ mod tests {
             }
         });
         assert!(!sections.iter().any(|t| t == "computers"));
-        assert!(!sections.iter().any(|t| t == "hermeses — resident agents"));
+        assert!(!sections.iter().any(|t| t == "hermeses · resident agents"));
         assert!(!sections.iter().any(|t| t == "spend"));
         assert!(
             !text.contains("no computers yet"),
@@ -1818,7 +1818,7 @@ mod tests {
             ViewNode::Pill { text, .. } => pills.push(text.clone()),
             _ => {}
         });
-        for title in ["computers", "hermeses — resident agents", "spend"] {
+        for title in ["computers", "hermeses · resident agents", "spend"] {
             assert!(sections.iter().any(|t| t == title), "{title} panel renders");
         }
         for honesty in ["not connected", "can't reach", "demo data", "partial read"] {

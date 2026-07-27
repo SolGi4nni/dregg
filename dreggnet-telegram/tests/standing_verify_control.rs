@@ -337,9 +337,9 @@ fn dungeon_verifier_replays_narrated_receipts_with_telegram_identity() {
     let mut session = offering
         .open(SessionConfig::with_seed(52_733))
         .expect("the hosted Dungeon opens");
-    let (_, command) = legal_commands(&session.narrated_view())
-        .into_iter()
-        .next()
+    let command = legal_commands(&session.narrated_view())
+        .first()
+        .map(|offered| offered.command.clone())
         .expect("the current room exposes a closed narrated command");
     let narrated = Narrated::new(
         command,

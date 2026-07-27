@@ -1,0 +1,38 @@
+{"synthetic": false,
+ "schemaVersion": "2025-09-10",
+ "outputs":
+ {"o": ["bce65d198a6f0de9.olean"],
+  "m": false,
+  "i": "858aabd4eaa04bc0.ilean",
+  "c": "dd2c70a14b4a6c61.c"},
+ "log":
+ [{"message":
+   ".> LEAN_PATH=/Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean /Users/ember/.elan/toolchains/leanprover--lean4---v4.30.0/bin/lean /Users/ember/dev/breadstuffs/orb-compiler/Pancake/RealStageDemo.lean -o /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/RealStageDemo.olean -i /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/RealStageDemo.ilean -c /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/RealStageDemo.c --setup /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/RealStageDemo.setup.json --json",
+   "level": "trace"},
+  {"message":
+   "Pancake/RealStageDemo.lean:373:15: unused variable `hj`\n\nNote: This linter can be disabled with `set_option linter.unusedVariables false`",
+   "level": "warning"}],
+ "inputs":
+ [["Pancake.RealStageDemo:deps",
+   [["deps",
+     [["«orb-compiler»/Pancake:extraDep",
+       [["@«orb-compiler»:extraDep", "00000000000006bb"]]],
+      ["imports",
+       [["Pancake.EmitCorrectClock transitive imports (legacy)",
+         "149a59990fb57141"],
+        ["Pancake.EmitCorrectClock:importAllArts", "668102422b8d2b8e"]]]]],
+    ["libs",
+     [["import dynlibs", "00000000000006bb"],
+      ["package external libraries", "00000000000006bb"],
+      ["module dynlibs", "00000000000006bb"],
+      ["module plugins", "00000000000006bb"]]]]],
+  ["Lean 4.30.0, commit d024af099ca4bf2c86f649261ebf59565dc8c622",
+   "2f4703bb19086252"],
+  ["/Users/ember/dev/breadstuffs/orb-compiler/Pancake/RealStageDemo.lean",
+   "3c34760e36176597"],
+  ["options", "00000000000006bb"],
+  ["isModule: false", "feefd2a0d3a1847e"],
+  ["Module.name: Pancake.RealStageDemo", "b78a7021128cf86a"],
+  ["Package.id?: (some orb-compiler)", "0a473b67509a16ae"],
+  ["Module.leanArgs: #[]", "00000000000006bb"]],
+ "depHash": "596b4396f3490aa3"}

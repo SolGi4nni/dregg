@@ -1,0 +1,85 @@
+{"synthetic": false,
+ "schemaVersion": "2025-09-10",
+ "outputs":
+ {"o": ["edf2c7abf50c71b4.olean"],
+  "m": false,
+  "i": "c1d0d3da26d17544.ilean",
+  "c": "1cfd05549cf44cd2.c"},
+ "log":
+ [{"message":
+   ".> LEAN_PATH=/Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean /Users/ember/.elan/toolchains/leanprover--lean4---v4.30.0/bin/lean /Users/ember/dev/breadstuffs/orb-compiler/Pancake/CondRespProto.lean -o /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/CondRespProto.olean -i /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/CondRespProto.ilean -c /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/CondRespProto.c --setup /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/CondRespProto.setup.json --json",
+   "level": "trace"},
+  {"message":
+   "Pancake/CondRespProto.lean:736:0: 'Pancake.CondRespProto.denoteRR_condStatus_eq' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/CondRespProto.lean:737:0: 'Pancake.CondRespProto.runChainR_gate_keystone' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/CondRespProto.lean:738:0: 'Pancake.CondRespProto.denoteRR_stampProgR' does not depend on any axioms",
+   "level": "info"},
+  {"message":
+   "Pancake/CondRespProto.lean:739:0: 'Pancake.CondRespProto.runChainR_stampSpecR' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/CondRespProto.lean:740:0: 'Pancake.CondRespProto.condRespStamp_carries_on_gate_refusal' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/CondRespProto.lean:741:0: 'Pancake.CondRespProto.denoteRR_warning' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/CondRespProto.lean:742:0: 'Pancake.CondRespProto.denoteRR_link' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/CondRespProto.lean:743:0: 'Pancake.CondRespProto.denoteRR_cacheControl' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/CondRespProto.lean:744:0: 'Pancake.CondRespProto.denoteRR_expires' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/CondRespProto.lean:745:0: 'Pancake.CondRespProto.denoteRR_immutable' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/CondRespProto.lean:746:0: 'Pancake.CondRespProto.denoteRR_lastModified' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/CondRespProto.lean:747:0: 'Pancake.CondRespProto.denoteRR_retryAfter' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/CondRespProto.lean:748:0: 'Pancake.CondRespProto.denoteRR_contentLocation' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/CondRespProto.lean:749:0: 'Pancake.CondRespProto.ofNat64_inj' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/CondRespProto.lean:750:0: 'Pancake.CondRespProto.compileRR_correct' depends on axioms: [propext, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/CondRespProto.lean:751:0: 'Pancake.CondRespProto.compile_statusStamp' depends on axioms: [propext, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/CondRespProto.lean:752:0: 'Pancake.CondRespProto.compile_staticStatusStamp' depends on axioms: [propext, Quot.sound]",
+   "level": "info"}],
+ "inputs":
+ [["Pancake.CondRespProto:deps",
+   [["deps",
+     [["«orb-compiler»/Pancake:extraDep",
+       [["@«orb-compiler»:extraDep", "00000000000006bb"]]],
+      ["imports",
+       [["Pancake.StageLift2 transitive imports (legacy)", "0316034a1bf71a8b"],
+        ["Pancake.StageLift2:importAllArts", "d45a6e3eb94ffe82"]]]]],
+    ["libs",
+     [["import dynlibs", "00000000000006bb"],
+      ["package external libraries", "00000000000006bb"],
+      ["module dynlibs", "00000000000006bb"],
+      ["module plugins", "00000000000006bb"]]]]],
+  ["Lean 4.30.0, commit d024af099ca4bf2c86f649261ebf59565dc8c622",
+   "2f4703bb19086252"],
+  ["/Users/ember/dev/breadstuffs/orb-compiler/Pancake/CondRespProto.lean",
+   "6e02cb06779cf791"],
+  ["options", "00000000000006bb"],
+  ["isModule: false", "feefd2a0d3a1847e"],
+  ["Module.name: Pancake.CondRespProto", "6dcd2d962997b31a"],
+  ["Package.id?: (some orb-compiler)", "0a473b67509a16ae"],
+  ["Module.leanArgs: #[]", "00000000000006bb"]],
+ "depHash": "f3fd84ebe8f9b6a5"}

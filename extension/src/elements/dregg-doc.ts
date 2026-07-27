@@ -104,7 +104,7 @@ const BADGE: Record<TrustTier, string> = {
   extension: "✓ verified by your cipherclerk",
   sdk: "✓ verified in this page",
   server: "✓ verified by dregg.net (trust the origin)",
-  none: "⚠ unverified — original link shown",
+  none: "⚠ unverified · original link shown",
 };
 
 const STYLE = `

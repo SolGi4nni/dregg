@@ -2225,6 +2225,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "dregg-attest-check"
+version = "0.1.0"
+dependencies = [
+ "dregg-tee-verify",
+ "dungeon-on-dregg",
+ "hex",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "dregg-automatafl"
 version = "0.1.0"
 dependencies = [
@@ -2544,6 +2555,7 @@ dependencies = [
  "chacha20poly1305",
  "deos-view",
  "dregg-app-framework",
+ "dregg-attest-check",
  "dregg-automatafl",
  "dregg-captp",
  "dregg-cell",

@@ -1,0 +1,1 @@
+{"outdir": "./reports-verify", "servers": [{"agent": "dataplane", "url": "ws://127.0.0.1:18998"}], "cases": ["9.1.6","9.4.4","9.5.3"], "exclude-cases": [], "exclude-agent-cases": {}}

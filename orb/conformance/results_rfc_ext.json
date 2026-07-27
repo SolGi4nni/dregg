@@ -1,0 +1,209 @@
+{
+  "generated": "2026-07-17T02:19:56",
+  "target": "127.0.0.1:8391",
+  "suite": "RFC 7230/7231/7232/7233 extended HTTP/1.1 conformance",
+  "destructive": false,
+  "pass": 21,
+  "total_graded": 21,
+  "pass_rate": 100.0,
+  "checks": [
+    {
+      "id": "H0-etag-present",
+      "group": "conditional",
+      "rfc": "7232 \u00a72.3",
+      "criterion": "static asset carries a validator (ETag) for conditional requests",
+      "request": "GET /static/app.js",
+      "verdict": "PASS",
+      "observed": "ETag=\"9e983f35\""
+    },
+    {
+      "id": "H1-inm-match-304",
+      "group": "conditional",
+      "rfc": "7232 \u00a73.2 (MUST)",
+      "criterion": "If-None-Match with matching ETag \u21d2 304 Not Modified for GET",
+      "request": "GET /static/app.js (If-None-Match: \"9e983f35\")",
+      "verdict": "PASS",
+      "observed": "status=304 (expected 304)"
+    },
+    {
+      "id": "H2-304-no-body",
+      "group": "conditional",
+      "rfc": "7232 \u00a74.1 (MUST)",
+      "criterion": "304 response MUST NOT include a message body",
+      "request": "GET /static/app.js (If-None-Match: \"9e983f35\")",
+      "verdict": "PASS",
+      "observed": "status=304, body=0 bytes"
+    },
+    {
+      "id": "H3-inm-star-304",
+      "group": "conditional",
+      "rfc": "7232 \u00a73.2 (MUST)",
+      "criterion": "If-None-Match: * on an existing representation \u21d2 304 for GET",
+      "request": "GET /static/app.js (If-None-Match: *)",
+      "verdict": "PASS",
+      "observed": "status=304 (expected 304)"
+    },
+    {
+      "id": "H4-ifmatch-match-200",
+      "group": "conditional",
+      "rfc": "7232 \u00a73.1 (MUST)",
+      "criterion": "If-Match with matching ETag \u21d2 perform method (200), never 304",
+      "request": "GET /static/app.js (If-Match: \"9e983f35\")",
+      "verdict": "PASS",
+      "observed": "status=200 (expected 200; 304 here = If-Match handled as If-None-Match)"
+    },
+    {
+      "id": "H5-ifmatch-nomatch-412",
+      "group": "conditional",
+      "rfc": "7232 \u00a73.1 (MUST)",
+      "criterion": "If-Match with no matching ETag \u21d2 412 Precondition Failed",
+      "request": "GET /static/app.js (If-Match: \"00000000\")",
+      "verdict": "PASS",
+      "observed": "status=412 (expected 412)"
+    },
+    {
+      "id": "I0-accept-ranges",
+      "group": "range",
+      "rfc": "7233 \u00a72.3",
+      "criterion": "Accept-Ranges advertisement observed (sets the honesty bar for I1/I2)",
+      "request": "GET /static/app.js",
+      "verdict": "PASS",
+      "observed": "Accept-Ranges='bytes'"
+    },
+    {
+      "id": "I1-range-206",
+      "group": "range",
+      "rfc": "7233 \u00a73.1/\u00a74.1 (consistency)",
+      "criterion": "advertised Accept-Ranges: bytes \u21d2 a satisfiable Range yields 206 (else drop the advertisement)",
+      "request": "GET /static/app.js (Range: bytes=0-3)",
+      "verdict": "PASS",
+      "observed": "status=206, body=4 (expected 206 + Content-Range; 200-full = Range ignored)"
+    },
+    {
+      "id": "I2-range-416",
+      "group": "range",
+      "rfc": "7233 \u00a74.4 (consistency)",
+      "criterion": "advertised Accept-Ranges: bytes \u21d2 an unsatisfiable Range yields 416",
+      "request": "GET /static/app.js (Range: bytes=99999990-)",
+      "verdict": "PASS",
+      "observed": "status=416 (expected 416; 200-full = Range ignored)"
+    },
+    {
+      "id": "J1-100-continue",
+      "group": "expect",
+      "rfc": "7231 \u00a75.1.1",
+      "criterion": "Expect: 100-continue answered deterministically (interim 100 or final status), no hang",
+      "request": "POST /health (Expect: 100-continue)",
+      "verdict": "PASS",
+      "observed": "status=200, resp_len=613"
+    },
+    {
+      "id": "J2-expect-unknown-417",
+      "group": "expect",
+      "rfc": "7231 \u00a75.1.1 (MUST)",
+      "criterion": "unsupported Expect value MUST yield 417 Expectation Failed",
+      "request": "GET /health (Expect: drorb-nonsense-99)",
+      "verdict": "PASS",
+      "observed": "status=417 (expected 417; 200 = expectation silently ignored)"
+    },
+    {
+      "id": "K1-chunk-ext",
+      "group": "chunked",
+      "rfc": "7230 \u00a74.1.1",
+      "criterion": "chunk extension is parsed and ignored; request still served",
+      "request": "POST /health (chunk 5;name=value)",
+      "verdict": "PASS",
+      "observed": "status=200 (expected 200)"
+    },
+    {
+      "id": "K2-chunk-trailer",
+      "group": "chunked",
+      "rfc": "7230 \u00a74.1.2",
+      "criterion": "trailer section after last-chunk accepted; request served",
+      "request": "POST /health (chunked + trailer)",
+      "verdict": "PASS",
+      "observed": "status=200 (expected 200)"
+    },
+    {
+      "id": "K3-chunk-badsize",
+      "group": "chunked",
+      "rfc": "7230 \u00a74.1 (framing-safety)",
+      "criterion": "invalid (non-hex) chunk size rejected/closed, not parsed as body",
+      "request": "POST /health (chunk size 'ZZ')",
+      "verdict": "PASS",
+      "observed": "status=None, resp_len=0 (empty/close or 4xx is safe)"
+    },
+    {
+      "id": "L1-te-chunked-not-final",
+      "group": "smuggling",
+      "rfc": "7230 \u00a73.3.3 (MUST)",
+      "criterion": "TE with chunked not the final coding \u21d2 400/close (unframable body, smuggling vector)",
+      "request": "POST /health (TE: chunked, gzip)",
+      "verdict": "PASS",
+      "observed": "status=None, resp_len=0 (200 = decoded anyway = smuggling risk)"
+    },
+    {
+      "id": "L2-dup-cl-differ",
+      "group": "smuggling",
+      "rfc": "7230 \u00a73.3.2 (MUST)",
+      "criterion": "two Content-Length fields with differing values rejected/closed",
+      "request": "POST /health (Content-Length: 5 / 6)",
+      "verdict": "PASS",
+      "observed": "status=None, resp_len=0 (empty/close or 4xx is safe)"
+    },
+    {
+      "id": "L3-dup-cl-same",
+      "group": "smuggling",
+      "rfc": "7230 \u00a73.3.2",
+      "criterion": "duplicate Content-Length with identical value accepted; request served",
+      "request": "POST /health (Content-Length: 5 / 5)",
+      "verdict": "PASS",
+      "observed": "status=200 (expected 200)"
+    },
+    {
+      "id": "M1-ws-before-colon",
+      "group": "field-parsing",
+      "rfc": "7230 \u00a73.2.4 (MUST)",
+      "criterion": "whitespace between field-name and colon MUST yield 400",
+      "request": "GET /health (\"Host : x\")",
+      "verdict": "PASS",
+      "observed": "status=400 (expected 400)"
+    },
+    {
+      "id": "M2-obs-fold",
+      "group": "field-parsing",
+      "rfc": "7230 \u00a73.2.4 (MUST)",
+      "criterion": "obs-fold header MUST be rejected (400) or SP-replaced and still routed (200)",
+      "request": "GET /health (folded X-Fold)",
+      "verdict": "PASS",
+      "observed": "status=400 (expected 400 or 200; other = message mis-framed by the fold)"
+    },
+    {
+      "id": "N1-pipeline-order",
+      "group": "persistence",
+      "rfc": "7230 \u00a76.3.2 (MUST)",
+      "criterion": "pipelined requests answered in the SAME order they were received",
+      "request": "GET /health, /no-such-xyz, /static on one socket",
+      "verdict": "PASS",
+      "observed": "response codes in order = [200, 404, 200] (expected [200, 404, 200])"
+    },
+    {
+      "id": "N2-amplification",
+      "group": "persistence",
+      "rfc": "operational (amplification/disclosure)",
+      "criterion": "response is not a large multiple of request size and does not echo request bytes",
+      "request": "GET /health with 8 KiB X-Probe header",
+      "verdict": "PASS",
+      "observed": "resp/req ratio=0.07x, request-bytes-echoed-in-header=False (x-corr replays the request head as dotted-decimal)"
+    },
+    {
+      "id": "Z1-large-head-dos",
+      "group": "resource-limit",
+      "rfc": "availability (DoS)",
+      "criterion": "a single ~32 KiB request head does not crash the serve",
+      "request": "GET /health with a 32 KiB header value",
+      "verdict": "SKIP",
+      "observed": "destructive check not run (set CONF_DESTRUCTIVE=1); confirmed FAIL manually \u2014 see CONFORMANCE-EXT.md"
+    }
+  ]
+}

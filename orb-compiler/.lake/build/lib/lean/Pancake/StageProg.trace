@@ -1,0 +1,62 @@
+{"synthetic": false,
+ "schemaVersion": "2025-09-10",
+ "outputs":
+ {"o": ["84ca3485a8178789.olean"],
+  "m": false,
+  "i": "249843571458cde8.ilean",
+  "c": "e705ee84c431b1f6.c"},
+ "log":
+ [{"message":
+   ".> LEAN_PATH=/Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean /Users/ember/.elan/toolchains/leanprover--lean4---v4.30.0/bin/lean /Users/ember/dev/breadstuffs/orb-compiler/Pancake/StageProg.lean -o /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/StageProg.olean -i /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/StageProg.ilean -c /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/StageProg.c --setup /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/StageProg.setup.json --json",
+   "level": "trace"},
+  {"message":
+   "Pancake/StageProg.lean:444:0: 'Pancake.StageProg.denoteStep_halted' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageProg.lean:445:0: 'Pancake.StageProg.denote_securityHeaders' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageProg.lean:446:0: 'Pancake.StageProg.denote_methodFilter_deny' depends on axioms: [propext, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageProg.lean:447:0: 'Pancake.StageProg.denote_methodFilter_allow' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageProg.lean:448:0: 'Pancake.StageProg.denote_redirect' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageProg.lean:449:0: 'Pancake.StageProg.denote_securityHeadersCfg' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageProg.lean:450:0: 'Pancake.StageProg.securityHeadersCfg_value_present' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageProg.lean:451:0: 'Pancake.StageProg.stageprog_compile_correct' depends on axioms: [propext, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageProg.lean:452:0: 'Pancake.StageProg.redirect_compile_correct' depends on axioms: [propext, Quot.sound]",
+   "level": "info"}],
+ "inputs":
+ [["Pancake.StageProg:deps",
+   [["deps",
+     [["«orb-compiler»/Pancake:extraDep",
+       [["@«orb-compiler»:extraDep", "00000000000006bb"]]],
+      ["imports",
+       [["Pancake.SerializeCompile transitive imports (legacy)",
+         "7eb9e7ef4e824d0b"],
+        ["Pancake.SerializeCompile:importAllArts", "3dd42b35c239b1fd"]]]]],
+    ["libs",
+     [["import dynlibs", "00000000000006bb"],
+      ["package external libraries", "00000000000006bb"],
+      ["module dynlibs", "00000000000006bb"],
+      ["module plugins", "00000000000006bb"]]]]],
+  ["Lean 4.30.0, commit d024af099ca4bf2c86f649261ebf59565dc8c622",
+   "2f4703bb19086252"],
+  ["/Users/ember/dev/breadstuffs/orb-compiler/Pancake/StageProg.lean",
+   "ba03e3e7d86baff3"],
+  ["options", "00000000000006bb"],
+  ["isModule: false", "feefd2a0d3a1847e"],
+  ["Module.name: Pancake.StageProg", "a013461289f939f9"],
+  ["Package.id?: (some orb-compiler)", "0a473b67509a16ae"],
+  ["Module.leanArgs: #[]", "00000000000006bb"]],
+ "depHash": "4ef7be3a21285a91"}

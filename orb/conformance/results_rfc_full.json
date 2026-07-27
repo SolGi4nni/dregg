@@ -1,0 +1,1138 @@
+{
+  "generated": "2026-07-17T01:49:58",
+  "target": "127.0.0.1:18993",
+  "suite": "comprehensive HTTP/1.1 RFC conformance battery (7230-7235 / 9110-9112 / 3986)",
+  "destructive": false,
+  "pass": 122,
+  "fail": 0,
+  "skip": 3,
+  "total_graded": 122,
+  "pass_rate": 100.0,
+  "checks": [
+    {
+      "id": "A01-status-line-shape",
+      "group": "framing",
+      "rfc": "9112 \u00a74 (MUST)",
+      "criterion": "status-line = HTTP-version SP status-code SP [reason] CRLF",
+      "request": "GET /health",
+      "verdict": "PASS",
+      "observed": "HTTP/1.1 200 OK"
+    },
+    {
+      "id": "A02-version-token",
+      "group": "framing",
+      "rfc": "9112 \u00a72.3 (MUST)",
+      "criterion": "server responds with HTTP/1.1 version token",
+      "request": "GET /health",
+      "verdict": "PASS",
+      "observed": "HTTP/1.1 200 OK"
+    },
+    {
+      "id": "A03-status-200-reason",
+      "group": "framing",
+      "rfc": "9110 \u00a715.3.1 (SHOULD)",
+      "criterion": "200 carries a sensible reason phrase (OK)",
+      "request": "GET /health",
+      "verdict": "PASS",
+      "observed": "status=200 reason='OK'"
+    },
+    {
+      "id": "A04-header-terminator",
+      "group": "framing",
+      "rfc": "9112 \u00a72.1 (MUST)",
+      "criterion": "header section terminated by an empty line (CRLFCRLF)",
+      "request": "GET /health",
+      "verdict": "PASS",
+      "observed": "CRLFCRLF present"
+    },
+    {
+      "id": "A05-content-length-accurate",
+      "group": "framing",
+      "rfc": "9112 \u00a76.2 (MUST)",
+      "criterion": "Content-Length equals the actual message-body octet count",
+      "request": "GET /health",
+      "verdict": "PASS",
+      "observed": "Content-Length=b'2' body=2"
+    },
+    {
+      "id": "A06-content-length-static",
+      "group": "framing",
+      "rfc": "9112 \u00a76.2 (MUST)",
+      "criterion": "static asset Content-Length equals served body octet count",
+      "request": "GET /static/app.js",
+      "verdict": "PASS",
+      "observed": "Content-Length=b'35' body=35"
+    },
+    {
+      "id": "A07-404-framed",
+      "group": "framing",
+      "rfc": "9112 \u00a76.2 (MUST)",
+      "criterion": "404 error body is framed by an accurate Content-Length",
+      "request": "GET /definitely-no-such-path-xyz",
+      "verdict": "PASS",
+      "observed": "status=404 Content-Length=b'85' body=85"
+    },
+    {
+      "id": "A08-single-status-line",
+      "group": "framing",
+      "rfc": "9112 \u00a72.1 (MUST)",
+      "criterion": "exactly one start-line before the header section",
+      "request": "GET /health",
+      "verdict": "PASS",
+      "observed": "start-lines in head=1"
+    },
+    {
+      "id": "B01-get",
+      "group": "methods",
+      "rfc": "9110 \u00a79.3.1 (MUST)",
+      "criterion": "GET on a valid resource returns 2xx",
+      "request": "GET /health",
+      "verdict": "PASS",
+      "observed": "status=200"
+    },
+    {
+      "id": "B02-head-no-body",
+      "group": "methods",
+      "rfc": "9110 \u00a79.3.2 (MUST)",
+      "criterion": "HEAD response MUST NOT include a message body",
+      "request": "HEAD /health",
+      "verdict": "PASS",
+      "observed": "status=200 body=0 b''"
+    },
+    {
+      "id": "B03-head-matches-get",
+      "group": "methods",
+      "rfc": "9110 \u00a79.3.2 (SHOULD)",
+      "criterion": "HEAD Content-Length equals what GET would return",
+      "request": "HEAD /static/app.js vs GET",
+      "verdict": "PASS",
+      "observed": "GET CL=b'35' HEAD CL=b'35'"
+    },
+    {
+      "id": "B04-post-answered",
+      "group": "methods",
+      "rfc": "9110 \u00a79.3.3 (MUST)",
+      "criterion": "POST is answered with a final status (not ignored/hung)",
+      "request": "POST /health",
+      "verdict": "PASS",
+      "observed": "status=200"
+    },
+    {
+      "id": "B05-put-answered",
+      "group": "methods",
+      "rfc": "9110 \u00a79.3.4 / \u00a715.5.6 (MUST)",
+      "criterion": "PUT is answered with a final status (2xx if supported, else 405/501)",
+      "request": "PUT /health",
+      "verdict": "PASS",
+      "observed": "status=405"
+    },
+    {
+      "id": "B06-delete-answered",
+      "group": "methods",
+      "rfc": "9110 \u00a79.3.5 (MUST)",
+      "criterion": "DELETE is answered with a final status",
+      "request": "DELETE /health",
+      "verdict": "PASS",
+      "observed": "status=405"
+    },
+    {
+      "id": "B07-options-answered",
+      "group": "methods",
+      "rfc": "9110 \u00a79.3.7 (MUST)",
+      "criterion": "OPTIONS answered with a final status (2xx) or 405/501",
+      "request": "OPTIONS /health",
+      "verdict": "PASS",
+      "observed": "status=204"
+    },
+    {
+      "id": "B08-options-allow",
+      "group": "methods",
+      "rfc": "9110 \u00a79.3.7 / \u00a710.2.1 (SHOULD)",
+      "criterion": "a 2xx OPTIONS response advertises supported methods in Allow",
+      "request": "OPTIONS /health",
+      "verdict": "PASS",
+      "observed": "status=204 Allow=b'GET, HEAD, POST, OPTIONS'"
+    },
+    {
+      "id": "B09-options-asterisk",
+      "group": "methods",
+      "rfc": "9112 \u00a73.2.4 (SHOULD)",
+      "criterion": "asterisk-form OPTIONS * answered deterministically (2xx/4xx), no hang",
+      "request": "OPTIONS *",
+      "verdict": "PASS",
+      "observed": "status=204 len=135"
+    },
+    {
+      "id": "B10-trace-safe",
+      "group": "methods",
+      "rfc": "9110 \u00a79.3.8 (MUST)",
+      "criterion": "TRACE either disabled (405/501) or a message/http echo \u2014 not a generic 200 page",
+      "request": "TRACE /health",
+      "verdict": "PASS",
+      "observed": "status=405 (405/501 disabled, or 200+message/http echo)"
+    },
+    {
+      "id": "B11-connect-rejected",
+      "group": "methods",
+      "rfc": "9110 \u00a79.3.6 (MUST)",
+      "criterion": "CONNECT to a non-tunnel origin server is rejected (405/501/400), not 200",
+      "request": "CONNECT example.com:443",
+      "verdict": "PASS",
+      "observed": "status=403 len=73"
+    },
+    {
+      "id": "B12-unknown-method-501",
+      "group": "methods",
+      "rfc": "9110 \u00a79.1 / \u00a715.6.6 (MUST)",
+      "criterion": "unrecognized method rejected (501 preferred, or 405/400) \u2014 never served as GET",
+      "request": "FROBNICATE /health",
+      "verdict": "PASS",
+      "observed": "status=501 (expected 501/405/400)"
+    },
+    {
+      "id": "B13-method-case-sensitive",
+      "group": "methods",
+      "rfc": "9110 \u00a79.1 (MUST)",
+      "criterion": "method names are case-sensitive; lowercase 'get' is not GET (400/501, not 200)",
+      "request": "get /health",
+      "verdict": "PASS",
+      "observed": "status=501 len=124 (200 = case-folded, a violation)"
+    },
+    {
+      "id": "B14-405-allow",
+      "group": "methods",
+      "rfc": "9110 \u00a715.5.6 (MUST)",
+      "criterion": "a 405 Method Not Allowed response MUST include an Allow header",
+      "request": "PUT /health -> 405",
+      "verdict": "PASS",
+      "observed": "Allow=b'GET, POST, HEAD, OPTIONS'"
+    },
+    {
+      "id": "C01-absolute-form",
+      "group": "targets",
+      "rfc": "9112 \u00a73.2.2 (MUST)",
+      "criterion": "absolute-form request-target accepted and routed like origin-form",
+      "request": "GET http://x/health",
+      "verdict": "PASS",
+      "observed": "abs=200 org=200"
+    },
+    {
+      "id": "C02-authority-form-get",
+      "group": "targets",
+      "rfc": "9112 \u00a73.2.3 (MUST)",
+      "criterion": "authority-form target is only valid for CONNECT; a GET with it is 400, not 200",
+      "request": "GET x:80",
+      "verdict": "PASS",
+      "observed": "status=400 (200 = mis-parsed authority-form)"
+    },
+    {
+      "id": "C03-query-string",
+      "group": "targets",
+      "rfc": "9112 \u00a73.2.1 (MUST)",
+      "criterion": "origin-form with a query component is accepted and routed",
+      "request": "GET /health?a=1&b=2",
+      "verdict": "PASS",
+      "observed": "status=200"
+    },
+    {
+      "id": "C04-fragment-in-target",
+      "group": "targets",
+      "rfc": "9112 \u00a73.2 / 3986 \u00a73.5 (SHOULD)",
+      "criterion": "a fragment in the request-target is rejected (400) or 404, not silently served as 200",
+      "request": "GET /health#frag",
+      "verdict": "PASS",
+      "observed": "status=404 (200 = fragment silently stripped)"
+    },
+    {
+      "id": "C05-empty-target",
+      "group": "targets",
+      "rfc": "9112 \u00a73 (MUST)",
+      "criterion": "an empty request-target is a malformed request-line \u21d2 400 (or close)",
+      "request": "GET <empty>",
+      "verdict": "PASS",
+      "observed": "status=400 len=116"
+    },
+    {
+      "id": "C06-relative-target",
+      "group": "targets",
+      "rfc": "9112 \u00a73.2.1 (SHOULD)",
+      "criterion": "a bare relative target ('health', no leading /) is rejected (400) or 404, not 200",
+      "request": "GET health",
+      "verdict": "PASS",
+      "observed": "status=400"
+    },
+    {
+      "id": "C07-double-slash",
+      "group": "targets",
+      "rfc": "9110 \u00a74.1 (capability)",
+      "criterion": "path with a leading double slash handled deterministically (routed or 404)",
+      "request": "GET //health",
+      "verdict": "PASS",
+      "observed": "status=200"
+    },
+    {
+      "id": "D01-missing-host",
+      "group": "host",
+      "rfc": "9112 \u00a73.2 (MUST)",
+      "criterion": "HTTP/1.1 request lacking a Host header MUST be answered with 400",
+      "request": "GET /health (no Host)",
+      "verdict": "PASS",
+      "observed": "status=400 (expected 400)"
+    },
+    {
+      "id": "D02-duplicate-host",
+      "group": "host",
+      "rfc": "9112 \u00a73.2 (MUST)",
+      "criterion": "request with more than one Host header MUST get 400",
+      "request": "GET /health (Host: a / Host: b)",
+      "verdict": "PASS",
+      "observed": "status=400 (expected 400)"
+    },
+    {
+      "id": "D03-empty-host",
+      "group": "host",
+      "rfc": "9110 \u00a77.2 (capability)",
+      "criterion": "an empty Host is handled deterministically (accepted for a single-tenant origin, or 400)",
+      "request": "GET /health (Host: <empty>)",
+      "verdict": "PASS",
+      "observed": "status=400"
+    },
+    {
+      "id": "D04-host-invalid-char",
+      "group": "host",
+      "rfc": "9110 \u00a74.2 / 3986 \u00a73.2.2 (SHOULD)",
+      "criterion": "a Host with an invalid authority (embedded space) is rejected (400), not 200",
+      "request": "GET /health (Host: 'bad host')",
+      "verdict": "PASS",
+      "observed": "status=400 (200 = invalid authority accepted)"
+    },
+    {
+      "id": "D05-host-with-port",
+      "group": "host",
+      "rfc": "9110 \u00a74.2 (MUST)",
+      "criterion": "a Host with an explicit port is a valid authority and routes normally",
+      "request": "GET /health (Host: x:80)",
+      "verdict": "PASS",
+      "observed": "status=200"
+    },
+    {
+      "id": "D06-absform-host-precedence",
+      "group": "host",
+      "rfc": "9112 \u00a73.2.2 (MUST)",
+      "criterion": "with absolute-form, the target authority is authoritative even if Host differs (still valid)",
+      "request": "GET http://authority.example/health (Host: other)",
+      "verdict": "PASS",
+      "observed": "status=200"
+    },
+    {
+      "id": "E01-ws-before-colon",
+      "group": "fields",
+      "rfc": "9112 \u00a75.1 (MUST)",
+      "criterion": "whitespace between field-name and colon MUST yield 400 (no OWS before ':')",
+      "request": "GET /health (\"X-Foo : bar\")",
+      "verdict": "PASS",
+      "observed": "status=400 (expected 400)"
+    },
+    {
+      "id": "E02-obs-fold",
+      "group": "fields",
+      "rfc": "9112 \u00a75.2 (MUST)",
+      "criterion": "obs-fold (line-folded value) MUST be rejected (400) or replaced with SP and still routed (200)",
+      "request": "GET /health (folded X-Fold)",
+      "verdict": "PASS",
+      "observed": "status=400 (other = message mis-framed by the fold)"
+    },
+    {
+      "id": "E03-empty-field-name",
+      "group": "fields",
+      "rfc": "9110 \u00a75.1 (MUST)",
+      "criterion": "a header line with an empty field-name is malformed \u21d2 400 (or close)",
+      "request": "GET /health (\": emptyname\")",
+      "verdict": "PASS",
+      "observed": "status=400 (200 = empty field-name accepted)"
+    },
+    {
+      "id": "E04-header-name-case-insensitive",
+      "group": "fields",
+      "rfc": "9110 \u00a75.1 (MUST)",
+      "criterion": "field names are case-insensitive; 'hOsT' satisfies the Host requirement",
+      "request": "GET /health (hOsT: x)",
+      "verdict": "PASS",
+      "observed": "status=200"
+    },
+    {
+      "id": "E05-value-ows-trim",
+      "group": "fields",
+      "rfc": "9112 \u00a75 (MUST)",
+      "criterion": "optional whitespace around a field value is trimmed; request still routes",
+      "request": "GET /health (Host:    x   )",
+      "verdict": "PASS",
+      "observed": "status=200"
+    },
+    {
+      "id": "E06-ctl-in-value",
+      "group": "fields",
+      "rfc": "9110 \u00a75.5 (MUST)",
+      "criterion": "a control char (bare CR) inside a field value is rejected (400) or the request closed",
+      "request": "GET /health (X-Bad: a<CR>b)",
+      "verdict": "PASS",
+      "observed": "status=400 len=116"
+    },
+    {
+      "id": "E07-nul-in-value",
+      "group": "fields",
+      "rfc": "9110 \u00a75.5 (MUST)",
+      "criterion": "a NUL octet inside a field value is rejected (400) or the connection closed",
+      "request": "GET /health (X-Nul: a<NUL>b)",
+      "verdict": "PASS",
+      "observed": "status=400 len=116"
+    },
+    {
+      "id": "E08-many-headers",
+      "group": "fields",
+      "rfc": "9110 \u00a75 (SHOULD)",
+      "criterion": "a request with 100 small headers is handled deterministically (200 or 431/400), no crash",
+      "request": "GET /health (100 headers)",
+      "verdict": "PASS",
+      "observed": "status=431 len=156"
+    },
+    {
+      "id": "E09-dup-list-header",
+      "group": "fields",
+      "rfc": "9110 \u00a75.2 (SHOULD)",
+      "criterion": "two instances of a list-valued header (Accept) are accepted (combinable), request routes",
+      "request": "GET /health (Accept x2)",
+      "verdict": "PASS",
+      "observed": "status=200"
+    },
+    {
+      "id": "F01-nonnumeric-cl",
+      "group": "content-length",
+      "rfc": "9112 \u00a76.2 (MUST)",
+      "criterion": "a non-numeric Content-Length is invalid \u21d2 400 (or close)",
+      "request": "POST /health (Content-Length: abc)",
+      "verdict": "PASS",
+      "observed": "status=None len=0"
+    },
+    {
+      "id": "F02-negative-cl",
+      "group": "content-length",
+      "rfc": "9112 \u00a76.2 (MUST)",
+      "criterion": "a negative Content-Length is invalid \u21d2 400 (or close)",
+      "request": "POST /health (Content-Length: -5)",
+      "verdict": "PASS",
+      "observed": "status=None"
+    },
+    {
+      "id": "F03-plus-cl",
+      "group": "content-length",
+      "rfc": "9112 \u00a76.2 (MUST)",
+      "criterion": "a Content-Length with a '+' sign is not a valid 1*DIGIT \u21d2 400 (or close)",
+      "request": "POST /health (Content-Length: +5)",
+      "verdict": "PASS",
+      "observed": "status=None"
+    },
+    {
+      "id": "F04-cl-internal-ws",
+      "group": "content-length",
+      "rfc": "9112 \u00a76.2 (MUST)",
+      "criterion": "a Content-Length containing embedded whitespace is invalid \u21d2 400 (or close)",
+      "request": "POST /health (Content-Length: '5 5')",
+      "verdict": "PASS",
+      "observed": "status=None"
+    },
+    {
+      "id": "F05-valid-cl-body",
+      "group": "content-length",
+      "rfc": "9112 \u00a76.2 (MUST)",
+      "criterion": "a valid Content-Length body is consumed and the request served",
+      "request": "POST /health (Content-Length: 5, hello)",
+      "verdict": "PASS",
+      "observed": "status=200"
+    },
+    {
+      "id": "G01-chunked-basic",
+      "group": "chunked",
+      "rfc": "9112 \u00a77.1 (MUST)",
+      "criterion": "a valid chunked request body is decoded and the request served",
+      "request": "POST /health (chunked hello)",
+      "verdict": "PASS",
+      "observed": "status=200"
+    },
+    {
+      "id": "G02-chunk-ext",
+      "group": "chunked",
+      "rfc": "9112 \u00a77.1.1 (MUST)",
+      "criterion": "chunk extensions are parsed and ignored; request still served",
+      "request": "POST /health (5;ext=1)",
+      "verdict": "PASS",
+      "observed": "status=200"
+    },
+    {
+      "id": "G03-chunk-trailer",
+      "group": "chunked",
+      "rfc": "9112 \u00a77.1.2 (MUST)",
+      "criterion": "a trailer section after the last-chunk is accepted; request served",
+      "request": "POST /health (chunk + trailer)",
+      "verdict": "PASS",
+      "observed": "status=200"
+    },
+    {
+      "id": "G04-chunk-hex-upper",
+      "group": "chunked",
+      "rfc": "9112 \u00a77.1 (MUST)",
+      "criterion": "an uppercase-hex chunk size (A = 10) is valid and decoded",
+      "request": "POST /health (chunk size 'A')",
+      "verdict": "PASS",
+      "observed": "status=200"
+    },
+    {
+      "id": "G05-chunk-badsize",
+      "group": "chunked",
+      "rfc": "9112 \u00a77.1 (MUST)",
+      "criterion": "a non-hex chunk size is a framing error \u21d2 reject/close, never parsed as data",
+      "request": "POST /health (chunk size 'ZZ')",
+      "verdict": "PASS",
+      "observed": "status=None len=0"
+    },
+    {
+      "id": "G06-te-case-insensitive",
+      "group": "chunked",
+      "rfc": "9112 \u00a76.1 (MUST)",
+      "criterion": "the transfer-coding name is case-insensitive; 'Chunked' is decoded",
+      "request": "POST /health (TE: Chunked)",
+      "verdict": "PASS",
+      "observed": "status=200"
+    },
+    {
+      "id": "G07-te-chunked-not-final",
+      "group": "chunked",
+      "rfc": "9112 \u00a76.3 (MUST)",
+      "criterion": "TE with chunked NOT the final coding \u21d2 400/close (unframable body, smuggling vector)",
+      "request": "POST /health (TE: chunked, gzip)",
+      "verdict": "PASS",
+      "observed": "status=None len=0 (200 = decoded anyway = smuggling risk)"
+    },
+    {
+      "id": "G08-incomplete-chunked",
+      "group": "chunked",
+      "rfc": "9112 \u00a77.1 (MUST)",
+      "criterion": "an incomplete chunked body (no terminating 0-chunk) is not answered 200; closes or 400",
+      "request": "POST /health (chunk, no 0-terminator)",
+      "verdict": "PASS",
+      "observed": "status=None len=0"
+    },
+    {
+      "id": "H01-te-cl-conflict",
+      "group": "smuggling",
+      "rfc": "9112 \u00a76.3 (MUST)",
+      "criterion": "a message with both Transfer-Encoding and Content-Length is rejected/closed (anti-smuggling)",
+      "request": "POST /health (TE: chunked + CL: 5)",
+      "verdict": "PASS",
+      "observed": "status=None len=0"
+    },
+    {
+      "id": "H02-dup-cl-differ",
+      "group": "smuggling",
+      "rfc": "9112 \u00a76.2 (MUST)",
+      "criterion": "two Content-Length fields with DIFFERING values \u21d2 400 (or close)",
+      "request": "POST /health (CL: 5 / CL: 6)",
+      "verdict": "PASS",
+      "observed": "status=None len=0"
+    },
+    {
+      "id": "H03-cl-comma-differ",
+      "group": "smuggling",
+      "rfc": "9112 \u00a76.2 (MUST)",
+      "criterion": "a Content-Length whose comma-list values differ (5, 6) \u21d2 400 (or close)",
+      "request": "POST /health (CL: '5, 6')",
+      "verdict": "PASS",
+      "observed": "status=None"
+    },
+    {
+      "id": "H04-dup-cl-same",
+      "group": "smuggling",
+      "rfc": "9112 \u00a76.2 (SHOULD)",
+      "criterion": "duplicate Content-Length with an IDENTICAL value may be accepted and served",
+      "request": "POST /health (CL: 5 / CL: 5)",
+      "verdict": "PASS",
+      "observed": "status=200 (200 = merged, 400 = strict-reject; both defensible)"
+    },
+    {
+      "id": "I01-keepalive-default",
+      "group": "connection",
+      "rfc": "9112 \u00a79.3 (MUST)",
+      "criterion": "HTTP/1.1 is persistent by default; two pipelined requests yield two responses",
+      "request": "GET /health then GET /static/app.js on one socket",
+      "verdict": "PASS",
+      "observed": "responses on one connection = 2"
+    },
+    {
+      "id": "I02-connection-close",
+      "group": "connection",
+      "rfc": "9112 \u00a79.6 (MUST)",
+      "criterion": "Connection: close is honored (response signals close and the socket is closed)",
+      "request": "GET /health (Connection: close)",
+      "verdict": "PASS",
+      "observed": "Connection=b'close'"
+    },
+    {
+      "id": "I03-http10-default-close",
+      "group": "connection",
+      "rfc": "9112 \u00a79.3 (MUST)",
+      "criterion": "an HTTP/1.0 request without keep-alive is treated as non-persistent (close)",
+      "request": "GET /health HTTP/1.0",
+      "verdict": "PASS",
+      "observed": "Connection=b'close'"
+    },
+    {
+      "id": "I04-http10-keepalive",
+      "group": "connection",
+      "rfc": "9112 \u00a79.3 (capability)",
+      "criterion": "HTTP/1.0 Connection: keep-alive may hold the connection open for a 2nd request",
+      "request": "GET /health HTTP/1.0 (keep-alive) x2",
+      "verdict": "PASS",
+      "observed": "2nd-response-on-same-socket=True"
+    },
+    {
+      "id": "I05-pipeline-order",
+      "group": "connection",
+      "rfc": "9112 \u00a79.3.2 (MUST)",
+      "criterion": "pipelined requests are answered in the SAME order received",
+      "request": "GET /health, /no-such-xyz, /static/app.js",
+      "verdict": "PASS",
+      "observed": "codes in order = [200, 404, 200] (expected [200, 404, 200])"
+    },
+    {
+      "id": "J00-etag-present",
+      "group": "conditional",
+      "rfc": "9110 \u00a78.8.3 (SHOULD)",
+      "criterion": "static asset carries a validator (ETag) for conditional requests",
+      "request": "GET /static/app.js",
+      "verdict": "PASS",
+      "observed": "ETag=\"9e983f35\""
+    },
+    {
+      "id": "J01-inm-match-304",
+      "group": "conditional",
+      "rfc": "9110 \u00a713.1.2 (MUST)",
+      "criterion": "If-None-Match with a matching validator \u21d2 304 for GET",
+      "request": "GET /static/app.js (If-None-Match: \"9e983f35\")",
+      "verdict": "PASS",
+      "observed": "status=304 (expected 304)"
+    },
+    {
+      "id": "J02-304-no-body",
+      "group": "conditional",
+      "rfc": "9110 \u00a715.4.5 (MUST)",
+      "criterion": "a 304 Not Modified response MUST NOT include a message body",
+      "request": "GET /static/app.js (If-None-Match match)",
+      "verdict": "PASS",
+      "observed": "status=304 body=0"
+    },
+    {
+      "id": "J03-304-keeps-etag",
+      "group": "conditional",
+      "rfc": "9110 \u00a715.4.5 (SHOULD)",
+      "criterion": "a 304 response echoes the ETag so caches can update stored metadata",
+      "request": "GET /static/app.js (If-None-Match match)",
+      "verdict": "PASS",
+      "observed": "status=304 ETag=b'\"9e983f35\"'"
+    },
+    {
+      "id": "J04-inm-star-304",
+      "group": "conditional",
+      "rfc": "9110 \u00a713.1.2 (MUST)",
+      "criterion": "If-None-Match: * on an existing representation \u21d2 304 for GET",
+      "request": "GET /static/app.js (If-None-Match: *)",
+      "verdict": "PASS",
+      "observed": "status=304 (expected 304)"
+    },
+    {
+      "id": "J05-inm-nomatch-200",
+      "group": "conditional",
+      "rfc": "9110 \u00a713.1.2 (MUST)",
+      "criterion": "If-None-Match with a NON-matching validator \u21d2 perform GET (200)",
+      "request": "GET /static/app.js (If-None-Match: \"deadbeef\")",
+      "verdict": "PASS",
+      "observed": "status=200 (expected 200)"
+    },
+    {
+      "id": "J06-ifmatch-match-200",
+      "group": "conditional",
+      "rfc": "9110 \u00a713.1.1 (MUST)",
+      "criterion": "If-Match with a matching validator \u21d2 perform the method (200), never 304",
+      "request": "GET /static/app.js (If-Match: \"9e983f35\")",
+      "verdict": "PASS",
+      "observed": "status=200 (304 here = If-Match handled as If-None-Match)"
+    },
+    {
+      "id": "J07-ifmatch-nomatch-412",
+      "group": "conditional",
+      "rfc": "9110 \u00a713.1.1 (MUST)",
+      "criterion": "If-Match with no matching validator \u21d2 412 Precondition Failed",
+      "request": "GET /static/app.js (If-Match: \"00000000\")",
+      "verdict": "PASS",
+      "observed": "status=412 (expected 412)"
+    },
+    {
+      "id": "J08-ifmatch-star-200",
+      "group": "conditional",
+      "rfc": "9110 \u00a713.1.1 (MUST)",
+      "criterion": "If-Match: * on an existing representation \u21d2 perform the method (200)",
+      "request": "GET /static/app.js (If-Match: *)",
+      "verdict": "PASS",
+      "observed": "status=200"
+    },
+    {
+      "id": "J09-ims-future-304",
+      "group": "conditional",
+      "rfc": "9110 \u00a713.1.3 (MUST)",
+      "criterion": "If-Modified-Since after the representation's date \u21d2 304 (GET/HEAD)",
+      "request": "GET /static/app.js (If-Modified-Since: 2050)",
+      "verdict": "PASS",
+      "observed": "status=304 (200 = IMS not implemented)"
+    },
+    {
+      "id": "J10-ims-past-200",
+      "group": "conditional",
+      "rfc": "9110 \u00a713.1.3 (MUST)",
+      "criterion": "If-Modified-Since before the representation's date \u21d2 200 (send the body)",
+      "request": "GET /static/app.js (If-Modified-Since: 1970)",
+      "verdict": "PASS",
+      "observed": "status=200"
+    },
+    {
+      "id": "J11-ius-past-412",
+      "group": "conditional",
+      "rfc": "9110 \u00a713.1.4 (MUST)",
+      "criterion": "If-Unmodified-Since before the representation's date \u21d2 412 Precondition Failed",
+      "request": "GET /static/app.js (If-Unmodified-Since: 1970)",
+      "verdict": "PASS",
+      "observed": "status=412 (200 = IUS not implemented)"
+    },
+    {
+      "id": "J12-inm-over-ims",
+      "group": "conditional",
+      "rfc": "9110 \u00a713.2.2 (MUST)",
+      "criterion": "If-None-Match takes precedence over If-Modified-Since (non-match \u21d2 200 despite future IMS)",
+      "request": "GET /static/app.js (INM nomatch + IMS 2050)",
+      "verdict": "PASS",
+      "observed": "status=200 (304 = IMS wrongly honored over INM)"
+    },
+    {
+      "id": "K00-accept-ranges",
+      "group": "range",
+      "rfc": "9110 \u00a714.3 (capability)",
+      "criterion": "the static asset advertises Accept-Ranges: bytes",
+      "request": "GET /static/app.js",
+      "verdict": "PASS",
+      "observed": "Accept-Ranges='bytes'"
+    },
+    {
+      "id": "K01-range-206",
+      "group": "range",
+      "rfc": "9110 \u00a714.2/\u00a715.3.7 (MUST-if-supported)",
+      "criterion": "a satisfiable Range on a range-advertising resource \u21d2 206 + Content-Range",
+      "request": "GET /static/app.js (Range: bytes=0-3)",
+      "verdict": "PASS",
+      "observed": "status=206 body=4 Content-Range=b'bytes 0-3/35'"
+    },
+    {
+      "id": "K02-206-body-len",
+      "group": "range",
+      "rfc": "9110 \u00a714.4 (MUST)",
+      "criterion": "a 206 for bytes=0-3 returns exactly 4 octets",
+      "request": "GET /static/app.js (Range: bytes=0-3)",
+      "verdict": "PASS",
+      "observed": "status=206 body=4 (expected 4)"
+    },
+    {
+      "id": "K03-suffix-range",
+      "group": "range",
+      "rfc": "9110 \u00a714.1.2 (MUST-if-supported)",
+      "criterion": "a suffix range (bytes=-4) \u21d2 206 with the last 4 octets",
+      "request": "GET /static/app.js (Range: bytes=-4)",
+      "verdict": "PASS",
+      "observed": "status=206 body=4"
+    },
+    {
+      "id": "K04-open-range",
+      "group": "range",
+      "rfc": "9110 \u00a714.1.2 (MUST-if-supported)",
+      "criterion": "an open-ended range (bytes=2-) \u21d2 206 from offset 2 to the end",
+      "request": "GET /static/app.js (Range: bytes=2-)",
+      "verdict": "PASS",
+      "observed": "status=206 body=33 (expected 33)"
+    },
+    {
+      "id": "K05-range-416",
+      "group": "range",
+      "rfc": "9110 \u00a714.4/\u00a715.5.17 (MUST-if-supported)",
+      "criterion": "an unsatisfiable Range \u21d2 416 Range Not Satisfiable with Content-Range: bytes */len",
+      "request": "GET /static/app.js (Range: bytes=99999990-)",
+      "verdict": "PASS",
+      "observed": "status=416 Content-Range=b'bytes */35' (expected 416 + 'bytes */len')"
+    },
+    {
+      "id": "K06-multi-range",
+      "group": "range",
+      "rfc": "9110 \u00a714.2/\u00a715.3.7 (capability)",
+      "criterion": "multiple ranges \u21d2 206 with Content-Type multipart/byteranges (or a single coalesced 206)",
+      "request": "GET /static/app.js (Range: bytes=0-1,3-4)",
+      "verdict": "PASS",
+      "observed": "status=206 Content-Type=b'multipart/byteranges; boundary=drorbrange'"
+    },
+    {
+      "id": "K07-ifrange-match-206",
+      "group": "range",
+      "rfc": "9110 \u00a713.1.5 (MUST-if-supported)",
+      "criterion": "If-Range with a matching validator \u21d2 send the requested range (206)",
+      "request": "GET /static/app.js (If-Range match + Range)",
+      "verdict": "PASS",
+      "observed": "status=206 (expected 206)"
+    },
+    {
+      "id": "K08-ifrange-nomatch-200",
+      "group": "range",
+      "rfc": "9110 \u00a713.1.5 (MUST-if-supported)",
+      "criterion": "If-Range with a NON-matching validator \u21d2 ignore Range, send full 200",
+      "request": "GET /static/app.js (If-Range nomatch + Range)",
+      "verdict": "PASS",
+      "observed": "status=200 body=35 (expected full 200)"
+    },
+    {
+      "id": "K09-unknown-range-unit",
+      "group": "range",
+      "rfc": "9110 \u00a714.2 (MUST)",
+      "criterion": "an unrecognized range unit is ignored \u21d2 200 full response, never 206/416",
+      "request": "GET /static/app.js (Range: items=0-3)",
+      "verdict": "PASS",
+      "observed": "status=200 (206/416 = mis-handled unknown unit)"
+    },
+    {
+      "id": "L01-accept-any",
+      "group": "negotiation",
+      "rfc": "9110 \u00a712.5.1 (MUST)",
+      "criterion": "Accept: */* is satisfiable \u21d2 200",
+      "request": "GET /static/app.js (Accept: */*)",
+      "verdict": "PASS",
+      "observed": "status=200"
+    },
+    {
+      "id": "L02-accept-match",
+      "group": "negotiation",
+      "rfc": "9110 \u00a712.5.1 (MUST)",
+      "criterion": "Accept naming the resource's media type \u21d2 200",
+      "request": "GET /static/app.js (Accept: application/javascript)",
+      "verdict": "PASS",
+      "observed": "status=200"
+    },
+    {
+      "id": "L03-accept-unsatisfiable",
+      "group": "negotiation",
+      "rfc": "9110 \u00a712.5.1/\u00a715.5.7 (capability)",
+      "criterion": "an Accept that excludes the only representation \u21d2 406, or serve it anyway (both conformant)",
+      "request": "GET /static/app.js (Accept: application/x-nonesuch)",
+      "verdict": "PASS",
+      "observed": "status=200 (406 = strict negotiation; 200 = serve-anyway)"
+    },
+    {
+      "id": "L04-accept-encoding-gzip",
+      "group": "negotiation",
+      "rfc": "9110 \u00a712.5.3 (capability)",
+      "criterion": "Accept-Encoding: gzip may yield Content-Encoding: gzip (else identity is still valid)",
+      "request": "GET /static/app.js (Accept-Encoding: gzip)",
+      "verdict": "PASS",
+      "observed": "status=200 Content-Encoding=b'gzip'"
+    },
+    {
+      "id": "L05-vary-on-encoding",
+      "group": "negotiation",
+      "rfc": "9110 \u00a712.5.5 (SHOULD)",
+      "criterion": "a content-coding-negotiated response carries Vary: Accept-Encoding",
+      "request": "GET /static/app.js (Accept-Encoding: gzip)",
+      "verdict": "PASS",
+      "observed": "Vary=b'Accept-Encoding'"
+    },
+    {
+      "id": "L06-encoding-all-refused",
+      "group": "negotiation",
+      "rfc": "9110 \u00a712.5.3 (capability)",
+      "criterion": "Accept-Encoding refusing every coding (incl. identity) may yield 406, or be served identity",
+      "request": "GET /static/app.js (Accept-Encoding: identity;q=0, *;q=0)",
+      "verdict": "PASS",
+      "observed": "status=200"
+    },
+    {
+      "id": "L07-accept-language",
+      "group": "negotiation",
+      "rfc": "9110 \u00a712.5.4 (MUST)",
+      "criterion": "Accept-Language for an unavailable language still yields a usable 200 (language negotiation optional)",
+      "request": "GET /static/app.js (Accept-Language: zz)",
+      "verdict": "PASS",
+      "observed": "status=200"
+    },
+    {
+      "id": "M01-100-continue-answered",
+      "group": "expect",
+      "rfc": "9110 \u00a710.1.1 (MUST)",
+      "criterion": "Expect: 100-continue is answered deterministically (interim 100 and/or final), no hang",
+      "request": "POST /health (Expect: 100-continue)",
+      "verdict": "PASS",
+      "observed": "codes=[100, 200] interim=b'HTTP/1.1 100 Continu'"
+    },
+    {
+      "id": "M02-100-interim-sent",
+      "group": "expect",
+      "rfc": "9110 \u00a710.1.1 (SHOULD)",
+      "criterion": "server sends an interim 100 (Continue) before reading the body it will accept",
+      "request": "POST /health (Expect: 100-continue)",
+      "verdict": "PASS",
+      "observed": "interim_status=100"
+    },
+    {
+      "id": "M03-expect-unknown-417",
+      "group": "expect",
+      "rfc": "9110 \u00a710.1.1/\u00a715.5.18 (MUST)",
+      "criterion": "an unsupported Expect value MUST yield 417 Expectation Failed",
+      "request": "GET /health (Expect: some-unknown-99)",
+      "verdict": "PASS",
+      "observed": "status=417 (200 = expectation silently ignored)"
+    },
+    {
+      "id": "N01-cache-control-present",
+      "group": "caching",
+      "rfc": "9111 \u00a75.2 (capability)",
+      "criterion": "a static asset advertises freshness via Cache-Control (max-age / public / immutable)",
+      "request": "GET /static/app.js",
+      "verdict": "PASS",
+      "observed": "Cache-Control=b'max-age=60, stale-while-revalidate=30'"
+    },
+    {
+      "id": "N02-age-syntax",
+      "group": "caching",
+      "rfc": "9111 \u00a75.1 (capability)",
+      "criterion": "Age header present and well-formed (origin responses often omit Age)",
+      "request": "GET /static/app.js",
+      "verdict": "SKIP",
+      "observed": "no Age header (origin default)"
+    },
+    {
+      "id": "N03-cacheability-signal",
+      "group": "caching",
+      "rfc": "9111 \u00a73/\u00a74.2 (SHOULD)",
+      "criterion": "a cacheable static response carries a validator (ETag/Last-Modified) or explicit freshness",
+      "request": "GET /static/app.js",
+      "verdict": "PASS",
+      "observed": "ETag=True Last-Modified=True Cache-Control=True"
+    },
+    {
+      "id": "N04-vary-syntax",
+      "group": "caching",
+      "rfc": "9110 \u00a712.5.5 (MUST)",
+      "criterion": "a Vary header is '*' or a comma list of valid field-names",
+      "request": "GET /static/app.js",
+      "verdict": "PASS",
+      "observed": "Vary=b'Accept-Encoding'"
+    },
+    {
+      "id": "N05-request-no-cache",
+      "group": "caching",
+      "rfc": "9111 \u00a75.2.1.4 (MUST)",
+      "criterion": "an origin server honors a request even with Cache-Control: no-cache (returns a fresh 200)",
+      "request": "GET /static/app.js (Cache-Control: no-cache)",
+      "verdict": "PASS",
+      "observed": "status=200"
+    },
+    {
+      "id": "O01-404-missing",
+      "group": "status",
+      "rfc": "9110 \u00a715.5.5 (MUST)",
+      "criterion": "a request for a non-existent resource yields 404 Not Found",
+      "request": "GET /surely-no-such-resource-9z",
+      "verdict": "PASS",
+      "observed": "status=404"
+    },
+    {
+      "id": "O02-bad-version",
+      "group": "status",
+      "rfc": "9112 \u00a72.3/\u00a715.6.6 (MUST)",
+      "criterion": "an unsupported HTTP major version is rejected (505 or 400), never served as 200",
+      "request": "GET /health HTTP/9.9",
+      "verdict": "PASS",
+      "observed": "status=505 (expected 400/505)"
+    },
+    {
+      "id": "O03-garbage-request-line",
+      "group": "status",
+      "rfc": "9112 \u00a73 (MUST)",
+      "criterion": "a malformed request-line is answered 400 (or the connection is closed)",
+      "request": "!@#$ garbage line",
+      "verdict": "PASS",
+      "observed": "status=None len=0"
+    },
+    {
+      "id": "O04-error-body-framed",
+      "group": "status",
+      "rfc": "9112 \u00a76 (MUST)",
+      "criterion": "a 404 response is self-delimiting (Content-Length present, or connection closed)",
+      "request": "GET /nope-xyz",
+      "verdict": "PASS",
+      "observed": "Content-Length=b'66' Connection=b'close'"
+    },
+    {
+      "id": "O05-404-reason",
+      "group": "status",
+      "rfc": "9110 \u00a715.3 (SHOULD)",
+      "criterion": "the 404 status-line carries a non-empty reason phrase",
+      "request": "GET /nope-xyz",
+      "verdict": "PASS",
+      "observed": "reason='Not Found'"
+    },
+    {
+      "id": "O06-200-has-body",
+      "group": "status",
+      "rfc": "9110 \u00a76.4.1 (MUST)",
+      "criterion": "a 200 GET response includes the representation body",
+      "request": "GET /health",
+      "verdict": "PASS",
+      "observed": "body=2"
+    },
+    {
+      "id": "P01-percent-decode",
+      "group": "encoding",
+      "rfc": "3986 \u00a72.1 (SHOULD)",
+      "criterion": "a fully percent-encoded path decodes to the same resource as the plain form",
+      "request": "GET /%68%65%61%6C%74%68",
+      "verdict": "PASS",
+      "observed": "encoded=200 plain=200"
+    },
+    {
+      "id": "P02-invalid-percent",
+      "group": "encoding",
+      "rfc": "3986 \u00a72.1/9110 \u00a74 (SHOULD)",
+      "criterion": "an invalid percent-escape (%ZZ) is rejected (400) or 404, not silently 200",
+      "request": "GET /%ZZbad",
+      "verdict": "PASS",
+      "observed": "status=404"
+    },
+    {
+      "id": "P03-encoded-nul",
+      "group": "encoding",
+      "rfc": "9110 \u00a74.1 (SHOULD)",
+      "criterion": "an encoded NUL (%00) in the path does not resolve to a different resource (no 200 via truncation)",
+      "request": "GET /health%00.txt",
+      "verdict": "PASS",
+      "observed": "status=404 (200 = %00 truncation)"
+    },
+    {
+      "id": "P04-path-traversal",
+      "group": "encoding",
+      "rfc": "9110 \u00a74.1 (MUST)",
+      "criterion": "dot-segment traversal (../../etc/passwd) does not escape the root or leak a file",
+      "request": "GET /../../../../etc/passwd",
+      "verdict": "PASS",
+      "observed": "status=404 leaked_passwd=False"
+    },
+    {
+      "id": "P05-encoded-traversal",
+      "group": "encoding",
+      "rfc": "9110 \u00a74.1 (MUST)",
+      "criterion": "percent-encoded traversal (%2e%2e%2f) is normalized/contained, no file leak",
+      "request": "GET /%2e%2e%2f...etc%2fpasswd",
+      "verdict": "PASS",
+      "observed": "status=404 leaked_passwd=False"
+    },
+    {
+      "id": "Q01-no-request-header-reflection",
+      "group": "injection",
+      "rfc": "9110 \u00a75.5 (SHOULD)",
+      "criterion": "arbitrary request header names are not reflected verbatim into the response header block",
+      "request": "GET /health (X-Evil: injected)",
+      "verdict": "PASS",
+      "observed": "x-evil-reflected=False"
+    },
+    {
+      "id": "Q02-encoded-crlf-path",
+      "group": "injection",
+      "rfc": "9110 \u00a74.1 (MUST)",
+      "criterion": "an encoded CRLF in the path does not inject a response header (no response splitting)",
+      "request": "GET /health%0d%0aX-Injected:%20yes",
+      "verdict": "PASS",
+      "observed": "x-injected-present=False status=404"
+    },
+    {
+      "id": "Q03-bare-lf-no-desync",
+      "group": "injection",
+      "rfc": "9112 \u00a72.2 (SHOULD)",
+      "criterion": "a bare LF within the header block does not desync framing into two responses",
+      "request": "GET /health (bare LF before X-Bare)",
+      "verdict": "PASS",
+      "observed": "responses=1 status=400"
+    },
+    {
+      "id": "R01-date-header",
+      "group": "metadata",
+      "rfc": "9110 \u00a76.6.1 (MUST)",
+      "criterion": "an origin server with a clock sends a Date header on 2xx/3xx/4xx",
+      "request": "GET /health",
+      "verdict": "PASS",
+      "observed": "Date=b'Mon, 01 Jan 2024 00:00:00 GMT'"
+    },
+    {
+      "id": "R02-date-imf-format",
+      "group": "metadata",
+      "rfc": "9110 \u00a75.6.7 (MUST)",
+      "criterion": "the Date value is an IMF-fixdate (e.g. 'Sun, 06 Nov 1994 08:49:37 GMT')",
+      "request": "GET /health",
+      "verdict": "PASS",
+      "observed": "Date=b'Mon, 01 Jan 2024 00:00:00 GMT'"
+    },
+    {
+      "id": "R03-content-type",
+      "group": "metadata",
+      "rfc": "9110 \u00a78.3 (SHOULD)",
+      "criterion": "a body-bearing 200 response declares its media type via Content-Type",
+      "request": "GET /static/app.js",
+      "verdict": "PASS",
+      "observed": "Content-Type=b'application/javascript'"
+    },
+    {
+      "id": "R04-server-token",
+      "group": "metadata",
+      "rfc": "9110 \u00a710.2.4 (MUST)",
+      "criterion": "the Server header, if present, is printable product tokens (no control chars)",
+      "request": "GET /health",
+      "verdict": "PASS",
+      "observed": "Server=b'drorb'"
+    },
+    {
+      "id": "R05-deterministic-status",
+      "group": "metadata",
+      "rfc": "operational (determinism)",
+      "criterion": "repeated identical safe requests return a stable status code",
+      "request": "GET /health x3",
+      "verdict": "PASS",
+      "observed": "codes=[200, 200, 200]"
+    },
+    {
+      "id": "Z01-large-head-dos",
+      "group": "resource-limit",
+      "rfc": "availability (robustness)",
+      "criterion": "a single ~32 KiB request head does not crash the serve",
+      "request": "-",
+      "verdict": "SKIP",
+      "observed": "destructive group not run (set CONF_DESTRUCTIVE=1)"
+    },
+    {
+      "id": "Z02-long-uri-dos",
+      "group": "resource-limit",
+      "rfc": "availability (robustness)",
+      "criterion": "a single ~32 KiB request-target does not crash the serve",
+      "request": "-",
+      "verdict": "SKIP",
+      "observed": "destructive group not run (set CONF_DESTRUCTIVE=1)"
+    }
+  ]
+}

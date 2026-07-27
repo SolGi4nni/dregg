@@ -71,12 +71,12 @@ struct RenderedFace {
 
 enum RenderedBody {
     Fields {
-        /// `"{title} — {subtitle}"`.
+        /// `"{title} · {subtitle}"`.
         summary: String,
         /// Per field: (`"{key}:"`, `render_value(ty, value)`), pre-formatted.
         rows: Vec<(String, String)>,
     },
-    /// `"‹{kind} face — rendered as a tag in this slice›"`.
+    /// `"‹{kind} face, rendered as a tag in this slice›"`.
     Other(String),
 }
 
@@ -85,7 +85,7 @@ impl RenderedFace {
         let header = format!("[{}] {}", face.kind, face.label);
         let body = match &face.body {
             FaceBody::Fields { value } => RenderedBody::Fields {
-                summary: format!("{} — {}", value.title, value.subtitle),
+                summary: format!("{} · {}", value.title, value.subtitle),
                 rows: value
                     .fields
                     .iter()
@@ -93,7 +93,7 @@ impl RenderedFace {
                     .collect(),
             },
             FaceBody::Other => RenderedBody::Other(format!(
-                "‹{} face — rendered as a tag in this slice›",
+                "‹{} face, rendered as a tag in this slice›",
                 face.kind
             )),
         };
@@ -132,7 +132,7 @@ impl Render for FacesView {
 
         let mut root = v_flex().gap_3().p_3().size_full().bg(cx.theme().background);
         root = root.child(
-            Label::new("present() — moldable faces")
+            Label::new("present() · moldable faces")
                 .font_weight(FontWeight::BOLD)
                 .text_color(fg),
         );

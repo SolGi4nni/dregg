@@ -176,7 +176,7 @@ pub fn automatafl_resolve_marks_trace(
     // Fail-closed layout guards: the descriptor must be the resolve-marks layout for this `n`.
     if l.width() != desc.trace_width {
         return Err(format!(
-            "resolve-marks witness-gen: layout width {} ≠ descriptor '{}' trace_width {} — a \
+            "resolve-marks witness-gen: layout width {} ≠ descriptor '{}' trace_width {}: a \
              descriptor cutover the shape-independent mirror has not tracked",
             l.width(),
             desc.name,
@@ -224,7 +224,7 @@ pub fn automatafl_resolve_marks_trace(
     if !unresolved.is_empty() {
         return Err(format!(
             "resolve-marks witness-gen: {} column(s) unresolved after the gate solver reached \
-             fixpoint — a genuine witness-gen gap: {:?}",
+             fixpoint. A genuine witness-gen gap: {:?}",
             unresolved.len(),
             &unresolved[..unresolved.len().min(24)]
         ));

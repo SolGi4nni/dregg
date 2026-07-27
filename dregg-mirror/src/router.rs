@@ -68,7 +68,7 @@ impl<S: ObjectStore> Mirror<S> {
                 405,
                 "This mirror only reads",
                 "The mirror serves <code>GET</code>. Acting on a dregg object is a cap-gated \
-                 turn that needs custody, and custody is never on this server — so there is \
+                 turn that needs custody, and custody is never on this server, so there is \
                  nothing here to <code>POST</code> to.",
                 None,
                 None,
@@ -120,7 +120,7 @@ impl<S: ObjectStore> Mirror<S> {
                 "Unknown kind",
                 &format!(
                     "This mirror has no renderer for a <code>{}</code>. It renders: {known}. \
-                     It will not guess a surface for a kind it does not know — a guessed \
+                     It will not guess a surface for a kind it does not know: a guessed \
                      render is a claim about an object nobody made.",
                     page::esc(&dref.kind)
                 ),
@@ -191,7 +191,7 @@ impl<S: ObjectStore> Mirror<S> {
                         &format!(
                             "More than one <code>{kind}</code> starts with \
                              <code>{p}</code>, so this mirror does not know which one the \
-                             link meant — and it will not pick. Use more of the address:\
+                             link meant, and it will not pick. Use more of the address:\
                              <ul class=\"mirror-cands\">{list}</ul>",
                             kind = kind,
                             p = page::esc(&p),
@@ -298,7 +298,7 @@ impl<S: ObjectStore> Mirror<S> {
             &format!(
                 "This mirror holds no <code>{kind}</code> at <code>{addr}</code>. A dregg \
                  reference names an object by its hash, so a reference nothing answers is \
-                 an honest dead end — not a hint that something else nearby is what you \
+                 an honest dead end, not a hint that something else nearby is what you \
                  wanted.",
                 kind = kind,
                 addr = page::esc(addr_frag)

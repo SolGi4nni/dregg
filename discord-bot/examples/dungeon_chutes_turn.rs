@@ -257,15 +257,19 @@ pub fn chutes_request(
 ) -> Result<ConverseRequest, WeldError> {
     validate_model(model)?;
     let commands: Vec<String> = legal_commands(view)
-        .into_iter()
-        .map(|(keyword, _)| keyword.to_string())
+        .iter()
+        .map(|offered| offered.keyword.clone())
         .collect();
     if commands.is_empty() {
         return Err(WeldError::NoLegalCommands);
     }
 
     let room = view.room.as_deref().unwrap_or("(ended)");
-    let command_list = commands.join(", ");
+    let command_list = legal_commands(view)
+        .iter()
+        .map(|offered| format!("`{}` ({})", offered.keyword, offered.prompt))
+        .collect::<Vec<_>>()
+        .join(", ");
     let mut request = ConverseRequest::plain(
         model,
         "You are a dungeon narrator. The world executor is the sole authority: you may select one offered command and narrate it, but your prose cannot create items, alter stats, or change outcomes. Reply only by calling submit_dungeon_turn.",
@@ -376,8 +380,11 @@ pub fn run_chutes_turn(
 
     // A hosted call crosses time. Never apply a command selected for a room that is no
     // longer current when the response returns.
+    // The WHOLE view, not just the room name: the view carries the derived legal set, and a
+    // move can leave that set without the room changing (a write-once slot claimed, a budget
+    // spent, a ratchet shut).
     let current_view = scene_view(world, scene);
-    if current_view.room != requested_view.room {
+    if current_view != requested_view {
         return Err(WeldError::StaleScene {
             requested: requested_view.room,
             current: current_view.room,

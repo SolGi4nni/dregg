@@ -1,0 +1,60 @@
+# player-copy-punctuation-allow.tsv — the em-dashes in player copy that STAY, one per row.
+#
+# Read by `scripts/check-player-copy-punctuation.py`. Three TAB-separated fields:
+#
+#     path <TAB> the exact text, with \n \t \r \\ escaped <TAB> why it keeps its dash
+#
+# ⚑ KEYED BY THE TEXT, NOT THE LINE. Lanes move lines all day; a line-number key rots into a
+#   blanket ignore inside a day. Keying on the text also gives the ratchet its second edge: a row
+#   whose text is no longer at that path FAILS the gate. Fixing a string RETIRES its exemption
+#   instead of leaving a permission slip behind for the next dash to walk through.
+#
+# ⚑ A ROW IS AN ARGUMENT, NOT A MUTE. The reason field is required and the gate refuses an empty
+#   one. "operator output", "test fixture" and "a bare — table cell" are NOT reasons to write here:
+#   those are rules R3, R2 and R4 in the checker itself, and if a site of that kind is being
+#   reported, the RULE is wrong and should be fixed. What belongs here is the site where the dash
+#   is doing a job no punctuation rule covers.
+#
+# As of 2026-07-26 there are 19 rows in four blocks. The first three kinds are genuine
+# keeps; the fourth is DEBT and says so in every row.
+#   * CLAIMED-REAL OUTPUT — a page captions a <pre> block "Real output". Editing a character
+#     inside it makes it not-real, which is a worse defect than the dash. Three lines.
+#   * A CUTTING WORD — a haiku's kireji. It is not punctuation; removing it changes the verse.
+#   * A LABELLED no-value cell — R4 catches the bare `—`, and deliberately does not try to catch
+#     `<label>: —`. Widening R4 to "ends in a dash" would swallow the kireji, and widening it to
+#     "ends in a dash after a colon" would be a rule written for exactly one site. One row is the
+#     honest form; if a second one ever appears, THAT is the moment R4 earns the case.
+
+site/deep/proofs/index.html	# 1. prove a live BTC price — a real MPC-TLS 2PC session	inside a <pre> the page captions "Real output". The block is a transcript of a run, not prose the page wrote; a character edited inside it makes the claim false.
+site/deep/proofs/index.html	# 2. send proof.json to anyone. they verify — a separate run, trusting no one	same <pre>, same reason: claimed-real transcript, not page copy.
+site/deep/proofs/index.html	— New line at end of file. --Signed off by Spaceghost	a verification tool's own PASS line, quoted verbatim under a "Real output" caption. This one is the GitHub commit message it read; the dash is the tool's, and rewriting it would be forging output.
+site/grain/play.html	Grains in a sealed box —\\nthe agent may only ask;\\nthe walls decide yes.	a KIREJI — the cutting word of a haiku. It is not punctuation doing a grammatical job and no substitution applies; dropping it changes the verse.
+site/transclusion/index.html	federation height: —	a no-value readout with its label inline: the JS overwrites the whole span's textContent on the first tick, so the dash is the empty state of a NUMBER, the same glyph R4 clears when it stands alone in its own element.
+dreggnet-game-board/src/lib.rs	Multiway Tug — Proof Board	⚠ A CONTENT-ADDRESS PREIMAGE, not just a title. `Game::title()` is passed to `Universe::authored` AND embedded in `Game::scene()`, and `ugc_dregg::universe_id` hashes both `name` and `source` — so editing this string RE-ADDRESSES the published board universe whose `UniverseId` the docs call "a per-game constant". That is a deployment migration with a pinned ProofAnchor on the other end, not a copy edit. Needs ember.
+dreggnet-game-board/src/lib.rs	Automatafl — Proof Board	same preimage, same reason as the Multiway Tug row above. Both must move together or not at all.
+
+# ── OPERATOR OUTPUT R3 CANNOT SEE ──────────────────────────────────────────────────────
+# R3 reads the ENCLOSING CALL CHAIN, so it clears `tracing::warn!("…")` written inline and
+# misses the same string built by a helper and logged one frame up. Each row below was
+# traced to every one of its call sites; the trace is the reason.
+discord-bot/src/crown_store.rs	token {} is already held by a DIFFERENT crown fold — this fold was not persisted (its token counter fell behind a row that did not re-verify at boot)	`SqliteCrownStore::persist_fold`'s Err(String). Its ONE consumer is commands/crown.rs:402, which does `tracing::warn!("crown fold #{token} RANKED but did not persist ({e})…")` — R3 would have cleared it if the format! were lexically inside the macro. No Discord surface renders it.
+discord-bot/src/http_server.rs	{name} — Admin	the <title> of `admin_index`, served under `admin_router` behind the ADMIN_TOKEN bearer check (pinned by `admin_portal_requires_a_token`). The page's own subtitle is "Read-mostly operator view over the bot DB"; no player can reach it.
+discord-bot/src/http_server.rs	{} — Admin Portal	the <h1> of that same token-gated operator page. Moves with the <title> row above or not at all.
+discord-bot/src/pay.rs	DREGG_PAY_MOCK is set on a MAINNET config — real funds never ride the mock watcher; unset DREGG_PAY_MOCK or set DREGG_PAY_NETWORK=devnet	`WatcherSelectError::MockOnMainnet`'s Display. Both call sites (pay.rs:1359, pay.rs:1457) are `select_watcher(…).unwrap_or_else(|e| panic!(…))` — a BOOT-TIME ABORT read by whoever is starting the process. The variant appears nowhere else outside #[cfg(test)].
+
+# ── ⚠ NOT AN EXEMPTION: A HANDOFF, AND THE ONLY ROWS HERE THAT ARE DEBT ────────────────
+# `dreggnet-web/src/{crown_ingest,device_key}.rs` were being written by a concurrent lane
+# during the 2026-07-26 sweep and were declared off-limits, so these EIGHT sites are simply
+# UNSWEPT — they are ordinary player prose and every one of them should lose its dash.
+# They are here rather than left red for one reason: a gate that ships red teaches every
+# lane to scroll past it. The ratchet still does the work — the moment that lane edits any
+# of these strings the row goes STALE and the gate fails, which is exactly when someone is
+# already looking at the file. Delete the row and fix the dash in the same breath.
+dreggnet-web/src/crown_ingest.rs	the whole-history light client accepted this envelope against the board's pinned anchor, on this server, just now — nothing was taken on the sender's word	HANDOFF, not a keep: player prose, unswept because the file was owned by a live lane.
+dreggnet-web/src/crown_ingest.rs	A finished match of a portfolio game folds to ONE succinct proof. A crown won in a Discord channel and a crown won here rank on the SAME board — not because the surfaces trust each other, but because a proof does not need trust: this server re-runs the whole-history light client itself, on every read.	HANDOFF, not a keep: player prose, unswept because the file was owned by a live lane.
+dreggnet-web/src/crown_ingest.rs	. &ldquo;The moves are never posted&rdquo; is a data-availability privacy property — this board never sees them and nobody publishes them — not a cryptographic claim about the transcript, and the proof inherits the deployed FRI/STARK floor.	HANDOFF, not a keep: player prose, unswept because the file was owned by a live lane.
+dreggnet-web/src/device_key.rs	You can still enrol from here — the form reads your 24 words, not this browser's cookie. If you have not claimed an identity at all,	HANDOFF, not a keep: player prose, unswept because the file was owned by a live lane.
+dreggnet-web/src/device_key.rs	: this page hands us the name you are signed in as and we take it at face value. That is not a flaw in how you played — it is the ordinary way a browser plays, and every board counts those turns. What it cannot do is prove that the person pressing the button was you.	HANDOFF, not a keep: player prose, unswept because the file was owned by a live lane.
+dreggnet-web/src/device_key.rs	The key was made by this browser and stored in a form the browser will use but will not hand back — not to us, not to this page's own scripts. That is what makes a signature from it mean something we could not have produced. It also means there is no recovering it: a new browser makes a new key and you enrol that one.	HANDOFF, not a keep: player prose, unswept because the file was owned by a live lane.
+dreggnet-web/src/crown_ingest.rs	the fold did NOT verify against the anchor it would pin the {} board to ({e}) — refused, and the board stays unpinned	HANDOFF, not a keep: player prose, unswept because the file was owned by a live lane.
+dreggnet-web/src/crown_ingest.rs	against this board's pinned anchor — no moves were posted, and none are stored.	HANDOFF, not a keep: player prose, unswept because the file was owned by a live lane.

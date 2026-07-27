@@ -593,6 +593,7 @@ import Metatheory.EpistemicDial            -- the Disclosure×Transferability×A
 import Dregg2.AttestCube                    -- dregg4 ATTESTATION CUBE: assembles the 3 proved dials (EpistemicDial.Dial × DV.TransferDial × Finality.Tier) into ONE per-turn Turn.Attest point + the 2 coherence 2-cells (disclosure⟂transferability orthogonality · directed Agreement via Finality.no_downgrade) + the LOAD-BEARING impossibility corner deniable_bft_quorum_empty (deniable transferability ∧ BFT-quorum agreement is EMPTY under the quorum-verifiable bridge, via designated_excludes_public; INHABITED as a bare cube point ⇒ a semantic obstruction, not a type collapse). cubeIsThreeDimensional #guards non-vacuity (2 points differing on every axis); 10 keystones #assert_all_clean
 import Metatheory.EpistemicConsensus       -- epistemic consensus / common-knowledge front
 import Metatheory.Disputation              -- disputation / adjudication game
+import Metatheory.OptimisticAdjudication   -- "fightable disproof" vs "checkable proof": the Refutable dual, the carried Actuated (liveness) hypothesis PROVED non-removable, and the DistKnows-vs-Knows challenger gap
 import Metatheory.Categorical              -- categorical core (final-coalgebra base)
 import Metatheory.Open.FinalCoalgebra      -- OPEN: final-coalgebra boundary
 import Metatheory.Open.AuthorityClosure    -- OPEN: authority closure

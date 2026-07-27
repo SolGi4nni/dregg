@@ -1,0 +1,7 @@
+{"plugins": [],
+ "package": "orb-compiler",
+ "options": {},
+ "name": "Dsl.EmitPancake",
+ "isModule": false,
+ "importArts": {},
+ "dynlibs": []}

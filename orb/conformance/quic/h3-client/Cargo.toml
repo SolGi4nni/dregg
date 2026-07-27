@@ -1,0 +1,26 @@
+# A REAL off-the-shelf HTTP/3 client, used as an independent conformance peer for
+# the QUIC/H3 serve path. Nothing here is ours: quinn is the QUIC transport, h3 is
+# the HTTP/3 implementation, rustls is the TLS 1.3 stack. The client is configured
+# to offer the X25519MLKEM768 hybrid key exchange the serve pins, so it can
+# complete a real 1-RTT handshake and a real GET.
+#
+# Standalone (its own [workspace]) so it never perturbs the parent build.
+[package]
+name = "h3-client"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+quinn = { version = "0.11.7", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs"] }
+h3 = "0.0.8"
+h3-quinn = "0.0.10"
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "std", "prefer-post-quantum", "logging"] }
+tokio = { version = "1", features = ["rt", "macros", "time", "io-util"] }
+bytes = "1"
+http = "1"
+futures = "0.3"
+
+[profile.release]
+debug = false

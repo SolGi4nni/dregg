@@ -145,48 +145,16 @@ struct TeeInstanceEvidence {
     certificate: Option<String>,
 }
 
-/// Lowercase-hex SHA-256 of a raw quote — the ONE definition of the handle that links an
-/// `AttestationSummary` to the bytes behind it, exposed so an archive re-deriving it from stored
-/// bytes computes exactly what the summary carried rather than its own near-miss of it.
-pub fn quote_sha256_hex(quote_bytes: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(quote_bytes);
-    hex::encode(hasher.finalize())
-}
-
-/// **Re-check an ARCHIVED attestation record's internal consistency. THIS IS NOT AN
-/// ATTESTATION.**
+/// The quote-digest handle and the archived-record re-check, RE-EXPORTED rather than restated.
 ///
-/// Given a quote and the `nonce_hex` / `e2e_pubkey_b64` it was archived alongside, this
-/// recomputes `SHA-256(ascii(nonce_hex) ‖ ascii(e2e_pubkey_b64))` and requires it to equal the
-/// quote's `report_data[0..32]` — the same binding [`attest_chute`] enforced when the quote was
-/// actually verified.
-///
-/// What it catches: an archive row whose nonce or instance key has been EDITED away from the
-/// pair the quote commits to. What it emphatically does NOT do: verify the DCAP signature chain,
-/// the PCK root, the TCB status or the measurements. A quote an attacker fabricated from nothing
-/// passes this happily, because the attacker also picks the `report_data`. The attestation
-/// happened once, at [`attest_chute`] time, against live collateral and a nonce we had just
-/// generated; it cannot be re-derived from stored bytes, and nothing here pretends otherwise.
-///
-/// Use it to say "this record is the one we archived", never "this record is attested".
-pub fn recheck_archived_binding(
-    quote_bytes: &[u8],
-    nonce_hex: &str,
-    e2e_pubkey_b64: &str,
-) -> Result<(), String> {
-    let report_data = dregg_tee_verify::report_data_structural_unverified(quote_bytes)?;
-    let want = dregg_tee_verify::chutes_report_data_binding(nonce_hex, e2e_pubkey_b64);
-    if report_data[..32] != want[..] {
-        return Err(
-            "the archived nonce/instance-key pair is NOT what this quote's report_data commits \
-             to — the record has been altered since it was written"
-                .to_string(),
-        );
-    }
-    Ok(())
-}
+/// Both used to live here, and both only ever called `dregg_tee_verify` primitives. They moved
+/// down to that crate when a second consumer appeared (`dungeon_on_dregg::attest_check`, the
+/// verifier a player runs on the files `/dungeon attestation` hands them) so there is exactly one
+/// definition of "the digest" and one of "does this record still match its own quote" — the
+/// checker a player runs and the check this crate's archive lane runs are the SAME function, not
+/// two that agree today. See [`dregg_tee_verify::tdx::recheck_archived_binding`] for the full
+/// statement of what that re-check does and does not establish.
+pub use dregg_tee_verify::{quote_sha256_hex, recheck_archived_binding};
 
 /// Generate a fresh 64-hex-char (32-byte) attestation nonce, per chutes-api
 /// `validate_user_nonce`. This is SEPARATE from the opaque invocation nonce and from the

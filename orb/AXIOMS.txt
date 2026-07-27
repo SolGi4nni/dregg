@@ -1,0 +1,34 @@
+# drorb axiom manifest — every `axiom` DECLARATION in the tree.
+# Regenerate with: scripts/axiom-manifest.sh --write
+# Each line widens the trust surface: it is a Prop the kernel accepts
+# without proof. Adding one is a REVIEW event, not a build detail.
+#
+# format:  <fully-qualified name>\t<file>
+Cache.VaryKey.hash	Cache/VaryKey.lean
+Crypto.Assumptions.aes_ecb_block_valid	Crypto.lean
+Crypto.Assumptions.aesgcm_open_authentic	Crypto.lean
+Crypto.Assumptions.aesgcm_open_seal_roundtrip	Crypto.lean
+Crypto.Assumptions.chacha_open_authentic	Crypto.lean
+Crypto.Assumptions.chacha_open_seal_roundtrip	Crypto.lean
+Crypto.Assumptions.crypto_box_agree	Crypto.lean
+Crypto.Assumptions.crypto_box_open_authentic	Crypto.lean
+Crypto.Assumptions.crypto_box_open_seal_roundtrip	Crypto.lean
+Crypto.Assumptions.ecdsaP256Genuine	Crypto.lean
+Crypto.Assumptions.ecdsaP256Verify_authentic	Crypto.lean
+Crypto.Assumptions.ed25519_pubOf	Crypto.lean
+Crypto.Assumptions.ed25519_sign_verify_roundtrip	Crypto.lean
+Crypto.Assumptions.mlDsaGenuine	Crypto.lean
+Crypto.Assumptions.mlDsaPubOf	Crypto.lean
+Crypto.Assumptions.mlDsaVerify_authentic	Crypto.lean
+Crypto.Assumptions.rsaPkcs1Genuine	Crypto.lean
+Crypto.Assumptions.rsaPkcs1Verify_authentic	Crypto.lean
+Crypto.Assumptions.rsaPssGenuine	Crypto.lean
+Crypto.Assumptions.rsaPssVerify_authentic	Crypto.lean
+Crypto.Assumptions.sha256_len	Crypto.lean
+Crypto.Assumptions.sha384_len	Crypto.lean
+Crypto.Assumptions.x25519_dh_agree	Crypto.lean
+Crypto.Xwing.mlKemSource	Crypto.lean
+Crypto.Xwing.mlKem_ind_cca	Crypto.lean
+Crypto.Xwing.xwing_kdf_dualPRF	Crypto.lean
+QuicHeaderProt.chacha20Raw_valid	QuicHeaderProt.lean
+TlsHandshake.tls_keyschedule_hybrid_dualPRF	TlsHandshake.lean

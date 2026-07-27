@@ -52,10 +52,11 @@ pub use attested_data::{
 pub use oracle_mark::{Grade, GradedMark, MarkError, MarkPrice, MarkProvenance};
 pub use snp::{SnpVerifier, TcbVersion};
 pub use tdx::{
-    apply_chutes_bindings, check_pck_chain_roots_at_pinned, chutes_report_data_binding,
-    decode_quote_field, fold_tdx_measurement, parse_chutes_measurements,
-    report_data_structural_unverified, ChutesMeasurements, QuoteCollateralV3, TdxVerifiedReport,
-    TdxVerifier,
+    apply_chutes_bindings, check_chutes_preimages_well_formed, check_pck_chain_roots_at_pinned,
+    chutes_report_data_binding, decode_quote_field, fold_tdx_measurement,
+    parse_chutes_measurements, pck_chain_structural_unverified, quote_sha256_hex,
+    recheck_archived_binding, registers_structural_unverified, report_data_structural_unverified,
+    ChutesMeasurements, QuoteCollateralV3, TdxRegisters, TdxVerifiedReport, TdxVerifier,
 };
 
 /// The pinned AWS Nitro Enclaves root G1 certificate (PEM).

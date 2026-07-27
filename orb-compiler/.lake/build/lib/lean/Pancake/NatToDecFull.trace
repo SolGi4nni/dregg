@@ -1,0 +1,49 @@
+{"synthetic": false,
+ "schemaVersion": "2025-09-10",
+ "outputs":
+ {"o": ["094533b980d6f760.olean"],
+  "m": false,
+  "i": "9475b00bab75adc4.ilean",
+  "c": "c1e6b49d9dd711c2.c"},
+ "log":
+ [{"message":
+   ".> LEAN_PATH=/Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean /Users/ember/.elan/toolchains/leanprover--lean4---v4.30.0/bin/lean /Users/ember/dev/breadstuffs/orb-compiler/Pancake/NatToDecFull.lean -o /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/NatToDecFull.olean -i /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/NatToDecFull.ilean -c /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/NatToDecFull.c --setup /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/NatToDecFull.setup.json --json",
+   "level": "trace"},
+  {"message":
+   "Pancake/NatToDecFull.lean:774:0: 'Pancake.NatToDecFull.digitBody_sem' depends on axioms: [propext, Classical.choice, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/NatToDecFull.lean:775:0: 'Pancake.NatToDecFull.digitLoop_sem' depends on axioms: [propext, Classical.choice, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/NatToDecFull.lean:776:0: 'Pancake.NatToDecFull.natToDecProg_sem' depends on axioms: [propext, Classical.choice, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/NatToDecFull.lean:777:0: 'Pancake.NatToDecFull.natToDec_split' depends on axioms: [propext, Quot.sound]",
+   "level": "info"}],
+ "inputs":
+ [["Pancake.NatToDecFull:deps",
+   [["deps",
+     [["«orb-compiler»/Pancake:extraDep",
+       [["@«orb-compiler»:extraDep", "00000000000006bb"]]],
+      ["imports",
+       [["Pancake.NatToDecCompile transitive imports (legacy)",
+         "a205f396b33596e4"],
+        ["Pancake.NatToDecCompile:importAllArts", "3dba64b36dd7ddcb"],
+        ["Pancake.BytesModel transitive imports (legacy)", "f54f9dc9ad1e5d15"],
+        ["Pancake.BytesModel:importAllArts", "747911746b215ab0"]]]]],
+    ["libs",
+     [["import dynlibs", "00000000000006bb"],
+      ["package external libraries", "00000000000006bb"],
+      ["module dynlibs", "00000000000006bb"],
+      ["module plugins", "00000000000006bb"]]]]],
+  ["Lean 4.30.0, commit d024af099ca4bf2c86f649261ebf59565dc8c622",
+   "2f4703bb19086252"],
+  ["/Users/ember/dev/breadstuffs/orb-compiler/Pancake/NatToDecFull.lean",
+   "1f3d56714ab0159f"],
+  ["options", "00000000000006bb"],
+  ["isModule: false", "feefd2a0d3a1847e"],
+  ["Module.name: Pancake.NatToDecFull", "adbad9ecde2df35c"],
+  ["Package.id?: (some orb-compiler)", "0a473b67509a16ae"],
+  ["Module.leanArgs: #[]", "00000000000006bb"]],
+ "depHash": "a52dcf4a344a6a82"}

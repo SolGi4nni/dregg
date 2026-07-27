@@ -1,0 +1,22 @@
+
+; <<>> DiG 9.20.24 <<>> @127.0.0.1 -p 15356 www.github.com A +time=10 +tries=1 +notcp
+; (1 server found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 63144
+;; flags: qr rd ra; QUERY: 1, ANSWER: 2, AUTHORITY: 0, ADDITIONAL: 1
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 1232
+;; QUESTION SECTION:
+;www.github.com.			IN	A
+
+;; ANSWER SECTION:
+www.github.com.		275	IN	CNAME	github.com.
+github.com.		18	IN	A	140.82.112.4
+
+;; Query time: 111 msec
+;; SERVER: 127.0.0.1#15356(127.0.0.1) (UDP)
+;; WHEN: Sun Jul 05 22:37:09 EDT 2026
+;; MSG SIZE  rcvd: 73
+

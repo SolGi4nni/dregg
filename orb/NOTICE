@@ -1,0 +1,14 @@
+This cut retains or derives from third-party work. Attribution, not a licence grant:
+
+* Pancake / CakeML lineage — the emitted `.S` preamble in the certified serve path is the
+  output of CakeML's `cake --pancake` backend. CakeML is BSD-3-Clause, (c) Anthony Fox,
+  Google LLC, Ramana Kumar, Magnus Myreen, Michael Norrish, Scott Owens, Yong Kiam Tan and
+  the contributors listed at https://cakeml.org . The CakeML compiler itself is NOT vendored
+  here; our contributions to it belong upstream.
+* HTTP structured-field test vectors under conformance/external/ — IETF Trust, from the
+  httpwg test suite. Their own LICENSE travels with them.
+* Tailscale protocol surfaces (ts2021, DERP, tailcfg wire shapes) are implemented against
+  the public protocol; Tailscale is a trademark of Tailscale Inc. No affiliation.
+* HACL* / EverCrypt (Project Everest) is linked, not vendored — see the crypto FFI seam.
+
+Everything else is AGPL-3.0-or-later; see LICENSE.

@@ -325,7 +325,7 @@ impl TugSession {
             } else if a == 0 {
                 ("nobody has pulled".to_string(), "muted")
             } else {
-                ("contested — dead even".to_string(), "warn")
+                ("contested · dead even".to_string(), "warn")
             };
             let weight_tag = if w >= 4 { "accent" } else { "muted" };
             rows.push(ViewNode::Row(vec![
@@ -383,7 +383,7 @@ impl TugSession {
     fn lane_movement_rule(&self) -> String {
         let pending = match self.engine.pending_offer() {
             Some(offer) => format!(
-                "Seat {:?}'s {:?} is in escrow right now — those favors have left their hand and \
+                "Seat {:?}'s {:?} is in escrow right now: those favors have left their hand and \
                  reached NO lane; seat {:?}'s answer places them.",
                 offer.proposer,
                 offer.kind(),
@@ -438,10 +438,10 @@ impl TugSession {
     /// HOLDS anything. That distinction is the whole difference between a read and a fog leak.
     fn lane_row_legend(&self) -> String {
         format!(
-            "The deck is PUBLIC — {weights} copies for lanes 0..{last}, {total} favors, no others \
-             — so each row ends with what is UNSEEN once the placements, a face-up cut and (yours \
-             only) your own favors come off it. Unseen is a POOL, never a claim: it is in the \
-             deck, was removed at the deal, or is theirs.",
+            "The deck is PUBLIC ({weights} copies for lanes 0..{last}, {total} favors, no \
+             others), so each row ends with what is UNSEEN once the placements, a face-up cut \
+             and (yours only) your own favors come off it. Unseen is a POOL, never a claim: it \
+             is in the deck, was removed at the deal, or is theirs.",
             weights = (0..N_GUILDS)
                 .map(|g| INFLUENCE[g].to_string())
                 .collect::<Vec<_>>()
@@ -511,8 +511,8 @@ impl TugSession {
             0
         };
         format!(
-            "Seat {them:?} has spent {spent_txt}; still owed: {unspent_txt} — {owed} favors they \
-             MUST commit by turn {ROUND_TURNS}, drawing one before each of their own actions. They \
+            "Seat {them:?} has spent {spent_txt}; still owed: {unspent_txt} ({owed} favors they \
+             MUST commit by turn {ROUND_TURNS}, drawing one before each of their own actions). They \
              hold {held} (a cut awaiting an answer counts here), {secret} sealed, {placed} placed. \
              Burnt: 1 at the deal, {burnt_them} by THEIR Discard, {burnt_you} by yours. {deck} in \
              the deck.",
@@ -540,17 +540,17 @@ impl TugSession {
         let proj = self.projection();
         if proj.scored == 1 {
             return match proj.winner {
-                1 => "The round is over — seat A took it. Nothing further can be committed.",
-                2 => "The round is over — seat B took it. Nothing further can be committed.",
+                1 => "The round is over: seat A took it. Nothing further can be committed.",
+                2 => "The round is over: seat B took it. Nothing further can be committed.",
                 _ => {
-                    "The round is over — an exact dead heat on influence AND on lanes held, which \
+                    "The round is over: an exact dead heat on influence AND on lanes held, which \
                      is the only draw the rules admit."
                 }
             }
             .to_string();
         }
         if self.engine.round_complete() {
-            return "Every favor is placed. Press Reveal secrets & score — each seat's face-down \
+            return "Every favor is placed. Press Reveal secrets & score: each seat's face-down \
                     Secret turns up onto its own side BEFORE control is counted, and the proven \
                     rule names the winner."
                 .to_string();
@@ -565,7 +565,7 @@ impl TugSession {
             let answering = offer.responder();
             return if viewer == Some(answering) {
                 format!(
-                    "Seat {:?} has cut a {:?} and it is FACE UP. Choose the side you take — what \
+                    "Seat {:?} has cut a {:?} and it is FACE UP. Choose the side you take: what \
                      you leave goes to them, and you cannot un-choose.",
                     offer.proposer,
                     offer.kind()
@@ -588,7 +588,7 @@ impl TugSession {
             };
         }
         if yours {
-            "Your move. Spend ONE of your four actions — each is once per round, and the heavier \
+            "Your move. Spend ONE of your four actions: each is once per round, and the heavier \
              ones commit more favors, so the order is the game."
                 .to_string()
         } else if viewer.is_some() {
@@ -602,7 +602,7 @@ impl TugSession {
             // were inert while serving working controls was the exact falsehood the QA sweep
             // proved from a before/after pair (finding 2).
             format!(
-                "Seat {mover:?} is to move. You hold no seat YET — the controls below are LIVE, \
+                "Seat {mover:?} is to move. You hold no seat YET; the controls below are LIVE, \
                  and the first move you land CLAIMS seat {claim:?}. Both hands stay fog to you \
                  until then."
             )
@@ -677,7 +677,7 @@ impl TugSession {
                     if lanes[i] == 1 { "" } else { "s" }
                 ),
                 None => {
-                    "influence · lanes led — UNAVAILABLE, this build could not ask the ruleset for \
+                    "influence · lanes led: UNAVAILABLE, this build could not ask the ruleset for \
                      the standing"
                         .to_string()
                 }
@@ -691,11 +691,11 @@ impl TugSession {
         // claimant, whose press changed their seat, their hand and the turn counter.
         let who = match (viewer, claimant) {
             (Some(s), _) => format!(
-                "You hold seat {s:?}: your favors are rendered to you and nobody else — the other \
+                "You hold seat {s:?}: your favors are rendered to you and nobody else; the other \
                  house sees a count and a committed root."
             ),
             (None, Some(claim)) => format!(
-                "You hold no seat at this table: BOTH hands are the fog form — a count and a \
+                "You hold no seat at this table: BOTH hands are the fog form, a count and a \
                  committed root. The controls below are NOT inert. They are seat {claim:?}'s own \
                  controls, and the first move you land takes that seat; only then are its favors \
                  rendered to you."
@@ -706,7 +706,7 @@ impl TugSession {
             // host can falsify. The claim that holds on every host is about the EXECUTOR: it refuses
             // an advance from an actor holding no seat ("actor holds no seat in this round") and
             // commits nothing.
-            (None, None) => "You are watching this table: BOTH hands are the fog form — a count \
+            (None, None) => "You are watching this table: BOTH hands are the fog form, a count \
                              and a committed root. Both seats are held, so nothing you press can \
                              move this round: the executor refuses a move from an actor holding no \
                              seat, and commits nothing."
@@ -723,11 +723,11 @@ impl TugSession {
                 // rule that finally decides the round, and they are short by exactly two known things
                 // — which is what makes a losing-looking board still readable rather than hopeless.
                 ViewNode::Text(if proj.scored == 1 {
-                    "Those standings are FINAL — both Secrets are up and this is the tally the \
+                    "Those standings are FINAL: both Secrets are up and this is the tally the \
                      proven rule decided on."
                         .to_string()
                 } else {
-                    "Those standings are LIVE — the SAME rule that names the winner, read over the \
+                    "Those standings are LIVE: the SAME rule that names the winner, read over the \
                      favors placed so far. Not in them yet: each seat's ONE face-down Secret (it \
                      joins its own side at the reveal) and anything in escrow."
                         .to_string()
@@ -835,7 +835,7 @@ impl TugSession {
             for pick in 0..offer.picks() {
                 if let Some((taker, cutter)) = offer.split(pick) {
                     lines.push(ViewNode::Text(format!(
-                        "Side {pick}: seat {:?} takes {} — which leaves {} to seat {:?}.",
+                        "Side {pick}: seat {:?} takes {}, which leaves {} to seat {:?}.",
                         offer.responder(),
                         favor_list(&taker),
                         favor_list(&cutter),
@@ -849,7 +849,7 @@ impl TugSession {
                 children: {
                     let mut c = vec![ViewNode::Text(format!(
                         "Seat {:?} cut it and cannot answer their own cut. Every side reassembles \
-                         the whole offer, so nothing is destroyed — the only question is which \
+                         the whole offer, so nothing is destroyed; the only question is which \
                          half of the influence lands on whose side.",
                         offer.proposer
                     ))];
@@ -957,17 +957,17 @@ impl TugSession {
             // token in both directions.
             let label = match aimed {
                 Some(i) if show_cuts => format!(
-                    "{kind:?} — {} · {}",
+                    "{kind:?}: {} · {}",
                     kind_effect(kind),
                     cut_label(&decisions[i]),
                 ),
                 Some(_) => format!(
-                    "{kind:?} — {} · {} favor{}, not named until you hold the seat",
+                    "{kind:?}: {} · {} favor{}, not named until you hold the seat",
                     kind_effect(kind),
                     kind.card_count(),
                     if kind.card_count() == 1 { "" } else { "s" }
                 ),
-                None => format!("{kind:?} — {}", kind_effect(kind)),
+                None => format!("{kind:?}: {}", kind_effect(kind)),
             };
             Action::new(
                 label,
@@ -1015,7 +1015,7 @@ impl TugSession {
         // ⚑ THE TWO WORD-PAIRS, EQUATED, where a player first meets both. `favor`/`card` and
         // `guild`/`lane` were each used for one object and never once defined against each other.
         let mut lines = vec![ViewNode::Text(format!(
-            "{} favors — a favor IS a card, and these are yours; the other house sees only the \
+            "{} favors: a favor IS a card, and these are yours; the other house sees only the \
              count and the committed root below. Each belongs to one GUILD, and a guild IS a LANE: \
              the lane it pulls.",
             ids.len()
@@ -1068,7 +1068,7 @@ impl TugSession {
                 0
             };
             lines.push(ViewNode::Text(format!(
-                "Sealed face down by you: card #{card} · guild {g} (lane {g}) · pays {w} — out of \
+                "Sealed face down by you: card #{card} · guild {g} (lane {g}) · pays {w}; out of \
                  your hand, out of everyone else's sight, and it joins YOUR side of lane {g} at \
                  the reveal."
             )));
@@ -1113,7 +1113,7 @@ impl TugSession {
                 // turn — but do not claim the witness is against THIS root.
                 ViewNode::Text(
                     "That root is a Poseidon2 commitment to the exact set they hold: it hides \
-                     which favors those are and BINDS them — a favor never entrusted to that seat \
+                     which favors those are and BINDS them; a favor never entrusted to that seat \
                      cannot be played out of it."
                         .to_string(),
                 ),
@@ -1162,7 +1162,7 @@ impl TugSession {
             ),
         };
         let mut kids = vec![
-            ViewNode::Text(format!("Multiway-Tug — {status}")),
+            ViewNode::Text(format!("Multiway-Tug · {status}")),
             // `guilds A:2` became `lanes led A:2` — same number, and it now uses the same noun the
             // seat rows, the decision plaque and the lane table all use.
             //
@@ -1179,11 +1179,11 @@ impl TugSession {
                     if proj.scored == 1 {
                         " (final)"
                     } else {
-                        " (as placed — the two Secrets are still face down)"
+                        " (as placed: the two Secrets are still face down)"
                     }
                 ),
-                None => "Influence A:? / B:? · lanes led A:? / B:? — this build could not ask the \
-                         ruleset for the standing, so it is not guessed here"
+                None => "Influence A:? / B:? · lanes led A:? / B:? (this build could not ask the \
+                         ruleset for the standing, so it is not guessed here)"
                     .to_string(),
             }),
             // THE TWO PLAQUES, the automatafl convention: where the turn stands (with the ONE
@@ -1196,7 +1196,7 @@ impl TugSession {
         // see which seat must now choose.
         if let Some(offer) = self.engine.pending_offer() {
             kids.push(ViewNode::Text(format!(
-                "ON THE TABLE — seat {:?} cut a {:?}: {} · seat {:?} chooses",
+                "ON THE TABLE · seat {:?} cut a {:?}: {} · seat {:?} chooses",
                 offer.proposer,
                 offer.kind(),
                 cut_label_for_offer(&offer),
@@ -1212,7 +1212,7 @@ impl TugSession {
         let mut lane_kids = vec![
             // THE EQUATION, in words, before the table that uses both nouns.
             ViewNode::Text(
-                "The seven contested GUILDS are the seven LANES — guild 3 is lane 3. Each row: the \
+                "The seven contested GUILDS are the seven LANES: guild 3 is lane 3. Each row: the \
                  lane · what leading it pays · favors placed (A · B) · who holds it · what is \
                  unseen."
                     .to_string(),
@@ -1305,7 +1305,7 @@ impl TugSession {
             kids.push(ViewNode::Text(format!(
                 "These are seat {claimant:?}'s controls and they are live: the first move you land \
                  CLAIMS that seat, and only then are its favors rendered to you. Until it lands, \
-                 each button states what the action DOES and never which cards it would spend — \
+                 each button states what the action DOES and never which cards it would spend: \
                  that would read the unclaimed hand out to anybody watching."
             )));
             kids.push(self.action_menu(claimant, false));
@@ -1360,10 +1360,10 @@ fn kind_effect(kind: ActionKind) -> &'static str {
         }
         ActionKind::Gift => {
             "offer 3 favors; they take ONE onto their side of its lane and the other two land on \
-             yours — lanes move when they answer, not now"
+             yours; lanes move when they answer, not now"
         }
         ActionKind::Competition => {
-            "offer 2 pairs; they take ONE PAIR onto their side and the other pair lands on yours — \
+            "offer 2 pairs; they take ONE PAIR onto their side and the other pair lands on yours; \
              lanes move when they answer, not now"
         }
     }

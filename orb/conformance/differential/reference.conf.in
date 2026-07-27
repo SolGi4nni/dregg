@@ -1,0 +1,56 @@
+# Reference-server config template for the differential harness.
+# Rendered by launch.sh: @ROOT@ -> the differential dir, @SITE@ -> docroot,
+# @REF_PORT@ / @BACKEND_PORT@ -> lane ports.
+# Deliberately plain-vanilla: static files under /static/, one reverse-proxy
+# route at /api, gzip for common text types. No tuning beyond that — the point
+# is stock reference behaviour.
+pid @ROOT@/ref/ref.pid;
+error_log @ROOT@/ref/error.log;
+worker_processes 1;
+daemon on;
+
+events { worker_connections 128; }
+
+http {
+    access_log @ROOT@/ref/access.log;
+    client_body_temp_path @ROOT@/ref/tmp/body;
+    proxy_temp_path @ROOT@/ref/tmp/proxy;
+    fastcgi_temp_path @ROOT@/ref/tmp/fastcgi;
+    uwsgi_temp_path @ROOT@/ref/tmp/uwsgi;
+    scgi_temp_path @ROOT@/ref/tmp/scgi;
+
+    types {
+        text/html html;
+        text/css css;
+        text/plain txt;
+        application/json json;
+        application/javascript js;
+        image/png png;
+    }
+    default_type application/octet-stream;
+
+    sendfile on;
+    gzip on;
+    gzip_types text/plain text/css application/json;
+
+    server {
+        listen 127.0.0.1:@REF_PORT@;
+        server_name localhost;
+
+        location /static/ {
+            alias @SITE@/;
+            # The docroot is UTF-8 content (mksite.sh writes UTF-8 files, e.g.
+            # cafe*.txt); label it. The SUT serves these types with an explicit
+            # charset=utf-8 parameter, so an UNLABELED reference here is a
+            # reference-config gap, not an SUT gap - the differential should
+            # compare content behaviour, not a missing charset declaration.
+            # Scoped to this location so /api (proxied) stays stock.
+            charset utf-8;
+            charset_types text/css text/plain;  # text/html is implicit
+        }
+
+        location /api {
+            proxy_pass http://127.0.0.1:@BACKEND_PORT@;
+        }
+    }
+}

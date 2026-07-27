@@ -181,6 +181,15 @@ chacha20poly1305 = "0.10"
 # ballot is built from). Root workspace members (their workspace-inherited deps resolve
 # against the root manifest) + the spween git rev `dungeon-on-dregg` already pins.
 dungeon-on-dregg = { path = "../dungeon-on-dregg", default-features = false }
+# THE CHECKER behind `/dungeon attestation`. The panel renders `verify_record`'s six checks and
+# attaches `NarrationAttestationRecord` serialized, which is exactly what the `dungeon-attest-check`
+# program a player runs deserializes: one definition of the sidecar and one of each check, so the
+# panel and the player's own run cannot disagree, and a player who wants to contradict the panel
+# has the code that produced it. Sits above `dungeon-on-dregg` (the receipt commitment) and
+# `dregg-tee-verify` (the whole TDX/DCAP side); adds neither to this graph, both were already here.
+# `collateral-fetch` is left OFF: the bot has no collateral to hand the checker at render time, so
+# check 6 reports NOT RUN, which the panel prints as unanswered rather than folding into a pass.
+dregg-attest-check = { path = "../attest-check" }
 spween-dregg = { path = "../spween-dregg" }
 spween = { git = "https://github.com/emberian/spween", rev = "95980f7d1e109138496849a444f28c4b9076a4e2" }
 # THE OFFERING CORE behind `/dungeon` — the frontend-agnostic `Offering` trait

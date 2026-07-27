@@ -1,0 +1,22 @@
+
+; <<>> DiG 9.20.24 <<>> @127.0.0.1 -p 15364 example.com DS +dnssec +time=10 +tries=1 +notcp
+; (1 server found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 5759
+;; flags: qr rd ra ad; QUERY: 1, ANSWER: 2, AUTHORITY: 0, ADDITIONAL: 1
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags: do; udp: 1232
+;; QUESTION SECTION:
+;example.com.			IN	DS
+
+;; ANSWER SECTION:
+example.com.		83801	IN	DS	2371 13 2 C988EC423E3880EB8DD8A46FE06CA230EE23F35B578D64E78B29C3E1 C83D245A
+example.com.		83801	IN	RRSIG	DS 13 2 86400 20260712013537 20260705002537 27677 com. 41A5BSSaRrtrZk9sq6HvGmDgUTwhQv6rTb+kIsskCT9e7sQkiqS5sohE 4M2r/J/8vUHEaNUlSC+bNFvM/wk9xw==
+
+;; Query time: 36 msec
+;; SERVER: 127.0.0.1#15364(127.0.0.1) (UDP)
+;; WHEN: Sun Jul 05 22:37:09 EDT 2026
+;; MSG SIZE  rcvd: 187
+

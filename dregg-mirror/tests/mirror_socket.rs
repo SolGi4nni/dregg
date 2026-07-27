@@ -95,7 +95,7 @@ fn a_dead_reference_refuses_over_the_wire_and_renders_no_card() {
         &res[..40.min(res.len())]
     );
     assert!(res.contains("No object at that reference"));
-    assert!(res.contains("⚠ unverified — original link shown"));
+    assert!(res.contains("⚠ unverified · original link shown"));
     assert!(!res.contains(r#"<div class="deos-card">"#));
 }
 

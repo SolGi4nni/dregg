@@ -1,0 +1,13 @@
+[package]
+name = "oneshot-recv-twin"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+description = "Executable model of the DEPLOYED one-shot buffer-select recv path (uring.rs recv_br_sqe/on_recv_br): the per-request lease acquire->process->recycle cycle through the single Conn.leased_bid cell, recycle-exactly-once, and buffer conservation with no cross-request lease leak. Built for exhaustive schedule exploration under loom. A separate zero-dependency crate so loom's unwind-based panic capture is not polluted by the dataplane package's linked Lean runtime."
+publish = false
+
+[target.'cfg(loom)'.dev-dependencies]
+loom = "0.7"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(loom)"] }

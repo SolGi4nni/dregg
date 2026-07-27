@@ -612,7 +612,7 @@ pub fn route_callback_decided<T: Transport>(
             let keys = host.resume_chat_all(&sid, Some(&viewer));
             let Some(primary) = keys.first().cloned() else {
                 return (
-                    "No session in this chat yet — send /offerings to pick one.".to_string(),
+                    "No session in this chat yet. Send /offerings to pick one.".to_string(),
                     PressDecision::NoSession,
                 );
             };
@@ -648,7 +648,7 @@ pub fn route_callback_decided<T: Transport>(
             }
             if reopened.is_empty() {
                 return (
-                    format!("Could not reopen {primary} — send /offerings."),
+                    format!("Could not reopen {primary}. Send /offerings."),
                     PressDecision::ReopenFailed(primary),
                 );
             }
@@ -887,11 +887,11 @@ pub fn route_text_decided<T: Transport>(
             let cleared = host.cancel_chat(chat_id, topic);
             host.present_offerings_menu(chat_id, topic);
             let what = if cleared.is_empty() {
-                "Nothing was open here — you are clear.".to_string()
+                "Nothing was open here; you are clear.".to_string()
             } else {
                 format!(
                     "Cleared this chat's surfaces ({}) and any pending text slot. Nothing \
-                     committed was discarded — /open <key> brings a session back with its \
+                     committed was discarded: /open <key> brings a session back with its \
                      receipts intact.",
                     cleared.join(", ")
                 )
@@ -905,7 +905,7 @@ pub fn route_text_decided<T: Transport>(
             if rest.is_empty() {
                 return (
                     Some(
-                        "Usage: /close <key> — ENDS that session and DISCARDS its move-log. \
+                        "Usage: /close <key>. ENDS that session and DISCARDS its move-log. \
                          /cancel is the non-destructive escape."
                             .to_string(),
                     ),
@@ -996,7 +996,7 @@ pub fn route_text_decided<T: Transport>(
         "/open" => {
             if rest.is_empty() {
                 return (
-                    Some("Usage: /open <key> — see /offerings for the catalog.".to_string()),
+                    Some("Usage: /open <key>. See /offerings for the catalog.".to_string()),
                     TextDecision::Usage {
                         cmd: cmd.to_string(),
                     },
@@ -1028,7 +1028,7 @@ pub fn route_text_decided<T: Transport>(
                         // the opened surface IS the reply — unless it was an in-place repaint
                         repaint_in_place.then(|| {
                             format!(
-                                "{rest} is already open in this chat — I refreshed its message \
+                                "{rest} is already open in this chat; I refreshed its message \
                                  above (a group keeps ONE shared surface per game, so it stays \
                                  where it is). /cancel clears this chat."
                             )
@@ -1104,7 +1104,7 @@ pub fn route_text_decided<T: Transport>(
             )
         }
         "/act" => {
-            let usage = "Usage: /act <turn> <arg> — e.g. /act bid 500".to_string();
+            let usage = "Usage: /act <turn> <arg>, e.g. /act bid 500".to_string();
             let Some((turn, arg)) = rest.split_once(char::is_whitespace) else {
                 return (
                     Some(usage),
@@ -1155,7 +1155,7 @@ pub fn route_text_decided<T: Transport>(
         // `every_registered_command_dispatches` can both see.
         _ if !cmd.is_empty() => (
             Some(format!(
-                "{cmd} is in my command list but has no handler — that is a bug in me, not in \
+                "{cmd} is in my command list but has no handler: that is a bug in me, not in \
                  you. /help lists what works, /cancel always works."
             )),
             TextDecision::Unknown {
@@ -1216,7 +1216,7 @@ pub fn route_text_decided<T: Transport>(
                 (
                     Some(format!(
                         "The {minutes}-minute window for “{}” had already closed, so I did NOT \
-                         take that message as its text — nothing was submitted and nothing was \
+                         take that message as its text: nothing was submitted and nothing was \
                          lost. Press that button again and send the text right after, and I will \
                          fill it in.",
                         expired.label
@@ -1236,8 +1236,8 @@ pub fn route_text_decided<T: Transport>(
                     Some(match &unpainted {
                         None => format!(
                             "I had nothing live in this chat (I restarted), so I restored {count} \
-                             and reposted {} above: {keys}. Your message was NOT read as a move — \
-                             press a button on that surface, or /status for the record.",
+                             and reposted {} above: {keys}. Your message was NOT read as a move. \
+                             Press a button on that surface, or /status for the record.",
                             if resumed.len() == 1 { "it" } else { "them" }
                         ),
                         Some(why) => format!(
@@ -1439,7 +1439,7 @@ pub fn route_web_app_data_decided<T: Transport>(
     } else {
         (
             format!(
-                "Mini App sent {} byte(s) — no affordance decoded, nothing landed. State-changing \
+                "Mini App sent {} byte(s): no affordance decoded, nothing landed. State-changing \
                  turns land through the app's own verified channel.",
                 data.len()
             ),
@@ -1466,7 +1466,7 @@ pub fn describe_press(press: HostPress) -> String {
         } => format!("Refused by the executor: {why}"),
         HostPress::Verified { key, report } => describe_verify(&key, report.as_ref()),
         HostPress::TextArmed { action, .. } => format!(
-            "Selected \"{}\" — now send your text and I will fill it in.",
+            "Selected \"{}\": now send your text and I will fill it in.",
             action.label
         ),
         // The privacy redirect IS the ack (and, being long, the loop also lands it in the chat).
@@ -1479,7 +1479,7 @@ pub fn describe_press(press: HostPress) -> String {
             // same time.
             stale_control(TELEGRAM_NEXT_STEP)
         }
-        HostPress::NoSession => "No session in this chat yet — send /offerings.".to_string(),
+        HostPress::NoSession => "No session in this chat yet. Send /offerings.".to_string(),
     }
 }
 
@@ -1671,11 +1671,11 @@ pub fn describe_shared_game_receipt_landed(receipt: &PublicGameReceipt) -> Strin
 pub fn describe_verify(key: &str, report: Option<&VerifyReport>) -> String {
     match report {
         Some(r) if r.verified => format!(
-            "{key}: {} turn(s) re-verified by replay — {}",
+            "{key}: {} turn(s) re-verified by replay · {}",
             r.turns, r.detail
         ),
         Some(r) => format!(
-            "{key}: VERIFY FAILED after {} turn(s) — {}",
+            "{key}: VERIFY FAILED after {} turn(s) · {}",
             r.turns, r.detail
         ),
         None => format!("{key} exposes no verifier."),

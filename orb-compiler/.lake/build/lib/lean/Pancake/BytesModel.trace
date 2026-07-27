@@ -1,0 +1,61 @@
+{"synthetic": false,
+ "schemaVersion": "2025-09-10",
+ "outputs":
+ {"o": ["ceb3e5f5f6a928c8.olean"],
+  "m": false,
+  "i": "50f75e452559d318.ilean",
+  "c": "d418fcadcd8901af.c"},
+ "log":
+ [{"message":
+   ".> LEAN_PATH=/Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean /Users/ember/.elan/toolchains/leanprover--lean4---v4.30.0/bin/lean /Users/ember/dev/breadstuffs/orb-compiler/Pancake/BytesModel.lean -o /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/BytesModel.olean -i /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/BytesModel.ilean -c /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/BytesModel.c --setup /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/BytesModel.setup.json --json",
+   "level": "trace"},
+  {"message":
+   "Pancake/BytesModel.lean:46:17: This simp argument is unused:\n  Nat.one_mul\n\nHint: Omit it from the simp argument list.\n  simp only [BitVec.toNat_sub, BitVec.toNat_shiftLeft, BitVec.toNat_ofNat, Nat.shiftLeft_eq,̵\n  ̵ ̵ ̵ ̵ ̵ ̵ ̵ ̵ ̵ ̵ ̵ ̵ ̵ ̵ ̵ ̵ ̵ ̵N̵a̵t̵.̵o̵n̵e̵_̵m̵u̵l̵]\n\nNote: This linter can be disabled with `set_option linter.unusedSimpArgs false`",
+   "level": "warning"},
+  {"message":
+   "Pancake/BytesModel.lean:94:43: This simp argument is unused:\n  Bool.false_and\n\nHint: Omit it from the simp argument list.\n  simp only [hsub, hij64, d2, d3, d4, d5, hj, decide_true, decide_false, Bool.true_and,\n  ̲  ̲ ̲ ̲Bool.and_true, B̵o̵o̵l̵.̵f̵a̵l̵s̵e̵_̵a̵n̵d̵,̵ ̵Bool.and_false, Bool.not_true, Bool.not_false, Bool.or_false, Bool.false_or,\n  ̲  ̲ ̲ ̲Bool.or_true]\n\nNote: This linter can be disabled with `set_option linter.unusedSimpArgs false`",
+   "level": "warning"},
+  {"message":
+   "Pancake/BytesModel.lean:95:74: This simp argument is unused:\n  Bool.or_true\n\nHint: Omit it from the simp argument list.\n  simp only [hsub, hij64, d2, d3, d4, d5, hj, decide_true, decide_false, Bool.true_and,\n  ̲  ̲ ̲ ̲Bool.and_true, Bool.false_and, Bool.and_false, Bool.not_true, Bool.not_false, Bool.or_false,\n  ̲  ̲ ̲ ̲B̵o̵o̵l̵.̵f̵a̵l̵s̵e̵_̵o̵r̵,̵ ̵B̵o̵o̵l̵.̵o̵r̵_̵t̵r̵u̵e̵]̵B̲o̲o̲l̲.̲f̲a̲l̲s̲e̲_̲o̲r̲]̲\n\nNote: This linter can be disabled with `set_option linter.unusedSimpArgs false`",
+   "level": "warning"},
+  {"message":
+   "Pancake/BytesModel.lean:123:76: This simp argument is unused:\n  Bool.or_true\n\nHint: Omit it from the simp argument list.\n  simp only [hij64, c1, c2, c3, hj, decide_true, decide_false, Bool.true_and, Bool.and_true,\n  ̲  ̲ ̲ ̲ ̲ ̲Bool.false_and, Bool.and_false, Bool.not_true, Bool.not_false, Bool.or_false, B̵o̵o̵l̵.̵f̵a̵l̵s̵e̵_̵o̵r̵,̵ ̵B̵o̵o̵l̵.̵o̵r̵_̵t̵r̵u̵e̵]̵B̲o̲o̲l̲.̲f̲a̲l̲s̲e̲_̲o̲r̲]̲\n\nNote: This linter can be disabled with `set_option linter.unusedSimpArgs false`",
+   "level": "warning"},
+  {"message":
+   "Pancake/BytesModel.lean:129:45: This simp argument is unused:\n  Bool.false_and\n\nHint: Omit it from the simp argument list.\n  simp only [hij64, c1, c2, c3, hb0, hj, decide_true, decide_false, Bool.true_and, Bool.and_true,\n  ̲  ̲ ̲ ̲ ̲ ̲B̵o̵o̵l̵.̵f̵a̵l̵s̵e̵_̵a̵n̵d̵,̵ ̵Bool.and_false, Bool.not_true, Bool.not_false, Bool.or_false, Bool.false_or, Bool.or_true]\n\nNote: This linter can be disabled with `set_option linter.unusedSimpArgs false`",
+   "level": "warning"},
+  {"message":
+   "Pancake/BytesModel.lean:130:15: This simp argument is unused:\n  Bool.not_true\n\nHint: Omit it from the simp argument list.\n  simp only [hij64, c1, c2, c3, hb0, hj, decide_true, decide_false, Bool.true_and, Bool.and_true,\n  ̲  ̲ ̲ ̲ ̲ ̲Bool.false_and, Bool.and_false, B̵o̵o̵l̵.̵n̵o̵t̵_̵t̵r̵u̵e̵,̵ ̵Bool.not_false, Bool.or_false, Bool.false_or, Bool.or_true]\n\nNote: This linter can be disabled with `set_option linter.unusedSimpArgs false`",
+   "level": "warning"},
+  {"message":
+   "Pancake/BytesModel.lean:130:61: This simp argument is unused:\n  Bool.false_or\n\nHint: Omit it from the simp argument list.\n  simp only [hij64, c1, c2, c3, hb0, hj, decide_true, decide_false, Bool.true_and, Bool.and_true,\n  ̲  ̲ ̲ ̲ ̲ ̲Bool.false_and, Bool.and_false, Bool.not_true, Bool.not_false, Bool.or_false, B̵o̵o̵l̵.̵f̵a̵l̵s̵e̵_̵o̵r̵,̵ ̵Bool.or_true]\n\nNote: This linter can be disabled with `set_option linter.unusedSimpArgs false`",
+   "level": "warning"},
+  {"message":
+   "Pancake/BytesModel.lean:130:76: This simp argument is unused:\n  Bool.or_true\n\nHint: Omit it from the simp argument list.\n  simp only [hij64, c1, c2, c3, hb0, hj, decide_true, decide_false, Bool.true_and, Bool.and_true,\n  ̲  ̲ ̲ ̲ ̲ ̲Bool.false_and, Bool.and_false, Bool.not_true, Bool.not_false, Bool.or_false, B̵o̵o̵l̵.̵f̵a̵l̵s̵e̵_̵o̵r̵,̵ ̵B̵o̵o̵l̵.̵o̵r̵_̵t̵r̵u̵e̵]̵B̲o̲o̲l̲.̲f̲a̲l̲s̲e̲_̲o̲r̲]̲\n\nNote: This linter can be disabled with `set_option linter.unusedSimpArgs false`",
+   "level": "warning"},
+  {"message":
+   "Pancake/BytesModel.lean:346:38: unused variable `hlen`\n\nNote: This linter can be disabled with `set_option linter.unusedVariables false`",
+   "level": "warning"}],
+ "inputs":
+ [["Pancake.BytesModel:deps",
+   [["deps",
+     [["«orb-compiler»/Pancake:extraDep",
+       [["@«orb-compiler»:extraDep", "00000000000006bb"]]],
+      ["imports",
+       [["Pancake.Sem transitive imports (legacy)", "00000000000006bb"],
+        ["Pancake.Sem:importAllArts", "e43d97663b20cdaa"]]]]],
+    ["libs",
+     [["import dynlibs", "00000000000006bb"],
+      ["package external libraries", "00000000000006bb"],
+      ["module dynlibs", "00000000000006bb"],
+      ["module plugins", "00000000000006bb"]]]]],
+  ["Lean 4.30.0, commit d024af099ca4bf2c86f649261ebf59565dc8c622",
+   "2f4703bb19086252"],
+  ["/Users/ember/dev/breadstuffs/orb-compiler/Pancake/BytesModel.lean",
+   "df887f3eeb454e2f"],
+  ["options", "00000000000006bb"],
+  ["isModule: false", "feefd2a0d3a1847e"],
+  ["Module.name: Pancake.BytesModel", "0c8c1f6819c09e1e"],
+  ["Package.id?: (some orb-compiler)", "0a473b67509a16ae"],
+  ["Module.leanArgs: #[]", "00000000000006bb"]],
+ "depHash": "199ea5b3c3d63ea0"}

@@ -433,7 +433,7 @@ fn keyboard_bound_note(
     note.push_str(&format!(
         "{dropped} more affordance{} not on the keyboard ({dropped_live} you could take now, \
          {dropped_locked} locked): a keyboard past {TELEGRAM_KEYBOARD_MAX_ROWS} rows stops being \
-         readable, so the live moves come first. They are still offered — /act <turn> <arg> \
+         readable, so the live moves come first. They are still offered: /act <turn> <arg> \
          reaches any of them, and /status shows the whole record.",
         if dropped == 1 { " is" } else { "s are" }
     ));

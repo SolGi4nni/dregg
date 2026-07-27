@@ -348,7 +348,7 @@ fn substituted_bytes_fail_closed_and_render_none_of_the_object() {
     assert!(!body.contains(CARD_MARKUP));
     assert!(!body.contains("mirror-inert\" disabled"));
     // And the page wears the tier-`none` badge, verbatim from §5.
-    assert!(body.contains("⚠ unverified — original link shown"));
+    assert!(body.contains("⚠ unverified · original link shown"));
     assert!(body.contains(r#"data-trust="none""#));
 }
 
@@ -384,7 +384,7 @@ fn error_pages_never_wear_the_server_tiers_badge() {
         let (status, body) = get(&m, path);
         assert!(status >= 400, "{path} should refuse");
         assert!(
-            body.contains("⚠ unverified — original link shown"),
+            body.contains("⚠ unverified · original link shown"),
             "{path} lost the tier-`none` badge"
         );
         // §7's ladder still prints every rung's language (that block is the same on

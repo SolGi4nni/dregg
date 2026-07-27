@@ -72,7 +72,7 @@ const BADGE: Record<TrustTier, string> = {
   extension: "✓ replay-verified by your cipherclerk",
   sdk: "✓ replay-verified in this page",
   server: "✓ replay-verified by dregg.net (trust the origin)",
-  none: "⚠ unverified — original link shown",
+  none: "⚠ unverified · original link shown",
 };
 
 const STYLE = `

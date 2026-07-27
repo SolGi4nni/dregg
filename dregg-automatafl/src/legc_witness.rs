@@ -132,7 +132,7 @@ fn fill_forced_ge0(
     if term < 0 || term >= (1i64 << rbits) {
         return Err(format!(
             "legc witness-gen: forced_ge0 range term {term} ∉ [0, 2^{rbits}) for source col \
-             {source_col} (value {x}) — an out-of-range / invalid input (fail-closed)"
+             {source_col} (value {x}): an out-of-range / invalid input (fail-closed)"
         ));
     }
     let mut prog = set_if_none(vals, ib_col, bb(ib));
@@ -258,7 +258,7 @@ pub fn automatafl_legc_trace(
     // Fail-closed layout guards: the descriptor must be the Leg C layout for this `n`.
     if l.width() != desc.trace_width {
         return Err(format!(
-            "legc witness-gen: layout width {} ≠ descriptor '{}' trace_width {} — a descriptor \
+            "legc witness-gen: layout width {} ≠ descriptor '{}' trace_width {}: a descriptor \
              cutover the shape-independent mirror has not tracked",
             l.width(),
             desc.name,
@@ -301,8 +301,8 @@ pub fn automatafl_legc_trace(
     let unresolved: Vec<usize> = (0..l.width()).filter(|c| vals[*c].is_none()).collect();
     if !unresolved.is_empty() {
         return Err(format!(
-            "legc witness-gen: {} column(s) unresolved after the gate solver reached fixpoint — a \
-             genuine witness-gen gap: no descriptor gate determines them, and no gadget filler \
+            "legc witness-gen: {} column(s) unresolved after the gate solver reached fixpoint. \
+             A genuine witness-gen gap: no descriptor gate determines them, and no gadget filler \
              covers them. Contiguous ranges: {}",
             unresolved.len(),
             contiguous_ranges(&unresolved)
@@ -324,7 +324,7 @@ pub fn automatafl_legc_trace(
                 let v = door.get(pi).copied().ok_or_else(|| {
                     format!(
                         "legc witness-gen: PI {pi} is neither column-bound nor part of the 16-felt \
-                         free door — the descriptor publishes a lane the ABI cannot fill"
+                         free door: the descriptor publishes a lane the ABI cannot fill"
                     )
                 })?;
                 public_inputs.push(v);

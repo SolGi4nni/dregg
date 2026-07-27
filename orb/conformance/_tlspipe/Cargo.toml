@@ -1,0 +1,9 @@
+[workspace]
+
+[package]
+name = "tlspipe"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "prefer-post-quantum", "std", "tls12"] }

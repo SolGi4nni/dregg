@@ -1,0 +1,13 @@
+{"version": "1.2.0",
+ "packagesDir": ".lake/packages",
+ "packages":
+ [{"type": "path",
+   "scope": "",
+   "name": "«dregg-serve-spec»",
+   "manifestFile": "lake-manifest.json",
+   "inherited": false,
+   "dir": "../dregg-serve-spec",
+   "configFile": "lakefile.lean"}],
+ "name": "drorb",
+ "lakeDir": ".lake",
+ "fixedToolchain": false}

@@ -954,11 +954,11 @@ async function boot() {{\n\
       const label = span.textContent.replace(/[0-9]+$/, '');\n\
       span.textContent = label + card.read();\n\
     }});\n\
-    if (status) status.textContent = 'live — cell ' + card.cellId().slice(0, 10) + '… · receipts: ' + card.receiptCount();\n\
+    if (status) status.textContent = 'live · cell ' + card.cellId().slice(0, 10) + '… · receipts: ' + card.receiptCount();\n\
     // Keep the receipt count fresh after every committed turn.\n\
     document.addEventListener('deos-affordance', function() {{\n\
       requestAnimationFrame(function() {{\n\
-        if (status && window.__deosCard) status.textContent = 'live — cell ' + window.__deosCard.cellId().slice(0, 10) + '… · receipts: ' + window.__deosCard.receiptCount();\n\
+        if (status && window.__deosCard) status.textContent = 'live · cell ' + window.__deosCard.cellId().slice(0, 10) + '… · receipts: ' + window.__deosCard.receiptCount();\n\
       }});\n\
     }});\n\
   }} catch (e) {{\n\
@@ -1040,7 +1040,7 @@ async function boot() {{\n\
     const card = new InspectorWorld([{seeds}]);    // mint the in-tab reflective executor\n\
     window.__deosCard = card;                      // the affordance wire fires real turns into this\n\
     // Re-paint every bound slot from the committed ledger (the witnessed read), each row\n\
-    // off its OWN data-slot — the reflective inspector binds several fields.\n\
+    // off its OWN data-slot: the reflective inspector binds several fields.\n\
     document.querySelectorAll('.deos-bind[data-slot]').forEach(function(span) {{\n\
       const slot = parseInt(span.getAttribute('data-slot') || '0', 10);\n\
       const label = span.textContent.replace(/[0-9]+$/, '');\n\
@@ -1049,7 +1049,7 @@ async function boot() {{\n\
     function refreshStatus() {{\n\
       if (status && window.__deosCard) {{\n\
         const c = window.__deosCard;\n\
-        status.textContent = 'live — cell ' + c.cellId().slice(0, 10) + '… · balance ' + c.balance() + ' · nonce ' + c.nonce() + ' · receipts ' + c.receiptCount();\n\
+        status.textContent = 'live · cell ' + c.cellId().slice(0, 10) + '… · balance ' + c.balance() + ' · nonce ' + c.nonce() + ' · receipts ' + c.receiptCount();\n\
       }}\n\
     }}\n\
     refreshStatus();\n\
@@ -1126,7 +1126,7 @@ async function boot() {{\n\
     const card = new TallyWorld([{seeds}]);        // mint the in-tab tally executor\n\
     window.__deosCard = card;                      // the affordance wire fires real turns into this\n\
     // Re-paint every bound row from the committed ledger (the witnessed read), each off its\n\
-    // OWN data-slot — the board binds one slot per tally row.\n\
+    // OWN data-slot: the board binds one slot per tally row.\n\
     document.querySelectorAll('.deos-bind[data-slot]').forEach(function(span) {{\n\
       const slot = parseInt(span.getAttribute('data-slot') || '0', 10);\n\
       const label = span.textContent.replace(/[0-9]+$/, '');\n\
@@ -1135,7 +1135,7 @@ async function boot() {{\n\
     function refreshStatus() {{\n\
       if (status && window.__deosCard) {{\n\
         const c = window.__deosCard;\n\
-        status.textContent = 'live — cell ' + c.cellId().slice(0, 10) + '… · receipts ' + c.receiptCount();\n\
+        status.textContent = 'live · cell ' + c.cellId().slice(0, 10) + '… · receipts ' + c.receiptCount();\n\
       }}\n\
     }}\n\
     refreshStatus();\n\
@@ -1216,7 +1216,7 @@ async function boot() {{\n\
     const card = new KvStoreWorld([{seeds}]);      // mint the in-tab service cell + verified executor\n\
     window.__deosCard = card;                      // the affordance wire routes real turns into this\n\
     // Re-paint every bound slot from the committed ledger (the witnessed read), each off its\n\
-    // OWN data-slot — slot 0 is the store version, the rest are registers.\n\
+    // OWN data-slot: slot 0 is the store version, the rest are registers.\n\
     document.querySelectorAll('.deos-bind[data-slot]').forEach(function(span) {{\n\
       const slot = parseInt(span.getAttribute('data-slot') || '0', 10);\n\
       const label = span.textContent.replace(/[0-9]+$/, '');\n\
@@ -1225,7 +1225,7 @@ async function boot() {{\n\
     function refreshStatus() {{\n\
       if (status && window.__deosCard) {{\n\
         const c = window.__deosCard;\n\
-        status.textContent = 'live — store ' + c.cellId().slice(0, 10) + '… · version ' + c.version() + ' · receipts ' + c.receiptCount();\n\
+        status.textContent = 'live · store ' + c.cellId().slice(0, 10) + '… · version ' + c.version() + ' · receipts ' + c.receiptCount();\n\
       }}\n\
     }}\n\
     refreshStatus();\n\
@@ -1409,7 +1409,7 @@ pub fn render_gallery_document(title: &str, cards: &[GalleryCard]) -> String {
 <main class=\"deos-gallery\">\n\
 <header class=\"deos-gallery-head\">\n\
 <h1>{title}</h1>\n\
-<p>Each tile is a live deos card. Open one and click an affordance — every click fires a \
+<p>Each tile is a live deos card. Open one and click an affordance: every click fires a \
 real cap-gated <em>verified turn</em> over an executor running right here in the tab, and \
 the bound field re-paints from the committed ledger.</p>\n\
 </header>\n\
@@ -1717,18 +1717,18 @@ async function boot() {{\n\
     if (verdict && verdict.attested) {{\n\
       const fr = (verdict.final_root || []).join(', ');\n\
       banner.className = 'deos-trust verified';\n\
-      banner.textContent = '\\u2713 light-client verified \\u2014 ' + verdict.num_turns + ' finalized turns, checked in YOUR browser';\n\
+      banner.textContent = '\\u2713 light-client verified \\u00b7 ' + verdict.num_turns + ' finalized turns, checked in YOUR browser';\n\
       content.className = content.className.replace('deos-unverified', 'deos-verified');\n\
       const fields = deosVerifyFields();   // bind each painted field value to the committed heap\n\
       let fieldNote = '';\n\
       if (fields && fields.total > 0) {{\n\
         fieldNote = '<br>field values: ' + fields.ok + '/' + fields.total + ' verified by per-slot heap openings (the shown values provably equal the committed cell state under <code>heap_root</code>; binding <code>heap_root</code> into <code>final_root</code> is the named residual)';\n\
       }}\n\
-      detail.innerHTML = 'This page reflects a genuine verified cell. The recursive STARK aggregate over its whole finalized history verified in this tab, re-witnessing nothing \\u2014 ' +\n\
+      detail.innerHTML = 'This page reflects a genuine verified cell. The recursive STARK aggregate over its whole finalized history verified in this tab, re-witnessing nothing, ' +\n\
         '{mode_note}.<br>commitment <code>final_root</code> = [' + fr + ']<br>engine: ' + verdict.engine + fieldNote + '<br><span class=\\\"deos-floor\\\">' + verdict.named_floor + '</span>';\n\
     }} else {{\n\
       banner.className = 'deos-trust refused';\n\
-      banner.textContent = '\\u2717 UNVERIFIED \\u2014 the light client REFUSED this attestation';\n\
+      banner.textContent = '\\u2717 UNVERIFIED \\u00b7 the light client REFUSED this attestation';\n\
       detail.innerHTML = 'Treat the content below as the server\\u2019s unproven claim. ' + ((verdict && verdict.named_floor) || 'no verdict returned');\n\
     }}\n\
   }} catch (e) {{\n\
@@ -1768,7 +1768,7 @@ boot();\n",
 <body>\n\
 <div class=\"deos-portal\">\n\
 <div class=\"deos-trust pending\" id=\"deos-trust\">&#9203; verifying the cell&rsquo;s attestation in your browser&hellip;</div>\n\
-<div class=\"deos-trust-detail\" id=\"deos-trust-detail\">A light client is checking the recursive proof of this cell&rsquo;s whole finalized history &mdash; locally, trusting no server.</div>\n\
+<div class=\"deos-trust-detail\" id=\"deos-trust-detail\">A light client is checking the recursive proof of this cell&rsquo;s whole finalized history (locally, trusting no server).</div>\n\
 <main class=\"deos-card deos-unverified\" id=\"deos-content\">{body}</main>\n\
 </div>\n\
 {attest_block}\n\
@@ -1921,7 +1921,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:'IBM Plex Sans',u
 .deos-input-submit{background:var(--accent);color:var(--accent-ink);border:none;border-radius:7px;padding:.4rem .8rem;font:inherit;font-weight:700;cursor:pointer;}
 .deos-grid{display:flex;flex-wrap:wrap;gap:.5rem;}
 .deos-grid[style*=grid-template]{display:grid;}
-/* ── THE GAME BOARD — a coordgrid renders as a real, centered, square-celled board. ── */
+/* ── THE GAME BOARD: a coordgrid renders as a real, centered, square-celled board. ── */
 .deos-coordgrid{display:grid;gap:.35rem;width:100%;max-width:26rem;margin:.9rem auto;padding:.55rem;background:#0a1326;border:1px solid var(--border);border-radius:12px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.35),0 6px 24px -14px #000;}
 .deos-cell,button.deos-cell{display:flex;align-items:center;justify-content:center;aspect-ratio:1/1;min-width:1.9rem;border:1px solid var(--border);border-radius:7px;background:#0d1830;color:var(--muted);font-size:1.2rem;font-weight:700;line-height:1;font-family:inherit;padding:0;margin:0;transition:border-color .12s,background .12s,color .12s,transform .07s,box-shadow .12s;}
 button.deos-cell{cursor:pointer;}
@@ -1990,7 +1990,7 @@ function deosReadSlot(card, slot){
   return card.read.length > 0 ? card.read(slot) : card.read();
 }
 function deosRepaintBinds(card){
-  // Re-read the live ledger for every bound slot and repaint it — the witnessed read the
+  // Re-read the live ledger for every bound slot and repaint it: the witnessed read the
   // native `bind` makes, here `card.read(slot)`. Each `deos-bind` span carries its own
   // `data-slot`, so a multi-field card (the inspector) repaints each row from ITS slot.
   // CONSUMER-DELIGHT: a span carrying `data-label`+`data-fmt` re-formats through the shared
@@ -2010,7 +2010,7 @@ function deosRepaintBinds(card){
 }
 function deosRepaintPills(card){
   // A LIVE pill re-reads its bound slot and maps the value to the matching case's word + color
-  // (the static phase-word cure) — the witnessed read the native pill makes.
+  // (the static phase-word cure), the witnessed read the native pill makes.
   document.querySelectorAll('.deos-pill[data-slot][data-cases]').forEach(function(p){
     var slot = parseInt(p.getAttribute('data-slot') || '0', 10);
     var v = deosReadSlot(card, slot);
@@ -2023,7 +2023,7 @@ function deosRepaintPills(card){
           break;
         }
       }
-    } catch(e) { /* a malformed cases blob leaves the static first paint — honest, never a crash */ }
+    } catch(e) { /* a malformed cases blob leaves the static first paint: honest, never a crash */ }
   });
 }
 document.querySelectorAll('.deos-button').forEach(function(b){
@@ -2047,7 +2047,7 @@ document.querySelectorAll('.deos-button').forEach(function(b){
     }
   });
 });
-// THE EXTENDED INPUT — a submit button fires `{turn, arg=the paired field value}` (input →
+// THE EXTENDED INPUT: a submit button fires `{turn, arg=the paired field value}` (input →
 // verified turn). `data-arg-from` names the `<input>` whose value becomes the arg.
 document.querySelectorAll('.deos-input-submit[data-arg-from]').forEach(function(b){
   b.addEventListener('click', function(){
@@ -2063,7 +2063,7 @@ document.querySelectorAll('.deos-input-submit[data-arg-from]').forEach(function(
     }
   });
 });
-// THE SLIDER / SCRUBBER — a range input fires `{turn, arg=the value}` on change (seek).
+// THE SLIDER / SCRUBBER: a range input fires `{turn, arg=the value}` on change (seek).
 document.querySelectorAll('.deos-slider[data-turn]').forEach(function(s){
   s.addEventListener('change', function(){
     var turn = s.getAttribute('data-turn');
@@ -2076,7 +2076,7 @@ document.querySelectorAll('.deos-slider[data-turn]').forEach(function(s){
     }
   });
 });
-// THE TOGGLE — a click fires the off-turn when currently on, else the on-turn (the live slot
+// THE TOGGLE: a click fires the off-turn when currently on, else the on-turn (the live slot
 // picks the direction + the glyph). Reads the slot off the in-tab executor.
 document.querySelectorAll('.deos-toggle[data-slot]').forEach(function(t){
   t.addEventListener('click', function(){
@@ -2096,10 +2096,10 @@ document.querySelectorAll('.deos-toggle[data-slot]').forEach(function(t){
     }
   });
 });
-// THE TABS — a tab click fires `{turn=select_turn, arg=the clicked index}` (a REAL cap-gated
+// THE TABS: a tab click fires `{turn=select_turn, arg=the clicked index}` (a REAL cap-gated
 // select turn when an in-tab executor is bound) AND switches the visible panel. Visibility is
-// driven by the `deos-active` class off the LIVE selected slot (`card.read(selected_slot)`) —
-// NOT a hardcoded index-0 CSS rule — so the panel follows the committed selection.
+// driven by the `deos-active` class off the LIVE selected slot (`card.read(selected_slot)`),
+// NOT a hardcoded index-0 CSS rule, so the panel follows the committed selection.
 function deosActivateTab(tabsEl, index){
   var want = String(index);
   tabsEl.querySelectorAll('.deos-tab').forEach(function(t){
@@ -2131,7 +2131,7 @@ document.querySelectorAll('.deos-tabs').forEach(function(tabsEl){
           return;
         } catch (e) { console.error('deos tab select refused:', turn, index, e); }
       }
-      // Static bake (no executor) or an unbound select_turn — switch the visible panel locally.
+      // Static bake (no executor) or an unbound select_turn: switch the visible panel locally.
       deosActivateTab(tabsEl, index);
     });
   });

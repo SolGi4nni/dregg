@@ -1,0 +1,25 @@
+{"plugins": [],
+ "package": "orb-compiler",
+ "options": {},
+ "name": "Pancake.StageLiftHeader",
+ "isModule": false,
+ "importArts":
+ {"Pancake.StageProg":
+  ["/Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/StageProg.olean"],
+  "Pancake.SerializeCompile":
+  ["/Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/SerializeCompile.olean"],
+  "Pancake.Sem":
+  ["/Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/Sem.olean"],
+  "Pancake.Lower":
+  ["/Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/Lower.olean"],
+  "Pancake.EmitCorrectRegion":
+  ["/Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/EmitCorrectRegion.olean"],
+  "Pancake.EmitCorrectLoop":
+  ["/Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/EmitCorrectLoop.olean"],
+  "Pancake.EmitCorrectCompose":
+  ["/Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/EmitCorrectCompose.olean"],
+  "Pancake.EmitCorrectClock":
+  ["/Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/EmitCorrectClock.olean"],
+  "Dsl.EmitPancake":
+  ["/Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Dsl/EmitPancake.olean"]},
+ "dynlibs": []}

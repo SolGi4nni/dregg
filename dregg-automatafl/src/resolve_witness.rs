@@ -188,7 +188,7 @@ fn try_solve_gate(expr: &LeanExpr, vals: &mut [Option<BabyBear>]) -> Result<bool
             return Ok(false); // 0 == 0 for any u — underdetermined here, solved by another gate.
         }
         return Err(format!(
-            "resolve witness-gen: gate is UNSAT — column {u} forced to satisfy {}·u + {} = 0 with \
+            "resolve witness-gen: gate is UNSAT: column {u} forced to satisfy {}·u + {} = 0 with \
              a = 0, b ≠ 0",
             canon(a),
             canon(b)
@@ -239,7 +239,7 @@ fn fill_forced_ge0(
     if term < 0 || term >= (1i64 << rbits) {
         return Err(format!(
             "resolve witness-gen: forced_ge0 range term {term} ∉ [0, 2^{rbits}) for source col \
-             {source_col} (value {x}) — an out-of-range / invalid input (fail-closed)"
+             {source_col} (value {x}): an out-of-range / invalid input (fail-closed)"
         ));
     }
     let mut prog = set_if_none(vals, ib_col, bb(ib));
@@ -350,7 +350,7 @@ pub fn automatafl_resolve_trace(
     // Fail-closed layout guards: the descriptor must be the Leg-R packed-felt layout for this `n`.
     if l.width() != desc.trace_width {
         return Err(format!(
-            "resolve witness-gen: layout width {} ≠ descriptor '{}' trace_width {} — a descriptor \
+            "resolve witness-gen: layout width {} ≠ descriptor '{}' trace_width {}: a descriptor \
              cutover the shape-independent mirror has not tracked",
             l.width(),
             desc.name,
@@ -392,8 +392,8 @@ pub fn automatafl_resolve_trace(
     let unresolved: Vec<usize> = (0..l.width()).filter(|c| vals[*c].is_none()).collect();
     if !unresolved.is_empty() {
         return Err(format!(
-            "resolve witness-gen: {} column(s) unresolved after the gate solver reached fixpoint \
-             — a genuine witness-gen gap: no descriptor gate determines them, and no gadget filler \
+            "resolve witness-gen: {} column(s) unresolved after the gate solver reached fixpoint. \
+             A genuine witness-gen gap: no descriptor gate determines them, and no gadget filler \
              covers them. Contiguous ranges: {}",
             unresolved.len(),
             contiguous_ranges(&unresolved)

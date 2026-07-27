@@ -1,0 +1,50 @@
+{"synthetic": false,
+ "schemaVersion": "2025-09-10",
+ "outputs":
+ {"o": ["e6cb835dcdaaa289.olean"],
+  "m": false,
+  "i": "2d83ed2e47a9adf9.ilean",
+  "c": "77a9137ed5378dd6.c"},
+ "log":
+ [{"message":
+   ".> LEAN_PATH=/Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean /Users/ember/.elan/toolchains/leanprover--lean4---v4.30.0/bin/lean /Users/ember/dev/breadstuffs/orb-compiler/Pancake/ModelUnify.lean -o /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/ModelUnify.olean -i /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/ModelUnify.ilean -c /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/ModelUnify.c --setup /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/ModelUnify.setup.json --json",
+   "level": "trace"},
+  {"message":
+   "Pancake/ModelUnify.lean:493:0: 'Pancake.ModelUnify.byteLit_landsB' depends on axioms: [propext, Classical.choice, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/ModelUnify.lean:494:0: 'Pancake.ModelUnify.statusHead_landsB' depends on axioms: [propext, Classical.choice, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/ModelUnify.lean:495:0: 'Pancake.ModelUnify.statusHead_fires_on_404' depends on axioms: [propext, Classical.choice, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/ModelUnify.lean:496:0: 'Pancake.ModelUnify.head404_is_serialize_prefix' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/ModelUnify.lean:497:0: 'Pancake.ModelUnify.witness_pre_not_head' depends on axioms: [propext, Quot.sound]",
+   "level": "info"}],
+ "inputs":
+ [["Pancake.ModelUnify:deps",
+   [["deps",
+     [["«orb-compiler»/Pancake:extraDep",
+       [["@«orb-compiler»:extraDep", "00000000000006bb"]]],
+      ["imports",
+       [["Pancake.StatusLineEmit transitive imports (legacy)",
+         "592b4c80596f65c2"],
+        ["Pancake.StatusLineEmit:importAllArts", "9a4be98dc687f449"]]]]],
+    ["libs",
+     [["import dynlibs", "00000000000006bb"],
+      ["package external libraries", "00000000000006bb"],
+      ["module dynlibs", "00000000000006bb"],
+      ["module plugins", "00000000000006bb"]]]]],
+  ["Lean 4.30.0, commit d024af099ca4bf2c86f649261ebf59565dc8c622",
+   "2f4703bb19086252"],
+  ["/Users/ember/dev/breadstuffs/orb-compiler/Pancake/ModelUnify.lean",
+   "a42f172e6ef62fd2"],
+  ["options", "00000000000006bb"],
+  ["isModule: false", "feefd2a0d3a1847e"],
+  ["Module.name: Pancake.ModelUnify", "b27caa20b26d6c59"],
+  ["Package.id?: (some orb-compiler)", "0a473b67509a16ae"],
+  ["Module.leanArgs: #[]", "00000000000006bb"]],
+ "depHash": "3f841a73d4439d29"}

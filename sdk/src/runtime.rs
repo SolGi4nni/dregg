@@ -449,11 +449,17 @@ fn ensure_deployed_executor_oracles_installed() {
                  `dregg_cross_cell_conserves` for this process"
             );
         } else {
+            // ⚑ This branch is only reachable INSIDE the release-native guard above, i.e.
+            // exactly where `executor/atomic.rs:497` DOES fail closed and the Rust twin is
+            // not even compiled. The prior text ("This does not fail closed; it silently
+            // decides") described the pre-fail-closed world and was the sentence an
+            // operator would act on — stale in the SAFE direction, but still wrong.
             tracing::warn!(
                 "conservation oracle: the linked Lean archive does NOT export \
-                 `dregg_cross_cell_conserves` — the executor will decide per-asset Σδ=0 with the \
-                 UNVERIFIED Rust twin that already drifted into an inflation bug once. This does not \
-                 fail closed; it silently decides."
+                 `dregg_cross_cell_conserves` — NO oracle is installed, so on this native \
+                 RELEASE build every value-moving turn is REFUSED with \
+                 `ConservationGateUnavailable` (the unverified Rust twin is not compiled \
+                 here, so it cannot silently decide). Rebuild against a HEAD-matching archive."
             );
         }
     });

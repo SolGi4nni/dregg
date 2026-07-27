@@ -1,0 +1,56 @@
+{"synthetic": false,
+ "schemaVersion": "2025-09-10",
+ "outputs":
+ {"o": ["cad9b88d4d3c750d.olean"],
+  "m": false,
+  "i": "342cfe70b009b6c8.ilean",
+  "c": "6167b5d6a8959ac0.c"},
+ "log":
+ [{"message":
+   ".> LEAN_PATH=/Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean /Users/ember/.elan/toolchains/leanprover--lean4---v4.30.0/bin/lean /Users/ember/dev/breadstuffs/orb-compiler/Pancake/SerializeHeaders.lean -o /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/SerializeHeaders.olean -i /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/SerializeHeaders.ilean -c /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/SerializeHeaders.c --setup /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/SerializeHeaders.setup.json --json",
+   "level": "trace"},
+  {"message":
+   "Pancake/SerializeHeaders.lean:825:0: 'Pancake.SerializeHeaders.copyWhile_locals' depends on axioms: [propext, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/SerializeHeaders.lean:826:0: 'Pancake.SerializeHeaders.segStep' depends on axioms: [propext, Classical.choice, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/SerializeHeaders.lean:827:0: 'Pancake.SerializeHeaders.segLoop' depends on axioms: [propext, Classical.choice, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/SerializeHeaders.lean:828:0: 'Pancake.SerializeHeaders.segWhile_writes' depends on axioms: [propext, Classical.choice, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/SerializeHeaders.lean:829:0: 'Pancake.SerializeHeaders.concat_membytes' depends on axioms: [propext, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/SerializeHeaders.lean:830:0: 'Pancake.SerializeHeaders.segWhile_membytes' depends on axioms: [propext, Classical.choice, Quot.sound]",
+   "level": "info"},
+  {"message":
+   "Pancake/SerializeHeaders.lean:831:0: 'Pancake.SerializeHeaders.header_seg_framing' depends on axioms: [propext]",
+   "level": "info"}],
+ "inputs":
+ [["Pancake.SerializeHeaders:deps",
+   [["deps",
+     [["«orb-compiler»/Pancake:extraDep",
+       [["@«orb-compiler»:extraDep", "00000000000006bb"]]],
+      ["imports",
+       [["Pancake.SerializeFull transitive imports (legacy)",
+         "062e0dc535546a4c"],
+        ["Pancake.SerializeFull:importAllArts", "9f5900dcbc2e0ad9"]]]]],
+    ["libs",
+     [["import dynlibs", "00000000000006bb"],
+      ["package external libraries", "00000000000006bb"],
+      ["module dynlibs", "00000000000006bb"],
+      ["module plugins", "00000000000006bb"]]]]],
+  ["Lean 4.30.0, commit d024af099ca4bf2c86f649261ebf59565dc8c622",
+   "2f4703bb19086252"],
+  ["/Users/ember/dev/breadstuffs/orb-compiler/Pancake/SerializeHeaders.lean",
+   "8e959048ce5f0a9e"],
+  ["options", "00000000000006bb"],
+  ["isModule: false", "feefd2a0d3a1847e"],
+  ["Module.name: Pancake.SerializeHeaders", "14d84efd0763f842"],
+  ["Package.id?: (some orb-compiler)", "0a473b67509a16ae"],
+  ["Module.leanArgs: #[]", "00000000000006bb"]],
+ "depHash": "e06cfcea4d99f0f2"}

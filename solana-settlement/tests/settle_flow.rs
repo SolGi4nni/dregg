@@ -18,9 +18,12 @@ use dregg_solana_settlement::{
 
 use solana_program_test::{processor, ProgramTest};
 use solana_sdk::{
+    compute_budget::ComputeBudgetInstruction,
+    hash::Hash,
     instruction::{AccountMeta, Instruction},
+    packet::PACKET_DATA_SIZE,
     pubkey::Pubkey,
-    signature::Signer,
+    signature::{Keypair, Signer},
     system_program,
     transaction::Transaction,
 };
@@ -201,6 +204,51 @@ fn assert_proven_ix(lanes: &[u32; 8]) -> Instruction {
         }
         .pack(),
     }
+}
+
+/// ⚑ **THE SETTLE TRANSACTION DOES NOT FIT IN A SOLANA PACKET, AND NOTHING HERE COULD TELL US.**
+///
+/// This gate exists because the two tests below are green and *structurally cannot* go red on it:
+/// `ProgramTest::new(..., processor!(...))` runs the processor natively (so the `solana_bn254`
+/// syscall CU meter is never charged) and hands a `Transaction` OBJECT to `BanksClient`, which never
+/// wire-serializes it. `PACKET_DATA_SIZE` appeared nowhere in this repository before this test.
+///
+/// A validator drops any transaction whose serialized form exceeds `PACKET_DATA_SIZE` (1232 =
+/// 1280 MTU − 40 IPv6 − 8 UDP, `solana-packet-2.2.1/src/lib.rs:32`). The settle payload carries the
+/// 25 statement lanes as full 32-byte big-endian scalars (`SETTLE_LEN`, `instruction.rs:24`), which
+/// is 800 bytes of the ~1184-byte payload — and the runbook additionally requires a prepended
+/// `ComputeBudget` instruction, because the settle exceeds the 200,000-CU default
+/// (`docs/ops/DEPLOY-SOLANA-COSMOS-TESTNET.md` §1.7).
+///
+/// ⚠ **THIS TEST IS EXPECTED RED AT HEAD.** That is the finding, not a flaw in the test: the Solana
+/// settle has never been broadcast because it *cannot* be. It is deliberately NOT `#[ignore]`d —
+/// an ignored gate is one nobody reads. It goes green when the wire encoding carries the lanes as
+/// canonical `u32` (25 × 4 = 100 B instead of 800 B), which is a WIRE-FORMAT decision and therefore
+/// ember's call, not a change this test makes on its own.
+#[tokio::test]
+async fn settle_transaction_fits_in_a_solana_packet() {
+    let fx = load_fixture();
+    let payer = Keypair::new();
+
+    // The runbook's real settle tx: ComputeBudget limit + the settle instruction.
+    let cu_ix = ComputeBudgetInstruction::set_compute_unit_limit(600_000);
+    let mut tx = Transaction::new_with_payer(
+        &[cu_ix, settle_ix(&fx, fx.inputs, fx.a, &payer.pubkey())],
+        Some(&payer.pubkey()),
+    );
+    tx.sign(&[&payer], Hash::default());
+
+    let wire = bincode::serialize(&tx).expect("a Transaction serializes with bincode");
+    let len = wire.len();
+
+    assert!(
+        len <= PACKET_DATA_SIZE,
+        "settle transaction is {len} serialized bytes against PACKET_DATA_SIZE = {PACKET_DATA_SIZE} \
+         (over by {}). A validator will DROP it; the settle cannot be broadcast at all. The 25 \
+         statement lanes occupy 800 B of the payload as 32-byte scalars and are canonical u32 \
+         values (100 B) on the wire.",
+        len.saturating_sub(PACKET_DATA_SIZE)
+    );
 }
 
 #[tokio::test]

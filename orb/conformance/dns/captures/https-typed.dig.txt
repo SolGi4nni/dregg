@@ -1,0 +1,21 @@
+
+; <<>> DiG 9.20.24 <<>> @127.0.0.1 -p 15373 cloudflare.com HTTPS +time=10 +tries=1 +notcp
+; (1 server found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 36834
+;; flags: qr rd ra ad; QUERY: 1, ANSWER: 1, AUTHORITY: 0, ADDITIONAL: 1
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 1232
+;; QUESTION SECTION:
+;cloudflare.com.			IN	HTTPS
+
+;; ANSWER SECTION:
+cloudflare.com.		300	IN	HTTPS	1 . alpn="h3,h2" ipv4hint=104.16.132.229,104.16.133.229 ipv6hint=2606:4700::6810:84e5,2606:4700::6810:85e5
+
+;; Query time: 38 msec
+;; SERVER: 127.0.0.1#15373(127.0.0.1) (UDP)
+;; WHEN: Sun Jul 05 22:37:10 EDT 2026
+;; MSG SIZE  rcvd: 116
+

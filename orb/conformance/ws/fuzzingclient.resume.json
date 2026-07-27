@@ -1,0 +1,1 @@
+{"outdir": "./reports-resume", "servers": [{"agent": "dataplane", "url": "ws://127.0.0.1:18966"}], "cases": ["10.1.1"], "exclude-cases": [], "exclude-agent-cases": {}}

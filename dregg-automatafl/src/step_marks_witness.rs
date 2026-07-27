@@ -79,7 +79,7 @@ pub fn step_marks_board_window(
     let f = packed_felts(n);
     let auto_out = step_auto_out_pi(n, desc).ok_or_else(|| {
         format!(
-            "step-marks descriptor '{}' publishes {} PIs — it carries no STEPPED automaton \
+            "step-marks descriptor '{}' publishes {} PIs: it carries no STEPPED automaton \
              coordinate (NAX/NAY). Leg A cannot declare an OUT window whose automaton is the one it \
              PRODUCED, so the inter-round carry is blocked, not faked.",
             desc.name, desc.public_input_count
@@ -160,7 +160,7 @@ pub fn automatafl_step_marks_trace(
     // Fail-closed layout guards: the descriptor must be the step-marks layout for this `n`.
     if l.width() != desc.trace_width {
         return Err(format!(
-            "step-marks witness-gen: layout width {} ≠ descriptor '{}' trace_width {} — a descriptor \
+            "step-marks witness-gen: layout width {} ≠ descriptor '{}' trace_width {}: a descriptor \
              cutover the shape-independent mirror has not tracked",
             l.width(),
             desc.name,
@@ -204,8 +204,8 @@ pub fn automatafl_step_marks_trace(
     let unresolved: Vec<usize> = (0..l.width()).filter(|c| vals[*c].is_none()).collect();
     if !unresolved.is_empty() {
         return Err(format!(
-            "step-marks witness-gen: {} column(s) unresolved after the gate solver reached fixpoint \
-             — a genuine witness-gen gap: {:?}",
+            "step-marks witness-gen: {} column(s) unresolved after the gate solver reached fixpoint. \
+             A genuine witness-gen gap: {:?}",
             unresolved.len(),
             &unresolved[..unresolved.len().min(24)]
         ));
@@ -227,7 +227,7 @@ pub fn automatafl_step_marks_trace(
                 let v = door.get(pi).copied().ok_or_else(|| {
                     format!(
                         "step-marks witness-gen: PI {pi} is neither column-bound nor part of the \
-                         16-felt free door — the descriptor publishes a lane the ABI cannot fill"
+                         16-felt free door: the descriptor publishes a lane the ABI cannot fill"
                     )
                 })?;
                 public_inputs.push(v);

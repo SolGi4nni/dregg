@@ -129,11 +129,26 @@ fn narrator_view_tracks_the_hosted_session_without_exposing_the_world() {
     assert_eq!(before.room.as_deref(), Some(ROOM_GATEHALL));
     assert_eq!(
         legal_commands(&before)
-            .into_iter()
-            .map(|(keyword, _)| keyword)
+            .iter()
+            .map(|offered| offered.keyword.as_str())
             .collect::<Vec<_>>(),
-        vec!["trade_blows", "press_on"],
+        vec![
+            "trade_blows_with_the_gate_warden",
+            "press_on_into_the_plundered_hall"
+        ],
         "a provider derives its opening tool enum from the owned session view"
+    );
+    // The keyword is DERIVED from the scene's own authored label, not from a table in the
+    // narrator: the gloss the model reads and the token it names come from one place.
+    assert_eq!(
+        legal_commands(&before)
+            .iter()
+            .map(|offered| offered.prompt.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "Trade blows with the gate-warden",
+            "Press on into the plundered hall"
+        ],
     );
 
     let press_on = Narrated::new(
@@ -146,11 +161,23 @@ fn narrator_view_tracks_the_hosted_session_without_exposing_the_world() {
     assert_eq!(after.room.as_deref(), Some(ROOM_HALL));
     assert_eq!(
         legal_commands(&after)
-            .into_iter()
-            .map(|(keyword, _)| keyword)
+            .iter()
+            .map(|offered| offered.keyword.as_str())
             .collect::<Vec<_>>(),
-        vec!["claim_red", "claim_blue", "descend"],
+        vec![
+            "claim_the_crown_for_the_red_hand",
+            "claim_the_crown_for_the_blue_hand",
+            "descend_the_collapsing_stair"
+        ],
         "the next provider request sees the landed session head, not a stale raw world"
+    );
+    // The hall AUTHORS three more choices whose executor case demands a certified
+    // private-result commitment this lane never writes. The view's gate probe drops them;
+    // no list in the narrator names them.
+    assert_eq!(
+        legal_commands(&after).len(),
+        3,
+        "the certified private-result choices are not offered to a narrator"
     );
     assert!(offering.verify(&session).verified);
 }

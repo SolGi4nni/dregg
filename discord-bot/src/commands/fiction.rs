@@ -69,6 +69,11 @@ use dungeon_on_dregg::narrator::{
     Narrated, TeeProvenance, bound_narration_commit, bound_tee_provenance_commit, legal_commands,
     narration_commitment, parse_confined_response, tee_provenance_commitment,
 };
+// The SHARED checker behind `/dungeon attestation`. The panel below renders `verify_record`'s
+// result, and the sidecar it attaches is `NarrationAttestationRecord` serialized — the same type
+// the `dungeon-attest-check` program a player runs deserializes. One definition of the sidecar,
+// one definition of each check, so the panel and the player's own run cannot disagree.
+use dregg_attest_check as attest_check;
 
 use crate::BotState;
 use crate::character_store::{award_run_outcome, xp_reward};
@@ -1347,13 +1352,18 @@ async fn handle_chutes_turn(ctx: &Context, command: &CommandInteraction, state: 
         // unattested one. Anything else and the surface would report a provenance the receipt
         // does not carry.
         let expected_tee = tee_provenance.as_ref().map(tee_provenance_commitment);
-        if turn.narrated.tee_provenance_commit != expected_tee
-            || bound_tee_provenance_commit(&turn.narrated.receipt) != expected_tee
-        {
+        let receipt_tee = bound_tee_provenance_commit(&turn.narrated.receipt);
+        if turn.narrated.tee_provenance_commit != expected_tee || receipt_tee != expected_tee {
             return Err(
                 "the landed receipt did not bind this turn's enclave provenance".to_string(),
             );
         }
+        // Carried out of the closure so the archive can store WHAT THE RECEIPT BOUND, rather than
+        // re-deriving the commitment from the row it is filed beside. Re-derivation is circular:
+        // it would reproduce whatever the row currently says, so an edit to the instance id or
+        // the TCB status would derive the edited commitment and read as clean. Taken off the
+        // receipt, it is the fixed value every one of the four preimages has to reproduce.
+        let receipt_commit_hex = receipt_tee.map(hex::encode).unwrap_or_default();
 
         let next_round = live
             .round
@@ -1369,9 +1379,13 @@ async fn handle_chutes_turn(ctx: &Context, command: &CommandInteraction, state: 
                 None,
             ));
         }
-        Ok((turn.narrated.receipt.receipt_hash(), turn.ended))
+        Ok((
+            turn.narrated.receipt.receipt_hash(),
+            turn.ended,
+            receipt_commit_hex,
+        ))
     });
-    let (receipt_id, ended) = match applied {
+    let (receipt_id, ended, receipt_commit_hex) = match applied {
         Some(Ok(applied)) => applied,
         Some(Err(error)) => {
             ack::edit_slash(
@@ -1412,6 +1426,7 @@ async fn handle_chutes_turn(ctx: &Context, command: &CommandInteraction, state: 
         &evidence_source,
         channel,
         receipt_id,
+        &receipt_commit_hex,
         &model,
         &narration_provenance,
     )
@@ -2112,6 +2127,7 @@ async fn archive_attestation(
     paid: &crate::pay::PaidNarrator,
     channel: u64,
     receipt_id: [u8; 32],
+    receipt_commit_hex: &str,
     model: &str,
     provenance: &NarrationProvenance,
 ) {
@@ -2157,6 +2173,10 @@ async fn archive_attestation(
         e2e_pubkey_b64: evidence.e2e_pubkey_b64,
         quote: evidence.quote_bytes,
         created_at: now_secs(),
+        // Read off the landed receipt, NOT re-derived from the fields above it. See the column's
+        // note in `db.rs`: a re-derivation reproduces whatever the row says, so it can never
+        // contradict an edit to the row.
+        receipt_commit_hex: receipt_commit_hex.to_string(),
     };
     if let Err(error) = state.db.persist_narration_attestation(&row).await {
         tracing::error!(
@@ -2168,57 +2188,65 @@ async fn archive_attestation(
     }
 }
 
-/// What re-checking an archived record **from the stored bytes alone** established.
+/// **The record, as the SHARED checker grades it.**
 ///
-/// Both fields are TAMPER checks on the archive, not attestations. The attestation happened once,
-/// live, against fresh collateral and a nonce generated moments earlier; it is not re-derivable
-/// from bytes at rest and nothing here claims it is. What these catch is a row that has been
-/// EDITED since it was written — which is exactly the failure a stored record is otherwise
-/// silently vulnerable to.
-struct ArchiveRecheck {
-    /// `SHA-256(quote)` equals the digest stored beside it — so the blob is the one this row
-    /// claims, and the one the receipt's commitment was computed over.
-    digest_matches: bool,
-    /// The quote's `report_data[0..32]` equals `SHA-256(ascii(nonce) ‖ ascii(pubkey))` — so the
-    /// stored nonce/instance-key pair is the one this quote commits to. `Err` carries why not.
-    binding: Result<(), String>,
+/// Not a bot-local re-check: this is `dungeon_on_dregg::attest_check::verify_record`, the same
+/// function the `dungeon-attest-check` program runs on the two files below. The panel therefore
+/// cannot report something a player who checks it themselves would not see, and a player who
+/// wants to contradict this panel has the exact code that produced it.
+///
+/// Check 3 (the measurement registry) needs a PINNED registry file, which this host has only if
+/// `CHUTES_MEASUREMENTS_JSON` is set. Check 6 (the Intel signature chain) needs DCAP collateral
+/// for this quote's platform. Both report NOT RUN when their input is absent, and NOT RUN is not
+/// a pass anywhere in the rendering.
+fn recheck_of(row: &crate::db::NarrationAttestationRow) -> attest_check::Verification {
+    attest_check::verify_record(
+        &row.quote,
+        &sidecar_record(row),
+        pinned_measurements().as_deref(),
+        None,
+        &[],
+    )
 }
 
-impl ArchiveRecheck {
-    /// Re-derive both checks from the row's own bytes.
-    fn of(row: &crate::db::NarrationAttestationRow) -> ArchiveRecheck {
-        ArchiveRecheck {
-            digest_matches: dregg_chutes_e2ee::quote_sha256_hex(&row.quote) == row.quote_sha256_hex,
-            binding: dregg_chutes_e2ee::recheck_archived_binding(
-                &row.quote,
-                &row.nonce_hex,
-                &row.e2e_pubkey_b64,
-            ),
+/// The pinned measurements registry this host holds, if any. Deliberately the FILE and never a
+/// fetch: a registry pulled at render time is whatever answered, and the point of check 3 is that
+/// it is a pin. Absent means check 3 reports NOT RUN, which is the honest reading.
+fn pinned_measurements() -> Option<String> {
+    let path = std::env::var("CHUTES_MEASUREMENTS_JSON").ok()?;
+    if path.trim().is_empty() {
+        return None;
+    }
+    match std::fs::read_to_string(path.trim()) {
+        Ok(json) => Some(json),
+        Err(error) => {
+            tracing::warn!(%error, "CHUTES_MEASUREMENTS_JSON is set but unreadable");
+            None
         }
     }
-
-    /// Whether the record is internally consistent on both counts.
-    fn intact(&self) -> bool {
-        self.digest_matches && self.binding.is_ok()
-    }
 }
 
-/// The commitment the LANDED RECEIPT binds for this attestation, recomputed from the archived
-/// fields — the link between "these bytes" and "that turn on the verified chain".
-///
-/// It is the same domain-separated hash `/dungeon chutes-turn` required the receipt to carry
-/// before it would commit a credit, over the same four preimages. Recomputing it here means a
-/// player can check the tie themselves rather than being told it holds: this value must appear on
-/// the receipt named in the record, and that receipt must survive `/dungeon verify`'s replay.
-fn archived_provenance_commit(row: &crate::db::NarrationAttestationRow) -> Option<String> {
-    let measurement: [u8; 32] = hex::decode(&row.measurement_hex).ok()?.try_into().ok()?;
-    let quote_sha256: [u8; 32] = hex::decode(&row.quote_sha256_hex).ok()?.try_into().ok()?;
-    Some(hex::encode(tee_provenance_commitment(&TeeProvenance::new(
-        measurement,
-        row.instance_id.clone(),
-        row.tcb_status.clone(),
-        quote_sha256,
-    ))))
+/// The archived row as the SHARED sidecar type: one definition, serialized here and deserialized
+/// by the checker, so a field this bot renames stops parsing rather than reading as absent.
+fn sidecar_record(
+    row: &crate::db::NarrationAttestationRow,
+) -> attest_check::NarrationAttestationRecord {
+    attest_check::NarrationAttestationRecord::of(attest_check::RecordIdentity {
+        receipt_hex: row.receipt_hex.clone(),
+        provider: row.provider.clone(),
+        model: row.model.clone(),
+        instance_id: row.instance_id.clone(),
+        measurement_hex: row.measurement_hex.clone(),
+        tcb_status: row.tcb_status.clone(),
+        quote_sha256_hex: row.quote_sha256_hex.clone(),
+        quote_len: row.quote.len(),
+        nonce_hex: row.nonce_hex.clone(),
+        e2e_pubkey_b64: row.e2e_pubkey_b64.clone(),
+        receipt_commit_hex: row.receipt_commit_hex.clone(),
+        measurement_registry: dregg_chutes_e2ee::narrator_backend::DEFAULT_MEASUREMENTS_URL
+            .to_string(),
+        archived_at_unix: row.created_at,
+    })
 }
 
 /// How many archived attestations the panel lists (the newest in full, the rest as one line each).
@@ -2270,7 +2298,7 @@ async fn handle_attestation(ctx: &Context, command: &CommandInteraction, state: 
         return;
     };
 
-    let recheck = ArchiveRecheck::of(newest);
+    let recheck = recheck_of(newest);
     let embed = attestation_embed(newest, &recheck, &rows[1..]);
     let short: String = newest.receipt_hex.chars().take(12).collect();
     let quote_file = serenity::all::CreateAttachment::bytes(
@@ -2294,48 +2322,22 @@ async fn handle_attestation(ctx: &Context, command: &CommandInteraction, state: 
 }
 
 /// The machine-readable sidecar: everything needed to re-run the checks, in one JSON object
-/// beside the raw quote. Deliberately field-for-field the archived row (minus the blob, which is
-/// the other attachment) so nothing about the record is only visible in prose.
+/// beside the raw quote.
+///
+/// It is `dungeon_on_dregg::attest_check::NarrationAttestationRecord` serialized, and nothing
+/// else. The checker deserializes that same type, so this file is not a description of an input
+/// format, it IS the input format.
 fn attestation_sidecar_json(row: &crate::db::NarrationAttestationRow) -> String {
-    serde_json::to_string_pretty(&serde_json::json!({
-        "what_this_establishes":
-            "WHERE this narration was produced: inside an Intel TDX enclave whose folded code \
-             identity is `measurement_hex`, accepted by DCAP at `tcb_status`. It is NOT a claim \
-             about the narration itself. The dregg executor, not the model, moves the world.",
-        "receipt_hex": row.receipt_hex,
-        "provider": row.provider,
-        "model": row.model,
-        "instance_id": row.instance_id,
-        "measurement_hex": row.measurement_hex,
-        "tcb_status": row.tcb_status,
-        "quote_sha256_hex": row.quote_sha256_hex,
-        "quote_len": row.quote.len(),
-        "report_data_binding": {
-            "rule": "report_data[0..32] == SHA-256(ascii(nonce_hex) || ascii(e2e_pubkey_b64))",
-            "nonce_hex": row.nonce_hex,
-            "e2e_pubkey_b64": row.e2e_pubkey_b64,
-        },
-        "receipt_binding": {
-            "rule":
-                "BLAKE3(\"dungeon-on-dregg/tee-provenance-v1:\" || measurement || \
-                 len(instance_id) || instance_id || len(tcb_status) || tcb_status || \
-                 quote_sha256), bound into the receipt named above",
-            "tee_provenance_commit_hex": archived_provenance_commit(row),
-        },
-        "measurement_registry": dregg_chutes_e2ee::narrator_backend::DEFAULT_MEASUREMENTS_URL,
-        "archived_at_unix": row.created_at,
-    }))
-    .unwrap_or_else(|_| "{}".to_string())
+    serde_json::to_string_pretty(&sidecar_record(row)).unwrap_or_else(|_| "{}".to_string())
 }
 
 /// The `/dungeon attestation` panel.
 fn attestation_embed(
     row: &crate::db::NarrationAttestationRow,
-    recheck: &ArchiveRecheck,
+    recheck: &attest_check::Verification,
     older: &[crate::db::NarrationAttestationRow],
 ) -> CreateEmbed {
     let short_measurement: String = row.measurement_hex.chars().take(24).collect();
-    let short_receipt: String = row.receipt_hex.chars().take(24).collect();
 
     let mut embed = base_embed(&format!("{KEEP_NAME} · the attested narration, in full"))
         .description(format!(
@@ -2360,28 +2362,29 @@ fn attestation_embed(
             false,
         )
         .field(
-            "🧾 Four things you can check yourself",
-            format!(
-                "**1. The quote is the one named.** `sha256` of the attached `.bin` must equal \
-                 `{}…`\n\
-                 **2. The quote was minted for this session.** its `report_data[0..32]` must \
-                 equal `SHA-256(ascii(nonce) ‖ ascii(e2e_pubkey))`. Both strings are in the \
-                 sidecar. Without this a quote proves only that *some* enclave signed *something*.\n\
-                 **3. The enclave is a Chutes one.** its MRTD + RTMR0..2 must match an entry in \
-                 the published registry: <{registry}>\n\
-                 **4. The turn is this turn.** the sidecar's `tee_provenance_commit_hex` is bound \
-                 into receipt `{short_receipt}…`, and `/dungeon verify` re-verifies that receipt \
-                 chain by replay.\n\n\
-                 A full DCAP verification of the attached quote (signature chain to the Intel SGX \
-                 Root CA, QE identity, TCB) is what any DCAP verifier will do with the file.",
-                truncate(&row.quote_sha256_hex, 24),
-                registry = dregg_chutes_e2ee::narrator_backend::DEFAULT_MEASUREMENTS_URL,
-            ),
+            "🧾 Six checks, run on this record",
+            recheck_text(recheck),
             false,
         )
+        .field("⚖️ What that adds up to", verdict_text(recheck), false)
         .field(
-            "📼 This record, re-checked from its own stored bytes",
-            recheck_text(recheck),
+            "🔬 Run them yourself",
+            format!(
+                "Nothing above needs to be taken on trust. The two attachments are the whole \
+                 input, and the checker is the same code that produced the lines above:\n\
+                 ```\n{}\n```\n\
+                 Exit `0` every check ran and passed · `1` a check FAILED · `3` a check did not \
+                 run.\n\
+                 **2** is `{rule}` · **3** compares MRTD and RTMR0..2 against a copy of \
+                 <{registry}> you pin yourself · **4** re-derives the commitment receipt \
+                 `{receipt}…` bound, and `/dungeon verify` replays that receipt chain · **6** \
+                 needs the Intel signed DCAP collateral, and it is the only one that decides \
+                 whether the quote is genuine.",
+                attest_check::VERIFY_WITH,
+                rule = attest_check::REPORT_DATA_RULE,
+                registry = dregg_chutes_e2ee::narrator_backend::DEFAULT_MEASUREMENTS_URL,
+                receipt = row.receipt_hex.chars().take(16).collect::<String>(),
+            ),
             false,
         );
 
@@ -2408,30 +2411,37 @@ fn attestation_embed(
     )))
 }
 
-/// The re-check panel's wording. It states plainly what these checks are for, so an intact record
-/// is never mistaken for a re-run attestation — and a BROKEN one is unmissable.
-fn recheck_text(recheck: &ArchiveRecheck) -> String {
-    let digest = if recheck.digest_matches {
-        "✓ the stored quote hashes to the stored digest"
-    } else {
-        "✗ **the stored quote does NOT hash to the stored digest**"
-    };
-    let binding = match &recheck.binding {
-        Ok(()) => "✓ the stored nonce + instance key are the pair this quote's `report_data` \
-                   commits to"
-            .to_string(),
-        Err(why) => format!("✗ **{}**", truncate(why, 300)),
-    };
-    let verdict = if recheck.intact() {
-        "These two say the record is UNALTERED since it was written. They are tamper checks on a \
-         stored row; they are **not** a re-run of the attestation, which happened once, live, \
-         against fresh collateral and a nonce generated moments before. Re-running it is what the \
-         attached quote is for."
-    } else {
-        "**This record has been altered since it was written.** Do not rely on it. The receipt \
-         chain is a separate matter. Run `/dungeon verify`."
-    };
-    format!("{digest}\n{binding}\n\n{verdict}")
+/// The six check LINES, rendered from the shared [`attest_check::Verification`].
+///
+/// A NOT RUN check is shown as a question mark and named as unanswered, never folded into a green
+/// summary: an unrun check is the one place a panel is most tempted to imply more than it
+/// checked. Each detail is clipped hard so six lines cannot push the verdict out of the embed:
+/// the verdict and the caveat live in their OWN field ([`verdict_text`]) for exactly that reason,
+/// after a version of this that concatenated them had Discord truncate the caveat away.
+fn recheck_text(recheck: &attest_check::Verification) -> String {
+    let mut lines = String::new();
+    for check in &recheck.checks {
+        lines.push_str(&format!(
+            "{} **{}. {}** · {}\n",
+            check.state.glyph(),
+            check.number,
+            check.name,
+            truncate(&check.detail, 130),
+        ));
+    }
+    truncate(&lines, 1024)
+}
+
+/// The verdict and, whenever check 6 did not decide, what the other five are worth without it.
+/// Both are the checker's OWN strings, so the player who runs the program reads the same words
+/// back rather than a paraphrase of them.
+fn verdict_text(recheck: &attest_check::Verification) -> String {
+    let mut out = recheck.verdict_line();
+    if recheck.verdict() != attest_check::Verdict::Verified {
+        out.push_str("\n\n");
+        out.push_str(attest_check::WITHOUT_COLLATERAL);
+    }
+    truncate(&out, 1024)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3321,28 +3331,49 @@ mod tests {
     // ── THE DURABLE ATTESTATION ARCHIVE + what a player can actually check ────
 
     /// A row shaped like the one an attested turn archives. `quote` is deliberately NOT a real
-    /// TDX quote here — the quote-parsing half of the re-check is proved against the real Chutes
-    /// fixture in `dregg-chutes-e2ee`'s `archive_recheck` tests; what this file owns is the
-    /// storage round-trip, the digest half, and the wording.
+    /// TDX quote here: the quote-parsing checks are driven against the real Chutes fixture in
+    /// `dungeon-on-dregg`'s `attest_check_red` tests, which show all six going red one at a time.
+    /// What this file owns is the storage round-trip, the receipt-commitment column, and the
+    /// panel's wording.
     fn sample_attestation_row(
         channel: u64,
         receipt: [u8; 32],
     ) -> crate::db::NarrationAttestationRow {
         let quote = vec![0x5Au8; 4_782];
+        let quote_sha256_hex = dregg_chutes_e2ee::quote_sha256_hex(&quote);
+        let instance_id = "1d5fdd83-8c1a-4f2e-9b77-2a5f0c9e4411".to_string();
+        let tcb_status = "UpToDate".to_string();
         crate::db::NarrationAttestationRow {
             receipt_hex: hex::encode(receipt),
             channel_id: channel.to_string(),
             provider: "chutes-tee".to_string(),
             model: "Qwen/Qwen3-32B-TEE".to_string(),
-            instance_id: "1d5fdd83-8c1a-4f2e-9b77-2a5f0c9e4411".to_string(),
+            instance_id: instance_id.clone(),
             measurement_hex: "a5".repeat(32),
-            tcb_status: "UpToDate".to_string(),
-            quote_sha256_hex: dregg_chutes_e2ee::quote_sha256_hex(&quote),
+            tcb_status: tcb_status.clone(),
+            // What the landed receipt bound, as `handle_chutes_turn` reads it off the receipt.
+            // Stored, never re-derived at read time; see the column's note in `db.rs`.
+            receipt_commit_hex: hex::encode(tee_provenance_commitment(&TeeProvenance::new(
+                [0xa5; 32],
+                instance_id,
+                tcb_status,
+                hex::decode(&quote_sha256_hex).unwrap().try_into().unwrap(),
+            ))),
+            quote_sha256_hex,
             nonce_hex: "9f".repeat(32),
             e2e_pubkey_b64: "QVRURVNURUQ=".to_string(),
             quote,
             created_at: 1_753_500_000,
         }
+    }
+
+    /// The state of numbered check `n` in a rendered verification.
+    fn check_state(v: &attest_check::Verification, n: u8) -> attest_check::CheckState {
+        v.checks
+            .iter()
+            .find(|c| c.number == n)
+            .unwrap_or_else(|| panic!("check {n} exists"))
+            .state
     }
 
     /// **The gap this closes.** Before the archive, an attested turn's quote lived only in the
@@ -3411,57 +3442,79 @@ mod tests {
             "a second write under the same receipt must NOT replace the archived evidence"
         );
 
-        // THE TAMPER CHECK, RED. Flip one byte of the stored quote: the digest no longer matches,
-        // so the record is not intact and the panel says so in plain sight.
+        // THE TAMPER CHECK, RED, through the SHARED checker the player runs. Flip one byte of the
+        // stored quote: check 1 fails, so the record is broken and the panel says so in plain
+        // sight rather than summarising it away.
         let mut flipped = stored.clone();
         flipped.quote[2_000] ^= 0x01;
-        let check = ArchiveRecheck::of(&flipped);
-        assert!(
-            !check.digest_matches,
+        let check = recheck_of(&flipped);
+        assert_eq!(
+            check_state(&check, 1),
+            attest_check::CheckState::Fail,
             "one flipped quote byte must break the stored digest"
         );
-        assert!(!check.intact());
+        assert_eq!(check.verdict(), attest_check::Verdict::Broken);
         assert!(
-            recheck_text(&check).contains("has been altered"),
+            verdict_text(&check).contains("BROKEN"),
             "a broken record must be unmissable: {}",
+            verdict_text(&check)
+        );
+        assert!(
+            recheck_text(&check).contains("✗ **1. quote digest**"),
+            "and the failing line names which check broke: {}",
             recheck_text(&check)
         );
 
         // …and rewriting the DIGEST instead of the bytes is caught the same way.
         let mut relabelled = stored.clone();
         relabelled.quote_sha256_hex = "00".repeat(32);
-        assert!(!ArchiveRecheck::of(&relabelled).digest_matches);
+        assert_eq!(
+            check_state(&recheck_of(&relabelled), 1),
+            attest_check::CheckState::Fail
+        );
 
-        // A quote column that is not a quote at all fails the binding half rather than passing
-        // it — garbage must never read as "checks out". (The GREEN binding case runs against the
-        // real Chutes TDX fixture in `dregg-chutes-e2ee`'s `archive_recheck` tests.)
-        assert!(
-            ArchiveRecheck::of(&stored).binding.is_err(),
+        // A quote column that is not a quote at all fails the session binding rather than passing
+        // it: garbage must never read as "checks out". (The GREEN case for every quote-parsing
+        // check runs against the real Chutes TDX fixture in `dungeon-on-dregg`'s
+        // `attest_check_red` tests.)
+        assert_eq!(
+            check_state(&recheck_of(&stored), 2),
+            attest_check::CheckState::Fail,
             "a non-quote blob must not satisfy the report_data binding"
         );
     }
 
-    /// The record recomputes the SAME commitment the landed receipt binds — the link between
-    /// "these bytes" and "that turn on the replay-verified chain" — and it is sensitive to every
-    /// field it is computed over, so a record cannot be edited into matching a different turn.
+    /// **The receipt commitment is STORED, not re-derived, and that is what gives check 4 teeth.**
+    ///
+    /// `instance_id` and `tcb_status` are free text no other check covers. A checker that
+    /// recomputed the commitment from the row would recompute the EDITED one and report clean; a
+    /// commitment taken off the landed receipt is fixed, so every edited preimage stops deriving
+    /// it. Both directions are asserted here.
     #[test]
-    fn the_archived_record_recomputes_the_receipts_own_provenance_commitment() {
+    fn an_edit_to_any_committed_field_stops_deriving_the_receipts_commitment() {
         let row = sample_attestation_row(771_701, [0x22; 32]);
-        let commit = archived_provenance_commit(&row).expect("a well-formed row commits");
-        assert_eq!(commit.len(), 64);
+        assert_eq!(row.receipt_commit_hex.len(), 64);
 
-        // It IS the receipt-side commitment, not a look-alike: the same function, over the same
-        // four preimages, that `/dungeon chutes-turn` required the receipt to carry.
-        let expected = hex::encode(tee_provenance_commitment(&TeeProvenance::new(
-            [0xa5; 32],
-            row.instance_id.clone(),
-            row.tcb_status.clone(),
-            hex::decode(&row.quote_sha256_hex)
-                .unwrap()
-                .try_into()
-                .unwrap(),
-        )));
-        assert_eq!(commit, expected);
+        // The honest row derives exactly what the receipt bound: check 4 passes.
+        assert_eq!(
+            check_state(&recheck_of(&row), 4),
+            attest_check::CheckState::Pass
+        );
+
+        // And it IS the receipt-side commitment, not a look-alike: the same function, over the
+        // same four preimages, that `/dungeon chutes-turn` required the receipt to carry.
+        assert_eq!(
+            row.receipt_commit_hex,
+            hex::encode(tee_provenance_commitment(&TeeProvenance::new(
+                [0xa5; 32],
+                row.instance_id.clone(),
+                row.tcb_status.clone(),
+                hex::decode(&row.quote_sha256_hex)
+                    .unwrap()
+                    .try_into()
+                    .unwrap(),
+            )))
+        );
 
         for mutate in [
             |r: &mut crate::db::NarrationAttestationRow| r.measurement_hex = "b6".repeat(32),
@@ -3471,63 +3524,63 @@ mod tests {
         ] {
             let mut altered = row.clone();
             mutate(&mut altered);
-            assert_ne!(
-                archived_provenance_commit(&altered),
-                Some(commit.clone()),
+            assert_eq!(
+                check_state(&recheck_of(&altered), 4),
+                attest_check::CheckState::Fail,
                 "every committed field must move the commitment"
             );
         }
 
-        // A malformed row commits to NOTHING rather than to a guess.
-        let mut broken = row.clone();
-        broken.measurement_hex = "not hex".to_string();
-        assert!(archived_provenance_commit(&broken).is_none());
+        // A row from before the column existed carries no commitment, and that is a FAILED check
+        // rather than a skipped one: an archive that cannot tie itself to a turn has not answered.
+        let mut legacy = row.clone();
+        legacy.receipt_commit_hex = String::new();
+        assert_eq!(
+            check_state(&recheck_of(&legacy), 4),
+            attest_check::CheckState::Fail
+        );
     }
 
-    /// **The claim does not grow.** The panel's re-check wording must say what these checks are
-    /// (tamper checks on a stored row) and what they are NOT (a re-run attestation) — the same
-    /// ceiling the `/dungeon` footer already holds. An intact record that read as "attestation
-    /// re-verified" would be exactly the over-claim the footer avoids.
+    /// **The claim does not grow.** The panel renders the shared checker's own strings, so what it
+    /// says about an unrun check is what the player's program says. A NOT RUN check must never
+    /// read as a pass, and a clean set of record checks must never read as a re-run attestation:
+    /// that is exactly the over-claim the `/dungeon` footer avoids.
     #[test]
     fn the_recheck_wording_never_claims_a_re_run_attestation() {
-        let intact = ArchiveRecheck {
-            digest_matches: true,
-            binding: Ok(()),
-        };
-        assert!(intact.intact());
-        let text = recheck_text(&intact);
-        assert!(text.contains('✓'), "{text}");
-        assert!(
-            text.contains("not** a re-run of the attestation"),
-            "an intact record must not read as a re-verified attestation: {text}"
-        );
-        assert!(
-            text.contains("UNALTERED"),
-            "it must say what it DOES establish: {text}"
-        );
+        let row = sample_attestation_row(771_703, [0x44; 32]);
+        let recheck = recheck_of(&row);
+        let lines = recheck_text(&recheck);
+        let verdict = verdict_text(&recheck);
 
-        let broken = ArchiveRecheck {
-            digest_matches: false,
-            binding: Err(
-                "the archived nonce/instance-key pair is NOT what this quote's \
-                          report_data commits to"
-                    .to_string(),
-            ),
-        };
-        assert!(!broken.intact());
-        let text = recheck_text(&broken);
+        // Check 6 cannot have run (no collateral on a test host), so the panel must be carrying
+        // the caveat that says what the other checks are worth without it. It must SURVIVE the
+        // embed clip, which is why it is its own field.
         assert!(
-            text.contains('✗') && text.contains("has been altered"),
-            "{text}"
+            verdict.contains("NOT AUTHENTICATED") || verdict.contains("BROKEN"),
+            "the verdict is never a bare pass on this host: {verdict}"
         );
         assert!(
-            text.contains("`/dungeon verify`"),
-            "a broken record still points at the chain, which is a separate question: {text}"
+            verdict.contains("do NOT decide whether the quote is genuine"),
+            "the panel must say what has not been decided: {verdict}"
+        );
+        assert!(
+            verdict.len() <= 1024 && lines.len() <= 1024,
+            "each field must fit inside Discord's limit uncut"
+        );
+        assert!(
+            !verdict.contains("attestation re-verified") && !verdict.contains("re-attested"),
+            "record checks must never read as a re-run attestation: {verdict}"
+        );
+        // A failing check is shown with its cross and its reason, never folded into a summary.
+        assert!(lines.contains('✗'), "{lines}");
+        assert!(
+            lines.contains('?'),
+            "an unrun check is shown as unrun: {lines}"
         );
     }
 
-    /// The panel itself: it names the enclave, hands over the checks, and — the tooth — never
-    /// exceeds what an attestation establishes.
+    /// The panel itself: it names the enclave, runs the checks, hands over the program that
+    /// re-runs them, and never exceeds what an attestation establishes.
     #[test]
     fn the_attestation_panel_is_checkable_and_bounded_in_what_it_claims() {
         let wire = serde_json::to_value(register()).expect("serialize command registration");
@@ -3541,7 +3594,7 @@ mod tests {
         );
 
         let row = sample_attestation_row(771_702, [0x33; 32]);
-        let check = ArchiveRecheck::of(&row);
+        let check = recheck_of(&row);
         let embed = attestation_embed(&row, &check, &[]);
         let json = serde_json::to_string(&embed).expect("the panel serializes");
 
@@ -3555,16 +3608,17 @@ mod tests {
             "the published registry to compare it against is named"
         );
         assert!(
-            json.contains(&"33".repeat(8)),
-            "the receipt the turn landed is named"
-        );
-        assert!(
             json.contains("/dungeon verify"),
             "the panel points at the replay that ties the receipt to the chain"
         );
         assert!(
             json.contains("report_data"),
             "the session binding a player recomputes is stated"
+        );
+        // THE POINT OF THE WHOLE LANE: the panel hands over the program, not a description of one.
+        assert!(
+            json.contains("dungeon-attest-check"),
+            "the panel must name the checker a player runs themselves: {json}"
         );
 
         // THE CEILING: where, not what. The panel must carry the same bound the footer does.
@@ -3580,23 +3634,35 @@ mod tests {
             "the panel must never claim the PROSE was verified: {json}"
         );
 
-        // The sidecar carries the same bound, machine-readably.
-        let sidecar: serde_json::Value =
-            serde_json::from_str(&attestation_sidecar_json(&row)).expect("the sidecar is JSON");
-        assert_eq!(sidecar["receipt_hex"], row.receipt_hex);
-        assert_eq!(sidecar["quote_sha256_hex"], row.quote_sha256_hex);
-        assert_eq!(sidecar["report_data_binding"]["nonce_hex"], row.nonce_hex);
+        // The sidecar is the SHARED type, and it parses back as that type: the file the player
+        // feeds to the checker is not a described format, it is the format.
+        let sidecar_text = attestation_sidecar_json(&row);
+        let sidecar: attest_check::NarrationAttestationRecord =
+            serde_json::from_str(&sidecar_text).expect("the sidecar parses as the shared record");
+        assert_eq!(sidecar.receipt_hex, row.receipt_hex);
+        assert_eq!(sidecar.quote_sha256_hex, row.quote_sha256_hex);
+        assert_eq!(sidecar.report_data_binding.nonce_hex, row.nonce_hex);
         assert_eq!(
-            sidecar["report_data_binding"]["e2e_pubkey_b64"],
+            sidecar.report_data_binding.e2e_pubkey_b64,
             row.e2e_pubkey_b64
         );
         assert_eq!(
-            sidecar["receipt_binding"]["tee_provenance_commit_hex"],
-            serde_json::json!(archived_provenance_commit(&row).unwrap())
+            sidecar.receipt_binding.tee_provenance_commit_hex.as_deref(),
+            Some(row.receipt_commit_hex.as_str()),
+            "the sidecar carries what the RECEIPT bound, not a re-derivation of the row"
         );
-        let what = sidecar["what_this_establishes"].as_str().unwrap();
-        assert!(what.contains("WHERE"), "{what}");
-        assert!(what.contains("NOT a claim about the narration"), "{what}");
+        assert!(sidecar.what_this_establishes.contains("WHERE"));
+        assert!(
+            sidecar
+                .what_this_does_not_establish
+                .contains("not a claim that the narration is true"),
+            "the ceiling travels with the file: {}",
+            sidecar.what_this_does_not_establish
+        );
+        assert!(
+            sidecar.verify_with.contains("dungeon-attest-check"),
+            "the file says how to check itself"
+        );
     }
 
     #[test]

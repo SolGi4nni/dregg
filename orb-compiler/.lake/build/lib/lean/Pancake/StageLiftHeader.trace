@@ -1,0 +1,145 @@
+{"synthetic": false,
+ "schemaVersion": "2025-09-10",
+ "outputs":
+ {"o": ["f79bb8d586c86413.olean"],
+  "m": false,
+  "i": "7587760d88465165.ilean",
+  "c": "516a3bf40961d880.c"},
+ "log":
+ [{"message":
+   ".> LEAN_PATH=/Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean /Users/ember/.elan/toolchains/leanprover--lean4---v4.30.0/bin/lean /Users/ember/dev/breadstuffs/orb-compiler/Pancake/StageLiftHeader.lean -o /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/StageLiftHeader.olean -i /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/StageLiftHeader.ilean -c /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/StageLiftHeader.c --setup /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/StageLiftHeader.setup.json --json",
+   "level": "trace"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1027:0: 'Pancake.StageLiftHeader.denote_addHeader_stamp' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1028:0: 'Pancake.StageLiftHeader.denote_stampProg' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1029:0: 'Pancake.StageLiftHeader.mapResp_stampUnless_eq' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1030:0: 'Pancake.StageLiftHeader.mapResp_stampField_eq' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1031:0: 'Pancake.StageLiftHeader.denote_stampUnless' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1032:0: 'Pancake.StageLiftHeader.denote_stampField' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1033:0: 'Pancake.StageLiftHeader.denote_stampExcluded' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1034:0: 'Pancake.StageLiftHeader.build_addHeaders' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1035:0: 'Pancake.StageLiftHeader.denoteStep_stampSeq' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1036:0: 'Pancake.StageLiftHeader.denote_stampSeq' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1038:0: 'Pancake.StageLiftHeader.denote_alt' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1039:0: 'Pancake.StageLiftHeader.denote_pp' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1040:0: 'Pancake.StageLiftHeader.denote_corp' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1041:0: 'Pancake.StageLiftHeader.denote_tao' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1042:0: 'Pancake.StageLiftHeader.denote_via' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1043:0: 'Pancake.StageLiftHeader.denote_vary' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1044:0: 'Pancake.StageLiftHeader.denote_varyGate8' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1045:0: 'Pancake.StageLiftHeader.denote_warning' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1046:0: 'Pancake.StageLiftHeader.denote_link' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1047:0: 'Pancake.StageLiftHeader.denote_cs' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1048:0: 'Pancake.StageLiftHeader.denote_cacheControl' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1049:0: 'Pancake.StageLiftHeader.denote_assetExpires' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1050:0: 'Pancake.StageLiftHeader.denote_assetImmutable' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1051:0: 'Pancake.StageLiftHeader.denote_lmStamp' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1052:0: 'Pancake.StageLiftHeader.denote_dashType' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1053:0: 'Pancake.StageLiftHeader.denote_spaType' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1054:0: 'Pancake.StageLiftHeader.denote_sseHead' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1055:0: 'Pancake.StageLiftHeader.denote_setCookie' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1056:0: 'Pancake.StageLiftHeader.denote_retryAfter' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1057:0: 'Pancake.StageLiftHeader.denote_contentLocation' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1058:0: 'Pancake.StageLiftHeader.denote_rid' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1059:0: 'Pancake.StageLiftHeader.denote_proxyProto' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1060:0: 'Pancake.StageLiftHeader.denote_cors' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1061:0: 'Pancake.StageLiftHeader.denote_date' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1062:0: 'Pancake.StageLiftHeader.denote_securityHeaders' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1063:0: 'Pancake.StageLiftHeader.denote_langStamp_inScope' depends on axioms: [propext]",
+   "level": "info"},
+  {"message":
+   "Pancake/StageLiftHeader.lean:1064:0: 'Pancake.StageLiftHeader.denote_langStamp_out' depends on axioms: [propext]",
+   "level": "info"}],
+ "inputs":
+ [["Pancake.StageLiftHeader:deps",
+   [["deps",
+     [["«orb-compiler»/Pancake:extraDep",
+       [["@«orb-compiler»:extraDep", "00000000000006bb"]]],
+      ["imports",
+       [["Pancake.StageProg transitive imports (legacy)", "a205f396b33596e4"],
+        ["Pancake.StageProg:importAllArts", "535a9e038acde63b"]]]]],
+    ["libs",
+     [["import dynlibs", "00000000000006bb"],
+      ["package external libraries", "00000000000006bb"],
+      ["module dynlibs", "00000000000006bb"],
+      ["module plugins", "00000000000006bb"]]]]],
+  ["Lean 4.30.0, commit d024af099ca4bf2c86f649261ebf59565dc8c622",
+   "2f4703bb19086252"],
+  ["/Users/ember/dev/breadstuffs/orb-compiler/Pancake/StageLiftHeader.lean",
+   "d08ea78c4b59557d"],
+  ["options", "00000000000006bb"],
+  ["isModule: false", "feefd2a0d3a1847e"],
+  ["Module.name: Pancake.StageLiftHeader", "d29e71f3ef4e9ad8"],
+  ["Package.id?: (some orb-compiler)", "0a473b67509a16ae"],
+  ["Module.leanArgs: #[]", "00000000000006bb"]],
+ "depHash": "b6764e26b8694c46"}

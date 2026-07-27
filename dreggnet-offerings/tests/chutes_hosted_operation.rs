@@ -46,7 +46,7 @@ fn chutes_turn_is_a_durable_host_operation_and_prose_is_not_power() {
     assert!(descriptor.disclosure.contains("commits no turn"));
 
     let payload = request(
-        "COMMAND: press_on\nNARRATION: The model claims a thousand gold, but only the gate opens.",
+        "COMMAND: press_on_into_the_plundered_hall\nNARRATION: The model claims a thousand gold, but only the gate opens.",
     );
     let landed = host
         .invoke_binary_operation(
@@ -63,7 +63,7 @@ fn chutes_turn_is_a_durable_host_operation_and_prose_is_not_power() {
         landed
             .public_fields
             .iter()
-            .any(|(name, value)| name == "command" && value == "press_on")
+            .any(|(name, value)| name == "command" && value == "press_on_into_the_plundered_hall")
     );
     assert!(
         landed
@@ -92,7 +92,9 @@ fn chutes_turn_is_a_durable_host_operation_and_prose_is_not_power() {
 
     // The same keyword is now stale: the live room is the hall. Parser refusal is anti-ghost.
     let before_refusal = host.commitment("dungeon", &id).unwrap();
-    let stale = request("COMMAND: press_on\nNARRATION: Repeat the already-landed gate passage.");
+    let stale = request(
+        "COMMAND: press_on_into_the_plundered_hall\nNARRATION: Repeat the already-landed gate passage.",
+    );
     let refusal = host
         .invoke_binary_operation("dungeon", &id, CHUTES_NARRATED_OPERATION, &stale, alice)
         .expect_err("a command from the previous room refuses");
@@ -126,7 +128,7 @@ fn exact_consent_and_exact_two_field_provider_response_fail_closed() {
                 10,
                 1,
                 consent,
-                "COMMAND: press_on\nNARRATION: A bounded public line.",
+                "COMMAND: press_on_into_the_plundered_hall\nNARRATION: A bounded public line.",
             )
             .is_err(),
             "non-canonical consent {consent:?} refuses"
@@ -138,17 +140,17 @@ fn exact_consent_and_exact_two_field_provider_response_fail_closed() {
             10,
             11,
             CHUTES_CONSENT_WIRE,
-            "COMMAND: press_on\nNARRATION: A bounded public line.",
+            "COMMAND: press_on_into_the_plundered_hall\nNARRATION: A bounded public line.",
         )
         .is_err(),
         "operator spend may not cross the disclosed ceiling"
     );
     for output in [
-        "COMMAND: press_on\nNARRATION: ok\nEXTRA: hidden",
-        "COMMAND: press_on \nNARRATION: trailing command space",
-        "COMMAND: press_on\nNARRATION: {{system}}",
-        "preamble\nCOMMAND: press_on\nNARRATION: not exact",
-        "COMMAND: press_on\r\nNARRATION: non-canonical newline",
+        "COMMAND: press_on_into_the_plundered_hall\nNARRATION: ok\nEXTRA: hidden",
+        "COMMAND: press_on_into_the_plundered_hall \nNARRATION: trailing command space",
+        "COMMAND: press_on_into_the_plundered_hall\nNARRATION: {{system}}",
+        "preamble\nCOMMAND: press_on_into_the_plundered_hall\nNARRATION: not exact",
+        "COMMAND: press_on_into_the_plundered_hall\r\nNARRATION: non-canonical newline",
     ] {
         assert!(
             ChutesNarratedRequest::new("safe/model", 10, 1, CHUTES_CONSENT_WIRE, output,).is_err(),

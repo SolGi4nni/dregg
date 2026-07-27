@@ -1,0 +1,31 @@
+{"synthetic": false,
+ "schemaVersion": "2025-09-10",
+ "outputs":
+ {"o": ["18b94c0cec2af199.olean"],
+  "m": false,
+  "i": "6a2bc549fee6c1bb.ilean",
+  "c": "6fbf9b33f52debc7.c"},
+ "log":
+ [{"message":
+   ".> LEAN_PATH=/Users/ember/dev/dregg-serve-spec/.lake/build/lib/lean:/Users/ember/dev/drorb/.lake/build/lib/lean /Users/ember/.elan/toolchains/leanprover--lean4---v4.30.0/bin/lean /Users/ember/dev/dregg-serve-spec/ServeSpec.lean -o /Users/ember/dev/dregg-serve-spec/.lake/build/lib/lean/ServeSpec.olean -i /Users/ember/dev/dregg-serve-spec/.lake/build/lib/lean/ServeSpec.ilean -c /Users/ember/dev/dregg-serve-spec/.lake/build/ir/ServeSpec.c --setup /Users/ember/dev/dregg-serve-spec/.lake/build/ir/ServeSpec.setup.json --json",
+   "level": "trace"}],
+ "inputs":
+ [["ServeSpec:deps",
+   [["deps",
+     [["«dregg-serve-spec»/ServeSpec:extraDep",
+       [["@«dregg-serve-spec»:extraDep", "00000000000006bb"]]],
+      ["imports", "00000000000006bb"]]],
+    ["libs",
+     [["import dynlibs", "00000000000006bb"],
+      ["package external libraries", "00000000000006bb"],
+      ["module dynlibs", "00000000000006bb"],
+      ["module plugins", "00000000000006bb"]]]]],
+  ["Lean 4.30.0, commit d024af099ca4bf2c86f649261ebf59565dc8c622",
+   "2f4703bb19086252"],
+  ["/Users/ember/dev/dregg-serve-spec/ServeSpec.lean", "f81e969e1497c834"],
+  ["options", "00000000000006bb"],
+  ["isModule: false", "feefd2a0d3a1847e"],
+  ["Module.name: ServeSpec", "3621a1cf94ff724b"],
+  ["Package.id?: (some dregg-serve-spec)", "80edac49673e3327"],
+  ["Module.leanArgs: #[]", "00000000000006bb"]],
+ "depHash": "7e99c15f65bea9e8"}

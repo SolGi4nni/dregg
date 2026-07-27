@@ -122,10 +122,23 @@ fn walk(node: &ViewNode, depth: usize, style: &ChatTextStyle, out: &mut String) 
                 // A heading, kept as WORDS rather than markup: with a parse mode live, wrapping
                 // this in `<b>` would put the transport's syntax into a string the game author
                 // controls, for a visual the prose does not need.
+                //
+                // ⚑ THE MARKER IS `▸`, AND IT USED TO BE `—`. This one line prefixed an em-dash to
+                // EVERY nested section heading on every chat transport, which made it far and away
+                // the largest single em-dash site in the product: one `format!` in front of
+                // everything a Telegram or WeChat player reads. It is not punctuation doing a
+                // grammatical job — nothing is being joined, and no clause breaks — it is a GLYPH
+                // saying "a subsection starts here", which is exactly the thing an em-dash is the
+                // wrong character for. `▸` says it and says only it; `·` is already spoken for as
+                // the JOINER (`Inventory · Newcomer`), and `•` as a list bullet, so reusing either
+                // would make a heading and its contents look like the same kind of line.
+                //
+                // It survives both transports untouched: `escape_telegram_html` reads exactly
+                // `&`, `<` and `>`, and the plain style is the identity.
                 let heading = if depth == 0 {
                     title.trim().to_string()
                 } else {
-                    format!("— {}", title.trim())
+                    format!("▸ {}", title.trim())
                 };
                 push_content(out, style, &heading);
             }

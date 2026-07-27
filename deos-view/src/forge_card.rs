@@ -283,16 +283,16 @@ impl MergeGate {
     /// The gate line's text + the semantic palette tag.
     fn label_tag(self) -> (String, &'static str) {
         match self {
-            MergeGate::Clean => ("✓ ready to merge — clean pushout".to_string(), "good"),
+            MergeGate::Clean => ("✓ ready to merge · clean pushout".to_string(), "good"),
             MergeGate::Conflicts(n) => (
                 format!(
-                    "✗ {n} conflict{} — resolve to merge",
+                    "✗ {n} conflict{} · resolve to merge",
                     if n == 1 { "" } else { "s" }
                 ),
                 "bad",
             ),
             MergeGate::AwaitingChecks => (
-                "◷ awaiting checks — a CI gate is not green".to_string(),
+                "◷ awaiting checks · a CI gate is not green".to_string(),
                 "warn",
             ),
         }
@@ -351,7 +351,7 @@ fn repo_panel(repo: &Repo) -> Value {
             &title,
             "",
             vec![text(
-                "(no tracked files yet — this repo cell holds no committed patches)",
+                "(no tracked files yet: this repo cell holds no committed patches)",
             )],
         );
     }
@@ -379,7 +379,7 @@ fn diff_section(diff: &[DiffHunk]) -> Value {
         return section(
             "diff",
             "",
-            vec![text("(no changes — the forks are identical)")],
+            vec![text("(no changes: the forks are identical)")],
         );
     }
     let hunks: Vec<Value> = diff
@@ -406,7 +406,7 @@ fn conflicts_section(conflicts: &[ConflictView]) -> Value {
         return section(
             "conflicts",
             "",
-            vec![text("(no conflicts — the pushout merged cleanly)")],
+            vec![text("(no conflicts: the pushout merged cleanly)")],
         );
     }
     let regions: Vec<Value> = conflicts
@@ -457,7 +457,7 @@ fn review_section(review: &[ReviewEntry]) -> Value {
         return section(
             "review",
             "",
-            vec![text("(no reviews yet — the thread is empty)")],
+            vec![text("(no reviews yet: the thread is empty)")],
         );
     }
     let rows: Vec<Value> = review
@@ -481,7 +481,7 @@ fn pr_panel(pr: Option<&PullRequest>) -> Value {
             "pull request",
             "",
             vec![text(
-                "(no open pull request — fork the repo, diverge, and stitch to open one)",
+                "(no open pull request: fork the repo, diverge, and stitch to open one)",
             )],
         );
     };

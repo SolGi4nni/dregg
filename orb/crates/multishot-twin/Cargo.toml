@@ -1,0 +1,13 @@
+[package]
+name = "multishot-twin"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+description = "Executable model of the io_uring MULTISHOT-recv re-arm coordination: when a multishot recv posts its terminal CQE (buffer-ring exhausted, F_MORE cleared) the shard must re-arm it once a buffer frees, but the buffer recycle can land on a worker thread concurrently — so the re-arm decision races the recycle. The invariant: the recv is re-armed EXACTLY ONCE per exhaustion once a buffer is available — never dropped (a lost re-arm stalls the connection though a buffer is free) and never double-armed (two multishot recvs on one fd double-deliver / double-consume the ring). Built for exhaustive schedule exploration under loom. A separate zero-dependency crate so loom's unwind-based panic capture is not polluted by the dataplane package's linked Lean runtime. NOTE: models a PROSPECTIVE multishot design; the deployed uring.rs recv path is one-shot re-armed on the shard thread."
+publish = false
+
+[target.'cfg(loom)'.dev-dependencies]
+loom = "0.7"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(loom)"] }

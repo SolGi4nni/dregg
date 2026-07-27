@@ -1,0 +1,42 @@
+{"synthetic": false,
+ "schemaVersion": "2025-09-10",
+ "outputs":
+ {"o": ["1e2346e2937cd2d1.olean"],
+  "m": false,
+  "i": "1c1681a3524aed94.ilean",
+  "c": "6b9fe7b73c5d7c69.c"},
+ "log":
+ [{"message":
+   ".> LEAN_PATH=/Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean /Users/ember/.elan/toolchains/leanprover--lean4---v4.30.0/bin/lean /Users/ember/dev/breadstuffs/orb-compiler/Pancake/ServeEmit.lean -o /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/ServeEmit.olean -i /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/ServeEmit.ilean -c /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/ServeEmit.c --setup /Users/ember/dev/breadstuffs/orb-compiler/.lake/build/ir/Pancake/ServeEmit.setup.json --json",
+   "level": "trace"},
+  {"message":
+   "Pancake/ServeEmit.lean:167:0: wrote Pancake/serve_slice_export.pnk (9857 bytes)",
+   "level": "info"},
+  {"message":
+   "Pancake/ServeEmit.lean:178:0: wrote Pancake/serve_resp200.bin, Pancake/serve_resp405.bin",
+   "level": "info"}],
+ "inputs":
+ [["Pancake.ServeEmit:deps",
+   [["deps",
+     [["«orb-compiler»/Pancake:extraDep",
+       [["@«orb-compiler»:extraDep", "00000000000006bb"]]],
+      ["imports",
+       [["Pancake.ServeSlice transitive imports (legacy)", "e053a98f602c98d0"],
+        ["Pancake.ServeSlice:importAllArts", "612ee079d26a7edc"],
+        ["Dsl.EmitPancake transitive imports (legacy)", "00000000000006bb"],
+        ["Dsl.EmitPancake:importAllArts", "2362a706c3bd35e0"]]]]],
+    ["libs",
+     [["import dynlibs", "00000000000006bb"],
+      ["package external libraries", "00000000000006bb"],
+      ["module dynlibs", "00000000000006bb"],
+      ["module plugins", "00000000000006bb"]]]]],
+  ["Lean 4.30.0, commit d024af099ca4bf2c86f649261ebf59565dc8c622",
+   "2f4703bb19086252"],
+  ["/Users/ember/dev/breadstuffs/orb-compiler/Pancake/ServeEmit.lean",
+   "3f73c95b9bf971f5"],
+  ["options", "00000000000006bb"],
+  ["isModule: false", "feefd2a0d3a1847e"],
+  ["Module.name: Pancake.ServeEmit", "f99f58a9f1648235"],
+  ["Package.id?: (some orb-compiler)", "0a473b67509a16ae"],
+  ["Module.leanArgs: #[]", "00000000000006bb"]],
+ "depHash": "01cf10177914919e"}

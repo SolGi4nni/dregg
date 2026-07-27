@@ -139,7 +139,7 @@ fn shelf_note_for(rows: &[ShelfEntry]) -> Option<String> {
     // list right before it says who else it covers.
     let mut note = format!(
         "🔒 Dimmed above, and refused if you press it here: {}. {} \
-         To play: DM me and send {} — or /play there for the richer Mini App (Telegram allows \
+         To play: DM me and send {}, or /play there for the richer Mini App (Telegram allows \
          those in a private chat only).",
         shelf::name_list(&names),
         first
@@ -154,7 +154,7 @@ fn shelf_note_for(rows: &[ShelfEntry]) -> Option<String> {
         // a group chat has NOTHING on the shelf, and the menu must say so instead of presenting a
         // wall of locks as if one of them might work.
         note.push_str(
-            " Nothing else on the shelf plays in a group chat either — every game we ship keeps \
+            " Nothing else on the shelf plays in a group chat either: every game we ship keeps \
              per-player state, so a DM is where all of them play.",
         );
     } else {
@@ -1162,7 +1162,7 @@ impl<T: Transport> TelegramHost<T> {
                     // glyph cannot: that there IS a place this works and it is not here. The SHORT
                     // name, not the full tagline — a row whose whole job is to say "not here" must
                     // not bury that under a sentence of ad copy.
-                    Some(block) => format!("Play {} — {}", entry.name(), block.tag()),
+                    Some(block) => format!("Play {} · {}", entry.name(), block.tag()),
                 };
                 Action::new(
                     label,
@@ -1248,14 +1248,14 @@ impl<T: Transport> TelegramHost<T> {
     pub fn present_play_menu(&mut self, chat_id: ChatId, topic: Option<i64>) -> Result<(), String> {
         let Some(base) = self.webapp_base.clone() else {
             return Err(
-                "The Mini App tier is not configured on this deploy — the inline buttons \
+                "The Mini App tier is not configured on this deploy; the inline buttons \
                  (/offerings) still play everything."
                     .to_string(),
             );
         };
         if !crate::webapp::web_app_allowed(chat_id, topic) {
             return Err(format!(
-                "Mini App buttons only work in a private chat (Telegram's rule) — DM me and \
+                "Mini App buttons only work in a private chat (Telegram's rule). DM me and \
                  send /play. The web surface lives at {base}/tg."
             ));
         }
@@ -1280,7 +1280,7 @@ impl<T: Transport> TelegramHost<T> {
         };
         if !crate::webapp::web_app_allowed(chat_id, topic) {
             return Err(format!(
-                "Linking opens a web page, so it works in a private chat only (Telegram's rule) — \
+                "Linking opens a web page, so it works in a private chat only (Telegram's rule). \
                  DM me and send /link. The page lives at {base}/tg/link."
             ));
         }
@@ -1330,10 +1330,10 @@ impl<T: Transport> TelegramHost<T> {
         }
         let title = title.unwrap_or_else(|| key.to_string());
         Some(format!(
-            "🔒 {title} hides per-player state — your hand is yours alone. This chat is a group, \
+            "🔒 {title} hides per-player state: your hand is yours alone. This chat is a group, \
              and a group's surface is ONE message every member reads (each move edits it in \
              place), so painting your own cards there would deal them to the whole table. I will \
-             not do that. DM me and send `/open {key}` to play it privately — or `/play` for the \
+             not do that. DM me and send `/open {key}` to play it privately, or `/play` for the \
              Mini App (Telegram allows those in DMs only). Full-information offerings \
              (`/offerings`) play here in the group as usual."
         ))
@@ -2694,6 +2694,9 @@ fn operation_guide_pages(
             let separator = usize::from(!current.is_empty()) * 5;
             if current.chars().count() + separator + block_characters.len() <= BODY_CHARS {
                 if !current.is_empty() {
+                    // A horizontal RULE between operation blocks, not punctuation: R4's
+                    // "a glyph, not a mark" case, which the gate reads correctly now that
+                    // it decodes `\n` before asking whether the literal IS the glyph.
                     current.push_str("\n\n—\n");
                 }
                 current.push_str(&block);

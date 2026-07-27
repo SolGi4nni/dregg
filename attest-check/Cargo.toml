@@ -1,0 +1,59 @@
+# `dregg-attest-check` — the CHECKER for the evidence `/dungeon attestation` hands a player, and
+# the `dungeon-attest-check` program that runs it on the two downloaded files.
+#
+# WHY IT IS ITS OWN CRATE, and not a module of `dungeon-on-dregg`. It needs both halves of the
+# artifact: the receipt commitment (`dungeon_on_dregg::narrator::tee_provenance_commitment`, whose
+# domain separator and length-prefixed preimage layout are that crate's) and the whole TDX side
+# (`dregg-tee-verify`, which owns the DCAP flow). Putting it inside `dungeon-on-dregg` gets the
+# receipt half for free and pays for it by dragging dcap-qvl + ring into every consumer of the
+# game crate — including `dreggnet-offerings`, and through it the wasm32 browser bundle, which has
+# no business linking a DCAP verifier. Sitting ABOVE both, it reaches only the processes that
+# actually check an attestation: this program, and the Discord bot's `/dungeon attestation` panel.
+#
+# The same argument `dregg-chutes-e2ee::narrator_backend` makes about where the attestation stack
+# is allowed to reach, applied one crate over.
+[package]
+name = "dregg-attest-check"
+version = "0.1.0"
+edition = "2021"
+description = "Check one archived dungeon narration attestation: the TDX quote, its session binding, the published measurement registry, the receipt commitment, Intel's pinned root, and the DCAP signature chain."
+
+[dependencies]
+# The RECEIPT half. Check 4 calls `tee_provenance_commitment` itself rather than restating the
+# hash, so the emitter and the checker cannot drift apart. `default-features = false` keeps the
+# heavy optional proof-producer paths (`private-quest` and friends) out of this graph.
+dungeon-on-dregg = { path = "../dungeon-on-dregg", default-features = false }
+# The TDX half. Quote parsing, the Chutes `report_data` binding, the MRTD/RTMR fold, the
+# measurements registry, the pinned Intel SGX Root CA, and the full DCAP verification against
+# Intel-signed collateral are ALL calls into this crate. Nothing about a quote is re-implemented
+# here. Default features only, so the checker makes no network request unless asked.
+dregg-tee-verify = { path = "../tee-verify" }
+serde = { workspace = true, features = ["derive", "std"] }
+serde_json = { workspace = true }
+hex = "0.4"
+
+[dev-dependencies]
+# `tests/attest_check_red.rs` builds a well-formed 1184-byte ML-KEM-768 public key so check 2 is
+# exercised at its binding rather than at its length gate.
+base64 = "0.22"
+
+[features]
+# Let `dungeon-attest-check` fetch DCAP collateral from a PCCS instead of taking it as a file.
+# OFF by default: the checker's whole point is that a player can run it over bytes they already
+# hold, and a checker that reaches the network by default is a checker whose result depends on
+# who answered. With the feature on, `--pccs <url>` becomes available; a hostile PCCS can only
+# make check 6 FAIL (the chain is re-rooted at the pinned Intel root), never manufacture a pass.
+collateral-fetch = ["dregg-tee-verify/collateral-fetch"]
+
+# THE VERIFIER A PLAYER RUNS. No `required-features`: an offline check of a downloaded record must
+# work in the default build, or the answer to "can I check this myself" is "first discover a
+# feature flag".
+[[bin]]
+name = "dungeon-attest-check"
+path = "src/bin/dungeon-attest-check.rs"
+
+# A workspace MEMBER of the breadstuffs root (registered in `members`). Deliberately NOT in
+# `default-members`: it pulls `dungeon-on-dregg`, which the light default dev loop does not build.
+
+[lints]
+workspace = true

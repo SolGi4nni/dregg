@@ -1,0 +1,8 @@
+HTTP/1.1 405 Method Not Allowed
+Allow: GET, POST, HEAD, OPTIONS
+Strict-Transport-Security: max-age=63072000; includeSubDomains
+X-Frame-Options: DENY
+X-Content-Type-Options: nosniff
+Content-Length: 19
+
+method not allowed

@@ -73,12 +73,12 @@ pub const COMMANDS: &[BotCommand] = &[
         name: "/offerings",
         aliases: &["/menu"],
         args: "",
-        summary: "the game shelf — a button per game",
+        summary: "the game shelf: a button per game",
         detail: "Posts the catalog as an inline keyboard; a press opens that offering in this \
                  chat. Always posts a FRESH message at the bottom of the chat, so asking for the \
                  menu always produces something you can see. In a group, a game that has to keep \
                  part of itself hidden from the other player is shown DIMMED (🔒) with the reason \
-                 and the DM route, because a group's board is one message every member reads — the \
+                 and the DM route, because a group's board is one message every member reads; the \
                  shelf says so before you press, not after.",
         in_menu: true,
     },
@@ -89,7 +89,7 @@ pub const COMMANDS: &[BotCommand] = &[
         summary: "open a game here (e.g. /open descent)",
         detail: "Opens (or re-presents) `<key>` in this chat as its own message. Keys come from \
                  /offerings. An offering that hides per-player state is refused in a group or \
-                 forum topic — a group's surface is ONE message every member reads — and redirects \
+                 forum topic (a group's surface is ONE message every member reads) and redirects \
                  you to a DM; /offerings dims exactly those rows and names them, so you do not \
                  have to guess which. Re-opening something already open reposts its live surface \
                  at the bottom of the chat rather than editing a message you have scrolled past.",
@@ -112,7 +112,7 @@ pub const COMMANDS: &[BotCommand] = &[
         args: "",
         summary: "re-verify this chat's committed chain by replay",
         detail: "Replays the active offering's committed move-log and reports the verifier's own \
-                 verdict. Read-only — the presented surface is untouched.",
+                 verdict. Read-only: the presented surface is untouched.",
         in_menu: true,
     },
     BotCommand {
@@ -129,7 +129,7 @@ pub const COMMANDS: &[BotCommand] = &[
         name: "/cancel",
         aliases: &["/reset", "/stop"],
         args: "",
-        summary: "escape hatch — unstick this chat, keep every receipt",
+        summary: "escape hatch: unstick this chat, keep every receipt",
         detail: "Always works, from any state, session or no session. It disarms a pending \
                  free-text slot (so your next message is ordinary chatter again), drops this \
                  chat's surface bookkeeping and stale keyboards, and reposts the offerings menu. \
@@ -165,7 +165,7 @@ pub const COMMANDS: &[BotCommand] = &[
         args: "",
         summary: "bind this Telegram to your dregg root key (DMs only)",
         detail: "Opens the identity-link ceremony in the Mini App, where you sign a link claim \
-                 with your root key — one you, across platforms. Private chats only, for the \
+                 with your root key: one you, across platforms. Private chats only, for the \
                  same `web_app` reason as /play.",
         in_menu: true,
     },
@@ -174,7 +174,7 @@ pub const COMMANDS: &[BotCommand] = &[
 /// A pseudo-command documented in `/help` but dispatched from a DOCUMENT CAPTION, never as a chat
 /// message. Kept out of [`COMMANDS`] so the registry stays exactly "what the text dispatcher
 /// routes", and named here so `/help` can still teach it.
-pub const OPERATION_CAPTION_NOTE: &str = "📎 /operation <name> — not a chat command: it is the \
+pub const OPERATION_CAPTION_NOTE: &str = "📎 /operation <name> · not a chat command: it is the \
     exact CAPTION you attach to a canonical receipt document. Normally DM-only; the \
     proof-operation guide names any shared-session exception.";
 
@@ -196,15 +196,15 @@ pub const HELP_HEADER: &str = "Dregg games use one addressed session-and-receipt
 const FLAGSHIP_LINES: &[(&str, &str)] = &[
     (
         "descent",
-        "⚔️ /open descent — a dungeon crawl: one dungeon a day, one life, no retries",
+        "⚔️ /open descent · a dungeon crawl: one dungeon a day, one life, no retries",
     ),
     (
         "automatafl",
-        "♟ /open automatafl — a two-player board game where both moves are revealed at once",
+        "♟ /open automatafl · a two-player board game where both moves are revealed at once",
     ),
     (
         "tug",
-        "🪢 /open tug — a two-player game of hidden influence over seven guilds",
+        "🪢 /open tug · a two-player game of hidden influence over seven guilds",
     ),
 ];
 
@@ -248,7 +248,7 @@ pub fn help_text() -> String {
     out.push('\n');
     out.push_str("Commands:\n");
     for command in COMMANDS {
-        out.push_str(&format!("{} — {}\n", command.usage(), command.summary));
+        out.push_str(&format!("{} · {}\n", command.usage(), command.summary));
         if !command.aliases.is_empty() {
             out.push_str(&format!("    (also {})\n", command.aliases.join(", ")));
         }

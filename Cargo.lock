@@ -5960,6 +5960,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "dregg-attest-check"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "dregg-tee-verify",
+ "dungeon-on-dregg",
+ "hex",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "dregg-audit"
 version = "0.1.0"
 dependencies = [
@@ -8268,9 +8280,11 @@ dependencies = [
  "blake3",
  "deos-view",
  "dregg-automatafl",
+ "dregg-circuit",
  "dregg-circuit-prove",
  "dregg-exec-lean",
  "dregg-intent",
+ "dregg-lightclient",
  "dregg-multiway-tug",
  "dregg-node-target",
  "dregg-sdk",
@@ -8282,6 +8296,7 @@ dependencies = [
  "dreggnet-council",
  "dreggnet-discord-identity",
  "dreggnet-doc",
+ "dreggnet-game-board",
  "dreggnet-grain",
  "dreggnet-hermes",
  "dreggnet-market",

@@ -1,0 +1,8 @@
+#!/bin/sh
+# Minimal CGI/1.1 script (RFC 3875) for the drorb conformance suite: emits a
+# CGI header block (Content-Type) + a blank line + a body that echoes two
+# meta-variables, so the deployed `.cgi` route's real process-spawn is observable
+# end to end. Invoked by the serve process via drorb_cgi_exec (fork/execve).
+printf 'Content-Type: text/plain\r\n'
+printf '\r\n'
+printf 'cgi-ok method=%s query=%s\n' "${REQUEST_METHOD:-?}" "${QUERY_STRING:-}"

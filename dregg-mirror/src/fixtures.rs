@@ -134,7 +134,7 @@ pub fn doc(title: &str, paragraphs: &[&str], conflict: Option<(&str, &str)>) -> 
     if let Some((a, b)) = conflict {
         kids.push(divider());
         kids.push(section(
-            "unresolved conflict — both alternatives stand",
+            "unresolved conflict · both alternatives stand",
             "refusal",
             vec![
                 row(vec![text("A"), text(a), button("take A", "resolve", 0)]),
@@ -179,7 +179,7 @@ pub fn descent(title: &str, epoch_hex: &str, board: &[(&str, u64, u64)]) -> Vec<
             text(&format!("epoch {epoch_hex}")),
             divider(),
             table(rows),
-            text("every entry is a replayed run — the board is re-derivable, not asserted"),
+            text("every entry is a replayed run; the board is re-derivable, not asserted"),
         ],
     );
     object("descent", title, view, &[], None)
