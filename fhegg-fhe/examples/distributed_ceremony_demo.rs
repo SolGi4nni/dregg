@@ -36,7 +36,7 @@
 //! cargo run --example distributed_ceremony_demo --features verified-pq-runtime-tests
 //! ```
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use dregg_pq::hybrid_kem::{
     install_verified_mlkem_decaps_core, install_verified_mlkem_encaps_core,
@@ -77,10 +77,49 @@ const N_MEMBERS: usize = 128;
 const OBLIGATIONS_PER_MEMBER: usize = 8;
 /// Max gross amount of one bilateral obligation.
 const MAX_AMOUNT: i64 = 50;
-/// A conservative signed-window cap for one member's obligation vector
-/// (row-sum bound: at most this member's total gross owing). Kept well inside
-/// the centered window `(t-1)/2` even after summing all `N_MEMBERS` of them.
-const MEMBER_GROSS_CAP: i64 = (OBLIGATIONS_PER_MEMBER as i64) * MAX_AMOUNT;
+
+/// The clearing-ring sizing. Defaults reproduce the pinned constants above; each
+/// can be overridden at runtime (env var) so ONE release build can be swept
+/// across member counts and obligation densities without recompiling. Every
+/// field feeds the SAME real ceremony — nothing here weakens the crypto.
+#[derive(Clone, Copy)]
+struct RingConfig {
+    /// Members in the clearing ring (= SIMD slots used). `FHEGG_N_MEMBERS`.
+    n_members: usize,
+    /// How many other members each member owes. `FHEGG_OBLIGATIONS`.
+    obligations_per_member: usize,
+    /// Max gross amount of one bilateral obligation. `FHEGG_MAX_AMOUNT`.
+    max_amount: i64,
+}
+
+impl RingConfig {
+    fn from_env() -> Self {
+        fn env_usize(key: &str, default: usize) -> usize {
+            std::env::var(key)
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default)
+        }
+        fn env_i64(key: &str, default: i64) -> i64 {
+            std::env::var(key)
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default)
+        }
+        Self {
+            n_members: env_usize("FHEGG_N_MEMBERS", N_MEMBERS),
+            obligations_per_member: env_usize("FHEGG_OBLIGATIONS", OBLIGATIONS_PER_MEMBER),
+            max_amount: env_i64("FHEGG_MAX_AMOUNT", MAX_AMOUNT),
+        }
+    }
+
+    /// A conservative signed-window cap for one member's obligation vector
+    /// (row-sum bound: at most this member's total gross owing). Kept well inside
+    /// the centered window `(t-1)/2` even after summing all members of them.
+    fn member_gross_cap(&self) -> i64 {
+        (self.obligations_per_member as i64) * self.max_amount
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  A single custody party. Owns ONLY its own secret state.
@@ -459,22 +498,24 @@ fn run_dkg(actors: &mut [PartyActor]) -> Result<(), DistributedCommitteeError> {
 /// owes member `j` (diagonal 0). Deterministic, so the run is reproducible.
 struct ObligationBook {
     g: Vec<Vec<i64>>,
+    n_members: usize,
     nonzero: usize,
     gross: i64,
 }
 
-fn build_obligation_book() -> ObligationBook {
+fn build_obligation_book(cfg: &RingConfig) -> ObligationBook {
+    let n = cfg.n_members;
     let mut rng = StdRng::seed_from_u64(0x0b11_6a70_c1ea_1234);
-    let mut g = vec![vec![0i64; N_MEMBERS]; N_MEMBERS];
+    let mut g = vec![vec![0i64; n]; n];
     let mut nonzero = 0usize;
     let mut gross = 0i64;
     for (i, row) in g.iter_mut().enumerate() {
-        for _ in 0..OBLIGATIONS_PER_MEMBER {
-            let j = rng.gen_range(0..N_MEMBERS);
+        for _ in 0..cfg.obligations_per_member {
+            let j = rng.gen_range(0..n);
             if j == i {
                 continue;
             }
-            let amount = rng.gen_range(1..=MAX_AMOUNT);
+            let amount = rng.gen_range(1..=cfg.max_amount);
             if row[j] == 0 {
                 nonzero += 1;
             }
@@ -482,16 +523,22 @@ fn build_obligation_book() -> ObligationBook {
             gross += amount;
         }
     }
-    ObligationBook { g, nonzero, gross }
+    ObligationBook {
+        g,
+        n_members: n,
+        nonzero,
+        gross,
+    }
 }
 
 /// Member `i`'s contribution vector to the global net: `+g[i][j]` credited to
 /// each creditor `j`, and `-Σ_j g[i][j]` debited to `i`. Sums to zero over
 /// slots, so the netted total conserves.
 fn member_contribution(book: &ObligationBook, i: usize) -> Vec<i64> {
-    let mut v = vec![0i64; N_MEMBERS];
+    let n = book.n_members;
+    let mut v = vec![0i64; n];
     let mut owing = 0i64;
-    for j in 0..N_MEMBERS {
+    for j in 0..n {
         v[j] += book.g[i][j];
         owing += book.g[i][j];
     }
@@ -501,9 +548,10 @@ fn member_contribution(book: &ObligationBook, i: usize) -> Vec<i64> {
 
 /// Cleartext reference net vector (what the encrypted clearing must reproduce).
 fn reference_nets(book: &ObligationBook) -> Vec<i64> {
-    let mut nets = vec![0i64; N_MEMBERS];
-    for i in 0..N_MEMBERS {
-        for j in 0..N_MEMBERS {
+    let n = book.n_members;
+    let mut nets = vec![0i64; n];
+    for i in 0..n {
+        for j in 0..n {
             nets[j] += book.g[i][j]; // j is owed
             nets[i] -= book.g[i][j]; // i owes
         }
@@ -518,6 +566,7 @@ fn encrypt_contribution(
     params: &BfvParams,
     values: &[i64],
     t: u64,
+    member_gross_cap: i64,
 ) -> SignedCt {
     let mut slots = vec![0u64; params.degree()];
     for (slot, &v) in slots.iter_mut().zip(values) {
@@ -531,7 +580,7 @@ fn encrypt_contribution(
     let lean =
         LeanCiphertext::from_fhe_bytes(&ct.to_bytes(), params.moduli(), params.degree(), t - 1)
             .expect("lean ciphertext");
-    SignedCt::new(lean, -MEMBER_GROSS_CAP, MEMBER_GROSS_CAP, t).expect("signed window")
+    SignedCt::new(lean, -member_gross_cap, member_gross_cap, t).expect("signed window")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -550,6 +599,9 @@ fn main() {
     let t = params.plaintext_modulus();
     let window_half = (t - 1) / 2;
 
+    let cfg = RingConfig::from_env();
+    let member_gross_cap = cfg.member_gross_cap();
+
     // ── SCENARIO A: honest ceremony + house-blind clearing ───────────────────
     let (mut actors, _house, party_keys) = stand_up_committee(&params);
     println!(
@@ -559,6 +611,11 @@ fn main() {
         "BFV: degree {} ({} SIMD slots), plaintext modulus {t}, centered window +/-{window_half}",
         params.degree(),
         params.degree()
+    );
+    println!(
+        "ring config: M={} members, {} obligations/member, max amount {} \
+         (per-member window cap +/-{member_gross_cap})",
+        cfg.n_members, cfg.obligations_per_member, cfg.max_amount
     );
 
     let keygen_start = Instant::now();
@@ -584,42 +641,71 @@ fn main() {
     );
     println!("  (the collective secret s = Σ s_d was never assembled in any variable)\n");
 
-    // Build the private batch and clear it house-blind.
-    let book = build_obligation_book();
+    // (a) DEMO-ONLY reference: build the private book and the O(M^2) cleartext
+    //     net. This is the check the demo asserts against — the REAL system never
+    //     computes it (no party may see the plaintext books). Timed apart so it is
+    //     never charged to the operator.
+    let ref_start = Instant::now();
+    let book = build_obligation_book(&cfg);
     let reference = reference_nets(&book);
+    let ref_ms = ref_start.elapsed().as_secs_f64() * 1e3;
     assert_eq!(
         reference.iter().sum::<i64>(),
         0,
         "cleartext netting must conserve"
     );
-    let window_use: i64 = (N_MEMBERS as i64) * MEMBER_GROSS_CAP;
+    let window_use: i64 = (cfg.n_members as i64) * member_gross_cap;
     assert!(
         window_use < window_half as i64,
         "batch would exceed the signed window ({window_use} >= {window_half})"
     );
     println!(
-        "clearing ring: M={N_MEMBERS} members, {} private bilateral obligations ({} total gross), \
-         net packed into {N_MEMBERS} SIMD slots",
-        book.nonzero, book.gross
+        "clearing ring: M={} members, {} private bilateral obligations ({} total gross), \
+         net packed into {} SIMD slots",
+        cfg.n_members, book.nonzero, book.gross, cfg.n_members
+    );
+    println!(
+        "  (a) reference (DEMO-ONLY cleartext O(M^2) check, NOT in the real system): {ref_ms:.1} ms"
     );
 
-    // Encrypt each member's obligation vector, then NET homomorphically.
+    // Clear it house-blind. Two costs, timed apart:
+    //   (b) per-member ENCRYPTION — one member builds its own contribution vector,
+    //       SIMD-encodes it, and encrypts under the collective key. In the real
+    //       system each member's OWN client does exactly ONE of these, all in
+    //       parallel; the operator does none of them. We sum the M of them here in
+    //       one process only for accounting, and also report the per-client cost.
+    //   (c) the homomorphic FOLD — the share-less clearing house's M-1 `signed_add`s
+    //       over the members' ciphertexts. THIS is the operator's per-clearing cost.
     let collective = actors[0].collective_public_key().clone();
-    let compute_start = Instant::now();
+    let mut enc_dur = Duration::ZERO; // (b) per-client (summed over M clients)
+    let mut fold_dur = Duration::ZERO; // (c) operator
     let mut netted: Option<SignedCt> = None;
-    for i in 0..N_MEMBERS {
+    for i in 0..cfg.n_members {
+        let enc_t = Instant::now();
         let contribution = member_contribution(&book, i);
-        let ct = encrypt_contribution(&collective, &params, &contribution, t);
+        let ct = encrypt_contribution(&collective, &params, &contribution, t, member_gross_cap);
+        enc_dur += enc_t.elapsed();
+
+        let fold_t = Instant::now();
         netted = Some(match netted.take() {
             None => ct,
             Some(acc) => signed_add(&acc, &ct, t).expect("homomorphic net add"),
         });
+        fold_dur += fold_t.elapsed();
     }
     let net_ct = netted.expect("at least one member");
-    let compute_ms = compute_start.elapsed().as_secs_f64() * 1e3;
+    let enc_ms = enc_dur.as_secs_f64() * 1e3;
+    let fold_ms = fold_dur.as_secs_f64() * 1e3;
+    let enc_per_client_ms = enc_ms / (cfg.n_members as f64);
     println!(
-        "encrypted {N_MEMBERS} member books + netted homomorphically in {compute_ms:.1} ms \
-         (additive regime, no ct*ct, no relinearization)"
+        "  (b) encryption (PER-CLIENT, parallel; operator does NONE): {enc_ms:.1} ms summed over \
+         {} clients = {enc_per_client_ms:.2} ms each",
+        cfg.n_members
+    );
+    println!(
+        "  (c) homomorphic FOLD (the OPERATOR's per-clearing cost, {} `signed_add`s by the \
+         share-less house): {fold_ms:.1} ms",
+        cfg.n_members.saturating_sub(1)
     );
 
     // ── DISTRIBUTED DECRYPT: a t-subset each produces one signed share. ───────
@@ -647,7 +733,7 @@ fn main() {
     let decrypt_ms = decrypt_start.elapsed().as_secs_f64() * 1e3;
 
     // Center-decode and check against the cleartext reference + conservation.
-    let revealed: Vec<i64> = (0..N_MEMBERS).map(|k| center(opened[k], t)).collect();
+    let revealed: Vec<i64> = (0..cfg.n_members).map(|k| center(opened[k], t)).collect();
     assert_eq!(
         revealed, reference,
         "the house-blind clearing did not reproduce the cleartext nets"
@@ -658,8 +744,9 @@ fn main() {
         "revealed nets do not conserve"
     );
     println!(
-        "threshold decrypt ({THRESHOLD} signed shares) + combine in {decrypt_ms:.1} ms — \
-         revealed ONLY the {N_MEMBERS}-slot net vector"
+        "  decrypt: threshold decrypt ({THRESHOLD} signed shares) + combine (over the ONE net \
+         ciphertext, independent of M) in {decrypt_ms:.1} ms — revealed ONLY the {}-slot net vector",
+        cfg.n_members
     );
 
     let (creditor, &max_net) = revealed.iter().enumerate().max_by_key(|(_, &v)| v).unwrap();
@@ -670,12 +757,20 @@ fn main() {
     );
 
     println!(
-        "\n★ N={N_PARTIES} custody parties, t={THRESHOLD}: {} orders across M={N_MEMBERS} members \
-         cleared HOUSE-BLIND in {:.1} ms (keygen {keygen_ms:.0} + compute {compute_ms:.0} + decrypt {decrypt_ms:.0}). \
-         Nobody saw an order.\n",
-        book.nonzero,
-        keygen_ms + compute_ms + decrypt_ms
+        "\n★ N={N_PARTIES} custody parties, t={THRESHOLD}: {} orders across M={} members \
+         cleared HOUSE-BLIND. OPERATOR per-clearing cost = fold {fold_ms:.1} ms + decrypt {decrypt_ms:.1} ms \
+         (keygen {keygen_ms:.0} ms is ONE-TIME; encryption is per-client-parallel; the reference is demo-only). \
+         Nobody saw an order.",
+        book.nonzero, cfg.n_members
     );
+    // Machine-readable line for the scale sweep (all values observed, release build).
+    println!(
+        "SCALE members={} obligations={} max_amount={} nonzero={} gross={} \
+         ref_ms={ref_ms:.3} enc_ms={enc_ms:.3} enc_per_client_ms={enc_per_client_ms:.4} \
+         fold_ms={fold_ms:.3} decrypt_ms={decrypt_ms:.3} keygen_ms={keygen_ms:.3}",
+        cfg.n_members, cfg.obligations_per_member, cfg.max_amount, book.nonzero, book.gross
+    );
+    println!();
 
     // ── SCENARIO B: malice is caught and attributed. ─────────────────────────
     run_malice_scenario(&params);

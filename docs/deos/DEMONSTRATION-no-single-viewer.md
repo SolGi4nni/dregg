@@ -50,6 +50,28 @@ its own address space and a `0600` secret file; peers exchange only sealed `Vec<
 
 Run this one to *believe* it — four processes, one net, nobody peeked.
 
+## Scale — measured (the operator's cost is O(members); obligations are free)
+
+The one figure the demonstration owed. The netting was instrumented to separate three different costs — a
+demo-only cleartext reference, per-client-parallel encryption, and the operator's homomorphic **fold** — then
+swept in release (independently re-run; `FHEGG_N_MEMBERS` / `FHEGG_OBLIGATIONS` override the scenario):
+
+| members | (c) fold — OPERATOR | decrypt | operator per-clearing |
+|---|---|---|---|
+| 128  | 0.89 ms | 16.6 ms | ~17 ms |
+| 512  | 3.80 ms | 16.0 ms | ~20 ms |
+| 1024 | 7.24 ms | 15.9 ms | ~23 ms |
+| 2048 | 15.20 ms | 16.4 ms | ~32 ms |
+
+The **operator's per-clearing cost is `O(members)`** — a flat ~7 µs per `signed_add` fold plus an `O(1)`
+~16 ms threshold decrypt over the *single* net ciphertext. A **2048-member ring clears house-blind for ~32 ms
+of operator work.** Per-member encryption (~1.27 ms) is each member's own client's job, done in parallel — it
+is never the operator's serial cost. The fold streams one accumulator ciphertext, so memory stays `O(1)`.
+
+**Obligations are free.** At 512 members, cranking 8 → 200 obligations/member (4,061 → 84,720 real orders — a
+21× denser book) leaves the fold flat at ~3.7 ms: obligations densify the SIMD-packed books, they do not add
+ciphertexts to fold. The system scales in *obligations* at zero marginal operator cost.
+
 ## What is proved, and what is not (honest boundary)
 
 **Proved, and shown:** real distributed threshold keygen with no single secret-holder; house-blind multilateral
@@ -57,11 +79,6 @@ netting computed by a share-less party; threshold decrypt revealing only the res
 attributed** across real process boundaries; audited PQ throughout.
 
 **Not yet, and named:**
-- **Scale numbers are honest-partial.** 128 members / 994 obligations is measured clean. The netting cost is
-  `O(members)` (the fold), and obligations *amortize* into the SIMD-batched books (`O(members)`, not
-  `O(obligations)`) — but a headline scale figure needs the fold timed separately from per-member encryption
-  (which is per-client-parallel in reality, not the serial single-machine artifact). That instrumentation is
-  the next crank, not done here.
 - **Keygen ~20–23 s** is a real 4-party degree-4096 VSS cost, unoptimized — a one-time setup, not per-clearing.
 - **Transport is process-local TCP + a rendezvous dir**, not a hardened network layer / WAN.
 - The **multiplicative** halls (Dark Pool `x·y=k`) — where the measured GPU ct×ct wins (3.35–5.13×) apply —
