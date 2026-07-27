@@ -42,6 +42,11 @@ use std::collections::HashSet;
 use dregg_blocklace::finality::{Block, BlockId, Blocklace as Lace, Payload};
 use ed25519_dalek::SigningKey;
 
+// See `blocklace_attacks.rs` — `Block::new` derives the creator's ML-DSA-65 half and
+// `dregg-pq` aborts the process when no Lean-verified core is installed, so the whole
+// Byzantine-chaos cluster asserted nothing. Installed at process start, ahead of libtest.
+dregg_pq_testkit::install_at_process_start!();
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Cluster + chaos-network model
 // ─────────────────────────────────────────────────────────────────────────────

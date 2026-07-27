@@ -20,6 +20,14 @@ use realm_model::identity::{
 };
 use realm_model::{RealmWorld, Refused};
 
+// Every identity in this file is a HYBRID key: `HybridKey::from_seed` derives the ML-DSA-65
+// half via `dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed`, and `dregg-pq` answers that with
+// `process::abort()` when no Lean-verified core is installed. Nothing in realm-model's graph
+// installed one, so this binary died as a bare SIGABRT before its first assertion. An install
+// in `realm-model/src/` would be inert here (`src/` is a DEPENDENCY of this test binary, so
+// `cfg(test)` is false in it), so it goes at process start. See `dregg-pq-testkit`'s docs.
+dregg_pq_testkit::install_at_process_start!();
+
 /// A distinct hybrid key from a byte-filled seed (a "new" or "guardian" key).
 fn key(seed_byte: u8) -> HybridKey {
     HybridKey::from_seed(&[seed_byte; 32])

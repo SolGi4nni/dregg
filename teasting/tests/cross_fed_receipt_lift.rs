@@ -71,6 +71,10 @@ use dregg_turn::{
 };
 use dregg_types::merkle_root_of_receipt_hashes;
 
+// See `fault_crash.rs` — the hybrid identity's ML-DSA half aborts the process with no verified
+// core installed, and this binary asserted nothing. Installed at process start.
+dregg_pq_testkit::install_at_process_start!();
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

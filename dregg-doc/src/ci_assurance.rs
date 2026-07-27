@@ -783,6 +783,21 @@ pub struct ReexecDivergence {
 /// signature is verifiable by anyone. The disseminated block IS the challenge;
 /// [`detect_upheld_challenge`] reads it back off the lace.
 pub fn post_challenge(divergence: &ReexecDivergence, challenger_key: &SigningKey) -> Block {
+    // `Block::new_signed` derives the challenger's ML-DSA-65 half from the same ed25519 seed (the
+    // hybrid creator id the lace verifies), and `dregg-pq` answers an ML-DSA operation with
+    // `process::abort()` when no Lean-verified core is installed. Under `--features substrate`
+    // this crate reaches `dregg-blocklace`, which is a light leaf that cannot link the archive —
+    // so the lib-test binary aborted here and reported none of its tests.
+    //
+    // ⚑ THIS IS NOT A `-p dregg-doc` PROBLEM, which is why it went unseen: featureless, this
+    // crate has no dregg dependency at all and its 122 tests pass. `dreggnet-doc` depends on
+    // `dregg-doc` with `features = ["substrate"]`, so a WORKSPACE build unifies `substrate` on
+    // and this binary dies there.
+    //
+    // `#[cfg(test)]` because the shipped crate must stay archive-free; a deployed challenger runs
+    // inside a host that installed the cores at startup. See `dregg-pq-testkit`'s crate docs.
+    #[cfg(test)]
+    dregg_pq_testkit::install_or_panic();
     let challenge = Challenge {
         input_root: divergence.host_verdict.input_root,
         command_id: divergence.host_verdict.command_id,
@@ -1266,6 +1281,10 @@ mod tests {
     /// SAME ed25519 seed `Block::sign` derives the PQ signing key from — so the
     /// lace's hybrid-verifying `insert` (and `detect_upheld_challenge`) accepts it.
     fn lace_of(seed: [u8; 32], block: Block) -> Blocklace {
+        // The other entry from this crate into `dregg-pq` — see `post_challenge`. Both
+        // `MlDsaSigningKey::from_seed` (keygen) and the hybrid-verifying `insert` (verify) are
+        // refused with a process abort when no verified core is installed.
+        dregg_pq_testkit::install_or_panic();
         let mut lace = Blocklace::new();
         let (pq_pub, _) = MlDsaSigningKey::from_seed(&seed);
         lace.enroll_pq(block.creator, pq_pub);

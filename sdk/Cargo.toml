@@ -153,6 +153,15 @@ unsafe-test-utils = []
 # CRATE since PR3. Test-scoped: the sdk library itself links no turn-prover.
 dregg-turn-prover = { path = "../turn-prover" }
 x25519-dalek = { workspace = true }
+# TEST-ONLY: the one canonical install of all six Lean-verified PQ cores. The SDK owns installers
+# of its own (`runtime.rs`) but they are reached only from `AgentRuntime`'s constructors and from
+# `AgentCipherclerk::ml_dsa_key` — and that second, point-of-use path installs KEYGEN and SIGN
+# ONLY. So `tests/hybrid_pq_turn.rs`, which signs through a cipherclerk and then verifies through
+# `dregg_turn::pq::ml_dsa_verify` without ever building an `AgentRuntime`, reached the VERIFY gate
+# with nothing installed and died as a bare SIGABRT (measured on persvati: `operation: ML-DSA-65
+# verify`). This crate already links `dregg-lean-ffi` from `[dependencies]`, so the edge adds no
+# archive link — only the list. See `dregg-pq-testkit`'s crate docs.
+dregg-pq-testkit = { path = "../dregg-pq-testkit" }
 # The running-binary ML-DSA verify gate (`tests/mldsa_wire_silo_verify.rs`) mints a GENUINE ML-DSA-65
 # `(pk, msg, ctx, sig)` with the SAME `fips204` 0.4.x the `dregg-pq` leaf carries, then asserts the
 # SDK-startup-installed Lean core is the authority behind `dregg_pq::ml_dsa_verify`.

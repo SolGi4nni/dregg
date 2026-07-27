@@ -24,6 +24,13 @@ blake3 = "1"
 # without pulling the Lean static lib into the (lib-only) build graph.
 proptest = { workspace = true }
 dregg-lean-ffi = { path = "../dregg-lean-ffi" }
+# TEST-ONLY: installs the Lean-verified ML-DSA cores so the blocklace attack binaries can run
+# a PQ operation at all. They reach ML-DSA only through `dregg_blocklace::finality::Block::new`
+# (the hybrid creator id), and nothing in their graph installed a core — so all three died as
+# bare SIGABRTs and asserted NOTHING. dregg-lean-ffi is already a dev-dep here, so this edge
+# adds no archive link the fuzz targets were not already paying; it adds the ONE canonical
+# install list. See `dregg-pq-testkit`'s crate docs.
+dregg-pq-testkit = { path = "../dregg-pq-testkit" }
 # net's PeerScoreboard exposes the eclipse-resistant eager-selection surface
 # (incl. anchor pinning) that the F-5 / L4 anti-eclipse attack test drives.
 dregg-net = { path = "../net" }

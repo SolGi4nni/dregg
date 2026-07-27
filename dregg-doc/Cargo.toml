@@ -147,6 +147,17 @@ serde_json = { version = "1", optional = true }
 # in the lockfile), so this adds no new transitive dependency.
 [dev-dependencies]
 ed25519-dalek = "2"
+# TEST-ONLY: installs the Lean-verified ML-DSA cores so the `--features substrate` lib-test
+# binary can run a PQ operation at all. `dregg_blocklace::Block::new_signed` derives the
+# challenger's ML-DSA half, and `dregg-pq` refuses that with `process::abort()` when no verified
+# core is installed — `dregg-blocklace` is a light leaf that cannot link the archive itself.
+#
+# ⚑ Only a WORKSPACE build hits this: featureless (this crate's default and its whole standalone
+# point) there is no dregg dependency at all and the 122 tests pass; `dreggnet-doc` depends on
+# `dregg-doc` with `features = ["substrate"]`, so `cargo test --workspace` unifies `substrate` on
+# and the binary died as a bare SIGABRT there. The install sites are `#[cfg(test)]`-gated inside
+# `ci_assurance.rs`, so a featureless build pulls none of this in. See `dregg-pq-testkit`'s docs.
+dregg-pq-testkit = { path = "../dregg-pq-testkit" }
 
 # The ark-serialize serde-integration fork `[patch.crates-io]` this crate used to
 # mirror (needed by the transitive `dregg-hints` under `--features substrate`) is

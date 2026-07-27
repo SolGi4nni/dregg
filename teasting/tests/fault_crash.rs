@@ -16,6 +16,15 @@ use dregg_teasting::federation::{drive_to_finalization, dual_federation, quick_f
 use dregg_teasting::harness::SimulationHarness;
 use dregg_wire::message::WireMessage;
 
+// This suite's federations sign with the HYBRID (ed25519 + ML-DSA-65) identity, and `dregg-pq`
+// answers an ML-DSA operation with `process::abort()` when no Lean-verified core is installed.
+// Nothing in `dregg-teasting`'s graph installed one, so this binary died as a bare SIGABRT
+// before its first assertion. The gateway is `dregg_blocklace::Block::new` inside
+// `dregg_teasting::harness`, which is a DEPENDENCY here — `cfg(test)` is false in it, so an
+// install in `teasting/src/` would be inert. It goes at process start instead, ahead of
+// libtest, so no test order can beat it. See `dregg-pq-testkit`'s crate docs.
+dregg_pq_testkit::install_at_process_start!();
+
 // =============================================================================
 // Helpers
 // =============================================================================

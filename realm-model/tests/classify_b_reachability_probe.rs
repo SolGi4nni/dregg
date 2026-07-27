@@ -22,6 +22,10 @@ use realm_model::identity::{
     HybridKey, HybridSig, SuccessionKind, commit_hybrid, succession_message,
 };
 
+// See `hybrid_identity_succession.rs` — `HybridKey::from_seed`'s ML-DSA half aborts the process
+// with no verified core installed, and this binary asserted nothing. Installed at process start.
+dregg_pq_testkit::install_at_process_start!();
+
 /// The eight canonical small-order ed25519 point encodings (compressed y). Any of
 /// these is a valid `VerifyingKey` that the COFACTORED `verify` accepts a
 /// no-secret signature under. `verify_strict` rejects them (RFC 8032 §5.1.7).

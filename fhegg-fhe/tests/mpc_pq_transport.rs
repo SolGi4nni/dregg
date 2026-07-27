@@ -18,6 +18,14 @@ use fhegg_fhe::mpc_party::{
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
+// `NativePqTransportIdentity` mints REAL ML-DSA-65 and ML-KEM-768 material, and `dregg-pq`
+// answers a PQ operation with `process::abort()` when no Lean-verified core is installed. This
+// crate links `dregg-lean-ffi` only behind the optional `verified-pq-runtime-tests` feature, so
+// in the default graph these two binaries had no core to install and died as bare SIGABRTs.
+// Giving them `required-features` instead would have made them SILENT rather than verified, so
+// the dev-only testkit installs the audited cores unconditionally. See `dregg-pq-testkit`.
+dregg_pq_testkit::install_at_process_start!();
+
 const N: usize = 2;
 
 fn native_identities() -> (Vec<NativePqTransportIdentity>, NativePqTransportIdentity) {

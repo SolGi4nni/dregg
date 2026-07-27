@@ -49,6 +49,19 @@ pub mod transcript;
 pub use node::{LocalNode, NodeError, NodeMinter};
 pub use share::Role;
 
+// Install the Lean-verified PQ cores in the LIB-TEST process, at process start.
+//
+// ⚑ `cargo test -p agent-platform --lib` installed nothing and died as a bare SIGABRT at the
+// first ML-DSA keygen, so none of its tests reported — not just the one that minted a key.
+// In the shipped library the install is a side effect of building a `dregg_sdk::AgentRuntime`
+// (`sdk/src/runtime.rs`), which every served drive path does; the lib tests reach ML-DSA
+// earlier and from several directions at once — `LocalNode`'s `AgentCipherclerk`,
+// `dregg_auth`'s credential chain, `grain_turn`'s minter — so there is no single gateway here
+// to hang a call on. A process-start initializer covers all of them and cannot be beaten by
+// test order. `#[cfg(test)]`, so the shipped library carries no initializer.
+#[cfg(test)]
+dregg_pq_testkit::install_at_process_start!();
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 

@@ -5,6 +5,10 @@
 
 use dregg_teasting::federation::{drive_to_finalization, quick_federation};
 
+// See `fault_crash.rs` — the hybrid identity's ML-DSA half aborts the process with no verified
+// core installed, and this binary asserted nothing. Installed at process start.
+dregg_pq_testkit::install_at_process_start!();
+
 /// Basic revocation: submit, finalize, verify all nodes show revoked.
 #[test]
 fn test_basic_revocation_propagation() {

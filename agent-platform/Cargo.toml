@@ -74,6 +74,12 @@ getrandom = { version = "0.3" }
 # production method itself takes only dregg-cell's registry seam; the vendor
 # crypto stays a dev/test (or host-install, see deos-hermes::tee_fact) concern.
 dregg-tee-verify = { path = "../tee-verify" }
+# TEST-ONLY: installs the Lean-verified PQ cores so the lib-test binary can run an ML-DSA
+# operation at all. `dregg-pq` refuses one with `process::abort()` when no core is installed, and
+# this crate installs one only as a side effect of constructing a `dregg_sdk::AgentRuntime` — which
+# the lib tests reach ML-DSA before doing. `dregg-lean-ffi` is already in this crate's normal graph
+# (via `dregg-sdk`), so this edge adds no archive link, only the install. See `dregg-pq-testkit`.
+dregg-pq-testkit = { path = "../dregg-pq-testkit" }
 
 [lints]
 workspace = true

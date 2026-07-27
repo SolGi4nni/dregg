@@ -31,6 +31,16 @@ ed25519-dalek = { version = "2", features = ["hazmat"] }
 # (ark-serialize's serde_with feature from emberian/algebra) is inherited from the
 # root workspace, so no per-crate `[workspace]`/`[patch]` is needed here anymore.
 
+[dev-dependencies]
+# TEST-ONLY: installs the Lean-verified ML-DSA cores. `HybridKey::from_seed` (src/identity.rs)
+# derives the PQ half through `dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed`, and `dregg-pq`
+# refuses that with `process::abort()` when no verified core is installed. Nothing in this
+# crate's graph installed one, so ALL FOUR test binaries died as bare SIGABRTs and asserted
+# nothing. `dregg-turn` is a light leaf that cannot link the archive from `[dependencies]`, and
+# this crate's own `src/` is a DEPENDENCY of its `tests/*.rs` (so `cfg(test)` is false there) —
+# hence a dev-dep here plus a process-start install per test file. See `dregg-pq-testkit`.
+dregg-pq-testkit = { path = "../dregg-pq-testkit" }
+
 # Bound to the workspace lint set (2026-07-25). The load-bearing member is
 # `unexpected_cfgs = "deny"`: a `#[cfg(feature = "X")]` naming a feature this manifest does
 # not declare is ALWAYS FALSE, so the gated code silently compiles to nothing. This crate had

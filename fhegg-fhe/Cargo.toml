@@ -126,6 +126,16 @@ getrandom_v3 = { package = "getrandom", version = "0.3", features = ["wasm_js"] 
 # The integration test drives a real PDHG solve to produce a genuine Cert-F
 # certificate; it needs the solver's pdhg/cert API directly.
 fhegg-solver = { path = "../fhegg-solver" }
+# TEST-ONLY: installs the Lean-verified ML-DSA / ML-KEM cores. `dregg-lean-ffi` above is
+# OPTIONAL (behind `verified-pq-runtime-tests`), so in the DEFAULT graph the two native-PQ
+# transport tests — `mpc_pq_transport`, `mpc_pq_crossing_sealed`, which do NOT declare
+# `required-features` — had no archive to install from, and `dregg-pq` aborted the process at
+# the first ML-DSA keygen. Both died as bare SIGABRTs asserting nothing.
+#
+# Moving them behind `required-features` would have made them SILENT instead of verified. This
+# is the opposite: the dev-only testkit makes the audited cores the authority in the default
+# test graph too, so the transport tests run the same objects the committee binary runs.
+dregg-pq-testkit = { path = "../dregg-pq-testkit" }
 
 # Runnable no-single-viewer ceremony demonstrator: the real DistributedDkg
 # across isolated party-actors, a house-blind netting, and the distributed

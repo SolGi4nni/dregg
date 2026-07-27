@@ -153,3 +153,73 @@ pub fn install_or_panic() -> Installed {
     );
     got
 }
+
+/// Run [`install`] at PROCESS START, from one line at the top of a test file.
+///
+/// # When this, and not a call at the gateway
+///
+/// The adopters above put `install_or_panic()` at their own crate's entry into `dregg-pq`
+/// (`turn/src/pq.rs`, `blocklace/src/pq.rs`, …) under `#[cfg(test)]`. That works when the
+/// crate OWNS the gateway. It does not work for an INTEGRATION test (`tests/*.rs`), because
+/// the crate under test is compiled as a DEPENDENCY there: `cfg(test)` is false in its
+/// `src/`, so a `#[cfg(test)]` install one crate down is INERT. And the gateway is often not
+/// in the test crate at all — `dregg-redteam` reaches ML-DSA only through
+/// `dregg_blocklace::finality::Block::new`, `dregg-teasting` only through its own
+/// `SimulationHarness`/`SimFederation` helpers, `realm-model` only through
+/// `dregg_turn::pq::MlDsaTurnKey`.
+///
+/// Hanging the install on "every helper the file happens to use" makes coverage a property
+/// of a hand-audited call list, and a missed one is a bare SIGABRT that takes the whole
+/// binary. A process-start initializer makes it a property of the BINARY: it runs before
+/// libtest starts, so no test can beat it and `--test-threads` cannot change the outcome.
+/// This is the same mechanism, and for the same reason, as `dregg-node`'s
+/// `pq_test_bootstrap` (`node/src/lib.rs`).
+///
+/// # It does not weaken the gate
+///
+/// [`install`] is export-gated per direction, so an archive that exports nothing installs
+/// nothing and every PQ operation still hits `dregg-pq`'s refusal at the point of use. What
+/// this adds is that the incomplete-archive case is REPORTED, on stderr, at process start —
+/// before libtest's output capture exists to swallow it, which is what makes the current
+/// failure mode a bare exit-134 with no text.
+///
+/// It deliberately does NOT panic like [`install_or_panic`]: a panic out of an
+/// `extern "C"` initializer aborts before `main`, i.e. it replaces one uninformative abort
+/// with another. A test whose SUBJECT is the PQ path should still call [`install_or_panic`]
+/// itself and assert on [`Installed`].
+///
+/// ```ignore
+/// // tests/blocklace_attacks.rs
+/// dregg_pq_testkit::install_at_process_start!();
+/// ```
+#[macro_export]
+macro_rules! install_at_process_start {
+    () => {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        #[allow(dead_code)]
+        mod dregg_pq_testkit_process_start {
+            extern "C" fn install() {
+                let got = $crate::install();
+                if !got.mldsa_complete() {
+                    // stderr, at process start: libtest has not installed its output capture
+                    // yet, so unlike a message printed from inside a test this one survives.
+                    eprintln!(
+                        "dregg-pq-testkit: the linked Lean archive does not export all three \
+                         ML-DSA cores (verify={} sign={} keygen={}). Every ML-DSA operation in \
+                         this test binary will be REFUSED by dregg-pq's audit gate — an \
+                         uncatchable process abort that takes the whole binary, not one test. \
+                         Rebuild against a HEAD-matching archive (dregg-lean-ffi's build script \
+                         produces one; scripts/fetch-lean-seed.sh pulls the published \
+                         platform-native seed).",
+                        got.mldsa_verify, got.mldsa_sign, got.mldsa_keygen,
+                    );
+                }
+            }
+
+            #[used]
+            #[cfg_attr(target_os = "linux", unsafe(link_section = ".init_array"))]
+            #[cfg_attr(target_os = "macos", unsafe(link_section = "__DATA,__mod_init_func"))]
+            static INSTALL_VERIFIED_PQ_CORES: extern "C" fn() = install;
+        }
+    };
+}

@@ -25,6 +25,10 @@ use fhegg_fhe::mpc_party::{
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
+// See `mpc_pq_transport.rs` — the native-PQ party identities abort the process with no verified
+// core installed, and this binary asserted nothing. Installed at process start.
+dregg_pq_testkit::install_at_process_start!();
+
 const N: usize = 2;
 
 fn identities() -> (Vec<NativePqTransportIdentity>, NativePqTransportIdentity) {

@@ -56,6 +56,19 @@ postcard = { version = "1", features = ["use-std"] }
 serde = { workspace = true }
 curve25519-dalek = { version = "4", features = ["alloc"] }
 
+[dev-dependencies]
+# TEST-ONLY: installs the Lean-verified ML-DSA cores so this suite's integration binaries can
+# run a PQ operation at all. `dregg-pq` refuses one with `process::abort()` when no verified
+# core is installed, and nothing in this crate's graph installed one — so the six adversarial
+# binaries (fault_crash, fault_partition, consensus_liveness, revocation_propagation,
+# cross_federation, cross_fed_receipt_lift) died as bare SIGABRTs and asserted NOTHING.
+#
+# Their entry into ML-DSA is `dregg_blocklace::Block::new` inside this crate's OWN
+# `harness.rs`, which is compiled as a DEPENDENCY of a `tests/*.rs` binary — so `cfg(test)` is
+# false there and an install in `src/` would be INERT. It goes at process start in each test
+# file instead. See `dregg-pq-testkit`'s crate docs.
+dregg-pq-testkit = { path = "../dregg-pq-testkit" }
+
 [features]
 # `prover` is in the DEFAULT set (matching `dregg-circuit`/`dregg-sdk`/`dregg-turn`/`dregg-verifier`,
 # all of which default to it) and forwards to `dregg-circuit/prover`, so this crate's own

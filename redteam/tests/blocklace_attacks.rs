@@ -29,6 +29,13 @@ use dregg_blocklace::finality::{Block, BlockError, Blocklace, Payload};
 use ed25519_dalek::ed25519::signature::Signer as _;
 use ed25519_dalek::SigningKey as DalekKey;
 
+// Every `Block::new` below derives the creator's ML-DSA-65 half (the hybrid id these attacks
+// are ABOUT), and `dregg-pq` answers an ML-DSA operation with `process::abort()` when no
+// Lean-verified core is installed. Nothing in this binary installed one, so this file died at
+// its first block — a bare SIGABRT, before a single attack was asserted. The install runs at
+// process start, so no test order can beat it. See `dregg-pq-testkit`'s crate docs.
+dregg_pq_testkit::install_at_process_start!();
+
 fn dalek_key(seed: u8) -> DalekKey {
     DalekKey::from_bytes(&[seed; 32])
 }

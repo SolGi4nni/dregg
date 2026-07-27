@@ -26,6 +26,11 @@ use dregg_blocklace::finality::{
 use ed25519_dalek::ed25519::signature::Signer as _;
 use ed25519_dalek::SigningKey as DalekKey;
 
+// See `blocklace_attacks.rs` — `Block::new` derives the creator's ML-DSA-65 half and
+// `dregg-pq` aborts the process when no Lean-verified core is installed, so this binary
+// asserted nothing. Installed at process start, ahead of libtest.
+dregg_pq_testkit::install_at_process_start!();
+
 fn dalek_key(seed: u8) -> DalekKey {
     DalekKey::from_bytes(&[seed; 32])
 }

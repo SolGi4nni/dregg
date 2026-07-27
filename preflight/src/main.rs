@@ -50,7 +50,63 @@ fn run_all_subsystems() -> Vec<SubsystemResult> {
     ]
 }
 
+/// Install the six Lean-verified post-quantum cores for THIS process, once.
+///
+/// ⚑ WHY THIS EXISTS. `dregg-pq` answers an ML-DSA / ML-KEM operation only through a function
+/// pointer some host installed, and with none installed it refuses with `process::abort()`.
+/// Preflight had NO host: nothing here, and nothing in `checks/`, ever called an install. So
+/// `cargo run -p dregg-preflight` — the documented golden-master promotion gate — aborted with a
+/// bare `Abort trap: 6` at the first ML-DSA keygen, and `cargo test -p dregg-preflight` did the
+/// same, taking every check in the binary rather than the one that minted a key. This is the same
+/// defect `dregg-node genesis` carried until `1fc796e8d` and for the same reason: the install
+/// lived on a code path nobody ran.
+///
+/// It is NOT a bypass. `DREGG_ALLOW_UNAUDITED_PQ` routes these operations onto the unaudited
+/// `fips204` / `ml-kem` crates; this does the opposite — it makes the extracted, Lean-verified
+/// cores the authority, the SAME ones `dregg_node::install_verified_pq_cores` installs at node
+/// startup. Every install is export-gated inside `dregg-pq`, so an archive that does not export a
+/// core installs nothing for that direction and the refusal at the point of use still stands.
+///
+/// No new dependency: `dregg-sdk` is already a `[dependencies]` entry here and re-exports the six
+/// shared installs (`sdk/src/runtime.rs`), which is why this is six calls and not a fourth copy of
+/// the `dregg-lean-ffi` symbol list.
+fn install_verified_pq_cores() {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        let _ = dregg_sdk::install_verified_mldsa_verify_core();
+        let _ = dregg_sdk::install_verified_mldsa_sign_core_real();
+        let _ = dregg_sdk::install_verified_mldsa_keygen_core_real();
+        let _ = dregg_sdk::install_verified_mlkem_encaps_core();
+        let _ = dregg_sdk::install_verified_mlkem_decaps_core();
+        let _ = dregg_sdk::install_verified_mlkem_keygen_core();
+    });
+}
+
+/// Call [`install_verified_pq_cores`] at process start in the TEST binary.
+///
+/// `main` is not run by libtest, and there is no single derivation point inside `checks/` to hang
+/// the install on — the 27 subsystems mint ML-DSA keys through `dregg_sdk::AgentCipherclerk`,
+/// `dregg_blocklace::Block`, `dregg_federation` and `dregg_turn::pq` alike. A process-start
+/// initializer covers all of them and puts the test binary in the same disposition as the
+/// deployed one. `#[cfg(test)]`, so the shipped binary carries no initializer — it calls the
+/// function from `main` instead.
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+mod pq_test_bootstrap {
+    extern "C" fn install() {
+        super::install_verified_pq_cores();
+    }
+
+    #[used]
+    #[cfg_attr(target_os = "linux", unsafe(link_section = ".init_array"))]
+    #[cfg_attr(target_os = "macos", unsafe(link_section = "__DATA,__mod_init_func"))]
+    static INSTALL_VERIFIED_PQ_CORES: extern "C" fn() = install;
+}
+
 fn main() {
+    // Before the first check, not inside one: a subsystem that mints an ML-DSA key would
+    // otherwise abort the whole run with no report printed.
+    install_verified_pq_cores();
     let start = Instant::now();
     let subsystems = run_all_subsystems();
     let total_duration = start.elapsed();

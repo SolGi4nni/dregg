@@ -22,6 +22,10 @@ use dregg_turn::{
 };
 use dregg_types::AttestedRoot;
 
+// See `fault_crash.rs` — the hybrid identity's ML-DSA half aborts the process with no verified
+// core installed, and this binary asserted nothing. Installed at process start.
+dregg_pq_testkit::install_at_process_start!();
+
 fn open_permissions() -> Permissions {
     Permissions {
         send: AuthRequired::None,

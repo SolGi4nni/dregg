@@ -20,6 +20,10 @@ use realm_model::instance::field as ifield;
 use realm_model::realm::Membrane;
 use realm_model::{RealmWorld, Refused, RulesetRoot, pack_u64};
 
+// See `hybrid_identity_succession.rs` — `HybridKey::from_seed`'s ML-DSA half aborts the process
+// with no verified core installed, and this binary asserted nothing. Installed at process start.
+dregg_pq_testkit::install_at_process_start!();
+
 fn ruleset(name: &str) -> RulesetRoot {
     *blake3::hash(name.as_bytes()).as_bytes()
 }
