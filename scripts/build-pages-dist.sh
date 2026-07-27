@@ -128,27 +128,62 @@ cp "$ROOT/site/root/technical.html" "$DIST/technical.html"
 # is source-controlled; the PDF is compiled from paper/main.typ on every assembly.
 mkdir -p "$DIST/paper"
 cp "$ROOT/site/root/paper.html" "$DIST/paper/index.html"
-typst compile "$ROOT/paper/main.typ" "$DIST/paper/dregg.pdf"
-test -s "$DIST/paper/dregg.pdf"
-test "$(head -c 5 "$DIST/paper/dregg.pdf")" = '%PDF-'
 
-# The direct-logic report is being developed alongside its formalization. Keep
-# today's Pages deploy green before the source lands; once main.typ exists, a
-# missing or invalid PDF is a hard assembly failure. --root lets the report cite
-# checked-in formalization artifacts outside its own directory without weakening
-# Typst's filesystem boundary beyond this repository.
-DIRECT_LOGIC_SRC="$ROOT/papers/direct-logic-arithmetization/main.typ"
-DIRECT_LOGIC_DIST="$DIST/papers/direct-logic-arithmetization"
-DIRECT_LOGIC_PDF="$DIRECT_LOGIC_DIST/direct-logic-arithmetization.pdf"
-if [ -f "$DIRECT_LOGIC_SRC" ]; then
-  echo "=== compile the direct-logic arithmetization report ==="
-  mkdir -p "$DIRECT_LOGIC_DIST"
-  typst compile --root "$ROOT" "$DIRECT_LOGIC_SRC" "$DIRECT_LOGIC_PDF"
-  test -s "$DIRECT_LOGIC_PDF"
-  test "$(head -c 5 "$DIRECT_LOGIC_PDF")" = '%PDF-'
-else
-  echo "=== direct-logic arithmetization report not present yet; skipped ==="
+# ── TYPST DOCUMENTS: an explicit manifest plus a DISCOVERY FLOOR ────────────────
+# Was: two hard-coded `typst compile` calls, one with its own bespoke skip branch.
+# That made a NEW paper invisible by default — it would simply never be published,
+# with no signal anywhere. `docs/reference/arklib-kzg-vacuity/twopager.typ` had
+# already been sitting unbuilt. Absence-without-signal is the wound this repo keeps
+# getting bitten by, so: an explicit list (survives a bad glob, and says what we
+# MEANT to ship) plus a derivation that reds when a document exists outside it.
+#
+# STAGING POSTURE: a typst failure marks the route and continues. A site that says
+# "this paper did not build" beats a deploy that dies and ships nothing.
+#   SRC | DIST SUBDIR | PDF NAME
+TYPST_DOCS=(
+  "paper/main.typ|paper|dregg.pdf"
+  "papers/direct-logic-arithmetization/main.typ|papers/direct-logic-arithmetization|direct-logic-arithmetization.pdf"
+  "docs/reference/arklib-kzg-vacuity/twopager.typ|papers/arklib-kzg-vacuity|arklib-kzg-vacuity.pdf"
+)
+TYPST_BUILT=(); TYPST_FAILED=(); TYPST_ABSENT=()
+for entry in "${TYPST_DOCS[@]}"; do
+  src="${entry%%|*}"; rest="${entry#*|}"; sub="${rest%%|*}"; pdf="${rest#*|}"
+  if [ ! -f "$ROOT/$src" ]; then TYPST_ABSENT+=("$src"); continue; fi
+  mkdir -p "$DIST/$sub"
+  if typst compile --root "$ROOT" "$ROOT/$src" "$DIST/$sub/$pdf" 2>&1 \
+     && [ -s "$DIST/$sub/$pdf" ] && [ "$(head -c 5 "$DIST/$sub/$pdf")" = '%PDF-' ]; then
+    TYPST_BUILT+=("$sub/$pdf")
+  else
+    TYPST_FAILED+=("$src")
+    rm -f "$DIST/$sub/$pdf"
+    printf '<!doctype html><meta charset=utf-8><title>not yet built</title>%s\n' \
+      "<h1>This document did not build</h1><p><code>$src</code> failed to compile in this assembly. This is a STAGING site.</p>" \
+      > "$DIST/$sub/index.html"
+  fi
+done
+echo "=== typst: built ${#TYPST_BUILT[@]}, failed ${#TYPST_FAILED[@]}, absent ${#TYPST_ABSENT[@]} ==="
+for d in "${TYPST_BUILT[@]}";  do echo "    built  $d"; done
+for d in "${TYPST_FAILED[@]}"; do echo "    FAILED $d (marker page shipped)" >&2; done
+for d in "${TYPST_ABSENT[@]}"; do echo "    absent $d (listed but no source yet)"; done
+
+# DISCOVERY FLOOR — a .typ that is neither a manifest entry, nor under a sections/
+# dir, nor #include'd by a sibling, is an UNPUBLISHED DOCUMENT. Report it loudly.
+# An explicit list alone goes stale silently; the derivation is what stops that.
+TYPST_UNWIRED=()
+while IFS= read -r cand; do
+  rel="${cand#"$ROOT"/}"
+  case "$rel" in */sections/*|.claude/*|target/*|vendor/*) continue;; esac
+  printf '%s\n' "${TYPST_DOCS[@]}" | grep -q "^$rel|" && continue
+  base="$(basename "$rel")"
+  grep -rqs --include='*.typ' -e "include \"[^\"]*$base\"" -e "import \"[^\"]*$base\"" "$ROOT/paper" "$ROOT/papers" "$ROOT/docs" && continue
+  TYPST_UNWIRED+=("$rel")
+done < <(find "$ROOT/paper" "$ROOT/papers" "$ROOT/docs" -name '*.typ' 2>/dev/null)
+if [ "${#TYPST_UNWIRED[@]}" -gt 0 ]; then
+  echo "=== ⚑ UNPUBLISHED typst documents — present in the tree, in no manifest ===" >&2
+  for d in "${TYPST_UNWIRED[@]}"; do echo "    $d" >&2; done
+  echo "    Add to TYPST_DOCS above, or move under a sections/ dir if it is an include." >&2
 fi
+
 # the cloud & userspace subsite — the grain economy (the cloud) + the ~30 starbridge
 # apps (the userspace of the kernel) + trustless serving; deploys at /cloud/.
 cp -R "$ROOT/site/cloud" "$DIST/cloud"
@@ -361,6 +396,10 @@ echo "  /cards/        -> $(du -sh "$DIST/cards" | cut -f1) (the deos-js card ga
 echo "  /explorer/     -> $(du -sh "$DIST/explorer" | cut -f1) (caps as rows)"
 echo "  /light-client/ -> $(du -sh "$DIST/light-client" | cut -f1) (verify a whole history)"
 echo "  /transclusion/ -> $(du -sh "$DIST/transclusion" | cut -f1) (xanadu made honest)"
-[ -f "$DIRECT_LOGIC_PDF" ] && echo "  /papers/direct-logic-arithmetization/ -> $(du -sh "$DIRECT_LOGIC_PDF" | cut -f1) (the direct-logic report)"
+# every typst document the manifest actually built, listed from the manifest rather than
+# from a hard-coded variable — a new paper appears here for free.
+for d in "${TYPST_BUILT[@]}"; do
+  echo "  /$(dirname "$d")/ -> $(du -sh "$DIST/$d" | cut -f1) (typst: $(basename "$d"))"
+done
 [ -d "$DIST/atlas" ] && echo "  /atlas/        -> $(du -sh "$DIST/atlas" | cut -f1) (the atlas)"
 echo "  total: $(find "$DIST" -type f | wc -l | tr -d ' ') files"
