@@ -16,6 +16,20 @@
 #
 # There is deliberately NO regenerate flag. Adding a row is supposed to cost a sentence.
 #
+# ── THE NEXT RATCHET, NAMED AND NOT YET ARMED ────────────────────────────────────────
+# The same convention says a ```no_run block states what would happen if it ran
+# (`// NO_RUN: binds 0.0.0.0:3000`). All 13 minted by the 2026-07-27 pass do. TWENTY-NINE
+# PRE-EXISTING ONES DO NOT, and the gate does NOT currently detect them — this paragraph
+# is documentation, not a control. They are: 20 in `sdk/` + `dregg-sdk-net/`, 8 upstream
+# in `vendor/curve25519-dalek-dregg` (the ```ascii,no_run rows below), and one each in
+# `chain/`, `dregg-pay/`, `git-deploy/`, `host-gateway/`, `wire/`.
+#
+# Arming it is one line — `if "ignore" in attrs` in `scan_fences` becomes
+# `if attrs & {"ignore", "no_run"}` — plus 29 rows here. It was left un-armed ON PURPOSE:
+# 20 of the 29 sit in directories a concurrent lane was editing on 2026-07-27, and a gate
+# that reddens other people's in-flight work is a gate that gets switched off in a week,
+# taking the ```ignore contract with it. Arm it when `sdk/` is quiet.
+#
 # ─────────────────────────────────────────────────────────────────────────────────────
 # Seeded 2026-07-27, from the pass that repaired 45 of the 71 ```ignore fences this tree
 # had (and re-marked the rest ```text / ```no_run / ```ignore-with-a-reason). Everything
