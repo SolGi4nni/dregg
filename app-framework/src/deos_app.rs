@@ -21,8 +21,20 @@
 //!
 //! ## The shape
 //!
-//! ```ignore
-//! let app = DeosApp::builder("doc-app", cipherclerk, executor)
+//! ```
+//! use dregg_app_framework::{
+//!     AgentCipherclerk, AppCipherclerk, AuthRequired, CellAffordance, DeosApp, DeosCell, Effect,
+//!     EmbeddedExecutor, Event, FederationId, StarbridgeAppContext,
+//! };
+//!
+//! let cipherclerk = AppCipherclerk::new(AgentCipherclerk::new(), [0xAB; 32]);
+//! let executor = EmbeddedExecutor::new(&cipherclerk, "default");
+//! let doc = cipherclerk.cell_id();
+//! # let emit = |topic: [u8; 32]| Effect::EmitEvent { cell: doc, event: Event { topic, data: vec![] } };
+//! # let (view_fx, admin_fx) = (emit([1u8; 32]), emit([2u8; 32]));
+//! # let edit_fx = Effect::SetField { cell: doc, index: 1, value: [7u8; 32] };
+//!
+//! let app = DeosApp::builder("doc-app", cipherclerk.clone(), executor.clone())
 //!     .federation(FederationId([0xAB; 32]))
 //!     // one cell exposing its affordances; published into the web-of-cells:
 //!     .cell(DeosCell::new(doc, "doc")
@@ -34,11 +46,13 @@
 //!     .build();
 //!
 //! // ONE registration onto the shared host context (alongside other deos apps):
+//! let ctx = StarbridgeAppContext::new(cipherclerk, executor);
 //! app.register(&ctx);
 //!
 //! // ONE mount yields the whole HTTP surface (per-cell affordance routers + the
 //! // app manifest + the web-of-cells snapshot endpoints):
 //! let router = app.mount();
+//! # let _ = router;
 //! ```
 //!
 //! ## What each layer becomes
@@ -155,12 +169,23 @@ impl DeosCell {
     /// the surface is REACTIVE (a button dark in one state lights in another) without
     /// the author threading `(old, new)` by hand.
     ///
-    /// ```ignore
-    /// DeosCell::new(proposal, "proposal")
+    /// ```
+    /// use dregg_app_framework::{
+    ///     AuthRequired, CellAffordance, CellId, CellProgram, DeosCell, Effect, GatedAffordance,
+    ///     StateConstraint, field_from_u64,
+    /// };
+    ///
+    /// # let proposal = CellId::from_bytes([9u8; 32]);
+    /// # let (pending, approved) = (field_from_u64(0), field_from_u64(1));
+    /// # let approve_effect = Effect::SetField { cell: proposal, index: 0, value: approved };
+    /// let cell = DeosCell::new(proposal, "proposal")
     ///     .gated(GatedAffordance::new(
     ///         CellAffordance::new("approve", AuthRequired::Either, approve_effect),
     ///         CellProgram::Predicate(vec![StateConstraint::FieldEquals { index: 0, value: pending }]),
-    ///     ))
+    ///     ));
+    /// // The button exists on the gated (cap∧state) surface, not the cap-only one.
+    /// assert!(cell.has_gated());
+    /// assert!(cell.surface().all_names().is_empty());
     /// ```
     pub fn gated(mut self, ga: GatedAffordance) -> Self {
         self.gated = self.gated.declare(ga);

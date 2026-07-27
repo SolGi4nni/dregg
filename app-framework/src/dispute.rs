@@ -371,16 +371,95 @@ impl Default for DisputeConfig {
 ///
 /// # Example (compute-exchange)
 ///
-/// ```ignore
+/// ```
+/// use dregg_app_framework::dispute::{
+///     ComputeMetrics, Disputable, DisputeError, DisputeEvidence, DisputeId, DisputeResolution,
+///     SettlementId,
+/// };
+/// use dregg_app_framework::CellId;
+///
+/// #[derive(Default)]
+/// struct ComputeExchange {
+///     claims: Vec<(SettlementId, ComputeMetrics)>,
+///     disputes: Vec<(DisputeId, SettlementId, CellId, u64)>,
+///     finalized: Vec<SettlementId>,
+/// }
+///
 /// impl Disputable for ComputeExchange {
 ///     type Claim = ComputeMetrics;
 ///     type Evidence = DisputeEvidence;
+///     type Error = DisputeError;
 ///
-///     fn submit_claim(&mut self, claim: ComputeMetrics) -> SettlementId { ... }
-///     fn challenge(&mut self, id: SettlementId, ev: DisputeEvidence) -> DisputeId { ... }
-///     fn resolve(&mut self, id: DisputeId, resolution: DisputeResolution) { ... }
-///     fn finalize_unchallenged(&mut self, id: SettlementId) { ... }
+///     fn submit_claim(&mut self, claim: ComputeMetrics) -> Result<SettlementId, DisputeError> {
+///         let id = claim.output_hash; // content-addressed settlement id
+///         self.claims.push((id, claim));
+///         Ok(id)
+///     }
+///
+///     fn challenge(
+///         &mut self,
+///         settlement_id: SettlementId,
+///         challenger: CellId,
+///         _evidence: DisputeEvidence,
+///         challenger_stake: u64,
+///     ) -> Result<DisputeId, DisputeError> {
+///         if !self.claims.iter().any(|(id, _)| *id == settlement_id) {
+///             return Err(DisputeError::SettlementNotFound);
+///         }
+///         let dispute_id = blake3::hash(&settlement_id).into();
+///         self.disputes
+///             .push((dispute_id, settlement_id, challenger, challenger_stake));
+///         Ok(dispute_id)
+///     }
+///
+///     fn resolve(
+///         &mut self,
+///         dispute_id: DisputeId,
+///         _resolution: DisputeResolution,
+///     ) -> Result<(), DisputeError> {
+///         let before = self.disputes.len();
+///         self.disputes.retain(|(id, ..)| *id != dispute_id);
+///         if self.disputes.len() == before {
+///             return Err(DisputeError::DisputeNotFound);
+///         }
+///         Ok(())
+///     }
+///
+///     fn finalize_unchallenged(&mut self, settlement_id: SettlementId) -> Result<(), DisputeError> {
+///         if self.disputes.iter().any(|(_, s, ..)| *s == settlement_id) {
+///             return Err(DisputeError::DisputeWindowOpen {
+///                 deadline: 0,
+///                 current_height: 0,
+///             });
+///         }
+///         self.finalized.push(settlement_id);
+///         Ok(())
+///     }
 /// }
+///
+/// let mut exchange = ComputeExchange::default();
+/// let claim = ComputeMetrics {
+///     flops_delivered: 1_000,
+///     duration_seconds: 10,
+///     quality_bps: 9_500,
+///     output_hash: [3u8; 32],
+///     input_hash: None,
+/// };
+/// let settlement = exchange.submit_claim(claim).unwrap();
+///
+/// // Unchallenged: the window closes and the settlement finalizes.
+/// exchange.finalize_unchallenged(settlement).unwrap();
+///
+/// // An unknown settlement cannot be challenged.
+/// assert_eq!(
+///     exchange.challenge(
+///         [0xFFu8; 32],
+///         CellId::from_bytes([1u8; 32]),
+///         DisputeEvidence::ProofInvalid { verification_error: "bad proof".into() },
+///         100,
+///     ),
+///     Err(DisputeError::SettlementNotFound),
+/// );
 /// ```
 pub trait Disputable {
     /// The domain-specific claim type (what the provider attests to).

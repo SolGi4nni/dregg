@@ -6,11 +6,21 @@
 //!
 //! # Usage
 //!
-//! ```ignore
+//! ```no_run
+//! // NO_RUN: `serve()` binds the configured listen address and runs until shutdown.
+//! use axum::{Router, routing::get};
 //! use dregg_app_framework::server::{AppConfig, AppServer};
+//!
+//! fn my_app_routes(state: String) -> Router {
+//!     Router::new().route("/hello", get(move || {
+//!         let state = state.clone();
+//!         async move { state }
+//!     }))
+//! }
 //!
 //! #[tokio::main]
 //! async fn main() {
+//!     let state = "hello from my app".to_string();
 //!     let config = AppConfig::from_env();
 //!     AppServer::new(config)
 //!         .with_health()
@@ -199,15 +209,25 @@ impl AppServer {
     /// `APPS-USERSPACE-GAPS.md` §Gap 4, the load-bearing one).
     ///
     /// Typical wiring in an app's `main.rs`:
-    /// ```ignore
-    /// let cipherclerk = AppCipherclerk::new(AgentCipherclerk::new(), federation_id);
-    /// let executor = EmbeddedExecutor::new(cipherclerk.clone(), "my-domain");
-    /// AppServer::new(config)
-    ///     .with_cipherclerk(cipherclerk)
-    ///     .with_embedded_executor(executor)
-    ///     .routes(my_routes)
-    ///     .serve()
-    ///     .await
+    /// ```no_run
+    /// // NO_RUN: `serve()` binds the configured listen address and runs until shutdown.
+    /// use dregg_app_framework::{
+    ///     AgentCipherclerk, AppCipherclerk, AppConfig, AppServer, EmbeddedExecutor,
+    /// };
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let federation_id = [0xABu8; 32];
+    ///     let cipherclerk = AppCipherclerk::new(AgentCipherclerk::new(), federation_id);
+    ///     let executor = EmbeddedExecutor::new(&cipherclerk, "my-domain");
+    ///     AppServer::new(AppConfig::from_env())
+    ///         .with_cipherclerk(cipherclerk)
+    ///         .with_embedded_executor(executor)
+    ///         .routes(axum::Router::new())
+    ///         .serve()
+    ///         .await
+    ///         .unwrap();
+    /// }
     /// ```
     pub fn with_embedded_executor(
         mut self,
@@ -233,6 +253,10 @@ impl AppServer {
     ///
     /// Typical wiring in an app's `main.rs`:
     /// ```ignore
+    /// // IGNORED: `starbridge-nameservice` DEPENDS ON `dregg-app-framework`, so this
+    /// // crate cannot name it — a doctest here would be a dependency cycle. The
+    /// // compiled twin of this example lives in the other direction, at
+    /// // `starbridge_nameservice::register`.
     /// let cipherclerk = AppCipherclerk::new(AgentCipherclerk::new(), federation_id);
     /// let executor = EmbeddedExecutor::new(&cipherclerk, "default");
     /// let ctx = StarbridgeAppContext::new(cipherclerk.clone(), executor.clone());
@@ -343,12 +367,32 @@ impl AppServer {
     /// labels are computed against, so the rendered endpoints match where the
     /// router is served:
     ///
-    /// ```ignore
+    /// ```
+    /// use dregg_app_framework::affordance_endpoint::AffordanceEndpoint;
+    /// use dregg_app_framework::{
+    ///     AffordanceSurface, AgentCipherclerk, AppCipherclerk, AppConfig, AppServer, AuthRequired,
+    ///     CellAffordance, Effect, EmbeddedExecutor, Event,
+    /// };
+    ///
+    /// # let cipherclerk = AppCipherclerk::new(AgentCipherclerk::new(), [0xAB; 32]);
+    /// # let executor = EmbeddedExecutor::new(&cipherclerk, "default");
+    /// # let doc = cipherclerk.cell_id();
+    /// # let view_fx = Effect::EmitEvent { cell: doc, event: Event { topic: [1u8; 32], data: vec![] } };
+    /// let surface = AffordanceSurface::named(doc, "doc")
+    ///     .declare(CellAffordance::new("view", AuthRequired::Signature, view_fx));
+    ///
+    /// // The descriptor's endpoint labels are computed against the SAME prefix the
+    /// // router is nested at, so what the surface advertises is where it is served.
+    /// assert_eq!(
+    ///     surface.descriptor("/doc-affordances").elements[0].fire_endpoint,
+    ///     "/doc-affordances/fire/view",
+    /// );
+    ///
     /// let endpoint = AffordanceEndpoint::new(surface, cipherclerk, executor);
-    /// AppServer::new(config)
-    ///     .with_affordance_endpoint("/doc-affordances", endpoint)
-    ///     .serve()
-    ///     .await
+    /// let server = AppServer::new(AppConfig::default())
+    ///     .with_affordance_endpoint("/doc-affordances", endpoint);
+    /// // `server.serve().await` then runs it.
+    /// # let _ = server;
     /// ```
     pub fn with_affordance_endpoint(
         self,
@@ -484,12 +528,23 @@ async fn health_handler(service_name: String) -> impl IntoResponse {
 /// Use this when your app wants to add extra fields to the health response
 /// (e.g., block height, pool count, connection status).
 ///
-/// ```ignore
+/// ```
 /// use dregg_app_framework::server::health_with_metadata;
+/// use serde_json::json;
 ///
-/// let handler = health_with_metadata("my-app", || async {
-///     json!({"block_height": 42, "pools": 3})
-/// });
+/// #[tokio::main]
+/// async fn main() {
+///     let handler = health_with_metadata("my-app", || async {
+///         json!({"block_height": 42, "pools": 3})
+///     });
+///
+///     // Your fields are folded INTO the standard health envelope, not beside it.
+///     let body = handler().await;
+///     assert_eq!(body["status"], "ok");
+///     assert_eq!(body["service"], "my-app");
+///     assert_eq!(body["block_height"], 42);
+///     assert!(body["timestamp"].is_u64());
+/// }
 /// ```
 pub fn health_with_metadata<F, Fut>(
     service_name: impl Into<String>,

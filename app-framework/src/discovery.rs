@@ -11,15 +11,26 @@
 //!
 //! # Usage
 //!
-//! ```ignore
-//! use dregg_app_framework::discovery::{NameRegistration, NameserviceClient};
+//! ```no_run
+//! // NO_RUN: `register` POSTs over the network to the live nameservice at
+//! // `DREGG_NAMESERVICE_URL` (default `http://127.0.0.1:9100`).
+//! use dregg_app_framework::discovery::{DiscoveryError, NameRegistration, NameserviceClient};
 //!
-//! let client = NameserviceClient::from_env();
-//! client.register(&NameRegistration {
-//!     name: "my-app".into(),
-//!     tags: vec!["amm".into()],
-//!     target_uri: "http://127.0.0.1:3001".into(),
-//! }).await?;
+//! #[tokio::main]
+//! async fn main() -> Result<(), DiscoveryError> {
+//!     let client = NameserviceClient::from_env();
+//!     client
+//!         .register(&NameRegistration {
+//!             name: "my-app".into(),
+//!             tags: vec!["amm".into()],
+//!             target_uri: "http://127.0.0.1:3001".into(),
+//!         })
+//!         .await?;
+//!
+//!     // ... and on clean shutdown:
+//!     client.deregister("my-app").await?;
+//!     Ok(())
+//! }
 //! ```
 
 use serde::{Deserialize, Serialize};

@@ -59,14 +59,20 @@
 //!
 //! # Usage
 //!
-//! ```ignore
+//! ```
 //! use dregg_app_framework::blinded_endpoint::FairDistributionEndpoint;
+//! use dregg_app_framework::{AppConfig, AppServer};
 //!
+//! let current_height = 1_000u64;
 //! let endpoint = FairDistributionEndpoint::new(64)
 //!     .with_distribution(32, current_height + 1000);
-//! let app = AppServer::new(config)
-//!     .with_blinded_endpoint("/airdrop", endpoint)
-//!     .serve();
+//!
+//! // Mounted at `/airdrop`: `POST /airdrop/commit`, `/airdrop/consume`,
+//! // `/airdrop/consume-private`, `GET /airdrop/status`.
+//! let server = AppServer::new(AppConfig::default())
+//!     .with_blinded_endpoint("/airdrop", endpoint);
+//! assert_eq!(server.config().listen, "0.0.0.0:3000");
+//! // `server.serve().await` then runs it.
 //! ```
 
 use std::sync::Arc;

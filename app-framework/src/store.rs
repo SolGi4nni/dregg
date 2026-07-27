@@ -18,15 +18,24 @@ pub type Bytes32 = [u8; 32];
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use dregg_app_framework::store::ContentStore;
 ///
 /// #[derive(Clone, serde::Serialize, serde::Deserialize)]
 /// struct Order { amount: u64 }
 ///
-/// let store = ContentStore::<Order>::new();
-/// store.insert([1u8; 32], Order { amount: 100 }).await;
-/// let order = store.get(&[1u8; 32]).await;
+/// #[tokio::main]
+/// async fn main() {
+///     let store = ContentStore::<Order>::new();
+///     store.insert([1u8; 32], Order { amount: 100 }).await;
+///     let order = store.get(&[1u8; 32]).await;
+///     assert_eq!(order.unwrap().amount, 100);
+///
+///     // Clones share the same data.
+///     let other = store.clone();
+///     other.update(&[1u8; 32], |o| o.amount += 5).await;
+///     assert_eq!(store.get(&[1u8; 32]).await.unwrap().amount, 105);
+/// }
 /// ```
 #[derive(Clone)]
 pub struct ContentStore<T: Serialize + for<'de> Deserialize<'de> + Clone> {

@@ -13,17 +13,23 @@
 //!
 //! # Usage
 //!
-//! ```ignore
+//! ```
 //! use dregg_app_framework::queue_endpoint::QueueEndpoint;
+//! use dregg_app_framework::{AppConfig, AppServer};
 //! use dregg_storage::programmable::{ProgrammableQueue, programs};
 //!
+//! # let owner = [0u8; 32];
+//! # fn current_block_height() -> u64 { 42 }
 //! let queue = ProgrammableQueue::new("orders".into(), owner, programs::open(0), None, 1024);
 //! let endpoint = QueueEndpoint::new(queue)
 //!     .with_height_provider(|| current_block_height());
 //!
-//! let app = AppServer::new(config)
-//!     .with_queue_endpoint("/queue", endpoint)
-//!     .serve();
+//! // Mounted at `/queue`: `POST /queue/enqueue`, `POST /queue/dequeue`,
+//! // `GET /queue/status`.
+//! let server = AppServer::new(AppConfig::default())
+//!     .with_queue_endpoint("/queue", endpoint);
+//! assert_eq!(server.config().listen, "0.0.0.0:3000");
+//! // `server.serve().await` then runs it.
 //! ```
 
 use std::sync::Arc;

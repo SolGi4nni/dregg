@@ -6,12 +6,18 @@
 //!
 //! # Usage
 //!
-//! ```ignore
-//! use dregg_app_framework::multi_group::MultiGroupConfig;
-//! use dregg_captp::GroupId;
+//! ```
+//! use dregg_app_framework::multi_group::{GroupId, MultiGroupConfig};
+//! use dregg_captp::FederationId;
 //!
+//! # let main_group: GroupId = FederationId([1u8; 32]);
+//! # let partner_group: GroupId = FederationId([2u8; 32]);
+//! # let stranger: GroupId = FederationId([9u8; 32]);
 //! let config = MultiGroupConfig::new(vec![main_group, partner_group]);
 //! assert!(config.includes(&main_group));
+//! assert!(config.includes(&partner_group));
+//! // A session from an unrecognized group is refused.
+//! assert!(!config.includes(&stranger));
 //! ```
 
 pub use dregg_captp::GroupId;

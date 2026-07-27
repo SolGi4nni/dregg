@@ -10,12 +10,38 @@
 //!
 //! # Usage
 //!
-//! ```ignore
-//! use dregg_app_framework::auth::{AdminAuth, AdminToken};
+//! ```
+//! use dregg_app_framework::auth::{AdminAuth, AdminToken, HasAdminToken};
 //!
+//! // Your app state carries the token; the extractor finds it through this trait.
+//! #[derive(Clone)]
+//! struct AppState {
+//!     admin: AdminToken,
+//! }
+//!
+//! impl HasAdminToken for AppState {
+//!     fn admin_token(&self) -> &AdminToken {
+//!         &self.admin
+//!     }
+//! }
+//!
+//! // Taking `AdminAuth` is the whole gate: the extractor runs before the body.
 //! async fn protected_handler(_auth: AdminAuth) -> &'static str {
 //!     "admin access granted"
 //! }
+//!
+//! let state = AppState {
+//!     admin: AdminToken::from_value("s3cret"),
+//! };
+//! let router: axum::Router = axum::Router::new()
+//!     .route("/admin/ping", axum::routing::get(protected_handler))
+//!     .with_state(state.clone());
+//!
+//! // The same check the extractor performs, in isolation:
+//! assert!(state.admin.validate(Some("Bearer s3cret")).is_ok());
+//! assert!(state.admin.validate(Some("Bearer wrong")).is_err());
+//! assert!(state.admin.validate(None).is_err());
+//! # let _ = router;
 //! ```
 
 use axum::extract::FromRequestParts;

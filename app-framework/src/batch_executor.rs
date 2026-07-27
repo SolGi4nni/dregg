@@ -7,14 +7,47 @@
 //!
 //! # Usage
 //!
-//! ```ignore
-//! use dregg_app_framework::batch_executor::{BatchExecutor, ClientTurnRequest, BatchExecution};
+//! ```
+//! use dregg_app_framework::CellId;
+//! use dregg_app_framework::batch_executor::{BatchExecution, BatchExecutor, ClientTurnRequest};
+//!
+//! #[derive(Default)]
+//! struct MySequencer {
+//!     pending: Vec<ClientTurnRequest>,
+//! }
 //!
 //! impl BatchExecutor for MySequencer {
-//!     type Error = MyError;
-//!     fn collect_batch(&mut self, max_size: usize) -> Vec<ClientTurnRequest> { ... }
-//!     fn execute_batch(&mut self, batch: Vec<ClientTurnRequest>) -> Result<BatchExecution, MyError> { ... }
+//!     type Error = String;
+//!
+//!     fn collect_batch(&mut self, max_size: usize) -> Vec<ClientTurnRequest> {
+//!         let take = max_size.min(self.pending.len());
+//!         self.pending.drain(..take).collect()
+//!     }
+//!
+//!     fn execute_batch(&mut self, batch: Vec<ClientTurnRequest>) -> Result<BatchExecution, String> {
+//!         let mut hasher = blake3::Hasher::new();
+//!         for req in &batch {
+//!             hasher.update(&req.turn_bytes);
+//!         }
+//!         Ok(BatchExecution {
+//!             batch_id: *hasher.finalize().as_bytes(),
+//!             turn_count: batch.len(),
+//!             proof: None, // optimistic (non-proven) mode
+//!         })
+//!     }
 //! }
+//!
+//! let mut sequencer = MySequencer::default();
+//! sequencer.pending.push(ClientTurnRequest {
+//!     client: CellId::from_bytes([1u8; 32]),
+//!     turn_bytes: b"a serialized turn".to_vec(),
+//!     deadline_height: None,
+//! });
+//!
+//! let batch = sequencer.collect_batch(16);
+//! let execution = sequencer.execute_batch(batch).unwrap();
+//! assert_eq!(execution.turn_count, 1);
+//! assert!(execution.proof.is_none());
 //! ```
 
 use dregg_types::CellId;

@@ -20,14 +20,27 @@
 //!
 //! # Quick Start
 //!
-//! ```ignore
-//! use dregg_app_framework::server::{AppConfig, AppServer};
-//! use dregg_app_framework::auth::{AdminAuth, AdminToken, HasAdminToken};
+//! ```no_run
+//! // NO_RUN: `serve()` binds the configured listen address (`LISTEN`, default
+//! // `0.0.0.0:3000`) and runs until shutdown.
+//! use axum::{Router, routing::get};
 //! use dregg_app_framework::persistence::JsonPersistence;
+//! use dregg_app_framework::server::{AppConfig, AppServer};
+//!
+//! fn my_routes(state: JsonPersistence) -> Router {
+//!     Router::new().route(
+//!         "/orders",
+//!         get(move || {
+//!             let state = state.clone();
+//!             async move { format!("state at {}", state.path().display()) }
+//!         }),
+//!     )
+//! }
 //!
 //! #[tokio::main]
 //! async fn main() {
 //!     let config = AppConfig::from_env();
+//!     let state = config.persistence().unwrap_or_else(|| JsonPersistence::new("state.json"));
 //!     AppServer::new(config)
 //!         .service_name("my-app")
 //!         .with_health()

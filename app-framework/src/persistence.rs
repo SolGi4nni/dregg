@@ -6,20 +6,24 @@
 //!
 //! # Usage
 //!
-//! ```ignore
+//! ```
 //! use dregg_app_framework::persistence::JsonPersistence;
 //!
 //! #[derive(serde::Serialize, serde::Deserialize)]
 //! struct MyState { counter: u64 }
 //!
-//! let persist = JsonPersistence::new("/tmp/my-app/state.json");
+//! # let dir = std::env::temp_dir().join("dregg-doc-json-persistence");
+//! # let state_file = dir.join("state.json");
+//! let persist = JsonPersistence::new(&state_file);
 //! persist.initialize().unwrap();
 //!
-//! // Save state atomically
+//! // Save state atomically (serialize → write `.tmp` sibling → rename into place)
 //! persist.save(&MyState { counter: 42 }).unwrap();
 //!
-//! // Load state on startup
+//! // Load state on startup (`Ok(None)` when the file does not exist yet)
 //! let loaded: Option<MyState> = persist.load().unwrap();
+//! assert_eq!(loaded.unwrap().counter, 42);
+//! # std::fs::remove_dir_all(&dir).unwrap();
 //! ```
 
 use serde::{Deserialize, Serialize};
@@ -166,14 +170,26 @@ impl From<io::Error> for PersistError {
 ///
 /// # Usage
 ///
-/// ```ignore
+/// ```
 /// use dregg_app_framework::persistence::{AutoPersist, JsonPersistence};
 ///
-/// let persist = JsonPersistence::new("/tmp/state.json");
+/// #[derive(Default, serde::Serialize, serde::Deserialize)]
+/// struct MyState { counter: u64 }
+///
+/// # let dir = std::env::temp_dir().join("dregg-doc-auto-persist");
+/// # let state_file = dir.join("state.json");
+/// let persist = JsonPersistence::new(&state_file);
+/// # persist.initialize().unwrap();
 /// let mut ap = AutoPersist::new(MyState::default(), persist);
 ///
 /// // Mutate and auto-save:
 /// ap.mutate(|state| state.counter += 1).unwrap();
+/// assert_eq!(ap.get().counter, 1);
+///
+/// // The write already reached disk — a fresh reader sees it.
+/// let reloaded: MyState = JsonPersistence::new(&state_file).load().unwrap().unwrap();
+/// assert_eq!(reloaded.counter, 1);
+/// # std::fs::remove_dir_all(&dir).unwrap();
 /// ```
 pub struct AutoPersist<T: Serialize + for<'de> Deserialize<'de>> {
     state: T,

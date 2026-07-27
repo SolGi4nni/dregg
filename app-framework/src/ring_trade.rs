@@ -8,15 +8,58 @@
 //!
 //! # Usage
 //!
-//! ```ignore
-//! use dregg_app_framework::ring_trade::{RingTradeParticipant, ExchangeSpec, Settlement};
+//! ```
+//! use dregg_app_framework::ring_trade::{ExchangeSpec, LegId, RingTradeParticipant, Settlement};
+//! use dregg_intent::CommitmentId;
+//!
+//! #[derive(Default)]
+//! struct MyAMM {
+//!     /// Legs this pool has committed, by `LegId` — so a rollback is exact.
+//!     settled: Vec<LegId>,
+//! }
 //!
 //! impl RingTradeParticipant for MyAMM {
-//!     type Error = MyError;
-//!     fn exchange_offers(&self) -> Vec<ExchangeSpec> { self.pool_offers() }
-//!     fn settle_leg(&mut self, s: &Settlement) -> Result<(), MyError> { self.execute(s) }
-//!     fn rollback_leg(&mut self, s: &Settlement) -> Result<(), MyError> { self.undo(s) }
+//!     type Error = String;
+//!
+//!     fn exchange_offers(&self) -> Vec<ExchangeSpec> {
+//!         vec![ExchangeSpec {
+//!             offer_asset: [1u8; 32],
+//!             offer_amount: 1_000,
+//!             want_asset: [2u8; 32],
+//!             want_min_amount: 900,
+//!             min_rate: None,
+//!             max_rate: None,
+//!         }]
+//!     }
+//!
+//!     fn settle_leg(&mut self, s: &Settlement) -> Result<(), String> {
+//!         self.settled.push(LegId::from_settlement(s));
+//!         Ok(())
+//!     }
+//!
+//!     fn rollback_leg(&mut self, s: &Settlement) -> Result<(), String> {
+//!         // Idempotent: it may be called for a leg that never fully settled.
+//!         self.settled.retain(|leg| leg != &LegId::from_settlement(s));
+//!         Ok(())
+//!     }
 //! }
+//!
+//! let mut amm = MyAMM::default();
+//! assert_eq!(amm.exchange_offers().len(), 1);
+//!
+//! let leg = Settlement {
+//!     from: CommitmentId([3u8; 32]),
+//!     to: CommitmentId([4u8; 32]),
+//!     asset: [1u8; 32],
+//!     amount: 1_000,
+//! };
+//! amm.settle_leg(&leg).unwrap();
+//! assert_eq!(amm.settled, vec![LegId::from_settlement(&leg)]);
+//!
+//! // A peer in the ring failed: roll this leg back, and again (idempotent).
+//! amm.rollback_leg(&leg).unwrap();
+//! amm.rollback_leg(&leg).unwrap();
+//! assert!(amm.settled.is_empty());
 //! ```
 
 pub use dregg_intent::solver::{

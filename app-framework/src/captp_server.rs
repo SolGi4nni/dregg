@@ -44,12 +44,25 @@
 //!
 //! # Usage
 //!
-//! ```ignore
+//! ```
 //! use dregg_app_framework::captp_server::CapTpServer;
-//! use dregg_captp::FederationId;
+//! use dregg_app_framework::{AuthRequired, CellId, FederationId};
 //!
-//! let server = CapTpServer::new(FederationId([0xAB; 32]));
-//! let uri = server.export(my_cell, AuthRequired::Signature, 100, None).await;
+//! #[tokio::main]
+//! async fn main() {
+//!     let server = CapTpServer::new(FederationId([0xAB; 32]));
+//!     let my_cell = CellId::from_bytes([0x11; 32]);
+//!
+//!     // Mint a sturdy ref for `my_cell` at `Signature` authority, minted at
+//!     // height 100, never expiring. `export` wraps `SwissTable::export` (the raw
+//!     // swiss number) + `SwissTable::make_uri`, so callers get the `dregg://` URI.
+//!     let uri = server
+//!         .export(my_cell, AuthRequired::Signature, 100, None)
+//!         .await
+//!         .expect("a freshly exported swiss number always resolves to a URI");
+//!     assert_eq!(uri.cell_id, my_cell.0);
+//!     assert!(uri.to_uri_string().starts_with("dregg://"));
+//! }
 //! ```
 
 use std::sync::Arc;

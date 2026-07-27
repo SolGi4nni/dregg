@@ -1161,65 +1161,6 @@ fn field_to_u64(f: &FieldElement) -> u64 {
 // StarbridgeAppContext mount
 // =============================================================================
 
-/// Register the nameservice starbridge-app on a [`StarbridgeAppContext`].
-///
-/// Concrete `register(ctx)` hook a host calls at startup to bind this
-/// app's factory descriptors and inspector surfaces into the shared
-/// context. After this call:
-///
-/// - `ctx.factory_registry().get(&NAME_FACTORY_VK)` returns the
-///   [`name_factory_descriptor`]. The in-browser DreggRuntime can
-///   resolve `window.dregg.createFromFactory(NAME_FACTORY_VK, ..)`
-///   against the host's HTTP descriptor service backed by this
-///   registry.
-/// - `ctx.inspector_registry().get("name")` returns the
-///   [`InspectorDescriptor`] pointing the Studio at
-///   `/starbridge-apps/nameservice/inspectors.js` for any
-///   `<dregg-name uri="..."/>` mount.
-/// - `ctx.inspector_registry().get("name-registry")` returns the
-///   parent-list inspector (the registry-cell view that links
-///   into individual name cells).
-///
-/// Returns the registered `factory_vk` so the host can log or
-/// surface it.
-///
-/// ## Typical host wiring
-///
-/// ```ignore
-/// use dregg_app_framework::{
-///     AgentCipherclerk, AppServer, AppConfig, AppCipherclerk, EmbeddedExecutor,
-///     StarbridgeAppContext,
-/// };
-///
-/// #[tokio::main]
-/// async fn main() {
-///     let federation_id = [42u8; 32];
-///     let cipherclerk = AppCipherclerk::new(AgentCipherclerk::new(), federation_id);
-///     let executor = EmbeddedExecutor::new(&cipherclerk, "default");
-///     let ctx = StarbridgeAppContext::new(cipherclerk.clone(), executor.clone());
-///
-///     // Each starbridge-app contributes its factories + inspectors.
-///     starbridge_nameservice::register(&ctx);
-///     // starbridge_identity::register(&ctx);
-///     // ...
-///
-///     AppServer::new(AppConfig::from_env())
-///         .service_name("starbridge-host")
-///         .with_health()
-///         .with_cors()
-///         .with_cipherclerk(cipherclerk)
-///         .with_embedded_executor(executor)
-///         .with_starbridge(ctx)
-///         .serve()
-///         .await
-///         .unwrap();
-/// }
-/// ```
-///
-/// Per-handler use: extract `axum::Extension<StarbridgeAppContext>`
-/// and reach `ctx.cipherclerk()`, `ctx.executor()`, or
-/// `ctx.factory_registry()` uniformly across all starbridge-apps
-/// mounted on the same host.
 /// The canonical web-constants module for this app — a single source of truth
 /// for the slot indices, factory-vk, and event topics.
 ///
@@ -1251,6 +1192,68 @@ pub fn web_constants() -> ConstantsModule {
         .topic("TARGET_SET", "name-target-set")
 }
 
+/// Register the nameservice starbridge-app on a [`StarbridgeAppContext`].
+///
+/// Concrete `register(ctx)` hook a host calls at startup to bind this
+/// app's factory descriptors and inspector surfaces into the shared
+/// context. After this call:
+///
+/// - `ctx.factory_registry().get(&NAME_FACTORY_VK)` returns the
+///   [`name_factory_descriptor`]. The in-browser DreggRuntime can
+///   resolve `window.dregg.createFromFactory(NAME_FACTORY_VK, ..)`
+///   against the host's HTTP descriptor service backed by this
+///   registry.
+/// - `ctx.inspector_registry().get("name")` returns the
+///   [`InspectorDescriptor`] pointing the Studio at
+///   `/starbridge-apps/nameservice/inspectors.js` for any
+///   `<dregg-name uri="..."/>` mount.
+/// - `ctx.inspector_registry().get("name-registry")` returns the
+///   parent-list inspector (the registry-cell view that links
+///   into individual name cells).
+///
+/// Returns the registered `factory_vk` so the host can log or
+/// surface it.
+///
+/// ## Typical host wiring
+///
+/// ```no_run
+/// // NO_RUN: `AppConfig::from_env` reads the process environment and `serve()`
+/// // binds the configured listen address, running until shutdown.
+/// use dregg_app_framework::{
+///     AgentCipherclerk, AppServer, AppConfig, AppCipherclerk, EmbeddedExecutor,
+///     StarbridgeAppContext,
+/// };
+///
+/// #[tokio::main]
+/// async fn main() {
+///     let federation_id = [42u8; 32];
+///     let cipherclerk = AppCipherclerk::new(AgentCipherclerk::new(), federation_id);
+///     let executor = EmbeddedExecutor::new(&cipherclerk, "default");
+///     let ctx = StarbridgeAppContext::new(cipherclerk.clone(), executor.clone());
+///
+///     // Each starbridge-app contributes its factories + inspectors.
+///     let factory_vk = starbridge_nameservice::register(&ctx);
+///     assert_eq!(factory_vk, starbridge_nameservice::NAME_FACTORY_VK);
+///     // starbridge_identity::register(&ctx);
+///     // ...
+///
+///     AppServer::new(AppConfig::from_env())
+///         .service_name("starbridge-host")
+///         .with_health()
+///         .with_cors()
+///         .with_cipherclerk(cipherclerk)
+///         .with_embedded_executor(executor)
+///         .with_starbridge(ctx)
+///         .serve()
+///         .await
+///         .unwrap();
+/// }
+/// ```
+///
+/// Per-handler use: extract `axum::Extension<StarbridgeAppContext>`
+/// and reach `ctx.cipherclerk()`, `ctx.executor()`, or
+/// `ctx.factory_registry()` uniformly across all starbridge-apps
+/// mounted on the same host.
 pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
     // 1. Register the name factory descriptor. The returned vk is
     // `NAME_FACTORY_VK`; downstream code looks descriptors up by it.

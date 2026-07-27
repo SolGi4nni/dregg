@@ -14,18 +14,27 @@
 //!
 //! # Usage
 //!
-//! ```ignore
-//! use axum::{Router, routing::get};
-//! use dregg_app_framework::middleware::StrictPresentation;
+//! ```
+//! use std::sync::Arc;
 //!
-//! async fn protected(proof: StrictPresentation) -> &'static str {
-//!     // If we got here, verification already passed.
-//!     "access granted"
+//! use axum::{Router, routing::get};
+//! use dregg_app_framework::middleware::{EngineState, StrictPresentation};
+//! use dregg_app_framework::{DreggEngine, EngineConfig};
+//!
+//! async fn protected(proof: StrictPresentation) -> String {
+//!     // If we got here, verification already passed — and the extractor tells
+//!     // us exactly what was verified.
+//!     format!("access granted for {} on {}", proof.action, proof.resource)
 //! }
 //!
-//! let app = Router::new()
+//! let engine_state = EngineState(Arc::new(tokio::sync::Mutex::new(DreggEngine::new(
+//!     EngineConfig::for_testing(),
+//! ))));
+//!
+//! let app: Router = Router::new()
 //!     .route("/protected", get(protected))
 //!     .with_state(engine_state);
+//! # let _ = app;
 //! ```
 
 use std::sync::Arc;
@@ -264,9 +273,17 @@ impl FromRequestParts<EngineState> for OptionalPresentation {
 ///
 /// Wrap your `DreggEngine` in this type and pass it as axum state:
 ///
-/// ```ignore
+/// ```
+/// use std::sync::Arc;
+/// use tokio::sync::Mutex;
+///
+/// use dregg_app_framework::middleware::EngineState;
+/// use dregg_app_framework::{DreggEngine, EngineConfig};
+///
+/// # let engine = DreggEngine::new(EngineConfig::for_testing());
 /// let state = EngineState(Arc::new(Mutex::new(engine)));
-/// Router::new().with_state(state);
+/// let router: axum::Router = axum::Router::new().with_state(state);
+/// # let _ = router;
 /// ```
 ///
 /// Note: `DreggEngine` is `Send` but not `Sync` (contains `RefCell` internally).
@@ -279,8 +296,17 @@ pub struct EngineState(pub Arc<Mutex<DreggEngine>>);
 /// Use this when your app also needs mutable access to the engine (e.g., executing
 /// turns). The bounty-board pattern uses this variant.
 ///
-/// ```ignore
+/// ```
+/// use std::sync::Arc;
+/// use tokio::sync::Mutex;
+///
+/// use dregg_app_framework::middleware::MutexEngineState;
+/// use dregg_app_framework::{DreggEngine, EngineConfig};
+///
+/// # let engine = DreggEngine::new(EngineConfig::for_testing());
 /// let state = MutexEngineState(Arc::new(Mutex::new(engine)));
+/// // The engine is reachable mutably from a handler: `state.0.lock().await`.
+/// # let _ = state;
 /// ```
 #[derive(Clone)]
 pub struct MutexEngineState(pub Arc<tokio::sync::Mutex<DreggEngine>>);

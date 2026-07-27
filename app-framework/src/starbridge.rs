@@ -47,13 +47,18 @@
 //! ## Wiring (typical `main.rs`)
 //!
 //! ```ignore
+//! // IGNORED: every starbridge-app (`starbridge-nameservice`, …) DEPENDS ON
+//! // `dregg-app-framework`, so this crate cannot name one — a doctest that calls
+//! // `register` here would be a dependency cycle. The compiled twin of this wiring
+//! // runs in the other direction, at `starbridge_nameservice::register`.
 //! let cipherclerk = AppCipherclerk::new(AgentCipherclerk::new(), federation_id);
 //! let executor = EmbeddedExecutor::new(&cipherclerk, "default");
-//! let mut ctx = StarbridgeAppContext::new(cipherclerk.clone(), executor.clone());
+//! let ctx = StarbridgeAppContext::new(cipherclerk.clone(), executor.clone());
 //!
-//! // Each starbridge-app registers its factories + inspectors.
-//! starbridge_nameservice::register(&mut ctx);
-//! // starbridge_identity::register(&mut ctx);
+//! // Each starbridge-app registers its factories + inspectors. The registries are
+//! // interior-mutable, so `register` takes `&ctx`, not `&mut ctx`.
+//! starbridge_nameservice::register(&ctx);
+//! // starbridge_identity::register(&ctx);
 //! // ...
 //!
 //! AppServer::new(config)
@@ -414,9 +419,14 @@ impl StarbridgeAppContext {
     /// in its dep tree (typically `dregg-node`):
     ///
     /// ```ignore
+    /// // IGNORED: `dregg-federation` is DELIBERATELY not a dependency of
+    /// // `dregg-app-framework` — that non-dependency is exactly why this method is
+    /// // generic over `Arc<T>` and stores the value type-erased. The framework
+    /// // cannot name `KnownFederations`; only a host that has the federation crate
+    /// // in its own dep tree (typically `dregg-node`) can write this call.
     /// use dregg_federation::KnownFederations;
     /// let known = Arc::new(KnownFederations::new());
-    /// ctx.with_known_federations(known);
+    /// let ctx = ctx.with_known_federations(known);
     /// ```
     ///
     /// Apps that need to access the registry call
@@ -468,7 +478,15 @@ impl StarbridgeAppContext {
     /// Apps typically call this with a kind tag and a JSON descriptor
     /// shaped for the site's `_includes/studio/inspectors.js`:
     ///
-    /// ```ignore
+    /// ```
+    /// use dregg_app_framework::{
+    ///     AgentCipherclerk, AppCipherclerk, EmbeddedExecutor, InspectorDescriptor,
+    ///     StarbridgeAppContext,
+    /// };
+    ///
+    /// # let cipherclerk = AppCipherclerk::new(AgentCipherclerk::new(), [0xAB; 32]);
+    /// # let executor = EmbeddedExecutor::new(&cipherclerk, "default");
+    /// # let ctx = StarbridgeAppContext::new(cipherclerk, executor);
     /// ctx.register_inspector(InspectorDescriptor {
     ///     kind: "name".into(),
     ///     descriptor: serde_json::json!({
@@ -477,6 +495,9 @@ impl StarbridgeAppContext {
     ///         "uri_prefix": "dregg://cell/",
     ///     }),
     /// });
+    ///
+    /// let mounted = ctx.inspector_registry().get("name").unwrap();
+    /// assert_eq!(mounted.descriptor["component"], "dregg-name");
     /// ```
     pub fn register_inspector(&self, descriptor: InspectorDescriptor) {
         self.inspectors.register(descriptor);
@@ -507,13 +528,27 @@ impl StarbridgeAppContext {
     /// projection + routes cap-gated fires (through the embedded executor) for it.
     /// Returns the surface's cell key.
     ///
-    /// ```ignore
+    /// ```
+    /// use dregg_app_framework::{
+    ///     AffordanceSurface, AgentCipherclerk, AppCipherclerk, AuthRequired, CellAffordance,
+    ///     Effect, EmbeddedExecutor, Event, StarbridgeAppContext,
+    /// };
+    ///
+    /// # let cclerk = AppCipherclerk::new(AgentCipherclerk::new(), [0xAB; 32]);
+    /// # let executor = EmbeddedExecutor::new(&cclerk, "default");
+    /// # let ctx = StarbridgeAppContext::new(cclerk.clone(), executor);
     /// let doc = cclerk.cell_id();
+    /// # let emit = |topic: [u8; 32]| Effect::EmitEvent { cell: doc, event: Event { topic, data: vec![] } };
+    /// # let (view_effect, admin_effect) = (emit([1u8; 32]), emit([2u8; 32]));
     /// ctx.register_affordance_surface(
     ///     AffordanceSurface::named(doc, "doc")
     ///         .declare(CellAffordance::new("view", AuthRequired::Signature, view_effect))
     ///         .declare(CellAffordance::new("admin", AuthRequired::None, admin_effect)),
     /// );
+    ///
+    /// // The host serves it, keyed by the backing cell.
+    /// let surface = ctx.affordance_registry().get(&doc).unwrap();
+    /// assert_eq!(surface.all_names(), vec!["admin".to_string(), "view".to_string()]);
     /// ```
     pub fn register_affordance_surface(&self, surface: AffordanceSurface) -> [u8; 32] {
         self.affordances.register(surface)

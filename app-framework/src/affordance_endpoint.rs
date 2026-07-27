@@ -111,12 +111,31 @@ pub fn parse_auth_required(raw: &str) -> Option<AuthRequired> {
 /// optionally swap the held-rights resolver with [`AffordanceEndpoint::with_resolver`],
 /// then mount with [`AffordanceEndpoint::router`] under a path prefix:
 ///
-/// ```ignore
+/// ```
+/// use dregg_app_framework::affordance_endpoint::AffordanceEndpoint;
+/// use dregg_app_framework::{
+///     AffordanceSurface, AgentCipherclerk, AppCipherclerk, AppConfig, AppServer, AuthRequired,
+///     CellAffordance, Effect, EmbeddedExecutor, Event,
+/// };
+///
+/// let cipherclerk = AppCipherclerk::new(AgentCipherclerk::new(), [0xAB; 32]);
+/// let executor = EmbeddedExecutor::new(&cipherclerk, "default");
+/// let doc = cipherclerk.cell_id();
+///
+/// let surface = AffordanceSurface::named(doc, "doc").declare(CellAffordance::new(
+///     "view",
+///     AuthRequired::Signature,
+///     Effect::EmitEvent {
+///         cell: doc,
+///         event: Event { topic: [1u8; 32], data: vec![] },
+///     },
+/// ));
+///
 /// let endpoint = AffordanceEndpoint::new(surface, cipherclerk, executor);
-/// AppServer::new(config)
-///     .nest("/doc-affordances", endpoint.router("/doc-affordances"))
-///     .serve()
-///     .await
+/// let server = AppServer::new(AppConfig::default())
+///     .nest("/doc-affordances", endpoint.router("/doc-affordances"));
+/// // `server.serve().await` then runs it.
+/// # let _ = server;
 /// ```
 #[derive(Clone)]
 pub struct AffordanceEndpoint {

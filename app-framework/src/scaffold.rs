@@ -29,16 +29,23 @@
 //!
 //! ## The one-command path
 //!
-//! ```ignore
-//! // The CLI-shaped entry (a `dregg new deos-app <name>` would call this):
-//! let spec = AppSpec::new("guestbook")
-//!     .cell(CellSpec::new("book")
-//!         .affordance(AffordanceSpec::view("read",  "Signature"))
-//!         .affordance(AffordanceSpec::emit("sign",  "Either", "signed"))
-//!         .publish("Signature"))
-//!     .discoverable(vec!["social".into()]);
-//! Scaffold::new(spec).write_to("./guestbook")?; // emits Cargo.toml + src/* + the web surface
-//! // then: cd guestbook && cargo run   → a live deos app
+//! ```no_run
+//! // NO_RUN: `write_to` creates a directory and writes a whole crate
+//! // (Cargo.toml + src/lib.rs + src/main.rs + the web surface) into the CWD.
+//! use dregg_app_framework::{AffordanceSpec, AppSpec, CellSpec, Scaffold, ScaffoldError};
+//!
+//! fn main() -> Result<(), ScaffoldError> {
+//!     // The CLI-shaped entry (a `dregg new deos-app <name>` would call this):
+//!     let spec = AppSpec::new("guestbook")
+//!         .cell(CellSpec::new("book")
+//!             .affordance(AffordanceSpec::view("read",  "Signature"))
+//!             .affordance(AffordanceSpec::emit("sign",  "Either", "signed"))
+//!             .publish("Signature"))
+//!         .discoverable(vec!["social".into()]);
+//!     Scaffold::new(spec).write_to("./guestbook")?; // emits Cargo.toml + src/* + the web surface
+//!     // then: cd guestbook && cargo run   → a live deos app
+//!     Ok(())
+//! }
 //! ```
 
 use std::path::Path;

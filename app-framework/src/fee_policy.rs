@@ -21,15 +21,24 @@
 //!
 //! # Usage
 //!
-//! ```ignore
-//! use dregg_app_framework::fee_policy::{FeePolicy};
+//! ```
+//! use dregg_app_framework::fee_policy::{AssetId, FeePolicy, NATIVE_ASSET};
 //!
+//! # let some_stablecoin_id: AssetId = [7u8; 32];
 //! let policy = FeePolicy::computrons_only()
-//!     .with_asset(some_stablecoin_id, 11000, 500); // 10% premium, 500 minimum
+//!     .with_asset(some_stablecoin_id, 11_000, 500); // 10% premium, 500 minimum
 //!
+//! let base_fee = 1_000;
+//! # let paying_asset = some_stablecoin_id;
 //! if let Some(fee) = policy.compute_fee(&paying_asset, base_fee) {
-//!     // accept payment
+//!     // accept payment: 1_000 * 11_000 / 10_000 = 1_100, above the 500 floor
+//!     assert_eq!(fee, 1_100);
 //! }
+//!
+//! // The native computron asset is always accepted, at par.
+//! assert_eq!(policy.compute_fee(&NATIVE_ASSET, base_fee), Some(1_000));
+//! // An asset the policy never declared prices to nothing — the app refuses it.
+//! assert_eq!(policy.compute_fee(&[9u8; 32], base_fee), None);
 //! ```
 
 use serde::{Deserialize, Serialize};

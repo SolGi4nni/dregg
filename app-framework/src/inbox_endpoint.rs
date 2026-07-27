@@ -42,13 +42,18 @@
 //!
 //! # Usage
 //!
-//! ```ignore
+//! ```
 //! use dregg_app_framework::inbox_endpoint::InboxEndpoint;
+//! use dregg_app_framework::{AppConfig, AppServer};
 //!
+//! // 256 queued entries per user, a 100-computron minimum deposit, entries
+//! // expiring after 1000 blocks.
 //! let endpoint = InboxEndpoint::new(256, 100).ttl_blocks(1000);
-//! let app = AppServer::new(config)
-//!     .with_inbox("/inbox", endpoint)
-//!     .serve();
+//!
+//! // Mounted at `/inbox`: `POST /inbox/send`, `GET /inbox/next`, `GET /inbox/status`.
+//! let server = AppServer::new(AppConfig::default()).with_inbox("/inbox", endpoint);
+//! assert_eq!(server.config().listen, "0.0.0.0:3000");
+//! // `server.serve().await` then runs it.
 //! ```
 
 use std::sync::Arc;
