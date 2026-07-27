@@ -453,10 +453,142 @@ fn three_cell_ring_with_tampered_pair_rejects() {
 // Compositions with slot caveats / sovereign witness
 // ===========================================================================
 
+/// UNBLOCKED (2026-07-27). The reason named "γ.2 + slot caveats on both cells
+/// (CAVEAT-LAYER-COVERAGE.md row 24)". Row 24 is `BoundDelta`, listed there as
+/// **"exec REJECTS unconditionally — cell evaluator returns
+/// `BoundDeltaNotWired`"**. That is stale: the executor's cross-cell match loop
+/// `execute_tree::validate_bound_delta_program` is wired and enforcing (the
+/// scalar evaluator still fails closed; the executor runs a dedicated pass with
+/// the peer's `(old, new)` in scope).
+///
+/// So both halves of this composition exist and can be composed HERE, at the
+/// layer this file operates on (off-AIR verifier + real executor — see the
+/// module header). The γ.2 **AIR-side** binding is still absent; that is a
+/// different, still-`#[ignore]`d test in this file.
+///
+/// The composition: one turn that BOTH moves value (γ.2 binds the transfer_id
+/// across the two cells' schedules) AND carries an equal-and-opposite slot
+/// delta guarded by a `BoundDelta` caveat on EACH cell pointing at the other.
 #[test]
-#[ignore = "blocked on γ.2 + slot caveats on both cells (composition target from CAVEAT-LAYER-COVERAGE.md row 24)"]
 fn bilateral_transfer_with_bound_delta_caveat_on_both_sides() {
-    panic!("blocked");
+    use dregg_cell::program::DeltaRelation;
+    use dregg_cell::{
+        AuthRequired, Cell, CellProgram, Ledger, Permissions, StateConstraint, field_from_u64,
+    };
+    use dregg_turn::{ComputronCosts, Effect, TurnExecutor, TurnResult};
+
+    fn open_cell(seed: u8, balance: i64) -> Cell {
+        let mut pk = [0u8; 32];
+        pk[0] = seed;
+        pk[31] = seed.wrapping_mul(7);
+        let mut c = Cell::with_balance(pk, [0u8; 32], balance);
+        c.permissions = Permissions {
+            send: AuthRequired::None,
+            receive: AuthRequired::None,
+            set_state: AuthRequired::None,
+            set_permissions: AuthRequired::None,
+            set_verification_key: AuthRequired::None,
+            increment_nonce: AuthRequired::None,
+            delegate: AuthRequired::None,
+            access: AuthRequired::None,
+        };
+        c
+    }
+
+    // `alice_slot0` and `bob_slot0` move equal-and-opposite; each cell's
+    // BoundDelta names the other. `transfer_amount` rides the same turn.
+    fn run(alice_new: u64, bob_new: u64) -> (TurnResult, Turn, CellId, CellId) {
+        let mut alice = open_cell(0xA1, 1_000);
+        let mut bob = open_cell(0xB2, 1_000);
+        let alice_id = alice.id();
+        let bob_id = bob.id();
+
+        alice.program = CellProgram::Predicate(vec![StateConstraint::BoundDelta {
+            local_slot: 0,
+            peer_cell: bob_id,
+            peer_slot: 0,
+            delta_relation: DeltaRelation::EqualAndOpposite,
+        }]);
+        bob.program = CellProgram::Predicate(vec![StateConstraint::BoundDelta {
+            local_slot: 0,
+            peer_cell: alice_id,
+            peer_slot: 0,
+            delta_relation: DeltaRelation::EqualAndOpposite,
+        }]);
+        alice.state.fields[0] = field_from_u64(100);
+        bob.state.fields[0] = field_from_u64(100);
+        alice
+            .capabilities
+            .grant(bob_id, AuthRequired::None)
+            .unwrap();
+
+        let mut ledger = Ledger::new();
+        ledger.insert_cell(alice).unwrap();
+        ledger.insert_cell(bob).unwrap();
+
+        let action = ActionBuilder::new_unchecked_for_tests(alice_id, "bilateral", alice_id)
+            .effect_transfer(alice_id, bob_id, 10)
+            .effect(Effect::SetField {
+                cell: alice_id,
+                index: 0,
+                value: field_from_u64(alice_new),
+            })
+            .effect(Effect::SetField {
+                cell: bob_id,
+                index: 0,
+                value: field_from_u64(bob_new),
+            })
+            .build();
+        // Fresh cells start at nonce 0; the executor enforces it, and the
+        // γ.2 schedule derives transfer_id from this same actor nonce.
+        let mut builder = TurnBuilder::new(alice_id, 0);
+        builder.add_action(action);
+        let turn = builder.fee(0).build();
+
+        let result = TurnExecutor::new(ComputronCosts::zero()).execute(&turn, &mut ledger);
+        (result, turn, alice_id, bob_id)
+    }
+
+    // POSITIVE: paired deltas (100→90 / 100→110) satisfy BoundDelta on BOTH
+    // cells, and the turn carrying the Transfer commits.
+    let (ok, turn, alice_id, bob_id) = run(90, 110);
+    assert!(
+        matches!(ok, TurnResult::Committed { .. }),
+        "paired BoundDelta on both sides + a Transfer must commit, got: {ok:?}"
+    );
+
+    // …and the γ.2 bilateral schedule over that SAME turn verifies, with the
+    // transfer counted on both sides. This is the composition: the slot
+    // caveats fired AND the cross-cell transfer_id binding holds.
+    let bundle = fabricated_bundle(&turn, &[alice_id, bob_id]);
+    let verdict = verify_bilateral_bundle(&bundle);
+    assert!(
+        verdict.verified,
+        "γ.2 binding must hold over a caveat-guarded bilateral turn: {verdict:?}"
+    );
+    assert_eq!(verdict.transfer_count, 1, "the Transfer must be scheduled");
+    assert_eq!(verdict.entry_count, 2);
+
+    // NEGATIVE (slot-caveat tooth): unpaired deltas (100→90 / 100→105) break
+    // EqualAndOpposite and the whole turn must reject — the Transfer does not
+    // buy the slot caveat any slack.
+    let (bad, _, _, _) = run(90, 105);
+    assert!(
+        matches!(bad, TurnResult::Rejected { .. }),
+        "an unpaired BoundDelta must reject the turn even though the Transfer is well-formed, \
+         got: {bad:?}"
+    );
+
+    // NEGATIVE (γ.2 tooth) on the honest turn: tampering one side's incoming
+    // transfer root must still be caught, so the composition has not
+    // weakened the bilateral check.
+    let mut tampered = fabricated_bundle(&turn, &[alice_id, bob_id]);
+    tampered.entries[1].witnessed_receipt.public_inputs
+        [dregg_circuit::effect_vm::pi::INCOMING_TRANSFER_ROOT_BASE] ^= 1;
+    assert!(
+        !verify_bilateral_bundle(&tampered).verified,
+        "γ.2 root tamper must still reject under the caveat composition"
+    );
 }
 
 #[test]
@@ -607,10 +739,124 @@ fn bilateral_bound_delta_disagreement_on_nonce_rejects() {
     );
 }
 
+/// UNBLOCKED (2026-07-27). Same stale premise as
+/// `bilateral_transfer_with_bound_delta_caveat_on_both_sides`: `BoundDelta` is
+/// wired in the executor, so "BOTH a BoundDelta caveat AND a Monotonic caveat
+/// on the same slot" is constructible today.
+///
+/// The property under test is the CONJUNCTION, stated as an ordering: a
+/// satisfied cross-cell γ.2 binding must not excuse the per-cell slot caveat.
+/// The interesting direction is the one where they disagree — `BoundDelta`
+/// SATISFIED (the peer moved equal-and-opposite) while `Monotonic` on the same
+/// slot is VIOLATED (this cell's value went down). If the executor short-
+/// circuited on the cross-cell pass, this turn would commit.
 #[test]
-#[ignore = "blocked on γ.2 Phase 1: Transfer effect against a cell that has BOTH a BoundDelta caveat AND a Monotonic caveat on the same slot — the per-cell slot caveat must fire AFTER the γ.2 binding succeeds"]
 fn bilateral_with_layered_slot_caveats_evaluation_order() {
-    panic!("blocked");
+    use dregg_cell::program::DeltaRelation;
+    use dregg_cell::{
+        AuthRequired, Cell, CellProgram, Ledger, Permissions, StateConstraint, field_from_u64,
+    };
+    use dregg_turn::{ComputronCosts, Effect, TurnExecutor, TurnResult};
+
+    fn open_cell(seed: u8, balance: i64) -> Cell {
+        let mut pk = [0u8; 32];
+        pk[0] = seed;
+        pk[31] = seed.wrapping_mul(11);
+        let mut c = Cell::with_balance(pk, [0u8; 32], balance);
+        c.permissions = Permissions {
+            send: AuthRequired::None,
+            receive: AuthRequired::None,
+            set_state: AuthRequired::None,
+            set_permissions: AuthRequired::None,
+            set_verification_key: AuthRequired::None,
+            increment_nonce: AuthRequired::None,
+            delegate: AuthRequired::None,
+            access: AuthRequired::None,
+        };
+        c
+    }
+
+    // Alice carries BOTH caveats on slot 0. Bob carries only BoundDelta, so
+    // the cross-cell pass is always satisfiable and only Alice's Monotonic
+    // can be the discriminator.
+    fn run(alice_new: u64, bob_new: u64) -> TurnResult {
+        let mut alice = open_cell(0xA1, 1_000);
+        let mut bob = open_cell(0xB2, 1_000);
+        let alice_id = alice.id();
+        let bob_id = bob.id();
+
+        alice.program = CellProgram::Predicate(vec![
+            StateConstraint::BoundDelta {
+                local_slot: 0,
+                peer_cell: bob_id,
+                peer_slot: 0,
+                delta_relation: DeltaRelation::EqualAndOpposite,
+            },
+            StateConstraint::Monotonic { index: 0 },
+        ]);
+        bob.program = CellProgram::Predicate(vec![StateConstraint::BoundDelta {
+            local_slot: 0,
+            peer_cell: alice_id,
+            peer_slot: 0,
+            delta_relation: DeltaRelation::EqualAndOpposite,
+        }]);
+        alice.state.fields[0] = field_from_u64(100);
+        bob.state.fields[0] = field_from_u64(100);
+        alice
+            .capabilities
+            .grant(bob_id, AuthRequired::None)
+            .unwrap();
+
+        let mut ledger = Ledger::new();
+        ledger.insert_cell(alice).unwrap();
+        ledger.insert_cell(bob).unwrap();
+
+        let action = ActionBuilder::new_unchecked_for_tests(alice_id, "layered", alice_id)
+            .effect_transfer(alice_id, bob_id, 10)
+            .effect(Effect::SetField {
+                cell: alice_id,
+                index: 0,
+                value: field_from_u64(alice_new),
+            })
+            .effect(Effect::SetField {
+                cell: bob_id,
+                index: 0,
+                value: field_from_u64(bob_new),
+            })
+            .build();
+        let mut builder = TurnBuilder::new(alice_id, 0);
+        builder.add_action(action);
+        TurnExecutor::new(ComputronCosts::zero()).execute(&builder.fee(0).build(), &mut ledger)
+    }
+
+    // ANTI-VACUITY: both caveats satisfied — Alice 100→110 (Monotonic ✓),
+    // Bob 100→90 (EqualAndOpposite ✓) — must COMMIT. Without this leg the
+    // rejection below could be either caveat failing for any reason.
+    let both_ok = run(110, 90);
+    assert!(
+        matches!(both_ok, TurnResult::Committed { .. }),
+        "BoundDelta ✓ + Monotonic ✓ must commit, got: {both_ok:?}"
+    );
+
+    // THE ORDERING TOOTH: BoundDelta SATISFIED (Alice −10 / Bob +10 are still
+    // equal-and-opposite) but Alice's Monotonic VIOLATED (100 → 90). A
+    // short-circuit on the cross-cell pass would let this through.
+    let monotonic_violated = run(90, 110);
+    assert!(
+        matches!(monotonic_violated, TurnResult::Rejected { .. }),
+        "a SATISFIED cross-cell BoundDelta must not excuse a violated per-cell Monotonic on the \
+         same slot, got: {monotonic_violated:?}"
+    );
+
+    // AND THE CONVERSE: Monotonic satisfied on Alice (100→110) but the pair
+    // unbalanced (Bob 100→105 is not equal-and-opposite). Passing the local
+    // caveat must not excuse the cross-cell one either.
+    let bound_delta_violated = run(110, 105);
+    assert!(
+        matches!(bound_delta_violated, TurnResult::Rejected { .. }),
+        "a satisfied per-cell Monotonic must not excuse a violated cross-cell BoundDelta, \
+         got: {bound_delta_violated:?}"
+    );
 }
 
 // ===========================================================================

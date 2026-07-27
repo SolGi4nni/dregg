@@ -864,10 +864,119 @@ fn capability_uniqueness_rejects_invalid_index() {
     );
 }
 
+/// UNBLOCKED (2026-07-27). The `#[ignore]` reason read "blocked on cap-set
+/// Merkle uniqueness gadget — out of caveat-correctness lane scope
+/// (CAVEAT-LAYER-COVERAGE.md §1 row 16, §9)". That premise is dead: the
+/// enforcement site landed as `TurnExecutor`'s
+/// `execute_tree::validate_capability_uniqueness`, whose two legs are modelled
+/// in `metatheory/Dregg2/Cell/CapUniquenessWidth.lean`:
+///
+///   1. **root binding** — the declared cap-set-root slot must equal
+///      `compute_canonical_capability_root` of the cell's ACTUAL cap set, and
+///      be non-zero;
+///   2. **structural dup-scan** — no two `CapabilityRef`s share a c-list slot
+///      or a `(target, permissions, breadstuff, allowed_effects)` identity.
+///
+/// The Lean's `accept_implies_unique` is the load-bearing tooth: acceptance
+/// implies leg (2) *independently of the root encoding*, so a lane-0 collision
+/// on the narrow declared root cannot fabricate uniqueness.
+///
+/// This test drives the REAL executor (the cell-side scalar evaluator cannot
+/// decide this and fails closed — see `capability_uniqueness_scalar_fails_closed`
+/// above, which is the layer this file otherwise tests). Both directions are
+/// asserted so the reject cannot be vacuous: the same turn against a
+/// single-cap cell COMMITS.
 #[test]
-#[ignore = "blocked on cap-set Merkle uniqueness gadget — out of caveat-correctness lane scope (CAVEAT-LAYER-COVERAGE.md §1 row 16, §9)"]
 fn capability_uniqueness_rejects_multiple_live_caps() {
-    panic!("blocked");
+    use dregg_cell::{AuthRequired, Cell, Ledger, Permissions, compute_canonical_capability_root};
+    use dregg_turn::{ComputronCosts, Effect, TurnExecutor};
+
+    fn open_cell(seed: u8) -> Cell {
+        let mut pk = [0u8; 32];
+        pk[0] = seed;
+        pk[31] = seed.wrapping_mul(37);
+        let mut cell = Cell::with_balance(pk, [0u8; 32], 1_000);
+        cell.permissions = Permissions {
+            send: AuthRequired::None,
+            receive: AuthRequired::None,
+            set_state: AuthRequired::None,
+            set_permissions: AuthRequired::None,
+            set_verification_key: AuthRequired::None,
+            increment_nonce: AuthRequired::None,
+            delegate: AuthRequired::None,
+            access: AuthRequired::None,
+        };
+        cell
+    }
+
+    // `cap_count` live capabilities to the SAME target, cap-set-root slot 0
+    // honestly bound to the canonical root, then a mutation of an unrelated
+    // slot. Returns whether the turn committed.
+    fn commits_with_cap_count(seed: u8, cap_count: usize) -> (bool, String) {
+        let mut owner = open_cell(seed);
+        let target = open_cell(seed.wrapping_add(1));
+        let target_id = target.id();
+        for _ in 0..cap_count {
+            owner
+                .capabilities
+                .grant(target_id, AuthRequired::None)
+                .expect("c-list slot available");
+        }
+        // Bind the declared root HONESTLY to whatever cap set we built, so
+        // leg (1) passes and leg (2) is the only thing under test.
+        owner.state.fields[0] = compute_canonical_capability_root(&owner.capabilities);
+        owner.program = single_predicate(StateConstraint::CapabilityUniqueness {
+            cap_set_root_slot: 0,
+        });
+        let owner_id = owner.id();
+
+        let mut ledger = Ledger::new();
+        ledger.insert_cell(owner).unwrap();
+        ledger.insert_cell(target).unwrap();
+
+        let mut builder = dregg_turn::TurnBuilder::new(owner_id, 0);
+        builder.add_action(
+            dregg_turn::ActionBuilder::new_unchecked_for_tests(owner_id, "bump", owner_id)
+                .effect(Effect::SetField {
+                    cell: owner_id,
+                    index: 1,
+                    value: field_from_u64(7),
+                })
+                .build(),
+        );
+        let turn = builder.fee(0).build();
+
+        let result = TurnExecutor::new(ComputronCosts::zero()).execute(&turn, &mut ledger);
+        (result.is_committed(), format!("{result:?}"))
+    }
+
+    // ANTI-VACUITY: exactly one live cap must COMMIT. Without this leg the
+    // rejection below could come from anything (bad permissions, missing
+    // cell, metering) rather than from the uniqueness gate.
+    let (one_committed, one_detail) = commits_with_cap_count(0x51, 1);
+    assert!(
+        one_committed,
+        "exactly one live cap must satisfy CapabilityUniqueness; got: {one_detail}"
+    );
+
+    // THE TOOTH: two live caps of the same identity must REJECT, and the
+    // rejection must name the uniqueness gate — not some unrelated failure.
+    let (two_committed, two_detail) = commits_with_cap_count(0x53, 2);
+    assert!(
+        !two_committed,
+        "two live caps must violate CapabilityUniqueness; got: {two_detail}"
+    );
+    assert!(
+        two_detail.contains("CapabilityUniqueness"),
+        "rejection must come from the uniqueness gate, not an unrelated error; got: {two_detail}"
+    );
+
+    // And it stays closed as the cap set grows.
+    let (three_committed, three_detail) = commits_with_cap_count(0x55, 3);
+    assert!(
+        !three_committed,
+        "three live caps must violate CapabilityUniqueness; got: {three_detail}"
+    );
 }
 
 // ===========================================================================
@@ -1185,10 +1294,95 @@ fn preimage_gate_rejects_wrong_preimage() {
     assert_reject_violated(&p, &new, None, Some(&ctx), "PreimageGate wrong preimage");
 }
 
+/// UNBLOCKED (2026-07-27). The `#[ignore]` reason read "Poseidon2 PreimageGate
+/// uses a BLAKE3-tagged stub today (CAVEAT-LAYER-COVERAGE.md §1 row 20)". The
+/// `poseidon2-stub:`-prefixed BLAKE3 stand-in is GONE: `HashKind::Poseidon2`
+/// now routes to the STARK-native sponge, and the cross-crate conformance KAT
+/// lives at `circuit/tests/poseidon2_cell_circuit_kat.rs`.
+///
+/// That KAT proves cell-Poseidon2 == circuit-Poseidon2 on the digest. THIS test
+/// is the per-variant tooth the KAT does not carry: the `HashKind` tag actually
+/// SELECTS the gadget. A commitment computed under one hash must not open a gate
+/// declared under the other — which is exactly the property a stub destroys
+/// (with the stub, "Poseidon2" WAS BLAKE3, so the two gates were the same
+/// function and this test would fail in both directions).
 #[test]
-#[ignore = "blocked on caveat-correctness: Poseidon2 PreimageGate uses a BLAKE3-tagged stub today (CAVEAT-LAYER-COVERAGE.md §1 row 20)"]
 fn preimage_gate_poseidon2_real_gadget() {
-    panic!("blocked");
+    use dregg_circuit::poseidon2::hash_bytes;
+
+    let preimages: [[u8; 32]; 3] = [[0u8; 32], [7u8; 32], [0xFEu8; 32]];
+
+    for preimage in preimages {
+        let poseidon2_digest = dregg_cell::felt_to_bytes32(hash_bytes(&preimage));
+        let blake3_digest = *blake3::hash(&preimage).as_bytes();
+
+        // The gadgets are genuinely DIFFERENT functions — the anti-stub
+        // guard. Under the old `poseidon2-stub:` BLAKE3 stand-in the two
+        // digests were both BLAKE3-derived and every assertion below is
+        // meaningless, so this one goes first.
+        assert_ne!(
+            poseidon2_digest, blake3_digest,
+            "Poseidon2 and BLAKE3 digests of {preimage:?} must differ — a \
+             stubbed Poseidon2 makes the HashKind tag decorative"
+        );
+
+        let mut ctx = EvalContext::minimal(0, 0);
+        ctx.revealed_preimage = Some(preimage);
+
+        let poseidon2_gate = single_predicate(StateConstraint::PreimageGate {
+            commitment_index: 0,
+            hash_kind: HashKind::Poseidon2,
+        });
+        let blake3_gate = single_predicate(StateConstraint::PreimageGate {
+            commitment_index: 0,
+            hash_kind: HashKind::Blake3,
+        });
+
+        // POSITIVE: the Poseidon2 gate opens on the CIRCUIT's Poseidon2 of
+        // the preimage. The digest is built from `dregg_circuit::poseidon2`,
+        // never from the cell's own helper, so agreement is cross-crate.
+        assert_accept(
+            &poseidon2_gate,
+            &state_raw_with(&[(0, poseidon2_digest)]),
+            None,
+            Some(&ctx),
+            "Poseidon2 PreimageGate opens on circuit hash_bytes",
+        );
+
+        // NEGATIVE (cross-kind, direction 1): a BLAKE3 commitment must NOT
+        // open a Poseidon2-declared gate.
+        assert_reject_violated(
+            &poseidon2_gate,
+            &state_raw_with(&[(0, blake3_digest)]),
+            None,
+            Some(&ctx),
+            "BLAKE3 commitment must not open a Poseidon2 gate",
+        );
+
+        // NEGATIVE (cross-kind, direction 2): and a Poseidon2 commitment
+        // must NOT open a BLAKE3-declared gate.
+        assert_reject_violated(
+            &blake3_gate,
+            &state_raw_with(&[(0, poseidon2_digest)]),
+            None,
+            Some(&ctx),
+            "Poseidon2 commitment must not open a BLAKE3 gate",
+        );
+
+        // NEGATIVE (wrong preimage under the real gadget): one flipped bit
+        // must not open the Poseidon2 digest.
+        let mut wrong = preimage;
+        wrong[0] ^= 0x01;
+        let mut wrong_ctx = EvalContext::minimal(0, 0);
+        wrong_ctx.revealed_preimage = Some(wrong);
+        assert_reject_violated(
+            &poseidon2_gate,
+            &state_raw_with(&[(0, poseidon2_digest)]),
+            None,
+            Some(&wrong_ctx),
+            "a one-bit-flipped preimage must not open a Poseidon2 digest",
+        );
+    }
 }
 
 // ===========================================================================

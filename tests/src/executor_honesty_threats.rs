@@ -603,10 +603,135 @@ fn t11_stale_proof_replay_rejected_by_verifier() {
 // T13 — Cross-cell aliasing (same cell_id in two federations)
 // ===========================================================================
 
+/// UNBLOCKED (2026-07-27). The `#[ignore]` reason asked for the T13 escape
+/// hatch to "be constrained by federation membership + CapTP origin
+/// attestation". The audit's open question was *"what prevents a malicious node
+/// from minting an arbitrary-id cell?"* — and the answer now exists: the
+/// **cross-federation ingest gate** `Ledger::migrate_accept`, which is the only
+/// path by which one federation's cell enters another's ledger. It enforces
+/// exactly the two things T13 needs, plus the double-existence rule that IS the
+/// T13 threat model ("same cell_id in two federations applying conflicting
+/// state updates").
+///
+/// `Cell::remote_stub_with_id*` is left deliberately unconstrained — it is a
+/// local landing site, and its own docstring says `verify_id_integrity()` fails
+/// on it by design. The security claim is not "the constructor is safe"; it is
+/// "a stub cannot cross a federation boundary". That is what this test pins.
+///
+/// The dangerous variant is `remote_stub_with_id_pk_token_balance`, which lets
+/// the caller pick an arbitrary id AND an attacker-controlled public key — so
+/// unlike the zero-pk stub, a `Signature` authorization WOULD match it. That is
+/// the cell this test tries to smuggle across.
 #[test]
-#[ignore = "blocked on EXECUTOR-HONESTY-AUDIT.md T13: Cell::remote_stub_with_id escape hatch must be constrained by federation membership + CapTP origin attestation"]
 fn t13_remote_stub_with_id_cannot_mint_arbitrary_cell_ids() {
-    panic!("blocked");
+    use dregg_cell::cell::CellMode;
+    use dregg_cell::migration::MigrationError;
+    use dregg_cell::{Cell, Ledger};
+
+    let fed_a = [0xAAu8; 32];
+    let fed_b = [0xBBu8; 32];
+
+    // The attacker's signing identity, and an id that is NOT its content
+    // address — the "minted" cell id they want to occupy on federation B.
+    let attacker_pk = [0x99u8; 32];
+    let coveted_id = CellId([0x77u8; 32]);
+    let forged =
+        Cell::remote_stub_with_id_pk_token_balance(coveted_id, attacker_pk, [0u8; 32], 1_000_000);
+
+    // (1) The mint is DETECTABLE: the stub breaks the content-address
+    // invariant, and it really is the attacker's key on it (so the danger is
+    // real, not a zero-pk stub that could never sign).
+    assert!(
+        !forged.verify_id_integrity(),
+        "an arbitrary-id stub must fail the content-address invariant"
+    );
+    assert_eq!(
+        *forged.public_key(),
+        attacker_pk,
+        "the smuggled cell carries the attacker's signing key — this is the variant that matters"
+    );
+    assert_eq!(forged.id(), coveted_id, "and the id they wanted");
+
+    // (2) THE FEDERATION GATE. Build a genuine voucher on federation A for a
+    // real cell, then try to redeem it on B with the forged stub swapped in.
+    let genuine = Cell::with_balance([0x11u8; 32], [0u8; 32], 500);
+    let genuine_id = genuine.id();
+    assert!(
+        genuine.verify_id_integrity(),
+        "control cell must be content-addressed"
+    );
+    let mut ledger_a = Ledger::new();
+    ledger_a.insert_cell(genuine.clone()).unwrap();
+    let voucher = ledger_a
+        .migrate_prepare(&genuine_id, fed_a, fed_b, CellMode::Hosted, 1)
+        .expect("PREPARE on a well-formed cell");
+
+    // 2a. The forged stub does not even match the voucher's cell id.
+    let mut ledger_b = Ledger::new();
+    assert!(
+        matches!(
+            ledger_b.migrate_accept(&voucher, forged.clone(), fed_b, 2),
+            Err(MigrationError::StateMismatch)
+        ),
+        "a stub whose id differs from the voucher must not be installed"
+    );
+
+    // 2b. The sharper attack: mint a stub AT the voucher's id, with the
+    // attacker's key. Now the id matches — and `verify_id_integrity` is the
+    // only thing standing between the attacker and custody of that cell on
+    // federation B.
+    let forged_at_voucher_id =
+        Cell::remote_stub_with_id_pk_token_balance(genuine_id, attacker_pk, [0u8; 32], 1_000_000);
+    assert_eq!(forged_at_voucher_id.id(), voucher.cell_id);
+    assert!(
+        matches!(
+            ledger_b.migrate_accept(&voucher, forged_at_voucher_id, fed_b, 2),
+            Err(MigrationError::IdentityBroken(id)) if id == genuine_id
+        ),
+        "an arbitrary-id stub carrying an attacker key must be refused at the \
+         cross-federation ingest gate with IdentityBroken"
+    );
+
+    // (3) ANTI-VACUITY: the SAME voucher, redeemed with the GENUINE cell,
+    // must succeed. Without this the rejections above could be the gate
+    // refusing everything.
+    ledger_b
+        .migrate_accept(&voucher, genuine.clone(), fed_b, 2)
+        .expect("the genuine cell must be accepted by the same gate");
+    assert!(
+        ledger_b.get(&genuine_id).is_some(),
+        "genuine migration must install the cell"
+    );
+
+    // (4) THE T13 THREAT ITSELF — "same cell_id in two federations applying
+    // conflicting state updates". A second acceptance of the same id is
+    // refused as double-existence, even with a genuine cell.
+    assert!(
+        matches!(
+            ledger_b.migrate_accept(&voucher, genuine.clone(), fed_b, 3),
+            Err(MigrationError::DestinationOccupied(id)) if id == genuine_id
+        ),
+        "the same cell id must not be installable twice — that IS the T13 aliasing threat"
+    );
+
+    // (5) FEDERATION MEMBERSHIP: a voucher addressed to B cannot be redeemed
+    // by a third federation that simply decides to accept it.
+    let fed_c = [0xCCu8; 32];
+    let mut ledger_c = Ledger::new();
+    assert!(
+        matches!(
+            ledger_c.migrate_accept(&voucher, genuine.clone(), fed_c, 2),
+            Err(MigrationError::WrongDestination)
+        ),
+        "a voucher names its destination federation; a non-addressee must not take custody"
+    );
+
+    // (6) The remaining leg — drifting an EXISTING cell's `public_key` to the
+    // attacker's while keeping its id — is not reachable from here at all:
+    // `Cell::public_key` is a sealed private field (P0-1), so the attack does
+    // not compile outside `dregg-cell`. The in-crate runtime guard for the
+    // same invariant (`Ledger::update_with` rolling back an integrity break)
+    // is covered by `cell::tests::p2_3_verify_id_integrity_catches_drift`.
 }
 
 // ===========================================================================
@@ -667,10 +792,316 @@ fn t14_malformed_proof_bytes_rejected() {
 // Cross-cutting (audit §"Cross-cutting open questions")
 // ===========================================================================
 
+/// UNBLOCKED (2026-07-27). The `#[ignore]` reason was "blocked on
+/// T-cross-cutting #1: trace-side binding completeness audit". The audit item
+/// asked a question; a `panic!("blocked")` is not an answer, and *nothing in
+/// the tree asserted a single effect-VM PI was trace-bound* — deleting
+/// `boundaryFirstPins` from the Lean emitter would have been caught by no test.
+/// This IS the audit, machine-checked and standing, read off the DEPLOYED
+/// registry bytes (`V3_STAGED_REGISTRY_TSV`) rather than off a doc comment.
+///
+/// The 2026-05-24 claim it replaces was wrong in BOTH directions, and this test
+/// pins the corrected picture:
+///
+/// | field | trace-bound? |
+/// |---|---|
+/// | `ACTOR_NONCE` (41) | YES — row-0 `state_before.NONCE` |
+/// | `OLD_COMMIT[0]` (0) | YES — row-0 `state_before.STATE_COMMIT` |
+/// | `NEW_COMMIT[0]` (8) | YES — last-row `state_after.STATE_COMMIT` |
+/// | `INIT_BAL_LO/HI` (20,21) | YES — row-0 `state_before.BALANCE_*` |
+/// | `FINAL_BAL_LO/HI` (22,23) | YES — last-row `state_after.BALANCE_*` |
+/// | `EFFECTS_HASH` (16..20) | **NO** — the claim said it WAS bound |
+/// | `TURN_HASH` (33..37) | **NO** |
+/// | `EFFECTS_HASH_GLOBAL` (37..41) | **NO** |
+/// | `IS_AGENT_CELL` (81) | **NO** — past every deployed `public_input_count` |
+///
+/// Two teeth, both able to go red:
+///
+///   A. **Semantic correctness of every v1-window pin.** Every `pi_binding`
+///      any deployed member carries into the v1 PI window must appear in the
+///      table below — PI `k` tied to the semantically-right trace column. A pin
+///      moved to the wrong column, retargeted at the wrong PI, or deleted
+///      wholesale fails here.
+///   B. **Non-emptiness per field.** Each of the seven pins must be carried by
+///      at least one deployed member, so the table cannot pass by being vacuous
+///      over a registry that pins nothing.
+///
+/// The residual assertions (the unbound set) are a FREEZE, not a guarantee:
+/// they exist so that binding `TURN_HASH` — the fix the audit actually wants —
+/// is a deliberate, visible edit and not a silent drift in either direction.
 #[test]
-#[ignore = "blocked on T-cross-cutting #1: trace-side binding completeness audit (ACTOR_NONCE, EFFECTS_HASH_GLOBAL, TURN_HASH, PRE/POST_STATE, PREVIOUS_RECEIPT_HASH)"]
 fn cross_cutting_all_pi_fields_trace_bound() {
-    panic!("blocked");
+    use dregg_circuit::descriptor_ir2::{VmConstraint2, parse_vm_descriptor2};
+    use dregg_circuit::effect_vm::columns::{STATE_AFTER_BASE, STATE_BEFORE_BASE, state};
+    use dregg_circuit::effect_vm::pi;
+    use dregg_circuit::effect_vm::trace_rotated::V1_PI_COUNT;
+    use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
+    use dregg_circuit::lean_descriptor_air::{VmConstraint, VmRow};
+
+    // THE PIN TABLE: (row, trace column, PI index, field name). This is the
+    // semantic contract — "PI k is the value in THIS trace cell".
+    let expected: &[(VmRow, usize, usize, &str)] = &[
+        (
+            VmRow::First,
+            STATE_BEFORE_BASE + state::NONCE,
+            pi::ACTOR_NONCE,
+            "ACTOR_NONCE",
+        ),
+        (
+            VmRow::First,
+            STATE_BEFORE_BASE + state::BALANCE_LO,
+            pi::INIT_BAL_LO,
+            "INIT_BAL_LO",
+        ),
+        (
+            VmRow::First,
+            STATE_BEFORE_BASE + state::BALANCE_HI,
+            pi::INIT_BAL_HI,
+            "INIT_BAL_HI",
+        ),
+        (
+            VmRow::First,
+            STATE_BEFORE_BASE + state::STATE_COMMIT,
+            pi::OLD_COMMIT_BASE,
+            "OLD_COMMIT[0] (PRE_STATE)",
+        ),
+        (
+            VmRow::Last,
+            STATE_AFTER_BASE + state::STATE_COMMIT,
+            pi::NEW_COMMIT_BASE,
+            "NEW_COMMIT[0] (POST_STATE)",
+        ),
+        (
+            VmRow::Last,
+            STATE_AFTER_BASE + state::BALANCE_LO,
+            pi::FINAL_BAL_LO,
+            "FINAL_BAL_LO",
+        ),
+        (
+            VmRow::Last,
+            STATE_AFTER_BASE + state::BALANCE_HI,
+            pi::FINAL_BAL_HI,
+            "FINAL_BAL_HI",
+        ),
+    ];
+
+    // Members whose `public_input_count` cannot even address the v1 window
+    // are on their OWN local PI contract (their PI 0..3 are rotated-block
+    // pins, not `OLD_COMMIT`). They are skipped — and the skip set is frozen
+    // below so a new member cannot quietly join it.
+    const LOCAL_PI_SPACE_MEMBERS: &[&str] = &["heapWriteVmDescriptor2R24"];
+
+    // Members on the shared v1 PI contract that carry NO first-row v1 pin.
+    // For these, `ACTOR_NONCE` / `OLD_COMMIT[0]` / the initial balance limbs
+    // have NO v1-window trace binding; only the rotated-block commit pins
+    // (42..45) tie the proof to a state. THIS IS A REAL GAP, frozen here so
+    // it is detected rather than merely true.
+    const NO_FIRST_ROW_V1_PIN: &[&str] = &[
+        "setFieldDynVmDescriptor2R24",
+        "setFieldVmDescriptor2-0R24",
+        "setFieldVmDescriptor2-1R24",
+        "setFieldVmDescriptor2-2R24",
+        "setFieldVmDescriptor2-3R24",
+        "setFieldVmDescriptor2-4R24",
+        "setFieldVmDescriptor2-5R24",
+        "setFieldVmDescriptor2-6R24",
+        "setFieldVmDescriptor2-7R24",
+    ];
+
+    // Members carrying NO last-row v1 pin: `NEW_COMMIT[0]` / `FINAL_BAL_*`
+    // have no v1-window binding. The whole cap-write family plus setField.
+    const NO_LAST_ROW_V1_PIN: &[&str] = &[
+        "attenuateVmDescriptor2R24",
+        "revokeCapabilityVmDescriptor2R24",
+        "grantCapVmDescriptor2R24",
+        "setFieldDynVmDescriptor2R24",
+        "setFieldVmDescriptor2-0R24",
+        "setFieldVmDescriptor2-1R24",
+        "setFieldVmDescriptor2-2R24",
+        "setFieldVmDescriptor2-3R24",
+        "setFieldVmDescriptor2-4R24",
+        "setFieldVmDescriptor2-5R24",
+        "setFieldVmDescriptor2-6R24",
+        "setFieldVmDescriptor2-7R24",
+        "delegateCapOpenVmDescriptor2R24",
+        "grantCapCapOpenVmDescriptor2R24",
+        "revokeCapabilityCapOpenVmDescriptor2R24",
+        "attenuateCapOpenEffVmDescriptor2R24",
+        "delegateWriteCapOpenVmDescriptor2R24",
+        "introduceWriteCapOpenVmDescriptor2R24",
+        "delegateAttenWriteCapOpenVmDescriptor2R24",
+        "revokeDelegationWriteCapOpenVmDescriptor2R24",
+        "revokeCapabilityWriteCapOpenVmDescriptor2R24",
+        "refreshDelegationWriteCapOpenVmDescriptor2R24",
+    ];
+
+    // How many deployed members carry each pin — the anti-vacuity counters.
+    let mut carriers = vec![0usize; expected.len()];
+    let mut members = 0usize;
+    // Every PI index observed in the v1 window, for the residual freeze.
+    let mut bound_v1_pis: std::collections::BTreeSet<usize> = Default::default();
+    let mut observed_local: std::collections::BTreeSet<String> = Default::default();
+    let mut observed_no_first: std::collections::BTreeSet<String> = Default::default();
+    let mut observed_no_last: std::collections::BTreeSet<String> = Default::default();
+
+    for line in V3_STAGED_REGISTRY_TSV.lines() {
+        if line.is_empty() {
+            continue;
+        }
+        members += 1;
+        let mut it = line.splitn(3, '\t');
+        let key = it.next().expect("tsv key");
+        let _name = it.next().expect("tsv name");
+        let json = it.next().expect("tsv json");
+        let desc = parse_vm_descriptor2(json)
+            .unwrap_or_else(|e| panic!("registry member {key} failed to parse: {e}"));
+
+        // A member that cannot address PI[ACTOR_NONCE] is not on the shared
+        // v1 PI contract at all.
+        if desc.public_input_count <= pi::ACTOR_NONCE {
+            observed_local.insert(key.to_string());
+            continue;
+        }
+
+        let mut present = vec![false; expected.len()];
+        for constraint in &desc.constraints {
+            let VmConstraint2::Base(VmConstraint::PiBinding { row, col, pi_index }) = constraint
+            else {
+                continue;
+            };
+            // Rotated-block pins live at/above V1_PI_COUNT and are audited by
+            // `effect_vm_descriptors::v3_staged_registry_parses_and_covers`.
+            if *pi_index >= V1_PI_COUNT {
+                continue;
+            }
+            bound_v1_pis.insert(*pi_index);
+
+            // TOOTH A: this pin must be one of the seven semantic pins.
+            let hit = expected
+                .iter()
+                .position(|(r, c, p, _)| r == row && c == col && p == pi_index);
+            let Some(idx) = hit else {
+                panic!(
+                    "deployed member {key} binds PI {pi_index} to {row:?}-row column {col}, \
+                     which is NOT a recognised trace-side binding. Either a pin moved off its \
+                     semantic column or a new PI became trace-bound without updating this table."
+                );
+            };
+            carriers[idx] += 1;
+            present[idx] = true;
+        }
+
+        // TOOTH A′ — PER MEMBER, not merely per registry. A member on the
+        // shared v1 contract that is not on an exemption list must carry
+        // EVERY pin of that row. Without this, dropping one member's
+        // `ACTOR_NONCE` pin passes silently because 46 siblings still carry
+        // it (measured: that exact break did NOT go red until this assert
+        // existed).
+        let missing_first: Vec<&str> = expected
+            .iter()
+            .enumerate()
+            .filter(|(i, (r, _, _, _))| *r == VmRow::First && !present[*i])
+            .map(|(_, (_, _, _, field))| *field)
+            .collect();
+        let missing_last: Vec<&str> = expected
+            .iter()
+            .enumerate()
+            .filter(|(i, (r, _, _, _))| *r == VmRow::Last && !present[*i])
+            .map(|(_, (_, _, _, field))| *field)
+            .collect();
+
+        if missing_first.is_empty() {
+            // carries the complete first-row set
+        } else if missing_first.len() == 4 {
+            observed_no_first.insert(key.to_string());
+        } else {
+            panic!(
+                "deployed member {key} carries a PARTIAL first-row boundary pin set — missing \
+                 {missing_first:?}. Every shared-contract member must pin all four or none; a \
+                 partial set means one field silently lost its trace binding."
+            );
+        }
+        if missing_last.is_empty() {
+            // carries the complete last-row set
+        } else if missing_last.len() == 3 {
+            observed_no_last.insert(key.to_string());
+        } else {
+            panic!(
+                "deployed member {key} carries a PARTIAL last-row boundary pin set — missing \
+                 {missing_last:?}. See above."
+            );
+        }
+    }
+
+    assert_eq!(
+        members, 60,
+        "expected the 60-member deployed registry; parsed {members}. A registry that changed \
+         size makes every count below a different claim — re-derive the exemption sets."
+    );
+
+    // THE EXEMPTION SETS ARE EXACT. A new member that silently ships without a
+    // boundary pin fails here instead of passing unnoticed.
+    let as_set = |xs: &[&str]| -> std::collections::BTreeSet<String> {
+        xs.iter().map(|s| s.to_string()).collect()
+    };
+    assert_eq!(
+        observed_local,
+        as_set(LOCAL_PI_SPACE_MEMBERS),
+        "the set of members on a LOCAL PI contract changed"
+    );
+    assert_eq!(
+        observed_no_first,
+        as_set(NO_FIRST_ROW_V1_PIN),
+        "the set of members with NO first-row v1 PI binding changed — a member either gained \
+         a binding (good: shrink the list) or lost one (bad: ACTOR_NONCE/OLD_COMMIT are no \
+         longer trace-bound for that effect)"
+    );
+    assert_eq!(
+        observed_no_last,
+        as_set(NO_LAST_ROW_V1_PIN),
+        "the set of members with NO last-row v1 PI binding changed — see above"
+    );
+
+    // TOOTH B: every field in the table is genuinely carried by deployed
+    // members. A pin deleted from the Lean emitter drops its count to 0.
+    for (i, (row, col, pi_index, field)) in expected.iter().enumerate() {
+        assert!(
+            carriers[i] > 0,
+            "NO deployed registry member binds {field} (PI {pi_index}) to {row:?}-row column \
+             {col}. This field is no longer trace-bound anywhere in the deployed AIR."
+        );
+    }
+
+    // RESIDUAL FREEZE. These are the fields the audit named that are NOT
+    // trace-bound today. Naming them here means the gap is detected, not just
+    // documented — and closing one is a visible edit to this list.
+    let unbound_residuals: &[(usize, usize, &str)] = &[
+        (pi::EFFECTS_HASH_BASE, pi::EFFECTS_HASH_LEN, "EFFECTS_HASH"),
+        (pi::TURN_HASH_BASE, pi::TURN_HASH_LEN, "TURN_HASH"),
+        (
+            pi::EFFECTS_HASH_GLOBAL_BASE,
+            pi::EFFECTS_HASH_GLOBAL_LEN,
+            "EFFECTS_HASH_GLOBAL",
+        ),
+    ];
+    for (base, len, field) in unbound_residuals {
+        for k in *base..(*base + *len) {
+            assert!(
+                !bound_v1_pis.contains(&k),
+                "PI {k} ({field}) is now trace-bound by a deployed member. That is the FIX the \
+                 cross-cutting audit asks for — update this test's table and the residual list \
+                 rather than deleting the assertion."
+            );
+        }
+    }
+
+    // `IS_AGENT_CELL` sits past the deployed PI window entirely: no member can
+    // bind it, because no member publishes that many public inputs.
+    assert!(
+        pi::IS_AGENT_CELL >= V1_PI_COUNT,
+        "IS_AGENT_CELL moved into the deployed PI window; its off-AIR-only status \
+         (asserted by cross_cutting_verifier_checks_all_pi) must be re-derived"
+    );
 }
 
 #[test]
