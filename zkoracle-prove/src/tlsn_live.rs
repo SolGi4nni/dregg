@@ -74,6 +74,49 @@ const API_KEY_SECRET: &str = "sk-ant-MERCHANT-API-KEY-PLACEHOLDER";
 const MAX_SENT_DATA: usize = 1 << 12;
 const MAX_RECV_DATA: usize = 1 << 14;
 
+/// **The process-wide MPC-TLS session lock — a REAL constraint, not a test crutch.**
+///
+/// Each `*_roundtrip_blocking` below stands up its OWN `new_multi_thread` tokio runtime (default
+/// worker count = `available_parallelism()`) and drives the `mpz` 2PC garbling stack, whose crates
+/// in turn pull `rayon 1.12` — i.e. a **process-global**, fixed-size pool. So N concurrent sessions
+/// in one process are N × cores tokio workers contending for that one pool, on top of N in-process
+/// notary + server + prover triples.
+///
+/// MEASURED on persvati (24 cores, Linux, debug, 2026-07-27), `tests/tlsn_live_roundtrip.rs`:
+///
+/// | how it was run                        | outcome                                    |
+/// |---------------------------------------|--------------------------------------------|
+/// | `--test-threads=1` (all 3)            | 3 passed in **2.34 s**                     |
+/// | one roundtrip alone (`--exact`)       | 1 passed in **0.70 s**                     |
+/// | `--test-threads=4` (all 3)            | 2 pass, the third **NEVER RETURNS** (killed at 420 s) |
+///
+/// It is a genuine deadlock, not slowness: the box goes idle, and 420 s is two orders of
+/// magnitude past the 2.34 s the same three tests take back to back. The defect is inside the
+/// git-pinned TLSNotary/`mpz` stack, not here — but what INVITES it is here: one `#[test]` per
+/// roundtrip in one binary, which libtest runs on parallel threads by default. This lock makes
+/// "one MPC-TLS session at a time per process" structural instead of a property each caller has to
+/// remember — the same shape `servo-render`'s `swgl_context::GL_LOCK` uses for the process-global
+/// SWGL current-context pointer.
+///
+/// ⚠ HONEST LIMIT: this pins WHICH configurations deadlock, not WHICH lock deadlocks — no stack
+/// was captured naming a specific rayon/tokio wait. Serializing is therefore the containment that
+/// the measurements support, not a repair of the vendored stack. Do not delete it on the grounds
+/// that "the tests pass now"; they pass BECAUSE of it, and the `--test-threads=4` row above is the
+/// falsifier.
+static MPC_TLS_SESSION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Run one whole MPC-TLS roundtrip while holding [`MPC_TLS_SESSION_LOCK`], so at most one 2PC
+/// session (and one dedicated multi-thread runtime) exists in this process at a time.
+///
+/// Poison-tolerant: a panic inside one roundtrip must not wedge every later one. The protected
+/// data is `()` — the lock ORDERS sessions, it guards no invariant-bearing state.
+fn with_mpc_tls_session<R>(f: impl FnOnce() -> R) -> R {
+    let _guard = MPC_TLS_SESSION_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    f()
+}
+
 /// A canned endpoint exchange the test server answers. Endpoint-parameterized: the same
 /// live MPC-TLS machinery drives an Anthropic `POST /v1/messages`, a public GitHub
 /// `GET /repos/…/commits/…`, or a public Coinbase `GET /v2/prices/…/spot` — a new endpoint
@@ -532,17 +575,20 @@ pub fn verify_messages_presentation(
 
 /// **Run the full REAL local MPC-TLS roundtrip** (server + notary + prover in-process),
 /// producing a signed presentation, then verify it and extract the response body.
-/// Blocking: stands up its own multi-thread tokio runtime.
+/// Blocking: stands up its own multi-thread tokio runtime, serialized against every other
+/// session in this process by [`MPC_TLS_SESSION_LOCK`] (concurrent sessions DEADLOCK — see it).
 pub fn run_local_roundtrip_blocking(exchange: &LiveExchange) -> Result<LiveRoundtrip> {
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()?;
-    let presentation_bytes = rt.block_on(prove_messages_presentation(exchange))?;
-    let verified = verify_messages_presentation(&presentation_bytes, SERVER_DOMAIN)?;
-    Ok(LiveRoundtrip {
-        verified,
-        presentation_bytes,
-        pinned_server: SERVER_DOMAIN.to_string(),
+    with_mpc_tls_session(|| {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        let presentation_bytes = rt.block_on(prove_messages_presentation(exchange))?;
+        let verified = verify_messages_presentation(&presentation_bytes, SERVER_DOMAIN)?;
+        Ok(LiveRoundtrip {
+            verified,
+            presentation_bytes,
+            pinned_server: SERVER_DOMAIN.to_string(),
+        })
     })
 }
 
@@ -832,11 +878,13 @@ async fn run_coinbase_roundtrip_inner(
 /// run). Blocking: stands up its own multi-thread runtime. Requires live network. For a stable,
 /// re-pinnable notary anchor use [`run_coinbase_roundtrip_with_durable_notary`].
 pub fn run_coinbase_roundtrip_blocking(asset: &str) -> Result<CoinbaseRoundtrip> {
-    let notary_key = crate::notary_server::generate_notary_key()?;
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()?;
-    rt.block_on(run_coinbase_roundtrip_inner(asset, notary_key))
+    with_mpc_tls_session(|| {
+        let notary_key = crate::notary_server::generate_notary_key()?;
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        rt.block_on(run_coinbase_roundtrip_inner(asset, notary_key))
+    })
 }
 
 /// Generic real-host MPC-TLS roundtrip: spawn a local notary, prove a live
@@ -864,11 +912,13 @@ async fn run_live_roundtrip_inner(
 /// Generic real-host MPC-TLS roundtrip: `GET https://{host}{path}`. The caller owns
 /// the host pin + the path; the response body is disclosed whole.
 pub fn run_url_roundtrip_blocking(host: &str, path: &str) -> Result<CoinbaseRoundtrip> {
-    let notary_key = crate::notary_server::generate_notary_key()?;
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()?;
-    rt.block_on(run_live_roundtrip_inner(host, path, notary_key))
+    with_mpc_tls_session(|| {
+        let notary_key = crate::notary_server::generate_notary_key()?;
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        rt.block_on(run_live_roundtrip_inner(host, path, notary_key))
+    })
 }
 
 /// Real-host MPC-TLS roundtrip against `GET api.github.com/repos/{owner}/{repo}/commits/{sha}`.
@@ -878,15 +928,17 @@ pub fn run_github_roundtrip_blocking(
     sha: &str,
 ) -> Result<CoinbaseRoundtrip> {
     let path = crate::endpoints::github::github_commit_path(owner, repo, sha);
-    let notary_key = crate::notary_server::generate_notary_key()?;
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()?;
-    rt.block_on(run_live_roundtrip_inner(
-        crate::endpoints::github::GITHUB_SERVER_NAME,
-        &path,
-        notary_key,
-    ))
+    with_mpc_tls_session(|| {
+        let notary_key = crate::notary_server::generate_notary_key()?;
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        rt.block_on(run_live_roundtrip_inner(
+            crate::endpoints::github::GITHUB_SERVER_NAME,
+            &path,
+            notary_key,
+        ))
+    })
 }
 
 /// **Run the roundtrip against a DURABLE hosted notary** whose signing key is persisted at
@@ -898,10 +950,12 @@ pub fn run_coinbase_roundtrip_with_durable_notary(
     key_path: &std::path::Path,
 ) -> Result<CoinbaseRoundtrip> {
     let notary_key = crate::notary_server::load_or_generate_notary_key(key_path)?;
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()?;
-    rt.block_on(run_coinbase_roundtrip_inner(asset, notary_key))
+    with_mpc_tls_session(|| {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        rt.block_on(run_coinbase_roundtrip_inner(asset, notary_key))
+    })
 }
 
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
