@@ -26,14 +26,19 @@
 //! - malformed proof bytes under the deployed vk are REJECTED.
 //!
 //! The end-to-end honest-proof discharge (a valid route verifying through the
-//! registered verifier) is `#[ignore]`d: it needs an honest STARK proof from the
-//! routing prover, which is RED at HEAD independently of this wiring —
-//! `dregg_circuit::dsl::dfa_routing::build_routing_witness`'s honest witness fails
-//! the descriptor's own lowered constraints (`[#0, #11]` on row 0), panicking the
-//! debug prover. The turn crate's own `live_routing_*` teeth are red with the
-//! identical panic, and the circuit's prove/verify teeth were removed (only
-//! `descriptor_is_deployable` remains) — a `circuit/src/dsl/dfa_routing.rs`
-//! regression, not a node wiring gap. When that is repaired, drop the `#[ignore]`.
+//! registered verifier) RUNS as of 2026-07-27. It was `#[ignore]`d on a diagnosis that
+//! pointed at the wrong file: "a `circuit/src/dsl/dfa_routing.rs` regression — the honest
+//! witness fails the descriptor's own lowered constraints (`[#0, #11]` on row 0)". The
+//! descriptor was never the problem. `ChainedHash2to1` + `SeedHash2to1` lower TOGETHER into
+//! a copy-forward ACCUMULATOR column past the base trace width, plus the two constraints
+//! over it — the first-row `acc[0] == pi[seed]` pin (`#0`) and the on-transition
+//! `next.acc == local.source` copy-forward (`#11`). `prove_dfa_transition` resized the trace
+//! to the lowered width with ZEROS and never witnessed that column, because it lowered
+//! through `cellprogram_to_descriptor2`, which DISCARDS the fill plan by design.
+//! `turn/src/executor/membership_verifier.rs` now lowers with `lower_cellprogram` and calls
+//! `fill_chain_columns` — the same thing `circuit-prove`'s `custom_leaf_adapter` already did
+//! on its own leaf path. The four `live_routing_*` teeth this comment cited as "red with the
+//! identical panic" are green for the identical one-line reason.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -350,13 +355,17 @@ async fn foreign_deployed_program_cannot_discharge_a_dfa_caveat() {
     );
 }
 
-/// END-TO-END DISCHARGE (blocked on the routing prover, see module docs): an
-/// honest route verifies through the registered verifier at the deployed vk. This
-/// needs an honest STARK proof, and `build_routing_witness` fails the descriptor's
-/// own lowered constraints at HEAD (`circuit/src/dsl/dfa_routing.rs` regression),
-/// panicking the debug prover. Drop the `#[ignore]` once that is repaired.
-#[ignore = "blocked on circuit/src/dsl/dfa_routing.rs: honest witness fails its own \
-            lowered constraints [#0,#11] on row 0 (turn's live_routing_* red identically)"]
+/// END-TO-END DISCHARGE: an honest route verifies through the registered verifier at the
+/// deployed vk.
+///
+/// ⚑ UN-IGNORED 2026-07-27. The blocker was real but mis-located: it was never a
+/// `circuit/src/dsl/dfa_routing.rs` regression — the descriptor is fine. `[#0, #11]` are the
+/// first-row seed pin and the on-transition copy-forward over the running-hash ACCUMULATOR
+/// column the lowering appends, and `prove_dfa_transition` was resizing the trace to the
+/// lowered width with ZEROS instead of witnessing that column (it called the fill-plan-DISCARDING
+/// `cellprogram_to_descriptor2`). Fixed in `turn/src/executor/membership_verifier.rs` by
+/// lowering through `lower_cellprogram` + `fill_chain_columns`. The four `live_routing_*` tests
+/// this reason pointed at as "red identically" are green for the same one-line reason.
 #[tokio::test]
 async fn discharges_honest_route_end_to_end() {
     let (state, executor, _dir) = configured_executor().await;

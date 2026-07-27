@@ -47,7 +47,9 @@ use dregg_circuit::BabyBear;
 use dregg_circuit::adjacency_witness::{
     PI_IDX_LOWER as ADJ_PI_IDX_LOWER, PI_IDX_UPPER as ADJ_PI_IDX_UPPER, adjacency_witness,
 };
-use dregg_circuit::custom_leaf_lowering::cellprogram_to_descriptor2;
+use dregg_circuit::custom_leaf_lowering::{
+    cellprogram_to_descriptor2, fill_chain_columns, lower_cellprogram,
+};
 use dregg_circuit::descriptor_by_name::{MEMBERSHIP_4ARY_NAME_PREFIX, descriptor_by_name};
 use dregg_circuit::descriptor_ir2::{
     DreggStarkConfig, Ir2BatchProof, MemBoundaryWitness, prove_vm_descriptor2,
@@ -652,10 +654,23 @@ pub fn prove_dfa_transition(
     let program = programs
         .get(vk_hash)
         .ok_or_else(|| "no DSL program registered for vk_hash".to_string())?;
-    // Lower the program to its IR-v2 descriptor and prove the transition through
-    // the descriptor prover. The program trace is widened to the lowered
-    // descriptor width (the lowering may append accumulator/lane columns).
-    let desc = cellprogram_to_descriptor2(program)?;
+    // Lower the program to its IR-v2 descriptor and prove the transition through the
+    // descriptor prover. The lowering appends columns the base program never writes, and
+    // resizing with ZERO is NOT witnessing them.
+    //
+    // ⚑ THIS IS WHY EVERY `live_routing_*` TEST WAS RED (`failed constraints = [#0, #11]`,
+    // and the `#[ignore]`d `node::dfa_relay_closure::discharges_honest_route_end_to_end`
+    // with it). `ChainedHash2to1` + its `SeedHash2to1` lower TOGETHER into a copy-forward
+    // ACCUMULATOR column plus two constraints over it: a first-row `acc[0] == pi[seed]`
+    // pin (#0) and an on-transition `next.acc == local.source` copy-forward (#11). The
+    // accumulator lives past the base width, so it arrived here all-zero and failed both.
+    // `cellprogram_to_descriptor2` DISCARDS the fill plan by construction (its own doc says
+    // so); `lower_cellprogram` keeps it, and `fill_chain_columns` witnesses the column —
+    // exactly what `circuit-prove`'s `custom_leaf_adapter` already does on its leaf path.
+    // Nothing about the AIR changed: the descriptor is the same Lean-shaped lowering, and
+    // this is trace FILL on the producer side.
+    let lowered = lower_cellprogram(program)?;
+    let desc = lowered.desc;
     let mut base_trace = program
         .generate_trace(witness_values, num_rows)
         .map_err(|e| format!("{e:?}"))?;
@@ -664,6 +679,7 @@ pub fn prove_dfa_transition(
             row.resize(desc.trace_width, BabyBear::ZERO);
         }
     }
+    fill_chain_columns(&lowered.chains, &mut base_trace, public_inputs);
     let proof = prove_vm_descriptor2(
         &desc,
         &base_trace,
