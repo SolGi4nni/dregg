@@ -86,6 +86,7 @@ GATES=(
   # ⚠ It needs `node`, and it FAILS rather than skips without one. That is the point.
   "embedded-js|180|python3 scripts/check-embedded-js.py"
   "embedded-js-red|120|python3 scripts/check-embedded-js.py --self-test"
+  "test-stubs-firewall|300|bash scripts/check-test-stubs-firewall.sh"
   # A function that DECIDES something — `verify_*`, `check_*`, `*_admits` — with no
   # production caller. `dregg_circuit::effect_vm::verify_balance_limb_pis` was the
   # Group 6 range precondition, was re-exported twice, said "verifiers MUST call this",
