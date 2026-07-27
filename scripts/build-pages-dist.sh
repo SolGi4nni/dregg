@@ -162,6 +162,30 @@ for entry in "${TYPST_DOCS[@]}"; do
   fi
 done
 echo "=== typst: built ${#TYPST_BUILT[@]}, failed ${#TYPST_FAILED[@]}, absent ${#TYPST_ABSENT[@]} ==="
+# ── /papers/ INDEX, generated FROM the manifest ────────────────────────────────
+# The two papers/ documents were built and served but linked from NOWHERE — reachable
+# only if you already knew the URL. Generating this from TYPST_DOCS means a new paper
+# is LINKED for free; hand-maintaining a list is how the last one stayed invisible.
+mkdir -p "$DIST/papers"
+{
+  echo '<!doctype html><meta charset=utf-8><title>dregg — papers</title>'
+  echo '<style>body{font:16px/1.6 ui-sans-serif,system-ui,sans-serif;max-width:46rem;margin:4rem auto;padding:0 1.25rem;color:#111}'
+  echo 'a{color:#0645ad}li{margin:.6rem 0}.muted{color:#666;font-size:.9em}</style>'
+  echo '<h1>Papers</h1><p class=muted>Compiled from Typst on every site assembly.</p><ul>'
+  for d in "${TYPST_BUILT[@]}"; do
+    sub="$(dirname "$d")"; pdf="$(basename "$d")"
+    name="$(basename "$sub")"; [ "$sub" = "paper" ] && name="dregg (main paper)"
+    sz="$(du -h "$DIST/$d" | cut -f1 | tr -d ' ')"
+    echo "<li><a href=\"/$sub/$pdf\">$name</a> <span class=muted>&mdash; PDF, $sz</span></li>"
+  done
+  for f in "${TYPST_FAILED[@]}"; do
+    echo "<li><span class=muted>$(basename "$(dirname "$f")") &mdash; did not build in this assembly (staging)</span></li>"
+  done
+  echo '</ul><p class=muted><a href="/">&larr; dregg</a></p>'
+} > "$DIST/papers/index.html"
+echo "    index  /papers/ (${#TYPST_BUILT[@]} linked)"
+
+
 for d in "${TYPST_BUILT[@]}";  do echo "    built  $d"; done
 for d in "${TYPST_FAILED[@]}"; do echo "    FAILED $d (marker page shipped)" >&2; done
 for d in "${TYPST_ABSENT[@]}"; do echo "    absent $d (listed but no source yet)"; done

@@ -111,11 +111,20 @@ jobs:
   assemble:
     runs-on: ubuntu-latest
     steps:
+      # ⚑ LFS IS BEST-EFFORT, NOT A PRECONDITION (2026-07-27). `lfs: true` here made the
+      # ENTIRE SITE undeployable the moment the repo hit its LFS budget: every recent Pages
+      # run failed inside actions/checkout, before a single line of our code ran —
+      #   "This repository exceeded its LFS budget."
+      # The only LFS content the site wants is the atlas screenshots. Losing those must cost
+      # us the screenshots, NOT the deploy — the same staging posture we took for wasm: ship
+      # the site, mark what is missing. A billing limit is not a reason to have no website.
       - uses: actions/checkout@v4
         with:
-          # Materialize the atlas's LFS-tracked images into the working tree so the
-          # real files (not LFS pointer stubs) land in the Pages artifact.
-          lfs: true
+          lfs: false
+
+      - name: Fetch LFS media (best-effort — a budget failure must not block the deploy)
+        continue-on-error: true
+        run: git lfs pull --include="dregg-atlas/site/screenshots/*" || true
 
       - name: Install Typst for the papers
         uses: typst-community/setup-typst@v4
