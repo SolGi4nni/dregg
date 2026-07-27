@@ -14,7 +14,7 @@
 //!
 //! 1. **Derive the draw's context.** A [`dregg_dice::RandomnessRequest`] binds the
 //!    turn's context — the world's committed pre-state ([`WorldCell::snapshot`]
-//!    hashed), the action (the trade-blows method + die), the purpose
+//!    hashed), the action (the [`crate::DICE_BLOW_METHOD`] + die), the purpose
 //!    (`event_kind = "combat/hit"`), the sequence, and `draw_count = 1`. Its
 //!    [`EventId`](dregg_dice::EventId) is the seed's binding context: changing the
 //!    pre-state, the action, the purpose, or the draw count moves the EventId, hence
@@ -24,9 +24,14 @@
 //!    that seed yields the die face ([`DrawStream::draw_die`]). The damage IS that
 //!    roll — a real draw, not a constant.
 //! 3. **Commit + bind.** The blow commits as ONE real cap-bounded turn on the keep
-//!    world-cell (`hp -= roll`) under the trade-blows method — so the executor's
-//!    `FieldGte(hp, 1)` tooth still bites (a roll that would drop HP below 1 is a
-//!    REAL refusal). The draw's `[event_id ‖ transcript_commitment ‖ roll ‖ damage]`
+//!    world-cell (`hp -= roll`) under [`crate::DICE_BLOW_METHOD`] — the keep's own case
+//!    for a VARIABLE-damage blow, whose executor teeth bound `Δhp` to `[−12, −1]` and
+//!    carry the same `FieldGte(hp, 1)` floor, so a roll that would drop HP below 1 is a
+//!    REAL refusal, a healing "blow" is a REAL refusal, and damage past the die's top
+//!    face is a REAL refusal. (It deliberately does NOT ride the scripted
+//!    [`crate::KP_TRADE_BLOWS`] method, whose exact `FieldDelta { hp, −20 }` pin is the
+//!    keep's staple closure for `hp` and stays exact.) The draw's
+//!    `[event_id ‖ transcript_commitment ‖ roll ‖ damage]`
 //!    rides the SAME [`TurnReceipt`] via an [`Effect::EmitEvent`] under
 //!    [`DICE_TOPIC`] — exactly the receipt-only binding `narrator` uses for the
 //!    narration commitment. The event is folded into the receipt's
@@ -65,9 +70,9 @@ use dregg_dice::source::Deterministic;
 use dregg_dice::{
     DrawError, DrawStream, RandomnessEvidence, RandomnessRequest, RandomnessSource, VerifyError,
 };
-use spween_dregg::{PASSAGE_SLOT, WorldCell, WorldError, choice_method, field_to_u64};
+use spween_dregg::{PASSAGE_SLOT, WorldCell, WorldError, field_to_u64};
 
-use crate::{KP_TRADE_BLOWS, ROOM_GATEHALL};
+use crate::{DICE_BLOW_MAX_DAMAGE, DICE_BLOW_METHOD, ROOM_GATEHALL};
 
 /// The topic under which a combat draw's binding is emitted onto the real turn.
 /// Distinct from the narration topic and from any state-write method, so a dice
@@ -85,7 +90,12 @@ const GAME_BINDING: &[u8] = b"dungeon-on-dregg/wardens-keep/dice-combat/v1";
 /// The die a combat blow rolls (a d12: damage in `1..=12`, so a couple of blows are
 /// survivable from the keep's 50-HP warden fight and the `FieldGte(hp, 1)` floor is
 /// reachable but not trivial).
-pub const COMBAT_DIE_SIDES: u64 = 12;
+///
+/// This IS the keep's [`crate::DICE_BLOW_MAX_DAMAGE`] — the executor tooth on
+/// [`crate::DICE_BLOW_METHOD`] bounds the HP move by that constant, so the die and the
+/// tooth cannot drift apart into "a roll the program refuses" (the exact failure that kept
+/// this module red).
+pub const COMBAT_DIE_SIDES: u64 = DICE_BLOW_MAX_DAMAGE;
 
 /// A resolved combat draw: the `dregg-dice` request + evidence it was derived from,
 /// the die face rolled, and the damage applied (here `damage == roll`). Carried
@@ -224,12 +234,12 @@ fn snapshot_root(world: &WorldCell) -> [u8; 32] {
     *h.finalize().as_bytes()
 }
 
-/// A commitment to the finalized combat action (the trade-blows method + die), bound
+/// A commitment to the finalized combat action (the dice-blow method + die), bound
 /// into the request's `EventId` so a different action would move the seed.
 fn action_hash(sides: u64) -> [u8; 32] {
     let mut h = blake3::Hasher::new();
     h.update(b"dungeon-on-dregg/dice-combat/action/v1");
-    h.update(choice_method(ROOM_GATEHALL, KP_TRADE_BLOWS).as_bytes());
+    h.update(DICE_BLOW_METHOD.as_bytes());
     h.update(&sides.to_le_bytes());
     *h.finalize().as_bytes()
 }
@@ -288,10 +298,16 @@ fn dice_event_effect(cell: CellId, draw: &CombatDraw) -> Effect {
 }
 
 /// **Commit a rolled blow as ONE real cap-bounded turn.** The blow writes `hp -= roll`
-/// under the trade-blows method (so the executor's `FieldGte(hp, 1)` tooth bites — a
-/// blow that would drop HP below 1 is a REAL [`WorldError::Refused`], nothing commits),
-/// and the draw binds into the SAME receipt via an `EmitEvent`. The trade-blows move is
-/// a self-loop (`-> gatehall`), so the passage slot is rewritten to the gatehall index.
+/// under [`crate::DICE_BLOW_METHOD`] — the keep's own case for a VARIABLE-damage blow,
+/// whose executor teeth are `Δhp ∈ [−12, −1]` (an `AffineDeltaLe` pair: a dice blow can
+/// only move HP down, and only by damage a d12 can deal) plus the same `FieldGte(hp, 1)`
+/// floor the scripted blow carries, so a blow that would drop HP below 1 is a REAL
+/// [`WorldError::Refused`] and nothing commits. The draw binds into the SAME receipt via
+/// an `EmitEvent`. The blow is a self-loop, so the passage slot is rewritten to the
+/// gatehall index.
+///
+/// It does NOT ride `KP_TRADE_BLOWS`: that method's `FieldDelta { hp, −20 }` pin is the
+/// keep's raw-method staple closure for `hp` and stays exact.
 pub fn resolve_blow(world: &WorldCell, draw: &CombatDraw) -> Result<CombatReceipt, WorldError> {
     let story = world.story();
     let cell = world.cell_id();
@@ -321,8 +337,7 @@ pub fn resolve_blow(world: &WorldCell, draw: &CombatDraw) -> Result<CombatReceip
         dice_event_effect(cell, draw),
     ];
 
-    let method = choice_method(ROOM_GATEHALL, KP_TRADE_BLOWS);
-    let receipt = world.apply_raw(&method, effects)?;
+    let receipt = world.apply_raw(DICE_BLOW_METHOD, effects)?;
 
     Ok(CombatReceipt {
         receipt,
@@ -396,42 +411,37 @@ pub fn reverify_draw(committed: &CombatReceipt) -> Result<u64, DiceReplayError> 
     Ok(rederived)
 }
 
-/// ⚑ EVERY TEST IN HERE IS `#[ignore]`d ON A REAL, UNFIXED CONTRADICTION — not on cost.
+/// ⚑ THE CONTRADICTION THAT KEPT THIS MODULE RED IS CLOSED (2026-07-27).
 ///
-/// Two features in this crate disagree about the same method, and the later one silently disarmed
-/// the earlier:
+/// Two features in this crate disagreed about the same method, and the later one silently
+/// disarmed the earlier:
 ///
-/// * `dice_combat` (2026-07-11) resolves a blow onto `choice_method(ROOM_GATEHALL,
+/// * `dice_combat` (2026-07-11) resolved a blow onto `choice_method(ROOM_GATEHALL,
 ///   KP_TRADE_BLOWS)` writing `hp - roll`, where `roll` is a verifiable-random draw in
 ///   `1..=COMBAT_DIE_SIDES` (12).
 /// * The keep's raw-method hardening (`lib.rs`, "HP … moves by exactly -20 on a real blow") then
 ///   augmented THAT SAME method with `StateConstraint::FieldDelta { index: hp, delta: -20 }`, to
 ///   close a raw-method staple surface.
 ///
-/// A 12-sided die cannot roll 20, so the pin refuses every dice blow with
-/// `field[3] != old + delta` and all six tests below have been red since. Nothing here is stale
-/// fixture data — the assertions are the ones worth keeping, and they are what detect the clash.
+/// A 12-sided die cannot roll 20, so the pin refused every dice blow with
+/// `field[3] != old + delta` and all six tests below were red from 2026-07-20.
 ///
-/// It is NOT repaired by widening the pin: `-20` exactness is the whole content of the hardening,
-/// and relaxing it to a range would reopen the surface it was written to close. The fix is to give
-/// dice combat its OWN gatehall method (so the fixed-delta pin keeps guarding the scripted blow
-/// while the random blow is constrained by range/`BoundedBy`), which is a game-program change, not
-/// a test change.
+/// It was NOT repaired by widening the pin — `-20` exactness is the whole content of the
+/// hardening. It is repaired by giving the variable-damage blow its OWN method
+/// ([`crate::DICE_BLOW_METHOD`]): the scripted blow keeps its exact pin, and the random blow is
+/// bounded by an `AffineDeltaLe` pair (`Δhp ∈ [−12, −1]`) plus the `FieldGte(hp, 1)` floor. Both
+/// poles are driven below — the honest blows commit, and an over-damaged / healing / no-op blow
+/// on the dice method, and any HP staple on a non-writer method, are REAL executor refusals.
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{KP_PRESS_ON, deploy_keep, keep_scene};
-    use spween_dregg::{Value, WorldError};
+    use spween_dregg::{Value, WorldError, choice_method};
 
     /// A dice-combat blow COMMITS as a real `TurnReceipt`, its damage is a real
     /// `dregg-dice` draw (`1..=sides`), and the draw is BOUND into the receipt via
     /// `EmitEvent`. The blow re-verifies: replay re-derives the SAME roll.
     #[test]
-    #[ignore = "BLOCKED on the KP_TRADE_BLOWS delta pin: the keep augments that method with \
-                `FieldDelta { index: hp, delta: -20 }` (lib.rs, `HP ... moves by exactly -20 on a \
-                real blow`), while `resolve_blow` writes `hp - roll` for a roll in 1..=12. No draw \
-                can equal 20, so EVERY dice blow is refused `field[3] != old + delta`. Needs dice \
-                combat on its own method (or a ranged delta constraint), not a weaker pin"]
     fn a_dice_blow_commits_binds_and_reverifies() {
         let mut world = deploy_keep(40);
         world.seed_var("hp", Value::Int(50));
@@ -474,11 +484,6 @@ mod tests {
     /// sequence re-derives the byte-identical roll (what replay leans on). Two
     /// identically-seeded, identically-driven worlds roll the same first blow.
     #[test]
-    #[ignore = "BLOCKED on the KP_TRADE_BLOWS delta pin: the keep augments that method with \
-                `FieldDelta { index: hp, delta: -20 }` (lib.rs, `HP ... moves by exactly -20 on a \
-                real blow`), while `resolve_blow` writes `hp - roll` for a roll in 1..=12. No draw \
-                can equal 20, so EVERY dice blow is refused `field[3] != old + delta`. Needs dice \
-                combat on its own method (or a ranged delta constraint), not a weaker pin"]
     fn the_draw_reproduces_across_identical_worlds() {
         let mut wa = deploy_keep(41);
         let mut wb = deploy_keep(41);
@@ -499,11 +504,6 @@ mod tests {
     /// request+evidence and CATCHES the forgery — the bound roll no longer matches. The
     /// honest receipt passes the same tooth, so the tooth is real, not vacuous.
     #[test]
-    #[ignore = "BLOCKED on the KP_TRADE_BLOWS delta pin: the keep augments that method with \
-                `FieldDelta { index: hp, delta: -20 }` (lib.rs, `HP ... moves by exactly -20 on a \
-                real blow`), while `resolve_blow` writes `hp - roll` for a roll in 1..=12. No draw \
-                can equal 20, so EVERY dice blow is refused `field[3] != old + delta`. Needs dice \
-                combat on its own method (or a ranged delta constraint), not a weaker pin"]
     fn a_forged_roll_is_caught_on_replay() {
         let mut world = deploy_keep(42);
         world.seed_var("hp", Value::Int(50));
@@ -548,11 +548,6 @@ mod tests {
     /// A forged DAMAGE alone (roll left honest, damage lowered) is caught too — the
     /// damage must be the function of the roll the rules fix.
     #[test]
-    #[ignore = "BLOCKED on the KP_TRADE_BLOWS delta pin: the keep augments that method with \
-                `FieldDelta { index: hp, delta: -20 }` (lib.rs, `HP ... moves by exactly -20 on a \
-                real blow`), while `resolve_blow` writes `hp - roll` for a roll in 1..=12. No draw \
-                can equal 20, so EVERY dice blow is refused `field[3] != old + delta`. Needs dice \
-                combat on its own method (or a ranged delta constraint), not a weaker pin"]
     fn a_forged_damage_is_caught_on_replay() {
         let mut world = deploy_keep(43);
         world.seed_var("hp", Value::Int(50));
@@ -585,11 +580,6 @@ mod tests {
     /// below 1 is a REAL executor refusal — nothing commits (anti-ghost). Driven by
     /// seeding HP to exactly the roll (so `hp - roll == 0 < 1`).
     #[test]
-    #[ignore = "BLOCKED on the KP_TRADE_BLOWS delta pin: the keep augments that method with \
-                `FieldDelta { index: hp, delta: -20 }` (lib.rs, `HP ... moves by exactly -20 on a \
-                real blow`), while `resolve_blow` writes `hp - roll` for a roll in 1..=12. No draw \
-                can equal 20, so EVERY dice blow is refused `field[3] != old + delta`. Needs dice \
-                combat on its own method (or a ranged delta constraint), not a weaker pin"]
     fn a_lethal_dice_blow_is_refused_by_the_hp_floor() {
         let mut world = deploy_keep(44);
         // First learn what seq-0 rolls against a fresh keep, then seed HP so the blow is
@@ -620,11 +610,6 @@ mod tests {
     /// Dice-combat receipts CHAIN onto the real keep receipt chain: a dice blow, then a
     /// narrated press-on, link `pre == prev.post` (one serial writer, one cell).
     #[test]
-    #[ignore = "BLOCKED on the KP_TRADE_BLOWS delta pin: the keep augments that method with \
-                `FieldDelta { index: hp, delta: -20 }` (lib.rs, `HP ... moves by exactly -20 on a \
-                real blow`), while `resolve_blow` writes `hp - roll` for a roll in 1..=12. No draw \
-                can equal 20, so EVERY dice blow is refused `field[3] != old + delta`. Needs dice \
-                combat on its own method (or a ranged delta constraint), not a weaker pin"]
     fn dice_blows_chain_onto_the_keep_receipt_chain() {
         let s = keep_scene();
         let mut world = deploy_keep(45);
@@ -648,5 +633,121 @@ mod tests {
             r.receipt.pre_state_hash, b2.receipt.post_state_hash,
             "the narrated turn chains onto the last dice blow"
         );
+    }
+
+    // ── THE OTHER POLE: the dice method's own teeth still REFUSE ───────────────────
+    //
+    // The dice blow now commits (above). These drive the constraints that stop it from
+    // being a free HP write-hatch, and the constraints on the SCRIPTED blow that the
+    // repair had to leave exact. Every one of them is a REAL `WorldError::Refused` from
+    // the real executor on a `apply_raw` turn a client could actually present — not an
+    // app-level check.
+
+    /// Write a raw HP value on `method` (an `apply_raw` staple, the exact shape the
+    /// keep's raw-method hardening exists to refuse) and return the executor's verdict.
+    fn staple_hp(world: &WorldCell, method: &str, hp: u64) -> Result<TurnReceipt, WorldError> {
+        let hp_slot = *world
+            .story()
+            .var_slots
+            .get("hp")
+            .expect("the keep compiles an `hp` slot");
+        world.apply_raw(
+            method,
+            vec![Effect::SetField {
+                cell: world.cell_id(),
+                index: hp_slot as u64,
+                value: field_from_u64(hp),
+            }],
+        )
+    }
+
+    /// A dice blow claiming MORE damage than the die can roll is a REAL executor refusal
+    /// (`AffineDeltaLe { [(-1, hp)], 12 }`): 12 lands, 13 does not. The bound is the die's
+    /// top face, so the tooth is exactly as wide as the game rule and no wider.
+    #[test]
+    fn a_dice_blow_past_the_dies_top_face_is_refused() {
+        let mut world = deploy_keep(46);
+        world.seed_var("hp", Value::Int(50));
+
+        // The ceiling itself commits (the tooth is not off-by-one tight).
+        staple_hp(&world, DICE_BLOW_METHOD, 50 - DICE_BLOW_MAX_DAMAGE)
+            .expect("a full-face dice blow (12) commits");
+        assert_eq!(world.read_var("hp"), 50 - DICE_BLOW_MAX_DAMAGE);
+
+        // One point past it does not.
+        let hp_before = world.read_var("hp");
+        let out = staple_hp(
+            &world,
+            DICE_BLOW_METHOD,
+            hp_before - (DICE_BLOW_MAX_DAMAGE + 1),
+        );
+        assert!(
+            matches!(out, Err(WorldError::Refused(_))),
+            "a {}-damage dice blow is past a d{DICE_BLOW_MAX_DAMAGE} and must be refused, got {out:?}",
+            DICE_BLOW_MAX_DAMAGE + 1
+        );
+        assert_eq!(
+            world.read_var("hp"),
+            hp_before,
+            "anti-ghost: HP unchanged after the refused over-damage blow"
+        );
+    }
+
+    /// A "blow" that HEALS — or that moves HP not at all — is a REAL executor refusal
+    /// (`AffineDeltaLe { [(1, hp)], -1 }`). This is the mint the `-20` pin was written to
+    /// close, and the dice method does not hand it back: HP can only go DOWN here.
+    #[test]
+    fn a_healing_or_no_op_dice_blow_is_refused() {
+        let mut world = deploy_keep(47);
+        world.seed_var("hp", Value::Int(30));
+
+        let heal = staple_hp(&world, DICE_BLOW_METHOD, 35);
+        assert!(
+            matches!(heal, Err(WorldError::Refused(_))),
+            "a dice blow cannot MINT hp, got {heal:?}"
+        );
+        let noop = staple_hp(&world, DICE_BLOW_METHOD, 30);
+        assert!(
+            matches!(noop, Err(WorldError::Refused(_))),
+            "a dice blow must move hp DOWN — a no-op write-hatch turn is refused, got {noop:?}"
+        );
+        assert_eq!(world.read_var("hp"), 30, "anti-ghost: HP unmoved by either");
+    }
+
+    /// **The staple surface the repair had to leave closed.** The SCRIPTED blow keeps its
+    /// exact `FieldDelta { hp, -20 }`: -20 commits, -19 and -21 are refused. Splitting the
+    /// dice blow onto its own method did not widen this pin by one point.
+    #[test]
+    fn the_scripted_blows_exact_pin_is_untouched_by_the_dice_split() {
+        let scripted = choice_method(ROOM_GATEHALL, crate::KP_TRADE_BLOWS);
+        let mut world = deploy_keep(48);
+        world.seed_var("hp", Value::Int(50));
+
+        for wrong in [50 - 19, 50 - 21, 50 - DICE_BLOW_MAX_DAMAGE] {
+            let out = staple_hp(&world, &scripted, wrong);
+            assert!(
+                matches!(out, Err(WorldError::Refused(_))),
+                "the scripted blow is pinned to exactly -20; hp->{wrong} must be refused, got {out:?}"
+            );
+        }
+        staple_hp(&world, &scripted, 30).expect("the scripted blow's exact -20 still commits");
+        assert_eq!(world.read_var("hp"), 30);
+    }
+
+    /// And HP still cannot move on a method that is not an HP writer — the `Immutable`
+    /// pin `pin_immutable_except` installs. The dice method was ADDED to the writer set;
+    /// nothing else was.
+    #[test]
+    fn hp_still_cannot_be_stapled_onto_a_non_writer_method() {
+        let mut world = deploy_keep(49);
+        world.seed_var("hp", Value::Int(50));
+
+        let press_on = choice_method(ROOM_GATEHALL, KP_PRESS_ON);
+        let out = staple_hp(&world, &press_on, 49);
+        assert!(
+            matches!(out, Err(WorldError::Refused(_))),
+            "hp is Immutable on the press-on method; a staple must be refused, got {out:?}"
+        );
+        assert_eq!(world.read_var("hp"), 50, "anti-ghost: HP unmoved");
     }
 }

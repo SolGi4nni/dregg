@@ -214,7 +214,8 @@ pub mod dialogue;
 use dregg_cell::program::HeapAtom;
 use spween::{Choice, PassageContent, Scene};
 use spween_dregg::{
-    CompiledStory, DECISION_EXT_KEY, GENESIS_METHOD, WorldCell, choice_method, compile_scene, parse,
+    CompiledStory, DECISION_EXT_KEY, GENESIS_DONE_EXT_KEY, GENESIS_METHOD, WorldCell,
+    choice_method, compile_scene, parse,
 };
 
 /// The dungeon, expressed in the spween narrative DSL. Three rooms
@@ -506,6 +507,22 @@ pub const KP_PRIVATE_RAID_MENDER_CHOICES: [usize; 4] = [3, 4, 5, 6];
 /// The dispatch method for a raw heap-write turn ([`WorldCell::apply_raw`]) that stashes
 /// an item into the heap-keyed inventory (mechanic #5).
 pub const STASH_METHOD: &str = "stash";
+
+/// **The VARIABLE-DAMAGE blow's own method** ([`dice_combat`]). Deliberately NOT the
+/// scripted [`KP_TRADE_BLOWS`] choice: that method's `FieldDelta { hp, -20 }` pin IS the
+/// raw-method staple closure for `hp` (a stapled `SetField(hp, …)` on the scripted blow is
+/// refused unless it is exactly -20), and a die that rolls `1..=12` can never satisfy an
+/// exact -20. Widening that pin to a range would hand the staple back on the scripted
+/// method; giving the random blow its OWN case keeps the scripted pin exact and prices the
+/// random one on its own terms — see [`keep_compiled`] for the teeth this case carries.
+pub const DICE_BLOW_METHOD: &str = "dice/gatehall/blow";
+
+/// The largest damage a [`DICE_BLOW_METHOD`] turn may inflict — the top face of the
+/// `dice_combat` die (`dice_combat::COMBAT_DIE_SIDES`). The executor bounds a dice blow's
+/// HP move to a DECREASE in `1..=DICE_BLOW_MAX_DAMAGE`; the exact face is tied to the
+/// verifiable draw by the receipt binding + `dice_combat::reverify_draw`, not by a slot
+/// tooth (the executor cannot read the receipt's event).
+pub const DICE_BLOW_MAX_DAMAGE: u64 = 12;
 /// The heap key of the reliquary crown's owner marker — a WRITE-ONCE heap field: the
 /// first stash claims it, a second stash to a different owner is refused. Keys `>= 16`
 /// live in the cell's committed `fields_map` (the heap), beyond the 16 register slots.
@@ -784,7 +801,63 @@ pub fn keep_compiled() -> CompiledStory {
             delta: signed_delta(-20),
         }],
     );
-    let mut hp_writers = vec![GENESIS_METHOD, trade_blow_method.as_str()];
+    // ── THE VARIABLE-DAMAGE BLOW GETS ITS OWN CASE (`dice_combat`) ──
+    //
+    // The pin above is EXACT on purpose, and it is exactly why a rolled blow cannot ride
+    // that method: a d12 never rolls 20, so `dice_combat` was refused `field[3] != old +
+    // delta` on every draw. The repair is a SEPARATE method, not a looser pin — the
+    // scripted blow keeps its exact -20 and the staple surface it closes stays closed.
+    //
+    // What this case must still refuse, and does:
+    //   * MINTING hp. `AffineDeltaLe { [(1, hp)], -1 }` is `new[hp] − old[hp] <= −1`: a
+    //     dice blow can only ever move HP DOWN. A stapled heal on this method is refused.
+    //   * damage the die cannot deal. `AffineDeltaLe { [(-1, hp)], MAX }` is
+    //     `old[hp] − new[hp] <= 12`: a blow claiming 13 is refused.
+    //   * a no-op. The strict half above forces a real decrease (delta 0 is refused), so a
+    //     "blow" cannot be used as a free write-hatch turn for the other slots.
+    //   * a KILLING blow. `FieldGte { hp, 1 }` is the same floor the scripted blow carries
+    //     (the compiler lowers the scene's `{ hp >= 21 } ~ hp -= 20` gate to it); it is
+    //     restated here because this case is added, not compiled from a scene choice.
+    //   * re-opening the one-shot genesis. Every COMPILED case carries the genesis-done
+    //     sentinel freeze; an `add_case` case does not get it for free, so it is restated
+    //     (without it, `apply_raw(DICE_BLOW_METHOD, [SetField(GENESIS_DONE, 0)])` would be
+    //     a fresh reset hatch — a hole this repair would have OPENED).
+    //   * moving the one-use Mender counter — `pin_immutable_except` below adds
+    //     `Immutable { raid_mending_used }` to this case, because it is not a Mender.
+    //
+    // ⚠ RESOLUTION, stated: `AffineDeltaLe` has NO SlotCaveat AIR projection
+    // (`turn/src/executor/mod.rs`, the deferred list) while `FieldDelta` does. Neither
+    // rides an AIR on any production path today (no production caller populates
+    // `EffectVmContext::slot_caveat_count`), so both are executor-evaluated; but if that
+    // manifest is ever populated, the scripted blow's pin binds in-circuit and this
+    // bounded tooth does not. And within `[1, 12]` the executor bounds the damage without
+    // PINNING it to the face that was rolled — the executor cannot read the receipt's
+    // `EmitEvent`. The roll→damage tie is `dice_combat::reverify_draw` (O(N) replay), and
+    // that is the whole of it.
+    add_case(
+        &mut story.program,
+        DICE_BLOW_METHOD,
+        vec![
+            StateConstraint::AffineDeltaLe {
+                terms: vec![(1, hp)],
+                c: -1,
+            },
+            StateConstraint::AffineDeltaLe {
+                terms: vec![(-1, hp)],
+                c: DICE_BLOW_MAX_DAMAGE as i64,
+            },
+            StateConstraint::FieldGte {
+                index: hp,
+                value: field_from_u64(1),
+            },
+            StateConstraint::HeapField {
+                key: GENESIS_DONE_EXT_KEY,
+                atom: HeapAtom::Immutable,
+            },
+        ],
+    );
+
+    let mut hp_writers = vec![GENESIS_METHOD, trade_blow_method.as_str(), DICE_BLOW_METHOD];
     hp_writers.extend(raid_mender_methods.iter().map(String::as_str));
     pin_immutable_except(&mut story.program, &hp_writers, hp);
     let mending_writers: Vec<&str> = raid_mender_methods.iter().map(String::as_str).collect();
