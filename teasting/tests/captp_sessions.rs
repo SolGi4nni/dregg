@@ -23,6 +23,15 @@ use dregg_teasting::federation::dual_federation;
 use dregg_teasting::harness::SimulationHarness;
 use dregg_types::{CellId, generate_keypair};
 
+mod common;
+
+// `SimulationHarness` / `dual_federation` mint blocks, whose hybrid creator identity reaches ML-DSA
+// through `dregg_blocklace::Block::new`; with no verified core installed `dregg-pq` aborts the
+// PROCESS rather than answer with the unaudited `fips204` crate. Same remedy as `fault_crash.rs`:
+// install the Lean-verified cores at process start. NOT a bypass — `dregg-pq-testkit` installs the
+// AUDITED, Lean-extracted cores and sets no audit-waiver environment variable.
+dregg_pq_testkit::install_at_process_start!();
+
 // =============================================================================
 // Helpers
 // =============================================================================
@@ -198,8 +207,16 @@ fn test_pipeline_three_actions_resolve() {
 
 /// Handoff protocol: A introduces C to a capability at A's target federation.
 /// C presents the signed certificate and gains access.
+///
+/// The handoff below is HONEST: the swiss entry records `held = Signature` and the certificate
+/// grants exactly `Signature`, so `granted == held` and nothing is amplified. Admitting it requires
+/// the verified §6 gate to be installed — `validate_handoff` has no Rust fallback for that verdict
+/// and refuses outright without one (see `tests/common/mod.rs`).
 #[test]
 fn test_handoff_certificate_flow() {
+    if !common::install_verified_captp_gate() {
+        return;
+    }
     let _harness = SimulationHarness::two_federations(3, 3);
 
     // Setup identities.

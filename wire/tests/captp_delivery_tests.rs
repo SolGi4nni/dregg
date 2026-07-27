@@ -28,6 +28,8 @@ use dregg_wire::captp_routing;
 use dregg_wire::message::WireMessage;
 use dregg_wire::prelude::CapTpState;
 
+mod common;
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -136,6 +138,12 @@ fn peer_disconnect_breaks_outstanding_promises() {
 /// target federation.
 #[test]
 fn three_party_handoff_validates_on_target() {
+    // This test needs a LEGITIMATE handoff to VALIDATE, and `validate_handoff` decides §6
+    // non-amplification only through the verified-Lean gate — refusing outright when none is
+    // registered. Install it as a native node does at startup. See `tests/common/mod.rs`.
+    if !common::install_verified_captp_gate() {
+        return;
+    }
     // Alice = introducer (signs the cert).
     let (alice_sk, alice_pk) = generate_keypair();
     let alice_fed = FederationId(alice_pk.0);
@@ -198,6 +206,12 @@ fn three_party_handoff_validates_on_target() {
 /// the same nonce and confirm the second one is rejected.
 #[test]
 fn handoff_replay_rejected_by_seen_nonce_registry() {
+    // This test needs a LEGITIMATE handoff to VALIDATE, and `validate_handoff` decides §6
+    // non-amplification only through the verified-Lean gate — refusing outright when none is
+    // registered. Install it as a native node does at startup. See `tests/common/mod.rs`.
+    if !common::install_verified_captp_gate() {
+        return;
+    }
     // Setup the same way the wire handler would.
     let (alice_sk, alice_pk) = generate_keypair();
     let alice_fed = FederationId(alice_pk.0);
@@ -294,6 +308,12 @@ fn make_delivery_setup(
 /// against a ledger with the target cell and the receipt commits.
 #[test]
 fn captp_delivered_loop_closes_executor_accepts_and_commits() {
+    // This test needs a LEGITIMATE handoff to VALIDATE, and `validate_handoff` decides §6
+    // non-amplification only through the verified-Lean gate — refusing outright when none is
+    // registered. Install it as a native node does at startup. See `tests/common/mod.rs`.
+    if !common::install_verified_captp_gate() {
+        return;
+    }
     use dregg_cell::{Cell, Ledger, Permissions, permissions::AuthRequired as P};
     use dregg_turn::action::Authorization;
     use dregg_turn::executor::{ComputronCosts, TurnExecutor};

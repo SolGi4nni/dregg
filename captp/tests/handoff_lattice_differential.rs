@@ -20,10 +20,21 @@
 //! It ALSO drives the FULL runtime entry point (`validate_handoff`) over every (held, granted)
 //! pair. Since `validate_handoff`'s §6 verdict now comes ONLY from the verified Lean gate (the
 //! hand-written Rust lattice was deleted from the live path) and this binary registers NO gate, that
-//! runtime tooth asserts `validate_handoff` FAILS CLOSED — refuses every pair with `Amplification`,
-//! including attenuating pairs the old Rust fallback would have admitted. The admit-iff-lattice
-//! decision itself is pinned Rust↔Lean by the two pure teeth here and exercised over a linked archive
-//! in `dregg-exec-lean`.
+//! runtime tooth asserts `validate_handoff` FAILS CLOSED — refuses every pair, including attenuating
+//! pairs the old Rust fallback would have admitted.
+//!
+//! ⚠ **What this binary can and cannot see.** A gate-less process refuses every handoff, so a
+//! refusal HERE is not evidence about the amplification rule: it is returned identically for an
+//! attenuating pair. `validate_handoff` now names that case `HandoffError::VerifiedGateUnavailable`
+//! rather than `Amplification`, and the runtime tooth below asserts that exact variant — which is
+//! strictly more than it asserted before, because "refused for want of a checker" and "refused by
+//! the checker" are no longer the same observation. Two tests here that used to assert
+//! `Amplification` for the headline amplifying pairs were reading the fail-closed refusal and would
+//! have passed with the rule deleted; they are renamed to claim only what a gate-less binary can
+//! establish. The ADMIT-IFF-LATTICE decision is pinned Rust↔Lean by the two pure teeth here, and
+//! both runtime poles over a linked archive — attenuating ADMITTED, amplifying REFUSED as
+//! `Amplification` — are proved in `teasting/tests/captp_verified_gate_poles.rs`,
+//! `node/src/captp_handoff_e2e.rs`, and `dregg-redteam`'s CapTP attack suites.
 
 use dregg_captp::{
     FederationId, HandoffCertificate, HandoffError, HandoffPresentation, SwissTable,
@@ -144,10 +155,16 @@ fn run_handoff(held: AuthRequired, granted: AuthRequired) -> Result<(), HandoffE
 /// verified Lean gate (`dregg_captp_validate_handoff`); the hand-written Rust rights lattice was
 /// deleted from the live path. With NO verified gate registered — the state of this test binary —
 /// `validate_handoff` FAILS CLOSED at §6: EVERY handoff over the corpus, attenuating AND amplifying,
-/// is REFUSED with `Amplification`. In particular a legitimately ATTENUATING handoff (which the
-/// deleted Rust fallback would have admitted) is now refused, proving the twin is gone from the live
-/// path. (The Rust↔Lean lattice agreement is pinned by the two pure teeth above; the ADMITTING path
-/// over a linked archive is exercised in `dregg-exec-lean`'s tests.)
+/// is REFUSED. In particular a legitimately ATTENUATING handoff (which the deleted Rust fallback
+/// would have admitted) is refused, proving the twin is gone from the live path.
+///
+/// The refusal must be `VerifiedGateUnavailable`, NOT `Amplification`. That is the whole content of
+/// the fail-closed posture: the handoff is turned away because the check could not RUN, and a
+/// validator that reports it as an amplification attempt is accusing an honest presenter of the
+/// receiver's own misconfiguration. Asserting the exact variant is also what stops this file from
+/// laundering "no gate here" into evidence about the amplification rule — the two pure teeth above
+/// pin the Rust↔Lean lattice agreement, and the runtime ADMIT/REFUSE poles over a linked archive
+/// live in `teasting/tests/captp_verified_gate_poles.rs`.
 #[test]
 fn validate_handoff_fails_closed_over_corpus_without_gate() {
     let ps = probes();
@@ -156,34 +173,42 @@ fn validate_handoff_fails_closed_over_corpus_without_gate() {
             let verdict = run_handoff(held.clone(), granted.clone());
             assert_eq!(
                 verdict,
-                Err(HandoffError::Amplification),
-                "without the verified gate, validate_handoff must FAIL CLOSED (refuse as \
-                 Amplification) — held={held:?} granted={granted:?}; including attenuating pairs the \
-                 deleted Rust lattice would have admitted"
+                Err(HandoffError::VerifiedGateUnavailable),
+                "without the verified gate, validate_handoff must FAIL CLOSED and say WHY — \
+                 held={held:?} granted={granted:?}; including attenuating pairs the deleted Rust \
+                 lattice would have admitted, and never blaming the presenter with Amplification"
             );
         }
     }
 }
 
-/// The headline amplification — granting `None` (unauthenticated) over a held `Signature` — is
-/// refused as `Amplification` at the runtime entry point (Lean `grant_none_over_nonnone_amplifies`).
-/// With no gate registered here the refusal is the fail-closed refusal; a fortiori the amplifying
-/// handoff never slips through.
+/// The headline amplification — granting `None` (unauthenticated) over a held `Signature` (Lean
+/// `grant_none_over_nonnone_amplifies`) — does not slip through the runtime entry point.
+///
+/// ⚠ Read the assertion, not the scenario. This binary registers no gate, so the refusal observed
+/// here is `VerifiedGateUnavailable` and is returned for EVERY pair; it establishes only that the
+/// amplifying handoff is not admitted, which is a fortiori true when nothing is admitted. It is NOT
+/// evidence that the non-amplification rule rejected this pair — that claim needs a process where
+/// attenuating pairs are admitted, and it is proved over the real Lean gate by
+/// `teasting/tests/captp_verified_gate_poles.rs::granting_none_over_held_signature_is_refused`.
+/// (This test asserted `Amplification` until the variant split made the difference visible; it was
+/// green with the rule deleted.)
 #[test]
-fn grant_none_over_signature_rejected_at_runtime() {
+fn grant_none_over_signature_not_admitted_at_runtime() {
     assert_eq!(
         run_handoff(AuthRequired::Signature, AuthRequired::None),
-        Err(HandoffError::Amplification)
+        Err(HandoffError::VerifiedGateUnavailable)
     );
 }
 
-/// Conjuring `Signature` from a held `Impossible` (locked cap) is refused (Lean
-/// `grant_signature_over_impossible_amplifies`). As above, the refusal is fail-closed without the
-/// gate; the amplifying handoff is never admitted.
+/// Conjuring `Signature` from a held `Impossible` (locked cap) does not slip through either (Lean
+/// `grant_signature_over_impossible_amplifies`). Same caveat as above: without a gate this is the
+/// fail-closed refusal, and the rule-decided refusal is proved in
+/// `teasting/tests/captp_verified_gate_poles.rs::granting_signature_over_held_impossible_is_refused`.
 #[test]
-fn grant_signature_over_impossible_rejected_at_runtime() {
+fn grant_signature_over_impossible_not_admitted_at_runtime() {
     assert_eq!(
         run_handoff(AuthRequired::Impossible, AuthRequired::Signature),
-        Err(HandoffError::Amplification)
+        Err(HandoffError::VerifiedGateUnavailable)
     );
 }

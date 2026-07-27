@@ -20,6 +20,8 @@ use dregg_captp::sturdy::{EnlivenError, SwissTable};
 use dregg_cell::AuthRequired;
 use dregg_types::{generate_keypair, CellId, FederationId, PublicKey, SigningKey};
 
+mod common;
+
 fn introducer() -> (SigningKey, FederationId) {
     let (sk, pk) = generate_keypair();
     (sk, FederationId(pk.0))
@@ -44,6 +46,12 @@ fn introducer() -> (SigningKey, FederationId) {
 
 #[test]
 fn finding_handoff_nonce_replay_is_not_prevented() {
+    // The §6 non-amplification rule this test attacks lives behind the verified-Lean gate;
+    // with none registered `validate_handoff` refuses every handoff and the assertions below
+    // hold vacuously. See `tests/common/mod.rs`.
+    if !common::install_verified_captp_gate() {
+        return;
+    }
     let (intro_sk, intro_fed) = introducer();
     let intro_pk = PublicKey(intro_fed.0);
     let (recip_sk, recip_pk) = generate_keypair();
@@ -135,6 +143,12 @@ fn finding_handoff_nonce_replay_is_not_prevented() {
 
 #[test]
 fn deep_custom_cross_vk_grant_is_rejected() {
+    // The §6 non-amplification rule this test attacks lives behind the verified-Lean gate;
+    // with none registered `validate_handoff` refuses every handoff and the assertions below
+    // hold vacuously. See `tests/common/mod.rs`.
+    if !common::install_verified_captp_gate() {
+        return;
+    }
     let (intro_sk, intro_fed) = introducer();
     let intro_pk = PublicKey(intro_fed.0);
     let (recip_sk, recip_pk) = generate_keypair();
@@ -186,6 +200,12 @@ fn deep_custom_cross_vk_grant_is_rejected() {
 
 #[test]
 fn deep_custom_vs_concrete_both_directions_rejected() {
+    // The §6 non-amplification rule this test attacks lives behind the verified-Lean gate;
+    // with none registered `validate_handoff` refuses every handoff and the assertions below
+    // hold vacuously. See `tests/common/mod.rs`.
+    if !common::install_verified_captp_gate() {
+        return;
+    }
     let (intro_sk, intro_fed) = introducer();
     let intro_pk = PublicKey(intro_fed.0);
     let (recip_sk, recip_pk) = generate_keypair();
@@ -254,6 +274,12 @@ fn deep_custom_vs_concrete_both_directions_rejected() {
 
 #[test]
 fn deep_proof_signature_sibling_grants_rejected() {
+    // The §6 non-amplification rule this test attacks lives behind the verified-Lean gate;
+    // with none registered `validate_handoff` refuses every handoff and the assertions below
+    // hold vacuously. See `tests/common/mod.rs`.
+    if !common::install_verified_captp_gate() {
+        return;
+    }
     let (intro_sk, intro_fed) = introducer();
     let intro_pk = PublicKey(intro_fed.0);
     let (recip_sk, recip_pk) = generate_keypair();
@@ -362,6 +388,12 @@ fn deep_expiration_boundary_is_exact() {
 
 #[test]
 fn deep_recipient_rebind_after_sign_is_rejected() {
+    // The §6 non-amplification rule this test attacks lives behind the verified-Lean gate;
+    // with none registered `validate_handoff` refuses every handoff and the assertions below
+    // hold vacuously. See `tests/common/mod.rs`.
+    if !common::install_verified_captp_gate() {
+        return;
+    }
     let (intro_sk, intro_fed) = introducer();
     let intro_pk = PublicKey(intro_fed.0);
     let (_legit_recip_sk, legit_recip_pk) = generate_keypair();
@@ -408,6 +440,12 @@ fn deep_recipient_rebind_after_sign_is_rejected() {
 
 #[test]
 fn deep_swiss_swap_after_sign_is_rejected() {
+    // The §6 non-amplification rule this test attacks lives behind the verified-Lean gate;
+    // with none registered `validate_handoff` refuses every handoff and the assertions below
+    // hold vacuously. See `tests/common/mod.rs`.
+    if !common::install_verified_captp_gate() {
+        return;
+    }
     let (intro_sk, intro_fed) = introducer();
     let intro_pk = PublicKey(intro_fed.0);
     let (recip_sk, recip_pk) = generate_keypair();

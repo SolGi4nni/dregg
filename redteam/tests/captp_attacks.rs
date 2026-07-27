@@ -14,6 +14,8 @@ use dregg_cell::AuthRequired;
 use dregg_redteam::{flip_bit, mint_dalek_keypair, AttackOutcome};
 use dregg_types::{generate_keypair, CellId, FederationId, SigningKey};
 
+mod common;
+
 // --- shared scenario builders ----------------------------------------------
 
 fn introducer() -> (SigningKey, FederationId) {
@@ -82,6 +84,12 @@ fn attack_confinement_guess_swiss_number_is_rejected() {
 
 #[test]
 fn attack_amplify_permissions_is_rejected() {
+    // The §6 non-amplification rule this test attacks lives behind the verified-Lean gate;
+    // with none registered `validate_handoff` refuses every handoff and the assertions below
+    // hold vacuously. See `tests/common/mod.rs`.
+    if !common::install_verified_captp_gate() {
+        return;
+    }
     let (intro_sk, intro_fed) = introducer();
     let intro_pk = dregg_types::PublicKey(intro_fed.0);
     let (recip_sk, recip_pk) = generate_keypair();
@@ -118,6 +126,12 @@ fn attack_amplify_permissions_is_rejected() {
 
 #[test]
 fn attack_amplify_effect_mask_is_rejected() {
+    // The §6 non-amplification rule this test attacks lives behind the verified-Lean gate;
+    // with none registered `validate_handoff` refuses every handoff and the assertions below
+    // hold vacuously. See `tests/common/mod.rs`.
+    if !common::install_verified_captp_gate() {
+        return;
+    }
     let (intro_sk, intro_fed) = introducer();
     let intro_pk = dregg_types::PublicKey(intro_fed.0);
     let (recip_sk, recip_pk) = generate_keypair();
@@ -174,6 +188,12 @@ fn attack_amplify_effect_mask_is_rejected() {
 
 #[test]
 fn attack_forge_introducer_signature_is_rejected() {
+    // The §6 non-amplification rule this test attacks lives behind the verified-Lean gate;
+    // with none registered `validate_handoff` refuses every handoff and the assertions below
+    // hold vacuously. See `tests/common/mod.rs`.
+    if !common::install_verified_captp_gate() {
+        return;
+    }
     let (intro_sk, intro_fed) = introducer();
     let intro_pk = dregg_types::PublicKey(intro_fed.0);
     let (recip_sk, recip_pk) = generate_keypair();
@@ -207,6 +227,12 @@ fn attack_forge_introducer_signature_is_rejected() {
 
 #[test]
 fn attack_intercept_cert_present_as_wrong_recipient_is_rejected() {
+    // The §6 non-amplification rule this test attacks lives behind the verified-Lean gate;
+    // with none registered `validate_handoff` refuses every handoff and the assertions below
+    // hold vacuously. See `tests/common/mod.rs`.
+    if !common::install_verified_captp_gate() {
+        return;
+    }
     // Network attacker intercepts a cert in transit and tries to present it as
     // themselves (they do NOT own recipient_pk).
     let (intro_sk, intro_fed) = introducer();
@@ -256,6 +282,12 @@ fn attack_intercept_cert_present_as_wrong_recipient_is_rejected() {
 
 #[test]
 fn finding_amplifying_handoff_consumes_a_use_on_rejection() {
+    // The §6 non-amplification rule this test attacks lives behind the verified-Lean gate;
+    // with none registered `validate_handoff` refuses every handoff and the assertions below
+    // hold vacuously. See `tests/common/mod.rs`.
+    if !common::install_verified_captp_gate() {
+        return;
+    }
     let (intro_sk, intro_fed) = introducer();
     let intro_pk = dregg_types::PublicKey(intro_fed.0);
     let (recip_sk, recip_pk) = generate_keypair();
@@ -388,6 +420,12 @@ fn finding_enliven_error_taxonomy_is_a_membership_oracle() {
 
 #[test]
 fn attack_untrusted_introducer_is_rejected() {
+    // The §6 non-amplification rule this test attacks lives behind the verified-Lean gate;
+    // with none registered `validate_handoff` refuses every handoff and the assertions below
+    // hold vacuously. See `tests/common/mod.rs`.
+    if !common::install_verified_captp_gate() {
+        return;
+    }
     let (intro_sk, intro_fed) = introducer();
     let intro_pk = dregg_types::PublicKey(intro_fed.0);
     let (recip_sk, recip_pk) = generate_keypair();

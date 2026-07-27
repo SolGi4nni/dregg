@@ -301,7 +301,8 @@ fn verified_decision(yes: usize, no: usize, n: usize, threshold: usize) -> Optio
         Some(Verdict2pc::Commit) => Some(Decision::Commit),
         Some(Verdict2pc::Abort) => Some(Decision::Abort),
         Some(Verdict2pc::Pending) => Some(Decision::Pending),
-        // FFI / wire error ⇒ fall back to the native Rust (never break the live coordinator path).
+        // FFI / wire error ⇒ `None`, which the caller (`evaluate_votes`) turns into the fail-closed
+        // `evaluate_votes_no_gate()` — an ABORT from `Proposing`, not the native Rust tally.
         None => None,
     }
 }

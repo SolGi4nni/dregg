@@ -68,6 +68,22 @@ curve25519-dalek = { version = "4", features = ["alloc"] }
 # false there and an install in `src/` would be INERT. It goes at process start in each test
 # file instead. See `dregg-pq-testkit`'s crate docs.
 dregg-pq-testkit = { path = "../dregg-pq-testkit" }
+# TEST-ONLY: the single FFI boundary that implements `dregg-captp`'s `verified_gate` seam over the
+# linked Lean archive. `validate_handoff` decides §6 non-amplification ONLY through that seam and
+# FAILS CLOSED when it is unregistered (`e3f0e7b92`'s twin deletion), so without this every handoff
+# this suite drives — including a first, honest, `granted == held` presentation — was refused. A
+# native node installs it at startup via `dregg_exec_lean::register_distributed_gates()`
+# (`node/src/lib.rs::install_verified_distributed_gates`); a test binary that drives the handoff
+# path has to do the same thing, and `tests/common/mod.rs` is where this suite does it.
+#
+# COST, measured rather than assumed — it is per-BINARY-THAT-CALLS, not per-crate: the linker pulls
+# static-archive members BY REFERENCE, so a test binary that merely has this edge in its graph and
+# never calls in links no Lean member and stays small, while one that does call in pays the archive.
+# Same shape and same reasoning as the `dregg-pq-testkit` edge above.
+dregg-exec-lean = { path = "../exec-lean" }
+# For `demand_lean` — the archive-absent case must PANIC with a named capability rather than print
+# `ok` for a test that asserted nothing about the verified gate it is named after.
+dregg-lean-ffi = { path = "../dregg-lean-ffi" }
 
 [features]
 # `prover` is in the DEFAULT set (matching `dregg-circuit`/`dregg-sdk`/`dregg-turn`/`dregg-verifier`,

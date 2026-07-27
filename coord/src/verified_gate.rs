@@ -3,9 +3,28 @@
 //! `dregg-coord` is FFI-free: it builds the wire encodings for its three verified decisions
 //! (causal happened-before, 2PC decide, shared-budget resolve) and routes them through this seam,
 //! never calling `dregg-lean-ffi` directly. A native node installs the Lean-backed implementation
-//! once at startup (`dregg-exec-lean` provides it); a wasm / verifier-PD / pg build simply never
-//! registers one, so every gate query returns `None` and the native-Rust differential sibling
-//! decides — exactly the behavior the deleted `no-lean-link` feature used to compile in.
+//! once at startup (`dregg-exec-lean`'s `register_distributed_gates`); a wasm / verifier-PD / pg
+//! build simply never registers one, so every gate query returns `None`.
+//!
+//! # ⚠ AN ABSENT GATE REFUSES. ALL THREE OF THEM.
+//!
+//! This doc used to end "…and the native-Rust differential sibling decides — exactly the behavior
+//! the deleted `no-lean-link` feature used to compile in," and the trait below used to add that the
+//! gate "is never allowed to break a live coordinator path, only to make it verified." Both were
+//! true when this seam was written and BOTH ARE NOW BACKWARDS: the twin-deletion sweep
+//! (`e3f0e7b92`, 2026-07-24) removed the native sibling from all three LIVE paths in favour of
+//! fail-closed refusals, and updated each decision site's own comment without touching this file.
+//! At HEAD an unregistered gate does not degrade a coordinator to unverified — it stops it:
+//!
+//! | decision | consumer | gate absent ⇒ |
+//! |---|---|---|
+//! | causal happened-before | `causal::happened_before_verified` | `lean_happened_before(..).unwrap_or(false)` — reports NOT ordered for every pair. |
+//! | 2PC decide | `atomic`'s `evaluate_votes` | `evaluate_votes_no_gate()` — a `Proposing` state ABORTS rather than commit. |
+//! | shared-budget resolve | `shared_budget`'s tau resolution | `resolve_ordering_no_gate()` — REJECTS every debit, balance untouched. |
+//!
+//! The native siblings still exist, but as `#[cfg(test)]`/differential objects that the live path no
+//! longer reaches. A production coordinator MUST install the gate; the same is true of any test
+//! binary that drives one of these decisions and expects a non-refusal.
 //!
 //! The wire grammars are documented at the seam impl in `dregg-exec-lean`; the encode/decode logic
 //! that produces / consumes them lives here in `dregg-coord` (it is pure, FFI-free).
@@ -28,8 +47,10 @@ pub enum Verdict2pc {
 /// and injected on a native node; absent (⇒ `gate()` is `None`) on FFI-free targets.
 ///
 /// Each method returns `None` when the verified gate is unavailable (archive not linked / export
-/// absent / wire error), so the caller falls back to the native-Rust decision — the gate is never
-/// allowed to break a live coordinator path, only to make it verified.
+/// absent / wire error). ⚠ That `None` is a REFUSAL on all three live paths, not a fallback to the
+/// native-Rust decision — see the module docs above for the per-decision table. (This doc used to
+/// say the opposite: "the gate is never allowed to break a live coordinator path, only to make it
+/// verified." Not installing it breaks every one of them.)
 pub trait CoordVerifiedGate: Send + Sync {
     /// Whether the verified distributed-exports module is linked and queryable.
     fn distributed_exports_available(&self) -> bool;

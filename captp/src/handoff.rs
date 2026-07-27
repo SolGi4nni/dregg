@@ -100,6 +100,31 @@ pub enum HandoffError {
     /// could name an arbitrary target and the non-amplification check (over
     /// rights, not target) would not catch it.
     TargetMismatch,
+    /// §6 non-amplification COULD NOT BE DECIDED: no verified Lean gate is
+    /// registered in this process (or the linked archive lacks the export, or the
+    /// gate errored on the wire). The handoff is still REFUSED — fail-closed is the
+    /// only safe verdict for an undecided authority comparison — but this is a
+    /// MISCONFIGURED VALIDATOR, not a detected attack.
+    ///
+    /// # Why this is not [`HandoffError::Amplification`]
+    ///
+    /// It used to be. `validate_handoff` decided §6 through the gate and collapsed
+    /// `None` into the amplifying verdict (`.unwrap_or(false)`), so a vat that had
+    /// simply never called `dregg_exec_lean::register_distributed_gates()` accused
+    /// every honest peer of authority amplification — on a first, honest,
+    /// `granted == held` presentation. Two facts with opposite remedies ("your
+    /// certificate is an attack" / "my validator never installed its checker")
+    /// arrived as the same byte, so neither an operator, a peer, nor a test could
+    /// tell whether the check had run at all. `handoff_session::accept_handoff`
+    /// even reported `Refused { amplification: true }` back over the wire, which
+    /// slandered the presenter for the receiver's own misconfiguration.
+    ///
+    /// A silent hard refusal and a silent accept are the same defect wearing
+    /// different clothes: in both, the caller cannot tell whether the check ran.
+    /// Naming the case fixes that without relaxing anything — the handoff is
+    /// refused exactly as before, and the amplification decision itself is
+    /// untouched and still comes only from the verified Lean gate.
+    VerifiedGateUnavailable,
 }
 
 impl std::fmt::Display for HandoffError {
@@ -150,6 +175,13 @@ impl std::fmt::Display for HandoffError {
             HandoffError::TargetMismatch => write!(
                 f,
                 "handoff target mismatch: certificate target_cell differs from the swiss entry's cell"
+            ),
+            HandoffError::VerifiedGateUnavailable => write!(
+                f,
+                "handoff REFUSED because §6 non-amplification could not be decided: no verified \
+                 Lean CapTP gate is registered in this process (call \
+                 `dregg_exec_lean::register_distributed_gates()` at startup, as `node/src/lib.rs` \
+                 does). This is a misconfigured validator, NOT an amplifying certificate"
             ),
         }
     }
@@ -916,10 +948,11 @@ fn effect_mask_field(m: Option<EffectMask>) -> String {
 /// Decide the §6 non-amplification verdict via the VERIFIED Lean export
 /// `dregg_captp_validate_handoff` (= `Dregg2.Exec.CapTPConcrete.handoffNonAmplifyingC`). Returns
 /// `Some(true)` (non-amplifying) / `Some(false)` (amplifies) when the gate ran, or `None` when the
-/// verified gate is unavailable (no gate registered / archive lacks the export) — in which case
-/// [`validate_handoff`] FAILS CLOSED (treats the handoff as amplifying and REFUSES) rather than
-/// running an unverified Rust decision on the live path. Routes through the [`crate::verified_gate`]
-/// seam so the crate has no hard dependency on the Lean archive.
+/// verified gate is unavailable (no gate registered / archive lacks the export / a wire error) — in
+/// which case [`validate_handoff`] FAILS CLOSED and REFUSES with
+/// [`HandoffError::VerifiedGateUnavailable`], rather than running an unverified Rust decision on the
+/// live path or blaming the presenter with [`HandoffError::Amplification`]. Routes through the
+/// [`crate::verified_gate`] seam so the crate has no hard dependency on the Lean archive.
 fn verified_non_amplifying(
     granted_perm: &AuthRequired,
     held_perm: &AuthRequired,
@@ -937,8 +970,8 @@ fn verified_non_amplifying(
         effect_mask_field(held_eff),
         effect_mask_field(granted_eff),
     );
-    // FFI / wire error ⇒ `None` ⇒ the caller FAILS CLOSED (refuses the handoff), never a silent
-    // unverified Rust decision.
+    // FFI / wire error ⇒ `None` ⇒ the caller FAILS CLOSED (refuses the handoff as
+    // `VerifiedGateUnavailable`), never a silent unverified Rust decision.
     gate.handoff_non_amplifying(&wire)
 }
 
@@ -1051,20 +1084,27 @@ fn validate_handoff_body(
     //    differential twin that could silently diverge in a config where the gate is absent, so it has
     //    been deleted from this live path.
     //
-    //    FAIL CLOSED: when no verified gate is registered (an FFI-free target, a vat that never
-    //    installed the `dregg-exec-lean` gate, or an archive lacking the export) the verdict is treated
-    //    as AMPLIFYING and the handoff is REFUSED — never a silent unverified Rust decision. A
-    //    production vat MUST install the gate; refusing the handoff is the safe verdict when it is
-    //    absent. (The concrete rights lattice `AuthRequired::is_narrower_or_equal` + `is_facet_attenuation`
-    //    remains pinned Rust↔Lean by `handoff_lattice_differential.rs`, and the ACCEPTING path over a
-    //    linked archive is exercised in `dregg-exec-lean`'s tests.)
-    let non_amplifying = verified_non_amplifying(
+    //    FAIL CLOSED, AND SAY WHICH: when no verified gate is registered (an FFI-free target, a vat
+    //    that never installed the `dregg-exec-lean` gate, or an archive lacking the export) the
+    //    handoff is REFUSED — never a silent unverified Rust decision. But it is refused as
+    //    `VerifiedGateUnavailable`, NOT as `Amplification`: the gate having been unable to run is a
+    //    fact about THIS VALIDATOR, and reporting it as an attack by the presenter is what let a
+    //    missing `register_distributed_gates()` masquerade as an honest peer amplifying authority.
+    //    The refusal is identical; only its NAME now distinguishes "could not check" from "checked,
+    //    and it amplifies". (The concrete rights lattice `AuthRequired::is_narrower_or_equal` +
+    //    `is_facet_attenuation` remains pinned Rust↔Lean by `handoff_lattice_differential.rs`, and
+    //    both poles over a linked archive — attenuating ADMITTED, amplifying REFUSED — are exercised
+    //    by `node/src/captp_handoff_e2e.rs`, `teasting/tests/captp_verified_gate_poles.rs`, and
+    //    `dregg-redteam`'s CapTP attack suites.)
+    let non_amplifying = match verified_non_amplifying(
         &cert.permissions,
         &held.permissions,
         cert.allowed_effects,
         held.allowed_effects,
-    )
-    .unwrap_or(false);
+    ) {
+        Some(v) => v,
+        None => return Err(HandoffError::VerifiedGateUnavailable),
+    };
     if !non_amplifying {
         return Err(HandoffError::Amplification);
     }

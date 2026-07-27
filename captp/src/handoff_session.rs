@@ -226,6 +226,14 @@ impl HandoffResolution {
 /// cert's `permissions` cannot escalate beyond its registered rights: that path
 /// is refused as [`HandoffError::Amplification`] and the reply is
 /// `Refused { amplification: true }`.
+///
+/// ⚠ `amplification: true` is reported ONLY for a decided amplification. If this
+/// vat never registered a verified CapTP gate, `validate_handoff` refuses with
+/// [`HandoffError::VerifiedGateUnavailable`] and the reply carries
+/// `amplification: false` plus a `reason` naming the missing registration — the
+/// receiver's misconfiguration is not charged to the presenter. (Before that
+/// variant existed the two collapsed, and a vat that had merely forgotten
+/// `register_distributed_gates()` told every honest peer it had tried to amplify.)
 pub async fn accept_handoff<C: NetConnection>(
     conn: &C,
     swiss_table: &mut SwissTable,

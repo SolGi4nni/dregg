@@ -31,6 +31,18 @@ dregg-lean-ffi = { path = "../dregg-lean-ffi" }
 # adds no archive link the fuzz targets were not already paying; it adds the ONE canonical
 # install list. See `dregg-pq-testkit`'s crate docs.
 dregg-pq-testkit = { path = "../dregg-pq-testkit" }
+# TEST-ONLY, and it is what makes the CapTP handoff attacks MEAN anything. `validate_handoff`
+# decides §6 non-amplification only through `dregg-captp`'s `verified_gate` seam and REFUSES when
+# no gate is registered (`e3f0e7b92` deleted the Rust rights lattice from that live path). With the
+# seam empty, `captp_attacks.rs` and `captp_deep_attacks.rs` printed "permission amplification:
+# DEFENDED" for a defence that never ran: their `Some(HandoffError::Amplification)` assertions were
+# satisfied by the no-gate refusal, which refuses attenuating handoffs identically — so they would
+# have passed with the amplification rule deleted outright. (The same emptiness also RED-ed
+# `finding_handoff_nonce_replay_is_not_prevented`, whose first presentation must be ADMITTED.)
+# Installing the real Lean-backed gate, as a native node does at startup, makes each refusal a
+# verdict the verified rule actually returned. dregg-lean-ffi is already a dev-dep above, so this
+# edge adds no archive link these binaries were not already paying.
+dregg-exec-lean = { path = "../exec-lean" }
 # net's PeerScoreboard exposes the eclipse-resistant eager-selection surface
 # (incl. anchor pinning) that the F-5 / L4 anti-eclipse attack test drives.
 dregg-net = { path = "../net" }

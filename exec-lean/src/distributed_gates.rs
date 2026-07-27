@@ -4,9 +4,16 @@
 //! `verified_gate` SEAM trait and routes its verified decisions through it. This module is the single
 //! FFI boundary that implements those seams over `dregg-lean-ffi`. A native node calls
 //! [`register_distributed_gates`] once at startup to install all four; an FFI-free target
-//! (wasm / verifier-PD / pg) never depends on this crate, so the seams stay unregistered and the
-//! native-Rust differential siblings decide — the structural replacement for the deleted
-//! `no-lean-link` feature.
+//! (wasm / verifier-PD / pg) never depends on this crate, so the seams stay unregistered — the
+//! structural replacement for the deleted `no-lean-link` feature.
+//!
+//! ⚠ **"unregistered ⇒ the native-Rust differential sibling decides" is FALSE for several of these
+//! decisions and this doc used to assert it flatly.** The twin-deletion sweep (`e3f0e7b92`) deleted
+//! the Rust sibling from the LIVE path of the load-bearing ones, so an unregistered seam is a hard
+//! REFUSAL there, not a fallback. Read each seam's own module docs for its per-decision answer;
+//! `dregg_captp::verified_gate` carries the table for CapTP (handoff §6 refuses; GC and pipeline
+//! fall back). Installing this is not an optimisation — for those decisions it is the difference
+//! between a working node and one that refuses every request it is offered.
 
 use dregg_captp::verified_gate::CaptpVerifiedGate;
 use dregg_coord::verified_gate::{CoordVerifiedGate, Verdict2pc};
@@ -70,8 +77,14 @@ impl IntentVerifiedGate for LeanDistributedGate {
 
 /// Install the verified-Lean gate into all four distributed coordination seams (call once at native
 /// node startup). After this, `dregg-coord` / `dregg-captp` / `dregg-federation` / `dregg-intent`
-/// route their verified decisions through the linked Lean archive; before it (and on every FFI-free
-/// target) they use their native-Rust differential siblings.
+/// route their verified decisions through the linked Lean archive.
+///
+/// ⚠ Before it (and on every FFI-free target) the answer is PER DECISION, not "the native-Rust
+/// differential sibling decides" as this doc used to claim: the twin-deleted decisions have no
+/// sibling left on the live path and FAIL CLOSED instead. `dregg_captp::handoff::validate_handoff`
+/// refuses every handoff with `HandoffError::VerifiedGateUnavailable`; `dregg_intent`'s ring
+/// settlement refuses the ring. A test binary or app that drives one of those paths must call this,
+/// exactly as `node/src/lib.rs::install_verified_distributed_gates` does at startup.
 pub fn register_distributed_gates() {
     dregg_coord::register_coord_verified_gate(Box::new(LeanDistributedGate));
     dregg_captp::register_captp_verified_gate(Box::new(LeanDistributedGate));

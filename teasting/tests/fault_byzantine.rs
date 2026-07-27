@@ -22,6 +22,18 @@ use dregg_teasting::harness::SimulationHarness;
 use dregg_types::generate_keypair;
 use dregg_wire::message::WireMessage;
 
+mod common;
+
+// The harness's hybrid creator identity reaches ML-DSA through `dregg_blocklace::Block::new`, and
+// `dregg-pq` answers a PQ operation with no verified core installed by aborting the PROCESS — which
+// takes the whole binary, not one test, and prints its banner before libtest can attribute it. Same
+// remedy as `fault_crash.rs` / `fault_partition.rs`: install the Lean-verified cores at process
+// start. (This binary did not previously reach that path; it is a second instance of the very defect
+// this file's handoff test was fixed for — the binary links a verified capability and installs
+// nothing.) NOT a bypass: `dregg-pq-testkit` installs the AUDITED, Lean-extracted cores and sets no
+// audit-waiver environment variable — see its crate docs, which say why it is the opposite of one.
+dregg_pq_testkit::install_at_process_start!();
+
 // =============================================================================
 // Helpers
 // =============================================================================
@@ -209,8 +221,17 @@ fn test_byzantine_equivocation_detection() {
 
 /// A handoff certificate that was already used (max_uses exhausted) must be
 /// rejected on replay. This prevents unauthorized access via certificate reuse.
+///
+/// The replay claim only has content if the FIRST presentation is ADMITTED — a suite where every
+/// handoff is refused would report this green while proving nothing about replay. The first
+/// presentation here is honest (`granted == held == Signature`), so admitting it needs the verified
+/// §6 gate installed; without one `validate_handoff` refuses it and the `result.is_ok()` assertion
+/// below is what fires (see `tests/common/mod.rs`).
 #[test]
 fn test_byzantine_certificate_replay_rejected() {
+    if !common::install_verified_captp_gate() {
+        return;
+    }
     let (intro_sk, intro_pk) = generate_keypair();
     let intro_fed = FederationId(intro_pk.0);
 

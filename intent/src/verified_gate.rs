@@ -2,9 +2,19 @@
 //!
 //! `dregg-intent` is FFI-free: `verified_settle` builds the per-leg asset-projection wire and routes
 //! it through this seam, never calling `dregg-lean-ffi` directly. A native node installs the
-//! Lean-backed implementation once at startup (`dregg-exec-lean` provides it); a wasm / verifier-PD /
-//! pg build never registers one, so the cross-check is skipped (the in-process verified transition
-//! stands on its own) — exactly the behavior the deleted `no-lean-link` feature used to compile in.
+//! Lean-backed implementation once at startup (`dregg-exec-lean`'s `register_distributed_gates`); a
+//! wasm / verifier-PD / pg build never registers one, so every gate query returns `None`.
+//!
+//! ⚠ **An absent gate REFUSES the ring; it does not skip a cross-check.** This doc used to end
+//! "…so the cross-check is skipped (the in-process verified transition stands on its own)", which
+//! was true until the twin-deletion sweep (`e3f0e7b92`, 2026-07-24) INVERTED the polarity: the
+//! export is now the AUTHORITY per leg and the in-process Rust fold is the cross-checked
+//! differential. With no gate registered, `ffi::settle_leg` returns
+//! `Err(VerifiedSettleError::FfiUnavailable)`, which refuses the leg — and since a ring is
+//! all-or-none, the whole ring (`verified_settle::settle_leg_authoritative`, whose own comment says
+//! so). A production node MUST install the gate, as must any test binary or app that settles a
+//! non-empty ring; `starbridge-apps/tussle` and `dreggnet-catalog`'s private bazaar both learned
+//! this the same way.
 
 use std::sync::OnceLock;
 

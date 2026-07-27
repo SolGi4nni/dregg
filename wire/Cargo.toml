@@ -40,6 +40,21 @@ criterion = { version = "0.5", features = ["html_reports"] }
 # links the archive transitively (dregg-wire -> dregg-bridge -> dregg-lean-ffi), so this dev-dep
 # adds the INSTALL and no new archive linking at all.
 dregg-pq-testkit = { path = "../dregg-pq-testkit" }
+# TEST-ONLY, and the same shape as the line above: `dregg_captp::validate_handoff` decides §6
+# non-amplification only through `dregg-captp`'s `verified_gate` seam and REFUSES when no gate is
+# registered (`e3f0e7b92` deleted the Rust rights lattice from that live path). Nothing in this
+# crate's graph registered one, so the three tests in `tests/captp_delivery_tests.rs` that require a
+# LEGITIMATE handoff to validate — GAP-1 three-party, GAP-2 replay (whose first presentation must be
+# ADMITTED for the replay claim to have content), and the GAP-12/13 wire→receipt keystone — were RED
+# for want of a startup call a native node makes and a test binary has to make for itself.
+# As with `dregg-pq-testkit`: `dregg-wire` already links the archive transitively
+# (dregg-wire -> dregg-bridge -> dregg-lean-ffi), so this dev-dep adds the INSTALL and no new
+# archive linking at all.
+dregg-exec-lean = { path = "../exec-lean" }
+# For `demand_lean` — an archive-absent run must PANIC naming the missing capability rather than
+# print `ok` for a test named after the verified gate it never queried. Already in the link graph
+# transitively (see above); this makes the NAME reachable, not the archive.
+dregg-lean-ffi = { path = "../dregg-lean-ffi" }
 
 [[bench]]
 name = "wire_bench"
