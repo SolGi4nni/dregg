@@ -3028,6 +3028,51 @@ pub const CAP_OPEN_TB_PI_SRC: usize = CAP_OPEN_TB_PI_BASE; // 46
 pub const CAP_OPEN_TB_PI_ACTOR: usize = CAP_OPEN_TB_PI_BASE + 1; // 47
 pub const CAP_OPEN_TB_PI_DST: usize = CAP_OPEN_TB_PI_BASE + 2; // 48
 
+// CAP-OPEN GEOMETRY PINS — the twin of the wide-carrier FLAG-DAY block below, and it exists
+// because this family's numbers ROTTED IN PLACE ONCE ALREADY. Docs on the widener, the wide
+// lift and the TB turn-pin filler carried `818 / 1026 / 210 / 91 / +608` and the TB PI slots
+// `38/39/40` long after Phase H-CAP-8 moved the span to 329 (host 1976) and the TB pins to
+// 46/47/48 — a doc comment that is wrong about a width is how the next reader derives a wrong
+// descriptor, and a prose number cannot go red. These CAN. Any drift in `GRAD_ROT_WIDTH`,
+// `CAP_OPEN_DEPTH`, `CAP_OPEN_MASK_BITS` or the digest width now breaks the BUILD here, at the
+// definitions, rather than rotting a paragraph a reader will believe.
+const _: () = {
+    assert!(
+        CAP_OPEN_BASE == 1647,
+        "cap-open rides the graduated rotated base"
+    );
+    assert!(
+        CAP_OPEN_SPAN == 329,
+        "Phase H-CAP-8 native 8-felt membership span"
+    );
+    assert!(
+        CAP_OPEN_WIDTH == 1976,
+        "cap-open READ host width = 1647 + 329"
+    );
+    assert!(
+        CAP_OPEN_AFTER_SPINE_SPAN == 143,
+        "cap-WRITE after-spine appendix = 15 + 8·16"
+    );
+    // The committed narrow `attenuateCapOpenEffVmDescriptor2R24.trace_width`
+    // (`circuit/descriptors/rotation-v3-staged-registry.tsv`).
+    assert!(
+        CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN == 2119,
+        "cap-WRITE narrow width"
+    );
+    assert!(
+        CAP_OPEN_TB_ACTOR_COL == 1976 && CAP_OPEN_TB_DST_COL == 1977,
+        "TB turn-identity cols"
+    );
+    assert!(
+        CAP_OPEN_TB_WIDTH == 1978,
+        "TB host = cap-open host + the 2 turn-identity cols"
+    );
+    assert!(
+        CAP_OPEN_TB_PI_SRC == 46 && CAP_OPEN_TB_PI_ACTOR == 47 && CAP_OPEN_TB_PI_DST == 48,
+        "TB turn-identity PI slots ride PAST the base 46"
+    );
+};
+
 /// The `FACT_MARK` node-tag felt (`DeployedCapTree.FACT_MARK = 0xFACF`).
 pub const FACT_MARK: u32 = 0xFACF; // 64207
 /// The leaf `mask_lo` the FAITHFUL two-axis facet gate (`DeployedCapOpen.transferFacetGate`)
@@ -3693,13 +3738,16 @@ pub fn patch_attenuate_base_for_cap_open(
 }
 
 /// Widen an already-built rotated base trace (`ROT_WIDTH`-wide) to the `CAP_OPEN_WIDTH`-wide
-/// cap-open trace, filling the 91 cap-MEMBERSHIP columns on EVERY row uniformly with `w` (so the
-/// every-row base gates — dir-bool, rootPin, targetBind, transferFacet/facetHi/authTag — hold on
-/// every row). The base trace's own `ROT_WIDTH` columns + 38 PIs are unchanged; the cap-open
-/// appendix is purely additive and lands at `CAP_OPEN_BASE = GRAD_ROT_WIDTH` (the cap-open builds on
-/// the GRADUATED rotated layout). The graduated rotated chip-lane columns (`ROT_WIDTH..GRAD_ROT_WIDTH`)
-/// and the cap chip-lane columns (`CAP_OPEN_BASE + 91 ..`) are filled automatically by the prove
-/// wrapper's `descriptor_ir2::fill_chip_lanes` — NOT here. The base trace MUST be a `ROT_WIDTH`-wide
+/// cap-open trace, filling the [`CAP_OPEN_MEMBERSHIP_COLS`] (329) cap-MEMBERSHIP columns on EVERY
+/// row uniformly with `w` (so the every-row base gates — dir-bool, rootPin, targetBind,
+/// transferFacet/facetHi/authTag — hold on every row). The base trace's own `ROT_WIDTH` columns +
+/// 38 PIs are unchanged; the cap-open appendix is purely additive and lands at `CAP_OPEN_BASE =
+/// GRAD_ROT_WIDTH` (the cap-open builds on the GRADUATED rotated layout). The graduated rotated
+/// chip-lane columns (`ROT_WIDTH..GRAD_ROT_WIDTH`) are filled automatically by the prove wrapper's
+/// `descriptor_ir2::fill_chip_lanes` — NOT here. Since Phase H-CAP-8 there is NO separate cap
+/// chip-lane tail: the 17 [`CAP_OPEN_LANE_SITES`] absorb their lane outputs directly into the
+/// committed `node8` groups, so `CAP_OPEN_SPAN == CAP_OPEN_MEMBERSHIP_COLS` and the membership
+/// columns ARE the whole appendix. The base trace MUST be a `ROT_WIDTH`-wide
 /// rotated trace the base `attenuateV3` constraints already accept (e.g. from
 /// [`generate_rotated_effect_vm_trace`] on an AttenuateCapability turn).
 pub fn widen_to_cap_open(trace: &mut [Vec<BabyBear>], w: &CapOpenWitness) -> Result<(), String> {
@@ -3738,14 +3786,24 @@ pub fn widen_to_cap_open_avail(
     Ok(())
 }
 
-/// **THE WIDE CAP-OPEN widener (the 1026-wide cap-open tail's faithful 8-felt commit).** Given a
+/// **THE WIDE CAP-OPEN widener (the cap-open READ tail's faithful 8-felt commit).** Given a
 /// fully-laid `CAP_OPEN_WIDTH`-wide cap-open trace (a base rotated trace already passed through
-/// [`widen_to_cap_open`]) and its base PI vector, appends the two `WIDE_NUM_CARRIERS`×8 BEFORE/AFTER wide carrier
-/// blocks at `CAP_OPEN_WIDTH = 818` / `+104` and the 16 wide commit PIs — the cap-open tail's wide
-/// member is `wideAppend (capOpenHost) 187 238` (width 1026), carriers PAST the 210-col cap-open
+/// [`widen_to_cap_open`]) and its base PI vector, appends the two [`WIDE_NUM_CARRIERS`]×8
+/// BEFORE/AFTER wide carrier blocks at `CAP_OPEN_WIDTH` (1976) / `+ WIDE_CARRIER_BLOCK_SPAN`
+/// (2456) and the 16 wide commit PIs — the cap-open tail's wide member is
+/// `wideAppend (capOpenHost) 187 238`, carriers PAST the [`CAP_OPEN_SPAN`] (329) cap-open
 /// appendix. The cap-open host constraints / membership columns are CARRIED UNCHANGED; the wide
 /// carriers re-absorb the SAME `BEFORE_BASE`/`AFTER_BASE` limbs. Returns the appended `dpis`. The
-/// trace is resized in place to `CAP_OPEN_WIDTH + 608 = 1026`.
+/// trace is resized in place to `CAP_OPEN_WIDTH + WIDE_CARRIER_APPENDIX = 2936`.
+///
+/// ⚠ That RAW appended width is NOT a deployed descriptor's `trace_width`. The committed wide
+/// cap-WRITE member (`attenuateCapOpenEffVmDescriptor2R24` in
+/// `circuit/descriptors/rotation-wide-registry-staged.tsv`) is **2021** wide, because the
+/// deployed producer lays the after-spine FIRST (so its host is
+/// `CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN`, see
+/// [`generate_rotated_cap_attenuate_after_spine_wide`]) and then runs
+/// [`compact_s2_columns`] ∘ [`compact_e1_columns`] over the appended row. Do not derive a
+/// descriptor width by adding this appendix to a host width; read the registry.
 pub fn append_wide_carriers_cap_open(
     trace: &mut [Vec<BabyBear>],
     base_pis: Vec<BabyBear>,
@@ -4040,20 +4098,23 @@ pub fn generate_rotated_cap_remove_after_spine_wide(
 }
 
 /// Fill the two TURN-IDENTITY columns of the TB (turn-bound) cap-open weld on a single row: the
-/// `actor` felt at `CAP_OPEN_TB_ACTOR_COL` (818) and the `dst` felt at `CAP_OPEN_TB_DST_COL` (819).
-/// (The `src` column — `CAP_OPEN_BASE + 57` = 665 — is the EXISTING cap-open `src` column already
-/// filled by [`fill_cap_open`] from `w.src`; the TB weld pins THAT column, not a new one.) The three
-/// `CapOpenTurnPins.turnIdentityPins` are LAST-row `.piBinding` gates welding these columns to the
-/// published turn PIs (`src → 38`, `actor → 39`, `dst → 40`).
+/// `actor` felt at [`CAP_OPEN_TB_ACTOR_COL`] (1976) and the `dst` felt at [`CAP_OPEN_TB_DST_COL`]
+/// (1977). (The `src` column — laid inside the cap-open appendix by [`fill_cap_open`] — is the EXISTING cap-open `src`
+/// column already filled by [`fill_cap_open`] from `w.src`; the TB weld pins THAT column, not a new
+/// one.) The three `CapOpenTurnPins.turnIdentityPins` are LAST-row `.piBinding` gates welding these
+/// columns to the published turn PIs [`CAP_OPEN_TB_PI_SRC`] / [`CAP_OPEN_TB_PI_ACTOR`] /
+/// [`CAP_OPEN_TB_PI_DST`] = `src → 46`, `actor → 47`, `dst → 48` — PAST the base 46, matching the
+/// deployed `transferCapOpenTBVmDescriptor2R24.public_input_count = 49`.
 pub fn fill_cap_open_turn_pins(row: &mut [BabyBear], actor: BabyBear, dst: BabyBear) {
     row[CAP_OPEN_TB_ACTOR_COL] = actor;
     row[CAP_OPEN_TB_DST_COL] = dst;
 }
 
-/// Widen a rotated base trace (`ROT_WIDTH`) to the TURN-BOUND cap-open width (`CAP_OPEN_TB_WIDTH` =
-/// 409): the cap-open appendix (incl. the `src` column from `w.src`) PLUS the two turn-identity
-/// columns (`actor`/`dst`) filled UNIFORMLY on every row. The TB descriptor (`effCapOpenV3TB`) pins
-/// the `src`/`actor`/`dst` columns to PIs `38/39/40` on the LAST row; filling them uniformly makes the
+/// Widen a rotated base trace (`ROT_WIDTH`) to the TURN-BOUND cap-open width
+/// ([`CAP_OPEN_TB_WIDTH`] = 1978): the cap-open appendix (incl. the `src` column from `w.src`) PLUS
+/// the two turn-identity columns (`actor`/`dst`) filled UNIFORMLY on every row. The TB descriptor
+/// (`effCapOpenV3TB`) pins the `src`/`actor`/`dst` columns to PIs `46/47/48` on the LAST row
+/// ([`CAP_OPEN_TB_PI_SRC`] and friends); filling them uniformly makes the
 /// pins hold on the last row. The `src` column is rooted (`targetBindGate` already pins `leaf.target ==
 /// src`), so `src == w.src`; `actor`/`dst` are the published columns the verifier ANCHORS to the
 /// trusted turn (`TurnIdentityAnchored`). Caller MUST pass `actor`/`dst` consistent with `w.src` (the
@@ -4090,7 +4151,8 @@ pub fn widen_to_cap_open_tb_avail(
 }
 
 /// Extend a base 46-PI rotated vector to the turn-bound 49-PI vector by appending the three
-/// turn-identity PIs (`src` at 38, `actor` at 39, `dst` at 40). The honest prover publishes its own
+/// turn-identity PIs (`src` at 46, `actor` at 47, `dst` at 48 — [`CAP_OPEN_TB_PI_SRC`] and
+/// friends; the deployed `transferCapOpenTBVmDescriptor2R24.public_input_count` is 49). The honest prover publishes its own
 /// turn's `(src, actor, dst)`; the verifier OVERRIDES these slots from the trusted turn before
 /// `verify_vm_descriptor2` (see [`anchor_cap_open_turn_pins`]), so a forged identity is UNSAT.
 pub fn cap_open_tb_dpis(
@@ -4101,15 +4163,15 @@ pub fn cap_open_tb_dpis(
 ) -> Vec<BabyBear> {
     let mut dpis = base_dpis[..ROT_PI_COUNT].to_vec();
     debug_assert_eq!(dpis.len(), CAP_OPEN_TB_PI_BASE);
-    dpis.push(src); // PI 38
-    dpis.push(actor); // PI 39
-    dpis.push(dst); // PI 40
+    dpis.push(src); // PI 46 (CAP_OPEN_TB_PI_SRC)
+    dpis.push(actor); // PI 47 (CAP_OPEN_TB_PI_ACTOR)
+    dpis.push(dst); // PI 48 (CAP_OPEN_TB_PI_DST)
     dpis
 }
 
 /// **`anchor_cap_open_turn_pins` — the `TurnIdentityAnchored` verifier override (DEPLOYMENT side).**
-/// Override the three turn-identity PIs (`38/39/40`) of a TB cap-open dpis vector with the TRUSTED
-/// turn's `(src, actor, dst)` felts, exactly as the record-pin family anchors `dpis[38]` from the
+/// Override the three turn-identity PIs (`46/47/48`) of a TB cap-open dpis vector with the TRUSTED
+/// turn's `(src, actor, dst)` felts, exactly as the record-pin family anchors its own PI from the
 /// trusted post-cell. A prover-published identity that disagrees (a forged `actor`/`src`/`dst`) makes
 /// the anchored PI disagree with the proof's bound, last-row-pinned column ⇒ `verify_vm_descriptor2`
 /// UNSAT ⇒ reject. This is what makes a LEDGERLESS light client able to conclude the published turn's
@@ -5686,16 +5748,20 @@ pub fn generate_rotated_set_field_dyn_wide(
 }
 
 // ============================================================================
-// custom — the user-defined program effect bound to an EXTERNAL sub-proof (the
-// `customVmDescriptor2R24` 789-wide member = host 581 + 608 carriers).
+// custom — the user-defined program effect bound to an EXTERNAL sub-proof
+// (`customVmDescriptor2R24`; see [`CUSTOM_HOST_WIDTH_TEETH`] for the wide geometry).
 // ============================================================================
 
-/// The host width of the wide `customVmDescriptor2R24` member: the deployed
-/// descriptor is 789-wide (`trace_width`), and its wide commit carriers land at
-/// cols 677 / 781 — i.e. `host + 96` / `host + 200`, pinning `host = 581`. Same
-/// V1Face host as setFieldDyn (the carriers ride the identical 8-felt blocks);
-/// the trace SHAPE differs (a Custom row, no Blum-memory boundary), but the wide
-/// geometry is `append_wide_carriers` at 581.
+/// The bare host width of the wide `customVmDescriptor2R24` member (BEFORE the
+/// commitment/VK teeth — [`CUSTOM_HOST_WIDTH_TEETH`] is the base the wide carrier
+/// appendix is actually appended at). Same V1Face host as setFieldDyn (the carriers
+/// ride the identical 8-felt blocks); the trace SHAPE differs (a Custom row, no
+/// Blum-memory boundary).
+///
+/// ⚠ This docstring used to read "the deployed descriptor is 789-wide, carriers at
+/// 677 / 781, pinning host = 581", from a geometry three flag-days dead — the const's
+/// own value has been `GRAD_ROT_WIDTH − 28` since. Deployed widths come from
+/// `circuit/descriptors/*.tsv`, never from a paragraph.
 pub const CUSTOM_HOST_WIDTH: usize = GRAD_ROT_WIDTH - 28; // 1647 − 4·7 sites = 1619
 
 /// **THE CUSTOM COMMIT-TEETH COLUMNS (proof-bind flag-day rotation, 4 → 8 felts).**
