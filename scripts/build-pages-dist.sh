@@ -176,12 +176,12 @@ mkdir -p "$DIST/papers"
     sub="$(dirname "$d")"; pdf="$(basename "$d")"
     name="$(basename "$sub")"; [ "$sub" = "paper" ] && name="dregg (main paper)"
     sz="$(du -h "$DIST/$d" | cut -f1 | tr -d ' ')"
-    echo "<li><a href=\"/$sub/$pdf\">$name</a> <span class=muted>&mdash; PDF, $sz</span></li>"
+    echo "<li><a href=\"../$sub/$pdf\">$name</a> <span class=muted>&mdash; PDF, $sz</span></li>"
   done
   for f in "${TYPST_FAILED[@]}"; do
     echo "<li><span class=muted>$(basename "$(dirname "$f")") &mdash; did not build in this assembly (staging)</span></li>"
   done
-  echo '</ul><p class=muted><a href="/">&larr; dregg</a></p>'
+  echo '</ul><p class=muted><a href="../">&larr; dregg</a></p>'
 } > "$DIST/papers/index.html"
 echo "    index  /papers/ (${#TYPST_BUILT[@]} linked)"
 

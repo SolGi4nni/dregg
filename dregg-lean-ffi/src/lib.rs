@@ -152,11 +152,7 @@ pub fn lean_available() -> bool {
 /// UNSET is ARMED. That asymmetry is the entire change: the condition under which
 /// every verified-gate test used to report `ok` was nobody having set anything.
 pub fn test_require_lean() -> bool {
-    if armed_from_env_value(
-        std::env::var("DREGG_TEST_ALLOW_MISSING_LEAN")
-            .ok()
-            .as_deref(),
-    ) {
+    if armed_from_env_value(std::env::var("DREGG_TEST_ALLOW_MISSING_LEAN").ok().as_deref()) {
         return false;
     }
     match std::env::var("DREGG_TEST_REQUIRE_LEAN").ok().as_deref() {
@@ -305,16 +301,10 @@ mod test_require_lean_gate {
         }
         for truthy in ["1", "true", "on"] {
             unsafe { std::env::set_var("DREGG_TEST_REQUIRE_LEAN", truthy) };
-            assert!(
-                test_require_lean(),
-                "DREGG_TEST_REQUIRE_LEAN={truthy} re-asserts the default"
-            );
+            assert!(test_require_lean(), "DREGG_TEST_REQUIRE_LEAN={truthy} re-asserts the default");
         }
         unsafe { std::env::remove_var("DREGG_TEST_REQUIRE_LEAN") };
-        assert!(
-            test_require_lean(),
-            "UNSET is ARMED — that asymmetry IS the change"
-        );
+        assert!(test_require_lean(), "UNSET is ARMED — that asymmetry IS the change");
     }
 
     #[test]

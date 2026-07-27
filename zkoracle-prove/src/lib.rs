@@ -57,10 +57,10 @@ pub mod sigv4;
 pub mod zk_leg;
 
 pub use attestation::{
-    AuthenticPolicy, AuthenticProvenance, MpcTlsLeg, NoMpcTlsBackend, ProveError, VerifiedZkOracle,
-    ZkOracleAttestation, ZkOracleError, attestation_over_authenticated_body, authentic_provenance,
-    prove_zkoracle, prove_zkoracle_with_stark, verify_legs_over_session, verify_zkoracle,
-    verify_zkoracle_with_policy,
+    AuthenticPolicy, AuthenticProvenance, MpcTlsLeg, NoMpcTlsBackend, ProveError,
+    VerifiedZkOracle, ZkOracleAttestation, ZkOracleError, attestation_over_authenticated_body,
+    authentic_provenance, prove_zkoracle, prove_zkoracle_with_stark, verify_legs_over_session,
+    verify_zkoracle, verify_zkoracle_with_policy,
 };
 pub use authentic::{
     AnthropicConfig, AnthropicPresentation, AuthenticError, AuthenticSession, EndpointConfig,
