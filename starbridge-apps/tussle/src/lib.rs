@@ -62,10 +62,11 @@
 #![forbid(unsafe_code)]
 
 use std::collections::BTreeMap;
+use std::sync::OnceLock;
 
 use dregg_cell::{CellProgram, CellState, FieldElement, StateConstraint, field_from_u64};
 use dregg_intent::verified_settle::{
-    VerifiedLedger, VerifiedLeg, VerifiedSettleError, settle_ring_verified,
+    VerifiedLedger, VerifiedLeg, VerifiedSettleError, funded_ledger, settle_ring_verified,
 };
 
 pub mod resolution;
@@ -658,6 +659,113 @@ impl Frame {
 }
 
 // ---------------------------------------------------------------------------
+// The verified-executor gate a match's joint turns settle THROUGH
+// ---------------------------------------------------------------------------
+
+/// The install probe's asset column — a fixed 32-byte id nothing else in this crate uses, so the
+/// probe can never collide with a live match's [`SCORE_ASSET`] ledger.
+const GATE_PROBE_ASSET: [u8; 32] = [0x67; 32];
+/// The probe's two live cells (the low byte the verified ledger indexes by), distinct from the
+/// [`resolution::SCORE_BANK`] and from any figure id a match uses.
+const GATE_PROBE_FROM: FigureId = 0xF1;
+const GATE_PROBE_TO: FigureId = 0xF2;
+/// The amount the probe funds and moves.
+const GATE_PROBE_AMOUNT: i128 = 5;
+
+/// Cached one-shot install result. The gate itself is a process-global `OnceLock` inside
+/// `dregg-intent`, so the registration is idempotent and the probe is worth running exactly once.
+static GATE_INSTALLED: OnceLock<Result<(), String>> = OnceLock::new();
+
+/// **Install the verified-Lean executor gate every joint turn settles through, and PROVE it
+/// decides.** Call once, before any match is played.
+///
+/// [`Frame::resolve`] folds each contact's score legs through
+/// [`dregg_intent::verified_settle::settle_ring_verified`], which is FAIL-CLOSED: with no
+/// [`IntentVerifiedGate`](dregg_intent::verified_gate::IntentVerifiedGate) registered it REFUSES
+/// the ring rather than letting an unverified in-process Rust fold decide a score move. That
+/// refusal is correct and stays. What was missing is that NOTHING in this crate ever registered
+/// the gate, so in a process that is not a native node (this crate's own tests included) EVERY
+/// scoring frame came back `JointTurnRejected(FfiUnavailable("no verified gate registered"))` and
+/// the match could not advance a single point.
+///
+/// `dregg-exec-lean` is ALREADY compiled and linked into any binary that links this crate —
+/// `dregg-app-framework` depends on `dregg-sdk`, whose default features include `exec-lean`
+/// (`cargo tree -p starbridge-tussle -i dregg-exec-lean`). So naming it directly adds ZERO new
+/// compilation; it makes an already-present capability reachable.
+///
+/// # Registered is not decided
+///
+/// Registration alone is not evidence: a gate registered over an ABSENT or STALE Lean archive
+/// still refuses at the first contact, which is exactly the failure this function exists to
+/// delete. So it registers and then PROVES the gate decides, with a two-polarity probe:
+///
+///   * a funded, distinct, live-cell leg MUST commit AND produce the exact post-column;
+///   * an OVER-DRAWN leg MUST be refused.
+///
+/// The second pole is what makes this a gate rather than a smoke test — a gate that answered
+/// "ok" unconditionally would sail through the first.
+///
+/// `Ok(())` means a contact in this process will be settled by the linked verified executor.
+/// `Err(reason)` means it will NOT — every scoring frame will refuse — and the caller must
+/// surface that rather than play a match it cannot score.
+pub fn install_verified_joint_turn_gate() -> Result<(), String> {
+    GATE_INSTALLED.get_or_init(install_and_probe_gate).clone()
+}
+
+/// Whether [`install_verified_joint_turn_gate`] has already run AND succeeded. Never triggers the
+/// install itself — for a surface that wants to describe the state without changing it.
+pub fn verified_joint_turn_gate_available() -> bool {
+    matches!(GATE_INSTALLED.get(), Some(Ok(())))
+}
+
+fn install_and_probe_gate() -> Result<(), String> {
+    // The single documented entry point a native node calls at startup: it installs the
+    // Lean-backed impl into all four FFI-free coordination seams. The intent seam is the one a
+    // frame's score ring folds through.
+    dregg_exec_lean::register_distributed_gates();
+
+    let probe = VerifiedLeg {
+        from: GATE_PROBE_FROM,
+        to: GATE_PROBE_TO,
+        asset: GATE_PROBE_ASSET,
+        amount: GATE_PROBE_AMOUNT,
+    };
+    let k0 = funded_ledger(std::slice::from_ref(&probe));
+
+    // POLE 1 — a funded, distinct, live-cell leg must COMMIT, with the exact post-column.
+    let post = settle_ring_verified(&k0, std::slice::from_ref(&probe)).map_err(|e| {
+        format!("the verified executor refused a funded, conserving probe leg: {e}")
+    })?;
+    let (from_after, to_after) = (
+        post.get(GATE_PROBE_FROM, &GATE_PROBE_ASSET),
+        post.get(GATE_PROBE_TO, &GATE_PROBE_ASSET),
+    );
+    if (from_after, to_after) != (0, GATE_PROBE_AMOUNT) {
+        return Err(format!(
+            "the verified executor committed the probe leg but produced the wrong column: \
+             from={from_after} to={to_after} (expected 0 / {GATE_PROBE_AMOUNT})"
+        ));
+    }
+
+    // POLE 2 — an OVER-DRAWN leg must be REFUSED. Without this pole a gate that answered "ok"
+    // unconditionally would sail through pole 1 and every tampered score ring would settle.
+    let overdraft = VerifiedLeg {
+        from: GATE_PROBE_FROM,
+        to: GATE_PROBE_TO,
+        asset: GATE_PROBE_ASSET,
+        amount: GATE_PROBE_AMOUNT + 1,
+    };
+    if settle_ring_verified(&k0, std::slice::from_ref(&overdraft)).is_ok() {
+        return Err(
+            "the verified executor ACCEPTED an over-drawn probe leg — it is registered but not \
+             DECIDING, so a non-conserving score ring would settle"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Match — a sequence of frames + the running score
 // ---------------------------------------------------------------------------
 
@@ -770,6 +878,13 @@ impl Match {
     ///
     /// Returns the [`FrameResolution`] (the deterministic outcome). The two `MoveCommit`s must pose
     /// the match's two figures (`f0.id`, `f1.id`); a mismatched figure is refused by the cap tooth.
+    ///
+    /// ⚠ **THE `Result` IS LOAD-BEARING, AND A DRIVING LOOP MUST NOT DISCARD IT.** A frame that
+    /// does not settle leaves the match EXACTLY where it was — no log entry, no score move — so
+    /// `while m.outcome().is_none() { let _ = m.play_frame(..); }` spins forever on the first
+    /// refusal instead of reporting it. The commonest refusal is not a game rule at all:
+    /// [`TussleError::JointTurnRejected`] with `FfiUnavailable("no verified gate registered")`,
+    /// i.e. [`install_verified_joint_turn_gate`] was never called in this process.
     pub fn play_frame(
         &mut self,
         m0: MoveCommit,

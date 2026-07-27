@@ -14,6 +14,29 @@ use crate::resolution::{SCORE_BANK, brace, forward_drive, resolve_contact};
 const P0: FigureId = 10;
 const P1: FigureId = 11;
 
+/// **Arm the verified executor every scoring frame settles through.**
+///
+/// `dregg-intent`'s `settle_ring_verified` has been FAIL-CLOSED since the twin-deletion sweep
+/// (`e3f0e7b92`): with no `IntentVerifiedGate` registered it REFUSES the ring rather than letting
+/// an unverified in-process Rust fold decide a score move. `dregg-intent`'s OWN tests keep the
+/// in-process transition authoritative via a `#[cfg(test)]` sibling — but that `cfg` is set only
+/// when `dregg-intent` itself is the crate under test. Every CONSUMER (this crate included)
+/// compiles the fail-closed path, so from here every contact frame came back
+/// `JointTurnRejected(FfiUnavailable("no verified gate registered"))` and a match could not score.
+///
+/// This is not a skip: an install that does not DECIDE is a hard failure with its own reason. A
+/// match test over a match that cannot move is worse than a red one.
+fn arm_the_verified_executor() {
+    install_verified_joint_turn_gate().unwrap_or_else(|e| {
+        panic!(
+            "the verified joint-turn gate did not install: {e}\n\
+             A TUSSLE frame's score legs settle through the linked verified Lean executor; \
+             without it every contact is refused and no match can score. Seed a HEAD-matching \
+             dregg-lean-ffi/libdregg_lean.a and rebuild."
+        )
+    });
+}
+
 // Convenience: a full joint vector from four states.
 fn pose(a: JointState, b: JointState, c: JointState, d: JointState) -> JointVector {
     [a, b, c, d]
@@ -382,6 +405,7 @@ fn resolution_is_reproducible() {
 #[test]
 fn frame_resolves_through_the_verified_executor() {
     // One frame, end to end, through the verified per-asset executor. P0 out-pushes P1 and scores.
+    arm_the_verified_executor();
     let mut m = Match::new(P0, P1, 1, 5, 8);
     let before_bank = m.ledger.get(SCORE_BANK, &SCORE_ASSET);
     let before_total = m.ledger.total_asset(&SCORE_ASSET);
@@ -410,6 +434,7 @@ fn frame_resolves_through_the_verified_executor() {
 fn empty_ring_frame_is_a_conserving_noop() {
     // A frame with no contact (both far + Relax) folds an empty ring — a conserving no-op that still
     // advances the match (a logged frame, unchanged scores).
+    arm_the_verified_executor();
     let mut m = Match::new(P0, P1, 5, 10, 8);
     let total0 = m.ledger.total_asset(&SCORE_ASSET);
     m.play_frame(
@@ -427,15 +452,30 @@ fn empty_ring_frame_is_a_conserving_noop() {
 fn full_match_plays_to_a_knockout() {
     // A scripted match: P0 keeps out-pushing P1 across frames until it reaches the target score.
     // Every frame is a verified joint turn; the match ends on a knockout.
+    arm_the_verified_executor();
     let mut m = Match::new(P0, P1, 1, 4, 16);
     let mut nonce = 0u64;
     while m.outcome().is_none() {
         nonce += 1;
+        let played = m.log.len();
         // P0 pushes 3, P1 pushes 1 → P0 scores 2 each contact frame. After contact they're touching;
         // P0 keeps pushing (3) and P1 relaxes, so P0 keeps landing.
-        let _ = m.play_frame(
+        //
+        // ⚠ THE FRAME'S VERDICT IS THE LOOP'S TERMINATION ARGUMENT. A refused frame changes NOTHING
+        // — no log entry, no score move — so `outcome()` answers `None` forever. `let _ =` stood
+        // here, which turned the first settlement refusal into an unbounded 99.9%-CPU spin with the
+        // reason thrown away. It is propagated, with the frame's own reason.
+        m.play_frame(
             MoveCommit::new(P0, push(3), nonce),
             MoveCommit::new(P1, push(1), nonce + 1000),
+        )
+        .unwrap_or_else(|e| panic!("frame {played} did not settle, so the match cannot end: {e}"));
+        // And the loop cannot spin even if `play_frame` ever returns `Ok` WITHOUT advancing: every
+        // iteration must log a frame, which bounds the loop by `frame_cap` (`outcome()` ends the
+        // match at `log.len() >= frame_cap`). A stall is reported, never waited out.
+        assert!(
+            m.log.len() > played,
+            "frame {played} reported success but logged no frame — the match did not advance"
         );
     }
     match m.outcome().unwrap() {
@@ -452,10 +492,62 @@ fn full_match_plays_to_a_knockout() {
     );
 }
 
+/// **THE SWALLOWED-`Result` FALSIFIER.** A frame that does not settle leaves the match EXACTLY
+/// where it was, so a `while m.outcome().is_none()` driver that DISCARDS [`Match::play_frame`]'s
+/// verdict can never terminate — which is what this file's knockout test did (`let _ =`, a 99.9%-CPU
+/// unbounded spin that had to be killed by a watchdog). This pins the two facts that make the fixed
+/// loop's termination argument real:
+///
+///   1. a refused frame is REPORTED, carrying the verified executor's OWN reason;
+///   2. it advances NOTHING — no log entry, no score, no outcome — so the verdict is the only
+///      thing standing between a driving loop and an infinite one.
+///
+/// The refusal here is a genuine one on the deployed path (an unfundable score leg the verified
+/// executor rejects for atomicity), not an absent gate.
+#[test]
+fn a_refused_frame_reports_its_reason_and_advances_nothing() {
+    arm_the_verified_executor();
+    let mut m = Match::new(P0, P1, 1, 4, 16);
+    // Drain the neutral score bank. The contact below emits a bank→P0 leg the verified executor
+    // cannot fund, so the whole ring aborts (the `settleRing_atomic` contract).
+    m.ledger.set(SCORE_BANK, &SCORE_ASSET, 0);
+
+    let verdict = m.play_frame(
+        MoveCommit::new(P0, push(3), 1),
+        MoveCommit::new(P1, push(1), 2),
+    );
+    match verdict {
+        Err(TussleError::JointTurnRejected(e)) => {
+            let reason = e.to_string();
+            assert!(
+                reason.contains("rejected by the verified executor"),
+                "a refused frame must carry the executor's own reason, not a bare error; got: {reason}"
+            );
+        }
+        other => panic!("an unfundable score ring must be refused, got {other:?}"),
+    }
+
+    // NOTHING moved — which is precisely why swallowing the verdict spins forever.
+    assert!(m.log.is_empty(), "a refused frame logs no frame");
+    assert_eq!(m.score0(), 0, "a refused frame moves no points");
+    assert_eq!(m.score1(), 0);
+    assert!(
+        m.outcome().is_none(),
+        "and the match is NOT over — this is the exact state a discarding loop would re-enter \
+         forever"
+    );
+}
+
 #[test]
 fn match_is_reproducible_end_to_end() {
     // THE MATCH-LEVEL REPRODUCIBILITY TOOTH: the same scripted moves produce the same final scores
     // and the same frame log — a deterministic, verifiable match.
+    //
+    // ⚠ NON-VACUITY. This test compared two runs and asked only that they AGREE, so while every
+    // frame was being refused by the absent verified gate (and its `Result` discarded) both runs
+    // were `(0, 0, 0)` and it passed having exercised nothing. The gate is armed, the frame verdicts
+    // are propagated, and the agreed-on values are asserted to be a match that actually PLAYED.
+    arm_the_verified_executor();
     fn play_scripted() -> (i128, i128, usize) {
         let mut m = Match::new(P0, P1, 1, 6, 20);
         let script: [(JointVector, JointVector); 4] = [
@@ -468,16 +560,26 @@ fn match_is_reproducible_end_to_end() {
             if m.outcome().is_some() {
                 break;
             }
-            let _ = m.play_frame(
+            m.play_frame(
                 MoveCommit::new(P0, *a, i as u64),
                 MoveCommit::new(P1, *b, (i + 100) as u64),
-            );
+            )
+            .unwrap_or_else(|e| panic!("scripted frame {i} did not settle: {e}"));
         }
         (m.score0(), m.score1(), m.log.len())
     }
     let run1 = play_scripted();
     let run2 = play_scripted();
     assert_eq!(run1, run2, "the same scripted match diverged between runs");
+    // The agreement is over a match that PLAYED: all four scripted frames landed, and three of them
+    // scored (frame 2 is the cancelled clash), so the reproduced value is not the all-zero one a
+    // fully refused match produces.
+    let (score0, score1, frames) = run1;
+    assert_eq!(frames, 4, "all four scripted frames resolved");
+    assert!(
+        score0 > 0 || score1 > 0,
+        "a reproducible match that scored NOTHING would agree vacuously; got {score0}-{score1}"
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

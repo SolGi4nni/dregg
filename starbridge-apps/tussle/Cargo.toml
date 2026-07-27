@@ -31,6 +31,15 @@ dregg-cell = { path = "../../cell", default-features = false }
 # executor refusal in the fire path (an illegal joint reveal is rejected by the
 # executor, not by app bookkeeping). See the deos section in `src/lib.rs`.
 dregg-app-framework = { path = "../../app-framework" }
+# THE VERIFIED-EXECUTOR GATE a scoring frame settles through
+# (`install_verified_joint_turn_gate`). `dregg-intent`'s `settle_ring_verified` is FAIL-CLOSED:
+# with no `IntentVerifiedGate` registered it REFUSES the score ring rather than letting an
+# unverified in-process Rust fold decide, so a process that never registers one cannot land a
+# single contact. This adds ZERO new compilation — `dregg-app-framework` already pulls
+# `dregg-sdk`, whose default features include `exec-lean` (`cargo tree -i dregg-exec-lean`
+# resolves exec-lean <- sdk <- app-framework <- this crate); naming it directly only makes the
+# already-linked capability reachable. Same posture as `dreggnet-web`'s startup installer.
+dregg-exec-lean = { path = "../../exec-lean" }
 
 blake3 = "1"
 serde_json = { workspace = true }

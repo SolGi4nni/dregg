@@ -170,6 +170,19 @@ fn play_and_narrate(script: &[(JointVector, JointVector)], announce: bool) -> (i
 }
 
 fn main() {
+    // ── Arm the verified executor BEFORE the first frame. Every contact's score legs fold through
+    // `settle_ring_verified`, which is FAIL-CLOSED: with no gate registered it refuses the ring
+    // rather than letting an unverified in-process Rust fold decide a point. Without this the
+    // narration below prints one "rejected by the verified executor" line and stops at frame 0.
+    if let Err(e) = starbridge_tussle::install_verified_joint_turn_gate() {
+        eprintln!("the verified joint-turn gate did not install: {e}");
+        eprintln!(
+            "A TUSSLE match settles its score legs through the linked verified Lean executor; \
+             without it no contact can score. Seed a HEAD-matching dregg-lean-ffi/libdregg_lean.a."
+        );
+        std::process::exit(1);
+    }
+
     // A scripted bout: Blue presses, Red defends then counters, a cancelled clash, a finisher.
     let script: [(JointVector, JointVector); 8] = [
         (push(3), guard(2)), // Blue pushes 3, Red braces 2 + counters 2 → Red's brace blunts Blue
