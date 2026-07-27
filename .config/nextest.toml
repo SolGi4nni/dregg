@@ -154,8 +154,33 @@
 
 # The legitimately-slow set. Named individually, so that granting them a real budget
 # does not also grant one to a deadlock. Durations in the table at the top of this file.
+#
+# ⚠ THE SECOND HALF OF THIS LIST WAS NOT IN THE HEAVY SET, AND THAT IS THE POINT.
+# The heavy set is the suites someone SEGREGATED for being slow. It is not the same
+# thing as the suites that ARE slow, and this file's `[profile.default]` asserted
+# "with the heavies gone, default tests are well under a minute" — which the
+# per-binary durations of the 2026-07-26 reference run refute outright:
+#
+#   multi_round_fold                    1879.2s / 17 tests  (~111s each)
+#   ext_degree_cost_measure             1032.5s /  2 tests  (~516s each)
+#   catalog_flow_harness                 859.3s /  4 tests  (~215s each)
+#   e2_fold_arity_recompose_probe        450.9s /  2 tests  (~225s each)
+#   private_raid_player_journey          369.0s
+#   tiny_automata_prover_shape_measure   279.0s /  5 tests
+#   note_spend_binding_node_tooth        193.2s /  1 test
+#   hosted_party                         182.6s /  2 tests
+#
+# Not one of these is in any profile's heavy clause, so all of them run in `default`
+# — against a 45s×4 = 180s kill. `ext_degree_cost_measure` alone averages 516s per
+# test. Adding a `terminate-after` without checking this would have manufactured a
+# fresh red in the DEFAULT gauntlet for at least four suites doing exactly what they
+# are supposed to do, which is the precise failure this file's TIMEOUT DOCTRINE calls
+# worse than having no budget at all. They are granted the budget here rather than
+# segregated into `heavy`, because how long a suite may legitimately take is a
+# different question from which profile ought to run it, and only the first is a
+# timeout's business. Durations are from the reference run; re-measure before trimming.
 [[profile.default.overrides]]
-filter = 'binary(rotation_batchstark_leaf_smoke) or binary(proptest_invariants) or binary(descriptor_leaf_recursion) or binary(private_attested_clearing) or binary(private_book_bfv_zk) or binary(private_book_distributed_bfv_exact) or binary(private_bfv_attested_clearing) or binary(private_clearing_apex_e2e) or binary(private_clearing_crown_consequence) or binary(private_clearing_guild_allocation) or binary(private_bazaar_playable_journey) or test(~k_fold_turn_chain_proves_and_verifies) or test(~two_step_inductive_core_proves_and_verifies) or test(~shielded_whole_note_swap_substrate_hiding_proof_and_hostile_publics) or test(~foreign_circuit_root_is_refused_by_vk_pin) or test(~authenticated_encrypted_orders_gate_real_game_asset_settlement) or test(~production_bfv_book_a_and_valid_hidingfri_book_b_cannot_cross_pair) or test(~private_bazaar_winner_spends_the_proof_assigned_mender_through_signed_spine_once)'
+filter = 'binary(multi_round_fold) or binary(ext_degree_cost_measure) or binary(catalog_flow_harness) or binary(e2_fold_arity_recompose_probe) or binary(private_raid_player_journey) or binary(tiny_automata_prover_shape_measure) or binary(note_spend_binding_node_tooth) or binary(hosted_party) or binary(rotation_batchstark_leaf_smoke) or binary(proptest_invariants) or binary(descriptor_leaf_recursion) or binary(private_attested_clearing) or binary(private_book_bfv_zk) or binary(private_book_distributed_bfv_exact) or binary(private_bfv_attested_clearing) or binary(private_clearing_apex_e2e) or binary(private_clearing_crown_consequence) or binary(private_clearing_guild_allocation) or binary(private_bazaar_playable_journey) or test(~k_fold_turn_chain_proves_and_verifies) or test(~two_step_inductive_core_proves_and_verifies) or test(~shielded_whole_note_swap_substrate_hiding_proof_and_hostile_publics) or test(~foreign_circuit_root_is_refused_by_vk_pin) or test(~authenticated_encrypted_orders_gate_real_game_asset_settlement) or test(~production_bfv_book_a_and_valid_hidingfri_book_b_cannot_cross_pair) or test(~private_bazaar_winner_spends_the_proof_assigned_mender_through_signed_spine_once)'
 # 120s × 30 = 3600s. Warn at two minutes (all of these exceed it — the SLOW line is
 # how you notice one has regressed), kill at an hour (none has ever come close).
 slow-timeout = { period = "120s", terminate-after = 30 }
@@ -185,7 +210,16 @@ slow-timeout = { period = "45s", terminate-after = 4 }
 # Custom profiles inherit `profile.default.default-filter` unless they replace
 # it explicitly; `all()` is what makes this profile genuinely full.
 default-filter = 'all()'
-slow-timeout = { period = "60s", terminate-after = 10 }
+# 60s × 60 = 3600s. GENEROUS ON PURPOSE, and it used to be 600s. `full` is the only
+# profile that runs the hour-scale folds AND the ordinary suites in one pass, so its
+# GLOBAL number is the one an un-enumerated slow test falls back on — and the reference
+# run has single tests averaging 516s (`ext_degree_cost_measure`) that appear in no
+# heavy clause anywhere. A 600s global would have killed them. The tight bounds in this
+# file are applied BY NAME to the three known hang classes (60s, in the override above),
+# which is where a tight bound belongs; the global's job is only to guarantee that an
+# UNKNOWN hang terminates eventually rather than never. An hour, once, is a cost worth
+# paying to never truncate real work.
+slow-timeout = { period = "60s", terminate-after = 60 }
 
 [profile.ci]
 # CI keeps the same passing-backend coverage as default (heavies segregated),
