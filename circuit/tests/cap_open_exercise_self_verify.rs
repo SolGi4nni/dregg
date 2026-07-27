@@ -303,23 +303,23 @@ fn cap_open_exercise_authority_forge_rejected_at_witness() {
 }
 
 /// END-TO-END self-verify through `prove_vm_descriptor2`. The honest exercise with a genuine held
-/// cap is widened with the cap-open appendix and proves. THE OBSTRUCTION (named, shared, NOT
-/// exercise-specific): the non-TB cap-open prove-THROUGH over a frozen rotated base hits a chip-table
-/// multiplicity reconciliation gap in the IR-v2 prover (the cap-node `ir2_p2` lookups gather with a
-/// net multiplicity the auto-gathered table does not balance). This is the SAME Rust handoff that
-/// `cap_open_self_verify::cap_open_attenuate_self_verifies` carries `#[ignore]` for — NO non-TB
-/// cap-open prove-through is green anywhere (only the TURN-BOUND `transferCapOpenTBVmDescriptor2R24`
-/// path, which rides the turn-identity columns, self-verifies). The exercise DESCRIPTOR is byte-
-/// identical to the transfer/attenuate cap-open appendix (same 16 node lookups, same lane columns),
-/// the column-genuineness + witness-recomposition + facet-bit + targetBind are GREEN (above), and the
-/// Lean apex (`exercise_descriptorRefines_capOpenSat`, `Rfix 16 = exerciseCapOpenV3`, threaded into
-/// `lightclient_unfoolable_closed_final_genuine`) PROVES the soundness with mutation-confirmation. The
-/// remaining gap is purely the shared IR-v2 cap-node lookup-balance plumbing, not the exercise crown.
-#[ignore = "RUST HANDOFF (SHARED): the non-TB cap-open prove-through hits the IR-v2 cap-node lookup \
-            multiplicity gap — the SAME handoff cap_open_attenuate_self_verifies carries. The \
-            exercise descriptor + the Lean apex (Rfix 16) are CLOSED + mutation-confirmed; the \
-            column-genuineness + witness-forge-rejection are green. Re-enable when the non-TB \
-            cap-open prove path lands (TB is the only green cap-open prove)."]
+/// cap is widened with the cap-open appendix and proves.
+///
+/// ⚑ THIS WAS `#[ignore]`d ON A PREMISE THAT HAD EVAPORATED (un-ignored 2026-07-27). The reason
+/// claimed "the non-TB cap-open prove-through hits the IR-v2 cap-node lookup multiplicity gap —
+/// the SAME handoff `cap_open_attenuate_self_verifies` carries", and that no non-TB cap-open
+/// prove-through was green anywhere. Neither half held: the sibling's reason had ALREADY been
+/// retracted and re-measured as a row-0 witness gap (`[#4, #10]`, since closed — a stale commit PI
+/// and a wrongly-applied nonce FREEZE, both trace-fill), and this body proves on the first try
+/// against HEAD. Nothing was fixed for it; nobody re-ran it after the multiplicity diagnosis was
+/// withdrawn. Measured, not argued: `cargo test -p dregg-circuit --test
+/// cap_open_exercise_self_verify` — 1 passed.
+///
+/// The exercise DESCRIPTOR is byte-identical to the transfer/attenuate cap-open appendix (same 16
+/// node lookups, same lane columns), the column-genuineness + witness-recomposition + facet-bit +
+/// targetBind are GREEN (above), and the Lean apex (`exercise_descriptorRefines_capOpenSat`,
+/// `Rfix 16 = exerciseCapOpenV3`, threaded into `lightclient_unfoolable_closed_final_genuine`)
+/// PROVES the soundness with mutation-confirmation.
 #[test]
 fn cap_open_exercise_self_verifies_end_to_end() {
     let desc = parse_vm_descriptor2(reg_json(EXERCISE_CAP_OPEN_KEY))

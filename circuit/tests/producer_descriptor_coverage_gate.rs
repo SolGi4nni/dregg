@@ -252,77 +252,82 @@ fn v3_coverage_ledger() -> Vec<(&'static str, Cov)> {
             "revokeCapabilityVmDescriptor2R24",
             Uncovered("bare cap-write forbidden; route = revokeCapabilityCapOpen"),
         ),
-        // ── cap-OPEN family — UNCOVERED: the non-TB cap-open prove-through is #[ignore]d behind a
-        //    NAMED shared Rust handoff (the IR-v2 cap-node lookup multiplicity reconciliation gap).
-        //    Only transferCapOpenTB is green. These are route-blocked + seam-named, not silent — but
-        //    they carry NO green producer≡descriptor roundtrip on the deployed path.
+        // ── cap-OPEN family. ⚑ The blanket "IR-v2 cap-node lookup multiplicity gap" this section
+        //    used to name for the WHOLE family was NEVER REAL: it was withdrawn for the attenuate
+        //    twins on 2026-07-26 (re-measured as a row-0 witness gap, `[#4, #10]`), and the two
+        //    members below prove through TODAY. The remaining rows keep an Uncovered mark because
+        //    nothing exercises them — which is a MISSING TEST, not a prover obstruction, and the
+        //    two greens are the evidence for that distinction. Do not re-generalize from them.
         (
             "attenuateCapOpenEffVmDescriptor2R24",
-            Uncovered("cap-open prove-through #[ignore]d (IR-v2 cap-node lookup handoff)"),
+            Covered(
+                "cap_open_self_verify::cap_open_attenuate_self_verifies (narrow, 2119) + \
+                 ::cap_open_wide_proves_verifies_and_executor_anchors (wide, 2021 post-compaction)",
+            ),
         ),
         (
             "exerciseCapOpenVmDescriptor2R24",
-            Uncovered("cap-open prove-through #[ignore]d (IR-v2 cap-node lookup handoff)"),
+            Covered("cap_open_exercise_self_verify::cap_open_exercise_self_verifies_end_to_end"),
         ),
         (
             "transferCapOpenEffVmDescriptor2R24",
-            Uncovered("cap-open prove-through #[ignore]d (shared IR-v2 handoff)"),
+            Uncovered("no cap-open prove-through test exists for this member"),
         ),
         (
             "delegateCapOpenVmDescriptor2R24",
-            Uncovered("cap-open prove-through #[ignore]d (shared IR-v2 handoff)"),
+            Uncovered("no cap-open prove-through test exists for this member"),
         ),
         (
             "introduceCapOpenVmDescriptor2R24",
-            Uncovered("cap-open prove-through #[ignore]d (shared IR-v2 handoff)"),
+            Uncovered("no cap-open prove-through test exists for this member"),
         ),
         (
             "grantCapCapOpenVmDescriptor2R24",
-            Uncovered("cap-open prove-through #[ignore]d (shared IR-v2 handoff)"),
+            Uncovered("no cap-open prove-through test exists for this member"),
         ),
         (
             "revokeCapOpenVmDescriptor2R24",
-            Uncovered("cap-open prove-through #[ignore]d (shared IR-v2 handoff)"),
+            Uncovered("no cap-open prove-through test exists for this member"),
         ),
         (
             "refreshDelegationCapOpenVmDescriptor2R24",
-            Uncovered("cap-open prove-through #[ignore]d (shared IR-v2 handoff)"),
+            Uncovered("no cap-open prove-through test exists for this member"),
         ),
         (
             "revokeCapabilityCapOpenVmDescriptor2R24",
-            Uncovered("cap-open prove-through #[ignore]d (shared IR-v2 handoff)"),
+            Uncovered("no cap-open prove-through test exists for this member"),
         ),
         (
             "spawnCapOpenVmDescriptor2R24",
-            Uncovered("cap-open prove-through #[ignore]d (shared IR-v2 handoff)"),
+            Uncovered("no cap-open prove-through test exists for this member"),
         ),
         (
             "delegateWriteCapOpenVmDescriptor2R24",
-            Uncovered("cap-open write prove-through #[ignore]d (shared IR-v2 handoff)"),
+            Uncovered("no cap-open write prove-through test exists for this member"),
         ),
         (
             "introduceWriteCapOpenVmDescriptor2R24",
-            Uncovered("cap-open write prove-through #[ignore]d (shared IR-v2 handoff)"),
+            Uncovered("no cap-open write prove-through test exists for this member"),
         ),
         (
             "delegateAttenWriteCapOpenVmDescriptor2R24",
-            Uncovered("cap-open write prove-through #[ignore]d (shared IR-v2 handoff)"),
+            Uncovered("no cap-open write prove-through test exists for this member"),
         ),
         (
             "revokeDelegationWriteCapOpenVmDescriptor2R24",
-            Uncovered("cap-open write prove-through #[ignore]d (shared IR-v2 handoff)"),
+            Uncovered("no cap-open write prove-through test exists for this member"),
         ),
         (
             "revokeCapabilityWriteCapOpenVmDescriptor2R24",
-            Uncovered("cap-open write prove-through #[ignore]d (shared IR-v2 handoff)"),
+            Uncovered("no cap-open write prove-through test exists for this member"),
         ),
         (
             "refreshDelegationWriteCapOpenVmDescriptor2R24",
-            Uncovered("cap-open write prove-through #[ignore]d (shared IR-v2 handoff)"),
+            Uncovered("no cap-open write prove-through test exists for this member"),
         ),
         (
             "spawnWriteCapOpenVmDescriptor2R24",
-            Uncovered("cap-open write prove-through #[ignore]d (shared IR-v2 handoff)"),
+            Uncovered("no cap-open write prove-through test exists for this member"),
         ),
     ]
 }
