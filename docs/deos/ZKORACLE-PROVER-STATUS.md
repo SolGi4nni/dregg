@@ -255,7 +255,7 @@ on `dregg-zkoracle-prove` and attests each turn.
   `authentic_provenance(&att)` reads which of the two actually vouches, and a
   `VerifiedZkOracle` reports the provenance its accept rested on.
 
-  Driven: `zkoracle-prove/tests/model_provenance_fused.rs` (6 tests, `--features tlsn-live`)
+  Driven: `zkoracle-live/tests/model_provenance_fused.rs` (6 tests, `--features tlsn-live`)
   against a genuine MPC-TLS 2PC roundtrip, and `zkoracle-prove/tests/provenance_gate.rs` (4 tests, light
   build). The fixture survives ONLY as an explicitly-labelled test double
   (`AuthenticProvenance::SelfSignedFixture`), admitted by `AuthenticPolicy::AllowFixture`.

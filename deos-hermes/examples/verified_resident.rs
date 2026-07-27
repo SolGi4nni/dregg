@@ -64,7 +64,7 @@ use grain_turn::ATTESTATION_SLOT;
 #[cfg(feature = "zk-live")]
 use deos_hermes::attest::attest_turn_live;
 #[cfg(feature = "zk-live")]
-use dregg_zkoracle_prove::verify_zkoracle_live;
+use dregg_zkoracle_live::verify_zkoracle_live;
 
 fn line() {
     println!("───────────────────────────────────────────────────────────────");

@@ -19,8 +19,6 @@
 //! self-consistent with its *embedded* verifying key; it does NOT decide which notary to
 //! trust. Trust-anchoring is the caller's job — pinning [`NotaryPin::verifying_key`].
 
-#![cfg(feature = "tlsn-live")]
-
 use std::io::Read as _;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};

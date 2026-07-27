@@ -9,13 +9,12 @@
 //! attestation, live-locally.
 //!
 //! Run with:
-//! `cargo test -p dregg-zkoracle-prove --features tlsn-live --test tlsn_live_roundtrip`.
-#![cfg(feature = "tlsn-live")]
+//! `cargo test -p dregg-zkoracle-live --test tlsn_live_roundtrip`.
 
-use dregg_zkoracle_prove::injection::injection_free;
-use dregg_zkoracle_prove::tlsn_live::{
+use dregg_zkoracle_live::tlsn_live::{
     LiveExchange, run_local_roundtrip_blocking, verify_messages_presentation,
 };
+use dregg_zkoracle_prove::injection::injection_free;
 use dregg_zkoracle_prove::{prove_cfg_cert, verify_cfg_cert};
 
 /// THE DELIVERABLE — the whole authentic leg runs on REAL tlsn, then composes with the CFG

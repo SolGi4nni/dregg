@@ -21,41 +21,46 @@
 //!
 //! ## What is real vs the operational remainder
 //!
-//! - **REAL (default build, fully tested):** the CFG parse-certificate prover+verifier
+//! - **REAL (this crate, fully tested):** the CFG parse-certificate prover+verifier
 //!   ([`cfg`]) over genuine JSON, the injection-free `neg`-complement matcher
 //!   ([`injection`], backed by dregg-dfa's verified derivative `Re`), the authentic-leg
 //!   tlsn adapter ([`authentic`]) with server/notary pinning + presentation-signature +
 //!   api-key redaction, and their composition ([`attestation`]).
-//! - **REAL behind `tlsn-live`:** a genuine local MPC-TLS 2PC roundtrip against an
-//!   Anthropic-shaped HTTPS endpoint ([`tlsn_live`]) — vendored TLSNotary, a real Notary +
-//!   Prover, `presentation.verify()`. The heavy `mpz`/tokio/rustls backend, gated so the
-//!   default build stays light.
+//! - **REAL in the `dregg-zkoracle-live` CRATE:** a genuine MPC-TLS 2PC roundtrip against a
+//!   real HTTPS host — git-pinned TLSNotary, a separate hosted Notary + a Prover, a real
+//!   `presentation.verify()`. It supplies leg 1 through [`attestation::MpcTlsLeg`].
 //! - **Operational remainder (NAMED, not built):** pointing the Prover at the live
 //!   `api.anthropic.com` with a real key + a deployed/pinned notary. See
 //!   `docs/deos/ZKORACLE-PROVER-STATUS.md`.
+//!
+//! ## ⚑ THIS CRATE HAS NO CARGO FEATURES, ON PURPOSE
+//!
+//! The heavy `mpz` 2PC/garbling + tokio + rustls backend used to be a `tlsn-live` feature
+//! here. A cargo feature UNIFIES across a workspace resolve, so an unrelated member
+//! (`dregg-oracle`, whose `default` enabled it) decided whether THIS crate's live modules
+//! compiled and whether ten of its tests existed: `cargo test -p dregg-zkoracle-prove` and
+//! `cargo test --workspace` ran different suites over the same source. Worse, the
+//! `verify_mpctls_leg` PROVENANCE GATE was a `#[cfg]`/`#[cfg(not)]` pair — real crypto or an
+//! immediate refusal, chosen by the package selection.
+//!
+//! The backend is now a separate unconditional crate and leg 1 is an injected
+//! [`attestation::MpcTlsLeg`] the caller names. This crate compiles identically under every
+//! selection.
 
 pub mod attestation;
 pub mod authentic;
 pub mod cfg;
 pub mod endpoints;
 pub mod injection;
-#[cfg(feature = "tlsn-live")]
-pub mod notary_server;
 pub mod render;
 pub mod sigv4;
-#[cfg(feature = "tlsn-live")]
-pub mod tlsn_bedrock;
-#[cfg(feature = "tlsn-live")]
-pub mod tlsn_live;
 pub mod zk_leg;
 
-/// The live authentic-leg verifier (real `presentation.verify()`), gated with its backend.
-#[cfg(feature = "tlsn-live")]
-pub use attestation::verify_zkoracle_live;
 pub use attestation::{
-    AuthenticPolicy, AuthenticProvenance, ProveError, VerifiedZkOracle, ZkOracleAttestation,
-    ZkOracleError, authentic_provenance, prove_zkoracle, prove_zkoracle_with_stark,
-    verify_zkoracle, verify_zkoracle_with_policy,
+    AuthenticPolicy, AuthenticProvenance, MpcTlsLeg, NoMpcTlsBackend, ProveError, VerifiedZkOracle,
+    ZkOracleAttestation, ZkOracleError, attestation_over_authenticated_body, authentic_provenance,
+    prove_zkoracle, prove_zkoracle_with_stark, verify_legs_over_session, verify_zkoracle,
+    verify_zkoracle_with_policy,
 };
 pub use authentic::{
     AnthropicConfig, AnthropicPresentation, AuthenticError, AuthenticSession, EndpointConfig,

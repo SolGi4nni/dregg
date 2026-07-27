@@ -1,6 +1,6 @@
 //! **The authentic leg, run for real — vendored TLSNotary, live-local MPC-TLS.**
 //!
-//! Where [`crate::authentic`] MODELS the shape a verified `tlsn` presentation takes, THIS
+//! Where [`dregg_zkoracle_prove::authentic`] MODELS the shape a verified `tlsn` presentation takes, THIS
 //! module runs the genuine thing against an **Anthropic-shaped** endpoint: a real [`tlsn`]
 //! Prover + a real local Notary perform the **MPC-TLS 2PC** handshake against a test HTTPS
 //! server, the Prover **`POST`s `/v1/messages`** and **selectively discloses** the response
@@ -28,9 +28,7 @@
 //!   deployed/pinned notary). The machinery below is exactly that path with the server
 //!   swapped: the local test server presents the `tlsn-server-fixture` cert
 //!   (`test-server.io`), so the server pin here is that domain; live-Anthropic pins
-//!   [`crate::authentic::ANTHROPIC_SERVER_NAME`] (`api.anthropic.com`).
-
-#![cfg(feature = "tlsn-live")]
+//!   [`dregg_zkoracle_prove::authentic::ANTHROPIC_SERVER_NAME`] (`api.anthropic.com`).
 
 use std::future::IntoFuture;
 use std::sync::Arc;
@@ -98,11 +96,35 @@ const MAX_RECV_DATA: usize = 1 << 14;
 /// remember — the same shape `servo-render`'s `swgl_context::GL_LOCK` uses for the process-global
 /// SWGL current-context pointer.
 ///
-/// ⚠ HONEST LIMIT: this pins WHICH configurations deadlock, not WHICH lock deadlocks — no stack
-/// was captured naming a specific rayon/tokio wait. Serializing is therefore the containment that
-/// the measurements support, not a repair of the vendored stack. Do not delete it on the grounds
-/// that "the tests pass now"; they pass BECAUSE of it, and the `--test-threads=4` row above is the
-/// falsifier.
+/// ⚠ HONEST LIMIT: this pins WHICH configurations deadlock, not WHICH lock deadlocks.
+/// Serializing is therefore the containment that the measurements support, not a repair of the
+/// vendored stack. Do not delete it on the grounds that "the tests pass now"; they pass BECAUSE
+/// of it, and the `--test-threads=4` row above is the falsifier.
+///
+/// ── 2026-07-27, DURING THE CRATE SPLIT: A STACK WAS FINALLY CAPTURED, and it says two things.
+/// `tests/model_provenance_fused.rs` wedged at `--test-threads=4` (macOS, 20+ min, 0:11 CPU —
+/// parked, not working). `sample(1)` on the three live test threads:
+///
+/// | thread                                            | frames                                    |
+/// |---------------------------------------------------|-------------------------------------------|
+/// | `spliced_evidence_is_refused_even_with_a_real_live_leg` | `with_mpc_tls_session` → `prove_messages_presentation` → `mpz` → `rayon_core` → `crossbeam_utils::sync::Parker::park` |
+/// | `stark_injection_leg_is_attached_…`               | `with_mpc_tls_session` → `Mutex` → `__psynch_mutexwait` |
+/// | `tampered_real_presentation_is_refused_by_real_crypto` | `with_mpc_tls_session` → `Mutex` → `__psynch_mutexwait` |
+///
+/// 1. **THIS LOCK IS SOUND.** Exactly ONE thread is past it; the other two are queued on the
+///    mutex with no `rayon`/`prove_messages_presentation` frames at all. The serialization does
+///    what it claims — the earlier "N concurrent sessions" hypothesis is not what is firing.
+/// 2. **THE RESIDUAL IS A SINGLE WEDGED SESSION**, inside the PROVER half
+///    (`prove_messages_presentation`), parked under `rayon_core`. So one 2PC session can hang on
+///    its own, and serializing cannot fix that — it only stops it taking siblings down. Which
+///    means `--test-threads=4` is FLAKY, not fixed: the same binary passed 6/6 in 6.30 s earlier
+///    the same day and wedged on the next run. At `--test-threads=1` the whole live suite is
+///    green (6.24 s / 3.11 s / 0.01 s, measured after the split).
+///
+/// The next step for the owning lane is inside `mpz`/`rayon`, not here. `.config/nextest.toml`
+/// bounds the blast radius by package name and NOW NAMES `dregg-zkoracle-live` as well as
+/// `dregg-zkoracle-prove` — a bound that silently stopped covering these binaries when they
+/// moved would have been a deleted gate wearing a rename.
 static MPC_TLS_SESSION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Run one whole MPC-TLS roundtrip while holding [`MPC_TLS_SESSION_LOCK`], so at most one 2PC
@@ -170,7 +192,9 @@ impl LiveExchange {
             path: format!("/repos/{owner}/{repo}/commits/{sha}"),
             secret_header: None,
             request_body: String::new(),
-            response_body: crate::endpoints::github::github_commit_body(sha, author, date, message),
+            response_body: dregg_zkoracle_prove::endpoints::github::github_commit_body(
+                sha, author, date, message,
+            ),
         }
     }
 
@@ -181,7 +205,9 @@ impl LiveExchange {
             path: format!("/v2/prices/{asset}/spot"),
             secret_header: None,
             request_body: String::new(),
-            response_body: crate::endpoints::price::coinbase_spot_body(asset, amount),
+            response_body: dregg_zkoracle_prove::endpoints::price::coinbase_spot_body(
+                asset, amount,
+            ),
         }
     }
 }
@@ -610,7 +636,7 @@ pub fn run_local_roundtrip_blocking(exchange: &LiveExchange) -> Result<LiveRound
 // Verification uses `ServerCertVerifier::mozilla()` and PINS the separate notary's key.
 // ─────────────────────────────────────────────────────────────────────────────
 
-use crate::endpoints::price::COINBASE_SERVER_NAME;
+use dregg_zkoracle_prove::endpoints::price::COINBASE_SERVER_NAME;
 
 /// A completed real roundtrip against live `api.coinbase.com`: the verified response, the raw
 /// `tlsn` `Presentation` bytes, and the SEPARATE notary's pin (socket + pinned verifying key)
@@ -927,14 +953,14 @@ pub fn run_github_roundtrip_blocking(
     repo: &str,
     sha: &str,
 ) -> Result<CoinbaseRoundtrip> {
-    let path = crate::endpoints::github::github_commit_path(owner, repo, sha);
+    let path = dregg_zkoracle_prove::endpoints::github::github_commit_path(owner, repo, sha);
     with_mpc_tls_session(|| {
         let notary_key = crate::notary_server::generate_notary_key()?;
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?;
         rt.block_on(run_live_roundtrip_inner(
-            crate::endpoints::github::GITHUB_SERVER_NAME,
+            dregg_zkoracle_prove::endpoints::github::GITHUB_SERVER_NAME,
             &path,
             notary_key,
         ))

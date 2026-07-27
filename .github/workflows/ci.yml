@@ -488,7 +488,7 @@ jobs:
       # breakage.
       #
       # It also bounds the hangs. Three classes of test in this tree hang forever
-      # (a real deadlock in dregg-zkoracle-prove, servo-render waiting on a display
+      # (a real deadlock in dregg-zkoracle-live, servo-render waiting on a display
       # a headless runner does not have, a starbridge-tussle spin loop). That first
       # workspace run needed an external watchdog to complete at all. `.config/
       # nextest.toml` now gives every profile a `terminate-after`, so a hang is a

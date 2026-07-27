@@ -155,7 +155,7 @@ impl ArbiterAttestationCarrier {
         prompt: &str,
         ruling: &str,
     ) -> Result<ZkOracleAttestation, String> {
-        use dregg_zkoracle_prove::tlsn_live::{run_local_roundtrip_blocking, LiveExchange};
+        use dregg_zkoracle_live::tlsn_live::{run_local_roundtrip_blocking, LiveExchange};
         let exchange = LiveExchange::messages(prompt, ruling);
         let roundtrip = run_local_roundtrip_blocking(&exchange).map_err(|e| e.to_string())?;
         let body = String::from_utf8(roundtrip.verified.response_body.clone())

@@ -19,7 +19,7 @@ PROOF="proof.json"
 FRIEND_COPY="proof.received.json"
 TAMPERED="proof.tampered.json"
 
-# Build once, then invoke quietly. If you built with --features live, add it here.
+# Build once, then invoke quietly. No feature flags: the live MPC-TLS path is unconditional.
 ORACLE=(cargo run --release --quiet --)
 
 line() { printf '\n\033[1m── %s\033[0m\n' "$1"; }

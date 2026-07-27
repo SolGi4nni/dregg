@@ -45,6 +45,15 @@ path = "src/main.rs"
 name = "zk_live_carrier"
 required-features = ["zk-live"]
 
+# `agent_turn_carries_a_web_fact` imports the live github prover UNCONDITIONALLY, so it has
+# always needed the live backend — it was simply never declared. It compiled anyway because
+# `cargo check --workspace` unified `dregg-zkoracle-prove/tlsn-live` on (via `dregg-oracle`'s
+# `default`), so nothing ever reported that this example's compilability was a function of the
+# package selection. Declared now, so it is gated on purpose rather than by accident.
+[[example]]
+name = "agent_turn_carries_a_web_fact"
+required-features = ["zk-live"]
+
 [dependencies]
 # THE GROUNDING DEP — the real SDK with its DEFAULT features (the verified Lean
 # executor + the proven `ToolGateway`). We reuse `ToolGateway::{admit,invoke}`,
@@ -93,6 +102,11 @@ serde_json = "1"
 # heavy `tlsn-live` feature); the live `api.anthropic.com` session is the named
 # operational remainder (docs/deos/ZKORACLE-PROVER-STATUS.md).
 dregg-zkoracle-prove = { path = "../zkoracle-prove" }
+# The LIVE MPC-TLS backend, an OPTIONAL DEPENDENCY rather than a feature reaching into
+# `dregg-zkoracle-prove`. That forward used to flip that shared crate's `verify_mpctls_leg`
+# for EVERY member of the resolve; this edge adds code here and changes nothing there.
+dregg-zkoracle-live = { path = "../zkoracle-live", optional = true }
+
 
 # THE GAME NARRATOR — the hosted, budget-metered DM narrator (`dregg-narrator`:
 # Bedrock Claude/Nova → Ollama → scripted, behind the hard USD `BudgetLedger`). The
@@ -203,7 +217,7 @@ live-brain = ["dep:reqwest"]
 # `presentation.verify()`). The heavy `mpz`/tokio/rustls 2PC backend rides ONLY this
 # feature, so the crown's default modeled path stays HTTP/TLS-free. The live-Anthropic
 # session (real key + deployed notary) is the operational remainder, NAMED not faked.
-zk-live = ["dregg-zkoracle-prove/tlsn-live", "dep:tlsn", "dep:bincode"]
+zk-live = ["dep:dregg-zkoracle-live", "dep:tlsn", "dep:bincode"]
 # THE HANDS — the confined agent's `run_js` tool. Pulls deos-js (real
 # SpiderMonkey) so a Hermes agent can crawl + drive the cockpit as the
 # operator's co-pilot, every fire a cap-gated verified turn under the agent's

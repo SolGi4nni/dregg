@@ -11,7 +11,7 @@
 //!   1. the prover connects to a real `TcpStream`, not `tokio::io::duplex` to a local server;
 //!   2. the root store is the Mozilla/webpki set (`RootCertStore::mozilla`), so Amazon's real
 //!      cert chain verifies and the server name pins `bedrock-runtime.<region>.amazonaws.com`;
-//!   3. the request is **SigV4-signed** ([`crate::sigv4`]) — the `Authorization` header is the
+//!   3. the request is **SigV4-signed** ([`dregg_zkoracle_prove::sigv4`]) — the `Authorization` header is the
 //!      secret, replacing `x-api-key`;
 //!   4. selective disclosure hides the `Authorization` VALUE (the credential) while revealing the
 //!      response body — Claude's genuine completion.
@@ -36,8 +36,6 @@
 //! The residual is pure operational infra: hosting the notary at a real, stable internet
 //! address, PUBLISHING + independently auditing the pinned key, and running it with uptime and
 //! a documented rotation policy.
-
-#![cfg(feature = "tlsn-live")]
 
 use std::future::IntoFuture;
 use std::net::SocketAddr;
@@ -75,8 +73,8 @@ use std::path::Path;
 use crate::notary_server::{
     HostedNotary, NotaryPin, generate_notary_key, load_or_generate_notary_key, spawn_hosted_notary,
 };
-use crate::sigv4::{AwsCredentials, SignRequest, sign};
 use crate::tlsn_live::VerifiedResponse;
+use dregg_zkoracle_prove::sigv4::{AwsCredentials, SignRequest, sign};
 
 // The 2PC preprocesses these bounds; cost (OT/garbling volume, memory, wall-clock) scales
 // ~linearly with them. The request is a small signed POST, so `MAX_SENT_DATA` stays at 4 KiB.

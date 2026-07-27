@@ -56,6 +56,11 @@ path = "src/lib.rs"
 # real model (authentic), well-formed, and injection-free. Composed directly so the Arbiter
 # stays light (no HTTP/TLS on the default path).
 dregg-zkoracle-prove = { path = "../zkoracle-prove" }
+# The LIVE MPC-TLS backend, an OPTIONAL DEPENDENCY rather than a feature reaching into
+# `dregg-zkoracle-prove`. That forward used to flip that shared crate's `verify_mpctls_leg`
+# for EVERY member of the resolve; this edge adds code here and changes nothing there.
+dregg-zkoracle-live = { path = "../zkoracle-live", optional = true }
+
 
 # The receipt-id commitment over a landed ruling (the on-ledger fingerprint a light client
 # recomputes) — the SAME BLAKE3 shape `deos_hermes::attest` uses.
@@ -70,7 +75,7 @@ dregg-node-target = { path = "../node-target" }
 # THE CROWN, run REAL-LOCALLY. Attest the ruling over a GENUINE local MPC-TLS 2PC roundtrip
 # (zkoracle-prove's vendored TLSNotary) instead of the modeled ed25519 carrier. OFF by
 # default so the standard build stays HTTP/TLS-free.
-tlsn-live = ["dregg-zkoracle-prove/tlsn-live"]
+tlsn-live = ["dep:dregg-zkoracle-live"]
 
 # A workspace MEMBER of the breadstuffs root (registered in `members`). The root
 # `[workspace]` + its `[patch]` tables (the plonky3-recursion sibling checkout + the

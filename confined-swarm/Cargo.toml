@@ -66,11 +66,5 @@ blake3 = "1"
 # landed). One flip from the live independent-operator federation.
 dregg-node-target = { path = "../node-target" }
 
-[features]
-# THE CROWN, run REAL-LOCALLY. Attest each worker's turn over a GENUINE local
-# MPC-TLS 2PC roundtrip (zkoracle-prove's vendored TLSNotary) instead of the modeled
-# ed25519 carrier. OFF by default so the standard build stays HTTP/TLS-free.
-tlsn-live = ["dregg-zkoracle-prove/tlsn-live"]
-
 [lints]
 workspace = true

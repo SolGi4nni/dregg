@@ -55,7 +55,13 @@ dregg-cell = { path = "../cell" }
 # turn, and its content commitment rides the real `TurnReceipt` via `EmitEvent`.
 # The default authentic leg is a fixture notary — that provenance level is Phase E
 # (Bedrock MPC-TLS), NOT this phase; our job is BINDING whatever attestation exists.
-dregg-zkoracle-prove = { path = "../zkoracle-prove", default-features = false }
+# (no `default-features = false`: `dregg-zkoracle-prove` has NO features at all now.)
+dregg-zkoracle-prove = { path = "../zkoracle-prove" }
+# The LIVE MPC-TLS backend, an OPTIONAL DEPENDENCY rather than a feature reaching into
+# `dregg-zkoracle-prove`. That forward used to flip that shared crate's `verify_mpctls_leg`
+# for EVERY member of the resolve; this edge adds code here and changes nothing there.
+dregg-zkoracle-live = { path = "../zkoracle-live", optional = true }
+
 # THE COLLECTIVE (Phase C). The REAL quorum-certified voting engine: `WriteOnce`
 # ballots + `Monotonic` tally + the polis `AffineLe` quorum gate, every ballot /
 # tally / resolve a real cap-bounded turn on its own `EmbeddedExecutor`. We CONSUME
@@ -137,13 +143,13 @@ serde_json = { workspace = true }
 postcard = { version = "1", features = ["alloc"], optional = true }
 
 [features]
-# The REAL attested brain path (Phase E→B): links `dregg-zkoracle-prove`'s heavy MPC-TLS
-# backend so `BedrockBrain` can make a genuine live Bedrock call and
+# The REAL attested brain path (Phase E→B): links the `dregg-zkoracle-live` crate's heavy
+# MPC-TLS backend so `BedrockBrain` can make a genuine live Bedrock call and
 # `narrate_turn_bedrock_attested` can authenticate the narration's provenance with a REAL
 # `presentation.verify()` under the hosted pinned notary. OFF by default — the offline
 # scripted-brain tests + the confined-channel parser stay green and light without it. The
 # live test (`tests/bedrock_brain_live.rs`) is `#[ignore]`d (real network + paid call).
-tlsn-live = ["dregg-zkoracle-prove/tlsn-live"]
+tlsn-live = ["dep:dregg-zkoracle-live"]
 
 # A two-step hidden quest/raid state machine proved as the Lean-authored bounded
 # 4-host-slot / 2-pattern-slot match-driven replacement relation.  This is

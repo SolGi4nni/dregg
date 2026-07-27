@@ -167,7 +167,7 @@ Storyflame should not become a privileged special case named â€œthe AI feature.â
 
 ### What exists
 
-The provenance vocabulary is unusually honest. The default attestation carrier is explicitly a self-signed fixture that proves plumbing and nothing about model origin; live policy can require MPC-TLS and refuse fixtures (`attested-dm/src/lib.rs:15`, `zkoracle-prove/src/attestation.rs:142`, `zkoracle-prove/src/attestation.rs:306`). A real Bedrock path connects the prover/notary to the actual endpoint, discloses the returned body, pins the host and a separate notary key, and hides the authorization value (`zkoracle-prove/src/tlsn_bedrock.rs:1`, `zkoracle-prove/src/tlsn_bedrock.rs:299`).
+The provenance vocabulary is unusually honest. The default attestation carrier is explicitly a self-signed fixture that proves plumbing and nothing about model origin; live policy can require MPC-TLS and refuse fixtures (`attested-dm/src/lib.rs:15`, `zkoracle-prove/src/attestation.rs:142`, `zkoracle-prove/src/attestation.rs:306`). A real Bedrock path connects the prover/notary to the actual endpoint, discloses the returned body, pins the host and a separate notary key, and hides the authorization value (`zkoracle-live/src/tlsn_bedrock.rs:1`, `zkoracle-live/src/tlsn_bedrock.rs:298`).
 
 The cap pattern is also correct in spirit. `DmCaps` enumerates scene, flag, and item-grant authority and recursively checks every effect in a batch (`attested-dm/src/lib.rs:1067`, `attested-dm/src/lib.rs:1102`). The prompt template hash, world binding, and player input can be committed into the turn (`attested-dm/src/lib.rs:1243`, `attested-dm/src/lib.rs:1299`).
 

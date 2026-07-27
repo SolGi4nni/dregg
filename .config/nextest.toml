@@ -118,7 +118,8 @@
 # denies a verdict to everything queued behind it. The first complete
 # `cargo test --workspace` (2026-07-26) needed an external watchdog for exactly
 # this — /tmp/ws-watchdog.log records it killing
-# `dregg-zkoracle-prove`'s `tlsn_live_roundtrip` by hand. Under process-per-test
+# `tlsn_live_roundtrip` by hand (then in `dregg-zkoracle-prove`, now in
+# `dregg-zkoracle-live`). Under process-per-test
 # with a kill budget, that same hang is a NAMED FAILING TEST and the other ~16 000
 # still report. `[profile.heavy]`, `[profile.armed]` and `[profile.gpu]` had NO
 # `terminate-after` at all — a hang in any of them ran until a human noticed, which
@@ -126,7 +127,12 @@
 #
 # ⚠ A TIMEOUT IS NOT A FIX, AND MUST NOT BE READ AS ONE. The three hang classes have
 # real, diagnosed root causes and a separate lane owns them:
-#   dregg-zkoracle-prove  a genuine DEADLOCK (98 threads parked in futex_do_wait)
+#   dregg-zkoracle-live   a genuine DEADLOCK (98 threads parked in futex_do_wait) — the MPC-TLS
+#                         2PC suites, which lived in `dregg-zkoracle-prove` until the
+#                         2026-07-27 crate split. ⚠ BOTH packages stay in the filter below:
+#                         `dregg-zkoracle-prove` keeps the fixture-path suites, and a bound
+#                         that silently stopped covering the moved binaries would be a
+#                         deleted gate wearing a rename.
 #   servo-render          waits on a display a headless box does not have
 #   starbridge-tussle     99.9% CPU spinning on a loop that discards a Result
 # The overrides below bound each one's blast radius. They do not repair any of them,
@@ -189,7 +195,7 @@ slow-timeout = { period = "120s", terminate-after = 30 }
 # these has a legitimate slow path. 30s × 2 = 60s, well above their honest runtimes
 # and far below "forever". DELETE THESE ROWS when the root causes land; do not retune.
 [[profile.default.overrides]]
-filter = 'package(dregg-zkoracle-prove) or package(servo-render) or package(starbridge-tussle)'
+filter = 'package(dregg-zkoracle-prove) or package(dregg-zkoracle-live) or package(servo-render) or package(starbridge-tussle)'
 slow-timeout = { period = "30s", terminate-after = 2 }
 
 [profile.default]

@@ -138,10 +138,14 @@ on `dregg-zkoracle-prove`.
 cd dregg-oracle
 cargo build --release            # the prover + verifier CLI
 cargo run --release -- verify proof.json
-
-# the real internet-host MPC-TLS path (heavier: mpz 2PC + tokio + rustls):
-cargo build --release --features live
 ```
+
+There is no lighter build and no feature flag: the real internet-host MPC-TLS path (the
+heavy `mpz` 2PC + tokio + rustls stack, in the `dregg-zkoracle-live` crate) is what this tool
+IS. It used to sit behind `--features live`, whose "off" build compiled a CLI in which every
+command was a `bail!` — and, because cargo features unify across a workspace resolve, whose
+"on" state silently reached into `dregg-zkoracle-prove` and changed what that shared crate
+compiled for every other member.
 
 ## Reuse
 

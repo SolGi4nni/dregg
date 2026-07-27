@@ -28,13 +28,14 @@
 # 79 T3 pairs: 59 PASS, 20 FAIL, 1594s total (26.6 min), mean 20s, median 12s, max 151s
 # (starbridge-v2:gpui-web). FIVE distinct root causes, not twenty problems:
 #
-#   1. deos-hermes x4 — `examples/agent_turn_carries_a_web_fact.rs` imports
-#      `dregg_zkoracle_prove::endpoints::github::{prove_github_live, verify_github_live}`, which
-#      exist only under that crate's `tlsn-live`. deos-hermes never enables it; the example
-#      compiles in ci.yml ONLY because another workspace member pulls `tlsn-live` into the
-#      unified resolve. Its sibling example `zk_live_carrier` declares
-#      `required-features = ["zk-live"]` for exactly this reason. One missing `[[example]]`
-#      stanza fixes all four.
+#   1. deos-hermes x4 — ⚑ FIXED 2026-07-27, rows deleted. `examples/agent_turn_carries_a_web_fact.rs`
+#      imported the live github prover unconditionally, so it compiled in ci.yml ONLY because
+#      another member pulled `tlsn-live` into the unified resolve — its compilability was a
+#      function of the PACKAGE SELECTION and nothing said so. It now declares
+#      `required-features = ["zk-live"]`, the stanza its sibling `zk_live_carrier` always had,
+#      and the live backend it wants is the `dregg-zkoracle-live` CRATE rather than a feature
+#      that reaches into a shared one. The predicted "one missing `[[example]]` stanza fixes
+#      all four" held exactly.
 #   2. pg-dregg x6 + dregg-sdk-py x3 — `unresolved imports p3_fri::{CpuTwoAdicFriFold,
 #      TwoAdicFriFoldBackend}`. Both are EXCLUDED workspaces, so neither inherits the root's
 #      `[patch] p3-fri = { path = "vendor/plonky3-fri-82cfad73" }`; they resolve a different
@@ -57,10 +58,6 @@
 # sweep goes RED on the "now COMPILES but is still recorded broken" direction, which is the
 # ratchet working. Fix by replacing these two rows with whatever CI actually reports.
 #
-deos-hermes	js-agent	error[E0432]: unresolved imports `dregg_zkoracle_prove::endpoints::github::prove_github_live`, `dregg_zkoracle_prove::endpoints::github::verify_github_live`
-deos-hermes	live-brain	error[E0432]: unresolved imports `dregg_zkoracle_prove::endpoints::github::prove_github_live`, `dregg_zkoracle_prove::endpoints::github::verify_github_live`
-deos-hermes	node-brain	error[E0432]: unresolved imports `dregg_zkoracle_prove::endpoints::github::prove_github_live`, `dregg_zkoracle_prove::endpoints::github::verify_github_live`
-deos-hermes	screenshot	error[E0432]: unresolved imports `dregg_zkoracle_prove::endpoints::github::prove_github_live`, `dregg_zkoracle_prove::endpoints::github::verify_github_live`
 deos-zed-full	default	error: failed to run custom build command for `glib-sys v0.21.5`
 deos-zed-full	full-zed	error: failed to run custom build command for `glib-sys v0.21.5`
 dregg-sdk-py	default	error[E0432]: unresolved imports `p3_fri::CpuTwoAdicFriFold`, `p3_fri::TwoAdicFriFoldBackend`

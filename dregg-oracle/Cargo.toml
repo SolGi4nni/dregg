@@ -4,30 +4,38 @@ version = "0.1.0"
 edition = "2021"
 description = "Trustless web facts you can reuse. A CLI + library that produces a PORTABLE, independently-verifiable proof that a real HTTPS endpoint genuinely returned a value (a Coinbase spot price, a GitHub commit) — authentic (MPC-TLS / tlsn), well-formed (JSON CFG parse certificate), injection-free, STARK-bound. Anyone can re-verify a proof.json trusting no one but the pinned transport anchors."
 
-# Folded into the root workspace (members, NOT default-members — its default
-# `live` feature links the heavy tlsn-live MPC-TLS backend, so keeping it out of
-# default-members prevents that from feature-unifying onto zkoracle-prove in the
-# light dev loop; build it explicitly with `-p dregg-oracle`).
+# ─────────────────────────────────────────────────────────────────────────────
+# ⚑ THIS CRATE HAS NO CARGO FEATURES.
+#
+# It used to have `default = ["live"]`, `live = ["dregg-zkoracle-prove/tlsn-live"]`, and
+# the root workspace kept it in `members` but out of `default-members` to stop that from
+# feature-unifying onto zkoracle-prove in the light dev loop. THE WORKAROUND DID NOT
+# HOLD: `--workspace` selects members regardless of `default-members`, so every
+# whole-workspace build and every CI `cargo test --workspace` turned `tlsn-live` on for
+# `dregg-zkoracle-prove` — and MEASURED 2026-07-27, that crate then ran 10 real MPC-TLS
+# 2PC tests it does not run under `cargo test -p dregg-zkoracle-prove`. Same source, two
+# suites, decided by whether THIS package was in the selection.
+#
+# And `live` was not an axis. With it off, every public entry point in src/lib.rs
+# (`prove`, `verify_coinbase`, `verify_github`, `verify_url`) was a `bail!` stub, so
+# `--no-default-features` produced a crate that compiled and could do nothing — while the
+# manifest comment here claimed it "can still VERIFY modeled-carrier proofs (the ed25519
+# fixture path)", which was FALSE: no fixture path was ever wired into this crate.
+#
+# The live backend is now its own unconditional crate. This one depends on it directly.
 [dependencies]
-# THE PROVER/VERIFIER this tool wraps. `default-features = false` keeps the light
-# modeled core available; the `live` feature (default) turns on the real MPC-TLS
-# backend (`tlsn-live`) so `prove` can run a genuine session and `verify` can run
-# the real `presentation.verify()`.
-dregg-zkoracle-prove = { path = "../zkoracle-prove", default-features = false }
+# THE PROVER/VERIFIER this tool wraps: the featureless attestation core (the 3-leg
+# composition, the CFG certificate, the fact extractors) …
+dregg-zkoracle-prove = { path = "../zkoracle-prove" }
+# … and the LIVE MPC-TLS backend, UNCONDITIONALLY. Proving a REAL HTTPS endpoint is the
+# whole point of this tool; there is no build of it that does anything else.
+dregg-zkoracle-live = { path = "../zkoracle-live" }
 
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
 hex = "0.4"
-
-[features]
-# Default ON: the reusable tool's whole point is proving a REAL HTTPS endpoint, so
-# it links the heavy `tlsn-live` MPC-TLS backend by default. `--no-default-features`
-# gives a light, unit-testable crate that can still VERIFY modeled-carrier proofs
-# (the ed25519 fixture path) but not run live proofs or verify live-carrier proofs.
-default = ["live"]
-live = ["dregg-zkoracle-prove/tlsn-live"]
 
 [lints]
 workspace = true

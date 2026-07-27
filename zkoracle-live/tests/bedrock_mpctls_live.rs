@@ -4,7 +4,7 @@
 //! ```text
 //! export AWS_ACCESS_KEY_ID=$(aws configure get aws_access_key_id --profile commonquant-ember)
 //! export AWS_SECRET_ACCESS_KEY=$(aws configure get aws_secret_access_key --profile commonquant-ember)
-//! cargo test -p dregg-zkoracle-prove --features tlsn-live --test bedrock_mpctls_live -- --ignored --nocapture
+//! cargo test -p dregg-zkoracle-live --test bedrock_mpctls_live -- --ignored --nocapture
 //! ```
 //!
 //! On success it PRINTS the disclosed body — Claude's genuine in-session completion, attested by
@@ -12,18 +12,16 @@
 //! Phase-E hole closed: the attested body is what Bedrock actually returned, not a passed-in
 //! string.
 
-#![cfg(feature = "tlsn-live")]
-
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use dregg_zkoracle_prove::notary_server::{
+use dregg_zkoracle_live::notary_server::{
     generate_notary_key, load_notary_key, load_or_generate_notary_key, verifying_key_of,
 };
-use dregg_zkoracle_prove::sigv4::AwsCredentials;
-use dregg_zkoracle_prove::tlsn_bedrock::{
+use dregg_zkoracle_live::tlsn_bedrock::{
     BedrockExchange, authorization_hidden, run_bedrock_roundtrip_blocking,
     run_bedrock_roundtrip_with_durable_notary, verify_bedrock_presentation,
 };
+use dregg_zkoracle_prove::sigv4::AwsCredentials;
 
 fn amz_date(unix: u64) -> String {
     let days = (unix / 86_400) as i64;

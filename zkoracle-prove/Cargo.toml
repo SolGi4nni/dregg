@@ -32,45 +32,6 @@ serde-big-array = "0.5"
 # reads the specific fact fields (commit author/date/message, price amount) out of it.
 serde_json = { workspace = true }
 
-# ─────────────────────────────────────────────────────────────────────────────
-# `tlsn-live` — the REAL MPC-TLS integration against an Anthropic-shaped endpoint
-# (git-pinned TLSNotary @ v0.1.0-alpha.15, the SAME rev deco-prove pins). A heavy
-# optional CRYPTO BACKEND (the `mpz` 2PC/garbling stack + tokio + rustls) gated behind
-# a BUILD feature so the default build stays light — the sanctioned use of a feature
-# (an optional heavy backend, NOT a runtime toggle). With the feature OFF nothing here
-# is compiled: the default zkoracle-prove build = the modeled authentic adapter + the
-# CFG parse-cert core + the injection matcher, fully green and tested.
-tlsn = { git = "https://github.com/tlsnotary/tlsn", rev = "47aee45b53e06648c1b2ad3689b367b8c923fdec", optional = true, features = ["mozilla-certs"] }
-tlsn-formats = { git = "https://github.com/tlsnotary/tlsn", rev = "47aee45b53e06648c1b2ad3689b367b8c923fdec", optional = true }
-tlsn-server-fixture-certs = { git = "https://github.com/tlsnotary/tlsn", rev = "47aee45b53e06648c1b2ad3689b367b8c923fdec", optional = true }
-tokio = { version = "1.38", features = ["rt", "rt-multi-thread", "macros", "sync", "io-util", "net", "time"], optional = true }
-futures = { version = "0.3", optional = true }
-futures-rustls = { version = "0.25", optional = true }
-hyper = { version = "1.1", features = ["client", "server", "http1"], optional = true }
-hyper-util = { version = "0.1", features = ["full"], optional = true }
-http-body-util = { version = "0.1", optional = true }
-tokio-util = { version = "0.7", features = ["compat", "io"], optional = true }
-k256 = { version = "0.13", features = ["ecdsa"], optional = true }
-bincode = { version = "1.3", optional = true }
-anyhow = { version = "1", optional = true }
-
-[features]
-tlsn-live = [
-    "dep:tlsn",
-    "dep:tlsn-formats",
-    "dep:tlsn-server-fixture-certs",
-    "dep:tokio",
-    "dep:futures",
-    "dep:futures-rustls",
-    "dep:hyper",
-    "dep:hyper-util",
-    "dep:http-body-util",
-    "dep:tokio-util",
-    "dep:k256",
-    "dep:bincode",
-    "dep:anyhow",
-]
-
 [dev-dependencies]
 # Proof-size measurement in the demo example only (StarkProof is serde).
 bincode = "1.3"
@@ -80,20 +41,6 @@ bincode = "1.3"
 # TYPE lives in tee-verify; this crate is the zkTLS PRODUCER, tied end-to-end in
 # `tests/oracle_mark_zktls.rs`. No runtime dependency, no cycle (tee-verify does not depend here).
 dregg-tee-verify = { path = "../tee-verify", features = ["zktls-producer"] }
-
-# The live coinbase demo needs the heavy tlsn-live backend; gate it so `cargo build` without
-# the feature does not try to compile it.
-[[example]]
-name = "coinbase_live"
-required-features = ["tlsn-live"]
-
-# coinbase_inproc drives the same `#[cfg(feature = "tlsn-live")]` API
-# (prove_coinbase_live / verify_coinbase_live), so it needs the same gate — without it the
-# example is compiled in the default config and fails to resolve those imports under
-# `cargo check --all-targets` (CI's Check). Its sibling above was gated; this one was missed.
-[[example]]
-name = "coinbase_inproc"
-required-features = ["tlsn-live"]
 
 [lints]
 workspace = true

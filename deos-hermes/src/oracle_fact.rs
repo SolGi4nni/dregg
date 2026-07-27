@@ -28,8 +28,8 @@
 //! are returned ONLY for a genuinely authenticated live proof.
 
 use dregg_cell::oracle_attest::{OracleFactClaims, OracleFactVerifier};
+use dregg_zkoracle_live::verify_zkoracle_live_host;
 use dregg_zkoracle_prove::ZkOracleAttestation;
-use dregg_zkoracle_prove::attestation::verify_zkoracle_live_host;
 use serde::{Deserialize, Serialize};
 
 use crate::attest::attestation_commitment;
@@ -57,7 +57,7 @@ pub struct OracleFactProof {
 
 impl OracleFactProof {
     /// Assemble a proof from its parts. `notary_key` is the bincode of the pinned notary
-    /// `tlsn` `VerifyingKey` (as `dregg_zkoracle_prove::notary_server::verifying_key_of`
+    /// `tlsn` `VerifyingKey` (as `dregg_zkoracle_live::notary_server::verifying_key_of`
     /// then `bincode::serialize` yields).
     pub fn new(
         server: impl Into<String>,
@@ -120,7 +120,7 @@ impl OracleFactVerifier for ZkOracleFactVerifier {
 mod tests {
     use super::*;
     use crate::attest::AttestationCarrier;
-    use dregg_zkoracle_prove::notary_server::{generate_notary_key, verifying_key_of};
+    use dregg_zkoracle_live::notary_server::{generate_notary_key, verifying_key_of};
 
     /// A modeled fixture proof: a genuine modeled attestation (its `tlsn_presentation` is
     /// `None`) + a real, freshly-generated pinned notary key, bincode-encoded into the

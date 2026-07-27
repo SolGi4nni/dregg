@@ -154,7 +154,6 @@ pub struct Leg {
     pub detail: String,
 }
 
-#[cfg(feature = "live")]
 impl Leg {
     fn new(name: &'static str, detail: impl Into<String>) -> Leg {
         Leg {
@@ -166,7 +165,6 @@ impl Leg {
 
 /// The transport-bound legs every dregg-oracle proof re-derives over the
 /// authenticated body (all three held whenever verification returns `Ok`).
-#[cfg(feature = "live")]
 fn transport_legs() -> Vec<Leg> {
     vec![
         Leg::new(
@@ -186,13 +184,11 @@ fn transport_legs() -> Vec<Leg> {
 
 // ── prove ────────────────────────────────────────────────────────────────────
 
-#[cfg(feature = "live")]
 pub fn prove(ep: &Endpoint) -> Result<ProofEnvelope> {
     match ep {
         Endpoint::Coinbase { asset } => {
-            let (pres, key) =
-                dregg_zkoracle_prove::endpoints::price::prove_coinbase_portable(asset)
-                    .map_err(|e| anyhow!("live proof failed: {e:?}"))?;
+            let (pres, key) = dregg_zkoracle_live::endpoints::price::prove_coinbase_portable(asset)
+                .map_err(|e| anyhow!("live proof failed: {e:?}"))?;
             Ok(ProofEnvelope {
                 scheme: SCHEME.to_string(),
                 server: "api.coinbase.com".to_string(),
@@ -205,7 +201,7 @@ pub fn prove(ep: &Endpoint) -> Result<ProofEnvelope> {
         }
         Endpoint::Github { owner, repo, sha } => {
             let (pres, key) =
-                dregg_zkoracle_prove::endpoints::github::prove_github_portable(owner, repo, sha)
+                dregg_zkoracle_live::endpoints::github::prove_github_portable(owner, repo, sha)
                     .map_err(|e| anyhow!("live github proof failed: {e:?}"))?;
             Ok(ProofEnvelope {
                 scheme: SCHEME.to_string(),
@@ -219,7 +215,7 @@ pub fn prove(ep: &Endpoint) -> Result<ProofEnvelope> {
         }
         Endpoint::Url { host, path, .. } => {
             let (pres, key) =
-                dregg_zkoracle_prove::endpoints::generic::prove_url_portable(host, path)
+                dregg_zkoracle_live::endpoints::generic::prove_url_portable(host, path)
                     .map_err(|e| anyhow!("live url proof failed: {e:?}"))?;
             Ok(ProofEnvelope {
                 scheme: SCHEME.to_string(),
@@ -234,11 +230,6 @@ pub fn prove(ep: &Endpoint) -> Result<ProofEnvelope> {
     }
 }
 
-#[cfg(not(feature = "live"))]
-pub fn prove(_ep: &Endpoint) -> Result<ProofEnvelope> {
-    bail!("built without the `live` feature — rebuild with `--features live` to prove")
-}
-
 // ── verify ───────────────────────────────────────────────────────────────────
 
 pub fn verify_envelope(env: &ProofEnvelope) -> Result<Attested> {
@@ -249,11 +240,10 @@ pub fn verify_envelope(env: &ProofEnvelope) -> Result<Attested> {
     }
 }
 
-#[cfg(feature = "live")]
 fn verify_coinbase(env: &ProofEnvelope) -> Result<Attested> {
     let pres = hex::decode(&env.presentation_hex).context("decode presentation hex")?;
     let key = hex::decode(&env.notary_key_hex).context("decode notary key hex")?;
-    let price = dregg_zkoracle_prove::endpoints::price::verify_coinbase_portable_bytes(&pres, &key)
+    let price = dregg_zkoracle_live::endpoints::price::verify_coinbase_portable_bytes(&pres, &key)
         .map_err(|e| anyhow!("VERIFY FAILED (fail-closed): {e:?}"))?;
     Ok(Attested {
         value: format!("{} = {}", price.asset, price.amount),
@@ -266,16 +256,10 @@ fn verify_coinbase(env: &ProofEnvelope) -> Result<Attested> {
     })
 }
 
-#[cfg(not(feature = "live"))]
-fn verify_coinbase(_env: &ProofEnvelope) -> Result<Attested> {
-    bail!("built without `live` — rebuild with `--features live` to verify a live-carrier proof")
-}
-
-#[cfg(feature = "live")]
 fn verify_github(env: &ProofEnvelope) -> Result<Attested> {
     let pres = hex::decode(&env.presentation_hex).context("decode presentation hex")?;
     let key = hex::decode(&env.notary_key_hex).context("decode notary key hex")?;
-    let fact = dregg_zkoracle_prove::endpoints::github::verify_github_portable_bytes(&pres, &key)
+    let fact = dregg_zkoracle_live::endpoints::github::verify_github_portable_bytes(&pres, &key)
         .map_err(|e| anyhow!("VERIFY FAILED (fail-closed): {e:?}"))?;
     let short = &fact.sha[..fact.sha.len().min(12)];
     let subject = fact.message.lines().next().unwrap_or("").trim();
@@ -290,12 +274,6 @@ fn verify_github(env: &ProofEnvelope) -> Result<Attested> {
     })
 }
 
-#[cfg(not(feature = "live"))]
-fn verify_github(_env: &ProofEnvelope) -> Result<Attested> {
-    bail!("built without `live` — rebuild with `--features live` to verify a live-carrier proof")
-}
-
-#[cfg(feature = "live")]
 fn verify_url(env: &ProofEnvelope) -> Result<Attested> {
     let field = match &env.endpoint {
         EndpointTag::Url { field, .. } => field.clone(),
@@ -303,7 +281,7 @@ fn verify_url(env: &ProofEnvelope) -> Result<Attested> {
     };
     let pres = hex::decode(&env.presentation_hex).context("decode presentation hex")?;
     let key = hex::decode(&env.notary_key_hex).context("decode notary key hex")?;
-    let body = dregg_zkoracle_prove::endpoints::generic::verify_url_body_portable_bytes(
+    let body = dregg_zkoracle_live::endpoints::generic::verify_url_body_portable_bytes(
         &pres,
         &key,
         &env.server,
@@ -326,11 +304,6 @@ fn verify_url(env: &ProofEnvelope) -> Result<Attested> {
     })
 }
 
-#[cfg(not(feature = "live"))]
-fn verify_url(_env: &ProofEnvelope) -> Result<Attested> {
-    bail!("built without `live` — rebuild with `--features live` to verify a live-carrier proof")
-}
-
 // ── field extraction ─────────────────────────────────────────────────────────
 //
 // A dotted path walks object keys, numeric array indices, and `*` wildcards
@@ -340,16 +313,13 @@ fn verify_url(_env: &ProofEnvelope) -> Result<Attested> {
 // wrong `--field` is obvious.
 
 /// Max authenticated body we will parse for field extraction (1 MiB).
-#[cfg(any(feature = "live", test))]
 const MAX_BODY_BYTES: usize = 1 << 20;
 /// Max number of dotted path segments we will walk.
-#[cfg(any(feature = "live", test))]
 const MAX_PATH_DEPTH: usize = 64;
 
 /// Walk a dotted path (object keys, numeric array indices, and `*` wildcards)
 /// into a JSON body and render the selected value(s). A wildcard fans out and
 /// its matches are joined with `, `. An empty path yields the whole document.
-#[cfg(any(feature = "live", test))]
 fn extract_field(body: &str, field: &str) -> Result<String> {
     if body.len() > MAX_BODY_BYTES {
         bail!(
@@ -383,7 +353,6 @@ fn extract_field(body: &str, field: &str) -> Result<String> {
 
 /// Recursive walker. Decides key-vs-index by the *node* type, so a numeric
 /// segment against an object is a key lookup (not a failed array index).
-#[cfg(any(feature = "live", test))]
 fn walk<'a>(
     cur: &'a serde_json::Value,
     segs: &[&str],
@@ -439,7 +408,6 @@ fn walk<'a>(
     }
 }
 
-#[cfg(any(feature = "live", test))]
 fn render_value(v: &serde_json::Value) -> String {
     match v {
         serde_json::Value::String(s) => s.clone(),
@@ -447,7 +415,6 @@ fn render_value(v: &serde_json::Value) -> String {
     }
 }
 
-#[cfg(any(feature = "live", test))]
 fn type_name(v: &serde_json::Value) -> &'static str {
     match v {
         serde_json::Value::Null => "null",
@@ -460,7 +427,6 @@ fn type_name(v: &serde_json::Value) -> &'static str {
 }
 
 /// A bounded, human-readable list of an object's keys for error messages.
-#[cfg(any(feature = "live", test))]
 fn object_keys(map: &serde_json::Map<String, serde_json::Value>) -> String {
     let shown: Vec<&str> = map.keys().map(String::as_str).take(16).collect();
     let joined = shown.join(", ");

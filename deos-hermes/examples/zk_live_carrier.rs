@@ -47,10 +47,11 @@
 //! endpoint. See `docs/deos/ZKORACLE-PROVER-STATUS.md`.
 
 use deos_hermes::attest::{AttestationCarrier, attest_turn_live};
-use dregg_zkoracle_prove::tlsn_live::{
+use dregg_zkoracle_live::tlsn_live::{
     LiveExchange, run_local_roundtrip_blocking, verify_messages_presentation,
 };
-use dregg_zkoracle_prove::{ZkOracleError, verify_zkoracle_live};
+use dregg_zkoracle_live::verify_zkoracle_live;
+use dregg_zkoracle_prove::ZkOracleError;
 
 fn main() {
     println!("== zk_live_carrier — the crown over a REAL local MPC-TLS 2PC presentation ==\n");

@@ -299,7 +299,7 @@ pub fn attest_turn_live(
     prompt: &str,
     reply: &str,
 ) -> Result<ZkOracleAttestation, String> {
-    use dregg_zkoracle_prove::tlsn_live::{LiveExchange, run_local_roundtrip_blocking};
+    use dregg_zkoracle_live::tlsn_live::{LiveExchange, run_local_roundtrip_blocking};
 
     let exchange = LiveExchange::messages(prompt, reply);
     // A REAL MPC-TLS 2PC roundtrip authenticates the response body (and verifies the
@@ -332,14 +332,14 @@ pub fn attest_turn_live(
 ///
 /// The returned attestation carries the real presentation as its authentic leg
 /// ([`AuthenticProvenance::MpcTls`]) plus the STARK injection leg, and is verified with
-/// [`dregg_zkoracle_prove::attestation::verify_zkoracle_live_host`] under the pinned notary
+/// [`dregg_zkoracle_live::verify_zkoracle_live_host`] under the pinned notary
 /// key returned in [`BedrockAttestedTurn::notary_pin`].
 ///
 /// **Requires live network + AWS credentials + a paid Bedrock call**, so it is not driven in
 /// CI. Drive it with:
 ///
 /// ```text
-/// cargo test -p dregg-zkoracle-prove --features tlsn-live \
+/// cargo test -p dregg-zkoracle-live \
 ///   --test bedrock_mpctls_live -- --ignored --nocapture
 /// ```
 #[cfg(feature = "zk-live")]
@@ -353,7 +353,7 @@ pub struct BedrockAttestedTurn {
     pub authenticated_body: Vec<u8>,
     /// The separate hosted notary's pin (socket + durable verifying key) the attestation
     /// binds to — the out-of-band trust anchor a verifier checks against.
-    pub notary_pin: dregg_zkoracle_prove::notary_server::NotaryPin,
+    pub notary_pin: dregg_zkoracle_live::notary_server::NotaryPin,
     /// The pinned Bedrock host the session authenticated against.
     pub pinned_host: String,
 }
@@ -367,10 +367,10 @@ pub struct BedrockAttestedTurn {
 #[cfg(feature = "zk-live")]
 pub fn attest_turn_bedrock(
     carrier: &AttestationCarrier,
-    exchange: &dregg_zkoracle_prove::tlsn_bedrock::BedrockExchange,
+    exchange: &dregg_zkoracle_live::tlsn_bedrock::BedrockExchange,
     notary_key_path: &std::path::Path,
 ) -> Result<BedrockAttestedTurn, String> {
-    use dregg_zkoracle_prove::tlsn_bedrock::run_bedrock_roundtrip_with_durable_notary;
+    use dregg_zkoracle_live::tlsn_bedrock::run_bedrock_roundtrip_with_durable_notary;
 
     // THE REAL MODEL SESSION — live network, real Amazon cert chain, real SigV4, a real
     // separate notary. The disclosed body is Claude's genuine completion.

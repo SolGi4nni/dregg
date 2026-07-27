@@ -151,7 +151,23 @@ pub fn verify_github_commit(
     config: &EndpointConfig,
 ) -> Result<GithubCommitFact, GithubError> {
     let verified = verify_zkoracle(att, config).map_err(GithubError::NotVerified)?;
+    commit_fact_over_session(att, &verified)
+}
 
+/// **EXTRACT the commit fact from an ALREADY-VERIFIED session** — the half of
+/// [`verify_github_commit`] that is downstream of leg 1.
+///
+/// Parses `owner`/`repo`/`sha` from the AUTHENTICATED request target and
+/// `author`/`date`/`message`/`sha` from the AUTHENTICATED body, and cross-checks the two
+/// `sha`s agree — so the response is provably about the commit that was asked for.
+///
+/// `pub` and factored out because the live path (`dregg-zkoracle-live`, whose leg 1 is a real
+/// `presentation.verify()`) must reach the SAME extractor. It used to be a verbatim copy
+/// behind `#[cfg(feature = "tlsn-live")]`.
+pub fn commit_fact_over_session(
+    att: &ZkOracleAttestation,
+    verified: &crate::attestation::VerifiedZkOracle,
+) -> Result<GithubCommitFact, GithubError> {
     // owner/repo/sha from the authenticated request target.
     let target = request_target(&att.presentation.sent)
         .ok_or_else(|| GithubError::BadRequestTarget { got: String::new() })?;
@@ -187,173 +203,6 @@ pub fn verify_github_commit(
 }
 
 /// Parse `/repos/{owner}/{repo}/commits/{sha}` → `(owner, repo, sha)`.
-/// **Prove a live `api.github.com` commit** — a genuine MPC-TLS 2PC roundtrip against
-/// the real GitHub API (no auth), bound through the authentic∧well-formed legs.
-#[cfg(feature = "tlsn-live")]
-pub fn prove_github_live(
-    owner: &str,
-    repo: &str,
-    sha: &str,
-) -> Result<
-    (
-        crate::attestation::ZkOracleAttestation,
-        tlsn::attestation::signing::VerifyingKey,
-    ),
-    crate::attestation::ZkOracleError,
-> {
-    use crate::attestation::{FieldSpan, ZkOracleAttestation, ZkOracleError, content_commitment};
-    use crate::authentic::{EndpointPresentation, TlsnVerifyingKey};
-    use crate::cfg::prove_cfg_compact;
-
-    let rt = crate::tlsn_live::run_github_roundtrip_blocking(owner, repo, sha)
-        .map_err(|e| ZkOracleError::NotAuthenticLive(e.to_string()))?;
-    let body = rt.verified.response_body.clone();
-    let cfg_cert = prove_cfg_compact(&body).map_err(ZkOracleError::NotWellFormed)?;
-    let content_commit = content_commitment(&body);
-    let field_span = FieldSpan { offset: 0, len: 0 };
-    let recv = {
-        let mut v = b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\r\n".to_vec();
-        v.extend_from_slice(&body);
-        v
-    };
-    let presentation = EndpointPresentation {
-        verifying_key: TlsnVerifyingKey {
-            alg: rt.notary_pin.verifying_key.alg.to_string(),
-            data: rt.notary_pin.verifying_key.data.clone(),
-        },
-        server_name: rt.verified.server_name.clone(),
-        connection_time: rt.verified.connection_time,
-        sent: rt.verified.sent_redacted.clone(),
-        recv,
-        notary_sig: [0u8; 64],
-    };
-    let att = ZkOracleAttestation {
-        presentation,
-        cfg_cert,
-        field_span,
-        content_commit,
-        zk_injection: None,
-        tlsn_presentation: Some(rt.presentation_bytes),
-    };
-    Ok((att, rt.notary_pin.verifying_key))
-}
-
-/// Verify a live-carrier GitHub attestation and extract the commit fact.
-#[cfg(feature = "tlsn-live")]
-pub fn verify_github_live(
-    att: &crate::attestation::ZkOracleAttestation,
-    expected_notary_key: &tlsn::attestation::signing::VerifyingKey,
-) -> Result<GithubCommitFact, GithubError> {
-    let verified =
-        crate::attestation::verify_zkoracle_live_host(att, GITHUB_SERVER_NAME, expected_notary_key)
-            .map_err(GithubError::NotVerified)?;
-    let target = request_target(&att.presentation.sent)
-        .ok_or_else(|| GithubError::BadRequestTarget { got: String::new() })?;
-    let (owner, repo, requested_sha) =
-        parse_commit_target(&target).ok_or_else(|| GithubError::BadRequestTarget {
-            got: target.clone(),
-        })?;
-    let parsed: CommitResponse =
-        serde_json::from_slice(&verified.session.response_body).map_err(|e| {
-            GithubError::BadSchema {
-                reason: e.to_string(),
-            }
-        })?;
-    if parsed.sha != requested_sha {
-        return Err(GithubError::ShaMismatch {
-            requested: requested_sha,
-            got: parsed.sha,
-        });
-    }
-    Ok(GithubCommitFact {
-        owner,
-        repo,
-        sha: parsed.sha,
-        author: parsed.commit.author.name,
-        date: parsed.commit.author.date,
-        message: parsed.commit.message,
-    })
-}
-
-/// Portable prove: `(tlsn presentation bytes, bincode notary key)`.
-#[cfg(feature = "tlsn-live")]
-pub fn prove_github_portable(
-    owner: &str,
-    repo: &str,
-    sha: &str,
-) -> Result<(Vec<u8>, Vec<u8>), GithubError> {
-    let (att, key) = prove_github_live(owner, repo, sha).map_err(GithubError::NotVerified)?;
-    let pres = att.tlsn_presentation.ok_or_else(|| {
-        GithubError::NotVerified(crate::attestation::ZkOracleError::NotAuthenticLive(
-            "prover produced no tlsn presentation".to_string(),
-        ))
-    })?;
-    let key_bytes = bincode::serialize(&key).map_err(|e| {
-        GithubError::NotVerified(crate::attestation::ZkOracleError::NotAuthenticLive(
-            format!("notary key serialize: {e}"),
-        ))
-    })?;
-    Ok((pres, key_bytes))
-}
-
-/// Portable verify from raw bytes — rebuilds the att from the authenticated body.
-#[cfg(feature = "tlsn-live")]
-pub fn verify_github_portable_bytes(
-    presentation_bytes: &[u8],
-    notary_key_bytes: &[u8],
-) -> Result<GithubCommitFact, GithubError> {
-    use crate::attestation::{FieldSpan, ZkOracleAttestation, ZkOracleError, content_commitment};
-    use crate::authentic::{EndpointPresentation, TlsnVerifyingKey};
-    use crate::cfg::prove_cfg_compact;
-
-    let key: tlsn::attestation::signing::VerifyingKey = bincode::deserialize(notary_key_bytes)
-        .map_err(|e| {
-            GithubError::NotVerified(ZkOracleError::NotAuthenticLive(format!(
-                "notary key decode: {e}"
-            )))
-        })?;
-    let vr = crate::tlsn_live::verify_coinbase_presentation(
-        presentation_bytes,
-        GITHUB_SERVER_NAME,
-        &key,
-    )
-    .map_err(|e| {
-        GithubError::NotVerified(ZkOracleError::NotAuthenticLive(format!(
-            "presentation: {e}"
-        )))
-    })?;
-    let body = vr.response_body.clone();
-    let cfg_cert = prove_cfg_compact(&body)
-        .map_err(ZkOracleError::NotWellFormed)
-        .map_err(GithubError::NotVerified)?;
-    let content_commit = content_commitment(&body);
-    let recv = {
-        let mut v = b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\r\n".to_vec();
-        v.extend_from_slice(&body);
-        v
-    };
-    let presentation = EndpointPresentation {
-        verifying_key: TlsnVerifyingKey {
-            alg: key.alg.to_string(),
-            data: key.data.clone(),
-        },
-        server_name: vr.server_name.clone(),
-        connection_time: vr.connection_time,
-        sent: vr.sent_redacted.clone(),
-        recv,
-        notary_sig: [0u8; 64],
-    };
-    let att = ZkOracleAttestation {
-        presentation,
-        cfg_cert,
-        field_span: FieldSpan { offset: 0, len: 0 },
-        content_commit,
-        zk_injection: None,
-        tlsn_presentation: Some(presentation_bytes.to_vec()),
-    };
-    verify_github_live(&att, &key)
-}
-
 fn parse_commit_target(target: &str) -> Option<(String, String, String)> {
     let segs: Vec<&str> = target.trim_start_matches('/').split('/').collect();
     // ["repos", owner, repo, "commits", sha]

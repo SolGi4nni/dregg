@@ -23,10 +23,11 @@
 //!
 //! Run:
 //! ```text
-//! cargo test -p dregg-zkoracle-prove --features tlsn-live --test model_provenance_fused
+//! cargo test -p dregg-zkoracle-live --test model_provenance_fused
 //! ```
-#![cfg(feature = "tlsn-live")]
 
+use dregg_zkoracle_live::TlsnLeg;
+use dregg_zkoracle_live::tlsn_live::{LiveExchange, run_local_roundtrip_blocking};
 use dregg_zkoracle_prove::attestation::{
     AuthenticPolicy, AuthenticProvenance, FieldSpan, ZkOracleAttestation, ZkOracleError,
     authentic_provenance, content_commitment, verify_zkoracle, verify_zkoracle_with_policy,
@@ -34,7 +35,6 @@ use dregg_zkoracle_prove::attestation::{
 use dregg_zkoracle_prove::authentic::{
     EndpointConfig, EndpointSpec, FixtureNotary, SecretHeader, build_endpoint_fixture,
 };
-use dregg_zkoracle_prove::tlsn_live::{LiveExchange, run_local_roundtrip_blocking};
 use dregg_zkoracle_prove::{
     ZkLegError, prove_cfg_compact, prove_injection_leg, prove_zkoracle_with_stark,
     verify_injection_leg,
@@ -102,7 +102,7 @@ fn real_mpctls_presentation_authenticates_on_the_live_path() {
     assert_eq!(authentic_provenance(&att), AuthenticProvenance::MpcTls);
 
     // ...and the real crypto adjudicates the claim: ACCEPT.
-    let out = verify_zkoracle_with_policy(&att, &config, AuthenticPolicy::RequireMpcTls)
+    let out = verify_zkoracle_with_policy(&att, &config, AuthenticPolicy::RequireMpcTls, &TlsnLeg)
         .expect("a real MPC-TLS presentation authenticates the attestation");
 
     // The accept reports WHAT VOUCHED — not a fixture.
@@ -151,7 +151,7 @@ fn self_signed_fixture_is_accepted_by_the_legacy_path_and_refused_on_the_live_pa
 
     // THE GATE — the live path REFUSES it. Nothing vouches for where these bytes came from.
     assert_eq!(
-        verify_zkoracle_with_policy(&att, &config, AuthenticPolicy::RequireMpcTls),
+        verify_zkoracle_with_policy(&att, &config, AuthenticPolicy::RequireMpcTls, &TlsnLeg),
         Err(ZkOracleError::FixtureOnLivePath),
         "a self-signed fixture MUST NOT authenticate a live attestation"
     );
@@ -170,7 +170,7 @@ fn tampered_real_presentation_is_refused_by_real_crypto() {
     let n = bytes.len();
     bytes[n / 2] ^= 0xFF;
 
-    match verify_zkoracle_with_policy(&att, &config, AuthenticPolicy::RequireMpcTls) {
+    match verify_zkoracle_with_policy(&att, &config, AuthenticPolicy::RequireMpcTls, &TlsnLeg) {
         Err(ZkOracleError::NotAuthenticLive(_)) => {}
         other => panic!("a tampered real presentation must be refused, got {other:?}"),
     }
@@ -199,10 +199,13 @@ fn spliced_evidence_is_refused_even_with_a_real_live_leg() {
         ..att_a.clone()
     };
     // B's live leg is genuinely authentic on its own...
-    assert!(verify_zkoracle_with_policy(&att_b, &config, AuthenticPolicy::RequireMpcTls).is_ok());
+    assert!(
+        verify_zkoracle_with_policy(&att_b, &config, AuthenticPolicy::RequireMpcTls, &TlsnLeg)
+            .is_ok()
+    );
     // ...but it cannot carry A's evidence.
     assert_eq!(
-        verify_zkoracle_with_policy(&spliced, &config, AuthenticPolicy::RequireMpcTls),
+        verify_zkoracle_with_policy(&spliced, &config, AuthenticPolicy::RequireMpcTls, &TlsnLeg),
         Err(ZkOracleError::CrossLegMismatch),
         "a real live leg must not launder evidence about a different body"
     );
@@ -228,7 +231,7 @@ fn stark_injection_leg_is_attached_consulted_and_discriminates_on_the_live_path(
         .expect("the live path attaches the in-circuit STARK injection leg");
     assert!(!leg.proof_bytes.is_empty());
     // And it verifies as part of the whole live attestation.
-    verify_zkoracle_with_policy(&att, &config, AuthenticPolicy::RequireMpcTls)
+    verify_zkoracle_with_policy(&att, &config, AuthenticPolicy::RequireMpcTls, &TlsnLeg)
         .expect("the STARK-carrying live attestation verifies");
 
     // (b) CONSULTED — staple on a genuine proof of a DIFFERENT run. Every other leg is
@@ -250,7 +253,7 @@ fn stark_injection_leg_is_attached_consulted_and_discriminates_on_the_live_path(
         ..att.clone()
     };
     assert_eq!(
-        verify_zkoracle_with_policy(&stapled, &config, AuthenticPolicy::RequireMpcTls),
+        verify_zkoracle_with_policy(&stapled, &config, AuthenticPolicy::RequireMpcTls, &TlsnLeg),
         Err(ZkOracleError::BadZkLeg(ZkLegError::WrongRun)),
         "the STARK leg must be checked against THIS field's run, not merely carried"
     );
@@ -324,7 +327,7 @@ fn injecting_prose_is_refused_over_a_real_live_session() {
         tlsn_presentation: Some(roundtrip.presentation_bytes),
     };
     assert_eq!(
-        verify_zkoracle_with_policy(&hostile, &config, AuthenticPolicy::RequireMpcTls),
+        verify_zkoracle_with_policy(&hostile, &config, AuthenticPolicy::RequireMpcTls, &TlsnLeg),
         Err(ZkOracleError::Injection),
         "injecting prose must be refused even when a REAL 2PC session authenticated it"
     );

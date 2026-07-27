@@ -5,11 +5,9 @@
 //! trust root a verifier pins out-of-band. It is hermetic (a real localhost socket, no live
 //! Bedrock), so it runs by default.
 
-#![cfg(feature = "tlsn-live")]
-
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use dregg_zkoracle_prove::notary_server::{
+use dregg_zkoracle_live::notary_server::{
     generate_notary_key, load_notary_key, load_or_generate_notary_key, save_notary_key,
     spawn_hosted_notary, verifying_key_of,
 };

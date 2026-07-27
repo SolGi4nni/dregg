@@ -3,14 +3,14 @@
 //! file trusting only the pinned host + the published notary key (no trusted third party).
 //!
 //! Run (needs live network):
-//! `cargo run -p dregg-zkoracle-prove --example coinbase_live --features tlsn-live --release -- BTC-USD`
+//! `cargo run -p dregg-zkoracle-live --example coinbase_live --release -- BTC-USD`
 //!
 //! DEPENDS ON the portability patches (serde derives on `ZkOracleAttestation` and its members).
 //! Without them the crate compiles but this example will not (the attestation is not `Serialize`).
 
 use std::env;
 
-use dregg_zkoracle_prove::endpoints::price::{prove_coinbase_live, verify_coinbase_live};
+use dregg_zkoracle_live::endpoints::price::{prove_coinbase_live, verify_coinbase_live};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let asset = env::args().nth(1).unwrap_or_else(|| "BTC-USD".to_string());

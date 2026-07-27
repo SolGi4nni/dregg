@@ -15,23 +15,30 @@
 //!   `{amount}` at `{time}` (the session time). Ships a clean [`price::PriceOracle`]
 //!   interface the downstream auditable-fund lane consumes: `price(asset) -> AttestedPrice`.
 //!
-//! ## What is real vs the live-endpoint remainder
+//! ## What is here vs what is in `dregg-zkoracle-live`
 //!
-//! Same honest boundary as the Anthropic endpoint: the default build exercises each oracle
-//! over a fixture presentation (the modeled tlsn notary + a realistic transcript); the real
-//! local MPC-TLS 2PC roundtrip is the `tlsn-live` path ([`crate::tlsn_live`]). Pointing the
-//! Prover at the live `api.github.com` / `api.coinbase.com` (a real TLS session + a
-//! deployed/pinned notary) is the NAMED operational remainder — see
+//! This module is the ENDPOINT-AGNOSTIC half: the spec, the response schema, and the
+//! fact-extractor that runs over an ALREADY-AUTHENTICATED session
+//! ([`price::price_fact_over_session`], [`github::commit_fact_over_session`]). The default
+//! build exercises each oracle over a fixture presentation (the modeled tlsn notary + a
+//! realistic transcript).
+//!
+//! The real MPC-TLS 2PC roundtrip against the live host, and the third `generic` endpoint
+//! (which has no fixture path at all), live in the `dregg-zkoracle-live` CRATE. They call the
+//! same extractors above, so both paths cross-check the same way. Pointing the Prover at a
+//! deployed/pinned notary is the NAMED operational remainder — see
 //! `docs/deos/ZKORACLE-ENDPOINTS.md`.
 
-pub mod generic;
 pub mod github;
 pub mod price;
 
 /// The HTTP request target (the path) out of the authenticated request bytes: the second
 /// whitespace-delimited field of the request line `METHOD <target> HTTP/1.1`. The request
 /// line is part of the notary-signed presentation, so the target is authenticated.
-pub(crate) fn request_target(sent: &[u8]) -> Option<String> {
+///
+/// `pub` (not `pub(crate)`) because `dregg-zkoracle-live`'s endpoint provers read the target
+/// out of the same authenticated request line after a real 2PC session.
+pub fn request_target(sent: &[u8]) -> Option<String> {
     let line_end = sent
         .windows(2)
         .position(|w| w == b"\r\n")

@@ -218,7 +218,7 @@ pub enum ZkOracleError {
     BadZkLeg(ZkLegError),
     /// **The LIVE authentic leg refused** — the real `tlsn` `presentation.verify()` failed
     /// (a tampered/forged presentation, a wrong server pin, or a missing presentation), as
-    /// surfaced by [`verify_zkoracle_live`]. Carries the real presentation-verifier message.
+    /// surfaced by the [`MpcTlsLeg`] the caller supplied. Carries the verifier's message.
     NotAuthenticLive(String),
     /// **THE PROVENANCE GATE REFUSED — a self-signed fixture was offered on a LIVE path.**
     /// The attestation's authentic leg is only the modeled ed25519 [`crate::authentic::FixtureNotary`]
@@ -227,10 +227,15 @@ pub enum ZkOracleError {
     /// so the attestation is refused before any leg runs. This is the tooth that stops a
     /// test double being consumed as a live proof of model provenance.
     FixtureOnLivePath,
-    /// **The live authentic leg cannot be checked in THIS build** — the attestation carries
-    /// a real MPC-TLS presentation, but the crate was built WITHOUT the `tlsn-live` feature,
-    /// so the tlsn backend that would run `presentation.verify()` is not linked. Fail-CLOSED:
-    /// an unverifiable live leg is refused, never waved through onto the fixture.
+    /// **The caller supplied no MPC-TLS backend** — leg 1 was to be a real
+    /// `presentation.verify()`, but the [`MpcTlsLeg`] handed in was [`NoMpcTlsBackend`], which
+    /// authenticates nothing. Fail-CLOSED: an uncheckable live leg is refused, never waved
+    /// through onto the fixture carrier sitting right next to it.
+    ///
+    /// ⚑ This used to mean "this crate was compiled without the `tlsn-live` feature", which
+    /// made a SECURITY-LOAD-BEARING branch depend on which OTHER workspace members cargo had
+    /// been asked about. It is now a value the caller passes, visible at the call site. The
+    /// real backend is `dregg_zkoracle_live::TlsnLeg`.
     LiveBackendUnavailable,
 }
 
@@ -271,8 +276,9 @@ impl core::fmt::Display for ZkOracleError {
             ZkOracleError::LiveBackendUnavailable => {
                 write!(
                     f,
-                    "live authentic leg cannot be checked: built without the `tlsn-live` \
-                     feature, so presentation.verify() is not linked (refusing fail-closed)"
+                    "live authentic leg cannot be checked: the caller supplied \
+                     NoMpcTlsBackend, so presentation.verify() was never run (refusing \
+                     fail-closed). Pass a real MpcTlsLeg (dregg_zkoracle_live::TlsnLeg)."
                 )
             }
         }
@@ -300,7 +306,48 @@ pub fn verify_zkoracle(
     att: &ZkOracleAttestation,
     config: &EndpointConfig,
 ) -> Result<VerifiedZkOracle, ZkOracleError> {
-    verify_zkoracle_with_policy(att, config, AuthenticPolicy::AllowFixture)
+    verify_zkoracle_with_policy(att, config, AuthenticPolicy::AllowFixture, &NoMpcTlsBackend)
+}
+
+/// **The MPC-TLS authenticator for leg 1** — the seam where a REAL `tlsn`
+/// `presentation.verify()` plugs in.
+///
+/// This crate never links `tlsn`. It defines the obligation and the fail-closed default;
+/// `dregg_zkoracle_live::TlsnLeg` is the implementation that runs genuine 2PC crypto against
+/// the pinned server and (optionally) a pinned notary key.
+///
+/// ⚑ WHY THIS IS A TRAIT AND NOT A `#[cfg(feature = "tlsn-live")]`. It used to be a
+/// `#[cfg]`/`#[cfg(not)]` PAIR over this exact function: with the feature on, real crypto;
+/// with it off, an immediate refusal. Cargo UNIFIES features across a workspace resolve, so
+/// which of those two bodies a build got was decided by which OTHER packages happened to be
+/// selected — `cargo test -p dregg-zkoracle-prove` compiled one and `cargo test --workspace`
+/// the other, because an unrelated member (`dregg-oracle`) had the feature in its `default`.
+/// A security-load-bearing branch must not be a function of the package selection. Now the
+/// caller names the backend it has, and the choice is visible at the call site.
+pub trait MpcTlsLeg {
+    /// Authenticate `presentation_bytes` as a genuine MPC-TLS session with `expected_server`,
+    /// yielding the authenticated session (the response body legs 2–4 then run over).
+    fn authenticate(
+        &self,
+        presentation_bytes: &[u8],
+        expected_server: &str,
+    ) -> Result<AuthenticSession, ZkOracleError>;
+}
+
+/// **The fail-closed backend: authenticates NOTHING.** A verifier holding this cannot check a
+/// live leg, so it refuses one ([`ZkOracleError::LiveBackendUnavailable`]) rather than falling
+/// back onto the self-signed fixture carrier the attestation also has — that fallback would be
+/// precisely the laundering the provenance gate exists to stop.
+///
+/// It is a NAMED VALUE, not an absence: a call site passing it says so in the source, where
+/// the old `#[cfg(not(feature = "tlsn-live"))]` said nothing at all.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NoMpcTlsBackend;
+
+impl MpcTlsLeg for NoMpcTlsBackend {
+    fn authenticate(&self, _: &[u8], _: &str) -> Result<AuthenticSession, ZkOracleError> {
+        Err(ZkOracleError::LiveBackendUnavailable)
+    }
 }
 
 /// **VERIFY a zkOracle attestation UNDER AN EXPLICIT PROVENANCE POLICY** — the entry that
@@ -310,10 +357,10 @@ pub fn verify_zkoracle(
 ///   [`verify_zkoracle`] behaviour, unchanged). Hermetic plumbing only.
 /// - [`AuthenticPolicy::RequireMpcTls`] — **the live path.** A fixture-only attestation is
 ///   REFUSED ([`ZkOracleError::FixtureOnLivePath`]) before any leg runs. A real MPC-TLS
-///   presentation is authenticated by genuine `presentation.verify()` against the pinned
-///   `config.expected_server()`; in a build without the `tlsn-live` backend the leg cannot
-///   be checked at all and is refused fail-closed ([`ZkOracleError::LiveBackendUnavailable`])
-///   — never silently downgraded onto the fixture.
+///   presentation is authenticated by `mpctls`, the [`MpcTlsLeg`] the CALLER supplies, against
+///   the pinned `config.expected_server()`. A caller holding [`NoMpcTlsBackend`] cannot check
+///   the leg at all and is refused fail-closed ([`ZkOracleError::LiveBackendUnavailable`]) —
+///   never silently downgraded onto the fixture.
 ///
 /// The authenticated body (whichever leg produced it) then drives the SAME cross-leg weld +
 /// well-formed + injection-free + STARK legs, so the splice refusal is identical on both
@@ -322,6 +369,7 @@ pub fn verify_zkoracle_with_policy(
     att: &ZkOracleAttestation,
     config: &EndpointConfig,
     policy: AuthenticPolicy,
+    mpctls: &dyn MpcTlsLeg,
 ) -> Result<VerifiedZkOracle, ZkOracleError> {
     // ── THE PROVENANCE GATE ── refuse a test double on a live path BEFORE any leg runs.
     if !policy.admits(authentic_provenance(att)) {
@@ -343,115 +391,78 @@ pub fn verify_zkoracle_with_policy(
                 .map_err(ZkOracleError::NotAuthentic)?;
             verify_legs_over_session(att, session, AuthenticProvenance::SelfSignedFixture)
         }
-        // Leg 1 — the REAL MPC-TLS presentation, adjudicated by genuine tlsn crypto.
+        // Leg 1 — the REAL MPC-TLS presentation, adjudicated by genuine tlsn crypto in
+        // whatever backend the caller handed in.
         AuthenticPolicy::RequireMpcTls => {
-            let session = verify_mpctls_leg(att, config.expected_server())?;
+            let bytes = att
+                .tlsn_presentation
+                .as_ref()
+                .ok_or(ZkOracleError::FixtureOnLivePath)?;
+            let session = mpctls.authenticate(bytes, config.expected_server())?;
             verify_legs_over_session(att, session, AuthenticProvenance::MpcTls)
         }
     }
 }
 
-/// Authenticate leg 1 by the REAL `tlsn` `presentation.verify()`. Without the `tlsn-live`
-/// backend linked this cannot be done at all — refuse fail-closed rather than fall back to
-/// the fixture (the fallback WOULD be the laundering this whole gate exists to stop).
-#[cfg(feature = "tlsn-live")]
-fn verify_mpctls_leg(
-    att: &ZkOracleAttestation,
-    expected_server: &str,
-) -> Result<AuthenticSession, ZkOracleError> {
-    let bytes = att
-        .tlsn_presentation
-        .as_ref()
-        .ok_or(ZkOracleError::FixtureOnLivePath)?;
-    let vr = crate::tlsn_live::verify_messages_presentation(bytes, expected_server)
-        .map_err(|e| ZkOracleError::NotAuthenticLive(e.to_string()))?;
-    // The killer property survives the real session: the x-api-key was redacted.
-    if !vr.api_key_hidden() {
-        return Err(ZkOracleError::NotAuthentic(AuthenticError::ApiKeyDisclosed));
-    }
-    Ok(AuthenticSession {
-        server_name: vr.server_name,
-        connection_time: vr.connection_time,
-        response_body: vr.response_body,
-    })
-}
-
-/// Fail-closed stand-in when the `tlsn-live` backend is not linked: a real MPC-TLS leg is
-/// UNCHECKABLE in this build, so it is refused. Never falls back to `att.presentation`.
-#[cfg(not(feature = "tlsn-live"))]
-fn verify_mpctls_leg(
-    _att: &ZkOracleAttestation,
-    _expected_server: &str,
-) -> Result<AuthenticSession, ZkOracleError> {
-    Err(ZkOracleError::LiveBackendUnavailable)
-}
-
-/// **VERIFY a zkOracle attestation with the LIVE authentic leg** (feature `tlsn-live`).
+/// **BUILD an attestation over an already-AUTHENTICATED response body.**
 ///
-/// Identical to [`verify_zkoracle`] EXCEPT leg 1 is authenticated by the REAL `tlsn`
-/// `presentation.verify()` over the attestation's [`ZkOracleAttestation::tlsn_presentation`]
-/// — a trustless MPC-TLS 2PC notary (the notary co-derived session keys and saw no
-/// plaintext), NOT the modeled ed25519 carrier. The authenticated body it yields drives the
-/// SAME cross-leg weld + well-formed + injection legs. A tampered/forged presentation is
-/// refused by the real crypto ([`ZkOracleError::NotAuthenticLive`]); an un-redacted api-key
-/// still fails the killer property ([`AuthenticError::ApiKeyDisclosed`]).
-#[cfg(feature = "tlsn-live")]
-pub fn verify_zkoracle_live(
-    att: &ZkOracleAttestation,
-    expected_server: &str,
-) -> Result<VerifiedZkOracle, ZkOracleError> {
-    let bytes = att.tlsn_presentation.as_ref().ok_or_else(|| {
-        ZkOracleError::NotAuthenticLive("attestation carries no tlsn presentation".to_string())
-    })?;
-    // Leg 1 — authentic by the REAL presentation.verify() (a tampered presentation fails
-    // here in the genuine tlsn crypto, not a modeled signature).
-    let vr = crate::tlsn_live::verify_messages_presentation(bytes, expected_server)
-        .map_err(|e| ZkOracleError::NotAuthenticLive(e.to_string()))?;
-    // The killer property survives the real session: the x-api-key was redacted.
-    if !vr.api_key_hidden() {
-        return Err(ZkOracleError::NotAuthentic(AuthenticError::ApiKeyDisclosed));
-    }
-    let session = AuthenticSession {
-        server_name: vr.server_name,
-        connection_time: vr.connection_time,
-        response_body: vr.response_body,
-    };
-    verify_legs_over_session(att, session, AuthenticProvenance::MpcTls)
-}
+/// Every live endpoint prover (coinbase spot, github commit, generic URL) does the same three
+/// things once its MPC-TLS session has produced an authenticated body: prove the CFG
+/// certificate over THAT body, commit to it, and package the result with the real presentation
+/// bytes. That is this function, and it links no `tlsn` — the caller has already reduced its
+/// session to `(server_name, connection_time, sent_redacted, body)`.
+///
+/// The modeled `presentation` it builds carries a ZERO `notary_sig`: it is an UNSIGNED
+/// envelope holding the authenticated request line (so the endpoint's fact-extractors can
+/// recover the request target), NOT a second authentication. The real authentication is
+/// `tlsn_presentation`, and a verifier of a live attestation MUST use
+/// [`AuthenticPolicy::RequireMpcTls`] — the modeled carrier would not verify and is never
+/// consulted on that path.
+#[allow(clippy::too_many_arguments)]
+pub fn attestation_over_authenticated_body(
+    notary_alg: &str,
+    notary_data: &[u8],
+    server_name: &str,
+    connection_time: u64,
+    sent_redacted: &[u8],
+    body: &[u8],
+    tlsn_presentation: Vec<u8>,
+) -> Result<ZkOracleAttestation, ZkOracleError> {
+    use crate::authentic::TlsnVerifyingKey;
 
-/// **VERIFY a zkOracle attestation with the LIVE authentic leg against a REAL host**
-/// (feature `tlsn-live`). Like [`verify_zkoracle_live`] but leg 1 authenticates the real `tlsn`
-/// presentation against the host's GENUINE cert chain (Mozilla/webpki roots) and PINS the
-/// separate hosted notary's verifying key
-/// ([`crate::tlsn_live::verify_coinbase_presentation`]) — the trust anchor a verifier holds
-/// out-of-band. The authenticated body drives the SAME cross-leg weld + well-formed + injection
-/// legs. A tampered/forged presentation, a wrong host, or a wrong/unpinned notary is refused
-/// ([`ZkOracleError::NotAuthenticLive`]).
-#[cfg(feature = "tlsn-live")]
-pub fn verify_zkoracle_live_host(
-    att: &ZkOracleAttestation,
-    expected_server: &str,
-    expected_notary_key: &tlsn::attestation::signing::VerifyingKey,
-) -> Result<VerifiedZkOracle, ZkOracleError> {
-    let bytes = att.tlsn_presentation.as_ref().ok_or_else(|| {
-        ZkOracleError::NotAuthenticLive("attestation carries no tlsn presentation".to_string())
-    })?;
-    let vr =
-        crate::tlsn_live::verify_coinbase_presentation(bytes, expected_server, expected_notary_key)
-            .map_err(|e| ZkOracleError::NotAuthenticLive(e.to_string()))?;
-    let session = AuthenticSession {
-        server_name: vr.server_name,
-        connection_time: vr.connection_time,
-        response_body: vr.response_body,
-    };
-    verify_legs_over_session(att, session, AuthenticProvenance::MpcTls)
+    // Leg 2 — well-formed JSON CFG certificate over the AUTHENTICATED body.
+    let cfg_cert = prove_cfg_compact(body).map_err(ZkOracleError::NotWellFormed)?;
+    // The cross-leg weld. The injection leg is vacuous for these read-only endpoints: there
+    // is no user-supplied field, so the empty span is injection-free by inspection.
+    let content_commit = content_commitment(body);
+    let mut recv = b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\r\n".to_vec();
+    recv.extend_from_slice(body);
+    Ok(ZkOracleAttestation {
+        presentation: EndpointPresentation {
+            verifying_key: TlsnVerifyingKey {
+                alg: notary_alg.to_string(),
+                data: notary_data.to_vec(),
+            },
+            server_name: server_name.to_string(),
+            connection_time,
+            sent: sent_redacted.to_vec(),
+            recv,
+            notary_sig: [0u8; 64],
+        },
+        cfg_cert,
+        field_span: FieldSpan { offset: 0, len: 0 },
+        content_commit,
+        zk_injection: None,
+        tlsn_presentation: Some(tlsn_presentation),
+    })
 }
 
 /// The shared legs 2–4 over an already-authenticated session: the cross-leg weld, the
 /// well-formed (CFG) leg, the injection-free leg, and the optional STARK injection leg.
-/// Both [`verify_zkoracle`] (modeled leg 1) and [`verify_zkoracle_live`] (real tlsn leg 1)
-/// bind their downstream evidence to the SAME authenticated body through this.
-fn verify_legs_over_session(
+/// Both leg-1 routes — the modeled fixture carrier and a real [`MpcTlsLeg`] — bind their
+/// downstream evidence to the SAME authenticated body through this. `pub` because
+/// `dregg-zkoracle-live` reaches it after authenticating a session with genuine tlsn crypto.
+pub fn verify_legs_over_session(
     att: &ZkOracleAttestation,
     session: AuthenticSession,
     provenance: AuthenticProvenance,

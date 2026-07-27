@@ -1502,14 +1502,14 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(feature = "tlsn-live")]
+use dregg_zkoracle_live::tlsn_bedrock::{
+    BedrockExchange, BedrockRoundtrip, authorization_hidden, run_bedrock_roundtrip_blocking,
+    verify_bedrock_presentation,
+};
+#[cfg(feature = "tlsn-live")]
 use dregg_zkoracle_prove::{
     attestation::{FieldSpan, content_commitment},
-    injection_free, prove_cfg_compact,
-    tlsn_bedrock::{
-        BedrockExchange, BedrockRoundtrip, authorization_hidden, run_bedrock_roundtrip_blocking,
-        verify_bedrock_presentation,
-    },
-    verify_cfg_compact,
+    injection_free, prove_cfg_compact, verify_cfg_compact,
 };
 
 /// A confined proposal from a live Bedrock call: the parsed [`Narrated`] (from the closed

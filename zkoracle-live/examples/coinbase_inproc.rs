@@ -1,6 +1,6 @@
 //! REAL coinbase MPC-TLS proof, in-process (prove + verify, no serialization) — proves
 //! the hard thing first: a genuine live api.coinbase.com TLS session, attested + verified.
-use dregg_zkoracle_prove::endpoints::price::{prove_coinbase_live, verify_coinbase_live};
+use dregg_zkoracle_live::endpoints::price::{prove_coinbase_live, verify_coinbase_live};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let asset = std::env::args()

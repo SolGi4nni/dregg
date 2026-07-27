@@ -25,6 +25,7 @@ use attested_dm::{
     attestation_commitment, authentic_provenance, verify_zkoracle_with_policy, AuthenticPolicy,
     AuthenticProvenance, DmAttestationCarrier,
 };
+use dregg_zkoracle_live::TlsnLeg;
 use dregg_zkoracle_prove::authentic::{EndpointConfig, EndpointSpec, SecretHeader};
 use dregg_zkoracle_prove::{verify_zkoracle, ZkOracleError};
 
@@ -64,9 +65,13 @@ fn dm_live_narration_fuses_the_real_presentation_into_the_authentic_leg() {
     // The narration claims — and carries — real MPC-TLS provenance.
     assert_eq!(authentic_provenance(&att), AuthenticProvenance::MpcTls);
 
-    let out =
-        verify_zkoracle_with_policy(&att, &live_config(&carrier), AuthenticPolicy::RequireMpcTls)
-            .expect("the real presentation authenticates the DM narration");
+    let out = verify_zkoracle_with_policy(
+        &att,
+        &live_config(&carrier),
+        AuthenticPolicy::RequireMpcTls,
+        &TlsnLeg,
+    )
+    .expect("the real presentation authenticates the DM narration");
     assert_eq!(out.provenance, AuthenticProvenance::MpcTls);
     assert_eq!(out.session.server_name, LIVE_SERVER);
     // The DM's actual words are in the body the REAL session delivered.
@@ -106,7 +111,12 @@ fn default_fixture_narration_is_refused_on_the_live_path() {
 
     // THE GATE — the live path refuses it outright. Nothing vouches for its origin.
     assert_eq!(
-        verify_zkoracle_with_policy(&att, &live_config(&carrier), AuthenticPolicy::RequireMpcTls),
+        verify_zkoracle_with_policy(
+            &att,
+            &live_config(&carrier),
+            AuthenticPolicy::RequireMpcTls,
+            &TlsnLeg
+        ),
         Err(ZkOracleError::FixtureOnLivePath),
         "a self-signed narration must not pass as provably-from-the-model"
     );

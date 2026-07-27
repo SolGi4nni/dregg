@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 use deos_hermes::attest::attestation_commitment;
 use dregg_agent::agent::{AgentAction, AgentSpec, PlannedBrain, ToolKit, ToolOutcome};
 use dregg_agent::session::Session;
-use dregg_zkoracle_prove::endpoints::github::{prove_github_live, verify_github_live};
+use dregg_zkoracle_live::endpoints::github::{prove_github_live, verify_github_live};
 use grain_turn::{ATTESTATION_SLOT, ToolGatewayMinter};
 
 struct NoKit;

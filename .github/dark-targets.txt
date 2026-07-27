@@ -295,4 +295,4 @@ never-run dreggnet-web test private_bazaar_shared_contract   # `private-bazaar-l
 never-run attested-dm test dm_model_provenance   # `tlsn-live` runs the MPC-TLS 2PC REAL-LOCALLY (vendored TLSNotary, local Notary+Prover). Heavy to compile, but needs no external network.
 never-run dregg-deco-prove test tlsn_live_roundtrip   # `tlsn-live`, ditto — local 2PC roundtrip.
 never-run dungeon-on-dregg test bedrock_brain_live   # `tlsn-live`, ditto.
-never-run deos-hermes test narrator_model_provenance_live   # `zk-live` reuses zkoracle-prove's local `tlsn-live`; the LIVE-Anthropic session is separately named as an operational remainder.
+never-run deos-hermes test narrator_model_provenance_live   # `zk-live` is an optional dep on the `dregg-zkoracle-live` CRATE (it was a forward to `dregg-zkoracle-prove/tlsn-live` until the 2026-07-27 split); the LIVE-Anthropic session is separately named as an operational remainder.

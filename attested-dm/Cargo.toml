@@ -59,6 +59,11 @@ path = "src/lib.rs"
 # from a real model (authentic), well-formed, and injection-free. Composed directly so
 # the DM stays light (no HTTP/TLS on the default path).
 dregg-zkoracle-prove = { path = "../zkoracle-prove" }
+# The LIVE MPC-TLS backend, an OPTIONAL DEPENDENCY rather than a feature reaching into
+# `dregg-zkoracle-prove`. That forward used to flip that shared crate's `verify_mpctls_leg`
+# for EVERY member of the resolve; this edge adds code here and changes nothing there.
+dregg-zkoracle-live = { path = "../zkoracle-live", optional = true }
+
 
 # VERIFIABLE RANDOMNESS — a provably-fair game mechanic (a loot chest that drops via a
 # seed-determined, unbiased d-N draw). `EventId::derive` binds the draw to the turn's
@@ -89,7 +94,7 @@ serde_json = "1"
 # THE CROWN, run REAL-LOCALLY. Attest the narration over a GENUINE local MPC-TLS 2PC
 # roundtrip (zkoracle-prove's vendored TLSNotary) instead of the modeled ed25519
 # carrier. OFF by default so the standard build stays HTTP/TLS-free.
-tlsn-live = ["dregg-zkoracle-prove/tlsn-live"]
+tlsn-live = ["dep:dregg-zkoracle-live"]
 
 [lints]
 workspace = true

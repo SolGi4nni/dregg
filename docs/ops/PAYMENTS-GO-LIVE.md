@@ -48,7 +48,7 @@ Set these in the operator's secured env (`/etc/dregg/pay.env`, mode 0600 — see
 ## Go-live sequence (each step gates the next)
 1. **Provision the durable notary key** and publish its verifying key out-of-band
    as the trust root (so provenance is verifiable). `dregg-pay`'s hosted notary is
-   a separate pinned party — see `zkoracle-prove/src/notary_server.rs`.
+   a separate pinned party — see `zkoracle-live/src/notary_server.rs`.
 2. **Watch-only dry run.** `DREGG_PAY_NETWORK=mainnet`, real `DREGG_PAY_RPC`, **no
    sweeper key loaded.** Confirm the `SolanaWatcher` (reusing `bridge/src/
    solana_holdings.rs`'s consensus-verified SPL decode) *sees* a real deposit to a

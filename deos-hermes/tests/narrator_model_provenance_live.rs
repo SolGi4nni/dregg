@@ -28,9 +28,9 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use deos_hermes::attest::{AttestationCarrier, attest_turn_bedrock, attestation_commitment};
-use dregg_zkoracle_prove::attestation::verify_zkoracle_live_host;
+use dregg_zkoracle_live::tlsn_bedrock::BedrockExchange;
+use dregg_zkoracle_live::verify_zkoracle_live_host;
 use dregg_zkoracle_prove::sigv4::AwsCredentials;
-use dregg_zkoracle_prove::tlsn_bedrock::BedrockExchange;
 use dregg_zkoracle_prove::{AuthenticProvenance, authentic_provenance};
 
 /// `YYYYMMDDTHHMMSSZ` from unix seconds (UTC), within AWS's 5-minute skew window.
@@ -150,8 +150,8 @@ fn narrator_turn_is_provably_from_the_live_model() {
     );
 
     // (5) A WRONG notary pin is refused — so the accept above really rested on the pin.
-    let fresh = dregg_zkoracle_prove::notary_server::generate_notary_key().expect("a fresh key");
-    let other = dregg_zkoracle_prove::notary_server::verifying_key_of(&fresh)
+    let fresh = dregg_zkoracle_live::notary_server::generate_notary_key().expect("a fresh key");
+    let other = dregg_zkoracle_live::notary_server::verifying_key_of(&fresh)
         .expect("the fresh key has a verifying key");
     assert!(
         verify_zkoracle_live_host(&turn.attestation, &host, &other).is_err(),

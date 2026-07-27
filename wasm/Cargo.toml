@@ -134,7 +134,10 @@ spween-dregg = { path = "../spween-dregg" }
 # `<dregg-story>` uses: `dreggnet-offerings`'s substrate deps are `spween-dregg` +
 # `dungeon-on-dregg` + `dregg-app-framework` (all `default-features = false`, dropping the
 # non-wasm32 `server` feature), plus `procgen-dregg` (the beacon → daily-seed wire) below — the
-# `dregg-zkoracle-prove` `tlsn`/`tokio` edge is optional + off. So it crosses to the tab exactly
+# `tlsn`/`tokio` edge is a `dungeon-on-dregg/tlsn-live` optional dep on the SEPARATE
+# `dregg-zkoracle-live` crate and is off (it was a feature forward into
+# `dregg-zkoracle-prove` until the 2026-07-27 split, which is a much longer reach to keep
+# off a wasm bundle). So it crosses to the tab exactly
 # like `spween-dregg`, and `bindings_descent` is in the shipped bundle (no target gate).
 dreggnet-offerings = { path = "../dreggnet-offerings" }
 # THE IN-HOUSE SPRITE — `dreggnet-sprite`: the deterministic generative renderer
