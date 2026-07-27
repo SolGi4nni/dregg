@@ -212,6 +212,8 @@ fi
 # apps (the userspace of the kernel) + trustless serving; deploys at /cloud/.
 cp -R "$ROOT/site/cloud" "$DIST/cloud"
 cp -R "$ROOT/site/assets" "$DIST/assets"
+
+
 cp -R "$ROOT/site/explorer" "$DIST/explorer"
 cp -R "$ROOT/site/light-client" "$DIST/light-client"
 # dregg.works — the trustless-host front door + the injectable verify badge. Shipped
@@ -394,6 +396,26 @@ if [ "$ATLAS" = "1" ] && [ -d "$ROOT/dregg-atlas/site" ]; then
   echo "=== 4/6 bundle the atlas ==="
   mkdir -p "$DIST/atlas"
   cp -a "$ROOT/dregg-atlas/site/." "$DIST/atlas/"
+
+# ── ATLAS SCREENSHOTS: generate a labeled placeholder for each reference ────────
+# The 40 real PNGs were 40 MB of LFS-tracked binary re-pulled by EVERY checkout —
+# which exhausted the LFS BANDWIDTH budget and made the whole site undeployable at
+# actions/checkout, before any of our code ran. They are no longer tracked. A broken
+# <img> is silent; a labeled placeholder is not, and "absent but SAID SO" is the same
+# posture we take for the wasm surfaces.
+  if [ -d "$DIST/atlas" ]; then
+  shots="$DIST/atlas/screenshots"; mkdir -p "$shots"
+  # every screenshot the atlas actually references, derived not hard-coded
+  refs="$(grep -rhos 'screenshots/[A-Za-z0-9_-]*\.png' "$DIST/atlas" 2>/dev/null | sed 's|screenshots/||' | sort -u)"
+  made=0
+  for name in $refs; do
+    [ -f "$shots/$name" ] && continue
+    label="${name%.png}"
+    printf '%s' "<svg xmlns='http://www.w3.org/2000/svg' width='960' height='540'><rect width='100%' height='100%' fill='#f4f4f5'/><rect x='.5' y='.5' width='959' height='539' fill='none' stroke='#d4d4d8'/><text x='480' y='262' text-anchor='middle' font-family='ui-sans-serif,system-ui,sans-serif' font-size='22' fill='#71717a'>$label</text><text x='480' y='292' text-anchor='middle' font-family='ui-sans-serif,system-ui,sans-serif' font-size='15' fill='#a1a1aa'>screenshot not shipped &#8212; staging site</text></svg>" > "$shots/$name"
+    made=$((made+1))
+  done
+  echo "=== atlas: $made screenshot placeholders generated (real captures are not tracked) ==="
+  fi
   test -f "$DIST/atlas/index.html"
 else
   echo "=== 4/6 SKIPPED the atlas ==="

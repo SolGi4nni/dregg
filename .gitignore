@@ -109,3 +109,9 @@ rhlp-web
 # COMMITTED half of that sweep is scripts/feature-t3-known-red.tsv (the ratchet).
 /feature-t3-sweep.tsv
 /t3-shard*.tsv
+
+# Atlas screenshots are large, regenerable-by-hand UI captures. They were 40 MB of
+# LFS-tracked binary that every checkout re-pulled — which is what exhausted the LFS
+# BANDWIDTH budget and made the entire site undeployable. They are not shipped; the
+# site build generates a labeled placeholder wherever one is referenced.
+dregg-atlas/site/screenshots/
