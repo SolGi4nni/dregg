@@ -39,11 +39,21 @@
 //! defaults: for `Dfa` predicates the input is "the resource string
 //! UTF-8 bytes", for `Temporal` it's "the receipt-window bytes", etc.
 //!
-//! ```rust,ignore
+//! ```rust
 //! use dregg_intent::predicate::{IntentPredicateVerifier, ResourceDfa};
+//! # let route_root = [7u8; 32];                       // the compiled route-table root
+//! # let dfa_proof_bytes = b"dfa-acceptance-trace".to_vec();
 //! let verifier = IntentPredicateVerifier::with_stub_registry();
 //! let dfa = ResourceDfa::new(route_root, dfa_proof_bytes);
 //! assert!(verifier.matches_resource(&dfa, "documents/private/x").is_ok());
+//!
+//! // The stub registry accepts any NON-EMPTY trace (and only in a build that armed
+//! // `dregg-cell/test-stubs`, as this crate's dev-dependencies do — elsewhere the
+//! // stub is fail-closed); the production registry re-checks the trace against
+//! // `route_root` and the accepting state.
+//! assert!(verifier
+//!     .matches_resource(&ResourceDfa::new(route_root, Vec::new()), "documents/private/x")
+//!     .is_err());
 //! ```
 
 use std::sync::Arc;

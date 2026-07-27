@@ -19,18 +19,27 @@
 //!
 //! Implement [`CommitmentSchema`] for a type to derive both forms:
 //!
-//! ```ignore
-//! struct MyValue { /* … */ }
+//! ```
+//! use dregg_circuit::field::BabyBear;
+//! use dregg_commit::typed::{Commitment4, CommitmentSchema};
+//!
+//! struct MyValue { id: u64 }
 //! enum MyMarker {}
 //!
 //! impl CommitmentSchema for MyMarker {
 //!     type Value = MyValue;
 //!     const DOMAIN: &'static str = "dregg-myvalue v1";
-//!     fn canonical(value: &Self::Value) -> Vec<u8> { /* … */ }
-//!     fn to_felts(value: &Self::Value) -> Vec<BabyBear> { /* … */ }
+//!     fn canonical(value: &Self::Value) -> Vec<u8> { value.id.to_le_bytes().to_vec() }
+//!     fn to_felts(value: &Self::Value) -> Vec<BabyBear> { vec![BabyBear::from_u64(value.id)] }
 //! }
 //!
+//! let my_value = MyValue { id: 7 };
 //! let commitment: Commitment4<MyMarker> = Commitment4::seal(&my_value);
+//!
+//! // Both forms were derived from the SAME canonical preimage under the SAME
+//! // domain tag — that is the one-directional binding the framework rests on.
+//! assert!(commitment.verify_blake3(&MyMarker::canonical(&my_value)));
+//! assert_ne!(commitment.poseidon2(), [BabyBear::ZERO; 4]);
 //! ```
 //!
 //! See `DESIGN-commitment-framework.md` §3 for the full design.

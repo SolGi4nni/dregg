@@ -331,11 +331,14 @@ pub fn install_verified_mlkem_encaps_core(
 /// dregg-pq stays a LIGHT leaf: the archive-dependent symbols are INJECTED as `fn` pointers rather than
 /// depended on. Every host passes the SAME two `dregg-lean-ffi` symbols:
 ///
-/// ```ignore
-/// dregg_pq::install_verified_mlkem_decaps_core(
+/// ```no_run
+/// // NO_RUN: installs a PROCESS-GLOBAL decaps authority (once-per-process, irreversible
+/// // for the life of the process) and drives the linked Lean archive.
+/// let outcome = dregg_pq::install_verified_mlkem_decaps_core(
 ///     dregg_lean_ffi::mlkem_decaps_real_core_available,
 ///     |w| dregg_lean_ffi::shadow_mlkem_decaps_real(w).ok(),
-/// )
+/// );
+/// assert_ne!(outcome, dregg_pq::MlKemDecapsCoreInstall::ExportAbsent);
 /// ```
 ///
 /// Gated on `export_available()` (the `mlkem_decaps_real_core_available()` check): install ONLY when the

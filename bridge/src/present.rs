@@ -3107,11 +3107,33 @@ pub fn prove_committed_threshold(
 ///
 /// # For the verifier (who knows their threshold):
 ///
-/// ```ignore
-/// let expected_commitment = dregg_circuit::compute_threshold_commitment(
+/// ```
+/// use dregg_bridge::{
+///     BridgeCommittedThresholdProof, prove_committed_threshold,
+///     verify_committed_threshold_proof,
+/// };
+/// use dregg_circuit::{BabyBear, compute_threshold_commitment};
+///
+/// let (my_threshold, my_blinding) = (1_000u32, 42u32);
+/// let expected_commitment = compute_threshold_commitment(
 ///     BabyBear::new(my_threshold), BabyBear::new(my_blinding)
 /// );
+/// let fact_commitment = BabyBear::new(7);
+///
+/// // FAIL-CLOSED TODAY. The committed-threshold predicate has no emitted IR-v2
+/// // descriptor (the hand-AIR gadget was retired), so the prover yields nothing…
+/// assert!(prove_committed_threshold(
+///     5_000, my_threshold, my_blinding, fact_commitment, BabyBear::new(9),
+/// ).is_none());
+///
+/// // …and the verifier accepts nothing, not even a well-formed-looking proof.
+/// let proof = BridgeCommittedThresholdProof {
+///     proof: Vec::new(),
+///     threshold_commitment: expected_commitment,
+///     fact_commitment,
+/// };
 /// let valid = verify_committed_threshold_proof(&proof, expected_commitment, fact_commitment);
+/// assert!(!valid);
 /// ```
 ///
 /// # For third-party auditors (who know neither value nor threshold):
@@ -3199,7 +3221,8 @@ impl From<dregg_circuit::predicate_program::ProveError> for ProgramProveError {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// use dregg_bridge::ProgramProveError;
 /// use dregg_circuit::predicate_program::{PredicateExpr, PredicateProgram};
 /// use dregg_circuit::dsl::predicates::PredicateType;
 /// use dregg_circuit::BabyBear;
@@ -3214,9 +3237,16 @@ impl From<dregg_circuit::predicate_program::ProveError> for ProgramProveError {
 /// let mut values = HashMap::new();
 /// values.insert("balance".to_string(), 5000u64);
 ///
-/// let proof = dregg_bridge::prove_predicate_program(
+/// let outcome = dregg_bridge::prove_predicate_program(
 ///     &program, &values, BabyBear::new(99999),
-/// ).unwrap();
+/// );
+///
+/// // FAIL-CLOSED TODAY. The program's SHAPE is still compiled and validated (an
+/// // ill-formed program comes back as `CompileError`), but the programmable-predicate
+/// // compiler emits no IR-v2 descriptor yet, so no proof can be produced. Once the
+/// // descriptor lands this returns the `ProgramProof` anyone holding the public
+/// // inputs can verify.
+/// assert!(matches!(outcome, Err(ProgramProveError::Unsupported(_))));
 /// ```
 pub fn prove_predicate_program(
     program: &dregg_circuit::predicate_program::PredicateProgram,

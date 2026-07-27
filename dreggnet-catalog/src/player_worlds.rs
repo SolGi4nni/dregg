@@ -21,10 +21,19 @@
 //! [`OfferingHost`], with its own world, forge, `AssetWorld`, item registry and sessions. Nothing
 //! crosses between them — there is no shared cell to leak through.
 //!
-//! ```ignore
+//! ```
+//! use dreggnet_catalog::PlayerWorlds;
+//! use dreggnet_offerings::SessionId;
+//! # let viewer_identity_hex = "9f3c…".to_string();
+//! # let other_identity_hex = "1a2b…".to_string();
 //! let mut worlds = PlayerWorlds::new();                 // or ::with_store(|id| …) for durability
 //! let host = worlds.host_mut(&viewer_identity_hex);     // built (and resumed) on first touch
-//! host.ensure_open("craft", &SessionId::new("primary"))?;
+//! host.ensure_open("craft", &SessionId::new("primary")).unwrap();
+//!
+//! // A second identity gets its OWN host — a different world, not a label on a
+//! // shared one. That is where the isolation comes from.
+//! worlds.host_mut(&other_identity_hex);
+//! assert_eq!(worlds.len(), 2);
 //! ```
 //!
 //! ## Which offerings belong here

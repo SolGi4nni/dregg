@@ -188,9 +188,13 @@ pub fn install_or_panic() -> Installed {
 /// with another. A test whose SUBJECT is the PQ path should still call [`install_or_panic`]
 /// itself and assert on [`Installed`].
 ///
-/// ```ignore
+/// ```no_run
+/// // NO_RUN: the expansion registers a `.init_array` / `__mod_init_func` entry, so the
+/// // verified PQ cores are installed process-globally BEFORE `main` — irreversible for
+/// // the life of the process.
 /// // tests/blocklace_attacks.rs
 /// dregg_pq_testkit::install_at_process_start!();
+/// # fn main() {}
 /// ```
 #[macro_export]
 macro_rules! install_at_process_start {

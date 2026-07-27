@@ -113,11 +113,14 @@ pub enum MlDsaVerifyCoreInstall {
 /// depended on. Every host (node, the SDK-hosted wire silo, starbridge-v2, …) passes the SAME two
 /// `dregg-lean-ffi` symbols:
 ///
-/// ```ignore
-/// dregg_pq::install_verified_mldsa_verify_core(
+/// ```no_run
+/// // NO_RUN: installs a PROCESS-GLOBAL verify authority (once-per-process, irreversible
+/// // for the life of the process) and drives the linked Lean archive.
+/// let outcome = dregg_pq::install_verified_mldsa_verify_core(
 ///     dregg_lean_ffi::fips204_verify_real_core_available,
 ///     |w| dregg_lean_ffi::shadow_fips204_verify_real(w).ok(),
-/// )
+/// );
+/// assert_ne!(outcome, dregg_pq::MlDsaVerifyCoreInstall::ExportAbsent);
 /// ```
 ///
 /// so the gating + install + once-per-process semantics live in ONE tested function (and the CI guard has a
@@ -287,11 +290,14 @@ pub enum MlDsaSignCoreRealInstall {
 /// dregg-pq stays a LIGHT leaf: the two archive-dependent symbols are INJECTED as `fn` pointers rather than
 /// depended on. Every host passes the SAME two `dregg-lean-ffi` symbols:
 ///
-/// ```ignore
-/// dregg_pq::install_verified_mldsa_sign_core_real(
+/// ```no_run
+/// // NO_RUN: installs a PROCESS-GLOBAL sign producer (once-per-process, irreversible
+/// // for the life of the process) and drives the linked Lean archive.
+/// let outcome = dregg_pq::install_verified_mldsa_sign_core_real(
 ///     dregg_lean_ffi::fips204_sign_real_core_available,
 ///     |w| dregg_lean_ffi::shadow_fips204_sign_real(w).ok(),
-/// )
+/// );
+/// assert_ne!(outcome, dregg_pq::MlDsaSignCoreRealInstall::ExportAbsent);
 /// ```
 ///
 /// Gated on `export_available()` (the `fips204_sign_real_core_available()` check): install ONLY when the
@@ -397,11 +403,14 @@ pub enum MlDsaKeygenCoreRealInstall {
 /// [`MlDsaKey::from_ed25519_seed`] — taking the `fips204` crate OUT of that process's IDENTITY-KEY keygen
 /// TCB.
 ///
-/// ```ignore
-/// dregg_pq::install_verified_mldsa_keygen_core_real(
+/// ```no_run
+/// // NO_RUN: installs a PROCESS-GLOBAL identity-key expander (once-per-process,
+/// // irreversible for the life of the process) and drives the linked Lean archive.
+/// let outcome = dregg_pq::install_verified_mldsa_keygen_core_real(
 ///     dregg_lean_ffi::mldsa_keygen_real_core_available,
 ///     |w| dregg_lean_ffi::shadow_mldsa_keygen_real(w).ok(),
-/// )
+/// );
+/// assert_ne!(outcome, dregg_pq::MlDsaKeygenCoreRealInstall::ExportAbsent);
 /// ```
 ///
 /// Gated on `export_available()`: install ONLY when the linked archive actually EXPORTS the real core. A

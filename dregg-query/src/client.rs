@@ -28,7 +28,12 @@
 //! .route("/api/receipts/index/range", get(get_receipt_index_range))
 //! ```
 //!
-//! ```rust,ignore
+//! ```ignore
+//! // IGNORED: this is the NODE's source, quoted. The handlers live in `node/src/api.rs`
+//! // and are written against `axum` (`State`, `Query`, `Json`) over `NodeState` — none of
+//! // which is a dependency of this leaf crate, and none of which can become one: `node`
+//! // depends on `dregg-query`, so naming those types here would close a cycle. Kept as
+//! // Rust (not `text`) because it is Rust and reads as the handler contract it mirrors.
 //! /// GET /api/receipts/index/root → IndexRootResponse
 //! ///
 //! /// The MMR root over the node's receipt chain: leaf i = the 32-byte

@@ -10,18 +10,33 @@
 //!
 //! # Usage
 //!
-//! ```ignore
-//! use dregg_dfa::{RouteTableBuilder, RouteTarget};
+//! ```
+//! use dregg_dfa::{GovernanceProof, RouteTableBuilder, RouteTarget, RouteUpdateError};
 //! use dregg_dfa_federation::governed_router_with_committee;
-//! use dregg_federation::threshold::FederationCommittee;
+//! use dregg_federation::threshold::{FederationCommittee, generate_test_committee};
 //!
-//! let committee: FederationCommittee = /* loaded from federation state */;
+//! // Production loads the committee from federation state; here we mint a
+//! // 4-member / threshold-3 one so the example actually runs.
+//! let (committee, _members): (FederationCommittee, _) =
+//!     generate_test_committee(4, 3).unwrap();
 //! let table = RouteTableBuilder::new()
 //!     .route("/x/*", RouteTarget::handler("xh"))
 //!     .compile();
-//! let router = governed_router_with_committee(table, committee);
+//! let mut router = governed_router_with_committee(table.clone(), committee);
+//!
 //! // `router.update_routes(new_table, &proof)` now REQUIRES `proof.proof_data`
 //! // to be a valid `ThresholdQC` over `old_commitment || new_commitment`.
+//! let next = RouteTableBuilder::new()
+//!     .route("/x/*", RouteTarget::handler("xh2"))
+//!     .compile();
+//! let unsigned = GovernanceProof {
+//!     expected_old_commitment: table.commitment,
+//!     proof_data: vec![1, 2, 3], // a CAS-only blob: no threshold signature
+//! };
+//! assert!(matches!(
+//!     router.update_routes(next, &unsigned),
+//!     Err(RouteUpdateError::ThresholdVerificationFailed(_)),
+//! ));
 //! ```
 //!
 //! # Wire-format

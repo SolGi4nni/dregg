@@ -18,7 +18,7 @@
 //! `deos-js` dependency (executor + HTTP only), so a consuming crate can drive a
 //! real node without dragging SpiderMonkey in.
 //!
-//! ```ignore
+//! ```
 //! # use dregg_sdk_net::test_support::TestNode;
 //! # async fn demo(agent_pk: [u8; 32]) {
 //! let (node, agent_cell) = TestNode::genesis([0u8; 32], agent_pk, 1_000_000);
@@ -26,6 +26,7 @@
 //! let spawned = node.spawn().await;
 //! // point a NodeWorldSink / NodeHttpClient at `spawned.base_url`, committing
 //! // AS `agent_cell`, signed over `fed_id`; then read `spawned.lock().await`.
+//! # let _ = (agent_cell, fed_id, spawned.base_url(), spawned.lock().await);
 //! # }
 //! ```
 

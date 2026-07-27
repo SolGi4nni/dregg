@@ -59,9 +59,12 @@ use dregg_turn::ProofVerifier;
 ///
 /// # Usage
 ///
-/// ```ignore
+/// ```
+/// use dregg_bridge::StarkProofVerifier;
+/// use dregg_turn::{ComputronCosts, TurnExecutor};
+///
 /// let verifier = StarkProofVerifier::with_max_age(300); // 5 minutes
-/// let mut executor = TurnExecutor::new(costs);
+/// let mut executor = TurnExecutor::new(ComputronCosts::default());
 /// executor.set_proof_verifier(Box::new(verifier));
 /// ```
 pub struct StarkProofVerifier {
@@ -170,10 +173,16 @@ const KNOWN_AIR_NAMES: &[&str] = &[
 ///
 /// # Usage
 ///
-/// ```ignore
+/// ```
+/// use std::sync::Arc;
+/// use dregg_bridge::DslAwareProofVerifier;
+/// use dregg_dsl_runtime::ProgramRegistry;
+/// use dregg_turn::{ComputronCosts, TurnExecutor};
+///
 /// let registry = Arc::new(ProgramRegistry::new());
 /// // ... deploy programs to registry ...
 /// let verifier = DslAwareProofVerifier::new(registry);
+/// let mut executor = TurnExecutor::new(ComputronCosts::default());
 /// executor.set_proof_verifier(Box::new(verifier));
 /// ```
 pub struct DslAwareProofVerifier {

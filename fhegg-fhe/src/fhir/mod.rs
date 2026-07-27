@@ -474,7 +474,11 @@ pub const DEFAULT_PLAINTEXT_MODULUS: u64 = 1 << 20;
 /// The typed AST (affine/convex/constraint/trigger/order/program).
 ///
 /// Build with the fluent API:
-/// ```ignore
+/// ```
+/// use fhegg_fhe::fhir::{
+///     AffineExpr, Coeff, Constraint, Expr, Phase, Program, Tier, Visibility, compile,
+/// };
+///
 /// let mut p = Program::new(Phase::Clear);
 /// let x = p.var("x", Visibility::Committed, -100, 100);
 /// let y = p.var("y", Visibility::Committed, -100, 100);
@@ -485,7 +489,8 @@ pub const DEFAULT_PLAINTEXT_MODULUS: u64 = 1 << 20;
 /// p.subject_to(Constraint::EqZero(
 ///     AffineExpr::var(x).term(Coeff::Public(1), y),  // x + y = 0 (balance)
 /// ));
-/// let spec = compile(&p)?; // Tier0Dark
+/// let spec = compile(&p).expect("an admissible Tier0Dark program");
+/// assert_eq!(spec.tier, Tier::Tier0Dark);
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Program {

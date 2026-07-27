@@ -56,9 +56,13 @@ pub use spec_audit::{
 ///
 /// Inject it on a native node:
 ///
-/// ```ignore
+/// ```
+/// use dregg_turn::{ComputronCosts, TurnExecutor};
+///
+/// # let costs = ComputronCosts::default();
 /// let executor = TurnExecutor::new(costs)
 ///     .with_shadow_observer(dregg_exec_lean::LeanShadowObserver::arc());
+/// # let _ = executor;
 /// ```
 ///
 /// The differential trait methods delegate to the moved `lean_shadow` free functions (which carry
