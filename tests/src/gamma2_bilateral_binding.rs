@@ -16,7 +16,16 @@
 //!   - permissions-bit tamper on `Introduce` → AIR reject;
 //!   - federation-id binding across cross-federation `Introduce` (§1.3 tail).
 //!
-//! AIR-side γ.2 tests remain `#[ignore]`d until trace-to-PI binding lands.
+//! ⚠ This header used to say "AIR-side γ.2 tests remain `#[ignore]`d until
+//! trace-to-PI binding lands." That binding is NOT landing: sub-stage γ.2.1 is
+//! still marked `pending` in `circuit/src/effect_vm/pi.rs:135`, but its host —
+//! the v1 hand-`EffectVmAir` — is RETIRED, and the deployed rotated circuit
+//! contains no occurrence of `transfer_id` or `bilateral` at all. The Phase-2
+//! aggregation AIR deleted its schedule-replay group as a prover-filled
+//! tautology and states where the closure moved: the schedule's counts/roots are
+//! bound to the canonical `Turn` OFF-AIR. There are no `#[ignore]`d tests left
+//! in this file.
+//!
 //! Phase 1 off-AIR verifier tests below use fabricated WR public inputs to
 //! demonstrate the verifier schedule checks without paying proving cost.
 

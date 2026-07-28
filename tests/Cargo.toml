@@ -38,6 +38,11 @@ dregg-turn = { path = "../turn" }
 dregg-turn-prover = { path = "../turn-prover" }
 dregg-cell = { path = "../cell" }
 dregg-cell-crypto = { path = "../cell-crypto" }
+# `state_constraint_composition::cross_federation_captp_delivered_with_sovereign_and_bilateral`
+# constructs a real `HandoffCertificate`. `Authorization::CapTpDelivered` names the type in a
+# public enum variant, so there is no way to build one without the crate that defines it — and a
+# hand-rolled stand-in would be testing the stand-in.
+dregg-captp = { path = "../captp" }
 dregg-sdk = { path = "../sdk" }
 dregg-types = { path = "../types" }
 dregg-verifier = { path = "../verifier" }

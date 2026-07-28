@@ -8,9 +8,15 @@
 //! variant; "composition" tests cover the interactions that emerge when
 //! multiple caveats fire on the same turn.
 //!
-//! Layer: cell-side evaluator + (where applicable) executor. Tests that
-//! require pieces of the caveat-correctness lane to land carry an
-//! `#[ignore = "..."]` with unblock label.
+//! Layer: cell-side evaluator + (where applicable) executor.
+//!
+//! ⚠ This header used to end "Tests that require pieces of the caveat-correctness
+//! lane to land carry an `#[ignore = "..."]` with unblock label." As of
+//! 2026-07-27 there are none: the last one
+//! (`cross_federation_captp_delivered_with_sovereign_and_bilateral`) was waiting
+//! on three lanes, two of which had been CANCELLED rather than completed. A
+//! header that promises a quarantine which is not in force is the same defect as
+//! a reason string that outlives its referent.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -939,15 +945,530 @@ fn three_cell_ring_trade_bound_delta() {
 // Cross-federation composition: CapTpDelivered + sovereign witness + bilateral
 // ===========================================================================
 
+/// UNBLOCKED (2026-07-27). The `#[ignore]` cited three lanes; all three are
+/// resolved, two of them by being cancelled:
+///
+///   * *caveat-correctness* — `CAVEAT-LAYER-COVERAGE.md`'s row 24 said the
+///     executor "REJECTS `BoundDelta` unconditionally". Stale: the cross-cell
+///     pass is wired (`execute_tree::validate_bound_delta_program`), and this
+///     test uses the simpler `Monotonic`, which was never blocked at all.
+///   * *γ.2 cross-federation* — the off-AIR verifier this file's siblings drive
+///     is the whole γ.2 mechanism; the AIR sub-stage the reason waited for has a
+///     RETIRED host (see the note on
+///     `gamma2_bilateral_binding::coherent_two_sided_transfer_id_lie_…`).
+///   * *sovereign-witness AIR teeth (SOVEREIGN-WITNESS-AIR-DESIGN.md)* — the
+///     cited doc left the tree in May and is archived at
+///     `.docs-history-noclaude/docs-old/`. Its Phase 1 landed as dead-zero PI
+///     slots (no producer sets `EffectVmContext::is_sovereign_cell`) and its
+///     Phase 2 is retired outright (`circuit/src/effect_vm/pi.rs:209`). The
+///     sovereign teeth that actually bite are the EXECUTOR's.
+///
+/// ## Why this composition is worth a test and not just four tests
+///
+/// `CapTpDelivered` is the one authorization mode that **short-circuits the
+/// permission lattice on purpose**. `executor/authorize.rs:124` verifies it
+/// "holistically… regardless of the target cell's permission level" and
+/// `return Ok(())`s before `check_single_auth_requirement` ever runs. That is
+/// deliberate — the cert carries its own cryptographic provenance — but it makes
+/// exactly one question urgent, and nothing in the tree asked it:
+///
+/// **does a valid CapTP delivery also short-circuit the gates that are NOT the
+/// permission lattice?**
+///
+/// Three of them ride on the same turn here: the cell's slot caveat, the
+/// sovereign witness, and the γ.2 cross-cell binding. An early `Ok` that
+/// happened to skip past any of those would be a capability that confers
+/// authority the introducer never held and the cell never agreed to.
+///
+/// ## The shape
+///
+/// One turn at FED_B whose action is authorized by an introducer-signed handoff
+/// certificate issued for FED_B, targeting a cell that is SOVEREIGN at FED_B and
+/// supplies its own witness, carrying a `Monotonic` slot caveat, and moving
+/// value so the γ.2 schedule has something to bind. Then each gate is failed in
+/// turn while the other three stay perfect.
 #[test]
-#[ignore = "blocked on caveat-correctness + γ.2 cross-federation + sovereign-witness AIR teeth (SOVEREIGN-WITNESS-AIR-DESIGN.md)"]
 fn cross_federation_captp_delivered_with_sovereign_and_bilateral() {
-    // Mandate composition target:
-    //   - Federation A's turn signs a Transfer(A→B) using Authorization::Signature.
-    //   - That turn's effect is mirrored on Federation B via Authorization::CapTpDelivered,
-    //     referencing the introducer-signed handoff certificate.
-    //   - B's mirroring turn is sovereign-witnessed (sovereign B cell has a witness).
-    //   - Both cells have slot caveats (Monotonic, RateLimit).
-    //   - γ.2 binds the bilateral transfer_id across the two federation's per-cell proofs.
-    panic!("blocked");
+    use dregg_captp::{FederationId, HandoffCertificate};
+    use dregg_cell::Cell;
+    use dregg_turn::action::Effect as Eff;
+    use dregg_turn::{SovereignCellWitness, TurnError};
+    use dregg_types::{SigningKey, sign};
+
+    const FED_A: [u8; 32] = [0xAA; 32];
+    const FED_B: [u8; 32] = [0u8; 32]; // the executor's default local federation
+    const AMOUNT: u64 = 10;
+    const SLOT_BEFORE: u64 = 10;
+    const SLOT_AFTER: u64 = 20; // Monotonic ✓
+
+    fn open_permissions() -> Permissions {
+        Permissions {
+            send: AuthRequired::None,
+            receive: AuthRequired::None,
+            set_state: AuthRequired::None,
+            set_permissions: AuthRequired::None,
+            set_verification_key: AuthRequired::None,
+            increment_nonce: AuthRequired::None,
+            delegate: AuthRequired::None,
+            access: AuthRequired::None,
+        }
+    }
+
+    /// Bob: sovereign at FED_B, signs his own witness, carries a `Monotonic`
+    /// caveat on slot 0. Because he carries a program, the implicit
+    /// target-nonce bump never applies (`execute_tree.rs:1250`), so the hosted
+    /// twin below is a faithful twin without adjustment.
+    fn bob_cell() -> (Cell, SigningKey) {
+        let key = SigningKey::from_bytes(&[0xB2; 32]);
+        let mut cell = Cell::with_balance(*key.public_key().as_bytes(), [0u8; 32], 1_000);
+        cell.permissions = open_permissions();
+        cell.program = CellProgram::Predicate(vec![StateConstraint::Monotonic { index: 0 }]);
+        cell.state.fields[0] = field_from_u64(SLOT_BEFORE);
+        (cell, key)
+    }
+
+    fn plain_cell(seed: u8) -> Cell {
+        let mut pk = [0u8; 32];
+        pk[0] = seed;
+        pk[31] = seed.wrapping_mul(29);
+        let mut cell = Cell::with_balance(pk, [0u8; 32], 1_000);
+        cell.permissions = open_permissions();
+        cell
+    }
+
+    /// The turn: ONE action targeting bob, authorized by the CapTP delivery,
+    /// carrying both the value movement (for γ.2) and the slot write (for the
+    /// caveat).
+    #[allow(clippy::too_many_arguments)]
+    fn captp_turn(
+        agent: CellId,
+        bob_id: CellId,
+        carol_id: CellId,
+        local_fed: [u8; 32],
+        cert: HandoffCertificate,
+        introducer_pk: [u8; 32],
+        recipient_key: &SigningKey,
+        slot_value: u64,
+        witnesses: HashMap<CellId, SovereignCellWitness>,
+    ) -> Turn {
+        let effects = vec![
+            Eff::Transfer {
+                from: bob_id,
+                to: carol_id,
+                amount: AMOUNT,
+            },
+            Eff::SetField {
+                cell: bob_id,
+                index: 0,
+                value: field_from_u64(slot_value),
+            },
+        ];
+        // The executor recomputes this message from the on-chain Turn using ITS
+        // OWN federation id and `action.target` for both the agent and target
+        // slots (`executor/authorize.rs:379`). Any divergence is a rejection,
+        // which is what makes the FED_A replay leg below bite.
+        let signing_msg = Authorization::captp_delivered_signing_message_for_federation(
+            &local_fed,
+            &cert.nonce,
+            &bob_id,
+            &bob_id,
+            0,
+            &effects,
+        );
+        let sender_signature = sign(recipient_key, &signing_msg).0;
+
+        let mut call_forest = CallForest::new();
+        call_forest.add_root(Action {
+            target: bob_id,
+            method: symbol("captp_mirror"),
+            args: vec![],
+            authorization: Authorization::CapTpDelivered {
+                handoff_cert: cert,
+                introducer_pk,
+                sender_pk: *recipient_key.public_key().as_bytes(),
+                sender_signature,
+            },
+            preconditions: Default::default(),
+            effects,
+            may_delegate: DelegationMode::None,
+            commitment_mode: CommitmentMode::Full,
+            balance_change: None,
+            witness_blobs: vec![],
+        });
+
+        let mut turn = Turn {
+            agent,
+            nonce: 0,
+            call_forest,
+            fee: 0,
+            memo: None,
+            valid_until: None,
+            previous_receipt_hash: None,
+            depends_on: vec![],
+            conservation_proof: None,
+            sovereign_witnesses: HashMap::new(),
+            execution_proof: None,
+            execution_proof_cell: None,
+            execution_proof_new_commitment: None,
+            custom_program_proofs: None,
+            effect_binding_proofs: Vec::new(),
+            cross_effect_dependencies: Vec::new(),
+            effect_witness_index_map: Vec::new(),
+        };
+        turn.sovereign_witnesses = witnesses;
+        turn
+    }
+
+    fn signed_witness(
+        federation_id: &[u8; 32],
+        cell: &Cell,
+        key: &SigningKey,
+        old_commitment: [u8; 32],
+        new_commitment: [u8; 32],
+        effects_hash: [u8; 32],
+        sequence: u64,
+    ) -> SovereignCellWitness {
+        let cell_id = cell.id();
+        let message = SovereignCellWitness::signing_message_for_federation(
+            federation_id,
+            &cell_id,
+            &old_commitment,
+            &new_commitment,
+            &effects_hash,
+            0,
+            sequence,
+        );
+        SovereignCellWitness {
+            cell_id,
+            old_commitment,
+            new_commitment,
+            effects_hash,
+            timestamp: 0,
+            sequence,
+            signature: sign(key, &message).0,
+            cell_state: cell.clone(),
+            transition_proof: None,
+        }
+    }
+
+    // The introducer at FED_A: an untrusted-to-us key that signs the cert.
+    let introducer_key = SigningKey::from_bytes(&[0x1D; 32]);
+    let introducer_pk = *introducer_key.public_key().as_bytes();
+    let (bob, bob_key) = bob_cell();
+    let bob_id = bob.id();
+    let carol = plain_cell(0xC3);
+    let carol_id = carol.id();
+    let agent = plain_cell(0x0A);
+    let agent_id = agent.id();
+
+    // A cert issued by FED_A's introducer, delegating authority over bob to
+    // bob's own key, redeemable AT FED_B. `Signature` is strictly narrower than
+    // bob's `None` floor, so the non-amplification gate is satisfied.
+    let cert_for = |target_federation: [u8; 32]| {
+        HandoffCertificate::create(
+            &introducer_key,
+            FederationId(FED_A),
+            FederationId(target_federation),
+            bob_id,
+            *bob_key.public_key().as_bytes(),
+            AuthRequired::Signature,
+            None,
+            None,
+            None,
+            [0u8; 32],
+        )
+    };
+
+    let ledger_with = |bob_sovereign: bool| {
+        let mut ledger = Ledger::new();
+        let mut a = agent.clone();
+        a.capabilities.grant(bob_id, AuthRequired::None).unwrap();
+        a.capabilities.grant(carol_id, AuthRequired::None).unwrap();
+        ledger.insert_cell(a).unwrap();
+        ledger.insert_cell(carol.clone()).unwrap();
+        if bob_sovereign {
+            ledger
+                .register_sovereign_cell(bob_id, bob.state_commitment())
+                .unwrap();
+        } else {
+            ledger.insert_cell(bob.clone()).unwrap();
+        }
+        ledger
+    };
+
+    // ── The faithful twin: bob HOSTED, everything else identical. Bob carries a
+    //    program, so the sovereign nonce exemption cannot make the two paths
+    //    disagree, and this gives the exact post-state his witness must declare.
+    let twin_turn = captp_turn(
+        agent_id,
+        bob_id,
+        carol_id,
+        FED_B,
+        cert_for(FED_B),
+        introducer_pk,
+        &bob_key,
+        SLOT_AFTER,
+        HashMap::new(),
+    );
+    let mut twin_ledger = ledger_with(false);
+    let twin = TurnExecutor::new(ComputronCosts::zero()).execute(&twin_turn, &mut twin_ledger);
+    assert!(
+        matches!(twin, TurnResult::Committed { .. }),
+        "the HOSTED twin must commit — a CapTP delivery with no sovereign cell in \
+         sight is the control for everything below: {twin:?}"
+    );
+    let bob_post = twin_ledger.get(&bob_id).unwrap().state_commitment();
+    assert_ne!(
+        bob_post,
+        bob.state_commitment(),
+        "anti-vacuity: the turn must actually move bob"
+    );
+    let bob_effects = twin_turn.sovereign_effects_hash(&bob_id);
+
+    // ── LEG 1 (positive): cert ✓ + sovereign witness ✓ + Monotonic ✓ → commits,
+    //    and the witness sequence is spent.
+    let mut witnesses = HashMap::new();
+    witnesses.insert(
+        bob_id,
+        signed_witness(
+            &FED_B,
+            &bob,
+            &bob_key,
+            bob.state_commitment(),
+            bob_post,
+            bob_effects,
+            1,
+        ),
+    );
+    let turn = captp_turn(
+        agent_id,
+        bob_id,
+        carol_id,
+        FED_B,
+        cert_for(FED_B),
+        introducer_pk,
+        &bob_key,
+        SLOT_AFTER,
+        witnesses,
+    );
+    let mut ledger = ledger_with(true);
+    let result = TurnExecutor::new(ComputronCosts::zero()).execute(&turn, &mut ledger);
+    assert!(
+        matches!(&result, TurnResult::Committed { .. }),
+        "a CapTP-delivered turn on a sovereign, caveat-bearing cell must commit \
+         when all four gates are satisfied: {result:?}"
+    );
+    assert_eq!(
+        ledger.last_sovereign_witness_sequence(&bob_id),
+        1,
+        "the CapTP path must not bypass the sovereign replay counter"
+    );
+
+    // ── LEG 2 (γ.2 over the same turn): the bilateral schedule binds the
+    //    transfer, and a root tamper still rejects.
+    let bundle = dregg_verifier::BilateralBundle {
+        turn: turn.clone(),
+        entries: [bob_id, carol_id]
+            .iter()
+            .map(|cell_id| dregg_verifier::BilateralEntry {
+                cell_id: *cell_id,
+                witnessed_receipt: dregg_verifier::fabricate_witnessed_receipt(
+                    &turn,
+                    cell_id,
+                    captp_dummy_receipt(turn.agent),
+                ),
+            })
+            .collect(),
+        unilateral_attestations: std::collections::BTreeMap::new(),
+    };
+    let verdict = dregg_verifier::verify_bilateral_bundle(&bundle);
+    assert!(
+        verdict.verified,
+        "γ.2 must bind the transfer a CapTP delivery carried: {verdict:?}"
+    );
+    assert_eq!(verdict.transfer_count, 1);
+
+    let mut tampered = bundle;
+    tampered.entries[1].witnessed_receipt.public_inputs
+        [dregg_circuit::effect_vm::pi::INCOMING_TRANSFER_ROOT_BASE] ^= 1;
+    assert!(
+        !dregg_verifier::verify_bilateral_bundle(&tampered).verified,
+        "the γ.2 tooth must survive the CapTP composition"
+    );
+
+    // ── LEG 3: THE SLOT CAVEAT. Cert perfect, witness perfect for the turn it
+    //    rides — and the slot goes DOWN. The `Monotonic` caveat must refuse,
+    //    which is the "does an early Ok skip the cell's own program?" question.
+    let violating = 5u64; // SLOT_BEFORE = 10 → Monotonic ✗
+    let twin_turn = captp_turn(
+        agent_id,
+        bob_id,
+        carol_id,
+        FED_B,
+        cert_for(FED_B),
+        introducer_pk,
+        &bob_key,
+        violating,
+        HashMap::new(),
+    );
+    let mut witnesses = HashMap::new();
+    witnesses.insert(
+        bob_id,
+        signed_witness(
+            &FED_B,
+            &bob,
+            &bob_key,
+            bob.state_commitment(),
+            // The post-state a SUCCESSFUL apply would reach — so the witness is
+            // not what is wrong here.
+            {
+                let mut post = bob.clone();
+                post.state.set_field(0, field_from_u64(violating));
+                post.state.set_balance(post.state.balance() - AMOUNT as i64);
+                post.state_commitment()
+            },
+            twin_turn.sovereign_effects_hash(&bob_id),
+            1,
+        ),
+    );
+    let turn = captp_turn(
+        agent_id,
+        bob_id,
+        carol_id,
+        FED_B,
+        cert_for(FED_B),
+        introducer_pk,
+        &bob_key,
+        violating,
+        witnesses,
+    );
+    let mut ledger = ledger_with(true);
+    let result = TurnExecutor::new(ComputronCosts::zero()).execute(&turn, &mut ledger);
+    assert!(
+        matches!(
+            &result,
+            TurnResult::Rejected {
+                reason: TurnError::ProgramViolation { .. },
+                ..
+            }
+        ),
+        "a CapTP handoff certificate must NOT confer the right to break the \
+         target cell's own slot caveat: {result:?}"
+    );
+    assert_eq!(
+        ledger.last_sovereign_witness_sequence(&bob_id),
+        0,
+        "a caveat rejection must not spend the sovereign sequence"
+    );
+
+    // ── LEG 4: THE SOVEREIGN WITNESS. Cert perfect, caveat satisfied, and the
+    //    witness is signed for FED_A instead of FED_B. Valid signature, wrong
+    //    federation — the cross-federation replay guard must refuse it even
+    //    though the CERT is the thing that legitimately crossed federations.
+    let mut witnesses = HashMap::new();
+    witnesses.insert(
+        bob_id,
+        signed_witness(
+            &FED_A,
+            &bob,
+            &bob_key,
+            bob.state_commitment(),
+            bob_post,
+            bob_effects,
+            1,
+        ),
+    );
+    let turn = captp_turn(
+        agent_id,
+        bob_id,
+        carol_id,
+        FED_B,
+        cert_for(FED_B),
+        introducer_pk,
+        &bob_key,
+        SLOT_AFTER,
+        witnesses,
+    );
+    let mut ledger = ledger_with(true);
+    let result = TurnExecutor::new(ComputronCosts::zero()).execute(&turn, &mut ledger);
+    assert!(
+        matches!(
+            &result,
+            TurnResult::Rejected {
+                reason: TurnError::InvalidEffect { reason },
+                ..
+            } if reason.contains("signature")
+        ),
+        "a cert that crossed federations does not license a witness that did: \
+         {result:?}"
+    );
+
+    // ── LEG 5: THE CERT. Witness perfect, caveat satisfied, and the cert names
+    //    FED_A as its target federation — i.e. it was issued for somewhere else
+    //    and replayed here. `verify_captp_delivered` step 2 must refuse.
+    let mut witnesses = HashMap::new();
+    witnesses.insert(
+        bob_id,
+        signed_witness(
+            &FED_B,
+            &bob,
+            &bob_key,
+            bob.state_commitment(),
+            bob_post,
+            bob_effects,
+            1,
+        ),
+    );
+    let turn = captp_turn(
+        agent_id,
+        bob_id,
+        carol_id,
+        FED_B,
+        cert_for(FED_A),
+        introducer_pk,
+        &bob_key,
+        SLOT_AFTER,
+        witnesses,
+    );
+    let mut ledger = ledger_with(true);
+    let result = TurnExecutor::new(ComputronCosts::zero()).execute(&turn, &mut ledger);
+    assert!(
+        matches!(
+            &result,
+            TurnResult::Rejected {
+                reason: TurnError::InvalidAuthorization { reason },
+                ..
+            } if reason.contains("target_federation")
+        ),
+        "a handoff certificate issued for another federation must not redeem \
+         here: {result:?}"
+    );
+}
+
+/// A receipt shell for the γ.2 fabrication above. The bilateral verifier reads
+/// the schedule out of the `Turn`, not out of the receipt, so the receipt only
+/// has to exist.
+fn captp_dummy_receipt(agent: CellId) -> dregg_turn::TurnReceipt {
+    dregg_turn::TurnReceipt {
+        turn_hash: [0u8; 32],
+        forest_hash: [0u8; 32],
+        pre_state_hash: [0u8; 32],
+        post_state_hash: [0u8; 32],
+        timestamp: 0,
+        effects_hash: [0u8; 32],
+        computrons_used: 0,
+        action_count: 0,
+        previous_receipt_hash: None,
+        agent,
+        federation_id: [0u8; 32],
+        routing_directives: vec![],
+        introduction_exports: vec![],
+        derivation_records: vec![],
+        emitted_events: vec![],
+        executor_signature: None,
+        finality: Default::default(),
+        was_encrypted: false,
+        was_burn: false,
+        consumed_capabilities: vec![],
+    }
 }
