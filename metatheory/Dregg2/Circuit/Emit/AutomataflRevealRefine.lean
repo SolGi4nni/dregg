@@ -15,8 +15,22 @@ commit_s = hash [11*fy_s+fx_s, 11*ty_s+tx_s, seat_s, nonce_s]
 
 for `s=0,1`, with all four coordinates in `[0,11)`, and transports all nine
 old-board packed felts.  A successful post-reveal swap therefore constructs an
-explicit arity-4 collision.  Only the final `legS_swap_refused` corollary assumes
-the named `Hash4NoCollision` floor.
+explicit arity-4 collision.
+
+## The floor, refuted, and what replaced it
+
+`Hash4NoCollision` was the named carrier of the swap-refusal corollary, and its own
+docstring already said it "globally cannot hold" at a one-BabyBear-felt codomain
+(generic birthday ≈ `2^15.5`).  A documented wound is not a detected one: nothing in
+the tree PROVED it false, so `#floor_ratchet` could not derive it as a refuted floor
+and both consumers were vacuous while reading as green.  `hash4NoCollision_false_babyBear`
+is that refutation, by the same pigeonhole core as
+`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`.
+
+The consumers are now stated on `RevealColl` — a PER-INSTANCE non-collision residual at
+the exact preimage pair the extractor produces, refutable AND satisfiable at deployed
+parameters, and strictly implied by the deleted global floor.  No declaration in this
+file assumes `Hash4NoCollision` any more.
 -/
 import Dregg2.Circuit.Emit.AutomataflRevealEmit
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
@@ -390,12 +404,43 @@ end Extract
 
 /-! ## Collision extraction and the exactly-named swap floor. -/
 
-/-- The precise ideal binding carrier used only by the refusal corollary. This is
-not a practical deployment assumption for a one-BabyBear-felt codomain: globally it
-cannot hold, and generic birthday search is about `2^15.5`. The unconditional theorem
-below instead hands out an explicit collision. -/
+/-- ⚠ **BROKEN / VACUOUS AT REAL PARAMS — REFUTED by `hash4NoCollision_false_babyBear`
+below, and NO LONGER ASSUMED ANYWHERE.** Stated as injectivity on the length-4 slice of
+the infinite `List ℤ`; a one-BabyBear-felt codomain cannot be injective on it, so every
+theorem conditioned on this was vacuously true at deployed parameters. KEPT for the record
+(the campaign convention — the old carrier stays doc-marked beside its tooth); the honest
+per-instance replacement is `RevealColl`. -/
 def Hash4NoCollision (hash : List ℤ → ℤ) : Prop :=
   ∀ x y : List ℤ, x.length = 4 → y.length = 4 → hash x = hash y → x = y
+
+/-- **⚑ THE TOOTH — `Hash4NoCollision` is FALSE at the deployed one-felt BabyBear codomain.**
+Pigeonhole, no Poseidon2 collision exhibited: the diagonal `n ↦ [n,0,0,0]` embeds the infinite
+`ℤ` into the length-4 slice, so the floor would make `n ↦ hash [n,0,0,0]` injective into a
+range contained in `[0, p)` — a finite set. Same counting core as
+`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`; `p = 2^31 − 2^27 + 1 = 2013265921`.
+
+The file's own prose already carried the finding ("globally it cannot hold, and generic
+birthday search is about `2^15.5`"). It was never a theorem, so `#floor_ratchet` could not
+derive this as a refuted floor and both consumers passed the gate while saying nothing. -/
+theorem hash4NoCollision_false_babyBear (hash : List ℤ → ℤ)
+    (hb : ∀ xs : List ℤ, 0 ≤ hash xs ∧ hash xs < (2013265921 : ℤ)) :
+    ¬ Hash4NoCollision hash := by
+  intro hCR
+  have hinj : Function.Injective (fun n : ℤ => hash [n, 0, 0, 0]) := by
+    intro a b h
+    have hx : ([a, 0, 0, 0] : List ℤ) = [b, 0, 0, 0] := hCR _ _ rfl rfl h
+    have h1 := congrArg (fun l : List ℤ => l.headI) hx
+    simpa using h1
+  have hfin : (Set.range (fun n : ℤ => hash [n, 0, 0, 0])).Finite := by
+    refine (Set.finite_Ico (0 : ℤ) 2013265921).subset ?_
+    rintro _ ⟨n, rfl⟩
+    exact ⟨(hb _).1, (hb _).2⟩
+  haveI : Finite (Set.range (fun n : ℤ => hash [n, 0, 0, 0])) := hfin.to_subtype
+  have hg : Function.Injective
+      (fun a : ℤ => (⟨hash [a, 0, 0, 0], a, rfl⟩ : Set.range (fun n : ℤ => hash [n, 0, 0, 0]))) :=
+    fun a b h => hinj (congrArg Subtype.val h)
+  haveI : Finite ℤ := Finite.of_injective _ hg
+  exact not_finite ℤ
 
 def SameOpeningData (a b : PublicOpening) : Prop :=
   a.fx = b.fx ∧ a.fy = b.fy ∧ a.tx = b.tx ∧ a.ty = b.ty ∧
@@ -424,20 +469,59 @@ theorem swapped_opening_extracts_collision {hash : List ℤ → ℤ} {s : Nat}
     exact hswap (sameData_of_preimage_eq ha hb hpre)
   · rw [← ha.commitExact, hcommit, hb.commitExact]
 
-/-- **Post-reveal swap refusal, with the floor exposed.** Under the explicitly named
-arity-4 no-collision carrier, a second opening of the same commitment has exactly the
-same move/seat/nonce data. -/
-theorem opening_unique_of_noCollision {hash : List ℤ → ℤ} (hCR : Hash4NoCollision hash)
-    {s : Nat} {a b : PublicOpening} (ha : Opens hash s a) (hb : Opens hash s b)
-    (hcommit : a.commit = b.commit) : SameOpeningData a b := by
-  apply sameData_of_preimage_eq ha hb
-  apply hCR (openingPreimage a) (openingPreimage b) (by rfl) (by rfl)
-  rw [← ha.commitExact, hcommit, hb.commitExact]
+/-- **THE PER-INSTANCE RESIDUAL — the honest replacement for the global floor.** A collision
+of the deployed arity-4 hash AT THE EXACT PAIR the extractor produces, and nowhere else. It
+is what the refuted `Hash4NoCollision` implied (so every consumer below is strictly stronger
+than its old form), and unlike that floor it is both refutable and satisfiable at deployed
+parameters — see the two poles immediately after it. -/
+def RevealColl (hash : List ℤ → ℤ) (a b : PublicOpening) : Prop :=
+  openingPreimage a ≠ openingPreimage b ∧
+    hash (openingPreimage a) = hash (openingPreimage b)
+
+/-- **THE RESIDUAL IS DISCHARGEABLE (positive pole).** At one opening against itself there is
+nothing to collide, so `¬ RevealColl` holds outright. A side condition that can never be
+discharged is a broken keystone, not a repaired one. -/
+theorem revealColl_self_false (hash : List ℤ → ℤ) (a : PublicOpening) :
+    ¬ RevealColl hash a a := fun h => h.1 rfl
+
+/-- **THE RESIDUAL IS REFUTABLE (negative pole).** At the constant hash any two openings with
+distinct preimages DO collide, so `¬ RevealColl` is not free — it is a real hypothesis about
+the deployed hash at a named pair. -/
+theorem revealColl_of_constant_hash (a b : PublicOpening)
+    (hne : openingPreimage a ≠ openingPreimage b) :
+    RevealColl (fun _ => (0 : ℤ)) a b := ⟨hne, rfl⟩
+
+/-- **THE OLD FLOOR IS STRICTLY STRONGER.** `Hash4NoCollision` kills every residual at once —
+recorded so the port is visibly a WEAKENING of the hypothesis, not a change of subject. -/
+theorem not_revealColl_of_hash4NoCollision {hash : List ℤ → ℤ} (hCR : Hash4NoCollision hash)
+    (a b : PublicOpening) : ¬ RevealColl hash a b :=
+  fun h => h.1 (hCR _ _ rfl rfl h.2)
+
+/-- **Post-reveal swap: bind, or EXHIBIT the collision. FLOOR-FREE.** Two accepted openings of
+the same commitment either reveal the same data or collide at their own preimage pair. This is
+the unconditional form; `opening_unique_of_noResid` is the binding corollary. -/
+theorem opening_unique_or_collides {hash : List ℤ → ℤ} {s : Nat} {a b : PublicOpening}
+    (ha : Opens hash s a) (hb : Opens hash s b) (hcommit : a.commit = b.commit) :
+    SameOpeningData a b ∨ RevealColl hash a b := by
+  by_cases hpre : openingPreimage a = openingPreimage b
+  · exact Or.inl (sameData_of_preimage_eq ha hb hpre)
+  · refine Or.inr ⟨hpre, ?_⟩
+    rw [← ha.commitExact, hcommit, hb.commitExact]
+
+/-- **Post-reveal swap refusal, on the per-instance residual.** Under `¬ RevealColl` at the two
+openings actually presented, a second opening of the same commitment has exactly the same
+move/seat/nonce data. Replaces the `Hash4NoCollision`-carrying `opening_unique_of_noCollision`,
+whose hypothesis is refuted at deployed parameters. -/
+theorem opening_unique_of_noResid {hash : List ℤ → ℤ} {s : Nat} {a b : PublicOpening}
+    (ha : Opens hash s a) (hb : Opens hash s b) (hcommit : a.commit = b.commit)
+    (hno : ¬ RevealColl hash a b) : SameOpeningData a b :=
+  (opening_unique_or_collides ha hb hcommit).resolve_right hno
 
 /-- The descriptor-level swap tooth: once one satisfying opening exists, another
 satisfying trace with the same seat commitment but different opening data is refused,
-under exactly `Hash4NoCollision`. -/
-theorem legS_swap_refused {hash : List ℤ → ℤ} (hCR : Hash4NoCollision hash)
+under the PER-INSTANCE residual at the two presented openings (was: the refuted global
+`Hash4NoCollision`). -/
+theorem legS_swap_refused {hash : List ℤ → ℤ}
     {minit₁ minit₂ : ℤ → ℤ} {mfin₁ mfin₂ : ℤ → ℤ × Nat}
     {maddrs₁ maddrs₂ : List ℤ} {t₁ t₂ : VmTrace} {s : Nat} (hs : s < 2)
     (hsat₁ : Satisfied2 hash automataflRevealDesc11 minit₁ mfin₁ maddrs₁ t₁)
@@ -446,12 +530,13 @@ theorem legS_swap_refused {hash : List ℤ → ℤ} (hCR : Hash4NoCollision hash
     (hSound₂ : ChipTableSound hash (t₂.tf .poseidon2)) (hc₂ : RevealCanon t₂)
     (hlen₂ : 1 < t₂.rows.length)
     (hcommit : (publicOpening t₁ s).commit = (publicOpening t₂ s).commit)
+    (hno : ¬ RevealColl hash (publicOpening t₁ s) (publicOpening t₂ s))
     (hswap : ¬ SameOpeningData (publicOpening t₁ s) (publicOpening t₂ s)) :
     ¬ Satisfied2 hash automataflRevealDesc11 minit₂ mfin₂ maddrs₂ t₂ := by
   intro hsat₂
   have h₁ := oneSeat_sat_imp_opens hsat₁ hSound₁ hc₁ hlen₁ s hs
   have h₂ := oneSeat_sat_imp_opens hsat₂ hSound₂ hc₂ hlen₂ s hs
-  exact hswap (opening_unique_of_noCollision hCR h₁ h₂ hcommit)
+  exact hswap (opening_unique_of_noResid h₁ h₂ hcommit hno)
 
 #assert_axioms coord_bounds
 #assert_axioms flat_frm_eq
@@ -459,7 +544,12 @@ theorem legS_swap_refused {hash : List ℤ → ℤ} (hCR : Hash4NoCollision hash
 #assert_axioms oneSeat_sat_imp_opens
 #assert_axioms legS_sat_imp_semantics
 #assert_axioms swapped_opening_extracts_collision
-#assert_axioms opening_unique_of_noCollision
+#assert_axioms hash4NoCollision_false_babyBear
+#assert_axioms revealColl_self_false
+#assert_axioms revealColl_of_constant_hash
+#assert_axioms not_revealColl_of_hash4NoCollision
+#assert_axioms opening_unique_or_collides
+#assert_axioms opening_unique_of_noResid
 #assert_axioms legS_swap_refused
 
 #print axioms legS_sat_imp_semantics
