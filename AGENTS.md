@@ -195,6 +195,43 @@ trusting an import cleanup.
 - Concurrent persvati build collisions are normal — sleep 60s and retry, don't roll
   anything back.
 
+### ⚑ A RED-PROOF SCAFFOLD IS A DISARMED SECURITY GUARD
+
+Proving a gate can go red means breaking it. In a shared tree, the broken state **is
+indistinguishable from the wound it demonstrates**, and it lives exactly as long as the
+process that promised to restore it. **The promise is not a mechanism.** A session limit,
+an API error, or a compaction ends the promise and leaves the guard off.
+
+Measured 2026-07-27. `cell/src/program/eval.rs`'s `Monotonic` arm sat as
+
+```rust
+// RED-PROOF SCAFFOLD — MUST NOT BE COMMITTED. Restored in the same session.
+if false && !field_gte(&new_state.fields[idx], &old.fields[idx]) {
+```
+
+after the lane that wrote it died on a weekly limit. A per-cell `Monotonic` then admitted a
+DECREASE. It **misled two other lanes before anyone noticed**: one measured
+`bilateral_with_layered_slot_caveats` committing 100→90, green in two of four runs and red
+in two, and concluded — reasonably, this repo has had several — that the divergence was
+feature unification. It wasn't. The "flap" was which builds had picked up the edit.
+
+So:
+
+- **Mutate on a COPY when you can.** `rsync` the lane to scratch, or use `pbuild`'s remote
+  lane, and break it there. Several lanes did exactly this and it cost them nothing.
+- **If you must mutate the shared tree, restore it in the SAME tool call** — break, run,
+  restore, in one `bash -c`. Not "next step", which may never arrive.
+- **Verify the restore by diff, not by memory**: `git diff --exit-code <path>` after, and
+  say so in the report. "Restored" without a diff is a claim.
+- **Never commit a mutation.** If you find a foreign one, **report it — do not silently
+  restore it**; another lane may be mid-proof. One lane caught an `if true { // RED-PROOF
+  BREAK` in `signing_message_for_federation` and correctly waited it out.
+- **The main loop sweeps before it believes a green.** This finds the whole class:
+
+```
+grep -rn "if false &&\|if true {\s*//\|MUST NOT BE COMMITTED\|RED-PROOF" --include='*.rs' . | grep -v '^./target'
+```
+
 *(Pair with `~/.claude/CLAUDE.md` (global prefs) + `HORIZONLOG.md` (current state).
 The verification economy: trust a lane's own narrow green; full gauntlets are
 deliberate, on-demand `heavy`-profile / persvati acts, not per-turn taxes.)*
