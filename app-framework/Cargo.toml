@@ -81,6 +81,40 @@ dev = ["dregg-sdk/dev"]
 # gated endpoint modules use it), and compiles the server/endpoint modules. ON by
 # default so existing consumers are unchanged; a wasm-clean build takes
 # `default-features = false` and gets the `EmbeddedExecutor` + primitives only.
+#
+# ⚑ THIS FEATURE IS A KNOWN, MEASURED FOOTGUN AND IS NOT FIXED. Two things are wrong with it and
+# the second is why the first matters.
+#
+# (1) IT GATES MORE THAN THIS COMMENT SAYS. The description above ("the server/endpoint modules")
+#     covers 11 of the 13 whole modules it actually gates. SWEPT 2026-07-27 over `src/lib.rs`:
+#     13 `pub mod` — affordance_endpoint, auth, blinded_endpoint, captp_server, discovery,
+#     fee_policy, inbox_endpoint, middleware, queue_endpoint, scaffold, server, store,
+#     transclude_affordance — plus 9 `pub use` blocks, 19 inline sites in `deos_app.rs` and 3 in
+#     `webgen.rs`: 45 in all. `fee_policy`, `store`, `transclude_affordance` and
+#     `webgen::render_surface_component` are named NOWHERE as part of "the server surface".
+#     `transclude_affordance` is the one that should stop a reader: this manifest describes it
+#     twenty lines up as "a first-class framework affordance" over `starbridge-web-surface`'s
+#     transclusion primitive — an UNCONDITIONAL dep — and it is switched off with axum.
+#
+# (2) 23 WORKSPACE MEMBERS PASS `default-features = false` HERE, AND CARGO OVERRULES THEM. This
+#     crate is a root member with `default = ["server"]`, so any whole-workspace command unifies
+#     `server` back on for all 23. MEASURED with `cargo build --unit-graph --all-targets`:
+#
+#       -p spween-dregg / -p dregg-automatafl / -p dregg-multiway-tug / -p collective-choice /
+#       -p dregg-schema / -p starbridge-web-surface / -p dreggnet-council
+#                                              dregg-app-framework = []            (13 modules ABSENT)
+#       --workspace                            dregg-app-framework = default,server (13 modules PRESENT)
+#
+#     Seven of nine sampled narrowing consumers are a DIFFERENT PROGRAM depending on which other
+#     packages cargo was asked about. (The other two, `dreggnet-catalog` and
+#     `starbridge-privacy-voting`, resolve `default,server` even under `-p`, because something else
+#     in their own sub-resolve turns it on — the same mechanism pointing the other way.)
+#
+# THE FIX IS A CRATE, NOT A SMALLER FEATURE: the transport-bearing half belongs in its own
+# unconditionally-compiled `dregg-app-framework-server`, because a dep EDGE is prunable per
+# selection while a feature unifies. That is a real API move (the 22 re-exports above are public)
+# across 37 first-party files that name a gated symbol, and it is deliberately NOT started here —
+# a half-moved crate would leave BOTH a feature and a crate, which is worse than either.
 server = [
     "dep:axum",
     "dep:http",
