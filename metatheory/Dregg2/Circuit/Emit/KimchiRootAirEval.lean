@@ -533,7 +533,11 @@ by `head_extractor_agrees_with_p3_evaluation`, a DIFFERENTIAL at pseudorandom as
 out an extractor quietly wrong on these constraints and proves nothing about all inputs. Closing it
 needs a Lean model of `SymbolicExpression` and a refinement of the flattening.
 
-**§7.2 — ⚑ THE FLAT SOURCE LANGUAGE IS THE COMPILER'S NEXT RUNG, AND IT IS THE WHOLE PRICE.**
+**§7.2 — ⚑ THE FLAT SOURCE LANGUAGE WAS THE COMPILER'S NEXT RUNG, AND IT IS NOW BUILT** —
+`Dregg2.Circuit.Emit.KimchiDag`, which reaches all 901 base constraints at 2,433 DAG multiplies.
+The measurement below is what forced it and is left standing because it is the argument.
+
+**The measurement.**
 All 901 of the root's base constraints ARE flat-`Head`-expressible — measured, not assumed. But
 `Head` is FLAT and p3's constraints are a SHARED DAG, and flattening destroys the sharing:
 

@@ -952,3 +952,554 @@ fn emit_lean_heads() {
     }
     println!("HEADS_END");
 }
+
+// ===========================================================================
+// THE DAG SOURCE LANGUAGE — a STRUCTURE-PRESERVING numbering of p3's own DAG
+// ===========================================================================
+//
+// ⚑ WHY THIS IS A DIFFERENT SEAM FROM `to_head`, NOT A SECOND COPY OF IT.
+//
+// `to_head` FLATTENS: it distributes every product over every sum and returns monomials, which
+// destroys the `Arc` sharing p3 built and costs 521x in multiplications (see
+// `dag_sharing_versus_flat_monomials`). `to_dag` does not compute anything: it walks the same DAG
+// and replaces each `Arc` child by the INDEX of the node that child became. Node kinds are 1:1
+// with `SymbolicExpr`'s constructors (`Leaf`/`Add`/`Sub`/`Neg`/`Mul`), so the seam is a
+// re-indexing rather than an algebraic rewrite — a strictly narrower thing to get wrong.
+//
+// CSE. p3's `SymbolicCompiler::compile_base` keys its cache on the raw `Arc` pointer, so two
+// structurally identical but separately allocated subtrees stay separate. This one keeps that
+// pointer cache AND interns on STRUCTURAL identity of the already-numbered node, so it is at
+// least as sharing-preserving as p3's. Both counts are reported.
+
+/// One SSA node. Children are indices into the node list and are always STRICTLY SMALLER than
+/// the node's own index (`dag_wf` asserts it), so the list is topologically sorted by
+/// construction. This is `Dregg2.Circuit.Emit.KimchiDag.Node`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum DagNode {
+    /// A column, in the SAME `vars` numbering `to_head` uses — so a DAG and a `Head` extracted
+    /// from the same AIR read the same assignment.
+    Var(usize),
+    /// A constant, as a canonical BabyBear representative.
+    Cst(i64),
+    Add(usize, usize),
+    Sub(usize, usize),
+    Neg(usize),
+    Mul(usize, usize),
+}
+
+/// A constraint system as one shared DAG plus the indices of its constraint roots.
+#[derive(Debug, Default)]
+struct Dag {
+    nodes: Vec<DagNode>,
+    roots: Vec<usize>,
+    /// Nodes that the STRUCTURAL cache merged and a pointer-only cache would not have.
+    struct_hits: usize,
+}
+
+impl Dag {
+    fn muls(&self) -> usize {
+        self.nodes
+            .iter()
+            .filter(|n| matches!(n, DagNode::Mul(_, _)))
+            .count()
+    }
+
+    /// `[var, cst, add, sub, neg, mul]`. ⚑ This is the PRICE'S input, not a curiosity: only `Mul`
+    /// is a full extension multiply (31 rows, §3.14); `Add`/`Sub`/`Neg`/`Var` are extension
+    /// add/scale (19); `Cst` is a pin. Pricing `C_i` off the multiply count alone — which is what
+    /// the ledger did — undercounts by the whole linear half.
+    fn kinds(&self) -> [usize; 6] {
+        let mut k = [0usize; 6];
+        for n in &self.nodes {
+            let i = match n {
+                DagNode::Var(_) => 0,
+                DagNode::Cst(_) => 1,
+                DagNode::Add(_, _) => 2,
+                DagNode::Sub(_, _) => 3,
+                DagNode::Neg(_) => 4,
+                DagNode::Mul(_, _) => 5,
+            };
+            k[i] += 1;
+        }
+        k
+    }
+
+    /// Every child index is strictly below its parent's index — the invariant the Lean lowering
+    /// theorem takes as `dagWf`. Checked here so a violation is caught at emission, not in Lean.
+    fn wf(&self) -> bool {
+        self.nodes.iter().enumerate().all(|(i, n)| match *n {
+            DagNode::Var(_) | DagNode::Cst(_) => true,
+            DagNode::Neg(x) => x < i,
+            DagNode::Add(x, y) | DagNode::Sub(x, y) | DagNode::Mul(x, y) => x < i && y < i,
+        }) && self.roots.iter().all(|&r| r < self.nodes.len())
+    }
+
+    /// Evaluate the DAG at an assignment — the Rust twin of Lean's `denote`, and the reference
+    /// the differential compares against p3.
+    fn eval(&self, a: &[F]) -> Vec<F> {
+        let mut v: Vec<F> = Vec::with_capacity(self.nodes.len());
+        for n in &self.nodes {
+            let x = match *n {
+                DagNode::Var(c) => a[c],
+                DagNode::Cst(k) => F::from_u32(u32::try_from(k.rem_euclid(babybear_p())).unwrap()),
+                DagNode::Add(i, j) => v[i] + v[j],
+                DagNode::Sub(i, j) => v[i] - v[j],
+                DagNode::Neg(i) => -v[i],
+                DagNode::Mul(i, j) => v[i] * v[j],
+            };
+            v.push(x);
+        }
+        v
+    }
+}
+
+#[derive(Clone, Copy)]
+enum DagOp {
+    Add,
+    Sub,
+    Mul,
+}
+
+enum DagWork<'a> {
+    Eval(&'a SymbolicExpression<F>),
+    Build(*const SymbolicExpression<F>, DagOp),
+    BuildNeg(*const SymbolicExpression<F>),
+}
+
+struct DagBuilder {
+    dag: Dag,
+    /// p3's own cache discipline: `Arc` identity (`compile_base`'s `base_cache`).
+    ptr: std::collections::HashMap<*const SymbolicExpression<F>, usize>,
+    /// The extra one: STRUCTURAL identity of the numbered node.
+    hc: std::collections::HashMap<DagNode, usize>,
+}
+
+impl DagBuilder {
+    fn new() -> Self {
+        Self {
+            dag: Dag::default(),
+            ptr: std::collections::HashMap::new(),
+            hc: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Hash-cons one node. Returns an existing index on a structural hit.
+    fn intern(&mut self, n: DagNode) -> usize {
+        if let Some(&i) = self.hc.get(&n) {
+            self.dag.struct_hits += 1;
+            return i;
+        }
+        let i = self.dag.nodes.len();
+        self.dag.nodes.push(n);
+        self.hc.insert(n, i);
+        i
+    }
+
+    fn leaf(&mut self, leaf: &BaseLeaf<F>, vars: &mut BTreeMap<VarKey, usize>) -> usize {
+        let key = match leaf {
+            BaseLeaf::Constant(c) => {
+                let k = i64::from(c.as_canonical_u32());
+                return self.intern(DagNode::Cst(k));
+            }
+            BaseLeaf::IsFirstRow => VarKey::IsFirstRow,
+            BaseLeaf::IsLastRow => VarKey::IsLastRow,
+            BaseLeaf::IsTransition => VarKey::IsTransition,
+            BaseLeaf::Variable(v) => match v.entry {
+                BaseEntry::Preprocessed { offset } => VarKey::Preprocessed {
+                    offset,
+                    index: v.index,
+                },
+                BaseEntry::Main { offset } => VarKey::Main {
+                    offset,
+                    index: v.index,
+                },
+                BaseEntry::Periodic => VarKey::Periodic { index: v.index },
+                BaseEntry::Public => VarKey::Public { index: v.index },
+            },
+        };
+        let next = vars.len();
+        let col = *vars.entry(key).or_insert(next);
+        self.intern(DagNode::Var(col))
+    }
+
+    /// **THE EXTRACTOR.** An explicit two-stack walk, the same shape as
+    /// `SymbolicCompiler::compile_base` — no recursion, so DAG depth cannot blow the stack.
+    fn add_root(&mut self, e: &SymbolicExpression<F>, vars: &mut BTreeMap<VarKey, usize>) {
+        let mut tasks: Vec<DagWork<'_>> = vec![DagWork::Eval(e)];
+        let mut stack: Vec<usize> = Vec::with_capacity(16);
+        while let Some(w) = tasks.pop() {
+            match w {
+                DagWork::BuildNeg(key) => {
+                    let x = stack.pop().expect("operand for neg");
+                    let id = self.intern(DagNode::Neg(x));
+                    self.ptr.insert(key, id);
+                    stack.push(id);
+                }
+                DagWork::Build(key, op) => {
+                    let y = stack.pop().expect("rhs");
+                    let x = stack.pop().expect("lhs");
+                    let id = self.intern(match op {
+                        DagOp::Add => DagNode::Add(x, y),
+                        DagOp::Sub => DagNode::Sub(x, y),
+                        DagOp::Mul => DagNode::Mul(x, y),
+                    });
+                    self.ptr.insert(key, id);
+                    stack.push(id);
+                }
+                DagWork::Eval(node) => {
+                    let key: *const SymbolicExpression<F> = node;
+                    if let Some(&hit) = self.ptr.get(&key) {
+                        stack.push(hit);
+                        continue;
+                    }
+                    let id = match node {
+                        SymbolicExpr::Leaf(l) => self.leaf(l, vars),
+                        SymbolicExpr::Neg { x, .. } => {
+                            tasks.push(DagWork::BuildNeg(key));
+                            tasks.push(DagWork::Eval(x));
+                            continue;
+                        }
+                        SymbolicExpr::Add { x, y, .. } => {
+                            tasks.push(DagWork::Build(key, DagOp::Add));
+                            tasks.push(DagWork::Eval(y));
+                            tasks.push(DagWork::Eval(x));
+                            continue;
+                        }
+                        SymbolicExpr::Sub { x, y, .. } => {
+                            tasks.push(DagWork::Build(key, DagOp::Sub));
+                            tasks.push(DagWork::Eval(y));
+                            tasks.push(DagWork::Eval(x));
+                            continue;
+                        }
+                        SymbolicExpr::Mul { x, y, .. } => {
+                            tasks.push(DagWork::Build(key, DagOp::Mul));
+                            tasks.push(DagWork::Eval(y));
+                            tasks.push(DagWork::Eval(x));
+                            continue;
+                        }
+                    };
+                    self.ptr.insert(key, id);
+                    stack.push(id);
+                }
+            }
+        }
+        let root = stack.pop().expect("final target");
+        self.dag.roots.push(root);
+    }
+}
+
+/// Extract one AIR's whole base constraint system as ONE shared DAG. The cache is shared across
+/// constraints — that cross-constraint sharing is what `base_cache` buys in p3 and what makes the
+/// multiply count 2,937 rather than a per-constraint sum.
+fn to_dag<A>(air: &A) -> (Dag, BTreeMap<VarKey, usize>)
+where
+    A: BaseAir<F> + p3_air::Air<p3_lookup::InteractionSymbolicBuilder<F, EF>>,
+{
+    let cs = base_constraints(air);
+    let mut b = DagBuilder::new();
+    let mut vars = BTreeMap::new();
+    for c in &cs {
+        b.add_root(c, &mut vars);
+    }
+    (b.dag, vars)
+}
+
+fn all_base_tables() -> Vec<(&'static str, Dag, BTreeMap<VarKey, usize>)> {
+    let rows = 1024;
+    let mut out = Vec::new();
+    macro_rules! t {
+        ($n:expr, $air:expr) => {{
+            let (d, v) = to_dag(&$air);
+            out.push(($n, d, v));
+        }};
+    }
+    t!("Const", const_air(rows));
+    t!("Public", public_air(rows));
+    t!("Alu", alu_air(rows));
+    t!("poseidon2_w16", BabyBearD4Width16::default_air());
+    t!("poseidon2_w24", BabyBearD4Width24::default_air());
+    t!("recompose", recompose_air());
+    t!("expose_claim", expose_claim_air());
+    out
+}
+
+/// ⚑ **THE DAG EXTRACTOR'S ANTI-VACUITY CHECK** — the same confession `to_head` makes, over the
+/// new path. For every base constraint of all seven tables, the DAG's root value and p3's own
+/// `SymbolicExpression` evaluation must agree at pseudorandom assignments.
+#[test]
+fn dag_extractor_agrees_with_p3_evaluation() {
+    let mut seed = 0x5eed_1234_abcd_0001u64;
+    let mut checked = 0usize;
+    for (name, dag, vars) in all_base_tables() {
+        assert!(dag.wf(), "{name}: DAG is not topologically sorted");
+        let cs = base_constraints_by_name(name);
+        assert_eq!(
+            cs.len(),
+            dag.roots.len(),
+            "{name}: one root per base constraint"
+        );
+        let n_vars = vars.len().max(1);
+        for _trial in 0..8 {
+            let a: Vec<F> = (0..n_vars).map(|_| lcg(&mut seed)).collect();
+            let v = dag.eval(&a);
+            let mut ememo = EvalMemo::new();
+            for (c, &r) in cs.iter().zip(dag.roots.iter()) {
+                let lhs = v[r];
+                let rhs = eval_sym(c, &vars, &a, &mut ememo);
+                assert_eq!(lhs, rhs, "{name}: DAG root disagrees with p3");
+                checked += 1;
+            }
+        }
+    }
+    println!("\n{checked} DAG-root/SymbolicExpression agreements at 8 assignments each");
+    assert!(checked > 0, "a differential over an empty set says nothing");
+}
+
+/// ⚑ **THE REGRESSION THE COMPILER CHANGE MUST NOT BREAK.** For the two tables the flat path
+/// already generated, the DAG path and the `Head` path must denote the SAME value, constraint by
+/// constraint, at the same assignment. A compiler change that silently alters emitted semantics is
+/// the worst possible outcome; this is the check that would catch it.
+#[test]
+fn dag_and_head_denote_the_same_constraints() {
+    let mut seed = 0xd00d_beef_0000_0007u64;
+    let mut checked = 0usize;
+    macro_rules! both {
+        ($name:expr, $air:expr) => {{
+            let air = $air;
+            let (dag, dvars) = to_dag(&air);
+            let cs = base_constraints(&air)
+                .into_iter()
+                .map(std::sync::Arc::new)
+                .collect::<Vec<_>>();
+            let mut hvars = BTreeMap::new();
+            let mut memo = Memo::new();
+            let heads: Vec<Option<std::rc::Rc<Head>>> = cs
+                .iter()
+                .map(|c| to_head_arc(c, &mut hvars, &mut memo, CAP))
+                .collect();
+            // ⚑ The two extractors must agree on the COLUMN NUMBERING, or "the same assignment"
+            // is a different assignment and the differential is meaningless.
+            assert_eq!(hvars, dvars, "{}: variable numbering diverged", $name);
+            let n_vars = dvars.len().max(1);
+            for _trial in 0..8 {
+                let a: Vec<F> = (0..n_vars).map(|_| lcg(&mut seed)).collect();
+                let v = dag.eval(&a);
+                for (h, &r) in heads.iter().zip(dag.roots.iter()) {
+                    let Some(h) = h else { continue };
+                    assert_eq!(
+                        eval_head(h, &a),
+                        v[r],
+                        "{}: DAG and Head disagree on a constraint",
+                        $name
+                    );
+                    checked += 1;
+                }
+            }
+        }};
+    }
+    both!("Alu", alu_air(1024));
+    both!("expose_claim", expose_claim_air());
+    println!("\n{checked} DAG/Head denotation agreements");
+    assert!(checked > 0, "a differential over an empty set says nothing");
+}
+
+fn base_constraints_by_name(name: &str) -> Vec<SymbolicExpression<F>> {
+    let rows = 1024;
+    match name {
+        "Const" => base_constraints(&const_air(rows)),
+        "Public" => base_constraints(&public_air(rows)),
+        "Alu" => base_constraints(&alu_air(rows)),
+        "poseidon2_w16" => base_constraints(&BabyBearD4Width16::default_air()),
+        "poseidon2_w24" => base_constraints(&BabyBearD4Width24::default_air()),
+        "recompose" => base_constraints(&recompose_air()),
+        "expose_claim" => base_constraints(&expose_claim_air()),
+        other => panic!("unknown table {other}"),
+    }
+}
+
+/// The census the Lean side is priced against: nodes, multiplies and roots, per table.
+#[test]
+fn dag_source_language_census() {
+    println!(
+        "\n{:<16} {:>7} {:>8} {:>8} {:>8} {:>10}",
+        "table", "roots", "nodes", "muls", "cse_hits", "flat_muls"
+    );
+    let mut n = 0usize;
+    let mut m = 0usize;
+    let mut r = 0usize;
+    for (name, dag, _) in all_base_tables() {
+        assert!(dag.wf(), "{name}: DAG is not topologically sorted");
+        let flat = flat_muls_by_name(name);
+        println!(
+            "{name:<16} {:>7} {:>8} {:>8} {:>8} {:>10}",
+            dag.roots.len(),
+            dag.nodes.len(),
+            dag.muls(),
+            dag.struct_hits,
+            flat
+        );
+        r += dag.roots.len();
+        n += dag.nodes.len();
+        m += dag.muls();
+    }
+    println!("\nroots (base constraints) : {r}");
+    println!("DAG nodes                : {n}");
+    println!("DAG multiplies           : {m}");
+    println!("+ one alpha-fold per root: {}", m + r);
+
+    // ⚑ THE RE-PRICE. §3.14's measured units: extension multiply 31 rows, extension add/scale 19,
+    // a constant pin ~0. The ledger priced `C_i` off the MULTIPLY count alone; the node program's
+    // linear half is real and is counted here.
+    let mut k = [0usize; 6];
+    for (_, dag, _) in all_base_tables() {
+        let d = dag.kinds();
+        for i in 0..6 {
+            k[i] += d[i];
+        }
+    }
+    println!(
+        "\nnode kinds: var {} cst {} add {} sub {} neg {} mul {}",
+        k[0], k[1], k[2], k[3], k[4], k[5]
+    );
+    let ext_mul = 31usize;
+    let ext_lin = 19usize;
+    let ci_rows = k[5] * ext_mul + (k[0] + k[2] + k[3] + k[4]) * ext_lin;
+    let flat_rows = 1_529_889usize * ext_mul;
+    println!(
+        "C_i node program         : {ci_rows} rows  ({} mul + {} lin)",
+        k[5] * ext_mul,
+        (k[0] + k[2] + k[3] + k[4]) * ext_lin
+    );
+    println!(
+        "  of which .var copies   : {} rows (elidable, KimchiDag §11.2)",
+        k[0] * ext_lin
+    );
+    println!(
+        "the alpha-fold, A + N*h  : {} rows (14175 + 1093*48, all 1093)",
+        14_175 + 1093 * 48
+    );
+    println!(
+        "AIR side, whole root     : {} rows",
+        ci_rows + 14_175 + 1093 * 48
+    );
+    println!("the FLAT form's multiplies alone: {flat_rows} rows");
+
+    assert_eq!(
+        r, 901,
+        "the root count is the census's 901 base constraints"
+    );
+    assert_eq!(
+        k.iter().sum::<usize>(),
+        n,
+        "the kind histogram must cover every node"
+    );
+    assert!(
+        ci_rows * 100 < 30_000_000,
+        "C_i through the DAG language must be under 1% of the 3.0e7 whole-verifier budget"
+    );
+    assert!(
+        flat_rows > 30_000_000,
+        "and the flat form must still exceed the whole budget on multiplies alone — if this ever \
+         stops holding, the argument for this source language has changed"
+    );
+}
+
+fn flat_muls_by_name(name: &str) -> usize {
+    let rows = 1024;
+    match name {
+        "Const" => expressibility("", &const_air(rows)).ext_muls,
+        "Public" => expressibility("", &public_air(rows)).ext_muls,
+        "Alu" => expressibility("", &alu_air(rows)).ext_muls,
+        "poseidon2_w16" => expressibility("", &BabyBearD4Width16::default_air()).ext_muls,
+        "poseidon2_w24" => expressibility("", &BabyBearD4Width24::default_air()).ext_muls,
+        "recompose" => expressibility("", &recompose_air()).ext_muls,
+        "expose_claim" => expressibility("", &expose_claim_air()).ext_muls,
+        other => panic!("unknown table {other}"),
+    }
+}
+
+/// Render the DAG for one table as Lean literals. `DREGG_EMIT_DAG=<table>` selects it.
+#[test]
+fn emit_lean_dag() {
+    let Ok(which) = std::env::var("DREGG_EMIT_DAG") else {
+        println!(
+            "set DREGG_EMIT_DAG=<Const|Public|Alu|poseidon2_w16|poseidon2_w24|recompose|expose_claim>"
+        );
+        return;
+    };
+    let per_chunk: usize = std::env::var("DREGG_DAG_CHUNK")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(512);
+    let (dag, vars) = match which.as_str() {
+        "Const" => to_dag(&const_air(1024)),
+        "Public" => to_dag(&public_air(1024)),
+        "Alu" => to_dag(&alu_air(1024)),
+        "poseidon2_w16" => to_dag(&BabyBearD4Width16::default_air()),
+        "poseidon2_w24" => to_dag(&BabyBearD4Width24::default_air()),
+        "recompose" => to_dag(&recompose_air()),
+        "expose_claim" => to_dag(&expose_claim_air()),
+        other => panic!("unknown table {other}"),
+    };
+    assert!(
+        dag.wf(),
+        "refusing to emit a DAG that is not topologically sorted"
+    );
+    let lean = |n: &DagNode| -> String {
+        match *n {
+            DagNode::Var(c) => format!(".var {c}"),
+            DagNode::Cst(k) => format!(".cst {k}"),
+            DagNode::Add(i, j) => format!(".add {i} {j}"),
+            DagNode::Sub(i, j) => format!(".sub {i} {j}"),
+            DagNode::Neg(i) => format!(".neg {i}"),
+            DagNode::Mul(i, j) => format!(".mul {i} {j}"),
+        }
+    };
+    println!(
+        "-- TABLE {which}: {} base constraints, {} DAG nodes, {} multiplies, {} columns",
+        dag.roots.len(),
+        dag.nodes.len(),
+        dag.muls(),
+        vars.len()
+    );
+    let mut legend: Vec<(usize, String)> = vars.iter().map(|(k, v)| (*v, k.label())).collect();
+    legend.sort_unstable();
+    for (i, l) in &legend {
+        println!("--   col {i} = {l}");
+    }
+    println!("DAG_BEGIN");
+    println!("-- chunks of {per_chunk}");
+    for (ci, chunk) in dag.nodes.chunks(per_chunk).enumerate() {
+        println!("CHUNK {ci}");
+        let mut line = String::new();
+        for (k, n) in chunk.iter().enumerate() {
+            if !line.is_empty() {
+                line.push_str(", ");
+            }
+            line.push_str(&lean(n));
+            if line.len() > 96 || k + 1 == chunk.len() {
+                println!("  {line}{}", if k + 1 == chunk.len() { "" } else { "," });
+                line.clear();
+            }
+        }
+        println!("CHUNK_END");
+    }
+    println!("DAG_END");
+    println!("ROOTS_BEGIN");
+    let mut line = String::new();
+    for (k, r) in dag.roots.iter().enumerate() {
+        if !line.is_empty() {
+            line.push_str(", ");
+        }
+        line.push_str(&r.to_string());
+        if line.len() > 96 || k + 1 == dag.roots.len() {
+            println!(
+                "  {line}{}",
+                if k + 1 == dag.roots.len() { "" } else { "," }
+            );
+            line.clear();
+        }
+    }
+    println!("ROOTS_END");
+    println!("COLS {}", vars.len());
+}

@@ -907,7 +907,7 @@ estimate)
 | ~~DEEP quotient + AIR constraint evaluation~~ | ~~~2.4 × 10⁴ ext ops × 31–49~~ | ~~≈ 1.0 × 10⁶~~ — **superseded, see below** |
 | **DEEP quotient × 19 queries** | 154,523 × 19, **measured** (§3.15) | **2.94 × 10⁶** |
 | **observing the 2,286 opened values into the challenger** | 1,143 perms × 2,600.5 (§3.16) | **2.97 × 10⁶** |
-| **AIR constraint evaluation, ONCE per verify** | `A + N·h` = 14,175 + **1,093** × 48 = 66,639, plus `C_i` at 2,937 DAG multiplies × 31 ≈ 9.1 × 10⁴ (§3.17) | **≈ 1.6 × 10⁵** |
+| **AIR constraint evaluation, ONCE per verify** | `A + N·h` = 14,175 + **1,093** × 48 = 66,639, plus `C_i` **MEASURED through the DAG source language at 187,295** (§3.18) | **≈ 2.5 × 10⁵** |
 | commit phase × 19 queries | 623,310 × 19 | **1.18 × 10⁷** |
 | transcript (FRI schedule only) | measured | **6.3 × 10⁴** |
 | **whole root verify** | sum | **≈ 3.0 × 10⁷** — and the independent permutation count in §0 says 2.9 × 10⁷ |
@@ -941,15 +941,16 @@ estimate)
    `makeDeepBoundQueryProgram` keeps the pre-3.15 statement compiled beside it and the gate
    **proves a witness the old statement admits and the new one refuses**, so the closure is
    exhibited rather than asserted.
-3. **The AIR constraint evaluation** at ζ. **NARROWED, NOT CLOSED — §3.16 + §3.17.** The protocol
-   arithmetic around `C_i` is built and KAT'd at four `degree_bits` (§3.16). **`N = 1,093` is
-   measured** and `C_i` is now a *compiler output* for `Alu` and `expose_claim` — 117 of the 901
-   base constraints — with `airFold_forces` proving the emitted Kimchi rows force p3's accumulator
-   (§3.17). What remains: the two Poseidon2 tables need the DAG-shaped source language (the flat
-   one costs 521× and blows the whole budget); the 192 LogUp constraints are not in this vocabulary;
-   the `SymbolicExpression → Head` extraction is a differentially-checked SEAM, not a theorem; and
-   the Lean accumulator is not welded to `AirEval.ts`'s closing equality. **Until those close, the
-   walk still authenticates a low-degree function whose encoding is only partly pinned.**
+3. **The AIR constraint evaluation** at ζ. **NARROWED FURTHER — §3.16 + §3.17 + §3.18.** The
+   protocol arithmetic around `C_i` is built and KAT'd at four `degree_bits` (§3.16). **`N = 1,093`
+   is measured**, and with the DAG source language **`C_i` is now a compiler output for ALL 901 of
+   the base constraints** — 8,698 nodes, 2,433 multiplies, 187,295 rows, 0.85% of this budget —
+   with `dagFold_forces` proving the emitted Kimchi rows force p3's accumulator and
+   `dagDenote_unfold` proving the sharing sound (§3.18). What remains: **the 192 LogUp constraints
+   are still not in this vocabulary** (the extension they need is named in §3.18); the extraction
+   is still a differentially-checked SEAM, not a theorem; and the Lean accumulator is not welded to
+   `AirEval.ts`'s closing equality. **Until those close, the walk still authenticates a low-degree
+   function whose encoding is only partly pinned.**
 4. **19 queries, not 1.** Every rung here walks one.
 5. **The input-phase MMCS opening over MIXED heights.** §3.15's program carries ONE matrix per
    batch; `MerkleTreeMmcs::verify_batch` over several matrices of different heights under one root
@@ -1286,6 +1287,86 @@ shift with the overflow folded back by `W = 11`, **not** four extension multipli
 chunk shift must move the Lagrange weights, and the leg fails if it does not. The closing equality
 accepts a constructed honest instance and refuses a chunk one lane off, the two chunks swapped, and
 — the whole point of the rung — **a constraint one element off**.
+
+---
+
+### 3.18 ⚑ MEASURED — the DAG SOURCE LANGUAGE, and all 901 base constraints as compiler output
+
+*§3.17 stopped at 117 of 901 and said exactly why: `Head` is FLAT, p3's constraints are an
+`Arc`-shared DAG, and flattening costs 521× in multiplications — enough that the flat form of `C_i`
+ALONE exceeds §3.14's whole-verifier budget. The next rung was named there: a DAG-shaped source
+language with a common-subexpression cache. It is built.*
+
+`metatheory/Dregg2/Circuit/Emit/KimchiDag.lean`. `Node` is a 1:1 image of `SymbolicExpr` —
+`Leaf`/`Add`/`Sub`/`Neg`/`Mul` — with each `Arc` child replaced by the INDEX of the node it became.
+The lowering is one `Gen1` per node, node `k` to variable `nv + k`, which is
+`SymbolicCompiler::compile_base`'s shape with the `CircuitBuilder` replaced by sub-gates.
+
+**The measurement, over all seven tables** (`dag_source_language_census`):
+
+| table | base | DAG nodes | DAG multiplies | flat-`Head` multiplies | ratio |
+|---|---:|---:|---:|---:|---:|
+| Alu | 92 | 850 | 356 | 1,304 | 3.7× |
+| poseidon2-W16 | 316 | 2,850 | **754** | 243,849 | **323×** |
+| poseidon2-W24 | 468 | 4,848 | **1,298** | 1,284,686 | **990×** |
+| expose_claim | 25 | 150 | 25 | 50 | 2.0× |
+| Const / Public / recompose | 0 | 0 | 0 | 0 | — |
+| **Σ** | **901** | **8,698** | **2,433** | **1,529,889** | **629×** |
+
+⚑ **2,433, not §3.17's 2,937.** p3's own cache keys on the raw `Arc` pointer, so two structurally
+identical but separately allocated subtrees stay separate; the extractor here interns on
+STRUCTURAL identity of the already-numbered node and merges them. The 504-node difference is
+entirely in the two Poseidon2 tables.
+
+**THE PRICE, RE-MEASURED — and §3.17's ≈9.1 × 10⁴ was low, because it counted only multiplies.**
+The node census is `var 1,063 · cst 377 · add 3,547 · sub 1,249 · neg 29 · mul 2,433`. At §3.14's
+measured units (extension multiply 31, extension add/scale 19, a constant pin ≈ 0):
+
+| term | rows |
+|---|---:|
+| 2,433 multiplies × 31 | 75,423 |
+| 4,825 add/sub/neg × 19 | 91,675 |
+| 1,063 `.var` copy nodes × 19 (**elidable** — `KimchiDag` §11.2) | 20,197 |
+| **`C_i`, all 901 base constraints** | **187,295** |
+| the α-fold, `A + N·h`, all 1,093 | 66,639 |
+| **the AIR side, whole root** | **≈ 2.5 × 10⁵** |
+
+**⇒ 0.85% of §3.14's ≈3.0 × 10⁷.** The flat form's multiplies ALONE are 47,426,559 rows — **158% of
+the whole budget.** So `C_i` is not a budget problem and never had to be; getting the source
+language wrong would have made it one, and that is now a `#guard` and two Rust assertions rather
+than a paragraph.
+
+**What is PROVED, and it is the same shape as before.** `dagGens_forces`: any assignment satisfying
+the emitted rows makes variable `nv + k` hold node `k`'s denotation, for every `k`, at an arbitrary
+`CommRing`, over the actual emitted list. `dagFold_forces` puts p3's accumulator in the output
+variable. **`dagDenote_unfold` is the sharing statement** — node `k` is lowered to ONE variable and
+every parent reads it, and that variable is forced to `evalNode` of `k`'s own children's
+denotations, so an `m`-times-shared node is `m` reads of one forced value rather than `m` values a
+satisfying assignment could pull apart. `cseGo_denote` goes the other way: a TREE compiled through a
+structural-identity cache yields a DAG whose root denotes exactly the tree's value. All
+`#assert_axioms`-clean, no `sorry`, no `native_decide`.
+
+**⚑ `dagWf` is a HYPOTHESIS, not a lemma.** Every child index must be strictly below its parent's;
+an out-of-order list reads a child that has not been forced and the theorem is FALSE for it. It is
+`#guard`ed on all four emitted tables and the Rust emitter refuses to print a DAG that fails it.
+Mutation-tested: a forward reference reds three guards.
+
+**THE REGRESSION, and it bites.** The two tables §3.17 already generated are re-emitted through the
+new path, and `dagHornerZ` (walks nodes) and `hornerZ` (walks monomials) must agree in the field at
+the same seeding. A wf-preserving one-child edit to a single Alu node — same node count, same kinds,
+same multiply count, still topologically sorted — is caught by **exactly that guard and no other**.
+On the Rust side the same comparison runs at 8 pseudorandom assignments over both tables (936
+agreements) and against p3's own evaluation over all 901 constraints of all seven tables (7,208).
+
+**What this does NOT close.** The extraction is still a SEAM — narrower, because `to_dag` renumbers
+where `to_head` distributed, but a differential all the same. The **192 LogUp constraints remain
+outside the vocabulary**, and the extension they need is named precisely: `SymbolicExpressionExt`'s
+leaves are `ExtLeaf::Challenge` (β, γ) and `ExtLeaf::Base` (a lifted base expression), so `Node`
+needs `chal (i)`, a permutation-column leaf, and a `lift` embedding a base-DAG index — exactly
+`compile_ext`'s shape, sharing the same `base_cache`. The lowering itself needs no change: `Gen1` is
+already at arbitrary `CommRing`. Three of the seven tables have ZERO base constraints, so for them
+this rung still covers nothing. The closing equality is still `AirEval.ts`'s. The lane currency
+still needs `renderOps_gens_sound`. **The verifier is not sound because the DAG language landed.**
 
 ---
 
