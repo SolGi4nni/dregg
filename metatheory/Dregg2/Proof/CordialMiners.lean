@@ -278,6 +278,103 @@ structure SuperRatification (S : CordialState) (cfg : Finality.Config) (l : Bloc
   wave-first round (the anchor is not itself an equivocation). -/
   unique_leader : ∀ b ∈ S.lace, b.creator = l.creator → S.rounds b.id = S.rounds l.id → b = l
 
+/-! ### 2d. `LeaderIdPins` — the id-determinism assumption, NAMED.
+
+Every safety theorem in this file and in `Consensus.Safety` carried an anonymous binder
+`hid_inj : l₁.id = l₂.id → l₁ = l₂`, doc-commented "`Lace.Canonical` at the anchor". It had no
+name, so it appeared in no census and no floor list, and — at the cross-node sites — the
+attribution was WRONG (see `Consensus.Safety.CrossNodeCanonical`). Naming it is the point of
+this section; the strength claim is discharged as a theorem, not asserted in prose. -/
+
+/-- **`LeaderIdPins l₁ l₂`** — the content-address of a leader block DETERMINES the block, at
+this one pair: if the two anchors share an id they are the same block.
+
+This is the per-pair residue of content-addressing. What discharges it depends on WHERE the two
+blocks come from, and the two cases are genuinely different assumptions:
+
+* **Both from ONE node's lace** (`cordial_agreement` and friends, `S` is a single state): it is
+  an instance of `Lace.Canonical S.lace` — `leaderIdPins_of_canonical`. Per-lace canonicity IS
+  enough here, and the doc-comment that said so was right.
+* **From TWO nodes' laces** (`Consensus.Safety`, `l₁` from `S₁`, `l₂` from `S₂`): per-lace
+  canonicity of each is NOT enough. The assumption is CROSS-node canonicity
+  (`Consensus.Safety.CrossNodeCanonical`, = `Distributed.LaceMerge.CrossCanonical` on the two
+  laces), and `Consensus.Safety.Model.crossNodeCanonical_is_the_gap` exhibits two laces that are
+  EACH `Lace.Canonical` and for which `LeaderIdPins` is FALSE.
+
+Not a crypto axiom and not a theorem: the wire-format fact that makes it hold is collision
+resistance over the block encoding, which this tree does not prove. -/
+def LeaderIdPins (l₁ l₂ : Block) : Prop := l₁.id = l₂.id → l₁ = l₂
+
+/-- `LeaderIdPins` is DECIDABLE on concrete blocks — a node can CHECK it on the two anchors it
+holds rather than assume it. Used by the `Consensus.Safety` model and teeth. -/
+instance decidableLeaderIdPins (l₁ l₂ : Block) : Decidable (LeaderIdPins l₁ l₂) := by
+  unfold LeaderIdPins; infer_instance
+
+/-- On the diagonal it is free: a block is pinned by its own id. So the assumption is not
+vacuous-by-strength — it costs nothing exactly when the two nodes agree on the anchor. -/
+theorem leaderIdPins_refl (l : Block) : LeaderIdPins l l := fun _ => rfl
+
+/-- **WITHIN ONE LACE, `LeaderIdPins` IS `Lace.Canonical`.** Two anchors drawn from the SAME
+canonical lace are pinned by their ids. This is the justification the single-state theorems'
+doc-comments used to assert; here it is proved. It does NOT extend to two nodes' laces. -/
+theorem leaderIdPins_of_canonical {B : Lace} (hc : B.Canonical) {l₁ l₂ : Block}
+    (h₁ : l₁ ∈ B) (h₂ : l₂ ∈ B) : LeaderIdPins l₁ l₂ :=
+  fun hid => hc l₁ h₁ l₂ h₂ hid
+
+/-! ### 2e. The ratifier set is drawn from the PARTICIPANT universe.
+
+Structural facts about `ratifyingVoters`/`votesFromVoters` that hold for ANY observer — including
+the `Classical.choice`-extracted observer of a `Committed` fact, whose identity is opaque. They
+are what makes the cross-node BFT carrier constructible without opening `Committed.some`. -/
+
+/-- **`ratifyingVoters_subset_participants`** — the lace-read ratifier set is a sub-list of the
+node's participant list (it is a `filter`+`dedup` of it). Holds for every observer, so it
+survives `Committed.some`. -/
+theorem ratifyingVoters_subset_participants (S : CordialState) (o l : Block) :
+    S.ratifyingVoters o l ⊆ S.participants := by
+  classical
+  intro p hp
+  simp only [CordialState.ratifyingVoters, List.mem_dedup, List.mem_filter] at hp
+  exact hp.1
+
+/-- **`votersFor_union_subset`** — every voter the BFT feeder counts over the UNION of two
+nodes' materialized pools is a ratifier of one node or the other, for ANY queried block id. -/
+theorem votersFor_union_subset (V₁ V₂ : List AuthorId) (bid₁ bid₂ b : Nat) :
+    votersFor (votesFromVoters V₁ bid₁ ++ votesFromVoters V₂ bid₂) b ⊆ V₁ ++ V₂ := by
+  intro x hx
+  have hx' := List.dedup_subset _ hx
+  simp only [votesFromVoters, List.filter_append, List.map_append, List.mem_append,
+    List.mem_map, List.mem_filter] at hx'
+  rcases hx' with ⟨v, ⟨hv, _⟩, hxv⟩ | ⟨v, ⟨hv, _⟩, hxv⟩ <;>
+    obtain ⟨p, hp, rfl⟩ := hv <;> subst hxv <;> simp [hp]
+
+/-- **`block_of_voter_union`** — a block id that anybody voted for in the union pool IS one of
+the two leaders' ids. (Every materialized vote endorses the leader it was built for.) This is
+what discharges honest-vote-once when both nodes committed the SAME anchor id. -/
+theorem block_of_voter_union {V₁ V₂ : List AuthorId} {bid₁ bid₂ b x : Nat}
+    (hx : x ∈ votersFor (votesFromVoters V₁ bid₁ ++ votesFromVoters V₂ bid₂) b) :
+    b = bid₁ ∨ b = bid₂ := by
+  have hx' := List.dedup_subset _ hx
+  simp only [votesFromVoters, List.filter_append, List.map_append, List.mem_append,
+    List.mem_map, List.mem_filter] at hx'
+  rcases hx' with ⟨v, ⟨hv, hb⟩, _⟩ | ⟨v, ⟨hv, hb⟩, _⟩ <;>
+    obtain ⟨p, _, rfl⟩ := hv <;> simp only [decide_eq_true_eq] at hb
+  · exact Or.inl hb.symm
+  · exact Or.inr hb.symm
+
+/-- The quorum `n − f` is positive whenever the BFT floor `n > 3f` holds — so a committed
+leader always has at least one ratifier, and `committed_mem_lace` applies. -/
+theorem quorum_pos_of_threshold {cfg : Finality.Config} (h : cfg.n > 3 * cfg.f) :
+    0 < cfg.n - cfg.f := by omega
+
+/-- **`precedes_lookup_left`** — anything in a causal past RESOLVES in the lace: `a ≺ b` forces
+`B.lookup a.id = some a` (the `pointed` base case carries it and `trans` preserves it). -/
+theorem precedes_lookup_left {B : Lace} {a b : Block} (h : precedes B a b) :
+    B.lookup a.id = some a := by
+  induction h with
+  | base hp => exact hp.2.1
+  | trans _ _ iha _ => exact iha
+
 /-- **`Committed S cfg l`** — a block is **committed** (a final leader anchoring `tau`) exactly
 when the lace EXHIBITS the ratifying quorum (`superRatifiedFromLace`). This is
 `find_all_final_leaders` pushing `l` onto `final_leaders`: the commit decision is the
@@ -319,6 +416,22 @@ theorem committed_to_superRatification
     (h : Committed S cfg l) : Nonempty (SuperRatification S cfg l) :=
   ⟨SuperRatification.ofLace h.some⟩
 
+/-- **`committed_mem_lace` — a committed leader IS a block of the committing node's lace.** Not
+an extra hypothesis: a `Committed` fact carries an `≥ n − f` ratifier read, and (`n − f > 0`) at
+least one of those ratifiers holds an approving block, whose `approves` is `precedes S.lace l _`
+— which resolves `l` in the lace. This is what lets `Consensus.Safety`'s apex TIE a finalized
+history to the node that finalized it without assuming membership separately. -/
+theorem committed_mem_lace {S : CordialState} {cfg : Finality.Config} {l : Block}
+    (hpos : 0 < cfg.n - cfg.f) (h : Committed S cfg l) : l ∈ S.lace := by
+  classical
+  obtain ⟨sr⟩ := h
+  have hlen : 0 < (S.ratifyingVoters sr.observer l).length :=
+    lt_of_lt_of_le hpos sr.quorum_from_lace
+  obtain ⟨p, hp⟩ := List.exists_mem_of_ne_nil _ (List.ne_nil_of_length_pos hlen)
+  simp only [CordialState.ratifyingVoters, List.mem_dedup, List.mem_filter] at hp
+  obtain ⟨b, _, _, _, happ⟩ := of_decide_eq_true hp.2
+  exact List.mem_of_find?_eq_some (precedes_lookup_left happ.1)
+
 /-! ## 4. THE SAFETY THEOREM — `cordial_agreement` (reusing the BFT + Blocklace feeders).
 
 Two leader candidates that are both super-ratified, with their ratifications counted by the
@@ -354,8 +467,10 @@ theorem cordial_agreement
     (honest_one_ratification : ∀ v : Nat, ¬ M.Byzantine v →
         v ∈ votersFor (sr₁.votes ++ sr₂.votes) l₁.id →
         v ∈ votersFor (sr₁.votes ++ sr₂.votes) l₂.id → l₁.id = l₂.id)
-    -- the leader id determines the block (content-addressing / `Lace.Canonical` at the anchor):
-    (hid_inj : l₁.id = l₂.id → l₁ = l₂) :
+    -- id-determinism at the anchor pair, NAMED (`LeaderIdPins`). Both anchors are drawn from
+    -- the SAME state `S` here, so `leaderIdPins_of_canonical` discharges it from
+    -- `Lace.Canonical S.lace` — the one place where that attribution is correct.
+    (hid_inj : LeaderIdPins l₁ l₂) :
     l₁ = l₂ := by
   classical
   -- Lift each candidate's quorum onto the *union* vote list. Voters for a block over `A ++ B`
@@ -411,7 +526,7 @@ theorem cordial_no_conflicting_final_leaders
     (honest_one_ratification : ∀ v : Nat, ¬ M.Byzantine v →
         v ∈ votersFor (sr₁.votes ++ sr₂.votes) l₁.id →
         v ∈ votersFor (sr₁.votes ++ sr₂.votes) l₂.id → l₁.id = l₂.id)
-    (hid_inj : l₁.id = l₂.id → l₁ = l₂) :
+    (hid_inj : LeaderIdPins l₁ l₂) :
     False :=
   hconflict (cordial_agreement S cfg l₁ l₂ sr₁ sr₂ M honest_one_ratification hid_inj)
 
@@ -446,7 +561,7 @@ theorem cordial_agreement_via_bft
     (S : CordialState) (cfg : Finality.Config) (l₁ l₂ : Block)
     (sr₁ : SuperRatification S cfg l₁) (sr₂ : SuperRatification S cfg l₂)
     (M : BFTModel cfg (sr₁.votes ++ sr₂.votes))
-    (hid_inj : l₁.id = l₂.id → l₁ = l₂) :
+    (hid_inj : LeaderIdPins l₁ l₂) :
     l₁ = l₂ :=
   cordial_agreement S cfg l₁ l₂ sr₁ sr₂ M
     (honest_one_ratification_of_bft cfg (sr₁.votes ++ sr₂.votes) M l₁ l₂) hid_inj
@@ -476,8 +591,12 @@ the gossip/reliable-broadcast convergence (off the safety critical path):
      ratifiers, `n > 3f`, honest-vote-once) over the materialized ratification votes. This is
      the *same* assumed adversary model `BFT.lean` carries (the `World.recv_mono`-style
      discipline), now read on the lace ratifiers rather than on abstract votes.
-  2. `hid_inj` — content-addressing at the anchor (`Lace.Canonical`): the leader id pins the
-     block. A §8 crypto-seam fact, never a Lean theorem (`Blocklace` header).
+  2. `hid_inj : LeaderIdPins l₁ l₂` — content-addressing at the anchor: the leader id pins the
+     block. Here BOTH anchors live in the SAME lace `S.lace`, so this IS an instance of
+     `Lace.Canonical` (`leaderIdPins_of_canonical`) — the attribution is correct at this site,
+     and is NOT correct at the cross-node sites in `Consensus.Safety`, where the two anchors
+     come from two different nodes' laces. A §8 crypto-seam fact, never a Lean theorem
+     (`Blocklace` header).
   3. That the two lace ratifier reads draw from a *common* honest participant universe — i.e.
      the honest nodes' causal pasts have converged enough that a shared honest ratifier of one
      leader is visible as a ratifier of the other (the gossip convergence). This is the genuine
@@ -492,7 +611,7 @@ theorem cordial_agreement_from_lace
     (h₁ : Committed S cfg l₁) (h₂ : Committed S cfg l₂)
     -- the adversary/honesty model over the *materialized* (lace-derived) ratification votes:
     (M : BFTModel cfg ((SuperRatification.ofLace h₁.some).votes ++ (SuperRatification.ofLace h₂.some).votes))
-    (hid_inj : l₁.id = l₂.id → l₁ = l₂) :
+    (hid_inj : LeaderIdPins l₁ l₂) :
     l₁ = l₂ :=
   cordial_agreement_via_bft S cfg l₁ l₂
     (SuperRatification.ofLace h₁.some) (SuperRatification.ofLace h₂.some) M hid_inj
@@ -505,7 +624,7 @@ theorem cordial_no_conflicting_final_leaders_from_lace
     (S : CordialState) (cfg : Finality.Config) (l₁ l₂ : Block) (hconflict : l₁ ≠ l₂)
     (h₁ : Committed S cfg l₁) (h₂ : Committed S cfg l₂)
     (M : BFTModel cfg ((SuperRatification.ofLace h₁.some).votes ++ (SuperRatification.ofLace h₂.some).votes))
-    (hid_inj : l₁.id = l₂.id → l₁ = l₂) :
+    (hid_inj : LeaderIdPins l₁ l₂) :
     False :=
   hconflict (cordial_agreement_from_lace S cfg l₁ l₂ h₁ h₂ M hid_inj)
 
@@ -668,6 +787,17 @@ lace read via `SuperRatification.ofLace` — exhibiting that the BFT-feeder evid
 constructed from the lace, not supplied. -/
 noncomputable def superRatifyG1 : SuperRatification state cfg rg1 := SuperRatification.ofLace srG1
 
+/-- **`ratLace` IS content-addressed** — DECIDED on the real block list, not assumed. -/
+theorem ratLace_canonical : ratLace.Canonical := by unfold Lace.Canonical; decide
+
+/-- **The single-state id-determinism carrier is SATISFIED at the real trace, for EVERY anchor
+pair.** `leaderIdPins_of_canonical` turns the decided `ratLace_canonical` into `LeaderIdPins`
+for any two blocks of the lace — so `cordial_agreement`'s `hid_inj` is discharged here rather
+than assumed. This is the satisfiability leg; the refutability leg (two laces that are each
+canonical and for which `LeaderIdPins` FAILS) is `Consensus.Safety.Model`. -/
+theorem leaderIdPins_on_ratLace : ∀ a ∈ ratLace, ∀ b ∈ ratLace, LeaderIdPins a b :=
+  fun _ ha _ hb => leaderIdPins_of_canonical ratLace_canonical ha hb
+
 end Inhabited
 
 /-! ## 7. Axiom hygiene — the keystones are kernel-clean.
@@ -686,5 +816,11 @@ oracle axiom; `collectAxioms` sees only the three standard kernel axioms. -/
 #assert_axioms Inhabited.quorum_from_lace
 #assert_axioms Inhabited.srG1
 #assert_axioms Inhabited.g1_committed
+#assert_axioms leaderIdPins_of_canonical
+#assert_axioms ratifyingVoters_subset_participants
+#assert_axioms votersFor_union_subset
+#assert_axioms block_of_voter_union
+#assert_axioms Inhabited.ratLace_canonical
+#assert_axioms Inhabited.leaderIdPins_on_ratLace
 
 end Dregg2.Proof.CordialMiners
