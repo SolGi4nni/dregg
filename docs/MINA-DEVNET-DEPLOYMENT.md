@@ -14,16 +14,36 @@ demonstrate.*
 | | |
 |---|---|
 | **Network** | Mina **Devnet** (`https://api.minascan.io/node/devnet/v1/graphql`), chain id `29936104443aaf264a7f0192ac64b1c7173198c1ed404c1bcff5e562e05eb7f6` |
-| **zkApp address** | `B62qo54w6YftnPHCXTrcEYDcKYwg8CCeW5wiTsW9x8Tp1Hm5BS5xCeD` |
+| **zkApp address** | `B62qkiRhX1tKdkYSXRHFASHQHj1tPf5VcLzgUhqkL3kuFViX9ckcSaN` |
 | **Contract** | `DreggAttestedGate` (`bridge/mina-zkapp/src/DreggPoseidonAttestation.ts`) |
-| **zkApp VK hash** | `5302519670984547173190284200080041659426793795939996099701086393384665512020` |
-| **Inner attestation VK hash** | `15990086229449428195652199478086393224646730752932942884262475971185394292035` (`DreggMembershipAttestation`, depth 32) |
-| **Attested root** | `0x374f281aca58897f95a244e1cf945e30bebf29c555aba596aaf335fd9dfbb4f4` (emitted by the dregg-side Rust hasher — §2) |
-| **Deployer** | `B62qqqmJk56HN9YJmV9hAFZQRuYshGTjr26mbzZY7dbPN4iHynUfDs7` (faucet-funded, 299 tMINA) |
-| **Deploy tx** | `5JuBT6fJuX4ciV3Nfn831Mqujfhi7VioT2ioSerhiPwR7dbedb5t` — block 539517, applied |
-| **Anchor-root tx** | `5JtrbadxW6nhomfWBCTfBMKkkC8mWqn6jdyfKk9k2tvMNBqEErsp` — block 539518, applied |
-| **ACCEPT tx** (honest witness) | `5JubGa2yehQGS7TgWT9ifCV2HmPFQ9Ew9pgK3KnQKuPdLKKuKT8A` — block 539520, **applied** |
-| **REJECT tx** (refused witness) | `5JtmftP3JSfYTWrAQSCU1oXZ6BsDo8WdcyqtbiX9bjhBgfr3FXHj` — block 539522, **included and failed**, `Account_app_state_0_precondition_unsatisfied` |
+| **zkApp VK hash** | `18259224799046289794653728189970443815216123546422294759906737389909903001257` |
+| **Inner attestation VK hash** | `15990086229449428195652199478086393224646730752932942884262475971185394292035` (`DreggMembershipAttestation`, depth 32 — **unchanged** across both deployments) |
+| **Relay** | `B62qnViwxRUH8HrqyPzQnoWQMMqGcUGXjESLP45Bh4JigF1ZYaX1cJw` — the only key `setDreggRoot` accepts (§1), held on chain in `app_state_2/3` |
+| **Attested root** | `0x388feba5822b4d3f66ed14bda2bd72898cf9ca83ad05d826a6b42bdbf9966460` (emitted by the dregg-side Rust hasher — §2) |
+| **Attested leaf** | `a8935dca69b63466e6e517173f1f5d4385631802`, this repository's commit |
+| **Deployer** | `B62qqqmJk56HN9YJmV9hAFZQRuYshGTjr26mbzZY7dbPN4iHynUfDs7` (faucet-funded; unchanged, and no new funds were needed for the redeploy) |
+| **Deploy tx** | `5Juneee81a8yUBoRBu4gyRa32asVfXcLK6D7TdvQ2LK63j1qqT5g` — block 539534, applied |
+| **Anchor-root tx** | `5Ju4a1gSFhJubAXVgUziNPmG4YwHDzNWWeMBdScPUCfW6baid3Bg` — block 539535, applied. **The first relay-signed anchor**: it carries an in-circuit Schnorr check against the key in `app_state_2/3`, so the transaction could not have been built without it |
+| **ACCEPT tx** (honest witness) | `5Ju3uMFNRK4Xa7HxUyt7WARbepMoGQZNjUujZjavt4pERe1Bg57Q` — block 539536, **applied** |
+| root advance (relay-signed) | `5JtgZYmZmHzu3UgTzJPcD3a4Hy7m8mB34UsCoGC3iagEUk2C3E9u` — block 539537, applied |
+| **REJECT tx** (replayed witness) | `5Jv7MRgqHfb7VtoCcReZZ3g5ayJnbFBEJfjfprTQwwc4Qot7xFoK` — block 539538, **included and failed**, `Account_app_state_0_precondition_unsatisfied` |
+| **CONTROL tx** (§3, R2b) | `5JuhgtwrsA4uW7YuyYFvuVEAYGwU7Ldj7qTujTkuspw9TsuLeRxV` — block 539540, **applied**. The *identical proof bytes* the daemon had refused minutes earlier on a different account update |
+
+**Superseded — the same contract without an authorisation check.**
+`B62qo54w6YftnPHCXTrcEYDcKYwg8CCeW5wiTsW9x8Tp1Hm5BS5xCeD`, deployed at `7af1883f2` earlier the same
+day, VK hash `5302519670984547173190284200080041659426793795939996099701086393384665512020`. Its
+`setDreggRoot` took no authorisation while its comment claimed one (§1), and fixing that moved the
+zkApp's verification key — so the address stopped corresponding to the sources and was replaced
+rather than left to drift. It is a throwaway and remains on chain; its accept/reject record is §3,
+and it is the R1 evidence, because `actOnAttestedLeaf` is byte-identical between the two versions.
+
+| Its record | Tx | Block | Verdict |
+|---|---|---|---|
+| deploy | `5JuBT6fJuX4ciV3Nfn831Mqujfhi7VioT2ioSerhiPwR7dbedb5t` | 539517 | applied |
+| anchor | `5JtrbadxW6nhomfWBCTfBMKkkC8mWqn6jdyfKk9k2tvMNBqEErsp` | 539518 | applied |
+| **ACCEPT** (honest witness) | `5JubGa2yehQGS7TgWT9ifCV2HmPFQ9Ew9pgK3KnQKuPdLKKuKT8A` | 539520 | **applied** |
+| root advance | `5JtdG1EL7jpXtHPiffsZcbHd2eQVeTLkGi4SC3BYrfTa7NJPyVC9` | 539521 | applied |
+| **REJECT** (replayed witness) | `5JtmftP3JSfYTWrAQSCU1oXZ6BsDo8WdcyqtbiX9bjhBgfr3FXHj` | 539522 | **included and failed** — `Account_app_state_0_precondition_unsatisfied` |
 
 ⚑ **Devnet only, throwaway keys, faucet funds.** Nothing here holds value and no existing dregg key
 material was reused. The private keys live at `~/.config/dregg-mina/devnet-keys.json` (0600, outside
@@ -34,13 +54,30 @@ published or announced anywhere.
 
 ## 1. What the contract actually checks
 
-`DreggAttestedGate` holds two field elements of state — `dreggRoot` (the anchored dregg-side root)
-and `lastAttestedLeaf` — and exposes two methods:
+`DreggAttestedGate` holds four field slots of state — `dreggRoot` (the anchored dregg-side root, and
+deliberately `app_state_0`), `lastAttestedLeaf`, and a `relay` **public key** (two slots) — and
+exposes two methods:
 
-- `setDreggRoot(newRoot)` — anchors a root.
+- `setDreggRoot(newRoot, auth)` — anchors a root, and **checks in circuit** that `auth` is a Schnorr
+  signature by the `relay` key held in state over the exact transition `[oldRoot, newRoot]`. Failing
+  that makes the constraint system unsatisfiable, so an unauthorised caller cannot build a
+  transaction at all. The relay key is installed by the deploy account update — which the zkApp key
+  signs — and no method changes it, so rotating the relay is a redeploy.
 - `actOnAttestedLeaf(proof)` — takes a **recursive proof** from `DreggMembershipAttestation`,
   `.verify()`s it, asserts `proof.publicInput == this.dreggRoot.getAndRequireEquals()`, and records
   `proof.publicOutput` as the attested leaf.
+
+⚑ The first version of this contract took `setDreggRoot(newRoot)` with an empty body and a comment
+reading "relay-authorized". Under Mina's default `proof` permission that is open to everyone —
+producing a proof of an unconditional method is exactly what any caller can do. Mina's per-field
+permissions cannot fix it either: `editState` governs **both** methods, so no permission admits
+`actOnAttestedLeaf` and restricts `setDreggRoot`. The authorisation therefore has to be a condition
+the circuit asserts, which is what the check above is. §0's superseded address is that first version.
+
+What it does **not** prevent, said here rather than implied away: an authorisation for
+`oldRoot -> newRoot` becomes usable again if the anchored root ever returns to `oldRoot`. Roots here
+are fresh Poseidon images, so that is not reachable in practice; the contract does not itself forbid
+it.
 
 `DreggMembershipAttestation` is the inner `ZkProgram`. Its public input is the dregg-side root; its
 private inputs are a leaf and a 32-level Poseidon-Merkle authentication path; its public output is
@@ -77,8 +114,10 @@ Rust/arkworks and o1js's OCaml-compiled-to-WASM sponge are independent implement
 a real cross-implementation agreement over data neither side had seen before. The exact emitted
 object is committed at `bridge/mina-zkapp/devnet-root.json`.
 
-The attested leaf is the git commit `0e66ea63c79f63981c39b1cb18946456f35b5936` — so the live zkApp records, on a public
-chain, a proof that that commit is a member of a tree whose root the dregg-side hasher emitted.
+The attested leaf is the git commit `a8935dca69b63466e6e517173f1f5d4385631802` — so the live zkApp
+records, on a public chain, a proof that that commit is a member of a tree whose root the dregg-side
+hasher emitted. (The superseded deployment attested `0e66ea63c79f63981c39b1cb18946456f35b5936` the
+same way, under a different root.)
 
 **⚑ These leaves are not dregg cell state.** Nothing in dregg emits a Mina-Poseidon root over real
 state today; see §5.
@@ -108,9 +147,12 @@ a contrived one: roots advance, and an attestation against a retired root must n
 
 | Step | Tx | Block | Daemon verdict |
 |---|---|---|---|
-| **ACCEPT** — the honest depth-32 attestation | `5JubGa2yehQGS7TgWT9ifCV2HmPFQ9Ew9pgK3KnQKuPdLKKuKT8A` | 539520 | **APPLIED** |
-| the relay advances the anchored root | `5JtdG1EL7jpXtHPiffsZcbHd2eQVeTLkGi4SC3BYrfTa7NJPyVC9` | 539521 | **APPLIED** |
-| **REJECT** — the *same* attestation, replayed | `5JtmftP3JSfYTWrAQSCU1oXZ6BsDo8WdcyqtbiX9bjhBgfr3FXHj` | 539522 | **INCLUDED AND FAILED** — `accountUpdate[1]: Account_app_state_0_precondition_unsatisfied` |
+| **ACCEPT** — the honest depth-32 attestation | `5Ju3uMFNRK4Xa7HxUyt7WARbepMoGQZNjUujZjavt4pERe1Bg57Q` | 539536 | **APPLIED** |
+| the relay advances the anchored root | `5JtgZYmZmHzu3UgTzJPcD3a4Hy7m8mB34UsCoGC3iagEUk2C3E9u` | 539537 | **APPLIED** |
+| **REJECT** — the *same* attestation, replayed | `5Jv7MRgqHfb7VtoCcReZZ3g5ayJnbFBEJfjfprTQwwc4Qot7xFoK` | 539538 | **INCLUDED AND FAILED** — `accountUpdate[1]: Account_app_state_0_precondition_unsatisfied` |
+
+(The superseded deployment produced the same three rows in blocks 539520–539522; §0 records them.
+This is a re-run against the current address, not a citation of the old one.)
 
 The accept made `lastAttestedLeaf` the attested leaf. The reject was built and proved **before** the
 root advanced, so the transaction exists and carries a precondition pinning the **old** root;
@@ -128,13 +170,65 @@ before deployment by inspecting a built transaction, which pins the anchored roo
 **R3 was re-checked against the live artifacts** (a tampered sibling could not be proved), and
 `npm run gate` checks both R3 polarities at depth 2 against the gold root on every run.
 
-**R2 was attempted and demonstrated less than it was meant to.** Flipping a character in the
-transaction's serialised proof got it refused with `Invalid rich scalar: Proof KChzdGF0…` — but that
-is a **parse** error, not a verification failure: the corruption broke the proof's *encoding*, so the
-daemon rejected it before any cryptography ran. It shows a malformed proof does not get through. It
-does **not** show that a well-formed proof of a false statement is rejected, which is the property
-worth demonstrating, and this write-up should not be read as claiming it. Doing that properly needs a
-proof that decodes cleanly but attests something else, and it is not done here.
+### R2: parse-refusal is not verification-refusal, and the difference is now shown
+
+The first deployment's only proof probe flipped a character in the transaction's serialised proof and
+got `Invalid rich scalar: Proof KChzdGF0…`. That is a **parse** error: the corruption broke the
+proof's *encoding*, so the daemon refused it before any cryptography ran. It shows a malformed proof
+does not get through, and nothing whatsoever about verification. The write-up said so, and this is
+the repair. The probe is kept, as R2a below, precisely as the contrast case — re-run here, same
+answer.
+
+The honest experiment keeps the proof **well-formed** and varies only the **statement**. Two valid
+`setDreggRoot` transactions are built and proved, and the proof of one is moved onto the account
+update of the other. That splice is legitimate rather than a trick: Mina's transaction commitment
+covers account-update **bodies**, not authorisations, so the fee-payer signature stays valid and every
+byte of the proof is a proof the prover itself produced. Nothing can refuse it except the verification
+equation. Then the **same bytes** are submitted on their own account update, and are accepted.
+Rejected then accepted, one variable changed, and the variable is the statement.
+
+**On chain, this deployment, `npm run devnet:attest`:**
+
+| | What was submitted | What came back | Refused at |
+|---|---|---|---|
+| **R2a** | the proof with one character flipped | `Invalid rich scalar: Proof KChzdGF0…` | **decode** |
+| **R2b** | a valid, untouched proof on a **different** account update | `Invalid_proof` — but you do not see that string; read the ⚑ below | **verification** |
+| **control** | the *identical bytes* on their own account update | applied, block **539540** | — |
+
+Neither refusal entered a block: both were refused at admission, so neither has a hash. The control
+does — `5JuhgtwrsA4uW7YuyYFvuVEAYGwU7Ldj7qTujTkuspw9TsuLeRxV`.
+
+⚑ **What R2b's verdict is called, and what it is.** The message that actually reaches an operator is
+*"Couldn't send zkApp command: Stale verification key detected. Please make sure that deployed
+verification key reflects latest zkApp changes."* That is **o1js's rewrite, not the network's word**:
+`node_modules/o1js/dist/node/lib/mina/v1/errors.js` carries a replacement rule mapping
+`(invalid (Invalid_proof "In progress"))` onto that sentence. `Invalid_proof` is the daemon saying
+*this proof does not verify*; the stale-key phrasing is a guess at why, and here it is wrong — the
+verification key is current, which the control transaction settles by being **accepted against the
+same key, on the same account, with the same proof bytes, four blocks later**. The receipt records
+the classification and whose wording it is, because a proof-verification failure that reads as an
+operator's deployment mistake is exactly how this kind of result gets miscounted.
+
+`npm run gate` runs the same experiment offline on every invocation, at two levels, and requires
+both — so this does not depend on devnet being up:
+
+| Level | Submitted | Result |
+|---|---|---|
+| `ZkProgram` proof | untouched, round-tripped through JSON | **verifies** |
+| | same bytes, public input replaced by a foreign root | **parses, then FAILS VERIFICATION** |
+| | encoding damaged | **does not parse** (`Sexplib.Sexp.of_string: incomplete S-expression`) |
+| account update, local chain | a valid proof moved onto a different account update | **`Invalid proof for account update`** |
+| | the identical bytes on their own account update | **applied** (the control) |
+
+Each of those can go red: the `--self-test` makes the spliced statement equal to the honest one and
+the gate refuses to report a result, because an experiment that has stopped varying anything is not
+an experiment.
+
+⚑ **Said exactly.** What this shows is that the verifier does not accept a proof whose prover had no
+witness for the statement it is attached to — soundness in the direction that matters. It does **not**
+show that no such witness *exists*: that would be a claim about Poseidon preimages, and nothing here
+proves one. "A proof of a false statement" in the soundness-game sense is demonstrated; "false" in the
+sense of provably unsatisfiable is not, and cannot be by this method.
 
 ---
 
@@ -149,15 +243,19 @@ Toolchain, pinned and load-bearing:
 | **Rust probe** | `mina-poseidon` / `mina-curves` from o1-labs `proof-systems` rev `36a8b510` |
 
 ```sh
+# 0. The offline gate, all three legs, plus the fault injections that prove each
+#    can go red. No network. This is the `local-gates.sh` row and the `ci.yml`
+#    job; run it rather than the individual npm targets.
+bash scripts/check-mina-attestation.sh
+bash scripts/check-mina-attestation.sh --self-test
+
 cd bridge/mina-zkapp
 npm ci
 
-# 0. The offline gate — cross-implementation KATs, in-circuit path, prove/verify,
-#    tamper rejection, and the zkApp composition on a local chain. No network.
-npm run gate
-
-# 1. Mint throwaway devnet keys (~/.config/dregg-mina/devnet-keys.json) and fund
-#    the deployer from the faucet.
+# 1. Mint throwaway devnet keys (~/.config/dregg-mina/devnet-keys.json: deployer,
+#    zkApp and RELAY keypairs) and fund the deployer from the faucet. A key file
+#    predating the relay-authorized `setDreggRoot` refuses to load rather than
+#    being reinterpreted — move it aside and re-mint.
 npm run devnet:fund
 
 # 2. Emit a FRESH dregg-side root and cross-check it against o1js.
@@ -205,9 +303,15 @@ scripts cannot be pointed at mainnet by changing one variable.
 - A Mina zkApp with a **verification key committed on chain** that consumes a **real recursive
   Pickles proof** and gates its state transition on it.
 - That the proof's binding to the contract's anchored root is **enforced by the network**, in the
-  network's own words: the replayed attestation entered block 539522 and the daemon recorded
+  network's own words: the replayed attestation entered block 539538 and the daemon recorded
   `Account_app_state_0_precondition_unsatisfied` against it. Both polarities are on chain, in
   consecutive blocks, from the same proof.
+- That the anchor is **authorised by a condition the circuit asserts** — the two root anchors in
+  blocks 539535 and 539537 each carry an in-circuit Schnorr check against the relay key held in
+  `app_state_2/3`, so neither transaction could have been built without that key.
+- That a **well-formed proof of a statement its prover had no witness for is refused by the daemon's
+  verifier**, with the identical proof bytes accepted on their own account update four blocks later
+  as the control (§3, R2b).
 - **Bit-for-bit agreement** between two independent Mina-Poseidon implementations (Rust/arkworks
   `mina-poseidon` and o1js's WASM sponge) over a root and 32 siblings that neither had seen before,
   with the **Rust side emitting** and the Mina side verifying.
@@ -228,18 +332,22 @@ scripts cannot be pointed at mainnet by changing one variable.
    a nonce. Nothing in dregg emits a Mina-Poseidon root over live cell state, so the root is a
    **re-commitment computed in plain Rust, outside any STARK**. Whoever computes it is trusted for
    that hash.
-3. **The root anchor is unauthenticated.** `setDreggRoot` carries no authorisation check whatsoever —
-   the doc comment calls it "relay-authorized", but under the default `proof` permission *any* caller
-   can produce a valid proof of that method and re-anchor the contract to any root. On devnet with a
-   throwaway contract this is harmless, and this deployment used it deliberately to stage the
-   rejection. **It is not a trust boundary, and the comment claiming it is one should be corrected
-   before this shape is reused.**
+3. **The root anchor is authenticated, but the relay is trusted absolutely.** `setDreggRoot` now
+   verifies a relay signature in circuit (§1), so the anchor is a real trust boundary and not a
+   comment claiming to be one. What that boundary *is*, though, is one key: whoever holds the relay
+   key can anchor any root at all, and nothing on chain checks that the root corresponds to anything
+   in dregg. That is the same trust assumption as point 2 — the re-commitment is computed in plain
+   Rust outside any STARK — now named at the key rather than left implicit.
 4. **The chain did not catch a forged Merkle path.** The prover caught it first (§3). Only the
    precondition failure is an on-chain refusal.
-5. **No proof-verification failure was demonstrated on chain.** The one attempt (R2, §3) corrupted
-   the proof's encoding and so was refused at parsing, before any cryptography ran. That a
-   well-formed proof of a false statement gets rejected by the daemon's verifier is *believed* — it
-   is what a zkApp is — but it is **not** shown here.
+5. **Proof-verification refusal IS demonstrated on chain now — state precisely against what.** §3's
+   R2b sent a well-formed, fully-decoding proof on an account update it was not proved for; the
+   devnet daemon answered `Invalid_proof`, and the identical bytes were then accepted on their own
+   account update in block 539540. That replaces the earlier attempt, which corrupted the *encoding*
+   and so was refused at parsing before any cryptography ran, and which this document previously
+   listed here as a thing believed rather than shown. What is still **not** shown is that the
+   rejected statement is *unsatisfiable*: no witness is known for it, which is what soundness is
+   about, but proving none exists is a Poseidon preimage claim and nothing here proves one.
 6. **The mutual bridge is still asymmetric.** Direction 1 (dregg verifies a real Kimchi proof, in
    Lean, modulo three named crypto carriers) remains the strong half. This deployment strengthens
    direction 2 from "a `ZkProgram` ran off-pin in a scratch directory over `[1,2,3,4]`" to "a
@@ -254,10 +362,18 @@ step circuits.**
 
 ## 6. What breaks, and what re-emits
 
-- Changing `DreggPoseidonAttestation.ts` in any way that alters the constraint system changes **both
-  verification keys**, so the deployed zkApp no longer corresponds to the sources. There is no
-  migration: deploy a new address and update this document. The old address is a throwaway.
+- Changing `DreggPoseidonAttestation.ts` in any way that alters the constraint system changes the
+  zkApp's **verification key**, so the deployed address no longer corresponds to the sources. There
+  is no migration: deploy a new address and update this document. The old address is a throwaway.
+  **This has now happened once, which is why §0 has a superseded row** — adding the relay
+  authorisation to `setDreggRoot` moved the zkApp VK from `530251967…` to `182592247…`, so the
+  address deployed at `7af1883f2` was retired the same day and a new one deployed. Note what did
+  *not* move: `DreggMembershipAttestation` was untouched, so the **inner** attestation VK hash is
+  identical across both deployments. Only the contract that consumes it changed.
 - Changing `ATTEST_DEPTH` changes the inner VK, hence the outer VK, hence the address's meaning.
+- The devnet key file (`~/.config/dregg-mina/devnet-keys.json`) gained `relayPrivate`/`relayPublic`
+  at the same time, and a file lacking them now **refuses to load** with the recovery step named,
+  rather than being reinterpreted into an unsatisfiable circuit ten minutes later.
 - `devnet-root.json` is reproducible from its own `leaves` field by re-running the probe; the
   timestamp and nonce make it non-regenerable from scratch, which is the point.
 - The devnet is wiped periodically by the Mina foundation. When it is, this address stops existing
@@ -266,10 +382,27 @@ step circuits.**
 ## 7. Coverage
 
 `scripts/check-mina-attestation.sh` (a `local-gates.sh` row and a `ci.yml` job, both with a
-`--self-test` that proves the gate can go red) covers the **offline** gate. It is deliberately
-Node-only — no cargo, no Lean — so the Rust probe's own tests, **including the new
-`sparse_path_folds_through_the_gold_depth2_root`**, are not run by it. Run them with
-`cargo test --offline` in `circuit-prove/sketches/mina-pasta-hash-probe`.
+`--self-test` that proves the gate can go red) covers everything offline, in **three legs**:
+
+| Leg | What runs | Needs |
+|---|---|---|
+| 1 | `attestation-gate.ts`: the KATs, the in-circuit path, a real Pickles compile/prove/verify, the tamper refusals, the zkApp composition on a local chain, the **relay-authorisation polarities** (§1) and the **parse-vs-verify experiment** (§3) | node ≥ 20, o1js 2.15.0 |
+| 2 | `poseidon2-babybear-rows.ts`: the Poseidon2-w16-BabyBear rows/perm ratchet | node |
+| 3 | `probe-gate.ts`: `cargo test --locked` in the dregg-side probe crate, then its `merkle` subcommand end to end on unprecomputable leaves, cross-checked against o1js elementwise | node, **cargo**, git |
+
+**Leg 3 is new, and the reason it is new is this document's own §7 from the first deployment**, which
+recorded that the gate was "deliberately Node-only" and that the probe's tests therefore did not run.
+That reads like a scoping decision; what it actually meant is that the half of the bridge which
+*produces* the attested root ran in no gate at all. The probe crate is its own workspace
+(`[workspace]` in its `Cargo.toml`), so no cargo job in the repo reached it either, and the `merkle`
+subcommand that emits the deployed root ran only inside `npm run devnet:emit-root` — which needs
+devnet keys and is deliberately ungated. **A missing `cargo` is now a gate failure, not a skip.**
+
+The `--self-test` injects **thirteen** faults into scratch copies of both the TypeScript and the Rust
+crate — never the shared tree — and requires each to turn the gate red; all thirteen do. One is
+chosen to separate the instruments: bending the root that the `merkle` subcommand *prints* leaves
+every `cargo test` passing and is caught only by the elementwise cross-check. Nothing in the crate
+covers its own emit path, which is the gap leg 3 exists to close.
 
 The devnet scripts are **not** gated and must not be: they need network, faucet budget and real
 block times. This document is their record.

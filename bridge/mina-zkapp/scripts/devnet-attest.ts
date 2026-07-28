@@ -305,15 +305,37 @@ async function main() {
     if (!au?.authorization.proof) throw new Error('no proof on any account update');
     return au;
   };
-  /** Did the daemon refuse this at DECODE time or at VERIFICATION time? The
-   *  distinction is the defect this section exists to fix, so it is classified
-   *  from the daemon's own words rather than asserted. */
+  /**
+   * Did the daemon refuse this at DECODE time or at VERIFICATION time? The
+   * distinction is the defect this section exists to fix, so it is classified
+   * from the daemon's own words rather than asserted.
+   *
+   * ⚑ ONE OF THOSE WORDS IS NOT THE DAEMON'S. o1js rewrites the daemon's
+   * verdict before you ever see it: `dist/node/lib/mina/v1/errors.js` carries
+   *
+   *   { pattern: /\(invalid \(Invalid_proof \\"In progress\\"\)\)/g,
+   *     replacement: 'Stale verification key detected. Please make sure that
+   *                   deployed verification key reflects latest zkApp changes.' }
+   *
+   * so `Invalid_proof` — the network saying THIS PROOF DOES NOT VERIFY — reaches
+   * the operator as a hint that they forgot to redeploy. That guess is usually
+   * right and here it is exactly wrong: the verification key is current, and the
+   * control transaction below proves it by being accepted against the same key
+   * with the same proof bytes minutes later. The string is matched here so the
+   * receipt records a proof-verification refusal as a proof-verification
+   * refusal, and says whose wording it is.
+   */
   const classify = (errs: string): 'parse' | 'verification' | 'other' => {
     const e = errs.toLowerCase();
     if (e.includes('rich scalar') || e.includes('could not decode') || e.includes('base64'))
       return 'parse';
-    if (e.includes('verification_failed') || e.includes('invalid_proof') || e.includes('proof'))
+    if (
+      e.includes('invalid_proof') ||
+      e.includes('stale verification key') || // o1js's rewrite of Invalid_proof
+      e.includes('verification_failed')
+    )
       return 'verification';
+    if (e.includes('proof')) return 'other';
     return 'other';
   };
 
