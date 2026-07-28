@@ -1,8 +1,37 @@
 # PICKLES-VERIFIER-SCOPE.md — from a single Kimchi verify to Mina's Pickles recursion
 
-**Status:** research / scoping only. No Lean, no build. Audience: ember + the K7 (Pickles) build.
+**Status:** scoping doc + **P0/P1/P2 BUILT** (2026-07-27). P3–P10 remain unbuilt scoping.
+Audience: ember + the K7 (Pickles) build.
 This is the follow-on named in `docs/MINA-KIMCHI-VERIFIER-PLAN.md` item 6 ("Pickles/recursion tip …
 recursion is the follow-on") and the frontier `KimchiVerify.lean` freezes at `prevLen = 0`.
+
+### BUILD STATUS — `metatheory/Dregg2/Circuit/Emit/PicklesRecursion.lean`
+
+P0, P1 and P2 are Lean-authored, `lake build`-green on hbox and `#assert_namespace_axioms`-clean
+(91 theorems ⊆ {propext, Classical.choice, Quot.sound}; no `sorry`, no `native_decide`).
+
+- **P0** — `both_shapes_run` runs K5's `kimchiVerifyDecisionGates` at BOTH `Fp = ZMod pN`
+  (Step, Vesta-committed, `k=16`) and `Fq = ZMod qN` (Wrap, Pallas-committed, `k=15`);
+  `wrap_field_decision_discriminates` (10 tampers), `sides_discriminate`, `cycle_is_a_swap`,
+  `wrapOmega15_is_the_wrap_domain` (the real `2^15` wrap-domain generator, exact order, via the
+  `sqIter` ladder). **`wrap_prev_challenges_refused` proves the real Wrap object's
+  `prev_challenges = 2` is REFUSED by K5's v1 `shapeOk`** — the `prevLen = 0` frontier, measured;
+  that is P6, not a P0 gap. Residuals: no real Wrap fixture, no Fq-state sponge, witness domain
+  `2^5` (kernel cost).
+- **P1** — `accumulator_check_splits`: the assembled `msm(points, scalars)` of
+  `batch_dlog_accumulator_check` IS `Σ r^i·comm_i − Σ r^i·⟨sVec chals_i, G⟩`, plus
+  `accumulator_check_complete` / `_one` / `_two_sound`. The per-proof block is K4c's `sVec`;
+  `accumulator_block_is_bPoly` / `_compression` are the `sVec_eq_bPoly` / `deferral_compression`
+  reuse. Residuals: the terminal `msm == 0` is P10; `r` is `OsRng`-sampled so general-`k` batching
+  soundness is statistical and NOT proven.
+- **P2** — the two `Deferred_values` records + `wrapData_roundtrip`, the `Shifted_value`
+  Type1/Type2 bridge (`type1_eq_iff` / `type2_eq_iff` — comparing shifted representatives IS
+  comparing field values, the algebraic half of P4), the concrete Pasta shift constants
+  (`pasta_shift_constants`: `2^255 + 1` / `2^255`), `branchData_roundtrip`.
+
+**Not claimed:** this is not a Pickles verifier. P3 (`finalize_other_proof`) and P4 (the
+transcript-equality binding — the soundness of P3) are unbuilt; see §Z of the Lean file for the
+per-item handoff.
 
 It maps every piece of a Pickles verifier onto **have** (an instantiation of a primitive the K-lanes
 already built) vs **new** (recursion machinery with no analog in the single-proof verifier), with
@@ -62,9 +91,9 @@ instantiation (real Step/Wrap VKs, the tx-snark merge tree, the block step rule,
 
 ### 2. The ordered task list (dependency order; effort honest; see §7 for detail)
 
-- **P0** — Instantiate K5 at the **Wrap** shape (Pallas-committed, Fq scalars, `k=15`). *Medium.*
-- **P1** — Close `accumulator_check` (the sg discharge) on top of `sVec_eq_bPoly`. *Small–medium.*
-- **P2** — The `Deferred_values` data model + Type1/Type2 shifted-value bridge. *Small–medium.*
+- **P0** — Instantiate K5 at the **Wrap** shape (Pallas-committed, Fq scalars, `k=15`). *Medium.* **BUILT.**
+- **P1** — Close `accumulator_check` (the sg discharge) on top of `sVec_eq_bPoly`. *Small–medium.* **BUILT** (batching wrapper + reduction; terminal MSM still P10).
+- **P2** — The `Deferred_values` data model + Type1/Type2 shifted-value bridge. *Small–medium.* **BUILT.**
 - **P3** — `finalize_other_proof`: the four re-checks (`xi`/`cip`/`b`/`plonk`) on ONE side. *Medium.*
 - **P4** — **The transcript-equality binding** (`assert_eq_plonk` + digest/bp-challenge equality) —
   the soundness of P3. *Hard — the single hardest buildable piece.*
