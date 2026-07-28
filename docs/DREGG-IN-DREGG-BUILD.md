@@ -68,10 +68,9 @@ Three added by the account model:
 - `settle_starts_at_registered_genesis` — the registered `childGenesis` *is* the first step's
   pre-root, via `AggregateAttests.genesis_pinned`. The account is not merely *told* which chain it
   settled.
-- `settle_conserves_child_from_verification` — the parent inherits child value-conservation **from the
-  settlement's own legs** (`h.engine` + `h.root_ok`), through
-  `RecursiveAggregation.conserves_from_verification`, with **no** prover-supplied `StateChained`.
-  (`settle_conserves_child_producer_witness` is the weaker alternate route, labelled as such.)
+- `settle_conserves_child_producer_witness` — conservation over the child's history from an
+  executor-genuine `StateChained` witness. This is the *weak* form and is labelled as such; the strong
+  one is refused, see §3b.
 - `settle_advances_monotone`, `settled_account_proves_root`, `settle_preserves_registration`.
 - Teeth (all refusals): `stale_settlement_rejected` (replay), `forged_anchor_cannot_settle`
   (non-leader anchor), `root_mismatch_cannot_settle` (proof of A + cert for B),
@@ -124,6 +123,29 @@ constraint work, listed below).
 
 ---
 
+## 3b. ⚑ The conservation leg the L1 cannot yet have — a refused import
+
+The settlement *should* let the parent derive child value-conservation from its own crypto legs
+(`engine` + `root_ok`), with no prover-supplied `StateChained`. That form was written, riding
+`RecursiveAggregation.conserves_from_verification` — and the tree's own floor ratchet rejected it:
+
+```
+theorem settle_conserves_child_from_verification
+  carries: cellLeafInjective, compressInjective, compressNInjective
+```
+
+Those are floors this tree **proves false** at deployed BabyBear parameters. A settlement-level
+restatement under them would be vacuously true at deployment — it would tell an operator nothing about
+the shipping system. The theorem was therefore **removed, not recorded as a new floor carrier** (adding
+a carrier is a deliberate, reviewable decision and belongs to the operator, not to a build lane).
+
+What ships instead is the honest producer-witness form, explicitly labelled as consuming a witness
+rather than the settlement. **Remaining step: the `_or_collides` + total-extractor port of
+`conserves_from_verification`** — until then, an L1 settling a child inherits the child's *correctness,
+ordering, genuine fold and finality* from verification, but **not** its conservation.
+
+---
+
 ## 4. Zeko, concretely
 
 | Ingredient | Zeko / Mina | dregg |
@@ -160,7 +182,9 @@ proven predicate, a proven binding lemma, and the four residuals below.
 4. **NEW-C, the account cell.** Persist `RollupAccount` as a real `RecordKernelState` cell advanced
    only by the effect (registration fixes `childGenesis`), then deposits/withdrawals binding the
    commitment via `Bridge/HoldingFoldRecursive.lean`.
-5. **NEW-A, the online fold driver.** Drive `fold_two_turns`
+5. **Port `conserves_from_verification`** off its refuted CR floor (§3b), so a settling L1 can inherit
+   child conservation from the proof rather than from a producer witness.
+6. **NEW-A, the online fold driver.** Drive `fold_two_turns`
    (`circuit-prove/src/ivc_turn_chain.rs:5678`) as a running fold with the previous running proof
    re-verified in-circuit (O(1) memory), for an unbounded settled child. Soundness is already the Lean
    induction; this is fork/crypto engineering. Optional for a bounded-window rollup.

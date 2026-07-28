@@ -38,15 +38,25 @@ RESIDUAL below — it is not claimed as done.
      child's whole history. The L2 commitment sitting on the L1 is bound to the child's entire executed,
      finalized history — no re-execution. `settlement_root_is_unique` adds the anti-equivocation edge:
      no two accepted settlements of one child history can commit different roots.
-  6. `settle_conserves_child_from_verification` — the parent inherits child value-conservation FROM THE
-     SETTLEMENT'S OWN LEGS (`h.engine` + `h.root_ok`, via `RecursiveAggregation.conserves_from_-
-     verification`), with NO prover-supplied `StateChained`. The producer-witness variant is kept
-     separately and labelled as such.
+  6. `settle_conserves_child_producer_witness` — the parent inherits child value-conservation, in the
+     PRODUCER-WITNESS form only. ⚠ The stronger verification-derived form is DELIBERATELY NOT TAKEN:
+     see the floor note below.
   7. Teeth: stale/replayed (`stale_settlement_rejected`), forged anchor (`forged_anchor_cannot_settle`),
      root mismatch (`root_mismatch_cannot_settle`), fabricated child genesis
      (`fabricated_genesis_cannot_settle`), and the unset account proving nothing.
   8. Non-vacuity: the settlement FIRES on the realizing child chain of `FinalizedLightClient`
      (`settle_fires_on_real_child`), advancing a registered account by a real, quorum-finalized child.
+
+**⚠ THE CONSERVATION LEG THE L1 CANNOT YET HAVE (a refused import, not an oversight).** The strong
+form — the parent deriving child value-conservation from the SETTLEMENT'S OWN legs (`h.engine` +
+`h.root_ok`), with no prover-supplied `StateChained` — would ride
+`RecursiveAggregation.conserves_from_verification`. That theorem carries `compressInjective`,
+`compressNInjective` and `cellLeafInjective`, all of which THIS TREE REFUTES at deployed BabyBear
+parameters; a settlement-level restatement would therefore be VACUOUSLY TRUE at deployment and would
+tell an operator nothing about the shipping system. It was written, measured against the floor ratchet,
+and REMOVED rather than recorded as a new floor carrier. What remains here is the honest
+producer-witness form. Adopting the strong form requires the `_or_collides` + total-extractor PORT of
+`conserves_from_verification` upstream first — named, not carried.
 
 **⚠ MEASURED LIMITATION OF THE HEIGHT REGISTER (proved, not prose).** `Aggregate.numTurns` is a PUBLIC
 field that `RecursiveAggregation.EngineSound` pins NOWHERE — `binding_sound` pins `genesisRoot` and
@@ -87,6 +97,8 @@ nothing is emitted, no Rust calls this yet.
     the commitment (reusing `Dregg2.Bridge.HoldingFoldRecursive`). This slice models the account
     abstractly (`RollupAccount` + `applySettle`); the concrete cell + its emit is the remaining assembly.
   * **Pinning `numTurns`** in the binding AIR (see the measured limitation above).
+  * **The `_or_collides` port of `conserves_from_verification`**, without which the L1 cannot inherit
+    child conservation from verification non-vacuously (see the floor note above).
 
 `#assert_axioms`-clean (⊆ {propext, Classical.choice, Quot.sound}). Verified with
 `lake build Dregg2.Distributed.SelfSettlement`.
@@ -97,11 +109,9 @@ namespace Dregg2.Distributed.SelfSettlement
 
 open Dregg2.Exec (RecChainedState recCexec recTotal)
 open Dregg2.Distributed.HistoryAggregation
-  (ChainStep foldedFinalRoot lastStateOf StateChained KernelGenesisPin SeamStruct)
-open Dregg2.Circuit.StateCommit
-  (compressInjective compressNInjective cellLeafInjective RestHashIffFrame)
+  (ChainStep foldedFinalRoot lastStateOf StateChained)
 open Dregg2.Circuit.RecursiveAggregation
-  (Aggregate EngineSound AggregateAttests conserves_from_verification)
+  (Aggregate EngineSound AggregateAttests)
 open Dregg2.Distributed.FinalizedLightClient
   (FinalityCert CertValid Bound FinalizedHistoryAttested
    light_client_accepts_finalized_history finalized_history_conserves
@@ -343,31 +353,20 @@ theorem settle_preserves_registration
     (acc : RollupAccount) (s : SettleChildChain Proof) :
     (applySettle Proof acc s).childGenesis = acc.childGenesis := rfl
 
-/-! ## 7. CONSERVATION the L1 inherits over the settled child history. -/
+/-! ## 7. CONSERVATION over the settled child history — and the form that is REFUSED.
 
-/-- **`settle_conserves_child_from_verification` (KEYSTONE — conservation from the SETTLEMENT'S OWN
-LEGS).** A parent L1 that accepts a settlement inherits value CONSERVATION over the child's whole
-history — the child ledger's total at the finalized endpoint equals its genesis total — deriving it
-from `h.engine` + `h.root_ok` (the settlement's own crypto legs) via
-`RecursiveAggregation.conserves_from_verification`, with **NO prover-supplied `StateChained`**. The
-honest inputs are the standard Poseidon CR set, the public genesis pin, and the non-cryptographic
-structural envelope `SeamStruct` — none of them a state-continuity assertion. The L1 records a
-no-mint/no-burn child, re-executing nothing. -/
-theorem settle_conserves_child_from_verification
-    (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
-    (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
-    (hRest : RestHashIffFrame RH)
-    (acc : RollupAccount) (s : SettleChildChain Proof) (g : RecChainedState) (steps : List ChainStep)
-    (h : SettleAccepts Proof verify CH RH cmb compress compressN acc s g steps)
-    (hgen : KernelGenesisPin g steps) (hstruct : SeamStruct steps) :
-    recTotal (lastStateOf g steps).kernel = recTotal g.kernel :=
-  conserves_from_verification Proof verify CH RH cmb compress compressN
-    hCmb hCompress hCompressN hLeaf hRest s.childAgg g steps h.engine h.root_ok hgen hstruct
+The strong form (conservation derived from the settlement's own `engine` + `root_ok` legs, no
+prover-supplied `StateChained`) rides `RecursiveAggregation.conserves_from_verification`, which carries
+`compressInjective` / `compressNInjective` / `cellLeafInjective` — floors THIS TREE REFUTES at deployed
+BabyBear parameters. A settlement-level restatement would be vacuous at deployment, so it is NOT taken
+here; the port is a named residual (module header). Only the honest producer-witness form remains, and
+it is labelled as consuming a witness rather than the settlement. -/
 
-/-- **`settle_conserves_child_producer_witness`.** The weaker, producer-witness form: given the
-executor-genuine `StateChained` witness directly, conservation over the child's history holds. Kept
-only as the alternate route (`FinalizedLightClient.finalized_history_conserves`); it does NOT consume
-the settlement, and the verification-derived form above is the one the L1 actually gets. -/
+/-- **`settle_conserves_child_producer_witness`.** Given the executor-genuine `StateChained` witness
+directly, value is conserved over the child's whole history. This is the producer-supplied route
+(`FinalizedLightClient.finalized_history_conserves`): it does NOT consume the settlement, and it is
+NOT the L1 learning conservation from the proof. That stronger statement is refused above until
+`conserves_from_verification` is ported off its refuted floor. -/
 theorem settle_conserves_child_producer_witness
     (g : RecChainedState) (steps : List ChainStep) (hch : StateChained g steps) :
     recTotal (lastStateOf g steps).kernel = recTotal g.kernel :=
@@ -575,7 +574,6 @@ end Realize
 #assert_axioms Dregg2.Distributed.SelfSettlement.settle_advances_monotone
 #assert_axioms Dregg2.Distributed.SelfSettlement.settled_account_proves_root
 #assert_axioms Dregg2.Distributed.SelfSettlement.settle_preserves_registration
-#assert_axioms Dregg2.Distributed.SelfSettlement.settle_conserves_child_from_verification
 #assert_axioms Dregg2.Distributed.SelfSettlement.settle_conserves_child_producer_witness
 #assert_axioms Dregg2.Distributed.SelfSettlement.engineSound_numTurns_irrelevant
 #assert_axioms Dregg2.Distributed.SelfSettlement.settle_accepts_inflated_height
