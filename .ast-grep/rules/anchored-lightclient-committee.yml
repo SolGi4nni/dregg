@@ -1,0 +1,69 @@
+# THE COMMITTEE-ANCHOR GATE (ast-grep).
+#
+# `eth_lightclient::finality::verify_finalized_update` decides whether a foreign
+# Ethereum update is real, and everything it decides — the >= 2/3 threshold, the
+# committee-size floor, the BLS aggregate result — is decided RELATIVE TO THE
+# COMMITTEE IT IS HANDED. Hand it a 512-key committee an untrusted RPC returned
+# and every one of those checks passes and every one is worthless: the attacker
+# generated the keypairs, so their own committee really did sign their own header.
+# `verifyFinalizedUpdate` is TRUE, the verified Lean gate ACCEPTS (correctly — the
+# facts it decides over are all true), and the attacker's chosen EVM state root
+# comes back in a `FinalizedExecution`. This is demonstrated, not asserted:
+# `eth-lightclient/tests/weak_subjectivity_store.rs`'s
+# `unanchored_committee_ADMITS_a_fully_forged_update` performs exactly that drain.
+#
+# The defence is not cryptographic — it is provenance. The committee must be
+# reached by rotation from a governance-pinned weak-subjectivity anchor
+# (`WeakSubjectivityStore`), and the type that certifies that is
+# `TrustedCommittee`. Its fields are private and it has exactly two constructors:
+#
+#   * `WeakSubjectivityStore::trusted_committee` — anchored, and `Err` before any
+#     committee is bootstrapped, so the fail-closed state cannot be spent; and
+#   * `TrustedCommittee::new_unchecked` — the loud caller assertion (the
+#     `from_utf8_unchecked` / `FinalizedExecution::new_unchecked` idiom), which
+#     discharges NOTHING and is legitimate only over fixed test fixtures.
+#
+# This rule is the second half. The type wall stops the un-anchored path from
+# being taken BY ACCIDENT; this stops it from being taken QUIETLY in production
+# source. Without it `new_unchecked` is a documented wound rather than a detected
+# one — and the store itself is the cautionary tale: it landed in 27b15fa95,
+# correct and tested, and three days later the un-anchored spelling was still the
+# one every caller used, because nothing made anyone reach for it.
+#
+# Scope is `eth-lightclient/src/**` — PRODUCTION source only. Tests legitimately
+# assert an un-anchored committee over fixed fixtures (and must: the ADMIT pole
+# above is what proves the anchored REJECT is not vacuous), so `tests/` is out of
+# scope by design.
+#
+# Allowlisting a real production residual: put the human reason on the line ABOVE
+# and suppress with a trailing  // ast-grep-ignore: unanchored-lightclient-committee
+# (text after the colon is parsed as a rule-id list, so the REASON needs its own
+# comment line). Today there are ZERO such residuals: `store.rs` uses the private
+# `TrustedCommittee::anchored`, and `bin/verify_holding.rs` goes through
+# `pin_checkpoint` -> `bootstrap_committee` -> `trusted_committee`.
+id: unanchored-lightclient-committee
+language: rust
+severity: error
+files:
+  - "eth-lightclient/src/**/*.rs"
+rule:
+  any:
+    - pattern: TrustedCommittee::new_unchecked($$$)
+    - pattern: $$$::TrustedCommittee::new_unchecked($$$)
+message: >-
+  Un-anchored sync committee in eth-lightclient PRODUCTION source:
+  `TrustedCommittee::new_unchecked` asserts a committee is trusted without any
+  weak-subjectivity anchoring. If those keys came from an RPC, the >= 2/3 BLS
+  floor is VACUOUS — a committee the attacker generated signs whatever they like
+  and the verified gate accepts it. Obtain the committee from
+  `WeakSubjectivityStore::trusted_committee` (pin a governance checkpoint, then
+  `bootstrap_committee` / `advance`). If this really is anchored by some other
+  audited means, document that on the line above and suppress with a trailing
+  `// ast-grep-ignore: unanchored-lightclient-committee`.
+note: |
+  Falsifier for the property this rule protects (both poles, one process):
+  `eth-lightclient/tests/weak_subjectivity_store.rs` ::
+  `unanchored_committee_ADMITS_a_fully_forged_update` (the drain succeeds) and
+  `anchored_committee_REFUSES_the_same_forged_update` (the SAME forgery is
+  refused once the committee must come from the store, while the honest mainnet
+  update is still admitted).

@@ -29,7 +29,9 @@ use eth_lightclient::finality::{
     verify_finality_branch, verify_finalized_update, LightClientHeader, LightClientUpdate,
     FINALIZED_ROOT_DEPTH_ELECTRA,
 };
-use eth_lightclient::{BeaconBlockHeader, Error, SyncAggregate, SYNC_COMMITTEE_SIZE};
+use eth_lightclient::{
+    BeaconBlockHeader, Error, SyncAggregate, TrustedCommittee, SYNC_COMMITTEE_SIZE,
+};
 
 fn h32(s: &str) -> [u8; 32] {
     let v = hex::decode(s).expect("hex32");
@@ -234,7 +236,11 @@ fn composed_update_fails_closed_on_bad_sync_aggregate() {
     let committee = vec![[0x01u8; 48]; SYNC_COMMITTEE_SIZE]; // not on-curve
     let fork_version = [0x06, 0x00, 0x00, 0x00];
     let gvr = h32("4b363db94e286120d76eb905340fdd4e54bfe9f06bf33ff6cf5ad27f511bfe95");
-    let r = verify_finalized_update(&update, &committee, fork_version, gvr);
+    let r = verify_finalized_update(
+        &update,
+        &TrustedCommittee::new_unchecked(&committee, gvr),
+        fork_version,
+    );
     assert!(
         r.is_err(),
         "bad sync aggregate must fail the composed update, got {r:?}"
@@ -265,7 +271,11 @@ fn composed_update_fails_closed_on_subquorum() {
     let committee = vec![[0x01u8; 48]; SYNC_COMMITTEE_SIZE];
     let gvr = [0x42u8; 32];
     assert!(matches!(
-        verify_finalized_update(&update, &committee, [0x06, 0, 0, 0], gvr),
+        verify_finalized_update(
+            &update,
+            &TrustedCommittee::new_unchecked(&committee, gvr),
+            [0x06, 0, 0, 0]
+        ),
         Err(Error::InsufficientParticipation { .. })
     ));
 }

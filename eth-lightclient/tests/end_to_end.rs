@@ -42,7 +42,7 @@ use eth_lightclient::finality::{
 };
 use eth_lightclient::{
     verify_committee_update, verify_sync_aggregate, BeaconBlockHeader, Error, SyncAggregate,
-    SyncCommittee, SYNC_COMMITTEE_SIZE,
+    SyncCommittee, TrustedCommittee, SYNC_COMMITTEE_SIZE,
 };
 
 // -------------------- hex helpers --------------------
@@ -169,9 +169,12 @@ fn run_chain(
     update: &LightClientUpdate,
     committee: &[[u8; 48]],
 ) -> Result<eth_lightclient::evm::ProvenErc20Holding, String> {
-    let finalized: FinalizedExecution =
-        verify_finalized_update(update, committee, e2e::FORK_VERSION, gvr())
-            .map_err(|e| format!("light-client gate refused: {e:?}"))?;
+    let finalized: FinalizedExecution = verify_finalized_update(
+        update,
+        &TrustedCommittee::new_unchecked(committee, gvr()),
+        e2e::FORK_VERSION,
+    )
+    .map_err(|e| format!("light-client gate refused: {e:?}"))?;
     verify_erc20_holding_finalized(
         &finalized,
         &nodes(e2e::ACCOUNT_PROOF),
@@ -208,8 +211,12 @@ fn real_mainnet_chain_bls_to_finality_to_consensus_proven_holding() {
     .expect("real mainnet sync-committee BLS aggregate must verify");
 
     // The composed chain: BLS -> finality branch -> execution branch -> FinalizedExecution.
-    let finalized = verify_finalized_update(&update(), &committee, e2e::FORK_VERSION, gvr())
-        .expect("real mainnet finalized update must verify end-to-end");
+    let finalized = verify_finalized_update(
+        &update(),
+        &TrustedCommittee::new_unchecked(&committee, gvr()),
+        e2e::FORK_VERSION,
+    )
+    .expect("real mainnet finalized update must verify end-to-end");
     assert_eq!(finalized.finalized_slot(), e2e::FIN_SLOT);
     assert_eq!(
         finalized.finalized_beacon_root(),
@@ -351,7 +358,11 @@ fn wrong_fork_version_fails_closed() {
 fn genuine_bls_accept_then_tampered_finality_branch_fails() {
     let mut upd = update();
     upd.finality_branch[3][7] ^= 0x01;
-    let r = verify_finalized_update(&upd, &committee_pubkeys(), e2e::FORK_VERSION, gvr());
+    let r = verify_finalized_update(
+        &upd,
+        &TrustedCommittee::new_unchecked(&committee_pubkeys(), gvr()),
+        e2e::FORK_VERSION,
+    );
     assert_eq!(r.unwrap_err(), Error::BadFinalityBranch);
 }
 
@@ -362,7 +373,11 @@ fn genuine_bls_accept_then_tampered_finality_branch_fails() {
 fn genuine_bls_accept_then_tampered_execution_state_root_fails() {
     let mut upd = update();
     upd.finalized_header.execution.state_root[0] ^= 0x01;
-    let r = verify_finalized_update(&upd, &committee_pubkeys(), e2e::FORK_VERSION, gvr());
+    let r = verify_finalized_update(
+        &upd,
+        &TrustedCommittee::new_unchecked(&committee_pubkeys(), gvr()),
+        e2e::FORK_VERSION,
+    );
     assert_eq!(r.unwrap_err(), Error::BadExecutionBranch);
 }
 
@@ -371,9 +386,12 @@ fn genuine_bls_accept_then_tampered_execution_state_root_fails() {
 /// let a prover overstate a holding.
 #[test]
 fn genuine_consensus_root_then_wrong_balance_fails_at_mpt_gate() {
-    let finalized =
-        verify_finalized_update(&update(), &committee_pubkeys(), e2e::FORK_VERSION, gvr())
-            .expect("the real update verifies");
+    let finalized = verify_finalized_update(
+        &update(),
+        &TrustedCommittee::new_unchecked(&committee_pubkeys(), gvr()),
+        e2e::FORK_VERSION,
+    )
+    .expect("the real update verifies");
     let inflated = u256(e2e::EXPECTED_BALANCE_HEX) + Uint256::from(1u64);
     let r = verify_erc20_holding_finalized(
         &finalized,

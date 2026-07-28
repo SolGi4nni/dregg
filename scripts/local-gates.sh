@@ -46,6 +46,8 @@ GATES=(
   "forcing-gadget-tie|120|python3 scripts/check-forcing-gadget-tie.py"
   "forcing-gadget-tie-red|60|python3 scripts/check-forcing-gadget-tie.py --self-test"
   "no-degraded-felt|120|bash scripts/check-no-degraded-felt.sh"
+  "anchored-lc-committee|60|bash scripts/check-anchored-lc-committee.sh"
+  "anchored-lc-committee-red|60|bash scripts/check-anchored-lc-committee.sh --self-test"
   "byte-to-felt|120|bash scripts/check-byte-to-felt.sh"
   "p3-rev|60|bash scripts/check-p3-rev.sh"
   "drift-taxonomy|120|bash scripts/check-drift-taxonomy.sh"
@@ -295,7 +297,7 @@ GATES=(
   # `cargo test --locked` and then the `merkle` subcommand end to end on unprecomputable
   # leaves, cross-checked elementwise against o1js. No Lean. The -red row is not optional
   # — most of these legs are NEGATIVE assertions, which pass just as happily on a broken
-  # driver. It injects FIFTY-FIVE faults into SCRATCH COPIES of both the TypeScript and
+  # driver. It injects FIFTY-SIX faults into SCRATCH COPIES of both the TypeScript and
   # the Rust crate (never the shared tree) — and a fault that matches NOTHING is itself a
   # failure. One of them bends only the `merkle` subcommand's printed root: every
   # `cargo test` still passes and only the cross-check catches it, which is the gap the

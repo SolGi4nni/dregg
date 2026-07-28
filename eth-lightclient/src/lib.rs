@@ -175,6 +175,79 @@ impl SyncCommittee {
     }
 }
 
+/// **A sync committee that has been ESTABLISHED AS TRUSTED**, together with the pinned
+/// `genesis_validators_root` that fixes its signing domain — the TRUST ANCHOR
+/// [`finality::verify_finalized_update`] now demands instead of a bare `&[[u8; 48]]`.
+///
+/// # Why this type exists
+///
+/// The BLS math is never the weak point of a light client; *learning the right committee* is.
+/// `verify_finalized_update` used to take `committee_pubkeys` and `genesis_validators_root` as
+/// two ordinary arguments, so an integration that passed a 512-key committee an untrusted RPC
+/// had just returned got a perfectly valid `Ok(FinalizedExecution)`: the forged keys really did
+/// sign the forged header, so `blst` verified, the ≥ 2/3 threshold was met over the forged
+/// committee, and the whole 2/3-of-512 floor went VACUOUS. Nothing in the signature of that
+/// function distinguished the anchored case from the RPC case, and nothing failed.
+///
+/// [`store::WeakSubjectivityStore`] pins the trust root and advances the committee only by
+/// cryptographic rotation. This type makes that store the DEFAULT rather than an option a caller
+/// may or may not have read about: the fields are private, so the only ways to obtain one are
+///
+///   * [`store::WeakSubjectivityStore::trusted_committee`] — the anchored path; the pubkeys and
+///     the `genesis_validators_root` both come from the store, and it is `Err` before any
+///     committee is established, and
+///   * [`TrustedCommittee::new_unchecked`] — the loud, greppable caller assertion, exactly the
+///     [`finality::FinalizedExecution::new_unchecked`] / `from_utf8_unchecked` idiom this crate
+///     already uses.
+///
+/// So "this committee is anchored" is a type-level property that must be either PROVED by a
+/// store rotation or ASSERTED by name. There is no longer a spelling of the un-anchored path
+/// that looks like the anchored one.
+///
+/// The `fork_version` is deliberately NOT carried here: it legitimately changes across forks and
+/// is a per-slot parameter, and a wrong one can only make verification FAIL (wrong domain ⇒
+/// `BadSignature`), never forge an acceptance.
+#[derive(Debug, Clone, Copy)]
+pub struct TrustedCommittee<'a> {
+    pubkeys: &'a [[u8; 48]],
+    genesis_validators_root: [u8; 32],
+}
+
+impl<'a> TrustedCommittee<'a> {
+    /// The crate-internal constructor used by the anchored path
+    /// ([`store::WeakSubjectivityStore::trusted_committee`]).
+    pub(crate) fn anchored(pubkeys: &'a [[u8; 48]], genesis_validators_root: [u8; 32]) -> Self {
+        TrustedCommittee {
+            pubkeys,
+            genesis_validators_root,
+        }
+    }
+
+    /// Assert — WITHOUT any weak-subjectivity anchoring — that these pubkeys are the trusted
+    /// sync committee and that `genesis_validators_root` is the pinned chain identity.
+    ///
+    /// **This is the un-anchored path, and it is named so it cannot be taken by accident.** The
+    /// caller takes on the whole burden the store otherwise discharges: if these keys came from
+    /// an RPC, a `verify_finalized_update` built on this witness proves nothing at all. Legitimate
+    /// uses are tests over fixed fixtures and a caller that has anchored the committee by some
+    /// other audited means. Production integrations use
+    /// [`store::WeakSubjectivityStore::trusted_committee`]; a grep for `new_unchecked` is the
+    /// review surface.
+    pub fn new_unchecked(pubkeys: &'a [[u8; 48]], genesis_validators_root: [u8; 32]) -> Self {
+        Self::anchored(pubkeys, genesis_validators_root)
+    }
+
+    /// The trusted committee's pubkeys.
+    pub fn pubkeys(&self) -> &'a [[u8; 48]] {
+        self.pubkeys
+    }
+
+    /// The pinned `genesis_validators_root` (half of the signing domain).
+    pub fn genesis_validators_root(&self) -> [u8; 32] {
+        self.genesis_validators_root
+    }
+}
+
 /// The `SyncAggregate`: a 512-bit participation bitfield (64 bytes, little-endian
 /// bit order) and one aggregate G2 signature (96 compressed bytes).
 #[derive(Debug, Clone)]

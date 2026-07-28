@@ -33,7 +33,7 @@ use crate::execution::{
 };
 use crate::ssz::is_valid_merkle_branch;
 use crate::verified_gate::{self, EthProjections};
-use crate::{sync_projection, BeaconBlockHeader, Error, SyncAggregate};
+use crate::{sync_projection, BeaconBlockHeader, Error, SyncAggregate, TrustedCommittee};
 
 /// `FINALIZED_ROOT_GINDEX` — generalized index of `finalized_checkpoint.root` in
 /// `BeaconState` (Altair..Deneb).
@@ -241,7 +241,7 @@ pub fn project_update(
 
 /// **Finality-following + execution-state recovery — decided by the verified Lean gate.**
 ///
-/// Given a `LightClientUpdate` and the CURRENT trusted sync-committee pubkeys, this computes the
+/// Given a `LightClientUpdate` and an ANCHORED [`TrustedCommittee`], this computes the
 /// three crypto primitives and makes **one** call to `@[export] dregg_eth_lc_verify` over the
 /// update's true projections:
 ///   1. the sync-committee BLS aggregate over `attested_header` and the ≥ 2/3 threshold;
@@ -260,17 +260,29 @@ pub fn project_update(
 /// finalized EVM execution state root. Any failure returns `Err` — never a partial/asserted
 /// advance. **A missing archive is also a failure** ([`Error::VerifiedGateUnavailable`]): the
 /// Rust rules that used to decide here were the twin, and they are gone.
+///
+/// # The committee is an ANCHOR, not an argument
+///
+/// This function takes a [`TrustedCommittee`], not a bare `&[[u8; 48]]` + `genesis_validators_root`
+/// pair, and that is a soundness boundary rather than a style choice. Everything the verified gate
+/// decides — the ≥ 2/3 threshold, the committee-size floor, the BLS result — is decided *relative
+/// to the committee it is handed*. Handed a committee an untrusted RPC returned, all of it is
+/// true and all of it is worthless: the forged keys signed the forged header, so the gate ACCEPTS.
+/// The only defence is that the committee be reached by cryptographic rotation from a
+/// governance-pinned weak-subjectivity anchor, which is what
+/// [`crate::store::WeakSubjectivityStore::trusted_committee`] certifies. The un-anchored path
+/// still exists — it must, for tests and for callers anchoring by other means — but it is now
+/// spelled [`TrustedCommittee::new_unchecked`] and cannot be entered by accident.
 pub fn verify_finalized_update(
     update: &LightClientUpdate,
-    committee_pubkeys: &[[u8; 48]],
+    committee: &TrustedCommittee<'_>,
     fork_version: [u8; 4],
-    genesis_validators_root: [u8; 32],
 ) -> Result<FinalizedExecution, Error> {
     let (projections, bls_err) = project_update(
         update,
-        committee_pubkeys,
+        committee.pubkeys(),
         fork_version,
-        genesis_validators_root,
+        committee.genesis_validators_root(),
     );
 
     // THE decision. Not a Rust match on Rust rules — the archive's verdict over the same eight

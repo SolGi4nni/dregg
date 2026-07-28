@@ -38,9 +38,9 @@ use eth_lightclient::execution::ExecutionPayloadHeader;
 use eth_lightclient::finality::{
     verify_finalized_update, FinalizedExecution, LightClientHeader, LightClientUpdate,
 };
+use eth_lightclient::store::WeakSubjectivityStore;
 use eth_lightclient::{
-    verify_committee_update, verify_sync_aggregate, BeaconBlockHeader, SyncAggregate,
-    SyncCommittee, SYNC_COMMITTEE_SIZE,
+    verify_sync_aggregate, BeaconBlockHeader, SyncAggregate, SyncCommittee, SYNC_COMMITTEE_SIZE,
 };
 
 // -------------------- hex helpers (same as the tests) --------------------
@@ -200,25 +200,39 @@ fn main() {
     .expect("real mainnet sync-committee BLS aggregate must verify");
     println!("OK (real BLS12-381 aggregate accepted)");
 
-    // ---- step 2: the committee itself is Merkle-proven (the rotation step) --
-    print!("2. verify_committee_update (committee proven under prev period) ... ");
-    let this_committee = SyncCommittee {
-        pubkeys: committee.clone(),
-        aggregate_pubkey: h48(e2e::COMMITTEE_AGGREGATE_PUBKEY),
-    };
-    verify_committee_update(
-        &this_committee,
-        &branch(e2e::COMMITTEE_BRANCH),
-        &h32(e2e::PREV_ATTESTED_STATE_ROOT),
-    )
-    .expect("committee rotation Merkle proof must verify");
-    println!("OK (SSZ next_sync_committee branch accepted)");
+    // ---- step 2: the committee is reached from a PINNED anchor, not accepted --
+    //
+    // This is the step that decides whether any of the rest means anything. The pin is the
+    // period-1799 beacon state root as a GOVERNANCE CONSTANT (in a deployment: config /
+    // a checkpoint-sync provider the operator chose), and `bootstrap_committee` proves the
+    // 512-key committee is the `next_sync_committee` that state commits. A committee an RPC
+    // merely ASSERTED cannot get in here — its rotation branch does not reconstruct the pin.
+    print!("2. WeakSubjectivityStore::bootstrap_committee (pinned anchor -> committee) ... ");
+    // 1799 = the sync-committee period of `PREV_ATTESTED_STATE_ROOT`; it commits the period-1800
+    // committee this fixture carries (the same pin `tests/weak_subjectivity_store.rs` uses).
+    let mut store =
+        WeakSubjectivityStore::pin_checkpoint(h32(e2e::PREV_ATTESTED_STATE_ROOT), gvr(), 1799);
+    store
+        .bootstrap_committee(
+            SyncCommittee {
+                pubkeys: committee.clone(),
+                aggregate_pubkey: h48(e2e::COMMITTEE_AGGREGATE_PUBKEY),
+            },
+            &branch(e2e::COMMITTEE_BRANCH),
+        )
+        .expect("committee rotation Merkle proof must verify against the pinned checkpoint");
+    println!("OK (SSZ next_sync_committee branch accepted under the pin)");
 
     // ---- step 3: finality + execution branch -> finalized EVM state root ----
+    //
+    // The committee handed to the gate is the STORE's — `TrustedCommittee` cannot be built
+    // from a bare `&[[u8; 48]]` without saying `new_unchecked` out loud.
     print!("3. verify_finalized_update (finality depth 7 + execution depth 4) ... ");
-    let finalized: FinalizedExecution =
-        verify_finalized_update(&upd, &committee, e2e::FORK_VERSION, gvr())
-            .expect("finalized update must verify");
+    let trusted = store
+        .trusted_committee()
+        .expect("the store bootstrapped a committee above");
+    let finalized: FinalizedExecution = verify_finalized_update(&upd, &trusted, e2e::FORK_VERSION)
+        .expect("finalized update must verify");
     println!("OK");
     println!(
         "     finalized execution: block {}  state_root 0x{}",

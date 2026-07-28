@@ -6,12 +6,26 @@
 //! ## The hole this closes
 //!
 //! [`crate::finality::verify_finalized_update`] and [`crate::verify_sync_aggregate`]
-//! take the trusted `committee_pubkeys` and `genesis_validators_root` as BARE CALLER
-//! ARGS. The verify-core is sound *given* the right committee — but if an integration
-//! feeds it a 512-key committee an untrusted RPC returned, a forged committee "signs"
-//! a forged header, `verify_sync_aggregate` accepts (the forged keys really did sign),
-//! and the whole 2/3-of-512 BLS floor goes VACUOUS. The BLS math is never the weak
-//! point of a light client; *learning the right committee* is.
+//! USED TO take the trusted `committee_pubkeys` and `genesis_validators_root` as BARE
+//! CALLER ARGS. The verify-core is sound *given* the right committee — but if an
+//! integration feeds it a 512-key committee an untrusted RPC returned, a forged committee
+//! "signs" a forged header, the gate accepts (the forged keys really did sign), and the
+//! whole 2/3-of-512 BLS floor goes VACUOUS. The BLS math is never the weak point of a
+//! light client; *learning the right committee* is.
+//!
+//! ⚠ **Having the store was not the same as USING it.** The store landed in `27b15fa95`
+//! and closed the trust discipline, but `verify_finalized_update` stayed `pub` with its
+//! bare-committee signature, so the un-anchored spelling remained the SHORTEST one and
+//! looked exactly like the anchored one at the call site. That is the shape this repo
+//! files under "gating defaults to silence": the protection existed, was correct, was
+//! tested — and nothing made a caller reach for it. `verify_finalized_update` now demands
+//! a [`crate::TrustedCommittee`], obtainable from [`WeakSubjectivityStore::trusted_committee`]
+//! or from the loud [`crate::TrustedCommittee::new_unchecked`] and nowhere else.
+//!
+//! `verify_sync_aggregate` deliberately keeps its bare-committee signature: it is a
+//! PROJECTION carrier over one header, it mints no [`FinalizedExecution`], and no trust
+//! state advances on its result. The unforgeability anchor is the `FinalizedExecution`,
+//! and that is what is now gated.
 //!
 //! ## The store's trust discipline
 //!
@@ -46,7 +60,7 @@
 //! make verification FAIL (wrong domain -> `BadSignature`), never forge acceptance.
 
 use crate::finality::{verify_finalized_update, FinalizedExecution, LightClientUpdate};
-use crate::{verify_committee_update, Error, SyncCommittee, SYNC_COMMITTEE_SIZE};
+use crate::{verify_committee_update, Error, SyncCommittee, TrustedCommittee, SYNC_COMMITTEE_SIZE};
 
 /// Fail-closed errors for the store's trust-advance and verify paths.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -217,19 +231,11 @@ impl WeakSubjectivityStore {
                 got: next_committee.pubkeys.len(),
             });
         }
-        let committee = self
-            .current_committee
-            .as_ref()
-            .ok_or(StoreError::NoTrustedCommittee)?;
+        let trusted = self.trusted_committee()?;
 
         // (1) The current trusted committee must have signed a finalized update.
-        let finalized = verify_finalized_update(
-            update,
-            &committee.pubkeys,
-            fork_version,
-            self.genesis_validators_root,
-        )
-        .map_err(StoreError::Verify)?;
+        let finalized =
+            verify_finalized_update(update, &trusted, fork_version).map_err(StoreError::Verify)?;
 
         // (2) Monotonic: an old update cannot rotate the committee backward.
         let attested_slot = update.attested_header.slot;
@@ -267,17 +273,35 @@ impl WeakSubjectivityStore {
         update: &LightClientUpdate,
         fork_version: [u8; 4],
     ) -> Result<FinalizedExecution, StoreError> {
+        let trusted = self.trusted_committee()?;
+        verify_finalized_update(update, &trusted, fork_version).map_err(StoreError::Verify)
+    }
+
+    /// **The trust anchor** — the store's current committee paired with its pinned
+    /// `genesis_validators_root`, as the [`TrustedCommittee`] witness
+    /// [`crate::finality::verify_finalized_update`] demands.
+    ///
+    /// This is the ONLY constructor of a `TrustedCommittee` that certifies anything: the pubkeys
+    /// were reached by [`bootstrap_committee`](Self::bootstrap_committee) /
+    /// [`advance`](Self::advance) from the pinned genesis, and the `genesis_validators_root` is
+    /// the governance constant, never a caller argument. Before any committee is established it
+    /// is [`StoreError::NoTrustedCommittee`] — a caller cannot get a witness out of an
+    /// un-bootstrapped store, so the fail-closed state cannot be spent as an accept.
+    ///
+    /// Exposed (rather than kept private behind [`verify`](Self::verify)) so an integration that
+    /// needs the raw `verify_finalized_update` — a differential run, a caller composing its own
+    /// pipeline — can still be ANCHORED. Reaching for
+    /// [`TrustedCommittee::new_unchecked`] because the anchored witness was unobtainable would be
+    /// the worst of both worlds.
+    pub fn trusted_committee(&self) -> Result<TrustedCommittee<'_>, StoreError> {
         let committee = self
             .current_committee
             .as_ref()
             .ok_or(StoreError::NoTrustedCommittee)?;
-        verify_finalized_update(
-            update,
+        Ok(TrustedCommittee::anchored(
             &committee.pubkeys,
-            fork_version,
             self.genesis_validators_root,
-        )
-        .map_err(StoreError::Verify)
+        ))
     }
 
     /// The pinned `genesis_validators_root` (governance constant).

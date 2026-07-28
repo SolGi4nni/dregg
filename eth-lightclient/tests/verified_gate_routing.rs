@@ -42,7 +42,9 @@ use eth_lightclient::finality::{
     project_update, verify_finalized_update, LightClientHeader, LightClientUpdate,
 };
 use eth_lightclient::verified_gate;
-use eth_lightclient::{BeaconBlockHeader, Error, SyncAggregate, SYNC_COMMITTEE_SIZE};
+use eth_lightclient::{
+    BeaconBlockHeader, Error, SyncAggregate, TrustedCommittee, SYNC_COMMITTEE_SIZE,
+};
 
 // -------------------- hex helpers (same fixture as end_to_end.rs) --------------------
 
@@ -145,7 +147,12 @@ fn thin_participation_to(agg: &mut SyncAggregate, target: usize) {
 }
 
 fn verdict(u: &LightClientUpdate, committee: &[[u8; 48]]) -> Result<(), Error> {
-    verify_finalized_update(u, committee, e2e::FORK_VERSION, gvr()).map(|_| ())
+    verify_finalized_update(
+        u,
+        &TrustedCommittee::new_unchecked(committee, gvr()),
+        e2e::FORK_VERSION,
+    )
+    .map(|_| ())
 }
 
 // ---------------------------------------------------------------------------
@@ -171,8 +178,12 @@ fn the_archive_is_a_hard_requirement() {
 fn real_mainnet_update_is_accepted_through_the_relayer_entry_point() {
     let u = update();
     let committee = committee_pubkeys();
-    let finalized = verify_finalized_update(&u, &committee, e2e::FORK_VERSION, gvr())
-        .expect("the verified Lean gate must ACCEPT the genuine mainnet update");
+    let finalized = verify_finalized_update(
+        &u,
+        &TrustedCommittee::new_unchecked(&committee, gvr()),
+        e2e::FORK_VERSION,
+    )
+    .expect("the verified Lean gate must ACCEPT the genuine mainnet update");
     assert_eq!(finalized.finalized_slot(), e2e::FIN_SLOT);
     assert_eq!(finalized.execution_state_root(), h32(e2e::EX_STATE_ROOT));
 

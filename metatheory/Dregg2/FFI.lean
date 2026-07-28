@@ -195,21 +195,43 @@ rooting the build on one file. Rooting first; conversion second, bottom-up, with
 
 ---
 
-## §4 — Known defects this file makes visible (not yet fixed here)
+## §4 — The interchain light-client gates: FOUR dark layers, all CLOSED (`b5081491a`)
 
-The three interchain light-client gates are **dark end to end**, at three independent layers:
+⚠ **This section described an OPEN wound and outlived it by three days.** It was read at face
+value on 2026-07-28 and re-reported as a live defect ("`dregg_eth_lc_verify_str` is DEFINED
+NOWHERE, so the ETH relayer runs un-gated"), costing an audit lane its first hour. The text below
+is now the *record of the repair*, with the file:line of each closure, so the next reader can
+check HEAD rather than re-derive the alarm. **If you are about to cite this section as a defect,
+you are citing history.**
 
-1. `Dregg2.Bridge.LightClient{Eth,Mpt,Tendermint}Gate` were absent from `build.rs`'s target list, so
-   no `:c` facet was emitted and `dregg_{eth,mpt,tm}_lc_verify` were the only Lean exports missing
-   from the built archive. Importing them here fixes *this* layer.
-2. `build.rs` never declares or sets `cfg(dregg_eth_lc_verify_present)`, so
-   `bridge_lc_ffi.rs`'s `#[cfg(all(lean_lib_present, dregg_eth_lc_verify_present))]` arm is
-   unreachable regardless of the archive.
-3. The C shim it would call, `dregg_eth_lc_verify_str`, is declared and called in
-   `dregg-lean-ffi/src/bridge_lc_ffi.rs` but **defined nowhere** — `lean_init.c` has 32 `_str`
-   wrappers and this is not one of them.
+The three interchain light-client gates were dark end to end. The commit found FOUR independent
+layers, not the three this section originally named — any ONE of which kept the ETH relayer
+running with its verification gate compiled out, green and silent:
 
-Layers 2 and 3 are Rust/C work outside this file. Until they land, `eth_lc_verify_available()` is
-constantly false and the ETH relayer path runs un-gated. `dregg_mpt_lc_verify` and
-`dregg_tm_lc_verify` have no Rust caller at all.
+1. **archive facet** — `Dregg2.Bridge.LightClient{Eth,Mpt,Tendermint}Gate` were absent from
+   `build.rs`'s target list, so no `:c` facet was emitted and `dregg_{eth,mpt,tm}_lc_verify` were
+   the only Lean exports missing from the built archive. CLOSED by rooting the build on *this*
+   file's import closure (§1.5 — that is what those otherwise-callerless imports are for).
+2. **the cfg was never declared or set** — CLOSED: `dregg-lean-ffi/build.rs:2094-2096`
+   (`rustc-check-cfg` for all three) and `:2978-2995` (three `archive_exports` probes that emit
+   `rustc-cfg=dregg_{eth,tm,mpt}_lc_verify_present`, `absent_export_warn` on a miss).
+3. **the C shim was declared and called but defined nowhere** — CLOSED:
+   `dregg-lean-ffi/src/lean_init.c:1072` (`dregg_eth_lc_verify_str`), `:1098` (`tm`), `:1124`
+   (`mpt`), each under the matching `#ifdef DREGG_*_LC_VERIFY` that `build.rs:3203-3211`
+   `shim.define`s. The `extern lean_object *` declarations are at `:489-495`.
+4. **NOT PREVIOUSLY KNOWN: `bridge_lc_ffi.rs` was in no `mod` declaration anywhere in the repo.**
+   rustc never compiled a byte of it, so `cargo test --lib -- bridge_lc_ffi` matched 0 of 24 tests
+   and reported green. Strictly worse than the cfg holes it sat behind: a cfg-gated module at
+   least compiles its absent arm; an undeclared file has no arms at all. CLOSED by
+   `dregg-lean-ffi/src/lib.rs:46`'s `pub mod bridge_lc_ffi;`.
+
+**What keeps it closed** (the layer that matters — a repair is not a gate): all three symbols are
+on `build.rs`'s `REQUIRED_DECISION_EXPORTS` (`:122-138`), so a strict build
+(`DREGG_REQUIRE_VERIFIED_EXPORTS=1` / release / `DREGG_TEST_REQUIRE_LEAN=1`) cannot re-enter the
+dark state quietly; and `bridge_lc_ffi.rs`'s three `*_gate_refuses_*_through_the_real_ffi` tests
+are **ungated** — they route archive-absence through `demand_lean`, which PANICS under
+`DREGG_TEST_REQUIRE_LEAN=1`, rather than ceasing to exist the way a `#[cfg(…_present)]` test
+module does. Each carries a non-constancy canary (two wires differing in ONE field across the
+decision boundary must not agree), so a gate that has degenerated to always-accept,
+always-reject, or always-`"ERR"` fails there.
 -/

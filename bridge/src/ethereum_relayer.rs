@@ -12,8 +12,9 @@
 //! 1. **watches** the bridge contract for `Deposit` logs over the real JSON-RPC
 //!    (`eth_getBlockByNumber("finalized")` for the finality head + `eth_getLogs`
 //!    for the contract's deposit events, with `eth_getTransactionReceipt` for the
-//!    inclusion cross-check and `eth_getProof` available for the storage-slot
-//!    binding),
+//!    inclusion cross-check; `eth_getProof` is carried as TRANSPORT for the
+//!    trustless route and **nothing in this module verifies what it returns** —
+//!    see the deletion note on `storage_binds_deposit`),
 //! 2. **verifies** that the observed deposit is genuinely *finalized* (post-merge
 //!    finality via the `finalized` tag — GASPER/Casper-FFG justified+finalized,
 //!    irreversible barring a >1/3 slashing event) and was emitted by THIS bridge's
@@ -187,27 +188,38 @@ pub struct EthReceipt {
 
 /// One storage slot from an `eth_getProof` result: the slot key, its 32-byte
 /// value, and the Merkle-Patricia proof nodes against the account storage root.
-/// Verifying the MPT proof against the finalized state root is the trustless /
-/// in-circuit route; the relayer surfaces the value as a secondary binding.
+///
+/// ⚠ **UNVERIFIED TRANSPORT.** Every field is whatever the RPC said, including
+/// [`Self::proof`]. Nothing in this module walks that proof, and there is nothing
+/// here to walk it against — see the `storage_binds_deposit` deletion note on
+/// [`EthRelayer`]. Treat a value read out of this struct as a claim by the
+/// endpoint, never as chain state.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EthStorageSlot {
     /// The 32-byte storage slot key.
     pub key: [u8; 32],
-    /// The 32-byte slot value.
+    /// The 32-byte slot value, **as reported** (never proven here).
     pub value: [u8; 32],
-    /// The RLP-encoded MPT proof nodes (opaque to the relayer; the mainnet route
-    /// verifies them against the finalized state root).
+    /// The RLP-encoded MPT proof nodes, carried verbatim. The trustless route
+    /// (`eth_lightclient::evm::verify_evm_storage_slot`, alloy-trie behind the
+    /// verified Lean gate `dregg_mpt_lc_verify`) verifies these against a
+    /// light-client-proven execution state root. This crate does not.
     pub proof: Vec<Vec<u8>>,
 }
 
 /// An `eth_getProof` result: the account's storage root + the requested slots.
+///
+/// ⚠ **UNVERIFIED TRANSPORT** — see [`EthStorageSlot`]. In particular
+/// [`Self::storage_hash`] is *reported*, not proven, so it anchors nothing on its
+/// own: verifying the slot proofs against it would only show the endpoint is
+/// self-consistent.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EthProof {
-    /// The account's storage trie root (binds the slots below).
+    /// The account's storage trie root **as reported** by the RPC.
     pub storage_hash: [u8; 32],
-    /// The RLP-encoded account-proof nodes against the state root.
+    /// The RLP-encoded account-proof nodes against the state root, carried verbatim.
     pub account_proof: Vec<Vec<u8>>,
-    /// The requested storage slots with their values + proofs.
+    /// The requested storage slots with their reported values + proofs.
     pub storage: Vec<EthStorageSlot>,
 }
 
@@ -234,7 +246,8 @@ pub trait EthRpc {
     fn get_transaction_receipt(&self, tx_hash: &[u8; 32]) -> Result<Option<EthReceipt>, RpcError>;
 
     /// `eth_getProof(address, slots, block)` — the account + storage-slot MPT
-    /// proof at `block` (used for the optional storage-slot binding).
+    /// proof at `block`, carried verbatim as UNVERIFIED transport for the
+    /// trustless route. No method on [`EthRelayer`] verifies its result.
     fn get_proof(
         &self,
         address: &[u8; 20],
@@ -921,31 +934,36 @@ impl<R: EthRpc> EthRelayer<R> {
         })
     }
 
-    /// Optional secondary binding via `eth_getProof`: read the bridge contract's
-    /// storage slot that records `lockId → amount` (the deposit ledger) at the
-    /// finalized block and check it matches the observed deposit. The MPT proof
-    /// itself is verified against the finalized state root by the trustless /
-    /// in-circuit route; this surfaces the storage VALUE as a defence-in-depth
-    /// cross-check a re-executing validator can run today.
-    pub fn storage_binds_deposit(
-        &self,
-        deposit: &ObservedDeposit,
-        deposit_slot: [u8; 32],
-    ) -> Result<bool, EthRelayerError> {
-        let proof = self.rpc.get_proof(
-            &self.config.bridge_contract,
-            &[deposit_slot],
-            deposit.block_number,
-        )?;
-        let Some(slot) = proof.storage.iter().find(|s| s.key == deposit_slot) else {
-            return Ok(false);
-        };
-        // The slot encodes the amount as a big-endian uint256; the low 8 bytes
-        // carry a u64 amount.
-        let mut amt = [0u8; 8];
-        amt.copy_from_slice(&slot.value[24..32]);
-        Ok(u64::from_be_bytes(amt) == deposit.amount)
-    }
+    // ── DELETED 2026-07-28: `storage_binds_deposit` ──────────────────────────
+    //
+    // It read the bridge contract's `lockId → amount` slot via `eth_getProof`, compared the
+    // value's low 8 bytes to the observed deposit amount, and returned a `bool`, described as
+    // "a defence-in-depth cross-check a re-executing validator can run today".
+    //
+    // It cross-checked NOTHING. `EthProof` carries `account_proof` and per-slot `proof` nodes,
+    // and the function touched neither; it did not even read `storage_hash`. Every byte it
+    // compared came from the SAME untrusted RPC that supplied the deposit log — so the node that
+    // fabricates a `Deposit` log, a receipt and a finalized head fabricates the matching slot
+    // value in the same breath. The test that "proved" it passed a slot with `proof: vec![]` —
+    // an EMPTY Merkle-Patricia proof — and got `true`.
+    //
+    // Verifying it here was not the alternative. Two reasons, both structural:
+    //   * there is no anchor to verify AGAINST. An MPT proof binds a value to a state root; the
+    //     only state root available here is the same RPC's `storageHash`. Walking the trie
+    //     correctly against an attacker-supplied root proves the attacker is self-consistent.
+    //   * the audited verifier already exists and cannot come here. `eth-lightclient`'s
+    //     `verify_evm_account_proof` / `verify_evm_storage_slot` (alloy-trie, routed through the
+    //     verified Lean gate `dregg_mpt_lc_verify`) do this properly against a
+    //     light-client-verified `FinalizedExecution` root. `dregg-bridge` cannot depend on it:
+    //     this crate is on the `dregg-wasm` bundle path by three independent edges, and
+    //     alloy-trie/blst do not build for `wasm32` (see the `zstd` note in Cargo.toml for the
+    //     same failure mode costing five days). Hand-rolling a Patricia walk here to avoid that
+    //     would be strictly worse than having none.
+    //
+    // So the relayer states its grade instead of dressing it up: `EthDepositTrust::RpcStructureOnly`,
+    // `consensus_verified = false`, `BridgeMintError::TrustTooLow`. `EthRpc::get_proof` stays —
+    // it is honest transport (it does carry the proof nodes) and it is what the trustless route
+    // consumes — but nothing in this module claims to verify what it returns.
 }
 
 /// Decode a `Deposit(bytes32 lockId, bytes32 dreggRecipient, uint256 amount)` log:
@@ -1505,35 +1523,96 @@ mod tests {
         );
     }
 
+    /// REPLACES `storage_binding_cross_checks_amount`, which asserted that the deleted
+    /// `storage_binds_deposit` returned `true` for a slot the mock RPC had been told to
+    /// return — with `proof: vec![]`, an EMPTY Merkle-Patricia proof. It was a map lookup
+    /// wearing the name of a verification, and it could not have gone red for the wound it
+    /// appeared to guard.
+    ///
+    /// What is asserted instead is the property that actually holds, **by variant**, over the
+    /// SAME `eth_getProof` value the old check consumed:
+    ///
+    ///   * ADMITTED — an honest deposit IS observed and decoded (so this cannot be satisfied
+    ///     by a relayer that refuses everything);
+    ///   * REFUSED — and its committed authority is `false` REGARDLESS of what the RPC's
+    ///     `eth_getProof` says, on both the mint and the escrow leg. An agreeing slot value
+    ///     does not lift it, and a disagreeing one does not lower it — which is precisely why
+    ///     reading the slot was never a check.
     #[test]
-    fn storage_binding_cross_checks_amount() {
+    fn rpc_storage_values_cannot_lift_a_deposits_authority() {
         let recipient = CellId::from_bytes([0x44u8; 32]);
-        let mut rpc = MockEthRpc::new(100, 105, 110);
-        rpc.insert_deposit(MockEthRpc::deposit_log(
-            CONTRACT,
-            lock_id(8),
-            recipient,
-            777,
-            90,
-            tx(8),
-            0,
-        ));
         let slot_key = [0xEEu8; 32];
-        let mut value = [0u8; 32];
-        value[24..32].copy_from_slice(&777u64.to_be_bytes());
-        rpc.insert_storage(EthStorageSlot {
-            key: slot_key,
-            value,
-            proof: vec![],
-        });
-        let relayer = EthRelayer::new(config(), rpc);
-        let obs = relayer.observe_deposits().expect("scan")[0]
-            .as_ref()
-            .unwrap()
-            .clone();
-        assert!(relayer.storage_binds_deposit(&obs, slot_key).unwrap());
-        // A different slot (zero value) does not bind.
-        assert!(!relayer.storage_binds_deposit(&obs, [0x00u8; 32]).unwrap());
+
+        // The value an attacker-controlled endpoint would return to make the old cross-check
+        // agree: exactly the deposit amount, under an EMPTY proof.
+        let mut agreeing = [0u8; 32];
+        agreeing[24..32].copy_from_slice(&777u64.to_be_bytes());
+
+        for (label, slot_value) in [
+            (
+                "agreeing slot value (what a lying RPC would return)",
+                agreeing,
+            ),
+            ("disagreeing slot value", [0u8; 32]),
+        ] {
+            let mut rpc = MockEthRpc::new(100, 105, 110);
+            rpc.insert_deposit(MockEthRpc::deposit_log(
+                CONTRACT,
+                lock_id(8),
+                recipient,
+                777,
+                90,
+                tx(8),
+                0,
+            ));
+            rpc.insert_storage(EthStorageSlot {
+                key: slot_key,
+                value: slot_value,
+                proof: vec![], // an EMPTY MPT proof — nothing verifies it, and nothing may
+            });
+            let relayer = EthRelayer::new(config(), rpc);
+
+            // ADMITTED: the honest deposit is observed and decoded.
+            let obs = relayer.observe_deposits().expect("scan")[0]
+                .as_ref()
+                .expect("the honest deposit must be observed")
+                .clone();
+            assert_eq!(obs.amount, 777, "{label}: the deposit itself decodes");
+
+            // …and the RPC's proof response is reachable, unverified, exactly as documented.
+            let proof = relayer
+                .rpc
+                .get_proof(&CONTRACT, &[slot_key], obs.block_number)
+                .expect("get_proof");
+            assert_eq!(proof.storage[0].value, slot_value);
+            assert!(
+                proof.storage[0].proof.is_empty(),
+                "{label}: an empty MPT proof round-trips — there is no verifier to stop it"
+            );
+
+            // REFUSED: the authority is fail-closed either way. The slot value is inert.
+            assert_eq!(
+                obs.trust,
+                EthDepositTrust::RpcStructureOnly,
+                "{label}: an RPC-only observation must not reach LightClientVerified"
+            );
+            assert!(
+                !obs.trust.is_light_client_verified(),
+                "{label}: the trust dial reported light-client-verified for an RPC-only \
+                 observation — the fail-closed grade is the ONLY thing standing between a \
+                 lying endpoint and a mint"
+            );
+            let mint = obs.to_bridge_mint_request(recipient, recipient);
+            let escrow = obs.to_escrow_record(recipient);
+            assert!(
+                !mint.consensus_verified,
+                "{label}: an eth_getProof value must not set consensus_verified on the MINT leg"
+            );
+            assert!(
+                !escrow.consensus_verified,
+                "{label}: …nor on the ESCROW leg"
+            );
+        }
     }
 
     #[test]

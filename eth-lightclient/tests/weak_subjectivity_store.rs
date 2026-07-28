@@ -23,12 +23,19 @@
 #[allow(dead_code)]
 mod e2e;
 
+use blst::min_pk::{AggregateSignature, SecretKey, Signature};
 use eth_lightclient::evm::{verify_erc20_holding_finalized, AccountClaim, HoldingTrust, Uint256};
-use eth_lightclient::execution::ExecutionPayloadHeader;
-use eth_lightclient::finality::{FinalizedExecution, LightClientHeader, LightClientUpdate};
+use eth_lightclient::execution::{
+    compute_branch_root, ExecutionPayloadHeader, EXECUTION_PAYLOAD_SUBTREE_INDEX,
+};
+use eth_lightclient::finality::{
+    verify_finalized_update, FinalizedExecution, LightClientHeader, LightClientUpdate,
+    FINALIZED_ROOT_SUBTREE_INDEX,
+};
 use eth_lightclient::store::{StoreError, WeakSubjectivityStore};
 use eth_lightclient::{
-    BeaconBlockHeader, Error, SyncAggregate, SyncCommittee, SYNC_COMMITTEE_SIZE,
+    compute_signing_root, BeaconBlockHeader, Error, SyncAggregate, SyncCommittee, TrustedCommittee,
+    DST, SYNC_COMMITTEE_SIZE,
 };
 
 // -------------------- hex helpers (same as end_to_end.rs) --------------------
@@ -328,5 +335,225 @@ fn wrong_size_committee_refused_at_boundary() {
     assert_eq!(
         WeakSubjectivityStore::pin_genesis_committee(short, gvr(), 1800).unwrap_err(),
         StoreError::WrongCommitteeSize { got: 511 }
+    );
+}
+
+// ============================================================================
+// THE ATTACK, MADE CONCRETE — a forged committee that GENUINELY SIGNS
+// ============================================================================
+//
+// Every REJECT above refuses a committee that could never have verified anyway: the forged
+// committee is the real one rotated by a position, so it never signed the real header and
+// `blst` says no. That is a real property, but it is NOT the attack, and a reader could come
+// away believing the BLS floor is what stops a hostile committee. It is not. The attack is:
+//
+//   the attacker GENERATES 512 keypairs, keeps the secrets, invents an update whose branches
+//   all reconstruct, and signs it with all 512 of their own keys.
+//
+// Every cryptographic check then PASSES — the committee is exactly 512, the bitfield is 512,
+// participation is 512/512, the aggregate signature verifies against those pubkeys, the finality
+// branch folds to the attested state root, the execution branch folds to the finalized body
+// root. `verifyFinalizedUpdate` is TRUE. The verified Lean gate ACCEPTS, correctly, because
+// everything it decides over is true. The only false thing is the premise that those pubkeys
+// were the Ethereum sync committee, and that premise is not a cryptographic object — it is a
+// trust anchor, and it lives entirely in how the caller obtained the committee.
+//
+// So these two tests are stated as a MATCHED PAIR over the SAME forged update, differing in
+// exactly one thing: where the committee came from. Un-anchored, the drain succeeds and the
+// attacker's chosen EVM state root comes back in a `FinalizedExecution`. Anchored to the
+// weak-subjectivity store, it is refused — and the honest update is still admitted in the same
+// test, so a refusal cannot be passing for the wrong reason.
+
+/// The attacker's own 512-key sync committee. They hold every secret, so they can produce a
+/// genuine BLS12-381 aggregate over any header they like.
+fn attacker_keys() -> Vec<SecretKey> {
+    (0..SYNC_COMMITTEE_SIZE as u32)
+        .map(|i| {
+            let mut ikm = [0u8; 32];
+            ikm[..4].copy_from_slice(&i.to_be_bytes());
+            ikm[4] = 0xF0; // domain-separated from every honest fixture IKM
+            SecretKey::key_gen(&ikm, &[]).expect("blst key_gen")
+        })
+        .collect()
+}
+
+fn attacker_pubkeys(keys: &[SecretKey]) -> Vec<[u8; 48]> {
+    keys.iter().map(|k| k.sk_to_pk().compress()).collect()
+}
+
+/// The attacker's chosen EVM world-state root — the payload of the drain. Anything anchored to
+/// this root (an ERC-20 balance, a bridge deposit record) is whatever the attacker says it is.
+const ATTACKER_EXECUTION_STATE_ROOT: [u8; 32] = [0xEE; 32];
+
+/// A fully SELF-CONSISTENT forged `LightClientUpdate`, signed by `keys`.
+///
+/// The attacker does not have to break any hash: they pick the branches FIRST and derive the
+/// roots that those branches fold to (`compute_branch_root`), then put those roots in the
+/// headers. Both SSZ reconstructions therefore hold by construction, at the admissible depths
+/// (7 finality / 4 execution). Then all 512 of their keys sign the attested header under the
+/// REAL fork version and the REAL pinned `genesis_validators_root`, so the signing domain is
+/// correct too. Nothing here is malformed and nothing here is a near-miss.
+fn forged_update(keys: &[SecretKey]) -> LightClientUpdate {
+    // (1) The attacker's execution payload, carrying the state root they want believed.
+    let mut execution = execution_header();
+    execution.state_root = ATTACKER_EXECUTION_STATE_ROOT;
+    execution.block_hash = [0xED; 32];
+
+    // (2) An execution branch they CHOOSE, and the body root it folds to.
+    let execution_branch: Vec<[u8; 32]> = (0..4u8).map(|i| [0xB0 | i; 32]).collect();
+    let body_root = compute_branch_root(
+        &execution.hash_tree_root(),
+        &execution_branch,
+        EXECUTION_PAYLOAD_SUBTREE_INDEX,
+    );
+
+    // (3) The forged finalized beacon header carrying that body root.
+    let fin_beacon = BeaconBlockHeader {
+        slot: e2e::FIN_SLOT,
+        proposer_index: 999_999,
+        parent_root: [0xA1; 32],
+        state_root: [0xA2; 32],
+        body_root,
+    };
+
+    // (4) A finality branch they CHOOSE (depth 7, Electra), and the attested state root it
+    //     folds to — so `finality_branch_reconstructs` is true.
+    let finality_branch: Vec<[u8; 32]> = (0..7u8).map(|i| [0xC0 | i; 32]).collect();
+    let attested_state_root = compute_branch_root(
+        &fin_beacon.hash_tree_root(),
+        &finality_branch,
+        FINALIZED_ROOT_SUBTREE_INDEX,
+    );
+    let attested = BeaconBlockHeader {
+        slot: e2e::ATTESTED_SLOT,
+        proposer_index: 999_998,
+        parent_root: [0xA3; 32],
+        state_root: attested_state_root,
+        body_root: [0xA4; 32],
+    };
+
+    // (5) All 512 attacker keys sign it, under the REAL domain (correct fork version + the
+    //     correct pinned gvr) — so not even the domain is wrong.
+    let signing_root = compute_signing_root(&attested, e2e::FORK_VERSION, gvr());
+    let sigs: Vec<Signature> = keys
+        .iter()
+        .map(|k| k.sign(&signing_root, DST, &[]))
+        .collect();
+    let refs: Vec<&Signature> = sigs.iter().collect();
+    let sig = AggregateSignature::aggregate(&refs, true)
+        .expect("attacker aggregate")
+        .to_signature()
+        .compress();
+
+    LightClientUpdate {
+        attested_header: attested,
+        finalized_header: LightClientHeader {
+            beacon: fin_beacon,
+            execution,
+            execution_branch,
+        },
+        finality_branch,
+        sync_aggregate: SyncAggregate {
+            sync_committee_bits: [0xFF; SYNC_COMMITTEE_SIZE / 8], // 512/512 participation
+            sync_committee_signature: sig,
+        },
+    }
+}
+
+/// **POLE A — the drain, un-anchored.** With the committee supplied as a bare caller claim
+/// (now spelled [`TrustedCommittee::new_unchecked`], previously just the second argument), the
+/// verified gate ACCEPTS the forgery and hands back the attacker's chosen EVM state root.
+///
+/// This assertion is the point of the whole pair: it proves the un-anchored path is a REAL
+/// capability with a REAL consequence, not a theoretical worry. A test suite that only ever
+/// showed refusals would be satisfied by a gate that refuses everything, and would tell you
+/// nothing about whether the anchor is what is doing the work.
+#[test]
+fn unanchored_committee_ADMITS_a_fully_forged_update() {
+    let keys = attacker_keys();
+    let pubkeys = attacker_pubkeys(&keys);
+    let forged = forged_update(&keys);
+
+    let finalized = verify_finalized_update(
+        &forged,
+        &TrustedCommittee::new_unchecked(&pubkeys, gvr()),
+        e2e::FORK_VERSION,
+    )
+    .expect(
+        "the forgery is cryptographically PERFECT relative to the attacker's own committee — \
+         if this refuses, the fixture stopped modelling the attack and the anchored REJECT \
+         below proves nothing",
+    );
+
+    assert_eq!(
+        finalized.execution_state_root(),
+        ATTACKER_EXECUTION_STATE_ROOT,
+        "the un-anchored path returns the ATTACKER's EVM state root as consensus-verified"
+    );
+}
+
+/// **POLE B — the SAME forgery, anchored.** One thing changes: the committee comes from a
+/// weak-subjectivity store pinned to a governance checkpoint instead of from the caller. Three
+/// refusals and one admission, all in this one process, so no assertion can pass because the
+/// rule never ran:
+///
+///   * the attacker's committee cannot be INSTALLED (its rotation branch does not reconstruct
+///     the pinned checkpoint state root) — `UnchainedCommittee`;
+///   * a store that therefore has no committee yields no witness at all — `NoTrustedCommittee`,
+///     so there is no anchored spelling of Pole A's `Ok`;
+///   * a store holding the REAL committee refuses the forged update — `BadSignature`, because
+///     the real committee did not sign it;
+///   * …and that SAME store still ADMITS the honest mainnet update, at the real state root.
+#[test]
+fn anchored_committee_REFUSES_the_same_forged_update() {
+    let keys = attacker_keys();
+    let forged = forged_update(&keys);
+    let attacker_committee = SyncCommittee {
+        pubkeys: attacker_pubkeys(&keys),
+        aggregate_pubkey: h48(e2e::COMMITTEE_AGGREGATE_PUBKEY),
+    };
+
+    // (1) The attacker's committee cannot be installed under the governance pin.
+    let mut store =
+        WeakSubjectivityStore::pin_checkpoint(h32(e2e::PREV_ATTESTED_STATE_ROOT), gvr(), 1799);
+    let err = store
+        .bootstrap_committee(attacker_committee, &branch(e2e::COMMITTEE_BRANCH))
+        .unwrap_err();
+    assert!(
+        matches!(err, StoreError::UnchainedCommittee(Error::BadMerkleBranch)),
+        "an attacker-generated committee must not chain from the pinned checkpoint, got {err:?}"
+    );
+
+    // (2) …so no anchored witness exists at all. Pole A's `Ok` has no anchored spelling.
+    assert!(matches!(
+        store.trusted_committee().map(|_| ()),
+        Err(StoreError::NoTrustedCommittee)
+    ));
+    assert_eq!(
+        store.verify(&forged, e2e::FORK_VERSION).unwrap_err(),
+        StoreError::NoTrustedCommittee
+    );
+
+    // (3) A store holding the REAL committee refuses the forged update outright: the real
+    //     committee never signed it.
+    let real_store =
+        WeakSubjectivityStore::pin_genesis_committee(real_committee(), gvr(), 1800).unwrap();
+    assert_eq!(
+        real_store.verify(&forged, e2e::FORK_VERSION).unwrap_err(),
+        StoreError::Verify(Error::BadSignature),
+        "the anchored committee must refuse the attacker's update"
+    );
+
+    // (4) ACCEPT, in the SAME process and through the SAME store: the honest mainnet update
+    //     still verifies to the REAL execution state root. The refusals above are therefore a
+    //     discrimination, not a gate that has degenerated into refusing everything.
+    let honest = real_store
+        .verify(&update(), e2e::FORK_VERSION)
+        .expect("the anchored store must still ADMIT the honest mainnet update");
+    assert_eq!(honest.execution_state_root(), h32(e2e::EX_STATE_ROOT));
+    assert_ne!(
+        honest.execution_state_root(),
+        ATTACKER_EXECUTION_STATE_ROOT,
+        "accept and refuse must land on different roots — otherwise the pair is vacuous"
     );
 }
