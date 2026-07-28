@@ -88,3 +88,42 @@ inert-attr	vendor/curve25519-dalek-dregg/src/backend/vector/avx2/constants.rs	0e
 inert-attr	vendor/curve25519-dalek-dregg/src/backend/vector/avx2/constants.rs	4fa075fc7451	upstream curve25519-dalek AVX2 lane diagram
 inert-attr	vendor/curve25519-dalek-dregg/src/backend/vector/avx2/field.rs	55574edc5ab7	upstream curve25519-dalek AVX2 lane diagram
 inert-attr	vendor/curve25519-dalek-dregg/src/backend/vector/avx2/field.rs	d157c569a685	upstream curve25519-dalek AVX2 lane diagram
+
+# ── SEEDED 2026-07-28: the `no_run` half of this ratchet, armed at last ──────────────
+# `scan_fences` asked only `ignore` fences for a reason; `no_run` was known to the constants
+# and to `REASON_RE` (which already accepted `NO_RUN:`) and simply never asked. Arming it found
+# 29 reasonless `no_run` fences out of 43. They are seeded so the gate RATCHETS rather than
+# walls — every one is a real finding, and a row here is a RECORDED HOLE, not a fix.
+#
+# The convention: a `no_run` block states WHAT WOULD HAPPEN if it ran — writes a file, binds a
+# port, runs a prover, costs money. That claim is exactly as unverifiable without a reason as an
+# `ignore` is, which is why one rule now covers both.
+no-reason	chain/src/bridge.rs	de8c0ab2f2ea	reasonless `no_run`, found when this half was armed 2026-07-28; needs a NO_RUN: line saying what would happen
+no-reason	chain/src/listener.rs	243a6a9d143c	reasonless `no_run`, found when this half was armed 2026-07-28; needs a NO_RUN: line saying what would happen
+no-reason	deos-homeserver/vendor/askama_derive/src/lib.rs	0aac3104d0b0	vendored third-party; not authored here, and not ours to annotate
+no-reason	deos-homeserver/vendor/askama_derive/src/lib.rs	6bd49abc447b	vendored third-party; not authored here, and not ours to annotate
+no-reason	deos-homeserver/vendor/askama_derive/src/lib.rs	8ac5277102ec	vendored third-party; not authored here, and not ours to annotate
+no-reason	deos-homeserver/vendor/askama_derive/src/lib.rs	c4b9e95a28bd	vendored third-party; not authored here, and not ours to annotate
+no-reason	dregg-pay/src/multichain.rs	84a968648b90	reasonless `no_run`, found when this half was armed 2026-07-28; needs a NO_RUN: line saying what would happen
+no-reason	dregg-sdk-net/src/captp_client.rs	74d884b4dfd6	SDK example that must not execute; reason not yet written — arming this half is what surfaced it
+no-reason	dregg-sdk-net/src/client.rs	ff30d131603e	SDK example that must not execute; reason not yet written — arming this half is what surfaced it
+no-reason	dregg-sdk-net/src/discovery.rs	7901b56705da	SDK example that must not execute; reason not yet written — arming this half is what surfaced it
+no-reason	dregg-sdk-net/src/events.rs	2c7db8a9b0cf	SDK example that must not execute; reason not yet written — arming this half is what surfaced it
+no-reason	git-deploy/src/lib.rs	60d7a937443e	reasonless `no_run`, found when this half was armed 2026-07-28; needs a NO_RUN: line saying what would happen
+no-reason	host-gateway/src/lib.rs	7bbe4c253724	reasonless `no_run`, found when this half was armed 2026-07-28; needs a NO_RUN: line saying what would happen
+no-reason	sdk/src/cipherclerk.rs	4c9c5692343b	SDK example that must not execute; reason not yet written — arming this half is what surfaced it
+no-reason	sdk/src/cipherclerk.rs	5298205d7238	SDK example that must not execute; reason not yet written — arming this half is what surfaced it
+no-reason	sdk/src/cipherclerk.rs	7cff22dd2244	SDK example that must not execute; reason not yet written — arming this half is what surfaced it
+no-reason	sdk/src/cipherclerk.rs	bd096857c507	SDK example that must not execute; reason not yet written — arming this half is what surfaced it
+no-reason	sdk/src/fhegg.rs	c637644e31b7	SDK example that must not execute; reason not yet written — arming this half is what surfaced it
+no-reason	sdk/src/lib.rs	9c3e74d586df	SDK example that must not execute; reason not yet written — arming this half is what surfaced it
+no-reason	sdk/src/program.rs	5576ed7cb98a	SDK example that must not execute; reason not yet written — arming this half is what surfaced it
+no-reason	sdk/src/runtime.rs	6bcba153e0ee	SDK example that must not execute; reason not yet written — arming this half is what surfaced it
+no-reason	sdk/src/runtime.rs	a02ec342de1e	SDK example that must not execute; reason not yet written — arming this half is what surfaced it
+no-reason	sdk/src/verify.rs	323978aa3dcd	SDK example that must not execute; reason not yet written — arming this half is what surfaced it
+no-reason	sdk/src/verify.rs	b3de8b920e03	SDK example that must not execute; reason not yet written — arming this half is what surfaced it
+no-reason	vendor/curve25519-dalek-dregg/src/backend/vector/avx2/constants.rs	0e6293d80da8	vendored third-party; not authored here, and not ours to annotate
+no-reason	vendor/curve25519-dalek-dregg/src/backend/vector/avx2/constants.rs	4fa075fc7451	vendored third-party; not authored here, and not ours to annotate
+no-reason	vendor/curve25519-dalek-dregg/src/backend/vector/avx2/field.rs	55574edc5ab7	vendored third-party; not authored here, and not ours to annotate
+no-reason	vendor/curve25519-dalek-dregg/src/backend/vector/avx2/field.rs	d157c569a685	vendored third-party; not authored here, and not ours to annotate
+no-reason	wire/src/lib.rs	9eb3ff4b14da	reasonless `no_run`, found when this half was armed 2026-07-28; needs a NO_RUN: line saying what would happen

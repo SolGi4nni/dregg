@@ -359,7 +359,16 @@ def scan_fences() -> tuple[list[dict], list[dict], int]:
             attrs = fence["attrs"]
             row = {"rel": rel, "line": fence["line"], "info": fence["info"],
                    "key": fence_key(rel, fence)}
-            if "ignore" in attrs and fence_reason(fence) is None:
+            # ⚑ `no_run` IS ASKED FOR A REASON TOO, since 2026-07-28.
+            #
+            # This read `if "ignore" in attrs`, so a ```no_run fence was never asked. The
+            # convention this gate enforces says a `no_run` block states WHAT WOULD HAPPEN if it
+            # ran — writes a file, binds a port, runs a prover, costs money — and that claim is
+            # exactly as unverifiable as an `ignore` without one. `REASON_RE` already accepted
+            # `NO_RUN:` and the constants at :215/:221 already knew the attribute; the scan simply
+            # never asked. Measured at the moment of arming: 680 fences, 43 `no_run`, 14 reasoned,
+            # 29 REASONLESS — seeded into the baseline so this ratchets rather than walls.
+            if (attrs & {"ignore", "no_run"}) and fence_reason(fence) is None:
                 f1.append(row)
             if (attrs & BEHAVIOUR_FENCE_ATTRS) and (attrs - KNOWN_FENCE_ATTRS):
                 row = dict(row, unknown=sorted(attrs - KNOWN_FENCE_ATTRS))
