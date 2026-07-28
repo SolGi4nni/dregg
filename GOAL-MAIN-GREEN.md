@@ -199,6 +199,20 @@ first.
   ⚠ Nearly a false green: my first typecheck ran `npx --no-install tsc`, which printed nothing because
   it did nothing. The real one is `./node_modules/.bin/tsc` — rc 0.
 
+- **D3 CLOSED** — all four bounty payout surfaces carry a real `Transfer` now (the residual missed
+  the CLI one). ⚑ The blocker was one level down and only running the code found it:
+  `execute_tree.rs:1100` evaluates a touched cell's program over EVERY cell an effect touches, so
+  `StrictMonotonic(STATE)` makes **a self-escrowing bounty cell inexpressible**. The reward is a
+  PROMISE; both legs are roots of one turn so a refused payment takes the PAID stamp with it.
+  ⚠ And its red-proof caught a vacuity in its OWN refusal pole: with the fix reverted the test stayed
+  green because `InsufficientBalance` fired on the TURN FEE, so a test asserting only "insufficient
+  balance" would have passed over a payout carrying no `Transfer` at all.
+- **D2 marked STALE, not closed** — a concurrent lane repaired it; a production caller now exists at
+  `pay.rs:649` and the recorded "10 test callers" was never right (15 at HEAD). Marked so nobody
+  cites the old shape.
+- **`compute-exchange` dispatched** — the same defect, live: a green `SETTLED` pill and a `"paid · "`
+  binding over SetField+EmitEvent with no conserving effect, and no `Payable` impl in the crate.
+
 ## Open for ember
 1. **F1?** — the only route that makes a successor to `RestHashIffFrame` satisfiable. Flag day:
    commitment epoch + descriptor re-emit + re-genesis, 234 binder positions across 85 modules.
