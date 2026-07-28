@@ -42,8 +42,16 @@
 //! | `post`   | [`Semantics::Replayable`]| `Signature` | `(title, reward)`   | `SetField(TITLE, REWARD, STATE=OPEN)` |
 //! | `claim`  | [`Semantics::Replayable`]| `Signature` | `(claimant)`        | `SetField(CLAIMANT, STATE=CLAIMED)` |
 //! | `submit` | [`Semantics::Replayable`]| `Signature` | `(artifact)`        | `SetField(SUBMISSION, STATE=SUBMITTED)` |
-//! | `payout` | [`Semantics::Replayable`]| `Signature` | `()`                | `SetField(STATE=PAID)` |
+//! | `payout` | [`Semantics::Replayable`]| `Signature` | `(claimant, reward)`| `Transfer(payer → claimant) + SetField(STATE=PAID)` |
 //! | `view`   | [`Semantics::Serviced`]  | `None`      | `()`                | — (the named OFE seam: a pure read, no turn) |
+//!
+//! ⚑ `payout` MOVES VALUE. It desugars to the conserving kernel `Effect::Transfer`
+//! (`crate::payout_effects`, via the shared `Payable` desugar) in the SAME action
+//! as the `STATE=PAID` advance, so there is no accepted turn in which the bounty
+//! reads PAID and the claimant was not paid. A zero amount is refused before any
+//! turn is built. This face drives a bounty cell that IS the paying agent's own
+//! cell, so both legs fit one action; the reward is a PROMISE rather than an
+//! escrow (see the crate docs for why the bounty cell cannot hold one).
 //!
 //! `post`/`claim`/`submit`/`payout` are **replayable**: they desugar (via
 //! `invoke()`) to a verified turn whose post-state the executor checks against
@@ -74,9 +82,9 @@ use dregg_turn::Turn;
 use dregg_types::CellId;
 
 use crate::{
-    CLAIMANT_HASH_SLOT, REWARD_SLOT, STATE_CLAIMED, STATE_OPEN, STATE_PAID, STATE_SLOT,
-    STATE_SUBMITTED, SUBMISSION_HASH_SLOT, TITLE_HASH_SLOT, claimant_hash, reward_field,
-    state_field, title_hash,
+    CLAIMANT_HASH_SLOT, REWARD_SLOT, RewardRefused, STATE_CLAIMED, STATE_OPEN, STATE_SLOT,
+    STATE_SUBMITTED, SUBMISSION_HASH_SLOT, TITLE_HASH_SLOT, claimant_hash, payout_effects,
+    reward_field, state_field, title_hash,
 };
 
 // =============================================================================
@@ -93,7 +101,8 @@ pub const METHOD_CLAIM: &str = "claim";
 /// deliver work (`SUBMISSION_HASH` `WriteOnce`, `STATE → SUBMITTED`).
 pub const METHOD_SUBMIT: &str = "submit";
 /// The `payout` method — a [`Semantics::Replayable`], `Signature`-gated mutator:
-/// settle the bounty (`STATE → PAID`, terminal).
+/// settle the bounty by PAYING the claimant (`Effect::Transfer`) and advancing
+/// `STATE → PAID` (terminal) in one action.
 pub const METHOD_PAYOUT: &str = "payout";
 /// The `view` method — a [`Semantics::Serviced`] read (the named OFE seam): read
 /// the bounty's committed lifecycle state. Never desugared.
@@ -124,8 +133,8 @@ pub fn interface_descriptor() -> InterfaceDescriptor {
         mutator(METHOD_CLAIM, 1),
         // submit(artifact): deliver work.
         mutator(METHOD_SUBMIT, 1),
-        // payout(): settle (terminal).
-        mutator(METHOD_PAYOUT, 0),
+        // payout(claimant, reward): pay the escrow out and settle (terminal).
+        mutator(METHOD_PAYOUT, 2),
         // view(): a pure read — the named OFE seam, never desugared.
         MethodSig {
             args_schema: ArgsSchema::Fixed(0),
@@ -181,6 +190,11 @@ impl BountyService {
     /// `STATE → OPEN`. Routes through the verified DFA, cap-gates on `Signature`,
     /// and desugars to the underlying `SetField`s targeting the `post` method
     /// symbol.
+    ///
+    /// ⚑ The `REWARD` slot is a `WriteOnce` PROMISE, not a holding: nothing is
+    /// moved here. [`BountyService::payout`] is what pays, out of the paying
+    /// cell's own balance, and it is an `InsufficientBalance` refusal if that
+    /// balance cannot cover the promise.
     pub fn post(
         &self,
         cipherclerk: &AppCipherclerk,
@@ -259,16 +273,32 @@ impl BountyService {
         )
     }
 
-    /// **Invoke `payout()`** — the poster settles a submitted bounty: advance
-    /// `STATE → PAID` (terminal). A re-payout is a no-advance `PAID → PAID` the
-    /// executor's `StrictMonotonic(STATE)` refuses.
+    /// **Invoke `payout(claimant, reward)`** — the poster settles a submitted
+    /// bounty: PAY `reward` to `claimant` (the conserving kernel
+    /// `Effect::Transfer`) and advance `STATE → PAID` (terminal), in ONE action
+    /// so neither leg can land without the other.
+    ///
+    /// Refused with [`BountyServiceError::NothingToPay`] at zero, before any turn
+    /// exists. A re-payout is a no-advance `PAID → PAID` the executor's
+    /// `StrictMonotonic(STATE)` refuses.
     pub fn payout(
         &self,
         cipherclerk: &AppCipherclerk,
+        claimant: CellId,
+        reward: u64,
         authority: InvokeAuthority,
     ) -> Result<Turn, BountyServiceError> {
-        let effects = vec![self.set(STATE_SLOT, state_field(STATE_PAID))];
-        self.invoke(cipherclerk, METHOD_PAYOUT, vec![], effects, authority)
+        let effects = payout_effects(self.cell, claimant, reward)
+            .map_err(|_| BountyServiceError::NothingToPay)?;
+        let mut payee = [0u8; 32];
+        payee.copy_from_slice(claimant.as_bytes());
+        self.invoke(
+            cipherclerk,
+            METHOD_PAYOUT,
+            vec![payee, crate::reward_field(reward)],
+            effects,
+            authority,
+        )
     }
 
     /// **Attempt to invoke `view()`** — which ALWAYS refuses with
@@ -325,6 +355,9 @@ impl BountyService {
 pub enum BountyServiceError {
     /// A required text field (title / claimant / artifact) was empty.
     EmptyField,
+    /// A payout was asked to move zero. The named refusal that makes the
+    /// value-less payout unrepresentable at this face (see [`RewardRefused`]).
+    NothingToPay,
     /// The `invoke()` front door refused (unknown method, insufficient authority,
     /// or a serviced seam) — fail-closed, no turn built.
     Refused(InvokeRefused),
@@ -334,6 +367,9 @@ impl std::fmt::Display for BountyServiceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             BountyServiceError::EmptyField => write!(f, "a required text field must be non-empty"),
+            BountyServiceError::NothingToPay => {
+                write!(f, "{}", RewardRefused::NothingToPay)
+            }
             BountyServiceError::Refused(r) => write!(f, "invoke refused: {r}"),
         }
     }

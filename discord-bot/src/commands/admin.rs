@@ -26,9 +26,14 @@
 //!   and `/buy-credits` then hands out deposit addresses that NOTHING watches. That was a single
 //!   boot-log line. It also names the node, the state producer, the federation id, the custody
 //!   posture, and the narrator's price PROVENANCE.
-//! * **`treasury`** — the refuel signal. `Treasury::spend_inference_usd` fails closed with
-//!   `InsufficientFuel`, so an operator wants to know the tank is low BEFORE runs start failing;
-//!   this reports how many runs the current fuel covers at the configured per-run ceiling.
+//! * **`treasury`** — the refuel signal, and the refuel itself. `PaidNarrator::metered_request`
+//!   debits the tank for every hosted call and refuses one it cannot fund, so an operator wants
+//!   to know the tank is low BEFORE runs start refusing; this reports how many runs the current
+//!   fuel covers at the configured per-run ceiling, over the SAME threshold the run path
+//!   enforces. `refuel:<usd>` is the key to that gate: the tank is otherwise fed only by an
+//!   observed USDC payment, and an operator taking `$DREGG` would have no way to declare the
+//!   real money behind their inference bill. It is a MINT, so it is admin-gated, `warn!`-logged
+//!   with the actor, and recorded in the audit envelope, exactly like a credits grant.
 //! * **`credits`** — inspect, and optionally grant, a user's run-credits. Granting is how the paid
 //!   path gets exercised end-to-end without moving real money; it is a MINT, so it is admin-gated,
 //!   `warn!`-logged with the actor, and recorded in the audit envelope.
@@ -95,7 +100,10 @@ impl AdminAction {
 
     /// Whether this action MUTATES bot state (and therefore must be logged with its actor).
     pub const fn mutates(self) -> bool {
-        matches!(self, AdminAction::Narrator | AdminAction::Credits)
+        matches!(
+            self,
+            AdminAction::Narrator | AdminAction::Credits | AdminAction::Treasury
+        )
     }
 }
 
@@ -193,11 +201,18 @@ pub fn register() -> CreateCommand {
             "status",
             "The honest posture: node, payment watcher, custody, narrator, federation",
         ))
-        .add_option(CreateCommandOption::new(
-            CommandOptionType::SubCommand,
-            "treasury",
-            "Fuel (USDC) + pile ($DREGG), and how many runs the fuel still covers",
-        ))
+        .add_option(
+            CreateCommandOption::new(
+                CommandOptionType::SubCommand,
+                "treasury",
+                "Fuel (USDC) + pile ($DREGG), and how many runs the fuel still covers",
+            )
+            .add_sub_option(CreateCommandOption::new(
+                CommandOptionType::Number,
+                "refuel",
+                "Add this many USD of declared inference fuel to the tank (logged)",
+            )),
+        )
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,
             "pool",
@@ -285,7 +300,7 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
     let embed = match action {
         AdminAction::Narrator => run_narrator(command, state, user_id).await,
         AdminAction::Status => run_status(state).await,
-        AdminAction::Treasury => run_treasury(state),
+        AdminAction::Treasury => run_treasury(command, state, user_id).await,
         AdminAction::Credits => run_credits(command, state, user_id).await,
         AdminAction::Pool => run_pool(state).await,
     };
@@ -794,19 +809,17 @@ async fn run_status(state: &BotState) -> CreateEmbed {
 // `/dregg admin treasury`
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The treasury + the refuel signal.
-fn run_treasury(state: &BotState) -> CreateEmbed {
-    let pay = &state.pay;
-    let fuel = pay.treasury_fuel();
-    let pile = pay.treasury_pile();
-    let usd_per_run = pay.narrator_status().usd_per_run;
-
-    // The fuel tank is atomic USDC; `usdc_decimals` on the config gives the scale.
-    let decimals = pay.config.usdc_decimals as u32;
-    let scale = 10u64.pow(decimals.min(18)) as f64;
-    let fuel_usd = fuel as f64 / scale;
-
-    let refuel = match usd_per_run {
+/// **The refuel signal**, as a pure function of the two numbers it reads: the tank in USD and
+/// the configured per-run ceiling. Split out of [`run_treasury`] so the alarm can be driven
+/// from a REAL drained treasury in a test instead of only from a hand-built `BotState` — the
+/// point of the alarm is that it fires, and an alarm nothing can make ring is not one.
+///
+/// `runs == 0` is the red arm, and it is the SAME predicate
+/// [`crate::pay::PaidNarrator::metered_request`] refuses a run on (`fuel_covers_usd(ceiling)`),
+/// so "real-AI runs will start refusing" describes what the process does rather than
+/// predicting it.
+pub(crate) fn refuel_signal(fuel_usd: f64, usd_per_run: Option<f64>) -> String {
+    match usd_per_run {
         Some(usd) if usd > 0.0 => {
             let runs = (fuel_usd / usd).floor() as u64;
             if runs == 0 {
@@ -824,13 +837,81 @@ fn run_treasury(state: &BotState) -> CreateEmbed {
         _ => format!(
             "${fuel_usd:.4} of fuel. No narrator is active, so nothing is currently burning it."
         ),
-    };
+    }
+}
+
+/// The treasury + the refuel signal, and **the one key that opens the fail-closed gate**.
+///
+/// The tank is otherwise fed only by an OBSERVED USDC payment, so an operator pricing runs in
+/// `$DREGG` (the default) would sit at `$0.0000` forever with real-AI runs refusing and no way
+/// to say "I put real money behind this". `refuel` is that statement: a DECLARED operator
+/// top-up, exactly as much a mint as `credits grant` is, and gated, warn-logged and audited the
+/// same way. It moves no chain funds and asserts nothing about a wallet.
+async fn run_treasury(command: &CommandInteraction, state: &BotState, actor: u64) -> CreateEmbed {
+    let pay = &state.pay;
+    let mut note = String::new();
+
+    let refuel_usd = opt_number(&sub_options(command), "refuel").unwrap_or(0.0);
+    if refuel_usd > 0.0 {
+        match pay.treasury.usd_to_atomic_usdc(refuel_usd) {
+            Ok(atomic) => {
+                let before = pay.treasury_fuel();
+                let after = pay.treasury.deposit_usdc(atomic);
+                tracing::warn!(
+                    actor,
+                    refuel_usd,
+                    atomic,
+                    before,
+                    after,
+                    "admin DECLARED inference fuel (a treasury top-up, not an observed payment)"
+                );
+                crate::audit::log().emit(
+                    crate::audit::AuditEvent::new(
+                        "discord",
+                        crate::audit::custodial_actor(state, actor),
+                        crate::audit::Surface::Command,
+                        crate::audit::Input {
+                            kind: "admin.treasury.refuel".to_string(),
+                            detail: serde_json::json!({
+                                "usd": refuel_usd,
+                                "atomic_usdc": atomic,
+                                "before": before,
+                                "after": after,
+                            }),
+                        },
+                    )
+                    .decided("refueled", ""),
+                );
+                note = format!(
+                    "\n\n**Declared ${refuel_usd:.4} of fuel** (tank was `{before}`, now \
+                     `{after}` atomic USDC). This is an operator statement, not an observed \
+                     on-chain payment. Recorded in the audit log against <@{actor}>."
+                );
+            }
+            Err(e) => {
+                return embeds::error_embed(
+                    "Refuel refused",
+                    &format!("That amount could not be priced ({e}); the tank is unchanged."),
+                );
+            }
+        }
+    } else if refuel_usd < 0.0 {
+        note = "\n\n_A negative `refuel` is ignored: this surface only adds fuel._".to_string();
+    }
+
+    let fuel = pay.treasury_fuel();
+    let pile = pay.treasury_pile();
+    let usd_per_run = pay.narrator_status().usd_per_run;
+
+    // The tank in USD comes from the treasury itself (it owns the USDC decimals), so this
+    // surface and the run-time refusal divide the same number by the same ceiling.
+    let refuel = refuel_signal(pay.treasury.fuel_usd(), usd_per_run);
 
     embeds::dregg_embed("Treasury")
         .description(format!(
             "Where detected game revenue lands. A USDC payment fuels the tank (burned per \
              real-AI run, fail-closed on empty); a $DREGG payment grows the illiquid pile. Every \
-             run burns USD fuel regardless of how the player paid.\n\n{refuel}"
+             run burns USD fuel regardless of how the player paid.\n\n{refuel}{note}"
         ))
         .field("Fuel (USDC atomic)", format!("`{fuel}`"), true)
         .field("Pile ($DREGG atomic)", format!("`{pile}`"), true)

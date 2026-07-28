@@ -37,6 +37,45 @@
 //! posted (its first write, admitted from zero) and then frozen — it cannot be
 //! silently lowered after a worker commits to the bounty.
 //!
+//! ## A PAYOUT MOVES VALUE, and the reward is a PROMISE, not an escrow
+//!
+//! ⚑ Until 2026-07-28 all three payout builders here were `SetField` +
+//! `EmitEvent` and contained no [`Effect::Transfer`] at all, so `/bounty payout`
+//! rendered "Bounty Paid", emitted `bounty-paid`, advanced `STATE` to PAID, and
+//! moved no balance anywhere. A claimant held a receipt for a payment that never
+//! happened. That is worse than a failure, because the next reader trusts it.
+//!
+//! [`build_payout_actions`] now carries the conserving kernel
+//! [`Effect::Transfer`] — the one effect the executor conserves per-asset
+//! (Σδ=0), produced by the shared [`Payable`] desugar
+//! ([`dregg_app_framework::pay_effects`], the same one [`BountyTreasury::payout`]
+//! and every other `Payable` app pays through) — in the SAME TURN as the
+//! `STATE=PAID` advance. They are roots of one call forest, so they commit or
+//! roll back together: **there is no accepted turn in which the bounty reads PAID
+//! and nobody was paid.** A payer who cannot cover the reward is a
+//! `TurnError::InsufficientBalance` refusal that takes the PAID stamp down with
+//! it, and a zero amount is [`RewardRefused::NothingToPay`] before a turn exists.
+//!
+//! ### ⚠ The reward is NOT held in escrow, and this crate no longer says it is
+//!
+//! The poster pays at payout time, out of its own balance. The bounty cell CANNOT
+//! hold the escrow, and the reason is its own program: the executor evaluates a
+//! touched cell's [`CellProgram`] per ACTION over **every cell any effect
+//! touches**, including a `Transfer` DESTINATION. `StrictMonotonic(STATE)`
+//! therefore demands that any action crediting the bounty cell ALSO strictly
+//! advance its `STATE` — while a `Transfer` whose `from` is not the action's
+//! target requires the source cell's `send` permission to be `AuthRequired::None`
+//! (a user cell's is `Signature`). Those two rules have no common solution, so a
+//! self-escrowing bounty cell is not expressible, and pretending otherwise would
+//! be a second false label rather than a fix.
+//!
+//! What that costs, stated plainly: between `post` and `payout` nothing stops the
+//! poster spending the money, so a claimant is protected against a payout that
+//! LIES, not against a poster who goes broke. Real escrow needs a separate
+//! holding cell with no `StrictMonotonic` on it — which is exactly the shape
+//! [`BountyTreasury`] already is, and it is a design fork (who mints it, who
+//! holds its cap, what happens to an abandoned bounty) rather than wiring.
+//!
 //! ## What this crate exports
 //!
 //! - [`bounty_factory_descriptor`] — the `FactoryDescriptor`, with its slot
@@ -44,12 +83,14 @@
 //!   the gating.
 //! - [`factory_descriptors`] — the descriptor slice for host registration.
 //! - [`build_post_action`] — writes `TITLE_HASH`, `REWARD`, and `STATE=OPEN`,
-//!   emits `bounty-posted`. Run against a freshly factory-born bounty cell.
+//!   emits `bounty-posted`. Refuses a zero reward. Run against a freshly
+//!   factory-born bounty cell.
 //! - [`build_claim_action`] — binds `CLAIMANT_HASH` (write-once → first-claimer-
 //!   wins) and advances `STATE=CLAIMED`, emits `bounty-claimed`.
 //! - [`build_submit_action`] — binds `SUBMISSION_HASH` and advances
 //!   `STATE=SUBMITTED`, emits `bounty-submitted`.
-//! - [`build_payout_action`] — advances `STATE=PAID`, emits `bounty-paid`.
+//! - [`build_payout_actions`] — PAYS the claimant and advances `STATE=PAID`,
+//!   atomically in one turn, emitting `bounty-paid` with the amount and payee.
 //! - [`register`] — mounts the app's factory + inspector on a
 //!   [`StarbridgeAppContext`].
 
@@ -59,7 +100,7 @@ use dregg_app_framework::{
     EmbeddedExecutor, Event, FactoryDescriptor, FieldElement, FireExecuteError, GatedAffordance,
     InspectorDescriptor, InvokeAuthority, InvokeRefused, Payable, StarbridgeAppContext,
     StateConstraint, Turn, TurnReceipt, canonical_program_vk, field_from_bytes, field_from_u64,
-    hex_encode_32, symbol,
+    hex_encode_32, pay_effects, symbol,
 };
 
 // The four modern app-framework axes this app demonstrates (the unified template):
@@ -193,15 +234,53 @@ pub fn factory_descriptors() -> Vec<FactoryDescriptor> {
 // Turn-builders
 // =============================================================================
 
+/// **Why a bounty could not be posted or paid** — refused before any turn is
+/// built, so no surface can render success for a move that did not happen.
+///
+/// Both variants exist so a zero-value payout is UNREPRESENTABLE rather than
+/// merely unlikely: that is the exact shape the wound had.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RewardRefused {
+    /// A bounty was posted with `reward == 0`. Its payout could only ever move
+    /// nothing, so the post is refused rather than producing a bounty whose
+    /// settlement can only be theatre.
+    ZeroReward,
+    /// A payout was asked to move zero. This is the value-less payout the
+    /// builders exist to make unrepresentable.
+    NothingToPay,
+}
+
+impl std::fmt::Display for RewardRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RewardRefused::ZeroReward => {
+                write!(f, "a bounty must promise a reward greater than zero")
+            }
+            RewardRefused::NothingToPay => {
+                write!(f, "a payout must move a positive amount to the claimant")
+            }
+        }
+    }
+}
+
+impl std::error::Error for RewardRefused {}
+
 /// Build the signed `Action` that posts a bounty: writes the title hash, the
-/// escrowed reward, and `STATE=OPEN`, then emits `bounty-posted`. Run against a
+/// promised reward, and `STATE=OPEN`, then emits `bounty-posted`. Run against a
 /// freshly factory-born bounty cell.
+///
+/// A zero reward is [`RewardRefused::ZeroReward`]. The `REWARD_SLOT` value is a
+/// `WriteOnce` PROMISE, not a holding: see the module docs for why the bounty
+/// cell cannot escrow it, and [`build_payout_actions`] for what actually pays.
 pub fn build_post_action(
     cipherclerk: &AppCipherclerk,
     bounty_cell: CellId,
     title: &str,
     reward: u64,
-) -> Action {
+) -> Result<Action, RewardRefused> {
+    if reward == 0 {
+        return Err(RewardRefused::ZeroReward);
+    }
     let title_h = field_from_bytes(title.as_bytes());
     let reward_f = field_from_u64(reward);
     let effects = vec![
@@ -225,7 +304,7 @@ pub fn build_post_action(
             event: Event::new(symbol("bounty-posted"), vec![title_h, reward_f]),
         },
     ];
-    cipherclerk.make_action(bounty_cell, "post_bounty", effects)
+    Ok(cipherclerk.make_action(bounty_cell, "post_bounty", effects))
 }
 
 /// Build the signed `Action` that claims a bounty.
@@ -288,25 +367,60 @@ pub fn build_submit_action(
     cipherclerk.make_action(bounty_cell, "submit_work", effects)
 }
 
-/// Build the signed `Action` that pays out a submitted bounty.
+/// Build the signed `Action`s that pay out a submitted bounty — **the value
+/// moves in the same TURN as the state advance, or neither happens.**
 ///
-/// Advances `STATE` from SUBMITTED to PAID (terminal). Emits `bounty-paid`.
-/// Because `STATE` is strictly monotone, a paid bounty cannot be re-opened, and
-/// a payout cannot be issued twice.
-pub fn build_payout_action(cipherclerk: &AppCipherclerk, bounty_cell: CellId) -> Action {
-    let paid = field_from_u64(STATE_PAID);
-    let effects = vec![
-        Effect::SetField {
-            cell: bounty_cell,
-            index: STATE_SLOT as u64,
-            value: paid,
-        },
-        Effect::EmitEvent {
-            cell: bounty_cell,
-            event: Event::new(symbol("bounty-paid"), vec![paid]),
-        },
-    ];
-    cipherclerk.make_action(bounty_cell, "payout_bounty", effects)
+/// Returns one or two actions, to be submitted as roots of ONE turn
+/// (`AppCipherclerk::make_turn_with_actions`, the node's multi-action ingress).
+/// They are one atomic outcome: a payer who cannot cover `reward` rolls the
+/// `STATE=PAID` stamp back with the transfer, so no surface can ever show a paid
+/// bounty over a payment that did not happen.
+///
+///   * the PAYMENT action targets the payer (`cipherclerk`'s own cell) and
+///     carries the conserving `Effect::Transfer` from [`pay_effects`] — it must
+///     target the payer, because `apply_transfer` only skips its cross-cell
+///     `Send` check when the transfer's `from` IS the action target, and that
+///     check demands `send == AuthRequired::None`, which a user cell is not;
+///   * the SETTLE action targets the bounty and advances `STATE` SUBMITTED ->
+///     PAID (terminal, `StrictMonotonic`), emitting `bounty-paid` with the amount
+///     and the payee so the event names the value that moved and not only a flag.
+///
+/// When the payer IS the bounty cell (the deos composition surface and the
+/// service face both drive a bounty that is the agent's own cell) the two
+/// collapse into ONE action, which is strictly stronger: one action cannot
+/// half-commit at all.
+///
+/// ⚠ Nothing here binds the `claimant` to the bounty's committed
+/// `CLAIMANT_HASH`. No `StateConstraint` relates a `Transfer` destination to a
+/// state slot, so that check belongs to whoever can read the slot (the surfaces
+/// do it against the node's committed field view) until the constraint language
+/// grows an atom for it, which is Lean-authored work.
+pub fn build_payout_actions(
+    cipherclerk: &AppCipherclerk,
+    bounty_cell: CellId,
+    claimant: CellId,
+    reward: u64,
+) -> Result<Vec<Action>, RewardRefused> {
+    let payer = cipherclerk.cell_id();
+    if payer == bounty_cell {
+        return Ok(vec![cipherclerk.make_action(
+            bounty_cell,
+            "payout_bounty",
+            payout_effects(bounty_cell, claimant, reward)?,
+        )]);
+    }
+    Ok(vec![
+        cipherclerk.make_action(
+            payer,
+            "pay_bounty_reward",
+            payment_effects(payer, claimant, reward)?,
+        ),
+        cipherclerk.make_action(
+            bounty_cell,
+            "payout_bounty",
+            settle_effects(bounty_cell, claimant, reward),
+        ),
+    ])
 }
 
 // =============================================================================
@@ -440,8 +554,9 @@ pub fn submitted_precondition() -> CellProgram {
 ///     `SUBMISSION_HASH` + advances `STATE` CLAIMED -> SUBMITTED, re-enforced by the
 ///     executor;
 ///   - `payout` — a [`GatedAffordance`] (the POSTER settles): `None`/root, a live-state
-///     PRECONDITION (the bounty is SUBMITTED); the real fire ([`fire_payout`]) advances
-///     `STATE` SUBMITTED -> PAID (terminal), re-enforced by the executor.
+///     PRECONDITION (the bounty is SUBMITTED); the real fire ([`fire_payout`]) PAYS THE
+///     ESCROW to the claimant and advances `STATE` SUBMITTED -> PAID (terminal) in one
+///     action, re-enforced by the executor.
 ///
 /// The bounty cell is published into the web-of-cells at the watcher tier (an indexer on
 /// another federation reacquires the bounty's lifecycle across the membrane) and is
@@ -595,10 +710,30 @@ pub fn submit_effects(bounty: CellId, artifact_uri: &str) -> Vec<Effect> {
     ]
 }
 
-/// **`payout` effects** — the multi-effect payout body: advance `STATE` SUBMITTED -> PAID
-/// (terminal, `StrictMonotonic`). THIS is the turn [`fire_payout`] submits.
-pub fn payout_effects(bounty: CellId) -> Vec<Effect> {
+/// **The PAYMENT leg** — the conserving kernel `Effect::Transfer` moving `reward`
+/// from `payer` to `claimant`, produced by [`pay_effects`]: the shared [`Payable`]
+/// desugar [`BountyTreasury::payout`] and every other `Payable` app pay through,
+/// so this crate has no private notion of moving money. Refuses a zero amount
+/// ([`RewardRefused::NothingToPay`]).
+pub fn payment_effects(
+    payer: CellId,
+    claimant: CellId,
+    reward: u64,
+) -> Result<Vec<Effect>, RewardRefused> {
+    if reward == 0 {
+        return Err(RewardRefused::NothingToPay);
+    }
+    Ok(pay_effects(payer, claimant, reward))
+}
+
+/// **The SETTLE leg** — advance `STATE` SUBMITTED -> PAID (terminal,
+/// `StrictMonotonic`) and emit `bounty-paid` carrying the state code, the amount
+/// and the payee, so the receipt names the value that moved rather than only a
+/// flag having flipped.
+pub fn settle_effects(bounty: CellId, claimant: CellId, reward: u64) -> Vec<Effect> {
     let paid = field_from_u64(STATE_PAID);
+    let mut payee = [0u8; 32];
+    payee.copy_from_slice(claimant.as_bytes());
     vec![
         Effect::SetField {
             cell: bounty,
@@ -607,9 +742,30 @@ pub fn payout_effects(bounty: CellId) -> Vec<Effect> {
         },
         Effect::EmitEvent {
             cell: bounty,
-            event: Event::new(symbol("bounty-paid"), vec![paid]),
+            event: Event::new(
+                symbol("bounty-paid"),
+                vec![paid, field_from_u64(reward), payee],
+            ),
         },
     ]
+}
+
+/// **`payout` effects, for a bounty cell that IS the payer** — the payment leg
+/// and the settle leg in ONE action body, which the executor admits because the
+/// transfer's `from` is the action target AND the same action strictly advances
+/// `STATE` (a `StrictMonotonic` cell refuses any action that touches it without
+/// advancing, including a bare credit — see the module docs).
+///
+/// THIS is the turn [`fire_payout`] submits, and the single-action arm of
+/// [`build_payout_actions`].
+pub fn payout_effects(
+    bounty: CellId,
+    claimant: CellId,
+    reward: u64,
+) -> Result<Vec<Effect>, RewardRefused> {
+    let mut effects = payment_effects(bounty, claimant, reward)?;
+    effects.extend(settle_effects(bounty, claimant, reward));
+    Ok(effects)
 }
 
 /// **Fire `claim`** — the deos cap∧state PRECONDITION gate (anti-ghost, in-band), then the
@@ -657,22 +813,63 @@ pub fn fire_submit(
 }
 
 /// **Fire `payout`** — the deos cap∧state PRECONDITION gate (cap ⊇ root AND the bounty is
-/// SUBMITTED), then the FULL payout turn ([`payout_effects`]). The gated affordance decides
-/// the button in-band and the executor's `StrictMonotonic(STATE)` (SUBMITTED -> PAID, and a
-/// re-payout's no-advance PAID -> PAID is REFUSED) is the verified second gate. Use
-/// [`seed_bounty`] first.
+/// SUBMITTED), then the FULL payout turn ([`payout_effects`]), which PAYS `claimant` the
+/// reward the bounty committed to. The gated affordance decides the button in-band and the
+/// executor is the verified second gate twice over: `StrictMonotonic(STATE)` (SUBMITTED ->
+/// PAID, and a re-payout's no-advance PAID -> PAID is REFUSED) and `InsufficientBalance` on
+/// a payer that cannot cover the reward. Use [`seed_bounty`] first.
+///
+/// The amount is READ OFF THE LIVE CELL — the committed [`REWARD_SLOT`], which is
+/// `WriteOnce` and therefore exactly what the bounty promised when it was posted. A caller
+/// cannot name a different figure, and a bounty with no reward recorded is
+/// [`PayoutError::Refused`] before any turn is built.
+///
+/// On this surface the bounty cell IS the agent's own cell, so the payment and the
+/// settle ride ONE action ([`payout_effects`]).
 pub fn fire_payout(
     app: &DeosApp,
     held: &AuthRequired,
+    claimant: CellId,
     cipherclerk: &AppCipherclerk,
     executor: &EmbeddedExecutor,
-) -> Result<TurnReceipt, FireExecuteError> {
+) -> Result<TurnReceipt, PayoutError> {
     let cell = &app.cells()[0];
     let bounty = cell.cell();
+    let reward = executor.with_ledger_mut(|ledger| {
+        ledger
+            .get(&bounty)
+            .map(|c| dregg_cell::field_to_u64(&c.state.fields[REWARD_SLOT]))
+            .unwrap_or(0)
+    });
+    // Refuse the value-less payout HERE, before a turn exists — the surface has
+    // nothing to render success over.
+    let effects = payout_effects(bounty, claimant, reward).map_err(PayoutError::Refused)?;
     cell.fire_gated_through_executor_with("payout", held, cipherclerk, executor, move |_live| {
-        payout_effects(bounty)
+        effects
     })
+    .map_err(PayoutError::Execute)
 }
+
+/// Why a [`fire_payout`] did not pay.
+#[derive(Debug)]
+pub enum PayoutError {
+    /// The payout was refused before any turn was built (see [`RewardRefused`]).
+    Refused(RewardRefused),
+    /// The gate or the executor refused the payout turn: a cap/precondition miss,
+    /// a lifecycle caveat, or an escrow that cannot cover the reward.
+    Execute(FireExecuteError),
+}
+
+impl std::fmt::Display for PayoutError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PayoutError::Refused(e) => write!(f, "payout refused: {e}"),
+            PayoutError::Execute(e) => write!(f, "payout not committed: {e:?}"),
+        }
+    }
+}
+
+impl std::error::Error for PayoutError {}
 
 /// **Mount the deos-native surface** ([`bounty_app`]) on a shared context: build the
 /// composed [`DeosApp`] from the context's cipherclerk + executor, seed the bounty cell's
@@ -799,6 +996,15 @@ impl BountyTreasury {
     /// (`treasury → dest`) routed through the shared interface. This helper BUILDS
     /// the signed [`Turn`]; the caller submits it through the embedded executor on
     /// the shared `World` to commit.
+    ///
+    /// ⚑ This is NOT what the LIFECYCLE payout calls, and the reason is worth
+    /// stating: `pay` resolves to a standalone turn carrying exactly ONE effect,
+    /// the `Transfer`. Calling it for a `/bounty payout` would move the money and
+    /// leave `STATE` at SUBMITTED in a separate turn that can fail on its own —
+    /// the mirror image of the wound it fixes. The lifecycle payout is ONE atomic
+    /// turn carrying both legs, and it takes its value leg from [`pay_effects`]
+    /// — the exact desugar `pay` resolves to, so there is one notion of moving
+    /// value in this crate and both faces use it.
     pub fn payout(
         &self,
         cipherclerk: &AppCipherclerk,
@@ -1015,7 +1221,8 @@ mod tests {
     #[test]
     fn post_action_writes_three_slots_and_emits_event() {
         let cclerk = test_cipherclerk();
-        let action = build_post_action(&cclerk, bounty_cell(), "fix the bug", 500);
+        let action = build_post_action(&cclerk, bounty_cell(), "fix the bug", 500)
+            .expect("a positive reward posts");
         assert_eq!(action.effects.len(), 4);
         assert!(matches!(
             &action.effects[0],
@@ -1029,10 +1236,91 @@ mod tests {
             &action.effects[2],
             Effect::SetField { index, value, .. } if *index == STATE_SLOT as u64 && *value == state_field(STATE_OPEN)
         ));
-        match action.authorization {
-            Authorization::HybridSignature { ed25519, .. } => assert!(ed25519 != [0u8; 64]),
+        match &action.authorization {
+            Authorization::HybridSignature { ed25519, .. } => assert!(*ed25519 != [0u8; 64]),
             other => panic!("expected HybridSignature, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_zero_reward_bounty_cannot_be_posted() {
+        let cclerk = test_cipherclerk();
+        assert_eq!(
+            build_post_action(&cclerk, bounty_cell(), "fix the bug", 0).err(),
+            Some(RewardRefused::ZeroReward),
+            "a bounty promising nothing can only ever settle by moving nothing"
+        );
+    }
+
+    #[test]
+    fn a_zero_amount_payout_cannot_be_built() {
+        let cclerk = test_cipherclerk();
+        let claimant = CellId::from_bytes([7u8; 32]);
+        assert_eq!(
+            build_payout_actions(&cclerk, bounty_cell(), claimant, 0).err(),
+            Some(RewardRefused::NothingToPay),
+        );
+        assert_eq!(
+            payout_effects(bounty_cell(), claimant, 0).err(),
+            Some(RewardRefused::NothingToPay),
+        );
+        assert_eq!(
+            payment_effects(bounty_cell(), claimant, 0).err(),
+            Some(RewardRefused::NothingToPay),
+        );
+    }
+
+    #[test]
+    fn payout_pays_the_claimant_in_the_same_turn_as_the_state_advance() {
+        let cclerk = test_cipherclerk();
+        let claimant = CellId::from_bytes([7u8; 32]);
+        // The bounty is a separate factory-born cell, so the payer and the
+        // lifecycle cell differ: two actions, ONE turn.
+        let actions = build_payout_actions(&cclerk, bounty_cell(), claimant, 500)
+            .expect("a payout with an amount builds");
+        assert_eq!(actions.len(), 2, "pay + settle, atomically");
+
+        assert_eq!(
+            actions[0].target,
+            cclerk.cell_id(),
+            "the payment action must target the payer, or the cross-cell Send check refuses it"
+        );
+        match actions[0].effects[0] {
+            Effect::Transfer { from, to, amount } => {
+                assert_eq!(from, cclerk.cell_id(), "the poster pays");
+                assert_eq!(to, claimant, "the claimant is paid");
+                assert_eq!(amount, 500);
+            }
+            ref other => panic!("payout must MOVE value, got {other:?}"),
+        }
+
+        assert_eq!(actions[1].target, bounty_cell());
+        assert!(
+            matches!(&actions[1].effects[0], Effect::SetField { index, value, .. }
+                if *index == STATE_SLOT as u64 && *value == state_field(STATE_PAID)),
+            "the settle leg advances STATE to PAID"
+        );
+    }
+
+    #[test]
+    fn a_self_paying_bounty_collapses_to_one_action() {
+        // The deos surface and the service face both drive a bounty that IS the
+        // agent's own cell. One action is strictly stronger than two: it cannot
+        // half-commit at all.
+        let cclerk = test_cipherclerk();
+        let claimant = CellId::from_bytes([7u8; 32]);
+        let actions =
+            build_payout_actions(&cclerk, cclerk.cell_id(), claimant, 500).expect("builds");
+        assert_eq!(actions.len(), 1);
+        assert_eq!(
+            actions[0].effects.len(),
+            3,
+            "transfer + state advance + event"
+        );
+        assert!(matches!(
+            actions[0].effects[0],
+            Effect::Transfer { amount: 500, .. }
+        ));
     }
 
     // ── End-to-end factory-birth + caveat-biting through EmbeddedExecutor ─
@@ -1091,10 +1379,22 @@ mod tests {
             }
         });
 
+        // A same-asset payee for the reward to land in. A factory-born cell
+        // inherits its creator's currency, so the payer and the payee must share
+        // an asset column for the kernel to admit the move.
+        let agent_asset = exec.with_ledger_mut(|ledger| ledger.get(&agent).unwrap().asset());
+        let payee = dregg_cell::Cell::with_balance([0xB0u8; 32], [0xB0u8; 32], 0)
+            .in_asset(agent_asset)
+            .id();
+        exec.ensure_cell(
+            dregg_cell::Cell::with_balance([0xB0u8; 32], [0xB0u8; 32], 0).in_asset(agent_asset),
+        )
+        .expect("payee co-placed");
+
         // Post → Claim → Submit → Payout: the legal lifecycle is accepted.
         exec.submit_action(
             &cclerk,
-            build_post_action(&cclerk, bounty, "fix the bug", 500),
+            build_post_action(&cclerk, bounty, "fix the bug", 500).expect("post builds"),
         )
         .expect("post commits");
         exec.submit_action(&cclerk, build_claim_action(&cclerk, bounty, "bob"))
@@ -1121,8 +1421,17 @@ mod tests {
             build_submit_action(&cclerk, bounty, "dregg://cell/work-artifact"),
         )
         .expect("submit commits");
-        exec.submit_action(&cclerk, build_payout_action(&cclerk, bounty))
-            .expect("payout commits");
+        let payout = cclerk.make_turn_with_actions(
+            build_payout_actions(&cclerk, bounty, payee, 500).expect("payout builds"),
+        );
+        exec.submit_turn(&payout).expect("payout commits");
+
+        // THE CONSERVATION, not the flag: the payee HOLDS the reward.
+        assert_eq!(
+            exec.with_ledger_mut(|l| l.get(&payee).unwrap().state.balance()),
+            500,
+            "the claimant HOLDS the reward"
+        );
     }
 
     // ── The PAYABLE face — bounty payout as a cross-app value flow ───────

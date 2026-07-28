@@ -2,16 +2,20 @@
 name = "starbridge-bounty-board"
 version = "0.1.0"
 edition = "2024"
-description = "Starbridge userspace bounty-board app — FactoryDescriptors and turn helpers for posting escrow-backed bounties, claiming them (first-claimer-wins), submitting work, and paying out through a one-way state machine."
+description = "Starbridge userspace bounty-board app — FactoryDescriptors and turn helpers for posting bounties, claiming them (first-claimer-wins), submitting work, and paying the claimant a real conserving Transfer through a one-way state machine."
 
 # Greenfield rebuild of the legacy `apps/bounty-board/` HTTP app as a
 # dregg-native starbridge-app. Composes dregg primitives only
-# (FactoryDescriptor + Effect::SetField + Effect::EmitEvent +
+# (FactoryDescriptor + Effect::SetField + Effect::EmitEvent + Effect::Transfer +
 # StateConstraint slot caveats) — no domain-specific bounty effects.
 #
 # The bounty lifecycle is enforced by slot caveats on factory-born cells:
 #   - `TITLE_HASH`    is WriteOnce        ⇒ the bounty title is fixed at posting.
-#   - `REWARD`        is Immutable        ⇒ the escrowed reward cannot change.
+#   - `REWARD`        is WriteOnce        ⇒ the PROMISED reward cannot change. It is
+#                                            a promise, not a holding: the cell cannot
+#                                            escrow it (see src/lib.rs), the payer
+#                                            settles it from its own balance, and the
+#                                            payout carries a real Effect::Transfer.
 #   - `STATE`         is StrictMonotonic  ⇒ OPEN→CLAIMED→SUBMITTED→PAID, no
 #                                            going backward, no re-entering a state.
 #   - `CLAIMANT_HASH` is WriteOnce        ⇒ first claimer wins; a claim cannot

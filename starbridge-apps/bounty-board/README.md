@@ -1,8 +1,8 @@
 # starbridge-bounty-board
 
-**Escrow-backed bounties as a one-way state machine, enforced by the verified executor — and the reference template for a modern deos app.**
+**Bounties as a one-way state machine, enforced by the verified executor, settling in a real conserving `Effect::Transfer` — and the reference template for a modern deos app.**
 
-A poster opens a bounty with an escrowed reward; a worker claims it (first-claimer-wins);
+A poster opens a bounty promising a reward; a worker claims it (first-claimer-wins);
 the worker submits work; the poster pays out. Every transition is a signed turn the
 **verified executor** checks against slot-caveats installed on the bounty cell — so a
 bounty cannot be stolen, replayed, re-priced, or paid twice.
@@ -35,7 +35,7 @@ OPEN ──claim──▶ CLAIMED ──submit──▶ SUBMITTED ──payout�
 | Slot | Constant            | Caveat            | What it guarantees |
 |:---:|---------------------|-------------------|--------------------|
 | `2` | `TITLE_HASH_SLOT`     | `WriteOnce`       | the title is fixed at posting |
-| `3` | `REWARD_SLOT`         | `WriteOnce`       | the escrowed reward cannot be re-priced after a worker commits |
+| `3` | `REWARD_SLOT`         | `WriteOnce`       | the promised reward cannot be re-priced after a worker commits |
 | `4` | `STATE_SLOT`          | `StrictMonotonic` | `OPEN→CLAIMED→SUBMITTED→PAID`, no going back, no re-entering a state (so: no double-claim, no re-open, no double-payout) |
 | `5` | `CLAIMANT_HASH_SLOT`  | `WriteOnce`       | **first-claimer-wins** — a claim cannot be overwritten to steal the bounty |
 | `6` | `SUBMISSION_HASH_SLOT` | `WriteOnce`      | the submitted artifact hash is fixed at submission |
@@ -105,13 +105,50 @@ The card is pure `serde_json` data (no dependency on the `deos-view` renderer cr
 pulls the mozjs + gpui elephants and is a standalone excluded workspace). The deos world's
 renderers consume the JSON; this crate owns the card definition and proves it well-formed.
 
+## A payout MOVES VALUE, and the reward is a PROMISE
+
+⚑ Until 2026-07-28 all three payout builders here carried `SetField` + `EmitEvent`
+and **no `Effect::Transfer` at all**, so `/bounty payout` rendered "Bounty Paid",
+emitted `bounty-paid`, advanced `STATE` to PAID, and moved no balance anywhere. A
+claimant held a receipt for a payment that never happened.
+
+`build_payout_actions` now returns the payment leg and the settle leg as roots of
+**one turn**: a conserving kernel `Effect::Transfer` (from the shared `Payable`
+desugar, `dregg_app_framework::pay_effects` — the same one `BountyTreasury::payout`
+resolves to) and the `STATE=PAID` advance. They commit or roll back together, so
+there is no accepted turn in which the bounty reads PAID and nobody was paid. A
+payer who cannot cover the reward is an `InsufficientBalance` refusal that takes
+the PAID stamp down with it; a zero amount is `RewardRefused::NothingToPay` before
+a turn exists.
+
+⚠ **The reward is not held in escrow, and this crate no longer says it is.** The
+bounty cell CANNOT hold it: the executor evaluates a touched cell's `CellProgram`
+per action over *every cell any effect touches*, including a `Transfer`
+destination, so `StrictMonotonic(STATE)` demands that any action crediting the
+bounty cell also strictly advance its `STATE` — while a `Transfer` whose `from` is
+not the action's target requires the source cell's `send` permission to be
+`AuthRequired::None` (a user cell's is `Signature`). Those two rules have no common
+solution. The poster therefore settles from its own balance, and between `post` and
+`payout` nothing stops it spending the money: a claimant is protected against a
+payout that LIES, not against a poster who goes broke. Real escrow needs a separate
+holding cell with no `StrictMonotonic` on it — the shape `BountyTreasury` already
+is — and that is a design fork (who mints it, who holds its cap, what happens to an
+abandoned bounty), not wiring.
+
+⚠ Nothing binds the payee to the committed `CLAIMANT_HASH` at the executor: no
+`StateConstraint` relates a `Transfer` destination to a state slot. The Discord and
+CLI surfaces check it against the node's committed field view before submitting.
+Making it an executor refusal needs a new constraint atom, which is Lean-authored
+work on the constraint language.
+
 ## What this crate exports
 
 ```rust
 // Axis 1 — verified core
 bounty_factory_descriptor() -> FactoryDescriptor
 bounty_cell_program()       -> CellProgram
-build_post_action / build_claim_action / build_submit_action / build_payout_action
+build_post_action / build_claim_action / build_submit_action / build_payout_actions
+payment_effects / settle_effects / payout_effects   // the value leg + the state leg
 register(ctx: &StarbridgeAppContext) -> [u8; 32]   // mount factory + inspector + deos surface
 
 // Axis 2 — deos surface

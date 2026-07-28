@@ -34,15 +34,33 @@ use dregg_app_framework::{
 };
 
 use starbridge_bounty_board::{
-    CLAIMANT_HASH_SLOT, STATE_CLAIMED, STATE_OPEN, STATE_SLOT, bounty_app, bounty_cell_program,
-    claim_effects, claimant_hash, fire_claim, fire_payout, fire_submit, register_deos, seed_bounty,
-    state_field,
+    CLAIMANT_HASH_SLOT, PayoutError, STATE_CLAIMED, STATE_OPEN, STATE_SLOT, bounty_app,
+    bounty_cell_program, claim_effects, claimant_hash, fire_claim, fire_payout, fire_submit,
+    register_deos, seed_bounty, state_field,
 };
 
 fn agent(seed: u8) -> (AppCipherclerk, EmbeddedExecutor) {
     let cclerk = AppCipherclerk::new(AgentCipherclerk::new(), [seed; 32]);
     let executor = EmbeddedExecutor::new(&cclerk, "default");
     (cclerk, executor)
+}
+
+/// Co-place a payee cell in the SAME currency as the bounty cell, so the
+/// payout's `Transfer` is the single-column move the kernel admits.
+fn co_place_payee(
+    executor: &EmbeddedExecutor,
+    bounty: dregg_app_framework::CellId,
+    tag: u8,
+) -> dregg_app_framework::CellId {
+    let asset = executor.with_ledger_mut(|ledger| ledger.get(&bounty).unwrap().asset());
+    let payee = dregg_cell::Cell::with_balance([tag; 32], [tag; 32], 0).in_asset(asset);
+    let id = payee.id();
+    executor.ensure_cell(payee).expect("payee co-placed");
+    id
+}
+
+fn balance_of(executor: &EmbeddedExecutor, cell: dregg_app_framework::CellId) -> i64 {
+    executor.with_ledger_mut(|ledger| ledger.get(&cell).map(|c| c.state.balance()).unwrap_or(0))
 }
 
 // =============================================================================
@@ -140,15 +158,21 @@ fn a_watcher_below_the_poster_tier_cannot_payout_the_cap_tooth_bites_in_band() {
     // A WATCHER holding only `Signature` (incomparable-below the `None`/root `payout` needs)
     // firing `payout`: the CAP tooth refuses IN-BAND — `is_attenuation(Signature, None)` is
     // false. Nothing is submitted (anti-ghost). A watcher can read but cannot settle.
-    let refused = fire_payout(&app, &AuthRequired::Signature, &cclerk, &executor);
+    let payee = co_place_payee(&executor, cclerk.cell_id(), 0xC1);
+    let refused = fire_payout(&app, &AuthRequired::Signature, payee, &cclerk, &executor);
     assert!(
         matches!(
             refused,
-            Err(FireExecuteError::Gate(
+            Err(PayoutError::Execute(FireExecuteError::Gate(
                 dregg_app_framework::FireError::Unauthorized { .. }
-            ))
+            )))
         ),
         "a watcher's payout is refused at the cap tooth in-band, got {refused:?}"
+    );
+    assert_eq!(
+        balance_of(&executor, payee),
+        0,
+        "a refused payout moves NOTHING"
     );
 }
 
@@ -266,7 +290,22 @@ fn the_full_four_state_lifecycle_runs_through_the_gated_fires() {
         &executor,
     )
     .expect("submit commits");
-    fire_payout(&app, &AuthRequired::None, &cclerk, &executor).expect("payout commits");
+    let payee = co_place_payee(&executor, cclerk.cell_id(), 0xC2);
+    let payer_before = balance_of(&executor, cclerk.cell_id());
+    fire_payout(&app, &AuthRequired::None, payee, &cclerk, &executor).expect("payout commits");
+
+    // THE CONSERVATION: the reward the bounty COMMITTED to (its `WriteOnce`
+    // REWARD slot, read off the live cell by `fire_payout`) is now the payee's,
+    // and it came out of the paying cell.
+    assert_eq!(
+        balance_of(&executor, payee),
+        500,
+        "the claimant HOLDS the reward, which is what `payout` has to mean"
+    );
+    assert!(
+        balance_of(&executor, cclerk.cell_id()) <= payer_before - 500,
+        "the reward left the paying cell (plus the turn fee)"
+    );
 
     // The bounty reached PAID (terminal).
     let state = executor.cell_state(cclerk.cell_id()).unwrap();
@@ -278,15 +317,20 @@ fn the_full_four_state_lifecycle_runs_through_the_gated_fires() {
 
     // A second payout (PAID -> PAID, no-advance) is now refused at the STATE tooth in-band:
     // the submitted precondition (STATE == SUBMITTED) fails on a PAID bounty.
-    let refused = fire_payout(&app, &AuthRequired::None, &cclerk, &executor);
+    let refused = fire_payout(&app, &AuthRequired::None, payee, &cclerk, &executor);
     assert!(
         matches!(
             refused,
-            Err(FireExecuteError::Gate(
+            Err(PayoutError::Execute(FireExecuteError::Gate(
                 dregg_app_framework::FireError::StateConditionUnmet { .. }
-            ))
+            )))
         ),
         "a second payout is refused at the state tooth in-band, got {refused:?}"
+    );
+    assert_eq!(
+        balance_of(&executor, payee),
+        500,
+        "the refused second payout paid NOTHING a second time"
     );
 }
 

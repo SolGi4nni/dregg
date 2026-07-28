@@ -28,7 +28,7 @@
 //!     (open → claimed → submitted → paid) with the current step marked;
 //!   - a **"Bounty" `section`** surfacing the LIVE cell state: a `gauge` bound to
 //!     [`STATE_SLOT`](crate::STATE_SLOT) (state-machine progress) and a `gauge` on the
-//!     escrowed [`REWARD_SLOT`](crate::REWARD_SLOT), plus `bind`s on the reward, the
+//!     promised [`REWARD_SLOT`](crate::REWARD_SLOT), plus `bind`s on the reward, the
 //!     [`CLAIMANT_HASH_SLOT`](crate::CLAIMANT_HASH_SLOT) and the
 //!     [`TITLE_HASH_SLOT`](crate::TITLE_HASH_SLOT) — each a fine-grained signal that
 //!     re-reads the live value (the SAME witnessed read a native `bind` closure
@@ -50,8 +50,8 @@ use crate::{
     STATE_SUBMITTED, TITLE_HASH_SLOT,
 };
 
-/// The reward bar's denominator — a representative escrow ceiling so a fully-funded
-/// bounty fills the gauge (the seeded reward is `1_000`).
+/// The reward bar's denominator — a representative ceiling so a top-of-range
+/// bounty fills the gauge (the seeded reward is `500`).
 const REWARD_GAUGE_MAX: u64 = 1_000;
 
 /// A `deos.ui.text` node.
@@ -134,7 +134,7 @@ fn action(glyph: &str, label: &str, turn: &str) -> Value {
 ///
 /// A rich, live bounty surface: a status header (name + `CLAIMED` pill + lifecycle
 /// breadcrumb), a "Bounty" section surfacing the live state-machine gauge, the
-/// escrowed-reward gauge, and the reward / claimant / title binds, and an "Actions"
+/// promised-reward gauge, and the reward / claimant / title binds, and an "Actions"
 /// section of the four icon-labelled lifecycle buttons. Renderer-independent DATA.
 /// The button `turn` names are the [`service`](crate::service) method symbols.
 pub fn bounty_card_value() -> Value {
@@ -152,7 +152,7 @@ pub fn bounty_card_value() -> Value {
             divider(),
             section("Bounty", "genuine", vec![
                 gauge(STATE_SLOT, STATE_PAID, "stage ", true),
-                gauge(REWARD_SLOT, REWARD_GAUGE_MAX, "escrowed reward ", false),
+                gauge(REWARD_SLOT, REWARD_GAUGE_MAX, "promised reward ", false),
                 bind(REWARD_SLOT, "reward · ", "amount"),
                 bind(CLAIMANT_HASH_SLOT, "claimant · ", "id"),
                 bind(TITLE_HASH_SLOT, "title hash · ", "hash"),
@@ -257,7 +257,7 @@ mod tests {
     fn the_state_and_reward_gauges_read_the_live_slots() {
         let card = bounty_card_value();
         let gauges = of_kind(&card, "gauge");
-        assert_eq!(gauges.len(), 2, "a state-machine gauge + an escrow gauge");
+        assert_eq!(gauges.len(), 2, "a state-machine gauge + a reward gauge");
         assert_eq!(gauges[0]["props"]["slot"], STATE_SLOT);
         assert_eq!(gauges[0]["props"]["max"], STATE_PAID);
         assert_eq!(gauges[1]["props"]["slot"], REWARD_SLOT);

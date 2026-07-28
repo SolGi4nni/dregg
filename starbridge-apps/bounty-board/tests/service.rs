@@ -20,7 +20,7 @@
 //!    answer rides the OFE cross-cell-read), and an unknown method does not route.
 
 use dregg_app_framework::{
-    AgentCipherclerk, AppCipherclerk, EmbeddedExecutor, InterfaceRegistry, InvokeAuthority,
+    AgentCipherclerk, AppCipherclerk, CellId, EmbeddedExecutor, InterfaceRegistry, InvokeAuthority,
     InvokeRefused,
 };
 use dregg_cell::interface::{Semantics, method_symbol};
@@ -32,6 +32,20 @@ use starbridge_bounty_board::service::{
 use starbridge_bounty_board::{
     CLAIMANT_HASH_SLOT, STATE_CLAIMED, STATE_SLOT, claimant_hash, seed_bounty, state_field,
 };
+
+/// Co-place a payee cell in the SAME currency as the bounty cell, so the payout's
+/// `Transfer` is the single-column move the kernel admits.
+fn co_place_payee(executor: &EmbeddedExecutor, bounty: CellId, tag: u8) -> CellId {
+    let asset = executor.with_ledger_mut(|ledger| ledger.get(&bounty).unwrap().asset());
+    let payee = dregg_cell::Cell::with_balance([tag; 32], [tag; 32], 0).in_asset(asset);
+    let id = payee.id();
+    executor.ensure_cell(payee).expect("payee co-placed");
+    id
+}
+
+fn balance_of(executor: &EmbeddedExecutor, cell: CellId) -> i64 {
+    executor.with_ledger_mut(|ledger| ledger.get(&cell).map(|c| c.state.balance()).unwrap_or(0))
+}
 
 /// A cipherclerk + an embedded executor whose agent cell IS the bounty cell, with
 /// the canonical bounty program installed and a POSTED/OPEN genesis state.
@@ -199,9 +213,28 @@ fn the_full_lifecycle_runs_through_invoke() {
                 .unwrap(),
         )
         .expect("submit commits");
+    let payee = co_place_payee(&executor, service.cell, 0xD1);
+    let escrow_before = balance_of(&executor, service.cell);
     executor
-        .submit_turn(&service.payout(&cclerk, InvokeAuthority::Signature).unwrap())
+        .submit_turn(
+            &service
+                .payout(&cclerk, payee, 500, InvokeAuthority::Signature)
+                .unwrap(),
+        )
         .expect("payout commits");
+
+    // THE CONSERVATION, asserted rather than the flag: the payee HOLDS the reward
+    // and it came out of the paying cell. Before 2026-07-28 this method desugared
+    // to a lone `SetField` and this assertion was unwritable.
+    assert_eq!(
+        balance_of(&executor, payee),
+        500,
+        "an invoke()-desugared payout MOVES the reward to the claimant"
+    );
+    assert!(
+        balance_of(&executor, service.cell) <= escrow_before - 500,
+        "the reward left the paying cell (plus the turn fee)"
+    );
 
     let state = executor.cell_state(service.cell).unwrap();
     assert_eq!(
@@ -211,8 +244,26 @@ fn the_full_lifecycle_runs_through_invoke() {
     );
 
     // A re-payout is a no-advance PAID → PAID the executor's StrictMonotonic refuses.
-    let re = executor.submit_turn(&service.payout(&cclerk, InvokeAuthority::Signature).unwrap());
-    assert!(re.is_err(), "a re-payout is refused (StrictMonotonic)");
+    let re = executor.submit_turn(
+        &service
+            .payout(&cclerk, payee, 500, InvokeAuthority::Signature)
+            .unwrap(),
+    );
+    assert!(re.is_err(), "a re-payout is refused");
+    assert_eq!(
+        balance_of(&executor, payee),
+        500,
+        "the refused re-payout paid nothing a second time"
+    );
+
+    // A zero payout is refused before any turn is built.
+    assert!(
+        matches!(
+            service.payout(&cclerk, payee, 0, InvokeAuthority::Signature),
+            Err(BountyServiceError::NothingToPay)
+        ),
+        "a payout that would move nothing is not expressible"
+    );
 }
 
 #[test]
