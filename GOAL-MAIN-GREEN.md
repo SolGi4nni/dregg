@@ -122,6 +122,11 @@ first.
   sanctioned sweep — it is live lane targets (persvati `srot` alone is 100.6 GB), and
   `reclaim-space.sh --clean` races active builds. **persvati 98%, hbox 99% — ember's call.**
 
+- Gate reading at checkpoint: `dark-modules` PASS · `ci-invariants-structural` PASS · `doc-refs` PASS
+  · `no-disarmed-guard` PASS (7,642 files). `ratchet-darkness` RED on
+  `Dregg2.Circuit.WholeImageFoldRealization` — **untracked, another lane's WIP** (570 lines, 29
+  theorems). Left red on purpose: it is a message for its author, not a number to make go away.
+
 ## Open for ember
 1. **F1?** — the only route that makes a successor to `RestHashIffFrame` satisfiable. Flag day:
    commitment epoch + descriptor re-emit + re-genesis, 234 binder positions across 85 modules.
