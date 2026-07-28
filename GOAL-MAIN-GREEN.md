@@ -25,6 +25,13 @@ first.
 | `ci-invariants-structural` | 1 FAILURE |
 
 ## Next 3 moves
+1. **Lean catalog drift** dispatched — `EffectKind` has no `.mint`, colors `.burn` opposite to the
+   executor, and cites a Rust function deleted today. ⚠ Briefed NOT to assume the executor is right.
+2. **`test-gauntlet.sh` is invoked by nothing** — C2's surviving half. It owns the `--ignored`
+   profiles, and 27 `[[test]]` targets behind unenabled `required-features` print nothing at all.
+3. **The apex F1 fork** — still ember's, and still the largest single open decision.
+
+## Superseded moves
 1. **B3** dispatched — the sovereign carrier arm is dead TWO levels: neither the attach nor the drain
    has a production caller, while three production sites fill the stash.
 2. **B5** dispatched — the solo finalization arm still finalizes any creator, the half `c6f00c228`
