@@ -89,6 +89,30 @@ It also prints two measurements the plan in `docs/MINA-REAL-BLOCK-GATE.md` §6.1
 `linearization.index_terms = 0` (hence `f_comm` is a **one-term** MSM), and that the terminal
 `msm == 0` runs over **82 non-SRS points + `|srs.g| = 32768`**.
 
+#### Rungs 5e and 5f (2026-07-28) — four more ground truths, in the same "assert before emit" shape
+
+`wrap_group_export` also produces what `MinaWrapPublicCommGate` (5e) and `MinaWrapOpeningGate`
+(5f) consume, and asserts each object before emitting it:
+
+* **GT5 — `public_comm`.** The 40 SRS Lagrange points, the block's 40-element public input and
+  `srs.h` are dumped, and the reconstruction is an **explicit sequential fold** rather than
+  `PolyComm::multi_scalar_mul`, so it is a different computation from the one it is checked
+  against; it must equal o1-labs' `commit_public`. Then `public_comm` is displaced by `+G` inside
+  the 47-entry evaluations list and **o1-labs' own `SRS::verify` must reject**.
+* **GT6/GT7 — the opening relation.** `SRS::verify` folds two statements into one randomised MSM
+  and exposes neither, so this binary re-derives the whole IPA transcript from `o.fq_sponge`
+  (`absorb_fr(shift_scalar(cip))` → `challenge_fq` → the group map → 15 rounds → `absorb_g(delta)`
+  → `c`) and asserts the deterministic (`rand_base = 1`) relation
+  `c·Q + delta − z1·sg − z1·b0·U − z2·H == O` **directly, with arkworks group arithmetic**. It
+  must hold, and must FAIL at `z1 + 1` and at `combined + G`.
+* **GT8 — the leg the Lean side defers.** `<b_poly_coefficients(chal), srs.g> == opening.sg`, the
+  2^15-term SRS MSM of rung 5h. Cheap here, ~18 h and ~7 TB in-kernel; asserting it in Rust is
+  what makes 5h's deferral a **known-true premise** of 5f rather than an unexamined one.
+
+The 15 IPA *pre*challenges are replayed on a second sponge clone (via `OpeningProof::prechallenges`)
+and each is asserted to endo-lift to the challenge the verify path computed, so the Lean sponge
+derivation has 128-bit values to land on.
+
 The extra `rand = "0.8"` dependency exists only because `SRS::verify`'s `RngCore + CryptoRng`
 bounds come from rand 0.8 and nothing in the graph re-exports it.
 

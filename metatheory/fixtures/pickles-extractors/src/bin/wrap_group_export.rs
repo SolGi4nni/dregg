@@ -67,7 +67,8 @@ use mina_p2p_messages::v2::{
 };
 use mina_poseidon::constants::PlonkSpongeConstantsKimchi;
 use mina_poseidon::pasta::FULL_ROUNDS;
-use mina_poseidon::sponge::{DefaultFqSponge, DefaultFrSponge};
+use mina_poseidon::sponge::{DefaultFqSponge, DefaultFrSponge, ScalarChallenge};
+use mina_poseidon::FqSponge as _;
 use poly_commitment::commitment::{BatchEvaluationProof, CommitmentCurve, Evaluation, PolyComm};
 use poly_commitment::ipa::OpeningProof;
 use poly_commitment::SRS as _;
@@ -441,6 +442,246 @@ fn main() {
         srs_len
     );
 
+    // ======================================================================
+    // RUNG 5e — `public_comm`, the Lagrange MSM over the block's public input.
+    // ======================================================================
+    // `verifier.rs:850-871` (reproduced as `commit_public` below) builds
+    //   public_comm = mask_custom( MSM(lagrange[0..public], -public_input), blinders = 1 )
+    //               = Σ_{i<40} (-public_i) · L_i  +  1 · srs.h
+    // `mask_custom` (`ipa.rs:408-425`) is `com + blinder·h` per chunk, and the blinder here is
+    // literally `PolyComm::one` — so the "blinding" is a FIXED `+h`, not a secret.
+    let srs_h: Pallas = vi.srs().h;
+    let lagrange40: Vec<Pallas> = {
+        let lgr = vi.srs().get_lagrange_basis(vi.domain);
+        let v: Vec<Pallas> = lgr
+            .iter()
+            .take(vi.public)
+            .map(|c| {
+                assert_eq!(c.chunks.len(), 1, "a Lagrange basis comm is chunked");
+                c.chunks[0]
+            })
+            .collect();
+        assert_eq!(v.len(), vi.public);
+        v
+    };
+    // Our own explicit fold — deliberately NOT `multi_scalar_mul`, so the reconstruction is a
+    // different computation from the one it is pinned against.
+    let public_comm_ours: Pallas = {
+        let mut acc = <Pallas as AffineRepr>::Group::zero();
+        for (l, p) in lagrange40.iter().zip(public_input.iter()) {
+            acc += *l * (-*p);
+        }
+        acc += srs_h.into_group();
+        acc.into_affine()
+    };
+    assert_eq!(
+        public_comm_ours, public_comm.chunks[0],
+        "the explicit Lagrange fold does not reproduce o1-labs' commit_public"
+    );
+    // and it is the point the ACCEPTED verification actually consumed: slot 2 of the
+    // aggregation, i.e. the third entry of `combine_commitments`' own output.
+    assert_eq!(
+        combine_points[2], public_comm.chunks[0],
+        "public_comm is not combine slot 2"
+    );
+    // GT5: the pin is REFUTABLE — displace `public_comm` in the evaluations list and o1-labs'
+    // own IPA check rejects. (`build_evaluations` puts it at index `o.polys.len()`.)
+    {
+        let mut evs = build_evaluations(ft_comm.clone());
+        let slot = o.polys.len();
+        assert_eq!(evs[slot].commitment.chunks[0], public_comm.chunks[0]);
+        evs[slot].commitment = PolyComm {
+            chunks: vec![(public_comm.chunks[0] + Pallas::generator()).into_affine()],
+        };
+        let mut batch = [BatchEvaluationProof {
+            sponge: o.fq_sponge.clone(),
+            evaluations: evs,
+            evaluation_points: evaluation_points.clone(),
+            polyscale: o.oracles.v,
+            evalscale: o.oracles.u,
+            opening: &pp.proof,
+            combined_inner_product: o.combined_inner_product,
+        }];
+        let bad = vi.srs().verify::<EFqSponge, _, FULL_ROUNDS>(
+            &group_map,
+            &mut batch,
+            &mut rand::thread_rng(),
+        );
+        eprintln!("[gt5] SRS::verify on public_comm + G (negative control) = {bad}");
+        assert!(!bad, "the IPA check ACCEPTED a displaced public_comm");
+    }
+    eprintln!(
+        "[5e] public_comm reproduced from {} Lagrange points + srs.h",
+        lagrange40.len()
+    );
+
+    // ======================================================================
+    // RUNG 5f — `check_bulletproof`: the IPA relation, minus the <s,G> term.
+    // ======================================================================
+    // `SRS::verify` (`ipa.rs:118-300`) folds TWO independent statements into one randomised
+    // MSM, with independent randomisers `rand_base` and `sg_rand_base`:
+    //
+    //   (A)  sg == <s, srs.g>                                      -- the sg / accumulator leg
+    //   (B)  c·Q + delta - z1·sg - z1·b0·U - z2·H == O             -- the opening relation
+    //        where  Q = Σ_j (chal_inv_j·L_j + chal_j·R_j) + Σ_i ξ^i·C_i + cip·U
+    //
+    // (B) is the rung: it is the first statement in this campaign whose truth says a COMMITTED
+    // polynomial has the evaluation the proof claims. Both are asserted here, deterministically
+    // (rand_base = 1), before anything is emitted.
+    let (_endo_q, endo_r) = poly_commitment::ipa::endos::<Pallas>();
+    let cip_shifted = poly_commitment::commitment::shift_scalar::<Pallas>(o.combined_inner_product);
+    let mut sponge = o.fq_sponge.clone();
+    sponge.absorb_fr(&[cip_shifted]);
+    let t_fq: Fp = sponge.challenge_fq();
+    let u_base: Pallas = {
+        let (x, y) = group_map.to_group(t_fq);
+        Pallas::of_coordinates(x, y)
+    };
+    let ipa_chals = pp.proof.challenges::<EFqSponge>(&endo_r, &mut sponge);
+    sponge.absorb_g(&[pp.proof.delta]);
+    let c_pre_fq: Fq = sponge.challenge();
+    let c: Fq = ScalarChallenge(c_pre_fq).to_field(&endo_r);
+    assert_eq!(ipa_chals.chal.len(), pp.proof.lr.len());
+
+    // The 128-bit PREchallenges, for the Lean sponge derivation. Replayed on a second clone so
+    // the values above stay the ones `SRS::verify` itself would compute.
+    let ipa_prechals: Vec<Fq> = {
+        let mut s2 = o.fq_sponge.clone();
+        s2.absorb_fr(&[cip_shifted]);
+        let pre = pp.proof.prechallenges::<EFqSponge>(&mut s2);
+        let out: Vec<Fq> = pre.iter().map(|p| p.0).collect();
+        for (i, p) in pre.iter().enumerate() {
+            assert_eq!(
+                p.clone().to_field(&endo_r),
+                ipa_chals.chal[i],
+                "prechallenge {i} does not endo-lift to the IPA challenge"
+            );
+        }
+        s2.absorb_g(&[pp.proof.delta]);
+        assert_eq!(
+            s2.challenge(),
+            c_pre_fq,
+            "the c prechallenge replay diverges"
+        );
+        out
+    };
+
+    // `b0 = Σ_j evalscale^j · b_poly(chal, evaluation_point_j)` (`ipa.rs:203-212`).
+    let b0: Fq = {
+        let mut scale = Fq::one();
+        let mut res = Fq::zero();
+        for &e in evaluation_points.iter() {
+            res += scale * poly_commitment::commitment::b_poly(&ipa_chals.chal, e);
+            scale *= o.oracles.u;
+        }
+        res
+    };
+
+    // -- GROUND TRUTH 6: statement (B) HOLDS on the real block, deterministically ----------
+    let bulletproof_residual = |z1: Fq, cc: Pallas| -> <Pallas as AffineRepr>::Group {
+        let mut acc = <Pallas as AffineRepr>::Group::zero();
+        for ((l, r), (ci, cinv)) in pp
+            .proof
+            .lr
+            .iter()
+            .zip(ipa_chals.chal.iter().zip(ipa_chals.chal_inv.iter()))
+        {
+            acc += *l * (c * cinv);
+            acc += *r * (c * ci);
+        }
+        acc += cc * c;
+        acc += u_base * (c * o.combined_inner_product - z1 * b0);
+        acc += pp.proof.sg * (-z1);
+        acc += srs_h * (-pp.proof.z2);
+        acc += pp.proof.delta.into_group();
+        acc
+    };
+    let residual = bulletproof_residual(pp.proof.z1, combined_commitment);
+    eprintln!(
+        "[gt6] the IPA opening relation c·Q + delta - z1·sg - z1·b0·U - z2·H == O : {}",
+        residual.is_zero()
+    );
+    assert!(
+        residual.is_zero(),
+        "the bulletproof opening relation does NOT hold on the real block"
+    );
+    // -- GROUND TRUTH 7: and it is REFUTABLE -----------------------------------------------
+    assert!(
+        !bulletproof_residual(pp.proof.z1 + Fq::one(), combined_commitment).is_zero(),
+        "the relation held at z1+1 — GT6 is vacuous"
+    );
+    assert!(
+        !bulletproof_residual(
+            pp.proof.z1,
+            (combined_commitment + Pallas::generator()).into_affine()
+        )
+        .is_zero(),
+        "the relation held at combined_comm + G — GT6 is vacuous"
+    );
+
+    // -- GROUND TRUTH 8: statement (A), the leg the Lean side DEFERS (5h) --------------------
+    // Measured here so the deferral is a known-true premise rather than an unexamined one.
+    {
+        use ark_ec::VariableBaseMSM;
+        let s = poly_commitment::commitment::b_poly_coefficients(&ipa_chals.chal);
+        assert_eq!(s.len(), vi.srs().g.len());
+        let bigs: Vec<_> = s.iter().map(|x| x.into_bigint()).collect();
+        let sg_from_srs =
+            <Pallas as AffineRepr>::Group::msm_bigint(&vi.srs().g, &bigs).into_affine();
+        eprintln!(
+            "[gt8] <s, srs.g> == opening.sg (the 2^15-term leg the Lean side defers) : {}",
+            sg_from_srs == pp.proof.sg
+        );
+        assert_eq!(sg_from_srs, pp.proof.sg, "the sg leg does NOT hold");
+    }
+    eprintln!(
+        "[5f] priced: {} scalar-muls in-kernel (2*{} lr + combined + u + sg + h)",
+        2 * pp.proof.lr.len() + 4,
+        pp.proof.lr.len()
+    );
+
+    // -- the group map, opened up so the Lean side can DERIVE u_base's x from t ---------------
+    // `groupmap/src/lib.rs:65-125` (SvdW06). `alpha` is an inverse and each candidate `x` is
+    // accepted only if `x^3 + 5` is a square, so the in-kernel version needs the inverse and the
+    // square root as WITNESSES plus a non-residue certificate for the candidates that were
+    // skipped. All of that is emitted here and checked in Lean.
+    let gm = GroupMapWitness::of(&group_map, t_fq);
+    assert_eq!(
+        Pallas::of_coordinates(gm.xs[gm.selected], gm.y),
+        u_base,
+        "the reproduced group map does not land on u_base"
+    );
+    eprintln!(
+        "[5f] group map: candidate x{} selected, {} skipped as non-residues",
+        gm.selected + 1,
+        gm.selected
+    );
+
+    let rungs = render_rungs(
+        &lagrange40,
+        &srs_h,
+        &public_input,
+        &public_comm.chunks[0],
+        &o.combined_inner_product,
+        &cip_shifted,
+        &t_fq,
+        &u_base,
+        &gm,
+        &ipa_prechals,
+        &ipa_chals.chal,
+        &ipa_chals.chal_inv,
+        &c_pre_fq,
+        &c,
+        &b0,
+        &pp.proof.lr,
+        &pp.proof.sg,
+        &pp.proof.delta,
+        &pp.proof.z1,
+        &pp.proof.z2,
+        &evaluation_points,
+        o.oracles.u,
+    );
+
     dump(
         &fx.state_hash,
         &fx.blockchain_length,
@@ -458,7 +699,197 @@ fn main() {
         &combined_commitment,
         srs_len,
         non_srs_terms,
+        &rungs,
     );
+}
+
+// ------------------------------------------------------------------ the group map, opened up
+
+/// The SvdW group map (`groupmap/src/lib.rs`) run on one input, with every value an in-kernel
+/// re-derivation needs as a witness: the inverse `alpha`, the three candidate x-coordinates, the
+/// index the search settled on, and the square root.
+struct GroupMapWitness {
+    u: Fp,
+    fu: Fp,
+    sqrt_neg_three_u_sq: Fp,
+    sqrt_neg_three_u_sq_minus_u_over_2: Fp,
+    inv_three_u_sq: Fp,
+    alpha_inv: Fp,
+    alpha: Fp,
+    xs: [Fp; 3],
+    selected: usize,
+    y: Fp,
+}
+
+impl GroupMapWitness {
+    fn of(p: &kimchi::groupmap::BWParameters<PallasParameters>, t: Fp) -> Self {
+        let t2 = t.square();
+        let alpha_inv = (t2 + p.fu) * t2;
+        let alpha = alpha_inv.inverse().expect("alpha_inv is invertible");
+        let x1 = p.sqrt_neg_three_u_squared_minus_u_over_2
+            - t2.square() * alpha * p.sqrt_neg_three_u_squared;
+        let x2 = -p.u - x1;
+        let x3 = {
+            let t2_plus_fu = t2 + p.fu;
+            let t2_inv = alpha * t2_plus_fu;
+            p.u - t2_plus_fu.square() * t2_inv * p.inv_three_u_squared
+        };
+        let xs = [x1, x2, x3];
+        let (selected, y) = xs
+            .iter()
+            .enumerate()
+            .find_map(|(i, x)| ((*x * x * x) + Fp::from(5u64)).sqrt().map(|y| (i, y)))
+            .expect("no candidate x is on the curve");
+        Self {
+            u: p.u,
+            fu: p.fu,
+            sqrt_neg_three_u_sq: p.sqrt_neg_three_u_squared,
+            sqrt_neg_three_u_sq_minus_u_over_2: p.sqrt_neg_three_u_squared_minus_u_over_2,
+            inv_three_u_sq: p.inv_three_u_squared,
+            alpha_inv,
+            alpha,
+            xs,
+            selected,
+            y,
+        }
+    }
+}
+
+// ------------------------------------------------------------------ rungs 5e / 5f JSON
+
+#[allow(clippy::too_many_arguments)]
+fn render_rungs(
+    lagrange40: &[Pallas],
+    srs_h: &Pallas,
+    public_input: &[Fq],
+    public_comm: &Pallas,
+    cip: &Fq,
+    cip_shifted: &Fq,
+    t_fq: &Fp,
+    u_base: &Pallas,
+    gm: &GroupMapWitness,
+    prechals: &[Fq],
+    chal: &[Fq],
+    chal_inv: &[Fq],
+    c_pre: &Fq,
+    c: &Fq,
+    b0: &Fq,
+    lr: &[(Pallas, Pallas)],
+    sg: &Pallas,
+    delta: &Pallas,
+    z1: &Fq,
+    z2: &Fq,
+    evaluation_points: &[Fq],
+    evalscale: Fq,
+) -> String {
+    let mut s = String::new();
+    let js = |xs: &[String]| xs.join(",");
+
+    // ---- 5e -------------------------------------------------------------
+    s.push_str("\"public_comm_rung\": {\n");
+    s.push_str(&format!("  \"srs_h\": {},\n", pallas_j(srs_h)));
+    s.push_str(&format!(
+        "  \"lagrange_basis\": [{}],\n",
+        js(&lagrange40.iter().map(pallas_j).collect::<Vec<_>>())
+    ));
+    s.push_str(&format!(
+        "  \"public_input\": [{}],\n",
+        js(&public_input
+            .iter()
+            .map(|x| format!("\"{}\"", dfq(x)))
+            .collect::<Vec<_>>())
+    ));
+    s.push_str(&format!(
+        "  \"public_comm_gold\": {}\n",
+        pallas_j(public_comm)
+    ));
+    s.push_str("},\n");
+
+    // ---- 5f -------------------------------------------------------------
+    s.push_str("\"bulletproof_rung\": {\n");
+    s.push_str(&format!(
+        "  \"combined_inner_product\": \"{}\",\n",
+        dfq(cip)
+    ));
+    s.push_str(&format!(
+        "  \"combined_inner_product_shifted\": \"{}\",\n",
+        dfq(cip_shifted)
+    ));
+    s.push_str(&format!("  \"u_base_preimage_t\": \"{}\",\n", dfp(t_fq)));
+    s.push_str("  \"group_map\": {\n");
+    s.push_str(&format!("    \"u\": \"{}\",\n", dfp(&gm.u)));
+    s.push_str(&format!("    \"fu\": \"{}\",\n", dfp(&gm.fu)));
+    s.push_str(&format!(
+        "    \"sqrt_neg_three_u_squared\": \"{}\",\n",
+        dfp(&gm.sqrt_neg_three_u_sq)
+    ));
+    s.push_str(&format!(
+        "    \"sqrt_neg_three_u_squared_minus_u_over_2\": \"{}\",\n",
+        dfp(&gm.sqrt_neg_three_u_sq_minus_u_over_2)
+    ));
+    s.push_str(&format!(
+        "    \"inv_three_u_squared\": \"{}\",\n",
+        dfp(&gm.inv_three_u_sq)
+    ));
+    s.push_str(&format!("    \"alpha_inv\": \"{}\",\n", dfp(&gm.alpha_inv)));
+    s.push_str(&format!("    \"alpha\": \"{}\",\n", dfp(&gm.alpha)));
+    s.push_str(&format!(
+        "    \"candidate_xs\": [{}],\n",
+        js(&gm
+            .xs
+            .iter()
+            .map(|x| format!("\"{}\"", dfp(x)))
+            .collect::<Vec<_>>())
+    ));
+    s.push_str(&format!("    \"selected\": {},\n", gm.selected));
+    s.push_str(&format!("    \"y\": \"{}\"\n", dfp(&gm.y)));
+    s.push_str("  },\n");
+    s.push_str(&format!("  \"u_base\": {},\n", pallas_j(u_base)));
+    s.push_str(&format!(
+        "  \"ipa_prechallenges\": [{}],\n",
+        js(&prechals
+            .iter()
+            .map(|x| format!("\"{}\"", dfq(x)))
+            .collect::<Vec<_>>())
+    ));
+    s.push_str(&format!(
+        "  \"ipa_chal\": [{}],\n",
+        js(&chal
+            .iter()
+            .map(|x| format!("\"{}\"", dfq(x)))
+            .collect::<Vec<_>>())
+    ));
+    s.push_str(&format!(
+        "  \"ipa_chal_inv\": [{}],\n",
+        js(&chal_inv
+            .iter()
+            .map(|x| format!("\"{}\"", dfq(x)))
+            .collect::<Vec<_>>())
+    ));
+    s.push_str(&format!("  \"c_prechallenge\": \"{}\",\n", dfq(c_pre)));
+    s.push_str(&format!("  \"c\": \"{}\",\n", dfq(c)));
+    s.push_str(&format!("  \"b0\": \"{}\",\n", dfq(b0)));
+    s.push_str(&format!(
+        "  \"evaluation_points\": [{}],\n",
+        js(&evaluation_points
+            .iter()
+            .map(|x| format!("\"{}\"", dfq(x)))
+            .collect::<Vec<_>>())
+    ));
+    s.push_str(&format!("  \"evalscale_u\": \"{}\",\n", dfq(&evalscale)));
+    s.push_str(&format!(
+        "  \"lr\": [{}],\n",
+        js(&lr
+            .iter()
+            .map(|(l, r)| format!("[{},{}]", pallas_j(l), pallas_j(r)))
+            .collect::<Vec<_>>())
+    ));
+    s.push_str(&format!("  \"sg\": {},\n", pallas_j(sg)));
+    s.push_str(&format!("  \"delta\": {},\n", pallas_j(delta)));
+    s.push_str(&format!("  \"z1\": \"{}\",\n", dfq(z1)));
+    s.push_str(&format!("  \"z2\": \"{}\"\n", dfq(z2)));
+    s.push_str("},");
+    s
 }
 
 // ------------------------------------------------------------------ dump
@@ -481,6 +912,7 @@ fn dump(
     combined_commitment: &Pallas,
     srs_len: usize,
     non_srs_terms: usize,
+    rungs: &str,
 ) {
     println!("{{");
     println!("\"_network\": \"mina devnet\",");
@@ -548,7 +980,11 @@ fn dump(
     );
     println!("\"terminal_msm_srs_terms\": {srs_len},");
     println!("\"terminal_msm_non_srs_terms\": {non_srs_terms},");
-    println!("\"ipa_rounds_k\": {}", pp.proof.lr.len());
+    println!("\"ipa_rounds_k\": {},", pp.proof.lr.len());
+
+    // §E/§F -- rungs 5e and 5f ---------------------------------------------
+    println!("{rungs}");
+    println!("\"_rung_ground_truth\": \"5e: explicit Lagrange fold == commit_public, SRS::verify refutes public_comm+G; 5f: c*Q + delta - z1*sg - z1*b0*U - z2*H == O deterministically, refuted at z1+1 and at combined+G; and <s,srs.g> == sg\"");
     println!("}}");
 }
 
