@@ -16,33 +16,53 @@ The vehicle is a small congruence algebra over ℤ:
   * `Cong2` on `ℤ×ℤ` (Fp2), `Cong6` on `(ℤ×ℤ)³` (Fp6), `Cong12` on `(Fp6)²` — each a congruence for
     the tower operations (`mul2/add2/xi2`, `mul6/add6/sub6/gamma6`, `mul12`), proved from `CZ`.
 
-The atomic bridge `fp2Mul_cong` turns the 8 raw gate satisfactions of one `fp2MulGadget` into the
-Fp2-product congruence `Cong2`; the whole-structure theorems then take the per-sub-operation
-congruences (exactly what `fp2Mul_cong`/`mulByXi_forces`/`fp{Add,Sub}Core_forces` deliver on the
-gadget's sub-gates) and CONCLUDE the tower/curve congruence. This is the standard refinement
-composition: each hypothesis is discharged by the sub-gadget's proven forcing.
+## ⚑ What was WRONG here until 2026-07-27
 
-## Landed (this file)
+This file's 29 theorems contained the string `acceptB` ZERO times. Every one of them took either RAW
+GATE EQUATIONS over FREE column bases (`evalH (fpMulHead a0 b0 v0 qv0) a = 0`, with `v0`, `qv0`, …
+universally quantified) or the CONCLUSIONS of other lemmas (`Cong2 …`). No generator — not
+`fp2MulGadget`, not `g1AddGadget`, not `g1DoubleGadget` — appeared in any statement. The commit
+claimed `g1Double`/`g1Add` were "**fully gadget-tied, like `fp2Mul_forces`**"; they were not, and
+neither was `fp2Mul_forces`. Nothing here related *the emitted circuit* to *the curve operation*, and
+no theorem in the file or in the tree ever applied any of the nine leaves.
 
-  * `fp6Mul_forces` — the Fp6 product gadget forces all 3 Fp2 coordinates (from 9 `fp2` products +
-    6 adds + 2 `mulByXi`).
-  * `fp12Mul_forces` — the Fp12 product gadget forces both Fp6 coordinates (from 3 Fp6 products +
-    the γ fold), via `Cong6.mul`.
-  * `g1Double_forces` / `g1Add_forces` — the Jacobian G1 gadgets force the output = the ℤ point-op
-    (over Fp), directly from the 21/29 raw gate satisfactions.
-  * `g2Double_forces` / `g2Add_forces` — the same over Fp2 (from the per-`fp2`-operation congruences).
+§9 is the repair. It supplies the acceptance rungs, and everything that could not be tied in this
+pass was RENAMED to what it is, so the names stop claiming more than the statements deliver:
+
+  * TIED to `acceptB <generator>` (§9): `fp2Mul_cong` (`fp2MulGadget`, outputs at the gadget's own
+    `fp2MulR0/R1`), `fp2Add_cong`, `fp2Sub_cong`, `mulByXi_cong` (**new — the `xi2` bridge the tower
+    theorems assumed and no lemma produced**), `g1Double_forces` (`g1DoubleGadget`, outputs at
+    `S+156/234/260`), `g1Add_forces` (`g1AddGadget`, outputs at the triple it RETURNS).
+  * RENAMED, raw-gate helper forms — real lemmas, wrong names: `fp2Mul_core_cong`,
+    `fp2Add_core_cong`, `fp2Sub_core_cong`, `g1Double_core_forces`, `g1Add_core_forces`. The tied
+    rungs above instantiate exactly these at the gadgets' own layouts.
+  * RENAMED, NOT TIED — hypotheses are other lemmas' `Cong2`/`Cong6` conclusions, not gates:
+    `fp6Mul_of_subop_congs`, `fp12Mul_of_subop_congs`, `g2Double_of_subop_congs`,
+    `g2Add_of_subop_congs`. These are the tower/curve ALGEBRA (`mul6`/`mul12`/`g2dblTrace`'s `let`
+    chains re-derived through `Cong2.trans`), which is correct and useful, but it is not forcing.
+    Tying them is mechanical and is the named next step: split `fp6MulGadget` (17 `++` segments),
+    `fp12MulGadget` (9), `g2DoubleGadget` (21), `g2AddGadget` (29) with `acceptB_append` and
+    discharge each segment with the §9 atoms. It is NOT done here.
+
+## The residual every rung in this file carries
+
+The congruence is mod `p` on the ℤ readings. Every gadget here emits VALUE gates only — no
+`fpLimbRange`, no `binGate` — so the limb encoding is not pinned to a canonical representative and
+the carry/borrow columns are unconstrained integers. A tied theorem says "the output columns are
+congruent mod `p` to the point operation", not "the output columns are the canonical encoding of it".
 
 ## What remains (the pairing arc)
 
-The Miller-loop and final-exponentiation GENERATORS are not built yet (their forcing is the step after
-that). With the tower+curve now FORCED, the pairing is composition of these forced pieces — the
-accepted ~millions-of-gates cost. This file claims exactly the tower+curve forcing, not a pairing.
+The Miller-loop and final-exponentiation GENERATORS are not built yet. This file claims exactly the
+tower+curve layer, not a pairing.
 
 ## Axiom hygiene
 
-`#assert_axioms`-clean (⊆ {propext, Classical.choice, Quot.sound}); no `sorry`/`native_decide`/`#guard`
-carrying the weight. NEW file; imports read-only (`Bls12381TowerExt`); standalone (NOT imported by the
-truncated `Dregg2.lean`).
+§10 carries `#assert_axioms` for all 34 named results — the check RUNS. The previous header asserted
+`#assert_axioms`-cleanliness while the file contained ZERO `#assert_axioms` commands (the measurement
+was real but ephemeral: one `#print axioms` on a throwaway `/tmp` file, written into the docstring as
+if it were a file property). It also said "standalone (NOT imported by the truncated `Dregg2.lean`)"
+— false: `Dregg2.lean:1535` imports it. Both corrected.
 -/
 import Dregg2.Circuit.Emit.Bls12381TowerExt
 
@@ -51,6 +71,8 @@ namespace Dregg2.Circuit.Emit.Bls12381Forcing
 open Dregg2.Circuit (Assignment)
 open Dregg2.Circuit.Emit.AirBuilder
 open Dregg2.Circuit.Emit.Bls12381Tower
+open Dregg2.Circuit.Emit.Bls12381TowerExt (mulByXiGadget fp2AddGadget fp2SubGadget g1DoubleGadget g1AddGadget)
+open Dregg2.Circuit.DescriptorIR2 (VmConstraint2)
 
 set_option autoImplicit false
 
@@ -106,10 +128,10 @@ end Cong2
 
 /-! ## §2 — The atomic bridge: `fp2MulGadget`'s gates FORCE the Fp2-product congruence. -/
 
-/-- **`fp2Mul_cong`** — the 8 raw gate satisfactions of one `fp2MulGadget` (the same hypotheses
+/-- **`fp2Mul_core_cong`** — the 8 raw gate satisfactions of one `fp2MulGadget` (the same hypotheses
 `fp2Mul_forces` takes) force `Cong2 (output) (mul2 inputs)` — the composable form the tower theorems
 consume. -/
-theorem fp2Mul_cong (a : Assignment) (a0 a1 b0 b1 v0 v1 sa sb v2 w r0 r1
+theorem fp2Mul_core_cong (a : Assignment) (a0 a1 b0 b1 v0 v1 sa sb v2 w r0 r1
     qv0 qv1 qv2 csa csb cw br0 br1 : Nat)
     (h0 : evalH (fpMulHead a0 b0 v0 qv0) a = 0)
     (h1 : evalH (fpMulHead a1 b1 v1 qv1) a = 0)
@@ -124,10 +146,10 @@ theorem fp2Mul_cong (a : Assignment) (a0 a1 b0 b1 v0 v1 sa sb v2 w r0 r1
     qv0 qv1 qv2 csa csb cw br0 br1 h0 h1 h2 h3 h4 h5 h6 h7
   exact ⟨CZ.symm e1, CZ.symm e2⟩
 
-/-! ## §3 — `fp6Mul_forces`: the Fp6 product gadget forces all 3 Fp2 coordinates.
+/-! ## §3 — `fp6Mul_of_subop_congs`: the Fp6 product gadget forces all 3 Fp2 coordinates.
 
 `F6z = (Fp2)³`. `mul6` is the schoolbook Fp6 product with the `v³ = ξ` fold. The hypotheses are the
-per-sub-operation congruences the gadget's 9 `fp2Mul_cong` + 6 `fp2Add` + 2 `mulByXi` deliver. -/
+per-sub-operation congruences the gadget's 9 `fp2Mul_core_cong` + 6 `fp2Add` + 2 `mulByXi` deliver. -/
 
 abbrev F6z := (ℤ × ℤ) × (ℤ × ℤ) × (ℤ × ℤ)
 
@@ -165,10 +187,10 @@ end Cong6
 /-- The ℤ value of an Fp6 element at its 3 Fp2 column-bases. -/
 def V6 (a : Assignment) (x y z : C2) : F6z := (V2 a x, V2 a y, V2 a z)
 
-/-- **`fp6Mul_forces`** — the 88-gate `fp6MulGadget` forces the Fp6 product in all 3 Fp2 coordinates.
-Hypotheses = the sub-operation congruences (9 `fp2Mul_cong` products, 5 Fp2 adds, 2 `mulByXi`, 3 output
+/-- **`fp6Mul_of_subop_congs`** — the 88-gate `fp6MulGadget` forces the Fp6 product in all 3 Fp2 coordinates.
+Hypotheses = the sub-operation congruences (9 `fp2Mul_core_cong` products, 5 Fp2 adds, 2 `mulByXi`, 3 output
 adds); conclusion = the reconstructed output `(c0,c1,c2)` ≡ `mul6` of the reconstructed inputs. -/
-theorem fp6Mul_forces (a : Assignment) (a0 a1 a2 b0 b1 b2 : C2)
+theorem fp6Mul_of_subop_congs (a : Assignment) (a0 a1 a2 b0 b1 b2 : C2)
     (p00 p11 p22 p12 p21 p01 p10 p02 p20 : C2) (s1 x1 s2 x2 s3 c0 c1 c2 : C2)
     (hp00 : Cong2 (V2 a p00) (mul2 (V2 a a0) (V2 a b0)))
     (hp11 : Cong2 (V2 a p11) (mul2 (V2 a a1) (V2 a b1)))
@@ -195,7 +217,7 @@ theorem fp6Mul_forces (a : Assignment) (a0 a1 a2 b0 b1 b2 : C2)
       (Cong2.trans hs2 (Cong2.add hp01 hp10)) (Cong2.trans hx2 (Cong2.xi hp22)))
   · exact Cong2.trans hc2 (Cong2.add (Cong2.trans hs3 (Cong2.add hp02 hp11)) hp20)
 
-/-! ## §4 — `fp12Mul_forces`: the Fp12 product gadget forces both Fp6 coordinates. -/
+/-! ## §4 — `fp12Mul_of_subop_congs`: the Fp12 product gadget forces both Fp6 coordinates. -/
 
 abbrev F12z := F6z × F6z
 def mul12 (A B : F12z) : F12z :=
@@ -207,11 +229,11 @@ def Cong12 (A B : F12z) : Prop := Cong6 A.1 B.1 ∧ Cong6 A.2 B.2
 def V12 (a : Assignment) (A B : C2 × C2 × C2) : F12z :=
   ((V2 a A.1, V2 a A.2.1, V2 a A.2.2), (V2 a B.1, V2 a B.2.1, V2 a B.2.2))
 
-/-- **`fp12Mul_forces`** — the 296-gate `fp12MulGadget` forces the Fp12 product in both Fp6 coords.
-Hypotheses = the sub-operation Fp6 congruences (3 `fp6Mul_forces` products, 2 adds, the γ fold, the two
+/-- **`fp12Mul_of_subop_congs`** — the 296-gate `fp12MulGadget` forces the Fp12 product in both Fp6 coords.
+Hypotheses = the sub-operation Fp6 congruences (3 `fp6Mul_of_subop_congs` products, 2 adds, the γ fold, the two
 output add/sub); conclusion = `(d0,d1)` ≡ `mul12` of the reconstructed inputs. Uses `Cong6.mul` to lift
 `sa·sb ≡ (a0+a1)(b0+b1)`. -/
-theorem fp12Mul_forces (a : Assignment) (a0 a1 b0 b1 : C2 × C2 × C2)
+theorem fp12Mul_of_subop_congs (a : Assignment) (a0 a1 b0 b1 : C2 × C2 × C2)
     (v0 v1 v2 sa sb gv1 d0 w d1 : C2 × C2 × C2)
     (hv0 : Cong6 (V12 a v0 v0).1 (mul6 (V12 a a0 a0).1 (V12 a b0 b0).1))
     (hv1 : Cong6 (V12 a v1 v1).1 (mul6 (V12 a a1 a1).1 (V12 a b1 b1).1))
@@ -255,9 +277,9 @@ private theorem addCZ {a : Assignment} {x y z c : Nat} (h : evalH (fpAddHead x y
 private theorem subCZ {a : Assignment} {x y z c : Nat} (h : evalH (fpSubHead x y z c) a = 0) :
     CZ (fpVal a z) (fpVal a x - fpVal a y) := CZ.symm (fpSubCore_forces a x y z c h)
 
-/-- **`g1Double_forces`** — the 21-gate `g1DoubleGadget` forces `(X3,Y3,Z3) ≡ g1dblZ (X,Y,Z)` over Fp,
+/-- **`g1Double_core_forces`** — the 21-gate `g1DoubleGadget` forces `(X3,Y3,Z3) ≡ g1dblZ (X,Y,Z)` over Fp,
 from the raw gate satisfactions. -/
-theorem g1Double_forces (a : Assignment)
+theorem g1Double_core_forces (a : Assignment)
     (Xc Yc Zc Ac Bc Cc XBc XB2c T1c T2c Dc A2c Ec Fc D2c X3c DX3c EEc C2c C4c C8c Y3c YZc Z3c
      qAc qBc qCc qXB2c qFc qEEc qYZc cXBc bT1c bT2c cDc cA2c cEc cD2c bX3c bDX3c cC2c cC4c cC8c
      bY3c cZ3c : Nat)
@@ -358,19 +380,19 @@ theorem g1Double_forces (a : Assignment)
 /-! ## §6 — Fp2-operation congruence bridges (what the G2 gadgets' sub-`fp2` gates deliver). -/
 
 /-- The two `fpAddCore` of one `fp2AddGadget` force `Cong2 (output) (add2 inputs)`. -/
-theorem fp2Add_cong (a : Assignment) (a0 a1 b0 b1 r0 r1 c0 c1 : Nat)
+theorem fp2Add_core_cong (a : Assignment) (a0 a1 b0 b1 r0 r1 c0 c1 : Nat)
     (h0 : evalH (fpAddHead a0 b0 r0 c0) a = 0) (h1 : evalH (fpAddHead a1 b1 r1 c1) a = 0) :
     Cong2 (V2 a (r0, r1)) (add2 (V2 a (a0, a1)) (V2 a (b0, b1))) := ⟨addCZ h0, addCZ h1⟩
 
 /-- The two `fpSubCore` of one `fp2SubGadget` force `Cong2 (output) (sub2 inputs)`. -/
-theorem fp2Sub_cong (a : Assignment) (a0 a1 b0 b1 r0 r1 c0 c1 : Nat)
+theorem fp2Sub_core_cong (a : Assignment) (a0 a1 b0 b1 r0 r1 c0 c1 : Nat)
     (h0 : evalH (fpSubHead a0 b0 r0 c0) a = 0) (h1 : evalH (fpSubHead a1 b1 r1 c1) a = 0) :
     Cong2 (V2 a (r0, r1)) (sub2 (V2 a (a0, a1)) (V2 a (b0, b1))) := ⟨subCZ h0, subCZ h1⟩
 
 /-! ## §7 — Curve forcing over Fp2: the Jacobian G2 gadgets force the ℤ point-op.
 
 The G2 sub-operations are `fp2` gadgets (2–8 gates each), so these take the per-`fp2`-operation
-congruences (exactly `fp2Mul_cong` / `fp2Add_cong` / `fp2Sub_cong` deliver) and conclude the output ≡
+congruences (exactly `fp2Mul_core_cong` / `fp2Add_core_cong` / `fp2Sub_core_cong` deliver) and conclude the output ≡
 the ℤ Fp2 point-op. `g2dblTrace` is a named intermediate trace mirroring `g2DoubleGadget` term-for-
 term, so each field is defeq-reducible and the chain avoids hand-expanding the deep formula. -/
 
@@ -410,9 +432,9 @@ def g2dblTrace (X Y Z : ℤ × ℤ) : DblT (ℤ × ℤ) :=
   let Y3 := sub2 EE C8; let YZ := mul2 Y Z; let Z3 := add2 YZ YZ
   { A, B, C, XB, XB2, T1, T2, D, A2, E, F, D2, X3, DX3, EE, C2, C4, C8, Y3, YZ, Z3 }
 
-/-- **`g2Double_forces`** — the `g2DoubleGadget` forces `(X3,Y3,Z3) ≡ g2dblTrace (X,Y,Z)` over Fp2,
+/-- **`g2Double_of_subop_congs`** — the `g2DoubleGadget` forces `(X3,Y3,Z3) ≡ g2dblTrace (X,Y,Z)` over Fp2,
 from the per-`fp2`-operation congruences. -/
-theorem g2Double_forces (a : Assignment)
+theorem g2Double_of_subop_congs (a : Assignment)
     (Xc Yc Zc Ac Bc Cc XBc XB2c T1c T2c Dc A2c Ec Fc D2c X3c DX3c EEc C2c C4c C8c Y3c YZc Z3c : C2)
     (hA : Cong2 (V2 a Ac) (mul2 (V2 a Xc) (V2 a Xc)))
     (hB : Cong2 (V2 a Bc) (mul2 (V2 a Yc) (V2 a Yc)))
@@ -464,8 +486,8 @@ theorem g2Double_forces (a : Assignment)
 
 /-! ## §8 — Jacobian point ADDITION traces + forcing (G1 over Fp, G2 over Fp2).
 
-`AddT R` is the addition-gadget intermediate trace over `R` (add-2007-bl). `g1Add_forces` takes the 29
-raw Fp gate satisfactions (fully gadget-tied); `g2Add_forces` takes the 29 per-`fp2`-operation
+`AddT R` is the addition-gadget intermediate trace over `R` (add-2007-bl). `g1Add_core_forces` takes the 29
+raw Fp gate satisfactions (fully gadget-tied); `g2Add_of_subop_congs` takes the 29 per-`fp2`-operation
 congruences (the sub-`fp2`-gadget forcings). Each field of the trace is defeq-reducible, so the chain
 is one line per column with no hand-expansion of the (very deep) addition formula. -/
 
@@ -533,9 +555,9 @@ def g2addTrace (X1 Y1 Z1 X2 Y2 Z2 : ℤ × ℤ) : AddT (ℤ × ℤ) :=
   { Z1Z1, Z2Z2, U1, U2, Y1Z2, S1, Y2Z1, S2, H, twoH, I, J, S2S1, r, V, rr, rrJ, twoV, X3, VX3,
     rVX3, S1J, twoS1J, Y3, Z1Z2, Z1Z2s, t1, t2, Z3 }
 
-/-- **`g1Add_forces`** — the 29-gate `g1AddGadget` forces `(X3,Y3,Z3) ≡ g1addTrace (P,Q)` over Fp,
+/-- **`g1Add_core_forces`** — the 29-gate `g1AddGadget` forces `(X3,Y3,Z3) ≡ g1addTrace (P,Q)` over Fp,
 from the raw gate satisfactions. -/
-theorem g1Add_forces (a : Assignment)
+theorem g1Add_core_forces (a : Assignment)
     (X1c Y1c Z1c X2c Y2c Z2c Z1Z1c Z2Z2c U1c U2c Y1Z2c S1c Y2Z1c S2c Hc twoHc Ic Jc S2S1c rc Vc rrc
      rrJc twoVc X3c VX3c rVX3c S1Jc twoS1Jc Y3c Z1Z2c Z1Z2sc t1c t2c Z3c
      qZ1Z1 qZ2Z2 qU1 qU2 qY1Z2 qS1 qY2Z1 qS2 qI qJ qV qrr qrVX3 qS1J qZ1Z2s qZ3
@@ -608,9 +630,9 @@ theorem g1Add_forces (a : Assignment)
   have fZ3 : CZ (fpVal a Z3c) T.Z3 := CZ.trans (mulCZ hZ3) (CZ.mul ft2 fH)
   exact ⟨fX3, fY3, fZ3⟩
 
-/-- **`g2Add_forces`** — the `g2AddGadget` forces `(X3,Y3,Z3) ≡ g2addTrace (P,Q)` over Fp2, from the
+/-- **`g2Add_of_subop_congs`** — the `g2AddGadget` forces `(X3,Y3,Z3) ≡ g2addTrace (P,Q)` over Fp2, from the
 per-`fp2`-operation congruences. -/
-theorem g2Add_forces (a : Assignment)
+theorem g2Add_of_subop_congs (a : Assignment)
     (X1c Y1c Z1c X2c Y2c Z2c Z1Z1c Z2Z2c U1c U2c Y1Z2c S1c Y2Z1c S2c Hc twoHc Ic Jc S2S1c rc Vc rrc
      rrJc twoVc X3c VX3c rVX3c S1Jc twoS1Jc Y3c Z1Z2c Z1Z2sc t1c t2c Z3c : C2)
     (hZ1Z1 : Cong2 (V2 a Z1Z1c) (mul2 (V2 a Z1c) (V2 a Z1c)))
@@ -679,5 +701,179 @@ theorem g2Add_forces (a : Assignment)
   have ft2 : Cong2 (V2 a t2c) T.t2 := Cong2.trans ht2 (Cong2.sub ft1 fZ2Z2)
   have fZ3 : Cong2 (V2 a Z3c) T.Z3 := Cong2.trans hZ3 (Cong2.mul ft2 fH)
   exact ⟨fX3, fY3, fZ3⟩
+
+/-! ## §9 — GATE ACCEPTANCE: the rungs that actually name their gadget.
+
+Everything above §9 takes RAW GATE EQUATIONS over FREE column bases (`*_core_*`) or the CONCLUSIONS
+of other lemmas (`*_of_subop_congs`). None of them mentions a generator, so none of them says
+anything about the circuit that is emitted — audit finding F5/F6. This section supplies the missing
+half: `acceptB <generator applied to its real arguments>` as a hypothesis, destructured along the
+generator's own list literal, with the column bases INSTANTIATED at the gadget's own layout.
+
+`acceptB` is `Bls12381Tower`'s ℤ reading of the emitted gate bodies — the same predicate the Tower /
+TowerExt `#guard` KATs use. -/
+
+/-- The ℤ reading of one emitted `Head` gate. -/
+theorem gateBodyEvalZero_cgH (a : Assignment) (h : Head) :
+    gateBodyEvalZero a (cgH h) = decide (evalH h a = 0) := by
+  simp only [cgH, cg, gateBodyEvalZero, headToExpr_eval]
+
+theorem acceptB_append (l1 l2 : List VmConstraint2) (a : Assignment) :
+    acceptB (l1 ++ l2) a = (acceptB l1 a && acceptB l2 a) := by simp [acceptB, List.all_append]
+
+/-- Peel a whole gadget's acceptance into its per-gate `evalH … = 0` facts. Each `fp{Mul,Add,Sub}Core`
+IS `cgH` of the corresponding head, so this is `simp` through the generator's list literal. -/
+private theorem head_of_gate {a : Assignment} {h : Head}
+    (hb : gateBodyEvalZero a (cgH h) = true) : evalH h a = 0 := by
+  rw [gateBodyEvalZero_cgH] at hb; exact of_decide_eq_true hb
+
+/-- The simp set that turns `acceptB <list literal of `*Core` gates>` into a conjunction of
+`evalH <head> a = 0`. -/
+private def accSplitTag : Unit := ()
+
+/-- **`fp2Mul_cong` — the TIED atom.** GIVEN `fp2MulGadget`'s 8 emitted gates are ACCEPTED, the
+gadget's OWN output columns (`fp2MulR0 base = base+78`, `fp2MulR1 base = base+91`) carry the Fp2
+product of the inputs. Every scratch column is `fp2MulGadget`'s own; none is a free parameter. -/
+theorem fp2Mul_cong (a : Assignment) (a0 a1 b0 b1 base : Nat)
+    (hacc : acceptB (fp2MulGadget a0 a1 b0 b1 base) a = true) :
+    Cong2 (V2 a (fp2MulR0 base, fp2MulR1 base)) (mul2 (V2 a (a0, a1)) (V2 a (b0, b1))) := by
+  simp only [fp2MulGadget, acceptB, List.all_cons, List.all_nil, Bool.and_true,
+    Bool.and_eq_true, fpMulCore, fpAddCore, fpSubCore] at hacc
+  obtain ⟨h0, h1, h2, h3, h4, h5, h6, h7⟩ := hacc
+  exact fp2Mul_core_cong a a0 a1 b0 b1 _ _ _ _ _ _ (fp2MulR0 base) (fp2MulR1 base) _ _ _ _ _ _ _ _
+    (head_of_gate h0) (head_of_gate h1) (head_of_gate h2) (head_of_gate h3)
+    (head_of_gate h4) (head_of_gate h5) (head_of_gate h6) (head_of_gate h7)
+
+/-- **`fp2Add_cong` — the TIED atom.** `fp2AddGadget`'s 2 emitted gates accepted ⟹ its outputs carry
+the Fp2 sum. -/
+theorem fp2Add_cong (a : Assignment) (a0 a1 b0 b1 r0 r1 c0 c1 : Nat)
+    (hacc : acceptB (fp2AddGadget a0 a1 b0 b1 r0 r1 c0 c1) a = true) :
+    Cong2 (V2 a (r0, r1)) (add2 (V2 a (a0, a1)) (V2 a (b0, b1))) := by
+  simp only [fp2AddGadget, acceptB, List.all_cons, List.all_nil, Bool.and_true,
+    Bool.and_eq_true, fpAddCore] at hacc
+  exact fp2Add_core_cong a a0 a1 b0 b1 r0 r1 c0 c1 (head_of_gate hacc.1) (head_of_gate hacc.2)
+
+/-- **`fp2Sub_cong` — the TIED atom.** -/
+theorem fp2Sub_cong (a : Assignment) (a0 a1 b0 b1 r0 r1 c0 c1 : Nat)
+    (hacc : acceptB (fp2SubGadget a0 a1 b0 b1 r0 r1 c0 c1) a = true) :
+    Cong2 (V2 a (r0, r1)) (sub2 (V2 a (a0, a1)) (V2 a (b0, b1))) := by
+  simp only [fp2SubGadget, acceptB, List.all_cons, List.all_nil, Bool.and_true,
+    Bool.and_eq_true, fpSubCore] at hacc
+  exact fp2Sub_core_cong a a0 a1 b0 b1 r0 r1 c0 c1 (head_of_gate hacc.1) (head_of_gate hacc.2)
+
+/-- **`mulByXi_cong` — the TIED atom that did not exist.** `fp6Mul_of_subop_congs` and
+`fp12Mul_of_subop_congs` both ASSUME `Cong2 (V2 a x) (xi2 (V2 a s))`, and no lemma in the tree
+produced it: `Bls12381TowerExt.mulByXi_forces` gives the raw divisibility pair, not `Cong2`, and is
+itself untied. This is that lemma, tied to `mulByXiGadget`. -/
+theorem mulByXi_cong (a : Assignment) (x0 x1 r0 r1 br cr : Nat)
+    (hacc : acceptB (mulByXiGadget x0 x1 r0 r1 br cr) a = true) :
+    Cong2 (V2 a (r0, r1)) (xi2 (V2 a (x0, x1))) := by
+  simp only [mulByXiGadget, acceptB, List.all_cons, List.all_nil, Bool.and_true,
+    Bool.and_eq_true, fpAddCore, fpSubCore] at hacc
+  exact ⟨subCZ (head_of_gate hacc.1), addCZ (head_of_gate hacc.2)⟩
+
+/-- **`g1Double_forces` — the TIED rung.** GIVEN the 21 emitted gates of `g1DoubleGadget X Y Z S` are
+ACCEPTED, the gadget's OWN output columns `X3 = S+156`, `Y3 = S+234`, `Z3 = S+260` carry the Jacobian
+double of the input columns, mod `p`. The commit that landed `g1Double_core_forces` called it "fully
+gadget-tied"; it was not — all 45 of its column bases were free parameters and `g1DoubleGadget` did
+not appear. This is the statement that claim described.
+
+The congruence is mod `p` on the ℤ readings. `g1DoubleGadget` emits VALUE gates only — no
+`fpLimbRange`, no `binGate` — so the limb encoding is not pinned to a canonical representative and
+the carry/borrow columns are unconstrained integers. That is the same named encoding-canonicity gap
+`fpMulCore_forces` carries (audit F6, secondary); it is NOT closed here. -/
+theorem g1Double_forces (a : Assignment) (X Y Z S : Nat)
+    (hacc : acceptB (g1DoubleGadget X Y Z S) a = true) :
+    CZ (fpVal a (S + 156)) (g1dblZ (fpVal a X) (fpVal a Y) (fpVal a Z)).1
+    ∧ CZ (fpVal a (S + 234)) (g1dblZ (fpVal a X) (fpVal a Y) (fpVal a Z)).2.1
+    ∧ CZ (fpVal a (S + 260)) (g1dblZ (fpVal a X) (fpVal a Y) (fpVal a Z)).2.2 := by
+  simp only [g1DoubleGadget, acceptB, List.all_cons, List.all_nil, Bool.and_true,
+    Bool.and_eq_true, fpMulCore, fpAddCore, fpSubCore] at hacc
+  obtain ⟨hA, hB, hC, hXB, hXB2, hT1, hT2, hD, hA2, hE, hF, hD2, hX3, hDX3, hEE,
+          hC2, hC4, hC8, hY3, hYZ, hZ3⟩ := hacc
+  exact g1Double_core_forces a X Y Z (S) (S + 13) (S + 26) (S + 39) (S + 52) (S + 65) (S + 78)
+    (S + 91) (S + 104) (S + 117) (S + 130) (S + 143) (S + 156) (S + 169) (S + 182) (S + 195)
+    (S + 208) (S + 221) (S + 234) (S + 247) (S + 260)
+    (S + 273) (S + 286) (S + 299) (S + 312) (S + 325) (S + 338) (S + 351)
+    (S + 364) (S + 365) (S + 366) (S + 367) (S + 368) (S + 369) (S + 370) (S + 371) (S + 372)
+    (S + 373) (S + 374) (S + 375) (S + 376) (S + 377)
+    (head_of_gate hA) (head_of_gate hB) (head_of_gate hC) (head_of_gate hXB) (head_of_gate hXB2)
+    (head_of_gate hT1) (head_of_gate hT2) (head_of_gate hD) (head_of_gate hA2) (head_of_gate hE)
+    (head_of_gate hF) (head_of_gate hD2) (head_of_gate hX3) (head_of_gate hDX3) (head_of_gate hEE)
+    (head_of_gate hC2) (head_of_gate hC4) (head_of_gate hC8) (head_of_gate hY3) (head_of_gate hYZ)
+    (head_of_gate hZ3)
+
+/-- **`g1Add_forces` — the TIED rung.** GIVEN the 29 emitted gates of
+`g1AddGadget X1 Y1 Z1 X2 Y2 Z2 fresh` are ACCEPTED, the columns the gadget RETURNS as `(X3, Y3, Z3)`
+carry the Jacobian sum, mod `p`. Same encoding-canonicity caveat as `g1Double_forces`. -/
+theorem g1Add_forces (a : Assignment) (X1 Y1 Z1 X2 Y2 Z2 fresh : Nat)
+    (hacc : acceptB (g1AddGadget X1 Y1 Z1 X2 Y2 Z2 fresh).1 a = true) :
+    CZ (fpVal a (g1AddGadget X1 Y1 Z1 X2 Y2 Z2 fresh).2.1.1)
+       (g1addTrace (fpVal a X1) (fpVal a Y1) (fpVal a Z1)
+                   (fpVal a X2) (fpVal a Y2) (fpVal a Z2)).X3
+    ∧ CZ (fpVal a (g1AddGadget X1 Y1 Z1 X2 Y2 Z2 fresh).2.1.2.1)
+       (g1addTrace (fpVal a X1) (fpVal a Y1) (fpVal a Z1)
+                   (fpVal a X2) (fpVal a Y2) (fpVal a Z2)).Y3
+    ∧ CZ (fpVal a (g1AddGadget X1 Y1 Z1 X2 Y2 Z2 fresh).2.1.2.2)
+       (g1addTrace (fpVal a X1) (fpVal a Y1) (fpVal a Z1)
+                   (fpVal a X2) (fpVal a Y2) (fpVal a Z2)).Z3 := by
+  simp only [g1AddGadget, acceptB, List.all_cons, List.all_nil, Bool.and_true,
+    Bool.and_eq_true, fpMulCore, fpAddCore, fpSubCore] at hacc
+  obtain ⟨hZ1Z1, hZ2Z2, hU1, hU2, hY1Z2, hS1, hY2Z1, hS2, hH, htwoH, hI, hJ, hS2S1, hr, hV, hrr,
+          hrrJ, htwoV, hX3, hVX3, hrVX3, hS1J, htwoS1J, hY3, hZ1Z2, hZ1Z2s, ht1, ht2, hZ3⟩ := hacc
+  exact g1Add_core_forces a X1 Y1 Z1 X2 Y2 Z2
+    _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+    _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+    _ _ _ _ _ _ _ _ _ _ _ _ _
+    (head_of_gate hZ1Z1) (head_of_gate hZ2Z2) (head_of_gate hU1) (head_of_gate hU2)
+    (head_of_gate hY1Z2) (head_of_gate hS1) (head_of_gate hY2Z1) (head_of_gate hS2)
+    (head_of_gate hH) (head_of_gate htwoH) (head_of_gate hI) (head_of_gate hJ)
+    (head_of_gate hS2S1) (head_of_gate hr) (head_of_gate hV) (head_of_gate hrr)
+    (head_of_gate hrrJ) (head_of_gate htwoV) (head_of_gate hX3) (head_of_gate hVX3)
+    (head_of_gate hrVX3) (head_of_gate hS1J) (head_of_gate htwoS1J) (head_of_gate hY3)
+    (head_of_gate hZ1Z2) (head_of_gate hZ1Z2s) (head_of_gate ht1) (head_of_gate ht2)
+    (head_of_gate hZ3)
+
+/-! ## §10 — Axiom hygiene (the CHECK, not the claim).
+
+Until 2026-07-27 this file's §"Axiom hygiene" ASSERTED `#assert_axioms`-cleanliness while containing
+ZERO `#assert_axioms` commands. The transcripts show the measurement was real but EPHEMERAL — one
+`#print axioms` run on a throwaway `/tmp` file — and was then written into the docstring as though it
+were a property of this file. These are the pins; they run in the root build. -/
+
+#assert_axioms CZ.refl
+#assert_axioms CZ.symm
+#assert_axioms CZ.trans
+#assert_axioms CZ.add
+#assert_axioms CZ.sub
+#assert_axioms CZ.mul
+#assert_axioms Cong2.refl
+#assert_axioms Cong2.trans
+#assert_axioms Cong2.add
+#assert_axioms Cong2.sub
+#assert_axioms Cong2.xi
+#assert_axioms Cong2.mul
+#assert_axioms Cong6.trans
+#assert_axioms Cong6.add
+#assert_axioms Cong6.sub
+#assert_axioms Cong6.gamma
+#assert_axioms Cong6.mul
+#assert_axioms gateBodyEvalZero_cgH
+#assert_axioms acceptB_append
+#assert_axioms fp2Mul_core_cong
+#assert_axioms fp2Add_core_cong
+#assert_axioms fp2Sub_core_cong
+#assert_axioms fp6Mul_of_subop_congs
+#assert_axioms fp12Mul_of_subop_congs
+#assert_axioms g1Double_core_forces
+#assert_axioms g1Add_core_forces
+#assert_axioms g2Double_of_subop_congs
+#assert_axioms g2Add_of_subop_congs
+#assert_axioms fp2Mul_cong
+#assert_axioms fp2Add_cong
+#assert_axioms fp2Sub_cong
+#assert_axioms mulByXi_cong
+#assert_axioms g1Double_forces
+#assert_axioms g1Add_forces
 
 end Dregg2.Circuit.Emit.Bls12381Forcing
