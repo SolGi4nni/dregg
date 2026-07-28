@@ -1227,9 +1227,17 @@ fn settle_carrier_trace(
 
     // Seed the carrier's pre-state with the BEFORE leg statuses so the row-0 BEFORE block (and the
     // native v1 `OLD_COMMIT`) read them — the welded gate's before-leg precondition.
+    //
+    // `CellState.state_commitment` is a CARRIED felt, not a derived one: mutating `fields` leaves it
+    // stale, `to_trace_cols` copies the stale value verbatim into row 0's
+    // `state_before.state_commit`, and `PI[OLD_COMMIT_BASE..]` is recomputed FRESH from the fields —
+    // so the trace and the public input silently disagree. Refresh it here (the same hand repair the
+    // other direct-mutation sites carry), which is what `verify_state_integrity`, the
+    // witness-generation precondition at the `generate_effect_vm_trace_ext` funnel, requires.
     let mut pre = initial_state.clone();
     pre.fields[leg_a_slot] = before_a;
     pre.fields[leg_b_slot] = before_b;
+    pre.refresh_commitment();
 
     // The zero-amount settle carrier: a `Transfer` of 0 (balance unchanged) under the transfer
     // selector the settle base inherits; the settle is the field flip, not an economic move.
