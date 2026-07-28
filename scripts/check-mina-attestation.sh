@@ -334,13 +334,30 @@ ln -s "$PROBE/target" "$PCOPY/target"
 PROBE_DIR="$PCOPY"
 
 red=0; green=0
-expect_red() { # expect_red <leg: gate|rows|probe> <label> <perl-program> <file> [base-dir]
+# ⚑ TWO PASSES, AND THE FIRST ONE IS THE POINT. `PREFLIGHT=1` makes `expect_red`
+# only check that its pattern still MATCHES, injecting nothing and running no
+# leg. A fault whose pattern has rotted is a fault that silently stopped
+# existing — and it costs nothing to write and everything to discover late.
+# Measured 2026-07-28: `setDreggRoot`'s check was renamed from "anchored relay
+# key" to "PLACEHOLDER relay key" in 90718ee6f and its injection was left
+# pointing at the old string, so the anchor's ONE unforgeability check had no
+# live falsifier for a day. Serially that took ~40 minutes of self-test to
+# surface. The pre-flight surfaces all 38 in about two seconds.
+PREFLIGHT=0
+expect_red() { # expect_red <leg: gate|rows|probe|merkle|fri|chal|chain> <label> <perl-program> <file> [base-dir]
   local leg="$1" label="$2" prog="$3" file="$4" base="${5:-$COPY}"
+  if [ ! -f "$base/$file" ]; then
+    echo "  ✗ $label: target $file does not exist"
+    red=$((red+1)); return
+  fi
   cp "$base/$file" "$WORK/.orig"
   perl -0pi -e "$prog" "$base/$file"
   if cmp -s "$WORK/.orig" "$base/$file"; then
     echo "  ✗ $label: the fault injection MATCHED NOTHING in $file"
     cp "$WORK/.orig" "$base/$file"; red=$((red+1)); return
+  fi
+  if [ "$PREFLIGHT" = "1" ]; then
+    cp "$WORK/.orig" "$base/$file"; green=$((green+1)); return
   fi
   rm -rf "$COPY/dist"
   if "run_$leg" "$COPY" >"$WORK/.out" 2>&1; then
@@ -353,7 +370,7 @@ expect_red() { # expect_red <leg: gate|rows|probe> <label> <perl-program> <file>
   cp "$WORK/.orig" "$base/$file"
 }
 
-echo "self-test: injecting faults into $COPY"
+inject_all() {
 expect_red gate "corrupted gold digest" \
   "s/0x10b41a5d3139ef0802e5faf6a7776aab079e44e99ec5b306ddddd88e15fe9e6d/0x10b41a5d3139ef0802e5faf6a7776aab079e44e99ec5b306ddddd88e15fe9e6e/" \
   src/rust-gold-vectors.ts
@@ -380,8 +397,8 @@ expect_red gate "useDefineForClassFields flipped (o1js's @state decorator loses 
 # The authorization on `setDreggRoot`, disarmed the way it was originally absent:
 # a check that is always true. Leg [6] must notice, because "any caller can
 # re-anchor" is precisely what a passing gate used to be compatible with.
-expect_red gate "setDreggRoot authorization made vacuous" \
-  "s/\.assertTrue\('setDreggRoot: not signed by the anchored relay key'\)/.or(Bool(true)).assertTrue('setDreggRoot: not signed by the anchored relay key')/" \
+expect_red gate "the PLACEHOLDER key check made vacuous (any caller could re-anchor)" \
+  "s/\.assertTrue\('setDreggRoot: not signed by the PLACEHOLDER relay key'\)/.or(Bool(true)).assertTrue('setDreggRoot: not signed by the PLACEHOLDER relay key')/" \
   src/DreggPoseidonAttestation.ts
 # Leg [7] is a controlled experiment: the spliced proof must carry a DIFFERENT
 # statement, or its rejection means nothing. Make the "spliced" statement equal
@@ -538,6 +555,25 @@ expect_red probe "the depth-32 sparse-path test's own assertion" \
 expect_red probe "the emitted root is off by one level (cargo test cannot see this)" \
   "s/fp_hex\(nodes\[depth - 1\]\)/fp_hex(nodes[depth - 2])/" \
   src/main.rs "$PCOPY"
+
+}
+
+# PASS 1 — patterns only. Seconds, and it is where a rotted fault shows up.
+echo "self-test pre-flight: checking every fault injection still MATCHES"
+PREFLIGHT=1 red=0 green=0
+inject_all
+if [ "$red" -gt 0 ]; then
+  echo "self-test FAILED in PRE-FLIGHT: $red of $((red+green)) fault injection(s) match nothing."
+  echo "A fault that matches nothing is a falsifier that silently stopped existing."
+  exit 1
+fi
+echo "pre-flight PASS: all $green fault injections still match their target"
+echo
+
+# PASS 2 — inject each one and require the gate to go red.
+echo "self-test: injecting faults into $COPY"
+PREFLIGHT=0 red=0 green=0
+inject_all
 
 echo
 if [ "$red" -gt 0 ]; then
