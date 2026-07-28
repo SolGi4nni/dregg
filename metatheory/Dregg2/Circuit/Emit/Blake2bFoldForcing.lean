@@ -462,8 +462,8 @@ theorem xor3Word_forces (a : Assignment) (hbool : AllBool a)
   exact xor3Word_core_forces a hbool hB viB vjB out car H Vi Vj hH hVi hVj
     (gates_of_xor3Core a hB viB vjB out car hacc.1.1)
 
-(`xorConstWord_forces` is the third; it sits with its `_core_` form in §7, below the constant-word
-bridges it needs.)
+/-! (`xorConstWord_forces` is the third; it sits with its `_core_` form in §7, below the
+constant-word bridges it needs.) -/
 
 /-! ### The FOLD engine. Every BLAKE2b generator above `blakeG` is a `List.foldl` whose body appends
 its own step's gates and threads a state. `hF` below is that shape, proved `rfl` at the LAMBDA BODY
