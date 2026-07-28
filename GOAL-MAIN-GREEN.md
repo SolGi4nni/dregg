@@ -169,6 +169,20 @@ first.
   `total_spent() == 400` while its own comment described the hole — comment named it, assertion
   enshrined it. Now three assertions where there was one.
 
+- **A7 CLOSED** — four heap-root builders silently MERGED two leaves at one address, so a removal
+  left the anchor unmoved. ⚠ My brief's mechanism was WRONG: `as_u32()` is not a truncation
+  (`BabyBear` is a canonical `u32`, `p < 2^32`), so "dedup on the full felt" would have been a
+  no-op — the address is narrow because it is ONE ~31-bit felt. Reachability splits three ways:
+  the per-cell heap is accident-only (but ~1 expected collision at depth-16 capacity), while
+  `cells_root` and the four accumulators are **grindable offline — measured at 101,577 folds**.
+  ⚑ The guard caught a LIVE one on its first run: `fold_bytes32_to_bb([0u8;32]) == SENTINEL_MIN`,
+  so a nullifier folding to zero displaced the genesis sentinel every non-membership opening rests
+  on. Trade stated: a silent soundness bug becomes a liveness one on the grindable surfaces.
+- Flag-day residue from `30ff508fe`: 26 reds were attributed to it, **25 have since resolved**, and
+  the survivor is `wide_notecreate_completion_lane_forge_verdict` — whose failing assertion is the
+  test's own NON-VACUITY guard, so its forge pole is currently unfalsifiable. Dispatched; baselines
+  recorded (`dregg-circuit --tests` 751/1, `dregg-cell` 846/0).
+
 ## Open for ember
 1. **F1?** — the only route that makes a successor to `RestHashIffFrame` satisfiable. Flag day:
    commitment epoch + descriptor re-emit + re-genesis, 234 binder positions across 85 modules.
