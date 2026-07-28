@@ -3607,6 +3607,21 @@ mod tests {
             json.contains(dregg_chutes_e2ee::narrator_backend::DEFAULT_MEASUREMENTS_URL),
             "the published registry to compare it against is named"
         );
+        // The receipt PREFIX the panel actually renders (`row.receipt_hex` truncated to 16), derived
+        // from the fixture rather than written down — the literal `"33".repeat(8)` this replaces was
+        // dropped with no replacement in `4bcb934a3` while the renderer kept emitting it, so the
+        // panel's one link to the chain sat unpinned. The length guard is what keeps the needle from
+        // going empty and the assertion from going vacuous if the fixture ever changes.
+        let rendered_receipt: String = row.receipt_hex.chars().take(16).collect();
+        assert_eq!(
+            rendered_receipt.len(),
+            16,
+            "the fixture must supply a receipt long enough to pin"
+        );
+        assert!(
+            json.contains(&rendered_receipt),
+            "the receipt the turn landed on is named: {json}"
+        );
         assert!(
             json.contains("/dungeon verify"),
             "the panel points at the replay that ties the receipt to the chain"
