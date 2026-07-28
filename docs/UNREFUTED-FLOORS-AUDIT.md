@@ -171,7 +171,7 @@ floor implied every residual, so the port is a visible weakening. Added
 `attested_member_is_committed_or_collides`: bind, or exhibit the collision, floor-free.
 `hash4Injective_is_satisfiable` deleted in favour of the floor-free `ftreeNode_injective`.
 
-Carriers after the port: **0.** `scripts/ratchet_probe_attested.lean` calls the gate's own
+Carriers after the port: **0.** `metatheory/scripts/ratchet_probe_attested.lean` calls the gate's own
 `FloorRatchet.antiFloor` and confirms the tooth adds zero gated carriers.
 
 ⚠ **Needs one line in `metatheory/Dregg2.lean`** (not edited here — the main loop roots it),
@@ -331,7 +331,7 @@ discharged by a sigma protocol / equality-of-committed-value proof, or dissolved
   (`Unknown constant OodCommitmentBinding.commitmentOpening_binds_of_poseidon2CR`,
   `Unknown identifier merkleRecomputeZ`). So `#floor_ratchet` never ran. Every module touched
   here elaborates green individually (`lake env lean`, EXIT=0, all `#assert_axioms` passing),
-  and `scripts/ratchet_probe_attested.lean` puts the gating question to the gate's own
+  and `metatheory/scripts/ratchet_probe_attested.lean` puts the gating question to the gate's own
   `antiFloor` predicate — but that is a strictly weaker claim than a green root and is not a
   substitute for one.
 * **No tooth for `StrandForkFree`.** It is already refuted in-tree; restating the refutation

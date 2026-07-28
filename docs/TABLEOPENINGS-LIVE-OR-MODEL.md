@@ -78,7 +78,8 @@ is exact: **two lists, nothing tying them together.**
 
 `verify_all_tables` (`batch_stark_prover.rs:978-993`) → `validate()` (`:490-501`) → `verify::<D>`
 (`:1403-1413`) → `rebuild_airs_pvs_common` (`:1433-1522`) → `p3_batch_stark::verify_batch`
-(`verifier/mod.rs:30`).
+(`p3-batch-stark/src/verifier/mod.rs:30`, Plonky3 rev `82cfad7` — every line citation below is into
+that upstream file, not this repo's `verifier/` crate).
 
 The decisive lines are these two, and they are what makes the answer *model gap*:
 
@@ -94,7 +95,7 @@ anything the prover supplies; only the *tail* of the list (`:1490-1503`) comes f
 `proof.non_primitives`. There is no code path on which `airs.len() < 3`.
 
 **(b) The openings list length is pinned to the AIR list, up front, before any crypto** —
-`verifier/mod.rs:61-72`:
+`p3-batch-stark/src/verifier/mod.rs:61-72`:
 
 ```rust
 if airs.len() != opened_values.instances.len()
@@ -122,7 +123,7 @@ These are the model fixes. Each is a check the shipped Rust performs and the Lea
 
 1. **The openings list is verifier-driven, not prover-driven.**
    Every per-table loop in `verify_batch` iterates `airs` and *indexes into* the openings
-   (`verifier/mod.rs:96-141` shape/degree, `:146-275` widths and lookup metadata, `:507-621` the
+   (`p3-batch-stark/src/verifier/mod.rs:96-141` shape/degree, `:146-275` widths and lookup metadata, `:507-621` the
    quotient/constraint identity). The Lean does `proof.tableOpenings.all …` — it walks the prover's
    list. **That inversion is the entire defect.** A vacuous `List.all []` has no Rust counterpart
    because Rust never asks the prover how many tables to check.
@@ -164,7 +165,7 @@ Even setting aside the up-front shape gate, a zero-table proof has nothing left 
 so nobody re-opens this as "but could it slip past downstream?":
 
 - **PCS/FRI.** `coms_to_verify` is assembled per-instance from `opened_values.instances`
-  (`verifier/mod.rs:331-356` trace round, `:388-406` quotient round, `:474-499` permutation round) and
+  (`p3-batch-stark/src/verifier/mod.rs:331-356` trace round, `:388-406` quotient round, `:474-499` permutation round) and
   handed to `pcs.verify` at `:502`. With no instances there is nothing to open and no commitment to
   test — but control never reaches here, because `:71` already returned.
 - **Quotient identity.** `verify_constraints_with_lookups` (`:613-614`) runs once per `airs` entry.

@@ -60,11 +60,21 @@ as an input and C7's commitment-side MSM. Precisely: *the decision checks a real
 over the real field, modulo those carriers.* This is a genuine, non-vacuous proof-checking-a-proof at
 that resolution — the strong half of the mutual bridge.
 
-**State-query (K6), `MinaStateQuery.lean`:** on top of a verified Mina ledger root, a **Poseidon
-Merkle path** into an account/zkApp-state field (`merkleFold`, `leafHash_commits_balance/_nonce/_zkappRoot`).
-SOURCED from the real Mina account structure (`~/dev/mina` `mina_base/account.ml`, `ledger_hash.ml`,
-`hash_prefixes.ml`). `mina_verify_then_query` states the seam: (K5) verify-root ∘ (K6) query-under-root.
-This is what makes Mina a **dregg light client** — the internet-of-proofs bet.
+**State-query (K6), `MinaStateQuery.lean`:** a **Poseidon Merkle path** into an account/zkApp-state
+field (`merkleFold`, `leafHash_commits_balance/_nonce/_zkappRoot`), as a `Nat` COMMITMENT MODEL —
+the file emits zero constraints. SOURCED from the real Mina account structure (`~/dev/mina`
+`mina_base/account.ml`, `ledger_hash.ml`, `hash_prefixes.ml`).
+
+⚑ **Corrected 2026-07-27.** This paragraph used to say "`mina_verify_then_query` states the seam:
+(K5) verify-root ∘ (K6) query-under-root." That theorem is **deleted**: its seam conjunct was
+`P → P` over a free predicate and its other conjunct was vacuous through three collision-resistance
+floors that were **provably false** (they asserted injectivity of a concrete Poseidon over all of
+`Nat`, while the sponge absorbs mod `pN`). The binding results are re-proved on per-instance
+non-equivocation conditions and stand; **the K5→K6 seam does not exist in Lean** — the two files
+share no object. See `docs/AUDIT-MINA-KIMCHI.md` F2/F4 and `MinaStateQuery` §3/§7/§10.
+
+So Mina is not yet a **dregg light client** at this leg; the state-query commitment structure is
+built and KAT-anchored to the real hash, and the composition with the verifier is the open step.
 
 ---
 
@@ -145,7 +155,8 @@ are honest about this once you read the accept path:
 
 `plans/mina-bridge-design.md` argues the Mina bridge can be fully proof-carrying at "Level 2 today"
 because dregg allegedly already emits a Pasta-native Pickles proof (`poseidon_stark_verifier_circuit.rs`,
-`pickles.rs`, `step_verifier.rs`, `wrap_verifier.rs`, `ipa_verifier.rs`, `circuit/src/backends/mina/mod.rs`).
+`pickles.rs`, `step_verifier.rs`, `wrap_verifier.rs`, `ipa_verifier.rs`, and the `circuit` crate's
+`src/backends/mina/mod.rs`).
 
 **Every one of those files is gone.** They were deleted in *"the great deletion: ~29K lines of legacy
 backends"* (`be83eceae`). The current `circuit/src/backends/mod.rs` states why: *"The former

@@ -219,7 +219,7 @@ web page, and not on the audit's word.
 - **An executable Lean 4 Kimchi verifier.** `formal/kimchi/Kimchi/Verifier/Kimchi.lean` (27,151
   bytes) defines `kimchiVerify` at line **471**, docstring *"The kimchi verifier transcribed from
   proof-systems `kimchi/src/verifier.rs`."* I downloaded the file and grepped it: **zero `sorry`.**
-- **Soundness capstones we do not have.** `Verifier/Capstone/Standard.lean` carries `kimchiVesta_sound`
+- **Soundness capstones we do not have.** `formal/kimchi/Kimchi/Verifier/Capstone/Standard.lean` carries `kimchiVesta_sound`
   (:166), `kimchiPallas_sound` (:214), `kimchiVesta_run_sound` (:275), `kimchiPallas_run_sound` (:355);
   `Capstone/Algebraic.lean` carries `kimchiProof_sound_algebraic` and `_ft`; `Capstone/Reflection.lean`
   carries the lifts. The **only** `axiom`s in the capstone chain are the Fiat–Shamir/random-oracle
@@ -228,7 +228,7 @@ web page, and not on the audit's word.
   (`formal/bulletproof-pcs/Bulletproof/Soundness.lean`), Kimchi gate semantics proved faithful to
   **Mathlib's** elliptic-curve group law (`WeierstrassCurve.Affine`), the permutation/grand-product
   argument, and **five production proof fixtures** across both curves at chunk counts `nc ∈ {1,2,8}`
-  with corruption cases that flip the verdict (`scripts/check_kimchi_verifier.lean`).
+  with corruption cases that flip the verdict (`formal/kimchi/scripts/check_kimchi_verifier.lean`).
 - **Priority is not close.** Paginating `gh api repos/l-adic/snarky/commits?path=formal` returns
   **109** commits, the oldest dated **2026-06-24** (*"Lean/Mathlib formalization of kimchi gates:
   scaffolding + AddComplete (#159)"*). Our `metatheory/Dregg2/Circuit/Emit/KimchiVerify.lean` was
@@ -283,9 +283,9 @@ production fixtures) where the earlier version implied we led.** Describe ours b
 **One adjacent question, left OPEN rather than converted into a smaller claim.** Both projects
 explicitly exclude Kimchi's **Plookup** argument and **Pickles recursion**: `l-adic/snarky` declares
 *"no lookups (the wire records carry none) and no recursion (`prev_challenges` absent)"*
-(`Verifier/Kimchi.lean:32-33`), *"Flagged optional gates (range check, foreign field, lookups) are out
+(`formal/kimchi/Kimchi/Verifier/Kimchi.lean:32-33`), *"Flagged optional gates (range check, foreign field, lookups) are out
 of scope"* (`Index/Basic.lean:40`), and *"Lookup data and `prev_challenges` are absent — declared
-deferrals"* (`Verifier/Wire.lean:45-46`); ours freezes the same two (`KimchiVerify.lean:104,1211-1212`
+deferrals"* (`formal/kimchi/Kimchi/Verifier/Wire.lean:45-46`); ours freezes the same two (`KimchiVerify.lean:104,1211-1212`
 — *"v1 FREEZES: no recursion (`prevLen = 0`), no lookups"*). **So this is a gap in BOTH, not a dregg
 distinctive, and no narrowed novelty claim is printed here.** I grepped their full `formal/` tree
 (101 Lean files, cloned locally) for lookup/Plookup and Pickles/recursion: no formalization of either.
@@ -358,9 +358,10 @@ tell a fetched-and-read source from a restated one. That is the mechanism that l
 sit beside real ones for a day. This list fixes it.
 
 **Fetched and read first-hand** (by the audit, this pass, or both): the `l-adic/snarky` repository
-(metadata, `formal/` commit history paginated, `Verifier/Kimchi.lean`, the three `Capstone/*.lean`,
-`Verifier/Wire.lean`, `Index/Basic.lean`, `pasta/Pasta/Shifted.lean`, `Bulletproof/{Soundness,Protocol}.lean`,
-`scripts/check_kimchi_verifier.lean`, and a full-tree grep from a local clone); `martyall`'s GitHub
+(metadata, `formal/` commit history paginated, `formal/kimchi/Kimchi/Verifier/Kimchi.lean`, the three
+`Verifier/Capstone/*.lean`, `formal/kimchi/Kimchi/Verifier/Wire.lean`, `Index/Basic.lean`,
+`pasta/Pasta/Shifted.lean`, `Bulletproof/{Soundness,Protocol}.lean`,
+`formal/kimchi/scripts/check_kimchi_verifier.lean`, and a full-tree grep from a local clone); `martyall`'s GitHub
 profile; `o1-labs/o1js-to-zkvm` and `Nori-zk/proof-conversion` (metadata + READMEs, via `gh api`);
 the Mina Core-Grants RFC thread JSON; the ArkLib repo README and its Plonk files; the =nil;
 `mina-ethereum-bridge` page (rendered text searched for every figure quoted above); and the

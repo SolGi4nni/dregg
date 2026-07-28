@@ -54,16 +54,16 @@ by reading the declaration, not by grep. **Read + plan; nothing deployed changes
 |---|---|---|---|
 | proximity keystone | `ForMathlib/PolishchukSpielman.lean:739` `polishchuk_spielman` | bivariate BW → Polishchuk–Spielman divisibility (Kopparty 2025 §2.2 Cramér–Nardi-fixed form) | proved, `#assert_axioms` clean, `_fires` at `:931` |
 | CA ladder L0–L6 | `Circuit/CorrelatedAgreement/{Scaffolding,BerlekampWelch,Interpolation,Collinearity,Theorems,Interface,RlcDischarge,DecimLiftDischarge}.lean` | UD-regime correlated agreement for RS codes (BCIKS20 Thm 4.1) | landed, sorry-free |
-| adversary object | `Circuit/FriAdversaryObject.lean:85,107,115,133,278` | `Strategy`, `fsRun` (FS as an `OracleComp`), `fsRun_queryBounded`, `fsRun_eval`, `chain_far_strategy_of_farCover` at an **arbitrary adaptive** strategy | landed |
+| adversary object | `metatheory/Dregg2/Circuit/FriAdversaryObject.lean:85,107,115,133,278` | `Strategy`, `fsRun` (FS as an `OracleComp`), `fsRun_queryBounded`, `fsRun_eval`, `chain_far_strategy_of_farCover` at an **arbitrary adaptive** strategy | landed |
 | tower far-survival | `CorrelatedAgreement/Interface.lean:881` `ud_tower_far_survival` (`:837` `_strategy`) | `winProb bad ≤ rounds·(m−1)(r₁+1)/|F|`; `deployed_code_eq:516` pins the code to `friSetupDeployed.C` | landed — **but see the `hlift` hypothesis, §5** |
-| four-leg union bound | `Circuit/FriVerifierCompose.lean:378` `friLdtExtractV3_rom_of_legs` | `condProb C accepts_and_fails ≤ epsFri …` from the four leg bounds | landed |
-| word↔proof bridge | `Circuit/WordProofBridgeDeployed.lean:89` `wordProofBridge_of_embedding` | `DeployedFriEmbedding → WordProofBridge` over the **real** deployed `Int`-column encoding (`FriColumnDecode.decodeColumn`) | landed — closes the type-shape gap `FriVerifierCompose` §3 flagged |
-| query leg over the real sampler | `Circuit/FriVerifierComposeDefected.lean:169` `epsFri_compose_deployed_defected` | the query leg with the **sampling defect** composed in, deployed leg a theorem | landed |
+| four-leg union bound | `metatheory/Dregg2/Circuit/FriVerifierCompose.lean:378` `friLdtExtractV3_rom_of_legs` | `condProb C accepts_and_fails ≤ epsFri …` from the four leg bounds | landed |
+| word↔proof bridge | `metatheory/Dregg2/Circuit/WordProofBridgeDeployed.lean:89` `wordProofBridge_of_embedding` | `DeployedFriEmbedding → WordProofBridge` over the **real** deployed `Int`-column encoding (`FriColumnDecode.decodeColumn`) | landed — closes the type-shape gap `FriVerifierCompose` §3 flagged |
+| query leg over the real sampler | `metatheory/Dregg2/Circuit/FriVerifierComposeDefected.lean:169` `epsFri_compose_deployed_defected` | the query leg with the **sampling defect** composed in, deployed leg a theorem | landed |
 | sampling defect itself | `FriVerifierCompose.lean:359` `babybear_sampleBits_not_balanced` | deployed `sampleBits` buckets **cannot** be balanced at any `logN ≥ 1` (BabyBear order is odd) | proved |
-| L4 verifier-syntax half | `Circuit/DeployedTraceExtract.lean:309` `verifyAlgo_concreteFri_opened_positions` | accepting run opens exactly `numQueries` positions, each index transcript-bound, each passing `friQueryCheck` | **proved** |
-| L6 dichotomy | `Circuit/DeployedTraceExtract.lean:551` `accept_close_or_paid` | per run: all folds `d`-close (⇒ oracle `n²d`-close by the keystone) **or** some fold is `d`-far and its sampled-agreement event has mass `≤ (1−δ)^k` | **proved, generic** |
+| L4 verifier-syntax half | `metatheory/Dregg2/Circuit/DeployedTraceExtract.lean:309` `verifyAlgo_concreteFri_opened_positions` | accepting run opens exactly `numQueries` positions, each index transcript-bound, each passing `friQueryCheck` | **proved** |
+| L6 dichotomy | `metatheory/Dregg2/Circuit/DeployedTraceExtract.lean:551` `accept_close_or_paid` | per run: all folds `d`-close (⇒ oracle `n²d`-close by the keystone) **or** some fold is `d`-far and its sampled-agreement event has mass `≤ (1−δ)^k` | **proved, generic** |
 | the refutation that disciplines all of it | `DeployedTraceExtract.lean:686` `sampled_pass_not_membership` | "sampled pass ⟹ membership" is **FALSE** at a witness | proved |
-| V3 OOD cutover | `Circuit/FriLdtExtractDeployed.lean:323,352,641`; `Circuit/ApexOodLaneRepair.lean` | `FriLdtExtractV3Cons`, `friLdtExtractV3_imp_cons`, `algoStarkSound_transferV3_cons` | **landed 2026-07-25** |
+| V3 OOD cutover | `metatheory/Dregg2/Circuit/FriLdtExtractDeployed.lean:323,641`; `metatheory/Dregg2/Circuit/ApexOodLaneRepair.lean` | `FriLdtExtractV3Cons`, `algoStarkSound_transferV3_cons` — the transport `friLdtExtractV3_imp_cons` that used to sit at `:352` was **DELETED 2026-07-28** (that line is now its deletion notice): the corrected bundle carries the per-run `¬ OpeningColl` residual the landed bundle never had, so the implication is no longer provable | **landed 2026-07-25** |
 
 ---
 
@@ -134,8 +134,8 @@ do.
 (per-column agreement between the true fold and the committed next-layer word **at the sampled
 positions**) and retypes the decode input to a **batched multi-column** `MatrixOracle` — matching
 what plonky3 actually commits (one LDE matrix per commitment; a query opens the whole row through
-one Merkle path; `p3_commit::BatchOpening.opened_values`, `commit/src/mmcs.rs:163-169` at rev
-`82cfad7`).
+one Merkle path; `p3_commit::BatchOpening.opened_values`, `p3-commit/src/mmcs.rs:163-169` in Plonky3
+at rev `82cfad7` — an upstream path, not this repo's `commit/` crate).
 
 **This is the answer to "connectable or not".** Connectable — but only to the *sampled* bar. Anyone
 who tries to discharge `DeployedFriEmbedding` as written is trying to prove something the tree has

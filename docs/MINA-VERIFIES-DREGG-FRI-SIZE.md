@@ -131,7 +131,7 @@ so **7 tables**:
 | Public | 4 | 2 | `air/public_air.rs:98-116` |
 | Alu | 76 | 59 | `air/alu_air.rs:289-309`, `air/alu_columns.rs:9-23,74-77` |
 | poseidon2-**W16** | 300 | 24 | `poseidon2-circuit-air/src/air.rs:538-542`, `columns.rs:87,210-214` |
-| poseidon2-**W24** | **452** | 36 | same formula at `pr=21`, `circuit/src/ops/poseidon2_perm/config.rs:78-86` |
+| poseidon2-**W24** | **452** | 36 | same formula at `pr=21`, `plonky3-recursion/circuit/src/ops/poseidon2_perm/config.rs:78-86` (`BABY_BEAR_D4_W24`) |
 | recompose | 4 | 2 | `air/recompose_air.rs:56-75` |
 | expose_claim | 100 | 50 | `air/expose_claim_air.rs:125-135`; `SEG_WIDTH = NUM_CHAIN_CLAIMS = 25` at `ivc_turn_chain.rs:366,278` |
 | **Σ** | **940** | **175** | |
@@ -205,7 +205,7 @@ is recognisably the commit-phase depth sum, its `5m+9` the 4-round input-path su
 ### 2.3 The transcript is ~12%, and one term dominates it
 
 `DuplexChallenger` permutes once per 8 absorbed elements. The observe sites are enumerable
-(`p3-batch-stark/src/verifier/transcript.rs:27-119`, `verifier/mod.rs:144,274-300`;
+(`p3-batch-stark/src/verifier/transcript.rs:27-119`, `p3-batch-stark/src/verifier/mod.rs:144,274-300`;
 `vendor/plonky3-fri-82cfad73/src/verifier.rs:143,221-268`), and everything except one is small:
 instance bindings 28, main digest + public values 33, preprocessed 15, permutation 36, quotient 8,
 16 commit-phase commitments 128, final poly 4, arities 16.

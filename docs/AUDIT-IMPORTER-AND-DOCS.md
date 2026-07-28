@@ -532,7 +532,8 @@ correctly (Step 2^16, Wrap 2^15) — **the two docs disagree with each other.**
 
 ### 4.4 F-D4 — **OVERCLAIM.** `PICKLES-VERIFIER-SCOPE.md:277` renders a generic function as a concrete instantiation it does not produce.
 
-The doc says `SRS::<Vesta>::create(2^15)` [`verifier/mod.rs:38-45`]. The code is generic
+The doc says `SRS::<Vesta>::create(2^15)` [`~/dev/mina-rust/crates/ledger/src/verifier/mod.rs:38-45`,
+the `get_srs` body; the call itself is `:42`]. The code is generic
 (`SRS::<F::OtherCurve>::create(F::Scalar::SRS_DEPTH)`), and with `Fp::SRS_DEPTH = 32768`,
 `Fq::SRS_DEPTH = 65536` it yields `SRS::<Pallas>::create(32768)` or
 `SRS::<Vesta>::create(65536)`. The doc pairs the wrong curve with the wrong depth.
@@ -672,7 +673,7 @@ myself with `gh api`, because it inverts a headline:
   `formal/kimchi/Kimchi/Verifier/Kimchi.lean` is 27,151 bytes with
   `def kimchiVerify` at line **471**, under the docstring *"The kimchi verifier
   transcribed from proof-systems `kimchi/src/verifier.rs`"*. **No `sorry`.**
-- **It has soundness capstones we do not.** `Verifier/Capstone/Standard.lean` carries
+- **It has soundness capstones we do not.** `formal/kimchi/Kimchi/Verifier/Capstone/Standard.lean` carries
   `kimchiVesta_sound`, `kimchiPallas_sound`, `kimchiVesta_run_sound`,
   `kimchiPallas_run_sound`; `Algebraic.lean` carries `kimchiProof_sound_algebraic` /
   `_ft`; `Reflection.lean` carries the `_algebraic_ft` lifts. The only `axiom`s are the

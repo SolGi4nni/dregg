@@ -394,7 +394,7 @@ parameters with no hypotheses), `wrap_sound_needs_no_carrier:166` (the payoff wi
 `{Poseidon2SpongeCR, FRI-LDT, FS-game}` — exactly (c-P2) + (b) + (c-RO).
 `docs/SUPERSEDED/STARK-FLOOR-REDUCTION.md` then **re-fused** them under "the irreducible crypto
 floor" in its own title, and *that* framing is what propagated. Both are in `SUPERSEDED/`, but
-`docs/STARK-COMPLETION-AUTOMATION.md:154` and `docs/SUPERSEDED/README.md:18` still route readers to
+`docs/SUPERSEDED/STARK-COMPLETION-AUTOMATION.md:154` and `docs/SUPERSEDED/README.md:18` still route readers to
 them. **Cut those two pointers.**
 
 ---

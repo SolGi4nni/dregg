@@ -111,7 +111,7 @@ Three added by the account model:
 The settlement does **not** re-derive any recursion soundness. Legs 1–4 are passed verbatim into
 `light_client_accepts_finalized_history`, so the effect inherits:
 
-- `Circuit/RecursiveAggregation.lean` — `light_client_verifies_whole_history` (one verify ⇒ the whole
+- `metatheory/Dregg2/Circuit/RecursiveAggregation.lean` — `light_client_verifies_whole_history` (one verify ⇒ the whole
   child history executed, ordered, genuine fold), and the fact that
   `recursive_sound` is *derived* whole-tree by `RecursiveSoundFromNodes.lean`;
 - `Distributed/FinalizedLightClient.lean` — the third (quorum/`tau`) leg and its teeth.
@@ -215,7 +215,7 @@ ordering, genuine fold and finality* from verification, but **not** its conserva
 | Unbounded accumulator | Pickles, perpetual | induction **proven** (`accumulate_preserves_wellformed`); the O(1)-memory driver is **unbuilt** |
 | L2 state commitment on an L1 **account** | zkApp account on Mina L1 — **built, in production** | `RollupAccount` **as a Lean model only**; no cell, no persistence |
 | Settlement effect verifying the child proof | zkApp method | `SettleAccepts` **as a Lean predicate only**; no descriptor, no executor threading |
-| Deposits / withdrawals binding the commitment | built | **not built** (`Bridge/HoldingFoldRecursive.lean` is the reusable holdings leg) |
+| Deposits / withdrawals binding the commitment | built | **not built** (`metatheory/Dregg2/Bridge/HoldingFoldRecursive.lean` is the reusable holdings leg) |
 
 **What dregg has that Zeko does not:** the recursion-to-light-client composition is a machine-checked
 theorem, and the finality leg is checked against the node's real rule. A dregg recursive rollup would
@@ -240,7 +240,7 @@ proven predicate, a proven binding lemma, and the four residuals below.
    `height_is_count` from advisory to proof-backed.
 4. **NEW-C, the account cell.** Persist `RollupAccount` as a real `RecordKernelState` cell advanced
    only by the effect (registration fixes `childGenesis`), then deposits/withdrawals binding the
-   commitment via `Bridge/HoldingFoldRecursive.lean`.
+   commitment via `metatheory/Dregg2/Bridge/HoldingFoldRecursive.lean`.
 5. **Port `conserves_from_verification`** off its refuted CR floor (§3b), so a settling L1 can inherit
    child conservation from the proof rather than from a producer witness.
 6. **NEW-A, the online fold driver.** Drive `fold_two_turns`
