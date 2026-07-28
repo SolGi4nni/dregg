@@ -1001,8 +1001,9 @@ for (const [what, got, want] of RATCHET) {
     );
 }
 console.log(
-  `\n    ratchet: ${deepFactored.toLocaleString()} DEEP / ${jointCapped.toLocaleString()} joint rows ` +
-    'are both within 2% of the recorded figures',
+  `\n    ratchet: ${deepFactored.toLocaleString()} DEEP / ${jointCapped.toLocaleString()} joint / ` +
+    `${deepSeamRows.toLocaleString()} seam / ${bindingDelta.toLocaleString()} binding-delta rows ` +
+    `are all within 2% of the recorded figures (${RATCHET.length} figures)`,
 );
 
 console.log('\n=== FRI DEEP PASS ===\n');
