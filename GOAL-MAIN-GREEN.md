@@ -214,6 +214,19 @@ first.
 - **`compute-exchange` dispatched** — the same defect, live: a green `SETTLED` pill and a `"paid · "`
   binding over SetField+EmitEvent with no conserving effect, and no `Payable` impl in the crate.
 
+- **The cap-open "residue" was not mine, refuted by measurement** — the wide `noteCreate` member is
+  byte-identical across the flag day (JSON sha256 `f68b22bd96e759d1` both sides). The red predates it
+  by five days: the E1 cutover moved the columns and the harness never followed. Neither a stale
+  fixture nor a broken producer — a **stale HARNESS** indexing committed-geometry col 348 into a
+  2936-column old-geometry row, where that column is a BEFORE-block limb. The guard fired correctly.
+  ⚑ Both teeth had been dead since 07-23 — the second died at its HONEST pole — so the audit they
+  exist to perform **had never once run on the wide member**.
+- ⚠ **MY BASELINE WAS WRONG and this is the lesson of the day landing on me.** I recorded
+  `dregg-circuit` as 751/1. nextest's default fail-fast **truncates at 750 of 1218 and reports "1
+  failed"**. With `--no-fail-fast`: 26 before, 24 after. I have told every lane to read COUNTS rather
+  than verdicts, and then read a truncated count as a complete one. **`--no-fail-fast` is not
+  optional when quoting a baseline.**
+
 ## Open for ember
 1. **F1?** — the only route that makes a successor to `RestHashIffFrame` satisfiable. Flag day:
    commitment epoch + descriptor re-emit + re-genesis, 234 binder positions across 85 modules.
