@@ -1,16 +1,16 @@
 /-
 # Dregg2.Exec.FieldsMap — the committed user-field MAP (`fields_root`), Stage 0 beachhead.
 
-`_RECORD-LAYER-UPGRADE.md` §B. The Rust cell has exactly **8** `FieldElement` slots
-(`cell/src/state.rs:STATE_SLOTS = 8`); shipped apps already burn all 8 (`subscription`). The
-Lean record (`Exec/Value.lean:65`, `record : List (FieldName × Value)`) is, by contrast,
-**already an unbounded name-keyed map** — the 8-cap is a Rust `[FieldElement; 8]` + circuit
-artifact, NOT a Lean constraint.
+`_RECORD-LAYER-UPGRADE.md` §B. The Rust cell has a FIXED number of `FieldElement` slots
+(`cell/src/state.rs:STATE_SLOTS`, **16**; it was 8 when this file was written and this header said
+so for a while after it was not). The Lean record (`Exec/Value.lean:65`,
+`record : List (FieldName × Value)`) is, by contrast, **already an unbounded name-keyed map** — the
+cap is a Rust `[FieldElement; STATE_SLOTS]` + circuit artifact, NOT a Lean constraint.
 
-This module adds the Lean witness for the **hybrid** unsqueeze: keep `fields[0..7]` as reserved
-low keys `0..7` (existing access byte-identical), and commit the **map tail** (keys `≥ 8`) under a
-single `fields_root` = `ListCommit.listDigest` — the SAME injective accumulator the side-table
-roots use (`Circuit/ListCommit.lean`). Strictly additive: no existing `Value`/`scalar`/`setField`
+This module adds the Lean witness for the **hybrid** unsqueeze: keep `fields[0..reservedKeys-1]` as
+reserved low keys (existing access byte-identical), and commit the **map tail** (keys
+`≥ reservedKeys`) under a single `fields_root` = `ListCommit.listDigest` — the SAME accumulator the
+side-table roots use (`Circuit/ListCommit.lean`). Strictly additive: no existing `Value`/`scalar`/`setField`
 def changes; the keystone `stateStepGuarded_eq` (`EffectsState.lean`) is untouched and lifts
 verbatim, because field access here is name-keyed exactly as it already was.
 
@@ -71,12 +71,23 @@ def isUserTailKey (k : FieldName) : Bool :=
   | some n => decide (reservedKeys ≤ n)
   | none   => false
 
+/-- **`witnessKey n`** — the `n`-th key GUARANTEED to lie in the committed user tail, written
+relative to the band (`reservedKeys + n`) instead of as a literal. Every `#guard` fixture that means
+to exercise the TAIL is keyed with this, here and in the four downstream witness modules, so a
+future `reservedKeys` move carries them instead of swallowing them (§5). -/
+def witnessKey (n : Nat) : FieldName := userKey (reservedKeys + n)
+
+/-- **`reservedProbeKey`** — the HIGHEST reserved key (`reservedKeys - 1`), also band-relative. A
+record keyed here has an EMPTY user tail by construction: it is exactly the shape the pre-2026-07-28
+fixtures degenerated into, and §5 tests `separatesOnTail` against it as the negative pole. -/
+def reservedProbeKey : FieldName := userKey (reservedKeys - 1)
+
 /-! ## §2 — the user tail + its committed digest (`fields_root`). -/
 
 /-- **`userTail v`** — the record fields whose key is a user-map key (`≥ reservedKeys`), as a
-`List (FieldName × Value)`. The reserved low keys `0..7` (and any non-numeric kernel fields like
-`"balance"`) are filtered out — they are carried by the fixed cells, not the map. Order-preserving
-on the record's field list. -/
+`List (FieldName × Value)`. The reserved low keys `0..reservedKeys-1` (and any non-numeric kernel
+fields like `"balance"`) are filtered out — they are carried by the fixed cells, not the map.
+Order-preserving on the record's field list. -/
 def userTail (v : Value) : List (FieldName × Value) :=
   match v with
   | .record fs => fs.filter (fun p => isUserTailKey p.1)
@@ -95,6 +106,21 @@ def tailLeaf (compress2 : Int → Int → Int) (p : FieldName × Value) : Int :=
     | .sym s  => (s : Int)
     | .record _ => 0
   compress2 kZ vZ
+
+/-- **`tailPopulated v`** — `v` has a NON-EMPTY committed user tail. Everything a `fields_root`
+witness claims to distinguish is carried by the tail; an empty tail digests to the fixed
+`emptyTailRoot` for EVERY cell (`fieldsRoot_empty_legacy` below), so a witness over an empty-tail
+fixture distinguishes nothing, whatever it computes. Guard the completeness duals with this. -/
+def tailPopulated (v : Value) : Bool := !(userTail v).isEmpty
+
+/-- **`separatesOnTail compress2 v w`** — the predicate a tail-separation witness should `#guard`
+instead of a bare `≠`: `v` and `w` each carry a POPULATED tail AND their tails DIFFER under the
+injective `tailLeaf` projection. FALSE when the two sides coincide, and FALSE when either side's
+tail is empty — so a `reservedKeys` bump that swallows a fixture's keys turns the witness RED rather
+than leaving it green and toothless (§5). -/
+def separatesOnTail (compress2 : Int → Int → Int) (v w : Value) : Bool :=
+  tailPopulated v && tailPopulated w
+    && !((userTail v).map (tailLeaf compress2) == (userTail w).map (tailLeaf compress2))
 
 /-- **`fieldsRoot compress2 compressN v`** — the committed digest of the user-field MAP: the
 `ListCommit.listDigest` over `userTail v` under the `tailLeaf` encoder. This is the SINGLE root
@@ -164,11 +190,12 @@ theorem fieldsRoot_binds_tail (compress2 : Int → Int → Int) (compressN : Lis
 /-! ## §4 — VACUITY GUARD (`_RECORD-LAYER-UPGRADE.md` §D.4): pos + neg, no `native_decide`. -/
 
 -- A concrete pair of cells to exercise membership: a legacy cell (keys 0,7 reserved) plus a cell
--- that overflows onto user-map keys 8 and 9.
+-- that overflows onto the first two USER-map keys. Those keys are `witnessKey 0`/`witnessKey 1`,
+-- NOT literals: they were literal `"8"`/`"9"` until `reservedKeys` moved 8 → 16 underneath them.
 private def legacyCell : Value :=
   .record [("0", .int 11), ("7", .int 99), ("balance", .int 500)]
 private def overflowCell : Value :=
-  .record [("0", .int 11), ("7", .int 99), ("16", .int 1234), ("17", .dig 42)]
+  .record [("0", .int 11), ("7", .int 99), (witnessKey 0, .int 1234), (witnessKey 1, .dig 42)]
 
 -- `Value` carries no `BEq`, so read-back is checked via the canonical `Int` leaf of the looked-up
 -- value (and `isSome`/`isNone` for presence). This is the same encoding `tailLeaf` commits.
@@ -177,16 +204,18 @@ private def valInt : Value → Int
 private def tailLookupInt (v : Value) (k : FieldName) : Option Int := (tailLookup v k).map valInt
 
 -- POSITIVE: a present user key reads exactly its value out of the committed tail.
-#guard tailLookupInt overflowCell (userKey 16) == some 1234
-#guard tailLookupInt overflowCell (userKey 17) == some 42
+#guard tailLookupInt overflowCell (witnessKey 0) == some 1234
+#guard tailLookupInt overflowCell (witnessKey 1) == some 42
 
 -- NEGATIVE: an ABSENT user key does NOT read a value (the tail does not commit it).
-#guard (tailLookup overflowCell (userKey 18)).isNone
-#guard (tailLookup legacyCell (userKey 8)).isNone
+#guard (tailLookup overflowCell (witnessKey 2)).isNone
+#guard (tailLookup legacyCell (witnessKey 0)).isNone
 
 -- The user tail filters out reserved low keys and the `balance` field (carried by fixed cells):
-#guard (userTail overflowCell).map (fun p => (p.1, valInt p.2)) == [("16", (1234 : Int)), ("17", 42)]
-#guard (userTail legacyCell).isEmpty   -- a legacy 8-fixed-field cell has an EMPTY user tail.
+#guard (userTail overflowCell).map (fun p => (p.1, valInt p.2))
+         == [(witnessKey 0, (1234 : Int)), (witnessKey 1, 42)]
+#guard (userTail legacyCell).isEmpty   -- a legacy fixed-field-only cell has an EMPTY user tail.
+#guard tailPopulated overflowCell      -- ...and the overflow cell's tail is POPULATED (§5).
 
 -- BACKWARD-COMPAT: a legacy cell's `fields_root` equals the fixed empty-tail constant, INDEPENDENT
 -- of the cell — so absorbing it into a commitment leaves legacy commitments unchanged.
@@ -200,11 +229,52 @@ private def c2C : Int → Int → Int := fun a b => a * 1000003 + b
 #guard decide (fieldsRoot c2C cNC overflowCell = emptyTailRoot cNC) == false
 -- A tampered user value flips the root (the digest commits the map tail):
 private def overflowTampered : Value :=
-  .record [("0", .int 11), ("7", .int 99), ("16", .int 9999), ("17", .dig 42)]
+  .record [("0", .int 11), ("7", .int 99), (witnessKey 0, .int 9999), (witnessKey 1, .dig 42)]
+#guard separatesOnTail c2C overflowCell overflowTampered   -- §5: the tamper MOVES a populated tail
 #guard decide (fieldsRoot c2C cNC overflowCell = fieldsRoot c2C cNC overflowTampered) == false
--- Two cells with the SAME user tail have the SAME root (completeness dual):
+-- Two cells with the SAME user tail have the SAME root (completeness dual). The `tailPopulated`
+-- guard is what stops this from passing on `[] = []` after a `reservedKeys` move (§5).
+#guard tailPopulated (.record [(witnessKey 0, .int 1234), (witnessKey 1, .dig 42)])
 #guard decide (fieldsRoot c2C cNC overflowCell
-             = fieldsRoot c2C cNC (.record [("16", .int 1234), ("17", .dig 42)]))   -- true
+             = fieldsRoot c2C cNC (.record [(witnessKey 0, .int 1234), (witnessKey 1, .dig 42)]))
+
+/-! ## §5 — WITNESS HYGIENE: band-relative fixture keys, and the guard that REDS when a witness
+stops separating.
+
+⚑ Why this section exists, measured 2026-07-28. `reservedKeys` moved 8 → 16 (§1: the Lean band had
+been behind Rust's `STATE_SLOTS`). Four downstream modules carried their non-vacuity / anti-ghost
+teeth on records keyed `"8"` — `Exec/RecordCommit §4`, `Circuit/CommitmentCrossBind §5`,
+`Verify/ReceiptContract §4a`, `Circuit/Argus/Receipt §4`. Under the corrected band those keys are
+FIXED CELLS, so both sides of every distinction acquired an EMPTY user tail, `fieldsRoot` collapsed
+to the cell-independent `emptyTailRoot` on both, and:
+
+  * the SEPARATING guards went red (three in `RecordCommit`, and the rest behind them in the
+    dependency order) — visible, and the reason this file is being read;
+  * the COMPLETENESS DUALS kept passing, now comparing `[] = []`. That is the dangerous half: a
+    witness that no longer distinguishes anything but still reports green.
+
+Both halves are the same class — a witness whose two sides coincide. `witnessKey`/`reservedProbeKey`
+(§1) and `tailPopulated`/`separatesOnTail` (§2) remove it in both directions: fixtures are written
+RELATIVE to the band, so a future bump CARRIES them instead of swallowing them, and a separation
+guard is FALSE when a side's tail is empty, so a degenerate witness REDS rather than passing on
+nothing. The `#guard`s below are the guard's own teeth: it must accept a real separation and refuse
+BOTH degeneracies. -/
+
+-- The band-relative keys land on the right side of the split, and the reserved probe does not.
+#guard isUserTailKey (witnessKey 0) && isUserTailKey (witnessKey 1)
+#guard isUserTailKey reservedProbeKey == false
+#guard tailPopulated (.record [(witnessKey 0, .int 50)])
+#guard tailPopulated (.record [(reservedProbeKey, .int 50)]) == false
+
+-- POSITIVE pole: a genuine tail separation passes.
+#guard separatesOnTail c2C (.record [(witnessKey 0, .int 50)]) (.record [(witnessKey 0, .int 999)])
+-- NEGATIVE pole — THE 2026-07-28 CLASS, caught in the act: two records that plainly DIFFER, on a
+-- RESERVED key. Their tails are both empty; the old witness shape would compare `[] ≠ []`. REFUSED.
+#guard separatesOnTail c2C (.record [(reservedProbeKey, .int 50)])
+                           (.record [(reservedProbeKey, .int 999)]) == false
+-- NEGATIVE pole — the ordinary way to fail to separate: the two sides coincide on a populated tail.
+#guard separatesOnTail c2C (.record [(witnessKey 0, .int 50)])
+                           (.record [(witnessKey 0, .int 50)]) == false
 
 #assert_axioms fieldsRoot_membership
 #assert_axioms fieldsRoot_empty_legacy

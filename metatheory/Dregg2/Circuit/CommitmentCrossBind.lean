@@ -716,11 +716,13 @@ root, so the cross-bind is non-trivial. NO `native_decide`. -/
 
 section Vacuity
 
-/-- Injective toy pairing `a·BIG + b` (BIG larger than any toy child) — a realizable 2-to-1 CR. -/
+/-- Toy pairing `a·10⁶ + b`. It separates the small child pairs the `#guard`s below decide; it is NOT
+a `compressInjective` witness (`cmbC 1 0 = 10⁶ = cmbC 0 1000000` — the children are unbounded `ℤ`). -/
 def cmbC : ℤ → ℤ → ℤ := fun a b => a * 1000000 + b
-/-- Injective positional Horner sponge (length folded in) — a realizable list CR (NOT `List.sum`). -/
+/-- Toy positional Horner sponge, length folded in — position-sensitive where `List.sum` is not. NOT
+a `compressNInjective` witness either; see the collision `#guard`ed below. -/
 def cNC : List ℤ → ℤ := fun xs => xs.foldl (fun acc x => acc * 1000000 + x) (xs.length : ℤ)
-/-- Injective 2-arg leaf combiner for the canonical-commitment field map. -/
+/-- Toy 2-arg leaf combiner for the canonical-commitment field map (same caveat as `cmbC`). -/
 def c2C : Int → Int → Int := fun a b => a * 1000000 + b
 /-- A per-cell `restLimbs` prefix (the abstract identity/perms/… limbs; any fixed family works). -/
 def restLimbsC : CellId → List ℤ := fun c => [7, 11, (c : ℤ)]
@@ -764,36 +766,64 @@ theorem chC_bad_not_bridge
   exact htail (RecordCommit.cellCommit_binds_tail compressN compress2 hN hLE (restLimbs 0) v w hcc)
 
 /-! NON-VACUITY of the negative witness's premise: two `Value`s with DISTINCT user tails exist (so
-`chC_bad_not_bridge`'s `htail` hypothesis is satisfiable, not vacuous). We exhibit the distinctness via
-the injective `tailLeaf`-projection (a decidable `List ℤ` inequality — the tails differ in the value of
-key `"8"`). -/
-#guard decide ((FieldsMap.userTail (.record [("8", .int 50)])).map (FieldsMap.tailLeaf c2C)
-             = (FieldsMap.userTail (.record [("8", .int 999)])).map (FieldsMap.tailLeaf c2C)) == false
+`chC_bad_not_bridge`'s `htail` hypothesis is satisfiable, not vacuous). The distinctness runs through
+`FieldsMap.separatesOnTail`, which demands BOTH tails be POPULATED as well as different — the bare
+`≠` this used to spell was satisfied by `[] ≠ []` never holding, so it went red (rather than silent)
+on 2026-07-28 when `reservedKeys` moved 8 → 16 and made the then-literal key `"8"` a FIXED CELL. The
+key is `FieldsMap.witnessKey 0` now: band-relative, so the next move carries it.
 
-/-! POSITIVE: the toy `cmbC` is injective on the `#guard` domain (a realizable
-`compressInjective` witness, NOT the lossy `a + b`). Two distinct child-pairs ⇒ distinct combinations. -/
+⚑ AND READ WHAT THIS DOES NOT SAY. It witnesses that `htail` is satisfiable. `chC_bad_not_bridge`'s
+OTHER hypotheses are `compressNInjective compressN` and `listLeafInjective (FieldsMap.tailLeaf …)` —
+floors this tree REFUTES at deployed BabyBear width (`Verify/ApexPremiseVacuity`,
+`Circuit/StateCommitFloorRegrounded`), and the theorem is grandfathered in `FloorRatchetBaseline`.
+So the premise this witnesses satisfiable was never the premise in doubt. -/
+#guard FieldsMap.separatesOnTail c2C (.record [(FieldsMap.witnessKey 0, .int 50)])
+                                     (.record [(FieldsMap.witnessKey 0, .int 999)])
+
+/-! POSITIVE: the toy `cmbC` separates distinct child-pairs on the `#guard` domain, where the lossy
+`a + b` does not. It is NOT a `compressInjective` witness off that domain — the children are
+unbounded `ℤ` and one carries into the other, decided on the third line. -/
 #guard decide (cmbC 3 5 = cmbC 3 6) == false
 #guard decide (cmbC 3 5 = cmbC 4 5) == false
+#guard decide (cmbC 1 0 = cmbC 0 1000000)
 /-! NEGATIVE: the lossy `+`-fold COLLAPSES distinct child-pairs (would make `compressInjective` false)
 — this is the carrier the soundness theorems FORBID. `2+5 = 3+4` but `(2,5) ≠ (3,4)`. -/
 #guard decide ((2 : ℤ) + 5 = 3 + 4)
 
-/-! POSITIVE: the toy sponge `cNC` separates distinct ORDERED leaf lists (realizable `compressNInjective`
-— positions kept). NEGATIVE: `List.sum` collapses a reorder (forbidden). -/
+/-! POSITIVE: the toy sponge `cNC` separates distinct ORDERED leaf lists — positions are kept, unlike
+`List.sum`, which collapses a reorder (NEGATIVE, the carrier the soundness theorems forbid). -/
 #guard decide (cNC [1, 2] = cNC [2, 1]) == false
 #guard decide (([1, 2] : List ℤ).sum = ([2, 1] : List ℤ).sum)
+/-! ⚑ BUT `cNC` IS NOT A `compressNInjective` WITNESS, and this comment said it was until 2026-07-28.
+`compressNInjective h` is `∀ xs ys, h xs = h ys → xs = ys` over ALL of `List ℤ`, and `cNC` is a
+base-10⁶ positional fold with the LENGTH seeded into the accumulator: entries are unbounded `ℤ`, so a
+one-element list simply overruns into the two-element range. A concrete collision, decided here, not
+argued — `cNC [0, 0] = 2·10¹² = cNC [1999999000000]`: -/
+#guard decide (cNC [0, 0] = cNC [1999999000000])
+/-! Nor could any repair of `cNC` help: a `compressNInjective` witness is an injection `List ℤ ↪ ℤ`,
+which exists ONLY because the codomain is unbounded — no sponge landing in a BabyBear felt can be
+one, which is exactly why the tree refutes the floor at deployed width. The toy carriers here are
+what they are: concrete functions that separate the specific pairs the `#guard`s below decide. That
+is all a `#guard` can buy, and it is worth having; it is not evidence that the floor is realizable. -/
 
 /-! ANTI-GHOST (cross-bind is non-trivial): the running canonical commitment `cellCommit` SEPARATES a
 tampered cell value from the honest one (distinct user-field maps ⇒ distinct roots ⇒ distinct
 commitments). So binding `recStateCommit` to `cellCommit` catches a forged cell — the bind
-is not vacuous. -/
-#guard decide (cellCommit cNC c2C (restLimbsC 2) (.record [("8", .int 50)])
-             = cellCommit cNC c2C (restLimbsC 2) (.record [("8", .int 999)])) == false
+is not vacuous. The `separatesOnTail` line is the precondition that makes it mean that: the two
+values must actually differ IN THE COMMITTED TAIL, which is what stopped being true when the band
+moved under the literal key `"8"`. -/
+#guard FieldsMap.separatesOnTail c2C (.record [(FieldsMap.witnessKey 0, .int 50)])
+                                     (.record [(FieldsMap.witnessKey 0, .int 999)])
+#guard decide (cellCommit cNC c2C (restLimbsC 2) (.record [(FieldsMap.witnessKey 0, .int 50)])
+             = cellCommit cNC c2C (restLimbsC 2) (.record [(FieldsMap.witnessKey 0, .int 999)])) == false
 
 /-! COMPLETENESS dual: two states with the SAME cell `Value` commit identically under `cellCommit`
-(the `cellCommit_determined` direction, concretely). -/
-#guard decide (cellCommit cNC c2C (restLimbsC 1) (.record [("8", .int 5)])
-             = cellCommit cNC c2C (restLimbsC 1) (.record [("8", .int 5)]))
+(the `cellCommit_determined` direction, concretely). ⚑ THE SILENT HALF: a dual like this keeps
+passing after the band swallows its key, on two empty tails that commit identically because EVERY
+empty tail does. `tailPopulated` is what reds it. -/
+#guard FieldsMap.tailPopulated (.record [(FieldsMap.witnessKey 0, .int 5)])
+#guard decide (cellCommit cNC c2C (restLimbsC 1) (.record [(FieldsMap.witnessKey 0, .int 5)])
+             = cellCommit cNC c2C (restLimbsC 1) (.record [(FieldsMap.witnessKey 0, .int 5)]))
 
 end Vacuity
 

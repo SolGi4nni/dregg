@@ -513,9 +513,14 @@ section Vacuity
 -- combiner `c2C`, the per-cell prefix `restLimbsC`) for the concrete `#guard` witnesses below.
 open Dregg2.Circuit.CommitmentCrossBind (cNC c2C restLimbsC)
 
-/-- A two-cell base kernel (cell `0` Live), like the §C/§8 witnesses elsewhere in Argus. -/
+/-- A two-cell base kernel (cell `0` Live), like the §C/§8 witnesses elsewhere in Argus. The cell's
+user-tail key is `FieldsMap.witnessKey 0` — band-relative, not the literal `"8"` it was until
+2026-07-28, when `reservedKeys` moved 8 → 16 and turned every fixture in this section into an
+empty-tail cell (`Exec/FieldsMap §5`). -/
 def kR : RecordKernelState :=
-  { accounts := {0, 1}, cell := fun _ => .record [("8", .int 5)], caps := fun _ => [] }
+  { accounts := {0, 1}
+    cell := fun _ => .record [(Dregg2.Exec.FieldsMap.witnessKey 0, .int 5)]
+    caps := fun _ => [] }
 
 /-- An Argus term that OVERWRITES cell `0` with a chosen record (a `setCell {0}`), so its produced state's
 cell `0` is exactly the written `Value` — the cleanest probe for "the receipt is a function of the output." -/
@@ -542,20 +547,33 @@ theorem writeCell0_receipt_eq (compressN : List ℤ → ℤ) (compress2 : Int �
   rfl
 
 -- The receipt for cell 0 of `writeCell0 v` IS the `cellCommit` of `v` (the written value) — Q reads the
--- produced cell, with the realizable injective `cNC`/`c2C` carriers:
-#guard (argusReceipt cNC c2C restLimbsC (writeCell0 (.record [("8", .int 50)])) kR 0
-        == some (cellCommit cNC c2C (restLimbsC 0) (.record [("8", .int 50)])))
+-- produced cell, with the concrete `cNC`/`c2C` carriers:
+#guard (argusReceipt cNC c2C restLimbsC
+          (writeCell0 (.record [(Dregg2.Exec.FieldsMap.witnessKey 0, .int 50)])) kR 0
+        == some (cellCommit cNC c2C (restLimbsC 0)
+                  (.record [(Dregg2.Exec.FieldsMap.witnessKey 0, .int 50)])))
 
 -- ANTI-GHOST (the receipt is OBSERVABLE): two Argus terms that write DIFFERENT cell-`0` values publish
 -- DIFFERENT receipts (the canonical `cellCommit` separates the distinct user-field maps). So the receipt Q
--- depends on the state the Argus term produces — tampering the output MOVES Q.
-#guard (decide (argusReceipt cNC c2C restLimbsC (writeCell0 (.record [("8", .int 50)])) kR 0
-              = argusReceipt cNC c2C restLimbsC (writeCell0 (.record [("8", .int 999)])) kR 0) == false)
+-- depends on the state the Argus term produces — tampering the output MOVES Q. The `separatesOnTail`
+-- line is the precondition: the two written values must differ IN THE COMMITTED TAIL.
+#guard Dregg2.Exec.FieldsMap.separatesOnTail c2C
+         (.record [(Dregg2.Exec.FieldsMap.witnessKey 0, .int 50)])
+         (.record [(Dregg2.Exec.FieldsMap.witnessKey 0, .int 999)])
+#guard (decide (argusReceipt cNC c2C restLimbsC
+                  (writeCell0 (.record [(Dregg2.Exec.FieldsMap.witnessKey 0, .int 50)])) kR 0
+              = argusReceipt cNC c2C restLimbsC
+                  (writeCell0 (.record [(Dregg2.Exec.FieldsMap.witnessKey 0, .int 999)])) kR 0) == false)
 
 -- COMPLETENESS dual: two Argus terms writing the SAME cell-`0` value publish the SAME receipt (the
--- `argus_receipt_determined` direction, concretely — the produced state determines Q).
-#guard (argusReceipt cNC c2C restLimbsC (writeCell0 (.record [("8", .int 7)])) kR 0
-        == argusReceipt cNC c2C restLimbsC (writeCell0 (.record [("8", .int 7)])) kR 0)
+-- `argus_receipt_determined` direction, concretely — the produced state determines Q). ⚑ THE SILENT
+-- HALF of the band move: this passes just as happily on two EMPTY tails, which commit identically
+-- because every empty tail does. `tailPopulated` reds it instead.
+#guard Dregg2.Exec.FieldsMap.tailPopulated (.record [(Dregg2.Exec.FieldsMap.witnessKey 0, .int 7)])
+#guard (argusReceipt cNC c2C restLimbsC
+          (writeCell0 (.record [(Dregg2.Exec.FieldsMap.witnessKey 0, .int 7)])) kR 0
+        == argusReceipt cNC c2C restLimbsC
+             (writeCell0 (.record [(Dregg2.Exec.FieldsMap.witnessKey 0, .int 7)])) kR 0)
 
 -- A REJECTING term publishes NO receipt (Q is `none` exactly when there is no produced state): a guard that
 -- fails closed yields no post-state, hence no receipt.
@@ -600,12 +618,17 @@ theorem writeCell0_receipt_observable
   fun h => htail (writeCell0_receipt_binds_tail compressN compress2 hN hLE v w h)
 
 -- NON-VACUITY of the distinct-tail premise: two records with DISTINCT user tails exist (so
--- `writeCell0_receipt_observable`'s `htail` is satisfiable). The tails differ at key `"8"` — a decidable
--- `List` inequality via the injective `tailLeaf` projection (the SAME witness `CommitmentCrossBind §5` uses).
-#guard decide ((Dregg2.Exec.FieldsMap.userTail (.record [("8", .int 50)])).map
-                (Dregg2.Exec.FieldsMap.tailLeaf c2C)
-             = (Dregg2.Exec.FieldsMap.userTail (.record [("8", .int 999)])).map
-                (Dregg2.Exec.FieldsMap.tailLeaf c2C)) == false
+-- `writeCell0_receipt_observable`'s `htail` is satisfiable). Spelled through
+-- `FieldsMap.separatesOnTail`, which requires both tails POPULATED as well as different — the bare
+-- projection inequality it replaced degenerated to `[] ≠ []` when `reservedKeys` moved 8 → 16 under
+-- the then-literal key `"8"` (the SAME witness `CommitmentCrossBind §5` uses).
+--
+-- ⚑ WHAT IT DOES NOT WITNESS: `writeCell0_receipt_observable` also carries `compressNInjective
+-- compressN` and `listLeafInjective (tailLeaf compress2)` — floors REFUTED at deployed BabyBear
+-- width, grandfathered in `FloorRatchetBaseline`. `htail` was never the premise in doubt.
+#guard Dregg2.Exec.FieldsMap.separatesOnTail c2C
+         (.record [(Dregg2.Exec.FieldsMap.witnessKey 0, .int 50)])
+         (.record [(Dregg2.Exec.FieldsMap.witnessKey 0, .int 999)])
 
 /-! ### keystone-audit companions (named `*_satisfiable` / `*_teeth`).
 

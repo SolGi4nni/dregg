@@ -269,11 +269,15 @@ tampered one, on concrete cells with the realizable injective carriers. -/
 -- `CommitmentCrossBind`/`RecordCommit` discharge their anti-ghost guards against).
 open Dregg2.Circuit.CommitmentCrossBind (cNC c2C restLimbsC)
 
-/-- A RELEASED reference cell value (its `escrow.state` slot reads `sReleased = 1`). -/
-def vReleased : Value := .record [(stateField, .int sReleased), ("8", .int 7)]
+/-- A RELEASED reference cell value (its `escrow.state` slot reads `sReleased = 1`). The user-tail
+key is `FieldsMap.witnessKey 0` — RELATIVE to `reservedKeys`, not the literal `"8"` it was until
+2026-07-28, when the band moved 8 → 16 and made that key a fixed cell (`FieldsMap §5`). -/
+def vReleased : Value :=
+  .record [(stateField, .int sReleased), (Dregg2.Exec.FieldsMap.witnessKey 0, .int 7)]
 
-/-- A NOT-released (open) cell value differing at the user tail key `"8"`. -/
-def vTampered : Value := .record [(stateField, .int 0), ("8", .int 999)]
+/-- A NOT-released (open) cell value differing at the user tail key `witnessKey 0`. -/
+def vTampered : Value :=
+  .record [(stateField, .int 0), (Dregg2.Exec.FieldsMap.witnessKey 0, .int 999)]
 
 /-- A state whose bounty cell `3` holds the RELEASED value. -/
 def sHonest : RecChainedState :=
@@ -299,12 +303,17 @@ def sTamper : RecChainedState :=
 #guard (decide (receiptOf cNC c2C restLimbsC 3 sTamper
               = some (cellCommit cNC c2C (restLimbsC 3) vReleased)) == false)
 
--- ...and the underlying tails differ (so `resolution_visible_rejects_tampered`'s
--- `htail` premise is satisfiable on this witness — differ at user-tail key `"8"`):
-#guard (decide ((Dregg2.Exec.FieldsMap.userTail vTampered).map
-                  (Dregg2.Exec.FieldsMap.tailLeaf c2C)
-              = (Dregg2.Exec.FieldsMap.userTail vReleased).map
-                  (Dregg2.Exec.FieldsMap.tailLeaf c2C)) == false)
+-- ...and the underlying tails differ (so `resolution_visible_rejects_tampered`'s `htail` premise is
+-- satisfiable on this witness). Spelled through `FieldsMap.separatesOnTail`, which ALSO requires
+-- both tails be POPULATED: the bare projection inequality it replaced compared `[]` with `[]` once
+-- `reservedKeys` moved 8 → 16 under the then-literal key `"8"`, which also emptied the tail the
+-- "REJECT" discrimination above is supposed to run on (`FieldsMap §5`).
+--
+-- ⚑ WHAT IT DOES NOT WITNESS: `resolution_visible_rejects_tampered` also carries
+-- `compressNInjective compressN` and `listLeafInjective (tailLeaf compress2)`, floors this tree
+-- REFUTES at deployed BabyBear width, and it is grandfathered in `FloorRatchetBaseline`. `htail`
+-- was never the premise in doubt.
+#guard Dregg2.Exec.FieldsMap.separatesOnTail c2C vTampered vReleased
 
 /-! ## §5 — axiom-hygiene tripwires (kernel triple `{propext, Classical.choice, Quot.sound}`). -/
 

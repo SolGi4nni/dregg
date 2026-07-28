@@ -4,10 +4,11 @@ into the canonical CELL commitment, with a re-proved injectivity over the extend
 LEGACY no-op (an empty-map cell commits byte-identically).
 
 `_RECORD-LAYER-UPGRADE.md` §D.2.1 + Stage 1. Stage 0 (`Dregg2.Exec.FieldsMap`) added the committed
-user-field MAP: keys `≥ 8` live in a `fields_root = ListCommit.listDigest (userTail v)` accumulator
-ALONGSIDE the 8 fixed cells, but `fields_root` was NOT yet folded into the cell's canonical state
-commitment. Stage 1 FOLDS it in — so a verifier binds the WHOLE record, not just the 8 fixed slots —
-and bumps the Rust domain-separation context `v2 → v3` (`cell/src/commitment.rs`).
+user-field MAP: keys `≥ FieldsMap.reservedKeys` live in a `fields_root =
+ListCommit.listDigest (userTail v)` accumulator ALONGSIDE the `reservedKeys` fixed cells (16 since
+2026-07-28, tracking Rust `STATE_SLOTS`), but `fields_root` was NOT yet folded into the cell's
+canonical state commitment. Stage 1 FOLDS it in — so a verifier binds the WHOLE record, not just the
+fixed slots — and bumps the Rust domain-separation context `v2 → v3` (`cell/src/commitment.rs`).
 
 This module is the LEAN keystone certifying that the Rust Stage-1 change is SOUND:
 
@@ -58,9 +59,9 @@ cell. Stage 1 appends ONE limb — the user-field-map root `FieldsMap.fieldsRoot
 position (mirroring the Rust `hasher.update(&state.fields_root)` right after `refcount_table_root`).
 
 `restLimbs` is the (abstract) ordered prefix of every OTHER absorbed limb (identity, mode, nonce,
-balance, the 8 fixed `fields`, visibility, commitments, swiss/refcount roots, permissions, vk, caps,
-delegate, delegation, program, lifecycle) — Stage 1 changes NONE of it, so its exact shape is
-irrelevant to the absorption proof; we carry it as the data it is. -/
+balance, the `reservedKeys` fixed `fields`, visibility, commitments, swiss/refcount roots,
+permissions, vk, caps, delegate, delegation, program, lifecycle) — Stage 1 changes NONE of it, so
+its exact shape is irrelevant to the absorption proof; we carry it as the data it is. -/
 
 section Surface
 
@@ -76,7 +77,7 @@ variable (compress2 : Int → Int → Int)
 ordered `rest` limbs FOLLOWED BY the user-field-map root limb `FieldsMap.fieldsRoot compress2 …`.
 `rest : List ℤ` is the abstract prefix of all the other absorbed limbs (none of which Stage 1
 touches). The `fields_root` limb is the Stage-1 addition — the ONE extra `compressN` input that
-binds the unbounded `key ≥ 8` overflow map into the commitment. -/
+binds the unbounded `key ≥ reservedKeys` overflow map into the commitment. -/
 def cellCommit (rest : List ℤ) (v : Value) : ℤ :=
   compressN (rest ++ [fieldsRoot compress2 compressN v])
 
@@ -172,10 +173,21 @@ private def restC : List Int := [7, 11, 13]
 
 private def legacyCellR : Value :=
   .record [("0", .int 11), ("7", .int 99), ("balance", .int 500)]
+-- ⚑ The overflow keys are `FieldsMap.witnessKey 0/1` — RELATIVE to `reservedKeys`, never literals.
+-- They were literal `"8"`/`"9"` until 2026-07-28, when `reservedKeys` moved 8 → 16 and made both of
+-- them FIXED CELLS: the two fixtures below acquired EMPTY user tails, so every guard in this section
+-- compared a cell with itself. `FieldsMap §5` carries the class and the guard's own teeth.
 private def overflowCellR : Value :=
-  .record [("0", .int 11), ("7", .int 99), ("8", .int 1234), ("9", .dig 42)]
+  .record [("0", .int 11), ("7", .int 99), (witnessKey 0, .int 1234), (witnessKey 1, .dig 42)]
 private def overflowTamperedR : Value :=
-  .record [("0", .int 11), ("7", .int 99), ("8", .int 9999), ("9", .dig 42)]
+  .record [("0", .int 11), ("7", .int 99), (witnessKey 0, .int 9999), (witnessKey 1, .dig 42)]
+
+-- WITNESS HYGIENE (the guard against the recurrence): these three facts are what make the guards
+-- below MEAN anything — the honest fixture carries a populated committed tail, the legacy fixture
+-- carries none, and the tamper genuinely MOVES the tail it is supposed to move.
+#guard tailPopulated overflowCellR
+#guard tailPopulated legacyCellR == false
+#guard separatesOnTail c2C overflowCellR overflowTamperedR
 
 -- NO-OP: a legacy cell's commitment EQUALS the empty-root reference (byte-identical fold).
 #guard decide (cellCommit cNC c2C restC legacyCellR = legacyReferenceCommit cNC restC)
@@ -192,8 +204,11 @@ private def overflowTamperedR : Value :=
 #guard decide (cellCommit cNC c2C restC overflowCellR = cellCommit cNC c2C restC overflowTamperedR) == false
 
 -- COMPLETENESS dual: two cells with the SAME user tail commit IDENTICALLY (same rest, same tail).
+-- ⚑ THE SILENT HALF of the 2026-07-28 breakage: this guard kept passing while both sides had EMPTY
+-- tails, i.e. while it distinguished nothing. The `tailPopulated` line is what reds it instead.
+#guard tailPopulated (.record [(witnessKey 0, .int 1234), (witnessKey 1, .dig 42)])
 #guard decide (cellCommit cNC c2C restC overflowCellR
-             = cellCommit cNC c2C restC (.record [("8", .int 1234), ("9", .dig 42)]))
+             = cellCommit cNC c2C restC (.record [(witnessKey 0, .int 1234), (witnessKey 1, .dig 42)]))
 
 #assert_axioms cellCommit_binds_fieldsRoot
 #assert_axioms cellCommit_binds_tail
