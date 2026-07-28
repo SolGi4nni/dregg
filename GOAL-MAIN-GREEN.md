@@ -227,6 +227,15 @@ first.
   than verdicts, and then read a truncated count as a complete one. **`--no-fail-fast` is not
   optional when quoting a baseline.**
 
+### Known pre-existing reds — MEASURED, `--no-fail-fast`, 2026-07-28 12:32
+`dregg-circuit`: **1218 run, 1194 passed, 24 failed, 10 skipped.** The 24 are
+`gentian_discharge_vault_prove` ×11, `gentian_carrier_floor_prove` ×6,
+`gentian_deployed_capacity_liveness` ×3, `settle_escrow_weld_prove` ×3,
+`effect_vm_selector_gate_forgery` ×1 — all owned by a live lane in
+`circuit/src/{descriptor_ir2,plonky3_prover,stark_zk}.rs`.
+Elsewhere: `dregg-cell` 846/0 · `dregg-turn` 914/915 (`stark_kill_wire_roundtrip::dfa_routing_roundtrip`)
+· `dregg-coord` 129/0 · `sdk full_turn_proof::tests` ×24 · `dreggnet-party` `depth == 3`.
+
 ## Open for ember
 1. **F1?** — the only route that makes a successor to `RestHashIffFrame` satisfiable. Flag day:
    commitment epoch + descriptor re-emit + re-genesis, 234 binder positions across 85 modules.
