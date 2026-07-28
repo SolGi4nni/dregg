@@ -599,10 +599,32 @@ fi
 # Only the archive is covered by a .gitignore (`dregg-lean-ffi/.gitignore`: `*.a`). The sidecar
 # and the lease are not, and protecting them here rather than editing a shared `.gitignore`
 # keeps the whole mechanism inside this script.
+# ⚑ `.lake` IS REMOTE-OWNED TOO, AND `--delete` ATE ONE (2026-07-28). A lane seeded `mapop-wide`
+# by copying a warm lane's `metatheory`, then ran its first hbuild — and rsync emptied
+# `metatheory/.lake/packages/mathlib` and removed `.lake/build` (223 olean dirs → 0), printing
+# `cannot delete non-empty directory: metatheory/.lake/...` before the build died on
+# "mathlib: configuration file not found". That is a warm 12G mathlib and hours of oleans, gone on
+# a first run, and the lane had to abandon `hbuild` and drive `ssh + swarm-build` by hand.
+#
+# WHY THE GITIGNORE MERGE DID NOT SAVE IT: `.lake` IS gitignored (root `.gitignore` carries
+# `metatheory/.lake`), but `--filter=':- .gitignore'` does not reproduce git's ANCHORING semantics.
+# A pattern containing a slash is anchored to its .gitignore's directory in git; rsync's per-dir
+# merge reads it relative to the directory being scanned, so the root file's `metatheory/.lake`
+# never matched `metatheory/.lake/` on the receiver. Relying on a gitignore translation to protect
+# irreplaceable remote state was the mistake; protect it EXPLICITLY, here, where it is visible.
+#
+# `P` is delete-only, so this costs nothing on the transfer side — and the accompanying excludes
+# stop us shipping local build state into a lane, which we never want either. Both the bare dir
+# entry AND its contents are listed: protecting a directory does not protect what is inside it
+# during rsync's delete scan (the same both-forms lesson `/.git/lfs/` already learned above).
 PROTECT_FILTER=(
   --filter="P /${LEAN_ARCHIVE}"
   --filter="P /${LEAN_ARCHIVE_PROV}"
   --filter="P /.pbuild-lease"
+  --filter="P .lake/"               # never DELETE a lane's warm build state
+  --filter="P .lake/**"             # (both forms: the dir entry AND its contents)
+  --exclude=".lake/"                # …and never SHIP local build state into a lane
+  --exclude=".lake/**"
 )
 
 # ---- claim the lane (the lease) --------------------------------------------
