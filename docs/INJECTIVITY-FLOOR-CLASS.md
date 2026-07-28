@@ -114,6 +114,23 @@ carriers of its own, sitting in the ratchet's refuted set.
 | **3** | `RomQueryFloor.birthday_bound:364` — `winProb (collWin M) ≤ (Q²+1)/‖R‖` for a `Q`-query adversary | ⚑ **PROVED. No hypothesis, no named carrier, no assumption** | information-theoretic, by induction over the query tree. `Eff := RomEff F Q` (adversaries that factor through a `Q`-query `OracleComp`) is a genuine class, and `romEff_not_iff_solvableFrac_negl` proves the rung-1 collapse **fails** for it. |
 | **3′** | `Poseidon2RomInstantiation.Poseidon2IsKeyedRandomOracle D w` | the ONE central idealisation, **per-experiment** | satisfiable and refuted-as-`∀w` on both faces. This is the honest name for "Poseidon2 behaves generically". |
 
+### 2.1 ⚑ Deleting the `def CollisionResistant` is NOT a local edit — measured 2026-07-28
+
+It is a **named sentinel** in `Verify/FloorCensus.sentinelFloors` with `needRefut = true`, and both
+`#floor_census` and `#floor_ratchet` **fail closed — hard error —** when a sentinel name does not
+resolve. So deleting the `def` forces deleting that sentinel entry. And its body
+(`∀ A, Negl (collisionAdv F A)`) is **not** injectivity-shaped, so the gate's DERIVED half cannot
+rediscover it: the sentinel is the *only* thing gating this floor. `HashCRHardQuant` cannot take its
+place on that list either — at a restricted `Eff` it is the honest rung 2.
+
+**So "delete `CollisionResistant`" costs a gate.** Draining its carriers to zero does not.
+The 47 sole-floor carriers split: **2 endpoints** (done, above), **30 embedded** (the `*_not_CR`
+teeth, `*Family_CR` satisfiability witnesses and `*Family_CR_of_injective` bridges over 12
+`*Regrounded*` modules), **3 prop-body floors** (`Poseidon2KeyedBridge.DomainSeparatedCR`,
+`S5Closure`'s `domainSepCR`, `Shielded.WideNativePqCommitment.ComputationalBindingFloor`) and
+**12 users** of those, of which only `S5Closure.deployed_unfoolable_of_domainSepCR` is a genuine
+security consumer — the rest refute or exhibit. Plus 10 multi-floor `…Family_CR_of_…` bridges.
+
 **Read rung 1 → rung 2 → rung 3 as the actual migration.** `InjectiveFloorRegrounded.lean`
 §"⚑ Why this is NOT the `CollisionResistant` treatment" (`:23–45`) argues rung 1 is a trap and
 is right. Measured state of the 28 `*Regrounded*` modules:
@@ -286,6 +303,58 @@ bundle still carries `topen ∈ tableOpenings`, which acceptance does not supply
 `deployed_accepting_pole_has_no_tableOpenings:902` is a `decide`-backed accepting run with
 `tableOpenings = []`. Routing off `hCR` removes one of the apex's two vacuities, not both.
 
+### ✅ 2026-07-28 — LANDED. The apex rests on no refuted floor.
+
+`algoStarkSound_transferV3_cons`, `starkSound_of_friLdtExtractFaithful_transferV3` and
+`StarkSoundFriLdt.starkSound_of_friLdtExtract_transferV3` now take **no floor hypothesis at all**.
+The estimate above was right about the content and wrong about one thing worth writing down:
+
+⚑ **The residual cannot be a BINDER at the apex — it has to enter through the BUNDLE.** At
+`hood_of_reductions_cons` the opening data (`idx`, `siblings`, `topen`, `vCommitted`) are explicit
+binders, so a per-instance `¬ OpeningColl sponge idx topen.constraintEval vCommitted siblings`
+swaps straight in for `hCR`. At the apex those four are **existentially bound inside
+`FriLdtExtractV3Cons`**, so there is nothing to state the residual *about*. Quantifying it
+universally would have re-created a global Merkle-binding floor — the forbidden move. So the
+conjunct went into the corrected bundles (`FriLdtExtractV3Cons`, `FriLdtExtractV3Faithful`,
+`FriLdtExtractV3FaithfulNoOodShape`, `ApexOodLaneRepair.FriLdtExtractV3ConsNoOodShape`), where it
+sits beside the two Merkle recomputes those bundles already deliver.
+
+What that cost, exactly: the LANDED `FriLdtExtractV3` never carried the conjunct, so
+`friLdtExtractV3_imp_cons` is **deleted**, and with it four migration receipts
+(`StarkSoundReduce.retiredPremise_imp_reducePremise`,
+`StarkSoundFriLdt.retiredPremise_imp_apexPremise`,
+`StarkSoundFriLdtCorrected.landedPremise_imp_correctedPremise` and
+`.starkSound_of_friLdtExtract_transferV3_via_corrected`). All five were transports **out of a
+premise proved to make `verifyBatch` reject every input**, so nothing that ever transported was
+lost. The landed bundle is deliberately not given the conjunct — it is the SUBJECT of the theorems
+that prove it empty.
+
+Landed in `OodCommitmentBinding`, with `merkleRecomputeZ_binds` and
+`commitmentOpening_binds_of_poseidon2CR` **deleted**:
+
+- `OpeningColl sponge idx l1 l2 siblings` — the pair `merkleFind` extracts really is a collision;
+- `openingColl_self_false` / `honest_run_needs_no_residual` — **dischargeable, and totally**: a
+  non-equivocating opening kills the side condition for every sponge, index and path, with no
+  hypothesis. The honest path pays nothing for the port;
+- `openingColl_of_constant_sponge` — refutable, so `¬ OpeningColl` is not free;
+- `openingColl_refutes_poseidon2CR` — the deleted floor implied it, so the port is a visible
+  WEAKENING (stated in the ¬-direction so it is anti-floor content and assumes no floor);
+- `merkleRecomputeZ_binds_of_noColl` / `commitmentOpening_binds_of_noColl` — the binding;
+- `opening_equivocation_exhibits_coll` — the converse, so the residual is *equivalent* to the
+  binding at that opening rather than merely sufficient for it.
+
+Priced by rung 3, unchanged: `merkleOpening_binds_rom` bounds a query-bounded prover's advantage in
+producing exactly this event on `KeyedRomFloor.keyedRom_hard`.
+
+**Measured delta:** 22 declarations shed their `Poseidon2SpongeCR` binder, 7 declarations deleted,
+2 inline-spelled baseline entries removed (282 → 280), **zero baseline entries added.**
+
+**NOT ported, named at each site in source:** five consumers whose opening data arrives from a
+*different* bundle — `OodExtChallengeLayout.DecodedLdtLinkExt`,
+`OodSingletonRepair.DecodedLdtLinkExtCons`, `ApexOodLaneRepair.FriLdtExtractCons`. They keep their
+already-grandfathered `Poseidon2SpongeCR` binder and DERIVE the residual through
+`openingColl_refutes_poseidon2CR`. One conjunct on each of those three bundles finishes it.
+
 ---
 
 ## §6 — The ordered plan, with effort bands
@@ -299,9 +368,9 @@ remains. Multi-floor sites must shed EVERY floor in one pass, or the metric does
 | **A — one edit** | `CLAIMS-LEDGER-vacuity.md` rows 42/43: labelled CITABLE, refuted 7 lines below themselves. | 1 doc edit | A CITABLE label is what gets quoted externally. |
 | **A — one edit** | The 3 stale pointers of §1.3. | 1 commit | `poseidon2WideCR_false_babyBear` does not exist and is cited 5×. |
 | **B — a swarmcycle** | **`Poseidon2SpongeCR`'s 707 sole-floor carriers.** | 707 sites | The only place unit-of-work and unit-of-progress coincide (97% sole). Repair = the standard per-instance residual; the extractor idiom and `Tools/ConePort` exist. |
-| **B — a swarmcycle** | The **apex chain** (§5): 4 restatements + 8 call sites, onto the *already-written* `merkleOpening_binds_rom`. | ~12 decls | Removes one of the apex's two vacuities. Independent of all FRI work. Cheapest apex improvement available. |
+| ~~**B — a swarmcycle**~~ ✅ | ~~The **apex chain** (§5)~~ — **LANDED 2026-07-28.** Cost was 22 restatements + 7 deletions across 12 files, not 12 decls: the residual had to enter through the corrected BUNDLES, because the apex cannot name the extraction data. | done | One of the apex's two vacuities is gone. `topen ∈ tableOpenings` remains. |
 | **C — a swarmcycle** | The four-combo batch table: 473 of 547 multi-floor sites in **4** combos. | 473 sites | Sequence **after** their floors' endpoints; shed all floors per site. |
-| **C — a real build** | Move the 7 rung-1 `*Regrounded* → CollisionResistant` modules up to rung 2/3, and **delete the old carriers rather than adding siblings**. | 7 modules | 28 regroundings are additive; a sibling does not drain a ratchet. |
+| **C — a real build** | Move the 7 rung-1 `*Regrounded* → CollisionResistant` modules up to rung 2/3, and **delete the old carriers rather than adding siblings**. | 7 modules | 28 regroundings are additive; a sibling does not drain a ratchet. **Started 2026-07-28**: the two ENDPOINT carriers (`HashFloorHonesty.equivocation_advantage_negligible` / `.friFold_advantage_negligible` — the only two declarations in the tree that CONSUMED the floor rather than talking about it) are deleted and restated at rung 2 as `FloorGames.*_eff`. 45 sole-floor carriers remain; see §2.1. |
 | **D — multi-session** | **`CommitSurface`**, shedding `restFrame` **in the same pass** as the four CR fields, via the finite-support redesign. | 409 decls reached | Rung 0′: widening does nothing; the domain must become finite. `PARKED` §2 is the brief. |
 | **D — a real build** | Instantiate `RomQueryFloor.birthday_bound` at the **8-felt** carrier (`‖R‖ = p^8`) and wire it under the ported endpoints. | repackaging | §3. Width-agnostic already, so an instantiation, not research. ⚑ **Never instantiate at 1 felt** — that proves a theorem about a bug (2^15.5). |
 | **E — open design** | Decide whether `#floor_ratchet`'s derivation grows to recognise ∀-iff-shaped floors like `RestHashIffFrame`. | decision | Right now it is undecided, which silently means "human-recognised only". |
