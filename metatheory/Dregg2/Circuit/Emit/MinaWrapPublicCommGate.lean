@@ -47,7 +47,7 @@ rejects**. Nothing is emitted unless both hold.
 
 40 × 255-bit RCB ladders per instance ≈ 15 s of kernel at the 0.19 s/ladder unit `docs/
 MINA-REAL-BLOCK-GATE.md` §6.1 established. Nine instances (four accept, five tamper):
-**159 s measured on hbox**.
+**159 s / 14.5 GB peak RSS measured on hbox**.
 
 ## What this is NOT
 

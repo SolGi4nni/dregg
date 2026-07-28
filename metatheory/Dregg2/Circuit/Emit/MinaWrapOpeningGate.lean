@@ -65,9 +65,10 @@ samples.
 34 × 255-bit RCB ladders per instance of the relation (2×15 `lr` + the aggregate + `u_base` + `sg`
 + `h`) ≈ 13 s of kernel at §6.1's 0.19 s/ladder unit; `delta` enters with coefficient 1 and costs
 no ladder. The sponge continuation is ~50 Poseidon permutations, `#guard`-evaluated as
-`MinaRealBlockTranscript`'s are. Ten instances of the relation plus the transcript: **153 s
-measured on hbox**, peak RSS ~13.6 GB — the prediction and the measurement agree, which is what
-makes the 5h extrapolation in §6.1 worth anything.
+`MinaRealBlockTranscript`'s are. Ten instances of the relation plus the transcript: **153 s /
+14.3 GB peak RSS measured on hbox** (`lake build`; 174 s standalone on a loaded box) — the
+prediction and the measurement agree, which is what makes the 5h extrapolation in §6.1 worth
+anything.
 
 ## What pins the gold
 

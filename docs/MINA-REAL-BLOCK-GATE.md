@@ -239,7 +239,12 @@ it is **eight rungs of very unequal size**, and the two facts that reorder them 
 **Unit of cost, measured on this hardware (hbox, `lake build`):** one 255-bit RCB double-and-add
 ladder ≈ **0.19 s** of kernel (each `by decide` pays it twice — elaborator, then kernel recheck).
 The 47-term fold in 6.1d is **93 s at 10.2 GB peak RSS**; that is the datum the extrapolations
-below use.
+below use. **5e and 5f are the first check on it, and it held**: 5e's nine 40-ladder instances
+predicted ~135 s and cost **159 s / 14.5 GB**; 5f's ten 34-ladder instances plus the sponge
+predicted ~130 s and cost **153 s / 14.3 GB**; the 80-ladder weld cost **75 s / 9.6 GB**. Time is
+linear in ladders as assumed; **memory is not** — it tracks the largest single `decide`, not the
+file's total, which is why splitting the weld out worked and why the 5h ~7 TB figure is an upper
+bound on a shape nobody should build that way.
 
 | rung | what | scalar-muls | status |
 |---|---|---|---|
