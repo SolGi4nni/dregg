@@ -196,13 +196,13 @@ def settleEntry (hash : List ℤ → ℤ) (before after : FeltHeap) : Entry :=
 /-- **HONEST SETTLE IS COVERED.** The genuine kernel transition (both legs `Ready`, then `settle`)
 produces a covered tag-17 entry: the entry is present and its gate verdict is `true` (by the §6
 `settle_passes_gate`). So an honest escrow turn passes coverage. -/
-theorem honest_settle_covers (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) (h : FeltHeap)
+theorem honest_settle_covers (hash : List ℤ → ℤ) (hsd : SlotsDistinct hash) (h : FeltHeap)
     (hready : Ready hash h) :
     covers [settleEntry hash h (settle hash h)] tagSettleEscrow := by
   refine ⟨settleEntry hash h (settle hash h), List.mem_singleton.mpr rfl, rfl, ?_⟩
   show decide (SettleGate hash h (settle hash h)) = true
   simp only [decide_eq_true_eq]
-  exact settle_passes_gate hash hCR h hready
+  exact settle_passes_gate hash hsd h hready
 
 /-- **PARTIAL SETTLE IS NOT COVERED.** A forged partial settle (leg B left `Deposited`) produces a
 tag-17 entry whose gate verdict is `false` (by the §6 `partial_settle_rejected`), so it does NOT

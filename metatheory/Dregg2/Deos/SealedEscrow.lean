@@ -27,8 +27,8 @@ committed heap reads those slots and gates claim/settlement. The rung proves:
   * `deposit_both_ready` / `deposit_binds_amounts` (HONEST ROUND-TRIP + BOTH-LEG BINDING) —
     depositing both conforming legs makes the settlement gate ready AND binds each leg's amount into
     the commitment (a claim binds BOTH legs: settlement reads both). Read-after-write is
-    `Heap.hget_hset_self`; the un-touched leg's slot survives by `Heap.hget_hset_frame` (the ONE
-    named `Poseidon2SpongeCR` floor — the cap-root floor, reused).
+    `Heap.hget_hset_self`; the un-touched leg's slot survives by `Heap.hget_hset_frame` on the
+    per-instance `SlotsDistinct` residual (NO floor).
 
   * `settle_consumes_both` + `replay_rejected` (THE ONE-SHOT TOOTH) — settlement flips BOTH legs to
     `Consumed`; a re-settle/replay of a consumed leg is REJECTED because the gate requires
@@ -47,7 +47,7 @@ committed heap reads those slots and gates claim/settlement. The rung proves:
   * **`leg_status_bound_in_root` / `leg_amount_bound_in_root` (THE REUSE KEYSTONE)** — equal
     committed roots ⟹ equal leg status AND equal leg amount: a forge cannot present the honest root
     with a flipped status (a `Consumed` leg masquerading as `Deposited`) or a swollen amount. DIRECT
-    instances of `Heap.root_binds_get` (the anti-ghost), under the one named `Poseidon2SpongeCR`
+    instances of `Heap.root_binds_get` (the anti-ghost), on the per-instance `¬ HeapRootColl`
     floor. With it, `forged_leg_moves_root`: a forged leg MUST publish a different root, where the
     status/amount teeth then bite.
 
@@ -238,12 +238,11 @@ theorem frameSlot (hash : List ℤ → ℤ) (hd : SlotsDistinct hash) (h : FeltH
 /-! ## §3 — THE HONEST ROUND-TRIP + BOTH-LEG BINDING.
 
 Depositing both conforming legs makes settlement ready AND binds each leg's amount — so settlement
-reads BOTH legs (the atomic swap binds both). The frames ride the ONE named `Poseidon2SpongeCR`
-floor; the read-backs are crypto-free. -/
+reads BOTH legs (the atomic swap binds both). The frames ride the `SlotsDistinct` residual; the read-backs are crypto-free. -/
 
 /-- **HONEST ROUND-TRIP.** After both legs are deposited, the settlement gate is `Ready`. Leg B's
 status reads back by `Heap.hget_hset_self`; leg A's survives the leg-B writes by
-`Heap.hget_hset_frame` (the named cap-root `Poseidon2SpongeCR` floor). -/
+`Heap.hget_hset_frame` on the `SlotsDistinct` residual (NO floor). -/
 theorem deposit_both_ready (hash : List ℤ → ℤ) (hsd : SlotsDistinct hash)
     (h : FeltHeap) (aA aB : ℤ) :
     Ready hash (deposit hash (deposit hash h Side.A aA) Side.B aB) := by
@@ -351,7 +350,7 @@ theorem over_claim_rejected (hash : List ℤ → ℤ) (h : FeltHeap) (c : Claim)
 Each leg's status and amount ride the SAME sorted-Poseidon2 `Heap.root` the cap crown proves binds.
 So equal committed roots open to the SAME leg state — a forge cannot present the honest root with a
 flipped status (a consumed leg posing as deposited) or a swollen amount. DIRECT instances of
-`Heap.root_binds_get` (the anti-ghost), under the one named `Poseidon2SpongeCR` floor. -/
+`Heap.root_binds_get` (the anti-ghost), on its per-instance `¬ HeapRootColl` residual (NO floor; ≈2^15.5 at the 1-felt root). -/
 
 /-- **THE REUSE KEYSTONE (status).** Two heaps with EQUAL roots open to the SAME leg status. Proven
 by REUSE of `Heap.root_binds_get` — no escrow-local commitment. -/
@@ -448,7 +447,7 @@ ROOTS of the before/after views — so a light client that checks the gate again
 public-input-bound before/after roots reads the GENUINE verdict; a forger presenting fake leg
 slots must MOVE a root (where §5's status binding bites). Equal-root before/after views give
 the same gate verdict. Proven by REUSE of `leg_status_bound_in_root` — no escrow-local
-commitment, the one named `Poseidon2SpongeCR` floor. -/
+commitment, and NO floor — the per-instance `¬ HeapRootColl` residual. -/
 theorem settle_gate_root_bound (hash : List ℤ → ℤ)
     {before before' after after' : FeltHeap}
     (hnb : ¬ HeapRootColl hash before before')

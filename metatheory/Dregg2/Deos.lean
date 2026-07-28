@@ -56,6 +56,10 @@ surfaces / membranes / rehydration / affordances.
 -/
 import Dregg2.Deos.Surface
 import Dregg2.Deos.Membrane
+-- ⚑ NO FLOOR (2026-07-28): ported off `Poseidon2SpongeCR` — which is PROVED FALSE at deployed
+-- BabyBear — onto the per-instance `SlotsDistinct` (slot keys do not alias; a finite kernel
+-- check) and `¬ Heap.HeapRootColl` (no sponge collision at the pair `rootFind` returns)
+-- residuals, each with three proved poles. Honest strength ≈ 2^15.5 at the 1-felt heap root.
 import Dregg2.Deos.DerivedCell
 -- The SEALED-ESCROW house-capacity, GROUNDED (`docs/deos/HOUSE-CAPACITY-FRAMEWORK.md`): an atomic
 -- 2-of-2 value swap completes all-or-nothing and ONCE, proven BY REUSE of the committed-heap root
@@ -63,17 +67,29 @@ import Dregg2.Deos.DerivedCell
 -- swap) + replay_rejected (the one-shot tooth: a settled leg is a spent nullifier) +
 -- nonconforming_claim_rejected + over_claim_rejected + leg_status_bound_in_root (the anti-ghost). The
 -- Rust escrow_sealed.rs is wired via invariant_matches_lean_rung. #assert_all_clean.
+-- ⚑ NO FLOOR (2026-07-28): ported off `Poseidon2SpongeCR` — which is PROVED FALSE at deployed
+-- BabyBear — onto the per-instance `SlotsDistinct` (slot keys do not alias; a finite kernel
+-- check) and `¬ Heap.HeapRootColl` (no sponge collision at the pair `rootFind` returns)
+-- residuals, each with three proved poles. Honest strength ≈ 2^15.5 at the 1-felt heap root.
 import Dregg2.Deos.SealedEscrow
 -- The STANDING-OBLIGATION house-capacity, GROUNDED: a recurring duty is discharged once-per-period,
 -- on-schedule, never early or skipped, proven BY REUSE of the committed-heap root + the
 -- StrictMonotonic cursor discipline (the version/supply-slot monotone law). cursor_strict_mono +
 -- replay_rejected (one-shot per period) + early/over/behind-schedule teeth + cursor_bound_in_root.
 -- The Rust obligation_standing.rs is wired via invariant_matches_lean_rung. #assert_all_clean.
+-- ⚑ NO FLOOR (2026-07-28): ported off `Poseidon2SpongeCR` — which is PROVED FALSE at deployed
+-- BabyBear — onto the per-instance `SlotsDistinct` (slot keys do not alias; a finite kernel
+-- check) and `¬ Heap.HeapRootColl` (no sponge collision at the pair `rootFind` returns)
+-- residuals, each with three proved poles. Honest strength ≈ 2^15.5 at the 1-felt heap root.
 import Dregg2.Deos.StandingObligation
 -- The FUSED budget-escrow ⊗ obligation prepaid lease (P1): one atomic write advances the
 -- StrictMonotonic meter cursor AND draws exactly rent from the escrowed prepaid budget, so
 -- meter/pay drift is UNREPRESENTABLE (metered_equals_drawn + budget_never_overdrawn, both
 -- polarities, bound in the heap root). Rust cell/src/prepaid_lease.rs. #assert_all_clean.
+-- ⚑ NO FLOOR (2026-07-28): ported off `Poseidon2SpongeCR` — which is PROVED FALSE at deployed
+-- BabyBear — onto the per-instance `SlotsDistinct` (slot keys do not alias; a finite kernel
+-- check) and `¬ Heap.HeapRootColl` (no sponge collision at the pair `rootFind` returns)
+-- residuals, each with three proved poles. Honest strength ≈ 2^15.5 at the 1-felt heap root.
 import Dregg2.Deos.PrepaidLease
 -- The SHARE-VAULT house-capacity, GROUNDED: an ERC-4626-style vault whose minted shares equal the
 -- share-price relation d·S/T, where existing holders are NEVER diluted (deposit_price_non_decreasing)
@@ -81,6 +97,10 @@ import Dregg2.Deos.PrepaidLease
 -- via internal committed accounting). Proven BY REUSE of the committed-heap root + the derived-cell
 -- share-price pattern; the Rust vault.rs share-vault is wired via share_vault_matches_lean_rung.
 -- #assert_all_clean. The proven share-price is stronger than ERC-4626's exploit-prone share math.
+-- ⚑ NO FLOOR (2026-07-28): ported off `Poseidon2SpongeCR` — which is PROVED FALSE at deployed
+-- BabyBear — onto the per-instance `SlotsDistinct` (slot keys do not alias; a finite kernel
+-- check) and `¬ Heap.HeapRootColl` (no sponge collision at the pair `rootFind` returns)
+-- residuals, each with three proved poles. Honest strength ≈ 2^15.5 at the 1-felt heap root.
 import Dregg2.Deos.Vault
 -- The CONSTRAINT-BINDING soundness core for the house-capacity in-circuit welds: a DECLARED capacity
 -- caveat cannot be OMITTED. The §6 weld rungs prove a PRESENT manifest entry forces its invariant;

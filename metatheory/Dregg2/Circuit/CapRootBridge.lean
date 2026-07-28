@@ -161,7 +161,8 @@ theorem capOpensTo_functional (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR
     (h₁ : capOpensTo hash r k o₁) (h₂ : capOpensTo hash r k o₂) : o₁ = o₂ := by
   obtain ⟨m₁, _, hr₁, hg₁⟩ := h₁
   obtain ⟨m₂, _, hr₂, hg₂⟩ := h₂
-  have hm : m₁ = m₂ := Heap.root_injective hash hCR (hr₁.trans hr₂.symm)
+  have hm : m₁ = m₂ :=
+    Heap.root_injective hash (fun hc => hc.1 (hCR _ _ hc.2)) (hr₁.trans hr₂.symm)
   rw [← hg₁, ← hg₂, hm]
 
 /-! ## §4 — THE BRIDGE: a write-rights `capOpensTo` discharges the kernel authority gate. -/

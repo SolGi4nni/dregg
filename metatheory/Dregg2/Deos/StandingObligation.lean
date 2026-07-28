@@ -30,8 +30,8 @@ proves:
   * `opened_cursor` + `opened_discharge_accepts` (HONEST ROUND-TRIP) — an opened obligation commits
     `next_due = start`, against which the period-0 discharge (paid the exact amount, at/after the
     first due block) is accepted by the gate. Read-after-write is `Heap.hget_hset_self`; the cursor
-    slot survives the other open-writes by `Heap.hget_hset_frame` (the ONE named `Poseidon2SpongeCR`
-    floor).
+    slot survives the other open-writes by `Heap.hget_hset_frame` on the per-instance
+    `SlotsDistinct` residual (NO floor).
 
   * **`cursor_strict_mono` + `advance_strictly_increases` (THE MONOTONE-CURSOR REUSE)** — the cursor
     `cursorAt start period k = start + k·period` is STRICTLY increasing in the period index (the
@@ -57,7 +57,7 @@ proves:
   * **`cursor_bound_in_root` / `count_bound_in_root` (THE HEAP REUSE KEYSTONE)** — equal committed
     roots ⟹ equal cursor AND equal discharged-count: a forge cannot present the honest root with a
     rewound cursor or a padded count. DIRECT instances of `Heap.root_binds_get` (the anti-ghost),
-    under the one named `Poseidon2SpongeCR` floor. With it, `forged_cursor_moves_root`.
+    under the one named per-instance `¬ HeapRootColl` residual. With it, `forged_cursor_moves_root`.
 
 This is NOT new mathematics: the cursor is a committed scalar advancing under the existing
 StrictMonotonic discipline, and the BINDING is the proven sorted-Poseidon2 root. The standing
@@ -298,8 +298,8 @@ theorem expectedPeriod_open (t : Terms) : expectedPeriod t t.start = 0 := by
 /-! ## §5 — THE HONEST ROUND-TRIP + THE TEETH. -/
 
 /-- **HONEST ROUND-TRIP (cursor).** An opened obligation commits `next_due = start`. The cursor slot
-survives the later open-writes (count, total) by `Heap.hget_hset_frame` (the named
-`Poseidon2SpongeCR` floor), then reads back by `Heap.hget_hset_self`. -/
+survives the later open-writes (count, total) by `Heap.hget_hset_frame` on the `SlotsDistinct`
+residual, then reads back by `Heap.hget_hset_self`. -/
 theorem opened_cursor (hash : List ℤ → ℤ) (hsd : SlotsDistinct hash)
     (h : FeltHeap) (digest : ℤ) (t : Terms) :
     boundCursor hash (openObl hash h digest t) = some t.start := by
@@ -372,7 +372,7 @@ theorem behind_schedule_rejected (t : Terms) (committedCount clock : ℤ)
 The `next_due` cursor and discharged-count ride the SAME sorted-Poseidon2 `Heap.root` the cap crown
 proves binds. So equal committed roots open to the SAME cursor and count — a forge cannot present the
 honest root with a rewound cursor (re-opening a discharged period) or a padded count. DIRECT
-instances of `Heap.root_binds_get` (the anti-ghost), under the one named `Poseidon2SpongeCR` floor. -/
+instances of `Heap.root_binds_get` (the anti-ghost), on its per-instance `¬ HeapRootColl` residual (NO floor; ≈2^15.5 at the 1-felt root). -/
 
 /-- **THE REUSE KEYSTONE (cursor).** Equal roots ⟹ equal committed cursor. Proven by REUSE of
 `Heap.root_binds_get` — no obligation-local commitment. -/
@@ -525,7 +525,7 @@ the before/after views — so a light client that checks the gate against the pu
 before/after roots reads the GENUINE verdict; a forger presenting fake cursor/total slots must MOVE a
 root (where §6's binding bites). Equal-root before/after views give the same gate verdict. Proven by
 REUSE of `cursor_bound_in_root` / `total_bound_in_root` — no obligation-local commitment, the one
-named `Poseidon2SpongeCR` floor. -/
+per-instance `¬ HeapRootColl` residual (NO floor). -/
 theorem discharge_gate_root_bound (hash : List ℤ → ℤ)
     {before before' after after' : FeltHeap}
     (hnb : ¬ HeapRootColl hash before before')

@@ -24,8 +24,8 @@ checks it equals the committed claim. The rung proves:
 
   * `bind_verifies` (HONEST ROUND-TRIP) — re-deriving (`bind`) writes the freshly-folded value, so a
     verifier with the SAME spec and sources accepts. Read-after-write is `Heap.hget_hset_self`
-    (crypto-free); the digest slot survives the value write by `Heap.hget_hset_frame` (the ONE named
-    `Poseidon2SpongeCR` floor — the cap-root floor, reused).
+    (crypto-free); the digest slot survives the value write by `Heap.hget_hset_frame` on the per-instance
+    `SlotsDistinct` residual (NO floor).
 
   * `forged_value_rejected` (THE FORGE TOOTH) — a cell whose committed claim ≠ `f(sources)` does NOT
     verify. The `cell/src/derived.rs` `forged_value_is_rejected` (claim 999 over Σ = 350), as a
@@ -222,11 +222,11 @@ theorem frameSlot (hash : List ℤ → ℤ) (hd : SlotsDistinct hash) (h : FeltH
 
 `bind` produces a cell the SAME spec+sources verify (round-trip); a forged claim, a stale claim, and
 a wrong spec are each rejected. The forge/stale teeth are crypto-free (the value read-back); the
-round-trip's digest leg rides the ONE named `Poseidon2SpongeCR` floor (frame off the value write). -/
+round-trip's digest leg rides the `SlotsDistinct` residual (frame off the value write; NO floor). -/
 
 /-- **HONEST ROUND-TRIP.** A freshly re-derived cell verifies against the spec+sources it was bound
 to. The value slot reads back by `Heap.hget_hset_self` (crypto-free); the digest slot survives the
-value write by `Heap.hget_hset_frame` (the named cap-root `Poseidon2SpongeCR` floor). -/
+value write by `Heap.hget_hset_frame` on the `SlotsDistinct` residual (NO floor). -/
 theorem bind_verifies (hash : List ℤ → ℤ) (hsd : SlotsDistinct hash)
     (h : FeltHeap) (agg : Aggregate) (srcs : List Source) :
     Verifies hash (bind hash h agg srcs) agg srcs := by
@@ -288,7 +288,7 @@ theorem wrong_spec_after_bind (hash : List ℤ → ℤ) (hsd : SlotsDistinct has
 The claimed derived value rides the SAME sorted-Poseidon2 `Heap.root` the cap crown proves binds.
 So equal committed roots open to the SAME claim (and the SAME spec) — a verifier and a light client
 see EXACTLY the value the cell committed; a forge cannot present the honest root with a lying claim.
-A DIRECT instance of `Heap.root_binds_get` (the anti-ghost), under the one named `Poseidon2SpongeCR`
+A DIRECT instance of `Heap.root_binds_get` (the anti-ghost), on the per-instance `¬ HeapRootColl`
 floor. -/
 
 /-- **THE REUSE KEYSTONE — the claimed value is bound into the committed root.** Two heaps with EQUAL

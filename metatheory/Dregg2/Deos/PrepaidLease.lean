@@ -42,7 +42,7 @@ NO VK bump). The rung proves:
   * `opened_cursor` + `opened_remaining` (HONEST ROUND-TRIP + BUDGET-HOLD) — an opened lease commits
     `next_due = start` AND holds the full `budget` in the escrow slot. Read-after-write is
     `Heap.hget_hset_self`; the un-touched slots survive the other open-writes by
-    `Heap.hget_hset_frame` (the ONE named `Poseidon2SpongeCR` floor).
+    `Heap.hget_hset_frame` on the per-instance `SlotsDistinct` residual (NO floor).
 
   * **`budget_never_overdrawn`** (THE BUDGET INVARIANT, BOTH POLARITIES) — the closed form
     `remainingAfter budget rent n = budget − n·rent` (the committed budget after `n` discharges is
@@ -71,7 +71,7 @@ NO VK bump). The rung proves:
     KEYSTONE)** — equal committed roots ⟹ equal cursor AND equal remaining budget AND equal drawn: a
     forge cannot present the honest root with a rewound cursor, a padded budget, or an under-reported
     draw. DIRECT instances of `Heap.root_binds_get` (the anti-ghost), under the one named
-    `Poseidon2SpongeCR` floor. With them, `forged_budget_moves_root`.
+    per-instance `¬ HeapRootColl` residual. With them, `forged_budget_moves_root`.
 
 This is NOT new mathematics: the cursor is a committed scalar advancing under the existing
 StrictMonotonic discipline, the budget is a committed sealed value, and the BINDING is the proven
@@ -500,7 +500,7 @@ theorem advance_records_draw (hash : List ℤ → ℤ)
 All three ride the SAME sorted-Poseidon2 `Heap.root` the cap crown proves binds. Equal committed
 roots open to the SAME cursor, remaining budget, and drawn — a forge cannot present the honest root
 with a rewound cursor, a padded budget, or an under-reported draw. DIRECT instances of
-`Heap.root_binds_get` (the anti-ghost), under the one named `Poseidon2SpongeCR` floor. -/
+`Heap.root_binds_get` (the anti-ghost), on its per-instance `¬ HeapRootColl` residual (NO floor; ≈2^15.5 at the 1-felt root). -/
 
 /-- **THE REUSE KEYSTONE (cursor).** Equal roots ⟹ equal committed cursor. -/
 theorem cursor_bound_in_root (hash : List ℤ → ℤ)
@@ -627,7 +627,7 @@ theorem discharge_gate_insufficient_rejected (hash : List ℤ → ℤ) (t : Term
 /-- **THE LIGHT-CLIENT TOOTH (root-transport).** The gate verdict is FIXED by the committed ROOTS of
 the before/after views — a forger presenting fake cursor/budget/drawn slots must MOVE a root (where
 §6's binding bites). Proven by REUSE of `cursor_bound_in_root` / `remaining_bound_in_root` /
-`drawn_bound_in_root` — no lease-local commitment, the one named `Poseidon2SpongeCR` floor. -/
+`drawn_bound_in_root` — no lease-local commitment, and NO floor — the per-instance `¬ HeapRootColl` residual. -/
 theorem discharge_gate_root_bound (hash : List ℤ → ℤ)
     {before before' after after' : FeltHeap}
     (hnb : ¬ HeapRootColl hash before before')

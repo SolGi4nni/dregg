@@ -35,8 +35,8 @@ under the existing frame discipline. Concretely:
   * **FRAME DISCIPLINE** — other cells' heaps and records are untouched
     (`heapStep_heap_frame_cells` / `heapStep_cell_frame`); on the written cell, every field other
     than `heap_root` is untouched (`heapStep_field_frame`) and every heap key other than the
-    written `(collection, key)` keeps its opening (`heapStep_key_frame`, under the ONE named CR
-    floor); caps/authority untouched (`heapStep_caps_unchanged`/`heapStep_authGraph_unchanged`).
+    written `(collection, key)` keeps its opening (`heapStep_key_frame`, on the per-instance `AddrColl`
+    residual — NO floor); caps/authority untouched (`heapStep_caps_unchanged`/`heapStep_authGraph_unchanged`).
   * **THE REGISTER BINDS THE HEAP** — the committed `heap_root` field reads back EXACTLY the
     recomputed root of the committed post-heap (`heapStep_root_written`): the register and the
     spliced field are one object (the cell≡circuit identity seed: cell, executor, and circuit all
@@ -58,7 +58,7 @@ and the state-commitment conjunct (`Circuit/StateCommit.RestHashIffFrame` does n
 ## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; crypto enters ONLY as the named
-`Poseidon2SpongeCR` hypothesis (the cap-root floor) and ONLY where an opening is compared across
+per-instance `Heap.AddrColl` / `Heap.HeapRootColl` residuals and ONLY where an opening is compared across
 distinct addresses.
 -/
 import Dregg2.Substrate.Heap

@@ -419,7 +419,7 @@ theorem mapRoot_injective (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR has
   have hmap : (h₁.map (Heap.leafOf hash)) = (h₂.map (Heap.leafOf hash)) :=
     perfectRoot_injective hash hCR d (by rw [List.length_map, hlen₁])
       (by rw [List.length_map, hlen₂]) h
-  exact Heap.map_leaf_injective hash hCR h₁ h₂ hmap
+  exact Heap.map_leaf_injective hash h₁ h₂ (fun hc => hc.1 (hCR _ _ hc.2)) hmap
 
 /-! ## §5 — the faithful map OPENING (`opensToMerkle`/`writesToMerkle`) + the re-proved anti-ghost.
 

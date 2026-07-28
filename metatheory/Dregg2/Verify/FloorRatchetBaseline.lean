@@ -1357,7 +1357,6 @@ private def c9 : Array String := #[
   "Dregg2.Deos.CapacitySatisfaction.vault_satisfaction_witnessed",
   "Dregg2.Deos.CarrierBoundFloorGadget.gentian_selector_forced_carrier",
   "Dregg2.Deos.CarrierBoundFloorGadget.gentian_settle_forced_carrier",
-  "Dregg2.Deos.ConstraintBinding.honest_settle_covers",
   "Dregg2.Deos.DocSubstrateSound.substrate_root_binds_conflict_alternatives_or_collides",
   "Dregg2.Deos.DocSubstrateSound.substrate_root_binds_element_structure_or_collides",
   "Dregg2.Deos.InAirAuthorityDigestGadget.gentian_selector_forced_discharged",

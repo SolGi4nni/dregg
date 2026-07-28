@@ -507,7 +507,9 @@ theorem boundary_init_root_bound (hash : List ℤ → ℤ) (hCR : Poseidon2Spong
     {hcommitted hdeclared : FeltHeap}
     (hroot : Heap.root hash hdeclared = Heap.root hash hcommitted) :
     hdeclared = hcommitted :=
-  Heap.root_injective hash hCR hroot
+  -- `hCR` is still this cone's (refuted) floor; it DERIVES the per-instance residual
+  -- `Heap.root_injective` now takes. Porting `UniversalMemory` itself is its own cone.
+  Heap.root_injective hash (fun hc => hc.1 (hCR _ _ hc.2)) hroot
 
 /-! ### §4c — the WHOLE-IMAGE boundary equality (the no-extra-cells direction).
 
@@ -547,7 +549,7 @@ theorem boundary_image_eq_of_root (hash : List ℤ → ℤ) (hCR : Poseidon2Spon
     {hcommitted : FeltHeap} {init : ℤ → Option ℤ} {as : List ℤ}
     (hpin : Heap.root hash hcommitted = Heap.root hash (boundaryCells init as)) :
     hcommitted = boundaryCells init as :=
-  Heap.root_injective hash hCR hpin
+  Heap.root_injective hash (fun hc => hc.1 (hCR _ _ hc.2)) hpin
 
 /-- **`boundary_whole_image_sem` — the committed heap agrees with the declared image EVERYWHERE.**
 The lookup-world consequence of `boundary_image_eq_of_root`: under the CR floor, pinning the
@@ -780,7 +782,7 @@ theorem nullifier_fresh_binds_root (hash : List ℤ → ℤ) (hCR : Poseidon2Spo
     Heap.get nmap' x = none ∧ x ∉ Heap.keys nmap' := by
   have habs := (nullifier_fresh_sound hcons hread haddr hnone hio).1
   rw [hload] at habs
-  have heq : nmap' = nmap := Heap.root_injective hash hCR hroot
+  have heq : nmap' = nmap := Heap.root_injective hash (fun hc => hc.1 (hCR _ _ hc.2)) hroot
   rw [heq]
   exact ⟨habs, (Heap.get_eq_none_iff nmap x).mp habs⟩
 

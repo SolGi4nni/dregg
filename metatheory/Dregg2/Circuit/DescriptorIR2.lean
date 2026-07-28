@@ -774,7 +774,7 @@ theorem satisfied2_init_root_bound (hash : List ℤ → ℤ) (hCR : Poseidon2Spo
     {mcommitted mdeclared : Heap.FeltHeap}
     (hroot : Heap.root hash mdeclared = Heap.root hash mcommitted) :
     mdeclared = mcommitted :=
-  Heap.root_injective hash hCR hroot
+  Heap.root_injective hash (fun hc => hc.1 (hCR _ _ hc.2)) hroot
 
 /-- **THE WHOLE-IMAGE flat init binding — `boundary_whole_image_sem` applied.** The no-extra-cells
 direction: if the committed pre-state root EQUALS the sorted-Poseidon2 fold of the ENTIRE declared
