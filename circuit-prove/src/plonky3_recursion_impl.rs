@@ -99,6 +99,18 @@ pub mod recursive {
     /// `3·38 + 14 = 128` — on the nose of the drift margin, with zero headroom
     /// (`FriLedgerSound.recursion_ledger_capacityBits`).
     pub const RECURSION_FRI_QUERY_POW_BITS: usize = 14;
+    /// [`create_recursion_config`]'s FRI **commit-phase** proof-of-work bits — plonky3's second
+    /// grinding knob (`fri/src/config.rs:18`), ground per fold round after the round commitment is
+    /// observed and before the folding challenge `β` is drawn (`fri/src/prover.rs:224`, checked
+    /// `verifier.rs:222`). It is the only lever on the `ε_C` branch that is not a field-extension
+    /// flag day (`Dregg2.Circuit.FriCommitPow.commit_pow_moves_the_commit_branch`), and it is
+    /// **hard-capped at 30 bits** by `grind`'s `assert!((1u64 << bits) < F::ORDER_U64)` over a
+    /// single BabyBear witness (`FriCommitPow.maxGrindBits_is_the_babybear_witness_cap`).
+    ///
+    /// It was an inline `0` at both construction sites; exported because a knob that moves a
+    /// soundness column must be pinnable by the params gate, and because the in-circuit
+    /// `FriVerifierParams` below must be able to READ the value the prover grinds.
+    pub const RECURSION_FRI_COMMIT_POW_BITS: usize = 0;
     /// [`create_recursion_config`]'s FRI fold arity exponent — 1, i.e. fold by 2.
     pub const RECURSION_FRI_MAX_LOG_ARITY: usize = 1;
     /// [`create_recursion_config`]'s FRI final-polynomial length exponent — 0 (constant final poly).
@@ -352,7 +364,7 @@ pub mod recursive {
             log_final_poly_len: RECURSION_FRI_LOG_FINAL_POLY_LEN,
             max_log_arity: RECURSION_FRI_MAX_LOG_ARITY,
             num_queries: RECURSION_FRI_NUM_QUERIES,
-            commit_proof_of_work_bits: 0,
+            commit_proof_of_work_bits: RECURSION_FRI_COMMIT_POW_BITS,
             query_proof_of_work_bits: RECURSION_FRI_QUERY_POW_BITS,
             mmcs: challenge_mmcs,
         };
@@ -361,11 +373,17 @@ pub mod recursive {
         let config = StarkConfig::new(pcs, challenger);
 
         use p3_circuit::ops::PermConfig;
+        // ⚑ THESE READ THE CONSTS, and until 2026-07-28 they did not: the four arguments were
+        // inline literals `3, 0, 0, 14` each carrying the comment "(match prover)". They matched by
+        // COINCIDENCE — nothing tied them to the `RECURSION_FRI_*` the `FriParameters` above reads,
+        // so moving any one const would have left the IN-CIRCUIT verifier checking a config the
+        // prover does not run, with a comment asserting the opposite. The commit-PoW argument is
+        // `RECURSION_FRI_COMMIT_POW_BITS` for the same reason.
         let fri_verifier_params = FriVerifierParams::with_mmcs(
-            3,  // log_blowup (match prover)
-            0,  // log_final_poly_len
-            0,  // commit_pow_bits (match prover)
-            14, // query_pow_bits (match prover)
+            RECURSION_FRI_LOG_BLOWUP,
+            RECURSION_FRI_LOG_FINAL_POLY_LEN,
+            RECURSION_FRI_COMMIT_POW_BITS,
+            RECURSION_FRI_QUERY_POW_BITS,
             PermConfig::poseidon2(Poseidon2Config::BABY_BEAR_D4_W16),
         );
 

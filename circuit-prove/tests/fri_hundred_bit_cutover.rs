@@ -32,8 +32,40 @@
 //!    bits RAISES `|D⁰|`, which LOWERS the commit branch. §3's rows hold `|D⁰|` fixed while moving
 //!    `q` by 5.8×; the `degree_bits` printed here are what actually happens.
 //!
+//! ## ⚑ WHAT IT MEASURED, 2026-07-28 — and it withdrew the flip
+//!
+//! ```text
+//! candidate                              status       inner degree_bits    wrap degree_bits   wrap KiB   wrap s
+//! DEPLOYED  lb6 arity2 q19  cpow0        RUNS             [6, 8, 4]   [10, 9, 16, 14, 16]      306.7    320.7
+//! E2 flip   lb6 arity8 q19  cpow0        RUNS             [6, 8, 4]   [10, 9, 16, 14, 16]      224.2    342.3
+//! lb floor  lb3 arity8 q19  cpow0        RUNS             [6, 8, 4]   [10, 9, 16, 14, 16]      200.5     49.8
+//! ROW D     lb2 arity8 q19  cpow0        UNRUNNABLE — inner proof VERIFY FAILED: OodEvaluationMismatch { index: 1 }
+//! ROW D     lb2 arity8 q110 cpow0        UNRUNNABLE — inner proof VERIFY FAILED: OodEvaluationMismatch { index: 1 }
+//! ```
+//!
+//! **1. Row D does not run, and the failure mode is worse than a panic.** At `log_blowup 2` the
+//! prover does NOT assert out — the pinned `p3-fri`'s `get_evaluations_on_domain` has a
+//! re-interpolation fallback (`two_adic_pcs.rs:464-484`), so it happily emits a proof and the
+//! VERIFIER then rejects it, at instance **1**: the Poseidon2 chip, the degree-7 table. A knob
+//! set that produces unverifiable proofs is exactly what a calculator cannot see.
+//!
+//! **2. The wrap trace is `2^16` NATURALLY, and nothing moves it.** Identical `degree_bits`
+//! at arity 2 and arity 8, at `log_blowup 6` and `3`. So `|D⁰|` is `2^22` deployed and `2^19` at
+//! the lowest legal blowup — never the `2^17` row D needed. `WRAP_LOG_CEIL` is a FLOOR; it is not
+//! padding anything here. (The `[9,9,15,14,15]` in `accumulator.rs:227` is the AGGREGATION fold, a
+//! different circuit.) ⚑ This is the input `Dregg2.Circuit.FriCommitPow.
+//! ext4_cannot_reach_100_at_any_runnable_blowup_and_the_measured_wrap_height` consumes.
+//!
+//! **3. The lb-6 → lb-3 move is a large FREE win that has nothing to do with ≥100.** Same wrap,
+//! same trace: **6.4× faster** (320.7 s → 49.8 s) and **35% smaller** (306.7 KiB → 200.5 KiB),
+//! and it RAISES the commit column `58 → 68` because `ε_C` carries `2^(3·lb/2)` and `|D⁰|` falls
+//! with the blowup. It is not landed here — it re-emits every descriptor and rotates the apex VK,
+//! and that is `ember`'s call, not a measurement's.
+//!
 //! Run the sweep (SLOW — real recursion proofs, and any `commit_pow > 0` row grinds):
 //!   `cargo test -p dregg-circuit-prove --release --test fri_hundred_bit_cutover -- --ignored --nocapture`
+//! The quotient-domain floor tooth is FAST and always on:
+//!   `cargo test -p dregg-circuit-prove --release --test fri_hundred_bit_cutover -- --nocapture`
 
 use std::time::Instant;
 
@@ -43,10 +75,12 @@ use dregg_circuit::descriptor_ir2::{
     verify_vm_descriptor2_with_config,
 };
 use dregg_circuit::effect_vm::trace_rotated::{
-    RotatedBlockWitness, generate_rotated_effect_vm_trace, transfer_caveat_manifest,
+    RotatedBlockWitness, avail_pad_for_descriptor_name, generate_rotated_effect_vm_trace_avail,
+    transfer_caveat_manifest,
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
+use dregg_circuit::field::BabyBear;
 use dregg_circuit_prove::plonky3_recursion_impl::recursive::{
     DreggRecursionConfig, create_recursion_config_with_fri,
     verify_recursive_batch_proof_with_config,
@@ -110,6 +144,112 @@ struct Ran {
     verify_wrap: f64,
 }
 
+/// The deployed rotated transfer witness — a real transfer-out over the validated v1 reference
+/// witness, byte-for-byte the fixture `rotation_batchstark_leaf_smoke.rs` and
+/// `e2_fold_arity_recompose_probe.rs` drive. The deployed member is AVAILABILITY-HARDENED, so the
+/// generator takes the pad and graduates the base trace up to `desc.trace_width` internally; the
+/// un-padded generator produces a witness the range table rejects.
+fn deployed_transfer_witness(pad: usize) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
+    let before_balance: i64 = 100_000;
+    let amount: u64 = 50;
+    let st = CellState::new(before_balance as u64, 0);
+    let effects = vec![Effect::Transfer {
+        amount,
+        direction: 1,
+    }];
+    let mut ledger = Ledger::new();
+    let before_cell = producer_cell(before_balance, 0);
+    let after_cell = producer_cell(before_balance - amount as i64, 0);
+    ledger.insert_cell(after_cell.clone()).unwrap();
+    let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
+    let receipt_log: Vec<[u8; 32]> = vec![[1u8; 32], [2u8; 32]];
+    let mk = |c: &Cell| {
+        rw::produce(
+            c,
+            &ledger,
+            &nullifier_root,
+            &commitments_root,
+            &dregg_turn::rotation_witness::empty_revoked_root_8(),
+            &receipt_log,
+            &Default::default(),
+        )
+    };
+    let before_w = mk(&before_cell);
+    let after_w = mk(&after_cell);
+    let bridge = |w: &rw::RotationWitness| -> RotatedBlockWitness {
+        RotatedBlockWitness::new(w.pre_limbs.clone(), w.iroot).expect("31 pre-iroot limbs")
+    };
+    generate_rotated_effect_vm_trace_avail(
+        pad,
+        &st,
+        &effects,
+        &bridge(&before_w),
+        &bridge(&after_w),
+        &transfer_caveat_manifest(),
+    )
+    .map_err(|e| format!("trace generation failed: {e:?}"))
+}
+
+/// Mint the deployed rotated IR-v2 batch at an arbitrary `log_blowup` and report whether it
+/// VERIFIES. Split out of [`run_candidate`] so the quotient-domain floor can be gated without
+/// paying for a recursion wrap.
+fn inner_proves_and_verifies(log_blowup: usize, num_queries: usize) -> Result<(), String> {
+    let config = create_recursion_config_with_fri(log_blowup, 0, 3, num_queries, 0, 16);
+    let desc = parse_vm_descriptor2(rotated_transfer_json()).expect("rotated transfer parses");
+    let pad = avail_pad_for_descriptor_name(&desc.name);
+    let (trace, dpis) = deployed_transfer_witness(pad)?;
+    let proof = prove_vm_descriptor2_for_config(
+        &desc,
+        &trace,
+        &dpis,
+        &MemBoundaryWitness::default(),
+        &[],
+        &UMemBoundaryWitness::default(),
+        &config,
+    )
+    .map_err(|e| format!("prove FAILED: {e}"))?;
+    verify_vm_descriptor2_with_config(&desc, &proof, &dpis, &config)
+        .map_err(|e| format!("VERIFY FAILED: {e}"))
+}
+
+/// **⚑ THE QUOTIENT-DOMAIN FLOOR, AS A LIVE TOOTH — and it is the one this campaign needed.**
+///
+/// `docs/FRI-SECURE-PARAMETERIZATION.md` §3.1 rows **D** and **E** were the only ≥100-bit
+/// configurations reachable with no ember-gated step, and both sit BELOW `log_blowup 3`. Nothing in
+/// the tree could tell anyone they were unrunnable: the constraint is `log_blowup ≥
+/// ⌈log₂(max_constraint_degree − 1)⌉`, the deployed IR-v2 batch's frozen degree budget is **8**
+/// (`descriptor_ir2.rs::ir2_degree_budget` — `setFieldDyn`'s slot gate, with the Poseidon2 chip at
+/// 7), and NO `FriParams` carries a constraint degree. A ledger cannot see this. Only a proof can.
+///
+/// ⚑ **The failure is not a panic — it is an INVALID PROOF.** The pinned `p3-fri`'s
+/// `get_evaluations_on_domain` re-interpolates when the quotient domain exceeds the committed LDE
+/// (`two_adic_pcs.rs:464-484`), so the prover runs to completion and emits a proof the VERIFIER
+/// rejects, at the degree-7 chip instance. A sweep that only caught panics would have called row D
+/// runnable.
+///
+/// Both directions are asserted, so this cannot rot into a tautology: `log_blowup 3` (the floor)
+/// must PROVE AND VERIFY, and `log_blowup 2` (one below) must NOT.
+#[test]
+fn log_blowup_below_the_deployed_air_degree_floor_produces_an_invalid_proof() {
+    let at_floor = inner_proves_and_verifies(3, 19);
+    assert!(
+        at_floor.is_ok(),
+        "log_blowup 3 IS the floor for the deployed IR-v2 AIRs (frozen degree budget 8 ⇒ \
+         ⌈log₂ 7⌉ = 3) and must prove AND verify. It did not: {at_floor:?}. If this is red the \
+         floor moved and every ε_C reading in `FriCommitPow` is at the wrong blowup."
+    );
+    let below = inner_proves_and_verifies(2, 19);
+    assert!(
+        below.is_err(),
+        "log_blowup 2 is BELOW the deployed AIRs' quotient-domain floor and must not yield a \
+         verifying proof — but it did. If plonky3 gained a legal sub-floor path, then \
+         `docs/FRI-SECURE-PARAMETERIZATION.md` rows D/E are back on the table and \
+         `FriCommitPow.ext4_cannot_reach_100_at_any_runnable_blowup_and_the_measured_wrap_height` \
+         is no longer the binding claim — re-run the sweep before believing either."
+    );
+}
+
 /// **THE REAL RUN.** Mint + verify + wrap + verify-wrapped, at exactly these knobs. Returns the
 /// failure text rather than panicking, because "this candidate cannot be proven" is the single
 /// most important thing this file can report and a panic would take the sweep with it.
@@ -127,46 +267,8 @@ fn run_candidate(c: &Candidate) -> Result<Ran, String> {
     // knobs; a width pin would make it red for a reason that has nothing to do with FRI (it did:
     // the staged registry read 1702 against `GRAD_ROT_WIDTH`'s 1647 on 2026-07-28).
     let desc = parse_vm_descriptor2(rotated_transfer_json()).expect("rotated transfer parses");
-
-    let before_balance: i64 = 100_000;
-    let amount: u64 = 50;
-    let st = CellState::new(before_balance as u64, 0);
-    let effects = vec![Effect::Transfer {
-        amount,
-        direction: 1,
-    }];
-    let mut ledger = Ledger::new();
-    let before_cell = producer_cell(before_balance, 0);
-    let after_cell = producer_cell(before_balance - amount as i64, 0);
-    ledger.insert_cell(after_cell).unwrap();
-    let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let receipt_log: Vec<[u8; 32]> = vec![[1u8; 32], [2u8; 32]];
-    let mk = |c: &Cell| {
-        rw::produce(
-            c,
-            &ledger,
-            &nullifier_root,
-            &commitments_root,
-            &dregg_turn::rotation_witness::empty_revoked_root_8(),
-            &receipt_log,
-            &Default::default(),
-        )
-    };
-    let before_w = mk(&before_cell);
-    let after_w = mk(&producer_cell(before_balance - amount as i64, 0));
-    let bridge = |w: &rw::RotationWitness| -> RotatedBlockWitness {
-        RotatedBlockWitness::new(w.pre_limbs.clone(), w.iroot).expect("31 pre-iroot limbs")
-    };
-    let caveat = transfer_caveat_manifest();
-    let (trace, dpis) = generate_rotated_effect_vm_trace(
-        &st,
-        &effects,
-        &bridge(&before_w),
-        &bridge(&after_w),
-        &caveat,
-    )
-    .map_err(|e| format!("trace generation failed: {e:?}"))?;
+    let pad = avail_pad_for_descriptor_name(&desc.name);
+    let (trace, dpis) = deployed_transfer_witness(pad)?;
 
     let t0 = Instant::now();
     let proof = prove_vm_descriptor2_for_config(

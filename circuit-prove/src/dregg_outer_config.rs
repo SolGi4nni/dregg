@@ -145,6 +145,17 @@ pub const OUTER_FRI_MAX_LOG_ARITY: usize = 1;
 /// FRI final-polynomial length exponent — 0 (a constant final poly). Was an inline `0`; exported so
 /// the ledger gate pins the WHOLE knob set rather than the subset that happened to be `const`.
 pub const OUTER_FRI_LOG_FINAL_POLY_LEN: usize = 0;
+/// **The SIXTH knob, and on THIS config it is not a knob at all — it is pinned to `0` by the gnark
+/// verifier.** plonky3's `commit_proof_of_work_bits` is ground per fold round on the native side,
+/// but the in-circuit ETH-wrap verifier passes a HARDCODED witness of `0`
+/// (`chain/gnark/fri_verify.go:117`, `fri_verify_native.go:351`
+/// `CheckWitness(ch, cfg.CommitPowBits, frontend.Variable(0))`), which is only correct at `0` bits,
+/// and `chain/gnark/apex_shrink_real_fixture_test.go:192` fails closed on `CommitPowBits != 0`.
+///
+/// ⚑ So raising it HERE is not a knob turn: it is a gnark circuit change and a fresh Groth16
+/// trusted setup. Exported anyway, so the params gate pins the `0` the wrap depends on instead of
+/// leaving it as an unnamed literal that a sweep could move without any gate noticing.
+pub const OUTER_FRI_COMMIT_POW_BITS: usize = 0;
 
 /// Trace/arithmetic field — UNCHANGED: the shrink layer re-verifies BabyBear
 /// arithmetic; only hashing moves to BN254.
@@ -431,7 +442,7 @@ pub fn create_outer_config() -> DreggOuterConfig {
             OUTER_FRI_LOG_FINAL_POLY_LEN,
             OUTER_FRI_MAX_LOG_ARITY,
             OUTER_FRI_NUM_QUERIES,
-            0, // commit_pow_bits
+            OUTER_FRI_COMMIT_POW_BITS,
             OUTER_FRI_QUERY_POW_BITS,
         );
     }

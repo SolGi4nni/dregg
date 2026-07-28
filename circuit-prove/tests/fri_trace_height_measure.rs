@@ -107,7 +107,7 @@ use dregg_circuit::field::BabyBear;
 use dregg_circuit::plonky3_prover::PROD_FRI_LOG_BLOWUP;
 use dregg_circuit_prove::accumulator::WRAP_LOG_CEIL;
 use dregg_circuit_prove::dregg_outer_config::OUTER_FRI_LOG_BLOWUP;
-use dregg_circuit_prove::plonky3_recursion_impl::recursive::RECURSION_FRI_LOG_BLOWUP;
+use dregg_circuit_prove::ivc_turn_chain::IR2_INNER_LOG_BLOWUP;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE PINS. Each is a MEASURED value with its measurement named — not a guess, and not a target.
@@ -128,20 +128,28 @@ const LEAF_ENVELOPE_LOG_D0: usize = 14;
 
 /// **THE WORST CASE THE DEPLOYED SYSTEM PRODUCES**, as `log₂|D⁽⁰⁾|`: the recursion wrap.
 ///
-/// `WRAP_LOG_CEIL` (2^16 rows, FORCED on every running fold) + `RECURSION_FRI_LOG_BLOWUP` (3).
-/// This is the number the proven posture is set by — not the leaf's, and not the fixture's.
-/// ⚠ **CORRECTED 2026-07-20 — THIS CONSTANT IS MIS-DERIVED, AND IT IS NOT A MEASUREMENT.**
-/// It is a sum of two compile-time constants (nothing here reads a proof), and the two constants
-/// come from DIFFERENT paths: `WRAP_LOG_CEIL` is the `min_trace_height` floor
-/// `Accumulator::accumulate` applies via `wrap_params()`, but that same call binds
-/// `config = ir2_leaf_wrap_config()`, whose blowup is `IR2_INNER_LOG_BLOWUP = 6` — not
-/// `RECURSION_FRI_LOG_BLOWUP = 3`. `create_recursion_config` is not constructed on the wrap path at
-/// all. The deployed domain is therefore `2^(16 + 6) = 2^22`, and the commit column there reads
-/// **51**, not the `61` this `19` produces
-/// (`Dregg2.Circuit.FriDeployedHeightPairing.deployed_wrap_commitBits`, `deployed_wrap_is_not_61`).
-/// Left in place because the assertions below pin it by name and moving it is a posture change to
-/// be argued, not a constant to edit quietly — but it must not be quoted as the deployed height.
-const DEPLOYED_WORST_LOG_D0: usize = WRAP_LOG_CEIL + RECURSION_FRI_LOG_BLOWUP;
+/// `WRAP_LOG_CEIL` (2^16 rows, FORCED on every running fold) + `IR2_INNER_LOG_BLOWUP` (6) — the
+/// blowup of the config that same `prove` call binds. This is the number the proven posture is set
+/// by: not the leaf's, and not the fixture's.
+///
+/// ⚑ **REPAIRED 2026-07-28. It was `WRAP_LOG_CEIL + RECURSION_FRI_LOG_BLOWUP` (the recursion config's blowup) = 19**, which adds one
+/// path's trace floor to the OTHER path's blowup: `Accumulator::accumulate` applies `wrap_params()`'s
+/// `min_trace_height` floor AND binds `config = ir2_leaf_wrap_config()` in the SAME call, and that
+/// config's blowup is `IR2_INNER_LOG_BLOWUP = 6`; `create_recursion_config` (`lb = 3`) is never
+/// constructed on the wrap path. Lean proved the correct pairing in 2026-07
+/// (`Dregg2.Circuit.FriDeployedHeightPairing.deployedWrapLogD0 = 22`, `deployed_wrap_commitBits = 51`,
+/// `deployed_wrap_is_not_61`) and this constant was left wrong anyway, with a doc comment saying so —
+/// *"moving it is a posture change to be argued, not a constant to edit quietly"*.
+///
+/// It is not an argument any more, because it is now MEASURED rather than derived. The leaf-wrap
+/// output proof's own `degree_bits` at the deployed knobs read **`[10, 9, 16, 14, 16]`**
+/// (`circuit-prove/tests/fri_hundred_bit_cutover.rs`, real prove + real verify): the wrap trace is
+/// `2^16` **naturally**, and at `lb = 6` that is `|D⁽⁰⁾| = 2^22` off a proof, agreeing with Lean
+/// exactly. ⚠ Note what that also settles: `WRAP_LOG_CEIL` is a FLOOR, and at the leaf wrap it is
+/// not padding anything — lowering it does not shrink this domain.
+///
+/// The posture change this repair makes explicit: the deployed commit column reads **51**, not 61.
+const DEPLOYED_WORST_LOG_D0: usize = WRAP_LOG_CEIL + IR2_INNER_LOG_BLOWUP;
 
 /// One measured workload: what ran, and the heights the proof it produced actually carries.
 #[derive(Debug)]
@@ -283,8 +291,9 @@ fn the_recursion_ceiling_is_the_systems_worst_case_domain() {
          v1 per-turn (lb={PROD_FRI_LOG_BLOWUP})                    |D⁽⁰⁾| = 2^{}   (2^6 main table)\n  \
          outer/gnark shrink (lb={OUTER_FRI_LOG_BLOWUP})             |D⁽⁰⁾| = 2^{outer_d0}   \
          (MEASURED 2^15 tables)\n  \
-         recursion WRAP (lb={RECURSION_FRI_LOG_BLOWUP})                 |D⁽⁰⁾| = \
-         2^{DEPLOYED_WORST_LOG_D0}   (WRAP_LOG_CEIL = 2^{WRAP_LOG_CEIL}, FORCED every fold)\n  \
+         ir2 leaf WRAP (lb={IR2_INNER_LOG_BLOWUP})               |D⁽⁰⁾| = \
+         2^{DEPLOYED_WORST_LOG_D0}   (WRAP_LOG_CEIL = 2^{WRAP_LOG_CEIL}, FORCED every fold; the \
+         wrap trace is 2^16 NATURALLY — MEASURED degree_bits [10,9,16,14,16])\n  \
          ⚑ WORST CASE = 2^{DEPLOYED_WORST_LOG_D0} — {}× the 2^12 the cost grid and the ~70-bit \
          headline are measured at.",
         6 + PROD_FRI_LOG_BLOWUP,
@@ -299,16 +308,20 @@ fn the_recursion_ceiling_is_the_systems_worst_case_domain() {
          the WORST case, not by the fixture and not by the median."
     );
 
-    // ⚑ The recursion is the worst case on BOTH columns at once. `fri_params_soundness_budget.rs`'s
-    //   `recursion_config_is_the_weakest_link` pins the query half (pow 14 ⇒ Johnson 71); this pins
-    //   the height half. Same config; the query gate cannot see the height.
+    // ⚑ The wrap is the worst case on the HEIGHT column; `fri_params_soundness_budget.rs`'s
+    //   `recursion_config_is_the_weakest_link` pins the QUERY half on a different config (pow 14 ⇒
+    //   Johnson 71). Two columns, two weakest links — which is why they stay separate.
     assert_eq!(
-        DEPLOYED_WORST_LOG_D0, 19,
-        "the deployed recursion commits |D⁽⁰⁾| = 2^(WRAP_LOG_CEIL + RECURSION_FRI_LOG_BLOWUP) = \
-         2^(16 + 3) = 2^19. If either knob moved, the ε_C input moved with it and the proven number \
-         changed — re-read `Dregg2.Circuit.FriLedger`'s ε_C column at the new |D⁽⁰⁾| before repinning \
-         this. ⚑ Raising WRAP_LOG_CEIL to make the VK depth-invariant COSTS proven bits (~2 per \
-         doubling): that trade is real, and it must be made deliberately rather than discovered."
+        DEPLOYED_WORST_LOG_D0, 22,
+        "the deployed wrap commits |D⁽⁰⁾| = 2^(WRAP_LOG_CEIL + IR2_INNER_LOG_BLOWUP) = 2^(16 + 6) = \
+         2^22 — MEASURED off a real leaf-wrap proof's degree_bits [10,9,16,14,16] \
+         (`fri_hundred_bit_cutover.rs`), and equal to Lean's \
+         `FriDeployedHeightPairing.deployedWrapLogD0`. ⚑ It read 2^19 until 2026-07-28, adding this \
+         path's trace floor to the OTHER path's blowup (`create_recursion_config`, lb 3, is never \
+         constructed on the wrap path). If either knob moved, the ε_C input moved with it and the \
+         proven number changed — re-read `Dregg2.Circuit.FriLedger`'s ε_C column at the new |D⁽⁰⁾| \
+         before repinning this. ⚠ And note lowering WRAP_LOG_CEIL does NOT help: the wrap trace is \
+         2^16 naturally, and the ceiling is a FLOOR."
     );
     assert!(
         outer_d0 < DEPLOYED_WORST_LOG_D0,

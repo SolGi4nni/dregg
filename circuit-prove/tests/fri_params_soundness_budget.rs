@@ -138,26 +138,31 @@
 //! Run: `cargo test -p dregg-circuit-prove --test fri_params_soundness_budget -- --nocapture`.
 
 use dregg_circuit::descriptor_ir2::{
-    IR2_EXT_DEGREE, IR2_FRI_LOG_BLOWUP, IR2_FRI_LOG_FINAL_POLY_LEN, IR2_FRI_MAX_LOG_ARITY,
-    IR2_FRI_NUM_QUERIES, IR2_FRI_QUERY_POW_BITS,
+    IR2_EXT_DEGREE, IR2_FRI_COMMIT_POW_BITS, IR2_FRI_LOG_BLOWUP, IR2_FRI_LOG_FINAL_POLY_LEN,
+    IR2_FRI_MAX_LOG_ARITY, IR2_FRI_NUM_QUERIES, IR2_FRI_QUERY_POW_BITS,
 };
 use dregg_circuit::plonky3_prover::{
-    PROD_EXT_DEGREE, PROD_FRI_LOG_BLOWUP, PROD_FRI_LOG_FINAL_POLY_LEN, PROD_FRI_MAX_LOG_ARITY,
-    PROD_FRI_NUM_QUERIES, PROD_FRI_QUERY_POW_BITS,
+    PROD_EXT_DEGREE, PROD_FRI_COMMIT_POW_BITS, PROD_FRI_LOG_BLOWUP, PROD_FRI_LOG_FINAL_POLY_LEN,
+    PROD_FRI_MAX_LOG_ARITY, PROD_FRI_NUM_QUERIES, PROD_FRI_QUERY_POW_BITS,
 };
 use dregg_circuit::stark_zk::{
-    ZK_EXT_DEGREE, ZK_FRI_LOG_BLOWUP, ZK_FRI_LOG_FINAL_POLY_LEN, ZK_FRI_MAX_LOG_ARITY,
-    ZK_FRI_NUM_QUERIES, ZK_FRI_QUERY_POW_BITS,
+    ZK_EXT_DEGREE, ZK_FRI_COMMIT_POW_BITS, ZK_FRI_LOG_BLOWUP, ZK_FRI_LOG_FINAL_POLY_LEN,
+    ZK_FRI_MAX_LOG_ARITY, ZK_FRI_NUM_QUERIES, ZK_FRI_QUERY_POW_BITS,
 };
 use dregg_circuit_prove::accumulator::WRAP_LOG_CEIL;
 use dregg_circuit_prove::dregg_outer_config::{
-    OUTER_EXT_DEGREE, OUTER_FRI_LOG_BLOWUP, OUTER_FRI_LOG_FINAL_POLY_LEN, OUTER_FRI_MAX_LOG_ARITY,
-    OUTER_FRI_NUM_QUERIES, OUTER_FRI_QUERY_POW_BITS,
+    OUTER_EXT_DEGREE, OUTER_FRI_COMMIT_POW_BITS, OUTER_FRI_LOG_BLOWUP,
+    OUTER_FRI_LOG_FINAL_POLY_LEN, OUTER_FRI_MAX_LOG_ARITY, OUTER_FRI_NUM_QUERIES,
+    OUTER_FRI_QUERY_POW_BITS,
+};
+use dregg_circuit_prove::ivc_turn_chain::{
+    IR2_INNER_COMMIT_POW_BITS, IR2_INNER_LOG_BLOWUP, IR2_INNER_LOG_FINAL_POLY_LEN,
+    IR2_INNER_QUERY_POW_BITS,
 };
 use dregg_circuit_prove::plonky3_recursion_impl::recursive::{
-    INNER_FRI_MAX_LOG_ARITY, INNER_FRI_NUM_QUERIES, RECURSION_EXT_DEGREE, RECURSION_FRI_LOG_BLOWUP,
-    RECURSION_FRI_LOG_FINAL_POLY_LEN, RECURSION_FRI_MAX_LOG_ARITY, RECURSION_FRI_NUM_QUERIES,
-    RECURSION_FRI_QUERY_POW_BITS,
+    INNER_FRI_MAX_LOG_ARITY, INNER_FRI_NUM_QUERIES, RECURSION_EXT_DEGREE,
+    RECURSION_FRI_COMMIT_POW_BITS, RECURSION_FRI_LOG_BLOWUP, RECURSION_FRI_LOG_FINAL_POLY_LEN,
+    RECURSION_FRI_MAX_LOG_ARITY, RECURSION_FRI_NUM_QUERIES, RECURSION_FRI_QUERY_POW_BITS,
 };
 use dregg_lean_ffi::{FriKnobs, FriLedger, fri_ledger, fri_ledger_available};
 
@@ -363,6 +368,7 @@ fn shipped() -> Vec<ShippedConfig> {
                 ext_deg: IR2_EXT_DEGREE,
                 log_d0: FIXTURE_LOG_D0,
                 bciks_m: BCIKS_M,
+                commit_pow: IR2_FRI_COMMIT_POW_BITS,
             },
             modeled: FriKnobs {
                 log_blowup: 6,
@@ -373,6 +379,7 @@ fn shipped() -> Vec<ShippedConfig> {
                 ext_deg: 4,
                 log_d0: FIXTURE_LOG_D0,
                 bciks_m: BCIKS_M,
+                commit_pow: 0,
             },
         },
         ShippedConfig {
@@ -387,6 +394,7 @@ fn shipped() -> Vec<ShippedConfig> {
                 ext_deg: PROD_EXT_DEGREE,
                 log_d0: FIXTURE_LOG_D0,
                 bciks_m: BCIKS_M,
+                commit_pow: PROD_FRI_COMMIT_POW_BITS,
             },
             modeled: FriKnobs {
                 log_blowup: 3,
@@ -397,6 +405,7 @@ fn shipped() -> Vec<ShippedConfig> {
                 ext_deg: 4,
                 log_d0: FIXTURE_LOG_D0,
                 bciks_m: BCIKS_M,
+                commit_pow: 0,
             },
         },
         ShippedConfig {
@@ -411,6 +420,7 @@ fn shipped() -> Vec<ShippedConfig> {
                 ext_deg: ZK_EXT_DEGREE,
                 log_d0: FIXTURE_LOG_D0,
                 bciks_m: BCIKS_M,
+                commit_pow: ZK_FRI_COMMIT_POW_BITS,
             },
             modeled: FriKnobs {
                 log_blowup: 3,
@@ -421,6 +431,7 @@ fn shipped() -> Vec<ShippedConfig> {
                 ext_deg: 4,
                 log_d0: FIXTURE_LOG_D0,
                 bciks_m: BCIKS_M,
+                commit_pow: 0,
             },
         },
         ShippedConfig {
@@ -435,6 +446,7 @@ fn shipped() -> Vec<ShippedConfig> {
                 ext_deg: OUTER_EXT_DEGREE,
                 log_d0: FIXTURE_LOG_D0,
                 bciks_m: BCIKS_M,
+                commit_pow: OUTER_FRI_COMMIT_POW_BITS,
             },
             modeled: FriKnobs {
                 log_blowup: 3,
@@ -445,6 +457,7 @@ fn shipped() -> Vec<ShippedConfig> {
                 ext_deg: 4,
                 log_d0: FIXTURE_LOG_D0,
                 bciks_m: BCIKS_M,
+                commit_pow: 0,
             },
         },
         ShippedConfig {
@@ -459,6 +472,7 @@ fn shipped() -> Vec<ShippedConfig> {
                 ext_deg: RECURSION_EXT_DEGREE,
                 log_d0: FIXTURE_LOG_D0,
                 bciks_m: BCIKS_M,
+                commit_pow: RECURSION_FRI_COMMIT_POW_BITS,
             },
             modeled: FriKnobs {
                 log_blowup: 3,
@@ -469,23 +483,33 @@ fn shipped() -> Vec<ShippedConfig> {
                 ext_deg: 4,
                 log_d0: FIXTURE_LOG_D0,
                 bciks_m: BCIKS_M,
+                commit_pow: 0,
             },
         },
         ShippedConfig {
-            // The rotated native-batch leaf wrap: `ir2_config`'s log_blowup/queries, but the arity +
-            // query count come from `create_recursion_config_for_inner_fri`'s pins. THE NAME COLLISION
-            // (see the header): this is NOT what Lean's `ir2LeafWrapConfig` models.
+            // The rotated native-batch leaf wrap: the arity + query count come from
+            // `create_recursion_config_for_inner_fri`'s `INNER_FRI_*` pins, everything else from the
+            // `IR2_INNER_*` consts `ir2_leaf_wrap_config()` passes it. THE NAME COLLISION (see the
+            // header): this is NOT what Lean's `ir2LeafWrapConfig` models.
+            //
+            // ⚑ THIS ROW USED TO READ `IR2_FRI_*` — the constants of a DIFFERENT config. They agree
+            // today, which is exactly why it survived: the gate was judging a knob set ASSEMBLED
+            // out of another config's constants rather than the ones `ir2_leaf_wrap_config()`
+            // actually passes. `IR2_INNER_*` was private, so it could not do otherwise. Moving
+            // `IR2_INNER_LOG_BLOWUP` alone would have changed the deployed prover and left this
+            // green.
             name: "ir2_leaf_wrap_config (rotated native-batch leaf wrap — arity 2, NOT 8)",
             lean_model: "FriLedgerSound.ir2LeafWrapRotatedConfig",
             deployed: FriKnobs {
-                log_blowup: IR2_FRI_LOG_BLOWUP,
+                log_blowup: IR2_INNER_LOG_BLOWUP,
                 num_queries: INNER_FRI_NUM_QUERIES,
-                query_pow_bits: IR2_FRI_QUERY_POW_BITS,
+                query_pow_bits: IR2_INNER_QUERY_POW_BITS,
                 max_log_arity: INNER_FRI_MAX_LOG_ARITY,
-                log_final_poly_len: IR2_FRI_LOG_FINAL_POLY_LEN,
+                log_final_poly_len: IR2_INNER_LOG_FINAL_POLY_LEN,
                 ext_deg: RECURSION_EXT_DEGREE,
                 log_d0: FIXTURE_LOG_D0,
                 bciks_m: BCIKS_M,
+                commit_pow: IR2_INNER_COMMIT_POW_BITS,
             },
             modeled: FriKnobs {
                 log_blowup: 6,
@@ -496,6 +520,7 @@ fn shipped() -> Vec<ShippedConfig> {
                 ext_deg: 4,
                 log_d0: FIXTURE_LOG_D0,
                 bciks_m: BCIKS_M,
+                commit_pow: 0,
             },
         },
         ShippedConfig {
@@ -514,6 +539,7 @@ fn shipped() -> Vec<ShippedConfig> {
                 ext_deg: OUTER_EXT_DEGREE,
                 log_d0: FIXTURE_LOG_D0,
                 bciks_m: BCIKS_M,
+                commit_pow: OUTER_FRI_COMMIT_POW_BITS,
             },
             modeled: FriKnobs {
                 log_blowup: 3,
@@ -524,6 +550,7 @@ fn shipped() -> Vec<ShippedConfig> {
                 ext_deg: 4,
                 log_d0: FIXTURE_LOG_D0,
                 bciks_m: BCIKS_M,
+                commit_pow: 0,
             },
         },
     ]
@@ -1279,13 +1306,24 @@ fn the_measured_deployed_heights_read_below_the_fixture_floor() {
     require_ledger();
     let cfgs = shipped();
     let wrap = cfgs[0].deployed;
-    // The recursion config is what the WRAP_LOG_CEIL fold runs under (log_blowup = 3).
-    let recursion = cfgs[4].deployed;
-    assert_eq!(cfgs[4].lean_model, "FriLedgerSound.recursionConfig");
+    // ⚑ THE CONFIG THE `WRAP_LOG_CEIL` FOLD ACTUALLY RUNS UNDER — repaired 2026-07-28. This read
+    // `cfgs[4]`, `create_recursion_config` (`log_blowup = 3`), which the wrap path never constructs:
+    // `Accumulator::accumulate` binds `ir2_leaf_wrap_config()` and `wrap_params()` in ONE prove
+    // call, so the config is `cfgs[5]` and the blowup is `IR2_INNER_LOG_BLOWUP = 6`. Lean proved
+    // this on 2026-07-20 (`FriDeployedHeightPairing.deployed_wrap_commitBits` = 51,
+    // `the_61_is_the_recursion_config_reading`) and the Rust kept the mis-pairing.
+    let deployed_wrap = cfgs[5].deployed;
+    assert_eq!(
+        cfgs[5].lean_model,
+        "FriLedgerSound.ir2LeafWrapRotatedConfig"
+    );
 
     // Rebuilt from the deployed lib consts, exactly as `fri_trace_height_measure.rs` does — so a
-    // change to the forced wrap height reaches this reading instead of rotting a literal.
-    const DEPLOYED_WORST_LOG_D0: usize = WRAP_LOG_CEIL + RECURSION_FRI_LOG_BLOWUP;
+    // change to the forced wrap height reaches this reading instead of rotting a literal. ⚑ And it
+    // is no longer only a derivation: `fri_hundred_bit_cutover.rs` reads the leaf-wrap output
+    // proof's own `degree_bits` as `[10, 9, 16, 14, 16]`, i.e. a 2^16 trace, so `2^(16+6) = 2^22`
+    // is MEASURED off a real proof and agrees with this sum.
+    const DEPLOYED_WORST_LOG_D0: usize = WRAP_LOG_CEIL + IR2_INNER_LOG_BLOWUP;
     // MEASURED in `fri_trace_height_measure.rs` (a 64-effect turn's leaf, off a real proof). It is a
     // const in a sibling TEST binary, so it cannot be imported; repin it THERE and here together.
     const MEASURED_LEAF_LOG_D0: usize = 14;
@@ -1298,7 +1336,7 @@ fn the_measured_deployed_heights_read_below_the_fixture_floor() {
     .expect("ledger");
     let worst = fri_ledger(FriKnobs {
         log_d0: DEPLOYED_WORST_LOG_D0,
-        ..recursion
+        ..deployed_wrap
     })
     .expect("ledger");
 
@@ -1306,7 +1344,7 @@ fn the_measured_deployed_heights_read_below_the_fixture_floor() {
         "⚑ ε_C AT THE TREE'S OWN MEASURED HEIGHTS (all numbers from Lean):\n    \
          fixture  log_d0={:2} (1-effect cost grid, ir2_config) ... commit {} bits  ← the gate's floor\n    \
          leaf     log_d0={:2} (64-effect turn, MEASURED)        ... commit {} bits\n    \
-         WORST    log_d0={:2} (recursion wrap, 2^16 FORCED)     ... commit {} bits  ← the deployed posture",
+         WORST    log_d0={:2} (ir2_leaf_wrap @ 2^16 FORCED, lb 6) commit {} bits  ← the deployed posture",
         fixture_log_d0_of(&wrap),
         fixture.commit_bits,
         MEASURED_LEAF_LOG_D0,
@@ -1492,6 +1530,21 @@ fn the_ledger_fails_closed_outside_the_modeled_window() {
         (
             "log_d0 below log_blowup — |D⁽⁰⁾| cannot be smaller than the folded domain",
             FriKnobs { log_d0: 2, ..base },
+        ),
+        // ⚑ `commit_pow ≤ 30` is the BABYBEAR MODULUS, not a wire guard: plonky3's `grind`
+        //   (`challenger/src/grinding_challenger.rs:107`) opens with
+        //   `assert!((1u64 << bits) < F::ORDER_U64)` over a witness that is ONE base-field element,
+        //   so at 31 the prover asserts out. A composite computed above the cap describes an object
+        //   NO PROVER CAN PRODUCE — and that is not hypothetical: the first draft of the ≥100
+        //   theorem in `FriCommitPow` used `commit_pow = 34`, read `100`, and named an unrunnable
+        //   config. The cap caught it. This case is what keeps the cap load-bearing on the Rust
+        //   side of the boundary too.
+        (
+            "commit_pow above the BabyBear single-witness grind cap — a posture no prover can grind",
+            FriKnobs {
+                commit_pow: 31,
+                ..base
+            },
         ),
     ] {
         assert!(

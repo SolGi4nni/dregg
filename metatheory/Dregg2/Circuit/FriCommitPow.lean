@@ -84,42 +84,17 @@ open Dregg2.Circuit.FriLedgerSound
 open Dregg2.Circuit.FriDeployedHeightPairing
 open Dregg2.Circuit.FriVerifier (FriParams ir2LeafWrapConfig)
 
-/-! ## §1. THE TWO NEW COLUMNS -/
+/-! ## §1. THE TWO NEW COLUMNS
 
-/-- **THE COMMIT BRANCH, WITH GRINDING.** `⌊−log₂ ε_C⌋ + commit_pow`, in the work-factor convention
-`johnsonBits` already uses for its own `powBits`. At `commitPow = 0` this is exactly
-`friCommitLedger`'s existing column, so the extension is CONSERVATIVE by construction — it cannot
-change any number the tree already reports (`commitPowBranch_at_zero_is_the_old_column`). -/
-def commitPowBranch (cfg : FriParams) (logD0 bciksM commitPow : Nat) : Nat :=
-  (friCommitLedger cfg logD0 bciksM).commitBits + commitPow
+⚑ **THE COLUMNS THEMSELVES NOW LIVE IN `FriLedger.lean`** — `commitPowBranch`, `johnsonAlphaNum`,
+`johnsonAlphaDen`, `johnsonBitsAtM`, `compositeBits` and `maxGrindBits` were defined here and moved
+DOWN, because `friLedgerFFI` has to be able to REPORT the composite. A number that can be proved
+in Lean but not handed to the caller who sets the knobs is a number nobody checks against a prover,
+and this whole module exists because the deployed configs set `commit_proof_of_work_bits = 0` — a
+fact only a caller reading deployed constants can see. The wire is nine in / ten out, and the old
+eight-field shape now fails closed rather than being reinterpreted with a defaulted `commitPow`.
 
-/-- The numerator of `α^(2s)`'s reciprocal: `2^(s·lb) · (2m)^(2s)`. -/
-def johnsonAlphaNum (cfg : FriParams) (m : Nat) : Nat :=
-  2 ^ (cfg.numQueries * cfg.logBlowup) * (2 * m) ^ (2 * cfg.numQueries)
-
-/-- The denominator: `(2m+1)^(2s)`. -/
-def johnsonAlphaDen (cfg : FriParams) (m : Nat) : Nat :=
-  (2 * m + 1) ^ (2 * cfg.numQueries)
-
-/-- **THE JOHNSON BRANCH AT A FINITE `m`.** With `α = √ρ·(1 + 1/2m)` and `ρ = 2^(−lb)`,
-
-  `α^(2s) = (2m+1)^(2s) / (2^(s·lb) · (2m)^(2s))`,
-
-so the greatest `b` with `α^s ≤ 2^(−b)` is `⌊log₂ X / 2⌋` for `X = (num − 1)/den`. Squaring keeps
-everything in `Nat` with **no division inside the power** — the same discipline `friCommitLedger`
-uses, and the halving is a floor, so the reported figure rounds DOWN. Adding `cfg.powBits` is the
-query grinding, exactly as `friLedger.johnsonBits` does.
-
-⚑ This is **strictly below** the exported `johnsonBits` at every finite `m`, because that column is
-the `m → ∞` limit (`the_exported_johnson_column_overstates_at_every_finite_m`). It is a CORRECTION
-of an over-claim, not a new optimism. -/
-def johnsonBitsAtM (cfg : FriParams) (m : Nat) : Nat :=
-  Nat.log2 ((johnsonAlphaNum cfg m - 1) / johnsonAlphaDen cfg m) / 2 + cfg.powBits
-
-/-- **ethSTARK eq. (20), at ONE `m`, with BOTH grinding terms.**
-`λ ≥ min{−log₂ ε_C + commit_pow, ζ − s·log₂ α} − 1`. -/
-def compositeBits (cfg : FriParams) (logD0 m commitPow : Nat) : Nat :=
-  min (commitPowBranch cfg logD0 m commitPow) (johnsonBitsAtM cfg m) - 1
+Nothing about the definitions changed; this file keeps every THEOREM about them. -/
 
 /-! ## §2. BRACKET LEMMAS — `Nat.log2` is well-founded-recursive and does not reduce in the kernel,
 so every reading below is proved by EXHIBITING its defining bracket. `native_decide` would drag
@@ -252,9 +227,6 @@ witness_cap` pins it to the modulus the rest of the ledger is stated over, and *
 theorem in §6 carries `≤ maxGrindBits` as a conjunct**, so a knob set that cannot be ground cannot
 be quoted from here as a posture. -/
 
-/-- The largest PoW bit count a BabyBear witness admits: `2^b < p`. -/
-def maxGrindBits : Nat := 30
-
 /-- **⚑ THE CAP IS THE MODULUS, NOT A CHOICE.** `2^30 < p` and `2^31 ≥ p`, so `30` is exactly
 plonky3's `(1 << bits) < F::ORDER_U64` over BabyBear — tight on both sides. -/
 theorem maxGrindBits_is_the_babybear_witness_cap :
@@ -273,20 +245,37 @@ and `create_config_with_fri_full` already exposes the commit knob. What the ext-
 that the ext-`4` one does not is the extension-degree change, which is a rebuild, a VK rotation and
 a fresh gnark setup — a flag day, named as such, not a knob turn. -/
 
-/-- **⚑ ≥100 BITS AT `extDeg = 4` — NO FIELD-EXTENSION FLAG DAY, AND THE GRIND IS RUNNABLE.**
+/-- **⚑ ≥100 BITS AT `extDeg = 4` — arithmetically. ⚠ AND AT A `logBlowup` NO DREGG PROVER CAN RUN.**
 
 `logBlowup 2`, `110` queries, arity `8`, query-PoW `16`, **commit-PoW `28`**, at `|D⁽⁰⁾| = 2^17`
 (trace `2^15` × blowup `2^2`), `m = 3`: commit branch `74 + 28 = 102`, Johnson branch `101`,
 composite **`100`**.
 
-This is the theorem that refutes the impossibility claim in the form it was made — it changes no
-field, no extension degree, and no trusted setup. The `28 ≤ maxGrindBits` conjunct is load-bearing,
-not decoration: the first draft of this theorem used `commit_pow = 34` at `logBlowup 4`, which reads
-`100` and **cannot be ground at all** — `grind` asserts out above `30`. The cap is what caught it.
+As ARITHMETIC this is correct, and it refutes the impossibility claim in the form it was made: no
+field change, no extension degree, no trusted setup. The `28 ≤ maxGrindBits` conjunct is
+load-bearing, not decoration — the first draft used `commit_pow = 34`, read `100`, and named a knob
+set `grind` asserts out on.
 
-Its price is the `5 × 2^28` grind (measured whole-machine at `0.85 M – 7.9 M` Poseidon2-BabyBear
-witness trials/s, i.e. `≈ 1–26 min` per proof, `circuit/tests/commit_pow_cost_measure.rs`) and `110`
-queries against the deployed `19` — a ~1.75× proof. Both are tabulated in `docs/FRI-SECURE-PARAMETERIZATION.md`. -/
+⚑⚑ **BUT `maxGrindBits` WAS THE ONLY RUNNABILITY GUARD THIS FILE HAD, AND IT IS NOT THE ONLY ONE
+THAT BINDS.** Measured 2026-07-28, `circuit-prove/tests/fri_hundred_bit_cutover.rs`: **`logBlowup 2`
+is illegal on BOTH halves of the path this config would run on.** plonky3 splits `Q(x)` into
+`2^⌈log₂(deg−1)⌉` chunks and evaluates the trace on a domain that size
+(`uni-stark/src/prover.rs:197-208`), so `logBlowup ≥ ⌈log₂(deg−1)⌉`, and
+
+* the IR-v2 batch's own FROZEN, symbolically-computed degree budget is **8** (the `setFieldDyn` slot
+  gate) with the Poseidon2 chip at **7** — `circuit/src/descriptor_ir2.rs::ir2_degree_budget`,
+  a `#[test]`, not a comment ⇒ `logBlowup ≥ 3`;
+* the p3-recursion circuit AIR carries the degree-7 `x⁷` S-box
+  (`circuit-prove/src/plonky3_recursion_impl.rs:92`) ⇒ `logBlowup ≥ 3`.
+
+So this theorem, and row **E** (`logBlowup 1`) beside it in `docs/FRI-SECURE-PARAMETERIZATION.md`
+§3.1, describe the ONLY two ≥100 rows that needed no ember-gated step — and **the prover cannot be
+handed either.** The `⌈·⌉` in the quotient-chunk count is a fact about the deployed AIRs, which no
+`FriParams` can see; that is precisely why it took a REAL PROOF to find, and why
+`ext4_cannot_reach_100_at_any_runnable_blowup_and_the_measured_wrap_height` below is the claim that
+survives. This theorem is KEPT, un-weakened, because the arithmetic is right and deleting it would
+hide how the error was made: a runnability guard that was checked (the grind cap) does not imply the
+runnability guards that were not. -/
 theorem ext4_reaches_100_without_a_field_flag_day :
     compositeBits { logBlowup := 2, numQueries := 110, powBits := 16, maxLogArity := 3,
                     logFinalPolyLen := 0, extDeg := 4 } 17 3 28 = 100 ∧ 28 ≤ maxGrindBits := by
@@ -331,6 +320,86 @@ theorem ext8_reaches_128 :
   rw [hc, hj]
   decide
 
+/-! ## §6b. ⚑ THE CLAIM THAT SURVIVES THE RUNNABILITY CONSTRAINT
+
+`ext4_reaches_100_without_a_field_flag_day` is true arithmetic about an unrunnable `logBlowup`. The
+question it was supposed to answer is *"can the DEPLOYED prover be turned up to ≥100 without an
+ember-gated step?"*, and answering THAT needs the two facts a `FriParams` cannot carry:
+
+1. **`logBlowup ≥ 3`** — the quotient-domain floor, from the deployed AIRs' constraint degrees (see
+   the ⚑⚑ block above; both halves of the wrap path are pinned at `3` by in-tree tests).
+2. **the wrap's `|D⁽⁰⁾|`** — MEASURED, not assumed. `fri_hundred_bit_cutover.rs` reads the leaf-wrap
+   output proof's own `degree_bits` at the deployed knobs: `[10, 9, 16, 14, 16]`, i.e. a **`2^16`
+   NATURAL** trace, `|D⁽⁰⁾| = 2^(16+6) = 2^22`. ⚠ That corrects a premise §3 of
+   `docs/FRI-SECURE-PARAMETERIZATION.md` leaned on: it took the wrap trace to be `2^15` with
+   `WRAP_LOG_CEIL = 16` as "pure padding" (true of the ACCUMULATOR's aggregation fold, whose
+   measured shape is `[9, 9, 15, 14, 15]` — a DIFFERENT circuit). At the leaf wrap the `2^16` is
+   natural, so lowering `WRAP_LOG_CEIL` buys nothing there.
+
+Put those together and the honest statement is the theorem below. -/
+
+/-- **⚑ AT `extDeg = 4`, THE COMMIT BRANCH CAPS THE COMPOSITE AT `97` ON THE MEASURED WRAP GEOMETRY
+— FOR EVERY QUERY COUNT AND EVERY QUERY-PoW, AT THE FULL `30`-BIT GRIND CAP.**
+
+Stated `∀ q, ∀ pw` deliberately, and that universal quantifier is the whole point: `ε_C`'s formula
+contains neither, so no amount of query-buying moves this ceiling — the exact same structural fact
+`FriLedgerSound.query_and_pow_cannot_pass_epsC` proves about the un-ground column, now carried
+through the composite with the grinding knob pushed to the BabyBear cap.
+
+`logBlowup = 3` is the LOWEST legal blowup (§6b (1)); `logD0 = 19` is that blowup over the MEASURED
+`2^16` wrap trace (§6b (2)); `m = 3` maximises the commit branch. `commitBits = 68`, so even at
+`commitPow = 30` the branch is `98` and the composite is at most `97`.
+
+⚑ So **≥100 is NOT reachable at `extDeg = 4` by any knob turn** on the geometry the prover runs.
+Reaching it requires moving something that is not an FRI knob:
+
+* the wrap trace down to `2^14` (`ext4_reaches_100_only_if_the_wrap_trace_shrinks_to_2e14` shows
+  `100` IS reachable there, so this ceiling is a fact about the HEIGHT, not an impossibility) — a
+  recursion-circuit change, not a knob;
+* or `extDeg` to `5`/`8` — the flag day, with a fresh Groth16 setup and an on-chain re-key.
+
+Both are ember-gated. That is the finding. -/
+theorem ext4_cannot_reach_100_at_any_runnable_blowup_and_the_measured_wrap_height
+    (q pw : ℕ) :
+    compositeBits { logBlowup := 3, numQueries := q, powBits := pw, maxLogArity := 3,
+                    logFinalPolyLen := 0, extDeg := 4 } 19 3 maxGrindBits ≤ 97 := by
+  have hc : (friCommitLedger { logBlowup := 3, numQueries := q, powBits := pw, maxLogArity := 3,
+                               logFinalPolyLen := 0, extDeg := 4 } 19 3).commitBits = 68 := by
+    refine commitBits_bracket _ _ _ 68 ?_ ?_ <;> norm_num [friCommitLedger, ceilDiv, ledgerP]
+  calc compositeBits _ 19 3 maxGrindBits
+      ≤ commitPowBranch { logBlowup := 3, numQueries := q, powBits := pw, maxLogArity := 3,
+                          logFinalPolyLen := 0, extDeg := 4 } 19 3 maxGrindBits - 1 :=
+        Nat.sub_le_sub_right (Nat.min_le_left _ _) 1
+    _ = 97 := by show (friCommitLedger _ _ _).commitBits + maxGrindBits - 1 = 97
+                 rw [hc]; rfl
+
+/-- **⚑ NON-VACUITY FOR THE CEILING — `97` is a fact about the HEIGHT, not an impossibility.**
+
+The same `extDeg = 4`, the same lowest-legal `logBlowup = 3`, the same arity, the same `m`, the same
+grind: drop the wrap trace `2^16 → 2^14` (so `|D⁽⁰⁾| = 2^17`) and the composite reaches **`100`** at
+`67` queries and `commitPow = 29`. So the theorem above is not "extDeg 4 cannot reach 100"; it is
+"extDeg 4 cannot reach 100 **at the trace the wrap actually has**", and it names the one quantity
+that would have to move.
+
+⚠ And `2^14` is BELOW the measured natural height, so this is not a `WRAP_LOG_CEIL` knob turn —
+that constant is a FLOOR, and lowering it cannot shrink a table that is naturally `2^16`. Getting
+here means making the recursion verifier circuit smaller. -/
+theorem ext4_reaches_100_only_if_the_wrap_trace_shrinks_to_2e14 :
+    compositeBits { logBlowup := 3, numQueries := 67, powBits := 16, maxLogArity := 3,
+                    logFinalPolyLen := 0, extDeg := 4 } 17 3 29 = 100 ∧ 29 ≤ maxGrindBits := by
+  have hc : (friCommitLedger { logBlowup := 3, numQueries := 67, powBits := 16, maxLogArity := 3,
+                               logFinalPolyLen := 0, extDeg := 4 } 17 3).commitBits = 72 := by
+    refine commitBits_bracket _ _ _ 72 ?_ ?_ <;> norm_num [friCommitLedger, ceilDiv, ledgerP]
+  have hj : johnsonBitsAtM { logBlowup := 3, numQueries := 67, powBits := 16, maxLogArity := 3,
+                             logFinalPolyLen := 0, extDeg := 4 } 3 = 101 := by
+    rw [show (101 : ℕ) = 171 / 2 + 16 from by norm_num]
+    refine johnsonAlphaBits_bracket _ _ 171 ?_ ?_ <;>
+      norm_num [johnsonAlphaNum, johnsonAlphaDen]
+  refine ⟨?_, by decide⟩
+  show min ((friCommitLedger _ _ _).commitBits + 29) _ - 1 = 100
+  rw [hc, hj]
+  decide
+
 /-! ## §7. NON-VACUITY / MUTATION CANARIES
 
 A ledger extension is worthless if the brackets would have accepted any number, or if the new column
@@ -372,6 +441,8 @@ right", never "the security claim is discharged". -/
 #assert_axioms the_deployed_composite_is_57
 #assert_axioms commit_pow_saturates_at_the_deployed_geometry
 #assert_axioms ext4_reaches_100_without_a_field_flag_day
+#assert_axioms ext4_cannot_reach_100_at_any_runnable_blowup_and_the_measured_wrap_height
+#assert_axioms ext4_reaches_100_only_if_the_wrap_trace_shrinks_to_2e14
 #assert_axioms ext8_reaches_128
 #assert_axioms the_five_readings_are_distinct_and_ordered
 #assert_axioms maxGrindBits_is_the_babybear_witness_cap

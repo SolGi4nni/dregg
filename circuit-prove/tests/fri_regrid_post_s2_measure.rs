@@ -179,6 +179,11 @@ fn member_knobs(c: &Candidate) -> FriKnobs {
         ext_deg: IR2_EXT_DEGREE,
         log_d0: POST_S2_CHIP_LOG_HEIGHT + c.log_blowup,
         bciks_m: BCIKS_M,
+        // ⚑ The candidate's OWN commit-PoW, on the wire at last. This harness has always carried a
+        // `commit_pow` column in its grid and measured its BYTE/TIME cost; until the ledger wire
+        // grew this field there was no way to ask Lean what it BUYS, so the grid measured a knob
+        // whose whole point is invisible to the verdict beside it.
+        commit_pow: c.commit_pow,
     }
 }
 

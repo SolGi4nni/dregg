@@ -1002,14 +1002,30 @@ pub struct FriKnobs {
     /// family of bounds the paper's theorem is instantiated at. Lean REFUSES `m < 3` (the paper's own
     /// hypothesis), so a caller cannot ask for a number no theorem backs.
     pub bciks_m: usize,
+    /// **plonky3's SECOND grinding knob** — `commit_proof_of_work_bits` (`fri/src/config.rs:18`),
+    /// ground per fold round after the round commitment is observed and before the folding challenge
+    /// `β` is drawn (`fri/src/prover.rs:224`, checked `verifier.rs:222`). Unlike `query_pow_bits` it
+    /// grinds against exactly the phase BCIKS20's `ε_C` bounds, so it moves
+    /// [`FriLedger::commit_pow_branch`] one-for-one — the ONLY lever on that branch that is not a
+    /// field-extension flag day.
+    ///
+    /// ⚑ It rides the wire but is NOT in Lean's `FriParams`, for the same reason `log_d0` is not:
+    /// the four columns that predate it are functions of `FriParams` alone, and widening that
+    /// structure would have silently moved them. ⚑ Lean REFUSES `commit_pow > 30`
+    /// (`FriLedger.maxGrindBits`), because plonky3's `grind` asserts
+    /// `(1u64 << bits) < F::ORDER_U64` over a single BabyBear witness — above 30 there is no prover,
+    /// only a number.
+    pub commit_pow: usize,
 }
 
 impl FriKnobs {
-    /// The eight-field wire the Lean export reads: the six knob fields, then the two ε_C inputs
-    /// (`logD0 bciksM`) that are not knobs. Lean's `friLedgerFFI` refuses any other arity.
+    /// The NINE-field wire the Lean export reads: the six knob fields, the two ε_C inputs
+    /// (`logD0 bciksM`) that are not knobs, and the commit-phase grinding bits. Lean's
+    /// `friLedgerFFI` refuses any other arity — including the EIGHT-field wire this replaced, which
+    /// now fails closed rather than being read as nine with a defaulted `commit_pow`.
     pub fn to_wire(self) -> String {
         format!(
-            "{} {} {} {} {} {} {} {}",
+            "{} {} {} {} {} {} {} {} {}",
             self.log_blowup,
             self.num_queries,
             self.query_pow_bits,
@@ -1017,7 +1033,8 @@ impl FriKnobs {
             self.log_final_poly_len,
             self.ext_deg,
             self.log_d0,
-            self.bciks_m
+            self.bciks_m,
+            self.commit_pow
         )
     }
 }
@@ -1090,6 +1107,28 @@ pub struct FriLedger {
     /// ⚑ **Kept SEPARATE.** This is never multiplied or `min`-ed into `johnson_bits` here. The `min`
     /// of ethSTARK eq. (20) is a reading a CALLER may take; the ledger reports the terms.
     pub commit_bits: usize,
+    /// **The commit branch WITH grinding** — `commit_bits + commit_pow`, in the work-factor
+    /// convention [`FriLedger::johnson_bits`] already uses for its own `query_pow_bits`. At
+    /// `commit_pow = 0` it IS `commit_bits`, so this column cannot move a number the tree already
+    /// reported (`FriCommitPow.commitPowBranch_at_zero_is_the_old_column`).
+    pub commit_pow_branch: usize,
+    /// **The Johnson branch at the SAME finite `m`** the commit branch is read at — `⌊−s·log₂ α⌋ +
+    /// query_pow_bits` with `α = √ρ·(1 + 1/2m)`.
+    ///
+    /// ⚑ Strictly BELOW [`FriLedger::johnson_bits`], which is the `m → ∞` idealisation. The tree's
+    /// standing composite took `min` of the commit branch at `m = 7` against `johnson_bits` at
+    /// `m = ∞` — two different `m`, so not ethSTARK eq. (20) at all. This is the column that makes
+    /// the `min` mean something.
+    pub johnson_bits_at_m: usize,
+    /// **ethSTARK eq. (20) at ONE `m`, with BOTH grinding terms** —
+    /// `min{commit_pow_branch, johnson_bits_at_m} − 1`.
+    ///
+    /// ⚑ This is a CALCULATOR READING at the knobs named, never "the system has N bits". There is no
+    /// adversary object anywhere in the Lean this comes from: the FRI extraction guarantee the apex
+    /// consumes (`FriLdtExtractV3`) is still ASSUMED and none of these bits discharge it. Read it as
+    /// the one number that moves when a knob moves, and check it against a config the prover RUNS —
+    /// `circuit-prove/tests/fri_hundred_bit_cutover.rs` is the instrument for the second half.
+    pub composite_bits: usize,
 }
 
 /// Whether the linked archive exports the FRI soundness ledger (`dregg_fri_ledger`, the C-ABI entry
@@ -1119,7 +1158,7 @@ pub fn fri_ledger(knobs: FriKnobs) -> Result<FriLedger, String> {
     ensure_lean_init()?;
     let out = ffi::lean_fri_ledger(&knobs.to_wire())?;
     let cols: Vec<&str> = out.split_whitespace().collect();
-    if cols.len() != 7 {
+    if cols.len() != 10 {
         return Err(format!(
             "dregg_fri_ledger refused {:?} (fail-closed) or returned a malformed ledger: {out:?}",
             knobs.to_wire()
@@ -1138,6 +1177,9 @@ pub fn fri_ledger(knobs: FriKnobs) -> Result<FriLedger, String> {
         johnson_bits: n(4)?,
         capacity_bits: n(5)?,
         commit_bits: n(6)?,
+        commit_pow_branch: n(7)?,
+        johnson_bits_at_m: n(8)?,
+        composite_bits: n(9)?,
     })
 }
 

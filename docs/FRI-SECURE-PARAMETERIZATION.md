@@ -7,6 +7,57 @@
 
 ---
 
+## ⚑⚑ CORRECTION, 2026-07-28 — READ THIS BEFORE §3. ROWS **D** AND **E** DO NOT RUN.
+
+This document was written from ledger arithmetic. When the flip was attempted — flip the deployed
+config to row **D**, prove one real proof at it — **rows D and E turned out to describe configs the
+prover cannot be handed**, and they are the only two ≥100 rows here that needed no ember-gated step.
+The instrument is `circuit-prove/tests/fri_hundred_bit_cutover.rs` (new): it hands each candidate to
+the real `create_recursion_config_with_fri` and makes it carry a real workload end to end.
+
+**Two facts a `FriParams` cannot carry, and neither was checked:**
+
+1. **`log_blowup ≥ 3` is a hard floor on BOTH halves of the wrap path.** plonky3 splits `Q(x)` into
+   `2^⌈log₂(deg−1)⌉` chunks and evaluates the trace on a domain that size
+   (`uni-stark/src/prover.rs:197-208`). The IR-v2 batch's own **frozen, symbolically-computed**
+   degree budget is **8** (the `setFieldDyn` slot gate) with the Poseidon2 chip at **7** —
+   `circuit/src/descriptor_ir2.rs::ir2_degree_budget`, a `#[test]`, not a comment. The p3-recursion
+   circuit AIR carries the degree-7 `x⁷` S-box. So `logBlowup 2` (row D) and `logBlowup 1` (row E)
+   are **illegal**, not merely unusual.
+2. **The wrap trace is `2^16` NATURALLY, not `2^15` padded.** §3 assumed *"the measured natural
+   running-fold height is `2^15`, so the `2^16` floor is pure padding"*. Measured off a real
+   leaf-wrap output proof's `degree_bits`: **`[10, 9, 16, 14, 16]`** ⇒ `2^16`, `|D⁽⁰⁾| = 2^22`. The
+   `[9,9,15,14,15]` §3 quotes is the **accumulator's aggregation fold** — a different circuit.
+   `WRAP_LOG_CEIL` is a FLOOR, so lowering it cannot shrink a table that is naturally `2^16`.
+
+**What survives.** At `extDeg = 4`, on the geometry the prover runs (`logBlowup ≥ 3`,
+`|D⁽⁰⁾| = 2^19` at the lowest legal blowup over the measured `2^16` trace), the commit branch is
+`68`, so even at the full `30`-bit grind cap the composite is **at most 97 — for every query count
+and every query-PoW**, because `ε_C` contains neither. That is
+`FriCommitPow.ext4_cannot_reach_100_at_any_runnable_blowup_and_the_measured_wrap_height`, stated
+`∀ q, ∀ pw`. `ext4_reaches_100_only_if_the_wrap_trace_shrinks_to_2e14` shows the ceiling is a fact
+about the HEIGHT and not an impossibility: at a `2^14` wrap trace, `logBlowup 3 · 67 queries ·
+commit_pow 29` reads **100**.
+
+| geometry | max composite at `extDeg 4`, `lb ≥ 3`, `cpow ≤ 30` |
+|---|---:|
+| **`|D⁰| = 2^22` (deployed today, `lb 6`)** | 87 |
+| `|D⁰| = 2^19` (`lb 3` over the **measured** `2^16` trace) | **97** |
+| `|D⁰| = 2^18` (`lb 3` over a `2^15` trace) | 99 |
+| `|D⁰| = 2^17` (`lb 3` over a `2^14` trace) | **101** |
+
+**So ≥100 at `extDeg = 4` is not a knob turn.** It needs either a smaller recursion verifier circuit
+or the degree-5/8 flag day — and the flag day is ember-gated (fresh Groth16 setup, on-chain re-key).
+The flip was NOT performed. §4.2's *"cheapest path to ≥100 with no ember-gated step"* is **withdrawn**.
+
+⚑ The generalisable lesson, and it is the reason this correction exists rather than a patch: §1.3
+caught one runnability guard (the 30-bit grind cap) and the file then read as though runnability had
+been handled. **A runnability guard that was checked does not imply the ones that were not.** The
+only instrument that can tell a config the calculator likes from a config the prover runs is a real
+proof at the real knobs.
+
+---
+
 ## 0. THE RECORD, CORRECTED
 
 > **"`FriLedgerSound.query_and_pow_cannot_pass_epsC` shows a ≥100-bit parameterization is
@@ -163,15 +214,24 @@ the measured natural running-fold height is `2^15`, so the `2^16` floor is pure 
 
 ### 3.1 ≥100 bits
 
+⚠ **Read the 2026-07-28 correction at the top first.** Rows **D** and **E** are `logBlowup 2` and
+`logBlowup 1`; the deployed AIRs' constraint degrees force `logBlowup ≥ 3`, so **the prover cannot
+be handed either.** They are struck below, not deleted, because how the error was made is the useful
+part: every column in them is correct arithmetic.
+
 | # | ext | lb | q | arity | qpow | **cpow** | \|D⁰\| | m | commit | john | **comp** | prover | proof | grind |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | **A** | 5 | 4 | 48 | 8 | 16 | **4** | 2^19 | 3 | 102 | 101 | **100** | 0.13× | 0.96× | 0.0 s |
 | **B** | 5 | 6 | 31 | 8 | 16 | **10** | 2^21 | 3 | 101 | 102 | **100** | 0.54× | 0.69× | 0.0 s |
 | **C** | 8 | 6 | 29 | 8 | 16 | 0 | 2^21 | 11 | 172 | 101 | **100** | 0.62× | 0.84× | 0 |
-| **D** | **4** | 2 | 110 | 8 | 16 | **28** | 2^17 | 3 | 102 | 101 | **100** | 0.03× | 1.75× | 0.9–26 min |
-| **E** | **4** | 1 | 307 | 8 | 16 | **24** | 2^16 | 3 | 101 | 101 | **100** | 0.02× | 4.54× | 1–5 min |
+| ~~**D**~~ | 4 | ~~2~~ | 110 | 8 | 16 | 28 | 2^17 | 3 | 102 | 101 | ~~100~~ | — | — | **UNRUNNABLE: `lb < 3`** |
+| ~~**E**~~ | 4 | ~~1~~ | 307 | 8 | 16 | 24 | 2^16 | 3 | 101 | 101 | ~~100~~ | — | — | **UNRUNNABLE: `lb < 3`** |
+| **D′** | **4** | **3** | 67 | 8 | 16 | **29** | 2^17 | 3 | 101 | 101 | **100** | — | — | ⚠ needs a **2^14** wrap trace; the measured one is **2^16** |
 
-`D` and `E` are the **no-flag-day** rows: `extDeg = 4`, so nothing re-keys.
+`D` and `E` were the **no-flag-day** rows. With both struck there is **no no-flag-day row**: at
+`extDeg = 4` and the lowest legal `logBlowup 3`, the measured `2^16` wrap trace puts `|D⁰|` at `2^19`
+and the commit branch at `68`, capping the composite at **97** for every `(q, pow)` even at the
+`30`-bit grind cap. `D′` shows what would have to move — the *trace*, not a knob.
 
 ### 3.2 ≥128 bits
 
@@ -232,7 +292,12 @@ binding at all — the posture becomes query-limited, which is the regime `numQu
   measures the BN254 recursion circuit at **4 980 767 R1CS** with a 13-min / **23 GB** setup at
   d=4, and estimates **7.5 M – 12 M R1CS at d=8**. That is the real gate, not the STARK cost.
 
-### 4.2 Cheapest path to ≥100 with **no ember-gated step**: **D**
+### 4.2 ~~Cheapest path to ≥100 with **no ember-gated step**: **D**~~ — ⚑ WITHDRAWN 2026-07-28
+
+**There is no such path.** `logBlowup 2` is below the deployed AIRs' quotient-domain floor, so this
+recommendation names a config the prover refuses. The paragraph is kept as written, struck, because
+its own closing sentence — *"There is no free row at `extDeg = 4`; that is the honest finding"* —
+was closer to the truth than the row it was recommending. What follows is the withdrawn text.
 
 ```
 extDeg 4 · logBlowup 2 · 110 queries · arity 8 · query_pow 16 · commit_pow 28 · trace 2^15 (|D⁰| = 2^17)
@@ -277,6 +342,17 @@ the marginal benefit is 28 bits and the commit branch ceasing to bind.**
 - **No shipped config was flipped.** This is analysis plus a Lean ledger extension. Every row above
   is a reading of knobs the prover *can* be handed; none is a claim about what runs today. Turning
   one on is a separate, deliberate act.
+  ⚑ **2026-07-28: that act was attempted, and it is what found rows D/E unrunnable.** Two of those
+  rows were readings of knobs the prover *cannot* be handed — the sentence above was written in
+  good faith and was false. What DID land from the attempt, none of it a knob move:
+  `commit_proof_of_work_bits` is an exported `const` at all six shipped const blocks (it was ten
+  inline `0`s that no gate could read, which is why no column priced it); `IR2_INNER_*` is `pub` and
+  the params gate's `ir2_leaf_wrap_config` row reads the constants that config actually passes
+  instead of a different config's; `create_recursion_config`'s in-circuit `FriVerifierParams` read
+  the `RECURSION_FRI_*` consts instead of matching them by coincidence; `DEPLOYED_WORST_LOG_D0` is
+  `WRAP_LOG_CEIL + IR2_INNER_LOG_BLOWUP = 22` (it was 19, adding one path's trace floor to another
+  path's blowup — known wrong since 2026-07-20 and deferred); and the ledger export carries the
+  composite so a caller can read the number rather than only Lean prove it.
 - **The scope of `FriDeployedHeightPairing` carries over unweakened.** These are arithmetic
   statements about a formula transcribed from BCIKS20 and ethSTARK. **There is no adversary object
   anywhere in this tree**, the FRI extraction guarantee the apex consumes (`FriLdtExtractV3`) is
@@ -311,8 +387,14 @@ the marginal benefit is 28 bits and the commit branch ceasing to bind.**
 | deployed composite is 57, not 50 | `FriCommitPow.the_deployed_composite_is_57` |
 | commit-PoW saturates at +10 on the deployed geometry | `FriCommitPow.commit_pow_saturates_at_the_deployed_geometry` |
 | the 30-bit grind cap is the BabyBear modulus | `FriCommitPow.maxGrindBits_is_the_babybear_witness_cap` |
-| ≥100 at `extDeg 4`, runnable grind (row D) | `FriCommitPow.ext4_reaches_100_without_a_field_flag_day` |
+| ≥100 at `extDeg 4` **as arithmetic** (row D) — ⚠ at an unrunnable `lb` | `FriCommitPow.ext4_reaches_100_without_a_field_flag_day` |
 | ≥128 at `extDeg 8`, `cpow 0` (row F) | `FriCommitPow.ext8_reaches_128` |
 | the impossibility claim is false | `FriCommitPow.a_hundred_bit_parameterization_exists` |
 | grind rate and per-`cpow` wall clock | `circuit/tests/commit_pow_cost_measure.rs` |
 | extension-degree prover/proof/R1CS cost | `docs/reference/EXT-DEGREE-COST.md` |
+| **⚑ `extDeg 4` cannot reach 100 on the runnable geometry, `∀ q, ∀ pow`** | `FriCommitPow.ext4_cannot_reach_100_at_any_runnable_blowup_and_the_measured_wrap_height` |
+| **⚑ …and that ceiling is a fact about the TRACE, not an impossibility** | `FriCommitPow.ext4_reaches_100_only_if_the_wrap_trace_shrinks_to_2e14` |
+| **⚑ `log_blowup 2` yields a proof that does not verify** (live tooth) | `circuit-prove/tests/fri_hundred_bit_cutover.rs::log_blowup_below_the_deployed_air_degree_floor_produces_an_invalid_proof` |
+| **⚑ the deployed AIRs' frozen constraint-degree budget (8)** | `circuit/src/descriptor_ir2.rs::ir2_degree_budget` |
+| **⚑ the wrap's MEASURED `degree_bits` / runnability of each candidate** | `circuit-prove/tests/fri_hundred_bit_cutover.rs` (sweep) |
+| **⚑ the composite, READABLE by the caller who sets the knobs** | `FriLedger.friLedgerFFI` (9-in/10-out) → `dregg_lean_ffi::FriLedger::composite_bits` |

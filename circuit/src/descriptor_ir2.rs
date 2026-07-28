@@ -229,7 +229,7 @@ use crate::lean_descriptor_air::{
 use crate::lean_descriptor_air::i64_to_babybear;
 use crate::lean_descriptor_air::{EffectVmDescriptor, RangeSpec};
 use crate::plonky3_prover::{
-    POSEIDON2_PERM_AUX_COLS, POSEIDON2_WIDTH, create_config_with_fri, from_p3,
+    POSEIDON2_PERM_AUX_COLS, POSEIDON2_WIDTH, create_config_with_fri_full, from_p3,
     poseidon2_permute_expr_lanes, to_p3,
 };
 // The concrete permutation aux-witness fill is prover-only (`perm_aux`).
@@ -5975,11 +5975,15 @@ fn ir2_config() -> DreggStarkConfig {
     // sidesteps any `Sync` requirement on the config; the cached value is byte-identical to a
     // fresh `create_config_with_fri(6, 0, 3, 19, 16)` (same deterministic knobs).
     thread_local! {
-        static IR2_CONFIG: DreggStarkConfig = create_config_with_fri(
+        // ⚑ `_full`, not `create_config_with_fri`: the short constructor hard-codes
+        // `commit_proof_of_work_bits = 0` INSIDE itself, so this config's sixth knob was set by a
+        // literal in another file that no gate could reach. It is `IR2_FRI_COMMIT_POW_BITS` now.
+        static IR2_CONFIG: DreggStarkConfig = create_config_with_fri_full(
             IR2_FRI_LOG_BLOWUP,
             IR2_FRI_LOG_FINAL_POLY_LEN,
             IR2_FRI_MAX_LOG_ARITY,
             IR2_FRI_NUM_QUERIES,
+            IR2_FRI_COMMIT_POW_BITS,
             IR2_FRI_QUERY_POW_BITS,
         );
     }
@@ -6002,6 +6006,23 @@ pub const IR2_FRI_LOG_FINAL_POLY_LEN: usize = 0;
 pub const IR2_FRI_MAX_LOG_ARITY: usize = 3;
 pub const IR2_FRI_NUM_QUERIES: usize = 19;
 pub const IR2_FRI_QUERY_POW_BITS: usize = 16;
+/// **The SIXTH knob, and the one the ledger could not see.** plonky3's
+/// `commit_proof_of_work_bits` (`fri/src/config.rs:18`) is ground per fold round, after the round
+/// commitment is observed and before the folding challenge `β` is drawn (`fri/src/prover.rs:224`;
+/// checked `verifier.rs:222` with the witness count pinned to the commit count at `:206`). It
+/// grinds against exactly the phase BCIKS20's `ε_C` bounds, so it is the ONE lever on the branch
+/// that BINDS at the deployed wrap which is not a field-extension flag day
+/// (`Dregg2.Circuit.FriCommitPow.commit_pow_moves_the_commit_branch`).
+///
+/// ⚑ It was an inline `0` at `plonky3_prover.rs`'s `create_config_with_fri`, and so were the other
+/// nine construction sites — a knob that moves a soundness column, set by nobody, visible to no
+/// gate. It is a `const` now so `fri_params_soundness_budget.rs` PINS the value the prover
+/// actually grinds against the value the Lean composite is read at.
+///
+/// ⚑ Hard-capped at 30: `grind` asserts `(1u64 << bits) < F::ORDER_U64` over a single BabyBear
+/// witness (`FriCommitPow.maxGrindBits_is_the_babybear_witness_cap`), and the Lean export fails
+/// closed above it.
+pub const IR2_FRI_COMMIT_POW_BITS: usize = 0;
 /// The challenge extension degree for the IR-v2 batch. `ir2_config` builds on the same
 /// `plonky3_prover` extension type, so this is `PROD_EXT_DEGREE`; it is named here so the ledger gate
 /// pins the IR-v2 config's `|F|` explicitly rather than assuming it.

@@ -781,46 +781,73 @@ theorem three_columns_three_dependencies :
 reads the proved numbers, and a wire-format edit that dropped a column would go red HERE, in Lean,
 before the Rust test ever ran. -/
 
--- ⚑ The wire now carries EIGHT inputs (the six knobs + `logD0` + BCIKS20's `m`) and SEVEN columns
--- (the six + `commitBits`). `logD0 = 12` is the COST FIXTURE's FRI domain — a 1-effect turn — and is
--- used below only to exercise the wire against a known reading. It is NOT the deployed height: those
--- are measured in `circuit-prove/tests/fri_trace_height_measure.rs` and read out per config by
+-- ⚑ The wire carries NINE inputs (the six knobs + `logD0` + BCIKS20's `m` + `commitPow`) and TEN
+-- columns (the six + `commitBits` + the three eq.-(20) columns `commitPowBranch`, `johnsonBitsAtM`,
+-- `compositeBits`). `logD0 = 12` is the COST FIXTURE's FRI domain — a 1-effect turn — and is used
+-- below only to exercise the wire against a known reading. It is NOT the deployed height: those are
+-- measured in `circuit-prove/tests/fri_trace_height_measure.rs` and read out per config by
 -- `ledger_commitBits_at_measured_heights` (the recursion wrap's 2^19 gives 61, not 71). `m = 7` is
 -- the proximity parameter that happens to optimise the deployed composite; it is an input, not a fact.
+--
+-- ⚑ EVERY VECTOR BELOW PASSES `commitPow = 0`, and that is not padding — it is the DEPLOYED VALUE at
+-- all ten shipped construction sites, now readable as `IR2_FRI_COMMIT_POW_BITS`,
+-- `IR2_INNER_COMMIT_POW_BITS`, `PROD_FRI_COMMIT_POW_BITS`, `ZK_FRI_COMMIT_POW_BITS`,
+-- `RECURSION_FRI_COMMIT_POW_BITS`, `OUTER_FRI_COMMIT_POW_BITS`. At `0` the `commitPowBranch` column
+-- IS `commitBits`, which is why adding it moved no number the tree already published.
 
 -- The deployed IR-v2 wrap: arity 8, |κ| = 64, |Good| ≤ 14112, 109 per-fold, 73 Johnson, 130 capacity,
--- and commit-phase 71 — the term the 73 drops.
-#guard friLedgerFFI "6 19 16 3 0 4 12 7" == "8 64 14112 109 73 130 71"
+-- and commit-phase 71 — the term the 73 drops. ⚑ The composite reads 70, not 73: at ONE m = 7 the
+-- honest Johnson branch is 71, not the m → ∞ 73, and min{71, 71} − 1 = 70.
+#guard friLedgerFFI "6 19 16 3 0 4 12 7 0" == "8 64 14112 109 73 130 71 71 71 70"
 -- The rotated leaf wrap (arity 2 at logBlowup 6) — the one config the ~112.6 describes.
-#guard friLedgerFFI "6 19 16 1 0 4 12 7" == "2 64 2016 112 73 130 71"
+#guard friLedgerFFI "6 19 16 1 0 4 12 7 0" == "2 64 2016 112 73 130 71 71 71 70"
 -- The gnark ETH-wrap's outer shrink: arity 2 at logBlowup 3 ⇒ |κ| = 8, |Good| ≤ 28, 118 bits.
-#guard friLedgerFFI "3 38 16 1 0 4 12 7" == "2 8 28 118 73 130 75"
+#guard friLedgerFFI "3 38 16 1 0 4 12 7 0" == "2 8 28 118 73 130 75 75 69 68"
 -- v1 production: arity 8 at logBlowup 3.
-#guard friLedgerFFI "3 38 16 3 0 4 12 7" == "8 8 196 116 73 130 75"
+#guard friLedgerFFI "3 38 16 3 0 4 12 7 0" == "8 8 196 116 73 130 75 75 69 68"
 -- The recursion default: powBits 14 ⇒ capacity exactly 128.
-#guard friLedgerFFI "3 38 14 1 0 4 12 7" == "2 8 28 118 71 128 75"
+#guard friLedgerFFI "3 38 14 1 0 4 12 7 0" == "2 8 28 118 71 128 75 75 67 66"
 
 -- ⚑ THE COMMIT COLUMN IS NOT TRACE-INVARIANT — the mutation canary, on the wire. Same config, a
 -- 2^20 FRI domain instead of 2^12: the per-fold and query columns do not move at all, and the
--- commit column falls 71 → 55 (~2 bits per trace doubling, because ε_C ∝ |D⁽⁰⁾|²).
-#guard friLedgerFFI "6 19 16 3 0 4 20 7" == "8 64 14112 109 73 130 55"
-#guard friLedgerFFI "6 19 16 3 0 4 13 7" == "8 64 14112 109 73 130 69"
+-- commit column falls 71 → 55 (~2 bits per trace doubling, because ε_C ∝ |D⁽⁰⁾|²). The COMPOSITE
+-- follows it down (70 → 54) while `johnsonBitsAtM` stands still at 71 — the whole content of the
+-- eq.-(20) `min` in one pair of vectors.
+#guard friLedgerFFI "6 19 16 3 0 4 20 7 0" == "8 64 14112 109 73 130 55 55 71 54"
+#guard friLedgerFFI "6 19 16 3 0 4 13 7 0" == "8 64 14112 109 73 130 69 69 71 68"
 
 -- ⚑ THE CEILING, AND THE SHARPEST READING IN THIS FILE. `ε_C` contains no `numQueries` and no
 -- `powBits`. Buy queries to `200` and PoW to the practical maximum `27` and the query columns
--- balloon — Johnson `73 → 627`, capacity `130 → 1227` — while the commit column does not move one
--- bit off `71`. The query ledger's monotone `q·lb/2` reading is what makes "proven 128" look
--- purchasable; ε_C is what says it is not. No `(q, pow)` passes this. Only `extDeg` moves it, at
--- log₂ p ≈ 30.91 bits per degree, because `ε_C ∝ 1/|F| = 1/p^extDeg`.
-#guard friLedgerFFI "6 200 27 3 0 4 12 7" == "8 64 14112 109 627 1227 71"
+-- balloon — Johnson `73 → 627`, capacity `130 → 1227`, `johnsonBitsAtM` `71 → 607` — while the
+-- commit column does not move one bit off `71` AND THE COMPOSITE DOES NOT MOVE OFF `70`. The query
+-- ledger's monotone `q·lb/2` reading is what makes "proven 128" look purchasable; ε_C is what says
+-- it is not. No `(q, pow)` passes this.
+#guard friLedgerFFI "6 200 27 3 0 4 12 7 0" == "8 64 14112 109 627 1227 71 71 607 70"
 
--- FAIL-CLOSED: a malformed wire, the OLD six-field wire, and `m < 3` (BCIKS20 Thm 8.3's own
--- hypothesis — outside it the formula is not the paper's) all refuse rather than answer.
+-- ⚑ …AND `commitPow` IS THE KNOB THAT DOES MOVE IT — but ONLY once the queries have been bought
+-- first, which is the whole shape of the eq.-(20) `min` and the reason neither column alone is a
+-- posture. At the DEPLOYED query count grinding is worth NOTHING: `commitPow = 1` lifts the commit
+-- branch 71 → 72 and the composite does not move off 70, because `johnsonBitsAtM` (71) has already
+-- taken over the `min`. Buy the queries (`q = 200`, `pow = 27`) and the Johnson branch goes to 607
+-- — and only THEN does grinding buy bits one-for-one: 70 → 86 at `commitPow = 16`, 70 → 100 at the
+-- `30`-bit grind cap. A caller cannot read either knob alone as a free ride.
+#guard friLedgerFFI "6 19 16 3 0 4 12 7 1" == "8 64 14112 109 73 130 71 72 71 70"
+#guard friLedgerFFI "6 200 27 3 0 4 12 7 16" == "8 64 14112 109 627 1227 71 87 607 86"
+#guard friLedgerFFI "6 200 27 3 0 4 12 7 30" == "8 64 14112 109 627 1227 71 101 607 100"
+
+-- FAIL-CLOSED: a malformed wire, the OLD EIGHT-field wire (the shape this replaced — it is REFUSED,
+-- not reinterpreted as nine with a defaulted `commitPow`, because a defaulted grinding knob is this
+-- export choosing a soundness number on the caller's behalf), the older six-field wire, `m < 3`
+-- (BCIKS20 Thm 8.3's own hypothesis — outside it the formula is not the paper's), and a `commitPow`
+-- above the BabyBear single-witness grind cap (where plonky3's `grind` asserts out, so the number
+-- would describe an object no prover can produce) all refuse rather than answer.
 #guard friLedgerFFI "6 19 16" == ""
 #guard friLedgerFFI "6 19 16 3 0 4" == ""
-#guard friLedgerFFI "6 19 16 3 0 4 12 2" == ""
+#guard friLedgerFFI "6 19 16 3 0 4 12 7" == ""
+#guard friLedgerFFI "6 19 16 3 0 4 12 2 0" == ""
 #guard friLedgerFFI "not a config" == ""
-#guard friLedgerFFI "6 19 16 3 0 64" == ""
+#guard friLedgerFFI "6 19 16 3 0 64 12 7 0" == ""
+#guard friLedgerFFI "6 19 16 3 0 4 12 7 31" == ""
 
 /-! ## §8. Axiom hygiene.
 

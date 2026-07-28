@@ -338,6 +338,60 @@ def friCommitLedger (cfg : FriParams) (logD0 bciksM : Nat) : CommitLedger :=
     epsCNum := num
     commitBits := Nat.log2 ((den - 1) / num) }
 
+/-! ## §  THE COMPOSITE — ethSTARK eq. (20) read at ONE `m`, with BOTH grinding terms
+
+These four `def`s were born in `Dregg2.Circuit.FriCommitPow` and live here now for one reason: the
+FFI export below has to be able to REPORT the composite. A calculator that can prove a number in
+Lean but cannot hand it to the caller who chooses the knobs is a calculator nobody reads, and the
+whole point of `FriCommitPow` is that the deployed configs set `commit_proof_of_work_bits = 0` —
+a fact only a caller reading deployed constants can check. The THEOREMS about these defs stay in
+`FriCommitPow.lean`; only the computable content moved. -/
+
+/-- The largest proof-of-work bit count a BabyBear witness admits. plonky3's `grind`
+(`challenger/src/grinding_challenger.rs:107`) opens with `assert!((1u64 << bits) < F::ORDER_U64)`
+over a witness that is ONE base-field element (`type Witness = F`), so `2^b < p` caps BOTH PoW
+knobs. `FriCommitPow.maxGrindBits_is_the_babybear_witness_cap` pins this to `ledgerP`, tight on both
+sides. A `commitPow` above it names a posture **no prover can produce**, which is why the export
+below fails closed on it rather than returning a number. -/
+def maxGrindBits : Nat := 30
+
+/-- **THE COMMIT BRANCH, WITH GRINDING.** `⌊−log₂ ε_C⌋ + commit_pow`, in the work-factor convention
+`johnsonBits` already uses for its own `powBits`: under Fiat–Shamir a prover redraws the folding
+challenge `β` by finding a second valid PoW witness, and each redraw costs `2^commit_pow`
+permutations. At `commitPow = 0` this is exactly `friCommitLedger`'s existing column, so the
+extension cannot move any number the tree already reports
+(`FriCommitPow.commitPowBranch_at_zero_is_the_old_column`). -/
+def commitPowBranch (cfg : FriParams) (logD0 bciksM commitPow : Nat) : Nat :=
+  (friCommitLedger cfg logD0 bciksM).commitBits + commitPow
+
+/-- The numerator of `α^(2s)`'s reciprocal: `2^(s·lb) · (2m)^(2s)`. -/
+def johnsonAlphaNum (cfg : FriParams) (m : Nat) : Nat :=
+  2 ^ (cfg.numQueries * cfg.logBlowup) * (2 * m) ^ (2 * cfg.numQueries)
+
+/-- The denominator: `(2m+1)^(2s)`. -/
+def johnsonAlphaDen (cfg : FriParams) (m : Nat) : Nat :=
+  (2 * m + 1) ^ (2 * cfg.numQueries)
+
+/-- **THE JOHNSON BRANCH AT A FINITE `m`.** With `α = √ρ·(1 + 1/2m)` and `ρ = 2^(−lb)`,
+`α^(2s) = (2m+1)^(2s) / (2^(s·lb)·(2m)^(2s))`, so the greatest `b` with `α^s ≤ 2^(−b)` is
+`⌊log₂ X / 2⌋` for `X = (num − 1)/den`. Squaring keeps everything in `Nat` with **no division
+inside the power**, and the halving is a floor, so the figure rounds DOWN.
+
+⚑ Strictly BELOW the exported `johnsonBits` at every finite `m`, because that column is the
+`m → ∞` limit (`FriCommitPow.the_exported_johnson_column_overstates_at_every_finite_m`). -/
+def johnsonBitsAtM (cfg : FriParams) (m : Nat) : Nat :=
+  Nat.log2 ((johnsonAlphaNum cfg m - 1) / johnsonAlphaDen cfg m) / 2 + cfg.powBits
+
+/-- **ethSTARK eq. (20), at ONE `m`, with BOTH grinding terms.**
+`λ ≥ min{−log₂ ε_C + commit_pow, ζ − s·log₂ α} − 1`.
+
+The tree's standing composite compared the commit branch at `m = 7` against the Johnson branch at
+`m = ∞` — two different `m`, so not eq. (20) at all. BCIKS20 Thm 8.3 carries ONE proximity
+parameter in BOTH terms; `m` is universally quantified in its hypothesis, so any `m ≥ 3` gives a
+true bound and the best is the analyst's to take. -/
+def compositeBits (cfg : FriParams) (logD0 m commitPow : Nat) : Nat :=
+  min (commitPowBranch cfg logD0 m commitPow) (johnsonBitsAtM cfg m) - 1
+
 /-! ## The `@[export]` FFI entry (Rust → Lean), running the computable ledger.
 
 Mirrors the repo's established string-wire export mechanism (`Dregg2.Grain.R3Verify.r3VerifyFFI`,
@@ -358,21 +412,40 @@ than returning a number no theorem backs. `maxLogArity ≥ 1` keeps the round co
 def epsCInWindow (cfg : FriParams) (logD0 bciksM : Nat) : Bool :=
   3 ≤ bciksM && bciksM ≤ 64 && logD0 ≤ 40 && cfg.logBlowup ≤ logD0 && 1 ≤ cfg.maxLogArity
 
+/-- **THE GRIND WINDOW — the guard that keeps the composite from quoting an unrunnable posture.**
+`commitPow ≤ maxGrindBits` is NOT a wire convenience: above it plonky3's `grind` asserts out, so a
+composite computed there describes an object no prover can produce. That is the exact fake-green
+this column was written to avoid (a first draft of the ≥100 theorem used `commit_pow = 34`, read
+`100`, and named a config no prover can run), so the export REFUSES rather than returning it. -/
+def grindInWindow (commitPow : Nat) : Bool := commitPow ≤ maxGrindBits
+
 /-- **The C-ABI entry.** Wire grammar:
 
-  * in:  `"logBlowup numQueries powBits maxLogArity logFinalPolyLen extDeg logD0 bciksM"` (eight
-    decimal `Nat`s — the five deployed knobs, the extension degree that fixes `|F|`, and the two
-    `ε_C` inputs that are NOT FRI knobs: the FRI domain size `|D⁽⁰⁾| = 2^logD0` (trace height ×
-    blowup) and BCIKS20's proximity parameter `m ≥ 3`).
-  * out: `"arity foldedDomain goodCount perFoldBits johnsonBits capacityBits commitBits"` (seven
-    decimal `Nat`s — the `Ledger` fields in declaration order, then `CommitLedger.commitBits`).
-  * `""` (empty) — fail-closed for a malformed wire, a knob set outside `knobsInWindow`, or `ε_C`
-    inputs outside `epsCInWindow` (notably `m < 3`, which is BCIKS20's own hypothesis).
+  * in:  `"logBlowup numQueries powBits maxLogArity logFinalPolyLen extDeg logD0 bciksM commitPow"`
+    (NINE decimal `Nat`s — the five deployed knobs, the extension degree that fixes `|F|`, the two
+    `ε_C` inputs that are NOT FRI knobs (the FRI domain size `|D⁽⁰⁾| = 2^logD0` = trace height ×
+    blowup, and BCIKS20's proximity parameter `m ≥ 3`), and the SIXTH deployed knob,
+    `commit_proof_of_work_bits`).
+  * out: `"arity foldedDomain goodCount perFoldBits johnsonBits capacityBits commitBits
+    commitPowBranch johnsonBitsAtM compositeBits"` (TEN decimal `Nat`s — the `Ledger` fields in
+    declaration order, then `CommitLedger.commitBits`, then the three eq.-(20) columns).
+  * `""` (empty) — fail-closed for a malformed wire, a knob set outside `knobsInWindow`, `ε_C`
+    inputs outside `epsCInWindow` (notably `m < 3`, which is BCIKS20's own hypothesis), or a
+    `commitPow` outside `grindInWindow` (above `maxGrindBits`, where plonky3's `grind` asserts out).
+
+⚑ **THE WIRE CHANGED, AND THE OLD SHAPE NOW REFUSES.** It was eight fields in / seven out. A caller
+still sending eight falls through to `| _ => ""` and gets the fail-closed empty string — it is not
+reinterpreted as a nine-field wire with a defaulted `commitPow`, because a DEFAULTED grinding knob
+is this export silently choosing a soundness number on the caller's behalf. `commit_proof_of_work_bits`
+had been on no wire and in no column while every shipped config set it to `0`; the whole point of
+putting it here is that the caller must SAY what the prover grinds.
 
 `logD0` and `bciksM` are on the wire rather than in `FriParams` because they are **not FRI knobs**:
 `|D⁽⁰⁾|` is a property of the STATEMENT being proved (the trace height), and `m` is a parameter of
 the ANALYSIS. Folding them into `FriParams` would have implied the deployed config determines
-`ε_C`, and the whole point of this column is that it does not.
+`ε_C`, and the whole point of that column is that it does not. `commitPow` is likewise NOT in
+`FriParams` — the four `FriParams` soundness columns are the ones that predate it, and adding a
+seventh field would have silently moved `friLedger`'s own arity.
 
 `logFinalPolyLen` is READ and echoed into no ledger column, because it enters no soundness formula in
 this tree. That is deliberate and is the honest answer: the export does not invent a number for it.
@@ -380,15 +453,16 @@ It stays on the wire so the Rust pin passes the WHOLE deployed knob set through 
 @[export dregg_fri_ledger]
 def friLedgerFFI (input : String) : String :=
   match (input.splitOn " ").filterMap String.toNat? with
-  | [lb, nq, pw, mla, lfpl, ed, logD0, bciksM] =>
+  | [lb, nq, pw, mla, lfpl, ed, logD0, bciksM, commitPow] =>
       let cfg : FriParams :=
         { logBlowup := lb, numQueries := nq, powBits := pw, maxLogArity := mla,
           logFinalPolyLen := lfpl, extDeg := ed }
-      if knobsInWindow cfg && epsCInWindow cfg logD0 bciksM then
+      if knobsInWindow cfg && epsCInWindow cfg logD0 bciksM && grindInWindow commitPow then
         let l := friLedger cfg
         let cl := friCommitLedger cfg logD0 bciksM
         s!"{l.arity} {l.foldedDomain} {l.goodCount} {l.perFoldBits} {l.johnsonBits} \
-{l.capacityBits} {cl.commitBits}"
+{l.capacityBits} {cl.commitBits} {commitPowBranch cfg logD0 bciksM commitPow} \
+{johnsonBitsAtM cfg bciksM} {compositeBits cfg logD0 bciksM commitPow}"
       else ""
   | _ => ""
 

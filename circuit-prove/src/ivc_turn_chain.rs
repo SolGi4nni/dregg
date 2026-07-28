@@ -1239,10 +1239,21 @@ fn generate_chain_trace_rotated(
 /// SIDESTEP (C3 PART 2a): the inner proof keeps its production FRI engine; only the
 /// recursion verifier's params are retargeted. The leaf-wrap OUTPUT is a standard
 /// recursion-config (`log_blowup = 3`, 38-query) proof.
-const IR2_INNER_LOG_BLOWUP: usize = 6;
-const IR2_INNER_LOG_FINAL_POLY_LEN: usize = 0;
-const IR2_INNER_COMMIT_POW_BITS: usize = 0;
-const IR2_INNER_QUERY_POW_BITS: usize = 16;
+///
+/// ⚑ **THESE ARE `pub` NOW, AND THAT CLOSES A HOLE IN THE PARAMS GATE.** They were private, so
+/// `circuit-prove/tests/fri_params_soundness_budget.rs`'s `ir2_leaf_wrap_config` row could not read
+/// the consts the config ACTUALLY reads — it reconstructed the row from `IR2_FRI_*` + `INNER_FRI_*`
+/// instead. Moving `IR2_INNER_LOG_BLOWUP` alone would therefore have changed what the deployed
+/// prover runs while the gate went on judging a config assembled out of other constants. A
+/// soundness knob that no gate can read is not gated.
+pub const IR2_INNER_LOG_BLOWUP: usize = 6;
+pub const IR2_INNER_LOG_FINAL_POLY_LEN: usize = 0;
+/// The commit-phase grinding this wrap performs — `0`, like all ten shipped sites. This is the
+/// knob `Dregg2.Circuit.FriCommitPow` prices: it is the only lever on the branch that BINDS at this
+/// exact config (`FriDeployedHeightPairing.deployed_wrap_commitBits`) which is not a
+/// field-extension flag day. Capped at 30 by `grind`'s single-BabyBear-witness assertion.
+pub const IR2_INNER_COMMIT_POW_BITS: usize = 0;
+pub const IR2_INNER_QUERY_POW_BITS: usize = 16;
 
 /// THREAD 1 (C3 cutover) — the rotated multi-table `Ir2BatchProof` native-batch leaf-wrap.
 ///

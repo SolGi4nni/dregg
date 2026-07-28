@@ -64,6 +64,11 @@ mod zk_plonky3 {
     pub const ZK_FRI_NUM_QUERIES: usize = 38;
     /// See [`ZK_FRI_LOG_BLOWUP`].
     pub const ZK_FRI_QUERY_POW_BITS: usize = 16;
+    /// **The SIXTH knob** — plonky3's `commit_proof_of_work_bits`, ground per fold round against
+    /// exactly the phase BCIKS20's `ε_C` bounds. It was an inline `0` in the `FriParameters` below;
+    /// exported for the same reason as the five above, so the params gate can pin the value the
+    /// prover grinds. Capped at 30 by `grind`'s single-BabyBear-witness assertion.
+    pub const ZK_FRI_COMMIT_POW_BITS: usize = 0;
     /// The challenge extension degree — builds [`EF`], so the two cannot drift.
     pub const ZK_EXT_DEGREE: usize = 4;
 
@@ -144,7 +149,7 @@ mod zk_plonky3 {
             // `docs/reference/FRI-BOTH-WIN-LEVERS.md` and the matching non-ZK
             // configuration in `plonky3_prover.rs`.
             num_queries: ZK_FRI_NUM_QUERIES,
-            commit_proof_of_work_bits: 0,
+            commit_proof_of_work_bits: ZK_FRI_COMMIT_POW_BITS,
             query_proof_of_work_bits: ZK_FRI_QUERY_POW_BITS,
             mmcs: challenge_mmcs,
         };

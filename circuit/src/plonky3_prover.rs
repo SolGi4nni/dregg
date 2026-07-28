@@ -99,6 +99,12 @@ pub const PROD_FRI_LOG_FINAL_POLY_LEN: usize = 0;
 pub const PROD_FRI_MAX_LOG_ARITY: usize = 3;
 pub const PROD_FRI_NUM_QUERIES: usize = 38;
 pub const PROD_FRI_QUERY_POW_BITS: usize = 16;
+/// **The SIXTH knob** — plonky3's `commit_proof_of_work_bits` (`fri/src/config.rs:18`), ground per
+/// fold round before the folding challenge `β` is drawn, i.e. against exactly the phase BCIKS20's
+/// `ε_C` bounds. It was an inline `0` inside [`create_config_with_fri`], which is why no gate could
+/// see it and no ledger column priced it; it is a `const` now for the same reason the other five
+/// are. Capped at 30 by `grind`'s single-BabyBear-witness assertion.
+pub const PROD_FRI_COMMIT_POW_BITS: usize = 0;
 /// The challenge extension degree — `|F| = babyBearP ^ PROD_EXT_DEGREE ≈ 2^123.6`. It is the
 /// denominator of every per-fold proximity-gap bound, so it is a soundness knob as much as the five
 /// above; it is exported (and used to build [`EF`]) so it cannot drift from the modeled `extDeg`
@@ -136,11 +142,12 @@ pub fn create_config() -> DreggStarkConfig {
     // derives no soundness number itself: it hands these knobs to the VERIFIED Lean ledger
     // (`@[export] dregg_fri_ledger` over `Dregg2.Circuit.FriLedger.friLedger`) and reports
     // what comes back, and it PINS them against the Lean-modeled `FriLedgerSound.prodV1Config`.
-    create_config_with_fri(
+    create_config_with_fri_full(
         PROD_FRI_LOG_BLOWUP,
         PROD_FRI_LOG_FINAL_POLY_LEN,
         PROD_FRI_MAX_LOG_ARITY,
         PROD_FRI_NUM_QUERIES,
+        PROD_FRI_COMMIT_POW_BITS,
         PROD_FRI_QUERY_POW_BITS,
     )
 }
@@ -165,7 +172,12 @@ pub fn create_config_with_fri(
         log_final_poly_len,
         max_log_arity,
         num_queries,
-        0, // commit_proof_of_work_bits — every SHIPPED config sets it to 0
+        // ⚑ MEASUREMENT CALLERS ONLY. Every SHIPPED config now names its commit-PoW through an
+        // exported const and goes through `create_config_with_fri_full` directly
+        // (`PROD_FRI_COMMIT_POW_BITS`, `IR2_FRI_COMMIT_POW_BITS`, …), because a knob that moves a
+        // soundness column has to be pinnable by `fri_params_soundness_budget.rs`. This `0` used to
+        // be where the deployed value came from, which is exactly why nothing could see it.
+        0,
         query_proof_of_work_bits,
     )
 }
