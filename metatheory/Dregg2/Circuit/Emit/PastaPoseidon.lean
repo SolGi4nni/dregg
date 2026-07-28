@@ -31,22 +31,34 @@ poly-commitment) — files `poseidon/src/constants.rs`, `poseidon/src/permutatio
   * round split: **55 full rounds, 0 partial rounds** (`PERM_ROUNDS_FULL = 55`,
     `PERM_ROUNDS_PARTIAL = 0`, `PERM_HALF_ROUNDS_FULL = 0`), full MDS (`PERM_FULL_MDS = true`),
     **no initial ARK** (`PERM_INITIAL_ARK = false`).
-  * round `r` (`full_round`, `permutation.rs:56-71`), in order: **(1) S-box on all 3 lanes,
+  * round `r` (`full_round`, `permutation.rs:55-70`), in order: **(1) S-box on all 3 lanes,
     (2) the 3×3 MDS matvec, (3) add `round_constants[r]`**. The permutation is the fold of the 55
     rounds (`poseidon_block_cipher`, the `PERM_HALF_ROUNDS_FULL == 0 ∧ ¬PERM_INITIAL_ARK` branch).
   * the MDS matrix and the 55×3 round constants below were DUMPED from the pinned crate
     (`fp_kimchi::static_params()`, via a scratch bin on the probe's lockfile) as decimal Fp values.
-  * sponge semantics (`ArithmeticSponge` absorb/squeeze, `poseidon.rs`): zero initial state;
-    absorb ADDS each input into `state[n]` (`n < rate`), permuting when a full rate block is
-    absorbed and more input arrives; squeeze from `Absorbed(_)` permutes once and reads
-    `state[0]`. This is o1js `Poseidon.hash` exactly (the probe's `main.rs` documents why,
-    including the empty-input case permuting the zero state once).
+  * sponge semantics (`ArithmeticSponge` absorb/squeeze, `poseidon.rs:107-146`): zero initial
+    state; absorb ADDS each input into `state[n]` (`n < rate`), permuting when an element ARRIVES
+    to find the rate already full — never on the way out, so a final full block is left unpermuted;
+    squeeze from `Absorbed(_)` permutes once and reads `state[0]`. This is o1js `Poseidon.hash`
+    exactly (the probe's `main.rs` documents why, including the empty-input case permuting the zero
+    state once). `Ref.absorbFrom` is that state machine transcribed, lane counter and all.
 
-VERIFICATION: an independent Python recomputation of this file's reference (same dumped constants,
-same round order, same sponge) reproduces ALL NINE of the probe's o1js-1.9.1 gold KATs
-(`bridge/mina-zkapp/scripts/poseidon-kat.mjs`, pasted in the probe's `main.rs`) bit-exactly —
-empty, `[0]`, `[1]`, `[2]`, `[0,1,2]`, `[1,2,3,4,5]` (multi-block), `[p−1]`, `[p−1,p−1]`,
-`[123456789, 987654321]`. The `#guard`s below pin six of them in-kernel.
+VERIFICATION (re-measured 2026-07-27, after the even-length defect below): the reference reproduces
+all NINE of the probe's o1js-1.9.1 gold KATs (`bridge/mina-zkapp/scripts/poseidon-kat.mjs`, pasted
+in the probe's `main.rs`) bit-exactly — empty, `[0]`, `[1]`, `[2]`, `[0,1,2]`, `[1,2,3,4,5]`
+(multi-block), `[p−1]`, `[p−1,p−1]`, `[123456789, 987654321]` — and the probe's tenth gold, the o1js
+`MerkleTree` depth-2 root over leaves `[1,2,3,4]`. **§5 pins all ten in-kernel**, both even-length
+vectors included, plus the two DOUBLE-PERMUTE values as rejects.
+
+⚑ WHAT THIS PARAGRAPH USED TO SAY, AND WHY IT WAS FALSE. Until 2026-07-27 it claimed "an
+independent Python recomputation … reproduces ALL NINE" while `Ref.absorbAll` permuted twice on
+every input of nonzero EVEN length (see `absorbFrom`). It reproduced SEVEN. The two it failed were
+`[123456789, 987654321]` and `[p−1, p−1]` — precisely the only two even-length golds, and precisely
+the two the `#guard` set did not pin, so the instrument could not go red. (The Python was not
+independent; it shared the bug.) The claim "the `#guard`s below pin six of them" was also wrong —
+there were seven. Recorded here rather than deleted: the lesson is that a KAT set whose omissions
+line up exactly with a definition's untested branch is not evidence, and the header sentence that
+asserts coverage is the one to check against the pins.
 
 ## The gadget shape (over K1's heads)
 
@@ -66,7 +78,8 @@ empty, `[0]`, `[1]`, `[2]`, `[0,1,2]`, `[1,2,3,4,5]` (multi-block), `[p−1]`, `
 ## What is AUTHORED + built vs NAMED mechanical continuation
 
 AUTHORED + built: the baked Kimchi params (`mdsN`/`rcsN`); the `Nat` reference (`Ref.sbox`/
-`Ref.round`/`Ref.perm`/`Ref.absorbAll`/`Ref.hash`); the generators (`sboxLaneGates`/`fpSMulCore`/
+`Ref.round`/`Ref.perm`/`Ref.absorbFrom`/`Ref.absorbAll`/`Ref.hash`); the generators
+(`sboxLaneGates`/`fpSMulCore`/
 `rcAddCore`/`mdsRowGates`/`roundGates`/`permGates`/`absorbBlockGates`); the forcing lemmas —
 `sboxLane_forces` (S-box), `fpSMulCore_forces`/`rcAddCore_forces` (atomics), `mdsRow_forces`,
 `round_forces` (the round composing), and **`perm_forces`** (the whole 55-round permutation, by the
@@ -321,15 +334,32 @@ def perm (hs : List Nat) : List Nat := permFrom 0 rounds hs
 /-- Add input `x` into state lane `j` (the sponge's absorb add; field addition). -/
 def absorbAt (st : List Nat) (j x : Nat) : List Nat := st.set j ((st.getD j 0 + x) % pN)
 
+/-- **The absorb loop, transcribed from the upstream STATE MACHINE** (`poseidon.rs:107-126`), with
+`n` the `SpongeState.Absorbed n` lane counter. Upstream permutes inside `absorb` only when an
+element ARRIVES and finds the rate already full — never on the way out. So a final full rate block
+is absorbed and left unpermuted; `squeeze` (the `[]` clause) supplies the one closing permutation
+from `Absorbed(_)`.
+
+⚑ THIS SHAPE IS THE FIX, AND IT IS STRUCTURAL. Until 2026-07-27 the loop was a three-clause
+block recursion whose `x :: y :: rest` clause permuted the finished block and then recursed into
+`rest`; at `rest = []` that fell into the `[]` clause and permuted a SECOND time, so every input of
+nonzero EVEN length got one permutation too many. The lane counter cannot express that bug: the
+permutation is triggered by an arriving element, exactly as upstream, so there is no "is this the
+last block?" case to get wrong. (The clause-ordering repair — insert a `[x, y]` case ahead of the
+cons-cons case — computes the same function, but rebuilds the fix on the same fragility that broke
+it.) §5 pins both even-length o1js golds and REJECTS the two double-permute values. -/
+def absorbFrom (st : List Nat) (n : Nat) : List Nat → List Nat
+  | [] => perm st
+  | x :: rest =>
+      if n = rate then absorbFrom (absorbAt (perm st) 0 x) 1 rest
+      else absorbFrom (absorbAt st n x) (n + 1) rest
+
 /-- The o1js/`ArithmeticSponge` absorb+squeeze state machine for one hash: absorb at `rate = 2`
 (zero-padding a partial final block is a no-op because absorb ADDS), permuting when a full block
 is absorbed and more input arrives; the final squeeze permutes once and the caller reads lane 0.
 For `[]` this permutes the zero state once, exactly as `ArithmeticSponge.squeeze` from
-`Absorbed(0)` does. -/
-def absorbAll (st : List Nat) : List Nat → List Nat
-  | [] => perm st
-  | [x] => perm (absorbAt st 0 x)
-  | x :: y :: rest => absorbAll (perm (absorbAt (absorbAt st 0 x) 1 y)) rest
+`Absorbed(0)` does. Starts at `Absorbed(0)`, the state `ArithmeticSponge.new` installs. -/
+def absorbAll (st : List Nat) (xs : List Nat) : List Nat := absorbFrom st 0 xs
 
 /-- o1js `Poseidon.hash` over Fp: zero initial state, absorb, one squeeze = lane 0. -/
 def hash (xs : List Nat) : Nat := (absorbAll [0, 0, 0] xs).getD 0 0
@@ -679,10 +709,17 @@ theorem absorbBlock_forces (a : Assignment) (stB x0B x1B outB c0 c1 : Nat)
 /-! ## §5 — KATs: the reference reproduces REAL o1js `Poseidon.hash` gold vectors (in-kernel
 `#guard`), and the generated round gates ACCEPT the honest round-0 witness of the `hash([1])`
 trace and REJECT limb bumps. Gold values: o1js 1.9.1 (`bridge/mina-zkapp/scripts/poseidon-kat.mjs`),
-pasted in `circuit-prove/sketches/mina-pasta-hash-probe/src/main.rs`, matched bit-exactly by the
-pinned `mina-poseidon` crate and by an independent Python recomputation of §1 (see the header). -/
+pasted in `circuit-prove/sketches/mina-pasta-hash-probe/src/main.rs`.
 
--- The o1js gold KATs (both sponge shapes: single-block, multi-block, empty, the `p−1` edge).
+PROVENANCE, at the resolution the 2026-07-27 defect earned: every value below was re-emitted by the
+PINNED `mina-poseidon` crate at rev `36a8b510` (the probe's own dependency, driven through
+`ArithmeticSponge::absorb`/`squeeze` — i.e. by the upstream state machine itself, not by a
+re-implementation), and independently by a Python reference over the same dumped constants. Both
+agree on all ten. The previous header cited "an independent Python recomputation" that agreed with
+this file on seven of nine because it shared this file's bug — so upstream-emitted values, not a
+second implementation of the same reading, are what the even-length pins rest on. -/
+
+-- ── ALL TEN gold vectors. ODD/EMPTY lengths (0, 1, 3, 5) ───────────────────────────────────
 #guard Ref.hash [] ==
   21565680844461314807147611702860246336805372493508489110556896454939225549736
 #guard Ref.hash [0] ==
@@ -697,6 +734,58 @@ pinned `mina-poseidon` crate and by an independent Python recomputation of §1 (
   18001630098669009746006492126580468118637657922305117967646200390172668909548
 #guard Ref.hash [pN - 1] ==
   24518824681776829458756587711529610422801475896601056123110828936099743112011
+
+-- ── ⚑ THE EVEN LENGTHS — the branch that was WRONG and UNPINNED until 2026-07-27. ──────────
+-- The probe's two even-length o1js golds (`main.rs` `compress_LR` and `pminus1_pair`).
+#guard Ref.hash [123456789, 987654321] ==
+  6772978760933812024160307839154538618423125613299338612712092411478945181912
+#guard Ref.hash [pN - 1, pN - 1] ==
+  20810074891993247493960274286147277584611699933767320058174718289332701361363
+-- The probe's tenth gold: the o1js `MerkleTree` depth-2 root over leaves `[1,2,3,4]`, i.e. THREE
+-- composed length-2 hashes (`main.rs:211`, `merkle_compress_matches_o1js_merkletree`). This is the
+-- vector K6's node hash rests on, and it is the even-length case used the way o1js uses it.
+#guard Ref.hash [Ref.hash [1, 2], Ref.hash [3, 4]] ==
+  7015600548940256149412569585750804788713845761673517466748455515265959704439
+-- Even MULTI-block (2 permutations): the cons-cons path followed by an even TAIL — the exact
+-- shape the old block recursion mis-scheduled. Values from the pinned `mina-poseidon` crate
+-- (rev `36a8b510`) itself, not from o1js's gold list, and labelled as such.
+#guard Ref.hash [1, 2, 3, 4] ==
+  17999926647250094709265028274613333425009490119803674735075942677461815400090
+#guard Ref.hash [1, 2, 3, 4, 5, 6] ==
+  7959985017624114422670972688388085510647704392438374328769526015682157146350
+
+-- ── ⚑ THE NEGATIVE PIN THAT CAN FIRE, AIMED AT THE EVEN-LENGTH PATH. ──────────────────────
+-- These are the values the DOUBLE-PERMUTING definition actually produced (measured, both
+-- semantics, same constants). They are not "some wrong number": they are the specific outputs of
+-- the specific defect. If the extra permutation ever comes back — by a reordered clause, a
+-- restructured recursion, or a lane counter off by one — these three `#guard`s go RED and say so.
+#guard Ref.hash [123456789, 987654321] !=
+  23397677932345629730936879514936877232937627317971664105867317815527328737417
+#guard Ref.hash [pN - 1, pN - 1] !=
+  8219658745770503307740253059558344825226897798820789573635148578028951530372
+#guard Ref.hash [1, 2, 3, 4] !=
+  26993694416056582790582409423103415288705444050638970371145280293842306269458
+-- And the structural statement of the same fact, independent of any constant: absorbing a FULL
+-- final rate block must leave exactly ONE closing permutation, so a length-2 hash is the singly
+-- permuted absorbed state — NOT `perm (perm ...)`.
+#guard Ref.absorbAll [0, 0, 0] [1, 2] ==
+  Ref.perm (Ref.absorbAt (Ref.absorbAt [0, 0, 0] 0 1) 1 2)
+#guard Ref.absorbAll [0, 0, 0] [1, 2] !=
+  Ref.perm (Ref.perm (Ref.absorbAt (Ref.absorbAt [0, 0, 0] 0 1) 1 2))
+
+-- ⚑ AND THE REJECTS ABOVE ARE AIMED AT A REACHABLE VALUE, PROVED IN-KERNEL RATHER THAN ASSERTED.
+-- Applying ONE EXTRA permutation to the correctly-absorbed state reproduces, exactly, the three
+-- numbers the `!=` guards reject. So those guards are not pinned to arbitrary wrong numbers: they
+-- are pinned to precisely what the defect emits, and they go red if and only if it returns. (This
+-- is the mutation test, expressed as a permanent pin — no need to reintroduce the bug to show the
+-- instrument bites, and no window in which a shared tree carries a deliberately broken sponge.)
+#guard (Ref.perm (Ref.absorbAll [0, 0, 0] [123456789, 987654321])).getD 0 0 ==
+  23397677932345629730936879514936877232937627317971664105867317815527328737417
+#guard (Ref.perm (Ref.absorbAll [0, 0, 0] [pN - 1, pN - 1])).getD 0 0 ==
+  8219658745770503307740253059558344825226897798820789573635148578028951530372
+#guard (Ref.perm (Ref.absorbAll [0, 0, 0] [1, 2, 3, 4])).getD 0 0 ==
+  26993694416056582790582409423103415288705444050638970371145280293842306269458
+
 -- non-vacuity: a tampered input does NOT reproduce the gold `seq012` vector
 #guard Ref.hash [0, 1, 3] !=
   23424253158290730161371606799079106362420197187036669822385682777728739646385
@@ -792,7 +881,7 @@ RESIDUALS (named; none sorry-ed):
      round of the real `hash([1])` trace, both polarities.
   3. **The hash-level gate fold (absorb blocks ‖ perm folds ‖ squeeze) is NOT composed.** The
      absorb add is forced (`absorbBlock_forces`), the permutation is forced (`perm_forces`), and
-     squeeze is a projection; threading them through `Ref.absorbAll`'s block recursion is the
+     squeeze is a projection; threading them through `Ref.absorbFrom`'s lane-counter loop is the
      same induction shape again, named for the transcript task that needs it.
   4. **The shared K1 residuals** — the `ℤ ↔ p_felt` field-width gap (the gates are read over ℤ;
      the cross-sums overflow BabyBear) and inherited primality of the modulus — stand unchanged

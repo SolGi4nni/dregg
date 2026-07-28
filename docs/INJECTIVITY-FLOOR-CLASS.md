@@ -77,7 +77,17 @@ Read individually. Four are false and merely undetected; four are legitimately u
 | `Distributed.StrandIntegrity.StrandForkFree`, `Blocklace.Lace.Canonical`, `Crypto.Segmentation.SplitUniqueAt`, `ShieldedWideJoinPin.CrossSchemeSameOpening` | structural, not hash floors | not cardinality-shaped. |
 
 Additional never-censused members with **no tooth and no regrounding module**:
-`Emit.MinaStateQuery.PoseidonPairCR:174`, `.AccountLeafCR:236`, `.ZkappStateCR:281`,
+~~`Emit.MinaStateQuery.PoseidonPairCR:174`, `.AccountLeafCR:236`, `.ZkappStateCR:281`~~ — ⚑ **all
+three CLOSED 2026-07-27**: refuted in-file (`poseidonPair_shift_collides`, `leafHash_shift_collides`,
+`zkappStateCR_refuted` — `absorbAt` reduces every input mod `pN`, so injectivity over `Nat` dies to
+a one-line shift, and `ZkappStateCR` dies inside its own length-8 restriction), the three floor
+`def`s **deleted**, and every consumer ported to a per-instance non-equivocation side condition
+(`NoFoldColl`, `¬ LeafColl`, `¬ StateColl`) carrying all three legs — satisfiable with an exhibited
+model, strength-preserving, and load-bearing. Refutation and port landed in the SAME commit, so no
+consumer was ever left vacuous-and-known. The replacements are **not** `¬ Function.Injective`
+spellings, deliberately: that would arm `#floor_ratchet` Source B on the shared signatures
+`List Nat → Nat` and `Account → Nat`, where injections genuinely exist — gating them would be
+noise, not a finding.
 `Crypto.MlKemIndCca.QROMInjective:286` (superseded by `FoQromRegrounded`'s proved O2H bound,
 3 residual live uses), `Circuit.ListCommit.listLeafInjective:36` (185 occ / 42 files —
 `ListCommitRegrounded` re-grounded the `compressNInjective` half and **retained** this one).
@@ -109,37 +119,99 @@ carriers of its own, sitting in the ratchet's refuted set.
 |---|---|---|---|
 | **0** | `Poseidon2SpongeCR`, `compressNInjective`, `Compress8CR`, … — **injectivity** | **FALSE at deployed BabyBear params** | `HashFloorHonesty` §1 pigeonhole core; 27 instances |
 | **0′** | `Function.Injective D` for `D : (CellId → AssetId → ℤ) → ℤ` and kin | **FALSE at ANY params, for ANY hash, in ANY field** | `Verify/InjSpelledFloors.lean` — uncountable domain. *Worse than rung 0: no width fixes it.* |
-| **1** | `HashFloorHonesty.CollisionResistant F` — keyed family, negligible collision advantage | ⚑ **ALSO FALSE for any compressing family** | `FloorGames.collisionResistant_false_of_compressing:619`. It is *definitionally* `HashCRHardQuant F ⊤` (`collisionResistant_iff_hashCRHardQuant_top:595`), and `hard_top_iff_solvableFrac_negl:241` proves **every** unrestricted-adversary floor IS the existence floor. The `Classical.choice` finder that outputs a collision at every key is a perfectly good `CollisionFinder`. |
+| **1** | `HashFloorHonesty.CollisionResistant F` — keyed family, negligible collision advantage | ⚑ **ALSO FALSE for any compressing family — and DELETED 2026-07-28 (§2.1)** | `FloorGames.hashCRHardQuant_top_false_of_compressing`. It WAS `HashCRHardQuant F ⊤` under a name that hid the `⊤`, and `hard_top_iff_solvableFrac_negl:241` proves **every** unrestricted-adversary floor IS the existence floor. The `Classical.choice` adversary that outputs a collision at every key is a perfectly good one. **There is no rung 1 any more**: the ladder starts at 2, and the `⊤` pole is now written out at every site that used to hide it. |
 | **2** | `FloorGames.HashCRHardQuant F Eff` — a real collision **Game** at an **explicit adversary class** | **honest; `Eff` undischarged** | both poles proved: `⊤` false, `⊥` vacuous (`hard_bot_vacuous`). The residual is named: *the tree has no cost model* (`FloorGames` §8; `computable_does_not_restrict`). |
 | **3** | `RomQueryFloor.birthday_bound:364` — `winProb (collWin M) ≤ (Q²+1)/‖R‖` for a `Q`-query adversary | ⚑ **PROVED. No hypothesis, no named carrier, no assumption** | information-theoretic, by induction over the query tree. `Eff := RomEff F Q` (adversaries that factor through a `Q`-query `OracleComp`) is a genuine class, and `romEff_not_iff_solvableFrac_negl` proves the rung-1 collapse **fails** for it. |
 | **3′** | `Poseidon2RomInstantiation.Poseidon2IsKeyedRandomOracle D w` | the ONE central idealisation, **per-experiment** | satisfiable and refuted-as-`∀w` on both faces. This is the honest name for "Poseidon2 behaves generically". |
 
-### 2.1 ⚑ Deleting the `def CollisionResistant` is NOT a local edit — measured 2026-07-28
+### 2.1 ⚑ `def CollisionResistant` IS DELETED — and it cost a gate. ember authorized it; this is the record.
 
-It is a **named sentinel** in `Verify/FloorCensus.sentinelFloors` with `needRefut = true`, and both
+**Landed 2026-07-28.** Rung 1 no longer exists as an object. Read this section as the flag day.
+
+#### What was paid
+
+It was a **named sentinel** in `Verify/FloorCensus.sentinelFloors` with `needRefut = true`, and both
 `#floor_census` and `#floor_ratchet` **fail closed — hard error —** when a sentinel name does not
-resolve. So deleting the `def` forces deleting that sentinel entry. And its body
-(`∀ A, Negl (collisionAdv F A)`) is **not** injectivity-shaped, so the gate's DERIVED half cannot
-rediscover it: the sentinel is the *only* thing gating this floor. `HashCRHardQuant` cannot take its
-place on that list either — at a restricted `Eff` it is the honest rung 2.
+resolve. So deleting the `def` forced deleting that sentinel entry, in the same commit; leaving it
+would have reddened the root for every lane rather than gating anything. And its body
+(`∀ A, Negl (collisionAdv F A)`) is **not** injectivity-shaped, so the census's DERIVED half cannot
+rediscover it: **the sentinel was the only thing gating this floor.** `HashCRHardQuant` cannot take
+its place on that list — at a restricted `Eff` it *is* the honest rung 2, and the list is keyed by
+head constant, so a `needRefut` entry for it would record `¬ HashCRHardQuant F ⊤` as refuting the
+floor at *every* `Eff` and report every honest rung-2 carrier as sitting on a refuted floor. A gate
+that lies is worse than an absent one.
 
-**So "delete `CollisionResistant`" costs a gate.** Draining its carriers to zero does not.
-The 47 sole-floor carriers split: **2 endpoints** (done, above), **30 embedded** (the `*_not_CR`
-teeth, `*Family_CR` satisfiability witnesses and `*Family_CR_of_injective` bridges over 12
-`*Regrounded*` modules), **3 prop-body floors** (`Poseidon2KeyedBridge.DomainSeparatedCR`,
-`S5Closure`'s `domainSepCR`, `Shielded.WideNativePqCommitment.ComputationalBindingFloor`) and
-**12 users** of those, of which only `S5Closure.deployed_unfoolable_of_domainSepCR` is a genuine
-security consumer — the rest refute or exhibit. Plus 10 multi-floor `…Family_CR_of_…` bridges.
+**THE WEAKENING, stated plainly: nothing now detects the reintroduction of a floor of this shape.**
+An author can write `∀ A : <finder structure> F, Negl (<advantage> F A)` again, under any name, and
+neither instrument will say a word. That is a real loss of coverage and it is the price.
+
+- **Who authorized it:** ember, asked directly on 2026-07-27 as a check-weakening — which
+  `CLAUDE.md` puts on the short list reserved for the operator — and answering that the `def` goes
+  now. Not a drift, not an accident, not an agent's judgement call.
+- **What restores it:** a **derived detector** for the shape "universally quantified over an
+  unrestricted adversary structure, with a negligible advantage", the way Pass 0 already recognises
+  injectivity. That is strictly stronger than the sentinel that was removed: a name-keyed entry only
+  catches an author who reuses *this* name, while a shape detector catches the next floor written
+  with a fresh structure and a fresh name. This is the follow-up worth doing.
+- **Where a future reader meets it:** the removal site itself,
+  `Verify/FloorCensus.lean`'s `sentinelFloors` docstring, carries the whole record — including the
+  authorization and the restoration path — so it cannot be found without the reason attached.
+
+#### And the tooth SURVIVED, contrary to the work order's expectation
+
+`collisionResistant_false_of_compressing` — the refutation, the thing that made this floor a
+*measured* wound rather than an opinion — was expected to die with its subject. It did not. Its
+subject moved to the propositionally equal `HashCRHardQuant F (fun _ => True)`, and it is
+`FloorGames.hashCRHardQuant_top_false_of_compressing`, same proof, same content. This is **more**
+honest than the original: the `⊤` that makes the floor false is now written into the statement
+instead of folded into a name. Ported with it: `injective_family_CR` →
+`hashCRHardQuant_top_of_injective`, `idFamily_CR` → `idFamily_hashCRHardQuant_top`,
+`brokenFamily_not_CR` → `brokenFamily_not_hashCRHardQuant_top`, `mod2Family_not_CR` →
+`mod2Family_not_hashCRHardQuant_top`. What genuinely died is
+`collisionResistant_iff_hashCRHardQuant_top`, whose only job was to see through the name — an `↔`
+needs two sides.
+
+#### How the 45 remaining carriers went
+
+- **~22 satisfiability / refutability teeth** across the `*Regrounded*` modules — **PORTED**, names
+  unchanged, conclusion restated at `HashCRHardQuant … (fun _ => True)`. Every one of them was
+  *about* the `⊤` pole; now it says so.
+- **11 old-floor ⟹ new-floor bridges** (`*_CR_of_rosterCR`, `_of_keySetCR`, `_of_leafCR`,
+  `_of_noCollision`, `_of_compressInjective`, `_of_logHashInjective`, `_of_compressionCR`,
+  `_of_floorDigestBinds`, `_of_commitTreeInjective`, …) — **DELETED.** Each implied a refuted floor
+  from a refuted floor, and each carried the docstring *"the old floor was STRICTLY STRONGER … so
+  nothing is lost re-grounding"*, which is **false**: the `⊤` floor they land on is refuted at a real
+  digest too, by a tooth in the very same file. Capability lost: the tree no longer records that
+  implication. It is one line to restate and it was never security content.
+- **3 prop-body floors.** `Poseidon2KeyedBridge.DomainSeparatedCR` **kept, body rewritten** to
+  `HashCRHardQuant (poseidon2KeyedFamily D) (fun _ => True)` — it cannot be defined as
+  `DomainSeparatedCREff D ⊤` because that module imports this one, so `domainSeparatedCREff_top_iff_old`
+  is now `Iff.rfl`. `WideNativePqCommitment.ComputationalBindingFloor` and
+  `CommitFaithfulRegrounded.CollisionResistant` — **DELETED**, both were re-export aliases with zero
+  Lean consumers whose whole function was to point a reader at rung 1.
+- **The one genuine security consumer,
+  `S5Closure.deployed_unfoolable_of_domainSepCR` — PORTED TO RUNG 2**, name kept, now taking
+  `HashCRHardQuant (poseidon2KeyedFamily D) Eff` plus a named `hEff`: that the class contains the
+  CONSTRUCTED fixed-pair equivocator `foolingRootEquivocator D xs xs'`. That obligation is the honest
+  price of a categorical `¬ Foolable` from a hash floor and it is **undischarged**. §5's own teeth
+  prove why it cannot be avoided: this floor *forces injectivity*, and injectivity is false at
+  BabyBear, so at `⊤` the headline was true with a false antecedent. The concrete-security sibling
+  that needs no `hEff`, `DomainSeparatedCREffRegrounded.deployed_lightclientUnfoolable_advantage_bound_eff`,
+  bounds the forgery *advantage* instead and is the form a real hash supports.
+- The `thread_advantage_bound` tactic's `‹CollisionResistant _›` leaf went with the floor. It cost
+  nothing: the floor was a `∀`-statement, so the generic `apply_assumption; done` leaf already closed
+  the same goals.
 
 **Read rung 1 → rung 2 → rung 3 as the actual migration.** `InjectiveFloorRegrounded.lean`
 §"⚑ Why this is NOT the `CollisionResistant` treatment" (`:23–45`) argues rung 1 is a trap and
 is right. Measured state of the 28 `*Regrounded*` modules:
 
 - **14** land on rung 2 (`HashCRHardQuant … Eff`) — correct;
-- **7** land on **rung 1** (`CollisionResistant`) — i.e. re-grounded onto a *second refuted
-  floor*. Most price themselves with a `_top_false` tooth beside it, so this is honest debt
-  rather than laundering — but it is debt, and it is the reason `CollisionResistant` has 47
-  sole-floor carriers;
+- **7** landed on **rung 1** (`CollisionResistant`) — i.e. re-grounded onto a *second refuted
+  floor*. Most priced themselves with a `_top_false` tooth beside it, so this was honest debt
+  rather than laundering — but it was debt, and it was the reason `CollisionResistant` had 47
+  sole-floor carriers. ⚑ **Drained 2026-07-28** (§2.1): the bridges deleted, the teeth restated at
+  `HashCRHardQuant … ⊤`. All 7 now read at rung 2 or above;
 - **5** land on rung 3 (`KeyedRomFloor.keyedRom_hard` / `binds_or_collides`) — strictly best;
 - **2** are not hash floors.
 
@@ -426,6 +498,7 @@ commit. Expected green, not established.
 | the measured surface (TSV + provenance) | `docs/artifacts/floor-census-v2-2026-07-26/` |
 | the apex's *other* vacuity, and the (a)/(b)/(c) floor split | `docs/OPENING-SOUNDNESS-DECONFLATED.md` |
 | the two-move repair, worked end to end | `metatheory/Dregg2/Circuit/Emit/ShieldedWideValueLinkDescriptor.lean` |
-| why `CollisionResistant` is not the answer | `metatheory/Dregg2/Crypto/FloorGames.lean` §2, §8 |
+| why `CollisionResistant` was not the answer, and where it went | `metatheory/Dregg2/Crypto/FloorGames.lean` §2, §6, §8 |
+| the gate its deletion cost, who authorized it, what restores it | `metatheory/Dregg2/Verify/FloorCensus.lean` — `sentinelFloors` docstring |
 | the floor that is actually proved | `metatheory/Dregg2/Crypto/RomQueryFloor.lean` §5 |
 | the canonical-encoding half | `metatheory/Dregg2/Bignum/DigitInjective.lean`, `docs/CENSUS-bignum-adoption-2026-07-25.md` |
