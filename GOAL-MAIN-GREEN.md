@@ -313,7 +313,20 @@ Elsewhere: `dregg-cell` 846/0 · `dregg-turn` 914/915 (`stark_kill_wire_roundtri
   one is fail-closed dead. Found only because a lane noticed its own change *could not regress the
   join flow*.
 
+- **HORIZONLOG headlines corrected** — 20 residuals closed today, and the HEADLINE said LIVE on 17 of
+  them while a `✅ FIXED` marker sat one line below. The headline is what a reader scans, so the
+  burn-down was misreporting itself in the only field anybody skims. Third time today the index was
+  wrong in a way that mattered, in both directions.
+- **C2 HALF CLOSED** — the nightly adversarial verdict now runs in the cheap local set, which is the
+  path work takes; `armed-teeth`'s own mirror was correct but fired only on `pull_request` while work
+  lands on `main` directly at a ~92s median. ⚑ **It went red on its first run and the cause is not
+  code**: two consecutive nightlies died in ~57s at checkout — *"This repository exceeded its LFS
+  budget"*. Still live: `test-gauntlet.sh` is invoked by nothing.
+
 ## Open for ember
+0. ⚑ **THE GITHUB LFS BUDGET IS EXCEEDED**, so the adversarial suite has not run for at least two
+   nights — `actions/checkout` with `lfs: true` fails in 57s. The staged registries are LFS-tracked,
+   so every heavy job needs it. Nothing in code can fix this.
 1. **F1?** — the only route that makes a successor to `RestHashIffFrame` satisfiable. Flag day:
    commitment epoch + descriptor re-emit + re-genesis, 234 binder positions across 85 modules.
 
