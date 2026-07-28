@@ -1,9 +1,0 @@
-{"plugins": [],
- "package": "orb-compiler",
- "options": {},
- "name": "Pancake.BytesModel",
- "isModule": false,
- "importArts":
- {"Pancake.Sem":
-  ["/Users/ember/dev/breadstuffs/orb-compiler/.lake/build/lib/lean/Pancake/Sem.olean"]},
- "dynlibs": []}

@@ -398,7 +398,10 @@ pub fn run(listener: TcpListener, gw: ServeGateway, cert: TlsCert) {
     // Publish the boot pool, then start watching its files so a renewal is
     // picked up without a restart.
     let boot = install(cert);
-    eprintln!("dataplane: TLS certificate pool loaded, pool={}", pool_tag(&boot));
+    eprintln!(
+        "dataplane: TLS certificate pool loaded, pool={}",
+        pool_tag(&boot)
+    );
     spawn_watcher();
     loop {
         if crate::SHUTDOWN.load(Ordering::SeqCst) {
@@ -421,7 +424,9 @@ pub fn run(listener: TcpListener, gw: ServeGateway, cert: TlsCert) {
                 // Take the BOOT pool handle HERE, once, for this connection's
                 // whole life — a reload after this point cannot disturb it.
                 let Some(boot) = current() else {
-                    eprintln!("dataplane: TLS — no certificate pool installed; dropping connection");
+                    eprintln!(
+                        "dataplane: TLS — no certificate pool installed; dropping connection"
+                    );
                     // Re-own the fd so dropping it closes the socket (we took it
                     // out of the stream above precisely so Lean could own it).
                     drop(unsafe { std::net::TcpStream::from_raw_fd(fd) });
@@ -871,11 +876,7 @@ fn static_decide_direct(frame: &[u8]) -> Option<Vec<u8>> {
             std::slice::from_raw_parts(p, n).to_vec()
         };
         drorb_obj_dec(out);
-        if v.is_empty() {
-            None
-        } else {
-            Some(v)
-        }
+        if v.is_empty() { None } else { Some(v) }
     }
 }
 
