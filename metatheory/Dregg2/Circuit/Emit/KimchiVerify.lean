@@ -624,23 +624,6 @@ def ftEval0R {R : Type} [CommRing R] (n : Nat) (omega zeta beta gamma alpha0 alp
   let afterZk := afterDenom + numerator * denomInv
   afterZk - linConstTerm
 
-/-- CommRing mirror of `permScalar` (C7) — no division, body byte-identical. Needed because the
-Pickles `derive_plonk` scalar is this expression and must be evaluated at `ZMod pN`, which has no
-`Field` instance in this tree. -/
-def permScalarR {R : Type} [CommRing R] (n : Nat) (omega zeta beta gamma alpha0 : R)
-    (w s : List R) (zZetaOmega : R) : R :=
-  let zkp := zkPolyR n omega zeta
-  let init := zZetaOmega * beta * alpha0 * zkp
-  let res := (List.range (PERMUTS - 1)).foldl
-    (fun x i => x * (gamma + beta * s.getD i 0 + w.getD i 0)) init
-  0 - res
-
-/-- **`permScalarR_eq`** — the C7 mirror IS the shipped `permScalar`, for every field. -/
-theorem permScalarR_eq {K : Type} [Field K] (n : Nat) (omega zeta beta gamma alpha0 : K)
-    (w s : List K) (zZetaOmega : K) :
-    permScalarR n omega zeta beta gamma alpha0 w s zZetaOmega
-      = permScalar n omega zeta beta gamma alpha0 w s zZetaOmega := rfl
-
 /-- **`ftEval0R_eq`** — with `denomInv = denominator⁻¹` the C5 mirror IS the shipped `ftEval0`,
 for every field (`zkPolyR = zkPoly`, `numerator·denomInv = numerator·denominator⁻¹`). -/
 theorem ftEval0R_eq {K : Type} [Field K] (n : Nat) (omega zeta beta gamma alpha0 alpha1 alpha2 : K)

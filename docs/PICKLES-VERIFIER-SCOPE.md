@@ -83,43 +83,36 @@ accumulator commitments are checked only as transcript inputs — that `comm = �
 is `accumulator_check`, bottoming out at P10. `Wrap_hack` padding to 2 is modelled only as the
 count, not as the dummy-challenge construction (that is P7's dummy proof).
 
-### BUILD STATUS — P3 `finalize_other_proof` (2026-07-28)
+### BUILD STATUS — P3 (2026-07-28) — **two lanes met here; read which file owns what**
 
-**`metatheory/Dregg2/Circuit/Emit/PicklesFinalizeOtherProof.lean`** (15 theorems pinned).
+`metatheory/Dregg2/Circuit/Emit/PicklesFinalize.lean` (39 theorems pinned) is the **P3 authoring
+site**: the `derive_plonk` arms, the four-way `finalizeOtherProof`, a universally-quantified
+completeness theorem (not a KAT), the tamper poles, and a MEASURED reading of
+`plonk_checks::checked` — **its comparison list is `[perm]`, one entry, in both implementations**
+(`plonk_checks.rs:363-366`, siblings commented out; `plonk_checks.ml:541-543`). `derive_plonk`
+computes `zeta_to_srs_length` and `zeta_to_domain_size` and `checked` compares **neither**. That
+file also carries P4 as MEASURED-not-proved; read its §Z before citing anything there as recursion
+soundness.
 
-The reuse prediction in §B held, and better than stated: `derive_plonk`'s `perm`
-(`plonk_checks.rs:259-266`) is **character-for-character** o1-labs' own
-`ConstraintSystem::perm_scalars` (`permutation.rs:392-430`) **and** K5's `permScalar` — one
-expression, three call sites, proven identical for every input
-(`derive_plonk_perm_is_permScalar`). So the "genuinely new scalar derivations" reduce to two
-exponentiations: `zeta_to_domain_size = ζ^n` and `zeta_to_srs_length = ζ^max_poly_size`, the
-latter checked at the REAL `max_poly_size = 65536` through the `sqIter` ladder rather than at a
-kernel-cheap surrogate.
+`metatheory/Dregg2/Circuit/Emit/PicklesDerivePlonkRealGate.lean` (5 theorems pinned) is the
+**reality gate for those derivations**, and defines none of them. It instantiates
+`PicklesFinalize`'s `permScalarR` / `zetaToDomainSizeR` / `zetaToSrsLengthR` at the real
+`prev_challenges = 2` proof of `KimchiRecursionGate` and compares against values o1-labs' own code
+computed: `perm` against **`ConstraintSystem::perm_scalars`** (`permutation.rs:392-430`), `zkp(ζ)`
+against the index's `permutation_vanishing_polynomial_m` (which is what makes the `perm` comparison
+a differential rather than a restatement of K5's formula), `ζ^max_poly_size` at the **real 65536**
+through the `sqIter` ladder, and `b_correct`'s `bEval` against their **`b_poly`** at `k = 16`.
+Eight per-argument tampers. `PicklesFinalize`'s own note — *"Not a real fixture … the concrete pole
+runs at `ZMod 97`"* — is the gap this closes.
 
-`derive_plonk_matches_rust` is a DIFFERENTIAL against o1-labs' code (the `perm` value is dumped
-from their `perm_scalars`, `zkp(ζ)` from the index's `permutation_vanishing_polynomial_m`), on the
-same `prev_challenges = 2` proof as P6. `finalizeOtherProofOk` composes the four checks —
-`xi_correct`, `combined_inner_product_correct` (K5 `cipR` + `ftEval0R` + the witnessed inverse),
-`b_correct` (K4c `bEval` via `bEvalSq`), `plonk_checks_passed` (`derivePlonk`) — and eight tampers
-flip it, one per sub-check.
+**The finding both lanes reached independently:** `derive_plonk`'s `perm`
+(`plonk_checks.rs:259-266`) is character-for-character o1-labs' `ConstraintSystem::perm_scalars`
+**and** K5's `permScalar`. One expression, three call sites. So P3's "new scalar derivations" are
+two exponentiations plus a K5 reuse.
 
-⚑ **THE CAVEAT, and it is the whole of P3's honest scope.** `finalize_other_proof` compares
-recomputed values against the ones the OTHER proof EXPOSED in its public input. **There is no
-Pickles proof in this tree** — no Step or Wrap statement, no `Deferred_values` record from a real
-prover — so the exposed side is instantiated with the derived values, i.e. with what an honest
-prover would expose. `finalize_accepts` is therefore a statement about the ASSEMBLY and about the
-three reused cores accepting this proof's real scalars. It is **not** evidence that a real Pickles
-statement passes.
-
-⚑ **And P4 is untouched.** Without the transcript-equality binding, `finalize_other_proof`
-discharges a `Deferred_values` an attacker CHOSE, as long as it is internally consistent. That is
-precisely why P4 is the crux. `shifted_comparison_is_field_comparison` (P2's Type1 bridge applied
-to the derived record) is the ALGEBRAIC half only — comparing shifted representatives is comparing
-field values — and the file says so where it is proved.
-
-Also landed with P3: `permScalarR`, the `CommRing` mirror of K5's `permScalar`, tied by
-`permScalarR_eq` at every field — the same device `cipR`/`ftEval0R` use, and the reason the real
-proof (`ZMod pN`, no `Field` instance in this tree) can be checked at all.
+⚑ **P4 is the crux and is NOT proved.** Without the transcript-equality binding,
+`finalize_other_proof` discharges a `Deferred_values` an attacker CHOSE, as long as it is
+internally consistent.
 
 **Not claimed:** this is not a Pickles verifier. P3 (`finalize_other_proof`) and P4 (the
 transcript-equality binding — the soundness of P3) are unbuilt; see §Z of the Lean file for the
@@ -197,7 +190,7 @@ instantiation (real Step/Wrap VKs, the tx-snark merge tree, the block step rule,
 - **P0** — Instantiate K5 at the **Wrap** shape (Pallas-committed, Fq scalars, `k=15`). *Medium.* **BUILT.**
 - **P1** — Close `accumulator_check` (the sg discharge) on top of `sVec_eq_bPoly`. *Small–medium.* **BUILT** (batching wrapper + reduction; terminal MSM still P10).
 - **P2** — The `Deferred_values` data model + Type1/Type2 shifted-value bridge. *Small–medium.* **BUILT.**
-- **P3** — `finalize_other_proof`: the four re-checks (`xi`/`cip`/`b`/`plonk`) on ONE side. *Medium.* **BUILT 2026-07-28.**
+- **P3** — `finalize_other_proof`: the four re-checks (`xi`/`cip`/`b`/`plonk`) on ONE side. *Medium.* **BUILT 2026-07-28** (`PicklesFinalize` + `PicklesDerivePlonkRealGate`).
 - **P4** — **The transcript-equality binding** (`assert_eq_plonk` + digest/bp-challenge equality) —
   the soundness of P3. *Hard — the single hardest buildable piece.*
 - **P5** — Mirror P3+P4 to the other side (field swap Fp↔Fq). *Small (mirror).*
