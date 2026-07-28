@@ -37,26 +37,33 @@ import { BbExt, EXT_D, verifyCommitPhase } from './FriQueryStep.js';
 // prover's* FRI proof.
 //
 // ⚑ WHAT A TRANSCRIPTION GETS WRONG. The hash was never the risk — `p2bb` pins
-// it. The risk is the state machine, and `DuplexChallenger` has four edges that
+// it. The risk is the state machine, and `DuplexChallenger` has THREE edges that
 // each look like a detail and each silently change every challenge downstream:
 //
 //   1. `output_buffer.pop()` takes from the BACK. The first sample after a
 //      permutation is `sponge_state[RATE-1]`, not `[0]`
 //      (`duplex_challenger.rs:243-245`).
-//   2. `observe` CLEARS the output buffer, discarding unread squeezes
-//      (`:150`).
-//   3. `sample` re-duplexes when the input buffer is NON-EMPTY, and the absorb
+//   2. `sample` re-duplexes when the input buffer is NON-EMPTY, and the absorb
 //      is an OVERWRITE of only the buffered prefix — the unabsorbed rate lanes
 //      keep the PREVIOUS permutation's output rather than being zero-filled
-//      (`:86-99, 239-241`).
-//   4. `check_witness(0, w)` returns BEFORE observing (`grinding_challenger.rs:
+//      (`:86-99, 239-241`). The deployed schedule hits this at `alpha`.
+//   3. `check_witness(0, w)` returns BEFORE observing (`grinding_challenger.rs:
 //      41-43`). The deployed commit-phase PoW is 0 bits, so all 16 per-layer
 //      calls must leave the transcript byte-identical. A circuit that "checked"
 //      them by absorbing the witness would get all 16 betas wrong.
 //
-// Each of those is pinned by a Rust test against the DEPLOYED challenger
+// Each is pinned by a Rust test against the DEPLOYED challenger
 // (`mina-pasta-hash-probe/src/p2chal.rs`), each with a discriminating polarity,
 // and the whole schedule is KAT'd end to end by `p2fritranscript`.
+//
+// ⚑ AND A FOURTH THAT THIS COMMENT CLAIMED AND THE MEASUREMENT REFUTED.
+// `observe` also CLEARS the output buffer (`:150`), and that was written up here
+// as load-bearing. It is not. `sample` re-duplexes whenever the input buffer is
+// non-empty and `observe` always makes it non-empty, so a stale output buffer
+// can never be read: the clear is DEFENSIVE. The fault injection written for it
+// STAYED GREEN, which is how this was found, and it was deleted rather than kept
+// as a falsifier that cannot fire. `fri-challenger-rows.ts` now proves the
+// removal invisible on five schedules instead of asserting it matters.
 //
 // ⚑ WHAT THIS RUNG IS NOT. It derives the FRI challenges GIVEN a transcript
 // state. The state is reached by observing a `preamble` — a stand-in for the

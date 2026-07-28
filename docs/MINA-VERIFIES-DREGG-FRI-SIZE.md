@@ -690,19 +690,27 @@ value plus the final sponge state, input buffer and output buffer; `p2fritranscr
 `verify_fri` schedule and emits `alpha`, all 16 `beta`s, a **ground** 16-bit PoW witness and all 19
 query indices. o1js must reproduce all of it in the bigint twin *and* inside the circuit.
 
-⚑ **The hash was never the risk. The state machine was.** Four edges each look like a detail and
+⚑ **The hash was never the risk. The state machine was.** Three edges each look like a detail and
 each silently changes every challenge downstream, and each gets a check *plus* a discriminating
 polarity showing the plausible wrong reading gives a different answer:
 
 1. **`output_buffer.pop()` takes from the BACK** (`duplex_challenger.rs:243-245`). The first sample
    after a permutation is `sponge_state[RATE-1]`, not `[0]`.
-2. **`observe` CLEARS the output buffer** (`:150`), discarding unread squeezes.
-3. **A partial absorb OVERWRITES only its prefix** (`:86-99`); the unabsorbed rate lanes keep the
+2. **A partial absorb OVERWRITES only its prefix** (`:86-99`); the unabsorbed rate lanes keep the
    *previous* permutation's output rather than being zero-filled. The deployed schedule hits this
    at `alpha`, because the preamble does not end on a rate boundary.
-4. **`check_witness(0, w)` returns BEFORE observing** (`grinding_challenger.rs:41-43`). The deployed
+3. **`check_witness(0, w)` returns BEFORE observing** (`grinding_challenger.rs:41-43`). The deployed
    commit-phase PoW is 0 bits, so all 16 per-layer calls must leave the transcript byte-identical.
    A circuit that "checked" them by absorbing the witness would get **all 16 `beta`s wrong.**
+
+> ⚑ **THIS LIST SAID FOUR, AND THE SELF-TEST REFUTED THE FOURTH.** `observe` also clears the output
+> buffer (`:150`), written up here as load-bearing. It is not: `sample` re-duplexes whenever the
+> INPUT buffer is non-empty and `observe` always makes it non-empty, so a stale output buffer can
+> never be read. The clear is **defensive**. The fault injection written for it — delete the clear,
+> require the gate to go red — **stayed green**, which is how the over-claim surfaced, and it was
+> deleted rather than kept as a falsifier that cannot fire. The leg now *proves the removal
+> invisible* on five schedules chosen to stress it. A guard that cannot fail is not a guard, and a
+> claim that survives only because nobody tried to falsify it is not a finding.
 
 ⚑ **And one constraint that no KAT can see.** `sample_bits(k)` splits a canonical lane as
 `c = hi·2^k + Σ bᵢ2ⁱ`. Every KAT above compares against p3 on an *honest* witness, which produces

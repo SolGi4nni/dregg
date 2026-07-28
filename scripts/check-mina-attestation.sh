@@ -472,9 +472,13 @@ expect_red fri "rows/query drifts from the figure the doc quotes" \
 expect_red chal "the output buffer is popped from the FRONT (samples in the wrong order)" \
   "s/    return this\.outputBuffer\.pop\(\)!;/    return this.outputBuffer.shift()!;/" \
   src/FriChallenger.ts
-expect_red chal "observe stops discarding unread squeezes" \
-  "s/  observe\(v: bigint\) \{\n    this\.outputBuffer = \[\];/  observe(v: bigint) {\n    \/* fault *\//" \
-  src/FriChallenger.ts
+# ⚑ NOT A FAULT, AND THE ABSENCE IS THE FINDING. `observe` also CLEARS the
+# output buffer, and that was listed as a fourth load-bearing edge. It is not
+# one: `sample` re-duplexes whenever the INPUT buffer is non-empty and `observe`
+# always makes it non-empty, so a stale output buffer can never be read. The
+# injection for it was written, run, and STAYED GREEN — so it was deleted rather
+# than kept as a falsifier that cannot fire. The leg now PROVES the removal is
+# invisible instead, on five schedules chosen to stress it.
 expect_red chal "a 0-bit check_witness OBSERVES the witness (all 16 betas move)" \
   "s/    if \(bits === 0\) return true;/    if (bits === -1) return true;/" \
   src/FriChallenger.ts

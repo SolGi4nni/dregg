@@ -129,11 +129,14 @@ console.log('[1] the DuplexChallenger STATE MACHINE == p3, on scripts it cannot 
 }
 
 // ---------------------------------------------------------------------------
-console.log('\n[2] the four EDGES, each with a discriminating polarity');
+console.log('\n[2] the state-machine EDGES: THREE load-bearing (each with a discriminating\n    polarity) and ONE that a naive reading counts and the measurement refutes');
 {
-  // These are the four places a re-implementation drifts while every hash still
-  // matches. Each check shows the twin agrees with p3 AND that the plausible
-  // wrong reading gives a DIFFERENT answer — otherwise the agreement is free.
+  // These are the places a re-implementation drifts while every hash still
+  // matches. Each LOAD-BEARING one shows the twin agrees with p3 AND that the
+  // plausible wrong reading gives a DIFFERENT answer — otherwise the agreement
+  // is free. ⚑ Edge (2) is the exception and is written up as such: it was
+  // asserted to be load-bearing, its fault injection STAYED GREEN, and what is
+  // checked now is the fact that replaced the claim.
   const em = runProbe(dir, ['p2chal', '4242', 'o:8', 's:8']);
   const squeezed = em.ops[1].values.map(B) as bigint[];
 
@@ -149,20 +152,69 @@ console.log('\n[2] the four EDGES, each with a discriminating polarity');
     fail('the rate is palindromic here — this check cannot see the order');
   ok('(1) samples are the rate read BACK-TO-FRONT, and front-to-back differs');
 
-  // (2) `observe` clears the output buffer.
+  // (2) `observe` clears the output buffer — AND THAT TURNS OUT TO BE
+  //     DEFENSIVE, NOT SEMANTIC. It was listed here as one of four edges "each
+  //     of which silently changes every challenge downstream". It is not one:
+  //     `sample` re-duplexes whenever the INPUT buffer is non-empty, and
+  //     `observe` always makes it non-empty, so a stale output buffer can never
+  //     be read. Measured, by deleting the clear from the twin and requiring
+  //     the gate to go red — IT STAYED GREEN. The honest check is therefore the
+  //     opposite one: show the removal is invisible, on schedules chosen to
+  //     stress it, so nobody later "hardens" this into a falsifier that cannot
+  //     fire. There is deliberately NO fault injection for it.
   const emDrop = runProbe(dir, ['p2chal', '4242', 'o:8', 's:1', 'o:1', 's:1']);
   const tDrop = new ChallengerBigInt();
   tDrop.observeSlice(emDrop.ops[0].values.map(B));
   tDrop.sample();
   tDrop.observeSlice(emDrop.ops[2].values.map(B));
-  const gotDrop = tDrop.sample();
-  if (gotDrop !== B(emDrop.ops[3].values[0]))
+  if (tDrop.sample() !== B(emDrop.ops[3].values[0]))
     fail('the post-observe sample diverges from p3');
-  // If `observe` had NOT cleared the buffer, the next sample would be the
-  // second-from-last lane of the first permutation.
-  if (gotDrop === squeezed[1])
-    fail('a challenger that KEPT its output buffer would give the same value here');
-  ok('(2) observe DISCARDS unread squeezes, and keeping them would differ');
+
+  class NoClear extends ChallengerBigInt {
+    override observe(v: bigint) {
+      this.inputBuffer.push(((v % P) + P) % P);
+      if (this.inputBuffer.length === 8) this.duplexing();
+    }
+  }
+  // (observes, samples) alternating — including a squeeze left half-drained
+  // before the next observe, which is the only shape where a stale buffer could
+  // possibly matter.
+  const schedules: number[][] = [
+    [8, 1, 1, 1],
+    [3, 1, 5, 2],
+    [8, 3, 1, 9],
+    [13, 4, 8, 4],
+    [5, 9, 3, 1],
+  ];
+  for (const sch of schedules) {
+    const a = new ChallengerBigInt();
+    const b = new NoClear();
+    const ga: bigint[] = [];
+    const gb: bigint[] = [];
+    let n = 0n;
+    for (let i = 0; i < sch.length; i++) {
+      if (i % 2 === 0)
+        for (let k = 0; k < sch[i]; k++) {
+          n += 1n;
+          a.observe(n);
+          b.observe(n);
+        }
+      else
+        for (let k = 0; k < sch[i]; k++) {
+          ga.push(a.sample());
+          gb.push(b.sample());
+        }
+    }
+    if (!eqv(ga, gb))
+      fail(
+        `dropping observe's output-buffer clear CHANGED the samples on schedule ` +
+          `${sch}: it is load-bearing after all and needs a fault injection`,
+      );
+  }
+  ok(
+    `(2) observe's output-buffer clear is DEFENSIVE, not semantic — proved unobservable ` +
+      `on ${schedules.length} schedules, because sample re-duplexes on a non-empty input buffer`,
+  );
 
   // (3) a partial absorb OVERWRITES a prefix; the rest keeps the previous
   //     permutation's output rather than being zero-filled.
