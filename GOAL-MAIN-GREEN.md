@@ -287,6 +287,20 @@ Elsewhere: `dregg-cell` 846/0 · `dregg-turn` 914/915 (`stark_kill_wire_roundtri
 - ⚠ I added the `starbridge-v2` match arm the new variant needed — the same omission I made with three
   CapTP variants at 10:43. `cargo check -p starbridge-v2` is 0.
 
+- **B3 CLOSED — retired, not wired**, and it is dead FOUR levels, not two. Level 3: `attach_to_leg`
+  takes a `RotatedParticipantLeg` and **the SDK constructs none anywhere**; the stash was declared
+  "never serialized" so it could not reach the node-side mint, which in turn REFUSES to persist a leg
+  carrying a witness. Level 4: the object it produced was never arm-admissible — measured through the
+  deployed prover, the claim slice `[58..62)` overlaps the 16 anchor PIs of the only reachable
+  (68-PI) leg.
+  ⚑ **AND THE PIN CHECK ALONE WOULD HAVE ADMITTED IT.** `transferVmDescriptor2R24` has a genuine
+  `PiBinding` at all four claim slots — because on a 68-PI leg those ARE the state anchors. Only the
+  overlap arithmetic refuses. Had the gate been the pin half alone, a sovereign authority tuple would
+  have folded against four lanes of the leg's own state commitment read as a key commitment. Two
+  independent conditions is the whole difference, and nothing recorded that. It is a test now.
+  ⚠ Residual, unchanged: the fold's `Sovereign` arm and every Lean theorem above it still describe an
+  object no production path constructs. Retiring the wire removed what LOOKED like the producer.
+
 ## Open for ember
 1. **F1?** — the only route that makes a successor to `RestHashIffFrame` satisfiable. Flag day:
    commitment epoch + descriptor re-emit + re-genesis, 234 binder positions across 85 modules.
