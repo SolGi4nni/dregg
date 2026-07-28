@@ -54,6 +54,13 @@ acceptance predicate*, proved to deliver the L2-commitment binding. Everything i
 > and the **height register is now proof-bound** (§3, which also records that the "residual" it named
 > never existed). Still true, and still the whole gap: **nothing executes**, no Rust calls this, no
 > account cell is persisted. §5 is re-measured accordingly.
+>
+> **[SUPERSEDED, SAME DAY, later pass.]** Two more of those clauses have since become false. **The
+> account cell EXISTS** (`Dregg2/Distributed/RollupAccountCell.lean`) and **the settlement's account
+> write EXECUTES** on the shipped `execFullTurnA`, with the registered-genesis pin, the Nomad law
+> and the settler authorization enforced by the executor's slot-caveat gate — §5.4. What does not
+> execute is the **verification leg**: no turn can be made to refuse a settlement whose child proof
+> does not verify, and no Rust resolves `dregg-self-settlement-v1`. §5.1 re-prices that.
 
 ### The objects
 
@@ -253,7 +260,7 @@ ordering, genuine fold and finality* from verification, but **not** its conserva
 | Soundness of the recursion composition | **Not machine-checked** | `RecursiveAggregation` + `RecursiveSoundFromNodes`, `#assert_axioms`-clean; the residual is the per-node FRI floor only |
 | Finality leg (accept only a *finalized* root) | inherited from Mina consensus | `FinalizedLightClient` — the node's real `tau` super-ratification, with refusal teeth |
 | Unbounded accumulator | Pickles, perpetual | induction **proven** (`accumulate_preserves_wellformed`); the O(1)-memory driver is **unbuilt** |
-| L2 state commitment on an L1 **account** | zkApp account on Mina L1 — **built, in production** | `RollupAccount` **as a Lean model only**; no cell, no persistence (scoped: 5 of a `Value`'s 8 field slots — §5.4) |
+| L2 state commitment on an L1 **account** | zkApp account on Mina L1 — **built, in production** | **a real cell, advanced by a real turn** (2026-07-28): `RollupAccountCell.lean`, 5 of a `Value`'s 8 field slots, written by `setFieldA` through `execFullTurnA`, genesis pin + Nomad law executor-enforced as slot caveats, decoded back to the proved `RollupAccount` by `readAccount_settle_is_applySettle` — §5.4 |
 | Settlement effect verifying the child proof | zkApp method | `SettleAccepts` proved, **and since 2026-07-28 EMITTED** as a Lean-authored byte-golden descriptor (§6). Still no executor threading, and nothing in Rust resolves it. |
 | Settled HEIGHT bound to the proof | Mina's account update is protocol-enforced | **bound since 2026-07-28** (§3). It was a griefable advisory register, and the AIR that fixes it had been emitting the constraint the whole time. |
 | Deposits / withdrawals binding the commitment | built | **not built** (`metatheory/Dregg2/Bridge/HoldingFoldRecursive.lean` is the reusable holdings leg) |
@@ -268,13 +275,17 @@ machine-checked nor emitted from a proof assistant. **At the composition layer a
 rollup would be more verified than the prior art. That has been true for a while and is not what is
 missing.**
 
-**What Zeko has that dregg does not: a working L2, and the gap is now precisely one thing.** The
-account model, the settlement loop, the deposit/withdraw bridge and the perpetual accumulator are
-built and running there. Here, after this pass, the semantics are proved, the height is bound, and
-the constraint set is emitted and byte-pinned — but **no turn can run it**, because
-`SettleChildChain` has no constructor on `FullActionA` and nothing in Rust resolves
-`dregg-self-settlement-v1`. §5.1 and §5.4 measure that: it is a single constructor-addition ripple
-across a 30-constructor inductive referenced by 138 files, and it blocks the account cell too.
+**What Zeko has that dregg does not: a working L2 — and the gap is now ONE leg, not the whole loop.**
+The account model, the settlement loop, the deposit/withdraw bridge and the perpetual accumulator are
+built and running there. Here, after 2026-07-28, the semantics are proved, the height is bound, the
+constraint set is emitted and byte-pinned, and **the L1 account is a real cell advanced by a real
+turn** (§5.4) with the genesis pin and the Nomad law enforced BY THE EXECUTOR. What still cannot run
+is the **verification leg**: a turn cannot be made to REFUSE a settlement whose child proof does not
+verify, because that gate has to ride on the effect and `SettleChildChain` has no `FullActionA`
+constructor; nor does anything in Rust resolve `dregg-self-settlement-v1`. §5.1 measures that
+constructor honestly, and it is **not** the additive 30-constructor ripple this document previously
+called it — every LIVE constructor is also a per-effect circuit-closure campaign at the deployed
+apex, priced from the record at ~2,000 lines across ~6 modules.
 
 **The honest one-line comparison, at current resolution:** dregg's settlement is *better verified
 and not running*; Zeko's is *running and not verified*. Nothing in this pass changed which side of
@@ -288,29 +299,101 @@ which is one of the two things standing between the two halves.
 **Step 3 (pin `numTurns`) is DONE** and turned out not to be an AIR change at all (§3).
 **Step 2 (the Lean-authored EMIT) is DONE** — see §6.
 
-1. **Thread the effect into the turn model — MEASURED, and it is one blocker, not two.**
-   `SettleChildChain` needs a constructor on `Dregg2.Exec.TurnExecutorFull.PerAsset.FullActionA`
-   (`PerAsset.lean:1551`, currently **30 constructors**, referenced across **138 Lean files**), plus
-   the `actionTag` / `fullActionStep` / `execFullTurnA` / `dispatchArm` / `Rfix` weld. This is the
-   SAME ripple the tree already priced once and deferred: `Dregg2.lean:1010` records
-   "NAMED RESIDUAL: the apex-registry dispatch entry … needs a `setProgramA` constructor on
-   `FullActionA` (the 30-file actionTag/executor-weld ripple)", and that lane landed the circuit
-   witness core (descriptor + spec + rung) exactly as this one has. **So there are now TWO effects
-   queued behind one constructor-addition ripple, which is the argument for doing it as its own
-   lane rather than as a rider.**
+1. **Thread the effect into the turn model — ⚑ RE-MEASURED 2026-07-28, and the earlier estimate was
+   the wrong SHAPE, not merely the wrong size.**
+
+   What this step used to say: one constructor on
+   `Dregg2.Exec.TurnExecutorFull.PerAsset.FullActionA` (`PerAsset.lean:1551`, 30 constructors, 138
+   files) plus an `actionTag` / `fullActionStep` / `execFullTurnA` / `dispatchArm` / `Rfix` weld —
+   an ADDITIVE ripple, "a new arm at every exhaustive match". And it said two effects were queued
+   behind it, citing `Dregg2.lean:1010`'s `setProgramA` residual.
+
+   **`setProgramA` is NOT queued — it already landed.** The constructor exists
+   (`PerAsset.lean`), it dispatches (`execFullA` → `stateStep … programField`), it has `actionTag`
+   13, a `SetProgramSpec` arm, an `actionAirName`, a deployed registry position
+   (`actionTagToPos 13 = 51`, `Rfix 13 = setProgramV3`) and an apex closure
+   (`closedLogExtract_setProgram_closed`). **`Dregg2.lean:1010`'s residual line is STALE** and should
+   be struck; only ONE effect is queued behind this step, not two.
+
+   **The measured ripple.** A LIVE constructor's ripple is exact and reproducible: `heapWriteA`,
+   `refreshDelegationA` and `setProgramA` each have **34 pattern arms across the SAME 18 files**.
+   That set is the whole mechanical cost, and ~27 of the 34 arms are mechanical (a tag, a name, a
+   target cell, a `[]`-delta, a `subst; rfl`).
+
+   **The other 7 arms are not mechanical, and they are the actual blocker.** Because the apex
+   theorems case-split on `FullActionA` (`closedLogExtract_all_genuine_live` is
+   `∀ e, LiveTag e → …` proved by `rintro ⟨fa, rfl⟩; cases fa`), a new LIVE constructor is a new
+   obligation at the deployed circuit apex. It needs, at minimum:
+
+   * a leaf `Circuit/Spec/*.lean` spec + the `execFullA_… _iff_spec` arm (`ActionDispatch`, x2);
+   * a `Circuit/Inst/*.lean` instance AIR + `effectEmitRegistry` entry (`EffectEmitRegistry`);
+   * a `settleChildCircuitStep` + `_circuit_refines_spec` (`TurnEffectRefinement`, x2);
+   * an emitted encoder + `_emitted_refines_spec` (`TurnEmit`; the `stepEmittedSat` DEF has a
+     catch-all, the THEOREM does not);
+   * a DEPLOYED descriptor in `v3RegistryHeap` **and** an `actionTagToPos` position — without one,
+     `Rfix <newtag>` falls through to `transferDescr`, so any `closedLogExtract_…_closed` at that
+     tag would be forced from the TRANSFER AIR, which is a lie;
+   * a `RotatedKernelRefinement*` trace readout + a `_closedLog_sat` rung + a new readout field on
+     `ClosureReadoutsLive` (`ClosureFanoutGenuine`, `ClosureReadoutsRealizable`);
+   * a real handler + the handler↔executor kernel-agreement lemma (`HandlerExecutor`, x2).
+
+   **The price, from the record rather than from estimate.** The last constructor added
+   ("THE ROTATION", `heapWriteA`) shipped `Circuit/Inst/heapWriteA.lean` (242 lines) +
+   `Circuit/Spec/heapwrite.lean` (194) + its emit and refinement modules; `refreshDelegationA`
+   shipped ~1,980 lines across five modules. `git log -S heapWriteA -- metatheory/` is **48
+   commits.** So the honest price of one live `FullActionA` constructor in this tree is on the order
+   of **2,000+ lines of new circuit Lean across ~6 new modules, plus 34 arms in 18 files** — a
+   campaign, not a rider.
+
+   **Two shortcuts exist and BOTH are forbidden by this repo's own doctrine**, recorded here so the
+   next lane does not re-derive them: (a) carrying `ClosedLogExtract` for the new tag as a raw field
+   instead of a trace readout + rung is assuming the conclusion; (b) defining the
+   `fullActionCircuitStep` arm as the spec itself is `hole_circuit_step`, which
+   `Circuit/CircuitOpenFronts.lean` names and forbids ("Silent spec-fallback … is forbidden") and
+   which the tree closed 20/20.
+
+   **Design fork for the operator, named because the repo has already taken it four times.** dregg3
+   F1b DELETED the escrow / obligation / committed-escrow / bridge-L-F-C constructors from
+   `FullActionA` and re-landed those families as verified FACTORY CELLS with slot caveats
+   (`Apps/{EscrowFactory,ObligationFactory,BridgeCell}.lean`) — precisely because a live constructor
+   is a per-effect circuit campaign. Step 4 below is now that route's first half, landed.
 2. ~~Emit the verification constraint FROM LEAN.~~ **DONE** — §6.
 3. ~~Pin `numTurns`.~~ **DONE** — §3.
-4. **NEW-C, the account cell — precisely scoped, and it is NOT independently landable.**
-   `RollupAccount` is four fields (`childId`, `childGenesis`, `latestRoot : Option ℤ`,
-   `latestHeight`). A `RecordKernelState` cell is `cell : CellId → Value` and a `Value` carries eight
-   developer field slots (`fields[0..7]`, the columns `EffectVmEmitSetField` writes and the ones the
-   deployed row's `state_commit` absorbs). So the account fits in **five** slots — the fourth being
-   a presence flag for the `Option`, which is what keeps the Nomad law by construction rather than
-   by a `0`-that-reads-as-proven. Registration fixes `childGenesis`; the settlement advances
-   `latestRoot`/`latestHeight` only. **The blocker is that this write is a `setFieldA`-shaped cell
-   write and therefore needs the same `FullActionA` constructor as step 1** — the account cell and
-   the executor threading are one piece of work, not two. Deposits/withdrawals binding the
-   commitment (`Dregg2/Bridge/HoldingFoldRecursive.lean`) come after.
+4. **NEW-C, the account cell — ⚑ LANDED 2026-07-28, and it WAS independently landable.**
+   `metatheory/Dregg2/Distributed/RollupAccountCell.lean`. This step used to say the account cell
+   "needs the same `FullActionA` constructor as step 1 — the account cell and the executor threading
+   are one piece of work, not two." That was wrong in the direction that mattered: the write is
+   `setFieldA`-shaped, and `setFieldA` is **already** fully threaded, deployed and apex-closed, so
+   the account runs on the shipped executor today.
+
+   `RollupAccount` occupies **five of a `Value`'s eight developer slots** (`child_id`,
+   `child_genesis`, `latest_root`, `latest_root_set`, `latest_height`) — none of them one of the
+   four protocol-managed slots, so a developer `setFieldA` may write them. `readAccount` decodes the
+   cell back to the *same* `SelfSettlement.RollupAccount` the binding lemma quantifies over
+   (`readAccount_settle_is_applySettle`), so composed with `settled_root_is_child_final_fold` the
+   field element in a real cell's `latest_root` slot **is** the child's genuine whole-history fold.
+
+   **Three of `SettleAccepts`' seven legs are now EXECUTOR-ENFORCED**, as factory-installed slot
+   caveats rather than as hypotheses: `genesis_ok` (`.immutable child_genesis` — the account cannot
+   be re-homed, `rollup_genesis_cannot_be_rehomed`, unconditional), the Nomad law (`.monotonic` on
+   the presence flag plus a decode that reads a `0` flag as `none` whatever the root slot holds), and
+   who may settle (`.senderAuthorized` on the root slot). The settlement's account write RUNS:
+   `#guard`s execute `execFullTurnA` on a registered account and read the committed root back out.
+
+   **Two legs are NOT executor-enforced, and this is where step 1 actually bites.** (a) `engine` /
+   `root_ok` — a `setFieldA` carries no proof argument, so the executor cannot refuse a settlement
+   whose child proof does not verify; that needs a constructor carrying the verification shadow (the
+   shape `noteSpendA`'s `spendProof : Bool` already has). (b) `monotone` — the caveat vocabulary has
+   `.monotonic` (`old ≤ new`) and `.monotonicSeq` (`new = old + 1`) and **no strict-`<` member**, so a
+   REPLAY at the already-settled height is admitted by the caveat gate. That is exhibited, not
+   hidden: `rollup_replay_at_same_height_is_admitted` plus a `#guard` that runs it.
+
+   ⚑ **ROOT IMPORT NOT ADDED** (this lane does not edit `metatheory/Dregg2.lean`). Until
+   `import Dregg2.Distributed.RollupAccountCell` lands there, the module's 10 `#assert_axioms` pins
+   and 16 `#guard`s run in **no CI target** — the same F-B1 shape §1 records twice.
+
+   Deposits/withdrawals binding the commitment (`Dregg2/Bridge/HoldingFoldRecursive.lean`) come
+   after.
 5. **Port `conserves_from_verification`** off its refuted CR floor (§3b), so a settling L1 can
    inherit child conservation from the proof rather than from a producer witness. Unchanged.
 6. **The quorum AIR.** `SettleAccepts.cert_ok` is a genuine super-ratification quorum under
@@ -355,23 +438,32 @@ constant-zero portal and reads `0 = 0` (audit F-B2).
     is proven vacuous.
   * `cert_ok` — the quorum. Not in this descriptor at all (step 6 above).
 
-**⚑ ORPHAN STATUS, and it is the failure this document already records once.** The module is not
-imported by `metatheory/Dregg2.lean`, so its **12 `#assert_axioms` pins currently run in NO CI
-target** — precisely the F-B1 shape that let `SelfSettlement`'s own 20 pins ship uncompiled. The
-import line to add is:
+**⚑ ORPHAN STATUS — CLOSED 2026-07-28.** This section used to record that `SelfSettlementEmit` was
+imported by nothing, so its **12 `#assert_axioms` pins ran in NO CI target** (the F-B1 shape that let
+`SelfSettlement`'s own 20 pins ship uncompiled), and that `Dregg2.lean`'s `SelfSettlement` annotation
+still advertised the deleted `settle_accepts_inflated_height`. **Both are now fixed:**
+`metatheory/Dregg2.lean:1544` carries `import Dregg2.Circuit.Emit.SelfSettlementEmit` and `:1545`'s
+annotation is rewritten. Verified by building the root on hbox: `lake build Dregg2` compiles both
+modules, so all 32 pins elaborate in a real target. The emit is gated.
 
-```
-import Dregg2.Circuit.Emit.SelfSettlementEmit
-```
-
-and `Dregg2.lean:1543`'s `SelfSettlement` annotation still advertises
-`settle_accepts_inflated_height`, which no longer exists. Both edits were left to the operator
-deliberately (that file loses import lines to contending commits, twice recorded), and both are
-**required before the emit counts as gated**.
+(That build also fixes the tree's baseline for anyone following: the root is green except for
+`#floor_ratchet`, which reports exactly **1** pre-existing violation —
+`Emit.AutomataflRevealRefine.not_revealColl_of_hash4NoCollision`. Any lane touching this campaign
+should still see 1.)
 
 ---
 
-Steps 1 and 4 are what turn "a proven predicate with an emitted descriptor" into "an effect a turn
-can run". Until then, the honest description of this work is: **the self-settlement effect's Lean
-semantics, verification predicate, L2-commitment binding lemma, height pin and emitted constraint set
-exist and are proved; the loop does not run.**
+**Step 4 is done. Step 1 is the last thing between "a proven predicate with an emitted descriptor"
+and "an effect a turn can run" — and it is a campaign, not a rider.** The honest description of this
+work at current resolution:
+
+> the self-settlement effect's Lean semantics, verification predicate, L2-commitment binding lemma,
+> height pin and emitted constraint set exist and are proved; **the L1 account is a real cell that a
+> real turn advances, with the child's cryptographic identity and the Nomad law enforced by the
+> executor**; and the child-proof verification gate does not run, because it has to ride on a
+> `FullActionA` constructor and that constructor costs a per-effect circuit-closure campaign at the
+> deployed apex (§5.1).
+
+The one-line comparison with Zeko therefore moves, but not all the way: dregg's settlement is *better
+verified, with its account running and its verification leg not*; Zeko's is *running and not
+verified*.
