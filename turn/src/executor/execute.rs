@@ -263,64 +263,35 @@ impl TurnExecutor {
         };
         obs.capture_pre_state(turn, ledger, host);
 
-        // THE SWAP beachhead (part d): under strict mode the verified Lean executor is a binding
-        // REJECTION authority. Snapshot the FULL pre-state ledger BEFORE the Rust commit so a Lean
-        // VETO can restore it (a verified rejection = NO state edit). Off the strict path this is
-        // never taken (clone avoided on the hot path).
-        let veto_snapshot: Option<Ledger> = if obs.strict_veto_enabled() {
-            Some(ledger.clone())
-        } else {
-            None
-        };
-
         // Factory quota is part of the same turn transaction as the newborn
         // cell. `CreateCellFromFactory` validates/records before all later
         // ledger checks have completed, so retain the exact pre-image until the
-        // whole turn (including the optional verified veto) has committed.
+        // whole turn has committed.
         let factory_registry_checkpoint = Self::turn_mutates_factory_registry(turn)
             .then(|| self.factory_registry.borrow().clone());
 
-        // Rate-limit debits are a candidate side-state transition until BOTH
-        // the Rust execution and the optional verified Lean veto have accepted.
-        // A rejected/vetoed turn drops this value without ever publishing it.
+        // Rate-limit debits are a candidate side-state transition until the Rust
+        // execution has accepted. A rejected turn drops this value without ever
+        // publishing it.
         let mut staged_rate_limits = super::execute_tree::StagedRateLimitState::default();
         let result = self.execute_without_shadow(turn, ledger, &mut staged_rate_limits);
-        let lean_verdict = obs.observe(turn, ledger, &result, self.block_height);
 
-        // When the verified Lean executor REJECTED a turn the Rust executor COMMITTED, the Lean
-        // verdict VETOES the commit — the verified kernel can only TIGHTEN the decision
-        // (kernel-vs-NEW-Rust; never matching a buggy oracle, never laundering a Rust rejection to a
-        // commit). Restoring the pre-state snapshot leaves the ledger EXACTLY as a verified
-        // rejection would (no state edit).
-        if obs.lean_vetoes(result.is_committed(), lean_verdict) {
-            if let Some(pre) = veto_snapshot {
-                // Surface the verified executor's theorem-backed admission REASON when it carried
-                // one (a refusal at the admission prologue) — the legible "why" of the veto,
-                // replacing a bare `LeanShadowVeto`. A reason is present only when the verified
-                // refusal was an ADMISSION refusal (not `Admitted`); a body-rollback veto keeps
-                // the generic `LeanShadowVeto`.
-                let reason = match obs.admission_reason() {
-                    Some(r) if !r.is_admitted() => TurnError::AdmissionRefused { reason: r },
-                    _ => TurnError::LeanShadowVeto,
-                };
-                tracing::warn!(
-                    target: "dregg::lean_shadow::veto",
-                    agent = ?turn.agent,
-                    reason = %reason,
-                    "THE SWAP veto: verified Lean executor REJECTED a Rust-committed turn — rolling \
-                     back (the verified kernel is the authoritative rejection gate under strict mode)"
-                );
-                *ledger = pre;
-                if let Some(previous) = factory_registry_checkpoint {
-                    *self.factory_registry.borrow_mut() = previous;
-                }
-                let _ = self.restore_exact_fnsp_v3_admission_after_rejection();
-                return TurnResult::Rejected {
-                    reason,
-                    at_action: vec![],
-                };
-            }
-        }
+        // The verified-Lean DIFFERENTIAL — a pure observer. It logs Lean↔Rust divergence and
+        // advances observer-owned cross-turn accumulators; it does NOT decide this turn, and
+        // `result` is already final above.
+        //
+        // ⚑ THE VERIFIED DECISION IS NOT HERE. It is the authority inversion in
+        // `dregg_exec_lean::lean_apply::produce_via_lean` (default-ON via `DREGG_LEAN_PRODUCER`),
+        // which runs THIS function as its demoted Rust reference and then installs the verified
+        // post-state and verdict over it. A `strict_veto_enabled`/`lean_vetoes` pair that rolled a
+        // Rust commit back from inside this function was deleted 2026-07-28: it was armed nowhere,
+        // it was dominated by the producer, and its rollback restored the ledger while leaving the
+        // agent's receipt-chain head advanced to a receipt that was never issued — one vetoed turn
+        // permanently bricked the agent (`ReceiptChainMismatch { expected: Some(..), got: None }`,
+        // unsatisfiable forever). `produce_via_lean` undoes that side state properly, via
+        // `checkpoint_producer_reference`/`rollback_producer_reference`.
+        obs.observe(turn, ledger, &result, self.block_height);
+
         if !result.is_committed() {
             let _ = self.restore_exact_fnsp_v3_admission_after_rejection();
         }

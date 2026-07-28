@@ -1478,6 +1478,10 @@ pub fn execute_via_lean(
     };
     let shadow_state =
         lean_shadow::run_shadow_state(turn, &pre, host).map_err(ExtractError::Ffi)?;
+    // Capture the theorem-backed admission REASON this verdict carried, so a verified REJECTION on
+    // the authoritative path can name the gate that refused instead of a bare `LeanShadowVeto`.
+    // Cleared (to `None`) whenever the turn was admitted, so no reason can go stale across turns.
+    lean_shadow::record_admission_reason(&shadow_state.verdict);
     let t2 = if prof {
         Some(std::time::Instant::now())
     } else {
@@ -1838,8 +1842,15 @@ pub fn produce_via_lean(
             r @ TurnResult::Rejected { .. } => r,
             // Rust ACCEPTED where the verified kernel REJECTED — the verified veto overrides the
             // buggy Rust accept (the kernel can only TIGHTEN; never launder a wrong accept).
+            // Name the verified gate that refused when the wire carried one (the legible "why");
+            // a body-rollback rejection has no admission reason and keeps `LeanShadowVeto`.
             _ => TurnResult::Rejected {
-                reason: dregg_turn::error::TurnError::LeanShadowVeto,
+                reason: match lean_shadow::last_admission_reason() {
+                    Some(reason) if !reason.is_admitted() => {
+                        dregg_turn::error::TurnError::AdmissionRefused { reason }
+                    }
+                    _ => dregg_turn::error::TurnError::LeanShadowVeto,
+                },
                 at_action: vec![],
             },
         };

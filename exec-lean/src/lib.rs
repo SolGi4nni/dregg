@@ -3,10 +3,14 @@
 //! This native-only crate holds ALL the Lean-FFI executor code that `dregg-turn` used to carry
 //! behind the (now-deleted) `no-lean-link` feature:
 //!
-//! - [`lean_shadow`] — the differential OBSERVER: it marshals a turn through the verified Lean
-//!   kernel and compares its commit decision (and, on the swap-safe root-agreeing set, its full
-//!   reconstituted post-state root) against the legacy Rust executor, WITHOUT affecting the
-//!   `TurnResult`. It is also the binding strict-veto REJECTION authority (`DREGG_LEAN_SHADOW_STRICT`).
+//! - [`lean_shadow`] — the differential OBSERVER, and ONLY an observer: it marshals a turn through
+//!   the verified Lean kernel and compares its commit decision (and, on the swap-safe root-agreeing
+//!   set, its full reconstituted post-state root) against the legacy Rust executor, WITHOUT
+//!   affecting the `TurnResult`. It is gated on `DREGG_LEAN_SHADOW=1`, which is set by nothing, so
+//!   in a default deployment it does not run. **That is not where the verified decision lives.**
+//!   (A `DREGG_LEAN_SHADOW_STRICT` veto that DID decide from here was deleted 2026-07-28: armed
+//!   nowhere, dominated by [`lean_apply`], and its rollback left the agent's receipt head advanced
+//!   to a receipt that was never issued.)
 //! - [`lean_apply`] — the authoritative state PRODUCER: `produce_via_lean` installs the verified
 //!   Lean post-state and commit verdict UNCONDITIONALLY (the authority inversion), demoting the
 //!   Rust executor to a checked reference.
@@ -153,31 +157,14 @@ impl ShadowObserver for LeanShadowObserver {
         lean_shadow::capture_pre_state_if_eligible(turn, ledger, host);
     }
 
-    fn strict_veto_enabled(&self) -> bool {
-        lean_shadow::strict_veto_enabled()
-    }
-
-    fn observe(
-        &self,
-        turn: &Turn,
-        ledger: &Ledger,
-        result: &TurnResult,
-        block_height: u64,
-    ) -> Option<bool> {
-        let verdict = lean_shadow::maybe_shadow_turn(turn, ledger, result, block_height);
+    fn observe(&self, turn: &Turn, ledger: &Ledger, result: &TurnResult, block_height: u64) {
+        // DIAGNOSTIC: logs a Lean↔Rust divergence at `dregg::lean_shadow::divergence`. The verdict
+        // is deliberately dropped — this observer decides nothing (see `ShadowObserver`).
+        let _ = lean_shadow::maybe_shadow_turn(turn, ledger, result, block_height);
         // Path B: advance the durable nullifier root on a committed NoteSpend (the fast O(depth)
         // Rust advance; the verified Lean `advanceRoot8Exec` is the proven spec + offline KAT tie).
         if result.is_committed() {
             self.advance_committed_nullifiers(turn);
         }
-        verdict
-    }
-
-    fn lean_vetoes(&self, rust_committed: bool, lean_verdict: Option<bool>) -> bool {
-        lean_shadow::lean_vetoes(rust_committed, lean_verdict)
-    }
-
-    fn admission_reason(&self) -> Option<dregg_turn::AdmissionReason> {
-        lean_shadow::last_admission_reason()
     }
 }

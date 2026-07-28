@@ -153,10 +153,10 @@ impl ShadowAgreement {
 /// The `ledger` argument matches the public API; marshalling uses the captured pre-state.
 ///
 /// Returns the Lean commit verdict (`Some(true/false)`) when the turn was comparable (eligible +
-/// the FFI ran), else `None`. The verified Lean executor is the swap's TARGET decision-maker; this
-/// verdict lets the caller (boundary-P1 / THE SWAP) treat a Lean REJECTION as a binding VETO under
-/// strict mode (`lean_vetoes` below) — the Lean kernel can only TIGHTEN the commit decision (reject
-/// what Rust accepts), never loosen it (it never launders a Rust rejection to a commit).
+/// the FFI ran), else `None`. This is a PURE OBSERVER: it never changes the `TurnResult`, and since
+/// the strict veto was deleted (2026-07-28) there is no path by which it can. The verified executor
+/// DECIDES on the armed authority-inversion path instead ([`crate::lean_apply::produce_via_lean`]),
+/// which owns the full reject-side rollback this observer never had.
 ///
 /// # The comparison is DENOTATIONAL where it can be (no laundered "agreement")
 ///
@@ -330,25 +330,26 @@ fn log_shadow_outcome(
     }
 }
 
-/// Whether STRICT shadow mode (`DREGG_LEAN_SHADOW_STRICT=1`) is enabled — the SWAP beachhead. When
-/// on (and `DREGG_LEAN_SHADOW=1`), the verified Lean executor becomes a binding REJECTION authority
-/// on the commit path: a turn the Rust executor COMMITTED but the verified Lean executor REJECTED
-/// is VETOED (converted to a rejection). The Lean kernel can ONLY tighten the decision — it never
-/// turns a Rust rejection into a commit — so a divergence can only make the node MORE conservative
-/// (the "kernel-vs-NEW-Rust, never match a buggy oracle" direction). OFF by default: the live path
-/// stays Rust-decided until the marshaller covers every effect (so a still-GAP effect is never
-/// spuriously vetoed — only COMPARABLE turns can be vetoed).
-pub fn strict_veto_enabled() -> bool {
-    shadow_env_enabled() && std::env::var("DREGG_LEAN_SHADOW_STRICT").as_deref() == Ok("1")
-}
-
-/// Decide whether the verified Lean verdict VETOES a Rust commit. Returns `true` ONLY when strict
-/// mode is on, the turn was COMPARABLE (`lean_verdict = Some(_)`), the Rust executor COMMITTED, and
-/// the verified Lean executor REJECTED. A `None` verdict (GAP / FFI off) NEVER vetoes (we cannot
-/// veto what we did not compare). The veto is one-directional: `lean=false ∧ rust=true` only.
-pub fn lean_vetoes(rust_committed: bool, lean_verdict: Option<bool>) -> bool {
-    strict_veto_enabled() && rust_committed && lean_verdict == Some(false)
-}
+// ── DELETED 2026-07-28: `DREGG_LEAN_SHADOW_STRICT` / `strict_veto_enabled` / `lean_vetoes` ──
+//
+// The strict veto let a verified Lean REJECTION roll back a Rust commit from inside
+// `TurnExecutor::execute`. It was set by nothing outside its own test, it was DOMINATED by the
+// armed authority inversion (`lean_apply::produce_via_lean`, default-ON via `DREGG_LEAN_PRODUCER`,
+// which installs the verified verdict in BOTH directions instead of only tightening) — and it was
+// BROKEN: its rollback restored the ledger, the factory registry and the FNSP admission slot, but
+// NOT the executor-owned side state the Rust reference had already mutated. Measured on the archive
+// at HEAD: an under-authorised `Burn` vetoed correctly (balance unchanged) while the agent's
+// receipt-chain head stayed ADVANCED to a receipt that was never issued, so the agent's next honest
+// turn was refused `ReceiptChainMismatch { expected: Some(d250…), got: None }` — permanently, since
+// no receipt carrying that hash exists anywhere. `produce_via_lean` does this correctly through
+// `checkpoint_producer_reference` / `rollback_producer_reference`; the veto path never got that
+// machinery. Arming it alongside the producer would also have LAUNDERED the producer's central
+// finding: the veto flips the demoted reference's commit to a rejection, so `rust_agreed` reads
+// `true` and a genuine "Rust committed what the verified kernel rejects" logs `info!` AGREES
+// instead of `error!` REAL finding.
+//
+// `TurnError::LeanShadowVeto` survives and is still constructed — by `produce_via_lean`, the path
+// that actually runs.
 
 fn shadow_env_enabled() -> bool {
     std::env::var("DREGG_LEAN_SHADOW").as_deref() == Ok("1")
@@ -1581,10 +1582,22 @@ fn run_shadow(turn: &Turn, pre: &ShadowPreLedger, host: &ShadowHostCtx) -> Resul
 }
 
 /// The theorem-backed admission REASON the verified executor reported for the last observed turn
-/// (the legible "why" of a refusal), or `None` when there is none to surface. Read by
-/// [`LeanShadowObserver::admission_reason`].
+/// (the legible "why" of a refusal), or `None` when there is none to surface.
+///
+/// Read by the AUTHORITATIVE producer ([`crate::lean_apply::produce_via_lean`]) so a verified
+/// rejection names the gate that refused instead of a bare `LeanShadowVeto`. Set by
+/// [`record_admission_reason`] on the producer path and by `run_shadow` on the differential path.
 pub fn last_admission_reason() -> Option<dregg_turn::AdmissionReason> {
     SHADOW_REASON.with(|r| *r.borrow())
+}
+
+/// Record the theorem-backed admission REASON carried by a verified verdict, for
+/// [`last_admission_reason`]. `admission_refusal()` yields a reason ONLY when the turn was refused
+/// at admission with a non-`Admitted` reason; an admitted turn (or a legacy no-`reason` wire)
+/// clears it, so a stale reason can never survive into the next turn.
+pub(crate) fn record_admission_reason(verdict: &dregg_lean_ffi::ShadowVerdict) {
+    let mapped = verdict.admission_refusal().and_then(map_ffi_reason);
+    SHADOW_REASON.with(|r| *r.borrow_mut() = mapped);
 }
 
 /// THE SWAP state-producing path: marshal the turn, run the VERIFIED Lean executor, and return
