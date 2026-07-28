@@ -427,13 +427,96 @@ fn visible_text(html: &str) -> String {
         out.push(bytes[i]);
         i += 1;
     }
-    let out = out
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&amp;", "&");
+    let out = unescape_entities(&out);
     out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// **Entity references back to the characters they stand for** — the second half of "the text a
+/// person actually READS".
+///
+/// ⚑ [`visible_text`]'s doc has always said "entities unescaped", and for five of them it was true.
+/// The typographic ones the copy is written in — `&ldquo;`/`&rdquo;` round a quoted word,
+/// `&nbsp;` inside a phrase, `&rsaquo;` in a breadcrumb — were left as LITERAL TEXT, and that is
+/// not a cosmetic gap: `&ldquo;asserted&rdquo;` reaches [`tokens`] as a single 22-character token
+/// and clears [`is_secret_shaped`]'s digest threshold, while the word it encodes (`asserted`, eight
+/// letters, no digit) does not. The fog check reported the attribution disclosure's own two words
+/// as seat-private data on the shipped tug table for exactly that reason. A checker must judge the
+/// SENTENCE, never its transport encoding.
+///
+/// Numeric references are decoded generically; a named reference outside this list becomes a SPACE,
+/// because an entity is one glyph and a glyph this reader cannot name is not a secret — never left
+/// in place to be counted as text. `&amp;` is decoded LAST so a decoded `&` cannot start a second
+/// round.
+fn unescape_entities(text: &str) -> String {
+    const NAMED: &[(&str, &str)] = &[
+        ("&quot;", "\""),
+        ("&apos;", "'"),
+        ("&nbsp;", " "),
+        ("&ldquo;", "\""),
+        ("&rdquo;", "\""),
+        ("&lsquo;", "'"),
+        ("&rsquo;", "'"),
+        ("&lsaquo;", "‹"),
+        ("&rsaquo;", "›"),
+        ("&laquo;", "«"),
+        ("&raquo;", "»"),
+        ("&larr;", "←"),
+        ("&rarr;", "→"),
+        ("&ndash;", "–"),
+        ("&mdash;", "—"),
+        ("&hellip;", "…"),
+        ("&middot;", "·"),
+        ("&times;", "×"),
+        ("&lt;", "<"),
+        ("&gt;", ">"),
+    ];
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find('&') {
+        out.push_str(&rest[..at]);
+        let tail = &rest[at..];
+        // `&amp;` is handled here rather than by a trailing `.replace`, so one pass decodes
+        // everything and a decoded `&` is never re-scanned.
+        if let Some(after) = tail.strip_prefix("&amp;") {
+            out.push('&');
+            rest = after;
+            continue;
+        }
+        if let Some((name, glyph)) = NAMED.iter().find(|(name, _)| tail.starts_with(name)) {
+            out.push_str(glyph);
+            rest = &tail[name.len()..];
+            continue;
+        }
+        let numeric = tail
+            .strip_prefix("&#")
+            .and_then(|body| body.split_once(';'))
+            .and_then(|(digits, after)| {
+                let code = match digits.strip_prefix(['x', 'X']) {
+                    Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+                    None => digits.parse::<u32>().ok()?,
+                };
+                Some((char::from_u32(code)?, after))
+            });
+        if let Some((glyph, after)) = numeric {
+            out.push(glyph);
+            rest = after;
+            continue;
+        }
+        // Some other `&…;` run: one unreadable glyph, spelled as a space rather than as letters.
+        match tail[1..].find(';').map(|end| end + 2) {
+            Some(end) if end <= 12 => {
+                out.push(' ');
+                rest = &tail[end..];
+            }
+            // A bare `&` that opens no reference at all — ordinary punctuation, kept.
+            _ => {
+                out.push('&');
+                rest = &tail[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// The page's text with every CONTROL LABEL removed — the prose half alone.
@@ -621,13 +704,29 @@ fn directive_of(html: &str) -> Option<String> {
 /// this check reported `picked`, `action`, `buttons`, `claims` and `land` as leaks; every one was
 /// prose, and a gate that cries wolf gets muted, which is worse than a narrower gate.
 ///
-/// So: a token counts only if it carries a digit, or is long enough to be a digest. The cost is
-/// stated plainly rather than hidden — **this check detects DATA-shaped leaks, not prose-shaped
-/// ones.** A surface that leaked a secret purely in words would pass it. The tug leak it
-/// generalises (`card #3`, `#4 g3w3` in a button label) is data-shaped, as is automatafl's sealed
-/// destination and every hand root on the table.
+/// So: a token counts only if it carries a digit, or **is shaped like a digest** — long AND an
+/// unbroken alphanumeric run. The cost is stated plainly rather than hidden — **this check detects
+/// DATA-shaped leaks, not prose-shaped ones.** A surface that leaked a secret purely in words would
+/// pass it. The tug leak it generalises (`card #3`, `#4 g3w3` in a button label) is data-shaped, as
+/// is automatafl's sealed destination and every hand root on the table.
+///
+/// ⚑ **THE LENGTH ARM MEANS "DIGEST", AND UNTIL IT SAID SO IT MEANT "LONG WORD".** Bare
+/// `count() >= 12` admitted three kinds of ordinary text that no hand can be hidden in, and all
+/// three landed on the shipped tug table in one run: the link text `Replay-verify` (13), the tug
+/// verify report's `rules+witness` (13, out of "atomic rules+witness turn(s) including genesis" —
+/// a TURN COUNT), and `&ldquo;asserted&rdquo` (22, an entity-wrapped eight-letter word;
+/// [`unescape_entities`] is the other half of that one). Requiring the run to be alphanumeric
+/// throughout is what the sentence "long enough to be a digest" always meant: a hyphen, a plus or
+/// an `&` is punctuation, and punctuation is where English gets its length.
+///
+/// It costs no real coverage, and the harness could not hide it if it did: every identifier this
+/// catalog can leak carries a digit (a card `#7`, a square `(3,3)`, a session id, a 64-character
+/// hand root — hex, and alphanumeric anyway), and a narrowing that emptied a seat's secret set
+/// would trip [`fog_check`]'s own non-vacuity tooth, which FAILS on `widest == 0` rather than
+/// passing quietly. This gate cannot be blunted into a green.
 fn is_secret_shaped(token: &str) -> bool {
-    token.chars().any(|c| c.is_ascii_digit()) || token.chars().count() >= 12
+    token.chars().any(|c| c.is_ascii_digit())
+        || (token.chars().count() >= 12 && token.chars().all(|c| c.is_ascii_alphanumeric()))
 }
 
 /// The comparable tokens of a rendered page — the things a leak would carry, as a person's eye
@@ -1291,6 +1390,64 @@ fn the_page_readers_read_what_a_person_reads() {
         "the field and its placeholder are chrome, not page prose — `state-visible` must not be \
          able to pass on a box appearing: {}",
         visible_text(asks)
+    );
+}
+
+/// **The fog check's SENSITIVITY, pinned at both ends** — the narrowing that retired tug's four
+/// false positives must not have retired the shapes the check exists for.
+///
+/// Read together with [`is_secret_shaped`]'s note: the whole difference between "a digest" and "a
+/// long word" is whether the run is broken by punctuation. Everything below is a real string off
+/// one of these surfaces.
+#[test]
+fn a_digest_is_secret_shaped_and_hyphenated_english_is_not() {
+    // ── STILL CAUGHT. A hand root, a card, a square, a session id, a lane.
+    for data in [
+        "3b1f0c9d8e7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c",
+        "aafi5b2c9d1e",
+        "#7",
+        "(3,3)",
+        "g3w3",
+        "dr1-7-8f2a9c",
+        "18/26",
+    ] {
+        assert!(
+            is_secret_shaped(data),
+            "a data-shaped token must still count as possibly-secret: {data}"
+        );
+    }
+
+    // ── NO LONGER CRIED WOLF ON. Every one of these is page chrome or public prose that the fog
+    //    check reported as seat-private on the shipped tug table.
+    for prose in [
+        "replay-verify",
+        "rules+witness",
+        "&ldquo;asserted&rdquo",
+        "Reveal-and-score",
+        "hidden-information",
+    ] {
+        assert!(
+            !is_secret_shaped(prose),
+            "hyphenated English is not a digest, however long: {prose}"
+        );
+    }
+
+    // ── AND THE ENTITY HALF. The reader decodes the typographic references the copy is written in,
+    //    so a quoted word arrives as a word — which the tokenizer then trims to eight letters and
+    //    the shaper correctly declines. Left encoded it was a 22-character "digest".
+    let decoded =
+        visible_text("<p>&ldquo;asserted&rdquo;&nbsp;and&nbsp;&ldquo;verified&rdquo;</p>");
+    assert_eq!(decoded, "\"asserted\" and \"verified\"");
+    for token in tokens(&decoded) {
+        assert!(
+            !is_secret_shaped(&token),
+            "the attribution gloss carries no data-shaped token: {token}"
+        );
+    }
+    // A `&` that opens no reference is ordinary punctuation and survives; `&amp;` decodes once.
+    assert_eq!(
+        visible_text("<p>Gift Ember Cloak &amp; wait &rarr; R&amp;D &#8212; 3 &lt; 5</p>"),
+        "Gift Ember Cloak & wait → R&D — 3 < 5"
     );
 }
 

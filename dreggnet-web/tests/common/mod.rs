@@ -109,6 +109,52 @@ async fn trip_on_dark_act(request: AxumRequest, next: Next) -> Response {
     Response::from_parts(parts, Body::from(bytes))
 }
 
+/// **A served page with its `<style>` and `<script>` elements removed** — what a substring
+/// assertion about page CONTENT must be run against.
+///
+/// ⚑ **THE PAGE SHIPS ITS OWN PROSE INSIDE ITS STYLESHEET, AND TWO SUITES WERE READING IT.** Every
+/// page `document()` builds inlines the whole skin, and that skin is HEAVILY COMMENTED — the
+/// comments explain why a rule exists, in English, naming the very things the tests look for. Both
+/// of these were live, and neither is about the product:
+///
+/// * `driven`'s receipt check does `body.find("executor receipt ")` and reads the next 64 characters
+///   as hex. The FIRST occurrence in the document is `lib.rs:1199` — the comment explaining why
+///   `.notice` needs `overflow-wrap:anywhere`, which says "a 64-character executor receipt hex". The
+///   test read `hex — ONE unbroken word, in proport…` and reported that the receipt id was not hex.
+/// * `descent`'s day-isolation check does `!board_b.contains("anna")`. `lib.rs:1060` says
+///   "…is equally sc**anna**ble and the pair reads as one axis", so day-b's board "contained" day-a's
+///   player and the day filter looked broken. It is not: that board ranks `boris` and nothing else.
+///
+/// One root cause, and it will recur every time the skin gains a sentence, so the reader is shared
+/// rather than patched per suite. Everything outside the two elements is left EXACTLY as served —
+/// tags, attributes and hidden inputs included — because the assertions that ride this also check
+/// markup (`action="/session/keep-a/act"`), which [`crate::common`] must not strip out from under
+/// them.
+pub fn without_stylesheets(html: &str) -> String {
+    const ELEMENTS: [(&str, &str); 2] = [("<style", "</style>"), ("<script", "</script>")];
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    loop {
+        // The NEAREST opener, always — taking a later `<script>` first would swallow an earlier
+        // `<style>` and everything between the two.
+        let next = ELEMENTS
+            .iter()
+            .filter_map(|(open, close)| rest.find(open).map(|at| (at, *open, *close)))
+            .min_by_key(|(at, _, _)| *at);
+        let Some((at, open, close)) = next else {
+            out.push_str(rest);
+            return out;
+        };
+        out.push_str(&rest[..at]);
+        out.push(' ');
+        rest = match rest[at + open.len()..].split_once(close) {
+            Some((_, tail)) => tail,
+            // An unterminated element runs to the end of the document.
+            None => return out,
+        };
+    }
+}
+
 /// The value of a `<input type="hidden" name="{name}" value="…">` on a rendered page.
 pub fn hidden_value<'a>(html: &'a str, name: &str) -> Option<&'a str> {
     let marker = format!("name=\"{name}\" value=\"");

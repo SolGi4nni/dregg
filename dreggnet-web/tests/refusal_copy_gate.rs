@@ -61,7 +61,19 @@ use tower::ServiceExt;
 
 mod common;
 
+/// The catalog router, with a verified Descent day published.
+///
+/// ⚑ **THE DAY IS A PRECONDITION OF THE SHIP LIST, not a fixture convenience.** `CatalogState::new`
+/// builds its host through `dreggnet_catalog::CatalogConfig::live`, which binds a run's banked-relic
+/// provenance to the CURRENT verified beacon day and REFUSES to open a Descent until one is
+/// published. `descent` is the first entry in `dreggnet_catalog::SHIPPED_KEYS`, so without this the
+/// two legs below never reach a Descent at all: the open is refused and the gate scans the REFUSAL
+/// OF THE OPEN instead of the refusal copy it exists to audit. The serving binary publishes the day
+/// at boot (`arm_todays_descent_day`, over the network); a test process publishes the pinned,
+/// BLS-verifiable reveal, exactly as every other Descent web suite here does (`descent_door`,
+/// `game_session_coherence`, `catalog_flow_harness`, `descent_campaign_catalog`).
 fn app() -> Router {
+    dreggnet_catalog::publish_pinned_descent_day().expect("the pinned published round verifies");
     common::guard(catalog_router(Arc::new(CatalogState::new())))
 }
 

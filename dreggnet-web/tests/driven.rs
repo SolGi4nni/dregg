@@ -134,11 +134,17 @@ async fn a_winning_line_plays_through_the_web_surface() {
         body.contains("Turn committed"),
         "the honest banner reports a committed turn"
     );
-    let receipt_start = body
+    // ⚑ The receipt is read WITHOUT the page's stylesheet. The skin comments its own rules in
+    // English, and the FIRST "executor receipt " in the served document is `lib.rs:1199` explaining
+    // why `.notice` needs `overflow-wrap:anywhere` ("a 64-character executor receipt hex — ONE
+    // unbroken word…") — so this scan was reading that sentence and reporting the receipt id as
+    // non-hex. See `common::without_stylesheets`.
+    let banner = common::without_stylesheets(&body);
+    let receipt_start = banner
         .find("executor receipt ")
         .expect("the landing banner publishes a copyable receipt-chain join")
         + "executor receipt ".len();
-    let receipt_id = &body[receipt_start..receipt_start + 64];
+    let receipt_id = &banner[receipt_start..receipt_start + 64];
     assert!(
         receipt_id
             .bytes()

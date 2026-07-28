@@ -27,6 +27,8 @@ use dungeon_on_dregg::progression::WARRIOR;
 use procgen_dregg::daily_seed;
 use tower::ServiceExt; // oneshot
 
+mod common;
+
 async fn get(app: &axum::Router, uri: &str) -> (StatusCode, String) {
     let resp = app
         .clone()
@@ -249,16 +251,35 @@ async fn a_different_days_board_differs() {
     );
 
     let app = descent_router(state);
+    // ⚑ The board is read WITHOUT the page's stylesheet: the skin's own comments are English, and
+    // one of them calls a pair of chips "equally sc**anna**ble" — so `!board_b.contains("anna")`
+    // was reading a CSS comment and reporting a day-filter leak that does not exist. See
+    // `common::without_stylesheets`.
     let (_s, board_a) = get(&app, "/descent/leaderboard?day=day-a").await;
     let (_s, board_b) = get(&app, "/descent/leaderboard?day=day-b").await;
+    let board_a = common::without_stylesheets(&board_a);
+    let board_b = common::without_stylesheets(&board_b);
 
+    // ⚑ EACH SIDE OF THE FILTER IS ITS OWN ASSERTION, and each prints the board it judged. As one
+    // conjunction with a bare message this said only "day-b shows only its runs", which cannot
+    // distinguish "the day filter leaked the other day's run in" (a real isolation bug) from "this
+    // day's run did not rank at all" (a re-verification or engine change) — opposite causes, one
+    // sentence. A diagnostic that cannot speak is the failure mode, not one that is over-specific.
     assert!(
-        board_a.contains("anna") && !board_a.contains("boris"),
-        "day-a shows only its runs"
+        board_a.contains("anna"),
+        "day-a ranks its own run: {board_a}"
     );
     assert!(
-        board_b.contains("boris") && !board_b.contains("anna"),
-        "day-b shows only its runs"
+        !board_a.contains("boris"),
+        "day-a does not leak day-b's run: {board_a}"
+    );
+    assert!(
+        board_b.contains("boris"),
+        "day-b ranks its own run: {board_b}"
+    );
+    assert!(
+        !board_b.contains("anna"),
+        "day-b does not leak day-a's run: {board_b}"
     );
     assert_ne!(board_a, board_b, "the two days' boards differ");
 }
