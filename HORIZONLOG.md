@@ -155,7 +155,9 @@ guaranteed failure to a JSON field (`"proof_status": "proof_generation_failed"`,
 returning `committed: true` (`:508`). Shared by `dregg_register_name` / `dregg_publish_subscription` /
 `dregg_issue_credential` / `dregg_register_service`.
 
-**A3 · `affine_sum` STILL WRAPS, AND THE TARGETS WHERE IT DECIDES ARE EXACTLY THE PROVEN ONES. LIVE
+**A3 · `affine_sum` STILL WRAPS, AND THE TARGETS WHERE IT DECIDES ARE EXACTLY THE PROVEN ONES. FIXED 2026-07-28
+> ✅ **FIXED 2026-07-28** (`ef4eed456`) — the accumulator is exact 256-bit now. ⚠ And the residual overstated the reach: native release NEVER wrapped (`constraint_subset_fails_closed_without_oracle` is release-and-native-only). The live wrap-and-admit was **wasm32 and the SP1 guest only** — the browser light client and the prover guest, where an ADMIT is what gets proven.
+
 on wasm32 + zkVM guest; FIXED on native.** `cell/src/program/eval.rs:2949-2957` accumulates
 `sum += (*k as i128) * x` with no `checked_*` and no `overflow-checks` in the root profile; same in
 `affine_delta_sum` (`:2964-2976`). Lean is unbounded `Int`
@@ -167,7 +169,9 @@ the SP1 guest**, where the unchecked Rust `affine_sum` *is* the decider. Both co
 (`wasm/Cargo.toml`, `circuit/sp1-guest/Cargo.toml`), and `wasm/src/bindings_card.rs:1193, 1463` builds
 a live quorum gate as exactly this constraint. **The guest's ACCEPT is what gets proven.**
 
-**A4 · TWO EFFECTS SHARE A DOMAIN TAG, AND ONE TURN HASH ABSORBS NO PAYLOAD AT ALL. LIVE.**
+**A4 · TWO EFFECTS SHARE A DOMAIN TAG, AND ONE TURN HASH ABSORBS NO PAYLOAD AT ALL. FIXED 2026-07-28.**
+> ✅ **FIXED 2026-07-28** (`8bb47a484`) — `ShieldedTransfer` moved 63 → 67; 36 scattered tag literals replaced by one macro with a single absorb site. No VK rotation — `Effect::hash()` has grep-zero consumers in `circuit/`, and the AIR's own effect identity is an independent one-hot selector column.
+
 `Effect::Mint` (`turn/src/action.rs:2423`) and `Effect::ShieldedTransfer` (`:2562`) both write `63u8`
 into `Effect::hash()`, which feeds the sovereign `effects_hash`, the custom-predicate signing message
 (`executor/authorize.rs:2273`) and the receipt/PI binding. Today it is saved only by the preimages
@@ -186,7 +190,7 @@ fail-closed arm at `:496`: **not compiled on native release; compiled on wasm32,
 and in every debug binary and dev node.** The oracle path keeps `i64` (`:453`); the truncation is
 fallback-only.
 
-**A6 · THE CONSERVATION PARTITION KEY IS FOUR BYTES. LIVE.**
+**A6 · THE CONSERVATION PARTITION KEY IS FOUR BYTES. FIXED 2026-07-28.**
 
 > ✅ **FIXED 2026-07-28** — all FOUR row-producing sites refuse a scope whose distinct committed
 > asset ids fold to one class: `execute.rs:1296` (main turn path), `atomic.rs:1160` (atomic
@@ -210,7 +214,7 @@ Unreachable today only because `birth_asset` (`turn/src/executor/apply.rs:1083`)
 inherit its parent's asset: an unstated invariant in a different file, one token-issuance product away
 from live inflation.
 
-**A7 · A CELL REMOVAL IS INVISIBLE TO THE SIGNED ANCHOR FOR A COLLIDING PAIR. LIVE (the false claim
+**A7 · A CELL REMOVAL IS INVISIBLE TO THE SIGNED ANCHOR FOR A COLLIDING PAIR. FIXED 2026-07-28 (the false claim
 > ✅ **FIXED 2026-07-28** (b3111ee18) — all four builders refuse a colliding pair; ⚠ `as_u32()` was never a truncation — the address is ONE ~31-bit felt, so the fix is the refusal, not a wider dedup key
 
 was retracted; the behaviour was not).** The heap leaf address is one felt —
@@ -242,7 +246,9 @@ besides: EVM `DreggSettlement.sol`'s verify path (`:219`) never consults `_verif
 `processor.rs` reads `vk_hash` only at init (`:162`, `:191`) and `settle` (`:217-`) never touches it.
 `docs/ops/VK-CEREMONY.md:343` already names the repair.
 
-**A10 · THE SOLANA SETTLE TRANSACTION CANNOT BE BROADCAST. LIVE — measured red at HEAD.**
+**A10 · THE SOLANA SETTLE TRANSACTION CANNOT BE BROADCAST. FIXED 2026-07-28 — measured red at HEAD.**
+> ✅ **FIXED 2026-07-28** (`fee3426e3`) — 1495 → 795 bytes, 437 to spare — and it was neither a split nor compression: the 25 lanes rode as 32-byte scalars of which `input_to_lane` REQUIRED 700 bytes to be zero. Deleting provably-dead bytes NARROWS the wire, so a non-canonical scalar is now unrepresentable rather than merely rejected.
+
 `cargo test --test settle_flow settle_transaction_fits_in_a_solana_packet` → **EXIT=101**,
 *"settle transaction is 1495 serialized bytes against PACKET_DATA_SIZE = 1232 (over by 263)"*
 (`solana-settlement/tests/settle_flow.rs:244`, deliberately not `#[ignore]`d). Root cause is
@@ -251,7 +257,9 @@ besides: EVM `DreggSettlement.sol`'s verify path (`:219`) never consults `_verif
 sibling tests are green and structurally cannot see it — `ProgramTest`/`BanksClient` never
 wire-serializes the transaction.
 
-**A11 · THE EVM STATE ORACLE WRITES FOUR MIRROR SUB-ROOTS BOUND TO NOTHING. LIVE, source-only.**
+**A11 · THE EVM STATE ORACLE WRITES FOUR MIRROR SUB-ROOTS BOUND TO NOTHING. FIXED 2026-07-28, source-only.**
+> ✅ **FIXED 2026-07-28** (`fee3426e3`) — the unbindable surface is DELETED and with it the recorder role — `recordEpoch` is permissionless. ⚑ Exposing the Poseidon2 sub-roots as PIs would NOT have sufficed: what the contract served were KECCAK MIRRORS, and no EVM contract can relate a Poseidon2 field root to a keccak Merkle root. The height, separately, was also recorder-attested and is now read from `provenHeightOf`.
+
 `chain/contracts/DreggStateOracle.sol:160` checks `settlement.isProvenRoot(stateRoot)` — the TOP root
 only — then `:167-169` writes `e.subRoots[i] = subRootVec[i]` unchecked, under a single immutable
 `recorder` (`:90`, `:139`). `proveHolding` (`:232`) → `subRootOf` (`:200`) reads exactly those
@@ -260,7 +268,7 @@ against a genuinely settled root. **Ranked here rather than at the top because i
 (absent from `chain/DEPLOYMENTS.md`, no deploy script, no recorder client in any language) **and the
 contract states the trust grade itself at `:42-52`.**
 
-**A12 · THE LEAN AND RUST `fields_root` PREIMAGES SPLIT AT DIFFERENT KEYS. LIVE.**
+**A12 · THE LEAN AND RUST `fields_root` PREIMAGES SPLIT AT DIFFERENT KEYS. FIXED 2026-07-28.**
 > ✅ **FIXED 2026-07-28** ((fields_root band)) — Lean's `reservedKeys` 8 → 16 to match `STATE_SLOTS`, 5 `#guard` fixtures moved above the band, pinned by a Rust test that READS the Lean source
 
 `cell/src/state.rs:57` is `pub const STATE_SLOTS: usize = 16`.
@@ -365,19 +373,36 @@ Four concrete pairwise holes, in descending order of how cheaply they'd bite:
   fold**); the note channel keys on the effect's own cleartext `asset_type: u64`
   (`finalize.rs:517-533`). Two turns can each balance perfectly and still have moved value between
   incomparable asset identities. Nothing relates the two maps.
-- **(balance, supply) — the designed seam is wired to `&[]`.** `check_per_asset_conservation_by_asset`
-  takes a `declared_supply: &[DeclaredSupplyChange]` argument precisely so disclosed mint/burn can be
-  reconciled against balance deltas. **All four production callers pass `&[]`** — `execute.rs:1289`
-  (hosted), `atomic.rs:1014` and `:1555` (atomic/sovereign), `proof_verify.rs:2029` (light-client
-  bundle) — and so do the only two test callers (`atomic.rs:3077`, `:3103`, both under the
-  `#[cfg(test)]` at `:1695`), so **no test would notice if the parameter stopped working**. ⚑ And the
-  VERIFIED side already implements it: `Dregg2/Circuit/CrossCellConserveDecision.lean` groups
-  `(asset, δ)` rows **plus declared mint/burn supply** and carries a `#guard` for exactly that arm
-  ("declared supply restores"). So the Lean decider supports the reconciliation, has a tooth for it,
-  and **Rust never once calls it with a row.** It is sound today
-  only because mint/burn are well-paired and therefore already appear as ordinary balance deltas —
-  i.e. the parameter is load-bearing for a supply model nobody uses, and would silently accept the
-  moment one did.
+- ~~**(balance, supply) — the designed seam is wired to `&[]`.**~~ ⚑ **CLOSED 2026-07-28 BY DELETION,
+  and the census above was wrong twice.** The re-count over tracked files found **four** non-forwarding
+  production call sites (`atomic.rs:1176` sovereign, `:1734` mixed, `execute.rs:1296` cleartext,
+  `proof_verify.rs:2029` bundle) and **five** test call sites, not two — every one passing `&[]`.
+  ⚑ **But "wire it" was the wrong instruction, and the reason changes the finding.** There is no
+  producer for a `DeclaredSupplyChange` row and under the ratified supply model there cannot be one:
+  `.docs-history-noclaude/SUPPLY-MODEL.md` discloses a supply change as the issuer WELL's own PAIRED
+  ledger delta. `apply_mint` debits the asset's negative-capable well and credits the holder;
+  `apply_burn` is the dual; `CreateCell` refuses a nonzero opening balance
+  (`TurnError::CreateCellNonZeroBalance`). So a genuine mint already arrives at the gate as TWO rows
+  of one asset that cancel, and its disclosure is auditable state rather than an unbacked assertion.
+  **The row type was not merely unused, it was WRONG for this design**: it added `+magnitude` to the
+  conserved sum with NO authority check, while `Effect::Mint` demands a control-grade cap over the
+  issuer well carrying `EFFECT_MINT` (the Rust image of Lean `mintAuthorizedB`). Any caller that
+  populated it would have minted past that gate. **DELETED**: the parameter from all four
+  `check_per_asset_conservation*` functions and `unverified_rust_conservation_fallback`, the `supply`
+  argument from `ConservationOracle::conserves` and `dregg_lean_ffi::shadow_cross_cell_conserves`
+  (the emitted wire is byte-identical — an explicit `nSupply = 0`), and
+  `dregg_circuit::block_conservation::{DeclaredSupplyChange, BlockConservation::add_supply_change}`.
+  **The Lean rule is UNTOUCHED** — `Dregg2/Circuit/CrossCellConserveDecision.lean` keeps `parseSupply`,
+  `supplyRowDelta` and the "declared supply restores" `#guard`; that is the spec being legitimately
+  more general than the deployment, and it is what a future *properly gated* ex-nihilo supply design
+  would route through. Teeth: `turn/tests/supply_disclosure_rows_reach_the_decider.rs` installs a
+  RECORDING oracle at the decider's seam and asserts the row set is `{(class7,+989),(class7,−989)}`
+  for a real cap-gated `Effect::Mint` and `{(class7,+989),(class9,−989)}` → REFUSED when the well is
+  registered in the wrong currency, plus both poles through the real executor in
+  `atomic.rs::hardening_tests`. ⚠ The one ex-nihilo credit that remains is `EpochMinter::maybe_mint`
+  ("the LAST non-conserving verb in the executor", `economics.rs:213`) — it is BLOCK-level, outside
+  every conservation scope, unconfigured on the deployed chain, and its named fix is to become an
+  issuer-well move, not a declared row.
 - **(balance, shielded).** A `ShieldedTransfer` conserves over its own Pedersen legs; whether it can
   sit in the same turn as a `Transfer` and move value across the seam is unasked.
 - **(cleartext notes, committed notes) — the ONE pairwise interaction anyone has thought about**, and
@@ -472,7 +497,7 @@ four teeth (`circuit/tests/setfield_value8_epoch_flip.rs`) — and **no Rust pro
 Every live path still uses `V3_STAGED_REGISTRY_TSV` (`sdk/src/full_turn_proof.rs:1078, 1106, 1426,
 1447, 2093, 2125, 2663`). The work is done; the epoch re-point is not.
 
-**B5 · THE SOLO FINALIZATION ARM STILL FINALIZES ANY CREATOR. LIVE, and its own comment says so.**
+**B5 · THE SOLO FINALIZATION ARM STILL FINALIZES ANY CREATOR. FIXED 2026-07-28, and its own comment says so.**
 > ✅ **FIXED 2026-07-28** (`8f275b661`) — the arm consulted NO rule at all. The bootstrap tension its comment cited was resolvable, not a trade: `ML-DSA.KeyGen` is deterministic in the seed and the boot path ALREADY derives the node's own hybrid id before any roster is committed, so `projected ∪ {self_hybrid}` names exactly one key and widens nothing. It could NOT simply call `tauOrder` — checked: a fresh solo lace finalizes nothing under it, so routing solo there would brick cold start. Cold start driven on the real binary through a `from_checkpoint_trusted` restart. ⚑ Separate live wound found and dispatched: `execute_finalized_membership` passes the HYBRID id to a `participants` map keyed by ed25519, so **no membership vote has ever counted on the live path**.
 
 `node/src/blocklace_sync.rs:1534` `if admitted.len() <= 1 {` — the body (`:1555-1567`) filters only on
@@ -539,7 +564,7 @@ tests. **`scripts/test-gauntlet.sh` is invoked by nothing:** 4 occurrences under
 lands on `main` directly at a ~92 s median and `main` is not branch-protected, so the `pull_request`
 path does not fire on the dominant route either.
 
-**C3 · THE `no_run` RATCHET'S TRIGGER HAS FIRED AND THE GATE IS NOT ARMED. LIVE.**
+**C3 · THE `no_run` RATCHET'S TRIGGER HAS FIRED AND THE GATE IS NOT ARMED. FIXED 2026-07-28.**
 > ✅ **FIXED 2026-07-28** (41d8903ef) — `no_run` fences are asked for a reason now; 29 of 43 were reasonless, seeded to ratchet
 
 `scripts/check-bare-ignore.py` knows `no_run` (`:215`, `:221`, and `REASON_RE` at `:224` accepts
@@ -571,7 +596,7 @@ the scanner's `FFI_MARKERS` (`:129`, which lists only `#[no_mangle]` / `extern "
 `#[unsafe(no_mangle)]`), so a whole FFI surface is confidently misreported. **A baseline row that is
 wrong is worse than a missing one.**
 
-**C5 · IN `local-gates.sh` A TIMEOUT IS A SKIP, NOT A FAILURE — AND NOTHING INVOKES IT. LIVE.**
+**C5 · IN `local-gates.sh` A TIMEOUT IS A SKIP, NOT A FAILURE — AND NOTHING INVOKES IT. FIXED 2026-07-28.**
 > ✅ **FIXED 2026-07-28** (69fbda191) — a timeout is a FAILURE, named separately in the summary — 'produced no verdict' and 'found a defect' both fail and want opposite fixes
 
 `run_one` treats `rc == 124` as `skip=$((skip+1))` and prints *"not a verdict"*; only a non-zero,
@@ -583,7 +608,7 @@ print `SKIP  needs --all` otherwise. ⚠ **And no workflow and no hook invokes `
 all** — the 45-row instrument this repo built *because GitHub cannot answer* runs only when a human
 types it.
 
-**C6 · THE RED-PROOF-SCAFFOLD SWEEP IS A RITUAL, NOT A MECHANISM. LIVE.** `AGENTS.md` prescribes
+**C6 · THE RED-PROOF-SCAFFOLD SWEEP IS A RITUAL, NOT A MECHANISM. FIXED 2026-07-28.** `AGENTS.md` prescribes
 > ✅ **FIXED 2026-07-28** (33437417c) — `check-no-disarmed-guard.sh`, 7,642 files, red-proved against the real `Monotonic` scaffold
 
 `grep -rn "if false &&\|if true {\s*//\|MUST NOT BE COMMITTED\|RED-PROOF"` and says *"the main loop
@@ -594,7 +619,7 @@ sat on `main` under security-fix subjects (`c82adbe00` → `6f38efbe3` → `43d1
 hits are legitimate red-proof diagnostics in `circuit/tests/cap_open_*` and a vendored askama template
 fixture. Clean today, undetectable tomorrow.
 
-**C7 · THE PUBLISHED LEAN SEED NO LONGER MATCHES THE TREE, SO THE TESTS IT ARMS CANNOT ARM. LIVE.**
+**C7 · THE PUBLISHED LEAN SEED NO LONGER MATCHES THE TREE, SO THE TESTS IT ARMS CANNOT ARM. FIXED 2026-07-28.**
 > ✅ **FIXED 2026-07-28** (0dcc816de) — detection, not a demand — reports drift always, fails past 14 days; deliberately does NOT re-add the push trigger ember removed for a measured cost reason
 
 `dregg-lean-ffi/lean-seed.pin` carries `DREGG_TREE_HASH=406424cff5…` (`GENERATED_UTC=2026-07-17`);
@@ -611,7 +636,7 @@ gate** — `main` is not branch-protected, and there is a declared escape
 (`DREGG_ALLOW_DEAD_DOC_REFS=1`, `:70-73`). Two installers exist (`install-hooks.sh`,
 `install-git-hooks.sh`), one more than there should be.
 
-**C9 · THE SHIPPED EXTENSION BUNDLE IS 16 DAYS OLDER THAN THE GUARD IT IS SUPPOSED TO ARM. LIVE.**
+**C9 · THE SHIPPED EXTENSION BUNDLE IS 16 DAYS OLDER THAN THE GUARD IT IS SUPPOSED TO ARM. FIXED 2026-07-28.**
 > ✅ **FIXED 2026-07-28** (ec31bf984) — absence is a named refusal now; the bundle is still stale and that is LOUD
 
 `extension/src/passkey.ts:230` still reads
@@ -623,7 +648,9 @@ that tracked blob was last committed in `975078215` (2026-07-10 01:30) while the
 hard-required (`extension/src/background.ts:560` throws `staleBundle`); `passkey.ts` was not. Rebuild
 the bundle, or give `passkey.ts` the same hard require.
 
-**C10 · A BLOCKING GATE'S VERDICT IS A FUNCTION OF LOCAL BUILD STATE. LIVE — found by running it
+**C10 · A BLOCKING GATE'S VERDICT IS A FUNCTION OF LOCAL BUILD STATE. FIXED 2026-07-28 — found by running it
+> ✅ **FIXED 2026-07-28** (`70fa4c434`) — a gitignored path is a BUILD OUTPUT, not a reference — the gate's verdict was a function of whether you had run the codegen, which is the same shape as a green that depends on your CPU count. Narrow rule: OK iff ignored AND its parent directory is reachable.
+
 during this pass, not harvested.** `check-doc-refs` resolves against the **WORKING TREE**
 (`scripts/git-hooks/pre-push:28` says so), and two docs cite
 `chain/codegen/out/DreggGroth16Verifier25.vk.sol` — `docs/ops/regenerating-verifiers.md:32` and
@@ -662,7 +689,7 @@ two of the reds are *refusal* teeth that now refuse for a completely unrelated r
 because they check the CITATION. A sibling tooth that asserted refuse-for-any-reason would be green
 right now.** That is the next audit.
 
-**D2 · THE TREASURY FUEL GAUGE CANNOT FALL AND THE REFUEL ALARM CANNOT FIRE. LIVE — real money.**
+**D2 · THE TREASURY FUEL GAUGE CANNOT FALL AND THE REFUEL ALARM CANNOT FIRE. FIXED 2026-07-28 — real money.**
 > ✅ **FIXED 2026-07-28** (`1259679bf`) — the debit is at `PaidNarrator::metered_request`, the single funnel where a run's real `usd_spent` exists. Gauge falls by the run's OWN metered cost (720 atomic asserted, not "a call happened"); the alarm fires from a genuinely drained tank. ⚑ A STANDING red-proof sits beside it: same tank, narrator unwired vs wired — **40 priced runs, gauge unmoved** next to 7 that drain it. ⚠ Siblings still open: the entire OTC desk and the liquidity swap have 0 production callers, so the treasury doc's own stated remedy (pile → fuel behind the operator's signer) is **test-only** — which is why a `/dregg admin treasury refuel` key had to exist.
 
 > ⚠ **STALE 2026-07-28 — verify before citing.** A concurrent lane repaired this; a production caller now exists at `discord-bot/src/pay.rs:649` inside `PaidNarrator::metered_request`, with a driving test at `:4535` running a real treasury down until the alarm fires. And the recorded "10 test callers" was never right — 15 direct at HEAD.
@@ -675,7 +702,7 @@ computes `runs = (fuel_usd / usd).floor()` and shouts *"🔴 REFUEL NOW"* at `ru
 only ever deposited and never drawn down in production, that is reachable **only by a tank that was
 never funded.** Every real-AI run bills the provider and debits nothing.
 
-**D3 · `/bounty` RENDERS "Bounty Paid" AND MOVES NO VALUE — ALL THREE PAYOUT BUILDERS. LIVE.**
+**D3 · `/bounty` RENDERS "Bounty Paid" AND MOVES NO VALUE — ALL THREE PAYOUT BUILDERS. FIXED 2026-07-28.**
 > ✅ **FIXED 2026-07-28** (`0ea777733`) — all four surfaces (the residual missed `cli/src/commands/bounty.rs:262`) now carry a real `Transfer`, both legs as roots of ONE turn so a refused payment takes the PAID stamp with it. ⚑ The blocker was one level down: `execute_tree.rs:1100` evaluates a touched cell's program over every cell any effect touches, so `StrictMonotonic(STATE)` makes **a self-escrowing bounty cell inexpressible** — the reward is a PROMISE and the payer settles from its own balance. ⚠ SIBLING STILL OPEN: `starbridge-apps/compute-exchange` is the same defect, rendering a green SETTLED pill over SetField+EmitEvent with no conserving effect.
 
 `build_payout_action` (`starbridge-apps/bounty-board/src/lib.rs:296-311`) is `SetField` + `EmitEvent`;
@@ -711,7 +738,7 @@ through `open_detached`, which is itself `#[cfg(test)]`. `PrivateBazaarWorkerSup
 `PrivateBazaarAuthenticatedReceiptSource::settle_and_capture`, the one in-tree path from private
 ingress to real cryptography, sole caller a test.
 
-**D5 · SHARED-BUDGET DEBITS ARE NOW REPORTED AND STILL NOT COUNTED. LIVE (the reporting half FIXED).**
+**D5 · SHARED-BUDGET DEBITS ARE NOW REPORTED AND STILL NOT COUNTED. FIXED 2026-07-28 (the reporting half FIXED).**
 > ✅ **FIXED 2026-07-28** (1d0eebcf8) — `unattributed_spent` folded into `total_spent()`; ⚠ the existing test asserted the blindness its own comment described
 
 `81658dd50` landed the refusal — `coord/src/shared_budget.rs:545` returns
