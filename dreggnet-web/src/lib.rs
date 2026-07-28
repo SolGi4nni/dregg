@@ -953,7 +953,7 @@ color-scheme:dark;
 --n-serif:"Iowan Old Style","New York",Palatino,Baskerville,Georgia,serif;
 --bg:var(--ink-900);--muted:var(--fg-3);--panel:var(--ink-700);--card:var(--ink-600);--border:var(--line);
 /* type scale */
---t-micro:.6875rem;--t-sm:.8125rem;--t-body:1rem;--t-lead:1.0625rem;
+--t-micro:.6875rem;--t-xs:.75rem;--t-sm:.8125rem;--t-body:1rem;--t-lead:1.0625rem;
 --t-h3:1.0625rem;--t-h2:1.25rem;--t-h1:1.75rem;--t-display:clamp(2rem,6.4vw,3.15rem);
 /* rhythm */
 --s1:.25rem;--s2:.5rem;--s3:.75rem;--s4:1rem;--s5:1.5rem;--s6:2rem;--s7:3rem;--s8:4.5rem;
