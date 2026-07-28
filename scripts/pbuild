@@ -361,11 +361,22 @@ if [ -n "$REMOTE_WRAPPER" ]; then
   fi
 fi
 
-# Check the remote home filesystem before any mutation. A Cargo link can grow a
-# warm lane by several GiB; hosts with live services need space left for those
+# Check the filesystem the LANE ACTUALLY WRITES TO before any mutation. A Cargo link can
+# grow a warm lane by several GiB; hosts with live services need space left for those
 # services even when the build itself is memory-contained.
+#
+# ⚑ FIXED 2026-07-28: this measured `$HOME` unconditionally, which is the WRONG FILESYSTEM
+# whenever a lane lives off the home volume. Measured that night: hbox `/` sat at 96% (19 GiB)
+# while `/tank` had 2.6 TiB free, so a lane at `/tank/dregg-build/<lane>` was REFUSED for a
+# shortage on a disk it never touches — and the escape from the full root was exactly those
+# tank-resident lanes. Two separate lanes worked around it with `HBUILD_MIN_FREE_GIB=8`, which
+# is how a policy knob becomes a thing people lower rather than a thing that protects them.
+# The ENOSPC probe a few hundred lines up ALREADY had this right (`df -P -- dregg-build/$LANE`
+# falling back to `$HOME`); the guard simply never learned it. Same shape now, one source of
+# truth: measure the lane dir when it exists, fall back to `$HOME` when it does not (a brand-new
+# lane has no dir yet, and `$HOME` is the right proxy for where it is about to be created).
 if [ "$MIN_FREE_GIB" -gt 0 ]; then
-  FREE_KIB="$(ssh "$HOST" "df -Pk \"\$HOME\" | awk 'NR == 2 { print \$4 }'")"
+  FREE_KIB="$(ssh "$HOST" "df -Pk -- 'dregg-build/${LANE}' 2>/dev/null || df -Pk -- \"\$HOME\"" 2>/dev/null | awk 'NR == 2 { print $4 }')"
   case "$FREE_KIB" in
     ''|*[!0-9]*)
       echo "pbuild: REFUSING — could not measure free space on ${HOST}." >&2
