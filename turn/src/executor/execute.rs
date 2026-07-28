@@ -1109,12 +1109,14 @@ impl TurnExecutor {
         let mut computrons_used: u64 = 0;
         let mut all_effects_hashes: Vec<[u8; 32]> = Vec::new();
         let mut excess: i64 = 0; // Mina-style excess: must be zero at turn end.
-        // Per-asset conservation accumulator: `(target-cell asset class, delta)`
-        // for every `balance_change`, grouped by the target's committed
-        // `token_id`. The scalar `excess` only proves the deltas net to zero
+        // Per-asset conservation accumulator: `(target-cell 32-byte asset id,
+        // delta)` for every `balance_change`, grouped by the target's committed
+        // `Cell::asset()`. The scalar `excess` only proves the deltas net to zero
         // ACROSS assets; this is checked per-asset at turn end so a cross-asset
-        // teleport (mint X against burn self-issued Y) is REFUSED.
-        let mut asset_deltas: Vec<(dregg_circuit::field::BabyBear, i64)> = Vec::new();
+        // teleport (mint X against burn self-issued Y) is REFUSED. The ID is
+        // carried, not the ~31-bit fold, so the turn-end gate can still refuse two
+        // DISTINCT currencies that share a class.
+        let mut asset_deltas: Vec<([u8; 32], i64)> = Vec::new();
 
         // Everything from PHASE 1 start through here (incl. sovereign-witness /
         // binding-sweep gates, trivial for the classical forest path) is the
@@ -1286,7 +1288,12 @@ impl TurnExecutor {
         // — no second conservation implementation). A single-asset imbalance was
         // already caught by `excess != 0` above, so this fires only on the
         // cross-asset teleport that the scalar sum cannot see.
-        if let Err(err) = Self::check_per_asset_conservation_by_asset(&asset_deltas, &[]) {
+        //
+        // ⚑ AND THE CLASS IS ONE ~31-BIT FELT. `check_per_asset_conservation_by_asset_id`
+        // is handed the 32-BYTE ids and REFUSES the turn outright if two distinct
+        // currencies fold to one class — a check that is impossible one line later,
+        // and impossible for the Lean decider, which is handed the folded `u32`.
+        if let Err(err) = Self::check_per_asset_conservation_by_asset_id(&asset_deltas, &[]) {
             journal.rollback(
                 ledger,
                 &self.bridged_nullifiers,
@@ -1317,9 +1324,23 @@ impl TurnExecutor {
                 super::atomic::AtomicTurnError::ConservationGateUnavailable => {
                     TurnError::ConservationGateUnavailable
                 }
-                // `check_per_asset_conservation_by_asset` returns only those two;
-                // any other variant is a contract break, surfaced as a plain
-                // conservation failure.
+                // TWO DISTINCT CURRENCIES AT ONE ~31-BIT CLASS. Surfaced as
+                // ITSELF, never collapsed into a conservation "violation": the
+                // turn's arithmetic may be perfect; the PARTITION it would be
+                // judged under merges two assets, so no verdict taken over it
+                // means anything. See `fold_token_id_to_asset`.
+                super::atomic::AtomicTurnError::AssetClassCollision {
+                    first,
+                    second,
+                    class,
+                } => TurnError::AssetClassCollision {
+                    first,
+                    second,
+                    class,
+                },
+                // `check_per_asset_conservation_by_asset_id` returns only those
+                // three; any other variant is a contract break, surfaced as a
+                // plain conservation failure.
                 _ => TurnError::ExcessNotZero { excess },
             };
             return TurnResult::Rejected {

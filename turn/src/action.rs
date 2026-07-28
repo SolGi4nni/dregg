@@ -1020,8 +1020,11 @@ pub struct ShieldedTransferPayload {
 /// that they compose into global conservation**: nothing shows the channels
 /// exhaust the ways value moves, nor that they are disjoint in the resource
 /// they move. Concretely, #2/#3 key assets on a lossy 32-byte→31-bit
-/// `fold_token_id_to_asset`, while #4 keys on the effect's own cleartext
-/// `asset_type: u64` — two incomparable namespaces. See `HORIZONLOG.md` B2 for
+/// `fold_token_id_to_asset` (~2^30.87 classes, a 2^15.67 birthday grind — the
+/// executor now REFUSES a turn whose committed asset ids collide,
+/// `executor::atomic::refuse_colliding_asset_classes`, but a ledgerless light
+/// client still partitions on the bare felt), while #4 keys on the effect's own
+/// cleartext `asset_type: u64` — two incomparable namespaces. See `HORIZONLOG.md` B2 for
 /// the full statement and the four pairwise holes. Do not read this note as
 /// saying conservation is closed; it says the effect *color* was never part of
 /// it.

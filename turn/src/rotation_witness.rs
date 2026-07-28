@@ -100,6 +100,14 @@ pub struct RotationWitness {
     /// `EffectVmContext.asset_class` so the proof COMMITS to its genuine asset
     /// class, making the light-client per-asset partition non-trivial for
     /// multi-asset turns.
+    ///
+    /// ⚑ "Genuine asset class" is ~2^30.87 classes wide, not 2^256: the fold maps
+    /// 32 bytes onto ONE felt, so two DISTINCT currencies collide after a 2^15.67
+    /// grind and their conservation sums silently merge. The executor refuses a
+    /// turn whose committed ids collide
+    /// (`executor::atomic::refuse_colliding_asset_classes`); a light client
+    /// reading only this felt cannot. See
+    /// `dregg_circuit::block_conservation::fold_token_id_to_asset`.
     pub asset_class: BabyBear,
 }
 

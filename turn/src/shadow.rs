@@ -120,16 +120,27 @@ impl ShadowHostCtx {
     }
 }
 
-/// The dependency-inversion seam for the verified-Lean shadow/gate executor.
+/// The dependency-inversion seam for the verified-Lean shadow OBSERVER.
 ///
 /// The production execute path ([`TurnExecutor::execute`](crate::executor::TurnExecutor::execute))
-/// drives the 5-step shadow flow through this trait so `dregg-turn` never links the FFI directly:
+/// drives the 3-step differential flow through this trait so `dregg-turn` never links the FFI
+/// directly:
 ///
 /// 1. [`enabled`](ShadowObserver::enabled) — is the shadow on (`DREGG_LEAN_SHADOW=1`)?
 /// 2. [`capture_pre_state`](ShadowObserver::capture_pre_state) — snapshot the pre-state + host ctx.
-/// 3. [`strict_veto_enabled`](ShadowObserver::strict_veto_enabled) — is the binding-reject gate on?
-/// 4. [`observe`](ShadowObserver::observe) — run the verified Lean executor; return its commit bit.
-/// 5. [`lean_vetoes`](ShadowObserver::lean_vetoes) — does the verified verdict VETO the Rust commit?
+/// 3. [`observe`](ShadowObserver::observe) — run the verified Lean executor and report divergence.
+///
+/// ⚑ **THIS SEAM DECIDES NOTHING.** `observe` is side-effect-free with respect to the `TurnResult`;
+/// the executor does not consult it to commit or reject. The verified Lean executor is the
+/// AUTHORITATIVE decision-maker on the *other* seam — `dregg_exec_lean::lean_apply::produce_via_lean`
+/// (THE SWAP authority inversion, default-ON via `DREGG_LEAN_PRODUCER`), which installs the verified
+/// post-state and verdict, and which owns the reject-side rollback of executor side state
+/// (`checkpoint_producer_reference` / `rollback_producer_reference`).
+///
+/// A binding `strict_veto_enabled` / `lean_vetoes` pair lived here until 2026-07-28. It was set by
+/// nothing but its own test, it was dominated by the producer inversion, and its rollback was
+/// INCOMPLETE — it restored the ledger but left the agent's receipt-chain head advanced to a receipt
+/// that was never issued, bricking the agent. It is deleted; see `dregg_exec_lean::lean_shadow`.
 ///
 /// The native node injects `dregg_exec_lean::LeanShadowObserver`; everyone else gets
 /// [`NoOpShadowObserver`].
@@ -145,40 +156,16 @@ pub trait ShadowObserver: Send + Sync {
     /// admission context (clock / freeze-set / stored head / budget) — the bug-1 seam.
     fn capture_pre_state(&self, turn: &Turn, ledger: &Ledger, host: ShadowHostCtx);
 
-    /// Whether strict mode is on — the verified Lean executor is a binding REJECTION authority.
-    fn strict_veto_enabled(&self) -> bool;
-
-    /// Run the verified Lean executor against the just-produced Rust `result` and return the Lean
-    /// commit bit (`Some(committed)`), or `None` when the turn was not comparable (FFI off / GAP /
-    /// marshal failure). Side-effecting diagnostics only — never changes `result`.
-    fn observe(
-        &self,
-        turn: &Turn,
-        ledger: &Ledger,
-        result: &TurnResult,
-        block_height: u64,
-    ) -> Option<bool>;
-
-    /// Decide whether the verified Lean verdict VETOES a Rust commit. Returns `true` ONLY when strict
-    /// mode is on, the turn was COMPARABLE (`lean_verdict = Some(_)`), the Rust executor COMMITTED, and
-    /// the verified Lean executor REJECTED. A `None` verdict (GAP / FFI off) NEVER vetoes (we cannot
-    /// veto what we did not compare). The veto is one-directional: `lean=false ∧ rust=true` only.
-    fn lean_vetoes(&self, rust_committed: bool, lean_verdict: Option<bool>) -> bool;
-
-    /// The theorem-backed admission REASON the verified executor reported for the last
-    /// [`observe`](Self::observe)d turn, if the verified wire carried one (the legible "why" of a
-    /// refusal). `None` when there is no reason to surface — the turn was not comparable
-    /// (FFI off / GAP / marshal failure), the legacy no-`reason` wire was decoded, or the turn was
-    /// admitted (the body's success/rollback is then the relevant outcome, not admission). The
-    /// default (no-op observer) returns `None` — "no reason" is then a visible platform fact.
-    fn admission_reason(&self) -> Option<crate::AdmissionReason> {
-        None
-    }
+    /// Run the verified Lean executor against the just-produced Rust `result` and report any
+    /// divergence. DIAGNOSTIC ONLY — it must never change `result`, and the executor discards
+    /// whatever it learns. (The observer may also advance observer-owned cross-turn accumulators;
+    /// `dregg_exec_lean` advances its durable nullifier frontier here.)
+    fn observe(&self, turn: &Turn, ledger: &Ledger, result: &TurnResult, block_height: u64);
 }
 
 /// The default shadow observer for every executor that is NOT a native Lean-linked node: it
-/// compares nothing, captures nothing, and never vetoes. The wasm / no-FFI path gets this, making
-/// "no shadow" a visible platform fact rather than a silent omission.
+/// compares nothing and captures nothing. The wasm / no-FFI path gets this, making "no shadow" a
+/// visible platform fact rather than a silent omission.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NoOpShadowObserver;
 
@@ -189,21 +176,5 @@ impl ShadowObserver for NoOpShadowObserver {
 
     fn capture_pre_state(&self, _turn: &Turn, _ledger: &Ledger, _host: ShadowHostCtx) {}
 
-    fn strict_veto_enabled(&self) -> bool {
-        false
-    }
-
-    fn observe(
-        &self,
-        _turn: &Turn,
-        _ledger: &Ledger,
-        _result: &TurnResult,
-        _block_height: u64,
-    ) -> Option<bool> {
-        None
-    }
-
-    fn lean_vetoes(&self, _rust_committed: bool, _lean_verdict: Option<bool>) -> bool {
-        false
-    }
+    fn observe(&self, _turn: &Turn, _ledger: &Ledger, _result: &TurnResult, _block_height: u64) {}
 }

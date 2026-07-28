@@ -629,6 +629,35 @@ pub enum TurnError {
     /// identifies the malformed declaration, missing/misordered write, wrong
     /// target/index/value, or non-canonical public input.
     CustomAppWriteBindingMismatch { index: usize, reason: String },
+
+    /// TWO DISTINCT COMMITTED ASSET IDS IN ONE TURN FOLD TO ONE CONSERVATION
+    /// CLASS. The per-asset partition keys on
+    /// `dregg_circuit::block_conservation::fold_token_id_to_asset`, which maps 32
+    /// bytes onto ONE `BabyBear` — ~2^30.87 classes, a 2^15.67 birthday grind. Two
+    /// currencies sharing a class would let the turn borrow across them
+    /// invisibly: `asset A −10, asset B +10` sums to zero WITHIN the merged class,
+    /// and everything downstream of the fold agrees, including the verified Lean
+    /// decider (which is handed the folded `u32`).
+    ///
+    /// REFUSED, not "violated": the turn's arithmetic may be perfect per genuine
+    /// asset. What is wrong is the partition it would be judged under, and the
+    /// only place that is visible is in the executor, which still holds both
+    /// 32-byte ids (`executor::atomic::refuse_colliding_asset_classes`).
+    ///
+    /// ⚠ APPENDED AT THE END ON PURPOSE — it belongs next to
+    /// `PerAssetConservationViolation` and cannot go there. This enum derives
+    /// `Serialize`/`Deserialize` and the repo encodes with postcard, which tags
+    /// enum variants by INDEX: inserting mid-enum renumbers every later variant,
+    /// so an already-persisted `TurnError` would decode as a DIFFERENT error
+    /// instead of refusing to load. Appending breaks nothing.
+    AssetClassCollision {
+        /// The lexicographically smaller colliding asset id.
+        first: [u8; 32],
+        /// The lexicographically larger colliding asset id.
+        second: [u8; 32],
+        /// The single class both ids fold to.
+        class: u32,
+    },
 }
 
 /// Operational classification of a refusal, for the security observability
@@ -821,6 +850,29 @@ impl core::fmt::Display for TurnError {
                      ConservationOracle is installed — REFUSING the turn rather than deciding with the \
                      unverified Rust BlockConservation twin. Install/refresh libdregg_lean.a (see \
                      scripts/bootstrap.sh or scripts/fetch-lean-seed.sh)"
+                )
+            }
+            TurnError::AssetClassCollision {
+                first,
+                second,
+                class,
+            } => {
+                write!(
+                    f,
+                    "asset-class collision: distinct asset ids \
+                     {:02x}{:02x}{:02x}{:02x}… and {:02x}{:02x}{:02x}{:02x}… both fold to class \
+                     {class} — REFUSING the turn rather than judging two currencies under one \
+                     per-asset partition (fold_token_id_to_asset maps 32 bytes onto one ~31-bit \
+                     felt; cross-asset borrowing inside a merged class is invisible to every \
+                     consumer downstream of the fold, Lean included)",
+                    first[0],
+                    first[1],
+                    first[2],
+                    first[3],
+                    second[0],
+                    second[1],
+                    second[2],
+                    second[3]
                 )
             }
             TurnError::BalanceChangeUnderflow {

@@ -894,8 +894,10 @@ pub mod v3 {
 
     /// ASSET_CLASS — the per-cell asset / issuer-cell class (dregg3: AssetId :=
     /// issuer-cell), as a single field element folded from the cell's committed
-    /// `token_id` (`fold_token_id_to_asset` in `dregg_turn`, the exact fold the
-    /// executor's per-asset collector already uses). Lean: `PiV3.ASSET_CLASS`.
+    /// `token_id` (`crate::block_conservation::fold_token_id_to_asset`, the exact
+    /// fold the executor's per-asset collector already uses; `dregg_turn`'s
+    /// `TurnExecutor::fold_token_id_to_asset` just delegates to it). Lean:
+    /// `PiV3.ASSET_CLASS`.
     ///
     /// WHY THIS SLOT EXISTS (light-client conservation soundness). The per-asset
     /// cross-cell conservation gate (`block_conservation::BlockConservation`)
@@ -914,6 +916,21 @@ pub mod v3 {
     /// `PI[ASSET_CLASS]` directly, so per-asset Σδ=0 is enforced WITHOUT a
     /// ledger. Single felt: matches the collector's per-asset partition key
     /// (`PerCellContribution::asset`).
+    ///
+    /// ⚑ AND "SINGLE FELT" IS THE WOUND, not just a layout note. One `BabyBear`
+    /// is ~2^30.87 classes, so two DISTINCT 32-byte asset ids land in one class
+    /// after a 2^15.67 birthday grind, and cross-asset borrowing between them is
+    /// invisible to everything reading this slot — including the verified Lean
+    /// `Σδ=0` decider, which is handed the folded class. The executor refuses a
+    /// turn whose committed ids collide
+    /// (`turn::executor::atomic::refuse_colliding_asset_classes`), which is
+    /// possible only because IT still holds the pre-fold ids; a ledgerless light
+    /// client reading this slot has no such recourse. Making the partition
+    /// genuinely collision-resistant means widening THIS SLOT (and the row-0
+    /// `aux_off::ASSET_CLASS` column, and the committed
+    /// `Dregg2.Circuit.CrossCellConservation` asset column) to a multi-felt asset
+    /// commitment — Lean-authored, and a PI-layout flag day. See
+    /// `crate::block_conservation::fold_token_id_to_asset`.
     pub const ASSET_CLASS: usize = BASE_COUNT + 3;
     /// The v3 base count (Lean: `PiV3.V3_BASE_COUNT`). At the cutover,
     /// `VK_PI_LAYOUT_VERSION` bumps 2 → 3 and `CUSTOM_PROOFS_BASE` moves here.

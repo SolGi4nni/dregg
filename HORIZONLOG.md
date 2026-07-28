@@ -187,6 +187,20 @@ and in every debug binary and dev node.** The oracle path keeps `i64` (`:453`); 
 fallback-only.
 
 **A6 · THE CONSERVATION PARTITION KEY IS FOUR BYTES. LIVE.**
+
+> ✅ **FIXED 2026-07-28** — all FOUR row-producing sites refuse a scope whose distinct committed
+> asset ids fold to one class: `execute.rs:1296` (main turn path), `atomic.rs:1160` (atomic
+> sovereign), `atomic.rs:1715` (mixed), and the ledger entry point `atomic.rs:461`, via
+> `assert_asset_classes_injective` (`block_conservation.rs:224`). ⚠ Two corrections to the finding
+> above: the **truncation is real but is NOT the binding constraint** — the destination is one
+> `BabyBear` (`p < 2^31`), so a wider hash key is a no-op and only a WIDER COLUMN (Lean-authored,
+> PI flag day) adds classes; and the oracle hand-off is `atomic.rs:604`, not `:453`. Measured:
+> **2^30.87 effective classes** (image is all of `[0,p)`; 1.025× worse than uniform over `p`) and a
+> **28,681-fold driven collision** against an analytic 50% birthday of 52,172 (2^15.67).
+> ⚠ The **light-client / bundle leg is NOT covered** — `proof_verify.rs::check_bundle_per_asset_conservation`
+> has no ledger and only sees the felt (and is already weaker for a larger reason: nothing in-AIR
+> binds `PI[v3::ASSET_CLASS]` to a cell's committed asset bytes).
+
 `circuit/src/block_conservation.rs:88-92` — `fold_token_id_to_asset` takes `h[0..4]` of a BLAKE3
 `derive_key` and reduces mod p (~2^31 classes), with the doc directly above calling it
 *"collision-resistant-to-the-field-modulus"*. No collision check exists; two asset ids that fold

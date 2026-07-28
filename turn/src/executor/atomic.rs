@@ -176,6 +176,33 @@ pub enum AtomicTurnError {
     HostedApplyFailed { cell: CellId, reason: String },
     /// The agent's nonce overflowed u64::MAX (P2-2 guard).
     NonceOverflow(CellId),
+    /// TWO DISTINCT COMMITTED ASSET IDS IN ONE CONSERVATION SCOPE FOLD TO ONE
+    /// CLASS. The per-asset partition keys on `fold_token_id_to_asset`, which maps
+    /// 32 bytes onto ONE `BabyBear` (~2^30.87 classes, a 2^15.67 birthday grind).
+    /// Two currencies sharing a class would let this turn borrow across them
+    /// invisibly — asset A `−10`, asset B `+10` sums to zero within the merged
+    /// class, and every consumer downstream of the fold (including the verified
+    /// Lean decider, which is handed the folded `u32`) agrees.
+    ///
+    /// A collision cannot be seen from the class, so it is refused HERE, where the
+    /// executor still holds both 32-byte ids. This is a WITNESS-GENERATION FAULT,
+    /// not a conservation violation: the turn may well conserve per genuine asset;
+    /// the partition it would be judged under is wrong.
+    ///
+    /// ⚠ APPENDED AT THE END ON PURPOSE. This enum derives `Serialize`/
+    /// `Deserialize` and the repo encodes with postcard, which tags enum variants
+    /// by INDEX — inserting this next to the other conservation variants (where it
+    /// reads better) would renumber every variant after it, so an
+    /// already-persisted value would decode as a DIFFERENT error rather than
+    /// refusing to load. Appending costs nothing and breaks nothing.
+    AssetClassCollision {
+        /// The lexicographically smaller colliding asset id.
+        first: [u8; 32],
+        /// The lexicographically larger colliding asset id.
+        second: [u8; 32],
+        /// The single class both fold to.
+        class: u32,
+    },
 }
 
 impl core::fmt::Display for AtomicTurnError {
@@ -217,6 +244,27 @@ impl core::fmt::Display for AtomicTurnError {
                  (stale/absent libdregg_lean.a, or dregg-exec-lean never registered it) — REFUSING \
                  the turn rather than deciding the asset-inflation boundary with the unverified Rust \
                  BlockConservation twin"
+            ),
+            Self::AssetClassCollision {
+                first,
+                second,
+                class,
+            } => write!(
+                f,
+                "asset-class collision in one conservation scope: distinct asset ids \
+                 {:02x}{:02x}{:02x}{:02x}… and {:02x}{:02x}{:02x}{:02x}… both fold to class {} — \
+                 REFUSING the turn rather than judging two currencies under one per-asset \
+                 partition (the fold is 32 bytes onto one ~31-bit felt; see \
+                 dregg_circuit::block_conservation::fold_token_id_to_asset)",
+                first[0],
+                first[1],
+                first[2],
+                first[3],
+                second[0],
+                second[1],
+                second[2],
+                second[3],
+                class
             ),
             Self::AgentNotFound(id) => write!(f, "agent cell not found: {}", id),
             Self::InsufficientFee {
@@ -295,6 +343,19 @@ impl TurnExecutor {
     // falls back to the executor's trusted ledger class — sound for the
     // executor, but the pure light-client partition stays trivial for those
     // legs until every prover leg populates the class.
+    //
+    // ⚑ AND THE CLASS IS ONE ~31-BIT FELT (2026-07-28). `fold_token_id_to_asset`
+    // maps a 32-byte asset id onto one `BabyBear`: ~2^30.87 classes, a 2^15.67
+    // birthday grind for two DISTINCT currencies at one class — at which point
+    // cross-asset borrowing between them sums to zero WITHIN the merged class and
+    // is invisible. Routing through Lean does not help: the oracle is handed the
+    // already-folded `u32` (`check_per_asset_conservation_by_asset`), so it
+    // decides Σδ=0 correctly over classes that were wrong before it saw them.
+    // The refusal is `refuse_colliding_asset_classes` /
+    // `check_per_asset_conservation_by_asset_id`, run at every site that still
+    // holds the pre-fold ids; a wider HASH would be a no-op (the width is the
+    // destination felt), and a wider COLUMN is Lean-authored + a PI flag day.
+    // See `dregg_circuit::block_conservation::fold_token_id_to_asset`.
 
     /// Derive the asset / issuer-cell class for a cell from its committed
     /// `asset` (dregg3: AssetId := issuer-cell). Folds the 32-byte asset id
@@ -310,11 +371,53 @@ impl TurnExecutor {
         ledger: &Ledger,
         cell: &CellId,
     ) -> dregg_circuit::field::BabyBear {
-        let asset: [u8; 32] = ledger
+        Self::fold_token_id_to_asset(&Self::asset_id_for_cell(ledger, cell))
+    }
+
+    /// The cell's committed asset id BEFORE the fold — the 32 bytes the class is
+    /// derived from. This is the only place the pre-fold identity is still in
+    /// hand: past [`Self::asset_class_for_cell`] the id is gone and two distinct
+    /// currencies are indistinguishable. [`Self::refuse_colliding_asset_classes`]
+    /// is the reason this accessor exists.
+    pub(super) fn asset_id_for_cell(ledger: &Ledger, cell: &CellId) -> [u8; 32] {
+        ledger
             .get(cell)
             .map(|c| *c.asset().as_bytes())
-            .unwrap_or([0u8; 32]);
-        Self::fold_token_id_to_asset(&asset)
+            .unwrap_or([0u8; 32])
+    }
+
+    /// REFUSE a conservation scope in which two DISTINCT committed asset ids fold
+    /// to one `PI[v3::ASSET_CLASS]`.
+    ///
+    /// Runs over exactly the cells that produce conservation ROWS — the scope the
+    /// per-asset `Σδ=0` verdict is taken over — because that is the scope a
+    /// cross-asset borrow must fit inside: a lone `−10` leg in its own turn leaves
+    /// its class at `Σδ = −10` and is rejected on the spot, so both legs have to
+    /// be here, and so do both ids.
+    ///
+    /// ⚠ SUBSTRATE: this is RUST, verifier-side, and deliberately so. It changes
+    /// no constraint. The conservation CLASS definition and the `Σδ=0` decision
+    /// remain the Lean-authored `Dregg2.Circuit.CrossCellConservation` /
+    /// `conservesFFI`, untouched — what was wrong is the producer-side function
+    /// assigning a 32-byte ledger asset to that one-felt column, and this refuses
+    /// the assignments that are not injective. Making the column WIDE (so the
+    /// question cannot arise) is the Lean-authored change, and it is a PI-layout
+    /// flag day; see `dregg_circuit::block_conservation::fold_token_id_to_asset`.
+    pub(super) fn refuse_colliding_asset_classes<'a>(
+        ledger: &Ledger,
+        cells: impl IntoIterator<Item = &'a CellId>,
+    ) -> Result<(), AtomicTurnError> {
+        let ids: Vec<[u8; 32]> = cells
+            .into_iter()
+            .map(|c| Self::asset_id_for_cell(ledger, c))
+            .collect();
+        dregg_circuit::block_conservation::assert_asset_classes_injective(&ids).map_err(|c| {
+            AtomicTurnError::AssetClassCollision {
+                first: c.first,
+                second: c.second,
+                class: c.class,
+            }
+        })
     }
 
     /// Fold a 32-byte `token_id` to a single asset-class field element.
@@ -358,9 +461,50 @@ impl TurnExecutor {
         // path; it just resolves the asset class from the trusted ledger token_id rather than a
         // proof-bound PI. `BlockConservation` now lives ONLY in `unverified_rust_conservation_fallback`
         // (the labeled no-Lean-guest degradation, reached only when no oracle is installed).
-        let by_asset: Vec<(dregg_circuit::field::BabyBear, i64)> = entries
+        let by_asset_id: Vec<([u8; 32], i64)> = entries
             .iter()
-            .map(|(cell_id, delta)| (Self::asset_class_for_cell(ledger, cell_id), *delta))
+            .map(|(cell_id, delta)| (Self::asset_id_for_cell(ledger, cell_id), *delta))
+            .collect();
+        Self::check_per_asset_conservation_by_asset_id(&by_asset_id, declared_supply)
+    }
+
+    /// THE PER-ASSET GATE, KEYED BY THE 32-BYTE ASSET ID rather than by the felt
+    /// class — the entry point for every caller that still HOLDS the pre-fold id.
+    ///
+    /// It does two things in the only order that works:
+    ///
+    /// 1. REFUSES the scope if two DISTINCT ids fold to one class
+    ///    ([`Self::refuse_colliding_asset_classes`]'s arithmetic, over ids the
+    ///    caller resolved). Past this line the ids are gone and two currencies at
+    ///    one class are indistinguishable — to this gate, to the committed
+    ///    per-asset AIR, and to the verified Lean decider, all of which see only
+    ///    the felt.
+    /// 2. Folds and delegates to [`Self::check_per_asset_conservation_by_asset`],
+    ///    which routes the `Σδ=0` verdict to the installed Lean oracle.
+    ///
+    /// Callers keyed by the PROOF-BOUND class (`PI[v3::ASSET_CLASS]`) cannot use
+    /// this — they never had the id — and call
+    /// `refuse_colliding_asset_classes` against their ledger separately.
+    pub(super) fn check_per_asset_conservation_by_asset_id(
+        rows: &[([u8; 32], i64)],
+        declared_supply: &[dregg_circuit::block_conservation::DeclaredSupplyChange],
+    ) -> Result<(), AtomicTurnError> {
+        let ids: Vec<[u8; 32]> = rows.iter().map(|(asset, _)| *asset).collect();
+        dregg_circuit::block_conservation::assert_asset_classes_injective(&ids).map_err(|c| {
+            AtomicTurnError::AssetClassCollision {
+                first: c.first,
+                second: c.second,
+                class: c.class,
+            }
+        })?;
+        let by_asset: Vec<(dregg_circuit::field::BabyBear, i64)> = rows
+            .iter()
+            .map(|(asset, delta)| {
+                (
+                    dregg_circuit::block_conservation::fold_token_id_to_asset(asset),
+                    *delta,
+                )
+            })
             .collect();
         Self::check_per_asset_conservation_by_asset(&by_asset, declared_supply)
     }
@@ -428,6 +572,14 @@ impl TurnExecutor {
     /// bundle path uses THIS variant because it has no ledger; the executor
     /// uses it too (after reconciling the proof-bound class against its trusted
     /// ledger token_id) so both paths partition identically.
+    ///
+    /// ⚑ THE CLASS IS ALREADY FOLDED HERE, so a colliding pair is already merged
+    /// and NOTHING below this line — not this function, not the committed AIR,
+    /// not the verified Lean decider — can tell two currencies apart. A caller
+    /// that still HOLDS the 32-byte ids must go through
+    /// [`Self::check_per_asset_conservation_by_asset_id`], or call
+    /// [`Self::refuse_colliding_asset_classes`] against its ledger first; the
+    /// bundle path cannot, and that is a stated residual.
     pub(super) fn check_per_asset_conservation_by_asset(
         entries: &[(dregg_circuit::field::BabyBear, i64)],
         declared_supply: &[dregg_circuit::block_conservation::DeclaredSupplyChange],
@@ -1006,6 +1158,16 @@ impl TurnExecutor {
         //    collector. An AtomicSovereignTurn carries no declared mint/burn
         //    rows, so a hidden mint within any asset (or any cross-asset
         //    borrowing) is rejected.
+        //    ⚑ AND THE PARTITION KEY ITSELF IS ~31 BITS. `PI[v3::ASSET_CLASS]` is
+        //    one felt folded from a 32-byte asset id, so two DISTINCT currencies
+        //    can share a class (2^15.67 birthday grind) and borrow across each
+        //    other invisibly — the folded class is all the gate, and the verified
+        //    Lean decider behind it, ever sees. The executor still holds both
+        //    32-byte ids at this point, so it refuses the scope first.
+        Self::refuse_colliding_asset_classes(
+            ledger,
+            atomic_turn.proofs.iter().map(|entry| &entry.cell_id),
+        )?;
         let conservation_entries: Vec<(dregg_circuit::field::BabyBear, i64)> = proven_assets
             .iter()
             .copied()
@@ -1544,15 +1706,34 @@ impl TurnExecutor {
         // executor-bound, not proof-bound — the stated residual for a PURELY
         // light-client mixed-turn (no ledger); the sovereign side is fully
         // proof-bound.
-        let mut conservation_entries: Vec<(dregg_circuit::field::BabyBear, i64)> = sovereign_assets
+        //
+        // ⚑ AND BEFORE ANY OF IT: the partition key is one ~31-bit felt folded
+        // from a 32-byte asset id, so two DISTINCT currencies can share a class
+        // (2^15.67 birthday grind) and the "independently" above silently becomes
+        // "jointly" for that pair. Refuse the scope while both ids are still in
+        // hand — `sorted` so the reported pair does not depend on `HashMap` order.
+        let mut scope_cells: Vec<CellId> = mixed_turn
+            .sovereign_entries
             .iter()
-            .copied()
-            .zip(sovereign_deltas.iter().copied())
+            .map(|entry| entry.cell_id)
+            .chain(hosted_cell_deltas.keys().copied())
             .collect();
-        for (cell_id, delta) in &hosted_cell_deltas {
-            conservation_entries.push((Self::asset_class_for_cell(ledger, cell_id), *delta));
-        }
-        if let Err(e) = Self::check_per_asset_conservation_by_asset(&conservation_entries, &[]) {
+        scope_cells.sort_unstable();
+        let conservation_verdict = Self::refuse_colliding_asset_classes(ledger, scope_cells.iter())
+            .and_then(|()| {
+                let mut conservation_entries: Vec<(dregg_circuit::field::BabyBear, i64)> =
+                    sovereign_assets
+                        .iter()
+                        .copied()
+                        .zip(sovereign_deltas.iter().copied())
+                        .collect();
+                for (cell_id, delta) in &hosted_cell_deltas {
+                    conservation_entries
+                        .push((Self::asset_class_for_cell(ledger, cell_id), *delta));
+                }
+                Self::check_per_asset_conservation_by_asset(&conservation_entries, &[])
+            });
+        if let Err(e) = conservation_verdict {
             // Roll back ALL hosted mutations before returning.
             journal.rollback(
                 ledger,
@@ -3106,5 +3287,186 @@ mod hardening_tests {
             }
             other => panic!("cross-asset borrow must be rejected, got {:?}", other),
         }
+    }
+
+    // =======================================================================
+    // ⚑ THE PARTITION KEY IS ~31 BITS — the driven collision, executor side
+    // =======================================================================
+    //
+    // `PI[v3::ASSET_CLASS]` is `fold_token_id_to_asset(cell.asset())`: 32 bytes
+    // onto ONE `BabyBear`, ~2^30.87 classes. Two DISTINCT currencies at one class
+    // let a turn borrow across them, and NOTHING downstream of the fold can see
+    // it — the verified Lean decider is handed the folded `u32`
+    // (`check_per_asset_conservation_by_asset`), so it answers `Σδ=0` correctly
+    // over classes that were already wrong. The colliding pair below is the one
+    // `dregg_circuit::block_conservation::driven_fold_collision_is_cheap` finds
+    // (28,681 folds; analytic 50% birthday 52,172 = 2^15.67); it is re-verified at
+    // runtime here, so this is a real collision, not a magic constant.
+
+    /// The two colliding 32-byte asset ids, written out rather than derived from
+    /// a counter: `fn(u64) -> [u8; 32]` is the SHAPE of a `fields[]` encoder and
+    /// `circuit/tests/setfield_encoder_window_gate.rs` correctly refuses one that
+    /// writes below byte 24. These are asset IDS, never field values, and the
+    /// property that matters is asserted at runtime below, not by construction.
+    /// They are counters 2542 and 28680 of the circuit-side grinder
+    /// (`block_conservation::grind_colliding_asset_ids`).
+    const GROUND_ASSET_A: [u8; 32] = [
+        0xEE, 0x09, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0,
+    ];
+    const GROUND_ASSET_B: [u8; 32] = [
+        0x08, 0x70, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0,
+    ];
+
+    /// A permissive cell holding `balance` denominated in `asset` (32 bytes),
+    /// with a name salt distinct from the asset so `Cell::asset()` is the asset
+    /// and not the salt.
+    fn make_cell_in_raw_asset(seed: u8, asset: [u8; 32], balance: i64) -> Cell {
+        let mut pk = [0u8; 32];
+        pk[0] = seed;
+        let mut salt = [0u8; 32];
+        salt[0] = seed;
+        salt[31] = 0x5A;
+        let mut cell = Cell::with_balance(pk, salt, balance).in_asset(CellId(asset));
+        cell.permissions = permissive();
+        cell
+    }
+
+    /// VERBATIM PRE-FIX ORACLE. This is exactly what the executor did before the
+    /// refusal landed, and exactly what every consumer downstream of the fold
+    /// still does — including the Lean decider, whose input is the folded `u32`:
+    /// resolve each row's class through `asset_class_for_cell`, sum per class,
+    /// accept iff every class nets to zero. Kept in-test so the wound stays
+    /// demonstrated rather than resting on a git-history claim.
+    fn legacy_per_asset_verdict(
+        ledger: &Ledger,
+        entries: &[(CellId, i64)],
+    ) -> Result<(), (u32, i64)> {
+        use std::collections::BTreeMap;
+        let mut sums: BTreeMap<u32, i64> = BTreeMap::new();
+        for (cell_id, delta) in entries {
+            let class = TurnExecutor::asset_class_for_cell(ledger, cell_id).as_u32();
+            *sums.entry(class).or_insert(0) += *delta;
+        }
+        for (class, sum) in sums {
+            if sum != 0 {
+                return Err((class, sum));
+            }
+        }
+        Ok(())
+    }
+
+    /// ⚑ THE WOUND AND THE REFUSAL, DRIVEN OVER A REAL LEDGER.
+    ///
+    /// Two cells hold DISTINCT currencies whose ids collide under the fold. The
+    /// turn destroys 10 of one and mints 10 of the other. Pre-fix: accepted.
+    /// Post-fix: `AssetClassCollision`, before any conservation arithmetic runs.
+    #[test]
+    fn colliding_asset_classes_hide_cross_asset_borrowing_then_refused() {
+        let asset_a = GROUND_ASSET_A;
+        let asset_b = GROUND_ASSET_B;
+        assert_ne!(asset_a, asset_b, "the two currencies must be DISTINCT");
+
+        let class_a = dregg_circuit::block_conservation::fold_token_id_to_asset(&asset_a);
+        let class_b = dregg_circuit::block_conservation::fold_token_id_to_asset(&asset_b);
+        assert_eq!(
+            class_a, class_b,
+            "the ground collision must still hold: two distinct 32-byte assets, one class"
+        );
+
+        let mut ledger = Ledger::new();
+        let a = make_cell_in_raw_asset(0xA7, asset_a, 100);
+        let b = make_cell_in_raw_asset(0xB7, asset_b, 0);
+        let (a_id, b_id) = (a.id(), b.id());
+        ledger.insert_cell(a).unwrap();
+        ledger.insert_cell(b).unwrap();
+        assert_eq!(*ledger.get(&a_id).unwrap().asset().as_bytes(), asset_a);
+        assert_eq!(*ledger.get(&b_id).unwrap().asset().as_bytes(), asset_b);
+
+        // The forge: currency A short −10, currency B long +10. Distinct assets,
+        // so this is a mint of B funded by destroying A.
+        let forge = vec![(a_id, -10), (b_id, 10)];
+
+        // ── BEFORE: the class is all the gate ever sees, and it nets to zero. ──
+        assert_eq!(
+            legacy_per_asset_verdict(&ledger, &forge),
+            Ok(()),
+            "THE WOUND: two DISTINCT currencies merged into class {} — the borrow sums to \
+             zero and every consumer downstream of the fold, Lean included, agrees",
+            class_a.as_u32()
+        );
+
+        // The SAME forge over two NON-colliding assets is rejected, so the
+        // acceptance above is the collision and not a broken gate.
+        let mut clean = Ledger::new();
+        let c = make_asset_cell(0xC7, 7, 100);
+        let d = make_asset_cell(0xD8, 8, 0);
+        let (c_id, d_id) = (c.id(), d.id());
+        clean.insert_cell(c).unwrap();
+        clean.insert_cell(d).unwrap();
+        assert!(
+            legacy_per_asset_verdict(&clean, &[(c_id, -10), (d_id, 10)]).is_err(),
+            "cross-asset borrowing between DISTINCT classes is caught — the collision is \
+             what makes the identical forge invisible"
+        );
+
+        // ── AFTER: the executor still holds both 32-byte ids, and refuses. ──
+        match TurnExecutor::check_per_asset_conservation(&ledger, &forge, &[]) {
+            Err(AtomicTurnError::AssetClassCollision {
+                first,
+                second,
+                class,
+            }) => {
+                assert_eq!(class, class_a.as_u32());
+                let mut got = [first, second];
+                got.sort_unstable();
+                let mut want = [asset_a, asset_b];
+                want.sort_unstable();
+                assert_eq!(got, want, "the refusal must name BOTH colliding currencies");
+            }
+            other => panic!(
+                "a turn touching two distinct currencies at one class must be REFUSED, got {:?}",
+                other
+            ),
+        }
+    }
+
+    /// BOTH POLES, executor side: honest multi-asset traffic still commits.
+    ///
+    /// * Balanced traffic in two genuinely distinct, non-colliding assets — the
+    ///   refusal must not fire, and the turn must still pass the per-asset gate.
+    /// * Many cells of ONE asset — a repeated id is not a collision.
+    #[test]
+    fn asset_class_refusal_does_not_reject_honest_multi_asset_turns() {
+        let mut ledger = Ledger::new();
+        let a = make_asset_cell(0xA1, 7, 100);
+        let b = make_asset_cell(0xB1, 7, 0);
+        let c = make_asset_cell(0xC1, 8, 100);
+        let d = make_asset_cell(0xD1, 8, 0);
+        let (a_id, b_id, c_id, d_id) = (a.id(), b.id(), c.id(), d.id());
+        for cell in [a, b, c, d] {
+            ledger.insert_cell(cell).unwrap();
+        }
+
+        let balanced = vec![(a_id, -10), (b_id, 10), (c_id, -5), (d_id, 5)];
+        TurnExecutor::refuse_colliding_asset_classes(
+            &ledger,
+            balanced.iter().map(|(cell_id, _)| cell_id),
+        )
+        .expect("two distinct non-colliding assets must NOT be refused");
+        assert!(
+            TurnExecutor::check_per_asset_conservation(&ledger, &balanced, &[]).is_ok(),
+            "honest multi-asset traffic must still commit"
+        );
+
+        // One asset over four cells: the id repeats, which is not a collision.
+        let one_asset = vec![(a_id, -10), (b_id, 4), (a_id, 0), (b_id, 6)];
+        TurnExecutor::refuse_colliding_asset_classes(
+            &ledger,
+            one_asset.iter().map(|(cell_id, _)| cell_id),
+        )
+        .expect("ONE asset over many cells is not a collision");
+        assert!(TurnExecutor::check_per_asset_conservation(&ledger, &one_asset, &[]).is_ok());
     }
 }

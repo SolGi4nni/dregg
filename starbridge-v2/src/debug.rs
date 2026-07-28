@@ -277,6 +277,13 @@ fn classify(error: &TurnError) -> (GuardKind, Vec<CellId>) {
         // No cell to name: this one refuses before any target is resolved, because the
         // certificate's claimed introducer is not the key that signed it.
         CapTpIntroducerKeyMismatch { .. } => (GuardKind::Capability, vec![]),
+
+        // The conservation partition refuses a turn whose touched asset ids FOLD TO ONE CLASS —
+        // added with `assert_asset_classes_injective`. It names no cell because the defect is a
+        // property of the ASSET PAIR, not of any one cell's state: two currencies collide under
+        // `fold_token_id_to_asset` and the per-asset Σδ=0 gate would otherwise net them against
+        // each other. Classified as Conservation, which is the guard it protects.
+        AssetClassCollision { .. } => (GuardKind::Conservation, vec![]),
         BearerCapDelegatorLacksCapability { delegator, target } => {
             (GuardKind::Capability, vec![*delegator, *target])
         }

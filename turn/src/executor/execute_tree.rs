@@ -509,12 +509,19 @@ impl TurnExecutor {
         excess: &mut i64,
         // PER-ASSET conservation accumulator (closes the asset-blind `excess`
         // hole): every `balance_change` delta is pushed as
-        // `(target-cell asset class, delta)` — the class resolved from the
-        // target's committed `token_id` at APPLY time, while the cell provably
-        // exists. The turn-end gate requires EACH asset's Σδ == 0 independently,
-        // so a cross-asset net-zero teleport is REFUSED even though `excess` sums
-        // to 0.
-        asset_deltas: &mut Vec<(dregg_circuit::field::BabyBear, i64)>,
+        // `(target-cell 32-byte asset id, delta)` — the id read from the target's
+        // committed `Cell::asset()` at APPLY time, while the cell provably exists.
+        // The turn-end gate requires EACH asset's Σδ == 0 independently, so a
+        // cross-asset net-zero teleport is REFUSED even though `excess` sums to 0.
+        //
+        // ⚑ THE 32-BYTE ID, NOT THE FOLDED CLASS. The partition key the gate
+        // finally uses is `fold_token_id_to_asset(id)`, one ~31-bit `BabyBear`, so
+        // two DISTINCT currencies can share a class (2^15.67 birthday grind) and
+        // borrow across each other invisibly. Folding HERE threw the only evidence
+        // away; carrying the id to the gate lets it refuse the scope
+        // (`check_per_asset_conservation_by_asset_id`). The fold is pure, so
+        // deferring it changes no class.
+        asset_deltas: &mut Vec<([u8; 32], i64)>,
         turn_nonce: u64,
         turn_agent: &CellId,
         // The turn's pre-execution INPUT hash (`wake.hash()` / `turn.hash()`),
@@ -1038,14 +1045,15 @@ impl TurnExecutor {
             })?;
 
             // PER-ASSET conservation: record this delta under the target cell's
-            // committed asset class (`token_id` fold). The scalar `excess` above
-            // is asset-BLIND — a +N on cell(token X) against a −N on a
-            // self-issued cell(token Y) nets `excess` to 0 and would mint X out
-            // of worthless Y. Grouping by asset (resolved from the ledger HERE,
-            // where the target provably exists) lets the turn-end gate reject any
-            // asset whose Σδ ≠ 0 independently. Reuses the atomic path's asset
-            // fold — no second conservation impl.
-            let asset = Self::asset_class_for_cell(ledger, &action.target);
+            // committed asset ID. The scalar `excess` above is asset-BLIND — a +N
+            // on cell(token X) against a −N on a self-issued cell(token Y) nets
+            // `excess` to 0 and would mint X out of worthless Y. Grouping by asset
+            // (resolved from the ledger HERE, where the target provably exists)
+            // lets the turn-end gate reject any asset whose Σδ ≠ 0 independently.
+            // Reuses the atomic path's asset resolution — no second conservation
+            // impl. The 32 BYTES, not the fold: the gate needs both to refuse a
+            // colliding pair (see the parameter's doc).
+            let asset = Self::asset_id_for_cell(ledger, &action.target);
             asset_deltas.push((asset, delta));
         }
 
