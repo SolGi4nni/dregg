@@ -516,7 +516,7 @@ has been the reason to care about exactly that distinction.
 
 *2026-07-28. §3.8 measured one permutation. A FRI verifier never buys one permutation; it buys
 **openings**, and an opening is not `depth × 2,600.5`. `bridge/mina-zkapp/src/Poseidon2Merkle.ts`,
-measured by `scripts/poseidon2-merkle-rows.ts` (`npm run poseidon2-merkle`).*
+measured by `bridge/mina-zkapp/scripts/poseidon2-merkle-rows.ts` (`npm run poseidon2-merkle`).*
 
 > ## **2,677 Kimchi rows per Merkle level. 58,971 rows for the deployed depth-22 opening.**
 >
@@ -562,7 +562,7 @@ rows/depth-22-opening and rows/sponge-block.
 
 ### 3.10 ⚑ MEASURED — one whole FRI QUERY at the deployed geometry
 
-*2026-07-28. `bridge/mina-zkapp/src/FriQueryStep.ts`, measured by `scripts/fri-query-rows.ts`
+*2026-07-28. `bridge/mina-zkapp/src/FriQueryStep.ts`, measured by `bridge/mina-zkapp/scripts/fri-query-rows.ts`
 (`npm run fri-query`). This is `verify_query` (`vendor/plonky3-fri-82cfad73/src/verifier.rs:363`)
 at `|D⁰| = 2^22`, `max_log_arity = 1`, 16 commit-phase layers, `cap_height = 0`.*
 
@@ -652,7 +652,7 @@ rows each. That is exactly why the set is closed and why the 8-flag Feature-Flag
 
 ### 3.12 ⚑ MEASURED — the CHALLENGER, and why it outranks every row count here
 
-*2026-07-28. `bridge/mina-zkapp/src/FriChallenger.ts`, measured by `scripts/fri-challenger-rows.ts`
+*2026-07-28. `bridge/mina-zkapp/src/FriChallenger.ts`, measured by `bridge/mina-zkapp/scripts/fri-challenger-rows.ts`
 (`npm run fri-challenger`). This is `DuplexChallenger<BabyBear, Poseidon2BabyBear<16>, 16, 8>`
 running exactly the schedule `p3_fri::verifier::verify_fri` runs at the deployed knobs.*
 
@@ -750,7 +750,7 @@ happens to land within 2% of 62,637 still fails.
 ### 3.13 ⚑ MEASURED — the COMMIT PHASE as ONE object, and the defect that found
 
 *2026-07-28. `verifyCommitPhase` in `bridge/mina-zkapp/src/FriQueryStep.ts`, measured by
-`scripts/fri-chain-rows.ts` (`npm run fri-chain`).*
+`bridge/mina-zkapp/scripts/fri-chain-rows.ts` (`npm run fri-chain`).*
 
 > ## **623,310 rows for one query's whole 16-layer commit phase. 45,186 with the paths capped — which FITS, and PROVES.**
 

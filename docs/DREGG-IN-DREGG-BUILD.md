@@ -130,7 +130,7 @@ The settlement does **not** re-derive any recursion soundness. Legs 1–4 are pa
 - `metatheory/Dregg2/Circuit/RecursiveAggregation.lean` — `light_client_verifies_whole_history` (one verify ⇒ the whole
   child history executed, ordered, genuine fold), and the fact that
   `recursive_sound` is *derived* whole-tree by `RecursiveSoundFromNodes.lean`;
-- `Distributed/FinalizedLightClient.lean` — the third (quorum/`tau`) leg and its teeth.
+- `metatheory/Dregg2/Distributed/FinalizedLightClient.lean` — the third (quorum/`tau`) leg and its teeth.
 
 > **[CORRECTED 2026-07-27 — `conserves_from_verification` was listed here and is NOT inherited.]**
 > This list claimed the effect inherits `conserves_from_verification`. It does not: **§3b of this same
@@ -338,8 +338,8 @@ which is one of the two things standing between the two halves.
    * a real handler + the handler↔executor kernel-agreement lemma (`HandlerExecutor`, x2).
 
    **The price, from the record rather than from estimate.** The last constructor added
-   ("THE ROTATION", `heapWriteA`) shipped `Circuit/Inst/heapWriteA.lean` (242 lines) +
-   `Circuit/Spec/heapwrite.lean` (194) + its emit and refinement modules; `refreshDelegationA`
+   ("THE ROTATION", `heapWriteA`) shipped `metatheory/Dregg2/Circuit/Inst/heapWriteA.lean` (242 lines) +
+   `metatheory/Dregg2/Circuit/Spec/heapwrite.lean` (194) + its emit and refinement modules; `refreshDelegationA`
    shipped ~1,980 lines across five modules. `git log -S heapWriteA -- metatheory/` is **48
    commits.** So the honest price of one live `FullActionA` constructor in this tree is on the order
    of **2,000+ lines of new circuit Lean across ~6 new modules, plus 34 arms in 18 files** — a
@@ -349,7 +349,7 @@ which is one of the two things standing between the two halves.
    next lane does not re-derive them: (a) carrying `ClosedLogExtract` for the new tag as a raw field
    instead of a trace readout + rung is assuming the conclusion; (b) defining the
    `fullActionCircuitStep` arm as the spec itself is `hole_circuit_step`, which
-   `Circuit/CircuitOpenFronts.lean` names and forbids ("Silent spec-fallback … is forbidden") and
+   `metatheory/Dregg2/Circuit/CircuitOpenFronts.lean` names and forbids ("Silent spec-fallback … is forbidden") and
    which the tree closed 20/20.
 
    **Design fork for the operator, named because the repo has already taken it four times.** dregg3

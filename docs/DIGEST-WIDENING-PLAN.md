@@ -122,11 +122,11 @@ this file.
 ## §2 — THE EMIT BLOCKER, assessed with evidence — and the record points at the wrong seam
 
 `docs/INJECTIVITY-FLOOR-CLASS.md` §4.2 names it: *"The bridge `emitExpr`/`emitConstraint`
-(`Exec/CircuitEmit.lean:90`, with a round-trip proof at `:149`) has zero call sites outside its own
+(`metatheory/Dregg2/Exec/CircuitEmit.lean:90`, with a round-trip proof at `:149`) has zero call sites outside its own
 file."*
 
 **That is TRUE and I confirm it** (`grep -rn "emitExpr\|emitConstraint"` over
-`metatheory/**/*.lean`, excluding `Exec/CircuitEmit.lean`: **0 hits**; 27 in-file). But it is not
+`metatheory/**/*.lean`, excluding `metatheory/Dregg2/Exec/CircuitEmit.lean`: **0 hits**; 27 in-file). But it is not
 the blocker, and the real one is worse:
 
 ### 2a. `emitConstraint`'s TARGET is a retired rail
@@ -135,7 +135,7 @@ the blocker, and the real one is worse:
 `circuit/src/lean_descriptor_air.rs:3-9`, the file's own header:
 
 > ⚠ **RETIRED / IR-v1 — NOT the live law-#1 rail (marked 2026-07-16).** `LeanDescriptorAir` here is
-> referenced ONLY inside this file: no deployed path instantiates it. … Lean's `Exec/CircuitEmit.lean`
+> referenced ONLY inside this file: no deployed path instantiates it. … Lean's `metatheory/Dregg2/Exec/CircuitEmit.lean`
 > (`emit_faithful`) emits to THIS v1 `EmittedDescriptor` target, so those faithfulness theorems are
 > real but land on a path nothing runs.
 
@@ -198,28 +198,28 @@ Q = 44870 ≈ 2^15.45.** Quoting one number for the whole table is the point.
 
 | endpoint | file:line | codomain | refs | 8-felt sibling |
 |---|---|---|---:|---|
-| `leafOfW` | `Circuit/MapOpWideKeyGate.lean:243` | `ℤ` | 104 | ✅ **`leafOfW8`** — `Circuit/MapOpWideDigest8.lean:234` (this commit) |
-| `mapRootW` | `Circuit/MapOpWideKeyGate.lean:393` | `ℤ` | 76 | ✅ **`mapRootW8`** — `:306` (this commit) |
-| `mapNode` | `Circuit/MapMerkleRoot.lean:84` | `ℤ` | 68 | ✅ `DeployedHeapTree.heapNodeOf8:70` |
-| `foldLevel` | `Circuit/MapMerkleRoot.lean:98` | `List ℤ` | 56 | ✅ `foldLevel8:503` |
-| `perfectRoot` | `Circuit/MapMerkleRoot.lean:105` | `ℤ` | 236 | ✅ `perfectRoot8:510` |
-| `mapRoot` | `Circuit/MapMerkleRoot.lean:407` | `ℤ` | 201 | ✅ `mapRoot8:712` + `mapRoot8Find`, `MapRootColl`, `opensToMerkle8` |
-| `pathRecompute` | `Circuit/MapOpsColumnLayout.lean:180` | `ℤ` | 154 | ~ no `pathRecompute8`; `DeployedCapTree.recomposeUp8:859` is the shape |
-| `aafiLeafHash` | `Circuit/MapOpsColumnLayout.lean:1307` | `ℤ` | 49 | ~ `MapOpWideKeyGate.aafiLeafHashW:1161` — **still 1 felt** |
+| `leafOfW` | `metatheory/Dregg2/Circuit/MapOpWideKeyGate.lean:243` | `ℤ` | 104 | ✅ **`leafOfW8`** — `metatheory/Dregg2/Circuit/MapOpWideDigest8.lean:234` (this commit) |
+| `mapRootW` | `metatheory/Dregg2/Circuit/MapOpWideKeyGate.lean:393` | `ℤ` | 76 | ✅ **`mapRootW8`** — `:306` (this commit) |
+| `mapNode` | `metatheory/Dregg2/Circuit/MapMerkleRoot.lean:84` | `ℤ` | 68 | ✅ `DeployedHeapTree.heapNodeOf8:70` |
+| `foldLevel` | `metatheory/Dregg2/Circuit/MapMerkleRoot.lean:98` | `List ℤ` | 56 | ✅ `foldLevel8:503` |
+| `perfectRoot` | `metatheory/Dregg2/Circuit/MapMerkleRoot.lean:105` | `ℤ` | 236 | ✅ `perfectRoot8:510` |
+| `mapRoot` | `metatheory/Dregg2/Circuit/MapMerkleRoot.lean:407` | `ℤ` | 201 | ✅ `mapRoot8:712` + `mapRoot8Find`, `MapRootColl`, `opensToMerkle8` |
+| `pathRecompute` | `metatheory/Dregg2/Circuit/MapOpsColumnLayout.lean:180` | `ℤ` | 154 | ~ no `pathRecompute8`; `DeployedCapTree.recomposeUp8:859` is the shape |
+| `aafiLeafHash` | `metatheory/Dregg2/Circuit/MapOpsColumnLayout.lean:1307` | `ℤ` | 49 | ~ `MapOpWideKeyGate.aafiLeafHashW:1161` — **still 1 felt** |
 | `Heap.leafOf` | `Substrate/Heap.lean:387` | `ℤ` | **356** | ✅ `heapLeafDigest8:65` |
 | `Heap.root` | `Substrate/Heap.lean:392` | `ℤ` | 123 | ~ partial, via `Heap8Scheme` |
-| `imtLeafHash` | `Circuit/IndexedMerkleTree.lean:133` | `ℤ` | **253** | ~ `heapLeafDigest8` is the arity-3 twin |
-| `imtLeafHash8` | `Circuit/MapOpWideKey.lean:281` | **`ℤ`** | 21 | ❌ — **wide INPUT, narrow OUTPUT: the kind-D error, named** |
-| `imtLeafHash8Of` | `Circuit/MapOpWideKeyGate.lean:1038` | **`ℤ`** | 63 | ❌ |
-| `aafiLeafHashW` | `Circuit/MapOpWideKeyGate.lean:1161` | **`ℤ`** | 27 | ❌ |
-| `imtLeafHashE` | `Circuit/MapWideImtPadOpen.lean:150` | `ℤ` | 43 | ❌ |
-| `padImtRootE` | `Circuit/MapWideImtPadOpen.lean:325` | `ℤ` | 17 | ~ `padImtRoot8:669` exists and is **also `ℤ`** |
-| `padImtRoot` | `Circuit/MapPaddedDenotation.lean:486` | `ℤ` | 64 | ❌ — docstring: **"⚑ THE DEPLOYED MAP COMMITMENT"** |
-| `padMapRoot` | `Circuit/MapPaddedDenotation.lean:365` | `ℤ` | 12 | ❌ |
-| `appendOrderRoot` | `Circuit/MapKindImtGates.lean:882` | `ℤ` | 9 | ❌ — docstring: *"`fold_append_order_8`'s 1-felt face"* |
-| `opensTo` / `writesTo` | `Circuit/DescriptorIR2.lean:534,539` | `ℤ` | — | ✅ `opensToMerkle8` / `writesToMerkle8` (§5b) |
-| `MapOp.holdsAt` | `Circuit/DescriptorIR2.lean:577` | reads **`root 0` only** | — | ⚠ **the seam — §1** |
-| ⚑ `MapLeafSchema.commit` | `Circuit/MapDenotationSchema.lean:134` | **structure FIELD**, `… → ℤ` | 3 field / `padImtSchema` 129 | ❌ — **the chokepoint, §3e** |
+| `imtLeafHash` | `metatheory/Dregg2/Circuit/IndexedMerkleTree.lean:133` | `ℤ` | **253** | ~ `heapLeafDigest8` is the arity-3 twin |
+| `imtLeafHash8` | `metatheory/Dregg2/Circuit/MapOpWideKey.lean:281` | **`ℤ`** | 21 | ❌ — **wide INPUT, narrow OUTPUT: the kind-D error, named** |
+| `imtLeafHash8Of` | `metatheory/Dregg2/Circuit/MapOpWideKeyGate.lean:1038` | **`ℤ`** | 63 | ❌ |
+| `aafiLeafHashW` | `metatheory/Dregg2/Circuit/MapOpWideKeyGate.lean:1161` | **`ℤ`** | 27 | ❌ |
+| `imtLeafHashE` | `metatheory/Dregg2/Circuit/MapWideImtPadOpen.lean:150` | `ℤ` | 43 | ❌ |
+| `padImtRootE` | `metatheory/Dregg2/Circuit/MapWideImtPadOpen.lean:325` | `ℤ` | 17 | ~ `padImtRoot8:669` exists and is **also `ℤ`** |
+| `padImtRoot` | `metatheory/Dregg2/Circuit/MapPaddedDenotation.lean:486` | `ℤ` | 64 | ❌ — docstring: **"⚑ THE DEPLOYED MAP COMMITMENT"** |
+| `padMapRoot` | `metatheory/Dregg2/Circuit/MapPaddedDenotation.lean:365` | `ℤ` | 12 | ❌ |
+| `appendOrderRoot` | `metatheory/Dregg2/Circuit/MapKindImtGates.lean:882` | `ℤ` | 9 | ❌ — docstring: *"`fold_append_order_8`'s 1-felt face"* |
+| `opensTo` / `writesTo` | `metatheory/Dregg2/Circuit/DescriptorIR2.lean:534,539` | `ℤ` | — | ✅ `opensToMerkle8` / `writesToMerkle8` (§5b) |
+| `MapOp.holdsAt` | `metatheory/Dregg2/Circuit/DescriptorIR2.lean:577` | reads **`root 0` only** | — | ⚠ **the seam — §1** |
+| ⚑ `MapLeafSchema.commit` | `metatheory/Dregg2/Circuit/MapDenotationSchema.lean:134` | **structure FIELD**, `… → ℤ` | 3 field / `padImtSchema` 129 | ❌ — **the chokepoint, §3e** |
 
 `narrowLeafHash` (`MapOpWideKey.lean:335`, 4 refs) and `halfWideLeafHash`
 (`MapOpWideKeyGate.lean:1071`, 5 refs) are **deliberate anti-launder counterexamples** and must STAY
@@ -237,9 +237,9 @@ capAdvanceOf:226}` (35/25), `EffectVmEmitCapReshape.{capLeaf:126, capRoot:133}` 
 
 ### 3c. Light client / MMR / receipt index — and this cone already says the number out loud
 
-`Lightclient/MMR.lean`: `PTree.hashOf:109`, `bag:391` (44), `mroot:402` (**170**). ⚑ **That module's
+`metatheory/Dregg2/Lightclient/MMR.lean`: `PTree.hashOf:109`, `bag:391` (44), `mroot:402` (**170**). ⚑ **That module's
 own header self-declares "THE HONEST NUMBER: ~2^15.5 QUERIES … nothing here is `Digest8`-valued."**
-`Lightclient/HistoryIndex.lean`: `rleaf:179` (7), `iroot:184` (**305** — the second-widest name in
+`metatheory/Dregg2/Lightclient/HistoryIndex.lean`: `rleaf:179` (7), `iroot:184` (**305** — the second-widest name in
 this inventory). `Circuit/RotationLayout.rotatedCommit:127` (88),
 `RotatedCommitDifferential.rotatedCommit:170`, `NonOmissionAttack.rotatedCommitIdx:156` (5),
 `Distributed/HistoryAggregation.{stateRoot:77 (101), turnReceipt:100, logRoot:112, chainedCommit:122,
