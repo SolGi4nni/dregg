@@ -132,8 +132,41 @@ The Lean module is the calibrated referent: byte-exact against
 - ⚑ **`degree_bits = [9,9,15,14,15]` is NOT the root.** That measurement is of the **BN254 shrink**
   proof (`docs/deos/APEX-VERIFIER-AIR-REDUCTION.md:11-14`,
   `circuit-prove/tests/apex_shrink_bn254_tooth.rs`), re-quoted at `accumulator.rs:227` and
-  `fri_trace_height_measure.rs:55`. **No committed measurement of the root's own `degree_bits`
-  exists.** §1.3 derives the root's table set structurally instead.
+  `fri_trace_height_measure.rs:55`. `[10,9,16,14,16]` is the **leaf-wrap** 5-table proof
+  (`fri_trace_height_measure.rs:145`). Neither is the root.
+
+⚑ **THE ROOT'S OWN `degree_bits`, READ 2026-07-28 — `[10, 10, 16, 15, 3, 16, 0]`.** This paragraph
+previously said no committed measurement existed. It was sitting in three committed artifacts all
+along: the `root_proof` blob of `ugc-dregg/tests/fixtures/whole_history_proof.bin` (and the same
+fold in `site/light-client/history.json`, `site/dist/light-client/history.json`,
+`portal/dist/history.json`), a 3-turn `prove_turn_chain_recursive` root under VK `434f57d2…`.
+`degree_bits` is the last field of `p3_batch_stark::BatchProof` (`batch-stark/src/proof.rs:23`,
+built at `prover.rs:668`), reachable as `WholeChainProof.root.0.proof.degree_bits`.
+
+| i | table | `degree_bits` | padded rows | logical rows |
+|---|---|---:|---:|---|
+| 0 | Const | 10 | 1,024 | 529 |
+| 1 | Public | 10 | 1,024 | 534 |
+| 2 | Alu | **16** | 65,536 | 142,589 ops / 4 lanes |
+| 3 | poseidon2-W16 | 15 | 32,768 | 32,768 |
+| 4 | poseidon2-W24 | 3 | 8 | 8 |
+| 5 | recompose | **16** | 65,536 | 41,353 |
+| 6 | expose_claim | 0 | 1 | 25 claims / 25 lanes |
+
+Cross-checked inside the same blob: the trailing `stark_common.preprocessed.instances` carry
+`(matrix_index, prep_width, degree_bits)` with prep widths `[2,2,59,24,36,2,50]` — **exactly §1.3's
+per-table preprocessed column census**, which independently pins the table→index mapping. The same
+blob decodes `table_packing = {public_lanes 1, alu_lanes 4, npo_lanes [], min_trace_height 1,
+horner_packed_steps 2}` and `ext_degree 4`.
+
+⚑ **AND IT CORRECTS THE PARAGRAPH BELOW.** `max = 16`, so `|D⁰| = 2^(16+6) = 2^22` and
+**(22 − 6)/1 = 16 commit-phase layers — on the `prove_chain_core_rotated` path too.** The claim that
+that producer has "natural heights, max ≈ 2^15, |D⁰| ≈ 2^21, 15 layers" and that "the counts differ
+by ~5%" is **wrong**: the ≈2^15 was itself inherited from the shrink's `[9,9,15,14,15]`. The two
+root producers do not differ in FRI depth at all, and `WRAP_LOG_CEIL = 16` is a no-op on `|D⁰|`
+here — it still pads the five short tables up to 2^16, which is prover cost, not FRI depth. Under
+the floor the accumulator root's vector would be `[16,16,16,16,16,16,16]`; that root is an AGG∘LEAF
+circuit, so its *natural* heights remain unmeasured.
 
 Commit-phase layers = `(log|D⁰| − log_final_height) / max_log_arity` with
 `log_final_height = log_blowup + log_final_poly_len = 6` ⇒ **(22 − 6)/1 = 16 layers**.
@@ -874,16 +907,20 @@ estimate)
 | ~~DEEP quotient + AIR constraint evaluation~~ | ~~~2.4 × 10⁴ ext ops × 31–49~~ | ~~≈ 1.0 × 10⁶~~ — **superseded, see below** |
 | **DEEP quotient × 19 queries** | 154,523 × 19, **measured** (§3.15) | **2.94 × 10⁶** |
 | **observing the 2,286 opened values into the challenger** | 1,143 perms × 2,600.5 (§3.16) | **2.97 × 10⁶** |
-| AIR constraint evaluation | `A + N·h` = 14,175 + N × 48, **plus `C_i`** (§3.16) | **≥ 1.4 × 10⁴, N UNCOUNTED** |
+| **AIR constraint evaluation, ONCE per verify** | `A + N·h` = 14,175 + **1,093** × 48 = 66,639, plus `C_i` at 2,937 DAG multiplies × 31 ≈ 9.1 × 10⁴ (§3.17) | **≈ 1.6 × 10⁵** |
 | commit phase × 19 queries | 623,310 × 19 | **1.18 × 10⁷** |
 | transcript (FRI schedule only) | measured | **6.3 × 10⁴** |
 | **whole root verify** | sum | **≈ 3.0 × 10⁷** — and the independent permutation count in §0 says 2.9 × 10⁷ |
 
 **STILL UNCOUNTED — and these are counts, not prices**
 
-1. **The root's own `degree_bits`.** §1.3 says no committed measurement exists; §5.2's open
-   contradiction (is there a live W24 table?) is worth ~10% on its own. Every "4 rounds all at
-   depth 22" above rests on it.
+1. ~~**The root's own `degree_bits`.**~~ **CLOSED 2026-07-28 — §1.2.** `[10, 10, 16, 15, 3, 16, 0]`,
+   read out of the committed `whole_history_proof.bin` root blob and cross-checked against the
+   preprocessed instance metas. `max = 16` ⇒ `|D⁰| = 2^22` ⇒ **16 commit-phase layers**, which is
+   what "4 rounds all at depth 22" rested on and it holds. It also **settles §5.2**: the W24 table
+   is live and present, at `degree_bits = 3` — eight rows, so its ~10% worry was a worry about a
+   table that costs almost nothing in FRI depth while costing its full 452 columns in the DEEP
+   quotient and the observe.
 2. ~~**The roll-in schedule.**~~ **CLOSED as a schedule, 2026-07-28 (§3.15d).** It was never a free
    parameter: the opening at height `L` rolls in after round `LGMH − 1 − L`, the opening at `LGMH`
    is `initial`, and `verify_query` refuses any other first height. `rollInSchedule` computes it and
@@ -904,11 +941,15 @@ estimate)
    `makeDeepBoundQueryProgram` keeps the pre-3.15 statement compiled beside it and the gate
    **proves a witness the old statement admits and the new one refuses**, so the closure is
    exhibited rather than asserted.
-3. **The AIR constraint evaluation** at ζ. **STARTED, §3.16**: the selectors, the α-folded
-   accumulator, the quotient-chunk recomposition and the closing equality are built, KAT'd against
-   p3's own domain algebra at four `degree_bits`, and priced at `A + N·h`. **`C_i` itself — dregg's
-   seven AIRs — is not built, and `N` is not counted.** Until it is, the walk still authenticates a
-   low-degree function that encodes nothing in particular.
+3. **The AIR constraint evaluation** at ζ. **NARROWED, NOT CLOSED — §3.16 + §3.17.** The protocol
+   arithmetic around `C_i` is built and KAT'd at four `degree_bits` (§3.16). **`N = 1,093` is
+   measured** and `C_i` is now a *compiler output* for `Alu` and `expose_claim` — 117 of the 901
+   base constraints — with `airFold_forces` proving the emitted Kimchi rows force p3's accumulator
+   (§3.17). What remains: the two Poseidon2 tables need the DAG-shaped source language (the flat
+   one costs 521× and blows the whole budget); the 192 LogUp constraints are not in this vocabulary;
+   the `SymbolicExpression → Head` extraction is a differentially-checked SEAM, not a theorem; and
+   the Lean accumulator is not welded to `AirEval.ts`'s closing equality. **Until those close, the
+   walk still authenticates a low-degree function whose encoding is only partly pinned.**
 4. **19 queries, not 1.** Every rung here walks one.
 5. **The input-phase MMCS opening over MIXED heights.** §3.15's program carries ONE matrix per
    batch; `MerkleTreeMmcs::verify_batch` over several matrices of different heights under one root
@@ -1123,6 +1164,115 @@ inside a guessed count and was **7× out on the unit alone**.
 ⚑ **The table set is the ROOT's seven.** `degree_bits = [9,9,15,14,15]` is the **BN254 shrink**
 proof (§1.2). Pricing the AIR side against it would under-count by more than an order of magnitude,
 and that mis-attribution has already been made once in this tree.
+
+---
+
+### 3.17 ⚑ MEASURED — `N = 1093`, and `C_i` GENERATED
+
+*2026-07-28. `circuit-prove/tests/root_air_constraint_census.rs` (the census + the `Head`
+extractor) and `metatheory/Dregg2/Circuit/Emit/KimchiRootAirEval.lean` (the generator + its
+soundness theorem).*
+
+> ## **`N` = 1,093. It was never uncountable — `p3_batch_stark::symbolic::get_symbolic_constraints` returns the list and `RecursiveAir::eval_folded_circuit` folds exactly `base.len() + ext.len()` of them. And `C_i` is now a COMPILER OUTPUT for two of the seven tables, with the lowering proved to force p3's accumulator.**
+
+**The census.** Every AIR is built at the deployed shape — `TablePacking::new(1, 4)` from
+`ProveNextLayerParams::default()`, `horner_packed_steps = 2`, `W = 11`, `recompose` at
+`lanes = 1, coeff_lookups = false`, `expose_claim` at 25 claims — and run through
+`get_symbolic_constraints` with `LogUpGadget`.
+
+| table | main | prep | base | ext | lookups | **N** |
+|---|---:|---:|---:|---:|---:|---:|
+| Const | 4 | 2 | **0** | 3 | 1 | 3 |
+| Public | 4 | 2 | **0** | 3 | 1 | 3 |
+| Alu | 76 | 59 | 92 | 54 | 18 | 146 |
+| poseidon2-W16 | 300 | 24 | 316 | 21 | 7 | 337 |
+| poseidon2-W24 | 452 | 36 | 468 | 33 | 11 | 501 |
+| recompose | 4 | 2 | **0** | 3 | 1 | 3 |
+| expose_claim | 100 | 50 | 25 | 75 | 25 | 100 |
+| **Σ** | **940** | **175** | **901** | **192** | | **1,093** |
+
+Two independent confirmations that these are the DEPLOYED AIRs and not a plausible reconstruction:
+the column totals are §1.3's 940/175, and the per-table preprocessed widths `[2,2,59,24,36,2,50]`
+are byte-for-byte the ones in the real serialized root proof (§1.2). `N ≈ 0.98 ×` the column count,
+so §3.16's "1,115 (1 × columns)" row was almost exactly right by accident.
+
+⚑ **Three of the seven tables have ZERO base constraints.** `Const`, `Public` and `recompose` are
+pure lookup tables — `ConstAir::eval` pushes one `WitnessChecks` interaction and asserts nothing. So
+192 of the 1,093 are LogUp permutation constraints over the CHALLENGE extension, and for those three
+tables they are *all* of it.
+
+⚑ **The count is a property of the AIR, not of the fixture** — asserted, not assumed. `ConstAir` and
+`AluAir` both take a row parameter, so a reading at one row-count is indistinguishable from a
+reading of a function of it. `constraint_count_does_not_depend_on_row_count` sweeps
+`{16, 256, 4096, 65536, 1048576}` and refuses on any movement. What DOES move it is the ALU packing,
+and that is measured too: `N_alu` = 50 / 82 / **146** / 274 at `alu_lanes` = 1 / 2 / **4** / 8.
+
+**The price, re-measured.** `A + N·h` = 14,175 + 1,093 × 48 = **66,639 rows** for the fold —
+still not `C_i`.
+
+**`C_i` itself, and the finding that matters.** All 901 base constraints ARE expressible as
+`AirBuilder.Head` (`Σ coeff·∏cols + const`) — measured by attempting the flat expansion on every
+one. But `Head` is FLAT and p3's `SymbolicExpression` is an `Arc`-SHARED DAG, and flattening
+destroys the sharing:
+
+| table | base | DAG multiplies | flat-`Head` multiplies | ratio |
+|---|---:|---:|---:|---:|
+| Alu | 92 | 356 | 1,304 | 3.7× |
+| poseidon2-W16 | 316 | 958 | 243,849 | **254×** |
+| poseidon2-W24 | 468 | 1,598 | 1,284,686 | **804×** |
+| expose_claim | 25 | 25 | 50 | 2.0× |
+| Const / Public / recompose | 0 | 0 | 0 | — |
+| **Σ** | **901** | **2,937** | **1,529,889** | **521×** |
+
+At the measured 31 rows per extension multiply (§3.14), that is **≈9.1 × 10⁴ rows** through a
+sharing-preserving lowering against **≈4.7 × 10⁷** through the flat one. The flat form ALONE exceeds
+§3.14's whole-verifier ≈3.0 × 10⁷. So the honest statement is not "the compiler cannot express the
+Poseidon2 tables" — it can, and must not. **The compiler's next rung is a DAG-shaped source language
+with a common-subexpression cache**, which is exactly what p3's own `SymbolicCompiler::compile_base`
+does (`recursion/src/traits/air.rs:150-156`, `base_cache`), and its lowering theorem is the same
+shape as the one below, one `Gen1` per DAG node.
+
+**⇒ the AIR side, done right: ≈ 6.7 × 10⁴ (fold) + ≈ 9.1 × 10⁴ (`C_i`) ≈ 1.6 × 10⁵ rows, ONCE per
+verify** — `verify_constraints_with_lookups` runs per instance per proof, not per query. That is
+**~0.5% of the ≈3.0 × 10⁷ total**, not the ≈3.5% §3.16 hedged at. The AIR side is not the budget
+problem; getting the lowering's source language wrong would have been.
+
+**What was GENERATED, and what is proved.** `KimchiRootAirEval.lean` compiles a `List Head` to
+Kimchi rows through `packGen`, and `airFold_forces` proves, at an arbitrary `CommRing`, that any
+assignment satisfying the emitted rows puts p3's accumulator `fold_i (acc·α + C_i)` in the output
+variable — the object `verify_constraints_with_lookups` compares against `quotient(ζ)·Z_H(ζ)`. Two
+tables are generated end-to-end from extractor output with no hand-written constraint:
+
+| table | constraints | sub-gates | packed rows | extension multiplies |
+|---|---:|---:|---:|---:|
+| `expose_claim` | 25 | 176 | **88** | 75 |
+| `Alu` | 92 | 2,359 | **1,180** | 1,396 |
+
+with the row counts as a *theorem* (`airFoldRows_length`) rather than a measurement, and a `#guard`
+that runs the emitted straight-line program at a non-degenerate seeding, checks every sub-gate, and
+compares the output variable against an independent evaluation of the same heads.
+
+⚑ **A DEFECT IN THE RUNG BELOW IT, FOUND BY USING IT.** `KimchiLower`'s header scopes `lowerHead` as
+"precisely the verifier's `AIR.evalAtZeta` rung". Its body ends in `Gen1.isZero` — the emitted rows
+assert the head **VANISHES**. At ζ that is FALSE for an honest proof: the constraints vanish on `H`,
+ζ is sampled outside `H` precisely so they do not, and `Q = (Σ αⁱ Cᵢ)/Z_H` is only meaningful
+because `Cᵢ(ζ) ≠ 0`. A verifier built on `lowerHead` as scoped would have been **unsatisfiable on
+every honest proof**, and would have looked right, because `lowerHead_sound` is a true theorem about
+it. §1 of the new file supplies the value-producing lowering; its forcing lemma is `lowerAcc_forces`,
+already proved. The fix was three lines. Noticing that a constraint-GATE lowering and a
+constraint-EVALUATION lowering are different objects was the whole of it.
+
+⚑ **AND THE α-FOLD IS OFF BY ONE IN `AirEval.ts`.** `foldConstraints` seeds with `constraints[0]`
+and pays `N − 1` folds; p3 seeds with ZERO and pays `N` (`recursion/src/traits/air.rs:148`). §3.16
+corrected for it by subtracting one marginal price; the generated fold matches p3 structurally.
+
+**What this does NOT close.** The extraction `SymbolicExpression → Head` is a Rust-side SEAM, checked
+by a differential over all 901 base constraints at pseudorandom assignments — a confession, not a
+mitigation. The 192 LogUp constraints are not in this vocabulary at all. The closing equality is
+still `AirEval.ts`'s, and nothing states the Lean half and the TypeScript half compose. Everything is
+in EXTENSION-element currency; the lowering to Pasta lanes interleaves `RangeCheck0` rows, for which
+`KimchiLower`'s `renderOps_gens_sound` is named and unproved. **The verifier is not sound because
+`C_i` landed.**
 
 **What the AIR side does make exact, and it is large.** Every one of the **2,286** opened values is
 `observe_algebra_slice`d into the challenger before `alpha` is sampled (`two_adic_pcs.rs:780-788`).
