@@ -51,8 +51,8 @@ pub use emit::{
 };
 pub use game::{GameError, SchemaGame, Turn, check_layout, compiled_story};
 pub use layout::{
-    Assignment, CheckedLayout, Layout, LayoutError, LegalError, STATE_SLOTS, Slot, allocate,
-    allocate_checked,
+    Assignment, CheckedLayout, Layout, LayoutError, LegalError, RegisterWidth, STATE_SLOTS, Slot,
+    allocate, allocate_checked,
 };
 pub use schema::{Archetype, Component, Placement, Schema};
 

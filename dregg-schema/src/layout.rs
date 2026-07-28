@@ -20,9 +20,78 @@
 use crate::schema::{Archetype, Placement, Schema};
 
 /// The number of fixed register slots a cell carries. Register keys are `0..STATE_SLOTS`;
-/// heap keys are `>= STATE_SLOTS` (mirrors `dregg_cell::state::STATE_SLOTS`, re-exported
-/// by spween-dregg).
+/// heap keys are `>= STATE_SLOTS`. This IS `dregg_cell::state::STATE_SLOTS` (re-exported
+/// by spween-dregg, which no longer keeps a literal of its own), narrowed to the `u8` a
+/// slot index is carried in.
 pub const STATE_SLOTS: u8 = spween_dregg::STATE_SLOTS as u8;
+
+/// The `usize -> u8` narrowing directly above must never TRUNCATE. A cell register file
+/// wider than 255 would wrap to a tiny width and hand every bounds check below a bound
+/// that is not the cell's — the same class of silent-width wound [`RegisterWidth`] exists
+/// to close. Compile error, not a runtime surprise.
+const _: () = assert!(
+    spween_dregg::STATE_SLOTS <= u8::MAX as usize,
+    "STATE_SLOTS does not fit in a u8: dregg-schema's `as u8` narrowing would truncate"
+);
+
+/// **The register-width TYPE WALL** — a layout's declared register-space width, which
+/// cannot exceed the cell's real register file.
+///
+/// The wound this closes, measured 2026-07-27: [`Layout::num_registers`] was a bare `u8`
+/// and [`Layout::legal`] validated register slots against *that field*, never against
+/// [`STATE_SLOTS`]. So a hand-built layout that DECLARED 18 registers and placed a
+/// component at `Slot::Register(17)` sailed through the Legal gate and became a
+/// [`CheckedLayout`] — the value the rest of the crate treats as "checked" — even though a
+/// cell has 16 registers. The *value* check existed and the *type* permitted the bad
+/// value.
+///
+/// This is `dregg_circuit::faithful8::Faithful8`'s discipline applied to a width: the
+/// inner `u8` is private, and the only safe constructors produce a width `<= STATE_SLOTS`.
+///
+/// **NARROWING is safe; WIDENING is the wound.** A layout may declare FEWER registers than
+/// the cell has — that is a strictly stricter in-bounds check, and [`Layout::legal`] still
+/// checks the real cell bound independently — but it may never declare more. There is
+/// deliberately NO `from_over_wide_DANGER` escape hatch: nothing in the tree needs one,
+/// and a wall with an unused escape hatch is a convention.
+///
+/// The tripwire — the exact layout that used to pass, now refused by the compiler:
+///
+/// ```compile_fail
+/// use dregg_schema::{Archetype, Assignment, Layout, Slot};
+/// let over_wide = Layout {
+///     assignments: vec![Assignment {
+///         component: "hp".into(),
+///         archetype: Archetype::Stat { min: 0, max: 20 },
+///         slot: Slot::Register(17),
+///     }],
+///     num_registers: 18, // `expected RegisterWidth, found integer` — the wall
+/// };
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RegisterWidth(u8);
+
+impl RegisterWidth {
+    /// The cell's REAL register width ([`STATE_SLOTS`]) — what every [`allocate`] output
+    /// declares.
+    pub const CELL: Self = Self(STATE_SLOTS);
+
+    /// The checked NARROWING constructor: `Some(w)` iff `n <= STATE_SLOTS`, `None`
+    /// otherwise. The only way to name a width other than [`CELL`](Self::CELL), and it
+    /// cannot name an over-wide one.
+    pub const fn narrowed(n: u8) -> Option<Self> {
+        if n <= STATE_SLOTS {
+            Some(Self(n))
+        } else {
+            None
+        }
+    }
+
+    /// The width as a number. Reading out is unrestricted — the wall polices
+    /// construction, not inspection.
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+}
 
 /// Where a component's field is placed in the cell — a fixed register or a heap key.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,9 +128,12 @@ pub struct Assignment {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Layout {
     pub assignments: Vec<Assignment>,
-    /// The register-space width (`STATE_SLOTS`); a register slot is in-bounds iff
-    /// `< num_registers`, a heap key iff `>= num_registers`.
-    pub num_registers: u8,
+    /// The register-space width this layout DECLARES. A [`RegisterWidth`], never a bare
+    /// `u8`: an over-wide declaration (`18` registers in a 16-register cell) is a compile
+    /// error, not a value [`legal`](Layout::legal) has to catch. A register slot is
+    /// in-bounds iff `< num_registers` AND `< STATE_SLOTS`; a heap key iff
+    /// `>= STATE_SLOTS`.
+    pub num_registers: RegisterWidth,
 }
 
 /// Why a [`Layout`] is not [`Legal`](Layout::legal) — the disjointness / in-bounds
@@ -71,18 +143,32 @@ pub enum LegalError {
     /// Two components write the same column — the `disjoint : occupied.Nodup`
     /// obligation. THE invariant that was a comment in the 14-file emit.
     Overlap { column: u64, a: String, b: String },
-    /// A register slot is `>= num_registers` — out of the register file.
+    /// A register slot is `>= STATE_SLOTS` — it is not a register THE CELL HAS, whatever
+    /// width this layout declared. The bound checked FIRST, because it is the physical
+    /// fact; [`RegisterWidth`] makes the declared width `<= STATE_SLOTS`, so this fires
+    /// exactly when the slot index itself is out of the cell.
+    RegisterExceedsCell {
+        component: String,
+        slot: u8,
+        declared_width: u8,
+        cell_width: u8,
+    },
+    /// A register slot is inside the cell's register file but `>= num_registers` — out of
+    /// the (possibly narrower) width this layout declared.
     RegisterOutOfBounds {
         component: String,
         slot: u8,
-        num_registers: u8,
+        declared_width: u8,
+        cell_width: u8,
     },
-    /// A "heap" key is `< num_registers` — it aliases the register file (a heap key
-    /// must be `>= STATE_SLOTS`).
+    /// A "heap" key is `< STATE_SLOTS` (or `< num_registers`) — it aliases the register
+    /// file. A heap key must be `>= STATE_SLOTS`, the cell's real register width, not
+    /// merely `>=` whatever this layout declared.
     HeapAliasesRegisters {
         component: String,
         key: u64,
-        num_registers: u8,
+        declared_width: u8,
+        cell_width: u8,
     },
 }
 
@@ -93,21 +179,35 @@ impl core::fmt::Display for LegalError {
                 f,
                 "layout is not disjoint: `{a}` and `{b}` both write column {column}"
             ),
+            LegalError::RegisterExceedsCell {
+                component,
+                slot,
+                declared_width,
+                cell_width,
+            } => write!(
+                f,
+                "`{component}` register slot {slot} is not a register this cell has \
+                 (STATE_SLOTS = {cell_width}; this layout declared {declared_width})"
+            ),
             LegalError::RegisterOutOfBounds {
                 component,
                 slot,
-                num_registers,
+                declared_width,
+                cell_width,
             } => write!(
                 f,
-                "`{component}` register slot {slot} is out of bounds (num_registers = {num_registers})"
+                "`{component}` register slot {slot} is out of bounds \
+                 (declared num_registers = {declared_width}, cell STATE_SLOTS = {cell_width})"
             ),
             LegalError::HeapAliasesRegisters {
                 component,
                 key,
-                num_registers,
+                declared_width,
+                cell_width,
             } => write!(
                 f,
-                "`{component}` heap key {key} aliases the register file (must be >= {num_registers})"
+                "`{component}` heap key {key} aliases the register file \
+                 (must be >= STATE_SLOTS = {cell_width}; this layout declared {declared_width})"
             ),
         }
     }
@@ -126,8 +226,15 @@ impl Layout {
     /// `Legal { disjoint, inBounds }`:
     ///
     /// * `disjoint` — `occupied` has no duplicate column (Nodup);
-    /// * `inBounds` — every register slot is `< num_registers`, every heap key is
-    ///   `>= num_registers`.
+    /// * `inBounds` — every register slot is `< STATE_SLOTS` **and** `< num_registers`;
+    ///   every heap key is `>= STATE_SLOTS` (and `>= num_registers`).
+    ///
+    /// **Both bounds, independently — belt and braces.** [`RegisterWidth`] already pins
+    /// the declared width `<= STATE_SLOTS`, so checking the declared width alone would be
+    /// sufficient *today*; checking the cell's real width too is what keeps this honest if
+    /// a future field-width change ever breaches the type wall. The wall stops the bad
+    /// value; the check stops the bad *bound*. (Before both existed, a layout declaring
+    /// 18 registers legalized `Slot::Register(17)` in a 16-register cell.)
     ///
     /// [`CheckedLayout::new`] runs this; an illegal layout cannot become a
     /// `CheckedLayout`, so nothing downstream ever reads an ill-aligned layout.
@@ -146,24 +253,38 @@ impl Layout {
                 }
             }
         }
-        // inBounds : register < num_registers ; heap >= num_registers
+        // inBounds, against TWO bounds checked independently:
+        //   (1) STATE_SLOTS — the cell's REAL register width, the physical fact;
+        //   (2) self.num_registers — the width this layout declared, which `RegisterWidth`
+        //       pins `<= STATE_SLOTS`, so it is the tighter of the two.
+        let declared = self.num_registers.get();
         for a in &self.assignments {
             match a.slot {
                 Slot::Register(r) => {
-                    if r >= self.num_registers {
+                    if r >= STATE_SLOTS {
+                        return Err(LegalError::RegisterExceedsCell {
+                            component: a.component.clone(),
+                            slot: r,
+                            declared_width: declared,
+                            cell_width: STATE_SLOTS,
+                        });
+                    }
+                    if r >= declared {
                         return Err(LegalError::RegisterOutOfBounds {
                             component: a.component.clone(),
                             slot: r,
-                            num_registers: self.num_registers,
+                            declared_width: declared,
+                            cell_width: STATE_SLOTS,
                         });
                     }
                 }
                 Slot::Heap(k) => {
-                    if k < self.num_registers as u64 {
+                    if k < STATE_SLOTS as u64 || k < declared as u64 {
                         return Err(LegalError::HeapAliasesRegisters {
                             component: a.component.clone(),
                             key: k,
-                            num_registers: self.num_registers,
+                            declared_width: declared,
+                            cell_width: STATE_SLOTS,
                         });
                     }
                 }
@@ -194,8 +315,10 @@ impl CheckedLayout {
         &self.layout.assignments
     }
 
-    /// The register-space width.
-    pub fn num_registers(&self) -> u8 {
+    /// The declared register-space width. The one honest accessor: it hands back the
+    /// [`RegisterWidth`], so a caller that wants the number says `.num_registers().get()`
+    /// and never re-widens it on the way out.
+    pub fn num_registers(&self) -> RegisterWidth {
         self.layout.num_registers
     }
 
@@ -323,7 +446,7 @@ pub fn allocate(schema: &Schema) -> Result<Layout, LayoutError> {
 
     Ok(Layout {
         assignments,
-        num_registers: STATE_SLOTS,
+        num_registers: RegisterWidth::CELL,
     })
 }
 
@@ -338,10 +461,12 @@ pub fn allocate_checked(schema: &Schema) -> Result<CheckedLayout, LayoutError> {
         // Fold a Legal failure into an allocation failure for the one-step path.
         match e {
             LegalError::Overlap { a, .. } => LayoutError::DuplicateComponent { name: a },
-            LegalError::RegisterOutOfBounds { .. } => LayoutError::OutOfRegisters {
-                needed: schema.components.len(),
-                available: STATE_SLOTS,
-            },
+            LegalError::RegisterExceedsCell { .. } | LegalError::RegisterOutOfBounds { .. } => {
+                LayoutError::OutOfRegisters {
+                    needed: schema.components.len(),
+                    available: STATE_SLOTS,
+                }
+            }
             LegalError::HeapAliasesRegisters { component, .. } => {
                 LayoutError::DuplicateComponent { name: component }
             }
