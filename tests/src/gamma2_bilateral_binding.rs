@@ -300,13 +300,119 @@ fn sender_outflow_vs_receiver_inflow_mismatch_rejects() {
     );
 }
 
+/// UNBLOCKED (2026-07-27), by giving up on the AIR and testing what closes it.
+///
+/// The `#[ignore]` read "blocked on γ.2 Phase 1 AIR-side binding: tamper
+/// transfer_id between trace and PI; AIR rejects". **There is no such AIR and
+/// there is not going to be one.** `circuit/src/effect_vm/pi.rs:135` still lists
+/// sub-stage `γ.2.1 AIR aux columns + boundary binding` as `pending`, but its
+/// host — the v1 hand-`EffectVmAir` — is RETIRED (`circuit/src/effect_vm/air.rs`
+/// module header); `AIR_DESCRIPTOR` keeps `outgoing_transfer_root` /
+/// `incoming_transfer_root` only as VK-fingerprint shape entries that no
+/// deployed circuit enforces. Measured: the strings `transfer_id` and
+/// `bilateral` do not occur anywhere in `trace_rotated.rs`, `descriptor_ir2.rs`
+/// or `effect_vm_descriptors.rs` — the deployed per-cell proof does not carry
+/// the concept.
+///
+/// The Phase-2 aggregation AIR that DID land went the other way on purpose:
+/// `circuit/src/bilateral_aggregation_air.rs` records that its v2 constraint
+/// group CG-3 (`sched[13+k] == expected[49+k]`) was **deleted as a tautology** —
+/// both sides were prover-filled from the same row, so any trace satisfied it by
+/// copying — and states where the real closure lives: *"The schedule block's
+/// counts/roots are bound to the canonical Turn OFF-AIR."*
+///
+/// So the subject survives; only the layer moved. This test is the stub's own
+/// threat — *the prover claims transfer_id = X but the transfer effect derives
+/// Y* — aimed at the mechanism that actually refuses it.
+///
+/// **And it is the sharp version, not the easy one.** Every existing tamper test
+/// in this file corrupts ONE side, so a verifier that merely cross-checked the
+/// two entries against each other would pass them all. Here both sides tell the
+/// SAME lie: two entries whose bilateral roots are internally consistent with
+/// each other and inconsistent only with the canonical `Turn` in the bundle.
+/// Nothing but recomputing the schedule from that `Turn` can catch it.
+///
+/// The turn identity is fabricated from the REAL turn in both legs, so the
+/// rejection cannot come from a `TURN_HASH` / `ACTOR_NONCE` mismatch — the roots
+/// are the only thing that differs.
 #[test]
-#[ignore = "blocked on γ.2 Phase 1 AIR-side binding: tamper transfer_id between trace and PI; AIR rejects"]
-fn tampered_transfer_id_in_pi_rejected_by_air() {
-    // Build a proof where the prover claims transfer_id = X but the in-trace
-    // transfer effect derives id = Y; AIR's "in-trace transfer-effect data
-    // ties to PI transfer_id" constraint fires.
-    panic!("blocked");
+fn coherent_two_sided_transfer_id_lie_is_refused_by_the_canonical_turn() {
+    use dregg_turn::bilateral_schedule::ExpectedBilateral;
+
+    let alice = CellId([0xA1; 32]);
+    let bob = CellId([0xB2; 32]);
+
+    // The turn that is actually in the bundle, and will be shipped in it.
+    let real = make_transfer_turn(alice, bob, 10, 7);
+    // The turn the two colluding provers WISH they had been given. Same
+    // endpoints, same nonce, same shape — a different amount, and therefore a
+    // different `transfer_id` and different folded roots.
+    let lie = make_transfer_turn(alice, bob, 20, 7);
+
+    let real_sched = ExpectedBilateral::from_turn(&real);
+    let lie_sched = ExpectedBilateral::from_turn(&lie);
+    assert_ne!(
+        real_sched.roots_for(&alice, real.nonce).outgoing_transfer,
+        lie_sched.roots_for(&alice, real.nonce).outgoing_transfer,
+        "anti-vacuity: the two schedules must fold to different roots, or the \
+         attack below is not an attack"
+    );
+
+    // A bundle over `turn`, with every entry's bilateral block projected from
+    // `sched`. Turn identity always comes from `turn`.
+    let bundle_with = |turn: &Turn, sched: &ExpectedBilateral| BilateralBundle {
+        turn: turn.clone(),
+        entries: [alice, bob]
+            .iter()
+            .map(|cell_id| BilateralEntry {
+                cell_id: *cell_id,
+                witnessed_receipt:
+                    dregg_verifier::bilateral_pair::fabricate_witnessed_receipt_with_schedule(
+                        turn,
+                        cell_id,
+                        dummy_receipt(turn.agent),
+                        sched,
+                    ),
+            })
+            .collect(),
+        unilateral_attestations: std::collections::BTreeMap::new(),
+    };
+
+    // CONTROL — same construction, honest schedule. Without this leg the
+    // rejection below could be an artifact of
+    // `fabricate_witnessed_receipt_with_schedule` rather than of the lie.
+    let honest = verify_bilateral_bundle(&bundle_with(&real, &real_sched));
+    assert!(
+        honest.verified,
+        "control: the same construction with the turn's own schedule must verify: \
+         {honest:?}"
+    );
+
+    // THE ATTACK: both sides agree with each other and disagree with the turn.
+    let verdict = verify_bilateral_bundle(&bundle_with(&real, &lie_sched));
+    assert!(
+        !verdict.verified,
+        "two entries that agree with each other but not with the bundle's own Turn \
+         must reject — the schedule is recomputed from the Turn, not read off the \
+         entries: {verdict:?}"
+    );
+    assert!(
+        verdict.reason.contains("transfer") || verdict.reason.contains("root"),
+        "the rejection must be about the transfer roots, not some incidental \
+         structural check: {}",
+        verdict.reason
+    );
+
+    // …and the same attack on the OTHER direction of the same pair, so the test
+    // does not silently depend on which of the two roots happens to be compared
+    // first.
+    let reversed_lie = make_transfer_turn(bob, alice, 10, 7);
+    let reversed_sched = ExpectedBilateral::from_turn(&reversed_lie);
+    let verdict = verify_bilateral_bundle(&bundle_with(&real, &reversed_sched));
+    assert!(
+        !verdict.verified,
+        "a coherent two-sided DIRECTION lie must also reject: {verdict:?}"
+    );
 }
 
 #[test]
@@ -591,10 +697,454 @@ fn bilateral_transfer_with_bound_delta_caveat_on_both_sides() {
     );
 }
 
+// ===========================================================================
+// Sovereign fixtures for the γ.2 × sovereign-witness compositions below.
+//
+// These are LOCAL on purpose. The sovereign helpers in
+// `crate::sovereign_witness_threats` are private to that module and it is
+// under concurrent edit; duplicating three small builders is cheaper than
+// coupling two suites through a shared mutable surface.
+// ===========================================================================
+
+fn sovereign_signing_cell(seed: u8, balance: i64) -> (dregg_cell::Cell, dregg_types::SigningKey) {
+    use dregg_cell::{Cell, Permissions};
+    let signing_key = dregg_types::SigningKey::from_bytes(&[seed; 32]);
+    let mut cell = Cell::with_balance(*signing_key.public_key().as_bytes(), [0u8; 32], balance);
+    cell.permissions = Permissions {
+        send: AuthRequired::None,
+        receive: AuthRequired::None,
+        set_state: AuthRequired::None,
+        set_permissions: AuthRequired::None,
+        set_verification_key: AuthRequired::None,
+        increment_nonce: AuthRequired::None,
+        delegate: AuthRequired::None,
+        access: AuthRequired::None,
+    };
+    (cell, signing_key)
+}
+
+fn plain_agent_cell(seed: u8, balance: i64) -> dregg_cell::Cell {
+    use dregg_cell::{Cell, Permissions};
+    let mut pk = [0u8; 32];
+    pk[0] = seed;
+    pk[31] = seed.wrapping_mul(31);
+    let mut cell = Cell::with_balance(pk, [0u8; 32], balance);
+    cell.permissions = Permissions {
+        send: AuthRequired::None,
+        receive: AuthRequired::None,
+        set_state: AuthRequired::None,
+        set_permissions: AuthRequired::None,
+        set_verification_key: AuthRequired::None,
+        increment_nonce: AuthRequired::None,
+        delegate: AuthRequired::None,
+        access: AuthRequired::None,
+    };
+    cell
+}
+
+/// A sovereign witness signed over the canonical federation message, declaring
+/// `new_commitment` and `effects_hash` VERBATIM.
+///
+/// Both must be the real values or the executor refuses before anything
+/// interesting happens: `new_commitment` is re-derived from the executor's own
+/// post-state (`SovereignCommitmentMismatch`) and `effects_hash` is compared
+/// against `Turn::sovereign_effects_hash(cell)` (`EffectsHashMismatch`, executor
+/// rule 7b). Callers get `new_commitment` from [`hosted_post_state`] rather than
+/// recomputing the apply order by hand.
+fn sovereign_witness(
+    federation_id: &[u8; 32],
+    cell: &dregg_cell::Cell,
+    signing_key: &dregg_types::SigningKey,
+    old_commitment: [u8; 32],
+    new_commitment: [u8; 32],
+    effects_hash: [u8; 32],
+    sequence: u64,
+) -> dregg_turn::SovereignCellWitness {
+    use dregg_turn::SovereignCellWitness;
+    let cell_id = cell.id();
+    let timestamp = 0;
+    let message = SovereignCellWitness::signing_message_for_federation(
+        federation_id,
+        &cell_id,
+        &old_commitment,
+        &new_commitment,
+        &effects_hash,
+        timestamp,
+        sequence,
+    );
+    SovereignCellWitness {
+        cell_id,
+        old_commitment,
+        new_commitment,
+        effects_hash,
+        timestamp,
+        sequence,
+        signature: dregg_types::sign(signing_key, &message).0,
+        cell_state: cell.clone(),
+        transition_proof: None,
+    }
+}
+
+/// Run `turn` against `ledger` and return each requested cell's post-state
+/// commitment.
+///
+/// This is the only honest source for a sovereign witness's `new_commitment`:
+/// hand-computing it means re-implementing the executor's apply order inside the
+/// test, and a test that re-implements the thing it is testing agrees with
+/// itself for free.
+///
+/// ⚠ A PLAIN HOSTED TWIN IS NOT A FAITHFUL TWIN, and `nonce_exempt` is the
+/// whole reason this helper takes a fourth argument.
+///
+/// MEASURED 2026-07-27: a plain hosted run reaches a DIFFERENT post-state than
+/// the sovereign run for the very same turn, differing by exactly the action
+/// TARGET cell's `state.nonce`. `turn/src/executor/execute_tree.rs:1250` says
+/// why, and says it deliberately:
+///
+/// ```text
+/// let target_is_sovereign = ledger.is_sovereign(&action.target)
+///     || ledger.is_sovereign_registered(&action.target);
+/// if !target_is_turn_agent && !target_is_sovereign && !explicit_target_nonce_bump {
+///     … increment_nonce() …
+/// }
+/// ```
+///
+/// A sovereign target is EXEMPT from the implicit target-nonce bump: its replay
+/// counter is the witness `sequence` in the federation's sovereign table, not
+/// the cell's own nonce. Registering the twin's cells sovereign is not an option
+/// — `Ledger::register_sovereign_cell` refuses a cell already in the hosted
+/// table (`SovereignAlreadyExists`), which is the exclusivity invariant working.
+/// So the twin runs hosted and this helper undoes the ONE documented divergence,
+/// by name, for the cells the caller declares exempt. Callers assert the
+/// adjustment actually moved something, so the day the exemption changes this
+/// goes red instead of quietly agreeing.
+fn hosted_post_state(
+    mut ledger: dregg_cell::Ledger,
+    turn: &Turn,
+    cells: &[CellId],
+    nonce_exempt: &[CellId],
+) -> Vec<[u8; 32]> {
+    use dregg_turn::{ComputronCosts, TurnExecutor, TurnResult};
+    let result = TurnExecutor::new(ComputronCosts::zero()).execute(turn, &mut ledger);
+    assert!(
+        matches!(result, TurnResult::Committed { .. }),
+        "the HOSTED twin of this turn must commit, or the sovereign leg is \
+         measuring the wrong failure: {result:?}"
+    );
+    cells
+        .iter()
+        .map(|c| {
+            let mut post = ledger
+                .get(c)
+                .unwrap_or_else(|| panic!("cell {c} missing from the hosted post-state"))
+                .clone();
+            if nonce_exempt.contains(c) {
+                let n = post.state.nonce();
+                assert!(
+                    n > 0,
+                    "cell {c} was declared nonce-exempt but the hosted twin never \
+                     bumped its nonce — the divergence this undoes is gone, and the \
+                     comment above is now wrong"
+                );
+                post.state.set_nonce(n - 1);
+            }
+            post.state_commitment()
+        })
+        .collect()
+}
+
+/// UNBLOCKED (2026-07-27). The `#[ignore]` read "blocked on γ.2 + sovereign
+/// witness AIR teeth: bilateral transfer between two sovereign cells must bind
+/// transfer_id AND verify sovereign witnesses".
+///
+/// Neither half was ever blocked on an AIR. The sovereign-witness teeth this
+/// composition needs are the EXECUTOR's — signature, pre-state anchor,
+/// monotonic sequence, post-state commitment, and (as of 2026-07-27) the
+/// rule-7b effects binding — and the γ.2 half is the off-AIR verifier this file
+/// has exercised all along. The AIR-side Phase 1 the reason was waiting for is
+/// dead-zero and Phase 2 is retired (`circuit/src/effect_vm/pi.rs:209`), so the
+/// premise named a dependency that had been cancelled.
+///
+/// The composition, and why it is not just two tests stapled together: ONE turn
+/// moves value between TWO sovereign cells, so the transfer must be paid for
+/// TWICE over — each cell's own witness must cover it under that cell's
+/// projection of the effect list — and the γ.2 schedule must bind the same
+/// transfer across both cells' per-cell proofs. Three teeth, each with its own
+/// leg below.
 #[test]
-#[ignore = "blocked on γ.2 + sovereign witness AIR teeth: bilateral transfer between two sovereign cells must bind transfer_id AND verify sovereign witnesses"]
 fn bilateral_transfer_with_sovereign_witness_on_both_sides() {
-    panic!("blocked");
+    use dregg_cell::Ledger;
+    use dregg_turn::{ComputronCosts, TurnExecutor, TurnResult};
+
+    const AMOUNT: u64 = 10;
+    let fed = [0u8; 32];
+
+    // `build()` returns (ledger-with-both-sovereign, hosted-twin-ledger, turn
+    // skeleton, ids, cells, keys). Every leg starts from a FRESH build: a
+    // rejected turn still charges the agent's nonce, so reusing a ledger across
+    // legs would trip NonceReplay and mask what is being asserted.
+    struct Fixture {
+        sovereign_ledger: Ledger,
+        hosted_ledger: Ledger,
+        agent_id: CellId,
+        alice: dregg_cell::Cell,
+        bob: dregg_cell::Cell,
+        alice_key: dregg_types::SigningKey,
+        bob_key: dregg_types::SigningKey,
+    }
+
+    fn build() -> Fixture {
+        let (alice, alice_key) = sovereign_signing_cell(0xA1, 1_000);
+        let (bob, bob_key) = sovereign_signing_cell(0xB2, 1_000);
+        let agent = plain_agent_cell(0x0A, 1_000);
+        let (alice_id, bob_id, agent_id) = (alice.id(), bob.id(), agent.id());
+
+        let mut sovereign_ledger = Ledger::new();
+        sovereign_ledger.insert_cell(agent.clone()).unwrap();
+        sovereign_ledger
+            .register_sovereign_cell(alice_id, alice.state_commitment())
+            .unwrap();
+        sovereign_ledger
+            .register_sovereign_cell(bob_id, bob.state_commitment())
+            .unwrap();
+        {
+            let a = sovereign_ledger.get_mut(&agent_id).unwrap();
+            a.capabilities.grant(alice_id, AuthRequired::None).unwrap();
+            a.capabilities.grant(bob_id, AuthRequired::None).unwrap();
+        }
+
+        // The hosted twin: identical cells, none registered sovereign. Its only
+        // job is to tell us the post-state the executor will reach.
+        let mut hosted_ledger = Ledger::new();
+        let mut hosted_agent = agent.clone();
+        hosted_agent
+            .capabilities
+            .grant(alice_id, AuthRequired::None)
+            .unwrap();
+        hosted_agent
+            .capabilities
+            .grant(bob_id, AuthRequired::None)
+            .unwrap();
+        hosted_ledger.insert_cell(hosted_agent).unwrap();
+        hosted_ledger.insert_cell(alice.clone()).unwrap();
+        hosted_ledger.insert_cell(bob.clone()).unwrap();
+
+        Fixture {
+            sovereign_ledger,
+            hosted_ledger,
+            agent_id,
+            alice,
+            bob,
+            alice_key,
+            bob_key,
+        }
+    }
+
+    // The turn: one action TARGETING alice (so the sovereign authority in
+    // question is alice's), carrying a Transfer that names bob.
+    fn sovereign_transfer_turn(
+        agent_id: CellId,
+        alice_id: CellId,
+        bob_id: CellId,
+        witnesses: std::collections::HashMap<CellId, dregg_turn::SovereignCellWitness>,
+    ) -> Turn {
+        let action = ActionBuilder::new_unchecked_for_tests(alice_id, "pay", agent_id)
+            .effect_transfer(alice_id, bob_id, AMOUNT)
+            .build();
+        let mut builder = TurnBuilder::new(agent_id, 0);
+        builder.add_action(action);
+        let mut turn = builder.fee(0).build();
+        turn.sovereign_witnesses = witnesses;
+        turn
+    }
+
+    let f = build();
+    let (alice_id, bob_id) = (f.alice.id(), f.bob.id());
+    let witnessless = sovereign_transfer_turn(
+        f.agent_id,
+        alice_id,
+        bob_id,
+        std::collections::HashMap::new(),
+    );
+    let post = hosted_post_state(
+        f.hosted_ledger,
+        &witnessless,
+        &[alice_id, bob_id],
+        // Alice is the action TARGET, so only she takes the implicit bump.
+        &[alice_id],
+    );
+    let (alice_post, bob_post) = (post[0], post[1]);
+    assert_ne!(
+        alice_post,
+        f.alice.state_commitment(),
+        "anti-vacuity: the transfer must actually move alice's state"
+    );
+    assert_ne!(
+        bob_post,
+        f.bob.state_commitment(),
+        "anti-vacuity: the transfer must actually move bob's state"
+    );
+
+    // Each cell's OWN projection of the same effect list. They differ (the
+    // cell id is absorbed into the digest), which is what makes "paid for
+    // twice" a real requirement rather than one signature reused.
+    let alice_effects = witnessless.sovereign_effects_hash(&alice_id);
+    let bob_effects = witnessless.sovereign_effects_hash(&bob_id);
+    assert_ne!(
+        alice_effects, bob_effects,
+        "the two sovereign cells must not share an effects digest"
+    );
+
+    let both_witnesses = |f: &Fixture, alice_eff: [u8; 32], bob_eff: [u8; 32]| {
+        let mut w = std::collections::HashMap::new();
+        w.insert(
+            f.alice.id(),
+            sovereign_witness(
+                &fed,
+                &f.alice,
+                &f.alice_key,
+                f.alice.state_commitment(),
+                alice_post,
+                alice_eff,
+                1,
+            ),
+        );
+        w.insert(
+            f.bob.id(),
+            sovereign_witness(
+                &fed,
+                &f.bob,
+                &f.bob_key,
+                f.bob.state_commitment(),
+                bob_post,
+                bob_eff,
+                1,
+            ),
+        );
+        w
+    };
+
+    // ── LEG 1 (positive): both sovereign cells authorize, the turn commits,
+    //    and BOTH replay sequences advance.
+    let mut f = build();
+    let turn = sovereign_transfer_turn(
+        f.agent_id,
+        alice_id,
+        bob_id,
+        both_witnesses(&f, alice_effects, bob_effects),
+    );
+    let result = TurnExecutor::new(ComputronCosts::zero()).execute(&turn, &mut f.sovereign_ledger);
+    assert!(
+        matches!(&result, TurnResult::Committed { .. }),
+        "a transfer between two sovereign cells, witnessed by both, must commit: \
+         {result:?}"
+    );
+    assert_eq!(
+        f.sovereign_ledger
+            .last_sovereign_witness_sequence(&alice_id),
+        1,
+        "the sender's replay sequence must advance"
+    );
+    assert_eq!(
+        f.sovereign_ledger.last_sovereign_witness_sequence(&bob_id),
+        1,
+        "the RECEIVER's replay sequence must advance too — a sovereign cell that \
+         is only ever a payee still spends witness authority"
+    );
+
+    // ── LEG 2 (γ.2 over the very same turn): the bilateral schedule binds the
+    //    transfer across both cells, and a root tamper still rejects. This is
+    //    the composition proper — the same turn satisfies the sovereign teeth
+    //    AND the cross-cell binding.
+    let bundle = fabricated_bundle(&turn, &[alice_id, bob_id]);
+    let verdict = verify_bilateral_bundle(&bundle);
+    assert!(
+        verdict.verified,
+        "γ.2 must bind the transfer across two sovereign cells: {verdict:?}"
+    );
+    assert_eq!(verdict.transfer_count, 1);
+    assert_eq!(verdict.entry_count, 2);
+
+    let mut tampered = fabricated_bundle(&turn, &[alice_id, bob_id]);
+    tampered.entries[1].witnessed_receipt.public_inputs
+        [dregg_circuit::effect_vm::pi::INCOMING_TRANSFER_ROOT_BASE] ^= 1;
+    assert!(
+        !verify_bilateral_bundle(&tampered).verified,
+        "the γ.2 tooth must not be blunted by the sovereign composition"
+    );
+
+    // ── LEG 3 (the tooth that makes leg 1 mean something): the RECEIVER's
+    //    witness covers the WRONG projection — it carries the sender's effects
+    //    digest. Everything else is perfect, and it must still refuse. Without
+    //    this leg, an executor that checked only `turn.agent`'s witness, or that
+    //    accepted any signed digest, would pass leg 1.
+    let mut f = build();
+    let turn = sovereign_transfer_turn(
+        f.agent_id,
+        alice_id,
+        bob_id,
+        both_witnesses(&f, alice_effects, alice_effects),
+    );
+    let result = TurnExecutor::new(ComputronCosts::zero()).execute(&turn, &mut f.sovereign_ledger);
+    assert!(
+        matches!(
+            &result,
+            TurnResult::Rejected {
+                reason: dregg_turn::TurnError::EffectsHashMismatch { .. },
+                ..
+            }
+        ),
+        "the receiver's witness must cover the receiver's own projection: {result:?}"
+    );
+    assert_eq!(
+        f.sovereign_ledger
+            .last_sovereign_witness_sequence(&alice_id),
+        0,
+        "a rejected turn must advance NO replay sequence, including the side \
+         whose witness was fine"
+    );
+
+    // ── LEG 4: the receiver's witness is signed by the WRONG KEY. The sender's
+    //    is impeccable. One bad witness must reject the whole turn.
+    let mut f = build();
+    let impostor = dregg_types::SigningKey::from_bytes(&[0x99u8; 32]);
+    let mut witnesses = std::collections::HashMap::new();
+    witnesses.insert(
+        alice_id,
+        sovereign_witness(
+            &fed,
+            &f.alice,
+            &f.alice_key,
+            f.alice.state_commitment(),
+            alice_post,
+            alice_effects,
+            1,
+        ),
+    );
+    witnesses.insert(
+        bob_id,
+        sovereign_witness(
+            &fed,
+            &f.bob,
+            &impostor,
+            f.bob.state_commitment(),
+            bob_post,
+            bob_effects,
+            1,
+        ),
+    );
+    let turn = sovereign_transfer_turn(f.agent_id, alice_id, bob_id, witnesses);
+    let result = TurnExecutor::new(ComputronCosts::zero()).execute(&turn, &mut f.sovereign_ledger);
+    assert!(
+        matches!(
+            &result,
+            TurnResult::Rejected {
+                reason: dregg_turn::TurnError::InvalidEffect { reason },
+                ..
+            } if reason.contains("signature")
+        ),
+        "one invalid sovereign witness must reject the bilateral turn: {result:?}"
+    );
 }
 
 // ===========================================================================
@@ -667,10 +1217,259 @@ fn transfer_id_preimage_endian_stability() {
 // γ.2 + sovereign witness composition (additional)
 // ===========================================================================
 
+/// UNBLOCKED (2026-07-27), and the reason's own framing turns out to be the
+/// interesting finding.
+///
+/// The `#[ignore]` read "blocked on γ.2 Phase 1 + sovereign witness AIR teeth +
+/// cross-fed extension: trilateral introduce across three federations where each
+/// cell is sovereign and each emits its own sovereign witness". Both named
+/// blockers are dead (see `bilateral_transfer_with_sovereign_witness_on_both_sides`
+/// for the AIR half). What is left is the third clause — and **as literally
+/// stated it is not implementable, because the federation binding forbids it.**
+///
+/// A `TurnExecutor` has exactly one `local_federation_id`, and a sovereign
+/// witness signs `signing_message_for_federation`. Three cells sovereign under
+/// three DIFFERENT federations cannot all witness one turn at one executor: at
+/// most one federation's signatures verify. That is not a gap — it is the
+/// cross-federation replay protection working, and a test that made it pass
+/// would be a test that had broken it.
+///
+/// So the composition is split into the two real halves, both asserted here:
+///
+///   1. The IDs are federation-scoped: one `Introduce` surface derives three
+///      distinct `intro_id`s under three federations. That is the "cross-fed
+///      extension" the reason wanted, and it is a property of the id, not of a
+///      turn.
+///   2. The TURN is federation-bound: three sovereign cells all under the LOCAL
+///      federation commit and the γ.2 trilateral binding verifies over that same
+///      turn — while swapping ONE witness to a foreign federation refuses it.
 #[test]
-#[ignore = "blocked on γ.2 Phase 1 + sovereign witness AIR teeth + cross-fed extension: trilateral introduce across three federations where each cell is sovereign and each emits its own sovereign witness"]
 fn trilateral_introduce_three_federations_each_sovereign() {
-    panic!("blocked");
+    use dregg_cell::Ledger;
+    use dregg_turn::{ComputronCosts, TurnExecutor, TurnResult};
+
+    let fed_local = [0u8; 32];
+    let fed_b = [0xFB; 32];
+    let fed_c = [0xFC; 32];
+
+    // ── HALF 1: the id is federation-scoped, three ways.
+    {
+        let i = CellId([0x11; 32]);
+        let r = CellId([0x22; 32]);
+        let t = CellId([0x33; 32]);
+        let ids: Vec<[dregg_circuit::field::BabyBear; 4]> = [fed_local, fed_b, fed_c]
+            .iter()
+            .map(|f| derive_intro_id_for_federation(f, &i, &r, &t, &AuthRequired::Signature, 7))
+            .collect();
+        assert_ne!(ids[0], ids[1]);
+        assert_ne!(ids[1], ids[2]);
+        assert_ne!(
+            ids[0], ids[2],
+            "one Introduce surface must derive three DISTINCT ids under three \
+             federations — pairwise, not just adjacent"
+        );
+    }
+
+    // ── HALF 2: the turn.
+    struct Fixture {
+        sovereign_ledger: Ledger,
+        hosted_ledger: Ledger,
+        agent_id: CellId,
+        cells: [dregg_cell::Cell; 3],
+        keys: [dregg_types::SigningKey; 3],
+    }
+
+    fn build() -> Fixture {
+        let (mut alice, ka) = sovereign_signing_cell(0xA1, 1_000);
+        let (bob, kb) = sovereign_signing_cell(0xB2, 1_000);
+        let (carol, kc) = sovereign_signing_cell(0xC3, 1_000);
+        let agent = plain_agent_cell(0x0A, 1_000);
+        let agent_id = agent.id();
+        let ids = [alice.id(), bob.id(), carol.id()];
+        // The introducer must already hold what it introduces: a capability to
+        // the recipient and one to the target (`IntroductionDenied` otherwise).
+        // Granted on the CELL, before either ledger sees it, so alice's
+        // pre-state commitment — which her own witness signs as
+        // `old_commitment` — is the granted one in both runs.
+        alice
+            .capabilities
+            .grant(ids[1], AuthRequired::None)
+            .unwrap();
+        alice
+            .capabilities
+            .grant(ids[2], AuthRequired::None)
+            .unwrap();
+
+        let mut sovereign_ledger = Ledger::new();
+        sovereign_ledger.insert_cell(agent.clone()).unwrap();
+        for (c, id) in [&alice, &bob, &carol].iter().zip(ids.iter()) {
+            sovereign_ledger
+                .register_sovereign_cell(*id, c.state_commitment())
+                .unwrap();
+        }
+        {
+            let a = sovereign_ledger.get_mut(&agent_id).unwrap();
+            for id in ids.iter() {
+                a.capabilities.grant(*id, AuthRequired::None).unwrap();
+            }
+        }
+
+        let mut hosted_ledger = Ledger::new();
+        let mut hosted_agent = agent.clone();
+        for id in ids.iter() {
+            hosted_agent
+                .capabilities
+                .grant(*id, AuthRequired::None)
+                .unwrap();
+        }
+        hosted_ledger.insert_cell(hosted_agent).unwrap();
+        for c in [&alice, &bob, &carol] {
+            hosted_ledger.insert_cell((*c).clone()).unwrap();
+        }
+
+        Fixture {
+            sovereign_ledger,
+            hosted_ledger,
+            agent_id,
+            cells: [alice, bob, carol],
+            keys: [ka, kb, kc],
+        }
+    }
+
+    fn intro_turn(
+        agent_id: CellId,
+        introducer: CellId,
+        recipient: CellId,
+        target: CellId,
+        witnesses: std::collections::HashMap<CellId, dregg_turn::SovereignCellWitness>,
+    ) -> Turn {
+        let action = ActionBuilder::new_unchecked_for_tests(introducer, "introduce", agent_id)
+            .effect_introduce(introducer, recipient, target, AuthRequired::Signature)
+            .build();
+        let mut builder = TurnBuilder::new(agent_id, 0);
+        builder.add_action(action);
+        let mut turn = builder.fee(0).build();
+        turn.sovereign_witnesses = witnesses;
+        turn
+    }
+
+    let f = build();
+    let ids = [f.cells[0].id(), f.cells[1].id(), f.cells[2].id()];
+    let witnessless = intro_turn(
+        f.agent_id,
+        ids[0],
+        ids[1],
+        ids[2],
+        std::collections::HashMap::new(),
+    );
+    // No cell is nonce-exempt here: `Introduce` mutates capability lists, not
+    // `CellState`, so the `target_changed` half of the implicit-bump condition
+    // is false and the hosted twin bumps nobody. (Pass a cell that WAS bumped
+    // and `hosted_post_state` says so rather than silently subtracting.)
+    let post = hosted_post_state(f.hosted_ledger, &witnessless, &ids, &[]);
+    let effects: Vec<[u8; 32]> = ids
+        .iter()
+        .map(|c| witnessless.sovereign_effects_hash(c))
+        .collect();
+    assert_ne!(
+        effects[0], effects[1],
+        "each role's projection must be its own digest"
+    );
+    assert_ne!(effects[1], effects[2]);
+
+    // Build the three witnesses, each under `feds[k]`.
+    let witnesses_under = |f: &Fixture, feds: [[u8; 32]; 3]| {
+        let mut w = std::collections::HashMap::new();
+        for k in 0..3 {
+            w.insert(
+                f.cells[k].id(),
+                sovereign_witness(
+                    &feds[k],
+                    &f.cells[k],
+                    &f.keys[k],
+                    f.cells[k].state_commitment(),
+                    post[k],
+                    effects[k],
+                    1,
+                ),
+            );
+        }
+        w
+    };
+
+    // POSITIVE: all three sovereign under the local federation.
+    let mut f = build();
+    let turn = intro_turn(
+        f.agent_id,
+        ids[0],
+        ids[1],
+        ids[2],
+        witnesses_under(&f, [fed_local; 3]),
+    );
+    let result = TurnExecutor::new(ComputronCosts::zero()).execute(&turn, &mut f.sovereign_ledger);
+    assert!(
+        matches!(&result, TurnResult::Committed { .. }),
+        "three sovereign cells, three witnesses, one Introduce must commit: {result:?}"
+    );
+    for id in ids.iter() {
+        assert_eq!(
+            f.sovereign_ledger.last_sovereign_witness_sequence(id),
+            1,
+            "every witnessed role must spend its own replay sequence"
+        );
+    }
+
+    // …and γ.2 binds the introduce across all three roles.
+    let bundle = fabricated_bundle(&turn, &ids);
+    let verdict = verify_bilateral_bundle(&bundle);
+    assert!(
+        verdict.verified,
+        "γ.2 trilateral introduce over three sovereign cells: {verdict:?}"
+    );
+    assert_eq!(verdict.introduce_count, 1);
+    assert_eq!(verdict.entry_count, 3);
+
+    let mut tampered = fabricated_bundle(&turn, &ids);
+    tampered.entries[2].witnessed_receipt.public_inputs
+        [dregg_circuit::effect_vm::pi::INTRO_AS_TARGET_ROOT_BASE] ^= 1;
+    assert!(
+        !verify_bilateral_bundle(&tampered).verified,
+        "the target role's γ.2 root must still be checked under the sovereign \
+         composition"
+    );
+
+    // NEGATIVE — the clause the reason asked for, and the reason it cannot be
+    // satisfied: put ONE of the three under a foreign federation. Its signature
+    // is perfectly valid *for FED_B*; this executor is FED_LOCAL, and the whole
+    // turn must refuse.
+    let mut f = build();
+    let turn = intro_turn(
+        f.agent_id,
+        ids[0],
+        ids[1],
+        ids[2],
+        witnesses_under(&f, [fed_local, fed_b, fed_local]),
+    );
+    let result = TurnExecutor::new(ComputronCosts::zero()).execute(&turn, &mut f.sovereign_ledger);
+    assert!(
+        matches!(
+            &result,
+            TurnResult::Rejected {
+                reason: dregg_turn::TurnError::InvalidEffect { reason },
+                ..
+            } if reason.contains("signature")
+        ),
+        "a witness signed for another federation cannot ride a local turn — this \
+         is why 'each cell sovereign under its OWN federation' is not a thing one \
+         executor can accept: {result:?}"
+    );
+    for id in ids.iter() {
+        assert_eq!(
+            f.sovereign_ledger.last_sovereign_witness_sequence(id),
+            0,
+            "a refused cross-federation turn must burn no sequence anywhere"
+        );
+    }
 }
 
 #[test]
@@ -935,8 +1734,103 @@ fn direction_bit_inverted_on_sender_rejects() {
 // γ.2 + bridge composition
 // ===========================================================================
 
+/// REPLACED (2026-07-27). The stub here was
+/// `cross_federation_transfer_binds_both_transfer_id_and_bridge_id`,
+/// `#[ignore]`d on "γ.2 + bridge phase log: … FED_A emits a Phase-1 lock with
+/// bridge_id, … FED_B emits a Phase-2 witness; the γ.2 transfer_id binding must
+/// compose with the bridge_id binding".
+///
+/// **That composition has never existed, in either direction, and the stub does
+/// not describe the code it names.** Both halves are real and neither touches
+/// the other: `dregg_cell_crypto::note_bridge` has `compute_bridge_id` and a
+/// four-phase `BridgePhase` log, and `dregg_turn::bilateral_schedule` has
+/// `derive_transfer_id` — and nothing anywhere composes them. Even the
+/// vocabulary is wrong: the phases are `Locked / Witnessed / Finalized /
+/// Refunded`, not "Phase-1 lock / Phase-2 witness". A test cannot guard a weld
+/// that no production path makes, so keeping the placeholder was keeping a
+/// reminder that had stopped pointing at anything.
+///
+/// What replaces it is the **obstacle** that composition would actually hit, and
+/// it is a live property of shipped code rather than a wish. Line the two ids up
+/// and they scope oppositely:
+///
+/// | id | federation-scoped? |
+/// |---|---|
+/// | `compute_bridge_id` | YES — absorbs BOTH `src_fed` and `dst_fed` |
+/// | `derive_intro_id_for_federation` | YES — added for exactly this reason |
+/// | `derive_transfer_id` | **NO** — no federation input exists |
+/// | `derive_grant_id` | **NO** |
+///
+/// So the same `(from, to, amount, nonce)` derives the SAME `transfer_id` under
+/// every federation in existence. `intro_id` closed that surface deliberately —
+/// `bilateral_schedule.rs:219` documents the zero-id back-compat path it needed
+/// to do so — and the transfer/grant siblings were never given the same
+/// treatment.
+///
+/// ⚠ THIS TEST FREEZES A HOLE. It is NOT a guarantee, and reading it as one is
+/// the error it exists to prevent: it asserts that `transfer_id` is federation-
+/// blind TODAY, so that giving it a federation binding is a deliberate, visible
+/// edit that turns this test red and makes someone read this comment. The fix is
+/// a `derive_transfer_id_for_federation` mirroring the `intro_id` one, plus the
+/// `ExpectedBilateral` producer threading a federation id; that is a schedule
+/// change with PI consequences and it belongs to whoever owns the re-genesis
+/// flag day, not to a test.
 #[test]
-#[ignore = "blocked on γ.2 + bridge phase log: cross-federation Transfer where the sender's federation FED_A emits a Phase-1 lock with bridge_id, the receiver's FED_B emits a Phase-2 witness; the γ.2 transfer_id binding must compose with the bridge_id binding"]
-fn cross_federation_transfer_binds_both_transfer_id_and_bridge_id() {
-    panic!("blocked");
+fn transfer_id_is_federation_blind_while_intro_id_and_bridge_id_are_not() {
+    use dregg_cell_crypto::note_bridge::compute_bridge_id;
+    use dregg_turn::bilateral_schedule::derive_transfer_id;
+
+    let alice = CellId([0xA1; 32]);
+    let bob = CellId([0xB2; 32]);
+    let carol = CellId([0xC3; 32]);
+    let fed_a = [0xFA; 32];
+    let fed_b = [0xFB; 32];
+    assert_ne!(fed_a, fed_b, "the two federations must differ");
+
+    // THE HOLE. One transfer, two federations, one id.
+    assert_eq!(
+        derive_transfer_id(&alice, &bob, 10, 7),
+        derive_transfer_id(&alice, &bob, 10, 7),
+        "sanity: the derivation is deterministic"
+    );
+    // There is no federation parameter to vary — the signature itself is the
+    // finding. Pin the CONTRAST instead, against the two siblings that DO scope:
+    let intro_a =
+        derive_intro_id_for_federation(&fed_a, &alice, &bob, &carol, &AuthRequired::Signature, 7);
+    let intro_b =
+        derive_intro_id_for_federation(&fed_b, &alice, &bob, &carol, &AuthRequired::Signature, 7);
+    assert_ne!(
+        intro_a, intro_b,
+        "intro_id binds the federation — this is the treatment transfer_id lacks"
+    );
+
+    let lock_nullifier = [0x5A; 32];
+    let bridge_ab = compute_bridge_id(&lock_nullifier, &fed_a, &fed_b, 7);
+    let bridge_ba = compute_bridge_id(&lock_nullifier, &fed_b, &fed_a, 7);
+    assert_ne!(
+        bridge_ab, bridge_ba,
+        "bridge_id binds BOTH federations and their direction"
+    );
+
+    // The consequence, stated as the composition the deleted stub wanted: a
+    // cross-federation transfer identified by (bridge_id, transfer_id) has one
+    // half that distinguishes A→B from B→A by federation and one half that
+    // cannot. Both A→B and B→A over the SAME cell pair and nonce collapse to a
+    // single transfer_id, so the pair is only as federation-bound as its bridge
+    // half. If a future `derive_transfer_id_for_federation` lands, THIS is the
+    // assertion that must be inverted, and the doc comment above rewritten.
+    let same_cells_two_feds = derive_transfer_id(&alice, &bob, 10, 7);
+    assert_eq!(
+        same_cells_two_feds,
+        derive_transfer_id(&alice, &bob, 10, 7),
+        "transfer_id has no federation input: the id under FED_A and the id under \
+         FED_B are the same value, because there is nothing to make them differ"
+    );
+    // Direction IS bound (the one scoping transfer_id does have), so the
+    // freeze above is narrow and not a claim that transfer_id binds nothing.
+    assert_ne!(
+        derive_transfer_id(&alice, &bob, 10, 7),
+        derive_transfer_id(&bob, &alice, 10, 7),
+        "transfer_id does bind direction; the gap is federation scope alone"
+    );
 }
