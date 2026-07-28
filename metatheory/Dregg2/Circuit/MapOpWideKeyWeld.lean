@@ -161,7 +161,8 @@ theorem spineCommitsW_of_heap (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR
   · rintro ⟨e, he, hop⟩
     have he' : e.1 = k := he
     obtain ⟨h', hs', hlen', hroot', hget'⟩ := hop
-    have hh : h' = h := mapRootW_injective hash hCR E dep hlen' hlen (hroot'.trans hroot.symm)
+    have hh : h' = h := mapRootW_injective hash E dep (fun hc => hc.1 (hCR _ _ hc.2))
+      hlen' hlen (hroot'.trans hroot.symm)
     have hgk : Heap.get h k = some e.2 := by rw [← hh, ← he']; exact hget'
     by_contra hk
     rw [(Heap.get_eq_none_iff h k).mpr hk] at hgk
@@ -188,7 +189,10 @@ theorem notMem_keysOfW_of_opensNone (hash : List ℤ → ℤ) (hCR : Poseidon2Sp
   have he' : e.1 = k := he
   have hop' : opensToMerkleW hash E dep r e.1 (some e.2) := hop
   rw [he'] at hop'
-  exact opensToMerkleW_some_excludes_none hash hCR E dep hop' hnone
+  obtain ⟨m₁, -, hl₁, hr₁, hg₁⟩ := hop'
+  obtain ⟨m₂, -, hl₂, hr₂, hg₂⟩ := hnone
+  exact opensToMerkleW_some_excludes_none hash E dep hl₁ hr₁ hg₁ hl₂ hr₂ hg₂
+    (fun hc => hc.1 (hCR _ _ hc.2))
 
 /-- **Transport (⇒), unconditional.** A concrete membership opening puts the key IN the abstract
 committed set — no CR needed in this direction. -/
@@ -330,8 +334,9 @@ theorem writeW_then_absentW_unsat (hash : List ℤ → ℤ) (hCR : Poseidon2Spon
   obtain ⟨h, hs, hlen, hroot, hk, hr'⟩ := writesToMerkleW_forces_present hash E dep hw
   have hlenset : (Heap.set h k v).length = 2 ^ dep := by
     rw [Heap.length_set_mem h k v (E.heapOk_sorted h hs) hk]; exact hlen
-  exact opensToMerkleW_some_excludes_none hash hCR E dep (v := v)
-    ⟨Heap.set h k v, E.heapOk_set h k v hs hk, hlenset, hr'.symm, Heap.get_set_self h k v⟩ habs
+  obtain ⟨m₂, -, hl₂, hr₂, hg₂⟩ := habs
+  exact opensToMerkleW_some_excludes_none hash E dep (v := v)
+    hlenset hr'.symm (Heap.get_set_self h k v) hl₂ hr₂ hg₂ (fun hc => hc.1 (hCR _ _ hc.2))
 
 /-- **★ THE DOUBLE-SPEND REFUSAL, ON THE EMITTED GATE (`.insert`).** Two ACCEPTING widened rows —
 an `.insert` of the 8-felt key `k` moving `r` to `r'`, and an `.absent` of the SAME `k` against

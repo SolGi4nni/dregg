@@ -630,7 +630,8 @@ theorem aliasRoot_admits_no_gate (hash : List ℤ → ℤ) (hCR : Poseidon2Spong
     ¬ ReconcileGatesAtW hash wideEnc 1 (aliasRoot hash) k v r' op := by
   rintro ⟨h, hok, hlen, hroot, -⟩
   have : h = aliasHeap :=
-    mapRootW_injective hash hCR wideEnc 1 hlen aliasHeap_length (hroot.trans rfl)
+    mapRootW_injective hash wideEnc 1 (fun hc => hc.1 (hCR _ _ hc.2)) hlen aliasHeap_length
+      (hroot.trans rfl)
   exact aliasHeap_not_heapOk (this ▸ hok)
 
 /-- …in particular the exact old counterexample — the `.absent` gate at `forgeRow`'s canonical key
@@ -678,26 +679,32 @@ theorem canonAliasHeap_ok : wideEnc.HeapOk canonAliasHeap := by
 
 noncomputable def canonAliasRoot (hash : List ℤ → ℤ) : ℤ := mapRootW hash wideEnc 1 canonAliasHeap
 
+/-- The canonical twin holds the key `5`. -/
+theorem canonAliasHeap_get_five :
+    Heap.get canonAliasHeap (toLex (canonKey forgeKk)) = some 1 := by
+  show Heap.get [((toLex forgeLow : Digest8Key), (1 : ℤ)),
+      ((toLex (canonKey forgeKk) : Digest8Key), (1 : ℤ))] (toLex (canonKey forgeKk)) = some 1
+  rw [Heap.get_cons_ne (1 : ℤ) [((toLex (canonKey forgeKk) : Digest8Key), (1 : ℤ))]]
+  · exact Heap.get_cons_self _ 1 []
+  · refine fun hEq => absurd hEq.symm (ne_of_lt (lex_lt_at0 ?_))
+    show (0 : ℤ) < canonKey forgeKk 0
+    rw [forgeKk_canon0]
+    norm_num
+
 /-- The canonical twin really OPENS at the key `5`. -/
 theorem canonAliasHeap_opens_five (hash : List ℤ → ℤ) :
     opensToMerkleW hash wideEnc 1 (canonAliasRoot hash) (toLex (canonKey forgeKk)) (some 1) :=
-  ⟨canonAliasHeap, canonAliasHeap_ok, canonAliasHeap_length, rfl, by
-    show Heap.get [((toLex forgeLow : Digest8Key), (1 : ℤ)),
-        ((toLex (canonKey forgeKk) : Digest8Key), (1 : ℤ))] (toLex (canonKey forgeKk)) = some 1
-    rw [Heap.get_cons_ne (1 : ℤ) [((toLex (canonKey forgeKk) : Digest8Key), (1 : ℤ))]]
-    · exact Heap.get_cons_self _ 1 []
-    · refine fun hEq => absurd hEq.symm (ne_of_lt (lex_lt_at0 ?_))
-      show (0 : ℤ) < canonKey forgeKk 0
-      rw [forgeKk_canon0]
-      norm_num⟩
+  ⟨canonAliasHeap, canonAliasHeap_ok, canonAliasHeap_length, rfl, canonAliasHeap_get_five⟩
 
 /-- **★ …AND THE `.absent` GATE FOR `5` IS REFUSED THERE TOO, FOR THE HONEST REASON.** No absence
 opening can coexist with that membership opening at one root. -/
 theorem canonAliasRoot_refuses_absence_of_five (hash : List ℤ → ℤ)
     (hCR : Poseidon2SpongeCR hash) :
-    ¬ opensToMerkleW hash wideEnc 1 (canonAliasRoot hash) (toLex (canonKey forgeKk)) none :=
-  fun habs => Dregg2.Circuit.MapOpWideKeyGate.opensToMerkleW_some_excludes_none hash hCR wideEnc 1
-    (canonAliasHeap_opens_five hash) habs
+    ¬ opensToMerkleW hash wideEnc 1 (canonAliasRoot hash) (toLex (canonKey forgeKk)) none := by
+  rintro ⟨m₂, -, hl₂, hr₂, hg₂⟩
+  exact Dregg2.Circuit.MapOpWideKeyGate.opensToMerkleW_some_excludes_none hash wideEnc 1
+    canonAliasHeap_length rfl canonAliasHeap_get_five hl₂ hr₂ hg₂
+    (fun hc => hc.1 (hCR _ _ hc.2))
 
 /-! ## §7 — NON-VACUITY: every row-level statement fires on the epoch's existing accepting rows. -/
 

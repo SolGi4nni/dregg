@@ -66,6 +66,7 @@ namespace Dregg2.Circuit.MapMerkleRoot
 
 open Dregg2.Substrate
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Crypto.SpongeCarrierReduction (IsSpongeColl)
 open Dregg2.Circuit.DeployedCapTree (Digest8)
 open Dregg2.Circuit.DeployedHeapTree (Heap8Scheme)
 
@@ -178,6 +179,200 @@ theorem perfectRoot_injective (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR
     have hfl_y : (foldLevel hash ys).length = 2 ^ d := foldLevel_length_half hash (2 ^ d) ys (by omega)
     have hfold := ih hfl_x hfl_y hroot
     exact foldLevel_injective hash hCR (2 ^ d) (by omega) (by omega) hfold
+
+/-! ## §3b — THE SAME FOLD, FLOOR-FREE: a TOTAL collision EXTRACTOR over the ℤ node levels.
+
+`perfectRoot_injective` above peels the `d` levels with `Poseidon2SpongeCR`, which
+`HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES FALSE for every BabyBear-bounded sponge.
+So at deployed parameters it says nothing. This section restates the SAME induction with the floor
+REMOVED: where the old proof fed an equal-digest pair to the (false) injectivity, this one RETURNS
+that pair. The 8-felt half of this file already worked this way (`foldLevel8Find`/`perfectRoot8Find`,
+§5b); the ℤ half did not, and every widened map-root consumer routes through it.
+
+⚠ `perfectRoot_injective` is deliberately LEFT STANDING and still carries the floor. Its narrow
+consumers (`mapRoot_injective`, `opensToMerkle_functional`, …) are a different cone with its own
+baseline entries; this section is what the WIDE cone (`MapOpWideKeyGate.mapRootW_injective`) is cut
+over onto, and the narrow cone can follow without a second extractor being written. -/
+
+/-- **`foldLevelFind xs ys`** — scan two digest vectors pairwise and RETURN the first adjacent pair
+whose `mapNode` PREIMAGES differ. Decidable throughout (list equality on `ℤ`), total, and
+INDEPENDENT of the hash: the extractor is combinatorics, the hash only makes the returned pair a
+collision. -/
+def foldLevelFind : List ℤ → List ℤ → List ℤ × List ℤ
+  | l :: r :: rest, l' :: r' :: rest' =>
+      if ([l, r] : List ℤ) = [l', r'] then foldLevelFind rest rest' else ([l, r], [l', r'])
+  | _, _ => ([], [])
+
+/-- **THE EXTRACTOR DOES NOT BLOW UP ITS INPUT** — every branch returns two lists of at most two
+felts, whatever the level width. The cost model's output-growth obligation, PROVED. -/
+theorem foldLevelFind_len_le :
+    ∀ xs ys : List ℤ, (foldLevelFind xs ys).1.length + (foldLevelFind xs ys).2.length ≤ 4
+  | [], _ => by simp [foldLevelFind]
+  | [_], _ => by simp [foldLevelFind]
+  | _ :: _ :: _, [] => by simp [foldLevelFind]
+  | _ :: _ :: _, [_] => by simp [foldLevelFind]
+  | l :: r :: rest, l' :: r' :: rest' => by
+      by_cases hp : ([l, r] : List ℤ) = [l', r']
+      · rw [foldLevelFind, if_pos hp]; exact foldLevelFind_len_le rest rest'
+      · rw [foldLevelFind, if_neg hp]; simp
+
+/-- On EQUAL vectors the extractor bottoms out at the empty pair — so the residual it guards is
+DISCHARGEABLE with no hypothesis at all on an honest (non-equivocating) opening. -/
+theorem foldLevelFind_self : ∀ xs : List ℤ, foldLevelFind xs xs = ([], [])
+  | [] => rfl
+  | [_] => rfl
+  | l :: r :: rest => by rw [foldLevelFind, if_pos rfl]; exact foldLevelFind_self rest
+
+/-- **ONE MERKLE LEVEL, FLOOR-FREE.** Two equal-length vectors with the same folded level are EITHER
+EQUAL, OR `foldLevelFind` names two DISTINCT node preimages on which the deployed sponge genuinely
+collides. No hypothesis on `hash`. -/
+theorem foldLevel_binds_or_collides (hash : List ℤ → ℤ) :
+    ∀ (n : Nat) {xs ys : List ℤ}, xs.length = 2 * n → ys.length = 2 * n →
+      foldLevel hash xs = foldLevel hash ys →
+      xs = ys ∨ IsSpongeColl hash (foldLevelFind xs ys) := by
+  intro n
+  induction n with
+  | zero =>
+    intro xs ys hx hy _
+    have hxe : xs = [] := List.length_eq_zero_iff.mp (by omega)
+    have hye : ys = [] := List.length_eq_zero_iff.mp (by omega)
+    exact Or.inl (by rw [hxe, hye])
+  | succ m ih =>
+    intro xs ys hx hy hfold
+    match xs, hx, ys, hy with
+    | l :: r :: rest, hx, l' :: r' :: rest', hy =>
+      simp only [foldLevel, List.cons.injEq] at hfold
+      obtain ⟨hnode, hrest⟩ := hfold
+      simp only [List.length_cons] at hx hy
+      have hxlen : rest.length = 2 * m := by omega
+      have hylen : rest'.length = 2 * m := by omega
+      by_cases hpre : ([l, r] : List ℤ) = [l', r']
+      · have hl : l = l' := by simpa using (List.cons.inj hpre).1
+        have hr : r = r' := by
+          have h2 := (List.cons.inj hpre).2
+          simpa using (List.cons.inj h2).1
+        rcases ih hxlen hylen hrest with hrec | hc
+        · exact Or.inl (by rw [hl, hr, hrec])
+        · refine Or.inr ?_
+          show IsSpongeColl hash (foldLevelFind (l :: r :: rest) (l' :: r' :: rest'))
+          rw [foldLevelFind, if_pos hpre]
+          exact hc
+      · refine Or.inr ?_
+        show IsSpongeColl hash (foldLevelFind (l :: r :: rest) (l' :: r' :: rest'))
+        rw [foldLevelFind, if_neg hpre]
+        exact ⟨hpre, hnode⟩
+
+/-- **`perfectRootFind hash d xs ys`** — descend the `d` levels and name the ONE pair the peel
+actually equivocates on: the deepest level whose folds still agree supplies a colliding node pair,
+otherwise the recursion carries the deeper level's pair up. -/
+def perfectRootFind (hash : List ℤ → ℤ) : Nat → List ℤ → List ℤ → List ℤ × List ℤ
+  | 0,     _,  _  => ([], [])
+  | d + 1, xs, ys =>
+      if foldLevel hash xs = foldLevel hash ys then foldLevelFind xs ys
+      else perfectRootFind hash d (foldLevel hash xs) (foldLevel hash ys)
+
+/-- The root extractor inherits the level extractor's output bound. -/
+theorem perfectRootFind_len_le (hash : List ℤ → ℤ) :
+    ∀ (d : Nat) (xs ys : List ℤ),
+      (perfectRootFind hash d xs ys).1.length + (perfectRootFind hash d xs ys).2.length ≤ 4 := by
+  intro d
+  induction d with
+  | zero => intro xs ys; simp [perfectRootFind]
+  | succ d ih =>
+    intro xs ys
+    by_cases hEq : foldLevel hash xs = foldLevel hash ys
+    · rw [perfectRootFind, if_pos hEq]; exact foldLevelFind_len_le xs ys
+    · rw [perfectRootFind, if_neg hEq]; exact ih _ _
+
+/-- On an EQUAL pair of leaf-digest vectors the root extractor bottoms out at the empty pair. The
+DISCHARGEABLE pole: the honest prover, who commits ONE vector, pays nothing. -/
+theorem perfectRootFind_self (hash : List ℤ → ℤ) :
+    ∀ (d : Nat) (xs : List ℤ), perfectRootFind hash d xs xs = ([], []) := by
+  intro d
+  induction d with
+  | zero => intro xs; rfl
+  | succ d _ =>
+    intro xs
+    rw [perfectRootFind, if_pos rfl]
+    exact foldLevelFind_self xs
+
+/-- **★ THE BINARY-MERKLE ROOT BINDS THE LEAF-DIGEST VECTOR, FLOOR-FREE** (the honest replacement of
+`perfectRoot_injective`). Two length-`2^d` leaf-digest vectors with EQUAL perfect-tree roots are
+EITHER EQUAL, OR the deployed sponge genuinely collides at the ONE pair `perfectRootFind` returns.
+NO hypothesis on `hash`: unlike the theorem it replaces, this holds of the deployed 1-felt Poseidon2
+sponge. -/
+theorem perfectRoot_binds_or_collides (hash : List ℤ → ℤ) :
+    ∀ (d : Nat) {xs ys : List ℤ}, xs.length = 2 ^ d → ys.length = 2 ^ d →
+      perfectRoot hash d xs = perfectRoot hash d ys →
+      xs = ys ∨ IsSpongeColl hash (perfectRootFind hash d xs ys) := by
+  intro d
+  induction d with
+  | zero =>
+    intro xs ys hx hy hroot
+    rw [pow_zero] at hx hy
+    match xs, ys, hx, hy with
+    | [x], [y], _, _ =>
+      simp only [perfectRoot, List.headD_cons] at hroot
+      exact Or.inl (by rw [hroot])
+  | succ d ih =>
+    intro xs ys hx hy hroot
+    simp only [perfectRoot] at hroot
+    have hxlen : xs.length = 2 ^ d + 2 ^ d := by rw [hx]; ring
+    have hylen : ys.length = 2 ^ d + 2 ^ d := by rw [hy]; ring
+    have hfl_x : (foldLevel hash xs).length = 2 ^ d :=
+      foldLevel_length_half hash (2 ^ d) xs (by omega)
+    have hfl_y : (foldLevel hash ys).length = 2 ^ d :=
+      foldLevel_length_half hash (2 ^ d) ys (by omega)
+    by_cases hEq : foldLevel hash xs = foldLevel hash ys
+    · rcases foldLevel_binds_or_collides hash (2 ^ d) (xs := xs) (ys := ys)
+        (by omega) (by omega) hEq with hxy | hc
+      · exact Or.inl hxy
+      · refine Or.inr ?_
+        show IsSpongeColl hash (perfectRootFind hash (d + 1) xs ys)
+        rw [perfectRootFind, if_pos hEq]
+        exact hc
+    · rcases ih hfl_x hfl_y hroot with hfold | hc
+      · exact absurd hfold hEq
+      · refine Or.inr ?_
+        show IsSpongeColl hash (perfectRootFind hash (d + 1) xs ys)
+        rw [perfectRootFind, if_neg hEq]
+        exact hc
+
+/-! ### §3b teeth — the residual is REFUTABLE, DISCHARGEABLE, and a genuine REFUTATION of the floor.
+
+Three poles, because a side condition that can never fail is `True` in disguise and one that can
+never be discharged is a broken keystone rather than a repaired one. -/
+
+/-- **REFUTABLE.** At the constant sponge the extractor really does hand back a colliding pair, so
+`¬ IsSpongeColl hash (perfectRootFind …)` is not free. -/
+theorem perfectRootColl_refutable :
+    IsSpongeColl (fun _ => 0) (perfectRootFind (fun _ => (0 : ℤ)) 1 [1, 2] [3, 4]) := by
+  refine ⟨?_, rfl⟩
+  decide
+
+/-- **DISCHARGEABLE.** The honest prover — who commits ONE leaf-digest vector — discharges the
+residual for EVERY hash, with no cryptographic assumption whatsoever. -/
+theorem perfectRootColl_dischargeable (hash : List ℤ → ℤ) (d : Nat) (xs : List ℤ) :
+    ¬ IsSpongeColl hash (perfectRootFind hash d xs xs) := by
+  rw [perfectRootFind_self hash d xs]
+  exact fun hc => hc.1 rfl
+
+/-- **A REFUTATION, NOT A NEW FLOOR.** Exhibiting the residual REFUTES `Poseidon2SpongeCR` outright,
+so the port is a strict WEAKENING of the premise it replaces — stated contrapositively, assuming no
+floor content, so the ratchet reads it as the tooth it is. -/
+theorem perfectRootColl_refutes_poseidon2CR {hash : List ℤ → ℤ} {d : Nat} {xs ys : List ℤ}
+    (hc : IsSpongeColl hash (perfectRootFind hash d xs ys)) : ¬ Poseidon2SpongeCR hash :=
+  fun hCR => hc.1 (hCR _ _ hc.2)
+
+#assert_axioms foldLevelFind_len_le
+#assert_axioms foldLevelFind_self
+#assert_axioms foldLevel_binds_or_collides
+#assert_axioms perfectRootFind_len_le
+#assert_axioms perfectRootFind_self
+#assert_axioms perfectRoot_binds_or_collides
+#assert_axioms perfectRootColl_refutable
+#assert_axioms perfectRootColl_dischargeable
+#assert_axioms perfectRootColl_refutes_poseidon2CR
 
 /-! ## §4 — `mapRoot`: the ARITY-2 map COMMITMENT (the binary fold of the sorted heap's leaf digests).
 

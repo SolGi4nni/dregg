@@ -358,13 +358,13 @@ theorem adjacentBracketW_forces_committed_pair (hash : List ℤ → ℤ) (hCR : 
   | some eLo =>
     rw [heLo] at hbindLo
     simp only [Option.map_some, Option.some.injEq] at hbindLo
-    obtain rfl := leafOfW_injective hash hCR wideEnc hbindLo
+    obtain rfl := leafOfW_injective hash wideEnc (fun hc => hc.1 (hCR _ _ hc.2)) hbindLo
     cases heHi : h[pathPos sHi]? with
     | none => rw [heHi] at hbindHi; simp at hbindHi
     | some eHi =>
       rw [heHi] at hbindHi
       simp only [Option.map_some, Option.some.injEq] at hbindHi
-      obtain rfl := leafOfW_injective hash hCR wideEnc hbindHi
+      obtain rfl := leafOfW_injective hash wideEnc (fun hc => hc.1 (hCR _ _ hc.2)) hbindHi
       rw [hadj] at heHi
       exact ⟨pathPos sLo, klo, vlo, khi, vhi, heLo, heHi, hklo, hkhi⟩
 
@@ -702,7 +702,7 @@ theorem topGapW_reconcileGatesW_unsat (v r' : ℤ) :
         MapOpKind.absent := by
   rintro ⟨h, hok, hlen, hroot, hgb, -⟩
   have hh : h = imtToHeapW forgeChain :=
-    mapRootW_injective refSponge refSponge_CR wideEnc 1 hlen rfl hroot
+    mapRootW_injective refSponge wideEnc 1 (fun hc => hc.1 (refSponge_CR _ _ hc.2)) hlen rfl hroot
   refine adjacentBracketW_unsat_above_max refSponge refSponge_CR 1 h hlen hroot ?_ hgb
   intro x hx
   rw [hh, keys_imtToHeapW] at hx
