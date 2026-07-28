@@ -255,9 +255,19 @@ fn v3_coverage_ledger() -> Vec<(&'static str, Cov)> {
         // ── cap-OPEN family. ⚑ The blanket "IR-v2 cap-node lookup multiplicity gap" this section
         //    used to name for the WHOLE family was NEVER REAL: it was withdrawn for the attenuate
         //    twins on 2026-07-26 (re-measured as a row-0 witness gap, `[#4, #10]`), and the two
-        //    members below prove through TODAY. The remaining rows keep an Uncovered mark because
-        //    nothing exercises them — which is a MISSING TEST, not a prover obstruction, and the
-        //    two greens are the evidence for that distinction. Do not re-generalize from them.
+        //    members below prove through TODAY. The remaining rows kept an Uncovered mark because
+        //    nothing exercised them — a MISSING TEST, not a prover obstruction.
+        //
+        //    ⚑ THE MISSING TESTS ARE WRITTEN (2026-07-27) and the distinction is now MEASURED, not
+        //    argued. `cap_open_fanout_prove_through` proves + verifies all SEVEN authority-crown
+        //    fan-out members against these committed bytes, each with four red-proofs (effBit off
+        //    its pinned bit, a forged leaf target, a forged cap_root lane, a corrupted PI). Nothing
+        //    in the prover was changed for them. What HAD to be fixed was a producer bug:
+        //    `CapOpenWitness::build_for` validated its `eff_bit` argument and then stored
+        //    `WRITE_MASK_LO` regardless, so every honest fan-out witness reported EFFECT_TRANSFER
+        //    into the column `effBitGateFor` pins — UNSAT on every member whose bit is not 1<<1,
+        //    for a reason no error message named. `transferCapOpenEff` was never a gap at all: its
+        //    roundtrip already existed and simply was not pointed at from here.
         (
             "attenuateCapOpenEffVmDescriptor2R24",
             Covered(
@@ -271,35 +281,41 @@ fn v3_coverage_ledger() -> Vec<(&'static str, Cov)> {
         ),
         (
             "transferCapOpenEffVmDescriptor2R24",
-            Uncovered("no cap-open prove-through test exists for this member"),
+            Covered("cap_open_avail_roundtrip::cap_open_eff_member_roundtrips_live"),
         ),
         (
             "delegateCapOpenVmDescriptor2R24",
-            Uncovered("no cap-open prove-through test exists for this member"),
+            Covered("cap_open_fanout_prove_through::delegate_cap_open_proves_and_verifies"),
         ),
         (
             "introduceCapOpenVmDescriptor2R24",
-            Uncovered("no cap-open prove-through test exists for this member"),
+            Covered("cap_open_fanout_prove_through::introduce_cap_open_proves_and_verifies"),
         ),
         (
             "grantCapCapOpenVmDescriptor2R24",
-            Uncovered("no cap-open prove-through test exists for this member"),
+            Covered("cap_open_fanout_prove_through::grant_cap_cap_open_proves_and_verifies"),
         ),
         (
             "revokeCapOpenVmDescriptor2R24",
-            Uncovered("no cap-open prove-through test exists for this member"),
+            Covered(
+                "cap_open_fanout_prove_through::revoke_delegation_cap_open_proves_and_verifies",
+            ),
         ),
         (
             "refreshDelegationCapOpenVmDescriptor2R24",
-            Uncovered("no cap-open prove-through test exists for this member"),
+            Covered(
+                "cap_open_fanout_prove_through::refresh_delegation_cap_open_proves_and_verifies",
+            ),
         ),
         (
             "revokeCapabilityCapOpenVmDescriptor2R24",
-            Uncovered("no cap-open prove-through test exists for this member"),
+            Covered(
+                "cap_open_fanout_prove_through::revoke_capability_cap_open_proves_and_verifies",
+            ),
         ),
         (
             "spawnCapOpenVmDescriptor2R24",
-            Uncovered("no cap-open prove-through test exists for this member"),
+            Covered("cap_open_fanout_prove_through::spawn_cap_open_proves_and_verifies"),
         ),
         (
             "delegateWriteCapOpenVmDescriptor2R24",

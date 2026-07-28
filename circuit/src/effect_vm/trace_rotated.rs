@@ -3233,7 +3233,16 @@ impl CapOpenWitness {
             directions,
             cap_root: cur,
             src: chosen[1],
-            eff_bit: WRITE_MASK_LO,
+            // ⚑ WAS `WRITE_MASK_LO`, DROPPING THE PARAMETER (fixed 2026-07-27). `build_for` validated
+            // `eff_bit` against the leaf mask and then stored the transfer constant, so every witness
+            // built for a fan-out bit (delegate/spawn/revoke/refresh = 1<<16, introduce = 1<<13,
+            // grantCap = 1<<2, revokeCapability = 1<<3) came back claiming EFFECT_TRANSFER.
+            // `fill_cap_open` writes this field to the `effBit` column, whose `effBitGateFor` pins the
+            // member's own bit — so the honest trace was UNSAT on every fan-out member. Every
+            // in-tree call site (8, all in `sdk/src/full_turn_proof.rs`) reads only `siblings` /
+            // `directions` off the result, and `build` is `build_for(_, _, WRITE_MASK_LO)`, so storing
+            // the parameter is behaviour-identical everywhere it was already correct.
+            eff_bit,
         };
         debug_assert_eq!(
             w.recomposes(),
