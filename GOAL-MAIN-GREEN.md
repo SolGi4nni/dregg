@@ -236,6 +236,16 @@ first.
 Elsewhere: `dregg-cell` 846/0 · `dregg-turn` 914/915 (`stark_kill_wire_roundtrip::dfa_routing_roundtrip`)
 · `dregg-coord` 129/0 · `sdk full_turn_proof::tests` ×24 · `dreggnet-party` `depth == 3`.
 
+- **D2 CLOSED** — the gauge falls by the run's own metered cost and the alarm fires from a drained
+  tank. ⚠ Siblings open: the OTC desk and the liquidity swap have 0 production callers, so the
+  documented pile→fuel path is test-only. That is why a refuel key was needed.
+- ⚠ **I swept a lane's file.** `0ea777733` committed `discord-bot/src/commands/` as a DIRECTORY and
+  caught the treasury lane's in-progress `admin.rs`, so the refuel flag day is not findable from that
+  subject. Annotated with `git notes`; the rest landed as `1259679bf`. **Commit named paths, not
+  directories** — AGENTS.md says so and I read a directory as one.
+- **24 committed circuit reds dispatched** — they were being carried on every brief as "a live lane's
+  uncommitted work", and all three named files are CLEAN and committed. Measurably nobody's.
+
 ## Open for ember
 1. **F1?** — the only route that makes a successor to `RestHashIffFrame` satisfiable. Flag day:
    commitment epoch + descriptor re-emit + re-genesis, 234 binder positions across 85 modules.

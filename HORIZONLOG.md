@@ -591,6 +591,8 @@ because they check the CITATION. A sibling tooth that asserted refuse-for-any-re
 right now.** That is the next audit.
 
 **D2 · THE TREASURY FUEL GAUGE CANNOT FALL AND THE REFUEL ALARM CANNOT FIRE. LIVE — real money.**
+> ✅ **FIXED 2026-07-28** (`1259679bf`) — the debit is at `PaidNarrator::metered_request`, the single funnel where a run's real `usd_spent` exists. Gauge falls by the run's OWN metered cost (720 atomic asserted, not "a call happened"); the alarm fires from a genuinely drained tank. ⚑ A STANDING red-proof sits beside it: same tank, narrator unwired vs wired — **40 priced runs, gauge unmoved** next to 7 that drain it. ⚠ Siblings still open: the entire OTC desk and the liquidity swap have 0 production callers, so the treasury doc's own stated remedy (pile → fuel behind the operator's signer) is **test-only** — which is why a `/dregg admin treasury refuel` key had to exist.
+
 > ⚠ **STALE 2026-07-28 — verify before citing.** A concurrent lane repaired this; a production caller now exists at `discord-bot/src/pay.rs:649` inside `PaidNarrator::metered_request`, with a driving test at `:4535` running a real treasury down until the alarm fires. And the recorded "10 test callers" was never right — 15 direct at HEAD.
 
 `Treasury::spend_inference_usd` (`dregg-pay/src/treasury.rs:206`) documents itself *"called for EVERY
@@ -611,7 +613,20 @@ one `SetField`. **None contains an `Effect::Transfer`.** The one builder that do
 value-less one (`discord-bot/src/commands/bounty.rs:298`) and renders success at `:311`; `:337` labels
 the cell balance **"Escrowed"**, a balance `build_post_action` never funds either.
 
-**D4 · A ZK SUPERVISOR PROVES EVERY TICK OVER A QUEUE ONLY TESTS CAN FILL. LIVE, with a correction.**
+**D4 · A ZK SUPERVISOR POLLS A QUEUE ONLY TESTS CAN FILL. WIRED — and the headline's verb was wrong.**
+> ✅ **WIRED 2026-07-28** — census reconfirmed at HEAD (0 production / 11 test callers of `submit`;
+> the ONLY route to a queue, `private_sealed_ingress`, had exactly one non-test caller and it was the
+> DRAIN side). Fixed by shipping the caller: `dreggnet-catalog/src/private_bazaar_submit.rs` +
+> the `dregg-private-bazaar-submit` binary — an operator-run local process reading the book from
+> **stdin, never argv** (argv is world-readable; the queue's boundary is 0600). ⚠ **The headline verb
+> is REFUTED: it does not "prove every tick".** `settle_pending_ingress` calls `next_pending()` FIRST
+> and `break`s on `None`, so the mint is behind a record that has to exist. Measured idle cost:
+> **~0.47 ms of work per tick, 4 ticks/s at the shipped 250 ms poll ⇒ ~0.19 % of one core**, with
+> `ingress_settled = 0` and `source_appends = 0` over the window. The waste was a *shipped feature
+> with no way in*, not burned proving. ⚠ Also RETIRED: `settle_and_capture` — its doc claimed to be
+> "the one in-tree path from private ingress to real cryptography" while never touching ingress, so
+> it cleared an auction leaving no durable record of who bid. **PUBLIC API REMOVED.**
+
 `PrivateBazaarSealedIngressQueue::submit` (`dreggnet-catalog/src/private_bazaar_ingress.rs:272`, doc:
 *"THE PRODUCTION INGRESS"*) has **0 production / 11 test callers**; the three in its own file reach it
 through `open_detached`, which is itself `#[cfg(test)]`. `PrivateBazaarWorkerSupervisor`
