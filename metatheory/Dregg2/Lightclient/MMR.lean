@@ -19,11 +19,18 @@ completeness holds BY CONSTRUCTION. This module is the MMR theory that specializ
   * **bagging + the root** (§3, §3½): `mroot = bag (peaksOf L)`; **`mroot_binds_or_collides`** — the
     root BINDS the whole log, UNCONDITIONALLY: two logs with equal roots are equal OR the total
     extractor `mrootFind` HANDS BACK the specific pair of sponge inputs that collide. ⚑ CUTOVER
-    2026-07-25: the headline used to be `mroot_injective` under the `Poseidon2SpongeCR` floor, which
-    `Storage.DeployedFloorRefuted.deployed_floor_false` REFUTES at the deployed hash by `rfl` — so it
-    said nothing about deployment. `mroot_injective` survives as a one-line STRENGTH BRIDGE (the
-    injective special case), and `Storage.DeployedFloorRegrounded` prices the collision disjunct as an
-    advantage in a real collision GAME;
+    2026-07-25, COMPLETED 2026-07-28: the headline used to be `mroot_injective` under the
+    `Poseidon2SpongeCR` floor, which `Storage.DeployedFloorRefuted.deployed_floor_false` REFUTES at
+    the deployed hash by `rfl` — so it said nothing about deployment. Between those two dates
+    `mroot_injective` / `bag_injective` / `PTree.hashOf_injective` were RETAINED as one-line
+    "strength bridges". **They are now DELETED, and the reason is that their CONCLUSIONS are false at
+    the deployed hash too, not only their premises** — `mroot_not_injective_of_singleton_collision`
+    (§3¼) turns ONE sponge collision at two singleton preimages into a refutation of
+    `mroot_injective`'s exact conclusion, and `Storage.DeployedFloorRegrounded` instantiates it at
+    `poseidon2Hash` off the `rfl` collision `deployed_collides`. A false→false theorem is not a
+    bridge. What survives is the honest per-instance residual `MRootColl` at the pair `mrootFind`
+    NAMES, with all three poles proved (§3¾), and `Storage.DeployedFloorRegrounded` prices that
+    residual as an advantage in a real collision GAME;
   * **positional + range openings** (§4): `Opens`/`mrange`; appends preserve prior openings and
     prior ranges VERBATIM (`append_preserves_opens`, `append_preserves_range`);
   * **POSITIONAL COMPLETENESS** (§5): the range protocol needs NO gap openings — positions are
@@ -38,22 +45,33 @@ completeness holds BY CONSTRUCTION. This module is the MMR theory that specializ
     SHRINKS on this structure: no sorted invariant (`hsorted` is gone — the log is its own
     canonical order) and no gap-opening machinery (density replaces bracketing).
 
-## Axiom hygiene
-`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem. Crypto enters the ROOT
-layer as NOTHING at all after the 2026-07-25 cutover — §1½/§3½ are hypothesis-free — and elsewhere
-only as the named `Poseidon2SpongeCR` hypothesis (retained as the strength bridge) + `EngineSound`'s
-named fields at the bridge — hypotheses, never axioms. Non-vacuity §7: witnesses TRUE (a complete range
-answer verifies; the demo forest has the binary-decomposition shape) and FALSE (a skipped position
-is rejected; a substituted/reordered value is rejected; tamper/truncate/extend/reorder each MOVE
-the root). NEW file; all imports read-only.
+## Axiom hygiene, and the ROM number this module's guarantee is actually worth
+`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem. **`Poseidon2SpongeCR`
+no longer appears in this file at all** (2026-07-28): every root/peak/commit binding is either
+hypothesis-free (`*_binds_or_collides`) or carries a per-instance `¬ MRootColl` / `¬ CommitColl`
+residual at a pair a TOTAL extractor names. `EngineSound`'s named fields remain hypotheses at §6.
+
+⚑ **THE HONEST NUMBER: ~2^15.5 QUERIES, NOT ~2^123.5.** `PTree.hashOf`, `bag` and `mroot` are all
+`… → ℤ` — ONE BabyBear felt — at every log length and every peak height. The MMR widens the ABSORBED
+PREIMAGE (peak arity 1 vs 2, bag arity 0/2), never the DIGEST; nothing here is `Digest8`-valued. So on
+`Crypto.RomQueryFloor.birthday_bound`'s honest rung the residual costs `(Q² + 1)/‖R‖` with
+`‖R‖ = babyBearP ≈ 2^30.9`, i.e. **an adversary reaches probability ~1 at Q ≈ 2^15.5 — a break, not a
+bound.** Every ported endpoint below (`mroot_binds_position`, `mroot_binds_range`,
+`mroot_pins_rverifies`, `server_cannot_omit_position`, `commit_pins_mmr`,
+`light_client_position_non_omission`) reads that same number. The residual is HONEST-BUT-WEAK, which
+is exactly the point: the deleted floor read as infinitely strong and was false.
+
+Non-vacuity §7: witnesses TRUE (a complete range answer verifies; the demo forest has the
+binary-decomposition shape; **the honest opening discharges BOTH residuals for EVERY hash**) and FALSE
+(a skipped position is rejected; a substituted/reordered value is rejected; tamper/truncate/extend/
+reorder each MOVE the root). All §7 witnesses are UNCONDITIONAL — none is conditioned on a floor.
 -/
 import Dregg2.Lightclient.AttestedQuery
 
 namespace Dregg2.Lightclient.MMR
 
 open Dregg2.Substrate.Heap (refSponge)
-open Dregg2.Circuit.Poseidon2Binding
-  (Poseidon2SpongeCR SpongeColl spongeColl_refutable_of_injective)
+open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR SpongeColl)
 
 /-! ## §1 — perfect peak trees.
 
@@ -102,46 +120,23 @@ def hashOf (hash : List ℤ → ℤ) : PTree → ℤ
 @[simp] theorem hashOf_node (hash : List ℤ → ℤ) (l r : PTree) :
     (PTree.node l r).hashOf hash = hash [l.hashOf hash, r.hashOf hash] := rfl
 
-/-- **The peak hash binds the peak.** Under the one CR floor, equal hashes force equal TREES
-(hence equal leaf chunks). Leaf-vs-node collisions die on preimage arity (1 ≠ 2); node-vs-node
-recurses. -/
-theorem hashOf_injective (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) :
-    ∀ t t' : PTree, t.hashOf hash = t'.hashOf hash → t = t' := by
-  intro t
-  induction t with
-  | leaf v =>
-    intro t' h
-    cases t' with
-    | leaf v' =>
-      have hl := hCR _ _ h
-      simp only [List.cons.injEq, and_true] at hl
-      rw [hl]
-    | node l' r' => exact absurd (hCR _ _ h) (by simp)
-  | node l r ihl ihr =>
-    intro t' h
-    cases t' with
-    | leaf v' => exact absurd (hCR _ _ h) (by simp)
-    | node l' r' =>
-      have hl := hCR _ _ h
-      simp only [List.cons.injEq, and_true] at hl
-      rw [ihl l' hl.1, ihr r' hl.2]
+/-! ### §1½ — THE PEAK EXTRACTOR: the binding, with NO refuted floor.
 
-/-! ### §1½ — THE PEAK EXTRACTOR: the same binding, with NO refuted floor.
-
-`hashOf_injective` above is conditioned on `Poseidon2SpongeCR`, which
+There used to be a `hashOf_injective` here, conditioned on `Poseidon2SpongeCR`, which
 `HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES FALSE for every range-bounded sponge and
 `Storage.DeployedFloorRefuted.deployed_floor_false` refutes at the DEPLOYED hash by `rfl`. A theorem
-carrying it says nothing about the deployed system.
+carrying it says nothing about the deployed system, and — see §3¼ — its CONCLUSION is false there
+too, so it was not even a bridge worth keeping.
 
 What replaces it is not a weaker hypothesis but NO hypothesis: a TOTAL extractor that, from two peaks
 with equal hashes, either proves the peaks equal or HANDS BACK the specific pair of sponge inputs at
 which the hash actually collides. The disjunction is UNCONDITIONAL, so it holds OF the deployed
-sponge — and it is not a free pass, because `Poseidon2Binding.spongeColl_refutable_of_injective`
-refutes the right disjunct at any injective sponge (which is exactly how `hashOf_injective` is
-re-derived below, losing nothing). -/
+sponge — and it is not a free pass, because the returned pair is REFUTABLE (§3¾): exhibiting it
+outright refutes `Poseidon2SpongeCR`, which is what makes this a strict WEAKENING rather than a
+change of subject. -/
 
-/-- **THE PEAK-COLLISION EXTRACTOR (TOTAL).** The tree walk `hashOf_injective` performs, written as a
-FUNCTION. Two peaks whose hashes agree: if their sponge preimages differ (mismatched arity, or
+/-- **THE PEAK-COLLISION EXTRACTOR (TOTAL).** The tree walk the deleted `hashOf_injective` performed,
+written as a FUNCTION. Two peaks whose hashes agree: if their sponge preimages differ (mismatched arity, or
 different child digests) those preimages ARE the collision; otherwise the child digests agree
 slot-for-slot, so recurse into the first child that differs. No search, no `Classical.choice` — the
 branch test is `DecidableEq PTree`. -/
@@ -157,7 +152,7 @@ def collFind (hash : List ℤ → ℤ) : PTree → PTree → List ℤ × List �
 
 /-- **⚑ THE PEAK BINDING, UNCONDITIONAL.** Two peaks with equal hashes are EITHER equal, OR the pair
 `collFind` returns is a genuine sponge collision. No injectivity, no CR, no floor of any kind — this
-holds of the DEPLOYED sponge, which `hashOf_injective` never did. -/
+holds of the DEPLOYED sponge, which the deleted `hashOf_injective` never did. -/
 theorem hashOf_binds_or_collides (hash : List ℤ → ℤ) :
     ∀ t t' : PTree, t.hashOf hash = t'.hashOf hash →
       t = t' ∨ SpongeColl hash (collFind hash t t') := by
@@ -202,16 +197,35 @@ theorem hashOf_binds_or_collides (hash : List ℤ → ℤ) :
           simp only [collFind, if_neg hcond, if_pos hl]
           exact (ihl l' hlh).resolve_left hl
 
-/-- **THE STRENGTH BRIDGE (peak level), stated contradiction-style.** Under exactly the injectivity
-the refuted floor asserted, DISTINCT peaks cannot share a hash — the collision disjunct is impossible,
-so `hashOf_injective`'s conclusion falls straight out of the unconditional form. Nothing that was
-genuinely proved has been surrendered; what was surrendered is the pretence that the deployed sponge
-satisfies the hypothesis. -/
-theorem hashOf_injective_of_binds_or_collides (hash : List ℤ → ℤ)
-    (hCR : Poseidon2SpongeCR hash) (t t' : PTree) (h : t.hashOf hash = t'.hashOf hash)
-    (hne : t ≠ t') : False :=
-  hne ((hashOf_binds_or_collides hash t t' h).resolve_right
-    (spongeColl_refutable_of_injective hash hCR _))
+/-- **THE PEAK EXTRACTOR BOTTOMS OUT AT AN EQUAL PAIR.** On one and the same peak the walk never
+finds a difference, so the pair it returns has EQUAL components — the DISCHARGEABLE pole, one level
+down: an honest prover who commits ONE peak pays nothing, for every hash. -/
+theorem collFind_self_eq (hash : List ℤ → ℤ) :
+    ∀ t : PTree, (collFind hash t t).1 = (collFind hash t t).2 := by
+  intro t
+  induction t with
+  | leaf v => rfl
+  | node l r _ ihr =>
+    simp only [collFind, if_neg (by simp : ¬ ([l.hashOf hash, r.hashOf hash] : List ℤ)
+      ≠ [l.hashOf hash, r.hashOf hash]), if_neg (by simp : ¬ (l ≠ l))]
+    exact ihr
+
+/-- **DISCHARGEABLE (peak level).** The honest opening of ONE peak refutes its own residual, with no
+cryptographic hypothesis at all. -/
+theorem hashOfColl_dischargeable (hash : List ℤ → ℤ) (t : PTree) :
+    ¬ SpongeColl hash (collFind hash t t) :=
+  fun hc => hc.1 (collFind_self_eq hash t)
+
+/-- **A REFUTATION, NOT A NEW FLOOR (peak level).** Two DISTINCT peaks sharing a hash REFUTE
+`Poseidon2SpongeCR` outright. Stated contrapositively — it assumes no floor content — so it is the
+tooth the old `hashOf_injective_of_binds_or_collides` was pretending to be: that one took the refuted
+floor as a HYPOTHESIS and was therefore a carrier whatever its conclusion. -/
+theorem hashOf_equivocation_refutes_poseidon2CR {hash : List ℤ → ℤ} {t t' : PTree}
+    (h : t.hashOf hash = t'.hashOf hash) (hne : t ≠ t') : ¬ Poseidon2SpongeCR hash := by
+  intro hCR
+  rcases hashOf_binds_or_collides hash t t' h with heq | hc
+  · exact hne heq
+  · exact hc.1 (hCR _ _ hc.2)
 
 /-- A perfect peak of height `h` carries exactly `2 ^ h` leaves (the chunk sizes are the binary
 decomposition of the log length). -/
@@ -227,9 +241,10 @@ theorem length_leaves : ∀ t : PTree, t.Perfect → t.leaves.length = 2 ^ t.hei
 
 end PTree
 
-#assert_axioms PTree.hashOf_injective
 #assert_axioms PTree.hashOf_binds_or_collides
-#assert_axioms PTree.hashOf_injective_of_binds_or_collides
+#assert_axioms PTree.collFind_self_eq
+#assert_axioms PTree.hashOfColl_dischargeable
+#assert_axioms PTree.hashOf_equivocation_refutes_poseidon2CR
 #assert_axioms PTree.length_leaves
 
 /-! ## §2 — the forest: `push` (the carry), `peaksOf` (the fold), leaf recovery, the mountains
@@ -369,8 +384,8 @@ theorem peaksOf_mountains (L : List ℤ) : Mountains (peaksOf L) := by
 /-! ## §3 — bagging and THE ROOT.
 
 `bag` folds the peaks into ONE felt (right-assoc: `hash [peakHash, bagOfRest]`, empty = `hash []`
-— arities 0/2/1 keep the three hash domains apart under CR with no tags). `mroot` is the committed
-value; `mroot_injective` is the root_injective transfer onto the MMR. -/
+— arities 0/2/1 keep the three hash domains apart with no tags). `mroot` is the committed
+value; `mroot_binds_or_collides` (§3½) is the root-binding transfer onto the MMR. -/
 
 /-- **`bag`** — the single root over the peaks: `hash []` for the empty range, else
 `hash [peak, bag rest]` youngest-outward. -/
@@ -394,7 +409,7 @@ with equal roots are equal OR the extractor hands back a genuine collision of th
 a light client can actually rely on at the deployed Poseidon2, and it is the theorem every consumer
 below is migrated onto. -/
 
-/-- **THE FOREST-COLLISION EXTRACTOR (TOTAL).** The `bag_injective` induction as a FUNCTION: mismatched
+/-- **THE FOREST-COLLISION EXTRACTOR (TOTAL).** The deleted `bag_injective`'s induction as a FUNCTION: mismatched
 arity (empty vs cons) IS the collision; matching arity with differing preimages IS the collision;
 otherwise peel — the peak if the peaks differ, else the tail. -/
 def bagFind (hash : List ℤ → ℤ) : Forest → Forest → List ℤ × List ℤ
@@ -449,16 +464,16 @@ theorem bag_binds_or_collides (hash : List ℤ → ℤ) :
           simp only [bagFind, if_neg hcond, if_pos ht]
           exact (PTree.hashOf_binds_or_collides hash t t' hth).resolve_left ht
 
-/-- The bag binds the forest: equal bags force equal peak lists.
-
-⚠ **RETAINED ONLY AS THE STRENGTH BRIDGE.** `Poseidon2SpongeCR` is REFUTED at the deployed sponge
-(`Storage.DeployedFloorRefuted.deployed_floor_false`), so this statement is vacuous there. It is now
-DERIVED from the unconditional `bag_binds_or_collides` in one line, which is the proof that the
-migration surrendered nothing: the old theorem is exactly the injective special case of the new one. -/
-theorem bag_injective (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) :
-    ∀ f₁ f₂ : Forest, bag hash f₁ = bag hash f₂ → f₁ = f₂ := fun f₁ f₂ h =>
-  (bag_binds_or_collides hash f₁ f₂ h).resolve_right
-    (spongeColl_refutable_of_injective hash hCR _)
+/-- **THE FOREST EXTRACTOR BOTTOMS OUT AT AN EQUAL PAIR** (the forest-level DISCHARGEABLE pole). -/
+theorem bagFind_self_eq (hash : List ℤ → ℤ) :
+    ∀ f : Forest, (bagFind hash f f).1 = (bagFind hash f f).2 := by
+  intro f
+  induction f with
+  | nil => rfl
+  | cons t rest ih =>
+    simp only [bagFind, if_neg (by simp : ¬ ([t.hashOf hash, bag hash rest] : List ℤ)
+      ≠ [t.hashOf hash, bag hash rest]), if_neg (by simp : ¬ (t ≠ t))]
+    exact ih
 
 /-- **THE ROOT-COLLISION EXTRACTOR (TOTAL).** The forest walk started at the two logs' peak lists —
 what an adversary who equivocates on the published MMR root actually hands over. -/
@@ -470,8 +485,9 @@ equal roots are EITHER equal — a server cannot keep the published root while s
 REORDERING or truncating any receipt position — OR the pair `mrootFind` returns is a genuine collision
 of the sponge.
 
-This is the headline `mroot_injective` was trying to be, minus the hypothesis the deployed sponge
-REFUTES. It holds OF the deployed Poseidon2. What it costs is honest and named: the guarantee is now
+This is the headline the deleted `mroot_injective` was trying to be, minus the hypothesis the deployed
+sponge REFUTES — and minus a conclusion the deployed sponge also refutes (§3¼). It holds OF the
+deployed Poseidon2. What it costs is honest and named: the guarantee is now
 "binds, unless the server found a sponge collision", and §3¾ prices that residual as a game advantage
 instead of assuming it away. -/
 theorem mroot_binds_or_collides (hash : List ℤ → ℤ) {L₁ L₂ : List ℤ}
@@ -484,22 +500,114 @@ theorem mroot_binds_or_collides (hash : List ℤ → ℤ) {L₁ L₂ : List ℤ}
       _ = L₂ := forestLeaves_peaksOf L₂
   · exact Or.inr hcoll
 
-/-- **`mroot_injective` — the anti-ghost keystone, at an INJECTIVE sponge.**
+/-! ### §3¼ — ⚑ WHY THE THREE "STRENGTH BRIDGES" ARE DELETED, NOT KEPT.
 
-⚠ **RETAINED ONLY AS THE STRENGTH BRIDGE.** `Poseidon2SpongeCR` is REFUTED at the deployed sponge, so
-at deployment this says nothing; `mroot_binds_or_collides` is the live statement and every migrated
-consumer routes through it. Derived here in one line to PROVE that the cutover is a weakening of the
-hypothesis and therefore a strengthening of every consumer: whatever `mroot_injective` gave you, the
-unconditional form still gives you, at exactly the same hypothesis. -/
-theorem mroot_injective (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {L₁ L₂ : List ℤ} (h : mroot hash L₁ = mroot hash L₂) : L₁ = L₂ :=
-  (mroot_binds_or_collides hash h).resolve_right
-    (spongeColl_refutable_of_injective hash hCR _)
+`PTree.hashOf_injective`, `bag_injective` and `mroot_injective` survived the 2026-07-25 cutover as
+one-line derivations from the unconditional forms, labelled STRENGTH BRIDGES: "whatever the old
+theorem gave you, the new one still gives you, at exactly the same hypothesis". That was true and it
+was beside the point. **Check the CONCLUSION, not only the hypothesis.**
+
+Each of those three concludes an INJECTIVITY of a `… → ℤ` map — and at a range-bounded sponge that
+conclusion is refuted by the SAME pigeonhole that refutes the premise. The three lemmas below make it
+concrete rather than asymptotic: ONE sponge collision at two DISTINCT SINGLETON preimages (`hash [a] =
+hash [b]`, `a ≠ b`) refutes all three conclusions outright, because `mroot hash [a] = hash [hash [a],
+hash []]` peels straight down to it. `Storage.DeployedFloorRegrounded` instantiates them at the
+DEPLOYED `poseidon2Hash` off `DeployedFloorRefuted.deployed_collides`, an `rfl` collision at
+`[0]`/`[p]`. So the bridges were false → false: they carried a refuted hypothesis to a refuted
+conclusion, and a reader who cited one learned nothing either way. They are gone.
+
+None of the three names a floor at all: each ASSUMES a concrete collision at two NAMED singleton
+preimages and CONCLUDES the negation of an anonymous injectivity. They are teeth, not carriers. -/
+
+/-- One singleton collision refutes the PEAK binding's old conclusion. -/
+theorem hashOf_not_injective_of_singleton_collision (hash : List ℤ → ℤ) {a b : ℤ}
+    (hne : a ≠ b) (hcoll : hash [a] = hash [b]) :
+    ¬ (∀ t t' : PTree, t.hashOf hash = t'.hashOf hash → t = t') := by
+  intro hinj
+  have := hinj (.leaf a) (.leaf b) hcoll
+  exact hne (by simpa using this)
+
+/-- The same collision refutes the FOREST binding's old conclusion. -/
+theorem bag_not_injective_of_singleton_collision (hash : List ℤ → ℤ) {a b : ℤ}
+    (hne : a ≠ b) (hcoll : hash [a] = hash [b]) :
+    ¬ (∀ f₁ f₂ : Forest, bag hash f₁ = bag hash f₂ → f₁ = f₂) := by
+  intro hinj
+  have hb : bag hash [PTree.leaf a] = bag hash [PTree.leaf b] := by
+    simp only [bag_cons, bag_nil, PTree.hashOf_leaf, hcoll]
+  have := hinj _ _ hb
+  exact hne (by simpa using this)
+
+/-- **⚑ THE HEADLINE OF §3¼ — the same collision refutes `mroot_injective`'s exact conclusion.** The
+deleted theorem said "two logs with equal roots are equal"; at any sponge that collides on two
+singletons, the two ONE-ENTRY logs `[a]` and `[b]` are a counterexample. So the deployed system never
+had the conclusion either, and the "bridge" bridged nothing. -/
+theorem mroot_not_injective_of_singleton_collision (hash : List ℤ → ℤ) {a b : ℤ}
+    (hne : a ≠ b) (hcoll : hash [a] = hash [b]) :
+    ¬ (∀ L₁ L₂ : List ℤ, mroot hash L₁ = mroot hash L₂ → L₁ = L₂) := by
+  intro hinj
+  have hr : mroot hash [a] = mroot hash [b] := by
+    simp only [mroot, peaksOf, List.foldl_cons, List.foldl_nil, appendLeaf, push_nil,
+      bag_cons, bag_nil, PTree.hashOf_leaf, hcoll]
+  have := hinj _ _ hr
+  exact hne (by simpa using this)
+
+/-! ### §3¾ — the RESIDUAL every migrated consumer now carries, and its three poles.
+
+`MRootColl hash L₁ L₂` is the ONE named side condition that replaced the floor binder in
+`mroot_binds_position`, `mroot_binds_range`, `mroot_pins_rverifies`, `server_cannot_omit_position`,
+`commit_pins_mmr` and `light_client_position_non_omission`.
+
+Deliberately NOT `∃ xs ys, xs ≠ ys ∧ hash xs = hash ys`: at deployed BabyBear that existence claim is
+unconditionally TRUE by pigeonhole, so it would carry no more content than `True`. And deliberately
+NOT `∀ xs ys, ¬ …`: that is the refuted floor wearing a disjunction. It is the collision AT THE PAIR
+`mrootFind` HANDS BACK, for the two logs in play.
+
+Three poles, because a side condition that can never fail is `True` in disguise and one that can never
+be discharged is a broken keystone rather than a repaired one. -/
+
+/-- **`MRootColl hash L₁ L₂`** — the per-instance residual: the deployed sponge genuinely collides at
+the ONE pair the root extractor returns for these two logs. -/
+def MRootColl (hash : List ℤ → ℤ) (L₁ L₂ : List ℤ) : Prop :=
+  SpongeColl hash (mrootFind hash L₁ L₂)
+
+/-- The residual is DECIDABLE per instance — which is exactly what a global injectivity floor never
+was, and what lets the poles below be `decide`d rather than asserted. -/
+instance decidableMRootColl (hash : List ℤ → ℤ) (L₁ L₂ : List ℤ) :
+    Decidable (MRootColl hash L₁ L₂) := by
+  unfold MRootColl; infer_instance
+
+/-- The root extractor bottoms out at an EQUAL pair on one and the same log. -/
+theorem mrootFind_self_eq (hash : List ℤ → ℤ) (L : List ℤ) :
+    (mrootFind hash L L).1 = (mrootFind hash L L).2 :=
+  bagFind_self_eq hash (peaksOf L)
+
+/-- **DISCHARGEABLE.** The honest prover — who commits ONE log — discharges the residual for EVERY
+hash, with no cryptographic assumption whatsoever. This is what the deleted floor could never do:
+`Poseidon2SpongeCR` is unavailable at the deployed sponge even to an honest party. -/
+theorem mrootColl_dischargeable (hash : List ℤ → ℤ) (L : List ℤ) : ¬ MRootColl hash L L :=
+  fun hc => hc.1 (mrootFind_self_eq hash L)
+
+/-- **REFUTABLE.** At the constant sponge the extractor really does hand back a colliding pair, so
+`¬ MRootColl` is not free — the residual is not `True` in disguise. -/
+theorem mrootColl_refutable : MRootColl (fun _ => (0 : ℤ)) [1] [2] := by decide
+
+/-- **A REFUTATION, NOT A NEW FLOOR.** Exhibiting the residual REFUTES `Poseidon2SpongeCR` outright,
+so every port below is a strict WEAKENING of the premise it replaces. Stated contrapositively, so it
+assumes no floor content and the ratchet reads it as the tooth it is. -/
+theorem mrootColl_refutes_poseidon2CR {hash : List ℤ → ℤ} {L₁ L₂ : List ℤ}
+    (hc : MRootColl hash L₁ L₂) : ¬ Poseidon2SpongeCR hash :=
+  fun hCR => hc.1 (hCR _ _ hc.2)
 
 #assert_axioms bag_binds_or_collides
+#assert_axioms bagFind_self_eq
 #assert_axioms mroot_binds_or_collides
-#assert_axioms bag_injective
-#assert_axioms mroot_injective
+#assert_axioms hashOf_not_injective_of_singleton_collision
+#assert_axioms bag_not_injective_of_singleton_collision
+#assert_axioms mroot_not_injective_of_singleton_collision
+#assert_axioms mrootFind_self_eq
+#assert_axioms mrootColl_dischargeable
+#assert_axioms mrootColl_refutable
+#assert_axioms mrootColl_refutes_poseidon2CR
 
 /-! ## §4 — positional and range openings; appends preserve them.
 
@@ -510,7 +618,7 @@ the sorted map had to re-prove per insert. -/
 
 /-- **`Opens L i v`** — the positional opening's semantic content: position `i` of the log holds
 `v`. (At the wire: the Merkle path through the covering peak + the peak's bag position; at the
-model the log is pinned by `mroot_injective`.) -/
+model the log is pinned by `mroot_binds_or_collides`.) -/
 def Opens (L : List ℤ) (i : ℕ) (v : ℤ) : Prop := L[i]? = some v
 
 instance (L : List ℤ) (i : ℕ) (v : ℤ) : Decidable (Opens L i v) := by
@@ -534,17 +642,25 @@ theorem mrange_getElem? (L : List ℤ) (lo hi j : ℕ) (hj : j < rangeCount L.le
   have h1 : lo + j < hi + 1 := by unfold rangeCount at hj; omega
   simp [mrange, List.getElem?_drop, h1]
 
-/-- Equal roots open identically at every position (the per-position consumable form). -/
-theorem mroot_binds_position (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {L L' : List ℤ} (h : mroot hash L' = mroot hash L) (i : ℕ) : L'[i]? = L[i]? := by
-  rw [mroot_injective hash hCR h]
+/-- Equal roots open identically at every position (the per-position consumable form).
+
+⚙ PORTED 2026-07-28: the `Poseidon2SpongeCR` binder is replaced by the per-instance residual at the
+pair `mrootFind` names for THESE two logs. Strictly weaker hypothesis, so nothing provable was lost —
+and unlike the floor, `¬ MRootColl` is DISCHARGEABLE by the honest party (`mrootColl_dischargeable`)
+and REFUTABLE (`mrootColl_refutable`). Worth ~2^15.5 queries at the deployed 1-felt root; see the
+header. -/
+theorem mroot_binds_position (hash : List ℤ → ℤ)
+    {L L' : List ℤ} (h : mroot hash L' = mroot hash L)
+    (hno : ¬ MRootColl hash L' L) (i : ℕ) : L'[i]? = L[i]? := by
+  rw [(mroot_binds_or_collides hash h).resolve_right hno]
 
 /-- **A range is fully determined by the root**: once the root is fixed there is exactly one
 correct answer to every positional range query (`iroot_binds_range`, transferred). -/
-theorem mroot_binds_range (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {L L' : List ℤ} (h : mroot hash L' = mroot hash L) (lo hi : ℕ) :
+theorem mroot_binds_range (hash : List ℤ → ℤ)
+    {L L' : List ℤ} (h : mroot hash L' = mroot hash L)
+    (hno : ¬ MRootColl hash L' L) (lo hi : ℕ) :
     mrange L' lo hi = mrange L lo hi := by
-  rw [mroot_injective hash hCR h]
+  rw [(mroot_binds_or_collides hash h).resolve_right hno]
 
 /-- **Appends preserve prior positions** — any suffix of later appends leaves every committed
 position untouched (prefix stability, by construction). -/
@@ -644,25 +760,32 @@ theorem exact_range_verifies (L : List ℤ) (lo hi : ℕ) :
   rverifies_iff_exact.mpr rfl
 
 /-- A `RVerifies` run against ANY log recomposing the published root is a run against THE log
-(CR pins the leaves). -/
-theorem mroot_pins_rverifies (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+(the root binding pins the leaves, unless the server found the named collision). -/
+theorem mroot_pins_rverifies (hash : List ℤ → ℤ)
     {L L' : List ℤ} (hroot : mroot hash L' = mroot hash L)
+    (hno : ¬ MRootColl hash L' L)
     {lo hi : ℕ} {vals : List ℤ}
     (hv : RVerifies L' lo hi vals) : RVerifies L lo hi vals := by
-  rwa [mroot_injective hash hCR hroot] at hv
+  rwa [(mroot_binds_or_collides hash hroot).resolve_right hno] at hv
 
 /-- **`server_cannot_omit_position` — THE ROOT-FACE HEADLINE.** A client holding ONLY the committed
 `mroot`: a verifying answer against ANY log recomposing that root IS the unique exact range of the
 genuine log — every committed in-range position present at its dense slot (omission impossible),
-every value genuine (forgery impossible). One named CR floor; no sorted invariant, no gaps. -/
-theorem server_cannot_omit_position (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+every value genuine (forgery impossible). No sorted invariant, no gaps.
+
+The only crypto is ONE named, per-instance, refutable residual — *unless the server found a sponge
+collision at the specific pair `mrootFind hash L' L` returns*. That is the honest statement at the
+deployed 1-felt root, and it is worth ~2^15.5 queries (header). The version of this theorem that
+carried `Poseidon2SpongeCR` was worth nothing at all: the floor is refuted at the deployed hash. -/
+theorem server_cannot_omit_position (hash : List ℤ → ℤ)
     {L L' : List ℤ} (hroot : mroot hash L' = mroot hash L)
+    (hno : ¬ MRootColl hash L' L)
     {lo hi : ℕ} {vals : List ℤ}
     (hv : RVerifies L' lo hi vals) :
     vals = mrange L lo hi
     ∧ ∀ i, lo ≤ i → i ≤ hi → i < L.length →
         ∃ v, vals[i - lo]? = some v ∧ Opens L i v := by
-  have hv' := mroot_pins_rverifies hash hCR hroot hv
+  have hv' := mroot_pins_rverifies hash hroot hno hv
   exact ⟨rverifies_iff_exact.mp hv', range_complete hv'⟩
 
 #assert_axioms range_sound
@@ -688,21 +811,55 @@ def CommitBindsMMR (hash : List ℤ → ℤ) (limbs : List ℤ) (commit : ℤ)
     (L : List ℤ) : Prop :=
   commit = hash (limbs ++ [mroot hash L])
 
+/-- **`CommitColl hash limbs limbs' L L'`** — the OUTER residual `commit_pins_mmr` carries: the
+sponge collides at the two COMMITMENT PREIMAGES in play. The peel of the commitment is a second,
+independent use of the hash, so it gets its own named residual rather than being smuggled into the
+root one; both pairs are statement-visible, which is what makes a per-instance condition honest here
+(hiding either behind an existential would force the residual back to a universal, i.e. back to the
+refuted floor). -/
+def CommitColl (hash : List ℤ → ℤ) (limbs limbs' : List ℤ) (L L' : List ℤ) : Prop :=
+  SpongeColl hash (limbs ++ [mroot hash L], limbs' ++ [mroot hash L'])
+
+instance decidableCommitColl (hash : List ℤ → ℤ) (limbs limbs' L L' : List ℤ) :
+    Decidable (CommitColl hash limbs limbs' L L') := by
+  unfold CommitColl; infer_instance
+
+/-- **DISCHARGEABLE.** One honest opening of one commitment refutes the outer residual for EVERY
+hash. -/
+theorem commitColl_dischargeable (hash : List ℤ → ℤ) (limbs L : List ℤ) :
+    ¬ CommitColl hash limbs limbs L L := fun hc => hc.1 rfl
+
+/-- **REFUTABLE.** At the constant sponge two different limb vectors really do collide, so the outer
+residual is not `True` in disguise either. -/
+theorem commitColl_refutable : CommitColl (fun _ => (0 : ℤ)) [1] [2] [] [] := by decide
+
+/-- **A REFUTATION, NOT A NEW FLOOR** (outer level), stated contrapositively. -/
+theorem commitColl_refutes_poseidon2CR {hash : List ℤ → ℤ} {limbs limbs' L L' : List ℤ}
+    (hc : CommitColl hash limbs limbs' L L') : ¬ Poseidon2SpongeCR hash :=
+  fun hCR => hc.1 (hCR _ _ hc.2)
+
 /-- A commitment binding an MMR root pins the log: two openings of the SAME commitment expose the
-SAME receipt log (CR peels the sponge, the root limb is last regardless of the other limbs' shape,
-`mroot_injective` pins the leaves — `commit_pins_index`, transferred). -/
-theorem commit_pins_mmr (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+SAME receipt log (the sponge peel exposes the last limb regardless of the other limbs' shape, and
+the root binding pins the leaves — `commit_pins_index`, transferred).
+
+⚙ PORTED 2026-07-28: TWO per-instance residuals in place of one refuted floor — the outer commitment
+peel (`CommitColl`) and the root binding (`MRootColl`). Both are dischargeable by an honest opening
+with no hypothesis on the hash, and both are refutable. -/
+theorem commit_pins_mmr (hash : List ℤ → ℤ)
     {limbs limbs' : List ℤ} {c : ℤ} {L L' : List ℤ}
     (hb : CommitBindsMMR hash limbs c L)
-    (hb' : CommitBindsMMR hash limbs' c L') : L' = L := by
-  have hl : limbs ++ [mroot hash L] = limbs' ++ [mroot hash L'] :=
-    hCR _ _ (hb.symm.trans hb')
+    (hb' : CommitBindsMMR hash limbs' c L')
+    (hnc : ¬ CommitColl hash limbs limbs' L L')
+    (hnr : ¬ MRootColl hash L' L) : L' = L := by
+  have hl : limbs ++ [mroot hash L] = limbs' ++ [mroot hash L'] := by
+    by_contra hne
+    exact hnc ⟨hne, hb.symm.trans hb'⟩
   have h1 : (limbs ++ [mroot hash L]).getLast? = some (mroot hash L) :=
     List.getLast?_concat
   have h2 : (limbs' ++ [mroot hash L']).getLast? = some (mroot hash L') :=
     List.getLast?_concat
   rw [hl, h2] at h1
-  exact mroot_injective hash hCR (Option.some.inj h1)
+  exact (mroot_binds_or_collides hash (Option.some.inj h1)).resolve_right hnr
 
 open Dregg2.Circuit.RecursiveAggregation
 open Dregg2.Distributed.HistoryAggregation (ChainStep)
@@ -727,7 +884,7 @@ theorem light_client_position_non_omission
     (CH : Dregg2.Exec.CellId → Dregg2.Exec.Value → ℤ)
     (RH : Dregg2.Exec.RecordKernelState → ℤ)
     (cmb : ℤ → ℤ → ℤ) (compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
-    (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (hash : List ℤ → ℤ)
     (agg : Aggregate Proof) (g : RecChainedState) (steps : List ChainStep)
     (es : EngineSound Proof verify CH RH cmb compress compressN agg g steps)
     (hroot : verify agg.root = true)
@@ -740,18 +897,24 @@ theorem light_client_position_non_omission
     {L' : List ℤ} {limbs' : List ℤ}
     (hopen : CommitBindsMMR hash limbs'
       (ChainStep.newRoot CH RH cmb compress compressN s) L')
+    -- the two per-instance residuals, at the pairs the extractors NAME for this step:
+    (hnc : ¬ CommitColl hash (limbsOf s) limbs' (logOf s) L')
+    (hnr : ¬ MRootColl hash L' (logOf s))
     {lo hi : ℕ} {vals : List ℤ}
     (hv : RVerifies L' lo hi vals) :
     AggregateAttests Proof CH RH cmb compress compressN agg g steps
       ∧ vals = mrange (logOf s) lo hi
       ∧ (∀ i, lo ≤ i → i ≤ hi → i < (logOf s).length →
           ∃ v, vals[i - lo]? = some v ∧ Opens (logOf s) i v) := by
-  have hpin : L' = logOf s := commit_pins_mmr hash hCR (hweld s hstep) hopen
+  have hpin : L' = logOf s := commit_pins_mmr hash (hweld s hstep) hopen hnc hnr
   rw [hpin] at hv
   exact ⟨light_client_verifies_whole_history Proof verify CH RH cmb compress compressN
       agg g steps es hroot,
     rverifies_iff_exact.mp hv, range_complete hv⟩
 
+#assert_axioms commitColl_dischargeable
+#assert_axioms commitColl_refutable
+#assert_axioms commitColl_refutes_poseidon2CR
 #assert_axioms commit_pins_mmr
 #assert_axioms light_client_position_non_omission
 
@@ -767,7 +930,8 @@ behind the CR floor):
   * FALSE — a SKIPPED position is rejected (`demo_skipped_rejected` — derived from THE keystone);
     a SUBSTITUTED value and a REORDERED answer are rejected (the dense slot pins each value);
     tamper / truncate / extend / reorder each MOVE the root (the executable shadow of
-    `mroot_injective` — note REORDER is detected, which the sorted map could not even express). -/
+    `mroot_binds_or_collides` — note REORDER is detected, which the sorted map could not even
+    express). -/
 
 /-- The demo receipt log: positions 0, 1, 2. -/
 def demoLog : List ℤ := [111, 222, 333]
@@ -827,7 +991,27 @@ theorem demo_reordered_rejected : ¬ RVerifies demoLog 1 2 [333, 222] := by
   intro hv
   exact absurd (hv.2 0 333 (by decide)) (by decide)
 
+/-- **Witness TRUE #2 — THE HONEST PROVER PAYS NOTHING, FOR EVERY HASH.** The two residuals the
+ported §5/§6 endpoints carry are BOTH discharged by a non-equivocating opening — one log, one limb
+vector — with no hypothesis on the sponge whatsoever. This is the pole the deleted floor could not
+supply: `Poseidon2SpongeCR` is unavailable at the deployed hash even to the honest party, so a
+statement conditioned on it fired for nobody. Deliberately UNCONDITIONAL: a satisfiability witness
+gated on the refuted floor is itself vacuous, and this campaign has found three of those. -/
+theorem demo_honest_opening_discharges_residuals (hash : List ℤ → ℤ) (limbs L : List ℤ) :
+    ¬ CommitColl hash limbs limbs L L ∧ ¬ MRootColl hash L L :=
+  ⟨commitColl_dischargeable hash limbs L, mrootColl_dischargeable hash L⟩
+
+/-- **Witness FALSE #4 — the residual is ABSENT at a real tamper pair, so the binding half does the
+work.** On the genuine demo log against a tampered one, at the toy sponge, `¬ MRootColl` HOLDS — the
+ported endpoints cannot be discharged here by taking the collision escape, which is exactly the
+failure mode a bare `∃`-collision disjunct would have had (it is unconditionally true at deployed
+parameters). Decided, not asserted. -/
+theorem demo_residual_absent_at_refSponge :
+    ¬ MRootColl refSponge demoLog [111, 999, 333] := by decide
+
 #assert_axioms demo_mountains
+#assert_axioms demo_honest_opening_discharges_residuals
+#assert_axioms demo_residual_absent_at_refSponge
 #assert_axioms demo_range_verifies
 #assert_axioms demo_skipped_rejected
 #assert_axioms demo_substituted_rejected

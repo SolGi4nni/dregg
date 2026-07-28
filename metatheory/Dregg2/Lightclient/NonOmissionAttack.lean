@@ -19,7 +19,8 @@ delegations · delegationEpoch · delegationEpochAt · heaps — **the receipt l
 is precisely WHY the rotated commit absorbs the log as its SECOND limb:
 
   * `recStateCommit_admits_receipt_omission` — the kernel-digest limb ALONE is LITERALLY unchanged
-    (`rfl`) when a receipt is dropped, while the receipt-log MMR roots DIFFER (`mroot_injective`). The
+    (`rfl`) when a receipt is dropped, while the receipt-log MMR roots MOVE (unless the omitting
+    server exhibits the named collision — `MMR.MRootColl`, the honest 2026-07-28 form). The
     residual a kernel-only chained commit would leave open.
   * `newRoot_binds_log` — the rotated `chainedCommit` CLOSES it: two steps sharing a turn whose
     `newRoot`s agree have EQUAL receipt logs (`HistoryAggregation.root_tooth_pins_log`, the outer
@@ -63,9 +64,22 @@ headline `light_client_whole_history_non_omission` (= `RecursiveAggregation.non_
 `verify agg.root = true` ⟹ `LogChained` over the whole history — omission impossible everywhere, no
 `hweld`. The aggregation model no longer lags the deployed Rust.
 
-## Axiom hygiene
-`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem; crypto enters only as
-the named `Poseidon2SpongeCR` hypothesis. NEW file; all imports read-only.
+## Axiom hygiene, and what the MMR face costs after the 2026-07-28 port
+`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem.
+
+The MMR-face theorems (`recStateCommit_admits_receipt_omission`,
+`commit_absorbing_root_pins_log_uniquely`, `light_client_position_non_omission_grounded`, and BOTH of
+§3's MMR witnesses) no longer carry `Poseidon2SpongeCR` at all: they take per-instance, decidable,
+refutable residuals (`MMR.CommitColl` / `MMR.MRootColl`) at the pairs the total extractors NAME.
+Worth ~2^15.5 queries at the deployed 1-felt root (`Lightclient/MMR.lean` header) — a real number,
+where the floor was a false one.
+
+⚠ THE SORTED-INDEX FACE STILL CARRIES IT. `light_client_query_non_omission_grounded` and its witness
+`grounded_idx_fires_honest` route through `AttestedQuery.commit_pins_index` / `iroot`, a DIFFERENT
+cone with its own extractors still unwritten, so both keep the refuted floor and both stay in
+`FloorRatchetBaseline`. `grounded_idx_fires_honest` is therefore a satisfiability witness conditioned
+on a hypothesis that is false where the system stands — i.e. it demonstrates nothing at deployment.
+Named here rather than left to be rediscovered; it is the sorted cone's port to make.
 -/
 import Dregg2.Circuit.RotationLayout
 import Dregg2.Distributed.HistoryAggregation
@@ -117,20 +131,33 @@ theorem newRoot_binds_log
 /-- **The kernel-digest LIMB alone admits omission — WHY the rotated commit needs the log root.** The
 FIRST limb `stateRoot … k t` (= `recStateCommit`, the kernel digest) is a function of the kernel and
 turn ALONE: the full receipt log and ANY log with a receipt omitted map to the SAME kernel-digest limb
-(`rfl`), while their receipt-log MMR roots DIFFER (`mroot_injective`). This is the residual that a
-kernel-ONLY chained commit would have left open — and precisely what the rotated commit's SECOND limb
-(`logRoot`, `newRoot_binds_log` above) closes. -/
+(`rfl`), while their receipt-log MMR roots MOVE. This is the residual that a kernel-ONLY chained
+commit would have left open — and precisely what the rotated commit's SECOND limb (`logRoot`,
+`newRoot_binds_log` above) closes.
+
+⚑ PORTED 2026-07-28, AND ITS CONCLUSION WAS AS FALSE AS ITS PREMISE. This theorem used to take
+`hCR : Poseidon2SpongeCR hash` and conclude, for ARBITRARY distinct logs,
+`mroot hash full ≠ mroot hash dropped`. That conclusion IS injectivity of `mroot hash`, and
+`MMR.mroot_not_injective_of_singleton_collision` refutes it at any sponge with a singleton collision —
+`Storage.DeployedFloorRegrounded.mroot_conclusion_false_at_deployed` does so at the deployed
+`poseidon2Hash` by `rfl`. So the old statement was refuted premise ⟹ refuted conclusion: it could
+never have been cited honestly in either direction. The honest form names the escape rather than
+assuming it away: the roots MOVE, unless the omitting server exhibits the collision the extractor
+points at — and that exhibition itself refutes the floor (`MMR.mrootColl_refutes_poseidon2CR`). -/
 theorem recStateCommit_admits_receipt_omission
     (CH : Dregg2.Exec.CellId → Dregg2.Exec.Value → ℤ)
     (RH : Dregg2.Exec.RecordKernelState → ℤ)
     (cmb : ℤ → ℤ → ℤ) (compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
-    (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (hash : List ℤ → ℤ)
     (k : Dregg2.Exec.RecordKernelState) (t : Dregg2.Exec.Turn)
     (full dropped : List ℤ) (hne : full ≠ dropped) :
     stateRoot CH RH cmb compress compressN k t
         = stateRoot CH RH cmb compress compressN k t
-      ∧ mroot hash full ≠ mroot hash dropped :=
-  ⟨rfl, fun h => hne (mroot_injective hash hCR h)⟩
+      ∧ (mroot hash full ≠ mroot hash dropped ∨ MRootColl hash full dropped) := by
+  refine ⟨rfl, ?_⟩
+  by_cases hr : mroot hash full = mroot hash dropped
+  · exact Or.inr ((mroot_binds_or_collides hash hr).resolve_left hne)
+  · exact Or.inl hr
 
 /-- **The CONTRAST that drives the repair: a commit absorbing the log pins it UNIQUELY.** Two
 `CommitBindsMMR` openings of ONE commit force EQUAL logs (`commit_pins_mmr`). The kernel commit
@@ -139,10 +166,11 @@ cannot supply this — it is the SAME for distinct logs (`recStateCommit_admits_
 A commit that DOES absorb the root (the rotated commit, §2) regains this uniqueness — which is
 exactly why binding to it makes non-omission real. -/
 theorem commit_absorbing_root_pins_log_uniquely
-    (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (hash : List ℤ → ℤ)
     {limbs limbs' : List ℤ} {c : ℤ} {L L' : List ℤ}
-    (hb : CommitBindsMMR hash limbs c L) (hb' : CommitBindsMMR hash limbs' c L') : L = L' :=
-  (commit_pins_mmr hash hCR hb hb').symm
+    (hb : CommitBindsMMR hash limbs c L) (hb' : CommitBindsMMR hash limbs' c L')
+    (hnc : ¬ CommitColl hash limbs limbs' L L') (hnr : ¬ MRootColl hash L' L) : L = L' :=
+  (commit_pins_mmr hash hb hb' hnc hnr).symm
 
 #assert_axioms newRoot_binds_log
 #assert_axioms recStateCommit_admits_receipt_omission
@@ -168,10 +196,11 @@ answer, the answer is EXACTLY the genuine range — every committed in-range pos
 dense slot (omission impossible), every value genuine (forgery impossible). The receipt-log binding
 is the PROVEN `rotatedCommit_binds_mmr` (`rfl`) — **NO `hweld` hypothesis.** -/
 theorem light_client_position_non_omission_grounded
-    (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (hash : List ℤ → ℤ)
     (s : RotatedLimbs) (L : List ℤ)
     {limbs' : List ℤ} {L' : List ℤ}
     (hopen : CommitBindsMMR hash limbs' (rotatedCommit hash s L) L')
+    (hnc : ¬ CommitColl hash s.toList limbs' L L') (hnr : ¬ MRootColl hash L' L)
     {lo hi : ℕ} {vals : List ℤ}
     (hv : RVerifies L' lo hi vals) :
     vals = mrange L lo hi
@@ -179,7 +208,7 @@ theorem light_client_position_non_omission_grounded
         ∃ v, vals[i - lo]? = some v ∧ Opens L i v := by
   have hbind : CommitBindsMMR hash s.toList (rotatedCommit hash s L) L :=
     rotatedCommit_binds_mmr hash s L
-  have hpin : L' = L := commit_pins_mmr hash hCR hbind hopen
+  have hpin : L' = L := commit_pins_mmr hash hbind hopen hnc hnr
   subst hpin
   exact ⟨rverifies_iff_exact.mp hv, range_complete hv⟩
 
@@ -214,22 +243,42 @@ theorem light_client_query_non_omission_grounded
 theorem returns the COMPLETE genuine range: a real verdict, not a vacuous one. (The proof term IS the
 theorem's first conjunct at the honest inputs — it typechecks only because the theorem fires.) -/
 theorem grounded_mmr_fires_honest
-    (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (hash : List ℤ → ℤ)
     (s : RotatedLimbs) (L : List ℤ) (lo hi : ℕ) :
     mrange L lo hi = mrange L lo hi :=
-  (light_client_position_non_omission_grounded hash hCR s L
-    (rotatedCommit_binds_mmr hash s L) (exact_range_verifies L lo hi)).1
+  (light_client_position_non_omission_grounded hash s L
+    (rotatedCommit_binds_mmr hash s L)
+    (commitColl_dischargeable hash s.toList L) (mrootColl_dischargeable hash L)
+    (exact_range_verifies L lo hi)).1
 
 /-- **Witness FALSE — the omission is REJECTED.** A server presenting the SKIPPED answer `[333]`
 (position 1 dropped) for range `[1,2]` over the genuine commit cannot exist: the grounded theorem
 forces `[333] = mrange demoLog 1 2 = [222, 333]`, absurd. The dropped receipt is caught. -/
 theorem grounded_mmr_rejects_omission
-    (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (hash : List ℤ → ℤ)
     {limbs' : List ℤ} {L' : List ℤ}
     (hopen : CommitBindsMMR hash limbs' (rotatedCommit hash demoLimbs demoLog) L')
+    (hnc : ¬ CommitColl hash demoLimbs.toList limbs' demoLog L')
+    (hnr : ¬ MRootColl hash L' demoLog)
     (hv : RVerifies L' 1 2 [333]) : False := by
-  have heq := (light_client_position_non_omission_grounded hash hCR demoLimbs demoLog hopen hv).1
+  have heq :=
+    (light_client_position_non_omission_grounded hash demoLimbs demoLog hopen hnc hnr hv).1
   exact absurd heq (by decide)
+
+/-- **Witness FALSE, UNCONDITIONAL FORM — the omitting server has EXHIBITED a collision.** No
+hypothesis at all on the sponge: a prover that opens the genuine deployed commit and gets the SKIPPED
+answer `[333]` accepted has, by that very fact, produced one of the two NAMED collisions the
+extractors point at. This is the honest shape of "the omission is caught": at the deployed 1-felt
+sponge such a collision costs ~2^15.5 queries, and saying so is the whole content — the old version
+of this witness assumed `Poseidon2SpongeCR` and therefore fired for nobody at deployment. -/
+theorem grounded_mmr_omission_forces_collision
+    (hash : List ℤ → ℤ) {limbs' : List ℤ} {L' : List ℤ}
+    (hopen : CommitBindsMMR hash limbs' (rotatedCommit hash demoLimbs demoLog) L')
+    (hv : RVerifies L' 1 2 [333]) :
+    CommitColl hash demoLimbs.toList limbs' demoLog L' ∨ MRootColl hash L' demoLog := by
+  by_contra hn
+  push_neg at hn
+  exact grounded_mmr_rejects_omission hash hopen hn.1 hn.2 hv
 
 /-- **Witness TRUE — the sorted-map face FIRES** (the honest opening returns the complete answer). -/
 theorem grounded_idx_fires_honest
@@ -241,6 +290,7 @@ theorem grounded_idx_fires_honest
 
 #assert_axioms grounded_mmr_fires_honest
 #assert_axioms grounded_mmr_rejects_omission
+#assert_axioms grounded_mmr_omission_forces_collision
 #assert_axioms grounded_idx_fires_honest
 
 /-! ## §4 — WHOLE-HISTORY: the §3 residual CLOSED (the aggregation model folds the rotated commit).

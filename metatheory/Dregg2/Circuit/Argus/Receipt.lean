@@ -304,8 +304,9 @@ end Keystone
 The §2 keystone carries the cross-AIR PI binding as a bare hypothesis ("the two roots are pinned to the
 SAME published value"). The receipt index the EPOCH publishes is an MMR (`Lightclient/MMR.lean`): history
 keys are dense positions, the per-turn commitment absorbs the index root (`CommitBindsMMR`, discharged by
-construction at the flag-day layout), and `mroot_binds_position` proves — under the ONE named
-`Poseidon2SpongeCR` floor — that ANY log recomposing the published root opens identically at every
+construction at the flag-day layout), and `mroot_binds_position` proves — as of 2026-07-28 with NO
+floor of its own, only a per-instance `MMR.MRootColl` residual this file discharges from its own
+`hCR` — that ANY log recomposing the published root opens identically at every
 position. So "both proofs bind their root to the SAME published value" is not a free-floating PI equation
 any more: it is "both roots OPEN at the same dense position of the published index", and the equality the
 §2 keystone needs is DERIVED, adversarial-server included (the prover's openings may be against its own
@@ -319,12 +320,15 @@ open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 /-- **`published_position_pins_value`** — openings of ONE published index position pin ONE value,
 adversarial server included: if the prover's log `L'` recomposes the published root of the genuine log
 `L` (`mroot hash L' = mroot hash L`) and a value opens at position `i` of each, the values are EQUAL.
-This is the `hRootPI`-shape supplier: `mroot_binds_position` (CR pins the whole log) + positional
-determinism. Terminal at the named `Poseidon2SpongeCR` floor — no out-of-band PI equation remains. -/
+This is the `hRootPI`-shape supplier: `mroot_binds_position` (the MMR root binding pins the whole
+log) + positional determinism. Terminal at the named `Poseidon2SpongeCR` floor, which is THIS file's
+carrier, not the MMR module's: the ported `mroot_binds_position` asks only for `¬ MRootColl` at the
+two logs in play, and `hCR` discharges it inline. Porting the rest of this cone means giving the
+Argus keystones their own per-instance residuals — a separate wave. -/
 theorem published_position_pins_value (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
     {L L' : List ℤ} (hpub : mroot hash L' = mroot hash L)
     {i : ℕ} {r' r : ℤ} (h' : Opens L' i r') (h : Opens L i r) : r' = r := by
-  have hpos := mroot_binds_position hash hCR hpub i
+  have hpos := mroot_binds_position hash hpub (fun hc => hc.1 (hCR _ _ hc.2)) i
   exact Option.some.inj ((h'.symm.trans hpos).trans h)
 
 /-- **`argus_published_index_pins_receipt` — THE DISCHARGED KEYSTONE.** The §2 connection keystone

@@ -20,10 +20,13 @@ Until this module, `effect_vm_umem_real_turn.rs` carried the real turn's trace u
 "dense injective relabeling" (distinct addresses/values numbered within the instance — sound
 because a multiset balance is label-invariant, but a placeholder). The DEPLOYED flip needs the
 REAL codecs. THIS module proves them, as pure-Lean adapter lemmas — NO wire / descriptor / VK
-change. Each rides the SAME named `Poseidon2SpongeCR` floor every other root binder uses; none
-invents a narrower bit-count assumption (the load-bearing-insecurity discipline: the abstract `ℤ`
-sponge output stands for the FULL multi-felt Poseidon2 digest, and the codec's collision-freedom
-is exactly that one floor, never a single-felt 31-bit shortcut).
+change. ⛑ NONE OF THEM RIDES `Poseidon2SpongeCR` ANY MORE — §1/§2 were cut over 2026-07-27 and §3
+on 2026-07-28, so **this module has ZERO floor carriers**. Each binder is a per-instance,
+decidable, refutable non-collision at the exact pair the proof feeds the sponge. And the honest
+bit-count is now SAID rather than deferred: every carrier here is ONE BabyBear felt, so each
+residual is a ~2^15.5-query claim on `RomQueryFloor.birthday_bound`'s rung, not the multi-felt
+digest the earlier text gestured at. That is a weak number, and naming it is the point — the floor
+it replaced read as unbreakable and was false.
 
 THE ADAPTERS (each faithful-encoding-grounded + non-vacuity-witnessed, both polarities):
 
@@ -46,17 +49,19 @@ THE ADAPTERS (each faithful-encoding-grounded + non-vacuity-witnessed, both pola
   * §3 MMR boundary-derivation analogue — for the index domain the `boundary_root_derived`
     refactor theorem and the `boundary_init_root_bound` anti-ghost are restated against `mroot`:
     `index_boundary_root_derived` (same derived log ⇒ same `mroot`, NO crypto) and
-    `index_boundary_root_bound` (`= mroot_injective`: a tampered / REORDERED / truncated index
+    `index_boundary_root_bound` (the MMR root binding: a tampered / REORDERED / truncated index
     image cannot keep the published `iroot`). Welded to the ONE balance:
     `index_boundary_root_from_memcheck` rides `memcheck_pins_final` so the derived index boundary
     log is the GENUINE pinned final column, encoded — the index version of
     `boundary_root_from_memcheck`. (The positional-vs-sorted reconciliation of the deployed log
     is the assembly's job — obstruction #2 "coverage"; the binding the adapter delivers is
-    `mroot_injective` over the derived leaf list.)
+    `MMR.mroot_binds_or_collides` over the derived leaf list, plus its named per-instance
+    residual.)
 
 Axiom hygiene: `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every result; crypto
-enters ONLY as the named `Poseidon2SpongeCR` hypothesis, never as an axiom. Lean/design only — no
-circuit Rust, no wire/descriptor/VK change.
+enters ONLY as per-instance non-collision side conditions (`IsSpongeColl` / `MMR.MRootColl`) at
+named pairs — never as an axiom, and no longer as the refuted `Poseidon2SpongeCR`. Lean/design
+only — no circuit Rust, no wire/descriptor/VK change.
 -/
 import Dregg2.Crypto.UniversalMemory
 import Dregg2.Crypto.SpongeCarrierReduction
@@ -69,8 +74,7 @@ open Dregg2.Crypto.MemoryChecking
 open Dregg2.Crypto.UniversalMemory
 open Dregg2.Substrate
 open Dregg2.Substrate.Heap (FeltHeap leafOf root addrOf refSponge)
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
-open Dregg2.Lightclient.MMR (mroot mroot_injective)
+open Dregg2.Lightclient.MMR (mroot mroot_binds_or_collides MRootColl mrootColl_dischargeable)
 open Dregg2.Circuit.Emit.EffectVmEmitCapRoot (edgeLeafOf)
 open Dregg2.Crypto.SpongeCarrierReduction (IsSpongeColl)
 
@@ -83,7 +87,7 @@ the wire as `hash[domain_tag, collection, key]`. The two lemmas below make that 
 FAITHFUL: a distinct domain tag separates the planes (the tag is injective), and a single CR peel
 of the 3-element list recovers the whole `(Domain, coll, key)` triple. This is the §1-banner claim
 ("CR makes the concrete form injective, i.e. exactly this pair") discharged at the address layer,
-on the SAME `Poseidon2SpongeCR` floor as `Heap.addrOf`/`leafOf`. -/
+on a per-instance non-collision at the named 3-element pair, not the refuted `Poseidon2SpongeCR`. -/
 
 /-- The domain tag felt — a distinct constant per state domain (the `domain_tag` limb of the
 unified address). Injective by construction (`domainTag_injective`); a future state component is a
@@ -286,7 +290,8 @@ For four of the five committed domains the boundary commitment is a sorted-map `
 anti-ghost. The INDEX domain commits with the MMR root `mroot` instead (positional, append-only).
 This section restates the two theorems against `mroot`, and welds the derivation to the ONE balance
 via `memcheck_pins_final` — the index version of `boundary_root_from_memcheck`. The MMR module
-already binds the whole log (`mroot_injective` detects suppress / forge / REORDER / truncate), so
+already binds the whole log (`mroot_binds_or_collides` detects suppress / forge / REORDER /
+truncate), so
 this is an ADAPTER lemma, not a soundness gap (`UNIVERSAL-MEMORY.md:115-121`). -/
 
 variable {κ : Type u} {ν : Type v}
@@ -327,16 +332,26 @@ theorem index_boundary_root_derived (hash : List ℤ → ℤ) (enc : κ × ν �
   unfold indexBoundary
   rw [h]
 
-/-- **`index_boundary_root_bound` — the MMR anti-ghost.** Under the named CR floor, a committed
-index log and the derived boundary log carry the SAME `mroot` iff they ARE the same log: pinning
-the index boundary root to the committed `iroot` forces the committed log to BE the boundary view
-— a tampered, REORDERED, or truncated index image cannot keep the published root. The MMR
-companion of `boundary_init_root_bound`, riding `mroot_injective`. -/
-theorem index_boundary_root_bound (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+/-- **`index_boundary_root_bound` — the MMR anti-ghost.** A committed index log and the derived
+boundary log carry the SAME `mroot` iff they ARE the same log: pinning the index boundary root to the
+committed `iroot` forces the committed log to BE the boundary view — a tampered, REORDERED, or
+truncated index image cannot keep the published root. The MMR companion of
+`boundary_init_root_bound`.
+
+⚙ PORTED 2026-07-28 — this closes the residual `37cf8c21a` left named. The `Poseidon2SpongeCR` binder
+is gone; what carries the binding is `MMR.mroot_binds_or_collides` (UNCONDITIONAL, hence true of the
+deployed sponge) plus ONE per-instance residual at the pair `MMR.mrootFind` returns for exactly these
+two logs. Discharged by the honest prover for every hash (`MMR.mrootColl_dischargeable`), refutable
+(`MMR.mrootColl_refutable`), and exhibiting it REFUTES the floor
+(`MMR.mrootColl_refutes_poseidon2CR`). Priced honestly: the MMR root is ONE BabyBear felt, so the
+residual is a ~2^15.5-query claim, not a ~2^123.5 one — the §1/§2 codecs in this file sit at the same
+width and the same number. -/
+theorem index_boundary_root_bound (hash : List ℤ → ℤ)
     {committed derived : List ℤ}
+    (hno : ¬ MRootColl hash committed derived)
     (hroot : mroot hash committed = mroot hash derived) :
     committed = derived :=
-  mroot_injective hash hCR hroot
+  (mroot_binds_or_collides hash hroot).resolve_right hno
 
 /-- **`index_boundary_root_from_memcheck` — the MMR derivation, welded to the ONE balance.** The
 index boundary log derived from the prover's claimed final column carries the SAME `mroot` as the
@@ -358,7 +373,7 @@ theorem index_boundary_root_from_memcheck (hash : List ℤ → ℤ) (enc : ℤ �
 
 /-! ## §4 — NON-VACUITY: both polarities, on the computable reference sponge.
 
-The soundness theorems above ride the abstract `Poseidon2SpongeCR` floor; these guards exhibit
+The soundness theorems above ride per-instance non-collision side conditions; these guards exhibit
 realizable witnesses on `Heap.refSponge` (the same Horner-with-length-tag toy the cap-root and
 heap-root non-vacuity use). Each codec is shown true (honest) AND false (a tamper moves the
 carrier), and the load-bearing facts (the tag separates the planes; reorder moves the MMR root)
@@ -427,17 +442,18 @@ private def idxFin : ℤ → Option ℤ := fun a => if a = 0 then some 10 else i
 #guard indexBoundary encIdx idxFin [0, 1, 2] == [10, 1020]
 
 -- The MMR root BINDS the derived log — extend AND reorder both move it (reorder the sorted map
--- could not even express — `mroot_injective` detects it):
+-- could not even express — the MMR root binding detects it):
 #guard mroot refSponge [10, 1020] == mroot refSponge [10, 1020]            -- honest
 #guard mroot refSponge [10, 1020] != mroot refSponge [10, 1020, 30]        -- extend moves the root
 #guard mroot refSponge [10, 1020] != mroot refSponge [1020, 10]            -- REORDER moves the root
 
 /-- `index_boundary_root_bound` fires structurally on a concrete committed log = its derived
 boundary: pinning the committed `iroot` to the derived MMR root forces the committed log to BE the
-boundary view (the pin given by `rfl` on the matching log, exercising the MMR route under the
-abstract floor — every boundary binder is stated against the named CR hypothesis). -/
-example (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) (L : List ℤ) : L = L :=
-  index_boundary_root_bound hash hCR (committed := L) (derived := L) rfl
+boundary view. ⚙ UNCONDITIONAL since the 2026-07-28 port — the honest (non-equivocating) pin
+discharges the residual for EVERY hash, so this satisfiability witness no longer rests on a
+hypothesis that is false where the system stands. -/
+example (hash : List ℤ → ℤ) (L : List ℤ) : L = L :=
+  index_boundary_root_bound hash (mrootColl_dischargeable hash L) (committed := L) (derived := L) rfl
 
 /-- `index_boundary_root_derived` (the refactor, NO crypto) fires on a concrete instance: two final
 images agreeing on the declared index cells derive the same `mroot`. -/
@@ -449,7 +465,7 @@ example (hash : List ℤ → ℤ) :
 end NonVacuity
 
 /-! ## Axiom-hygiene pins — `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound};
-crypto only as the named `Poseidon2SpongeCR` hypothesis, never an axiom. -/
+crypto only as per-instance non-collision side conditions, never an axiom and never a floor. -/
 
 #assert_axioms domainTag_injective
 #assert_axioms uaddrEnc_eq_tagged_addr

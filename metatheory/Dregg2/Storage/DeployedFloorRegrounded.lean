@@ -474,13 +474,68 @@ deleted keystone required is UNAVAILABLE at the deployed hash. -/
 theorem storage_old_hypothesis_unavailable : ¬ Poseidon2SpongeCR poseidon2Hash :=
   deployed_floor_false
 
-/-- The same shape one level down, at the MMR root: the migrated `mroot_binds_or_collides` gives
-`mroot_injective`'s conclusion back at an injective sponge. Stated so the light-client cone's
-migration is auditable by the same criterion. -/
-theorem mmr_migration_strictly_stronger (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+/-- The same shape one level down, at the MMR root, RESTATED CONTRAPOSITIVELY (2026-07-28). Two
+DISTINCT receipt logs sharing an `mroot` REFUTE the floor outright — so the light-client cone's
+migration is auditable by the same criterion, and this declaration assumes no floor content and is
+therefore a tooth rather than a carrier.
+
+⚑ WHY IT MOVED. It used to read `(hCR) (h) (hne) : False` and prove it by citing
+`MMR.mroot_injective`, a "strength bridge" retained precisely so this auditability claim could be
+made. That bridge is DELETED, because — see `mroot_conclusion_false_at_deployed` immediately below —
+its CONCLUSION is false at the deployed hash by an `rfl` collision, exactly as its premise is. A
+theorem that carries a refuted floor is a carrier whatever its conclusion; a theorem that CONCLUDES a
+floor's negation and assumes none is the thing this campaign wants more of. Same claim, honest
+spelling. -/
+theorem mmr_migration_strictly_stronger (hash : List ℤ → ℤ)
     {L₁ L₂ : List ℤ} (h : Dregg2.Lightclient.MMR.mroot hash L₁
-      = Dregg2.Lightclient.MMR.mroot hash L₂) (hne : L₁ ≠ L₂) : False :=
-  hne (Dregg2.Lightclient.MMR.mroot_injective hash hCR h)
+      = Dregg2.Lightclient.MMR.mroot hash L₂) (hne : L₁ ≠ L₂) : ¬ Poseidon2SpongeCR hash :=
+  Dregg2.Lightclient.MMR.mrootColl_refutes_poseidon2CR
+    ((Dregg2.Lightclient.MMR.mroot_binds_or_collides hash h).resolve_left hne)
+
+/-! ### ⚑ THE DELETED "STRENGTH BRIDGES" WERE FALSE → FALSE, AND HERE IS THE WITNESS.
+
+`Storage.DeployedFloorRefuted.deployed_collides` is a `rfl` collision of the DEPLOYED sponge at two
+distinct SINGLETON preimages, `poseidon2Hash [0] = poseidon2Hash [p]`. That single fact refutes the
+CONCLUSION of all three MMR injectivity bridges that stood between 2026-07-25 and 2026-07-28
+(`PTree.hashOf_injective`, `bag_injective`, `mroot_injective`), because a one-entry log's root peels
+straight down to the singleton absorb (`MMR` §3¼).
+
+This is the measurement the wave-1 lesson asks for — CHECK THE CONCLUSION, NOT ONLY THE HYPOTHESIS.
+A bridge whose premise AND conclusion are both refuted where the system stands is not preserving
+strength; it is preserving a shape. The three below are the reason the bridges were deleted rather
+than kept, and they are `rfl`-cheap, so nothing is being asserted on credit. -/
+
+/-- The deployed sponge's peak-hash map is NOT injective — the old `PTree.hashOf_injective`'s
+conclusion, refuted. -/
+theorem hashOf_conclusion_false_at_deployed :
+    ¬ (∀ t t' : Dregg2.Lightclient.MMR.PTree,
+        t.hashOf poseidon2Hash = t'.hashOf poseidon2Hash → t = t') :=
+  Dregg2.Lightclient.MMR.hashOf_not_injective_of_singleton_collision
+    poseidon2Hash (by decide) deployed_collides
+
+/-- The deployed sponge's peak-list bag is NOT injective — the old `bag_injective`'s conclusion,
+refuted. -/
+theorem bag_conclusion_false_at_deployed :
+    ¬ (∀ f₁ f₂ : Dregg2.Lightclient.MMR.Forest,
+        Dregg2.Lightclient.MMR.bag poseidon2Hash f₁
+          = Dregg2.Lightclient.MMR.bag poseidon2Hash f₂ → f₁ = f₂) :=
+  Dregg2.Lightclient.MMR.bag_not_injective_of_singleton_collision
+    poseidon2Hash (by decide) deployed_collides
+
+/-- **⚑ THE DEPLOYED RECEIPT-INDEX ROOT DOES NOT BIND ITS LOG BY INJECTIVITY.** The old
+`mroot_injective` concluded "two logs with equal MMR roots are equal"; at `poseidon2Hash` the
+one-entry logs `[0]` and `[p]` are a counterexample, by `rfl`. The honest binding is
+`MMR.mroot_binds_or_collides` plus the named `MMR.MRootColl` residual, priced at ~2^15.5 queries by
+`RomQueryFloor.birthday_bound` at the 1-felt root. -/
+theorem mroot_conclusion_false_at_deployed :
+    ¬ (∀ L₁ L₂ : List ℤ, Dregg2.Lightclient.MMR.mroot poseidon2Hash L₁
+        = Dregg2.Lightclient.MMR.mroot poseidon2Hash L₂ → L₁ = L₂) :=
+  Dregg2.Lightclient.MMR.mroot_not_injective_of_singleton_collision
+    poseidon2Hash (by decide) deployed_collides
+
+#assert_axioms hashOf_conclusion_false_at_deployed
+#assert_axioms bag_conclusion_false_at_deployed
+#assert_axioms mroot_conclusion_false_at_deployed
 
 /-- **NON-VACUITY OF THE MIGRATED KEYSTONE (positive pole).** The unconditional storage binding is not
 trivially the collision disjunct: on a bucket pair that genuinely agrees it delivers the EQUALITY, at

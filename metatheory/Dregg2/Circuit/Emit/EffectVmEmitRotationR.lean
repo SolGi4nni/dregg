@@ -49,7 +49,7 @@ open Dregg2.Circuit.Emit.EffectVmEmitV2
 open Dregg2.Circuit.Emit.EffectVmEmitRotation
 open Dregg2.Circuit.RotationLayout (RotatedLimbs)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
-open Dregg2.Lightclient.MMR (mroot mroot_injective)
+open Dregg2.Lightclient.MMR (mroot mroot_binds_or_collides)
 open Dregg2.Substrate.Heap (refSponge)
 
 set_option autoImplicit false
@@ -229,7 +229,8 @@ theorem wireCommitR_binds_log (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR
     (h : wireCommitR hash l (mroot hash L) = wireCommitR hash l' (mroot hash L')) :
     l = l' ∧ L = L' :=
   ⟨(wireCommitR_binds hash hCR hlen h).1,
-   mroot_injective hash hCR (wireCommitR_binds hash hCR hlen h).2⟩
+   (mroot_binds_or_collides hash (wireCommitR_binds hash hCR hlen h).2).resolve_right
+     (fun hc => hc.1 (hCR _ _ hc.2))⟩
 
 #assert_axioms chainFrom_inj
 #assert_axioms wireCommitR_binds

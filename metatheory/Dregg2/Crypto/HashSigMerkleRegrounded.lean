@@ -59,10 +59,15 @@ the old name turn out to be the SAME statement, and are now labelled as such ins
 ## ⚑ THE NAMED, SEPARATELY-PRICED RESIDUAL — say it out loud
 
 `merkle_ots_binds_index` spends its sponge floor TWICE: once on the leaf (closed here) and once on
-`MMR.mroot_injective`, which peels the whole `bag`/`hashOf` forest to conclude the opened log IS the
+`MMR.mroot_binds_or_collides` (until 2026-07-28, `MMR.mroot_injective`), which peels the whole
+`bag`/`hashOf` forest to conclude the opened log IS the
 genuine key log. The key-swap game carries `openLog = keyLog …` as an explicit SIDE CONDITION, so this
 file closes the LEAF leg only. **The MMR root leg is NOT closed and is not pretended to be:**
-`MMR.bag_injective` / `MMR.mroot_injective` still ride the refuted injective `Poseidon2SpongeCR` and
+⚑ UPDATED 2026-07-28: `MMR.bag_injective` / `MMR.mroot_injective` are DELETED (their CONCLUSIONS
+were refuted at the deployed hash too — `Storage.DeployedFloorRegrounded.mroot_conclusion_false_at_
+deployed`). The MMR leg is now `mroot_binds_or_collides` + a per-instance `MRootColl` residual, and
+does NOT ride the refuted injective `Poseidon2SpongeCR`. The `pkLeaf` sponge peel in
+`HashSigMerkle.merkle_ots_binds_index` still does, and
 have no extractor. That is a real open carrier, named here so it is countable rather than absorbed.
 
 ## Non-fake
@@ -172,7 +177,8 @@ presents a signature that
   2. VERIFIES against the master root — the deployed `mverify` at the real `masterKey`, not a
      paraphrase of it,
   3. opens along the GENUINE key log (the explicitly-priced side condition — see the header: the
-     complementary case is the MMR root leg, `MMR.mroot_injective`, NOT closed here), and
+     complementary case is the MMR root leg, PORTED 2026-07-28 to
+     `MMR.mroot_binds_or_collides` + its named residual, not closed here), and
   4. nonetheless carries a public key DIFFERENT from the one committed at that index.
 
 A win is exactly the key swap `HashSigMerkle.merkle_ots_binds_index` denies: a verifying many-time

@@ -21,7 +21,7 @@ until the flag-day regen.
     {2,4}, and the arity-2 tail keeps the iroot LITERALLY LAST), each a REAL `babyBearD4W16`
     permutation row in the IR-v2 chip table. `wireCommit_binds` re-proves the anti-ghost keystone for the
     CHAINED shape under the same ONE CR floor (peel 8 collisions): equal wire commits force
-    equal `RotatedLimbs` AND equal iroot; `wireCommit_binds_log` composes `mroot_injective` so
+    equal `RotatedLimbs` AND equal iroot; `wireCommit_binds_log` composes the MMR root binding so
     the whole receipt log is bound (tamper/truncate/extend/reorder all move the commit);
     `wireCommit_binds_named_field` carries the `FactoryDescriptor.fields` weld.
   * **§3/§4 the PROBE descriptor** — `rotationProbeVmDescriptor2` (graduated IR-v2, the five
@@ -55,7 +55,7 @@ open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.Emit.EffectVmEmitV2
 open Dregg2.Circuit.RotationLayout
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
-open Dregg2.Lightclient.MMR (mroot mroot_injective demoLog)
+open Dregg2.Lightclient.MMR (mroot mroot_binds_or_collides demoLog)
 open Dregg2.Substrate.Heap (refSponge)
 
 set_option autoImplicit false
@@ -222,11 +222,13 @@ theorem wireCommit_binds_named_field (hash : List ℤ → ℤ) (hCR : Poseidon2S
   wireCommit_binds_reg hash hCR h i
 
 /-- The log tooth, chained form: with `ir := mroot log`, equal wire commits force EQUAL receipt
-logs (tamper / truncate / extend / REORDER all refused via `mroot_injective`). -/
+logs (tamper / truncate / extend / REORDER all refused via `MMR.mroot_binds_or_collides`; the floor
+binder that remains is this file's own `wireCommit_binds` sponge peel, not the MMR leg). -/
 theorem wireCommit_binds_log (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
     {s s' : RotatedLimbs} {L L' : List ℤ}
     (h : wireCommit hash s (mroot hash L) = wireCommit hash s' (mroot hash L')) : L = L' :=
-  mroot_injective hash hCR (wireCommit_binds hash hCR h).2
+  (mroot_binds_or_collides hash (wireCommit_binds hash hCR h).2).resolve_right
+    (fun hc => hc.1 (hCR _ _ hc.2))
 
 #assert_axioms wireCommit_binds
 #assert_axioms wireCommit_binds_heapRoot

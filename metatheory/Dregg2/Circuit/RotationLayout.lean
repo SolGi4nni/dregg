@@ -28,7 +28,7 @@ the cutover commit consumes this module's shape, `.docs-history-noclaude/ROTATIO
   * **the anti-ghost keystone** (`rotatedCommit_binds`): under the ONE named CR floor, equal
     commits force equal limb structures AND equal receipt logs — tampering ANY limb (a register
     beyond the old 8, the heap root, the height) or ANY log position (truncate/extend/reorder,
-    via `mroot_injective`) moves the commit. Witnessed executably both polarities (§5).
+    via the MMR root binding) moves the commit. Witnessed executably both polarities (§5).
 
 The four map-root limbs are DERIVED boundary views under the universal-memory restructure
 (`Crypto/UniversalMemory.boundary_root_derived`, `Exec/UniversalBridge.cap_leaf_value_codec` /
@@ -45,7 +45,7 @@ import Dregg2.Tactics
 
 namespace Dregg2.Circuit.RotationLayout
 
-open Dregg2.Lightclient.MMR (mroot mroot_injective CommitBindsMMR demoLog)
+open Dregg2.Lightclient.MMR (mroot mroot_binds_or_collides CommitBindsMMR demoLog)
 open Dregg2.Substrate.Heap (refSponge)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 
@@ -138,14 +138,22 @@ theorem rotatedCommit_binds_mmr (hash : List ℤ → ℤ) (s : RotatedLimbs) (L 
 /-- **THE ANTI-GHOST KEYSTONE** — the rotated commitment binds EVERYTHING it absorbs: under the
 ONE named CR floor, equal commits force equal limb structures AND equal receipt logs. Tampering
 any register (including the widened `r8..r15`), any map root, the height, or any log position
-(tamper / truncate / extend / REORDER — `mroot_injective`) moves the commit. -/
+(tamper / truncate / extend / REORDER — `MMR.mroot_binds_or_collides`) moves the commit.
+
+⚠ STILL A FLOOR CARRIER, and named as one: the OUTER sponge peel (`hCR _ _ h`, splitting
+`s.toList ++ [mroot hash L]`) is this file's own use of the refuted hypothesis and is untouched by the
+MMR port. The MMR leg no longer needs it — the log binding now flows through the unconditional
+`mroot_binds_or_collides`, with `hCR` discharging its named residual inline — so what remains here is
+exactly one obligation, the rotated-limb split, for the rotation cone to port. -/
 theorem rotatedCommit_binds (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
     {s s' : RotatedLimbs} {L L' : List ℤ}
     (h : rotatedCommit hash s L = rotatedCommit hash s' L') : s = s' ∧ L = L' := by
   have hl := hCR _ _ h
   have hsplit := List.append_inj hl
     (by rw [RotatedLimbs.toList_length, RotatedLimbs.toList_length])
-  refine ⟨RotatedLimbs.toList_injective hsplit.1, mroot_injective hash hCR ?_⟩
+  refine ⟨RotatedLimbs.toList_injective hsplit.1,
+    (mroot_binds_or_collides hash (L₁ := L) (L₂ := L') ?_).resolve_right
+      (fun hc => hc.1 (hCR _ _ hc.2))⟩
   have h2 := hsplit.2
   simp only [List.cons.injEq, and_true] at h2
   exact h2

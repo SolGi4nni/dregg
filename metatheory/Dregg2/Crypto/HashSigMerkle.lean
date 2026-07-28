@@ -6,13 +6,14 @@ one-time keys (the SLH-DSA / SPHINCS+ shape).
 forgery tooth, both reducing only to the hash). This file lifts it to MANY-TIME exactly the way
 its header promised: a Merkle tree over `N` one-time public keys, reusing
 `Dregg2.Lightclient.MMR` — whose root already `#assert_axioms`-cleanly binds its leaves
-(`mroot_injective`) under the SAME single CR floor (`Poseidon2SpongeCR`) the STARK layer carries.
+(`MMR.mroot_binds_or_collides`) under the SAME single CR floor (`Poseidon2SpongeCR`) the STARK layer
+carries at the leaf peel.
 
 * The **master public key** is `mroot` over the log whose `j`-th leaf is the hash of the `j`-th
   OTS public key (`pkLeaf`).
 * A **signature at index `i`** is `(i, claimed OTS pubkey, OTS signature, opening)`. At the wire
   the opening is the Merkle authentication path; at the model — MMR's own discipline
-  (`Opens`' docstring) — it is a log recomposing the root, pinned by `mroot_injective`.
+  (`Opens`' docstring) — it is a log recomposing the root, pinned by the MMR root binding.
 * **Verify** = the opening places the claimed pubkey's leaf at index `i` under the master root,
   AND `HashSig.verify` accepts the OTS signature under that pubkey.
 
@@ -31,7 +32,7 @@ import Dregg2.Lightclient.MMR
 namespace Dregg2.Crypto.HashSigMerkle
 
 open Dregg2.Crypto.HashSig
-open Dregg2.Lightclient.MMR (mroot mroot_injective Opens)
+open Dregg2.Lightclient.MMR (mroot mroot_binds_or_collides Opens)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Substrate.Heap (refSponge)
 
@@ -89,7 +90,7 @@ theorem keyLog_getElem? (hash : List ℤ → ℤ) (H : ℤ → ℤ) {ℓ N : ℕ
 
 /-- A many-time signature: the index, the claimed OTS public key, the OTS signature, and the
 opening material. At the wire `openLog` is the Merkle authentication path; at the model (MMR's
-own discipline) it is a log the verifier checks recomposes the master root — `mroot_injective`
+own discipline) it is a log the verifier checks recomposes the master root — the MMR root binding
 pins it to the genuine key log. -/
 structure Sig (ℓ : ℕ) where
   idx : ℕ
@@ -134,9 +135,11 @@ theorem merkle_ots_correct (hash : List ℤ → ℤ) (H : ℤ → ℤ) {ℓ N : 
 /-- **THE BINDING TOOTH (`merkle_ots_binds_index`).** ANY verifying signature at index `i` —
 whatever pubkey and opening the adversary supplied — carries EXACTLY the OTS public key
 committed at index `i` when the master key was minted, and its OTS layer verifies under that
-GENUINE key. So a key swap at an index is impossible under the one CR floor: `mroot_injective`
-pins the opened log to the genuine key log, the leaf at `i` pins the pubkey hash, CR peels the
-sponge, `pkEncode_injective` recovers the key. Consequence: a verifying forgery at index `i` on
+GENUINE key. So a key swap at an index is impossible under the one CR floor:
+`MMR.mroot_binds_or_collides` pins the opened log to the genuine key log (its per-instance residual
+discharged from `hCR` inline — this file's OWN floor use is the `pkLeaf` sponge peel below, which is
+the PQ-signature cone's port to make, not the MMR port's), the leaf at `i` pins the pubkey hash,
+CR peels the sponge, `pkEncode_injective` recovers the key. Consequence: a verifying forgery at index `i` on
 a fresh message IS a verifying Lamport forgery against `sks i` — `lamport_forgery_breaks_hash`
 applies verbatim to the second conjunct, closing the many-time reduction onto the one-time atom.
 Genuinely refutable: for a `pk` different from the committed one the first conjunct is FALSE
@@ -148,7 +151,8 @@ theorem merkle_ots_binds_index (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeC
     s.pk = publicKey H (sks i) ∧ verify H (publicKey H (sks i)) m s.ots := by
   obtain ⟨hroot, hopen, hver⟩ := hv
   -- the opening's log recomposes the master root ⇒ it IS the genuine key log:
-  have hlog : s.openLog = keyLog hash H sks := mroot_injective hash hCR hroot
+  have hlog : s.openLog = keyLog hash H sks :=
+    (mroot_binds_or_collides hash hroot).resolve_right (fun hc => hc.1 (hCR _ _ hc.2))
   rw [hlog, hidx] at hopen
   -- leaf `i` of the genuine log is the committed pubkey's hash; the opening placed the
   -- claimed pubkey's hash there:
