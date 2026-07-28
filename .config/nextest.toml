@@ -87,6 +87,22 @@
 #   binary private_clearing_crown_consequence                dreggnet-market (proof + game consequence)
 #   binary private_clearing_guild_allocation                 dreggnet-market (proof + guild allocation)
 #   binary private_bazaar_playable_journey                   dreggnet-market (proof + shared game surface)
+#
+# ⚑ ADDED 2026-07-27 — `dregg-multiway-tug`'s six `#[ignore]`d real-cell folds. They are NOT in the
+# heavy SET (they use the other mechanism, `#[ignore]`), but they DID need a real BUDGET, and this
+# file's own TIMEOUT DOCTRINE is that those are two separate questions. MEASURED: run with
+# `--run-ignored ignored-only`, `private_match_folds_and_lightclient_accepts` and
+# `match_win_output_is_attested` were both TERMINATED at exactly 180.1s — `[profile.default]`'s
+# 45s x 4 kill, inherited by a `--run-ignored` invocation nobody had ever pointed at this crate. So
+# six deliberate multi-minute recursion folds were structurally UN-RUNNABLE under nextest and could
+# be driven only by bare `cargo test`. A budget that truncates a real 5-minute fold is exactly the
+# failure this file calls worse than having no budget at all.
+#   test private_match_folds_and_lightclient_accepts                       multiway-tug (2 REAL play turns)
+#   test match_win_output_is_attested                                      multiway-tug (play + win, one chain)
+#   test membership_play_folds_over_the_real_cell_and_lightclient_accepts  multiway-tug
+#   test win_folds_over_the_real_cell_and_lightclient_accepts              multiway-tug
+#   test app_root_weld_refuses_disagreeing_winner_through_verify_history   multiway-tug (3 folds)
+#   test the_leg_octet_exposes_the_committed_field_values                  multiway-tug
 # The three circuit-LIB tests are excluded by name (their binary, dregg-circuit's
 # lib, holds ~960 other fast tests we keep). The integration suites above
 # are excluded whole-binary. Binary/test names are unique workspace-wide.
@@ -186,7 +202,7 @@
 # different question from which profile ought to run it, and only the first is a
 # timeout's business. Durations are from the reference run; re-measure before trimming.
 [[profile.default.overrides]]
-filter = 'binary(multi_round_fold) or binary(ext_degree_cost_measure) or binary(catalog_flow_harness) or binary(e2_fold_arity_recompose_probe) or binary(private_raid_player_journey) or binary(tiny_automata_prover_shape_measure) or binary(note_spend_binding_node_tooth) or binary(hosted_party) or binary(rotation_batchstark_leaf_smoke) or binary(proptest_invariants) or binary(descriptor_leaf_recursion) or binary(private_attested_clearing) or binary(private_book_bfv_zk) or binary(private_book_distributed_bfv_exact) or binary(private_bfv_attested_clearing) or binary(private_clearing_apex_e2e) or binary(private_clearing_crown_consequence) or binary(private_clearing_guild_allocation) or binary(private_bazaar_playable_journey) or test(~k_fold_turn_chain_proves_and_verifies) or test(~two_step_inductive_core_proves_and_verifies) or test(~shielded_whole_note_swap_substrate_hiding_proof_and_hostile_publics) or test(~foreign_circuit_root_is_refused_by_vk_pin) or test(~authenticated_encrypted_orders_gate_real_game_asset_settlement) or test(~production_bfv_book_a_and_valid_hidingfri_book_b_cannot_cross_pair) or test(~private_bazaar_winner_spends_the_proof_assigned_mender_through_signed_spine_once)'
+filter = 'binary(multi_round_fold) or binary(ext_degree_cost_measure) or binary(catalog_flow_harness) or binary(e2_fold_arity_recompose_probe) or binary(private_raid_player_journey) or binary(tiny_automata_prover_shape_measure) or binary(note_spend_binding_node_tooth) or binary(sovereign_binding_deployed_tooth) or binary(hosted_party) or binary(rotation_batchstark_leaf_smoke) or binary(proptest_invariants) or binary(descriptor_leaf_recursion) or binary(private_attested_clearing) or binary(private_book_bfv_zk) or binary(private_book_distributed_bfv_exact) or binary(private_bfv_attested_clearing) or binary(private_clearing_apex_e2e) or binary(private_clearing_crown_consequence) or binary(private_clearing_guild_allocation) or binary(private_bazaar_playable_journey) or test(~k_fold_turn_chain_proves_and_verifies) or test(~two_step_inductive_core_proves_and_verifies) or test(~shielded_whole_note_swap_substrate_hiding_proof_and_hostile_publics) or test(~foreign_circuit_root_is_refused_by_vk_pin) or test(~authenticated_encrypted_orders_gate_real_game_asset_settlement) or test(~production_bfv_book_a_and_valid_hidingfri_book_b_cannot_cross_pair) or test(~private_bazaar_winner_spends_the_proof_assigned_mender_through_signed_spine_once) or test(~private_match_folds_and_lightclient_accepts) or test(~match_win_output_is_attested) or test(~membership_play_folds_over_the_real_cell_and_lightclient_accepts) or test(~win_folds_over_the_real_cell_and_lightclient_accepts) or test(~app_root_weld_refuses_disagreeing_winner_through_verify_history) or test(~the_leg_octet_exposes_the_committed_field_values)'
 # 120s × 30 = 3600s. Warn at two minutes (all of these exceed it — the SLOW line is
 # how you notice one has regressed), kill at an hour (none has ever come close).
 slow-timeout = { period = "120s", terminate-after = 30 }
