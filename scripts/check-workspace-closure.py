@@ -44,16 +44,23 @@ check.  Stated precisely so nobody reads more into a green than is there:
     * a path dependency (including dev- and build-dependencies) whose target
       directory is absent or carries no manifest;
     * a `Cargo.toml` that does not parse, or that cargo rejects;
-    * an explicitly declared target (`[[bin]] path = …`) whose source file is
-      absent from the commit — cargo errors while enumerating targets;
+    * a path dependency that escapes the tree entirely — `mobile/deos-android-paint`
+      took gpui from `../../../emberian-zed/`, a checkout on one laptop, and was
+      green in the working tree and unresolvable from any clone;
     * a workspace root whose own manifest is internally inconsistent.
 
   DOES **NOT** CATCH — a green here is not a green build
     * anything requiring COMPILATION: a missing `mod foo;` file, a type error,
       an unresolved `use`, a missing test fixture, a missing `include_str!`
       target.  A full `cargo check` per commit is not affordable here (the
-      workspace is 285 packages behind one target lock) and this gate does not
+      workspace is 293 packages behind one target lock) and this gate does not
       attempt it.
+    * an explicitly declared target (`[[bin]] name = … path = "src/main.rs"`)
+      whose source file is absent.  This gate CLAIMED that one until its own
+      `--self-test` refused to go red for it: measured 2026-07-28, `cargo
+      metadata --no-deps` exits 0 with the file deleted and only `cargo check`
+      reports `can't find bin … at path …`.  Target sources are validated at
+      target-resolution time, which `--no-deps` does not reach.
     * a missing NON-Rust artifact a build script needs (orb's `libdrorb.a`, the
       Lean archive, generated descriptors).  `--no-deps` does not run build
       scripts.
@@ -98,12 +105,12 @@ import tomllib
 
 # ── population floors ────────────────────────────────────────────────────────
 # A gate whose reader silently found nothing reads as CLEAN, which is the way
-# negative assertions fail.  This tree carries ~285 package manifests across
-# ~40 workspace roots; a scan that sees far fewer has a broken walk, a bad
+# negative assertions fail.  This tree carries ~293 package manifests across
+# 43 workspace roots; a scan that sees far fewer has a broken walk, a bad
 # ignore list, or an empty extract — and must fail LOUDLY rather than pass
 # having checked almost nothing.
-MIN_PACKAGES = 250
-MIN_WORKSPACE_ROOTS = 20
+MIN_PACKAGES = 275
+MIN_WORKSPACE_ROOTS = 35
 
 # Directories never walked.  `.claude/worktrees/` holds full checkouts of this
 # same repo (a second copy of every manifest); `target`/`.lake` are build
@@ -456,31 +463,31 @@ def _inject_malformed_manifest(tree: str) -> str:
     return "a member manifest that does not parse"
 
 
-def _inject_declared_target_source_missing(tree: str) -> str:
-    """An explicitly declared `[[bin]] path = …` whose source file is not in the
-    commit.  Cargo errors while enumerating targets, with no compilation."""
-    manifest = os.path.join(tree, "orb", "crates", "dataplane", "Cargo.toml")
-    main_rs = os.path.join(tree, "orb", "crates", "dataplane", "src", "main.rs")
-    if not os.path.exists(manifest) or not os.path.exists(main_rs):
+def _inject_escaping_path_dep(tree: str) -> str:
+    """A path dependency that leaves the tree — the `deos-android-paint` shape:
+    resolvable on the author's disk, on nobody else's."""
+    manifest = os.path.join(tree, "turn", "Cargo.toml")
+    src = open(manifest, encoding="utf-8").read()
+    marker = "\n[dependencies]\n"
+    if marker not in src:
         raise AssertionError(
-            "fault injection matched NOTHING: orb/crates/dataplane's declared bin source is absent."
+            "fault injection matched NOTHING: turn/Cargo.toml has no [dependencies] table."
         )
-    os.remove(main_rs)
-    return "an explicitly declared [[bin]] whose src/main.rs is not in the tree"
-
-
-def _inject_broken_reader(tree: str) -> str:
-    """Not a tree fault — a READER fault.  Drives the population floor: if the
-    walk stops seeing manifests, the checker must fail rather than read clean."""
-    return "READER"
+    injected = src.replace(
+        marker,
+        marker + 'a-checkout-beside-the-repo = { path = "../../a-checkout-beside-the-repo" }\n',
+        1,
+    )
+    open(manifest, "w", encoding="utf-8").write(injected)
+    return "path dependency pointing OUTSIDE the tree"
 
 
 FAULTS = [
     ("third state (the orb wound itself)", _inject_third_state, {"THIRD_STATE"}),
     ("member directory missing from the commit", _inject_missing_member, {"WORKSPACE_UNRESOLVABLE"}),
     ("path dep on an uncommitted sibling", _inject_missing_path_dep, {"WORKSPACE_UNRESOLVABLE"}),
+    ("path dep escaping the tree", _inject_escaping_path_dep, {"WORKSPACE_UNRESOLVABLE"}),
     ("manifest does not parse", _inject_malformed_manifest, {"WORKSPACE_UNRESOLVABLE", "UNPARSEABLE"}),
-    ("declared [[bin]] source missing", _inject_declared_target_source_missing, {"WORKSPACE_UNRESOLVABLE", "THIRD_STATE"}),
 ]
 
 
@@ -534,18 +541,19 @@ def run_self_test(git_root: str) -> int:
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
-    # The reader-fault row: a walk that sees nothing must FAIL, not read clean.
+    # The reader-fault row.  Not a tree fault: the WALK is truncated, which is the
+    # shape that has actually bitten this repo (check-doc-refs' awk died on an
+    # em-dash under a UTF-8 locale and silently scanned a quarter of the corpus,
+    # reporting 0 DEAD).  A checker that sees half the tree must FAIL, not read clean.
     tmp = tempfile.mkdtemp(prefix="ws-closure-self-")
     try:
         extract_rev(git_root, "HEAD", tmp)
-        saved = set(IGNORE_DIRS)
+        real_find = globals()["find_manifests"]
         try:
-            IGNORE_DIRS.update({"turn", "cell", "sdk", "node", "circuit", "verifier",
-                                "starbridge-apps", "dreggnet-offerings", "metatheory"})
+            globals()["find_manifests"] = lambda root: real_find(root)[: len(real_find(root)) // 2]
             ok, findings, stats = check_tree(tmp)
         finally:
-            IGNORE_DIRS.clear()
-            IGNORE_DIRS.update(saved)
+            globals()["find_manifests"] = real_find
         if ok:
             print(f"  {'population floor (blinded reader)':44s} \033[31mFAIL\033[0m — "
                   f"a reader that saw only {stats['packages']} packages read as CLEAN")

@@ -230,7 +230,7 @@ GATES=(
   # `[[bin]]` whose source is not in the commit; it does NOT catch a missing `mod foo;`
   # file, a type error, or a missing build-script artifact. `cargo metadata --no-deps` is
   # ~0.3s, a `cargo check` per commit is hours; the manifest half is the half that broke.
-  # ~15s / ~20s, no compile. The -red row is not optional — the headline is a NEGATIVE
+  # ~12s / ~12s / ~70s, no compile. The -red row is not optional — the headline is a NEGATIVE
   # assertion — and it injects every fault into a FRESH `git archive` EXTRACT in a temp
   # dir, so unlike most red-proofs it cannot leave the shared tree disarmed. It also
   # blinds its own reader to drive the MIN_PACKAGES floor red.
