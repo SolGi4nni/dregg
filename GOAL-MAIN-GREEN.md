@@ -148,6 +148,27 @@ first.
   `#assert_axioms`-pinned) with NO `@[export]`. So it is a proved spec, a dead Rust twin, and an
   executor using neither.
 
+- ⚑ **`lake build Dregg2` UNBLOCKED** — and a second red was hiding behind the first.
+  `DungeonDeployed.lean` (1466 lines) imports `DungeonCompleteness`, so Lean never elaborated it and
+  its 21 errors were invisible: the root build had been red **two days, not one**, and "39 errors"
+  was an undercount of **67 across two modules**. Every `sorryAx` gone BY BEING PROVED, all ten
+  statements byte-identical. `dungeon_program.json` re-emitted (was a Jul-25 cache with no `take`).
+  **First instrument reading in days**: `#teeth_wired` PASS, `#floor_ratchet` red on exactly one new
+  foreign carrier — not grandfathered, since a baseline row is relaxing a gate.
+  ⚑ It also settled the `ApexPremiseVacuity` question: two of my three baseline rows are class
+  `prop-body` and LOAD-BEARING; the third was pure slack and is retired.
+- **B2 CLOSED** — 403 lines of dead conservation twin deleted. The Lean theory is proved and
+  SPEC-ONLY (no `@[export]`). Three findings beyond it: the MCP surface told third parties its table
+  was "sourced from the real enum" (it is a hardcoded array) and that the classes were "the linearity
+  the VERIFIED EXECUTOR enforces" (it enforced nothing); the Lean catalog has drifted from Rust in
+  BOTH directions (52 vs 36, overlap 27, **9 Rust-only including `ShieldedTransfer` and `Mint`**);
+  and `check_per_asset_conservation_by_asset` takes `declared_supply` while **all four production
+  callers pass `&[]`**.
+- **D5 CLOSED** — an OBSERVED debit is consumption that happened. `unattributed_spent` added and
+  folded into `total_spent()`, so `is_overspent()` can fire on it. ⚠ The existing test asserted
+  `total_spent() == 400` while its own comment described the hole — comment named it, assertion
+  enshrined it. Now three assertions where there was one.
+
 ## Open for ember
 1. **F1?** — the only route that makes a successor to `RestHashIffFrame` satisfiable. Flag day:
    commitment epoch + descriptor re-emit + re-genesis, 234 binder positions across 85 modules.
