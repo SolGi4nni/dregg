@@ -9,18 +9,42 @@ descent's `affineLe`/`allowedTransitions`/`inRangeTwoSided`/`fieldDelta` were th
 inversions quantify over arbitrary signed `Exec.Value`s where the two evaluators genuinely
 diverge. This module closes what is now closable, by PROOF:
 
-* **The vocabulary gap is GONE.** The `CIRCUIT-LEAN-BOUNDARY` widening put `affineLe`,
-  `allowedTransitions`, `inRangeTwoSided`, `fieldDelta`, `memberOf`, the flat `AnyOf`
-  parity branches, and every heap atom the descent uses into the `@[export
-  dregg_constraint_admits]` evaluator's decided subset. Of the descent's whole tooth
-  vocabulary, exactly ONE constructor remains outside: `countFieldsEq` (the six
-  object↔projection census teeth on the spent rider) — the Rust
-  `StateConstraint::FieldsCountEquals`, enumerated in
-  `exec-lean/src/constraint_oracle.rs` under "heap SHAPES not yet on the wire".
+* **The REGISTER vocabulary gap is GONE.** The `CIRCUIT-LEAN-BOUNDARY` widening put
+  `affineLe`, `allowedTransitions`, `inRangeTwoSided`, `fieldDelta`, `memberOf` and the
+  flat `AnyOf` parity branches into the `@[export dregg_constraint_admits]` evaluator's
+  decided subset.
+
+  ⚑ **THE REMAINDER IS THREE SHAPES NOW, NOT ONE — AND IT GREW BECAUSE THE RULEBOOK DID.**
+  Re-based 2026-07-28 against the key-in-the-door rewrite (`f79dae644` … `b15c958fe`), which
+  gave the descent an eighth verb, moved the door frame off four registers onto the relic,
+  and put a per-object HOP TABLE where a monotone atom used to be. `Constraint.toDTop` is
+  `none` on exactly (and the ledger in §9 COUNTS them, so none can leave quietly):
+
+    1. `countFieldsEq` — the 6 census teeth. Unchanged; `DConstraint.fieldsCountEquals`
+       exists but the resolved-cells run is not marshalled here.
+    2. `heapField _ (.allowedTransitions …)` — the 8 per-relic custody HOP tables.
+       `DHeapAtom` carries `equals/gte/lte/memberOf/inRange/immutable/writeOnce/monotonic/
+       strictMonotonic/deltaBounded/deltaEquals` and NO transition table, on EITHER
+       substrate. Closing it is a `DHeapAtom` arm + one wire tag + the `tr_heapField`
+       pattern — mechanical, but it is deployed admission logic, so it is ember-gated.
+    3. `anyOf` carrying a `heapField` branch — the 24 object-side DOOR-FRAME teeth
+       (`doorArrivalTooth`/`doorDepartureTooth`) and `keyHangsHereTooth`. This one is a
+       MARSHALLING limit, not a vocabulary one: `dgInput` resolves ONE heap key per tooth,
+       so an `anyOf` branch reading a relic's custody key would be handed `heapOld =
+       heapNew = none` and fail closed while the Exec branch reads the record and can be
+       TRUE. Lowering it would be a LIE about the marshalled image. Closing it is
+       `dgInput` resolving the key an `anyOf` mentions plus a `heapField` arm in
+       `branch_agree` (which needs the full iff, both directions).
+
+  So the honest reading of the flagship below is: 38 of the spent rider's teeth are NOT
+  carried to the deployed evaluator by this bridge, and the per-relic `memberOf` custody
+  alphabet, conservation, capacity, the ranges, the clock and the fate machine ARE. The
+  Exec-level ∀-weld (`reachable_step_admitted`) covers all of them; this file is about how
+  many reach the UNSIGNED deployed evaluator.
 
 * **The Int→Nat bridge is a THEOREM** (`tooth_transport` + `descent_step_teeth_deployed`),
   not an assumption: the game's states are `Nat`-valued and reachable states are SMALL
-  (every register ≤ 30 = BREATH, every custody code ≤ 9 — `regs_small`/`heap_small`, from `Inv`
+  (every register ≤ 30 = BREATH, every custody code ≤ 16 = `HUNG + FLOORS` — `regs_small`/`heap_small`, from `Inv`
   plus the new `Tight` reachability bound), so on the marshalled image the signed `Exec`
   verdict and the unsigned 256-bit deployed verdict AGREE, tooth by tooth. The audit's
   divergence on negative attacker scalars is real but out of scope BY SUBSTRATE here: the
@@ -110,6 +134,7 @@ These mirror the (private, hence not importable) pins of `DungeonCompleteness.le
 @[simp] private theorem relicName_5 : relicName 5 = "relic_5" := by decide
 @[simp] private theorem relicName_6 : relicName 6 = "relic_6" := by decide
 @[simp] private theorem relicName_7 : relicName 7 = "relic_7" := by decide
+@[simp] private theorem hungName_eq : hungName = "hung" := by decide
 @[simp] private theorem range_relics :
     List.range RELICS = [0, 1, 2, 3, 4, 5, 6, 7] := by decide
 
@@ -132,29 +157,35 @@ private theorem encode_scalar_relic (s : DState) (i : Nat) (hi : i < RELICS) :
 
 /-! ## 1. The register allocation and the marshalling (the descent's `tugSlots`). -/
 
-/-- Register allocation: the descent's 14 register names → deployed slot indices
-`0..13` (slots `14..15` spare, never named by a tooth). ⚑ `harm` was appended at 13, so
-no existing slot moved. -/
+/-- Register allocation: the descent's 15 register names → deployed slot indices
+`0..14` (slot `15` spare, never named by a tooth, and the fall-through for an
+unallocated name). ⚑ `harm` was appended at 13 and the DOOR RESIDUE `hung` at 14, so no
+existing slot moved. The register file is now FULL to 15 of the cell's 16 — which is
+exactly the count `DungeonProgram.programRegistersOK` pins at the source, and exactly why
+the doors are ONE residue rather than a `hung_1 … hung_4` family. -/
 def dgRegIdx : String → Nat
   | "depth" => 0 | "spent" => 1 | "wounds" => 2 | "fate" => 3
   | "pack" => 4 | "bank" => 5
   | "way_2" => 6 | "way_3" => 7 | "way_4" => 8
   | "hoard_1" => 9 | "hoard_2" => 10 | "hoard_3" => 11 | "hoard_4" => 12
-  | "harm" => 13
+  | "harm" => 13 | "hung" => 14
   | _ => 15
 
-/-- The 14 register names the descent's teeth may mention (heap keys are separate). -/
-def registerNames : List String :=
-  ["depth", "spent", "wounds", "fate", "pack", "bank",
-   wayName 2, wayName 3, wayName 4,
-   hoardName 1, hoardName 2, hoardName 3, hoardName 4, "harm"]
+/-- ⚑ The register-name list is NOT re-declared here: it is `DungeonProgram`'s
+`registerNames`, the same list `programRegistersOK` walks the authored teeth against. A
+second copy is exactly how this file drifted a register behind the program it marshals. -/
+private theorem registerNames_pin :
+    registerNames = ["depth", "spent", "wounds", "fate", "pack", "bank",
+      "way_2", "way_3", "way_4",
+      "hoard_1", "hoard_2", "hoard_3", "hoard_4", "harm", "hung"] := by decide
 
 /-- Marshal a model state into the deployed 16-slot register file, each projection at
-its `dgRegIdx` slot. -/
+its `dgRegIdx` slot. ⚑ Slot 14 carries `hungTotal` — the DOOR RESIDUE, a projection of
+custody exactly like `pack`/`bank`/`hoardAt`, not a parallel counter. -/
 def dgSlots (s : DState) : List DField :=
   [s.depth, s.spent, s.wounds, s.fate, pack s, bank s,
    s.ways.getD 0 0, s.ways.getD 1 0, s.ways.getD 2 0,
-   hoardAt s 1, hoardAt s 2, hoardAt s 3, hoardAt s 4, s.harm, 0, 0]
+   hoardAt s 1, hoardAt s 2, hoardAt s 3, hoardAt s 4, s.harm, hungTotal s, 0]
 
 /-- The heap keys the descent's teeth may mention: the spween sentinel + the eight
 individually committed relic custody keys. -/
@@ -193,11 +224,9 @@ the deployed slot value. -/
 private theorem resolve (s : DState) {r : String} (hr : r ∈ registerNames) :
     dgRegIdx r < stateSlots ∧
       (encode s).scalar r = some (((dgSlots s).getD (dgRegIdx r) 0 : Nat) : Int) := by
-  simp only [registerNames, wayName_2, wayName_3, wayName_4,
-    hoardName_1, hoardName_2, hoardName_3, hoardName_4,
-    List.mem_cons, List.not_mem_nil, or_false] at hr
+  simp only [registerNames_pin, List.mem_cons, List.not_mem_nil, or_false] at hr
   rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
-      rfl <;>
+      rfl | rfl <;>
     exact ⟨by decide, by simp [encode, Value.scalar, Value.field, dgSlots, dgRegIdx]⟩
 
 /-- The heap twin: for a descent heap key, the Exec read is the cast of the marshalled
@@ -285,6 +314,12 @@ private theorem tight_step {s s' : DState} {m : Move}
     simp only [step] at hstep; split at hstep
     · cases hstep; exact ⟨hw, hwys⟩
     · exact absurd hstep (by simp)
+  | take r =>
+    -- ⚑ THE NEW VERB. It moves a custody code and the door residue, and NOTHING that
+    -- `Tight` bounds: no wound, no way.
+    simp only [step] at hstep; split at hstep
+    · cases hstep; exact ⟨hw, hwys⟩
+    · exact absurd hstep (by simp)
   | flee =>
     simp only [step] at hstep; split at hstep
     · cases hstep; exact ⟨hw, hwys⟩
@@ -344,12 +379,13 @@ private theorem regs_small {s : DState} (hInv : Inv s) (ht : Tight s) {r : Strin
   have hhoard : ∀ d, hoardAt s d ≤ 8 :=
     fun d => le_trans List.countP_le_length (le_of_eq hlen)
   have hwv : ∀ i, s.ways.getD i 0 ≤ 1 := getD_le_of_forall hwys
-  simp only [registerNames, wayName_2, wayName_3, wayName_4,
-    hoardName_1, hoardName_2, hoardName_3, hoardName_4,
-    List.mem_cons, List.not_mem_nil, or_false] at hr
+  have hhung : hungTotal s ≤ 8 :=
+    hungTotal_le_relics ⟨⟨hlen, hcodes⟩, hspent, hdepth, hfate, hways, hcap, hb0, hb1,
+      hcap1, hd0, hwb, hprize, hharm⟩
+  simp only [registerNames_pin, List.mem_cons, List.not_mem_nil, or_false] at hr
   have hFl : s.depth ≤ 4 := hdepth
   rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
-    rfl | rfl
+    rfl | rfl | rfl
   · show s.depth ≤ 30; omega
   · show s.spent ≤ 30; exact hspent
   · show s.wounds ≤ 30; omega
@@ -364,13 +400,18 @@ private theorem regs_small {s : DState} (hInv : Inv s) (ht : Tight s) {r : Strin
   · show hoardAt s 3 ≤ 30; have := hhoard 3; omega
   · show hoardAt s 4 ≤ 30; have := hhoard 4; omega
   · show s.harm ≤ 30; have h2 : s.harm ≤ 2 := hharm; omega
+  · show hungTotal s ≤ 30; omega
 
-/-- Every marshalled heap value of an `Inv` state is at most `BANKED = 9`. -/
+/-- Every marshalled heap value of an `Inv` state is at most `HUNG + FLOORS = 16`.
+⚑ NINE → SIXTEEN: the custody alphabet grew a fourth family when `unlock` started leaving
+the key in the door (`HUNG + 1 … HUNG + FLOORS` = 13…16), so a relic's committed code is
+no longer capped by `BANKED`. Every use of this bound is a `low64` lane argument with room
+to spare (the lane is 2^64), so the widening costs the transport nothing. -/
 private theorem heap_small {s : DState} (hInv : Inv s) {k : HeapKeyRef}
-    (hk : k ∈ keyList) : heapVal s k ≤ 9 := by
+    (hk : k ∈ keyList) : heapVal s k ≤ 16 := by
   obtain ⟨⟨hlen, hcodes⟩, _⟩ := hInv
   rcases List.mem_cons.mp hk with rfl | hk
-  · show heapVal s .sentinel ≤ 9
+  · show heapVal s .sentinel ≤ 16
     simp [heapVal, HeapKeyRef.field]
   · obtain ⟨i, hi, rfl⟩ := List.mem_map.mp hk
     have hi8 : i < RELICS := List.mem_range.mp hi
@@ -378,38 +419,64 @@ private theorem heap_small {s : DState} (hInv : Inv s) {k : HeapKeyRef}
       have hpin := encode_scalar_relic s i hi8
       simp only [HeapKeyRef.field, heapVal, hpin, Option.getD_some, Int.toNat_natCast]
     rw [hval]
-    have hcode : ∀ c ∈ s.custody, c ≤ 9 := by
+    have hcode : ∀ c ∈ s.custody, c ≤ 16 := by
       intro c hc
-      rcases hcodes c hc with ⟨_, h4⟩ | rfl | rfl
-      · have : (FLOORS : Nat) = 4 := rfl
-        omega
+      have hF : (FLOORS : Nat) = 4 := rfl
+      have hH : (HUNG : Nat) = 12 := rfl
+      rcases hcodes c hc with ⟨_, h4⟩ | rfl | rfl | ⟨_, hhi⟩
+      · omega
       · decide
       · decide
+      · omega
     exact getD_le_of_forall hcode i
 
 /-! ## 4. The lowering into the deployed subset (`toDTop`) + the decidable side
 conditions the transport needs (`toothOK`), discharged once for the WHOLE program. -/
 
 /-- Lower an `anyOf`-liftable simple tooth to a deployed `(parity, atom)` branch —
-exactly the peeled-`Not` shape `eval.rs::evaluate_simple_constraint` reduces to. -/
-def Simple.toBranch : Simple → Bool × DConstraint
-  | .fieldEquals r v => (false, .fieldEquals (dgRegIdx r) v)
-  | .fieldGte r v    => (false, .fieldGte (dgRegIdx r) v)
-  | .fieldLte r v    => (false, .fieldLte (dgRegIdx r) v)
-  | .immutable r     => (false, .immutable (dgRegIdx r))
-  | .negate inner    => (!(inner.toBranch.1), inner.toBranch.2)
+exactly the peeled-`Not` shape `eval.rs::evaluate_simple_constraint` reduces to.
 
-/-- The descent heap atoms embed into the deployed heap-atom vocabulary VERBATIM. -/
-def HeapAtom.toDHeap : HeapAtom → DHeapAtom
-  | .equals v      => .equals v
-  | .immutable     => .immutable
-  | .monotonic     => .monotonic
-  | .memberOf set  => .memberOf set
-  | .deltaEquals d => .deltaEquals d
+⚑ `none` on `Simple.heapField`, and that is a MARSHALLING fact, not a vocabulary one:
+`DConstraint.heapField` exists, but `dgInput` resolves ONE heap key per tooth (the
+top-level `heapField`'s), and an `anyOf` branch that reads a relic's custody key would be
+handed `heapOld = heapNew = none` and fail closed while the Exec branch reads the record
+and can be TRUE. Lowering it would be a lie about the marshalled image, so the whole
+`anyOf` stays out of subset — see §9's remainder ledger. -/
+def Simple.toBranch : Simple → Option (Bool × DConstraint)
+  | .fieldEquals r v => some (false, .fieldEquals (dgRegIdx r) v)
+  | .fieldGte r v    => some (false, .fieldGte (dgRegIdx r) v)
+  | .fieldLte r v    => some (false, .fieldLte (dgRegIdx r) v)
+  | .immutable r     => some (false, .immutable (dgRegIdx r))
+  | .heapField _ _   => none
+  | .negate inner    => (inner.toBranch).map (fun b => (!b.1, b.2))
+
+/-- Lower a whole `anyOf` variant list, ALL-or-nothing: one unlowerable branch takes the
+tooth out of subset, because a partially-lowered disjunction is a WEAKER tooth. -/
+def branchesOf : List Simple → Option (List (Bool × DConstraint))
+  | []      => some []
+  | v :: vs =>
+    match Simple.toBranch v, branchesOf vs with
+    | some b, some bs => some (b :: bs)
+    | _,      _       => none
+
+/-- The descent heap atoms embed into the deployed heap-atom vocabulary VERBATIM —
+except the hop TABLE. ⚑ `DHeapAtom` has `equals`/`gte`/`lte`/`memberOf`/`inRange`/
+`immutable`/`writeOnce`/`monotonic`/`strictMonotonic`/`deltaBounded`/`deltaEquals` and NO
+`allowedTransitions`: a per-object transition table is not in the exported subset on
+EITHER substrate. So the per-relic custody hop tooth lowers to `none` and joins the §9
+remainder; its companion `memberOf (custodyAlphabet i)` lowers as before. -/
+def HeapAtom.toDHeap : HeapAtom → Option DHeapAtom
+  | .equals v      => some (.equals v)
+  | .immutable     => some .immutable
+  | .monotonic     => some .monotonic
+  | .memberOf set  => some (.memberOf set)
+  | .deltaEquals d => some (.deltaEquals d)
+  | .allowedTransitions _ => none
 
 /-- **The partition, as a function**: lower a descent tooth into the deployed
-evaluator's exported subset. `none` on EXACTLY the `countFieldsEq` census teeth — the
-one descent constructor outside the deployed pure subset (the §9 remainder). -/
+evaluator's exported subset. `none` on exactly three shapes — the `countFieldsEq` census
+teeth, the per-object hop TABLE, and any `anyOf` carrying a heap-resident branch. §9 is
+the ledger. -/
 def Constraint.toDTop : Constraint → Option DTop
   | .fieldEquals r v => some (.base (.fieldEquals (dgRegIdx r) v))
   | .fieldGte r v => some (.base (.fieldGte (dgRegIdx r) v))
@@ -421,16 +488,19 @@ def Constraint.toDTop : Constraint → Option DTop
   | .affineLe ts c => some (.base (.affineLe (ts.map (fun t => (t.1, dgRegIdx t.2))) c))
   | .inRangeTwoSided r lo hi => some (.base (.inRangeTwoSided (dgRegIdx r) lo hi))
   | .allowedTransitions r al => some (.base (.allowedTransitions (dgRegIdx r) al))
-  | .anyOf vs => some (.anyOf (vs.map Simple.toBranch))
-  | .heapField _ atom => some (.base (.heapField atom.toDHeap))
+  | .anyOf vs => (branchesOf vs).map DTop.anyOf
+  | .heapField _ atom => (atom.toDHeap).map (fun a => DTop.base (.heapField a))
   | .countFieldsEq _ _ _ => none
 
-/-- Names mentioned by an `anyOf`-liftable tooth are register names. -/
+/-- Names mentioned by an `anyOf`-liftable tooth are register names. A `heapField` branch
+carries no side condition because it is never LOWERED (`Simple.toBranch` is `none`, so the
+enclosing tooth is out of subset and the transport is never invoked on it). -/
 def simpleOK : Simple → Bool
   | .fieldEquals r _ => decide (r ∈ registerNames)
   | .fieldGte r _ => decide (r ∈ registerNames)
   | .fieldLte r _ => decide (r ∈ registerNames)
   | .immutable r => decide (r ∈ registerNames)
+  | .heapField _ _ => true
   | .negate inner => simpleOK inner
 
 /-- The decidable side conditions of the transport: every mentioned register name is
@@ -754,12 +824,15 @@ private theorem branchAdmits_neg (p : Bool) (c : DConstraint) (i : DInput) :
 /-- On the marshalled image, a deployed `(parity, atom)` branch verdict IS the Exec
 `Simple` verdict (`.ok` ↔ `true`, `.violated` ↔ `false`) — the full iff, needed so a
 `Not` chain flips faithfully. -/
-private theorem branch_agree {s s' : DState} (v : Simple) (hok : simpleOK v = true) :
-    branchAdmits v.toBranch (baseInput s s') =
+private theorem branch_agree {s s' : DState} (v : Simple) (hok : simpleOK v = true)
+    {b : Bool × DConstraint} (hbv : Simple.toBranch v = some b) :
+    branchAdmits b (baseInput s s') =
       (if evalSimple v.toExec (encode s) (encode s') = true
        then DAdmit.ok else DAdmit.violated) := by
-  induction v with
+  induction v generalizing b with
   | fieldEquals r w =>
+    obtain rfl : b = (false, .fieldEquals (dgRegIdx r) w) :=
+      (Option.some.inj hbv).symm
     have hr : r ∈ registerNames := of_decide_eq_true hok
     obtain ⟨hidx, hval⟩ := resolve s' hr
     have hgr : getReg (dgSlots s') (dgRegIdx r)
@@ -786,6 +859,7 @@ private theorem branch_agree {s s' : DState} (v : Simple) (hok : simpleOK v = tr
       simp only [admits, baseInput, hgr]
       rw [if_neg h]
   | fieldGte r w =>
+    obtain rfl : b = (false, .fieldGte (dgRegIdx r) w) := (Option.some.inj hbv).symm
     have hr : r ∈ registerNames := of_decide_eq_true hok
     obtain ⟨hidx, hval⟩ := resolve s' hr
     have hgr : getReg (dgSlots s') (dgRegIdx r)
@@ -811,6 +885,7 @@ private theorem branch_agree {s s' : DState} (v : Simple) (hok : simpleOK v = tr
       simp only [admits, baseInput, hgr]
       rw [if_neg h]
   | fieldLte r w =>
+    obtain rfl : b = (false, .fieldLte (dgRegIdx r) w) := (Option.some.inj hbv).symm
     have hr : r ∈ registerNames := of_decide_eq_true hok
     obtain ⟨hidx, hval⟩ := resolve s' hr
     have hgr : getReg (dgSlots s') (dgRegIdx r)
@@ -836,6 +911,7 @@ private theorem branch_agree {s s' : DState} (v : Simple) (hok : simpleOK v = tr
       simp only [admits, baseInput, hgr]
       rw [if_neg h]
   | immutable r =>
+    obtain rfl : b = (false, .immutable (dgRegIdx r)) := (Option.some.inj hbv).symm
     have hr : r ∈ registerNames := of_decide_eq_true hok
     obtain ⟨hidx, hvalO⟩ := resolve s hr
     obtain ⟨_, hvalN⟩ := resolve s' hr
@@ -858,18 +934,28 @@ private theorem branch_agree {s s' : DState} (v : Simple) (hok : simpleOK v = tr
       show admits (.immutable (dgRegIdx r)) (baseInput s s') = .violated
       simp only [admits, baseInput]
       rw [if_neg (Nat.not_le.mpr hidx), if_true, if_neg h]
+  | heapField k a =>
+    -- ⚑ NEVER LOWERED: `Simple.toBranch` is `none` here, so this branch cannot arrive.
+    exact absurd hbv (by simp [Simple.toBranch])
   | negate inner ih =>
     have hok' : simpleOK inner = true := hok
-    have hih := ih hok'
-    have hneg := branchAdmits_neg inner.toBranch.1 inner.toBranch.2 (baseInput s s')
-    show branchAdmits (!inner.toBranch.1, inner.toBranch.2) (baseInput s s') = _
-    rw [hneg]
-    rw [show (inner.toBranch.1, inner.toBranch.2) = inner.toBranch from rfl]
-    rw [hih]
-    have hnot : evalSimple (Simple.toExec (.negate inner)) (encode s) (encode s')
-        = !(evalSimple inner.toExec (encode s) (encode s')) := rfl
-    rw [hnot]
-    cases hE : evalSimple inner.toExec (encode s) (encode s') <;> simp [flipV]
+    cases hbi : Simple.toBranch inner with
+    | none => rw [show Simple.toBranch (.negate inner)
+                = (Simple.toBranch inner).map (fun b => (!b.1, b.2)) from rfl,
+                hbi] at hbv; cases hbv
+    | some b' =>
+      obtain rfl : b = (!b'.1, b'.2) := by
+        have : Simple.toBranch (.negate inner)
+            = (Simple.toBranch inner).map (fun b => (!b.1, b.2)) := rfl
+        rw [this, hbi] at hbv
+        exact (Option.some.inj hbv).symm
+      have hih := ih hok' hbi
+      have hneg := branchAdmits_neg b'.1 b'.2 (baseInput s s')
+      rw [hneg, show (b'.1, b'.2) = b' from rfl, hih]
+      have hnot : evalSimple (Simple.toExec (.negate inner)) (encode s) (encode s')
+          = !(evalSimple inner.toExec (encode s) (encode s')) := rfl
+      rw [hnot]
+      cases hE : evalSimple inner.toExec (encode s) (encode s') <;> simp [flipV]
 
 private theorem anyOfGo_ok {i : DInput} :
     ∀ (bs : List (Bool × DConstraint)) (b : Bool × DConstraint), b ∈ bs →
@@ -887,65 +973,96 @@ private theorem anyOfGo_ok {i : DInput} :
           | rfl
           | exact ih b htl hok _
 
+/-- Every lowered variant list carries a lowering of every variant, and the lowerings are
+exactly its members — the all-or-nothing shape of `branchesOf`, inverted. -/
+private theorem mem_branchesOf : ∀ {vs : List Simple} {bs : List (Bool × DConstraint)},
+    branchesOf vs = some bs → ∀ {v : Simple}, v ∈ vs →
+    ∃ b, Simple.toBranch v = some b ∧ b ∈ bs
+  | [], bs, h, v, hv => by cases hv
+  | v0 :: rest, bs, h, v, hv => by
+    simp only [branchesOf] at h
+    cases hb0 : Simple.toBranch v0 with
+    | none => rw [hb0] at h; cases h
+    | some b0 =>
+      cases hbr : branchesOf rest with
+      | none => rw [hb0, hbr] at h; cases h
+      | some bs' =>
+        rw [hb0, hbr] at h
+        obtain rfl : bs = b0 :: bs' := (Option.some.inj h).symm
+        rcases List.mem_cons.mp hv with rfl | hv'
+        · exact ⟨b0, hb0, by simp⟩
+        · obtain ⟨b, hb, hbm⟩ := mem_branchesOf hbr hv'
+          exact ⟨b, hb, by simp [hbm]⟩
+
 private theorem tr_anyOf {s s' : DState} {vs : List Simple}
+    {bs : List (Bool × DConstraint)} (hbs : branchesOf vs = some bs)
     (hok : vs.all simpleOK = true)
     (hexec : evalConstraint (Constraint.anyOf vs).toExec
       (encode s) (encode s') = true) :
-    admitsTop (.anyOf (vs.map Simple.toBranch)) (baseInput s s') = .ok := by
+    admitsTop (.anyOf bs) (baseInput s s') = .ok := by
   have hex : vs.any (fun v => evalSimple v.toExec (encode s) (encode s')) = true := by
     simpa [Constraint.toExec, evalConstraint, List.any_map, Function.comp] using hexec
   obtain ⟨v, hvmem, hv⟩ := List.any_eq_true.mp hex
-  have hbr := branch_agree (s := s) (s' := s') v (List.all_eq_true.mp hok v hvmem)
+  obtain ⟨b, hbv, hbmem⟩ := mem_branchesOf hbs hvmem
+  have hbr := branch_agree (s := s) (s' := s') v (List.all_eq_true.mp hok v hvmem) hbv
   rw [hv] at hbr
   simp only [ite_true] at hbr
-  cases vs with
-  | nil => cases hvmem
-  | cons v0 rest =>
-    simp only [List.map_cons, admitsTop]
-    exact anyOfGo_ok _ _ (List.mem_map_of_mem (f := Simple.toBranch) hvmem) hbr _
+  cases bs with
+  | nil => cases hbmem
+  | cons b0 rest =>
+    simp only [admitsTop]
+    exact anyOfGo_ok _ b hbmem hbr _
 
 /-! ### The heap atoms. -/
 
 private theorem tr_heapField {s s' : DState} {k : HeapKeyRef} (hk : k ∈ keyList)
-    (atom : HeapAtom)
-    (hb : heapVal s k ≤ 9) (hb' : heapVal s' k ≤ 9)
+    (atom : HeapAtom) {da : DHeapAtom} (hda : atom.toDHeap = some da)
+    (hb : heapVal s k ≤ 16) (hb' : heapVal s' k ≤ 16)
     (hexec : evalConstraint (Constraint.heapField k atom).toExec
       (encode s) (encode s') = true) :
-    admits (.heapField atom.toDHeap) (dgInput s s' (.heapField k atom)) = .ok := by
+    admits (.heapField da) (dgInput s s' (.heapField k atom)) = .ok := by
   have hvalO := resolveHeap s hk
   have hvalN := resolveHeap s' hk
   have hO : (dgInput s s' (.heapField k atom)).heapOld = some (heapVal s k) := rfl
   have hN : (dgInput s s' (.heapField k atom)).heapNew = some (heapVal s' k) := rfl
-  have hred : admits (.heapField atom.toDHeap) (dgInput s s' (.heapField k atom))
-      = heapAdmits atom.toDHeap (some (heapVal s k)) (some (heapVal s' k)) := by
+  have hred : admits (.heapField da) (dgInput s s' (.heapField k atom))
+      = heapAdmits da (some (heapVal s k)) (some (heapVal s' k)) := by
     simp only [admits, hO, hN]
   rw [hred]
   cases atom with
+  | allowedTransitions al =>
+    -- ⚑ NOT IN THE DEPLOYED VOCABULARY: `DHeapAtom` has no transition TABLE, so the
+    -- per-object hop tooth never lowers and this arm cannot arrive.
+    exact absurd hda (by simp [HeapAtom.toDHeap])
   | equals v =>
+    obtain rfl : da = .equals v := (Option.some.inj hda).symm
     simp only [Constraint.toExec, HeapAtom.toExec, evalConstraint, evalSimple,
       hvalN] at hexec
     have hx : heapVal s' k = v := by
       have h := Option.some.inj (beq_iff_eq.mp hexec)
       exact_mod_cast h
-    simp only [HeapAtom.toDHeap, heapAdmits]
+    simp only [heapAdmits]
     rw [if_pos hx]
   | immutable =>
+    obtain rfl : da = .immutable := (Option.some.inj hda).symm
     simp only [Constraint.toExec, HeapAtom.toExec, evalConstraint, evalSimple,
       hvalO, hvalN] at hexec
     have hx : heapVal s' k = heapVal s k := by
       have h := Option.some.inj (beq_iff_eq.mp hexec)
       exact_mod_cast h
-    simp only [HeapAtom.toDHeap, heapAdmits]
+    simp only [heapAdmits]
     rw [if_pos (by rw [hx])]
   | monotonic =>
+    obtain rfl : da = .monotonic := (Option.some.inj hda).symm
     simp only [Constraint.toExec, HeapAtom.toExec, evalConstraint, evalSimple,
       hvalO, hvalN] at hexec
     have hx : heapVal s k ≤ heapVal s' k := by
       have h := of_decide_eq_true hexec
       exact_mod_cast h
-    simp only [HeapAtom.toDHeap, heapAdmits]
+    simp only [heapAdmits]
     rw [if_pos hx]
   | memberOf set =>
+    obtain rfl : da = .memberOf set := (Option.some.inj hda).symm
     have hexec' : Dregg2.Exec.evalSimple
         (.memberOf k.field (set.map (fun v => (v : Int))))
         (encode s) (encode s') = true := hexec
@@ -959,9 +1076,10 @@ private theorem tr_heapField {s s' : DState} {k : HeapKeyRef} (hk : k ∈ keyLis
     have hmem : heapVal s' k ∈ set := mem_map_natcast hxmem
     have hlow : low64 (heapVal s' k) = heapVal s' k :=
       low64_small (le_trans hb' (by decide))
-    simp only [HeapAtom.toDHeap, heapAdmits, hlow]
+    simp only [heapAdmits, hlow]
     rw [if_pos (List.contains_iff_mem.mpr hmem)]
   | deltaEquals d =>
+    obtain rfl : da = .deltaEquals d := (Option.some.inj hda).symm
     simp only [Constraint.toExec, HeapAtom.toExec, evalConstraint, evalSimple,
       hvalO, hvalN] at hexec
     have hx : ((heapVal s' k : Nat) : Int) = ((heapVal s k : Nat) : Int) + d :=
@@ -970,7 +1088,7 @@ private theorem tr_heapField {s s' : DState} {k : HeapKeyRef} (hk : k ∈ keyLis
       low64_small (le_trans hb (by decide))
     have hlN : low64 (heapVal s' k) = heapVal s' k :=
       low64_small (le_trans hb' (by decide))
-    simp only [HeapAtom.toDHeap, heapAdmits, hlO, hlN]
+    simp only [heapAdmits, hlO, hlN]
     rw [if_pos (by omega)]
 
 /-! ## 6. The dispatcher: ONE transport theorem over the whole in-subset vocabulary. -/
@@ -1026,12 +1144,28 @@ private theorem tooth_transport {s s' : DState}
     injection hdt with h; subst h
     exact tr_allowedTransitions (of_decide_eq_true hok) al hexec
   | anyOf vs =>
-    injection hdt with h; subst h
-    exact tr_anyOf hok hexec
+    cases hbs : branchesOf vs with
+    | none => rw [show Constraint.toDTop (.anyOf vs)
+                  = (branchesOf vs).map DTop.anyOf from rfl, hbs] at hdt; cases hdt
+    | some bs =>
+      obtain rfl : dt = .anyOf bs := by
+        rw [show Constraint.toDTop (.anyOf vs)
+              = (branchesOf vs).map DTop.anyOf from rfl, hbs] at hdt
+        exact (Option.some.inj hdt).symm
+      exact tr_anyOf hbs hok hexec
   | heapField k atom =>
-    injection hdt with h; subst h
-    have hk : k ∈ keyList := of_decide_eq_true hok
-    exact tr_heapField hk atom (heap_small hInv hk) (heap_small hInv' hk) hexec
+    cases hda : atom.toDHeap with
+    | none => rw [show Constraint.toDTop (.heapField k atom)
+                  = (atom.toDHeap).map (fun a => DTop.base (.heapField a)) from rfl,
+                  hda] at hdt; cases hdt
+    | some da =>
+      obtain rfl : dt = .base (.heapField da) := by
+        rw [show Constraint.toDTop (.heapField k atom)
+              = (atom.toDHeap).map (fun a => DTop.base (.heapField a)) from rfl,
+              hda] at hdt
+        exact (Option.some.inj hdt).symm
+      have hk : k ∈ keyList := of_decide_eq_true hok
+      exact tr_heapField hk atom hda (heap_small hInv hk) (heap_small hInv' hk) hexec
   | countFieldsEq ks v r => simp [Constraint.toDTop] at hdt
 
 /-! ## 7. THE FLAGSHIP — the descent's legal play lands on the DEPLOYED evaluator. -/
@@ -1074,7 +1208,7 @@ evaluator for EVERY verb (the cases each verb's method arm carries `coreTeeth`).
 private def verbCase : Move → Case
   | .delve => delveCase | .unlock _ => unlockCase | .smite => smiteCase
   | .lunge => lungeCase | .loot _ => lootCase | .flee => fleeCase
-  | .ascend => ascendCase
+  | .ascend => ascendCase | .take _ => takeCase
 
 private theorem verbCase_mem (m : Move) : verbCase m ∈ programCases := by
   cases m <;> simp [verbCase, programCases]
@@ -1087,23 +1221,27 @@ private theorem coreTeeth_mem_verbCase (m : Move) {c : Constraint}
     (hc : c ∈ coreTeeth) : c ∈ (verbCase m).constraints := by
   cases m <;>
     · simp only [verbCase, delveCase, unlockCase, smiteCase, lungeCase, lootCase,
-        fleeCase, ascendCase, List.mem_append]
+        fleeCase, ascendCase, takeCase, List.mem_append]
       tauto
 
 /-- Conservation reaches the deployed referee: on every reachable legal step, the
-deployed `SumEquals` tooth over the six zone slots admits the marshalled post-state. -/
+deployed `SumEquals` tooth over the SEVEN zone slots admits the marshalled post-state.
+⚑ SEVEN, not six: slot 14 is the door residue, and without it the sum is simply FALSE on
+every turn after the first `unlock`. -/
 theorem descent_conserves_deployed {s s' : DState} {m : Move}
     (hreach : Reachable s) (hstep : step s m = some s') :
-    admitsTop (.base (.sumEquals [4, 5, 9, 10, 11, 12] 8))
+    admitsTop (.base (.sumEquals [4, 5, 9, 10, 11, 12, 14] 8))
       (dgInput s s' (.sumEquals zones RELICS)) = .ok :=
   descent_step_teeth_deployed hreach hstep (verbCase m) (verbCase_mem m)
     (verbCase_guard m _ _) _ (coreTeeth_mem_verbCase m (by simp [coreTeeth]))
     _ rfl
 
-/-- Capacity attenuation reaches the deployed referee (`AffineLe` over pack+depth). -/
+/-- Capacity attenuation reaches the deployed referee (`AffineLe` over pack+depth+harm).
+⚑ The bound is `CAP = 7`, not 8: the key in the door bought a slot back and the rulebook
+spent it (`f79dae644`). -/
 theorem descent_capacity_deployed {s s' : DState} {m : Move}
     (hreach : Reachable s) (hstep : step s m = some s') :
-    admitsTop (.base (.affineLe [((1 : Int), 4), ((1 : Int), 0), ((1 : Int), 13)] (8 : Int)))
+    admitsTop (.base (.affineLe [((1 : Int), 4), ((1 : Int), 0), ((1 : Int), 13)] (7 : Int)))
       (dgInput s s' (.affineLe [((1 : Int), "pack"), ((1 : Int), "depth"),
         ((1 : Int), "harm")] (CAP : Int)))
       = .ok :=
@@ -1170,13 +1308,14 @@ private theorem sumGo_inv (v : DField) (regs : List DField) :
         omega
 
 /-- **Conservation inversion at deployed width**: ANY input the deployed `SumEquals`
-zone tooth admits has its six zone lanes summing to exactly `RELICS` — whatever the
+zone tooth admits has its SEVEN zone lanes — the six old zones plus the door residue
+at lane 14 — summing to exactly `RELICS` — whatever the
 (unsigned 256-bit) writes were. -/
 theorem deployed_tooth_conserves (i : DInput)
-    (h : admits (.sumEquals [4, 5, 9, 10, 11, 12] 8) i = .ok) :
-    ([4, 5, 9, 10, 11, 12].map (fun k => low64 (i.newRegs.getD k 0))).sum = RELICS := by
+    (h : admits (.sumEquals [4, 5, 9, 10, 11, 12, 14] 8) i = .ok) :
+    ([4, 5, 9, 10, 11, 12, 14].map (fun k => low64 (i.newRegs.getD k 0))).sum = RELICS := by
   simp only [admits, sumEqualsAdmit] at h
-  have := sumGo_inv 8 i.newRegs [4, 5, 9, 10, 11, 12] 0 h
+  have := sumGo_inv 8 i.newRegs [4, 5, 9, 10, 11, 12, 14] 0 h
   simpa using this
 
 /-- **Capacity inversion at deployed width**: ANY input the deployed `AffineLe`
@@ -1184,7 +1323,7 @@ capacity tooth admits satisfies `pack-lane + depth-lane + harm-lane ≤ CAP`. �
 `harm` lane is what makes a broken grip cost a carry slot at DEPLOYED width, over
 attacker-supplied unsigned registers — not merely in the model. -/
 theorem deployed_tooth_capacity (i : DInput)
-    (h : admits (.affineLe [((1 : Int), 4), ((1 : Int), 0), ((1 : Int), 13)] (8 : Int))
+    (h : admits (.affineLe [((1 : Int), 4), ((1 : Int), 0), ((1 : Int), 13)] (7 : Int))
       i = .ok) :
     low64 (i.newRegs.getD 4 0) + low64 (i.newRegs.getD 0 0)
       + low64 (i.newRegs.getD 13 0) ≤ CAP := by
@@ -1195,13 +1334,13 @@ theorem deployed_tooth_capacity (i : DInput)
   simp only at h
   by_cases hgt : (1 : Int) * (low64 (i.newRegs.getD 4 0) : Int)
       + ((1 : Int) * (low64 (i.newRegs.getD 0 0) : Int)
-        + ((1 : Int) * (low64 (i.newRegs.getD 13 0) : Int) + 0)) > 8
+        + ((1 : Int) * (low64 (i.newRegs.getD 13 0) : Int) + 0)) > 7
   · rw [if_pos hgt] at h; cases h
   · have : (low64 (i.newRegs.getD 4 0) : Int) + (low64 (i.newRegs.getD 0 0) : Int)
-        + (low64 (i.newRegs.getD 13 0) : Int) ≤ 8 := by
+        + (low64 (i.newRegs.getD 13 0) : Int) ≤ 7 := by
       omega
     show low64 (i.newRegs.getD 4 0) + low64 (i.newRegs.getD 0 0)
-      + low64 (i.newRegs.getD 13 0) ≤ 8
+      + low64 (i.newRegs.getD 13 0) ≤ 7
     exact_mod_cast this
 
 /-- **Clock inversion at deployed width**: ANY input the deployed strict-monotone +
@@ -1253,21 +1392,32 @@ private def mkI (oldR newR : List DField) : DInput :=
     oldBalance := 0, newBalance := 0, ctx := noCtx, cells := [] }
 
 -- Conservation: a dupe (zone lanes summing to 9) is REFUSED; an honest 8 admits.
-#guard admits (.sumEquals [4, 5, 9, 10, 11, 12] 8)
+-- ⚑ THE DOOR RESIDUE IS IN THE SUM (lane 14). The first pair keeps every door empty; the
+-- third shows a key IN A DOOR still counted — a hung key is neither lost nor banked.
+#guard admits (.sumEquals [4, 5, 9, 10, 11, 12, 14] 8)
   (mkI regs0 [1, 4, 1, 0, 2, 0, 0, 0, 0, 2, 2, 2, 1, 0, 0, 0]) = DAdmit.violated
-#guard admits (.sumEquals [4, 5, 9, 10, 11, 12] 8)
+#guard admits (.sumEquals [4, 5, 9, 10, 11, 12, 14] 8)
   (mkI regs0 [1, 4, 1, 0, 1, 0, 0, 0, 0, 2, 2, 2, 1, 0, 0, 0]) = DAdmit.ok
+#guard admits (.sumEquals [4, 5, 9, 10, 11, 12, 14] 8)
+  (mkI regs0 [1, 4, 1, 0, 0, 0, 0, 0, 0, 2, 2, 2, 1, 0, 1, 0]) = DAdmit.ok
+-- …and DROPPING the residue from the sum makes the SAME honest post-state a "burn":
+-- the six-zone tooth this file used to carry is FALSE after the first `unlock`.
+#guard admits (.sumEquals [4, 5, 9, 10, 11, 12] 8)
+  (mkI regs0 [1, 4, 1, 0, 0, 0, 0, 0, 0, 2, 2, 2, 1, 0, 1, 0]) = DAdmit.violated
 
--- Capacity: pack 8 at depth 1 is REFUSED; 4 at 4 admits.
-#guard admits (.affineLe [((1 : Int), 4), ((1 : Int), 0), ((1 : Int), 13)] (8 : Int))
+-- Capacity: pack 8 at depth 1 is REFUSED; 3 at 4 admits (CAP = 7).
+#guard admits (.affineLe [((1 : Int), 4), ((1 : Int), 0), ((1 : Int), 13)] (7 : Int))
   (mkI regs0 [1, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) = DAdmit.violated
-#guard admits (.affineLe [((1 : Int), 4), ((1 : Int), 0), ((1 : Int), 13)] (8 : Int))
-  (mkI regs0 [4, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) = DAdmit.ok
--- ⚑ HARM COSTS A SLOT AT DEPLOYED WIDTH: the SAME pack-4-at-depth-4 that admits above
+#guard admits (.affineLe [((1 : Int), 4), ((1 : Int), 0), ((1 : Int), 13)] (7 : Int))
+  (mkI regs0 [4, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) = DAdmit.ok
+-- ⚑ THE SLOT `CAP 8 → 7` TOOK: the pack-4-at-depth-4 that used to admit is now REFUSED.
+#guard admits (.affineLe [((1 : Int), 4), ((1 : Int), 0), ((1 : Int), 13)] (7 : Int))
+  (mkI regs0 [4, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) = DAdmit.violated
+-- ⚑ HARM COSTS A SLOT AT DEPLOYED WIDTH: the SAME pack-3-at-depth-4 that admits above
 -- is REFUSED once one point of grip is broken (harm lane 13 = 1) — the prize does not
 -- fit beside a lunge.
-#guard admits (.affineLe [((1 : Int), 4), ((1 : Int), 0), ((1 : Int), 13)] (8 : Int))
-  (mkI regs0 [4, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0]) = DAdmit.violated
+#guard admits (.affineLe [((1 : Int), 4), ((1 : Int), 0), ((1 : Int), 13)] (7 : Int))
+  (mkI regs0 [4, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0]) = DAdmit.violated
 -- The ratchet's range tooth bites at deployed width: harm 3 is out of `[0, 2]`.
 #guard admits (.inRangeTwoSided 13 0 2)
   (mkI regs0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0]) = DAdmit.violated
@@ -1388,19 +1538,56 @@ Until then, the honest statement is: the census law is enforced by the deployed 
 (Rust `eval.rs`, exercised by the executor tests and the Exec-level inversions), but
 it is OUTSIDE what this bridge proves about the Lean-evaluated reality-gated subset. -/
 
-/-- The partition is EXACT: a descent tooth lowers to the deployed subset IFF it is
-not a census tooth (kernel-checked over the whole authored program). -/
+/-- The out-of-subset SHAPES, as a decidable predicate — the remainder ledger, so that a
+tooth silently falling out of the deployed bridge is a `#guard` failure and not a
+discovery six weeks later. THREE shapes, and each is a fact about the DEPLOYED
+vocabulary or the MARSHALLING, never about the tooth being unimportant:
+
+  `countFieldsEq …`                  — the census; `DConstraint.fieldsCountEquals` exists
+                                        but the cells run is not marshalled here (§9).
+  `heapField _ (allowedTransitions)` — `DHeapAtom` has NO transition table, on either
+                                        substrate. This is the per-relic custody HOP tooth.
+  `anyOf …` containing a `heapField` — `dgInput` resolves ONE key per tooth; an `anyOf`
+                                        branch reading a relic would be handed `none` and
+                                        fail closed. This is the object-side DOOR FRAME
+                                        (`doorArrivalTooth`/`doorDepartureTooth`) and
+                                        `keyHangsHereTooth`. -/
+def outOfSubset : Constraint → Bool
+  | .countFieldsEq _ _ _ => true
+  | .heapField _ (.allowedTransitions _) => true
+  | .anyOf vs => vs.any (fun v => (Simple.toBranch v).isNone)
+  | _ => false
+
+/-- The partition is EXACT: a descent tooth lowers to the deployed subset IFF it is not
+one of the three named out-of-subset shapes (kernel-checked over the whole authored
+program, on the shipped map). -/
 private theorem census_is_the_remainder :
     (programCases.all fun tc => tc.constraints.all fun c =>
-      (Constraint.toDTop c).isSome
-        == !(match c with | .countFieldsEq _ _ _ => true | _ => false)) = true := by
+      (Constraint.toDTop c).isSome == !(outOfSubset c)) = true := by
   rfl
 
--- The spent rider carries exactly six out-of-subset teeth: the census — on EVERY day of
--- the drawn family (the remainder is a fact about the tooth SHAPES, not the map).
+section CanonRemainder
+local instance : WorldParam := instAt 0
+
+-- ⚑ THE REMAINDER, COUNTED. The spent rider's out-of-subset teeth are exactly:
+--   6 census (`projectionTeeth`) + 8 per-relic hop tables (`custodyTeeth`'s first half)
+--   + 24 object-side door-frame teeth (`doorFrameTeeth`) = 38.
+-- On EVERY day of the drawn family — the remainder is a fact about tooth SHAPES, not the
+-- map. A tooth that quietly leaves the bridge moves this number.
 #guard (List.range dayCount).all (fun k =>
-  ((@spentRider (instAt k)).constraints.filter fun c => (Constraint.toDTop c).isNone).length == 6)
+  ((@spentRider (instAt k)).constraints.filter fun c =>
+    (Constraint.toDTop c).isNone).length == 38)
 #guard projectionTeeth.all fun c => (Constraint.toDTop c).isNone
+#guard doorFrameTeeth.all fun c => (Constraint.toDTop c).isNone
+#guard (doorFrameTeeth.length) = 24
+-- …and the half of `custodyTeeth` that DOES lower — the per-relic `memberOf` alphabet —
+-- still lowers, so the remainder is the hop TABLE alone, not the provenance law.
+#guard (custodyTeeth.filter fun c => (Constraint.toDTop c).isNone).length = 8
+#guard (custodyTeeth.filter fun c => (Constraint.toDTop c).isSome).length = 8
+-- The way rider's key-exhibit hop table and its four floor teeth are out; its core is in.
+#guard ((wayRider 2).constraints.filter fun c => (Constraint.toDTop c).isNone).length = 5
+
+end CanonRemainder
 
 /-! ### The forged census transition, marshalled (attack 1b at deployed width). -/
 

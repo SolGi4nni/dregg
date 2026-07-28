@@ -232,6 +232,30 @@ private theorem hungTotal_split (s : DState) :
     hungTotal s = hungAt s 1 + hungAt s 2 + hungAt s 3 + hungAt s 4 := by
   simp [hungTotal, hangFloors_eq]; omega
 
+/-- ⚑ Every door fact about a turn reduces to the four per-floor censuses. `j`/`k` carry
+the ±1 a verb posts: `j = k = 0` freezes the residue, `k = 1` is `unlock`'s hang, `j = 1`
+is `take`'s lift. One register standing for four censuses is exactly this identity. -/
+private theorem hungTotal_eq_of {s s' : DState} {j k : Nat}
+    (h : hungAt s' 1 + hungAt s' 2 + hungAt s' 3 + hungAt s' 4 + j
+       = hungAt s 1 + hungAt s 2 + hungAt s 3 + hungAt s 4 + k) :
+    hungTotal s' + j = hungTotal s + k := by
+  rw [hungTotal_split, hungTotal_split]; omega
+
+/-- The `flee` promotion, at an arbitrary predicate: the map moves `CARRIED` to `BANKED`
+and nothing else, so a census blind to BOTH codes rides through the bank untouched. This
+generalizes `countP_flee_floor_local` (below) from a value to a predicate, which is what
+the whole-door-family readings need. -/
+private theorem countP_flee_pred_local (l : List Nat) (p : Nat → Bool)
+    (hC : p CARRIED = false) (hB : p BANKED = false) :
+    (l.map (fun c => if c = CARRIED then BANKED else c)).countP p = l.countP p := by
+  induction l with
+  | nil => rfl
+  | cons hd tl ih =>
+    rw [List.map_cons, List.countP_cons, List.countP_cons, ih]
+    by_cases h : hd = CARRIED
+    · subst hd; simp [hC, hB]
+    · simp [h]
+
 open Dregg2.Exec in
 @[simp] private theorem encode_scalar_relic0 (s : DState) :
     (encode s).scalar "relic_0" = some (s.custody.getD 0 0 : Int) := by
@@ -500,6 +524,14 @@ private theorem zones_total_of_inv {s : DState} (hInv : Inv s) :
   simp only [pack, bank, hoardAt, hungAt] at *
   omega
 
+/-- ⚑ The door residue is bounded by the PARTITION it belongs to, not by a `countP` of its
+own: it is one register standing for four censuses, and `zones_total_of_inv` says the
+seven zones partition the eight relics. -/
+theorem hungTotal_le_relics {s : DState} (hInv : Inv s) : hungTotal s ≤ RELICS := by
+  have hpart := zones_total_of_inv hInv
+  have hsplit := hungTotal_split s
+  omega
+
 open Dregg2.Exec in
 private theorem encode_sum_zones_of_inv {s : DState} (hInv : Inv s) :
     sumScalars (encode s) zones = some (RELICS : Int) := by
@@ -621,16 +653,29 @@ private theorem hang_mem_custodyHops {i d : Nat} (hkey : isKeyRelic i = true)
      refine Or.inr ?_
      rcases hd with rfl | rfl | rfl | rfl <;> decide)
 
-/-- ⚑ **THE HOP LAW — WHAT REPLACES THE RETIRED `custody_ratchet`.** Every legal step
-moves every relic along one of the hops the deployed `allowedTransitions` tooth
-enumerates. This is not the ratchet weakened to survive `take`: the ratchet said only
-"never decreases", which ADMITTED `home → BANKED` (a relic teleporting out of a hoard
-into the bank, skipping the pack and therefore skipping the capacity commons entirely).
-The enumeration refuses that transition, and it names which verb owns each edge. -/
-private theorem custody_hop_of_step {s s' : DState} {m : Move}
+/-- ⚑ **THE EDGE LAW — WHICH HOP, AND ON WHICH FLOOR.** Every legal step moves every
+relic along exactly one of five named edges, and the two door edges carry THE FLOOR THE
+RUN IS STANDING ON.
+
+That last clause is what the counter-side door frame could never say and is why the frame
+moved onto the object: `unlock` hangs the key in the door of `s.depth` and `take` lifts one
+out of the door of `s.depth`, on a turn that does not move `depth` at all. So a key can
+neither enter nor leave a door on a floor the run is not standing at — which is exactly
+the two `heapField` teeth `doorArrivalTooth` / `doorDepartureTooth` demand, and exactly the
+remote take (attack 7b) the deployed program refuses.
+
+`custody_hop_of_step` — the deployed `allowedTransitions (relic_i) (custodyHops i)` tooth —
+is the floor-forgetting corollary below. -/
+private theorem custody_edge_of_step {s s' : DState} {m : Move}
     (hInv : ModelProgramInv s) (hstep : step s m = some s')
     (i : Nat) (hi : i < RELICS) :
-    (s.custody.getD i 0, s'.custody.getD i 0) ∈ custodyHops i := by
+    s'.custody.getD i 0 = s.custody.getD i 0
+      ∨ (s.custody.getD i 0 = homeCode i ∧ s'.custody.getD i 0 = CARRIED)
+      ∨ (s.custody.getD i 0 = CARRIED ∧ s'.custody.getD i 0 = BANKED)
+      ∨ (isKeyRelic i = true ∧ 1 ≤ s.depth ∧ s.depth ≤ FLOORS ∧ s'.depth = s.depth
+          ∧ s.custody.getD i 0 = CARRIED ∧ s'.custody.getD i 0 = HUNG + s.depth)
+      ∨ (isKeyRelic i = true ∧ 1 ≤ s.depth ∧ s.depth ≤ FLOORS ∧ s'.depth = s.depth
+          ∧ s.custody.getD i 0 = HUNG + s.depth ∧ s'.custody.getD i 0 = CARRIED) := by
   have hlen : s.custody.length = RELICS := hInv.1.1.1
   have hilt : i < s.custody.length := by omega
   have hdHi : s.depth ≤ FLOORS := hInv.1.2.2.1
@@ -644,22 +689,22 @@ private theorem custody_hop_of_step {s s' : DState} {m : Move}
   | delve =>
     simp only [step] at hstep
     split at hstep
-    · cases hstep; exact stay_mem_custodyHops halpha
+    · cases hstep; exact Or.inl rfl
     · exact absurd hstep (by simp)
   | ascend =>
     simp only [step] at hstep
     split at hstep
-    · cases hstep; exact stay_mem_custodyHops halpha
+    · cases hstep; exact Or.inl rfl
     · exact absurd hstep (by simp)
   | smite =>
     simp only [step] at hstep
     split at hstep
-    · cases hstep; exact stay_mem_custodyHops halpha
+    · cases hstep; exact Or.inl rfl
     · exact absurd hstep (by simp)
   | lunge =>
     simp only [step] at hstep
     split at hstep
-    · cases hstep; exact stay_mem_custodyHops halpha
+    · cases hstep; exact Or.inl rfl
     · exact absurd hstep (by simp)
   | unlock w =>
     simp only [step] at hstep
@@ -675,14 +720,9 @@ private theorem custody_hop_of_step {s s' : DState} {m : Move}
           rw [hik]; exact getD_eq_of_getElem?_eq_some hkeyC
         have hnew : (s.custody.set (keyFor w) (HUNG + s.depth)).getD i 0 = HUNG + s.depth := by
           rw [hik]; exact getD_set_self (by rw [← hik]; exact hilt)
-        show (s.custody.getD i 0,
-          (s.custody.set (keyFor w) (HUNG + s.depth)).getD i 0) ∈ custodyHops i
-        rw [hold, hnew, hik]
-        exact (hang_mem_custodyHops (isKeyRelic_keyFor hwLo hwHi) hdLo hdHi).1
-      · show (s.custody.getD i 0,
-          (s.custody.set (keyFor w) (HUNG + s.depth)).getD i 0) ∈ custodyHops i
-        rw [getD_set_ne (by omega)]
-        exact stay_mem_custodyHops halpha
+        exact Or.inr (Or.inr (Or.inr (Or.inl
+          ⟨hik ▸ isKeyRelic_keyFor hwLo hwHi, hdLo, hdHi, rfl, hold, hnew⟩)))
+      · exact Or.inl (getD_set_ne (by omega))
     · exact absurd hstep (by simp)
   | loot r =>
     simp only [step] at hstep
@@ -717,13 +757,8 @@ private theorem custody_hop_of_step {s s' : DState} {m : Move}
             · rw [if_neg hkey] at hmem; cases hmem
         have hnew : (s.custody.set r CARRIED).getD i 0 = CARRIED := by
           rw [hir]; exact getD_set_self (by rw [← hir]; exact hilt)
-        show (s.custody.getD i 0, (s.custody.set r CARRIED).getD i 0) ∈ custodyHops i
-        rw [hhomeEq, hnew]
-        simp only [custodyHops, List.mem_append]
-        exact Or.inl (Or.inr (by simp))
-      · show (s.custody.getD i 0, (s.custody.set r CARRIED).getD i 0) ∈ custodyHops i
-        rw [getD_set_ne (by omega)]
-        exact stay_mem_custodyHops halpha
+        exact Or.inr (Or.inl ⟨hhomeEq, hnew⟩)
+      · exact Or.inl (getD_set_ne (by omega))
     · exact absurd hstep (by simp)
   | take r =>
     simp only [step] at hstep
@@ -750,28 +785,46 @@ private theorem custody_hop_of_step {s s' : DState} {m : Move}
           · exact hk
         have hnew : (s.custody.set r CARRIED).getD i 0 = CARRIED := by
           rw [hir]; exact getD_set_self (by rw [← hir]; exact hilt)
-        show (s.custody.getD i 0, (s.custody.set r CARRIED).getD i 0) ∈ custodyHops i
-        rw [hold, hnew]
-        exact (hang_mem_custodyHops hkey hdLo hdHi).2
-      · show (s.custody.getD i 0, (s.custody.set r CARRIED).getD i 0) ∈ custodyHops i
-        rw [getD_set_ne (by omega)]
-        exact stay_mem_custodyHops halpha
+        exact Or.inr (Or.inr (Or.inr (Or.inr ⟨hkey, hdLo, hdHi, rfl, hold, hnew⟩)))
+      · exact Or.inl (getD_set_ne (by omega))
     · exact absurd hstep (by simp)
   | flee =>
     simp only [step] at hstep
     split at hstep
     · cases hstep
-      show (s.custody.getD i 0,
-        (s.custody.map (fun c => if c = CARRIED then BANKED else c)).getD i 0)
-          ∈ custodyHops i
-      rw [getD_map_flee hilt]
       by_cases hC : s.custody.getD i 0 = CARRIED
-      · rw [if_pos hC, hC]
-        simp only [custodyHops, List.mem_append]
-        exact Or.inl (Or.inr (by simp))
-      · rw [if_neg hC]
-        exact stay_mem_custodyHops halpha
+      · refine Or.inr (Or.inr (Or.inl ⟨hC, ?_⟩))
+        show (s.custody.map (fun c => if c = CARRIED then BANKED else c)).getD i 0 = BANKED
+        rw [getD_map_flee hilt, if_pos hC]
+      · refine Or.inl ?_
+        show (s.custody.map (fun c => if c = CARRIED then BANKED else c)).getD i 0
+          = s.custody.getD i 0
+        rw [getD_map_flee hilt, if_neg hC]
     · exact absurd hstep (by simp)
+
+/-- ⚑ **THE HOP LAW — WHAT REPLACES THE RETIRED `custody_ratchet`.** Every legal step
+moves every relic along one of the hops the deployed `allowedTransitions` tooth
+enumerates. This is not the ratchet weakened to survive `take`: the ratchet said only
+"never decreases", which ADMITTED `home → BANKED` (a relic teleporting out of a hoard
+into the bank, skipping the pack and therefore skipping the capacity commons entirely).
+The enumeration refuses that transition, and it names which verb owns each edge. -/
+private theorem custody_hop_of_step {s s' : DState} {m : Move}
+    (hInv : ModelProgramInv s) (hstep : step s m = some s')
+    (i : Nat) (hi : i < RELICS) :
+    (s.custody.getD i 0, s'.custody.getD i 0) ∈ custodyHops i := by
+  have halpha := custody_getD_alphabet hInv i hi
+  rcases custody_edge_of_step hInv hstep i hi with
+    hstay | ⟨hold, hnew⟩ | ⟨hold, hnew⟩ | ⟨hkey, hdLo, hdHi, _, hold, hnew⟩
+      | ⟨hkey, hdLo, hdHi, _, hold, hnew⟩
+  · rw [hstay]; exact stay_mem_custodyHops halpha
+  · rw [hold, hnew]
+    simp only [custodyHops, List.mem_append]
+    exact Or.inl (Or.inr (by simp))
+  · rw [hold, hnew]
+    simp only [custodyHops, List.mem_append]
+    exact Or.inl (Or.inr (by simp))
+  · rw [hold, hnew]; exact (hang_mem_custodyHops hkey hdLo hdHi).1
+  · rw [hold, hnew]; exact (hang_mem_custodyHops hkey hdLo hdHi).2
 
 open Dregg2.Exec in
 private theorem rangeTeeth_honest {s : DState} (hInv : Inv s) (o : Value) :
@@ -804,10 +857,7 @@ private theorem rangeTeeth_honest {s : DState} (hInv : Inv s) (o : Value) :
   -- one register standing for four censuses, and `zones_total_of_inv` is exactly the
   -- statement that the seven zones partition the eight relics.
   · refine ⟨hungTotal s, by simp, by exact_mod_cast Nat.zero_le _, ?_⟩
-    have hpart := zones_total_of_inv hInv
-    have hsplit := hungTotal_split s
-    have : hungTotal s ≤ RELICS := by omega
-    exact_mod_cast this
+    exact_mod_cast hungTotal_le_relics hInv
 
 open Dregg2.Exec in
 /-- The hop tooth, generically — stated over the PAIR so the case analysis lands on the
@@ -842,6 +892,129 @@ private theorem custodyTeeth_honest {s s' : DState} {m : Move}
     refine ⟨(s'.custody.getD i 0 : Int), encode_scalar_relic s' i hi, ?_⟩
     have hmem := custody_getD_alphabet (modelProgramInv_step hInv hstep) i hi
     simpa using List.mem_map_of_mem (f := fun v : Nat => (v : Int)) hmem
+
+open Dregg2.Exec in
+/-- ⚑ **THE DOOR FRAME, ARRIVAL HALF — DISCHARGED.** `depth ≠ d ⇒ relic `i` did not NEWLY
+arrive in floor `d`'s door. The three innocent readings are the three disjuncts, and
+`custody_edge_of_step` hands us exactly one of them: the relic did not move (delta 0), or
+it landed in the pack or the bank (neither is a `HUNG` code), or `unlock` hung it — in
+which case the door it entered is THE FLOOR THE RUN IS STANDING ON, and the post-state
+`depth` reads `d`. -/
+private theorem doorArrivalTooth_honest {s s' : DState} {m : Move}
+    (hInv : ModelProgramInv s) (hstep : step s m = some s')
+    (i : Nat) (hi : i < RELICS) (d : Nat) (hdLo : 1 ≤ d) (_hdHi : d ≤ FLOORS) :
+    evalConstraint (doorArrivalTooth i d).toExec (encode s) (encode s') = true := by
+  have hHnum : (HUNG : Nat) = 12 := rfl
+  have hCnum : (CARRIED : Nat) = 8 := rfl
+  have hBnum : (BANKED : Nat) = 9 := rfl
+  have hFnum : (FLOORS : Nat) = 4 := rfl
+  have hhome : homeCode i ≤ FLOORS := homeCode_le_floors i hi
+  -- The tooth is `anyOf [depth = d, ¬(relic i = HUNG + d), Δ relic i = 0]`.
+  have hstand : (encode s').scalar "depth" = some ((d : Nat) : Int) →
+      evalConstraint (doorArrivalTooth i d).toExec (encode s) (encode s') = true := by
+    intro h
+    simp only [doorArrivalTooth, Constraint.toExec, List.map_cons, List.map_nil,
+      Simple.toExec, HeapAtom.toExecSimple, HeapKeyRef.field, evalConstraint,
+      List.any_cons, List.any_nil, Bool.or_false, Bool.or_eq_true]
+    refine Or.inl ?_
+    simp [evalSimple, h]
+  have helse : s'.custody.getD i 0 ≠ HUNG + d →
+      evalConstraint (doorArrivalTooth i d).toExec (encode s) (encode s') = true := by
+    intro h
+    simp only [doorArrivalTooth, Constraint.toExec, List.map_cons, List.map_nil,
+      Simple.toExec, HeapAtom.toExecSimple, HeapKeyRef.field, evalConstraint,
+      List.any_cons, List.any_nil, Bool.or_false, Bool.or_eq_true]
+    refine Or.inr (Or.inl ?_)
+    simp only [evalSimple, encode_scalar_relic s' i hi, Bool.not_eq_true']
+    exact beq_eq_false_iff_ne.mpr (by
+      simp only [ne_eq, Option.some.injEq, Nat.cast_inj]
+      exact h)
+  have hfroze : s'.custody.getD i 0 = s.custody.getD i 0 →
+      evalConstraint (doorArrivalTooth i d).toExec (encode s) (encode s') = true := by
+    intro h
+    simp only [doorArrivalTooth, Constraint.toExec, List.map_cons, List.map_nil,
+      Simple.toExec, HeapAtom.toExecSimple, HeapKeyRef.field, evalConstraint,
+      List.any_cons, List.any_nil, Bool.or_false, Bool.or_eq_true]
+    refine Or.inr (Or.inr ?_)
+    simp only [evalSimple, encode_scalar_relic s i hi, encode_scalar_relic s' i hi, h]
+    simp
+  rcases custody_edge_of_step hInv hstep i hi with
+    hstay | ⟨_, hnew⟩ | ⟨_, hnew⟩ | ⟨_, hdepthLo, hdepthHi, hdepthEq, _, hnew⟩
+      | ⟨_, _, _, _, _, hnew⟩
+  · exact hfroze hstay
+  · exact helse (by rw [hnew]; omega)
+  · exact helse (by rw [hnew]; omega)
+  · by_cases heq : s.depth = d
+    · refine hstand ?_
+      rw [encode_scalar_depth, hdepthEq, heq]
+    · exact helse (by rw [hnew]; omega)
+  · exact helse (by rw [hnew]; omega)
+
+open Dregg2.Exec in
+/-- ⚑ **THE DOOR FRAME, DEPARTURE HALF — DISCHARGED.** `depth ≠ d ⇒ relic `i` did not make
+the `HUNG + d → CARRIED` hop. This is the half that refuses THE REMOTE TAKE, and the proof
+is exactly why the delta names the hop unambiguously: `CARRIED − (HUNG + d)` is NEGATIVE
+and every other edge in `custody_edge_of_step` has a non-negative delta, so the only way to
+satisfy it is `take`'s lift — whose floor is `s.depth`, and `take` does not move `depth`. -/
+private theorem doorDepartureTooth_honest {s s' : DState} {m : Move}
+    (hInv : ModelProgramInv s) (hstep : step s m = some s')
+    (i : Nat) (hi : i < RELICS) (d : Nat) (hdLo : 1 ≤ d) (hdHi : d ≤ FLOORS) :
+    evalConstraint (doorDepartureTooth i d).toExec (encode s) (encode s') = true := by
+  have hHnum : (HUNG : Nat) = 12 := rfl
+  have hCnum : (CARRIED : Nat) = 8 := rfl
+  have hBnum : (BANKED : Nat) = 9 := rfl
+  have hFnum : (FLOORS : Nat) = 4 := rfl
+  have hhome : homeCode i ≤ FLOORS := homeCode_le_floors i hi
+  have hstand : (encode s').scalar "depth" = some ((d : Nat) : Int) →
+      evalConstraint (doorDepartureTooth i d).toExec (encode s) (encode s') = true := by
+    intro h
+    simp only [doorDepartureTooth, Constraint.toExec, List.map_cons, List.map_nil,
+      Simple.toExec, HeapAtom.toExecSimple, HeapKeyRef.field, evalConstraint,
+      List.any_cons, List.any_nil, Bool.or_false, Bool.or_eq_true]
+    refine Or.inl ?_
+    simp [evalSimple, h]
+  have hnotlift : ((s'.custody.getD i 0 : Int)
+        ≠ (s.custody.getD i 0 : Int) + ((CARRIED : Int) - ((HUNG + d : Nat) : Int))) →
+      evalConstraint (doorDepartureTooth i d).toExec (encode s) (encode s') = true := by
+    intro h
+    simp only [doorDepartureTooth, Constraint.toExec, List.map_cons, List.map_nil,
+      Simple.toExec, HeapAtom.toExecSimple, HeapKeyRef.field, evalConstraint,
+      List.any_cons, List.any_nil, Bool.or_false, Bool.or_eq_true]
+    refine Or.inr ?_
+    simp only [evalSimple, encode_scalar_relic s i hi, encode_scalar_relic s' i hi,
+      Bool.not_eq_true']
+    exact beq_eq_false_iff_ne.mpr h
+  rcases custody_edge_of_step hInv hstep i hi with
+    hstay | ⟨hold, hnew⟩ | ⟨hold, hnew⟩ | ⟨_, _, _, _, hold, hnew⟩
+      | ⟨_, hdepthLo, hdepthHi, hdepthEq, hold, hnew⟩
+  · exact hnotlift (by rw [hstay]; omega)
+  · exact hnotlift (by rw [hold, hnew]; omega)
+  · exact hnotlift (by rw [hold, hnew]; omega)
+  · exact hnotlift (by rw [hold, hnew]; push_cast; omega)
+  · by_cases heq : s.depth = d
+    · refine hstand ?_
+      rw [encode_scalar_depth, hdepthEq, heq]
+    · exact hnotlift (by rw [hold, hnew]; push_cast; omega)
+
+open Dregg2.Exec in
+/-- ⚑ **THE OBJECT-SIDE DOOR FRAME, DISCHARGED FOR EVERY VERB.** These 24 teeth ride the
+`spent` rider, so an honest turn of ANY verb pays them — which is what makes "you must be
+standing where it hangs" method-independent rather than a clause of `unlock`/`take`. -/
+private theorem doorFrameTeeth_honest {s s' : DState} {m : Move}
+    (hInv : ModelProgramInv s) (hstep : step s m = some s') :
+    ∀ c ∈ doorFrameTeeth, evalConstraint c.toExec (encode s) (encode s') = true := by
+  intro c hc
+  obtain ⟨i, hiKey, hc⟩ := List.mem_flatMap.mp hc
+  obtain ⟨d, hdMem, hc⟩ := List.mem_flatMap.mp hc
+  have hi : i < RELICS := List.mem_range.mp (List.mem_filter.mp hiKey).1
+  have hd : d = 1 ∨ d = 2 ∨ d = 3 ∨ d = 4 := by
+    simpa using (hangFloors_eq ▸ hdMem : d ∈ [1, 2, 3, 4])
+  have hdLo : 1 ≤ d := by rcases hd with rfl | rfl | rfl | rfl <;> decide
+  have hdHi : d ≤ FLOORS := by rcases hd with rfl | rfl | rfl | rfl <;> decide
+  simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
+  rcases hc with rfl | rfl
+  · exact doorArrivalTooth_honest hInv hstep i hi d hdLo hdHi
+  · exact doorDepartureTooth_honest hInv hstep i hi d hdLo hdHi
 
 /-- A fixed eight-relic world can be exposed elementwise without assuming
 anything about the elements.  This is only plumbing for reducing the deployed
@@ -938,13 +1111,14 @@ private theorem spentRider_honest {s s' : DState} {m : Move}
     ∀ c ∈ spentRider.constraints,
       evalConstraint c.toExec (encode s) (encode s') = true := by
   intro c hc
-  change c ∈ coreTeeth ++ rangeTeeth ++ custodyTeeth ++ projectionTeeth ++
-    [.heapField .sentinel .immutable] at hc
+  change c ∈ coreTeeth ++ rangeTeeth ++ custodyTeeth ++ doorFrameTeeth ++
+    projectionTeeth ++ [.heapField .sentinel .immutable] at hc
   simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false] at hc
-  rcases hc with (((hc | hc) | hc) | hc) | rfl
+  rcases hc with ((((hc | hc) | hc) | hc) | hc) | rfl
   · exact coreTeeth_honest hInv hstep c hc
   · exact rangeTeeth_honest (modelProgramInv_step hInv hstep).1 (encode s) c hc
   · exact custodyTeeth_honest hInv hstep c hc
+  · exact doorFrameTeeth_honest hInv hstep c hc
   · exact projectionTeeth_honest (modelProgramInv_step hInv hstep).1 (encode s) c hc
   · simp [Constraint.toExec, HeapAtom.toExec, HeapKeyRef.field, evalConstraint,
       evalSimple]
@@ -1136,6 +1310,20 @@ private theorem depth_transition_pin {s s' : DState} {al : List (Nat × Nat)}
   rw [encode_scalar_depth, encode_scalar_depth]
   apply List.any_eq_true.mpr
   refine ⟨((s.depth : Int), (s'.depth : Int)), List.mem_map_of_mem hmem, by simp⟩
+
+open Dregg2.Exec in
+/-- ⚑ The DOOR-RESIDUE tooth, generically — the twin of `depth_transition_pin`, one zone
+over. `unlock` and `take` are the only verbs that post a rung here, and each posts exactly
+one: `(k, k+1)` hangs a key, `(k, k−1)` lifts one. Stated over the PAIR for the same reason
+the staircase is. -/
+private theorem hung_transition_pin {s s' : DState} {al : List (Nat × Nat)}
+    (hmem : (hungTotal s, hungTotal s') ∈ al) :
+    evalConstraint (Constraint.allowedTransitions hungName al).toExec
+      (encode s) (encode s') = true := by
+  simp only [Constraint.toExec, evalConstraint]
+  rw [encode_scalar_hung, encode_scalar_hung]
+  apply List.any_eq_true.mpr
+  refine ⟨((hungTotal s : Int), (hungTotal s' : Int)), List.mem_map_of_mem hmem, by simp⟩
 
 open Dregg2.Exec in
 /-- The staircase tooth, DESCENDING: `d → d + 1` is one of the eight enumerated rungs
@@ -1490,46 +1678,44 @@ private theorem unlock_pack_drop {s s' : DState} {w : Nat}
   · exact absurd hstep (by simp)
 
 open Dregg2.Exec in
-/-- ⚑ **THE DOOR FRAME** — `unlock` may only hang a key in the door ON THE FLOOR IT IS
-STANDING ON: every other floor's door census is immutable, and conservation then forces
-the `+1` into THIS floor. `take`'s twin is `take_hungFrame_honest`. -/
-private theorem unlock_hungFrame_honest {s s' : DState} {w d : Nat}
-    (_hInv : ModelProgramInv s) (hstep : step s (.unlock w) = some s')
-    (hdLo : 1 ≤ d) (hdHi : d ≤ FLOORS) :
-    evalConstraint (hungFrameTooth d).toExec (encode s) (encode s') = true := by
+/-- ⚑ **THE DOOR CENSUS GAINS EXACTLY ONE.** `unlock` hangs the key it exercises in the
+door on the floor it is standing on, so the residue rises by one at `s.depth` and is frozen
+on every other floor. WHICH door it entered is no longer a counter fact — it is
+`doorArrivalTooth`, on the object, discharged for every verb by `doorFrameTeeth_honest`. -/
+private theorem unlock_hungTotal_bump {s s' : DState} {w : Nat}
+    (hInv : ModelProgramInv s) (hstep : step s (.unlock w) = some s') :
+    hungTotal s' = hungTotal s + 1 := by
   have hH : (HUNG : Nat) = 12 := rfl
   have hC : (CARRIED : Nat) = 8 := rfl
+  have hdHi : s.depth ≤ FLOORS := hInv.1.2.2.1
+  have hF : (FLOORS : Nat) = 4 := rfl
   simp only [step] at hstep
   split at hstep
   · rename_i hlegal
+    have hdLo : 1 ≤ s.depth := hlegal.2.2.2.1
     have hkeyC : s.custody[keyFor w]? = some CARRIED := hlegal.2.2.2.2.2.2.2
-    by_cases heq : s.depth = d
-    · cases hstep
-      simp only [hungFrameTooth, Constraint.toExec, List.map_cons, List.map_nil,
-        Simple.toExec, evalConstraint, List.any_cons, List.any_nil, Bool.or_false,
-        Bool.or_eq_true]
-      left
-      unfold evalSimple
-      rw [encode_scalar_depth]
-      have hz : (s.depth : Int) = (d : Int) := by exact_mod_cast heq
-      simpa using hz
-    · have hsame : (s.custody.set (keyFor w) (HUNG + s.depth)).countP (· == HUNG + d) =
-          s.custody.countP (· == HUNG + d) :=
-        countP_set_same_local _ hkeyC
-          (by
-            have h1 : ((CARRIED : Nat) == HUNG + d) = false :=
-              beq_eq_false_iff_ne.mpr (by omega)
-            have h2 : ((HUNG + s.depth) == HUNG + d) = false :=
-              beq_eq_false_iff_ne.mpr (by omega)
-            rw [h1, h2])
-      cases hstep
-      simp only [hungFrameTooth, Constraint.toExec, List.map_cons, List.map_nil,
-        Simple.toExec, evalConstraint, List.any_cons, List.any_nil, Bool.or_false,
-        Bool.or_eq_true]
-      right
-      unfold evalSimple
-      rw [encode_scalar_hung s d hdLo hdHi, encode_scalar_hung _ d hdLo hdHi]
-      simpa [hungAt] using hsame
+    have hcust : s'.custody = s.custody.set (keyFor w) (HUNG + s.depth) := by
+      rw [← Option.some.inj hstep]
+    have hAt : ∀ e : Nat, hungAt s' e
+        = hungAt s e + (if e = s.depth then 1 else 0) := by
+      intro e
+      simp only [hungAt, hcust]
+      by_cases he : e = s.depth
+      · subst he
+        rw [if_pos rfl]
+        exact countP_set_bump_local _ hkeyC (beq_eq_false_iff_ne.mpr (by omega)) (by simp)
+      · rw [if_neg he, Nat.add_zero]
+        exact countP_set_same_local _ hkeyC (by
+          have h1 : ((CARRIED : Nat) == HUNG + e) = false :=
+            beq_eq_false_iff_ne.mpr (by omega)
+          have h2 : ((HUNG + s.depth) == HUNG + e) = false :=
+            beq_eq_false_iff_ne.mpr (by omega)
+          rw [h1, h2])
+    have hd : s.depth = 1 ∨ s.depth = 2 ∨ s.depth = 3 ∨ s.depth = 4 := by omega
+    have := hungTotal_eq_of (s := s) (s' := s') (j := 0) (k := 1)
+      (by rw [hAt 1, hAt 2, hAt 3, hAt 4]
+          rcases hd with h | h | h | h <;> rw [h] <;> simp <;> omega)
+    omega
   · exact absurd hstep (by simp)
 
 open Dregg2.Exec in
@@ -1549,14 +1735,14 @@ private theorem unlockCase_honest {s s' : DState} {w : Nat}
   change c ∈ coreTeeth ++
     [.fieldDelta "spent" 1, .fieldEquals "fate" 0,
       .allowedTransitions "pack" ((List.range' 1 RELICS).map (fun k => (k, k - 1))),
-      hungFrameTooth 1, hungFrameTooth 2, hungFrameTooth 3, hungFrameTooth 4] ++
+      .allowedTransitions hungName ((List.range' 0 RELICS).map (fun k => (k, k + 1)))] ++
     frozen ["depth", "wounds", "bank", "harm",
       hoardName 1, hoardName 2, hoardName 3, hoardName 4] at hc
   simp only [List.mem_append] at hc
   rcases hc with (hcore | hverb) | hfrozen
   · exact coreTeeth_honest hInv hstep c hcore
   · simp only [List.mem_cons, List.not_mem_nil, or_false] at hverb
-    rcases hverb with rfl | rfl | rfl | rfl | rfl | rfl | rfl
+    rcases hverb with rfl | rfl | rfl | rfl
     · simp only [Constraint.toExec, evalConstraint]
       unfold evalSimple
       rw [encode_scalar_spent, encode_scalar_spent, legal_step_spent_eq hstep]
@@ -1584,10 +1770,20 @@ private theorem unlockCase_honest {s s' : DState} {w : Nat}
         rcases hc with h|h|h|h|h|h|h|h <;> rw [h] <;> simp
       · have hsub : pack s - 1 = pack s' := by omega
         rw [hsub]
-    · exact unlock_hungFrame_honest hInv hstep (by decide) (by decide)
-    · exact unlock_hungFrame_honest hInv hstep (by decide) (by decide)
-    · exact unlock_hungFrame_honest hInv hstep (by decide) (by decide)
-    · exact unlock_hungFrame_honest hInv hstep (by decide) (by decide)
+    · -- ⚑ THE DOOR RESIDUE GAINS EXACTLY ONE. The upper rung `(7, 8)` is reachable only in
+      -- principle: the residue is bounded by the partition it belongs to
+      -- (`hungTotal_le_relics` on the POST state), so the pair is always on the table.
+      have hbump := unlock_hungTotal_bump hInv hstep
+      have hle : hungTotal s' ≤ RELICS :=
+        hungTotal_le_relics (modelProgramInv_step hInv hstep).1
+      have hrelics : (RELICS : Nat) = 8 := rfl
+      refine hung_transition_pin ?_
+      have hlist : (List.range' 0 RELICS) = [0, 1, 2, 3, 4, 5, 6, 7] := by decide
+      rw [hlist]
+      have hcases : hungTotal s = 0 ∨ hungTotal s = 1 ∨ hungTotal s = 2 ∨ hungTotal s = 3
+          ∨ hungTotal s = 4 ∨ hungTotal s = 5 ∨ hungTotal s = 6 ∨ hungTotal s = 7 := by
+        omega
+      rcases hcases with h|h|h|h|h|h|h|h <;> rw [hbump, h] <;> simp
   · obtain ⟨r, hr, rfl⟩ := List.mem_map.mp hfrozen
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
     -- depth / wounds / harm are registers this verb does not write; `bank` and the four
@@ -1653,8 +1849,8 @@ private theorem unlock_keyHangsHere_honest {s s' : DState} {w d : Nat}
     by_cases heq : s.depth = d
     · cases hstep
       simp only [keyHangsHereTooth, Constraint.toExec, List.map_cons, List.map_nil,
-        Simple.toExec, evalConstraint, List.any_cons, List.any_nil, Bool.or_false,
-        Bool.or_eq_true]
+        Simple.toExec, HeapAtom.toExecSimple, HeapKeyRef.field, evalConstraint,
+        List.any_cons, List.any_nil, Bool.or_false, Bool.or_eq_true]
       right
       unfold evalSimple
       rw [encode_scalar_relic _ (keyFor w) hkeyLt,
@@ -1662,8 +1858,8 @@ private theorem unlock_keyHangsHere_honest {s s' : DState} {w d : Nat}
       simp
     · cases hstep
       simp only [keyHangsHereTooth, Constraint.toExec, List.map_cons, List.map_nil,
-        Simple.toExec, evalConstraint, List.any_cons, List.any_nil, Bool.or_false,
-        Bool.or_eq_true]
+        Simple.toExec, HeapAtom.toExecSimple, HeapKeyRef.field, evalConstraint,
+        List.any_cons, List.any_nil, Bool.or_false, Bool.or_eq_true]
       left
       simp only [evalSimple]
       rw [encode_scalar_depth]
@@ -1685,9 +1881,10 @@ private theorem wayRider_unlock_honest {s s' : DState} {w : Nat}
   intro c hc
   change c ∈ coreTeeth ++
     [.allowedTransitions (wayName w) [(0, 1)],
-      .allowedTransitions (relicName (keyFor w))
-        [(CARRIED, HUNG + 1), (CARRIED, HUNG + 2), (CARRIED, HUNG + 3),
-         (CARRIED, HUNG + 4)]] ++
+      .heapField (.named (relicName (keyFor w)))
+        (.allowedTransitions
+          [(CARRIED, HUNG + 1), (CARRIED, HUNG + 2), (CARRIED, HUNG + 3),
+           (CARRIED, HUNG + 4)])] ++
     [keyHangsHereTooth (keyFor w) 1, keyHangsHereTooth (keyFor w) 2,
      keyHangsHereTooth (keyFor w) 3, keyHangsHereTooth (keyFor w) 4] at hc
   simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false] at hc
@@ -2330,11 +2527,9 @@ open Dregg2.Exec in
 /-- ⚑ **A `loot` NEVER TOUCHES A DOOR.** It writes `CARRIED` over a FLOOR code, and
 neither code is in the `HUNG` family, so every door census is frozen across the turn —
 the register-side twin of "a relic found lying in a hoard was already lying there". -/
-private theorem loot_hung_immutable_honest {s s' : DState} {r : Nat}
-    (hInv : ModelProgramInv s) (hstep : step s (.loot r) = some s') (d : Nat)
-    (hdLo : 1 ≤ d) (hdHi : d ≤ FLOORS) :
-    evalConstraint (Constraint.immutable (hungName d)).toExec
-      (encode s) (encode s') = true := by
+private theorem loot_hungTotal_same {s s' : DState} {r : Nat}
+    (hInv : ModelProgramInv s) (hstep : step s (.loot r) = some s') :
+    hungTotal s' = hungTotal s := by
   have hdepthLt : s.depth ≤ FLOORS := hInv.1.2.2.1
   have hH : (HUNG : Nat) = 12 := rfl
   have hF : (FLOORS : Nat) = 4 := rfl
@@ -2342,20 +2537,32 @@ private theorem loot_hung_immutable_honest {s s' : DState} {r : Nat}
   simp only [step] at hstep
   split at hstep
   · rename_i hlegal
-    have hsame : (s.custody.set r CARRIED).countP (· == HUNG + d) =
-        s.custody.countP (· == HUNG + d) :=
-      countP_set_same_local _ hlegal.2.2.2.2.1
+    have hcust : s'.custody = s.custody.set r CARRIED := by rw [← Option.some.inj hstep]
+    have hAt : ∀ e : Nat, hungAt s' e = hungAt s e := by
+      intro e
+      simp only [hungAt, hcust]
+      exact countP_set_same_local _ hlegal.2.2.2.2.1
         (by
-          have h1 : (s.depth == HUNG + d) = false := beq_eq_false_iff_ne.mpr (by omega)
-          have h2 : ((CARRIED : Nat) == HUNG + d) = false :=
+          have h1 : (s.depth == HUNG + e) = false := beq_eq_false_iff_ne.mpr (by omega)
+          have h2 : ((CARRIED : Nat) == HUNG + e) = false :=
             beq_eq_false_iff_ne.mpr (by omega)
           rw [h1, h2])
-    cases hstep
-    simp only [Constraint.toExec, evalConstraint]
-    unfold evalSimple
-    rw [encode_scalar_hung s d hdLo hdHi, encode_scalar_hung _ d hdLo hdHi]
-    simpa [hungAt] using hsame
+    have := hungTotal_eq_of (s := s) (s' := s') (j := 0) (k := 0)
+      (by rw [hAt 1, hAt 2, hAt 3, hAt 4])
+    omega
   · exact absurd hstep (by simp)
+
+open Dregg2.Exec in
+/-- The `loot` arm's door freeze, deployed: ONE register, frozen. -/
+private theorem loot_hung_immutable_honest {s s' : DState} {r : Nat}
+    (hInv : ModelProgramInv s) (hstep : step s (.loot r) = some s') :
+    evalConstraint (Constraint.immutable hungName).toExec
+      (encode s) (encode s') = true := by
+  have hsame := loot_hungTotal_same hInv hstep
+  simp only [Constraint.toExec, evalConstraint]
+  unfold evalSimple
+  rw [encode_scalar_hung s, encode_scalar_hung s', hsame]
+  simp
 
 open Dregg2.Exec in
 private theorem lootCase_honest {s s' : DState} {r : Nat}
@@ -2468,10 +2675,7 @@ private theorem lootCase_honest {s s' : DState} {r : Nat}
       split at hstep
       · cases hstep; simp [Constraint.toExec, evalConstraint, evalSimple]
       · exact absurd hstep (by simp)
-    · exact loot_hung_immutable_honest hInv hstep 1 (by decide) (by decide)
-    · exact loot_hung_immutable_honest hInv hstep 2 (by decide) (by decide)
-    · exact loot_hung_immutable_honest hInv hstep 3 (by decide) (by decide)
-    · exact loot_hung_immutable_honest hInv hstep 4 (by decide) (by decide)
+    · exact loot_hung_immutable_honest hInv hstep
 
 open Dregg2.Exec in
 theorem modelProgram_loot_admitted {s s' : DState} {r : Nat}
@@ -2576,49 +2780,64 @@ private theorem take_pack_bump {s s' : DState} {r : Nat}
   · exact absurd hstep (by simp)
 
 open Dregg2.Exec in
-/-- ⚑ **YOU MUST BE STANDING WHERE IT HANGS.** Every door but the standing floor's is
-immutable across a `take`; conservation then forces the `−1` out of THIS floor's door and
-the `+1` into the pack. This is the register-side form of
-`Dungeon.custody_lowers_only_by_take`'s "standing on floor `depth`" clause, and it is why
-the door family is per-floor rather than one aggregate counter. -/
-private theorem take_hungFrame_honest {s s' : DState} {r d : Nat}
-    (_hInv : ModelProgramInv s) (hstep : step s (.take r) = some s')
-    (hdLo : 1 ≤ d) (hdHi : d ≤ FLOORS) :
-    evalConstraint (hungFrameTooth d).toExec (encode s) (encode s') = true := by
+/-- ⚑ **THE DOOR CENSUS LOSES EXACTLY ONE.** `take` lifts the key out of the door on the
+floor it is standing on, so the residue drops by one at `s.depth` and is frozen on every
+other floor. WHICH door it came out of is `doorDepartureTooth`, on the object — and THAT is
+the tooth that refuses the remote take, method-independently, because it rides the `spent`
+rider rather than this arm. -/
+private theorem take_hungTotal_drop {s s' : DState} {r : Nat}
+    (hInv : ModelProgramInv s) (hstep : step s (.take r) = some s') :
+    hungTotal s' + 1 = hungTotal s := by
   have hH : (HUNG : Nat) = 12 := rfl
   have hC : (CARRIED : Nat) = 8 := rfl
+  have hdHi : s.depth ≤ FLOORS := hInv.1.2.2.1
+  have hF : (FLOORS : Nat) = 4 := rfl
   simp only [step] at hstep
   split at hstep
   · rename_i hlegal
+    have hdLo : 1 ≤ s.depth := hlegal.2.2.2.1
     have hhangs : s.custody[r]? = some (HUNG + s.depth) := hlegal.2.2.2.2.1
-    by_cases heq : s.depth = d
-    · cases hstep
-      simp only [hungFrameTooth, Constraint.toExec, List.map_cons, List.map_nil,
-        Simple.toExec, evalConstraint, List.any_cons, List.any_nil, Bool.or_false,
-        Bool.or_eq_true]
-      left
-      unfold evalSimple
-      rw [encode_scalar_depth]
-      have hz : (s.depth : Int) = (d : Int) := by exact_mod_cast heq
-      simpa using hz
-    · have hsame : (s.custody.set r CARRIED).countP (· == HUNG + d) =
-          s.custody.countP (· == HUNG + d) :=
-        countP_set_same_local _ hhangs
-          (by
-            have h1 : ((HUNG + s.depth) == HUNG + d) = false :=
-              beq_eq_false_iff_ne.mpr (by omega)
-            have h2 : ((CARRIED : Nat) == HUNG + d) = false :=
-              beq_eq_false_iff_ne.mpr (by omega)
-            rw [h1, h2])
-      cases hstep
-      simp only [hungFrameTooth, Constraint.toExec, List.map_cons, List.map_nil,
-        Simple.toExec, evalConstraint, List.any_cons, List.any_nil, Bool.or_false,
-        Bool.or_eq_true]
-      right
-      unfold evalSimple
-      rw [encode_scalar_hung s d hdLo hdHi, encode_scalar_hung _ d hdLo hdHi]
-      simpa [hungAt] using hsame
+    have hcust : s'.custody = s.custody.set r CARRIED := by rw [← Option.some.inj hstep]
+    have hAt : ∀ e : Nat, hungAt s e = hungAt s' e + (if e = s.depth then 1 else 0) := by
+      intro e
+      simp only [hungAt, hcust]
+      by_cases he : e = s.depth
+      · rw [if_pos he, he]
+        exact (countP_set_drop_local (· == HUNG + s.depth) hhangs (by simp)
+          (beq_eq_false_iff_ne.mpr (by omega))).symm
+      · rw [if_neg he, Nat.add_zero]
+        exact (countP_set_same_local (· == HUNG + e) hhangs (by
+          have h1 : ((HUNG + s.depth) == HUNG + e) = false :=
+            beq_eq_false_iff_ne.mpr (by omega)
+          have h2 : ((CARRIED : Nat) == HUNG + e) = false :=
+            beq_eq_false_iff_ne.mpr (by omega)
+          simp only []
+          rw [h1, h2])).symm
+    have hd : s.depth = 1 ∨ s.depth = 2 ∨ s.depth = 3 ∨ s.depth = 4 := by omega
+    have := hungTotal_eq_of (s := s) (s' := s') (j := 1) (k := 0)
+      (by rw [hAt 1, hAt 2, hAt 3, hAt 4]
+          rcases hd with h | h | h | h <;> rw [h] <;> simp <;> omega)
+    omega
   · exact absurd hstep (by simp)
+
+open Dregg2.Exec in
+/-- ⚑ **THE DOOR RESIDUE'S `take` RUNG.** `(k, k−1)`; the residue is at least one because a
+key was hanging, and at most `RELICS` because it is part of the partition. -/
+private theorem take_hung_transition_honest {s s' : DState} {r : Nat}
+    (hInv : ModelProgramInv s) (hstep : step s (.take r) = some s') :
+    evalConstraint (Constraint.allowedTransitions hungName
+        ((List.range' 1 RELICS).map (fun k => (k, k - 1)))).toExec
+      (encode s) (encode s') = true := by
+  have hdrop := take_hungTotal_drop hInv hstep
+  have hle : hungTotal s ≤ RELICS := hungTotal_le_relics hInv.1
+  have hrelics : (RELICS : Nat) = 8 := rfl
+  refine hung_transition_pin ?_
+  have hlist : (List.range' 1 RELICS) = [1, 2, 3, 4, 5, 6, 7, 8] := by decide
+  rw [hlist]
+  have hcases : hungTotal s = 1 ∨ hungTotal s = 2 ∨ hungTotal s = 3 ∨ hungTotal s = 4
+      ∨ hungTotal s = 5 ∨ hungTotal s = 6 ∨ hungTotal s = 7 ∨ hungTotal s = 8 := by omega
+  have hs' : hungTotal s' = hungTotal s - 1 := by omega
+  rcases hcases with h|h|h|h|h|h|h|h <;> rw [hs', h] <;> simp
 
 open Dregg2.Exec in
 /-- A `take` never touches a hoard: it writes `CARRIED` over a `HUNG` code, and neither is
@@ -2685,14 +2904,14 @@ private theorem takeCase_honest {s s' : DState} {r : Nat}
   change c ∈ coreTeeth ++
     [.fieldDelta "spent" 1, .fieldDelta "pack" 1,
       .fieldGte "depth" 1, .fieldEquals "fate" 0,
-      hungFrameTooth 1, hungFrameTooth 2, hungFrameTooth 3, hungFrameTooth 4] ++
+      .allowedTransitions hungName ((List.range' 1 RELICS).map (fun k => (k, k - 1)))] ++
     frozen ["depth", "wounds", "bank", wayName 2, wayName 3, wayName 4, "harm",
       hoardName 1, hoardName 2, hoardName 3, hoardName 4] at hc
   simp only [List.mem_append] at hc
   rcases hc with (hcore | hverb) | hfrozen
   · exact coreTeeth_honest hInv hstep c hcore
   · simp only [List.mem_cons, List.not_mem_nil, or_false] at hverb
-    rcases hverb with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+    rcases hverb with rfl | rfl | rfl | rfl | rfl
     · simp only [Constraint.toExec, evalConstraint]
       unfold evalSimple
       rw [encode_scalar_spent, encode_scalar_spent, legal_step_spent_eq hstep]
@@ -2718,10 +2937,7 @@ private theorem takeCase_honest {s s' : DState} {r : Nat}
         cases hstep
         simp [Constraint.toExec, evalConstraint, evalSimple, hlegal.1]
       · exact absurd hstep (by simp)
-    · exact take_hungFrame_honest hInv hstep (by decide) (by decide)
-    · exact take_hungFrame_honest hInv hstep (by decide) (by decide)
-    · exact take_hungFrame_honest hInv hstep (by decide) (by decide)
-    · exact take_hungFrame_honest hInv hstep (by decide) (by decide)
+    · exact take_hung_transition_honest hInv hstep
   · obtain ⟨reg, hreg, rfl⟩ := List.mem_map.mp hfrozen
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hreg
     rcases hreg with rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl
@@ -2860,32 +3076,38 @@ open Dregg2.Exec in
 /-- ⚑ **A HUNG KEY IS NOT YOURS.** `flee` promotes `CARRIED` and only `CARRIED`, so the
 door censuses ride through the bank untouched — a key left in its door banks nothing, and
 conservation cannot launder it into the bank on the way past. -/
-private theorem flee_hung_immutable_honest {s s' : DState}
-    (hstep : step s .flee = some s') (d : Nat)
-    (hdLo : 1 ≤ d) (hdHi : d ≤ FLOORS) :
-    evalConstraint (Constraint.immutable (hungName d)).toExec
-      (encode s) (encode s') = true := by
+private theorem flee_hungTotal_same {s s' : DState}
+    (hstep : step s .flee = some s') : hungTotal s' = hungTotal s := by
   have hH : (HUNG : Nat) = 12 := rfl
   have hF : (FLOORS : Nat) = 4 := rfl
   have hC : (CARRIED : Nat) = 8 := rfl
   have hB : (BANKED : Nat) = 9 := rfl
   simp only [step] at hstep
   split at hstep
-  · have hdC : HUNG + d ≠ CARRIED := by omega
-    have hdB : HUNG + d ≠ BANKED := by omega
-    have hsame := countP_flee_floor_local s.custody (HUNG + d) hdC hdB
-    cases hstep
-    simp only [Constraint.toExec, evalConstraint]
-    unfold evalSimple
-    rw [encode_scalar_hung s d hdLo hdHi, encode_scalar_hung _ d hdLo hdHi]
-    rw [show hungAt
-        { depth := s.depth, spent := s.spent + 1, wounds := s.wounds, harm := s.harm,
-          fate := 1, ways := s.ways,
-          custody := s.custody.map
-            (fun c => if c = CARRIED then BANKED else c) } d = hungAt s d by
-      simpa [hungAt, Function.comp_def] using hsame]
-    simp
+  · have hcust : s'.custody
+        = s.custody.map (fun c => if c = CARRIED then BANKED else c) := by
+      rw [← Option.some.inj hstep]
+    have hAt : ∀ e : Nat, hungAt s' e = hungAt s e := by
+      intro e
+      simp only [hungAt, hcust]
+      exact countP_flee_pred_local s.custody (· == HUNG + e)
+        (beq_eq_false_iff_ne.mpr (by omega)) (beq_eq_false_iff_ne.mpr (by omega))
+    have := hungTotal_eq_of (s := s) (s' := s') (j := 0) (k := 0)
+      (by rw [hAt 1, hAt 2, hAt 3, hAt 4])
+    omega
   · exact absurd hstep (by simp)
+
+open Dregg2.Exec in
+/-- The `flee` arm's door freeze, deployed: ONE register, frozen. -/
+private theorem flee_hung_immutable_honest {s s' : DState}
+    (hstep : step s .flee = some s') :
+    evalConstraint (Constraint.immutable hungName).toExec
+      (encode s) (encode s') = true := by
+  have hsame := flee_hungTotal_same hstep
+  simp only [Constraint.toExec, evalConstraint]
+  unfold evalSimple
+  rw [encode_scalar_hung s, encode_scalar_hung s', hsame]
+  simp
 
 open Dregg2.Exec in
 private theorem fleeCase_honest {s s' : DState}
@@ -2962,10 +3184,7 @@ private theorem fleeCase_honest {s s' : DState}
     · exact flee_hoard_immutable_honest hstep 2 (by decide) (by decide)
     · exact flee_hoard_immutable_honest hstep 3 (by decide) (by decide)
     · exact flee_hoard_immutable_honest hstep 4 (by decide) (by decide)
-    · exact flee_hung_immutable_honest hstep 1 (by decide) (by decide)
-    · exact flee_hung_immutable_honest hstep 2 (by decide) (by decide)
-    · exact flee_hung_immutable_honest hstep 3 (by decide) (by decide)
-    · exact flee_hung_immutable_honest hstep 4 (by decide) (by decide)
+    · exact flee_hung_immutable_honest hstep
 
 open Dregg2.Exec in
 private theorem fateRider_flee_honest {s s' : DState}

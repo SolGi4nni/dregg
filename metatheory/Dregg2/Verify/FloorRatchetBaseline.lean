@@ -1538,20 +1538,29 @@ def manual : Array String := #[
   -- genuinely TRUE so the refutation is not itself vacuous. Both shapes trip the carrier detector.
   --
   -- ⚠ THE IRONY IS THE POINT AND IS RECORDED DELIBERATELY: a module written to expose that this
-  -- baseline grandfathers vacuous apexes needs three rows in this baseline to land. That is the
-  -- honest direction (b) the preflight offers — a reviewable decision rather than a silent escape —
-  -- but a future reader should not mistake these rows for the class they were added to expose.
+  -- baseline grandfathers vacuous apexes needs rows in this baseline to land. That is the honest
+  -- direction (b) the preflight offers — a reviewable decision rather than a silent escape — but a
+  -- future reader should not mistake these rows for the class they were added to expose.
   --
   --   ApexCommitFloor / ApexCommitFloorSansRest — DEFINITIONS, not theorems. They bundle the five
   --     binders so `apexCommitFloor_unsatisfiable` can refute the bundle. A def that names a floor
   --     carries no proof obligation and cannot be vacuous; it is the SUBJECT of the refutation.
-  --   pairCompress_injective — the POSITIVE POLE. It proves `compressInjective` genuinely HOLDS for
-  --     an unbounded pairing portal, which is what establishes that the width bound is load-bearing
-  --     and that the deployed refutation is not a statement about an empty class. Deleting this row
-  --     by deleting the theorem would make the whole module's anti-vacuity claim unfalsifiable.
+  --     ⚑ MEASURED against the WHOLE-TREE ratchet 2026-07-28 (the first green-enough root build in
+  --     two days — `Games/DungeonCompleteness` and `Games/DungeonDeployed` were red, so
+  --     `Dregg2.lean` never elaborated and this gate never ran): both are carriers of class
+  --     `prop-body`, i.e. Prop DEFS whose BODY is the floor conjunction. There is no conclusion to
+  --     restate as anti-floor and no binder to move, so these two rows are LOAD-BEARING under the
+  --     current ruler, exactly as claimed above.
+  --
+  -- ⚑ RETIRED 2026-07-28, −1: `pairCompress_injective` was pasted here on the SAME reasoning and
+  --   the whole-tree ratchet says it was never needed — it is NOT in the live carrier surface at
+  --   all (it PROVES a floor rather than assuming one, so `assumesFloorContent` is false of it).
+  --   The row was pure slack: the gate's fresh set is `carriers ∖ baseline`, and dropping a
+  --   non-carrier cannot add to it. Measured by running the real `FloorRatchet.check` against the
+  --   baseline with all three rows deleted: the fresh set came back with the OTHER two and not
+  --   this one. The baseline only ever gets shorter; this is that.
   "Dregg2.Verify.ApexPremiseVacuity.ApexCommitFloor",
   "Dregg2.Verify.ApexPremiseVacuity.ApexCommitFloorSansRest",
-  "Dregg2.Verify.ApexPremiseVacuity.pairCompress_injective",
 -- ⚑⚑ RAISE OF 2026-07-25 (second), +2 — THE TWO SECURITY CLAIMS THE B4 HOLE WAS HIDING.
 --
 -- These are not new theorems and nothing about them changed. What changed is the RULER: the
