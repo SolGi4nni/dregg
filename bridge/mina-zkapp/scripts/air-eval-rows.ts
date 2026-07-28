@@ -29,7 +29,7 @@
 // under-count the AIR side by more than an order of magnitude, and that
 // mis-attribution has already been made once in this tree.
 
-import { Field, Provable } from 'o1js';
+import { Provable } from 'o1js';
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
@@ -46,7 +46,6 @@ import {
   recomposeQuotient,
   rootColumnCensus,
   selectorsAtPoint,
-  vanishingAtPoint,
   witnessInstanceShape,
 } from '../src/AirEval.js';
 
@@ -408,10 +407,19 @@ let perConstraint = 0;
   const at0 = await measure(1);
   const at101 = await measure(101);
   perConstraint = (at101 - at0) / 100;
+  // ⚑ AN AFFINE DECOMPOSITION, AND THE OFFSET IS DELIBERATE. `measure(1)` is the
+  // cost WITH one constraint, whose fold is free (the Horner accumulator starts
+  // at `C_0`). Subtracting one marginal price makes `A + N*h` exact for every N
+  // rather than off by one fold — the total is the measured thing, the split
+  // into `A` and `h` is the affine fit through two measured points.
   perInstanceFixed = at0 - perConstraint;
   console.log(
+    `    measured at N=1 / N=101                        : ${at0} / ${at101} rows`,
+  );
+  console.log(
     `    per-instance FIXED cost (selectors at k=${ROOT_LOG_TRACE_HEIGHT}, chunk recomposition,\n` +
-      `      the closing equality)                       : ${perInstanceFixed.toFixed(0)} rows`,
+      `      the closing equality; net of the free first fold) : ` +
+      `${perInstanceFixed.toFixed(0)} rows`,
   );
   console.log(
     `    per CONSTRAINT (the alpha fold only, NOT C_i)  : ${perConstraint.toFixed(0)} rows`,
@@ -455,7 +463,7 @@ let perConstraint = 0;
       `      (two_adic_pcs.rs:780-788) — ${deep.total * 4} lanes = ` +
       `${Math.ceil((deep.total * 4) / 8)} permutations at 2,600.5 rows\n` +
       `      = ${Math.round((Math.ceil((deep.total * 4) / 8) * 2600.5) / 1e6 * 100) / 100}e6 rows. ` +
-      `§3.12 stood that whole preamble in with 32 lanes.`,
+      `§3.12 stood that whole preamble in with 13 lanes.`,
   );
 }
 
@@ -481,4 +489,3 @@ console.log(
 );
 
 console.log('\n=== AIR EVAL PASS ===\n');
-void Field;

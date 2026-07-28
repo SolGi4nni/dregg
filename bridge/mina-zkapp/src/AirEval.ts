@@ -3,7 +3,6 @@ import { P, canonicalLane, reduceLane } from './Poseidon2BabyBearW16.js';
 import {
   BbExt,
   EXT_D,
-  assertExtInRange,
   extAdd,
   extMul,
   extOfBase,
@@ -294,9 +293,4 @@ export function rootColumnCensus() {
   const main = ROOT_TABLES.reduce((a, t) => a + t.main, 0);
   const prep = ROOT_TABLES.reduce((a, t) => a + t.prep, 0);
   return { tables: ROOT_TABLES.length, main, prep, total: main + prep };
-}
-
-/** Sanity: the range plumbing this module leans on is live. */
-export function assertExtWitnessed(e: BbExt) {
-  assertExtInRange(e);
 }

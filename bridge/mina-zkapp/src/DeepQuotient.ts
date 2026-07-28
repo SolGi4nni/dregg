@@ -59,23 +59,34 @@ import {
 // `p2deep::deep_quotient_is_the_quotient_polynomial`, which builds `q` by
 // synthetic division rather than by rearranging the same formula.
 //
-// ⚑ FOUR CONVENTIONS THAT ARE EACH INVISIBLE ON A DEGENERATE FIXTURE. The
-// lesson the coset-descent bug taught — a both-polarity check on one round could
-// not see a sign error because one round never consumes two bits — applies here
-// four times over, so every fixture in `fri-deep-rows.ts` carries TWO heights,
-// TWO matrices sharing a height across DIFFERENT batches, and MULTIPLE points:
+// ⚑ CONVENTIONS THAT ARE EACH SILENTLY RIGHT ON A DEGENERATE FIXTURE. The lesson
+// the coset-descent bug taught — a both-polarity check on ONE round could not see
+// a sign error, because one round never consumes two index bits and the check was
+// right on 100% of the all-zero index every row measurement supplies — applies
+// here several times over. So every fixture in `fri-deep-rows.ts` carries TWO
+// heights, TWO matrices sharing a height across DIFFERENT batches, and MULTIPLE
+// opening points:
 //
 //   1. `x` carries the multiplicative-group GENERATOR (31). The fold chain's
-//      `cosetPointFromBits` does not. Invisible at index 0 only if you also drop
-//      the generator, so: not invisible — but see (2).
+//      `cosetPointFromBits` does not.
 //   2. `x` uses `g_L`. The fold chain uses `g_{L+1}`. Both give 1 at reversed
-//      index 0, i.e. on the all-zero index every `getRows()` supplies.
+//      index 0, i.e. on the all-zero index every `getRows()` witness supplies.
 //   3. the index is SHIFTED DOWN by `LGMH - L` before bit-reversal. Invisible
 //      unless a matrix sits BELOW the global max height.
-//   4. `alpha_pow` is keyed by HEIGHT, in ENCOUNTER order across batches.
+//   4. the shifted index is bit-REVERSED, and it is the HIGH bits that are
+//      taken. Both are invisible at index 0 and at all-ones.
+//   5. `alpha_pow` is keyed by HEIGHT, in ENCOUNTER order across batches.
 //      Invisible unless two matrices share a height AND a second height exists.
 //
-// Each has a live wrong twin in `fri-deep-rows.ts` that must diverge.
+// Each has a live wrong twin in `fri-deep-rows.ts` that must diverge, and the leg
+// fails if any of them ever stops diverging.
+//
+// ⚑ AND ONE THAT IS NOT A CONVENTION AT ALL. `g_{L+1}^{reverse_bits_len(s,L+1)}`
+// looks like a sixth reading and is the SAME FUNCTION: `s` has `L` significant
+// bits, so `rev(s, L+1) = 2*rev(s, L)`, and `g_{L+1}^2 = g_L`. A twin built on it
+// could never diverge — the same shape as the challenger's
+// `observe`-clears-the-output-buffer edge, which was written up as load-bearing
+// and was not. It is ASSERTED as an identity rather than counted as a divergence.
 // ---------------------------------------------------------------------------
 
 const LANE_MAX = (1n << 31n) - 1n;
@@ -465,13 +476,17 @@ export function deepPreambleBigInt(
  *     rest in at the rounds their heights name;
  *   * the chain lands on the absorbed final polynomial.
  *
- * ⚑ WHAT IS STILL A STAND-IN. `prefix` stands for the batch-STARK's own observes
- * that precede the opened values (degree bits, trace/quotient commitments, the
- * public values, and `zeta` itself). The `z`s are carried in it so they are
- * bound, but binding them to a STARK transcript that SAMPLED zeta is a further
- * rung. And each batch here holds ONE matrix: `MerkleTreeMmcs::verify_batch`
- * over several matrices of MIXED heights under one root is not built, and the
- * input-phase opening is priced for it rather than implemented.
+ * ⚑ WHAT IS STILL A STAND-IN, PRECISELY.
+ *
+ *   * `prefix` stands for the batch-STARK's own observes that precede the opened
+ *     values: the degree bits, the trace and quotient COMMITMENTS, the public
+ *     values, and `zeta` itself. In particular `claim.inputCommits` is public
+ *     here but is NOT absorbed by this program — upstream it would be, and
+ *     `prefix` is what stands in for that. The `z`s ARE absorbed, which is a
+ *     weaker binding than having been SAMPLED, and is named as such.
+ *   * each batch holds ONE matrix. `MerkleTreeMmcs::verify_batch` over several
+ *     matrices of MIXED heights under one root is not built; the input-phase
+ *     opening is priced for it (§3.14) rather than implemented.
  */
 export function makeDeepBoundQueryProgram(opts: {
   knobs: FriKnobs;
@@ -744,6 +759,23 @@ export function rootDeepTermCount(): {
   return { main, prep, quotient, total: main + prep + quotient };
 }
 
+/** Just the opened matrices — for a JOINT measurement, where the index bits and
+ *  `alpha` come out of a transcript and witnessing them again would put dead
+ *  constraints inside the number the join is being read from. */
+export function witnessDeepBatches(batches: DeepBatchSpec[]): DeepMatrix[][] {
+  const wit = <T>(f: () => T, t: any) => Provable.witness(t, f);
+  return batches.map((b) =>
+    b.map((s) => ({
+      logHeight: s.logHeight,
+      openedRow: Array.from({ length: s.numCols }, () => wit(() => Field(1), Field)),
+      points: Array.from({ length: s.numPoints }, () => ({
+        z: wit(() => BbExt.from([2n, 0n, 0n, 0n]), BbExt),
+        psAtZ: Array.from({ length: s.numCols }, () => wit(() => BbExt.zero(), BbExt)),
+      })),
+    })),
+  );
+}
+
 /** Witness a DEEP shape of the given widths — for `getRows()`. The values are
  *  irrelevant to the row count; the SHAPE is not. */
 export function witnessDeepShape(
@@ -754,16 +786,7 @@ export function witnessDeepShape(
   return {
     indexBits: Array.from({ length: logGlobalMaxHeight }, () => wit(() => Bool(false), Bool)),
     alpha: wit(() => BbExt.zero(), BbExt),
-    batches: batches.map((b) =>
-      b.map((s) => ({
-        logHeight: s.logHeight,
-        openedRow: Array.from({ length: s.numCols }, () => wit(() => Field(1), Field)),
-        points: Array.from({ length: s.numPoints }, () => ({
-          z: wit(() => BbExt.from([2n, 0n, 0n, 0n]), BbExt),
-          psAtZ: Array.from({ length: s.numCols }, () => wit(() => BbExt.zero(), BbExt)),
-        })),
-      })),
-    ),
+    batches: witnessDeepBatches(batches),
   };
 }
 

@@ -66,6 +66,7 @@ import {
   rollInSchedule,
   rootDeepTermCount,
   twoAdicGeneratorBigInt,
+  witnessDeepBatches,
   witnessDeepShape,
 } from '../src/DeepQuotient.js';
 
@@ -118,7 +119,7 @@ console.log('=== Rung 6: the DEEP QUOTIENT — the reduced opening, BOUND ===\n'
 // ---------------------------------------------------------------------------
 // [1] the query point.
 // ---------------------------------------------------------------------------
-console.log('[1] the DEEP query point == p3, and the four wrong readings all diverge');
+console.log('[1] the DEEP query point == p3, and every wrong reading of it diverges');
 let em0: any;
 {
   // ⚑ A MULTI-HEIGHT SPEC ON A BIT-VARIED INDEX. Two matrices at the top height
@@ -254,8 +255,8 @@ console.log('\n[2] the REDUCED OPENINGS == p3 — across batches, heights, point
 
   // ⚑ THE ALPHA-POWER TWINS, LIVE. Both are the same value on a one-matrix,
   // one-height fixture and wrong on this one.
-  const perMatrix = altOpenings(batches, alpha, 'per-matrix');
-  const global = altOpenings(batches, alpha, 'global');
+  const perMatrix = altOpenings(batches, alpha, 'per-matrix', BigInt(index));
+  const global = altOpenings(batches, alpha, 'global', BigInt(index));
   const same = (a: { logHeight: number; ro: bigint[] }[]) =>
     a.length === got.length && a.every((s, i) => s.logHeight === got[i].logHeight && eqv(s.ro, got[i].ro));
   if (same(perMatrix)) fail('resetting alpha_pow per MATRIX gave the same openings — the fixture is blind');
@@ -283,12 +284,16 @@ function altOpenings(
   batches: DeepMatBigInt[][],
   alpha: bigint[],
   mode: 'per-matrix' | 'global',
+  index: bigint,
 ): { logHeight: number; ro: bigint[] }[] {
   const slots: { logHeight: number; ro: bigint[] }[] = [];
   let globalPow = [1n, 0n, 0n, 0n];
   for (const batch of batches)
     for (const m of batch) {
-      const x = deepQueryPointBigInt(0n, m.logHeight, 22); //  x is irrelevant to the twin's point
+      // ⚑ THE SAME `x` AS THE REAL COMPUTATION. The twin varies ONE thing — how
+      // `alpha_pow` is keyed — so a divergence is attributable to that and not
+      // to a query point that happened to differ too.
+      const x = deepQueryPointBigInt(index, m.logHeight, 22);
       let ap = mode === 'global' ? globalPow : [1n, 0n, 0n, 0n];
       let acc = [0n, 0n, 0n, 0n];
       for (const pt of m.points) {
@@ -861,17 +866,23 @@ let jointCapped = 0;
   // plus the §3.13 delta, labelled as a composition rather than a measurement.
   const LOG_D0 = DEPLOYED_KNOBS.logGlobalMaxHeight;
   const LAYERS = DEPLOYED_KNOBS.layers;
-  const PRE = 32;
+  // The SAME stand-in preamble length §3.12 measured 62,637 at, so the three
+  // standalone figures below are directly comparable and the join is a real
+  // delta rather than an artefact of a longer absorb. (§3.16 measures what the
+  // preamble actually costs: 2.97e6 rows, not 13 lanes.)
+  const PRE = 13;
   const t0 = Date.now();
   const cs = await Provable.constraintSystem(() => {
     const t = witnessTranscriptShape(DEPLOYED_KNOBS, PRE);
     const ch = deriveFriChallenges(t, DEPLOYED_KNOBS);
-    const w = witnessDeepShape(LOG_D0, deployedDeepShape());
+    // ⚑ ONLY the matrices are witnessed here. The index bits and `alpha` come out
+    // of the transcript, so re-witnessing them would put dead constraints inside
+    // the very number the join is read from.
     const ro = reducedOpenings({
       indexBits: ch.queryIndexBits[0],
       logGlobalMaxHeight: LOG_D0,
       alpha: ch.alpha,
-      batches: w.batches,
+      batches: witnessDeepBatches(deployedDeepShape()),
     });
     verifyCommitPhase({
       indexBits: ch.queryIndexBits[0],
@@ -888,6 +899,30 @@ let jointCapped = 0;
     });
   });
   jointCapped = cs.rows;
+
+  // ⚑ AND THE JOIN IS ATTRIBUTED, NOT LEFT AS A MYSTERY. §3.13b measured the
+  // transcript-plus-chain join at 58 rows; this one is three orders larger, so
+  // the same circuit is measured WITHOUT the DEEP quotient to say how much of
+  // the difference is the DEEP seam and how much is the pair that was already
+  // measured.
+  const noDeep = await Provable.constraintSystem(() => {
+    const t = witnessTranscriptShape(DEPLOYED_KNOBS, PRE);
+    const ch = deriveFriChallenges(t, DEPLOYED_KNOBS);
+    verifyCommitPhase({
+      indexBits: ch.queryIndexBits[0],
+      initial: Provable.witness(BbExt, () => BbExt.zero()),
+      rounds: Array.from({ length: LAYERS }, (_, r) => ({
+        sibling: Provable.witness(BbExt, () => BbExt.zero()),
+        path: [] as BbDigest[],
+        beta: ch.betas[r],
+        commit: t.commits[r],
+      })),
+      rollIns: [],
+      finalPoly: t.finalPoly,
+      logGlobalMaxHeight: LOG_D0,
+    });
+  });
+
   // The three standalone figures this is being joined from, all §3.12/§3.13/[6].
   const TRANSCRIPT = 62_637;
   const CAPPED_CHAIN = 45_186;
@@ -903,7 +938,21 @@ let jointCapped = 0;
       `${deepFactored.toLocaleString()})`,
   );
   console.log(
-    `    the JOIN costs                                      : ` +
+    `    the SAME circuit without the DEEP quotient (MEASURED): ` +
+      `${noDeep.rows.toLocaleString()} rows`,
+  );
+  console.log(
+    `    ... vs transcript + capped chain standalone         : ` +
+      `${(TRANSCRIPT + CAPPED_CHAIN).toLocaleString()} rows ` +
+      `(join ${(noDeep.rows - TRANSCRIPT - CAPPED_CHAIN).toLocaleString()}; §3.13b measured 58)`,
+  );
+  console.log(
+    `    so the DEEP quotient's own seam costs               : ` +
+      `${(jointCapped - noDeep.rows - deepFactored).toLocaleString()} rows on top of ` +
+      `its ${deepFactored.toLocaleString()}`,
+  );
+  console.log(
+    `    the JOIN, over all three standalone figures         : ` +
       `${(jointCapped - parts).toLocaleString()} rows`,
   );
   const deployedJoint = jointCapped + (DEPLOYED_CHAIN - CAPPED_CHAIN);
@@ -931,7 +980,7 @@ let jointCapped = 0;
 // §3.15, all MEASURED 2026-07-28 on o1js 2.15.0.
 const RECORDED_DEEP_FACTORED = 154_523;
 const RECORDED_DEEP_PERCOLUMN = 287_123;
-const RECORDED_JOINT = 285_901;
+const RECORDED_JOINT = 280_513;
 const RECORDED_SEAM = 50_409;
 const RECORDED_BINDING_DELTA = 1_754;
 const RATCHET: [string, number, number][] = [

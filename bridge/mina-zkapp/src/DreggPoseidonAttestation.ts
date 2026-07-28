@@ -320,24 +320,41 @@ export function vouchOfBbRoot(bbRoot: bigint[] | Field[]): Field {
  * labelled, and the docs say what it is.
  *
  * ⚑ AND "UNTIL IT IS THE FRI VERIFY" IS NOW A MEASURED DISTANCE, NOT A GESTURE.
- * `docs/MINA-VERIFIES-DREGG-FRI-SIZE.md` §3.9-3.14 prices the ladder against the
- * deployed p3 objects, and as of 2026-07-28 the FRI query indices and fold
+ * `docs/MINA-VERIFIES-DREGG-FRI-SIZE.md` §3.9-3.16 prices the ladder against the
+ * deployed p3 objects. As of 2026-07-28 the FRI query indices and fold
  * challenges are DERIVED from a Fiat-Shamir transcript (§3.12, 62,637 rows)
- * rather than witnessed, with one program joining the derivation to a whole
- * 16-layer commit phase (§3.13b). So the walk is over the PROVER's queries.
- * FOUR things still stand between that and an anchor this key could be deleted
+ * rather than witnessed, one program joins the derivation to a whole 16-layer
+ * commit phase (§3.13b), and — the item that used to be second on this list —
+ * the reduced opening the chain starts from is now the DEEP QUOTIENT of the
+ * MMCS-opened rows rather than a witness (§3.15, 154,523 rows/query). So the
+ * walk is over the PROVER's queries AND it is about the PROVER's trace.
+ *
+ * ⚑ THAT SECOND ITEM DID NOT CLOSE BY ASSERTION. `makeDeepBoundQueryProgram`
+ * keeps the pre-§3.15 statement compiled beside the new one, and the gate PROVES
+ * a witness the old statement admits and requires the new one to REFUSE the same
+ * public claim. Every run.
+ *
+ * FIVE things still stand between that and an anchor this key could be deleted
  * from, and §3.14 keeps the list:
  *
  *   1. the transcript's preamble is a stand-in, not the batch-STARK's own
- *      observes;
- *   2. the reduced opening the fold chain starts from is a WITNESS — binding it
- *      to an input-phase opening under `alpha` IS the DEEP quotient;
- *   3. the AIR constraint evaluation at zeta is not started, and it is what
- *      makes the STARK a statement about dregg rather than about an arbitrary
- *      low-degree function;
- *   4. every rung walks ONE query of nineteen.
+ *      observes — and §3.16 measures what the real one costs: 2.97e6 rows of
+ *      challenger permutations just to absorb the 2,286 opened values, against
+ *      the 13 lanes §3.12 stands in with;
+ *   2. the AIR constraint evaluation at zeta is STARTED but not finished
+ *      (§3.16): the selectors, the alpha-fold, the quotient-chunk recomposition
+ *      and the closing equality are built and KAT'd against p3's own domain
+ *      algebra, but `C_i` — dregg's seven AIRs — is not, and its constraint
+ *      count N is uncounted. Until it is, the walk authenticates a low-degree
+ *      function that encodes nothing in particular;
+ *   3. the input-phase MMCS opening carries ONE matrix per batch;
+ *      `verify_batch` over several matrices of MIXED heights is priced and not
+ *      implemented;
+ *   4. every rung walks ONE query of nineteen;
+ *   5. the root's own `degree_bits` has never been read (§1.3), and the roll-in
+ *      schedule is a function of it (§3.15d).
  *
- * None of those is a reason to delete the key early. All four closing is.
+ * None of those is a reason to delete the key early. All five closing is.
  */
 export class DreggAttestedGate extends SmartContract {
   /** The Pasta state root this gate trusts. This is `app_state_0` — the slot

@@ -33,7 +33,7 @@ under ~260.**
 | Kimchi rows for **transcript + one commit phase, JOINTLY** | **686,005 — MEASURED** | **§3.13b** — the join costs 58 rows. This is the statement that says *the prover's* FRI proof rather than *a* FRI proof |
 | Kimchi rows for one extension **Horner step** | **49 — MEASURED** | §3.14 — ⚑ **§2.4 priced it at ~7** |
 | Kimchi rows for the whole **DEEP QUOTIENT**, one query | **154,523 — MEASURED** | **§3.15** — at the root's real 940+175-column table set, 2,286 terms. **2.94 × 10⁶ across 19 queries**, and §3.14 had priced DEEP *and* AIR together at 1.0 × 10⁶. ⚑ This is the rung that stops the fold chain starting from a number the prover chose |
-| Kimchi rows to **observe the opened values** into the challenger | **2.97 × 10⁶ — MEASURED unit × exact count** | **§3.16** — 2,286 values × 4 lanes = 1,143 permutations. §3.12 stood the whole batch-STARK preamble in with 32 lanes |
+| Kimchi rows to **observe the opened values** into the challenger | **2.97 × 10⁶ — MEASURED unit × exact count** | **§3.16** — 2,286 values × 4 lanes = 1,143 permutations. §3.12 stood the whole batch-STARK preamble in with 13 lanes |
 | Kimchi rows for the **AIR evaluation at ζ** | **`A + N·h`, `A` = 14,175 and `h` = 48 MEASURED; `N` UNCOUNTED** | **§3.16** — selectors, α-fold, chunk recomposition and closing equality, KAT'd against p3's own domain algebra. `C_i` itself is not built |
 | Usable rows per Pickles step | **~48,000–55,000** of 65,536 | §4.1, measured overheads |
 | **Pickles step circuits** | **~650–1,040** deployed | §4.2 |
@@ -845,7 +845,7 @@ against the deployed Rust and ratcheted at 2%.***
 | one reduced-opening roll-in | 88 | 3.13 |
 | **the whole DEEP quotient, ONE query, at the root's 940+175-column table set** | **154,523** | **3.15** |
 | the same, p3's literal per-column loop | 287,123 | 3.15 |
-| transcript + DEEP + the capped commit phase, jointly | 285,901 | 3.15 |
+| transcript + DEEP + the capped commit phase, jointly | 280,513 | 3.15 |
 | the DEEP-bound query program, proved (2^6, 2 layers, 3 batches) | 50,409 | 3.15 |
 | the same with `initial` witnessed — every rung before 3.15 | 48,655 | 3.15 |
 | the AIR side's per-instance FIXED cost (selectors, chunk recomposition, closing equality) | 2,025 | 3.16 |
@@ -893,9 +893,12 @@ estimate)
 
 **STILL OPEN AS SOUNDNESS, not as size**
 
-1. **The preamble binding.** §3.12's transcript starts from a stand-in for the batch-STARK's own
-   observes. Until those are the real ones, the derivation is "the challenges given this state",
-   not "the challenges".
+1. **The preamble binding.** §3.12's transcript starts from a **13-lane stand-in** for the
+   batch-STARK's own observes. Until those are the real ones, the derivation is "the challenges
+   given this state", not "the challenges". ⚑ And §3.16 measures what the real one costs:
+   **2.97 × 10⁶ rows** of challenger permutations just to absorb the 2,286 opened values. It was
+   listed here only as a soundness residual; it is a **size term of the same order as the DEEP
+   quotient**.
 2. ~~**The DEEP quotient.**~~ **CLOSED 2026-07-28 — §3.15.** The reduced openings are now COMPUTED
    from the MMCS-opened rows, the absorbed claimed evaluations and the transcript's `alpha`.
    `makeDeepBoundQueryProgram` keeps the pre-3.15 statement compiled beside it and the gate
@@ -910,8 +913,6 @@ estimate)
 5. **The input-phase MMCS opening over MIXED heights.** §3.15's program carries ONE matrix per
    batch; `MerkleTreeMmcs::verify_batch` over several matrices of different heights under one root
    is priced (§3.14's 6.3 × 10⁵/query) and not implemented.
-6. **The preamble is still a stand-in** — but a much larger one than §3.12 knew: §3.16 measures the
-   real thing at 2.97 × 10⁶ rows, against the 32 lanes §3.12 used.
 
 ---
 
@@ -958,8 +959,8 @@ by **synthetic division** rather than by rearranging the same formula, and requi
 | the same, p3's literal per-column loop | **287,123** (1.86×) |
 | per DEEP term | **67.6** factored / **125.6** literal |
 | × 19 queries | **2,935,937** |
-| transcript + DEEP + the **capped** commit phase, jointly | **285,901** |
-| the join, over the three standalone figures (62,637 + 45,186 + 154,523) | **23,555** |
+| transcript + DEEP + the **capped** commit phase, jointly | **280,513** |
+| the join, over the three standalone figures (62,637 + 45,186 + 154,523) | **18,167** |
 | the proved DEEP-bound query program (`|D⁰| = 2^6`, 2 layers, 3 batches, depth 0) | **50,409** |
 | the same statement with `initial` **witnessed** — i.e. every rung before this one | **48,655** |
 | **what the binding costs at that shape** | **1,754** |
@@ -969,13 +970,18 @@ by `alpha_pow · q`, instead of p3's three extension multiplies per column. It i
 identity, pinned both by `the_factored_horner_form_agrees_with_p3s_per_column_loop` on the Rust side
 and by the in-circuit KAT running **both** forms against the same p3 output.
 
-⚑ **The deployed-depth joint figure is a COMPOSITION, and is labelled as one.** 285,901 +
-(623,310 − 45,186) = **864,025 rows** for transcript + DEEP + one commit phase at real Merkle
-depths — 16–19 Pickles steps for one query, 299–343 for nineteen. It is not a single `getRows()`
+⚑ **The deployed-depth joint figure is a COMPOSITION, and is labelled as one.** 280,513 +
+(623,310 − 45,186) = **858,637 rows** for transcript + DEEP + one commit phase at real Merkle
+depths — 16–18 Pickles steps for one query, 297–340 for nineteen. It is not a single `getRows()`
 because `Provable.constraintSystem` serialises the whole gate vector through the Kimchi wasm and
-that allocator dies somewhere past ~8 × 10⁵ rows. The **join** is measured on the capped chain,
-where it is the same object minus 216 Merkle levels that compose additively and were measured
-standalone in §3.13.
+that allocator dies somewhere past ~8 × 10⁵ rows (the deployed-depth joint circuit OOMs it — the
+wasm heap, not node's). The **join** is measured on the capped chain, where it is the same object
+minus 216 Merkle levels that compose additively and were measured standalone in §3.13.
+
+⚑ **And the join is ATTRIBUTED, not left as a number.** §3.13b measured the transcript-plus-chain
+join at **58 rows**; this one is three orders larger, so the same circuit is measured a second time
+*without* the DEEP quotient. Whatever the split, the DEEP seam is the term that grew, and the leg
+prints both halves rather than reporting one figure and letting a reader assume it is free.
 
 #### 3.15b THE GAP, EXHIBITED — not asserted
 
@@ -1081,9 +1087,15 @@ coset-descent sign.
 
 | object | **MEASURED** |
 |---|---:|
-| per-instance FIXED (selectors at `k = 16`, chunk recomposition, closing equality) | **2,025** |
+| one instance at `N = 1` / at `N = 101` | **2,073** / **6,873** |
 | per CONSTRAINT — the α-fold only, **not** `C_i` | **48** |
+| per-instance FIXED, net of the free first fold | **2,025** |
 | `A` = the fixed cost across the root's **7** tables | **14,175** |
+
+The split into `A` and `h` is the affine fit through two measured points; the *totals* are what is
+measured. `measure(1)` includes one constraint whose fold is free (the Horner accumulator starts at
+`C_0`), so subtracting one marginal price is what makes `A + N·h` exact for every `N` rather than
+off by one fold.
 
 | if `N` were … | fold rows | `+ A` |
 |---|---:|---:|
@@ -1104,7 +1116,7 @@ and that mis-attribution has already been made once in this tree.
 **What the AIR side does make exact, and it is large.** Every one of the **2,286** opened values is
 `observe_algebra_slice`d into the challenger before `alpha` is sampled (`two_adic_pcs.rs:780-788`).
 That is 9,144 lanes ⇒ **1,143 permutations ⇒ 2.97 × 10⁶ rows**, and §3.12 stood the entire
-batch-STARK preamble in with **32 lanes**. It was listed only as a soundness residual; it is a size
+batch-STARK preamble in with **13 lanes**. It was listed only as a soundness residual; it is a size
 term of the same order as the DEEP quotient.
 
 **Three shift conventions are pinned, each with a live twin.** `create_disjoint_domain` multiplies
