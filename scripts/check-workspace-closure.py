@@ -47,7 +47,14 @@ check.  Stated precisely so nobody reads more into a green than is there:
     * a path dependency that escapes the tree entirely — `mobile/deos-android-paint`
       took gpui from `../../../emberian-zed/`, a checkout on one laptop, and was
       green in the working tree and unresolvable from any clone;
-    * a workspace root whose own manifest is internally inconsistent.
+    * a workspace root whose own manifest is internally inconsistent;
+    * a `scripts/local-gates.sh` ROW naming a script the commit does not contain.
+      Same class, one altitude up, and live at the time this was written: two
+      `identity-as-a-name` rows had been in that file since `40a59541b` while
+      `scripts/check-identity-as-a-name.py` existed only on the author's disk, so
+      from any clone the two rows whose own comment argues "a gate not in this list
+      is not a gate" were not gates.  `MIN_GATE_ROWS` keeps a broken parser from
+      reading as clean.
 
   DOES **NOT** CATCH — a green here is not a green build
     * anything requiring COMPILATION: a missing `mod foo;` file, a type error,
@@ -111,6 +118,9 @@ import tomllib
 # having checked almost nothing.
 MIN_PACKAGES = 275
 MIN_WORKSPACE_ROOTS = 35
+# `scripts/local-gates.sh` carried ~45 gate rows when this landed.  A parse that
+# finds far fewer has lost the array shape, and would silently check nothing.
+MIN_GATE_ROWS = 30
 
 # Directories never walked.  `.claude/worktrees/` holds full checkouts of this
 # same repo (a second copy of every manifest); `target`/`.lake` are build
@@ -242,6 +252,53 @@ def first_lines(text: str, n: int = 4) -> str:
     return "\n      ".join(lines[:n])
 
 
+GATE_ROW_RE = None
+
+
+def check_gate_registry(root: str, findings, enforce_floors: bool) -> int:
+    """Every gate row in `scripts/local-gates.sh` must name a script THIS tree has.
+
+    The runner takes token 2 of each row's command as the script path (its own
+    `set -- $cmd; local script="$2"`), and reports MISSING at run time — but only
+    for whoever runs it, in whatever tree they have.  A row whose script was never
+    committed is green for its author forever and MISSING in every clone.
+    """
+    import re
+
+    runner = os.path.join(root, "scripts", "local-gates.sh")
+    if not os.path.exists(runner):
+        return 0
+
+    rows = 0
+    with open(runner, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            s = line.strip()
+            # a row is  "name|timeout|command"  — quoted, three fields
+            m = re.match(r'^"([A-Za-z0-9_.-]+)\|(\d+)\|(.+)"\s*$', s)
+            if not m:
+                continue
+            rows += 1
+            name, cmd = m.group(1), m.group(3)
+            parts = cmd.split()
+            if len(parts) < 2:
+                continue
+            script = parts[1]
+            if not os.path.exists(os.path.join(root, script)):
+                findings.add(
+                    "GATE_SCRIPT_MISSING", script,
+                    f"row `{name}` in scripts/local-gates.sh runs `{cmd}`, and that path is "
+                    f"not in this tree — the row reports MISSING for everyone but its author",
+                )
+
+    if enforce_floors and rows < MIN_GATE_ROWS:
+        findings.add(
+            "FLOOR", "scripts/local-gates.sh",
+            f"parsed only {rows} gate rows (floor {MIN_GATE_ROWS}) — the row regex has lost "
+            f"the array shape and this check is inspecting nothing",
+        )
+    return rows
+
+
 class Findings:
     def __init__(self) -> None:
         self.rows: list[tuple[str, str, str]] = []   # (kind, path, detail)
@@ -310,12 +367,15 @@ def check_tree(root: str, verbose: bool = False, enforce_floors: bool = True):
                 f"cargo resolves it under {os.path.relpath(ws_root, root)}, which this scan did not enumerate as a workspace root",
             )
 
+    gate_rows = check_gate_registry(root, findings, enforce_floors)
+
     stats = {
         "manifests": len(manifests),
         "packages": len(packages),
         "workspace_roots": len(roots),
         "claimed": len(claimed),
         "detached": len(detached),
+        "gate_rows": gate_rows,
     }
 
     if enforce_floors:
@@ -354,7 +414,7 @@ def extract_rev(git_root: str, rev: str, dest: str) -> None:
 
 def report(label: str, ok: bool, findings: Findings, stats: dict) -> None:
     print(f"  {label}: {stats['packages']} packages / {stats['workspace_roots']} workspace roots"
-          f" / {stats['detached']} detached", end="")
+          f" / {stats['detached']} detached / {stats['gate_rows']} gate rows", end="")
     if ok:
         print("  ->  OK")
     else:
@@ -482,8 +542,20 @@ def _inject_escaping_path_dep(tree: str) -> str:
     return "path dependency pointing OUTSIDE the tree"
 
 
+def _inject_missing_gate_script(tree: str) -> str:
+    """A local-gates row naming a script the commit does not carry — the shape that
+    was live in this tree when the check was written (`check-identity-as-a-name.py`
+    referenced by two rows since `40a59541b` and never committed)."""
+    victim = os.path.join(tree, "scripts", "check-doc-refs.sh")
+    if not os.path.exists(victim):
+        raise AssertionError("fault injection matched NOTHING: scripts/check-doc-refs.sh is absent.")
+    os.remove(victim)
+    return "a local-gates row whose script is not in the tree"
+
+
 FAULTS = [
     ("third state (the orb wound itself)", _inject_third_state, {"THIRD_STATE"}),
+    ("local-gates row with no script", _inject_missing_gate_script, {"GATE_SCRIPT_MISSING"}),
     ("member directory missing from the commit", _inject_missing_member, {"WORKSPACE_UNRESOLVABLE"}),
     ("path dep on an uncommitted sibling", _inject_missing_path_dep, {"WORKSPACE_UNRESOLVABLE"}),
     ("path dep escaping the tree", _inject_escaping_path_dep, {"WORKSPACE_UNRESOLVABLE"}),
