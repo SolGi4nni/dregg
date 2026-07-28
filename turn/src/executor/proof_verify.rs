@@ -2026,7 +2026,7 @@ impl TurnExecutor {
             entries.push((asset, delta));
         }
 
-        Self::check_per_asset_conservation_by_asset(&entries, &[]).map_err(|e| match e {
+        Self::check_per_asset_conservation_by_asset(&entries).map_err(|e| match e {
             AtomicTurnError::PerAssetConservationViolation { asset, imbalance } => {
                 TurnError::InvalidExecutionProof(format!(
                     "bundle per-asset conservation violated: asset {asset} imbalance {imbalance} \

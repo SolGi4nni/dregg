@@ -32,9 +32,9 @@ use std::collections::BTreeMap;
 struct TestConservationOracle;
 
 impl ConservationOracle for TestConservationOracle {
-    fn conserves(&self, rows: &[(u32, i64)], supply: &[(u32, i64)]) -> Result<(), (u32, i64)> {
+    fn conserves(&self, rows: &[(u32, i64)]) -> Result<(), (u32, i64)> {
         let mut sums: BTreeMap<u32, i64> = BTreeMap::new();
-        for (asset, delta) in rows.iter().chain(supply.iter()) {
+        for (asset, delta) in rows.iter() {
             *sums.entry(*asset).or_insert(0) += *delta;
         }
         for (asset, sum) in sums {

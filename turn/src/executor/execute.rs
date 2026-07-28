@@ -1293,7 +1293,7 @@ impl TurnExecutor {
         // is handed the 32-BYTE ids and REFUSES the turn outright if two distinct
         // currencies fold to one class — a check that is impossible one line later,
         // and impossible for the Lean decider, which is handed the folded `u32`.
-        if let Err(err) = Self::check_per_asset_conservation_by_asset_id(&asset_deltas, &[]) {
+        if let Err(err) = Self::check_per_asset_conservation_by_asset_id(&asset_deltas) {
             journal.rollback(
                 ledger,
                 &self.bridged_nullifiers,

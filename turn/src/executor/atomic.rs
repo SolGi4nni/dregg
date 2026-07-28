@@ -325,8 +325,29 @@ impl TurnExecutor {
     // proven NET_DELTA is grouped by its asset class and EACH asset is required
     // to conserve INDEPENDENTLY (cross-asset borrowing is impossible — the
     // committed `cross_cell_conservation_air`'s per-asset `balance[last]==0`
-    // boundary). Declared mint/burn rows enter the conserved sum explicitly, so
-    // a DISCLOSED non-conservation balances but a HIDDEN one is caught.
+    // boundary).
+    //
+    // A SUPPLY CHANGE NEEDS NO SEPARATE CHANNEL, and the one that existed was
+    // DELETED on 2026-07-28. These functions used to take a
+    // `declared_supply: &[DeclaredSupplyChange]` so a block could ASSERT "this
+    // credit is a disclosed mint" and have the assertion enter the conserved sum.
+    // Nothing in the tree ever produced such a row — every call site, production
+    // and test, passed `&[]` — because the ratified supply model
+    // (`.docs-history-noclaude/SUPPLY-MODEL.md`) discloses supply with a PAIRED
+    // LEDGER DELTA instead: `apply_mint` debits the asset's issuer WELL and
+    // credits the holder, `apply_burn` is the dual, and `CreateCell` cannot open
+    // a balance at all. So a genuine mint already arrives here as TWO rows of the
+    // same asset that cancel, and its disclosure is auditable state rather than
+    // an unbacked claim. A HIDDEN mint is a credit whose well leg is absent, and
+    // that is exactly what the per-asset boundary catches.
+    // ⚠ The parameter was not merely unused, it was WRONG for this design: it
+    // added `+magnitude` with NO authority check, while `Effect::Mint` demands a
+    // control-grade cap over the issuer well carrying `EFFECT_MINT` (the Rust
+    // image of Lean `mintAuthorizedB`). Any caller that populated it would have
+    // minted past that gate. The Lean rule
+    // (`Dregg2.Circuit.CrossCellConserveDecision`) still MODELS declared supply —
+    // its wire section is optional and its `#guard` is a true theorem about the
+    // rule — which is the spec being more general than the deployment.
     //
     // ASSET-ID DERIVATION (the named residual, NARROWED — see
     // `resolve_proof_asset_class`). AssetId := the cell's `token_id` (the
@@ -433,9 +454,10 @@ impl TurnExecutor {
     /// `(cell_id, proven_net_delta)` (the proven signed delta read from its
     /// per-cell proof PI), group by asset class (from the ledger's committed
     /// `token_id`) and require EACH asset to conserve to zero through the
-    /// in-AIR-backed `BlockConservation` collector. `declared_supply` carries
-    /// any disclosed mint/burn rows (DECLARED non-conservation) which enter the
-    /// conserved sum explicitly. Returns the first imbalanced asset on failure.
+    /// in-AIR-backed `BlockConservation` collector. Returns the first imbalanced
+    /// asset on failure. A mint/burn contributes BOTH of its legs (holder and
+    /// issuer well), so a DISCLOSED supply change balances here with no extra
+    /// row kind — see the block comment above on the deleted `declared_supply`.
     ///
     /// This replaces the asset-BLIND scalar sum. The check is the same
     /// arithmetic the committed per-asset `Σδ=0` AIR forces (its
@@ -450,7 +472,6 @@ impl TurnExecutor {
     fn check_per_asset_conservation(
         ledger: &Ledger,
         entries: &[(CellId, i64)],
-        declared_supply: &[dregg_circuit::block_conservation::DeclaredSupplyChange],
     ) -> Result<(), AtomicTurnError> {
         // ── House Law #1: the LEDGER path routes through the verified Lean conservation oracle too ──
         // Resolve each cell's TRUSTED ledger asset class, then delegate to
@@ -465,7 +486,7 @@ impl TurnExecutor {
             .iter()
             .map(|(cell_id, delta)| (Self::asset_id_for_cell(ledger, cell_id), *delta))
             .collect();
-        Self::check_per_asset_conservation_by_asset_id(&by_asset_id, declared_supply)
+        Self::check_per_asset_conservation_by_asset_id(&by_asset_id)
     }
 
     /// THE PER-ASSET GATE, KEYED BY THE 32-BYTE ASSET ID rather than by the felt
@@ -487,7 +508,6 @@ impl TurnExecutor {
     /// `refuse_colliding_asset_classes` against their ledger separately.
     pub(super) fn check_per_asset_conservation_by_asset_id(
         rows: &[([u8; 32], i64)],
-        declared_supply: &[dregg_circuit::block_conservation::DeclaredSupplyChange],
     ) -> Result<(), AtomicTurnError> {
         let ids: Vec<[u8; 32]> = rows.iter().map(|(asset, _)| *asset).collect();
         dregg_circuit::block_conservation::assert_asset_classes_injective(&ids).map_err(|c| {
@@ -506,7 +526,7 @@ impl TurnExecutor {
                 )
             })
             .collect();
-        Self::check_per_asset_conservation_by_asset(&by_asset, declared_supply)
+        Self::check_per_asset_conservation_by_asset(&by_asset)
     }
 
     /// Resolve the per-cell ASSET CLASS for the per-asset conservation gate on
@@ -582,7 +602,6 @@ impl TurnExecutor {
     /// bundle path cannot, and that is a stated residual.
     pub(super) fn check_per_asset_conservation_by_asset(
         entries: &[(dregg_circuit::field::BabyBear, i64)],
-        declared_supply: &[dregg_circuit::block_conservation::DeclaredSupplyChange],
     ) -> Result<(), AtomicTurnError> {
         // ── House Law #1: route the per-asset Σδ=0 decision through the verified Lean AIR ──
         // When a conservation oracle is installed (`dregg-node` via `dregg-exec-lean`), the deployed
@@ -598,33 +617,20 @@ impl TurnExecutor {
         // reaches the LABELED Rust fallback. See `super::conservation_oracle`.
 
         // VACUOUS CALL — nothing to decide, so no gate is needed. A turn that moves no value at all
-        // (a `set_state`, a delegation, a permissions change) reaches here with an EMPTY delta set
-        // and no declared supply rows: there is no per-asset sum in existence to be nonzero. Without
+        // (a `set_state`, a delegation, a permissions change) reaches here with an EMPTY delta set:
+        // there is no per-asset sum in existence to be nonzero. Without
         // this, the fail-closed disposition below would refuse EVERY turn on a native node with no
         // oracle, not just the ones that touch value — over-broad, and it would make the refusal say
         // something it does not mean. This is not a conservation DECISION and not a carve-out in the
         // fallback's favour: no rows, no arithmetic, no verdict to route anywhere.
-        if entries.is_empty() && declared_supply.is_empty() {
+        if entries.is_empty() {
             return Ok(());
         }
 
         let rows: Vec<(u32, i64)> = entries.iter().map(|(a, d)| (a.0, *d)).collect();
-        let supply_rows: Vec<(u32, i64)> = declared_supply
-            .iter()
-            .map(|s| {
-                (
-                    s.asset.0,
-                    if s.mint {
-                        s.magnitude as i64
-                    } else {
-                        -(s.magnitude as i64)
-                    },
-                )
-            })
-            .collect();
 
         if let Some(oracle) = super::conservation_oracle::installed_conservation_oracle() {
-            return match oracle.conserves(&rows, &supply_rows) {
+            return match oracle.conserves(&rows) {
                 Ok(()) => Ok(()),
                 Err((asset, imbalance)) => {
                     Err(AtomicTurnError::PerAssetConservationViolation { asset, imbalance })
@@ -655,7 +661,7 @@ impl TurnExecutor {
             if super::conservation_oracle::require_verified_conservation_gate() {
                 return Err(AtomicTurnError::ConservationGateUnavailable);
             }
-            Self::unverified_rust_conservation_fallback(entries, declared_supply)
+            Self::unverified_rust_conservation_fallback(entries)
         }
     }
 
@@ -681,7 +687,6 @@ impl TurnExecutor {
     #[cfg(not(all(any(unix, windows), not(debug_assertions))))]
     fn unverified_rust_conservation_fallback(
         entries: &[(dregg_circuit::field::BabyBear, i64)],
-        declared_supply: &[dregg_circuit::block_conservation::DeclaredSupplyChange],
     ) -> Result<(), AtomicTurnError> {
         use dregg_circuit::block_conservation::{BlockConservation, PerCellContribution};
         use dregg_circuit::field::BabyBear;
@@ -698,9 +703,6 @@ impl TurnExecutor {
                     BabyBear::ONE
                 },
             });
-        }
-        for s in declared_supply {
-            block.add_supply_change(*s);
         }
 
         if let Err(dregg_circuit::block_conservation::BlockConservationError::AssetImbalanced {
@@ -1173,7 +1175,7 @@ impl TurnExecutor {
             .copied()
             .zip(proven_deltas.iter().copied())
             .collect();
-        Self::check_per_asset_conservation_by_asset(&conservation_entries, &[])?;
+        Self::check_per_asset_conservation_by_asset(&conservation_entries)?;
 
         // 4. All proofs verified + conservation holds. Commit atomically.
         // Deduct fee and increment nonce. THE EPOCH §5 ("fees as moves"):
@@ -1731,7 +1733,7 @@ impl TurnExecutor {
                     conservation_entries
                         .push((Self::asset_class_for_cell(ledger, cell_id), *delta));
                 }
-                Self::check_per_asset_conservation_by_asset(&conservation_entries, &[])
+                Self::check_per_asset_conservation_by_asset(&conservation_entries)
             });
         if let Err(e) = conservation_verdict {
             // Roll back ALL hosted mutations before returning.
@@ -3015,6 +3017,240 @@ mod hardening_tests {
         );
     }
 
+    // =======================================================================
+    // THE SUPPLY DISCLOSURE IS THE ISSUER WELL'S OWN LEDGER LEG
+    // =======================================================================
+    //
+    // `check_per_asset_conservation*` used to take a
+    // `declared_supply: &[DeclaredSupplyChange]` slice so a turn could ASSERT
+    // "this credit is a disclosed mint" and have the assertion enter the
+    // conserved sum. It was DELETED on 2026-07-28: nothing in the tree ever
+    // produced a row for it, and under the ratified supply model nothing can,
+    // because a supply change is disclosed by a PAIRED LEDGER DELTA — the
+    // issuer WELL is debited and the holder credited, both inside the same
+    // per-asset sum. These two tests are the POLES of that claim, driven
+    // through the REAL executor over a real `Effect::Mint`:
+    //
+    //   * a genuinely disclosed mint reconciles and COMMITS, with the well's
+    //     `−amount` sitting in the ledger as auditable state;
+    //   * the SAME credit whose disclosure leg lands in a DIFFERENT asset is
+    //     REFUSED as `PerAssetConservationViolation`.
+    //
+    // ANTI-VACUITY: the gate's `entries.is_empty()` short-circuit means an
+    // empty row set is admitted unconditionally, so a pole that reached it
+    // would prove nothing. Both tests assert the row set is NON-EMPTY (the
+    // well is a distinct cell carrying a nonzero leg) and the second shows the
+    // gate REFUSING a non-empty one — in the same binary as the first.
+    //
+    // SUBSTRATE: the `Σδ=0` RULE is Lean-authored
+    // (`Dregg2.Circuit.CrossCellConserveDecision`, `@[export]
+    // dregg_cross_cell_conserves`), and these tests do not restate it. What
+    // they exercise is the RUST half — gathering the rows, issuer well
+    // included. `dregg-turn`'s own test binary cannot link
+    // `libdregg_lean.a`, so the verdict here comes from the LABELED
+    // `unverified_rust_conservation_fallback`, exactly as the sibling
+    // `per_asset_collector_in_air_accept_reject` does. These are claims about
+    // the ROW SET, not about the Lean decision.
+
+    /// POLE 1 — A DISCLOSED MINT RECONCILES AND COMMITS. A cap-gated
+    /// `Effect::Mint` of 989 into a holder of asset 7: `apply_mint` debits the
+    /// asset's issuer well (negative-capable, carrying `−supply`) and credits
+    /// the holder, so the conserved row set is `{(asset7, +989), (asset7,
+    /// −989)}` and the per-asset gate admits. The DISCLOSURE is the well's
+    /// ledger row — not a claim attached to the turn — and it is gated by
+    /// `holds_mint_authority` (the Rust image of Lean `mintAuthorizedB`), which
+    /// the deleted `DeclaredSupplyChange` row was not.
+    #[test]
+    fn disclosed_mint_reconciles_through_the_issuer_well_and_commits() {
+        let mut ledger = Ledger::new();
+
+        // The holder receiving newly-minted supply of asset 7.
+        let holder = make_asset_cell(0xD9, 7, 0);
+        let holder_id = holder.id();
+        let asset_bytes = *holder.asset().as_bytes();
+        ledger.insert_cell(holder).unwrap();
+
+        // The issuer well is NOT pre-created: `apply_mint` materializes it
+        // lazily, which is the deployed path for any asset with no registered
+        // override. Its id is deterministic, so the mint-cap can be granted now.
+        let (_well_pk, well_id) = TurnExecutor::derive_issuer_well(&asset_bytes);
+        assert!(
+            !ledger.contains(&well_id),
+            "the well must not exist yet — the mint is what creates it"
+        );
+
+        // The minter: a control-grade cap over the WELL carrying EFFECT_MINT
+        // (mint authority is a cap over the issuer, never bare ownership), plus
+        // the ordinary reach over the holder the hosted action targets.
+        let mut agent = make_permissive_cell(0xA9, 1_000);
+        agent
+            .capabilities
+            .grant_faceted(well_id, AuthRequired::None, dregg_cell::EFFECT_MINT)
+            .unwrap();
+        agent
+            .capabilities
+            .grant(holder_id, AuthRequired::None)
+            .unwrap();
+        let agent_id = agent.id();
+        ledger.insert_cell(agent).unwrap();
+
+        let executor = TurnExecutor::new(ComputronCosts::zero());
+        let mint_action = Action {
+            target: holder_id,
+            method: [0u8; 32],
+            args: vec![],
+            authorization: Authorization::Unchecked,
+            preconditions: Preconditions::default(),
+            effects: vec![Effect::Mint {
+                target: holder_id,
+                slot: 0,
+                amount: 989,
+            }],
+            may_delegate: DelegationMode::None,
+            commitment_mode: Default::default(),
+            balance_change: None,
+            witness_blobs: vec![],
+        };
+        let mixed = MixedAtomicTurn {
+            agent: agent_id,
+            nonce: 0,
+            fee: 0,
+            sovereign_entries: vec![],
+            hosted_actions: vec![mint_action],
+        };
+
+        executor
+            .execute_mixed_atomic(&mixed, &mut ledger)
+            .expect("a mint whose issuer-well leg is present must COMMIT");
+
+        // THE DISCLOSURE, AS STATE. The well is a DISTINCT cell holding the
+        // negative of the supply that entered — so the conserved row set had
+        // TWO entries, not zero, and the acceptance above is not the
+        // `entries.is_empty()` short-circuit.
+        assert_ne!(well_id, holder_id);
+        assert_eq!(
+            ledger.get(&holder_id).unwrap().state.balance(),
+            989,
+            "the holder received the minted supply"
+        );
+        assert_eq!(
+            ledger
+                .get(&well_id)
+                .expect("apply_mint materializes the issuer well")
+                .state
+                .balance(),
+            -989,
+            "the issuer well carries −supply: THIS is the disclosure the deleted \
+             DeclaredSupplyChange row was standing in for"
+        );
+        // Both legs are the SAME asset, which is why they cancel per-asset.
+        assert_eq!(
+            *ledger.get(&well_id).unwrap().asset().as_bytes(),
+            asset_bytes,
+            "the well lives in the holder's currency"
+        );
+    }
+
+    /// POLE 2 — A MINT WHOSE DISCLOSURE LANDS IN THE WRONG CURRENCY IS REFUSED,
+    /// BY VARIANT. `register_issuer_well` is an operator override, and it does
+    /// not check that the registered well shares the asset. Point asset 7's
+    /// well at a cell of asset 9 and the mint still applies — but the conserved
+    /// row set becomes `{(asset7, +989), (asset9, −989)}`, so asset 7 gained 989
+    /// that nothing paid for. The per-asset gate REFUSES with
+    /// `PerAssetConservationViolation`, and everything rolls back.
+    ///
+    /// This is the pole the `&[]` parameter could never reach: an
+    /// under-collateralised supply increase is caught by the ARITHMETIC over the
+    /// real rows, never by whether a disclosure row was attached.
+    #[test]
+    fn mint_whose_well_leg_lands_in_another_asset_is_refused() {
+        let mut ledger = Ledger::new();
+
+        let holder = make_asset_cell(0xDA, 7, 0);
+        let holder_id = holder.id();
+        let holder_asset = *holder.asset().as_bytes();
+        ledger.insert_cell(holder).unwrap();
+
+        // A well in a DIFFERENT currency (asset 9), registered as asset 7's.
+        let foreign_well = make_asset_cell(0xEA, 9, 0);
+        let foreign_well_id = foreign_well.id();
+        let foreign_asset = *foreign_well.asset().as_bytes();
+        ledger.insert_cell(foreign_well).unwrap();
+
+        // The two assets must be distinct CLASSES or the refusal below would be
+        // the collision guard, not the conservation gate.
+        assert_ne!(
+            dregg_circuit::block_conservation::fold_token_id_to_asset(&holder_asset),
+            dregg_circuit::block_conservation::fold_token_id_to_asset(&foreign_asset),
+            "fixture assets must not share a fold class"
+        );
+
+        let mut agent = make_permissive_cell(0xAB, 1_000);
+        agent
+            .capabilities
+            .grant_faceted(foreign_well_id, AuthRequired::None, dregg_cell::EFFECT_MINT)
+            .unwrap();
+        agent
+            .capabilities
+            .grant(holder_id, AuthRequired::None)
+            .unwrap();
+        let agent_id = agent.id();
+        ledger.insert_cell(agent).unwrap();
+
+        let mut executor = TurnExecutor::new(ComputronCosts::zero());
+        executor.register_issuer_well(holder_asset, foreign_well_id);
+
+        let mint_action = Action {
+            target: holder_id,
+            method: [0u8; 32],
+            args: vec![],
+            authorization: Authorization::Unchecked,
+            preconditions: Preconditions::default(),
+            effects: vec![Effect::Mint {
+                target: holder_id,
+                slot: 0,
+                amount: 989,
+            }],
+            may_delegate: DelegationMode::None,
+            commitment_mode: Default::default(),
+            balance_change: None,
+            witness_blobs: vec![],
+        };
+        let mixed = MixedAtomicTurn {
+            agent: agent_id,
+            nonce: 0,
+            fee: 0,
+            sovereign_entries: vec![],
+            hosted_actions: vec![mint_action],
+        };
+
+        match executor.execute_mixed_atomic(&mixed, &mut ledger) {
+            Err(AtomicTurnError::PerAssetConservationViolation { imbalance, .. }) => {
+                assert_eq!(
+                    imbalance.abs(),
+                    989,
+                    "the imbalance is the un-funded supply increase"
+                );
+            }
+            other => panic!(
+                "a mint whose issuer-well leg lands in ANOTHER asset must be REFUSED as a \
+                 per-asset conservation violation, got {other:?}"
+            ),
+        }
+
+        // ATOMICITY: the refusal rolled the mint back on BOTH legs.
+        assert_eq!(
+            ledger.get(&holder_id).unwrap().state.balance(),
+            0,
+            "the un-funded credit did not survive"
+        );
+        assert_eq!(
+            ledger.get(&foreign_well_id).unwrap().state.balance(),
+            0,
+            "the foreign well's debit did not survive"
+        );
+    }
+
     /// Smoke test: when the executor is configured with a signing key,
     /// atomic-emitted receipts carry a 64-byte executor_signature, just
     /// like cleartext turns (closes the R-4 gap on the atomic path).
@@ -3255,7 +3491,7 @@ mod hardening_tests {
         // ACCEPT: each asset conserves. Executor boundary pre-flight is clean.
         let balanced = vec![(a_id, -10), (b_id, 10), (c_id, -5), (d_id, 5)];
         assert!(
-            TurnExecutor::check_per_asset_conservation(&ledger, &balanced, &[]).is_ok(),
+            TurnExecutor::check_per_asset_conservation(&ledger, &balanced).is_ok(),
             "balanced multi-asset turn must pass the executor gate"
         );
 
@@ -3281,7 +3517,7 @@ mod hardening_tests {
 
         // REJECT: cross-asset borrow (asset 7 short −10, asset 8 long +10).
         let forged = vec![(a_id, -10), (c_id, 10)];
-        match TurnExecutor::check_per_asset_conservation(&ledger, &forged, &[]) {
+        match TurnExecutor::check_per_asset_conservation(&ledger, &forged) {
             Err(AtomicTurnError::PerAssetConservationViolation { imbalance, .. }) => {
                 assert!(imbalance == 10 || imbalance == -10);
             }
@@ -3412,7 +3648,7 @@ mod hardening_tests {
         );
 
         // ── AFTER: the executor still holds both 32-byte ids, and refuses. ──
-        match TurnExecutor::check_per_asset_conservation(&ledger, &forge, &[]) {
+        match TurnExecutor::check_per_asset_conservation(&ledger, &forge) {
             Err(AtomicTurnError::AssetClassCollision {
                 first,
                 second,
@@ -3456,7 +3692,7 @@ mod hardening_tests {
         )
         .expect("two distinct non-colliding assets must NOT be refused");
         assert!(
-            TurnExecutor::check_per_asset_conservation(&ledger, &balanced, &[]).is_ok(),
+            TurnExecutor::check_per_asset_conservation(&ledger, &balanced).is_ok(),
             "honest multi-asset traffic must still commit"
         );
 
@@ -3467,6 +3703,6 @@ mod hardening_tests {
             one_asset.iter().map(|(cell_id, _)| cell_id),
         )
         .expect("ONE asset over many cells is not a collision");
-        assert!(TurnExecutor::check_per_asset_conservation(&ledger, &one_asset, &[]).is_ok());
+        assert!(TurnExecutor::check_per_asset_conservation(&ledger, &one_asset).is_ok());
     }
 }

@@ -18,8 +18,8 @@ use dregg_turn::executor::ConservationOracle;
 pub struct LeanConservationOracle;
 
 impl ConservationOracle for LeanConservationOracle {
-    fn conserves(&self, rows: &[(u32, i64)], supply: &[(u32, i64)]) -> Result<(), (u32, i64)> {
-        match dregg_lean_ffi::shadow_cross_cell_conserves(rows, supply) {
+    fn conserves(&self, rows: &[(u32, i64)]) -> Result<(), (u32, i64)> {
+        match dregg_lean_ffi::shadow_cross_cell_conserves(rows) {
             Ok(dregg_lean_ffi::CrossCellVerdict::Conserves) => Ok(()),
             Ok(dregg_lean_ffi::CrossCellVerdict::Imbalanced { asset, imbalance }) => {
                 Err((asset, imbalance))

@@ -88,9 +88,24 @@ def conservesRows (rows : List (Nat × Int)) : Bool := (firstImbalanced rows).is
 
 /-! ## §2 — declared mint/burn supply rows enter as explicit signed deltas.
 
-A declared mint of magnitude `m` is a `+m` credit row; a declared burn is `-m`. This matches
-`dregg_circuit::block_conservation::DeclaredSupplyChange::as_delta` (`credit := mint`): a DISCLOSED
-supply change balances, an UNdisclosed one (no matching row) is exactly what the boundary catches. -/
+A declared mint of magnitude `m` is a `+m` credit row; a declared burn is `-m`. A DISCLOSED supply
+change balances; an UNdisclosed one (no matching row) is exactly what the boundary catches.
+
+⚠ THE DEPLOYED EXECUTOR SENDS NO SUPPLY ROWS, AND THIS IS THE RULE BEING MORE GENERAL THAN THE
+DEPLOYMENT — not a gap. This section used to name a Rust mirror
+(`dregg_circuit::block_conservation::DeclaredSupplyChange::as_delta`, `credit := mint`); that type
+and the `declared_supply` parameter threaded through
+`turn/src/executor/atomic.rs::check_per_asset_conservation*` were DELETED on 2026-07-28, because no
+producer for them existed anywhere in the tree — every call site, production and test, passed an
+empty slice. The ratified dregg supply model
+(`.docs-history-noclaude/SUPPLY-MODEL.md`) discloses a supply change as the issuer WELL's own PAIRED
+ledger delta instead: `apply_mint` debits the asset's well (carrying `-supply`) and credits the
+holder, so a mint reaches `conservesRows` as TWO rows of the same asset that cancel — auditable
+state, and gated by the Rust image of `mintAuthorizedB`, which an asserted row was not.
+
+So the wire's supply section (§3) is what the Rust bridge now always sends as `nSupply = 0`, and the
+`#guard` below for it is a true theorem about THIS RULE that no deployed caller exercises. Keeping it
+costs nothing and is what a future, properly-gated ex-nihilo supply design would route through. -/
 
 /-- Fold one declared supply row `(asset, magnitude, mint?)` into a signed `(asset, δ)` delta. -/
 def supplyRowDelta (asset mag : Nat) (mint : Bool) : Nat × Int :=

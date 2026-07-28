@@ -527,7 +527,7 @@ pub enum CrossCellVerdict {
 }
 
 /// Run the VERIFIED, Lean-authored cross-cell per-asset conservation decision `@[export]
-/// dregg_cross_cell_conserves` over the turn's `(asset, delta)` rows + declared mint/burn supply rows.
+/// dregg_cross_cell_conserves` over the turn's `(asset, delta)` rows.
 ///
 /// This is the object `turn/src/executor/atomic.rs`'s per-asset conservation gate routes through (via
 /// `dregg-exec-lean`'s conservation oracle) so the deployed executor's `Σδ=0`-per-asset decision is
@@ -536,18 +536,21 @@ pub enum CrossCellVerdict {
 /// (`creditSum = debitSum` per asset), so the route-through and the proof the prover commits to cannot
 /// drift.
 ///
-/// `rows`: `(asset_class, signed_net_delta)` per verified per-cell contribution. `supply`:
-/// `(asset_class, signed_declared_supply_change)` (a mint is `+mag`, a burn `-mag`) — the executor's
-/// live paths pass an empty slice. Returns `Err` if the archive lacks the export (the caller then fails
-/// closed) or the wire round-trip fails.
-pub fn shadow_cross_cell_conserves(
-    rows: &[(u32, i64)],
-    supply: &[(u32, i64)],
-) -> Result<CrossCellVerdict, String> {
+/// `rows`: `(asset_class, signed_net_delta)` per verified per-cell contribution — issuer-well legs
+/// included, which is how a disclosed mint/burn reaches the sum. Returns `Err` if the archive lacks
+/// the export (the caller then fails closed) or the wire round-trip fails.
+///
+/// ⚑ THE DECLARED-SUPPLY ARGUMENT WAS DELETED on 2026-07-28. This function used to take a second
+/// `supply: &[(u32, i64)]` slice and encode it into the wire's optional supply section. It had NO
+/// producer anywhere in the tree — every caller, production and test, passed an empty slice — because
+/// the ratified supply model (`.docs-history-noclaude/SUPPLY-MODEL.md`) discloses supply as the issuer
+/// well's paired ledger delta, not as an asserted row. The wire still carries an explicit `0` supply
+/// count: that is this executor telling the Lean rule, in the rule's own vocabulary, that it discloses
+/// no supply rows. The Lean rule keeps its supply section (and its `#guard` for it) — the spec is
+/// legitimately more general than the deployment; a Rust parameter with no producer is not.
+pub fn shadow_cross_cell_conserves(rows: &[(u32, i64)]) -> Result<CrossCellVerdict, String> {
     ensure_lean_init()?;
-    // Build the canonical wire: `nRows [asset delta]* nSupply [asset mag mint]*`. A signed supply
-    // delta is re-expressed as (magnitude, mint?) so the Lean codec folds it back to the same signed
-    // row (mint = credit = positive).
+    // Build the canonical wire: `nRows [asset delta]* nSupply [asset mag mint]*`, with `nSupply = 0`.
     let mut wire = String::new();
     wire.push_str(&rows.len().to_string());
     for (asset, delta) in rows {
@@ -556,16 +559,7 @@ pub fn shadow_cross_cell_conserves(
         wire.push(' ');
         wire.push_str(&delta.to_string());
     }
-    wire.push(' ');
-    wire.push_str(&supply.len().to_string());
-    for (asset, delta) in supply {
-        wire.push(' ');
-        wire.push_str(&asset.to_string());
-        wire.push(' ');
-        wire.push_str(&delta.unsigned_abs().to_string());
-        wire.push(' ');
-        wire.push_str(if *delta >= 0 { "1" } else { "0" });
-    }
+    wire.push_str(" 0");
     let out = ffi::lean_cross_cell_conserves(&wire)?;
     let mut toks = out.split_whitespace();
     match toks.next() {

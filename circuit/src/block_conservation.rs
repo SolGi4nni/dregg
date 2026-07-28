@@ -13,12 +13,12 @@
 //! out of nothing.
 //!
 //! This module is the COLLECTOR that closes that: given a BLOCK = the set of verified per-cell
-//! proofs (each carrying its published `(NET_DELTA, asset)`) + the block's declared mint/burn supply
-//! changes, it (a) extracts each proof's signed delta via
+//! proofs (each carrying its published `(NET_DELTA, asset)`), it (a) extracts each proof's signed
+//! delta via
 //! [`crate::cross_cell_conservation_air::CrossCellDelta::from_net_delta_pi`], (b) groups by asset
 //! (AssetId := issuer-cell), (c) runs the PROVEN per-asset AIR
 //! ([`crate::cross_cell_conservation_air::verify_cross_cell_conservation`]) on each group, and
-//! (d) ACCEPTS the block iff EVERY asset balances to zero (incl. its declared ±supply rows), else
+//! (d) ACCEPTS the block iff EVERY asset balances to zero, else
 //! REJECTS — with NO trust beyond the per-cell proofs (which are individually valid). This is the
 //! cross-cell light-client bite the per-cell path structurally cannot give.
 //!
@@ -37,15 +37,46 @@
 //! the already-folded class). Read that function's docs before treating this partition as a floor;
 //! [`assert_asset_classes_injective`] is the refusal every caller still holding the ids must run.
 //!
-//! ## Mint / burn are NOT a hole
+//! ## Mint / burn are NOT a hole — and the DISCLOSURE IS A LEDGER ROW, not a claim
 //!
-//! Disclosed supply changes enter as explicit signed rows ([`DeclaredSupplyChange`]): a mint of
-//! `+989` is a `+989` credit row paired against the corresponding burn/issuer accounting, exactly
-//! the `Generative`/`Annihilative` disclosed non-conservation of `Dregg2.Spec.Conservation`. The
-//! conserved sum is over the FULL row set including them, so a HIDDEN mint (a `+999` credit with no
-//! matching declared supply row) is precisely what the per-asset boundary catches.
+//! This module used to carry a `DeclaredSupplyChange` row type so a block could ASSERT "this `+989`
+//! is a disclosed mint" and have the assertion enter the conserved sum. **It was deleted on
+//! 2026-07-28 and nothing was lost**, because the deployed supply model
+//! (`.docs-history-noclaude/SUPPLY-MODEL.md`) does not disclose supply with a claim — it discloses
+//! it with a *paired ledger delta*:
+//!
+//! * **Mint** debits the asset's ISSUER WELL (a real, signed, negative-capable `−supply` account)
+//!   and credits the holder — `turn/src/executor/apply.rs::apply_mint`. Per-asset `Σδ = 0`.
+//! * **Burn** is the dual: holder → well. `apply_burn`. Per-asset `Σδ = 0`.
+//! * `CreateCell` **cannot** open a balance (`apply.rs`, hard `Err(CreateCellNonZeroBalance)`), so
+//!   there is no implicit value entry either.
+//!
+//! So a genuine supply change already appears in this collector as TWO ordinary contributions that
+//! cancel, and the well's leg is *auditable state* rather than an unbacked assertion. A HIDDEN mint
+//! is a `+999` credit whose well leg is absent — and that is exactly what the per-asset boundary
+//! catches, with no row type required.
+//!
+//! ⚠ Why the row type is not merely unused but WRONG here: it added `+magnitude` to the conserved
+//! sum with **no authority check of any kind**, while `Effect::Mint` requires a control-grade
+//! capability over the issuer well carrying the `EFFECT_MINT` facet (the Rust image of Lean
+//! `mintAuthorizedB` — "a cell cannot coin its own supply"). Any caller that populated it would
+//! have minted past that gate. It had no producer anywhere in the tree; every call site in the
+//! executor, the bundle path and the tests passed an empty slice.
+//!
+//! The Lean decision procedure `Dregg2.Circuit.CrossCellConserveDecision` still MODELS declared
+//! supply rows — its wire section is optional and its `#guard` for them is a true theorem about the
+//! rule. That is the spec being more general than the deployment, which is fine. What is not fine
+//! is a Rust parameter advertising a channel with no producer, because a parameter is a call-site
+//! obligation and the next reader fills it in.
 //!
 //! ## ADDITIVE — the live-wire seam (NOT wired here)
+//!
+//! ⚠ THE SECOND, LARGER GAP THE SUPPLY-ROW DELETION MAKES VISIBLE: this collector sums the
+//! contributions it is HANDED, and on both live paths the row set is built from a narrow channel —
+//! `Action::balance_change` on the cleartext path (`executor/execute_tree.rs`), and
+//! `Transfer`/`Burn`/`Mint` only on the mixed-atomic path (`executor/atomic.rs`). A `Σδ = 0` verdict
+//! is therefore a statement about THOSE rows, not about every way value moves in a turn. See
+//! `docs/reference/EXECUTED-PATH-SYMMETRY-2026-07-26.md` §2 for the four pairwise holes.
 //!
 //! This collector is BUILT + TESTED here over REAL multi-cell proofs, ADDITIVE. It is NOT invoked by
 //! the deployed verifier. The live-wire is the serialized handoff. The DEPLOYED path ALREADY
@@ -58,8 +89,9 @@
 //! > `AtomicTurnError::ConservationViolation`. That scalar sum is the OFF-AIR, NOT-per-asset,
 //! > NOT-in-circuit version of THIS collector. The live-wire replaces it: pair each `public_inputs`
 //! > with its cell's asset class (AssetId := issuer-cell, from `entry.cell_id`), feed
-//! > [`PerCellContribution::from_proof_pi`] into a [`BlockConservation`], add the turn's declared
-//! > mint/burn rows, and require [`BlockConservation::prove_and_verify`] (or, on the light-client
+//! > [`PerCellContribution::from_proof_pi`] into a [`BlockConservation`] (a mint/burn already
+//! > contributes BOTH its legs, holder and issuer well), and require
+//! > [`BlockConservation::prove_and_verify`] (or, on the light-client
 //! > side, [`BlockConservation::verify_with_proofs`] over the published per-asset proofs). The
 //! > block-rejection path is the existing `Err(AtomicTurnError::ConservationViolation)` (now carrying
 //! > the per-asset imbalance) — "On failure … no state changes" (the function's atomic-commit
@@ -247,32 +279,6 @@ pub fn assert_asset_classes_injective(ids: &[[u8; 32]]) -> Result<(), AssetClass
     Ok(())
 }
 
-/// A declared mint / burn supply-change row for one asset, disclosed by the block. Enters the
-/// per-asset conservation sum as an explicit signed delta exactly like a per-cell delta — so a
-/// disclosed mint balances, but an UNdisclosed one (no matching row) does not.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct DeclaredSupplyChange {
-    /// The asset / issuer-cell class whose supply changes.
-    pub asset: BabyBear,
-    /// The magnitude of the supply change.
-    pub magnitude: u32,
-    /// `true` = mint (a `+mag` credit injected into circulation); `false` = burn (a `−mag` debit).
-    /// The conserved sum is over per-cell deltas + these rows, so a mint must be matched by the
-    /// per-cell credits it funds (and vice versa) for the asset to balance.
-    pub mint: bool,
-}
-
-impl DeclaredSupplyChange {
-    /// As a [`CrossCellDelta`] over the same asset partition (a mint is a credit, a burn a debit).
-    fn as_delta(&self) -> CrossCellDelta {
-        CrossCellDelta {
-            asset: self.asset,
-            magnitude: self.magnitude,
-            credit: self.mint,
-        }
-    }
-}
-
 /// One verified per-cell proof's contribution to the block: its published signed `NET_DELTA` PI pair
 /// (read straight from the proof's public inputs at `pi::NET_DELTA_MAG` / `pi::NET_DELTA_SIGN`) and
 /// the asset / issuer-cell class that delta moves (AssetId := issuer-cell, supplied off-AIR by the
@@ -315,8 +321,8 @@ impl PerCellContribution {
 /// Why a block failed the cross-cell conservation collector.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BlockConservationError {
-    /// Asset `asset` does not conserve: the signed sum of its per-cell deltas + declared supply rows
-    /// is `imbalance ≠ 0` (e.g. a hidden mint). The block is REJECTED.
+    /// Asset `asset` does not conserve: the signed sum of its per-cell deltas is `imbalance ≠ 0`
+    /// (e.g. a hidden mint — a credit whose issuer-well leg is absent). The block is REJECTED.
     AssetImbalanced { asset: BabyBear, imbalance: i64 },
     /// The proven per-asset AIR rejected asset `asset`'s aggregation proof (the in-circuit
     /// `balance[last]==0` boundary). Carries the underlying verifier error.
@@ -329,7 +335,7 @@ impl std::fmt::Display for BlockConservationError {
             BlockConservationError::AssetImbalanced { asset, imbalance } => write!(
                 f,
                 "block cross-cell conservation FAILED: asset {:?} nets to {} (≠ 0) — a hidden \
-                 mint/burn across cells with no matching declared supply row",
+                 mint/burn across cells with no matching issuer-well leg",
                 asset, imbalance
             ),
             BlockConservationError::AssetProofRejected { asset, reason } => write!(
@@ -344,13 +350,14 @@ impl std::fmt::Display for BlockConservationError {
 
 impl std::error::Error for BlockConservationError {}
 
-/// The BLOCK-level cross-cell conservation collector: a set of verified per-cell proof
-/// contributions + the block's declared mint/burn supply changes. Grouped by asset and checked
-/// per-asset through the PROVEN AIR.
+/// The BLOCK-level cross-cell conservation collector: the set of verified per-cell proof
+/// contributions, grouped by asset and checked per-asset through the PROVEN AIR.
+///
+/// A supply change needs no separate row type here: a mint/burn is a holder↔issuer-well MOVE, so it
+/// arrives as TWO contributions of the same asset that cancel (see the module header).
 #[derive(Clone, Debug, Default)]
 pub struct BlockConservation {
     contributions: Vec<PerCellContribution>,
-    supply_changes: Vec<DeclaredSupplyChange>,
 }
 
 impl BlockConservation {
@@ -365,13 +372,7 @@ impl BlockConservation {
         self
     }
 
-    /// Add one declared mint/burn supply-change row.
-    pub fn add_supply_change(&mut self, s: DeclaredSupplyChange) -> &mut Self {
-        self.supply_changes.push(s);
-        self
-    }
-
-    /// Group every contribution + declared supply row by asset, in a deterministic asset order (the
+    /// Group every contribution by asset, in a deterministic asset order (the
     /// `BabyBear` canonical value). Each group is the full signed-delta list one per-asset proof
     /// certifies. Padding-collector convention from the committed AIR: a group with a single delta
     /// still proves (the trace builder pads to ≥2 rows).
@@ -379,9 +380,6 @@ impl BlockConservation {
         let mut groups: BTreeMap<u32, Vec<CrossCellDelta>> = BTreeMap::new();
         for c in &self.contributions {
             groups.entry(c.asset.0).or_default().push(c.as_delta());
-        }
-        for s in &self.supply_changes {
-            groups.entry(s.asset.0).or_default().push(s.as_delta());
         }
         groups
     }
@@ -398,7 +396,7 @@ impl BlockConservation {
     }
 
     /// PRE-FLIGHT accept check (prover-free): the block conserves iff EVERY asset's signed delta sum
-    /// (per-cell + declared supply) is zero. Returns the first imbalanced asset as the rejection.
+    /// is zero. Returns the first imbalanced asset as the rejection.
     /// This is the arithmetic the per-asset proven AIR's `balance[last]==0` boundary forces; the
     /// live verifier runs this before [`Self::prove_and_verify`] (the debug batch prover panics on an
     /// unsatisfiable trace, so the pre-flight is the clean fail-closed gate).
@@ -578,27 +576,46 @@ mod tests {
         }
     }
 
-    /// A DISCLOSED mint restores conservation: the forged-looking `A −10, B +999` block, WITH a
-    /// declared `−989` supply burn row (the issuer's disclosed Annihilative row that funds the
-    /// minted credit), balances to 0 and is ACCEPTED. Non-conservation is only legal when DISCLOSED.
+    /// A DISCLOSED SUPPLY CHANGE RESTORES CONSERVATION — AND ITS DISCLOSURE IS THE ISSUER WELL'S
+    /// OWN LEG, not a claimed row. The forged-looking `A −10, B +999` block balances to 0 once the
+    /// well contributes the `−989` that funded the extra credit, exactly as
+    /// `turn/src/executor/apply.rs::apply_mint` writes it (well debited, holder credited, same
+    /// asset). The well's leg is a real per-cell delta, so it needs no separate row type — and it
+    /// carries a capability gate the deleted `DeclaredSupplyChange` row never had.
     #[test]
-    fn declared_supply_change_restores_conservation() {
+    fn issuer_well_leg_is_the_supply_disclosure() {
         let asset = BabyBear::new(7);
-        let debit_pi = real_per_cell_transfer_pi(100, 10, 1); // −10
-        let credit_pi = real_per_cell_transfer_pi(0, 999, 0); // +999
+        let debit_pi = real_per_cell_transfer_pi(100, 10, 1); // holder A: −10
+        let credit_pi = real_per_cell_transfer_pi(0, 999, 0); // holder B: +999
+        // ISSUER WELL: −989, the leg that funds the extra credit. Its pre-balance is 989 because
+        // the Effect-VM trace generator's `CellState` is unsigned and refuses a debit below zero;
+        // the DEPLOYED well is negative-capable (`well_debit_balance`), and the collector only ever
+        // sees the published NET_DELTA, which is `−989` either way.
+        let well_pi = real_per_cell_transfer_pi(989, 989, 1);
 
         let mut block = BlockConservation::new();
         block
             .add_contribution(PerCellContribution::from_proof_pi(asset, &debit_pi).unwrap())
             .add_contribution(PerCellContribution::from_proof_pi(asset, &credit_pi).unwrap())
-            .add_supply_change(DeclaredSupplyChange {
-                asset,
-                magnitude: 989,
-                mint: false, // a declared −989 burn/supply row that funds the +999 credit
-            });
+            .add_contribution(PerCellContribution::from_proof_pi(asset, &well_pi).unwrap());
 
         assert_eq!(block.per_asset_balances().get(&7), Some(&0));
-        block.check().expect("disclosed supply row conserves");
+        block
+            .check()
+            .expect("a mint whose issuer-well leg is present conserves");
+
+        // ANTI-VACUITY: the SAME three-row shape WITHOUT the well leg is the hidden mint, and it is
+        // refused. So the acceptance above is the well's contribution, not an empty check.
+        let mut undisclosed = BlockConservation::new();
+        undisclosed
+            .add_contribution(PerCellContribution::from_proof_pi(asset, &debit_pi).unwrap())
+            .add_contribution(PerCellContribution::from_proof_pi(asset, &credit_pi).unwrap());
+        match undisclosed.check() {
+            Err(BlockConservationError::AssetImbalanced { imbalance, .. }) => {
+                assert_eq!(imbalance, 989, "the un-funded credit is the imbalance")
+            }
+            other => panic!("a mint with no issuer-well leg must be REJECTED, got {other:?}"),
+        }
     }
 
     /// THE PER-ASSET PARTITION TOOTH. A block where asset 7 is short `−10` and asset 8 is long `+10`
@@ -675,7 +692,7 @@ mod tests {
 
     /// MULTI-ASSET: a block touching asset 7 (A −10 / B +10) AND asset 8 (C −5 / D +5), each
     /// balanced, PROVES + VERIFIES — one per-asset AIR run per asset (the
-    /// `multi_domain_independent` conjunction). NO declared supply rows needed.
+    /// `multi_domain_independent` conjunction).
     #[test]
     fn multi_asset_balanced_block_conserves() {
         let asset7 = BabyBear::new(7);

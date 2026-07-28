@@ -39,19 +39,26 @@
 
 use std::sync::OnceLock;
 
-/// A per-asset conservation decision procedure over the turn's `(asset, signed_delta)` rows plus
-/// declared mint/burn supply rows (a mint is `+mag`, a burn `-mag`).
+/// A per-asset conservation decision procedure over the turn's `(asset, signed_delta)` rows.
 ///
 /// [`conserves`](ConservationOracle::conserves) returns `Ok(())` when EVERY asset's signed delta sum is
 /// zero (the block conserves — ADMIT) and `Err((asset, imbalance))` for the FIRST imbalanced asset in
 /// ascending key order (the same order as the Rust twin's `BTreeMap`, so a routed
 /// [`AtomicTurnError::PerAssetConservationViolation`](super::atomic::AtomicTurnError) is byte-identical
 /// to the pre-route path).
+///
+/// ⚑ THERE IS NO SEPARATE DECLARED-SUPPLY CHANNEL, and the one that existed was DELETED on
+/// 2026-07-28. This method used to take a second `supply: &[(u32, i64)]` slice for disclosed
+/// mint/burn; nothing in the tree ever produced a row for it. The ratified supply model
+/// (`.docs-history-noclaude/SUPPLY-MODEL.md`) discloses a supply change as the issuer WELL's own
+/// paired ledger delta, so a mint arrives in `rows` as TWO entries of the same asset that cancel —
+/// auditable state, and gated by `mintAuthorizedB`, which an asserted row was not. See the block
+/// comment in [`super::atomic`] above `check_per_asset_conservation`.
 pub trait ConservationOracle: Send + Sync {
     /// Decide per-asset conservation. `rows`: `(asset_class, signed_net_delta)` per verified per-cell
-    /// contribution. `supply`: `(asset_class, signed_declared_supply_change)`. `Ok(())` admits;
-    /// `Err((asset, imbalance))` refuses with the first imbalanced asset.
-    fn conserves(&self, rows: &[(u32, i64)], supply: &[(u32, i64)]) -> Result<(), (u32, i64)>;
+    /// contribution — issuer-well legs included. `Ok(())` admits; `Err((asset, imbalance))` refuses
+    /// with the first imbalanced asset.
+    fn conserves(&self, rows: &[(u32, i64)]) -> Result<(), (u32, i64)>;
 }
 
 static ORACLE: OnceLock<Box<dyn ConservationOracle>> = OnceLock::new();
