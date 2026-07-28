@@ -656,7 +656,8 @@ theorem root_binds_automaton (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR 
     (d e : TableDfa Nat Nat) (hd : CommitsAutomaton hash R d) (he : CommitsAutomaton hash R e) :
     ∀ s y : Nat, s < ASTATES → y < ASYM → d.step s y = e.step s y := by
   intro s y hs hy
-  have h := opensTo_functional hash hCR (hd s y hs hy) (he s y hs hy)
+  have h := opensTo_functional hash (hd s y hs hy) (he s y hs hy)
+    (fun hc => hc.1 (hCR _ _ hc.2))
   simp only [Option.some.injEq] at h
   exact_mod_cast h
 
@@ -753,7 +754,7 @@ theorem att_row_reads (hCR : Poseidon2SpongeCR hash) (d : TableDfa Nat Nat) (R :
     rw [hkey] at hopen
     have hc := hcommit ((t.rows[i]'hi) CURRENT).toNat ((t.rows[i]'hi) SYMBOL).toNat
       (by simp only [ASTATES]; omega) (by simp only [ASYM]; omega)
-    have hval := opensTo_functional hash hCR hopen hc
+    have hval := opensTo_functional hash hopen hc (fun hcc => hcc.1 (hCR _ _ hcc.2))
     simp only [Option.some.injEq] at hval
     rw [hval]
     rfl

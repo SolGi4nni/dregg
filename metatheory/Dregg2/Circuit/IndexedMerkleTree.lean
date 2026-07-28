@@ -914,7 +914,8 @@ theorem toy_preRootModelsChain :
     rw [show perfectRoot refSponge 2 (MapOpsColumnLayout.aafiXsToy refSponge)
           = MapOpsColumnLayout.aafiOldRootToy refSponge from rfl, hroot]
   have hxs : MapOpsColumnLayout.aafiXsToy refSponge = xs :=
-    perfectRoot_injective refSponge refSponge_CR 2 hxsToyLen hxlen hroots
+    perfectRoot_injective refSponge 2 hxsToyLen hxlen
+      (fun hc => hc.1 (refSponge_CR _ _ hc.2)) hroots
   rw [← hxs]; exact toy_imtVecCorr
 
 /-- **★ MEMBERSHIP DISCHARGED — the seam CLOSED end-to-end.** `aafiGates_force_lowMem_layout` DERIVES

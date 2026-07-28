@@ -120,11 +120,11 @@ open Dregg2.Circuit (Assignment)
 open Dregg2.Circuit.DescriptorIR2 (MapOp MapOpKind MAP_TREE_DEPTH EffectVmDescriptor2 VmTrace
   VmConstraint2 mapOpsOf envAt)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
-open Dregg2.Circuit.MapMerkleRoot (mapNode perfectRoot mapRoot)
+open Dregg2.Circuit.MapMerkleRoot (mapNode perfectRoot mapRoot perfectRoot_binds_or_collides)
 open Dregg2.Circuit.MapDenotationSchema (MapLeafSchema imtChainOf opensToMerkleS writesToMerkleS
   imtSchema_chain_imtSorted)
 open Dregg2.Circuit.MapPaddedDenotation (padDigest padTo padTo_length padTo_dense
-  perfectRoot_binds_or_collides padImtRoot PadFree3 padImtSchema padImtTeeth imtChainOf_length
+  padImtRoot PadFree3 padImtSchema padImtTeeth imtChainOf_length
   imtToHeap_imtChainOf oddSponge oddSponge_injective oddSponge_padFree3)
 open Dregg2.Circuit.IndexedMerkleTree (ImtLeaf ImtSorted imtAddrs imtLeafHash imtToHeap
   imtAbsent_excludes keys_imtToHeap)

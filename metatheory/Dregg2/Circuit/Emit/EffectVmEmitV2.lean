@@ -1098,7 +1098,7 @@ theorem attenuateV2_held_determined (hash : List ℤ → ℤ)
         ((envAt t i).loc (prmCol CAP_KEY)) (some v)) :
     v = (envAt t i).loc (prmCol HELD_MASK) := by
   have h := (attenuateV2_non_amp hash minit mfin maddrs t hsub hsat i hi hactive).1
-  have := opensTo_functional hash hCR hclaim h
+  have := opensTo_functional hash hclaim h (fun hc => hc.1 (hCR _ _ hc.2))
   simpa using this
 
 /-! ## §7.5 — NEWLY EXPRESSIBLE I.b: the RevokeCapability cap-crown circuit leg (sel 24).
@@ -1181,7 +1181,7 @@ theorem revokeV2_held_determined (hash : List ℤ → ℤ)
         ((envAt t i).loc (prmCol CAP_KEY)) (some v)) :
     v = (envAt t i).loc (prmCol HELD_MASK) := by
   have h := (revokeV2_removes hash minit mfin maddrs t hsat i hi hactive).1
-  have := opensTo_functional hash hCR hclaim h
+  have := opensTo_functional hash hclaim h (fun hc => hc.1 (hCR _ _ hc.2))
   simpa using this
 
 /-- **The post `cap_root` is DETERMINED (anti-forgery).** Under CR, the new root is the unique sorted
@@ -1197,7 +1197,7 @@ theorem revokeV2_post_determined (hash : List ℤ → ℤ)
         ((envAt t i).loc (prmCol CAP_KEY)) 0 r') :
     r' = (envAt t i).loc (saCol state.CAP_ROOT) := by
   have h := (revokeV2_removes hash minit mfin maddrs t hsat i hi hactive).2
-  exact writesTo_functional hash hCR hclaim h
+  exact writesTo_functional hash hclaim h (fun hc => hc.1 (hCR _ _ hc.2))
 
 /-! ## §7.6 — NEWLY EXPRESSIBLE I.c: the Custom cell-program recursive-proof binding (sel 8).
 

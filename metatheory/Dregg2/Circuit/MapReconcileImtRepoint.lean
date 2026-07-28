@@ -142,8 +142,8 @@ theorem imtRoot_ne_mapRoot (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR ha
     perfectRoot hash dep (c.map (imtLeafHash hash)) ≠ mapRoot hash dep h := by
   intro heq
   have hvec : c.map (imtLeafHash hash) = h.map (Heap.leafOf hash) :=
-    perfectRoot_injective hash hCR dep (by rw [List.length_map]; exact hc)
-      (by rw [List.length_map]; exact hh) heq
+    perfectRoot_injective hash dep (by rw [List.length_map]; exact hc)
+      (by rw [List.length_map]; exact hh) (fun hcc => hcc.1 (hCR _ _ hcc.2)) heq
   have hposc : 0 < c.length := by rw [hc]; exact Nat.two_pow_pos dep
   have hposh : 0 < h.length := by rw [hh]; exact Nat.two_pow_pos dep
   have h0 : (c.map (imtLeafHash hash))[0]? = (h.map (Heap.leafOf hash))[0]? := by rw [hvec]
@@ -640,7 +640,8 @@ theorem topGap_old_model_false_bracket :
   rw [rowOf_root] at hroot
   rw [rowOf_root, rowOf_key] at hgb
   have hh : h = imtToHeap depSpine :=
-    mapRoot_injective refSponge refSponge_CR MAP_TREE_DEPTH hlen depHeap_length hroot
+    mapRoot_injective refSponge MAP_TREE_DEPTH hlen depHeap_length
+      (fun hc => hc.1 (refSponge_CR _ _ hc.2)) hroot
   refine adjacentBracket_unsat_above_max refSponge refSponge_CR MAP_TREE_DEPTH h hlen hroot ?_ hgb
   intro x hx
   rw [hh, keys_imtToHeap] at hx

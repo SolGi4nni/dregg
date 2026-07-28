@@ -101,9 +101,9 @@ open Dregg2.Circuit (Assignment)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv siteHoldsAll)
 open Dregg2.Circuit.DescriptorIR2
-open Dregg2.Circuit.MapMerkleRoot (mapNode mapNode_injective foldLevel perfectRoot
-  perfectRoot_injective foldLevel_length_half mapRoot mapRoot_injective opensToMerkle
-  writesToMerkle opensToMerkle_functional writesToMerkle_functional)
+open Dregg2.Circuit.MapMerkleRoot (mapNode foldLevel perfectRoot
+  perfectRootFind perfectRoot_injective foldLevel_length_half mapRoot mapRootFind mapRoot_injective
+  opensToMerkle writesToMerkle opensToMerkle_functional writesToMerkle_functional)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Crypto.SpongeCarrierReduction (IsSpongeColl)
 open Dregg2.Circuit.AirChecksSatisfied (isArith MainAirAcceptF airAccept_forces_satisfied2)
@@ -1216,7 +1216,8 @@ theorem toy_forged_read_bites :
   intro hg
   have h := (reconcileGates_force_opening refSponge refSponge_CR 2
     (toyForgedReadEnv refSponge) toyReadOp hg).1
-  have := opensToMerkle_functional refSponge refSponge_CR 2 h toy_read_fires
+  have := opensToMerkle_functional refSponge 2 h toy_read_fires
+    (fun hc => hc.1 (refSponge_CR _ _ hc.2))
   norm_num [toyReadOp, toyForgedReadEnv, EmittedExpr.eval] at this
 
 /-- **FORGED TOOTH 2 (the frozen post-root BITES) — path to a different root is UNSAT.** Under
@@ -1231,8 +1232,10 @@ theorem toy_frozen_insert_bites :
   have h := reconcileGates_force_opening refSponge refSponge_CR 2
     (toyFrozenInsertEnv refSponge) toyInsertOp hg
   have heq : mapRoot refSponge 2 toyHeap = mapRoot refSponge 2 toyGrown :=
-    writesToMerkle_functional refSponge refSponge_CR 2 h toy_insert_op_value_update_fires
-  have : toyHeap = toyGrown := mapRoot_injective refSponge refSponge_CR 2 rfl rfl heq
+    writesToMerkle_functional refSponge 2 h toy_insert_op_value_update_fires
+      (fun hc => hc.1 (refSponge_CR _ _ hc.2))
+  have : toyHeap = toyGrown :=
+    mapRoot_injective refSponge 2 rfl rfl (fun hc => hc.1 (refSponge_CR _ _ hc.2)) heq
   exact absurd this (by decide)
 
 -- The openings the teeth force are the heap's REAL lookup semantics (executable face):
@@ -1529,7 +1532,8 @@ theorem aafi_toy_frozen_bites :
   have hroots : perfectRoot refSponge 2 xs
       = perfectRoot refSponge 2 ((xs.set p1 (aafiLeafHash refSponge 0 0 50)).set p2
           (aafiLeafHash refSponge 50 7 100)) := by rw [← hor, ← hnew]
-  have hxx := perfectRoot_injective refSponge refSponge_CR 2 hxlen hx2len hroots
+  have hxx := perfectRoot_injective refSponge 2 hxlen hx2len
+    (fun hc => hc.1 (refSponge_CR _ _ hc.2)) hroots
   have hp1lt : p1 < xs.length := (List.getElem?_eq_some_iff.mp hlowmem).1
   -- xs = the two-point-updated vector; but at the low position that vector holds low_NEW, while
   -- `hlowmem` says xs holds low_OLD there — distinct digests (100 ≠ 50) under CR.

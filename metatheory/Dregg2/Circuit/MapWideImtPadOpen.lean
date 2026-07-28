@@ -28,8 +28,8 @@ below, so the port is a change of citation, not of proof.
 
 The **node layer does not widen** — `perfectRoot` folds a vector of ℤ digests whatever the key
 width is. So the entire `_or_collides` spine arrives for free at 8 felts:
-`MapPaddedDenotation.mapNode_binds_or_collides` / `foldLevel_binds_or_collides` /
-`perfectRoot_binds_or_collides`, the padding algebra (`padTo`, `PadHit`,
+`MapMerkleRoot.foldLevel_binds_or_collides` / `perfectRoot_binds_or_collides` (⚑ MOVED there
+2026-07-28 from `MapPaddedDenotation`, which carried a verbatim duplicate), the padding algebra (`padTo`, `PadHit`,
 `append_replicate_eq_or_hit`, `padTo_eq_or_hit`, `padTo_getElem?`, `padTo_set`, `padTo_snoc_pad`),
 the floor-free path law `MapOpsColumnLayout.pathRecompute_binds_updates_or_collides` with its
 `pathCollFind` extractor, and the symbolic sparse paths `leftPadPath` / `slot1Path`. Nothing in
@@ -107,10 +107,11 @@ namespace Dregg2.Circuit.MapWideImtPadOpen
 open Dregg2.Substrate
 open Dregg2.Crypto.SpongeCarrierReduction (IsSpongeColl)
 open Dregg2.Circuit.Poseidon2Binding (SpongeColl)
-open Dregg2.Circuit.MapMerkleRoot (mapNode foldLevel perfectRoot)
+open Dregg2.Circuit.MapMerkleRoot (mapNode foldLevel perfectRoot perfectRootFind
+  perfectRoot_binds_or_collides)
 open Dregg2.Circuit.IndexedMerkleTree (ImtLeaf ImtSorted ImtAbsent imtAddrs imtAbsent_excludes)
 open Dregg2.Circuit.MapPaddedDenotation (padDigest padTo padTo_length padTo_dense PadHit
-  padTo_eq_or_hit perfectRootFind perfectRoot_binds_or_collides emptySubtreeRoot
+  padTo_eq_or_hit emptySubtreeRoot
   perfectRoot_all_padding oddSponge oddSponge_injective oddSponge_ne_pad)
 open Dregg2.Circuit.MapKindImtGates (padTo_set padTo_getElem? padTo_succ_split padTo_snoc_pad
   leftPadPath leftPadPath_length leftPadPath_pos leftPadPath_recompute

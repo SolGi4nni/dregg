@@ -104,7 +104,8 @@ open Dregg2.Substrate
 open Dregg2.Circuit.Poseidon2Binding (SpongeColl spongeColl_refutable_of_injective)
 open Dregg2.Circuit.Poseidon2Binding.Reference (refSponge refSponge_CR)
 open Dregg2.Circuit.MapMerkleRoot (mapNode foldLevel perfectRoot mapRoot opensToMerkle writesToMerkle
-  foldLevel_length_half)
+  foldLevel_length_half foldLevelFind perfectRootFind foldLevel_binds_or_collides
+  perfectRoot_binds_or_collides mapRootFind MapRootSpongeColl mapRoot_binds_or_collides)
 open Dregg2.Circuit.MapDenotationSchema (MapLeafSchema narrowSchema imtSchema imtChainOf
   opensToMerkleS writesToMerkleS)
 open Dregg2.Circuit.IndexedMerkleTree (ImtLeaf imtLeafHash imtLeafPre imtToHeap)
@@ -112,118 +113,21 @@ open Dregg2.Circuit.DescriptorIR2 (MAP_TREE_DEPTH)
 
 set_option autoImplicit false
 
-/-! ## §1 — THE 1-FELT PERFECT-TREE BINDING, FLOOR-FREE.
+/-! ## §1 — THE 1-FELT PERFECT-TREE BINDING, FLOOR-FREE — ⚑ NOW A SINGLE COPY, IN `MapMerkleRoot`.
 
-`MapMerkleRoot` proves `perfectRoot_injective` under `Poseidon2SpongeCR`, which is FALSE at deployed
-BabyBear parameters. The 8-felt §5b tower already carries the cured form; the 1-felt scalar layer —
-the one the map DENOTATION rides — did not. These are its total extractors, mechanically mirroring
-`foldLevel8Find` / `perfectRoot8Find`. Nothing below assumes anything about `hash`. -/
+This section used to carry its OWN `mapNodeColl` / `foldLevelFind` / `perfectRootFind` and its own
+`mapNode_binds_or_collides` / `foldLevel_binds_or_collides` / `perfectRoot_binds_or_collides` — a
+verbatim second tower over the SAME arity-2 fold that `MapMerkleRoot` §3b already carried, differing
+only in whether the level extractor branches on list inequality or on collision-ness, and in whether
+the residual is spelled `SpongeColl` or the identically-defined `IsSpongeColl`.
 
-/-- The two absorbed arity-2 node blocks of a `mapNode` equivocation, NAMED. -/
-def mapNodeColl (l₁ r₁ l₂ r₂ : ℤ) : List ℤ × List ℤ := ([l₁, r₁], [l₂, r₂])
+That duplication is not cosmetic: it is WHY the cure sat downstream of the wound. `MapMerkleRoot`'s
+own `perfectRoot_injective` / `mapRoot_injective` — the last peel of the DEPLOYED map-op anti-ghost —
+went on consuming the refuted `Poseidon2SpongeCR` floor while a floor-free binding for the identical
+fold existed twice, in files that import it. Both towers are now ONE, at the definition of the fold,
+and `MapMerkleRoot`'s keystones ride it (2026-07-28).
 
-/-- **The 2-to-1 node BINDS its children, UNCONDITIONAL.** The cured `mapNode_injective`. -/
-theorem mapNode_binds_or_collides (hash : List ℤ → ℤ) {l₁ r₁ l₂ r₂ : ℤ}
-    (h : mapNode hash l₁ r₁ = mapNode hash l₂ r₂) :
-    (l₁ = l₂ ∧ r₁ = r₂) ∨ SpongeColl hash (mapNodeColl l₁ r₁ l₂ r₂) := by
-  by_cases hp : ([l₁, r₁] : List ℤ) = [l₂, r₂]
-  · refine Or.inl ?_
-    simp only [List.cons.injEq, and_true] at hp
-    exact ⟨hp.1, hp.2⟩
-  · exact Or.inr ⟨hp, h⟩
-
-/-- **The one-level EXTRACTOR** — scan two Merkle levels pairwise and return the first pair of arity-2
-node blocks that is a GENUINE collision; `([], [])` if the scan runs out (the spec's terminal cases
-deliver equality outright and never read it). TOTAL. -/
-def foldLevelFind (hash : List ℤ → ℤ) : List ℤ → List ℤ → List ℤ × List ℤ
-  | l :: r :: rest, l' :: r' :: rest' =>
-      if SpongeColl hash (mapNodeColl l r l' r')
-      then mapNodeColl l r l' r'
-      else foldLevelFind hash rest rest'
-  | _, _ => ([], [])
-
-/-- **One fold level BINDS its input, UNCONDITIONAL** (the cured `foldLevel_injective`). -/
-theorem foldLevel_binds_or_collides (hash : List ℤ → ℤ) :
-    ∀ (n : Nat) {xs ys : List ℤ}, xs.length = 2 * n → ys.length = 2 * n →
-      foldLevel hash xs = foldLevel hash ys →
-      xs = ys ∨ SpongeColl hash (foldLevelFind hash xs ys) := by
-  intro n
-  induction n with
-  | zero =>
-    intro xs ys hx hy _
-    have hxe : xs = [] := List.length_eq_zero_iff.mp (by omega)
-    have hye : ys = [] := List.length_eq_zero_iff.mp (by omega)
-    exact Or.inl (by rw [hxe, hye])
-  | succ m ih =>
-    intro xs ys hx hy hfold
-    match xs, hx, ys, hy with
-    | l :: r :: rest, hx, l' :: r' :: rest', hy =>
-      simp only [foldLevel, List.cons.injEq] at hfold
-      obtain ⟨hnode, hrest⟩ := hfold
-      by_cases hif : SpongeColl hash (mapNodeColl l r l' r')
-      · refine Or.inr ?_
-        show SpongeColl hash (foldLevelFind hash (l :: r :: rest) (l' :: r' :: rest'))
-        rw [foldLevelFind, if_pos hif]
-        exact hif
-      · rcases mapNode_binds_or_collides hash hnode with ⟨hl, hr⟩ | hc
-        · simp only [List.length_cons] at hx hy
-          have hxlen : rest.length = 2 * m := by omega
-          have hylen : rest'.length = 2 * m := by omega
-          rcases ih hxlen hylen hrest with htail | hct
-          · exact Or.inl (by rw [hl, hr, htail])
-          · refine Or.inr ?_
-            show SpongeColl hash (foldLevelFind hash (l :: r :: rest) (l' :: r' :: rest'))
-            rw [foldLevelFind, if_neg hif]
-            exact hct
-        · exact absurd hc hif
-
-/-- **The perfect-tree EXTRACTOR** — descend the `d` fold levels; if the deeper walk found a genuine
-collision that is the answer, otherwise the deeper levels are already forced equal and the collision
-(if any) is at THIS level. TOTAL. -/
-def perfectRootFind (hash : List ℤ → ℤ) : Nat → List ℤ → List ℤ → List ℤ × List ℤ
-  | 0,     _,  _  => ([], [])
-  | d + 1, xs, ys =>
-      if SpongeColl hash (perfectRootFind hash d (foldLevel hash xs) (foldLevel hash ys))
-      then perfectRootFind hash d (foldLevel hash xs) (foldLevel hash ys)
-      else foldLevelFind hash xs ys
-
-/-- **★ THE 1-FELT BINARY-MERKLE ROOT BINDS ITS LEAF-DIGEST VECTOR, UNCONDITIONAL.** The cured
-`perfectRoot_injective`: two length-`2^d` digest vectors with equal roots are EITHER equal, OR the
-descent lands on a level whose two node blocks genuinely collide. No floor. -/
-theorem perfectRoot_binds_or_collides (hash : List ℤ → ℤ) :
-    ∀ (d : Nat) {xs ys : List ℤ}, xs.length = 2 ^ d → ys.length = 2 ^ d →
-      perfectRoot hash d xs = perfectRoot hash d ys →
-      xs = ys ∨ SpongeColl hash (perfectRootFind hash d xs ys) := by
-  intro d
-  induction d with
-  | zero =>
-    intro xs ys hx hy hroot
-    rw [pow_zero] at hx hy
-    match xs, ys, hx, hy with
-    | [x], [y], _, _ =>
-      simp only [perfectRoot, List.headD_cons] at hroot
-      exact Or.inl (by rw [hroot])
-  | succ d ih =>
-    intro xs ys hx hy hroot
-    simp only [perfectRoot] at hroot
-    have hfl_x : (foldLevel hash xs).length = 2 ^ d :=
-      foldLevel_length_half hash (2 ^ d) xs (by omega)
-    have hfl_y : (foldLevel hash ys).length = 2 ^ d :=
-      foldLevel_length_half hash (2 ^ d) ys (by omega)
-    by_cases hif : SpongeColl hash
-        (perfectRootFind hash d (foldLevel hash xs) (foldLevel hash ys))
-    · refine Or.inr ?_
-      show SpongeColl hash (perfectRootFind hash (d + 1) xs ys)
-      rw [perfectRootFind, if_pos hif]
-      exact hif
-    · rcases ih hfl_x hfl_y hroot with hfold | hc
-      · rcases foldLevel_binds_or_collides hash (2 ^ d) (by omega) (by omega) hfold with hxy | hcl
-        · exact Or.inl hxy
-        · refine Or.inr ?_
-          show SpongeColl hash (perfectRootFind hash (d + 1) xs ys)
-          rw [perfectRootFind, if_neg hif]
-          exact hcl
-      · exact absurd hc hif
+The names are `open`ed above, so everything below reads exactly as it did. -/
 
 /-! ## §2 — THE PADDING, and its weld to `heap_root.rs`'s precomputed empty-subtree roots. -/
 
@@ -540,33 +444,13 @@ theorem padImtRoot_binds_or_ghost_or_collides (sent : ℤ) (hash : List ℤ → 
       · exact Or.inr (Or.inr (Or.inl hh₂))
     · exact absurd hc hif
 
-/-! ### §4c — the DENSE arity-2 root, cured of its floor as well (used by §7's narrow instance). -/
+/-! ### §4c — the DENSE arity-2 root: ⚑ MOVED to `MapMerkleRoot` §4a (2026-07-28).
 
-def mapRootFind (hash : List ℤ → ℤ) (d : Nat) (h₁ h₂ : Heap.FeltHeap) : List ℤ × List ℤ :=
-  if SpongeColl hash (perfectRootFind hash d (h₁.map (Heap.leafOf hash))
-                                             (h₂.map (Heap.leafOf hash)))
-  then perfectRootFind hash d (h₁.map (Heap.leafOf hash)) (h₂.map (Heap.leafOf hash))
-  else Heap.mapLeafFind hash h₁ h₂
-
-/-- **The DENSE arity-2 `mapRoot` BINDS the heap, UNCONDITIONALLY** — the cured `mapRoot_injective`.
-At a dense heap there is NO padding, hence NO ghost: the only residual is a real collision. -/
-theorem mapRoot_binds_or_collides (hash : List ℤ → ℤ) (d : Nat) {h₁ h₂ : Heap.FeltHeap}
-    (hl₁ : h₁.length = 2 ^ d) (hl₂ : h₂.length = 2 ^ d)
-    (heq : mapRoot hash d h₁ = mapRoot hash d h₂) :
-    h₁ = h₂ ∨ SpongeColl hash (mapRootFind hash d h₁ h₂) := by
-  by_cases hif : SpongeColl hash (perfectRootFind hash d (h₁.map (Heap.leafOf hash))
-                                                         (h₂.map (Heap.leafOf hash)))
-  · refine Or.inr ?_
-    rw [mapRootFind, if_pos hif]
-    exact hif
-  · rcases perfectRoot_binds_or_collides hash d (by rw [List.length_map]; exact hl₁)
-      (by rw [List.length_map]; exact hl₂) heq with hmap | hc
-    · by_cases hne : h₁ = h₂
-      · exact Or.inl hne
-      · refine Or.inr ?_
-        rw [mapRootFind, if_neg hif]
-        exact Heap.mapLeafFind_spec hash h₁ h₂ hne hmap
-    · exact absurd hc hif
+`mapRootFind` and `mapRoot_binds_or_collides` were defined HERE — downstream of the theorem they
+cure. `MapMerkleRoot.mapRoot_injective`, one import UP, therefore kept peeling the tree with the
+refuted `Poseidon2SpongeCR` floor while its cure sat in a file that imports it, feeding only §7's
+`narrowTeeth`. They now live beside `mapRoot`, `mapRoot_injective` is proved FROM
+`mapRoot_binds_or_collides`, and both names are `open`ed above, so §7 reads unchanged. -/
 
 /-! ## §5 — ⚑⚑ THE REFUTATION: PADDED INJECTIVITY IS NOT AVAILABLE, AND THE HASH FLOOR DOES NOT
    SUPPLY IT.
@@ -800,10 +684,10 @@ all it is. ⚠ This doc-comment said "(deployed-today)", inheriting the false cl
 `MapDenotationSchema.narrowSchema`'s own header: the deployed instance is `padImtSchema` below
 (arity-3 IMT leaves, deployed relink, sparse padded occupancy), with `padImtTeeth`. -/
 def narrowTeeth : MapLeafTeeth narrowSchema where
-  Resid := fun hash d h₁ h₂ => SpongeColl hash (mapRootFind hash d h₁ h₂)
+  Resid := fun hash d h₁ h₂ => MapRootSpongeColl hash d h₁ h₂
   binds := fun hash d _ _ _ _ hz₁ hz₂ he => mapRoot_binds_or_collides hash d hz₁ hz₂ he
   Good := Function.Injective
-  resid_refuted := fun hash hg _ _ _ => spongeColl_refutable_of_injective hash hg _
+  resid_refuted := fun _ hg _ _ _ => fun hc => hc.1 (hg hc.2)
   good_inhabited := ⟨refSponge, refSponge_CR⟩
 
 /-- **`padNarrowSchema`** — the design doc §3's padded/sparse instance at arity 2: `SizeOk` relaxed
@@ -985,9 +869,6 @@ end Bite
 
 /-! ## §10 — AXIOM HYGIENE. -/
 
-#assert_axioms mapNode_binds_or_collides
-#assert_axioms foldLevel_binds_or_collides
-#assert_axioms perfectRoot_binds_or_collides
 #assert_axioms padTo_length
 #assert_axioms padTo_dense
 #assert_axioms perfectRoot_all_padding
@@ -999,7 +880,6 @@ end Bite
 #assert_axioms imtChainOf_injective
 #assert_axioms imtLeafFind_spec
 #assert_axioms padImtRoot_binds_or_ghost_or_collides
-#assert_axioms mapRoot_binds_or_collides
 #assert_axioms ghostSpongeAt_injective
 #assert_axioms padded_ghost2
 #assert_axioms padded_ghost3

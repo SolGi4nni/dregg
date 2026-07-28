@@ -215,7 +215,8 @@ theorem mapDecMerkle_complete (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR
       obtain ⟨⟨h', hs', hl', hr', hg'⟩, hnr⟩ := hh
       -- the supplied heap and the denotation heap share the column root ⇒ equal heaps ⇒ equal reads
       have heq : wit env m = h' :=
-        mapRoot_injective hash hCR HEAP_TREE_DEPTH hwl hl' (hwr.trans hr'.symm)
+        mapRoot_injective hash HEAP_TREE_DEPTH hwl hl' (fun hc => hc.1 (hCR _ _ hc.2))
+          (hwr.trans hr'.symm)
       show (decOpensTo hash (wit env m) _ _ _ && _) = true
       rw [Bool.and_eq_true, decide_eq_true_eq, decOpensTo_iff]
       exact ⟨⟨hws, hwl, hwr, by rw [heq]; exact hg'⟩, hnr⟩
@@ -223,7 +224,8 @@ theorem mapDecMerkle_complete (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR
       rw [hop] at hh
       obtain ⟨⟨h', hs', hl', hr', hg'⟩, hnr⟩ := hh
       have heq : wit env m = h' :=
-        mapRoot_injective hash hCR HEAP_TREE_DEPTH hwl hl' (hwr.trans hr'.symm)
+        mapRoot_injective hash HEAP_TREE_DEPTH hwl hl' (fun hc => hc.1 (hCR _ _ hc.2))
+          (hwr.trans hr'.symm)
       show (decOpensTo hash (wit env m) _ _ _ && _) = true
       rw [Bool.and_eq_true, decide_eq_true_eq, decOpensTo_iff]
       exact ⟨⟨hws, hwl, hwr, by rw [heq]; exact hg'⟩, hnr⟩
@@ -231,7 +233,8 @@ theorem mapDecMerkle_complete (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR
       rw [hop] at hh
       obtain ⟨h', hs', hl', hsl', hr', hnr'⟩ := hh
       have heq : wit env m = h' :=
-        mapRoot_injective hash hCR HEAP_TREE_DEPTH hwl hl' (hwr.trans hr'.symm)
+        mapRoot_injective hash HEAP_TREE_DEPTH hwl hl' (fun hc => hc.1 (hCR _ _ hc.2))
+          (hwr.trans hr'.symm)
       show decWritesTo hash (wit env m) _ _ _ _ = true
       rw [decWritesTo_iff]
       refine ⟨hws, hwl, ?_, hwr, ?_⟩
@@ -241,7 +244,8 @@ theorem mapDecMerkle_complete (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR
       rw [hop] at hh
       obtain ⟨h', hs', hl', hsl', hr', hnr'⟩ := hh
       have heq : wit env m = h' :=
-        mapRoot_injective hash hCR HEAP_TREE_DEPTH hwl hl' (hwr.trans hr'.symm)
+        mapRoot_injective hash HEAP_TREE_DEPTH hwl hl' (fun hc => hc.1 (hCR _ _ hc.2))
+          (hwr.trans hr'.symm)
       show decWritesTo hash (wit env m) _ _ _ _ = true
       rw [decWritesTo_iff]
       refine ⟨hws, hwl, ?_, hwr, ?_⟩
@@ -251,7 +255,8 @@ theorem mapDecMerkle_complete (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR
       rw [hop] at hh
       obtain ⟨h', hs', hl', hsl', hr', hnr'⟩ := hh
       have heq : wit env m = h' :=
-        mapRoot_injective hash hCR HEAP_TREE_DEPTH hwl hl' (hwr.trans hr'.symm)
+        mapRoot_injective hash HEAP_TREE_DEPTH hwl hl' (fun hc => hc.1 (hCR _ _ hc.2))
+          (hwr.trans hr'.symm)
       show decWritesTo hash (wit env m) _ _ _ _ = true
       rw [decWritesTo_iff]
       refine ⟨hws, hwl, ?_, hwr, ?_⟩

@@ -65,7 +65,7 @@ import Dregg2.Crypto.RomCarrierSites
 namespace Dregg2.Circuit.MapMerkleRoot
 
 open Dregg2.Substrate
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR SpongeColl)
 open Dregg2.Crypto.SpongeCarrierReduction (IsSpongeColl)
 open Dregg2.Circuit.DeployedCapTree (Digest8)
 open Dregg2.Circuit.DeployedHeapTree (Heap8Scheme)
@@ -83,13 +83,11 @@ BYTE-IDENTICAL to `heap_root.rs`'s `hash_fact(cur, &[sib])` / `hash_fact(sib, &[
 length-2 absorb, NO domain marker — distinct from the cap node's `[FACT_MARK, l, r]`). -/
 def mapNode (hash : List ℤ → ℤ) (l r : ℤ) : ℤ := hash [l, r]
 
-/-- The 2-to-1 node is injective in its two children under CR: equal node images force equal
-`[l, r]` lists, hence equal children. The per-level peel of the fold's anti-ghost. -/
-theorem mapNode_injective (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {l₁ r₁ l₂ r₂ : ℤ} (h : mapNode hash l₁ r₁ = mapNode hash l₂ r₂) : l₁ = l₂ ∧ r₁ = r₂ := by
-  have hlist := hCR _ _ h
-  simp only [List.cons.injEq, and_true] at hlist
-  exact ⟨hlist.1, hlist.2⟩
+/-! ⚑ **`mapNode_injective` IS GONE (2026-07-28).** It peeled the node with `Poseidon2SpongeCR`, which
+`HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES FALSE at deployed BabyBear, so it said
+nothing where the system stands; and its only consumer was `foldLevel_injective`, also gone. The node
+peel now lives in §3b's `foldLevel_binds_or_collides`, which does the same case split and RETURNS the
+colliding `[l, r]` pair instead of assuming it away. Nothing is kept in parallel. -/
 
 /-! ## §2 — the perfect-tree fold (a level pairs adjacent digests; `perfectRoot` folds `d` levels). -/
 
@@ -126,73 +124,28 @@ theorem foldLevel_length_half (hash : List ℤ → ℤ) :
       have hrest : rest.length = 2 * m := by omega
       simp only [foldLevel, List.length_cons, ih rest hrest]
 
-/-- `foldLevel` is injective on lists of equal length `2*n` under the node CR: peel each pair by
-`mapNode_injective`. (Lists that arise in `perfectRoot` always have length `2^d`, hence even at every
-level above the leaves.) Inducts on the half-length `n`. -/
-theorem foldLevel_injective (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) :
-    ∀ (n : Nat) {xs ys : List ℤ}, xs.length = 2 * n → ys.length = 2 * n →
-      foldLevel hash xs = foldLevel hash ys → xs = ys := by
-  intro n
-  induction n with
-  | zero =>
-    intro xs ys hx hy _
-    have hxe : xs = [] := List.length_eq_zero_iff.mp (by omega)
-    have hye : ys = [] := List.length_eq_zero_iff.mp (by omega)
-    rw [hxe, hye]
-  | succ m ih =>
-    intro xs ys hx hy hfold
-    match xs, hx, ys, hy with
-    | l :: r :: rest, hx, l' :: r' :: rest', hy =>
-      simp only [foldLevel, List.cons.injEq] at hfold
-      obtain ⟨hnode, hrest⟩ := hfold
-      obtain ⟨hl, hr⟩ := mapNode_injective hash hCR hnode
-      simp only [List.length_cons] at hx hy
-      have hxlen : rest.length = 2 * m := by omega
-      have hylen : rest'.length = 2 * m := by omega
-      have := ih hxlen hylen hrest
-      rw [hl, hr, this]
-
-/-- **`perfectRoot_injective` — the binary-Merkle root BINDS the whole leaf-digest vector.** Two
-length-`2^d` leaf-digest lists with EQUAL perfect-tree roots are EQUAL, under the single named CR floor
-— peel each of the `d` levels by `foldLevel_injective`. The binary-tree analog of the flat sponge's
-`Heap.root_injective`: a prover cannot keep the published map root while tampering ANY leaf digest. -/
-theorem perfectRoot_injective (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) :
-    ∀ (d : Nat) {xs ys : List ℤ}, xs.length = 2 ^ d → ys.length = 2 ^ d →
-      perfectRoot hash d xs = perfectRoot hash d ys → xs = ys := by
-  intro d
-  induction d with
-  | zero =>
-    intro xs ys hx hy hroot
-    -- length `2^0 = 1`: both are singletons, `perfectRoot 0 = headD`.
-    rw [pow_zero] at hx hy
-    match xs, ys, hx, hy with
-    | [x], [y], _, _ =>
-      simp only [perfectRoot, List.headD_cons] at hroot
-      rw [hroot]
-  | succ d ih =>
-    intro xs ys hx hy hroot
-    simp only [perfectRoot] at hroot
-    -- both `xs`, `ys` have length `2^(d+1) = 2 * 2^d`; one level halves to length `2^d`.
-    have hxlen : xs.length = 2 ^ d + 2 ^ d := by rw [hx]; ring
-    have hylen : ys.length = 2 ^ d + 2 ^ d := by rw [hy]; ring
-    have hfl_x : (foldLevel hash xs).length = 2 ^ d := foldLevel_length_half hash (2 ^ d) xs (by omega)
-    have hfl_y : (foldLevel hash ys).length = 2 ^ d := foldLevel_length_half hash (2 ^ d) ys (by omega)
-    have hfold := ih hfl_x hfl_y hroot
-    exact foldLevel_injective hash hCR (2 ^ d) (by omega) (by omega) hfold
+/-! ⚑ **`foldLevel_injective` IS GONE (2026-07-28), and so is the CR-peeled `perfectRoot_injective`
+induction.** Both consumed `Poseidon2SpongeCR` — PROVED FALSE at deployed BabyBear — and the level
+induction is reproduced VERBATIM in §3b (`foldLevel_binds_or_collides` /
+`perfectRoot_binds_or_collides`) with the hypothesis removed and the colliding pair RETURNED.
+`perfectRoot_injective` KEEPS ITS NAME below §3b, now riding the extractor. -/
 
 /-! ## §3b — THE SAME FOLD, FLOOR-FREE: a TOTAL collision EXTRACTOR over the ℤ node levels.
 
-`perfectRoot_injective` above peels the `d` levels with `Poseidon2SpongeCR`, which
+`perfectRoot_injective` used to peel the `d` levels with `Poseidon2SpongeCR`, which
 `HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES FALSE for every BabyBear-bounded sponge.
-So at deployed parameters it says nothing. This section restates the SAME induction with the floor
+So at deployed parameters it said nothing. This section restates the SAME induction with the floor
 REMOVED: where the old proof fed an equal-digest pair to the (false) injectivity, this one RETURNS
 that pair. The 8-felt half of this file already worked this way (`foldLevel8Find`/`perfectRoot8Find`,
 §5b); the ℤ half did not, and every widened map-root consumer routes through it.
 
-⚠ `perfectRoot_injective` is deliberately LEFT STANDING and still carries the floor. Its narrow
-consumers (`mapRoot_injective`, `opensToMerkle_functional`, …) are a different cone with its own
-baseline entries; this section is what the WIDE cone (`MapOpWideKeyGate.mapRootW_injective`) is cut
-over onto, and the narrow cone can follow without a second extractor being written. -/
+⚑ **2026-07-28 — THE NARROW CONE FOLLOWED.** This section used to end "`perfectRoot_injective` is
+deliberately LEFT STANDING and still carries the floor … the narrow cone can follow without a second
+extractor being written." It has: `perfectRoot_injective` is re-proved from
+`perfectRoot_binds_or_collides` at the end of this section, `mapRoot_injective` from `§4`'s
+`mapRoot_binds_or_collides`, and the three `opensToMerkle`/`writesToMerkle` anti-ghost teeth from
+`§5`'s `OpenColl`/`WriteColl`. No second extractor was written; every one of them resolves to the
+pair `perfectRootFind`/`Heap.mapLeafFind` already returned. -/
 
 /-- **`foldLevelFind xs ys`** — scan two digest vectors pairwise and RETURN the first adjacent pair
 whose `mapNode` PREIMAGES differ. Decidable throughout (list equality on `ℤ`), total, and
@@ -364,6 +317,26 @@ theorem perfectRootColl_refutes_poseidon2CR {hash : List ℤ → ℤ} {d : Nat} 
     (hc : IsSpongeColl hash (perfectRootFind hash d xs ys)) : ¬ Poseidon2SpongeCR hash :=
   fun hCR => hc.1 (hCR _ _ hc.2)
 
+/-- **⚑ `perfectRoot_injective`, PORTED OFF THE REFUTED FLOOR (2026-07-28) — same name, same
+conclusion, a hypothesis the deployed sponge can actually satisfy.** It used to assume
+`Poseidon2SpongeCR hash` and peel the `d` levels with it; that premise is FALSE at deployed BabyBear
+(`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so the theorem was VACUOUS exactly where the
+prover runs — and so, at 2^d leaf digests into one bounded field, was its CONCLUSION.
+
+It now assumes the DECIDABLE per-instance residual at the ONE pair `perfectRootFind` hands back for
+these two vectors. Strictly weaker than the floor (`perfectRootColl_refutes_poseidon2CR`),
+dischargeable by anyone who can evaluate the sponge on two ≤2-felt lists
+(`perfectRootColl_dischargeable`), and — unlike the floor — SATISFIABLE at deployed parameters.
+
+⚠ ARGUMENT ORDER MOVED: the old form was `perfectRoot_injective hash hCR d hx hy hroot`; the residual
+depends on `d`, `xs`, `ys`, so it cannot sit where `hCR` did. -/
+theorem perfectRoot_injective (hash : List ℤ → ℤ) (d : Nat) {xs ys : List ℤ}
+    (hx : xs.length = 2 ^ d) (hy : ys.length = 2 ^ d)
+    (hno : ¬ IsSpongeColl hash (perfectRootFind hash d xs ys))
+    (hroot : perfectRoot hash d xs = perfectRoot hash d ys) : xs = ys :=
+  (perfectRoot_binds_or_collides hash d hx hy hroot).resolve_right hno
+
+#assert_axioms perfectRoot_injective
 #assert_axioms foldLevelFind_len_le
 #assert_axioms foldLevelFind_self
 #assert_axioms foldLevel_binds_or_collides
@@ -407,26 +380,120 @@ as being about `heap_root`. -/
 def mapRoot (hash : List ℤ → ℤ) (d : Nat) (h : Heap.FeltHeap) : ℤ :=
   perfectRoot hash d (h.map (Heap.leafOf hash))
 
-/-- **`mapRoot_injective` — the binary-Merkle map root BINDS the whole heap (the anti-ghost), re-proved
-against `perfectRoot_injective` (the NODE injectivity `mapNode_injective` composed up the tree), NOT the
-flat-sponge `Heap.root_injective`.** Two depth-`d` `2^d`-leaf heaps publishing the same binary root are
-EQUAL: the root injectivity peels the `d` node levels (`perfectRoot_injective`) to equal leaf-digest
-lists, then the leaf CR (`Heap.map_leaf_injective`) peels each leaf to equal entries. A prover cannot keep
-the published map root while tampering ANY address or value. -/
-theorem mapRoot_injective (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) (d : Nat)
+/-! ### §4a — THE MAP-ROOT EXTRACTOR and the floor-free binding.
+
+⚑ These two lived in `MapPaddedDenotation` §4c (added there to feed `narrowTeeth`) while
+`mapRoot_injective` — one level UP, in this file — still peeled the tree with the refuted floor. That
+is the shape the ⚑07-28 sweep was looking for: the cure existed, downstream of the wound, and the
+wound was never rewired onto it. They are MOVED here, at the definition of `mapRoot`, and
+`MapPaddedDenotation` now `open`s them. Same statements, same proofs, one home. -/
+
+/-- **THE MAP-ROOT EXTRACTOR** — the SINGLE named pair the whole arity-2 heap-root peel hands back.
+Run the perfect-tree descent over the two leaf-digest vectors; if it found a genuine collision that
+is the answer, otherwise the descent has already forced the two DIGEST VECTORS equal, so the
+collision (if any) is at the LEAF absorb and `Heap.mapLeafFind` supplies the pair. Total, decidable,
+and independent of anything assumed about `hash`. -/
+def mapRootFind (hash : List ℤ → ℤ) (d : Nat) (h₁ h₂ : Heap.FeltHeap) : List ℤ × List ℤ :=
+  if SpongeColl hash (perfectRootFind hash d (h₁.map (Heap.leafOf hash))
+                                               (h₂.map (Heap.leafOf hash)))
+  then perfectRootFind hash d (h₁.map (Heap.leafOf hash)) (h₂.map (Heap.leafOf hash))
+  else Heap.mapLeafFind hash h₁ h₂
+
+/-- **`MapRootSpongeColl hash d h₁ h₂` — THE MAP ROOT'S PER-INSTANCE RESIDUAL.** The pair `mapRootFind`
+RETURNS on this heap equivocation is a genuine collision of the deployed sponge.
+
+Deliberately NOT `∃ xs ys, xs ≠ ys ∧ hash xs = hash ys` (unconditionally TRUE by pigeonhole at
+deployed BabyBear, hence no more content than `True`) and deliberately NOT `∀ p q, ¬ …` (the refuted
+floor wearing a disjunction). It is the collision AT THE ONE PAIR IN PLAY, and it is DECIDABLE. -/
+def MapRootSpongeColl (hash : List ℤ → ℤ) (d : Nat) (h₁ h₂ : Heap.FeltHeap) : Prop :=
+  SpongeColl hash (mapRootFind hash d h₁ h₂)
+
+/-- **★ THE ARITY-2 MAP ROOT BINDS THE WHOLE HEAP, FLOOR-FREE.** Two depth-`d` `2^d`-leaf heaps
+publishing the same binary root are EITHER the same heap, OR the deployed sponge genuinely collides
+at the ONE pair `mapRootFind` returns. NO hypothesis on `hash`: unlike `mapRoot_injective`'s old
+form, this holds of the deployed 1-felt Poseidon2 sponge. -/
+theorem mapRoot_binds_or_collides (hash : List ℤ → ℤ) (d : Nat) {h₁ h₂ : Heap.FeltHeap}
+    (hl₁ : h₁.length = 2 ^ d) (hl₂ : h₂.length = 2 ^ d)
+    (heq : mapRoot hash d h₁ = mapRoot hash d h₂) :
+    h₁ = h₂ ∨ MapRootSpongeColl hash d h₁ h₂ := by
+  by_cases hif : SpongeColl hash (perfectRootFind hash d (h₁.map (Heap.leafOf hash))
+                                                           (h₂.map (Heap.leafOf hash)))
+  · refine Or.inr ?_
+    show SpongeColl hash (mapRootFind hash d h₁ h₂)
+    rw [mapRootFind, if_pos hif]
+    exact hif
+  · rcases perfectRoot_binds_or_collides hash d (by rw [List.length_map]; exact hl₁)
+      (by rw [List.length_map]; exact hl₂) heq with hmap | hc
+    · by_cases hne : h₁ = h₂
+      · exact Or.inl hne
+      · refine Or.inr ?_
+        show SpongeColl hash (mapRootFind hash d h₁ h₂)
+        rw [mapRootFind, if_neg hif]
+        exact Heap.mapLeafFind_spec hash h₁ h₂ hne hmap
+    · exact absurd hc hif
+
+/-! ### §4a teeth — the residual is DISCHARGEABLE, REFUTABLE, and a REFUTATION of the floor. -/
+
+/-- **DISCHARGEABLE.** An honest prover commits ONE heap and pays nothing, for EVERY hash, with no
+cryptographic assumption whatsoever. Both extractor branches bottom out: the tree descent at the
+empty pair (`perfectRootFind_self`), the leaf scan at an equal pair (`Heap.mapLeafFind_self_eq`). -/
+theorem mapRootSpongeColl_dischargeable (hash : List ℤ → ℤ) (d : Nat) (h : Heap.FeltHeap) :
+    ¬ MapRootSpongeColl hash d h h := by
+  have hself : ¬ SpongeColl hash (perfectRootFind hash d (h.map (Heap.leafOf hash))
+                                                           (h.map (Heap.leafOf hash))) := by
+    rw [perfectRootFind_self hash d]
+    exact fun hc => hc.1 rfl
+  show ¬ SpongeColl hash (mapRootFind hash d h h)
+  rw [mapRootFind, if_neg hself]
+  exact fun hc => hc.1 (Heap.mapLeafFind_self_eq hash h)
+
+/-- **REFUTABLE.** At the constant sponge two genuinely different one-leaf heaps publish the same
+root and the extractor really does hand back a colliding pair, so `¬ MapRootSpongeColl` is not free. -/
+theorem mapRootSpongeColl_refutable :
+    MapRootSpongeColl (fun _ => (0 : ℤ)) 0 [(0, 0)] [(0, 1)] := by
+  rcases mapRoot_binds_or_collides (fun _ => (0 : ℤ)) 0 (h₁ := [(0, 0)]) (h₂ := [(0, 1)])
+    rfl rfl rfl with hne | hc
+  · exact absurd hne (by decide)
+  · exact hc
+
+/-- **A REFUTATION, NOT A NEW FLOOR.** Exhibiting the residual REFUTES `Poseidon2SpongeCR` outright,
+so the port is a strict WEAKENING of the premise it replaces — stated contrapositively, assuming no
+floor content, so the ratchet reads it as the tooth it is. -/
+theorem mapRootSpongeColl_refutes_poseidon2CR {hash : List ℤ → ℤ} {d : Nat} {h₁ h₂ : Heap.FeltHeap}
+    (hc : MapRootSpongeColl hash d h₁ h₂) : ¬ Poseidon2SpongeCR hash :=
+  fun hCR => hc.1 (hCR _ _ hc.2)
+
+/-- **⚑ `mapRoot_injective`, PORTED OFF THE REFUTED FLOOR (2026-07-28) — the anti-ghost the DEPLOYED
+map-op denotation terminates in.** It assumed `Poseidon2SpongeCR hash`, PROVED FALSE at deployed
+BabyBear (`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so `DescriptorIR2.opensTo_functional`
+/ `writesTo_functional` — the deployed map-op anti-ghost — bottomed out, at their final step, in a
+VACUOUS theorem. Its CONCLUSION was empty there too: `2 ^ 16` entries of `ℤ × ℤ` into one BabyBear
+felt collide by the same pigeonhole that refutes the premise.
+
+It now assumes the DECIDABLE per-instance residual at the ONE pair `mapRootFind` hands back for these
+two heaps. Strictly weaker than the floor (`mapRootSpongeColl_refutes_poseidon2CR`), dischargeable
+(`mapRootSpongeColl_dischargeable`), refutable (`mapRootSpongeColl_refutable`), and SATISFIABLE at deployed
+parameters where the floor is not.
+
+⚑ HONEST PRICE, stated at the resolution the deployment actually has: this is a ONE-FELT commitment
+(`mapNode hash [l, r] : ℤ`, `Heap.leafOf hash [a, v] : ℤ`), so the residual costs a collision search
+on a single BabyBear felt — **≈2^15.5 queries, which is a BREAK**, not a security level. The 8-felt
+twin (`§5b`'s `mapRoot8` / `MapRootSpongeColl` at `Digest8`) is the ~2^123.5 object. Porting the floor off
+does not make the arity-2 model safe; it makes the price VISIBLE instead of assumed away.
+
+⚠ ARGUMENT ORDER MOVED: the old form was `mapRoot_injective hash hCR d hlen₁ hlen₂ h`. -/
+theorem mapRoot_injective (hash : List ℤ → ℤ) (d : Nat)
     {h₁ h₂ : Heap.FeltHeap} (hlen₁ : h₁.length = 2 ^ d) (hlen₂ : h₂.length = 2 ^ d)
-    (h : mapRoot hash d h₁ = mapRoot hash d h₂) : h₁ = h₂ := by
-  have hmap : (h₁.map (Heap.leafOf hash)) = (h₂.map (Heap.leafOf hash)) :=
-    perfectRoot_injective hash hCR d (by rw [List.length_map, hlen₁])
-      (by rw [List.length_map, hlen₂]) h
-  exact Heap.map_leaf_injective hash h₁ h₂ (fun hc => hc.1 (hCR _ _ hc.2)) hmap
+    (hno : ¬ MapRootSpongeColl hash d h₁ h₂)
+    (h : mapRoot hash d h₁ = mapRoot hash d h₂) : h₁ = h₂ :=
+  (mapRoot_binds_or_collides hash d hlen₁ hlen₂ h).resolve_right hno
 
 /-! ## §5 — the faithful map OPENING (`opensToMerkle`/`writesToMerkle`) + the re-proved anti-ghost.
 
 The binary-Merkle replacement for `DescriptorIR2.opensTo`/`writesTo`: a depth-`d` `2^d`-leaf sorted heap
-behind the binary root reads / writes the abstract map. The `_functional` anti-ghost re-proves against
-`mapRoot_injective` (hence `perfectRoot_injective`/`mapNode_injective`), NOT the sponge `root_injective` —
-the deliverable-2 functional tooth over the deployed binary tree. -/
+behind the binary root reads / writes the abstract map. The `_functional` anti-ghost rides
+`§4a`'s `mapRoot_binds_or_collides` — the floor-free binding — NOT the sponge `root_injective` and no
+longer any CR floor at all. -/
 
 /-- **`opensToMerkle hash d r k o`** — some depth-`d` `2^d`-leaf sorted heap behind the BINARY-MERKLE
 root `r` reads `o` at `k`. The faithful replacement of `DescriptorIR2.opensTo` over the deployed tree. -/
@@ -440,33 +507,126 @@ def writesToMerkle (hash : List ℤ → ℤ) (d : Nat) (r k v r' : ℤ) : Prop :
     ∧ (Heap.set h k v).length = 2 ^ d
     ∧ mapRoot hash d h = r ∧ r' = mapRoot hash d (Heap.set h k v)
 
-/-- **Binary-Merkle openings are FUNCTIONAL (the anti-ghost over the deployed tree).** Under CR, the
-binary root + key determine the read: two openings of the same root at the same key agree. Re-proved
-against `mapRoot_injective` (the binary fold), NOT the flat-sponge `Heap.root_injective`. -/
-theorem opensToMerkle_functional (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) (d : Nat)
+/-! ### §5a — THE OPENING-LEVEL RESIDUAL, at the heaps the two openings ACTUALLY SUPPLY.
+
+⚑ The three teeth below quantify over OPENINGS, not over heaps: `opensToMerkle` hides its witness
+behind an `∃`. That is why they could not simply inherit `§4a`'s per-instance residual, and it is
+also why no `∀ h₁ h₂, ¬ MapRootSpongeColl …` side condition would do — at a fixed root the set of heaps
+with that root is INFINITE, so a `∀`-shaped residual is refuted by exactly the pigeonhole that
+refutes the floor. (`MapPaddedDenotation`'s schema-level teeth took the other road: they expose the
+witness heaps as arguments. `opensToMerkleS_functional_of_good` then needs `Good hash`, which at
+`narrowTeeth` is `Function.Injective hash` — **definitionally `Poseidon2SpongeCR hash`**, i.e. the
+same refuted floor under another name. So that road does not reach the deployed statement either.)
+
+What does reach it: NAME the two heaps. `Exists.choose` is canonical here — proof irrelevance makes
+`h.choose` a function of the PROPOSITION `opensToMerkle hash d r k o`, not of the proof term — so
+`OpenColl` is the collision at the ONE pair `mapRootFind` returns for the two heaps these two
+openings supply, and nothing wider. -/
+
+/-- The heap an opening supplies (canonical by proof irrelevance). -/
+noncomputable def openHeap {hash : List ℤ → ℤ} {d : Nat} {r k : ℤ} {o : Option ℤ}
+    (h : opensToMerkle hash d r k o) : Heap.FeltHeap := h.choose
+
+/-- The heap a write supplies (canonical by proof irrelevance). -/
+noncomputable def writeHeap {hash : List ℤ → ℤ} {d : Nat} {r k v r' : ℤ}
+    (h : writesToMerkle hash d r k v r') : Heap.FeltHeap := h.choose
+
+/-- **`OpenColl` — the per-instance residual of the OPENING anti-ghost.** The sponge genuinely
+collides at the pair `mapRootFind` returns for the two heaps THESE TWO OPENINGS supply. -/
+def OpenColl (hash : List ℤ → ℤ) (d : Nat) {r k : ℤ} {o₁ o₂ : Option ℤ}
+    (h₁ : opensToMerkle hash d r k o₁) (h₂ : opensToMerkle hash d r k o₂) : Prop :=
+  MapRootSpongeColl hash d (openHeap h₁) (openHeap h₂)
+
+/-- **`WriteColl` — the per-instance residual of the WRITE anti-ghost.** -/
+def WriteColl (hash : List ℤ → ℤ) (d : Nat) {r k v r₁ r₂ : ℤ}
+    (h₁ : writesToMerkle hash d r k v r₁) (h₂ : writesToMerkle hash d r k v r₂) : Prop :=
+  MapRootSpongeColl hash d (writeHeap h₁) (writeHeap h₂)
+
+/-- **★ BINARY-MERKLE OPENINGS BIND THE READ, FLOOR-FREE.** Two openings of the same root at the same
+key EITHER agree, OR the sponge collides at the named pair. NO hypothesis on `hash`. -/
+theorem opensToMerkle_binds_or_collides (hash : List ℤ → ℤ) (d : Nat) {r k : ℤ} {o₁ o₂ : Option ℤ}
+    (h₁ : opensToMerkle hash d r k o₁) (h₂ : opensToMerkle hash d r k o₂) :
+    o₁ = o₂ ∨ OpenColl hash d h₁ h₂ := by
+  obtain ⟨_, hl₁, hr₁, hg₁⟩ := h₁.choose_spec
+  obtain ⟨_, hl₂, hr₂, hg₂⟩ := h₂.choose_spec
+  rcases mapRoot_binds_or_collides hash d hl₁ hl₂ (hr₁.trans hr₂.symm) with hm | hc
+  · exact Or.inl (by rw [← hg₁, ← hg₂, hm])
+  · exact Or.inr hc
+
+/-- **★ BINARY-MERKLE WRITES BIND THE NEW ROOT, FLOOR-FREE.** -/
+theorem writesToMerkle_binds_or_collides (hash : List ℤ → ℤ) (d : Nat) {r k v r₁ r₂ : ℤ}
+    (h₁ : writesToMerkle hash d r k v r₁) (h₂ : writesToMerkle hash d r k v r₂) :
+    r₁ = r₂ ∨ WriteColl hash d h₁ h₂ := by
+  obtain ⟨_, hl₁, _, hr₁, he₁⟩ := h₁.choose_spec
+  obtain ⟨_, hl₂, _, hr₂, he₂⟩ := h₂.choose_spec
+  rcases mapRoot_binds_or_collides hash d hl₁ hl₂ (hr₁.trans hr₂.symm) with hm | hc
+  · exact Or.inl (by rw [he₁, he₂, hm])
+  · exact Or.inr hc
+
+/-- **DISCHARGEABLE.** One and the same opening never equivocates with itself — for EVERY hash. -/
+theorem openColl_dischargeable (hash : List ℤ → ℤ) (d : Nat) {r k : ℤ} {o : Option ℤ}
+    (h : opensToMerkle hash d r k o) : ¬ OpenColl hash d h h :=
+  mapRootSpongeColl_dischargeable hash d (openHeap h)
+
+/-- **DISCHARGEABLE.** -/
+theorem writeColl_dischargeable (hash : List ℤ → ℤ) (d : Nat) {r k v r' : ℤ}
+    (h : writesToMerkle hash d r k v r') : ¬ WriteColl hash d h h :=
+  mapRootSpongeColl_dischargeable hash d (writeHeap h)
+
+/-- **REFUTABLE.** At the constant sponge one root opens at one key to TWO different values, so
+`¬ OpenColl` is not free: the residual is genuinely reachable at the deployed shape of hash. -/
+theorem openColl_refutable :
+    ∃ (h₁ : opensToMerkle (fun _ => (0 : ℤ)) 0 0 0 (some 0))
+      (h₂ : opensToMerkle (fun _ => (0 : ℤ)) 0 0 0 (some 1)),
+      OpenColl (fun _ => (0 : ℤ)) 0 h₁ h₂ := by
+  have h₁ : opensToMerkle (fun _ => (0 : ℤ)) 0 0 0 (some 0) :=
+    ⟨[(0, 0)], by simp [Heap.SortedKeys, Heap.keys], rfl, rfl, rfl⟩
+  have h₂ : opensToMerkle (fun _ => (0 : ℤ)) 0 0 0 (some 1) :=
+    ⟨[(0, 1)], by simp [Heap.SortedKeys, Heap.keys], rfl, rfl, rfl⟩
+  refine ⟨h₁, h₂, ?_⟩
+  rcases opensToMerkle_binds_or_collides (fun _ => (0 : ℤ)) 0 h₁ h₂ with hv | hc
+  · exact absurd hv (by decide)
+  · exact hc
+
+/-- **A REFUTATION, NOT A NEW FLOOR.** -/
+theorem openColl_refutes_poseidon2CR {hash : List ℤ → ℤ} {d : Nat} {r k : ℤ} {o₁ o₂ : Option ℤ}
+    {h₁ : opensToMerkle hash d r k o₁} {h₂ : opensToMerkle hash d r k o₂}
+    (hc : OpenColl hash d h₁ h₂) : ¬ Poseidon2SpongeCR hash :=
+  mapRootSpongeColl_refutes_poseidon2CR hc
+
+/-- **A REFUTATION, NOT A NEW FLOOR.** -/
+theorem writeColl_refutes_poseidon2CR {hash : List ℤ → ℤ} {d : Nat} {r k v r₁ r₂ : ℤ}
+    {h₁ : writesToMerkle hash d r k v r₁} {h₂ : writesToMerkle hash d r k v r₂}
+    (hc : WriteColl hash d h₁ h₂) : ¬ Poseidon2SpongeCR hash :=
+  mapRootSpongeColl_refutes_poseidon2CR hc
+
+/-- **⚑ Binary-Merkle openings are FUNCTIONAL — PORTED OFF THE REFUTED FLOOR (2026-07-28).** The
+binary root + key determine the read, up to the per-instance residual at the two heaps the openings
+supply. It used to assume `Poseidon2SpongeCR hash`, false at deployed BabyBear, so this — the
+last peel of `DescriptorIR2.opensTo_functional`, the DEPLOYED map-op anti-ghost — was VACUOUS at the
+prover's own parameters, and its conclusion was false there besides. -/
+theorem opensToMerkle_functional (hash : List ℤ → ℤ) (d : Nat)
     {r k : ℤ} {o₁ o₂ : Option ℤ}
-    (h₁ : opensToMerkle hash d r k o₁) (h₂ : opensToMerkle hash d r k o₂) : o₁ = o₂ := by
-  obtain ⟨m₁, _, hl₁, hr₁, hg₁⟩ := h₁
-  obtain ⟨m₂, _, hl₂, hr₂, hg₂⟩ := h₂
-  have hm : m₁ = m₂ := mapRoot_injective hash hCR d hl₁ hl₂ (hr₁.trans hr₂.symm)
-  rw [← hg₁, ← hg₂, hm]
+    (h₁ : opensToMerkle hash d r k o₁) (h₂ : opensToMerkle hash d r k o₂)
+    (hno : ¬ OpenColl hash d h₁ h₂) : o₁ = o₂ :=
+  (opensToMerkle_binds_or_collides hash d h₁ h₂).resolve_right hno
 
 /-- Membership and non-membership at the same binary root/key EXCLUDE each other (the nullifier / cap
-non-membership tooth, over the deployed tree). -/
-theorem opensToMerkle_some_excludes_none (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) (d : Nat)
-    {r k v : ℤ} (h₁ : opensToMerkle hash d r k (some v)) (h₂ : opensToMerkle hash d r k none) : False := by
-  have := opensToMerkle_functional hash hCR d h₁ h₂
+non-membership tooth, over the deployed tree), up to the same named residual. -/
+theorem opensToMerkle_some_excludes_none (hash : List ℤ → ℤ) (d : Nat)
+    {r k v : ℤ} (h₁ : opensToMerkle hash d r k (some v)) (h₂ : opensToMerkle hash d r k none)
+    (hno : ¬ OpenColl hash d h₁ h₂) : False := by
+  have := opensToMerkle_functional hash d h₁ h₂ hno
   simp at this
 
-/-- **Binary-Merkle writes are FUNCTIONAL.** Under CR, binary root + key + value determine the new root:
-the map-op row's `new_root` column cannot be forged. Re-proved against `mapRoot_injective`. -/
-theorem writesToMerkle_functional (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) (d : Nat)
+/-- **⚑ Binary-Merkle writes are FUNCTIONAL — PORTED OFF THE REFUTED FLOOR (2026-07-28).** Binary root
++ key + value determine the new root: the map-op row's `new_root` column cannot be forged, up to the
+per-instance residual at the two heaps the writes supply. -/
+theorem writesToMerkle_functional (hash : List ℤ → ℤ) (d : Nat)
     {r k v r₁ r₂ : ℤ}
-    (h₁ : writesToMerkle hash d r k v r₁) (h₂ : writesToMerkle hash d r k v r₂) : r₁ = r₂ := by
-  obtain ⟨m₁, _, hl₁, _, hr₁, he₁⟩ := h₁
-  obtain ⟨m₂, _, hl₂, _, hr₂, he₂⟩ := h₂
-  have hm : m₁ = m₂ := mapRoot_injective hash hCR d hl₁ hl₂ (hr₁.trans hr₂.symm)
-  rw [he₁, he₂, hm]
+    (h₁ : writesToMerkle hash d r k v r₁) (h₂ : writesToMerkle hash d r k v r₂)
+    (hno : ¬ WriteColl hash d h₁ h₂) : r₁ = r₂ :=
+  (writesToMerkle_binds_or_collides hash d h₁ h₂).resolve_right hno
 
 /-! ## §5b — THE FAITHFUL 8-felt map denotation (Phase H-HEAP-8): the perfect-tree fold + opening over
 `node8` (`Digest8`), the exact twin of §2–§5 but at the deployed ~124-bit width. The historical §2–§5
@@ -1249,11 +1409,20 @@ end RomSuccessor
 
 /-! ## §6 — Axiom hygiene. -/
 
-#assert_axioms mapNode_injective
 #assert_axioms foldLevel_length_half
-#assert_axioms foldLevel_injective
-#assert_axioms perfectRoot_injective
+#assert_axioms mapRootFind
+#assert_axioms mapRoot_binds_or_collides
+#assert_axioms mapRootSpongeColl_dischargeable
+#assert_axioms mapRootSpongeColl_refutable
+#assert_axioms mapRootSpongeColl_refutes_poseidon2CR
 #assert_axioms mapRoot_injective
+#assert_axioms opensToMerkle_binds_or_collides
+#assert_axioms writesToMerkle_binds_or_collides
+#assert_axioms openColl_dischargeable
+#assert_axioms writeColl_dischargeable
+#assert_axioms openColl_refutable
+#assert_axioms openColl_refutes_poseidon2CR
+#assert_axioms writeColl_refutes_poseidon2CR
 #assert_axioms opensToMerkle_functional
 #assert_axioms opensToMerkle_some_excludes_none
 #assert_axioms writesToMerkle_functional

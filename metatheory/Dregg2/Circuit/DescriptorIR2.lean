@@ -521,10 +521,12 @@ a sorted heap behind the root. The COMMITMENT is the deployed depth-`HEAP_TREE_D
 (`MapMerkleRoot.mapRoot`: arity-2 `leafOf` leaves, arity-2 `mapNode` nodes), NOT the flat sponge — the
 fixed-depth tree the `Ir2Air::MapOps` AIR (`descriptor_ir2.rs:2213`) recomposes by its `mix` closure. The
 deployment pins every heap as the `2^HEAP_TREE_DEPTH`-leaf padded vector; the opening carries that
-`length = 2^HEAP_TREE_DEPTH` discipline. Under the one named CR floor the opening is FUNCTIONAL
-(`MapMerkleRoot.mapRoot_injective` — the binary fold pins the heap via `perfectRoot_injective` /
-`mapNode_injective`, NOT the sponge `root_injective`), so the root + key determine the value / new-root:
-the map-op row cannot lie. Non-membership reuses the gap bracketing (`get_none_of_gap`). -/
+`length = 2^HEAP_TREE_DEPTH` discipline. ⚑ **NO CR FLOOR (2026-07-28).** The opening is FUNCTIONAL up
+to a NAMED, DECIDABLE, per-instance residual (`OpenColl` / `WriteColl` → `MapMerkleRoot.mapRootFind`),
+which the honest prover discharges at zero cost and whose exhibition REFUTES `Poseidon2SpongeCR`
+outright. The old form assumed that floor, and it is FALSE at deployed BabyBear
+(`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`) — so the deployed map-op anti-ghost bottomed
+out in a vacuous theorem. Non-membership reuses the gap bracketing (`get_none_of_gap`). -/
 
 /-- The deployed map-tree depth (`heap_root.rs::HEAP_TREE_DEPTH = 16`). -/
 abbrev MAP_TREE_DEPTH : Nat := MapMerkleRoot.HEAP_TREE_DEPTH
@@ -539,28 +541,53 @@ def opensTo (hash : List ℤ → ℤ) (r k : ℤ) (o : Option ℤ) : Prop :=
 def writesTo (hash : List ℤ → ℤ) (r k v r' : ℤ) : Prop :=
   MapMerkleRoot.writesToMerkle hash MAP_TREE_DEPTH r k v r'
 
-/-- **Openings are FUNCTIONAL (the anti-ghost).** Under CR, the BINARY-MERKLE root + key determine the
-read: two openings of the same root at the same key agree. Re-proved against the deployed binary fold
-(`MapMerkleRoot.opensToMerkle_functional` → `mapRoot_injective` → `perfectRoot_injective` /
-`mapNode_injective`), NOT the flat-sponge `root_injective`. A map-op row cannot claim a tampered value. -/
-theorem opensTo_functional (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+/-- **`OpenColl`** — the DEPLOYED map-op read anti-ghost's per-instance residual: the deployed sponge
+genuinely collides at the ONE pair `MapMerkleRoot.mapRootFind` returns for the two heaps THESE two
+openings supply. Decidable; dischargeable by an honest prover at zero cost; refutable; and a
+REFUTATION of `Poseidon2SpongeCR` rather than a new floor. -/
+abbrev OpenColl (hash : List ℤ → ℤ) {r k : ℤ} {o₁ o₂ : Option ℤ}
+    (h₁ : opensTo hash r k o₁) (h₂ : opensTo hash r k o₂) : Prop :=
+  MapMerkleRoot.OpenColl hash MAP_TREE_DEPTH h₁ h₂
+
+/-- **`WriteColl`** — the same, for the map-op WRITE row's `new_root` column. -/
+abbrev WriteColl (hash : List ℤ → ℤ) {r k v r₁ r₂ : ℤ}
+    (h₁ : writesTo hash r k v r₁) (h₂ : writesTo hash r k v r₂) : Prop :=
+  MapMerkleRoot.WriteColl hash MAP_TREE_DEPTH h₁ h₂
+
+/-- **⚑ Openings are FUNCTIONAL (the anti-ghost) — PORTED OFF THE REFUTED FLOOR (2026-07-28).** The
+BINARY-MERKLE root + key determine the read: two openings of the same root at the same key agree, up
+to the named per-instance residual.
+
+This is THE deployed map-op anti-ghost — `MapOp.holdsAt`'s `.read` leg, hence the `.mapOp` arm of
+`Satisfied2`, hence every `AlgoStarkSound*` conclusion that quantifies over it. Until today it
+assumed `Poseidon2SpongeCR hash`, which `HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES
+FALSE at deployed BabyBear parameters: the anti-ghost of the deployed denotation terminated, at its
+final step, in a VACUOUS theorem. It now terminates in a condition the deployed sponge can satisfy.
+
+⚑ Read the price honestly: `mapRoot` is a ONE-FELT commitment, so the residual is a collision search
+on a single BabyBear felt — **≈2^15.5, a BREAK**. Nothing here makes the arity-2 denotation sound;
+it makes what it costs visible. -/
+theorem opensTo_functional (hash : List ℤ → ℤ)
     {r k : ℤ} {o₁ o₂ : Option ℤ}
-    (h₁ : opensTo hash r k o₁) (h₂ : opensTo hash r k o₂) : o₁ = o₂ :=
-  MapMerkleRoot.opensToMerkle_functional hash hCR MAP_TREE_DEPTH h₁ h₂
+    (h₁ : opensTo hash r k o₁) (h₂ : opensTo hash r k o₂)
+    (hno : ¬ OpenColl hash h₁ h₂) : o₁ = o₂ :=
+  MapMerkleRoot.opensToMerkle_functional hash MAP_TREE_DEPTH h₁ h₂ hno
 
 /-- Membership and non-membership at the same root/key EXCLUDE each other (the tooth the
-nullifier/cap non-membership argument needs from the map-ops table). -/
-theorem opensTo_some_excludes_none (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {r k v : ℤ} (h₁ : opensTo hash r k (some v)) (h₂ : opensTo hash r k none) : False :=
-  MapMerkleRoot.opensToMerkle_some_excludes_none hash hCR MAP_TREE_DEPTH h₁ h₂
+nullifier/cap non-membership argument needs from the map-ops table), up to the same residual. -/
+theorem opensTo_some_excludes_none (hash : List ℤ → ℤ)
+    {r k v : ℤ} (h₁ : opensTo hash r k (some v)) (h₂ : opensTo hash r k none)
+    (hno : ¬ OpenColl hash h₁ h₂) : False :=
+  MapMerkleRoot.opensToMerkle_some_excludes_none hash MAP_TREE_DEPTH h₁ h₂ hno
 
-/-- **Writes are FUNCTIONAL.** Under CR, the BINARY-MERKLE root + key + value determine the new root:
-the map-op row's `new_root` column cannot be forged. Re-proved against the deployed binary fold
-(`MapMerkleRoot.writesToMerkle_functional` → `mapRoot_injective`), NOT the flat-sponge `root_injective`. -/
-theorem writesTo_functional (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+/-- **⚑ Writes are FUNCTIONAL — PORTED OFF THE REFUTED FLOOR (2026-07-28).** The BINARY-MERKLE root +
+key + value determine the new root: the map-op row's `new_root` column cannot be forged, up to the
+named per-instance residual. Same story, same price, as `opensTo_functional`. -/
+theorem writesTo_functional (hash : List ℤ → ℤ)
     {r k v r₁ r₂ : ℤ}
-    (h₁ : writesTo hash r k v r₁) (h₂ : writesTo hash r k v r₂) : r₁ = r₂ :=
-  MapMerkleRoot.writesToMerkle_functional hash hCR MAP_TREE_DEPTH h₁ h₂
+    (h₁ : writesTo hash r k v r₁) (h₂ : writesTo hash r k v r₂)
+    (hno : ¬ WriteColl hash h₁ h₂) : r₁ = r₂ :=
+  MapMerkleRoot.writesToMerkle_functional hash MAP_TREE_DEPTH h₁ h₂ hno
 
 /-- Non-membership openings are CONSTRUCTIBLE from the proven gap bracketing — completeness of the
 `absent` kind (the `sorted_gap_excludes` machinery, via `Heap.get_none_of_gap`), over a depth-`d`

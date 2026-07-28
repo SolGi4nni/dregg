@@ -125,10 +125,11 @@ open Dregg2.Circuit (Assignment)
 open Dregg2.Circuit.DescriptorIR2 (MapOp MapOpKind MAP_TREE_DEPTH EffectVmDescriptor2 VmTrace
   VmConstraint2 mapOpsOf envAt)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
-open Dregg2.Circuit.MapMerkleRoot (mapNode perfectRoot mapRoot)
+open Dregg2.Circuit.MapMerkleRoot (mapNode perfectRoot mapRoot perfectRoot_binds_or_collides
+  mapRootFind mapRoot_binds_or_collides)
 open Dregg2.Circuit.MapDenotationSchema (MapLeafSchema imtChainOf opensToMerkleS writesToMerkleS
   imtSchema_chain_imtSorted)
-open Dregg2.Circuit.MapPaddedDenotation (padDigest padTo padTo_length perfectRoot_binds_or_collides
+open Dregg2.Circuit.MapPaddedDenotation (padDigest padTo padTo_length
   padImtRoot PadFree2 PadFree3 padImtSchema padImtTeeth imtChainOf_length imtToHeap_imtChainOf
   oddSponge oddSponge_injective oddSponge_padFree2 oddSponge_padFree3
   opensToMerkleS_functional_of_good opensToMerkleS_some_excludes_none_of_good)
@@ -137,7 +138,6 @@ open Dregg2.Circuit.IndexedMerkleTree (ImtLeaf ImtSorted imtAddrs imtLeafHash im
 open Dregg2.Circuit.MapOpsColumnLayout (pathPos pathRecompute ReconcileGatesAt MapReconcileModelOk
   mem_mapOpsOf toyInsertOp toyInsertEnv toyHeap toyGrown toy_insert_op_value_update_gates
   pathRecompute_binds_updates noPathColl_of_CR noLeafColl_of_CR leafOf_injective)
-open Dregg2.Circuit.MapPaddedDenotation (mapRootFind mapRoot_binds_or_collides)
 open Dregg2.Circuit.Poseidon2Binding (spongeColl_refutable_of_injective)
 open Dregg2.Circuit.MapReconcileImtRepoint (depSpine depKey depSpine_addr_lt depHeap_length)
 open Dregg2.Circuit.MapKindImtGates

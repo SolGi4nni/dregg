@@ -215,7 +215,8 @@ IS LOST by exporting the disjunction. -/
 theorem mapRootColl1_refutes_sponge (hash : List ℤ → ℤ) (d : Nat) {m₁ m₂ : Heap.FeltHeap}
     (hlen₁ : m₁.length = 2 ^ d) (hlen₂ : m₂.length = 2 ^ d)
     (hc : MapRootColl1 hash d m₁ m₂) : ¬ Poseidon2SpongeCR hash :=
-  fun hCR => hc.1 (MapMerkleRoot.mapRoot_injective hash hCR d hlen₁ hlen₂ hc.2)
+  fun hCR => hc.1 (MapMerkleRoot.mapRoot_injective hash d hlen₁ hlen₂
+    (fun hcc => hcc.1 (hCR _ _ hcc.2)) hc.2)
 
 /-- **`CommitsAutomatonBy hash m R d`** — the witness-explicit twin of
 `AttestedAutomatonEmit.CommitsAutomaton`, for the same reason: the residual names the heaps. -/

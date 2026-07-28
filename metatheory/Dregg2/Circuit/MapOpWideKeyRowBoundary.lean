@@ -984,7 +984,8 @@ cannot both open and not-open at it. -/
 theorem narrowCanonRoot_refuses_absence_of_five (hash : List ℤ → ℤ)
     (hCR : Poseidon2SpongeCR hash) : ¬ opensToMerkle hash 1 (narrowCanonRoot hash) 5 none := by
   intro habs
-  have := opensToMerkle_functional hash hCR 1 (narrowCanonHeap_opens_five hash) habs
+  have := opensToMerkle_functional hash 1 (narrowCanonHeap_opens_five hash) habs
+    (fun hc => hc.1 (hCR _ _ hc.2))
   simp at this
 
 /-- **`ResidueBlindLeaf hash`** — the leaf absorb sees only RESIDUES. ⚠ This is a HYPOTHESIS of the

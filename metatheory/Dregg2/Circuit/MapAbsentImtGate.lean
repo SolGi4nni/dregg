@@ -193,8 +193,8 @@ theorem absentImtGates_force_absence (hash : List ℤ → ℤ) (hCR : Poseidon2S
   obtain ⟨xs, p, hxlen, hor, hmem, hlk, hkn, hnr⟩ := absentImtGates_bind_low hash hCR dep hg
   -- The opened vector IS the chain's leaf-digest image: same length, same perfect root.
   have hxs : xs = c.map (imtLeafHash hash) :=
-    perfectRoot_injective hash hCR dep hxlen (by rw [List.length_map]; exact hlen)
-      (by rw [← hor, hroot])
+    perfectRoot_injective hash dep hxlen (by rw [List.length_map]; exact hlen)
+      (fun hc => hc.1 (hCR _ _ hc.2)) (by rw [← hor, hroot])
   subst hxs
   -- The bound digest decodes to a chain leaf (CR on the arity-3 leaf).
   simp only [List.getElem?_map] at hmem
@@ -430,7 +430,8 @@ theorem topGap_reconcileGates_unsat :
   -- The row's root column IS the committed toy root, so root injectivity pins the extracted heap.
   have hr : mapRoot refSponge 2 h = mapRoot refSponge 2 toyHeap := hroot
   have hmax : ∀ x ∈ Heap.keys h, x < (50 : ℤ) := by
-    have hh : h = toyHeap := mapRoot_injective refSponge refSponge_CR 2 hlen rfl hr
+    have hh : h = toyHeap :=
+      mapRoot_injective refSponge 2 hlen rfl (fun hc => hc.1 (refSponge_CR _ _ hc.2)) hr
     subst hh
     decide
   exact adjacentBracket_unsat_above_max refSponge refSponge_CR 2 h hlen hroot hmax hgb

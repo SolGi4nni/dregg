@@ -1045,7 +1045,8 @@ theorem crossCellRead_refines_observedField (hCR : Poseidon2SpongeCR hash)
   -- the circuit's accepted opening is at the same root (by the PI pin) and key.
   have hopen' : opensToMerkle hash d publishedRoot readAddr (some readValue) := hpi ▸ hopen
   -- anti-forge: root + key determine the read, so the two read values agree.
-  exact (Dregg2.Circuit.MapMerkleRoot.opensToMerkle_functional hash hCR d hopen' hgenuine)
+  exact Dregg2.Circuit.MapMerkleRoot.opensToMerkle_functional hash d hopen' hgenuine
+    (fun hc => hc.1 (hCR _ _ hc.2))
 
 /-- **`cross_cell_read_pins_observedValue` — the carrier is SOUND.** When the §8 portal's
 `observedFields` triple `(sourceCell, sourceField, readValue)` is the one the circuit's MapOp::Read
@@ -1148,7 +1149,8 @@ theorem crossCellRead_whole_image (hCR : Poseidon2SpongeCR hash)
     (hcommit : mapRoot hash d peerHeap = publishedRoot)
     (hpin : mapRoot hash d boundaryHeap = publishedRoot) :
     peerHeap = boundaryHeap :=
-  Dregg2.Circuit.MapMerkleRoot.mapRoot_injective hash hCR d hpl hbl (hcommit.trans hpin.symm)
+  Dregg2.Circuit.MapMerkleRoot.mapRoot_injective hash d hpl hbl
+    (fun hc => hc.1 (hCR _ _ hc.2)) (hcommit.trans hpin.symm)
 
 /-- **`crossCellRead_whole_image_sem` — the committed peer heap agrees with the declared image at
 EVERY address (no extra cells, in lookup terms).** The lookup-world consequence: once the published
@@ -1196,7 +1198,8 @@ theorem cross_cell_read_whole_image_teeth (hCR : Poseidon2SpongeCR hash)
     (hpl : peerHeap.length = 2 ^ d) (hbl : boundaryHeap.length = 2 ^ d)
     (hne : peerHeap ≠ boundaryHeap) :
     mapRoot hash d peerHeap ≠ mapRoot hash d boundaryHeap :=
-  fun heq => hne (Dregg2.Circuit.MapMerkleRoot.mapRoot_injective hash hCR d hpl hbl heq)
+  fun heq => hne (Dregg2.Circuit.MapMerkleRoot.mapRoot_injective hash d hpl hbl
+    (fun hc => hc.1 (hCR _ _ hc.2)) heq)
 
 end CrossCellReadWholeImage
 

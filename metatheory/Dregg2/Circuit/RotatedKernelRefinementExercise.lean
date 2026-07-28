@@ -461,7 +461,7 @@ theorem heapWrite_sat_rejects_wrong_splice_root (hash : List ℤ → ℤ) (hCR :
   have hs₁ := heapWrite_splice_forced hash hsat₁ row₁ hrow₁
   have hs₂ := heapWrite_splice_forced hash hsat₂ row₂ hrow₂
   rw [hroot, hkey, hval] at hs₁
-  exact writesTo_functional hash hCR hs₁ hs₂
+  exact writesTo_functional hash hs₁ hs₂ (fun hc => hc.1 (hCR _ _ hc.2))
 
 /-- **`heapWrite_realizes_heapSet` — SAT ⟹ SEM AT THE SORTED-TREE RESOLUTION (the genuine `Heap.set`
 realization).** A satisfying DEPLOYED `heapWriteV3` witness + the realizable readout forces the published
@@ -517,7 +517,8 @@ theorem heapWrite_sat_rejects_forged_root (hash : List ℤ → ℤ) (hCR : Posei
   unfold writesTo writesToMerkle at hsplice
   obtain ⟨h', hsort', hlen', _hlenset', hpre', heq'⟩ := hsplice
   have hheq : h' = h :=
-    mapRoot_injective hash hCR MAP_TREE_DEPTH hlen' hlen (hpre'.trans hpre.symm)
+    mapRoot_injective hash MAP_TREE_DEPTH hlen' hlen (fun hc => hc.1 (hCR _ _ hc.2))
+      (hpre'.trans hpre.symm)
   rw [hheq] at heq'
   exact hforged heq'
 

@@ -109,11 +109,12 @@ open Dregg2.Substrate
 open Dregg2.Circuit.Poseidon2Binding (SpongeColl spongeColl_refutable_of_injective)
 open Dregg2.Circuit.Poseidon2Binding.Reference (refSponge refSponge_CR)
 open Dregg2.Crypto.SpongeCarrierReduction (IsSpongeColl)
-open Dregg2.Circuit.MapMerkleRoot (mapNode foldLevel perfectRoot mapRoot opensToMerkle writesToMerkle)
+open Dregg2.Circuit.MapMerkleRoot (mapNode foldLevel perfectRoot mapRoot opensToMerkle writesToMerkle
+  perfectRoot_binds_or_collides mapRootFind mapRoot_binds_or_collides)
 open Dregg2.Circuit.MapDenotationSchema (MapLeafSchema narrowSchema imtSchema imtChainOf
   imtChainOf_cons opensToMerkleS writesToMerkleS)
 open Dregg2.Circuit.MapPaddedDenotation (padDigest padTo padTo_length padTo_dense emptySubtreeRoot
-  perfectRoot_all_padding perfectRoot_binds_or_collides PadHit append_replicate_eq_or_hit
+  perfectRoot_all_padding PadHit append_replicate_eq_or_hit
   padImtRoot PadGhost3 PadFree3 padGhost3_refuted padImtRoot_binds_or_ghost_or_collides
   padImtSchema padImtTeeth MapLeafTeeth imtChainOf_length imtToHeap_imtChainOf
   oddSponge oddSponge_injective oddSponge_padFree3 oddSponge_ne_pad
@@ -127,7 +128,6 @@ open Dregg2.Circuit.MapOpsColumnLayout (pathPos pathRecompute pathCollFind
   heapAt_of_getElem?)
 open Dregg2.Circuit.DescriptorIR2 (MapOp MapOpKind MAP_TREE_DEPTH)
 open Dregg2.Circuit (Assignment)
-open Dregg2.Circuit.MapPaddedDenotation (mapRootFind mapRoot_binds_or_collides)
 open Dregg2.Circuit.MapDenotationSchema (imtSchema_chain_imtSorted)
 open Dregg2.Circuit.MapOpsColumnLayout (noPathColl_of_CR noLeafColl_of_CR)
 

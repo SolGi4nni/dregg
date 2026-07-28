@@ -259,8 +259,8 @@ theorem absentImtGatesW_force_absence (hash : List ℤ → ℤ) (hCR : Poseidon2
   obtain ⟨xs, p, hxlen, hor, hmem, hlk, hkn, hnr⟩ := absentImtGatesW_bind_low hash hCR dep hg
   -- The opened vector IS the chain's arity-17 leaf-digest image: same length, same perfect root.
   have hxs : xs = c.map (imtLeafHash8Of hash) :=
-    perfectRoot_injective hash hCR dep hxlen (by rw [List.length_map]; exact hlen)
-      (by rw [← hor, hroot])
+    perfectRoot_injective hash dep hxlen (by rw [List.length_map]; exact hlen)
+      (fun hc => hc.1 (hCR _ _ hc.2)) (by rw [← hor, hroot])
   subst hxs
   -- The bound digest decodes to a chain leaf (CR on the arity-17 leaf: all 17 felts bind).
   simp only [List.getElem?_map] at hmem
