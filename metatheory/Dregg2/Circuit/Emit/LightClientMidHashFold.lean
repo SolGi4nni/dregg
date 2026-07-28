@@ -40,14 +40,13 @@ weight DENOMINATOR is pinned in-circuit.
   * `midBlakeLeaf_authSetCommit_eq_absorb` — the bridge leaf's `authSetCommit` IS the BLAKE2b absorb
     reconstruction (the `*_eq_chainCommit` analog: the object `authSetOk` stood for, via the BLAKE2b
     arithmetic, not a bit).
-  * `authSet_binding` — GIVEN the BLAKE2b compression-CR floor `hcompress` (injectivity of `Ref.compress`
-    at a fixed counter/flag — a genuine compression collision), equal-length authority sets whose absorbs
-    agree ARE the same set: the BLAKE2b commit BINDS the authority set (the commitment lemma, reduced by
-    reverse induction to the compression floor — the content behind `noSetCollision`, exactly as tm/sol's
-    `chainCommit_binding` reduces to `pairHash`-CR).
+  * `authSet_binding_on` — GIVEN separation on the absorb's OWN `(state, block)` pairs
+    (`compressSepOn` + `AbsorbCovered`, the HONEST floor), equal-length authority sets whose absorbs
+    agree ARE the same set: the BLAKE2b commit BINDS the authority set.
   * `verifyAuthSet_from_fold` (`*_from_fold` analog) — the `authSetOk` Boolean is DISCHARGED by the
     exhibited absorb: NO carrier column is read.
-  * `mid_authset_from_fold_slots_into_no_forgery` (`*_from_fold_slots_into_no_forgery` analog) — the
+  * `mid_authset_from_fold_gate_accepts` (carrier-free) + `mid_authset_binding_on` (the HONEST floor
+    `compressSepOn`) — the
     fold-derived binding slots into `mid_no_forgery`'s `anchorBinds` leg IN PLACE of the trusted bit: the
     Midnight/GRANDPA no-forgery guarantee holds with the authority-set hash carrier folded out (the
     denominator pinned by the BLAKE2b gates over the exhibited rows, not an opaque bit).
@@ -170,52 +169,84 @@ theorem sched_map_snd_eq (n : Nat) :
       have hlen' : rest.length = rest'.length := by simpa using hlen
       simp only [sched, List.map_cons, ih (i + 1) rest' hlen']
 
-/-- **THE ABSORB BINDS (the commitment lemma; reduced to the compression floor).** GIVEN the BLAKE2b
-compression-CR floor `hcompress` (injectivity of `Ref.compress` at a fixed counter/flag), two schedules
-with the SAME `(counter, flag)` projection whose absorbs agree ARE equal — by reverse induction, peeling
-the last block and applying `hcompress`. This is the `chainCommit_binding` analog for the flag-carrying
-BLAKE2b absorb. -/
-theorem absorb_binding
-    (hcompress : ∀ (x m : List Nat) (t f : Nat) (y n : List Nat),
-      Ref.compress x m t 0 f 0 = Ref.compress y n t 0 f 0 → x = y ∧ m = n)
-    (h0 : List Nat) :
-    ∀ (s₁ s₂ : List (List Nat × Nat × Nat)),
+/-! ### ⚑ 2026-07-27 — THE COMPRESSION FLOOR, STATED HONESTLY.
+
+`Ref.compress` COMPRESSES: 8 state words + 16 message words in, 8 words out, each `< 2^64`
+(`Ref.w64`). So "`Ref.compress` is injective in `(state, block)`" is FALSE, and the BLAKE2b message
+words enter ONLY through `add3 … x = w64 (…)` — they are never rotated — so a message word is read
+only MODULO `2^64` and the collision is EXECUTABLE, not a pigeonhole appeal
+(`authSetRootRef_weight_collision`: an authority whose weight is `0` and one whose weight is `2^64`
+produce the SAME authority-set root). `absorb_binding` used to take that refuted `Prop` as `hcompress`
+and was therefore an implication with an empty premise; the honest floor is separation on the FINITE,
+EXHIBITED set of `(state, block)` pairs the absorb actually compresses. -/
+
+/-- **The IDEALIZED BLAKE2b compression-CR floor, NAMED so it can be REFUTED rather than assumed.**
+This is the exact `Prop` `absorb_binding` used to take. -/
+def compressInjective : Prop :=
+  ∀ (x m : List Nat) (t f : Nat) (y n : List Nat),
+    Ref.compress x m t 0 f 0 = Ref.compress y n t 0 f 0 → x = y ∧ m = n
+
+/-- **`compressSepOn P` — THE HONEST FLOOR.** `Ref.compress` SEPARATES on the `(state, block)` pairs
+satisfying `P` at a given `(counter, flag)`. A consumer must NAME the class its absorb walks and pay
+for it — the shape a query-counted collision bound can price. -/
+def compressSepOn (P : List Nat → List Nat → Nat → Nat → Prop) : Prop :=
+  ∀ (x m : List Nat) (t f : Nat) (y n : List Nat), P x m t f → P y n t f →
+    Ref.compress x m t 0 f 0 = Ref.compress y n t 0 f 0 → x = y ∧ m = n
+
+/-- **The floor at the EMPTY class is vacuous** (the other end of the dial, priced). -/
+theorem compressSepOn_bot : compressSepOn (fun _ _ _ _ => False) := fun _ _ _ _ _ _ h => h.elim
+
+/-- **`AbsorbCovered P h0 s`** — `P` holds of every `(state, block, counter, flag)` the absorb feeds
+to `Ref.compress`. The absorb's HASH TRANSCRIPT, as an obligation. -/
+def AbsorbCovered (P : List Nat → List Nat → Nat → Nat → Prop) :
+    List Nat → List (List Nat × Nat × Nat) → Prop
+  | _, [] => True
+  | h, e :: rest =>
+      P h e.1 e.2.1 e.2.2 ∧ AbsorbCovered P (Ref.compress h e.1 e.2.1 0 e.2.2 0) rest
+
+/-- Peeling the FIRST block of an absorb. -/
+theorem absorb_cons (h0 : List Nat) (e : List Nat × Nat × Nat)
+    (rest : List (List Nat × Nat × Nat)) :
+    absorb h0 (e :: rest) = absorb (Ref.compress h0 e.1 e.2.1 0 e.2.2 0) rest := rfl
+
+/-- **THE ABSORB BINDS, at the HONEST floor.** Two schedules with the SAME `(counter, flag)`
+projection whose absorbs from (possibly different) initial states agree ARE equal, and so are the
+states — GIVEN separation on the class both absorbs' own `(state, block)` pairs live in. Conclusion
+strictly stronger than the old `absorb_binding` (it pins the initial state too); premise satisfiable
+(`compressSepOn_midAbsorbSep`) instead of refuted. -/
+theorem absorb_binding_on (P : List Nat → List Nat → Nat → Nat → Prop) (hsep : compressSepOn P) :
+    ∀ (s₁ s₂ : List (List Nat × Nat × Nat)) (h₁ h₂ : List Nat),
       s₁.map (·.2) = s₂.map (·.2) →
-      absorb h0 s₁ = absorb h0 s₂ → s₁ = s₂ := by
+      AbsorbCovered P h₁ s₁ → AbsorbCovered P h₂ s₂ →
+      absorb h₁ s₁ = absorb h₂ s₂ → h₁ = h₂ ∧ s₁ = s₂ := by
   intro s₁
-  induction s₁ using List.reverseRecOn with
+  induction s₁ with
   | nil =>
-    intro s₂ hsnd _
+    intro s₂ h₁ h₂ hsnd _ _ h
     cases s₂ with
-    | nil => rfl
-    | cons a t => simp at hsnd
-  | append_singleton s₁' a ih =>
-    intro s₂ hsnd h
-    rcases List.eq_nil_or_concat s₂ with rfl | ⟨s₂', b, rfl⟩
-    · simp at hsnd
-    · rw [List.concat_eq_append] at hsnd h ⊢
-      simp only [List.map_append, List.map_cons, List.map_nil] at hsnd
-      have hlen2 : (s₁'.map (·.2)).length = (s₂'.map (·.2)).length := by
-        have hh := congrArg List.length hsnd
-        simpa using hh
-      obtain ⟨hsnd', hlast⟩ := List.append_inj hsnd hlen2
-      have hab2 : a.2 = b.2 := by simpa using hlast
-      rw [absorb_concat, absorb_concat] at h
-      rw [show b.2.1 = a.2.1 from by rw [hab2], show b.2.2 = a.2.2 from by rw [hab2]] at h
-      obtain ⟨hstate, hblk⟩ := hcompress _ _ _ _ _ _ h
-      have hs' : s₁' = s₂' := ih s₂' hsnd' hstate
-      rw [hs']
-      have hab : a = b := by
-        rcases a with ⟨a1, a2⟩; rcases b with ⟨b1, b2⟩
-        dsimp only at hblk hab2
-        rw [hblk, hab2]
-      rw [hab]
+    | nil => exact ⟨h, rfl⟩
+    | cons _ _ => simp at hsnd
+  | cons e₁ r₁ ih =>
+    intro s₂ h₁ h₂ hsnd hc₁ hc₂ h
+    cases s₂ with
+    | nil => simp at hsnd
+    | cons e₂ r₂ =>
+      obtain ⟨m₁, t₁, f₁⟩ := e₁
+      obtain ⟨m₂, t₂, f₂⟩ := e₂
+      simp only [List.map_cons, List.cons.injEq, Prod.mk.injEq] at hsnd
+      obtain ⟨⟨rfl, rfl⟩, hrest⟩ := hsnd
+      simp only [AbsorbCovered] at hc₁ hc₂
+      simp only [absorb_cons] at h
+      obtain ⟨hcs, hr⟩ := ih r₂ _ _ hrest hc₁.2 hc₂.2 h
+      obtain ⟨hh, hm⟩ := hsep _ _ _ _ _ _ hc₁.1 hc₂.1 hcs
+      exact ⟨hh, by rw [hm, hr]⟩
 
 /-! ## §3 — The four fold theorems (mirroring the tm/sol folds), for the `authSetOk` carrier.
 
 The Ed25519 fields of `midBlakeLeaf` are the demo/EC-arc slot; the load-bearing object is `authSetCommit
-= authSetRootRef`, the BLAKE2b absorb. `authSetCR` is the genuine authority-set CR floor over
-`authSetRootRef`, `noSetCollision := id` (the named floor, `hcr` where consumed). -/
+= authSetRootRef`, the BLAKE2b absorb. ⚑ 2026-07-27: `authSetCR` used to be idealized injectivity of
+`authSetRootRef`, which is REFUTED (`authSetInjective_false`), so the slot is now `False` and the
+binding rides `authSet_binding_on` at the honest floor `compressSepOn`. -/
 
 /-- Demo Ed25519-slot verifier (genuine key `7`, genuine sig `7`): the EC-arc residual, NOT folded. -/
 def midEdVerify (pk : Nat) (_m : List Nat × Nat × Nat × Nat) (s : Nat) : Bool :=
@@ -230,9 +261,52 @@ theorem midEdSound (pk : Nat) (m : List Nat × Nat × Nat × Nat) (s : Nat)
   simp only [midEdVerify, Bool.and_eq_true, decide_eq_true_eq] at h
   exact h.1
 
+/-- **The IDEALIZED authority-set CR floor, NAMED so it can be REFUTED rather than assumed.** This is
+the exact `Prop` `midBlakeLeaf.authSetCR` used to hold. -/
+def authSetInjective : Prop :=
+  ∀ t₁ t₂ : List (Nat × Nat), authSetRootRef t₁ = authSetRootRef t₂ → t₁ = t₂
+
+/-- A one-row authority set is exactly one `Ref.compress` at counter 128 with the final flag. -/
+theorem authSetRootRef_single (r : Nat × Nat) :
+    authSetRootRef [r] = Ref.compress Ref.h0Default (rowBlock r) 128 0 Ref.FF 0 := rfl
+
+set_option maxRecDepth 8192 in
+/-- ⛑ **THE WEIGHT DENOMINATOR IS NOT BOUND — an executable collision.** An authority of weight `0`
+and one of weight `2^64` produce the SAME authority-set root: BLAKE2b's message words enter only
+through `add3 … x = w64 (…)` and are never rotated, so a message word is read only modulo `2^64`,
+and `rowBlock` drops the raw `Nat` weight straight into one. This is the audit's witness, in Lean. -/
+theorem authSetRootRef_weight_collision :
+    authSetRootRef [(1, 0)] = authSetRootRef [(1, 2 ^ 64)] := by decide
+
+/-- **THE IDEALIZED AUTHORITY-SET CR FLOOR IS FALSE**, by witness. -/
+theorem authSetInjective_false : ¬ authSetInjective := by
+  intro h
+  exact absurd (h _ _ authSetRootRef_weight_collision) (by decide)
+
+/-- **THE IDEALIZED COMPRESSION FLOOR IS FALSE**, by the same witness one level down. -/
+theorem compressInjective_false : ¬ compressInjective := by
+  intro h
+  have hcol : Ref.compress Ref.h0Default (rowBlock (1, 0)) 128 0 Ref.FF 0
+            = Ref.compress Ref.h0Default (rowBlock (1, 2 ^ 64)) 128 0 Ref.FF 0 := by
+    rw [← authSetRootRef_single, ← authSetRootRef_single]
+    exact authSetRootRef_weight_collision
+  exact absurd (h _ _ _ _ _ _ hcol).2 (by decide)
+
+/-- **UPPER POLE — the class is LOAD-BEARING.** At the UNRESTRICTED class the floor collapses to the
+idealized one and is therefore FALSE: restricting to an exhibited class is the whole difference
+between a floor and an empty premise. (Stated as the refutation, not as an `Iff`, so it is anti-floor
+content and carries nothing.) -/
+theorem compressSepOn_top_false : ¬ compressSepOn (fun _ _ _ _ => True) := fun h =>
+  compressInjective_false (fun x m t f y n e => h x m t f y n trivial trivial e)
+
 /-- **`midBlakeLeaf`** — the lawful BLAKE2b `MidLeaf` whose `authSetCommit` IS the multi-block absorb
-`authSetRootRef`. `authSetCR` is the genuine authority-set CR floor; `noSetCollision := fun h => h`
-unpacks it (the named floor, `hcr` where consumed). The Ed25519 fields are the demo/EC-arc slot. -/
+`authSetRootRef`. The Ed25519 fields are the demo/EC-arc slot.
+
+⛑ 2026-07-27 — `authSetCR` used to be `∀ t₁ t₂, authSetRootRef t₁ = authSetRootRef t₂ → t₁ = t₂`,
+described as "the genuine authority-set CR floor". `MidLeaf.noSetCollision` demands the carrier ENTAIL
+exactly that, and it is FALSE (`authSetInjective_false`, an executable weight-inflation collision), so
+every theorem taking `hcr : midBlakeLeaf.authSetCR` proved nothing. The slot is now `False`; the
+binding content rides `authSet_binding_on` on the honest floor `compressSepOn`. -/
 @[reducible] def midBlakeLeaf : MidLeaf where
   PubKey := Nat
   Digest := List Nat
@@ -243,8 +317,8 @@ unpacks it (the named floor, `hcr` where consumed). The Ed25519 fields are the d
   Signed := midSigned
   edSound := midEdSound
   authSetCommit := authSetRootRef
-  authSetCR := ∀ t₁ t₂ : List (Nat × Nat), authSetRootRef t₁ = authSetRootRef t₂ → t₁ = t₂
-  noSetCollision := fun h => h
+  authSetCR := False
+  noSetCollision := fun h => h.elim
   zeroSig := 0
   zeroDigest := List.replicate 8 0
 
@@ -266,14 +340,16 @@ reconstruction — the object `authSetOk` stood for, via the BLAKE2b arithmetic.
 theorem midBlakeLeaf_authSetCommit_eq_absorb (rows : List (Nat × Nat)) :
     midBlakeLeaf.authSetCommit rows = authSetRootRef rows := rfl
 
-/-- **THE AUTHORITY-SET COMMIT BINDS (the commitment lemma; reduced to the compression floor).** GIVEN
-the BLAKE2b compression-CR floor `hcompress`, equal-length authority sets whose BLAKE2b absorbs agree ARE
-the same set — so the WS-anchor-pinned root pins the weight DENOMINATOR (the content behind
-`noSetCollision`, reduced via `absorb_binding` and `rowBlock` injectivity). -/
-theorem authSet_binding
-    (hcompress : ∀ (x m : List Nat) (t f : Nat) (y n : List Nat),
-      Ref.compress x m t 0 f 0 = Ref.compress y n t 0 f 0 → x = y ∧ m = n)
+/-- **THE AUTHORITY-SET COMMIT BINDS, at the HONEST floor.** Equal-length authority sets whose
+BLAKE2b absorbs agree ARE the same set — so the WS-anchor-pinned root pins the weight DENOMINATOR —
+GIVEN separation on the class the two absorbs' OWN `(state, block)` pairs live in, instead of the
+REFUTED global injectivity of `Ref.compress`. Conclusion unchanged; premise satisfiable. -/
+theorem authSet_binding_on (P : List Nat → List Nat → Nat → Nat → Prop) (hsep : compressSepOn P)
     (t₁ t₂ : List (Nat × Nat)) (hlen : t₁.length = t₂.length)
+    (hc₁ : AbsorbCovered P Ref.h0Default
+      (sched (authSetBlocks t₁).length 0 (authSetBlocks t₁)))
+    (hc₂ : AbsorbCovered P Ref.h0Default
+      (sched (authSetBlocks t₂).length 0 (authSetBlocks t₂)))
     (h : authSetRootRef t₁ = authSetRootRef t₂) : t₁ = t₂ := by
   have hBlen : (authSetBlocks t₁).length = (authSetBlocks t₂).length := by
     simp only [authSetBlocks, List.length_map, hlen]
@@ -287,7 +363,7 @@ theorem authSet_binding
                = absorb Ref.h0Default (sched (authSetBlocks t₂).length 0 (authSetBlocks t₂)) := h
   have hsched : sched (authSetBlocks t₁).length 0 (authSetBlocks t₁)
               = sched (authSetBlocks t₂).length 0 (authSetBlocks t₂) :=
-    absorb_binding hcompress Ref.h0Default _ _ hsnd habsorb
+    (absorb_binding_on P hsep _ _ Ref.h0Default Ref.h0Default hsnd hc₁ hc₂ habsorb).2
   -- recover the block lists, then the row lists (rowBlock injective)
   have hB : authSetBlocks t₁ = authSetBlocks t₂ := by
     have hm := congrArg (List.map (fun p : List Nat × Nat × Nat => p.1)) hsched
@@ -310,16 +386,20 @@ theorem verifyAuthSet_from_fold (ts : MidTrustedState midBlakeLeaf) (u : MidUpda
   unfold authSetOk
   exact midBlakeLeaf.dBeq_iff.mpr hfold
 
-/-- **THE PAYOFF: the fold-derived binding slots into `mid_no_forgery`'s `anchorBinds` leg in place of the
-trusted `authSetOk` bit (`*_from_fold_slots_into_no_forgery` analog).** GIVEN the BLAKE2b authority-set-CR
-carrier (`hcr` — the named floor), the `0 < totalWeight` floor, the strict `> 2/3` supermajority, and the
-Ed25519 / round / era results (`edOk`/`roundOk`/`eraOk` — the EC-arc + in-AIR gates, hypotheses), if the
-authority rows' BLAKE2b absorb reconstructs into the pinned WS anchor root (`hfold` — DERIVED from the
-exhibited rows, not a witnessed bit), the update is Midnight-GRANDPA-VALID relative to the anchor. The
-`authSetOk` carrier is folded out: the weight DENOMINATOR is now pinned by the BLAKE2b absorb, not an
-opaque bit. -/
-theorem mid_authset_from_fold_slots_into_no_forgery
-    (hcr : midBlakeLeaf.authSetCR)
+/-- **THE PAYOFF, CARRIER-FREE: the fold-derived binding DISCHARGES THE WHOLE MIDNIGHT GATE.** Given
+the `0 < totalWeight` floor, the strict `> 2/3` supermajority, and the Ed25519 / round / era results,
+if the authority rows' BLAKE2b absorb reconstructs into the pinned WS anchor root (`hfold` — DERIVED
+from the exhibited rows, not a witnessed bit), `midVerify` ACCEPTS. No `authSetOk` bit is read and NO
+hash floor is used.
+
+⛑ 2026-07-27 — this replaces `mid_authset_from_fold_slots_into_no_forgery`, which concluded
+`MidValidAt` from `hcr : midBlakeLeaf.authSetCR`, REFUTED by an executable WEIGHT-INFLATION collision
+(`authSetInjective_false`). **CAPABILITY LOST, NAMED:** `MidValidAt`'s ∀-quantified authority-set
+binding conjunct is not derivable at a compressing hash by any premise. What replaces it is the
+PAIRWISE form (`mid_authset_binding_on`). ⛑ AND THE WITNESS IS ITS OWN FINDING: `rowBlock` drops the
+raw `Nat` weight into one BLAKE2b message word, so even the pairwise form is only as good as an
+encoder range-check that does not exist here — a NAMED residual this repair surfaces. -/
+theorem mid_authset_from_fold_gate_accepts
     (ts : MidTrustedState midBlakeLeaf) (u : MidUpdate midBlakeLeaf)
     (hpos : 0 < totalWeight midBlakeLeaf u)
     (hthr : 2 * totalWeight midBlakeLeaf u < 3 * signedWeight midBlakeLeaf u)
@@ -327,13 +407,59 @@ theorem mid_authset_from_fold_slots_into_no_forgery
     (hround : roundOk midBlakeLeaf u = true)
     (hera : eraOk midBlakeLeaf ts u = true)
     (hfold : authSetRootRef (u.authSet.map authRow) = ts.anchorRoot) :
-    MidValidAt midBlakeLeaf ts u := by
+    midVerify midBlakeLeaf ts u = true := by
   have hauthset : authSetOk midBlakeLeaf ts u = true := verifyAuthSet_from_fold ts u hfold
-  have hverify : midVerify midBlakeLeaf ts u = true := by
-    unfold midVerify midVerifyDecision
-    simp only [Bool.and_eq_true, decide_eq_true_eq]
-    exact ⟨⟨⟨⟨⟨hpos, hthr⟩, hed⟩, hauthset⟩, hround⟩, hera⟩
-  exact mid_no_forgery midBlakeLeaf hcr ts u hverify
+  unfold midVerify midVerifyDecision
+  simp only [Bool.and_eq_true, decide_eq_true_eq]
+  exact ⟨⟨⟨⟨⟨hpos, hthr⟩, hed⟩, hauthset⟩, hround⟩, hera⟩
+
+/-- **THE AUTHORITY SET IS BOUND, at the HONEST floor.** Two equal-length authority sets whose BLAKE2b
+absorbs both hit the SAME pinned anchor root ARE the same set — GIVEN separation on the class their own
+`(state, block)` pairs live in. This is what `authSetOk` stood for. -/
+theorem mid_authset_binding_on (P : List Nat → List Nat → Nat → Nat → Prop) (hsep : compressSepOn P)
+    (t₁ t₂ : List (Nat × Nat)) (anchor : List Nat) (hlen : t₁.length = t₂.length)
+    (hc₁ : AbsorbCovered P Ref.h0Default (sched (authSetBlocks t₁).length 0 (authSetBlocks t₁)))
+    (hc₂ : AbsorbCovered P Ref.h0Default (sched (authSetBlocks t₂).length 0 (authSetBlocks t₂)))
+    (h₁ : authSetRootRef t₁ = anchor) (h₂ : authSetRootRef t₂ = anchor) : t₁ = t₂ :=
+  authSet_binding_on P hsep t₁ t₂ hlen hc₁ hc₂ (h₁.trans h₂.symm)
+
+/-! ### The honest floor's SATISFIABLE leg (the one the audited guard never tested). -/
+
+/-- Two one-row absorbs at the real BLAKE2b parameters — an exhibited, genuinely two-element class. -/
+def midAbsorbSep (x m : List Nat) (t f : Nat) : Prop :=
+  x = Ref.h0Default ∧ t = 128 ∧ f = Ref.FF
+    ∧ (m = rowBlock (1, 2) ∨ m = rowBlock (1, 3))
+
+set_option maxRecDepth 8192 in
+/-- **SATISFIABLE — `Ref.compress` SEPARATES on an exhibited class**, kernel-checked on the real
+BLAKE2b reference. So `absorb_binding_on` is an implication with a NON-empty antecedent — the leg the
+audited `midCollapse_not_CR` guard never tested, and at which the OLD floor's answer was NO. -/
+theorem compressSepOn_midAbsorbSep : compressSepOn midAbsorbSep := by
+  intro x m t f y n hx hy e
+  obtain ⟨rfl, rfl, rfl, hm⟩ := hx
+  obtain ⟨rfl, -, -, hn⟩ := hy
+  rcases hm with rfl | rfl <;> rcases hn with rfl | rfl <;>
+    first
+      | exact ⟨rfl, rfl⟩
+      | exact absurd e (by decide)
+
+/-- The satisfying class is genuinely INHABITED by distinct blocks (not the empty class in disguise). -/
+theorem midAbsorbSep_class_inhabited :
+    midAbsorbSep Ref.h0Default (rowBlock (1, 2)) 128 Ref.FF
+    ∧ midAbsorbSep Ref.h0Default (rowBlock (1, 3)) 128 Ref.FF
+    ∧ rowBlock (1, 2) ≠ rowBlock (1, 3) :=
+  ⟨⟨rfl, rfl, rfl, Or.inl rfl⟩, ⟨rfl, rfl, rfl, Or.inr rfl⟩, by decide⟩
+
+set_option maxRecDepth 8192 in
+/-- **The satisfying floor FIRES** — obtained THROUGH `mid_authset_binding_on`: at a class the floor
+genuinely holds on, two one-authority sets with different weights cannot share an anchor root. Floor,
+coverage and conclusion exercised together on the real BLAKE2b. -/
+theorem mid_authset_binding_fires :
+    authSetRootRef [(1, 2)] ≠ authSetRootRef [(1, 3)] := by
+  intro h
+  exact absurd (mid_authset_binding_on midAbsorbSep compressSepOn_midAbsorbSep [(1, 2)] [(1, 3)] _
+    rfl ⟨⟨rfl, rfl, rfl, Or.inl rfl⟩, trivial⟩ ⟨⟨rfl, rfl, rfl, Or.inr rfl⟩, trivial⟩ rfl h.symm)
+    (by decide)
 
 /-! ## §4 — KATs: the 2-authority BLAKE2b absorb, anchored to a real `hashlib.blake2b` vector.
 
@@ -376,13 +502,22 @@ GADGET `blake2bF`. -/
 #assert_axioms absorb_concat
 #assert_axioms sched_map_fst
 #assert_axioms sched_map_snd_eq
-#assert_axioms absorb_binding
+#assert_axioms compressSepOn_top_false
+#assert_axioms compressSepOn_bot
+#assert_axioms absorb_binding_on
+#assert_axioms authSetRootRef_weight_collision
+#assert_axioms authSetInjective_false
+#assert_axioms compressInjective_false
 #assert_axioms midBlakeLeaf_authSetCommit_eq_absorb
-#assert_axioms authSet_binding
+#assert_axioms authSet_binding_on
 #assert_axioms verifyAuthSet_from_fold
-#assert_axioms mid_authset_from_fold_slots_into_no_forgery
+#assert_axioms mid_authset_from_fold_gate_accepts
+#assert_axioms mid_authset_binding_on
+#assert_axioms compressSepOn_midAbsorbSep
+#assert_axioms midAbsorbSep_class_inhabited
+#assert_axioms mid_authset_binding_fires
 
-#print axioms mid_authset_from_fold_slots_into_no_forgery
-#print axioms authSet_binding
+#print axioms mid_authset_from_fold_gate_accepts
+#print axioms authSet_binding_on
 
 end Dregg2.Circuit.Emit.LightClientMidHashFold

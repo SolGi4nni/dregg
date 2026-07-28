@@ -259,6 +259,220 @@ theorem addMod32_forces (a : Assignment) (ins : List Head) (outBase : Nat) (carB
 #assert_axioms evalH_foldl_append
 #assert_axioms addMod32_forces
 
+/-! ## §2b — THE HASH FLOOR, STATED HONESTLY (2026-07-27 repair).
+
+`pairHash : List Nat → List Nat → List Nat` COMPRESSES: its output is 8 words each `< 2^32`
+(`Ref.add2 = w32 (x+y)`), so at most `2^256` values, over an INFINITE domain. Any floor of the
+shape "`pairHash` is injective" is therefore FALSE, and every theorem taking one as a hypothesis
+proves NOTHING. That shape was what the four `LightClient*Fold` leaves plugged into their CR
+slots; this section names it so it can be REFUTED instead of assumed, and supplies the floor
+that is honest.
+
+  * `pairHashInjective` — the idealized floor, NAMED. `pairHashInjective_false` REFUTES it with
+    an EXECUTABLE collision (`pairHash_ignores_word_64`), not a pigeonhole appeal: `compressFrom`
+    reads only `w.getD t 0` for `t < 64`, and `Ref.schedule` leaves the input words at those
+    indices untouched, so message word 64 of `a ‖ b` is NEVER READ.
+  * `pairSepOn P` — the floor a binding proof actually needs: `pairHash` SEPARATES on the pairs
+    satisfying `P`. Every binding proof below applies collision-freeness at FINITELY MANY,
+    EXPLICITLY COMPUTABLE points — the pairs the fold hashes — never at "all inputs".
+
+`pairSepOn` has all THREE legs, which is what makes it a floor rather than a costume:
+
+  * SATISFIABLE — `pairSepOn_modelSep` exhibits a class on which it HOLDS, by kernel evaluation
+    of the REAL SHA-256, with `modelSep_class_inhabited` pinning that the class has genuinely
+    distinct members (so it is not `False`, nor the empty class, in disguise);
+  * REFUTABLE — `pairSepOn_truncSep_false` exhibits a two-element class on which it FAILS, and
+    `pairSepOn_top_false` shows the UNRESTRICTED class is exactly the refuted idealized floor;
+  * NOT PROVABLE — being refutable at a class, it is not a theorem: a consumer must EXHIBIT the
+    transcript and pay for its separation.
+
+⚑ WHAT THE CLASS COSTS is what the birthday bound prices (`Crypto.RomQueryFloor.birthday_bound`,
+`(Q²+1)/‖R‖`): `Q` here is the number of pairs in the transcript and `‖R‖ = 2^256`. That is the
+rung this floor is designed to land on; it is NOT landed here (that is a modelling step —
+`Crypto.DomainSeparatedCREffRegrounded` §5 — and taking it silently would be the laundering the
+sweep exists to stop). What IS closed here is that the hypothesis is one a model satisfies. -/
+
+/-- **The IDEALIZED-INJECTIVITY floor, NAMED so it can be REFUTED rather than assumed.** This is
+the exact `Prop` the light-client leaves used to plug into their CR slots. -/
+def pairHashInjective : Prop :=
+  ∀ a b c d : List Nat, pairHash a b = pairHash c d → a = c ∧ b = d
+
+-- ⚑ THE EXECUTABLE COLLISION: message word 64 of `a ‖ b` is never read.
+#guard pairHash (List.replicate 8 0) (List.replicate 56 0)
+    == pairHash (List.replicate 8 0) (List.replicate 56 0 ++ [1])
+
+set_option maxRecDepth 8192 in
+/-- **`pairHash` IGNORES message word 64** — a CONCRETE collision on the deployed reference, no
+pigeonhole needed. `pairHash a b = sha256_64 (a ++ b)`; `compressFrom` reads `w.getD t 0` only
+for `t < 64`, and `Ref.schedule` appends its 48 expansion words AFTER the input words, so for a
+64-word input the read prefix IS the input and a 65th word changes nothing. -/
+theorem pairHash_ignores_word_64 :
+    pairHash (List.replicate 8 0) (List.replicate 56 0)
+      = pairHash (List.replicate 8 0) (List.replicate 56 0 ++ [1]) := by decide
+
+-- ⚑ SECOND EXECUTABLE COLLISION: a message word is read only MODULO 2^64.
+#guard pairHash (List.replicate 8 0) [1, 2, 3, 4, 5, 6, 7, 8]
+    == pairHash (List.replicate 8 0) [1, 2, 3, 4 + 2 ^ 64, 5, 6, 7, 8]
+
+set_option maxRecDepth 8192 in
+/-- **`pairHash` READS ITS MESSAGE WORDS ONLY MODULO `2^64`.** A word enters the schedule only
+through `Ref.add2` (mod `2^32`) and through `σ0`/`σ1`, whose `rotr`/`shr` contributions are
+themselves consumed by an `add2`; adding `2^64` moves every affected bit above bit 31 in each of
+those terms. So ANY encoder that drops an unbounded `Nat` (a stake, a weight, a height) into a
+message word is NON-INJECTIVE at the digest — this is the SHA-256 twin of the BLAKE2b defect the
+crypto-gadget audit found in `authSetRootRef`, and it is the witness that refutes the Tendermint
+and Solana collection-CR carriers. -/
+theorem pairHash_ignores_bits_above_64 :
+    pairHash (List.replicate 8 0) [1, 2, 3, 4, 5, 6, 7, 8]
+      = pairHash (List.replicate 8 0) [1, 2, 3, 4 + 2 ^ 64, 5, 6, 7, 8] := by decide
+
+/-- **THE IDEALIZED FLOOR IS FALSE**, and by a witness rather than a counting argument: the two
+right-hand children differ (one has 57 words, the other 56) yet pair to the same digest. -/
+theorem pairHashInjective_false : ¬ pairHashInjective := by
+  intro h
+  have hb := (h (List.replicate 8 0) (List.replicate 56 0)
+      (List.replicate 8 0) (List.replicate 56 0 ++ [1]) pairHash_ignores_word_64).2
+  have hlen := congrArg List.length hb
+  simp at hlen
+
+/-- **`pairSepOn P` — THE HONEST HASH FLOOR.** `pairHash` SEPARATES on the pairs satisfying `P`:
+two `P`-pairs sharing a digest ARE the same pair. `P` is the finite, EXHIBITED class of pairs a
+particular fold hashes — a consumer must name it and pay for it, which is exactly the shape a
+query-counted collision bound can price. -/
+def pairSepOn (P : List Nat → List Nat → Prop) : Prop :=
+  ∀ a b c d : List Nat, P a b → P c d → pairHash a b = pairHash c d → a = c ∧ b = d
+
+/-- The floor at a SMALLER class is weaker: a fold needs separation only on its own pairs. -/
+theorem pairSepOn_mono {P Q : List Nat → List Nat → Prop}
+    (hPQ : ∀ a b, P a b → Q a b) (h : pairSepOn Q) : pairSepOn P :=
+  fun a b c d hab hcd e => h a b c d (hPQ a b hab) (hPQ c d hcd) e
+
+/-! ### The three legs. -/
+
+/-- **UPPER POLE — the class is LOAD-BEARING.** At the UNRESTRICTED class the floor IS the
+idealized injectivity floor. -/
+theorem pairSepOn_top_iff : pairSepOn (fun _ _ => True) ↔ pairHashInjective :=
+  ⟨fun h a b c d e => h a b c d trivial trivial e, fun h a b c d _ _ e => h a b c d e⟩
+
+/-- **UPPER POLE, fired: `pairSepOn ⊤` is FALSE.** So the restriction to an exhibited class is
+not decoration — it is the whole difference between a floor and an empty premise. -/
+theorem pairSepOn_top_false : ¬ pairSepOn (fun _ _ => True) :=
+  fun h => pairHashInjective_false (pairSepOn_top_iff.mp h)
+
+/-- **LOWER POLE — at the EMPTY class the floor is vacuous** (`hard_bot_vacuous`'s analogue).
+Stated so the dial's other end is priced too: a class must be inhabited to mean anything. -/
+theorem pairSepOn_bot : pairSepOn (fun _ _ => False) := fun _ _ _ _ h => h.elim
+
+/-- The two pairs of the collision witness — the class on which the floor FAILS. -/
+def truncSep (a b : List Nat) : Prop :=
+  (a = List.replicate 8 0 ∧ b = List.replicate 56 0)
+  ∨ (a = List.replicate 8 0 ∧ b = List.replicate 56 0 ++ [1])
+
+/-- **REFUTABLE LEG — the floor is FALSE at a genuinely two-element class**, not only at `⊤`:
+the truncation collision lives inside it. -/
+theorem pairSepOn_truncSep_false : ¬ pairSepOn truncSep := by
+  intro h
+  have hb := (h (List.replicate 8 0) (List.replicate 56 0)
+      (List.replicate 8 0) (List.replicate 56 0 ++ [1])
+      (Or.inl ⟨rfl, rfl⟩) (Or.inr ⟨rfl, rfl⟩) pairHash_ignores_word_64).2
+  have hlen := congrArg List.length hb
+  simp at hlen
+
+/-- Three pairwise-distinct digest pairs — the exhibited transcript the model pays for. -/
+def modelSep (a b : List Nat) : Prop :=
+  (a = List.replicate 8 0 ∧ b = List.replicate 8 0)
+  ∨ (a = List.replicate 8 0 ∧ b = List.replicate 8 1)
+  ∨ (a = List.replicate 8 1 ∧ b = List.replicate 8 0)
+
+set_option maxRecDepth 8192 in
+/-- **SATISFIABLE LEG — the floor HOLDS on an exhibited class, over the REAL SHA-256.** Checked
+by kernel evaluation of `pairHash` on every ordered pair of the class: the three digests are
+pairwise distinct. This is the leg the audited leaves never had — `tmCollapse_not_CR` and its
+siblings tested only that the shape is refutable. -/
+theorem pairSepOn_modelSep : pairSepOn modelSep := by
+  intro a b c d hab hcd e
+  rcases hab with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;>
+    rcases hcd with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;>
+      first
+        | exact ⟨rfl, rfl⟩
+        | exact absurd e (by decide)
+
+/-- The satisfying class is genuinely INHABITED by distinct pairs — it is not the empty class
+wearing the `pairSepOn` name (`pairSepOn_bot` is what that would be). -/
+theorem modelSep_class_inhabited :
+    modelSep (List.replicate 8 0) (List.replicate 8 0)
+    ∧ modelSep (List.replicate 8 0) (List.replicate 8 1)
+    ∧ (List.replicate 8 0 : List Nat) ≠ List.replicate 8 1 :=
+  ⟨Or.inl ⟨rfl, rfl⟩, Or.inr (Or.inl ⟨rfl, rfl⟩), by decide⟩
+
+/-! ### The floor CONSUMED: branch reconstruction is binding on the fold's OWN pairs. -/
+
+/-- **`FoldCovered P leaf branch idx`** — `P` holds of EVERY pair this branch fold feeds to
+`pairHash`. The obligation a consumer discharges by exhibiting its transcript. -/
+def FoldCovered (P : List Nat → List Nat → Prop) : List Nat → List (List Nat) → Nat → Prop
+  | _, [], _ => True
+  | leaf, sib :: rest, idx =>
+      (if idx % 2 = 1 then P sib leaf else P leaf sib)
+      ∧ FoldCovered P (if idx % 2 = 1 then pairHash sib leaf else pairHash leaf sib) rest (idx / 2)
+
+/-- **BRANCH RECONSTRUCTION IS BINDING, at the HONEST floor.** Two same-depth branches at the
+same index reconstructing the SAME root carry the SAME leaf — GIVEN separation on the class both
+folds' pairs live in, NOT injectivity of `pairHash`. This is `Bridge.LightClientEth`'s
+`reconstruct_binding` with its hypothesis replaced by one a model satisfies
+(`pairSepOn_modelSep`); the conclusion is unchanged. -/
+theorem foldReconstruct_binding_on (P : List Nat → List Nat → Prop) (hsep : pairSepOn P) :
+    ∀ (b₁ b₂ : List (List Nat)) (idx : Nat) (l₁ l₂ : List Nat),
+      b₁.length = b₂.length →
+      FoldCovered P l₁ b₁ idx → FoldCovered P l₂ b₂ idx →
+      foldReconstruct l₁ b₁ idx = foldReconstruct l₂ b₂ idx → l₁ = l₂ := by
+  intro b₁
+  induction b₁ with
+  | nil =>
+    intro b₂ idx l₁ l₂ hlen _ _ h
+    cases b₂ with
+    | nil => simpa [foldReconstruct] using h
+    | cons _ _ => simp at hlen
+  | cons s₁ r₁ ih =>
+    intro b₂ idx l₁ l₂ hlen hc₁ hc₂ h
+    cases b₂ with
+    | nil => simp at hlen
+    | cons s₂ r₂ =>
+      have hlen' : r₁.length = r₂.length := by simpa using hlen
+      by_cases hb : idx % 2 = 1
+      · simp only [FoldCovered, foldReconstruct, if_pos hb] at hc₁ hc₂ h
+        have hstep := ih r₂ (idx / 2) _ _ hlen' hc₁.2 hc₂.2 h
+        exact (hsep s₁ l₁ s₂ l₂ hc₁.1 hc₂.1 hstep).2
+      · simp only [FoldCovered, foldReconstruct, if_neg hb] at hc₁ hc₂ h
+        have hstep := ih r₂ (idx / 2) _ _ hlen' hc₁.2 hc₂.2 h
+        exact (hsep l₁ s₁ l₂ s₂ hc₁.1 hc₂.1 hstep).1
+
+set_option maxRecDepth 8192 in
+/-- **THE BINDING THEOREM RUNS ON A SATISFIED PREMISE** — the leg the audited anti-vacuity guards
+never had. At the model class, two REAL depth-1 folds over DISTINCT leaves cannot share a root,
+and the fact is obtained THROUGH `foldReconstruct_binding_on`: the floor (`pairSepOn_modelSep`),
+the coverage (`FoldCovered`) and the conclusion are exercised together, on the real SHA-256. -/
+theorem foldReconstruct_binding_on_fires :
+    foldReconstruct (List.replicate 8 0) [List.replicate 8 1] 0
+      ≠ foldReconstruct (List.replicate 8 1) [List.replicate 8 0] 0 := by
+  intro h
+  have hEq := foldReconstruct_binding_on modelSep pairSepOn_modelSep
+    [List.replicate 8 1] [List.replicate 8 0] 0 (List.replicate 8 0) (List.replicate 8 1)
+    rfl ⟨Or.inr (Or.inl ⟨rfl, rfl⟩), trivial⟩ ⟨Or.inr (Or.inr ⟨rfl, rfl⟩), trivial⟩ h
+  exact absurd hEq (by decide)
+
+#assert_axioms pairHash_ignores_word_64
+#assert_axioms pairHash_ignores_bits_above_64
+#assert_axioms pairHashInjective_false
+#assert_axioms pairSepOn_mono
+#assert_axioms pairSepOn_top_iff
+#assert_axioms pairSepOn_top_false
+#assert_axioms pairSepOn_bot
+#assert_axioms pairSepOn_truncSep_false
+#assert_axioms pairSepOn_modelSep
+#assert_axioms modelSep_class_inhabited
+#assert_axioms foldReconstruct_binding_on
+#assert_axioms foldReconstruct_binding_on_fires
+
 /-! ## §3 — Structural `#guard`s: the generators produce the budgeted atomic shapes (tractable).
 
 Only the CHEAP shapes are `#guard`'d — a `#guard` over `scheduleExpand`/`sha256Block`/`merkleBranchFold`

@@ -462,8 +462,12 @@ theorem xor3Word_forces (a : Assignment) (hbool : AllBool a)
   exact xor3Word_core_forces a hbool hB viB vjB out car H Vi Vj hH hVi hVj
     (gates_of_xor3Core a hB viB vjB out car hacc.1.1)
 
-/-! (`xorConstWord_forces` is the third; it sits with its `_core_` form in §7, below the
-constant-word bridges it needs.) -/
+/-! ⛑ 2026-07-27: this paragraph was BARE PROSE at file scope in the committed source — a syntax
+error (`unexpected token '('; expected command`) that made the whole module fail to elaborate at
+HEAD, so nothing in it was being checked. Turned into the section comment it was always meant to be.
+
+(`xorConstWord_forces` is the third; it sits with its `_core_` form in §7, below the constant-word
+bridges it needs.) -/
 
 /-! ### The FOLD engine. Every BLAKE2b generator above `blakeG` is a `List.foldl` whose body appends
 its own step's gates and threads a state. `hF` below is that shape, proved `rfl` at the LAMBDA BODY
@@ -1272,7 +1276,7 @@ theorem list_ext_getD (l1 l2 : List Nat) (hl : l1.length = l2.length)
 authority-set root (`hchain`, from `absorb_forces` over the exhibited rows) and the in-circuit pin of
 those root words to the WS-anchor root (`hpin` — the coordinate equality gates), the BLAKE2b absorb
 reconstructs into the anchor: `authSetRootRef rows = anchor`. This IS the `hfold` hypothesis
-`LightClientMidHashFold.verifyAuthSet_from_fold` / `mid_authset_from_fold_slots_into_no_forgery` assume —
+`LightClientMidHashFold.verifyAuthSet_from_fold` / `mid_authset_from_fold_gate_accepts` assume —
 now a CONCLUSION of the chained gates. -/
 theorem midHfold_discharged (a : Assignment) (rows : List (Nat × Nat)) (rootBases anchor : List Nat)
     (hchain : Holds8 a rootBases (LightClientMidHashFold.authSetRootRef rows))
@@ -1290,14 +1294,17 @@ section Payoff
 open Dregg2.Bridge.LightClientMidnight
 open Dregg2.Circuit.Emit.LightClientMidHashFold
 
-/-- **THE PAYOFF** — the Midnight/GRANDPA no-forgery guarantee with `AUTHSET_OK` FOLDED OUT: given the
-EC-arc/in-AIR results and a satisfying witness whose exhibited authority rows' chained-`blake2bF` absorb
-reconstructs into the pinned WS-anchor root (`hchain` from `absorb_forces` + `hpin` the root-pin gates),
-the update is Midnight-VALID. `mid_authset_from_fold_slots_into_no_forgery`'s `hfold` leg is now DERIVED
-by `midHfold_discharged`, not assumed — the composition wall closed end-to-end. -/
+/-- **THE PAYOFF, CARRIER-FREE** — `AUTHSET_OK` FOLDED OUT: given the EC-arc/in-AIR results and a
+satisfying witness whose exhibited authority rows' chained-`blake2bF` absorb reconstructs into the
+pinned WS-anchor root (`hchain` from `absorb_forces` + `hpin` the root-pin gates), `midVerify`
+ACCEPTS. The `hfold` leg is DERIVED by `midHfold_discharged`, not assumed.
+
+⛑ 2026-07-27 — this used to conclude `MidValidAt midBlakeLeaf ts u` from `hcr : midBlakeLeaf.authSetCR`
+= idealized injectivity of `authSetRootRef`, which is REFUTED by an executable weight-inflation
+collision (`LightClientMidHashFold.authSetInjective_false`), so it proved NOTHING. The binding content
+is `mid_binding_from_absorb`, below, on the honest floor `compressSepOn`. -/
 theorem mid_forgery_from_absorb (a : Assignment)
     (ts : MidTrustedState midBlakeLeaf) (u : MidUpdate midBlakeLeaf) (rootBases : List Nat)
-    (hcr : midBlakeLeaf.authSetCR)
     (hpos : 0 < totalWeight midBlakeLeaf u)
     (hthr : 2 * totalWeight midBlakeLeaf u < 3 * signedWeight midBlakeLeaf u)
     (hed : edOk midBlakeLeaf u = true) (hround : roundOk midBlakeLeaf u = true)
@@ -1305,9 +1312,30 @@ theorem mid_forgery_from_absorb (a : Assignment)
     (hchain : Holds8 a rootBases (authSetRootRef (u.authSet.map authRow)))
     (hanchorLen : ts.anchorRoot.length = 8)
     (hpin : ∀ i, i < 8 → Holds a (rootBases.getD i 0) (ts.anchorRoot.getD i 0)) :
-    MidValidAt midBlakeLeaf ts u :=
-  mid_authset_from_fold_slots_into_no_forgery hcr ts u hpos hthr hed hround hera
+    midVerify midBlakeLeaf ts u = true :=
+  mid_authset_from_fold_gate_accepts ts u hpos hthr hed hround hera
     (midHfold_discharged a (u.authSet.map authRow) rootBases ts.anchorRoot hchain hanchorLen hpin)
+
+/-- **THE MIDNIGHT BINDING, FROM THE ABSORB GATES.** Two satisfying witnesses whose authority-row
+absorbs are BOTH pinned to the SAME anchor root carry the SAME authority set — GIVEN separation on the
+class their own `(state, block)` pairs live in. Both fold equalities are DERIVED by
+`midHfold_discharged`. This is the crypto content `AUTHSET_OK` stood for, on a floor a model
+satisfies (`LightClientMidHashFold.compressSepOn_midAbsorbSep`). -/
+theorem mid_binding_from_absorb (a : Assignment)
+    (P : List Nat → List Nat → Nat → Nat → Prop) (hsep : compressSepOn P)
+    (t₁ t₂ : List (Nat × Nat)) (anchor : List Nat)
+    (hlen : t₁.length = t₂.length) (hanchorLen : anchor.length = 8)
+    (hc₁ : AbsorbCovered P Ref.h0Default (sched (authSetBlocks t₁).length 0 (authSetBlocks t₁)))
+    (hc₂ : AbsorbCovered P Ref.h0Default (sched (authSetBlocks t₂).length 0 (authSetBlocks t₂)))
+    (rootBases₁ rootBases₂ : List Nat)
+    (hchain₁ : Holds8 a rootBases₁ (authSetRootRef t₁))
+    (hchain₂ : Holds8 a rootBases₂ (authSetRootRef t₂))
+    (hpin₁ : ∀ i, i < 8 → Holds a (rootBases₁.getD i 0) (anchor.getD i 0))
+    (hpin₂ : ∀ i, i < 8 → Holds a (rootBases₂.getD i 0) (anchor.getD i 0)) :
+    t₁ = t₂ :=
+  mid_authset_binding_on P hsep t₁ t₂ anchor hlen hc₁ hc₂
+    (midHfold_discharged a t₁ rootBases₁ anchor hchain₁ hanchorLen hpin₁)
+    (midHfold_discharged a t₂ rootBases₂ anchor hchain₂ hanchorLen hpin₂)
 
 end Payoff
 
@@ -1346,10 +1374,12 @@ end Payoff
 #assert_axioms absorb_forces
 #assert_axioms midHfold_discharged
 #assert_axioms mid_forgery_from_absorb
+#assert_axioms mid_binding_from_absorb
 
 #print axioms blakeG_forces
 #print axioms blake2bCompress_forces
 #print axioms midHfold_discharged
 #print axioms mid_forgery_from_absorb
+#print axioms mid_binding_from_absorb
 
 end Dregg2.Circuit.Emit.Blake2bFoldForcing

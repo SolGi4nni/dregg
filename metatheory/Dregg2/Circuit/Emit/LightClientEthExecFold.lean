@@ -24,8 +24,9 @@ here:
   * `verifyExecutionPayload_from_fold` — the execution gate's boolean is DISCHARGED by the (derived)
     depth-4 branch fold: no `EXEC_OK` column is read. A satisfying prover must EXHIBIT a branch whose
     SHA fold hits the finalized body root.
-  * `eth_exec_from_fold_slots_into_no_forgery` — the fold-derived execution slots into
-    `eth_no_forgery` IN PLACE of the trusted bit: no-forgery holds with one fewer trusted carrier.
+  * `eth_exec_from_fold_gate_accepts` (carrier-free) + `exec_fold_binds_finStateRoot_on` (the HONEST
+    floor) — the fold-derived execution slots into
+    the composed gate IN PLACE of the trusted bit, and the binding rides a floor a model satisfies.
 
 ## The on-chain root: how EXEC_OK binds FIN_STATE_ROOT (the honest chain — read this)
 
@@ -39,8 +40,8 @@ FIN_STATE_ROOT at all):
     FIN_STATE_ROOT. FIN_STATE_ROOT is not the reconstruction target of any branch.
   * FIN_STATE_ROOT = `execution.stateRoot` is a COMMITTED FIELD of the fold's LEAF `htrExec` (field #3
     of the 17-field SSZ `ExecutionPayloadHeader`). `htrExec_commits_stateRoot` proves the leaf BINDS
-    that field (the SSZ merkleization pins it, GIVEN the SHA-256 CR carrier).
-  * `exec_fold_binds_finStateRoot` composes the two: the DERIVED fold binds FIN_STATE_ROOT — no two
+    that field (the SSZ merkleization pins it, GIVEN separation on the spine's own pairs).
+  * `exec_fold_binds_finStateRoot_on` composes the two: the DERIVED fold binds FIN_STATE_ROOT — no two
     execution headers with DIFFERENT EVM state roots open the same finalized body root through
     same-depth branches. This is why this is the carrier that binds the on-chain-recorded root:
     FIN_OK's finality branch never touches FIN_STATE_ROOT; EXEC_OK's leaf commits it.
@@ -71,8 +72,8 @@ PI[1..9] is the SAME field-soundness residual `LightClientEthAir` §6 / `Sha256M
 ## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. `shaWordLeaf` (from `LightClientEthFinFold`)
-is the lawful SHA `EthLeaf` DEMONSTRATION instance; its `hashPairCR`/`uChunkInj` are the GENUINE named
-SHA/encoding carriers, taken as explicit hypotheses where consumed (BLS stays a hypothesis). The
+is the lawful SHA `EthLeaf` instance over the real SSZ pair hash; its `hashPairCR` slot is `False`
+(the interface demands global injectivity of a compressing hash) and its `uChunkInj` is PROVED. The
 `#guard` KATs anchor the depth-4 execution reconstruction against an independently-computed SHA-256
 vector (`hashlib`), both polarities (a real fold value + a tampered sibling that DIFFERS). NEW file;
 imports read-only (`LightClientEthFinFold`, transitively `Sha256MerkleFold` + `Bridge.LightClientEth`).
@@ -155,38 +156,87 @@ theorem verifyExecutionPayload_from_fold (execution : ExecutionPayloadHeader sha
   rw [hbeq, Bool.and_true, hdepth]
   decide
 
-/-! ## §5 — the DERIVED fold BINDS FIN_STATE_ROOT (the on-chain-recorded root, non-equivocation). -/
+/-! ## §5 — the DERIVED fold BINDS FIN_STATE_ROOT, at the HONEST floor.
 
-/-- **The derived execution fold BINDS FIN_STATE_ROOT, GIVEN the CR carrier.** Two execution headers
-whose depth-matched branches both fold to the SAME finalized `bodyRoot` carry the SAME EVM
-`state_root` (= FIN_STATE_ROOT). Composition: `reconstruct_binding` pins the leaves equal (via
-`reconstruct_exec_eq_foldReconstruct`), then `htrExec_commits_stateRoot` pins the committed field.
-This is the on-chain payoff — the body root COMMITS the EVM state root the peer registry records; a
-forger cannot open it to a different one. (Analogue of `finalized_header_binding` for the exec leg.) -/
-theorem exec_fold_binds_finStateRoot (hcr : shaWordLeaf.hashPairCR)
+⚑ 2026-07-27 — the old `exec_fold_binds_finStateRoot` took `hcr : shaWordLeaf.hashPairCR`, which at
+the real compressing `pairHash` is FALSE (`Sha256MerkleFold.pairHashInjective_false`), so the
+"on-chain payoff" proved nothing. The conclusion is unchanged here; the premise is replaced by
+`Sha256MerkleFold.pairSepOn P` — separation on the FINITE class of pairs these two openings actually
+hash — which is satisfiable (`pairSepOn_modelSep`), refutable (`pairSepOn_truncSep_false`) and not
+provable. Every `pair_inj` in the old proof is applied at ONE explicit pair, so nothing is lost by
+the restriction: the old hypothesis was simply far stronger than the proof used, and false. -/
+
+/-- **`execSpineCovered P e`** — `P` holds of the FIVE pairs the `htrExec` peel walks down the left
+spine to the `state_root` field (field #3 of the 17-field SSZ container). Not the whole 31-pair
+merkleization: only the pairs the floor is actually applied at. -/
+def execSpineCovered (P : List Nat → List Nat → Prop)
+    (e : ExecutionPayloadHeader shaWordLeaf) : Prop :=
+  P e.stateRoot e.receiptsRoot
+  ∧ P (pairHash e.parentHash e.feeRecipient) (pairHash e.stateRoot e.receiptsRoot)
+  ∧ P (merk4 shaWordLeaf e.parentHash e.feeRecipient e.stateRoot e.receiptsRoot)
+      (merk4 shaWordLeaf e.logsBloomRoot e.prevRandao [e.blockNumber] [e.gasLimit])
+  ∧ P (merk8 shaWordLeaf e.parentHash e.feeRecipient e.stateRoot e.receiptsRoot
+        e.logsBloomRoot e.prevRandao [e.blockNumber] [e.gasLimit])
+      (merk8 shaWordLeaf [e.gasUsed] [e.timestamp] e.extraDataRoot e.baseFeePerGas
+        e.blockHash e.transactionsRoot e.withdrawalsRoot [e.blobGasUsed])
+  ∧ P (merk16 shaWordLeaf e.parentHash e.feeRecipient e.stateRoot e.receiptsRoot
+        e.logsBloomRoot e.prevRandao [e.blockNumber] [e.gasLimit]
+        [e.gasUsed] [e.timestamp] e.extraDataRoot e.baseFeePerGas
+        e.blockHash e.transactionsRoot e.withdrawalsRoot [e.blobGasUsed])
+      (merk16 shaWordLeaf [e.excessBlobGas] (List.replicate 8 0) (List.replicate 8 0)
+        (List.replicate 8 0) (List.replicate 8 0) (List.replicate 8 0) (List.replicate 8 0)
+        (List.replicate 8 0) (List.replicate 8 0) (List.replicate 8 0) (List.replicate 8 0)
+        (List.replicate 8 0) (List.replicate 8 0) (List.replicate 8 0) (List.replicate 8 0)
+        (List.replicate 8 0))
+
+/-- **The execution-payload root COMMITS the EVM `state_root` (= FIN_STATE_ROOT), at the HONEST
+floor.** `htrExec_commits_stateRoot`'s conclusion with its refuted premise replaced by separation
+on the two headers' own left-spine pairs. -/
+theorem htrExec_commits_stateRoot_on (P : List Nat → List Nat → Prop) (hsep : pairSepOn P)
+    (e₁ e₂ : ExecutionPayloadHeader shaWordLeaf)
+    (hc₁ : execSpineCovered P e₁) (hc₂ : execSpineCovered P e₂)
+    (h : htrExec shaWordLeaf e₁ = htrExec shaWordLeaf e₂) : e₁.stateRoot = e₂.stateRoot := by
+  obtain ⟨q0₁, q1₁, q2₁, q3₁, q4₁⟩ := hc₁
+  obtain ⟨q0₂, q1₂, q2₂, q3₂, q4₂⟩ := hc₂
+  simp only [htrExec, merk16, merk8, merk4, shaWordLeaf_hashPair, shaWordLeaf_uChunk,
+    shaWordLeaf_zeroChunk] at h q2₁ q3₁ q4₁ q2₂ q3₂ q4₂
+  obtain ⟨hL, _⟩ := hsep _ _ _ _ q4₁ q4₂ h
+  obtain ⟨hL8, _⟩ := hsep _ _ _ _ q3₁ q3₂ hL
+  obtain ⟨hL4, _⟩ := hsep _ _ _ _ q2₁ q2₂ hL8
+  obtain ⟨_, hR2⟩ := hsep _ _ _ _ q1₁ q1₂ hL4
+  exact (hsep _ _ _ _ q0₁ q0₂ hR2).1
+
+/-- **THE REPAIRED ON-CHAIN PAYOFF — the derived execution fold BINDS FIN_STATE_ROOT.** Two
+execution headers whose depth-matched branches both fold to the SAME finalized `bodyRoot` carry the
+SAME EVM `state_root`, GIVEN separation on the class those two openings' pairs live in. This is
+what the `EXEC_OK` carrier was supposed to buy — a forger cannot open the finalized body root to a
+different EVM state root — now resting on a hypothesis a model satisfies. -/
+theorem exec_fold_binds_finStateRoot_on (P : List Nat → List Nat → Prop) (hsep : pairSepOn P)
     (e₁ e₂ : ExecutionPayloadHeader shaWordLeaf) (b₁ b₂ : List (List Nat)) (bodyRoot : List Nat)
     (hlen : b₁.length = b₂.length)
+    (hcf₁ : FoldCovered P (htrExec shaWordLeaf e₁) b₁ executionPayloadSubtreeIndex)
+    (hcf₂ : FoldCovered P (htrExec shaWordLeaf e₂) b₂ executionPayloadSubtreeIndex)
+    (hs₁ : execSpineCovered P e₁) (hs₂ : execSpineCovered P e₂)
     (hf₁ : foldReconstruct (htrExec shaWordLeaf e₁) b₁ executionPayloadSubtreeIndex = bodyRoot)
     (hf₂ : foldReconstruct (htrExec shaWordLeaf e₂) b₂ executionPayloadSubtreeIndex = bodyRoot) :
-    e₁.stateRoot = e₂.stateRoot := by
-  have hrec₁ : reconstruct shaWordLeaf (htrExec shaWordLeaf e₁) b₁ executionPayloadSubtreeIndex
-                = bodyRoot := by rw [reconstruct_exec_eq_foldReconstruct]; exact hf₁
-  have hrec₂ : reconstruct shaWordLeaf (htrExec shaWordLeaf e₂) b₂ executionPayloadSubtreeIndex
-                = bodyRoot := by rw [reconstruct_exec_eq_foldReconstruct]; exact hf₂
-  have hleaf : htrExec shaWordLeaf e₁ = htrExec shaWordLeaf e₂ :=
-    reconstruct_binding shaWordLeaf hcr b₁ b₂ executionPayloadSubtreeIndex _ _ hlen
-      (hrec₁.trans hrec₂.symm)
-  exact htrExec_commits_stateRoot shaWordLeaf hcr e₁ e₂ hleaf
+    e₁.stateRoot = e₂.stateRoot :=
+  htrExec_commits_stateRoot_on P hsep e₁ e₂ hs₁ hs₂
+    (foldReconstruct_binding_on P hsep b₁ b₂ executionPayloadSubtreeIndex _ _ hlen hcf₁ hcf₂
+      (hf₁.trans hf₂.symm))
 
-/-! ## §6 — the fold-derived execution slots into `eth_no_forgery` in place of the `EXEC_OK` bit. -/
+/-! ## §6 — the fold-derived execution discharges the composed gate, CARRIER-FREE.
 
-/-- **The fold-derived execution slots into `eth_no_forgery` in place of the trusted `EXEC_OK` bit.**
-GIVEN the SHA carriers (`hcr`/`hinj`) and the sync + finality legs, if the execution branch fold
-reconstructs the finalized execution payload into the finalized body root (`hfold` — DERIVED from the
-exhibited depth-4 branch, not a witnessed bit), the update is Ethereum-VALID. The `EXEC_OK` carrier is
-folded out: its content is now the conclusion of the branch fold. -/
-theorem eth_exec_from_fold_slots_into_no_forgery
-    (hcr : shaWordLeaf.hashPairCR) (hinj : shaWordLeaf.uChunkInj)
+⚑ 2026-07-27 — `eth_exec_from_fold_slots_into_no_forgery` is GONE. It concluded
+`EthValidAt shaWordLeaf ts u` from `hcr : shaWordLeaf.hashPairCR` (refuted) and `hsync`
+(unsatisfiable while the leaf's `blsAggVerify` was `fun _ _ _ => false`), so it proved nothing.
+Its honest half is below; the binding half is §5. **CAPABILITY LOST, NAMED:** the ∀-quantified
+`EthValidAt.finalityBinds` conjunct is not derivable at a compressing hash by any premise — see
+`LightClientEthFinFold`'s header for the full statement of what that costs and what replaces it. -/
+
+/-- **The fold-derived execution DISCHARGES THE COMPOSED GATE — no `EXEC_OK` bit, no crypto
+carrier.** Given the sync + finality legs and the depth-4 admissibility, a branch whose SHA fold
+reaches the finalized body root makes the whole rule accept. -/
+theorem eth_exec_from_fold_gate_accepts
     (ts : EthState shaWordLeaf) (u : LightClientUpdate shaWordLeaf)
     (hsync : verifySyncAggregate shaWordLeaf ts u.attestedHeader u.syncAggregate = true)
     (hfin : verifyFinalityBranch shaWordLeaf u.finalizedHeader.beacon u.finalityBranch
@@ -195,12 +245,11 @@ theorem eth_exec_from_fold_slots_into_no_forgery
     (hfold : foldReconstruct (htrExec shaWordLeaf u.finalizedHeader.execution)
               u.finalizedHeader.executionBranch executionPayloadSubtreeIndex
               = u.finalizedHeader.beacon.bodyRoot) :
-    EthValidAt shaWordLeaf ts u := by
-  refine eth_no_forgery shaWordLeaf hcr hinj ts u ?_
+    verifyFinalizedUpdate shaWordLeaf ts u = true := by
   unfold verifyFinalizedUpdate
   rw [hsync, hfin, verifyExecutionPayload_from_fold u.finalizedHeader.execution
     u.finalizedHeader.executionBranch u.finalizedHeader.beacon.bodyRoot hdepth hfold]
-  decide
+  rfl
 
 /-! ## §7 — KATs: the depth-4 execution reconstruction, anchored to an independent SHA-256 vector.
 
@@ -233,10 +282,11 @@ fold DIFFERS (the execution binding is not vacuous). These reduce in the kernel 
 #assert_axioms htrExec_commits_stateRoot
 #assert_axioms exec_fold_derives_executionCommits
 #assert_axioms verifyExecutionPayload_from_fold
-#assert_axioms exec_fold_binds_finStateRoot
-#assert_axioms eth_exec_from_fold_slots_into_no_forgery
+#assert_axioms htrExec_commits_stateRoot_on
+#assert_axioms exec_fold_binds_finStateRoot_on
+#assert_axioms eth_exec_from_fold_gate_accepts
 
-#print axioms eth_exec_from_fold_slots_into_no_forgery
-#print axioms exec_fold_binds_finStateRoot
+#print axioms eth_exec_from_fold_gate_accepts
+#print axioms exec_fold_binds_finStateRoot_on
 
 end Dregg2.Circuit.Emit.LightClientEthExecFold

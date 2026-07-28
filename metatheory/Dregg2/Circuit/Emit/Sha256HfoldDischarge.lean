@@ -30,7 +30,7 @@ each derive their carrier (`FIN_OK`/`EXEC_OK`/`VSET_OK`+`EPOCH_OK`/`STAKE_TABLE_
     theorem: the fold gates force the root columns to hold the reference (from the fold-forcing above),
     the bind gates tie them to the target, and `WordIs` is functional in its value
     (`WordIs_functional`), so reference = target — the `hfold`. Then the module's
-    `*_slots_into_no_forgery` fires with the hypothesis DERIVED.
+    `*_from_gates` payoff fires with the hypothesis DERIVED.
 
 ## Resolution (honest — the SAME residuals `Sha256FoldForcing`/the fold modules carry)
 
@@ -578,12 +578,12 @@ open Dregg2.Bridge.LightClientSolana
 /-- **THE TENDERMINT PAYOFF** — `VSET_OK`/`EPOCH_OK` FOLDED OUT: given the six arithmetic legs and, for
 each of the two validator-set hash bindings, a satisfying witness whose validator-leaf SHA-256 chain
 reconstructs into the pinned root (`hchainE`/`hchainV` from `chainCommit_forces`, `hpinE`/`hpinV` the
-root-pin gates), the update is Tendermint-VALID. `tm_hash_from_fold_slots_into_no_forgery`'s two `hfold`
-legs are now DERIVED by `chainHfold_discharged`, not assumed. -/
+root-pin gates), `tmVerify` ACCEPTS — carrier-free. The two `hfold` legs are DERIVED by
+`chainHfold_discharged`, not assumed. (The old `TmForeignValid` conclusion rested on a REFUTED
+collection-CR carrier; the binding content is `tm_vset_binding_from_gates`, below.) -/
 theorem tm_hash_from_gates (a : Assignment)
     (sb : TmHeader tmShaLeaf.Digest → tmShaLeaf.Msg)
     (enc : List (TmValidator tmShaLeaf.PubKey) → tmShaLeaf.Msg)
-    (hcr : tmShaLeaf.hashCR)
     (ts : TmTrustedState tmShaLeaf) (u : TmUpdate tmShaLeaf)
     (hChain : u.header.chainId = ts.chainId)
     (hHeight : u.header.height = ts.height + 1)
@@ -599,18 +599,37 @@ theorem tm_hash_from_gates (a : Assignment)
     (hchainV : Holds8sha a vsetBases (chainCommit (enc u.validators)))
     (hvhLen : u.header.validatorsHash.length = 8)
     (hpinV : ∀ j, j < 8 → WordIs a (vsetBases.getD j 0) (u.header.validatorsHash.getD j 0)) :
-    TmForeignValid tmShaLeaf sb enc u :=
-  tm_hash_from_fold_slots_into_no_forgery sb enc hcr ts u hChain hHeight hMono hDrift hTrust hThresh
+    tmVerify tmShaLeaf sb enc ts u = true :=
+  tm_hash_from_fold_gate_accepts sb enc ts u hChain hHeight hMono hDrift hTrust hThresh
     (chainHfold_discharged a (enc u.validators) epochBases ts.nextValidatorsHash hchainE hnvLen hpinE)
     (chainHfold_discharged a (enc u.validators) vsetBases u.header.validatorsHash hchainV hvhLen hpinV)
 
+/-- **THE TENDERMINT BINDING, FROM GATES.** Two satisfying witnesses whose validator-leaf SHA chains
+are BOTH pinned to the SAME root carry the SAME validator set — GIVEN separation on the class those
+two chains' pairs live in. Both fold equalities are DERIVED by `chainHfold_discharged`. This is the
+crypto content `VSET_OK`/`EPOCH_OK` stood for, on a floor a model satisfies. -/
+theorem tm_vset_binding_from_gates (a : Assignment)
+    (P : List Nat → List Nat → Prop) (hsep : pairSepOn P)
+    (l₁ l₂ : List (List Nat)) (root : List Nat)
+    (hlen : l₁.length = l₂.length) (hrootLen : root.length = 8)
+    (hc₁ : ChainCovered P chainIV l₁) (hc₂ : ChainCovered P chainIV l₂)
+    (bases₁ bases₂ : List Nat)
+    (hchain₁ : Holds8sha a bases₁ (chainCommit l₁))
+    (hchain₂ : Holds8sha a bases₂ (chainCommit l₂))
+    (hpin₁ : ∀ j, j < 8 → WordIs a (bases₁.getD j 0) (root.getD j 0))
+    (hpin₂ : ∀ j, j < 8 → WordIs a (bases₂.getD j 0) (root.getD j 0)) :
+    l₁ = l₂ :=
+  tm_validatorSet_binding_on P hsep l₁ l₂ root hlen hc₁ hc₂
+    (chainHfold_discharged a l₁ bases₁ root hchain₁ hrootLen hpin₁)
+    (chainHfold_discharged a l₂ bases₂ root hchain₂ hrootLen hpin₂)
+
 /-- **THE SOLANA PAYOFF** — `STAKE_TABLE_OK` FOLDED OUT: given the stake legs and a satisfying witness
 whose stake-row SHA-256 chain reconstructs into the pinned WS anchor root (`hchain` from
-`chainCommit_forces`, `hpin` the root-pin gates), the update is Solana-ROOTED-VALID. The active-stake
-denominator is pinned by the SHA-256 collection fold — `sol_stake_from_fold_slots_into_no_forgery`'s
-`hfold` leg is DERIVED by `chainHfold_discharged`, not assumed. -/
+`chainCommit_forces`, `hpin` the root-pin gates), `solVerify` ACCEPTS. The active-stake
+denominator's ANCHOR is pinned by the SHA-256 collection fold, carrier-free; the `hfold` leg is
+DERIVED by `chainHfold_discharged`, not assumed. (The old `SolValidAt` conclusion rested on a
+REFUTED table-CR carrier; the binding content is `sol_stake_binding_from_gates`, below.) -/
 theorem sol_stake_from_gates (a : Assignment)
-    (hcr : solShaLeaf.stakeTableCR)
     (ts : SolTrustedState solShaLeaf) (u : SolUpdate solShaLeaf)
     (hpos : 0 < totalStake solShaLeaf u)
     (hthr : 2 * totalStake solShaLeaf u ≤ 3 * rootedStake solShaLeaf u)
@@ -621,10 +640,31 @@ theorem sol_stake_from_gates (a : Assignment)
     (hchain : Holds8sha a rootBases (chainCommit ((u.table.map entryRow).map solRowLeaf)))
     (hanchorLen : ts.anchorRoot.length = 8)
     (hpin : ∀ j, j < 8 → WordIs a (rootBases.getD j 0) (ts.anchorRoot.getD j 0)) :
-    SolValidAt solShaLeaf ts u :=
-  sol_stake_from_fold_slots_into_no_forgery hcr ts u hpos hthr hed hrooted hauth
+    solVerify solShaLeaf ts u = true :=
+  sol_stake_from_fold_gate_accepts ts u hpos hthr hed hrooted hauth
     (chainHfold_discharged a ((u.table.map entryRow).map solRowLeaf) rootBases ts.anchorRoot
       hchain hanchorLen hpin)
+
+/-- **THE SOLANA BINDING, FROM GATES.** Two satisfying witnesses whose stake-row SHA chains are BOTH
+pinned to the SAME anchor root carry the SAME stake table — GIVEN separation on their pairs. This is
+what pins the ACTIVE-STAKE DENOMINATOR. ⚠ Read it with `solTableInjective_false`: the encoder puts a
+raw `Nat` stake in one message word and `pairHash` reads a word only mod `2^64`, so the separation
+class must exclude the high-bit aliases — the missing encoder range-check is a NAMED residual. -/
+theorem sol_stake_binding_from_gates (a : Assignment)
+    (P : List Nat → List Nat → Prop) (hsep : pairSepOn P)
+    (t₁ t₂ : List (Nat × Nat × Nat)) (anchor : List Nat)
+    (hlen : t₁.length = t₂.length) (hanchorLen : anchor.length = 8)
+    (hc₁ : ChainCovered P chainIV (t₁.map solRowLeaf))
+    (hc₂ : ChainCovered P chainIV (t₂.map solRowLeaf))
+    (bases₁ bases₂ : List Nat)
+    (hchain₁ : Holds8sha a bases₁ (chainCommit (t₁.map solRowLeaf)))
+    (hchain₂ : Holds8sha a bases₂ (chainCommit (t₂.map solRowLeaf)))
+    (hpin₁ : ∀ j, j < 8 → WordIs a (bases₁.getD j 0) (anchor.getD j 0))
+    (hpin₂ : ∀ j, j < 8 → WordIs a (bases₂.getD j 0) (anchor.getD j 0)) :
+    t₁ = t₂ :=
+  sol_stake_binding_on P hsep t₁ t₂ anchor hlen hc₁ hc₂
+    (chainHfold_discharged a _ bases₁ anchor hchain₁ hanchorLen hpin₁)
+    (chainHfold_discharged a _ bases₂ anchor hchain₂ hanchorLen hpin₂)
 
 end TmSolPayoff
 
@@ -649,12 +689,26 @@ open Dregg2.Circuit.Emit.LightClientEthFinFold
 open Dregg2.Circuit.Emit.LightClientEthExecFold
 open Dregg2.Bridge.LightClientEth
 
-/-- **THE ETH FINALITY PAYOFF** — `FIN_OK` FOLDED OUT: given the sync + execution legs and a satisfying
-witness whose finality branch's SHA-256 fold reconstructs the finalized header into the pinned attested
-state root (`hforce` from the branch fold, `hpin` the root-pin gates), the update is Ethereum-VALID.
-`eth_finality_from_fold_slots_into_no_forgery`'s `hfold` leg is DERIVED by `hfold_discharged`. -/
+/-! ⚑ 2026-07-27 — THE TWO ETH PAYOFFS WERE VACUOUS AND ARE RESTATED. Both used to conclude
+`EthValidAt shaWordLeaf ts u` from `hcr : shaWordLeaf.hashPairCR` — idealized injectivity of the real
+compressing `pairHash`, REFUTED by an executable collision (`Sha256MerkleFold.pairHashInjective_false`)
+— and both also took an `hsync` that could never hold, because the leaf's `blsAggVerify` was
+`fun _ _ _ => false`. They proved nothing. Both defects are fixed at the leaf
+(`LightClientEthFinFold` §2/§2b); the payoffs are split into the two things that are actually true:
+
+  * `eth_finality_from_gates` / `eth_exec_from_gates` — the gates DISCHARGE THE COMPOSED RULE, with
+    NO crypto carrier whatsoever. This is what "the carrier is folded out" really buys, and it never
+    needed a hash floor.
+  * `eth_finality_binding_from_gates` / `eth_exec_binding_from_gates` — the NON-EQUIVOCATION content,
+    on the HONEST floor `Sha256MerkleFold.pairSepOn` (satisfiable / refutable / not provable),
+    with the fold equalities on BOTH openings still DERIVED by `hfold_discharged`. -/
+
+/-- **THE ETH FINALITY PAYOFF** — `FIN_OK` FOLDED OUT, carrier-free: given the sync + execution legs
+and a satisfying witness whose finality branch's SHA-256 fold reconstructs the finalized header into
+the pinned attested state root (`hforce` from the branch fold, `hpin` the root-pin gates), the
+composed rule ACCEPTS. The `hfold` leg is DERIVED by `hfold_discharged`; no `FIN_OK` bit is read and
+no hash assumption is used. -/
 theorem eth_finality_from_gates (a : Assignment)
-    (hcr : shaWordLeaf.hashPairCR) (hinj : shaWordLeaf.uChunkInj)
     (ts : EthState shaWordLeaf) (u : LightClientUpdate shaWordLeaf)
     (hsync : verifySyncAggregate shaWordLeaf ts u.attestedHeader u.syncAggregate = true)
     (hexec : verifyExecutionPayload shaWordLeaf u.finalizedHeader.execution
@@ -667,16 +721,14 @@ theorem eth_finality_from_gates (a : Assignment)
         finalizedRootSubtreeIndex))
     (hattLen : u.attestedHeader.stateRoot.length = 8)
     (hpin : ∀ j, j < 8 → WordIs a (rootBases.getD j 0) (u.attestedHeader.stateRoot.getD j 0)) :
-    EthValidAt shaWordLeaf ts u :=
-  eth_finality_from_fold_slots_into_no_forgery hcr hinj ts u hsync hexec hdepth
+    verifyFinalizedUpdate shaWordLeaf ts u = true :=
+  eth_finality_from_fold_gate_accepts ts u hsync hexec hdepth
     (hfold_discharged a _ u.attestedHeader.stateRoot rootBases hforce hattLen hpin)
 
-/-- **THE ETH EXECUTION PAYOFF** — `EXEC_OK` FOLDED OUT (the on-chain-recorded root): given the sync +
-finality legs and a satisfying witness whose execution branch's SHA-256 fold reconstructs the execution
-payload into the pinned finalized body root (`hforce`/`hpin`), the update is Ethereum-VALID.
-`eth_exec_from_fold_slots_into_no_forgery`'s `hfold` leg is DERIVED by `hfold_discharged`. -/
+/-- **THE ETH EXECUTION PAYOFF** — `EXEC_OK` FOLDED OUT, carrier-free: given the sync + finality legs
+and a satisfying witness whose execution branch's SHA-256 fold reconstructs the execution payload into
+the pinned finalized body root (`hforce`/`hpin`), the composed rule ACCEPTS. -/
 theorem eth_exec_from_gates (a : Assignment)
-    (hcr : shaWordLeaf.hashPairCR) (hinj : shaWordLeaf.uChunkInj)
     (ts : EthState shaWordLeaf) (u : LightClientUpdate shaWordLeaf)
     (hsync : verifySyncAggregate shaWordLeaf ts u.attestedHeader u.syncAggregate = true)
     (hfin : verifyFinalityBranch shaWordLeaf u.finalizedHeader.beacon u.finalityBranch
@@ -688,9 +740,55 @@ theorem eth_exec_from_gates (a : Assignment)
         u.finalizedHeader.executionBranch executionPayloadSubtreeIndex))
     (hbodyLen : u.finalizedHeader.beacon.bodyRoot.length = 8)
     (hpin : ∀ j, j < 8 → WordIs a (rootBases.getD j 0) (u.finalizedHeader.beacon.bodyRoot.getD j 0)) :
-    EthValidAt shaWordLeaf ts u :=
-  eth_exec_from_fold_slots_into_no_forgery hcr hinj ts u hsync hfin hdepth
+    verifyFinalizedUpdate shaWordLeaf ts u = true :=
+  eth_exec_from_fold_gate_accepts ts u hsync hfin hdepth
     (hfold_discharged a _ u.finalizedHeader.beacon.bodyRoot rootBases hforce hbodyLen hpin)
+
+/-- **THE ETH FINALITY BINDING, FROM GATES.** Two satisfying witnesses whose finality-branch SHA
+folds are BOTH pinned to the SAME attested state root carry the SAME finalized header — GIVEN
+separation on the class those two openings' pairs live in. Both fold equalities are DERIVED by
+`hfold_discharged` (not assumed), and the floor is one a model satisfies. This is the crypto content
+the `FIN_OK` carrier stood for, and it is the statement a query-counted collision bound prices. -/
+theorem eth_finality_binding_from_gates (a : Assignment)
+    (P : List Nat → List Nat → Prop) (hsep : pairSepOn P)
+    (f₁ f₂ : BeaconBlockHeader shaWordLeaf) (b₁ b₂ : List (List Nat)) (attested : List Nat)
+    (hlen : b₁.length = b₂.length) (hattLen : attested.length = 8)
+    (hcf₁ : FoldCovered P (htrHeader shaWordLeaf f₁) b₁ finalizedRootSubtreeIndex)
+    (hcf₂ : FoldCovered P (htrHeader shaWordLeaf f₂) b₂ finalizedRootSubtreeIndex)
+    (hh₁ : htrHeaderCovered P f₁) (hh₂ : htrHeaderCovered P f₂)
+    (rootBases₁ rootBases₂ : List Nat)
+    (hforce₁ : Holds8sha a rootBases₁
+      (foldReconstruct (htrHeader shaWordLeaf f₁) b₁ finalizedRootSubtreeIndex))
+    (hforce₂ : Holds8sha a rootBases₂
+      (foldReconstruct (htrHeader shaWordLeaf f₂) b₂ finalizedRootSubtreeIndex))
+    (hpin₁ : ∀ j, j < 8 → WordIs a (rootBases₁.getD j 0) (attested.getD j 0))
+    (hpin₂ : ∀ j, j < 8 → WordIs a (rootBases₂.getD j 0) (attested.getD j 0)) :
+    f₁ = f₂ :=
+  eth_finality_fold_binds_header P hsep f₁ f₂ b₁ b₂ attested hlen hcf₁ hcf₂ hh₁ hh₂
+    (hfold_discharged a _ attested rootBases₁ hforce₁ hattLen hpin₁)
+    (hfold_discharged a _ attested rootBases₂ hforce₂ hattLen hpin₂)
+
+/-- **THE ETH EXECUTION BINDING, FROM GATES** — the on-chain payoff. Two satisfying witnesses whose
+execution-branch SHA folds are BOTH pinned to the SAME finalized body root carry the SAME EVM
+`state_root` (= FIN_STATE_ROOT), GIVEN separation on their openings' pairs. -/
+theorem eth_exec_binding_from_gates (a : Assignment)
+    (P : List Nat → List Nat → Prop) (hsep : pairSepOn P)
+    (e₁ e₂ : ExecutionPayloadHeader shaWordLeaf) (b₁ b₂ : List (List Nat)) (bodyRoot : List Nat)
+    (hlen : b₁.length = b₂.length) (hbodyLen : bodyRoot.length = 8)
+    (hcf₁ : FoldCovered P (htrExec shaWordLeaf e₁) b₁ executionPayloadSubtreeIndex)
+    (hcf₂ : FoldCovered P (htrExec shaWordLeaf e₂) b₂ executionPayloadSubtreeIndex)
+    (hs₁ : execSpineCovered P e₁) (hs₂ : execSpineCovered P e₂)
+    (rootBases₁ rootBases₂ : List Nat)
+    (hforce₁ : Holds8sha a rootBases₁
+      (foldReconstruct (htrExec shaWordLeaf e₁) b₁ executionPayloadSubtreeIndex))
+    (hforce₂ : Holds8sha a rootBases₂
+      (foldReconstruct (htrExec shaWordLeaf e₂) b₂ executionPayloadSubtreeIndex))
+    (hpin₁ : ∀ j, j < 8 → WordIs a (rootBases₁.getD j 0) (bodyRoot.getD j 0))
+    (hpin₂ : ∀ j, j < 8 → WordIs a (rootBases₂.getD j 0) (bodyRoot.getD j 0)) :
+    e₁.stateRoot = e₂.stateRoot :=
+  exec_fold_binds_finStateRoot_on P hsep e₁ e₂ b₁ b₂ bodyRoot hlen hcf₁ hcf₂ hs₁ hs₂
+    (hfold_discharged a _ bodyRoot rootBases₁ hforce₁ hbodyLen hpin₁)
+    (hfold_discharged a _ bodyRoot rootBases₂ hforce₂ hbodyLen hpin₂)
 
 end EthPayoff
 
@@ -768,7 +866,11 @@ theorem merkleBranchFold_forces (a : Assignment) (branch : List (List Nat)) (idx
 #assert_axioms chainHfold_discharged
 #assert_axioms tm_hash_from_gates
 #assert_axioms sol_stake_from_gates
+#assert_axioms tm_vset_binding_from_gates
+#assert_axioms sol_stake_binding_from_gates
 #assert_axioms eth_finality_from_gates
 #assert_axioms eth_exec_from_gates
+#assert_axioms eth_finality_binding_from_gates
+#assert_axioms eth_exec_binding_from_gates
 
 end Dregg2.Circuit.Emit.Sha256HfoldDischarge

@@ -39,16 +39,34 @@ EXHIBIT the validator leaves whose SHA-256 chain hits the bound `validatorsHash`
   * `tmShaLeaf_hash_eq_chainCommit` — the bridge leaf's abstract `hash` IS the generator's SHA-256
     collection chain (the `reconstruct_*_eq_foldReconstruct` analog: the object the carriers stood for,
     now the SHA arithmetic).
-  * `chainCommit_binding` — GIVEN the `pairHash` collision-resistance floor, equal-length equal chain
-    roots pin the whole leaf list: the SHA-256 collection commit BINDS the validator set (the
-    `htrExec_commits_stateRoot`-style commitment lemma, here reduced to the proven pair-hash floor —
-    the honest content behind `noCollision`).
+  * `chainCommit_binding_on` — GIVEN separation on the chain's OWN pairs (`Sha256MerkleFold.pairSepOn`
+    + `ChainCovered`, the HONEST floor), equal-length equal chain roots pin the whole leaf list: the
+    SHA-256 collection commit BINDS the validator set.
   * `tmHashBindings_from_fold` (`verify*_from_fold` analog) — the two carrier equalities are DISCHARGED
     by the exhibited SHA folds: NO `VSET_OK`/`EPOCH_OK` column is read.
-  * `tm_hash_from_fold_slots_into_no_forgery` (`*_from_fold_slots_into_no_forgery` analog) — the
-    fold-derived hash bindings slot into `tmNoForgery` IN PLACE of the two trusted bits: the Tendermint
-    no-forgery guarantee holds with two fewer trusted carriers. Trust moves from "two opaque prover-set
-    bits" to "the SHA-256 gadget's gates over an exhibited validator-leaf chain".
+  * `tm_hash_from_fold_gate_accepts` — the fold-derived hash bindings DISCHARGE `tmVerify`, with NO
+    crypto carrier. Trust moves from "two opaque prover-set bits" to "the SHA-256 gadget's gates over
+    an exhibited validator-leaf chain".
+  * `tm_validatorSet_binding_on` — the NON-EQUIVOCATION content, on the HONEST floor.
+
+## ⚑ 2026-07-27 — WHAT WAS DELETED AND WHY (the vacuity repair)
+
+`tm_hash_from_fold_slots_into_no_forgery` is GONE, and `chainCommit_binding`'s `hpair` hypothesis
+with it. Both rested on idealized injectivity of a COMPRESSING hash:
+
+  * `tmShaLeaf.hashCR` was `∀ m₁ m₂, chainCommit m₁ = chainCommit m₂ → m₁ = m₂` — REFUTED here by
+    TWO executable witnesses (`chainCommit_word64_collision`: message word 64 is never read;
+    `chainCommit_high_bits_collision`: a word is read only mod `2^64`, so a validator's raw voting
+    power aliases). `CryptoLeaf.noCollision` demands the carrier ENTAIL that, so the slot is `False`.
+  * `chainCommit_binding` took the same shape one level down, on `pairHash`, also refuted.
+
+Replacements: `chainCommit_binding_on` / `tm_validatorSet_binding_on`, on
+`Sha256MerkleFold.pairSepOn` + `ChainCovered` — separation on the chain's OWN pairs, which is
+SATISFIABLE (`pairSepOn_tmChainSep`, kernel-checked on the real SHA-256), REFUTABLE
+(`Sha256MerkleFold.pairSepOn_truncSep_false`) and NOT PROVABLE. **CAPABILITY LOST, NAMED:**
+`TmForeignValid`'s ∀-quantified non-equivocation conjunct, over the infinite space of alternative
+validator sets, is not derivable at a compressing hash by any premise. The pairwise form is what
+survives, and it is what a query-counted collision bound prices.
 
 ## What remains (the honest, PRICED residuals — proof-mode step, LOW resolution + LABELED)
 
@@ -76,10 +94,10 @@ EXHIBIT the validator leaves whose SHA-256 chain hits the bound `validatorsHash`
 `#guard` KATs anchor the 3-validator SHA-256 chain against an independently-computed SHA-256 vector
 (`hashlib`, matching `Sha256MerkleFold` §0's FIPS anchoring exactly — encoding verified against the
 published `SHA256(64·0x00)` vector), both polarities (a real chain value + a tampered validator whose
-chain DIFFERS). `tmShaLeaf` is the lawful SHA `CryptoLeaf` demonstration instance whose `hashCR` is the
-GENUINE SHA-256 collection-CR floor over `chainCommit` (taken as the explicit `hcr` hypothesis where
-consumed, exactly as `shaWordLeaf.hashPairCR`; the Ed25519 `sigSound` is the demo slot, the EC-arc
-residual). NEW file; imports read-only (`Sha256MerkleFold`, `Bridge.LightClientTendermint`).
+chain DIFFERS). `tmShaLeaf` is the lawful SHA `CryptoLeaf` instance over the real `chainCommit`; its
+`hashCR` slot is `False`, because `CryptoLeaf.noCollision` demands global injectivity of a
+compressing hash (`chainCommitInjective_false`). The Ed25519 `sigSound` is the demo slot, the EC-arc
+residual. Imports read-only (`Sha256MerkleFold`, `Bridge.LightClientTendermint`).
 -/
 import Dregg2.Circuit.Emit.Sha256MerkleFold
 import Dregg2.Bridge.LightClientTendermint
@@ -113,42 +131,66 @@ theorem chainCommit_concat (l : List (List Nat)) (x : List Nat) :
     chainCommit (l ++ [x]) = pairHash (chainCommit l) x := by
   simp [chainCommit, List.foldl_append]
 
-/-- **THE COLLECTION COMMIT BINDS (the commitment lemma; reduced to the proven pair-hash floor).**
-GIVEN the `pairHash` collision-resistance floor `hpair` (the honest per-pair SHA-256 CR, an explicit
-hypothesis — for the real chain the named SHA-256 assumption), equal-length collections whose SHA-256
-chains agree ARE the same collection: the commit pins the whole validator/stake leaf list. This is the
-`htrExec_commits_stateRoot`-style commitment, here the WHOLE-collection binding, reduced by structural
-induction to `hpair`. It is the genuine content behind the leaf's `noCollision` (which states the same
-binding, unconditioned on length, as the named floor). -/
-theorem chainCommit_binding
-    (hpair : ∀ a b c d : List Nat, pairHash a b = pairHash c d → a = c ∧ b = d) :
-    ∀ (l₁ l₂ : List (List Nat)), l₁.length = l₂.length →
-      chainCommit l₁ = chainCommit l₂ → l₁ = l₂ := by
+/-- The chain from an arbitrary accumulator (`chainCommit = chainFrom chainIV`). -/
+def chainFrom (acc : List Nat) (leaves : List (List Nat)) : List Nat :=
+  leaves.foldl (fun a l => pairHash a l) acc
+
+theorem chainCommit_eq_chainFrom (l : List (List Nat)) : chainCommit l = chainFrom chainIV l := rfl
+
+/-- **`ChainCovered P acc leaves`** — `P` holds of every pair the collection chain feeds to
+`pairHash` from `acc`. The chain's HASH TRANSCRIPT, as an obligation a consumer discharges by
+exhibiting its leaves. -/
+def ChainCovered (P : List Nat → List Nat → Prop) : List Nat → List (List Nat) → Prop
+  | _, [] => True
+  | acc, x :: rest => P acc x ∧ ChainCovered P (pairHash acc x) rest
+
+/-- **THE COLLECTION COMMIT BINDS, at the HONEST floor** (`chainFrom` form).
+
+⚑ 2026-07-27 — this used to take `hpair : ∀ a b c d, pairHash a b = pairHash c d → a = c ∧ b = d`,
+described as "the honest per-pair SHA-256 CR". That `Prop` is FALSE — `pairHash` compresses, and
+`Sha256MerkleFold.pairHashInjective_false` refutes it with an executable collision — so the theorem
+had an empty premise. The proof only ever applied the floor at the chain's OWN pairs, so the honest
+hypothesis is separation on exactly those (`Sha256MerkleFold.pairSepOn` + `ChainCovered`), which is
+satisfiable, refutable and not provable. The conclusion is unchanged, and now strengthened to pin the
+accumulator as well as the leaves. -/
+theorem chainFrom_binding_on (P : List Nat → List Nat → Prop) (hsep : pairSepOn P) :
+    ∀ (l₁ l₂ : List (List Nat)) (a₁ a₂ : List Nat), l₁.length = l₂.length →
+      ChainCovered P a₁ l₁ → ChainCovered P a₂ l₂ →
+      chainFrom a₁ l₁ = chainFrom a₂ l₂ → a₁ = a₂ ∧ l₁ = l₂ := by
   intro l₁
-  induction l₁ using List.reverseRecOn with
+  induction l₁ with
   | nil =>
-    intro l₂ hlen _
+    intro l₂ a₁ a₂ hlen _ _ h
     cases l₂ with
-    | nil => rfl
-    | cons a t => simp at hlen
-  | append_singleton l₁' x₁ ih =>
-    intro l₂ hlen h
-    rcases List.eq_nil_or_concat l₂ with rfl | ⟨l₂', x₂, rfl⟩
-    · simp at hlen
-    · rw [List.concat_eq_append] at h hlen ⊢
-      rw [chainCommit_concat, chainCommit_concat] at h
-      obtain ⟨hc, hx⟩ := hpair _ _ _ _ h
-      have hlen' : l₁'.length = l₂'.length := by
-        simp only [List.length_append, List.length_cons, List.length_nil] at hlen; omega
-      rw [ih l₂' hlen' hc, hx]
+    | nil => exact ⟨h, rfl⟩
+    | cons _ _ => simp at hlen
+  | cons x₁ r₁ ih =>
+    intro l₂ a₁ a₂ hlen hc₁ hc₂ h
+    cases l₂ with
+    | nil => simp at hlen
+    | cons x₂ r₂ =>
+      have hlen' : r₁.length = r₂.length := by simpa using hlen
+      simp only [ChainCovered] at hc₁ hc₂
+      simp only [chainFrom, List.foldl_cons] at h
+      obtain ⟨hstep, hrest⟩ := ih r₂ (pairHash a₁ x₁) (pairHash a₂ x₂) hlen' hc₁.2 hc₂.2 h
+      obtain ⟨ha, hx⟩ := hsep _ _ _ _ hc₁.1 hc₂.1 hstep
+      exact ⟨ha, by rw [hx, hrest]⟩
+
+/-- **THE VALIDATOR/STAKE COLLECTION COMMIT BINDS.** Equal-length collections whose SHA-256 chains
+agree ARE the same collection — GIVEN separation on the two chains' own pairs. -/
+theorem chainCommit_binding_on (P : List Nat → List Nat → Prop) (hsep : pairSepOn P)
+    (l₁ l₂ : List (List Nat)) (hlen : l₁.length = l₂.length)
+    (hc₁ : ChainCovered P chainIV l₁) (hc₂ : ChainCovered P chainIV l₂)
+    (h : chainCommit l₁ = chainCommit l₂) : l₁ = l₂ :=
+  (chainFrom_binding_on P hsep l₁ l₂ chainIV chainIV hlen hc₁ hc₂ h).2
 
 /-! ## §1 — The SHA `CryptoLeaf` for Tendermint: `hash = chainCommit` (the SHA-256 collection fold).
 
 A lawful `CryptoLeaf` whose `hash` IS the FIPS-anchored SHA-256 collection commit. The Ed25519 signature
 fields are the demo slot (registered-key toy MAC — the EC-arc residual; the load-bearing quorum
-genuineness rides `sigSound`, exactly as the bridge demo). The `hashCR` carrier is the GENUINE SHA-256
-collection-CR floor over `chainCommit` — the named production assumption, taken as `hcr` where consumed
-(never discharged positively, exactly as `shaWordLeaf.hashPairCR`). -/
+genuineness rides `sigSound`, exactly as the bridge demo). The `hashCR` slot is `False`, because the interface's
+unpacker demands global injectivity of a compressing hash
+(the slot is `False` — see the leaf's docstring). -/
 
 /-- Demo Ed25519-slot verifier (registered key + toy MAC): the EC-arc residual, NOT what is folded. -/
 def tmDemoSigVerify (pk : Nat) (_m : List (List Nat)) (s : Nat) : Bool :=
@@ -163,9 +205,39 @@ theorem tmDemoSigSound (pk : Nat) (m : List (List Nat)) (s : Nat)
   simp only [tmDemoSigVerify, Bool.and_eq_true, decide_eq_true_eq] at h
   exact h.1
 
+/-- **The IDEALIZED collection-CR floor, NAMED so it can be REFUTED rather than assumed.** This is
+the exact `Prop` `tmShaLeaf.hashCR` used to hold. -/
+def chainCommitInjective : Prop :=
+  ∀ m₁ m₂ : List (List Nat), chainCommit m₁ = chainCommit m₂ → m₁ = m₂
+
+/-- Two one-element collections whose leaves differ only past message word 64 chain to the same root
+(`chainCommit [x] = pairHash chainIV x`, and `pairHash` never reads word 64). -/
+theorem chainCommit_word64_collision :
+    chainCommit [List.replicate 56 0] = chainCommit [List.replicate 56 0 ++ [1]] :=
+  pairHash_ignores_word_64
+
+/-- ⚑ **THE SHARPER ONE — the validator-set commit does not see a field's high bits.** A leaf whose
+third word is `50` and one whose third word is `50 + 2^64` chain to the SAME root, because `pairHash`
+reads its message words only modulo `2^64`. Any protobuf-shaped encoder that drops an unbounded
+`Nat` (a voting power, a height) into a word is non-injective AT THE DIGEST. -/
+theorem chainCommit_high_bits_collision :
+    chainCommit [[1, 2, 3, 4, 5, 6, 7, 8]] = chainCommit [[1, 2, 3, 4 + 2 ^ 64, 5, 6, 7, 8]] :=
+  pairHash_ignores_bits_above_64
+
+/-- **THE IDEALIZED COLLECTION-CR FLOOR IS FALSE**, by witness. -/
+theorem chainCommitInjective_false : ¬ chainCommitInjective := by
+  intro h
+  exact absurd (h _ _ chainCommit_high_bits_collision) (by decide)
+
 /-- **`tmShaLeaf`** — the lawful SHA `CryptoLeaf` whose hash IS `chainCommit` (the SHA-256 collection
-fold over `pairHash`). `hashCR` is the genuine collection-CR floor; `noCollision := id` unpacks it (the
-named floor, `hcr` where consumed). The Ed25519 fields are the demo/EC-arc slot. -/
+fold over `pairHash`). The Ed25519 fields are the demo/EC-arc slot.
+
+⚑ 2026-07-27 — `hashCR` used to be `∀ m₁ m₂, chainCommit m₁ = chainCommit m₂ → m₁ = m₂`, described
+as "the GENUINE SHA-256 collection-CR floor". `CryptoLeaf.noCollision` demands the carrier ENTAIL
+exactly that, and it is FALSE (`chainCommitInjective_false`, two executable witnesses). So every
+theorem that took `hcr : tmShaLeaf.hashCR` proved nothing. The slot is now `False`, which is what
+this interface can hold at a compressing hash; the binding content rides `chainCommit_binding_on`
+on the HONEST floor `Sha256MerkleFold.pairSepOn`. -/
 @[reducible] def tmShaLeaf : CryptoLeaf where
   PubKey := Nat
   Msg := List (List Nat)
@@ -175,23 +247,49 @@ named floor, `hcr` where consumed). The Ed25519 fields are the demo/EC-arc slot.
   hash := chainCommit
   Signed := tmDemoSigned
   sigSound := tmDemoSigSound
-  hashCR := ∀ m₁ m₂ : List (List Nat), chainCommit m₁ = chainCommit m₂ → m₁ = m₂
-  noCollision := fun h => h
+  hashCR := False
+  noCollision := fun h => h.elim
 
 instance : DecidableEq tmShaLeaf.Digest := inferInstanceAs (DecidableEq (List Nat))
 
-/-! ### The CR-floor SHAPE discriminates (non-vacuity — not `True` in disguise). -/
+/-! ### The floor's THREE legs (the audited guard tested only the middle one). -/
 
 /-- A COLLAPSING collection commit (every collection digests to the zero root) — the badCompress. -/
 def tmCollapseCommit (_ : List (List Nat)) : List Nat := chainIV
 
-/-- **The collapsing commit's CR carrier is FALSE (negative polarity).** Two DIFFERENT collections
-share the root, so the carrier REFUTES a broken hash: `tmShaLeaf.hashCR`'s SHAPE is a real
-discriminating hypothesis, not `True`. -/
+/-- **REFUTABLE at a collapsing hash (the guard that already existed).** Two DIFFERENT collections
+share the root. This tests only that the SHAPE can be false — it says nothing about whether it is
+SATISFIABLE at the real hash, which is the leg the audit found missing, and at which the answer
+was NO (`chainCommitInjective_false`). -/
 theorem tmCollapse_not_CR :
     ¬ (∀ m₁ m₂ : List (List Nat), tmCollapseCommit m₁ = tmCollapseCommit m₂ → m₁ = m₂) := by
   intro h
   exact absurd (h [] [[]] rfl) (by decide)
+
+/-- **SATISFIABLE — the honest floor HOLDS on an exhibited chain transcript.** The two-leaf
+validator chain's own pairs are separated (kernel-checked on the real SHA-256), so
+`chainCommit_binding_on` is an implication with a NON-empty antecedent. -/
+def tmChainSep (a b : List Nat) : Prop :=
+  (a = chainIV ∧ b = [1, 2, 3, 4, 5, 6, 7, 8])
+  ∨ (a = chainIV ∧ b = [1, 2, 3, 9, 5, 6, 7, 8])
+
+set_option maxRecDepth 8192 in
+theorem pairSepOn_tmChainSep : pairSepOn tmChainSep := by
+  intro a b c d hab hcd e
+  rcases hab with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;> rcases hcd with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;>
+    first
+      | exact ⟨rfl, rfl⟩
+      | exact absurd e (by decide)
+
+/-- **The satisfying floor FIRES** — obtained THROUGH `chainCommit_binding_on`: at a class the floor
+genuinely holds on, two one-leaf collections differing in one word cannot share a chain root. Floor,
+coverage and conclusion exercised together on the real SHA-256. -/
+theorem tm_chain_binding_fires :
+    chainCommit [[1, 2, 3, 4, 5, 6, 7, 8]] ≠ chainCommit [[1, 2, 3, 9, 5, 6, 7, 8]] := by
+  intro h
+  exact absurd (chainCommit_binding_on tmChainSep pairSepOn_tmChainSep
+    [[1, 2, 3, 4, 5, 6, 7, 8]] [[1, 2, 3, 9, 5, 6, 7, 8]] rfl
+    ⟨Or.inl ⟨rfl, rfl⟩, trivial⟩ ⟨Or.inr ⟨rfl, rfl⟩, trivial⟩ h) (by decide)
 
 /-! ## §2 — The four fold theorems (mirroring the ETH folds), per the two hash carriers. -/
 
@@ -224,19 +322,22 @@ theorem tmHashBindings_from_fold
     ∧ tmShaLeaf.hash (enc u.validators) = u.header.validatorsHash :=
   ⟨hEpochFold, hVsetFold⟩
 
-/-- **THE PAYOFF: the fold-derived hash bindings slot into `tmNoForgery` in place of the two trusted
-bits (`*_from_fold_slots_into_no_forgery` analog).** GIVEN the SHA-256 collection-CR carrier (`hcr` —
-the named floor) and the six arithmetic legs (chain-id match, adjacent height, the three time-window
-legs, and the strict `>2/3` stake threshold), if the encoded validator set's SHA-256 chain reconstructs
-into BOTH the trusted next-validators root and the header's validators-hash (`hEpochFold`/`hVsetFold` —
-DERIVED from the exhibited validator leaves, not two witnessed bits), the update is Tendermint-VALID
-relative to the trusted state. The `VSET_OK`/`EPOCH_OK` carriers are folded out: their content is now
-the conclusion of the SHA-256 collection fold. (`ED_OK`/Ed25519 rides `signedPower` — the EC-arc
-hypothesis, unchanged here.) -/
-theorem tm_hash_from_fold_slots_into_no_forgery
+/-- **THE PAYOFF, CARRIER-FREE: the fold-derived hash bindings DISCHARGE THE WHOLE TENDERMINT GATE.**
+Given the six arithmetic legs (chain-id match, adjacent height, the three time-window legs, and the
+strict `>2/3` stake threshold), if the encoded validator set's SHA-256 chain reconstructs into BOTH
+the trusted next-validators root and the header's validators-hash (`hEpochFold`/`hVsetFold` — DERIVED
+from the exhibited validator leaves, not two witnessed bits), `tmVerify` accepts. No `VSET_OK` /
+`EPOCH_OK` bit is read and NO hash floor is used.
+
+⚑ 2026-07-27 — this replaces `tm_hash_from_fold_slots_into_no_forgery`, which concluded
+`TmForeignValid` from `hcr : tmShaLeaf.hashCR` = idealized injectivity of `chainCommit`, REFUTED
+(`chainCommitInjective_false`). **CAPABILITY LOST, NAMED:** `TmForeignValid`'s ∀-quantified
+non-equivocation conjunct is not derivable at a compressing hash by any premise, because
+`CryptoLeaf.noCollision` demands global injectivity. What replaces it is the PAIRWISE form
+(`tm_validatorSet_binding_on`), which is also the form a collision bound prices. -/
+theorem tm_hash_from_fold_gate_accepts
     (sb : TmHeader tmShaLeaf.Digest → tmShaLeaf.Msg)
     (enc : List (TmValidator tmShaLeaf.PubKey) → tmShaLeaf.Msg)
-    (hcr : tmShaLeaf.hashCR)
     (ts : TmTrustedState tmShaLeaf) (u : TmUpdate tmShaLeaf)
     (hChain : u.header.chainId = ts.chainId)
     (hHeight : u.header.height = ts.height + 1)
@@ -247,11 +348,20 @@ theorem tm_hash_from_fold_slots_into_no_forgery
                 < 3 * signedPower tmShaLeaf (sb u.header) u.validators u.commit)
     (hEpochFold : chainCommit (enc u.validators) = ts.nextValidatorsHash)
     (hVsetFold : chainCommit (enc u.validators) = u.header.validatorsHash) :
-    TmForeignValid tmShaLeaf sb enc u := by
-  have hverify : tmVerify tmShaLeaf sb enc ts u = true :=
-    (tmVerify_eq_true_iff tmShaLeaf sb enc ts u).mpr
-      ⟨hChain, hHeight, hMono, hDrift, hTrust, hEpochFold, hVsetFold, hThresh⟩
-  exact tmNoForgery tmShaLeaf sb enc hcr ts u hverify
+    tmVerify tmShaLeaf sb enc ts u = true :=
+  (tmVerify_eq_true_iff tmShaLeaf sb enc ts u).mpr
+    ⟨hChain, hHeight, hMono, hDrift, hTrust, hEpochFold, hVsetFold, hThresh⟩
+
+/-- **THE VALIDATOR SET IS BOUND, at the HONEST floor.** Two equal-length validator-leaf collections
+whose SHA-256 chains both hit the SAME trusted root ARE the same collection — GIVEN separation on
+the two chains' own pairs. This is the crypto content `VSET_OK`/`EPOCH_OK` stood for: an attacker
+cannot open one `validators_hash` to two different validator sets (hence cannot move the stake
+denominator) without a `pairHash` collision on the pairs it exhibits. -/
+theorem tm_validatorSet_binding_on (P : List Nat → List Nat → Prop) (hsep : pairSepOn P)
+    (l₁ l₂ : List (List Nat)) (root : List Nat) (hlen : l₁.length = l₂.length)
+    (hc₁ : ChainCovered P chainIV l₁) (hc₂ : ChainCovered P chainIV l₂)
+    (h₁ : chainCommit l₁ = root) (h₂ : chainCommit l₂ = root) : l₁ = l₂ :=
+  chainCommit_binding_on P hsep l₁ l₂ hlen hc₁ hc₂ (h₁.trans h₂.symm)
 
 /-! ## §3 — KATs: the 3-validator SHA-256 chain, anchored to an independent SHA-256 vector.
 
@@ -281,15 +391,22 @@ def tmValLeaves : List (List Nat) := [tmVal1, tmVal2, tmVal3]
 /-! ## §4 — axiom hygiene. -/
 
 #assert_axioms chainCommit_concat
-#assert_axioms chainCommit_binding
+#assert_axioms chainFrom_binding_on
+#assert_axioms chainCommit_binding_on
 #assert_axioms tmDemoSigSound
 #assert_axioms tmCollapse_not_CR
+#assert_axioms chainCommit_word64_collision
+#assert_axioms chainCommit_high_bits_collision
+#assert_axioms chainCommitInjective_false
+#assert_axioms pairSepOn_tmChainSep
+#assert_axioms tm_chain_binding_fires
 #assert_axioms tmShaLeaf_hash_eq_chainCommit
 #assert_axioms vsetFold_derives_binding
 #assert_axioms tmHashBindings_from_fold
-#assert_axioms tm_hash_from_fold_slots_into_no_forgery
+#assert_axioms tm_hash_from_fold_gate_accepts
+#assert_axioms tm_validatorSet_binding_on
 
-#print axioms tm_hash_from_fold_slots_into_no_forgery
-#print axioms chainCommit_binding
+#print axioms tm_hash_from_fold_gate_accepts
+#print axioms chainCommit_binding_on
 
 end Dregg2.Circuit.Emit.LightClientTmHashFold

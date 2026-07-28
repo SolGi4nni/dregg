@@ -30,12 +30,12 @@ satisfying witness must EXHIBIT the stake rows whose SHA-256 chain hits the pinn
 
   * `solTableCommit_eq_chainCommit` — the bridge leaf's `tableCommit` IS the generator's SHA-256 row
     chain (the `reconstruct_*_eq_foldReconstruct` analog).
-  * `solTable_binding` — GIVEN the `pairHash` CR floor, equal-length equal chain roots pin the whole row
+  * `solTable_binding_on` — GIVEN separation on the chain's OWN pairs (the HONEST floor), equal-length equal chain roots pin the whole row
     list: the SHA-256 stake-table commit BINDS the denominator (the commitment lemma, reduced to the
     proven pair-hash floor — the content behind `noTableCollision`).
   * `stakeTableOk_from_fold` (`verify*_from_fold` analog) — the `stakeTableOk` Boolean is DISCHARGED by
     the exhibited SHA fold: NO `STAKE_TABLE_OK` column is read.
-  * `sol_stake_from_fold_slots_into_no_forgery` (`*_from_fold_slots_into_no_forgery` analog) — the
+  * `sol_stake_from_fold_gate_accepts` (carrier-free) + `sol_stake_binding_on` (the HONEST floor) — the
     fold-derived table binding slots into `sol_no_forgery` IN PLACE of the trusted bit: the Solana
     rooted-finality no-forgery guarantee holds with one fewer trusted carrier (the denominator pinned by
     the SHA-256 gates over the exhibited stake rows, not an opaque bit).
@@ -62,10 +62,22 @@ satisfying witness must EXHIBIT the stake rows whose SHA-256 chain hits the pinn
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; no `sorry`/`admit`/`native_decide`. The
 `#guard` KATs anchor the 2-entry SHA-256 chain against an independently-computed SHA-256 vector
 (`hashlib`, matching `Sha256MerkleFold` §0's FIPS anchoring), both polarities (a real chain value + a
-tampered stake entry whose chain DIFFERS). `solShaLeaf` is the lawful SHA `SolLeaf` demonstration
-instance whose `stakeTableCR` is the GENUINE SHA-256 table-CR floor over `chainCommit` (taken as `hcr`
-where consumed; the Ed25519 `edSound` is the demo/EC-arc slot). NEW file; imports read-only
+tampered stake entry whose chain DIFFERS). `solShaLeaf` is the lawful SHA `SolLeaf` instance over the
+real row chain; its `stakeTableCR` slot is `False`, because `SolLeaf.noTableCollision` demands global
+injectivity of a compressing hash and `solTableInjective_false` REFUTES it with an executable
+STAKE-INFLATION collision. The Ed25519 `edSound` is the demo/EC-arc slot. Imports read-only
 (`LightClientTmHashFold`, transitively `Sha256MerkleFold`; `Bridge.LightClientSolana`).
+
+## ⚑ 2026-07-27 — WHAT WAS DELETED AND WHY (the vacuity repair)
+
+`sol_stake_from_fold_slots_into_no_forgery` is GONE, and `solTable_binding`'s `hpair` hypothesis with
+it: both rested on injectivity of a compressing hash. Replacements are
+`sol_stake_from_fold_gate_accepts` (carrier-free: the gates discharge `solVerify`) and
+`solTable_binding_on` / `sol_stake_binding_on` (the binding, on `Sha256MerkleFold.pairSepOn`).
+**CAPABILITY LOST, NAMED:** `SolValidAt`'s ∀-quantified table-binding conjunct is not derivable at a
+compressing hash by any premise. ⚠ AND A NEW HOLE IS SURFACED: `solRowLeaf` drops the raw `Nat`
+stake into one message word and `pairHash` reads a word only mod `2^64`, so the anchor root does not
+pin the stake denominator even in principle without an encoder range-check that does not exist.
 -/
 import Dregg2.Circuit.Emit.LightClientTmHashFold
 import Dregg2.Bridge.LightClientSolana
@@ -99,10 +111,37 @@ theorem solEdSound (pk : Nat) (m : Nat × List Nat) (s : Nat)
   simp only [solEdVerify, Bool.and_eq_true, decide_eq_true_eq] at h
   exact h.1
 
+/-- **The IDEALIZED stake-table-CR floor, NAMED so it can be REFUTED rather than assumed.** This is
+the exact `Prop` `solShaLeaf.stakeTableCR` used to hold. -/
+def solTableInjective : Prop :=
+  ∀ t₁ t₂ : List (Nat × Nat × Nat),
+    chainCommit (t₁.map solRowLeaf) = chainCommit (t₂.map solRowLeaf) → t₁ = t₂
+
+set_option maxRecDepth 8192 in
+/-- ⚑ **THE STAKE DENOMINATOR IS NOT BOUND — an executable STAKE-INFLATION collision.** A row with
+stake `50` and a row with stake `50 + 2^64` produce the SAME stake-table root, because `pairHash`
+reads its message words only modulo `2^64` (`Sha256MerkleFold.pairHash_ignores_bits_above_64`) and
+`solRowLeaf` drops the raw `Nat` stake straight into a word. Two tables with WILDLY different
+`totalStake` share an anchor root, so the anchor pins no denominator at all. -/
+theorem solTable_stake_collision :
+    chainCommit (([(1, 7, 50)] : List (Nat × Nat × Nat)).map solRowLeaf)
+      = chainCommit (([(1, 7, 50 + 2 ^ 64)] : List (Nat × Nat × Nat)).map solRowLeaf) := by
+  decide
+
+/-- **THE IDEALIZED STAKE-TABLE-CR FLOOR IS FALSE**, by witness. -/
+theorem solTableInjective_false : ¬ solTableInjective := by
+  intro h
+  exact absurd (h _ _ solTable_stake_collision) (by decide)
+
 /-- **`solShaLeaf`** — the lawful SHA `SolLeaf` whose `tableCommit` IS the SHA-256 collection chain
-(`chainCommit` over the per-row `solRowLeaf` digests). `stakeTableCR` is the genuine table-CR floor;
-`noTableCollision := id` unpacks it (the named floor, `hcr` where consumed). The Ed25519 fields are the
-demo/EC-arc slot. -/
+(`chainCommit` over the per-row `solRowLeaf` digests). The Ed25519 fields are the demo/EC-arc slot.
+
+⚑ 2026-07-27 — `stakeTableCR` used to be the idealized injectivity of `chainCommit ∘ map solRowLeaf`,
+described as "the genuine table-CR floor". `SolLeaf.noTableCollision` demands the carrier ENTAIL
+exactly that, and it is FALSE (`solTableInjective_false` — and the witness is a stake-inflation
+collision, not a pigeonhole appeal). So every theorem taking `hcr : solShaLeaf.stakeTableCR` proved
+nothing. The slot is now `False`; the binding content rides `solTable_binding_on` on the HONEST
+floor `Sha256MerkleFold.pairSepOn`. -/
 @[reducible] def solShaLeaf : SolLeaf where
   PubKey := Nat
   Digest := List Nat
@@ -113,20 +152,20 @@ demo/EC-arc slot. -/
   Signed := solSigned
   edSound := solEdSound
   tableCommit := fun rows => chainCommit (rows.map solRowLeaf)
-  stakeTableCR := ∀ t₁ t₂ : List (Nat × Nat × Nat),
-    chainCommit (t₁.map solRowLeaf) = chainCommit (t₂.map solRowLeaf) → t₁ = t₂
-  noTableCollision := fun h => h
+  stakeTableCR := False
+  noTableCollision := fun h => h.elim
   zeroSig := 0
   zeroDigest := chainIV
 
-/-! ### The CR-floor SHAPE discriminates (non-vacuity — not `True` in disguise). -/
+/-! ### The floor's THREE legs (the audited guard tested only the middle one). -/
 
 /-- A COLLAPSING table commit (every table digests to the zero root). -/
 def solCollapseCommit (_ : List (Nat × Nat × Nat)) : List Nat := chainIV
 
-/-- **The collapsing commit's CR carrier is FALSE (negative polarity).** Two DIFFERENT tables share the
-root, so the carrier REFUTES a broken hash: the denominator would be swappable. Both polarities
-witnessed for the floor SHAPE. -/
+/-- **REFUTABLE at a collapsing hash (the guard that already existed).** Two DIFFERENT tables share
+the root. This tests only that the SHAPE can be false; it says nothing about SATISFIABILITY at the
+real hash, which is the leg that was missing and at which the answer is NO
+(`solTableInjective_false`). -/
 theorem solCollapse_not_CR :
     ¬ (∀ t₁ t₂ : List (Nat × Nat × Nat), solCollapseCommit t₁ = solCollapseCommit t₂ → t₁ = t₂) := by
   intro h
@@ -139,17 +178,18 @@ generator's SHA-256 row chain — the object `STAKE_TABLE_OK` stood for, via the
 theorem solTableCommit_eq_chainCommit (rows : List (Nat × Nat × Nat)) :
     solShaLeaf.tableCommit rows = chainCommit (rows.map solRowLeaf) := rfl
 
-/-- **THE STAKE-TABLE COMMIT BINDS (the commitment lemma; reduced to the proven pair-hash floor).**
-GIVEN the `pairHash` CR floor `hpair`, equal-length tables whose SHA-256 row chains agree ARE the same
-table — so the WS-anchor-pinned root pins the ACTIVE-STAKE DENOMINATOR (the content behind
-`noTableCollision`, reduced via `chainCommit_binding` and `solRowLeaf` injectivity). -/
-theorem solTable_binding
-    (hpair : ∀ a b c d : List Nat, pairHash a b = pairHash c d → a = c ∧ b = d)
+/-- **THE STAKE-TABLE COMMIT BINDS, at the HONEST floor.** Equal-length tables whose SHA-256 row
+chains agree ARE the same table — so the WS-anchor-pinned root pins the ACTIVE-STAKE DENOMINATOR —
+GIVEN separation on the two chains' OWN pairs (`Sha256MerkleFold.pairSepOn` + `ChainCovered`),
+instead of the refuted global injectivity of `pairHash`. Conclusion unchanged; premise satisfiable. -/
+theorem solTable_binding_on (P : List Nat → List Nat → Prop) (hsep : pairSepOn P)
     (t₁ t₂ : List (Nat × Nat × Nat)) (hlen : t₁.length = t₂.length)
+    (hc₁ : ChainCovered P chainIV (t₁.map solRowLeaf))
+    (hc₂ : ChainCovered P chainIV (t₂.map solRowLeaf))
     (h : solShaLeaf.tableCommit t₁ = solShaLeaf.tableCommit t₂) : t₁ = t₂ := by
   have hleaf : t₁.map solRowLeaf = t₂.map solRowLeaf :=
-    chainCommit_binding hpair (t₁.map solRowLeaf) (t₂.map solRowLeaf)
-      (by simp [hlen]) h
+    chainCommit_binding_on P hsep (t₁.map solRowLeaf) (t₂.map solRowLeaf)
+      (by simp [hlen]) hc₁ hc₂ h
   -- `solRowLeaf` is injective, so equal leaf lists force equal row lists.
   have hinj : Function.Injective solRowLeaf := by
     rintro ⟨a, b, c⟩ ⟨a', b', c'⟩ heq
@@ -177,16 +217,21 @@ theorem stakeTableOk_from_fold (ts : SolTrustedState solShaLeaf) (u : SolUpdate 
   unfold stakeTableOk
   exact solShaLeaf.dBeq_iff.mpr hfold
 
-/-- **THE PAYOFF: the fold-derived table binding slots into `sol_no_forgery` in place of the trusted
-`STAKE_TABLE_OK` bit (`*_from_fold_slots_into_no_forgery` analog).** GIVEN the SHA-256 table-CR carrier
-(`hcr` — the named floor), the `total > 0` floor, the ≥2/3 rooted-stake threshold, and the Ed25519 /
-rooted / authorized-voter results (`edOk`/`rootedOk`/`authOk` — the EC-arc + in-AIR gates, hypotheses),
-if the stake rows' SHA-256 chain reconstructs into the pinned WS anchor root (`hfold` — DERIVED from the
-exhibited rows, not a witnessed bit), the update is Solana-ROOTED-VALID relative to the anchor. The
-`STAKE_TABLE_OK` carrier is folded out: the ACTIVE-STAKE DENOMINATOR is now pinned by the SHA-256
-collection fold, not an opaque bit. -/
-theorem sol_stake_from_fold_slots_into_no_forgery
-    (hcr : solShaLeaf.stakeTableCR)
+/-- **THE PAYOFF, CARRIER-FREE: the fold-derived table binding DISCHARGES THE WHOLE SOLANA GATE.**
+Given the `total > 0` floor, the ≥2/3 rooted-stake threshold, and the Ed25519 / rooted /
+authorized-voter results, if the stake rows' SHA-256 chain reconstructs into the pinned WS anchor
+root (`hfold` — DERIVED from the exhibited rows, not a witnessed bit), `solVerify` accepts. No
+`STAKE_TABLE_OK` bit is read and NO hash floor is used.
+
+⚑ 2026-07-27 — this replaces `sol_stake_from_fold_slots_into_no_forgery`, which concluded
+`SolValidAt` from `hcr : solShaLeaf.stakeTableCR`, REFUTED by an executable STAKE-INFLATION collision
+(`solTableInjective_false`). **CAPABILITY LOST, NAMED:** `SolValidAt`'s ∀-quantified table-binding
+conjunct is not derivable at a compressing hash by any premise. What replaces it is the PAIRWISE
+form (`solTable_binding_on`). ⚠ AND THE WITNESS IS ITS OWN FINDING: `solRowLeaf` drops the raw `Nat`
+stake into one message word, and `pairHash` reads a word only mod `2^64` — so even the pairwise form
+is only as good as a range-check on the encoder. That range-check does not exist here; it is the
+named residual this repair surfaces rather than hides. -/
+theorem sol_stake_from_fold_gate_accepts
     (ts : SolTrustedState solShaLeaf) (u : SolUpdate solShaLeaf)
     (hpos : 0 < totalStake solShaLeaf u)
     (hthr : 2 * totalStake solShaLeaf u ≤ 3 * rootedStake solShaLeaf u)
@@ -194,13 +239,22 @@ theorem sol_stake_from_fold_slots_into_no_forgery
     (hrooted : rootedOk solShaLeaf u = true)
     (hauth : authOk solShaLeaf u = true)
     (hfold : chainCommit ((u.table.map entryRow).map solRowLeaf) = ts.anchorRoot) :
-    SolValidAt solShaLeaf ts u := by
+    solVerify solShaLeaf ts u = true := by
   have hstk : stakeTableOk solShaLeaf ts u = true := stakeTableOk_from_fold ts u hfold
-  have hverify : solVerify solShaLeaf ts u = true := by
-    unfold solVerify solVerifyDecision
-    simp only [Bool.and_eq_true, decide_eq_true_eq]
-    exact ⟨⟨⟨⟨⟨hpos, hthr⟩, hed⟩, hstk⟩, hrooted⟩, hauth⟩
-  exact sol_no_forgery solShaLeaf hcr ts u hverify
+  unfold solVerify solVerifyDecision
+  simp only [Bool.and_eq_true, decide_eq_true_eq]
+  exact ⟨⟨⟨⟨⟨hpos, hthr⟩, hed⟩, hstk⟩, hrooted⟩, hauth⟩
+
+/-- **THE STAKE DENOMINATOR IS BOUND, at the HONEST floor.** Two equal-length stake tables whose
+SHA-256 row chains both hit the SAME pinned anchor root ARE the same table — GIVEN separation on the
+two chains' own pairs. This is what `STAKE_TABLE_OK` stood for. -/
+theorem sol_stake_binding_on (P : List Nat → List Nat → Prop) (hsep : pairSepOn P)
+    (t₁ t₂ : List (Nat × Nat × Nat)) (anchor : List Nat) (hlen : t₁.length = t₂.length)
+    (hc₁ : ChainCovered P chainIV (t₁.map solRowLeaf))
+    (hc₂ : ChainCovered P chainIV (t₂.map solRowLeaf))
+    (h₁ : chainCommit (t₁.map solRowLeaf) = anchor)
+    (h₂ : chainCommit (t₂.map solRowLeaf) = anchor) : t₁ = t₂ :=
+  solTable_binding_on P hsep t₁ t₂ hlen hc₁ hc₂ (h₁.trans h₂.symm)
 
 /-! ## §3 — KATs: the 2-entry SHA-256 chain, anchored to an independent SHA-256 vector.
 
@@ -228,13 +282,16 @@ def solRows : List (Nat × Nat × Nat) := [solRow1, solRow2]
 
 #assert_axioms solEdSound
 #assert_axioms solCollapse_not_CR
+#assert_axioms solTable_stake_collision
+#assert_axioms solTableInjective_false
 #assert_axioms solTableCommit_eq_chainCommit
-#assert_axioms solTable_binding
+#assert_axioms solTable_binding_on
 #assert_axioms stakeFold_derives_anchorBinding
 #assert_axioms stakeTableOk_from_fold
-#assert_axioms sol_stake_from_fold_slots_into_no_forgery
+#assert_axioms sol_stake_from_fold_gate_accepts
+#assert_axioms sol_stake_binding_on
 
-#print axioms sol_stake_from_fold_slots_into_no_forgery
-#print axioms solTable_binding
+#print axioms sol_stake_from_fold_gate_accepts
+#print axioms solTable_binding_on
 
 end Dregg2.Circuit.Emit.LightClientSolHashFold
