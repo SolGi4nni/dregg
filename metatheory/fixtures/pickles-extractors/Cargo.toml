@@ -1,0 +1,44 @@
+[package]
+name = "pickles-reality-gate-export"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Standalone: this crate is deliberately NOT a member of the breadstuffs workspace.
+# It links against a third-party checkout (openmina `mina-rust`) whose dependency
+# graph (arkworks 0.5, o1-labs proof-systems 0.3.0, forked num-bigint) must not
+# leak into the breadstuffs lockfile.
+[workspace]
+
+# `mina-rust` is expected as a SIBLING checkout of this repo:
+#   <parent>/breadstuffs/metatheory/fixtures/pickles-extractors  (this crate)
+#   <parent>/mina-rust                                            (openmina)
+# Pinned rev is recorded in README.md and re-printed by the binary at run time.
+[dependencies]
+ledger = { path = "../../../../mina-rust/crates/ledger", package = "mina-tree" }
+mina-p2p-messages = { path = "../../../../mina-rust/crates/p2p-messages" }
+mina-core = { path = "../../../../mina-rust/crates/core" }
+
+ark-ec = { version = "0.5.0", features = ["std"] }
+ark-ff = { version = "0.5.0", features = ["parallel", "asm", "std"] }
+ark-poly = { version = "0.5.0" }
+kimchi = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+mina-curves = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+mina-poseidon = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+poly-commitment = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+o1-utils = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["float_roundtrip"] }
+base64 = "0.22"
+bs58 = { version = "0.5", features = ["check"] }
+
+# Mirrors mina-rust's root [patch.crates-io]. Without it the arkworks/kimchi graph
+# resolves against upstream num-bigint and fails to compile.
+[patch.crates-io]
+num-bigint = { git = "https://github.com/openmina/num-bigint", branch = "rebase-onstack" }
+num-rational = { git = "https://github.com/openmina/num-rational", branch = "rebase-onstack" }
+
+[profile.release]
+opt-level = 3
+debug = false
