@@ -1075,6 +1075,19 @@ local instance : WorldParam := instAt 0
 -- program-admitted on the same encoded transition).
 #guard programAdmitsRun crownedRun = true
 
+-- ⚑ AND SO IS A RUN THAT GOES BACK FOR THE KEYS. `crownedRun` contains no `take`, so the
+-- drive above never exercises the new verb's arm — a battery that leaves a whole case
+-- untouched cannot notice that case rotting. This is the §10 "which keys do you go back
+-- for" line (day 0, banks THREE for all 30 breath): it exercises `unlock`'s custody write,
+-- `take`'s inverse hop, and the door frame on three different floors.
+#guard programAdmitsRun
+  [ .delve, .smite, .loot 1, .unlock 2,
+    .delve, .smite, .loot 2, .unlock 3,
+    .delve, .smite, .smite, .loot 3, .unlock 4,
+    .delve, .smite, .smite, .loot 0,
+    .ascend, .take 3, .ascend, .take 2, .ascend, .ascend,
+    .flee ] = true
+
 -- Attack 1 — DUPE: a loot-shaped turn that mints a pack relic out of nothing
 -- (pack +1, no hoard debit) breaks conservation and is refused.
 #guard
@@ -1180,6 +1193,27 @@ local instance : WorldParam := instAt 0
 #guard
   (Dregg2.Exec.RecordProgram.admits dungeonExec 0 (encode genesisState)
      (encode genesisState)) = false
+
+-- ⚑ Attack 7b — THE REMOTE TAKE: lift a key out of a door you are NOT standing at. The
+-- key hangs on floor 1; the run is on floor 2; everything else is a lawful `take` (one
+-- breath, the carry slot charged, conservation balanced, the custody hop
+-- `HUNG + 1 → CARRIED` in the enumeration). REFUSED by `hungFrameTooth 1` alone — the
+-- door frame is what says "you must be STANDING WHERE IT HANGS"
+-- (`Dungeon.custody_lowers_only_by_take`), and the model refuses the same turn
+-- (`Dungeon.lean` §10: `replay [.delve, .smite, .loot 1, .unlock 2, .delve, .take 1]
+-- = none`).
+#guard
+  (let s := st [.delve, .smite, .loot 1, .unlock 2, .delve]
+   let forged := setF (setF (setF (setF (encode s)
+      (relicName 1) CARRIED) "pack" 1) (hungName 1) 0) "spent" 7
+   Dregg2.Exec.RecordProgram.admits dungeonExec 8 (encode s) forged) = false
+-- …and the honest twin: the SAME write set STANDING ON FLOOR 1 is admitted. Without this
+-- pole the tooth above would be indistinguishable from one that refuses every `take`.
+#guard
+  (let s := st [.delve, .smite, .loot 1, .unlock 2]
+   let forged := setF (setF (setF (setF (encode s)
+      (relicName 1) CARRIED) "pack" 1) (hungName 1) 0) "spent" 6
+   Dregg2.Exec.RecordProgram.admits dungeonExec 8 (encode s) forged) = true
 
 -- Attack 8 — UNKNOWN METHOD: a method outside the seven verbs is default-denied even
 -- with a fully-lawful-looking write set.
