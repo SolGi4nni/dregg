@@ -42,7 +42,7 @@
 turn/src/executor/atomic.rs	check_per_asset_conservation_by_asset	installed_conservation_oracle	any(unix, windows)|debug_assertions	twin#1 no conservation oracle => AtomicTurnError::ConservationGateUnavailable on native; Rust BlockConservation only on the no-archive guest / opted-out debug build
 
 # ── twin#2 cell StateConstraint eval (release-gated fail-closed; cell is a pervasive shared dep) ──
-cell/src/program/eval.rs	evaluate_constraint_full	installed_oracle	debug_assertions	twin#2 no constraint oracle => no_oracle_subset_disposition refuses the Lean subset on a native RELEASE build
+cell/src/program/eval.rs	evaluate_constraint_full	installed_oracle	constraint_subset_fails_closed_without_oracle	twin#2 no constraint oracle => undecided_subset_disposition refuses the Lean subset on a native RELEASE build (renamed from no_oracle_subset_disposition by 22d9e0f3a, which left this row naming a symbol that no longer exists; the fall-through the invariant sees is wasm32 + the SP1 guest, which CANNOT link the Lean archive, and debug/test which stay green deliberately)
 
 # ── twin#3 coord 2PC decide ──────────────────────────────────────────────────────────
 coord/src/atomic.rs	evaluate_votes	verified_decision	-	twin#3 no 2PC gate => evaluate_votes_no_gate returns Decision::Abort (refuse to commit)
