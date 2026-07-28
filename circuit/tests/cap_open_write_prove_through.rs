@@ -418,7 +418,7 @@ fn prove_insert_member(key: &str, effects: Vec<Effect>, eff_bit: u32, accounts_t
     // post-insert cap-root and then rebuilds every commitment AROUND it, so the trace is
     // internally consistent and only the cap-tree write is a lie.
     {
-        let (mut t, mut d, h) = build_insert_trace(key, &effects, eff_bit, accounts_tree, true);
+        let (t, d, h) = build_insert_trace(key, &effects, eff_bit, accounts_tree, true);
         assert_refused(
             &desc,
             &t,
@@ -426,8 +426,6 @@ fn prove_insert_member(key: &str, effects: Vec<Effect>, eff_bit: u32, accounts_t
             &h,
             "FABRICATED post-insert cap-root, commitments rebuilt around it",
         );
-        // (keep the bindings live so a future edit cannot silently drop the forge)
-        let _ = (t.pop(), d.pop());
     }
 
     let (trace, dpis, map_heaps) = build_insert_trace(key, &effects, eff_bit, accounts_tree, false);
