@@ -111,6 +111,17 @@ first.
   correctly did not touch it. Restored, byte-identical, gate clean — but the window is the hazard
   and I made one hours after writing the doctrine saying so. Mutate on a copy.
 
+- **B1 REWRITTEN, not ticked** — the sweep stands (`DREGG_LEAN_SHADOW` set by nothing, verified four
+  ways), the conclusion is refuted (it is the SUPERSEDED seam; `DREGG_LEAN_PRODUCER` is opt-OUT,
+  default ON, and overrides in BOTH directions). ⚑ The real finding is worse: the dark gate was
+  BROKEN — its veto restored the ledger but not the executor receipt head, so **one vetoed turn
+  permanently bricked the agent**. Deleted; the tooth moved onto the armed seam.
+- **C3 CLOSED** — `no_run` fences were never asked for a reason, though the script already knew the
+  attribute and `REASON_RE` already accepted `NO_RUN:`. Armed; 29 of 43 reasonless, seeded to ratchet.
+- **17 orphaned build-lane leases reaped** across both boxes. ⚠ Disk is NOT reclaimable by the
+  sanctioned sweep — it is live lane targets (persvati `srot` alone is 100.6 GB), and
+  `reclaim-space.sh --clean` races active builds. **persvati 98%, hbox 99% — ember's call.**
+
 ## Open for ember
 1. **F1?** — the only route that makes a successor to `RestHashIffFrame` satisfiable. Flag day:
    commitment epoch + descriptor re-emit + re-genesis, 234 binder positions across 85 modules.
