@@ -109,20 +109,28 @@ fn sample_receipt(
     }
 }
 
+/// A `ReplayEntry` carrying the ROTATED-shaped PI vector a real
+/// `"effect-vm-rotated"` leg publishes: the v1 prefix `[0, V1_PI_COUNT)` plus the four
+/// appended rotated pins (`ROT_PI_COUNT` felts), with `PI[TURN_HASH_BASE..+4]` filled
+/// the way the honest producer fills it (`turn_prover::proven_receipt`).
+///
+/// ⚠ This helper used to synthesize a `pi::ACTIVE_BASE_COUNT` (**213**) vector — a
+/// shape NO leg ships — and that is exactly how `check_receipt_pi_binding`'s 213-felt
+/// precondition stayed invisible: the tests manufactured an input long enough to clear
+/// a gate that every real proof failed, so T8/T11 passed against a vector the wire
+/// never carries. Measured 2026-07-27, a real wide rotated leg carries **68** felts;
+/// the drive-the-real-producer measurement is
+/// `tests/tests/receipt_pi_binding_reachability.rs`.
 fn replay_entry_with_receipt_pi(receipt: TurnReceipt) -> dregg_verifier::ReplayEntry {
     use dregg_circuit::effect_vm::pi;
+    use dregg_circuit::effect_vm::trace_rotated::ROT_PI_COUNT;
     use dregg_commit::typed::canonical_32_to_felts_4;
 
-    let mut public_inputs = vec![0u32; pi::ACTIVE_BASE_COUNT];
+    let mut public_inputs = vec![0u32; ROT_PI_COUNT];
     let turn_hash = canonical_32_to_felts_4(&receipt.turn_hash);
     for i in 0..pi::TURN_HASH_LEN {
         public_inputs[pi::TURN_HASH_BASE + i] = turn_hash[i].as_u32();
     }
-    let previous = canonical_32_to_felts_4(&receipt.previous_receipt_hash.unwrap_or([0u8; 32]));
-    for i in 0..pi::PREVIOUS_RECEIPT_HASH_LEN {
-        public_inputs[pi::PREVIOUS_RECEIPT_HASH_BASE + i] = previous[i].as_u32();
-    }
-    public_inputs[pi::IS_AGENT_CELL] = 1;
 
     dregg_verifier::ReplayEntry {
         receipt,
@@ -449,8 +457,12 @@ fn t8_verifier_rejects_fake_previous_receipt_hash() {
     let receipt = sample_receipt(agent, [0x85u8; 32], Some(forged_previous));
     let entry = replay_entry_with_receipt_pi(receipt);
 
-    let reason = dregg_verifier::check_receipt_pi_binding(&entry, Some(prior.receipt_hash()))
-        .expect("chain-walk must reject a fake previous_receipt_hash");
+    let reason = dregg_verifier::check_receipt_pi_binding(
+        &entry.receipt,
+        &entry.public_inputs,
+        Some(prior.receipt_hash()),
+    )
+    .expect("chain-walk must reject a fake previous_receipt_hash");
     assert!(
         reason.contains("chain-walk"),
         "expected chain-walk rejection, got: {reason}"
@@ -587,8 +599,9 @@ fn t11_stale_proof_replay_rejected_by_verifier() {
     let mut entry = replay_entry_with_receipt_pi(receipt);
     entry.public_inputs[dregg_circuit::effect_vm::pi::TURN_HASH_BASE] ^= 0x01;
 
-    let reason = dregg_verifier::check_receipt_pi_binding(&entry, None)
-        .expect("stale proof PI must reject when TURN_HASH no longer matches receipt");
+    let reason =
+        dregg_verifier::check_receipt_pi_binding(&entry.receipt, &entry.public_inputs, None)
+            .expect("stale proof PI must reject when TURN_HASH no longer matches receipt");
     assert!(
         reason.contains("TURN_HASH_BASE"),
         "expected TURN_HASH_BASE rejection, got: {reason}"
@@ -1095,6 +1108,15 @@ fn cross_cutting_all_pi_fields_trace_bound() {
         }
     }
 
+    // ⚑ THE REGISTRY THIS TEST WALKS IS NOT THE ONE THAT SHIPS. `V3_STAGED_REGISTRY_TSV`
+    // is SUPERSEDED on the live wire (its own docstring says so): the WIDE flag-day
+    // repointed the SDK, the executor's `verify_one_cohort_run` and node retention at
+    // `WIDE_REGISTRY_STAGED_TSV` / `WIDE_UMEM_WELD_REGISTRY_TSV`. The exemption sets
+    // above are therefore a freeze over the DEMONSTRATION floor. They happen to be
+    // exactly right for the deployed registries too — measured, not assumed — and
+    // `deployed_wide_registries_carry_the_same_pin_exemptions_and_the_wide_anchors`
+    // is where that is checked.
+
     // `IS_AGENT_CELL` sits past the deployed PI window entirely: no member can
     // bind it, because no member publishes that many public inputs.
     assert!(
@@ -1102,6 +1124,168 @@ fn cross_cutting_all_pi_fields_trace_bound() {
         "IS_AGENT_CELL moved into the deployed PI window; its off-AIR-only status \
          (asserted by cross_cutting_verifier_checks_all_pi) must be re-derived"
     );
+}
+
+/// THE SAME PIN AUDIT, ON THE REGISTRIES THAT ACTUALLY SHIP — plus the tooth that
+/// says what binds the state of the 31 exempt members INSTEAD.
+///
+/// `cross_cutting_all_pi_fields_trace_bound` walks `V3_STAGED_REGISTRY_TSV`, which is
+/// the superseded bare/narrow demonstration floor. The deployed wire iterates
+/// `WIDE_REGISTRY_STAGED_TSV` and `WIDE_UMEM_WELD_REGISTRY_TSV`. Measured 2026-07-27,
+/// the exemption sets are IDENTICAL across all three (9 setField members with no
+/// first-row v1 pin; 22 setField + cap-write members with no last-row v1 pin), so the
+/// gap is on the wire and not merely on the floor.
+///
+/// The second half is what makes the exemption legible rather than alarming: EVERY
+/// member — exempt or not — carries the full 16 wide-anchor `pi_binding`s (the 8-felt
+/// BEFORE commit on the first row, the 8-felt AFTER commit on the last). That is the
+/// faithful ~124-bit state binding the executor anchors from trusted storage/claim, and
+/// it is the reason the legacy 1-felt `OLD_COMMIT[0]` / `NEW_COMMIT[0]` pins are not
+/// worth re-adding: they are the ~31-bit waist the wide flip deliberately retired.
+///
+/// What IS still missing, and what a fix would cost:
+///   * the 9 setField members publish `INIT_BAL_LO/HI`, `FINAL_BAL_LO/HI` and
+///     `ACTOR_NONCE` as FREE public inputs — no in-circuit tie to the trace;
+///   * the 22 cap-write members publish `FINAL_BAL_LO/HI` free (their first-row set IS
+///     carried).
+/// On the executor's own leg this is not prover-choice: `verify_one_cohort_run`
+/// RECONSTRUCTS the whole PI vector from trusted state and a divergence is UNSAT. The
+/// exposure is a LEDGERLESS reader — the per-asset conservation gate reads `NET_DELTA`
+/// out of the PI, and `NET_DELTA`'s meaning rests on `INIT`/`FINAL` being the trace's
+/// real balances. Emitting the four missing pins is a Lean-emit change (the pins are
+/// authored in `metatheory/Dregg2/Circuit/Emit/`, never hand-written here) that changes
+/// the constraint list and therefore the VK bytes: a VK rotation over 3 registries × 31
+/// members plus the TSV/FP re-emit. It does NOT move `public_input_count`, so no
+/// PI-count flag day and no producer/verifier reconstruction change.
+#[test]
+fn deployed_wide_registries_carry_the_same_pin_exemptions_and_the_wide_anchors() {
+    use dregg_circuit::descriptor_ir2::{VmConstraint2, parse_vm_descriptor2};
+    use dregg_circuit::effect_vm::columns::{STATE_AFTER_BASE, STATE_BEFORE_BASE, state};
+    use dregg_circuit::effect_vm::pi;
+    use dregg_circuit::effect_vm::trace_rotated::V1_PI_COUNT;
+    use dregg_circuit::effect_vm_descriptors::{
+        WIDE_REGISTRY_STAGED_TSV, WIDE_UMEM_WELD_REGISTRY_TSV,
+    };
+    use dregg_circuit::lean_descriptor_air::{VmConstraint, VmRow};
+
+    // The same seven semantic pins as the bare-registry audit.
+    let first_row: &[(usize, usize)] = &[
+        (STATE_BEFORE_BASE + state::NONCE, pi::ACTOR_NONCE),
+        (STATE_BEFORE_BASE + state::BALANCE_LO, pi::INIT_BAL_LO),
+        (STATE_BEFORE_BASE + state::BALANCE_HI, pi::INIT_BAL_HI),
+        (STATE_BEFORE_BASE + state::STATE_COMMIT, pi::OLD_COMMIT_BASE),
+    ];
+    let last_row: &[(usize, usize)] = &[
+        (STATE_AFTER_BASE + state::STATE_COMMIT, pi::NEW_COMMIT_BASE),
+        (STATE_AFTER_BASE + state::BALANCE_LO, pi::FINAL_BAL_LO),
+        (STATE_AFTER_BASE + state::BALANCE_HI, pi::FINAL_BAL_HI),
+    ];
+
+    const NO_FIRST_ROW_V1_PIN: usize = 9;
+    const NO_LAST_ROW_V1_PIN: usize = 22;
+
+    for (label, tsv) in [
+        ("WIDE_REGISTRY_STAGED_TSV", WIDE_REGISTRY_STAGED_TSV),
+        ("WIDE_UMEM_WELD_REGISTRY_TSV", WIDE_UMEM_WELD_REGISTRY_TSV),
+    ] {
+        let mut members = 0usize;
+        let mut no_first: Vec<String> = Vec::new();
+        let mut no_last: Vec<String> = Vec::new();
+        for line in tsv.lines() {
+            if line.is_empty() {
+                continue;
+            }
+            members += 1;
+            let mut it = line.splitn(3, '\t');
+            let key = it.next().expect("tsv key");
+            let _name = it.next().expect("tsv name");
+            let json = it.next().expect("tsv json");
+            let desc = parse_vm_descriptor2(json)
+                .unwrap_or_else(|e| panic!("{label} member {key} failed to parse: {e}"));
+            let pc = desc.public_input_count;
+
+            let mut v1: Vec<(VmRow, usize, usize)> = Vec::new();
+            let mut anchor_pis: std::collections::BTreeSet<usize> = Default::default();
+            for constraint in &desc.constraints {
+                let VmConstraint2::Base(VmConstraint::PiBinding { row, col, pi_index }) =
+                    constraint
+                else {
+                    continue;
+                };
+                // ORDER MATTERS. `heapWrite` publishes only 20 PIs, so ITS 16 wide
+                // anchors live at 4..20 — inside the v1 window's numeric range. Classify
+                // by the anchor tail FIRST or the local-PI-space member reads as having
+                // zero anchors (it has all sixteen).
+                if *pi_index >= pc - 16 {
+                    anchor_pis.insert(*pi_index);
+                } else if *pi_index < V1_PI_COUNT {
+                    v1.push((*row, *col, *pi_index));
+                }
+            }
+
+            // THE TOOTH THAT MAKES THE EXEMPTION LEGIBLE: every member binds all 16
+            // wide-anchor PIs (the 8-felt BEFORE / AFTER state commitments). If this
+            // ever thins out, the exempt members would have NO state binding at all.
+            assert_eq!(
+                anchor_pis.len(),
+                16,
+                "{label} member {key} binds {} of the 16 wide 8-felt anchor PIs ({}..{}). The \
+                 wide anchors are the ONLY state binding the pin-exempt members have; a member \
+                 missing one is unbound, not merely un-pinned.",
+                anchor_pis.len(),
+                pc - 16,
+                pc
+            );
+
+            if desc.public_input_count <= pi::ACTOR_NONCE {
+                continue; // heapWrite: its own local PI contract
+            }
+            let has_first = first_row
+                .iter()
+                .filter(|(c, p)| v1.contains(&(VmRow::First, *c, *p)))
+                .count();
+            let has_last = last_row
+                .iter()
+                .filter(|(c, p)| v1.contains(&(VmRow::Last, *c, *p)))
+                .count();
+            assert!(
+                has_first == 0 || has_first == first_row.len(),
+                "{label} member {key} carries a PARTIAL first-row pin set ({has_first}/4)"
+            );
+            assert!(
+                has_last == 0 || has_last == last_row.len(),
+                "{label} member {key} carries a PARTIAL last-row pin set ({has_last}/3)"
+            );
+            if has_first == 0 {
+                no_first.push(key.to_string());
+            }
+            if has_last == 0 {
+                no_last.push(key.to_string());
+            }
+        }
+
+        assert_eq!(
+            members, 57,
+            "{label} member count changed; re-derive the counts below"
+        );
+        assert_eq!(
+            no_first.len(),
+            NO_FIRST_ROW_V1_PIN,
+            "{label}: {} members carry NO first-row v1 pin (expected {NO_FIRST_ROW_V1_PIN}): {no_first:?}",
+            no_first.len()
+        );
+        assert_eq!(
+            no_last.len(),
+            NO_LAST_ROW_V1_PIN,
+            "{label}: {} members carry NO last-row v1 pin (expected {NO_LAST_ROW_V1_PIN}): {no_last:?}",
+            no_last.len()
+        );
+        assert!(
+            no_first.iter().all(|k| k.starts_with("setField")),
+            "{label}: the no-first-row-pin set is supposed to be exactly the setField family; \
+             got {no_first:?}"
+        );
+    }
 }
 
 #[test]
@@ -1177,24 +1361,80 @@ fn cross_cutting_verifier_checks_all_pi() {
     let previous = [0xC3u8; 32];
     let base = sample_receipt(agent, [0xC2u8; 32], Some(previous));
 
+    use dregg_circuit::effect_vm::pi;
+    use dregg_circuit::effect_vm::trace_rotated::V1_PI_COUNT;
+
+    // (a) TURN_HASH — the one PI slot a rotated leg actually publishes for the turn
+    //     identity (`TURN_HASH_BASE` = 33, inside the v1 window `[0, 42)`).
     let mut turn_hash_tamper = replay_entry_with_receipt_pi(base.clone());
-    turn_hash_tamper.public_inputs[dregg_circuit::effect_vm::pi::TURN_HASH_BASE] ^= 0x01;
-    let reason = dregg_verifier::check_receipt_pi_binding(&turn_hash_tamper, Some(previous))
-        .expect("TURN_HASH PI mismatch must reject");
+    turn_hash_tamper.public_inputs[pi::TURN_HASH_BASE] ^= 0x01;
+    let reason = dregg_verifier::check_receipt_pi_binding(
+        &turn_hash_tamper.receipt,
+        &turn_hash_tamper.public_inputs,
+        Some(previous),
+    )
+    .expect("TURN_HASH PI mismatch must reject");
     assert!(reason.contains("TURN_HASH_BASE"));
 
-    let mut previous_hash_tamper = replay_entry_with_receipt_pi(base.clone());
-    previous_hash_tamper.public_inputs[dregg_circuit::effect_vm::pi::PREVIOUS_RECEIPT_HASH_BASE] ^=
-        0x01;
-    let reason = dregg_verifier::check_receipt_pi_binding(&previous_hash_tamper, Some(previous))
-        .expect("PREVIOUS_RECEIPT_HASH PI mismatch must reject");
-    assert!(reason.contains("PREVIOUS_RECEIPT_HASH_BASE"));
+    // (b) PREVIOUS_RECEIPT_HASH and IS_AGENT_CELL are NOT on the wire, and the
+    //     verifier no longer pretends to compare them. This is structural, not a
+    //     preference: the rotated producer slices the v1 PI vector at exactly
+    //     `V1_PI_COUNT` before appending its four rotated pins, and
+    //     `PREVIOUS_RECEIPT_HASH_BASE` IS that slice point — so indices 42..46 of a
+    //     real leg carry the rotated OLD/NEW commit, committed height and caveat
+    //     commit. `IS_AGENT_CELL` (81) is past the end of the vector entirely.
+    //     Comparing either against a receipt field would reject every honest proof.
+    assert_eq!(
+        pi::PREVIOUS_RECEIPT_HASH_BASE,
+        V1_PI_COUNT,
+        "PREVIOUS_RECEIPT_HASH_BASE moved off the v1 window's slice point — if it is now \
+         INSIDE the published window, the rotated leg carries it and the verifier should \
+         bind it directly instead of transitively"
+    );
+    assert!(
+        pi::IS_AGENT_CELL >= V1_PI_COUNT,
+        "IS_AGENT_CELL moved into the published rotated PI window; bind it directly"
+    );
 
-    let mut agent_cell_tamper = replay_entry_with_receipt_pi(base);
-    agent_cell_tamper.public_inputs[dregg_circuit::effect_vm::pi::IS_AGENT_CELL] = 0;
-    let reason = dregg_verifier::check_receipt_pi_binding(&agent_cell_tamper, Some(previous))
-        .expect("IS_AGENT_CELL PI mismatch must reject");
-    assert!(reason.contains("IS_AGENT_CELL"));
+    // (c) THE CHAIN LINK IS STILL PI-BOUND, transitively: `Turn::hash()` absorbs
+    //     `previous_receipt_hash`, so a receipt re-based to a different chain position
+    //     names a different turn_hash and (a) refuses it. Demonstrated on a real proof
+    //     in `verifier/tests/integration_rotated_replay_chain.rs`
+    //     (`receipt_binding_refuses_a_chain_link_forged_through_the_turn_hash`).
+    let mut at_p = one_action_turn(agent, 3, vec![]);
+    at_p.previous_receipt_hash = Some(previous);
+    let mut at_other = at_p.clone();
+    at_other.previous_receipt_hash = Some([0xC9u8; 32]);
+    assert_ne!(
+        at_p.hash(),
+        at_other.hash(),
+        "Turn::hash MUST absorb previous_receipt_hash — the transitive chain-link binding \
+         rests entirely on it"
+    );
+    let honest = replay_entry_with_receipt_pi(sample_receipt(agent, at_p.hash(), Some(previous)));
+    assert!(
+        dregg_verifier::check_receipt_pi_binding(
+            &honest.receipt,
+            &honest.public_inputs,
+            Some(previous)
+        )
+        .is_none(),
+        "the honestly-positioned receipt must be admitted"
+    );
+    let rebased = dregg_verifier::ReplayEntry {
+        receipt: sample_receipt(agent, at_other.hash(), Some(previous)),
+        ..honest
+    };
+    let reason = dregg_verifier::check_receipt_pi_binding(
+        &rebased.receipt,
+        &rebased.public_inputs,
+        Some(previous),
+    )
+    .expect("a receipt re-based to another chain position must reject via TURN_HASH");
+    assert!(
+        reason.contains("TURN_HASH_BASE"),
+        "the chain-link refusal must come from the TURN_HASH comparison; got: {reason}"
+    );
 }
 
 // ===========================================================================

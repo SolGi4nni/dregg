@@ -51,7 +51,7 @@
 //!     leg needs — is compiled out.
 //!
 //! (`dregg_verifier::verify_rotated_replay_chain` is NOT the answer either: it
-//! wants `RotatedReplayLeg{proof_bytes: Ir2BatchProof, public_inputs, vk_hash}`,
+//! wants `RotatedReplayLeg{receipt, proof_bytes: Ir2BatchProof, public_inputs, vk_hash}`,
 //! and a `WitnessedReceipt` carries neither an `Ir2BatchProof` nor a `vk_hash`.
 //! Its own module doc says it is the CLI/demonstration floor, not the wire.)
 //!

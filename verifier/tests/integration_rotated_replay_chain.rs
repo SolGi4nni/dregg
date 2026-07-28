@@ -37,7 +37,9 @@ use dregg_circuit::effect_vm::trace_rotated::{
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
 use dregg_circuit::field::BabyBear;
+use dregg_commit::typed::canonical_32_to_felts_4;
 use dregg_turn::rotation_witness as rw;
+use dregg_turn::turn::TurnReceipt;
 use dregg_verifier::{RotatedReplayLeg, RotatedReplayVerdict, verify_rotated_replay_chain};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -116,6 +118,7 @@ fn mint_rotated_leg_with_witnesses(
     effect: Effect,
     before_w: &rw::RotationWitness,
     after_w: &rw::RotationWitness,
+    receipt: TurnReceipt,
 ) -> (RotatedReplayLeg, BabyBear, BabyBear) {
     let effects = vec![effect.clone()];
     let (name, json) = rotated_json_for(&effect);
@@ -136,7 +139,7 @@ fn mint_rotated_leg_with_witnesses(
     // slot and the prover's own range pre-flight refuses the honest trace. Read the pad off the
     // parsed descriptor's wire name (`0` for every bare member, so this is a no-op for them).
     let pad = avail_pad_for_descriptor_name(&desc.name);
-    let (trace, dpis) = generate_rotated_effect_vm_trace_avail(
+    let (trace, mut dpis) = generate_rotated_effect_vm_trace_avail(
         pad,
         initial_state,
         &effects,
@@ -145,6 +148,16 @@ fn mint_rotated_leg_with_witnesses(
         &caveat,
     )
     .expect("live rotated generator must produce a trace + PIs");
+
+    // THE HONEST PRODUCER'S JOB, byte-for-byte what
+    // `dregg_turn_prover::proven_receipt::mint_transfer_proven_receipt` does: the rotated
+    // generator builds the v1 PI prefix from `EffectVmContext::default()`, whose
+    // `turn_hash` is the zero sentinel, so the producer fills `PI[TURN_HASH_BASE..+4]`
+    // with the canonical projection of the turn it is proving. The slot is not pinned to
+    // a trace column by the AIR — it rides the Fiat–Shamir transcript, so the value is
+    // fixed at prove time and the verifier's comparison catches RELABELLING.
+    let th = canonical_32_to_felts_4(&receipt.turn_hash);
+    dpis[pi::TURN_HASH_BASE..pi::TURN_HASH_BASE + pi::TURN_HASH_LEN].copy_from_slice(&th);
 
     let proof = prove_vm_descriptor2(&desc, &trace, &dpis, &MemBoundaryWitness::default(), &[])
         .unwrap_or_else(|e| panic!("rotated IR-v2 proof for {name} failed: {e}"));
@@ -155,6 +168,7 @@ fn mint_rotated_leg_with_witnesses(
 
     (
         RotatedReplayLeg {
+            receipt,
             proof_bytes,
             public_inputs,
             vk_hash,
@@ -172,6 +186,7 @@ fn mint_rotated_leg(
     effect: Effect,
     before_cell: &Cell,
     after_cell: &Cell,
+    receipt: TurnReceipt,
 ) -> (RotatedReplayLeg, BabyBear, BabyBear) {
     let mut ledger = Ledger::new();
     ledger.insert_cell(after_cell.clone()).unwrap();
@@ -196,7 +211,24 @@ fn mint_rotated_leg(
         &rl,
         &dregg_cell::commitment::RotationCarrierMaterial::default(),
     );
-    mint_rotated_leg_with_witnesses(initial_state, effect, &before_w, &after_w)
+    mint_rotated_leg_with_witnesses(initial_state, effect, &before_w, &after_w, receipt)
+}
+
+/// A chain-HEAD receipt naming `turn_hash` (no predecessor).
+fn head_receipt(turn_hash: [u8; 32]) -> TurnReceipt {
+    TurnReceipt {
+        turn_hash,
+        ..Default::default()
+    }
+}
+
+/// A receipt naming `turn_hash` at chain position `prev`.
+fn chained_receipt(turn_hash: [u8; 32], prev: [u8; 32]) -> TurnReceipt {
+    TurnReceipt {
+        turn_hash,
+        previous_receipt_hash: Some(prev),
+        ..Default::default()
+    }
 }
 
 /// Thread `s_k → s_{k+1}` off the LIVE v1 generator's own STATE_AFTER columns —
@@ -255,6 +287,7 @@ fn single_leg_rotated_chain_verifies() {
         },
         &before_cell,
         &after_cell,
+        head_receipt([0xA1u8; 32]),
     );
 
     let out = verify_rotated_replay_chain(&[leg], old_commit, new_commit);
@@ -326,10 +359,13 @@ fn two_leg_heterogeneous_chain_verifies_with_adjacency() {
     );
 
     // leg 0: Transfer, s0→s1. Interior after-block uses `before_w` (turn context).
-    let (leg0, old0, new0) = mint_rotated_leg_with_witnesses(&s0, transfer, &before_w, &before_w);
+    let r0 = head_receipt([0xB0u8; 32]);
+    let r1 = chained_receipt([0xB1u8; 32], r0.receipt_hash());
+    let (leg0, old0, new0) =
+        mint_rotated_leg_with_witnesses(&s0, transfer, &before_w, &before_w, r0);
     // leg 1: IncrementNonce, s1→s2. Final after-block uses the real `after_w`.
     let (leg1, old1, new1) =
-        mint_rotated_leg_with_witnesses(&s1, Effect::IncrementNonce, &before_w, &after_w);
+        mint_rotated_leg_with_witnesses(&s1, Effect::IncrementNonce, &before_w, &after_w, r1);
 
     // The chain closes at the seam by construction.
     assert_eq!(
@@ -362,6 +398,8 @@ fn two_sound_but_nonadjacent_legs_rejected() {
     let s0 = CellState::new(bal0 as u64, 0);
     let cell0 = producer_cell(bal0, 0);
     let cell1 = producer_cell(bal0 - amount as i64, 0);
+    let r0 = head_receipt([0xC0u8; 32]);
+    let r1 = chained_receipt([0xC1u8; 32], r0.receipt_hash());
     let (leg0, old0, new0) = mint_rotated_leg(
         &s0,
         Effect::Transfer {
@@ -370,6 +408,7 @@ fn two_sound_but_nonadjacent_legs_rejected() {
         },
         &cell0,
         &cell1,
+        r0,
     );
 
     // leg 1: a DIFFERENT genuine leg whose OLD does NOT continue leg-0 (a fresh,
@@ -378,7 +417,7 @@ fn two_sound_but_nonadjacent_legs_rejected() {
     let fcell_b = producer_cell(777_777, 3);
     let fcell_a = producer_cell(777_777, 4);
     let (leg1, foreign_old, new1) =
-        mint_rotated_leg(&foreign, Effect::IncrementNonce, &fcell_b, &fcell_a);
+        mint_rotated_leg(&foreign, Effect::IncrementNonce, &fcell_b, &fcell_a, r1);
 
     // The seam genuinely does NOT close (different states).
     assert_ne!(
@@ -428,6 +467,7 @@ fn tampered_proof_bytes_rejected() {
         },
         &before_cell,
         &after_cell,
+        head_receipt([0xD0u8; 32]),
     );
 
     // Flip bytes deep in the proof (past any length prefix) so it either fails to
@@ -472,6 +512,7 @@ fn tampered_vk_hash_rejected() {
         },
         &before_cell,
         &after_cell,
+        head_receipt([0xD1u8; 32]),
     );
 
     // The proof still verifies selector-bound, but we corrupt the attached
@@ -515,6 +556,7 @@ fn wrong_endpoint_commitment_rejected() {
         },
         &before_cell,
         &after_cell,
+        head_receipt([0xD2u8; 32]),
     );
 
     // The leg itself is sound, but the caller claims a NEW commitment that the
@@ -560,12 +602,22 @@ fn spliced_chain_breaks_endpoint() {
         },
         &cell0,
         &cell1,
+        head_receipt([0xE0u8; 32]),
     );
 
     let s1 = CellState::new((bal0 - amount as i64) as u64, 0);
     let cell1b = producer_cell(bal0 - amount as i64, 0);
     let cell2 = producer_cell(bal0 - amount as i64, 1);
-    let (leg1, _old1, new1) = mint_rotated_leg(&s1, Effect::IncrementNonce, &cell1b, &cell2);
+    // The dropped-leading-leg splice presents leg1 as the chain HEAD, so its receipt
+    // must be a head receipt (a chained one would be refused by the chain walk first,
+    // which would mask the endpoint tooth this test is about).
+    let (leg1, _old1, new1) = mint_rotated_leg(
+        &s1,
+        Effect::IncrementNonce,
+        &cell1b,
+        &cell2,
+        head_receipt([0xE1u8; 32]),
+    );
 
     // Present ONLY leg1 but claim the whole turn's endpoints [old0 .. new1]. leg1.OLD
     // (== s1's commit) != old0 (== s0's commit), so the first-endpoint check breaks.
@@ -603,5 +655,230 @@ fn empty_chain_identity_verified_nonidentity_rejected() {
         !bad.overall_verified,
         "empty chain cannot move the commitment; output = {}",
         bad.summary
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 8. THE RECEIPT BINDING (T11 / T8), on REAL proofs.
+//
+// Until 2026-07-27 the rotated chain bound NO receipt: crypto + commitments only.
+// The receipt-side binding lived in `dregg_verifier::check_receipt_pi_binding`,
+// which (a) sat behind the RETIRED `verify_effect_vm_proof` at all three of its
+// call sites and so never executed, and (b) demanded `pi::ACTIVE_BASE_COUNT` =
+// 213 felts while a real rotated leg carries 46-68 — measured 68 on a live wide
+// proof. Both halves are fixed; these tests are the proof that it now RUNS.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Mint the genuine chained 2-leg pair (`s0 -Transfer-> s1 -IncrementNonce-> s2`)
+/// carrying the caller's two receipts, and return `(leg0, leg1, old0, new1)`. Same
+/// construction as `two_leg_heterogeneous_chain_verifies_with_adjacency`; factored
+/// so the receipt-binding poles differ ONLY in the receipts.
+fn mint_chained_pair(
+    r0: TurnReceipt,
+    r1: TurnReceipt,
+) -> (RotatedReplayLeg, RotatedReplayLeg, BabyBear, BabyBear) {
+    let bal0: i64 = 100_000;
+    let amount: u64 = 50;
+    let s0 = CellState::new(bal0 as u64, 0);
+    let transfer = Effect::Transfer {
+        amount,
+        direction: 1,
+    };
+    let s1 = cell_state_after(&s0, &transfer);
+    let s2 = cell_state_after(&s1, &Effect::IncrementNonce);
+
+    let nr = nullifier_root();
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
+    let rl = receipt_log();
+    let final_cell = producer_cell(s2.balance as i64, s2.nonce as u64);
+    let mut ledger = Ledger::new();
+    ledger.insert_cell(final_cell.clone()).unwrap();
+    let before_cell = producer_cell(bal0, 0);
+    let before_w = rw::produce(
+        &before_cell,
+        &ledger,
+        &nr,
+        &commitments_root,
+        &rw::empty_revoked_root_8(),
+        &rl,
+        &dregg_cell::commitment::RotationCarrierMaterial::default(),
+    );
+    let after_w = rw::produce(
+        &final_cell,
+        &ledger,
+        &nr,
+        &commitments_root,
+        &rw::empty_revoked_root_8(),
+        &rl,
+        &dregg_cell::commitment::RotationCarrierMaterial::default(),
+    );
+
+    let (leg0, old0, _new0) =
+        mint_rotated_leg_with_witnesses(&s0, transfer, &before_w, &before_w, r0);
+    let (leg1, _old1, new1) =
+        mint_rotated_leg_with_witnesses(&s1, Effect::IncrementNonce, &before_w, &after_w, r1);
+    (leg0, leg1, old0, new1)
+}
+
+/// T11, BOTH POLES on ONE real proof. The leg is minted bound to turn A; presenting
+/// it with a receipt naming turn B is RELABELLING and must be REFUSED by the PI
+/// comparison — the proof itself is untouched and still verifies cryptographically,
+/// so the crypto/vk_hash/endpoint teeth are all silent here. Only the receipt
+/// binding can catch it.
+#[test]
+fn receipt_binding_admits_the_bound_turn_and_refuses_a_relabelled_one() {
+    let bal: i64 = 100_000;
+    let amount: u64 = 50;
+    let st = CellState::new(bal as u64, 0);
+    let before_cell = producer_cell(bal, 0);
+    let after_cell = producer_cell(bal - amount as i64, 0);
+    let turn_a = [0x11u8; 32];
+
+    let (leg, old_commit, new_commit) = mint_rotated_leg(
+        &st,
+        Effect::Transfer {
+            amount,
+            direction: 1,
+        },
+        &before_cell,
+        &after_cell,
+        head_receipt(turn_a),
+    );
+
+    // POLE 1 (ADMIT): the receipt the proof is bound to.
+    let ok = verify_rotated_replay_chain(std::slice::from_ref(&leg), old_commit, new_commit);
+    assert!(
+        ok.overall_verified,
+        "the correctly-bound receipt must be ADMITTED; output = {}",
+        ok.summary
+    );
+    assert_eq!(ok.verified, 1, "COUNT: exactly one leg verified");
+
+    // POLE 2 (REFUSE): same proof bytes, same vk_hash, same endpoints — only the
+    // receipt names a different turn.
+    let mut relabelled = leg.clone();
+    relabelled.receipt = head_receipt([0x22u8; 32]);
+    let bad = verify_rotated_replay_chain(&[relabelled], old_commit, new_commit);
+    assert!(
+        !bad.overall_verified,
+        "a genuine proof relabelled onto another turn's receipt must be REFUSED; output = {}",
+        bad.summary
+    );
+    assert_eq!(
+        bad.verified, 0,
+        "COUNT: no leg may verify under a relabelled receipt"
+    );
+    assert_eq!(bad.first_failure, Some(0));
+    let RotatedReplayVerdict::Rejected { reason } = &bad.per_leg[0] else {
+        panic!("expected Rejected, got {:?}", bad.per_leg[0]);
+    };
+    assert!(
+        reason.contains("TURN_HASH_BASE"),
+        "the refusal must come from the PI TURN_HASH comparison, not some other tooth; got: {reason}"
+    );
+}
+
+/// T8, the receipt-side half: a chained leg whose receipt claims a predecessor that
+/// is not the prior leg's receipt hash breaks the chain walk. Both legs verify
+/// cryptographically and the commitments chain, so nothing else objects.
+#[test]
+fn receipt_binding_refuses_a_broken_chain_walk() {
+    let r0 = head_receipt([0x31u8; 32]);
+    // The forgery: leg 1 claims to follow SOMETHING ELSE.
+    let r1 = chained_receipt([0x32u8; 32], [0xFFu8; 32]);
+    let (leg0, leg1, old0, new1) = mint_chained_pair(r0, r1);
+
+    let out = verify_rotated_replay_chain(&[leg0, leg1], old0, new1);
+    assert!(
+        !out.overall_verified,
+        "a forged chain link must be REFUSED; output = {}",
+        out.summary
+    );
+    assert_eq!(out.verified, 1, "COUNT: leg 0 verifies, leg 1 does not");
+    assert_eq!(out.first_failure, Some(1));
+    let RotatedReplayVerdict::Rejected { reason } = &out.per_leg[1] else {
+        panic!("expected leg-1 Rejected, got {:?}", out.per_leg[1]);
+    };
+    assert!(
+        reason.contains("chain-walk"),
+        "the refusal must name the chain walk; got: {reason}"
+    );
+}
+
+/// T8, the PI-BOUND half — the one that answers "the rotated leg does not publish
+/// PREVIOUS_RECEIPT_HASH, so how is the chain link bound to the PROOF?".
+///
+/// `Turn::hash()` absorbs `previous_receipt_hash` ("Include previous_receipt_hash to
+/// bind to causal ordering", `turn/src/turn.rs`), and `PI[TURN_HASH..+4]` is
+/// `canonical_32_to_felts_4` of that hash. So two turns that differ ONLY in their
+/// chain position have DIFFERENT turn hashes, and a proof minted at position P
+/// cannot be presented as a proof of the same work at position P'.
+///
+/// The forgery here is deliberately the SNEAKY one: the attacker leaves
+/// `receipt.previous_receipt_hash` at the honest value so the chain-walk above is
+/// SATISFIED, and only swaps in the turn hash of the same turn re-based to a
+/// different position. The chain walk cannot see it. The PI comparison must.
+#[test]
+fn receipt_binding_refuses_a_chain_link_forged_through_the_turn_hash() {
+    use dregg_cell::CellId;
+    use dregg_turn::builder::TurnBuilder;
+
+    let r0 = head_receipt([0x41u8; 32]);
+    let honest_prev = r0.receipt_hash();
+    let other_prev = [0x99u8; 32];
+    let agent = CellId::from_bytes([0x07u8; 32]);
+
+    // Two turns identical except for the chain position they were authored at.
+    let turn_at_honest = TurnBuilder::new(agent, 1)
+        .previous_receipt_hash(honest_prev)
+        .build();
+    let turn_at_other = TurnBuilder::new(agent, 1)
+        .previous_receipt_hash(other_prev)
+        .build();
+    assert_ne!(
+        turn_at_honest.hash(),
+        turn_at_other.hash(),
+        "Turn::hash MUST absorb previous_receipt_hash — the whole transitive binding rests on it"
+    );
+
+    let r1 = chained_receipt(turn_at_honest.hash(), honest_prev);
+    let (leg0, leg1, old0, new1) = mint_chained_pair(r0, r1);
+
+    // POLE 1 (ADMIT): the honest chain position.
+    let ok = verify_rotated_replay_chain(&[leg0.clone(), leg1.clone()], old0, new1);
+    assert!(
+        ok.overall_verified,
+        "the honestly-positioned chain must be ADMITTED; output = {}",
+        ok.summary
+    );
+    assert_eq!(ok.verified, 2, "COUNT: both legs verified");
+
+    // POLE 2 (REFUSE): the same proof presented as the same work done at a DIFFERENT
+    // chain position. `previous_receipt_hash` is left honest, so the chain walk is
+    // happy; the turn hash is the re-based one, and the PI binding refuses.
+    let mut forged = leg1.clone();
+    forged.receipt = chained_receipt(turn_at_other.hash(), honest_prev);
+    let bad = verify_rotated_replay_chain(&[leg0, forged], old0, new1);
+    assert!(
+        !bad.overall_verified,
+        "a chain link forged through the turn hash must be REFUSED; output = {}",
+        bad.summary
+    );
+    assert_eq!(
+        bad.verified, 1,
+        "COUNT: leg 0 verifies, the forged leg does not"
+    );
+    assert_eq!(bad.first_failure, Some(1));
+    let RotatedReplayVerdict::Rejected { reason } = &bad.per_leg[1] else {
+        panic!("expected leg-1 Rejected, got {:?}", bad.per_leg[1]);
+    };
+    assert!(
+        !reason.contains("chain-walk"),
+        "the chain walk must be SATISFIED here — that is what makes this the interesting \
+         forgery; got: {reason}"
+    );
+    assert!(
+        reason.contains("TURN_HASH_BASE"),
+        "the refusal must come from the PI TURN_HASH comparison; got: {reason}"
     );
 }

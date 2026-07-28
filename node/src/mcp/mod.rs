@@ -145,9 +145,14 @@ mod tests {
     /// actor's own state transition (the cell IS the agent here). The
     /// underlying `dregg_circuit::effect_vm::generate_effect_vm_trace`
     /// does not constrain this slot — it is an executor-asserted bundle
-    /// tag — so mcp must set it explicitly before proving. Without this,
-    /// the standalone `dregg-verifier replay-chain` rejects the chain
-    /// with "PI[IS_AGENT_CELL] = 0 but single-proof replay requires 1".
+    /// tag — so mcp must set it explicitly before proving.
+    ///
+    /// ⚠ The clause that stood here — "without this, the standalone
+    /// `dregg-verifier replay-chain` rejects the chain with 'PI[IS_AGENT_CELL]
+    /// = 0 but single-proof replay requires 1'" — is FALSE at HEAD
+    /// (2026-07-27): `check_receipt_pi_binding` no longer compares
+    /// `IS_AGENT_CELL`. The slot is PI 81 and a real rotated leg publishes
+    /// 46-68 felts, so no proof that ships carries the offset at all.
     ///
     /// See also `turn/src/executor/proof_verify.rs::populate_pi` (line
     /// 164) and `demo/two-ai-handoff/silver_helper.rs::cmd_make_recursive_witness`

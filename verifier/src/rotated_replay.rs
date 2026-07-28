@@ -43,6 +43,15 @@
 //!    and last leg's `NEW_COMMIT` must match, and interior adjacency must close.
 //!    A tampered / dropped middle leg breaks adjacency (anti-ghost at the chain
 //!    layer). A wrong-root caller expectation is rejected at the endpoints.
+//! 4. **Receipt binding** ([`crate::check_receipt_pi_binding`], run per leg by
+//!    [`verify_rotated_replay_chain`]) — each leg carries the [`RotatedReplayLeg::receipt`]
+//!    it attests, and the chain enforces `PI[TURN_HASH_BASE..+4] ==
+//!    canonical_32_to_felts_4(receipt.turn_hash)` (T11 — a genuine proof of turn A
+//!    cannot be relabelled onto a receipt naming turn B) plus the receipt chain-walk
+//!    `receipt[k].previous_receipt_hash == receipt[k-1].receipt_hash()` (T8). Until
+//!    2026-07-27 the rotated chain bound NO receipt at all: commitments and crypto
+//!    only, with the receipt-side binding living in a `check_receipt_pi_binding` that
+//!    sat behind the retired `verify_effect_vm_proof` and therefore never ran.
 //!
 //! # Isolation
 //!
@@ -88,6 +97,14 @@ use serde::{Deserialize, Serialize};
 /// vector, the cohort vk_hash.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RotatedReplayLeg {
+    /// The `TurnReceipt` this leg attests. REQUIRED (no `serde(default)`): a request
+    /// JSON without it REFUSES TO LOAD rather than silently verifying a chain with no
+    /// receipt binding, which is what the field's absence used to mean.
+    ///
+    /// [`verify_rotated_replay_chain`] binds it two ways — `PI[TURN_HASH_BASE..+4] ==
+    /// canonical_32_to_felts_4(receipt.turn_hash)` and the receipt chain-walk — via
+    /// [`crate::check_receipt_pi_binding`].
+    pub receipt: dregg_turn::TurnReceipt,
     /// Postcard-serialized `Ir2BatchProof<DreggStarkConfig>` (the multi-table
     /// rotated batch proof).
     pub proof_bytes: Vec<u8>,
@@ -236,6 +253,10 @@ pub fn verify_rotated_leg(leg: &RotatedReplayLeg) -> Result<(), String> {
 /// Per leg:
 /// 1. Cryptographically verify the leg ([`verify_rotated_leg`]): IR-v2 proof
 ///    selector-bound to its cohort descriptor + vk_hash pinned.
+/// 1b. Bind the leg to the RECEIPT it carries ([`crate::check_receipt_pi_binding`]):
+///    `PI[TURN_HASH_BASE..+4] == canonical_32_to_felts_4(receipt.turn_hash)` (T11) and
+///    the receipt chain-walk `receipt[k].previous_receipt_hash ==
+///    receipt[k-1].receipt_hash()`, head-must-be-`None` (T8).
 ///
 /// Chain-level (the analog of the v1 chain-walk invariant):
 /// 2. `legs[0].OLD_COMMIT == expected_old_commit` (the turn's pre-state).
@@ -260,12 +281,34 @@ pub fn verify_rotated_replay_chain(
     let mut first_failure: Option<usize> = None;
     let mut verified = 0usize;
 
-    // -- Step 1: per-leg cryptographic verification. --
+    // -- Step 1: per-leg cryptographic verification, then the RECEIPT BINDING. --
+    //
+    // The binding runs on the leg's REAL PI vector (a rotated leg is ~46-68 felts and
+    // `check_receipt_pi_binding`'s precondition is derived from the offsets it reads,
+    // so it decides rather than bailing on length). It is the only thing tying this
+    // chain's proofs to the receipts they claim to attest: without it a genuine proof
+    // of turn A verifies happily beside a receipt naming turn B, and the chain-walk
+    // over receipt hashes is never taken.
+    let mut prev_receipt_hash: Option<[u8; 32]> = None;
     for (idx, leg) in legs.iter().enumerate() {
         let verdict = match verify_rotated_leg(leg) {
             Ok(()) => {
-                verified += 1;
-                RotatedReplayVerdict::Verified
+                match crate::check_receipt_pi_binding(
+                    &leg.receipt,
+                    &leg.public_inputs,
+                    prev_receipt_hash,
+                ) {
+                    None => {
+                        verified += 1;
+                        RotatedReplayVerdict::Verified
+                    }
+                    Some(reason) => {
+                        if first_failure.is_none() {
+                            first_failure = Some(idx);
+                        }
+                        RotatedReplayVerdict::Rejected { reason }
+                    }
+                }
             }
             Err(reason) => {
                 if first_failure.is_none() {
@@ -274,6 +317,9 @@ pub fn verify_rotated_replay_chain(
                 RotatedReplayVerdict::Rejected { reason }
             }
         };
+        // Capture the hash regardless of verdict so a downstream break surfaces as a
+        // clear chain-walk rejection at the next leg rather than leaving a gap.
+        prev_receipt_hash = Some(leg.receipt.receipt_hash());
         per_leg.push(verdict);
     }
 

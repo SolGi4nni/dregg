@@ -447,9 +447,15 @@ pub(super) fn try_generate_effect_vm_proof(
     // tag is always 1 here. Setting it explicitly mirrors what
     // `turn/src/executor/proof_verify.rs::populate_pi` does for the
     // executor-driven path and what `silver_helper.rs::cmd_make_recursive_witness`
-    // does for the demo's witness fabrication path. Without this, the
-    // standalone `dregg-verifier replay-chain` rejects the chain with
-    // "PI[IS_AGENT_CELL] = 0 but single-proof replay requires 1".
+    // does for the demo's witness fabrication path.
+    //
+    // ⚠ STATUS CORRECTION (2026-07-27): the sentence that stood here — "without this,
+    // the standalone `dregg-verifier replay-chain` rejects the chain with
+    // 'PI[IS_AGENT_CELL] = 0 but single-proof replay requires 1'" — is FALSE at HEAD.
+    // `check_receipt_pi_binding` no longer compares `IS_AGENT_CELL` at all: the slot is
+    // at PI 81 and a real rotated leg publishes 46-68 felts, so the offset is past the
+    // end of every proof that ships. The write below is harmless (the whole helper is
+    // retired below), but it pins nothing.
     public_inputs[dregg_circuit::effect_vm::pi::IS_AGENT_CELL] = dregg_circuit::BabyBear::ONE;
     // The v1 hand-AIR (`EffectVmAir`) standalone effect-VM proof material is RETIRED.
     // Finalized turns prove rotated through the node's commit pipeline; this standalone

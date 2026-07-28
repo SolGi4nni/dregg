@@ -388,28 +388,67 @@ pub fn replay_chain(entries: &[ReplayEntry]) -> ReplayChainOutput {
     }
 }
 
-/// Cross-bind the proof's claimed public inputs against the receipt the WR
-/// carries (and the prior receipt's hash, for the chain-walk invariant).
+/// The shortest PI vector [`check_receipt_pi_binding`] can decide, DERIVED from the
+/// highest offset the body reads rather than written down. Every offset it touches
+/// lives in the v1 PI prefix a rotated leg publishes in full
+/// (`trace_rotated::V1_PI_COUNT` = 42), so the deployed leg always satisfies it.
+///
+/// The previous precondition was `pi::ACTIVE_BASE_COUNT` (213), which did not make
+/// the check strict — it made it **unreachable on every leg that ships**. Measured
+/// 2026-07-27 against a real wide rotated proof from
+/// `dregg_turn_prover::mint_transfer_proven_receipt`: the leg carries **68** felts, and
+/// the binding answered `PI too short for receipt binding: have 68 elements, need at
+/// least 213` on the only proof it was supposed to bind. Same shape as the
+/// balance-limb bug in `circuit/src/effect_vm/verify.rs`; same fix — the
+/// precondition is computed from the reads so it cannot drift away from them again.
+pub const RECEIPT_PI_BINDING_MIN_LEN: usize =
+    dregg_circuit::effect_vm::pi::TURN_HASH_BASE + dregg_circuit::effect_vm::pi::TURN_HASH_LEN;
+
+/// Cross-bind a rotated leg's claimed public inputs against the receipt it attests
+/// (and the prior receipt's hash, for the chain-walk invariant).
 ///
 /// Returns `Some(reason)` on rejection, `None` on pass. This is the
 /// EXECUTOR-HONESTY-AUDIT cross-cutting #3 enforcement: PI is not merely
 /// deserialized, it is *checked against an expected value*.
 ///
-/// Concretely:
-/// - PI[TURN_HASH_BASE..+4] must equal canonical_32_to_felts_4(receipt.turn_hash).
-///   Closes T11 (stale-proof replay against a different receipt) at the
-///   verifier layer.
-/// - PI[PREVIOUS_RECEIPT_HASH_BASE..+4] must equal
-///   canonical_32_to_felts_4(receipt.previous_receipt_hash.unwrap_or(0)).
-///   Closes T8 (forged chain link) at the verifier layer.
-/// - When `prev_receipt_hash` is `Some`, the receipt's own
-///   `previous_receipt_hash` field must equal it. This is the chain-walk
-///   invariant: receipt[N].previous_receipt_hash == receipt[N-1].receipt_hash().
-/// - When `prev_receipt_hash` is `None`, the receipt is being checked as the
-///   chain head and must not claim its own previous receipt. Verifying a suffix
-///   requires the caller to supply the expected prior hash.
-/// - PI[IS_AGENT_CELL] must be 1 for the single-proof-per-WR replay shape
-///   (γ.2 multi-cell bundles use a different code path).
+/// Two teeth, both of which RUN on a real `"effect-vm-rotated"` leg:
+///
+/// - **T11 (stale-proof replay against a different receipt).**
+///   `PI[TURN_HASH_BASE..+4]` must equal `canonical_32_to_felts_4(receipt.turn_hash)`.
+///   `TURN_HASH_BASE` is 33 and the rotated leg publishes the v1 prefix `[0, 42)`, so
+///   this is inside the window a real proof carries. The slot is not pinned to a
+///   trace column by the AIR — the honest producer fills it
+///   (`turn_prover::proven_receipt`) and it rides the Fiat–Shamir transcript — so
+///   what this comparison forbids is RELABELLING: a genuine proof of turn A
+///   presented alongside a receipt naming turn B.
+/// - **T8 (forged chain link).** When `prev_receipt_hash` is `Some`, the receipt's own
+///   `previous_receipt_hash` must equal it (`receipt[N].previous_receipt_hash ==
+///   receipt[N-1].receipt_hash()`); when it is `None` the receipt is the chain head
+///   and must not claim a predecessor. Verifying a suffix requires the caller to
+///   supply the expected prior hash.
+///
+/// # What is NOT compared, and why that is not a hole
+///
+/// `PI[PREVIOUS_RECEIPT_HASH_BASE..+4]` and `PI[IS_AGENT_CELL]` used to be compared
+/// here. Both comparisons are GONE, because neither offset exists on a leg that
+/// ships and keeping them would have been worse than useless:
+///
+/// * `PREVIOUS_RECEIPT_HASH_BASE` is **42**, and the rotated producer slices the v1
+///   PI vector at exactly `V1_PI_COUNT` = **42** before appending its four rotated
+///   pins (`trace_rotated`: OLD commit / NEW commit / committed height / caveat
+///   commit). So indices 42..46 of a real leg are those pins — measured
+///   `[0, 0, 0, 531325421]` on a live proof whose receipt's
+///   `canonical_32_to_felts_4(previous_receipt_hash)` was
+///   `[740780208; 4]`. Comparing them would reject every honest proof.
+/// * `IS_AGENT_CELL` is **81**, past the end of a 68-felt leg entirely.
+///
+/// The chain link is still bound to the proof, TRANSITIVELY and for real:
+/// `Turn::hash()` absorbs `previous_receipt_hash` (`turn/src/turn.rs`, "Include
+/// previous_receipt_hash to bind to causal ordering"), and `PI[TURN_HASH]` is
+/// `canonical_32_to_felts_4` of that hash. A receipt re-minted for a different chain
+/// position therefore names a different `turn_hash`, and the T11 comparison above
+/// refuses it. That is the same argument the pre-existing note below makes for
+/// `EFFECTS_HASH_GLOBAL` and `ACTOR_NONCE` — it simply also covers the chain link.
 ///
 /// Does NOT cross-check EFFECTS_HASH_GLOBAL or ACTOR_NONCE: those derive
 /// from the Turn (call_forest, nonce), not the Receipt. The receipt's
@@ -418,7 +457,8 @@ pub fn replay_chain(entries: &[ReplayEntry]) -> ReplayChainOutput {
 /// EFFECTS_HASH_GLOBAL or ACTOR_NONCE in the proof's PI would imply a
 /// different Turn::hash, which the TURN_HASH check catches.
 pub fn check_receipt_pi_binding(
-    wr: &ReplayEntry,
+    receipt: &dregg_turn::TurnReceipt,
+    public_inputs: &[u32],
     prev_receipt_hash: Option<[u8; 32]>,
 ) -> Option<String> {
     use dregg_circuit::effect_vm::pi;
@@ -426,7 +466,7 @@ pub fn check_receipt_pi_binding(
 
     // Chain-walk invariant (T8): receipt[N].previous_receipt_hash must
     // match receipt[N-1].receipt_hash().
-    match (prev_receipt_hash, wr.receipt.previous_receipt_hash) {
+    match (prev_receipt_hash, receipt.previous_receipt_hash) {
         (Some(expected), Some(claimed)) if expected != claimed => {
             return Some(format!(
                 "chain-walk break: receipt.previous_receipt_hash {} != prior receipt_hash {}",
@@ -449,23 +489,20 @@ pub fn check_receipt_pi_binding(
         _ => {}
     }
 
-    // PI length sanity: must carry the full active Effect VM PI layout (v3).
-    // Earlier versions only required TURN_HASH, which let truncated PI vectors
-    // skip PREVIOUS_RECEIPT_HASH / IS_AGENT_CELL binding when this helper was
-    // used directly.
-    let pi_len = wr.public_inputs.len();
-    if pi_len < pi::ACTIVE_BASE_COUNT {
+    // PI length sanity, derived from the reads (see `RECEIPT_PI_BINDING_MIN_LEN`).
+    let pi_len = public_inputs.len();
+    if pi_len < RECEIPT_PI_BINDING_MIN_LEN {
         return Some(format!(
-            "PI too short for receipt binding: have {} elements, need at least {}",
-            pi_len,
-            pi::ACTIVE_BASE_COUNT
+            "PI too short for receipt binding: have {} elements, need at least {} \
+             (the v1 prefix through TURN_HASH)",
+            pi_len, RECEIPT_PI_BINDING_MIN_LEN
         ));
     }
 
     // TURN_HASH binding (T11).
-    let expected_turn_hash = canonical_32_to_felts_4(&wr.receipt.turn_hash);
+    let expected_turn_hash = canonical_32_to_felts_4(&receipt.turn_hash);
     for i in 0..pi::TURN_HASH_LEN {
-        let claimed = wr.public_inputs[pi::TURN_HASH_BASE + i];
+        let claimed = public_inputs[pi::TURN_HASH_BASE + i];
         let expected = expected_turn_hash[i].as_u32();
         if claimed != expected {
             return Some(format!(
@@ -473,31 +510,6 @@ pub fn check_receipt_pi_binding(
                 i, claimed, i, expected
             ));
         }
-    }
-
-    // PREVIOUS_RECEIPT_HASH binding (T8 algebraic side).
-    let prev_bytes = wr.receipt.previous_receipt_hash.unwrap_or([0u8; 32]);
-    let expected_prev = canonical_32_to_felts_4(&prev_bytes);
-    for i in 0..pi::PREVIOUS_RECEIPT_HASH_LEN {
-        let claimed = wr.public_inputs[pi::PREVIOUS_RECEIPT_HASH_BASE + i];
-        let expected = expected_prev[i].as_u32();
-        if claimed != expected {
-            return Some(format!(
-                "PI[PREVIOUS_RECEIPT_HASH_BASE+{}] = {} but canonical_32_to_felts_4(receipt.previous_receipt_hash)[{}] = {}",
-                i, claimed, i, expected
-            ));
-        }
-    }
-
-    // IS_AGENT_CELL binding (γ.2): for the v1 single-proof-per-WR shape,
-    // the one proof in the entry MUST be the agent's cell proof, so
-    // PI[IS_AGENT_CELL] must be 1.
-    let claimed = wr.public_inputs[pi::IS_AGENT_CELL];
-    if claimed != 1 {
-        return Some(format!(
-            "PI[IS_AGENT_CELL] = {} but single-proof replay requires 1 (agent-cell proof)",
-            claimed
-        ));
     }
 
     None
@@ -532,7 +544,9 @@ fn replay_one_with_prev(
     // sound. Without this, an executor could swap a proof for a different
     // turn (T11) or fake the chain-walk link (T8) and the chain-level
     // verifier would not notice.
-    if let Some(reason) = check_receipt_pi_binding(wr, prev_receipt_hash) {
+    if let Some(reason) =
+        check_receipt_pi_binding(&wr.receipt, &wr.public_inputs, prev_receipt_hash)
+    {
         return ReplayVerdict::Rejected { reason };
     }
 
@@ -693,7 +707,9 @@ pub fn verify_recursive_replay(
     }
 
     // Step 1b: PI completeness — same cross-binding as the trust-replay path.
-    if let Some(reason) = check_receipt_pi_binding(wr, prev_receipt_hash) {
+    if let Some(reason) =
+        check_receipt_pi_binding(&wr.receipt, &wr.public_inputs, prev_receipt_hash)
+    {
         return RecursiveReplayVerdict::InnerProofRejected { reason };
     }
 
@@ -741,7 +757,9 @@ pub fn verify_recursive_replay_from_bundle(
     }
 
     // Step 1b: PI completeness — same cross-binding as the trust-replay path.
-    if let Some(reason) = check_receipt_pi_binding(wr, prev_receipt_hash) {
+    if let Some(reason) =
+        check_receipt_pi_binding(&wr.receipt, &wr.public_inputs, prev_receipt_hash)
+    {
         return RecursiveReplayVerdict::InnerProofRejected { reason };
     }
 
@@ -988,42 +1006,31 @@ mod tests {
 
     // ---- PI completeness adversarial tests (EXECUTOR-HONESTY-AUDIT #3) ----
 
-    /// Build a `ReplayEntry` whose `public_inputs` populate just the
-    /// turn-identity slots from the receipt — used by adversarial tests
-    /// to validate that tampering with PI[i] is rejected even though
-    /// (without real proof bytes) the STARK step fails first. The
-    /// `check_receipt_pi_binding` function is called directly so we can
-    /// isolate PI completeness from algebraic soundness.
-    fn entry_with_pi_from_receipt(receipt: dregg_turn::TurnReceipt) -> ReplayEntry {
+    /// Build the ROTATED-SHAPED PI vector a real `"effect-vm-rotated"` leg carries
+    /// for `receipt`: the v1 prefix `[0, V1_PI_COUNT)` plus the four appended rotated
+    /// pins, with `PI[TURN_HASH_BASE..+4]` filled the way the honest producer fills it
+    /// (`turn_prover::proven_receipt`). Deliberately `ROT_PI_COUNT` felts and NOT
+    /// `ACTIVE_BASE_COUNT` — a 213-slot vector is a shape no leg ships, and testing
+    /// against one is exactly how this check hid.
+    fn rotated_pi_from_receipt(receipt: &dregg_turn::TurnReceipt) -> Vec<u32> {
         use dregg_circuit::effect_vm::pi;
+        use dregg_circuit::effect_vm::trace_rotated::ROT_PI_COUNT;
         use dregg_commit::typed::canonical_32_to_felts_4;
-        let mut pi_vec = vec![0u32; pi::ACTIVE_BASE_COUNT];
+        let mut pi_vec = vec![0u32; ROT_PI_COUNT];
         let th = canonical_32_to_felts_4(&receipt.turn_hash);
         for i in 0..pi::TURN_HASH_LEN {
             pi_vec[pi::TURN_HASH_BASE + i] = th[i].as_u32();
         }
-        let prev = canonical_32_to_felts_4(&receipt.previous_receipt_hash.unwrap_or([0u8; 32]));
-        for i in 0..pi::PREVIOUS_RECEIPT_HASH_LEN {
-            pi_vec[pi::PREVIOUS_RECEIPT_HASH_BASE + i] = prev[i].as_u32();
-        }
-        pi_vec[pi::IS_AGENT_CELL] = 1;
-        ReplayEntry {
-            receipt,
-            proof_bytes: vec![],
-            public_inputs: pi_vec,
-            witness_bundle: None,
-            witness_hash: [0u8; 32],
-            aggregate_membership: None,
-        }
+        pi_vec
     }
 
     #[test]
     fn pi_binding_accepts_consistent_pi() {
         let mut r = sample_receipt();
         r.turn_hash = [0x42u8; 32];
-        let entry = entry_with_pi_from_receipt(r);
+        let piv = rotated_pi_from_receipt(&r);
         assert!(
-            check_receipt_pi_binding(&entry, None).is_none(),
+            check_receipt_pi_binding(&r, &piv, None).is_none(),
             "consistent PI must not be rejected"
         );
     }
@@ -1033,13 +1040,13 @@ mod tests {
         use dregg_circuit::effect_vm::pi;
         let mut r = sample_receipt();
         r.turn_hash = [0x42u8; 32];
-        let mut entry = entry_with_pi_from_receipt(r);
+        let mut piv = rotated_pi_from_receipt(&r);
         // Tamper with PI[TURN_HASH_BASE]: even though the proof would
         // verify algebraically (we don't run the STARK here), the
         // verifier MUST reject because the PI no longer matches the
         // receipt's claimed turn_hash. Closes T11 at the verifier layer.
-        entry.public_inputs[pi::TURN_HASH_BASE] ^= 0xDEAD_BEEF;
-        let reason = check_receipt_pi_binding(&entry, None)
+        piv[pi::TURN_HASH_BASE] ^= 0xDEAD_BEEF;
+        let reason = check_receipt_pi_binding(&r, &piv, None)
             .expect("tampered PI[TURN_HASH_BASE] must be rejected");
         assert!(
             reason.contains("TURN_HASH_BASE"),
@@ -1048,50 +1055,16 @@ mod tests {
     }
 
     #[test]
-    fn pi_binding_rejects_tampered_previous_receipt_hash() {
-        use dregg_circuit::effect_vm::pi;
-        let mut r = sample_receipt();
-        r.turn_hash = [0x42u8; 32];
-        let previous = [0x33u8; 32];
-        r.previous_receipt_hash = Some(previous);
-        let mut entry = entry_with_pi_from_receipt(r);
-        // Tamper with PI[PREVIOUS_RECEIPT_HASH_BASE]. Closes T8.
-        entry.public_inputs[pi::PREVIOUS_RECEIPT_HASH_BASE] ^= 0xCAFE;
-        let reason = check_receipt_pi_binding(&entry, Some(previous))
-            .expect("tampered PI[PREVIOUS_RECEIPT_HASH_BASE] must be rejected");
-        assert!(
-            reason.contains("PREVIOUS_RECEIPT_HASH_BASE"),
-            "rejection should name PREVIOUS_RECEIPT_HASH_BASE; got: {reason}"
-        );
-    }
-
-    #[test]
     fn pi_binding_rejects_non_genesis_chain_head() {
         let mut r = sample_receipt();
         r.turn_hash = [0x42u8; 32];
         r.previous_receipt_hash = Some([0x33u8; 32]);
-        let entry = entry_with_pi_from_receipt(r);
-        let reason = check_receipt_pi_binding(&entry, None)
+        let piv = rotated_pi_from_receipt(&r);
+        let reason = check_receipt_pi_binding(&r, &piv, None)
             .expect("chain head with a previous_receipt_hash must be rejected");
         assert!(
             reason.contains("chain head"),
             "rejection should name chain head; got: {reason}"
-        );
-    }
-
-    #[test]
-    fn pi_binding_rejects_tampered_is_agent_cell() {
-        use dregg_circuit::effect_vm::pi;
-        let mut r = sample_receipt();
-        r.turn_hash = [0x42u8; 32];
-        let mut entry = entry_with_pi_from_receipt(r);
-        // Tamper IS_AGENT_CELL to 0.
-        entry.public_inputs[pi::IS_AGENT_CELL] = 0;
-        let reason = check_receipt_pi_binding(&entry, None)
-            .expect("non-agent IS_AGENT_CELL in single-proof replay must be rejected");
-        assert!(
-            reason.contains("IS_AGENT_CELL"),
-            "rejection should name IS_AGENT_CELL; got: {reason}"
         );
     }
 
@@ -1101,10 +1074,10 @@ mod tests {
         r.turn_hash = [0x42u8; 32];
         // The receipt's previous_receipt_hash says one thing...
         r.previous_receipt_hash = Some([0x77u8; 32]);
-        let entry = entry_with_pi_from_receipt(r);
+        let piv = rotated_pi_from_receipt(&r);
         // ...but the chain-walk says the prior receipt hashed to
         // something else. The verifier must catch this (T8).
-        let reason = check_receipt_pi_binding(&entry, Some([0x88u8; 32]))
+        let reason = check_receipt_pi_binding(&r, &piv, Some([0x88u8; 32]))
             .expect("chain-walk break must be rejected");
         assert!(
             reason.contains("chain-walk"),
@@ -1118,9 +1091,9 @@ mod tests {
         r.turn_hash = [0x42u8; 32];
         // Receipt claims to be a head (no previous_receipt_hash)...
         r.previous_receipt_hash = None;
-        let entry = entry_with_pi_from_receipt(r);
+        let piv = rotated_pi_from_receipt(&r);
         // ...but the chain-walk says it should chain from somewhere.
-        let reason = check_receipt_pi_binding(&entry, Some([0x55u8; 32]))
+        let reason = check_receipt_pi_binding(&r, &piv, Some([0x55u8; 32]))
             .expect("missing previous_receipt_hash mid-chain must be rejected");
         assert!(
             reason.contains("chain-walk"),
@@ -1132,15 +1105,7 @@ mod tests {
     fn pi_binding_rejects_short_pi() {
         let mut r = sample_receipt();
         r.turn_hash = [0x42u8; 32];
-        let entry = ReplayEntry {
-            receipt: r,
-            proof_bytes: vec![],
-            public_inputs: vec![0u32; 10], // too short to carry TURN_HASH
-            witness_bundle: None,
-            witness_hash: [0u8; 32],
-            aggregate_membership: None,
-        };
-        let reason = check_receipt_pi_binding(&entry, None)
+        let reason = check_receipt_pi_binding(&r, &vec![0u32; 10], None)
             .expect("PI too short to carry turn-identity slots must be rejected");
         assert!(
             reason.contains("too short"),
@@ -1148,20 +1113,32 @@ mod tests {
         );
     }
 
+    /// THE PRECONDITION IS DERIVED FROM THE READS, NOT WRITTEN DOWN. A vector one
+    /// felt shy of the last TURN_HASH slot is refused; the exact length is accepted.
+    /// Both poles, so a future widening of the precondition that would re-orphan the
+    /// check on a real leg fails HERE.
     #[test]
-    fn pi_binding_rejects_truncated_base_pi_even_after_turn_hash() {
-        use dregg_circuit::effect_vm::pi;
-
+    fn pi_binding_precondition_is_exactly_the_highest_offset_it_reads() {
+        use dregg_circuit::effect_vm::trace_rotated::V1_PI_COUNT;
         let mut r = sample_receipt();
         r.turn_hash = [0x42u8; 32];
-        let mut entry = entry_with_pi_from_receipt(r);
-        entry.public_inputs.truncate(pi::PREVIOUS_RECEIPT_HASH_BASE);
+        let piv = rotated_pi_from_receipt(&r);
 
-        let reason = check_receipt_pi_binding(&entry, None)
-            .expect("truncated PI must not skip previous_receipt_hash/agent binding");
         assert!(
-            reason.contains("too short"),
-            "rejection should name 'too short'; got: {reason}"
+            RECEIPT_PI_BINDING_MIN_LEN <= V1_PI_COUNT,
+            "the precondition ({RECEIPT_PI_BINDING_MIN_LEN}) must fit inside the v1 PI window a \
+             rotated leg publishes ({V1_PI_COUNT}); above it, the check is unreachable on the \
+             only leg that ships"
+        );
+        let short = piv[..RECEIPT_PI_BINDING_MIN_LEN - 1].to_vec();
+        assert!(
+            check_receipt_pi_binding(&r, &short, None).is_some_and(|m| m.contains("too short")),
+            "one felt short of the last TURN_HASH slot must be refused"
+        );
+        let exact = piv[..RECEIPT_PI_BINDING_MIN_LEN].to_vec();
+        assert!(
+            check_receipt_pi_binding(&r, &exact, None).is_none(),
+            "exactly the offsets the body reads must be enough to DECIDE"
         );
     }
 

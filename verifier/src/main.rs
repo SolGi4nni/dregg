@@ -460,7 +460,15 @@ struct RotatedReplayRequest {
 /// v1 `replay-chain` subcommand — the v1 hand-AIR is gone). Each leg is an
 /// `"effect-vm-rotated"` IR-v2 batch proof verified SELECTOR-BOUND via the audited
 /// `verify_vm_descriptor2`; the chain's endpoints and interior adjacency are then
-/// checked against the caller's commitments.
+/// checked against the caller's commitments, and each leg is bound to the
+/// `TurnReceipt` it attests.
+///
+/// ⚑ FLAG DAY (2026-07-27): each leg object now REQUIRES a `"receipt"` field (a
+/// serialized `dregg_turn::TurnReceipt`). A request written before that date has no
+/// `receipt` on its legs and REFUSES TO LOAD — deliberately, and with a parse error
+/// rather than a silent verify: the field's absence used to mean "this chain's proofs
+/// are bound to no receipt at all", which is exactly what the binding closes. Nothing
+/// persists these requests; re-emit them from the producer.
 ///
 /// Exit code: 0 = chain verified, 1 = at least one rejection, 2 = read/parse error.
 #[cfg(feature = "verifier")]
