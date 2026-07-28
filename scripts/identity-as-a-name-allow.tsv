@@ -1,0 +1,17 @@
+# identity-as-a-name-allow.tsv — the exemption ratchet for
+# `scripts/check-identity-as-a-name.py`. Four TAB-separated fields:
+#
+#     path <TAB> rule <TAB> the exact text, escaped to one line <TAB> why it stays
+#
+# Keyed by the TEXT, not a line number: lanes move lines all day and a line-number key
+# rots into a blanket ignore inside a day. ⚑ A row whose text no longer appears at that
+# path FAILS the gate — fixing a site retires its exemption rather than leaving a
+# permission slip behind.
+#
+# An exemption is for a site that shows an IDENTIFIER ON PURPOSE, to a reader who wants
+# one (an operator's audit line, a page whose whole subject is the key). It is not for
+# "I did not get to it": the fix is one call,
+# `dreggnet_offerings::player_name::display_name_of`.
+#
+# EMPTY, and that is the state to keep it in. All six sites found on 2026-07-27 were
+# repaired rather than exempted.
