@@ -778,6 +778,26 @@ def findings() -> tuple[list[dict], dict[str, int]]:
 
 
 # ══ the allowlist ══════════════════════════════════════════════════════════════════
+def shown(path: Path) -> str:
+    """A path as a reader should see it: repo-relative when it is in the repo, else as given.
+
+    `Path.relative_to` RAISES on a path outside the repo, and `--list /tmp/x.tsv` is exactly
+    how this gate gets driven while somebody is proving it can go red. A crash in the FAILURE
+    PRINTER teaches the reader that the gate is broken rather than that their tree is — and it
+    fires only on the failure path, so it survives every green run unnoticed.
+
+    Ported from `check-player-vocabulary.py`, whose docstring already named this scenario. Two
+    sibling gates, one of them carrying the fix and the other carrying the bug, is the
+    twin-that-drifts shape this repo keeps finding; the helper is duplicated deliberately
+    rather than shared, because a shared import between two standalone one-second scripts is
+    its own coupling.
+    """
+    try:
+        return str(path.resolve().relative_to(REPO))
+    except ValueError:
+        return str(path)
+
+
 def read_allowlist(path: Path) -> list[tuple[str, str, str, int]]:
     """Rows as (path, escaped text, reason, FILE line) — the line so a stale row is citable."""
     rows = []
@@ -1020,7 +1040,7 @@ def main() -> int:
             f"\n⛔ {len(remaining)} em-dash(es) reached PLAYER-FACING copy.\n"
             "   ` · ` for a joiner, a comma or parens for a parenthetical, a colon or a\n"
             "   semicolon or two sentences for a break. If this one is deliberate, add it to\n"
-            f"   {args.list.relative_to(REPO)} with the reason.\n"
+            f"   {shown(args.list)} with the reason.\n"
         )
         for h in sorted(remaining, key=lambda x: (x["path"], x["line"])):
             excerpt = escape(h["text"])
@@ -1035,7 +1055,7 @@ def main() -> int:
             "   Fixing a string retires its exemption; delete the row.\n"
         )
         for _, (p, t, reason, lineno) in stale:
-            print(f"  {args.list.relative_to(REPO)}:{lineno}  claims {p} still says")
+            print(f"  {shown(args.list)}:{lineno}  claims {p} still says")
             print(f"      {t[:120]}")
             print(f"      was allowed because: {reason}")
 
