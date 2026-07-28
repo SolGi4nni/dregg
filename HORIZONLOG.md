@@ -396,13 +396,67 @@ this entry just deleted. The Lean theory is about the MODEL and should stay ther
 partition — not for the six-color classifier. **Prerequisite either way: reconcile the 51-variant
 Lean `EffectKind` against the live 36-variant Rust `Effect`, since nothing currently can.**
 
-**B3 · THE SOVEREIGN CARRIER-WITNESS ARM IS DEAD TWO LEVELS DEEP. LIVE.** `cb605e3fd` named one
-level; there are two. `RetainedCarrierMaterial::attach_to_leg` (`sdk/src/carrier_witness_attach.rs:115`)
-has 0 production / 9 test callers, all in `sdk/tests/carrier_witness_attach_sites.rs`. The drain that
-would feed it, `Cipherclerk::take_retained_carrier_material` (`sdk/src/cipherclerk.rs:2552`), **also
-has 0 production callers.** Production *does* fill the stash (`cipherclerk.rs:5466, 6276, 6499`);
-nothing drains it, nothing attaches it, and the fold's `Sovereign` arm only ever sees a witness a test
-handed it. `cipherclerk.rs:1135` describes the intended caller; it does not exist.
+**B3 · THE SOVEREIGN CARRIER-WITNESS ARM WAS DEAD *FOUR* LEVELS DEEP. RETIRED 2026-07-28 — the SDK
+wire is DELETED, and the measurement that settled it is now a tooth.** `cb605e3fd` named one level;
+the entry above named two; there were four, and the fourth is the one that decides it.
+
+All four counts verified at source over TRACKED files (`git grep`, no `.claude/worktrees/` scratch):
+`RetainedCarrierMaterial::attach_to_leg` **0 production / 9 test**, all in one file;
+`Cipherclerk::take_retained_carrier_material` **0 production / 4 test**, same file; three production
+fill sites (`cipherclerk.rs:5464, 6274, 6538`).
+
+**Level 3 — there was no site where a drain COULD feed the attach.** `attach_to_leg`'s only argument
+is a `RotatedParticipantLeg`, and the SDK **constructs none, anywhere**: outside the retired module,
+`sdk/src/` never names the type. Production legs are minted in `dregg-turn-prover`
+(`mint_rotated_participant_leg`, whose crate has no `dregg-sdk` dep), `node/src/turn_proving.rs`,
+`app-framework`, `braid-hook` and `dregg-multiway-tug` — every one hardcoding `carrier_witness:
+None` except braid-hook, which attaches `Custom` only. The stash was declared *"Runtime-only, NEVER
+serialized"*, so a client-side clerk's material could never reach the node-side mint. And
+`node/src/turn_proving.rs::encode_finalized_turn` **refuses outright** to persist a leg with
+`carrier_witness.is_some()`.
+
+**Level 4 — the object the attach produced was NOT arm-admissible, though its test header said it
+was.** MEASURED end-to-end through the deployed `prove_turn_chain_recursive` on a real 2-turn chain
+(continuity gate passed first — `leg0.new8 == leg1.old8` true — so this is the CARRIER arm's verdict,
+not `ChainBreak`):
+
+```text
+TurnProofInvalid { index: 0, reason: "carrier 'sovereign': the claim slice [58..62) overlaps the
+  16 wide anchor PIs of the 68-PI leg — the leg does not publish the carrier claim slots (the
+  STEP-3 octet-pin descriptor rides the big-bang regen); refusing to fold (fail-closed)" }
+```
+
+The only leg the SDK could reach is `transferVmDescriptor2R24` (**68 PIs**); the sovereign arm needs
+`62 + 16 = 78`. So the module's *"POSITIVE pole … the ARM-ADMISSIBLE honest shape"* never was.
+
+⚑ **AND THE PIN CHECK WOULD HAVE LET IT THROUGH.** `transferVmDescriptor2R24` carries a real
+`PiBinding` at every one of PIs 58-61 — on a 68-PI leg the last 16 PIs (`52..68`) ARE the two 8-felt
+state anchors, so the sovereign claim slice lands on **before-anchor lanes 6-7 and after-anchor lanes
+0-1**. `carrier_claim_pins_admitted`'s pin condition is therefore satisfied by a value-cohort leg and
+the ONLY thing refusing it is the claim/anchor overlap arithmetic. The deployed sovereign member is
+sized to clear this exactly: 78 PIs = `claim.end + 16`, teeth at columns 93-96 (the post-E1 frame
+`cb605e3fd` derived). Pinned, both poles, no proving, in
+`circuit-prove/tests/sovereign_carrier_claim_slots_are_member_scoped.rs` — red-proved by swapping the
+two members on a COPY (both poles fail, exit 100).
+
+**WHAT WAS BROKEN (public API, greenfield — nothing held it):** `sdk/src/carrier_witness_attach.rs`
+DELETED whole (`RetainedCarrierMaterial`, `RetainedSovereignAuthority`, `attach_to_leg`,
+`retain_factory_backing`, `retain_hatchery_attestation`, `retain_sovereign_authority`,
+`retain_sender_membership`, `retain_dfa_route`), with `pub mod carrier_witness_attach` and
+`sdk/tests/carrier_witness_attach_sites.rs`; `AgentCipherclerk`'s `retained_carrier_material` field,
+`turn_retention_key`, `record_retained_carrier_material`, `take_retained_carrier_material` and all
+three fill sites DELETED. Nothing re-emits, nothing re-genesises, no descriptor moves — grep-zero
+across tracked `*.rs` before the build. The field was also an unbounded leak: inserted once per
+sovereign turn, removed by nobody, for the life of the clerk. And it was never needed where it would
+have been used — `key_commit` is a pure function of the cell pubkey the executor already trusts,
+`sequence` is on the wire in `SovereignCellWitness`, the factory tuple is in the wire
+`Effect::CreateCellFromFactory`, the membership pair is in the cell's own slot.
+
+**The Lean/AIR substrate is untouched and stays Lean-authored** — this was a Rust *wiring* deletion.
+But say it plainly: the fold's `Sovereign` arm and every Lean theorem above it still describe an
+object **no production path constructs**. The arm is reachable (`sovereign_binding_deployed_tooth.rs`
+proves both poles on a genuine `makeSovereign` leg), and nothing in the deployed system takes it.
+That residual is now the whole of B3.
 
 **B4 · THE PROTOCOL CANNOT EXPRESS AN HONEST 32-BYTE FIELD WRITE, AND THE FIX IS BUILT AND PARKED.
 LIVE — the cheapest real win on this list.**

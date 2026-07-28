@@ -103,10 +103,16 @@
 // receipt event streams, the PIR discovery client, and the wire codec) lives in
 // the `dregg-sdk-net` crate, which depends on this one.
 pub mod beacon_cell;
-// The v12 carrier-witness ATTACH SITES: per-carrier turn-build retention projections
-// (factory backing / hatchery attestation / sovereign authority / sender membership) +
-// the fail-closed leg attach through the fold lane's `from_retained_*` projections.
-pub mod carrier_witness_attach;
+// RETIRED 2026-07-28 — `carrier_witness_attach` (the "v12 carrier-witness ATTACH SITES") is
+// DELETED, not moved. It projected turn-build material into a `CarrierWitness` and attached it to
+// a `RotatedParticipantLeg`, and it could never run: the SDK constructs no `RotatedParticipantLeg`
+// anywhere, so the attach's only argument had no producer, and its 0 production / 9 test callers
+// all fed it a leg minted by `dregg_turn_prover::rotation_witness::mint_rotated_participant_leg`.
+// Measured: that leg publishes 68 PIs and the fold's sovereign arm REFUSES it —
+//   carrier 'sovereign': the claim slice [58..62) overlaps the 16 wide anchor PIs of the 68-PI leg
+// — so the module's "arm-admissible honest shape" was never admissible. The carrier claim slots
+// are a property of the SOVEREIGN member alone, pinned by
+// `circuit-prove/tests/sovereign_carrier_claim_slots_are_member_scoped.rs`.
 pub mod cipherclerk;
 // The threshold-seal organ (DKG group-key hashed-ElGamal) and the
 // sealed-bid/sealed-ballot orchestration that welds it with the beacon. These
