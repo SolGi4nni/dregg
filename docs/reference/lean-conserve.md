@@ -40,9 +40,12 @@ The classifier prose is pinned to the `def`s by three theorems:
   disclosed non-conservation; the two regimes are mutually exclusive
   (`Dregg2/Spec/Conservation.lean:139`).
 
-The Rust classifiers match: `requires_paired_sibling` returns true only for
-`Conservative` (`turn/src/action.rs:925`); the disclosed-non-conservation check matches
-`Generative | Annihilative` (`turn/src/action.rs:938`).
+⚠ **There are no Rust classifiers any more.** This paragraph used to say "The Rust classifiers
+match: `requires_paired_sibling` returns true only for `Conservative` (`turn/src/action.rs:925`)
+…". They were a hand-maintained twin of the above with **zero non-test callers**, deleted
+2026-07-28; nothing compared the two, so "match" was an eyeball claim, never a checked one. ⚑ The
+Lean theory here is PROVED but **SPEC-ONLY — no `@[export]`**, so no executor path consults it
+either. See `HORIZONLOG.md` B2.
 
 ## The coloring map `linearity : Effect → LinearityClass`
 

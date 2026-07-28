@@ -150,17 +150,28 @@ ledger." There are 34 variants. The real list:
 
 ### Linearity discipline
 
-Every effect declares a `LinearityClass` via the exhaustive `Effect::linearity`
-match — no `_ =>` arm, so a new variant cannot leave its conservation status
-implicit (`turn/src/action.rs:1855-1985`). Classes (`action.rs:940-968`):
-`Conservative` (paired delta, sum zero — Transfer, the NoteSpend/NoteCreate
-pair, ShieldedTransfer), `Monotonic` (counters up — IncrementNonce, Refusal),
-`Terminal` (one-way — RevokeCapability, RevokeDelegation, CellDestroy,
-MakeSovereign, ReceiptArchive, AttenuateCapability), `Generative` (ex nihilo —
-Mint, CreateCell), `Annihilative` (Burn; receipt `was_burn` disclosure bound),
-`Neutral` (no resource delta). `is_disclosed_non_conservation()` (Generative |
-Annihilative) is the predicate the adversarial path uses to require a
-`was_burn`/`was_mint` receipt disclosure (`action.rs:989`).
+⚠ **REWRITTEN 2026-07-28. The Rust `LinearityClass` / `Effect::linearity` described here was
+DELETED, and two of the claims in the old text were false.**
+
+The old text said the classes were declared in `turn/src/action.rs` and that
+`is_disclosed_non_conservation()` "is the predicate the adversarial path uses to require a
+`was_burn`/`was_mint` receipt disclosure". Neither held: the predicate had **zero non-test
+callers**, and there is **no `was_mint` field on `TurnReceipt` at all**. `was_burn` is set by a
+hand-written `matches!(Effect::Burn)` forest walk
+(`turn/src/executor/mod.rs::effect_is_burn`/`tree_has_burn_effect`), which never consulted it.
+
+The six-color classification is **authored and proved in Lean** —
+`metatheory/Dregg2/Spec/Conservation.lean` (`Conservative`, `Monotonic`, `Terminal`,
+`Generative`, `Annihilative`, `Neutral`), with `requires_paired_sibling_iff`,
+`is_disclosed_non_conservation_iff` and `paired_and_disclosed_exclusive` axiom-pinned in
+`Claims.lean` — and it is **SPEC-ONLY**: no `@[export]`, so nothing in the executor consults it.
+
+What the executor actually enforces is described under [The executor](#the-executor) and keys on
+`Action::balance_change`, never on an effect's color: a per-cell non-negativity floor, a scalar
+`excess == 0`, and a per-asset `Σδ == 0` gate routed through the verified Lean conservation oracle
+(fail-closed on a native release build with no oracle installed). Note value, shielded value and the
+`was_burn` disclosure are three further, separate mechanisms. ⚑ Those six invariants are each local
+and there is **no proof that they compose into global conservation** — see `HORIZONLOG.md` B2.
 
 ## The executor
 

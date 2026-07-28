@@ -263,15 +263,118 @@ or deployment file. `turn/src/executor/execute.rs:339` says the shadow *"only ru
 `DREGG_LEAN_SHADOW=1`"*, so the strict veto (`turn/src/error.rs:132`) is unreachable and — per
 `a0fcd53ff` — **eleven of thirteen executor joints are trusted Rust.**
 
-**B2 · THE ONE PLACE ALL 36 EFFECTS ANSWER "DOES THIS CONSERVE?" HAS ZERO PRODUCTION CALLERS. LIVE.**
-`Effect::linearity()` (`turn/src/action.rs:1923`) — 0 production / 12 test callers, all inside the
-`#[cfg(test)]` block at `:3134`; the one non-test-looking hit (`starbridge-v2/src/bin/dregg_mcp.rs:1425`)
-is a JSON string literal. Its helpers `requires_paired_sibling` (`:961`) and
-`is_disclosed_non_conservation` (`:976`) have zero call sites anywhere. The real tooth reads
-`action.balance_change` (`turn/src/executor/execute_tree.rs:992` → `:1031`, `:1049`, gated at
-`executor/execute.rs:1283, 1318`) and **`Effect` never enters that path** — global conservation is an
-emergent property of six disjoint local invariants plus a pairwise-interaction proof nobody has
-written. A `⚑ NOTHING READS THIS` block sits at `action.rs:1902`. Documented, not fixed.
+**B2 · THE ONE PLACE ALL 36 EFFECTS ANSWER "DOES THIS CONSERVE?" HAS ZERO PRODUCTION CALLERS.
+⚑ THE DEAD RUST TWIN IS DELETED 2026-07-28 — THE REAL RESIDUAL IS THE ONE UNDERNEATH IT, AND IT IS
+STILL LIVE.**
+
+*Census re-run on tracked files only (`.claude/worktrees/` scratch inflates a naive sweep):* every
+`.linearity()` call site — 19 of them — sat inside one `#[cfg(test)] mod linearity_tests`, across 6
+tests; a 7th called `is_disclosed_non_conservation()` directly. `LinearityClass` was never even
+re-exported from `turn/src/lib.rs`, only reachable as `dregg_turn::action::LinearityClass`, and its
+five out-of-crate mentions were all doc prose (one, `sdk/src/explain.rs`, an intra-doc link that was
+*already broken* for that reason). `starbridge-v2/src/bin/dregg_mcp.rs` was a JSON string literal, as
+recorded — but see below, it was also **lying to the MCP surface**.
+
+**Deleted:** `LinearityClass` (enum + `requires_paired_sibling` + `is_disclosed_non_conservation`),
+`Effect::linearity()` (36 arms), a stale banner comment, and the 7 tests OF that dead code — 403
+lines. The "it is still a rustc-enforced checklist forcing every new variant to answer the
+conservation question" defence does not survive contact: the match forces an *arm*, never a *correct*
+arm, and nothing consumes the answer, so a wrong answer is free — and two already were. `Mint`/`Burn`
+were colored `Generative`/`Annihilative` (ex-nihilo supply) while the deployed `apply_mint`/
+`apply_burn` are WELL-PAIRED and conserve exactly (`executor/apply.rs:3764`, `:3542`). It was a
+design generation stale and nothing went red.
+
+**The classification itself is alive and PROVED — in Lean, and SPEC-ONLY.**
+`metatheory/Dregg2/Spec/Conservation.lean:101-141` defines both classifiers and proves
+`requires_paired_sibling_iff`, `is_disclosed_non_conservation_iff`, `paired_and_disclosed_exclusive`
+(axiom-pinned, `Claims.lean:114-115`), consumed across `CatalogEffects` / `CatalogInstances` /
+`DSLEffect` / `Exec/{EffectsSupply,TriDomain,TurnExecutorFull/*}`. **There is no `@[export]`**, so no
+Rust path consults it. So the honest shape was never "nothing reads this" — it was *a proved Lean
+theory, a dead Rust twin of it, and an executor that uses neither.*
+
+⚠ **And the Lean catalog has drifted from the Rust `Effect` in BOTH directions** — counted exactly,
+because the deletion forced the comparison nobody had made. `CatalogInstances.lean:255` colors **52**
+`EffectKind`s; the Rust match had **36** arms; the **overlap is 27**.
+
+- **25 Lean-only** — kinds Rust no longer has at all: the CapTP verb set (`createSealPair`, `seal`,
+  `unseal`, `exportSturdyRef`, `enlivenRef`, `dropRef`, `validateHandoff`) and the entire
+  bridge (`bridgeLock`/`Finalize`/`Cancel`), queue (`queueAllocate`/`Enqueue`/`Dequeue`/`Resize`/
+  `AtomicTx`/`PipelineStep`), escrow (6 variants) and obligation (3 variants) families.
+- **9 Rust-only** — kinds Lean has never colored: `ShieldedTransfer`, `Mint`, `Promise`, `Notify`,
+  `React`, `CreateHybridCell`, `RotatePqIdentity`, `SetProgram`, `Custom`.
+
+Its docstring calls itself "transcribed verbatim from `Effect::linearity`
+(`turn/src/action.rs:1675`)" — a line number that has not been right for a long time — and
+advertises an `rfl` tripwire against coloring drift. **The tripwire only fires on *Lean* edits.**
+Nothing ever compared the two sides, which is exactly how both drifted unobserved, and it is why the
+Rust twin's `Mint`/`Burn` staleness could sit there uncaught. Note the 9 Rust-only kinds include
+`ShieldedTransfer` and `Mint` — two of the value-moving effects — so the Lean theory does not
+currently classify the effects whose conservation matters most.
+
+**MCP surface was making a false claim to third parties (FIXED in the same change).**
+`dregg_mcp.rs`'s `tool_effects()` told consumers its table was "sourced from the real
+`dregg_turn::action::Effect` enum, so it never drifts from a hand-list" (it is a hardcoded array
+literal) and that the classes were "the linearity the **verified executor enforces** per effect" (it
+enforced nothing). Both strings now say what is true.
+
+**⚑ THE RESIDUAL THAT REMAINS — and it is the valuable half.** The executor's real teeth key on
+`Action::balance_change`, never on an effect color, and there are **six disjoint local invariants
+with no proof that they compose**:
+
+| # | invariant | where | scope |
+|---|---|---|---|
+| 1 | per-cell non-negativity floor + overflow | `executor/execute_tree.rs:991-1020` (`BalanceChangeUnderflow`, `BalanceOverflow`) | one cell, one action |
+| 2 | scalar `excess == 0`, **asset-blind** | accumulated `execute_tree.rs:1029`, gated `executor/execute.rs:1274` (`ExcessNotZero`) | the balance channel |
+| 3 | **per-asset `Σδ == 0`** — the one VERIFIED gate | `execute.rs:1289` → `executor/atomic.rs:431 check_per_asset_conservation_by_asset` → Lean `dregg_cross_cell_conserves` via `conservation_oracle`; fail-CLOSED on native release with no oracle | the balance channel |
+| 4 | note-value conservation | `executor/finalize.rs:159 check_note_conservation`, called `execute.rs:1224`; cleartext Σin==Σout per `asset_type`, or `check_committed_conservation:217` (Pedersen/Schnorr excess) | the note channel |
+| 5 | shielded Pedersen conservation + range proofs | `ShieldedTransferPayload.conservation`, verified by the injected `ShieldedTransferVerifier` (`executor/apply.rs:487`, `:1797`) | one effect's own legs |
+| 6 | `was_burn` disclosure | `executor/mod.rs:75-91` `effect_is_burn`/`tree_has_burn_effect`, a hand-written `matches!` forest walk bound into `receipt_hash` | a boolean, no arithmetic |
+
+**What the missing proof would have to say.** Each gate establishes `Δ_c(T, a) = 0` **within its own
+channel** `c`. Nothing establishes that the channels *exhaust* the ways value moves, or that they are
+*disjoint in the resource they move*. The theorem needed is a total `Value_a : State → ℤ` counting
+balances, cleartext notes, committed notes and shielded notes **once each with no overlap**, plus a
+case analysis over all 36 `Effect` variants showing each contributes to exactly one `Δ_c`, closing
+`Value_a(S') − Value_a(S) = Σ_c Δ_c(T,a)` — so that `∀c. Δ_c = 0 ⟹ Value_a` is invariant. Until that
+exists, "the turn conserves" means "each channel separately balanced", which is strictly weaker.
+
+Four concrete pairwise holes, in descending order of how cheaply they'd bite:
+
+- **(balance, notes) — the namespaces are not even comparable.** The balance channel keys assets on
+  `asset_class_for_cell` → `fold_token_id_to_asset([u8;32]) -> BabyBear` (a **lossy 32-byte → 31-bit
+  fold**); the note channel keys on the effect's own cleartext `asset_type: u64`
+  (`finalize.rs:517-533`). Two turns can each balance perfectly and still have moved value between
+  incomparable asset identities. Nothing relates the two maps.
+- **(balance, supply) — the designed seam is wired to `&[]`.** `check_per_asset_conservation_by_asset`
+  takes a `declared_supply: &[DeclaredSupplyChange]` argument precisely so disclosed mint/burn can be
+  reconciled against balance deltas. **All four production callers pass `&[]`** — `execute.rs:1289`
+  (hosted), `atomic.rs:1014` and `:1555` (atomic/sovereign), `proof_verify.rs:2029` (light-client
+  bundle) — and so do the only two test callers (`atomic.rs:3077`, `:3103`, both under the
+  `#[cfg(test)]` at `:1695`), so **no test would notice if the parameter stopped working**. ⚑ And the
+  VERIFIED side already implements it: `Dregg2/Circuit/CrossCellConserveDecision.lean` groups
+  `(asset, δ)` rows **plus declared mint/burn supply** and carries a `#guard` for exactly that arm
+  ("declared supply restores"). So the Lean decider supports the reconciliation, has a tooth for it,
+  and **Rust never once calls it with a row.** It is sound today
+  only because mint/burn are well-paired and therefore already appear as ordinary balance deltas —
+  i.e. the parameter is load-bearing for a supply model nobody uses, and would silently accept the
+  moment one did.
+- **(balance, shielded).** A `ShieldedTransfer` conserves over its own Pedersen legs; whether it can
+  sit in the same turn as a `Transfer` and move value across the seam is unasked.
+- **(cleartext notes, committed notes) — the ONE pairwise interaction anyone has thought about**, and
+  it is a *refusal*, not a proof: `NoteCommitmentMode::Mixed ⇒ reject` (`finalize.rs:185`). Same shape
+  as `check_committed_conservation`'s `buckets.len() > 1 ⇒ reject`, which carries its own NAMED
+  RESIDUAL saying one algebraic excess cannot certify multi-asset balance. Both are the right
+  fail-closed move and neither is the theorem.
+
+**Verdict on exporting the Lean theory: DO NOT, not as stated.** `@[export]`ing `effectLinearity`
+would give the executor a verified *color* for an effect, and the executor has no place to consult a
+color: its per-asset `Σδ=0` gate (#3) already routes through a verified Lean decider, and that gate
+is strictly stronger — it decides the arithmetic, not a label about the arithmetic. Exporting the
+colors would add a second, weaker, verified-looking decision alongside it and invite exactly the twin
+this entry just deleted. The Lean theory is about the MODEL and should stay there. The export that
+*would* be worth building is for the missing composition theorem above — a `Value_a` + channel
+partition — not for the six-color classifier. **Prerequisite either way: reconcile the 51-variant
+Lean `EffectKind` against the live 36-variant Rust `Effect`, since nothing currently can.**
 
 **B3 · THE SOVEREIGN CARRIER-WITNESS ARM IS DEAD TWO LEVELS DEEP. LIVE.** `cb605e3fd` named one
 level; there are two. `RetainedCarrierMaterial::attach_to_leg` (`sdk/src/carrier_witness_attach.rs:115`)

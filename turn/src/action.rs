@@ -881,106 +881,6 @@ pub enum DelegationMode {
     SnapshotRefresh,
 }
 
-/// Linearity discipline of an [`Effect`] family.
-///
-/// Per `HOUYHNHNM-COMPARISON.md` §4.3, §8.2: dregg already enforces
-/// conservation per effect family — `Transfer` conserves balances,
-/// `Mint`/`Burn` is the asymmetric pair, capability grant/revoke is the
-/// cap pair, the bilateral schedule (γ.2) is almost a linear-logic
-/// move. Houyhnhnm's framing makes the conservation discipline a *typed
-/// answer*: each effect declares its `LinearityClass`, and any new
-/// `Effect` variant added to the system MUST answer the conservation
-/// question via the exhaustive `match` in [`Effect::linearity`].
-///
-/// The discriminants are deliberately *narrow* and *exhaustive at
-/// compile time*: no `_ =>` default arm exists in [`Effect::linearity`],
-/// so a contributor who adds a new effect cannot silently leave its
-/// conservation status implicit.
-///
-/// # Variants
-///
-/// - [`LinearityClass::Conservative`] — paired effect; the sum of
-///   resource deltas across the turn is zero (Transfer, the inner
-///   balance moves of escrow create/release, the bilateral message
-///   accumulator on γ.2).
-/// - [`LinearityClass::Monotonic`] — strictly nondecreasing scalar
-///   (nonces, height counters, attestation counters, refcount
-///   *increments*).
-/// - [`LinearityClass::Terminal`] — one-way, no inverse (revoke,
-///   destroy, drop). These categorically cannot be "undone" by a
-///   future effect; rollback requires a fresh creation.
-/// - [`LinearityClass::Generative`] — creates a resource without a
-///   paired consumer (Mint without Burn pair, CreateCell, CreateNote
-///   without paired SpendNote). Must be operator-permissioned;
-///   appears in receipts as a disclosed non-conservation.
-/// - [`LinearityClass::Annihilative`] — destroys a resource without
-///   a paired producer (Burn without Mint pair). Operator-disclosed
-///   non-conservation; the receipt's `was_burn` flag is bound into
-///   `receipt_hash` so the executor cannot strip the disclosure.
-/// - [`LinearityClass::Neutral`] — no resource delta (state-field
-///   mutations on cell-local accounting, event emission, refresh).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum LinearityClass {
-    /// Sum of resource deltas across the turn is zero. The
-    /// conservation checker MAY require a paired sibling effect in the
-    /// same turn (the dual of this effect's primary delta).
-    Conservative,
-    /// The effect monotonically grows a scalar (e.g. nonce, height,
-    /// attestation counter, refcount-up). The executor's invariant
-    /// checker rejects any operation that would decrement.
-    Monotonic,
-    /// One-way structural transition with no inverse (revoke, destroy,
-    /// drop, archive). The cell-lifecycle state machine
-    /// (`dregg_cell::lifecycle::CellLifecycle::is_terminal`) is the
-    /// canonical example.
-    Terminal,
-    /// Creates a resource ex nihilo (Mint without a paired Burn,
-    /// CreateCell, CreateNote without paired Spend). MUST be
-    /// operator-permissioned; appears on-chain as a disclosed
-    /// non-conservation.
-    Generative,
-    /// Destroys a resource without a paired creator (Burn,
-    /// non-bridge-bound NoteCreate consumption paths). The disclosure
-    /// is bound into the receipt; the executor cannot silently strip
-    /// it.
-    Annihilative,
-    /// No resource delta — pure book-keeping (event emission, cell-
-    /// local field mutations whose conservation lives elsewhere,
-    /// refresh-from-parent).
-    Neutral,
-}
-
-impl LinearityClass {
-    /// Should the conservation checker require a paired sibling
-    /// (the dual of this effect's delta in the same turn)?
-    ///
-    /// Returns `true` only for [`LinearityClass::Conservative`]; the
-    /// other variants explicitly accept that no paired sibling is
-    /// required (Mint/Burn ex nihilo, monotonic increments,
-    /// one-way terminations, no-delta neutrals).
-    pub fn requires_paired_sibling(self) -> bool {
-        matches!(self, LinearityClass::Conservative)
-    }
-
-    /// Is this an *operator-disclosed non-conservation* — a deliberate
-    /// break with the conservation invariant that the operator must
-    /// disclose on-chain?
-    ///
-    /// ⚑ **NO CALLER.** The claim that stood here — "this is the predicate the
-    /// executor's adversarial path uses to decide whether to require a
-    /// `was_burn`/`was_mint` disclosure flag" — was false twice over: nothing
-    /// calls this outside tests, and there is no `was_mint` field on
-    /// [`crate::TurnReceipt`] at all. `was_burn` is set from a hand-written
-    /// `matches!(Effect::Burn)` forest walk (`executor/mod.rs:75-91`,
-    /// `executor/finalize.rs:895`) that never consults this.
-    pub fn is_disclosed_non_conservation(self) -> bool {
-        matches!(
-            self,
-            LinearityClass::Generative | LinearityClass::Annihilative
-        )
-    }
-}
-
 /// One value-commitment leg of a shielded transfer on the wire: the (single-asset
 /// M2-a) public asset type and the opaque compressed Pedersen value commitment
 /// `commit(v, r)`. The amount `v` stays hidden behind the commitment; the
@@ -1063,6 +963,68 @@ pub struct ShieldedTransferPayload {
 ///
 /// Analogous to Mina's balance_change + state updates, but generalized for
 /// the cell model.
+///
+/// # Where the conservation question is answered — NOT here
+///
+/// There used to be a `LinearityClass` enum and an `Effect::linearity()`
+/// six-way coloring right below this type, with `requires_paired_sibling` /
+/// `is_disclosed_non_conservation` helpers. **It was deleted on 2026-07-28
+/// and nothing was lost**, because:
+///
+/// 1. **It had zero non-test callers.** A tracked-file census found every
+///    `.linearity()` call site inside one `#[cfg(test)] mod`. It was never
+///    re-exported from the crate root either — only reachable as
+///    `dregg_turn::action::LinearityClass`.
+/// 2. **The classification is authored and PROVED in Lean**, where it is a
+///    machine-checked theory rather than a `match`:
+///    `metatheory/Dregg2/Spec/Conservation.lean` defines `LinearityClass`
+///    and both classifiers and proves `requires_paired_sibling_iff`,
+///    `is_disclosed_non_conservation_iff` and `paired_and_disclosed_exclusive`
+///    (axiom-pinned in `Claims.lean`); `Dregg2/CatalogInstances.lean` carries
+///    the per-variant coloring and `Dregg2/CatalogEffects.lean` the per-class
+///    obligations. That theory is **spec-only** — it has no `@[export]`, so no
+///    Rust path consults it, and the Rust `match` was a hand-maintained twin
+///    of it, which the LAW (`ZERO Rust-authored AIRs`) forbids.
+/// 3. **The self-justification for keeping it — "a rustc-enforced checklist
+///    that forces every new variant to answer the conservation question" —
+///    had already failed.** The checklist forces an *arm*, never a *correct*
+///    arm, and nothing consumes the answer, so a wrong answer is free. Two
+///    were already wrong: `Mint`/`Burn` were colored `Generative`/
+///    `Annihilative` (ex-nihilo supply) while the deployed `apply_mint`/
+///    `apply_burn` are WELL-PAIRED and conserve exactly
+///    (`executor/apply.rs`), and `executor/atomic.rs` counts them as paired
+///    deltas. It was stale by a design generation and nothing went red.
+///
+/// The executor's **actual** conservation teeth key on `Action::balance_change`
+/// and on per-mechanism walks, never on the effect's color. There are six:
+///
+/// 1. the per-cell non-negativity floor + overflow check
+///    (`executor/execute_tree.rs`, `TurnError::BalanceChangeUnderflow` /
+///    `BalanceOverflow`);
+/// 2. the turn-end scalar `excess == 0`, which is asset-BLIND
+///    (`executor/execute.rs`, `TurnError::ExcessNotZero`);
+/// 3. the turn-end **per-asset** `Σδ == 0` — the one VERIFIED gate, routed
+///    through the Lean decider
+///    (`executor/atomic.rs::check_per_asset_conservation_by_asset` →
+///    `conservation_oracle`, fail-CLOSED on a native release build with no
+///    oracle installed);
+/// 4. note-value conservation, cleartext or Pedersen-committed
+///    (`executor/finalize.rs::check_note_conservation`);
+/// 5. the shielded Pedersen conservation + range proofs, verified by the
+///    injected `ShieldedTransferVerifier` (`executor/apply.rs`);
+/// 6. the `was_burn` disclosure — a hand-written `matches!(Effect::Burn)`
+///    forest walk (`executor/mod.rs::effect_is_burn`), bound into
+///    `receipt_hash`.
+///
+/// ⚠ Each of those is **local to its own channel**, and there is **no proof
+/// that they compose into global conservation**: nothing shows the channels
+/// exhaust the ways value moves, nor that they are disjoint in the resource
+/// they move. Concretely, #2/#3 key assets on a lossy 32-byte→31-bit
+/// `fold_token_id_to_asset`, while #4 keys on the effect's own cleartext
+/// `asset_type: u64` — two incomparable namespaces. See `HORIZONLOG.md` B2 for
+/// the full statement and the four pairwise holes. Do not read this note as
+/// saying conservation is closed; it says the effect *color* was never part of
+/// it.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Effect {
     /// Set a state field on a cell.
@@ -1989,170 +1951,6 @@ impl Action {
 }
 
 impl Effect {
-    /// Declare this effect's [`LinearityClass`].
-    ///
-    /// **This match is exhaustive on purpose.** No `_ =>` default arm
-    /// exists; every new [`Effect`] variant added in the future is
-    /// forced — by `rustc` — to *answer the conservation question* per
-    /// `HOUYHNHNM-COMPARISON.md` §4.3, §8.2. The compiler is the
-    /// enforcer of "the designer had to think about this."
-    ///
-    /// ⚑ **NOTHING READS THIS.** The claim that stood here — "the conservation
-    /// checker in the executor uses this to know whether to require a paired
-    /// sibling effect" — was false: a whole-tree search for `.linearity()`,
-    /// `LinearityClass`, `requires_paired_sibling` and
-    /// `is_disclosed_non_conservation` finds no non-test caller anywhere
-    /// (`sel4/persist-hosttest/src/hosting.rs:56` is a doc comment). The
-    /// executor's actual conservation teeth are keyed on
-    /// `Action::balance_change` (`executor/execute.rs:1238`, `:1273`) and on
-    /// bespoke per-effect walks (`executor/finalize.rs:512`, `:314`,
-    /// `executor/atomic.rs:1440`); the `was_burn` disclosure is a hand-written
-    /// `matches!(Effect::Burn)` walk (`executor/mod.rs:75`), not this predicate.
-    ///
-    /// ⚑ The classification is also one design generation STALE: `Mint` and
-    /// `Burn` are declared `Generative`/`Annihilative` (ex-nihilo supply), but
-    /// the deployed `apply_mint`/`apply_burn` are WELL-PAIRED and conserve
-    /// exactly (`executor/apply.rs:3774-3780`), and `executor/atomic.rs:1459`/
-    /// `:1477` count them as paired deltas. Do not cite these classes as the
-    /// supply model until they are re-derived from the well-paired one.
-    ///
-    /// **This match is still worth keeping** for the exhaustiveness property
-    /// below — it is the one place a new `Effect` must answer the conservation
-    /// question — but it is a DESIGN CHECKLIST enforced by rustc, not a tooth.
-    pub fn linearity(&self) -> LinearityClass {
-        match self {
-            // -- Conservative: paired-delta resource moves. --
-            Effect::Transfer { .. } => LinearityClass::Conservative,
-
-            // Notes spent-and-created together must conserve value; the
-            // executor's conservation checker enforces this across
-            // sibling spend/create pairs in the same turn.
-            Effect::NoteSpend { .. } => LinearityClass::Conservative,
-            Effect::NoteCreate { .. } => LinearityClass::Conservative,
-
-            // A shielded transfer is value-conserving by construction: the
-            // Pedersen conservation proof certifies `Σ in = Σ out` (blind).
-            Effect::ShieldedTransfer { .. } => LinearityClass::Conservative,
-            // Obligation creation locks stake; fulfillment returns it;
-            // slash transfers it. Each is a conservative move.
-
-            // Queue enqueue/dequeue pair: the message moves; the
-            // deposit moves with it (paid on enqueue, refunded on
-            // dequeue).
-
-            // Atomic queue transactions and pipeline steps batch
-            // conservative moves; the executor enforces all-or-nothing.
-
-            // Bridge phases form a cross-federation conservative
-            // schedule: lock+finalize is the dual of mint on the other
-            // side; cancel is a roll-back; lock-without-finalize is
-            // value-locking, not value-creation.
-
-            // -- Monotonic: scalar counters / refcounts going up. --
-            Effect::IncrementNonce { .. } => LinearityClass::Monotonic,
-            Effect::RotatePqIdentity { .. } => LinearityClass::Monotonic,
-            // (The retired CapTP verbs — ExportSturdyRef / EnlivenRef /
-            // ValidateHandoff — were monotonic counter bumps; they no longer
-            // exist as effects. Caps-in-slots replaced them.)
-
-            // Refusals bump the cell's nonce and append to the
-            // refusal-log slot; both monotonic.
-            Effect::Refusal { .. } => LinearityClass::Monotonic,
-
-            // -- Terminal: one-way state transitions, no inverse. --
-            Effect::RevokeCapability { .. } => LinearityClass::Terminal,
-            Effect::RevokeDelegation { .. } => LinearityClass::Terminal,
-            // (Retired: DropRef — the CapTP refcount decrement — is gone with
-            // the CapTP verb set.)
-
-            // Cell destroy is the canonical terminal — once Destroyed
-            // the cell cannot transition to any other state
-            // (CellLifecycle::is_terminal).
-            Effect::CellDestroy { .. } => LinearityClass::Terminal,
-            // MakeSovereign drops local state in favor of a sovereign
-            // commitment — that's a one-way move from the federation's
-            // perspective.
-            Effect::MakeSovereign { .. } => LinearityClass::Terminal,
-            // ReceiptArchive sets the cell into Archived lifecycle;
-            // the chain prefix is no longer locally addressable as
-            // individual receipts (the attestation summarises it).
-            Effect::ReceiptArchive { .. } => LinearityClass::Terminal,
-            // AttenuateCapability only narrows — widening is rejected.
-            // Once narrowed, you cannot widen back.
-            Effect::AttenuateCapability { .. } => LinearityClass::Terminal,
-            // Cell seal/unseal is *reversible* but the seal-while-
-            // sealed transition is terminal in the sense that no
-            // effects (other than CellUnseal) can target the cell.
-            // Classify CellSeal as Terminal — its inverse is CellUnseal,
-            // which is itself Terminal in the reverse direction; the
-            // pair is *not* a balanced linear pair the way
-            // Transfer/Mint+Burn is, because no resource is conserved.
-            Effect::CellSeal { .. } => LinearityClass::Terminal,
-            Effect::CellUnseal { .. } => LinearityClass::Terminal,
-
-            // -- Generative: creates a resource ex nihilo. --
-            // BridgeMint mints local notes from a remote spend proof —
-            // generative from the local ledger's POV (the conservation
-            // lives in the bridge protocol, not in this federation).
-            Effect::BridgeMint { .. } => LinearityClass::Generative,
-            Effect::CreateCell { .. } => LinearityClass::Generative,
-            Effect::CreateHybridCell { .. } => LinearityClass::Generative,
-            Effect::CreateCellFromFactory { .. } => LinearityClass::Generative,
-            Effect::SpawnWithDelegation { .. } => LinearityClass::Generative,
-
-            // (Retired: CreateSealPair / Seal — generative sealer/unsealer
-            // handle creation — are gone with the CapTP verb set; sealing is
-            // the CapSlotFactory caps-in-slots route now.)
-
-            // Grant and Introduce mint new capability slots in the
-            // recipient's c-list; from the receiving cell's POV
-            // these are generative.
-            Effect::GrantCapability { .. } => LinearityClass::Generative,
-            Effect::Introduce { .. } => LinearityClass::Generative,
-
-            // Promise / Notify mint a fresh promise-hole (a standing
-            // commitment) in a cell's reactive registry — a resource created
-            // without a paired consumer in the same turn. The dual is the
-            // later React (Terminal) in a separate turn.
-            Effect::Promise { .. } => LinearityClass::Generative,
-            Effect::Notify { .. } => LinearityClass::Generative,
-
-            // -- Annihilative: destroys a resource, operator-disclosed. --
-            Effect::Burn { .. } => LinearityClass::Annihilative,
-
-            // Mint creates fresh supply (well → holder) — a resource
-            // produced without a paired consumer in the same turn (the
-            // well-debit is the conserving dual, but from the holder's
-            // POV value appears). The dual of Burn's Annihilative.
-            Effect::Mint { .. } => LinearityClass::Generative,
-
-            // React consumes (spends) a promise-hole exactly once: a one-way
-            // structural transition with no inverse — the hole is gone. The
-            // resource destroyed is the hole-nullifier, spent into the
-            // production nullifier set (no monetary delta, so not disclosed
-            // non-conservation; the consume is the dual of the Promise/Notify
-            // that created it in a prior turn).
-            Effect::React { .. } => LinearityClass::Terminal,
-
-            // -- Neutral: no resource delta; state-local accounting. --
-            Effect::SetField { .. } => LinearityClass::Neutral,
-            Effect::EmitEvent { .. } => LinearityClass::Neutral,
-            Effect::SetPermissions { .. } => LinearityClass::Neutral,
-            Effect::SetVerificationKey { .. } => LinearityClass::Neutral,
-            Effect::SetProgram { .. } => LinearityClass::Neutral,
-            Effect::RefreshDelegation { .. } => LinearityClass::Neutral,
-            Effect::PipelinedSend { .. } => LinearityClass::Neutral,
-            Effect::ExerciseViaCapability { .. } => LinearityClass::Neutral,
-
-            // A custom transition mutates only the SOVEREIGN COMMITMENT (an opaque
-            // 8-felt root); it debits/credits no substrate-tracked linear resource
-            // (balance/notes/caps). Conservation of the app's own resources is the
-            // custom AIR's job, proven in the sub-proof and welded to the committed
-            // roots — not a turn-effect-layer linearity obligation. So: Neutral.
-            Effect::Custom { .. } => LinearityClass::Neutral,
-        }
-    }
-
     /// Compute the BLAKE3 hash of this effect.
     pub fn hash(&self) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
@@ -3011,22 +2809,6 @@ impl Event {
     }
 }
 
-// =============================================================================
-// LinearityClass tests
-// =============================================================================
-//
-// Per `HOUYHNHNM-COMPARISON.md` §4.3, §8.2: the conservation question must
-// have a typed, *forced* answer. These tests assert the contract:
-//
-//   * Conservative effects declare they need a paired sibling (the
-//     executor's conservation checker dispatches off this).
-//   * Disclosed non-conservation (Generative / Annihilative) is named
-//     `is_disclosed_non_conservation()` and reachable for Mint / Burn.
-//   * Neutral effects don't claim conservation they don't enforce.
-//
-// The `linearity()` method itself is exhaustive at compile time; adding a
-// new `Effect` variant without answering the linearity question is a
-// `rustc` error, not a runtime surprise.
 // THE TOOTH for the deleted `Authorization::Token::discharges` field.
 //
 // The wound: `discharges` was a caller-settable `Vec<Vec<u8>>` hashed into
@@ -3514,8 +3296,16 @@ mod effect_tag_tests {
     }
 }
 
+// The module below was `linearity_tests`. Seven of its nine tests only asserted
+// that `Effect::linearity()` returned the color it was written to return —
+// tests OF a function with no non-test caller, checking a hand-maintained twin
+// of the Lean-proved classification (`Dregg2/Spec/Conservation.lean`) against
+// itself. They went with the function on 2026-07-28. The two that survive here
+// were never linearity tests at all: they pin `Effect::hash` preimage-binding
+// and the wide `SetField` index surviving its wire encoding — both live
+// mechanisms. Renamed to say what it now covers.
 #[cfg(test)]
-mod linearity_tests {
+mod effect_hash_and_wire_tests {
     use super::*;
 
     fn cid(byte: u8) -> CellId {
@@ -3570,102 +3360,6 @@ mod linearity_tests {
     }
 
     #[test]
-    fn transfer_is_conservative_and_requires_sibling() {
-        // Adversarial framing: a Transfer claims Conservative linearity,
-        // which the executor's conservation checker reads as
-        // "demand a paired credit on the receive side."
-        let e = Effect::Transfer {
-            from: cid(1),
-            to: cid(2),
-            amount: 7,
-        };
-        assert_eq!(e.linearity(), LinearityClass::Conservative);
-        assert!(e.linearity().requires_paired_sibling());
-        assert!(!e.linearity().is_disclosed_non_conservation());
-    }
-
-    #[test]
-    fn mint_without_paired_burn_is_generative_not_conservative() {
-        // **Adversarial:** an `Effect::CreateCell` / mint-like move is
-        // *generative* — the conservation checker MUST NOT require a
-        // paired sibling, but the operator MUST be authorized to mint
-        // (caught elsewhere). If we accidentally tagged CreateCell as
-        // `Conservative`, the checker would reject every legitimate
-        // genesis-style mint. If we accidentally tagged it `Neutral`,
-        // the operator could mint without disclosure.
-        let e = Effect::CreateCell {
-            public_key: [0; 32],
-            token_id: [0; 32],
-            balance: 1_000_000,
-        };
-        assert_eq!(e.linearity(), LinearityClass::Generative);
-        assert!(!e.linearity().requires_paired_sibling());
-        assert!(e.linearity().is_disclosed_non_conservation());
-        // Equivalent for SpawnWithDelegation: a fresh-child mint must
-        // also be generative.
-        let e2 = Effect::SpawnWithDelegation {
-            child_public_key: [0; 32],
-            child_token_id: [0; 32],
-            max_staleness: 0,
-        };
-        assert_eq!(e2.linearity(), LinearityClass::Generative);
-    }
-
-    #[test]
-    fn burn_is_annihilative_and_disclosed() {
-        // **Adversarial:** Burn's disclosure (`was_burn`) is bound into
-        // `receipt_hash`. If LinearityClass::Burn were mis-tagged as
-        // `Neutral`, the executor would not know to *require* the
-        // disclosure flag; mis-tagging as `Conservative` would make the
-        // checker demand a paired credit that doesn't exist. The only
-        // correct tag is `Annihilative`.
-        let e = Effect::Burn {
-            target: cid(3),
-            slot: 0,
-            amount: 42,
-        };
-        assert_eq!(e.linearity(), LinearityClass::Annihilative);
-        assert!(!e.linearity().requires_paired_sibling());
-        assert!(e.linearity().is_disclosed_non_conservation());
-    }
-
-    #[test]
-    fn terminal_effects_dont_require_pairing() {
-        // Revoke is one-way; it MUST NOT trip the "demand a paired sibling" branch.
-        let revoke = Effect::RevokeCapability {
-            cell: cid(1),
-            slot: 0,
-        };
-        let e = revoke;
-        assert_eq!(e.linearity(), LinearityClass::Terminal);
-        assert!(!e.linearity().requires_paired_sibling());
-        assert!(!e.linearity().is_disclosed_non_conservation());
-    }
-
-    #[test]
-    fn monotonic_counters_are_neither_conservative_nor_disclosed() {
-        let e = Effect::IncrementNonce { cell: cid(4) };
-        assert_eq!(e.linearity(), LinearityClass::Monotonic);
-        assert!(!e.linearity().requires_paired_sibling());
-        assert!(!e.linearity().is_disclosed_non_conservation());
-    }
-
-    #[test]
-    fn neutral_effects_have_no_resource_delta() {
-        // SetField on a cell-local slot has no resource delta from the
-        // ledger's POV — the cell's own program may enforce a delta,
-        // but the universal conservation checker doesn't see one here.
-        let e = Effect::SetField {
-            cell: cid(5),
-            index: 0,
-            value: [0; 32],
-        };
-        assert_eq!(e.linearity(), LinearityClass::Neutral);
-        assert!(!e.linearity().requires_paired_sibling());
-        assert!(!e.linearity().is_disclosed_non_conservation());
-    }
-
-    #[test]
     fn wide_set_field_key_roundtrips_without_architecture_narrowing() {
         let wide = (u32::MAX as u64) + 17;
         let effect = Effect::SetField {
@@ -3688,32 +3382,5 @@ mod linearity_tests {
             expected_hash,
             "the signed effect meaning must survive its durable wire encoding"
         );
-    }
-
-    #[test]
-    fn disclosed_predicate_is_only_generative_and_annihilative() {
-        // The disclosed-non-conservation set MUST be exactly Generative
-        // ∪ Annihilative. Conservation-respecting variants (Conservative,
-        // Monotonic, Terminal, Neutral) MUST NOT be flagged as
-        // disclosed non-conservation; doing so would prompt the
-        // executor to expect a `was_burn`/`was_mint` flag that isn't
-        // there and reject legitimate turns.
-        for c in [
-            LinearityClass::Conservative,
-            LinearityClass::Monotonic,
-            LinearityClass::Terminal,
-            LinearityClass::Neutral,
-        ] {
-            assert!(
-                !c.is_disclosed_non_conservation(),
-                "{c:?} must not be a disclosed non-conservation class"
-            );
-        }
-        for c in [LinearityClass::Generative, LinearityClass::Annihilative] {
-            assert!(
-                c.is_disclosed_non_conservation(),
-                "{c:?} must be a disclosed non-conservation class"
-            );
-        }
     }
 }

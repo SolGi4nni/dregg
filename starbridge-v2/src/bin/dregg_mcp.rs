@@ -1181,11 +1181,21 @@ fn tool_federation(s: &Session) -> Value {
 // effects / verbs — the protocol's complete action vocabulary + descriptors
 // ---------------------------------------------------------------------------
 
-/// The protocol's COMPLETE action vocabulary: the canonical 8 verbs (the minimal
-/// kernel) plus the full Effect catalog (every variant), each with its descriptor
-/// fields (the action's parameters) and its conservation class (the linearity the
-/// executor enforces). The full vocabulary the atlas documents — sourced from the
-/// real `dregg_turn::action::Effect` enum, so it never drifts from a hand-list.
+/// The protocol's action vocabulary: the canonical 8 verbs (the minimal kernel)
+/// plus the Effect catalog, each with its descriptor fields (the action's
+/// parameters) and its conservation class.
+///
+/// ⚠ **This IS a hand-list.** The docstring here used to claim it was "sourced
+/// from the real `dregg_turn::action::Effect` enum, so it never drifts from a
+/// hand-list" — false in both halves: `cat` below is a hardcoded array literal,
+/// and it had already drifted (it lists variants by a stale count). The
+/// conservation classes it reports were likewise claimed to be "the linearity the
+/// verified executor enforces per effect": the executor never read them. The Rust
+/// `Effect::linearity()` they came from had zero non-test callers and was deleted
+/// on 2026-07-28; the classification's real, PROVED home is
+/// `metatheory/Dregg2/Spec/Conservation.lean` + `Dregg2/CatalogInstances.lean`,
+/// which is spec-only (no `@[export]`). Read the classes below as a design
+/// vocabulary, not as an enforced property.
 fn tool_effects() -> Value {
     // (name, is_canonical_verb, conservation_class, descriptor_fields, gloss)
     let cat: &[(&str, bool, &str, &str, &str)] = &[
@@ -1416,13 +1426,13 @@ fn tool_effects() -> Value {
     }).collect();
 
     json!({
-        "what": "the protocol's complete action vocabulary — sourced from dregg_turn::action::Effect (31 variants) so it can never drift from a hand-list",
+        "what": "the protocol's action vocabulary. NOTE: this table is a HAND-LIST maintained in dregg_mcp.rs, NOT generated from dregg_turn::action::Effect — it can and does drift; verify against the enum before relying on it",
         "the_eight_verbs": {
             "what": "the minimal kernel set (dregg3: 8 verbs from 52) — the canonical subset every cell speaks",
             "verbs": verbs,
         },
         "conservation_classes": {
-            "what": "Effect::linearity() — the linearity the verified executor enforces per effect",
+            "what": "the DESIGN vocabulary for per-effect conservation, NOT an enforced property. Proved in Lean (metatheory/Dregg2/Spec/Conservation.lean, Dregg2/CatalogInstances.lean) but SPEC-ONLY — no @[export], so no executor path consults it. The Rust Effect::linearity() twin had zero non-test callers and was deleted 2026-07-28. What the executor actually enforces is per-asset Σδ=0 over Action::balance_change, routed through the verified Lean conservation oracle",
             "classes": {
                 "Conservative": "Σδ = 0 (Transfer, NoteSpend, NoteCreate) — value is moved, never made/lost",
                 "Generative": "introduces structure under non-forgeability (Create*, Grant, Introduce, Promise, Notify, Spawn, BridgeMint)",

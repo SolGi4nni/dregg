@@ -26,11 +26,23 @@ for is refused before it applies. Closure is load-bearing twice over:
 
 ## The six colors (`LinearityClass`)
 
-The colors are defined identically in Rust (`action.rs:919-996`, the `LinearityClass` enum +
-its `requires_pairing`/`is_disclosed_non_conservation` helpers) and in the Lean source of
-truth `metatheory/Dregg2/Spec/Conservation.lean:78-96`. Exactly six; both classifiers are
-exhaustive matches with no default arm, so a new color cannot compile until it answers "must
-it have a paired sibling?" and "is it a disclosed non-conservation?".
+The colors are defined **only** in Lean now — `metatheory/Dregg2/Spec/Conservation.lean:78-96`,
+with both classifiers exhaustive (no default arm) and their prose pinned by three theorems. Exactly
+six.
+
+⚠ **This section used to say the colors were "defined identically in Rust (`action.rs:919-996`, the
+`LinearityClass` enum + its `requires_pairing`/`is_disclosed_non_conservation` helpers)".** That
+Rust twin was DELETED on 2026-07-28: a tracked-file census found every `.linearity()` call site
+inside one `#[cfg(test)]` module, and the enum was never even re-exported from `turn/src/lib.rs`.
+Two of its colorings were already a design generation stale (`Mint`/`Burn` were `Generative`/
+`Annihilative` while the deployed `apply_mint`/`apply_burn` are well-paired and conserve exactly),
+and nothing went red — because nothing read it.
+
+⚑ **The Lean theory is PROVED but SPEC-ONLY: it has no `@[export]`, so no executor path consults
+it.** The colors below are a design vocabulary, not an enforced property. What the executor actually
+enforces is per-asset `Σδ = 0` over `Action::balance_change`, routed through the verified Lean
+conservation oracle (`turn/src/executor/atomic.rs::check_per_asset_conservation_by_asset`). See
+`HORIZONLOG.md` B2 for the six local invariants and the composition proof nobody has written.
 
 | Color | Meaning (Conservation.lean) | Conservation obligation |
 |---|---|---|
