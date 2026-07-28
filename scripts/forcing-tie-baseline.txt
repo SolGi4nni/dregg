@@ -1,0 +1,13 @@
+# forcing-tie-baseline — RULE B exceptions for scripts/check-forcing-gadget-tie.py.
+#
+# One `<path>::<theorem>` per line: a theorem named `<gadget>_forces` whose statement does NOT
+# mention `<gadget>` and does NOT consume `acceptB`. Every line here is DEBT — a name that claims
+# more than its statement delivers (audit F6, docs/AUDIT-CRYPTO-GADGETS.md).
+#
+# The list RATCHETS. The checker fails if an entry no longer fires (fix it, delete the line) and
+# fails if an entry names a theorem that no longer exists. It can only shrink.
+#
+# IT IS CURRENTLY EMPTY, and that is the point: as of 2026-07-27 every `<gadget>_forces` theorem in
+# every forcing module either mentions its gadget or consumes its acceptance. Adding a line here is
+# a deliberate act a reviewer will see in the diff. Do not add one to make a build green; tie the
+# theorem, or rename it to `<gadget>_core_forces` / `<gadget>_of_...` so the name stops claiming.

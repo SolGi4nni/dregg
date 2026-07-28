@@ -1202,6 +1202,14 @@ jobs:
         with:
           lfs: true
       - run: bash scripts/check-lean-orphans.sh
+      # A forcing module must mention the gates it claims to force. Measured 2026-07-27:
+      # Blake2bFoldForcing (47 theorems) and Bls12381Forcing (29) contained the string
+      # `acceptB` ZERO times, so nothing in either related gate satisfaction to anything —
+      # and both built green with passing `#assert_axioms`. This is the one mechanical
+      # measurement that separates them from the honest sibling. The `--self-test` proves
+      # the gate can go RED; a gate that cannot is not a gate.
+      - run: python3 scripts/check-forcing-gadget-tie.py
+      - run: python3 scripts/check-forcing-gadget-tie.py --self-test
 
   opentheory-importer:
     name: OpenTheory→Lean importer (runs the real articles, and proves the gate can go red)

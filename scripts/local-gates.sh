@@ -43,6 +43,8 @@ GATES=(
   "independence-controls|300|bash scripts/check-independence-controls.sh"
   "ratchet-darkness|120|bash scripts/check-ratchet-darkness.sh"
   "lean-orphans|120|bash scripts/check-lean-orphans.sh"
+  "forcing-gadget-tie|120|python3 scripts/check-forcing-gadget-tie.py"
+  "forcing-gadget-tie-red|60|python3 scripts/check-forcing-gadget-tie.py --self-test"
   "no-degraded-felt|120|bash scripts/check-no-degraded-felt.sh"
   "byte-to-felt|120|bash scripts/check-byte-to-felt.sh"
   "p3-rev|60|bash scripts/check-p3-rev.sh"
