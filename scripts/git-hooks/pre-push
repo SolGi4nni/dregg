@@ -57,6 +57,22 @@ fi
 push_tip=''
 while read -r _lref lsha _rref _rsha; do
   [ -n "${lsha:-}" ] || continue
+  # ⚑ A NOTES REF IS NOT A CODE TIP. `refs/notes/*` carries annotations — no manifests,
+  # no source — so "does this resolve from a clean checkout of itself?" has no meaning
+  # for it. The closure check ran anyway and blocked `git push origin refs/notes/commits`,
+  # which is HOW A CORRECTION GETS RECORDED in this repo — `git notes` is what this tree
+  # uses to annotate a commit whose subject turned out wrong, and it cannot rewrite
+  # history to fix one. A gate that blocks the mechanism for recording corrections is
+  # worse than no gate. Measured 2026-07-28 while annotating a commit that had swept
+  # another lane's file into a subject about something else.
+  case "$_lref" in refs/notes/*) continue ;; esac
+  # ⚑ A NOTES REF IS NOT A CODE TIP. `refs/notes/*` carries annotations — no manifests,
+  # no source — so "does this resolve from a clean checkout of itself?" has no meaning
+  # for it. The closure check ran anyway and blocked `git push origin refs/notes/commits`,
+  # which is HOW A CORRECTION GETS RECORDED in this repo. A gate that blocks the
+  # mechanism for recording corrections is worse than no gate. Measured 2026-07-28
+  # while annotating a commit that had swept another lane's file.
+  case "$_lref" in refs/notes/*) continue ;; esac
   case "$lsha" in *[!0]*) push_tip="$lsha" ;; esac
 done <<PUSH_REFS
 $stdin_data
