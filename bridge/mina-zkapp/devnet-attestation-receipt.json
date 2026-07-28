@@ -1,0 +1,18 @@
+{
+  "network": "mina-devnet",
+  "endpoint": "https://api.minascan.io/node/devnet/v1/graphql",
+  "ranAt": "2026-07-28T07:15:20.119Z",
+  "zkAppAddress": "B62qo54w6YftnPHCXTrcEYDcKYwg8CCeW5wiTsW9x8Tp1Hm5BS5xCeD",
+  "attestedRoot": "0x374f281aca58897f95a244e1cf945e30bebf29c555aba596aaf335fd9dfbb4f4",
+  "attestedLeaf": "0x0000000000000000000000000e66ea63c79f63981c39b1cb18946456f35b5936",
+  "acceptTx": "5JubGa2yehQGS7TgWT9ifCV2HmPFQ9Ew9pgK3KnQKuPdLKKuKT8A",
+  "acceptResult": "included; lastAttestedLeaf == the attested leaf",
+  "rootAdvanceTx": "5JtdG1EL7jpXtHPiffsZcbHd2eQVeTLkGi4SC3BYrfTa7NJPyVC9",
+  "advancedRoot": "0x154e1417c79b452cb78ea3cbe843ed3d162bc56537c512ee841a99e09c65364c",
+  "rejectTx": "5JtmftP3JSfYTWrAQSCU1oXZ6BsDo8WdcyqtbiX9bjhBgfr3FXHj",
+  "rejectMechanism": "account-state precondition (dreggRoot) pinned the retired root",
+  "rejectResult": "included and PROCESSED by the network; fee consumed, nonce bumped, zkApp state unchanged",
+  "rejectOnChain": true,
+  "corruptedProofOutcome": "refused: Invalid rich scalar: Proof KChzdGF0ZW1lbnQoKHByb29mX3N0YXRlKChkZWZlcnJlZF92YWx1ZXMoKHBsb25rKChhbHBoYSgoaW5uZXIoMzZmYWQ5MTM1NjE2OGZiYyBkZDAzMDY3MjhhOTEyNmVmKSkpKShiZXRhKDk3YzUyZWFjYzJlZWVjOTQgZWYzNTVlMGE4NGFhZGUxZCkpKGdhbW1hKDA0ZDhlNDI5NDRmODE1MGUgYzg5Zjg2ZjE5ZjUzYjdmOSkpKHpldGEoKGlubmVyKGI3NWNjZDc5Z",
+  "tamperedWitness": "unprovable (constraint system unsatisfiable); no tx exists"
+}

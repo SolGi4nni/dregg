@@ -1,0 +1,23 @@
+{
+  "network": "mina-devnet",
+  "endpoint": "https://api.minascan.io/node/devnet/v1/graphql",
+  "deployedAt": "2026-07-28T07:13:52.766Z",
+  "gitCommit": "0e66ea63c79f63981c39b1cb18946456f35b5936",
+  "zkAppAddress": "B62qo54w6YftnPHCXTrcEYDcKYwg8CCeW5wiTsW9x8Tp1Hm5BS5xCeD",
+  "deployerAddress": "B62qqqmJk56HN9YJmV9hAFZQRuYshGTjr26mbzZY7dbPN4iHynUfDs7",
+  "attestationVkHash": "15990086229449428195652199478086393224646730752932942884262475971185394292035",
+  "zkAppVkHash": "5302519670984547173190284200080041659426793795939996099701086393384665512020",
+  "anchoredRoot": "0x374f281aca58897f95a244e1cf945e30bebf29c555aba596aaf335fd9dfbb4f4",
+  "deployTx": "5JuBT6fJuX4ciV3Nfn831Mqujfhi7VioT2ioSerhiPwR7dbedb5t",
+  "anchorRootTx": "5JtrbadxW6nhomfWBCTfBMKkkC8mWqn6jdyfKk9k2tvMNBqEErsp",
+  "explorer": {
+    "zkApp": "https://minascan.io/devnet/account/B62qo54w6YftnPHCXTrcEYDcKYwg8CCeW5wiTsW9x8Tp1Hm5BS5xCeD",
+    "deployTx": "https://minascan.io/devnet/tx/5JuBT6fJuX4ciV3Nfn831Mqujfhi7VioT2ioSerhiPwR7dbedb5t",
+    "anchorRootTx": "https://minascan.io/devnet/tx/5JtrbadxW6nhomfWBCTfBMKkkC8mWqn6jdyfKk9k2tvMNBqEErsp"
+  },
+  "includedInBlocks": {
+    "deployTx": 539517,
+    "anchorRootTx": 539518
+  },
+  "hashProvenance": "Both transactions were sent by a run that was killed while polling for inclusion, so the script that finally wrote this file took the idempotent skip path and recorded null. The hashes were recovered FROM THE CHAIN by scanning bestChain for zkapp commands with this deployer as fee payer, and both report failureReason=null (applied). Re-checkable with: npm run devnet:tx-status -- <hash>"
+}
