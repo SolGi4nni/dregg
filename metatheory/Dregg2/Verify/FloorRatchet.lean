@@ -76,6 +76,41 @@ EXEMPT, because it is ANTI-floor content and the campaign wants MORE of it, not 
 declaration that REFUTES floor content and ASSUMES none — see `antiFloor`. Writing a new
 refutation never trips the gate; assuming a refuted floor on the way to a negation does.
 
+  * **THE POSITION RULE, 2026-07-27.** That exemption was implemented as "the conclusion is `¬ F …`
+    or `False`, AND no binder carries floor content", and only the second half was ever the rule.
+    The first half taxed every declaration that says something POSITIVE about a floor: its MODEL
+    (`theorem sat : F goodInstance`, or `∃ f, F f`), and its COUNTEREXAMPLE written one conjunct
+    off the blessed spelling (`forked_strand_not_forkFree : forkedLace = … ∧ ¬ StrandForkFree …`).
+    None of those assumes anything — if the floor is false they become UNPROVABLE, not vacuous —
+    and all of them were `binder`-class carriers. `34854bf62` is the tree paying for it in the
+    other direction: a satisfiability witness DELETED partly because naming a floor in a conclusion
+    "is a gate carrier for no benefit". The test is now `assumesFloorContent`: a declaration is a
+    carrier exactly when its claim is CONTINGENT on floor content — every `∀`/`→` domain anywhere,
+    including ones buried inside an `∃` or a conjunct, and both sides of an `↔`, and any occurrence
+    at all of a `prop-body` def or a BUNDLE (those UNFOLD to an implication / have no inhabitant,
+    so a positive claim about one IS the vacuity). `specSatisfiabilityWitness`, `specPoleInConjunct`,
+    `specClaimBuriedArrow` and `specIffLaundry` pin all four edges on every run.
+
+## HONEST FLOORS — the gate stopped taxing the refutability pole (`Verify/FloorPole`)
+
+The refuted set is derived from `¬ F …` theorems, and two very different things have that shape:
+`¬ Poseidon2SpongeCR deployedSponge` (the floor is FALSE where the system stands — gate its
+consumers) and `¬ Lace.Canonical dupLace` (the floor FAILS at a degenerate instance, which is the
+doctrine's REQUIRED refutability check on an honest structural invariant — leave its consumers
+alone). The derivation promoted both, so completing `feedback-prove-the-floor-false` on an honest
+floor reddened the root and cost a pile of baseline entries.
+`docs/UNREFUTED-FLOORS-AUDIT.md` finding 4 records that as the plausible reason 5 of the 8
+unrefuted floors have NO refutability witness, and `ae37dd523` records an author deliberately
+mis-spelling the one pole they did write so the instrument would not see it. An instrument people
+route around measures a tree shaped by the routing.
+
+A floor now leaves the refuted set only via an explicit in-tree `FloorPole.HonestHypothesis`
+declaration, and only when FOUR checks pass — never a sentinel, refuted at a CLOSED instance,
+NOT refuted parametrically, and with a satisfiability witness in the environment. Every failure is
+a hard error naming the missing pole; every success is printed on every root build with both poles.
+It removes nothing gated today (no floor is declared honest as this lands) and it makes the correct
+next move three lines instead of a red root.
+
   * **B4 — the BINDER-ORDER hole, closed 2026-07-25.** The exemption used to accept a `False`
     conclusion whenever the floor was the INNERMOST binder, since `Γ → F → False` IS `Γ → ¬ F`.
     True, and still a hole: ORDER IS A SPELLING THE AUTHOR CONTROLS, so the same soundness claim
@@ -103,7 +138,7 @@ hard-errors — never passes quietly — unless (a) the environment holds ≥ 50
 (whole-tree scale), (b) every sentinel floor resolves, (c) every sentinel the tree refutes is
 REDISCOVERED as refuted by the derivation above, (d) the `prop-body` keystone gates are
 rediscovered, (e) every sentinel BUNDLE is rediscovered as a floor-carrying structure, and
-(f) all eight `antiFloor` `FloorRatchetSpecimens` classify exactly as documented, and (g) the
+(f) all twelve `antiFloor` `FloorRatchetSpecimens` classify exactly as documented, and (g) the
 DERIVED refuted inline-injectivity signature set is non-empty and its five specimens split exactly
 as documented. It shares (b)-(d) with `#floor_census` so the two instruments cannot drift apart.
 
@@ -140,13 +175,22 @@ import Dregg2.Verify.FloorRatchetBaselineInline
 import Dregg2.Verify.InjSpelling
 
 set_option autoImplicit false
+-- `surface` is one long `do` block and the do-elaborator recurses once per statement; the
+-- honest-floor derivation put it near the default 512. Same budget note as `Verify/FloorCensus`.
+set_option maxRecDepth 8000
 
 namespace Dregg2.Verify.FloorRatchet
 
 open Lean Meta Elab Command
 open Dregg2.Verify.FloorCensus
   (ourModule moduleOf isInternalName headConst? notArg? injShape injShapeAnd
-   sentinelFloors sentinelPropBody)
+   sentinelFloors sentinelPropBody negWitnesses posWitnesses)
+
+/-- The marker constant `Dregg2.Verify.FloorPole.HonestHypothesis`, named by raw `Name` rather
+than imported: `Verify/FloorPole` is imported by the TREE (next to the floors it describes) and
+this module is imported by the root, so a real import here would be a cycle. Everything else in
+this file resolves its subjects out of the environment the same way. -/
+def honestMarker : Name := `Dregg2.Verify.FloorPole.HonestHypothesis
 
 /-- FAIL-CLOSED scale gate: whole-tree is ~915k constants. Below this the environment is
 partial and every count reads low — which is indistinguishable from progress. -/
@@ -195,7 +239,11 @@ def sentinelBundles : List Name :=
 
 /-- The `antiFloor` SELF-TEST specimens and their required verdicts (`true` = must be exempt).
 Each name is a `Prop`-valued def in `Dregg2.Verify.FloorRatchetSpecimens` whose VALUE is a
-declaration TYPE; `surface` classifies the value and hard-errors if the verdict moved. -/
+declaration TYPE; `surface` classifies the value and hard-errors if the verdict moved.
+
+The first eight are the B1/B2/B3/B4 record: they were all EXEMPT under some earlier spelling of the
+rule and each one is a laundering route that shipped. The last four pin the POSITION rule — that a
+floor MENTIONED in a claim is not a floor ASSUMED — at both of its edges. -/
 def specimenVerdicts : List (Name × Bool) :=
   [ (`Dregg2.Verify.FloorRatchetSpecimens.specRefutation, true)
   , (`Dregg2.Verify.FloorRatchetSpecimens.specRefutationManyHyp, true)
@@ -204,7 +252,12 @@ def specimenVerdicts : List (Name × Bool) :=
   , (`Dregg2.Verify.FloorRatchetSpecimens.specB3BundleLaundry, false)
   , (`Dregg2.Verify.FloorRatchetSpecimens.specB4UncurriedShape, false)
   , (`Dregg2.Verify.FloorRatchetSpecimens.specB4BinderOrderLaundry, false)
-  , (`Dregg2.Verify.FloorRatchetSpecimens.specB4NegOtherFloorReordered, false) ]
+  , (`Dregg2.Verify.FloorRatchetSpecimens.specB4NegOtherFloorReordered, false)
+  -- the POSITION rule (2026-07-27): a floor MENTIONED in a claim is not a floor ASSUMED
+  , (`Dregg2.Verify.FloorRatchetSpecimens.specSatisfiabilityWitness, true)
+  , (`Dregg2.Verify.FloorRatchetSpecimens.specPoleInConjunct, true)
+  , (`Dregg2.Verify.FloorRatchetSpecimens.specClaimBuriedArrow, false)
+  , (`Dregg2.Verify.FloorRatchetSpecimens.specIffLaundry, false) ]
 
 /-- The INLINE-INJECTIVITY SELF-TEST specimens and their required verdicts (`true` = must be
 GATED). The split this pins is the one thing about the inline tooth that can go wrong invisibly:
@@ -230,12 +283,81 @@ def specimens : NameSet :=
   injSpecimenVerdicts.foldl (fun a (n, _) => a.insert n)
     (specimenVerdicts.foldl (fun a (n, _) => a.insert n) {})
 
+/-- A CLAIM position, scanned deeply. Floor content in a positive claim (`theorem sat : F good`)
+assumes nothing — the theorem does not become vacuous if `F` is false, it becomes UNPROVABLE. But
+an implication buried inside a claim (`∃ p, F h → p = q`, `Nonempty (F h → C)`) is an assumption
+wearing a claim's clothes, so every `∀`/`→` DOMAIN anywhere under here still counts.
+
+`hidden` — floor-carrying `Prop` defs and floor BUNDLES — counts wherever it appears, claim
+position included. That asymmetry is the whole point of the split: `descriptorRefines d` UNFOLDS to
+`Poseidon2SpongeCR hash → …`, so CONCLUDING one is concluding an implication whose antecedent is
+refuted, and that is the vacuity itself rather than a claim about it. A floor NAME has no such
+antecedent hiding in it. -/
+partial def claimAssumes (floorC hidden : Name → Bool) (e : Expr) : Bool :=
+  match e with
+  | .forallE _ d b _ =>
+    d.foldConsts false (fun c a => a || floorC c || hidden c)
+      || claimAssumes floorC hidden b
+  | .lam _ d b _ => claimAssumes floorC hidden d || claimAssumes floorC hidden b
+  | .app f a => claimAssumes floorC hidden f || claimAssumes floorC hidden a
+  | .letE _ t v b _ =>
+    claimAssumes floorC hidden t || claimAssumes floorC hidden v || claimAssumes floorC hidden b
+  | .mdata _ b => claimAssumes floorC hidden b
+  | .proj _ _ b => claimAssumes floorC hidden b
+  | .const c _ => hidden c
+  | _ => false
+
+/-- **Is this declaration's claim CONTINGENT on floor content?** The carrier test, and the
+complement of the anti-floor exemption below.
+
+Reading the type as `∀ x₁:A₁ … xₙ:Aₙ, C`: any `Aᵢ` carrying floor content is an assumption, whatever
+its position in the telescope (that is B4 — binder ORDER is a spelling the author controls and is
+never consulted). Then `C` is decomposed by the connectives that actually carry a hypothesis
+inward:
+
+  * `¬ p` — NOT contingent. Proving a negation is refuting `p`, not assuming it. This is what makes
+    a refutability pole free, in EVERY spelling: `¬ F c`, `A ∧ ¬ F c`, `∃ x, ¬ F x`.
+  * `∧` / `∨` / `∃` — recurse; a floor's model or counterexample is routinely stated inside one,
+    and `crossScheme_fails_on_weak_schemes` had to be written around this to keep the root green.
+  * `↔` — BOTH sides are antecedents of each other, so both are assumption positions. `F f ↔ secure
+    f` has a vacuous forward direction and must not be exempt.
+  * anything else — `claimAssumes`, which still catches an implication buried in a claim.
+
+⚑ The only declarations this exempts that the old rule gated are ones whose floor mentions are ALL
+in claim position: satisfiability witnesses, poles stated in a conjunct or an `∃`, bridge claims.
+None of them is vacuous under any reading, and none of them can be used to launder a guarantee —
+a guarantee CONTINGENT on a floor has that floor in an antecedent by definition, and every
+antecedent position above is checked. -/
+partial def assumesFloorContent (floorC hidden : Name → Bool) (e : Expr) : Bool :=
+  match e with
+  | .forallE _ d b _ =>
+    d.foldConsts false (fun c a => a || floorC c || hidden c)
+      || assumesFloorContent floorC hidden b
+  | .mdata _ b => assumesFloorContent floorC hidden b
+  | .app (.const ``Not _) _ => false
+  | .app (.app (.const ``And _) l) r =>
+    assumesFloorContent floorC hidden l || assumesFloorContent floorC hidden r
+  | .app (.app (.const ``Or _) l) r =>
+    assumesFloorContent floorC hidden l || assumesFloorContent floorC hidden r
+  | e =>
+    if e.isAppOfArity ``Exists 2 then
+      match e.getAppArgs[1]! with
+      | .lam _ _ b _ => assumesFloorContent floorC hidden b
+      | _ => claimAssumes floorC hidden e
+    else if e.isAppOfArity ``Iff 2 then
+      let args := e.getAppArgs
+      args[0]!.foldConsts false (fun c a => a || floorC c || hidden c)
+        || args[1]!.foldConsts false (fun c a => a || floorC c || hidden c)
+    else claimAssumes floorC hidden e
+
 /-- ANTI-floor content, exempt from the gate: a declaration that REFUTES floor content and
-ASSUMES none. Precisely, reading the type as `∀ x₁:A₁ … xₙ:Aₙ, C`:
+ASSUMES none. Precisely — and read the ⚑ block at the bottom before this line, which records how
+the second condition was dropped in 2026-07-27 — the rule USED to be, over `∀ x₁:A₁ … xₙ:Aₙ, C`:
 
   **NO `Aᵢ` carries floor content, AND `C` is `¬ F …` for floor content `F` (or `C = False`).**
 
-Two conditions, and the FIRST is the one that does the work. "Concludes a negation" is a
+Two conditions, and the FIRST is the one that does the work — so much so that the second turned
+out to be doing only harm, and is gone. "Concludes a negation" is a
 conclusion SHAPE, not a refutation test; what makes a declaration a refutation is that it reaches
 that conclusion WITHOUT ASSUMING the thing it refutes. A declaration that assumes `Floor` and
 concludes `False` is not a refutation — "if this false thing were true, anything follows" is the
@@ -287,28 +409,26 @@ removing it would be a silent behaviour change the day a conclusion grows a non-
 
 Read off the TYPE syntactically — no naming convention, no proof term, no telescope
 instantiation. Keeping it type-only matters: a gate that read proof terms would classify the same
-statement differently depending on how it was proved. -/
-def antiFloor (content : Name → Bool) (ty : Expr) : Bool := Id.run do
-  -- The conclusion first, and CHEAPLY. This runs on every one of our ~300k declarations on every
-  -- root build; the spine walk below folds the constants of each binder domain, so it must be
-  -- reached only by the ~250 whose conclusion could possibly qualify.
-  let concl := ty.getForallBody
-  let neg? : Option Name := match notArg? concl with
-    | some arg => headConst? arg
-    | none     => none
-  let isNeg := match neg? with | some h => content h | none => false
-  let isFalse := neg?.isNone && concl.isAppOf ``False
-  unless isNeg || isFalse do return false
-  -- Walk the ∀-spine and reject on the FIRST binder domain that carries floor content — position
-  -- in the telescope is not consulted, so reordering hypotheses cannot change the verdict. Bodies
-  -- carry loose bvars; `foldConsts` does not care. `let`/`abbrev`/notation indirection is covered
-  -- too: an alias for a floor is itself a floor-carrying `Prop` def, so the joint fixpoint has
-  -- already put it in `content` and `foldConsts` sees the alias's own constant.
-  let mut t := ty
-  while t.isForall do
-    if t.bindingDomain!.foldConsts false (fun c a => a || content c) then return false
-    t := t.bindingBody!
-  return true
+statement differently depending on how it was proved.
+
+⚑ **THE CONCLUSION SHAPE STOPPED BEING A WHITELIST (2026-07-27).** The rule above is stated as two
+conditions, and it was IMPLEMENTED as "the conclusion is one of two blessed shapes, AND no binder
+carries floor content". The first condition was doing work it should never have done. A declaration
+whose only floor mention is in a POSITIVE claim — `theorem sat : Poseidon2SpongeCR refSponge`, the
+SATISFIABLE pole; `theorem t : ∃ f, F f`, the same thing existentially; `forked_strand_not_forkFree
+: forkedLace = … ∧ ¬ StrandForkFree forkedLace 9`, a refutability pole one conjunct off the blessed
+spelling — assumes NOTHING and is not vacuous under any reading, and all three were CARRIERS. The
+tree paid for it: `34854bf62` deleted a satisfiability witness partly because naming a floor in a
+conclusion "is a gate carrier for no benefit", which is the gate teaching authors to delete their
+anti-vacuity content.
+
+So the test is now the SECOND condition alone, applied to every position, by
+`assumesFloorContent`: **a declaration is a carrier exactly when its claim is CONTINGENT on floor
+content.** Positive claims about a floor are not; implications buried anywhere in the conclusion
+still are. `antiFloor` survives as its complement so the eight specimen verdicts — the record of
+what B1/B2/B3/B4 cost — keep testing the LIVE predicate rather than a retired one. -/
+def antiFloor (floorC hidden : Name → Bool) (ty : Expr) : Bool :=
+  !assumesFloorContent floorC hidden ty
 
 /-- A declaration that violates (or is grandfathered under) the ratchet. -/
 structure Carrier where
@@ -319,6 +439,8 @@ structure Carrier where
 
 structure Surface where
   floors    : Array Name           -- refuted floors, DERIVED from the environment
+  honest    : Array (Name × Name × Name × Name)
+    -- floors DECLARED honest and CHECKED as such: (floor, declaration, ¬-pole, model)
   propBody  : Array Name           -- Prop defs carrying a floor in their BODY (joint fixpoint)
   bundles   : Array Name           -- structures with a floor-carrying FIELD (joint fixpoint)
   carriers  : Array Carrier        -- sorted by name
@@ -412,6 +534,87 @@ def surface : MetaM Surface := do
         genuine regression — either way the gate would defend a smaller floor set than the \
         tree actually refutes. Refusing to run."
 
+  -- ===== HONEST floors: the refutability pole stops costing a red root (`Verify/FloorPole`) ====
+  -- A `¬ F c` at a DEGENERATE instance and a `¬ F deployed` have the same type shape, so the
+  -- derivation above promotes both and gates every consumer of both. For a floor that is
+  -- satisfiable AND refutable that is backwards: completing the doctrine's own check turns the
+  -- floor's honest consumers into build errors, which is the measured reason 5 of 8 unrefuted
+  -- floors have no pole and one author deliberately mis-spelled the one they wrote (`ae37dd523`).
+  -- A floor leaves the set ONLY by an explicit in-tree declaration that passes all four checks
+  -- below; every failure is a hard error naming the missing pole, never a silent drop.
+  let mut honestDecl : Std.HashMap Name Name := {}
+  for nm in ours do
+    let some ci := env.find? nm | continue
+    let b := ci.type.getForallBody
+    if b.isAppOfArity honestMarker 1 then
+      if let some h := headConst? b.appArg! then
+        if !honestDecl.contains h then honestDecl := honestDecl.insert h nm
+  let mut honest : NameSet := {}
+  let mut honestRec : Array (Name × Name × Name × Name) := #[]
+  unless honestDecl.isEmpty do
+    let honestSet : NameSet := honestDecl.fold (fun a f _ => a.insert f) {}
+    let mut negClosed : Std.HashMap Name Name := {}
+    let mut negParam : Std.HashMap Name Name := {}
+    let mut satWit : Std.HashMap Name Name := {}
+    for nm in ours do
+      let some ci := env.find? nm | continue
+      let .thmInfo _ := ci | continue
+      unless ci.type.getUsedConstants.any honestSet.contains do continue
+      let (negs, pos) ← forallTelescope ci.type fun xs body => do
+        let negs := negWitnesses honestSet body #[]
+        -- A MODEL must be proved from data alone: any propositional binder makes it a CONDITIONAL
+        -- discharge, and a conditional model is not evidence that the obligation is inhabitable.
+        let mut condHyp := false
+        for x in xs do
+          if ← Meta.isProp (← inferType x) then condHyp := true
+        return (negs, if condHyp then #[] else posWitnesses honestSet false body #[])
+      for (f, closed) in negs do
+        if closed && !negClosed.contains f then negClosed := negClosed.insert f nm
+        if !closed && !negParam.contains f then negParam := negParam.insert f nm
+      for (f, parametric) in pos do
+        if !parametric && !satWit.contains f then satWit := satWit.insert f nm
+    for (f, decl) in honestDecl.toList do
+      -- (1) NEVER a named sentinel. These are the deployed-parameter crypto floors the campaign
+      -- exists to delete, and "is the refuted instance the deployed one" is exactly the semantic
+      -- question no type-shape check can answer — so for them the answer is hard-wired to NO.
+      if sentinelFloors.any (·.1 == f) then
+        throwError "FLOOR-RATCHET FAIL-CLOSED: {decl} declares the SENTINEL floor {f} honest. \
+          A named sentinel can never be declared honest — it is a deployed-parameter crypto floor \
+          this tree proves false, and the fail-closed sentinel check would refuse the run anyway. \
+          Port its consumers or refute it; do not relabel it."
+      unless floors.contains f do
+        throwError "FLOOR-RATCHET FAIL-CLOSED: {decl} declares {f} honest, but {f} is not a \
+          refuted floor in this environment — nothing promotes it and the declaration gates \
+          nothing. Either it is not injectivity-shaped/sentinel-named (so it was never a \
+          candidate), or its refutability pole is missing or was deleted. The honest state for \
+          such a floor is UNREFUTED, which the census already reports. Delete the declaration, or \
+          write the pole it is claiming exists."
+      -- (4) a PARAMETRIC refutation says the floor fails at EVERY instance. That is not
+      -- "refutable", that is FALSE, and its consumers are vacuous however they are labelled.
+      if let some pw := negParam.get? f then
+        throwError "FLOOR-RATCHET FAIL-CLOSED: {decl} declares {f} honest, but {pw} refutes it \
+          PARAMETRICALLY — for arbitrary arguments, not at one degenerate instance. A floor false \
+          everywhere is not an honest hypothesis with a counterexample; it is a false hypothesis, \
+          and every consumer of it is vacuous. Port them."
+      -- (2) the refutability pole it is claiming
+      let some nw := negClosed.get? f
+        | throwError "FLOOR-RATCHET FAIL-CLOSED: {decl} declares {f} honest with no REFUTABILITY \
+            pole in the environment: no theorem proves `¬ {f} …` at a closed instance. Declaring \
+            a floor honest is declaring that both poles exist; write the counterexample."
+      -- (3) the model. A refutation with no inhabitant is a vacuity bomb, not an honest
+      -- obligation — the finding `ae37dd523` landed against `CrossSchemeSameOpening`.
+      let some sw := satWit.get? f
+        | throwError "FLOOR-RATCHET FAIL-CLOSED: {decl} declares {f} honest with no SATISFIABILITY \
+            witness in the environment: nothing CLAIMS `{f} …` at an exhibited instance while \
+            assuming no floor content. An obligation with consumers and no inhabitant is \
+            indistinguishable from a vacuity bomb — every consumer is true for free. Exhibit a \
+            model, at deployed shape and not at an escape hatch."
+      honest := honest.insert f
+      honestRec := honestRec.push (f, decl, nw, sw)
+  unless honest.isEmpty do
+    floorArr := floorArr.filter (fun f => !honest.contains f)
+    floors := floorArr.foldl (·.insert ·) {}
+
   -- ===== the JOINT `prop-body` × `bundle` fixpoint =====
   -- `prop-body`: `def … : Prop := Floor … → …` — the floor is in the def's VALUE, so its users
   -- carry no floor binder.
@@ -486,7 +689,11 @@ def surface : MetaM Surface := do
         floor-carrying. That is a WIN; delete this name from `sentinelBundles` in the same \
         commit as the port, and re-emit the baseline to bank the carriers that fell with it.\n\
         Check which by reading the structure's fields. Refusing to run until then."
-  let content : Name → Bool := fun c => floors.contains c || pb.contains c || bn.contains c
+  -- The SPLIT the position rule needs: a floor NAME assumes nothing in a claim position, a
+  -- floor-carrying `Prop` def or BUNDLE assumes something wherever it appears (it UNFOLDS to an
+  -- implication / has no inhabitant). See `assumesFloorContent`.
+  let floorNames : Name → Bool := fun c => floors.contains c
+  let hiddenContent : Name → Bool := fun c => pb.contains c || bn.contains c
   -- (f) the exemption predicate must still classify its eight specimens as documented. A rule
   -- that degenerates to "everything is a refutation" exempts the tree and passes forever; one
   -- that degenerates the other way makes writing a refutation a build error. Neither is visible
@@ -498,7 +705,7 @@ def surface : MetaM Surface := do
           the exemption predicate is running unchecked. Refusing to run."
     let .defnInfo sdi := sci
       | throwError "FLOOR-RATCHET FAIL-CLOSED: antiFloor specimen {spec} is not a def."
-    let got := antiFloor content sdi.value
+    let got := antiFloor floorNames hiddenContent sdi.value
     unless got == wantExempt do
       throwError "FLOOR-RATCHET FAIL-CLOSED: antiFloor specimen {spec} classified \
         {(if got then "EXEMPT" else "GATED")}, expected \
@@ -549,18 +756,8 @@ def surface : MetaM Surface := do
     if floors.contains nm then continue
     if specimens.contains nm then continue
     let some ci := env.find? nm | continue
-    if antiFloor content ci.type then
-      -- ⚑ `antiFloor` reads floor content BY NAME, and `Function.Injective` is not a name in that
-      -- set. So a declaration binding an INLINE-spelled refuted floor and concluding `False` (or
-      -- `¬ SomeOtherFloor …`) walks straight out of the exemption — the B1/B2 laundry, one
-      -- spelling over, and it would have shipped inside the very tooth that closes the spelling
-      -- hole. The exemption is honoured only once the inline classifier has had its look; a real
-      -- refutation (`∀ D, ¬ Function.Injective D`) binds no injectivity and is unaffected, which
-      -- `specInjRefutationOfInline` pins on every run.
-      match ← InjSpelling.classify injSigs injMemo ci.type with
-      | some fl => carriers := carriers.push ⟨nm, fl, "inj-spelled"⟩
-      | none    => pure ()
-      continue
+    -- IDENTITY classes first: a floor-carrying `Prop` def / STRUCTURE is a carrier by what it IS,
+    -- and its own type (`∀ …, Prop`, `Sort _`) mentions nothing.
     if pb.contains nm then
       carriers := carriers.push ⟨nm, nm, "prop-body"⟩
       continue
@@ -586,27 +783,41 @@ def surface : MetaM Surface := do
         , if ph.isNone && pb.contains c then some c else ph
         , if bh.isNone && bn.contains c then some c else bh
         , inj || c == ``Function.Injective )
-    if let some f := floorHit then
-      carriers := carriers.push ⟨nm, f, "binder"⟩
-    else if let some f := pbHit then
-      carriers := carriers.push ⟨nm, f, "propdef-user"⟩
-    else if let some f := bnHit then
-      carriers := carriers.push ⟨nm, f, "bundle-user"⟩
-    else if injSeen then
-      -- ⚑ THE INLINE SPELLING. A `Function.Injective f` HYPOTHESIS at a signature this tree
-      -- refutes is the same vacuity as a named floor binder; at any other signature it may be
-      -- perfectly true (a widening encoding, a constructor, a parametric `β → ℤ`) and gating it
-      -- would be noise. The split is decided by `Verify/InjSpelling`, from in-tree refutations.
-      match ← InjSpelling.classify injSigs injMemo ci.type with
-      | some fl => carriers := carriers.push ⟨nm, fl, "inj-spelled"⟩
-      | none =>
-        shapeLeak := shapeLeak + 1
-        for k in ← InjSpelling.residualKeys injSigs ci.type do
-          injResid := injResid.insert k ((injResid.getD k 0) + 1)
+    -- Cheap exit for the ~99% of declarations that mention no content at all, so the structural
+    -- position walk below runs on the few thousand that do rather than on every declaration.
+    if floorHit.isNone && pbHit.isNone && bnHit.isNone && !injSeen then continue
+    -- ⚑ MENTIONING IS NOT ASSUMING. The named classes fire only when the claim is CONTINGENT on
+    -- the content — see `assumesFloorContent`. A satisfiability witness, or a refutability pole in
+    -- a conjunct or an `∃`, mentions a floor and assumes nothing, and was a carrier under the old
+    -- whole-type test purely because the exemption keyed on TWO blessed conclusion shapes.
+    let named? : Option (Name × String) :=
+      if !assumesFloorContent floorNames hiddenContent ci.type then none
+      else if let some f := floorHit then some (f, "binder")
+      else if let some f := pbHit then some (f, "propdef-user")
+      else if let some f := bnHit then some (f, "bundle-user")
+      else none
+    match named? with
+    | some (f, cls) => carriers := carriers.push ⟨nm, f, cls⟩
+    | none =>
+      if injSeen then
+        -- ⚑ THE INLINE SPELLING. A `Function.Injective f` HYPOTHESIS at a signature this tree
+        -- refutes is the same vacuity as a named floor binder; at any other signature it may be
+        -- perfectly true (a widening encoding, a constructor, a parametric `β → ℤ`) and gating it
+        -- would be noise. The split is decided by `Verify/InjSpelling`, from in-tree refutations.
+        -- It runs even for declarations the named classes exempt: `antiFloor` reads content BY
+        -- NAME and `Function.Injective` is not one, so an inline-spelled refuted floor bound by a
+        -- declaration that concludes `False` is the B1/B2 laundry one spelling over.
+        match ← InjSpelling.classify injSigs injMemo ci.type with
+        | some fl => carriers := carriers.push ⟨nm, fl, "inj-spelled"⟩
+        | none =>
+          shapeLeak := shapeLeak + 1
+          for k in ← InjSpelling.residualKeys injSigs ci.type do
+            injResid := injResid.insert k ((injResid.getD k 0) + 1)
   let sorted := carriers.qsort (fun a b => a.name.toString < b.name.toString)
   let residArr := injResid.toList.toArray.qsort (fun a b => a.2 > b.2 || (a.2 == b.2 && a.1 < b.1))
   let sigKeys ← injSigs.mapM (fun s => do pure s!"{← InjSpelling.sigKey s.dom s.cod}  [{s.floor}]")
   return { floors := floorArr.qsort (fun a b => a.toString < b.toString)
+           honest := honestRec
            propBody := pbArr, bundles := bnArr, carriers := sorted
            injSigs := sigKeys.qsort (fun a b => a < b), shapeLeak, injResid := residArr, total }
 
@@ -690,6 +901,15 @@ def check (baseline : Array String) : MetaM Unit := do
          the win), `!` only to re-bootstrap the whole baseline.\n\
       \n{paste}\n"
   let byCls := fun k => (s.carriers.filter (fun c => c.cls == k)).size
+  -- ⚑ EVERY honest-floor demotion is printed on EVERY root build, with both of the poles it rode
+  -- in on. A gate that quietly stopped defending a floor would read as a smaller number, which is
+  -- indistinguishable from a port — so it is never quiet.
+  unless s.honest.isEmpty do
+    let hlines := String.intercalate "\n" (s.honest.toList.map fun (f, d, n, m) =>
+      s!"  {f}\n    declared by {d}\n    refutability pole {n}\n    model {m}")
+    logInfo s!"floor-ratchet: {s.honest.size} floor(s) DECLARED HONEST and checked \
+      (satisfiable + refutable at a closed instance + not a sentinel + not parametrically \
+      refuted), so their consumers are NOT gated:\n{hlines}"
   logInfo s!"floor-ratchet OK — {s.carriers.size} grandfathered carriers over \
     {s.floors.size} refuted floors ({s.propBody.size} prop-body defs, {s.bundles.size} floor \
     bundles); binder {byCls "binder"} + prop-body {byCls "prop-body"} + propdef-user \
@@ -730,9 +950,13 @@ def report : MetaM Unit := do
     let n := (s.carriers.filter (fun c => c.floor == b)).size
     blines := blines.push s!"  {n}\t{b}"
   let byCls := fun k => (s.carriers.filter (fun c => c.cls == k)).size
+  let hlines := String.intercalate "\n" (s.honest.toList.map fun (f, d, n, m) =>
+    s!"  {f}\tby {d}\tpole {n}\tmodel {m}")
   logInfo s!"floor-ratchet DERIVED SURFACE\n\
     refuted floors ({s.floors.size}), with carrier counts:\n\
     {String.intercalate "\n" lines.toList}\n\
+    floors DECLARED HONEST ({s.honest.size}) — refutable at a degenerate instance AND satisfiable, \
+    so their consumers are not vacuous and are not gated (`Verify/FloorPole`):\n{hlines}\n\
     floor BUNDLES ({s.bundles.size}) — structures with a floor-carrying FIELD, with the number \
     of declarations reached through each:\n\
     {String.intercalate "\n" blines.toList}\n\

@@ -15,10 +15,32 @@ Passes (all READ-ONLY over the imported environment):
   multi-target variant) is a candidate floor. A hand-maintained list is how the Python ruler
   went blind; the shape is the fact.
 * **Pass 0b — REFUTED-ness is mechanical.** A candidate `F` is refuted iff the environment
-  holds a theorem whose telescope body is `¬ F …`, or whose body is `False` with a binder of
+  holds a theorem whose telescope body PROVES `¬ F …`, or whose body is `False` with a binder of
   type `F …`. The `_false_babyBear` naming convention is never consulted — the TYPE is.
   A refutation whose refuted instance is CLOSED (no telescope fvars in `F`'s arguments) is
   flagged `instance`; an open one is `parametric`.
+  ⚑ **v3: NESTED refutations count.** v2 ran `notArg?` on the telescope body and nothing else, so
+  a `¬ F …` sitting in a CONJUNCT was invisible and the refuted/unrefuted split was a LOWER
+  BOUND on refutedness. Measured: `StrandIntegrity.forked_strand_not_forkFree` proves
+  `forkedLace = insertOverwrite k0b [k0a] ∧ ¬ StrandForkFree forkedLace 9` — an in-tree
+  refutation at a chosen instance, the same standard by which `MacaroonDischarge.BindingHashCR`
+  is recorded refuted — and v2 called `StrandForkFree` UNREFUTED. `negWitnesses` now descends
+  `∧`, `∃` and further `∀`s (all of which really do PROVE the enclosed negation) and never `∨`
+  (a disjunct is not proved). The `via` column says `top` or `nested`, so the correction's size
+  is readable off the report instead of being folded silently into a smaller headline.
+* **Pass 0c — the PROVABLE and SATISFIABLE arms (census v3).** `feedback-prove-the-floor-false`
+  asks three questions of a floor — is it SATISFIABLE, is it REFUTABLE, is it NOT PROVABLE — and
+  v2 measured exactly one of them. A floor that is secretly a THEOREM and a floor that is a
+  genuine hardness assumption reported the identical word, `UNREFUTED`. Measured:
+  `Crypto.Segmentation.SplitUniqueAt` is proved four lines below its own definition
+  (`split_unique_generic_packaged`) and v2 scored it beside `WideBindingCR`. Pass 0c is Pass 0b's
+  mirror: a theorem that ASSUMES NOTHING (no propositional binder at all) and CLAIMS `F …` is a
+  witness for `F`, and it is a PROVABLE witness when `F`'s arguments are BARE telescope fvars (the
+  floor holds for ARBITRARY arguments, so assuming it buys nothing) and a SATISFIABLE witness when
+  they are constructed or the claim sits under an `∃` (a MODEL, which is anti-vacuity content the
+  tree wants). A conditional discharge — `(hp : IsPerm f) : Poseidon2SpongeCR f` — is reported as
+  NEITHER pole rather than as a false one.
+  A `PROVABLE` floor is not a floor and belongs out of the candidate set, not refuted.
 * **Pass 1b — floor in a Prop-def BODY (census v2).** `def … : Prop := Floor … → …` carries a
   floor with NO floor binder in its type — invisible to every binder test (the
   `descriptorRefines`/`descriptorComplete`/`ClosedLogExtract` keystone shape). Pass 1b
@@ -30,6 +52,16 @@ Passes (all READ-ONLY over the imported environment):
   pi, or in the conclusion) are class `embedded` (flags `emb-binder`/`emb-conc`/`neg-conc`;
   a recorded refutation witness is flagged `refut-witness` and is anti-floor content, not
   port surface). v1 silently DROPPED all of these.
+* **Pass 1u — the UNREFUTED floors' carrier exposure (census v3).** ⚑ v2's carrier set was built
+  from `refutedBy`, so EVERY unrefuted floor reported `carriers = 0` — and that zero meant "not
+  measured", not "nothing depends on it". The instrument was blind to exposure on exactly the
+  floors everything rests on once the refuted ones are deleted. Measured by hand for
+  `docs/UNREFUTED-FLOORS-AUDIT.md`: `Authority.Blocklace.Lace.Canonical` carries **8**
+  declarations across **5** modules (consensus safety, CRDT convergence, checkpoint recovery,
+  catchup) and had never been counted. Pass 1u runs the same binder scan and the same proof-term
+  classification over the UNREFUTED candidates and emits `UCARRIER` records, with poles marked:
+  a site that is the floor's own refutability or satisfiability witness is flagged
+  `refut-witness`/`sat-witness` and is anti-vacuity content, NOT exposure.
 * **Pass 1 — CARRIER census.** For every constant in our modules: the refuted floors bound in
   HYPOTHESIS position of its elaborated type (section `variable`s are already `forallE`s here
   — no scope emulation), classified against the proof term:
@@ -84,7 +116,11 @@ tree refutes is seen as refuted by Pass 0b. A count that reads lower must come f
 port, never from an instrument that quietly measured less.
 
 ## Output (machine-readable, TSV, one record per line)
-  `FLOOR   name refuted witness closed? named?`
+  `FLOOR   name status witness closed? named? via provable-by satisfiable-by`
+  `PROVABLE floor witness` — an in-tree PARAMETRIC proof of the floor. Not a floor at all.
+  `SATWIT  floor witness` — an in-tree MODEL of the floor (closed instance, or under `∃`).
+  `UCARRIER name module file startLine endLine kind class conc floors flags` — exposure of an
+    UNREFUTED floor (v2 reported none of these; the count was structurally zero).
   `CARRIER name module file startLine endLine kind class conc level floors flags`
   `BUNDLE  struct` / `PROJ proj struct floor`
   `SHAPE   name module file line injective-head`
@@ -99,6 +135,11 @@ stated assumptions are not provably false in-tree" — not a verified system.
 import Lean
 
 set_option autoImplicit false
+-- `run` is one long `do` block (nine passes over the same environment, sharing a dozen locals),
+-- and the do-elaborator recurses once per statement. v3's two extra passes pushed it past the
+-- default 512. Splitting it would mean threading those locals through a function boundary for no
+-- gain in readability; the limit is an elaborator budget, not a code smell.
+set_option maxRecDepth 8000
 
 namespace Dregg2.Verify.FloorCensus
 
@@ -161,6 +202,24 @@ def sentinelFloors : List (Name × Bool) :=
   , (`Dregg2.Apps.QueueRoot.PairCR, true)
   , (`Dregg2.Apps.QueueRoot.LenBindCR, true)
   , (`Dregg2.Authority.MacaroonDischarge.BindingHashCR, false)
+  -- ⚑ THE CROSS-REPLICA CANONICITY FAMILY (2026-07-28), handed over by the LaceMerge and
+  -- chain-safety lanes. These are STRUCTURAL invariants, not hardness assumptions, and all three
+  -- are refuted in-tree — but every one of those refutations sits INSIDE A CONJUNCTION
+  -- (`Consensus.Safety.crossNodeCanonical_is_the_gap` is an eight-way `∧` carrying
+  -- `¬ CrossNodeCanonical node1 forkNode` and `¬ LeaderIdPins rg1 rg1Forged`), so the v2 rule —
+  -- `notArg?` on the telescope body and nothing else — saw NONE of them. They are the live
+  -- specimen for Pass 0b's v3 descent, and the census reports each as `refuted … nested`.
+  --
+  -- ⚑ ALL THREE ARE PRESENCE-REQUIRED (`false`), INCLUDING `LeaderIdPins`, WHICH IS REFUTED.
+  -- The `Bool` is shared with `#floor_ratchet`'s gate (c), and the RATCHET still derives its
+  -- refuted set from a TOP-LEVEL `¬` — deliberately, because extending it promotes this whole
+  -- family plus `StrandIntegrity.StrandForkFree` and gates their honest carriers, which is a
+  -- degradation dressed as a tooth. `true` here would then fail the ratchet CLOSED on a floor it
+  -- cannot see. The sequence that makes `true` correct is: extend the gate's scan, and declare
+  -- these floors honest (`Verify/FloorPole`, both poles checked) in the same commit.
+  , (`Dregg2.Distributed.LaceMerge.CrossCanonical, false)
+  , (`Dregg2.Consensus.Safety.CrossNodeCanonical, false)
+  , (`Dregg2.Proof.CordialMiners.LeaderIdPins, false)
   ]
 
 /-- Pass 1b SENTINELS: known load-bearing `Prop`-def-BODY floor carriers the v2 census must
@@ -292,6 +351,68 @@ def injShapeAnd (t : Expr) : MetaM Bool := do
       return false
   catch _ => return false
 
+/-! ## Pass 0b/0c — witnesses in NESTED position
+
+A statement body is not one claim; it is a tree of them, and PROVING the tree proves the leaves
+that the connective actually carries. `∧` carries both sides, `∃` carries its body at the exhibited
+witness, `∀`/`→` carries its body under the binder. `∨` carries NEITHER side — a proof of `A ∨ B`
+is not a proof of `B` — so the descent stops there, in the direction that under-reports rather
+than the one that invents refutations. -/
+
+/-- `¬ F …` for a candidate `F`, PROVED anywhere the connectives carry it. Each hit records
+`closed?`: `F`'s arguments hold no telescope fvar and no loose bvar, i.e. the refutation names a
+CONCRETE instance (`instance`) rather than every instance (`parametric`). -/
+partial def negWitnesses (cand : NameSet) (e : Expr) (acc : Array (Name × Bool)) :
+    Array (Name × Bool) :=
+  match e with
+  | .app (.const ``Not _) p =>
+    match headConst? p with
+    | some h => if cand.contains h then acc.push (h, !p.hasFVar && !p.hasLooseBVars) else acc
+    | none => acc
+  | .app (.app (.const ``And _) l) r => negWitnesses cand r (negWitnesses cand l acc)
+  | .forallE _ _ b _ => negWitnesses cand b acc
+  | e =>
+    if e.isAppOfArity ``Exists 2 then
+      match e.getAppArgs[1]! with
+      | .lam _ _ b _ => negWitnesses cand b acc
+      | _ => acc
+    else acc
+
+/-- `F …` for a candidate `F`, CLAIMED (not assumed) by a statement body. The `Bool` is
+`parametric?` — the PROVABLE arm — and it is `true` only when the claim is not under an `∃` AND
+every one of `F`'s arguments is a BARE telescope fvar. That last condition is the whole
+discrimination and it is why the arm is worth having:
+
+  * `split_unique_generic_packaged (c : α) : SplitUniqueAt c` — bare fvar, so the floor holds for
+    ARBITRARY arguments. It is a THEOREM, assuming it buys a consumer nothing, and it should be out
+    of the candidate set rather than sitting in it wearing the same `UNREFUTED` label as a hardness
+    assumption.
+  * `canonical_of_cdtToLace (c : CDT) : Lace.Canonical (cdtToLace c)` — the argument is CONSTRUCTED,
+    so this discharges the floor on one restricted family and says nothing about arbitrary laces.
+    That is a MODEL, the SATISFIABLE pole, and reporting it as `PROVABLE` would be the mirror of
+    the vacuity the census exists to find.
+
+`→`/`∀` are NOT descended: `F a → C` claims nothing about `F`, it assumes it, and Pass 0c's
+caller has already rejected any statement that assumes a candidate floor. Only `∧` and `∃` carry
+a positive claim inward. -/
+partial def posWitnesses (cand : NameSet) (underEx : Bool) (e : Expr)
+    (acc : Array (Name × Bool)) : Array (Name × Bool) :=
+  match e with
+  | .app (.app (.const ``And _) l) r =>
+    posWitnesses cand underEx r (posWitnesses cand underEx l acc)
+  | e =>
+    if e.isAppOfArity ``Exists 2 then
+      match e.getAppArgs[1]! with
+      | .lam _ _ b _ => posWitnesses cand true b acc
+      | _ => acc
+    else
+      match headConst? e with
+      | some h =>
+        if cand.contains h then
+          acc.push (h, !underEx && e.getAppArgs.all (·.isFVar))
+        else acc
+      | none => acc
+
 /-! ## Proof-term visitor -/
 
 structure VisitOut where
@@ -405,6 +526,120 @@ def fmtNames (ns : Array Name) : String :=
 def fmtFlags (fs : Array String) : String :=
   if fs.isEmpty then "-" else ",".intercalate fs.toList
 
+/-- **Pass 1u** — the carrier exposure of the UNREFUTED floors, which the census could not report
+at all before v3 (its carrier set was built from `refutedBy`, so every unrefuted floor read
+`carriers = 0` and that zero meant NOT MEASURED). Same binder scan and same proof-term
+classification as Pass 1, over `unref` instead of `floors`, emitted as its own record type so no
+existing count moves.
+
+`posWitSet` / `toothSet` are the floors' OWN poles — models, proofs, `False`-form teeth. They
+mention a floor and assume nothing, so they are flagged and excluded from the exposure count:
+reporting the anti-vacuity work as debt is how an instrument teaches people to delete it. -/
+def unrefutedCarriers (env : Environment) (ours : Array Name) (unref floors : NameSet)
+    (posWitSet toothSet : NameSet) (propDefs : Array (Name × Array Name))
+    (memo : IO.Ref (Std.HashMap (Name × Nat) (Bool × Array Name))) : MetaM (Array Site) := do
+  let mut uPropBody : Std.HashMap Name (Array Name) := {}
+  let mut uIters := 0
+  let mut uChanged := true
+  while uChanged && uIters < 100 do
+    uChanged := false
+    uIters := uIters + 1
+    for (nm, used) in propDefs do
+      if unref.contains nm then continue
+      let mut fl : Array Name := uPropBody.getD nm #[]
+      let before := fl.size
+      for c in used do
+        if unref.contains c && !fl.contains c then fl := fl.push c
+        if !unref.contains c && c != nm then
+          for f in uPropBody.getD c #[] do
+            if !fl.contains f then fl := fl.push f
+      if fl.size > before then
+        uPropBody := uPropBody.insert nm fl
+        uChanged := true
+  if uIters >= 100 then
+    throwError "FLOOR-CENSUS FAIL-CLOSED: Pass 1u unrefuted prop-body fixpoint did not converge."
+  let mut uSites : Array Site := #[]
+  for nm in ours do
+    let some info := env.find? nm | continue
+    if unref.contains nm || floors.contains nm then continue
+    let tyC := info.type.getUsedConstants
+    let hasU := tyC.any (fun c => unref.contains c)
+    let isUPB := uPropBody.contains nm
+    let tyUPds := tyC.filter (fun c => uPropBody.contains c)
+    unless hasU || isUPB || !tyUPds.isEmpty do continue
+    let mod := moduleOf env nm
+    let site? : Option Site ← forallTelescope info.type fun xs body => do
+      let mut fvs : Array FVarId := #[]
+      let mut fls : Array Name := #[]
+      let mut flags : Array String := #[]
+      for x in xs do
+        let ld ← x.fvarId!.getDecl
+        match headConst? ld.type with
+        | some h =>
+          if unref.contains h then
+            fvs := fvs.push x.fvarId!
+            if !fls.contains h then fls := fls.push h
+        | none => pure ()
+      if isStructBoilerplate env nm then flags := flags.push "struct-boiler"
+      -- POLES ARE NOT EXPOSURE. A floor's own model / proof / `False`-form tooth mentions it and
+      -- assumes nothing; counting those as carriers would report the anti-vacuity work as debt.
+      if posWitSet.contains nm then flags := flags.push "sat-witness"
+      if toothSet.contains nm then flags := flags.push "refut-witness"
+      if fvs.isEmpty then
+        if isUPB then
+          flags := flags.push "direct"
+          return some (Site.mk nm mod (declKind info) "prop-body" (concShape body)
+            (uPropBody.getD nm #[]) #[] tyUPds flags 0 0)
+        if hasU then
+          let fls2 := tyC.filter (fun c => unref.contains c)
+          if (notArg? body).any (fun a => (headConst? a).any unref.contains) then
+            flags := flags.push "neg-conc"
+          else if body.getUsedConstants.any unref.contains then
+            flags := flags.push "emb-conc"
+          return some (Site.mk nm mod (declKind info) "embedded" (concShape body) fls2 #[]
+            tyUPds flags 0 0)
+        if !tyUPds.isEmpty then
+          let mut fls2 : Array Name := #[]
+          for c in tyUPds do
+            for f in uPropBody.getD c #[] do
+              if !fls2.contains f then fls2 := fls2.push f
+          flags := flags.push "uses-propdef"
+          return some (Site.mk nm mod (declKind info) "propdef-user" (concShape body) fls2 #[]
+            tyUPds flags 0 0)
+        return none
+      let isTooth := body.isAppOf ``False
+      if (headConst? body).any unref.contains then flags := flags.push "bridge"
+      if isAutoCompanion nm then flags := flags.push "auto-name"
+      let mut cls := "no-value"
+      let mut edges : Array Name := #[]
+      if let some v := info.value? (allowOpaque := true) then
+        let vo ← visitValue fvs (v.beta xs)
+        for (c, _) in vo.edges do
+          if !edges.contains c then edges := edges.push c
+        cls := if vo.applied then "endpoint" else if vo.used then "threader" else "dead"
+        if !vo.applied && vo.used then
+          for (c, i) in vo.edges do
+            if c == ``absurd then
+              cls := "endpoint"
+              if !flags.contains "absurd-use" then flags := flags.push "absurd-use"
+            else if isInternalName c then
+              let (applied, _) ← auxResolve memo 8 c i
+              if applied then
+                cls := "endpoint"
+                if !flags.contains "aux-endpoint" then flags := flags.push "aux-endpoint"
+      if isTooth then
+        flags := flags.push s!"was-{cls}"
+        cls := "tooth"
+      return some (Site.mk nm mod (declKind info) cls (concShape body) fls edges #[] flags 0 0)
+    match site? with
+    | none => pure ()
+    | some s =>
+      let (l0, l1) ← match ← findDeclarationRanges? nm with
+        | some rg => pure (rg.range.pos.line, rg.range.endPos.line)
+        | none => pure (0, 0)
+      uSites := uSites.push { s with startLine := l0, endLine := l1 }
+  return uSites
+
 def run (outPath : Option String) : MetaM Unit := do
   let env ← getEnv
   let consts := env.constants
@@ -446,32 +681,63 @@ def run (outPath : Option String) : MetaM Unit := do
       candSet := candSet.insert f
       cand := cand.push f
 
-  -- ===== Pass 0b: refutation witnesses =====
-  -- ⚑ Only a `¬ F …`-CONCLUSION theorem is a refutation WITNESS of `F`. A theorem
+  -- ===== Pass 0b / 0c: refutation, proof and model witnesses =====
+  -- ⚑ Only a theorem that PROVES `¬ F …` is a refutation WITNESS of `F`. A theorem
   -- `(h : F …) → X → False` proves ¬(F ∧ X), not ¬F — it is a TOOTH (classified as such
   -- in the carrier surface below) but never the recorded refutation, and it never
-  -- satisfies the sentinel gate.
+  -- satisfies the sentinel gate. v3 reads "PROVES" through the connectives that carry a
+  -- claim (`∧`, `∃`, `∀`) rather than off the top-level head alone; `refutedTop` keeps the
+  -- v2 rule alongside so the correction is a reported delta, not a silently different number.
+  let mut refutedTop : Std.HashMap Name (Name × Bool) := {}  -- v2 rule: TOP-LEVEL `¬ F …` only
   let mut refutedBy : Std.HashMap Name (Name × Bool) := {}  -- floor ↦ (¬-witness, closed?)
   let mut falseForm : Std.HashMap Name Name := {}           -- floor ↦ a False-under-hyps tooth
+  let mut provableBy : Std.HashMap Name Name := {}          -- floor ↦ a PARAMETRIC proof of it
+  let mut satBy : Std.HashMap Name Name := {}               -- floor ↦ an exhibited MODEL of it
   for nm in ours do
     let some ci := env.find? nm | continue
     let .thmInfo _ := ci | continue
-    let (negs, falses) ← forallTelescope ci.type fun xs body => do
-      let mut negs : Array (Name × Bool) := #[]
+    let (negs, tops, falses, pos) ← forallTelescope ci.type fun xs body => do
+      let mut tops : Array Name := #[]
       let mut falses : Array Name := #[]
       if let some arg := notArg? body then
         if let some h := headConst? arg then
-          if candSet.contains h then negs := negs.push (h, !arg.hasFVar)
+          if candSet.contains h then tops := tops.push h
+      let negs := negWitnesses candSet body #[]
       if body.isAppOf ``False then
         for x in xs do
           let ty ← inferType x
           if let some h := headConst? ty then
             if candSet.contains h then falses := falses.push h
-      return (negs, falses)
+      -- Pass 0c: a theorem that ASSUMES NOTHING and CLAIMS a candidate floor is a proof witness.
+      -- The hypothesis test is the load-bearing half, exactly as in `FloorRatchet.antiFloor`:
+      -- "concludes `F …`" is a conclusion SHAPE, and what makes it a PROOF is reaching that
+      -- conclusion without assuming anything on the way.
+      -- ⚑ The bar is NO PROPOSITIONAL BINDER AT ALL, not merely "no floor binder". A theorem
+      -- `(hp : IsPerm f) : Poseidon2SpongeCR f` reaches the floor CONDITIONALLY, and reporting it
+      -- as a proof or a model would overstate both arms. Data and instance binders are fine —
+      -- `split_unique_generic_packaged {α} (c : α) : SplitUniqueAt c` has none of the former, and
+      -- it is exactly the shape the PROVABLE arm exists to catch. Under-reports rather than
+      -- over-reports, the same direction the `∨` decision above takes.
+      -- The claim scan is a pure `Expr` walk and is empty for all but a handful of theorems, so
+      -- it runs FIRST and the per-binder `isProp` (an `inferType` + `whnf` each) only runs on
+      -- those. This loop visits every theorem in the tree on every census.
+      let posRaw := posWitnesses candSet false body #[]
+      let mut pos : Array (Name × Bool) := #[]
+      unless posRaw.isEmpty do
+        let mut condHyp := false
+        for x in xs do
+          if ← Meta.isProp (← inferType x) then condHyp := true
+        unless condHyp do pos := posRaw
+      return (negs, tops, falses, pos)
     for (h, closed) in negs do
       if !refutedBy.contains h then refutedBy := refutedBy.insert h (nm, closed)
+      if tops.contains h && !refutedTop.contains h then
+        refutedTop := refutedTop.insert h (nm, closed)
     for h in falses do
       if !falseForm.contains h then falseForm := falseForm.insert h nm
+    for (h, parametric) in pos do
+      if parametric && !provableBy.contains h then provableBy := provableBy.insert h nm
+      if !parametric && !satBy.contains h then satBy := satBy.insert h nm
   -- ⚑ FAIL-CLOSED gate (c): sentinels the tree refutes must be SEEN refuted (¬-form).
   for (f, needRefut) in sentinelFloors do
     if needRefut && !refutedBy.contains f then
@@ -483,18 +749,26 @@ def run (outPath : Option String) : MetaM Unit := do
   let mut lines : Array String := #[]
   for f in cand do
     let named := sentinelFloors.any (·.1 == f)
-    match refutedBy.get? f with
+    let namedS := if named then "named" else "discovered"
+    let prov := match provableBy.get? f with | some w => w.toString | none => "-"
+    let sat := match satBy.get? f with | some w => w.toString | none => "-"
+    match (match refutedTop.get? f with | some r => some r | none => refutedBy.get? f) with
     | some (wit, closed) =>
+      let via := if refutedTop.contains f then "top" else "nested"
       lines := lines.push
-        s!"FLOOR\t{f}\trefuted\t{wit}\t{if closed then "instance" else "parametric"}\t{if named then "named" else "discovered"}"
+        s!"FLOOR\t{f}\trefuted\t{wit}\t{if closed then "instance" else "parametric"}\t{namedS}\t{via}\t{prov}\t{sat}"
     | none =>
       match falseForm.get? f with
       | some tooth =>
         lines := lines.push
-          s!"FLOOR\t{f}\tFALSE-UNDER-HYPS-ONLY\t{tooth}\t-\t{if named then "named" else "discovered"}"
+          s!"FLOOR\t{f}\tFALSE-UNDER-HYPS-ONLY\t{tooth}\t-\t{namedS}\t-\t{prov}\t{sat}"
       | none =>
         lines := lines.push
-          s!"FLOOR\t{f}\tUNREFUTED\t-\t-\t{if named then "named" else "discovered"}"
+          s!"FLOOR\t{f}\tUNREFUTED\t-\t-\t{namedS}\t-\t{prov}\t{sat}"
+  for (f, w) in provableBy.toList do
+    lines := lines.push s!"PROVABLE\t{f}\t{w}"
+  for (f, w) in satBy.toList do
+    lines := lines.push s!"SATWIT\t{f}\t{w}"
 
   -- ===== Pass 1b: floor-in-Prop-def-BODY carriers (census v2) =====
   -- `def … : Prop := Floor … → …` has NO floor binder in its type; the floor lives in the
@@ -727,6 +1001,22 @@ def run (outPath : Option String) : MetaM Unit := do
         | none => pure (0, 0)
       sites := sites.push { s with startLine := l0, endLine := l1 }
 
+  -- ===== Pass 1u: the UNREFUTED floors' carrier exposure (census v3) =====
+  -- ⚑ v2 built its carrier set from `refutedBy` alone, so every UNREFUTED floor reported
+  -- `carriers = 0` — a zero that means NOT MEASURED. The floors the tree will rest on after the
+  -- refuted ones are deleted were the ones the instrument could not see. Same binder scan, same
+  -- proof-term classification, separate record type so no existing count moves.
+  let mut unrefArr : Array Name := #[]
+  let mut unref : NameSet := {}
+  for f in cand do
+    unless floors.contains f do
+      unref := unref.insert f
+      unrefArr := unrefArr.push f
+  let posWitSet : NameSet :=
+    satBy.fold (fun a _ w => a.insert w) (provableBy.fold (fun a _ w => a.insert w) {})
+  let toothSet : NameSet := falseForm.fold (fun a _ w => a.insert w) {}
+  let uSites ← unrefutedCarriers env ours unref floors posWitSet toothSet propDefs memo
+
   -- ===== floor-flow DAG levels: v1 edge semantics AND v2 (higher-order-aware) =====
   -- v1: nodes are the proof-term-classified sites only, edges are proof-term floor flow.
   -- v2: all sites (incl. `prop-body`/`propdef-user`/`embedded`), edges also carry the
@@ -790,6 +1080,13 @@ def run (outPath : Option String) : MetaM Unit := do
     lines := lines.push
       (s!"CARRIER\t{s.name}\t{s.mod}\t{modFile s.mod}\t{s.startLine}\t{s.endLine}\t" ++
        s!"{s.kind}\t{s.cls}\t{s.conc}\t{level.getD s.name 0}\t{fmtNames s.floors}\t{fmtFlags s.flags}")
+  let uSorted := uSites.qsort (fun a b =>
+    a.mod.toString < b.mod.toString
+      || (a.mod.toString == b.mod.toString && a.startLine < b.startLine))
+  for s in uSorted do
+    lines := lines.push
+      (s!"UCARRIER\t{s.name}\t{s.mod}\t{modFile s.mod}\t{s.startLine}\t{s.endLine}\t" ++
+       s!"{s.kind}\t{s.cls}\t{s.conc}\t{fmtNames s.floors}\t{fmtFlags s.flags}")
   -- every proof-term-classified site the higher-order correction MOVED
   let mut relevels := 0
   for s in sorted do
@@ -832,6 +1129,16 @@ def run (outPath : Option String) : MetaM Unit := do
   summary := summary.push s!"SUMMARY\tour-constants\t{ours.size}"
   summary := summary.push s!"SUMMARY\tcandidate-floors\t{cand.size}"
   summary := summary.push s!"SUMMARY\trefuted-floors\t{floors.size}"
+  -- ⚑ v3 vs v2: the refuted/unrefuted boundary was a LOWER BOUND, because Pass 0b only matched a
+  -- TOP-LEVEL `¬`. Both numbers are reported so the correction is a readable delta, not a quietly
+  -- different headline.
+  summary := summary.push s!"SUMMARY\trefuted-floors-v2rule-toplevel\t{refutedTop.size}"
+  summary := summary.push
+    s!"SUMMARY\trefuted-floors-nested-only\t{floors.size - refutedTop.size}"
+  summary := summary.push s!"SUMMARY\tunrefuted-floors\t{unrefArr.size}"
+  -- ⚑ the doctrine's other two arms, measured for the first time.
+  summary := summary.push s!"SUMMARY\tprovable-floors\t{provableBy.size}"
+  summary := summary.push s!"SUMMARY\tsatisfiable-floors\t{satBy.size}"
   summary := summary.push s!"SUMMARY\tcarriers\t{sites.size}"
   for cl in ["endpoint", "threader", "dead", "no-value", "tooth",
              "prop-body", "propdef-user", "embedded"] do
@@ -895,6 +1202,22 @@ def run (outPath : Option String) : MetaM Unit := do
     for f in s.floors do perFloor := perFloor.insert f ((perFloor.getD f 0) + 1)
   for (f, c) in perFloor.toList do
     summary := summary.push s!"SUMMARY\tfloor-carriers\t{f}\t{c}"
+  -- ===== v3 gap 1: the UNREFUTED floors' exposure, which v2 could not report at all =====
+  let uReal := uSites.filter
+    (fun s => !(s.flags.contains "sat-witness" || s.flags.contains "refut-witness"))
+  summary := summary.push s!"SUMMARY\tunrefuted-carriers\t{uReal.size}"
+  summary := summary.push
+    s!"SUMMARY\tunrefuted-poles\t{uSites.size - uReal.size}"
+  for cl in ["endpoint", "threader", "dead", "no-value", "tooth",
+             "prop-body", "propdef-user", "embedded"] do
+    summary := summary.push
+      s!"SUMMARY\tunrefuted-class-{cl}\t{(uReal.filter (·.cls == cl)).size}"
+  for f in unrefArr do
+    let hits := uReal.filter (·.floors.contains f)
+    let mut mods : Array Name := #[]
+    for s in hits do if !mods.contains s.mod then mods := mods.push s.mod
+    summary := summary.push
+      s!"SUMMARY\tunrefuted-floor-carriers\t{f}\t{hits.size}\t{mods.size}"
   let mut lvHist : Std.HashMap Nat Nat := {}
   for s in sites do
     let lv := level.getD s.name 0

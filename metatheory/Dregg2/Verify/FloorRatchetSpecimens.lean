@@ -115,6 +115,45 @@ parameters and this says exactly as little as a floor binder does. -/
 def specB3BundleLaundry : Prop :=
   ∀ _S : CommitSurface, ∀ xs ys : List ℤ, xs = ys
 
+/-! ## The POSITION rule (2026-07-27): mentioning a floor is not assuming one
+
+The exemption used to require one of TWO blessed conclusion shapes (`¬ F …` or `False`) on top of
+"no binder carries floor content". The second condition was the whole rule; the first was silently
+gating every declaration that says something POSITIVE about a floor — its MODEL, its counterexample
+written one conjunct off the blessed spelling, its `∃`-form. Those assume nothing, and `34854bf62`
+records the tree paying for it: a satisfiability witness deleted partly because naming a floor in a
+conclusion "is a gate carrier for no benefit".
+
+The four below pin the corrected rule at both edges. The two EXEMPT ones must stay exempt or the
+gate goes back to taxing anti-vacuity content; the two GATED ones are the laundering routes that
+open if "claim position" is read too generously — an implication buried inside an `∃`, and an `↔`,
+whose sides are each other's antecedents. -/
+
+/-- EXEMPT. The SATISFIABLE pole, existentially. Claims a model exists and assumes nothing; if the
+floor is false this is UNPROVABLE, not vacuous. Under the old rule it was a `binder`-class carrier
+purely because the floor's NAME appeared in the type. -/
+def specSatisfiabilityWitness : Prop :=
+  ∃ f : List ℤ → ℤ, Poseidon2SpongeCR f
+
+/-- EXEMPT. The REFUTABILITY pole, one conjunct off the blessed spelling — the shape of
+`StrandIntegrity.forked_strand_not_forkFree`, which states the forked lace it refutes at alongside
+the refutation. Proving a conjunction proves both sides, so this refutes exactly as much as a bare
+`¬ …` does, and gating it is gating the doctrine's own required check. -/
+def specPoleInConjunct : Prop :=
+  ∀ f : List ℤ → ℤ, (0 : ℤ) = 0 ∧ ¬ Poseidon2SpongeCR f
+
+/-- GATED. The laundering route the `∃` descent would open if claim position were read as "no
+assumption anywhere inside": an implication BURIED in a claim is still an implication, and this one
+is vacuous exactly the way a floor binder is. -/
+def specClaimBuriedArrow : Prop :=
+  ∀ f : List ℤ → ℤ, ∃ p : Prop, Poseidon2SpongeCR f → p
+
+/-- GATED. `↔` is two implications, so BOTH sides are antecedents and neither is a free claim. A
+rule that treated an `Iff` as a leaf would exempt a biconditional whose forward direction is the
+vacuous guarantee. -/
+def specIffLaundry : Prop :=
+  ∀ f : List ℤ → ℤ, Poseidon2SpongeCR f ↔ (0 : ℤ) = 0
+
 /-! ## The INLINE `Function.Injective` split (`FloorRatchet.injSpecimenVerdicts`)
 
 A second classifier, a second way to degenerate invisibly. `Verify/InjSpelling` decides whether a
