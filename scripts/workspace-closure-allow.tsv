@@ -1,0 +1,22 @@
+# workspace-closure-allow.tsv — DECLARED, DIFFABLE carve-outs for check-workspace-closure.py.
+#
+# The gate asks: does every package resolve from a clean checkout of the commit that ships it?
+# A few genuinely cannot, and the honest answer is a row here rather than an env escape — an
+# escape is invisible in six weeks, a row is a reviewable diff.
+#
+# ⚠ THIS FILE IS A TWO-SIDED RATCHET. A row whose finding is GONE fails, exactly like the
+# allowlists for doc-refs, bare-ignore and production-callers. Fixing a package retires its
+# exemption; it does not leave a permission slip behind.
+#
+# ⚠ AND A ROW IS NOT A FIX. Every package here is one a clean clone CANNOT build. That is
+# acceptable only where the package is a developer-run extractor with an out-of-tree
+# dependency, never for anything the workspace ships.
+#
+# COLUMNS (tab-separated; blank lines and #-comments ignored):
+#   kind    the finding kind being exempted (WORKSPACE_UNRESOLVABLE | THIRD_STATE | …)
+#   path    repo-relative manifest path, exactly as the finding reports it
+#   reason  one line — WHY it cannot resolve, and what would have to change for the row to go
+#
+# kind	path	reason
+WORKSPACE_UNRESOLVABLE	metatheory/fixtures/pickles-extractors/Cargo.toml	path-deps on `../../../../mina-rust/crates/{ledger,p2p-messages,core}`, a SIBLING checkout of openmina that its own manifest header declares as expected-alongside ("`mina-rust` is expected as a SIBLING checkout of this repo"). No commit of this repo can contain it, so no clean extract can resolve it. Retire this row by vendoring or git-dep'ing those three crates.
+THIRD_STATE	metatheory/fixtures/pickles-extractors/Cargo.toml	same package: it carries an empty `[workspace]` (the ONLY mechanism that isolates a nested package — `exclude` cannot reach inside a member's directory because cargo's `is_excluded` is `!explicit_member && excluded` and the path-prefix member match wins), but the walk cannot confirm the isolation while the manifest itself does not resolve. Retiring the WORKSPACE_UNRESOLVABLE row above retires this one with it.

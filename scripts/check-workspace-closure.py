@@ -299,6 +299,85 @@ def check_gate_registry(root: str, findings, enforce_floors: bool) -> int:
     return rows
 
 
+ALLOW_LIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "workspace-closure-allow.tsv")
+
+
+def read_allow() -> list[tuple[str, str, str]]:
+    """Declared carve-outs as (kind, path, reason).
+
+    A MISSING file is a FAULT, not an empty allowlist. A sibling gate shipped with its
+    allowlist untracked and spent 25.5 hours red in every clean checkout while its own
+    red-proof reported green, because a missing file read as "nothing is exempt" — which is
+    indistinguishable from "no exemptions needed" and completely different in fact.
+    """
+    if not os.path.exists(ALLOW_LIST):
+        print(f"{ALLOW_LIST}: MISSING. A gate whose config is absent cannot be trusted to "
+              f"report; `git ls-files --error-unmatch` is the check.", file=sys.stderr)
+        raise SystemExit(2)
+    rows = []
+    with open(ALLOW_LIST, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.rstrip("\n")
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            parts = line.split("\t")
+            if len(parts) < 3:
+                print(f"{ALLOW_LIST}: a row needs 3 tab-separated fields", file=sys.stderr)
+                raise SystemExit(2)
+            rows.append((parts[0].strip(), parts[1].strip(), parts[2].strip()))
+    return rows
+
+
+_ALLOW_HITS: set[int] = set()
+
+
+_WALKED_REVS = False
+
+
+def note_rev_walked() -> None:
+    """Record that this invocation examined at least one clean EXTRACT, not just the tree."""
+    global _WALKED_REVS
+    _WALKED_REVS = True
+
+
+def stale_allow_rows() -> list[tuple[str, str, str]]:
+    """Rows that matched NOTHING across this whole invocation — the two-sided half.
+
+    Scoped per-INVOCATION, not per-tree: a carve-out may correctly apply to a clean extract
+    and not to the working tree, because they are different trees and THIRD_STATE only
+    surfaces where a manifest cannot resolve. Checking staleness per tree made a correct row
+    read as spent on whichever tree was walked first.
+    """
+    # ⚠ ONLY HONEST IF THIS INVOCATION WALKED AN EXTRACT. A carve-out can correctly apply to a
+    # clean extract and not to the working tree — THIRD_STATE surfaces only where a manifest
+    # cannot resolve, and in the working tree the sibling checkout is present so it resolves.
+    # A bare working-tree run therefore matches no extract-only row, and enforcing staleness
+    # there would report a CORRECT row as spent. That is the false-positive shape that gets a
+    # ratchet disabled, so the check simply does not run in that mode.
+    if not _WALKED_REVS:
+        return []
+    allow = read_allow()
+    return [r for i, r in enumerate(allow) if i not in _ALLOW_HITS]
+
+
+def apply_allow(findings: "Findings") -> list[tuple[str, str, str]]:
+    """Drop exempted findings; return the STALE rows (declared, but no longer found).
+
+    Two-sided by construction: a row that stops matching is returned and the caller fails on
+    it, so repairing a package retires its own exemption.
+    """
+    allow = read_allow()
+    kept, matched = [], set()
+    for kind, path, detail in findings.rows:
+        hit = next((i for i, (k, p_, _) in enumerate(allow) if k == kind and p_ == path), None)
+        if hit is None:
+            kept.append((kind, path, detail))
+        else:
+            matched.add(hit); _ALLOW_HITS.add(hit)
+    findings.rows = kept
+    return [allow[i] for i in range(len(allow)) if i not in matched]
+
+
 class Findings:
     def __init__(self) -> None:
         self.rows: list[tuple[str, str, str]] = []   # (kind, path, detail)
@@ -395,6 +474,10 @@ def check_tree(root: str, verbose: bool = False, enforce_floors: bool = True):
         for d in detached:
             print(f"  detached (own workspace root): {os.path.relpath(d, root)}")
 
+    # Declared carve-outs, applied LAST so the walk itself is never narrowed — the reader
+    # always sees the whole tree and only the REPORT is filtered. A stale row (declared, but
+    # the finding is gone) is itself a failure, so a repair retires its own exemption.
+    apply_allow(findings)
     return (not findings), findings, stats
 
 
@@ -440,6 +523,7 @@ def run_revs(git_root: str, revs: list[str], verbose: bool) -> int:
         try:
             extract_rev(git_root, rev, tmp)
             ok, findings, stats = check_tree(tmp, verbose=verbose)
+            note_rev_walked()  # this invocation examined a clean EXTRACT, so the stale half is judgeable
             subject = subprocess.run(
                 ["git", "-C", git_root, "log", "-1", "--format=%h %s", rev],
                 capture_output=True, text=True,
@@ -577,6 +661,7 @@ def run_self_test(git_root: str) -> int:
     try:
         extract_rev(git_root, "HEAD", tmp)
         ok, findings, stats = check_tree(tmp)
+        note_rev_walked()  # this invocation examined a clean EXTRACT, so the stale half is judgeable
         if not ok:
             print("  CONTROL  \033[31mFAIL\033[0m — a clean extract of HEAD is already red;")
             report("HEAD", ok, findings, stats)
@@ -599,6 +684,7 @@ def run_self_test(git_root: str) -> int:
                 failures += 1
                 continue
             ok, findings, stats = check_tree(tmp)
+            note_rev_walked()  # this invocation examined a clean EXTRACT, so the stale half is judgeable
             got = findings.kinds()
             if ok:
                 print(f"  {label:44s} \033[31mFAIL\033[0m — injected [{what}] and the checker stayed GREEN")
@@ -624,6 +710,7 @@ def run_self_test(git_root: str) -> int:
         try:
             globals()["find_manifests"] = lambda root: real_find(root)[: len(real_find(root)) // 2]
             ok, findings, stats = check_tree(tmp)
+            note_rev_walked()  # this invocation examined a clean EXTRACT, so the stale half is judgeable
         finally:
             globals()["find_manifests"] = real_find
         if ok:
@@ -675,5 +762,24 @@ def main() -> int:
     return run_worktree(root, args.verbose)
 
 
+
+
+
+def _report_stale_rows() -> int:
+    """Fail on any carve-out row that matched nothing anywhere. Called once, after every tree."""
+    stale = stale_allow_rows()
+    if not stale:
+        return 0
+    print("\ncheck-workspace-closure: STALE CARVE-OUT ROW(S) — the finding they exempt is gone.",
+          file=sys.stderr)
+    for kind, path, reason in stale:
+        print(f"  scripts/workspace-closure-allow.tsv: {kind}  {path}\n"
+              f"      no longer found in any tree checked — delete this row.\n"
+              f"      (was: {reason})", file=sys.stderr)
+    return 1
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    # The stale-row half runs AFTER main() so every tree has been walked; a carve-out that
+    # matched nothing anywhere is spent, and a spent row is how an exemption becomes permanent.
+    sys.exit(max(main(), _report_stale_rows()))
