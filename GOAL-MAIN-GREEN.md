@@ -30,7 +30,7 @@ first.
 2. **B5** dispatched — the solo finalization arm still finalizes any creator, the half `c6f00c228`
    deliberately left. ⚠ Its comment is right that a naive filter bricks solo cold start, so the lane
    is briefed to solve that tension rather than trade it away.
-3. **The `declared_supply` seam** — `check_per_asset_conservation_by_asset` takes it for reconciling
+3. ~~The `declared_supply` seam~~ dispatched — verified: EVERY invocation passes `&[]`, production and test alike, so no test would notice it breaking. Original note: — `check_per_asset_conservation_by_asset` takes it for reconciling
    disclosed mint/burn against balance deltas; all four production callers pass `&[]`, both test
    callers too, and the verified Lean decider already implements the reconciliation with a `#guard`.
 
