@@ -18,17 +18,13 @@ publish = false
 # generator the executor witness path uses. No estimates; we time the code that
 # actually runs.
 
-[features]
-# `prover` FORWARDS NOTHING — it is this crate's OWN gate over 3 local `#[cfg]` sites in
-# `src/lib.rs`, all positive (`#[cfg(feature = "prover")]`), so `not(prover)` compiles a perf
-# harness with three fewer measurements and no alternate path. The claim it "forwards to
-# `dregg-circuit/prover`" was false in every particular: `dregg-circuit` declares only
-# `default = ["plonky3"]` / `plonky3` and has never had a `prover` feature; the forward this
-# actually carried was `dregg-sdk/prover`, now deleted (that cluster is unconditional).
-# Under this feature the harnesses measure `prove_turn_self_sovereign` (the real node turn) +
-# the descriptor-interpreter (`prove_vm_descriptor`), never the retired v1 hand-AIR.
-default = ["prover"]
-prover = []
+# ⚑ NO `[features]`. `prover` is DELETED (2026-07-28) with `dregg-node`'s and `dregg-tests`'.
+# It forwarded nothing (`prover = []`) and was this crate's OWN gate over 3 POSITIVE
+# `#[cfg(feature = "prover")]` sites in `src/lib.rs` (`RotatedTurn`, `rotated_transfer_turn`,
+# `rotated_turns`) — the rotated full-turn prove/verify harness, i.e. the only thing this crate
+# exists to measure. It was `default = ["prover"]` and nothing in the tree passed
+# `--no-default-features`, so the OFF position — a perf harness that does not measure the live
+# prove path — was never built by anything. Those three items are now unconditional.
 
 [dependencies]
 dregg-circuit = { path = "../circuit" }

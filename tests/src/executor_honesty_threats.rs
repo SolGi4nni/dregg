@@ -751,10 +751,22 @@ fn t13_remote_stub_with_id_cannot_mint_arbitrary_cell_ids() {
 // T14 — Skip the AIR proof entirely
 // ===========================================================================
 
-// v1-only: asserts the replay-chain rejection reason is the bespoke-AIR
-// "STARK verify failed / deserial" message. Under recursion the scope-1 step
-// fails closed with the retired-v1 reason, so the substring asserts break.
-#[cfg(not(feature = "prover"))]
+// ⚑ UNGATED + RE-AIMED 2026-07-28. Both T14 tests carried `#[cfg(not(feature = "prover"))]`,
+// `dregg-tests` had `default = ["prover"]`, and nothing in the tree passed
+// `--no-default-features` to this crate — so neither emitted a line in any run. The feature is
+// deleted; these now compile and run unconditionally.
+//
+// They asserted the reason substring `"deserial"`, which was the bespoke v1 hand-STARK
+// deserialisation failure. That engine is RETIRED: `dregg_verifier::verify_effect_vm_proof` is
+// now an unconditional fail-closed stub (no `cfg`) whose reason names the retirement. The
+// substring is re-pointed at the LIVE refusal, and it is a STRICTER pin than `"deserial"` was:
+// a whole distinctive sentence instead of one word. What it still catches is the thing that
+// matters — a proofless / malformed receipt reaching `Verified`, or a refusal that stops saying
+// why. Reviving v1 reds these, which is the point.
+
+/// A receipt carrying no wire proof must be a HARD rejection of the whole chain, and the
+/// rejection must be attributable. Can go red three ways: `overall_verified` turning true,
+/// the failure moving off index 0, or the reason losing its provenance.
 #[test]
 fn t14_receipt_without_proof_rejected_at_wire_level() {
     let agent = CellId([0xE1u8; 32]);
@@ -769,17 +781,14 @@ fn t14_receipt_without_proof_rejected_at_wire_level() {
             &out.per_entry[0],
             dregg_verifier::ReplayVerdict::Rejected { reason }
                 if reason.contains("STARK verify failed")
-                    && reason.contains("deserial")
+                    && reason.contains("v1 Effect VM STARK verification is retired")
         ),
-        "missing wire proof must be a hard rejection, got: {:?}",
+        "missing wire proof must be a hard rejection naming the v1 retirement, got: {:?}",
         out.per_entry[0]
     );
 }
 
-// v1-only: asserts `verify_effect_vm_proof` returns a "deserial" failure for
-// malformed bytes. Under recursion this entry-point is the fail-closed stub
-// that returns the retired-v1 reason instead, so the assert breaks.
-#[cfg(not(feature = "prover"))]
+/// Malformed proof bytes must not verify, must exit ERROR, and must say why.
 #[test]
 fn t14_malformed_proof_bytes_rejected() {
     let (out, code) = dregg_verifier::verify_effect_vm_proof(
@@ -791,8 +800,9 @@ fn t14_malformed_proof_bytes_rejected() {
     assert!(!out.verified, "malformed proof bytes must not verify");
     assert_eq!(code, dregg_verifier::exit_code::ERROR);
     assert!(
-        out.reason.contains("deserial"),
-        "expected deserialisation failure, got: {}",
+        out.reason
+            .contains("v1 Effect VM STARK verification is retired"),
+        "the refusal must name the v1 retirement rather than fail for an incidental reason, got: {}",
         out.reason
     );
 }

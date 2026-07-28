@@ -112,7 +112,9 @@ pub fn single_transfer() -> (CellState, Vec<Effect>) {
 // and proves via `prove_full_turn` (the v1 `prove_turn_self_sovereign` entry with
 // no rotation witness is RETIRED — it panics "thread a rotation witness"). This
 // builder mirrors the validated C1 reference (`sdk/tests/sovereign_rotated_c1.rs`
-// wall_a) so the proving leg is the real one. Gated on `recursion`.
+// wall_a) so the proving leg is the real one. UNGATED (2026-07-28): this said "Gated on
+// `recursion`", and no crate in this tree has ever declared a `recursion` feature — the cfg
+// actually here was `prover`, now deleted. Nothing gates this; it is the harness's whole point.
 // ---------------------------------------------------------------------------
 
 /// A rotated full turn: the witness the prove bench re-proves, plus the rotated
@@ -120,7 +122,6 @@ pub fn single_transfer() -> (CellState, Vec<Effect>) {
 /// commits are READ FROM A PROVEN PROOF's `"effect-vm-rotated"` leg PI (the trace's
 /// own before/after state-commit carriers, NOT a separately-recomputed v9 — that is
 /// what `verify_full_turn` cross-binds; the C1 reference reads them the same way).
-#[cfg(feature = "prover")]
 pub struct RotatedTurn {
     pub witness: dregg_sdk::full_turn_proof::FullTurnWitness,
     pub old_commit: [BabyBear; 8],
@@ -132,7 +133,6 @@ pub struct RotatedTurn {
 /// `AgentCipherclerk::prove_sovereign_turn_rotated` (the C1 reference): produce the
 /// before/after rotation witnesses, seed the cap-rooted circuit pre-state, attach
 /// the per-effect rotation manifest. Returns the witness + the post-prove commit PIs.
-#[cfg(feature = "prover")]
 pub fn rotated_transfer_turn(balance: u64, amount: u64) -> RotatedTurn {
     use dregg_cell::{Cell, CellMode, Ledger};
     use dregg_sdk::full_turn_proof::{FullTurnWitness, RotationTurnWitness};
@@ -217,7 +217,6 @@ pub fn rotated_transfer_turn(balance: u64, amount: u64) -> RotatedTurn {
 /// The rotated-turn workload ladder (transfer amounts), SMOKE-vs-FULL aware.
 /// SMOKE: one transfer. FULL: a 1/4/16-effect-equivalent amount ladder (the
 /// single-cell rotated leg is fixed-height, so size scales via the manifest).
-#[cfg(feature = "prover")]
 pub fn rotated_turns() -> Vec<(&'static str, RotatedTurn)> {
     if !perf_full() {
         return vec![("transfer_100", rotated_transfer_turn(1_000_000, 100))];

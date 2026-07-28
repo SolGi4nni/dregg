@@ -64,12 +64,13 @@
 #     itself off the pin: while `TAG=` is empty it says so loudly instead of failing nightly for
 #     infrastructure that does not exist yet; the first publish flips it on with no edit here.
 #
-#   * THE `prover` FEATURE, EXCEPT ONE TARGET — and the reason is that it is NOT a hole. SIX
-#     crates declare a `prover` feature (was ten, then eight; `dregg-cell`'s and `dregg-demo`'s
-#     were both `prover = []` gating zero code and are DELETED, 2026-07-27, and `dregg-sdk`'s and
-#     `dregg-teasting`'s went the same day — see below), and the census (`default =` line of every
-#     Cargo.toml declaring one) says ALL SIX put it in `default`: grain-turn, dregg-lightclient,
-#     dregg-node, dregg-perf, dregg-tests, dregg-verifier. Default-on means `cargo test
+#   * THE `prover` FEATURE, EXCEPT ONE TARGET — and the reason is that it is NOT a hole. THREE
+#     crates declare a `prover` feature (was ten, then eight, then six; `dregg-cell`'s and
+#     `dregg-demo`'s were both `prover = []` gating zero code and are DELETED, 2026-07-27, and
+#     `dregg-sdk`'s and `dregg-teasting`'s went the same day — see below; `dregg-node`'s,
+#     `dregg-perf`'s and `dregg-tests`'s went 2026-07-28, also below), and the census
+#     (`default =` line of every Cargo.toml declaring one) says ALL THREE put it in `default`:
+#     grain-turn, dregg-lightclient, dregg-verifier. Default-on means `cargo test
 #     --workspace` already COMPILES and RUNS them, so
 #     `verifier/tests/integration_rotated_replay_chain.rs` (8) is not gated off CI at all —
 #     checked file by file, not one of them carries `#[ignore]`. Arming them here would be a
@@ -79,6 +80,15 @@
 #     packages), so the 15 whole-file `#![cfg(feature = "prover")]` binaries in `sdk/tests/*`
 #     — 95 tests — are now UNCONDITIONAL rather than default-on. `dregg-teasting`'s is DELETED
 #     as a second `prover = []` over ZERO cfg sites.
+#     `dregg-node`/`dregg-perf`/`dregg-tests` are DELETED (2026-07-28): all three `prover = []`,
+#     all three default-on with no `--no-default-features` consumer in the tree. Node's OFF
+#     position DID NOT COMPILE AT ALL (22 lib errors — `blocklace_sync.rs` names the
+#     `exact_fnsp_v3_*` modules that `lib.rs` gated on the feature), so its 10
+#     `#[cfg(not(feature = "prover"))]` tests existed in no configuration; un-gated and run, all
+#     nine that assert the retired v1 `EffectVmAir` attestation COMMITS fail, and they are
+#     deleted with that lane. `dregg-perf`'s three sites were POSITIVE and gated the rotated
+#     full-turn harness the crate exists to measure; they are now unconditional. `dregg-tests`'s
+#     two T14 legs are unconditional with their reason substring re-pointed at the live refusal.
 #     The one exception, named:
 #       - `grain-turn`'s `r3_grain_adapter` IS default-compiled but is `#[ignore]`d, so it ran
 #         nowhere — the first axis, missed because it lives outside `circuit-prove/tests/` and

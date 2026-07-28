@@ -47,8 +47,8 @@
 #   dropped. The `#!` counts below are rewritten to match, so a regen always shows in a diff.
 #
 # crate	feature	tier	why
-#!EXPECT_PAIRS=231
-#!EXPECT_T1=142
+#!EXPECT_PAIRS=225
+#!EXPECT_T1=136
 #!EXPECT_T2=3
 #!EXPECT_T3=77
 #!EXPECT_T4=9
@@ -132,14 +132,10 @@ dregg-macaroon	crypto	T1	default@.
 dregg-macaroon	default	T1	default@.
 dregg-net-client-pd	default	T4	target: the sel4/dregg-pd workspace builds for targets/aarch64-sel4-microkit.json — a bare-metal tier-3 JSON target spec needing build-std, rust-src on nightly-2026-04-04, and $SEL4_INCLUDE_DIRS pointing at a Microkit SDK board's libsel4 headers. A hosted runner has neither the SDK nor the board
 dregg-net-client-pd	executor-ingress	T4	target: the sel4/dregg-pd workspace builds for targets/aarch64-sel4-microkit.json — a bare-metal tier-3 JSON target spec needing build-std, rust-src on nightly-2026-04-04, and $SEL4_INCLUDE_DIRS pointing at a Microkit SDK board's libsel4 headers. A hosted runner has neither the SDK nor the board
-dregg-node	default	T1	default@.
 dregg-node	deos-host	T1	default@.
 dregg-node	pg-mirror-live	T3	shipping verified-turn MirrorBatches to a live pg18. Compile-only; the ship needs DREGG_PG_MIRROR_URL and a database
-dregg-node	prover	T1	default@.
 dregg-node-target	default	T1	default@.
 dregg-node-target	http	T1	default@.
-dregg-perf	default	T1	default@.
-dregg-perf	prover	T1	default@.
 dregg-preflight	default	T1	default@.
 dregg-sdk	default	T1	default@.
 dregg-sdk	dev	T3	the SDK's development-only helpers
@@ -172,8 +168,6 @@ dregg-tee-verify	collateral-fetch	T3	the optional DCAP collateral HTTP client fo
 dregg-tee-verify	zktls-producer	T1	default@.
 dregg-tests	__legacy_tests	T3	the retained legacy integration tests
 dregg-tests	__wip_tests	T3	the work-in-progress integration tests
-dregg-tests	default	T1	default@.
-dregg-tests	prover	T1	default@.
 dregg-token	biscuit	T1	default@.
 dregg-token	default	T1	default@.
 dregg-token	macaroon	T1	default@.

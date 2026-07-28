@@ -169,22 +169,34 @@ metrics-exporter-prometheus = "0.16"
 tokio-postgres = { version = "0.7", optional = true, features = ["with-serde_json-1"] }
 
 [features]
-# `prover` FORWARDS NOTHING — it is node's OWN gate over 19 local `#[cfg]` sites and nothing
-# else. Every crate it used to name has retired its own: `dregg-turn/prover` was DELETED (proof
-# production is the `dregg-turn-prover` crate, an UNCONDITIONAL dep above), `dregg-cell/prover`
-# was always `[]`, `dregg-circuit` never declared one, and `dregg-sdk/prover` is now deleted too
-# (its cluster is unconditional). The claim that it "aligns node's gates with the circuit's prover
-# state" was never true of any build: `dregg-circuit` has no such state to align to.
+# ⚑ `prover` IS DELETED (2026-07-28), and the measurement that retired it is stronger than the
+# one recorded here before. It forwarded nothing (`prover = []`): `cargo build -p dregg-node
+# --all-targets --unit-graph` resolves to the SAME 718 units under `--features prover` and
+# `--no-default-features`, differing only in the feature string on dregg-node's own units.
 #
-# ⚑ WHAT IS STILL WRONG HERE, MEASURED AND NOT FIXED BY THIS COMMIT. 15 of the 19 sites are
-# `#[cfg(not(feature = "prover"))]` v1-floor test blocks in `src/mcp/mod.rs`, and NOTHING IN THE
-# TREE COMPILES THEM: `default = ["prover"]`, the only consumer (`dreggnet-tavern`) takes defaults,
-# and no workflow or script passes `--no-default-features` to this crate. They are 15 tests that
-# emit no line in any run. The other 4 gate the `exact_fnsp_v3_*` modules ON and are always active.
-# Retiring this feature means deleting the v1-floor lane those 15 describe, which belongs with the
-# v1 retirement, not with the SDK's feature split.
-default = ["prover"]
-prover = []
+# It was node's OWN gate over 19 local `#[cfg]` sites, and BOTH positions were dead:
+#   * 4 POSITIVE sites gated the `exact_fnsp_v3_*` module declarations in `src/lib.rs`. But
+#     `blocklace_sync.rs` names `crate::exact_fnsp_v3_{activation,actor_authority,
+#     execution_authority,finalization}` at ~20 call sites with NO cfg, so `--no-default-features`
+#     DID NOT COMPILE — it was not merely unexercised, it was impossible. Those modules are now
+#     unconditional, which is what every build that has ever existed already had.
+#   * 14 NEGATIVE (`not(prover)`) sites in `src/mcp/mod.rs` were therefore compiled by NO
+#     configuration at all — 10 tests + 4 helper fns. (The "15" the previous comment recorded
+#     counted a COMMENT line mentioning `not(feature = "prover")`; there were only ever 14
+#     attributes, so this manifest overcounted its own wound by one.) They are DELETED with the
+#     v1 lane they described, except one — see the tombstone in `src/mcp/mod.rs`. Nine of the ten
+#     assert that the standalone v1 `EffectVmAir` attestation COMMITS, and
+#     `try_generate_effect_vm_proof` returns `Err` unconditionally (no cfg), so they could not
+#     pass in any configuration; un-gated and RUN, all nine failed. The tenth — the pin that
+#     guards the retirement — is now unconditional, and it failed too, on `contains("retired")`
+#     against a message that says `is RETIRED`. It is repaired in place.
+#
+# WHAT BROKE: nothing named this feature. `dreggnet-tavern` is the only consumer of dregg-node and
+# takes `features = ["deos-host"]` + defaults. `dregg-tests/prover` and `dregg-perf/prover` were
+# retired in the same commit. `scripts/feature-tiers.tsv` loses SIX rows, not three: dropping the
+# `default = [...]` key makes cargo stop synthesising a `default` feature at all, so
+# `{dregg-node,dregg-perf,dregg-tests}:{default,prover}` all cease to exist (231 → 225 rows).
+# `dregg-verifier` leaves node's dev-deps with the tests that were its only consumers.
 
 # THE DEOS-HOST: the node hosts a headless userspace deos-js "private server" program
 # (`--deos-program <path.js>`), running fully without gpui. Pulls in `mozjs` via deos-js,
@@ -220,7 +232,10 @@ rand_core = { version = "0.6", features = ["getrandom"] }
 http-body-util = "0.1"
 x25519-dalek = { workspace = true }
 postcard = { version = "1", features = ["use-std"] }
-dregg-verifier = { path = "../verifier" }
+# ⚑ `dregg-verifier` REMOVED 2026-07-28. Its only consumers in this crate were the
+# `not(feature = "prover")` cross-fed helpers and the two `silver_captp_*` tests deleted with
+# the v1-floor lane (`src/mcp/mod.rs`); `grep -r dregg_verifier node/` is now zero. A dev-dep
+# with no consumer is a dependency edge that reads as coverage and is not.
 # `dregg-lean-ffi` is now a regular dependency above (the verified finality gate calls it from
 # production code); tests that need it (`lean_producer_mode.rs`, the finality-gate differential)
 # inherit it from there — no separate dev-dependency entry required.

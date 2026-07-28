@@ -165,8 +165,18 @@ mod tests {
     /// If someone revives the v1 lane, this goes red and the `PI[IS_AGENT_CELL] == 1`
     /// assertion must be restored with it.
     ///
-    /// v1 floor only: absent under the (default) prover build.
-    #[cfg(not(feature = "prover"))]
+    /// ⚑ UNGATED + REPAIRED 2026-07-28, and the repair is the finding. This carried
+    /// `#[cfg(not(feature = "prover"))]`; `dregg-node`'s `prover` feature was default-on with no
+    /// `--no-default-features` consumer anywhere, and the OFF position did not even COMPILE
+    /// (`blocklace_sync.rs` names the `exact_fnsp_v3_*` modules that `lib.rs` gated on the
+    /// feature). So the one pin guarding the v1 retirement emitted no line in any run that has
+    /// ever happened — and when it was finally compiled it FAILED, on `contains("retired")`
+    /// against a message that says `is RETIRED`. A CASE MISMATCH. The pin could never have
+    /// passed; it was not merely unrun, it was wrong, and nothing could say so.
+    ///
+    /// The comparison is case-folded, which is the claim the author wrote in the message
+    /// ("must name the retirement"). It still goes red if the v1 lane is revived, if the helper
+    /// starts returning `Ok`, or if the refusal stops naming why.
     #[test]
     fn standalone_v1_effect_vm_material_is_retired_and_refuses_by_name() {
         let vm_effects = vec![dregg_circuit::effect_vm::Effect::GrantCapability {
@@ -178,7 +188,7 @@ mod tests {
              restore the Issue-#72 PI[IS_AGENT_CELL]==1 assertion this test replaced",
         );
         assert!(
-            err.contains("retired"),
+            err.to_lowercase().contains("retired"),
             "the refusal must name the retirement, not fail for an incidental reason: {err}"
         );
     }
@@ -278,49 +288,6 @@ mod tests {
             .map(|c| c.text.as_str())
             .unwrap_or("");
         serde_json::from_str(text).expect("tool result content must be JSON")
-    }
-
-    // Used only by the prover-gated v1-floor `*_produces_proof_carrying_receipt` /
-    // `forged_proof_bytes_*` tests (it asserts the synchronous v1 DREG `effect_vm_proof_hex`).
-    #[cfg(not(feature = "prover"))]
-    fn assert_proof_populated(label: &str, j: &Value) {
-        assert_eq!(
-            j.get("committed").and_then(|v| v.as_bool()),
-            Some(true),
-            "[{label}] tool must commit; got: {j}",
-        );
-        let proof = j.get("effect_vm_proof_hex").cloned().unwrap_or(Value::Null);
-        assert!(
-            proof.is_string(),
-            "[{label}] effect_vm_proof_hex must be a string; got {proof:?}",
-        );
-        let proof_hex = proof.as_str().unwrap_or("");
-        assert!(
-            proof_hex.len() > 128,
-            "[{label}] effect_vm_proof_hex must be substantial (>64 bytes); got {} chars",
-            proof_hex.len()
-        );
-        let pi = j
-            .get("effect_vm_public_inputs")
-            .cloned()
-            .unwrap_or(Value::Null);
-        assert!(pi.is_array(), "[{label}] public_inputs must be array");
-        assert!(
-            pi.as_array().map(|a| !a.is_empty()).unwrap_or(false),
-            "[{label}] public_inputs must be non-empty"
-        );
-        let trace = j
-            .get("effect_vm_trace_rows")
-            .cloned()
-            .unwrap_or(Value::Null);
-        assert!(trace.is_array(), "[{label}] trace_rows must be array");
-        assert!(
-            j.get("effect_vm_witness_hash_hex")
-                .and_then(|v| v.as_str())
-                .map(|s| s.len() == 64)
-                .unwrap_or(false),
-            "[{label}] witness_hash_hex must be a 64-char hex string"
-        );
     }
 
     // =====================================================================
@@ -680,70 +647,6 @@ mod tests {
         );
     }
 
-    // V1-FLOOR (prover-gated): the MCP tool surface's SYNCHRONOUS standalone effect-vm proof is
-    // the v1 hand-AIR (`EffectVmAir`) DREG-format `StarkProof` that `try_generate_effect_vm_proof`
-    // produces and `require_effect_vm_proof` gates the commit on. Under `prover` (default) the v1
-    // hand-AIR is retired (`EffectVmAir` is `#[cfg(not(prover))]`) and the live attestation is the
-    // ROTATED finalized-turn proof the node's async prove pool produces through the commit pipeline
-    // (covered by `turn_proving::tests::flow_b_*` + the executor rotated WR path). This standalone-
-    // proof tool surface is therefore a `not(prover)` floor; the test runs under
-    // `--no-default-features`.
-    #[cfg(not(feature = "prover"))]
-    #[tokio::test]
-    async fn grant_capability_commits_witness_artifact_for_receipt_chain() {
-        let (state, _tmp) = fresh_unlocked_state().await;
-        let (target_cell, recipient_cell) = {
-            let mut s = state.write().await;
-            let id = dregg_cell::CellId::derive_raw(&s.cclerk.public_key().0, &[0u8; 32]);
-            let recipient_pk = [0x77u8; 32];
-            let recipient = dregg_cell::Cell::with_balance(recipient_pk, [0u8; 32], 0);
-            let recipient_id = recipient.id();
-            s.ledger
-                .insert_cell(recipient)
-                .expect("recipient cell insert must succeed");
-            (hex_encode(&id.0), hex_encode(&recipient_id.0))
-        };
-        let params = serde_json::json!({
-            "to_agent": recipient_cell,
-            "target_cell": target_cell,
-            "permissions": "signature",
-        });
-
-        let result = dispatch_tool("dregg_grant_capability", params, &state).await;
-        let j = extract_json(&result);
-        assert_eq!(
-            j.get("activity_status").and_then(|v| v.as_str()),
-            Some("committed"),
-            "unexpected response: {j}"
-        );
-        assert_eq!(
-            j.get("proof_status").and_then(|v| v.as_str()),
-            Some("proved")
-        );
-
-        let s = state.read().await;
-        let receipt = s
-            .cclerk
-            .receipt_chain()
-            .last()
-            .expect("grant must append a receipt");
-        let receipt_hash = receipt.receipt_hash();
-        assert_eq!(
-            s.witnessed_receipt_count(&receipt_hash),
-            1,
-            "committed proof-bearing MCP turn must leave a retrievable witnessed receipt"
-        );
-        let stored = s
-            .witnessed_receipts
-            .get(&receipt_hash)
-            .expect("witnessed receipt entry must exist");
-        assert_eq!(stored[0].receipt.receipt_hash(), receipt_hash);
-        assert!(
-            stored[0].witness_bundle.is_some(),
-            "stored witnessed receipt must carry replay material"
-        );
-    }
-
     #[tokio::test]
     async fn grant_capability_rejects_missing_recipient_pre_state_instead_of_stub() {
         let (state, _tmp) = fresh_unlocked_state().await;
@@ -909,332 +812,48 @@ mod tests {
         );
     }
 
-    // V1-FLOOR (prover-gated): these four `dregg_*_produces_proof_carrying_receipt` tests assert
-    // the SYNCHRONOUS standalone v1 effect-vm DREG `StarkProof` (`assert_proof_populated`), which is
-    // retired under `prover` (the live attestation is the rotated node-pipeline proof). They run
-    // under `--no-default-features`. See `grant_capability_commits_witness_artifact_for_receipt_chain`.
-    #[cfg(not(feature = "prover"))]
-    #[tokio::test]
-    async fn dregg_register_name_produces_proof_carrying_receipt() {
-        let (state, _tmp) = fresh_unlocked_state().await;
-        let params = serde_json::json!({
-            "name": "alice.dev",
-            "expiry_height": 2_000_000_000u64,
-        });
-        let result = dispatch_tool("dregg_register_name", params, &state).await;
-        let j = extract_json(&result);
-        assert_proof_populated("register_name", &j);
-        // Confirm cross-app link metadata is surfaced.
-        assert_eq!(
-            j.get("registered_name").and_then(|v| v.as_str()),
-            Some("alice.dev")
-        );
-        assert!(
-            j.get("schema_commitment")
-                .and_then(|v| v.as_str())
-                .is_some()
-        );
-    }
-
-    #[cfg(not(feature = "prover"))] // v1-floor standalone proof (see register_name above)
-    #[tokio::test]
-    async fn dregg_publish_subscription_produces_proof_carrying_receipt() {
-        let (state, _tmp) = fresh_unlocked_state().await;
-        let bounty_id = "abcd".repeat(16);
-        let msg_root = "1234".repeat(16);
-        let actor_pk_hash = "5678".repeat(16);
-        let params = serde_json::json!({
-            "new_head": 1u64,
-            "new_message_root": msg_root,
-            "bounty_id": bounty_id,
-            "prior_state": "posted",
-            "new_state": "claimed",
-            "actor_pk_hash": actor_pk_hash,
-        });
-        let result = dispatch_tool("dregg_publish_subscription", params, &state).await;
-        let j = extract_json(&result);
-        assert_proof_populated("publish_subscription", &j);
-        assert_eq!(
-            j.get("prior_state").and_then(|v| v.as_str()),
-            Some("posted")
-        );
-        assert_eq!(j.get("new_state").and_then(|v| v.as_str()), Some("claimed"));
-        assert!(j.get("payload_hash").and_then(|v| v.as_str()).is_some());
-    }
-
-    #[cfg(not(feature = "prover"))] // v1-floor standalone proof (see register_name above)
-    #[tokio::test]
-    async fn dregg_issue_credential_produces_proof_carrying_receipt() {
-        let (state, _tmp) = fresh_unlocked_state().await;
-        let params = serde_json::json!({
-            "schema": "kyc",
-            "attributes": {
-                "given_name": "Bob",
-                "verification_level": 2,
-            },
-        });
-        let result = dispatch_tool("dregg_issue_credential", params, &state).await;
-        let j = extract_json(&result);
-        assert_proof_populated("issue_credential", &j);
-        assert!(j.get("credential_id").and_then(|v| v.as_str()).is_some());
-        assert_eq!(j.get("schema").and_then(|v| v.as_str()), Some("kyc"));
-        assert!(
-            j.get("credential_encoded")
-                .and_then(|v| v.as_str())
-                .is_some()
-        );
-    }
-
-    #[cfg(not(feature = "prover"))] // v1-floor standalone proof (see register_name above)
-    #[tokio::test]
-    async fn dregg_register_service_produces_proof_carrying_receipt() {
-        let (state, _tmp) = fresh_unlocked_state().await;
-        let params = serde_json::json!({
-            "path": "/alice.dev",
-        });
-        let result = dispatch_tool("dregg_register_service", params, &state).await;
-        let j = extract_json(&result);
-        assert_proof_populated("register_service", &j);
-        assert_eq!(j.get("path").and_then(|v| v.as_str()), Some("/alice.dev"));
-        // #110: the synthesized-row note is gone — the AIR now carries a
-        // real EmitEvent variant with canonical (topic_hash, payload_hash)
-        // binding, so register_service projects directly and no workaround
-        // marker is surfaced.
-        assert!(
-            j.get("synthesized_vm_setfield_note").is_none(),
-            "register_service must NOT surface the legacy coverage-gap note \
-             once #110 lands a real AIR EmitEvent variant"
-        );
-    }
-
-    // =====================================================================
-    // dregg_exercise_handoff_cert unit tests
-    // =====================================================================
-
-    /// Honest path: exercise_handoff_cert with a valid introducer key commits
-    /// and emits a STARK proof. Mirrors the existing `dregg_captp_deliver`
-    /// integration (CapTpDelivered cert + delivery-signature verification).
-    // V1-FLOOR (prover-gated): both handoff-cert tests drive the tool through
-    // `require_effect_vm_proof` (which gates the COMMIT on the v1 standalone DREG proof) and assert
-    // the v1 `effect_vm_proof_hex` / the v1-proof-generation error text. Under `prover` that v1
-    // standalone proof is retired; the live attestation is the rotated node-pipeline proof. Runs
-    // under `--no-default-features`. (The rotated handoff path is exercised by the silver-captp
-    // integration + the executor rotated WR path.)
-    #[cfg(not(feature = "prover"))]
-    #[tokio::test]
-    async fn exercise_handoff_cert_honest_path_commits() {
-        let (state, _tmp) = fresh_unlocked_state().await;
-
-        // Generate a deterministic introducer seed (32 bytes → secret key).
-        let mut seed = [0u8; 32];
-        seed[0] = 0xBB;
-        let introducer_sk_hex = hex_encode(&seed); // pass as introducer_sk
-
-        // Create an agent cell so pre_state is non-None and the proof fires.
-        let create_res = dispatch_tool(
-            "dregg_create_agent",
-            serde_json::json!({ "name": "honest-bob", "initial_balance": 1_000_000 }),
-            &state,
-        )
-        .await;
-        let create_j = extract_json(&create_res);
-        let target_cell = create_j["cell_id"].as_str().expect("cell_id").to_string();
-
-        let params = serde_json::json!({
-            "target_cell": target_cell,
-            "introducer_sk": introducer_sk_hex,
-            "permissions": "signature",
-        });
-        let result = dispatch_tool("dregg_exercise_handoff_cert", params, &state).await;
-        let j = extract_json(&result);
-
-        assert_eq!(
-            j.get("exercised").and_then(|v| v.as_bool()),
-            Some(true),
-            "honest handoff cert exercise must commit; got: {j}"
-        );
-        assert!(
-            j.get("turn_hash").and_then(|v| v.as_str()).is_some(),
-            "must return turn_hash"
-        );
-        assert!(
-            j.get("cert_nonce").and_then(|v| v.as_str()).is_some(),
-            "must return cert_nonce"
-        );
-        assert!(
-            j.get("cert_hash").and_then(|v| v.as_str()).is_some(),
-            "must return cert_hash"
-        );
-        // STARK proof must be present because the agent cell is in the ledger.
-        let proof = j.get("effect_vm_proof_hex").cloned().unwrap_or(Value::Null);
-        assert!(
-            proof.is_string(),
-            "honest path must emit effect_vm_proof_hex; got: {proof:?}"
-        );
-        let proof_hex = proof.as_str().unwrap_or("");
-        assert!(
-            proof_hex.len() > 128,
-            "proof must be non-trivial (>64 bytes); got {} chars",
-            proof_hex.len()
-        );
-    }
-
-    /// Adversarial test: supplying a forged `introducer_pk` that does NOT
-    /// match the cert's introducer causes the executor to reject the Turn.
-    ///
-    /// Security property: `verify_captp_delivered` step 3b checks
-    /// `introducer_pk == cert.introducer.0`. A forged pk diverges and the
-    /// executor returns `Rejected` (`TurnError::CapTpIntroducerKeyMismatch`)
-    /// rather than committing.
-    ///
-    /// ⚠ MEASURED 2026-07-28: this doc named a check that DID NOT EXIST. It said
-    /// "step 2", and step 2 compares `target_federation` and `target_cell` — no step
-    /// compared `introducer_pk` to `cert.introducer.0` anywhere on the executor path.
-    /// A forged pk was caught only incidentally, by the *signature* failing under it;
-    /// a presenter who held the introducer sk could name ANY federation and be
-    /// attributed to it. The binding now exists, so the claim above is finally true.
-    ///
-    /// ⚠ AND THIS TEST COULD NOT HAVE CAUGHT IT. `dregg-node` has `default = ["prover"]`,
-    /// nothing in the tree passes `--no-default-features` to it, so the `cfg` below
-    /// means this test is COMPILED BY NOTHING — one of the 15 the crate's own
-    /// `Cargo.toml` (`node/Cargo.toml:179-185`) already measures as emitting no line in
-    /// any run. Even compiled it would have passed for the wrong reason and then failed
-    /// for a third: `require_effect_vm_proof` refuses unconditionally (the v1 attestation
-    /// is retired), so the tool returns `exercised: false` before the executor is ever
-    /// reached — satisfying the first assertion below without the authorization gate
-    /// running at all. The real pole for this property is
-    /// `turn/tests/captp_delivered_amplification.rs::a2_captp_cert_naming_a_federation_that_did_not_sign_it_is_refused`,
-    /// which is compiled, runs, and asserts the refusal BY VARIANT.
-    #[cfg(not(feature = "prover"))] // v1-floor standalone proof (see honest_path_commits above)
-    #[tokio::test]
-    async fn exercise_handoff_cert_forged_introducer_pk_rejected() {
-        let (state, _tmp) = fresh_unlocked_state().await;
-
-        // Honest introducer secret key seed (32 bytes).
-        let mut seed = [0u8; 32];
-        seed[0] = 0xCC;
-        let honest_sk_hex = hex_encode(&seed); // pass as introducer_sk
-
-        // Create a target cell so the ledger has something to act on.
-        let create_res = dispatch_tool(
-            "dregg_create_agent",
-            serde_json::json!({ "name": "adversarial-bob", "initial_balance": 1_000_000 }),
-            &state,
-        )
-        .await;
-        let create_j = extract_json(&create_res);
-        let target_cell = create_j["cell_id"].as_str().expect("cell_id").to_string();
-
-        // Forged introducer pk: all 0xAA bytes — definitely not the honest key.
-        let forged_pk_hex = "aa".repeat(32);
-
-        // We supply the honest_sk (so the cert is signed with the honest key),
-        // but override `introducer_pk` with the forged value. The executor sees
-        // the cert signed by the honest key but `introducer_pk` pointing at the
-        // forged bytes — step 2 rejects immediately.
-        let params = serde_json::json!({
-            "target_cell": target_cell,
-            "introducer_sk": honest_sk_hex,
-            "introducer_pk": forged_pk_hex,
-            "permissions": "signature",
-        });
-        let result = dispatch_tool("dregg_exercise_handoff_cert", params, &state).await;
-        let j = extract_json(&result);
-
-        assert_eq!(
-            j.get("exercised").and_then(|v| v.as_bool()),
-            Some(false),
-            "forged introducer_pk MUST cause executor rejection; got: {j}"
-        );
-        let err = j
-            .get("error")
-            .and_then(|v| v.as_str())
-            .unwrap_or("(no error field)");
-        assert!(
-            err.contains("rejected") || err.contains("introducer") || err.contains("invalid"),
-            "rejection error must mention the authorization failure; got: '{err}'"
-        );
-    }
-
-    // These three cross-fed test helpers are used ONLY by the prover-gated `silver_captp_*` tests
-    // (whose handoff-commit step is v1-floor-only), so they are gated to match — else they would be
-    // dead code under `prover`.
-    #[cfg(not(feature = "prover"))]
-    fn test_committee_descriptor(
-        role: &str,
-        pk: dregg_types::PublicKey,
-        federation_id: [u8; 32],
-    ) -> dregg_verifier::cross_fed::CommitteeDescriptor {
-        dregg_verifier::cross_fed::CommitteeDescriptor {
-            federation_id: hex_encode(&federation_id),
-            committee_epoch: 0,
-            threshold: 1,
-            validators: vec![dregg_verifier::cross_fed::ValidatorDescriptor {
-                name: role.to_string(),
-                public_key: hex_encode(&pk.0),
-                ml_dsa_public_key: None,
-            }],
-        }
-    }
-
-    #[cfg(not(feature = "prover"))] // silver-captp-only helper (see test_committee_descriptor)
-    fn sign_test_attested_root(
-        mut root: dregg_types::AttestedRoot,
-        sk: &dregg_types::SigningKey,
-    ) -> dregg_types::AttestedRoot {
-        let message = root.signing_message();
-        let sig = dregg_types::sign(sk, &message);
-        let pk = sk.public_key();
-        root.quorum_signatures = vec![(pk, sig)];
-        // HYBRID closure: the cross-fed verifier now requires an ed25519 ∧
-        // ML-DSA-65 quorum over the SAME `signing_message()`. Derive this
-        // member's ML-DSA-65 key deterministically from its ed25519 pubkey so
-        // the fixture is reproducible and self-contained.
-        let (pq_pk, pq_sk) = dregg_federation::frost::MlDsaSigningKey::from_seed(&pk.0);
-        root.hybrid_quorum = vec![dregg_types::HybridQuorumSig {
-            pubkey: pk,
-            signature: sig,
-            ml_dsa_pubkey: pq_pk.0.to_vec(),
-            pq_signature: pq_sk.sign(&message).expect("ml-dsa sign"),
-        }];
-        root
-    }
-
-    #[cfg(not(feature = "prover"))] // silver-captp-only helper (see test_committee_descriptor)
-    fn test_attested_root_for_receipts(
-        federation_id: [u8; 32],
-        receipt_hashes: &[[u8; 32]],
-        signing_key: &dregg_types::SigningKey,
-        height: u64,
-        tag: &[u8],
-    ) -> dregg_types::AttestedRoot {
-        let receipt_stream_root = dregg_types::merkle_root_of_receipt_hashes(receipt_hashes);
-        let mut h = blake3::Hasher::new_derive_key("dregg-node-mcp-silver-captp-root-v1");
-        h.update(tag);
-        h.update(&height.to_le_bytes());
-        h.update(&receipt_stream_root);
-        let merkle_root = *h.finalize().as_bytes();
-        sign_test_attested_root(
-            dregg_types::AttestedRoot {
-                merkle_root,
-                note_tree_root: None,
-                nullifier_set_root: None,
-                height,
-                timestamp: 1_700_000_000 + height as i64,
-                blocklace_block_id: Some(
-                    *blake3::hash([tag, b":blocklace"].concat().as_slice()).as_bytes(),
-                ),
-                finality_round: Some(height),
-                quorum_signatures: Vec::new(),
-                threshold_qc: None,
-                threshold: 1,
-                federation_id: dregg_types::FederationId(federation_id),
-                receipt_stream_root: Some(receipt_stream_root),
-                hybrid_quorum: Vec::new(),
-            },
-            signing_key,
-        )
-    }
+    // ⚑ TOMBSTONE 2026-07-28 — THE `not(feature = "prover")` V1-FLOOR LANE IS DELETED.
+    //
+    // Nine tests and four helpers lived here behind `#[cfg(not(feature = "prover"))]`, and
+    // `dregg-node`'s `prover` feature was `default = ["prover"]` with no `--no-default-features`
+    // consumer in the tree — so they emitted no line in any run. Worse: the OFF position DID NOT
+    // COMPILE, because `blocklace_sync.rs` names the `exact_fnsp_v3_*` modules unconditionally
+    // while `src/lib.rs` gated their declarations ON `prover`. There was no configuration in which
+    // these tests existed.
+    //
+    // Un-gated and RUN before deleting (the measurement, not an assumption): all nine FAIL, and
+    // they fail for one reason. `try_generate_effect_vm_proof` (`mcp/proof.rs`) returns `Err`
+    // UNCONDITIONALLY — no `cfg` — because the standalone v1 `EffectVmAir` attestation is retired.
+    // So every test that asserted this surface COMMITS or emits an `effect_vm_proof_hex` asserted
+    // something no build can do:
+    //
+    //   grant_capability_commits_witness_artifact_for_receipt_chain    (wanted activity_status=committed)
+    //   dregg_register_name_produces_proof_carrying_receipt            (wanted effect_vm_proof_hex: String)
+    //   dregg_publish_subscription_produces_proof_carrying_receipt     (same)
+    //   dregg_issue_credential_produces_proof_carrying_receipt         (same)
+    //   dregg_register_service_produces_proof_carrying_receipt         (same)
+    //   exercise_handoff_cert_honest_path_commits                      (wanted exercised=true)
+    //   silver_captp_mcp_path_exports_cross_fed_verifiable_bundle      (wanted activity_status=committed)
+    //   silver_captp_node_to_node_exchange_imports_and_verifies_witness_artifact (same)
+    //
+    // And the ninth, `exercise_handoff_cert_forged_introducer_pk_rejected`, was a FAKE SECURITY
+    // POLE. It claimed to prove that a forged `introducer_pk` is refused by the executor. It never
+    // reached the executor: `require_effect_vm_proof` refuses first, so `exercised: false` was
+    // satisfied by the retirement and not by any authorization check. Its second assertion — that
+    // the error names the authorization failure (`"rejected" | "introducer" | "invalid"`) — is the
+    // one that could tell the two apart, and it FAILS, because the message it actually gets is
+    // "handoff cert exercise: refused — the standalone v1 effect-vm attestation … is RETIRED".
+    // A pole that cannot distinguish a forged key from a retired lane is not a pole.
+    //
+    // THE LIVE POLE FOR THAT PROPERTY, compiled and running today, is
+    // `turn/tests/captp_delivered_amplification.rs::a2_captp_cert_naming_a_federation_that_did_not_sign_it_is_refused`,
+    // which asserts the refusal BY ERROR VARIANT rather than by substring.
+    //
+    // NOT deleted, and deliberately: the five MCP tools that consult `require_effect_vm_proof`
+    // (`dregg_grant_capability`, `dregg_exercise_bearer_cap`, `dregg_exercise_handoff_cert`, and
+    // both sides of `dregg_bilateral_action`) still CANNOT COMMIT, because that helper is a
+    // guaranteed refusal. That is a live defect in the tool surface, not in these tests, and
+    // `require_effect_vm_proof`'s own doc already says the refusal is not fail-closed safety.
 
     /// The cross-fed AttestedRoot quorum, made HYBRID (ed25519 ∧ ML-DSA-65).
     ///
@@ -1361,357 +980,6 @@ mod tests {
         assert!(
             !verify_hybrid_quorum_sigs(&outsider, &message, &members, &ml_dsa_roster, 1),
             "non-member hybrid signer must reject"
-        );
-    }
-
-    // V1-FLOOR (prover-gated): both silver-captp tests first COMMIT a handoff-cert exercise
-    // through the MCP tool, which under the v1 floor gates the commit on the standalone DREG proof
-    // (`require_effect_vm_proof`). Under `prover` that v1 standalone proof is retired so the
-    // handoff tool returns `proof_generation_failed` instead of committing; the cross-fed bundle
-    // export they assert is downstream of that commit. They run under `--no-default-features`. (The
-    // rotated cross-fed witnessed-receipt path is exercised by `silver_captp_*` at the verifiable-
-    // bundle layer + the executor rotated WR path.)
-    #[cfg(not(feature = "prover"))]
-    #[tokio::test]
-    async fn silver_captp_mcp_path_exports_cross_fed_verifiable_bundle() {
-        let (state, _tmp) = fresh_unlocked_state().await;
-
-        let mut introducer_seed = [0u8; 32];
-        introducer_seed[0] = 0xE1;
-        let introducer_sk = dregg_types::SigningKey::from_bytes(&introducer_seed);
-        let introducer_pk = introducer_sk.public_key();
-        let issuer_fed_id = dregg_federation::derive_federation_id_with_epoch(&[introducer_pk], 0);
-
-        let (target_cell, recipient_pk, recipient_sk, recipient_fed_id) = {
-            let mut s = state.write().await;
-            let recipient_pk = s.cclerk.public_key();
-            let recipient_sk = s.cclerk.gossip_signing_key();
-            s.set_federation_keys(vec![recipient_pk]);
-            let recipient_fed_id = s.federation_id;
-            let target_cell = dregg_cell::CellId::derive_raw(&recipient_pk.0, &[0u8; 32]);
-            (target_cell, recipient_pk, recipient_sk, recipient_fed_id)
-        };
-
-        let params = serde_json::json!({
-            "target_cell": hex_encode(&target_cell.0),
-            "introducer_sk": hex_encode(&introducer_seed),
-            "introducer_federation": hex_encode(&issuer_fed_id),
-            "target_federation": hex_encode(&recipient_fed_id),
-            "recipient_pk": hex_encode(&recipient_pk.0),
-            "permissions": "signature",
-            "swiss": "42".repeat(32),
-            "effects": [{
-                "type": "set_field",
-                "cell": hex_encode(&target_cell.0),
-                "index": 1,
-                "value": 153u64,
-            }],
-        });
-        let result = dispatch_tool("dregg_exercise_handoff_cert", params, &state).await;
-        let j = extract_json(&result);
-        assert_eq!(
-            j.get("activity_status").and_then(|v| v.as_str()),
-            Some("committed"),
-            "MCP Silver handoff must commit before bundle export: {j}"
-        );
-        assert_eq!(
-            j.get("proof_status").and_then(|v| v.as_str()),
-            Some("proved"),
-            "MCP Silver handoff must produce replay witness material: {j}"
-        );
-
-        let cert_hex = j
-            .get("handoff_certificate_hex")
-            .and_then(|v| v.as_str())
-            .expect("MCP response must export the actual handoff certificate bytes");
-        let cert_bytes = hex_decode_var(cert_hex).expect("certificate hex decodes");
-        let cert = dregg_captp::HandoffCertificate::from_bytes(&cert_bytes)
-            .expect("certificate exported by MCP must decode");
-
-        let (receipt, witnessed) = {
-            let s = state.read().await;
-            let receipt = s
-                .cclerk
-                .receipt_chain()
-                .last()
-                .expect("committed MCP turn must append a receipt")
-                .clone();
-            assert_eq!(
-                receipt.federation_id, recipient_fed_id,
-                "node-facing CapTP receipt must bind the configured recipient federation"
-            );
-            assert!(
-                receipt.executor_signature.is_some(),
-                "node-facing CapTP receipt must carry executor signature material"
-            );
-            let receipt_hash = receipt.receipt_hash();
-            let stored = s
-                .witnessed_receipts
-                .get(&receipt_hash)
-                .expect("committed MCP handoff must persist a witnessed receipt artifact");
-            assert_eq!(stored.len(), 1);
-            assert!(
-                stored[0].witness_bundle.is_some(),
-                "stored witnessed receipt must carry scope-2 replay material"
-            );
-            (receipt, stored[0].clone())
-        };
-
-        let issuer_desc = test_committee_descriptor("issuer", introducer_pk, issuer_fed_id);
-        let recipient_desc = test_committee_descriptor("recipient", recipient_pk, recipient_fed_id);
-        let issuer_root =
-            test_attested_root_for_receipts(issuer_fed_id, &[], &introducer_sk, 10, b"issuer");
-        let recipient_root = test_attested_root_for_receipts(
-            recipient_fed_id,
-            &[receipt.receipt_hash()],
-            &recipient_sk,
-            20,
-            b"recipient",
-        );
-        let bundle = dregg_federation::CrossFedReceiptBundle::new(
-            vec![witnessed],
-            issuer_root,
-            recipient_root,
-            cert,
-            None,
-        );
-
-        let verdict = dregg_verifier::cross_fed::verify_cross_fed_bundle(
-            &bundle,
-            &issuer_desc,
-            &recipient_desc,
-        );
-        assert!(
-            verdict.overall_verified,
-            "MCP-produced Silver artifacts must verify as a cross-fed bundle: {verdict:?}",
-        );
-
-        let mut missing_witness = bundle.clone();
-        missing_witness.recipient_chain[0].witness_bundle = None;
-        let missing_verdict = dregg_verifier::cross_fed::verify_cross_fed_bundle(
-            &missing_witness,
-            &issuer_desc,
-            &recipient_desc,
-        );
-        assert!(
-            !missing_verdict.overall_verified
-                && missing_verdict.summary.contains("has no witness_bundle"),
-            "missing witnessed material must reject: {missing_verdict:?}",
-        );
-
-        let mut swapped_recipient = bundle;
-        swapped_recipient.cross_fed_cert.target_federation = dregg_captp::FederationId([0xF2; 32]);
-        let swapped_verdict = dregg_verifier::cross_fed::verify_cross_fed_bundle(
-            &swapped_recipient,
-            &issuer_desc,
-            &recipient_desc,
-        );
-        assert!(
-            !swapped_verdict.overall_verified,
-            "swapped target federation must reject: {swapped_verdict:?}",
-        );
-    }
-
-    #[cfg(not(feature = "prover"))] // v1-floor handoff commit gate (see the export test above)
-    #[tokio::test]
-    async fn silver_captp_node_to_node_exchange_imports_and_verifies_witness_artifact() {
-        let (producer_state, _producer_tmp) = fresh_unlocked_state().await;
-        let (importer_state, _importer_tmp) = fresh_unlocked_state().await;
-
-        let mut introducer_seed = [0u8; 32];
-        introducer_seed[0] = 0xE2;
-        let introducer_sk = dregg_types::SigningKey::from_bytes(&introducer_seed);
-        let introducer_pk = introducer_sk.public_key();
-        let issuer_fed_id = dregg_federation::derive_federation_id_with_epoch(&[introducer_pk], 0);
-
-        let (target_cell, recipient_pk, recipient_sk, recipient_fed_id) = {
-            let mut s = producer_state.write().await;
-            let recipient_pk = s.cclerk.public_key();
-            let recipient_sk = s.cclerk.gossip_signing_key();
-            s.set_federation_keys(vec![recipient_pk]);
-            let recipient_fed_id = s.federation_id;
-            let target_cell = dregg_cell::CellId::derive_raw(&recipient_pk.0, &[0u8; 32]);
-            (target_cell, recipient_pk, recipient_sk, recipient_fed_id)
-        };
-
-        let params = serde_json::json!({
-            "target_cell": hex_encode(&target_cell.0),
-            "introducer_sk": hex_encode(&introducer_seed),
-            "introducer_federation": hex_encode(&issuer_fed_id),
-            "target_federation": hex_encode(&recipient_fed_id),
-            "recipient_pk": hex_encode(&recipient_pk.0),
-            "permissions": "signature",
-            "swiss": "42".repeat(32),
-            "effects": [{
-                "type": "set_field",
-                "cell": hex_encode(&target_cell.0),
-                "index": 1,
-                "value": 154u64,
-            }],
-        });
-        let result = dispatch_tool("dregg_exercise_handoff_cert", params, &producer_state).await;
-        let j = extract_json(&result);
-        assert_eq!(
-            j.get("activity_status").and_then(|v| v.as_str()),
-            Some("committed"),
-            "producer node must commit the handoff before exporting gossip artifacts: {j}"
-        );
-        assert_eq!(
-            j.get("proof_status").and_then(|v| v.as_str()),
-            Some("proved"),
-            "producer node must persist replay witness material: {j}"
-        );
-
-        let cert_hex = j
-            .get("handoff_certificate_hex")
-            .and_then(|v| v.as_str())
-            .expect("MCP response must export handoff certificate bytes");
-        let cert_bytes = hex_decode_var(cert_hex).expect("certificate hex decodes");
-        let cert = dregg_captp::HandoffCertificate::from_bytes(&cert_bytes)
-            .expect("certificate exported by producer must decode");
-
-        let (receipt_hash, receipt) = {
-            let s = producer_state.read().await;
-            let receipt = s
-                .cclerk
-                .receipt_chain()
-                .last()
-                .expect("producer commit must append a receipt")
-                .clone();
-            (receipt.receipt_hash(), receipt)
-        };
-
-        // This mirrors the normal `/api/receipts/{hash}/witnesses` response
-        // shape: legacy JSON remains present for display/debugging, but node to
-        // node import uses the canonical DWR1 artifacts.
-        let exported = {
-            let s = producer_state.read().await;
-            let witnessed = s
-                .witnessed_receipts
-                .get(&receipt_hash)
-                .cloned()
-                .expect("producer storage must retain the witnessed receipt");
-            let witness_artifacts = witnessed
-                .iter()
-                .map(|w| {
-                    w.to_artifact_bytes()
-                        .map(|bytes| hex_encode(&bytes))
-                        .expect("witness artifact encodes")
-                })
-                .collect::<Vec<_>>();
-            serde_json::json!({
-                "receipt_hash": hex_encode(&receipt_hash),
-                "witness_count": witnessed.len(),
-                "artifact_format": "DWR1",
-                "witness_artifacts": witness_artifacts,
-                "witnessed_receipts": witnessed,
-            })
-        };
-        assert_eq!(exported["witness_count"], 1);
-        assert_eq!(exported["artifact_format"], "DWR1");
-
-        let exported_hash = exported
-            .get("receipt_hash")
-            .and_then(|v| v.as_str())
-            .and_then(|h| hex_decode(h).ok())
-            .expect("exported receipt_hash must be 32-byte hex");
-        assert_eq!(exported_hash, receipt_hash);
-        let imported_witnesses: Vec<dregg_turn::WitnessedReceipt> = exported["witness_artifacts"]
-            .as_array()
-            .expect("canonical witness_artifacts array")
-            .iter()
-            .map(|artifact| {
-                let artifact_hex = artifact.as_str().expect("artifact hex");
-                let artifact_bytes = hex_decode_var(artifact_hex).expect("artifact hex decodes");
-                dregg_turn::WitnessedReceipt::from_artifact_bytes(&artifact_bytes)
-                    .expect("DWR1 witness artifact decodes")
-            })
-            .collect();
-        assert_eq!(imported_witnesses.len(), 1);
-
-        {
-            let mut importer = importer_state.write().await;
-            importer.push_witnessed_receipt(receipt_hash, imported_witnesses[0].clone());
-            assert_eq!(
-                importer.witnessed_receipt_count(&receipt_hash),
-                1,
-                "importing node must persist the received witnessed receipt by receipt hash"
-            );
-        }
-
-        let imported = {
-            let importer = importer_state.read().await;
-            importer
-                .witnessed_receipts
-                .get(&receipt_hash)
-                .and_then(|items| items.first())
-                .cloned()
-                .expect("imported node storage must expose the received artifact")
-        };
-        let issuer_desc = test_committee_descriptor("issuer", introducer_pk, issuer_fed_id);
-        let recipient_desc = test_committee_descriptor("recipient", recipient_pk, recipient_fed_id);
-        let issuer_root =
-            test_attested_root_for_receipts(issuer_fed_id, &[], &introducer_sk, 10, b"issuer");
-        let recipient_root = test_attested_root_for_receipts(
-            recipient_fed_id,
-            &[receipt.receipt_hash()],
-            &recipient_sk,
-            20,
-            b"recipient",
-        );
-        let bundle = dregg_federation::CrossFedReceiptBundle::new(
-            vec![imported],
-            issuer_root,
-            recipient_root,
-            cert,
-            None,
-        );
-
-        let verdict = dregg_verifier::cross_fed::verify_cross_fed_bundle(
-            &bundle,
-            &issuer_desc,
-            &recipient_desc,
-        );
-        assert!(
-            verdict.overall_verified,
-            "imported node-to-node Silver artifact must verify end-to-end: {verdict:?}",
-        );
-
-        let mut missing_witness = bundle.clone();
-        missing_witness.recipient_chain[0].witness_bundle = None;
-        let missing_verdict = dregg_verifier::cross_fed::verify_cross_fed_bundle(
-            &missing_witness,
-            &issuer_desc,
-            &recipient_desc,
-        );
-        assert!(
-            !missing_verdict.overall_verified
-                && missing_verdict.summary.contains("has no witness_bundle"),
-            "imported bundle without witnessed replay material must reject: {missing_verdict:?}",
-        );
-
-        let mut swapped_recipient = bundle.clone();
-        swapped_recipient.cross_fed_cert.target_federation = dregg_captp::FederationId([0xF2; 32]);
-        let swapped_verdict = dregg_verifier::cross_fed::verify_cross_fed_bundle(
-            &swapped_recipient,
-            &issuer_desc,
-            &recipient_desc,
-        );
-        assert!(
-            !swapped_verdict.overall_verified,
-            "swapped recipient federation in the handoff certificate must reject: {swapped_verdict:?}",
-        );
-
-        let wrong_recipient_desc =
-            test_committee_descriptor("wrong-recipient", recipient_pk, [0xF3; 32]);
-        let wrong_fed_verdict = dregg_verifier::cross_fed::verify_cross_fed_bundle(
-            &bundle,
-            &issuer_desc,
-            &wrong_recipient_desc,
-        );
-        assert!(
-            !wrong_fed_verdict.overall_verified,
-            "wrong recipient committee federation id must reject imported artifacts: {wrong_fed_verdict:?}",
         );
     }
 

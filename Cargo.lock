@@ -6995,7 +6995,6 @@ dependencies = [
  "dregg-turn",
  "dregg-turn-prover",
  "dregg-types",
- "dregg-verifier",
  "ed25519-dalek",
  "fhe",
  "fhe-traits",

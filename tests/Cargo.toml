@@ -14,17 +14,12 @@ path = "src/main.rs"
 # build skips it so the workspace stays buildable while bridge undergoes
 # token-vocabulary changes.
 #
-# `prover` is this crate's OWN gate over 2 local `#[cfg(not(feature = "prover"))]` sites in
-# `src/executor_honesty_threats.rs` (the v1 `EffectVmAir` legs). It forwards nothing and always
-# has: the comment that stood here claimed it forwards to `dregg-circuit/prover` and that a bare
-# `cfg(feature = "prover")` would otherwise be always-false — `dregg-circuit` declares only
-# `default = ["plonky3"]` / `plonky3` and has NEVER had a `prover` feature, so the described
-# alignment could not happen and the `[]` body was the whole truth.
-#
-# ⚑ Same measured shape as `dregg-node`'s: `default = ["prover"]` and nothing in the tree passes
-# `--no-default-features` to this crate, so those 2 `not(prover)` legs are compiled by NOTHING.
-default = ["prover"]
-prover = []
+# ⚑ `prover` IS DELETED (2026-07-28), with `dregg-node`'s and `dregg-perf`'s. It forwarded
+# nothing (`prover = []`) and was this crate's OWN gate over 2 `#[cfg(not(feature = "prover"))]`
+# sites in `src/executor_honesty_threats.rs` (the T14 legs). `default = ["prover"]` plus no
+# `--no-default-features` consumer anywhere meant those two tests emitted no line in any run.
+# They are now unconditional; their v1-specific reason substring is re-pointed at the live
+# fail-closed refusal (see the note at those tests).
 __legacy_tests = ["dep:dregg-bridge"]
 __wip_tests = ["dep:dregg-bridge"]
 

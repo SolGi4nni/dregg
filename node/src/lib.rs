@@ -50,13 +50,12 @@ mod captp_handoff_e2e;
 mod epoch_transition_e2e;
 pub mod equivocation_court_service;
 pub mod events;
-#[cfg(feature = "prover")]
+// The exact-FNSP-v3 cluster. These four carried `#[cfg(feature = "prover")]` until 2026-07-28,
+// which never subtracted anything: `blocklace_sync.rs` names all four unconditionally at ~20 call
+// sites, so the OFF position did not compile and no build ever ran without them.
 mod exact_fnsp_v3_activation;
-#[cfg(feature = "prover")]
 mod exact_fnsp_v3_actor_authority;
-#[cfg(feature = "prover")]
 mod exact_fnsp_v3_execution_authority;
-#[cfg(feature = "prover")]
 mod exact_fnsp_v3_finalization;
 pub mod execution_cursor;
 pub mod executor_setup;
