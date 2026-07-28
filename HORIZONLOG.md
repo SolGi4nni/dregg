@@ -1,5 +1,57 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑ JULY 28 — THE WHOLE-IMAGE FOLD CHIP REALIZED A HYPOTHESIS IT PROVABLY DOES NOT. REPAIRED, with a tooth; ONE TWIN LEFT OPEN
+
+**The claim.** `circuit/src/whole_image_fold.rs` presented itself as the in-circuit realization of
+`Exec/UniversalBridge.lean`'s `crossCellRead_whole_image` / `cross_cell_read_no_extra_cell` /
+`cross_cell_read_whole_image_teeth`, whose hypothesis is
+`hpin : MapMerkleRoot.mapRoot hash d boundaryHeap = publishedRoot`, and named the object it folds as
+"`heap_root.rs::CanonicalHeapTree::root`, modelled byte-identically by `MapMerkleRoot.mapRoot`".
+
+**Three things were false, each fatal on its own** (`circuit/src/whole_image_fold.rs`'s
+`whole_boundary_fold` → `CanonicalHeapTree8::new(..).root8()`; symbols not `file:line`, `heap_root.rs`
+moves weekly):
+
+1. `mapRoot` folds ARITY-2 leaves; the deployed tree has folded arity-3 IMT leaves
+   `hash[addr, value, next_addr]` since 2026-07-12 (`919b2b0b8d`, `HEAP_LEAF_ARITY = 3`).
+   `MapReconcileImtRepoint.imtRoot_ne_mapRoot` proves those are different commitments.
+2. The chip does not compute `CanonicalHeapTree::root` either. It computes `CanonicalHeapTree8::root8`
+   — EIGHT felts, against an eight-lane published-root PI group. `mapRoot` is one field element:
+   **there was no `hpin` of the theorems' shape at the chip's public input at all.**
+3. `mapRoot` folds a DENSE `2^d` vector; the deployed tree prepends a MIN sentinel and zero-pads a
+   sparse prefix.
+
+**Was anything deployed relying on it? NO — and the answer matters.** The chip has ZERO production
+callers (`baseline/production-callers.tsv` classes its three verifiers `THEATRE`), its descriptor
+`dregg-whole-image-fold-v1` is in no registry, manifest or VK, and it is itself hand-written Rust AIR
+(38 sites baselined at `circuit-prove/tests/law1_enforcement_gate.rs:704`). The cost was **a
+spec-apex claim, ratchet-counted** — the four theorems are in `Verify/FloorRatchetBaseline.lean` — not
+a live decision. Nothing re-emits; no VK rotates; no key material is touched.
+
+**Repaired in the honest direction: the theorems moved to the object the chip folds.** New module
+`Dregg2/Circuit/WholeImageFoldRealization.lean` (`import Dregg2.Circuit.WholeImageFoldRealization`)
+authors `padImtRoot8` / `wholeBoundaryFold8` — relink, arity-3 eight-lane leaves, MIN sentinel, zero
+padding, `node8` fold — with `padImtRoot8_binds_or_ghost_or_collides` (no hash floor; two named
+residuals) and the cone re-proved: `crossCellRead_wholeImage8`, `cross_cell_read_no_extra_cell8`,
+`cross_cell_read_no_extra_cell8_chip`, `whole_boundary_fold8_teeth`. `padImtRoot8_ne_arity2Root8` is
+the separation at the chip's own width. Both residuals are refutable AND satisfiable, and
+`demo_no_extra_cell` fires the cone with ZERO residual hypotheses left. Axiom-clean, sorry-free, no
+`native_decide`. The `UniversalBridge` four are RETAINED and demoted in place to the arity-2 MODEL
+leg — true about `mapRoot`, not about `heap_root.rs`.
+
+**The tooth:** `circuit/tests/whole_image_fold_lean_correspondent.rs`. It re-derives the chip's fold
+from the raw chip primitive in the shape the Lean object denotes and refuses on drift;
+`the_shape_pin_is_refutable` performs six drifts (leaf arity, preimage order, sentinel, padding
+constant, node packing, relink) and shows the root moves on each — so the gate can go red, and the
+July change would have hit it.
+
+**⚠ LEFT OPEN — the FLAT twin, same class, named not closed.**
+`whole_image_fold::*_bound_mem` is documented as the in-circuit realization of
+`DescriptorIR2.satisfied2_init_whole_image`, which is stated over the FLAT SPONGE
+`Heap.root hash h = hash (h.map leafOf)`. That companion reuses `build_whole_image_fold`, so it pins a
+MERKLE root — a third object again. Corrected in place at `circuit/src/descriptor_ir2.rs`; the repair
+is the flat twin of the new module.
+
 ## ⚑⚑⚑⚑⚑ JULY 28 — THE RESIDUAL INDEX: 35 self-reported wounds swept out of commit bodies and `git notes`, re-measured at HEAD, and 9 were already closed
 
 **THE LANES HERE NAME THEIR OWN WOUNDS AGAINST THEIR OWN INTEREST — AND WRITE THEM WHERE NOTHING

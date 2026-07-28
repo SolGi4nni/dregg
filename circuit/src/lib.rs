@@ -424,12 +424,26 @@ pub mod bilateral_aggregation_air;
 /// `metatheory/Dregg2/Circuit/CrossCellConservation.lean`.
 pub mod cross_cell_conservation_air;
 
-/// The WHOLE-IMAGE FOLD CHIP: the in-circuit realization of the `hpin` obligation — an AIR that
-/// COMPUTES the depth-`d` binary-Merkle fold of an ENTIRE declared whole-boundary view (via a
-/// sorted-insert chain from the empty root) and PINS it to the published-root public input,
-/// realizing the no-extra-cells direction of the cross-cell read in-circuit. Lean soundness:
-/// `metatheory/Dregg2/Exec/UniversalBridge.lean` (`crossCellRead_whole_image` /
-/// `cross_cell_read_no_extra_cell` / `_teeth`, the `MapMerkleRoot.mapRoot_injective` anti-ghost).
+/// The WHOLE-IMAGE FOLD CHIP: an AIR that COMPUTES the depth-`d` `node8` Merkle fold of an ENTIRE
+/// declared whole-boundary view (via a sorted-insert chain from the empty root) and PINS it to the
+/// published-root public input, realizing the no-extra-cells direction of the cross-cell read
+/// in-circuit.
+///
+/// Lean correspondent: `metatheory/Dregg2/Circuit/WholeImageFoldRealization.lean` —
+/// `wholeBoundaryFold8` / `padImtRoot8`, with `crossCellRead_wholeImage8` /
+/// `cross_cell_read_no_extra_cell8_chip` / `whole_boundary_fold8_teeth` and the binding
+/// `padImtRoot8_binds_or_ghost_or_collides`. Pinned by
+/// `circuit/tests/whole_image_fold_lean_correspondent.rs`.
+///
+/// ⚠ This said the soundness is `UniversalBridge`'s `crossCellRead_whole_image` /
+/// `cross_cell_read_no_extra_cell` / `_teeth`, "the `MapMerkleRoot.mapRoot_injective` anti-ghost".
+/// It is not: `mapRoot` is the ARITY-2, single-felt, DENSE model fold and this chip folds the
+/// arity-3, eight-felt, sentinel-headed, zero-padded `CanonicalHeapTree8::root8`
+/// (`WholeImageFoldRealization.padImtRoot8_ne_arity2Root8` proves they differ). The
+/// `UniversalBridge` four are the arity-2 MODEL leg and are not about this module.
+///
+/// ⚠ The module is hand-written Rust AIR (ledgered debt, `circuit-prove/tests/law1_enforcement_gate.rs`)
+/// with NO production caller — `baseline/production-callers.tsv` classes its verifiers `THEATRE`.
 pub mod whole_image_fold;
 
 /// BLOCK / BATCH-level cross-cell conservation COLLECTOR (the deeper half of gap #6): gathers every

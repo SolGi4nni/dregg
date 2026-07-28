@@ -102,23 +102,36 @@
 //!     membership path, a forged value opens to the genuine leaf. It is the WITNESSED
 //!     CROSS-CELL-READ primitive (the circuit twin of the executor-only
 //!     `StateConstraint::ObservedFieldEquals`); see `tests/effect_vm_umem_real_turn.rs`. The
-//!     whole-IMAGE equality (the no-extra-cells direction) is now ASSEMBLED IN LEAN against the
-//!     DEPLOYED binary-Merkle peer-root leg — `UniversalBridge.crossCellRead_whole_image`
+//!     whole-IMAGE equality (the no-extra-cells direction) is ASSEMBLED IN LEAN at the ARITY-2
+//!     MODEL peer-root leg — `UniversalBridge.crossCellRead_whole_image`
 //!     (+ `_sem` / `cross_cell_read_no_extra_cell` / `_teeth`), the binary-`mapRoot_injective`
-//!     companion of the per-cell `crossCellRead_refines_observedField`, exactly as the flat-sponge
+//!     companion of the per-cell `crossCellRead_refines_observedField` (⚠ this said "against the
+//!     DEPLOYED binary-Merkle peer-root leg"; the deployed peer-root leg is the eight-felt arity-3
+//!     `WholeImageFoldRealization.padImtRoot8` — see the correction below), exactly as the flat-sponge
 //!     `UniversalMemory.boundary_whole_image_sem` (lifted to the IR as
 //!     `DescriptorIR2.satisfied2U_init_whole_image`) carries it over `Heap.root_injective`: pin the
 //!     published peer root to the binary fold of the ENTIRE declared whole-boundary view and, under
 //!     the CR floor, the committed peer heap agrees with the declared image at EVERY address
 //!     INCLUDING absence off the declared list (no extra cells — a hidden cell cannot survive the
-//!     pin). The Lean theorem's `hpin` hypothesis — an AIR that COMPUTES the whole-boundary binary
-//!     fold (`mapRoot hash d boundaryHeap`, the sorted-leaf fold to the `2^d`-leaf root) and pins
-//!     it to the published-root public input — is now REALIZED in `crate::whole_image_fold` (the
-//!     WHOLE-IMAGE FOLD CHIP): a sorted-`MapKind::Insert` chain from the empty root reconstructs the
-//!     deployed binary fold over the ENTIRE declared boundary view and `PiBinding`s the delivered
-//!     fold to the published root, so a peer heap with one undeclared/altered cell folds elsewhere
-//!     and cannot be pinned (the `mapRoot_injective` no-extra-cells tooth biting in-circuit;
-//!     `tests/effect_vm_umem_real_turn.rs::cross_cell_read_whole_image_*`). The cross-table wiring
+//!     pin).
+//!     ⚠ **THIS PARAGRAPH CLAIMED THAT `hpin` "(`mapRoot hash d boundaryHeap`, the sorted-leaf fold
+//!     to the `2^d`-leaf root)" IS "now REALIZED in `crate::whole_image_fold`", AND THAT WAS FALSE
+//!     FROM THE DAY IT WAS WRITTEN** (corrected 2026-07-28). `mapRoot` is the ARITY-2, single-felt,
+//!     DENSE model fold; the chip folds `CanonicalHeapTree8::root8` — arity-3 IMT leaves
+//!     `hash[addr, value, next_addr]`, EIGHT lanes, MIN sentinel, zero padding — against an
+//!     eight-lane published-root PI group. `MapReconcileImtRepoint.imtRoot_ne_mapRoot` proves those
+//!     are different commitments, so the chip could not realize that `hpin`, and
+//!     `mapRoot_injective` was never the tooth biting in-circuit here.
+//!     ★ What the chip DOES realize is
+//!     `Dregg2.Circuit.WholeImageFoldRealization.wholeBoundaryFold8` (over `padImtRoot8`), whose
+//!     no-extra-cells cone is `crossCellRead_wholeImage8` /
+//!     `cross_cell_read_no_extra_cell8_chip` / `whole_boundary_fold8_teeth` — proved at the deployed
+//!     shape, with no hash floor and two named residuals. The separation is
+//!     `padImtRoot8_ne_arity2Root8`; the correspondence is pinned by
+//!     `circuit/tests/whole_image_fold_lean_correspondent.rs`, and the chip's own behaviour by
+//!     `tests/effect_vm_umem_real_turn.rs::cross_cell_read_whole_image_*`. The `satisfied2U_init_*`
+//!     family named above is at the FLAT sponge `Heap.root` and is a THIRD object again — see the
+//!     flat-boundary note below. The cross-table wiring
 //!     binding the chip's insert-chain `(key, value)` rows to THIS universal boundary table's
 //!     per-domain `(domain, key)` cells is REALIZED (`whole_image_fold::whole_image_fold_bound_*`):
 //!     each fold link drives a `UMemOp::Read` against the boundary table, so the deployed
@@ -153,11 +166,23 @@
 //!         the WHOLE-boundary fold forces the committed heap to BE the declared image at every
 //!         address (declared cells open to `minit a`, every address off the list ABSENT) — the
 //!         no-extra-cells direction that rejects a forged `minit[a]` at an untouched declared field.
-//!     IN-CIRCUIT REALIZATION — REALIZED as the flat-bound whole-image fold companion (the exact
-//!     twin of the umem `whole_image_fold_bound`, `crate::whole_image_fold::*_bound_mem`): the fold
-//!     recomputes the sorted-Poseidon2 root of the declared flat boundary image and pins it to the
-//!     published (committed-pre-state) root, each fold link cross-bound to the `MemBoundary` table
-//!     via a `MemOp::Read`. The two deployed teeth bite in `verify_batch` (no new bus/column/AIR):
+//!     IN-CIRCUIT REALIZATION — ⚠ **THE OBJECT DOES NOT MATCH, AND THIS IS THE SAME CLASS AS THE
+//!     umem ONE ABOVE** (measured 2026-07-28, NOT repaired). `satisfied2_init_whole_image` and its
+//!     family are stated over the FLAT SPONGE `Heap.root hash h = hash (h.map leafOf)` — one absorb
+//!     of the whole leaf list, arity-2 leaves. The `*_bound_mem` companion
+//!     (`crate::whole_image_fold::whole_image_fold_bound_mem_descriptor`) reuses
+//!     `build_whole_image_fold`, so what it actually folds and pins is `CanonicalHeapTree8::root8` —
+//!     an eight-felt arity-3 IMT MERKLE root. A Merkle root is not a flat sponge, so the companion
+//!     is NOT the in-circuit realization of that Lean family; it is an unrelated commitment carrying
+//!     the same cross-table teeth. The chip-level teeth it DOES bite (address closure via
+//!     `BUS_MEM_ADDRS`, value equality via `BUS_MEM_CHECK`, the published-root `PiBinding`) are real
+//!     and are exercised by
+//!     `tests/effect_vm_umem_real_turn.rs::whole_image_fold_bound_mem_forged_minit_refuses`; what is
+//!     unproved is that they discharge `satisfied2_init_whole_image`. The honest repair is the flat
+//!     twin of `Dregg2.Circuit.WholeImageFoldRealization`: restate the flat cone over the object the
+//!     companion folds, or fold the flat sponge. Named, not closed. The mechanics below describe the
+//!     companion as built: each fold link cross-bound to the `MemBoundary` table via a
+//!     `MemOp::Read`. The two deployed teeth bite in `verify_batch` (no new bus/column/AIR):
 //!     the `BUS_MEM_ADDRS` address-closure refuses a folded cell the boundary never declared, and
 //!     the `BUS_MEM_CHECK` Blum balance refuses a folded value differing from the declared
 //!     `minit[addr]` — so a forged `minit` folds to a different root and the published-root pin

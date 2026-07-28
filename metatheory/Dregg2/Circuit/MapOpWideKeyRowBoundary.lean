@@ -894,8 +894,15 @@ theorem narrowAliasHeap_sorted : Heap.SortedKeys narrowAliasHeap := by
 
 theorem narrowAliasHeap_length : narrowAliasHeap.length = 2 ^ 1 := rfl
 
-/-- The DEPLOYED committed root of the alias heap (`MapMerkleRoot.mapRoot`, the object
-`heap_root.rs::CanonicalHeapTree::root` is pinned to). -/
+/-- The MODEL committed root of the alias heap (`MapMerkleRoot.mapRoot`).
+
+⚠ This said "The DEPLOYED committed root … the object `heap_root.rs::CanonicalHeapTree::root` is
+pinned to", and that is false at HEAD (corrected 2026-07-28, same sweep as
+`WholeImageFoldRealization`). `mapRoot` is the ARITY-2 model fold; the deployed heap commitment is
+the eight-felt arity-3 IMT `CanonicalHeapTree8::root8` (`circuit/src/heap_root.rs:1054`), modelled by
+`WholeImageFoldRealization.padImtRoot8`, and `MapReconcileImtRepoint.imtRoot_ne_mapRoot` proves the
+two are different commitments. Nothing about this file's argument changes — it is a narrow `.absent`
+row exhibit at the model commitment — only the word "DEPLOYED" was untrue. -/
 def narrowAliasRoot (hash : List ℤ → ℤ) : ℤ := mapRoot hash 1 narrowAliasHeap
 
 /-- **The DEPLOYED narrow `.absent` row** whose one-felt key column carries `5`. A real

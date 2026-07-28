@@ -1503,6 +1503,32 @@ to be built on a hypothesis this tree PROVES FALSE at deployed BabyBear paramete
 that it is knowingly VACUOUS. Say why in the commit message. The next shrink-emit folds
 surviving entries into the chunks above and drops the ones that got ported. -/
 def manual : Array String := #[
+  -- ⚑⚑ RAISE OF 2026-07-28 (second), +2 — THE TWO CANARIES OF `WholeImageFoldRealization`.
+  --
+  -- That module repoints the whole-image (no-extra-cells) cone off the arity-2 `mapRoot` and onto
+  -- `padImtRoot8`, the object `circuit/src/whole_image_fold.rs::whole_boundary_fold` ACTUALLY folds.
+  -- Its headline `padImtRoot8_binds_or_ghost_or_collides` carries NO floor: it is already in the
+  -- `_or_collides` + total-extractor idiom direction (a) asks for. These two rows are the ANTI-VACUITY
+  -- APPARATUS around it, and they are the exact species of four entries already in the chunks above
+  -- (`DeployedCapTree.Cap8Scheme.coll8_refutable_of_injective`, `…Reference8.refChip8CR`,
+  -- `DeployedHeapTree.Heap8Scheme.heapOpenColl_refutable_of_injective`,
+  -- `MapMerkleRoot.mapRootColl_refutable_of_injective`).
+  --
+  --   padImtRoot8Coll_refutable_of_injective — THE REFUTABILITY CANARY, and it is why the headline is
+  --     not a free pass. It must take `Compress8CR` because its whole content is "at an injective chip
+  --     the collision disjunct is UNAVAILABLE, so the binding half does the work". Porting it would
+  --     delete the evidence that the disjunction says more than `True`; the floor is its SUBJECT, not
+  --     its support.
+  --   honestChip8_CR — the POSITIVE POLE. It PROVES a concrete chip injective (`Encodable.encode`
+  --     shifted off zero), which is what lets `padImtRoot8_ne_arity2Root8` and `demo_no_extra_cell`
+  --     fire with zero residual hypotheses. Without an inhabitant where both residuals are genuinely
+  --     discharged, the cone's non-vacuity would be unfalsifiable.
+  --
+  -- Neither is a keystone and nothing deployed consumes either: they are reachable only from the
+  -- module's own §4/§5 witnesses. The floor is NOT assumed anywhere on the path from
+  -- `padImtRoot8_binds_or_ghost_or_collides` to `cross_cell_read_no_extra_cell8_chip`.
+  "Dregg2.Circuit.WholeImageFoldRealization.honestChip8_CR",
+  "Dregg2.Circuit.WholeImageFoldRealization.padImtRoot8Coll_refutable_of_injective",
   -- ⚑⚑⚑ RAISE OF 2026-07-28, +3 — THE MODULE THAT PROVES THIS FILE'S APEXES VACUOUS.
   --
   -- `Verify/ApexPremiseVacuity.lean` shows `deployed_system_secure` and `unfoolability_guarantee`

@@ -11,27 +11,54 @@
 //! NOT forbid a committed peer heap holding the declared cells AND EXTRA cells the
 //! boundary never declared.
 //!
-//! The Lean soundness of the no-extra-cells direction is ALREADY discharged
-//! (`metatheory/Dregg2/Exec/UniversalBridge.lean`):
+//! ## ⚠ THE CORRESPONDENT THIS BANNER NAMED WAS THE WRONG OBJECT (corrected 2026-07-28)
 //!
-//!   * `crossCellRead_whole_image`     — published peer root pinned to the binary
-//!                                       fold of the declared whole-boundary view
-//!                                       ⟹ the committed peer heap IS that view
-//!                                       (`MapMerkleRoot.mapRoot_injective`);
-//!   * `cross_cell_read_no_extra_cell` — hence an off-list peer cell is ABSENT;
-//!   * `cross_cell_read_whole_image_teeth` — the no-extra-cells REFUSAL tooth.
+//! This section used to name `metatheory/Dregg2/Exec/UniversalBridge.lean`'s
+//! `crossCellRead_whole_image` / `cross_cell_read_no_extra_cell` /
+//! `cross_cell_read_whole_image_teeth` as the Lean soundness this chip realizes, and
+//! called their hypothesis `hpin : mapRoot hash d boundaryHeap = publishedRoot` "the
+//! in-circuit obligation this module realizes". It also stated that "the deployed map
+//! root is … `heap_root.rs::CanonicalHeapTree::root`, modelled byte-identically by
+//! `MapMerkleRoot.mapRoot`". **Three things were wrong, each fatal on its own:**
 //!
-//! Each carries the hypothesis `hpin : mapRoot hash d boundaryHeap = publishedRoot`
-//! — the published peer root EQUALS the binary fold of the ENTIRE declared
-//! whole-boundary view. That hypothesis is the in-circuit obligation this module
-//! realizes: NOT a prover-asserted root, but a root the circuit CONSTRUCTS from the
-//! declared boundary cells alone.
+//!   1. `mapRoot` folds ARITY-2 leaves `hash[addr, value]`. The deployed tree has
+//!      folded ARITY-3 INDEXED-Merkle leaves `hash[addr, value, next_addr]` since
+//!      2026-07-12 (`919b2b0b8d`; [`crate::heap_root::HEAP_LEAF_ARITY`] `= 3`,
+//!      [`HeapLeaf::preimage`]). `mapRoot`'s own doc-comment retracts the
+//!      byte-identity claim, and `MapReconcileImtRepoint.imtRoot_ne_mapRoot` proves an
+//!      arity-3 IMT root is NEVER an arity-2 `mapRoot` under CR.
+//!   2. This chip does not compute `CanonicalHeapTree::root` either. [`whole_boundary_fold`]
+//!      computes [`CanonicalHeapTree8::root8`] — EIGHT-felt digests
+//!      ([`HeapLeaf::digest8`] leaves, [`crate::heap_root::heap_node8`] nodes), and the
+//!      published root is an eight-lane PI GROUP ([`WIF_PI_PUBLISHED_ROOT`]). `mapRoot`
+//!      is a single field element: there was no `hpin` OF THAT SHAPE at this chip's
+//!      public input at all.
+//!   3. `mapRoot` folds the DENSE `2^d` leaf vector. The deployed tree prepends one MIN
+//!      sentinel and ZERO-pads a sparse prefix.
+//!
+//! ★ **The Lean object this chip's fold DOES realize is
+//! `Dregg2.Circuit.WholeImageFoldRealization.wholeBoundaryFold8`** (over `padImtRoot8`:
+//! relink, arity-3 eight-lane leaves, MIN sentinel, zero padding, `node8` fold), and the
+//! no-extra-cells cone at that object is `crossCellRead_wholeImage8`,
+//! `cross_cell_read_no_extra_cell8_chip` and `whole_boundary_fold8_teeth` in the same
+//! module — with the binding `padImtRoot8_binds_or_ghost_or_collides` (no hash floor; two
+//! named residuals: the padding ghost and a collision at the ONE pair the extractor
+//! returns). `padImtRoot8_ne_arity2Root8` is the separation, at this chip's own width.
+//!
+//! The `UniversalBridge` four remain TRUE about `mapRoot` and are the arity-2 MODEL leg.
+//! They are NOT about this chip and must not be cited as its soundness.
+//!
+//! The correspondence is pinned by `circuit/tests/whole_image_fold_lean_correspondent.rs`,
+//! which re-derives this chip's fold from the Lean denotation's shape and refuses if the
+//! two drift apart again.
 //!
 //! ## The construction (binary fold via a sorted-INSERT chain from the EMPTY root)
 //!
-//! The deployed map root is the depth-16 binary Merkle fold of a sorted heap's leaf
-//! digests (`heap_root.rs::CanonicalHeapTree::root`, modelled byte-identically by
-//! `MapMerkleRoot.mapRoot = perfectRoot d (h.map leafOf)`). Rather than introduce a
+//! The deployed map root is the depth-16 `node8` Merkle fold of the sorted, MIN-sentinel-headed,
+//! relinked heap's ARITY-3 eight-felt leaf digests
+//! ([`CanonicalHeapTree8::root8`] = [`crate::heap_root::compute_canonical_heap_root_8`], the value
+//! `CellState::heap_root: Faithful8` carries and the rotated commitment absorbs at
+//! `HEAP_ROOT_GROUP`). Rather than introduce a
 //! fresh fold gadget, this chip computes that exact fold with the DEPLOYED,
 //! already-sound `MapKind::Insert` reconciliation: a sorted insert of a fresh key
 //! authenticates the post-insert root against the pre-insert root in-circuit (the
@@ -59,11 +86,12 @@
 //!                                        the final fold to the last trace row);
 //!   * `PiBinding{Last, root}`           — the LAST row's pre-root = the published-root PI.
 //!
-//! Together: the published root is FORCED to equal the binary fold of exactly the
+//! Together: the published root is FORCED to equal the fold of exactly the
 //! committed `(key, value)` boundary cells. A peer heap with one extra/altered cell
 //! folds to a DIFFERENT root, so its genuine published commitment can no longer be
-//! pinned — the no-extra-cells tooth bites in-circuit (the `mapRoot_injective`
-//! anti-ghost the Lean `_teeth` proves, now realized).
+//! pinned — the no-extra-cells tooth bites in-circuit (the anti-ghost
+//! `WholeImageFoldRealization.whole_boundary_fold8_teeth` proves at the object this chip
+//! folds, up to the padding ghost and the named extractor collision).
 //!
 //! ## The rotation-integration point — REALIZED (the cross-table wiring)
 //!
@@ -362,9 +390,17 @@ pub fn verify_whole_image_fold(
     crate::descriptor_ir2::verify_vm_descriptor2(&desc, proof, public_inputs)
 }
 
-/// The canonical binary-Merkle fold of a declared boundary view, at the deployed depth —
-/// the `mapRoot hash d boundaryHeap` the chip pins to. Exposed so callers (and the
-/// honest test path) can compute the genuine published root.
+/// The canonical `node8` Merkle fold of a declared boundary view, at the deployed depth
+/// ([`HEAP_TREE_DEPTH`]) — the object the chip pins its published-root PI group to.
+/// Exposed so callers (and the honest test path) can compute the genuine published root.
+///
+/// ⚠ The doc said "the `mapRoot hash d boundaryHeap` the chip pins to". It is NOT `mapRoot`:
+/// `MapMerkleRoot.mapRoot` is the ARITY-2, single-felt, DENSE model fold, and this is the
+/// arity-3 IMT leaf (`HeapLeaf::digest8`), eight-lane, MIN-sentinel-headed, zero-padded
+/// `node8` fold. Its Lean correspondent is
+/// `Dregg2.Circuit.WholeImageFoldRealization.wholeBoundaryFold8` (over `padImtRoot8`), and
+/// `padImtRoot8_ne_arity2Root8` proves the two are different objects at this very width.
+/// Pinned by `circuit/tests/whole_image_fold_lean_correspondent.rs`.
 pub fn whole_boundary_fold(leaves: &[HeapLeaf]) -> [BabyBear; HEAP_DIGEST_W] {
     CanonicalHeapTree8::new(leaves.to_vec(), HEAP_TREE_DEPTH)
         .root8()
@@ -610,7 +646,8 @@ mod tests {
     }
 
     /// The fold is order-independent in the declared view (the sorted insert canonicalizes),
-    /// and equals the deployed `CanonicalHeapTree::root` — the published-root the chip pins to.
+    /// and equals the deployed [`CanonicalHeapTree8::root8`] — the published root the chip pins to.
+    /// (The doc said `CanonicalHeapTree::root`, the 1-felt tree; that is not what this computes.)
     #[test]
     fn fold_is_canonical_and_pins_the_deployed_root() {
         let leaves = vec![leaf(7, 70), leaf(2, 20), leaf(5, 50)];

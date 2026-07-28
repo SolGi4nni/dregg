@@ -867,8 +867,21 @@ theorem linkHeap_length : ∀ h : Heap.FeltHeap, (linkHeap h).length = h.length 
 
 /-- **`mapRoot8 S8 d h`** — the depth-`d` 8-felt binary-Merkle root of the sorted heap `h`: LINK the
 pointers (`linkHeap` — `relink_next_addrs`), digest each linked leaf (arity-3 `heapLeafDigest8` —
-`HeapLeaf::digest8`), fold the perfect `node8` tree. BYTE-IDENTICAL to `heap_root.rs`'s
-`CanonicalHeapTree8::root` over the padded sorted vector. -/
+`HeapLeaf::digest8`), fold the perfect `node8` tree.
+
+⚠ **THIS DOC-COMMENT SAID "BYTE-IDENTICAL to `heap_root.rs`'s `CanonicalHeapTree8::root` over the
+padded sorted vector" AND THAT NAMED NOTHING.** There is no `CanonicalHeapTree8::root`; the deployed
+method is `CanonicalHeapTree8::root8` (`circuit/src/heap_root.rs:1054`). And the "over the padded
+sorted vector" clause described a padding this definition does not perform — `mapRoot8` is the DENSE
+form and requires `h.length = 2 ^ d`, while the deployed builder prepends ONE MIN sentinel
+(`min_sentinel_leaf`, `:307`) and ZERO-pads a sparse prefix. The LEAF and NODE shapes here are right;
+the OCCUPANCY is not.
+
+★ **The padded, sentinel-headed object — the one `CanonicalHeapTree8::root8` and
+`circuit/src/whole_image_fold.rs::whole_boundary_fold` actually compute — is
+`WholeImageFoldRealization.padImtRoot8` / `wholeBoundaryFold8`**, with the binding
+`padImtRoot8_binds_or_ghost_or_collides`. `mapRoot8` remains correct as the DENSE 8-felt fold and is
+the conservativity anchor the padded one extends (`padTo8_dense`). -/
 def mapRoot8 (d : Nat) (h : Heap.FeltHeap) : Digest8 :=
   perfectRoot8 S8 d ((linkHeap h).map (heapLeafDigest8 S8))
 

@@ -1114,29 +1114,48 @@ field IS the committed value", but on its own it does NOT forbid a committed pee
 the declared cells AND EXTRA cells the boundary never declared — exactly the named tail in
 `circuit/src/descriptor_ir2.rs` (the no-extra-cells direction "rides the universal-map rotation").
 
-This section closes that direction at the bridge level, against the DEPLOYED binary-Merkle root.
+This section closes that direction at the bridge level, at the ARITY-2 MODEL commitment.
 `UniversalMemory.boundary_whole_image_sem` carries the no-extra-cells punch over the FLAT-sponge
-commitment (`Heap.root_injective`); the deployed cross-cell read commits the peer field plane by
-the depth-`d` binary fold (`MapMerkleRoot.mapRoot`, the `CanonicalHeapTree::root`). So the
-deployed whole-image direction is the BINARY analog: it rides `mapRoot_injective` (the binary
-anti-ghost) exactly as `crossCellRead_refines_observedField` rides `opensToMerkle_functional`
-rather than the flat per-cell `boundary_init_root_derived`. The single CR tooth enters once, on
-the WHOLE-boundary fold instead of a per-cell opening — no new crypto, the precise binary mirror
-of `boundary_image_eq_of_root`.
+commitment (`Heap.root_injective`); this section is the BINARY analog: it rides `mapRoot_injective`
+(the binary anti-ghost) exactly as `crossCellRead_refines_observedField` rides
+`opensToMerkle_functional` rather than the flat per-cell `boundary_init_root_derived`. The single CR
+tooth enters once, on the WHOLE-boundary fold instead of a per-cell opening — the precise binary
+mirror of `boundary_image_eq_of_root`.
+
+⚠ **THIS HEADER SAID "against the DEPLOYED binary-Merkle root … `MapMerkleRoot.mapRoot`, the
+`CanonicalHeapTree::root`" AND THAT IS FALSE AT HEAD, on both halves.** (Measured 2026-07-28.)
+
+  * `mapRoot` folds ARITY-2 leaves `hash [addr, value]`. The deployed tree has folded ARITY-3 IMT
+    leaves `hash [addr, value, next_addr]` since 2026-07-12 (`919b2b0b8d`; `HEAP_LEAF_ARITY = 3`,
+    `circuit/src/heap_root.rs:97`). `mapRoot`'s own doc-comment retracts the byte-identity claim, and
+    `MapReconcileImtRepoint.imtRoot_ne_mapRoot` proves the two are DIFFERENT commitments.
+  * The deployed peer field-plane commitment is not 1-felt either: it is the EIGHT-felt
+    `CanonicalHeapTree8::root8` (`heap_root.rs:1054`), stored as `CellState::heap_root : Faithful8`
+    (`cell/src/state.rs:311`) and absorbed into the rotated commitment at `HEAP_ROOT_GROUP`
+    (`cell/src/commitment.rs:1229`, `turn/src/rotation_witness.rs:476`). `mapRoot` is `ℤ`-valued, so
+    `hpin` has no referent at the deployed published root at all — a type wall, not a drift.
+
+★ **The deployed-shape cone lives in `Dregg2.Circuit.WholeImageFoldRealization`**
+(`crossCellRead_wholeImage8`, `cross_cell_read_no_extra_cell8`, `cross_cell_read_wholeImage8_teeth`,
+and the chip-level `wholeBoundaryFold8` forms), over `padImtRoot8` — arity-3 linked leaves, eight
+lanes, MIN sentinel, zero padding — which IS what `circuit/src/whole_image_fold.rs::whole_boundary_fold`
+computes. The four theorems BELOW are retained as the arity-2 MODEL leg and the conservativity anchor;
+they are TRUE about `mapRoot` and must not be quoted as being about `heap_root.rs`, the deployed
+commitment, or the fold chip.
 
 The hypothesis `hpin` — the published peer root EQUALS `mapRoot hash d boundaryHeap`, the binary
 fold of the ENTIRE declared whole-boundary view (a sorted `2^d`-leaf heap realizing the declared
-image) — is EXACTLY the in-circuit obligation that remains: an AIR that COMPUTES the whole-boundary
-binary fold over the universal boundary table (the per-domain sorted-leaf fold chip, padded to the
-`2^d`-leaf vector) and pins it to the published-root public input. That fold chip rides the
-universal-map rotation; today's leg realizes only the per-cell `opensToMerkle` openings above. -/
+image) — is the MODEL-level whole-boundary pin. Its deployed-shape counterpart, and the one an AIR
+could realize, is `wholeBoundaryFold8 S8 d boundaryCells = published`. -/
 
 section CrossCellReadWholeImage
 
 variable (hash : List ℤ → ℤ) (d : Nat)
 
 /-- **`crossCellRead_whole_image` — the committed peer heap IS the declared whole-boundary view
-(no extra cells), deployed binary-Merkle leg.** If the published peer root is the binary fold of
+(no extra cells), ARITY-2 MODEL leg** (⚠ the doc said "deployed binary-Merkle leg"; the deployed
+commitment is the 8-felt arity-3 IMT — see this section's header and
+`WholeImageFoldRealization.crossCellRead_wholeImage8`). If the published peer root is the binary fold of
 peer B's committed `2^d`-leaf field heap (`hcommit`) AND equals the binary fold of the declared
 whole-boundary view `boundaryHeap` (`hpin`, the in-circuit whole-boundary fold pin), then under the
 named CR floor the committed peer heap EQUALS that boundary view: a single extra or altered leaf
@@ -1158,7 +1177,9 @@ peer root is pinned to the whole-boundary fold (`hpin`) and the declared boundar
 image `if k ∈ as then init k else none` (`hbsem` — the obligation the in-circuit leaf assembly
 discharges), the committed peer heap's `get` equals that image at EVERY address: declared cells
 open to their declared value, and EVERY address OFF the declared list is ABSENT in the peer heap.
-The deployed binary-Merkle realization of `UniversalMemory.boundary_whole_image_sem`. -/
+The arity-2 MODEL realization of `UniversalMemory.boundary_whole_image_sem` (⚠ the doc said
+"deployed binary-Merkle"; the deployed-shape statement is
+`WholeImageFoldRealization.crossCellRead_wholeImage8_sem`). -/
 theorem crossCellRead_whole_image_sem (hCR : Poseidon2SpongeCR hash)
     {publishedRoot : ℤ} {peerHeap boundaryHeap : Heap.FeltHeap}
     {init : ℤ → Option ℤ} {as : List ℤ}
