@@ -217,10 +217,30 @@ feature unification. It wasn't. The "flap" was which builds had picked up the ed
 
 So:
 
-- **Mutate on a COPY when you can.** `rsync` the lane to scratch, or use `pbuild`'s remote
-  lane, and break it there. Several lanes did exactly this and it cost them nothing.
-- **If you must mutate the shared tree, restore it in the SAME tool call** — break, run,
-  restore, in one `bash -c`. Not "next step", which may never arrive.
+⚑ **AND RESTORING IT CORRECTLY IS NOT ENOUGH.** This was measured on 2026-07-28 and it
+overturns the obvious remedy. Lane `a7666f02` disarmed `eval.rs` **twice** — 01:19:16→01:20:56
+and 01:35:22→01:38:57 — and **restored both correctly**, verifying by diff and a 270/270 suite.
+Three other lanes were misled anyway:
+
+- `a444dd13` was **spawned at 01:41 specifically to chase the "flap" those two windows caused**,
+  diagnosed it as a feature-unification hazard (a reasonable call — this repo had produced three
+  real ones that week), then wrote its own scaffold and died holding it.
+- `a22f7cc5`'s suites compiled **through** a disarm window and returned 8 monotonic-shaped reds.
+  All 4 pass at HEAD. Its lane was already dead, so **nobody ever saw the false red**.
+
+**The WINDOW is the hazard, not the failure to restore.** A concurrent lane that compiles during
+your mutation gets a wrong answer whether or not you put it back afterwards, and it will spend
+hours on it. So:
+
+- ⚑ **MUTATE ON A COPY. This is the remedy, not the preference.** `rsync` the lane to scratch,
+  or use `pbuild`'s remote lane, and break it there. Several lanes did exactly this and it cost
+  them nothing — one drove its whole red-proof through `--list` against scratch files.
+- **If you genuinely cannot, restore in the SAME tool call** — break, run, restore in one
+  `bash -c`, never "next step". Treat this as damage control, not safety: it shortens the
+  window, it does not close it. Say in your report that you took a window and how long it was.
+- ⚠ **Use ABSOLUTE paths in any `trap … EXIT` restore.** A lane's trap fired after a `cd`, the
+  relative path missed, and the tree was left broken — caught in the same turn, but only because
+  that lane checked.
 - **Verify the restore by diff, not by memory**: `git diff --exit-code <path>` after, and
   say so in the report. "Restored" without a diff is a claim.
 - **Never commit a mutation.** If you find a foreign one, **report it — do not silently
