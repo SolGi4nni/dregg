@@ -74,56 +74,74 @@ async function main() {
   const app = new DreggAttestedGate(zkApp);
 
   // --- deploy ---------------------------------------------------------------
+  // Idempotent by design. Devnet block times mean this script can be killed
+  // between the two transactions; re-running it must resume rather than try to
+  // create an account that already exists (the zkApp key is FIXED in the key
+  // file, so a blind retry would just fail).
   console.log('  [1] deploying the zkApp account...');
-  t = Date.now();
-  const deployTx = await Mina.transaction(
-    { sender: deployer, fee: FEE_DEPLOY },
-    async () => {
-      AccountUpdate.fundNewAccount(deployer);
-      await app.deploy({ verificationKey: gateVk });
-    },
-  );
-  await deployTx.prove();
-  const deployPending = await deployTx.sign([deployerKey, zkAppKey]).send();
-  const deployHash = deployPending.hash;
-  console.log(`      tx ${deployHash}`);
-  console.log(`      ${explorerTx(deployHash)}`);
+  let deployHash: string | null = null;
+  const existing = (await fetchAccount({ publicKey: zkApp })).account;
+  if (existing?.zkapp !== undefined) {
+    console.log('      already deployed at this address — skipping the deploy tx.');
+  } else {
+    t = Date.now();
+    const deployTx = await Mina.transaction(
+      { sender: deployer, fee: FEE_DEPLOY },
+      async () => {
+        AccountUpdate.fundNewAccount(deployer);
+        await app.deploy({ verificationKey: gateVk });
+      },
+    );
+    await deployTx.prove();
+    const deployPending = await deployTx.sign([deployerKey, zkAppKey]).send();
+    deployHash = deployPending.hash;
+    console.log(`      tx ${deployHash}`);
+    console.log(`      ${explorerTx(deployHash)}`);
 
-  const deployed = await until(
-    async () => (await fetchAccount({ publicKey: zkApp })).account !== undefined,
-    'the zkApp account to appear on chain',
-  );
-  if (!deployed) {
-    console.error('      the zkApp account never appeared. Check the explorer link.');
-    process.exit(1);
+    const deployed = await until(
+      async () => (await fetchAccount({ publicKey: zkApp })).account?.zkapp !== undefined,
+      'the zkApp account to appear on chain',
+    );
+    if (!deployed) {
+      console.error('      the zkApp account never appeared. Check the explorer link.');
+      process.exit(1);
+    }
+    console.log(`      deployed in ${secs(t)}`);
   }
-  console.log(`      deployed in ${secs(t)}`);
 
   // --- anchor the root ------------------------------------------------------
   console.log('\n  [2] anchoring the dregg-emitted root...');
-  t = Date.now();
-  const anchorTx = await Mina.transaction(
-    { sender: deployer, fee: FEE_CALL },
-    async () => {
-      await app.setDreggRoot(root);
-    },
-  );
-  await anchorTx.prove();
-  const anchorPending = await anchorTx.sign([deployerKey]).send();
-  const anchorHash = anchorPending.hash;
-  console.log(`      tx ${anchorHash}`);
-  console.log(`      ${explorerTx(anchorHash)}`);
+  let anchorHash: string | null = null;
+  const anchoredAlready =
+    (await fetchAccount({ publicKey: zkApp })).account?.zkapp?.appState?.[0]?.toBigInt() ===
+    root.toBigInt();
+  if (anchoredAlready) {
+    console.log('      the root is already anchored — skipping.');
+  } else {
+    t = Date.now();
+    const anchorTx = await Mina.transaction(
+      { sender: deployer, fee: FEE_CALL },
+      async () => {
+        await app.setDreggRoot(root);
+      },
+    );
+    await anchorTx.prove();
+    const anchorPending = await anchorTx.sign([deployerKey]).send();
+    anchorHash = anchorPending.hash;
+    console.log(`      tx ${anchorHash}`);
+    console.log(`      ${explorerTx(anchorHash)}`);
 
-  const anchored = await until(async () => {
-    const r = await fetchAccount({ publicKey: zkApp });
-    const s = r.account?.zkapp?.appState?.[0];
-    return s !== undefined && s.toBigInt() === root.toBigInt();
-  }, 'the root to be anchored on chain');
-  if (!anchored) {
-    console.error('      the root never appeared in zkApp state. Check the explorer link.');
-    process.exit(1);
+    const anchored = await until(async () => {
+      const r = await fetchAccount({ publicKey: zkApp });
+      const s = r.account?.zkapp?.appState?.[0];
+      return s !== undefined && s.toBigInt() === root.toBigInt();
+    }, 'the root to be anchored on chain');
+    if (!anchored) {
+      console.error('      the root never appeared in zkApp state. Check the explorer link.');
+      process.exit(1);
+    }
+    console.log(`      anchored in ${secs(t)}`);
   }
-  console.log(`      anchored in ${secs(t)}`);
 
   const record = {
     network: 'mina-devnet',
@@ -137,10 +155,12 @@ async function main() {
     anchoredRoot: emitted.root,
     deployTx: deployHash,
     anchorRootTx: anchorHash,
+    // `null` where a step was skipped because it had already landed (see the
+    // idempotency note above) — an earlier run of this script owns that hash.
     explorer: {
       zkApp: explorerAcct(zkApp.toBase58()),
-      deployTx: explorerTx(deployHash),
-      anchorRootTx: explorerTx(anchorHash),
+      deployTx: deployHash === null ? null : explorerTx(deployHash),
+      anchorRootTx: anchorHash === null ? null : explorerTx(anchorHash),
     },
   };
   writeFileSync(DEPLOY_JSON, JSON.stringify(record, null, 2) + '\n');

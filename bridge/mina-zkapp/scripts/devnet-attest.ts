@@ -144,8 +144,13 @@ async function main() {
   console.log(`    ACCEPT tx ${acceptHash}`);
   console.log(`    ${explorerTx(acceptHash)}`);
 
+  // Both conjuncts are load-bearing. The state check alone would pass instantly
+  // on a re-run against a gate that already holds this leaf — a green that means
+  // "an earlier run worked", not "this transaction landed".
   const landed = await until(
-    async () => (await zkAppState(zkApp)).lastAttestedLeaf === leaf.toBigInt(),
+    async () =>
+      ((await nonceOf(deployer)) ?? 0) > nonceA &&
+      (await zkAppState(zkApp)).lastAttestedLeaf === leaf.toBigInt(),
     'the honest attestation to be recorded on chain',
   );
   if (!landed) {
@@ -211,10 +216,22 @@ async function main() {
   const staleHash = staleSent.hash;
   console.log(`    REJECT tx ${staleHash}`);
   console.log(`    ${explorerTx(staleHash)}`);
-  if (staleSent.status === 'rejected') {
-    console.log(
-      `    the daemon refused it outright: ${JSON.stringify((staleSent as { errors?: unknown }).errors)}`,
-    );
+
+  // Two shapes of on-chain refusal are possible and BOTH are recorded honestly,
+  // because which one a daemon gives is its choice, not ours:
+  //   - refused at ADMISSION: the pool applies the command against its ledger,
+  //     sees the precondition fail, and never gossips it. The hash exists but
+  //     names nothing in a block.
+  //   - included as FAILED: the command enters a block, consumes the fee, and
+  //     bumps the nonce, with its effects discarded.
+  // Waiting 20 minutes for a nonce bump that admission-refusal will never
+  // produce is just a stall, so the budget collapses in that case.
+  const admissionRefused = staleSent.status === 'rejected';
+  const admissionErrors = admissionRefused
+    ? JSON.stringify((staleSent as { errors?: unknown }).errors)
+    : null;
+  if (admissionRefused) {
+    console.log(`    the daemon refused it at admission: ${admissionErrors}`);
   }
 
   // The fee payer's nonce advancing PAST this transaction is what proves it was
@@ -223,6 +240,7 @@ async function main() {
   const processed = await until(
     async () => ((await nonceOf(deployer)) ?? 0) > nonceB + 1,
     'the stale attestation to be processed',
+    admissionRefused ? 1 : 20 * 60_000,
   );
   const after = await zkAppState(zkApp);
   console.log(`    processed=${processed} in ${secs(t)}`);
@@ -239,10 +257,13 @@ async function main() {
   console.log('    ✓ REJECTED: the stale attestation did not take effect on chain');
   receipt.rejectTx = staleHash;
   receipt.rejectMechanism =
-    'account-state precondition (dreggRoot) failed at inclusion time';
-  receipt.rejectResult = processed
-    ? 'processed by the network; zkApp state unchanged'
-    : 'submitted; zkApp state unchanged (nonce advance not observed within budget)';
+    'account-state precondition (dreggRoot) pinned the retired root';
+  receipt.rejectResult = admissionRefused
+    ? `refused at ADMISSION by the daemon (never entered a block): ${admissionErrors}`
+    : processed
+      ? 'included and PROCESSED by the network; fee consumed, nonce bumped, zkApp state unchanged'
+      : 'submitted; zkApp state unchanged (nonce advance not observed within budget)';
+  receipt.rejectOnChain = !admissionRefused && processed;
 
   // ==========================================================================
   // [R2] The network verifies the PROOF: corrupt it on the wire.
