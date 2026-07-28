@@ -33,23 +33,44 @@ authenticating co-path and the forgery is refused BY THE BINDING, not by fail-cl
   is stated in `AttestedFactMembershipEmit` §"What is NOT closed here"). The descriptor's
   position gates generalize this to arbitrary slots by the identical injectivity argument.
 
-## Honest floor
+## ⚑ The floor this file used to stand on is FALSE, and the binding now stands without it
 
-`Hash4Injective` is a HYPOTHESIS — the collision-resistance / STARK-hash floor the whole
-system already stands on (`project-fri-soundness-reality`), NOT proven here. Under it the
-binding is a THEOREM. The remaining obligations to deploy it (the emitted-descriptor PI, the
-credential-side attribute-facts tree, the weld to trusted derivation, and the Rust un-fail-
-close) are engineering named in the accompanying report — NOT discharged here.
+`Hash4Injective` — global injectivity of a 4-to-1 compression — is REFUTED at every finite
+carrier by `AttestedFactsRootRegrounded.hash4Injective_false_of_finite`, hence at the deployed
+BabyBear field. It is pure pigeonhole: fixing two of the four arguments embeds `F × F` into `F`,
+so the floor forces `|F|² ≤ |F|`. No Poseidon2 collision is exhibited and none is needed. The
+old docstring called it "the honest collision-resistance floor"; it was neither honest nor a
+floor, and both consumers here were vacuous at deployed parameters.
 
-This file imports nothing (verified with bare `lean`); it is a self-contained model.
+The consumers are now stated on `Coll4` — a PER-INSTANCE non-collision residual at the EXACT
+two argument quadruples the two-level peel compares, and nowhere else. Both poles are proved
+(`coll4_self_false` dischargeable, `coll4_of_constant` refutable), and
+`coll4_breaks_hash4Injective` records that the deleted floor implied every residual, so the
+port is visibly a WEAKENING of the hypothesis rather than a change of subject. What a caller
+must now supply is a statement about the two preimage quadruples actually presented — the
+shape a keyed-ROM advantage bound discharges (`Crypto.RomQueryFloor.birthday_bound`, PROVED),
+which global injectivity never was.
+
+The remaining obligations to deploy the binding (the emitted-descriptor PI, the credential-side
+attribute-facts tree, the weld to trusted derivation, and the Rust un-fail-close) are
+engineering named in the accompanying report — NOT discharged here.
+
+This file imports nothing (verified with bare `lean`); it is a self-contained model. The tooth
+needs a cardinality argument and therefore Mathlib, so it lives in the sibling
+`AttestedFactsRootRegrounded` and this file keeps its bare-`lean` property.
 -/
 
 namespace Dregg2.Circuit.Emit.AttestedFactsRootModel
 
 set_option autoImplicit false
 
-/-- Injectivity of the deployed arity-4 compression `hash_4_to_1`, stated elementarily so this
-model needs no import. This is the honest collision-resistance floor as a HYPOTHESIS. -/
+/-- ⚠ **REFUTED AT EVERY FINITE CARRIER — see `AttestedFactsRootRegrounded.
+hash4Injective_false_of_finite`, and NO LONGER ASSUMED ANYWHERE.** Global injectivity of the
+deployed arity-4 compression `hash_4_to_1`: four field elements in, one out. Fixing two
+arguments embeds `F × F` into `F`, so this forces `|F|² ≤ |F|` and is false for any `F` with
+more than one element — the deployed BabyBear field included. KEPT for the record (the campaign
+convention: the old carrier stays doc-marked beside its tooth); the honest per-instance
+replacement is `Coll4`. -/
 def Hash4Injective {F : Type} (hash4 : F → F → F → F → F) : Prop :=
   ∀ a b c d a' b' c' d' : F,
     hash4 a b c d = hash4 a' b' c' d' →
@@ -69,16 +90,59 @@ def attestedRoot {F : Type} (hash4 : F → F → F → F → F)
     (m s0a s0b s0c s1a s1b s1c : F) : F :=
   hash4 (hash4 m s0a s0b s0c) s1a s1b s1c
 
+/-! ## The per-instance residual — the honest replacement for the refuted floor. -/
+
+/-- **`Coll4 hash4 a b c d a' b' c' d'`** — a collision of the arity-4 compression at ONE named
+pair of argument quadruples: the quadruples DIFFER, yet their images agree. This is what the
+refuted `Hash4Injective` implied at every quadruple at once (`coll4_breaks_hash4Injective`), and
+unlike that floor it is both dischargeable and refutable at deployed parameters — the two poles
+immediately below. -/
+def Coll4 {F : Type} (hash4 : F → F → F → F → F) (a b c d a' b' c' d' : F) : Prop :=
+  ¬(a = a' ∧ b = b' ∧ c = c' ∧ d = d') ∧ hash4 a b c d = hash4 a' b' c' d'
+
+/-- **THE RESIDUAL IS DISCHARGEABLE (positive pole).** At one quadruple against itself there is
+nothing to collide, so `¬ Coll4` holds outright. A side condition that can never be discharged
+is a broken keystone, not a repaired one. -/
+theorem coll4_self_false {F : Type} (hash4 : F → F → F → F → F) (a b c d : F) :
+    ¬ Coll4 hash4 a b c d a b c d :=
+  fun h => h.1 ⟨rfl, rfl, rfl, rfl⟩
+
+/-- **THE RESIDUAL IS REFUTABLE (negative pole).** At the constant compression any two distinct
+quadruples DO collide, so `¬ Coll4` is not free — it is a real hypothesis about the deployed
+hash at a named pair of preimages. -/
+theorem coll4_of_constant {F : Type} (k : F) (a b c d a' b' c' d' : F)
+    (hne : ¬(a = a' ∧ b = b' ∧ c = c' ∧ d = d')) :
+    Coll4 (fun _ _ _ _ => k) a b c d a' b' c' d' :=
+  ⟨hne, rfl⟩
+
+/-- **THE PORT IS A WEAKENING, NOT A CHANGE OF SUBJECT.** A residual collision at any single
+quadruple pair already REFUTES the global floor — so the deleted `Hash4Injective` implied every
+`¬ Coll4` at once, and each consumer below is strictly stronger than its old form. Stated in
+this direction (residual ⇒ `¬` floor) rather than as `floor ⇒ ¬ residual` deliberately: the
+latter takes a refuted floor in HYPOTHESIS position and is a `#floor_ratchet` carrier, while
+this one assumes no floor content and refutes some — the contrapositive is free either way. -/
+theorem coll4_breaks_hash4Injective {F : Type} (hash4 : F → F → F → F → F)
+    (a b c d a' b' c' d' : F) (hcoll : Coll4 hash4 a b c d a' b' c' d') :
+    ¬ Hash4Injective hash4 :=
+  fun hinj => hcoll.1 (hinj a b c d a' b' c' d' hcoll.2)
+
 /-- **The binding lemma (soundness HEART).** If the attestation authenticates member `m`
 (with any co-path) against a root that EQUALS the credential's committed facts root, then `m`
 is the committed leftmost leaf `l0` AND the whole co-path equals the committed co-path.
 
 This is what makes a TRUSTED `facts_root` (= `committedRoot`) sound: the attestation cannot
-name a member unless it is genuinely one of the committed facts. -/
+name a member unless it is genuinely one of the committed facts.
+
+⚑ Stated on the PER-INSTANCE residual (was: the refuted `Hash4Injective`). The two-level peel
+applies the compression exactly twice, so exactly two non-collision side conditions are owed —
+`hTop` at the level-1 quadruple and `hBot` at the level-0 quadruple. Both are statements about
+the preimages ACTUALLY PRESENTED, which is the shape an advantage bound discharges. -/
 theorem attested_member_is_committed {F : Type} (hash4 : F → F → F → F → F)
-    (hinj : Hash4Injective hash4)
     (m s0a s0b s0c s1a s1b s1c : F)
     (l0 l1 l2 l3 l4 l5 l6 l7 l8 l9 l10 l11 l12 l13 l14 l15 : F)
+    (hTop : ¬ Coll4 hash4 (hash4 m s0a s0b s0c) s1a s1b s1c
+        (hash4 l0 l1 l2 l3) (hash4 l4 l5 l6 l7) (hash4 l8 l9 l10 l11) (hash4 l12 l13 l14 l15))
+    (hBot : ¬ Coll4 hash4 m s0a s0b s0c l0 l1 l2 l3)
     (hroot :
       attestedRoot hash4 m s0a s0b s0c s1a s1b s1c
         = committedRoot hash4 l0 l1 l2 l3 l4 l5 l6 l7 l8 l9 l10 l11 l12 l13 l14 l15) :
@@ -87,11 +151,15 @@ theorem attested_member_is_committed {F : Type} (hash4 : F → F → F → F →
       ∧ s1b = hash4 l8 l9 l10 l11
       ∧ s1c = hash4 l12 l13 l14 l15 := by
   -- Peel the top-level hash: parent0 = P0, and the level-1 siblings equal the committed parents.
-  have htop := hinj (hash4 m s0a s0b s0c) s1a s1b s1c
-      (hash4 l0 l1 l2 l3) (hash4 l4 l5 l6 l7) (hash4 l8 l9 l10 l11) (hash4 l12 l13 l14 l15) hroot
+  -- `hroot` IS the image equality of the level-1 quadruples (both roots are that application by
+  -- definition), so a difference at that quadruple would be exactly the excluded `Coll4`.
+  have htop : (hash4 m s0a s0b s0c = hash4 l0 l1 l2 l3) ∧ s1a = hash4 l4 l5 l6 l7
+      ∧ s1b = hash4 l8 l9 l10 l11 ∧ s1c = hash4 l12 l13 l14 l15 :=
+    Classical.byContradiction fun hne => hTop ⟨hne, hroot⟩
   obtain ⟨hp0, hs1a, hs1b, hs1c⟩ := htop
   -- Peel the level-0 hash: m = l0 and the level-0 siblings equal the committed leaves.
-  have hbot := hinj m s0a s0b s0c l0 l1 l2 l3 hp0
+  have hbot : m = l0 ∧ s0a = l1 ∧ s0b = l2 ∧ s0c = l3 :=
+    Classical.byContradiction fun hne => hBot ⟨hne, hp0⟩
   obtain ⟨hm, h0a, h0b, h0c⟩ := hbot
   exact ⟨hm, h0a, h0b, h0c, hs1a, hs1b, hs1c⟩
 
@@ -102,18 +170,50 @@ once `facts_root` is the trusted committed root, a fabricated fact is REFUSED by
 
 This is exactly the forgery `cross_credential_predicate_forgery_rejected` must refuse
 soundly, and the WEAKER forgery (fact fabricated under A's own `state_root`, invented
-`facts_root`) the current fail-closed accept leaves open. -/
+`facts_root`) the current fail-closed accept leaves open.
+
+⚑ On the per-instance residual, like its parent. The forger who wants the root equality back
+must now EXHIBIT a collision at one of the two named quadruples — which is the honest reading
+of "the hash holds this up", and is what a `¬ Coll4` side condition prices. -/
 theorem fabricated_member_refused {F : Type} (hash4 : F → F → F → F → F)
-    (hinj : Hash4Injective hash4)
     (m s0a s0b s0c s1a s1b s1c : F)
     (l0 l1 l2 l3 l4 l5 l6 l7 l8 l9 l10 l11 l12 l13 l14 l15 : F)
+    (hTop : ¬ Coll4 hash4 (hash4 m s0a s0b s0c) s1a s1b s1c
+        (hash4 l0 l1 l2 l3) (hash4 l4 l5 l6 l7) (hash4 l8 l9 l10 l11) (hash4 l12 l13 l14 l15))
+    (hBot : ¬ Coll4 hash4 m s0a s0b s0c l0 l1 l2 l3)
     (hfab : m ≠ l0) :
     attestedRoot hash4 m s0a s0b s0c s1a s1b s1c
       ≠ committedRoot hash4 l0 l1 l2 l3 l4 l5 l6 l7 l8 l9 l10 l11 l12 l13 l14 l15 := by
   intro hroot
-  exact hfab (attested_member_is_committed hash4 hinj
+  exact hfab (attested_member_is_committed hash4
     m s0a s0b s0c s1a s1b s1c
-    l0 l1 l2 l3 l4 l5 l6 l7 l8 l9 l10 l11 l12 l13 l14 l15 hroot).1
+    l0 l1 l2 l3 l4 l5 l6 l7 l8 l9 l10 l11 l12 l13 l14 l15 hTop hBot hroot).1
+
+/-- **The binding, unconditionally: bind, or EXHIBIT a collision.** Floor-free and residual-free
+— the root equality forces the committed opening UNLESS the deployed compression genuinely
+collides at one of the two quadruples the peel compares. This is the honest form: it names the
+exact price of the binding instead of assuming the price away. -/
+theorem attested_member_is_committed_or_collides {F : Type} (hash4 : F → F → F → F → F)
+    (m s0a s0b s0c s1a s1b s1c : F)
+    (l0 l1 l2 l3 l4 l5 l6 l7 l8 l9 l10 l11 l12 l13 l14 l15 : F)
+    (hroot :
+      attestedRoot hash4 m s0a s0b s0c s1a s1b s1c
+        = committedRoot hash4 l0 l1 l2 l3 l4 l5 l6 l7 l8 l9 l10 l11 l12 l13 l14 l15) :
+    (m = l0 ∧ s0a = l1 ∧ s0b = l2 ∧ s0c = l3
+      ∧ s1a = hash4 l4 l5 l6 l7
+      ∧ s1b = hash4 l8 l9 l10 l11
+      ∧ s1c = hash4 l12 l13 l14 l15)
+    ∨ Coll4 hash4 (hash4 m s0a s0b s0c) s1a s1b s1c
+        (hash4 l0 l1 l2 l3) (hash4 l4 l5 l6 l7) (hash4 l8 l9 l10 l11) (hash4 l12 l13 l14 l15)
+    ∨ Coll4 hash4 m s0a s0b s0c l0 l1 l2 l3 := by
+  by_cases hTop : Coll4 hash4 (hash4 m s0a s0b s0c) s1a s1b s1c
+      (hash4 l0 l1 l2 l3) (hash4 l4 l5 l6 l7) (hash4 l8 l9 l10 l11) (hash4 l12 l13 l14 l15)
+  · exact Or.inr (Or.inl hTop)
+  · by_cases hBot : Coll4 hash4 m s0a s0b s0c l0 l1 l2 l3
+    · exact Or.inr (Or.inr hBot)
+    · exact Or.inl (attested_member_is_committed hash4
+        m s0a s0b s0c s1a s1b s1c
+        l0 l1 l2 l3 l4 l5 l6 l7 l8 l9 l10 l11 l12 l13 l14 l15 hTop hBot hroot)
 
 /-- A genuinely injective 4-ary compression: the free `node` constructor over `Nat` leaves.
 Constructor injectivity is definitional, so this is a concrete model of a collision-free
@@ -123,14 +223,20 @@ inductive FTree where
   | node : FTree → FTree → FTree → FTree → FTree
   deriving DecidableEq
 
-/-- **Non-vacuity of the hypothesis.** `Hash4Injective` is satisfiable by a genuine injective
-4-ary compression (`FTree.node`), so the theorems above are NOT vacuously true over an empty
-hypothesis. This is a witness that the assumption is consistent, NOT a claim that the deployed
-Poseidon2 is provably injective (that is the honest STARK/hash floor). -/
-theorem hash4Injective_is_satisfiable :
-    ∃ (F : Type) (hash4 : F → F → F → F → F), Hash4Injective hash4 := by
-  refine ⟨FTree, FTree.node, ?_⟩
-  intro a b c d a' b' c' d' heq
+/-- **What made the floor look safe, said honestly.** `FTree.node` IS a genuinely injective
+arity-4 compression — over an INFINITE carrier, where `F × F ↪ F` is unremarkable. That is the
+whole reason global 4-ary injectivity reads as a plausible hash assumption, and it is exactly
+what the tooth's finiteness hypothesis excludes: NO finite `F` with more than one element admits
+one, the deployed field included.
+
+⚑ This replaces `hash4Injective_is_satisfiable`, which asserted `∃ F hash4, Hash4Injective hash4`.
+That statement was TRUE and read as reassurance for a floor that is false everywhere the system
+actually runs — the object that made the wound survive. It also named a refuted floor in its
+conclusion, which is a `#floor_ratchet` carrier for no benefit. Same content, no floor mention,
+no false comfort. -/
+theorem ftreeNode_injective (a b c d a' b' c' d' : FTree)
+    (heq : FTree.node a b c d = FTree.node a' b' c' d') :
+    a = a' ∧ b = b' ∧ c = c' ∧ d = d' := by
   injection heq with h1 h2 h3 h4
   exact ⟨h1, h2, h3, h4⟩
 
