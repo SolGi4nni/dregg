@@ -1624,6 +1624,105 @@ pub enum Effect {
     },
 }
 
+/// ONE SOURCE for the one-byte domain tag [`Effect::hash`] absorbs first, expanding
+/// to the named constants, the `(variant name, tag)` table the distinctness test
+/// reads, and the wildcard-free `Effect::hash_tag` match the hasher calls.
+///
+/// **Why this is a table and not 36 literals in the match arms.** The tag's entire
+/// job is that a reader can tell WHICH variant a preimage was. Until 2026-07-28
+/// `Effect::Mint` and `Effect::ShieldedTransfer` BOTH absorbed `63` — a
+/// domain-separated hash with two names for one slot, i.e. no domain separation
+/// between those two at all. Nothing today reaches an equal-length preimage across
+/// the pair (the shortest `ShieldedTransfer` body is 142 bytes to `Mint`'s 44), so
+/// the digests were kept apart by an accident of body LENGTH rather than by the
+/// field whose purpose is to keep them apart. Length is not domain separation, and
+/// `Effect::hash` is inherited by `TurnReceipt::effects_hash` and by
+/// [`crate::turn::SovereignCellWitness::canonical_effects_hash`] — the value a
+/// sovereign owner's signature binds — so a tag collision is a standing
+/// second-preimage surface on that signature. `ShieldedTransfer` now takes `67`.
+///
+/// Generating both halves from one list is what makes reuse DETECTABLE rather than
+/// merely unlikely: `effect_tag::ALL` cannot drift from the match, so
+/// `effect_tag_tests::effect_hash_tags_are_pairwise_distinct_with_a_variant_floor`
+/// reads the tags the hasher actually absorbs. And the match has no `_ =>` arm, so a
+/// new `Effect` variant is a COMPILE ERROR here rather than an untagged effect.
+///
+/// ⚠ **These are NOT postcard discriminants.** `Effect`'s serde encoding is
+/// positional and derived; it does not consult these values, so moving a hash tag
+/// does not move the durable commit-log / checkpoint codec. The two numbering
+/// schemes are independent and must not be conflated.
+macro_rules! effect_hash_tags {
+    ( $( $variant:ident => $konst:ident = $value:literal ),+ $(,)? ) => {
+        /// The canonical one-byte domain tags [`Effect::hash`] absorbs — one per
+        /// `Effect` variant, generated together with [`Effect::hash_tag`].
+        pub mod effect_tag {
+            $( pub const $konst: u8 = $value; )+
+
+            /// Every `(variant name, tag)` pair, from the SAME list that generates
+            /// [`super::Effect::hash_tag`]'s match. A test that reads this table is
+            /// therefore reading the tags the hasher absorbs, not a hand-kept copy.
+            pub const ALL: &[(&str, u8)] = &[ $( (stringify!($variant), $value), )+ ];
+        }
+
+        impl Effect {
+            /// The one-byte domain tag this effect absorbs FIRST in [`Effect::hash`].
+            ///
+            /// Exhaustive by construction — the generating list has no `_ =>` arm, so
+            /// a new `Effect` variant cannot reach the hasher without being given a
+            /// tag, and `effect_tag::ALL` grows with it.
+            pub fn hash_tag(&self) -> u8 {
+                match self {
+                    $( Effect::$variant { .. } => effect_tag::$konst, )+
+                }
+            }
+        }
+    };
+}
+
+effect_hash_tags! {
+    SetField              => SET_FIELD                 = 0,
+    Transfer              => TRANSFER                  = 1,
+    GrantCapability       => GRANT_CAPABILITY          = 2,
+    RevokeCapability      => REVOKE_CAPABILITY         = 3,
+    EmitEvent             => EMIT_EVENT                = 4,
+    IncrementNonce        => INCREMENT_NONCE           = 5,
+    CreateCell            => CREATE_CELL               = 6,
+    SetPermissions        => SET_PERMISSIONS           = 7,
+    SetVerificationKey    => SET_VERIFICATION_KEY      = 8,
+    NoteSpend             => NOTE_SPEND                = 9,
+    NoteCreate            => NOTE_CREATE               = 10,
+    PipelinedSend         => PIPELINED_SEND            = 16,
+    Introduce             => INTRODUCE                 = 17,
+    SpawnWithDelegation   => SPAWN_WITH_DELEGATION     = 18,
+    RefreshDelegation     => REFRESH_DELEGATION        = 19,
+    RevokeDelegation      => REVOKE_DELEGATION         = 20,
+    BridgeMint            => BRIDGE_MINT               = 21,
+    ExerciseViaCapability => EXERCISE_VIA_CAPABILITY   = 25,
+    MakeSovereign         => MAKE_SOVEREIGN            = 35,
+    CreateCellFromFactory => CREATE_CELL_FROM_FACTORY  = 36,
+    Refusal               => REFUSAL                   = 47,
+    CellSeal              => CELL_SEAL                 = 48,
+    CellUnseal            => CELL_UNSEAL               = 49,
+    CellDestroy           => CELL_DESTROY              = 50,
+    Burn                  => BURN                      = 51,
+    AttenuateCapability   => ATTENUATE_CAPABILITY      = 52,
+    ReceiptArchive        => RECEIPT_ARCHIVE           = 53,
+    SetProgram            => SET_PROGRAM               = 54,
+    Promise               => PROMISE                   = 60,
+    Notify                => NOTIFY                    = 61,
+    React                 => REACT                     = 62,
+    Mint                  => MINT                      = 63,
+    Custom                => CUSTOM                    = 64,
+    CreateHybridCell      => CREATE_HYBRID_CELL        = 65,
+    RotatePqIdentity      => ROTATE_PQ_IDENTITY        = 66,
+    // ⚑ 2026-07-28 FLAG DAY: was `63`, colliding with `Mint`. `67` is the next free
+    // tag after `RotatePqIdentity`. This MOVES `Effect::hash` for every shielded
+    // transfer, and with it `Action::hash` → the call-forest hash → `Turn::hash` →
+    // `TurnReceipt::effects_hash`/`receipt_hash` → `canonical_effects_hash`. See the
+    // macro doc above and `effect_tag_tests`.
+    ShieldedTransfer      => SHIELDED_TRANSFER         = 67,
+}
+
 /// Why a [`Effect::Refusal`] was issued. Refusals are *evidence of
 /// absence*, but the reason field gives downstream auditors a
 /// structured signal beyond raw non-action.
@@ -2057,33 +2156,32 @@ impl Effect {
     /// Compute the BLAKE3 hash of this effect.
     pub fn hash(&self) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
+        // THE ONE TAG ABSORB. Formerly 36 literals, one per match arm, where a
+        // copy-paste gave `Mint` and `ShieldedTransfer` the same byte. There is now
+        // exactly one site, fed by the generated `effect_tag` table.
+        hasher.update(&[self.hash_tag()]);
         match self {
             Effect::SetField { cell, index, value } => {
-                hasher.update(&[0u8]);
                 hasher.update(cell.as_bytes());
                 hasher.update(&index.to_le_bytes());
                 hasher.update(value);
             }
             Effect::Transfer { from, to, amount } => {
-                hasher.update(&[1u8]);
                 hasher.update(from.as_bytes());
                 hasher.update(to.as_bytes());
                 hasher.update(&amount.to_le_bytes());
             }
             Effect::GrantCapability { from, to, cap } => {
-                hasher.update(&[2u8]);
                 hasher.update(from.as_bytes());
                 hasher.update(to.as_bytes());
                 hasher.update(cap.target.as_bytes());
                 hasher.update(&cap.slot.to_le_bytes());
             }
             Effect::RevokeCapability { cell, slot } => {
-                hasher.update(&[3u8]);
                 hasher.update(cell.as_bytes());
                 hasher.update(&slot.to_le_bytes());
             }
             Effect::EmitEvent { cell, event } => {
-                hasher.update(&[4u8]);
                 hasher.update(cell.as_bytes());
                 hasher.update(&event.topic);
                 for d in &event.data {
@@ -2091,7 +2189,6 @@ impl Effect {
                 }
             }
             Effect::IncrementNonce { cell } => {
-                hasher.update(&[5u8]);
                 hasher.update(cell.as_bytes());
             }
             Effect::CreateCell {
@@ -2099,7 +2196,6 @@ impl Effect {
                 token_id,
                 balance,
             } => {
-                hasher.update(&[6u8]);
                 hasher.update(public_key);
                 hasher.update(token_id);
                 hasher.update(&balance.to_le_bytes());
@@ -2111,7 +2207,6 @@ impl Effect {
                 ml_dsa_public_key,
                 pq_possession_signature,
             } => {
-                hasher.update(&[65u8]);
                 hasher.update(public_key);
                 hasher.update(token_id);
                 hasher.update(&balance.to_le_bytes());
@@ -2126,7 +2221,6 @@ impl Effect {
                 new_ml_dsa_public_key,
                 new_key_possession_signature,
             } => {
-                hasher.update(&[66u8]);
                 hasher.update(cell.as_bytes());
                 hasher.update(&expected_epoch.to_le_bytes());
                 hasher.update(&(new_ml_dsa_public_key.len() as u64).to_le_bytes());
@@ -2138,7 +2232,6 @@ impl Effect {
                 cell,
                 new_permissions,
             } => {
-                hasher.update(&[7u8]);
                 hasher.update(cell.as_bytes());
                 // Hash each permission field's discriminant.
                 let perms = [
@@ -2176,7 +2269,6 @@ impl Effect {
                 }
             }
             Effect::SetVerificationKey { cell, new_vk } => {
-                hasher.update(&[8u8]);
                 hasher.update(cell.as_bytes());
                 if let Some(vk) = new_vk {
                     hasher.update(&[1u8]);
@@ -2186,7 +2278,6 @@ impl Effect {
                 }
             }
             Effect::SetProgram { cell, program } => {
-                hasher.update(&[54u8]);
                 hasher.update(cell.as_bytes());
                 // Fold the program's canonical postcard bytes so distinct
                 // programs hash distinctly (deterministic, like the wire codec).
@@ -2202,7 +2293,6 @@ impl Effect {
                 spending_proof,
                 value_commitment,
             } => {
-                hasher.update(&[9u8]);
                 hasher.update(&nullifier.0);
                 hasher.update(note_tree_root);
                 hasher.update(&value.to_le_bytes());
@@ -2226,7 +2316,6 @@ impl Effect {
                 value_commitment,
                 range_proof,
             } => {
-                hasher.update(&[10u8]);
                 hasher.update(&commitment.0);
                 hasher.update(&value.to_le_bytes());
                 hasher.update(&asset_type.to_le_bytes());
@@ -2254,7 +2343,6 @@ impl Effect {
             }
 
             Effect::BridgeMint { portable_proof } => {
-                hasher.update(&[21u8]);
                 hasher.update(&portable_proof.nullifier);
                 hasher.update(&portable_proof.destination_commitment.0);
                 hasher.update(&portable_proof.value.to_le_bytes());
@@ -2269,7 +2357,6 @@ impl Effect {
                 target,
                 permissions,
             } => {
-                hasher.update(&[17u8]);
                 hasher.update(introducer.as_bytes());
                 hasher.update(recipient.as_bytes());
                 hasher.update(target.as_bytes());
@@ -2296,7 +2383,6 @@ impl Effect {
                 }
             }
             Effect::PipelinedSend { target, action } => {
-                hasher.update(&[16u8]);
                 hasher.update(&target.source_turn);
                 hasher.update(&target.output_slot.to_le_bytes());
                 hasher.update(&action.hash());
@@ -2307,32 +2393,27 @@ impl Effect {
                 child_token_id,
                 max_staleness,
             } => {
-                hasher.update(&[18u8]);
                 hasher.update(child_public_key);
                 hasher.update(child_token_id);
                 hasher.update(&max_staleness.to_le_bytes());
             }
             Effect::RefreshDelegation { child, snapshot } => {
-                hasher.update(&[19u8]);
                 hasher.update(child.as_bytes());
                 hasher.update(snapshot);
             }
             Effect::RevokeDelegation { child } => {
-                hasher.update(&[20u8]);
                 hasher.update(child.as_bytes());
             }
             Effect::ExerciseViaCapability {
                 cap_slot,
                 inner_effects,
             } => {
-                hasher.update(&[25u8]);
                 hasher.update(&cap_slot.to_le_bytes());
                 for inner in inner_effects {
                     hasher.update(&inner.hash());
                 }
             }
             Effect::MakeSovereign { cell } => {
-                hasher.update(&[35u8]);
                 hasher.update(cell.as_bytes());
             }
             Effect::CreateCellFromFactory {
@@ -2341,7 +2422,6 @@ impl Effect {
                 token_id,
                 params,
             } => {
-                hasher.update(&[36u8]);
                 hasher.update(factory_vk);
                 hasher.update(owner_pubkey);
                 hasher.update(token_id);
@@ -2387,19 +2467,16 @@ impl Effect {
 
             // ── CapTP runtime effects (Stage 7 / P1.A) ────────────────────
             Effect::CellSeal { target, reason } => {
-                hasher.update(&[48u8]);
                 hasher.update(target.as_bytes());
                 hasher.update(reason);
             }
             Effect::CellUnseal { target } => {
-                hasher.update(&[49u8]);
                 hasher.update(target.as_bytes());
             }
             Effect::CellDestroy {
                 target,
                 certificate,
             } => {
-                hasher.update(&[50u8]);
                 hasher.update(target.as_bytes());
                 // Bind the canonical death-certificate hash (cell-side
                 // routine `DeathCertificate::certificate_hash`).
@@ -2410,7 +2487,6 @@ impl Effect {
                 slot,
                 amount,
             } => {
-                hasher.update(&[51u8]);
                 hasher.update(target.as_bytes());
                 hasher.update(&slot.to_le_bytes());
                 hasher.update(&amount.to_le_bytes());
@@ -2420,7 +2496,6 @@ impl Effect {
                 slot,
                 amount,
             } => {
-                hasher.update(&[63u8]);
                 hasher.update(target.as_bytes());
                 hasher.update(&slot.to_le_bytes());
                 hasher.update(&amount.to_le_bytes());
@@ -2432,7 +2507,6 @@ impl Effect {
                 narrower_effects,
                 narrower_expiry,
             } => {
-                hasher.update(&[52u8]);
                 hasher.update(cell.as_bytes());
                 hasher.update(&slot.to_le_bytes());
                 match narrower_permissions {
@@ -2479,7 +2553,6 @@ impl Effect {
                 prefix_end_height,
                 checkpoint,
             } => {
-                hasher.update(&[53u8]);
                 hasher.update(&prefix_end_height.to_le_bytes());
                 hasher.update(&checkpoint.checkpoint_hash());
             }
@@ -2489,7 +2562,6 @@ impl Effect {
                 refusal_reason,
                 proof_witness_index,
             } => {
-                hasher.update(&[47u8]);
                 hasher.update(cell.as_bytes());
                 hasher.update(offered_action_commitment);
                 match refusal_reason {
@@ -2515,7 +2587,6 @@ impl Effect {
                 wake,
                 timeout_height,
             } => {
-                hasher.update(&[60u8]);
                 hasher.update(cell.as_bytes());
                 // Canonical postcard encoding of the resolution condition.
                 let rc = postcard::to_allocvec(resolution_condition).unwrap_or_default();
@@ -2531,7 +2602,6 @@ impl Effect {
                 resolution_condition,
                 timeout_height,
             } => {
-                hasher.update(&[61u8]);
                 hasher.update(from.as_bytes());
                 hasher.update(to.as_bytes());
                 hasher.update(&wake.hash());
@@ -2546,7 +2616,6 @@ impl Effect {
                 resolution_proof,
                 wake,
             } => {
-                hasher.update(&[62u8]);
                 // The hole-as-nullifier — the same shape NoteSpend folds (the
                 // 32-byte nullifier directly into the effect hash).
                 hasher.update(&pending_id.0);
@@ -2559,7 +2628,6 @@ impl Effect {
                 hasher.update(&wake.hash());
             }
             Effect::ShieldedTransfer { payload } => {
-                hasher.update(&[63u8]);
                 hasher.update(&payload.merkle_root.to_le_bytes());
                 hasher.update(&(payload.inputs.len() as u64).to_le_bytes());
                 for input in &payload.inputs {
@@ -2595,7 +2663,6 @@ impl Effect {
                 program_vk_hash,
                 proof_commitment,
             } => {
-                hasher.update(&[64u8]);
                 hasher.update(cell.as_bytes());
                 hasher.update(program_vk_hash);
                 hasher.update(proof_commitment);
@@ -3128,6 +3195,322 @@ mod token_arm_digest_tests {
             .hash(),
             "the key_ref VARIANT must change the action digest, not just its payload"
         );
+    }
+}
+
+// =============================================================================
+// THE TOOTH for the `Effect::hash` domain-tag collision (2026-07-28)
+// =============================================================================
+//
+// The wound: `Effect::Mint` and `Effect::ShieldedTransfer` both absorbed the
+// leading byte `63`. A domain-separated hash whose tags collide is a hash with
+// two names for one slot — the reader can no longer recover the variant from the
+// tag, which is the tag's only job. `Effect::hash` is inherited by
+// `TurnReceipt::effects_hash` and by `SovereignCellWitness::canonical_effects_hash`
+// (the value a SOVEREIGN SIGNATURE binds), so the collision is a standing
+// second-preimage surface on that signature, held shut only by the accident that
+// no `Mint` body and no `ShieldedTransfer` body have ever had the same length.
+//
+// These tests bite in four independent ways:
+//
+//   1. COMPILE-TIME. `effect_tag::ALL` and `Effect::hash_tag`'s wildcard-free match
+//      come out of ONE `effect_hash_tags!` invocation, so a new `Effect` variant
+//      reds the build until it is given a tag, and the table the tests read cannot
+//      drift from the match the hasher calls.
+//   2. PAIRWISE DISTINCT, WITH A FLOOR. Every tag differs from every other, AND the
+//      table must carry at least `EFFECT_VARIANT_FLOOR` distinctly-named variants —
+//      so a table that SHRANK (variants deleted, rows merged) cannot read as clean
+//      by having fewer things to collide.
+//   3. PREIMAGE-EXACT, AGAINST HARD-CODED BYTES. The pins below rebuild whole
+//      `Effect::hash` preimages with the tag written as a BARE LITERAL rather than
+//      via `effect_tag::`, so they are an independent restatement: `Mint` is pinned
+//      to `63` (its pre-fix value — this digest MUST NOT have moved) and
+//      `ShieldedTransfer` to `67` (its post-fix value, asserted DIFFERENT from what
+//      the old `63` preimage produced).
+//   4. NON-VACUOUS about what the tag buys. The demonstration below hashes ONE body
+//      under both tags: under the collided scheme the two variants' digests were
+//      *literally equal* whenever their bodies were, and the domain tag contributed
+//      nothing; under distinct tags they diverge at preimage byte 0.
+#[cfg(test)]
+mod effect_tag_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    /// `Effect` carried 36 variants when the collision was fixed (2026-07-28).
+    /// This is a FLOOR, not an equality: the enum is expected to grow, and a
+    /// growing enum must keep every tag distinct. Lowering it is the only way a
+    /// shrunken table reads as clean, and lowering it is a visible, deliberate act.
+    const EFFECT_VARIANT_FLOOR: usize = 36;
+
+    fn cell(b: u8) -> CellId {
+        CellId([b; 32])
+    }
+
+    fn minimal_shielded_payload() -> ShieldedTransferPayload {
+        ShieldedTransferPayload {
+            merkle_root: 0x0102_0304,
+            inputs: Vec::new(),
+            input_legs: Vec::new(),
+            output_legs: Vec::new(),
+            output_range_proofs: Vec::new(),
+            conservation: dregg_cell_crypto::ConservationProof {
+                excess_commitment: [0xE1u8; 32],
+                nonce_commitment: [0xE2u8; 32],
+                response: [0xE3u8; 32],
+            },
+        }
+    }
+
+    /// THE DISTINCTNESS GATE. Every `Effect` variant absorbs its own leading byte,
+    /// over a table that cannot have quietly shrunk.
+    #[test]
+    fn effect_hash_tags_are_pairwise_distinct_with_a_variant_floor() {
+        // (a) The floor: the table must still describe a whole enum. Without this,
+        //     deleting 34 variants would leave two rows that trivially "do not
+        //     collide" and this test would go green over a gutted reader.
+        assert!(
+            effect_tag::ALL.len() >= EFFECT_VARIANT_FLOOR,
+            "the Effect hash-tag table has {} rows, below the {EFFECT_VARIANT_FLOOR}-variant \
+             floor: either variants were deleted (say so, and lower the floor deliberately) \
+             or the table stopped tracking the enum",
+            effect_tag::ALL.len(),
+        );
+
+        // (b) Distinct NAMES, so a duplicated row cannot inflate the count past the
+        //     floor while describing one variant twice.
+        let mut names: Vec<&str> = effect_tag::ALL.iter().map(|(n, _)| *n).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(
+            names.len(),
+            effect_tag::ALL.len(),
+            "a variant name appears more than once in the Effect hash-tag table"
+        );
+
+        // (c) THE COLLISION CHECK. Pairwise distinct, reported BY NAME so the
+        //     failure message identifies the offending pair the way
+        //     `Mint`/`ShieldedTransfer` should have been identified.
+        let mut by_tag: BTreeMap<u8, Vec<&str>> = BTreeMap::new();
+        for (name, tag) in effect_tag::ALL {
+            by_tag.entry(*tag).or_default().push(name);
+        }
+        let collisions: Vec<(u8, Vec<&str>)> = by_tag
+            .iter()
+            .filter(|(_, variants)| variants.len() > 1)
+            .map(|(tag, variants)| (*tag, variants.clone()))
+            .collect();
+        assert!(
+            collisions.is_empty(),
+            "Effect::hash domain tags COLLIDE: {collisions:?}. A tag that names two variants \
+             is no domain separation at all — and Effect::hash is inherited by \
+             TurnReceipt::effects_hash and by SovereignCellWitness::canonical_effects_hash, \
+             which is what a sovereign signature binds"
+        );
+
+        // (d) …and therefore: as many distinct tags as there are variants.
+        assert_eq!(
+            by_tag.len(),
+            effect_tag::ALL.len(),
+            "distinct-tag count must equal the variant count"
+        );
+    }
+
+    /// PREIMAGE-EXACT: `Mint` did NOT move. Written with the tag as a bare `63u8`
+    /// literal — the byte HEAD absorbed before the fix — so this pin is an
+    /// independent restatement rather than a tautology over `effect_tag::MINT`.
+    #[test]
+    fn mint_effect_digest_is_pinned_to_its_pre_fix_preimage() {
+        let target = cell(0x11);
+        let mint = Effect::Mint {
+            target,
+            slot: 4,
+            amount: 9,
+        };
+        assert_eq!(mint.hash_tag(), 63, "Mint keeps the tag it already had");
+
+        let mut expect = blake3::Hasher::new();
+        expect.update(&[63u8]);
+        expect.update(target.as_bytes());
+        expect.update(&4u32.to_le_bytes());
+        expect.update(&9u64.to_le_bytes());
+        assert_eq!(
+            mint.hash(),
+            *expect.finalize().as_bytes(),
+            "the collision was fixed by moving ShieldedTransfer, NOT Mint; a Mint digest that \
+             moved means the tag hoist changed the preimage of an untouched variant"
+        );
+    }
+
+    /// PREIMAGE-EXACT: `ShieldedTransfer` DID move, `63` → `67`, and the old digest
+    /// is no longer producible.
+    #[test]
+    fn shielded_transfer_effect_digest_moved_off_the_collided_tag() {
+        let payload = minimal_shielded_payload();
+        let conservation_bytes =
+            postcard::to_allocvec(&payload.conservation).expect("encode conservation proof");
+        let effect = Effect::ShieldedTransfer {
+            payload: minimal_shielded_payload(),
+        };
+        assert_eq!(
+            effect.hash_tag(),
+            67,
+            "ShieldedTransfer moved to the next free tag"
+        );
+
+        // The whole preimage, with the tag as a bare literal. Everything after the
+        // tag is byte-identical to what HEAD absorbed.
+        let body = |tag: u8| {
+            let mut h = blake3::Hasher::new();
+            h.update(&[tag]);
+            h.update(&payload.merkle_root.to_le_bytes());
+            h.update(&0u64.to_le_bytes()); // inputs
+            h.update(&[0u8]); // input-leg group tag
+            h.update(&0u64.to_le_bytes()); // input_legs
+            h.update(&[1u8]); // output-leg group tag
+            h.update(&0u64.to_le_bytes()); // output_legs
+            h.update(&0u64.to_le_bytes()); // output_range_proofs
+            h.update(&(conservation_bytes.len() as u64).to_le_bytes());
+            h.update(&conservation_bytes);
+            *h.finalize().as_bytes()
+        };
+
+        assert_eq!(
+            effect.hash(),
+            body(67),
+            "a ShieldedTransfer must hash under tag 67, with its body unchanged"
+        );
+        assert_ne!(
+            effect.hash(),
+            body(63),
+            "the pre-fix digest — computed under the tag ShieldedTransfer SHARED with Mint — \
+             must no longer be reachable from any ShieldedTransfer"
+        );
+    }
+
+    /// THE POINT OF A TAG, demonstrated rather than asserted.
+    ///
+    /// Take one byte string and treat it as an effect body. Under the collided
+    /// scheme both variants prefixed it with `63`, so the two digests were the SAME
+    /// VALUE — the domain tag contributed exactly nothing to telling a mint from a
+    /// shielded transfer, and the only thing that ever separated the two families
+    /// was that their bodies happen to differ (today, by length: the shortest
+    /// reachable `ShieldedTransfer` body is far longer than any `Mint` body). Body
+    /// shape is not domain separation; it is a property of the CURRENT field lists,
+    /// and it stops holding the moment either variant gains or loses a field.
+    ///
+    /// With distinct tags the two preimages differ at byte 0 for every body, so the
+    /// separation no longer depends on the field lists at all.
+    #[test]
+    fn a_shared_tag_makes_equal_bodies_one_digest_and_distinct_tags_do_not() {
+        let shared_body = b"one body, two variant names";
+
+        let under = |tag: u8| {
+            let mut h = blake3::Hasher::new();
+            h.update(&[tag]);
+            h.update(shared_body);
+            *h.finalize().as_bytes()
+        };
+
+        // What the collided scheme did: `Mint`'s tag and `ShieldedTransfer`'s tag
+        // were the same byte, so equal bodies were literally one digest.
+        const COLLIDED_TAG: u8 = 63;
+        assert_eq!(
+            under(COLLIDED_TAG),
+            under(COLLIDED_TAG),
+            "the collided pair absorbed one and the same leading byte"
+        );
+
+        // What the fix buys: the two variants' tags now differ, so the SAME body
+        // lands on two different digests — the separation is carried by the field
+        // whose job it is, not by an accident of the bodies.
+        assert_ne!(
+            effect_tag::MINT,
+            effect_tag::SHIELDED_TRANSFER,
+            "Mint and ShieldedTransfer must not share a domain tag"
+        );
+        assert_ne!(
+            under(effect_tag::MINT),
+            under(effect_tag::SHIELDED_TRANSFER),
+            "with distinct tags, one body under two variants is two digests"
+        );
+
+        // And concretely, on real values: the live effects disagree in their tag,
+        // not merely in their digest.
+        let mint = Effect::Mint {
+            target: cell(0x21),
+            slot: 0,
+            amount: 1,
+        };
+        let shielded = Effect::ShieldedTransfer {
+            payload: minimal_shielded_payload(),
+        };
+        assert_ne!(
+            mint.hash_tag(),
+            shielded.hash_tag(),
+            "a reader must recover the variant from the tag alone"
+        );
+        assert_ne!(mint.hash(), shielded.hash());
+    }
+
+    /// The tag hoist (36 per-arm literals → one absorb site) must not have disturbed
+    /// any other variant's preimage. Each pin below writes the tag as a bare literal
+    /// equal to the byte HEAD absorbed, and rebuilds the whole (short) body.
+    #[test]
+    fn the_tag_hoist_left_every_other_pinned_preimage_byte_identical() {
+        let a = cell(0x31);
+        let b = cell(0x32);
+
+        let transfer = Effect::Transfer {
+            from: a,
+            to: b,
+            amount: 5,
+        };
+        let mut e = blake3::Hasher::new();
+        e.update(&[1u8]);
+        e.update(a.as_bytes());
+        e.update(b.as_bytes());
+        e.update(&5u64.to_le_bytes());
+        assert_eq!(transfer.hash(), *e.finalize().as_bytes(), "Transfer moved");
+
+        let bump = Effect::IncrementNonce { cell: a };
+        let mut e = blake3::Hasher::new();
+        e.update(&[5u8]);
+        e.update(a.as_bytes());
+        assert_eq!(
+            bump.hash(),
+            *e.finalize().as_bytes(),
+            "IncrementNonce moved"
+        );
+
+        let unseal = Effect::CellUnseal { target: a };
+        let mut e = blake3::Hasher::new();
+        e.update(&[49u8]);
+        e.update(a.as_bytes());
+        assert_eq!(unseal.hash(), *e.finalize().as_bytes(), "CellUnseal moved");
+
+        let burn = Effect::Burn {
+            target: a,
+            slot: 0,
+            amount: 3,
+        };
+        let mut e = blake3::Hasher::new();
+        e.update(&[51u8]);
+        e.update(a.as_bytes());
+        e.update(&0u32.to_le_bytes());
+        e.update(&3u64.to_le_bytes());
+        assert_eq!(burn.hash(), *e.finalize().as_bytes(), "Burn moved");
+
+        let custom = Effect::Custom {
+            cell: a,
+            program_vk_hash: [0x41u8; 32],
+            proof_commitment: [0x42u8; 32],
+        };
+        let mut e = blake3::Hasher::new();
+        e.update(&[64u8]);
+        e.update(a.as_bytes());
+        e.update(&[0x41u8; 32]);
+        e.update(&[0x42u8; 32]);
+        assert_eq!(custom.hash(), *e.finalize().as_bytes(), "Custom moved");
     }
 }
 
