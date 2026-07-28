@@ -146,11 +146,33 @@ pub fn fold_membership_block(
 }
 
 /// The finalized order of the lace under `participants`, as BlockIds of the
-/// FINALITY lace. Mirrors `poll_finalized_blocks` exactly: the solo (n ≤ 1)
-/// path orders every actionable block by sequence; the multi-party path runs
-/// `ordering::tau` over the unsigned ordering projection and maps back. The
-/// solo sort adds `(creator, id)` tiebreaks for determinism (a solo committee
-/// has one creator, so this only disambiguates pathological inputs).
+/// FINALITY lace. The solo (n ≤ 1) path orders every actionable block by
+/// sequence; the multi-party path runs `ordering::tau` over the unsigned
+/// ordering projection and maps back. The solo sort adds `(creator, id)`
+/// tiebreaks for determinism (a solo committee has one creator, so this only
+/// disambiguates pathological inputs).
+///
+/// ⚑ IT NO LONGER "MIRRORS `poll_finalized_blocks` EXACTLY", AND THAT SENTENCE IS DELETED RATHER
+/// THAN RE-TICKED. The live poll's solo arm now filters to ENROLLED creators
+/// (`blocklace_sync::solo_enrolled_creators`, the n=1 face of the verified rule's
+/// `BlocklaceFinality.enrolledId`); this arm still does not. Stated at its real resolution:
+///
+///  * It is REACHABLE. Boot calls this over a lace restored by
+///    `finality.rs::from_checkpoint_trusted`, which re-admits every persisted block with no
+///    signature, roster or closure check — so an unenrolled creator's `MembershipVote` block IS
+///    walked here.
+///  * It is INERT, and that is a property of the constitution, not of this filter.
+///    `constitution.rs::record_vote` opens with "Only current participants can vote" and returns
+///    without recording when `!constitution.is_participant(&voter)`, and this walk passes
+///    `block.ed25519` (the strand key the participant set is keyed by). So an unenrolled creator's
+///    block can register a `submit_proposal` id and can NEVER contribute an approval; a proposal
+///    with no eligible approvals cannot pass `has_passed`, so no authority flows from it.
+///  * It is NOT fixed here on purpose, and the reason is specific: the only creator key available
+///    to this function is the `ed25519 -> creator` map built FROM THE LACE ITSELF, and on the
+///    `from_checkpoint_trusted` path the lace is exactly the unauthenticated input. A filter keyed
+///    on attacker-supplied evidence is worse than the inert walk it would replace, and getting a
+///    sound one means giving this function committed state it does not currently take. Named as a
+///    follow-up, with its severity measured rather than assumed.
 fn finalized_order(lace: &Blocklace, participants: &[[u8; 32]]) -> Vec<BlockId> {
     if participants.len() <= 1 {
         let mut v: Vec<(u64, [u8; 32], BlockId)> = lace

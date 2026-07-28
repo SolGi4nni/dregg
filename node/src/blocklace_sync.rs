@@ -1517,8 +1517,10 @@ impl BlocklaceHandle {
         // ADMITTED participant count (`admitted.len()`), and multi-party tau runs ONLY
         // when the committed-state projection covers EVERY admitted participant
         // (`participants.len() == admitted.len()`). Three arms:
-        //   * `admitted <= 1` → genuine solo: order by `seq` (no leader schedule, no
-        //     projection needed).
+        //   * `admitted <= 1` → genuine solo: order the ENROLLED creators' blocks by `seq` (no
+        //     leader schedule, so no full projection needed — but see
+        //     [`solo_enrolled_creators`]: the creator filter IS needed, and the node's own
+        //     hybrid id is derivable without a committed key, so it applies on a cold start too).
         //   * `admitted > 1` but the projection dropped ≥1 admitted member (a current
         //     participant with no COMMITTED ML-DSA key) → FAIL CLOSED, finalize NOTHING.
         //     A node must NEVER order over a proper subset of the committed set: because
@@ -1532,39 +1534,87 @@ impl BlocklaceHandle {
         //     hazard) — nor run tau over a subset (the divergence hazard).
         //   * projection covers all admitted → run the verified multi-party tau order.
         let ordered = if admitted.len() <= 1 {
-            // Solo: all actionable blocks are ordered by sequence.
+            // Solo: the actionable blocks of an ENROLLED creator, ordered by sequence.
             //
-            // ⚑ NAMED RESIDUAL — the ENROLLMENT hole's sibling, left OPEN on purpose, not missed.
-            // The multi-party arm below now finalizes only ENROLLED creators (the verified
+            // ⚑ THE ENROLLMENT FILTER, SOLO ARM — the sibling `c6f00c228` named and left open, now
+            // closed. The multi-party arm below finalizes only ENROLLED creators (the verified
             // `BlocklaceFinality.enrolledId` filter, mirrored in `ordering::tau`, proved by
-            // `tauOrder_only_enrolled` — see `crate::finality_gate`'s module header). THIS arm has
-            // no such filter: it finalizes EVERY actionable block in the lace regardless of who
-            // created it. That is not hypothetical on a lace that once held more creators — a
-            // federation shrunk to n=1, or a restart through
-            // `blocklace/src/finality.rs::from_checkpoint_trusted`, which re-inserts every
-            // persisted block with no signature, roster or closure check.
+            // `tauOrder_only_enrolled` — see `crate::finality_gate`'s module header). This arm had
+            // NO creator check at all: it finalized EVERY actionable block in the lace regardless
+            // of who created it. Not hypothetical on a lace that once held more creators — both
+            // reachable paths are verified at source in
+            // `solo_arm_refuses_an_unenrolled_creator_at_seq_zero`:
+            //   * a federation SHRUNK to n=1. `blocklace/src/finality.rs::enroll_pq` (:979) only
+            //     inserts and nothing in the workspace removes, so the pinned ingest roster is
+            //     INSERT-ONLY, while `apply_passed_proposal` (:14217) shrinks
+            //     `constitution.current.participants`, which this poll re-reads every time. A
+            //     removed validator's NEW blocks keep passing `receive_block_pinned` and land in a
+            //     lace this arm then finalizes whole.
+            //   * a RESTART through `blocklace/src/finality.rs::from_checkpoint_trusted` (:2123),
+            //     reached from the boot `store.load_blocklace` via
+            //     `persist/src/blocklace_store.rs:274`. It re-inserts every persisted block by raw
+            //     `Block::from_bytes` + `blocks.insert` with no signature, roster, closure or
+            //     equivocation check, and the lace it builds starts with an EMPTY `pq_roster`.
+            //     Anything that ever landed comes back unverified.
             //
-            // NOT fixed here because the safe filter is not local. This arm deliberately skips the
-            // hybrid-id projection ("no leader schedule, no projection needed"), and the only sound
-            // creator key to filter against is the projected hybrid id — so adding the filter makes
-            // SOLO BOOTSTRAP depend on a COMMITTED ML-DSA key and inherits the fail-closed halt of
-            // the `participants.len() != admitted.len()` arm below. A filter here that is one key
-            // short does not refuse a stranger, it refuses the node's own blocks and the chain
-            // never starts. That trade needs the solo/devnet boot path exercised, which the
-            // enrollment work did not do.
-            let mut all_blocks: Vec<(u64, BlockId)> = lace
+            // ⚑ THE BOOTSTRAP TENSION IS DISSOLVED, NOT TRADED. `c6f00c228` left this open because
+            // "the only sound creator key to filter against is the projected hybrid id", so a
+            // filter here would make solo bootstrap depend on a COMMITTED ML-DSA key and refuse the
+            // node's OWN blocks on a cold start. That premise is FALSE for the one identity that
+            // matters here: the node's own hybrid id `H(ed25519 ‖ ml_dsa)` is DERIVABLE from the
+            // ed25519 seed it already holds, because `ML-DSA.KeyGen` is deterministic in the seed.
+            // The lace's `HybridBlockSigner` (`blocklace/src/signer.rs`) has already paid that
+            // derivation once at `Blocklace::new`, so `lace.signer().creator()` is the exact value
+            // `Block::new` stamps on every block this node authors — free, and available before any
+            // genesis roster is committed. The boot path does the same derivation at :3100 and
+            // enrolls it at :3450. So [`solo_enrolled_creators`] completes the committed-state
+            // projection with the ONE member whose key we can derive: ourselves. A genuine cold
+            // start (constitution `vec![self_key]`, `known_federation_ml_dsa_keys` empty) therefore
+            // finalizes its own blocks with the filter fully armed.
+            //
+            // ⚑ SAY WHAT BROKE (flag day, node startup behaviour). A node whose own ed25519 is NOT
+            // an admitted constitutional participant and whose `admitted.len() <= 1` no longer
+            // finalizes its OWN blocks — previously it finalized every block in the lace, its own
+            // included. That is the n=1 case of the rule the multi-party arm has enforced since
+            // `c6f00c228` (a non-participant's blocks are refused by `enrolledId` there too), so
+            // this makes n=1 CONSISTENT with n>1 rather than introducing a new refusal. Nothing
+            // re-emits and nothing refuses to load; what changes is which blocks reach the executor.
+            let self_ed25519 = lace.signer().ed25519();
+            let self_hybrid = lace.signer().creator();
+            let solo_enrolled =
+                solo_enrolled_creators(&participants, &admitted, &self_ed25519, self_hybrid);
+            if solo_enrolled.is_empty() {
+                warn!(
+                    admitted = admitted.len(),
+                    projected = participants.len(),
+                    "SOLO FAIL-CLOSED: no enrolled creator is resolvable for the n<=1 finality arm \
+                     (this node is not an admitted constitutional participant, and no admitted \
+                     participant has a COMMITTED ML-DSA key) — finalizing NOTHING this poll rather \
+                     than finalizing every block in the lace regardless of creator. Commit the \
+                     participant's ML-DSA key (genesis roster / on-chain join) to resume."
+                );
+            }
+            // `(seq, creator, id)` — the sort was `sort_by_key(seq)` over a HashMap iteration, so
+            // two blocks at the same seq came out in ARBITRARY order. At n=1 that is an
+            // equivocation, but the order fed to the executor must be a function of the lace, not
+            // of hash iteration. Same tiebreak `committee_replay::finalized_order` already uses.
+            let mut all_blocks: Vec<(u64, [u8; 32], BlockId)> = lace
                 .iter()
+                .filter(|(_, block)| solo_enrolled.contains(&block.creator))
                 .filter_map(|(id, block)| match &block.payload {
                     Payload::Turn(_)
                     | Payload::TurnBundle(_)
                     | Payload::ConsensusTimedTurnV1(_)
                     | Payload::MembershipVote { .. }
-                    | Payload::Checkpoint { .. } => Some((block.seq, *id)),
+                    | Payload::Checkpoint { .. } => Some((block.seq, block.creator, *id)),
                     _ => None,
                 })
                 .collect();
-            all_blocks.sort_by_key(|(seq, _)| *seq);
-            all_blocks.into_iter().map(|(_, id)| id).collect::<Vec<_>>()
+            all_blocks.sort_unstable();
+            all_blocks
+                .into_iter()
+                .map(|(_, _, id)| id)
+                .collect::<Vec<_>>()
         } else if participants.len() != admitted.len() {
             // FAIL-CLOSED: at least one admitted CURRENT participant has no COMMITTED
             // ML-DSA key, so its hybrid id — and thus the exact tau participant set and
@@ -2973,6 +3023,52 @@ async fn project_committed_participants(state: &NodeState, admitted: &[[u8; 32]]
             })
         })
         .collect()
+}
+
+/// The creator HYBRID ids the SOLO (`admitted.len() <= 1`) finality arm may finalize — the n=1 face
+/// of the verified rule's `BlocklaceFinality.enrolledId`.
+///
+/// ⚑ SUBSTRATE. The finalization RULE is Lean-authored and unchanged: `enrolledId` + `tauOrder`,
+/// with `tauOrder_only_enrolled` ("every finalized block's creator is a participant", no hypothesis
+/// on the lace) and `tauOrder_enrolled_eq_unfiltered` ("on an all-enrolled lace the filter is the
+/// identity"). Nothing in `metatheory/` needed to change for this. What was wrong was WHICH FUNCTION
+/// the live path calls: the `admitted <= 1` arm of `poll_finalized_blocks` short-circuits the
+/// verified rule entirely (`ordering::tau`/`tauOrder` cannot serve it — `find_all_final_leaders`
+/// breaks at `wave_end > max_round`, and with wavelength 3 a fresh solo lace has `max_round == 1`,
+/// so the verified rule finalizes NOTHING until three rounds exist and the mutation-driven solo
+/// cadence never produces them). So the arm stays a `seq` order and gains the rule's ENROLLMENT
+/// PREDICATE, keyed by the same hybrid id `enrolledId` compares.
+///
+/// TWO SOURCES, and the second is what makes the filter safe at cold start:
+///
+///  * `projected` — [`project_committed_participants`]'s output: the admitted constitutional
+///    members whose ML-DSA half is in COMMITTED consensus state. This is the only sound source for
+///    a PEER's hybrid id (`ML-DSA.KeyGen` needs the seed, which we do not have for a peer, so a
+///    peer's `H(ed25519 ‖ ml_dsa)` genuinely cannot be derived from its ed25519 public key).
+///  * `self_hybrid` — OUR OWN hybrid id, admitted only when our own ed25519 IS one of the
+///    `admitted` constitutional participants. `ML-DSA.KeyGen` is deterministic in the seed and we
+///    own our seed, so this is derivable with NO committed key — `blocklace/src/signer.rs`'s
+///    `HybridBlockSigner` holds it already, having paid the derivation once at `Blocklace::new`,
+///    and it is BY CONSTRUCTION the `creator` every block this node authors carries. This is not a
+///    widening of the enrolled set: it is the LOCAL computation of a projection entry that
+///    committed state would carry the identical value for. It is also the narrowly-typed case that
+///    cannot be entered remotely — it names exactly one key, our signer's, and no network peer can
+///    influence which key that is.
+///
+/// The result is EMPTY only when this node is not an admitted participant AND no admitted
+/// participant has a committed ML-DSA key; the caller then finalizes nothing and warns, the same
+/// halt-not-fork disposition the `participants.len() != admitted.len()` arm uses.
+fn solo_enrolled_creators(
+    projected: &[[u8; 32]],
+    admitted: &[[u8; 32]],
+    self_ed25519: &[u8; 32],
+    self_hybrid: [u8; 32],
+) -> std::collections::HashSet<[u8; 32]> {
+    let mut enrolled: std::collections::HashSet<[u8; 32]> = projected.iter().copied().collect();
+    if admitted.contains(self_ed25519) {
+        enrolled.insert(self_hybrid);
+    }
+    enrolled
 }
 
 /// Abort the process because consensus startup failed.
@@ -12460,6 +12556,37 @@ mod tests {
         self_key: [u8; 32],
         participants: Vec<[u8; 32]>,
     ) -> BlocklaceHandle {
+        test_handle_inner(
+            self_key,
+            ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]),
+            participants,
+        )
+        .await
+    }
+
+    /// Like [`test_handle_with_committee`], but the handle's `self_key` AND the lace's
+    /// `HybridBlockSigner` are the SAME identity — which is what the production boot builds
+    /// (`run_blocklace_sync_with_policy` derives `self_key` from `signing_key` and hands the SAME
+    /// `signing_key` to `Blocklace::new` / `store.load_blocklace`).
+    ///
+    /// ⚑ This distinction is load-bearing for the solo enrollment filter and NOT a convenience:
+    /// [`solo_enrolled_creators`] admits the node's own hybrid id only when the node's own ed25519
+    /// is an admitted constitutional participant, so a fixture whose lace is signed by an unrelated
+    /// key (the `[7u8; 32]` above) models an OBSERVER, not a solo validator. Any test that means
+    /// "a genuine solo node finalizing its own blocks" must use this constructor.
+    async fn test_handle_for_signer(
+        signing_key: ed25519_dalek::SigningKey,
+        participants: Vec<[u8; 32]>,
+    ) -> BlocklaceHandle {
+        let self_key = signing_key.verifying_key().to_bytes();
+        test_handle_inner(self_key, signing_key, participants).await
+    }
+
+    async fn test_handle_inner(
+        self_key: [u8; 32],
+        signing_key: ed25519_dalek::SigningKey,
+        participants: Vec<[u8; 32]>,
+    ) -> BlocklaceHandle {
         use dregg_blocklace::constitution::{Constitution, ConstitutionManager};
         let (sk, _pk) = dregg_types::generate_keypair();
         let node_id: NodeId = *blake3::hash(&self_key).as_bytes();
@@ -12471,7 +12598,6 @@ mod tests {
             HashMap::new(),
         ));
         let topic = gossip.join_topic(TOPIC_BLOCKLACE, &[]).await.unwrap();
-        let signing_key = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
         let quorum = dregg_blocklace::supermajority_threshold(participants.len());
         let blocklace = dregg_blocklace::finality::Blocklace::new(signing_key.clone(), quorum);
         let constitution =
@@ -13015,12 +13141,20 @@ mod tests {
     /// actionable blocks in `seq` order. Guards the fail-closed fix above against an
     /// over-aggressive mutation (e.g. "always halt") — the fail-closed arm must fire
     /// ONLY when a genuine n>1 federation's projection is incomplete, never for real solo.
+    ///
+    /// ⚑ FIXTURE CORRECTED (solo enrollment filter). This used to build the handle with
+    /// `test_handle_with_committee(pk_self, vec![pk_self])`, where `pk_self` is a random keypair
+    /// and the LACE is signed by an unrelated `[7u8; 32]` — so the node authoring the block was
+    /// NOT the constitutional participant. That models an observer, not a solo validator, and
+    /// under the enrollment filter it is (correctly) refused. The constructor now ties the two,
+    /// exactly as the production boot does, so the test asserts what its name says.
     #[tokio::test]
     async fn genuine_solo_node_still_finalizes() {
         let _ = rustls::crypto::ring::default_provider().install_default();
 
-        let (_sk_self, pk_self) = dregg_types::generate_keypair();
-        let handle = test_handle_with_committee(pk_self.0, vec![pk_self.0]).await;
+        let sk_self = ed25519_dalek::SigningKey::from_bytes(&[0x5Au8; 32]);
+        let pk_self = sk_self.verifying_key().to_bytes();
+        let handle = test_handle_for_signer(sk_self, vec![pk_self]).await;
         let tmp = tempfile::tempdir().expect("tempdir");
         let state = crate::state::NodeState::new(tmp.path(), Vec::new()).expect("node state");
 
@@ -13036,6 +13170,295 @@ mod tests {
             "a genuine solo node (admitted == 1) must still finalize its actionable Turn — \
              the fail-closed fix must not halt real solo finality"
         );
+    }
+
+    // ─── THE SOLO ENROLLMENT FILTER (the `c6f00c228` residual, closed) ────────────
+
+    /// Build a solo-shaped finality lace: the solo node's own genesis Turn at **seq 0**, and an
+    /// UNENROLLED creator's genuinely well-formed, correctly hybrid-signed Turn at **seq 0** which
+    /// the node's own later block ACKNOWLEDGES (so it is load-bearing in the causal past, not an
+    /// unreferenced island). Inserted with `receive_block` (ed25519-only) on purpose: that is the
+    /// ingest both reachable production paths produce — see the falsifier's HONEST SCOPE.
+    fn solo_lace_with_an_unenrolled_creator(
+        solo: &ed25519_dalek::SigningKey,
+        stranger: &ed25519_dalek::SigningKey,
+    ) -> Blocklace {
+        let mut lace = Blocklace::new(solo.clone(), 1);
+        let mine0 = Block::new(solo, 0, Payload::Turn(vec![0xA0]), vec![]);
+        let mine0_id = mine0.id();
+        lace.receive_block(mine0).expect("own seq-0 block inserts");
+        let theirs0 = Block::new(stranger, 0, Payload::Turn(vec![0xB0]), vec![]);
+        let theirs0_id = theirs0.id();
+        lace.receive_block(theirs0)
+            .expect("stranger seq-0 block inserts (receive_block is ed25519-only)");
+        // Our seq-1 block ACKS both — the stranger's genesis is now in our causal past.
+        let mine1 = Block::new(
+            solo,
+            1,
+            Payload::Turn(vec![0xA1]),
+            vec![mine0_id, theirs0_id],
+        );
+        lace.receive_block(mine1).expect("own seq-1 block inserts");
+        lace
+    }
+
+    /// ⚑ **THE SOLO TOOTH, AT SEQ 0 — the arm a bootstrap runs in.**
+    ///
+    /// `poll_finalized_blocks`' `admitted.len() <= 1` arm had NO creator check at all: it
+    /// finalized every actionable block in the lace by `seq`, whoever made it. The sibling
+    /// falsifier `finality_gate::tests::attacker_block_from_unenrolled_creator_is_refused_by_the_
+    /// verified_rule` fires at seq 1 on the MULTI-PARTY arm and cannot see this one — the solo arm
+    /// never calls `tau`, `tauOrder`, or the belt gate, so no verified export is consulted anywhere
+    /// on this path. And seq 0 is where a bootstrap lives: this asserts the filter at the exact
+    /// coordinate a cold-started node's first block occupies.
+    ///
+    /// HONEST SCOPE — two ORDINARY production paths produce this lace with no attack on the ingest:
+    ///   * a federation SHRUNK to n=1. `finality.rs::enroll_pq` only inserts (nothing in the
+    ///     workspace removes), so the pinned ingest roster is INSERT-ONLY, while
+    ///     `apply_passed_proposal` shrinks `constitution.current.participants` and this poll
+    ///     re-reads it every time. A removed validator's NEW blocks keep passing
+    ///     `receive_block_pinned` into the lace this arm then finalizes whole.
+    ///   * a RESTART through `finality.rs::from_checkpoint_trusted` (see the companion test below),
+    ///     which re-inserts every persisted block with no signature, roster, closure or
+    ///     equivocation check and an EMPTY `pq_roster`.
+    ///
+    /// ⚑ **THE COMMITTED ROSTER IS EMPTY** — `NodeState::new(tmp, vec![])`, no
+    /// `set_federation_keys_hybrid`. This is the GENUINE COLD START, and it is the guard that makes
+    /// the test about the fix rather than about a committed key: `project_committed_participants`
+    /// returns EMPTY here (asserted below), so the only thing that can admit the solo node's own
+    /// blocks is the LOCAL derivation of its own hybrid id from its own ed25519 seed. If that
+    /// derivation were not sound, this test would fail on the HONEST pole, not the refusal — which
+    /// is exactly the "a filter one key short refuses the node's own blocks and the chain never
+    /// starts" failure `c6f00c228` declined to risk.
+    ///
+    /// BOTH HALVES, because either alone is satisfied by a broken gate:
+    ///   * the unenrolled creator's seq-0 block is REFUSED, and
+    ///   * the solo node's OWN seq-0 and seq-1 blocks still finalize.
+    #[tokio::test]
+    async fn solo_arm_refuses_an_unenrolled_creator_at_seq_zero() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        let solo = ed25519_dalek::SigningKey::from_bytes(&[0x60u8; 32]);
+        let stranger = ed25519_dalek::SigningKey::from_bytes(&[0x61u8; 32]);
+        let solo_ed = solo.verifying_key().to_bytes();
+        let solo_hybrid = Block::hybrid_id(&solo);
+        let stranger_hybrid = Block::hybrid_id(&stranger);
+        assert_ne!(
+            solo_hybrid, stranger_hybrid,
+            "the stranger must be a DIFFERENT identity — else this test has no adversary"
+        );
+
+        // GENUINE COLD START: a fresh store with NO committed federation roster at all.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let state = crate::state::NodeState::new(tmp.path(), Vec::new()).expect("node state");
+        let handle = test_handle_for_signer(solo.clone(), vec![solo_ed]).await;
+        *handle.lace.write().await = solo_lace_with_an_unenrolled_creator(&solo, &stranger);
+
+        // ── ANTI-VACUITY 1: the projection this arm was told it needed is EMPTY. Nothing the
+        //    committed roster carries can be what admits the solo node's blocks below.
+        let projected = project_committed_participants(&state, &[solo_ed]).await;
+        assert!(
+            projected.is_empty(),
+            "a cold-started node has NO committed ML-DSA key for itself — if the projection is \
+             non-empty this fixture is not a cold start and the derivation half is untested"
+        );
+
+        // ── ANTI-VACUITY 2: the stranger really is in the lace, at seq 0, with an ACTIONABLE
+        //    payload the arm's payload filter admits — so there is something to refuse.
+        let stranger_seqs: Vec<u64> = {
+            let lace = handle.lace.read().await;
+            lace.iter()
+                .filter(|(_, b)| b.creator == stranger_hybrid)
+                .map(|(_, b)| b.seq)
+                .collect()
+        };
+        assert_eq!(
+            stranger_seqs,
+            vec![0],
+            "the unenrolled creator must have exactly its seq-0 block in the lace — else there is \
+             nothing for the solo arm to refuse at the bootstrap coordinate"
+        );
+
+        // ── ANTI-VACUITY 3 (THE WOUND, EXECUTED — no mutation required). The arm's payload filter
+        //    and `seq` sort WITHOUT the enrollment filter finalize the stranger's block. This is
+        //    the permanent in-tree witness that the filter is load-bearing rather than a no-op.
+        let unfiltered: Vec<[u8; 32]> = {
+            let lace = handle.lace.read().await;
+            let mut v: Vec<(u64, [u8; 32])> = lace
+                .iter()
+                .filter_map(|(_, block)| match &block.payload {
+                    Payload::Turn(_)
+                    | Payload::TurnBundle(_)
+                    | Payload::ConsensusTimedTurnV1(_)
+                    | Payload::MembershipVote { .. }
+                    | Payload::Checkpoint { .. } => Some((block.seq, block.creator)),
+                    _ => None,
+                })
+                .collect();
+            v.sort_unstable();
+            v.into_iter().map(|(_, c)| c).collect()
+        };
+        assert!(
+            unfiltered.contains(&stranger_hybrid),
+            "the UNFILTERED solo arm (the shape this code shipped with) must finalize the \
+             unenrolled creator's block — if it does not, this fixture cannot witness the wound \
+             and the refusal below asserts nothing"
+        );
+
+        // ── THE REAL POLL, over the REAL handle.
+        let finalized = handle.poll_finalized_blocks(&state).await;
+        let finalized_creators: Vec<[u8; 32]> = {
+            let lace = handle.lace.read().await;
+            finalized_order_ids(&finalized)
+                .iter()
+                .filter_map(|id| lace.get(id).map(|b| (b.creator, b.seq)))
+                .map(|(c, _)| c)
+                .collect()
+        };
+        let finalized_coords: Vec<(u64, [u8; 32])> = {
+            let lace = handle.lace.read().await;
+            finalized_order_ids(&finalized)
+                .iter()
+                .filter_map(|id| lace.get(id).map(|b| (b.seq, b.creator)))
+                .collect()
+        };
+
+        // ── HALF 1, THE HONEST POLE FIRST. A gate that refuses everyone is exactly as broken as
+        //    one that refuses no one, and it is what a wrong self-derivation would produce.
+        assert!(
+            finalized_coords.contains(&(0, solo_hybrid)),
+            "the solo node's OWN seq-0 block was NOT finalized on a genuine cold start (committed \
+             roster EMPTY) — the enrollment filter is refusing the node's own blocks and the chain \
+             never starts. That is a WORSE bug than the one it closes. Finalized: {finalized_coords:?}"
+        );
+        assert!(
+            finalized_coords.contains(&(1, solo_hybrid)),
+            "the solo node's own seq-1 block must finalize too — the filter is a SUBTRACTION on an \
+             all-enrolled prefix, not a stall. Finalized: {finalized_coords:?}"
+        );
+
+        // ── HALF 2, THE REFUSAL.
+        assert!(
+            !finalized_creators.contains(&stranger_hybrid),
+            "the SOLO finality arm FINALIZED a block created by an UNENROLLED identity — an \
+             unenrolled node can inject state transitions into this node's executor. The gate is \
+             OPEN. Finalized: {finalized_coords:?}"
+        );
+    }
+
+    /// ⚑ **THE RESTART PATH, DRIVEN — `from_checkpoint_trusted` is where the unenrolled blocks
+    /// come back, and the solo arm is what used to finalize them.**
+    ///
+    /// `blocklace/src/finality.rs::from_checkpoint_trusted` (reached from the boot
+    /// `store.load_blocklace` via `persist/src/blocklace_store.rs:274`) rebuilds the lace by raw
+    /// `Block::from_bytes` + `blocks.insert`: no signature check, no roster check, no causal-closure
+    /// check, no equivocation re-detection, and the restored lace's `pq_roster` is EMPTY (it is a
+    /// fresh `Blocklace::new`). So everything that ever landed comes back unverified — including a
+    /// creator that has since been rotated out, or was never enrolled at all.
+    ///
+    /// THE ANSWER TO "does closing the solo arm without closing the restart accomplish anything":
+    /// YES, and this test is the measurement. The restart is the SUPPLIER of unenrolled blocks; the
+    /// solo arm was the CONSUMER that fed them to the executor. With the restore left exactly as it
+    /// is — every block re-admitted, `pq_roster` empty, asserted below — the poll now refuses the
+    /// stranger and still finalizes the node's own restored blocks. The restore's own trust
+    /// contract (LOCAL DISK ONLY; peer-supplied checkpoints route through the authenticating
+    /// `from_checkpoint`) is untouched and is not what this closes.
+    #[tokio::test]
+    async fn restored_trusted_checkpoint_does_not_resurrect_an_unenrolled_creator() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        let solo = ed25519_dalek::SigningKey::from_bytes(&[0x62u8; 32]);
+        let stranger = ed25519_dalek::SigningKey::from_bytes(&[0x63u8; 32]);
+        let solo_ed = solo.verifying_key().to_bytes();
+        let solo_hybrid = Block::hybrid_id(&solo);
+        let stranger_hybrid = Block::hybrid_id(&stranger);
+
+        // The lace as it stood before the restart, then the checkpoint, then THE RESTART.
+        let before = solo_lace_with_an_unenrolled_creator(&solo, &stranger);
+        let checkpoint = before.checkpoint();
+        let restored = Blocklace::from_checkpoint_trusted(&checkpoint, solo.clone(), 1)
+            .expect("the trusted restore accepts the checkpoint verbatim");
+
+        // ── ANTI-VACUITY: the restore really did re-admit the stranger, and really did come back
+        //    with an EMPTY PQ roster — i.e. the supplier path is intact and is not what refuses.
+        assert!(
+            restored.pq_roster().is_empty(),
+            "from_checkpoint_trusted builds a fresh Blocklace, so the restored PQ roster is EMPTY \
+             — if this ever becomes non-empty the restore has grown a check and this test is \
+             measuring something else"
+        );
+        assert_eq!(
+            restored.len(),
+            before.len(),
+            "the trusted restore re-inserts EVERY persisted block with no roster check — that is \
+             the path under test"
+        );
+        assert!(
+            restored
+                .iter()
+                .any(|(_, b)| b.creator == stranger_hybrid && b.seq == 0),
+            "the unenrolled creator's block must survive the restore — else there is nothing for \
+             the finality arm to refuse"
+        );
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let state = crate::state::NodeState::new(tmp.path(), Vec::new()).expect("node state");
+        let handle = test_handle_for_signer(solo.clone(), vec![solo_ed]).await;
+        *handle.lace.write().await = restored;
+
+        let finalized = handle.poll_finalized_blocks(&state).await;
+        let coords: Vec<(u64, [u8; 32])> = {
+            let lace = handle.lace.read().await;
+            finalized_order_ids(&finalized)
+                .iter()
+                .filter_map(|id| lace.get(id).map(|b| (b.seq, b.creator)))
+                .collect()
+        };
+
+        assert!(
+            coords.contains(&(0, solo_hybrid)) && coords.contains(&(1, solo_hybrid)),
+            "a node that RESTARTED must still finalize its own restored blocks — a restart that \
+             comes back unable to finalize anything is a worse outage than the hole. Got {coords:?}"
+        );
+        assert!(
+            !coords.iter().any(|(_, c)| *c == stranger_hybrid),
+            "a RESTART through `from_checkpoint_trusted` resurrected an UNENROLLED creator's block \
+             and the solo finality arm fed it to the executor. Got {coords:?}"
+        );
+    }
+
+    /// The solo enrolled-creator set, in quadrants — so a future widening is a visible diff and not
+    /// a quiet boolean flip. Invariant/gate sweeps cannot evaluate this predicate; these four lines
+    /// are the complement that catches a `solo_enrolled_creators -> everything` mutant.
+    #[test]
+    fn solo_enrolled_creators_quadrants() {
+        let self_ed = [0x01u8; 32];
+        let self_hybrid = [0x11u8; 32];
+        let peer_ed = [0x02u8; 32];
+        let peer_hybrid = [0x22u8; 32];
+
+        // COLD START: we are the sole admitted participant and NOTHING is committed. The derived
+        // self hybrid is the whole enrolled set — this is the case that keeps bootstrap alive.
+        let cold = solo_enrolled_creators(&[], &[self_ed], &self_ed, self_hybrid);
+        assert_eq!(cold.len(), 1);
+        assert!(cold.contains(&self_hybrid));
+
+        // COMMITTED: the projection carries us; the derived id is the SAME value, so the set does
+        // not grow. (The local derivation completes the projection, it does not widen it.)
+        let committed = solo_enrolled_creators(&[self_hybrid], &[self_ed], &self_ed, self_hybrid);
+        assert_eq!(committed, cold);
+
+        // OBSERVER: the sole admitted participant is someone else and we are not a member. Our own
+        // hybrid id is NOT admitted — this is the n=1 face of the rule `tauOrder`'s `enrolledId`
+        // has enforced at n>1 since `c6f00c228`.
+        let observer = solo_enrolled_creators(&[peer_hybrid], &[peer_ed], &self_ed, self_hybrid);
+        assert_eq!(observer.len(), 1);
+        assert!(observer.contains(&peer_hybrid));
+        assert!(!observer.contains(&self_hybrid));
+
+        // NOTHING RESOLVABLE: not a member, and the sole admitted member has no committed key.
+        // Empty ⇒ the caller finalizes nothing and warns (halt, never finalize-everything).
+        assert!(solo_enrolled_creators(&[], &[peer_ed], &self_ed, self_hybrid).is_empty());
     }
 
     // ─── BUG 1: hostname peer resolution (overlay hostnames federate) ───────────
