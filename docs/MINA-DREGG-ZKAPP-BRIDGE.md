@@ -15,7 +15,7 @@ PoC of the minimal real mutual step.*
 |---|---|---|
 | **1. dregg verifies Mina** | a Lean-authored Kimchi verifier checks a real Mina proof | **mostly built** — checks a real Kimchi proof's arithmetic over the real Pasta field, non-vacuously, **modulo 3 named crypto carriers**. A real (partial) proof-checking-a-proof. |
 | **2. Mina verifies dregg** (the hard, novel one) | a Mina zkApp verifies dregg's proof in-circuit | **infeasible in-circuit today** — dregg's proof is a **BN254 Groth16**; Kimchi has **no pairing gate**, and emulating one blows past the 2^16-row step ceiling by orders of magnitude. |
-| **Tractable mutual step** | a Mina **`ZkProgram`** verifies a **Poseidon-over-Pasta KAT attestation** | **BUILT + RUN, off-pin** (PoC §6). Native Poseidon (11 rows/perm); the Rust and o1js hashers agree bit-for-bit — that part is real and survived adversarial probing. **[CORRECTED 2026-07-27]** the earlier row said *"a Mina **zkApp** verifies a **dregg** Poseidon-over-Pasta attestation."* No zkApp ran (a bare `ZkProgram` did, §6/F-B9), the attested value is a **hash KAT over the literals `[1,2,3,4]`**, not dregg state (F-B8), and it does not run on the repo's pinned o1js (F-B6). |
+| **Tractable mutual step** | a Mina **zkApp** consumes a `ZkProgram` proof of a **Poseidon-over-Pasta KAT attestation** | **BUILT + RUN, ON-PIN, GATED** (PoC §6). Native Poseidon (11 rows/perm); the Rust and o1js hashers agree bit-for-bit — real, and it survived adversarial probing. **[CORRECTED 2026-07-27]** the original row overstated the packaging: no zkApp ran (F-B9), the attested value is a **hash KAT over the literals `[1,2,3,4]`**, not dregg state (F-B8), and it did not run on the repo's pinned o1js (F-B6). **[REPAIRED 2026-07-28]** F-B6/F-B9/F-B10 are closed — o1js pinned at 2.15.0, runs from the tree, and `DreggAttestedGate` really does deploy and consume the proof recursively, under `scripts/check-mina-attestation.sh`. ⚑ **F-B8 stands: the attested value is still a KAT, not dregg state.** |
 
 So the honest shape of a Mina↔dregg bridge that is buildable now is **asymmetric**: direction 1 is a
 real (incomplete) proof-check; direction 2 is a hash-attestation, not yet a proof-check. A *symmetric*
@@ -289,6 +289,27 @@ one shared commitment.
   **different sources** — root pins `emberian/proof-systems@c5305e63`, the probe pins
   `o1-labs/proof-systems@36a8b510` — and the KAT is pinned against the latter only. The good
   cryptographic result above is real **and nothing would ever report if it stopped being true.**
+
+- **[REPAIRED 2026-07-28.]** Four of the five corrections above are closed; one is not.
+  `package.json` now pins **`o1js` 2.15.0 exactly** (1.9.1's prover bindings abort during
+  `compile()` on Node ≥ 26, and its `ZkProgram` typing rejects the committed source), `tsc` is
+  clean, and everything runs **from the tree**: `tsc` emits to `dist/` and the driver imports the
+  emitted JS, so `attestation-poc.mjs` — a second copy of `src/` — is **deleted**. The gate is
+  `bridge/mina-zkapp/scripts/attestation-gate.ts`, run by `scripts/check-mina-attestation.sh`,
+  which is a `scripts/local-gates.sh` row *and* a `ci.yml` job, and whose `--self-test` injects
+  eight faults and requires each to turn it red.
+  - **F-B6 "runnable" — closed.** `npm run gate`, 22 checks, ~37 s, on the pinned toolchain.
+  - **F-B9 "a Mina zkApp verifies" — closed.** `DreggAttestedGate` now compiles, deploys on a
+    local chain with proofs ENABLED, **consumes the attestation proof recursively** (340 rows),
+    records the leaf on-chain, and **refuses** a proof bound to a different root.
+  - **F-B7 direction — closed as documentation.** `src/rust-gold-vectors.ts` mirrors the Rust
+    probe's table verbatim and states in place that o1js generated the vectors, so the agreement
+    is a two-way check on two implementations of the same sponge — not evidence of provenance.
+  - **F-B10 "cannot go red" — closed.** See above.
+  - ⚑ **F-B8 is NOT closed, by design.** The attested root is still a fixed-leaf Mina-Poseidon
+    test vector over `[1,2,3,4]`, not a commitment to dregg state. That fact now lives in the
+    module header of `src/DreggPoseidonAttestation.ts`, where the next reader meets it, instead of
+    only here. Closing it is the §6.1 work below, not a wording change.
 
 ### The honest boundary of the attestation
 
