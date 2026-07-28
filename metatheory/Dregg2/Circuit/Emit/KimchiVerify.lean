@@ -483,6 +483,205 @@ theorem kimchiVerifyDecisionField_refines {R : Type} [CommRing R] [DecidableEq R
           && decide (ftEval0R n omega zeta beta gamma alpha0 alpha1 alpha2 w s shift
                zZeta zZetaOmega pZeta linConstTerm denomInv = ftEval0Claimed)) := rfl
 
+/-! ## §9c — C6: the GATE-CONSTRAINT linearization constant term (retiring the `linConstTerm`
+carrier for the gates a real proof uses).
+
+`linConstTerm = PolishToken::evaluate(index.linearization.constant_term)` (`verifier.rs:479-487`).
+Crucially `assert_eq!(linearization.index_terms.len(), 0)` (`linearization.rs:364`): every column
+(witness, coefficients, `z`, all selectors) is evaluated, so the WHOLE linearization is the constant
+term — there are NO commitment/index terms. And `constraints_expr` (`linearization.rs:45-243`) is the
+sum over GATES only — Poseidon + VarBaseMul + CompleteAdd + EndosclMul + EndomulScalar + optional +
+Generic + lookups; the PERMUTATION is NOT in it (it is the by-hand σ-fold of `ftEval0` above). So
+
+  `linConstTerm = Σ_gate index(gate)·(Σ_i alpha^i·constraint_{gate,i}) + lookups`
+
+(`argument.rs:207` `index(gate)·combined_constraints`, `expr.rs:1633` `combine_constraints` =
+`Σ_i alpha^{αᵢ}·cᵢ`). The gate alpha blocks are shared (`ArgumentType::Gate`, mutually exclusive —
+`argument.rs:26-30`), registered as `VarbaseMul::CONSTRAINTS = 21` (`linearization.rs:57-60`), so the
+GENERIC gate is at alpha⁰/alpha¹ (`linearization.rs:223-229`) and the permutation at alpha²¹⁺
+(A0/A1/A2). We transcribe the generic gate constraint fully and the Poseidon gate constraint as a
+def-generator, and expose the per-gate SELECTOR gating: a proof whose custom selectors vanish has its
+`linConstTerm` DERIVED from the generic gate alone. -/
+
+/-- **`genericGateConstraint`** — the double-generic gate constraint (`generic.rs:83-120`), scaled by
+the generic selector and alpha-combined: `genSel·(constraint1 + alpha·constraint2)` where
+`constraintₖ = c_{5k}·w_{3k} + c_{5k+1}·w_{3k+1} + c_{5k+2}·w_{3k+2} + c_{5k+3}·w_{3k}·w_{3k+1}
++ c_{5k+4}` (the two 5-coefficient generics l,r,o,m,c). `coeff` = the 15 coefficient evals at ζ
+(only 0..9 used), `w` = the 15 witness evals at ζ (only 0..5 used). Field/CommRing-generic — this is
+the emitted gate constraint that `ftEval0` subtracts, no longer a carrier. -/
+def genericGateConstraint {R : Type} [CommRing R] (genSel alpha : R) (coeff w : List R) : R :=
+  let c := fun i => coeff.getD i (0 : R)
+  let ww := fun i => w.getD i (0 : R)
+  let constraint1 := c 0 * ww 0 + c 1 * ww 1 + c 2 * ww 2 + c 3 * (ww 0 * ww 1) + c 4
+  let constraint2 := c 5 * ww 3 + c 6 * ww 4 + c 7 * ww 5 + c 8 * (ww 3 * ww 4) + c 9
+  genSel * (constraint1 + alpha * constraint2)
+
+/-- The double-generic gate constraint as a `PolishToken` stream (extends §5's `genericGateToks` to
+the full two-generic + alpha-fold + selector scaling). Establishes the C6 evaluator computes the real
+`generic.rs` polynomial as a token machine, not just an algebraic def. -/
+def genericConstraintToks (genSel alpha c0 c1 c2 c3 c4 c5 c6 c7 c8 c9 w0 w1 w2 w3 w4 w5 : F) :
+    List (Tok F) :=
+  [ .lit c0, .cell w0, .mul
+  , .lit c1, .cell w1, .mul, .add
+  , .lit c2, .cell w2, .mul, .add
+  , .lit c3, .cell w0, .cell w1, .mul, .mul, .add
+  , .lit c4, .add                                       -- constraint1 on the stack
+  , .lit c5, .cell w3, .mul
+  , .lit c6, .cell w4, .mul, .add
+  , .lit c7, .cell w5, .mul, .add
+  , .lit c8, .cell w3, .cell w4, .mul, .mul, .add
+  , .lit c9, .add                                       -- constraint2 on top
+  , .lit alpha, .mul, .add                              -- constraint1 + alpha·constraint2
+  , .lit genSel, .mul ]                                 -- · genSel
+
+/-- **`genericConstraint_evaluates`** — the token machine reduces the transcribed generic-gate stream
+to the exact `generic.rs` double-generic polynomial. -/
+theorem genericConstraint_evaluates (genSel alpha c0 c1 c2 c3 c4 c5 c6 c7 c8 c9 w0 w1 w2 w3 w4 w5 : F) :
+    evalToks (genericConstraintToks genSel alpha c0 c1 c2 c3 c4 c5 c6 c7 c8 c9 w0 w1 w2 w3 w4 w5)
+      = genSel * ((c0 * w0 + c1 * w1 + c2 * w2 + c3 * (w0 * w1) + c4)
+          + alpha * (c5 * w3 + c6 * w4 + c7 * w5 + c8 * (w3 * w4) + c9)) := by
+  simp only [evalToks, genericConstraintToks, List.foldl_cons, List.foldl_nil, stepTok]; ring
+
+/-- Kimchi Poseidon S-box `x⁷` (`PlonkSpongeConstantsKimchi::PERM_SBOX = 7`, `poseidon.rs:375`). -/
+def posSbox {R : Type} [CommRing R] (x : R) : R := x ^ (7 : Nat)
+
+/-- **`poseidonLaneConstraint`** — one lane of one Poseidon round-equation constraint
+(`poseidon.rs:364-420`): `target − (rc + Σ_c mds[j][c]·sbox(source_c))`, zero iff the round output
+matches. `mdsRow` = the 3 MDS entries of row `j` (K3's `PastaPoseidon.mdsN[j]`), `rc` the round
+constant, `source`/`target` the input/output lane evals. Def-generator; the full 15 constraints
+(5 rounds × 3 lanes, alpha⁰..alpha¹⁴ in the shared gate block, × `poseidon_selector`) are the
+mechanical repeat over `ROUND_EQUATIONS`. Poseidon is the highest-value custom gate (Mina uses it
+heavily), but a proof with `poseidon_selector = 0` does not exercise it (see §12). -/
+def poseidonLaneConstraint {R : Type} [CommRing R]
+    (mdsRow : List R) (rc : R) (source : List R) (target : R) : R :=
+  target - (rc + (mdsRow.getD 0 0 * posSbox (source.getD 0 0)
+                + mdsRow.getD 1 0 * posSbox (source.getD 1 0)
+                + mdsRow.getD 2 0 * posSbox (source.getD 2 0)))
+
+/-- **`gateLinConst`** — the gate contribution to `linConstTerm`, per-gate = selector · body. The
+GENERIC gate body is the fully-transcribed `genericGateConstraint`; the CUSTOM gates
+(poseidon/complete_add/varbasemul/endomul/endomul_scalar) enter as `selector · body` with the body a
+NAMED carrier (`*Body`) — but multiplied by the gate's selector, exactly the shape of `linearize`'s
+`index(gate)·combined` with `index_terms = []`. So a proof whose custom selectors are all zero has
+`gateLinConst = genericGateConstraint` for ANY custom bodies: its `linConstTerm` is DERIVED from the
+generic gate constraint, not carried. -/
+def gateLinConst {R : Type} [CommRing R] (genSel alpha : R) (coeff w : List R)
+    (posSel posBody caddSel caddBody mulSel mulBody emulSel emulBody emulScalarSel emulScalarBody : R) :
+    R :=
+  genericGateConstraint genSel alpha coeff w
+  + posSel * posBody + caddSel * caddBody + mulSel * mulBody
+  + emulSel * emulBody + emulScalarSel * emulScalarBody
+
+/-- **`kimchiVerifyDecisionGates`** — `kimchiVerifyDecisionField` (§9b) with the C5 linearization
+constant term DERIVED from the transcribed gate constraints (`gateLinConst`) instead of fed as the
+`linConstTerm` carrier. Now `ftEval0` is checked from the REAL generic-gate constraint over the real
+coefficient/witness evals + the selector-gated custom contributions. -/
+def kimchiVerifyDecisionGates {R : Type} [CommRing R] [DecidableEq R]
+    (prevLen publicLen wLen sLen coeffLen tCommLen chunkSize n : Nat)
+    (polyscale evalscale : R) (evZeta evZetaOmega : List R) (cipClaimed : R)
+    (omega zeta beta gamma alpha0 alpha1 alpha2 alpha : R)
+    (w s shift coeff : List R)
+    (genSel posSel caddSel mulSel emulSel emulScalarSel : R)
+    (posBody caddBody mulBody emulBody emulScalarBody : R)
+    (zZeta zZetaOmega pZeta denomInv ftEval0Claimed : R)
+    (transcriptOk ipaOk deferralOk : Bool) : Bool :=
+  kimchiVerifyDecisionField prevLen publicLen wLen sLen coeffLen tCommLen chunkSize n
+    polyscale evalscale evZeta evZetaOmega cipClaimed
+    omega zeta beta gamma alpha0 alpha1 alpha2 w s shift
+    zZeta zZetaOmega pZeta
+    (gateLinConst genSel alpha coeff w posSel posBody caddSel caddBody mulSel mulBody
+      emulSel emulBody emulScalarSel emulScalarBody)
+    denomInv ftEval0Claimed transcriptOk ipaOk deferralOk
+
+/-- **`kimchiVerifyDecisionGates_refines`** — the gate-derived decision IS `kimchiVerifyDecisionField`
+with `linConstTerm := gateLinConst …` (`rfl`): the gate transcription is threaded INTO the accept, it
+does not replace the field decision. -/
+theorem kimchiVerifyDecisionGates_refines {R : Type} [CommRing R] [DecidableEq R]
+    (prevLen publicLen wLen sLen coeffLen tCommLen chunkSize n : Nat)
+    (polyscale evalscale : R) (evZeta evZetaOmega : List R) (cipClaimed : R)
+    (omega zeta beta gamma alpha0 alpha1 alpha2 alpha : R)
+    (w s shift coeff : List R)
+    (genSel posSel caddSel mulSel emulSel emulScalarSel : R)
+    (posBody caddBody mulBody emulBody emulScalarBody : R)
+    (zZeta zZetaOmega pZeta denomInv ftEval0Claimed : R)
+    (transcriptOk ipaOk deferralOk : Bool) :
+    kimchiVerifyDecisionGates prevLen publicLen wLen sLen coeffLen tCommLen chunkSize n
+        polyscale evalscale evZeta evZetaOmega cipClaimed
+        omega zeta beta gamma alpha0 alpha1 alpha2 alpha w s shift coeff
+        genSel posSel caddSel mulSel emulSel emulScalarSel
+        posBody caddBody mulBody emulBody emulScalarBody
+        zZeta zZetaOmega pZeta denomInv ftEval0Claimed transcriptOk ipaOk deferralOk
+      = kimchiVerifyDecisionField prevLen publicLen wLen sLen coeffLen tCommLen chunkSize n
+          polyscale evalscale evZeta evZetaOmega cipClaimed
+          omega zeta beta gamma alpha0 alpha1 alpha2 w s shift
+          zZeta zZetaOmega pZeta
+          (gateLinConst genSel alpha coeff w posSel posBody caddSel caddBody mulSel mulBody
+            emulSel emulBody emulScalarSel emulScalarBody)
+          denomInv ftEval0Claimed transcriptOk ipaOk deferralOk := rfl
+
+/-! ## §9d — C3 (phase 2): the Fr-sponge INSTANTIATED over `Fp = pN` (K3's permutation).
+
+`ScalarSponge = DefaultFrSponge<Fp, PlonkSpongeConstantsKimchi>` (`reality_gate_export.rs:47`) is
+K3's Poseidon-over-Fp sponge: `oracles()` builds it `EFrSponge::from(G::sponge_params())`
+(`verifier.rs:284`) and `Vesta::sponge_params() = mina_poseidon::pasta::fp_kimchi::static_params()`
+(`curve.rs:63-64`) — the SAME `fp_kimchi` params `PastaPoseidon` baked (K3's `mdsN`/`rcsN`). So the
+phase-2 Fr-sponge IS `PastaPoseidon.Ref.hash` over the `Fp` absorb stream.
+
+(NB the §12 residual / task "Fr-sponge over qN" label was the same `Fp`/`Fq` mislabel the reality gate
+corrected: the Fr-sponge is over `Fp = pN`, K3's field; the `qN` `Fq`-sponge is PHASE 1
+(`other_curve_sponge_params = fq_kimchi`, `curve.rs:67-69`), absorbing curve points.)
+
+Phase-2 absorb schedule (`verifier.rs:283-393`), in order: `digest` (the fq-sponge digest),
+`prev_challenge_digest` (`= Ref.hash []` when `prev_challenges = []`), `ft_eval1`, `public_evals[ζ]`,
+`public_evals[ζω]`, then `absorb_evaluations` (`plonk_sponge.rs:88-155`): for each point of
+`frEvalPointOrder`, absorb `p.ζ` then `p.ζω`. Then `challenge()` → v'/u' (each = low-128-bits of ONE
+raw squeeze, `sponge.rs:265-277`) → `to_field(endo_r)` → v/u.
+
+(The §2/§3 `transcriptSchedule` sketched this combined phase with `ft_eval1` AFTER the public evals
+and no prev-challenge digest; the precise `oracles()` order — used here to instantiate the sponge —
+is `ft_eval1` THEN the public evals, preceded by the prev-challenge digest. The proven `squeeze_order`
+is unaffected, depending only on the six squeezes.) -/
+
+open Dregg2.Circuit.Emit.PastaPoseidon
+
+/-- The `absorb_evaluations` point (`plonk_sponge.rs:88-99`). -/
+inductive FrPt where
+  | z | genericSel | poseidonSel | completeAddSel | mulSel | emulSel | endomulScalarSel
+  | w (i : Nat) | coeff (i : Nat) | sigma (i : Nat)
+  deriving DecidableEq, Repr
+
+/-- **`frEvalPointOrder`** — the EXACT `absorb_evaluations` point order (`plonk_sponge.rs:88-99`):
+`z`, the 6 gate selectors, the 15 witness columns, the 15 coefficient columns, the 6 σ columns
+(the 7th σ is a commitment, not evaluated). Each point contributes `p.ζ` then `p.ζω` to the stream. -/
+def frEvalPointOrder : List FrPt :=
+  [FrPt.z, .genericSel, .poseidonSel, .completeAddSel, .mulSel, .emulSel, .endomulScalarSel]
+  ++ (List.range COLUMNS).map FrPt.w
+  ++ (List.range COLUMNS).map FrPt.coeff
+  ++ (List.range (PERMUTS - 1)).map FrPt.sigma
+
+/-- **`frEvalPointOrder_head`** — the leading `z` + six-selector order is exactly `plonk_sponge.rs`'s. -/
+theorem frEvalPointOrder_head :
+    frEvalPointOrder.take 7 =
+      [FrPt.z, .genericSel, .poseidonSel, .completeAddSel, .mulSel, .emulSel, .endomulScalarSel] := by
+  decide
+
+/-- The Fr-sponge phase-2 absorb list over `Fp` (as `Nat`, K3's field-arithmetic reference): the
+fq-sponge `digest` (an input — §12 residual), the prev-challenge digest `Ref.hash []`, `ft_eval1`,
+the two public evals, then the `absorb_evaluations` column evals in `frEvalPointOrder` (ζ then ζω per
+point). `evZeta`/`evZetaOmega` are the column evals IN `frEvalPointOrder` order. -/
+def frPhase2Inputs (digest ftEval1 pZeta pZetaOmega : Nat) (evZeta evZetaOmega : List Nat) :
+    List Nat :=
+  [digest, Ref.hash [], ftEval1, pZeta, pZetaOmega]
+  ++ (List.range evZeta.length).flatMap (fun i => [evZeta.getD i 0, evZetaOmega.getD i 0])
+
+/-- **`frSpongeDigest`** — the Fr-sponge's raw field digest after the phase-2 absorbs
+(`fr_sponge.digest()` = ONE Poseidon squeeze, `plonk_sponge.rs:51-53` = `sponge.squeeze()`), which is
+`PastaPoseidon.Ref.hash` of the absorb stream (o1js `Poseidon.hash` = the same absorb-then-squeeze).
+The `challenge()` derivation (low-128-bit truncation + `to_field(endo_r)`) sits on top — the §12
+residual. -/
+def frSpongeDigest (digest ftEval1 pZeta pZetaOmega : Nat) (evZeta evZetaOmega : List Nat) : Nat :=
+  Ref.hash (frPhase2Inputs digest ftEval1 pZeta pZetaOmega evZeta evZetaOmega)
+
 /-! ## §10 — NON-VACUITY: every check DISCRIMINATES (kernel-clean).
 
 The composed decision + the shape check reduce under `decide` (pure `Nat`/`Bool`); the field
@@ -539,6 +738,33 @@ private def ftArgs : List ℚ × List ℚ × List ℚ := ([2,3,5,7,11,13,17,19,2
 theorem genericGate_kat : evalToks (genericGateToks (2:ℚ) 5 11 17 23 3 7 13) = 564 := by
   rw [genericGate_evaluates]; norm_num
 
+-- C6 (§9c): the FULL double-generic token machine computes `genSel·(c1 + alpha·c2)` (proven above);
+-- a concrete anchor + non-vacuity of `genericGateConstraint` on the coefficient/witness evals.
+theorem genericConstraint_kat :
+    evalToks (genericConstraintToks (2:ℚ) 3 5 7 11 13 17 19 23 29 31 37 41 43 47 53 59 61) =
+      2 * ((5 * 41 + 7 * 43 + 11 * 47 + 13 * (41 * 43) + 17)
+        + 3 * (19 * 53 + 23 * 59 + 29 * 61 + 31 * (53 * 59) + 37)) := by
+  rw [genericConstraint_evaluates]
+#guard decide (genericGateConstraint (2:ℚ) 3 [5,7,11,13,17,19,23,29,31,37] [41,43,47,53,59,61]
+  ≠ genericGateConstraint (2:ℚ) 3 [5,7,11,13,17,19,23,29,31,37] [99,43,47,53,59,61])  -- bump w₀
+#guard decide (genericGateConstraint (2:ℚ) 3 [5,7,11,13,17,19,23,29,31,37] [41,43,47,53,59,61]
+  ≠ genericGateConstraint (2:ℚ) 3 [99,7,11,13,17,19,23,29,31,37] [41,43,47,53,59,61])  -- bump c₀
+-- gateLinConst: with all custom selectors zero it collapses to the generic gate (any bodies).
+#guard decide (gateLinConst (2:ℚ) 3 [5,7,11,13,17,19,23,29,31,37] [41,43,47,53,59,61]
+    0 100 0 200 0 300 0 400 0 500
+  = genericGateConstraint (2:ℚ) 3 [5,7,11,13,17,19,23,29,31,37] [41,43,47,53,59,61])
+
+-- C6 Poseidon (§9c): the round-equation lane constraint is zero on an honest round, nonzero on a bump.
+#guard decide (poseidonLaneConstraint ([2,3,5] : List ℚ) 7 [11,13,17]
+  (7 + (2*(11^7) + 3*(13^7) + 5*(17^7))) = 0)
+#guard decide (poseidonLaneConstraint ([2,3,5] : List ℚ) 7 [11,13,17]
+  (7 + (2*(11^7) + 3*(13^7) + 5*(17^7)) + 1) ≠ 0)
+
+-- C3 (§9d): the Fr-sponge phase-2 point order has the right length (1 z + 6 selectors + 15 w +
+-- 15 coeff + 6 σ = 43) and the K3 Fr-sponge digest discriminates on absorbed real-shaped values.
+#guard frEvalPointOrder.length == 1 + 6 + COLUMNS + COLUMNS + (PERMUTS - 1)
+#guard decide (Ref.hash [Ref.hash [], 1, 2, 3, 4] ≠ Ref.hash [Ref.hash [], 1, 99, 3, 4])
+
 -- C7: Maller's ft-commitment over `G = F = ℚ`: `ftComm = fComm − (ζⁿ−1)·tComm` (55 = 100 − 15·3).
 theorem ftComm_kat : ftComm (G := ℚ) 4 (2:ℚ) 100 3 = 55 := by
   rw [ftComm]; norm_num [smul_eq_mul]
@@ -571,6 +797,9 @@ theorem ftComm_kat : ftComm (G := ℚ) 4 (2:ℚ) 100 3 = 55 := by
 #assert_axioms cipR_eq
 #assert_axioms ftEval0R_eq
 #assert_axioms kimchiVerifyDecisionField_refines
+#assert_axioms genericConstraint_evaluates
+#assert_axioms kimchiVerifyDecisionGates_refines
+#assert_axioms frEvalPointOrder_head
 
 /-! ## §12 — The PRECISE named residuals (what does NOT compose end-to-end).
 
@@ -578,13 +807,26 @@ theorem ftComm_kat : ftComm (G := ℚ) 4 (2:ℚ) 100 3 = 55 := by
      `ipa.rs:501`) is a CARRIER: `accept ⟹ the proof is valid` inherits the undischarged IPA
      opening soundness (a STARK proves the trace, not the opening). No `no_forgery`-style payoff
      is claimed (contrast `ethVerifyDecision_no_forgery`, which had the hash-CR carriers only).
-  2. **The linearization constant term `linConstTerm` (C6) is a carrier for the CUSTOM gates.**
-     The `PolishToken` evaluator + the GENERIC gate are built (`genericGate_evaluates`); the
-     Poseidon/VarBaseMul/CompleteAdd/EndomulScalar constraint streams are verifier-index-baked
-     data (their LENGTH is the residual, not their semantics). Emitting them is the C6 follow-up.
-  3. **The Fr-sponge-over-Fq (C3 phase 2) is not instantiated.** K3 (`PastaPoseidon`) baked the
-     Fq-sponge-over-Fp constants (mod `pN`); the Fr-sponge is the same permutation over `qN` — a
-     mechanical mirror. The ORDER (`squeeze_order`) is proven; the phase-2 sponge VALUES are named.
+  2. **C6 GENERIC gate: TRANSCRIBED + COMPOSED (2026-07-27).** The generic gate constraint is now
+     fully emitted (`genericGateConstraint`, both algebraically and as the token stream
+     `genericConstraintToks`/`genericConstraint_evaluates`) and threaded INTO the accept via
+     `gateLinConst` + `kimchiVerifyDecisionGates` (§9c): `ftEval0`'s linearization constant term is
+     DERIVED from the real generic-gate constraint over the real coefficient/witness evals, not fed
+     as the `linConstTerm` carrier. `KimchiRealProofGate` shows `genericGateConstraint(real) = LCT`
+     and the custom selectors are all zero, so the whole `linConstTerm` of THIS proof is the generic
+     gate. STILL CARRIED: the CUSTOM-gate constraint BODIES — Poseidon is transcribed as a
+     def-generator (`poseidonLaneConstraint`, the round-equation lane) but is NOT exercised
+     (`poseidon_selector = 0` in this proof); complete_add/varbasemul/endomul/endomul_scalar bodies
+     are the `gateLinConst` `*Body` carriers, live only behind their (here-zero) selectors. A proof
+     that fires a custom gate needs those bodies emitted.
+  3. **C3 Fr-sponge (phase 2): INSTANTIATED over `Fp = pN` (2026-07-27).** The Fr-sponge IS K3's
+     Poseidon-over-Fp sponge (`Vesta::sponge_params() = fp_kimchi`, `curve.rs:63`), NOT a mirror at
+     another field — `frSpongeDigest = Ref.hash` of the phase-2 absorb stream (§9d), whose point
+     order (`frEvalPointOrder`) matches `plonk_sponge.rs:88-99`. STILL CARRIED: the fq-sponge
+     `digest` VALUE (phase-1 `Fq`-sponge over `qN`, absorbing curve points — not extracted) fed as
+     the first absorb, and the `challenge()` derivation (low-128-bit truncation of the raw squeeze +
+     `to_field(endo_r)`, `sponge.rs:190-226`) that maps the sponge digest to v/u. The ORDER
+     (`squeeze_order` + `frEvalPointOrder`) is proven; the digest value + endo map are named.
   4. **The field-arithmetic checks are over `F`, above the felt encoding.** The `ℤ ↔ p_felt`
      field-width gap (K1 §6) and the `z < p` canonical compare are the shared residuals. The real
      field is `Fp = ZMod pN` (Vesta::ScalarField); there is no `Field (ZMod pN)` instance in the

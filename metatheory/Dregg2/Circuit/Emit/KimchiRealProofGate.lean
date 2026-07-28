@@ -51,9 +51,11 @@ namespace Dregg2.Circuit.Emit.KimchiRealProofGate
 
 open Dregg2.Circuit.Emit.KimchiVerify
   (kimchiVerifyDecision kimchiVerifyDecisionField combinedInnerProduct ftEval0 zkPoly
-   cipR cipR_eq zkPolyR ftEval0R ftEval0R_eq ipaDeferralOk PERMUTS)
+   cipR cipR_eq zkPolyR ftEval0R ftEval0R_eq ipaDeferralOk PERMUTS
+   genericGateConstraint gateLinConst kimchiVerifyDecisionGates frEvalPointOrder frSpongeDigest)
 open Dregg2.Circuit.Emit.PastaIPA (IpaDeferred absorbChallenges)
 open Dregg2.Circuit.Emit.PastaField (pN)
+open Dregg2.Circuit.Emit.PastaPoseidon
 
 set_option autoImplicit false
 
@@ -103,6 +105,17 @@ def SZ : List Fp := [(1654111441437418641096672791971692228378510644239112422242
 def CIP : Fp := (4210050102189683816394537272740493692602739350784094460972305803318076804165 : Fp)   -- Rust oracles().combined_inner_product
 def EVZ : List Fp := [(26721404708901961892555744407146855255897463866912334121986446595141554099206 : Fp), (4818413338202460091328447768070851017173477173576229777698353938180176055892 : Fp), (14908019327547832049053253335688031334836545726269840248359597514473981705670 : Fp), (21523647510476461082775560673900638015389610829876962091991347483461677918650 : Fp), (0 : Fp), (0 : Fp), (0 : Fp), (0 : Fp), (0 : Fp), (7124519407909476644061601315873560214171268546132147259749224767879511208526 : Fp), (9813870773946315016106397139522346734954310769450916401595122454777721695031 : Fp), (7957617585896985994558221298908444378524211062340684608379169058813459124125 : Fp), (25892320666495842991909428413718662491009959969139547015940434937720716797071 : Fp), (26009138774403902370617648263807440121147954769105221107578863101047182292538 : Fp), (27466170664826345097164396266307382202229875220353670695282326298096484999838 : Fp), (7261810992396815825306710508414309282211989790400581651923269472036607170331 : Fp), (9240242236120294292031913178789773014559483743118763280533267242642482286538 : Fp), (24071623849593521746666714637464562110070118428993134428847353045256863934406 : Fp), (8046093920254362244164683683806466735405167663914543927349685779444710749657 : Fp), (3369444797809033379666201783477116655079366548616332814949704010845941543745 : Fp), (19802659069966914682212348789938551805534491314942875900339717901145992996629 : Fp), (22615186636492186784266137470305613897599345442760345917705903292752096906310 : Fp), (27511253389181890047238778469066881135811028288809975329899823904146893298316 : Fp), (21541426521135312050214770894195162752168226972449017315542391488004636105261 : Fp), (21523647510476461082775560673900638015389610829876962091991347483461677918650 : Fp), (14876826499927746420619957460417871224337714316167249057194716327742166069782 : Fp), (14339739372910117097055178347975360900796132882571957458238212400319256396964 : Fp), (0 : Fp), (10428546187583547847415769788085032812360587405448710807098257575265481105637 : Fp), (25471840246801199573420822989476966025909527346791990446921924239261473928458 : Fp), (0 : Fp), (14339739372910117097055178347975360900796132882571957458238212400319256396964 : Fp), (268543563508814661782389556221255161770790716797645799478251963711454836409 : Fp), (17380910312639246412359616313475054687267645675747851345163762625442468509395 : Fp), (0 : Fp), (0 : Fp), (0 : Fp), (0 : Fp), (0 : Fp), (16541114414374186410966727919716922283785106442391124222423037735912461503993 : Fp), (8876573005941968478547146115745284835532102400748670531326405672563516635209 : Fp), (7257365216172337705995069980889501915496007701498661427924617664889119321498 : Fp), (26768285395752967238006275000953076092445053802944015698901042879979183995436 : Fp), (19684055716448937491261643334590454679456791870441580166015711126655560885123 : Fp), (20110303701090081505261870391676216480447424717267129704428681171086133555003 : Fp)]
 def EVZW : List Fp := [(16439454869322104257790949803285360505437428967298140163974964039939064698582 : Fp), (14603788181917971557903613167324663367245585828947949002467211007261841479401 : Fp), (26299411995272010678557053079537170268419244114551598717318971433527609193211 : Fp), (677033687852569553188401330475165470487231430516801750084597838910095990668 : Fp), (0 : Fp), (0 : Fp), (0 : Fp), (0 : Fp), (0 : Fp), (22626747742589742176643848329134655730790247756794354951574771274556839047740 : Fp), (55259840651304119695738670840658847439197302763348807789709971250864526664 : Fp), (16770973281709655920145258520234590892383612378892716970434339124396067276791 : Fp), (642795910751881739326669410126934507436078693122046554479412381931888690240 : Fp), (3949518463888785340079982509801439413382334157018638132145161897193276358864 : Fp), (7808231744317858616707211799272727220963040534551443415208219416288299587977 : Fp), (15603562815152879298510474711916994608897006110191273231824508494529638738547 : Fp), (7402190389627147331798766844534393610483003560834938790433091572622382470844 : Fp), (8746957981949226270408483392506370348408613402471674688227009459672649604721 : Fp), (8942738249917550372323519119036269892194747879256135188716375637872076241625 : Fp), (14458726026020088712727579622733315923082252609093525758942422118312884708028 : Fp), (26582068571025616749697128883667509962333986830660186366533638316525708545513 : Fp), (13177354028472469160732535381443287686856854136950307591411369065491716465383 : Fp), (18112697466813162521994557688924215684425837602961091554996343622827121212254 : Fp), (26835206691721217485957258119540608961639375172446156680699806097302917160087 : Fp), (677033687852569553188401330475165470487231430516801750084597838910095990668 : Fp), (21415915549926751788448362549795246044033246061400227901065371992927301899369 : Fp), (2510702253134099022481461234125576973109936806847110938296434923807555243656 : Fp), (0 : Fp), (2945359617046938871092208755084389127134122802551682486836614436257949228783 : Fp), (8667554230760703328266845832362529278742977893129959409706020776030672800518 : Fp), (0 : Fp), (2510702253134099022481461234125576973109936806847110938296434923807555243656 : Fp), (23926617803060850810929823783920823017143182868247338839361806916734857143025 : Fp), (14558273464854581070451263342531307533011223498233324383379249648546571258084 : Fp), (0 : Fp), (0 : Fp), (0 : Fp), (0 : Fp), (0 : Fp), (3244125326228303370290757275281477329338024240392647494306206084848861676007 : Fp), (14829846334526131219993935707497929474635774740315885111097426873536011168675 : Fp), (26534459386517748364931040211755106964822790568202227434763166266261168713350 : Fp), (6266080746487092788209186828197923556446954274308172730172773762342589059686 : Fp), (19188014156135155674398288397006168938577973196898434006945528962503445581479 : Fp), (6214115658677698426529896383361450251740828614258737252179180238181561657301 : Fp)]
+
+-- C6 (gate-constraint linConstTerm): the generic selector eval + the 15 coefficient evals at ζ
+-- (from the es-order EVZ: generic_selector = EVZ[3], coefficients = EVZ[24..39]).
+def GENSEL : Fp := (21523647510476461082775560673900638015389610829876962091991347483461677918650 : Fp)
+def COEFFZ : List Fp := [(21523647510476461082775560673900638015389610829876962091991347483461677918650 : Fp), (14876826499927746420619957460417871224337714316167249057194716327742166069782 : Fp), (14339739372910117097055178347975360900796132882571957458238212400319256396964 : Fp), (0 : Fp), (10428546187583547847415769788085032812360587405448710807098257575265481105637 : Fp), (25471840246801199573420822989476966025909527346791990446921924239261473928458 : Fp), (0 : Fp), (14339739372910117097055178347975360900796132882571957458238212400319256396964 : Fp), (268543563508814661782389556221255161770790716797645799478251963711454836409 : Fp), (17380910312639246412359616313475054687267645675747851345163762625442468509395 : Fp), (0 : Fp), (0 : Fp), (0 : Fp), (0 : Fp), (0 : Fp)]
+
+-- C3 (Fr-sponge phase-2): the real `ft_eval1` + public evals at ζ, ζω as `Nat` (K3's field-arithmetic
+-- reference is over `Nat`). ft_eval1 = EVZW[1], p_zeta = EVZ[0], p_zetaomega = EVZW[0].
+def FT1_N : Nat := 14603788181917971557903613167324663367245585828947949002467211007261841479401
+def PZ_N  : Nat := 26721404708901961892555744407146855255897463866912334121986446595141554099206
+def PZW_N : Nat := 16439454869322104257790949803285360505437428967298140163974964039939064698582
 
 -- C9/IPA: k = 16 round prechallenges
 def IPACHALS : List Fp := [(168502751509754561397993864161548947823 : Fp), (144220330568312657585943353657462097902 : Fp), (91292439177747023325472740697379656487 : Fp), (147121632673930992127923268535506615029 : Fp), (225299100781512827642804456210571796454 : Fp), (294043513123946384926411848757827173154 : Fp), (276991882787246093537087304496998026642 : Fp), (291962780853000263004592818019147672662 : Fp), (311343200217828145558973689741535632240 : Fp), (298364334135430525080770736626347152204 : Fp), (158645794374916865482305699262608665720 : Fp), (73375543542916306943514784365698208573 : Fp), (131506715783630830901612046105457933057 : Fp), (66115544769647647077265635444168405186 : Fp), (65325994132922353780164031665758551851 : Fp), (18226844549987877151250366196707599048 : Fp)]
@@ -229,8 +242,94 @@ theorem real_field_decision_discriminates :
         OMEGA ZETA BETA GAMMA A0 A1 A2 WZ SZ SHIFT ZZ ZZW PZ LCT DINV FT0 false true true = false   -- tampered carrier
     := by refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
 
-/-! ## §7 — C3: the real challenges (recorded; the ORDER is proven in `KimchiVerify`, the sponge
-VALUES are the K3 carrier + un-instantiated Fr-sponge — NO differential possible here). -/
+/-! ## §6c — C6: the linConstTerm is DERIVED from the REAL generic gate (carrier RETIRED for this proof).
+
+`linConstTerm = PolishToken::evaluate(constant_term)` and `index_terms = []`
+(`linearization.rs:364`), so it is `Σ_gate selector·(alpha-combined constraint)`. This proof fires
+ONLY the generic gate: its 5 custom-gate selectors (poseidon/complete_add/mul/emul/endomul_scalar)
+are all zero at ζ, so the entire gate constant term IS the generic gate constraint over the real
+coefficient + witness evals. `genericGateConstraint` reproduces the Rust `lin_const_term` (LCT)
+EXACTLY, and the composed `kimchiVerifyDecisionGates` now checks `ft_eval0` from that constraint, not
+from the LCT carrier. -/
+
+/-- **The real proof's custom-gate selectors are all zero at ζ** (so nothing but the generic gate
+contributes to `linConstTerm`): EVZ[4..9] = poseidon/complete_add/mul/emul/endomul_scalar selectors. -/
+theorem custom_selectors_zero :
+    EVZ.getD 4 1 = 0 ∧ EVZ.getD 5 1 = 0 ∧ EVZ.getD 6 1 = 0
+    ∧ EVZ.getD 7 1 = 0 ∧ EVZ.getD 8 1 = 0 := by
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> decide
+
+/-- **C6 headline: the transcribed generic gate constraint REPRODUCES the Rust `lin_const_term`.**
+`genericGateConstraint genSel alpha coeff w = generic_selector·(constraint1 + alpha·constraint2)`
+over the real ζ-evals equals the carrier value `LCT` EXACTLY — the `linConstTerm` carrier is
+retired for this proof (its value is now DERIVED from the emitted generic gate). -/
+theorem generic_gate_matches_lct : genericGateConstraint GENSEL ALPHA COEFFZ WZ = LCT := by decide
+
+/-- Non-vacuity: bumping a coefficient eval (`c₀`) breaks the reproduction — the generic gate
+constraint, not a carried constant, is what determines `linConstTerm`. -/
+theorem generic_gate_discriminates_on_coeff :
+    genericGateConstraint GENSEL ALPHA (COEFFZ.set 0 (0 : Fp)) WZ ≠ LCT := by decide
+
+/-- Non-vacuity: bumping a witness eval (`w₀`) also breaks it (the double-generic `w·coeff` folds
+are load-bearing). -/
+theorem generic_gate_discriminates_on_witness :
+    genericGateConstraint GENSEL ALPHA COEFFZ (WZ.set 0 (0 : Fp)) ≠ LCT := by decide
+
+/-- **The gate-derived decision ACCEPTS the real proof** — `kimchiVerifyDecisionGates` with the real
+generic selector + coefficient evals, custom selectors = 0 (custom bodies irrelevant, shown here as
+0): C1 ∧ C8 ∧ witnessed-inverse ∧ C5-with-`ft_eval0`-from-the-generic-gate, all over `ZMod pN`. The
+`linConstTerm` is no longer a carrier — it is the transcribed generic gate constraint. -/
+theorem real_gate_decision_accepts :
+    kimchiVerifyDecisionGates (R := Fp)
+        0 5 15 6 15 7 1 N
+        VV UU EVZ EVZW CIP
+        OMEGA ZETA BETA GAMMA A0 A1 A2 ALPHA
+        WZ SZ SHIFT COEFFZ
+        GENSEL 0 0 0 0 0
+        0 0 0 0 0
+        ZZ ZZW PZ DINV FT0
+        true true true = true := by decide
+
+/-- Non-vacuity of the gate composition: tampering a coefficient eval (feeding the generic gate)
+changes the derived `linConstTerm`, so `ft_eval0` no longer matches and the decision REJECTS. -/
+theorem real_gate_decision_discriminates :
+    kimchiVerifyDecisionGates (R := Fp) 0 5 15 6 15 7 1 N VV UU EVZ EVZW CIP
+        OMEGA ZETA BETA GAMMA A0 A1 A2 ALPHA WZ SZ SHIFT COEFFZ
+        GENSEL 0 0 0 0 0 0 0 0 0 0 ZZ ZZW PZ DINV FT0 true true true = true
+    ∧ kimchiVerifyDecisionGates (R := Fp) 0 5 15 6 15 7 1 N VV UU EVZ EVZW CIP
+        OMEGA ZETA BETA GAMMA A0 A1 A2 ALPHA WZ SZ SHIFT (COEFFZ.set 0 (0 : Fp))
+        GENSEL 0 0 0 0 0 0 0 0 0 0 ZZ ZZW PZ DINV FT0 true true true = false   -- tampered coeff → linConstTerm → ft_eval0
+    ∧ kimchiVerifyDecisionGates (R := Fp) 0 5 15 6 15 7 1 N VV UU EVZ EVZW CIP
+        OMEGA ZETA BETA GAMMA A0 A1 A2 ALPHA WZ SZ SHIFT COEFFZ
+        (GENSEL + 1) 0 0 0 0 0 0 0 0 0 0 ZZ ZZW PZ DINV FT0 true true true = false   -- tampered generic selector
+    := by refine ⟨?_, ?_, ?_⟩ <;> decide
+
+/-! ## §6d — C3: the Fr-sponge INSTANTIATED over `Fp = pN` (K3's permutation), run on real evals.
+
+The phase-2 Fr-sponge IS K3's Poseidon-over-Fp sponge (`Vesta::sponge_params() = fp_kimchi`), so its
+digest is `Ref.hash` of the absorb stream. Here it CONSUMES the real proof's `ft_eval1` + public
+evals (the first real absorbs after the fq-sponge digest), non-vacuously: bumping the real `ft_eval1`
+changes the sponge output. The full 45-eval absorb (`frSpongeDigest`, `frEvalPointOrder`) is
+instantiated in `KimchiVerify §9d`; the fq-sponge `digest` value (here a placeholder `0`) and the
+`challenge()`→v/u endo map are the named residuals (`KimchiVerify §12`). -/
+
+/-- The Fr-sponge phase-2 point order (`frEvalPointOrder`) is 43 points: `z`, 6 selectors, 15 w,
+15 coeff, 6 σ (`plonk_sponge.rs:88-99`). -/
+theorem fr_eval_point_order_len : frEvalPointOrder.length = 43 := by decide
+
+/-! **The K3 Fr-sponge consumes the real transcript values non-vacuously** (`#guard` KATs — the same
+kernel-evaluated check K3 uses for its Poseidon gold vectors; the deeper `by decide` proof-term path
+overflows on the 255-bit permutation). Absorbing the real `ft_eval1` + the two real public evals and
+squeezing (`Ref.hash`, the phase-2 Fr-sponge over `Fp`) gives a digest that CHANGES when the real
+`ft_eval1`, or a real public eval, is bumped — the Fr-sponge is a genuine function of the real proof's
+evaluation values (the fq-sponge digest prefix + endo map are the §12 residuals). -/
+#guard Ref.hash [FT1_N, PZ_N, PZW_N] != Ref.hash [FT1_N + 1, PZ_N, PZW_N]   -- bump real ft_eval1
+#guard Ref.hash [FT1_N, PZ_N, PZW_N] != Ref.hash [FT1_N, PZ_N + 1, PZW_N]   -- bump real p_zeta
+#guard Ref.hash [FT1_N, PZ_N, PZW_N] != Ref.hash [FT1_N, PZ_N, PZW_N + 1]   -- bump real p_zetaomega
+
+/-! ## §7 — C3: the real challenges (recorded; the squeeze ORDER is proven in `KimchiVerify`, the
+Fr-sponge is instantiated §6d/§9d over the real evals; the fq-sponge digest VALUE + endo map remain
+carried — NO full v/u differential). -/
 
 /-- β and γ are SMALL (raw 128-bit sponge squeezes); α,ζ,v,u are full 255-bit `to_field(endo_r)`
 images — matching `KimchiVerify.squeeze_order`'s raw-vs-endo flags on a REAL proof. -/
@@ -254,6 +353,13 @@ theorem c3_raw_vs_endo_shape_real :
 #assert_axioms c5_discriminates_on_witness
 #assert_axioms real_field_decision_accepts
 #assert_axioms real_field_decision_discriminates
+#assert_axioms custom_selectors_zero
+#assert_axioms generic_gate_matches_lct
+#assert_axioms generic_gate_discriminates_on_coeff
+#assert_axioms generic_gate_discriminates_on_witness
+#assert_axioms real_gate_decision_accepts
+#assert_axioms real_gate_decision_discriminates
+#assert_axioms fr_eval_point_order_len
 #assert_axioms c9_real_deferral
 #assert_axioms c9_deferral_discriminates
 #assert_axioms c3_raw_vs_endo_shape_real
