@@ -1,0 +1,51 @@
+[package]
+name = "kimchi-reality-gate-extractors"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Standalone: deliberately NOT a member of the breadstuffs workspace, and an EMPTY
+# `[workspace]` table is the only mechanism that achieves that for a nested package.
+# `exclude` in the root manifest cannot reach here — cargo's `is_excluded` is
+# `!explicit_member && excluded`, and a path-prefix member match wins, silently
+# discarding the exclude entry. Same shape as the sibling `pickles-extractors`.
+#
+# WHY A MANIFEST AT ALL. These three files were flagged by `scripts/check-dark-modules.py`:
+# tracked `.rs` with no `mod`, no `[[bin]]`, no `path =` — rustc had never opened them. The
+# gate's remedy is "WIRE IT or DELETE IT", and a `dark-targets.txt` row would have been the
+# third option. Wiring is better here: these produce the GROUND TRUTH for the Mina/Kimchi
+# reality gates (`metatheory/kimchi_real_proof.json`, `kimchi_p6_prev2_proof.json`), and a
+# fixture generator nobody can build is a fixture nobody can regenerate.
+#
+# ⚠ THE POINT OF THIS DIRECTORY IS PROVENANCE. Per its README, these lived only as UNTRACKED
+# files inside a third-party checkout (`~/dev/proof-systems/kimchi/examples/`), which
+# `docs/MINA-REALITY-GATE.md` described as "committed in that repo" — false, and caught by
+# `docs/AUDIT-MINA-KIMCHI.md`. The rev below is the one the README records as the checkout
+# state at copy time, so the pin lives in the manifest rather than only in prose.
+[workspace]
+
+[dependencies]
+kimchi = { git = "https://github.com/o1-labs/proof-systems", rev = "f6d958dc05" }
+mina-curves = { git = "https://github.com/o1-labs/proof-systems", rev = "f6d958dc05" }
+mina-poseidon = { git = "https://github.com/o1-labs/proof-systems", rev = "f6d958dc05" }
+poly-commitment = { git = "https://github.com/o1-labs/proof-systems", rev = "f6d958dc05" }
+groupmap = { git = "https://github.com/o1-labs/proof-systems", rev = "f6d958dc05" }
+ark-ec = "0.4"
+ark-ff = "0.4"
+ark-poly = "0.4"
+num-bigint = "0.4"
+
+# Each extractor is its own binary. Named `[[bin]]` rather than `examples/` so
+# `check-dark-modules` sees a declaration without the files having to move — the whole
+# value of this directory is that they are byte-verbatim copies of what ran upstream.
+[[bin]]
+name = "reality_gate_export"
+path = "reality_gate_export.rs"
+
+[[bin]]
+name = "reality_gate_poseidon_export"
+path = "reality_gate_poseidon_export.rs"
+
+[[bin]]
+name = "pickles_p6_fq_export"
+path = "pickles_p6_fq_export.rs"
