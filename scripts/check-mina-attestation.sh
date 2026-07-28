@@ -223,6 +223,14 @@ expect_red gate "unpinned o1js" \
 expect_red gate "type error in the committed source" \
   "s/export const ATTEST_DEPTH = 32;/export const ATTEST_DEPTH: string = 32;/" \
   src/DreggPoseidonAttestation.ts
+# `useDefineForClassFields: false` is why the zkApp runs at all: at ES2022
+# TypeScript's class-field emit runs `Object.defineProperty` BEFORE o1js's
+# `@state` decorator has bound the field to its contract, and `State.set` then
+# throws. It is a one-word setting in a config file that nothing else guards, so
+# a well-meaning tsconfig cleanup could delete the reason this directory works.
+expect_red gate "useDefineForClassFields flipped (o1js's @state decorator loses to TS class fields)" \
+  "s/\"useDefineForClassFields\": false/\"useDefineForClassFields\": true/" \
+  tsconfig.json
 # The authorization on `setDreggRoot`, disarmed the way it was originally absent:
 # a check that is always true. Leg [6] must notice, because "any caller can
 # re-anchor" is precisely what a passing gate used to be compatible with.
