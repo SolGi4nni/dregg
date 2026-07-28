@@ -66,6 +66,32 @@ cd metatheory/fixtures/pickles-extractors
 cargo run --release -- devnet > ../../mina_real_block_proof.json
 ```
 
+### The second binary — the GROUP side
+
+`src/main.rs` dumps the **scalar** side. `src/bin/wrap_group_export.rs` dumps what a **group**
+check needs: the linearization MSM's `(commitment, scalar)` pairs, the chunked `t_comm`, `ft_comm`,
+and the 47 commitments `combine_commitments` feeds to the terminal MSM.
+
+```
+cargo run --release --bin wrap_group_export > ../../mina_real_block_wrap_group.json
+```
+
+`kimchi::verifier::to_batch` is **private**, so `f_comm` / `ft_comm` are rebuilt here from
+`verifier.rs:897-963` using o1-labs' own `perm_scalars`, `PolishToken::evaluate`,
+`Context::get_column`, `PolyComm::multi_scalar_mul`, `chunk_commitment` and `scale`. A
+transcription is not a ground truth, so the reconstruction is then **pinned**: it is handed, inside
+the full 47-entry `evaluations` list, to o1-labs' own `SRS::verify` — the real verifier's final IPA
+opening check — which returns `true`; and re-run with `ft_comm` displaced by `+G`, which returns
+`false`. Nothing is emitted unless both hold, so the gold cannot be a restatement of our own
+arithmetic and the pin cannot be vacuous.
+
+It also prints two measurements the plan in `docs/MINA-REAL-BLOCK-GATE.md` §6.1 rests on:
+`linearization.index_terms = 0` (hence `f_comm` is a **one-term** MSM), and that the terminal
+`msm == 0` runs over **82 non-SRS points + `|srs.g| = 32768`**.
+
+The extra `rand = "0.8"` dependency exists only because `SRS::verify`'s `RngCore + CryptoRng`
+bounds come from rand 0.8 and nothing in the graph re-exports it.
+
 `Cargo.lock` is committed and is **seeded from mina-rust's own lock on purpose**: resolving fresh
 fails, because `multihash 0.18.1` requires `core2 = "^0.4.0"` and `core2 0.4.0` is **yanked**. A
 lockfile that already pins it is the only way this resolves.

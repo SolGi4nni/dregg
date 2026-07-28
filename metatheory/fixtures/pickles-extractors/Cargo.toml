@@ -32,6 +32,9 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["float_roundtrip"] }
 base64 = "0.22"
 bs58 = { version = "0.5", features = ["check"] }
+# `wrap_group_export` calls o1-labs' own `SRS::verify`, whose `RNG: RngCore + CryptoRng`
+# bounds come from rand 0.8 (already in the lock via kimchi); nothing re-exports it.
+rand = "0.8"
 
 # Mirrors mina-rust's root [patch.crates-io]. Without it the arkworks/kimchi graph
 # resolves against upstream num-bigint and fails to compile.

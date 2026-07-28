@@ -2239,6 +2239,7 @@ dependencies = [
  "mina-tree",
  "o1-utils",
  "poly-commitment",
+ "rand",
  "serde",
  "serde_json",
 ]

@@ -1,18 +1,27 @@
 # MINA-REAL-BLOCK-GATE.md — a real Mina block, driven through our checks, per check
 
-**Date:** 2026-07-28. **Status:** the gate is OPEN and green; **C3 is no longer carried.**
-**Artifacts:** `metatheory/fixtures/pickles-extractors/` (extractor + fixtures, tracked),
-`metatheory/mina_real_block_proof.json` (the dump),
+**Date:** 2026-07-28. **Status:** the gate is OPEN and green; **C3 is no longer carried**, and
+**group elements are no longer untouched** (§6.1 rungs 5a–5d).
+**Artifacts:** `metatheory/fixtures/pickles-extractors/` (extractors + fixtures, tracked —
+`src/main.rs` for the scalar side, `src/bin/wrap_group_export.rs` for the group side),
+`metatheory/mina_real_block_proof.json` and `metatheory/mina_real_block_wrap_group.json` (the
+dumps),
 `metatheory/Dregg2/Circuit/Emit/MinaRealBlockGate.lean` (18 theorems, axiom-clean),
 `metatheory/Dregg2/Circuit/Emit/MinaRealBlockTranscript.lean` (13 theorems, axiom-clean — the
-Fiat–Shamir derivation).
+Fiat–Shamir derivation),
+`metatheory/Dregg2/Circuit/Emit/MinaWrapGroupGate.lean` (15 theorems, axiom-clean — the `ft_comm`
+assembly on real Pallas points, `lake build` 25 s) and
+`metatheory/Dregg2/Circuit/Emit/MinaWrapAggregationGate.lean` (7 theorems, axiom-clean — the
+47-term polyscale aggregation, 93 s).
 
-Import lines for the two modules (the `Dregg2` root was **not** edited, per house practice for
+Import lines for the four modules (the `Dregg2` root was **not** edited, per house practice for
 gates):
 
 ```
 import Dregg2.Circuit.Emit.MinaRealBlockGate
 import Dregg2.Circuit.Emit.MinaRealBlockTranscript
+import Dregg2.Circuit.Emit.MinaWrapGroupGate
+import Dregg2.Circuit.Emit.MinaWrapAggregationGate
 ```
 
 ---
@@ -119,11 +128,15 @@ in Rust and pinned in Lean. Both are dead at `prev_challenges = 0`; this block c
 ### What could NOT be fed, and why
 
 * **C9 / the terminal `msm == 0`** — the IPA opening-soundness floor. Unchanged, inherited, P10.
-* **The commitment arithmetic** — `w_comm`, `t_comm`, `lr`, `delta`, `sg` are dumped as Pallas
-  points but nothing in-kernel touches them. K2/K4a/K4b have the curve ops; no gate composes them
-  into the Wrap group check. **C3 does not change this.** The transcript eats `(x, y)` COORDINATES;
-  nothing checks the pair is on the curve, that `public_comm` commits to the public input, or that
-  a `RecursionChallenge`'s `comm` is `⟨b_poly_coefficients(chals), G⟩`.
+* **The commitment arithmetic** — *superseded the same day, partly.* This bullet used to read
+  "nothing in-kernel touches them". `MinaWrapGroupGate` / `MinaWrapAggregationGate` now compose
+  K4a's RCB complete add and K4b's ladder over the block's own `t_comm` chunks, the index's
+  `sigma_comm[6]`, and all 47 commitments the aggregation consumes — see §6.1 rungs 5a–5d. What
+  remains true, and is the honest residual: **nothing yet checks that a commitment commits to
+  anything.** `public_comm` is not opened against the public input (5e), a `RecursionChallenge`'s
+  `comm` is not checked to be `⟨b_poly_coefficients(chals), G⟩` (5g), and `lr` / `delta` / `sg`
+  are still untouched (5f). C3 still eats `(x, y)` COORDINATES; the group gates check curve
+  membership of every point they consume, but the transcript does not.
 * **The verifier-index digest is still an input.** `index.digest::<EFqSponge>()` is itself a sponge
   over every commitment of the VK (`verifier_index.rs:399-450`); it is absorbed as a value. Making
   it derived is P8/P9 (a model of the Wrap VK), not C3.
@@ -181,17 +194,56 @@ Ordered by effort, with the synthetic-witness estimates replaced by what the rea
 | 2 | the recursion fold into C8 (P6 arithmetic half) | **DONE** on real data. |
 | 3 | C8 / C5 / the witnessed inverse on real Wrap scalars | **DONE**. |
 | 4 | **C3 — the Fiat–Shamir transcript re-derived instead of carried** | **DONE, 2026-07-28.** `MinaRealBlockTranscript.lean`, 13 theorems + 15 `#guard` pins, `lake build` 14s. All six challenges plus both digests fall out of the two sponges over the block's own commitments and evaluations; `real_block_accepts_on_derived_challenges` is the gate's accept with every challenge argument replaced. The estimate ("a day, not a week") held. What it needed that was NOT in the dump: the verifier-index digest, the public commitment's coordinates, the prev-challenge digest and `endo_r` — added to the extractor, which now also **replays both sponges in Rust** against `oracles(...)`. |
-| 5 | the Wrap **group** check — `ft_comm`, the linearization commitment, `check_bulletproof` | **NOT STARTED.** K2/K4a/K4b have the curve arithmetic; nothing composes it. This is the largest genuinely-unbuilt block, and it is where the real block's 15 `lr` pairs, `delta` and `sg` finally get consumed. Weeks. |
+| 5 | the Wrap **group** check | **STARTED, 2026-07-28** — no longer one block. Broken into rungs and re-priced below; 5a–5d are done, 5e–5g are ordered and buildable, 5h is deferred by measurement. |
 | 6 | P3/P4 — `finalize_other_proof` + the transcript-equality binding | **NOT STARTED**, and the real block now supplies the inputs: `step_deferred_values` in the dump is `expand_deferred`'s output, Type1-shifted, with the unshifted values alongside. P4 remains the single hardest buildable item. |
 | 7 | P7/P8/P9 — base case, wrap-VK model, Mina's instantiation | **NOT STARTED**, but P8/P9's *data* is now concrete rather than notional: the devnet blockchain VK is a loadable object with known counts. |
 | 8 | P10 — the IPA `msm == 0` opening-soundness floor | **INHERITED, undischarged**, as before. |
+
+### 6.1 Item 5 opened up — the Wrap group check, rung by rung
+
+"Weeks, the largest genuinely-unbuilt block" was an estimate over an unmeasured object. Measured,
+it is **eight rungs of very unequal size**, and the two facts that reorder them are:
+
+1. **The devnet blockchain Wrap index has ZERO `linearization.index_terms`.** Every selector,
+   coefficient and witness column the linearization could reference has its evaluation *supplied*
+   by the proof, so kimchi folds it into the linearization **constant term** — the scalar C5 /
+   `ftEval0R` already reproduces on this block. The only column with no supplied evaluation is
+   `sigma_comm[PERMUTS−1]` (`s` carries `PERMUTS−1 = 6` evaluations, not 7). So the "linearization
+   commitment MSM" that item 5 named as a major sub-block is a **one-term MSM**.
+2. **The terminal `msm == 0` is 82 non-SRS points plus `|srs.g| = 32768`.** Counted from
+   `ipa.rs:170-285` on this block: `H`, `sg`, `u`, 2×15 `lr`, the 47 combined commitments, `u`
+   again, `delta`. Everything expensive is the one `⟨s, G⟩` term.
+
+**Unit of cost, measured on this hardware (hbox, `lake build`):** one 255-bit RCB double-and-add
+ladder ≈ **0.19 s** of kernel (each `by decide` pays it twice — elaborator, then kernel recheck).
+The 47-term fold in 6.1d is **93 s at 10.2 GB peak RSS**; that is the datum the extrapolations
+below use.
+
+| rung | what | scalar-muls | status |
+|---|---|---|---|
+| **5a** | `f_comm` = the linearization MSM (`perm_scalars · sigma_comm[6]`) | 1 | **DONE** — `MinaWrapGroupGate.fComm_reproduces_kimchi` |
+| **5b** | `chunk_commitment(t_comm, ζ^{2^15})` — Horner over the block's 7 real `t_comm` points | 6 | **DONE** — `chunkedT_reproduces_kimchi` |
+| **5c** | **`ft_comm`** = `chunk(f_comm) − (ζⁿ−1)·chunk(t_comm)`, Maller's optimization | 10 | **DONE** — `ftComm_reproduces_kimchi`, and the gold is **pinned by o1-labs' own `SRS::verify`** on the real opening proof (refuted at `ft_comm + G`) |
+| **5d** | `combine_commitments` — the 47-term `Σ ξⁱ·Cᵢ` aggregation that feeds the terminal MSM | 46 | **DONE** — `MinaWrapAggregationGate.combinedComm_reproduces_kimchi`, and `combinedComm_from_our_ftComm` fills the `ft_comm` slot with 5c's kernel-computed point rather than the dumped gold |
+| **5e** | `public_comm` = `MSM(lagrange[0..40], −public_input)` + blinding | 40 | **NOT STARTED, cheap.** ~40 ladders ≈ 15 s. Needs 40 SRS Lagrange basis points added to the dump. This is the rung that would make C3's public-commitment coordinates *derived* instead of eaten. |
+| **5f** | `check_bulletproof` minus `⟨s,G⟩` — the `lr` fold, `sg`, `delta`, `u_base`, `c` | ~35 | **NOT STARTED, and it was BLOCKED until today.** `u_base` is the group map applied to a sponge challenge, and `c` / the IPA challenges are `opening.challenges::<EFqSponge>` — all Fq-sponge outputs. Item 4 landing is what unblocks it. Add the group map (`groupmap.rs`) and this is a day. |
+| **5g** | the recursion commitments as `⟨b_poly_coefficients(chals), G⟩` | 2 × 2^15 | **DEFERRED BY DESIGN.** This is precisely the obligation K4c prices (`sVec_eq_bPoly`, `deferral_compression`) and that openmina's `accumulator_check` discharges out-of-circuit; P1 (`accumulator_check_splits`) already proved the real MSM splits into these blocks. |
+| **5h** | **`⟨s, G⟩`** — the 2^15-term SRS MSM inside the terminal `msm == 0` | 32768 | **DEFERRED, and the deferral is now a measurement not a preference.** Linear extrapolation from 5d (47 terms → 93 s, 10.2 GB) puts a naive in-kernel `⟨s,G⟩` at **~18 hours and ~7 TB of elaborator memory**. Brute force is not a scheduling problem; the route is the product structure `sVec_eq_bPoly` already gives, on top of the P10 floor, which this rung does **not** discharge either way. |
+
+**Order to build them in:** 5e (cheap, and completes the commitment side of C3), then 5f (now
+unblocked, and it is where the 15 `lr` pairs, `delta` and `sg` finally get consumed), then item 6.
+5g/5h are not next; they are the P10 story and belong with the FRI/IPA floor work.
 
 **Say it at the right resolution:** we do not verify a Mina block. We check, in-kernel, on a real
 Mina block, that its shape is the shape the real verifier index demands, that the accumulator
 evaluations it exposes are the b-polynomial of the challenges it carries, that its aggregated
 opening value and `ft(ζ)` are what the claimed evaluations and the sampled challenges produce, and
 — since 2026-07-28 — that **those challenges are the ones its own transcript samples** rather than
-the ones it hands us. The word "given" is gone from that sentence. What has not moved: **no group
-element is touched by any check in this gate.** Every commitment enters only as a pair of field
-coordinates the sponge eats; nothing verifies it is a commitment to anything. The gap between here
-and a light client is items 5 and 6 above, on top of the P10 floor.
+the ones it hands us. The word "given" is gone from that sentence. What moved on the group side
+the same day: **the sentence "no group element is touched by any check" is no longer true.** The
+block's 7 `t_comm` chunks, the index's `sigma_comm[6]`, and all 47 commitments the aggregation
+consumes are now run through the real group law mod the real prime and land on o1-labs' own
+values. What is still true: **no check yet says a commitment is a commitment to anything.** 5a–5d
+verify that our group arithmetic agrees with kimchi's on real points; they do not open a single
+commitment. That is 5e–5h, and the last of them is the P10 floor. The gap between here and a light
+client is items 5e–5h and 6, on top of that floor.
