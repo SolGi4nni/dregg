@@ -1,6 +1,8 @@
 # DREGG-IN-DREGG — the self-settlement effect: design + first slice
 
-*Companion to `docs/DREGG-IN-DREGG-SCOPE.md` (the have-vs-new survey). That doc established that
+*Companion to `docs/DREGG-IN-DREGG-SCOPE.md` (the have-vs-new survey). ⚑ **Read §3 and §5 first —
+both were re-measured on 2026-07-28 and §3's original "remaining step" turned out not to exist.**
+That doc established that
 dregg already has the recursion primitive, the IVC accumulator, the base case, and a Lean-proven
 gap-free composition — and that what is missing is the Zeko-style **self-settlement loop**. This doc
 is the design of that loop's effect and the record of the FIRST SLICE, which is Lean only.*
@@ -47,6 +49,12 @@ otherwise complete and 1:1 — no headline theorem is unpinned (audit F-B3, §2.
 no descriptor exists, no account cell is persisted. This slice is the effect's *semantics and its
 acceptance predicate*, proved to deliver the L2-commitment binding. Everything in §5 is remaining.
 
+> **[UPDATED 2026-07-28.]** Two of those clauses are now false and the rest are not. **A descriptor
+> DOES exist** — `Dregg2/Circuit/Emit/SelfSettlementEmit.lean`, Lean-authored and byte-pinned (§6) —
+> and the **height register is now proof-bound** (§3, which also records that the "residual" it named
+> never existed). Still true, and still the whole gap: **nothing executes**, no Rust calls this, no
+> account cell is persisted. §5 is re-measured accordingly.
+
 ### The objects
 
 | Name | What it is |
@@ -73,7 +81,8 @@ Three added by the account model:
 
 5. `genesis_ok` — the child aggregate's public genesis root **is the account's registered
    `childGenesis`**;
-6. `height_is_count` — the claimed height is the aggregate's public `numTurns` (**advisory** — §3);
+6. `height_is_count` — the claimed height is the aggregate's public `numTurns` (**proof-backed
+   since 2026-07-28** — §3; it was advisory, and the register was griefable);
 7. `monotone` — the height strictly advances.
 
 ### The theorems
@@ -151,7 +160,10 @@ The settlement does **not** re-derive any recursion soundness. Legs 1–4 are pa
 > them. The best theorem in the scope is untouched by any of this and worth naming:
 > `engineSound_numTurns_irrelevant`, an honestly-stated **negative** result (the settled height is
 > provably not engine-pinned) lifted to a demonstrated griefing attack by
-> `settle_accepts_inflated_height`.
+> `settle_accepts_inflated_height`. **[SUPERSEDED 2026-07-28 — both are DELETED; §3 has the repair.
+> The negative was true of the MODEL and false of the deployed AIR, which had pinned the count all
+> along. The best theorem in the scope is now the tooth that replaced it,
+> `inflated_height_cannot_settle`.]**
 
 The residual crypto floor is therefore **unchanged and named**: the per-node in-circuit FRI recursion
 verifier of the plonky3 recursion fork (native BabyBear). Nothing app-specific was added to it.
@@ -163,22 +175,50 @@ the *external-EVM* path only. This is the scope doc's §5 constraint, honoured.
 
 ---
 
-## 3. ⚑ Measured while building: the height register is not proof-pinned
+## 3. ⚑ RESOLVED 2026-07-28 — the height register IS pinned, and the residual named here never existed
 
-`Aggregate.numTurns` is a public field that appears in **no leg** of
-`RecursiveAggregation.EngineSound` — `binding_sound` pins `genesisRoot` and `finalRoot` only. The slice
-*proves* this rather than noting it:
+**What this section used to say.** `Aggregate.numTurns` appears in no leg of `EngineSound`;
+`engineSound_numTurns_irrelevant` proves it by transporting any witness across an arbitrary count;
+`settle_accepts_inflated_height` lifts that to a griefing attack; **remaining step: pin `numTurns` to
+the leaf count in the chain-binding AIR.**
 
-- `engineSound_numTurns_irrelevant` — any `EngineSound` witness transports across an arbitrary
-  `numTurns`;
-- `settle_accepts_inflated_height` — hence from any accepted settlement, an inflated-height settlement
-  of the *same* child history is also accepted;
-- `inflated_height_commits_same_root` — and the root committed is **unchanged**.
+**That remaining step did not exist.** The AIR has pinned the count since it was emitted. Constraint
+14 of `metatheory/Dregg2/Circuit/Emit/EffectVmEmitTurnChainBinding.lean` is
+`real_count[last] = pi[num_turns]` (`lastRealCountBind`, `PI_NUM_TURNS = 2`), it is inside the
+byte-golden `TURN_CHAIN_BINDING_GOLDEN`, and `firstRealCount` / `realCountAccum` / `realMonotone`
+make `real_count` the genuine count of real rows. `BindingAirSound.Satisfies.count` is the model of
+exactly that constraint, and it has always been a field of the keystone's hypothesis.
 
-So the settled height is an advisory, griefable monotone register; the *commitment* is bound. This is
-not a defect introduced here — it is a property of the existing aggregate model, surfaced by trying to
-build on it. **Remaining step: pin `numTurns` to the leaf count in the chain-binding AIR** (Lean-emitted
-constraint work, listed below).
+**The leak was one layer up, and it was a leak of something already in hand.**
+`binding_air_discharges_binding_sound` took `Satisfies` — `count` field and all — and concluded
+THREE of the four facts it could. So `EngineSound.binding_sound` had no slot for the count,
+`Aggregate.numTurns` reached every downstream client as an unconstrained public register, and the
+settlement's `height_is_count` leg tied a claimed height to a free number. Fixing it cost no crypto:
+`Satisfies.count` plus a new structural `represents_length`.
+
+### What changed shape (rebuild, do not migrate — nothing holds the old shape)
+
+| object | change |
+|---|---|
+| `EngineSound.binding_sound` | fourth conjunct `agg.numTurns = steps.length` |
+| `AggregateAttests` | new field `turns_pinned` (one construction site in the tree) |
+| `GroundedApex.BindingExtract` | new conjunct `agg.numTurns = pub.numTurns` — `numTurns` is a public input of the same AIR and was the only one of the four the extraction did not re-export |
+| `binding_air_discharges_binding_sound` | fourth conclusion `pub.numTurns = steps.length` |
+| pass-through hypotheses restating `binding_sound` | widened in `RecursiveSoundFromNodes`, `WitnessRealizing`, `EngineSoundOfApex` (x3) |
+
+**DELETED, not kept alongside:** `engineSound_numTurns_irrelevant` (now FALSE),
+`settle_accepts_inflated_height`, `inflated_height_commits_same_root`.
+
+**What replaces them, saying the opposite:** `settle_height_is_child_turn_count`,
+`settled_account_height_is_child_turn_count`, `inflated_height_cannot_settle` (the tooth),
+`settlement_height_is_unique`, `replayed_settlement_cannot_advance` — a child chain can no longer be
+settled twice into one account, because advancing now requires the CHILD to advance rather than a
+number to be inflated.
+
+**The lesson, since it is the second time this shape has cost something here:** the instrument that
+would have caught this is not an axiom check and not a vacuity sweep. It is asking, of every
+discharge lemma, *does its conclusion use everything its hypothesis gives it?* `Satisfies.count` sat
+unread in a keystone for as long as the keystone existed, and every gate in the tree was green over it.
 
 ---
 
@@ -213,41 +253,125 @@ ordering, genuine fold and finality* from verification, but **not** its conserva
 | Soundness of the recursion composition | **Not machine-checked** | `RecursiveAggregation` + `RecursiveSoundFromNodes`, `#assert_axioms`-clean; the residual is the per-node FRI floor only |
 | Finality leg (accept only a *finalized* root) | inherited from Mina consensus | `FinalizedLightClient` — the node's real `tau` super-ratification, with refusal teeth |
 | Unbounded accumulator | Pickles, perpetual | induction **proven** (`accumulate_preserves_wellformed`); the O(1)-memory driver is **unbuilt** |
-| L2 state commitment on an L1 **account** | zkApp account on Mina L1 — **built, in production** | `RollupAccount` **as a Lean model only**; no cell, no persistence |
-| Settlement effect verifying the child proof | zkApp method | `SettleAccepts` **as a Lean predicate only**; no descriptor, no executor threading |
+| L2 state commitment on an L1 **account** | zkApp account on Mina L1 — **built, in production** | `RollupAccount` **as a Lean model only**; no cell, no persistence (scoped: 5 of a `Value`'s 8 field slots — §5.4) |
+| Settlement effect verifying the child proof | zkApp method | `SettleAccepts` proved, **and since 2026-07-28 EMITTED** as a Lean-authored byte-golden descriptor (§6). Still no executor threading, and nothing in Rust resolves it. |
+| Settled HEIGHT bound to the proof | Mina's account update is protocol-enforced | **bound since 2026-07-28** (§3). It was a griefable advisory register, and the AIR that fixes it had been emitting the constraint the whole time. |
 | Deposits / withdrawals binding the commitment | built | **not built** (`metatheory/Dregg2/Bridge/HoldingFoldRecursive.lean` is the reusable holdings leg) |
 
-**What dregg has that Zeko does not:** the recursion-to-light-client composition is a machine-checked
-theorem, and the finality leg is checked against the node's real rule. A dregg recursive rollup would
-be *more verified* at the composition layer.
+**What dregg has that Zeko does not.** The recursion-to-light-client composition is a
+machine-checked theorem (`RecursiveAggregation` + `RecursiveSoundFromNodes`, `#assert_axioms`-clean,
+the recursion leg DERIVED not carried), the finality leg is checked against the node's real `tau`
+rule with refusal teeth, and — as of this pass — the settlement's constraint set is *authored in
+Lean with machine-checked forcing lemmas over the emitted object*, not hand-written in the prover's
+host language. Pickles' recursion soundness and Zeko's settlement circuit are neither
+machine-checked nor emitted from a proof assistant. **At the composition layer a dregg recursive
+rollup would be more verified than the prior art. That has been true for a while and is not what is
+missing.**
 
-**What Zeko has that dregg does not:** a working L2. The account model, the settlement loop, the
-deposit/withdraw bridge and the perpetual accumulator are all built and running there; here they are a
-proven predicate, a proven binding lemma, and the four residuals below.
+**What Zeko has that dregg does not: a working L2, and the gap is now precisely one thing.** The
+account model, the settlement loop, the deposit/withdraw bridge and the perpetual accumulator are
+built and running there. Here, after this pass, the semantics are proved, the height is bound, and
+the constraint set is emitted and byte-pinned — but **no turn can run it**, because
+`SettleChildChain` has no constructor on `FullActionA` and nothing in Rust resolves
+`dregg-self-settlement-v1`. §5.1 and §5.4 measure that: it is a single constructor-addition ripple
+across a 30-constructor inductive referenced by 138 files, and it blocks the account cell too.
+
+**The honest one-line comparison, at current resolution:** dregg's settlement is *better verified
+and not running*; Zeko's is *running and not verified*. Nothing in this pass changed which side of
+that sentence dregg is on — it moved the descriptor from "named residual" to "emitted and pinned",
+which is one of the two things standing between the two halves.
 
 ---
 
-## 5. Ordered remaining steps
+## 5. Ordered remaining steps — re-measured 2026-07-28
 
-1. **Thread the effect into the turn model.** Add `SettleChildChain` to `Dregg2.Exec.Effect` and its
-   semantics to the executor (`recCexec` / `execFullTurnA`), following the `SetField` family as the
-   write-a-computed-value template. Cheapest real step; makes the effect *exist* in a turn.
-2. **Emit the verification constraint FROM LEAN.** A descriptor under `Dregg2/Circuit/Emit/` whose
-   gadget is `ivc_turn_chain`'s in-circuit recursion verifier, plus the refinement rung tying the
-   emitted object to `SettleAccepts`. **This is the AIR step and it is Lean-authored — do not
-   hand-write it in Rust, and do not extend an existing Rust AIR.**
-3. **Pin `numTurns`** to the leaf count in the chain-binding AIR (§3), then strengthen
-   `height_is_count` from advisory to proof-backed.
-4. **NEW-C, the account cell.** Persist `RollupAccount` as a real `RecordKernelState` cell advanced
-   only by the effect (registration fixes `childGenesis`), then deposits/withdrawals binding the
-   commitment via `metatheory/Dregg2/Bridge/HoldingFoldRecursive.lean`.
-5. **Port `conserves_from_verification`** off its refuted CR floor (§3b), so a settling L1 can inherit
-   child conservation from the proof rather than from a producer witness.
-6. **NEW-A, the online fold driver.** Drive `fold_two_turns`
+**Step 3 (pin `numTurns`) is DONE** and turned out not to be an AIR change at all (§3).
+**Step 2 (the Lean-authored EMIT) is DONE** — see §6.
+
+1. **Thread the effect into the turn model — MEASURED, and it is one blocker, not two.**
+   `SettleChildChain` needs a constructor on `Dregg2.Exec.TurnExecutorFull.PerAsset.FullActionA`
+   (`PerAsset.lean:1551`, currently **30 constructors**, referenced across **138 Lean files**), plus
+   the `actionTag` / `fullActionStep` / `execFullTurnA` / `dispatchArm` / `Rfix` weld. This is the
+   SAME ripple the tree already priced once and deferred: `Dregg2.lean:1010` records
+   "NAMED RESIDUAL: the apex-registry dispatch entry … needs a `setProgramA` constructor on
+   `FullActionA` (the 30-file actionTag/executor-weld ripple)", and that lane landed the circuit
+   witness core (descriptor + spec + rung) exactly as this one has. **So there are now TWO effects
+   queued behind one constructor-addition ripple, which is the argument for doing it as its own
+   lane rather than as a rider.**
+2. ~~Emit the verification constraint FROM LEAN.~~ **DONE** — §6.
+3. ~~Pin `numTurns`.~~ **DONE** — §3.
+4. **NEW-C, the account cell — precisely scoped, and it is NOT independently landable.**
+   `RollupAccount` is four fields (`childId`, `childGenesis`, `latestRoot : Option ℤ`,
+   `latestHeight`). A `RecordKernelState` cell is `cell : CellId → Value` and a `Value` carries eight
+   developer field slots (`fields[0..7]`, the columns `EffectVmEmitSetField` writes and the ones the
+   deployed row's `state_commit` absorbs). So the account fits in **five** slots — the fourth being
+   a presence flag for the `Option`, which is what keeps the Nomad law by construction rather than
+   by a `0`-that-reads-as-proven. Registration fixes `childGenesis`; the settlement advances
+   `latestRoot`/`latestHeight` only. **The blocker is that this write is a `setFieldA`-shaped cell
+   write and therefore needs the same `FullActionA` constructor as step 1** — the account cell and
+   the executor threading are one piece of work, not two. Deposits/withdrawals binding the
+   commitment (`Dregg2/Bridge/HoldingFoldRecursive.lean`) come after.
+5. **Port `conserves_from_verification`** off its refuted CR floor (§3b), so a settling L1 can
+   inherit child conservation from the proof rather than from a producer witness. Unchanged.
+6. **The quorum AIR.** `SettleAccepts.cert_ok` is a genuine super-ratification quorum under
+   `BlocklaceFinality.finalLeaderAt`/`isSuperRatified` over a lace. The settlement descriptor (§6)
+   deliberately does NOT contain it — it carries the cert's finalized root as a column and binds the
+   SEAM only. This was implicit before and is now named because the emit made it visible.
+7. **NEW-A, the online fold driver.** Drive `fold_two_turns`
    (`circuit-prove/src/ivc_turn_chain.rs:5678`) as a running fold with the previous running proof
-   re-verified in-circuit (O(1) memory), for an unbounded settled child. Soundness is already the Lean
-   induction; this is fork/crypto engineering. Optional for a bounded-window rollup.
+   re-verified in-circuit (O(1) memory), for an unbounded settled child. Soundness is already the
+   Lean induction; this is fork/crypto engineering. Optional for a bounded-window rollup.
 
-Steps 1–2 are what turn "a proven predicate" into "an effect a turn can run". Until then, the honest
-description of this work is: **the self-settlement effect's Lean semantics, verification predicate and
-L2-commitment binding lemma exist and are proved; the loop does not run.**
+---
+
+## 6. The EMIT — `Dregg2/Circuit/Emit/SelfSettlementEmit.lean` (landed 2026-07-28)
+
+**Substrate, said out loud (HOUSE LAW #1): Lean-authored.** The constraint set is a `def` producing
+an `EffectVmDescriptor2`, byte-pinned as `SELF_SETTLEMENT_GOLDEN` (1996 bytes) by `emitVmJson2`, with
+forcing lemmas over the emitted gates. **No Rust AIR was written or extended**; Rust's job is to CALL
+the golden, exactly as the eventual cutover for `TURN_CHAIN_BINDING_GOLDEN` does.
+
+`dregg-self-settlement-v1`: 12 main columns, 6 public inputs, 13 constraints — 6 arithmetic
+`windowGate`s (`onTransition := false`, because a v2 `.base (.gate …)` is evaluated under
+`when_transition()` and would be VACUOUS on the only row of a one-row trace), 6 `.piBinding`s, and
+one `.proofBind`. A 32-bit range tooth on the `HEIGHT_SLACK` column makes the strict advance a
+genuine `<` rather than a wraparound.
+
+**What it FORCES:** the L1 account write is exactly the child aggregate's published, proof-bound
+commitments. No other root, no other height, no re-homing of the registered genesis, no failure to
+advance. Rung 1 (`settle_descriptor_refines_air`) and Rung 2 (`settle_descriptor_iff_air`) over the
+emitted gates; a canonicity BRIDGE (`settle_row_forces_settle_legs`) delivering `SettleAccepts`'s four
+arithmetic legs as ℤ equalities; four UNSAT teeth (fabricated genesis, proof-seam mismatch, cert-seam
+mismatch, stale height); and a concrete satisfying row whose equations are `11 = 11` and `29 = 29` —
+worth stating plainly, because the abstract non-vacuity witness in `SelfSettlement` is limited to the
+constant-zero portal and reads `0 = 0` (audit F-B2).
+
+**What it does NOT force, stated in the module header before any code:**
+
+  * `engine` / `root_ok` — the child aggregate's recursion proof verifying. That is the `.proofBind`
+    op, whose row-local `holdsAt` is `True` and whose content is `Satisfied2Custom.proofBound` /
+    `proofBind_bound` against the named engine — the SAME native-BabyBear boundary
+    `EngineSound.recursive_sound` names, and never the gnark wrap whose `FriLowDegreeSound` carrier
+    is proven vacuous.
+  * `cert_ok` — the quorum. Not in this descriptor at all (step 6 above).
+
+**⚑ ORPHAN STATUS, and it is the failure this document already records once.** The module is not
+imported by `metatheory/Dregg2.lean`, so its **12 `#assert_axioms` pins currently run in NO CI
+target** — precisely the F-B1 shape that let `SelfSettlement`'s own 20 pins ship uncompiled. The
+import line to add is:
+
+```
+import Dregg2.Circuit.Emit.SelfSettlementEmit
+```
+
+and `Dregg2.lean:1543`'s `SelfSettlement` annotation still advertises
+`settle_accepts_inflated_height`, which no longer exists. Both edits were left to the operator
+deliberately (that file loses import lines to contending commits, twice recorded), and both are
+**required before the emit counts as gated**.
+
+---
+
+Steps 1 and 4 are what turn "a proven predicate with an emitted descriptor" into "an effect a turn
+can run". Until then, the honest description of this work is: **the self-settlement effect's Lean
+semantics, verification predicate, L2-commitment binding lemma, height pin and emitted constraint set
+exist and are proved; the loop does not run.**

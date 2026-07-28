@@ -307,6 +307,14 @@ against the lane's own commits: it shipped red and a third party caught it.
 - **`engineSound_numTurns_irrelevant` is the best theorem in the scope** — a genuine,
   honestly-stated *negative* result (the settled height is provably not engine-pinned),
   with `settle_accepts_inflated_height` lifting it to a demonstrated griefing attack.
+  > **[SUPERSEDED 2026-07-28 — both theorems are DELETED.]** The negative was true of the
+  > MODEL and false of the deployed AIR: `EffectVmEmitTurnChainBinding` constraint 14
+  > (`real_count[last] = pi[num_turns]`) had pinned the count the whole time, and
+  > `BindingAirSound.Satisfies.count` modelled it — the keystone
+  > `binding_air_discharges_binding_sound` simply never carried it into
+  > `EngineSound.binding_sound`. This audit's praise was therefore itself an over-read: it
+  > called a MODEL gap a property of the recursion engine. `docs/DREGG-IN-DREGG-BUILD.md` §3
+  > has the repair; the replacement tooth is `inflated_height_cannot_settle`.
 
 ### 2.3 F-B2 — **OVERCLAIM (severity: high).** "non-vacuity fired on the realizing child chain" fires at a constant-zero portal.
 
