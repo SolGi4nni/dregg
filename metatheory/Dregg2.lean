@@ -594,6 +594,7 @@ import Dregg2.AttestCube                    -- dregg4 ATTESTATION CUBE: assemble
 import Metatheory.EpistemicConsensus       -- epistemic consensus / common-knowledge front
 import Metatheory.Disputation              -- disputation / adjudication game
 import Metatheory.OptimisticAdjudication   -- "fightable disproof" vs "checkable proof": the Refutable dual, the carried Actuated (liveness) hypothesis PROVED non-removable, and the DistKnows-vs-Knows challenger gap
+import Metatheory.ResearchRegime         -- the RESEARCH regime: two auditors agreeing is the ballot regime, and the theorem already existed
 import Metatheory.Categorical              -- categorical core (final-coalgebra base)
 import Metatheory.Open.FinalCoalgebra      -- OPEN: final-coalgebra boundary
 import Metatheory.Open.AuthorityClosure    -- OPEN: authority closure
