@@ -277,6 +277,16 @@ Elsewhere: `dregg-cell` 846/0 · `dregg-turn` 914/915 (`stark_kill_wire_roundtri
 - ⚠ `starbridge-v2` is red right now on a live lane's uncommitted `TurnError::AssetClassCollision`
   with no arm in `debug.rs:235` — the same miss I made at 10:43. Theirs to finish; not touched.
 
+- **A6 CLOSED** — and it corrected my framing in the OPPOSITE direction from its sibling. The
+  truncation IS real here (28 of 32 bytes) but is NOT the binding constraint: mod-p from a 32-bit key
+  is already surjective onto `[0,p)`, so a wider key buys 1.025× and zero classes. The width is in the
+  DESTINATION TYPE — one PI slot, one AIR column. Same conclusion as A7, different reason, established
+  not inherited. ⚑ Two new findings on top: the light-client leg's class is **prover-chosen outright,
+  no grind needed**, and the ZERO class is an overloaded sentinel reachable by a ~27-CPU-minute
+  targeted grind (checked: the native asset does not occupy it, now pinned).
+- ⚠ I added the `starbridge-v2` match arm the new variant needed — the same omission I made with three
+  CapTP variants at 10:43. `cargo check -p starbridge-v2` is 0.
+
 ## Open for ember
 1. **F1?** — the only route that makes a successor to `RestHashIffFrame` satisfiable. Flag day:
    commitment epoch + descriptor re-emit + re-genesis, 234 binder positions across 85 modules.
